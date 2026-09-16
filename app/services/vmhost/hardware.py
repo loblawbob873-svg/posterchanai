@@ -35,8 +35,9 @@ def _err(code, msg):
 
 
 def is_migrating(d) -> bool:
-    """Phase 3 records an in-flight migration on the VM's metadata. Read defensively so this module does
-    not depend on that field existing yet."""
+    """True when the VM's metadata carries a migration tag. The ops below do NOT use this alone: they call
+    the service's `_migration_guard`, which also consults the migration journal (a migration in
+    planned/quiescing/exporting has no tag yet) and ignores a tag whose migration already finished."""
     m = getattr(d, "meta", None)
     return bool(m is not None and getattr(m, "migration", None))
 
@@ -90,8 +91,7 @@ class HardwareOps:
                 d = await self.backend.get(d.uuid)
                 if d is None:
                     raise _err("not_found", "no such VM")
-                if is_migrating(d):
-                    raise _err("migrating", "this VM is being migrated")
+                self._migration_guard(d)     # journal (authoritative) + pc:migration metadata, like start
                 if d.state != "shutoff":
                     raise _err("conflict", "shut the VM down before changing its hardware")
                 domains = await self.backend.list_domains()
@@ -197,8 +197,7 @@ class HardwareOps:
     # ------------------------------------------------------------------------------ snapshots
     async def _snap_domain(self, pk, role, args):
         d = await self._domain(pk, role, args)
-        if is_migrating(d):
-            raise _err("migrating", "this VM is being migrated")
+        self._migration_guard(d)
         return d
 
     @staticmethod

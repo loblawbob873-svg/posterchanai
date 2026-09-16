@@ -142,12 +142,45 @@
       return last;
     }
 
+    // ---- phase 3 (cold migration) -------------------------------------------------------------
+    // An UNPUBLISHED request signed by the user and NIP-44-encrypted to ANOTHER host. The source host
+    // carries it inside peer.migrate.precheck so the TARGET can check for itself that the person asking
+    // is one of its admins — the source can neither forge it nor read it.
+    async function authorize(targetPubkey, op, args){
+      if(!/^[0-9a-f]{64}$/.test(String(targetPubkey || ''))) return null;
+      const ts = Math.floor(d.now() / 1000);
+      const content = await d.enc(targetPubkey, JSON.stringify({ v: 1, id: d.newId(), op, ts, args: args || {} }));
+      const ev = await d.sign({ kind: KINDS.REQ, created_at: ts, content,
+                                tags: [['p', targetPubkey], ['expiration', String(ts + 600)], ['nofederate']] });
+      return ev && ev.id ? ev : null;
+    }
+
+    // A live subscription on one or more host relays (migration progress, 7310). Returns close().
+    // Best effort by design: the screen also polls status, so a dropped socket costs smoothness only.
+    async function watch(urls, filter, onEvent){
+      const subs = [];
+      let closed = false;
+      for(const url of urls || []){
+        if(!/^wss?:\/\//.test(String(url || ''))) continue;
+        const c = await connect(url);
+        if(!c || closed) continue;
+        const subId = 'vw' + d.newId().slice(0, 12);
+        c.subs.set(subId, (ev) => { try{ onEvent(ev, url); }catch(_){} });
+        send(c, ['REQ', subId, filter]);
+        subs.push([c, subId]);
+      }
+      return () => {
+        closed = true;
+        for(const [c, id] of subs.splice(0)){ c.subs.delete(id); send(c, ['CLOSE', id]); touch(c); }
+      };
+    }
+
     function closeAll(){
       for(const c of socks.values()){ try{ c.ws.close(); }catch(_){} }
       socks.clear();
     }
 
-    return { call, closeAll, KINDS, _socks: socks };
+    return { call, closeAll, authorize, watch, KINDS, _socks: socks };
   }
 
   root.PCVmRpc = { createVmRpc, KINDS };

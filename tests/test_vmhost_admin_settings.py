@@ -212,11 +212,11 @@ def test_a_failed_durable_save_leaves_the_old_access_in_force_everywhere(monkeyp
     assert vmconfig.current().admin_pubkeys == []
 
 
-# Settings declared now for later phases. Each is shown, saved and hydrated like any other (the
-# coverage tests above), but NOTHING reads it yet — so the form must say so, or an admin sets a
-# migration cap or a shutdown timeout and believes the host enforces it.
-COMING_SOON = ("vmhost_peer_hosts", "vmhost_shutdown_timeout_sec",
-               "vmhost_migration_keep_source_hours", "vmhost_transfer_max_mbps")
+# Settings declared ahead of the code that reads them. Each is shown, saved and hydrated like any other
+# (the coverage tests above), but NOTHING reads it yet — so the form must say so, or an admin sets a
+# migration cap or a shutdown timeout and believes the host enforces it. Empty since phases 2 and 3
+# landed (they read every key); the test below still fails for any UNLABELLED setting nothing reads.
+COMING_SOON: tuple = ()
 
 
 def _label_of(html, key):

@@ -11,7 +11,8 @@ of a verified event is the requester, full stop.
 DROP ORDER — cheapest first, and a stranger never reaches the expensive half (the DVM worker's rule):
 kind → addressed to this node → payload size → already-seen event id → requester's role, or a session key's owner's (a stranger
 ends here, with NO reply) → that pubkey's token bucket (peek) → BIP-340 signature → clock skew and
-expiration → token taken → marked seen → the role's busy budget (admins have their own) → decrypt.
+expiration → token taken → marked seen → the role's busy budget (admins and peer hosts have their own)
+→ decrypt.
 
 Timing rules (`REQ_MAX_AGE`, `REQ_MAX_FUTURE`): a request older than two minutes or more than thirty
 seconds in the future is dropped, as is one with no expiration or an expired one. That is what makes
@@ -47,10 +48,17 @@ INDEX_EVERY = 300
 # a request leaves within milliseconds. MAX_BUSY bounds the EXPENSIVE stage (decrypt, libvirt) PER ROLE:
 # with one shared budget a user flood of slow operations filled it and an admin's request — the person
 # who could revoke the flooder — was dropped at the door.
+#
+# PEER HOSTS (phase 3, `vmhost_peer_hosts`) have a budget of their OWN, in both stages. A migration is a
+# conversation between two hosts that must not stall halfway: the target's commit/status/ack and the
+# source's abort arrive while the transfer runs, and if they shared the user slots or the user bucket a
+# user flood (or an admin's own polling) could starve them, leaving both hosts locked until an admin
+# force-reclaims. The peer set is a handful of configured node keys, so a generous per-key bucket costs
+# nothing a stranger can reach.
 MAX_PENDING = 256
-MAX_BUSY = {"user": 32, "admin": 16}
+MAX_BUSY = {"user": 32, "admin": 16, "peer": 8}
 # Per-pubkey token buckets (burst, refill per second), spent BEFORE anything is decrypted.
-BUCKETS = {"user": (10, 1.0), "admin": (30, 3.0)}
+BUCKETS = {"user": (10, 1.0), "admin": (30, 3.0), "peer": (60, 5.0)}
 
 
 # ------------------------------------------------------------------------------------ builders
@@ -78,7 +86,7 @@ def build_announcement(node_sk: bytes, cfg, now: Optional[int] = None) -> dict:
     relays = [r for r in [cfg.public_relay] if r]
     content = {"v": 1, "name": cfg.display_name or "PosterChan VM host", "https": cfg.public_url,
                "relays": relays, "proto": [PROTO_VERSION],
-               "features": ["novnc", "hardware", "snapshots", "iso-fetch", "sessions"]}
+               "features": ["novnc", "hardware", "snapshots", "iso-fetch", "sessions", "cold-migrate"]}
     tags = [["d", kinds.ANNOUNCE_D], ["alt", "PosterChan VM host"]] + [["relay", r] for r in relays]
     return nostr_event.build_event(node_sk, kinds.ANNOUNCE_KIND, json.dumps(content), tags,
                                    created_at=int(now if now is not None else time.time()))
@@ -144,7 +152,14 @@ class Transport:
         self.seen = seen if seen is not None else seen_for(service)
         self.buckets = TokenBuckets()
         self._pending = 0
-        self._busy = {"user": 0, "admin": 0}
+        self._busy = {r: 0 for r in MAX_BUSY}
+
+    def _is_peer(self, pk: str) -> bool:
+        m = getattr(self.service, "migrator", None)
+        try:
+            return bool(m is not None and m.is_peer(pk))
+        except Exception:
+            return False
 
     def _drop(self, why: str, ev: dict) -> None:
         logger.debug("[vmhost] dropped %s: %s", str(ev.get("id", ""))[:12], why)
@@ -177,7 +192,13 @@ class Transport:
             if role is None:
                 return self._drop("not on this host's lists", ev)    # a stranger: no reply at all
             actor, session = owner, requester
-        if not self.buckets.peek(actor, role):
+        # Which BUDGET, not which rights (service.handle decides those): a configured peer host that is
+        # also on a user list still gets the peer budget when it signs with its own key, so a migration
+        # never waits on user traffic. A session key is never a peer's (a peer cannot open one).
+        budget = role
+        if role == "user" and session is None and self._is_peer(actor):
+            budget = "peer"
+        if not self.buckets.peek(actor, budget):
             return self._drop("rate limited", ev)
         if not nostr_event.verify_event(ev):
             return self._drop("bad signature", ev)
@@ -194,12 +215,12 @@ class Transport:
         # Recorded only once it is inside the window (outside it the window itself refuses a replay),
         # and atomically with the check: two deliveries of one event racing through the awaits above
         # must not both get here.
-        if not self.buckets.take(actor, role):
+        if not self.buckets.take(actor, budget):
             return self._drop("rate limited", ev)
         marked = self.seen.add(eid)
         if marked != "ok":
             return self._drop("already handled" if marked == "dup" else "replay table full", ev)
-        busy_role = "admin" if role == "admin" else "user"
+        busy_role = budget if budget in MAX_BUSY else "user"
         if self._busy[busy_role] >= MAX_BUSY.get(busy_role, 16):
             return self._drop(f"{busy_role} budget full", ev)
         self._busy[busy_role] += 1
@@ -380,6 +401,15 @@ async def _run(cfg, stop: asyncio.Event) -> None:
 
     tr = Transport(svc, sk, publish)
     _state["transport"] = tr
+    # Phase 3: cold migration (peers from vmhost_peer_hosts; resumes unfinished migrations from the journal).
+    try:
+        from app.services import settings_store
+        from . import migrate
+        migrator = migrate.attach(svc, sk, publish, settings_store.all_settings())
+        await migrator.resume()
+    except Exception as e:
+        migrator = None
+        logger.warning("[vmhost] migration support not started: %s", e)
     _state["error"] = ""
     logger.info("[vmhost] VM host listening on %s as %s (libvirt %s, storage %s)",
                 relay, tr.node_pk[:16], cfg.libvirt_uri, cfg.storage_dir)
@@ -391,6 +421,11 @@ async def _run(cfg, stop: asyncio.Event) -> None:
                 await svc.refresh_index()
             except Exception as e:
                 logger.warning("[vmhost] could not read libvirt domains: %s", e)
+            if migrator is not None:
+                try:
+                    await migrator.housekeeping()
+                except Exception as e:
+                    logger.warning("[vmhost] migration housekeeping failed: %s", e)
             if cfg.announce and time.time() - last_announce > ANNOUNCE_EVERY:
                 try:
                     await publish(build_announcement(sk, cfg))
@@ -421,6 +456,13 @@ async def stop() -> None:
     ev = _state.get("stop")
     if ev is not None:
         ev.set()
+    t = _state.get("transport")
+    m = getattr(t.service, "migrator", None) if t else None
+    if m is not None:
+        try:
+            await m.close()
+        except Exception:
+            pass
     for t in list(_state.get("tasks") or []):
         t.cancel()
         try:

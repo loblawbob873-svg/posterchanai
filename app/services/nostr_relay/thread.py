@@ -500,18 +500,29 @@ def _read_config() -> dict:
         # cfg["operator"], which is every linked user plus the node — a request p-tagged to any user
         # would then count as "addressed to this host".
         cfg["node_pubkey"] = _node_pubkey()
-        cfg["vmhost_peer_hosts"] = _vmhost_peer_hosts()
+        cfg["vmhost_peer_hosts"] = _vmhost_peer_hosts(cfg["vmhost_enabled"], g("vmhost_peer_hosts", ""),
+                                                      cfg["node_pubkey"])
         return cfg
     finally:
         db.close()
 
 
-def _vmhost_peer_hosts() -> list:
+def _vmhost_peer_hosts(enabled, raw, node_pubkey: str = "") -> list:
     """Hex pubkeys of OTHER VM hosts whose 6310/7310/31310 this relay accepts from outside the web of
-    trust (host-to-host replies for migration). The hook phase 3 fills from `vmhost_peer_hosts`; it is
-    deliberately EMPTY until something in this codebase talks to a peer host, so the setting cannot
-    widen the relay's write gate before there is a feature behind it."""
-    return []
+    trust — the host-to-host replies of a cold migration (app/services/vmhost/migrate.py).
+
+    Parsed by the SAME `migrate.parse_peer_hosts` the host uses, so the relay can never trust a key the
+    host would not talk to (a line the host reports as unparseable is trusted by neither). EMPTY unless
+    this node hosts VMs: the peer list must not widen the write gate of a relay whose node runs no host.
+    Any failure reads as "no peers" — fail closed, the ordinary WoT gate still applies to everything."""
+    if not enabled:
+        return []
+    try:
+        from app.services.vmhost.migrate import parse_peer_hosts
+        peers, _bad = parse_peer_hosts(raw or "")
+    except Exception:
+        return []
+    return sorted({p.pubkey for p in peers} - {node_pubkey or ""})
 
 
 def _node_pubkey() -> str:

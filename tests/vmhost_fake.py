@@ -11,6 +11,7 @@ from __future__ import annotations
 import copy
 import os
 import re
+import xml.etree.ElementTree as ET
 
 from app.services.vmhost import domainxml
 from app.services.vmhost.backend import BackendError, DomainInfo
@@ -28,7 +29,10 @@ class FakeBackend:
         self.gate: dict = {}             # method name -> asyncio.Event the call waits on
         self.vnc: dict = {}              # uuid -> (host, port)
         self.passwords: dict = {}
-        self.snapshots: dict = {}        # uuid -> [ {name, created, state, vm: dict-copy} ]
+        # uuid -> [ {name, created, state, current, xml, vm?} ]. ONE shape for both phases: phase 2's ops
+        # (list/create/revert/delete) and phase 3's migration primitives (names/dumpxml/redefine) read the
+        # same records, so a snapshot created by vm.snapshot.create is one a migration can carry.
+        self.snapshots: dict = {}
 
     async def _enter(self, name, *args):
         self.calls.append((name,) + args)
@@ -128,37 +132,54 @@ class FakeBackend:
             f.write(b"QFI\xfb")
 
     # ---- phase 2
-    async def dumpxml(self, vm_uuid, inactive=True):
-        await self._enter("dumpxml", vm_uuid)
-        if vm_uuid not in self.domains:
-            raise BackendError("domain not found")
+    def _reported_xml(self, vm_uuid) -> str:
+        """The definition as `virsh dumpxml` reports it: the CURRENT metadata spliced in, and — like libvirt
+        without `--security-info` — NO VNC `passwd`. Anything that defines this back must restore one."""
         d = self.domains[vm_uuid]
         xml = d["xml"]
-        # libvirt returns the CURRENT metadata inside the definition; splice it in the way it would.
         xml = re.sub(r"<metadata>.*?</metadata>", "", xml, flags=re.S)
         meta = domainxml.parse_meta(d["meta_xml"]) if d["meta_xml"] else None
         if meta:
             xml = xml.replace("</uuid>", "</uuid><metadata>" + meta.to_xml(prefixed=True) + "</metadata>", 1)
-        return xml
+        return re.sub(r'\s(?:passwd|passwdValidTo)="[^"]*"', "", xml)
+
+    async def dumpxml(self, vm_uuid, inactive=True):
+        await self._enter("dumpxml", vm_uuid)
+        if vm_uuid not in self.domains:
+            raise BackendError("domain not found")
+        return self._reported_xml(vm_uuid)
 
     async def snapshot_list(self, vm_uuid):
         await self._enter("snapshot_list", vm_uuid)
-        return [{k: s[k] for k in ("name", "created", "state")} for s in self.snapshots.get(vm_uuid, [])]
+        return [{"name": s["name"], "created": s.get("created", ""), "state": s.get("state", "shutoff")}
+                for s in self.snapshots.get(vm_uuid, [])]
 
     async def snapshot_create(self, vm_uuid, name, description=""):
         await self._enter("snapshot_create", vm_uuid, name)
         lst = self.snapshots.setdefault(vm_uuid, [])
         if any(s["name"] == name for s in lst):
             raise BackendError("snapshot already exists")
-        lst.append({"name": name, "created": "2026-09-16 12:00:00 +0000",
-                    "state": self.domains[vm_uuid]["state"], "vm": copy.deepcopy(self.domains[vm_uuid])})
+        parent = next((s["name"] for s in lst if s.get("current")), "")
+        for s in lst:
+            s["current"] = False
+        state = self.domains[vm_uuid]["state"]
+        xml = (f"<domainsnapshot><name>{name}</name>" + (f"<parent><name>{parent}</name></parent>" if parent else "")
+               + f"<state>{state}</state><disks><disk name='vda' snapshot='internal'/></disks>"
+               + self._reported_xml(vm_uuid) + "</domainsnapshot>")
+        lst.append({"name": name, "created": "2026-09-16 12:00:00 +0000", "state": state, "current": True,
+                    "xml": xml, "vm": copy.deepcopy(self.domains[vm_uuid])})
 
     async def snapshot_revert(self, vm_uuid, name):
         await self._enter("snapshot_revert", vm_uuid, name)
         s = next((x for x in self.snapshots.get(vm_uuid, []) if x["name"] == name), None)
         if s is None:
             raise BackendError("snapshot not found")
-        self.domains[vm_uuid] = copy.deepcopy(s["vm"])
+        if s.get("vm") is not None:
+            self.domains[vm_uuid] = copy.deepcopy(s["vm"])
+        else:                                    # a REDEFINED snapshot: the definition travels in its XML
+            dom = ET.fromstring(s["xml"]).find("domain")
+            self.domains[vm_uuid]["xml"] = ET.tostring(dom, encoding="unicode")
+            self.domains[vm_uuid]["state"] = s.get("state", "shutoff")
 
     async def snapshot_delete(self, vm_uuid, name):
         await self._enter("snapshot_delete", vm_uuid, name)
@@ -166,3 +187,38 @@ class FakeBackend:
         if not any(x["name"] == name for x in lst):
             raise BackendError("snapshot not found")
         self.snapshots[vm_uuid] = [x for x in lst if x["name"] != name]
+
+    # ---- phase 3 (cold-migration primitives; tests/vmhost_migration_fake.py adds hooks on top)
+    async def dumpxml_inactive(self, vm_uuid):
+        await self._enter("dumpxml_inactive", vm_uuid)
+        if vm_uuid not in self.domains:
+            raise BackendError("domain not found")
+        return self._reported_xml(vm_uuid)
+
+    async def snapshot_names(self, vm_uuid):
+        await self._enter("snapshot_names", vm_uuid)
+        snaps = self.snapshots.get(vm_uuid, [])
+        return [s["name"] for s in snaps], next((s["name"] for s in snaps if s.get("current")), "")
+
+    async def snapshot_dumpxml(self, vm_uuid, name):
+        await self._enter("snapshot_dumpxml", vm_uuid, name)
+        return next(s["xml"] for s in self.snapshots[vm_uuid] if s["name"] == name)
+
+    async def snapshot_redefine(self, vm_uuid, xml, workdir, current=False):
+        await self._enter("snapshot_redefine", vm_uuid, current)
+        if vm_uuid not in self.domains:
+            raise BackendError("domain not found")
+        el = ET.fromstring(xml)
+        name = el.findtext("name")
+        snaps = [s for s in self.snapshots.get(vm_uuid, []) if s["name"] != name]
+        if current:
+            for s in snaps:
+                s["current"] = False
+        snaps.append({"name": name, "xml": xml, "current": bool(current), "created": "",
+                      "state": el.findtext("state") or "shutoff"})
+        self.snapshots[vm_uuid] = snaps
+
+    async def undefine_for_migration(self, vm_uuid, keep_nvram):
+        await self._enter("undefine_for_migration", vm_uuid, keep_nvram)
+        self.domains.pop(vm_uuid, None)
+        self.snapshots.pop(vm_uuid, None)

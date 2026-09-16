@@ -28,7 +28,7 @@
       should see this host before anything is assigned. Anyone else is silently ignored.</p>
     <label>Extra admin npubs (one per line) <textarea id="vmhost_admin_npubs" name="vmhost_admin_npubs" rows="3" spellcheck="false" placeholder="npub1…"></textarea></label>
     <label>Allowed user npubs (one per line) <textarea id="vmhost_allowed_npubs" name="vmhost_allowed_npubs" rows="4" spellcheck="false" placeholder="npub1…"></textarea></label>
-    <label>Peer hosts for migration (one npub per line) (coming soon) <textarea id="vmhost_peer_hosts" name="vmhost_peer_hosts" rows="2" spellcheck="false" placeholder="npub1… wss://relay"></textarea></label>
+    <label>Peer hosts for migration (one per line: npub relay https — list each other on BOTH hosts) <textarea id="vmhost_peer_hosts" name="vmhost_peer_hosts" rows="2" spellcheck="false" placeholder="npub1… wss://relay.example https://example"></textarea></label>
   </fieldset>
 
   <fieldset>
@@ -51,10 +51,10 @@
     <label><input type="checkbox" id="vmhost_allow_overcommit" name="vmhost_allow_overcommit"> Allow overcommitting CPU and memory</label>
     <label>Console ticket lifetime (seconds) <input type="number" id="vmhost_console_ticket_ttl_sec" name="vmhost_console_ticket_ttl_sec" value="60" min="10" max="600"></label>
     <label>Console session limit (minutes) <input type="number" id="vmhost_console_max_minutes" name="vmhost_console_max_minutes" value="240" min="1"></label>
-    <label>Guest shutdown timeout (seconds) (coming soon) <input type="number" id="vmhost_shutdown_timeout_sec" name="vmhost_shutdown_timeout_sec" value="120" min="10"></label>
+    <label>Guest shutdown timeout (seconds) <input type="number" id="vmhost_shutdown_timeout_sec" name="vmhost_shutdown_timeout_sec" value="120" min="10"></label>
     <label>Session key lifetime for remote signers (hours) <input type="number" id="vmhost_session_max_hours" name="vmhost_session_max_hours" value="12" min="1"></label>
-    <label>Keep a migrated VM's source copy (hours) (coming soon) <input type="number" id="vmhost_migration_keep_source_hours" name="vmhost_migration_keep_source_hours" value="72" min="0"></label>
-    <label>Migration transfer cap (Mbit/s, 0 = none) (coming soon) <input type="number" id="vmhost_transfer_max_mbps" name="vmhost_transfer_max_mbps" value="0" min="0"></label>
+    <label>Keep a migrated VM's source copy (hours) <input type="number" id="vmhost_migration_keep_source_hours" name="vmhost_migration_keep_source_hours" value="72" min="0"></label>
+    <label>Migration transfer cap (Mbit/s, 0 = none) <input type="number" id="vmhost_transfer_max_mbps" name="vmhost_transfer_max_mbps" value="0" min="0"></label>
     <label><input type="checkbox" id="vmhost_iso_fetch_enabled" name="vmhost_iso_fetch_enabled"> Let admins download ISOs by URL (public http/https only)</label>
   </fieldset>
 

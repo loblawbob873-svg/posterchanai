@@ -376,9 +376,71 @@ def test_read_config_carries_the_switch_the_node_key_and_the_peer_hook(monkeypat
     monkeypatch.setattr(thread, "_collect_preserve_pubkeys", lambda db: [])
     monkeypatch.setattr(keystore, "get_operator_nsec", lambda: NODE_SK.hex())
     monkeypatch.setattr(keystore, "get_bridge_secret", lambda: None, raising=False)
+    monkeypatch.setitem(settings_store._CACHE, "vmhost_peer_hosts", "")
     for value, expect in (("true", True), ("false", False), ("", False)):
         monkeypatch.setitem(settings_store._CACHE, "vmhost_enabled", value)
         cfg = thread._read_config()
         assert cfg["vmhost_enabled"] is expect, value
         assert cfg["node_pubkey"] == NODE
-        assert cfg["vmhost_peer_hosts"] == [], "phase 3 fills this hook; until then no peer is trusted"
+        assert cfg["vmhost_peer_hosts"] == [], "no peer line configured: no peer is trusted"
+
+
+def _read_config_env(monkeypatch, enabled, peer_line):
+    from app.services import keystore, settings_store
+    import app.database as database
+    monkeypatch.setattr(database, "SessionLocal", lambda: SimpleNamespace(close=lambda: None))
+    monkeypatch.setattr(settings_store, "load_local", lambda: None)
+    monkeypatch.setattr(settings_store, "hydrate_from_db", lambda db: 0)
+    monkeypatch.setattr(thread, "_collect_operator_pubkeys", lambda db: [])
+    monkeypatch.setattr(thread, "_collect_preserve_pubkeys", lambda db: [])
+    monkeypatch.setattr(keystore, "get_operator_nsec", lambda: NODE_SK.hex())
+    monkeypatch.setattr(keystore, "get_bridge_secret", lambda: None, raising=False)
+    monkeypatch.setitem(settings_store._CACHE, "vmhost_enabled", "true" if enabled else "false")
+    monkeypatch.setitem(settings_store._CACHE, "vmhost_peer_hosts", peer_line)
+    return thread._read_config()
+
+
+def _npub(hexkey):
+    from app.services.nostr import nostr_service
+    return nostr_service.npub_of(hexkey)
+
+
+def test_a_configured_peer_hosts_results_pass_the_gate_through_the_shipped_hook(monkeypatch):
+    """END TO END across the seam phase 1 left as a hook: the admin's `vmhost_peer_hosts` line (the exact
+    `npub relay https` format migrate.py parses) → `_read_config` → the LIVE write gate and the firehose.
+    A peer host's 6310/7310/31310 are accepted; a stranger host's are not; a malformed line trusts nobody;
+    and with VM hosting off the peer list widens nothing."""
+    stranger_host = STRANGER_HOST_SK
+    line = f"{_npub(PEER)} wss://peer.example/relay https://peer.example\n# a comment\nnot a peer line"
+    cfg = _read_config_env(monkeypatch, True, line)
+    assert cfg["vmhost_peer_hosts"] == [PEER], cfg["vmhost_peer_hosts"]
+
+    s = server(cfg={"wot_enabled": True, **cfg})
+    for kind in (kinds.RES_KIND, kinds.PROGRESS_KIND):
+        assert deliver(s, result(PEER_SK, kind, p=NODE))[2] is True, f"a peer host's {kind} was refused"
+        assert deliver(s, result(stranger_host, kind, p=NODE))[2] is False, f"a stranger host's {kind} passed"
+    body, d = '{"v":1}', [["d", kinds.ANNOUNCE_D]]
+    assert deliver(s, build_event(PEER_SK, kinds.ANNOUNCE_KIND, body, d))[2] is True
+    assert deliver(s, build_event(stranger_host, kinds.ANNOUNCE_KIND, body, d))[2] is False
+
+    env, store = firehose_env(peers=cfg["vmhost_peer_hosts"])
+    asyncio.run(env["_firehose_event"](result(PEER_SK, p=NODE)))
+    asyncio.run(env["_firehose_event"](result(stranger_host, p=NODE)))
+    assert [c.args[0]["pubkey"] for c in store.add_event.await_args_list] == [PEER]
+
+    # Hosting off: the same line trusts nobody.
+    off = _read_config_env(monkeypatch, False, line)
+    assert off["vmhost_peer_hosts"] == []
+    assert deliver(server(cfg={"wot_enabled": True, **off}), result(PEER_SK, p=NODE))[2] is False
+    # A line migrate.py would reject (no https) is trusted by neither the host nor the relay.
+    bad = _read_config_env(monkeypatch, True, f"{_npub(PEER)} wss://peer.example/relay")
+    assert bad["vmhost_peer_hosts"] == []
+    assert deliver(server(cfg={"wot_enabled": True, **bad}), result(PEER_SK, p=NODE))[2] is False
+
+
+def test_the_relay_and_the_host_parse_the_peer_line_with_one_rule():
+    from app.services.vmhost import migrate
+    line = f"{_npub(PEER)} wss://peer.example/relay https://peer.example\n{NODE} wss://x/r https://x"
+    peers, bad = migrate.parse_peer_hosts(line)
+    assert thread._vmhost_peer_hosts(True, line, NODE) == sorted({p.pubkey for p in peers} - {NODE})
+    assert thread._vmhost_peer_hosts(True, line, NODE) == [PEER], "the node itself is never its own peer"
