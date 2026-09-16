@@ -368,6 +368,247 @@ def rewrite_snapshot_xml(xml: str, vm_dir: Path, names: set, iso_path_for) -> st
     return ET.tostring(root, encoding="unicode")
 
 
+# ====================================================================================== TARGET: rebuild
+# THE TARGET NEVER DEFINES WHAT THE SOURCE SENT. A domain definition is root on the host that defines it — a
+# `qemu:commandline` (under any prefix) runs anything, a `<serial type="file">` writes any path qemu can, a
+# `<kernel>` boots a host file, a static `<seclabel>` turns confinement off, an `<interface type="ethernet">`
+# runs a script. A paired host is a peer, not an administrator of this one. So the definition is REBUILT here
+# with this host's own generator (domainxml.build_domain_xml) from a whitelisted field set, and everything
+# else is dropped — except constructs whose silent loss would change what the machine IS, which are refused.
+_MAC_RE = re.compile(r"^[0-9a-f]{2}(:[0-9a-f]{2}){5}$")
+_DISK_FILE_RE = re.compile(r"^disk-(vd|sd)[a-z]\.qcow2$")
+_NIC_MODELS = ("virtio", "e1000e", "e1000", "rtl8139")
+_SNAP_STATES = ("nostate", "running", "blocked", "paused", "shutdown", "shutoff", "crashed", "pmsuspended",
+                "disk-snapshot")
+_MEM_UNITS = {"b": 1 / 1048576, "bytes": 1 / 1048576, "k": 1 / 1024, "kib": 1 / 1024, "kb": 1000 / 1048576,
+              "m": 1, "mib": 1, "mb": 1000 ** 2 / 1048576, "g": 1024, "gib": 1024, "gb": 1000 ** 3 / 1048576,
+              "t": 1048576, "tib": 1048576, "tb": 1000 ** 4 / 1048576}
+MAX_LABELS = 16
+MAX_ASSIGNED = 256
+
+
+def _mem_mib(el) -> int:
+    if el is None:
+        return 0
+    try:
+        n = int((el.text or "0").strip())
+    except ValueError:
+        return 0
+    f = _MEM_UNITS.get((el.get("unit") or "KiB").strip().lower())
+    return int(n * f) if f else 0
+
+
+def validate_incoming_domain(xml: str, *, vm_uuid: str, name: str, disk_names: set, cfg) -> dict:
+    """The source's definition → the few facts this host will build from, or MigrationAbort. Nothing in the
+    returned dict is a path, a namespace, or anything the source chose beyond the whitelisted values."""
+    try:
+        root = ET.fromstring(xml)
+    except ET.ParseError:
+        raise MigrationAbort("the transferred definition is not readable XML")
+    if _local(root.tag) != "domain":
+        raise MigrationAbort("the transferred definition is not a domain")
+    info = inspect_domain_xml(xml)
+    try:
+        Migrator._refusals(info)                      # the SAME refusals the source runs, run again here
+    except MigrationError as e:
+        raise MigrationAbort(e.message)
+    if info["uuid"] != vm_uuid:
+        raise MigrationAbort("the transferred definition names a different VM id than the migration")
+    if info["name"] != name:
+        raise MigrationAbort("the transferred definition names a different VM than the migration")
+    os_el = root.find("os")
+    typ = os_el.find("type") if os_el is not None else None
+    if typ is None or (typ.text or "").strip() != "hvm" or (typ.get("arch") or "x86_64") != "x86_64":
+        raise MigrationAbort("only x86_64 hardware-virtualized VMs can be migrated here")
+    machine = (typ.get("machine") or "").strip().lower()
+    chipset = "pc" if (machine == "pc" or machine.startswith("pc-i440fx")) else "q35"
+    vcpus, ram = info["vcpus"], _mem_mib(root.find("memory"))
+    if not 1 <= vcpus <= cfg.max_vcpus:
+        raise MigrationAbort(f"the VM has {vcpus} vCPUs; this host allows 1-{cfg.max_vcpus}")
+    if not 256 <= ram <= cfg.max_ram_mib:
+        raise MigrationAbort(f"the VM has {ram} MiB of memory; this host allows 256-{cfg.max_ram_mib}")
+    loader = os_el.find("loader")
+    efi = (os_el.get("firmware") == "efi" or os_el.find("nvram") is not None
+           or (loader is not None and (loader.get("type") == "pflash" or (loader.text or "").strip())))
+    dev = root.find("devices")
+    disks, seen, cdrom_target = [], set(), ""
+    for d in (dev.findall("disk") if dev is not None else []):
+        device = d.get("device", "disk")
+        tgt = d.find("target")
+        target = tgt.get("dev", "") if tgt is not None else ""
+        if device == "cdrom":
+            if target.startswith("sd") and domainxml._DEV_RE.match(target):
+                cdrom_target = cdrom_target or target
+            continue                                      # detached: installer media is this host's business
+        if device != "disk":
+            continue                                      # floppy and friends are dropped with their sources
+        src = d.find("source")
+        if d.get("type", "file") != "file" or src is None or set(src.attrib) != {"file"}:
+            raise MigrationAbort("a disk that is not a plain file cannot be migrated")
+        if d.find("backingStore/source") is not None or d.find("mirror") is not None \
+                or d.get("snapshot") == "external":
+            raise MigrationAbort("a disk with a backing chain or external overlay cannot be migrated")
+        base = os.path.basename(src.get("file") or "")
+        if base not in disk_names or base in seen:
+            raise MigrationAbort(f"the definition names a disk that was not transferred ({base[:64]})")
+        if not domainxml._DEV_RE.match(target) or any(x["target"] == target for x in disks):
+            raise MigrationAbort("a disk has an unsupported or duplicate target")
+        seen.add(base)
+        disks.append({"name": base, "target": target})
+    if not disks:
+        raise MigrationAbort("the transferred definition has no disks")
+    nics = []
+    for i in (dev.findall("interface") if dev is not None else []):
+        if i.get("type") not in ("network", "bridge"):
+            continue                                      # ethernet/direct/vhostuser/…: host plumbing, dropped
+        mac_el = i.find("mac")
+        mac = (mac_el.get("address") or "").strip().lower() if mac_el is not None else ""
+        if mac and (not _MAC_RE.match(mac) or int(mac[:2], 16) & 1):
+            mac = ""                                      # not a unicast MAC: libvirt assigns a fresh one
+        model_el = i.find("model")
+        model = model_el.get("type") if model_el is not None else ""
+        nics.append({"mac": mac, "model": model if model in _NIC_MODELS else ""})
+        if len(nics) >= 8:
+            break
+    inputs = [x.get("type") for x in (dev.findall("input") if dev is not None else [])]
+    return {"uuid": vm_uuid, "name": name, "vcpus": vcpus, "ram_mib": ram, "chipset": chipset,
+            "firmware": "efi" if efi else "bios",
+            "disks": disks, "cdrom_target": cdrom_target, "nics": nics,
+            "input": "tablet" if "tablet" in inputs or not inputs else "mouse"}
+
+
+def clean_incoming_meta(meta_xml, *, cfg, assign_allow=None) -> domainxml.VmMeta:
+    """The source's `pc:vm` → a VmMeta of validated values only. `assign_allow`: when a set, only those
+    pubkeys may be carried (see the authorization)."""
+    m = domainxml.parse_meta(meta_xml or "") or domainxml.VmMeta()
+    owner = str(m.owner or "").lower()
+    assigned = [pk for pk in m.assigned if assign_allow is None or pk in assign_allow][:MAX_ASSIGNED]
+    labels = []
+    for lb in m.labels:
+        s = re.sub(r"[\x00-\x1f\x7f]", "", str(lb)).strip()[:64]
+        if s and s not in labels:
+            labels.append(s)
+    return domainxml.VmMeta(owner=owner if _HEX64.match(owner) else "", created=max(0, int(m.created or 0)),
+                            guest=m.guest if m.guest in ("linux", "windows") else "linux",
+                            firmware=m.firmware if m.firmware in ("efi", "bios") else "efi",
+                            disk_gib=max(0, min(int(m.disk_gib or 0), cfg.max_disk_gib * 32)), iso="",
+                            assigned=assigned, labels=labels[:MAX_LABELS])
+
+
+def build_incoming_domain(plan: dict, vm_dir: Path, meta: domainxml.VmMeta, cfg, formats: dict,
+                          nvram: bool) -> str:
+    """This host's own definition for a validated plan. Every path is `vm_dir/<manifest name>`; the network is
+    this host's; the display is one loopback VNC with an expired password; no emulator, no seclabel."""
+    meta.firmware = plan["firmware"]
+    windows = meta.guest == "windows"
+    spec = domainxml.DomainSpec(
+        name=plan["name"], uuid=plan["uuid"], guest=meta.guest, firmware=plan["firmware"], vcpus=plan["vcpus"],
+        ram_mib=plan["ram_mib"], disk_path=str(vm_dir / plan["disks"][0]["name"]),
+        nvram_path=str(vm_dir / "nvram.fd"), iso_path="", network=cfg.default_network, bridge=cfg.bridge,
+        meta=meta)
+    root = ET.fromstring(domainxml.build_domain_xml(spec))
+    if plan["chipset"] == "pc":
+        root.find("os/type").set("machine", "pc")
+    # No nvram file travelled (`nvram` False): the path still points into vm_dir, and libvirt creates it from
+    # this host's own firmware template on first start.
+    dev = root.find("devices")
+    for el in list(dev.findall("disk")) + list(dev.findall("interface")) + list(dev.findall("tpm")):
+        dev.remove(el)
+    at = 0
+    for dk in plan["disks"]:
+        d = ET.Element("disk", {"type": "file", "device": "disk"})
+        ET.SubElement(d, "driver", {"name": "qemu", "type": formats.get(dk["name"], "qcow2")})
+        ET.SubElement(d, "source", {"file": str(vm_dir / dk["name"])})
+        ET.SubElement(d, "target", {"dev": dk["target"], "bus": "sata" if dk["target"].startswith("sd") else "virtio"})
+        dev.insert(at, d)
+        at += 1
+    if plan["cdrom_target"] and plan["cdrom_target"] not in {dk["target"] for dk in plan["disks"]}:
+        cd = ET.Element("disk", {"type": "file", "device": "cdrom"})
+        ET.SubElement(cd, "driver", {"name": "qemu", "type": "raw"})
+        ET.SubElement(cd, "target", {"dev": plan["cdrom_target"], "bus": "sata"})
+        ET.SubElement(cd, "readonly")
+        dev.insert(at, cd)
+        at += 1
+    for nic in plan["nics"]:
+        n = ET.Element("interface", {"type": "bridge" if cfg.bridge else "network"})
+        if nic["mac"]:
+            ET.SubElement(n, "mac", {"address": nic["mac"]})
+        if cfg.bridge:
+            ET.SubElement(n, "source", {"bridge": cfg.bridge})
+        else:
+            ET.SubElement(n, "source", {"network": cfg.default_network or "default"})
+        ET.SubElement(n, "model", {"type": nic["model"] or ("e1000e" if windows else "virtio")})
+        dev.insert(at, n)
+        at += 1
+    # The cdrom arrives EMPTY (installer media is this host's library, not the source's path), so the machine
+    # boots from its disk; build_domain_xml already wrote exactly that.
+    domainxml.set_input(root, plan["input"])
+    return domainxml.to_text(root)
+
+
+def validate_incoming_snapshots(snaps, plan: dict) -> list:
+    """The source's snapshot list → [{name, description, state, created, parent, current, disks, memory}] of
+    validated values, parents first; MigrationAbort on anything external or malformed."""
+    from .backend import valid_snapshot_name
+    if not isinstance(snaps, list) or len(snaps) > 256:
+        raise MigrationAbort("the manifest's snapshot list is malformed")
+    targets = {dk["target"] for dk in plan["disks"]}
+    out, names = [], set()
+    for s in snaps:
+        if not isinstance(s, dict) or not isinstance(s.get("xml"), str):
+            raise MigrationAbort("the manifest's snapshot list is malformed")
+        try:
+            el = ET.fromstring(s["xml"])
+        except ET.ParseError:
+            raise MigrationAbort("a snapshot definition is not readable XML")
+        name = (el.findtext("name") or "").strip()
+        if _local(el.tag) != "domainsnapshot" or not valid_snapshot_name(name) or name in names \
+                or name != s.get("name"):
+            raise MigrationAbort("a snapshot has an invalid or duplicate name")
+        mem = el.find("memory")
+        if mem is not None and mem.get("snapshot") not in (None, "internal", "no"):
+            raise MigrationAbort(f"snapshot {name} keeps its memory outside the disk and cannot be migrated")
+        disks = []
+        for d in el.findall("disks/disk"):
+            mode = d.get("snapshot") or "internal"
+            if mode not in ("internal", "no") or d.find("source") is not None:
+                raise MigrationAbort(f"snapshot {name} is external (a separate overlay file) and cannot be migrated")
+            if d.get("name") in targets and mode == "internal":
+                disks.append(d.get("name"))
+        parent = (el.findtext("parent/name") or "").strip()
+        if parent and parent not in names:
+            raise MigrationAbort(f"snapshot {name} names a parent that does not come before it")
+        state = (el.findtext("state") or "shutoff").strip()
+        if state not in _SNAP_STATES:
+            raise MigrationAbort(f"snapshot {name} has an unknown state")
+        try:
+            created = max(0, int((el.findtext("creationTime") or "0").strip()))
+        except ValueError:
+            created = 0
+        desc = re.sub(r"[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]", "", el.findtext("description") or "")[:200]
+        names.add(name)
+        out.append({"name": name, "description": desc, "state": state, "created": created, "parent": parent,
+                    "current": bool(s.get("current")), "disks": disks,
+                    "memory": "internal" if state in ("running", "paused", "blocked") else "no"})
+    return out
+
+
+def build_incoming_snapshot(snap: dict, domain_xml: str) -> str:
+    """Snapshot METADATA only, from validated fields, around this host's own rebuilt definition — never the
+    `<domain>` the source embedded."""
+    from xml.sax.saxutils import escape
+    parts = [f"<domainsnapshot><name>{escape(snap['name'])}</name>"]
+    if snap["description"]:
+        parts.append(f"<description>{escape(snap['description'])}</description>")
+    parts.append(f"<state>{snap['state']}</state><creationTime>{int(snap['created'])}</creationTime>")
+    if snap["parent"]:
+        parts.append(f"<parent><name>{escape(snap['parent'])}</name></parent>")
+    parts.append(f"<memory snapshot='{snap['memory']}'/><disks>")
+    parts += [f"<disk name='{d}' snapshot='internal'/>" for d in snap["disks"]]
+    parts.append("</disks>" + domain_xml + "</domainsnapshot>")
+    return "".join(parts)
+
+
 def snapshot_is_external(xml: str) -> bool:
     try:
         root = ET.fromstring(xml)
@@ -1408,14 +1649,31 @@ class Migrator:
         if manifest.get("migration") != mig or manifest.get("source") != rec["source"] \
                 or manifest.get("target") != self.node_pk or (manifest.get("vm") or {}).get("uuid") != rec["vm"]:
             raise MigrationAbort("the manifest describes a different migration")
+        if (manifest.get("vm") or {}).get("name") != rec["name"]:
+            raise MigrationAbort("the manifest describes a different VM than the precheck")
         names = set()
-        for i, f in enumerate(manifest.get("files") or []):
-            if f.get("i") != i or not _FILE_RE.match(str(f.get("name", ""))) or f["name"] in names \
-                    or not re.fullmatch(r"[0-9a-f]{64}", str(f.get("sha256", ""))) or int(f.get("size", -1)) < 0:
+        files = manifest.get("files")
+        if not isinstance(files, list) or len(files) > 64:
+            raise MigrationAbort("the manifest lists an invalid file")
+        for i, f in enumerate(files):
+            try:
+                ok = (isinstance(f, dict) and f.get("i") == i and f.get("name") not in names
+                      and ((f.get("role") == "disk" and _DISK_FILE_RE.match(str(f.get("name", ""))))
+                           or (f.get("role") == "nvram" and f.get("name") == "nvram.fd"))
+                      and re.fullmatch(r"[0-9a-f]{64}", str(f.get("sha256", ""))) is not None
+                      and not isinstance(f.get("size"), bool) and int(f.get("size", -1)) >= 0)
+            except (TypeError, ValueError):
+                ok = False
+            if not ok:
                 raise MigrationAbort("the manifest lists an invalid file")
             names.add(f["name"])
         if not names:
             raise MigrationAbort("the manifest lists no files")
+        # Refuse a definition this host would not build BEFORE pulling gigabytes for it (checked again at define).
+        plan = validate_incoming_domain(manifest.get("xml") or "", vm_uuid=rec["vm"], name=rec["name"],
+                                        disk_names={f["name"] for f in files if f["role"] == "disk"},
+                                        cfg=self.svc.cfg)
+        validate_incoming_snapshots(manifest.get("snapshots") or [], plan)
         await asyncio.to_thread(self.store.write_manifest, mig, raw)
         return manifest
 
@@ -1507,7 +1765,41 @@ class Migrator:
                 return None
         return resolve
 
+    async def _define_incoming(self, rec: dict, manifest: dict, vm_dir: Path, migration: dict) -> None:
+        """TARGET: define a REBUILT domain (see the rebuild section above), never the source's XML."""
+        cfg = self.svc.cfg
+        vm = manifest.get("vm") if isinstance(manifest.get("vm"), dict) else {}
+        if vm.get("uuid") != rec["vm"] or vm.get("name") != rec["name"]:
+            raise MigrationAbort("the manifest describes a different VM than the precheck")
+        files = manifest["files"]
+        disk_names = {f["name"] for f in files if f.get("role") == "disk"}
+        plan = validate_incoming_domain(manifest.get("xml") or "", vm_uuid=rec["vm"], name=rec["name"],
+                                        disk_names=disk_names, cfg=cfg)
+        if plan["uuid"] != rec["vm"] or plan["name"] != rec["name"]:      # never reached; never trusted either
+            raise MigrationAbort("the rebuilt definition does not describe the migrating VM")
+        snaps = validate_incoming_snapshots(manifest.get("snapshots") or [], plan)
+        meta = clean_incoming_meta(manifest.get("meta"), cfg=cfg, assign_allow=rec.get("assign_allow"))
+        meta.migration = dict(migration)
+        formats = dict(rec.get("formats") or {})
+        has_nvram = any(f.get("role") == "nvram" for f in files)
+        xml = build_incoming_domain(plan, vm_dir, meta, cfg, formats, has_nvram)
+        uuid = rec["vm"]
+        existing = await self.backend.get(uuid)
+        if existing is None:
+            if any(d.name == rec["name"] for d in await self.backend.list_domains()):
+                raise MigrationAbort(f"a VM named {rec['name']} already exists on this host")
+            await self.backend.define(xml, str(vm_dir))
+        elif not (existing.meta and existing.meta.migration.get("id") == rec["id"]):
+            raise MigrationAbort("a VM with this id already exists on this host")
+        snap_domain = build_incoming_domain(plan, vm_dir, clean_incoming_meta(manifest.get("meta"), cfg=cfg,
+                                                                              assign_allow=rec.get("assign_allow")),
+                                            cfg, formats, has_nvram)
+        for s in snaps:
+            await self.backend.snapshot_redefine(uuid, build_incoming_snapshot(s, snap_domain), str(vm_dir),
+                                                 current=s["current"])
+
     async def _define_from_manifest(self, manifest: dict, vm_dir: Path, migration: dict) -> None:
+        """SOURCE only (reclaim): its OWN export, read back through the journaled checksum."""
         names = {f["name"] for f in manifest["files"]}
         meta = domainxml.parse_meta(manifest.get("meta") or "") or domainxml.VmMeta()
         meta.migration = dict(migration)
@@ -1544,8 +1836,7 @@ class Migrator:
             rec["dir_created"] = True
             await self._save(rec)
         await asyncio.to_thread(place)
-        await self._define_from_manifest(manifest, vm_dir,
-                                         {"id": mig, "state": "incoming", "peer": rec["source"]})
+        await self._define_incoming(rec, manifest, vm_dir, {"id": mig, "state": "incoming", "peer": rec["source"]})
         d = await self.backend.get(uuid)
         if d is not None:
             self.svc._set_index(d)
