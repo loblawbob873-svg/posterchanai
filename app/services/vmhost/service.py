@@ -38,6 +38,12 @@ PROTO_VERSION = 1
 FEATURES = ["novnc"]
 LOCK_WAIT = 2.0
 ADMIN_CACHE_SEC = 60
+# A FAILED admin lookup (account table unreadable) is remembered this long, so a burst of requests —
+# a stranger's included, since role_of runs before anything else — does not re-run it per request.
+ADMIN_NEG_CACHE_SEC = 5
+# One libvirt listing is shared by every read op for this long (single-flight). `virsh list` plus three
+# calls per domain, per request, was the cheapest way for one allowed user to load the host.
+DOMAIN_SNAPSHOT_SEC = 3
 
 ERROR_CODES = ("bad_request", "forbidden", "not_found", "conflict", "busy", "insufficient_capacity",
                "unsupported", "rate_limited", "backend_error", "timeout", "version", "internal")
@@ -131,7 +137,11 @@ class VmHostService:
         self.consoles = consoles or ConsoleRegistry(now=now)
         self.now = now
         self._admin_provider = admin_provider if admin_provider is not None else db_admin_pubkeys
-        self._admin_cache: tuple = (0.0, set())
+        self._admin_cache: tuple = (0.0, set(), 0)      # (fetched at, pubkeys, valid for seconds)
+        self._admin_inflight: Optional[asyncio.Future] = None
+        self._snap: tuple = (0.0, None)
+        self._snap_gen = 0
+        self._snap_inflight: Optional[asyncio.Future] = None
         self._assign: dict = {}          # uuid -> set(pubkey)
         self._index_ok = False
         self._vm_locks: dict = {}
@@ -139,21 +149,74 @@ class VmHostService:
 
     # ---------------------------------------------------------------- identity & index
     async def admin_pubkeys(self) -> set:
-        ts, cached = self._admin_cache
-        if self.now() - ts < ADMIN_CACHE_SEC:
+        ts, cached, ttl = self._admin_cache
+        if self.now() - ts < ttl:
             return cached
+        fut = self._admin_inflight
+        if fut is not None:                               # single-flight: one lookup, many waiters
+            return await asyncio.shield(fut)
+        fut = self._admin_inflight = asyncio.get_running_loop().create_future()
+        try:
+            out = await self._load_admin_pubkeys()
+            fut.set_result(out)
+            return out
+        except BaseException:
+            if not fut.done():
+                fut.cancel()
+            raise
+        finally:
+            self._admin_inflight = None
+
+    async def _load_admin_pubkeys(self) -> set:
+        base = set(self.cfg.admin_pubkeys) | ({self.node_pubkey} if self.node_pubkey else set())
         try:
             prov = self._admin_provider
             got = await prov() if asyncio.iscoroutinefunction(prov) else await asyncio.to_thread(prov)
             db = {p.lower() for p in (got or ()) if isinstance(p, str)}
         except Exception as e:
-            # An unreadable account table must not lock the operator out: the settings list and
-            # the node key still count. It must not keep a stale grant either, so nothing is cached.
+            # An unreadable account table must not lock the operator out: the settings list and the
+            # node key still count. It must not keep a stale grant either, so the fallback holds only
+            # those — and only briefly, so a recovered table is read again within seconds.
             logger.warning("[vmhost] admin lookup failed: %s", e)
-            return set(self.cfg.admin_pubkeys) | ({self.node_pubkey} if self.node_pubkey else set())
-        out = db | set(self.cfg.admin_pubkeys) | ({self.node_pubkey} if self.node_pubkey else set())
-        self._admin_cache = (self.now(), out)
+            self._admin_cache = (self.now(), base, ADMIN_NEG_CACHE_SEC)
+            return base
+        out = db | base
+        self._admin_cache = (self.now(), out, ADMIN_CACHE_SEC)
         return out
+
+    async def domains(self) -> list:
+        """Every domain, from a snapshot shared by all read ops for DOMAIN_SNAPSHOT_SEC (single-flight).
+        Mutating ops invalidate it, so nobody reads their own change back stale."""
+        ts, snap = self._snap
+        if snap is not None and self.now() - ts < DOMAIN_SNAPSHOT_SEC:
+            return snap
+        fut = self._snap_inflight
+        if fut is not None:
+            return await asyncio.shield(fut)
+        gen = self._snap_gen
+        fut = self._snap_inflight = asyncio.get_running_loop().create_future()
+        try:
+            domains = await self.backend.list_domains()
+        except BaseException as e:
+            if not fut.done():
+                if isinstance(e, Exception):
+                    fut.set_exception(e)
+                    fut.exception()                        # a waiter is optional; mark it retrieved
+                else:
+                    fut.cancel()
+            raise
+        finally:
+            self._snap_inflight = None
+        for d in domains:
+            self._set_index(d)
+        if gen == self._snap_gen:                          # not invalidated while it was being read
+            self._snap = (self.now(), domains)
+        fut.set_result(domains)
+        return domains
+
+    def invalidate_domains(self) -> None:
+        self._snap_gen += 1
+        self._snap = (0.0, None)
 
     async def refresh_index(self) -> None:
         domains = await self.backend.list_domains()
@@ -235,7 +298,10 @@ class VmHostService:
 
         if not mutating:
             return await run()
-        res = await self.journal.run_once(pk, rid, op, run)
+        try:
+            res = await self.journal.run_once(pk, rid, op, run)
+        finally:
+            self.invalidate_domains()
         if res is None:
             return err("bad_request", "that request id was already used for a different operation")
         return res
@@ -274,7 +340,7 @@ class VmHostService:
 
     async def _op_host_info(self, pk, role, args, progress):
         avail = await self.backend.available()
-        domains = await self.backend.list_domains()
+        domains = await self.domains()
         mine = [d for d in domains if self._visible(d, role, pk)]
         out = {"name": self.cfg.display_name or "PosterChan VM host",
                "kvm": bool(avail.get("kvm")), "libvirt": bool(avail.get("ok")),
@@ -302,9 +368,7 @@ class VmHostService:
             start = max(0, int(args.get("cursor") or 0))
         except (TypeError, ValueError):
             raise VmHostError("bad_request", "cursor/limit must be numbers")
-        domains = await self.backend.list_domains()
-        for d in domains:
-            self._set_index(d)
+        domains = await self.domains()
         vis = sorted((d for d in domains if self._visible(d, role, pk)), key=lambda d: (d.name.lower(), d.uuid))
         page = vis[start:start + limit]
         nxt = str(start + limit) if start + limit < len(vis) else None

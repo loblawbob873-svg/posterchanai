@@ -162,6 +162,14 @@ numbers too). A non-member's:
 Turning the host on adds a firehose subscription for 5310/6310/7310 `#p`-tagged to the node; switching
 it and the rules above on or off is applied live via reload-upstream, no relay restart.
 
+**Load limits.** A requester's pubkey has a token bucket (users: burst 10, 1/s; admins: burst 30, 3/s)
+spent before anything is decrypted — and only after the signature verifies, so a forgery wearing
+somebody's pubkey cannot drain theirs. Requests past the bucket are dropped without an answer (an
+answer would cost a signature per flood event). Executing requests are bounded per role (32 user,
+16 admin), so a user flood of slow operations cannot keep an admin out. Read ops share one libvirt
+listing for 3 s (single-flight; any mutating op invalidates it), and a failed admin-account lookup is
+single-flight and cached for 5 s.
+
 **No answer is not "no VMs".** An offline host and a host that drops strangers look identical to a
 client; the UI says "No answer — the host is offline or you're not on its list" and keeps the last
 known list on screen.

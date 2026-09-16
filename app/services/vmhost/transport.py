@@ -10,7 +10,8 @@ of a verified event is the requester, full stop.
 
 DROP ORDER — cheapest first, and a stranger never reaches the expensive half (the DVM worker's rule):
 kind → addressed to this node → payload size → already-seen event id → requester's role (a stranger
-ends here, with NO reply) → BIP-340 signature → clock skew and expiration → decrypt.
+ends here, with NO reply) → that pubkey's token bucket (peek) → BIP-340 signature → clock skew and
+expiration → token taken → marked seen → the role's busy budget (admins have their own) → decrypt.
 
 Timing rules (`REQ_MAX_AGE`, `REQ_MAX_FUTURE`): a request older than two minutes or more than thirty
 seconds in the future is dropped, as is one with no expiration or an expired one. That is what makes
@@ -42,7 +43,14 @@ PROGRESS_TTL = 600
 MAX_PLAINTEXT = 65_000
 ANNOUNCE_EVERY = 6 * 3600
 INDEX_EVERY = 300
-MAX_PENDING = 64
+# Admission, in two stages. MAX_PENDING bounds events in the CHEAP stage (role, signature, clock), which
+# a request leaves within milliseconds. MAX_BUSY bounds the EXPENSIVE stage (decrypt, libvirt) PER ROLE:
+# with one shared budget a user flood of slow operations filled it and an admin's request — the person
+# who could revoke the flooder — was dropped at the door.
+MAX_PENDING = 256
+MAX_BUSY = {"user": 32, "admin": 16}
+# Per-pubkey token buckets (burst, refill per second), spent BEFORE anything is decrypted.
+BUCKETS = {"user": (10, 1.0), "admin": (30, 3.0)}
 
 
 # ------------------------------------------------------------------------------------ builders
@@ -91,6 +99,38 @@ def seen_for(service: VmHostService) -> SeenIds:
     return s
 
 
+class TokenBuckets:
+    """Per-pubkey token buckets. `peek` before the signature check (a forgery wearing somebody's pubkey
+    must not spend their tokens), `take` after it."""
+
+    MAX_KEYS = 10_000
+
+    def __init__(self, now=time.monotonic):
+        self.now = now
+        self._b: dict = {}           # pubkey -> (tokens, at)
+
+    def _level(self, pk: str, role: str) -> tuple:
+        burst, rate = BUCKETS.get(role, BUCKETS["user"])
+        t = self.now()
+        tok, at = self._b.get(pk, (float(burst), t))
+        return min(float(burst), tok + max(0.0, t - at) * rate), t
+
+    def peek(self, pk: str, role: str) -> bool:
+        return self._level(pk, role)[0] >= 1.0
+
+    def take(self, pk: str, role: str) -> bool:
+        tok, t = self._level(pk, role)
+        if tok < 1.0:
+            self._b[pk] = (tok, t)
+            return False
+        self._b[pk] = (tok - 1.0, t)
+        if len(self._b) > self.MAX_KEYS:
+            # Only allowed pubkeys ever get here; forget the ones that have refilled completely.
+            for k in [k for k in self._b if k != pk and self._level(k, "user")[0] >= BUCKETS["user"][0]]:
+                self._b.pop(k, None)
+        return True
+
+
 class Transport:
     def __init__(self, service: VmHostService, node_sk: bytes, publish, now=time.time,
                  seen: SeenIds | None = None):
@@ -101,15 +141,18 @@ class Transport:
         self.publish = publish                    # async (event) -> bool
         self.now = now
         self.seen = seen if seen is not None else seen_for(service)
+        self.buckets = TokenBuckets()
         self._pending = 0
+        self._busy = {"user": 0, "admin": 0}
 
     def _drop(self, why: str, ev: dict) -> None:
         logger.debug("[vmhost] dropped %s: %s", str(ev.get("id", ""))[:12], why)
         return None
 
-    async def on_event(self, ev: dict) -> Optional[dict]:
+    async def on_event(self, ev: dict, on_admitted=None) -> Optional[dict]:
         """Handle one delivered event. Returns the RESULT event it published, or None when it
-        dropped the request (by design, most of the time a silent None)."""
+        dropped the request (by design, most of the time a silent None). `on_admitted` is called when
+        the request leaves the cheap stage for its role's busy budget (spawn's intake counter)."""
         if not isinstance(ev, dict) or ev.get("kind") != kinds.REQ_KIND:
             return self._drop("kind", ev or {})
         if self.node_pk not in kinds.tag_values(ev, "p"):
@@ -121,8 +164,11 @@ class Transport:
         if not isinstance(eid, str) or eid in self.seen:
             return self._drop("already handled", ev)
         requester = str(ev.get("pubkey", "")).lower()
-        if await self.service.role_of(requester) is None:
+        role = await self.service.role_of(requester)
+        if role is None:
             return self._drop("not on this host's lists", ev)        # a stranger: no reply at all
+        if not self.buckets.peek(requester, role):
+            return self._drop("rate limited", ev)
         if not nostr_event.verify_event(ev):
             return self._drop("bad signature", ev)
         now = int(self.now())
@@ -138,12 +184,25 @@ class Transport:
         # Recorded only once it is inside the window (outside it the window itself refuses a replay),
         # and atomically with the check: two deliveries of one event racing through the awaits above
         # must not both get here.
+        if not self.buckets.take(requester, role):
+            return self._drop("rate limited", ev)
         marked = self.seen.add(eid)
         if marked != "ok":
             return self._drop("already handled" if marked == "dup" else "replay table full", ev)
-        if self.seen.path is not None:
-            await asyncio.to_thread(self.seen.flush)
+        busy_role = "admin" if role == "admin" else "user"
+        if self._busy[busy_role] >= MAX_BUSY.get(busy_role, 16):
+            return self._drop(f"{busy_role} budget full", ev)
+        self._busy[busy_role] += 1
+        try:
+            if on_admitted is not None:
+                on_admitted()
+            if self.seen.path is not None:
+                await asyncio.to_thread(self.seen.flush)
+            return await self._execute(eid, requester, content)
+        finally:
+            self._busy[busy_role] -= 1
 
+    async def _execute(self, eid: str, requester: str, content: str) -> Optional[dict]:
         async def reply(payload: dict, kind: int = kinds.RES_KIND) -> Optional[dict]:
             out = build_reply(self.node_sk, eid, requester, payload, kind=kind, now=int(self.now()))
             try:
@@ -181,14 +240,20 @@ class Transport:
         if self._pending >= MAX_PENDING:
             return
         self._pending += 1
+        released = [False]
+
+        def release():
+            if not released[0]:
+                released[0] = True
+                self._pending -= 1
 
         async def _run():
             try:
-                await self.on_event(ev)
+                await self.on_event(ev, on_admitted=release)
             except Exception as e:
                 logger.warning("[vmhost] request failed: %s", e)
             finally:
-                self._pending -= 1
+                release()
         _track(asyncio.create_task(_run()))
 
 
