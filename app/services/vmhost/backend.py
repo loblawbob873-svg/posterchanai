@@ -415,27 +415,6 @@ class VirshBackend:
             raise BackendError("invalid snapshot name", "bad_request")
         await self._v("snapshot-delete", vm_uuid, "--snapshotname", name, timeout=300)
 
-
-SNAPSHOT_NAME = r"[A-Za-z0-9][A-Za-z0-9_.-]{0,47}"
-
-
-def parse_snapshot_list(text: str) -> list:
-    """`virsh snapshot-list` table → [{name, created, state}]. The header and the dashed rule are skipped;
-    the creation time is everything between the name and the last column."""
-    out = []
-    lines = str(text or "").splitlines()
-    started = False
-    for line in lines:
-        if not started:
-            if re.match(r"^\s*-{5,}", line):
-                started = True
-            continue
-        parts = line.split()
-        if len(parts) >= 2 and re.fullmatch(SNAPSHOT_NAME, parts[0]):
-            out.append({"name": parts[0], "created": " ".join(parts[1:-1]), "state": parts[-1]})
-    return out
-
-
     # ==================================================================================================
     # PHASE 3 — cold-migration primitives (app/services/vmhost/migrate.py is the only caller).
     # Kept in one block, below everything else, so the phase-2 edits above this line never collide.
@@ -493,9 +472,30 @@ def parse_snapshot_list(text: str) -> list:
             raise BackendError((err or out).strip()[:300] or "undefine failed")
 
 
+SNAPSHOT_NAME = r"[A-Za-z0-9][A-Za-z0-9_.-]{0,47}"
+
+
+def parse_snapshot_list(text: str) -> list:
+    """`virsh snapshot-list` table → [{name, created, state}]. The header and the dashed rule are skipped;
+    the creation time is everything between the name and the last column."""
+    out = []
+    lines = str(text or "").splitlines()
+    started = False
+    for line in lines:
+        if not started:
+            if re.match(r"^\s*-{5,}", line):
+                started = True
+            continue
+        parts = line.split()
+        if len(parts) >= 2 and re.fullmatch(SNAPSHOT_NAME, parts[0]):
+            out.append({"name": parts[0], "created": " ".join(parts[1:-1]), "state": parts[-1]})
+    return out
+
+
 def valid_snapshot_name(name) -> bool:
     s = str(name or "")
     return bool(re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9 ._:+-]{0,127}", s))
+
 
 def make_backend(cfg) -> Backend:
     """`vmhost_backend`: auto | virsh. (libvirt-python is a phase-2 option; auto = virsh today.)"""
