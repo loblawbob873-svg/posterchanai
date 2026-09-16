@@ -258,6 +258,15 @@ async def main(width):
                     await b.until("!!document.querySelector('.vms-mig-locked')")
                     assert await b.js("/split-brain/i.test(document.querySelector('.vms-mig-locked').innerText)")
                     assert await b.js("!document.querySelector('[data-act=mig-cancel]')"), 'too late to cancel'
+                    # A wrong name changes nothing ...
+                    await b.js("document.querySelector('[data-act=mig-reclaim][data-side=target]').click()")
+                    await b.until("/SPLIT-BRAIN/.test((document.querySelector('.uiconfirm-msg')||{}).innerText||'')")
+                    await confirm_dialog(b)
+                    await confirm_dialog(b, prompt_value='alpha-typo')
+                    await b.until("!document.querySelector('.uiconfirm')")
+                    await asyncio.sleep(1.0)
+                    assert await b.js("__mig.reclaim.length===0"), 'a mistyped name must not force anything'
+                    # ... the right one does.
                     await b.js("document.querySelector('[data-act=mig-reclaim][data-side=target]').click()")
                     await b.until("/SPLIT-BRAIN/.test((document.querySelector('.uiconfirm-msg')||{}).innerText||'')")
                     await confirm_dialog(b)

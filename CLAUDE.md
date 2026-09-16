@@ -455,7 +455,17 @@ would have handled it fine).
   first WS FRAME, never the URL, and the client sends `{t:go}` only after noVNC attached (RFB speaks
   first); (5) access lists + `vmhost_enabled` save durably (503 on a short write); (6) clients never send
   paths — ISO ids resolve and must stay inside `<storage>/isos` (symlinks out are refused); (7) libvirt
-  group ≈ root. Not yet: hardware edit, snapshots, ISO fetch, session keys, discovery, cold migration.
+  group ≈ root. Not yet: hardware edit, snapshots, ISO fetch, session keys, discovery.
+  **Cold migration (phase 3, `vmhost/migrate.py`)**: requester must be admin on BOTH hosts — the client
+  signs `vm.migrate.authorize` ENCRYPTED TO THE TARGET and the source only carries it; hosts pair via
+  `vmhost_peer_hosts` (`npub relay https`) and talk `peer.migrate.*` over the same 5310/6310; the target
+  PULLS disks from `GET /api/vmhost/transfer/{mig}/{i}` (Range, NIP-98 by the target key, EXACT url
+  match — `verify_nip98` alone is a substring check). **The commit point is the source journaling
+  `handed_off` BEFORE undefining**; lost contact there locks both sides until `vm.migrate.force_reclaim`
+  (split-brain warning). TPM (= every Windows) VMs are refused. Test gotcha: never `store.load()` a
+  LIVE migrator — journal writes happen in a worker thread and a reload swapped records under running
+  code (a commit loop then saved a stale `defining` over `defined`); `_save` writes a snapshot off-loop
+  and only touches the in-memory map on the loop.
 - **A GRANTED NIP-05 IS THE ENTITLEMENT — one predicate, four gates** (`app/services/nip05_access.py`;
   switch `nip05_grants_access`, Admin → Nostr Relay → NIP-05 identity server, **ON** by default).
   AI chat, image generation (`geni`), music generation (`musicgeni`/`voice`) and Blossom uploads were
