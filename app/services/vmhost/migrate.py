@@ -226,10 +226,25 @@ class MigrationStore:
         except OSError:
             pass
 
+    def write(self, rec: dict) -> None:
+        """Disk only — safe in a worker thread. The in-memory map is only ever touched on the loop."""
+        self._atomic_write(self.dir / f"{rec['id']}.json", json.dumps(rec, sort_keys=True).encode())
+
+    def put(self, rec: dict) -> None:
+        self._recs[rec["id"]] = rec
+
     def save(self, rec: dict) -> None:
         rec["updated"] = int(time.time())
-        self._atomic_write(self.dir / f"{rec['id']}.json", json.dumps(rec, sort_keys=True).encode())
-        self._recs[rec["id"]] = rec
+        self.write(rec)
+        self.put(rec)
+
+    def read(self, mig: str) -> Optional[dict]:
+        """A fresh read of one journal from disk, without touching the in-memory map."""
+        try:
+            with open(self.dir / f"{mig}.json", encoding="utf-8") as f:
+                return json.load(f)
+        except (OSError, ValueError):
+            return None
 
     def write_manifest(self, mig: str, raw: bytes) -> None:
         self._atomic_write(self.manifest_path(mig), raw)
@@ -565,7 +580,10 @@ class Migrator:
         await asyncio.gather(*self._tasks, return_exceptions=True)
 
     async def _save(self, rec: dict) -> None:
-        await asyncio.to_thread(self.store.save, rec)
+        rec["updated"] = _now_i()
+        snapshot = json.loads(json.dumps(rec))      # what reaches disk is what this moment decided
+        await asyncio.to_thread(self.store.write, snapshot)
+        self.store.put(rec)
 
     def active_for(self, vm_uuid: str) -> Optional[dict]:
         for r in self.store.all():
@@ -848,9 +866,10 @@ class Migrator:
             await self._begin(mig)
         except Superseded:
             return
-        except (MigrationAbort, MigrationError, BackendError, OSError, PathEscape) as e:
-            msg = getattr(e, "message", None) or str(e)
-            logger.warning("[vmhost] migration %s failed before handoff: %s", mig, msg)
+        except Exception as e:
+            msg = getattr(e, "message", None) or str(e) or type(e).__name__
+            logger.warning("[vmhost] migration %s failed before handoff: %s", mig, msg,
+                           exc_info=not isinstance(e, (MigrationAbort, MigrationError)))
             await self._abort_source(mig, msg, tell_target=True)
             return
         await self._watch_source(mig)
@@ -1343,9 +1362,12 @@ class Migrator:
             await self._define_target(mig, manifest)
         except Superseded:
             return
-        except (MigrationAbort, MigrationError, BackendError, OSError, PathEscape, ValueError) as e:
+        except Exception as e:
+            # Anything unexpected before the commit point is a failure before the commit point: roll
+            # back. A task that dies silently here would leave the migration stuck in `defining` for ever.
             msg = getattr(e, "message", None) or str(e) or type(e).__name__
-            logger.warning("[vmhost] incoming migration %s failed: %s", mig, msg)
+            logger.warning("[vmhost] incoming migration %s failed: %s", mig, msg,
+                           exc_info=not isinstance(e, (MigrationAbort, MigrationError)))
             await self._abort_target(mig, msg, tell_source=True)
             return
         await self._commit_loop(mig)

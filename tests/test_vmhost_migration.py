@@ -114,8 +114,9 @@ def test_a_checksum_mismatch_aborts_and_the_vm_stays_running_on_the_source(tmp_p
             mig = await start_migration(w)
             await until(lambda: state(w.S, mig) == "aborted" and state(w.T, mig) == "aborted", what="aborted")
             assert "checksum mismatch" in w.T.rec(mig)["error"]
+            # The abort is journaled first, then the VM is restored — and restarted, because it had been running.
+            await until(lambda: w.S.backend.domains[VM]["state"] == "running", what="restarted on the source")
             d = await w.S.backend.get(VM)
-            assert d is not None and d.state == "running", "restarted, because it had been running"
             assert d.autostart is True and d.meta.migration == {}
             assert VM not in w.T.backend.domains
             assert not (w.T.root / VM).exists() and not (w.T.root / ".incoming" / mig).exists()

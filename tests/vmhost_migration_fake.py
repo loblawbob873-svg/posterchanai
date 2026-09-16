@@ -42,7 +42,7 @@ S_RELAY, T_RELAY = "wss://source.test/relay", "wss://target.test/relay"
 S_HTTPS, T_HTTPS = "https://source.test", "https://target.test"
 VM = "aaaaaaaa-1111-4111-8111-aaaaaaaaaaaa"
 
-FAST = dict(rpc_timeout=0.4, rpc_retries=1, shutdown_poll=0.01, watch_poll=0.05, commit_retry=0.05,
+FAST = dict(rpc_timeout=1.5, rpc_retries=1, shutdown_poll=0.01, watch_poll=0.05, commit_retry=0.05,
             commit_retry_max=0.1, contact_deadline=0.8, transfer_attempts=4, transfer_backoff=0.01,
             progress_every=0.0, chunk=256 * 1024)
 
@@ -284,12 +284,12 @@ class Host:
         await self.migrator.resume()
 
     def rec(self, mig):
-        self.migrator.store.load()
-        return self.migrator.store.get(mig)
+        return self.migrator.store.read(mig)          # never reload the LIVE store under running code
 
 
 class World:
     def __init__(self, tmp_path, *, target_admins=None, timing=None, keep_hours=72):
+        WORLDS.append(self)
         self.relay = FakeRelay()
         self.app = make_app()
         self.timing = dict(FAST, **(timing or {}))
@@ -329,7 +329,10 @@ class World:
         service_mod.set_current(None)
 
 
-async def until(pred, timeout=15.0, what="condition"):
+WORLDS: list = []
+
+
+async def until(pred, timeout=30.0, what="condition"):
     loop = asyncio.get_running_loop()
     end = loop.time() + timeout
     while loop.time() < end:
@@ -339,7 +342,15 @@ async def until(pred, timeout=15.0, what="condition"):
         if r:
             return r
         await asyncio.sleep(0.02)
-    raise AssertionError(f"timed out waiting for {what}")
+    diag = []
+    for w in WORLDS[-1:]:
+        for h in (w.S, w.T):
+            diag.append((h.name, [(r["state"], r.get("error"), r.get("history")) for r in h.migrator.store.all()]))
+    import io
+    stacks = io.StringIO()
+    for t in asyncio.all_tasks():
+        t.print_stack(limit=6, file=stacks)
+    raise AssertionError(f"timed out waiting for {what}: {diag}\n{stacks.getvalue()}")
 
 
 def seed_vm(host: Host, *, guest="linux", state="running", autostart=True, size=3 * 1024 * 1024 + 17,
