@@ -209,6 +209,9 @@ def test_a_user_cannot_run_management_ops(tmp_path, op):
 # ================================================================================ snapshots
 def test_snapshot_create_list_revert_delete(tmp_path):
     svc, be, root = make(tmp_path)
+    # A BIOS machine: internal snapshots of an EFI VM are refused (test_vmhost_snapshot_hardening.py).
+    be.add_domain(U1, "alpha", state="shutoff", firmware="bios",
+                  meta=domainxml.VmMeta(owner=ADMIN, created=1, disk_gib=20, firmware="bios", assigned=[USER]))
     assert c(svc, ADMIN, "vm.snapshot.create", {"vm": U1, "name": "clean"}, "1")["ok"]
     assert c(svc, ADMIN, "vm.snapshot.create", {"vm": U1, "name": "clean"}, "2")["error"]["code"] == "conflict"
     assert c(svc, ADMIN, "vm.snapshot.create", {"vm": U1, "name": "bad name"}, "3")["error"]["code"] == "bad_request"

@@ -44,9 +44,9 @@ class FakeBackend:
             raise err
 
     # ---- helpers for tests
-    def add_domain(self, uuid, name, state="shutoff", vcpus=2, ram_mib=2048, meta=None):
+    def add_domain(self, uuid, name, state="shutoff", vcpus=2, ram_mib=2048, meta=None, firmware="efi"):
         xml = domainxml.build_domain_xml(domainxml.DomainSpec(
-            name=name, uuid=uuid, guest=(meta.guest if meta else "linux"), firmware="efi", vcpus=vcpus,
+            name=name, uuid=uuid, guest=(meta.guest if meta else "linux"), firmware=firmware, vcpus=vcpus,
             ram_mib=ram_mib, disk_path=f"/fake/{uuid}/disk-vda.qcow2", nvram_path=f"/fake/{uuid}/nvram.fd"))
         self.domains[uuid] = {"name": name, "state": state, "vcpus": vcpus, "ram_mib": ram_mib,
                               "autostart": False, "meta_xml": meta.to_xml(prefixed=False) if meta else None,

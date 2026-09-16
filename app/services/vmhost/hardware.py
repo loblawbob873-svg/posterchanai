@@ -9,8 +9,10 @@ edited as a tree (domainxml), defined back once, and read back: a Save that libv
 did not change the fields asked for is reported as an error, not as success. A new disk file is created
 first and removed again if the define fails, so a refused Save never leaves an orphan qcow2 behind.
 
-Snapshots are libvirt internal snapshots (`snapshot-create-as --atomic`). A revert throws away every
-change since the snapshot, so it demands `confirm: true`; a VM that is being migrated (phase 3 sets
+Snapshots are libvirt internal snapshots (`snapshot-create-as --atomic`). An EFI VM whose variables are a raw
+pflash file is refused (`unsupported` — libvirt cannot snapshot it), and so is a snapshot the free disk cannot
+hold. A revert throws away every change since the snapshot, so it demands `confirm: true`, and it re-applies
+the CURRENT `pc:vm` metadata afterwards (the snapshot's copy would roll back assignments); a VM that is being migrated (phase 3 sets
 `migration` on its metadata) refuses all four ops, because a snapshot taken mid-export is a history the
 destination never receives.
 """
@@ -212,6 +214,31 @@ class HardwareOps:
         d = await self._snap_domain(pk, role, args)
         return {"vm": d.uuid, "snapshots": await self.backend.snapshot_list(d.uuid)}
 
+    async def _snapshot_preflight(self, d) -> None:
+        """Refuse what libvirt would refuse late and obscurely, or what would fill the disk."""
+        import math
+        import xml.etree.ElementTree as ET
+        try:
+            root = domainxml.parse_domain(await self.backend.dumpxml(d.uuid, inactive=True))
+        except (domainxml.EditError, ET.ParseError) as e:
+            raise _err("backend_error", str(e))
+        os_el = root.find("os")
+        if os_el is not None:
+            loader, nvram = os_el.find("loader"), os_el.find("nvram")
+            efi = (os_el.get("firmware") == "efi" or nvram is not None
+                   or (loader is not None and loader.get("type") == "pflash"))
+            qcow2_vars = nvram is not None and nvram.get("format") == "qcow2"
+            if efi and not qcow2_vars:
+                raise _err("unsupported", "snapshots are not supported for EFI VMs on this host: libvirt cannot take an "
+                                          "internal snapshot while the firmware variables live in a raw pflash file")
+        st = await self.backend.host_stats(str(self.storage.root))
+        need = 1 + (math.ceil((d.ram_mib or 0) / 1024) if d.state in ("running", "paused") else 0)
+        room = int(st.get("disk_free_gib") or 0) - self.cfg.reserve_disk_gib
+        if room < need:
+            raise _err("insufficient_capacity",
+                       f"a snapshot of this VM needs about {need} GiB free (its memory is saved too when it runs); "
+                       f"this host has {max(0, room)} GiB above its reserve")
+
     async def _op_vm_snapshot_create(self, pk, role, args, progress):
         name = self._snap_name(args)
         desc = args.get("description") or ""
@@ -221,6 +248,9 @@ class HardwareOps:
         lock = self._vm_lock(d.uuid)
         await self._acquire(lock, "this VM")
         try:
+            d = await self.backend.get(d.uuid) or d
+            self._migration_guard(d)
+            await self._snapshot_preflight(d)
             existing = await self.backend.snapshot_list(d.uuid)
             if any(s["name"] == name for s in existing):
                 raise _err("conflict", f"a snapshot named {name} already exists")
@@ -243,9 +273,18 @@ class HardwareOps:
         try:
             if not any(s["name"] == name for s in await self.backend.snapshot_list(d.uuid)):
                 raise _err("not_found", "no such snapshot")
+            d = await self.backend.get(d.uuid) or d
+            self._migration_guard(d)
+            current = d.meta                                  # WHO may use it, NOW — not when the snapshot was taken
             self.consoles.revoke(d.uuid)
             await self.backend.snapshot_revert(d.uuid, name)
             after = await self.backend.get(d.uuid) or d
+            if current is not None and (after.meta is None or after.meta.to_xml(prefixed=False)
+                                        != current.to_xml(prefixed=False)):
+                # A revert restores the whole captured definition, pc:vm included: without this an unassigned user
+                # gets the VM back, a later assignment vanishes, and a migration tag can disappear.
+                await self.backend.set_metadata(d.uuid, current, live=after.state == "running")
+                after = await self.backend.get(d.uuid) or after
             self._set_index(after)
             return {"vm": self._vm_view(after, role, pk), "reverted": name}
         finally:
