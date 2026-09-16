@@ -189,3 +189,24 @@ def test_the_ciphertext_is_really_encrypted_to_the_operator():
     assert "secret-list" not in ct
     assert json.loads(nip44.decrypt_self(OP_SK, ct))["value"] == "secret-list"
     assert bip340.pubkey_from_seckey(OP_SK)
+
+
+def test_a_failed_durable_save_leaves_the_old_access_in_force_everywhere(monkeypatch):
+    """The relay refused the write, so after a restart the OLD list is what hydrates. The in-memory cache
+    must say the same thing NOW: holding the new list made the admin UI (and anything reading the
+    cache) believe a revocation had happened while the old grant was still the one that would come
+    back — and the running host was never told either way."""
+    old_allowed = "bb" * 32 + "\n" + "cc" * 32
+    monkeypatch.setattr(settings_store, "_CACHE", {"vmhost_allowed_npubs": old_allowed,
+                                                   "vmhost_enabled": "true"})
+    relay = FakeRelay()
+    with pytest.raises(HTTPException) as e:
+        _save(monkeypatch, relay, {"vmhost_allowed_npubs": "bb" * 32,          # revoke cc
+                                   "vmhost_admin_npubs": "dd" * 32,            # was never set
+                                   "vmhost_enabled": "true"}, short=True)
+    assert e.value.status_code == 503
+    assert settings_store.get("vmhost_allowed_npubs") == old_allowed, \
+        "the cache kept a revocation the relay never stored"
+    assert settings_store.get("vmhost_admin_npubs") is None, "a key that was absent must be absent again"
+    assert vmconfig.current().allowed_pubkeys == ["bb" * 32, "cc" * 32]
+    assert vmconfig.current().admin_pubkeys == []

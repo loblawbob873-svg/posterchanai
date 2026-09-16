@@ -586,6 +586,7 @@ def update_settings(
     # The admin UI sends ALL fields on every save; only the keys whose value actually CHANGED need to
     # be mirrored to the relay (each is its own replaceable event — don't rewrite ~250 on every save).
     changed_keys = set()
+    _vmhost_prev = {}   # durable VM-hosting keys → cached value before this save (None = absent)
 
     try:
         from app.services import settings_store
@@ -598,6 +599,8 @@ def update_settings(
             # (number/bool) settings an empty string would break SettingsResponse parsing on the next
             # GET, and "" there just means "leave as-is" from a partial UI update, so skip it.
             if settings_store.get(key, "") != value and (value != "" or key in text_keys):
+                if key in _VMHOST_DURABLE and key not in _vmhost_prev:
+                    _vmhost_prev[key] = settings_store.get(key, None)
                 settings_store.put(key, value, write_relay=not (key.startswith("monero_wallet_")
                                                                 or key in _VMHOST_DURABLE))
                 changed_keys.add(key)
@@ -617,6 +620,11 @@ def update_settings(
         if _vmhost_changes:
             import asyncio as _asyncio
             if _asyncio.run(settings_store.write_through(db, _vmhost_changes)) != len(_vmhost_changes):
+                # Put the cache back to what the relay (and so the next restart) still says, so the UI
+                # never shows a revocation that did not happen. The running host keeps its old
+                # configuration too: the reload below is never reached.
+                for _k, _prev in _vmhost_prev.items():
+                    settings_store.restore_cached(_k, _prev)
                 raise HTTPException(status_code=503, detail="Could not durably save VM hosting access settings")
         logger.info(f"[Admin] Saved {len(changed_keys)} changed setting(s)")
 
