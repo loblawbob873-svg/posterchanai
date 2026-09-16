@@ -77,6 +77,7 @@ _MIG_RE = re.compile(r"^[0-9a-f]{32}$")
 CHALLENGE_RANGES = 3            # random ranges per file, plus the file's tail
 CHALLENGE_LEN = 64 * 1024
 SERVED_PERSIST_EVERY = 64 << 20
+MANIFEST_MAX = 8 << 20          # a manifest is XML + a file list; a source that sends more is not describing a VM
 _HEX64 = re.compile(r"^[0-9a-f]{64}$")
 _FILE_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$")
 
@@ -841,6 +842,22 @@ class Migrator:
         snapshot = json.loads(json.dumps(rec))      # what reaches disk is what this moment decided
         await asyncio.to_thread(self.store.write, snapshot)
         self.store.put(rec)
+
+    def reserved_bytes(self, exclude: Optional[str] = None) -> int:
+        """Disk this host has PROMISED and not yet written: every incoming migration that is not placed yet, at
+        what its precheck reserved minus what already landed (landed bytes already show in the free space), plus
+        whatever the service reserves for ISO transfers and thin VM disks."""
+        n = 0
+        for r in self.store.all():
+            if r["role"] == "target" and r["state"] in ("prechecked", "receiving", "defining") and r["id"] != exclude:
+                n += max(0, int(r.get("precheck_bytes") or r.get("bytes_total") or 0) - int(r.get("bytes_done") or 0))
+        extra = getattr(self.svc, "other_reserved_bytes", None)
+        if callable(extra):
+            try:
+                n += int(extra())
+            except Exception:
+                pass
+        return n
 
     def active_for(self, vm_uuid: str) -> Optional[dict]:
         for r in self.store.all():
@@ -1701,12 +1718,17 @@ class Migrator:
             await asyncio.to_thread(writable)
         except OSError:
             raise MigrationError("unsupported", "the target host's VM storage is not writable")
+        if total <= 0:
+            raise MigrationError("bad_request", "malformed precheck")
         st = await self.backend.host_stats(str(self.storage.root))
         need_gib = math.ceil(1.1 * total / GIB) + self.svc.cfg.reserve_disk_gib
         free_gib = int(st.get("disk_free_gib") or 0)
-        if free_gib < need_gib:
+        others = self.reserved_bytes(exclude=mig)
+        if free_gib * GIB - self.svc.cfg.reserve_disk_gib * GIB - others < 1.1 * total:
             raise MigrationError("insufficient_capacity",
-                                 f"the target host needs {need_gib} GiB free (1.1× the disks + its reserve) and has {free_gib}")
+                                 f"the target host needs {need_gib} GiB free (1.1× the disks + its reserve"
+                                 + (f" + {math.ceil(others / GIB)} GiB reserved by other transfers" if others else "")
+                                 + f") and has {free_gib}")
         iso_ok = False
         if vm.get("iso"):
             try:
@@ -1719,8 +1741,8 @@ class Migrator:
         if not dry:
             rec = {"id": mig, "role": "target", "state": "prechecked", "vm": vm_uuid, "name": name,
                    "source": pk, "target": self.node_pk, "requester": admin, "authz_id": args["authz"]["id"],
-                   "start_after": bool(args.get("start_after")), "bytes_total": total, "created": _now_i(),
-                   "precheck": result, "history": [[_now_i(), "prechecked"]]}
+                   "start_after": bool(args.get("start_after")), "bytes_total": total, "precheck_bytes": total,
+                   "created": _now_i(), "precheck": result, "history": [[_now_i(), "prechecked"]]}
             await self._save(rec)
         return result
 
@@ -1792,14 +1814,22 @@ class Migrator:
         last = "no answer"
         for attempt in range(self.t.transfer_attempts):
             try:
+                raw, status = None, 0
                 async with self.http_client() as client:
-                    r = await client.get(url, headers={"Authorization": nip98_header(self.node_sk, url)})
-                if r.status_code == 200:
-                    raw = r.content
+                    async with client.stream("GET", url, headers={"Authorization": nip98_header(self.node_sk, url)}) as r:
+                        status = r.status_code
+                        if status == 200:
+                            buf = bytearray()
+                            async for b in r.aiter_bytes():
+                                buf += b
+                                if len(buf) > MANIFEST_MAX:
+                                    raise MigrationAbort("the source sent a manifest larger than this host accepts")
+                            raw = bytes(buf)
+                if raw is not None:
                     break
-                if r.status_code in (401, 404, 409):
-                    raise MigrationAbort(f"the source host refused the manifest ({r.status_code})")
-                last = f"HTTP {r.status_code}"
+                if status in (401, 404, 409):
+                    raise MigrationAbort(f"the source host refused the manifest ({status})")
+                last = f"HTTP {status}"
             except MigrationAbort:
                 raise
             except Exception as e:
@@ -1815,6 +1845,19 @@ class Migrator:
             raise MigrationAbort("the manifest describes a different migration")
         if (manifest.get("vm") or {}).get("name") != rec["name"]:
             raise MigrationAbort("the manifest describes a different VM than the precheck")
+        files0 = manifest.get("files") if isinstance(manifest.get("files"), list) else []
+        try:
+            mtotal = sum(int(f.get("size", 0)) for f in files0 if isinstance(f, dict))
+        except (TypeError, ValueError):
+            raise MigrationAbort("the manifest lists an invalid file")
+        reserved = int(rec.get("precheck_bytes") or rec.get("bytes_total") or 0)
+        if mtotal > reserved:
+            raise MigrationAbort(f"the manifest's disks ({mtotal} bytes) are larger than the precheck reserved "
+                                 f"({reserved} bytes)")
+        st = await self.backend.host_stats(str(self.storage.root))
+        room = int(st.get("disk_free_gib") or 0) * GIB - self.svc.cfg.reserve_disk_gib * GIB - self.reserved_bytes(exclude=mig)
+        if mtotal > room:
+            raise MigrationAbort("this host no longer has room for the VM's disks")
         names = set()
         files = manifest.get("files")
         if not isinstance(files, list) or len(files) > 64:
@@ -1860,7 +1903,10 @@ class Migrator:
             final, part = inc / name, inc / (name + ".part")
             if name in (self.store.get(mig).get("verified") or []) and final.exists():
                 continue
-            attempts = 0
+            stalls = failures = 0
+            # Bounded in TOTAL, not only per stall: a source that sends one chunk and cuts every connection used to
+            # reset the count each time and could hold this host for as long as it liked.
+            max_failures = self.t.transfer_attempts * 4 + size // GIB
             while True:
                 if self.store.get(mig)["state"] != "receiving":
                     raise Superseded()
@@ -1886,6 +1932,11 @@ class Migrator:
                             fh = await asyncio.to_thread(open, part, mode)
                             try:
                                 async for b in r.aiter_bytes(self.t.chunk):
+                                    room = size - have
+                                    if room <= 0:
+                                        break                  # never write past the declared size
+                                    if len(b) > room:
+                                        b = b[:room]
                                     await asyncio.to_thread(fh.write, b)
                                     have += len(b)
                                     progressed = True
@@ -1897,17 +1948,19 @@ class Migrator:
                 except MigrationAbort:
                     raise
                 except (httpx.HTTPError, OSError) as e:
-                    attempts = 0 if progressed else attempts + 1
-                    if attempts >= self.t.transfer_attempts:
+                    failures += 1
+                    stalls = 0 if progressed else stalls + 1
+                    if stalls >= self.t.transfer_attempts or failures >= max_failures:
                         raise MigrationAbort(f"the transfer of {name} kept failing: {e}")
                     logger.info("[vmhost] migration %s: %s interrupted (%s) — resuming", mig, name, e)
-                    await asyncio.sleep(self.t.transfer_backoff * max(1, attempts))
+                    await asyncio.sleep(self.t.transfer_backoff * max(1, stalls))
                     continue
-                if have < size and not progressed:
-                    attempts += 1
-                    if attempts >= self.t.transfer_attempts:
+                if have < size:
+                    failures += 1
+                    stalls = 0 if progressed else stalls + 1
+                    if stalls >= self.t.transfer_attempts or failures >= max_failures:
                         raise MigrationAbort(f"the source stopped sending {name}")
-                    await asyncio.sleep(self.t.transfer_backoff * attempts)
+                    await asyncio.sleep(self.t.transfer_backoff * max(1, stalls))
             await self._notify(rec, "verify", f"verifying {name}", bytes_done=done_before + size, force=True)
             digest = await asyncio.to_thread(sha256_file, part)
             if digest != f["sha256"]:

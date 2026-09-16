@@ -182,11 +182,16 @@ class TargetHttp(httpx.AsyncBaseTransport):
         self.cuts = 0
         self.gate = None                 # asyncio.Event: hold every request until set
         self.requests: list = []
+        self.override = None             # async (request, inner) -> Response | None: a HOSTILE source's answers
 
     async def handle_async_request(self, request):
         self.requests.append((request.url.path, request.headers.get("range")))
         if self.gate is not None:
             await self.gate.wait()
+        if self.override is not None:
+            got = await self.override(request, self.inner)
+            if got is not None:
+                return got
         resp = await self.inner.handle_async_request(request)
         if self.cut_after is not None and request.url.path.endswith("/0") and self.cuts == 0 \
                 and resp.status_code in (200, 206):
