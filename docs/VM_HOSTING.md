@@ -210,7 +210,8 @@ phase 1 before this was fixed, and any VM defined by hand. To give one a console
 password to its display (`virsh edit <vm>` →
 `<graphics type='vnc' … passwd='xxxxxxxx' passwdValidTo='1970-01-01T00:00:01'>`) and start it again
 (a password auth mode is only chosen when QEMU starts). While an unexpired ticket for a VM exists,
-further tickets reuse its password, so two people sharing a VM do not lock each other out. noVNC 1.5.0 is vendored in `static/vendor/novnc/` (see its README).
+further tickets reuse its password (and extend its expiry), so two people sharing a VM do not lock
+each other out; any revocation on the VM (unassign, stop, delete) forces the next ticket to rotate it. noVNC 1.5.0 is vendored in `static/vendor/novnc/` (see its README).
 
 Known trade-off: the VNC password is passed to `virsh qemu-monitor-command` as an argument, so another
 local user on the host could see it in the process list for a moment. It expires in 60 seconds and

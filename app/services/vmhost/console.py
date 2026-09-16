@@ -40,6 +40,7 @@ class ConsoleRegistry:
         self._tickets: dict = {}
         self._issued: dict = {}              # pubkey -> [timestamps]
         self._live: dict = {}                # vm uuid -> {id: (pubkey, closer)}
+        self._pw: dict = {}                  # vm uuid -> (VNC password, latest ticket expiry)
         self._lock = threading.Lock()        # consume() is reached from the ws route's task
 
     # ---- tickets ------------------------------------------------------------------------------
@@ -50,14 +51,30 @@ class ConsoleRegistry:
             self._issued[pubkey] = recent
             return len(recent) < TICKETS_PER_MINUTE
 
-    def issue(self, vm: str, pubkey: str, ttl: int) -> tuple:
+    def issue(self, vm: str, pubkey: str, ttl: int, password: str | None = None) -> tuple:
         tok = secrets.token_urlsafe(32)
         exp = self.now() + max(1, int(ttl))
         with self._lock:
             self._sweep()
             self._tickets[tok] = Ticket(vm=vm, pubkey=pubkey, exp=exp)
             self._issued.setdefault(pubkey, []).append(self.now())
+            if password:
+                prev = self._pw.get(vm)
+                self._pw[vm] = (password, max(exp, prev[1]) if prev and prev[0] == password else exp)
         return tok, int(exp)
+
+    def current_password(self, vm: str) -> str | None:
+        """The VM's display password while a ticket issued with it is still unexpired, else None.
+        Two people sharing a VM must not rotate each other's password: A is issued a ticket and is
+        still logging in when B asks for one — a new password for B fails A's authentication."""
+        with self._lock:
+            rec = self._pw.get(vm)
+            if rec is None:
+                return None
+            if rec[1] < self.now():
+                self._pw.pop(vm, None)
+                return None
+            return rec[0]
 
     def consume(self, token) -> Ticket | None:
         if not isinstance(token, str) or not token or len(token) > 128:
@@ -98,6 +115,8 @@ class ConsoleRegistry:
             for k in [k for k, v in self._tickets.items()
                       if v.vm == vm and (pubkey is None or v.pubkey == pubkey)]:
                 self._tickets.pop(k, None)
+            # Whoever was revoked may hold the current password: the next ticket rotates it.
+            self._pw.pop(vm, None)
             victims = [(cid, c) for cid, (pk, c) in self._live.get(vm, {}).items()
                        if pubkey is None or pk == pubkey]
         n = 0
@@ -115,6 +134,7 @@ class ConsoleRegistry:
         these sockets)."""
         with self._lock:
             self._tickets.clear()
+            self._pw.clear()
             victims = [c for per_vm in self._live.values() for (_pk, c) in per_vm.values()]
             self._live.clear()
         n = 0

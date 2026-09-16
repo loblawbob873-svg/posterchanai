@@ -145,6 +145,7 @@ class VmHostService:
         self._assign: dict = {}          # uuid -> set(pubkey)
         self._index_ok = False
         self._vm_locks: dict = {}
+        self._pw_locks: dict = {}
         self._host_lock = asyncio.Lock()
 
     # ---------------------------------------------------------------- identity & index
@@ -524,6 +525,7 @@ class VmHostService:
                     await asyncio.to_thread(shutil.rmtree, vm_dir, True)
                 self._assign.pop(d.uuid, None)
                 self._vm_locks.pop(d.uuid, None)
+                self._pw_locks.pop(d.uuid, None)
                 logger.info("[vmhost] deleted VM %s (%s, disks %s) by %s", d.name, d.uuid,
                             "deleted" if delete_disks else "kept", pk[:12])
                 return {"deleted": d.uuid, "disks_deleted": delete_disks}
@@ -577,16 +579,20 @@ class VmHostService:
         if not ep or not is_loopback(ep[0]):
             raise VmHostError("unsupported", "this VM has no loopback VNC display")
         ttl = self.cfg.ticket_ttl_sec
-        pw = domainxml.random_vnc_password()
-        try:
-            await self.backend.set_vnc_password(d.uuid, pw, ttl)
-        except BackendError as e:
-            # No password, no console: a display QEMU would not protect (one defined without `passwd`)
-            # is refused here rather than handed out with a password that guards nothing.
-            logger.warning("[vmhost] could not secure the console of %s: %s", d.uuid, e)
-            raise BackendError("could not set a console password on this VM's display — it may have "
-                               "been defined without VNC password auth (see docs/VM_HOSTING.md)")
-        tok, exp = self.consoles.issue(d.uuid, pk, ttl)
+        lock = self._pw_locks.setdefault(d.uuid, asyncio.Lock())
+        async with lock:          # two tickets racing for one VM must agree on ONE password
+            # Reuse the password while a ticket issued with it is unexpired (a shared VM), but always SET
+            # it again: that extends QEMU's expiry to cover this ticket too.
+            pw = self.consoles.current_password(d.uuid) or domainxml.random_vnc_password()
+            try:
+                await self.backend.set_vnc_password(d.uuid, pw, ttl)
+            except BackendError as e:
+                # No password, no console: a display QEMU would not protect (one defined without
+                # `passwd`) is refused here rather than handed out with a password that guards nothing.
+                logger.warning("[vmhost] could not secure the console of %s: %s", d.uuid, e)
+                raise BackendError("could not set a console password on this VM's display — it may have "
+                                   "been defined without VNC password auth (see docs/VM_HOSTING.md)")
+            tok, exp = self.consoles.issue(d.uuid, pk, ttl, password=pw)
         base = self.cfg.public_url
         if base.startswith("https://"):
             ws = "wss://" + base[len("https://"):] + "/ws/vmconsole"

@@ -202,3 +202,49 @@ def test_a_display_on_every_address_is_refused_a_console(tmp_path):
     res = run(svc.handle(USER, "console.ticket", {"vm": U1}, "t1"))
     assert res["ok"] is False and res["error"]["code"] == "unsupported"
     assert svc.consoles._tickets == {}
+
+
+# ------------------------------------------------------------------------------------ L2: shared VMs
+def shared_host(tmp_path, clock):
+    root = tmp_path / "vms"
+    st = Storage(root)
+    st.ensure()
+    (root / U1).mkdir()
+    cfg = VmHostConfig(enabled=True, storage_dir=str(root), admin_pubkeys=[ADMIN], ticket_ttl_sec=60)
+    be = FakeBackend()
+    be.add_domain(U1, "shared", state="running", meta=domainxml.VmMeta(owner=ADMIN, assigned=[USER, OTHER]))
+
+    async def admins():
+        return set()
+    svc = VmHostService(cfg, be, node_pubkey="0a" * 32, admin_provider=admins, storage=st,
+                        now=lambda: clock[0])
+    run(svc.refresh_index())
+    return svc, be
+
+
+OTHER = "4e" * 32
+
+
+def test_two_people_sharing_a_vm_do_not_rotate_each_others_password(tmp_path):
+    """User A is issued a ticket and is still logging in when user B asks for one. Rotating the password
+    for B would make A's noVNC fail authentication with the password its own ticket carried."""
+    clock = [1000.0]
+    svc, be = shared_host(tmp_path, clock)
+    a = run(svc.handle(USER, "console.ticket", {"vm": U1}, "a"))["result"]
+    clock[0] += 20
+    b = run(svc.handle(OTHER, "console.ticket", {"vm": U1}, "b"))["result"]
+    assert a["vnc_password"] == b["vnc_password"], "B's ticket rotated the password out from under A"
+    sets = [c for c in be.calls if c[0] == "set_vnc_password"]
+    assert len(sets) == 2 and sets[-1][2] == 60, "the reuse must still EXTEND the expiry to B's ticket"
+    clock[0] += 61                              # every ticket for the VM has expired
+    c = run(svc.handle(OTHER, "console.ticket", {"vm": U1}, "c"))["result"]
+    assert c["vnc_password"] != b["vnc_password"], "with no live ticket the password rotates again"
+
+
+def test_a_revocation_forces_a_fresh_password(tmp_path):
+    clock = [1000.0]
+    svc, be = shared_host(tmp_path, clock)
+    a = run(svc.handle(USER, "console.ticket", {"vm": U1}, "a"))["result"]
+    run(svc.handle(ADMIN, "vm.unassign", {"vm": U1, "pubkey": USER}, "u"))
+    b = run(svc.handle(OTHER, "console.ticket", {"vm": U1}, "b"))["result"]
+    assert a["vnc_password"] != b["vnc_password"], "an unassigned user must not keep a valid password"
