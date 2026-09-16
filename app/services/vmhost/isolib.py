@@ -1,11 +1,16 @@
 """The ISO library, phase 2: fetch an installer by URL, upload one, delete one. All ADMIN-only.
 
-FETCH IS SERVER-SIDE REQUEST FORGERY BY DESIGN, so it goes through the repo's own guard, the same one
-the RSS reader and the fediverse bridge use (`rss_service.looks_fetchable` + `is_safe_host`), and — the
-part that has already been got wrong once in this repo (search_service.fetch_url_content followed a 302
-to 169.254.169.254 with only the FIRST url checked) — redirects are followed BY HAND and every hop is
-re-checked before it is requested. It also goes DIRECT, never through the Tor fallback transport: a
-multi-GB installer over Tor is not a plan, and the guard is what makes direct safe.
+FETCH IS SERVER-SIDE REQUEST FORGERY BY DESIGN. The URL passes the repo's cheap syntactic gate
+(`rss_service.looks_fetchable`); then the name is resolved ONCE, every address it resolves to must be
+public (`ip_blocked`: private, loopback, link-local, multicast, reserved, CGNAT 100.64/10, 192.0.0.0/24,
+198.18/15, the NAT64 prefixes, and IPv4-mapped/compatible/6to4 forms of any of those), and the connection
+is made to THAT address (`PinnedTransport`) with the Host header and the TLS SNI/certificate check still
+bound to the name. Resolving to check and letting the client resolve again to connect is DNS rebinding: a
+server that answers public first and 127.0.0.1 second walks past the check. Redirects are followed BY HAND
+and every hop is resolved, checked and pinned again (search_service.fetch_url_content once followed a 302
+to 169.254.169.254 with only the FIRST url checked). The client ignores HTTP(S)_PROXY (`trust_env=False`)
+and never uses the Tor fallback transport: a multi-GB installer over Tor is not a plan, and the pinning is
+what makes direct safe.
 
 Bytes are streamed to `isos/.incoming/<random>.part` with a running SHA-256 and a hard cap
 (min(ISO_MAX_GIB, free disk − reserve)): a Content-Length over the cap is refused before a byte is read,
@@ -25,9 +30,11 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
+import ipaddress
 import logging
 import os
 import secrets
+import socket
 import threading
 import time
 from dataclasses import dataclass
@@ -56,26 +63,99 @@ class FetchRefused(Exception):
         self.message = message
 
 
-def _guard_default():
-    from app.services import rss_service
-    return rss_service.looks_fetchable, rss_service.is_safe_host
+_EXTRA_BLOCKED = tuple(ipaddress.ip_network(n) for n in (
+    "0.0.0.0/8", "100.64.0.0/10", "192.0.0.0/24", "198.18.0.0/15", "240.0.0.0/4",
+    "64:ff9b::/96", "64:ff9b:1::/48", "::/96", "2001::/32", "2002::/16"))
 
 
-async def fetch_to_part(url: str, part: Path, max_bytes: int, *, client=None, guard=None, progress=None,
+def ip_blocked(addr) -> bool:
+    """True for every address an installer download has no business reaching. `is_global` alone is not the rule
+    (its answers differ across Python versions), so the classic flags, an explicit list and the embedded-IPv4
+    forms are all checked."""
+    try:
+        ip = ipaddress.ip_address(str(addr).split("%", 1)[0].strip("[]"))
+    except ValueError:
+        return True
+    if isinstance(ip, ipaddress.IPv6Address):
+        inner = ip.ipv4_mapped or ip.sixtofour
+        if inner is None and int(ip) >> 32 == 0 and int(ip) > 1:
+            inner = ipaddress.IPv4Address(int(ip) & 0xFFFFFFFF)          # IPv4-compatible ::a.b.c.d
+        if inner is None and ip.teredo:
+            inner = ip.teredo[1]
+        if inner is not None and ip_blocked(inner):
+            return True
+    if (ip.is_private or ip.is_loopback or ip.is_link_local or ip.is_multicast or ip.is_reserved
+            or ip.is_unspecified or not ip.is_global):
+        return True
+    return any(ip.version == n.version and ip in n for n in _EXTRA_BLOCKED)
+
+
+def _resolve(host: str, port: int) -> list:
+    return [info[4][0] for info in socket.getaddrinfo(host, port, type=socket.SOCK_STREAM)]
+
+
+class PinnedTransport:
+    """An httpx transport that resolves each request's host ONCE, refuses it unless every answer is public, and
+    connects to the checked address — keeping the Host header and TLS SNI (and so certificate verification) on
+    the name. Wraps a real transport; tests may wrap a mock."""
+
+    def __init__(self, inner=None, resolver=_resolve):
+        import httpx
+        self.inner = inner if inner is not None else httpx.AsyncHTTPTransport(retries=0)
+        self.resolver = resolver
+
+    async def handle_async_request(self, request):
+        import httpx
+        host = request.url.host
+        port = request.url.port or (443 if request.url.scheme == "https" else 80)
+        try:
+            ipaddress.ip_address(host)
+            addrs = [host]
+        except ValueError:
+            try:
+                addrs = await asyncio.to_thread(self.resolver, host, port)
+            except (OSError, UnicodeError):
+                raise FetchRefused("forbidden", "that address does not resolve")
+        if not addrs or any(ip_blocked(a) for a in addrs):
+            raise FetchRefused("forbidden", "that address is not allowed (private, local or not http/https)")
+        ip = str(addrs[0]).split("%", 1)[0]
+        ext = dict(request.extensions)
+        if request.url.scheme == "https":
+            ext["sni_hostname"] = host
+        pinned = httpx.Request(request.method, request.url.copy_with(host=ip), headers=request.headers,
+                               stream=request.stream, extensions=ext)
+        return await self.inner.handle_async_request(pinned)
+
+    async def aclose(self):
+        await self.inner.aclose()
+
+    async def __aenter__(self):
+        return self
+
+    async def __aexit__(self, *exc):
+        await self.aclose()
+
+
+def make_fetch_client(transport=None, resolver=None):
+    """The one way an ISO download talks to the network: pinned, direct, no environment proxy, no redirects."""
+    import httpx
+    return httpx.AsyncClient(transport=PinnedTransport(transport, resolver or _resolve), trust_env=False,
+                             timeout=httpx.Timeout(30.0, read=120.0), follow_redirects=False)
+
+
+async def fetch_to_part(url: str, part: Path, max_bytes: int, *, transport=None, resolver=None, progress=None,
                         now=time.monotonic) -> dict:
-    """GET `url` into `part`, re-checking the SSRF guard on EVERY hop. Returns {size, sha256, final_url,
+    """GET `url` into `part`, resolving, checking and PINNING every hop. Returns {size, sha256, final_url,
     filename}. Raises FetchRefused (and leaves no part file) on any refusal."""
     import httpx
-    looks, safe = guard or _guard_default()
-    own = client is None
-    if own:
-        client = httpx.AsyncClient(timeout=httpx.Timeout(30.0, read=120.0), follow_redirects=False)
+    from app.services import rss_service
+    client = make_fetch_client(transport, resolver)
     h = hashlib.sha256()
     size = 0
     try:
         cur = url
         for hop in range(MAX_REDIRECTS + 1):
-            if not isinstance(cur, str) or not looks(cur) or not await asyncio.to_thread(safe, cur):
+            if not isinstance(cur, str) or not rss_service.looks_fetchable(cur):
                 raise FetchRefused("forbidden", "that address is not allowed (private, local or not http/https)"
                                    if hop == 0 else "the download redirected to an address that is not allowed")
             async with client.stream("GET", cur, headers={"User-Agent": "PosterChan-VMHost/1"}) as r:
@@ -117,15 +197,16 @@ async def fetch_to_part(url: str, part: Path, max_bytes: int, *, client=None, gu
                 return {"size": size, "sha256": h.hexdigest(), "final_url": cur,
                         "filename": path.rsplit("/", 1)[-1]}
         raise FetchRefused("backend_error", "too many redirects")
-    except FetchRefused:
+    except FetchRefused as e:
         _unlink(part)
+        if hop and e.code == "forbidden":
+            raise FetchRefused("forbidden", "the download redirected to an address that is not allowed")
         raise
     except Exception as e:
         _unlink(part)
         raise FetchRefused("backend_error", f"download failed: {type(e).__name__}")
     finally:
-        if own:
-            await client.aclose()
+        await client.aclose()
 
 
 def _unlink(p: Path) -> None:
@@ -233,8 +314,8 @@ class IsoOps:
         try:
             try:
                 got = await fetch_to_part(url, part, cap, progress=prog,
-                                          guard=getattr(self, "fetch_guard", None),
-                                          client=getattr(self, "fetch_client", None))
+                                          transport=getattr(self, "fetch_transport", None),
+                                          resolver=getattr(self, "fetch_resolver", None))
             except FetchRefused as e:
                 raise _err(e.code, e.message)
             name = pre or clean_iso_name(got["filename"])

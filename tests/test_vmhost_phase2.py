@@ -25,7 +25,6 @@ from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
 from app.routers import vmhost as vmhost_router
-from app.services import rss_service
 from app.services.nostr import bip340, nip44, nostr_service
 from app.services.nostr.event import build_event
 from app.services.vmhost import access, domainxml, isolib, sessions, transport
@@ -270,23 +269,24 @@ def test_virsh_snapshot_argv_is_validated():
 
 
 # ================================================================================ ISO fetch (SSRF)
-def _guard():
-    """The REAL guard, except that `*.example` names (which cannot resolve offline) count as public."""
-    def safe(url):
-        host = httpx.URL(url).host
-        return True if host.endswith(".example") else rss_service.is_safe_host(url)
-    return rss_service.looks_fetchable, safe
+def _resolver(host, port):
+    """The REAL resolver, except that `*.example` names (which cannot resolve offline) answer a public address."""
+    return ["93.184.216.34"] if host.endswith(".example") else isolib._resolve(host, port)
 
 
 def fetch_setup(tmp_path, handler, **cfg):
+    """The shipped fetch client (pinning, no env proxy) over a mock wire. Handlers and `seen` see the request as
+    the server would: by its Host header, although the connection goes to the pinned address."""
     svc, be, root = make(tmp_path, **cfg)
     seen = []
 
     def h(request):
-        seen.append(str(request.url))
-        return handler(request)
-    svc.fetch_client = httpx.AsyncClient(transport=httpx.MockTransport(h), follow_redirects=False)
-    svc.fetch_guard = _guard()
+        assert request.url.host == "93.184.216.34", "the connection must go to the checked address"
+        named = request.url.copy_with(host=request.headers["host"].split(":")[0])
+        seen.append(str(named))
+        return handler(httpx.Request(request.method, named, headers=request.headers))
+    svc.fetch_transport = httpx.MockTransport(h)
+    svc.fetch_resolver = _resolver
     return svc, be, root, seen
 
 
