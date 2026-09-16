@@ -9,7 +9,7 @@ of a verified event is the requester, full stop.
     result  = {"v":1, "id":…, "ok":true, "result":{…}} | {"v":1, "id":…, "ok":false, "error":{code,message}}
 
 DROP ORDER — cheapest first, and a stranger never reaches the expensive half (the DVM worker's rule):
-kind → addressed to this node → payload size → already-seen event id → requester's role (a stranger
+kind → addressed to this node → payload size → already-seen event id → requester's role, or a session key's owner's (a stranger
 ends here, with NO reply) → that pubkey's token bucket (peek) → BIP-340 signature → clock skew and
 expiration → token taken → marked seen → the role's busy budget (admins have their own) → decrypt.
 
@@ -77,7 +77,8 @@ def build_reply(node_sk: bytes, req_event_id: str, requester: str, payload: dict
 def build_announcement(node_sk: bytes, cfg, now: Optional[int] = None) -> dict:
     relays = [r for r in [cfg.public_relay] if r]
     content = {"v": 1, "name": cfg.display_name or "PosterChan VM host", "https": cfg.public_url,
-               "relays": relays, "proto": [PROTO_VERSION], "features": ["novnc"]}
+               "relays": relays, "proto": [PROTO_VERSION],
+               "features": ["novnc", "hardware", "snapshots", "iso-fetch", "sessions"]}
     tags = [["d", kinds.ANNOUNCE_D], ["alt", "PosterChan VM host"]] + [["relay", r] for r in relays]
     return nostr_event.build_event(node_sk, kinds.ANNOUNCE_KIND, json.dumps(content), tags,
                                    created_at=int(now if now is not None else time.time()))
@@ -164,10 +165,19 @@ class Transport:
         if not isinstance(eid, str) or eid in self.seen:
             return self._drop("already handled", ev)
         requester = str(ev.get("pubkey", "")).lower()
+        # The AUTHOR is who we talk to (decrypt from, reply to). The ACTOR is whose rights apply: the
+        # author itself, or — for a session key (sessions.py) — the real key that opened the session.
+        # Budgets (token bucket, busy slots) are the ACTOR's: opening eight sessions does not buy eight
+        # buckets.
+        actor, session, session_state = requester, None, None
         role = await self.service.role_of(requester)
         if role is None:
-            return self._drop("not on this host's lists", ev)        # a stranger: no reply at all
-        if not self.buckets.peek(requester, role):
+            owner, session_state = self.service._sessions().lookup(requester)
+            role = await self.service.role_of(owner) if owner is not None else None
+            if role is None:
+                return self._drop("not on this host's lists", ev)    # a stranger: no reply at all
+            actor, session = owner, requester
+        if not self.buckets.peek(actor, role):
             return self._drop("rate limited", ev)
         if not nostr_event.verify_event(ev):
             return self._drop("bad signature", ev)
@@ -184,7 +194,7 @@ class Transport:
         # Recorded only once it is inside the window (outside it the window itself refuses a replay),
         # and atomically with the check: two deliveries of one event racing through the awaits above
         # must not both get here.
-        if not self.buckets.take(requester, role):
+        if not self.buckets.take(actor, role):
             return self._drop("rate limited", ev)
         marked = self.seen.add(eid)
         if marked != "ok":
@@ -198,11 +208,13 @@ class Transport:
                 on_admitted()
             if self.seen.path is not None:
                 await asyncio.to_thread(self.seen.flush)
-            return await self._execute(eid, requester, content)
+            return await self._execute(eid, requester, content, actor, session, session_state)
         finally:
             self._busy[busy_role] -= 1
 
-    async def _execute(self, eid: str, requester: str, content: str) -> Optional[dict]:
+    async def _execute(self, eid: str, requester: str, content: str, actor: str | None = None,
+                       session: str | None = None, session_state: str | None = None) -> Optional[dict]:
+        actor = actor or requester
         async def reply(payload: dict, kind: int = kinds.RES_KIND) -> Optional[dict]:
             out = build_reply(self.node_sk, eid, requester, payload, kind=kind, now=int(self.now()))
             try:
@@ -230,7 +242,13 @@ class Transport:
         async def progress(p: dict) -> None:
             await reply({"v": PROTO_VERSION, "id": rid, "progress": p}, kind=kinds.PROGRESS_KIND)
 
-        res = await self.service.handle(requester, body.get("op"), body.get("args", {}), rid, progress)
+        if session and session_state != "live":
+            # Answered, not dropped: silence here would read as "the host is offline" to the client.
+            return await reply({"v": PROTO_VERSION, "id": rid, "ok": False,
+                                "error": {"code": "session_expired",
+                                          "message": "this session has ended — open a new one"}})
+        res = await self.service.handle(actor, body.get("op"), body.get("args", {}), rid, progress,
+                                        session=session)
         if res is None:
             return None
         return await reply(res)

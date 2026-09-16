@@ -100,6 +100,8 @@ class VmHostConfig:
     bridge: str = ""
     ticket_ttl_sec: int = 60
     console_max_minutes: int = 240
+    session_max_hours: int = 12
+    iso_fetch_enabled: bool = True
 
     @classmethod
     def from_settings(cls, s: dict) -> "VmHostConfig":
@@ -133,6 +135,8 @@ class VmHostConfig:
             bridge=(s.get("vmhost_bridge") or "").strip(),
             ticket_ttl_sec=_int(g("vmhost_console_ticket_ttl_sec"), DEFAULTS["vmhost_console_ticket_ttl_sec"], 10, 600),
             console_max_minutes=_int(g("vmhost_console_max_minutes"), DEFAULTS["vmhost_console_max_minutes"], 1, 24 * 60),
+            session_max_hours=_int(g("vmhost_session_max_hours"), DEFAULTS["vmhost_session_max_hours"], 1, 24 * 30),
+            iso_fetch_enabled=b("vmhost_iso_fetch_enabled"),
         )
 
 

@@ -33,11 +33,16 @@ from .config import VmHostConfig
 from .console import ConsoleRegistry
 from .journal import OpJournal
 from .storage import PathEscape, Storage, clean_name, new_uuid, valid_uuid
+# Phase 2 ops live in their own modules, mixed into the service (so this file only grows by table rows).
+from .access import AccessOps
+from .hardware import HardwareOps
+from .isolib import IsoOps
+from .sessions import CURRENT_SESSION, SESSION_OPS, SessionOps
 
 logger = logging.getLogger(__name__)
 
 PROTO_VERSION = 1
-FEATURES = ["novnc"]
+FEATURES = ["novnc", "hardware", "snapshots", "iso-fetch", "iso-upload", "access", "sessions"]
 LOCK_WAIT = 2.0
 ADMIN_CACHE_SEC = 60
 # A FAILED admin lookup (account table unreadable) is remembered this long, so a burst of requests —
@@ -48,7 +53,8 @@ ADMIN_NEG_CACHE_SEC = 5
 DOMAIN_SNAPSHOT_SEC = 3
 
 ERROR_CODES = ("bad_request", "forbidden", "not_found", "conflict", "busy", "insufficient_capacity",
-               "unsupported", "rate_limited", "backend_error", "timeout", "version", "internal")
+               "unsupported", "rate_limited", "backend_error", "timeout", "version", "internal",
+               "migrating", "session_expired", "step_up_required")
 
 # op -> (minimum role, mutating?). Mutating ops go through the op journal (idempotent retries).
 OPS = {
@@ -63,7 +69,22 @@ OPS = {
     "vm.delete":      ("admin", True),
     "vm.assign":      ("admin", True),
     "vm.unassign":    ("admin", True),
+    # ---- phase 2 (hardware.py, isolib.py, access.py, sessions.py)
+    "vm.update":           ("admin", True),
+    "vm.snapshot.list":    ("admin", False),
+    "vm.snapshot.create":  ("admin", True),
+    "vm.snapshot.revert":  ("admin", True),
+    "vm.snapshot.delete":  ("admin", True),
+    "iso.fetch":           ("admin", True),
+    "iso.upload_ticket":   ("admin", False),
+    "iso.delete":          ("admin", True),
+    "host.access.get":     ("admin", False),
+    "host.access.set":     ("admin", True),
+    "session.open":        ("user", False),
+    "session.close":       ("user", False),
 }
+# Ops that must be signed by the REAL key even though a session could technically reach them.
+REAL_KEY_ONLY = frozenset({"session.open"})
 
 _REQ_ID = re.compile(r"^[A-Za-z0-9_-]{1,64}$")
 _HEX64 = re.compile(r"^[0-9a-f]{64}$")
@@ -132,7 +153,7 @@ def _int_arg(args: dict, key: str, lo: int, hi: int, default=None) -> int:
     return n
 
 
-class VmHostService:
+class VmHostService(HardwareOps, IsoOps, AccessOps, SessionOps):
     def __init__(self, cfg: VmHostConfig, backend, *, node_pubkey: str, admin_provider=None,
                  storage: Storage | None = None, journal: OpJournal | None = None,
                  consoles: ConsoleRegistry | None = None, now=time.time):
@@ -271,7 +292,10 @@ class VmHostService:
             raise VmHostError("busy", f"{what} is busy with another operation — try again shortly")
 
     # ---------------------------------------------------------------- entry point
-    async def handle(self, requester: str, op, args, req_id, progress=None) -> Optional[dict]:
+    async def handle(self, requester: str, op, args, req_id, progress=None,
+                     session: Optional[str] = None) -> Optional[dict]:
+        """`session`: the session public key the request was SIGNED with, when the transport resolved it
+        to `requester` (its owner). Such a request may only run SESSION_OPS — see sessions.py."""
         role = await self.role_of(requester)
         if role is None:
             return None                                   # stranger: silence, see the module doc
@@ -288,10 +312,14 @@ class VmHostService:
         if not isinstance(args, dict):
             return err("bad_request", "args must be an object")
         need, mutating = OPS[op]
+        if session and (op not in SESSION_OPS or op in REAL_KEY_ONLY):
+            return err("step_up_required", "sign this with your own key — a session key can only view, "
+                                           "power and open consoles")
         if need == "admin" and role != "admin":
             return err("forbidden", "only a host admin can do that")
 
         async def run():
+            CURRENT_SESSION.set(session)
             try:
                 result = await getattr(self, "_op_" + op.replace(".", "_"))(pk, role, args, progress)
                 return {"v": PROTO_VERSION, "id": rid, "ok": True, "result": result}
@@ -384,10 +412,16 @@ class VmHostService:
         return {"vms": [self._vm_view(d, role, pk) for d in page], "next": nxt}
 
     async def _op_vm_get(self, pk, role, args, progress):
-        return {"vm": self._vm_view(await self._domain(pk, role, args), role, pk)}
+        d = await self._domain(pk, role, args)
+        view = self._vm_view(d, role, pk)
+        if role == "admin":
+            view["hardware"] = await self._hardware(d.uuid)
+        return {"vm": view}
 
     async def _op_iso_list(self, pk, role, args, progress):
-        return {"isos": await asyncio.to_thread(self.storage.list_isos)}
+        jobs = [{k: j[k] for k in ("id", "url", "bytes", "total", "state")} for j in self._iso_jobs().values()]
+        return {"isos": await asyncio.to_thread(self.storage.list_isos), "jobs": jobs,
+                "fetch_enabled": self.cfg.iso_fetch_enabled}
 
     # ---------------------------------------------------------------- power
     async def _op_vm_power(self, pk, role, args, progress):

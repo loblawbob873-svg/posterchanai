@@ -18,6 +18,7 @@ clamped integers) or escaped here, and the tests parse the output back to prove 
 """
 from __future__ import annotations
 
+import re
 import secrets
 import string
 import time
@@ -174,3 +175,210 @@ def build_domain_xml(spec: DomainSpec) -> str:
         f'<memballoon model="virtio"/>{tpm}'
         f"</devices></domain>"
     )
+
+
+# ------------------------------------------------------------------------------------ phase 2: hardware edits
+# `vm.update` edits an EXISTING (shut-off) definition. The hypervisor's own inactive XML is read, changed
+# here as a tree, defined back ONCE and then read again to confirm — the desktop's vm.js lesson that
+# "virsh said ok" and "the domain changed" are different claims (its eject re-read, vm.js:153-159).
+#
+# Why a redefine and not `change-media`/`attach-disk`: every edit here requires the VM to be OFF, where a
+# redefine is exactly what those commands do with `--config`, and ONE define makes a multi-field Save
+# atomic — four separate virsh calls that fail on the third leave a half-saved machine. The one
+# change-media rule that matters is kept by construction: a cdrom that already has a source has it
+# REPLACED (the `--update` semantics), never a second <source> appended (what `--insert` over a filled
+# tray amounts to, and what left desktop VMs unable to start, vm.js:142-145).
+
+ET.register_namespace("pc", PC_NS)
+
+_DEV_RE = re.compile(r"^(vd|sd)[a-z]$")
+
+
+class EditError(ValueError):
+    """The definition cannot take this edit (no <devices>, no free slot, …)."""
+
+
+def _parse(xml_text: str) -> ET.Element:
+    try:
+        return ET.fromstring(str(xml_text or "").strip())
+    except ET.ParseError as e:
+        raise EditError(f"unreadable domain XML: {e}")
+
+
+def parse_domain(xml_text: str) -> ET.Element:
+    return _parse(xml_text)
+
+
+def _devices(root: ET.Element) -> ET.Element:
+    dev = root.find("devices")
+    if dev is None:
+        raise EditError("the definition has no <devices>")
+    return dev
+
+
+def read_hardware(xml_text: str, iso_dir: str = "") -> dict:
+    """What the settings panel shows, read from a definition: boot order, pointer, NICs, disks, media.
+    `media` is an ISO id when the cdrom holds a file from the library, "(external)" for anything else."""
+    root = _parse(xml_text)
+    os_el = root.find("os")
+    boots = [b.get("dev") for b in (os_el.findall("boot") if os_el is not None else [])]
+    dev = root.find("devices")
+    disks, media, nics, inputs = [], "", 0, []
+    lib = iso_dir.rstrip("/") + "/" if iso_dir else ""
+    if dev is not None:
+        for d in dev.findall("disk"):
+            tgt = d.find("target")
+            src = d.find("source")
+            path = src.get("file", "") if src is not None else ""
+            entry = {"device": d.get("device", "disk"), "target": tgt.get("dev", "") if tgt is not None else "",
+                     "bus": tgt.get("bus", "") if tgt is not None else ""}
+            if entry["device"] == "cdrom":
+                if path:
+                    base = path.rsplit("/", 1)[-1]
+                    entry["media"] = base if (lib and path.startswith(lib) and "/" not in path[len(lib):]) else "(external)"
+                    media = media or entry["media"]
+                else:
+                    entry["media"] = ""
+            disks.append(entry)
+        nics = len(dev.findall("interface"))
+        inputs = [(i.get("type"), i.get("bus")) for i in dev.findall("input")]
+    return {"boot": "cdrom" if boots[:1] == ["cdrom"] else "disk",
+            "input": "tablet" if any(t == "tablet" for t, _ in inputs) else "mouse",
+            "nics": nics, "disks": disks, "media": media,
+            "cdrom": any(d["device"] == "cdrom" for d in disks)}
+
+
+def set_vcpus_ram(root: ET.Element, vcpus, ram_mib) -> None:
+    if vcpus is not None:
+        v = root.find("vcpu")
+        if v is None:
+            v = ET.SubElement(root, "vcpu")
+        v.attrib.pop("current", None)
+        v.text = str(int(vcpus))
+    if ram_mib is not None:
+        for tag in ("memory", "currentMemory"):
+            m = root.find(tag)
+            if m is None:
+                m = ET.SubElement(root, tag)
+            m.set("unit", "MiB")
+            m.text = str(int(ram_mib))
+
+
+def set_boot(root: ET.Element, first: str) -> None:
+    os_el = root.find("os")
+    if os_el is None:
+        raise EditError("the definition has no <os> block")
+    for b in os_el.findall("boot"):
+        os_el.remove(b)
+    # A per-device <boot order=…> and <os><boot> may not coexist; libvirt refuses that define.
+    for d in root.iter():
+        if d is os_el:
+            continue
+        for b in list(d.findall("boot")):
+            if b.get("order") is not None:
+                d.remove(b)
+    for dev_name in (["cdrom", "hd"] if first == "cdrom" else ["hd", "cdrom"]):
+        ET.SubElement(os_el, "boot", {"dev": dev_name})
+
+
+def set_input(root: ET.Element, mode: str) -> None:
+    dev = _devices(root)
+    for i in list(dev.findall("input")):
+        if i.get("type") in ("tablet", "mouse"):
+            dev.remove(i)
+    if mode == "tablet":
+        ET.SubElement(dev, "input", {"type": "tablet", "bus": "usb"})
+    else:
+        ET.SubElement(dev, "input", {"type": "mouse", "bus": "ps2"})
+
+
+def used_targets(root: ET.Element) -> set:
+    out = set()
+    for d in _devices(root).findall("disk"):
+        t = d.find("target")
+        if t is not None and t.get("dev"):
+            out.add(t.get("dev"))
+    return out
+
+
+def next_disk_target(root: ET.Element, windows: bool) -> str:
+    prefix = "sd" if windows else "vd"
+    used = used_targets(root)
+    for c in "bcdefghijklmnopqrstuvwxyz":
+        if prefix + c not in used:
+            return prefix + c
+    raise EditError("no free disk slot on this VM")
+
+
+def add_disk(root: ET.Element, path: str, target: str) -> None:
+    if not _DEV_RE.match(target or ""):
+        raise EditError("bad disk target")
+    bus = "sata" if target.startswith("sd") else "virtio"
+    d = ET.SubElement(_devices(root), "disk", {"type": "file", "device": "disk"})
+    ET.SubElement(d, "driver", {"name": "qemu", "type": "qcow2"})
+    ET.SubElement(d, "source", {"file": path})
+    ET.SubElement(d, "target", {"dev": target, "bus": bus})
+
+
+def add_nic(root: ET.Element, network: str, bridge: str, windows: bool) -> None:
+    dev = _devices(root)
+    if bridge:
+        n = ET.SubElement(dev, "interface", {"type": "bridge"})
+        ET.SubElement(n, "source", {"bridge": bridge})
+    else:
+        n = ET.SubElement(dev, "interface", {"type": "network"})
+        ET.SubElement(n, "source", {"network": network or "default"})
+    ET.SubElement(n, "model", {"type": "e1000e" if windows else "virtio"})
+
+
+def set_media(root: ET.Element, iso_path) -> None:
+    """Insert (a path) or eject (None). An existing cdrom's source is REPLACED — `--update`, never a
+    second source — and a VM created without an installer gets a SATA cdrom on a free sdX target."""
+    dev = _devices(root)
+    cd = next((d for d in dev.findall("disk") if d.get("device") == "cdrom"), None)
+    if cd is None:
+        if iso_path is None:
+            return
+        used = used_targets(root)
+        tgt = next(("sd" + c for c in "abcdefghijklmnopqrstuvwxyz" if "sd" + c not in used), None)
+        if not tgt:
+            raise EditError("no free slot for a CD drive")
+        cd = ET.SubElement(dev, "disk", {"type": "file", "device": "cdrom"})
+        ET.SubElement(cd, "driver", {"name": "qemu", "type": "raw"})
+        ET.SubElement(cd, "target", {"dev": tgt, "bus": "sata"})
+        ET.SubElement(cd, "readonly")
+    for s in list(cd.findall("source")):
+        cd.remove(s)
+    if iso_path is not None:
+        cd.insert(1 if cd.find("driver") is not None else 0, ET.Element("source", {"file": iso_path}))
+
+
+def set_meta(root: ET.Element, meta: VmMeta) -> None:
+    md = root.find("metadata")
+    if md is None:
+        md = ET.Element("metadata")
+        root.insert(2, md)
+    for ch in list(md):
+        if ch.tag.startswith("{" + PC_NS + "}") or _local(ch.tag) == "vm":
+            md.remove(ch)
+    md.append(ET.fromstring(meta.to_xml(prefixed=True)))
+
+
+def secure_vnc(root: ET.Element) -> int:
+    """Give every VNC display that has no `passwd` a random, ALREADY-EXPIRED one (see
+    VNC_PASSWD_EXPIRED). `virsh dumpxml` leaves `passwd` OUT unless asked for security info, so a
+    definition read back, edited and defined again (vm.update, a migration's define on the target)
+    would otherwise come up with NO VNC authentication — and every console ticket after it would be
+    refused, because QEMU will not set a password on a display that has no password auth. Returns how
+    many displays it changed."""
+    n = 0
+    for g in root.findall("devices/graphics"):
+        if g.get("type") == "vnc" and not g.get("passwd"):
+            g.set("passwd", random_vnc_password())
+            g.set("passwdValidTo", VNC_PASSWD_EXPIRED)
+            n += 1
+    return n
+
+
+def to_text(root: ET.Element) -> str:
+    return ET.tostring(root, encoding="unicode")

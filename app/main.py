@@ -87,7 +87,9 @@ class _ScopedCORS(CORSMiddleware):
     correct header was neutralised by this one. Skipping both prefixes hands the request to their own
     OPTIONS handlers. Jellyfin uses its own token-only CORS middleware too; its
     Nostr approval endpoint remains under the normal credentialed allowlist."""
-    _OWN_CORS = ("/blossom", "/git/", "/jellyfin/")   # trailing slash: must not swallow a future /gitea-style route
+    # /api/vmhost/iso/: an ISO upload is PUT by a client on ANY origin (the host is somebody else's
+    # server); its credential is a single-use ticket in the path, never a cookie, so it answers `*`.
+    _OWN_CORS = ("/blossom", "/git/", "/jellyfin/", "/api/vmhost/iso/")   # trailing slash: must not swallow a future /gitea-style route
 
     async def __call__(self, scope, receive, send):
         if scope.get("type") == "http" and scope.get("path", "").startswith(self._OWN_CORS):

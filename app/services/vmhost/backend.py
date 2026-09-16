@@ -77,6 +77,12 @@ class Backend(Protocol):
     async def vnc_endpoint(self, vm_uuid: str) -> Optional[tuple]: ...
     async def set_vnc_password(self, vm_uuid: str, password: str, expire_s: int) -> None: ...
     async def img_create(self, path: str, size_gib: int) -> None: ...
+    # phase 2
+    async def dumpxml(self, vm_uuid: str, inactive: bool = True) -> str: ...
+    async def snapshot_list(self, vm_uuid: str) -> list: ...
+    async def snapshot_create(self, vm_uuid: str, name: str, description: str = "") -> None: ...
+    async def snapshot_revert(self, vm_uuid: str, name: str) -> None: ...
+    async def snapshot_delete(self, vm_uuid: str, name: str) -> None: ...
 
 
 # ---------------------------------------------------------------------------------------- parsers
@@ -382,6 +388,52 @@ class VirshBackend:
                                           f"{int(size_gib)}G"], 60)
         if code != 0:
             raise BackendError((err or out).strip()[:300] or "qemu-img create failed")
+
+    # ---- phase 2 -----------------------------------------------------------------------------
+    async def dumpxml(self, vm_uuid: str, inactive: bool = True) -> str:
+        args = ["dumpxml", vm_uuid] + (["--inactive"] if inactive else [])
+        return await self._v(*args, timeout=15)
+
+    async def snapshot_list(self, vm_uuid: str) -> list:
+        return parse_snapshot_list(await self._v("snapshot-list", vm_uuid, timeout=15))
+
+    async def snapshot_create(self, vm_uuid: str, name: str, description: str = "") -> None:
+        if not re.fullmatch(SNAPSHOT_NAME, name or ""):
+            raise BackendError("invalid snapshot name", "bad_request")
+        args = ["snapshot-create-as", vm_uuid, "--name", name, "--atomic"]
+        if description:
+            args += ["--description", description[:200]]
+        await self._v(*args, timeout=300)
+
+    async def snapshot_revert(self, vm_uuid: str, name: str) -> None:
+        if not re.fullmatch(SNAPSHOT_NAME, name or ""):
+            raise BackendError("invalid snapshot name", "bad_request")
+        await self._v("snapshot-revert", vm_uuid, "--snapshotname", name, timeout=300)
+
+    async def snapshot_delete(self, vm_uuid: str, name: str) -> None:
+        if not re.fullmatch(SNAPSHOT_NAME, name or ""):
+            raise BackendError("invalid snapshot name", "bad_request")
+        await self._v("snapshot-delete", vm_uuid, "--snapshotname", name, timeout=300)
+
+
+SNAPSHOT_NAME = r"[A-Za-z0-9][A-Za-z0-9_.-]{0,47}"
+
+
+def parse_snapshot_list(text: str) -> list:
+    """`virsh snapshot-list` table → [{name, created, state}]. The header and the dashed rule are skipped;
+    the creation time is everything between the name and the last column."""
+    out = []
+    lines = str(text or "").splitlines()
+    started = False
+    for line in lines:
+        if not started:
+            if re.match(r"^\s*-{5,}", line):
+                started = True
+            continue
+        parts = line.split()
+        if len(parts) >= 2 and re.fullmatch(SNAPSHOT_NAME, parts[0]):
+            out.append({"name": parts[0], "created": " ".join(parts[1:-1]), "state": parts[-1]})
+    return out
 
 
 def make_backend(cfg) -> Backend:

@@ -441,7 +441,7 @@ would have handled it fine).
 
 ## Notable features
 
-- **VM hosting — our own Proxmox-like host, managed over Nostr (phase 1)** (`app/services/vmhost/`,
+- **VM hosting — our own Proxmox-like host, managed over Nostr (phases 1-2)** (`app/services/vmhost/`,
   `app/routers/vmhost.py`, client `vms.js`/`vmrpc.js`/`vmconsole.js`, Admin → VMs; `docs/VM_HOSTING.md`).
   A server node with libvirt; kind **5310** request (NIP-44, p=node key, expiration ≤120s, nofederate)
   → **6310** result / **7310** progress; **31310** announcement. Admins (`is_admin` npubs ∪
@@ -459,7 +459,18 @@ would have handled it fine).
   back); (8) the VNC display needs `passwd` in the domain XML or QEMU runs it with NO auth and refuses
   `set_password` — set it over QMP and READ the reply (virsh exits 0 on an error reply); (6) clients never send
   paths — ISO ids resolve and must stay inside `<storage>/isos` (symlinks out are refused); (7) libvirt
-  group ≈ root. Not yet: hardware edit, snapshots, ISO fetch, session keys, discovery, cold migration.
+  group ≈ root. **Phase 2** (`hardware.py`/`isolib.py`/`access.py`/`sessions.py`, mixed into the service so
+  `OPS` only grows by rows): (8) every change is admin-only IN THE OP TABLE; `vm.update` needs the VM shut
+  off, does ONE redefine and READS IT BACK (a field libvirt did not keep is an error), and REPLACES a
+  cdrom source (never a second one); (9) `iso.fetch` is SSRF by design — the rss_service guard on EVERY
+  redirect hop, direct transport, cap on header AND stream, `.part` then link; (10) `iso.upload_ticket` →
+  `PUT /api/vmhost/iso/<ticket>` (single use, consumed before reading, admin re-checked, CORS `*` via
+  `_OWN_CORS`); (11) `host.access.set` writes ONLY the allowed list, durably, and refuses the whole list on
+  one bad key — admins stay Admin-panel-only; (12) SESSION KEYS for remote signers: opened by the real key
+  with a proof signed by the session key, usable only for whoami/info/list/get/power/console
+  (`step_up_required` otherwise), an ended one is ANSWERED `session_expired` (silence = "offline");
+  (13) desktop "This computer" is `LocalHost` over `window.pcVM` in vms.js; os.js `paintVmManager` is
+  kept. Not yet: cold migration (phase 3).
 - **A GRANTED NIP-05 IS THE ENTITLEMENT — one predicate, four gates** (`app/services/nip05_access.py`;
   switch `nip05_grants_access`, Admin → Nostr Relay → NIP-05 identity server, **ON** by default).
   AI chat, image generation (`geni`), music generation (`musicgeni`/`voice`) and Blossom uploads were

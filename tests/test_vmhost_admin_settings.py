@@ -215,8 +215,8 @@ def test_a_failed_durable_save_leaves_the_old_access_in_force_everywhere(monkeyp
 # Settings declared now for later phases. Each is shown, saved and hydrated like any other (the
 # coverage tests above), but NOTHING reads it yet — so the form must say so, or an admin sets a
 # migration cap or a shutdown timeout and believes the host enforces it.
-COMING_SOON = ("vmhost_peer_hosts", "vmhost_shutdown_timeout_sec", "vmhost_session_max_hours",
-               "vmhost_migration_keep_source_hours", "vmhost_transfer_max_mbps", "vmhost_iso_fetch_enabled")
+COMING_SOON = ("vmhost_peer_hosts", "vmhost_shutdown_timeout_sec",
+               "vmhost_migration_keep_source_hours", "vmhost_transfer_max_mbps")
 
 
 def _label_of(html, key):
@@ -226,14 +226,32 @@ def _label_of(html, key):
     raise AssertionError(f"no <label> wraps {key}")
 
 
+def _readers():
+    """(code outside config.py, key → the VmHostConfig field config.py maps it to). A setting counts as
+    READ when its key appears in a vmhost module other than config.py (or the vmhost router), or when config.py maps it to a
+    field some other module reads as `.field` — the key string alone misses every setting that only
+    reaches the service through VmHostConfig."""
+    vm = ROOT / "app" / "services" / "vmhost"
+    files = [p for p in vm.glob("*.py") if p.name != "config.py"] + [ROOT / "app" / "routers" / "vmhost.py"]
+    code = "\n".join(p.read_text() for p in files)
+    fields = dict((k, f) for f, k in re.findall(r'^\s+(\w+)=[^\n]*?"(vmhost_\w+)"',
+                                                 (vm / "config.py").read_text(), re.M))
+    return code, fields
+
+
+def _is_read(key, code, fields):
+    return key in code or (key in fields and re.search(r"\.%s\b" % re.escape(fields[key]), code) is not None)
+
+
 def test_settings_nothing_reads_yet_are_labelled_coming_soon():
     _, html = _inputs()
-    code = "\n".join(p.read_text() for p in (ROOT / "app" / "services" / "vmhost").glob("*.py")
-                     if p.name != "config.py")
+    code, fields = _readers()
+    assert fields.get("vmhost_session_max_hours") == "session_max_hours", "the config.py field map parse broke"
     for key in vmconfig.DEFAULTS:
         label = _label_of(html, key)
         if key in COMING_SOON:
             assert "(coming soon)" in label, f"{key} does nothing yet and the form does not say so"
-            assert key not in code, f"{key} is used now — drop it from COMING_SOON and its label"
+            assert not _is_read(key, code, fields), f"{key} is used now — drop it from COMING_SOON and its label"
         else:
             assert "(coming soon)" not in label, key
+            assert _is_read(key, code, fields), f"{key} is shown as working but nothing reads it"

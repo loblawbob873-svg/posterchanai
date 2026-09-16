@@ -23,7 +23,8 @@ import json
 import logging
 import time
 
-from fastapi import APIRouter, Depends, WebSocket, WebSocketDisconnect
+from fastapi import APIRouter, Depends, Request, WebSocket, WebSocketDisconnect
+from fastapi.responses import JSONResponse, Response
 
 from app.auth import get_admin_user
 
@@ -193,6 +194,40 @@ async def websocket_vmconsole(websocket: WebSocket):
             await websocket.close()
         except Exception:
             pass
+
+
+_UPLOAD_CORS = {"Access-Control-Allow-Origin": "*", "Access-Control-Allow-Methods": "PUT, OPTIONS",
+                "Access-Control-Allow-Headers": "Content-Type", "Access-Control-Max-Age": "600"}
+
+
+@router.options("/api/vmhost/iso/{ticket}")
+async def vmhost_iso_upload_preflight(ticket: str):
+    return Response(status_code=204, headers=_UPLOAD_CORS)
+
+
+@router.put("/api/vmhost/iso/{ticket}")
+async def vmhost_iso_upload(ticket: str, request: Request):
+    """Receive an ISO for the library. The credential is the single-use ticket issued over Nostr
+    (`iso.upload_ticket`, admins only); it is consumed BEFORE the body is read, so a copy of this URL in
+    a proxy log is already spent. The body is streamed to disk, never buffered — see isolib.py."""
+    from app.services.vmhost import service as vmsvc
+    from app.services.vmhost.service import VmHostError
+    svc = vmsvc.current()
+    if svc is None:
+        return JSONResponse({"ok": False, "error": {"code": "unsupported",
+                                                    "message": "VM hosting is not running on this node"}},
+                            status_code=503, headers=_UPLOAD_CORS)
+    try:
+        res = await svc.receive_upload(ticket, request.stream())
+    except VmHostError as e:
+        status = {"forbidden": 403, "conflict": 409, "insufficient_capacity": 413}.get(e.code, 400)
+        return JSONResponse({"ok": False, "error": {"code": e.code, "message": e.message}}, status_code=status,
+                            headers=_UPLOAD_CORS)
+    except Exception as e:  # a dropped connection mid-body, a full disk
+        logger.warning("[vmhost] ISO upload failed: %s", e)
+        return JSONResponse({"ok": False, "error": {"code": "backend_error", "message": "the upload failed"}},
+                            status_code=500, headers=_UPLOAD_CORS)
+    return JSONResponse({"ok": True, "result": res}, headers=_UPLOAD_CORS)
 
 
 @router.get("/api/admin/vmhost/status")

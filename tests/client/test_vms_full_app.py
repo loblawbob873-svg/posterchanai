@@ -32,7 +32,7 @@ addEventListener('unhandledrejection',e=>__errors.push('rejection: '+String(e.re
 window.__back=null;window.__requests=[];
 window.Capacitor={isNativePlatform:()=>false,Plugins:{App:{addListener:(name,fn)=>{if(name==='backButton')window.__back=fn;return {remove(){}};}}}};
 const HOST_SK_HEX='9'.repeat(64);
-window.__vm={state:'shutoff',ops:[],vncFromClient:0,consoleOpens:0};
+window.__vm={state:'shutoff',ops:[],args:{},vncFromClient:0,consoleOpens:0,vcpus:2,snaps:[],hosts:{}};
 const origFetch=window.fetch.bind(window);
 window.fetch=async function(url,opts={}){
  const u=String(url);__requests.push(u);
@@ -48,10 +48,22 @@ window.fetch=async function(url,opts={}){
 };
 const hexToBytes=h=>Uint8Array.from(h.match(/../g).map(x=>parseInt(x,16)));
 function hostKeys(){const sk=hexToBytes(HOST_SK_HEX);return {sk,pk:NostrTools.getPublicKey(sk)};}
-function vmView(){return {uuid:'11111111-1111-4111-8111-111111111111',name:'alpha',state:__vm.state,vcpus:2,ram_mib:2048,disk_gib:20,managed:true,guest:'linux',firmware:'efi',autostart:false,labels:[],assigned:[],owner:'',iso:''};}
-function hostOp(op,args){
-  __vm.ops.push(op);
-  if(op==='host.whoami')return {ok:true,result:{role:'admin',host:{name:'Fixture host',version:1,features:['novnc']}}};
+const HOST_KEYS={'vmhost.invalid':HOST_SK_HEX,'vmhost2.invalid':'7'.repeat(64),'vmhost4.invalid':'6'.repeat(64)};
+function hostKeysFor(url){const k=Object.keys(HOST_KEYS).find(x=>url.includes('//'+x));if(!k)return null;const sk=hexToBytes(HOST_KEYS[k]);return {sk,pk:NostrTools.getPublicKey(sk),name:k};}
+function vmView(){return {uuid:'11111111-1111-4111-8111-111111111111',name:'alpha',state:__vm.state,vcpus:__vm.vcpus,ram_mib:2048,disk_gib:20,managed:true,guest:'linux',firmware:'efi',autostart:false,labels:[],assigned:[],owner:'',iso:''};}
+const FEATURES=['novnc','hardware','snapshots','iso-fetch','iso-upload','access','sessions'];
+function hostOp(op,args,who){
+  __vm.ops.push(op);__vm.args[op]=args;
+  if(who&&who.name!=='vmhost.invalid'){ if(op==='host.whoami')return {ok:true,result:{role:'user',host:{name:who.name==='vmhost2.invalid'?'Second host':'Found host',features:FEATURES}}};
+    if(op==='host.info')return {ok:true,result:{name:'x',vms:{running:0,total:0}}}; if(op==='vm.list')return {ok:true,result:{vms:[],next:null}}; return {ok:false,error:{code:'forbidden',message:'no'}}; }
+  if(op==='host.whoami')return {ok:true,result:{role:'admin',host:{name:'Fixture host',version:1,features:FEATURES}}};
+  if(op==='vm.get')return {ok:true,result:{vm:Object.assign(vmView(),{hardware:{boot:'disk',input:'tablet',nics:1,disks:[{device:'disk',target:'vda'}],media:'',cdrom:false}})}};
+  if(op==='vm.update'){ if(__vm.state!=='shutoff')return {ok:false,error:{code:'conflict',message:'shut it down'}}; if(args.vcpus)__vm.vcpus=args.vcpus;
+    return {ok:true,result:{vm:Object.assign(vmView(),{hardware:{boot:args.boot||'disk',input:args.input||'tablet',nics:1,disks:[],media:'',cdrom:false}})}}; }
+  if(op==='iso.list')return {ok:true,result:{isos:[{id:'debian.iso',name:'debian.iso',size:654311424}],jobs:[],fetch_enabled:true}};
+  if(op==='vm.snapshot.list')return {ok:true,result:{vm:args.vm,snapshots:__vm.snaps}};
+  if(op==='vm.snapshot.create'){__vm.snaps.push({name:args.name,created:'2026-09-16 12:00:00 +0000',state:__vm.state});return {ok:true,result:{vm:args.vm,snapshots:__vm.snaps}};}
+  if(op==='host.access.get')return {ok:true,result:{allowed:[],admins:[],admins_editable:false}};
   if(op==='host.info')return {ok:true,result:{name:'Fixture host',kvm:true,libvirt:true,vms:{running:__vm.state==='running'?1:0,total:1},
     cpu:{cores:8,load1:0.3},ram:{total_mib:32768,free_mib:20000,committed_mib:2048},disk:{total_gib:500,free_gib:400,committed_gib:20},
     limits:{max_vcpus:16,max_ram_mib:65536,max_disk_gib:2048,reserve_ram_mib:2048,reserve_disk_gib:20}}};
@@ -74,8 +86,9 @@ class FixtureSocket extends EventTarget{
  send(raw){
    if(this.url.includes('/ws/vmconsole'))return this.console(raw);
    const m=JSON.parse(raw);
-   if(this.url.includes('vmhost.invalid'))return this.host(m);
+   if(/vmhost\d?\.invalid/.test(this.url))return this.host(m);
    if(m[0]==='REQ')setTimeout(()=>{for(const ev of window.__events||[]){if(m.slice(2).some(f=>(!f.kinds||f.kinds.includes(ev.kind))&&(!f.authors||f.authors.includes(ev.pubkey))))this.text(['EVENT',m[1],ev]);}this.text(['EOSE',m[1]]);},15);
+   if(m[0]==='EVENT'&&m[1].kind===30078)(window.__docs=window.__docs||[]).push(m[1]);
    if(m[0]==='EVENT')this.text(['OK',m[1].id,true,'']);
  }
  host(m){
@@ -84,10 +97,11 @@ class FixtureSocket extends EventTarget{
    if(m[0]!=='EVENT')return;
    const ev=m[1];this.text(['OK',ev.id,true,'']);
    if(ev.kind!==5310||!NostrTools.verifyEvent(ev))return;
-   const {sk,pk}=hostKeys();
+   const who=hostKeysFor(this.url);if(!who)return;           // vmhost3: announced, never answers
+   const {sk}=who;
    const ck=NostrTools.nip44.v2.utils.getConversationKey(sk,ev.pubkey);
    const body=JSON.parse(NostrTools.nip44.v2.decrypt(ev.content,ck));
-   const res=Object.assign({v:1,id:body.id},hostOp(body.op,body.args||{}));
+   const res=Object.assign({v:1,id:body.id},hostOp(body.op,body.args||{},who));
    const now=Math.floor(Date.now()/1000);
    const reply=NostrTools.finalizeEvent({kind:6310,created_at:now,content:NostrTools.nip44.v2.encrypt(JSON.stringify(res),ck),
      tags:[['e',ev.id],['p',ev.pubkey],['nofederate'],['expiration',String(now+300)]]},sk);
@@ -190,6 +204,69 @@ async def main(width):
                 await b.until("!document.querySelector('#vms-console')")
                 assert await b.js("PCVms.consoleOpen()===false && __PC.isView('vms')"), \
                     'Back closes the console and stays on Virtual Machines'
+                # ---------------- phase 2: VM settings (Save last, dirty tracking, a real round trip)
+                await b.js("document.querySelector('[data-power=shutdown]').click()")
+                await b.until("__vm.state==='shutoff' && !!document.querySelector('[data-act=settings]:not([disabled])')")
+                await b.js("document.querySelector('[data-act=settings]').click()")
+                await b.until("!!document.querySelector('#vms-settings [name=vcpus]')")
+                assert await b.js("document.querySelector('[data-act=settings-save]').disabled"), 'nothing changed → Save disabled'
+                ctl = await b.js("(()=>{const f=document.querySelector('#vms-settings');const c=[...f.querySelectorAll('button,input,select')];return c[c.length-1].dataset.act;})()")
+                assert ctl == 'settings-save', ('Save must be the last control', ctl)
+                await b.js("(()=>{const i=document.querySelector('#vms-settings [name=vcpus]');i.value='4';i.dispatchEvent(new Event('input',{bubbles:true}));})()")
+                await b.until("!document.querySelector('[data-act=settings-save]').disabled")
+                vis = await b.js("(()=>{const r=document.querySelector('[data-act=settings-save]').getBoundingClientRect();return r.bottom<=innerHeight+1&&r.top>=0;})()")
+                assert vis, 'the sticky footer keeps Save on screen'
+                await b.js("document.querySelector('[data-act=settings-save]').click()")
+                await b.until("__vm.ops.includes('vm.update') && /VM settings saved/.test(document.querySelector('#vms-settings').innerText)")
+                assert await b.js("JSON.stringify(__vm.args['vm.update'])==='{\"vm\":\"11111111-1111-4111-8111-111111111111\",\"vcpus\":4}'"), \
+                    await b.js("JSON.stringify(__vm.args['vm.update'])")
+                assert await b.js("document.querySelector('[data-act=settings-save]').disabled"), 'after a save nothing is dirty'
+                await b.js("document.querySelector('[data-act=settings-leave]').click()")
+                await b.until("!!document.querySelector('.vms-vmhead')")
+                # ---------------- snapshots
+                await b.until("!!document.querySelector('[data-act=snap-create]')")
+                await b.js("document.querySelector('[data-act=snap-create]').click()")
+                await b.until("!!document.querySelector('.uiprompt-in')")
+                await b.js("document.querySelector('.uiprompt-in').value='clean';document.querySelector('.uiconfirm [data-uc=\"1\"]').click()")
+                await b.until("[...document.querySelectorAll('.vms-snap')].some(e=>/clean/.test(e.innerText))")
+                assert await b.js("__vm.args['vm.snapshot.create'].name==='clean'")
+                # ---------------- ISO library
+                await b.js("document.querySelector('[data-act=back]').click()")
+                await b.until("!!document.querySelector('[data-act=isos]')")
+                await b.js("document.querySelector('[data-act=isos]').click()")
+                await b.until("[...document.querySelectorAll('.vms-iso')].some(e=>/debian\\.iso/.test(e.innerText))")
+                assert await b.js("!!document.querySelector('[data-act=iso-fetch]') && !!document.querySelector('input[data-act=iso-upload]')")
+                assert await b.js("document.querySelector('.vms').scrollWidth <= innerWidth + 1"), 'ISO screen: no horizontal scroll'
+                await b.js("document.querySelector('[data-act=to-host]').click()")
+                await b.until("!!document.querySelector('[data-act=isos]')")
+                # ---------------- add a host
+                if width < 900:
+                    await b.js("document.querySelector('[data-act=back]').click()")
+                await b.until("!!document.querySelector('[data-act=add]')")
+                host2 = await b.js("NostrTools.getPublicKey(Uint8Array.from('7'.repeat(64).match(/../g).map(x=>parseInt(x,16))))")
+                await b.js("document.querySelector('[data-act=add]').click()")
+                await b.until("!!document.querySelector('.uiprompt-in')")
+                await b.js("document.querySelector('.uiprompt-in').value=NostrTools.nip19.npubEncode('%s');document.querySelector('.uiconfirm [data-uc=\"1\"]').click()" % host2)
+                await b.until("!!document.querySelector('.uiprompt-in')")
+                await b.js("document.querySelector('.uiprompt-in').value='wss://vmhost2.invalid/relay';document.querySelector('.uiconfirm [data-uc=\"1\"]').click()")
+                await b.until("/Second host/.test(document.querySelector('#feed').innerText)")
+                assert await b.js("(__docs||[]).length>=1"), 'the host list was saved to pcai:vmhosts'
+                # ---------------- find hosts: one announced host answers, one does not
+                await b.js("""(()=>{const mk=(skHex,relay,name)=>{const sk=Uint8Array.from(skHex.match(/../g).map(x=>parseInt(x,16)));
+                    return NostrTools.finalizeEvent({kind:31310,created_at:Math.floor(Date.now()/1000),tags:[['d','posterchan-vmhost'],['relay',relay]],
+                      content:JSON.stringify({v:1,name,relays:[relay]})},sk);};
+                    window.__events.push(mk('6'.repeat(64),'wss://vmhost4.invalid/relay','Found host'), mk('5'.repeat(64),'wss://vmhost3.invalid/relay','Silent host'));})()""")
+                if width < 900:
+                    if await b.js("!document.querySelector('[data-act=find]')"):
+                        await b.js("document.querySelector('[data-act=back]').click()")
+                await b.until("!!document.querySelector('[data-act=find]')")
+                await b.js("document.querySelector('[data-act=find]').click()")
+                await b.until("/Added 1 host/.test(document.querySelector('#feed').innerText)")
+                found = await b.js("NostrTools.getPublicKey(Uint8Array.from('6'.repeat(64).match(/../g).map(x=>parseInt(x,16))))")
+                silent = await b.js("NostrTools.getPublicKey(Uint8Array.from('5'.repeat(64).match(/../g).map(x=>parseInt(x,16))))")
+                hosts = await b.js("PCVms._state.hosts.map(h=>h.pubkey)")
+                assert found in hosts and silent not in hosts, hosts
+                assert await b.js("document.querySelector('.vms').scrollWidth <= innerWidth + 1"), 'find screen: no horizontal scroll'
                 errors = await b.js("__errors.filter(e=>!/ResizeObserver/.test(e))")
                 assert not errors, errors
         finally:

@@ -35,6 +35,19 @@ def clean_name(n) -> str:
     return s[:48]
 
 
+def clean_iso_name(n) -> str:
+    """A library file name from a URL basename or an upload's name: ISO-id characters only, `.iso`
+    appended when missing, and '' when nothing usable is left."""
+    s = re.sub(r"[^A-Za-z0-9._+-]+", "-", str(n or "").strip())
+    s = re.sub(r"^[._+-]+", "", s)
+    if not s:
+        return ""
+    if not s.lower().endswith(".iso"):
+        s = s[:120] + ".iso"
+    s = s[:-4][:124] + s[-4:]
+    return s if _ISO_RE.match(s) and ".." not in s else ""
+
+
 def valid_uuid(u) -> str | None:
     s = str(u or "").strip().lower()
     return s if _UUID_RE.match(s) else None
@@ -107,6 +120,36 @@ class Storage:
                 continue
             out.append({"id": e.name, "name": e.name, "size": size})
         return out
+
+    # ---- phase 2 -----------------------------------------------------------------------------
+    def extra_disk_path(self, vm_uuid: str, target: str) -> Path:
+        """An added disk, named by its guest target (`disk-vdb.qcow2`). The target is validated here
+        too, not only where it was chosen: this is the function that turns it into a path."""
+        if not re.fullmatch(r"(vd|sd)[b-z]", str(target or "")):
+            raise PathEscape("not a disk target")
+        base = self.vm_dir(vm_uuid)
+        return self._inside(base / f"disk-{target}.qcow2", base)
+
+    @property
+    def iso_dir(self) -> Path:
+        return self.root / "isos"
+
+    def iso_incoming(self) -> Path:
+        """Where fetches and uploads are written until they are whole. Inside the library directory so
+        the final rename is atomic, and dot-named so `list_isos` (which demands `*.iso`) never shows one."""
+        d = self.iso_dir / ".incoming"
+        d.mkdir(parents=True, exist_ok=True, mode=0o750)
+        return d
+
+    def new_iso_target(self, name: str) -> Path:
+        """The final path for a NEW library entry. Refuses a name that is not an ISO id, and one that is
+        already taken (FileExistsError) — a fetch never silently replaces an installer a VM boots from."""
+        if not _ISO_RE.match(name or "") or "/" in name or "\\" in name or ".." in name:
+            raise PathEscape("not an ISO id")
+        p = self.iso_dir / name
+        if os.path.lexists(p):
+            raise FileExistsError(name)
+        return self._inside(p.parent, self.iso_dir) / name
 
     def is_managed_dir(self, vm_uuid: str) -> bool:
         try:

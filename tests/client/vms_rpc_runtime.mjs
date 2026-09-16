@@ -186,4 +186,32 @@ if (process.env.PC_VMRPC_INTEROP === '1') {
   assert.equal(bad.error.code, 'bad_host');
   console.log('ok refused + host error + unreachable');
 }
+
+// ---- a session signer signs the request AND reads the reply (phase 2) --------------------------
+{
+  const sessSk = new Uint8Array(32).fill(13), SESS = NT.getPublicKey(sessSk);
+  let seen = null;
+  const WS = relayClass((m, sock) => {
+    if (m[0] === 'REQ') sock.subId = m[1];
+    if (m[0] !== 'EVENT') return;
+    seen = m[1];
+    const body = JSON.parse(dec(hostSk, SESS, m[1].content));      // encrypted to the host FROM the session key
+    const reply = NT.finalizeEvent({ kind: 6310, created_at: Math.floor(Date.now() / 1000),
+      content: enc(hostSk, SESS, JSON.stringify({ v: 1, id: body.id, ok: true, result: { via: 'session' } })),
+      tags: [['e', m[1].id], ['p', SESS]] }, hostSk);
+    sock.deliver(['EVENT', sock.subId, reply]);
+  });
+  const rpc = R.createVmRpc(deps(WS));
+  const signer = { pubkey: SESS, sign: async t => NT.finalizeEvent(t, sessSk),
+                   enc: async (pk, t) => enc(sessSk, pk, t), dec: async (pk, c) => dec(sessSk, pk, c) };
+  const out = await rpc.call(HOSTOBJ, 'vm.list', {}, { signer });
+  assert.equal(out.ok, true, JSON.stringify(out));
+  assert.equal(seen.pubkey, SESS, 'the request must be signed by the SESSION key, not the real one');
+  assert.deepEqual(out.result, { via: 'session' });
+  const plain = await rpc.call(HOSTOBJ, 'vm.list', {}, { retries: 0, timeout: 60 });
+  assert.equal(seen.pubkey, USER, 'without a signer the real key signs');
+  assert.equal(plain.noAnswer, true);
+  rpc.closeAll();
+  console.log('ok session signer');
+}
 console.log('ALL OK');
