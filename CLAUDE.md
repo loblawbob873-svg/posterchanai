@@ -450,10 +450,14 @@ would have handled it fine).
   **Gotchas:** (1) requesters are outside the WoT, so the kinds need their own branch in BOTH
   `server._on_event` and `thread._firehose_event` (+ the `#p:[node_pubkey]` firehose sub and the
   reload-upstream refresh) — `kinds.py` is the single rule, `tests/test_vmhost_relay_kinds.py` drives the
-  shipped closures; (2) a retry is a NEW event with the SAME `id` → the op journal returns the stored
+  shipped closures. That branch is for NON-members only (members keep the ordinary gate): a stranger's
+  5310 only while `vmhost_enabled` and p == [node], 6310/7310 only authored by the node (or a peer host),
+  31310 only from node/peer/operator; (2) a retry is a NEW event with the SAME `id` → the op journal returns the stored
   result (successes only); (3) "no answer" ≠ "no VMs" in the UI; (4) the console ticket travels in the
   first WS FRAME, never the URL, and the client sends `{t:go}` only after noVNC attached (RFB speaks
-  first); (5) access lists + `vmhost_enabled` save durably (503 on a short write); (6) clients never send
+  first); (5) access lists + `vmhost_enabled` save durably (503 on a short write, and the cache is put
+  back); (8) the VNC display needs `passwd` in the domain XML or QEMU runs it with NO auth and refuses
+  `set_password` — set it over QMP and READ the reply (virsh exits 0 on an error reply); (6) clients never send
   paths — ISO ids resolve and must stay inside `<storage>/isos` (symlinks out are refused); (7) libvirt
   group ≈ root. Not yet: hardware edit, snapshots, ISO fetch, session keys, discovery, cold migration.
 - **A GRANTED NIP-05 IS THE ENTITLEMENT — one predicate, four gates** (`app/services/nip05_access.py`;
