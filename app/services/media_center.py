@@ -594,26 +594,62 @@ def command(path, item, profile, number, encoder, output):
     return cmd + ["-avoid_negative_ts", "make_zero", "-f", "mpegts", str(output)]
 
 
+# Segments encoded AHEAD of the player. Every segment is made on demand by its own FFmpeg run, so
+# without this each request paid the whole encode before its first byte: measured on nas (RTX 3060,
+# 1080p HEVC 10-bit source) 1.2-1.4s per 6s segment, and up to 4.6s when a player's four parallel
+# requests queued behind max_transcodes=2 — all of it inside a per-viewer byte budget that leaves a
+# 480p stream only ~1.4x realtime to begin with. Encoding is ~4.5x realtime, so the next segments
+# are ready long before they are asked for.
+LOOKAHEAD = 2
+
+
+def prefetch(library, item, profile, number, count, config):
+    """Start encoding the next LOOKAHEAD segments into the cache, only on transcoder capacity that
+    is idle right now. Never queues behind or ahead of a viewer: a request that arrives for one of
+    these segments joins the running job (see `segment`), and nothing is started while every slot
+    is busy or a viewer's job is waiting for one."""
+    for ahead in range(number + 1, min(count, number + 1 + LOOKAHEAD)):
+        if len(_segment_jobs) >= config["max_transcodes"]:  # running AND waiting jobs
+            return
+        key = _segment_key(library, item, profile, ahead)
+        if key in _segment_jobs:
+            continue
+        _start_segment_job(key, library, item, profile, ahead, config, check_cache=True)
+
+
+def _segment_key(library, item, profile, number):
+    return json.dumps([library["folder"], item, profile, number, library["encoder"]], sort_keys=True)
+
+
+def _start_segment_job(key, library, item, profile, number, config, check_cache=False):
+    async def generate():
+        if check_cache:
+            cached = await asyncio.to_thread(cached_segment, library, item, profile, number)
+            if cached is not None:
+                return cached
+        async with transcode_slot(config):
+            return await asyncio.to_thread(transcode, library, item, profile, number, config)
+    job = asyncio.create_task(generate())
+    _segment_jobs[key] = job
+    def finished(task):
+        _segment_jobs.pop(key, None)
+        if not task.cancelled():
+            task.exception()  # Retrieve errors even if every viewer disconnected.
+    job.add_done_callback(finished)
+    return job
+
+
 async def segment(library, item, profile, number, config):
     """Coalesce concurrent viewers before reserving a transcoder slot."""
     cached = await asyncio.to_thread(cached_segment, library, item, profile, number)
     if cached is not None:
         return cached
-    key = json.dumps([library["folder"], item, profile, number, library["encoder"]], sort_keys=True)
+    key = _segment_key(library, item, profile, number)
     job = _segment_jobs.get(key)
     if job is None:
         if len(_segment_jobs) >= config["max_transcodes"] + config["max_streams"] * 2:
             raise RuntimeError("Media Center segment queue is full; retry shortly")
-        async def generate():
-            async with transcode_slot(config):
-                return await asyncio.to_thread(transcode, library, item, profile, number, config)
-        job = asyncio.create_task(generate())
-        _segment_jobs[key] = job
-        def finished(task):
-            _segment_jobs.pop(key, None)
-            if not task.cancelled():
-                task.exception()  # Retrieve errors even if every viewer disconnected.
-        job.add_done_callback(finished)
+        job = _start_segment_job(key, library, item, profile, number, config)
     # A disconnected viewer cannot cancel work another viewer shares, or release
     # the job slot while the FFmpeg thread is still running.
     return await asyncio.shield(job)

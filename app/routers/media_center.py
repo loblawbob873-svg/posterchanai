@@ -700,6 +700,7 @@ async def hls(library_id: str, item_id: str, asset: str, viewer: str = Query(max
         data = await media.segment(library, item, profile, number, config)
         # Revocation also takes effect while an uncached segment is encoding.
         await library_for(library_id, viewer)
+        media.prefetch(library, item, profile, number, count, config)
         return StreamingResponse(media.paced_bytes(data, viewer, config), media_type="video/mp2t", headers=PRIVATE)
     except asyncio.TimeoutError as error:
         raise HTTPException(503, "Transcoders are busy; retry shortly", headers={"Retry-After": "5"}) from error

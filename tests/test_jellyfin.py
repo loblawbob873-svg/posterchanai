@@ -1387,3 +1387,72 @@ def test_an_unknown_item_cannot_conjure_a_session(api):
         # because the write failed further downstream — a session had still been minted from a
         # guess, which is the thing worth refusing.
         assert jf._plays == {}, bogus
+
+
+def _first_segment(c, url):
+    master = c.get(url)
+    assert master.status_code == 200, master.text
+    variant = urljoin(url, next(line for line in master.text.splitlines() if line and not line.startswith('#')))
+    playlist = c.get(variant)
+    assert playlist.status_code == 200, playlist.text
+    return urljoin(variant, next(line for line in playlist.text.splitlines() if line and not line.startswith('#')))
+
+
+def test_resuming_after_a_long_pause_keeps_streaming(api, monkeypatch):
+    """Measured on server1: a viewer paused for ~50 minutes, play_record's 900s idle check expired
+    the session, the resume's progress report revived it as a progress-only record, and every
+    segment after that was `KeyError: 'profiles'` -> 500, which ended the film. The idle record
+    still held its ticket and the client's profiles; reviving must keep them."""
+    login = connect(api)
+    item, info = playable(api, login)
+    c, h = api.client, headers(login)
+    play_id = info['PlaySessionId']
+    url = '/jellyfin/' + info['MediaSources'][0]['TranscodingUrl']
+    segment = _first_segment(c, url)
+    async def encoded(*args):
+        return b'resumed-segment'
+    monkeypatch.setattr(media, 'segment', encoded)
+    chosen = jf._plays[play_id]['profiles']
+    jf._plays[play_id]['seen'] -= 901                                   # ← the long pause
+    body = {'PlaySessionId': play_id, 'ItemId': item['Id'], 'PositionTicks': 60000000}
+    assert c.post('/jellyfin/Sessions/Playing/Progress', headers=h, json=body).status_code == 204
+    assert jf._plays[play_id]['profiles'] == chosen
+    response = c.get(segment)
+    assert response.status_code == 200, response.text
+    assert response.content == b'resumed-segment'
+
+
+def test_a_revived_session_can_stream_again(api, monkeypatch):
+    """After a restart the record is rebuilt from a progress report with no stream ticket. The
+    client's next segment must be served (a fresh ticket, re-checked ACL), never a 500."""
+    login = connect(api)
+    item, info = playable(api, login)
+    c, h = api.client, headers(login)
+    play_id = info['PlaySessionId']
+    url = '/jellyfin/' + info['MediaSources'][0]['TranscodingUrl']
+    segment = _first_segment(c, url)
+    async def encoded(*args):
+        return b'rearmed-segment'
+    monkeypatch.setattr(media, 'segment', encoded)
+    jf._plays.clear()                                                   # ← the restart
+    body = {'PlaySessionId': play_id, 'ItemId': item['Id'], 'PositionTicks': 60000000}
+    assert c.post('/jellyfin/Sessions/Playing/Progress', headers=h, json=body).status_code == 204
+    response = c.get(segment)
+    assert response.status_code == 200, response.text
+    assert response.content == b'rearmed-segment'
+    assert c.get(url).status_code == 200
+    # The re-armed ticket still enforces the library ACL.
+    api.catalog['library:' + api.library['id']]['shared_with'] = []
+    assert c.get(segment).status_code in (403, 404)
+
+
+def test_stopping_encodings_of_a_revived_session_is_not_a_500(api):
+    login = connect(api)
+    item, info = playable(api, login)
+    c, h = api.client, headers(login)
+    play_id = info['PlaySessionId']
+    jf._plays.clear()
+    body = {'PlaySessionId': play_id, 'ItemId': item['Id'], 'PositionTicks': 60000000}
+    assert c.post('/jellyfin/Sessions/Playing/Progress', headers=h, json=body).status_code == 204
+    response = c.delete('/jellyfin/Videos/ActiveEncodings', headers=h, params={'PlaySessionId': play_id})
+    assert response.status_code == 204
