@@ -178,7 +178,11 @@ known list on screen.
 5. The client attaches noVNC to the socket, then sends `{"t":"go"}`; raw RFB flows both ways.
 
 Refusals are `{"t":"err","m":…}` messages, not HTTP statuses. Sessions end at
-`vmhost_console_max_minutes`, or when the VM is stopped/deleted or the user unassigned.
+`vmhost_console_max_minutes`, or when the VM is stopped/deleted or the user unassigned. A live console
+also RE-CHECKS its access (role, assignment, VM running, loopback display) right after it is
+registered and every 30 s, so access removed behind the service's back — a domain edited with virsh,
+a guest powered off from inside — closes it too; and stopping the host service (which a settings Save
+does, to restart it with the new configuration) closes every console the old service had open.
 
 Guests' VNC displays listen on **127.0.0.1 only** (the generated domain XML); a display found on any
 other address is refused. The address is read from the domain's own `<graphics><listen address>` in

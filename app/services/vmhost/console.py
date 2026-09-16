@@ -108,3 +108,20 @@ class ConsoleRegistry:
             except Exception:
                 pass
         return n
+
+    def close_all(self) -> int:
+        """Close EVERY open console and drop every unused ticket — the host service is stopping (a
+        settings Save restarts it with a NEW registry, and this one is the only thing that can reach
+        these sockets)."""
+        with self._lock:
+            self._tickets.clear()
+            victims = [c for per_vm in self._live.values() for (_pk, c) in per_vm.values()]
+            self._live.clear()
+        n = 0
+        for closer in victims:
+            try:
+                closer()
+                n += 1
+            except Exception:
+                pass
+        return n

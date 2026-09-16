@@ -321,6 +321,12 @@ async def stop() -> None:
     _release_lock(_state.get("lock_fd"))
     try:
         from . import service as service_mod
+        old = service_mod.current()
+        if old is not None:
+            # The next start builds a new service with a new console registry; this is the last moment
+            # anything can reach the sockets opened under the old configuration (whose access lists
+            # the Save may just have narrowed).
+            old.consoles.close_all()
         service_mod.set_current(None)
     except Exception:
         pass

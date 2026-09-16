@@ -33,6 +33,10 @@ router = APIRouter(tags=["vmhost"])
 ws_router = APIRouter()
 
 FIRST_FRAME_TIMEOUT = 20
+# A live console re-checks that its user may still reach the VM (role, assignment, running, loopback
+# display, same host service) this often — access removed behind the service's back (virsh by hand, a
+# guest powered off from inside) has no revoke to close the socket.
+RECHECK_EVERY = 30
 
 
 async def _refuse(ws: WebSocket, msg: str) -> None:
@@ -110,6 +114,36 @@ async def websocket_vmconsole(websocket: WebSocket):
         cid = reg.attach(ticket.vm, ticket.pubkey, lambda: loop.call_soon_threadsafe(done.set))
         deadline = time.monotonic() + svc.cfg.console_max_minutes * 60
 
+        async def still_allowed() -> str:
+            """'' while this console may stay open, otherwise why it must close. Fails CLOSED: a
+            check that cannot be made is not a check that passed."""
+            if vmsvc.current() is not svc:
+                return "console closed: the VM host restarted"
+            try:
+                await svc.console_target(ticket.pubkey, ticket.vm)
+            except VmHostError as e:
+                return "console closed: " + e.message
+            except Exception as e:
+                logger.warning("[vmhost] console access re-check failed: %s", e)
+                return "console closed: could not re-check access to this VM"
+            return ""
+
+        # Re-check once right after registering: a revoke that ran between the open-time check and
+        # attach() found nothing to close.
+        why = await still_allowed()
+        if why:
+            await _refuse(websocket, why)
+            return
+        reason = {"m": ""}
+
+        async def watch():
+            while True:
+                await asyncio.sleep(RECHECK_EVERY)
+                why = await still_allowed()
+                if why:
+                    reason["m"] = why
+                    return
+
         async def up():
             while True:
                 msg = await websocket.receive()
@@ -127,14 +161,17 @@ async def websocket_vmconsole(websocket: WebSocket):
                     return
                 await websocket.send_bytes(chunk)
 
-        tasks = [asyncio.create_task(up()), asyncio.create_task(down()), asyncio.create_task(done.wait())]
+        tasks = [asyncio.create_task(up()), asyncio.create_task(down()), asyncio.create_task(done.wait()),
+                 asyncio.create_task(watch())]
         try:
             finished, _ = await asyncio.wait(tasks, timeout=max(1.0, deadline - time.monotonic()),
                                              return_when=asyncio.FIRST_COMPLETED)
             if not finished:
                 await _refuse(websocket, "console session time limit reached")
             elif tasks[2] in finished:
-                await _refuse(websocket, "console closed: access to this VM changed")
+                await _refuse(websocket, "console closed: access to this VM changed, or the VM host restarted")
+            elif tasks[3] in finished:
+                await _refuse(websocket, reason["m"])
         finally:
             for t in tasks:
                 t.cancel()
