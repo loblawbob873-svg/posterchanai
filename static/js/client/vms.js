@@ -26,7 +26,7 @@
   const S = {
     pk: '', hosts: [], data: {}, screen: 'hosts', host: '', vm: '', filter: 'all',
     doc: { read: false, ok: false, at: 0 }, poll: null, booted: '', console: null, create: null,
-    busy: {},
+    busy: {}, mig: null,
   };
   let PC = null;
   let rpc = null;
@@ -372,6 +372,241 @@
     return true;
   }
 
+  // ---------------------------------------------------------------- migration (phase 3)
+  // A COLD migration to another host where this user is ALSO an admin: the source shuts the VM down,
+  // the target pulls its disks over HTTPS and defines it. Two things only this screen can do right:
+  //   * the authorization is signed HERE, encrypted to the TARGET (vmrpc.authorize) — the source only
+  //     carries it, so the target checks for itself that this person is one of its admins;
+  //   * progress arrives from BOTH hosts as 7310 events tagged to that authorization, and the status
+  //     is also POLLED on both, because a dropped socket must not freeze the bar at 43% for ever.
+  // A LOCKED migration (the hosts lost each other at the handoff) is shown with its split-brain risk
+  // spelled out, and force_reclaim needs a confirm plus the VM's name typed.
+  const MIG_FINAL = ['done', 'aborted', 'reclaimed', 'released'];
+  const MIG_CANCELLABLE = ['planned', 'quiescing', 'exporting', 'transferring'];
+  const fmtBytes = n => { n = Number(n) || 0; const u = ['B', 'KB', 'MB', 'GB', 'TB']; let i = 0;
+    while(n >= 1024 && i < u.length - 1){ n /= 1024; i++; } return (i ? n.toFixed(1) : String(n)) + ' ' + u[i]; };
+
+  function readMigForm(){
+    const M = S.mig, f = document.querySelector('#vms-mig');
+    if(!M || !f) return;
+    const sel = f.querySelector('[name=target]');
+    const t = sel ? sel.value : M.target;
+    if(t !== M.target){ M.target = t; M.pre = null; M.preErr = ''; }
+    const sa = f.querySelector('[name=start_after]'), fo = f.querySelector('[name=force_shutdown]');
+    if(sa) M.startAfter = !!sa.checked;
+    if(fo) M.force = !!fo.checked;
+  }
+
+  async function openMigrate(pk, v){
+    stopMigWatch();
+    const M = S.mig = { vm: v.uuid, name: v.name, target: '', startAfter: v.state === 'running', force: false,
+                        pre: null, preErr: '', busy: false, id: '', authzId: '', src: null, dst: null, peers: null, msg: '' };
+    S.screen = 'migrate';
+    paint();
+    for(const h of S.hosts) if(h.pubkey !== pk && !(S.data[h.pubkey] || {}).whoami) refresh(h.pubkey);
+    const r = await call(pk, 'vm.migrate.status', { vm: v.uuid }, { retries: 0 });
+    if(S.mig !== M) return;
+    if(r.ok){
+      M.peers = r.result.peers || [];
+      const active = (r.result.migrations || []).find(m => m.role === 'source' && !MIG_FINAL.includes(m.state));
+      if(active){ M.id = active.id; M.target = active.target; M.src = active; startMigWatch(pk); }
+    }else M.msg = r.noAnswer ? 'No answer from the host.' : (r.error.message || r.error.code);
+    paint();
+  }
+
+  async function migAuthz(pk, M){
+    const rr = await getRpc();
+    try{ return rr && await rr.authorize(M.target, 'vm.migrate.authorize', { source: pk, target: M.target, vm: M.vm }); }
+    catch(_){ return null; }
+  }
+
+  async function migPrecheck(pk){
+    const M = S.mig;
+    readMigForm();
+    if(!M || M.busy) return;
+    if(!M.target) return toast('choose the host to move it to');
+    M.busy = true; M.pre = null; M.preErr = ''; M.msg = 'Asking both hosts…'; paint();
+    const authz = await migAuthz(pk, M);
+    let r;
+    if(!authz) r = { ok: false, error: { code: 'signer', message: 'the authorization could not be signed' } };
+    else r = await call(pk, 'vm.migrate.precheck', { vm: M.vm, target: M.target, authz, start_after: M.startAfter },
+                        { timeout: 60000, retries: 0 });
+    if(S.mig !== M) return;
+    M.busy = false; M.msg = '';
+    if(r.noAnswer) M.preErr = 'No answer from this host.';
+    else if(!r.ok) M.preErr = r.error.message || r.error.code;
+    else M.pre = r.result;
+    paint();
+  }
+
+  async function migStart(pk){
+    const M = S.mig;
+    readMigForm();
+    if(!M || M.busy || !M.pre) return;
+    const th = hostOf(M.target);
+    const tname = (th && th.name) || short(M.target);
+    const size = M.pre.source && M.pre.source.total_bytes;
+    const msg = 'Move ' + M.name + ' to ' + tname + '? It is shut down first' +
+      (M.force ? ' (forced off if it does not stop in time)' : ' (the move is cancelled if it does not stop in time)') +
+      ', its disks' + (size ? ' (' + fmtBytes(size) + ')' : '') + ' are copied, and it cannot be used until the copy is done.' +
+      (M.startAfter ? ' It starts on ' + tname + ' when it arrives.' : '');
+    if(!await PC.uiConfirm(msg, { ok: 'Migrate' })) return;
+    if(S.mig !== M) return;
+    M.busy = true; M.msg = 'Starting the migration…'; paint();
+    const authz = await migAuthz(pk, M);
+    const r = authz ? await call(pk, 'vm.migrate', { vm: M.vm, target: M.target, authz, start_after: M.startAfter,
+                                                     force_shutdown: M.force }, { timeout: 90000 })
+                    : { ok: false, error: { code: 'signer', message: 'the authorization could not be signed' } };
+    if(S.mig !== M) return;
+    M.busy = false;
+    if(r.noAnswer){ M.msg = 'No answer from the host — open Migrate again to see whether it started.'; paint(); return; }
+    if(!r.ok){ M.msg = r.error.message || r.error.code; paint(); return; }
+    M.id = r.result.migration.id; M.authzId = authz.id; M.src = r.result.migration; M.msg = '';
+    toast('Migration started');
+    startMigWatch(pk);
+    paint();
+  }
+
+  async function startMigWatch(pk){
+    const M = S.mig;
+    if(!M || !M.id) return;
+    stopMigWatch();
+    M.poll = setInterval(() => migPoll(pk), 3000);
+    migPoll(pk);
+    const rr = await getRpc();
+    if(S.mig !== M || !rr || !M.authzId) return;
+    const urls = [hostOf(pk), hostOf(M.target)].filter(Boolean).map(h => h.relay);
+    const un = await rr.watch(urls, { kinds: [7310], authors: [pk, M.target], '#e': [M.authzId] }, async (ev) => {
+      if(S.mig !== M || !ev || !ev.pubkey) return;
+      try{
+        if(window.NostrTools && !window.NostrTools.verifyEvent(ev)) return;
+        const b = JSON.parse(await PC.nip44dec(ev.pubkey, ev.content));
+        if(!b || b.id !== M.id || !b.progress) return;
+        if(ev.pubkey === pk) M.src = Object.assign({}, M.src, b.progress);
+        else if(ev.pubkey === M.target) M.dst = Object.assign({}, M.dst, b.progress);
+        if(S.screen === 'migrate') paint();
+      }catch(_){}
+    });
+    if(S.mig !== M){ try{ un(); }catch(_){} return; }
+    M.unwatch = un;
+  }
+
+  function stopMigWatch(){
+    const M = S.mig;
+    if(!M) return;
+    if(M.unwatch){ try{ M.unwatch(); }catch(_){} M.unwatch = null; }
+    if(M.poll){ clearInterval(M.poll); M.poll = null; }
+  }
+
+  async function migPoll(pk){
+    const M = S.mig;
+    if(!M || !M.id || M.polling) return;
+    if(!inView() || S.screen !== 'migrate'){ stopMigWatch(); return; }
+    M.polling = true;
+    try{
+      const one = (host) => hostOf(host) ? call(host, 'vm.migrate.status', { migration: M.id }, { retries: 0, timeout: 8000 })
+                                         : Promise.resolve({ ok: false, noAnswer: true });
+      const [a, b] = await Promise.all([one(pk), M.target ? one(M.target) : Promise.resolve({ ok: false, noAnswer: true })]);
+      if(S.mig !== M) return;
+      const first = r => r.ok && r.result && (r.result.migrations || [])[0];
+      if(first(a)) M.src = Object.assign({}, M.src, first(a));
+      if(first(b)) M.dst = Object.assign({}, M.dst, first(b));
+      const srcDone = M.src && MIG_FINAL.includes(M.src.state);
+      const dstDone = !M.dst || MIG_FINAL.includes(M.dst.state) || (!b.ok && !b.noAnswer);
+      if(srcDone && dstDone){ stopMigWatch(); refresh(pk); if(M.target && hostOf(M.target)) refresh(M.target); }
+      if(S.screen === 'migrate') paint();
+    }finally{ M.polling = false; }
+  }
+
+  async function migCancel(pk){
+    const M = S.mig;
+    if(!M || !M.id) return;
+    if(!await PC.uiConfirm('Cancel moving ' + M.name + '? The copy stops, the other host throws away what it received, and the VM stays here (restarted if it was running).',
+                           { ok: 'Cancel migration', cancel: 'Keep going', danger: true })) return;
+    const r = await call(pk, 'vm.migrate.cancel', { migration: M.id }, { timeout: 30000, retries: 0 });
+    if(S.mig !== M) return;
+    if(r.noAnswer) toast('No answer from the host — nothing was confirmed');
+    else if(!r.ok) toast(r.error.message || r.error.code);
+    else{ M.src = Object.assign({}, M.src, r.result.migration); toast('Migration cancelled'); }
+    paint();
+    migPoll(pk);
+  }
+
+  async function migReclaim(pk, side){
+    const M = S.mig;
+    if(!M || !M.id || (side !== 'source' && side !== 'target')) return;
+    const th = hostOf(M.target);
+    const keeper = side === 'source' ? 'this host (' + ((hostOf(pk) || {}).name || short(pk)) + ')'
+                                     : 'the target (' + ((th && th.name) || short(M.target)) + ')';
+    if(!await PC.uiConfirm('SPLIT-BRAIN WARNING. You are deciding, WITHOUT the two hosts agreeing, that ' + keeper +
+        ' keeps ' + M.name + '. If the other host also holds a working copy and it gets started, two machines with the same identity will run and their disks will diverge — whatever is written to one is missing from the other. Continue only if you know where the VM really is. Make the same choice on both hosts.',
+        { ok: 'I understand the risk', danger: true })) return;
+    const typed = await PC.uiPrompt('Type the VM’s name (' + M.name + ') to force this decision', { placeholder: M.name, ok: 'Force reclaim' });
+    if(typed == null) return;
+    if(typed !== M.name) return toast('the name did not match — nothing was changed');
+    if(S.mig !== M) return;
+    const args = { migration: M.id, side, confirm: 'split-brain' };
+    const hosts = [pk].concat(M.target && th ? [M.target] : []);
+    const res = await Promise.all(hosts.map(h => call(h, 'vm.migrate.force_reclaim', args, { timeout: 60000, retries: 0 })));
+    const say = res.map((r, i) => (i === 0 ? 'This host: ' : 'Target: ') +
+      (r.noAnswer ? 'no answer — try again when it is reachable' : r.ok ? r.result.migration.state : (r.error.message || r.error.code)));
+    toast(say.join(' · '));
+    if(S.mig !== M) return;
+    migPoll(pk);
+  }
+
+  function migProgressHtml(pk, M){
+    const src = M.src || {}, dst = M.dst || {};
+    const th = hostOf(M.target);
+    const tname = (th && th.name) || short(M.target);
+    const total = dst.bytes_total || src.bytes_total || 0;
+    const done = dst.bytes_done || 0;
+    const pct = Math.max(0, Math.min(100, Math.round(dst.pct != null ? Number(dst.pct) : (total ? 100 * done / total : 0)) || 0));
+    const side = (label, x) => `<div class="vms-mig-side"><b>${esc(label)}</b><span class="vms-pill">${esc(x.state || '…')}</span><span class="vms-seen">${esc(x.error || x.msg || '')}</span></div>`;
+    let out = `<div class="vms-mig-bar" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow="${pct}"><i style="width:${pct}%"></i></div>
+      <div class="vms-seen vms-mig-pct">${pct}%${total ? ' · ' + esc(fmtBytes(done)) + ' of ' + esc(fmtBytes(total)) : ''}</div>
+      ${side('This host', src)}${side(tname, dst)}`;
+    if(src.state === 'done' || (dst.state === 'done' && src.state !== 'reclaimed'))
+      out += `<div class="vms-mig-done">Migrated — ${esc(M.name)} now lives on ${esc(tname)}.${src.retained ? ' This host keeps its old copy for a while.' : ''}</div>`;
+    if(src.state === 'aborted')
+      out += `<div class="vms-noanswer">The migration was stopped${src.error ? ': ' + esc(src.error) : ''}. The VM stays on this host.</div>`;
+    if(src.state === 'reclaimed' || dst.state === 'released')
+      out += `<div class="vms-noanswer">Force-reclaimed: the VM is kept on this host.</div>`;
+    if(src.state === 'locked' || dst.state === 'locked')
+      out += `<div class="vms-mig-locked"><b>The two hosts lost contact at the handoff.</b> Neither can tell whether the other still holds the VM, so both are locked and it cannot be started on either. If contact comes back this resolves itself. Otherwise decide which host KEEPS the VM — a forced decision risks split-brain: two running copies with diverging disks.
+        <div class="vms-actions"><button class="btn btn-red small" data-act="mig-reclaim" data-side="source">Keep it on this host</button>
+        <button class="btn btn-red small" data-act="mig-reclaim" data-side="target">Keep it on ${esc(tname)}</button></div></div>`;
+    out += `<div class="vms-actions">${MIG_CANCELLABLE.includes(src.state) ? '<button class="btn" data-act="mig-cancel">Cancel migration</button>' : ''}
+      <button class="btn small" data-act="mig-refresh">↻ Status</button></div>`;
+    return `<div id="vms-migprog" class="vms-mig" data-src="${esc(src.state || '')}" data-dst="${esc(dst.state || '')}">${out}</div>`;
+  }
+
+  function migrateScreen(pk){
+    const M = S.mig || {};
+    const head = `<div class="vms-head"><button class="btn small vms-back" data-act="back">‹ ${esc(M.name || 'VM')}</button><h2>Migrate ${esc(M.name || '')}</h2></div>`;
+    if(M.id) return head + migProgressHtml(pk, M);
+    const cands = S.hosts.filter(h => h.pubkey !== pk);
+    const opts = cands.map(h => {
+      const role = roleOf(h.pubkey);
+      const paired = !M.peers || M.peers.some(p => p.pubkey === h.pubkey);
+      const why = role !== 'admin' ? (role ? ' — you are not an admin there' : ' — checking…') : (!paired ? ' — not paired with this host' : '');
+      return `<option value="${esc(h.pubkey)}" ${role === 'admin' && paired ? '' : 'disabled'} ${M.target === h.pubkey ? 'selected' : ''}>${esc(h.name || short(h.pubkey))}${esc(why)}</option>`;
+    }).join('');
+    const pre = M.pre ? `<div class="vms-mig-pre">Ready: the target needs ${esc(M.pre.target.need_gib)} GiB and has ${esc(M.pre.target.free_gib)} GiB free · ${esc(M.pre.source.files)} file(s), ${esc(fmtBytes(M.pre.source.total_bytes))} to copy${M.pre.target.iso_available === false ? ' · its installer ISO is not on the target and will be detached' : ''}.</div>`
+      : M.preErr ? `<div class="vms-noanswer">${esc(M.preErr)}</div>` : '';
+    return head + `<form id="vms-mig" class="vms-form" onsubmit="return false">
+      <div class="vms-seen">A cold migration: the VM is shut down, its disks are copied to the other host, and it is defined there with its assignments, snapshots and settings. You must be an admin of both hosts. VMs with a TPM (Windows) cannot be moved yet.</div>
+      ${cands.length ? `<label>Move to<select class="input" name="target"><option value="">Choose a host…</option>${opts}</select></label>`
+        : `<div class="empty">Add the other host to your list first — you must be its admin too.</div>`}
+      <label class="vms-check"><input type="checkbox" name="start_after" ${M.startAfter ? 'checked' : ''}> Start it on the new host when it arrives</label>
+      <label class="vms-check"><input type="checkbox" name="force_shutdown" ${M.force ? 'checked' : ''}> Force it off if it does not shut down in time</label>
+      ${pre}
+      <div class="vms-createmsg">${esc(M.msg || '')}</div>
+      <div class="vms-actions"><button class="btn" data-act="mig-check" ${M.busy || !M.target ? 'disabled' : ''}>Check target</button>
+        <button class="btn btn-neon" data-act="mig-start" ${M.busy || !M.pre ? 'disabled' : ''}>Migrate</button></div>
+    </form>`;
+  }
+
   // ---------------------------------------------------------------- painting
   function bar(label, used, total, committed){
     if(!total) return '';
@@ -462,7 +697,7 @@
     const running = v.state === 'running' || v.state === 'paused';
     const b = (act, label, cls, on) => `<button class="btn ${cls || ''}" data-power="${act}" ${on && !S.busy[uuid + ':' + act] ? '' : 'disabled'}>${S.busy[uuid + ':' + act] ? '…' : esc(label)}</button>`;
     return `<div class="vms-head"><button class="btn small vms-back" data-act="back">‹ ${esc((h && h.name) || 'Host')}</button></div>
-      <div class="vms-vmhead"><h2>${esc(v.name)}</h2><span class="vms-pill vms-st-${esc(v.state)}">${esc(stateLabel(v.state))}</span></div>
+      <div class="vms-vmhead"><h2>${esc(v.name)}</h2><span class="vms-pill vms-st-${esc(v.state)}">${esc(stateLabel(v.state))}</span>${v.migration && v.migration.state ? `<span class="vms-pill vms-st-paused">migrating (${esc(v.migration.state)})</span>` : ''}</div>
       ${statusLine(pk)}
       <div class="vms-specs"><div><span>vCPUs</span><b>${esc(v.vcpus)}</b></div><div><span>Memory</span><b>${esc(v.ram_mib)} MiB</b></div>
         <div><span>Disk</span><b>${v.disk_gib ? esc(v.disk_gib) + ' GiB' : '—'}</b></div><div><span>Guest</span><b>${esc(v.guest || '—')} ${esc(v.firmware || '')}</b></div>
@@ -470,6 +705,7 @@
       ${role === 'admin' ? `<div class="vms-assign"><div class="vms-sub">Assigned to</div>
         ${(v.assigned || []).map(p => `<div class="vms-assignee"><span>${esc(short(p))}</span><button class="btn small" data-unassign="${esc(p)}">Remove</button></div>`).join('') || '<div class="vms-seen">Nobody — only admins can use it.</div>'}
         <button class="btn btn-ghost small" data-act="assign">+ Assign to an npub</button></div>
+        <div class="vms-actions"><button class="btn btn-ghost small" data-act="migrate">${v.migration && v.migration.state ? 'Migration status' : 'Migrate…'}</button></div>
         <div class="vms-danger"><button class="btn btn-red small" data-act="delete" ${v.state === 'shutoff' ? '' : 'disabled title="Shut it down first"'}>Delete VM</button></div>` : ''}
       <div class="vms-actions vms-power">
         ${b('start', 'Start', 'btn-neon', !running)}${b('shutdown', 'Shut down', '', running)}${b('reboot', 'Reboot', '', running)}${b('destroy', 'Force off', 'btn-red', running)}
@@ -540,6 +776,12 @@
 .vms-createmsg{color:var(--muted);min-height:1em}
 .vms-cold{display:flex;flex-direction:column;align-items:center}
 @media (max-width:1023px){.vms:not(.vms-wide) .vms-actions{position:sticky;bottom:0;background:var(--canvas);padding:10px 0;z-index:3}}
+.vms-mig{display:flex;flex-direction:column;gap:10px}
+.vms-mig-bar{position:relative;height:10px;border-radius:5px;background:var(--line);overflow:hidden}
+.vms-mig-bar i{position:absolute;left:0;top:0;bottom:0;background:var(--neon);border-radius:5px;transition:width .3s}
+.vms-mig-side{display:flex;align-items:center;gap:8px;flex-wrap:wrap;overflow-wrap:anywhere}
+.vms-mig-pre,.vms-mig-done{background:rgba(var(--accent2-rgb),.1);border:1px solid var(--line);border-radius:var(--r-sm);padding:8px 10px;font-size:14px}
+.vms-mig-locked{background:rgba(255,80,80,.1);border:1px solid rgba(255,80,80,.5);border-radius:var(--r-sm);padding:10px;font-size:14px;display:flex;flex-direction:column;gap:8px}
 .vmc{position:fixed;inset:0;z-index:10050;background:#000;display:flex;flex-direction:column}
 .vmc-bar{display:flex;gap:6px;align-items:center;padding:6px 8px;background:var(--bg2);color:var(--text);flex-wrap:wrap}
 .vmc-st{color:var(--muted);font-size:13px}.vmc-sp{flex:1}
@@ -571,6 +813,7 @@
     let main;
     if(S.screen === 'vm' && S.host) main = vmScreen(S.host, S.vm);
     else if(S.screen === 'create' && S.host) main = createScreen(S.host);
+    else if(S.screen === 'migrate' && S.host && S.mig) main = migrateScreen(S.host);
     else if((S.screen === 'host' || wide) && S.host && hostOf(S.host)) main = hostScreen(S.host, wide);
     else main = hostsScreen();
     // Keep what somebody is typing in the create form across a background repaint.
@@ -596,7 +839,8 @@
     on('[data-act=add]', () => addHost());
     on('[data-act=remove-host]', () => removeHost(S.host));
     on('[data-act=back]', () => {
-      if(S.screen === 'vm' || S.screen === 'create'){ S.screen = 'host'; S.vm = ''; S.create = null; }
+      if(S.screen === 'migrate'){ stopMigWatch(); S.mig = null; S.screen = 'vm'; }
+      else if(S.screen === 'vm' || S.screen === 'create'){ S.screen = 'host'; S.vm = ''; S.create = null; }
       else { S.screen = 'hosts'; if(!isWide(feed)) S.host = ''; }
       paint();
     });
@@ -609,6 +853,13 @@
     on('[data-act=delete]', () => { const v = ((S.data[S.host] || {}).vms || []).find(x => x.uuid === S.vm); if(v) del(S.host, v); });
     on('[data-act=create]', () => openCreate(S.host));
     on('[data-act=submit-create]', () => submitCreate(S.host));
+    on('[data-act=migrate]', () => { const v = ((S.data[S.host] || {}).vms || []).find(x => x.uuid === S.vm); if(v) openMigrate(S.host, v); });
+    on('[data-act=mig-check]', () => migPrecheck(S.host));
+    on('[data-act=mig-start]', () => migStart(S.host));
+    on('[data-act=mig-cancel]', () => migCancel(S.host));
+    on('[data-act=mig-refresh]', () => migPoll(S.host));
+    on('[data-act=mig-reclaim]', el => migReclaim(S.host, el.dataset.side));
+    feed.querySelectorAll('#vms-mig select, #vms-mig input').forEach(el => { el.onchange = () => { readMigForm(); paint(); }; });
   }
 
   // ---------------------------------------------------------------- entry
@@ -618,8 +869,9 @@
     const pk = me();
     if(pk !== S.pk){
       closeConsole();
+      stopMigWatch();
       Object.assign(S, { pk, hosts: [], data: {}, screen: 'hosts', host: '', vm: '', filter: 'all',
-                         doc: { read: false, ok: false, at: 0 }, create: null, busy: {} });
+                         doc: { read: false, ok: false, at: 0 }, create: null, busy: {}, mig: null });
       rpc = null;
       if(pk) loadCache();
     }
