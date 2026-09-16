@@ -69,7 +69,8 @@ def build_reply(node_sk: bytes, req_event_id: str, requester: str, payload: dict
 def build_announcement(node_sk: bytes, cfg, now: Optional[int] = None) -> dict:
     relays = [r for r in [cfg.public_relay] if r]
     content = {"v": 1, "name": cfg.display_name or "PosterChan VM host", "https": cfg.public_url,
-               "relays": relays, "proto": [PROTO_VERSION], "features": ["novnc"]}
+               "relays": relays, "proto": [PROTO_VERSION],
+               "features": ["novnc", "hardware", "snapshots", "iso-fetch", "sessions"]}
     tags = [["d", kinds.ANNOUNCE_D], ["alt", "PosterChan VM host"]] + [["relay", r] for r in relays]
     return nostr_event.build_event(node_sk, kinds.ANNOUNCE_KIND, json.dumps(content), tags,
                                    created_at=int(now if now is not None else time.time()))
@@ -105,8 +106,14 @@ class Transport:
         if not isinstance(eid, str) or eid in self.seen:
             return self._drop("already handled", ev)
         requester = str(ev.get("pubkey", "")).lower()
+        # The AUTHOR is who we talk to (decrypt from, reply to). The ACTOR is whose rights apply: the
+        # author itself, or — for a session key (sessions.py) — the real key that opened the session.
+        actor, session, session_state = requester, None, None
         if await self.service.role_of(requester) is None:
-            return self._drop("not on this host's lists", ev)        # a stranger: no reply at all
+            owner, session_state = self.service._sessions().lookup(requester)
+            if owner is None or await self.service.role_of(owner) is None:
+                return self._drop("not on this host's lists", ev)    # a stranger: no reply at all
+            actor, session = owner, requester
         if not nostr_event.verify_event(ev):
             return self._drop("bad signature", ev)
         self.seen.add(eid)
@@ -148,7 +155,13 @@ class Transport:
         async def progress(p: dict) -> None:
             await reply({"v": PROTO_VERSION, "id": rid, "progress": p}, kind=kinds.PROGRESS_KIND)
 
-        res = await self.service.handle(requester, body.get("op"), body.get("args", {}), rid, progress)
+        if session and session_state != "live":
+            # Answered, not dropped: silence here would read as "the host is offline" to the client.
+            return await reply({"v": PROTO_VERSION, "id": rid, "ok": False,
+                                "error": {"code": "session_expired",
+                                          "message": "this session has ended — open a new one"}})
+        res = await self.service.handle(actor, body.get("op"), body.get("args", {}), rid, progress,
+                                        session=session)
         if res is None:
             return None
         return await reply(res)
