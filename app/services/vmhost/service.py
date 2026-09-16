@@ -700,6 +700,8 @@ MIGRATION_OPS = {
     "vm.migrate.status":        ("admin", False),
     "vm.migrate.cancel":        ("admin", True),
     "vm.migrate.force_reclaim": ("admin", True),
+    "vm.retained.list":         ("admin", False),
+    "vm.retained.delete":       ("admin", True),
     # host ↔ host (only the keys in vmhost_peer_hosts). Not journaled: each is idempotent by state.
     "peer.migrate.precheck":    ("peer", False),
     "peer.migrate.begin":       ("peer", False),

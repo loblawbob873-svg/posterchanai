@@ -41,6 +41,7 @@ window.__requests=[];
 window.Capacitor={isNativePlatform:()=>false,Plugins:{App:{addListener:()=>({remove(){}})}}};
 const SRC_SK_HEX='9'.repeat(64), TGT_SK_HEX='7'.repeat(64);
 const UUID='11111111-1111-4111-8111-111111111111';
+const ASSIGNED='7a'.repeat(32);
 window.__mig={id:'',authz:'',src:'',dst:'',pct:0,ops:[],authzOk:false,hold:false,lock:false,reclaim:[],cancel:0,delivered:0,n:0};
 const origFetch=window.fetch.bind(window);
 window.fetch=async function(url,opts={}){
@@ -63,7 +64,7 @@ function authzOk(a,me){
     if(!(a.tags||[]).some(t=>t[0]==='p'&&t[1]===keys('target').pk))return false;
     const ck=NostrTools.nip44.v2.utils.getConversationKey(keys('target').sk,a.pubkey);
     const b=JSON.parse(NostrTools.nip44.v2.decrypt(a.content,ck));
-    return b.op==='vm.migrate.authorize'&&b.args.source===keys('source').pk&&b.args.target===keys('target').pk&&b.args.vm===UUID;
+    return b.op==='vm.migrate.authorize'&&b.args.source===keys('source').pk&&b.args.target===keys('target').pk&&b.args.vm===UUID&&JSON.stringify(b.args.assigned)===JSON.stringify([ASSIGNED]);
   }catch(_){return false;}
 }
 function emit(side,phase,extra){
@@ -86,7 +87,7 @@ function hostOp(side,op,args,me){
   if(op==='host.whoami')return {ok:true,result:{role:'admin',host:{name:side==='source'?'Source host':'Target host',version:1,features:['novnc','cold-migrate']}}};
   if(op==='host.info')return {ok:true,result:{name:'x',kvm:true,libvirt:true,vms:{running:1,total:1},cpu:{cores:8,load1:0.3},
     ram:{total_mib:32768,free_mib:20000,committed_mib:2048},disk:{total_gib:500,free_gib:400,committed_gib:20},limits:{}}};
-  if(op==='vm.list')return {ok:true,result:{vms:side==='source'?[{uuid:UUID,name:'alpha',state:'running',vcpus:2,ram_mib:2048,disk_gib:20,guest:'linux',firmware:'efi',autostart:true,labels:[],assigned:[],migration:{}}]:[],next:null}};
+  if(op==='vm.list')return {ok:true,result:{vms:side==='source'?[{uuid:UUID,name:'alpha',state:'running',vcpus:2,ram_mib:2048,disk_gib:20,guest:'linux',firmware:'efi',autostart:true,labels:[],assigned:[ASSIGNED],migration:{}}]:[],next:null}};
   if(op==='vm.migrate.status'){
     const peers=side==='source'?[{pubkey:keys('target').pk,relay:'wss://vmhost2.invalid/relay',https:'https://t.invalid'}]:[];
     if(args.migration){ if(args.migration!==__mig.id)return {ok:false,error:{code:'not_found',message:'no such migration'}};

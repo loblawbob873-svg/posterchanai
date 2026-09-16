@@ -937,7 +937,7 @@
 
   async function openMigrate(pk, v){
     stopMigWatch();
-    const M = S.mig = { vm: v.uuid, name: v.name, target: '', startAfter: v.state === 'running', force: false,
+    const M = S.mig = { vm: v.uuid, name: v.name, assigned: (v.assigned || []).slice(), target: '', startAfter: v.state === 'running', force: false,
                         pre: null, preErr: '', busy: false, id: '', authzId: '', src: null, dst: null, peers: null, msg: '' };
     S.screen = 'migrate';
     paint();
@@ -954,7 +954,9 @@
 
   async function migAuthz(pk, M){
     const rr = await getRpc();
-    try{ return rr && await rr.authorize(M.target, 'vm.migrate.authorize', { source: pk, target: M.target, vm: M.vm }); }
+    // `assigned` is what the TARGET will grant: it carries only the pubkeys this signature names, never the
+    // source's own copy of the list (a source host could otherwise hand anybody access on the target).
+    try{ return rr && await rr.authorize(M.target, 'vm.migrate.authorize', { source: pk, target: M.target, vm: M.vm, assigned: M.assigned || [] }); }
     catch(_){ return null; }
   }
 

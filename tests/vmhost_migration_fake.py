@@ -289,9 +289,12 @@ class World:
         return await io.roundtrip(host.relay_url, ev, {"kinds": [kinds.RES_KIND], "authors": [host.pk]},
                                   accept, timeout)
 
-    def authz(self, vm=VM, sk=ADMIN_SK, target=T, source=S, created_at=None):
-        return transport.build_request(sk, target, migrate.AUTHZ_OP, {"source": source, "target": target, "vm": vm},
-                                       os.urandom(8).hex(), created_at=created_at)
+    def authz(self, vm=VM, sk=ADMIN_SK, target=T, source=S, created_at=None, assigned=(USER,)):
+        """What the client signs: source, target, vm and — what the target will grant — the assigned list."""
+        args = {"source": source, "target": target, "vm": vm}
+        if assigned is not None:
+            args["assigned"] = list(assigned)
+        return transport.build_request(sk, target, migrate.AUTHZ_OP, args, os.urandom(8).hex(), created_at=created_at)
 
     async def close(self):
         for h in (self.S, self.T):

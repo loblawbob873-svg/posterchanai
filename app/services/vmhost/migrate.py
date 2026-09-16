@@ -682,14 +682,20 @@ class Pacer:
         if self.t0 is None:
             self.t0 = self.clock()
         self.sent += n
-        ahead = self.sent / self.rate - (self.clock() - self.t0)
+        now = self.clock()
+        ahead = self.sent / self.rate - (now - self.t0)
+        if ahead < -1.0:                      # idle for a while: carry at most one second of unused allowance
+            self.t0 = now - self.sent / self.rate - 1.0
+            ahead = -1.0
         if ahead > 0.002:
             await asyncio.sleep(ahead)
 
 
 # ====================================================================================== NIP-98
 def nip98_header(sk: bytes, url: str, method: str = "GET") -> str:
-    ev = nostr_event.build_event(sk, NIP98_KIND, "", [["u", url], ["method", method]])
+    # The nonce makes every header a distinct event: the source accepts each event id ONCE, and two honest
+    # requests for the same URL inside one second would otherwise be byte-identical.
+    ev = nostr_event.build_event(sk, NIP98_KIND, "", [["u", url], ["method", method], ["nonce", secrets.token_hex(8)]])
     return "Nostr " + base64.b64encode(json.dumps(ev).encode()).decode()
 
 
@@ -817,6 +823,8 @@ class Migrator:
         self._live: dict = {}            # mig -> {"phase","msg","bytes","total","at"}
         self._last_notify: dict = {}
         self._served: dict = {}          # mig -> {file index: [[start, end), …]} bytes served since `transferring`
+        self._pacers: dict = {}          # mig -> (mbps, Pacer): ONE rate for a migration, however many requests
+        self._nip98_seen: dict = {}      # transfer-route event id -> forget after
         self.closed = False
 
     @staticmethod
@@ -1109,6 +1117,8 @@ class Migrator:
         rec = self._rec_arg(args)
         if rec["role"] != "source":
             raise MigrationError("unsupported", "cancel a migration on its SOURCE host")
+        if rec["state"] == "released":
+            return await self._cancel_released(pk, rec, args)
         if rec["state"] not in SOURCE_PRE_HANDOFF:
             if rec["state"] in ("handed_off", "locked"):
                 raise MigrationError("conflict", "the VM was already handed off to the target — it can no longer be cancelled")
@@ -1118,6 +1128,89 @@ class Migrator:
         if rec["state"] != "aborted":
             raise MigrationError("conflict", f"the migration could not be cancelled (it is {rec['state']})")
         return {"migration": self.summary(rec)}
+
+    SPLIT_BRAIN = ("SPLIT-BRAIN RISK: this decision was made without the other host. If the other host "
+                   "also keeps or starts this VM, two copies will run with the same identity and "
+                   "diverging disks. Make the matching choice on the other host.")
+
+    async def _cancel_released(self, pk, rec, args):
+        """The target was force-kept (`released` here); cancelling now means taking the retained copy back while
+        the other host may be running the VM — the same decision force_reclaim makes, and it is confirmed the same
+        way."""
+        if args.get("confirm") != "split-brain":
+            raise MigrationError("conflict", self.SPLIT_BRAIN + " The target host was chosen to keep this VM; "
+                                 "cancelling brings this host's retained copy back. Confirm with confirm: split-brain.")
+        async with self._lock(rec["id"]):
+            rec = self.store.get(rec["id"])
+            if rec["state"] != "released":
+                raise MigrationError("conflict", f"the migration is {rec['state']}")
+            if not rec.get("retained") or rec.get("retained_reaped"):
+                raise MigrationError("conflict", "this host no longer keeps a copy of the VM")
+            await self._reclaim_on_source(rec)
+            rec.update(state="reclaimed", warning=self.SPLIT_BRAIN,
+                       cancelled_after_release={"by": pk, "at": _now_i()})
+            rec.setdefault("history", []).append([_now_i(), "reclaimed"])
+            await self._save(rec)
+        logger.warning("[vmhost] migration %s: released copy taken back by %s (split-brain confirmed)", rec["id"], pk[:12])
+        return {"migration": self.summary(rec), "warning": self.SPLIT_BRAIN}
+
+    # ------------------------------------------------------------------ retained copies (admin)
+    _RETAINED_RE = re.compile(r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}-\d{1,12}$")
+
+    def _retained_owner(self, name: str) -> Optional[dict]:
+        return next((r for r in self.store.all() if r.get("role") == "source" and r.get("retained") == name), None)
+
+    async def _op_vm_retained_list(self, pk, args):
+        base = self.storage.root / ".retained"
+
+        def scan():
+            out = []
+            try:
+                entries = sorted(os.scandir(base), key=lambda e: e.name)
+            except OSError:
+                return out
+            for e in entries:
+                if not self._RETAINED_RE.match(e.name) or not e.is_dir(follow_symlinks=False):
+                    continue
+                size = 0
+                try:
+                    for f in os.scandir(base / e.name):
+                        if f.is_file(follow_symlinks=False):
+                            size += f.stat(follow_symlinks=False).st_blocks * 512
+                except OSError:
+                    pass
+                out.append({"name": e.name, "bytes": size})
+            return out
+        items = await asyncio.to_thread(scan)
+        for it in items:
+            r = self._retained_owner(it["name"])
+            it.update(vm=r["vm"] if r else it["name"][:36], migration=r["id"] if r else "",
+                      state=r["state"] if r else "unknown", vm_name=r.get("name", "") if r else "",
+                      deletable=not r or r["state"] not in ("handed_off", "locked"))
+        return {"retained": items}
+
+    async def _op_vm_retained_delete(self, pk, args):
+        name = args.get("name")
+        if not isinstance(name, str) or not self._RETAINED_RE.match(name):
+            raise MigrationError("bad_request", "name must be a retained copy's name from vm.retained.list")
+        if args.get("confirm") != "delete":
+            raise MigrationError("bad_request", "deleting a retained copy cannot be undone — confirm with confirm: delete")
+        rec = self._retained_owner(name)
+        lock = self._lock(rec["id"]) if rec else asyncio.Lock()
+        async with lock:
+            rec = self._retained_owner(name)
+            if rec is not None and rec["state"] in ("handed_off", "locked"):
+                raise MigrationError("conflict", "this migration is not settled — its retained copy may be the only copy "
+                                                 "of the VM")
+            path = self.storage.root / ".retained" / name
+            if not path.is_dir() or path.is_symlink():
+                raise MigrationError("not_found", "no such retained copy")
+            await asyncio.to_thread(shutil.rmtree, path, True)
+            if rec is not None:
+                rec["retained_reaped"] = _now_i()
+                await self._save(rec)
+        logger.info("[vmhost] retained copy %s deleted by %s", name, pk[:12])
+        return {"deleted": name}
 
     async def _op_vm_migrate_force_reclaim(self, pk, args):
         rec = self._rec_arg(args)
@@ -1131,9 +1224,7 @@ class Migrator:
             if rec["state"] != "locked":
                 raise MigrationError("conflict", "force reclaim is only for a LOCKED migration (the other host "
                                                  f"could not be reached); this one is {rec['state']}")
-            warning = ("SPLIT-BRAIN RISK: this decision was made without the other host. If the other host "
-                       "also keeps or starts this VM, two copies will run with the same identity and "
-                       "diverging disks. Make the matching choice on the other host.")
+            warning = self.SPLIT_BRAIN
             rec["forced"] = {"side": side, "by": pk, "at": _now_i()}
             rec["warning"] = warning
             if rec["role"] == "source":
@@ -1301,8 +1392,9 @@ class Migrator:
                 if tstate == "done":
                     await self._mark_acked(mig)
                     return
-                if tstate in ("aborted", "unknown", "released"):
-                    # The target ANSWERED that it does not hold the VM: taking it back cannot split it.
+                if tstate in ("aborted", "released"):
+                    # The target ANSWERED that it does not hold the VM: taking it back cannot split it. ("unknown" —
+                    # a target whose journal forgot the migration — is not that answer.)
                     async with self._lock(mig):
                         rec = self.store.get(mig)
                         if rec["state"] in ("handed_off", "locked"):
@@ -1311,7 +1403,7 @@ class Migrator:
                             rec["error"] = f"the target reported {tstate} after the handoff — the VM was taken back"
                             await self._save(rec)
                     return
-                if tstate is None and st == "handed_off" and \
+                if tstate in (None, "unknown") and st == "handed_off" and \
                         time.time() - rec.get("handed_at", time.time()) > self.t.contact_deadline:
                     async with self._lock(mig):
                         rec = self.store.get(mig)
@@ -1579,6 +1671,22 @@ class Migrator:
             return {"state": "challenge", "challenge": {"nonce": rec["challenge"]["nonce"],
                                                         "ranges": rec["challenge"]["ranges"]}}
 
+    def _nip98_once(self, header: str) -> bool:
+        """A transfer header is good for ONE request: its event id is remembered for the freshness window."""
+        try:
+            ev = json.loads(base64.b64decode(header.strip().split(None, 1)[1], validate=True))
+            eid, created = str(ev["id"]), int(ev["created_at"])
+        except (ValueError, KeyError, IndexError, TypeError, AttributeError):
+            return False
+        now = time.time()
+        if len(self._nip98_seen) > 4096:
+            for k in [k for k, exp in self._nip98_seen.items() if exp < now]:
+                self._nip98_seen.pop(k, None)
+        if eid in self._nip98_seen:
+            return False
+        self._nip98_seen[eid] = max(created, now) + 2 * NIP98_SKEW
+        return True
+
     # ================================================================== source: serving the transfer
     async def serve_transfer(self, mig: str, index: str, authorization: Optional[str], range_header: Optional[str],
                              path: str):
@@ -1589,6 +1697,8 @@ class Migrator:
         expected = TRANSFER_PATH.format(mig=mig, index=index)
         if path != expected or not check_transfer_auth(authorization, expected, rec["target"],
                                                        self.svc.cfg.public_url):
+            return PlainTextResponse("unauthorized", status_code=401)
+        if not self._nip98_once(authorization):
             return PlainTextResponse("unauthorized", status_code=401)
         if rec["state"] not in ("exporting", "transferring"):
             return PlainTextResponse("this migration is not transferring", status_code=409)
@@ -1630,6 +1740,10 @@ class Migrator:
             status = 206
         chunk = self.t.chunk
         mbps = self.mcfg.transfer_max_mbps
+        cur_pacer = self._pacers.get(mig)
+        if cur_pacer is None or cur_pacer[0] != mbps:
+            cur_pacer = self._pacers[mig] = (mbps, Pacer(mbps))
+        pacer = cur_pacer[1]
 
         async def body():
             fh = await asyncio.to_thread(open, full, "rb")
@@ -1638,7 +1752,6 @@ class Migrator:
             try:
                 await asyncio.to_thread(fh.seek, start)
                 left = end - start + 1
-                pacer = Pacer(mbps)
                 served = start
                 while left > 0:
                     cur = self.store.get(mig)
@@ -1674,6 +1787,10 @@ class Migrator:
     # ================================================================== TARGET: peer ops (from the source)
     def verify_authz(self, ev, source: str, vm_uuid: str) -> str:
         """The admin's signed `vm.migrate.authorize` → the admin's pubkey, or MigrationError."""
+        return self.verify_authz_full(ev, source, vm_uuid)[0]
+
+    def verify_authz_full(self, ev, source: str, vm_uuid: str) -> tuple:
+        """(the admin's pubkey, the signed args) — or MigrationError."""
         bad = MigrationError("forbidden", "the migration request is not authorized by an admin of this host")
         if not isinstance(ev, dict) or ev.get("kind") != kinds.REQ_KIND or self.node_pk not in kinds.tag_values(ev, "p"):
             raise bad
@@ -1691,7 +1808,18 @@ class Migrator:
         if not isinstance(a, dict) or body.get("op") != AUTHZ_OP or a.get("source") != source \
                 or a.get("target") != self.node_pk or a.get("vm") != vm_uuid:
             raise bad
-        return str(ev["pubkey"]).lower()
+        return str(ev["pubkey"]).lower(), a
+
+    @staticmethod
+    def _signed_assignments(a: dict) -> list:
+        """The assignment list the target admin SIGNED. Absent = carry no assignments."""
+        got = a.get("assigned") if isinstance(a, dict) else None
+        if got is None:
+            return []
+        if not isinstance(got, list) or len(got) > MAX_ASSIGNED \
+                or not all(isinstance(x, str) and _HEX64.match(x) for x in got):
+            raise MigrationError("bad_request", "the authorization's assignment list is malformed")
+        return sorted(set(got))
 
     async def _op_peer_migrate_precheck(self, pk, args):
         mig = args.get("migration")
@@ -1702,7 +1830,8 @@ class Migrator:
         name = clean_name(vm.get("name"))
         if not isinstance(mig, str) or not _MIG_RE.match(mig) or not vm_uuid or not name or name != vm.get("name"):
             raise MigrationError("bad_request", "malformed precheck")
-        admin = self.verify_authz(args.get("authz"), pk, vm_uuid)
+        admin, signed = self.verify_authz_full(args.get("authz"), pk, vm_uuid)
+        assign_allow = self._signed_assignments(signed)
         if await self.svc.role_of(admin) != "admin":
             raise MigrationError("forbidden", "you are not an admin of the target host")
         if not dry:
@@ -1767,7 +1896,8 @@ class Migrator:
             rec = {"id": mig, "role": "target", "state": "prechecked", "vm": vm_uuid, "name": name,
                    "source": pk, "target": self.node_pk, "requester": admin, "authz_id": args["authz"]["id"],
                    "start_after": bool(args.get("start_after")), "bytes_total": total, "precheck_bytes": total,
-                   "created": _now_i(), "precheck": result, "history": [[_now_i(), "prechecked"]]}
+                   "created": _now_i(), "precheck": result, "history": [[_now_i(), "prechecked"]],
+                   "assign_allow": assign_allow}
             await self._save(rec)
         return result
 
@@ -2041,7 +2171,8 @@ class Migrator:
         if plan["uuid"] != rec["vm"] or plan["name"] != rec["name"]:      # never reached; never trusted either
             raise MigrationAbort("the rebuilt definition does not describe the migrating VM")
         snaps = validate_incoming_snapshots(manifest.get("snapshots") or [], plan)
-        meta = clean_incoming_meta(manifest.get("meta"), cfg=cfg, assign_allow=rec.get("assign_allow"))
+        allow = set(rec.get("assign_allow") or [])                 # only what the target admin signed
+        meta = clean_incoming_meta(manifest.get("meta"), cfg=cfg, assign_allow=allow)
         meta.migration = dict(migration)
         formats = dict(rec.get("formats") or {})
         for dk in plan["disks"]:
@@ -2058,7 +2189,7 @@ class Migrator:
         elif not (existing.meta and existing.meta.migration.get("id") == rec["id"]):
             raise MigrationAbort("a VM with this id already exists on this host")
         snap_domain = build_incoming_domain(plan, vm_dir, clean_incoming_meta(manifest.get("meta"), cfg=cfg,
-                                                                              assign_allow=rec.get("assign_allow")),
+                                                                              assign_allow=allow),
                                             cfg, formats, has_nvram)
         for s in snaps:
             await self.backend.snapshot_redefine(uuid, build_incoming_snapshot(s, snap_domain), str(vm_dir),
@@ -2135,11 +2266,15 @@ class Migrator:
             if res is not None and res.get("ok"):
                 await self._finalize_target(mig)
                 return
-            if res is not None and (res.get("error") or {}).get("code") in ("aborted", "not_found"):
+            code = (res.get("error") or {}).get("code") if res is not None else None
+            if code == "aborted":
                 await self._abort_target(mig, "the source host abandoned the migration", tell_source=False,
                                          allow_locked=True)
                 return
-            if res is None and rec["state"] == "defined" and time.time() - started > self.t.contact_deadline:
+            # not_found is NOT the source taking the VM back — only a journal that no longer knows this migration.
+            # Dropping this copy on its word could lose the only one; it counts as no answer (lock, then an admin).
+            if (res is None or code == "not_found") and rec["state"] == "defined" \
+                    and time.time() - started > self.t.contact_deadline:
                 async with self._lock(mig):
                     rec = self.store.get(mig)
                     if rec["state"] == "defined":
@@ -2301,10 +2436,11 @@ class Migrator:
         and expire prechecks that were never begun."""
         now = _now_i()
         for rec in list(self.store.all()):
-            if rec["role"] == "source" and rec["state"] == "done" and rec.get("acked_at") \
-                    and self.mcfg.keep_source_hours > 0 \
+            since = (rec.get("acked_at") if rec.get("state") == "done"
+                     else (rec.get("forced") or {}).get("at") if rec.get("state") == "released" else None)
+            if rec["role"] == "source" and since and self.mcfg.keep_source_hours > 0 \
                     and rec.get("retained") and not rec.get("retained_reaped") \
-                    and now - int(rec["acked_at"]) >= self.mcfg.keep_source_hours * 3600:
+                    and now - int(since) >= self.mcfg.keep_source_hours * 3600:
                 path = self.storage.root / ".retained" / rec["retained"]
                 await asyncio.to_thread(shutil.rmtree, path, True)
                 rec["retained_reaped"] = now

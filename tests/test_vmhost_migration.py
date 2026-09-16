@@ -20,6 +20,7 @@ What each test pins, and the failure it exists for:
 import asyncio
 import base64
 import json
+import os
 import time
 
 import httpx
@@ -240,7 +241,9 @@ def test_losing_contact_at_the_commit_point_locks_both_and_force_reclaim_resolve
 
 # ------------------------------------------------------------------------------------------ transfer route
 def _nip98(sk, url, method="GET", created_at=None):
-    ev = build_event(sk, 27235, "", [["u", url], ["method", method]], created_at=created_at)
+    # A nonce, as migrate.nip98_header adds: the source accepts each header event id once.
+    ev = build_event(sk, 27235, "", [["u", url], ["method", method], ["nonce", os.urandom(8).hex()]],
+                     created_at=created_at)
     return "Nostr " + base64.b64encode(json.dumps(ev).encode()).decode()
 
 
