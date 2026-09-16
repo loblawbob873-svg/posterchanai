@@ -407,6 +407,23 @@ def test_an_upload_longer_or_shorter_than_declared_is_discarded(upload_host):
     assert not (root / "isos" / "a.iso").exists() and no_parts(root)
 
 
+def test_an_oversized_upload_stops_reading_at_the_declared_size(tmp_path):
+    """Refusing at the END (size != declared) is not enough: a client that declared 10 bytes must not get
+    to write gigabytes to this host's disk first. Reading must stop as soon as the body passes the size."""
+    svc, be, root = make(tmp_path)
+    t = c(svc, ADMIN, "iso.upload_ticket", {"name": "c.iso", "size": 10})["result"]
+    consumed = []
+
+    async def body():
+        for i in range(1000):
+            consumed.append(i)
+            yield b"x" * 8
+    with pytest.raises(service_mod.VmHostError):
+        run(svc.receive_upload(t["ticket"], body()))
+    assert len(consumed) <= 2, f"kept reading {len(consumed)} chunks past the declared size"
+    assert no_parts(root) and not (root / "isos" / "c.iso").exists()
+
+
 def test_upload_refuses_oversize_tickets_and_a_revoked_admin(upload_host, monkeypatch):
     svc, be, root, client = upload_host
     assert c(svc, ADMIN, "iso.upload_ticket", {"name": "huge.iso", "size": 900 << 30}, "1")["error"]["code"] \
@@ -576,6 +593,8 @@ def test_sessions_survive_a_restart_and_expire(tmp_path):
     (lambda a: a.update(scope="admin"), "a scope other than use"),
     (lambda a: a.update(proof=build_event(bytes.fromhex("09" * 32), sessions.PROOF_KIND, a["proof"]["content"], [])),
      "a proof signed by some other key"),
+    (lambda a: a.update(proof=dict(build_event(bytes.fromhex("09" * 32), sessions.PROOF_KIND, a["proof"]["content"], []),
+                                   pubkey=a["pk"])), "a proof wearing the session key but signed by another"),
     (lambda a: a.update(proof=dict(a["proof"], content="posterchan-vmhost-session:" + ADMIN + ":1:x")),
      "a proof over somebody else's session"),
     (lambda a: a.update(pk=ADMIN), "a session key that is a real identity on the host"),
