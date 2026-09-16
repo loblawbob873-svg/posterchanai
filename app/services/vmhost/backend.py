@@ -471,6 +471,44 @@ class VirshBackend:
         elif code != 0 and not re.search(r"failed to get domain|domain not found|no domain", err + out, re.I):
             raise BackendError((err or out).strip()[:300] or "undefine failed")
 
+    async def img_info(self, path: str) -> dict:
+        """What a disk image IS, asked of qemu-img rather than of whoever sent it: {format, backing, data_file,
+        virtual_size}. `-U` (force-share) so a probe never takes a lock; a timeout because the image may be
+        hostile. See parse_img_info for the JSON it reads."""
+        code, out, err = await self._run([self.qemu_img, "info", "--output=json", "-U", "--", path], 60)
+        if code != 0:
+            raise BackendError((err or out).strip()[:300] or "qemu-img info failed")
+        return parse_img_info(out)
+
+
+def parse_img_info(text: str) -> dict:
+    """`qemu-img info --output=json` (QAPI ImageInfo). A backing file is `backing-filename` /
+    `full-backing-filename`; an external data file is `format-specific.data.data-file` (qcow2) and, on qemu >= 8,
+    also a `children` entry named `data-file`. Anything unreadable is an error, never "no backing file"."""
+    try:
+        j = json.loads(str(text or ""))
+    except ValueError:
+        raise BackendError("qemu-img gave an unreadable answer")
+    if not isinstance(j, dict) or not isinstance(j.get("format"), str):
+        raise BackendError("qemu-img gave an unreadable answer")
+    backing = j.get("full-backing-filename") or j.get("backing-filename") or ""
+    fs = j.get("format-specific") if isinstance(j.get("format-specific"), dict) else {}
+    data = fs.get("data") if isinstance(fs.get("data"), dict) else {}
+    data_file = data.get("data-file") or ""
+    for ch in j.get("children") or []:
+        if isinstance(ch, dict) and ch.get("name") in ("data-file", "backing"):
+            info = ch.get("info") if isinstance(ch.get("info"), dict) else {}
+            name = str(info.get("filename") or ch.get("name"))
+            if ch.get("name") == "data-file":
+                data_file = data_file or name
+            else:
+                backing = backing or name
+    try:
+        vsize = int(j.get("virtual-size") or 0)
+    except (TypeError, ValueError):
+        vsize = 0
+    return {"format": j["format"], "backing": str(backing), "data_file": str(data_file), "virtual_size": vsize}
+
 
 SNAPSHOT_NAME = r"[A-Za-z0-9][A-Za-z0-9_.-]{0,47}"
 

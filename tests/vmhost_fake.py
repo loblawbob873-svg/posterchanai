@@ -222,3 +222,13 @@ class FakeBackend:
         await self._enter("undefine_for_migration", vm_uuid, keep_nvram)
         self.domains.pop(vm_uuid, None)
         self.snapshots.pop(vm_uuid, None)
+
+    async def img_info(self, path):
+        """What qemu-img would say about a (fake) image: the qcow2 magic and backing-file offset of the header."""
+        await self._enter("img_info", path)
+        with open(path, "rb") as f:
+            hdr = f.read(16)
+        if hdr[:4] == b"QFI\xfb":
+            return {"format": "qcow2", "backing": "backing" if int.from_bytes(hdr[8:16], "big") else "",
+                    "data_file": "", "virtual_size": 0}
+        return {"format": "raw", "backing": "", "data_file": "", "virtual_size": 0}

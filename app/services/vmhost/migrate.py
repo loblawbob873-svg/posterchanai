@@ -517,7 +517,7 @@ def build_incoming_domain(plan: dict, vm_dir: Path, meta: domainxml.VmMeta, cfg,
     at = 0
     for dk in plan["disks"]:
         d = ET.Element("disk", {"type": "file", "device": "disk"})
-        ET.SubElement(d, "driver", {"name": "qemu", "type": formats.get(dk["name"], "qcow2")})
+        ET.SubElement(d, "driver", {"name": "qemu", "type": formats[dk["name"]]})
         ET.SubElement(d, "source", {"file": str(vm_dir / dk["name"])})
         ET.SubElement(d, "target", {"dev": dk["target"], "bus": "sata" if dk["target"].startswith("sd") else "virtio"})
         dev.insert(at, d)
@@ -1749,13 +1749,34 @@ class Migrator:
             if digest != f["sha256"]:
                 await asyncio.to_thread(part.unlink)
                 raise MigrationAbort(f"checksum mismatch for {name} — the copy is not what the source exported")
+            fmt = None
+            if f.get("role") == "disk":
+                fmt = await self._probe_disk(part, name)
             await asyncio.to_thread(os.replace, part, final)
             done_before += size
             async with self._lock(mig):
                 rec = self.store.get(mig)
+                if fmt:
+                    rec.setdefault("formats", {})[name] = fmt
                 rec.setdefault("verified", []).append(name)
                 rec["bytes_done"] = done_before
                 await self._save(rec)
+
+    async def _probe_disk(self, path: Path, name: str) -> str:
+        """Ask qemu-img what the received bytes ARE. A qcow2 may name a backing file or an external data file —
+        a path opened on THIS host when the VM runs — and the source's say-so about the format is not evidence.
+        The probed format is what `<driver type>` becomes, so libvirt never probes again."""
+        try:
+            info = await self.backend.img_info(str(path))
+        except BackendError as e:
+            raise MigrationAbort(f"{name} could not be inspected with qemu-img on this host: {e}")
+        if info.get("format") not in ("qcow2", "raw"):
+            raise MigrationAbort(f"{name} is a {str(info.get('format'))[:20]} image — only qcow2 and raw can be migrated")
+        if info.get("backing"):
+            raise MigrationAbort(f"{name} names a backing file, which would be opened on this host — refused")
+        if info.get("data_file"):
+            raise MigrationAbort(f"{name} names an external data file, which would be opened on this host — refused")
+        return info["format"]
 
     def _iso_resolver(self):
         def resolve(name):
@@ -1781,6 +1802,9 @@ class Migrator:
         meta = clean_incoming_meta(manifest.get("meta"), cfg=cfg, assign_allow=rec.get("assign_allow"))
         meta.migration = dict(migration)
         formats = dict(rec.get("formats") or {})
+        for dk in plan["disks"]:
+            if dk["name"] not in formats:        # a journal from before the probe existed: ask now, never assume
+                formats[dk["name"]] = await self._probe_disk(vm_dir / dk["name"], dk["name"])
         has_nvram = any(f.get("role") == "nvram" for f in files)
         xml = build_incoming_domain(plan, vm_dir, meta, cfg, formats, has_nvram)
         uuid = rec["vm"]

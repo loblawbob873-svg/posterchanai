@@ -31,7 +31,7 @@ def backend(answers=None):
 
 
 @pytest.mark.parametrize("name", ["dumpxml_inactive", "snapshot_names", "snapshot_dumpxml", "snapshot_redefine",
-                                  "undefine_for_migration"])
+                                  "undefine_for_migration", "img_info"])
 def test_the_real_backend_has_every_migration_primitive(name):
     assert callable(getattr(VirshBackend, name, None)), f"VirshBackend.{name} is missing"
 
