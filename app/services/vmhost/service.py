@@ -19,6 +19,8 @@ requester says about itself:
 from __future__ import annotations
 
 import asyncio
+import hashlib
+import json
 import logging
 import re
 import shutil
@@ -65,6 +67,12 @@ OPS = {
 
 _REQ_ID = re.compile(r"^[A-Za-z0-9_-]{1,64}$")
 _HEX64 = re.compile(r"^[0-9a-f]{64}$")
+
+
+def _args_hash(args: dict) -> str:
+    """Canonical hash of a request's arguments: key order and whitespace do not make a different op."""
+    raw = json.dumps(args, sort_keys=True, separators=(",", ":"), default=str)
+    return hashlib.sha256(raw.encode("utf-8")).hexdigest()
 
 
 class VmHostError(Exception):
@@ -300,11 +308,11 @@ class VmHostService:
         if not mutating:
             return await run()
         try:
-            res = await self.journal.run_once(pk, rid, op, run)
+            res = await self.journal.run_once(pk, rid, op, run, args_hash=_args_hash(args))
         finally:
             self.invalidate_domains()
         if res is None:
-            return err("bad_request", "that request id was already used for a different operation")
+            return err("bad_request", "that request id was already used for a different operation or arguments")
         return res
 
     # ---------------------------------------------------------------- views

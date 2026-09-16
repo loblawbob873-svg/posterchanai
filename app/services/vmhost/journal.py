@@ -6,7 +6,8 @@ TWO DIFFERENT QUESTIONS, and conflating them is how a retry turns into a second 
     by count). A relay redelivers on reconnect and
     the firehose can hand the same event over twice; either way it is dropped without an answer,
     because the first delivery already produced one.
-  * "Have I done this OPERATION?" — `OpJournal`, keyed on (requester, the request's own `id`). A
+  * "Have I done this OPERATION?" — `OpJournal`, keyed on (requester, the request's own `id`) and
+    checked against the op AND a hash of its arguments (a reused id for anything else is refused). A
     client that heard nothing retries with a NEW event (new created_at, new signature) carrying the
     SAME id. The event is new, so the seen-LRU cannot catch it; the journal returns the stored result
     instead of creating the VM, deleting the disk or rebooting the guest a second time. A retry that
@@ -136,8 +137,9 @@ class OpJournal:
         self.path = Path(path) if path else None
         self.ttl = ttl
         self.now = now
-        self._done: dict = {}          # (requester, id) -> (ts, op, response)
-        self._running: dict = {}       # (requester, id) -> asyncio.Future
+        self._done: dict = {}          # (requester, id) -> (ts, op, response, args hash)
+        self._running: dict = {}       # (requester, id) -> (asyncio.Future, op, args hash)
+        self._write_lock: asyncio.Lock | None = None
         self._load()
 
     def _load(self) -> None:
@@ -150,7 +152,8 @@ class OpJournal:
                     try:
                         rec = json.loads(line)
                         if rec.get("t", 0) >= cutoff:
-                            self._done[(rec["r"], rec["id"])] = (rec["t"], rec["op"], rec["res"])
+                            self._done[(rec["r"], rec["id"])] = (rec["t"], rec["op"], rec["res"],
+                                                                 str(rec.get("h", "")))
                     except (ValueError, KeyError, TypeError):
                         continue
         except OSError:
@@ -161,40 +164,53 @@ class OpJournal:
         for k in [k for k, v in self._done.items() if v[0] < cutoff]:
             self._done.pop(k, None)
 
-    def _persist(self) -> None:
-        if not self.path:
-            return
+    def _write(self, lines: list) -> None:
+        """Blocking: runs in a worker thread (see `_persist`)."""
         try:
             self.path.parent.mkdir(parents=True, exist_ok=True)
             tmp = self.path.with_suffix(".tmp")
             with open(tmp, "w", encoding="utf-8") as f:
-                for (r, i), (t, op, res) in self._done.items():
-                    f.write(json.dumps({"t": t, "r": r, "id": i, "op": op, "res": res}) + "\n")
+                f.writelines(lines)
             os.replace(tmp, self.path)
         except OSError:
             pass
+
+    async def _persist(self) -> None:
+        """Snapshot on the loop, write in a thread — never a synchronous file rewrite on the single
+        uvicorn worker's event loop. Writes are serialized so an older snapshot cannot land last."""
+        if not self.path:
+            return
+        if self._write_lock is None:
+            self._write_lock = asyncio.Lock()
+        async with self._write_lock:
+            lines = [json.dumps({"t": t, "r": r, "id": i, "op": op, "res": res, "h": h}) + "\n"
+                     for (r, i), (t, op, res, h) in list(self._done.items())]
+            await asyncio.to_thread(self._write, lines)
 
     def lookup(self, requester: str, req_id: str):
         self._prune()
         rec = self._done.get((requester, req_id))
         return rec[2] if rec else None
 
-    async def run_once(self, requester: str, req_id: str, op: str, fn):
+    async def run_once(self, requester: str, req_id: str, op: str, fn, args_hash: str = ""):
         """Run `fn()` at most once per (requester, id) within the TTL; every caller gets the same
-        response dict. A different op under a reused id is refused rather than answered with the
-        stored result of something else."""
+        response dict. A reused id carrying a different op OR different arguments (`args_hash`) is
+        refused (None) — never answered with the stored result of something else, and never run."""
         key = (requester, req_id)
         self._prune()
         rec = self._done.get(key)
         if rec is not None:
-            if rec[1] != op:
+            if rec[1] != op or rec[3] != args_hash:
                 return None
             return rec[2]
-        fut = self._running.get(key)
-        if fut is not None:
+        running = self._running.get(key)
+        if running is not None:
+            fut, r_op, r_hash = running
+            if r_op != op or r_hash != args_hash:
+                return None
             return await asyncio.shield(fut)
         fut = asyncio.get_running_loop().create_future()
-        self._running[key] = fut
+        self._running[key] = (fut, op, args_hash)
         try:
             res = await fn()
         except BaseException as e:
@@ -212,6 +228,6 @@ class OpJournal:
         # Only a SUCCESS is remembered. A refusal (busy, capacity, a libvirt hiccup) must let the
         # retry actually retry; remembering it would pin the failure for fifteen minutes.
         if isinstance(res, dict) and res.get("ok"):
-            self._done[key] = (self.now(), op, res)
-            self._persist()
+            self._done[key] = (self.now(), op, res, args_hash)
+            await self._persist()
         return res
