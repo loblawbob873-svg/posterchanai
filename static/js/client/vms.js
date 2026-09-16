@@ -214,9 +214,19 @@
     if(pk === LOCAL_PK) return false;
     try{ const m = PC.me && PC.me(); return !!(m && m.mode && m.mode !== 'local'); }catch(_){ return false; }
   }
-  const sessKey = () => 'pc_vms_sess:' + S.pk;
-  function readSess(){ try{ return JSON.parse(localStorage.getItem(sessKey()) || '{}') || {}; }catch(_){ return {}; } }
-  function writeSess(all){ try{ localStorage.setItem(sessKey(), JSON.stringify(all)); }catch(_){} }
+  // Session SECRETS live in memory, for this page and this account only. localStorage is readable by any script on
+  // the origin and outlives a sign-out; a reload costs one session.open (one signer prompt), which is the price.
+  const SESS = new Map();                                            // account pk -> { host pk: { sk, exp } }
+  function readSess(){ return SESS.get(S.pk) || {}; }
+  function writeSess(all){ if(S.pk) SESS.set(S.pk, all); }
+  function purgeStoredSessions(){                                    // what builds before this one persisted
+    try{
+      for(let i = localStorage.length - 1; i >= 0; i--){
+        const k = localStorage.key(i);
+        if(k && k.startsWith('pc_vms_sess:')) localStorage.removeItem(k);
+      }
+    }catch(_){}
+  }
   function dropSession(pk){ const all = readSess(); if(all[pk]){ delete all[pk]; writeSess(all); } }
   function signerFrom(skHex){
     const NT = window.NostrTools;
@@ -1553,7 +1563,9 @@
     PC = window.__PC;
     if(!PC){ return setTimeout(render, 50); }
     const pk = me();
+    if(!S.purged){ S.purged = true; purgeStoredSessions(); }
     if(pk !== S.pk){
+      SESS.clear();                                                  // sign-out or account switch: no key survives it
       closeConsole();
       stopMigWatch();
       Object.assign(S, { pk, hosts: [], data: {}, screen: 'hosts', host: '', vm: '', filter: 'all',

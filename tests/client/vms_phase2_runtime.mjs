@@ -37,8 +37,8 @@ function pcVMStub(log, impl){
   return new Proxy(obj, { get(t, k){ if(typeof k === 'string' && !(k in t) && k !== 'then') throw new Error('pcVM has no method ' + k); return t[k]; } });
 }
 
-function boot({ width = 1280, rpc, pcVM = null, mode = 'local', pc = {} } = {}){
-  const store = new Map();
+function boot({ width = 1280, rpc, pcVM = null, mode = 'local', pc = {}, preset = {} } = {}){
+  const store = new Map(Object.entries(preset));
   const feed = { _html: '', paints: [], scrollTop: 0,
     set innerHTML(v){ this._html = v; this.paints.push(v); }, get innerHTML(){ return this._html; },
     getBoundingClientRect: () => ({ width }), querySelector: () => null, querySelectorAll: () => [] };
@@ -48,7 +48,8 @@ function boot({ width = 1280, rpc, pcVM = null, mode = 'local', pc = {} } = {}){
   const g = {
     console, setTimeout, clearTimeout, setInterval: () => 0, clearInterval: () => {}, Date, JSON, Math, Promise,
     Uint8Array, TextEncoder, TextDecoder, crypto: globalThis.crypto, innerWidth: width,
-    localStorage: { getItem: k => store.has(k) ? store.get(k) : null, setItem: (k, v) => store.set(k, String(v)) },
+    localStorage: { getItem: k => store.has(k) ? store.get(k) : null, setItem: (k, v) => store.set(k, String(v)),
+                    removeItem: k => store.delete(k), key: i => [...store.keys()][i] ?? null, get length(){ return store.size; } },
     document: { hidden: false, head: { appendChild(){} }, documentElement: {}, body: { appendChild(){} },
       querySelector: s => s === '#feed' ? feed : null, getElementById: () => null,
       createElement: () => ({ style: {}, set textContent(v){} }) },
@@ -193,8 +194,11 @@ function hostCache(){
   await C(HOST, 'iso.list', {});
   await C(HOST, 'host.access.set', { allowed: [] });
   assert.ok(t.calls.every(c => !c.o.signer), 'management ops go out under the REAL key');
-  const stored = JSON.parse(t.store.get('pc_vms_sess:' + ME));
-  assert.ok(stored[HOST] && /^[0-9a-f]{64}$/.test(stored[HOST].sk));
+  // The session SECRET is never written to localStorage (readable by any script on the origin, and kept across
+  // sign-outs): it lives in memory for this page and this account only.
+  assert.ok(![...t.store.keys()].some(k => k.startsWith('pc_vms_sess:')), 'a session secret was persisted to localStorage');
+  assert.ok(![...t.store.values()].some(v => String(v).includes(opened[0].pk) || /"sk":"[0-9a-f]{64}"/.test(String(v))),
+            'no stored value carries the session key');
   // An ended session: dropped, the call falls back to the real key, and the next use op reopens.
   expireNext = true;
   t.calls.length = 0;
@@ -204,6 +208,26 @@ function hostCache(){
   await C(HOST, 'vm.get', { vm: 'x' });
   assert.equal(opened.length, 2, 'the next use op opens a fresh session');
   assert.notEqual(opened[1].pk, spk);
+  await C(HOST, 'vm.get', { vm: 'x' });
+  assert.equal(opened.length, 2, 'and reuses it');
+  // Sign-out / account switch drops every session secret of the account that left.
+  t.g.__PC.me = () => null;
+  t.g.PCVms.render();
+  t.g.__PC.me = () => ({ pubkey: ME, mode: 'nip46' });
+  t.g.PCVms.render();
+  await tick(30);
+  await C(HOST, 'vm.get', { vm: 'x' });
+  assert.equal(opened.length, 3, 'after a sign-out the old session key is gone: a new one is opened');
+}
+{
+  // A session secret an OLDER build left in localStorage is removed when the screen loads.
+  const t = boot({ mode: 'nip46', rpc: async () => ({ ok: true, result: {} }),
+                   preset: { ['pc_vms_sess:' + ME]: JSON.stringify({ [HOST]: { sk: 'ee'.repeat(32), exp: 9e9 } }),
+                             ['pc_vms_sess:' + 'ff'.repeat(32)]: '{}', ['pc_vms:' + ME]: JSON.stringify(hostCache()) } });
+  t.g.PCVms.render();
+  await tick(30);
+  assert.ok(![...t.store.keys()].some(k => k.startsWith('pc_vms_sess:')), 'legacy session secrets were purged');
+  assert.ok(t.store.has('pc_vms:' + ME), 'the host cache is not a secret and stays');
 }
 {
   const t = boot({ mode: 'local', rpc: async (h, op) => ({ ok: true, result: op === 'vm.list' ? { vms: [] } : {} }) });
