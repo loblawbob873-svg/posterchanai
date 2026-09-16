@@ -153,6 +153,21 @@ class Transport:
         self.buckets = TokenBuckets()
         self._pending = 0
         self._busy = {r: 0 for r in MAX_BUSY}
+        # This instance's in-flight request handlers. A reload stops the old Transport BEFORE the new service
+        # starts, and must not leave a request admitted under the old configuration (its access lists, its
+        # migrator) running to completion and replying after the Save.
+        self._tasks: set = set()
+        self.closed = False
+
+    async def close(self, timeout: float = 5.0) -> None:
+        self.closed = True
+        tasks = [t for t in self._tasks if not t.done()]
+        for t in tasks:
+            t.cancel()
+        if tasks:
+            done, pending = await asyncio.wait(tasks, timeout=timeout)
+            if pending:
+                logger.warning("[vmhost] %d request handler(s) did not stop within %ss", len(pending), timeout)
 
     def _is_peer(self, pk: str) -> bool:
         m = getattr(self.service, "migrator", None)
@@ -237,6 +252,8 @@ class Transport:
                        session: str | None = None, session_state: str | None = None) -> Optional[dict]:
         actor = actor or requester
         async def reply(payload: dict, kind: int = kinds.RES_KIND) -> Optional[dict]:
+            if self.closed:
+                return None                           # stopped mid-request: the old configuration says nothing more
             out = build_reply(self.node_sk, eid, requester, payload, kind=kind, now=int(self.now()))
             try:
                 ok = await self.publish(out)
@@ -276,7 +293,7 @@ class Transport:
 
     def spawn(self, ev: dict) -> None:
         """Listener callback: never block the recv loop on libvirt."""
-        if self._pending >= MAX_PENDING:
+        if self.closed or self._pending >= MAX_PENDING:
             return
         self._pending += 1
         released = [False]
@@ -293,7 +310,10 @@ class Transport:
                 logger.warning("[vmhost] request failed: %s", e)
             finally:
                 release()
-        _track(asyncio.create_task(_run()))
+        t = asyncio.create_task(_run())
+        self._tasks.add(t)
+        t.add_done_callback(self._tasks.discard)
+        _track(t)
 
 
 _tasks: set = set()
@@ -465,6 +485,11 @@ async def stop() -> None:
     if ev is not None:
         ev.set()
     t = _state.get("transport")
+    if t is not None:
+        try:
+            await t.close()                            # FIRST: nothing admitted under the old config keeps running
+        except Exception:
+            pass
     m = getattr(t.service, "migrator", None) if t else None
     if m is not None:
         try:

@@ -51,6 +51,7 @@ import secrets
 import shutil
 import time
 import uuid as _uuid
+import weakref
 import xml.etree.ElementTree as ET
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -175,6 +176,16 @@ class MigrationAbort(Exception):
 
 class Superseded(Exception):
     """Somebody else (a cancel, an abort from the peer) already moved this migration on: stop quietly."""
+
+
+class JournalBusy(RuntimeError):
+    """Another (unclosed) Migrator in this process holds this migration journal."""
+
+
+# ONE migrator per journal directory per process. A settings reload builds a new service and a new Migrator; if the
+# old one's tasks were still running they would save into the same journal files — a stale `defining` written over
+# `defined`. Weak references: a migrator that was dropped without close() cannot hold the journal for ever.
+_JOURNAL_OWNERS: "weakref.WeakValueDictionary" = weakref.WeakValueDictionary()
 
 
 class MigrationError(Exception):
@@ -794,6 +805,11 @@ class Migrator:
         self.publish = publish
         self.http_client = http_client or self._default_http
         self.t = timing or Timing()
+        self._journal_key = str((self.storage.state_dir / "migrations").resolve())
+        holder = _JOURNAL_OWNERS.get(self._journal_key)
+        if holder is not None and not holder.closed:
+            raise JournalBusy("another migrator is still running on this migration journal")
+        _JOURNAL_OWNERS[self._journal_key] = self
         self.store = MigrationStore(self.storage.state_dir / "migrations")
         self.store.load()
         self._locks: dict = {}
@@ -836,8 +852,12 @@ class Migrator:
         for t in list(self._tasks):
             t.cancel()
         await asyncio.gather(*self._tasks, return_exceptions=True)
+        if _JOURNAL_OWNERS.get(self._journal_key) is self:
+            del _JOURNAL_OWNERS[self._journal_key]
 
     async def _save(self, rec: dict) -> None:
+        if self.closed:
+            raise Superseded()          # a closed migrator (a reload, a stop) never writes the journal again
         rec["updated"] = _now_i()
         snapshot = json.loads(json.dumps(rec))      # what reaches disk is what this moment decided
         await asyncio.to_thread(self.store.write, snapshot)
@@ -929,6 +949,8 @@ class Migrator:
 
     # ------------------------------------------------------------------ op dispatch
     async def handle_op(self, op: str, pk: str, role: str, args: dict, progress) -> dict:
+        if self.closed:
+            raise MigrationError("busy", "the VM host is restarting — try again")
         name = "_op_" + op.replace(".", "_")
         fn = getattr(self, name, None)
         if fn is None:
