@@ -18,9 +18,12 @@ Three rules every call obeys:
 from __future__ import annotations
 
 import asyncio
+import ipaddress
+import json
 import os
 import re
 import shutil
+import xml.etree.ElementTree as ET
 from dataclasses import dataclass, field
 from typing import Optional, Protocol
 
@@ -106,12 +109,74 @@ def parse_uuid_list(text: str) -> list:
 
 
 def parse_vncdisplay(text: str) -> Optional[tuple]:
-    """`virsh vncdisplay` → `127.0.0.1:0` (display, not port) → ('127.0.0.1', 5900)."""
+    """`virsh vncdisplay` → `127.0.0.1:0` (display, not port) → ('127.0.0.1', 5900).
+
+    An EMPTY host is kept empty: virsh prints a bare `:0` when the display listens on `0.0.0.0` or `::`
+    (tools/virsh-domain.c cmdVNCDisplay), i.e. on EVERY address — the opposite of loopback."""
     m = re.search(r"^\s*(\[[^\]]+\]|[^:\s]*):(\d+)\s*$", str(text or ""), re.M)
     if not m:
         return None
-    host = m.group(1).strip("[]") or "127.0.0.1"
-    return host, 5900 + int(m.group(2))
+    return m.group(1).strip("[]"), 5900 + int(m.group(2))
+
+
+def is_loopback(host) -> bool:
+    """True only for an address that is loopback. Blank (= every address), `0.0.0.0`, `::` and any
+    unparseable value are NOT."""
+    h = str(host or "").strip().strip("[]")
+    if h == "localhost":
+        return True
+    try:
+        return ipaddress.ip_address(h).is_loopback
+    except ValueError:
+        return False
+
+
+def parse_vnc_graphics(xml_text: str) -> Optional[tuple]:
+    """(listen host, port) of a running domain's VNC display from `virsh dumpxml`, or None when it has
+    none, listens on a socket / nowhere, or has no allocated port (not running). The listen address
+    is read from the `<listen>` children (what libvirt actually bound) and falls back to the legacy
+    `listen=` attribute; a missing address is returned as "" — which is NOT loopback."""
+    try:
+        root = ET.fromstring(str(xml_text or "").strip())
+    except ET.ParseError:
+        return None
+    g = root.find("devices/graphics[@type='vnc']")
+    if g is None:
+        return None
+    try:
+        port = int(g.get("port") or -1)
+    except ValueError:
+        return None
+    if port <= 0:
+        return None
+    listens = g.findall("listen")
+    host = ""
+    if listens:
+        first = listens[0]
+        if first.get("type") not in ("address", "network"):
+            return None                              # socket / none: no TCP display to reach
+        host = first.get("address") or ""
+    else:
+        host = g.get("listen") or ""
+    return host, port
+
+
+def parse_qmp_reply(text: str) -> dict:
+    """A `virsh qemu-monitor-command` QMP reply. virsh exits 0 for an ERROR reply too, so the text is
+    the only verdict: `{"return": …}` is success; `{"error": {"class", "desc"}}` and anything that is
+    not a JSON object carrying `return` raise."""
+    try:
+        reply = json.loads(str(text or "").strip())
+    except ValueError:
+        raise BackendError("the QEMU monitor gave an unreadable reply")
+    if not isinstance(reply, dict):
+        raise BackendError("the QEMU monitor gave an unreadable reply")
+    if "error" in reply:
+        err = reply.get("error") if isinstance(reply.get("error"), dict) else {}
+        raise BackendError(f"QEMU refused: {str(err.get('desc') or err.get('class') or 'error')[:200]}")
+    if "return" not in reply:
+        raise BackendError("the QEMU monitor gave an unreadable reply")
+    return reply
 
 
 def parse_nodeinfo(text: str) -> dict:
@@ -290,17 +355,27 @@ class VirshBackend:
         await self._v(*args, timeout=15)
 
     async def vnc_endpoint(self, vm_uuid: str) -> Optional[tuple]:
+        """The display's (host, port), or None. The host is what the domain XML says libvirt BOUND —
+        `vncdisplay` alone cannot tell loopback from every-address (both can print `:N`). Callers
+        still refuse anything that is not loopback (`is_loopback`)."""
         try:
-            return parse_vncdisplay(await self._v("vncdisplay", vm_uuid, timeout=10))
+            ep = parse_vnc_graphics(await self._v("dumpxml", vm_uuid, timeout=10))
         except BackendError:
             return None
+        return ep if ep and is_loopback(ep[0]) else None
+
+    async def _qmp(self, vm_uuid: str, execute: str, arguments: dict) -> dict:
+        cmd = json.dumps({"execute": execute, "arguments": arguments}, separators=(",", ":"))
+        return parse_qmp_reply(await self._v("qemu-monitor-command", vm_uuid, cmd, timeout=10))
 
     async def set_vnc_password(self, vm_uuid: str, password: str, expire_s: int) -> None:
+        """Set the display password and its expiry over QMP, reading BOTH replies. A display defined
+        without `passwd` has no password auth and QEMU refuses this — which must reach the caller as a
+        failure, so no console ticket is issued for a display anybody could open."""
         if not re.fullmatch(r"[A-Za-z0-9]{1,8}", password or ""):
             raise BackendError("invalid VNC password", "internal")
-        await self._v("qemu-monitor-command", vm_uuid, "--hmp", f"set_password vnc {password}", timeout=10)
-        await self._v("qemu-monitor-command", vm_uuid, "--hmp", f"expire_password vnc +{int(expire_s)}",
-                      timeout=10)
+        await self._qmp(vm_uuid, "set_password", {"protocol": "vnc", "password": password})
+        await self._qmp(vm_uuid, "expire_password", {"protocol": "vnc", "time": f"+{int(expire_s)}"})
 
     async def img_create(self, path: str, size_gib: int) -> None:
         code, out, err = await self._run([self.qemu_img, "create", "-f", "qcow2", "--", path,

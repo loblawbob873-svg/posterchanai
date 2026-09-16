@@ -21,14 +21,12 @@ from __future__ import annotations
 import asyncio
 import logging
 import re
-import secrets
 import shutil
-import string
 import time
 from typing import Optional
 
 from . import domainxml
-from .backend import BackendError, DomainInfo
+from .backend import BackendError, DomainInfo, is_loopback
 from .config import VmHostConfig
 from .console import ConsoleRegistry
 from .journal import OpJournal
@@ -512,11 +510,18 @@ class VmHostService:
         if not self.consoles.rate_ok(pk):
             raise VmHostError("rate_limited", "too many console requests — wait a minute")
         ep = await self.backend.vnc_endpoint(d.uuid)
-        if not ep or ep[0] not in ("127.0.0.1", "::1", "localhost"):
+        if not ep or not is_loopback(ep[0]):
             raise VmHostError("unsupported", "this VM has no loopback VNC display")
         ttl = self.cfg.ticket_ttl_sec
-        pw = "".join(secrets.choice(string.ascii_letters + string.digits) for _ in range(8))
-        await self.backend.set_vnc_password(d.uuid, pw, ttl)
+        pw = domainxml.random_vnc_password()
+        try:
+            await self.backend.set_vnc_password(d.uuid, pw, ttl)
+        except BackendError as e:
+            # No password, no console: a display QEMU would not protect (one defined without `passwd`)
+            # is refused here rather than handed out with a password that guards nothing.
+            logger.warning("[vmhost] could not secure the console of %s: %s", d.uuid, e)
+            raise BackendError("could not set a console password on this VM's display — it may have "
+                               "been defined without VNC password auth (see docs/VM_HOSTING.md)")
         tok, exp = self.consoles.issue(d.uuid, pk, ttl)
         base = self.cfg.public_url
         if base.startswith("https://"):
@@ -539,7 +544,7 @@ class VmHostService:
         if d.state != "running":
             raise VmHostError("conflict", "the VM is not running")
         ep = await self.backend.vnc_endpoint(vm)
-        if not ep or ep[0] not in ("127.0.0.1", "::1", "localhost"):
+        if not ep or not is_loopback(ep[0]):
             raise VmHostError("unsupported", "this VM has no loopback VNC display")
         return ep
 

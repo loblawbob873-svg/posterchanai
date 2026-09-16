@@ -159,7 +159,10 @@ known list on screen.
 
 1. The client sends `console.ticket {vm}` over Nostr (VM must be running; 6 tickets/minute per npub).
 2. The host sets a fresh 8-character VNC password on the guest (QMP `set_password` + `expire_password`,
-   60 s) and returns `{ws, ticket, vnc_password, exp}` inside the NIP-44 result.
+   60 s), READS both QMP replies, and only then returns `{ws, ticket, vnc_password, exp}` inside the
+   NIP-44 result. A refused or unreadable reply refuses the ticket — there is no console without
+   authentication. (`virsh qemu-monitor-command` exits 0 for an error reply, and HMP prints its errors
+   as plain text, so the exit status alone says nothing.)
 3. The client opens `wss://<host>/ws/vmconsole` and sends `{"t":"open","ticket":…}` as the **first
    frame** — never a query string (a ticket in the URL is refused: URLs land in proxy logs).
 4. The host consumes the ticket (single use, 60 s, bound to that VM and npub), re-checks access and
@@ -170,7 +173,19 @@ Refusals are `{"t":"err","m":…}` messages, not HTTP statuses. Sessions end at
 `vmhost_console_max_minutes`, or when the VM is stopped/deleted or the user unassigned.
 
 Guests' VNC displays listen on **127.0.0.1 only** (the generated domain XML); a display found on any
-other address is refused. noVNC 1.5.0 is vendored in `static/vendor/novnc/` (see its README).
+other address is refused. The address is read from the domain's own `<graphics><listen address>` in
+`virsh dumpxml`, not from `virsh vncdisplay`, which prints a bare `:0` for a display on `0.0.0.0`/`::`
+— every address — that is easy to mistake for loopback.
+
+**The VNC password.** Every generated domain carries `passwd="<random>"` with `passwdValidTo` in 1970,
+so QEMU starts the display WITH password authentication and nobody holds a valid password until a
+ticket rotates it. A display defined WITHOUT `passwd` has no password auth at all, and QEMU refuses
+`set_password` for it. **Such VMs are refused a console, not migrated**: that covers any VM created by
+phase 1 before this was fixed, and any VM defined by hand. To give one a console, shut it down, add a
+password to its display (`virsh edit <vm>` →
+`<graphics type='vnc' … passwd='xxxxxxxx' passwdValidTo='1970-01-01T00:00:01'>`) and start it again
+(a password auth mode is only chosen when QEMU starts). While an unexpired ticket for a VM exists,
+further tickets reuse its password, so two people sharing a VM do not lock each other out. noVNC 1.5.0 is vendored in `static/vendor/novnc/` (see its README).
 
 Known trade-off: the VNC password is passed to `virsh qemu-monitor-command` as an argument, so another
 local user on the host could see it in the process list for a moment. It expires in 60 seconds and

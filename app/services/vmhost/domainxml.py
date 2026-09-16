@@ -18,6 +18,8 @@ clamped integers) or escaped here, and the tests parse the output back to prove 
 """
 from __future__ import annotations
 
+import secrets
+import string
 import time
 import xml.etree.ElementTree as ET
 from dataclasses import dataclass, field
@@ -111,6 +113,19 @@ class DomainSpec:
     network: str = "default"
     bridge: str = ""
     meta: VmMeta | None = None
+    vnc_passwd: str = ""          # blank = a fresh random one (the normal case; tests may pin it)
+
+
+# VNC's DES challenge uses at most 8 characters. The define-time password is ALREADY EXPIRED
+# (`passwdValidTo` in the past): QEMU then runs the display with password auth and nobody holds a
+# valid password until a console ticket rotates it over QMP. Without `passwd` QEMU starts the display
+# with NO authentication and refuses `set_password` outright — the console was open to anybody who
+# reached the loopback port, while the ticket carried a password that protected nothing.
+VNC_PASSWD_EXPIRED = "1970-01-01T00:00:01"
+
+
+def random_vnc_password() -> str:
+    return "".join(secrets.choice(string.ascii_letters + string.digits) for _ in range(8))
 
 
 def build_domain_xml(spec: DomainSpec) -> str:
@@ -148,9 +163,10 @@ def build_domain_xml(spec: DomainSpec) -> str:
         f'<disk type="file" device="disk"><driver name="qemu" type="qcow2"/><source file={_a(spec.disk_path)}/>'
         f'<target dev="{disk_dev}" bus="{disk_bus}"/></disk>{cdrom}{nic}'
         # VNC on loopback ONLY. The console route is the one door; a VNC port on a public address is
-        # an unauthenticated keyboard for anyone who can reach it. The password is set per console
-        # ticket (QMP set_password) and expires with it.
-        f'<graphics type="vnc" autoport="yes" listen="127.0.0.1"><listen type="address" address="127.0.0.1"/></graphics>'
+        # an unauthenticated keyboard for anyone who can reach it. The define-time password is random
+        # and already expired; each console ticket sets a fresh one over QMP that expires with it.
+        f'<graphics type="vnc" autoport="yes" listen="127.0.0.1" passwd={_a(spec.vnc_passwd or random_vnc_password())}'
+        f' passwdValidTo="{VNC_PASSWD_EXPIRED}"><listen type="address" address="127.0.0.1"/></graphics>'
         # No accel3d / gl: a headless host has no GL context to give it (see the module comment).
         f'<video><model type="virtio" heads="1" primary="yes"/></video>'
         f'<channel type="unix"><target type="virtio" name="org.qemu.guest_agent.0"/></channel>'

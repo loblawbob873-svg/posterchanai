@@ -428,6 +428,8 @@ def test_virsh_argv_is_strict_and_never_a_shell():
             return 0, "Name: x\nUUID: %s\nState: shut off\nCPU(s): 1\nMax memory: 1048576 KiB\n" % U1, ""
         if argv[3] == "metadata" and "--set" not in argv:
             return 0, '<vm v="1" owner="%s"/>' % DB_ADMIN, ""
+        if argv[3] == "qemu-monitor-command":
+            return 0, '{"return":{},"id":"libvirt-1"}', ""      # QMP success reply, as virsh prints it
         return 0, "", ""
     v = b.VirshBackend("qemu:///system", runner=runner)
 
