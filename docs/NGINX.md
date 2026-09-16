@@ -64,6 +64,14 @@ need them most, and nothing errors; the relay just starts publishing the nginx *
 its NIP-11 host. Declaring the WebSocket pair at the server level is safe for ordinary requests, as
 the `map` yields `close` whenever a client didn't ask to upgrade.
 
+**VM migration transfer** (`location ^~ /api/vmhost/transfer/`, only matters on a VM host — see
+`docs/VM_HOSTING.md`): during a cold migration the TARGET host pulls the source's disk images from
+`/api/vmhost/transfer/<migration>/<file>` with HTTP Range requests. The location turns off
+`proxy_buffering` and `proxy_request_buffering` (a buffered multi-GB response is spooled to nginx's
+temp directory before the target sees a byte) and keeps the 3600s timeouts. Like every other
+location it sets no `proxy_set_header`. A host behind a proxy that cannot stream this (or that
+strips `Authorization` / `Range`) cannot be a migration source.
+
 ## Mini apps (webxdc): a second hostname, `xdc.example.com`
 
 `.xdc` games, polls and shared editors are code somebody else wrote. They run in an iframe, and the
