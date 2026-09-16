@@ -1123,3 +1123,80 @@ def test_an_empty_listing_says_whether_libraries_exist_that_this_viewer_cannot_o
     docs["index"]["ids"], user.nostr_npub, user.is_admin = [], OWNER, True
     empty = client.get("/api/media-center").json()
     assert empty["libraries"] == [] and empty["unshared"] == 0 and empty["viewer"] == OWNER
+
+
+def _lookahead_harness(monkeypatch, encode):
+    monkeypatch.setattr(media, "_job_condition", asyncio.Condition())
+    monkeypatch.setattr(media, "_segment_jobs", {})
+    monkeypatch.setattr(media, "_active_transcodes", 0)
+    monkeypatch.setattr(media, "cached_segment", lambda *args: None)
+    monkeypatch.setattr(media, "transcode", encode)
+
+
+def test_next_segments_are_encoded_before_the_player_asks(monkeypatch):
+    """Every segment was encoded only when requested, so each one paid ~1.3s (nas, RTX 3060) before
+    its first byte, inside a byte budget that leaves 480p ~1.4x realtime. After serving segment n the
+    next ones start on idle capacity, and the player's request for n+1 joins that job."""
+    import threading
+    import time
+    calls = []
+    lock = threading.Lock()
+    def encode(library, item, profile, number, config):
+        with lock:
+            calls.append(number)
+        time.sleep(.05)
+        return b"seg%d" % number
+    async def exercise():
+        _lookahead_harness(monkeypatch, encode)
+        library = {"folder": "/media", "encoder": "cpu"}
+        config = {**media.DEFAULT_LIMITS, "max_transcodes": 2}
+        item = {"id": "a"}
+        assert await media.segment(library, item, "480p", 4, config) == b"seg4"
+        media.prefetch(library, item, "480p", 4, 100, config)
+        assert sorted(json.loads(k)[3] for k in media._segment_jobs) == [5, 6]
+        head_start = next(job for key, job in media._segment_jobs.items() if json.loads(key)[3] == 5)
+        assert await media.segment(library, item, "480p", 5, config) == b"seg5"
+        assert head_start.done()                      # the request joined it: no second encode of 5
+        await asyncio.gather(*list(media._segment_jobs.values()))
+        assert sorted(calls) == [4, 5, 6]
+    asyncio.run(exercise())
+
+
+def test_lookahead_never_takes_capacity_a_viewer_is_waiting_for(monkeypatch):
+    import threading
+    release = threading.Event()
+    calls = []
+    def encode(library, item, profile, number, config):
+        calls.append(number)
+        assert release.wait(5)
+        return b"x"
+    async def exercise():
+        _lookahead_harness(monkeypatch, encode)
+        library = {"folder": "/media", "encoder": "cpu"}
+        config = {**media.DEFAULT_LIMITS, "max_transcodes": 2}
+        busy = [asyncio.create_task(media.segment(library, {"id": "b"}, "360p", n, config)) for n in (0, 1)]
+        await asyncio.sleep(.05)
+        media.prefetch(library, {"id": "a"}, "480p", 0, 100, config)   # both slots in use
+        assert len(media._segment_jobs) == 2
+        release.set()
+        await asyncio.gather(*busy)
+        media.prefetch(library, {"id": "a"}, "480p", 98, 100, config)  # the last segment is 99
+        assert [json.loads(k)[3] for k in media._segment_jobs] == [99]
+        await asyncio.gather(*list(media._segment_jobs.values()))
+        assert sorted(calls) == [0, 1, 99]
+    asyncio.run(exercise())
+
+
+def test_serving_a_segment_starts_the_lookahead(api, monkeypatch):
+    client, docs, user, folder = api
+    seed(docs, folder)
+    started = []
+    async def encoded(*args):
+        return b"segment"
+    monkeypatch.setattr(media, "segment", encoded)
+    monkeypatch.setattr(media, "prefetch", lambda library, item, profile, number, count, config:
+                        started.append((item["id"], profile, number, count)))
+    url = client.post("/api/media-center/abc/play/movie").json()["url"]
+    response = client.get(url.replace("master.m3u8", "360p-0.ts"))
+    assert response.status_code == 200 and response.content == b"segment"
+    assert started == [("movie", "360p", 0, 3)]

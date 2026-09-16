@@ -929,6 +929,41 @@ def reported_play(auth, body):
     return play_id, play_record(auth, play_id)
 
 
+async def stream_record(request, auth, db, lib, item, uid, profiles, tracks, audio_index, subtitle_index):
+    """A play record that can serve HLS: a fresh native ticket plus the profiles/tracks it may use."""
+    playback = await media_call(request, auth, db, f"/{lib['id']}/play/{item['id']}", 'POST')
+    playback['url'] += '&' + urlencode({'audio': audio_index, 'subtitle': subtitle_index})
+    return {'token': digest(auth.token), 'item': uid, 'url': playback['url'],
+            'seen': time.monotonic(), 'profiles': profiles, 'library_id': lib['id'], 'native_id': item['id'],
+            'audio_indices': [t['index'] for t in tracks if t['type'] == 'audio'],
+            'subtitle_indices': [t['index'] for t in tracks if t['type'] == 'subtitle'],
+            'text_indices': [t['index'] for t in tracks if t['type'] == 'subtitle' and t['text']]}
+
+
+async def rearm_play(request, auth, db, play_id, record):
+    """Give a REVIVED record (see revive_play) the stream ticket it was rebuilt without.
+
+    A revived record carries only what progress reporting needs, and `hls` used to index
+    `record['profiles']` on it — a KeyError, i.e. a 500 on every segment. Measured on server1: a
+    viewer paused for ~50 minutes, the 900s idle check expired the session, the resume's progress
+    report revived it, and the next `360p-77.ts` / `480p-77.ts` / `…-78.ts` all 500'd; the TV then
+    asked for master.m3u8 (404), reported Stopped and ended the film. The ACL is re-read by
+    `resolve` and the native `/play` issues a new signed ticket, exactly as PlaybackInfo does; the
+    client's original bitrate/track choice is unknown, so it gets every profile this viewer is
+    allowed and the default tracks.
+    """
+    lib, item = await resolve(request, auth, db, record['item'])
+    if not item or '_folder' in item:
+        raise HTTPException(404, 'Playback session expired; reopen the item')
+    listing = await media_call(request, auth, db)
+    tracks = (await media_call(request, auth, db, f"/{lib['id']}/tracks/{item['id']}"))['tracks']
+    armed = await stream_record(request, auth, db, lib, item, record['item'], listing['profiles'], tracks, -1, -1)
+    record.update(armed)
+    record.pop('revived', None)
+    _plays[play_id] = record
+    return record
+
+
 @router.api_route('/Items/{uid}/PlaybackInfo', methods=['GET', 'POST'])
 async def playback_info(uid: str, request: Request, body: dict = Body(default={}),
                         auth=Depends(authenticate), db=Depends(get_db)):
@@ -984,15 +1019,9 @@ async def playback_info(uid: str, request: Request, body: dict = Body(default={}
     if subtitle_index >= 0 and not selected_subtitle:
         raise HTTPException(400, 'Unavailable subtitle track')
     streams = stream_dtos(item, tracks)
-    playback = await media_call(request, auth, db, f"/{lib['id']}/play/{item['id']}", 'POST')
-    playback['url'] += '&' + urlencode({'audio': audio_index,
-                                        'subtitle': subtitle_index if selected_subtitle and not selected_subtitle['text'] else -1})
     play_id = secrets.token_hex(16)
-    _plays[play_id] = {'token': digest(auth.token), 'item': uid, 'url': playback['url'],
-                       'seen': time.monotonic(), 'profiles': profiles, 'library_id': lib['id'], 'native_id': item['id'],
-                       'audio_indices': [t['index'] for t in tracks if t['type'] == 'audio'],
-                       'subtitle_indices': [t['index'] for t in tracks if t['type'] == 'subtitle'],
-                       'text_indices': [t['index'] for t in tracks if t['type'] == 'subtitle' and t['text']]}
+    _plays[play_id] = await stream_record(request, auth, db, lib, item, uid, profiles, tracks,
+                                          audio_index, subtitle_index if selected_subtitle and not selected_subtitle['text'] else -1)
     while len(_plays) > 256:
         _plays.popitem(last=False)
     params = urlencode({'api_key': auth.token, 'PlaySessionId': play_id})
@@ -1014,6 +1043,8 @@ async def playback_info(uid: str, request: Request, body: dict = Body(default={}
 async def hls(uid: str, asset: str, request: Request, auth=Depends(authenticate), db=Depends(get_db)):
     play_id = query(request, 'PlaySessionId', '')
     record = play_record(auth, play_id, uid)
+    if not record.get('url'):
+        record = await rearm_play(request, auth, db, play_id, record)
     profile = asset.split('-', 1)[0].removesuffix('.m3u8')
     if asset != 'master.m3u8' and profile not in record['profiles']:
         raise HTTPException(404, 'Unavailable streaming profile')
@@ -1057,7 +1088,10 @@ async def subtitles(uid: str, source_id: str, index: int, request: Request,
                     auth=Depends(authenticate), db=Depends(get_db)):
     if source_id != uid:
         raise HTTPException(404, 'Media source not found')
-    record = play_record(auth, query(request, 'PlaySessionId', ''), uid)
+    play_id = query(request, 'PlaySessionId', '')
+    record = play_record(auth, play_id, uid)
+    if not record.get('url'):
+        record = await rearm_play(request, auth, db, play_id, record)
     original = urlsplit(record['url'])
     path = original.path.removeprefix('/api/media-center').rsplit('/', 1)[0] + f'/subtitle-{index}.vtt?' + original.query
     return await media_call(request, auth, db, path)
@@ -1112,6 +1146,13 @@ async def revive_play(request, auth, db, body):
         return None
     if not lib or not item or item.get('_folder'):
         return None
+    # A session that only went IDLE (a long pause outlives play_record's 900s check) is still in
+    # `_plays` with its stream ticket and the client's chosen profiles/tracks. Keep that record
+    # rather than overwriting it with the progress-only shape below, which owns no ticket.
+    held = _plays.get(play_id)
+    if held and held.get('url') and held['token'] == digest(auth.token) and held['item'] == uid:
+        held['seen'] = time.monotonic()
+        return held
     return {'token': digest(auth.token), 'item': uid, 'url': '', 'seen': time.monotonic(),
             'library_id': lib['id'], 'native_id': item['id'], 'revived': True}
 
@@ -1179,8 +1220,10 @@ async def stop_encoding(request: Request, auth=Depends(authenticate), db=Depends
     # Native clients can send cleanup twice, or after Stopped. Never release a
     # different app token's session, even when it belongs to the same Nostr user.
     if record and record['token'] == digest(auth.token):
-        ticket = parse_qs(urlsplit(record['url']).query)['ticket'][0]
-        await media_call(request, auth, db, '/sessions/stop', 'POST', {'ticket': ticket})
+        # A revived record owns no ticket (see `stopped`); indexing one out of '' was a KeyError.
+        ticket = parse_qs(urlsplit(record.get('url') or '').query).get('ticket', [''])[0]
+        if ticket:
+            await media_call(request, auth, db, '/sessions/stop', 'POST', {'ticket': ticket})
         _plays.pop(play_id, None)
     return Response(status_code=204)
 
