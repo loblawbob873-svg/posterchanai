@@ -21,6 +21,7 @@ from websockets.http11 import Response
 
 from app.services.nostr.event import verify_event
 from app.services import git_acceptance
+from app.services.vmhost import kinds as _vmhost_kinds
 from .langfilter import blocked_language, blocked_word, _NEVER_WORD_FILTERED
 from .bridges import reveals_blocked_bridge, author_on_blocked_bridge, is_bridged_post
 from .store import retired_kind_reason as _retired_kind_reason
@@ -1402,6 +1403,19 @@ class RelayServer:
             # member, so members' zaps are stored + counted.
             if _wot and not any(len(t) >= 2 and t[0] == "p" and self.gate.is_member(t[1]) for t in ev.get("tags", [])):
                 self._refuse(conn, eid, ev, "blocked: zap not for a web-of-trust member")
+                return
+        elif _vmhost_kinds.is_vmhost_kind(kind):
+            # VM HOSTING (5310 request / 6310 result / 7310 progress / 31310 announcement). The requester
+            # is an admin's or an assigned user's own npub, which is almost never in this relay's web of
+            # trust — left to the WoT gate below, every request is refused and the host never hears it.
+            # The rule (app/services/vmhost/kinds.py) accepts a stranger's request only when it is
+            # addressed to THIS node, short-lived, nofederate and small; the host drops strangers again
+            # before decrypting anything.
+            _why = _vmhost_kinds.write_refusal(
+                ev, node_pubkey=self.cfg.get("node_pubkey"), is_member=self.gate.is_member,
+                is_operator=self.gate.is_operator, wot_enabled=_wot, now=time.time())
+            if _why:
+                self._refuse(conn, eid, ev, _why)
                 return
         elif ev.get("pubkey", "") in self.cfg.get("dvm_allowed", ()) and (
                 kind in self.cfg.get("dvm_req_kinds", ()) or kind in self.cfg.get("dvm_res_kinds", ())):

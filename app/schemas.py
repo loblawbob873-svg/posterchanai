@@ -89,6 +89,34 @@ class SettingsUpdate(BaseModel):
 
 
 class SettingsResponse(BaseModel):
+    # ---- VM hosting (Admin → VMs; app/services/vmhost). Defaults MUST equal vmhost/config.DEFAULTS —
+    # tests/test_vmhost_admin_settings.py compares the two tables and the admin form key by key.
+    vmhost_enabled: str = "false"
+    vmhost_display_name: str = ""
+    vmhost_libvirt_uri: str = "qemu:///system"
+    vmhost_backend: str = "auto"
+    vmhost_storage_dir: str = "/var/lib/posterchan/vms"
+    vmhost_public_url: str = ""
+    vmhost_public_relay: str = ""
+    vmhost_announce: str = "true"
+    vmhost_admin_npubs: str = ""
+    vmhost_allowed_npubs: str = ""
+    vmhost_peer_hosts: str = ""
+    vmhost_max_vcpus_per_vm: str = "16"
+    vmhost_max_ram_mib_per_vm: str = "65536"
+    vmhost_max_disk_gib_per_vm: str = "2048"
+    vmhost_reserve_ram_mib: str = "2048"
+    vmhost_reserve_disk_gib: str = "20"
+    vmhost_allow_overcommit: str = "false"
+    vmhost_default_network: str = "default"
+    vmhost_bridge: str = ""
+    vmhost_console_ticket_ttl_sec: str = "60"
+    vmhost_console_max_minutes: str = "240"
+    vmhost_shutdown_timeout_sec: str = "120"
+    vmhost_session_max_hours: str = "12"
+    vmhost_migration_keep_source_hours: str = "72"
+    vmhost_transfer_max_mbps: str = "0"
+    vmhost_iso_fetch_enabled: str = "true"
     # Local, low-balance Monero tip wallet. These node settings are stored in the operator-signed,
     # NIP-44-encrypted settings document. The password is masked by the admin API on reads.
     monero_wallet_enabled: str = ""

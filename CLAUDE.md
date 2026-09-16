@@ -441,6 +441,21 @@ would have handled it fine).
 
 ## Notable features
 
+- **VM hosting — our own Proxmox-like host, managed over Nostr (phase 1)** (`app/services/vmhost/`,
+  `app/routers/vmhost.py`, client `vms.js`/`vmrpc.js`/`vmconsole.js`, Admin → VMs; `docs/VM_HOSTING.md`).
+  A server node with libvirt; kind **5310** request (NIP-44, p=node key, expiration ≤120s, nofederate)
+  → **6310** result / **7310** progress; **31310** announcement. Admins (`is_admin` npubs ∪
+  `vmhost_admin_npubs` ∪ node key) create/delete/assign; allowlisted/ASSIGNED npubs see ONLY their VMs
+  (someone else's is `not_found`) and power/console them; strangers get **no reply at all**.
+  **Gotchas:** (1) requesters are outside the WoT, so the kinds need their own branch in BOTH
+  `server._on_event` and `thread._firehose_event` (+ the `#p:[node_pubkey]` firehose sub and the
+  reload-upstream refresh) — `kinds.py` is the single rule, `tests/test_vmhost_relay_kinds.py` drives the
+  shipped closures; (2) a retry is a NEW event with the SAME `id` → the op journal returns the stored
+  result (successes only); (3) "no answer" ≠ "no VMs" in the UI; (4) the console ticket travels in the
+  first WS FRAME, never the URL, and the client sends `{t:go}` only after noVNC attached (RFB speaks
+  first); (5) access lists + `vmhost_enabled` save durably (503 on a short write); (6) clients never send
+  paths — ISO ids resolve and must stay inside `<storage>/isos` (symlinks out are refused); (7) libvirt
+  group ≈ root. Not yet: hardware edit, snapshots, ISO fetch, session keys, discovery, cold migration.
 - **A GRANTED NIP-05 IS THE ENTITLEMENT — one predicate, four gates** (`app/services/nip05_access.py`;
   switch `nip05_grants_access`, Admin → Nostr Relay → NIP-05 identity server, **ON** by default).
   AI chat, image generation (`geni`), music generation (`musicgeni`/`voice`) and Blossom uploads were

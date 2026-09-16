@@ -341,4 +341,5 @@ _NEVER_WORD_FILTERED = frozenset({
     78, 30078,                   # this app's own encrypted datastore
     22242,                       # NIP-42 AUTH
     10318, 30617, 30618,         # git: the private repo list, announcements, state
+    5310, 6310, 7310,            # VM hosting request/result/progress — NIP-44 ciphertext
 })

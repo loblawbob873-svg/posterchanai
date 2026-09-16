@@ -252,6 +252,22 @@ async def meme_font():
                         headers={"Cache-Control": "public, max-age=604800", "Access-Control-Allow-Origin": "*"})
 
 
+def _vmhost_card(request: Request, db: Session):
+    try:
+        from app.services.vmhost import config as _vmcfg
+        from app.services import nostr_dvm
+        cfg = _vmcfg.current()
+        if not cfg.enabled:
+            return None
+        pk = nostr_dvm.node_pubkey()
+        if not pk:
+            return None
+        return {"pubkey": pk, "npub": nostr_dvm.node_npub(), "name": cfg.display_name or "PosterChan VM host",
+                "relay": cfg.public_relay or _relay_url(request, db), "https": cfg.public_url}
+    except Exception:
+        return None
+
+
 @router.get("/config")
 async def client_config(request: Request, db: Session = Depends(get_db)):
     from app.services import registration_service
@@ -286,6 +302,9 @@ async def client_config(request: Request, db: Session = Depends(get_db)):
         # push it and take a 413 after spending the upload. It is an admin setting, so it is
         # published rather than assumed client-side.
         "blossom_max_upload_mb": int(_setting(db, "blossom_max_upload_mb", "100") or 100),
+        # VM hosting: when THIS node is a VM host, say so, so Virtual Machines lists it with no setup.
+        # Who may USE it is decided by the host on every request — this grants nothing.
+        "vmhost": _vmhost_card(request, db),
         # Whether this node runs the built-in media server. The client uses it only to decide whether
         # to SHOW the "Go Live" entry points — /api/streams/* still gates the real thing.
         "stream_enabled": _setting(db, "stream_enabled", "false").lower() == "true",

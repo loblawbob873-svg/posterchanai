@@ -1144,7 +1144,9 @@
       when: () => !!(window.pcSystem && pcSystem.snapshot) },
     { view: '__ossettings', label: 'System Settings', icon: '#i-gear', act: () => openSystemSettings(),
       when: () => !!(window.pcDisplays && pcDisplays.status) },
-    { view: '__vms', label: 'Virtual Machines', icon: '#i-monitor', act: () => openVmManager(),
+    /* THIS machine's session VMs (desktop/vm.js). Labelled apart from the sidebar's "Virtual Machines",
+     * which is the SERVER hosts screen (view `vms`) and gets its own icon from its nav row. */
+    { view: '__vms', label: 'Local VMs', icon: '#i-monitor', act: () => openVmManager(),
       when: () => !!(window.pcVM && pcVM.list) },
     { view: '__remote', label: 'Remote Desktop', icon: '#i-monitor', act: () => openRemoteDesktop(),
       when: () => !!(me() && PC().startRemoteDesktop) },
@@ -3049,7 +3051,7 @@
    * is only ever a dialog anchor — uiConfirm/uiPrompt fall back to document.body when it is
    * absent, which is exactly right for a window document. */
   function paintVmManager(slot, owner){
-    slot.innerHTML=`<div class="vmui"><div class="vmui-hero"><div class="vmui-heroicon"><svg class="ic"><use href="#i-monitor"></use></svg></div><div><h2>Virtual Machines</h2><p>Run Windows or Linux in a window. PosterChanOS handles the virtual hardware for you.</p></div><button class="btn vmui-new" data-vm-new><svg class="ic b-ic" aria-hidden="true"><use href="#i-plus"></use></svg>Create a virtual machine</button></div><div class="vmui-create" hidden>
+    slot.innerHTML=`<div class="vmui"><div class="vmui-hero"><div class="vmui-heroicon"><svg class="ic"><use href="#i-monitor"></use></svg></div><div><h2>Virtual Machines</h2><p>Run Windows or Linux in a window. PosterChanOS handles the virtual hardware for you.</p></div><button class="btn vmui-new" data-vm-new><svg class="ic b-ic" aria-hidden="true"><use href="#i-plus"></use></svg>Create a virtual machine</button><button class="btn btn-ghost vmui-hosts" data-vm-hosts title="VMs on PosterChan servers">Server hosts</button></div><div class="vmui-create" hidden>
       <div class="vmui-formhead"><b>Create a virtual machine</b><span>Choose an installer, then give the machine a name and enough space.</span></div>
       <label>What should it be called?<input class="input" data-vm-name placeholder="Windows 11"></label>
       <label>Installation image (.iso)<div class="vmui-pick"><input class="input" data-vm-iso readonly placeholder="No installer selected"><button class="btn btn-ghost" data-vm-pick>Choose file…</button></div></label>
@@ -3133,7 +3135,10 @@
       $('[data-vme-eject]',box).onclick=async()=>{const r=await pcVM.ejectIso(name);if(r.ok){await editHardware(name);state('Installation disc ejected — the next start boots from disk');paint();}else state(r.error);};
       $('[data-vme-net]',box).onclick=async()=>{const r=await pcVM.addNetwork(name);state(r.ok?'Network adapter added':r.error);};
       $('[data-vme-mouse]',box).onclick=async()=>{const r=await pcVM.gamingMouse(name,!d.gamingMouse);state(r.ok?(!d.gamingMouse?'Gaming mouse enabled — Ctrl+Alt releases it':'Desktop pointer enabled'):r.error);if(r.ok)editHardware(name);};};
-    $('[data-vm-new]',slot).onclick=()=>{form.hidden=false;};$('[data-vm-cancel]',slot).onclick=()=>{form.hidden=true;};
+    $('[data-vm-new]',slot).onclick=()=>{form.hidden=false;};
+    /* The hosted VMs live in the client view `vms` (PosterChan server nodes over Nostr). Guarded: a
+     * window document may be painted before the client surface exists. */
+    {const hb=$('[data-vm-hosts]',slot);if(hb)hb.onclick=()=>{try{PC().switchView&&PC().switchView('vms');}catch(_){}};}$('[data-vm-cancel]',slot).onclick=()=>{form.hidden=true;};
     $('[data-vm-pick]',slot).onclick=async()=>{const p=await pcVM.pickIso();if(p)$('[data-vm-iso]',slot).value=p;};
     $('[data-vm-create]',slot).onclick=async function(){this.disabled=true;this.textContent='Creating…';const r=await pcVM.create({name:$('[data-vm-name]',slot).value,iso:$('[data-vm-iso]',slot).value,guest:$('[data-vm-guest]',slot).value,firmware:$('[data-vm-firmware]',slot).value,ramMiB:$('[data-vm-ram]',slot).value,cpus:$('[data-vm-cpu]',slot).value,diskGiB:$('[data-vm-disk]',slot).value});this.disabled=false;this.textContent='Create and start';if(!r.ok){say(r.error||'VM creation failed');return;}form.hidden=true;await new Promise(resolve=>setTimeout(resolve,300));const v=await pcVM.view(r.name);if(!v.ok)say(v.error||'VM created, but its display could not open');paint();};
     const timer=setInterval(paint,3000);paint();

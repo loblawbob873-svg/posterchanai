@@ -24,6 +24,7 @@ from app.models import User, VerificationToken
 from app.routers import auth, chat, admin, tts, stt, openai_api, image_api, media_api, news, mail, torrent, storage, files, music_api, video_api, voice_api, effects_api, search_api
 from app.auth import NATIVE_APP_ORIGINS as _NATIVE_ORIGINS
 from app.routers import youtube_thumb, bots, push, calls, streams, rss, markets, websearch, weather, ssh_term, mempool, monero_wallet, monero_user_wallet
+from app.routers import vmhost as vmhost_router
 from app.routers import exodus_wallet
 from app.routers import code as code_router      # PosterChan Code: /api/code/* (editor tree, read/write, beautify)
 from app.routers import office as office_router  # built-in CODE + WOPI document editing
@@ -277,6 +278,8 @@ app.include_router(monero_user_wallet.router, prefix="/api/wallet/xmr/me")
 app.include_router(exodus_wallet.router)
 app.include_router(ssh_term.router)
 app.include_router(ssh_term.ws_router)   # /ws/ssh — the PTY socket
+app.include_router(vmhost_router.router)     # /api/admin/vmhost/status
+app.include_router(vmhost_router.ws_router)  # /ws/vmconsole — noVNC behind a ticket obtained over Nostr
 app.include_router(youtube_thumb.router)
 app.include_router(bots.router)
 app.include_router(calls.router)  # /api/calls/turn-credentials (ICE config for voice/video calls)
@@ -651,6 +654,13 @@ async def startup():
             except Exception as e:
                 logging.error(f"Error starting Nostr DVM worker: {e}", exc_info=True)
             try:
+                # VM hosting over Nostr (kinds 5310/6310). No-op unless vmhost_enabled; an fcntl lock
+                # on the storage directory keeps a second process from running the same host.
+                from app.services.vmhost import transport as vmhost_transport
+                vmhost_transport.start()
+            except Exception as e:
+                logging.error(f"Error starting VM host: {e}", exc_info=True)
+            try:
                 # Markets daily digest (08:00): crypto price+news → operator kind-30078, served via /api/markets
                 from app.services.markets_service import start_markets_scheduler
                 start_markets_scheduler()
@@ -962,6 +972,11 @@ async def shutdown():
         try:
             from app.services import nostr_dvm
             await nostr_dvm.stop_worker()
+        except Exception:
+            pass
+        try:
+            from app.services.vmhost import transport as vmhost_transport
+            await vmhost_transport.stop()
         except Exception:
             pass
         try:

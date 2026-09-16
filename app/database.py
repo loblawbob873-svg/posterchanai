@@ -702,6 +702,10 @@ When asked to write or modify code or files:
             # the keys persist in its data dir (same address across restarts).
             "onion_enabled": os.environ.get("POSTERCHANAI_ONION_ENABLED", "false"),
         }
+        # VM hosting: ONE table of defaults (app/services/vmhost/config.DEFAULTS), not a second copy
+        # here that drifts. The access lists default empty, so seeding them grants nobody anything.
+        from app.services.vmhost.config import DEFAULTS as _VMHOST_DEFAULTS
+        default_settings.update(_VMHOST_DEFAULTS)
 
         # Settings live in the Nostr relay datastore (NO SQL Setting table). Populate the in-process
         # settings cache: local-only keys (plumbing + cursors) from the JSON file, then the defaults

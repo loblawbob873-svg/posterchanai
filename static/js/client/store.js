@@ -156,7 +156,10 @@
          t[1].startsWith('pcai:files-index') ||
          t[1].startsWith('pcai:playlist') || t[1] === 'pcai:budget' ||
          t[1] === 'pcai:desktop' || t[1] === 'pcai:automute' || t[1] === 'pcai:agent-tasks' ||
-         t[1] === 'pcai:dmkey' || t[1] === 'pcai:dmcache')) return true;
+         t[1] === 'pcai:dmkey' || t[1] === 'pcai:dmcache' ||
+         /* The VM hosts somebody added by hand. Evicted, Virtual Machines shows no hosts until a
+            relay hands the list back — which reads as the hosts being gone. */
+         t[1] === 'pcai:vmhosts')) return true;
     return false;
   }
   /* ONE event with no `tags` used to take down every timeline in the app, permanently.

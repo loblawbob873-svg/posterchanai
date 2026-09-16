@@ -418,6 +418,9 @@
     { view:'signer', after:'settings', icon:'#i-key', label:'Signer' },
     { view:'wallet', after:'vault', icon:'#i-coin', label:'Monero Wallet' },
     { view:'exodus', after:'wallet', icon:'#i-coin', label:'Wallet' },
+    /* VM hosting. Deliberately NOT in INSTANCE_VIEWS: the hosts are other servers reached over Nostr,
+       so a bundle with only a key and relays can still manage them. */
+    { view:'vms', after:'global', icon:'#i-monitor', label:'Virtual Machines' },
   ];
   function ensureNavItems(){
     for(const it of _NAV_REQUIRED){
@@ -3961,7 +3964,7 @@
       return true;
     }
     if(event && /^[0-9a-f]{64}$/i.test(event)){ _clean(); openThread(event); return true; }
-    const VALID = new Set(['home','global','notifications','messages','drafts','bookmarks','articles','markets','streams','calls','settings','signer','translate','news','websearch','terminal','code','office','mail','calendar','contacts','texts','notes','music']);
+    const VALID = new Set(['home','global','notifications','messages','drafts','bookmarks','articles','markets','streams','calls','settings','signer','translate','news','websearch','terminal','code','office','mail','calendar','contacts','texts','notes','music','vms']);
     if(view && VALID.has(view)){ _clean(); switchView(view); return true; }
     return false;
   }
@@ -5416,6 +5419,9 @@
           // return to the results — otherwise it leaves the whole screen with the article still up
           // and the results (which are the thing you were working through) gone.
           if(window.PCWebSearch && PCWebSearch.readerOpen && PCWebSearch.readerOpen()){ try{ PCWebSearch.closeReader(); }catch(_){} return; }
+          // A VM console is a full-window overlay over the Virtual Machines screen: Back closes the
+          // console and returns to the VM, never leaves the view with a guest's screen still up.
+          if(window.PCVms && PCVms.consoleOpen && PCVms.consoleOpen()){ try{ PCVms.closeConsole(); }catch(_){} return; }
           if(window.PCVault && PCVault.drawerOpen && PCVault.drawerOpen()){ try{ PCVault.closeDrawer(); }catch(_){} return; }
           const mini=document.getElementById('mini-player'); if(mini && mini.classList.contains('on')){ try{ closeMini(); }catch(_){} return; }
           /* Walk the app's own history first — every screen is an entry now, so this is what makes
@@ -6162,6 +6168,9 @@
                        it disabled again?". */
                     /^pcai:automute$/,
                     /^pcai:agent-tasks$/, /^pcai:dmkey$/, /^pcai:dmcache$/,
+                    /* The VM hosts a person added by hand (Virtual Machines). Left behind on the old
+                       pool, the list reads as empty, which looks like the hosts are gone. */
+                    /^pcai:vmhosts$/,
                     /* The phone's text-message archive. Carried for the same reason as Notes, and
                        for one more: on every device that is not the phone this IS the only copy —
                        the system message store that is authoritative on the handset does not exist
@@ -7848,7 +7857,7 @@
        Messages; it has its own row now, so the special case would light the wrong one. */
     $$('.nav-item[data-view]').forEach(b=> b.classList.toggle('active', b.dataset.view===v));
     _syncRightbar();
-    $('#view-title').textContent = { home:'Home', texts:'Texts', global:'Nostrverse', trending:'Trending', notifications:'Notifications', messages:'Messages', concord:'Communities', mail:'Email ✉️', drafts:'Drafts', bookmarks:'Bookmarks', analytics:'My Analytics 📈', articles:'Articles', markets:'Markets 📈', streams:'Streams', calls:'Calls 📞', pics:'Pics', torrents:'Torrents 🧲', 'media-center':'Media Center', repos:'Git 🌱', repo:'Repo', news:'News 🗞️', websearch:'Web Search 🔎', code:'PosterChan Code 💻', calendar:'Calendar 📅', contacts:'Contacts 👥', notes:'Notes 📝', sync:'Folder Sync 🔄', vault:'Passwords 🔑', wallet:'Monero Wallet ɱ', exodus:'Wallet 💼', budget:'Budget 💰', stats:'Server Stats 📊', chess:'Chess ♟️', ttt:'Tic-Tac-Toe ⭕', hangman:'Hangman 🎯', connect4:'Connect Four 🔴', blackjack:'Blackjack 🃏', holdem:"Texas Hold'em 🃏", xdc:'Webxdc 🎮', meme:'Meme Builder 🎬', blossom:'Files', profile:'Profile', settings:'Settings', ai:'PosterChan AI', translate:'Live Translate 🌐', admin:'Admin' }[v]||v;
+    $('#view-title').textContent = { home:'Home', texts:'Texts', global:'Nostrverse', trending:'Trending', notifications:'Notifications', messages:'Messages', concord:'Communities', mail:'Email ✉️', drafts:'Drafts', bookmarks:'Bookmarks', analytics:'My Analytics 📈', articles:'Articles', markets:'Markets 📈', streams:'Streams', calls:'Calls 📞', pics:'Pics', torrents:'Torrents 🧲', 'media-center':'Media Center', repos:'Git 🌱', repo:'Repo', news:'News 🗞️', websearch:'Web Search 🔎', vms:'Virtual Machines 🖥️', code:'PosterChan Code 💻', calendar:'Calendar 📅', contacts:'Contacts 👥', notes:'Notes 📝', sync:'Folder Sync 🔄', vault:'Passwords 🔑', wallet:'Monero Wallet ɱ', exodus:'Wallet 💼', budget:'Budget 💰', stats:'Server Stats 📊', chess:'Chess ♟️', ttt:'Tic-Tac-Toe ⭕', hangman:'Hangman 🎯', connect4:'Connect Four 🔴', blackjack:'Blackjack 🃏', holdem:"Texas Hold'em 🃏", xdc:'Webxdc 🎮', meme:'Meme Builder 🎬', blossom:'Files', profile:'Profile', settings:'Settings', ai:'PosterChan AI', translate:'Live Translate 🌐', admin:'Admin' }[v]||v;
     if(v==='blossom') $('#view-title').textContent='File Manager';
     if(v==='office') $('#view-title').textContent='PosterChan Office';
     /* The Communities view titled itself 'Messages' because it WAS the Communities tab of the
@@ -8014,6 +8023,7 @@
     if (VIEW==='repos') return renderRepos();
     if(renderModuleView('news','news.js','PCNews','render')) return;
     if(renderModuleView('websearch','websearch.js','PCWebSearch','render')) return;
+    if(renderModuleView('vms','vms.js','PCVms','render')) return;
     if(renderModuleView('terminal','term.js','PCTerm','render')) return;
     if(renderModuleView('code','code.js','PCCode','render')) return;
     if(renderModuleView('calendar','calendar.js','PCCalendar','render')) return;
@@ -16710,7 +16720,7 @@
     // and it was buried in Discover → Streams where nobody found it. Mirrors the desktop sidebar item.
     // Icons come from the shared sprite via ICO() — the same glyphs the desktop sidebar uses, so the
     // phone and desktop navs never drift apart (and they take the theme's colour, unlike emoji).
-    const items=[['concord','users','Communities'],['ai','ai','PosterChan AI'],['mail','mail','Email'],['websearch','search','Web Search'],['terminal','terminal','Terminal'],['calendar','clock','Calendar'],['contacts','user','Contacts'],['calls','phone','Calls'],['__remote','monitor','Remote Desktop'],['__golive','live','Go Live'],['translate','translate','Live Translate'],['notes','note','Notes'],['texts','chat','Texts'],['__music','music','Music'],['wallet','coin','Monero Wallet'],['vault','key','Passwords'],['drafts','draft','Drafts'],['meme','tv','Meme Builder'],['repos','git','Git'],['media-center','tv','Media Center'],['bookmarks','bookmark','Bookmarks'],['analytics','chart','My Analytics'],['__discover','compass','Discover'],['__games','gamepad','Games'],['__files','folder','Files'],['profile','user','Profile'],['__bug','bug','Report a Bug'],['__accounts','user','Switch account'],['signer','key','Signer'],['settings','gear','Settings'],
+    const items=[['concord','users','Communities'],['ai','ai','PosterChan AI'],['mail','mail','Email'],['websearch','search','Web Search'],['terminal','terminal','Terminal'],['vms','monitor','Virtual Machines'],['calendar','clock','Calendar'],['contacts','user','Contacts'],['calls','phone','Calls'],['__remote','monitor','Remote Desktop'],['__golive','live','Go Live'],['translate','translate','Live Translate'],['notes','note','Notes'],['texts','chat','Texts'],['__music','music','Music'],['wallet','coin','Monero Wallet'],['vault','key','Passwords'],['drafts','draft','Drafts'],['meme','tv','Meme Builder'],['repos','git','Git'],['media-center','tv','Media Center'],['bookmarks','bookmark','Bookmarks'],['analytics','chart','My Analytics'],['__discover','compass','Discover'],['__games','gamepad','Games'],['__files','folder','Files'],['profile','user','Profile'],['__bug','bug','Report a Bug'],['__accounts','user','Switch account'],['signer','key','Signer'],['settings','gear','Settings'],
       // Same button, same rule as the sidebar's: a guest is offered a way IN, not a second way out.
       (GUEST ? ['__login','user','Log in'] : ['logout','logout','Logout'])]
       .filter(([v])=> !(window.PC_NOSTR_ONLY && v==='translate') && !(window.PC_NOSTR_ONLY && v==='ai')
@@ -39966,6 +39976,9 @@
     /* Shared-feed modules may finish network/deferred work after navigation. They must ask who owns
      * the feed before painting; otherwise a late Concord render can replace Code (and vice versa). */
     isView: view => VIEW === view,
+    /* /client/config as this page holds it. Virtual Machines reads `vmhost` from it (this instance's
+     * own VM host); a bundle with no instance answers {} and the screen relies on the user's list. */
+    clientConfig: () => CFG || {},
     $, $$, enc, publish, sendDm, safePk, nip05Resolve, profOf, kind0Tags: _kind0Tags, needProfile, niceNip05, LOGO, toast,
     viewer: () => {
       const stored = ME && ME.pubkey ? Store.profile(ME.pubkey) : null;

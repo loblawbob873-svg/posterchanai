@@ -257,6 +257,9 @@
                  rather than inside Discover — it is a thing you reach for mid-thought, like AI. -->
             {% if not nostr_only %}<button class="nav-item" data-view="websearch"><svg class="ic"><use href="#i-search"></use></svg><span>Web Search</span></button>{% endif %}
             {% if not nostr_only %}<button class="nav-item" data-view="terminal"><svg class="ic"><use href="#i-terminal"></use></svg><span>Terminal</span></button>{% endif %}
+            <!-- Virtual Machines: PosterChan VM hosts, managed over Nostr. NOT nostr_only-guarded — the hosts
+                 are other servers reached with a key and relays, so it works on any node and in a bundle. -->
+            <button class="nav-item" data-view="vms"><svg class="ic"><use href="#i-monitor"></use></svg><span>Virtual Machines</span></button>
             <!-- PosterChan Code now lives under Office, with the other things you sit down and work
                  in. It used to sit beside the Terminal (same node, one edits its files and the other
                  runs its commands) — a defensible grouping, but Office is where it is looked for.

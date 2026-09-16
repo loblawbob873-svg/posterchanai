@@ -92,6 +92,7 @@ public final class HomeTiles {
         new Tile("torrents",      "Torrents",      "magnet",   false),
         new Tile("repos",         "Git",           "git",      false),
         new Tile("terminal",      "Terminal",      "terminal", false),
+        new Tile("vms",           "Virtual Machines","monitor", false),
         new Tile("stats",         "Server Stats",  "bars",     false),
         new Tile("xdc",           "Mini apps",     "gamepad",  false),
         new Tile("chess",         "Chess",         "pawn",     false),
