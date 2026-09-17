@@ -360,6 +360,14 @@
     var blob = streamed ? null : bytesOf(file.blob || file.bytes || file.src);
     if (!blob && !streamed) { toast('there are no bytes to show'); return false; }
     if (!handles(name, mime)) return false;
+    /* A STREAMED SOURCE HAS NO BLOB, SO IT HAS NO `blob.size` EITHER — and reading one threw a
+     * TypeError out of `open` before anything was drawn. That is EVERY local video and audio file
+     * opened from Files → This Computer (app.js sends `url:pcHost.fileUrl(path)` for exactly those
+     * types), i.e. the whole reason the streamed path exists: measured on the device, opening
+     * /tmp/pcvideo.mp4 answered `Cannot read properties of null (reading 'size')` and no window
+     * appeared. The size is only ever the header's label, and `fmtSize(0)` is the empty string, so
+     * an unknown length simply shows no size rather than inventing one. */
+    var size = streamed ? Math.max(0, Number(file.size) || 0) : blob.size;
 
     var kind = kindOf(name, mime);
     /* A PDF must be handed to the viewer as a PDF. A blob rebuilt from an ArrayBuffer has an EMPTY
@@ -410,13 +418,14 @@
             var av = host.querySelector('.pv-vid, .pv-aud');
             return {
               preview: true, name: String(name || ''), mime: String(mime || ''), url: String(url || ''),
+              size: Number(size) || 0,
               media: av ? { time:Number(av.currentTime)||0, paused:!!av.paused,
                 volume:Number(av.volume), muted:!!av.muted, rate:Number(av.playbackRate)||1 } : null
             };
           };
           w.handoffCancel = function () { transferring = false; };
         }
-        mountCleanup = mount(host, name, mime, blob.size, kind, url, shut, blob);
+        mountCleanup = mount(host, name, mime, size, kind, url, shut, blob);
         _open = { key: key, close: shut, host: host };
         root.addEventListener('keydown', onKey, true);
         return true;
@@ -429,15 +438,53 @@
     sheet.className = 'pv-sheet pv-host';
     document.body.appendChild(sheet);
     shut = function () { try { sheet.remove(); } catch (_) {} done(); };
-    mountCleanup = mount(sheet, name, mime, blob.size, kind, url, shut, blob);
+    mountCleanup = mount(sheet, name, mime, size, kind, url, shut, blob);
     _open = { key: key, close: shut };
     root.addEventListener('keydown', onKey, true);
     return true;
   }
 
+  /* An address THIS renderer can open for itself, on the page's own protocol and host.
+   *
+   * A streamed preview is `app://posterchan/__hostfile/<path>` (main.js serves it through the same
+   * hostfs gate the read bridge uses), so the other monitor can simply open the same address —
+   * there are no bytes to move. Compared on protocol AND host rather than `origin`, because a
+   * non-special scheme like `app:` reports origin "null", and "null" === "null" would accept every
+   * foreign scheme somebody could put in a payload. */
+  function sameOriginAddress(value) {
+    var here = root.location && root.location.href;
+    if (!here) return false;
+    try {
+      var target = new URL(String(value || ''), here), page = new URL(here);
+      return !!target.protocol && target.protocol === page.protocol && target.host === page.host;
+    } catch (_) { return false; }
+  }
+
+  /* A REFUSAL HERE USED TO DELETE THE WINDOW. os.js hands a `doc:pv:` frame to this function and
+   * returns whatever happens; the source frame has already closed, so answering `false` left the
+   * moved preview on NEITHER monitor. Measured on the device: a local video opened from This
+   * Computer carries a `__hostfile` address, the old `/^blob:/` test refused it, and the window
+   * vanished. Every preview payload now yields a document — the file itself where the address can
+   * be reopened, and an explanation where it cannot. */
+  function movedNote(name) {
+    var note = new Blob(['This preview could not be moved to this monitor. Reopen the file from Files.'],
+                        { type: 'text/plain' });
+    return open({ name: String(name || 'Preview'), mime: 'text/plain', blob: note });
+  }
+
   async function acceptHandoff(state) {
     var s = state && typeof state === 'object' ? state : {};
-    if (!s.preview || !/^blob:/i.test(String(s.url || ''))) return false;
+    if (!s.preview) return false;
+    var restore = function (opened) {
+      var host = _open && _open.host;
+      var av = host && host.querySelector('.pv-vid, .pv-aud');
+      if (opened && s.media && av) restoreHandoffMedia(av, s.media);
+      return opened;
+    };
+    if (sameOriginAddress(s.url))
+      return restore(open({ name: String(s.name || 'Preview'), mime: String(s.mime || ''),
+                           url: String(s.url), size: s.size })) || movedNote(s.name);
+    if (!/^blob:/i.test(String(s.url || ''))) return movedNote(s.name);
     var response, blob;
     try {
       response = await fetch(String(s.url));
