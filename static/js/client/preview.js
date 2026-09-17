@@ -98,13 +98,24 @@
     return _pdfjs;
   }
 
+  /* OpenFilePlugin.java refuses anything over 32 MB (it is handed over as Base64 through the bridge).
+   * Kept in step with its MAX; a bigger file goes straight to Save and SAYS why, instead of a native
+   * refusal that looked exactly like "no viewer installed". */
+  var NATIVE_OPEN_MAX = 32 * 1024 * 1024;
+  function nativeOpen() {
+    try { var cap = PC().capPlugin && PC().capPlugin('OpenFile', 'open'); return cap && cap.open ? cap : null; }
+    catch (_) { return null; }
+  }
+
   async function openElsewhere(blob, name) {
     name=name||'document.pdf';
+    var big = blob && Number(blob.size) > NATIVE_OPEN_MAX;
+    if (big && nativeOpen()) toast('This PDF is over 32 MB, too large to hand to another app, so it is saved instead.');
     /* Android WebView has no PDF activity inside it. Ask the platform to ACTION_VIEW the exact
      * bytes first; OpenFile keeps them in private cache and grants only the chosen viewer read
      * access. No viewer/older APK/cancel falls through to the useful Save-or-share sheet. */
     try {
-      var cap=PC().capPlugin&&PC().capPlugin('OpenFile','open');
+      var cap=big?null:nativeOpen();
       if(cap&&cap.open){
         var bytes=new Uint8Array(await blob.arrayBuffer()),binary='';
         for(var at=0;at<bytes.length;at+=0x8000)binary+=String.fromCharCode.apply(null,bytes.subarray(at,at+0x8000));
@@ -122,7 +133,7 @@
   function renderPdf(host, blob, name) {
     var box = host.querySelector('.pv-pdf-pages');
     if (!box) return function () {};
-    var stopped = false, task = null, pdf = null;
+    var stopped = false, task = null, pdf = null, rendered = 0;
     var cancel = function () {
       stopped = true;
       try { if (task && task.cancel) task.cancel(); } catch (_) {}
@@ -155,13 +166,24 @@
         box.appendChild(canvas);
         task = page.render({ canvasContext: canvas.getContext('2d'), viewport: viewport,
           transform: outputScale === 1 ? null : [outputScale, 0, 0, outputScale, 0, 0] });
-        await task.promise; task = null;
+        await task.promise; task = null; rendered = n;
       }
     } catch (e) {
       if (stopped) return;
-      box.innerHTML = '<div class="empty pv-pdf-fallback">Could not render this PDF.<br>'
-        + H((e && e.message) || e)
+      var msg = '<div class="empty pv-pdf-fallback">'
+        + (rendered ? 'Could not render the rest of this PDF (page ' + (rendered + 1) + ').' : 'Could not render this PDF.')
+        + '<br>' + H((e && e.message) || e)
         + '<br><button class="btn primary pv-pdf-native">Open or save in another app</button></div>';
+      /* A failure on page 7 must not throw away the six pages somebody may already be reading. */
+      if (rendered) {
+        var note = document.createElement('div');
+        note.innerHTML = msg;
+        box.appendChild(note);
+        var nb = note.querySelector('.pv-pdf-native');
+        if (nb) nb.onclick = function () { openElsewhere(blob, name); };
+        return;
+      }
+      box.innerHTML = msg;
       var native = box.querySelector('.pv-pdf-native');
       if (native) native.onclick = function () { openElsewhere(blob, name); };
     } })();
@@ -210,6 +232,7 @@
       + '<span class="pv-acts">'
       + (kind === 'image' ? '<button class="btn btn-ghost small pv-zoom">Actual size</button>'
                             + '<button class="btn btn-ghost small pv-rot" title="Rotate">&#8635;</button>' : '')
+      + (kind === 'pdf' && nativeOpen() ? '<button class="btn btn-ghost small pv-open">Open in app</button>' : '')
       + '<button class="btn btn-ghost small pv-dl">Download</button>'
       + '<button class="btn btn-ghost small pv-x" aria-label="Close">&#10005;</button>'
       + '</span></div>';
@@ -304,6 +327,13 @@
       fetch(url).then(function (r) { return r.blob(); })
         .then(function (b) { return save(b, name || 'file'); })
         .catch(function (e) { toast('could not save: ' + ((e && e.message) || e)); });
+    };
+    var op = q('.pv-open');
+    if (op) op.onclick = function () {
+      /* The same path as the fallback button: the bytes this viewer already holds, native viewer first. */
+      var b = blob ? Promise.resolve(blob) : fetch(url).then(function (r) { return r.blob(); });
+      b.then(function (x) { return openElsewhere(x, name || 'document.pdf'); })
+        .catch(function (e) { toast('could not open that PDF: ' + ((e && e.message) || e)); });
     };
     var x = q('.pv-x'); if (x) x.onclick = shut;
     return cleanup;
@@ -432,5 +462,6 @@
 
   root.PCPreview = { open: open, acceptHandoff: acceptHandoff, handles: handles, kindOf: kindOf,
                      isImage: isImage, isVideo: isVideo, isAudio: isAudio, isPdf: isPdf,
-                     loadPdfJs: loadPdfJs, isOpen: isOpen, close: close };
+                     loadPdfJs: loadPdfJs, isOpen: isOpen, close: close,
+                     _openElsewhere: openElsewhere, _renderPdf: renderPdf };
 })(window);
