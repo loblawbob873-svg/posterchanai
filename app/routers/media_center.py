@@ -271,9 +271,10 @@ async def stop_session(body: StopSession, user=Depends(get_media_user)):
 
 class Limits(BaseModel):
     server_kbps: int = Field(default=20000, ge=650, le=1000000)
+    # The per-viewer ceiling on this node's UPLOAD. Viewers on its own network do not use the
+    # uplink and are not charged against it (see media.metered) -- the same rule Jellyfin's
+    # "internet streaming bitrate limit" follows.
     viewer_kbps: int = Field(default=1600, ge=650, le=1000000)
-    # 0 = no separate allowance for this node's own network: `viewer_kbps` applies to every viewer.
-    lan_kbps: int = Field(default=0, ge=0, le=1000000)
     max_streams: int = Field(default=8, ge=1, le=100)
     max_transcodes: int = Field(default=2, ge=1, le=16)
     cache_mb: int = Field(default=2048, ge=32, le=1048576)
@@ -424,10 +425,10 @@ def queue_scan(library, background):
 async def list_libraries(user=Depends(get_media_user), request: Request = None):
     pubkey = media.identity(user)
     # The quality menu is built from `profiles`, so it must answer for the SAME viewer the playlist
-    # will: a LAN viewer offered a rung here that the master playlist withholds (or the reverse) has
-    # a menu entry that does nothing.
-    config = media.effective_limits(await media.limits(),
-                                    request is not None and media.is_local_address(client_address(request)))
+    # will: a viewer offered a rung here that the master playlist withholds (or the reverse) has a
+    # menu entry that does nothing.
+    config = await media.limits()
+    charged = media.metered(request is not None and media.is_local_address(client_address(request)))
     held = await media.libraries()
     readable = [lib for lib in held if media.can_read(lib, pubkey)]
     # AN EMPTY LIST IS TWO DIFFERENT ANSWERS, and they need different words on screen: this server
@@ -438,7 +439,8 @@ async def list_libraries(user=Depends(get_media_user), request: Request = None):
     # `viewer` is the key this server actually evaluated the ACL against (a delegated proxy hop can
     # carry a different one), which is also the key its owner has to be given.
     return {"libraries": [public_library(lib, pubkey, admin=user.is_admin) for lib in readable],
-            "can_create": bool(user.is_admin and pubkey), "profiles": media.allowed_profiles(config),
+            "can_create": bool(user.is_admin and pubkey),
+            "profiles": media.allowed_profiles(config, charged),
             "viewer": pubkey, "unshared": len(held) - len(readable)}
 
 
@@ -660,10 +662,10 @@ async def hls(library_id: str, item_id: str, asset: str, viewer: str = Query(max
         raise HTTPException(403, "Playback session expired; reopen the media")
     query = urlencode({"viewer": viewer, "expires": expires, "ticket": ticket, 'audio': audio, 'subtitle': subtitle})
     # One decision for the whole request: the ladder a player is offered and the rate its segments are
-    # sent at must come from the SAME limits, or it is offered a rung its budget cannot carry.
-    config = media.effective_limits(await media.limits(),
-                                    request is not None and media.is_local_address(client_address(request)))
-    profiles = media.allowed_profiles(config)
+    # sent at must follow the SAME rule, or it is offered a rung its budget cannot carry.
+    config = await media.limits()
+    charged = media.metered(request is not None and media.is_local_address(client_address(request)))
+    profiles = media.allowed_profiles(config, charged)
     try:
         media.touch_session(ticket, viewer, config)
     except RuntimeError as error:
@@ -723,8 +725,9 @@ async def hls(library_id: str, item_id: str, asset: str, viewer: str = Query(max
         # Revocation also takes effect while an uncached segment is encoding.
         await library_for(library_id, viewer)
         media.prefetch(library, item, profile, number, count, config)
-        # Always paced, at whatever `config` says applies to this viewer. There is no unmetered path.
-        return StreamingResponse(media.paced_bytes(data, viewer, config, order=(ticket, number)),
+        # The server-wide budget always applies; the per-viewer one only to a viewer on the internet.
+        return StreamingResponse(media.paced_bytes(data, viewer, config, order=(ticket, number),
+                                                   metered=charged),
                                  media_type="video/mp2t", headers=PRIVATE)
     except asyncio.TimeoutError as error:
         raise HTTPException(503, "Transcoders are busy; retry shortly", headers={"Retry-After": "5"}) from error

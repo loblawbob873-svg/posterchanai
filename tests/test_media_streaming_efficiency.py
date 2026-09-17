@@ -240,7 +240,9 @@ def test_segment_responses_are_ordered_within_their_playback(api, monkeypatch): 
     async def encoded(*args):
         return b"segment"
 
-    async def spy(data, viewer, config, order=None):
+    # `metered` says whether this viewer is charged the per-viewer uplink cap. The in-order
+    # rule this test is about holds either way, so the stub simply accepts it.
+    async def spy(data, viewer, config, order=None, metered=True):
         calls.append(order)
         yield data
 
