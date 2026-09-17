@@ -1,4 +1,4 @@
-"""`lan_kbps`: a SECOND cap the operator types for this node's own network. Nothing here is exempt.
+"""ONE number, and it limits the INTERNET -- the shape Jellyfin ships, for the same reason.
 
 The reported fault, measured live on 2026-09-17 while it was happening: a TV at 192.168.0.49 (router
 nginx -> server1 -> nas) paced to `viewer_kbps` 1600, so 480p segments took 6-13 s to deliver ~600-690
@@ -6,12 +6,14 @@ KB with headers in 0.08 s -- a 6-second segment arriving slower than real time
 (`[media-proxy] ... elapsed_s=13.907 upstream_bytes=682064`). The buffer drained, the player fell
 480p -> 240p, and at the rung switch the Jellyfin client stopped and restarted the stream.
 
-The rule this file pins, and the reason it is a setting and not a cleverness: A CAP THE OPERATOR
-TYPED IS ENFORCED, ALWAYS, ON EVERYBODY. `lan_kbps` defaults to 0 = no separate allowance, i.e. this
-node behaves exactly as it did. Set it, and only viewers inside this node's OWN attached subnets are
-paced to that number instead -- never a VPN peer (measured: WireGuard hands roaming phones
-192.168.5.2-5 and the VPS 192.168.7.1, all RFC1918, all across the WAN), never `ip.is_private`, and
-never a viewer this node could not measure.
+The rule this file pins: `viewer_kbps` is the per-viewer ceiling on this node's UPLOAD, so it is
+charged to viewers who use the uplink and to nobody else. `server_kbps`, the total, still applies to
+everyone. A SECOND setting was tried first and removed: it asked somebody to describe one intention
+twice, which no other media server does.
+
+Who counts as "not the internet" is the strict part -- this node's OWN attached subnets, never a VPN
+peer (measured: WireGuard hands roaming phones 192.168.5.2-5 and the VPS 192.168.7.1, all RFC1918,
+all across the WAN), never `ip.is_private`, and never a viewer this node could not measure.
 
 The address is decided by `media.viewer_address`, which trusts a forwarded header only from a local
 peer and the node-to-node `X-PC-Media-Client` only on an authenticated hop.
@@ -87,10 +89,10 @@ def test_a_vpn_peer_is_not_on_the_lan_however_private_its_address_looks(monkeypa
     monkeypatch.setattr(media, "_local_networks", (0.0, None))
 
 
-def test_an_unreadable_interface_table_falls_back_to_the_general_cap(monkeypatch):
-    """Failing to measure costs a viewer their LAN allowance -- the pre-existing behaviour, a bounded
-    and harmless loss -- and never lets an unmeasured address keep one. A STALE answer must not
-    survive the failure either, which is the shape a cached measurement invites."""
+def test_an_unreadable_interface_table_charges_everybody(monkeypatch):
+    """Failing to measure means the viewer is treated as the internet -- paced, which is the
+    pre-existing behaviour and a bounded, harmless loss -- and never the other way round. A STALE
+    answer must not survive the failure either, which is the shape a cached measurement invites."""
     import ipaddress
 
     def explode():
@@ -101,8 +103,7 @@ def test_an_unreadable_interface_table_falls_back_to_the_general_cap(monkeypatch
     monkeypatch.setattr(media, "_local_networks", (0.0, (ipaddress.ip_network("192.168.0.0/24"),)))
     assert media.local_networks() == ()
     assert media.is_local_address("192.168.0.49") is False
-    assert media.effective_limits({"viewer_kbps": 800, "lan_kbps": 40000},
-                                  media.is_local_address("192.168.0.49"))["viewer_kbps"] == 800
+    assert media.metered(media.is_local_address("192.168.0.49")) is True
     monkeypatch.setattr(media, "_local_networks", (0.0, None))
 
 
@@ -136,18 +137,19 @@ def test_the_edge_reads_the_address_the_same_way():
     assert routes.client_address(_request("")) == ""
 
 
-def test_the_typed_cap_applies_to_everybody_until_a_lan_number_is_typed(api, monkeypatch):  # noqa: F811
-    """Nobody is ever served unpaced, and no cap is ever raised by this code. With `lan_kbps` unset
-    a 100 KB/s cap is 100 KB/s for the TV too -- exactly what a node does today."""
+def test_the_internet_is_charged_and_this_network_is_not(api, monkeypatch):  # noqa: F811
+    """One number. A remote viewer is paced to it; a viewer on this node's own network is not
+    charged against it at all -- and the SERVER total still applies to both."""
     client, docs, user, folder = api
     seed(docs, folder)
-    rates, limits = [], dict(media.DEFAULT_LIMITS, viewer_kbps=800)
+    calls, limits = [], dict(media.DEFAULT_LIMITS, viewer_kbps=800)
 
     async def encoded(*args):
         return b"segment-bytes"
 
-    async def spy(data, viewer, config, order=None):
-        rates.append(config["viewer_kbps"])
+    async def spy(data, viewer, config, order=None, metered=True):
+        calls.append({"metered": metered, "viewer_kbps": config["viewer_kbps"],
+                      "server_kbps": config["server_kbps"]})
         yield data
 
     async def configured():
@@ -159,22 +161,30 @@ def test_the_typed_cap_applies_to_everybody_until_a_lan_number_is_typed(api, mon
     monkeypatch.setattr(media, "limits", configured)
     url = client.post("/api/media-center/abc/play/movie").json()["url"].replace("master.m3u8", "240p-1.ts")
 
-    monkeypatch.setattr(routes, "client_address", lambda request: "192.168.0.49")
-    assert client.get(url).content == b"segment-bytes"
-    assert rates == [800], "an unset lan_kbps must leave the operator's cap applying to everyone"
-
-    limits["lan_kbps"] = 40000
-    assert client.get(url).content == b"segment-bytes"
-    assert rates[-1] == 40000, "a typed LAN allowance was ignored"
-
     monkeypatch.setattr(routes, "client_address", lambda request: "69.145.1.133")
     assert client.get(url).content == b"segment-bytes"
-    assert rates[-1] == 800, "a LAN allowance must never reach a viewer off this network"
+    assert calls[-1]["metered"] is True, "a viewer on the internet must be charged the cap"
+
+    monkeypatch.setattr(routes, "client_address", lambda request: "192.168.0.49")
+    assert client.get(url).content == b"segment-bytes"
+    assert calls[-1]["metered"] is False, "a viewer on this network does not use the uplink"
+    # The number itself is never rewritten, and the server-wide total reaches the pacer either way.
+    assert {call["viewer_kbps"] for call in calls} == {800}
+    assert {call["server_kbps"] for call in calls} == {media.DEFAULT_LIMITS["server_kbps"]}
 
 
-def test_the_ladder_and_the_rate_come_from_the_same_limits(api, monkeypatch):  # noqa: F811
-    """A player offered a rung its budget cannot carry stalls at that rung. The master playlist and
-    the pacing must therefore read ONE config, so a LAN allowance opens the ladder it pays for."""
+def test_the_server_total_still_applies_to_a_viewer_on_this_network():
+    """The per-viewer cap is about the uplink; the total is about the machine, and everybody pays it.
+    Dropping BOTH budgets would let one local player take the whole server."""
+    import inspect
+    source = inspect.getsource(media.paced_bytes)
+    unmetered = source[source.index("if metered else"):]
+    assert '"server"' in unmetered.split(")")[0] + ")", unmetered[:120]
+
+
+def test_the_ladder_follows_the_same_rule_as_the_rate(api, monkeypatch):  # noqa: F811
+    """A player offered a rung its budget cannot carry stalls at that rung, so the master playlist
+    and the pacing must agree about who is charged."""
     client, docs, user, folder = api
     seed(docs, folder)
     limits = dict(media.DEFAULT_LIMITS, viewer_kbps=1600)
@@ -183,31 +193,36 @@ def test_the_ladder_and_the_rate_come_from_the_same_limits(api, monkeypatch):  #
         return dict(limits)
 
     monkeypatch.setattr(media, "limits", configured)
-    monkeypatch.setattr(routes, "client_address", lambda request: "192.168.0.49")
     url = client.post("/api/media-center/abc/play/movie").json()["url"]
-    assert "720p.m3u8" not in client.get(url).text, "1600 kbps cannot carry 720p"
 
-    limits["lan_kbps"] = 40000
-    assert "720p.m3u8" in client.get(url).text, "a LAN allowance bought no better picture"
+    monkeypatch.setattr(routes, "client_address", lambda request: "69.145.1.133")
+    assert "720p.m3u8" not in client.get(url).text, "1600 kbps of uplink cannot carry 720p"
+    assert "720p" not in client.get("/api/media-center").json()["profiles"]
 
+    monkeypatch.setattr(routes, "client_address", lambda request: "192.168.0.49")
+    assert "720p.m3u8" in client.get(url).text, "a viewer on this network is not held to the uplink"
     # The quality menu is built from this list, so it must answer for the same viewer.
     assert "720p" in client.get("/api/media-center").json()["profiles"]
 
-    monkeypatch.setattr(routes, "client_address", lambda request: "69.145.1.133")
-    assert "720p.m3u8" not in client.get(url).text, "a remote viewer was offered the LAN ladder"
-    assert "720p" not in client.get("/api/media-center").json()["profiles"]
+
+def test_only_the_internet_is_metered():
+    assert media.metered(False) is True          # not local -> the internet -> charged
+    assert media.metered(True) is False          # this node's own network -> not charged
 
 
-def test_effective_limits_never_raises_a_number_nobody_typed():
-    base = {"viewer_kbps": 800, "lan_kbps": 0, "server_kbps": 20000}
-    assert media.effective_limits(base, True) == base
-    assert media.effective_limits(base, False) == base
-    assert media.effective_limits({**base, "lan_kbps": 40000}, False)["viewer_kbps"] == 800
-    assert media.effective_limits({**base, "lan_kbps": 40000}, True)["viewer_kbps"] == 40000
-    # The server-wide ceiling is never touched: it is the uplink itself.
-    assert media.effective_limits({**base, "lan_kbps": 40000}, True)["server_kbps"] == 20000
-    # A LAN allowance SMALLER than the general cap is still obeyed -- it is a number, not a bonus.
-    assert media.effective_limits({**base, "lan_kbps": 300}, True)["viewer_kbps"] == 300
+def test_there_is_exactly_one_bandwidth_number_per_viewer():
+    """A second setting was tried and removed. Two boxes asked somebody to describe one intention
+    twice; the fix was to name the one number after what it limits."""
+    assert "lan_kbps" not in media.DEFAULT_LIMITS
+    assert "lan_kbps" not in routes.Limits.model_fields
+    source = (routes.__file__.rsplit("/app/", 1)[0] + "/static/js/client/app.js")
+    form = open(source, encoding="utf-8").read()
+    form = form[form.index('<form id="mc-limits"'):]
+    form = form[:form.index('</form>')]
+    assert 'name="lan_kbps"' not in form
+    # And the one that remains says what it limits, on screen.
+    assert "Internet bandwidth per user" in form
+    assert "own network is not limited" in form
 
 
 def test_the_jellyfin_hop_carries_the_clients_address():
