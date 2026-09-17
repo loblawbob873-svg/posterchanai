@@ -18,6 +18,27 @@ const cleanName = n => String(n||'').trim().replace(/[^A-Za-z0-9_.-]+/g, '-')
   .replace(/^[.-]+|[.-]+$/g,'').slice(0,48);
 const xml = s => String(s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&apos;'}[c]));
 
+/* DOES THIS QEMU HAVE A 3D VIRTUAL GPU?
+ *
+ * The domain below asks for SPICE GL and an accelerated virtio GPU, which is what a Wayland guest
+ * needs. QEMU built without virgl answers `define` with "3d acceleration is not supported by this
+ * QEMU binary" -- and that was the ENTIRE result of Create on a real PosterChanOS install whose
+ * qemu had USE=opengl but not virgl: no VM could be made at all. Asked once per process, from the
+ * binary itself (the device list names `virtio-vga-gl` exactly when virgl is compiled in); an
+ * unanswerable probe is read as "yes", the configuration that shipped before this check existed. */
+let _gl=null;
+function qemu3d(runner=run){
+  if(!_gl) _gl=runner('/usr/bin/qemu-system-x86_64',['-device','help'],15000)
+    .then(r=>!(r.ok||r.out) ? true : /virtio-(?:vga|gpu)-gl/.test(r.out+'\n'+r.error));
+  return _gl;
+}
+function displayXml(gl){
+  return gl
+    ? `<graphics type="spice" autoport="yes"><listen type="none"/><gl enable="yes"/></graphics>
+      <video><model type="virtio" heads="1" primary="yes"><acceleration accel3d="yes"/></model></video>`
+    : `<graphics type="spice" autoport="yes"><listen type="none"/></graphics>
+      <video><model type="virtio" heads="1" primary="yes"/></video>`;
+}
 async function available(){
   const r=await virsh(['version']);
   return {available:r.ok, uri:URI, error:r.ok?'':r.error};
@@ -88,7 +109,10 @@ async function details(name){
   return {ok:true,name,state:get('State').toLowerCase(),ramMiB:Math.round(Number((get('Max memory').match(/\d+/)||[0])[0])/1024),
     cpus:Number(get('CPU\\(s\\)'))||1,autostart:/enable/i.test(get('Autostart')),disks,
     bootOrder:boots[0]==='cdrom'?'cdrom':'disk',
-    gamingMouse:/<input type=['"]mouse['"] bus=['"]ps2['"]/.test(body),
+    /* A TABLET IS WHAT MAKES THE POINTER ABSOLUTE, so its absence is gaming mode. The PS/2 mouse is
+     * NOT the signal: libvirt adds `<input type='mouse' bus='ps2'/>` to every x86 domain by itself,
+     * so reading it reported gaming mode ON for every VM ever created (measured on a fresh one). */
+    gamingMouse:!/<input\s+type=['"]tablet['"]/.test(body),
     networks:(body.match(/<interface\b/g)||[]).length};
 }
 async function setBootOrder(name, first){
@@ -192,7 +216,11 @@ async function gamingMouse(name, enabled){
   const d=await details(name);if(!d.ok)return d;
   if(!/shut off|shutoff|inactive/.test(d.state))return {ok:false,error:'Shut down the VM before changing mouse mode'};
   const x=await virsh(['dumpxml',d.name]);if(!x.ok)return x;
-  let body=x.out.replace(/\s*<input type=['"](?:tablet|mouse)['"] bus=['"](?:usb|ps2)['"]\s*\/>/g,'');
+  /* libvirt WRITES BACK a tablet with an <address> child, so it is `<input …>…</input>`, never the
+   * self-closing form this used to match: enabling gaming mode removed nothing and the tablet kept
+   * the pointer absolute. Both shapes are removed here, and the implicit PS/2 mouse is left to
+   * libvirt, which re-adds it on every define anyway. */
+  let body=x.out.replace(/\s*<input\s+type=['"](?:tablet|mouse)['"]\s+bus=['"](?:usb|ps2)['"][^>]*?(?:\/>|>[\s\S]*?<\/input>)/g,'');
   const input=enabled?'      <input type="mouse" bus="ps2"/>':'      <input type="tablet" bus="usb"/>';
   body=body.replace(/\s*<\/devices>/,`\n${input}\n    </devices>`);
   const dir=path.join(root(),d.name);await fs.promises.mkdir(dir,{recursive:true,mode:0o700});
@@ -230,6 +258,7 @@ async function create(opts){
    * virt-viewer process, so no GTK virt-manager stack is involved. */
   const osXml=firmware==='efi'?`<os firmware="efi"><type arch="x86_64" machine="q35">hvm</type><firmware><feature enabled="${guest==='windows'?'yes':'no'}" name="secure-boot"/></firmware><boot dev="cdrom"/><boot dev="hd"/></os>`:
     `<os><type arch="x86_64" machine="q35">hvm</type><boot dev="cdrom"/><boot dev="hd"/></os>`;
+  const gl3d=await qemu3d();
   const tpm=guest==='windows'?'<tpm model="tpm-crb"><backend type="emulator" version="2.0"/></tpm>':'';
   const def=`<domain type="kvm"><name>${xml(name)}</name><uuid>${crypto.randomUUID()}</uuid>
     <memory unit="MiB">${ram}</memory><currentMemory unit="MiB">${ram}</currentMemory><vcpu>${cpus}</vcpu>
@@ -245,8 +274,9 @@ async function create(opts){
       <!-- A virtio GPU without VirGL/3D advertises a DRM device but cannot initialize EGL. Sway
            then owns the display yet paints only black. Keep SPICE local-only (required for GL) and
            expose the accelerated renderer that both Linux desktops and Windows drivers expect. -->
-      <graphics type="spice" autoport="yes"><listen type="none"/><gl enable="yes"/></graphics>
-      <video><model type="virtio" heads="1" primary="yes"><acceleration accel3d="yes"/></model></video>
+      <!-- …and a QEMU built without virgl cannot define it at all, so that one falls back to a 2D
+           virtio GPU (see qemu3d) rather than making Create fail for every VM. -->
+      ${displayXml(gl3d)}
       <channel type="spicevmc"><target type="virtio" name="com.redhat.spice.0"/></channel>
       <!-- Absolute input is the safe desktop default: entering the viewer does not imprison the
            host pointer. Relative PS/2 capture remains an explicit gaming-mode choice. -->
@@ -293,4 +323,4 @@ async function view(name){
    * above as well, rather than allowing a different PATH entry to win. */
   return launchViewer('/usr/bin/'+bin,args);
 }
-module.exports={available,list,details,update,addDisk,changeIso,ejectIso,bootDisk,addNetwork,gamingMouse,create,action,remove,view,launchViewer,cleanName,successorInstaller};
+module.exports={available,list,details,update,addDisk,changeIso,ejectIso,bootDisk,addNetwork,gamingMouse,create,action,remove,view,launchViewer,cleanName,successorInstaller,qemu3d,displayXml};
