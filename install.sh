@@ -42,6 +42,7 @@ source "$INSTALL_DIR/sandbox.sh"
 source "$INSTALL_DIR/searxng.sh"
 source "$INSTALL_DIR/webxdc.sh"
 source "$INSTALL_DIR/office.sh"
+source "$INSTALL_DIR/vmhost.sh"
 
 # Handle --help and --packages options
 if [ "$1" = "--help" ] || [ "$1" = "-h" ]; then
@@ -106,6 +107,12 @@ fi
 # mini app posts fine and then shows a blank window forever, with nothing in any log.
 if [ "$1" = "--webxdc" ]; then
     setup_webxdc_sandbox
+    exit $?
+fi
+
+# Add-on: make this machine a VM host (libvirt/QEMU, group socket, NOCOW storage on btrfs, default network).
+if [ "$1" = "--vmhost" ]; then
+    setup_vmhost
     exit $?
 fi
 

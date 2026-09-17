@@ -155,6 +155,7 @@ show_help() {
     echo "  --office         Install the built-in CODE office editor (DOCX/XLSX/PPTX)"
     echo "  --searxng        Run this node's own SearXNG (web search for the AI, news, bots, Web Search)"
     echo "  --sandbox        Set up the per-user Debian Docker sandbox (docker group + base image)"
+    echo "  --vmhost         Make this machine a VM host: libvirt/QEMU, groups, storage, socket, network"
     echo "  --webxdc         Serve mini apps (.xdc games/polls) from xdc.<your-domain> — DNS + cert + vhost"
     echo ""
     echo "Installation Types:"

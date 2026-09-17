@@ -20,39 +20,43 @@ shortcut opening this screen, per-op audit logging.
 
 ## 1. Set up a host
 
-### Packages
-
-| Distro | Packages |
-|---|---|
-| Gentoo | `app-emulation/libvirt[qemu,virt-network]`, `app-emulation/qemu`, `sys-firmware/edk2-bin`, `app-crypt/swtpm` |
-| Debian/Ubuntu | `libvirt-daemon-system libvirt-clients qemu-system-x86 qemu-utils ovmf swtpm-tools` |
-
-Then:
+### One command
 
 ```sh
-sudo systemctl enable --now libvirtd
-sudo virsh net-autostart default && sudo virsh net-start default   # the NAT network VMs attach to
-ls -l /dev/kvm                                                       # hardware virtualisation present?
+./install.sh --vmhost          # as the user posterchanai.service runs as; uses sudo for the system changes
 ```
 
-### The app user
+`scripts/install/vmhost.sh`, idempotent (a re-run only repairs what drifted — tested by running it twice under
+stubbed system commands, `tests/test_install_vmhost.py`, and dry-run on the live host with every privileged
+change refused). It does, in order:
 
-```sh
-sudo usermod -aG libvirt,kvm <the user posterchanai.service runs as>
-sudo systemctl restart posterchanai.service       # group changes need a new process
-```
+1. **Packages**, skipped when `virsh` and `qemu-img` already exist: Gentoo `emerge --noreplace
+   app-emulation/libvirt app-emulation/qemu` (NOT `sys-firmware/edk2-bin`: qemu pins its own edk2 and an
+   explicit request conflicts), Debian/Ubuntu `libvirt-daemon-system libvirt-clients qemu-system-x86
+   qemu-utils ovmf`, Arch `libvirt qemu-base edk2-ovmf dnsmasq`, Fedora `libvirt-daemon-kvm libvirt-client
+   qemu-kvm qemu-img edk2-ovmf`, openSUSE `libvirt qemu-kvm qemu-tools qemu-ovmf-x86_64`.
+2. The service user joins **`libvirt`** and **`kvm`** (effective when the service restarts).
+3. **Storage** `/var/lib/posterchan/vms` (`VMHOST_STORAGE` to change it): owned `<user>:qemu`
+   (Debian `<user>:libvirt-qemu`), **0751**, `isos/` **0755**. On **btrfs**, `chattr +C` (NOCOW) on it,
+   on `isos/` and on `/var/lib/libvirt/images` — ONLY while each is still empty, because NOCOW applies to
+   files created afterwards; a populated directory gets a warning instead (move the images out, `chattr +C`,
+   copy them back with `cp`). Warns about a parent directory QEMU cannot traverse.
+4. **libvirtd** enabled. When libvirt has **no polkit** (no `org.libvirt.unix.policy`; Gentoo's default), its
+   read-write socket is `root:root 0600` and every group membership is useless, so it writes
+   `/etc/systemd/system/libvirtd.socket.d/posterchan-group.conf` (`SocketGroup=libvirt`, `SocketMode=0660`),
+   sets `unix_sock_group = "libvirt"` and `unix_sock_rw_perms = "0770"` in `/etc/libvirt/libvirtd.conf`, and
+   restarts the socket — only when something changed. With polkit nothing is touched.
+5. The **`default`** NAT network defined (if missing), autostarted and started.
+6. `/dev/kvm` checked (without it VMs are slow software emulation).
+7. **Final check**: `virsh -c qemu:///system list --all` as the service user.
 
 > **Security: membership of `libvirt` is effectively root on this machine.** Anyone who can drive
 > `qemu:///system` can define a VM that mounts `/` from the host. Enabling VM hosting means trusting
 > this app — and therefore every admin npub you list — with that. Keep the admin list short.
 
-### Storage
+Then restart `posterchanai.service` (group changes need a new process) and turn it on in Admin → VMs.
 
-```sh
-sudo mkdir -p /var/lib/posterchan/vms/isos
-sudo chown -R <app user>:libvirt /var/lib/posterchan/vms
-sudo chmod 2750 /var/lib/posterchan/vms
-```
+### Storage
 
 Layout, all built by the server from ids — **clients never send a path**:
 
