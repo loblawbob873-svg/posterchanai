@@ -9928,7 +9928,15 @@
              * a generic doc:* frame; otherwise the frame moves successfully but its destination is
              * an empty shared-feed window. acceptHandoff opens its own neutral/maximised document. */
             if(/^doc:pv:/.test(String(p.view)) && p.state && window.PCPreview && PCPreview.acceptHandoff){
-              Promise.resolve(PCPreview.acceptHandoff(p.state)).catch(()=>{});return;
+              /* The source frame has already closed, so a refusal here loses the window on BOTH
+               * monitors. Preview answers every preview payload with a document — the file itself
+               * where it can reopen the address, an explanation where it cannot — and anything else
+               * is said out loud rather than leaving somebody looking at an empty screen. */
+              Promise.resolve(PCPreview.acceptHandoff(p.state)).then(made=>{
+                if(!made) osToast('That preview could not be moved to this display. Reopen it from Files.');
+              }).catch(()=>{
+                osToast('That preview could not be moved to this display. Reopen it from Files.');
+              });return;
             }
             /* A Webxdc document key is deliberately opaque and cannot repaint the app. Recreate
              * the sandbox from its transferred attachment/room identity instead of passing the

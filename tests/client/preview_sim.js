@@ -66,11 +66,23 @@ function install() {
     addEventListener: (k, f) => { (listeners[k] = listeners[k] || []).push(f); },
     removeEventListener: (k, f) => { listeners[k] = (listeners[k] || []).filter(x => x !== f); },
     _listeners: listeners,
+    /* The page HAS an address, and the module asks what it is: a streamed preview is reopened on
+       the other monitor only when the url is on this page's own protocol and host. A stub without
+       a location answers "no" to every address and would agree with the bug it must catch. */
+    location: { href: 'app://posterchan/index.html' },
   };
   // node 21+ defines a real `navigator` with only a getter, so it has to be REPLACED, not assigned.
   Object.defineProperty(global, 'navigator', { value: {}, configurable: true, writable: true });
-  global.URL = { _live: 0, _lastType: '', createObjectURL(blob) { this._live++; this._lastType = blob.type; return 'blob:x' + this._live; },
-                 revokeObjectURL() { this._live--; } };
+  /* A REAL parser with the object-URL bookkeeping bolted on. `new URL(...)` is how the module
+     decides whether an address belongs to this page, so a plain object here would make every
+     same-origin check throw and quietly take the fallback path. */
+  const RealURL = global.URL;
+  class TestURL extends RealURL {}
+  TestURL._live = 0; TestURL._lastType = '';
+  TestURL.createObjectURL = function (blob) { TestURL._live++; TestURL._lastType = blob.type;
+                                              return 'blob:app://posterchan/x' + TestURL._live; };
+  TestURL.revokeObjectURL = function () { TestURL._live--; };
+  global.URL = TestURL;
   global.Blob = class { constructor(parts, opts) { this.type = (opts && opts.type) || '';
                                                    this.size = 10; } };
   global.fetch = async () => ({ blob: async () => new global.Blob([]) });
@@ -231,6 +243,55 @@ console.log('a desktop monitor handoff transfers the live blob and playback befo
   check('recovery Preview is a real document window',!!fallbackWindow&&fallbackWindow.slot.classList.contains('pv-win'));
   check('recovery document is renderable plain text',global.URL._lastType==='text/plain');
   global.fetch=oldFetch;P.close();delete window.PCOS;
+
+  /* A LOCAL VIDEO IS AN ADDRESS, NOT BYTES — the whole reason the streamed path exists, and it was
+   * broken at both ends. Files → This Computer opens media with `url:pcHost.fileUrl(path)` and no
+   * blob, so `open` read `blob.size` off null and threw before drawing anything (measured on the
+   * device: "Cannot read properties of null (reading 'size')", no window); and the handoff refused
+   * any URL that was not `blob:`, so moving one to the other monitor left it on NEITHER screen. */
+  console.log('a streamed local file opens and travels as an address');
+  {
+    const HOST='app://posterchan/__hostfile/%2Ftmp%2Fpcvideo.mp4';
+    let streamWindow=null;
+    window.PCOS={isOn:()=>true,openDoc(){streamWindow={slot:slot()};return streamWindow;},
+      documentWindow(){},closeDoc(){}};
+    const before=global.URL._live;
+    const opened=P.open({name:'pcvideo.mp4',mime:'video/mp4',url:HOST});
+    check('a local video opens with no bytes in hand',opened===true);
+    const streamed=streamWindow&&streamWindow.slot.querySelector('.pv-vid');
+    check('and the player is pointed at the address itself',!!streamed&&streamed.src===HOST,
+          'a streamed source must be range-requested, never read into a blob');
+    check('no blob URL was minted for it',global.URL._live===before);
+    streamed.currentTime=12.25;streamed.paused=false;streamed.volume=.8;streamed.playbackRate=1;
+    const carried=streamWindow.handoffState();
+    check('the handoff carries the address',carried.preview===true&&carried.url===HOST);
+    check('and the position it was at',carried.media&&carried.media.time===12.25&&carried.media.paused===false);
+    P.close();
+
+    let landed=null;
+    window.PCOS={isOn:()=>true,openDoc(){landed={slot:slot()};return landed;},
+      documentWindow(){},closeDoc(){}};
+    check('the other monitor rebuilds it from the same address',await P.acceptHandoff(carried)===true);
+    const moved=landed&&landed.slot.querySelector('.pv-vid');
+    check('and shows the file, not an apology',!!moved&&moved.src===HOST);
+    moved.dispatch('loadedmetadata');
+    check('at the time it was moved at, still playing',moved.currentTime===12.25&&!moved.paused);
+    P.close();delete window.PCOS;
+  }
+
+  console.log('an address this renderer cannot open is explained, never swallowed');
+  {
+    let noteWindow=null;
+    window.PCOS={isOn:()=>true,openDoc(){noteWindow={slot:slot()};return noteWindow;},
+      documentWindow(){},closeDoc(){}};
+    const foreign={preview:true,name:'clip.mp4',mime:'video/mp4',
+                   url:'https://somewhere.example/clip.mp4',media:null};
+    const made=await P.acceptHandoff(foreign);
+    check('a foreign address still yields a document',made===true,
+          'os.js returns after this call: false means the window exists on NEITHER monitor');
+    check('and that document is the explanation',global.URL._lastType==='text/plain');
+    P.close();delete window.PCOS;
+  }
   console.log(failures ? '\nFAILED ' + failures : '\nOK  preview holds');
   process.exitCode=failures?1:0;
 })().catch(e=>{console.error(e&&e.stack||e);process.exitCode=1;});

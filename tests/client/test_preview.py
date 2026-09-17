@@ -52,6 +52,39 @@ class PreviewSim(unittest.TestCase):
         send = osjs[osjs.index("function sendFrameHandoff"):osjs.index("function rearmFrameHandoffDestination")]
         self.assertIn("typeof w.handoffCancel==='function'", send)
 
+    def test_a_preview_that_cannot_be_rebuilt_is_said_out_loud(self):
+        """os.js RETURNS after handing the payload to Preview, so a refusal leaves the window on
+        neither monitor — the source frame has already closed. Preview answers every preview payload
+        with a document; anything else must reach the person rather than a swallowed catch."""
+        osjs = _read("static/js/client/os.js")
+        receive = osjs[osjs.index("if(pcWM.onHandoffFrame)"):osjs.index("if(pcWM.onPreviewFrame)")]
+        branch = receive[receive.index("PCPreview.acceptHandoff(p.state)"):]
+        branch = branch[:branch.index("return;") + len("return;")]
+        self.assertIn("osToast(", branch)
+        self.assertIn("if(!made)", branch.replace(" ", ""))
+        self.assertIn("catch(", branch)
+        self.assertEqual(2, branch.count("osToast("),
+                         "a rejected promise loses the window as surely as a false answer does")
+
+    def test_a_streamed_local_file_survives_a_monitor_move(self):
+        """Measured on the device: Files → This Computer opens a video by ADDRESS, and both halves
+        were broken — `open` read `blob.size` off a null blob, and the handoff refused any url that
+        was not `blob:`, so the window existed on neither screen."""
+        preview = _read("static/js/client/preview.js")
+        opener = preview[preview.index("function open(file)"):preview.index("function sameOriginAddress")]
+        self.assertNotIn("mount(host, name, mime, blob.size", opener)
+        self.assertNotIn("mount(sheet, name, mime, blob.size", opener)
+        self.assertIn("var size = streamed ?", opener)
+        accept = preview[preview.index("async function acceptHandoff"):]
+        accept = accept[:accept.index("root.PCPreview")]
+        self.assertIn("sameOriginAddress(s.url)", accept)
+        self.assertIn("movedNote", accept)
+        self.assertNotIn("return false;", accept.split("if (!s.preview) return false;")[-1])
+        origin = preview[preview.index("function sameOriginAddress"):preview.index("function movedNote")]
+        self.assertIn("target.protocol === page.protocol", origin)
+        self.assertIn("target.host === page.host", origin)
+        self.assertNotIn(".origin ===", origin)
+
     def test_failed_cross_renderer_blob_fetch_opens_recovery_document(self):
         preview = _read("static/js/client/preview.js")
         accept = preview[preview.index("async function acceptHandoff"):
