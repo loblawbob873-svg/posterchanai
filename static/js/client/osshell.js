@@ -771,6 +771,32 @@
    * actually has. So the accessor takes EITHER, the tests now assert against __PC as well, and
    * test_os_shell.py fails if the short name comes back. */
   const APP = () => root.__PC || root.PC || {};
+
+  /* WHAT WENT WRONG, WITHOUT ELECTRON'S ENVELOPE.
+   *
+   * A bridge call that fails reaches the page as "Error invoking remote method 'pc:net:connect':
+   * Error: <what nmcli said>". Toasted whole, that prefix is all anybody reads -- reported from a
+   * LiveUSB as "can't connect to Wifi: says error invoking remote method", which names no reason.
+   * The envelope is removed, and the nmcli refusals a person can act on are said in words; anything
+   * unrecognised is shown as nmcli wrote it rather than guessed at. */
+  function wifiReason(e, ssid){
+    let m = String((e && e.message) || e || '').trim();
+    m = m.replace(/^Error invoking remote method '[^']*':\s*/i, '').replace(/^(?:Error:\s*)+/i, '').trim();
+    const name = ssid ? ' ' + ssid : '';
+    if(/secrets were required|802-11-wireless-security\.psk|invalid passphrase|wrong password|psk: property is invalid/i.test(m))
+      return 'could not join' + name + ': the password was not accepted';
+    if(/not authorized|insufficient privileges|permission denied/i.test(m))
+      return 'could not join' + name + ': this account is not allowed to change the network (' + m + ')';
+    if(/no wi-?fi device|wifi device not found|no suitable device/i.test(m))
+      return 'could not join' + name + ': no usable Wi-Fi adapter on this machine (missing driver or firmware?)';
+    if(/no network with ssid/i.test(m))
+      return 'could not join' + name + ': that network is no longer in range';
+    if(/nmcli: (?:command )?not found|ENOENT/i.test(m))
+      return 'could not join' + name + ': NetworkManager is not installed on this system';
+    if(/could not create nmclient|NetworkManager is not running/i.test(m))
+      return 'could not join' + name + ': NetworkManager is not running';
+    return m ? 'could not join' + name + ': ' + m : 'could not join' + name;
+  }
   const toast = (m) => { try{ const a = APP(); if(a.toast) a.toast(m); }catch(_){} };
 
   /* NETWORK. A list of what is in range, strongest first, with the one we are on marked. Joining
@@ -827,7 +853,7 @@
       try{
         const r = await net.connect(ssid, pw);
         toast((r && r.reused ? 'reconnected to ' : 'joined ') + ssid);
-      }catch(e){ toast(String((e && e.message) || e) || ('could not join ' + ssid)); }
+      }catch(e){ toast(wifiReason(e, ssid)); }
       closePop();
       refresh();
     });
@@ -1546,7 +1572,7 @@
                 profileMenu, machineApps, mergedApps, allApps, wifiIcon, volIcon, batterySvg,
                 ensureAccount, provisioned, identity, activateAccount, logoutSession,
                 panelHTML, quickHTML, taskbarHTML, launcherHTML, render, watch,
-                takeShot, shotAvailable, closePop, openControl, openTrayPopup,
+                takeShot, shotAvailable, closePop, openControl, openTrayPopup, wifiReason,
                 setViewOpener, refresh, paintTray, bindApps, bindPanel,
                 summary: () => _sum, rows: () => _rows, readAt: () => _readAt };
   root.PCOSShell = API;
