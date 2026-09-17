@@ -40,8 +40,10 @@ def test_oversized_native_preview_is_rejected_before_base64_allocation():
 
 
 def test_pdf_viewer_failure_retains_save_or_share_fallback():
+    native=PREVIEW[PREVIEW.index('function nativeOpen'):PREVIEW.index('async function openElsewhere')]
+    assert "capPlugin('OpenFile', 'open')" in native
     block=PREVIEW[PREVIEW.index('async function openElsewhere'):PREVIEW.index('function renderPdf')]
-    assert "capPlugin('OpenFile','open')" in block
+    assert "nativeOpen()" in block
     assert "if(opened&&opened.ok)return 'opened'" in block
     assert 'PC().saveBlobAs' in block
-    assert block.index("capPlugin('OpenFile','open')") < block.index('PC().saveBlobAs')
+    assert block.index("var cap=big?null:nativeOpen();") < block.index('PC().saveBlobAs')

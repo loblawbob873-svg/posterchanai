@@ -98,6 +98,29 @@
       if(bottomPinT){ clearTimeout(bottomPinT); bottomPinT = null; }
     }
 
+    /* Reading scrollback survives a resize: rows from the bottom, measured before FitAddon reflows
+     * and restored after it. Without this a person reading history was left at the old viewport
+     * index, which after a narrower reflow is somewhere else entirely. null = could not measure. */
+    function _rowsAboveBottom(){
+      try{ const b = term && term.buffer && term.buffer.active;
+        return b ? Math.max(0, (b.baseY | 0) - (b.viewportY | 0)) : null; }catch(_){ return null; }
+    }
+    function _keepRowsAboveBottom(n){
+      if(n == null || !term) return;
+      try{ const b = term.buffer.active; term.scrollToLine(Math.max(0, (b.baseY | 0) - n)); }catch(_){}
+    }
+    /* Dragging the SCROLLBAR is the one way of reading history that sends no wheel, touch or key
+     * event, so onScroll could not tell it from xterm's own layout movement and a live prompt yanked
+     * the reader back down. While a press that started on the viewport (the bar) is held, an upward
+     * scroll is the person's. */
+    let _barDrag = false;
+    function _scrollFromBar(y){
+      if(!_barDrag) return false;
+      const b = term && term.buffer && term.buffer.active;
+      if(b && y < b.baseY){ _stopFollowing(); return true; }
+      return false;
+    }
+
     /* A tap focuses the terminal and, on Android, opens the keyboard. It is not a scroll choice.
      * Keep this decision pure so touch/wheel surfaces cannot drift: only movement (or an upward
      * wheel) means the reader deliberately left current output. */
@@ -476,6 +499,7 @@
       /* Follow a live prompt until the person deliberately scrolls up. Reopening/attaching always
        * starts at the current prompt; after that, reading old output is never yanked back down. */
       try{ term.onScroll((y) => {
+        if(_scrollFromBar(y))return;
         if(scrollingByUs)return;
         const b=term.buffer&&term.buffer.active;followBottom=!!b && y>=b.baseY;
       }); }catch(_){}
@@ -485,6 +509,16 @@
        * live-output pin even when that pin currently owns the onScroll guard. */
       box.addEventListener('wheel', ev => { if(_scrollsAway('wheel',ev.deltaY)) _stopFollowing(); }, {passive:true});
       box.addEventListener('touchmove', ev => { if(_scrollsAway('touchmove')) _stopFollowing(); }, {passive:true});
+      box.addEventListener('pointerdown', ev => {
+        const t = ev.target;
+        if(t && t.classList && t.classList.contains('xterm-viewport')) _barDrag = true;
+      }, {passive:true});
+      if(!window.__pcTermBarUp){
+        window.__pcTermBarUp = true;
+        const up = () => { try{ window.PCTerm && window.PCTerm._barUp && window.PCTerm._barUp(); }catch(_){} };
+        document.addEventListener('pointerup', up, {passive:true, capture:true});
+        document.addEventListener('pointercancel', up, {passive:true, capture:true});
+      }
 
       /* FIND LIVES IN THE RENDERER, not in the shell. Sending Ctrl+F into readline searches command
        * history; Ctrl+Shift+F searches everything xterm still holds, including program output and
@@ -594,6 +628,7 @@
          * hundreds of rows above the new bottom after a window resize. A user already reading
          * history has followBottom=false and is deliberately left alone. */
         const followThisFit=followBottom;
+        const keepAbove=followThisFit ? null : _rowsAboveBottom();
         if(followThisFit)scrollingByUs=true;
         try{ term.options.fontSize = fontSize(); }catch(_){}
         /* Reparenting the live terminal during an app switch can deliver the first focused
@@ -604,6 +639,7 @@
         let fitOk=!fit;
         try{ if(fit){ fit.fit(); fitOk=true; } }catch(_){}
         if(followThisFit)_pinBottomAfterLayout();
+        else _keepRowsAboveBottom(keepAbove);
         /* A ZERO-SIZED BOX IS NOT A SIZE. In desktop mode the Terminal's window is PARKED when
          * another window takes focus — its nodes are moved aside, which fires the ResizeObserver
          * against an element with no layout. FitAddon declines to compute anything then, so
@@ -1529,7 +1565,8 @@
     }
 
     window.PCTerm = { render, unmount, isOpen: () => !!mounted, connected: () => connected,
-                      openLocal, sessionId: () => sid, adoptSession, handoffState, acceptHandoff };
+                      openLocal, sessionId: () => sid, adoptSession, handoffState, acceptHandoff,
+                      _barUp: () => { _barDrag = false; } };
   }
   init();
 })();

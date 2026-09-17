@@ -68,7 +68,13 @@ def test_user_scrolling_cancels_an_inflight_bottom_pin():
     assert "_scrollsAway('wheel',ev.deltaY)" in mount
     assert "addEventListener('touchmove'" in mount
     assert "_scrollsAway('touchmove')" in mount
-    assert "addEventListener('pointerdown'" not in mount
+    # A tap is not scroll intent: pointerdown may only ARM the scrollbar-drag check (viewport target),
+    # never stop following by itself — _scrollFromBar decides on the actual upward scroll.
+    if "addEventListener('pointerdown'" in mount:
+        down = mount[mount.index("addEventListener('pointerdown'"):]
+        down = down[:down.index("}, {passive:true});")]
+        assert "_stopFollowing" not in down
+        assert "classList.contains('xterm-viewport')" in down
 
     keys = TERM[TERM.index("attachCustomKeyEventHandler"):
                 TERM.index("return true;", TERM.index("attachCustomKeyEventHandler"))]
