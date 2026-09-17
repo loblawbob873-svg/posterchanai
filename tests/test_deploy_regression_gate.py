@@ -306,3 +306,22 @@ def test_the_full_suite_runs_async_tests_with_their_plugin(source_gate, tmp_path
     env.update(PYTEST_DISABLE_PLUGIN_AUTOLOAD='1', XDG_CACHE_HOME=str(tmp_path / 'cache'))
     ok, message = gate.run_full_suite(str(root), env, str(tmp_path), jobs=1)
     assert ok, message
+
+
+def test_a_hung_test_is_named_not_just_a_timed_out_shard(source_gate, tmp_path):
+    """Shard 1 once ran to its 3600s limit and the gate reported only "exit 124" and a screen of dots.
+    Real pytest, a real hang: faulthandler must dump the stuck test into what the gate prints."""
+    gate = source_gate[0]
+    root = tmp_path / 'suite'
+    (root / 'tests').mkdir(parents=True)
+    (root / 'tests/test_hangs.py').write_text('import time\ndef test_stuck_forever():\n    time.sleep(30)\n')
+    env = {k: v for k, v in os.environ.items() if k != 'PYTHONPATH'}
+    env['XDG_CACHE_HOME'] = str(tmp_path / 'cache')
+    gate.HANG_DUMP_S = 2
+    captured = gate.runpy.run_path(str(Path(gate.__file__).with_name('checkall.py')))['_captured']
+    def short(argv, cwd, env_, timeout, path, cancel=None):
+        return captured(argv, cwd, env_, 6, path)
+    ok, message = gate._run_shards(str(root), env, str(tmp_path), ['tests/test_hangs.py'],
+                                   [['tests/test_hangs.py']], {}, short)
+    assert not ok
+    assert 'test_stuck_forever' in message, message

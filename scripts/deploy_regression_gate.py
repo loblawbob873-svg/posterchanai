@@ -200,6 +200,9 @@ def _run_required_tests(command, root, env, log, timeout=600):
 DURATIONS = Path(os.environ.get('XDG_CACHE_HOME') or Path.home() / '.cache') / 'posterchanai' / 'test-durations.json'
 
 
+HANG_DUMP_S = 600
+
+
 def discover_test_files(root):
     tests = Path(root) / 'tests'
     return sorted(str(p.relative_to(root)) for p in tests.rglob('test_*.py')
@@ -282,7 +285,11 @@ def _run_shards(root, env, directory, files, shards, durations, captured):
     env = {k: v for k, v in env.items() if k != 'PYTEST_DISABLE_PLUGIN_AUTOLOAD'}
     def run(index):
         report = Path(directory) / f'full-{index}.xml'
+        # A hung test used to surface only as "shard did not complete (exit 124)" an hour later, naming
+        # nothing. faulthandler (built into pytest) dumps every thread's traceback — test name included —
+        # once one test runs past HANG_DUMP_S, into the shard log that the failure message tails.
         command = [sys.executable, '-m', 'pytest', '-q', '-p', 'no:cacheprovider', '-o', 'addopts=',
+                   '-o', f'faulthandler_timeout={HANG_DUMP_S}',
                    '--junitxml=' + str(report), *shards[index]]
         code, output = captured(command, root, dict(env, PC_GATE_MANAGED_PROCESSES='1'), 3600,
                                 Path(directory) / f'full-{index}.log')
@@ -298,7 +305,10 @@ def _run_shards(root, env, directory, files, shards, durations, captured):
         except (OSError, ET.ParseError):
             parsed = []
         if not parsed or code not in (0, 1):
-            tail = '\n'.join(output.strip().splitlines()[-15:])
+            lines = output.strip().splitlines()
+            dump = [i for i, l in enumerate(lines) if 'Timeout (' in l or 'most recent call first' in l]
+            # Lead with the hang dump when there is one: it names the test; the last lines only show dots.
+            tail = '\n'.join((lines[dump[0]:dump[0] + 40] if dump else []) + lines[-15:])
             bad.append(f'shard {index} did not complete (pytest exit {code}):\n{tail}')
             continue
         cases += len(parsed)
