@@ -436,6 +436,34 @@
             </intent-filter>
         </activity>
 
+        <!-- "SELECT A NUMBER, THEN PHONE", and Share → Phone. A `tel:` link already opens here; plain
+             text that happens to be a number did not — a number in a chat, a note or an email that
+             nobody made a link had to be copied, the app opened and the digits typed back in.
+             PROCESS_TEXT puts Phone in every app's text-selection menu, SEND puts it in the share
+             sheet; DialerActivity pulls the number out of the text (Dial.fromText) and PREFILLS it,
+             never dials.
+             An alias that SHIPS DISABLED, for the drawer icons' reason: an entry in every text
+             selection on the phone is not something a person who only installed a Nostr client asked
+             for. The dialer turns it on the first time it is opened. -->
+        <activity-alias
+            android:enabled="false"
+            android:name=".phone.CallFromText"
+            android:targetActivity=".phone.DialerActivity"
+            android:label="@string/tel_title"
+            android:icon="@mipmap/ic_launcher_phone"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="android.intent.action.PROCESS_TEXT" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <data android:mimeType="text/plain" />
+            </intent-filter>
+            <intent-filter>
+                <action android:name="android.intent.action.SEND" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <data android:mimeType="text/plain" />
+            </intent-filter>
+        </activity-alias>
+
         <!-- Answer, decline and hang up from the notification — the buttons that matter when the
              screen is locked or the phone is on a dashboard. Not exported: our own PendingIntents. -->
         <receiver

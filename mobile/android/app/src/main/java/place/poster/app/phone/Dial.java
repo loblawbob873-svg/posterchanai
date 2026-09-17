@@ -165,6 +165,70 @@ public final class Dial {
         return s;
     }
 
+    /**
+     * THE NUMBER IN A PIECE OF TEXT — what Paste, Share and "select text, then Phone" all hand over.
+     *
+     * None of them hand over a number. A clipboard holds "Call me on 555-010-4477 after 5", a
+     * share carries a whole message, a selection drags a word or a full stop along with it. Run
+     * through `clean` alone every digit in the text is kept, so "after 5" becomes the last digit of
+     * a number nobody owns — a confident wrong number is worse than an empty pad.
+     *
+     * So the text is split into RUNS of characters a written number is made of (digits, `+`,
+     * brackets, dashes, dots, spaces, the pause characters), and the first run with at least seven
+     * digits wins; a GSM service code wins at any length. With neither, the run with the most digits
+     * (three or more) is taken, and with nothing that looks like a number at all the answer is empty,
+     * never the digits of a date strung together.
+     */
+    public static String fromText(String text) {
+        if (text == null) return "";
+        String best = "";
+        int bestDigits = 0;
+        int n = text.length();
+        int i = 0;
+        while (i < n) {
+            if (!startsRun(text.charAt(i))) { i++; continue; }
+            int j = i;
+            while (j < n && inRun(text, j)) j++;
+            String cand = clean(trimRun(text.substring(i, j)));
+            int d = digitCount(cand);
+            if (d >= 7 || isServiceCode(cand)) return cand;
+            if (d >= 3 && d > bestDigits) { best = cand; bestDigits = d; }
+            i = Math.max(j, i + 1);
+        }
+        return best;
+    }
+
+    private static final String RUN = "0123456789+()-.*#,; \u00A0\u2010\u2011\u2012\u2013\u2014\u2015";
+
+    private static boolean startsRun(char c) {
+        return (c >= '0' && c <= '9') || c == '+' || c == '(' || c == '*' || c == '#';
+    }
+
+    private static boolean inRun(String s, int at) {
+        char c = s.charAt(at);
+        if (RUN.indexOf(c) >= 0) return true;
+        // `p`/`w` only BETWEEN digits: "555p1234" is an extension, "5pm" is a time.
+        return isPauseLetter(c) && at > 0 && at + 1 < s.length()
+                && Character.isDigit(s.charAt(at - 1)) && Character.isDigit(s.charAt(at + 1));
+    }
+
+    /** Prose punctuation at the edges ("…4477." / "…0100, or") is not part of the number. */
+    private static String trimRun(String run) {
+        int end = run.length();
+        while (end > 0) {
+            char c = run.charAt(end - 1);
+            if ((c >= '0' && c <= '9') || c == '#') break;
+            end--;
+        }
+        return run.substring(0, end);
+    }
+
+    private static int digitCount(String s) {
+        int d = 0;
+        for (int k = 0; k < s.length(); k++) if (s.charAt(k) >= '0' && s.charAt(k) <= '9') d++;
+        return d;
+    }
+
     /** Is there anything worth dialling? A string of pauses is not a number. */
     public static boolean dialable(String raw) {
         String s = clean(raw);

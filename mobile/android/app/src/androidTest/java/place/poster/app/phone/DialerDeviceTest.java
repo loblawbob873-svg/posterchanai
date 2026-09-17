@@ -124,6 +124,76 @@ public class DialerDeviceTest {
         }
     }
 
+    /**
+     * "The number circle buttons are cut off at the top and bottom." Measured, not reasoned about:
+     * every key's box must lie inside the pad's box on the real layout, after the dialer has had its
+     * chance to re-size the keys to that box.
+     */
+    @Test
+    public void everyKeyFitsInsideThePadsBox() {
+        ActivityScenario<DialerActivity> s = ActivityScenario.launch(DialerActivity.class);
+        try {
+            InstrumentationRegistry.getInstrumentation().waitForIdleSync();
+            s.onActivity(a -> {
+                View wrap = a.findViewById(R.id.pc_dl_padwrap);
+                android.view.ViewGroup pad = a.findViewById(R.id.pc_dl_pad);
+                int[] w = new int[2];
+                wrap.getLocationOnScreen(w);
+                int top = w[1], bottom = w[1] + wrap.getHeight();
+                int keys = 0;
+                for (int r = 0; r < pad.getChildCount(); r++) {
+                    android.view.ViewGroup row = (android.view.ViewGroup) pad.getChildAt(r);
+                    for (int c = 0; c < row.getChildCount(); c++) {
+                        View key = row.getChildAt(c);
+                        int[] k = new int[2];
+                        key.getLocationOnScreen(k);
+                        assertTrue("key row " + r + " starts above the pad (clipped at the top)",
+                                k[1] >= top);
+                        assertTrue("key row " + r + " ends below the pad (clipped at the bottom)",
+                                k[1] + key.getHeight() <= bottom);
+                        keys++;
+                    }
+                }
+                assertEquals(12, keys);
+            });
+        } finally {
+            s.close();
+        }
+    }
+
+    /** Select a number in any app, then Phone; or Share it to Phone. Both must reach us. */
+    @Test
+    public void aSelectionOrAShareOfTextReachesThePhoneApp() {
+        // The entry ships disabled and the dialer turns it on when it is first opened.
+        ActivityScenario.launch(DialerActivity.class).close();
+        for (Intent i : new Intent[]{
+                new Intent("android.intent.action.PROCESS_TEXT").setType("text/plain"),
+                new Intent(Intent.ACTION_SEND).setType("text/plain") }) {
+            boolean ours = false;
+            for (ResolveInfo r : ctx().getPackageManager().queryIntentActivities(i, 0)) {
+                if (r.activityInfo != null && ctx().getPackageName().equals(r.activityInfo.packageName)
+                        && "place.poster.app.phone.CallFromText".equals(r.activityInfo.name)) {
+                    ours = true;
+                }
+            }
+            assertTrue(i.getAction() + ": the phone app is not offered", ours);
+        }
+        Intent sel = new Intent(ctx(), DialerActivity.class)
+                .setAction("android.intent.action.PROCESS_TEXT")
+                .setType("text/plain")
+                .putExtra("android.intent.extra.PROCESS_TEXT", "call me on 555-010-4477 after 5");
+        ActivityScenario<DialerActivity> s = ActivityScenario.launch(sel);
+        try {
+            s.onActivity(a -> {
+                android.widget.TextView num = a.findViewById(R.id.pc_dl_number);
+                assertEquals("the selected number did not reach the pad", "5550104477",
+                        num.getText().toString().replaceAll("[^0-9]", ""));
+            });
+        } finally {
+            s.close();
+        }
+    }
+
     @Test
     public void everyContactRowRendersTextBesideCall() {
         ActivityScenario<DialerActivity> screen = ActivityScenario.launch(DialerActivity.class);
