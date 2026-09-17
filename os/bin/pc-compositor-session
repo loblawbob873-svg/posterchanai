@@ -45,12 +45,42 @@ note() {
 # deliberate: this script was itself exec'd from ~/.bash_profile, so exiting ends the login, agetty
 # respawns it, and a Wayfire that fails every time becomes a login loop nobody can type into. A
 # NON-login shell does not re-read .bash_profile, so it cannot recurse.
+# WHAT A STATUS NUMBER MEANS, since the screen is the only place anybody will read it. A child that
+# died from a signal is reported by the shell as 128+N, and "status 139" tells a person nothing while
+# "killed by signal 11 (SIGSEGV)" tells them the compositor CRASHED rather than refused to start.
+describe_status() {
+	case "${1:-}" in
+		''|*[!0-9]*) printf 'status unknown' ;;
+		0) printf 'exited cleanly (status 0)' ;;
+		*) if [ "$1" -gt 128 ] 2>/dev/null; then
+			   sig=$(($1 - 128))
+			   name=$(kill -l "$sig" 2>/dev/null || true)
+			   printf 'killed by signal %s%s' "$sig" "${name:+ (SIG$name)}"
+		   else
+			   printf 'exited with status %s' "$1"
+		   fi ;;
+	esac
+}
+
 rescue() {
 	printf '\n%s\n' "PosterChanOS: the Wayfire session could not start."
 	printf '%s\n' "  reason: $*"
 	printf '%s\n' "  log:    $state_dir/wayfire.log"
 	printf '%s\n' "  shell:  $HOME/.config/posterchan-desktop/shell.log"
-	printf '%s\n\n' "Fix it here, then run: exec /usr/local/bin/pc-compositor-session"
+	# THE LOG IS PRINTED, NOT MERELY NAMED. A live USB on somebody else's PC fails for reasons this
+	# script cannot guess -- a GPU with no driver in the image, a seat it cannot take, a plugin that
+	# crashed -- and every one of them is already written in wayfire's own last lines. Naming a path
+	# asks a person in front of a broken machine to know to `cat` it; a report that came back as
+	# "wayfire exited with status 11" and nothing else is what this exists to stop.
+	if [ -s "$state_dir/wayfire.log" ]; then
+		printf '\n%s\n' "  --- last lines of wayfire.log ---"
+		tail -n 15 "$state_dir/wayfire.log" 2>/dev/null | sed 's/^/  /'
+		printf '%s\n' "  ---------------------------------"
+	else
+		printf '%s\n' "  (wayfire.log is empty — Wayfire died before it wrote anything, which usually"
+		printf '%s\n' "   means the compositor could not open a GPU or take the seat on this machine.)"
+	fi
+	printf '\n%s\n\n' "Fix it here, then run: exec /usr/local/bin/pc-compositor-session"
 	note "no desktop: $*"
 	# Absolute by default -- a rescue must not depend on PATH being sane -- but overridable so a
 	# test can run this path without handing itself an interactive shell.
@@ -399,8 +429,8 @@ PC_SESSION_CONFIG_PY
 			kill -0 "$shell_pid" 2>/dev/null && kill -KILL "$shell_pid" 2>/dev/null || true
 		fi
 		rm -f "$PC_WAYFIRE_READY_FILE" "$PC_WAYFIRE_SHELL_PID_FILE"
-		note "Wayfire exited with status $status after $reason."
+		note "Wayfire $(describe_status "$status") after $reason."
 	fi
 fi
 
-rescue "Wayfire exited with status ${status:-unknown} after ${reason:-startup}"
+rescue "Wayfire $(describe_status "${status:-}") after ${reason:-startup}"

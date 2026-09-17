@@ -404,3 +404,47 @@ def test_virtual_gpu_fallback_exports_legacy_drm_only_for_virtio(tmp_path):
         expected = (["1", "1", "1", "--existing-flag --use-angle=swiftshader --enable-unsafe-swiftshader"]
                     if value == "0x1af4" else ["unset", "unset", "unset", "--existing-flag"])
         assert result.stdout.splitlines() == expected, (value, result.stdout, result.stderr)
+
+
+def test_the_rescue_screen_prints_the_log_it_names(tmp_path):
+    """A LiveUSB on somebody else's PC fails for reasons this script cannot guess, and every one of
+    them is already in Wayfire's last lines.
+
+    Reported from a real boot: "wayfire session could not start: reason: wayfire exited with status
+    11". That is the whole message — a number, and a path nobody in front of a broken machine knows
+    to `cat`. The log is printed now, on the screen, where the person is."""
+    marker = "failed to open DRM device /dev/dri/card0: no such device"
+    body = 'echo "%s" >&2\nexit 11\n' % marker
+    done, calls = _run(tmp_path, wayfire_body=body)
+    assert "rescue" in calls, done.stdout + done.stderr
+    assert "last lines of wayfire.log" in done.stdout, done.stdout
+    assert marker in done.stdout, (
+        "the rescue screen named the log and did not show it, which is the report we already had")
+
+
+def test_an_empty_log_says_what_that_means(tmp_path):
+    """Wayfire dying before it writes anything is itself the diagnosis — it could not open a GPU or
+    take the seat — and an empty file on screen would read as "no information"."""
+    done, calls = _run(tmp_path, wayfire_body="exit 11\n")
+    assert "rescue" in calls
+    assert "wayfire.log is empty" in done.stdout, done.stdout
+    assert "could not open a GPU" in done.stdout
+
+
+def test_a_crash_is_reported_as_a_signal_not_as_a_number(tmp_path):
+    """128+N is how a shell reports a child killed by a signal. "status 139" tells a person nothing;
+    "killed by signal 11 (SIGSEGV)" tells them the compositor CRASHED rather than refused to
+    start, which is a different thing to go and fix."""
+    done, calls = _run(tmp_path, wayfire_body="kill -SEGV $$\n")
+    assert "rescue" in calls
+    assert "killed by signal 11" in done.stdout, done.stdout
+    assert "status 139" not in done.stdout
+
+
+def test_an_ordinary_refusal_still_reads_as_a_status(tmp_path):
+    """Not everything is a crash: a compositor that exits 11 by itself must not be described as
+    having been killed."""
+    done, calls = _run(tmp_path, wayfire_status=11)
+    assert "rescue" in calls
+    assert "exited with status 11" in done.stdout, done.stdout
+    assert "killed by signal" not in done.stdout
