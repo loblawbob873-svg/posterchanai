@@ -24,6 +24,12 @@ CASES = {
     "nodev": WRAP + "No Wi-Fi device found.",
     "gone": WRAP + "No network with SSID 'Home' found.",
     "nm": WRAP + "Could not create NMClient object: Could not connect: No such file or directory.",
+    # A laptop's radio switch, in both the spellings nmcli uses for it.
+    "rfkill": WRAP + "Error: Failed to add/activate new connection: WiFi is disabled by hardware switch.",
+    "blocked": WRAP + "Error: Wi-Fi is disabled by rfkill (soft blocked).",
+    # Present, never came up: the firmware/driver case, which is NOT "no device".
+    "notready": WRAP + "Error: Device 'wlan0' is not ready for connections.",
+    "unmanaged": WRAP + "Error: Device 'wlan0' is strictly unmanaged.",
     "other": WRAP + "Connection activation failed: (7) Supplicant disconnected.",
     "bare": "Error: something odd",
 }
@@ -41,6 +47,15 @@ def test_every_refusal_is_said_in_words_without_the_electron_envelope():
     assert got["psk"] == "could not join Home: the password was not accepted"
     assert "not allowed to change the network" in got["auth"]
     assert "no usable Wi-Fi adapter" in got["nodev"]
+    # Eliminated by measurement on a real PosterChanOS install before these were added: polkit
+    # authorizes network-control in the desktop's own (active, seat) session, wpa_supplicant is
+    # installed and NMWifiFactory loads, and linux-firmware is in the image. What a laptop can still
+    # be is switched off, or holding an adapter that never finished coming up -- so those two are
+    # named rather than printed as nmcli's sentence.
+    for key in ("rfkill", "blocked"):
+        assert "radio is switched off" in got[key], (key, got[key])
+    for key in ("notready", "unmanaged"):
+        assert "not ready" in got[key] and "no usable Wi-Fi adapter" not in got[key], (key, got[key])
     assert "no longer in range" in got["gone"]
     assert "NetworkManager is not running" in got["nm"]
     assert got["other"] == "could not join Home: Connection activation failed: (7) Supplicant disconnected."
