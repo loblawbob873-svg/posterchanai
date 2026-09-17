@@ -19128,7 +19128,11 @@
     const nm=(m&&m.name)||(b&&b.name)||'';
     let e=(nm.match(/\.([A-Za-z0-9]{1,8})$/)||[])[1]||'';
     if(!e){ try{ e=(String((b&&b.url)||'').split('?')[0].match(/\.([A-Za-z0-9]{1,8})$/)||[])[1]||''; }catch(_){} }
-    const t=(((b&&b.type)||(m&&m.mime)||'').split(';')[0]||'').trim().toLowerCase();
+    /* The type the SERVER reports for a blob is often generic (application/octet-stream — always, for ciphertext)
+     * while the restored index remembers the real one. Take the first type that says something. */
+    const _gen=x=>!x||x==='application/octet-stream';
+    const _tb=((((b&&b.type)||'').split(';')[0])||'').trim().toLowerCase(), _tm=((((m&&m.mime)||'').split(';')[0])||'').trim().toLowerCase();
+    const t=_gen(_tb)?(_tm||_tb):_tb;
     if(!e) e=_MIME_EXT[t]||'';
     if(!e){ const sub=(t.split('/')[1]||''); if(sub && !/octet-stream/.test(sub)) e=sub.replace(/^x-/,'').replace(/[^a-z0-9]/g,''); }
     return e.toLowerCase().slice(0,8);
@@ -20790,7 +20794,14 @@
      * distinction does not matter here: any encrypted ancestor makes every descendant encrypted. */
     isEncFolder(name){ name=String(name||'').replace(/^\/+|\/+$/g,'');
       return name==='Music' || this._norm().encFolders.some(root=>name===root||name.startsWith(root+'/')); },
-    addFolder(name, enc){ name=(name||'').trim().slice(0,40); if(!name||this._norm().folders.includes(name)) return false; this.data.folders.push(name); if(enc&&!this.data.encFolders.includes(name)) this.data.encFolders.push(name); this.push(); return true; },
+    /* `exact` is for a folder PATH produced by an import (`Photos/2024/Summer trip/Day 3`). The files
+     * are tagged with that full path, so the registry must hold the very same string: the 40-character
+     * cap below is for a name somebody TYPES, and applied to a path it registered a truncated folder
+     * that nothing was filed under while the real one never appeared. Still bounded, never silently. */
+    addFolder(name, enc, exact){ name=exact ? String(name||'').trim().replace(/\/\/+/g,'/').replace(/^\/+|\/+$/g,'')
+        : (name||'').trim().slice(0,40);
+      if(exact && name.length>1024) return false;
+      if(!name||this._norm().folders.includes(name)) return false; this.data.folders.push(name); if(enc&&!this.data.encFolders.includes(name)) this.data.encFolders.push(name); this.push(); return true; },
     removeFolder(name){ this._norm(); if(name==='Music'||!name) return false; this.data.folders=this.data.folders.filter(f=>f!==name); this.data.encFolders=this.data.encFolders.filter(f=>f!==name); for(const sha in this.data.files){ if(this.data.files[sha].folder===name) this.data.files[sha].folder=''; } this.push(); return true; },
     meta(sha){ return this._norm().files[sha]||null; },
     folderOf(sha){ const m=this._norm().files[sha]; return (m&&m.folder)||''; },
@@ -20920,6 +20931,16 @@
     const icon = { image:'image', video:'film', audio:'music', pdf:'article', archive:'folder',
                    document:'text', folder:'folder', file:'paperclip' }[kind] || 'paperclip';
     return `<svg class="fx-file-ic fx-file-${enc(kind||'file')}" aria-hidden="true"><use href="#i-${icon}"></use></svg>`;
+  }
+  /* A drive folder icon: sprites, never emoji glyphs (the same platform-emoji-font trap _fxIcon avoids). */
+  function _fxFolderIcon(name){
+    const k = name==='Music' ? 'music' : (FilesIdx.isEncFolder(name) ? 'lock' : 'folder');
+    return `<svg class="ic b-ic fx-folder-ic fx-folder-${k}" aria-hidden="true"><use href="#i-${k}"></use></svg>`;
+  }
+  /* An encrypted file keeps its TYPE icon (from the index's mime and name) with a lock badge, instead
+   * of one 🔒 for every encrypted photo, song and document alike. */
+  function _fxEncIcon(ext, mime){
+    return `<span class="fx-enc-wrap">${_fxIcon(ext, mime)}<svg class="fx-enc-badge" aria-label="encrypted" role="img"><use href="#i-lock"></use></svg></span>`;
   }
   function _fxIcon(ext, type){
     /* Restored indexes can originate on another client and MIME tokens are case-insensitive. Keep
@@ -22001,7 +22022,7 @@
       <div class="fx-tree-children${_fxBlossomOpen?'':' hidden'}" data-fxtree="blossom"><div class="folder-bar">
         <button class="folder-chip${(!_syncRoot&&_filesFolder==='')?' active':''}" data-folder=""><svg class="ic b-ic" aria-hidden="true"><use href="#i-folder"></use></svg>All</button>
         ${_idxUnknown ? '<span class="muted small" id="fx-folders-loading">Loading your folders…</span>'
-          : folders.map(f=>`<button class="folder-chip${(!_syncRoot&&_filesFolder===f)?' active':''}" data-folder="${enc(f)}">${f==='Music'?'🎵':(FilesIdx.isEncFolder(f)?'🔒':'📁')} ${enc(f)}</button>`).join('')}
+          : folders.map(f=>`<button class="folder-chip${(!_syncRoot&&_filesFolder===f)?' active':''}" data-folder="${enc(f)}">${_fxFolderIcon(f)} ${enc(f)}</button>`).join('')}
       </div></div></section>` + _fxSyncedHTML() + _fxHostHTML()
       + `${_standalone()?'':`<button class="fx-tree-head${_filesTab==='ai'?' active':''}" data-files-mode="ai"><svg class="ic b-ic" aria-hidden="true"><use href="#i-ai"></use></svg><b>AI Chat files</b></button>`}`
       + `${IS_ADMIN?`<button class="fx-tree-head${_filesTab==='admin'?' active':''}" data-files-mode="admin"><svg class="ic b-ic" aria-hidden="true"><use href="#i-shield"></use></svg><b>Storage admin</b></button>`:''}</div>`;
@@ -22858,7 +22879,7 @@
        </button>`;
     const n = (k) => { const c = counts[k] || 0; return c ? (c + ' file' + (c === 1 ? '' : 's')) : 'empty'; };
     const folders = FilesIdx.folders().map(f =>
-      tile(f === 'Music' ? '🎵' : (FilesIdx.isEncFolder(f) ? '🔒' : '📁'), f, n(f), 'data-folder="' + enc(f) + '"')).join('');
+      tile(_fxFolderIcon(f), f, n(f), 'data-folder="' + enc(f) + '"')).join('');
     /* Synced folders are listed here too, because from the user's side they are simply more folders —
      * the fact that one is a Blossom folder and the other a sync manifest is our problem, not theirs.
      * `_syncPairs` may still be loading; the sidebar says so and this shelf just fills in on repaint. */
@@ -24081,7 +24102,7 @@
         href: m.enc ? '#' : b.url, encOpen: !!m.enc, mime: m.enc ? undefined : (b.type||''),
         data: ` data-sha="${b.sha256}" data-url="${enc(b.url)}" data-name="${enc(nm||dlName)}"`
             + ` data-mime="${enc(m.mime||b.type||'')}" data-enc="${m.enc?'1':'0'}"`,
-        icon: m.enc ? '🔒' : _fxIcon(ext, b.type), name: nm || (m.enc ? 'encrypted' : dlName), title: nm || dlName,
+        icon: m.enc ? _fxEncIcon(ext, m.mime) : _fxIcon(ext, (b.type && !/octet-stream/i.test(b.type)) ? b.type : (m.mime||b.type)), name: nm || (m.enc ? 'encrypted' : dlName), title: nm || dlName,
         size:_fxBytes(b.size), type:(m.enc?'🔒 ':'')+_fxType(ext), when:_fxWhen(b.uploaded),
         acts: (m.enc ? '' : `<button class="copy" data-url="${enc(b.url)}" title="Copy URL">⧉</button>`) + dl + ren + move + del,
       });
@@ -24093,7 +24114,7 @@
        * way to open any blossom file in posterchan code or office yet". Same buttons, same
        * dataset, same handlers as the details row; only the place they are drawn is new. */
       if(m.enc){   // encrypted file — lock card; opening decrypts in-browser (never exposes the ciphertext URL)
-        return `<div class="file-card enc${sel}" draggable="true" data-sha="${b.sha256}"><a href="#" class="enc-open" data-sha="${b.sha256}" data-name="${enc(nm||dlName)}" data-mime="${enc(m.mime||'')}" data-enc="1"><div class="file-icon">🔒<span>${enc(ext||'enc')}</span></div></a>
+        return `<div class="file-card enc${sel}" draggable="true" data-sha="${b.sha256}"><a href="#" class="enc-open" data-sha="${b.sha256}" data-name="${enc(nm||dlName)}" data-mime="${enc(m.mime||'')}" data-enc="1"><div class="file-icon">${_fxEncIcon(ext, m.mime)}<span>${enc(ext||'enc')}</span></div></a>
           ${box}${del}
           <div class="meta"><span class="fname" title="${enc(nm)}">${nm?enc(fileLabel(nm,ext,b.size)):'encrypted'}</span><span class="fc-acts">${dl}${ren}${move}</span></div></div>`;
       }
@@ -24455,7 +24476,10 @@
     // (a handful per import, not per file), plain uploads only.
     if(!music){
       const _seen=new Set(FilesIdx.folders());
-      for(let i=0;i<files.length;i++){ const tf=_targetFolders[i]; if(tf && !_targetEncrypted[i] && !_seen.has(tf)){ _seen.add(tf); try{ FilesIdx.addFolder(tf); }catch(_){} } }
+      /* Encrypted targets too: `Private/photos` inherits encryption from `Private` (isEncFolder walks
+       * ancestors), but the folder LIST is only what is registered — skipping them imported every file
+       * into a subfolder no chip, tile or picker could show. */
+      for(let i=0;i<files.length;i++){ const tf=_targetFolders[i]; if(tf && !_seen.has(tf)){ _seen.add(tf); try{ FilesIdx.addFolder(tf, false, true); }catch(_){} } }
     }
     /* "skipped" was one bucket covering two very different outcomes — a file REJECTED as non-audio
      * and a file ALREADY imported — and in a batch of more than 20 there are no per-file rows, so all

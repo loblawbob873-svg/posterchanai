@@ -60,7 +60,8 @@ def test_folder_import_registers_every_production_target_before_uploading():
     upload = APP[APP.index("async function uploadFilesSeq(files)") :]
     upload = upload[: upload.index("// ---- Music:")]
     assert "const _subFolder=(i)=>_uploadTargetFolder(folder,_relPaths[i])" in upload
-    assert "FilesIdx.addFolder(tf)" in upload
+    # registered EXACTLY (a path, not a typed name); behaviour: tests/client/files_folder_registry_sim.js
+    assert "FilesIdx.addFolder(tf, false, true)" in upload
     assert "folder:_targetFolders[i]" in upload
     assert "f.webkitRelativePath||f._pcRelativePath" in upload
 
