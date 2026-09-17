@@ -1,0 +1,15 @@
+Id:             -
+Name:           pcprobe-d14cd2
+UUID:           00000000-0000-4000-8000-000000000002
+OS Type:        hvm
+State:          shut off
+CPU(s):         1
+Max memory:     524288 KiB
+Used memory:    524288 KiB
+Persistent:     yes
+Autostart:      disable
+Autostart Once: disable
+Managed save:   no
+Security model: none
+Security DOI:   0
+

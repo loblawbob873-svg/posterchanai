@@ -302,6 +302,20 @@ def _set_local(key: str, value) -> bool:
     return True
 
 
+def restore_cached(key: str, previous) -> None:
+    """Put the in-process cache entry for `key` back to `previous` (None = it was absent), writing
+    nothing to the relay. For a save whose durable write FAILED: the cache must not keep claiming a
+    value the relay never stored (the old one is what hydrates after a restart)."""
+    if previous is None:
+        with _lock:
+            existed = _CACHE.pop(key, None) is not None
+            local = _is_local_only(key)
+        if local and existed:
+            _save_local_file()
+        return
+    _set_local(key, previous)
+
+
 def put(key: str, value, *, write_relay: bool = True) -> None:
     """Set a setting. Local-only keys persist to the JSON file; shareable keys also write through to
     the relay (best-effort, fire-and-forget from sync callers)."""

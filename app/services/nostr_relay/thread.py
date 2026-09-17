@@ -30,6 +30,7 @@ from .wot import WotGate
 from .server import RelayServer, _git_comment_root
 from .bridges import (relay_domain as _bridge_domain, reveals_blocked_bridge,
                       author_on_blocked_bridge, is_bridged_post)
+from app.services.vmhost import kinds as _vmhost_kinds
 from .langfilter import screen_blocked_words
 
 logger = logging.getLogger(__name__)
@@ -313,6 +314,9 @@ def _read_config() -> dict:
             # subscription, but it's a SEPARATE feature from GPU-sharing DVM — so the DVM firehose
             # branch spawns when EITHER is on (a node can run agent commands without offloading compute).
             "agent_enabled": gb("node_exec_nostr_enabled", False),
+            # VM hosting (kinds 5310/6310/7310): stream requests addressed to this node from upstream,
+            # the same way the DVM branch does, when this node is a VM host.
+            "vmhost_enabled": gb("vmhost_enabled", False),
             # Shared-cluster PEERS → the relay's write-gate accepts these npubs' DVM job-kind events even
             # if they aren't WoT members (sharing compute is a deliberate grant, separate from the social
             # web of trust). Each `nostr_dvm_peers` line is "npub relay"; we take the leading npub. The
@@ -492,9 +496,42 @@ def _read_config() -> dict:
             cfg["bridge_secret"] = keystore.get_bridge_secret()
         except Exception:
             cfg["bridge_secret"] = None
+        # VM hosting: THIS node's own key (the operator nsec the host signs results with). Not
+        # cfg["operator"], which is every linked user plus the node — a request p-tagged to any user
+        # would then count as "addressed to this host".
+        cfg["node_pubkey"] = _node_pubkey()
+        cfg["vmhost_peer_hosts"] = _vmhost_peer_hosts(cfg["vmhost_enabled"], g("vmhost_peer_hosts", ""),
+                                                      cfg["node_pubkey"])
         return cfg
     finally:
         db.close()
+
+
+def _vmhost_peer_hosts(enabled, raw, node_pubkey: str = "") -> list:
+    """Hex pubkeys of OTHER VM hosts whose 6310/7310/31310 this relay accepts from outside the web of
+    trust — the host-to-host replies of a cold migration (app/services/vmhost/migrate.py).
+
+    Parsed by the SAME `migrate.parse_peer_hosts` the host uses, so the relay can never trust a key the
+    host would not talk to (a line the host reports as unparseable is trusted by neither). EMPTY unless
+    this node hosts VMs: the peer list must not widen the write gate of a relay whose node runs no host.
+    Any failure reads as "no peers" — fail closed, the ordinary WoT gate still applies to everything."""
+    if not enabled:
+        return []
+    try:
+        from app.services.vmhost.migrate import parse_peer_hosts
+        peers, _bad = parse_peer_hosts(raw or "")
+    except Exception:
+        return []
+    return sorted({p.pubkey for p in peers} - {node_pubkey or ""})
+
+
+def _node_pubkey() -> str:
+    try:
+        from app.services import keystore
+        op = keystore.get_operator_nsec()
+        return nostr_service.derive_pubkey(nostr_service.decode_seckey(op)) if op else ""
+    except Exception:
+        return ""
 
 
 def _collect_operator_pubkeys(db) -> list:
@@ -834,6 +871,16 @@ async def _main(cfg: dict) -> None:
             if not (gate.is_member(ev.get("pubkey", "")) or
                     any(len(t) >= 2 and t[0] == "p" and gate.is_operator(t[1]) for t in (ev.get("tags") or []))):
                 return
+        elif _vmhost_kinds.is_vmhost_kind(_kind):
+            # VM hosting: a member keeps the ordinary path; a stranger's event is kept only under the
+            # same rules as the write gate (app/services/vmhost/kinds.py) — requests addressed to this
+            # node while it hosts VMs, results/announcements signed by this node or a peer host.
+            if not _vmhost_kinds.firehose_accept(ev, node_pubkey=cfg.get("node_pubkey"),
+                                                 is_member=gate.is_member, is_operator=gate.is_operator,
+                                                 vmhost_enabled=bool(cfg.get("vmhost_enabled")),
+                                                 peer_hosts=cfg.get("vmhost_peer_hosts") or (),
+                                                 now=time.time()):
+                return
         elif _kind in (2003, 2004, 30617, 30618):
             # NIP-35 torrents (+comments) / NIP-34 repo announcement (30617) + repo state (30618) are
             # PUBLIC, browsable Discover content — sync from ANY author (not WoT-gated), since typically
@@ -1003,6 +1050,14 @@ async def _main(cfg: dict) -> None:
                                  [5050, 5100, 5201, 5202, 5300, 6050, 6100, 6201, 6202, 6300],
                                  _firehose_event, fstop, cfg["direct"], max_relays=mr,
                                  extra={"#p": _ops}, stagger_span=span, label=" (DVM)")))
+        # VM hosting: requests (and host-to-host replies) p-tagged to THIS node, from upstream. Keyed on
+        # the node's own pubkey, not the operator list, and independent of DVM/agent being on.
+        _vm_kinds = _vmhost_kinds.firehose_kinds(bool(cfg.get("vmhost_enabled")))
+        if _vm_kinds and cfg.get("node_pubkey"):
+            grp.append(asyncio.create_task(
+                run_firehose(cfg["upstream"], _vm_kinds, _firehose_event, fstop, cfg["direct"],
+                             max_relays=mr, extra={"#p": [cfg["node_pubkey"]]}, stagger_span=span,
+                             label=" (VM host)")))
         _firehose["tasks"], _firehose["stop"] = grp, fstop
 
     async def _restart_firehose():
@@ -1347,6 +1402,9 @@ async def _main(cfg: dict) -> None:
                             cfg["operator"] = fresh["operator"]
                             cfg["dvm_enabled"] = fresh["dvm_enabled"]
                             cfg["agent_enabled"] = fresh["agent_enabled"]
+                            cfg["vmhost_enabled"] = fresh["vmhost_enabled"]
+                            cfg["node_pubkey"] = fresh["node_pubkey"]
+                            cfg["vmhost_peer_hosts"] = fresh["vmhost_peer_hosts"]
                             # Respawn the receive path FIRST; only retarget the send path once it
                             # succeeds, so a respawn failure doesn't leave the outbox publishing to
                             # the new set while the firehose ingests nothing.

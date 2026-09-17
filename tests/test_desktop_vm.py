@@ -102,12 +102,20 @@ console.log(JSON.stringify({success,asyncFailure,syncFailure,invocation,unrefs})
         src = (ROOT / "desktop" / "vm.js").read_text()
         self.assertIn("'--connect',URI,'--attach','--wait',name", src)
 
+    # The UI half of these tests reads vms.js: the desktop's old "Local VMs" painter (os.js) is gone and
+    # this machine's VMs are "This computer" (LocalHost over window.pcVM) on the Virtual Machines screen.
+    def local_host(self):
+        ui = (ROOT / "static/js/client/vms.js").read_text()
+        return ui[ui.index("const LocalHost = {"):ui.index("\n  };", ui.index("const LocalHost = {"))]
+
     def test_start_and_create_open_the_display_without_a_second_click(self):
-        ui = (ROOT / "static/js/client/os.js").read_text()
-        self.assertIn("r.ok&&act==='start'", ui)
-        self.assertIn("const v=await pcVM.view(n)", ui)
-        self.assertIn("const v=await pcVM.view(r.name)", ui)
-        self.assertIn("VM started, but its display could not open", ui)
+        lh = self.local_host()
+        start = lh[lh.index("case 'vm.power': {"):lh.index("case 'console.open':")]
+        self.assertIn("if(a.action === 'start')", start)
+        self.assertIn("const v = await vm.view(a.vm)", start)
+        self.assertIn("VM started, but its display could not open", start)
+        create = lh[lh.index("case 'vm.create': {"):lh.index("case 'vm.update': {")]
+        self.assertIn("const v = await vm.view(r.name)", create)
 
     def test_viewer_pointer_and_framebuffer_use_the_same_scale(self):
         src = (ROOT / "desktop" / "vm.js").read_text()
@@ -129,30 +137,32 @@ console.log(JSON.stringify({success,asyncFailure,syncFailure,invocation,unrefs})
                          "new VMs must not capture the pointer merely when it enters the viewer")
         self.assertIn('<input type="tablet" bus="usb"/>', create)
         self.assertIn("async function gamingMouse", src)
-        ui = (ROOT / "static/js/client/os.js").read_text()
-        self.assertIn("data-vme-mouse", ui)
+        ui = (ROOT / "static/js/client/vms.js").read_text()
+        self.assertIn("vm.gamingMouse(a.vm, a.input === 'mouse')", self.local_host())
+        self.assertIn('<option value="mouse"', ui)
         self.assertIn("Ctrl+Alt releases it", ui)
-        self.assertIn("Enable gaming mouse capture", ui)
 
     def test_powered_off_vm_hardware_is_editable_in_the_ui(self):
-        ui = (ROOT / "static/js/client/os.js").read_text()
+        ui = (ROOT / "static/js/client/vms.js").read_text()
+        lh = self.local_host()
         for api in ("details", "update", "addDisk", "changeIso", "ejectIso", "addNetwork"):
-            self.assertIn("pcVM." + api, ui)
-        self.assertIn("data-vm-edit-open", ui)
+            self.assertIn("vm." + api + "(", lh)
+        self.assertIn('data-act="settings" ${v.state === \'shutoff\' ? \'\' : \'disabled', ui)
 
     def test_installation_iso_can_be_ejected_for_a_real_disk_boot(self):
         backend = (ROOT / "desktop" / "vm.js").read_text()
         preload = (ROOT / "desktop" / "preload.js").read_text()
         main = (ROOT / "desktop" / "main.js").read_text()
-        ui = (ROOT / "static" / "js" / "client" / "os.js").read_text()
+        ui = (ROOT / "static" / "js" / "client" / "vms.js").read_text()
         self.assertIn("['change-media',d.name,cd.target,'--eject','--config']", backend)
         self.assertIn("pc:vm:eject-iso", preload)
         self.assertIn("pc:vm:eject-iso", main)
-        self.assertIn('data-vme-eject>Eject installer', ui)
+        self.assertIn('<option value="__eject">Eject the installer</option>', ui)
+        self.assertIn("if(a.media === 'eject'){ const r = await vm.ejectIso(a.vm)", ui)
 
     def test_an_attached_iso_can_be_replaced_after_its_old_path_moved(self):
         backend = (ROOT / "desktop" / "vm.js").read_text()
-        ui = (ROOT / "static" / "js" / "client" / "os.js").read_text()
+        ui = (ROOT / "static" / "js" / "client" / "vms.js").read_text()
         self.assertIn("?'--update':'--insert'", backend)
         self.assertIn("Attached media is missing:", backend)
         self.assertIn("missingMedia", backend)
@@ -177,71 +187,59 @@ const fs=require('fs'),os=require('os'),path=require('path'),v=require('./deskto
 
     def test_boot_drive_can_be_selected_and_eject_makes_disk_first(self):
         backend = (ROOT / "desktop" / "vm.js").read_text()
-        ui = (ROOT / "static" / "js" / "client" / "os.js").read_text()
+        ui = (ROOT / "static" / "js" / "client" / "vms.js").read_text()
         self.assertIn("async function setBootOrder", backend)
         self.assertIn("setBootOrder(d.name,'disk')", backend)
-        self.assertIn('data-vme-boot', ui)
-        self.assertIn("bootOrder:$('[data-vme-boot]'", ui)
+        self.assertIn('<select class="input" name="boot">', ui)
+        self.assertIn("bootOrder: a.boot != null ? a.boot : undefined", ui)
 
     def test_post_install_disk_boot_is_one_click(self):
         backend = (ROOT / "desktop" / "vm.js").read_text()
         preload = (ROOT / "desktop" / "preload.js").read_text()
         main = (ROOT / "desktop" / "main.js").read_text()
-        ui = (ROOT / "static" / "js" / "client" / "os.js").read_text()
+        ui = (ROOT / "static" / "js" / "client" / "vms.js").read_text()
         self.assertIn("async function bootDisk", backend)
         self.assertIn("mounted?ejectIso(d.name):setBootOrder(d.name,'disk')", backend)
         self.assertIn("pc:vm:boot-disk", preload)
         self.assertIn("pc:vm:boot-disk", main)
-        self.assertIn("Use installed system", ui)
-        self.assertIn("Preparing installed system", ui)
+        self.assertIn('data-act="boot-disk">Use installed system', ui)
         self.assertIn("await new Promise(resolve=>setTimeout(resolve,1000))", backend)
-        self.assertIn('data-vm-edit-open', ui)
-        self.assertIn("await pcVM.bootDisk(n)", ui)
-        self.assertNotIn('p.canceled||!p.path', ui, "the ISO picker returns a path string")
+        self.assertIn("const r = await vm.bootDisk(a.vm)", self.local_host())
+        self.assertIn("return { ok: true, result: { path: p || '' } }", self.local_host(),
+                      "the ISO picker returns a path string")
 
     def test_post_install_disk_boot_opens_the_guest_display(self):
-        ui = (ROOT / "static" / "js" / "client" / "os.js").read_text()
-        start = ui.index("list.querySelectorAll('[data-vm-boot-disk]')")
-        handler = ui[start:ui.index("list.querySelectorAll('[data-vm-edit-open]')", start)]
-        eject = handler.index("await pcVM.bootDisk(n)")
-        boot = handler.index("await pcVM.action(n,'start')")
-        display = handler.index("await pcVM.view(n)")
+        lh = self.local_host()
+        handler = lh[lh.index("case 'vm.boot_disk': {"):lh.index("case 'vm.create': {")]
+        eject = handler.index("await vm.bootDisk(a.vm)")
+        boot = handler.index("await vm.action(a.vm, 'start')")
+        display = handler.index("await vm.view(a.vm)")
         self.assertLess(eject, boot)
         self.assertLess(boot, display)
         self.assertIn("VM started, but its display could not open", handler)
 
     def test_editor_keeps_the_common_path_simple(self):
-        ui = (ROOT / "static" / "js" / "client" / "os.js").read_text()
-        self.assertIn('<section class="vmui-section"><h3>Performance</h3>', ui)
-        self.assertIn('<section class="vmui-section"><h3>Startup and installation media</h3>', ui)
-        self.assertIn('<details class="vmui-advanced">', ui)
-        self.assertIn('Eject installer and use installed system', ui)
+        ui = (ROOT / "static" / "js" / "client" / "vms.js").read_text()
+        self.assertIn('<section class="vms-section"><h3>Performance</h3>', ui)
+        self.assertIn('<section class="vms-section"><h3>Startup and installation media</h3>', ui)
+        self.assertIn('<section class="vms-section"><h3>Advanced hardware</h3>', ui)
+        self.assertIn('When installation finishes, eject the ISO and start from the installed system.', ui)
 
     def test_editor_shows_and_refreshes_the_attached_installer(self):
-        ui = (ROOT / "static" / "js" / "client" / "os.js").read_text()
-        editor = ui[ui.index("const editHardware=async(name)"):ui.index("$('[data-vm-new]'", ui.index("const editHardware=async(name)"))]
-        self.assertIn("(d.disks||[]).find(x=>x.device==='cdrom')", editor)
-        self.assertIn('<p data-vme-media><b>Attached installer:</b>', editor)
-        self.assertIn("isoName=iso.split", editor)
-        self.assertIn("$('[data-vme-eject]',box).disabled=!iso", editor)
-        for operation in ("pcVM.changeIso(name,p)", "pcVM.ejectIso(name)"):
-            handler = editor[editor.index(operation):]
-            handler = handler[:handler.index(";};")]
-            self.assertIn("await editHardware(name)", handler,
-                          "successful media changes must repaint the attached ISO immediately")
+        ui = (ROOT / "static" / "js" / "client" / "vms.js").read_text()
+        self.assertIn("const cd = (d.disks || []).find(x => x.device === 'cdrom')", ui)
+        self.assertIn("'Keep ' + hw.media", ui)
+        save = ui[ui.index("async function saveSettings(){"):ui.index("async function leaveSettings(){")]
+        self.assertIn("st.hw = r.result.vm.hardware || st.hw", save,
+                      "a successful media change must repaint the attached ISO immediately")
+        self.assertIn("vm.details(a.vm);", self.local_host()[self.local_host().index("case 'vm.update': {"):])
 
-    def test_hardware_settings_replace_the_machine_list_and_errors_can_go_back(self):
-        ui = (ROOT / "static" / "js" / "client" / "os.js").read_text()
-        css = (ROOT / "static" / "css" / "client.css").read_text()
-        start = ui.index("const closeHardware=()=>")
-        editor = ui[start:ui.index("$('[data-vm-new]'", start)]
-        self.assertIn("vmroot.classList.add('vmui-editing')", editor)
-        self.assertIn("vmroot.classList.remove('vmui-editing')", editor)
-        self.assertIn("try{d=await pcVM.details(name);}", editor)
-        failure = editor[editor.index("if(!d.ok)"):editor.index('<section class="vmui-section">')]
-        self.assertIn("data-vme-close", failure)
-        self.assertIn("onclick=closeHardware", failure)
-        self.assertIn(".vmui.vmui-editing>.vmui-list{display:none}", css)
+    def test_hardware_settings_replace_the_machine_view_and_errors_can_go_back(self):
+        ui = (ROOT / "static" / "js" / "client" / "vms.js").read_text()
+        screen = ui[ui.index("function settingsScreen(){"):ui.index("function isosScreen(){")]
+        failure = screen[:screen.index("const v = st.vm")]
+        self.assertIn("if(!st || !st.vm) return back", failure, "an unreadable VM still offers the way back")
+        self.assertIn('data-act="settings-leave"', failure)
 
     def test_viewer_cannot_pin_itself_over_the_desktop(self):
         # SWAY NEEDED A RULE; WAYFIRE NEEDS AN ABSENCE. The old config had to un-fullscreen and
@@ -257,11 +255,6 @@ const fs=require('fs'),os=require('os'),path=require('path'),v=require('./deskto
         # `set` actually implements — including `sticky` — which is exactly the sentence that stops
         # somebody re-adding a rule this test exists to forbid.
         self.assertNotIn("sticky", rules.lower())
-
-    def test_new_vm_uses_the_shared_plus_icon(self):
-        src = (ROOT / "static/js/client/os.js").read_text()
-        self.assertIn('data-vm-new><svg class="ic b-ic"', src)
-        self.assertIn('<use href="#i-plus"></use></svg>Create a virtual machine', src)
 
 
 if __name__ == "__main__":

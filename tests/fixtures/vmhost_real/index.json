@@ -1,0 +1,335 @@
+{
+ "captures": {
+  "qemu-img-info-backing": {
+   "argv": [
+    "info",
+    "--output=json",
+    "-U",
+    "--",
+    "/var/lib/posterchan/vms-probe/pcprobe-img-b0156d/overlay.qcow2"
+   ],
+   "note": "",
+   "rc": 0,
+   "stderr": "",
+   "tool": "qemu-img"
+  },
+  "qemu-img-info-datafile": {
+   "argv": [
+    "info",
+    "--output=json",
+    "-U",
+    "--",
+    "/var/lib/posterchan/vms-probe/pcprobe-img-b0156d/datafile.qcow2"
+   ],
+   "note": "",
+   "rc": 0,
+   "stderr": "",
+   "tool": "qemu-img"
+  },
+  "qemu-img-info-iso": {
+   "argv": [
+    "info",
+    "--output=json",
+    "-U",
+    "--",
+    "/var/lib/posterchan/vms-probe/isos/pcprobe-18fcc8.iso"
+   ],
+   "note": "",
+   "rc": 0,
+   "stderr": "",
+   "tool": "qemu-img"
+  },
+  "qemu-img-info-nvram": {
+   "argv": [
+    "info",
+    "--output=json",
+    "-U",
+    "--",
+    "/var/lib/posterchan/vms-probe/target/00000000-0000-4000-8000-000000000002/nvram.fd"
+   ],
+   "note": "",
+   "rc": 0,
+   "stderr": "",
+   "tool": "qemu-img"
+  },
+  "qemu-img-info-qcow2": {
+   "argv": [
+    "info",
+    "--output=json",
+    "-U",
+    "--",
+    "/var/lib/posterchan/vms-probe/pcprobe-img-b0156d/plain.qcow2"
+   ],
+   "note": "",
+   "rc": 0,
+   "stderr": "",
+   "tool": "qemu-img"
+  },
+  "qemu-img-info-raw": {
+   "argv": [
+    "info",
+    "--output=json",
+    "-U",
+    "--",
+    "/var/lib/posterchan/vms-probe/pcprobe-img-b0156d/raw.img"
+   ],
+   "note": "",
+   "rc": 0,
+   "stderr": "",
+   "tool": "qemu-img"
+  },
+  "qemu-img-info-with-snapshot": {
+   "argv": [
+    "info",
+    "--output=json",
+    "-U",
+    "--",
+    "/var/lib/posterchan/vms-probe/00000000-0000-4000-8000-000000000002/disk-vda.qcow2"
+   ],
+   "note": "",
+   "rc": 0,
+   "stderr": "",
+   "tool": "qemu-img"
+  },
+  "qemu-img-snapshot-l": {
+   "argv": [
+    "snapshot",
+    "-l",
+    "/var/lib/posterchan/vms-probe/00000000-0000-4000-8000-000000000002/disk-vda.qcow2"
+   ],
+   "note": "",
+   "rc": 0,
+   "stderr": "",
+   "tool": "qemu-img"
+  },
+  "qmp-error-reply": {
+   "argv": [
+    "qemu-monitor-command",
+    "00000000-0000-4000-8000-000000000002",
+    "{\"execute\":\"set_password\",\"arguments\":{\"protocol\":\"spice\",\"password\":\"x\"}}"
+   ],
+   "note": "virsh rc for a QMP error reply",
+   "rc": 0,
+   "stderr": "",
+   "tool": "virsh"
+  },
+  "qmp-set-password": {
+   "argv": [
+    "qemu-monitor-command",
+    "00000000-0000-4000-8000-000000000002",
+    "{\"execute\":\"expire_password\",\"arguments\":{\"protocol\":\"vnc\",\"time\":\"+60\"}}"
+   ],
+   "note": "expire_password reply",
+   "rc": 0,
+   "stderr": "",
+   "tool": "virsh"
+  },
+  "virsh-define-rebuilt": {
+   "argv": [
+    "define",
+    "/var/lib/posterchan/vms-probe/target/00000000-0000-4000-8000-000000000002/domain.xml"
+   ],
+   "note": "",
+   "rc": 0,
+   "stderr": "",
+   "tool": "virsh"
+  },
+  "virsh-domblklist-details-inactive": {
+   "argv": [
+    "domblklist",
+    "00000000-0000-4000-8000-000000000002",
+    "--details",
+    "--inactive"
+   ],
+   "note": "",
+   "rc": 0,
+   "stderr": "",
+   "tool": "virsh"
+  },
+  "virsh-domblklist-with-cdrom": {
+   "argv": [
+    "domblklist",
+    "00000000-0000-4000-8000-000000000002",
+    "--details",
+    "--inactive"
+   ],
+   "note": "",
+   "rc": 0,
+   "stderr": "",
+   "tool": "virsh"
+  },
+  "virsh-dominfo-running": {
+   "argv": [
+    "dominfo",
+    "00000000-0000-4000-8000-000000000002"
+   ],
+   "note": "",
+   "rc": 0,
+   "stderr": "",
+   "tool": "virsh"
+  },
+  "virsh-dominfo-shutoff": {
+   "argv": [
+    "dominfo",
+    "00000000-0000-4000-8000-000000000002"
+   ],
+   "note": "",
+   "rc": 0,
+   "stderr": "",
+   "tool": "virsh"
+  },
+  "virsh-dumpxml-inactive-bios": {
+   "argv": [
+    "dumpxml",
+    "00000000-0000-4000-8000-000000000003",
+    "--inactive"
+   ],
+   "note": "",
+   "rc": 0,
+   "stderr": "",
+   "tool": "virsh"
+  },
+  "virsh-dumpxml-inactive-efi": {
+   "argv": [
+    "dumpxml",
+    "00000000-0000-4000-8000-000000000002",
+    "--inactive"
+   ],
+   "note": "",
+   "rc": 0,
+   "stderr": "",
+   "tool": "virsh"
+  },
+  "virsh-dumpxml-inactive-migratable": {
+   "argv": [
+    "dumpxml",
+    "00000000-0000-4000-8000-000000000002",
+    "--inactive",
+    "--migratable"
+   ],
+   "note": "",
+   "rc": 0,
+   "stderr": "",
+   "tool": "virsh"
+  },
+  "virsh-dumpxml-inactive-rebuilt": {
+   "argv": [
+    "dumpxml",
+    "00000000-0000-4000-8000-000000000002",
+    "--inactive"
+   ],
+   "note": "",
+   "rc": 0,
+   "stderr": "",
+   "tool": "virsh"
+  },
+  "virsh-dumpxml-inactive-updated": {
+   "argv": [
+    "dumpxml",
+    "00000000-0000-4000-8000-000000000002",
+    "--inactive"
+   ],
+   "note": "",
+   "rc": 0,
+   "stderr": "",
+   "tool": "virsh"
+  },
+  "virsh-dumpxml-running": {
+   "argv": [
+    "dumpxml",
+    "00000000-0000-4000-8000-000000000002"
+   ],
+   "note": "",
+   "rc": 0,
+   "stderr": "",
+   "tool": "virsh"
+  },
+  "virsh-list-all-uuid": {
+   "argv": [
+    "list",
+    "--all",
+    "--uuid"
+   ],
+   "note": "",
+   "rc": 0,
+   "stderr": "",
+   "tool": "virsh"
+  },
+  "virsh-metadata": {
+   "argv": [
+    "metadata",
+    "00000000-0000-4000-8000-000000000002",
+    "--uri",
+    "https://posterchan.place/ns/vm/1",
+    "--config"
+   ],
+   "note": "",
+   "rc": 0,
+   "stderr": "",
+   "tool": "virsh"
+  },
+  "virsh-nodeinfo": {
+   "argv": [
+    "nodeinfo"
+   ],
+   "note": "",
+   "rc": 0,
+   "stderr": "",
+   "tool": "virsh"
+  },
+  "virsh-nodememstats": {
+   "argv": [
+    "nodememstats"
+   ],
+   "note": "",
+   "rc": 0,
+   "stderr": "",
+   "tool": "virsh"
+  },
+  "virsh-reboot": {
+   "argv": [
+    "reboot",
+    "00000000-0000-4000-8000-000000000002"
+   ],
+   "note": "",
+   "rc": 0,
+   "stderr": "",
+   "tool": "virsh"
+  },
+  "virsh-snapshot-list-names": {
+   "argv": [
+    "snapshot-list",
+    "00000000-0000-4000-8000-000000000002",
+    "--name",
+    "--topological"
+   ],
+   "note": "",
+   "rc": 0,
+   "stderr": "",
+   "tool": "virsh"
+  },
+  "virsh-version": {
+   "argv": [
+    "version"
+   ],
+   "note": "",
+   "rc": 0,
+   "stderr": "",
+   "tool": "virsh"
+  },
+  "virsh-vncdisplay": {
+   "argv": [
+    "vncdisplay",
+    "00000000-0000-4000-8000-000000000002"
+   ],
+   "note": "",
+   "rc": 0,
+   "stderr": "",
+   "tool": "virsh"
+  }
+ },
+ "host": {
+  "qemu_img": "qemu-img version 10.2.3",
+  "virsh_version": "Compiled against library: libvirt 12.0.0\nUsing library: libvirt 12.0.0\nUsing API: QEMU 12.0.0\nRunning hypervisor: QEMU 10.2.3"
+ }
+}

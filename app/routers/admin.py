@@ -566,6 +566,14 @@ def set_onion(body: OnionToggle, admin: User = Depends(get_admin_user)):
     return {"enabled": body.enabled, "address": addr}
 
 
+def _vmhost_durable_keys():
+    from app.services.vmhost.config import DURABLE_KEYS
+    return frozenset(DURABLE_KEYS)
+
+
+_VMHOST_DURABLE = _vmhost_durable_keys()
+
+
 @router.put("/settings")
 def update_settings(
     data: SettingsUpdate,
@@ -578,6 +586,7 @@ def update_settings(
     # The admin UI sends ALL fields on every save; only the keys whose value actually CHANGED need to
     # be mirrored to the relay (each is its own replaceable event — don't rewrite ~250 on every save).
     changed_keys = set()
+    _vmhost_prev = {}   # durable VM-hosting keys → cached value before this save (None = absent)
 
     try:
         from app.services import settings_store
@@ -590,7 +599,10 @@ def update_settings(
             # (number/bool) settings an empty string would break SettingsResponse parsing on the next
             # GET, and "" there just means "leave as-is" from a partial UI update, so skip it.
             if settings_store.get(key, "") != value and (value != "" or key in text_keys):
-                settings_store.put(key, value, write_relay=not key.startswith("monero_wallet_"))
+                if key in _VMHOST_DURABLE and key not in _vmhost_prev:
+                    _vmhost_prev[key] = settings_store.get(key, None)
+                settings_store.put(key, value, write_relay=not (key.startswith("monero_wallet_")
+                                                                or key in _VMHOST_DURABLE))
                 changed_keys.add(key)
             if key in cache_keys:
                 cache_settings_changed = True
@@ -601,6 +613,19 @@ def update_settings(
             import asyncio as _asyncio
             if _asyncio.run(settings_store.write_through(db, _monero_changes)) != len(_monero_changes):
                 raise HTTPException(status_code=503, detail="Could not durably save Monero wallet settings")
+        # VM hosting access lists and the on/off switch: WHO may reach the host. A best-effort write
+        # that is lost reads back as the OLD list after a restart — a revoked npub quietly regaining
+        # access — so Save does not report success until the relay holds them.
+        _vmhost_changes = {k: settings_store.get(k, "") for k in changed_keys if k in _VMHOST_DURABLE}
+        if _vmhost_changes:
+            import asyncio as _asyncio
+            if _asyncio.run(settings_store.write_through(db, _vmhost_changes)) != len(_vmhost_changes):
+                # Put the cache back to what the relay (and so the next restart) still says, so the UI
+                # never shows a revocation that did not happen. The running host keeps its old
+                # configuration too: the reload below is never reached.
+                for _k, _prev in _vmhost_prev.items():
+                    settings_store.restore_cached(_k, _prev)
+                raise HTTPException(status_code=503, detail="Could not durably save VM hosting access settings")
         logger.info(f"[Admin] Saved {len(changed_keys)} changed setting(s)")
 
         # Relay TASK-TOPOLOGY keys force a full subprocess restart (see the restart block below).
@@ -648,7 +673,8 @@ def update_settings(
         # could read STALE values and ignore the change.
         # nostr_relay_private_relays is here so clearing it actually STOPS the mirror: without a
         # reload the relay keeps copying every private write to a relay the operator has removed.
-        _relay_reload_keys = ("nostr_relay_private_relays",
+        # vmhost_peer_hosts: the relay's VM-hosting gate trusts results from exactly these hosts.
+        _relay_reload_keys = ("nostr_relay_private_relays", "vmhost_enabled", "vmhost_peer_hosts",
                               "nostr_relay_upstream_relays", "nostr_relay_firehose_max_relays",
                               "nostr_relay_ingest_kinds")
         if not _relay_will_restart and any(k in changed_keys for k in _relay_reload_keys):
@@ -698,6 +724,13 @@ def update_settings(
                     logger.info("[Admin] relay store config reload requested (retention/max_events/mirror-retention, no restart)")
                 except Exception as e:
                     logger.warning(f"[Admin] relay store-config reload after settings save failed: {e}")
+        # VM hosting settings changed → restart the host service with them (and it re-announces).
+        if any(k.startswith("vmhost_") for k in changed_keys):
+            try:
+                from app.services.vmhost import transport as _vmhost_transport
+                _vmhost_transport.request_reload()
+            except Exception as e:
+                logger.warning(f"[Admin] VM host reload after settings save failed: {e}")
         # Git-host topology changed (enable / bind / port / proxy_url — all per-node plumbing) →
         # reconcile the running git-host subprocess so an Admin toggle takes effect WITHOUT a full app
         # restart (symptom otherwise: "I enabled the git host but :3053 never comes up"). put() already

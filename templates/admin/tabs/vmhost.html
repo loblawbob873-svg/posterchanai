@@ -1,0 +1,90 @@
+<!-- VM hosting tab — this node as a Proxmox-like VM host, managed over encrypted Nostr.
+     Every named input here is a setting in SettingsResponse (tests/test_vmhost_admin_settings.py). -->
+<section class="tab-content" id="tab-vms">
+  <fieldset>
+    <legend>VM hosting</legend>
+    <p class="settings-help">Turns this server into a virtual-machine host that PosterChan clients (web,
+      Android, desktop — even one with only a key and relays) manage from <strong>Virtual Machines</strong>.
+      Requests are NIP-44-encrypted Nostr events addressed to this node's relay identity; the VM console is
+      noVNC over this node's HTTPS, behind a one-use ticket issued over Nostr. Needs libvirt + QEMU/KVM on
+      this machine — <code>./install.sh --vmhost</code> sets it up; see <code>docs/VM_HOSTING.md</code>.</p>
+    <p class="settings-help"><strong>Security:</strong> the app user needs the <code>libvirt</code> group,
+      and membership of that group is effectively root on this machine. Only enable this on a node you are
+      willing to trust with that.</p>
+    <label><input type="checkbox" id="vmhost_enabled" name="vmhost_enabled"> Run the VM host on this server</label>
+    <label>Host name shown to clients <input id="vmhost_display_name" name="vmhost_display_name" placeholder="PosterChan VM host" autocomplete="off"></label>
+    <label>Public HTTPS URL (for the console) <input id="vmhost_public_url" name="vmhost_public_url" placeholder="https://poster.place" autocomplete="off" spellcheck="false"></label>
+    <p class="settings-help">Blank = clients open the console on the same origin as the relay they reached this host through.</p>
+    <label>Public relay URL <input id="vmhost_public_relay" name="vmhost_public_relay" placeholder="wss://poster.place/relay" autocomplete="off" spellcheck="false"></label>
+    <label><input type="checkbox" id="vmhost_announce" name="vmhost_announce"> Publish a public host announcement (kind 31310; capacity is never published)</label>
+  </fieldset>
+
+  <fieldset>
+    <legend>Who may use it</legend>
+    <p class="settings-help"><strong>Admins</strong> create, delete and assign VMs. Every admin account of
+      this site that has a linked npub, and this node's own key, is already an admin; list extra npubs here.
+      <strong>Users</strong> only ever see the VMs assigned to them — they can start, stop, reboot and open the
+      console, nothing else. Assigning a VM to an npub is itself a grant; the list below is for people who
+      should see this host before anything is assigned. Anyone else is silently ignored.</p>
+    <label>Extra admin npubs (one per line) <textarea id="vmhost_admin_npubs" name="vmhost_admin_npubs" rows="3" spellcheck="false" placeholder="npub1…"></textarea></label>
+    <label>Allowed user npubs (one per line) <textarea id="vmhost_allowed_npubs" name="vmhost_allowed_npubs" rows="4" spellcheck="false" placeholder="npub1…"></textarea></label>
+    <label>Peer hosts for migration (one per line: npub relay https — list each other on BOTH hosts) <textarea id="vmhost_peer_hosts" name="vmhost_peer_hosts" rows="2" spellcheck="false" placeholder="npub1… wss://relay.example https://example"></textarea></label>
+  </fieldset>
+
+  <fieldset>
+    <legend>Hypervisor and storage</legend>
+    <label>libvirt URI <input id="vmhost_libvirt_uri" name="vmhost_libvirt_uri" value="qemu:///system" autocomplete="off" spellcheck="false"></label>
+    <label>Storage directory <input id="vmhost_storage_dir" name="vmhost_storage_dir" value="/var/lib/posterchan/vms" autocomplete="off" spellcheck="false"></label>
+    <p class="settings-help">Disks go in <code>&lt;dir&gt;/&lt;vm-uuid&gt;/</code>; installer ISOs live in <code>&lt;dir&gt;/isos/</code> — copy them there, or download/upload them from Virtual Machines → a host → ISO library. Clients pick from that list and can never name a path.</p>
+    <label>libvirt network <input id="vmhost_default_network" name="vmhost_default_network" value="default" autocomplete="off"></label>
+    <label>Bridge instead of a network (optional) <input id="vmhost_bridge" name="vmhost_bridge" placeholder="br0" autocomplete="off"></label>
+  </fieldset>
+
+  <fieldset>
+    <legend>Limits</legend>
+    <label>Max vCPUs per VM <input type="number" id="vmhost_max_vcpus_per_vm" name="vmhost_max_vcpus_per_vm" value="16" min="1"></label>
+    <label>Max RAM per VM (MiB) <input type="number" id="vmhost_max_ram_mib_per_vm" name="vmhost_max_ram_mib_per_vm" value="65536" min="256"></label>
+    <label>Max disk per VM (GiB) <input type="number" id="vmhost_max_disk_gib_per_vm" name="vmhost_max_disk_gib_per_vm" value="2048" min="1"></label>
+    <label>RAM kept for the host (MiB) <input type="number" id="vmhost_reserve_ram_mib" name="vmhost_reserve_ram_mib" value="2048" min="0"></label>
+    <label>Disk kept free (GiB) <input type="number" id="vmhost_reserve_disk_gib" name="vmhost_reserve_disk_gib" value="20" min="0"></label>
+    <label><input type="checkbox" id="vmhost_allow_overcommit" name="vmhost_allow_overcommit"> Allow overcommitting CPU and memory</label>
+    <label>Console ticket lifetime (seconds) <input type="number" id="vmhost_console_ticket_ttl_sec" name="vmhost_console_ticket_ttl_sec" value="60" min="10" max="600"></label>
+    <label>Console session limit (minutes) <input type="number" id="vmhost_console_max_minutes" name="vmhost_console_max_minutes" value="240" min="1"></label>
+    <label>Guest shutdown timeout before a migration (seconds) <input type="number" id="vmhost_shutdown_timeout_sec" name="vmhost_shutdown_timeout_sec" value="120" min="10"></label>
+    <label>Session key lifetime for remote signers (hours) <input type="number" id="vmhost_session_max_hours" name="vmhost_session_max_hours" value="12" min="1"></label>
+    <label>Keep a migrated VM's source copy (hours, 0 = until an admin deletes it) <input type="number" id="vmhost_migration_keep_source_hours" name="vmhost_migration_keep_source_hours" value="72" min="0"></label>
+    <label>Migration transfer cap (Mbit/s, 0 = none) <input type="number" id="vmhost_transfer_max_mbps" name="vmhost_transfer_max_mbps" value="0" min="0"></label>
+    <label><input type="checkbox" id="vmhost_iso_fetch_enabled" name="vmhost_iso_fetch_enabled"> Let admins download ISOs by URL (public http/https only)</label>
+  </fieldset>
+
+  <fieldset>
+    <legend>Status</legend>
+    <button type="button" class="btn-secondary" id="vmhost-status-btn">Check VM host status</button>
+    <pre id="vmhost-status-result" aria-live="polite">Not checked</pre>
+  </fieldset>
+</section>
+<script>
+(function(){
+  async function vmhostStatus(btn){
+    const out=document.getElementById('vmhost-status-result'); if(btn) btn.disabled=true; out.textContent='Checking…';
+    try{
+      const r=await fetch('/api/admin/vmhost/status',{credentials:'same-origin',cache:'no-store',headers:{Accept:'application/json'}});
+      const v=await r.json(); if(!r.ok) throw new Error(v.detail||('HTTP '+r.status));
+      const lv=v.libvirt||{};
+      out.textContent=[
+        'Enabled: '+(v.enabled?'yes':'no')+' · Running: '+(v.running?'yes':'no')+(v.error?' — '+v.error:''),
+        'Host npub: '+(v.node_npub||'(no relay identity yet)'),
+        'libvirt: '+v.libvirt_uri+' — '+(lv.ok?('reachable '+(lv.libvirt||'')):('not reachable'+(lv.error?': '+lv.error:''))),
+        'KVM (/dev/kvm): '+(v.kvm?'present':'missing'),
+        'Storage: '+v.storage_dir+' — '+(v.storage_exists?(v.storage_writable?'writable':'NOT writable by the app'):'missing')
+          +(v.storage_exists&&v.storage_traversable===false?' — NOT traversable by the qemu user (chmod o+x; ./install.sh --vmhost)':''),
+        'VMs: '+(v.vms?(v.vms.running+' running / '+v.vms.total+' total'):'—')+' · consoles open: '+(v.consoles_open??'—'),
+        'Extra admins: '+v.admins+' · allowed users: '+v.allowed
+      ].join('\n');
+    }catch(e){ out.textContent='Status unavailable: '+String(e&&e.message||e); }
+    finally{ if(btn) btn.disabled=false; }
+  }
+  document.getElementById('vmhost-status-btn')?.addEventListener('click', function(){ vmhostStatus(this); });
+  document.querySelector('.tab-btn[data-tab="vms"]')?.addEventListener('click', ()=>vmhostStatus(null));
+})();
+</script>

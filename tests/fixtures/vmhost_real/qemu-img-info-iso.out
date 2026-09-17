@@ -1,0 +1,26 @@
+{
+    "children": [
+        {
+            "name": "file",
+            "info": {
+                "children": [
+                ],
+                "virtual-size": 43008,
+                "filename": "/var/lib/posterchan/vms-probe/isos/pcprobe-18fcc8.iso",
+                "format": "file",
+                "actual-size": 45056,
+                "format-specific": {
+                    "type": "file",
+                    "data": {
+                    }
+                },
+                "dirty-flag": false
+            }
+        }
+    ],
+    "virtual-size": 43008,
+    "filename": "/var/lib/posterchan/vms-probe/isos/pcprobe-18fcc8.iso",
+    "format": "raw",
+    "actual-size": 45056,
+    "dirty-flag": false
+}

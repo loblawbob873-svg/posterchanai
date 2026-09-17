@@ -128,8 +128,7 @@ class HandoffReopensWhatItWasShowing(unittest.TestCase):
         start = self.os.index("function openApp(")
         body = self.os[start:self.os.index("function windowAIContext", start)]
         self.assertIn("return opened || null", body)
-        for opener in ("openSystemSettings", "openTaskManager", "openVmManager",
-                       "openRemoteDesktop"):
+        for opener in ("openSystemSettings", "openTaskManager", "openRemoteDesktop"):
             start = self.os.index("function " + opener + "(")
             end = self.os.index("\n  }", start)
             self.assertIn("return w", self.os[start:end], opener + " discards its managed window")

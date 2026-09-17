@@ -1144,8 +1144,10 @@
       when: () => !!(window.pcSystem && pcSystem.snapshot) },
     { view: '__ossettings', label: 'System Settings', icon: '#i-gear', act: () => openSystemSettings(),
       when: () => !!(window.pcDisplays && pcDisplays.status) },
-    { view: '__vms', label: 'Virtual Machines', icon: '#i-monitor', act: () => openVmManager(),
-      when: () => !!(window.pcVM && pcVM.list) },
+    /* No "Local VMs" entry any more: THIS machine's VMs are the first host ("This computer", vms.js
+     * LocalHost over window.pcVM) on the sidebar's Virtual Machines screen, which the launcher already
+     * lists from its nav row. A saved `__vms` (a pin, a handoff from an older shell) resolves to it —
+     * see legacyView(). */
     { view: '__remote', label: 'Remote Desktop', icon: '#i-monitor', act: () => openRemoteDesktop(),
       when: () => !!(me() && PC().startRemoteDesktop) },
   ];
@@ -1909,7 +1911,6 @@
     'doc:os-settings': { view: '__ossettings',  label: 'System Settings' },
     '__ossettings':    { view: '__ossettings',  label: 'System Settings' },
     '__tasks':         { view: '__tasks',       label: 'Task Manager' },
-    '__vms':           { view: '__vms',         label: 'Virtual Machines' },
     '__remote':        { view: '__remote',      label: 'Remote Desktop' },
   };
 
@@ -1925,7 +1926,6 @@
   const EXTRA_RENDER = {
     '__ossettings': () => renderSystemSettings(),
     '__tasks':      () => _paintExtraInFeed('feed-taskmgr', paintTaskManager),
-    '__vms':        () => _paintExtraInFeed('feed-vms',     paintVmManager),
     '__remote':     () => _paintExtraInFeed('feed-remote',  paintRemoteDesktop),
   };
 
@@ -2028,7 +2028,14 @@
     return child;
   }
 
+  /* Views that were renamed or merged, for anything that saved the OLD name: a taskbar pin, a desktop
+   * layout, a window handed over by an older shell. `__vms` was the desktop-only "Local VMs" painter;
+   * those machines are now "This computer" on Virtual Machines (`vms`). */
+  const LEGACY_VIEWS = { __vms: 'vms' };
+  function legacyView(v){ return Object.prototype.hasOwnProperty.call(LEGACY_VIEWS, v) ? LEGACY_VIEWS[v] : v; }
+
   function openApp(view, label, icon, render, noFeed, direct){
+    view = legacyView(view);
     if(view && view.indexOf('folder:') === 0 && !_inFolder){
       const f = layout().folders.find(x => 'folder:' + x.key === view);
       return f ? openFolder(f) : null;
@@ -3032,111 +3039,6 @@
     slot.querySelectorAll('[data-sort]').forEach(b=>b.onclick=()=>{if(sort===b.dataset.sort)desc=!desc;else{sort=b.dataset.sort;desc=sort!=='name';}paint();});
     const search=$('.pctm-search',slot);if(search)search.oninput=()=>paint();
     const timer=setInterval(paint,2000);paint();
-    return ()=>{dead=true;clearInterval(timer);};
-  }
-
-  function openVmManager(){
-    const old=wins.find(x=>x.view==='__vms');if(old){focusWin(old,false);return old;}
-    /* Same launcher/window split as Task Manager above. */
-    const w=openApp('__vms','Virtual Machines','#i-monitor',null,true,true);if(!w)return null;
-    w.el.classList.add('osw-vms');
-    w.onClose=paintVmManager(w.slot,w.body);
-    return w;
-  }
-
-  /* Painter and window are separate here for the reason given above paintTaskManager: on
-   * PosterChanOS this is a real compositor toplevel with no in-page frame to paint into. `owner`
-   * is only ever a dialog anchor — uiConfirm/uiPrompt fall back to document.body when it is
-   * absent, which is exactly right for a window document. */
-  function paintVmManager(slot, owner){
-    slot.innerHTML=`<div class="vmui"><div class="vmui-hero"><div class="vmui-heroicon"><svg class="ic"><use href="#i-monitor"></use></svg></div><div><h2>Virtual Machines</h2><p>Run Windows or Linux in a window. PosterChanOS handles the virtual hardware for you.</p></div><button class="btn vmui-new" data-vm-new><svg class="ic b-ic" aria-hidden="true"><use href="#i-plus"></use></svg>Create a virtual machine</button></div><div class="vmui-create" hidden>
-      <div class="vmui-formhead"><b>Create a virtual machine</b><span>Choose an installer, then give the machine a name and enough space.</span></div>
-      <label>What should it be called?<input class="input" data-vm-name placeholder="Windows 11"></label>
-      <label>Installation image (.iso)<div class="vmui-pick"><input class="input" data-vm-iso readonly placeholder="No installer selected"><button class="btn btn-ghost" data-vm-pick>Choose file…</button></div></label>
-      <div class="vmui-spec"><label>Operating system<select class="input" data-vm-guest><option value="linux">Linux</option><option value="windows">Windows 10 / 11</option></select></label><label>Boot type<select class="input" data-vm-firmware><option value="efi">UEFI (recommended)</option><option value="bios">Legacy BIOS</option></select></label></div>
-      <div class="vmui-spec"><label>Memory (MB)<input class="input" data-vm-ram type="number" min="512" value="4096"></label><label>CPUs<input class="input" data-vm-cpu type="number" min="1" value="2"></label><label>Disk (GB)<input class="input" data-vm-disk type="number" min="4" value="40"></label></div>
-      <div class="vmui-formacts"><button class="btn btn-ghost" data-vm-cancel>Cancel</button><button class="btn" data-vm-create>Create and start</button></div></div>
-      <div class="vmui-note"><b>Your machines stay private.</b> Their disks are stored inside this PosterChanOS account’s home folder.</div>
-      <div class="vmui-edit" data-vm-edit hidden></div><div class="vmui-list"><div class="os-pop-none">Loading virtual machines…</div></div></div>`;
-    const vmroot=$('.vmui',slot),form=$('.vmui-create',slot),list=$('.vmui-list',slot);let dead=false,busy=false;
-    const say=s=>{try{PC().toast(s);}catch(_){}};
-    const paint=async()=>{if(dead||busy)return;busy=true;try{const r=await pcVM.list();if(dead)return;
-      if(!r.available){list.innerHTML=`<div class="vmui-empty"><b>Virtualization is unavailable</b><span>${enc(r.error||'libvirt could not be reached')}</span></div>`;return;}
-      list.innerHTML=(r.machines||[]).map(m=>{const running=/running|paused|idle/.test(m.state),missing=(m.missingMedia||[])[0];return `<article class="vmui-card"><div class="vmui-machine"><div class="vmui-screen ${running?'on':''}"><svg class="ic"><use href="#i-monitor"></use></svg></div><div><b>${enc(m.name)}</b><span><i class="${running?'on':''}"></i>${running?'Running':'Powered off'}</span><small>${enc(m.cpus)} processor${m.cpus===1?'':'s'} · ${enc(Math.round((m.memoryKiB||0)/1024))} MB memory</small>${missing?`<small class="vmui-media-error">Installer media moved or is missing. Open Settings to replace or eject it.</small>`:''}</div></div><div class="vmui-actions">
-        ${running?`<button class="btn vmui-primary" data-vm-view="${enc(m.name)}"><svg class="ic b-ic"><use href="#i-monitor"></use></svg>Open display</button><button class="btn btn-ghost" data-vm-edit-open="${enc(m.name)}"><svg class="ic b-ic"><use href="#i-gear"></use></svg>Settings</button><button class="btn btn-ghost" data-vm-act="shutdown" data-name="${enc(m.name)}"><svg class="ic b-ic"><use href="#i-power"></use></svg>Shut down</button><button class="btn btn-ghost" data-vm-act="reboot" data-name="${enc(m.name)}">Restart</button><button class="btn btn-ghost danger" data-vm-act="stop" data-name="${enc(m.name)}">Force off</button>`:`<button class="btn vmui-primary" data-vm-act="start" data-name="${enc(m.name)}"><svg class="ic b-ic"><use href="#i-play"></use></svg>Start</button><button class="btn btn-ghost" data-vm-boot-disk="${enc(m.name)}">Use installed system</button><button class="btn btn-ghost" data-vm-edit-open="${enc(m.name)}"><svg class="ic b-ic"><use href="#i-gear"></use></svg>Settings</button><button class="btn btn-ghost danger" data-vm-delete="${enc(m.name)}"><svg class="ic b-ic"><use href="#i-trash"></use></svg>Delete</button>`}</div></article>`;}).join('')||'<div class="vmui-empty"><svg class="ic"><use href="#i-monitor"></use></svg><b>No virtual machines yet</b><span>Choose “Create a virtual machine” to install Windows or Linux from an ISO.</span></div>';
-      list.querySelectorAll('[data-vm-act]').forEach(b=>b.onclick=async()=>{b.disabled=true;const act=b.dataset.vmAct,n=b.dataset.name;const r=await pcVM.action(n,act);if(!r.ok)say(r.error||'VM action failed');
-        /* Starting a graphical machine means showing it. Requiring a second button that only
-         * appears after the polling repaint made a successful start look exactly like a headless
-         * failure. Give libvirt a moment to publish its SPICE socket, then attach the viewer. */
-        if(r.ok&&act==='start'){await new Promise(resolve=>setTimeout(resolve,300));const v=await pcVM.view(n);if(!v.ok)say(v.error||'VM started, but its display could not open');}
-        setTimeout(paint,500);});
-      list.querySelectorAll('[data-vm-view]').forEach(b=>b.onclick=async()=>{const r=await pcVM.view(b.dataset.vmView);if(!r.ok)say(r.error||'Viewer could not start');});
-      list.querySelectorAll('[data-vm-boot-disk]').forEach(b=>b.onclick=async()=>{b.disabled=true;b.textContent='Preparing installed system…';const n=b.dataset.vmBootDisk;const r=await pcVM.bootDisk(n);if(!r.ok){b.disabled=false;b.textContent='Boot installed system';say(r.error||'Could not select the installed disk');return;}const s=await pcVM.action(n,'start');if(!s.ok){b.disabled=false;b.textContent='Boot installed system';say(s.error||'VM could not start');return;}/* This is a graphical start just like the ordinary Start path. The old handler only repainted, leaving the newly installed guest running headlessly until a second Open display click. */await new Promise(resolve=>setTimeout(resolve,300));const v=await pcVM.view(n);if(!v.ok)say(v.error||'VM started, but its display could not open');setTimeout(paint,500);});
-      list.querySelectorAll('[data-vm-edit-open]').forEach(b=>b.onclick=()=>editHardware(b.dataset.vmEditOpen));
-      list.querySelectorAll('[data-vm-delete]').forEach(b=>b.onclick=async()=>{const n=b.dataset.vmDelete;
-        const ok=await PC().uiConfirm(`Delete ${n} and its virtual disk?`,{ok:'Delete',danger:true,owner:owner});
-        if(!ok)return;const r=await pcVM.remove(n,true);if(!r.ok)say(r.error||'Delete failed');paint();});
-    }catch(e){list.innerHTML='<div class="vmui-empty"><b>Could not read virtual machines</b></div>';}finally{busy=false;}};
-    const closeHardware=()=>{const box=$('[data-vm-edit]',slot);if(box){box.hidden=true;box.innerHTML='';}if(vmroot)vmroot.classList.remove('vmui-editing');};
-    const editHardware=async(name)=>{const box=$('[data-vm-edit]',slot);if(!box)return;if(vmroot)vmroot.classList.add('vmui-editing');box.hidden=false;box.innerHTML='<div class="spinner"></div>';let d;try{d=await pcVM.details(name);}catch(e){d={ok:false,error:String(e&&e.message||e)}}if(!d.ok){box.innerHTML=`<div class="vmui-top"><div><b>${enc(name)} settings</b><span>${enc(d.error||'Could not read VM hardware')}</span></div><button class="btn btn-ghost" data-vme-close>Back to machines</button></div>`;$('[data-vme-close]',box).onclick=closeHardware;return;}
-      const cd=(d.disks||[]).find(x=>x.device==='cdrom'),iso=cd&&cd.source&&cd.source!=='-'?cd.source:'',isoName=iso.split(/[\\/]/).pop();
-      box.innerHTML=`<div class="vmui-top"><div><b>${enc(name)} settings</b><span>Turn the machine off before changing hardware.</span></div><button class="btn btn-ghost" data-vme-close>Back to machines</button></div>
-        <section class="vmui-section"><h3>Performance</h3><div class="vmui-spec"><label>Memory (MB)<input class="input" data-vme-ram type="number" min="512" value="${enc(d.ramMiB)}"></label><label>Processors<input class="input" data-vme-cpu type="number" min="1" value="${enc(d.cpus)}"></label><label class="vmui-check"><input data-vme-auto type="checkbox" ${d.autostart?'checked':''}> Start automatically</label></div></section>
-        <section class="vmui-section"><h3>Startup and installation media</h3><div class="vmui-spec"><label>Start from<select class="input" data-vme-boot><option value="disk" ${d.bootOrder==='disk'?'selected':''}>Installed system (virtual disk)</option><option value="cdrom" ${d.bootOrder==='cdrom'?'selected':''}>Installer ISO</option></select></label></div><p data-vme-media><b>Attached installer:</b> ${iso?`<span title="${enc(iso)}">${enc(isoName)}</span>`:'None'}</p><p>When installation finishes, eject the ISO. The next start will use the installed system automatically.</p><div class="vmui-actions vmui-actions-left"><button class="btn btn-ghost" data-vme-iso>Change installer ISO…</button><button class="btn" data-vme-eject>Eject installer and use installed system</button></div></section>
-        <details class="vmui-advanced"><summary>Advanced hardware</summary><p>Add storage or networking, or enable relative mouse capture for games that require it.</p><div class="vmui-actions vmui-actions-left"><button class="btn btn-ghost" data-vme-disk>Add virtual disk…</button><button class="btn btn-ghost" data-vme-net>Add network adapter (${enc(d.networks)})</button><button class="btn btn-ghost" data-vme-mouse>${d.gamingMouse?'Mouse capture is on — turn off':'Enable gaming mouse capture'}</button></div></details>
-        <div class="tty-state vmui-state" data-vme-state aria-live="polite"></div>
-        <div class="vmui-formacts vmui-formfoot"><button class="btn btn-ghost" data-vme-back>Back to machines</button><button class="btn" data-vme-save disabled>Save settings</button></div>`;
-      const state=t=>{const x=$('[data-vme-state]',box);if(x)x.textContent=t||'';};$('[data-vme-eject]',box).disabled=!iso;
-      /* WHAT SAVE ACTUALLY WRITES, IN ONE PLACE. It was read inline in the click handler, which is
-       * how the button came to sit in the middle of the form: it looks like it belongs to the
-       * section it is in, while it writes `bootOrder` from the section BELOW it. Change the boot
-       * order and the only Save is off the top of the screen, above the thing you just edited. */
-      const fields=()=>({ramMiB:Number($('[data-vme-ram]',box).value),cpus:Number($('[data-vme-cpu]',box).value),
-                         autostart:!!$('[data-vme-auto]',box).checked,bootOrder:$('[data-vme-boot]',box).value});
-      const clean=JSON.stringify(fields());
-      const saveBtn=$('[data-vme-save]',box);
-      /* Save is offered only when there is something to save, and an edit you have not saved is
-       * never thrown away in silence — leaving the form is the one moment it can be lost. */
-      const dirty=()=>JSON.stringify(fields())!==clean;
-      const sync=()=>{if(saveBtn)saveBtn.disabled=!dirty();};
-      box.querySelectorAll('[data-vme-ram],[data-vme-cpu],[data-vme-auto],[data-vme-boot]')
-         .forEach(el=>{el.oninput=sync;el.onchange=sync;});
-      const leave=async()=>{
-        if(dirty()){
-          const go=await PC().uiConfirm('Leave without saving your changes to '+name+'?',
-                                        {ok:'Discard changes',danger:true,owner:owner});
-          if(!go)return;
-        }
-        closeHardware();
-      };
-      $('[data-vme-close]',box).onclick=leave;
-      const back=$('[data-vme-back]',box);if(back)back.onclick=leave;
-      if(saveBtn)saveBtn.onclick=async()=>{
-        /* Disabled for the round trip: `update` redefines the domain, and two of them racing is a
-         * libvirt error the user reads as "saving is broken". */
-        saveBtn.disabled=true;const label=saveBtn.textContent;saveBtn.textContent='Saving\u2026';
-        try{
-          const r=await pcVM.update(name,fields());
-          state(r.ok?'VM settings saved':(r.error||'Could not save these settings'));
-          if(r.ok){await editHardware(name);paint();return;}
-        }catch(e){state(String(e&&e.message||e));}
-        saveBtn.textContent=label;saveBtn.disabled=!dirty();
-      };
-      $('[data-vme-disk]',box).onclick=async()=>{
-        /* NEVER `prompt()`. A native dialog blocks the renderer, and in the Electron shell — which
-         * is the ONLY place this screen exists — that wedges the whole window with no way back.
-         * The rest of the client learned this long ago; this one call site was missed, and nothing
-         * was watching for it. */
-        const gib=Number(await PC().uiPrompt('New disk size in GB',{value:'40',ok:'Add disk',owner:owner}));
-        if(!gib||!(gib>0))return;const r=await pcVM.addDisk(name,gib);state(r.ok?'Disk added':r.error);};
-      $('[data-vme-iso]',box).onclick=async()=>{const p=await pcVM.pickIso();if(!p)return;const r=await pcVM.changeIso(name,p);if(r.ok){await editHardware(name);state('Installation disc changed');paint();}else state(r.error);};
-      $('[data-vme-eject]',box).onclick=async()=>{const r=await pcVM.ejectIso(name);if(r.ok){await editHardware(name);state('Installation disc ejected — the next start boots from disk');paint();}else state(r.error);};
-      $('[data-vme-net]',box).onclick=async()=>{const r=await pcVM.addNetwork(name);state(r.ok?'Network adapter added':r.error);};
-      $('[data-vme-mouse]',box).onclick=async()=>{const r=await pcVM.gamingMouse(name,!d.gamingMouse);state(r.ok?(!d.gamingMouse?'Gaming mouse enabled — Ctrl+Alt releases it':'Desktop pointer enabled'):r.error);if(r.ok)editHardware(name);};};
-    $('[data-vm-new]',slot).onclick=()=>{form.hidden=false;};$('[data-vm-cancel]',slot).onclick=()=>{form.hidden=true;};
-    $('[data-vm-pick]',slot).onclick=async()=>{const p=await pcVM.pickIso();if(p)$('[data-vm-iso]',slot).value=p;};
-    $('[data-vm-create]',slot).onclick=async function(){this.disabled=true;this.textContent='Creating…';const r=await pcVM.create({name:$('[data-vm-name]',slot).value,iso:$('[data-vm-iso]',slot).value,guest:$('[data-vm-guest]',slot).value,firmware:$('[data-vm-firmware]',slot).value,ramMiB:$('[data-vm-ram]',slot).value,cpus:$('[data-vm-cpu]',slot).value,diskGiB:$('[data-vm-disk]',slot).value});this.disabled=false;this.textContent='Create and start';if(!r.ok){say(r.error||'VM creation failed');return;}form.hidden=true;await new Promise(resolve=>setTimeout(resolve,300));const v=await pcVM.view(r.name);if(!v.ok)say(v.error||'VM created, but its display could not open');paint();};
-    const timer=setInterval(paint,3000);paint();
     return ()=>{dead=true;clearInterval(timer);};
   }
 
@@ -8230,8 +8132,8 @@
     const pinHtml = pins.map(key => {
       const cut = key.indexOf(':'), kind = key.slice(0, cut), id = key.slice(cut + 1);
       if(kind === 'view'){
-        if(openViews.has(id)) return '';
-        const a = apps().find(x => x.view === id); if(!a) return '';
+        if(openViews.has(legacyView(id))) return '';
+        const a = apps().find(x => x.view === legacyView(id)); if(!a) return '';
         return `<button class="os-task os-pinned" data-pin="${enc(key)}" data-kind="pin-view"${tint(a.view)}
                  title="${enc(a.label)}">${iconSvg(a.icon)}<span>${enc(a.label)}</span></button>`;
       }

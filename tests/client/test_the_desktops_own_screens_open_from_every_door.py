@@ -67,8 +67,10 @@ class ExtraScreensOpen(unittest.TestCase):
         block = re.search(r"const EXTRA_RENDER = \{(.*?)\n  \};", self.os, re.S)
         self.assertIsNotNone(block, "EXTRA_RENDER not found in os.js")
         names = re.findall(r"'(__[a-z]+)'\s*:", block.group(1))
-        self.assertIn("__vms", names, "the VMs screen is no longer in EXTRA_RENDER")
-        self.assertGreaterEqual(len(names), 4)
+        self.assertIn("__tasks", names, "the Task Manager screen is no longer in EXTRA_RENDER")
+        # `__vms` merged into the Virtual Machines view (`vms`, "This computer" first) — switchView maps it.
+        self.assertNotIn("__vms", names)
+        self.assertGreaterEqual(len(names), 3)
         # The hook keys on the leading underscore, so it must cover all of them.
         for n in names:
             self.assertTrue(n.startswith("_"),

@@ -1,0 +1,6 @@
+ Type   Device   Target   Source
+-------------------------------------------------------------------------------------------------------------
+ file   disk     vda      /var/lib/posterchan/vms-probe/00000000-0000-4000-8000-000000000002/disk-vda.qcow2
+ file   disk     vdb      /var/lib/posterchan/vms-probe/00000000-0000-4000-8000-000000000002/disk-vdb.qcow2
+ file   cdrom    sda      /var/lib/posterchan/vms-probe/isos/pcprobe-18fcc8.iso
+

@@ -441,6 +441,89 @@ would have handled it fine).
 
 ## Notable features
 
+- **VM hosting — our own Proxmox-like host, managed over Nostr (phases 1-4)** (`app/services/vmhost/`,
+  `app/routers/vmhost.py`, client `vms.js`/`vmrpc.js`/`vmconsole.js`, Admin → VMs; `docs/VM_HOSTING.md`).
+  A server node with libvirt; kind **5310** request (NIP-44, p=node key, expiration ≤120s, nofederate)
+  → **6310** result / **7310** progress; **31310** announcement. Admins (`is_admin` npubs ∪
+  `vmhost_admin_npubs` ∪ node key) create/delete/assign; allowlisted/ASSIGNED npubs see ONLY their VMs
+  (someone else's is `not_found`) and power/console them; strangers get **no reply at all**.
+  **Gotchas:** (1) requesters are outside the WoT, so the kinds need their own branch in BOTH
+  `server._on_event` and `thread._firehose_event` (+ the `#p:[node_pubkey]` firehose sub and the
+  reload-upstream refresh) — `kinds.py` is the single rule, `tests/test_vmhost_relay_kinds.py` drives the
+  shipped closures. That branch is for NON-members only (members keep the ordinary gate): a stranger's
+  5310 only while `vmhost_enabled` and p == [node], 6310/7310 only authored by the node or a PEER HOST,
+  31310 only from node/peer/operator. The peer set is `thread._vmhost_peer_hosts()` =
+  `migrate.parse_peer_hosts(vmhost_peer_hosts)`, and only while `vmhost_enabled`; (2) a retry is a NEW
+  event with the SAME `id` → the op journal returns the stored result (successes only); (3) "no answer" ≠
+  "no VMs" in the UI; (4) the console ticket travels in the first WS FRAME, never the URL, and the client
+  sends `{t:go}` only after noVNC attached (RFB speaks first); (5) access lists + `vmhost_enabled` save
+  durably (503 on a short write, and the cache is put back); (6) clients never send paths — ISO ids
+  resolve and must stay inside `<storage>/isos` (symlinks out are refused); (7) libvirt group ≈ root;
+  (8) the VNC display needs `passwd` in the domain XML or QEMU runs it with NO auth and refuses
+  `set_password` — set it over QMP and READ the reply (virsh exits 0 on an error reply). **`virsh
+  dumpxml` OMITS `passwd`**, so anything that reads a definition back and defines it again (`vm.update`,
+  a migration's define on the target) must call `domainxml.secure_vnc()` first.
+  **Load limits:** per-pubkey token bucket + per-role busy slots, charged to the ACTOR (a session key's
+  owner — eight sessions do not buy eight buckets); peer hosts have their OWN bucket and slots so user
+  traffic cannot stall a migration mid-handoff.
+  **Phase 2** (`hardware.py`/`isolib.py`/`access.py`/`sessions.py`, mixed into the service so `OPS` only
+  grows by rows): (9) every change is admin-only IN THE OP TABLE; `vm.update` needs the VM shut off, does
+  ONE redefine and READS IT BACK (a field libvirt did not keep is an error), and REPLACES a cdrom source
+  (never a second one); (10) `iso.fetch` is SSRF by design — the rss_service guard on EVERY redirect hop,
+  direct transport, cap on header AND stream, `.part` then link; (11) `iso.upload_ticket` →
+  `PUT /api/vmhost/iso/<ticket>` (single use, consumed before reading, admin re-checked, CORS `*` via
+  `_OWN_CORS`); (12) `host.access.set` writes ONLY the allowed list, durably, and refuses the whole list on
+  one bad key — admins stay Admin-panel-only; (13) SESSION KEYS for remote signers: opened by the real key
+  with a proof signed by the session key, usable only for whoami/info/list/get/power/console
+  (`step_up_required` otherwise — so `vm.migrate.*` and `peer.migrate.*` are never session-callable), an
+  ended one is ANSWERED `session_expired` (silence = "offline"); (14) desktop "This computer" is
+  `LocalHost` over `window.pcVM` in vms.js — phase 4 RETIRED os.js `paintVmManager`/`__vms` ("Local VMs"):
+  the start menu and desktop icon open `vms` once; `__vms` is only an alias (os.js `LEGACY_VIEWS`, oswin.js,
+  app.js `switchView`) for old pins/handoffs.
+  **Cold migration (phase 3, `vmhost/migrate.py`)**: requester must be admin on BOTH hosts — the client
+  signs `vm.migrate.authorize` ENCRYPTED TO THE TARGET and the source only carries it; hosts pair via
+  `vmhost_peer_hosts` (`npub relay https`) and talk `peer.migrate.*` over the same 5310/6310 (role
+  `peer`, which can call nothing else); the target PULLS disks from `GET /api/vmhost/transfer/{mig}/{i}`
+  (Range, NIP-98 by the target key, EXACT url match — `verify_nip98` alone is a substring check). **The
+  commit point is the source journaling `handed_off` BEFORE undefining**; lost contact there locks both
+  sides until `vm.migrate.force_reclaim` (split-brain warning). TPM (= every Windows) VMs are refused.
+  Start/delete/assign AND update/snapshots all go through `_migration_guard` (journal first, then the
+  `pc:migration` tag). `transport.stop()` closes the migrator AND the live consoles. Test gotcha: never
+  `store.load()` a LIVE migrator — journal writes happen in a worker thread and a reload swapped records
+  under running code (a commit loop then saved a stale `defining` over `defined`); `_save` writes a
+  snapshot off-loop and only touches the in-memory map on the loop.
+  **Each host treats the other as hostile** (docs/VM_HOSTING.md §6 "Security model"): the TARGET never
+  defines the source's XML — it REBUILDS the domain from validated fields (uuid/name must equal the
+  precheck's), probes every disk with `qemu-img info` (backing/data-file refused, driver type = probe) and
+  grants only the assignments the target admin SIGNED; the SOURCE hands off only after every byte was served
+  and the target answered `peer.migrate.challenge`, and is not `done` until libvirt confirms the undefine.
+  keep_source_hours 0 = keep. One migrator per journal (`JournalBusy`); `transport.stop()` cancels the old
+  handlers first.
+  **Phase 4 — the FIRST LIVE RUN (`scripts/vmhost_live_probe.py`, nas.lan libvirt 12 / QEMU 10.2.3; §7).** It
+  drives the shipped backend/service and the real `/ws/vmconsole` against real libvirt behind a guard that
+  refuses any mutation of a VM it did not create (`pcprobe-*`), proves with a raw RFB client
+  (`scripts/vmhost_rfb.py`) that the display demands the ticket's password, and captures every real
+  virsh/qemu-img/QMP output into `tests/fixtures/vmhost_real/` (`test_vmhost_real_captures.py`). Five bugs
+  the fakes hid, each in `test_vmhost_live_findings.py`: (1) **QEMU runs as ANOTHER USER** — VM dirs created
+  0750 made EVERY VM fail its first start (`Cannot access storage file … as uid:77`); root/VM dirs are 0751,
+  isos 0755, disks/varstores 0600 (`Storage.make_vm_dir`); (2) libvirt creates `nvram.fd` at first start as
+  `qemu:qemu 0600` and NEVER gives it back (migration hashing raised PermissionError) — the app seeds it from
+  the template libvirt selected (`_ensure_nvram`), and libvirt's remember_owner then returns it on every stop;
+  (3) `undefine` needs `--snapshots-metadata`; (4) `dumpxml --migratable` drops `firmware='efi'` and spells out
+  the SOURCE's loader path, so a target without that file refused every EFI VM — not checked any more; (5) the
+  target never probed `nvram.fd` (libvirt 12 runs qcow2 varstores = the backing-file hole) — probed, and its
+  format pins `<nvram format>`. **Snapshots are OFFLINE** (`hardware.py`): libvirt 12 + qcow2 varstore
+  snapshotted a RUNNING EFI VM while raw OVMF refuses — per-distro behaviour; now shut-off only, `qemu-img
+  snapshot` per qcow2 disk + `snap-<name>.nvram.fd`, recorded in `pc:vm` `<pc:snapshot>`; qemu-img ALLOWS a
+  duplicate tag (create refuses, list shows `orphan`); a migration carries them and the target keeps only
+  records its bytes back. `./install.sh --vmhost` (`scripts/install/vmhost.sh`): packages (Gentoo WITHOUT
+  edk2-bin), libvirt+kvm groups, `<user>:qemu` 0751 storage, `chattr +C` on btrfs ONLY while empty, the
+  libvirtd.socket group drop-in ONLY without polkit, default network, final `virsh list` as the user — tested
+  under bash with stateful stubs (`test_install_vmhost.py`, found `sudo VAR=x` → `sudo env VAR=x`).
+  `[vmhost-audit]` line per answered op (allowlisted ids only — never tickets/passwords/URLs); the 31310
+  announcement uses `service.FEATURES`, republishes on every Save-restart and is RETRACTED (kind-5 `a`) when
+  announcing/hosting goes off; `vmhost_backend` removed. Still owed: a real TWO-host migration (server1 has no
+  /dev/kvm).
 - **A GRANTED NIP-05 IS THE ENTITLEMENT — one predicate, four gates** (`app/services/nip05_access.py`;
   switch `nip05_grants_access`, Admin → Nostr Relay → NIP-05 identity server, **ON** by default).
   AI chat, image generation (`geni`), music generation (`musicgeni`/`voice`) and Blossom uploads were

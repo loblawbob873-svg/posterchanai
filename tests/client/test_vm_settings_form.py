@@ -21,7 +21,9 @@ import unittest
 from pathlib import Path
 
 CLIENT = Path(__file__).resolve().parents[2] / "static" / "js" / "client"
-OS_JS = (CLIENT / "os.js").read_text(encoding="utf-8")
+# The desktop's old "Local VMs" painter in os.js is gone: a local VM's settings are the Virtual Machines
+# screen's settings form (vms.js), the same form a server-hosted VM uses. The rules moved with it.
+VMS_JS = (CLIENT / "vms.js").read_text(encoding="utf-8")
 
 
 def _strip(js: str) -> str:
@@ -30,76 +32,59 @@ def _strip(js: str) -> str:
     return re.sub(r"(?<![:\w])//[^\n]*", " ", js)
 
 
-class SaveIsTheLastButtonInTheForm(unittest.TestCase):
-    def _form(self) -> str:
-        start = OS_JS.index("const editHardware=async(name)=>{")
-        # THE END OF THE EDIT FORM, addressed by the control that follows it rather than by the
-        # element it used to be painted into. `w.slot` is gone: the Virtual Machines app is a real
-        # compositor toplevel on PosterChanOS now, so its painter takes a HOST and knows nothing
-        # about a window ("why the fuck are windows still hiding when I open a app like system
-        # settings" — an in-page frame can only be shown by raising the desktop over everything).
-        return OS_JS[start:OS_JS.index("data-vm-new]',slot)", start)]
+def _fn(name: str) -> str:
+    src = _strip(VMS_JS)
+    start = src.index(name)
+    return src[start:src.index("\n  }", start)]
 
+
+class SaveIsTheLastButtonInTheForm(unittest.TestCase):
     def _markup(self) -> str:
-        """Just the innerHTML the settings form is built from."""
-        form = self._form()
-        # NOT the first `vmui-top`: the unreadable-hardware branch above opens with the same markup.
-        start = form.index("Turn the machine off before changing hardware")
-        start = form.rindex("<div class=\"vmui-top\">", 0, start)
-        return form[start:form.index("`;", start)]
+        form = _fn("function settingsScreen(){")
+        start = form.index('<form id="vms-settings"')
+        return form[start:form.index("</form>", start)]
 
     def test_save_is_the_last_button_in_the_form(self):
-        markup = self._markup()
-        buttons = re.findall(r"data-vme-(\w+)", markup)
-        buttons = [b for b in buttons if b not in ("state", "media")]
-        self.assertIn("save", buttons)
-        self.assertEqual(buttons[-1], "save",
-                         "Save is not the last control in the form; it is followed by " +
-                         ", ".join(buttons[buttons.index("save") + 1:]))
+        controls = re.findall(r'data-act="([\w-]+)"|name="([\w-]+)"', self._markup())
+        last = [a or n for a, n in controls][-1]
+        self.assertEqual(last, "settings-save", "Save is not the last control in the form")
 
     def test_save_is_not_buried_inside_one_section(self):
         """It writes fields from more than one section, so it must not sit inside any of them."""
         markup = self._markup()
-        pos = markup.index("data-vme-save")
-        last_section_close = markup.rfind("</section>")
-        self.assertGreater(pos, last_section_close,
-                           "Save sits inside a <section>, which is what made it look like it "
-                           "belonged to Performance while it also writes the boot order")
+        self.assertGreater(markup.index('data-act="settings-save"'), markup.rfind("</section>"))
 
     def test_what_save_writes_is_read_in_one_place(self):
-        """Read inline in the click handler, the set of saved fields and the button's position could
-        drift apart — which is how this bug happened."""
-        form = _strip(self._form())
-        self.assertIn("const fields=()=>", form)
-        self.assertIn("pcVM.update(name,fields())", form)
-        for key in ("ramMiB", "cpus", "autostart", "bootOrder"):
-            self.assertIn(key, form[form.index("const fields=()=>"):form.index("const clean=")], key)
+        """Save and the dirty check read the same two functions, so what is saved and what counts as
+        an unsaved change cannot drift apart."""
+        save, dirty = _fn("async function saveSettings(){"), _fn("function settingsDirty(){")
+        for body in (save, dirty):
+            self.assertIn("settingsFields()", body)
+            self.assertIn("settingsDelta(", body)
+        fields = _fn("function settingsFields(){")
+        for key in ("vcpus", "ram_mib", "autostart", "boot"):
+            self.assertIn(key, fields)
 
     def test_an_unsaved_edit_is_never_discarded_in_silence(self):
-        form = _strip(self._form())
-        self.assertIn("const dirty=()=>", form)
-        self.assertIn("uiConfirm(", form)
-        # Both ways out of the form ask.
-        self.assertIn("$('[data-vme-close]',box).onclick=leave", form)
-        self.assertIn("back.onclick=leave", form)
+        leave = _fn("async function leaveSettings(){")
+        self.assertIn("settingsDirty()", leave)
+        self.assertIn("PC.uiConfirm(", leave)
+        # Both ways out of the form ask: the header Back and the footer Back are the same action.
+        self.assertEqual(_fn("function settingsScreen(){").count('data-act="settings-leave"'), 2)
 
     def test_save_cannot_be_double_submitted(self):
-        """`update` redefines the libvirt domain; two in flight is an error a person reads as
-        "saving is broken"."""
-        form = _strip(self._form())
-        handler = form[form.index("saveBtn.onclick=async()"):]
-        self.assertIn("saveBtn.disabled=true", handler)
-        self.assertIn("Saving", handler)
+        """`vm.update` redefines the domain; two in flight is an error a person reads as "saving is broken"."""
+        save = _fn("async function saveSettings(){")
+        self.assertIn("if(!st || st.busy) return;", save)
+        self.assertLess(save.index("st.busy = true"), save.index("await call("))
+        self.assertIn("S.settings.busy", _fn("function syncSettingsSave(){"))
 
 
-class TheVmDiskPromptUsesTheClientDialog(unittest.TestCase):
-    """The app-wide audit moved to tests/test_no_native_dialogs_anywhere.py, which covers every
-    served script AND every template — this one only ever scanned `static/js/client/*.js`, which is
-    exactly why 67 native dialogs in the admin panel went unnoticed until one of them split the
-    desktop in half. What stays here is the VM-specific half."""
-
-    def test_the_vm_disk_prompt_uses_the_client_one(self):
-        self.assertIn("PC().uiPrompt('New disk size in GB'", OS_JS)
+class TheVmFormUsesNoNativeDialog(unittest.TestCase):
+    def test_adding_a_disk_is_a_field_not_a_native_prompt(self):
+        self.assertIn('name="add_disk_gib"', VMS_JS)
+        code = _strip(VMS_JS).replace("uiPrompt(", "").replace("uiConfirm(", "")
+        self.assertNotRegex(code, r"(?<![\w.])(prompt|confirm|alert)\(")
 
 
 if __name__ == "__main__":
