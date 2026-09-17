@@ -319,7 +319,7 @@
             if(!map[a.action]) return { ok: false, error: { code: 'bad_request', message: 'unknown action' } };
             const r = await vm.action(a.vm, map[a.action]);
             if(!r || !r.ok) return lerr(r, 'the VM action failed');
-            // Starting a graphical machine means showing it (os.js paintVmManager did the same).
+            // Starting a graphical machine means showing it, as the desktop's old Local VMs screen did.
             if(a.action === 'start'){ await new Promise(res => setTimeout(res, 300)); const v = await vm.view(a.vm);
               if(!v || !v.ok) toast((v && v.error) || 'VM started, but its display could not open'); }
             const d = await vm.details(a.vm);
@@ -1336,7 +1336,7 @@
           <div class="vms-seen">When installation finishes, eject the ISO and start from the installed system.</div></section>
         <section class="vms-section"><h3>Advanced hardware</h3><div class="vms-row">
           <label>Add a disk (GiB)<input class="input" name="add_disk_gib" type="number" min="0" ${lim.max_disk_gib ? `max="${esc(lim.max_disk_gib)}"` : ''} placeholder="0 = none" value=""></label>
-          <label>Pointer<select class="input" name="input"><option value="tablet" ${hw.input !== 'mouse' ? 'selected' : ''}>Tablet (follows the cursor)</option><option value="mouse" ${hw.input === 'mouse' ? 'selected' : ''}>Relative mouse (games)</option></select></label></div>
+          <label>Pointer<select class="input" name="input"><option value="tablet" ${hw.input !== 'mouse' ? 'selected' : ''}>Tablet (follows the cursor)</option><option value="mouse" ${hw.input === 'mouse' ? 'selected' : ''}>Relative mouse (games — Ctrl+Alt releases it)</option></select></label></div>
           <label class="vms-check"><input type="checkbox" name="add_nic"> Add a network adapter (has ${esc(hw.nics || 0)})</label></section>
         <div class="vms-createmsg" aria-live="polite">${esc(st.msg || '')}</div>
         <div class="vms-formfoot"><button class="btn btn-ghost" data-act="settings-leave">Back</button><button class="btn btn-neon" data-act="settings-save" disabled>${st.busy ? 'Saving…' : 'Save settings'}</button></div>

@@ -7775,6 +7775,8 @@
       const _pw = /^doc:post:([0-9a-f]{64})$/i.exec(String(v || ''));
       if(_pw && typeof openThread === 'function'){ openThread(_pw[1]); return; }
     }
+    // The desktop's old "Local VMs" screen merged into Virtual Machines ("This computer" is its first host).
+    if(v === '__vms') v = 'vms';
     if(typeof openEmojiPopover==='function' && openEmojiPopover.closeActive)openEmojiPopover.closeActive();
     /* Leaving the screen stops the narration. The chip is fixed to the viewport, so without this it
        outlives the post it belongs to and offers to stop something the reader can no longer see. */
@@ -8065,8 +8067,8 @@
     if (VIEW==='profile') return renderProfile(ME.pubkey);
     /* THE DESKTOP'S OWN SCREENS, FROM EVERY DOOR — not just from a popped-out window.
      *
-     * os.js builds four screens this chain knows nothing about (__ossettings, __tasks, __vms,
-     * __remote) and owns their renderers in EXTRA_RENDER. app.js consulted PCOS.renderExtra() in
+     * os.js builds screens this chain knows nothing about (__ossettings, __tasks, __remote — and
+     * formerly __vms) and owns their renderers in EXTRA_RENDER. app.js consulted PCOS.renderExtra() in
      * exactly ONE place: routeFromPath(), behind `_inWin()`. So a window that was opened as a
      * window worked, and every other way in — the start menu, a launcher tile, switchView() from
      * anywhere — set VIEW and painted nothing at all.

@@ -65,7 +65,7 @@ export function runPainter(name, { system = null, calls = [] } = {}) {
   ctx.window = ctx;
   ctx.document = { getElementById: () => null, createElement: () => el(), body: el() };
 
-  runInNewContext(body + `\nSLOT = SLOT_MAKER();\nSTOP = ${name}(SLOT${name === 'paintVmManager' ? ', null' : ''});`,
+  runInNewContext(body + `\nSLOT = SLOT_MAKER();\nSTOP = ${name}(SLOT);`,
                   Object.assign(ctx, { SLOT_MAKER: el, SLOT: null, STOP: null }),
                   { filename: `os.js#${name}` });
 
@@ -127,7 +127,7 @@ export async function runRenderExtra(views) {
   ctx.document = { getElementById: (id) => (id === 'feed' ? feed : null),
                    createElement: () => el(), body: el() };
 
-  const code = painter('paintTaskManager') + painter('paintVmManager') + painter('paintRemoteDesktop')
+  const code = painter('paintTaskManager') + painter('paintRemoteDesktop')
              + map + painter('_paintExtraInFeed') + painter('renderExtra');
   runInNewContext(code + '\nRENDER = renderExtra;', Object.assign(ctx, { RENDER: null }),
                   { filename: 'os.js#renderExtra' });

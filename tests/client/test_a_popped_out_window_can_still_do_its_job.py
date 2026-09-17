@@ -149,8 +149,7 @@ import subprocess
 import pytest
 
 NODE = shutil.which("node")
-PAINTERS = {"__tasks": "paintTaskManager", "__vms": "paintVmManager",
-            "__remote": "paintRemoteDesktop"}
+PAINTERS = {"__tasks": "paintTaskManager", "__remote": "paintRemoteDesktop"}
 
 
 def _extra_render_map():
@@ -207,7 +206,7 @@ def test_a_second_paint_stops_the_first():
         "the previous painter is stopped after the new one starts, so both run at once")
 
 
-@pytest.mark.parametrize("cls", ["feed-taskmgr", "feed-vms", "feed-remote"])
+@pytest.mark.parametrize("cls", ["feed-taskmgr", "feed-remote"])
 def test_the_window_host_is_styled_for_a_whole_app(cls):
     """In a frame these apps got the whole body from an `.osw-*` rule. A window document has no
     `.osw-body`, so without a host rule the app paints into `#feed` — a padded, scrolling column —
@@ -298,8 +297,9 @@ def test_renderExtra_paints_routes_and_never_leaves_two_timers_running():
         "renderExtra claimed a name it cannot draw; the caller then skips its own landing and the "
         "window shows whatever was already there")
 
-    assert steps["__vms"]["cls"] == "feed feed-vms"
-    for view in ("__tasks", "__vms", "__remote"):
+    assert steps["__vms"]["answered"] is False, (
+        "the retired Local VMs name must not paint anything here — app.js switchView maps it to `vms`")
+    for view in ("__tasks", "__remote"):
         assert steps[view]["timers"] <= 1, (
             f"after routing to {view} there are {steps[view]['timers']} polling timers running — "
             "re-routing a window leaks the previous painter")

@@ -5,38 +5,33 @@ ROOT = Path(__file__).resolve().parents[2]
 OS = (ROOT / "static/js/client/os.js").read_text(encoding="utf-8")
 APP = (ROOT / "static/js/client/app.js").read_text(encoding="utf-8")
 CSS = (ROOT / "static/css/client.css").read_text(encoding="utf-8")
+VMS = (ROOT / "static/js/client/vms.js").read_text(encoding="utf-8")
 
 
 def vm_delete_handler():
-    start = OS.index("list.querySelectorAll('[data-vm-delete]')")
-    return OS[start:OS.index("}catch(e){", start)]
+    """The desktop's own "Local VMs" painter (os.js) is gone; deleting a VM on THIS computer is the same
+    Virtual Machines screen as a server host — vms.js `del()`, over LocalHost's `vm.delete`."""
+    start = VMS.index("async function del(pk, vm){")
+    return VMS[start:VMS.index("\n  }", start)]
 
 
-def test_vm_delete_uses_an_in_app_confirm_owned_by_its_managed_window():
+def test_vm_delete_uses_in_app_dialogs_never_native_ones():
     handler = vm_delete_handler()
-    assert "confirm(" not in handler
-    assert "await PC().uiConfirm" in handler
-    # THE DIALOG IS ANCHORED TO WHATEVER HOSTS THIS APP — which is no longer always a window.
-    # Virtual Machines is a real compositor toplevel on PosterChanOS, so its painter takes a host
-    # and an `owner` and reaches for no frame; the IN-PAGE opener is what supplies `w.body`, and
-    # `uiConfirm` falls back to `document.body` when there is none, which is exactly right for a
-    # window document. Assert the chain, not the one expression it used to be.
-    assert "owner:owner" in handler.replace(" ", ""), (
-        "the delete confirm no longer anchors to the host it was given")
-    assert "function paintVmManager(slot, owner)" in OS, (
-        "the VM painter is welded back to a window, so this app cannot be a real toplevel and "
-        "opening it hides every window behind it")
-    assert "w.onClose=paintVmManager(w.slot,w.body)" in OS.replace(" ", ""), (
-        "the in-page frame no longer gives the painter its own body to anchor dialogs to")
-    assert "ok:'Delete'" in handler and "danger:true" in handler
+    assert "confirm(" not in handler.replace("uiConfirm(", "") and "prompt(" not in handler.replace("uiPrompt(", "")
+    assert "await PC.uiPrompt(" in handler and "await PC.uiConfirm(" in handler
+    assert "danger: true" in handler
+    assert "function paintVmManager" not in OS, "the retired Local VMs painter came back"
 
 
-def test_cancel_returns_before_any_vm_or_geometry_mutation_and_confirm_targets_only_selected_vm():
+def test_cancel_returns_before_any_vm_mutation_and_the_delete_names_only_this_vm():
     handler = vm_delete_handler()
-    assert handler.index("if(!ok)return") < handler.index("pcVM.remove(n,true)")
-    assert "pcVM.remove(n,true)" in handler
-    for broad in ("removeAll", "querySelector('.osw')", "releaseFeed", "exit()"):
-        assert broad not in handler
+    call = handler.index("call(pk, 'vm.delete'")
+    assert handler.index("if(typed == null) return;") < call
+    assert handler.index("if(typed !== vm.name) return") < call, "a mistyped name must delete nothing"
+    assert "{ vm: vm.uuid, confirm_name: typed, delete_disks: !!disks }" in handler
+    local = VMS[VMS.index("case 'vm.delete': {"):]
+    assert "vm.remove(a.vm, !!a.delete_disks)" in local[:local.index("}")], \
+        "LocalHost deletes exactly the VM it was asked about, disks only when chosen"
 
 
 def test_confirm_supports_a_connected_owner_without_changing_browser_default_scope():

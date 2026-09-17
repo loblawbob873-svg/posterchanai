@@ -395,9 +395,11 @@ opens the display)/create (ISO from the file picker)/settings (`update`, `addDis
 `changeIso`, `ejectIso`, `gamingMouse` — sequential, first failure stops and is reported)/"Use installed
 system" (`bootDisk`)/delete — and features `{assign:false, migrate:false, snapshots:false, console:"spice"}`:
 the console button runs `pcVM.view` (SPICE), there is no ISO library, no assignment, no snapshots. It is
-never written into `pcai:vmhosts`. The PosterChanOS "Local VMs" window (`os.js paintVmManager`) is KEPT:
-it is a real compositor toplevel with its own window routing and six test files pinned to it, and
-retiring it needs an on-device run this box cannot do (no X/Electron here).
+never written into `pcai:vmhosts`. **Phase 4 retired the desktop's separate "Local VMs" window** (`os.js
+paintVmManager`, view `__vms`): the start menu and the desktop icon open this screen, once, with "This
+computer" first. `__vms` survives only as an alias (`os.js LEGACY_VIEWS`, `oswin.js`, `app.js switchView`)
+so an old taskbar pin or a monitor handoff from an older shell lands on `vms`
+(`tests/client/test_vms_desktop_shortcut_full_app.py`, red against the previous bundle).
 
 Known trade-off: the VNC password is passed to `virsh qemu-monitor-command` as an argument, so another
 local user on the host could see it in the process list for a moment. It expires in 60 seconds and

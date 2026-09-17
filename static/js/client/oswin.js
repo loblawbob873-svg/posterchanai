@@ -151,10 +151,13 @@
    * a window opening on something it cannot show — "System settings just loaded a social feed" —
    * and a prefix would re-open exactly that door. A name is added here only once `PCOS.renderExtra`
    * can draw it in a page with no desktop behind it. */
-  const EXTRA_VIEWS = ['__ossettings', '__tasks', '__vms', '__remote'];
+  const EXTRA_VIEWS = ['__ossettings', '__tasks', '__remote'];
+  // Renamed/merged views an older shell may still hand over (os.js LEGACY_VIEWS; app.js switchView maps it).
+  const LEGACY_VIEWS = { __vms: 'vms' };
 
   function routable(view){
-    const v = String(view || '');
+    let v = String(view || '');
+    if(Object.prototype.hasOwnProperty.call(LEGACY_VIEWS, v)) v = LEGACY_VIEWS[v];
     if(EXTRA_VIEWS.includes(v)) return true;
     // A post window is named `doc:post:<event id>` — colons and all — so it fails the plain
     // identifier test below. It is routable because the child can fetch that id; see popOutView.
