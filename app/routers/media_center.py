@@ -51,6 +51,14 @@ async def require_membership(user):
         await instance_membership.require_user(user)
 
 
+def client_address(request):
+    """The viewer's address: see media.viewer_address for what is trusted and why."""
+    peer = request.client.host if request.client else ''
+    return media.viewer_address(peer, request.headers.get('x-real-ip', ''), request.headers.get('x-forwarded-for', ''),
+                                request.headers.get('X-PC-Media-Client', ''),
+                                bool(lb_auth.shared_secret() and lb_auth.is_internal(request)))
+
+
 async def media_user_optional(request: Request, user=Depends(get_current_user_optional)):
     assertion = request.headers.get("X-PC-Media-Viewer")
     if assertion is not None:
@@ -115,16 +123,19 @@ def _segment_diagnostic(path):
     return profile, int(raw_number)
 
 
-def _log_segment_delivery(segment, started, headers_elapsed, status, size, completed, outcome):
+def _log_segment_delivery(segment, started, headers_elapsed, status, size, completed, outcome, local=None):
     if segment is None:
         return
     elapsed = max(0.0, time.monotonic() - started)
     if completed and outcome == "complete" and status < 400 and elapsed <= media.SEGMENT:
         return
+    # `local` is whether this viewer is exempt from pacing, which is the first question a slow
+    # segment raises and the one no past report could answer. It is a verdict, never an address:
+    # the rule above (no viewer identity in diagnostics) still holds.
     logging.getLogger(__name__).warning(
         "[media-proxy] asset=segment profile=%s number=%d outcome=%s status=%s "
-        "headers_s=%.3f elapsed_s=%.3f upstream_bytes=%d completed=%s",
-        segment[0], segment[1], outcome, status, headers_elapsed, elapsed, size, completed)
+        "headers_s=%.3f elapsed_s=%.3f upstream_bytes=%d completed=%s local=%s",
+        segment[0], segment[1], outcome, status, headers_elapsed, elapsed, size, completed, local)
 
 
 async def proxy_request(request: Request, user=Depends(media_user_optional), db=Depends(get_db)):
@@ -151,6 +162,8 @@ async def proxy_request(request: Request, user=Depends(media_user_optional), db=
     pubkey = media.identity(user)
     if not pubkey:
         raise HTTPException(403, "Sign in with Nostr to use remote Media Center")
+    headers["X-PC-Media-Client"] = client_address(request)
+    viewer_local = media.is_local_address(headers["X-PC-Media-Client"])
     headers.update({"X-PC-Media-Viewer": pubkey, "X-PC-Media-Admin": "true" if user.is_admin else "false",
                     "X-PC-Media-Allowed": "true" if getattr(user, "can_media", False) else "false"})
     if request.headers.get("content-type"):
@@ -173,10 +186,10 @@ async def proxy_request(request: Request, user=Depends(media_user_optional), db=
     try:
         upstream = await _proxy_client.send(_proxy_client.build_request(request.method, url, headers=headers, content=bytes(body)), stream=True)
     except httpx.HTTPError as error:
-        _log_segment_delivery(segment, started, -1.0, None, 0, False, "send_error")
+        _log_segment_delivery(segment, started, -1.0, None, 0, False, "send_error", viewer_local)
         raise HTTPException(502, "Media Center NAS is unavailable") from error
     except asyncio.CancelledError:
-        _log_segment_delivery(segment, started, -1.0, None, 0, False, "cancelled")
+        _log_segment_delivery(segment, started, -1.0, None, 0, False, "cancelled", viewer_local)
         raise
     headers_elapsed = max(0.0, time.monotonic() - started)
     async def chunks():
@@ -205,7 +218,7 @@ async def proxy_request(request: Request, user=Depends(media_user_optional), db=
                 # One bounded record per slow/failed segment. Never include the URL, ticket,
                 # viewer, library/item identity, response body, or exception text/traceback.
                 _log_segment_delivery(segment, started, headers_elapsed, upstream.status_code,
-                                      size, completed, outcome)
+                                      size, completed, outcome, viewer_local)
     # Relative playlist/segment URLs keep every byte on the public proxy path.
     response_headers = {key: value for key, value in upstream.headers.items()
                         if key.lower() in ("content-type", "content-length", "retry-after")}
@@ -259,6 +272,8 @@ async def stop_session(body: StopSession, user=Depends(get_media_user)):
 class Limits(BaseModel):
     server_kbps: int = Field(default=20000, ge=650, le=1000000)
     viewer_kbps: int = Field(default=1600, ge=650, le=1000000)
+    # 0 = no separate allowance for this node's own network: `viewer_kbps` applies to every viewer.
+    lan_kbps: int = Field(default=0, ge=0, le=1000000)
     max_streams: int = Field(default=8, ge=1, le=100)
     max_transcodes: int = Field(default=2, ge=1, le=16)
     cache_mb: int = Field(default=2048, ge=32, le=1048576)
@@ -406,9 +421,13 @@ def queue_scan(library, background):
 
 
 @router.get("")
-async def list_libraries(user=Depends(get_media_user)):
+async def list_libraries(user=Depends(get_media_user), request: Request = None):
     pubkey = media.identity(user)
-    config = await media.limits()
+    # The quality menu is built from `profiles`, so it must answer for the SAME viewer the playlist
+    # will: a LAN viewer offered a rung here that the master playlist withholds (or the reverse) has
+    # a menu entry that does nothing.
+    config = media.effective_limits(await media.limits(),
+                                    request is not None and media.is_local_address(client_address(request)))
     held = await media.libraries()
     readable = [lib for lib in held if media.can_read(lib, pubkey)]
     # AN EMPTY LIST IS TWO DIFFERENT ANSWERS, and they need different words on screen: this server
@@ -633,14 +652,17 @@ async def hls(library_id: str, item_id: str, asset: str, viewer: str = Query(max
               expires: int = Query(), ticket: str = Query(max_length=64),
               audio: int = Query(default=-1, ge=-1, le=1024),
               subtitle: int = Query(default=-1, ge=-1, le=1024),
-              user=Depends(media_user_optional), db=Depends(get_db)):
+              request: Request = None, user=Depends(media_user_optional), db=Depends(get_db)):
     await require_membership(ticket_user(viewer, user, db))
     library = await library_for(library_id, viewer)
     if (expires < time.time() or not library.get("playback_secret") or
             not hmac.compare_digest(ticket, sign_ticket(library, item_id, viewer, expires))):
         raise HTTPException(403, "Playback session expired; reopen the media")
     query = urlencode({"viewer": viewer, "expires": expires, "ticket": ticket, 'audio': audio, 'subtitle': subtitle})
-    config = await media.limits()
+    # One decision for the whole request: the ladder a player is offered and the rate its segments are
+    # sent at must come from the SAME limits, or it is offered a rung its budget cannot carry.
+    config = media.effective_limits(await media.limits(),
+                                    request is not None and media.is_local_address(client_address(request)))
     profiles = media.allowed_profiles(config)
     try:
         media.touch_session(ticket, viewer, config)
@@ -701,6 +723,7 @@ async def hls(library_id: str, item_id: str, asset: str, viewer: str = Query(max
         # Revocation also takes effect while an uncached segment is encoding.
         await library_for(library_id, viewer)
         media.prefetch(library, item, profile, number, count, config)
+        # Always paced, at whatever `config` says applies to this viewer. There is no unmetered path.
         return StreamingResponse(media.paced_bytes(data, viewer, config, order=(ticket, number)),
                                  media_type="video/mp2t", headers=PRIVATE)
     except asyncio.TimeoutError as error:

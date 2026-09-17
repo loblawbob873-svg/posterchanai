@@ -38,7 +38,7 @@ SEGMENT = 6
 # settings, segment length) so a cache filled by the old encoder is never mixed into a new stream.
 ENCODING = 2
 mutation_lock = asyncio.Lock()
-DEFAULT_LIMITS = {"server_kbps": 20000, "viewer_kbps": 1600, "max_streams": 8,
+DEFAULT_LIMITS = {"server_kbps": 20000, "viewer_kbps": 1600, "lan_kbps": 0, "max_streams": 8,
                   "max_transcodes": 2, "cache_mb": 2048}
 _sessions = {}
 _active_transcodes = 0
@@ -128,6 +128,123 @@ ABR_HEADROOM = 1.6
 # bound for the rung's size, which is what a player checks it against.
 CODECS = {"240p": "avc1.64001f,mp4a.40.2", "360p": "avc1.64001f,mp4a.40.2", "480p": "avc1.64001f,mp4a.40.2",
           "720p": "avc1.640020,mp4a.40.2", "1080p": "avc1.64002a,mp4a.40.2"}
+
+
+# A CONFIGURED CAP IS THE CAP. `lan_kbps` IS A SECOND NUMBER THE OPERATOR TYPES, NOT AN EXEMPTION.
+#
+# The reported fault: a TV on this node's own LAN (192.168.0.49, via the router's nginx and server1's
+# proxy to nas) was paced to `viewer_kbps` 1600, so a ~600 KB 480p segment took 6-13 s -- a 6 s
+# segment delivered slower than real time. The buffer drained, the player fell 480p -> 240p, and at
+# the rung switch the Jellyfin client stopped and restarted the stream.
+#
+# The fix is NOT to decide on the operator's behalf that some viewer needs no limit. `viewer_kbps`
+# exists to bound the node's INTERNET uplink and it keeps applying to everyone, LAN included, until
+# somebody sets `lan_kbps`. That field is 0 by default -- 0 means "no separate allowance", i.e. this
+# node behaves exactly as it does today and a 100 KB/s cap is 100 KB/s for every viewer on earth.
+# Set it, and viewers on this node's own attached subnets are paced to THAT number instead. Nothing
+# below ever raises a limit nobody typed, and no viewer is ever served unpaced.
+import ipaddress as _ipaddress
+
+
+def _address(value):
+    try:
+        return _ipaddress.ip_address(str(value or '').strip().split('%')[0])
+    except ValueError:
+        return None
+
+
+# "THE SAME NETWORK" IS THIS NODE'S OWN ATTACHED SUBNETS, MEASURED -- NEVER A LIST OF PRIVATE RANGES.
+#
+# A fixed RFC1918 list was the obvious spelling and it LEAKS THE UPLINK, which is the one thing the
+# budget exists to protect. Measured on the router: WireGuard hands roaming phones 192.168.5.2-5 and
+# the VPS 192.168.7.1 -- RFC1918 addresses whose every byte crosses the WAN twice. `ip.is_private` is
+# worse again: it answers "special-purpose range", so it is True for 2002::/16 (6to4, a remote
+# viewer's real address) and 198.18.0.0/15, and CPython has changed its mind across versions about
+# 100.64.0.0/10, i.e. every phone on mobile data.
+#
+# The structural question is whether this node reaches the viewer WITHOUT its uplink, and the honest
+# answer is its own interface table: an address inside a directly attached broadcast network (server1
+# 192.168.0.0/24, nas 192.168.0.0/24) or loopback costs no WAN. POINT-TO-POINT interfaces are skipped
+# -- a tunnel's far end is over the uplink no matter what address it wears, which is exactly the
+# WireGuard case. Anything we cannot measure is not local, so a failure prices a viewer as remote and
+# paces them: the pre-existing behaviour, never a silent uplink giveaway.
+_LOCAL_TTL_S = 300
+_local_networks = (0.0, None)
+
+
+def _network(address, netmask):
+    ip = _address(address)
+    if ip is None or not netmask:
+        return None
+    try:
+        if ip.version == 6:
+            bits = bin(int(_ipaddress.IPv6Address(netmask.split('%')[0]))).count('1')
+            return _ipaddress.ip_network(f"{ip}/{bits}", strict=False)
+        return _ipaddress.ip_network(f"{ip}/{netmask}", strict=False)
+    except ValueError:
+        return None
+
+
+def local_networks():
+    """The subnets this node is directly attached to. Cached; an unreadable interface table is ()."""
+    global _local_networks
+    stamp, networks = _local_networks
+    now = time.monotonic()
+    if networks is not None and now - stamp < _LOCAL_TTL_S:
+        return networks
+    found = []
+    try:
+        import psutil
+        for entries in psutil.net_if_addrs().values():
+            for entry in entries:
+                if getattr(entry, "ptp", None):
+                    continue  # A tunnel (WireGuard, PPP): the far end is across the uplink.
+                network = _network(getattr(entry, "address", ""), getattr(entry, "netmask", ""))
+                if network is not None:
+                    found.append(network)
+    except Exception:
+        found = []
+    _local_networks = (now, tuple(found))
+    return _local_networks[1]
+
+
+def is_local_address(value):
+    ip = _address(value)
+    if ip is None:
+        return False
+    if ip.version == 6 and ip.ipv4_mapped:
+        ip = ip.ipv4_mapped
+    return any(ip.version == network.version and ip in network for network in local_networks())
+
+
+def viewer_address(peer, real_ip='', forwarded='', relayed='', internal=False):
+    """The viewer's address as far as this node can trust it.
+
+    On an authenticated node-to-node hop the peer is the OTHER NODE, never the viewer, so the only
+    answer is what that node measured (`relayed`). Missing or unreadable reads as unknown, which is
+    not local, so an edge that failed to say costs a viewer their pacing exemption rather than
+    costing the node its uplink — every remote viewer arrives over exactly that hop.
+
+    X-Real-IP / X-Forwarded-For are honoured only when the direct peer is itself on the local network
+    (the router's nginx overwrites X-Real-IP with the address it saw); from anywhere else they are
+    whatever the client typed, and the peer is the answer.
+    """
+    if internal:
+        return str(_address(relayed) or '')
+    if is_local_address(peer):
+        for candidate in (real_ip, (forwarded or '').split(',')[0]):
+            if _address(candidate) is not None:
+                return str(_address(candidate))
+    return str(peer or '')
+
+
+def effective_limits(config, local):
+    """The limits that apply to one viewer. `lan_kbps` (0 = unset) replaces `viewer_kbps` for a
+    viewer on this node's own attached subnets, and only because an operator typed it."""
+    lan = config.get("lan_kbps") or 0
+    if local and lan > 0:
+        return {**config, "viewer_kbps": lan}
+    return config
 
 
 def profile_kbps(profile):

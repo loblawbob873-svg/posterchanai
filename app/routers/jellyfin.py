@@ -546,7 +546,9 @@ async def media_call(request, auth, db, path='', method='GET', body=None):
     content = json.dumps(body).encode() if body is not None else b''
     parsed = urlsplit('/api/media-center' + path)
     scope = {**request.scope, 'method': method, 'path': parsed.path, 'raw_path': parsed.path.encode(),
-             'query_string': parsed.query.encode(), 'headers': [(b'content-type', b'application/json')]}
+             'query_string': parsed.query.encode(), 'headers': [(b'content-type', b'application/json')] + [
+                 (name, value) for name, value in request.scope.get('headers', [])
+                 if name in (b'x-real-ip', b'x-forwarded-for')]}
     async def receive():
         return {'type': 'http.request', 'body': content, 'more_body': False}
     try:
@@ -561,7 +563,7 @@ async def media_call(request, auth, db, path='', method='GET', body=None):
         return response
     parts = parsed.path.removeprefix('/api/media-center').strip('/').split('/')
     if path == '':
-        return await native.list_libraries(auth.user)
+        return await native.list_libraries(auth.user, request)
     if parts == ['sessions', 'stop']:
         return await native.stop_session(native.StopSession(**body), auth.user)
     if len(parts) == 2 and parts[1] == 'folder-art':
@@ -582,7 +584,8 @@ async def media_call(request, auth, db, path='', method='GET', body=None):
         params = {key: values[0] for key, values in parse_qs(parsed.query).items()}
         return await native.hls(parts[0], parts[2], parts[3], params['viewer'], int(params['expires']),
                                 params['ticket'], audio=int(params.get('audio', -1)),
-                                subtitle=int(params.get('subtitle', -1)), user=auth.user, db=db)
+                                subtitle=int(params.get('subtitle', -1)), request=request,
+                                user=auth.user, db=db)
     raise HTTPException(404, 'Unsupported Media Center operation')
 
 

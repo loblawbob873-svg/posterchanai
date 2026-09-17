@@ -19,7 +19,7 @@ def _load_proxy_methods():
     from urllib.parse import urlsplit
     from app.services import media_center as media
     source = Path(__file__).resolve().parents[1] / 'app/routers/media_center.py'
-    names = {'ProxiedResponse', '_segment_diagnostic', '_log_segment_delivery', 'proxy_request'}
+    names = {'ProxiedResponse', '_segment_diagnostic', '_log_segment_delivery', 'proxy_request', 'client_address'}
     tree = ast.parse(source.read_text())
     selected = [node for node in tree.body if isinstance(node, (ast.ClassDef, ast.FunctionDef, ast.AsyncFunctionDef))
                 and node.name in names]
@@ -29,7 +29,7 @@ def _load_proxy_methods():
         Request=Request, Depends=Depends, HTTPException=HTTPException, StreamingResponse=StreamingResponse,
         urlsplit=urlsplit, _proxy_client=None, media_user_optional=lambda: None, get_db=lambda: None,
         settings_store=SimpleNamespace(get=lambda *_: ''),
-        lb_auth=SimpleNamespace(shared_secret=lambda: '', headers=lambda h: h),
+        lb_auth=SimpleNamespace(shared_secret=lambda: '', headers=lambda h: h, is_internal=lambda _r: False),
         instance_membership=SimpleNamespace(require_user=None), ticket_user=lambda *_: None)
     exec(compile(ast.Module(body=selected, type_ignores=[]), str(source), 'exec'), module.__dict__)
     return module
