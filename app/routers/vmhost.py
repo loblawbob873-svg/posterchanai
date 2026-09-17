@@ -242,6 +242,8 @@ async def vmhost_status(admin=Depends(get_admin_user)):
            "node_npub": nostr_dvm.node_npub() or "", "libvirt_uri": cfg.libvirt_uri,
            "storage_dir": cfg.storage_dir, "storage_exists": os.path.isdir(cfg.storage_dir),
            "storage_writable": os.access(cfg.storage_dir, os.W_OK) if os.path.isdir(cfg.storage_dir) else False,
+           # QEMU runs as another user and must walk into <storage>/<uuid>/ (docs/VM_HOSTING.md §1 Storage).
+           "storage_traversable": bool(os.path.isdir(cfg.storage_dir) and os.stat(cfg.storage_dir).st_mode & 0o001),
            "kvm": os.path.exists("/dev/kvm"), "public_url": cfg.public_url,
            "admins": len(cfg.admin_pubkeys), "allowed": len(cfg.allowed_pubkeys)}
     svc = vmsvc.current()

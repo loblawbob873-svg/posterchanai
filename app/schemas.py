@@ -94,7 +94,6 @@ class SettingsResponse(BaseModel):
     vmhost_enabled: str = "false"
     vmhost_display_name: str = ""
     vmhost_libvirt_uri: str = "qemu:///system"
-    vmhost_backend: str = "auto"
     vmhost_storage_dir: str = "/var/lib/posterchan/vms"
     vmhost_public_url: str = ""
     vmhost_public_relay: str = ""

@@ -15,7 +15,6 @@ DEFAULTS: dict[str, str] = {
     "vmhost_enabled": "false",
     "vmhost_display_name": "",
     "vmhost_libvirt_uri": "qemu:///system",
-    "vmhost_backend": "auto",
     "vmhost_storage_dir": "/var/lib/posterchan/vms",
     "vmhost_public_url": "",
     "vmhost_public_relay": "",
@@ -83,7 +82,6 @@ class VmHostConfig:
     enabled: bool = False
     display_name: str = ""
     libvirt_uri: str = "qemu:///system"
-    backend: str = "auto"
     storage_dir: str = "/var/lib/posterchan/vms"
     public_url: str = ""
     public_relay: str = ""
@@ -118,7 +116,6 @@ class VmHostConfig:
             enabled=b("vmhost_enabled"),
             display_name=g("vmhost_display_name").strip(),
             libvirt_uri=g("vmhost_libvirt_uri").strip(),
-            backend=g("vmhost_backend").strip().lower(),
             storage_dir=g("vmhost_storage_dir").strip(),
             public_url=g("vmhost_public_url").strip().rstrip("/"),
             public_relay=g("vmhost_public_relay").strip(),

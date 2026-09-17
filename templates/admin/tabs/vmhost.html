@@ -7,7 +7,7 @@
       Android, desktop — even one with only a key and relays) manage from <strong>Virtual Machines</strong>.
       Requests are NIP-44-encrypted Nostr events addressed to this node's relay identity; the VM console is
       noVNC over this node's HTTPS, behind a one-use ticket issued over Nostr. Needs libvirt + QEMU/KVM on
-      this machine — see <code>docs/VM_HOSTING.md</code>.</p>
+      this machine — <code>./install.sh --vmhost</code> sets it up; see <code>docs/VM_HOSTING.md</code>.</p>
     <p class="settings-help"><strong>Security:</strong> the app user needs the <code>libvirt</code> group,
       and membership of that group is effectively root on this machine. Only enable this on a node you are
       willing to trust with that.</p>
@@ -34,7 +34,6 @@
   <fieldset>
     <legend>Hypervisor and storage</legend>
     <label>libvirt URI <input id="vmhost_libvirt_uri" name="vmhost_libvirt_uri" value="qemu:///system" autocomplete="off" spellcheck="false"></label>
-    <label>Backend <select id="vmhost_backend" name="vmhost_backend"><option value="auto">auto (virsh)</option><option value="virsh">virsh</option></select></label>
     <label>Storage directory <input id="vmhost_storage_dir" name="vmhost_storage_dir" value="/var/lib/posterchan/vms" autocomplete="off" spellcheck="false"></label>
     <p class="settings-help">Disks go in <code>&lt;dir&gt;/&lt;vm-uuid&gt;/</code>; installer ISOs live in <code>&lt;dir&gt;/isos/</code> — copy them there, or download/upload them from Virtual Machines → a host → ISO library. Clients pick from that list and can never name a path.</p>
     <label>libvirt network <input id="vmhost_default_network" name="vmhost_default_network" value="default" autocomplete="off"></label>
@@ -51,7 +50,7 @@
     <label><input type="checkbox" id="vmhost_allow_overcommit" name="vmhost_allow_overcommit"> Allow overcommitting CPU and memory</label>
     <label>Console ticket lifetime (seconds) <input type="number" id="vmhost_console_ticket_ttl_sec" name="vmhost_console_ticket_ttl_sec" value="60" min="10" max="600"></label>
     <label>Console session limit (minutes) <input type="number" id="vmhost_console_max_minutes" name="vmhost_console_max_minutes" value="240" min="1"></label>
-    <label>Guest shutdown timeout (seconds) <input type="number" id="vmhost_shutdown_timeout_sec" name="vmhost_shutdown_timeout_sec" value="120" min="10"></label>
+    <label>Guest shutdown timeout before a migration (seconds) <input type="number" id="vmhost_shutdown_timeout_sec" name="vmhost_shutdown_timeout_sec" value="120" min="10"></label>
     <label>Session key lifetime for remote signers (hours) <input type="number" id="vmhost_session_max_hours" name="vmhost_session_max_hours" value="12" min="1"></label>
     <label>Keep a migrated VM's source copy (hours, 0 = until an admin deletes it) <input type="number" id="vmhost_migration_keep_source_hours" name="vmhost_migration_keep_source_hours" value="72" min="0"></label>
     <label>Migration transfer cap (Mbit/s, 0 = none) <input type="number" id="vmhost_transfer_max_mbps" name="vmhost_transfer_max_mbps" value="0" min="0"></label>
@@ -77,7 +76,8 @@
         'Host npub: '+(v.node_npub||'(no relay identity yet)'),
         'libvirt: '+v.libvirt_uri+' — '+(lv.ok?('reachable '+(lv.libvirt||'')):('not reachable'+(lv.error?': '+lv.error:''))),
         'KVM (/dev/kvm): '+(v.kvm?'present':'missing'),
-        'Storage: '+v.storage_dir+' — '+(v.storage_exists?(v.storage_writable?'writable':'NOT writable by the app'):'missing'),
+        'Storage: '+v.storage_dir+' — '+(v.storage_exists?(v.storage_writable?'writable':'NOT writable by the app'):'missing')
+          +(v.storage_exists&&v.storage_traversable===false?' — NOT traversable by the qemu user (chmod o+x; ./install.sh --vmhost)':''),
         'VMs: '+(v.vms?(v.vms.running+' running / '+v.vms.total+' total'):'—')+' · consoles open: '+(v.consoles_open??'—'),
         'Extra admins: '+v.admins+' · allowed users: '+v.allowed
       ].join('\n');

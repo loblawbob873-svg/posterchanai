@@ -86,6 +86,9 @@ OPS = {
     "session.open":        ("user", False),
     "session.close":       ("user", False),
 }
+# Non-mutating ops that are still worth a line at INFO when they succeed: each hands out access.
+AUDIT_READS_AT_INFO = frozenset({"console.ticket", "session.open", "session.close", "iso.upload_ticket",
+                                 "host.access.get", "vm.migrate.precheck"})
 # Ops that must be signed by the REAL key even though a session could technically reach them.
 REAL_KEY_ONLY = frozenset({"session.open"})
 
@@ -310,6 +313,11 @@ class VmHostService(HardwareOps, IsoOps, AccessOps, SessionOps):
         def err(code, msg):
             return {"v": PROTO_VERSION, "id": rid or "", "ok": False, "error": {"code": code, "message": msg}}
 
+        res = await self._dispatch(pk, role, op, args, rid, progress, session, err)
+        self._audit(pk, role, op, args, res, session)
+        return res
+
+    async def _dispatch(self, pk, role, op, args, rid, progress, session, err):
         if rid is None:
             return err("bad_request", "request id missing or malformed")
         if not isinstance(op, str) or op not in OPS:
@@ -351,6 +359,42 @@ class VmHostService(HardwareOps, IsoOps, AccessOps, SessionOps):
         if res is None:
             return err("bad_request", "that request id was already used for a different operation or arguments")
         return res
+
+    # ---------------------------------------------------------------- audit
+    def _audit(self, pk: str, role: str, op, args, res: dict, session) -> None:
+        """One line per answered request: WHO (requester pubkey, and whether a session key signed it), WHAT
+        (the op and the ids it named) and the RESULT (ok or the error code). Built from an allowlist of
+        id-shaped fields only — never the args themselves, which carry console tickets' inputs, upload names,
+        URLs (which may embed credentials) and descriptions, and never the result, which carries tickets and
+        VNC passwords. Changes, consoles, sessions and refusals log at INFO; plain reads at DEBUG."""
+        try:
+            name = op if isinstance(op, str) and op in OPS else "?"
+            a = args if isinstance(args, dict) else {}
+            fields = [f"op={name}", f"by={pk}", f"role={role}"]
+            if session:
+                fields.append("session=yes")
+            vm = valid_uuid(a.get("vm")) if isinstance(a.get("vm"), str) else None
+            if not vm and res.get("ok"):
+                r = res.get("result") if isinstance(res.get("result"), dict) else {}
+                v = r.get("vm") if isinstance(r.get("vm"), dict) else {}
+                vm = valid_uuid(v.get("uuid")) or valid_uuid(r.get("deleted"))
+            if vm:
+                fields.append(f"vm={vm}")
+            if name == "vm.power" and a.get("action") in ("start", "shutdown", "reboot", "destroy"):
+                fields.append(f"action={a['action']}")
+            if name in ("vm.assign", "vm.unassign") and _to_hex(a.get("pubkey")):
+                fields.append(f"target={_to_hex(a.get('pubkey'))}")
+            if isinstance(a.get("name"), str) and name.startswith("vm.snapshot.") \
+                    and re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_.-]{0,47}", a["name"]):
+                fields.append(f"snapshot={a['name']}")
+            mig = a.get("migration")
+            if isinstance(mig, str) and re.fullmatch(r"[0-9a-f]{16,64}", mig):
+                fields.append(f"migration={mig}")
+            fields.append("result=ok" if res.get("ok") else f"result={(res.get('error') or {}).get('code', 'error')}")
+            quiet = name in OPS and not OPS[name][1] and res.get("ok") and name not in AUDIT_READS_AT_INFO
+            logger.log(logging.DEBUG if quiet else logging.INFO, "[vmhost-audit] %s", " ".join(fields))
+        except Exception as e:  # pragma: no cover - auditing must never break a request
+            logger.debug("[vmhost] audit line failed: %s", e)
 
     # ---------------------------------------------------------------- views
     def _vm_view(self, d: DomainInfo, role: str, pk: str) -> dict:

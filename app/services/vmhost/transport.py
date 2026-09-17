@@ -83,12 +83,25 @@ def build_reply(node_sk: bytes, req_event_id: str, requester: str, payload: dict
 
 
 def build_announcement(node_sk: bytes, cfg, now: Optional[int] = None) -> dict:
+    from .service import FEATURES
     relays = [r for r in [cfg.public_relay] if r]
+    # The SAME feature list host.whoami answers — a hand-kept copy here had already drifted (no "access",
+    # no "iso-upload"), so discovery advertised a different host than the one that then answered.
     content = {"v": 1, "name": cfg.display_name or "PosterChan VM host", "https": cfg.public_url,
-               "relays": relays, "proto": [PROTO_VERSION],
-               "features": ["novnc", "hardware", "snapshots", "iso-fetch", "sessions", "cold-migrate"]}
+               "relays": relays, "proto": [PROTO_VERSION], "features": list(FEATURES)}
     tags = [["d", kinds.ANNOUNCE_D], ["alt", "PosterChan VM host"]] + [["relay", r] for r in relays]
     return nostr_event.build_event(node_sk, kinds.ANNOUNCE_KIND, json.dumps(content), tags,
+                                   created_at=int(now if now is not None else time.time()))
+
+
+def build_retraction(node_sk: bytes, now: Optional[int] = None) -> dict:
+    """NIP-09 deletion of this node's host announcement (`a` = the 31310 coordinate). Published when an admin turns
+    announcing — or hosting — off: an addressable event otherwise stays on every relay that took it, advertising a
+    host that asked not to be advertised."""
+    from app.services.nostr import bip340
+    pk = bip340.pubkey_from_seckey(node_sk).hex()
+    tags = [["a", f"{kinds.ANNOUNCE_KIND}:{pk}:{kinds.ANNOUNCE_D}"], ["k", str(kinds.ANNOUNCE_KIND)]]
+    return nostr_event.build_event(node_sk, 5, "this VM host is no longer announced", tags,
                                    created_at=int(now if now is not None else time.time()))
 
 
@@ -371,6 +384,8 @@ def start() -> None:
     cfg = config.current()
     if not cfg.enabled:
         _state["error"] = ""
+        if _state.get("announced"):
+            _track(asyncio.create_task(_retract_announcement()))      # hosting was just switched off
         return
     _state["stop"] = asyncio.Event()
     _track(asyncio.create_task(_run(cfg, _state["stop"])))
@@ -439,7 +454,13 @@ async def _run(cfg, stop: asyncio.Event) -> None:
                 relay, tr.node_pk[:16], cfg.libvirt_uri, cfg.storage_dir)
 
     async def housekeeping():
+        # 0 = announce on the FIRST pass: a settings Save restarts the host, so a changed name, URL or relay
+        # reaches discovery at once instead of after ANNOUNCE_EVERY.
         last_announce = 0.0
+        if not cfg.announce:
+            # Every start with announcing off (one event per restart or Save): an announcement published by an
+            # EARLIER process, before an admin turned it off, is otherwise never taken back.
+            await _retract_announcement(publish, sk)
         while not stop.is_set():
             try:
                 await svc.refresh_index()
@@ -456,7 +477,8 @@ async def _run(cfg, stop: asyncio.Event) -> None:
                 logger.warning("[vmhost] cleaning stale incoming transfers failed: %s", e)
             if cfg.announce and time.time() - last_announce > ANNOUNCE_EVERY:
                 try:
-                    await publish(build_announcement(sk, cfg))
+                    if await publish(build_announcement(sk, cfg)):
+                        _state["announced"] = True
                     last_announce = time.time()
                 except Exception as e:
                     logger.debug("[vmhost] announcement failed: %s", e)
@@ -478,6 +500,25 @@ async def _run(cfg, stop: asyncio.Event) -> None:
     _state["tasks"] = tasks
     for t in tasks:
         _track(t)
+
+
+async def _retract_announcement(publish=None, sk: Optional[bytes] = None) -> None:
+    try:
+        if publish is None:
+            from app.services import nostr_dvm
+            from app.services.nostr import relay as nostr_relay
+            sk = nostr_dvm.node_seckey()
+            relay = nostr_dvm.relay_url()
+            if not sk:
+                return
+
+            async def publish(ev):
+                return bool(await nostr_relay.publish(relay, ev, direct=True))
+        if await publish(build_retraction(sk)):
+            _state["announced"] = False
+            logger.info("[vmhost] host announcement retracted")
+    except Exception as e:
+        logger.debug("[vmhost] retracting the announcement failed: %s", e)
 
 
 async def stop() -> None:

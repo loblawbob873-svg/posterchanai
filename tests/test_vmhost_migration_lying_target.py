@@ -77,10 +77,10 @@ def test_a_target_whose_copy_fails_the_challenge_is_refused_and_the_vm_stays(tmp
             mig = await begin(w)
             await until(lambda: state(w.S, mig) in ("aborted", "handed_off", "done"), what="decided")
             assert state(w.S, mig) == "aborted", w.S.rec(mig)
-            await until(lambda: state(w.T, mig) == "aborted", what="target told")
+            # The target journals `aborted` BEFORE it drops its copy (crash safety), so wait for both.
+            await until(lambda: state(w.T, mig) == "aborted" and VM not in w.T.backend.domains, what="target told")
             assert VM in w.S.backend.domains and sha(disk) == want
             assert not (w.S.root / ".retained").exists() or not any((w.S.root / ".retained").iterdir())
-            assert VM not in w.T.backend.domains
         finally:
             await w.close()
     run(go())

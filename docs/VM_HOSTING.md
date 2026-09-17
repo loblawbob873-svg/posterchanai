@@ -138,6 +138,24 @@ location ^~ /api/vmhost/iso/ {
 Both must come before `location ^~ /api/`. Don't add a `proxy_set_header` to either — see
 `docs/NGINX.md`. (`tests/test_vmhost_iso_limits.py` parses both shipped configs and checks these directives.)
 
+### Audit log
+
+Every answered request writes one line to the app log (`journalctl -u posterchanai.service | grep vmhost-audit`):
+
+```
+[vmhost-audit] op=vm.power by=<requester hex> role=user session=yes vm=<uuid> action=start result=ok
+```
+
+Who (the requester's pubkey; `session=yes` when a session key signed for it), what (the op and the ids it named:
+`vm`, `action`, assignment `target`, `snapshot`, `migration`) and the result (`ok` or the error code — refusals
+are logged too). It is built from an allowlist of id-shaped fields, never from the arguments or the result: a
+console ticket, a VNC password, an ISO URL (which can carry credentials) or a description never reaches the log.
+Changes, console tickets, sessions, upload tickets and every refusal log at INFO; successful plain reads at
+DEBUG. Strangers are dropped before this, with no line at all.
+
+The status panel (**Check VM host status**) also says whether the storage directory is traversable by the
+qemu user. The `vmhost_backend` setting ("auto (virsh)" / "virsh", which did the same thing) was removed.
+
 ---
 
 ## 2. Who can do what
@@ -173,6 +191,12 @@ land before the running host changes or success is reported.
 | 6310 | result, host → client | `e` request, `p` requester, `nofederate`, `expiration` (+300) |
 | 7310 | progress (zero or more before the result) | as 6310, `expiration` +600 |
 | 31310 | host announcement (public, addressable) | `d=posterchan-vmhost`, `relay` |
+
+The announcement is published when the host starts — so every Save (which restarts it) republishes it with the
+new name/URL/relay at once — and every 6 h. Its `features` are the SAME list `host.whoami` answers. Turning
+**Publish a public host announcement** off publishes a NIP-09 kind-5 deletion (`a` = `31310:<node>:posterchan-vmhost`)
+on every start, and switching hosting off retracts an announcement this process published; an addressable
+event otherwise stays on every relay that took it.
 
 Content is NIP-44 (requester ↔ host). Request plaintext (≤ 65 KB):
 

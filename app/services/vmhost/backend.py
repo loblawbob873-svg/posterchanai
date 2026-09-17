@@ -530,7 +530,6 @@ def valid_snapshot_name(name) -> bool:
 
 
 def make_backend(cfg) -> Backend:
-    """`vmhost_backend`: auto | virsh. (libvirt-python is a phase-2 option; auto = virsh today.)"""
-    if cfg.backend not in ("auto", "virsh"):
-        raise BackendError(f"unknown vmhost_backend {cfg.backend!r}", "unsupported")
+    """The hypervisor for this configuration. virsh is the only backend: the `vmhost_backend` setting (auto |
+    virsh — two values that did the same thing) was removed in phase 4 rather than shown as a choice."""
     return VirshBackend(cfg.libvirt_uri)
