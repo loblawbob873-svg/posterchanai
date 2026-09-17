@@ -611,16 +611,25 @@ def _make_barked_dog(h: int):
     # --- smirk: philtrum down from the nose, a small relaxed left side and a raised
     # right corner; a cheeky tongue peeks from the high corner. ---
     mouth_col = _shade(fur, 0.35)[:3]
+    tongue = (228, 120, 130)
+    # TONGUE FIRST, hanging from UNDER the lip: its top edge follows the smirk line and the lip is
+    # drawn over it, so it reads as poking out of the mouth. It used to be a whole outlined disc
+    # stuck ON the lip with a dark crease through the middle, which looked like a red circle with a
+    # black line in it rather than a tongue.
+    import math
+    tx, ty, trx, try_ = W * 0.615, H * 0.712, W * 0.046, H * 0.085
+    lobe = [(tx + trx * math.cos(math.radians(a)), ty + try_ * math.sin(math.radians(a)))
+            for a in range(0, 181, 10)]
+    d.polygon(lobe + [(W * 0.62, H * 0.72), (W * 0.662, H * 0.683)], fill=tongue + (255,),
+              outline=_shade(tongue, 0.62)[:3])
+    # a soft highlight, not a crease
+    d.ellipse([tx - trx * 0.55, ty + try_ * 0.25, tx - trx * 0.05, ty + try_ * 0.5],
+              fill=_shade(tongue, 1.12)[:3] + (255,))
     d.line([(cx, H * 0.63), (cx, H * 0.70)], fill=mouth_col, width=lw, joint="curve")
     d.line([(cx, H * 0.70), (W * 0.40, H * 0.76), (W * 0.36, H * 0.72)],
            fill=mouth_col, width=lw, joint="curve")                       # relaxed left
     d.line([(cx, H * 0.70), (W * 0.62, H * 0.72), (W * 0.70, H * 0.65)],
            fill=mouth_col, width=lw + 1, joint="curve")                   # raised right (smirk)
-    # tongue at the raised corner
-    d.ellipse([W * 0.60, H * 0.70, W * 0.70, H * 0.80], fill=(228, 120, 130, 255),
-              outline=mouth_col, width=max(lw - 1, 1))
-    d.line([(W * 0.65, H * 0.71), (W * 0.65, H * 0.78)], fill=_shade((228, 120, 130), 0.8)[:3],
-           width=max(lw - 1, 1))
 
     return tile
 
