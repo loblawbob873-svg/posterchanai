@@ -1589,6 +1589,20 @@ ipcMain.handle('pc:tor:restart', async (e) => {
  * did not come from our own page.
  */
 const fsGuard = (e) => { if (!fromOurPage(e)) throw new Error('denied'); };
+/* A FILE CHOOSER BELONGS TO THE WINDOW THAT ASKED FOR IT, NOT TO THE DESKTOP.
+ *
+ * Every picker was parented to `win`, the desktop surface. System Settings, and every other popped-out
+ * PosterChan window, is its own toplevel -- and the desktop is deliberately kept BELOW applications on
+ * this compositor. A dialog is stacked with its parent, so "Build ISO -> Choose..." opened its folder
+ * picker underneath the very Settings window whose button was pressed (reported exactly that way).
+ * The sender's own window is the parent; the desktop only when the request came from the desktop. */
+const dialogOwner = (e) => {
+  try {
+    const w = e && e.sender ? BrowserWindow.fromWebContents(e.sender) : null;
+    if (w && !w.isDestroyed()) return w;
+  } catch (_) {}
+  return win;
+};
 
 // Renderer routing removes ?pcwin=. Ownership belongs to the BrowserWindow and survives reload.
 ipcMain.on('pc:window:context', (e) => {
@@ -3120,11 +3134,11 @@ ipcMain.handle('pc:liveusb:status', (e) => { fsGuard(e); return liveusb.status()
 ipcMain.handle('pc:liveusb:build', (e, dir, home) => { fsGuard(e); return liveusb.build(String(dir||''), !!home); });
 ipcMain.handle('pc:liveusb:burn', (e, iso, disk) => { fsGuard(e); return liveusb.burn(String(iso||''), String(disk||'')); });
 ipcMain.handle('pc:liveusb:pick-iso', async (e) => {
-  fsGuard(e); const r=await dialog.showOpenDialog(win,{properties:['openFile'],filters:[{name:'ISO images',extensions:['iso']}]});
+  fsGuard(e); const r=await dialog.showOpenDialog(dialogOwner(e),{properties:['openFile'],filters:[{name:'ISO images',extensions:['iso']}]});
   return r.canceled?'':(r.filePaths[0]||'');
 });
 ipcMain.handle('pc:liveusb:pick-dir', async (e) => {
-  fsGuard(e); const r=await dialog.showOpenDialog(win,{properties:['openDirectory','createDirectory']});
+  fsGuard(e); const r=await dialog.showOpenDialog(dialogOwner(e),{properties:['openDirectory','createDirectory']});
   return r.canceled?'':(r.filePaths[0]||'');
 });
 /* Launch takes an ARGV ARRAY, never a command string. A string would have to be handed to a shell
@@ -3344,8 +3358,7 @@ ipcMain.handle('pc:host:notify', (e, options) => {
 });
 ipcMain.handle('pc:host:pickDirectory', async (e) => {
   fsGuard(e);
-  const owner = BrowserWindow.fromWebContents(e.sender) || win;
-  const r = await dialog.showOpenDialog(owner, { title: 'Open project folder', properties: ['openDirectory'] });
+  const r = await dialog.showOpenDialog(dialogOwner(e), { title: 'Open project folder', properties: ['openDirectory'] });
   return r.canceled || !r.filePaths || !r.filePaths[0] ? null : hostfs().clean(r.filePaths[0]);
 });
 ipcMain.handle('pc:host:pickFile', async (e, options) => {
@@ -3353,7 +3366,7 @@ ipcMain.handle('pc:host:pickFile', async (e, options) => {
   const o=options && typeof options==='object' ? options : {};
   const filters=o.images ? [{name:'Images',extensions:['jpg','jpeg','png','gif','webp','heic','heif','avif']}]
                          : [{name:'All files',extensions:['*']}];
-  const r=await dialog.showOpenDialog(win,{title:String(o.title||'Choose a file').slice(0,80),
+  const r=await dialog.showOpenDialog(dialogOwner(e),{title:String(o.title||'Choose a file').slice(0,80),
     properties:['openFile'],filters});
   if(r.canceled || !r.filePaths[0])return null;
   const file=r.filePaths[0],st=fs.statSync(file),max=Math.min(Math.max(Number(o.max)||32*1024*1024,1),64*1024*1024);
@@ -3366,8 +3379,7 @@ ipcMain.handle('pc:host:pickFile', async (e, options) => {
 });
 ipcMain.handle('pc:host:saveFile', async (e, name, bytes) => {
   fsGuard(e);
-  const owner=BrowserWindow.fromWebContents(e.sender)||win;
-  const r=await dialog.showSaveDialog(owner,{title:'Save document',defaultPath:path.basename(String(name||'document'))});
+  const r=await dialog.showSaveDialog(dialogOwner(e),{title:'Save document',defaultPath:path.basename(String(name||'document'))});
   if(r.canceled||!r.filePath)return null;
   const data=Buffer.from(bytes||[]);
   if(data.length>256*1024*1024)throw new Error('that file is too large');
@@ -3637,7 +3649,7 @@ ipcMain.handle('pc:vm:boot-disk', (e, name) => { fsGuard(e); return vm.bootDisk(
 ipcMain.handle('pc:vm:add-network', (e, name) => { fsGuard(e); return vm.addNetwork(name); });
 ipcMain.handle('pc:vm:gaming-mouse', (e, name, on) => { fsGuard(e); return vm.gamingMouse(name, !!on); });
 ipcMain.handle('pc:vm:pick-iso', async (e) => {
-  fsGuard(e); const r=await dialog.showOpenDialog(win,{title:'Choose installation ISO',properties:['openFile'],
+  fsGuard(e); const r=await dialog.showOpenDialog(dialogOwner(e),{title:'Choose installation ISO',properties:['openFile'],
     filters:[{name:'Disc images',extensions:['iso','img']},{name:'All files',extensions:['*']}]});
   return r.canceled?'':(r.filePaths[0]||'');
 });
@@ -3808,7 +3820,7 @@ ipcMain.on('pc:os:bootstrap', (e) => {
 ipcMain.handle('pc:fs:list', (e) => { fsGuard(e); return fsbridge.list(); });
 ipcMain.handle('pc:fs:pick', async (e) => {
   fsGuard(e);
-  const r = await dialog.showOpenDialog(win, {
+  const r = await dialog.showOpenDialog(dialogOwner(e), {
     title: 'Choose a folder to sync',
     properties: ['openDirectory', 'createDirectory'],
   });
