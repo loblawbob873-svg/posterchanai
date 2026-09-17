@@ -2925,21 +2925,58 @@ ipcMain.handle('pc:wm:fullscreen', async (e, id, on) => {
   const old=_shellFullscreenFailsafes.get(n);
   if(old){ clearTimeout(old); _shellFullscreenFailsafes.delete(n); }
   const result=await wm().fullscreen(n, enable);
+  /* IS THIS A DESKTOP SURFACE? Asked of the surface records first, which are the authority.
+   *
+   * The title test alone never matched on Wayfire: the shell's window is titled "PosterChan
+   * Desktop" (the BrowserWindow option, and the exact string the posterchan-shell plugin requires),
+   * while this accepted only "PosterChan" or "PosterChan · Nostr". So Alt+Tab's fullscreen raise was
+   * never registered here, and `sinkShellSurfaces` sent the desktop straight back under Firefox on
+   * the focus event the gesture itself produced: the chooser was drawn, focused, fullscreen and
+   * invisible, and releasing Alt went back to the window it started on. Measured on a two-output
+   * Wayfire session with Firefox in front (grim of the output while Alt was held). */
   let shellWindow=false;
   if(enable && SHELL_MODE){
-    try{
+    if(shellSurfaceIds().has(n)) shellWindow=true;
+    else try{
       const rows=await wm().windows();
       const row=(rows||[]).find(x=>Number(x&&x.id)===n);
       shellWindow=!!(row && /^(?:posterchan(?:-desktop)?|place\.poster\.desktop)$/i.test(String(row.app||''))
-        && /^PosterChan(?: · Nostr)?$/i.test(String(row.title||'')));
+        && /^PosterChan(?: Desktop| · Nostr)?$/i.test(String(row.title||'')));
     }catch(_){ shellWindow=false; }
   }
   if(shellWindow){
+    /* LONGER THAN THE CHOOSER'S OWN LIFE (os.js commits after 5s without an Alt release), or the
+     * desktop drops behind the applications while the chooser is still on screen. */
     const timer=setTimeout(()=>{
       _shellFullscreenFailsafes.delete(n);
       wm().fullscreen(n,false).catch(()=>{});
-    }, 3000);
+    }, 6000);
     _shellFullscreenFailsafes.set(n,timer);
+    /* FULLSCREEN DOES NOT RAISE ON WAYFIRE, AND NEITHER DOES FOCUSING THE DESKTOP. Measured: the
+     * shell went fullscreen and took the keyboard with Firefox still drawn over it, so the chooser
+     * existed only for the keyboard. What does work is the lever the rest of this file uses —
+     * `send-to-back` — applied to the applications instead of the desktop: every other view on that
+     * output goes under it, least recently focused LAST so their order among themselves survives.
+     * Committing focuses (and so raises) the chosen window, and the unfullscreen below sinks the
+     * desktop again under the rest. */
+    try{
+      const rows=await wm().windows();
+      const me=(rows||[]).find(x=>Number(x&&x.id)===n);
+      const shells=shellSurfaceIds();
+      if(me && typeof wm().keepBelow==='function'){
+        const others=rows.filter(x=>x && Number(x.id)!==n && !shells.has(Number(x.id)) && !x.stashed
+          && String(x.outputName||'')===String(me.outputName||''))
+          .sort((a,b)=>(Number(b.focusTime)||0)-(Number(a.focusTime)||0));
+        for(const x of others){
+          if(!_shellFullscreenFailsafes.has(n)) break;     // the gesture already ended
+          try{ await wm().keepBelow(Number(x.id), true); }catch(_){ }
+        }
+      }
+    }catch(_){ }
+  }else if(!enable && SHELL_MODE && shellSurfaceIds().has(n)){
+    /* The gesture is over: put the desktop back under the applications now rather than on the next
+     * focus event, which can arrive before this handler has retired the failsafe and skip it. */
+    sinkShellSurfaces();
   }
   return result;
 });

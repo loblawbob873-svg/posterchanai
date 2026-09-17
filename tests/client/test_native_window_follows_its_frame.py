@@ -108,7 +108,8 @@ class TheOtherGeometryPathsStillSync(unittest.TestCase):
 
     def test_every_known_mover_tells_the_compositor(self):
         src = strip_comments(OS_JS.read_text())
-        for fn in ("function snapTo", "function unsnap", "function minimise"):
+        # `(` matters: "function minimise" is also the start of "function minimiseNativeById".
+        for fn in ("function snapTo(", "function unsnap(", "function minimise("):
             with self.subTest(fn=fn):
                 self.assertIn("nsync()", body(src, fn))
 
