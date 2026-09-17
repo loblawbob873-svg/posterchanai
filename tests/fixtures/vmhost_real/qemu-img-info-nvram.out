@@ -1,0 +1,38 @@
+{
+    "children": [
+        {
+            "name": "file",
+            "info": {
+                "children": [
+                ],
+                "virtual-size": 561152,
+                "filename": "/var/lib/posterchan/vms-probe/target/00000000-0000-4000-8000-000000000002/nvram.fd",
+                "format": "file",
+                "actual-size": 561152,
+                "format-specific": {
+                    "type": "file",
+                    "data": {
+                    }
+                },
+                "dirty-flag": false
+            }
+        }
+    ],
+    "virtual-size": 540672,
+    "filename": "/var/lib/posterchan/vms-probe/target/00000000-0000-4000-8000-000000000002/nvram.fd",
+    "cluster-size": 4096,
+    "format": "qcow2",
+    "actual-size": 561152,
+    "format-specific": {
+        "type": "qcow2",
+        "data": {
+            "compat": "1.1",
+            "compression-type": "zlib",
+            "lazy-refcounts": false,
+            "refcount-bits": 16,
+            "corrupt": false,
+            "extended-l2": false
+        }
+    },
+    "dirty-flag": false
+}

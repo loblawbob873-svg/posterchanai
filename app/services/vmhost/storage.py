@@ -23,6 +23,13 @@ _UUID_RE = re.compile(r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f
 _ISO_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._+-]{0,127}\.iso$", re.I)
 
 
+SNAPSHOT_FILE_NAME = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]{0,47}$")
+SNAPSHOT_NVRAM_FILE = re.compile(r"^snap-[A-Za-z0-9][A-Za-z0-9_.-]{0,47}\.nvram\.fd$")
+# See Storage.ensure / make_vm_dir: traversable by libvirt's qemu user, never listable or readable by others.
+DIR_MODE = 0o751
+FILE_MODE = 0o600
+
+
 class PathEscape(ValueError):
     """A built path resolved outside the storage root."""
 
@@ -70,8 +77,24 @@ class Storage:
         return r
 
     def ensure(self) -> None:
-        for d in (self.root, self.root / "isos", self.root / ".state"):
-            d.mkdir(parents=True, exist_ok=True, mode=0o750)
+        """Create what is missing with the modes a libvirt host needs. QEMU runs as ANOTHER user (`qemu`, or
+        `libvirt-qemu` on Debian): libvirt's dynamic ownership hands it the disk FILES, never the directories it
+        must walk through, so the root is traversable (0751, not listable), the ISO library readable (0755 —
+        installers are not secrets) and `.state` the app's alone. Existing directories keep the admin's modes."""
+        for d, m in ((self.root, DIR_MODE), (self.root / "isos", 0o755), (self.root / ".state", 0o700)):
+            if not d.exists():
+                d.mkdir(parents=True, exist_ok=True)
+                os.chmod(d, m)
+
+    def make_vm_dir(self, vm_uuid: str, exist_ok: bool = False) -> Path:
+        """A VM's directory, traversable by the qemu user and listable by nobody else. LIVE: created 0750 by the
+        app, every VM failed its first start with `Cannot access storage file … (as uid:77, gid:77): Permission
+        denied`. Files inside are 0600 (`FILE_MODE`) — libvirt chowns them to qemu while the guest runs and gives
+        them back on stop, so traversal is all the directory has to grant."""
+        d = self.vm_dir(vm_uuid)
+        d.mkdir(mode=0o700, exist_ok=exist_ok)
+        os.chmod(d, DIR_MODE)
+        return d
 
     @property
     def state_dir(self) -> Path:
@@ -129,6 +152,14 @@ class Storage:
             raise PathEscape("not a disk target")
         base = self.vm_dir(vm_uuid)
         return self._inside(base / f"disk-{target}.qcow2", base)
+
+    def snapshot_nvram_path(self, vm_uuid: str, name: str) -> Path:
+        """The copy of a VM's EFI variable store taken with offline snapshot `name` — a flat file in the VM's own
+        directory (`snap-<name>.nvram.fd`), so a migration's file list stays flat and name-validated."""
+        if not SNAPSHOT_FILE_NAME.match(str(name or "")):
+            raise PathEscape("not a snapshot name")
+        base = self.vm_dir(vm_uuid)
+        return self._inside(base / f"snap-{name}.nvram.fd", base)
 
     @property
     def iso_dir(self) -> Path:

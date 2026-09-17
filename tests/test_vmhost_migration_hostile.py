@@ -45,8 +45,8 @@ def make_hostile(w, mutate_xml=None, mutate_snaps=None):
     m._refusals = lambda info: None
     real_collect = m._collect_files
 
-    def collect(u, info):
-        return real_collect(u, migrate.inspect_domain_xml(be._reported_xml(u)))
+    def collect(u, info, meta=None):
+        return real_collect(u, migrate.inspect_domain_xml(be._reported_xml(u)), meta)
     m._collect_files = collect
     if mutate_snaps:
         for s in be.snapshots.get(VM, []):

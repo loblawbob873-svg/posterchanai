@@ -64,7 +64,7 @@ def test_img_info_runs_qemu_img_with_force_share_json_and_a_timeout():
     assert argv == ["qemu-img", "info", "--output=json", "-U", "--",
                     "/var/lib/posterchan/vms/.incoming/m/disk-vda.qcow2.part"]
     assert 0 < timeout <= 120
-    assert got == {"format": "qcow2", "backing": "", "data_file": "", "virtual_size": 21474836480}
+    assert got == {"format": "qcow2", "backing": "", "data_file": "", "virtual_size": 21474836480, "snapshots": []}
     be2, _ = probing_backend(None)
     with pytest.raises(BackendError):
         run(be2.img_info("/nope"))
@@ -131,7 +131,8 @@ def test_the_driver_type_is_the_probed_format(tmp_path):
             root = ET.fromstring(w.T.backend.domains[VM]["xml"])
             assert [d.find("driver").get("type") for d in root.findall("devices/disk") if d.get("device") == "disk"] \
                 == ["raw"], "the source's claim (qcow2) must not decide how libvirt reads the bytes"
-            assert seen and all(not p.endswith("nvram.fd.part") for p in seen), "only disks are probed"
+            # The varstore is probed too (libvirt 12 runs qcow2 varstores — see test_vmhost_live_findings.py).
+            assert any(p.endswith("disk-vda.qcow2.part") for p in seen) and any(p.endswith("nvram.fd.part") for p in seen)
         finally:
             await w.close()
     run(go())

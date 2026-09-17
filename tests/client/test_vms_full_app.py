@@ -62,7 +62,7 @@ function hostOp(op,args,who){
     return {ok:true,result:{vm:Object.assign(vmView(),{hardware:{boot:args.boot||'disk',input:args.input||'tablet',nics:1,disks:[],media:'',cdrom:false}})}}; }
   if(op==='iso.list')return {ok:true,result:{isos:[{id:'debian.iso',name:'debian.iso',size:654311424}],jobs:[],fetch_enabled:true}};
   if(op==='vm.snapshot.list')return {ok:true,result:{vm:args.vm,snapshots:__vm.snaps}};
-  if(op==='vm.snapshot.create'){__vm.snaps.push({name:args.name,created:'2026-09-16 12:00:00 +0000',state:__vm.state});return {ok:true,result:{vm:args.vm,snapshots:__vm.snaps}};}
+  if(op==='vm.snapshot.create'){if(__vm.state!=='shutoff')return {ok:false,error:{code:'conflict',message:'shut the VM down to take a snapshot'}};__vm.snaps.push({name:args.name,created:'2026-09-16 12:00 UTC',state:'ok',disks:['vda'],description:''});return {ok:true,result:{vm:args.vm,snapshots:__vm.snaps}};}
   if(op==='host.access.get')return {ok:true,result:{allowed:[],admins:[],admins_editable:false}};
   if(op==='host.info')return {ok:true,result:{name:'Fixture host',kvm:true,libvirt:true,vms:{running:__vm.state==='running'?1:0,total:1},
     cpu:{cores:8,load1:0.3},ram:{total_mib:32768,free_mib:20000,committed_mib:2048},disk:{total_gib:500,free_gib:400,committed_gib:20},
@@ -204,6 +204,9 @@ async def main(width):
                 await b.until("!document.querySelector('#vms-console')")
                 assert await b.js("PCVms.consoleOpen()===false && __PC.isView('vms')"), \
                     'Back closes the console and stays on Virtual Machines'
+                # ---------------- snapshots are OFFLINE: while it runs, the button is off and says why
+                await b.until("!!document.querySelector('[data-act=snap-create]')")
+                assert await b.js("document.querySelector('[data-act=snap-create]').disabled && /Shut down to take a snapshot/.test(document.querySelector('.vms-snaps').innerText)")
                 # ---------------- phase 2: VM settings (Save last, dirty tracking, a real round trip)
                 await b.js("document.querySelector('[data-power=shutdown]').click()")
                 await b.until("__vm.state==='shutoff' && !!document.querySelector('[data-act=settings]:not([disabled])')")
@@ -229,6 +232,8 @@ async def main(width):
                 await b.until("!!document.querySelector('.uiprompt-in')")
                 await b.js("document.querySelector('.uiprompt-in').value='clean';document.querySelector('.uiconfirm [data-uc=\"1\"]').click()")
                 await b.until("[...document.querySelectorAll('.vms-snap')].some(e=>/clean/.test(e.innerText))")
+                assert await b.js("!document.querySelector('[data-snap-revert=clean]').disabled && !document.querySelector('.vms-snap-off')"), \
+                    'shut off: an ok snapshot can be reverted and the hint is gone'
                 assert await b.js("__vm.args['vm.snapshot.create'].name==='clean'")
                 # ---------------- ISO library
                 await b.js("document.querySelector('[data-act=back]').click()")

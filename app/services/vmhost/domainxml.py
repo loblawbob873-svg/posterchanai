@@ -47,6 +47,10 @@ class VmMeta:
     # Phase 3 (cold migration): {"id","state","peer"} while a migration holds this VM — "outgoing" on
     # the source, "incoming" (pending commit) on the target. Empty = not migrating. Start refuses both.
     migration: dict = field(default_factory=dict)
+    # Offline snapshots (hardware.py): [{name, created, description, disks: [targets], nvram: bool}], oldest first.
+    # The DATA lives in each qcow2 (`qemu-img snapshot`) and in `snap-<name>.nvram.fd`; this is the record of what a
+    # snapshot is made of, so it travels with the definition (and a migration) and survives an app restart.
+    snapshots: list = field(default_factory=list)
 
     def to_xml(self, *, prefixed: bool = True) -> str:
         """The metadata element. `prefixed` writes `pc:vm xmlns:pc=…` (inside a domain definition);
@@ -62,7 +66,37 @@ class VmMeta:
             mg = self.migration
             kids += (f"<{p}migration id={_a(mg.get('id', ''))} state={_a(mg.get('state', ''))}"
                      f" peer={_a(mg.get('peer', ''))}/>")
+        for sn in self.snapshots:
+            kids += (f"<{p}snapshot name={_a(sn.get('name', ''))} created={_a(int(sn.get('created') or 0))}"
+                     f" disks={_a(','.join(sn.get('disks') or []))} nvram={_a('1' if sn.get('nvram') else '0')}>"
+                     f"{escape(_XML_CTRL.sub('', str(sn.get('description') or '')))}</{p}snapshot>")
         return f"<{p}vm{ns}{attrs}>{kids}</{p}vm>"
+
+
+_XML_CTRL = re.compile(r"[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]")      # not representable in XML 1.0
+SNAPSHOT_NAME_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]{0,47}$")
+MAX_SNAPSHOT_RECORDS = 64
+
+
+def clean_snapshot_record(sn) -> dict | None:
+    """One offline-snapshot record with every field validated, or None. Used on read AND on a migration's incoming
+    metadata, so a record can never carry a path, a control character or a disk target that is not a disk target."""
+    if not isinstance(sn, dict) or not isinstance(sn.get("name"), str) or not SNAPSHOT_NAME_RE.match(sn["name"]):
+        return None
+    try:
+        created = max(0, int(sn.get("created") or 0))
+    except (TypeError, ValueError):
+        created = 0
+    disks = []
+    for t in sn.get("disks") or []:
+        t = str(t).strip()
+        if _DEV_RE.match(t) and t not in disks:
+            disks.append(t)
+    if not disks:
+        return None
+    desc = _XML_CTRL.sub("", str(sn.get("description") or ""))[:200]
+    return {"name": sn["name"], "created": created, "description": desc, "disks": disks,
+            "nvram": bool(sn.get("nvram"))}
 
 
 def _local(tag: str) -> str:
@@ -86,7 +120,7 @@ def parse_meta(xml_text) -> VmMeta | None:
             break
     if node is None:
         return None
-    pks, labels, migration = [], [], {}
+    pks, labels, migration, snapshots = [], [], {}, []
     for ch in node:
         name = _local(ch.tag)
         if name == "assign":
@@ -98,6 +132,12 @@ def parse_meta(xml_text) -> VmMeta | None:
         elif name == "migration" and ch.get("id"):
             migration = {"id": str(ch.get("id")), "state": str(ch.get("state") or ""),
                          "peer": str(ch.get("peer") or "")}
+        elif name == "snapshot":
+            sn = clean_snapshot_record({"name": ch.get("name"), "created": ch.get("created"),
+                                        "disks": str(ch.get("disks") or "").split(","),
+                                        "nvram": ch.get("nvram") == "1", "description": ch.text or ""})
+            if sn and all(x["name"] != sn["name"] for x in snapshots) and len(snapshots) < MAX_SNAPSHOT_RECORDS:
+                snapshots.append(sn)
 
     def _i(v):
         try:
@@ -107,7 +147,7 @@ def parse_meta(xml_text) -> VmMeta | None:
     return VmMeta(owner=str(node.get("owner") or ""), created=_i(node.get("created")),
                   guest=str(node.get("guest") or "linux"), firmware=str(node.get("firmware") or "efi"),
                   disk_gib=_i(node.get("disk_gib")), iso=str(node.get("iso") or ""),
-                  assigned=pks, labels=labels, migration=migration)
+                  assigned=pks, labels=labels, migration=migration, snapshots=snapshots)
 
 
 @dataclass
@@ -405,6 +445,30 @@ def secure_vnc(root: ET.Element, *, force_loopback: bool = False) -> int:
                 changed = True
         n += int(changed)
     return n
+
+
+def file_disks(xml_text: str) -> list:
+    """[{target, path, format, type}] of a definition's DISKS (not cdroms), in definition order."""
+    root = _parse(xml_text)
+    out = []
+    for d in root.findall("devices/disk"):
+        if d.get("device", "disk") != "disk":
+            continue
+        tgt, src, drv = d.find("target"), d.find("source"), d.find("driver")
+        out.append({"target": tgt.get("dev", "") if tgt is not None else "",
+                    "path": (src.get("file") or "") if src is not None else "",
+                    "format": drv.get("type", "") if drv is not None else "", "type": d.get("type", "file")})
+    return out
+
+
+def nvram_seed(xml_text: str) -> tuple:
+    """(nvram path, template path, format) from a definition libvirt has expanded — `("", "", "")` for a VM with no
+    EFI variable store. libvirt >= 8 writes the template it auto-selected into the inactive XML at DEFINE time."""
+    root = _parse(xml_text)
+    nv = root.find("os/nvram")
+    if nv is None or not (nv.text or "").strip():
+        return "", "", ""
+    return nv.text.strip(), (nv.get("template") or "").strip(), (nv.get("format") or "").strip()
 
 
 def to_text(root: ET.Element) -> str:

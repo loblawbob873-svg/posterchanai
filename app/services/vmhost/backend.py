@@ -79,10 +79,10 @@ class Backend(Protocol):
     async def img_create(self, path: str, size_gib: int) -> None: ...
     # phase 2
     async def dumpxml(self, vm_uuid: str, inactive: bool = True) -> str: ...
-    async def snapshot_list(self, vm_uuid: str) -> list: ...
-    async def snapshot_create(self, vm_uuid: str, name: str, description: str = "") -> None: ...
-    async def snapshot_revert(self, vm_uuid: str, name: str) -> None: ...
-    async def snapshot_delete(self, vm_uuid: str, name: str) -> None: ...
+    async def img_info(self, path: str) -> dict: ...
+    async def img_snapshot_create(self, path: str, name: str) -> None: ...
+    async def img_snapshot_apply(self, path: str, name: str) -> None: ...
+    async def img_snapshot_delete(self, path: str, name: str) -> None: ...
 
 
 # ---------------------------------------------------------------------------------------- parsers
@@ -325,11 +325,14 @@ class VirshBackend:
         await self._v("define", path, timeout=30)
 
     async def undefine(self, vm_uuid: str, keep_nvram: bool = False) -> None:
+        # `--snapshots-metadata`: LIVE, libvirt refuses to undefine a domain that has snapshots ("cannot delete
+        # inactive domain with 2 snapshots"). Internal snapshots live inside the qcow2 — deleted with it, or kept.
         flag = "--keep-nvram" if keep_nvram else "--nvram"
-        code, out, err = await self._run([self.virsh, "--connect", self.uri, "undefine", vm_uuid, flag], 30)
+        code, out, err = await self._run([self.virsh, "--connect", self.uri, "undefine", vm_uuid,
+                                          "--snapshots-metadata", flag], 30)
         if code != 0 and re.search(r"nvram", err, re.I):
             # A BIOS guest has no NVRAM, and older libvirt refuses the flag outright for one.
-            await self._v("undefine", vm_uuid, timeout=30)
+            await self._v("undefine", vm_uuid, "--snapshots-metadata", timeout=30)
         elif code != 0:
             raise BackendError((err or out).strip()[:300] or "undefine failed")
         # Swtpm state lives outside the VM directory; `--tpm` removes it where supported, and a host
@@ -388,32 +391,36 @@ class VirshBackend:
                                           f"{int(size_gib)}G"], 60)
         if code != 0:
             raise BackendError((err or out).strip()[:300] or "qemu-img create failed")
+        try:                           # qemu-img honours the umask (0644): every local user could read the guest's disk
+            await asyncio.to_thread(os.chmod, path, 0o600)
+        except OSError as e:
+            raise BackendError(f"could not restrict the new disk's permissions: {e}")
 
     # ---- phase 2 -----------------------------------------------------------------------------
     async def dumpxml(self, vm_uuid: str, inactive: bool = True) -> str:
         args = ["dumpxml", vm_uuid] + (["--inactive"] if inactive else [])
         return await self._v(*args, timeout=15)
 
-    async def snapshot_list(self, vm_uuid: str) -> list:
-        return parse_snapshot_list(await self._v("snapshot-list", vm_uuid, timeout=15))
-
-    async def snapshot_create(self, vm_uuid: str, name: str, description: str = "") -> None:
+    # ---- offline snapshots (hardware.py): qemu-img on a SHUT-OFF VM's own disk files -----------------------------
+    # libvirt's internal snapshots are not used for ops: whether they work for an EFI guest depends on the distro's
+    # firmware descriptors (a raw OVMF varstore is refused; libvirt 12 + a qcow2 varstore accepts one), so the same
+    # button would work on one host and not on the next. `qemu-img snapshot` works on every qcow2, on every host.
+    # Every path is built by Storage and every name matches SNAPSHOT_NAME (no leading '-'), and `--` ends options.
+    async def _img_snapshot(self, flag: str, path: str, name: str) -> None:
         if not re.fullmatch(SNAPSHOT_NAME, name or ""):
             raise BackendError("invalid snapshot name", "bad_request")
-        args = ["snapshot-create-as", vm_uuid, "--name", name, "--atomic"]
-        if description:
-            args += ["--description", description[:200]]
-        await self._v(*args, timeout=300)
+        code, out, err = await self._run([self.qemu_img, "snapshot", flag, name, "--", path], 300)
+        if code != 0:
+            raise BackendError((err or out).strip()[:300] or f"qemu-img snapshot {flag} failed")
 
-    async def snapshot_revert(self, vm_uuid: str, name: str) -> None:
-        if not re.fullmatch(SNAPSHOT_NAME, name or ""):
-            raise BackendError("invalid snapshot name", "bad_request")
-        await self._v("snapshot-revert", vm_uuid, "--snapshotname", name, timeout=300)
+    async def img_snapshot_create(self, path: str, name: str) -> None:
+        await self._img_snapshot("-c", path, name)
 
-    async def snapshot_delete(self, vm_uuid: str, name: str) -> None:
-        if not re.fullmatch(SNAPSHOT_NAME, name or ""):
-            raise BackendError("invalid snapshot name", "bad_request")
-        await self._v("snapshot-delete", vm_uuid, "--snapshotname", name, timeout=300)
+    async def img_snapshot_apply(self, path: str, name: str) -> None:
+        await self._img_snapshot("-a", path, name)
+
+    async def img_snapshot_delete(self, path: str, name: str) -> None:
+        await self._img_snapshot("-d", path, name)
 
     # ==================================================================================================
     # PHASE 3 — cold-migration primitives (app/services/vmhost/migrate.py is the only caller).
@@ -507,27 +514,14 @@ def parse_img_info(text: str) -> dict:
         vsize = int(j.get("virtual-size") or 0)
     except (TypeError, ValueError):
         vsize = 0
-    return {"format": j["format"], "backing": str(backing), "data_file": str(data_file), "virtual_size": vsize}
+    # Internal snapshot TAGS, in the image's order. qemu-img allows two with the same tag (LIVE: `-c s1` twice made
+    # IDs 1 and 3), so this is a list and callers treat a repeated tag as damage, not as one snapshot.
+    snaps = [str(x.get("name")) for x in (j.get("snapshots") or []) if isinstance(x, dict) and x.get("name") is not None]
+    return {"format": j["format"], "backing": str(backing), "data_file": str(data_file), "virtual_size": vsize,
+            "snapshots": snaps}
 
 
 SNAPSHOT_NAME = r"[A-Za-z0-9][A-Za-z0-9_.-]{0,47}"
-
-
-def parse_snapshot_list(text: str) -> list:
-    """`virsh snapshot-list` table → [{name, created, state}]. The header and the dashed rule are skipped;
-    the creation time is everything between the name and the last column."""
-    out = []
-    lines = str(text or "").splitlines()
-    started = False
-    for line in lines:
-        if not started:
-            if re.match(r"^\s*-{5,}", line):
-                started = True
-            continue
-        parts = line.split()
-        if len(parts) >= 2 and re.fullmatch(SNAPSHOT_NAME, parts[0]):
-            out.append({"name": parts[0], "created": " ".join(parts[1:-1]), "state": parts[-1]})
-    return out
 
 
 def valid_snapshot_name(name) -> bool:

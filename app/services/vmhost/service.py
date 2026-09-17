@@ -22,6 +22,7 @@ import asyncio
 import hashlib
 import json
 import logging
+import os
 import re
 import shutil
 import time
@@ -509,8 +510,7 @@ class VmHostService(HardwareOps, IsoOps, AccessOps, SessionOps):
                                   f"only {max(0, disk_room)} GiB of disk is free on this host")
 
             vm_uuid = new_uuid()
-            vm_dir = self.storage.vm_dir(vm_uuid)
-            await asyncio.to_thread(vm_dir.mkdir, mode=0o750, parents=False, exist_ok=False)
+            vm_dir = await asyncio.to_thread(self.storage.make_vm_dir, vm_uuid)
             created_dir = vm_dir
             disk_path = self.storage.disk_path(vm_uuid)
             if progress:
@@ -526,6 +526,7 @@ class VmHostService(HardwareOps, IsoOps, AccessOps, SessionOps):
                 await progress({"phase": "define", "msg": "defining the VM"})
             await self.backend.define(domainxml.build_domain_xml(spec), str(vm_dir))
             defined = vm_uuid
+            await self._ensure_nvram(vm_uuid)
             if args.get("autostart"):
                 await self.backend.set_autostart(vm_uuid, True)
             if args.get("start"):
@@ -551,6 +552,45 @@ class VmHostService(HardwareOps, IsoOps, AccessOps, SessionOps):
             raise
         finally:
             self._host_lock.release()
+
+    async def _ensure_nvram(self, vm_uuid: str) -> None:
+        """Create the VM's EFI variable store AS THE APP, from the template libvirt itself selected, before libvirt's
+        first start creates it as the qemu user. LIVE (libvirt 12): the store libvirt makes is qemu:qemu 0600 and
+        stays that way, so the app could never read it again — no migration (hashing it raised PermissionError), no
+        snapshot copy. A file the app created is chowned to qemu while the guest runs and RESTORED to the app on
+        stop (libvirt's remember_owner). Never overwrites an existing store; a definition that names no template
+        (older libvirt resolves it at start) is left to libvirt, and logged."""
+        try:
+            path, template, _fmt = domainxml.nvram_seed(await self.backend.dumpxml(vm_uuid, inactive=True))
+        except (BackendError, domainxml.EditError) as e:
+            logger.warning("[vmhost] could not read %s's firmware settings: %s", vm_uuid, e)
+            return
+        if not path:
+            return                                            # BIOS: no variable store
+        vm_dir = self.storage.vm_dir(vm_uuid)
+
+        def seed() -> str:
+            target = self.storage.nvram_path(vm_uuid)
+            if str(target) != str(vm_dir / os.path.basename(path)) or os.path.lexists(target):
+                return ""
+            if not template:
+                return "no template named"
+            try:
+                with open(template, "rb") as src:
+                    data = src.read(64 << 20)
+            except OSError as e:
+                return f"template unreadable: {e}"
+            tmp = vm_dir / ".nvram.fd.tmp"
+            fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+            with os.fdopen(fd, "wb") as f:
+                f.write(data)
+            os.chmod(tmp, 0o600)
+            os.replace(tmp, target)
+            return ""
+        why = await asyncio.to_thread(seed)
+        if why:
+            logger.warning("[vmhost] %s: libvirt will create the EFI variable store as the qemu user (%s) — "
+                           "migration and snapshots will not be able to read it", vm_uuid, why)
 
     async def _op_vm_delete(self, pk, role, args, progress):
         d = await self._domain(pk, role, args)

@@ -9,6 +9,7 @@ and return it, so a round trip through the fake is a round trip through the real
 from __future__ import annotations
 
 import copy
+import json
 import os
 import re
 import xml.etree.ElementTree as ET
@@ -29,10 +30,10 @@ class FakeBackend:
         self.gate: dict = {}             # method name -> asyncio.Event the call waits on
         self.vnc: dict = {}              # uuid -> (host, port)
         self.passwords: dict = {}
-        # uuid -> [ {name, created, state, current, xml, vm?} ]. ONE shape for both phases: phase 2's ops
-        # (list/create/revert/delete) and phase 3's migration primitives (names/dumpxml/redefine) read the
-        # same records, so a snapshot created by vm.snapshot.create is one a migration can carry.
+        # uuid -> [ {name, created, state, current, xml} ]: LIBVIRT snapshot metadata (made by hand with virsh, or
+        # redefined by a migration). The app's own snapshots are offline qemu-img tags (img_snapshot_*), not these.
         self.snapshots: dict = {}
+        self.img_data: dict = {}         # path -> [(tag, bytes at that snapshot)] — what `qemu-img snapshot -a` restores
 
     async def _enter(self, name, *args):
         self.calls.append((name,) + args)
@@ -149,44 +150,60 @@ class FakeBackend:
             raise BackendError("domain not found")
         return self._reported_xml(vm_uuid)
 
-    async def snapshot_list(self, vm_uuid):
-        await self._enter("snapshot_list", vm_uuid)
-        return [{"name": s["name"], "created": s.get("created", ""), "state": s.get("state", "shutoff")}
-                for s in self.snapshots.get(vm_uuid, [])]
+    # ---- offline snapshots: qemu-img tags live INSIDE the (fake) image, so they travel with its bytes
+    TAG_AT, TAG_LEN = 16, 1024
 
-    async def snapshot_create(self, vm_uuid, name, description=""):
-        await self._enter("snapshot_create", vm_uuid, name)
-        lst = self.snapshots.setdefault(vm_uuid, [])
-        if any(s["name"] == name for s in lst):
-            raise BackendError("snapshot already exists")
-        parent = next((s["name"] for s in lst if s.get("current")), "")
-        for s in lst:
-            s["current"] = False
-        state = self.domains[vm_uuid]["state"]
-        xml = (f"<domainsnapshot><name>{name}</name>" + (f"<parent><name>{parent}</name></parent>" if parent else "")
-               + f"<state>{state}</state><disks><disk name='vda' snapshot='internal'/></disks>"
-               + self._reported_xml(vm_uuid) + "</domainsnapshot>")
-        lst.append({"name": name, "created": "2026-09-16 12:00:00 +0000", "state": state, "current": True,
-                    "xml": xml, "vm": copy.deepcopy(self.domains[vm_uuid])})
+    def _tags(self, path) -> list:
+        with open(path, "rb") as f:
+            f.seek(self.TAG_AT)
+            blob = f.read(self.TAG_LEN)
+        if not blob.startswith(b"PCSNAP"):
+            return []
+        return json.loads(blob[6:].rstrip(b"\0").decode())
 
-    async def snapshot_revert(self, vm_uuid, name):
-        await self._enter("snapshot_revert", vm_uuid, name)
-        s = next((x for x in self.snapshots.get(vm_uuid, []) if x["name"] == name), None)
-        if s is None:
-            raise BackendError("snapshot not found")
-        if s.get("vm") is not None:
-            self.domains[vm_uuid] = copy.deepcopy(s["vm"])
-        else:                                    # a REDEFINED snapshot: the definition travels in its XML
-            dom = ET.fromstring(s["xml"]).find("domain")
-            self.domains[vm_uuid]["xml"] = ET.tostring(dom, encoding="unicode")
-            self.domains[vm_uuid]["state"] = s.get("state", "shutoff")
+    def _write_tags(self, path, tags) -> None:
+        blob = b"PCSNAP" + json.dumps(tags).encode()
+        assert len(blob) <= self.TAG_LEN
+        size = os.path.getsize(path)
+        with open(path, "r+b") as f:
+            if size < self.TAG_AT + self.TAG_LEN:
+                f.truncate(self.TAG_AT + self.TAG_LEN)
+            f.seek(self.TAG_AT)
+            f.write(blob.ljust(self.TAG_LEN, b"\0"))
 
-    async def snapshot_delete(self, vm_uuid, name):
-        await self._enter("snapshot_delete", vm_uuid, name)
-        lst = self.snapshots.get(vm_uuid, [])
-        if not any(x["name"] == name for x in lst):
-            raise BackendError("snapshot not found")
-        self.snapshots[vm_uuid] = [x for x in lst if x["name"] != name]
+    def _require_qcow2(self, path):
+        with open(path, "rb") as f:
+            if f.read(4) != b"QFI\xfb":
+                raise BackendError(f"qemu-img: Could not open '{path}': not a qcow2 image")
+
+    async def img_snapshot_create(self, path, name):
+        await self._enter("img_snapshot_create", path, name)
+        self._require_qcow2(path)
+        tags = self._tags(path)
+        tags.append(name)                        # like qemu-img: a repeated tag is a SECOND snapshot, not an error
+        self._write_tags(path, tags)
+        with open(path, "rb") as f:
+            data = f.read()
+        self.img_data.setdefault(path, []).append((name, data[:self.TAG_AT] + data[self.TAG_AT + self.TAG_LEN:]))
+
+    async def img_snapshot_apply(self, path, name):
+        await self._enter("img_snapshot_apply", path, name)
+        if name not in self._tags(path):
+            raise BackendError(f"qemu-img: Could not apply snapshot '{name}': snapshot not found")
+        saved = next((d for (n, d) in self.img_data.get(path, []) if n == name), None)
+        if saved is not None:
+            tags = self._tags(path)
+            with open(path, "wb") as f:
+                f.write(saved[:self.TAG_AT] + b"\0" * self.TAG_LEN + saved[self.TAG_AT:])
+            self._write_tags(path, tags)
+
+    async def img_snapshot_delete(self, path, name):
+        await self._enter("img_snapshot_delete", path, name)
+        tags = self._tags(path)
+        if name not in tags:
+            raise BackendError(f"qemu-img: Could not delete snapshot '{name}': snapshot not found")
+        tags.remove(name)
+        self._write_tags(path, tags)
 
     # ---- phase 3 (cold-migration primitives; tests/vmhost_migration_fake.py adds hooks on top)
     async def dumpxml_inactive(self, vm_uuid):
@@ -230,5 +247,5 @@ class FakeBackend:
             hdr = f.read(16)
         if hdr[:4] == b"QFI\xfb":
             return {"format": "qcow2", "backing": "backing" if int.from_bytes(hdr[8:16], "big") else "",
-                    "data_file": "", "virtual_size": 0}
-        return {"format": "raw", "backing": "", "data_file": "", "virtual_size": 0}
+                    "data_file": "", "virtual_size": 0, "snapshots": self._tags(path)}
+        return {"format": "raw", "backing": "", "data_file": "", "virtual_size": 0, "snapshots": []}

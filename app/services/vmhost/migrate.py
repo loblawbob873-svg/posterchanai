@@ -62,7 +62,7 @@ from app.services.nostr import event as nostr_event
 
 from . import domainxml, kinds
 from .backend import BackendError
-from .storage import PathEscape, valid_uuid
+from .storage import SNAPSHOT_NVRAM_FILE, PathEscape, valid_uuid
 
 logger = logging.getLogger(__name__)
 
@@ -516,7 +516,8 @@ def clean_incoming_meta(meta_xml, *, cfg, assign_allow=None) -> domainxml.VmMeta
                             guest=m.guest if m.guest in ("linux", "windows") else "linux",
                             firmware=m.firmware if m.firmware in ("efi", "bios") else "efi",
                             disk_gib=max(0, min(int(m.disk_gib or 0), cfg.max_disk_gib * 32)), iso="",
-                            assigned=assigned, labels=labels[:MAX_LABELS])
+                            assigned=assigned, labels=labels[:MAX_LABELS],
+                            snapshots=[x for x in (domainxml.clean_snapshot_record(sn) for sn in m.snapshots) if x])
 
 
 def build_incoming_domain(plan: dict, vm_dir: Path, meta: domainxml.VmMeta, cfg, formats: dict,
@@ -533,8 +534,13 @@ def build_incoming_domain(plan: dict, vm_dir: Path, meta: domainxml.VmMeta, cfg,
     root = ET.fromstring(domainxml.build_domain_xml(spec))
     if plan["chipset"] == "pc":
         root.find("os/type").set("machine", "pc")
-    # No nvram file travelled (`nvram` False): the path still points into vm_dir, and libvirt creates it from
-    # this host's own firmware template on first start.
+    # No nvram file travelled (`nvram` False): the path still points into vm_dir, and the target seeds it from its
+    # own firmware template (VmHostService._ensure_nvram). One that did travel carries its PROBED format, which is what
+    # makes libvirt's auto-selection pick a firmware that can read it (qcow2 4M vs raw 2M are not interchangeable).
+    if nvram and formats.get("nvram.fd") in ("raw", "qcow2"):
+        nv = root.find("os/nvram")
+        if nv is not None:
+            nv.set("format", formats["nvram.fd"])
     dev = root.find("devices")
     for el in list(dev.findall("disk")) + list(dev.findall("interface")) + list(dev.findall("tpm")):
         dev.remove(el)
@@ -998,7 +1004,7 @@ class Migrator:
         xml = await self.backend.dumpxml_inactive(d.uuid)
         info = inspect_domain_xml(xml)
         self._refusals(info)
-        files = await asyncio.to_thread(self._collect_files, d.uuid, info)
+        files = await asyncio.to_thread(self._collect_files, d.uuid, info, d.meta)
         return d, peer, info, files, authz
 
     @staticmethod
@@ -1017,7 +1023,7 @@ class Migrator:
             if dk["backing"]:
                 raise MigrationError("unsupported", "a disk with a backing chain cannot be migrated")
 
-    def _collect_files(self, vm_uuid: str, info: dict) -> list:
+    def _collect_files(self, vm_uuid: str, info: dict, meta=None) -> list:
         vm_dir = self.storage.vm_dir(vm_uuid)
         real = vm_dir.resolve()
         files, seen = [], set()
@@ -1049,6 +1055,10 @@ class Migrator:
             if dk["device"] != "cdrom":
                 add(dk["source"], "disk", True)
         add(info["nvram"], "nvram", False)
+        # Offline snapshots: their disk halves are inside the qcow2 files above; the variable-store halves are these.
+        for sn in (meta.snapshots if meta is not None else []):
+            if sn.get("nvram"):
+                add(str(self.storage.snapshot_nvram_path(vm_uuid, sn["name"])), "nvram-snapshot", True)
         if not files:
             raise MigrationError("unsupported", "this VM has no disks to migrate")
         return files
@@ -1322,7 +1332,7 @@ class Migrator:
         info = inspect_domain_xml(xml)
         try:
             self._refusals(info)
-            files = await asyncio.to_thread(self._collect_files, d.uuid, info)
+            files = await asyncio.to_thread(self._collect_files, d.uuid, info, d.meta)
         except MigrationError as e:
             raise MigrationAbort(e.message)
         vm_dir = self.storage.vm_dir(d.uuid)
@@ -1854,9 +1864,12 @@ class Migrator:
             raise MigrationError("conflict", "a VM with this id already exists on the target host")
         if any(d.name == name for d in await self.backend.list_domains()):
             raise MigrationError("conflict", f"a VM named {name} already exists on the target host")
-        loader = str(vm.get("loader") or "")
-        if loader and not vm.get("firmware_auto") and not os.path.exists(loader):
-            raise MigrationError("unsupported", f"the target host has no firmware at {loader}")
+        # The source's `loader` is NOT checked against this host's filesystem. LIVE (libvirt 12): `dumpxml --migratable`
+        # spells out the firmware auto-selection resolved on the SOURCE (`/usr/share/edk2/OvmfX64/OVMF_CODE_4M.qcow2`,
+        # no `firmware='efi'`), so a Debian target (/usr/share/OVMF) refused every EFI VM — for a path it never uses:
+        # the rebuilt definition asks for `firmware="efi"` and this host's own libvirt picks its own firmware, matched
+        # to the transferred varstore's probed format. A host with no EFI firmware at all fails the define, before
+        # the commit point.
 
         def writable():
             inc = self.storage.root / ".incoming"
@@ -2021,7 +2034,9 @@ class Migrator:
             try:
                 ok = (isinstance(f, dict) and f.get("i") == i and f.get("name") not in names
                       and ((f.get("role") == "disk" and _DISK_FILE_RE.match(str(f.get("name", ""))))
-                           or (f.get("role") == "nvram" and f.get("name") == "nvram.fd"))
+                           or (f.get("role") == "nvram" and f.get("name") == "nvram.fd")
+                           or (f.get("role") == "nvram-snapshot"
+                               and SNAPSHOT_NVRAM_FILE.match(str(f.get("name", "")))))
                       and re.fullmatch(r"[0-9a-f]{64}", str(f.get("sha256", ""))) is not None
                       and not isinstance(f.get("size"), bool) and int(f.get("size", -1)) >= 0)
             except (TypeError, ValueError):
@@ -2122,7 +2137,9 @@ class Migrator:
                 await asyncio.to_thread(part.unlink)
                 raise MigrationAbort(f"checksum mismatch for {name} — the copy is not what the source exported")
             fmt = None
-            if f.get("role") == "disk":
+            if f.get("role") in ("disk", "nvram", "nvram-snapshot"):
+                # The varstore too: libvirt 12 runs qcow2 varstores, and a qcow2 whose backing file is a host path is
+                # the same read-through view of that file as a hostile disk.
                 fmt = await self._probe_disk(part, name)
             await asyncio.to_thread(os.replace, part, final)
             done_before += size
@@ -2179,6 +2196,9 @@ class Migrator:
             if dk["name"] not in formats:        # a journal from before the probe existed: ask now, never assume
                 formats[dk["name"]] = await self._probe_disk(vm_dir / dk["name"], dk["name"])
         has_nvram = any(f.get("role") == "nvram" for f in files)
+        if has_nvram and "nvram.fd" not in formats:
+            formats["nvram.fd"] = await self._probe_disk(vm_dir / "nvram.fd", "nvram.fd")
+        meta.snapshots = await self._carried_snapshots(meta.snapshots, plan, files, vm_dir)
         xml = build_incoming_domain(plan, vm_dir, meta, cfg, formats, has_nvram)
         uuid = rec["vm"]
         existing = await self.backend.get(uuid)
@@ -2194,6 +2214,31 @@ class Migrator:
         for s in snaps:
             await self.backend.snapshot_redefine(uuid, build_incoming_snapshot(s, snap_domain), str(vm_dir),
                                                  current=s["current"])
+
+    async def _carried_snapshots(self, records: list, plan: dict, files: list, vm_dir: Path) -> list:
+        """TARGET: keep only the offline-snapshot records whose data really arrived — every disk they name is one of
+        the rebuilt disks and holds exactly one tag of that name (asked of qemu-img on the placed file), and the
+        variable-store copy is in the verified manifest. A record the bytes do not back is dropped, never trusted: a
+        revert to it would restore nothing, or something else."""
+        names = {f["name"] for f in files}
+        by_target = {dk["target"]: dk["name"] for dk in plan["disks"]}
+        tags: dict = {}
+        kept = []
+        for sn in records:
+            ok = sorted(sn["disks"]) == sorted(by_target) and (
+                not sn["nvram"] or f"snap-{sn['name']}.nvram.fd" in names)
+            for t in sn["disks"] if ok else []:
+                if t not in tags:
+                    try:
+                        tags[t] = (await self.backend.img_info(str(vm_dir / by_target[t]))).get("snapshots") or []
+                    except BackendError:
+                        tags[t] = []
+                ok = ok and tags[t].count(sn["name"]) == 1
+            if ok:
+                kept.append(sn)
+            else:
+                logger.warning("[vmhost] incoming snapshot %r is not backed by the transferred files — dropped", sn["name"])
+        return kept
 
     async def _define_from_manifest(self, manifest: dict, vm_dir: Path, migration: dict) -> None:
         """SOURCE only (reclaim): its OWN export, read back through the journaled checksum."""
@@ -2222,10 +2267,11 @@ class Migrator:
         def place():
             if vm_dir.exists() and not rec.get("dir_created"):
                 raise MigrationAbort("the VM directory already exists on the target host")
-            vm_dir.mkdir(mode=0o750, exist_ok=True)
+            self.storage.make_vm_dir(uuid, exist_ok=True)          # traversable by qemu (see Storage.make_vm_dir)
             for f in manifest["files"]:
                 s, t = inc / f["name"], vm_dir / f["name"]
                 if s.exists():
+                    os.chmod(s, 0o600)
                     os.replace(s, t)
                 elif not t.exists():
                     raise MigrationAbort(f"{f['name']} went missing before it was placed")
@@ -2234,6 +2280,7 @@ class Migrator:
             await self._save(rec)
         await asyncio.to_thread(place)
         await self._define_incoming(rec, manifest, vm_dir, {"id": mig, "state": "incoming", "peer": rec["source"]})
+        await self.svc._ensure_nvram(uuid)       # no varstore travelled: seed this host's own, as the app
         d = await self.backend.get(uuid)
         if d is not None:
             self.svc._set_index(d)

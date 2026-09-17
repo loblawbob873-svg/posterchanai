@@ -418,12 +418,15 @@ def test_virsh_parsers_read_real_output():
         {"cores": 16, "ram_total_mib": 64000}
 
 
-def test_virsh_argv_is_strict_and_never_a_shell():
+def test_virsh_argv_is_strict_and_never_a_shell(tmp_path):
     from app.services.vmhost import backend as b
     seen = []
+    disk = str(tmp_path / "disk-vda.qcow2")
 
     async def runner(argv, timeout, stdin=None):
         seen.append(argv)
+        if argv[0] == "qemu-img":
+            open(argv[-2], "wb").close()                  # a real qemu-img leaves the file behind
         if argv[3] == "dominfo":
             return 0, "Name: x\nUUID: %s\nState: shut off\nCPU(s): 1\nMax memory: 1048576 KiB\n" % U1, ""
         if argv[3] == "metadata" and "--set" not in argv:
@@ -436,7 +439,7 @@ def test_virsh_argv_is_strict_and_never_a_shell():
     async def go():
         await v.start(U1)
         await v.set_metadata(U1, domainxml.VmMeta(owner=DB_ADMIN, assigned=[ASSIGNEE]), live=True)
-        await v.img_create("/srv/vms/x/disk-vda.qcow2", 20)
+        await v.img_create(disk, 20)
         await v.set_vnc_password(U1, "abcd1234", 60)
         return await v.get(U1)
     d = run(go())
@@ -445,7 +448,7 @@ def test_virsh_argv_is_strict_and_never_a_shell():
     meta_set = seen[1]
     assert meta_set[:5] == ["virsh", "--connect", "qemu:///system", "metadata", U1]
     assert "--config" in meta_set and "--live" in meta_set and domainxml.PC_NS in meta_set
-    assert ["qemu-img", "create", "-f", "qcow2", "--", "/srv/vms/x/disk-vda.qcow2", "20G"] in seen
+    assert ["qemu-img", "create", "-f", "qcow2", "--", disk, "20G"] in seen
     assert d.meta.owner == DB_ADMIN and d.state == "shutoff" and d.ram_mib == 1024
     with pytest.raises(BackendError):
         run(v.set_vnc_password(U1, "bad pw; x", 60))

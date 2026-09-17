@@ -1,0 +1,50 @@
+{
+    "children": [
+        {
+            "name": "file",
+            "info": {
+                "children": [
+                ],
+                "virtual-size": 524288,
+                "filename": "/var/lib/posterchan/vms-probe/00000000-0000-4000-8000-000000000002/disk-vda.qcow2",
+                "format": "file",
+                "actual-size": 339968,
+                "format-specific": {
+                    "type": "file",
+                    "data": {
+                    }
+                },
+                "dirty-flag": false
+            }
+        }
+    ],
+    "snapshots": [
+        {
+            "icount": 0,
+            "vm-clock-nsec": 0,
+            "name": "clean",
+            "date-sec": 1789610264,
+            "date-nsec": 468495000,
+            "vm-clock-sec": 0,
+            "id": "1",
+            "vm-state-size": 0
+        }
+    ],
+    "virtual-size": 2147483648,
+    "filename": "/var/lib/posterchan/vms-probe/00000000-0000-4000-8000-000000000002/disk-vda.qcow2",
+    "cluster-size": 65536,
+    "format": "qcow2",
+    "actual-size": 339968,
+    "format-specific": {
+        "type": "qcow2",
+        "data": {
+            "compat": "1.1",
+            "compression-type": "zlib",
+            "lazy-refcounts": false,
+            "refcount-bits": 16,
+            "corrupt": false,
+            "extended-l2": false
+        }
+    },
+    "dirty-flag": false
+}

@@ -12,7 +12,9 @@ NIP-44-encrypted to the host node's key. The only thing that uses the node's HTT
 **Phase 1**: host info, VM list/get, power, create from a library ISO, delete, assign/unassign,
 console. **Phase 2**: hardware settings, snapshots, the ISO library (download by URL, upload), access
 management from the client, session keys for remote signers, host discovery, and "This computer" on
-the desktop app. **Phase 3**: cold migration between hosts (§6).
+the desktop app. **Phase 3**: cold migration between hosts (§6). **Phase 4**: the first live run against
+real libvirt (§7, `scripts/vmhost_live_probe.py`), offline snapshots, `install.sh --vmhost`, the desktop
+shortcut opening this screen, per-op audit logging.
 
 ---
 
@@ -55,8 +57,9 @@ sudo chmod 2750 /var/lib/posterchan/vms
 Layout, all built by the server from ids — **clients never send a path**:
 
 ```
-/var/lib/posterchan/vms/<vm-uuid>/disk-vda.qcow2   the disk
-/var/lib/posterchan/vms/<vm-uuid>/nvram.fd         EFI variables
+/var/lib/posterchan/vms/<vm-uuid>/disk-vda.qcow2   the disk (0600)
+/var/lib/posterchan/vms/<vm-uuid>/nvram.fd         EFI variables (0600, created by the APP from libvirt's template)
+/var/lib/posterchan/vms/<vm-uuid>/snap-<name>.nvram.fd   the EFI variables an offline snapshot saved
 /var/lib/posterchan/vms/<vm-uuid>/domain.xml       the definition handed to libvirt (recovery copy)
 /var/lib/posterchan/vms/isos/*.iso                 the ISO library (copy installers here)
 /var/lib/posterchan/vms/<vm-uuid>/disk-vdb.qcow2   a disk added later in VM Settings (vdb…vdz; sdb… on Windows)
@@ -65,9 +68,21 @@ Layout, all built by the server from ids — **clients never send a path**:
 ```
 
 An ISO id is a bare file name, and its RESOLVED path must still be a regular file inside `isos/` —
-a symlink pointing out of the library is refused, not followed. libvirt's `qemu` user needs to read
-the ISOs and write the VM directories (on Debian with AppArmor/`dynamic_ownership` this is automatic;
-otherwise make the directory group-accessible to `libvirt-qemu`/`qemu`).
+a symlink pointing out of the library is refused, not followed.
+
+**Two Unix users touch these files, and that shaped the modes** (both found on the first live run, §7).
+libvirt runs QEMU as `qemu` (Debian: `libvirt-qemu`) and, with its default `dynamic_ownership`, chowns a
+DISK to that user while the guest runs and gives it back on stop — but never the directories QEMU walks
+through. So the storage root and every VM directory are **0751** (traversable, not listable), the ISO
+library **0755**, disks and variable stores **0600**, `.state` 0700. A VM directory created 0750 made every
+VM fail its first start with `Cannot access storage file … (as uid:77, gid:77): Permission denied`.
+
+**EFI variable store.** libvirt ≥ 8 writes the firmware template it auto-selected into the definition
+(`<nvram template=… format=…>`) and, left alone, creates `nvram.fd` at the FIRST START — as `qemu:qemu 0600`,
+for good: the app could never read it again, so no migration (hashing it raised PermissionError) and no
+snapshot could include it. The host now copies that template itself right after defining the VM, before
+any start; libvirt then chowns the app's file to qemu while the guest runs and restores it on every stop.
+A VM created before this fix has a qemu-owned `nvram.fd`: `sudo chown <app user> <dir>/nvram.fd` once.
 
 ### Turn it on
 
@@ -175,8 +190,8 @@ Phase 2 ops (all admin except the session ops):
 |---|---|---|
 | `vm.update` | `vm`, any of `vcpus`, `ram_mib`, `autostart`, `boot: disk/cdrom`, `add_disk_gib`, `add_nic: true`, `media: {iso} or "eject"`, `input: tablet/mouse` | VM must be **shut off**; validated + capacity-checked before any write; ONE redefine; read back and compared — a field the host did not keep is `backend_error`. A cdrom's source is REPLACED (`change-media --update` semantics), never a second one added. A failed define removes the disk it just created. Result carries `vm.hardware`. |
 | `vm.get` | `vm` | admins also get `hardware {boot, input, nics, disks, media, cdrom}` |
-| `vm.snapshot.list/create/delete` | `vm`, `name` (≤48, `[A-Za-z0-9_.-]`), `description?` | libvirt internal snapshots, ≤32 per VM. Create refuses an **EFI VM** whose variables are a raw pflash file (`unsupported` — libvirt cannot snapshot it; every VM this host creates is EFI) and a host without ~1 GiB (+ the VM's RAM when it runs) free above the reserve (`insufficient_capacity`) |
-| `vm.snapshot.revert` | `vm`, `name`, `confirm: true` | without `confirm` → `bad_request`; closes consoles; **re-applies the CURRENT `pc:vm` metadata** afterwards — a revert restores the whole captured definition, and would otherwise hand an unassigned user the VM back |
+| `vm.snapshot.list/create/delete` | `vm`, `name` (≤48, `[A-Za-z0-9_.-]`), `description?` | **offline**, ≤32 per VM (§5a). create/delete need the VM **shut off** (`conflict` otherwise); list works any time and returns each snapshot's `state` checked against the disks: `ok`, `disks_changed`, `incomplete`, or `orphan` (a tag no record names — a create that died half-way; delete removes it). Refused: a raw disk, a variable store the app cannot read (`unsupported`), < 1 GiB free above the reserve (`insufficient_capacity`) |
+| `vm.snapshot.revert` | `vm`, `name`, `confirm: true` | shut off; without `confirm` → `bad_request`; only an `ok` snapshot; closes consoles. Restores the disks and the EFI variables only — the definition (hardware, `pc:vm` access, a migration tag) stays CURRENT |
 | `iso.list` | — | now also `jobs` (downloads, with state) and `fetch_enabled` |
 | `iso.fetch` | `url`, `name?` | answers AT ONCE with `{job}` — the download is a background job; 7310 progress (tagged to this request) every 2 s and a final `done`/`failed` |
 | `iso.fetch.status` | `job?` | `{job}` or `{jobs}`: `state` running/done/failed/cancelled, `bytes`, `total`, `iso`, `error`; kept an hour |
@@ -475,11 +490,11 @@ the side effect it announces.
 
 | Step | Source | Target |
 |---|---|---|
-| PLAN | `vm.migrate`: requester is admin here; target is a peer; VM is ours, not migrating, no TPM | `peer.migrate.precheck`: authorization valid and signer is admin HERE (its assigned list kept); free disk ≥ 1.1× the files + `vmhost_reserve_disk_gib` + every other reservation; no uuid/name collision; libvirt up; firmware present (when not auto-selected); storage writable → `prechecked` |
+| PLAN | `vm.migrate`: requester is admin here; target is a peer; VM is ours, not migrating, no TPM | `peer.migrate.precheck`: authorization valid and signer is admin HERE (its assigned list kept); free disk ≥ 1.1× the files + `vmhost_reserve_disk_gib` + every other reservation; no uuid/name collision; libvirt up; storage writable (the source's firmware PATH is not checked: `--migratable` XML spells out the source distro's auto-selected loader, and the rebuilt definition asks this host's libvirt for `firmware="efi"` instead) → `prechecked` |
 | QUIESCE | `quiescing`: `pc:migration state=outgoing` on the VM (start refused), autostart off, consoles closed, ACPI shutdown for `vmhost_shutdown_timeout_sec`; if it does not stop: abort, or `virsh destroy` when **force_shutdown** | |
 | EXPORT | `exporting`: inactive `--migratable` XML, `pc:vm` metadata, each snapshot's XML, files + sha256 (in a thread); the manifest is written and its sha256 signed by the source key | |
-| TRANSFER | `transferring`: `peer.migrate.begin {manifest_sha256, manifest_sig}`; records the ranges it serves | `receiving`: fetches the manifest (≤ 8 MiB; hash, signature, ids, name, file names `disk-(vd\|sd)X.qcow2`/`nvram.fd`, total ≤ the precheck's, the definition VALIDATED), pulls every file with `Range` into `.incoming/<id>/<name>.part`, resuming from the `.part` size, never writing past the declared size |
-| VERIFY + DEFINE | | each file hashed (mismatch → abort) and each disk PROBED (`qemu-img info`); `defining`: move into `<storage>/<uuid>/`, define the REBUILT domain with `pc:migration state=incoming` (start refused), re-create snapshot metadata parents-first → `defined` |
+| TRANSFER | `transferring`: `peer.migrate.begin {manifest_sha256, manifest_sig}`; records the ranges it serves | `receiving`: fetches the manifest (≤ 8 MiB; hash, signature, ids, name, file names `disk-(vd\|sd)X.qcow2`/`nvram.fd`/`snap-<name>.nvram.fd`, total ≤ the precheck's, the definition VALIDATED), pulls every file with `Range` into `.incoming/<id>/<name>.part`, resuming from the `.part` size, never writing past the declared size |
+| VERIFY + DEFINE | | each file hashed (mismatch → abort) and each disk AND variable store PROBED (`qemu-img info`: a qcow2 varstore with a backing file is refused like a disk); `defining`: move into `<storage>/<uuid>/` (0751, files 0600), define the REBUILT domain with `pc:migration state=incoming` (start refused) and `<nvram format>` = the probed format (so this host's libvirt picks a firmware that can read it), keep only the offline-snapshot records the transferred bytes back (every disk holds the tag once, the variable-store copy arrived), re-create any libvirt snapshot metadata parents-first → `defined` |
 | PROOF | `peer.migrate.challenge` (only once every byte was served): journals a nonce + ranges, closes the route | answers SHA-256(nonce ‖ bytes) of its placed copy, then `peer.migrate.commit {proofs}` |
 | HANDOFF | proofs checked against its own files (wrong → abort); `handed_off` journaled FIRST, then undefine (`--snapshots-metadata --keep-nvram`), confirmed gone, and the directory moved to `.retained/<uuid>-<ts>/` → answer | on the answer: `committed`, clear the marker, restore autostart, start if **start_after** → `done`, `peer.migrate.ack` |
 | DONE | ack (only once the undefine is confirmed) → `done`; `.retained` reaped `vmhost_migration_keep_source_hours` after the ACK, never before, never when 0 | |
@@ -563,10 +578,10 @@ confirm}`, `vm.retained.list`, `vm.retained.delete {name, confirm}`. Peer:
 
 TPM VMs, live migration, sparse-file preservation (qcow2 is copied as allocated bytes), external
 snapshots and backing chains, migrating between hosts that cannot reach each other's HTTPS, and a
-bundled progress UI outside the Virtual Machines screen. VirshBackend's migration primitives
-(`dumpxml --inactive --migratable`, `snapshot-list --topological`, `snapshot-dumpxml`,
-`snapshot-create --redefine [--current]`, `undefine --snapshots-metadata`) are argv-only and have not
-yet run against a real libvirt.
+bundled progress UI outside the Virtual Machines screen. The migration primitives have run against real
+libvirt 12 on one host (§7: export, `undefine --snapshots-metadata --keep-nvram`, and the target's rebuild
+defined in a second storage root, booted, console authenticated, offline snapshots carried and reverted);
+a real TWO-host migration still needs a second KVM-capable host.
 
 ## 5. Code map and tests
 
@@ -612,8 +627,10 @@ per-migration throttle, retained copies, cancel after release), `test_vmhost_iso
 rebinding, env proxy, every blocked range — through the real httpx transport), `test_vmhost_iso_limits.py`
 (background jobs, concurrency, reservations incl. thin disks, stale parts, iso.delete race, parsed nginx),
 `test_vmhost_sessions_bounded.py` (10k opens: bounded file, no loop stall), `test_vmhost_reload.py` (old
-handlers cancelled by stop, one migrator per journal), `test_vmhost_snapshot_hardening.py` (revert keeps the
-access list, EFI refused, disk check), `test_vmhost_backend_migration.py` (the REAL VirshBackend has the
+handlers cancelled by stop, one migrator per journal), `test_vmhost_snapshots_offline.py` (offline
+snapshots: round trip restores disk bytes and variables, shut-off rule, orphan tags, rollback half-way,
+revert keeps CURRENT access and hardware, a disk added later, migration carries them and drops records the
+bytes do not back, a hostile variable-store copy refused), `test_vmhost_backend_migration.py` (the REAL VirshBackend has the
 migration primitives — a merge had left them unreachable — and their argv).
 
 Migration: `tests/test_vmhost_migration.py` (two hosts with `tests/vmhost_migration_fake.py`, a fake
@@ -630,6 +647,11 @@ not, and not at all while hosting is off; `tests/test_vmhost_integration.py` —
 bucket and busy slots under a user flood; `vm.update` and a migration's rewritten definition both come
 out with a VNC `passwd`; update/snapshots refuse a VM the migration journal holds.
 
+Live (phase 4): `scripts/vmhost_live_probe.py` (§7) + `scripts/vmhost_rfb.py` (RFB/VNC-auth client, DES
+cross-checked against `cryptography`); `tests/test_vmhost_real_captures.py` runs every parser on what the
+live host printed (`tests/fixtures/vmhost_real/`, with `index.json` holding argv/rc/stderr);
+`tests/test_vmhost_live_findings.py` — one regression test per live bug, each shown failing first.
+
 | Piece (phase 2) | Where |
 |---|---|
 | hardware edits (XML tree) | `domainxml.py` (`read_hardware`, `set_*`, `add_*`, `secure_vnc`) |
@@ -637,3 +659,60 @@ out with a VNC `passwd`; update/snapshots refuse a VM the migration journal hold
 | ISO fetch/upload/delete | `app/services/vmhost/isolib.py`; PUT route in `app/routers/vmhost.py` |
 | host.access | `app/services/vmhost/access.py` |
 | session keys | `app/services/vmhost/sessions.py`; resolution in `transport.py` |
+
+## 5a. Offline snapshots
+
+A snapshot is taken of a **shut-off** VM: `qemu-img snapshot -c <name> -- <disk>` on every qcow2 disk, a copy
+of `nvram.fd` to `snap-<name>.nvram.fd` (0600, written atomically), and a record in the VM's `pc:vm`
+metadata — `<pc:snapshot name created disks="vda,vdb" nvram="1">description</pc:snapshot>`. Revert is
+`qemu-img snapshot -a` on the same disks and the copy put back; delete is `-d` (every copy of a repeated
+tag) plus the copy removed and the record dropped. A create that fails half-way deletes the tags it made.
+
+**Why not libvirt's internal snapshots.** Measured on the live host, whether libvirt accepts one for an EFI
+guest depends on the distro's firmware descriptors: libvirt 12 with Gentoo's qcow2 varstore took an internal
+snapshot of a RUNNING EFI VM, while a raw OVMF varstore (Debian's default) is refused. One button that works
+on one host and fails on the next — and a migration that has to carry two formats — was the worse design.
+The offline path behaves the same on every host, only files travel, and a revert never touches the
+definition, so assignments, hardware and a migration tag stay current by construction (the service still
+compares the metadata after a revert and re-applies the current copy if anything changed it).
+
+What a snapshot does NOT capture: hardware settings (vCPUs, memory, NICs) and anything a running guest had
+in memory. A snapshot taken before a disk was added cannot be reverted (`disks_changed`) — it can only be
+deleted. qemu-img allows two snapshots with the same tag (measured: `-c s1` twice made IDs 1 and 3), so a
+create refuses a name any disk already holds, and list shows such leftovers as `orphan`.
+
+## 7. The live probe (phase 4)
+
+`scripts/vmhost_live_probe.py --storage <probe-only dir> [--capture tests/fixtures/vmhost_real]` runs the
+shipped `VirshBackend` and `VmHostService` against the host's real libvirt, plus the real `/ws/vmconsole`
+route on an in-process uvicorn. Every mutating virsh verb goes through one guard that refuses a uuid the probe
+did not create and a definition not named `pcprobe-*`; everything it made is removed in a `finally` and
+checked for leftovers. Exit 0 = every step passed, 1 = a check failed, 2 = could not run.
+
+Steps: (1) host stats vs `/proc`; (2) create EFI + BIOS from generated XML; (3) start, VNC on 127.0.0.1 with
+a `passwd`; (4) a console ticket's password opens a raw RFB connection (VNC auth offered, never None), a wrong
+one fails, an expired one fails, a QMP error reply (virsh exit 0) raises, and ticket → `/ws/vmconsole` → RFB
+authenticates through the real route while a reused ticket is refused; (5) reboot/shutdown/destroy; (6)
+`vm.update` of every field incl. a disk and an ISO (generated in Python when no xorriso/genisoimage) read
+back, and the VM starts with them; (7) offline snapshots — running refused, revert restores disk bytes
+(checked with `qemu-io`) and variables; (8) `qemu-img info` on qcow2/raw/backing/data-file images; (9) the
+migration primitives, with the target's REBUILT definition defined in a second storage root, booted and
+console-authenticated, offline snapshots carried; (10) delete with disks, no leftovers.
+
+**First run, nas.lan (libvirt 12.0.0, QEMU 10.2.3), 2026-09-16 — what it found:**
+
+1. Every VM failed its first start: VM directories were 0750, QEMU runs as another user (§1 Storage).
+2. `nvram.fd` was created by libvirt as `qemu:qemu 0600` and never returned — migration export raised
+   PermissionError hashing it. The app now seeds it from libvirt's template.
+3. `vm.delete` failed on a VM with snapshots: `undefine` needs `--snapshots-metadata`.
+4. `dumpxml --migratable` drops `firmware='efi'` and spells out the SOURCE's loader path, so every target
+   without that exact file (every Debian host) refused the precheck. The check is gone; the rebuild
+   auto-selects this host's firmware.
+5. The target never probed `nvram.fd` — with libvirt 12 running qcow2 varstores, a hostile qcow2 "varstore"
+   naming a backing file was the same read-through hole as a hostile disk. Probed now, and its format pins
+   `<nvram format>` so the target picks a matching firmware (raw 2M and qcow2 4M are not interchangeable).
+6. libvirt 12 + qcow2 varstore snapshots a RUNNING EFI VM, contradicting the "EFI is refused" rule — the
+   reason snapshots are offline now (§5a).
+7. ACPI shutdown is ignored while a guest sits in firmware with no OS (expected; Force off is the fallback).
+
+After the fixes every step passes. Still owed: a real two-host migration (server1 has no `/dev/kvm`).

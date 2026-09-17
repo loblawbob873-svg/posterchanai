@@ -1,0 +1,26 @@
+{
+    "children": [
+        {
+            "name": "file",
+            "info": {
+                "children": [
+                ],
+                "virtual-size": 16777216,
+                "filename": "/var/lib/posterchan/vms-probe/pcprobe-img-b0156d/raw.img",
+                "format": "file",
+                "actual-size": 4096,
+                "format-specific": {
+                    "type": "file",
+                    "data": {
+                    }
+                },
+                "dirty-flag": false
+            }
+        }
+    ],
+    "virtual-size": 16777216,
+    "filename": "/var/lib/posterchan/vms-probe/pcprobe-img-b0156d/raw.img",
+    "format": "raw",
+    "actual-size": 4096,
+    "dirty-flag": false
+}

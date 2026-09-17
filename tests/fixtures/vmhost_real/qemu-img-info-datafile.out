@@ -1,0 +1,40 @@
+{
+    "children": [
+        {
+            "name": "file",
+            "info": {
+                "children": [
+                ],
+                "virtual-size": 197120,
+                "filename": "/var/lib/posterchan/vms-probe/pcprobe-img-b0156d/datafile.qcow2",
+                "format": "file",
+                "actual-size": 200704,
+                "format-specific": {
+                    "type": "file",
+                    "data": {
+                    }
+                },
+                "dirty-flag": false
+            }
+        }
+    ],
+    "virtual-size": 16777216,
+    "filename": "/var/lib/posterchan/vms-probe/pcprobe-img-b0156d/datafile.qcow2",
+    "cluster-size": 65536,
+    "format": "qcow2",
+    "actual-size": 200704,
+    "format-specific": {
+        "type": "qcow2",
+        "data": {
+            "compat": "1.1",
+            "compression-type": "zlib",
+            "lazy-refcounts": false,
+            "refcount-bits": 16,
+            "data-file": "/var/lib/posterchan/vms-probe/pcprobe-img-b0156d/datafile.raw",
+            "data-file-raw": false,
+            "corrupt": false,
+            "extended-l2": false
+        }
+    },
+    "dirty-flag": false
+}

@@ -5,7 +5,7 @@ What each block pins:
     by reading the definition back (a Save libvirt accepted but did not keep is an error, not success);
     the cdrom is REPLACED, never given a second source (change-media --update semantics); a failed
     define leaves no orphan disk file.
-  * snapshots — admin-only, revert demands confirm, a migrating VM refuses.
+  * snapshots — admin-only, a migrating VM refuses (the ops: test_vmhost_snapshots_offline.py).
   * ISO fetch — the SSRF guard runs on EVERY hop (a redirect to 169.254.169.254 is refused and never
     requested), the size cap is enforced on the header AND on the stream, nothing half-downloaded stays.
   * ISO upload — the ticket is single use, admin only, size-bound, and re-checks admin at PUT time.
@@ -29,7 +29,7 @@ from app.services.nostr import bip340, nip44, nostr_service
 from app.services.nostr.event import build_event
 from app.services.vmhost import access, domainxml, isolib, sessions, transport
 from app.services.vmhost import service as service_mod
-from app.services.vmhost.backend import BackendError, parse_snapshot_list
+from app.services.vmhost.backend import BackendError
 from app.services.vmhost.config import VmHostConfig
 from app.services.vmhost.service import OPS, VmHostService
 from app.services.vmhost.storage import Storage
@@ -207,23 +207,7 @@ def test_a_user_cannot_run_management_ops(tmp_path, op):
 
 
 # ================================================================================ snapshots
-def test_snapshot_create_list_revert_delete(tmp_path):
-    svc, be, root = make(tmp_path)
-    # A BIOS machine: internal snapshots of an EFI VM are refused (test_vmhost_snapshot_hardening.py).
-    be.add_domain(U1, "alpha", state="shutoff", firmware="bios",
-                  meta=domainxml.VmMeta(owner=ADMIN, created=1, disk_gib=20, firmware="bios", assigned=[USER]))
-    assert c(svc, ADMIN, "vm.snapshot.create", {"vm": U1, "name": "clean"}, "1")["ok"]
-    assert c(svc, ADMIN, "vm.snapshot.create", {"vm": U1, "name": "clean"}, "2")["error"]["code"] == "conflict"
-    assert c(svc, ADMIN, "vm.snapshot.create", {"vm": U1, "name": "bad name"}, "3")["error"]["code"] == "bad_request"
-    lst = c(svc, ADMIN, "vm.snapshot.list", {"vm": U1}, "4")["result"]["snapshots"]
-    assert [s["name"] for s in lst] == ["clean"]
-    assert c(svc, ADMIN, "vm.update", {"vm": U1, "vcpus": 6}, "5")["ok"]
-    no = c(svc, ADMIN, "vm.snapshot.revert", {"vm": U1, "name": "clean"}, "6")
-    assert no["error"]["code"] == "bad_request" and be.domains[U1]["vcpus"] == 6, "revert without confirm"
-    yes = c(svc, ADMIN, "vm.snapshot.revert", {"vm": U1, "name": "clean", "confirm": True}, "7")
-    assert yes["ok"] and yes["result"]["vm"]["vcpus"] == 2
-    assert c(svc, ADMIN, "vm.snapshot.revert", {"vm": U1, "name": "nope", "confirm": True}, "8")["error"]["code"] == "not_found"
-    assert c(svc, ADMIN, "vm.snapshot.delete", {"vm": U1, "name": "clean"}, "9")["result"]["snapshots"] == []
+# The snapshot ops themselves (offline, qemu-img) are covered in test_vmhost_snapshots_offline.py.
 
 
 def test_a_migrating_vm_refuses_snapshots_and_edits(tmp_path, monkeypatch):
@@ -241,34 +225,7 @@ def test_a_migrating_vm_refuses_snapshots_and_edits(tmp_path, monkeypatch):
                      ("vm.update", {"vcpus": 1})):
         res = c(svc, ADMIN, op, {"vm": U1, **args}, op.replace(".", "-"))
         assert res["error"]["code"] == "migrating", (op, res)
-    assert be.snapshots == {}
-
-
-def test_virsh_snapshot_list_parser_reads_real_output():
-    text = (" Name         Creation Time               State\n"
-            "-------------------------------------------------------\n"
-            " clean        2026-09-16 12:00:00 +0000   shutoff\n"
-            " after-apt    2026-09-16 13:10:02 +0000   running\n\n")
-    assert parse_snapshot_list(text) == [
-        {"name": "clean", "created": "2026-09-16 12:00:00 +0000", "state": "shutoff"},
-        {"name": "after-apt", "created": "2026-09-16 13:10:02 +0000", "state": "running"}]
-
-
-def test_virsh_snapshot_argv_is_validated():
-    from app.services.vmhost.backend import VirshBackend
-    seen = []
-
-    async def runner(argv, timeout, stdin=None):
-        seen.append(argv)
-        return 0, "", ""
-    v = VirshBackend("qemu:///system", runner=runner)
-    run(v.snapshot_create(U1, "clean", "desc"))
-    assert seen[-1] == ["virsh", "--connect", "qemu:///system", "snapshot-create-as", U1, "--name", "clean",
-                        "--atomic", "--description", "desc"]
-    run(v.snapshot_revert(U1, "clean"))
-    assert seen[-1][3:] == ["snapshot-revert", U1, "--snapshotname", "clean"]
-    with pytest.raises(BackendError):
-        run(v.snapshot_delete(U1, "--all"))
+    assert not any(call[0].startswith("img_snapshot") for call in be.calls)
 
 
 # ================================================================================ ISO fetch (SSRF)

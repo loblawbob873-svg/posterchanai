@@ -1258,7 +1258,7 @@
       ${v.missing_media ? `<div class="vms-noanswer">Installer media moved or is missing: ${esc(v.missing_media)}. Open Settings to replace or eject it.</div>` : ''}
       ${role === 'admin' && feat.hardware ? `<div class="vms-tools"><button class="btn btn-ghost small" data-act="settings" ${v.state === 'shutoff' ? '' : 'disabled title="Shut it down first"'}>⚙ Settings</button>
         ${feat.local && v.state === 'shutoff' ? `<button class="btn btn-ghost small" data-act="boot-disk">Use installed system</button>` : ''}</div>` : ''}
-      ${role === 'admin' && feat.snapshots ? snapsBlock(pk, uuid) : ''}
+      ${role === 'admin' && feat.snapshots ? snapsBlock(pk, uuid, v) : ''}
       ${role === 'admin' && feat.assign ? `<div class="vms-assign"><div class="vms-sub">Assigned to</div>
         ${(v.assigned || []).map(p => `<div class="vms-assignee"><span>${esc(short(p))}</span><button class="btn small" data-unassign="${esc(p)}">Remove</button></div>`).join('') || '<div class="vms-seen">Nobody — only admins can use it.</div>'}
         <button class="btn btn-ghost small" data-act="assign">+ Assign to an npub</button></div>` : ''}
@@ -1294,15 +1294,22 @@
       </form>`;
   }
 
-  function snapsBlock(pk, uuid){
+  // Snapshots are OFFLINE (the host takes them with qemu-img while the VM is shut off — see docs/VM_HOSTING.md): every
+  // control that changes one is disabled, and says why, while the VM runs. `state` is what the host found on disk:
+  // only an `ok` snapshot can be reverted; `disks_changed`/`incomplete`/`orphan` can only be deleted.
+  const SNAP_STATE = { disks_changed: 'disks changed since — delete only', incomplete: 'incomplete — delete only', orphan: 'leftover data — delete only' };
+  function snapsBlock(pk, uuid, v){
     const k = pk + ':' + uuid;
     const sn = S.snaps[k];
-    const rows = sn && sn.list ? (sn.list.length ? sn.list.map(x => `<div class="vms-snap"><span><b>${esc(x.name)}</b><small class="vms-seen"> ${esc(x.created || '')} · ${esc(x.state || '')}</small></span>
-        <span class="vms-snap-b"><button class="btn small" data-snap-revert="${esc(x.name)}" ${sn.busy ? 'disabled' : ''}>Revert</button><button class="btn small btn-red" data-snap-delete="${esc(x.name)}" ${sn.busy ? 'disabled' : ''}>Delete</button></span></div>`).join('')
+    const off = !v || v.state === 'shutoff';
+    const why = off ? '' : ' title="Shut the VM down first"';
+    const rows = sn && sn.list ? (sn.list.length ? sn.list.map(x => `<div class="vms-snap"><span><b>${esc(x.name)}</b><small class="vms-seen"> ${esc(x.created || '')}${x.description ? ' · ' + esc(x.description) : ''}${SNAP_STATE[x.state] ? ' · ' + esc(SNAP_STATE[x.state]) : ''}</small></span>
+        <span class="vms-snap-b"><button class="btn small" data-snap-revert="${esc(x.name)}" ${sn.busy || !off || (x.state && x.state !== 'ok') ? 'disabled' : ''}${why}>Revert</button><button class="btn small btn-red" data-snap-delete="${esc(x.name)}" ${sn.busy || !off ? 'disabled' : ''}${why}>Delete</button></span></div>`).join('')
         : '<div class="vms-seen">No snapshots yet.</div>')
       : (sn && sn.loading ? '<div class="vms-seen"><span class="spinner spinner-inline"></span>Reading snapshots…</div>' : '');
     return `<div class="vms-snaps"><div class="vms-head"><div class="vms-sub">Snapshots</div><span class="vms-sp"></span>
-        <button class="btn btn-ghost small" data-act="snap-create" ${sn && sn.busy ? 'disabled' : ''}>+ Take snapshot</button></div>
+        <button class="btn btn-ghost small" data-act="snap-create" ${sn && sn.busy || !off ? 'disabled' : ''}${why}>+ Take snapshot</button></div>
+      ${off ? '' : '<div class="vms-seen vms-snap-off">Shut down to take a snapshot — snapshots save the disks and firmware settings of a stopped VM.</div>'}
       ${rows}${sn && sn.err ? `<div class="vms-seen">${esc(sn.err)}</div>` : ''}</div>`;
   }
 

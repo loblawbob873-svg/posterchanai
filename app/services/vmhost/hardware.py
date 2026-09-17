@@ -9,11 +9,10 @@ edited as a tree (domainxml), defined back once, and read back: a Save that libv
 did not change the fields asked for is reported as an error, not as success. A new disk file is created
 first and removed again if the define fails, so a refused Save never leaves an orphan qcow2 behind.
 
-Snapshots are libvirt internal snapshots (`snapshot-create-as --atomic`). An EFI VM whose variables are a raw
-pflash file is refused (`unsupported` — libvirt cannot snapshot it), and so is a snapshot the free disk cannot
-hold. A revert throws away every change since the snapshot, so it demands `confirm: true`, and it re-applies
-the CURRENT `pc:vm` metadata afterwards (the snapshot's copy would roll back assignments); a VM that is being migrated (phase 3 sets
-`migration` on its metadata) refuses all four ops, because a snapshot taken mid-export is a history the
+Snapshots are OFFLINE (see the snapshot section below): only while the VM is shut off, `qemu-img snapshot` on
+every qcow2 disk plus a copy of the EFI variable store, recorded in `pc:vm`. A revert throws away every change since
+the snapshot, so it demands `confirm: true`; it never touches the definition, so the CURRENT assignments stay. A VM
+that is being migrated refuses all four ops (`_migration_guard`), because a snapshot taken mid-export is a history the
 destination never receives.
 """
 from __future__ import annotations
@@ -196,7 +195,16 @@ class HardwareOps:
             logger.debug("[vmhost] hardware read failed for %s: %s", vm_uuid, e)
             return {}
 
-    # ------------------------------------------------------------------------------ snapshots
+    # ------------------------------------------------------------------------------ snapshots (OFFLINE)
+    # A snapshot is taken of a SHUT-OFF VM: `qemu-img snapshot -c` on every qcow2 disk plus a copy of the EFI variable
+    # store (`snap-<name>.nvram.fd`), and a record in the VM's `pc:vm` metadata saying what it is made of. Revert is
+    # `qemu-img snapshot -a` on the same disks plus the variable store copied back. See docs/VM_HOSTING.md §5.
+    #
+    # Why not libvirt's internal snapshots: measured LIVE, whether libvirt accepts one for an EFI guest depends on the
+    # host's firmware descriptors (libvirt 12 with a qcow2 varstore took one of a RUNNING EFI VM; a raw OVMF varstore
+    # is refused) — the same button would work on one host and fail on the next, and a migration would have to carry
+    # two formats. Offline snapshots behave the same on every host, carry nothing but files, and a revert never
+    # touches the domain definition, so assignments, hardware and the migration tag stay CURRENT by construction.
     async def _snap_domain(self, pk, role, args):
         d = await self._domain(pk, role, args)
         self._migration_guard(d)
@@ -210,80 +218,200 @@ class HardwareOps:
             raise _err("bad_request", "a snapshot name is letters, digits, . _ - (at most 48)")
         return n
 
+    async def _snapshot_layout(self, d) -> tuple:
+        """([{target, path}] of the VM's disks, nvram path or "") — every path inside the VM's own directory, every
+        disk qcow2, the variable store readable by the app. Refuses what an offline snapshot cannot cover."""
+        import os
+        from .backend import BackendError
+        if d.meta is None or not self.storage.is_managed_dir(d.uuid):
+            raise _err("unsupported", "this VM was not created by PosterChan — snapshot it with virsh")
+        try:
+            xml = await self.backend.dumpxml(d.uuid, inactive=True)
+            disks = domainxml.file_disks(xml)
+            nv_path, _tmpl, _fmt = domainxml.nvram_seed(xml)
+        except (domainxml.EditError, BackendError) as e:
+            raise _err("backend_error", str(e))
+        vm_dir = self.storage.vm_dir(d.uuid)
+        out = []
+        for dk in disks:
+            p = dk["path"]
+            if dk["type"] != "file" or not p or os.path.dirname(p) != str(vm_dir):
+                raise _err("unsupported", f"disk {dk['target']} is not a file in the VM's own directory")
+            if dk["format"] != "qcow2":
+                raise _err("unsupported", f"disk {dk['target']} is {dk['format'] or 'not qcow2'} — only qcow2 disks can "
+                                          "hold a snapshot")
+            out.append({"target": dk["target"], "path": p})
+        if not out:
+            raise _err("unsupported", "this VM has no disks to snapshot")
+        if nv_path:
+            if os.path.dirname(nv_path) != str(vm_dir):
+                raise _err("unsupported", "the VM's EFI variable store is not in its own directory")
+            ok = await asyncio.to_thread(lambda: os.path.isfile(nv_path) and os.access(nv_path, os.R_OK | os.W_OK))
+            if not ok and await asyncio.to_thread(os.path.lexists, nv_path):
+                raise _err("unsupported", "the VM's EFI variable store is not readable by this app (libvirt created it "
+                                          "as the qemu user) — see docs/VM_HOSTING.md, \"EFI variable store\"")
+            if not ok:
+                nv_path = ""                      # never started, nothing seeded: there is no variable state yet
+        return out, nv_path
+
+    async def _disk_tags(self, disks) -> dict:
+        tags = {}
+        for dk in disks:
+            info = await self.backend.img_info(dk["path"])
+            tags[dk["target"]] = list(info.get("snapshots") or [])
+        return tags
+
+    async def _snapshot_view(self, d, disks=None, tags=None) -> list:
+        """The recorded snapshots, each checked against what the disks REALLY hold: `ok`, or `incomplete` (a disk or
+        the variable-store copy is missing its half — it cannot be reverted, only deleted). A tag on a disk that no
+        record names (a create that died half-way) is listed as `orphan`, so it can be deleted too."""
+        import datetime
+        import os
+        if disks is None:
+            try:
+                disks, _nv = await self._snapshot_layout(d)
+            except Exception:
+                disks = []
+        if tags is None:
+            try:
+                tags = await self._disk_tags(disks)
+            except Exception as e:
+                logger.debug("[vmhost] snapshot cross-check failed for %s: %s", d.uuid, e)
+                tags = {}
+        current = sorted(dk["target"] for dk in disks)
+        out, named = [], set()
+        for sn in (d.meta.snapshots if d.meta else []):
+            named.add(sn["name"])
+            state = "ok"
+            if sorted(sn["disks"]) != current:
+                state = "disks_changed"
+            elif any(tags.get(t, []).count(sn["name"]) != 1 for t in sn["disks"]):
+                state = "incomplete"
+            elif sn["nvram"] and not await asyncio.to_thread(
+                    os.path.isfile, self.storage.snapshot_nvram_path(d.uuid, sn["name"])):
+                state = "incomplete"
+            when = datetime.datetime.fromtimestamp(sn["created"], datetime.timezone.utc).strftime("%Y-%m-%d %H:%M UTC") \
+                if sn["created"] else ""
+            out.append({"name": sn["name"], "created": when, "created_at": sn["created"],
+                        "description": sn["description"], "disks": list(sn["disks"]), "state": state})
+        for t in sorted({x for v in tags.values() for x in v} - named):
+            out.append({"name": t, "created": "", "created_at": 0, "description": "", "disks": sorted(
+                k for k, v in tags.items() if t in v), "state": "orphan"})
+        return out
+
     async def _op_vm_snapshot_list(self, pk, role, args, progress):
         d = await self._snap_domain(pk, role, args)
-        return {"vm": d.uuid, "snapshots": await self.backend.snapshot_list(d.uuid)}
+        return {"vm": d.uuid, "offline": True, "snapshots": await self._snapshot_view(d)}
 
-    async def _snapshot_preflight(self, d) -> None:
-        """Refuse what libvirt would refuse late and obscurely, or what would fill the disk."""
-        import math
-        import xml.etree.ElementTree as ET
-        try:
-            root = domainxml.parse_domain(await self.backend.dumpxml(d.uuid, inactive=True))
-        except (domainxml.EditError, ET.ParseError) as e:
-            raise _err("backend_error", str(e))
-        os_el = root.find("os")
-        if os_el is not None:
-            loader, nvram = os_el.find("loader"), os_el.find("nvram")
-            efi = (os_el.get("firmware") == "efi" or nvram is not None
-                   or (loader is not None and loader.get("type") == "pflash"))
-            qcow2_vars = nvram is not None and nvram.get("format") == "qcow2"
-            if efi and not qcow2_vars:
-                raise _err("unsupported", "snapshots are not supported for EFI VMs on this host: libvirt cannot take an "
-                                          "internal snapshot while the firmware variables live in a raw pflash file")
+    async def _snapshot_capacity(self) -> None:
         st = await self.backend.host_stats(str(self.storage.root))
-        need = 1 + (math.ceil((d.ram_mib or 0) / 1024) if d.state in ("running", "paused") else 0)
         room = int(st.get("disk_free_gib") or 0) - self.cfg.reserve_disk_gib
-        if room < need:
-            raise _err("insufficient_capacity",
-                       f"a snapshot of this VM needs about {need} GiB free (its memory is saved too when it runs); "
-                       f"this host has {max(0, room)} GiB above its reserve")
+        if room < 1:
+            raise _err("insufficient_capacity", f"a snapshot needs about 1 GiB free; this host has {max(0, room)} GiB "
+                                                "above its reserve")
+
+    async def _locked_off(self, pk, role, args, verb: str):
+        """(domain, lock) with the VM re-read under its lock, migration-guarded and SHUT OFF."""
+        d = await self._snap_domain(pk, role, args)
+        lock = self._vm_lock(d.uuid)
+        await self._acquire(lock, "this VM")
+        try:
+            d = await self.backend.get(d.uuid)
+            if d is None or not self._visible(d, role, pk):
+                raise _err("not_found", "no such VM")
+            self._migration_guard(d)
+            if d.state != "shutoff":
+                raise _err("conflict", f"shut the VM down to {verb} a snapshot — snapshots are taken of a stopped VM")
+        except BaseException:
+            lock.release()
+            raise
+        return d, lock
 
     async def _op_vm_snapshot_create(self, pk, role, args, progress):
+        import os
+        import time as _t
         name = self._snap_name(args)
         desc = args.get("description") or ""
         if not isinstance(desc, str):
             raise _err("bad_request", "description must be text")
-        d = await self._snap_domain(pk, role, args)
-        lock = self._vm_lock(d.uuid)
-        await self._acquire(lock, "this VM")
+        d, lock = await self._locked_off(pk, role, args, "take")
+        made, nv_copy = [], None
         try:
-            d = await self.backend.get(d.uuid) or d
-            self._migration_guard(d)
-            await self._snapshot_preflight(d)
-            existing = await self.backend.snapshot_list(d.uuid)
-            if any(s["name"] == name for s in existing):
+            disks, nv_path = await self._snapshot_layout(d)
+            if any(s["name"] == name for s in d.meta.snapshots):
                 raise _err("conflict", f"a snapshot named {name} already exists")
-            if len(existing) >= MAX_SNAPSHOTS:
+            if len(d.meta.snapshots) >= MAX_SNAPSHOTS:
                 raise _err("insufficient_capacity", f"a VM may keep at most {MAX_SNAPSHOTS} snapshots")
+            tags = await self._disk_tags(disks)
+            if any(name in v for v in tags.values()):
+                # qemu-img happily makes a SECOND snapshot with the same tag; revert would then pick the older one.
+                raise _err("conflict", f"leftover snapshot data named {name} is on this VM's disks — delete it first")
+            await self._snapshot_capacity()
             if progress:
                 await progress({"phase": "snapshot", "msg": "taking the snapshot"})
-            await self.backend.snapshot_create(d.uuid, name, desc[:200])
-            return {"vm": d.uuid, "snapshots": await self.backend.snapshot_list(d.uuid)}
+            nv_copy = self.storage.snapshot_nvram_path(d.uuid, name) if nv_path else None
+            try:
+                for dk in disks:
+                    await self.backend.img_snapshot_create(dk["path"], name)
+                    made.append(dk)
+                if nv_copy is not None:
+                    await asyncio.to_thread(_copy_private, nv_path, nv_copy)
+                meta = d.meta
+                meta.snapshots = list(meta.snapshots) + [domainxml.clean_snapshot_record({
+                    "name": name, "created": int(_t.time()), "description": desc[:200],
+                    "disks": [dk["target"] for dk in disks], "nvram": nv_copy is not None})]
+                await self.backend.set_metadata(d.uuid, meta, live=False)
+            except BaseException:
+                # Leave nothing half-made: a tag with no record would block the name and be reverted to by nobody.
+                for dk in made:
+                    try:
+                        await self.backend.img_snapshot_delete(dk["path"], name)
+                    except Exception as e:
+                        logger.warning("[vmhost] rollback of snapshot %s on %s failed: %s", name, dk["target"], e)
+                if nv_copy is not None:
+                    await asyncio.to_thread(lambda: os.path.lexists(nv_copy) and os.unlink(nv_copy))
+                raise
+            after = await self.backend.get(d.uuid) or d
+            return {"vm": d.uuid, "offline": True, "snapshots": await self._snapshot_view(after, disks)}
         finally:
             lock.release()
 
     async def _op_vm_snapshot_revert(self, pk, role, args, progress):
+        import os
         name = self._snap_name(args)
         if args.get("confirm") is not True:
             raise _err("bad_request", "reverting discards every change since the snapshot — send confirm: true")
-        d = await self._snap_domain(pk, role, args)
-        lock = self._vm_lock(d.uuid)
-        await self._acquire(lock, "this VM")
+        d, lock = await self._locked_off(pk, role, args, "revert to")
         try:
-            if not any(s["name"] == name for s in await self.backend.snapshot_list(d.uuid)):
+            disks, nv_path = await self._snapshot_layout(d)
+            view = {s["name"]: s for s in await self._snapshot_view(d, disks)}
+            sn = view.get(name)
+            if sn is None or sn["state"] == "orphan":
                 raise _err("not_found", "no such snapshot")
-            d = await self.backend.get(d.uuid) or d
-            self._migration_guard(d)
-            current = d.meta                                  # WHO may use it, NOW — not when the snapshot was taken
+            if sn["state"] == "disks_changed":
+                raise _err("conflict", "this VM's disks changed since the snapshot (a disk was added) — it cannot be "
+                                       "reverted, only deleted")
+            if sn["state"] != "ok":
+                raise _err("conflict", "this snapshot is incomplete on disk and cannot be reverted — delete it")
+            record = next(s for s in d.meta.snapshots if s["name"] == name)
+            current = d.meta                               # WHO may use it and what it is, NOW
             self.consoles.revoke(d.uuid)
-            await self.backend.snapshot_revert(d.uuid, name)
+            if progress:
+                await progress({"phase": "snapshot", "msg": "reverting"})
+            for dk in disks:
+                await self.backend.img_snapshot_apply(dk["path"], name)
+            if record["nvram"]:
+                target = nv_path or str(self.storage.nvram_path(d.uuid))
+                await asyncio.to_thread(_copy_private, str(self.storage.snapshot_nvram_path(d.uuid, name)), target)
+            elif nv_path:
+                # Taken before the first start: there were no variables then, so there are none now — the next start
+                # seeds a fresh store from the firmware template, exactly as it did the first time.
+                await asyncio.to_thread(os.unlink, nv_path)
+                await self._ensure_nvram(d.uuid)
             after = await self.backend.get(d.uuid) or d
-            if current is not None and (after.meta is None or after.meta.to_xml(prefixed=False)
-                                        != current.to_xml(prefixed=False)):
-                # A revert restores the whole captured definition, pc:vm included: without this an unassigned user
-                # gets the VM back, a later assignment vanishes, and a migration tag can disappear.
-                await self.backend.set_metadata(d.uuid, current, live=after.state == "running")
+            if after.meta is None or after.meta.to_xml(prefixed=False) != current.to_xml(prefixed=False):
+                # An offline revert never touches the definition — but if anything did, the CURRENT access wins.
+                await self.backend.set_metadata(d.uuid, current, live=False)
                 after = await self.backend.get(d.uuid) or after
             self._set_index(after)
             return {"vm": self._vm_view(after, role, pk), "reverted": name}
@@ -291,14 +419,41 @@ class HardwareOps:
             lock.release()
 
     async def _op_vm_snapshot_delete(self, pk, role, args, progress):
+        import os
         name = self._snap_name(args)
-        d = await self._snap_domain(pk, role, args)
-        lock = self._vm_lock(d.uuid)
-        await self._acquire(lock, "this VM")
+        d, lock = await self._locked_off(pk, role, args, "delete")
         try:
-            if not any(s["name"] == name for s in await self.backend.snapshot_list(d.uuid)):
+            disks, _nv = await self._snapshot_layout(d)
+            tags = await self._disk_tags(disks)
+            recorded = any(s["name"] == name for s in d.meta.snapshots)
+            on_disk = [dk for dk in disks if name in tags.get(dk["target"], [])]
+            if not recorded and not on_disk:
                 raise _err("not_found", "no such snapshot")
-            await self.backend.snapshot_delete(d.uuid, name)
-            return {"vm": d.uuid, "snapshots": await self.backend.snapshot_list(d.uuid)}
+            for dk in on_disk:
+                for _ in range(tags[dk["target"]].count(name)):          # every copy of a repeated tag
+                    await self.backend.img_snapshot_delete(dk["path"], name)
+            copy = self.storage.snapshot_nvram_path(d.uuid, name)
+            await asyncio.to_thread(lambda: os.path.lexists(copy) and os.unlink(copy))
+            if recorded:
+                meta = d.meta
+                meta.snapshots = [s for s in meta.snapshots if s["name"] != name]
+                await self.backend.set_metadata(d.uuid, meta, live=False)
+            after = await self.backend.get(d.uuid) or d
+            return {"vm": d.uuid, "offline": True, "snapshots": await self._snapshot_view(after, disks)}
         finally:
             lock.release()
+
+
+def _copy_private(src: str, dst: str) -> None:
+    """Copy a small file (a variable store) to `dst` atomically, 0600 — a reader never sees half of one."""
+    import os
+    import shutil
+    dst = str(dst)
+    tmp = dst + ".tmp"
+    fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    with os.fdopen(fd, "wb") as out, open(src, "rb") as inp:
+        shutil.copyfileobj(inp, out, 1 << 20)
+        out.flush()
+        os.fsync(out.fileno())
+    os.chmod(tmp, 0o600)
+    os.replace(tmp, dst)
