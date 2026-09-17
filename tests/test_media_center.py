@@ -104,19 +104,21 @@ def test_bandwidth_caps_filter_and_reject_high_profiles(api):
     assert client.put("/api/media-center/limits", json=config).status_code == 200
     url = client.post("/api/media-center/abc/play/movie").json()["url"]
     manifest = client.get(url)
-    assert "360p.m3u8" in manifest.text and "480p" not in manifest.text
+    # 650 kbps fits only the rung whose PEAK leaves an ABR player its margin (media.allowed_profiles).
+    assert "240p.m3u8" in manifest.text and "360p" not in manifest.text and "480p" not in manifest.text
     assert client.get(url.replace("master.m3u8", "1080p-0.ts")).status_code == 404
-    playlist = client.get(url.replace("master.m3u8", "360p.m3u8"))
+    assert client.get(url.replace("master.m3u8", "360p-0.ts")).status_code == 404
+    playlist = client.get(url.replace("master.m3u8", "240p.m3u8"))
     assert playlist.text.count("#EXTINF") == 3
     assert "#EXTINF:1.000000" in playlist.text
-    assert client.get(url.replace("master.m3u8", "360p-3.ts")).status_code == 404
+    assert client.get(url.replace("master.m3u8", "240p-3.ts")).status_code == 404
     assert client.put("/api/media-center/limits", json={**config, "viewer_kbps": 50000}).status_code == 400
 
 
 def test_default_is_200_kilobytes_per_second(api):
     client, docs, user, folder = api
     assert client.get("/api/media-center/limits").json()["viewer_kbps"] * 1000 / 8 == 200000
-    assert client.get("/api/media-center").json()["profiles"] == ["360p", "480p"]
+    assert client.get("/api/media-center").json()["profiles"] == ["240p", "360p", "480p"]
     assert routes.Limits().viewer_kbps == media.DEFAULT_LIMITS["viewer_kbps"]
 
 

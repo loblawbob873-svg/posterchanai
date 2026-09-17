@@ -10227,7 +10227,7 @@
         </div><p id="mc-status" class="mc-status muted" role="status"></p><div id="mc-libraries" class="mc-libraries"></div>
         <div id="mc-playback" class="mc-playback" hidden><div class="mc-player-toolbar"><h3 id="mc-playing"></h3><button id="mc-fullscreen" class="btn btn-ghost" type="button" aria-label="Enter full screen">Full screen</button><button id="mc-close-player" class="btn btn-ghost" type="button">Close player</button>
           <label>Quality <select id="mc-quality"><option value="auto">Best quality within limit</option>
-            <option value="360p">360p · ~0.6 Mbps</option><option value="480p">480p · ~1.2 Mbps</option>
+            <option value="240p">240p · ~0.4 Mbps</option><option value="360p">360p · ~0.7 Mbps</option><option value="480p">480p · ~1 Mbps</option>
             <option value="720p">720p · ~2.6 Mbps</option><option value="1080p">1080p · ~5.6 Mbps</option></select></label><label>Audio <select id="mc-audio"><option value="-1">Default</option></select></label><label>Subtitles <select id="mc-subtitles"><option value="-1">Off</option></select></label></div>
           <video id="mc-player" controls playsinline tabindex="0" aria-label="Media player" preload="metadata" style="width:100%;max-height:65vh"></video>
         </div><div class="mc-browse"><label class="mc-search" hidden>Search this library <input id="mc-search" type="search" class="input" placeholder="Find a title or folder…"></label></div><nav id="mc-folder-nav" aria-label="Media folders"></nav><div id="mc-items"></div></div></div>`;

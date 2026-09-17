@@ -976,7 +976,7 @@ async def playback_info(uid: str, request: Request, body: dict = Body(default={}
         cap = int(body_value(body, 'MaxStreamingBitrate') or query(request, 'MaxStreamingBitrate', '1000000000'))
     except (ValueError, TypeError):
         raise HTTPException(400, 'Invalid streaming bitrate')
-    profiles = [p for p in listing['profiles'] if sum(media.PROFILES[p][2:]) * 1200 <= cap]
+    profiles = [p for p in listing['profiles'] if media.profile_kbps(p) * 1000 <= cap]
     if not profiles:
         return {'MediaSources': [], 'ErrorCode': 'NoCompatibleStream'}
     track_data = await media_call(request, auth, db, f"/{lib['id']}/tracks/{item['id']}")

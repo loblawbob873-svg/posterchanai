@@ -22,7 +22,9 @@ from app.services import nostr_store, settings_store
 from app.services.nostr.nostr_service import to_pubkey_hex
 
 NS = "pcai:media-center:"
-PROFILES = {"360p": (640, 360, 450, 64), "480p": (854, 480, 900, 96),
+# name -> (max width, max height, video CEILING kbps, AAC-LC kbps). Ascending: players and the web
+# client index levels in this order, and a player starts at the first one.
+PROFILES = {"240p": (426, 240, 250, 48), "360p": (640, 360, 450, 64), "480p": (854, 480, 700, 96),
             "720p": (1280, 720, 2000, 128), "1080p": (1920, 1080, 4500, 128)}
 EXTENSIONS = {".mp4", ".mkv", ".avi", ".mov", ".webm", ".m4v", ".ts", ".mpg", ".mpeg",
               ".mp3", ".flac", ".m4a", ".ogg", ".wav", ".opus"}
@@ -32,6 +34,9 @@ EXTENSIONS = {".mp4", ".mkv", ".avi", ".mov", ".webm", ".m4v", ".ts", ".mpg", ".
 logger = logging.getLogger(__name__)
 
 SEGMENT = 6
+# Part of every cache key. Bump it whenever what a segment contains changes (rate control, container
+# settings, segment length) so a cache filled by the old encoder is never mixed into a new stream.
+ENCODING = 2
 mutation_lock = asyncio.Lock()
 DEFAULT_LIMITS = {"server_kbps": 20000, "viewer_kbps": 1600, "max_streams": 8,
                   "max_transcodes": 2, "cache_mb": 2048}
@@ -100,9 +105,41 @@ async def limits():
     return {**DEFAULT_LIMITS, **(await read("limits") or {})}
 
 
+# WHAT A SEGMENT REALLY WEIGHS, NOT WHAT IT WAS ASKED TO. The video bitrate is a ceiling on the
+# encoder's rate control, not on a 6s MPEG-TS file: VBV lets a hard segment start over it, and the
+# container adds a near-FIXED cost (a padded TS packet per video frame, PES headers, PCR) that
+# dominates at the bottom of the ladder. Measured on nas (RTX 3060, NVENC with `video_rate_control`,
+# 12 anime + 8 live-action segments per rung), the heaviest segments were 240p 399, 360p 650 and
+# 480p 992 kbps: VIDEO_PEAK x video + audio + MUX_KBPS covers every one. That sum is what a
+# playlist must advertise — BANDWIDTH is defined as the PEAK — and advertising the nominal 1.2x
+# instead (real 480p peaked at 1.24x, 360p at 1.31x) is what let a player pick a rung it could not keep.
+VIDEO_PEAK = 1.2
+MUX_KBPS = 60
+# An ABR player climbs to a rung when its estimate clears it by a margin (hls.js 0.7, the production
+# Jellyfin client ~0.8) — and a rung that needs most of the viewer's byte budget can be picked on a
+# lucky estimate and then not sustained: the 360p/480p flip-flop measured in production. Measured with
+# scripts/media_hls_bench.py at the 1600 kbps cap, a 480p rung advertised at 1116 kbps (x1.43)
+# still stalled; at 996 kbps (x1.6, the 700k ceiling) it played 5/5 runs at ~430p average without a
+# stall. A rung is offered only when its peak x ABR_HEADROOM fits the cap.
+ABR_HEADROOM = 1.6
+
+
+# H.264 High (every encoder is asked for it in `video_rate_control`) + AAC-LC. The level is an upper
+# bound for the rung's size, which is what a player checks it against.
+CODECS = {"240p": "avc1.64001f,mp4a.40.2", "360p": "avc1.64001f,mp4a.40.2", "480p": "avc1.64001f,mp4a.40.2",
+          "720p": "avc1.640020,mp4a.40.2", "1080p": "avc1.64002a,mp4a.40.2"}
+
+
+def profile_kbps(profile):
+    """The advertised peak (BANDWIDTH, in kbps) of one profile's segments."""
+    _, _, video, audio = PROFILES[profile]
+    return math.ceil(video * VIDEO_PEAK + audio + MUX_KBPS)
+
+
 def allowed_profiles(config):
-    return [name for name, (_, _, video, audio) in PROFILES.items()
-            if (video + audio) * 1.2 <= config["viewer_kbps"]]
+    fits = [name for name in PROFILES if profile_kbps(name) * ABR_HEADROOM <= config["viewer_kbps"]]
+    # A cap too small for any rung with margin still plays the lowest one: slow is better than nothing.
+    return fits or [next(iter(PROFILES))]
 
 
 def touch_session(ticket, viewer, config):
@@ -129,29 +166,71 @@ async def transcode_slot(config):
             _job_condition.notify_all()
 
 
-async def paced_bytes(data, viewer, config):
+# How much unused budget a viewer may bank while idle, in seconds of their own rate. A player that
+# has filled its buffer stops asking; when it asks again, the next segment starts at link speed for
+# up to this much data instead of trickling out at the average from its first byte. The long-run
+# average is unchanged — every byte is still charged — and a fresh viewer starts with no credit.
+PACE_BURST_S = 4.0
+
+
+# A stream that has not asked for its next chunk for this long has a client that stopped reading; it
+# no longer holds back the segments queued behind it.
+PRIORITY_IDLE_S = 1.0
+_streams = {}                # (viewer, playback) -> {stream: [segment number, last time it pulled]}
+
+
+async def paced_bytes(data, viewer, config, order=None):
     """Pace actual response bytes; one budget per server and per Nostr identity.
 
-    Small chunks bound bursts; all of a viewer's tabs share the same budget.
-    State is process-local, matching the application's single ASGI worker.
+    A token bucket per budget: `_rate_due` is when the budget is next free, and it may lag `now` by
+    at most PACE_BURST_S — the credit banked while idle. All of a viewer's parallel requests and tabs
+    draw on the same bucket. State is process-local, matching the application's single ASGI worker.
+
+    IN ORDER WITHIN ONE PLAYBACK. `order` is (playback ticket, segment number). A player that fetches
+    several segments at once (the production Jellyfin client asks for four) used to get the budget
+    split four ways, so the segment its buffer was actually waiting on arrived at a quarter of the
+    rate — the player abandoned it as too slow, switched down, cancelled the other three and threw the
+    bytes away. Measured with scripts/media_hls_bench.py at a 1600 kbps cap: 1-2 stalls and 2-4 MB
+    wasted per 150s. Now a segment sends only when no EARLIER segment of the same playback is still
+    sending, so the budget goes to the next segment the buffer needs, then the one after; the total is
+    unchanged. An earlier stream whose client stopped reading for PRIORITY_IDLE_S stops blocking.
     """
-    for offset in range(0, len(data), 16384):
-        chunk = data[offset:offset + 16384]
-        while True:
-            async with _rate_lock:
-                now = time.monotonic()
-                for key, due in list(_rate_due.items()):
-                    if due < now - 120:
-                        _rate_due.pop(key, None)
-                delay = max(0, _rate_due.get("server", now) - now, _rate_due.get(viewer, now) - now)
-                if delay <= 0:
-                    _rate_due["server"] = now + len(chunk) * 8 / (config["server_kbps"] * 1000)
-                    _rate_due[viewer] = now + len(chunk) * 8 / (config["viewer_kbps"] * 1000)
-                    break
-            # A viewer waiting on their own cap reserves no global bandwidth.
-            # Other users can keep streaming, and disconnects leave no queued debt.
-            await asyncio.sleep(delay)
-        yield chunk
+    group = streams = None
+    token = object()
+    if order is not None:
+        group = (viewer, order[0])
+        streams = _streams.setdefault(group, {})
+        streams[token] = [order[1], time.monotonic()]
+    try:
+        for offset in range(0, len(data), 16384):
+            chunk = data[offset:offset + 16384]
+            while True:
+                async with _rate_lock:
+                    now = time.monotonic()
+                    for key, due in list(_rate_due.items()):
+                        if due < now - 120:
+                            _rate_due.pop(key, None)
+                    budgets = (("server", config["server_kbps"]), (viewer, config["viewer_kbps"]))
+                    delay = max(0, *(_rate_due.get(key, now) - now for key, _ in budgets))
+                    blocked = False
+                    if streams is not None:
+                        streams[token][1] = now
+                        blocked = any(number < order[1] and now - pulled < PRIORITY_IDLE_S
+                                      for other, (number, pulled) in streams.items() if other is not token)
+                    if delay <= 0 and not blocked:
+                        for key, kbps in budgets:
+                            start = max(_rate_due.get(key, now), now - PACE_BURST_S)
+                            _rate_due[key] = start + len(chunk) * 8 / (kbps * 1000)
+                        break
+                # A viewer waiting on their own cap reserves no global bandwidth.
+                # Other users can keep streaming, and disconnects leave no queued debt.
+                await asyncio.sleep(max(delay, 0.02) if blocked else delay)
+            yield chunk
+    finally:
+        if streams is not None:
+            streams.pop(token, None)
+            if not streams and _streams.get(group) is streams:
+                _streams.pop(group, None)
 
 
 def identity(user):
@@ -587,11 +666,40 @@ def command(path, item, profile, number, encoder, output):
                     '-map', '[subbed]']
         else:
             cmd += ['-map', '0:V:0', '-vf', scale]
-        cmd += ["-c:v", encoder, "-b:v", f"{bitrate}k",
-                "-maxrate", f"{bitrate}k", "-bufsize", f"{bitrate * 2}k", "-g", "48", "-threads", "2"]
-        if encoder == "libx264":
-            cmd += ["-preset", "veryfast"]
-    return cmd + ["-avoid_negative_ts", "make_zero", "-f", "mpegts", str(output)]
+        cmd += ["-c:v", encoder, *video_rate_control(encoder, bitrate), "-threads", "2"]
+    # One PAT/PMT per segment. Every segment is a standalone file that begins with them and a player
+    # only ever enters one at its start; the muxer's defaults (PAT/PMT 10x a second, SDT 2x) cost a
+    # measured 28 kbps of a 282 kbps 240p segment — a tenth of the lowest rung, carrying nothing.
+    return cmd + ["-avoid_negative_ts", "make_zero", "-pat_period", str(SEGMENT), "-sdt_period", str(SEGMENT),
+                  "-f", "mpegts", str(output)]
+
+
+def video_rate_control(encoder, kbps):
+    """The bitrate is a CEILING, never a target, spelled the way each encoder needs.
+
+    A plain `-b:v X` pads easy pictures up to X (the stream clamp measured an 11.5x inflation that way,
+    see stream_service), which spends a low-bandwidth viewer's budget on nothing. Quality-targeted rate
+    control with maxrate/bufsize spends what the picture needs and stops at the ceiling. Measured on
+    nas (NVENC, 20 segments per rung, SSIM against the source), old -> new average segment size:
+    live action 360p 579 -> 388 kbps (SSIM 0.991 -> 0.989), 480p 1067 -> 613 (0.993 -> 0.990);
+    BD anime 360p 536 -> 456 (0.971 -> 0.973), 480p 969 -> 689 (0.979 -> 0.976). bufsize is ONE
+    second of the ceiling, so the worst 6s segment stays close to it (VIDEO_PEAK). Every segment is
+    its own encode that starts with an IDR frame and a
+    player can only join at a segment start, so the GOP spans the whole segment instead of paying for
+    a keyframe every 2 seconds.
+    """
+    rate, gop = f"{kbps}k", str(SEGMENT * 60)
+    if encoder == "h264_nvenc":
+        # -cq with `-b:v 0`: a non-zero -b:v re-asserts a target.
+        return ["-preset", "p5", "-tune", "hq", "-rc", "vbr", "-cq", "28", "-b:v", "0",
+                "-maxrate", rate, "-bufsize", rate, "-g", gop, "-bf", "3", "-spatial-aq", "1", "-profile:v", "high"]
+    if encoder == "h264_vaapi":
+        # -rc_mode VBR: the only VAAPI mode that honours maxrate without padding (stream_service).
+        return ["-rc_mode", "VBR", "-b:v", rate, "-maxrate", rate, "-bufsize", rate, "-g", gop, "-profile:v", "high"]
+    if encoder == "h264_amf":
+        return ["-rc", "vbr_peak", "-b:v", rate, "-maxrate", rate, "-bufsize", rate, "-g", gop, "-profile:v", "high"]
+    return ["-preset", "veryfast", "-crf", "24", "-maxrate", rate, "-bufsize", rate, "-g", gop,
+            "-profile:v", "high"]
 
 
 # Segments encoded AHEAD of the player. Every segment is made on demand by its own FFmpeg run, so
@@ -662,7 +770,7 @@ def segment_cache_location(library, item, profile, number):
     if Path("/tmp") not in cache.parents:
         raise ValueError("Media Center transcode cache must be a directory under /tmp")
     cache.mkdir(mode=0o700, parents=True, exist_ok=True)
-    key = hashlib.sha256(json.dumps([str(path), item, profile, number, library["encoder"], 1], sort_keys=True).encode()).hexdigest()
+    key = hashlib.sha256(json.dumps([str(path), item, profile, number, library["encoder"], ENCODING], sort_keys=True).encode()).hexdigest()
     target = cache / (key + ".ts")
     return path, cache, key, target
 

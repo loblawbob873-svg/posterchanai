@@ -648,10 +648,10 @@ async def hls(library_id: str, item_id: str, asset: str, viewer: str = Query(max
         raise HTTPException(429, str(error)) from error
     if asset == "master.m3u8":
         lines = ["#EXTM3U", "#EXT-X-VERSION:3"]
-        for profile, (_, _, video, audio) in media.PROFILES.items():
-            if profile not in profiles:
-                continue
-            lines += [f"#EXT-X-STREAM-INF:BANDWIDTH={int((video + audio) * 1200)}", f"{profile}.m3u8?{query}"]
+        for profile in profiles:
+            # BANDWIDTH is the measured PEAK (media.profile_kbps), so an ABR player's arithmetic holds.
+            lines += [f'#EXT-X-STREAM-INF:BANDWIDTH={media.profile_kbps(profile) * 1000},CODECS="{media.CODECS[profile]}"',
+                      f"{profile}.m3u8?{query}"]
         return Response("\n".join(lines) + "\n", media_type="application/vnd.apple.mpegurl", headers=PRIVATE)
     item = next((item for item in await available_catalog(library) if item["id"] == item_id), None)
     if not item:
@@ -701,7 +701,8 @@ async def hls(library_id: str, item_id: str, asset: str, viewer: str = Query(max
         # Revocation also takes effect while an uncached segment is encoding.
         await library_for(library_id, viewer)
         media.prefetch(library, item, profile, number, count, config)
-        return StreamingResponse(media.paced_bytes(data, viewer, config), media_type="video/mp2t", headers=PRIVATE)
+        return StreamingResponse(media.paced_bytes(data, viewer, config, order=(ticket, number)),
+                                 media_type="video/mp2t", headers=PRIVATE)
     except asyncio.TimeoutError as error:
         raise HTTPException(503, "Transcoders are busy; retry shortly", headers={"Retry-After": "5"}) from error
     except (ValueError, OSError) as error:

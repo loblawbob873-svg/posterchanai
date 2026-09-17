@@ -433,7 +433,7 @@ def test_tv_camel_case_quick_connect_and_playback_requests(api):
                 json={'audioStreamIndex':None,'subtitleStreamIndex':None,'maxStreamingBitrate':700000})
     assert info.status_code==200, info.text
     play_id=info.json()['PlaySessionId']
-    assert jf._plays[play_id]['profiles']==['360p']
+    assert jf._plays[play_id]['profiles']==['240p','360p']  # each advertised PEAK within 700 kbps
     assert c.post('/jellyfin/Sessions/Playing',headers=headers(login),json={'playSessionId':play_id}).status_code==204
     assert c.post('/jellyfin/Sessions/Playing/Stopped',headers=headers(login),json={'playSessionId':play_id}).status_code==204
     assert c.post('/jellyfin/Users/AuthenticateWithQuickConnect',json={'secret':pending['Secret']}).status_code==401
