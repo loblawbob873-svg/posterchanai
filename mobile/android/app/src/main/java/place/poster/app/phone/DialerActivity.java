@@ -64,7 +64,9 @@ public class DialerActivity extends PcActivity {
 
     private TextView returnToCall;
     private boolean callRefreshVisible;
-    private TextView numberView, notice, empty, tPad, tRecent, tContacts, tVm;
+    private TextView numberView, pasteBtn, notice, empty, tPad, tRecent, tContacts, tVm;
+    /** The key size the pad was last built at, measured from its real box; 0 until first layout. */
+    private int padKeyDp = 0;
     private LinearLayout padWrap;
     private ListView list;
     private EditText search;
@@ -133,6 +135,14 @@ public class DialerActivity extends PcActivity {
         backBtn = (ImageView) findViewById(R.id.pc_dl_back);
         padToggle = (ImageView) findViewById(R.id.pc_dl_padtoggle);
         padWrap = (LinearLayout) findViewById(R.id.pc_dl_padwrap);
+        pasteBtn = (TextView) findViewById(R.id.pc_dl_paste);
+        pasteBtn.setOnClickListener(v -> pasteNumber());
+        numberView.setOnLongClickListener(v -> { numberMenu(); return true; });
+        // THE KEYS ARE SIZED FROM THE BOX THEY GET, re-measured whenever that box changes (a notice
+        // appearing, rotation, a split screen). See PadFit for how a guess clipped two rows.
+        padWrap.addOnLayoutChangeListener((v, l, t, r, b, ol, ot, or, ob) -> {
+            if (r - l != or - ol || b - t != ob - ot) v.post(this::fitPad);
+        });
         tPad = (TextView) findViewById(R.id.pc_dl_t_pad);
         tRecent = (TextView) findViewById(R.id.pc_dl_t_recent);
         tContacts = (TextView) findViewById(R.id.pc_dl_t_contacts);
@@ -198,6 +208,7 @@ public class DialerActivity extends PcActivity {
         readIntent(getIntent());
         applySkin();
         askForWhatIsMissing();
+        offerCallFromText();
     }
 
     private View.OnClickListener tabClick(final int which) {
@@ -211,12 +222,27 @@ public class DialerActivity extends PcActivity {
         super.onNewIntent(intent);
         setIntent(intent);
         readIntent(intent);
-        drawNumber();
+        // A selection or share lands on the KEYPAD tab, which only applySkin() shows.
+        applySkin();
+        reload();
     }
 
     /** ACTION_DIAL / a `tel:` link from another app: prefill, never auto-dial. */
     private void readIntent(Intent i) {
         if (i == null) return;
+        // TEXT FROM ANOTHER APP: a selection (PROCESS_TEXT) or a share (SEND). Neither is a number;
+        // it is whatever the person selected or shared, so the number is pulled out of it, and text
+        // with no number in it leaves the pad alone rather than filling it with stray digits.
+        CharSequence text = null;
+        if (ACTION_PROCESS_TEXT.equals(i.getAction())) text = i.getCharSequenceExtra(EXTRA_PROCESS_TEXT);
+        else if (Intent.ACTION_SEND.equals(i.getAction())) text = i.getCharSequenceExtra(Intent.EXTRA_TEXT);
+        if (text != null) {
+            String n = Dial.fromText(text.toString());
+            if (!n.isEmpty()) typed = n;
+            else say(getString(R.string.tel_paste_nothing));
+            tab = TAB_KEYPAD;
+            return;
+        }
         Uri d = i.getData();
         if (d == null || !"tel".equalsIgnoreCase(String.valueOf(d.getScheme()))) return;
         // `getSchemeSpecificPart` ALREADY decodes. Decoding it a second time is not a tidy-up: it
@@ -254,6 +280,30 @@ public class DialerActivity extends PcActivity {
     }
 
     @Override protected void onThemeChanged() { applySkin(); }
+
+    /** The clipboard can only be asked while this window has focus (Android 10+), so the Paste pill
+     *  is re-decided whenever focus comes back, which is also when somebody returns from copying. */
+    @Override
+    public void onWindowFocusChanged(boolean hasFocus) {
+        super.onWindowFocusChanged(hasFocus);
+        if (hasFocus) drawNumber();
+    }
+
+    private static final String ACTION_PROCESS_TEXT = "android.intent.action.PROCESS_TEXT";
+    private static final String EXTRA_PROCESS_TEXT = "android.intent.extra.PROCESS_TEXT";
+
+    /** Turn on the "select a number, then Phone" entry and the share target (see the manifest). */
+    private void offerCallFromText() {
+        try {
+            android.content.ComponentName c = new android.content.ComponentName(
+                    getPackageName(), "place.poster.app.phone.CallFromText");
+            PackageManager pm = getPackageManager();
+            if (pm.getComponentEnabledSetting(c) != PackageManager.COMPONENT_ENABLED_STATE_ENABLED) {
+                pm.setComponentEnabledSetting(c, PackageManager.COMPONENT_ENABLED_STATE_ENABLED,
+                        PackageManager.DONT_KILL_APP);
+            }
+        } catch (Throwable ignored) { }
+    }
 
     // ---------------------------------------------------------------- painting
 
@@ -301,6 +351,14 @@ public class DialerActivity extends PcActivity {
         backBtn.setImageDrawable(tint(R.drawable.ic_pc_close, pal.muted));
         padToggle.setImageDrawable(tint(R.drawable.ic_pc_grid, pal.accent));
         padToggle.setBackground(Skin.pill(this, pal, Skin.alpha(pal.accent, 0.16), true));
+        pasteBtn.setBackground(Skin.pill(this, pal, Skin.alpha(pal.accent, 0.16), true));
+        pasteBtn.setTextColor(pal.accent);
+        buildPad();
+        drawNumber();
+        if (adapter != null) adapter.notifyDataSetChanged();
+    }
+
+    private void buildPad() {
         // `true` = the pause keys. Long press on `*` types `,` (two seconds) and on `#` types `;`
         // (wait until I say so), which is the only way to enter a phone-tree number by hand.
         Keypad.build(this, pad, pal, keySizeDp(), new Keypad.Press() {
@@ -311,8 +369,20 @@ public class DialerActivity extends PcActivity {
             // the SIM's own — never the literal "1", which just dials a stranger.
             @Override public void run() { callVoicemail(); }
         });
-        drawNumber();
-        if (adapter != null) adapter.notifyDataSetChanged();
+    }
+
+    /** Re-size the keys to the pad's MEASURED box, rebuilding only when the answer changes. */
+    private void fitPad() {
+        if (padWrap.getVisibility() != View.VISIBLE) return;
+        float d = getResources().getDisplayMetrics().density;
+        View numRow = findViewById(R.id.pc_dl_numrow);
+        int w = (int) (padWrap.getWidth() / d);
+        int h = (int) (padWrap.getHeight() / d);
+        if (w <= 0 || h <= 0) return;
+        int k = PadFit.keyDp(w, h, (int) Math.ceil(numRow.getHeight() / d));
+        if (k == padKeyDp) return;
+        padKeyDp = k;
+        buildPad();
     }
 
     /**
@@ -322,12 +392,13 @@ public class DialerActivity extends PcActivity {
      * and a bottom row you cannot reach is a dialpad with nine keys.
      */
     private int keySizeDp() {
+        if (padKeyDp > 0) return padKeyDp;
+        // BEFORE THE FIRST LAYOUT there is no box to measure, so this is an estimate that errs
+        // small; fitPad() replaces it with the measured answer as soon as the pad is laid out.
         android.util.DisplayMetrics m = getResources().getDisplayMetrics();
         int wdp = (int) (m.widthPixels / m.density);
         int hdp = (int) (m.heightPixels / m.density);
-        int byWidth = (wdp - 40) / 3 - 18;
-        int byHeight = (hdp - 300) / 4 - 18;
-        return Math.max(52, Math.min(88, Math.min(byWidth, byHeight)));
+        return PadFit.keyDp(wdp - 16, hdp - 420, 60);
     }
 
     private void paintTab(TextView t, boolean on) {
@@ -339,6 +410,56 @@ public class DialerActivity extends PcActivity {
     private void drawNumber() {
         numberView.setText(Dial.pretty(typed));
         backBtn.setVisibility(typed.isEmpty() ? View.INVISIBLE : View.VISIBLE);
+        // PASTE, where the number goes, while there is no number and something to paste. Only the
+        // clipboard's DESCRIPTION is read here: reading its contents shows "PosterChan pasted from
+        // your clipboard" on Android 12+, and nobody has pressed anything yet.
+        pasteBtn.setVisibility(typed.isEmpty() && clipboardHasText() ? View.VISIBLE : View.GONE);
+    }
+
+    private boolean clipboardHasText() {
+        try {
+            ClipboardManager cb = (ClipboardManager) getSystemService(Context.CLIPBOARD_SERVICE);
+            android.content.ClipDescription c = cb == null ? null : cb.getPrimaryClipDescription();
+            return c != null && c.hasMimeType("text/*");
+        } catch (Throwable t) { return false; }
+    }
+
+    /** Put the number on the clipboard into the pad: the number IN the text, not every digit. */
+    private void pasteNumber() {
+        String n = "";
+        try {
+            ClipboardManager cb = (ClipboardManager) getSystemService(Context.CLIPBOARD_SERVICE);
+            ClipData c = cb == null ? null : cb.getPrimaryClip();
+            if (c != null && c.getItemCount() > 0) {
+                CharSequence text = c.getItemAt(0).coerceToText(this);
+                n = Dial.fromText(text == null ? null : text.toString());
+            }
+        } catch (Throwable ignored) { }
+        if (n.isEmpty()) { say(getString(R.string.tel_paste_nothing)); return; }
+        typed = n;
+        drawNumber();
+        reload();
+    }
+
+    /** Long press on the number: Paste, and Copy when there is something to copy. */
+    private void numberMenu() {
+        final List<String> labels = new ArrayList<String>();
+        labels.add(getString(R.string.tel_paste));
+        if (!typed.isEmpty()) labels.add(getString(R.string.tel_copy_number));
+        try {
+            new AlertDialog.Builder(this)
+                .setItems(labels.toArray(new CharSequence[0]),
+                    new android.content.DialogInterface.OnClickListener() {
+                        @Override public void onClick(android.content.DialogInterface d, int w) {
+                            if (w == 0) { pasteNumber(); return; }
+                            try {
+                                ClipboardManager cb = (ClipboardManager)
+                                        getSystemService(Context.CLIPBOARD_SERVICE);
+                                if (cb != null) cb.setPrimaryClip(ClipData.newPlainText("tel", typed));
+                            } catch (Throwable ignored) { }
+                        }
+                    }).show();
+        } catch (Throwable ignored) { }
     }
 
     // ---------------------------------------------------------------- the list

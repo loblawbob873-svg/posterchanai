@@ -173,6 +173,8 @@
     <string name="tel_delete_entry">Remove from recents</string>
     <string name="tel_copy_number">Copy number</string>
     <string name="tel_text_number">Send a text</string>
+    <string name="tel_paste">Paste</string>
+    <string name="tel_paste_nothing">There is no phone number on the clipboard</string>
     <string name="tel_wait_title">Send the rest of the number?</string>
     <string name="tel_wait_body">This number waits here before sending %1$s</string>
     <string name="tel_wait_send">Send</string>

@@ -143,7 +143,9 @@ def test_shell_move_tick_uses_state_preserving_monitor_handoff():
     assert "pcWM.handoff(w.native,direction,nativeHandoffPlacement(w,direction))" in move
     assert "sendFrameHandoff(w,direction,0,false)" in move
     assert "/^pc:move-native:\\d+:(left|right|up|down)$/.test(p)" in src
-    assert "nativeWins().find(x=>Number(x.native)===id)" in src
+    # hosted frames move with their frame; unhosted native windows (the default) through the compositor
+    assert "moveNativeToMonitor(id,direction)" in src
+    assert "nativeWins().find(x=>Number(x.native)===Number(id))" in src
 
 
 

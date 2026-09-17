@@ -3899,6 +3899,47 @@
     catch(_){ return false; }
   }
 
+  /* SUPER+DOWN ON FIREFOX DID NOTHING, because this only ever looked for a HOSTED frame.
+   *
+   * Hosting a native application inside a PosterChan frame is off by default
+   * (`pc_os_host_native`), so Firefox and Telegram are Wayfire's own toplevels with a taskbar
+   * button in `nativeTasks` and no entry in `nativeWins()`. `find` answered undefined and the key was
+   * silently dropped -- measured in an isolated copy of the installed desktop: Super+Left/Right/Up
+   * snapped Firefox, Super+Down left it focused and unminimised. The unhosted case minimises through
+   * `pcWM.hide`, the same scratchpad path the task button's click toggles, so the button still
+   * brings it back. Every renderer receives the tick; a renderer whose taskbar does not list the
+   * window (another output's) does nothing, exactly as the hosted branch did. */
+  /* The move counterpart of minimiseNativeById: a HOSTED native window moves with its frame; an
+   * unhosted one (the default) is moved by the compositor through `pcWM.moveToOutput`. An empty
+   * direction means "the other display" — the directions are tried in turn and the first output that
+   * exists wins, which is what the taskbar menu item promises. */
+  function moveNativeToMonitor(id,direction){
+    const w=nativeWins().find(x=>Number(x.native)===Number(id));
+    if(w){
+      if(direction) return Promise.resolve(moveWindowToMonitor(w,direction));
+      return Promise.resolve(moveToOtherMonitor(w));
+    }
+    if(!(nativeTasks||[]).some(r=>r && Number(r.id)===Number(id))) return Promise.resolve(false);
+    if(!window.pcWM || typeof pcWM.moveToOutput!=='function') return Promise.resolve(false);
+    const order=direction ? [direction] : ['right','left','down','up'];
+    return (async()=>{
+      for(const dir of order){
+        try{ if(await pcWM.moveToOutput(Number(id),dir)) return true; }catch(_){ }
+      }
+      return false;
+    })();
+  }
+
+  function minimiseNativeById(id){
+    const w=nativeWins().find(x=>Number(x.native)===Number(id));
+    if(w){ minimise(w); return 'hosted'; }
+    if((nativeTasks||[]).some(r=>r && Number(r.id)===Number(id))){
+      try{ Promise.resolve(pcWM.hide(Number(id))).catch(()=>{}); }catch(_){ return false; }
+      return 'task';
+    }
+    return false;
+  }
+
   function adoptNative(nw){
     if(!nw || nw.id == null) return null;
     const id=Number(nw.id), view='native:'+id;
@@ -8288,6 +8329,7 @@
           {label:'Move to other display',run:()=>{
             const frame=nativeWins().find(x=>Number(x.native)===Number(w.id));
             if(frame)moveToOtherMonitor(frame);
+            else moveNativeToMonitor(w.id,'');
           }},
           {label:'Snap left',run:()=>Promise.resolve(pcWM.snap(w.id,'left')).catch(()=>{})},
           {label:'Snap right',run:()=>Promise.resolve(pcWM.snap(w.id,'right')).catch(()=>{})},
@@ -9815,8 +9857,7 @@
               if(w) minimise(w);
             }
             else if(/^pc:minimise-native:\d+$/.test(p)){
-              const w=nativeWins().find(x=>Number(x.native)===Number(p.slice(19)));
-              if(w) minimise(w);
+              minimiseNativeById(Number(p.slice(19)));
             }
             else if(/^pc:move-output:(left|right|up|down)$/.test(p)){
               /* TWO SILENT NO-OPS LIVED HERE, AND BOTH READ AS "THE KEY DOES NOTHING".
@@ -9838,8 +9879,7 @@
             }
             else if(/^pc:move-native:\d+:(left|right|up|down)$/.test(p)){
               const parts=p.split(':'),id=Number(parts[2]),direction=parts[3];
-              const w=nativeWins().find(x=>Number(x.native)===id);
-              if(w)moveWindowToMonitor(w,direction);
+              moveNativeToMonitor(id,direction);
             }
           });
           /* Arm compositor delivery immediately. PCOSShell.watch() also subscribes, but only after

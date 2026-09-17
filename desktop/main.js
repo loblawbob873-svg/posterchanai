@@ -1589,6 +1589,20 @@ ipcMain.handle('pc:tor:restart', async (e) => {
  * did not come from our own page.
  */
 const fsGuard = (e) => { if (!fromOurPage(e)) throw new Error('denied'); };
+/* A FILE CHOOSER BELONGS TO THE WINDOW THAT ASKED FOR IT, NOT TO THE DESKTOP.
+ *
+ * Every picker was parented to `win`, the desktop surface. System Settings, and every other popped-out
+ * PosterChan window, is its own toplevel -- and the desktop is deliberately kept BELOW applications on
+ * this compositor. A dialog is stacked with its parent, so "Build ISO -> Choose..." opened its folder
+ * picker underneath the very Settings window whose button was pressed (reported exactly that way).
+ * The sender's own window is the parent; the desktop only when the request came from the desktop. */
+const dialogOwner = (e) => {
+  try {
+    const w = e && e.sender ? BrowserWindow.fromWebContents(e.sender) : null;
+    if (w && !w.isDestroyed()) return w;
+  } catch (_) {}
+  return win;
+};
 
 // Renderer routing removes ?pcwin=. Ownership belongs to the BrowserWindow and survives reload.
 ipcMain.on('pc:window:context', (e) => {
@@ -2751,6 +2765,30 @@ function adjacentShellSurface(e, direction){
   return candidates.length ? candidates[0].record : null;
 }
 
+/* A NATIVE WINDOW WE DO NOT HOST HAS NOTHING TO HAND OFF — IT JUST MOVES.
+ *
+ * `pc:wm:handoff` is the atomic frame-and-surface exchange for a Firefox/Telegram window hosted in a
+ * PosterChan frame: the destination renderer adopts the frame first, then the surface follows. With
+ * hosting off (`pc_os_host_native`, the default) there is no frame on either side, the destination's
+ * prepare never answers, and the exchange refuses — measured in an isolated copy of the installed
+ * desktop on two outputs: Super+Shift+Right and the taskbar's "Move to other display" left Telegram
+ * exactly where it was. This moves the compositor window to the adjacent output directly, with the
+ * same neighbour rule and placement the handoff uses. */
+ipcMain.handle('pc:wm:move-to-output', async (e, id, direction) => {
+  fsGuard(e);
+  direction=String(direction||'');
+  if(!/^(left|right|up|down)$/.test(direction)) return false;
+  const record=adjacentShellSurface(e, direction);
+  if(!record || !record.assignment || !record.assignment.rect) return false;
+  const nativeId=Number(id);
+  const rows=await wm().windows();
+  if(!rows.some(row=>Number(row.id)===nativeId)) return false;
+  if(typeof wm().placeOnOutput!=='function') return false;
+  await wm().placeOnOutput(nativeId, record.assignment.rect, direction);
+  if(record.assignment.workspace!=null) _nativeOwners.set(nativeId,String(record.assignment.workspace));
+  return true;
+});
+
 ipcMain.handle('pc:wm:handoff', async (e, id, direction, drop) => {
   fsGuard(e);
   direction=String(direction||'');
@@ -2901,21 +2939,58 @@ ipcMain.handle('pc:wm:fullscreen', async (e, id, on) => {
   const old=_shellFullscreenFailsafes.get(n);
   if(old){ clearTimeout(old); _shellFullscreenFailsafes.delete(n); }
   const result=await wm().fullscreen(n, enable);
+  /* IS THIS A DESKTOP SURFACE? Asked of the surface records first, which are the authority.
+   *
+   * The title test alone never matched on Wayfire: the shell's window is titled "PosterChan
+   * Desktop" (the BrowserWindow option, and the exact string the posterchan-shell plugin requires),
+   * while this accepted only "PosterChan" or "PosterChan · Nostr". So Alt+Tab's fullscreen raise was
+   * never registered here, and `sinkShellSurfaces` sent the desktop straight back under Firefox on
+   * the focus event the gesture itself produced: the chooser was drawn, focused, fullscreen and
+   * invisible, and releasing Alt went back to the window it started on. Measured on a two-output
+   * Wayfire session with Firefox in front (grim of the output while Alt was held). */
   let shellWindow=false;
   if(enable && SHELL_MODE){
-    try{
+    if(shellSurfaceIds().has(n)) shellWindow=true;
+    else try{
       const rows=await wm().windows();
       const row=(rows||[]).find(x=>Number(x&&x.id)===n);
       shellWindow=!!(row && /^(?:posterchan(?:-desktop)?|place\.poster\.desktop)$/i.test(String(row.app||''))
-        && /^PosterChan(?: · Nostr)?$/i.test(String(row.title||'')));
+        && /^PosterChan(?: Desktop| · Nostr)?$/i.test(String(row.title||'')));
     }catch(_){ shellWindow=false; }
   }
   if(shellWindow){
+    /* LONGER THAN THE CHOOSER'S OWN LIFE (os.js commits after 5s without an Alt release), or the
+     * desktop drops behind the applications while the chooser is still on screen. */
     const timer=setTimeout(()=>{
       _shellFullscreenFailsafes.delete(n);
       wm().fullscreen(n,false).catch(()=>{});
-    }, 3000);
+    }, 6000);
     _shellFullscreenFailsafes.set(n,timer);
+    /* FULLSCREEN DOES NOT RAISE ON WAYFIRE, AND NEITHER DOES FOCUSING THE DESKTOP. Measured: the
+     * shell went fullscreen and took the keyboard with Firefox still drawn over it, so the chooser
+     * existed only for the keyboard. What does work is the lever the rest of this file uses —
+     * `send-to-back` — applied to the applications instead of the desktop: every other view on that
+     * output goes under it, least recently focused LAST so their order among themselves survives.
+     * Committing focuses (and so raises) the chosen window, and the unfullscreen below sinks the
+     * desktop again under the rest. */
+    try{
+      const rows=await wm().windows();
+      const me=(rows||[]).find(x=>Number(x&&x.id)===n);
+      const shells=shellSurfaceIds();
+      if(me && typeof wm().keepBelow==='function'){
+        const others=rows.filter(x=>x && Number(x.id)!==n && !shells.has(Number(x.id)) && !x.stashed
+          && String(x.outputName||'')===String(me.outputName||''))
+          .sort((a,b)=>(Number(b.focusTime)||0)-(Number(a.focusTime)||0));
+        for(const x of others){
+          if(!_shellFullscreenFailsafes.has(n)) break;     // the gesture already ended
+          try{ await wm().keepBelow(Number(x.id), true); }catch(_){ }
+        }
+      }
+    }catch(_){ }
+  }else if(!enable && SHELL_MODE && shellSurfaceIds().has(n)){
+    /* The gesture is over: put the desktop back under the applications now rather than on the next
+     * focus event, which can arrive before this handler has retired the failsafe and skip it. */
+    sinkShellSurfaces();
   }
   return result;
 });
@@ -3059,11 +3134,11 @@ ipcMain.handle('pc:liveusb:status', (e) => { fsGuard(e); return liveusb.status()
 ipcMain.handle('pc:liveusb:build', (e, dir, home) => { fsGuard(e); return liveusb.build(String(dir||''), !!home); });
 ipcMain.handle('pc:liveusb:burn', (e, iso, disk) => { fsGuard(e); return liveusb.burn(String(iso||''), String(disk||'')); });
 ipcMain.handle('pc:liveusb:pick-iso', async (e) => {
-  fsGuard(e); const r=await dialog.showOpenDialog(win,{properties:['openFile'],filters:[{name:'ISO images',extensions:['iso']}]});
+  fsGuard(e); const r=await dialog.showOpenDialog(dialogOwner(e),{properties:['openFile'],filters:[{name:'ISO images',extensions:['iso']}]});
   return r.canceled?'':(r.filePaths[0]||'');
 });
 ipcMain.handle('pc:liveusb:pick-dir', async (e) => {
-  fsGuard(e); const r=await dialog.showOpenDialog(win,{properties:['openDirectory','createDirectory']});
+  fsGuard(e); const r=await dialog.showOpenDialog(dialogOwner(e),{properties:['openDirectory','createDirectory']});
   return r.canceled?'':(r.filePaths[0]||'');
 });
 /* Launch takes an ARGV ARRAY, never a command string. A string would have to be handed to a shell
@@ -3283,8 +3358,7 @@ ipcMain.handle('pc:host:notify', (e, options) => {
 });
 ipcMain.handle('pc:host:pickDirectory', async (e) => {
   fsGuard(e);
-  const owner = BrowserWindow.fromWebContents(e.sender) || win;
-  const r = await dialog.showOpenDialog(owner, { title: 'Open project folder', properties: ['openDirectory'] });
+  const r = await dialog.showOpenDialog(dialogOwner(e), { title: 'Open project folder', properties: ['openDirectory'] });
   return r.canceled || !r.filePaths || !r.filePaths[0] ? null : hostfs().clean(r.filePaths[0]);
 });
 ipcMain.handle('pc:host:pickFile', async (e, options) => {
@@ -3292,7 +3366,7 @@ ipcMain.handle('pc:host:pickFile', async (e, options) => {
   const o=options && typeof options==='object' ? options : {};
   const filters=o.images ? [{name:'Images',extensions:['jpg','jpeg','png','gif','webp','heic','heif','avif']}]
                          : [{name:'All files',extensions:['*']}];
-  const r=await dialog.showOpenDialog(win,{title:String(o.title||'Choose a file').slice(0,80),
+  const r=await dialog.showOpenDialog(dialogOwner(e),{title:String(o.title||'Choose a file').slice(0,80),
     properties:['openFile'],filters});
   if(r.canceled || !r.filePaths[0])return null;
   const file=r.filePaths[0],st=fs.statSync(file),max=Math.min(Math.max(Number(o.max)||32*1024*1024,1),64*1024*1024);
@@ -3305,8 +3379,7 @@ ipcMain.handle('pc:host:pickFile', async (e, options) => {
 });
 ipcMain.handle('pc:host:saveFile', async (e, name, bytes) => {
   fsGuard(e);
-  const owner=BrowserWindow.fromWebContents(e.sender)||win;
-  const r=await dialog.showSaveDialog(owner,{title:'Save document',defaultPath:path.basename(String(name||'document'))});
+  const r=await dialog.showSaveDialog(dialogOwner(e),{title:'Save document',defaultPath:path.basename(String(name||'document'))});
   if(r.canceled||!r.filePath)return null;
   const data=Buffer.from(bytes||[]);
   if(data.length>256*1024*1024)throw new Error('that file is too large');
@@ -3576,7 +3649,7 @@ ipcMain.handle('pc:vm:boot-disk', (e, name) => { fsGuard(e); return vm.bootDisk(
 ipcMain.handle('pc:vm:add-network', (e, name) => { fsGuard(e); return vm.addNetwork(name); });
 ipcMain.handle('pc:vm:gaming-mouse', (e, name, on) => { fsGuard(e); return vm.gamingMouse(name, !!on); });
 ipcMain.handle('pc:vm:pick-iso', async (e) => {
-  fsGuard(e); const r=await dialog.showOpenDialog(win,{title:'Choose installation ISO',properties:['openFile'],
+  fsGuard(e); const r=await dialog.showOpenDialog(dialogOwner(e),{title:'Choose installation ISO',properties:['openFile'],
     filters:[{name:'Disc images',extensions:['iso','img']},{name:'All files',extensions:['*']}]});
   return r.canceled?'':(r.filePaths[0]||'');
 });
@@ -3747,7 +3820,7 @@ ipcMain.on('pc:os:bootstrap', (e) => {
 ipcMain.handle('pc:fs:list', (e) => { fsGuard(e); return fsbridge.list(); });
 ipcMain.handle('pc:fs:pick', async (e) => {
   fsGuard(e);
-  const r = await dialog.showOpenDialog(win, {
+  const r = await dialog.showOpenDialog(dialogOwner(e), {
     title: 'Choose a folder to sync',
     properties: ['openDirectory', 'createDirectory'],
   });

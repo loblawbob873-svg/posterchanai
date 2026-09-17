@@ -332,6 +332,7 @@ if (isOurPage) {
       w: Number((area||{}).w)||0, h: Number((area||{}).h)||0,
       reserve: Number((area||{}).reserve)||0 }),
     move: (id, x, y) => ipcRenderer.invoke('pc:wm:move', Number(id), Number(x), Number(y)),
+    moveToOutput: (id, direction) => ipcRenderer.invoke('pc:wm:move-to-output', Number(id), String(direction||'')),
     handoff: (id, direction, drop) => ipcRenderer.invoke('pc:wm:handoff', Number(id),
                                                           String(direction||''), drop||{}),
     nativeHandoffAck: (token, rect) => ipcRenderer.invoke('pc:wm:native-handoff-ack',

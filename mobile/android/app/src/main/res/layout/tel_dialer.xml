@@ -107,19 +107,43 @@
         android:orientation="vertical"
         android:gravity="center">
 
-        <TextView
-            android:id="@+id/pc_dl_number"
+        <!-- The number, and in the same box the Paste pill that stands in for it while the pad is
+             empty and the clipboard holds text. One box, so showing the pill never moves the keys.
+             NOT textIsSelectable: selection owns the long press, and the long press is Paste/Copy. -->
+        <FrameLayout
+            android:id="@+id/pc_dl_numrow"
             android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:gravity="center"
-            android:paddingTop="8dp"
-            android:paddingBottom="14dp"
-            android:paddingLeft="24dp"
-            android:paddingRight="24dp"
-            android:maxLines="1"
-            android:ellipsize="start"
-            android:textSize="34sp"
-            android:textIsSelectable="true" />
+            android:layout_height="wrap_content">
+
+            <TextView
+                android:id="@+id/pc_dl_number"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:gravity="center"
+                android:paddingTop="8dp"
+                android:paddingBottom="14dp"
+                android:paddingLeft="24dp"
+                android:paddingRight="24dp"
+                android:maxLines="1"
+                android:ellipsize="start"
+                android:textSize="34sp"
+                android:longClickable="true" />
+
+            <TextView
+                android:id="@+id/pc_dl_paste"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_gravity="center"
+                android:minHeight="40dp"
+                android:gravity="center"
+                android:paddingLeft="20dp"
+                android:paddingRight="20dp"
+                android:text="@string/tel_paste"
+                android:textStyle="bold"
+                android:clickable="true"
+                android:focusable="true"
+                android:visibility="gone" />
+        </FrameLayout>
 
         <LinearLayout
             android:id="@+id/pc_dl_pad"

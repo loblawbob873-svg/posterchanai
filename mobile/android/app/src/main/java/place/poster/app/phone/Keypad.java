@@ -119,7 +119,8 @@ public final class Keypad {
         cell.setClickable(true);
         int px = Skin.dp(ctx, size);
         LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(px, px);
-        int m = Skin.dp(ctx, size >= 70 ? 9 : 7);
+        // PadFit decides the margin, so the dialer's fit and the pad it builds agree on a key's room.
+        int m = Skin.dp(ctx, PadFit.marginDp(size));
         lp.setMargins(m, m, m, m);
         cell.setLayoutParams(lp);
 
