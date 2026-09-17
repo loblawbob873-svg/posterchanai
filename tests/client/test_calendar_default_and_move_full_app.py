@@ -97,7 +97,9 @@ def test_move_keeps_original_ics_and_retries_exact_edited_payload(edit_title):
         assert await b.js("JSON.stringify(__calendarCalls[0])===JSON.stringify(__calendarCalls[1])")
         assert await b.js("__calendarData.a.length") == 0
         assert await b.js("__calendarData.b.length") == 1
-        assert await b.js("!!document.querySelector('.cal-edit[data-cal=b][data-uid=original]')")
+        # The list repaints AFTER the dialog closes. Asserted immediately, this lost the race on the
+        # slower CI runner (desktop build for 90f75c97) with the move itself already correct above.
+        await b.until("!!document.querySelector('.cal-edit[data-cal=b][data-uid=original]')")
     asyncio.run(desktop.with_browser('online','',check,BOUNDARIES))
 
 @pytest.mark.skipif(not Path('/opt/google/chrome/chrome').exists(),reason='Chrome required')
