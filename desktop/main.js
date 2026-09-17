@@ -2751,6 +2751,30 @@ function adjacentShellSurface(e, direction){
   return candidates.length ? candidates[0].record : null;
 }
 
+/* A NATIVE WINDOW WE DO NOT HOST HAS NOTHING TO HAND OFF — IT JUST MOVES.
+ *
+ * `pc:wm:handoff` is the atomic frame-and-surface exchange for a Firefox/Telegram window hosted in a
+ * PosterChan frame: the destination renderer adopts the frame first, then the surface follows. With
+ * hosting off (`pc_os_host_native`, the default) there is no frame on either side, the destination's
+ * prepare never answers, and the exchange refuses — measured in an isolated copy of the installed
+ * desktop on two outputs: Super+Shift+Right and the taskbar's "Move to other display" left Telegram
+ * exactly where it was. This moves the compositor window to the adjacent output directly, with the
+ * same neighbour rule and placement the handoff uses. */
+ipcMain.handle('pc:wm:move-to-output', async (e, id, direction) => {
+  fsGuard(e);
+  direction=String(direction||'');
+  if(!/^(left|right|up|down)$/.test(direction)) return false;
+  const record=adjacentShellSurface(e, direction);
+  if(!record || !record.assignment || !record.assignment.rect) return false;
+  const nativeId=Number(id);
+  const rows=await wm().windows();
+  if(!rows.some(row=>Number(row.id)===nativeId)) return false;
+  if(typeof wm().placeOnOutput!=='function') return false;
+  await wm().placeOnOutput(nativeId, record.assignment.rect, direction);
+  if(record.assignment.workspace!=null) _nativeOwners.set(nativeId,String(record.assignment.workspace));
+  return true;
+});
+
 ipcMain.handle('pc:wm:handoff', async (e, id, direction, drop) => {
   fsGuard(e);
   direction=String(direction||'');
