@@ -39135,6 +39135,86 @@
     return {x:Math.max(0,Math.min(1,(e.clientX-left)/Math.max(1,width))),
             y:Math.max(0,Math.min(1,(e.clientY-top)/Math.max(1,height)))};
   }
+  /* ZOOM, BECAUSE "FIT" IS NOT READABLE — reported as "why is remote desktop still hard to see the
+   * screen ... My desktop 4K screen is too tiny on laptop".
+   *
+   * Fitting a 3840-wide desktop into a ~1400-wide window is a 36% scale: correct, and unreadable.
+   * That is what every VNC viewer solves with a zoom control, so this is one: Fit, 100%, and steps
+   * between, with the view following the remote pointer while it is magnified.
+   *
+   * THE ZOOM IS A CSS TRANSFORM ON THE VIDEO, and that is the load-bearing decision. Every input
+   * this viewer sends is mapped through `video.getBoundingClientRect()` — `_rdVideoPoint` for
+   * absolute positions and the pointer-lock branch for relative motion — and a transformed element
+   * REPORTS ITS TRANSFORMED RECT. So the clicks keep landing where the pointer is with no second
+   * copy of the mapping to keep in step. Sizing the element instead (width in px + scroll) would
+   * have needed exactly that second copy, which is how a zoomed viewer ends up clicking the wrong
+   * thing while looking perfectly fine. */
+  const RD_ZOOM_MIN=1, RD_ZOOM_MAX=4, RD_ZOOM_STEP=1.25;
+  /* What the transform must be, given a zoom and where in the REMOTE screen we want centred.
+   * Pure: no DOM, so tests/test_remote_desktop_zoom_runtime.py can run the real clamping. `view` is
+   * the stage in CSS pixels, `at` is a normalised point of the remote screen (the pointer, usually).
+   * The offsets are clamped so magnified content can never be panned off its own stage — a viewer
+   * showing a band of black beside the desktop is the bug this arithmetic exists to prevent. */
+  function _rdZoomTransform(scale, view, at){
+    const z=Math.max(RD_ZOOM_MIN,Math.min(RD_ZOOM_MAX,Number(scale)||1));
+    const w=Math.max(1,Number(view&&view.width)||1), h=Math.max(1,Number(view&&view.height)||1);
+    const px=Math.max(0,Math.min(1,Number(at&&at.x)));
+    const py=Math.max(0,Math.min(1,Number(at&&at.y)));
+    // Room the magnified picture has to slide, in each direction, from centred.
+    const slackX=w*(z-1)/2, slackY=h*(z-1)/2;
+    // Centre the requested point: at z=1 there is no slack, so this is 0 and Fit is untouched.
+    const x=Math.max(-slackX,Math.min(slackX,(0.5-px)*w*z));
+    const y=Math.max(-slackY,Math.min(slackY,(0.5-py)*h*z));
+    return {scale:z,x:Math.round(x),y:Math.round(y)};
+  }
+  /* LAYOUT pixels, and its own function so a test can hold it to that. `getBoundingClientRect()`
+   * is in VISUAL pixels — this client scales whole pages with `body{zoom}` — while a CSS
+   * `translate()` is resolved in layout pixels, so measuring the stage with the rect over-translates
+   * by exactly the page zoom and the pointer stops agreeing with the picture. Measured while this
+   * was wrong: at 2x centred on 0.25, the middle of the stage was 0.32 of the remote screen. */
+  function _rdStageBox(stage){
+    if(!stage)return {width:1,height:1};
+    const rect=stage.getBoundingClientRect();
+    return {width:stage.clientWidth||rect.width||1, height:stage.clientHeight||rect.height||1};
+  }
+  function _rdZoomState(){
+    if(!_call)return null;
+    if(!_call.zoom)_call.zoom={scale:1,at:{x:.5,y:.5}};
+    return _call.zoom;
+  }
+  /* Paint it. Fit clears the transform entirely rather than writing `scale(1)`, so the ordinary
+   * session is byte-identical to what shipped before this control existed. */
+  function _rdApplyZoom(){
+    const video=document.getElementById('call-remote'), state=_rdZoomState();
+    if(!video||!state)return;
+    const stage=video.parentElement&&video.parentElement.classList.contains('rd-stage')?video.parentElement:video;
+    /* LAYOUT pixels, not the rect. `getBoundingClientRect()` is in VISUAL pixels — this client
+     * scales whole pages with `body{zoom}` — while a CSS `translate()` is resolved in layout
+     * pixels, so measuring with the rect over-translates by exactly the page zoom and the pointer
+     * stops agreeing with the picture. Measured: at 2x centred on 0.25, a rect-derived offset put
+     * the stage centre at 0.32 of the remote screen. `clientWidth` is the same space the transform
+     * is written in, so the two cannot drift. */
+    const box=_rdStageBox(stage);
+    if(state.scale<=RD_ZOOM_MIN+0.001){
+      video.style.transform='';video.style.transformOrigin='';
+    }else{
+      const t=_rdZoomTransform(state.scale,{width:box.width,height:box.height},state.at);
+      video.style.transformOrigin='center center';
+      video.style.transform='translate('+t.x+'px,'+t.y+'px) scale('+t.scale+')';
+    }
+    const label=document.getElementById('rd-zoom-level');
+    if(label)label.textContent=state.scale<=RD_ZOOM_MIN+0.001?'Fit':Math.round(state.scale*100)+'%';
+    const out=document.getElementById('rd-zoom-out');if(out)out.disabled=state.scale<=RD_ZOOM_MIN+0.001;
+    const inn=document.getElementById('rd-zoom-in');if(inn)inn.disabled=state.scale>=RD_ZOOM_MAX-0.001;
+  }
+  /* `at` is where to keep in view: the remote pointer while controlling, so magnified control still
+   * works without a second pan gesture competing with the clicks. */
+  function _rdZoomTo(scale,at){
+    const state=_rdZoomState();if(!state)return;
+    state.scale=Math.max(RD_ZOOM_MIN,Math.min(RD_ZOOM_MAX,Number(scale)||1));
+    if(at&&isFinite(at.x)&&isFinite(at.y))state.at={x:Math.max(0,Math.min(1,at.x)),y:Math.max(0,Math.min(1,at.y))};
+    _rdApplyZoom();
+  }
   let _rdViewerCleanup=null;
   function _rdBindViewer(video){
     if(!video||video.dataset.rdControl)return;
@@ -39145,8 +39225,14 @@
     const active=()=>_call===session&&!!(_call&&_call.remoteDesktop&&!_call.caller&&_call.controlGranted)&&!video.closest('.call-mini');
     const listen=(target,name,fn,opts)=>{target.addEventListener(name,fn,opts);listeners.push(()=>target.removeEventListener(name,fn,opts));};
     const point=e=>{
-      if(document.pointerLockElement===video)return position;
-      return position=_rdVideoPoint(video,e,_call&&_call.remoteGeometry);
+      if(document.pointerLockElement!==video)position=_rdVideoPoint(video,e,_call&&_call.remoteGeometry);
+      /* Magnified, the stage shows a WINDOW onto the remote screen, so it follows the pointer —
+       * otherwise controlling anything outside that window means panning first, and there is no
+       * gesture left to pan with while every drag is being sent to the other machine. */
+      const z=_call&&_call.zoom;
+      if(z&&z.scale>RD_ZOOM_MIN+0.001&&(Math.abs(z.at.x-position.x)>0.02||Math.abs(z.at.y-position.y)>0.02))
+        _rdZoomTo(z.scale,position);
+      return position;
     };
     const release=()=>{
       if(_call===session){
@@ -39184,7 +39270,16 @@
     listen(video,'pointerup',up);
     listen(video,'pointercancel',release);
     listen(video,'lostpointercapture',()=>{if(document.pointerLockElement!==video)release();});
-    listen(video,'wheel',e=>{if(!active())return;const p=point(e);_rdSend({t:'input',e:{type:'absolute',x:p.x,y:p.y}});_rdSend({t:'input',e:{type:'wheel',dy:Math.max(-12,Math.min(12,Math.sign(e.deltaY)))}});e.preventDefault();},{passive:false});
+    /* Ctrl/Cmd + wheel is the zoom every viewer and browser already uses, and it must be taken
+     * BEFORE the remote-scroll branch or the other machine scrolls instead of this one magnifying. */
+    listen(video,'wheel',e=>{
+      if(!(e.ctrlKey||e.metaKey))return;
+      const state=_rdZoomState();if(!state)return;
+      const at=document.pointerLockElement===video?position:_rdVideoPoint(video,e,_call&&_call.remoteGeometry);
+      _rdZoomTo(state.scale*(e.deltaY<0?RD_ZOOM_STEP:1/RD_ZOOM_STEP),at);
+      e.preventDefault();e.stopPropagation();
+    },{passive:false,capture:true});
+    listen(video,'wheel',e=>{if(!active()||e.ctrlKey||e.metaKey)return;const p=point(e);_rdSend({t:'input',e:{type:'absolute',x:p.x,y:p.y}});_rdSend({t:'input',e:{type:'wheel',dy:Math.max(-12,Math.min(12,Math.sign(e.deltaY)))}});e.preventDefault();},{passive:false});
     listen(video,'contextmenu',e=>{if(active())e.preventDefault();});
     listen(document,'pointerlockchange',()=>{
       const next=document.pointerLockElement===video;
@@ -39713,8 +39808,9 @@
     if(_call.state!=='ringing') _ringtone(false);
     if(!el){
       el=document.createElement('div'); el.id='call-overlay';
-      el.innerHTML=`<video id="call-remote" class="call-remote" autoplay playsinline></video>
-        <div class="call-head"><img id="call-av" onerror="this.src='${LOGO}'"><div><div class="call-name" id="call-name"></div><div class="call-status" id="call-status"></div></div></div>
+      el.innerHTML=`<div class="rd-stage"><video id="call-remote" class="call-remote" autoplay playsinline></video></div>
+        <div class="call-head"><img id="call-av" onerror="this.src='${LOGO}'"><div><div class="call-name" id="call-name"></div><div class="call-status" id="call-status"></div></div>
+          <div class="rd-zoom" id="rd-zoom"><button type="button" id="rd-zoom-out" title="Zoom out" aria-label="Zoom out">&minus;</button><button type="button" id="rd-zoom-level" title="Fit the whole screen">Fit</button><button type="button" id="rd-zoom-in" title="Zoom in" aria-label="Zoom in">+</button></div></div>
         <video id="call-local" class="call-local" autoplay playsinline muted></video>
         <div class="call-actions" id="call-actions"></div>`;
       const callHost=_call.remoteDesktop?(_rdEnsureHost()||document.body):document.body;
@@ -39735,6 +39831,25 @@
     // bare reassignment would drop `call-mini` and pop the overlay back to fullscreen on its own.
     const _mini=el.classList.contains('call-mini');
     el.className='call-overlay'+(_call.remoteDesktop?' rd':'')+(_call.remoteDesktop&&_call.controlGranted?' control-on':'')+(showVid?' vid':' aud')+(_call.state==='ringing'?' ring':'')+(_call.state==='connected'?' on':'')+(_mini?' call-mini':'');
+    /* The zoom row belongs to a remote-desktop session and to no other call. Bound on every UI
+     * pass (the overlay is rebuilt on any call event) and hidden outright for a camera call, where
+     * "Fit" would be a control over somebody's face. */
+    const zoomRow=document.getElementById('rd-zoom');
+    if(zoomRow){
+      const wanted=!!(_call&&_call.remoteDesktop&&!_call.caller)&&!el.classList.contains('call-mini');
+      zoomRow.hidden=!wanted;
+      if(wanted&&!zoomRow.dataset.bound){
+        zoomRow.dataset.bound='1';
+        const step=(factor)=>{const z=_rdZoomState();if(z)_rdZoomTo(factor?z.scale*factor:1,z.at);};
+        const bind=(id,fn)=>{const b=document.getElementById(id);if(b)b.onclick=(ev)=>{ev.stopPropagation();fn();};};
+        bind('rd-zoom-in',()=>step(RD_ZOOM_STEP));
+        bind('rd-zoom-out',()=>step(1/RD_ZOOM_STEP));
+        /* The readout is the way BACK: one press returns to the whole screen, which is the state
+         * somebody zoomed in from and the only one that needs no aiming. */
+        bind('rd-zoom-level',()=>step(0));
+      }
+      if(wanted)_rdApplyZoom();
+    }
     const rv=document.getElementById('call-remote'); if(rv){ rv.style.display=hasRemoteVid?'':'none'; if(_call.remote && rv.srcObject!==_call.remote){ rv.srcObject=_call.remote; if(_call.remoteDesktop&&!_call.caller)_rdPlayRemote(rv);else rv.play&&rv.play().catch(()=>{}); } if(_call.remoteDesktop&&!_call.caller)_rdBindViewer(rv); }
     const lv=document.getElementById('call-local'); if(lv){ lv.style.display=(hasLocalVid&&!_call.camOff)?'':'none'; if(_call.local && lv.srcObject!==_call.local){ lv.srcObject=_call.local; lv.play&&lv.play().catch(()=>{}); }
       // Wire + restore AFTER display is set: offsetWidth is 0 while hidden, so placing it any earlier
@@ -40128,6 +40243,13 @@
     adoptView: (v) => { VIEW=String(v||''); },
     askWindowContext,
     startRemoteDesktop, setRemoteDesktopArmed, setRemoteDesktopHost,
+    /* Exposed for the zoom test, which has to prove the one property that cannot be read off the
+     * source: that a click still lands where the pointer is after the picture is magnified. Both are
+     * the SHIPPED functions — the mapping is only honest if the test drives the same code the
+     * viewer does, against a real transformed element. */
+    __rdZoomTransform: (scale,view,at)=>_rdZoomTransform(scale,view,at),
+    __rdStageBox: (stage)=>_rdStageBox(stage),
+    __rdVideoPoint: (video,e)=>_rdVideoPoint(video,e,_call&&_call.remoteGeometry),
     messageUser: (pk) => { pk=safePk(String(pk||'')); if(!pk)return false; if(!dmPeers.has(pk))dmPeers.set(pk,[]); dmActive=pk; switchView('messages'); setTimeout(()=>openDm(pk),80); return true; },
     /* The one pass that fills every `.name[data-prof]` (and avatars, nip05s, @mentions) once a kind-0
      * arrives. A sub-module that paints author names MUST be able to call it, or its names are frozen

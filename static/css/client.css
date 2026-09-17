@@ -5013,7 +5013,21 @@ html.pc-oswin .main{ height:100% }
 .call-overlay.rd .call-remote{object-fit:contain;image-rendering:auto;touch-action:none}
 .call-overlay.rd:not(.call-mini){display:grid;grid-template-rows:auto minmax(0,1fr) auto;gap:12px;padding:12px;align-items:stretch}
 .call-overlay.rd:not(.call-mini) .call-head{position:static;grid-row:1;margin:0;padding:0;background:none}
+/* THE STAGE IS WHAT CLIPS A MAGNIFIED DESKTOP. `display:contents` by default, so the minimised
+   thumbnail keeps the absolutely-positioned video it has always had and the element adds nothing to
+   that layout; in a real session it becomes the grid cell, and `overflow:hidden` is what stops a
+   zoomed picture spilling over the header and the action row above and below it. */
+.rd-stage{display:contents}
+.call-overlay.rd:not(.call-mini) .rd-stage{grid-row:2;position:relative;overflow:hidden;min-width:0;min-height:0;display:block}
+.call-overlay.rd:not(.call-mini) .rd-stage>.call-remote{position:absolute;inset:0;width:100%;height:100%;min-width:0;min-height:0}
 .call-overlay.rd:not(.call-mini) .call-remote{position:relative;grid-row:2;min-width:0;min-height:0}
+/* The zoom control sits in the session header, right-aligned, and is hidden for a camera call. */
+.rd-zoom{margin-left:auto;display:flex;gap:4px;align-items:center}
+.rd-zoom[hidden]{display:none}
+.rd-zoom button{min-width:38px;height:28px;padding:0 8px;border-radius:8px;border:1px solid var(--line,#333);
+  background:rgba(0,0,0,.45);color:#fff;font:inherit;font-size:12px;cursor:pointer}
+.rd-zoom button:disabled{opacity:.45;cursor:default}
+.rd-zoom button:hover:not(:disabled){background:rgba(255,255,255,.16)}
 .call-overlay.rd:not(.call-mini) .call-actions{grid-row:3;margin:0;flex-wrap:wrap;gap:10px}
 .call-overlay.rd.control-on .call-remote{cursor:none}
 .call-overlay.aud .call-remote{display:none}
