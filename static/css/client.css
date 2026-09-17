@@ -7242,7 +7242,12 @@ body.os-on .osw-body > .feed::-webkit-scrollbar-thumb:hover{background:var(--mut
  * Verified with scripts/check_terminal_selection.py, which measures rendered-row-height against
  * xterm's own cell at every tier -- the two numbers in the table above. */
 .tty-screen{flex:1;min-height:0;padding:6px 4px 2px 8px;overflow:hidden;position:relative}
-.tty-fit{position:absolute;inset:0;zoom:calc(1 / var(--zf, 1))}
+.tty-fit{position:absolute;inset:0;zoom:calc(1 / var(--zf, 1));
+  /* ON THE HOST, NOT .tty-screen: an absolute `inset:0` box ignores its container's padding, so the
+     padding above never reached the text and the first column sat under a window's 4px border
+     (measured: the prompt's first letter cut off in a Terminal window). xterm's fit reads this
+     element's content box, so the columns shrink to match instead of overflowing. */
+  padding:4px 2px 2px 6px}
 .tty-screen .xterm{height:100%}
 /* xterm HARDCODES `background-color:#000` on its viewport and forces `overflow-y:scroll`. Against
    this app's #07040f that black box is a visible seam across the panel — the "weird horizontal
