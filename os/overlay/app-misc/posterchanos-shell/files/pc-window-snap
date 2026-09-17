@@ -181,6 +181,10 @@ def wayfire_main(side):
             "id": view_id, "output_id": int(target["id"]),
             "geometry": {"x": max(0, (width - w) // 2), "y": max(0, (height - h) // 2),
                          "width": w, "height": h}})
+        # THE WINDOW YOU MOVED IS STILL THE ONE YOU ARE USING. Wayfire leaves keyboard focus on the
+        # output the seat was on, so the desktop surface there took it: measured, a Terminal moved to
+        # the right-hand monitor arrived unfocused and typing went to the desktop it had left.
+        wayfire("window-rules/focus-view", {"id": view_id})
         return
     outputs = wayfire("window-rules/list-outputs")
     out = next((o for o in outputs if int(o.get("id", -1)) == int(win.get("output-id", -2))), None)
