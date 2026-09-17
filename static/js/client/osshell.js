@@ -789,6 +789,15 @@
       return 'could not join' + name + ': this account is not allowed to change the network (' + m + ')';
     if(/no wi-?fi device|wifi device not found|no suitable device/i.test(m))
       return 'could not join' + name + ': no usable Wi-Fi adapter on this machine (missing driver or firmware?)';
+    /* THE RADIO IS OFF, which on a laptop is a switch, an Fn key or a soft block the BIOS kept —
+     * and it is the one cause here somebody can fix in a second once they are told. nmcli says it
+     * differently depending on whether NM or rfkill refused, so both spellings are matched. */
+    if(/hardware switch|rfkill|wi-?fi is disabled|radio is disabled|blocked by/i.test(m))
+      return 'could not join' + name + ': the Wi-Fi radio is switched off (hardware switch, Fn key or airplane mode)';
+    /* The adapter EXISTS and never came up: firmware that did not load, a driver still binding, or a
+     * device another program put under its own management. "No device" would be the wrong words. */
+    if(/not ready|unmanaged|device is not available|unavailable/i.test(m))
+      return 'could not join' + name + ': the Wi-Fi adapter is not ready (firmware or driver did not finish loading)';
     if(/no network with ssid/i.test(m))
       return 'could not join' + name + ': that network is no longer in range';
     if(/nmcli: (?:command )?not found|ENOENT/i.test(m))
