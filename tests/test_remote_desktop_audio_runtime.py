@@ -62,7 +62,7 @@ def test_phone_can_enable_sound_after_autoplay_blocks_it(tmp_path):
 window._call={remoteDesktop:true,caller:false,remote:new MediaStream(),state:'connected',peer:'test'};
 const audio=new AudioContext(),dest=audio.createMediaStreamDestination();_call.remote.addTrack(dest.stream.getAudioTracks()[0]);
 window.LOGO='';window.profOf=()=>({name:'Laptop'});window._callStatus=()=> 'connected';window._hasLiveVideo=()=>true;
-for(const n of ['_callWake','_callService','_ringtone','_dragSelfView','_placeSelfView','_rdBindViewer'])window[n]=()=>{};
+for(const n of ['_callWake','_callService','_ringtone','_dragSelfView','_placeSelfView','_rdBindViewer','_rdApplyZoom'])window[n]=()=>{};
 window._rdEnsureHost=()=>document.body;window._callSvcName=()=> 'Laptop';
 window._rdSwitchScreen=()=>{};window.playCalls=[];window.blockAudio=true;
 HTMLMediaElement.prototype.play=function(){playCalls.push(this.muted);return blockAudio&&!this.muted?Promise.reject(new DOMException('autoplay','NotAllowedError')):Promise.resolve()};''')
