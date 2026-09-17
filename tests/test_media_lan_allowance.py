@@ -320,3 +320,39 @@ def test_the_jellyfin_shortcut_says_who_is_asking():
         assert filled, f"native.{node.func.attr} never says who is asking"
         asked += 1
     assert asked >= 2, "list_libraries and hls both take a request"
+
+
+def test_the_node_total_never_binds_below_the_number_the_operator_typed():
+    """THE PER-STREAM NUMBER MUST BE WHAT LIMITS A STREAM, or there are two numbers again.
+
+    Measured live on 2026-09-17, with the per-stream limit already correct: a TV on this node's own
+    LAN -- exempt from `viewer_kbps` by design, so the only budget left was the node total -- took
+    4.471 s to deliver 1,556,480 bytes of a CACHED 1080p segment (`headers_s=0.080`), i.e. 2.79
+    Mbit/s for a rung whose segments peak near 5.6. The node total was 10000 kbps. A 6-second segment
+    arriving in 13 drains the buffer, so the Jellyfin client stalled, cancelled and fell back to
+    480p, over and over -- the "frequent buffering" report, with the per-stream number innocent and
+    every rung above 480p unusable on a gigabit LAN.
+
+    `server_kbps` is the machine's backstop, not a second bandwidth policy: it exists so this node
+    cannot be asked to push more than it can serve. Set below `max_streams * viewer_kbps` it stops
+    being a backstop and becomes a cap nobody typed, binding first and invisibly. The shipped
+    defaults must never be that shape."""
+    limits = media.DEFAULT_LIMITS
+    ceiling = limits["max_streams"] * limits["viewer_kbps"]
+    assert limits["server_kbps"] >= ceiling, (
+        "the shipped node total (%d kbps) is lower than %d streams at the per-stream limit (%d), so "
+        "streams throttle each other while every one of them is inside the only limit anybody set"
+        % (limits["server_kbps"], limits["max_streams"], limits["viewer_kbps"]))
+
+
+def test_a_bigger_node_total_never_changes_what_gets_transcoded():
+    """The two numbers answer different questions and must not leak into each other.
+
+    Raising the node total is how a LAN gets its bandwidth back; it must not also unlock a rung,
+    because what this server transcodes is not a bandwidth decision and was never asked to change.
+    The ladder reads `viewer_kbps` alone, and this keeps it that way."""
+    small = {**media.DEFAULT_LIMITS, "server_kbps": 1000}
+    huge = {**media.DEFAULT_LIMITS, "server_kbps": 10 ** 6}
+    for charged in (True, False):
+        assert media.allowed_profiles(small, charged) == media.allowed_profiles(huge, charged), (
+            "the node total moved the transcode ladder")
