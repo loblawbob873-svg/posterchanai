@@ -30,14 +30,16 @@ def test_draft_is_restored_after_navigation_or_process_recreation():
     assert thread.count("restoreAttachmentDraft();") >= 3
 
 
-def test_accepted_send_keeps_preview_and_has_durable_explicit_result_states():
+def test_accepted_send_clears_the_composer_and_keeps_explicit_result_states():
+    """Superseded rule: an accepted picture used to stay on the composer as "Sending…"/"Sent", which
+    blocked the next message (see test_android_sent_picture_leaves_the_composer.py). The explicit
+    carrier states are still recorded, for the private-link path and the message row."""
     thread = source("ThreadActivity.java")
     receiver = source("MmsSendReceiver.java")
     draft = source("MmsDraft.java")
     send = thread[thread.index("private void sendMms(String body)"):
                   thread.index("private void call()")]
-    assert "MmsDraft.SENDING" in send
-    assert "clearAttachmentDraft()" not in send
+    assert "MmsDraft.remove(this, address)" in send
     assert "MmsDraft.SENT" in receiver
     assert "MmsDraft.FAILED" in receiver
     assert "MmsDraft.UNKNOWN" in receiver

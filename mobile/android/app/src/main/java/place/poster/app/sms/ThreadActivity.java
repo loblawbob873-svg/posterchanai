@@ -494,6 +494,13 @@ public class ThreadActivity extends PcActivity {
 
     private void restoreAttachmentDraft() {
         attachmentDraft = MmsDraft.load(this, address);
+        /* A draft an earlier build left behind after the carrier took it (SENT, or a delivery it
+         * could not confirm) is finished business, not something to send with the next message. */
+        if (attachmentDraft != null && (MmsDraft.SENT.equals(attachmentDraft.state)
+                || MmsDraft.UNKNOWN.equals(attachmentDraft.state)) && !sendingLink) {
+            MmsDraft.remove(this, address);
+            attachmentDraft = null;
+        }
         paintAttachmentDraft();
     }
 
@@ -862,10 +869,17 @@ public class ThreadActivity extends PcActivity {
             SmsSender.Result result = MmsSender.send(this, address, body, raw, mime, fileName, draftKey);
             if (!result.ok) { say(result.error == null || result.error.isEmpty()
                     ? getString(R.string.sms_failed) : result.error); return; }
-            if (attachmentDraft != null) {
-                MmsDraft.state(this, attachmentDraft.key, MmsDraft.SENDING, "");
-                restoreAttachmentDraft();
-            }
+            /* SENT MEANS THE COMPOSER IS EMPTY, picture included. The draft used to stay on screen
+             * as "Sending…"/"Sent", and send() refuses anything not READY or FAILED -- so the next
+             * text typed into this conversation did nothing but repeat the word "sent", and
+             * attachmentBusy() blocked even picking a new photo while the carrier worked. Reported as
+             * "the media stays in the text message and messes up the message you are trying to send
+             * next". The carrier has the bytes now (MmsSender wrote its own copy), the outcome is
+             * recorded on the message row, and a failure is retried from that row; nothing here can
+             * send this picture a second time because nothing here holds it any more. */
+            if (attachmentDraft != null) MmsDraft.remove(this, address);
+            attachmentDraft = null;
+            paintAttachmentDraft();
             attachment = null; capturedAttachment = null;
             discardPendingCamera();
             input.setText("");
