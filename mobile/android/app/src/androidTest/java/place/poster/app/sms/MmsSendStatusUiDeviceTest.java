@@ -24,30 +24,53 @@ import java.io.ByteArrayOutputStream;
 /** Real native rendering, private test draft only: never invokes a carrier send. */
 @RunWith(AndroidJUnit4.class)
 public class MmsSendStatusUiDeviceTest {
-    @Test public void uncertainAttachmentIsQuietAndDetailsRemainAccessible() throws Exception {
+    /* A picture the private-link path could not send stays on the composer as NOT SENT, with its
+     * reason one tap away: that is the one draft the person still has to act on. */
+    @Test public void aFailedAttachmentShowsWhyAndDetailsRemainAccessible() throws Exception {
         Context context = InstrumentationRegistry.getInstrumentation().getTargetContext();
         String address = "+15550009421";
-        ByteArrayOutputStream bytes = new ByteArrayOutputStream();
-        Bitmap image = Bitmap.createBitmap(2, 2, Bitmap.Config.ARGB_8888);
-        image.compress(Bitmap.CompressFormat.PNG, 100, bytes); image.recycle();
-        String detail = MmsFailures.reason(5, 0);
+        String detail = "The upload could not reach your server.";
         try {
-            MmsDraft.Value draft = MmsDraft.save(context, address, bytes.toByteArray(), "image/png", "photo.png");
-            MmsDraft.state(context, draft.key, MmsDraft.UNKNOWN, detail);
+            MmsDraft.Value draft = MmsDraft.save(context, address, png(), "image/png", "photo.png");
+            MmsDraft.state(context, draft.key, MmsDraft.FAILED, detail);
             Intent intent = new Intent(context, ThreadActivity.class)
                     .putExtra(ThreadActivity.EXTRA_ADDRESS, address);
             try (ActivityScenario<ThreadActivity> scenario = ActivityScenario.launch(intent)) {
                 scenario.onActivity(activity -> {
                     TextView status = activity.findViewById(R.id.pc_th_attachment_status);
-                    assertEquals("photo.png · Send status unconfirmed\nTap for details", status.getText().toString());
-                    assertFalse(status.getText().toString().contains("I/O"));
+                    assertEquals("photo.png · Not sent\nTap for details", status.getText().toString());
                 });
                 // Drive the real tap through Espresso, then select the newly opened dialog root.
-                // A direct performClick inside onActivity let the next lookup choose the underlying
-                // conversation window before the dialog gained focus on the emulator.
                 onView(withId(R.id.pc_th_attachment_status)).perform(click());
                 onView(withText(detail)).inRoot(isDialog()).check(matches(isDisplayed()));
             }
         } finally { MmsDraft.remove(context, address); }
+    }
+
+    /* A picture the carrier already took is not part of the next message. An earlier build left it
+     * on the composer as "Send status unconfirmed", where send() refused every follow-up text. */
+    @Test public void aPictureTheCarrierTookIsNotLeftOnTheComposer() throws Exception {
+        Context context = InstrumentationRegistry.getInstrumentation().getTargetContext();
+        String address = "+15550009422";
+        try {
+            MmsDraft.Value draft = MmsDraft.save(context, address, png(), "image/png", "photo.png");
+            MmsDraft.state(context, draft.key, MmsDraft.UNKNOWN, MmsFailures.reason(5, 0));
+            Intent intent = new Intent(context, ThreadActivity.class)
+                    .putExtra(ThreadActivity.EXTRA_ADDRESS, address);
+            try (ActivityScenario<ThreadActivity> scenario = ActivityScenario.launch(intent)) {
+                scenario.onActivity(activity -> {
+                    assertEquals(android.view.View.GONE,
+                            activity.findViewById(R.id.pc_th_attachment_draft).getVisibility());
+                });
+            }
+            assertNull("the finished draft is still stored", MmsDraft.load(context, address));
+        } finally { MmsDraft.remove(context, address); }
+    }
+
+    private static byte[] png() {
+        ByteArrayOutputStream bytes = new ByteArrayOutputStream();
+        Bitmap image = Bitmap.createBitmap(2, 2, Bitmap.Config.ARGB_8888);
+        image.compress(Bitmap.CompressFormat.PNG, 100, bytes); image.recycle();
+        return bytes.toByteArray();
     }
 }

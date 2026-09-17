@@ -2669,7 +2669,7 @@
         <section class="os-setting-row os-set-control"><div><b>Keep awake</b><span>Prevent automatic display-off during presentations and long tasks.</span></div><label class="os-set-switch"><input data-keep-awake type="checkbox" ${power.keepAwake?'checked':''}><span>${power.keepAwake?'On':'Off'}</span></label></section>
         <section class="os-hibernate os-setting-row"><div><b>Hibernation</b><span>${power.hibernateConfigured?'Enabled and ready to use.':'Save open apps to disk before the computer powers down.'}</span></div>
           ${power.hibernateConfigured?'<span class="os-set-ready">Ready</span>':'<button class="btn" data-enable-hibernate>Enable hibernation</button>'}</section>
-        <section class="os-hibernate os-setting-row"><div><b>Turn display off when idle</b><span>The computer stays running; only its displays switch off.</span></div>
+        <section class="os-hibernate os-setting-row os-set-control"><div><b>Turn display off when idle</b><span>The computer stays running; only its displays switch off.</span></div>
           <select data-idle-timeout aria-label="Display idle timeout">
             ${[[60,'1 minute'],[120,'2 minutes'],[300,'5 minutes'],[600,'10 minutes'],[1800,'30 minutes'],[0,'Never']].map(([n,label])=>`<option value="${n}" ${Number(power.idleSeconds)===n?'selected':''}>${label}</option>`).join('')}
           </select></section></section>

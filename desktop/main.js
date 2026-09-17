@@ -2786,6 +2786,10 @@ ipcMain.handle('pc:wm:move-to-output', async (e, id, direction) => {
   if(typeof wm().placeOnOutput!=='function') return false;
   await wm().placeOnOutput(nativeId, record.assignment.rect, direction);
   if(record.assignment.workspace!=null) _nativeOwners.set(nativeId,String(record.assignment.workspace));
+  /* THE WINDOW YOU MOVED IS STILL THE WINDOW YOU ARE USING. Wayfire leaves keyboard focus on the
+   * output the seat was on, so after Super+Shift+Arrow the focus fell to whatever else was on the old
+   * monitor (measured: System Settings took it from a Terminal that had just been moved). */
+  try{ await wm().focus(nativeId); }catch(_){ }
   return true;
 });
 

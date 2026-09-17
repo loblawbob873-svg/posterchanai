@@ -7242,7 +7242,12 @@ body.os-on .osw-body > .feed::-webkit-scrollbar-thumb:hover{background:var(--mut
  * Verified with scripts/check_terminal_selection.py, which measures rendered-row-height against
  * xterm's own cell at every tier -- the two numbers in the table above. */
 .tty-screen{flex:1;min-height:0;padding:6px 4px 2px 8px;overflow:hidden;position:relative}
-.tty-fit{position:absolute;inset:0;zoom:calc(1 / var(--zf, 1))}
+.tty-fit{position:absolute;inset:0;zoom:calc(1 / var(--zf, 1));
+  /* ON THE HOST, NOT .tty-screen: an absolute `inset:0` box ignores its container's padding, so the
+     padding above never reached the text and the first column sat under a window's 4px border
+     (measured: the prompt's first letter cut off in a Terminal window). xterm's fit reads this
+     element's content box, so the columns shrink to match instead of overflowing. */
+  padding:4px 2px 2px 6px}
 .tty-screen .xterm{height:100%}
 /* xterm HARDCODES `background-color:#000` on its viewport and forces `overflow-y:scroll`. Against
    this app's #07040f that black box is a visible seam across the panel — the "weird horizontal
@@ -9837,7 +9842,11 @@ audio.sms-att-img{min-width:220px}
 .os-display.selected{border-color:var(--accent);box-shadow:0 0 0 2px rgba(var(--accent-rgb),.25),0 8px 24px #0008}.os-display.off{opacity:.42}
 .os-display b{font-size:20px}.os-display span,.os-display small{max-width:95%;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .os-display-controls{display:grid;grid-template-columns:repeat(2,minmax(180px,1fr));gap:12px;padding:16px;border:1px solid var(--line);border-radius:10px;background:rgba(255,255,255,.025)}
-.os-display-controls label{display:flex;align-items:center;justify-content:space-between;gap:12px}.os-display-controls select{min-width:145px;background:#111722;color:var(--text);border:1px solid var(--line);border-radius:6px;padding:8px}
+.os-display-controls label{display:flex;align-items:center;justify-content:space-between;gap:12px}
+/* A checkbox or radio sits BESIDE its words. `space-between` is right for "Scale ........ [100%]" and
+   wrong for these: it put the tick box at one end of a 500px column and "Use this display" at the
+   other, measured on the Displays page. */
+.os-display-controls label:has(>input[type=checkbox]),.os-display-controls label:has(>input[type=radio]){justify-content:flex-start}.os-display-controls select{min-width:145px;background:#111722;color:var(--text);border:1px solid var(--line);border-radius:6px;padding:8px}
 .os-set-actions{display:flex;align-items:center;gap:10px;margin-top:16px}
 .os-set-control{display:flex;align-items:center;justify-content:space-between;gap:18px;padding:14px 16px;border:1px solid var(--line)}.os-set-control>div{display:flex;flex-direction:column;gap:4px}.os-set-control>div>span,.os-set-control output{color:var(--muted);font-size:12px}.os-set-control>label{display:flex;align-items:center;gap:10px}.os-set-control input[type=range]{width:min(240px,28vw)}.os-set-control select{min-width:150px;padding:8px;background:#111722;color:var(--text);border:1px solid var(--line);border-radius:7px}.os-set-switch span{min-width:24px}.os-about-grid{display:grid;grid-template-columns:repeat(2,minmax(140px,1fr));gap:1px;padding:0;overflow:hidden;background:var(--line)}.os-about-grid>div{display:flex;flex-direction:column;gap:6px;padding:16px;background:var(--panel)}.os-about-grid span{color:var(--muted);font-size:12px}
 .os-set-widget-list{margin-top:12px}.os-set-widget-addhead{margin-top:22px}.os-set-widget-grid{display:grid;grid-template-columns:repeat(2,minmax(220px,1fr));gap:8px;margin-top:12px}.os-set-widget-grid .os-wgt-pick{width:100%;min-height:68px}.os-set-widget .danger{color:#ff8f9a}
@@ -10262,6 +10271,19 @@ html.pc-oswin body{padding-top:38px}
    that is actually available. `min-height:0` because `.main` is a grid child and `auto` there is
    its content, which puts the overflow straight back. */
 html.pc-oswin #app,html.pc-oswin .main{height:100%!important;min-height:0!important}
+/* A NARROW WINDOW FILLED TWO THIRDS OF ITSELF.
+   A window under 821 CSS px wide is inside the phone media query, whose width guard is
+   `html,body,.app,.main,.feed{max-width:100vw}`. 100vw is not rescaled by zoom, and this window's
+   body carries the desktop's zoom (.67 on the test desk): the body was capped at 604 layout px and
+   drawn at 405 in a 604-px viewport. Terminal, the editor and every other view in a default-sized
+   window stopped a third of the way short of the right edge with the wallpaper showing through --
+   measured on a Terminal window, xterm 405 of 604, and 604 of 604 with this rule. The cap is kept
+   (it is what stops horizontal overflow), only divided by the zoom, as every other viewport-unit
+   size under body{zoom} already is. */
+@media (max-width:820px){
+  html.pc-oswin body,html.pc-oswin .app,html.pc-oswin .main,html.pc-oswin .feed{
+    max-width:calc(100vw / var(--ui-scale,1))}
+}
 /* A POPPED-OUT WINDOW IS A REAL TOPLEVEL AND FELL BETWEEN BOTH BORDER MECHANISMS.
  *
  * Reported as "desktop and laptop still missing the window border thing like hyprland" and measured

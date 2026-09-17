@@ -149,6 +149,23 @@ final class MmsDraft {
         }
     }
 
+    /* THE CARRIER'S VERDICT ONLY LANDS ON THE DRAFT THAT IS STILL WAITING FOR IT.
+     *
+     * A picture handed to the carrier leaves the composer at once (ThreadActivity.sendMms), so by the
+     * time MmsSendReceiver hears back, this conversation's draft is either gone or is a NEW picture
+     * the person has since picked. Writing SENT/FAILED over that one would make send() refuse it
+     * ("sent") or offer a retry for something never sent. The result is recorded on the message row
+     * (provider box + MmsFailures), which is where a failed send is retried from. */
+    static void result(Context ctx, String key, String state, String error) {
+        Slot slot = slot(key);
+        synchronized (slot) {
+            if (!media(ctx, key).isFile() || !SENDING.equals(prefs(ctx).getString(key + ".state", ""))) return;
+            ++slot.generation;
+            prefs(ctx).edit().putString(key + ".state", state)
+                    .putString(key + ".error", error == null ? "" : error).commit();
+        }
+    }
+
     static void remove(Context ctx, String address) {
         String key = key(address); Slot slot = slot(key);
         synchronized (slot) {

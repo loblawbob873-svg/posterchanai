@@ -79,7 +79,7 @@ public class MmsFailures {
 public class MmsDraft {
  public static final String SENT="sent",FAILED="failed",UNKNOWN="unknown";
  public static String state="",reason="";
- public static void state(android.content.Context c,String k,String s,String r){state=s;reason=r;}
+ public static void result(android.content.Context c,String k,String s,String r){state=s;reason=r;}
 }''',
 'place/poster/app/sms/MmsFlight.java': '''package place.poster.app.sms;
 public class MmsFlight {public static int releases;public static void release(android.content.Context c){releases++;}}''',

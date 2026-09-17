@@ -50,7 +50,7 @@ public final class MmsSendReceiver extends BroadcastReceiver {
                 long id = 0;
                 try { id = Long.parseLong(row.getLastPathSegment()); } catch (Throwable ignored) { }
                 if (ok) MmsFailures.clear(ctx, id); else MmsFailures.put(ctx, id, result, http);
-                if (draftKey != null) MmsDraft.state(ctx, draftKey,
+                if (draftKey != null) MmsDraft.result(ctx, draftKey,
                         ok ? MmsDraft.SENT : unknown ? MmsDraft.UNKNOWN : MmsDraft.FAILED,
                         ok ? "" : MmsFailures.reason(ctx, result, http));
                 ctx.sendBroadcast(new Intent("place.poster.app.MMS_DRAFT_CHANGED")

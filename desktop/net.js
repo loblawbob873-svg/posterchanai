@@ -45,6 +45,10 @@ function run(args, opts){
            * bare exit code cannot tell a person anything useful. */
           const why = String(stderr || err.message || '').trim().split('\n').pop();
           const e = new Error(why || 'nmcli failed');
+          /* AND IT IS WRITTEN DOWN. The page shows one toast; the shell's log is what somebody can read
+           * back afterwards on a machine they cannot screenshot (a LiveUSB on borrowed hardware). The
+           * arguments never hold a secret -- passwords travel on stdin -- so they are safe to log. */
+          try{ console.warn('[net] nmcli ' + args.join(' ') + ' failed: ' + (why || err.code || 'no message')); }catch(_){}
           e.code = err.code;
           return reject(e);
         }
