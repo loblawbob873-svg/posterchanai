@@ -441,7 +441,7 @@ would have handled it fine).
 
 ## Notable features
 
-- **VM hosting — our own Proxmox-like host, managed over Nostr (phases 1-3)** (`app/services/vmhost/`,
+- **VM hosting — our own Proxmox-like host, managed over Nostr (phases 1-4)** (`app/services/vmhost/`,
   `app/routers/vmhost.py`, client `vms.js`/`vmrpc.js`/`vmconsole.js`, Admin → VMs; `docs/VM_HOSTING.md`).
   A server node with libvirt; kind **5310** request (NIP-44, p=node key, expiration ≤120s, nofederate)
   → **6310** result / **7310** progress; **31310** announcement. Admins (`is_admin` npubs ∪
@@ -477,7 +477,9 @@ would have handled it fine).
   with a proof signed by the session key, usable only for whoami/info/list/get/power/console
   (`step_up_required` otherwise — so `vm.migrate.*` and `peer.migrate.*` are never session-callable), an
   ended one is ANSWERED `session_expired` (silence = "offline"); (14) desktop "This computer" is
-  `LocalHost` over `window.pcVM` in vms.js; os.js `paintVmManager` is kept.
+  `LocalHost` over `window.pcVM` in vms.js — phase 4 RETIRED os.js `paintVmManager`/`__vms` ("Local VMs"):
+  the start menu and desktop icon open `vms` once; `__vms` is only an alias (os.js `LEGACY_VIEWS`, oswin.js,
+  app.js `switchView`) for old pins/handoffs.
   **Cold migration (phase 3, `vmhost/migrate.py`)**: requester must be admin on BOTH hosts — the client
   signs `vm.migrate.authorize` ENCRYPTED TO THE TARGET and the source only carries it; hosts pair via
   `vmhost_peer_hosts` (`npub relay https`) and talk `peer.migrate.*` over the same 5310/6310 (role
@@ -497,6 +499,31 @@ would have handled it fine).
   and the target answered `peer.migrate.challenge`, and is not `done` until libvirt confirms the undefine.
   keep_source_hours 0 = keep. One migrator per journal (`JournalBusy`); `transport.stop()` cancels the old
   handlers first.
+  **Phase 4 — the FIRST LIVE RUN (`scripts/vmhost_live_probe.py`, nas.lan libvirt 12 / QEMU 10.2.3; §7).** It
+  drives the shipped backend/service and the real `/ws/vmconsole` against real libvirt behind a guard that
+  refuses any mutation of a VM it did not create (`pcprobe-*`), proves with a raw RFB client
+  (`scripts/vmhost_rfb.py`) that the display demands the ticket's password, and captures every real
+  virsh/qemu-img/QMP output into `tests/fixtures/vmhost_real/` (`test_vmhost_real_captures.py`). Five bugs
+  the fakes hid, each in `test_vmhost_live_findings.py`: (1) **QEMU runs as ANOTHER USER** — VM dirs created
+  0750 made EVERY VM fail its first start (`Cannot access storage file … as uid:77`); root/VM dirs are 0751,
+  isos 0755, disks/varstores 0600 (`Storage.make_vm_dir`); (2) libvirt creates `nvram.fd` at first start as
+  `qemu:qemu 0600` and NEVER gives it back (migration hashing raised PermissionError) — the app seeds it from
+  the template libvirt selected (`_ensure_nvram`), and libvirt's remember_owner then returns it on every stop;
+  (3) `undefine` needs `--snapshots-metadata`; (4) `dumpxml --migratable` drops `firmware='efi'` and spells out
+  the SOURCE's loader path, so a target without that file refused every EFI VM — not checked any more; (5) the
+  target never probed `nvram.fd` (libvirt 12 runs qcow2 varstores = the backing-file hole) — probed, and its
+  format pins `<nvram format>`. **Snapshots are OFFLINE** (`hardware.py`): libvirt 12 + qcow2 varstore
+  snapshotted a RUNNING EFI VM while raw OVMF refuses — per-distro behaviour; now shut-off only, `qemu-img
+  snapshot` per qcow2 disk + `snap-<name>.nvram.fd`, recorded in `pc:vm` `<pc:snapshot>`; qemu-img ALLOWS a
+  duplicate tag (create refuses, list shows `orphan`); a migration carries them and the target keeps only
+  records its bytes back. `./install.sh --vmhost` (`scripts/install/vmhost.sh`): packages (Gentoo WITHOUT
+  edk2-bin), libvirt+kvm groups, `<user>:qemu` 0751 storage, `chattr +C` on btrfs ONLY while empty, the
+  libvirtd.socket group drop-in ONLY without polkit, default network, final `virsh list` as the user — tested
+  under bash with stateful stubs (`test_install_vmhost.py`, found `sudo VAR=x` → `sudo env VAR=x`).
+  `[vmhost-audit]` line per answered op (allowlisted ids only — never tickets/passwords/URLs); the 31310
+  announcement uses `service.FEATURES`, republishes on every Save-restart and is RETRACTED (kind-5 `a`) when
+  announcing/hosting goes off; `vmhost_backend` removed. Still owed: a real TWO-host migration (server1 has no
+  /dev/kvm).
 - **A GRANTED NIP-05 IS THE ENTITLEMENT — one predicate, four gates** (`app/services/nip05_access.py`;
   switch `nip05_grants_access`, Admin → Nostr Relay → NIP-05 identity server, **ON** by default).
   AI chat, image generation (`geni`), music generation (`musicgeni`/`voice`) and Blossom uploads were
