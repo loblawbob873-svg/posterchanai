@@ -268,6 +268,52 @@ def install(iso, disk, serial_dir, evidence, timeout, memory, cpus, usb=False):
                 proc.kill()
 
 
+def _make_installed_boot_audible(disk, evidence):
+    """Add a serial console to the INSTALLED loader entry, in the test's copy of the disk.
+
+    Returns a short description of what changed, or "" when nothing could be edited (in which case
+    the boot check still runs and simply has less to read).
+    """
+    mnt = Path(evidence, "espmnt")
+    mnt.mkdir(exist_ok=True)
+    nbd = None
+    try:
+        # qemu-nbd is the only way to reach a partition inside a qcow2 without booting it.
+        subprocess.run(["modprobe", "nbd", "max_part=8"], capture_output=True, timeout=30)
+        for dev in ("/dev/nbd0", "/dev/nbd1", "/dev/nbd2"):
+            r = subprocess.run(["qemu-nbd", "--connect", dev, str(disk)],
+                               capture_output=True, text=True, timeout=60)
+            if r.returncode == 0:
+                nbd = dev
+                break
+        if not nbd:
+            return ""
+        time.sleep(1.5)
+        r = subprocess.run(["mount", "-o", "rw", nbd + "p1", str(mnt)],
+                           capture_output=True, text=True, timeout=60)
+        if r.returncode != 0:
+            return ""
+        changed = []
+        for conf in sorted(Path(mnt, "loader/entries").glob("*.conf")):
+            text = conf.read_text(encoding="utf-8", errors="replace")
+            out = []
+            for line in text.splitlines():
+                if line.startswith("options ") and "console=ttyS0" not in line:
+                    line = line.replace(" quiet", "").replace(" splash", "")
+                    line += " console=tty0 console=ttyS0,115200n8"
+                    changed.append(conf.name)
+                out.append(line)
+            conf.write_text("\n".join(out) + "\n", encoding="utf-8")
+        subprocess.run(["sync"], capture_output=True, timeout=30)
+        return ", ".join(changed)
+    except (OSError, subprocess.SubprocessError):
+        return ""
+    finally:
+        subprocess.run(["umount", str(mnt)], capture_output=True, timeout=60)
+        if nbd:
+            subprocess.run(["qemu-nbd", "--disconnect", nbd], capture_output=True, timeout=60)
+
+
 def boot_installed(disk, serial_dir, vars_copy, evidence, timeout, memory, cpus):
     """Boot the INSTALLED disk with no ISO and require it to reach a running system.
 
@@ -283,6 +329,22 @@ def boot_installed(disk, serial_dir, vars_copy, evidence, timeout, memory, cpus)
     of what is under test; a fresh variables file would quietly test the removable-media fallback.
     """
     code, _ = ovmf()
+    # ---- MAKE THE INSTALLED SYSTEM AUDIBLE, OR THIS CHECK CANNOT SEE IT ------------------------
+    #
+    # The LIVE image carries `console=ttyS0,115200n8` from the ISO's own grub line; the INSTALLED
+    # system does not -- its loader entry is `quiet splash ... root=UUID=... rw rd.luks.uuid=...`.
+    # So the firmware and systemd-boot write to the serial port, the kernel takes over, and every
+    # further word goes to the graphical console. Measured 2026-09-18: the boot console stopped after
+    # 1137 bytes at systemd-boot's menu and stayed silent, which this check would have reported as
+    # "printed nothing recognisable" -- a failure of the harness dressed up as a failure of the ISO.
+    #
+    # `quiet` goes too, for the same reason: it suppresses exactly the messages being waited for.
+    # This edits the TEST COPY of the disk's boot entry, never the ISO, and changes no code path that
+    # decides whether the system boots -- same kernel, same initramfs, same crypt setup, one extra
+    # console and the ordinary log level.
+    added = _make_installed_boot_audible(disk, evidence)
+    if added:
+        print(f"OK  boot entry made audible for the test ({added})")
     sock = Path(serial_dir, "boot-console.sock")
     log = open(Path(evidence, "boot-console.log"), "w", encoding="utf-8")
     # iso=None leaves out every medium drive, so the only bootable thing is the installed disk.

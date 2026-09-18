@@ -227,3 +227,35 @@ def test_the_boot_reuses_the_nvram_the_install_wrote(tmp_path, monkeypatch):
     """
     seen = _run_main(tmp_path, [], monkeypatch)
     assert seen.get("boot_vars", "").endswith("OVMF_VARS.fd"), seen
+
+
+def test_the_boot_check_can_actually_hear_the_installed_system():
+    """A SILENT PASS AND A SILENT FAILURE LOOK IDENTICAL, AND THIS ONE LOOKED LIKE A FAILURE.
+
+    The LIVE image carries `console=ttyS0,115200n8` from the ISO's own grub line. The INSTALLED
+    system does not — its loader entry is `quiet splash … root=UUID=… rw rd.luks.uuid=…`. So the
+    firmware and systemd-boot write to the serial port, the kernel takes over, and everything after
+    that goes to the graphical console.
+
+    Measured 2026-09-18: the boot console stopped after 1137 bytes at systemd-boot's menu and stayed
+    silent for the full timeout. The gate reported "printed nothing recognisable", about an ISO that
+    booted perfectly — a deaf harness reporting a broken product. Re-run with a serial console added
+    to the test's copy of the entry, the same disk reached a running system in seconds.
+
+    `quiet` is dropped for the same reason: it suppresses the very messages being waited for. This
+    edits the TEST's copy of the disk, never the ISO, and changes nothing that decides whether the
+    system boots.
+    """
+    from pathlib import Path as _Path
+    src = (_Path(__file__).resolve().parents[1] / "scripts/check_livecd_install_vm.py").read_text()
+    assert "_make_installed_boot_audible" in src, (
+        "the boot check no longer gives the installed system a console it can read")
+    fn = src[src.index("def _make_installed_boot_audible"):]
+    fn = fn[:fn.index("\ndef ", 1)]
+    assert "console=ttyS0" in fn, "no serial console is added, so the boot phase reads nothing"
+    assert 'replace(" quiet", "")' in fn, "`quiet` is left on, which suppresses what is waited for"
+    # It must edit the DISK, not the ISO: the artifact under test stays untouched.
+    assert ".iso" not in fn, "the boot check is editing the ISO rather than its installed copy"
+    called = src[src.index("def boot_installed("):]
+    called = called[:called.index("\ndef ", 1)] if "\ndef " in called[1:] else called
+    assert "_make_installed_boot_audible(" in called, "the helper exists but is never called"
