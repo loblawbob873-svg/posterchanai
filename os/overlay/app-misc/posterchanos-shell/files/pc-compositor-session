@@ -72,15 +72,35 @@ rescue() {
 	# crashed -- and every one of them is already written in wayfire's own last lines. Naming a path
 	# asks a person in front of a broken machine to know to `cat` it; a report that came back as
 	# "wayfire exited with status 11" and nothing else is what this exists to stop.
+	# AND AN EMPTY LOG IS TWO DIFFERENT FACTS. "Wayfire died before it wrote anything" is a real
+	# diagnosis and a wrong one to offer about a launch that never happened: the root refusal below
+	# stops before the compositor is started, and printing "the compositor could not open a GPU"
+	# there sends somebody hunting a graphics driver over a login-account problem. `wayfire_started`
+	# is set immediately before the launch, so this says only what it knows.
 	if [ -s "$state_dir/wayfire.log" ]; then
 		printf '\n%s\n' "  --- last lines of wayfire.log ---"
 		tail -n 15 "$state_dir/wayfire.log" 2>/dev/null | sed 's/^/  /'
 		printf '%s\n' "  ---------------------------------"
-	else
+	elif [ -n "${wayfire_started:-}" ]; then
 		printf '%s\n' "  (wayfire.log is empty — Wayfire died before it wrote anything, which usually"
 		printf '%s\n' "   means the compositor could not open a GPU or take the seat on this machine.)"
+	else
+		printf '%s\n' "  (Wayfire was never started — the reason above was known before the attempt,"
+		printf '%s\n' "   so there is nothing in its log and nothing about this machine's graphics.)"
 	fi
-	printf '\n%s\n\n' "Fix it here, then run: exec /usr/local/bin/pc-compositor-session"
+	# AND THE RETRY LINE MUST NOT INVITE `sudo`, because sudo is the one way to make this fail
+	# again -- see the root check below. "The desktop will not start" and "try it with sudo" is a
+	# reflex, and this screen was handing a person a command that, run that way, produces the same
+	# screen for ever with a number on it instead of a reason.
+	# ...and it must not tell ROOT to run it as root, which is the shape the first draft had: the
+	# account to name is the one that can actually succeed, and for root there isn't one.
+	if [ "$(id -u 2>/dev/null || echo 0)" = 0 ]; then
+		printf '\n%s\n' "This shell is root, and Wayfire will not start for root."
+		printf '%s\n\n' "Log in as an ordinary user (the live image's account is 'live') and let the login start the desktop."
+	else
+		printf '\n%s\n' "Fix it here, then run: exec /usr/local/bin/pc-compositor-session"
+		printf '%s\n\n' "(run it as $(id -un 2>/dev/null || echo 'this user') — NOT with sudo: Wayfire refuses to run as root.)"
+	fi
 	note "no desktop: $*"
 	# Absolute by default -- a rescue must not depend on PATH being sane -- but overridable so a
 	# test can run this path without handing itself an interactive shell.
@@ -88,6 +108,37 @@ rescue() {
 }
 
 [ -z "${note_stale:-}" ] || note "compositor selector still says 'sway'; Wayfire is the only session now."
+
+# "WAYFIRE EXITED WITH STATUS 1" MEANS EXACTLY ONE THING, AND THE SCREEN PRINTED THE NUMBER.
+#
+# Reported from a LiveUSB as "wayfire exited with status 1" and nothing else. Measured against the
+# shipped wayfire 0.10.1 / wlroots 0.19.2 by booting the release ISO in a VM and provoking every
+# failure this session can cause, status 1 is reachable by ONE path in wayfire's main.cpp:
+#
+#   EE [wayfire-0.10.1/src/main.cpp:67] Unable to drop root (we shouldn't be able to restore it
+#                                       after setuid), refusing to start
+#
+# `drop_permissions()` refuses to start when root can be regained after the drop, which is exactly
+# what running as uid 0 means. The other four EXIT_FAILURE paths cannot be hit here and each was
+# checked rather than assumed: an unrecognised argument (this passes a valid `-c <file>`); "Failed
+# to open DRM render device" (compiled OUT — the shipped binary carries the udmabuf LOGW string,
+# `Trying SW rendering instead.`, and not the LOGE one, so a machine with no render node warns and
+# carries on); "Failed to create renderer" (wlroots falls back to pixman — measured, a bochs-drm
+# guest with no render node reached the desktop that way); and "Failed to load configuration
+# backend!" (the .so is in the image). Everything ELSE measured exits 255 — no GPU at all, a
+# missing XDG_RUNTIME_DIR and an unreadable config file all take wayfire's fatal handler — and a
+# compositor this script stops itself exits 0.
+#
+# So a number was printed where a sentence was known. Worse, the rescue screen's own instruction is
+# `exec /usr/local/bin/pc-compositor-session`, and the natural way to answer "the desktop will not
+# start" is to try that with sudo — which cannot ever work and says the same unreadable thing again.
+#
+# This is checked HERE rather than by reading the status afterwards: nothing below should take the
+# DRM device, rewrite a session config or spawn a launcher on behalf of root, and a reason known
+# before the attempt should never be reported as the attempt's exit code.
+if [ "$(id -u 2>/dev/null || echo 0)" = 0 ] || [ "$(id -ru 2>/dev/null || echo 0)" = 0 ]; then
+	rescue "this session is running as root, and Wayfire refuses to run as root — it will not start unless it can drop privileges it cannot regain. Log in as an ordinary user (on the live image that account is 'live') and start the session without sudo."
+fi
 
 # ---- READ THE SCREEN WITHOUT BLURRING THE GAMES -----------------------------------------------
 #
@@ -330,6 +381,8 @@ PC_SESSION_CONFIG_PY
 			# Keep a usable desktop if the optional private-copy preparation fails.
 			session_cfg="${PC_WAYFIRE_CONFIG:-/etc/wayfire.ini}"
 		fi
+		# Read by rescue(): an empty log means something different before this line and after it.
+		wayfire_started=1
 		wayfire -c "$session_cfg" >"$state_dir/wayfire.log" 2>&1 &
 		wayfire_pid=$!
 		# WAIT ON THE LAUNCHER, NOT ON A CLOCK.

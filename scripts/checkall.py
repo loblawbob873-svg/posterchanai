@@ -285,6 +285,14 @@ CHECKS = {
     # the other heavy gates.
     "check_livecd_vm":                 dict(group="ui", secs=900, serial=True,
                                             why="the image reaches a desktop and keeps it"),
+    # ...and that one judges PIXELS, which a rescue console also has. This asks the SESSION, by
+    # reading the ready marker off the serial line the live image already streams its logs to -- and
+    # it boots a NON-virtio GPU, because `check_livecd_vm` boots virtio-vga and virtio is the one
+    # PCI vendor `pc-compositor-session`'s software-render guard names. Same shape: skips without
+    # an image, owns a QEMU guest, serial.
+    "check_livecd_session_ready":      dict(group="ui", secs=900, serial=True,
+                                            why="the live session declares itself ready on a GPU "
+                                                "the software-render guard does not whitelist"),
     # Reads a built ISO and answers whether Steam would work on the machine it installs -- the
     # launcher AND the 32-bit runtime Valve's i386 client cannot start without. Neither gate above
     # covers it: one proves the image boots to a desktop and the other proves the installer runs,
