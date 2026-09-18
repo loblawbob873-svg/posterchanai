@@ -1054,6 +1054,39 @@ if true; then
 			pc_use_software "this image has no renderer for $pc_no_renderer"
 		fi
 	fi
+	# ---- NVIDIA + WAYLAND: THE VULKAN RENDERER, NOT GLES2 -------------------------------------
+	#
+	# wlroots defaults to its GLES2 renderer, and on the NVIDIA proprietary driver GLES2 has no
+	# implicit buffer sync -- the compositor reads a frame before the GPU has finished it. That is
+	# the classic NVIDIA Wayland flicker: the composited frame is PERFECT (screenshots and the DOM
+	# are correct, the compositor logs zero errors) but it reaches the panel with mouse trails,
+	# hardware-cursor distortion and whole regions dropping out and returning. Measured for hours on
+	# a Quadro P1000 driving a 55" TV over DisplayPort: every GLES2-path lever -- WLR_NO_HARDWARE_
+	# CURSORS, WLR_DRM_NO_ATOMIC, WLR_DRM_NO_MODIFIERS, forcing the NVIDIA power state off P8 --
+	# either changed nothing or made it worse (NO_ATOMIC -> drmModePageFlip EBUSY, NO_MODIFIERS ->
+	# swapchain failed test). The ONLY thing that fixed it while keeping GPU acceleration was the
+	# Vulkan renderer, which does EXPLICIT sync. It is exactly what KDE and Hyprland use on NVIDIA.
+	# pixman (above) also stops the flicker but composites on the CPU, so it cannot run a game;
+	# Vulkan keeps the GPU, so Steam works.
+	#
+	# NARROW ON PURPOSE: only when an NVIDIA card is actually present, only when nothing above
+	# already chose a software renderer (respect PC_PIXMAN_RENDER / PC_SOFTWARE_RENDER), only when
+	# the NVIDIA Vulkan ICD and libvulkan are installed, and NEVER over an operator's own
+	# WLR_RENDERER. Intel and AMD keep GLES2, which is correct and flicker-free for them -- this is
+	# an NVIDIA workaround, not a global default.
+	if [ -z "${WLR_RENDERER:-}" ]; then
+		pc_has_nvidia=''
+		for pc_gpu_drv in $(pc_drm_cards | awk '{print $2}'); do
+			case "$pc_gpu_drv" in nvidia|nvidia-drm) pc_has_nvidia=1 ;; esac
+		done
+		pc_vk_icd="${PC_VULKAN_ICD:-/usr/share/vulkan/icd.d/nvidia_icd.json}"
+		if [ -n "$pc_has_nvidia" ] && [ -e "$pc_vk_icd" ] \
+			&& { [ -e /usr/lib64/libvulkan.so ] || [ -e /usr/lib/libvulkan.so ] \
+				|| { command -v ldconfig >/dev/null 2>&1 && ldconfig -p 2>/dev/null | grep -q libvulkan; }; }; then
+			export WLR_RENDERER=vulkan
+			pc_say "NVIDIA present — using the Vulkan renderer (explicit sync), which avoids the GLES2 scanout flicker while keeping GPU acceleration."
+		fi
+	fi
 	# ---- ON A HYBRID LAPTOP, THE SCREEN IS ON ONE OF THE TWO CARDS -----------------------------
 	#
 	# Measured on the reported machine: an Intel iGPU at 00:02.0 (card0, six connectors, ALL
