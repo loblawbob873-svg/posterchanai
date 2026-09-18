@@ -3985,9 +3985,43 @@ FSTAB
 		#
 		# The install path already states this rule for the target ("a machine must be repairable
 		# with the installer that built it"); the ISO is the same claim one step earlier.
-		local LIVE_INSTALLER="$PCOS_TREE/gentoo.sh"
+		# ...AND "THE INSTALLER THAT BUILT IT" IS `$0`, NOT `$PCOS_TREE/gentoo.sh`. THAT ONE WORD
+		# COST TWO WEEKS OF INSTALLER FIXES.
+		#
+		# $PCOS_TREE is resolved at the top of this script by looking for a directory that contains
+		# `bin/`, which on any INSTALLED machine is /usr/local/share/posterchanos — written once when
+		# that machine was installed and never updated since. So on the one host that actually builds
+		# images, this line did the exact opposite of the paragraph above it: it took a CURRENT
+		# installer, threw it away, and packed the copy from install day.
+		#
+		# Measured 2026-09-17, the LiveUSB that could not install:
+		#   /usr/local/share/posterchanos/gentoo.sh   4070 lines  222146 bytes   Sep  4 16:30
+		#   /usr/bin/gentoo.sh IN THE PACKED IMAGE    4070 lines  222146 bytes   (mtime Sep 17 21:38,
+		#                                                                        i.e. copied by THIS)
+		#   the checkout it was built from            5310 lines  300925 bytes   Sep 17
+		# Two weeks and 1,240 lines of fixes, including the live-medium scan fix this very comment
+		# block says was already lost once, absent from an image built from a tree that had them.
+		# The install path's "repairable with the installer that built it" was true; the ISO's copy
+		# was the installer that built the BUILD HOST, in September's first week.
+		#
+		# The running script needs no resolution and cannot go stale: it is by construction the
+		# installer the operator just invoked. BASH_SOURCE survives being sourced and being reached
+		# through a symlink or a relative path; the old candidates stay only as a last resort for a
+		# shell that somehow reports neither.
+		local LIVE_INSTALLER=""
+		# `:-` on both: under `set -u` a bare ${BASH_SOURCE[0]} ABORTS when it is unset, which is
+		# exactly the "sourced from somewhere unusual" case the fallbacks below exist for.
+		for _src in "${BASH_SOURCE[0]:-}" "${0:-}"; do
+			[ -n "$_src" ] || continue
+			_src="$(readlink -f -- "$_src" 2>/dev/null || true)"
+			[ -n "$_src" ] && [ -f "$_src" ] && { LIVE_INSTALLER="$_src"; break; }
+		done
+		[ -n "$LIVE_INSTALLER" ] || LIVE_INSTALLER="$PCOS_TREE/gentoo.sh"
 		[ -f "$LIVE_INSTALLER" ] || LIVE_INSTALLER="/usr/local/share/posterchanos/gentoo.sh"
 		[ -f "$LIVE_INSTALLER" ] || LIVE_INSTALLER="/usr/bin/gentoo.sh"
+		# AND IT SAYS WHICH ONE, because every symptom of getting this wrong appears later, on
+		# somebody else's machine, as an installer that behaves like a version nobody is looking at.
+		echo "live installer packed from: $LIVE_INSTALLER ($(wc -l <"$LIVE_INSTALLER" 2>/dev/null) lines)" >>"$LOG" 2>/dev/null
 		pseudoput "usr/bin/gentoo.sh" f 755 0 0 cat "$LIVE_INSTALLER"
 		pseudoput "etc/fstab" f 644 0 0 cat "$LIVEFSTAB"
 		pseudoput "usr/local/bin/posterchan" f 755 0 0 cat "$WORK/posterchan-launcher"
@@ -4205,6 +4239,62 @@ DESKTOP
 			return 1
 		fi
 	done
+
+	# ---- AND THE INSTALLER ITSELF, WHICH THIS LIST HAS NEVER CONTAINED ---------------------------
+	#
+	# THE ISO SHIPPED AN INSTALLER TWO WEEKS OLDER THAN THIS SCRIPT, AND THAT IS WHY INSTALLER FIXES
+	# KEPT NOT WORKING.
+	#
+	# Measured 2026-09-17 on the booted LiveUSB and on this build host:
+	#
+	#   os/gentoo.sh (canonical, what every fix edits)                 5265 lines, `local KSRC=` @1757
+	#   $PCREPO/app-misc/posterchanos-shell/files/gentoo.sh            5045 lines,               @1726
+    #   $PCOS_TREE/overlay/app-misc/posterchanos-shell/files/gentoo.sh 4053 lines,               @1123  (Sep 4)
+    #   /usr/bin/gentoo.sh ON THE BOOTED IMAGE                         4053 lines,               @1123
+	#
+	# The image carried the September 4 copy. Its live-medium scan predates the union-enumeration
+	# fix, so it could not see the hybrid ISO's hfsplus partition -- the one carrying boot/ and
+	# LiveOS/ -- and every install attempt died on "No kernel found on this live medium" BEFORE it
+	# ever asked which disk to use. Reported, reasonably, as *"installer would not even find disk to
+	# use"*. Run standalone as root, the CANONICAL scan accepts that partition correctly: the logic
+	# was right and the version was not.
+	#
+	# WHY NO TEST COULD SEE IT. `tests/test_live_medium_scan_finds_every_medium.py` extracts the scan
+	# from os/gentoo.sh and runs it against fake media -- a good test of a file this image does not
+	# ship. Its own docstring says the bug "has been fixed TWICE, one medium apart"; it was fixed
+	# twice in a file that never reached the USB. A test of the repository is not a test of the
+	# image, and the three helpers above were gated for exactly this reason while the INSTALLER --
+	# the one program whose whole job is the thing being shipped -- was left out of the list.
+	#
+	# THE ONE THING WORTH ASSERTING IS THAT THE IMAGE GETS *THIS* SCRIPT. The packing step resolves
+	# the installer itself (see "THE IMAGE CARRIES THE INSTALLER THAT BUILT IT"); this refuses the
+	# stale-tree shape directly, so the bug cannot come back by someone re-ordering those candidates.
+	# It compares CONTENT, never a path or a line count -- the Sep 4 file and the current one differ
+	# by 1,240 lines, but a one-line difference in the live-medium scan is equally fatal and equally
+	# invisible.
+	local RUNNING_INSTALLER
+	RUNNING_INSTALLER="$(readlink -f -- "${BASH_SOURCE[0]}" 2>/dev/null || true)"
+	if [[ -z "$RUNNING_INSTALLER" || ! -f "$RUNNING_INSTALLER" ]]; then
+		_lcd_fail "cannot resolve the running installer, so the image's copy cannot be verified — the ISO would ship an installer nobody identified."
+		return 1
+	fi
+	local _stale
+	for _stale in "$PCOS_TREE/gentoo.sh" /usr/local/share/posterchanos/gentoo.sh; do
+		[[ -f "$_stale" ]] || continue
+		cmp -s "$_stale" "$RUNNING_INSTALLER" && continue
+		# A DIFFERENT installed copy is normal and fine -- it is only a fault if it would be PACKED.
+		# Saying so keeps the operator from chasing the version they are not shipping.
+		echo "note: $_stale differs from the installer being packed ($RUNNING_INSTALLER); the image takes the latter." >>"$LOG" 2>/dev/null
+	done
+	# The published overlay is the one copy that SHOULD match, because publish_overlay.sh injects
+	# os/gentoo.sh into it. A mismatch means the overlay was not republished for this checkout, so an
+	# `update-posterchan` on an installed machine would hand back a different installer than the ISO
+	# carries -- the same split that produced this bug, one release later.
+	if [[ -n "$PCREPO" && -f "$PCREPO/app-misc/posterchanos-shell/files/gentoo.sh" ]] \
+		&& ! cmp -s "$PCREPO/app-misc/posterchanos-shell/files/gentoo.sh" "$RUNNING_INSTALLER"; then
+		_lcd_fail "the published overlay's gentoo.sh ($(wc -l <"$PCREPO/app-misc/posterchanos-shell/files/gentoo.sh") lines) is not the installer building this image ($(wc -l <"$RUNNING_INSTALLER") lines). The ISO and an updated machine would disagree about the installer. Run scripts/publish_overlay.sh for this checkout, then pack again."
+		return 1
+	fi
 
 	# ---------------------------------------------------------------- is Steam on this build host
 	#
@@ -4848,11 +4938,43 @@ setDevices() {
 		echo
 		lsblk -e7 -o NAME,SIZE,TYPE,FSTYPE,MOUNTPOINTS,MODEL
 		echo
-		local LIVE_SOURCE LIVE_PART LIVE_DISK DEFAULT_DISK
+		local LIVE_SOURCE LIVE_PART LIVE_DISK DEFAULT_DISK REJECTED
+		# THE LIVE MEDIUM IS FOUND THREE WAYS, BECAUSE THE FIRST ONE IS EMPTY ON REAL HARDWARE.
+		#
+		# Measured 2026-09-17 on a booted LiveUSB: `findmnt -no SOURCE /run/initramfs/live` printed
+		# NOTHING -- dracut had already detached the medium after pivoting to the squashfs overlay --
+		# so LIVE_DISK was the empty string. Two things silently stopped working, and both of them
+		# are about writing to the wrong disk:
+		#
+		#   * the candidate filter `$1!=live` excluded nothing, so the live USB itself was offered
+		#     as an installation target;
+		#   * the guard below, `[ "$device" = "$LIVE_DISK" ]`, compared against "" and could never
+		#     fire -- so the one refusal protecting the medium you booted from was dead.
+		#
+		# On that machine the default happened to land on the internal disk, which was a BitLocker
+        # Windows install. "Happened to" is the whole problem: the order of /dev/sd* is not a safety
+		# mechanism, and an installer that erases the stick it is running from cannot even report it.
+		#
+		# So: the mount if it is there, else whatever the medium scan actually mounted, else the
+		# signature -- a dd'd hybrid ISO carries iso9660 on the WHOLE DEVICE, which no installed disk
+		# does (an installed disk has a partition table; its partitions may be anything). All three
+		# resolve to a WHOLE disk, because that is what the filter and the guard compare against.
 		LIVE_SOURCE="$(findmnt -no SOURCE /run/initramfs/live 2>/dev/null)"
+		[ -n "$LIVE_SOURCE" ] || LIVE_SOURCE="$(findmnt -no SOURCE /run/posterchan-live-media 2>/dev/null)"
 		LIVE_PART="${LIVE_SOURCE#/dev/}"
 		LIVE_DISK="$(lsblk -ndo PKNAME "$LIVE_SOURCE" 2>/dev/null)"
 		[ -n "$LIVE_DISK" ] || LIVE_DISK="$LIVE_PART"
+		if [ -z "$LIVE_DISK" ]; then
+			LIVE_DISK="$(lsblk -pnro NAME,TYPE,FSTYPE 2>/dev/null \
+				| awk '$2=="disk" && $3=="iso9660" {sub("^/dev/","",$1); print $1; exit}')"
+			[ -z "$LIVE_DISK" ] || echo "Live medium identified by its ISO signature: /dev/$LIVE_DISK"
+		fi
+		if [ -z "$LIVE_DISK" ]; then
+			# Never silent. An unknown live medium means the two protections above are off, and the
+			# operator is the only thing left that can tell the stick from the target.
+			echo -e "${COLOR_YELLOW}Could not identify which disk this live system booted from.${COLOR_RESET}"
+			echo -e "${COLOR_YELLOW}Check the disk you choose below is not the USB you are running.${COLOR_RESET}"
+		fi
 		# QEMU commonly exposes a legacy /dev/fd0 before its virtio disk.  It reports TYPE=disk but is
 		# neither a writable installation target nor even probeable, so the old "first disk" rule chose
 		# it and failed at wipefs before touching the real vda. Optical, loop/RAM and implausibly small
@@ -4860,9 +4982,39 @@ setDevices() {
 		# whole disk below; this filter only governs the safe one-click default.
 		DEFAULT_DISK="$(lsblk -bdnro NAME,TYPE,SIZE | awk -v live="$LIVE_DISK" \
 			'$2=="disk" && $1!=live && $1!~/^(fd|sr|zram|loop|ram)/ && $3>=8589934592 {print $1; exit}')"
-		[ -n "$DEFAULT_DISK" ] || { echo "No install disk found besides the live medium."; return 1; }
-		read -r -p "Disk Device to Use [$DEFAULT_DISK]: " device
-		device="${device:-$DEFAULT_DISK}"
+		# A REFUSAL NAMES WHAT IT MEASURED, AND IS NEVER THE ONLY DOOR.
+		#
+		# `No install disk found besides the live medium.` + `return 1` was both the safe-default
+		# picker AND the only way in, so a disk this filter declined could not be named by hand
+		# either -- and the screen listed nothing it had looked at. Two ordinary machines fall in
+		# that gap: an eMMC sold as "8 GB" is 7.45 GiB and misses the floor by measurement, and a
+		# live medium identified wrongly excludes the real disk. The filter's own comment says it
+		# "only governs the safe one-click default"; this makes that true.
+		if [ -z "$DEFAULT_DISK" ]; then
+			echo -e "${COLOR_YELLOW}No disk here can be chosen automatically.${COLOR_RESET}"
+			REJECTED="$(lsblk -bdnro NAME,TYPE,SIZE,MODEL 2>/dev/null | awk -v live="$LIVE_DISK" '
+				$2!="disk" || $1~/^(fd|sr|zram|loop|ram)/ { next }
+				{
+					why = ""
+					if (live != "" && $1 == live) why = "this is the live medium you booted from"
+					else if ($3+0 < 8589934592) why = sprintf("only %.1f GiB — PosterChanOS needs at least 8", $3/1073741824)
+					if (why != "") printf "  /dev/%-10s %s\n", $1, why
+				}')"
+			if [ -n "$REJECTED" ]; then
+				echo "What is here, and why each was passed over:"
+				printf '%s\n' "$REJECTED"
+			else
+				echo "  No whole disk appeared at all besides the live medium. If this machine has an"
+				echo "  NVMe drive, its controller may be in RAID/RST mode and need a BIOS change, or"
+				echo "  its driver did not load — check 'lsblk' and 'dmesg | grep -i nvme'."
+			fi
+			echo
+			read -r -p "Disk Device to Use (a name from above, or Enter to stop): " device
+			[ -n "$device" ] || { echo "Nothing was written."; return 1; }
+		else
+			read -r -p "Disk Device to Use [$DEFAULT_DISK]: " device
+			device="${device:-$DEFAULT_DISK}"
+		fi
 		if [ ! -b "/dev/$device" ] || [ "$(lsblk -dnro TYPE "/dev/$device" 2>/dev/null)" != disk ]; then
 			echo "Not a whole disk: /dev/$device"; return 1
 		fi
