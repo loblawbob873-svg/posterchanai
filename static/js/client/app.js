@@ -2584,7 +2584,30 @@
       return this.userPk;
     },
     // signer interface — every user op is forwarded to the remote signer
-    async signEvent(tpl){ return JSON.parse(await this._send('sign_event',[JSON.stringify(tpl)])); },
+    /* A REMOTE SIGNER CAN CHANGE WHICH KEY IT OFFERS, AND SILENCE IS THE WORST WAY TO FIND OUT.
+     *
+     * `userPk` is read once and cached, which is right — it is asked for at connect time and a round
+     * trip per signature would be absurd. But the signer is a whole other device with its own account
+     * switcher: a phone that signs for this desktop and is then switched to a second account keeps
+     * answering, with a DIFFERENT key. Reported 2026-09-18: "I tried on my phone but I don't think
+     * the signer worked, my other account didn't work on desktop until I switched back." Nothing on
+     * either screen said why, because nothing looked.
+     *
+     * The signed event carries the pubkey that signed it, so the check is free and needs no extra
+     * request. Refusing is right — publishing it would post from an identity the user did not choose,
+     * under a session that still believes it is someone else. */
+    async signEvent(tpl){
+      const ev = JSON.parse(await this._send('sign_event',[JSON.stringify(tpl)]));
+      const want = this.userPk || '';
+      if(want && ev && ev.pubkey && ev.pubkey !== want){
+        const err = new Error('signer changed account');
+        err.signerPubkeyMismatch = { expected: want, got: ev.pubkey };
+        try{ toast('Your signer is offering a different account than this session. '
+                   + 'Switch it back, or sign in again as that account.'); }catch(_){}
+        throw err;
+      }
+      return ev;
+    },
     nip04enc(peer, text){ return this._send('nip04_encrypt',[peer, text]); },
     nip04dec(peer, ct){ return this._send('nip04_decrypt',[peer, ct]); },
     nip44enc(peer, text){ return this._send('nip44_encrypt',[peer, text]); },
