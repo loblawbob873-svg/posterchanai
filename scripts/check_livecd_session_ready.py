@@ -61,6 +61,25 @@ READY = "the shell was declared ready"
 # had not done. Both are matched: the banner would arrive if the session is ever started on ttyS0.
 GAVE_UP = ("no desktop:", "the Wayfire session could not start")
 
+# EVERY SENTENCE THE SESSION SAYS ABOUT ITSELF carries this prefix, and until 2026-09-18 there were
+# none: the whole start was silent, the waits are minutes long by design, and the result was reported
+# off a real machine as *"the boot HANGS right after the login message with nothing printed"*. A slow
+# boot and a dead one were the same picture. `pc_say` writes both the console and
+# compositor-fallback.log, and the log is what the live image tails to the serial line, so these
+# arrive here for free. A run that produces NOT ONE of them is its own verdict now — see `SILENT`.
+SPOKE = "PosterChanOS: "
+SILENT = ("the session never printed a single line about itself. That is the failure this check "
+          "exists for: a person in front of the machine sees the last login message and nothing "
+          "else, and cannot tell a slow start from a dead one.")
+# The session announces the renderer it chose. Reported on success, because a VM quietly running the
+# whole desktop on the CPU and a VM using its GPU look identical from a ready marker.
+SOFTWARE = "software rendering (llvmpipe)"
+# A DESKTOP THAT CAME UP AND PAINTED NOTHING must never be reported as a pass. It is the exact shape
+# of the NVIDIA/nouveau reports (compositor running, window mapped, nothing drawn), and the session
+# answers it with one llvmpipe retry — so seeing it and then seeing READY is a DEGRADED success worth
+# naming, while seeing it twice is a failure the old check would have waited out in silence.
+PAINTED_NOTHING = "painted nothing"
+
 # The device models this understands, and what each one is for. `VGA` is QEMU's stdvga, which the
 # guest drives with bochs-drm: a real KMS device with no render node, i.e. the shape of a machine
 # whose GPU has no Mesa driver in the image.
@@ -110,7 +129,7 @@ def run(iso: Path, gpu: str, timeout: int, evidence: Path | None) -> int:
         cmd += ["-cdrom", str(iso), "-boot", "d", "-display", "none",
                 "-serial", "file:" + str(serial), "-no-reboot"]
         proc = subprocess.Popen(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, text=True)
-        verdict, detail = 1, "the session never said anything before the timeout"
+        verdict, detail = 1, "the session never reached a verdict before the timeout"
         try:
             deadline = time.monotonic() + timeout
             while time.monotonic() < deadline:
@@ -140,7 +159,11 @@ def run(iso: Path, gpu: str, timeout: int, evidence: Path | None) -> int:
                                                   for line in text.splitlines()[-24:]))
                     break
                 if READY in text:
-                    verdict, detail = 0, "the shell declared itself ready"
+                    how = (" on " + SOFTWARE) if SOFTWARE in text else " on this machine's GPU"
+                    verdict, detail = 0, "the shell declared itself ready" + how
+                    if text.count(PAINTED_NOTHING):
+                        detail += (" — but only after the first attempt came up and painted "
+                                   "nothing, so this image is one retry away from no desktop")
                     break
                 time.sleep(2)
         finally:
@@ -156,6 +179,11 @@ def run(iso: Path, gpu: str, timeout: int, evidence: Path | None) -> int:
 
         if verdict == 2:
             return skip(detail)
+        # A TIMEOUT WITH NOTHING SAID IS A DIFFERENT FAILURE FROM A TIMEOUT, and it is the one that
+        # was reported. Named separately so the next report is about the missing sentence rather than
+        # about the clock.
+        if verdict == 1 and SPOKE not in readable(serial):
+            detail = SILENT + " (" + detail + ")"
         if expect_refusal:
             text = readable(serial)
             if verdict == 0:

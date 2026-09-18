@@ -124,7 +124,11 @@ def test_wayfire_failure_leaves_a_console_that_says_why(tmp_path):
     NON-login shell (which cannot re-read ~/.bash_profile) rather than exiting."""
     done, calls = _run(tmp_path, "wayfire", wayfire_status=23)
     assert done.returncode == 0
-    assert calls == _attempts(tmp_path, 2)
+    # Three rungs: the card's own driver, llvmpipe, then pixman. The third was added after llvmpipe
+    # was measured to be a copy of the first failure on an NVIDIA machine whose userspace did not
+    # match its kernel module -- LIBGL_ALWAYS_SOFTWARE picks a GL implementation and changes nothing
+    # about which GBM backend allocated the buffer.
+    assert calls == _attempts(tmp_path, 3)
     log = tmp_path / "home/.local/state/posterchanos/compositor-fallback.log"
     assert "status 23" in log.read_text(encoding="utf-8")
     src = LAUNCHER.read_text(encoding="utf-8")
@@ -144,7 +148,7 @@ exit 7
 """
     done, calls = _run(tmp_path, "wayfire", wayfire_body=body)
     assert done.returncode == 0
-    assert calls == _attempts(tmp_path, 2)
+    assert calls == _attempts(tmp_path, 3)
     runtime = tmp_path / "runtime"
     assert not (runtime / "posterchan-wayfire-ready").exists()
     assert not (runtime / "posterchan-wayfire-shell.pid").exists()
@@ -391,7 +395,7 @@ def test_the_ready_wait_follows_the_launcher_rather_than_a_clock():
     assert "break" in loop
     # The cap is a backstop for a launcher that HANGS, so it must be well beyond the launcher's own
     # worst case rather than the old 60s.
-    cap = int(re.search(r'"\$n" -lt (\d+)', loop).group(1))
+    cap = int(re.search(r'"\$n" -lt "\$\{PC_READY_WAIT_TENTHS:-(\d+)\}"', loop).group(1))
     assert cap >= 1200, cap
     # And it must not declare failure before the compositor has had a chance to run its autostart.
     assert '"$n" -gt 100' in loop, loop
@@ -400,34 +404,56 @@ def test_the_ready_wait_follows_the_launcher_rather_than_a_clock():
 def test_a_failed_start_still_says_which_it_was():
     session = (ROOT / "os/bin/pc-compositor-session").read_text(encoding="utf-8")
     assert "the shell never signalled ready" in session
-    assert "no ready signal and no launcher" in session
+    # ...AND IT IS SAID ON THE CONSOLE, not only in a log file the person cannot reach without a
+    # desktop. `pc_say` writes both; a log-only line was how "it hangs with nothing printed" happened.
+    assert 'pc_say "the desktop did not draw within' in session
 
 
 def test_virtual_gpu_fallback_exports_legacy_drm_only_for_virtio(tmp_path):
-    """Execute the shipped fallback against virtual and physical sysfs fixtures.
+    """Execute the shipped software-render decision against virtual and physical sysfs fixtures.
 
-    Only the sysfs path is redirected; real shell/grep evaluate the production condition
-    and exports. This catches an accidentally unconditional legacy-KMS workaround.
+    Only the sysfs path is redirected; the real shell evaluates the production condition and the
+    production exports. This catches an accidentally unconditional legacy-KMS workaround.
+
+    IT USED TO EXTRACT `if grep -qs '^0x1af4$' /sys/class/drm/card*/device/vendor`, WHICH NAMED /sys
+    LITERALLY -- and that was the bug as much as the thing being tested: 0x1af4 was the ONE PCI
+    vendor the guard recognised, so every other card with no usable GL got an accelerated attempt
+    that painted nothing, and the check could only ever be driven by rewriting the script's text.
+    The condition is `pc_drm_vendor 0x1af4` now, which reads the same root as the rest of the
+    session, so this runs the function. `WLR_DRM_NO_ATOMIC` stays virtio-only on purpose: it is a
+    measured fact about virtio software scanout, not about software rendering.
     """
     import os
     import shlex
     import subprocess
 
     source = LAUNCHER.read_text(encoding="utf-8")
-    start = source.index("if grep -qs '^0x1af4$'")
-    end = source.index("\n\tfi", start) + len("\n\tfi")
+
+    def slice_of(first, last):
+        start = source.index(first)
+        return source[start:source.index(last, start) + len(last)]
+
+    helper = slice_of("pc_drm_cards() {", "\n}")
+    vendor_fn = slice_of("pc_drm_vendor() {", "\n}")
+    decide = slice_of("\tpc_use_software() {", "\n\t\texport WLR_DRM_NO_ATOMIC=1")
     sysfs = tmp_path / "drm"
-    vendor = sysfs / "card0" / "device" / "vendor"
-    vendor.parent.mkdir(parents=True)
-    fallback = source[start:end].replace("/sys/class/drm", shlex.quote(str(sysfs)))
+    card = sysfs / "card0"
+    (card / "device").mkdir(parents=True)
+    vendor = card / "device" / "vendor"
     selected = ("LIBGL_ALWAYS_SOFTWARE", "WLR_RENDERER_ALLOW_SOFTWARE",
                 "WLR_DRM_NO_ATOMIC", "PC_SHELL_EXTRA_ARGS")
     env = {key: value for key, value in os.environ.items() if key not in selected}
     env["PC_SHELL_EXTRA_ARGS"] = "--existing-flag"
-    inspect = "\n" + "\n".join("printf '%s\\n' \"${" + key + "-unset}\"" for key in selected)
+    inspect = "\nfi\n" + "\n".join("printf '%s\\n' \"${" + key + "-unset}\"" for key in selected)
+    # Everything the decision calls that is not the rule under test, stubbed to say "nothing wrong":
+    # this test is about the virtio branch and about nothing else firing.
+    preamble = ("drm_root=" + shlex.quote(str(sysfs)) + "\n"
+                "note() { :; }\npc_say() { :; }\n"
+                "pc_gl_missing_for_cards() { :; }\npc_nvidia_version_mismatch() { :; }\n")
+    script = preamble + helper + "\n" + vendor_fn + "\n" + decide + inspect
     for value in ("0x1af4", "0x8086", "0x1002", "0x10de"):
         vendor.write_text(value + "\n")
-        result = subprocess.run(["sh", "-c", fallback + inspect], env=env,
+        result = subprocess.run(["sh", "-c", script], env=env,
                                 capture_output=True, text=True, timeout=5, check=True)
         expected = (["1", "1", "1", "--existing-flag --use-angle=swiftshader --enable-unsafe-swiftshader"]
                     if value == "0x1af4" else ["unset", "unset", "unset", "--existing-flag"])

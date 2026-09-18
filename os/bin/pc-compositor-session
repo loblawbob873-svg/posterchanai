@@ -41,6 +41,56 @@ note() {
 	printf '%s %s\n' "$(date '+%Y-%m-%d %H:%M:%S' 2>/dev/null || echo '?')" "$*" >>"$state_dir/compositor-fallback.log"
 }
 
+# A FROZEN LINE AFTER AUTOLOGIN IS THE WORST FAILURE THIS SCRIPT HAS, AND IT WAS THE ORDINARY ONE.
+#
+# Reported off an NVIDIA machine: the boot "HANGS right after the last login message with nothing
+# printed". Everything this script does between the login and a desktop was SILENT -- the whole
+# start went to a log file nobody can reach without a desktop -- and the waits are long by design
+# (up to 300s for a shell that is genuinely still starting under llvmpipe). So a slow-but-working
+# boot and a wedged one are the same picture, and the picture is a machine that has stopped.
+#
+# `note` still writes the log. `pc_say` ALSO writes the console, which is the only surface a person
+# in front of the machine has. Every step below announces itself, so the next report names the line
+# it stopped on instead of naming the login message before it.
+pc_say() {
+	note "$*"
+	printf 'PosterChanOS: %s\n' "$*" >&2
+}
+
+# ...AND WHEN THE COMPOSITOR HAS ALREADY TAKEN THE SCREEN, PRINTING IS NOT SHOWING.
+#
+# wlroots puts the VT into KD_GRAPHICS and the keyboard into K_OFF for as long as it owns the
+# session, and restores both on a CLEAN exit. A compositor that dies on a signal restores neither,
+# so from that moment the console is a text stream nobody can see on a keyboard that types nowhere:
+# the rescue screen below prints its sentence into a framebuffer still showing the compositor's last
+# frame, and the interactive shell it hands over cannot be typed into. That is indistinguishable
+# from a hang, and it is the same state as "an empty UI with no mouse movement" -- which is what the
+# nouveau entry was reported as, on a machine where the session had in fact already given up.
+#
+# So the text mode and the keyboard mode are put back before anything a person must read. ioctls,
+# because there is no command-line tool for KDSKBMODE: KDSETMODE 0x4B3A/KD_TEXT 0,
+# KDSKBMODE 0x4B45/K_XLATE 1. Best-effort and silent -- a session with no controlling tty (a test, a
+# nested compositor) has nothing to restore and must not fail for trying.
+pc_restore_console() {
+	command -v python3 >/dev/null 2>&1 || return 0
+	python3 - <<'PC_RESTORE_CONSOLE_PY' 2>/dev/null || true
+import fcntl, os
+for name in ("/dev/tty", "/proc/self/fd/2", "/dev/tty0"):
+    try:
+        fd = os.open(name, os.O_RDWR | os.O_NOCTTY)
+    except OSError:
+        continue
+    try:
+        fcntl.ioctl(fd, 0x4B3A, 0)   # KDSETMODE, KD_TEXT
+        fcntl.ioctl(fd, 0x4B45, 1)   # KDSKBMODE, K_XLATE
+        break
+    except OSError:
+        pass
+    finally:
+        os.close(fd)
+PC_RESTORE_CONSOLE_PY
+}
+
 # NO DESKTOP IS A STATE THE MACHINE HAS TO BE USABLE IN. `exec`ing bash here rather than exiting is
 # deliberate: this script was itself exec'd from ~/.bash_profile, so exiting ends the login, agetty
 # respawns it, and a Wayfire that fails every time becomes a login loop nobody can type into. A
@@ -125,17 +175,160 @@ pc_nvidia_pci() {
 
 pc_module_loaded() { grep -qs "^$1 " "$proc_modules"; }
 
+# IS THERE A MODESETTING DEVICE, WHICH IS A DIFFERENT QUESTION FROM "IS THERE A CARD".
+#
+# A connector node (`card0-DP-1`) exists for every output a KMS device has, connected or not, so
+# "no connector anywhere" means "no card on this machine can set a mode". That is exactly what
+# nvidia-drm looks like when it is loaded WITHOUT modeset=1 -- which is its default (measured with
+# modinfo on 580.173.02: `0 = disable (default)`), so it is what an image missing
+# /etc/modprobe.d/nvidia.conf gets from udev. The card is present, the driver is bound, and there is
+# nothing to display on: a state every check here used to read as a healthy GPU.
+pc_any_connector() {
+	for pc_conn in "$drm_root"/card[0-9]*-*; do
+		[ ! -e "$pc_conn" ] || return 0
+	done
+	return 1
+}
+
+# ---- DO THE TWO HALVES OF THE NVIDIA DRIVER AGREE ----------------------------------------------
+#
+# MEASURED ON THE MACHINE THAT COULD NOT START (a Dell hybrid Intel+NVIDIA laptop, live image of
+# 2026-09-18):
+#
+#   /proc/driver/nvidia/version : 580.173.02      (the kernel module, built for 6.18.43)
+#   /usr/lib64/libnvidia-ml.so. : 580.178.04      (the userspace)
+#
+# The NVIDIA driver is ONE product in two halves and it refuses to work when they disagree. What
+# that produced, in wayfire.log, is nothing a person could trace back to a version number:
+#
+#   [EGL] eglQueryDevicesEXT, error: EGL_BAD_ALLOC ... "Failed to allocate device list."
+#   [EGL] eglInitialize, error: EGL_NOT_INITIALIZED ... "DRI2: gbm device using incorrect/
+#                                                        incompatible backend"
+#   [render/vulkan] Vulkan device: 'Intel(R) HD Graphics 530'
+#   [render/vulkan] Could not match drm and vulkan device
+#   [wayfire main.cpp:455] Failed to create renderer         -> exit status 1
+#
+# i.e. the broken libEGL_nvidia fails its device query, glvnd falls through to MESA's EGL, Mesa is
+# handed a GBM device the NVIDIA backend created and refuses it, wlroots then tries Vulkan, the only
+# ICD that enumerates is the Intel one, and the primary DRM device is the NVIDIA card — so nothing
+# matches and there is no renderer. Six errors, one cause, and the cause is two numbers.
+#
+# Cheap to ask and worth asking every time: both facts are plain files readable by anyone.
+pc_nvidia_module_version() {
+	[ -r "${PC_NVIDIA_PROC_VERSION:-/proc/driver/nvidia/version}" ] || return 1
+	sed -n 's/.*Kernel Module *\([0-9][0-9.]*\).*/\1/p' \
+		"${PC_NVIDIA_PROC_VERSION:-/proc/driver/nvidia/version}" 2>/dev/null | head -1
+}
+
+pc_nvidia_userspace_version() {
+	for pc_libdir in /usr/lib64 /usr/lib; do
+		for pc_so in "$pc_gl_root$pc_libdir"/libnvidia-ml.so.[0-9]*; do
+			[ -e "$pc_so" ] || continue
+			pc_so=${pc_so##*/libnvidia-ml.so.}
+			case "$pc_so" in
+				*.*) printf '%s\n' "$pc_so"; return 0 ;;   # x.y.z, not the `.so.1` symlink
+			esac
+		done
+	done
+	return 1
+}
+
+# Empty when they agree or when either is absent -- "I could not ask" is never an accusation.
+pc_nvidia_version_mismatch() {
+	pc_kv=$(pc_nvidia_module_version) || return 0
+	pc_uv=$(pc_nvidia_userspace_version) || return 0
+	[ -n "$pc_kv" ] && [ -n "$pc_uv" ] || return 0
+	[ "$pc_kv" != "$pc_uv" ] || return 0
+	printf 'the NVIDIA kernel module is %s and the NVIDIA userspace on this image is %s. They are two halves of one driver and must be the same version; nothing on this machine can render through NVIDIA until they are' \
+		"$pc_kv" "$pc_uv"
+}
+
+# Is any DRM device this vendor's? Reads the SAME root as everything else here -- the virtio check
+# below used to name /sys/class/drm literally, which is why no test could ever drive it.
+pc_drm_vendor() {
+	for pc_card in "$drm_root"/card[0-9]*; do
+		[ -e "$pc_card" ] || continue
+		case "${pc_card##*/}" in *-*) continue ;; esac
+		[ -r "$pc_card/device/vendor" ] || continue
+		IFS= read -r pc_v <"$pc_card/device/vendor" 2>/dev/null || continue
+		[ "$pc_v" != "$1" ] || return 0
+	done
+	return 1
+}
+
+# ---- CAN ANYTHING IN THIS IMAGE ACTUALLY DRAW ON THE CARD THAT HAS THE SCREEN -------------------
+#
+# 0x1af4 WAS THE ONE PCI VENDOR THE SOFTWARE-RENDER GUARD NAMED, AND EVERY OTHER CARD WITH NO USABLE
+# GL GOT AN EMPTY DESKTOP.
+#
+# The rule below it has always been right: a DRM device whose GL stack cannot come up must be driven
+# through llvmpipe, because llvmpipe draws and a rescue console does not. It was only ever ASKED
+# about QEMU's virtio-gpu, so the two shapes reported off real hardware both missed it —
+#
+#   * nouveau bound the card and the image's Mesa had been built without the nouveau driver
+#     (measured on the 2026-09-18 ISO: dri/ held crocus, iris, r300, r600, radeonsi, virtio_gpu and
+#     swrast, and no nouveau_dri.so)
+#   * nvidia bound the card and the image carried no NVIDIA userspace at all — no libEGL_nvidia, no
+#     gbm/nvidia-drm_gbm.so, no glvnd vendor json
+#
+# — and in both the compositor started, the shell mapped a window, and nothing was painted in it.
+#
+# THE QUESTION IS ASKED OF THE FILESYSTEM, NOT OF A GL CONTEXT. There is no EGL probe available here
+# that does not need a display, a compiler or a package this image may not have, and a probe that
+# needs the compositor cannot run before it. What CAN be read is whether the renderer for this
+# driver is present at all, which is the failure that actually happened twice: a driver with its Mesa
+# module missing cannot render, no matter what a context would have said.
+#
+# IT FAILS OPEN. An unrecognised driver answers "nothing missing" — demoting an unknown-but-working
+# card to llvmpipe on a guess would be a slow desktop chosen for no reason, and the one-shot retry
+# after a failed attempt is what covers the cases this table cannot name.
+pc_gl_root=${PC_GL_ROOT:-}
+
+pc_gl_have() {
+	for pc_rel in "$@"; do
+		for pc_libdir in /usr/lib64 /usr/lib; do
+			[ ! -e "$pc_gl_root$pc_libdir/$pc_rel" ] || return 0
+		done
+	done
+	return 1
+}
+
+# The drivers holding a DRM device that this image has no renderer for, space separated. Empty is
+# the answer on every healthy machine and on every machine this cannot judge.
+pc_gl_missing_for_cards() {
+	pc_drm_cards | while read -r pc_c pc_d; do printf '%s\n' "${pc_d:-}"; done | sort -u |
+	while IFS= read -r pc_d; do
+		[ -n "$pc_d" ] || continue
+		case "$pc_d" in
+			amdgpu)  pc_gl_have dri/radeonsi_dri.so dri/amdgpu_dri.so || printf '%s\n' "$pc_d" ;;
+			radeon)  pc_gl_have dri/r600_dri.so dri/r300_dri.so || printf '%s\n' "$pc_d" ;;
+			i915|xe) pc_gl_have dri/iris_dri.so dri/crocus_dri.so dri/i965_dri.so \
+				|| printf '%s\n' "$pc_d" ;;
+			nouveau) pc_gl_have dri/nouveau_dri.so || printf '%s\n' "$pc_d" ;;
+			virtio_gpu) pc_gl_have dri/virtio_gpu_dri.so || printf '%s\n' "$pc_d" ;;
+			vmwgfx)  pc_gl_have dri/vmwgfx_dri.so dri/svga_dri.so || printf '%s\n' "$pc_d" ;;
+			# The proprietary driver needs BOTH halves and neither is Mesa's: wlroots allocates
+			# through the nvidia GBM backend and Chromium renders through libEGL_nvidia. One without
+			# the other is not a working card.
+			nvidia|nvidia-drm)
+				if pc_gl_have libEGL_nvidia.so.0 && pc_gl_have gbm/nvidia-drm_gbm.so; then :
+				else printf '%s\n' "$pc_d"; fi ;;
+			*) ;;   # unknown driver: fail open, see above
+		esac
+	done | tr '\n' ' ' | sed 's/ *$//'
+}
+
 # THE ONE SENTENCE THE SCREEN OWES THE PERSON IN FRONT OF IT. Empty when nothing here is wrong --
 # an ordinary crash on a healthy GPU must not be dressed up as a driver problem.
 pc_gpu_diagnosis() {
 	pc_cards=$(pc_drm_cards)
 	pc_nv=$(pc_nvidia_pci)
-	pc_stolen='' pc_unclaimed=''
+	pc_stolen='' pc_unclaimed='' pc_bound=''
 	if [ -n "$pc_nv" ]; then
 		while read -r pc_slot pc_id pc_drv; do
 			[ -n "$pc_slot" ] || continue
 			case "$pc_drv" in
-				nvidia) ;;
+				nvidia) pc_bound="${pc_bound:+$pc_bound }$pc_slot" ;;
 				nouveau) pc_stolen="${pc_stolen:+$pc_stolen }$pc_slot" ;;
 				*) pc_unclaimed="${pc_unclaimed:+$pc_unclaimed }$pc_slot" ;;
 			esac
@@ -147,12 +340,46 @@ pc_gpu_diagnosis() {
 		printf '%s' "the NVIDIA card at $pc_stolen was claimed by nouveau, so the proprietary NVIDIA driver was refused it (\"already bound to nouveau\" in dmesg). Reboot and pick \"PosterChan Live\" from the boot menu, which keeps nouveau off the card"
 		return 0
 	fi
+	# THE TWO HALVES OF ONE DRIVER DISAGREEING, which is what actually stopped the reported machine
+	# and is the hardest of all of these to read off a log: six unrelated-looking EGL and Vulkan
+	# errors, and the cause is two version numbers. Named before anything about renderers or
+	# modesetting, because while this holds none of those questions has a meaningful answer.
+	pc_nv_mismatch=$(pc_nvidia_version_mismatch)
+	if [ -n "$pc_nv_mismatch" ]; then
+		printf '%s' "$pc_nv_mismatch. This image was built wrong — its NVIDIA modules were compiled for a different release than the libraries beside them. Pick \"PosterChan Live (open-source NVIDIA driver)\" from the boot menu to use nouveau instead"
+		return 0
+	fi
+	# THE CARD IS THE NVIDIA DRIVER'S AND THERE IS STILL NO SCREEN — a different fault from every
+	# other one here, and it was being reported as the generic "no display driver claimed the GPU",
+	# which sends somebody hunting a driver that is loaded and working. nvidia.ko on its own
+	# registers no DRM device; nvidia-drm does, and nothing autoloads it (measured on the shipped
+	# image: `modules.alias` carries no 10de entry for any of the five modules, so udev cannot).
+	if [ -z "$pc_cards" ] && [ -n "$pc_bound" ]; then
+		printf '%s' "the NVIDIA driver has the card at $pc_bound and there is no DRM device on this machine, which means nvidia-drm (the modesetting half) is not loaded — a compositor has nothing to open. This image may have been built without x11-drivers/nvidia-drivers, which is what supplies \"options nvidia-drm modeset=1\" and the whole rendering userspace; reboot and pick \"PosterChan Live (open-source NVIDIA driver)\" to use the open driver instead"
+		return 0
+	fi
 	if [ -z "$pc_cards" ]; then
 		if [ -n "$pc_unclaimed" ]; then
 			printf '%s' "no display driver claimed the GPU: the NVIDIA card at $pc_unclaimed has no kernel driver bound and this machine has no DRM device at all, so there is nothing for the compositor to open. The proprietary driver did not load for this kernel; reboot and pick \"PosterChan Live (open-source NVIDIA driver)\" from the boot menu"
 		else
 			printf '%s' "no display driver claimed the GPU — this machine has no DRM device at all, so there is nothing for the compositor to open"
 		fi
+		return 0
+	fi
+	# A CARD WITH NO OUTPUTS AT ALL, which on an NVIDIA machine means one thing: nvidia-drm without
+	# modeset=1. Named before the renderer question below, because a card that cannot set a mode
+	# cannot be judged on whether something could have drawn on it.
+	if [ -n "$pc_bound" ] && ! pc_any_connector; then
+		printf '%s' "the NVIDIA card at $pc_bound has a DRM device with no outputs on it, which is what nvidia-drm looks like when it is loaded without modeset=1 — and modeset is DISABLED by default, so an image missing /etc/modprobe.d/nvidia.conf (that file comes with x11-drivers/nvidia-drivers) gets exactly this. Reboot and make sure the boot line carries nvidia_drm.modeset=1, or pick \"PosterChan Live (open-source NVIDIA driver)\""
+		return 0
+	fi
+	# A DRM DEVICE THIS IMAGE HAS NO RENDERER FOR IS ITS OWN DIAGNOSIS, and it is the one the
+	# nouveau entry produced: nouveau.ko bound the card, a card0 appeared, and the image's Mesa had
+	# been built without the nouveau driver -- so wlroots and Chromium both had a screen they could
+	# not draw on, which on the screen is an empty desktop rather than an error.
+	pc_norender=$(pc_gl_missing_for_cards)
+	if [ -n "$pc_norender" ]; then
+		printf '%s' "this image has no renderer for the graphics driver holding the card ($pc_norender), so the compositor can open the screen and nothing can paint on it. Software rendering (llvmpipe) is the way through — the session retries that by itself, and \"PosterChan Live (software rendering)\" in the boot menu starts there"
 		return 0
 	fi
 	return 0
@@ -187,7 +414,32 @@ if [ -n "${PC_GPU_PROBE:-}" ]; then
 	exit 0
 fi
 
+# STOPPING THE COMPOSITOR IS A BOUNDED OPERATION OR IT IS A HANG. `kill` was sent and the script
+# then blocked in `wait` for ever if it was not honoured -- a compositor wedged in a GPU driver is
+# precisely the case where it is not, and precisely the case this session exists to recover from.
+# Ask, wait a bounded moment, insist, wait again, and return either way; the caller decides what to
+# say about a child that is still there.
+pc_stop_wayfire() {
+	kill -0 "$wayfire_pid" 2>/dev/null || return 0
+	kill -TERM "$wayfire_pid" 2>/dev/null || true
+	pc_n=0
+	while kill -0 "$wayfire_pid" 2>/dev/null && [ "$pc_n" -lt "${PC_STOP_GRACE_TENTHS:-50}" ]; do
+		sleep 0.1; pc_n=$((pc_n + 1))
+	done
+	kill -0 "$wayfire_pid" 2>/dev/null || return 0
+	pc_say "Wayfire did not stop when asked; killing it."
+	kill -KILL "$wayfire_pid" 2>/dev/null || true
+	pc_n=0
+	while kill -0 "$wayfire_pid" 2>/dev/null && [ "$pc_n" -lt "${PC_STOP_GRACE_TENTHS:-50}" ]; do
+		sleep 0.1; pc_n=$((pc_n + 1))
+	done
+	return 0
+}
+
 rescue() {
+	# Before the first character: the screen may still belong to a compositor that is no longer
+	# running. See pc_restore_console.
+	pc_restore_console
 	printf '\n%s\n' "PosterChanOS: the Wayfire session could not start."
 	printf '%s\n' "  reason: $*"
 	printf '%s\n' "  log:    $state_dir/wayfire.log"
@@ -251,15 +503,27 @@ rescue() {
 #                                       after setuid), refusing to start
 #
 # `drop_permissions()` refuses to start when root can be regained after the drop, which is exactly
-# what running as uid 0 means. The other four EXIT_FAILURE paths cannot be hit here and each was
-# checked rather than assumed: an unrecognised argument (this passes a valid `-c <file>`); "Failed
-# to open DRM render device" (compiled OUT — the shipped binary carries the udmabuf LOGW string,
-# `Trying SW rendering instead.`, and not the LOGE one, so a machine with no render node warns and
-# carries on); "Failed to create renderer" (wlroots falls back to pixman — measured, a bochs-drm
-# guest with no render node reached the desktop that way); and "Failed to load configuration
-# backend!" (the .so is in the image). Everything ELSE measured exits 255 — no GPU at all, a
-# missing XDG_RUNTIME_DIR and an unreadable config file all take wayfire's fatal handler — and a
-# compositor this script stops itself exits 0.
+# what running as uid 0 means.
+#
+# **CORRECTION, MEASURED ON REAL HARDWARE 2026-09-17: "EXACTLY ONE THING" WAS WRONG, AND THE OTHER
+# ONE IS THE ONE THAT WAS HAPPENING.** Off the NVIDIA laptop's own wayfire.log:
+#
+#   EE [wayfire-0.10.1/src/main.cpp:455] Failed to create renderer
+#
+# The paragraph below said that path could not be hit because "wlroots falls back to pixman —
+# measured, a bochs-drm guest with no render node reached the desktop that way". True of bochs-drm,
+# and NOT true in general: wlroots falls back from GLES2 to VULKAN, not to pixman, and when the
+# Vulkan ICD that enumerates belongs to a different GPU than the primary DRM device it reports
+# `Could not match drm and vulkan device` and gives up. Do not read a status number here as proof of
+# the root check; read the log, which is why the rescue screen prints it.
+#
+# The other three EXIT_FAILURE paths cannot be hit here and each was checked rather than assumed: an
+# unrecognised argument (this passes a valid `-c <file>`); "Failed to open DRM render device"
+# (compiled OUT — the shipped binary carries the udmabuf LOGW string, `Trying SW rendering instead.`,
+# and not the LOGE one, so a machine with no render node warns and carries on); and "Failed to load
+# configuration backend!" (the .so is in the image). Everything ELSE measured exits 255 — no GPU at
+# all, a missing XDG_RUNTIME_DIR and an unreadable config file all take wayfire's fatal handler —
+# and a compositor this script stops itself exits 0.
 #
 # So a number was printed where a sentence was known. Worse, the rescue screen's own instruction is
 # `exec /usr/local/bin/pc-compositor-session`, and the natural way to answer "the desktop will not
@@ -437,9 +701,9 @@ done
 # and a fallback that cannot run must fail quietly rather than stop the login.
 pc_try_modprobe() {
 	command -v modprobe >/dev/null 2>&1 || return 1
-	modprobe "$1" >/dev/null 2>&1 && return 0
+	modprobe "$@" >/dev/null 2>&1 && return 0
 	command -v sudo >/dev/null 2>&1 || return 1
-	sudo -n modprobe "$1" >/dev/null 2>&1
+	sudo -n modprobe "$@" >/dev/null 2>&1
 }
 
 # udev creates the DRM device a moment after the module lands, so "did that work" is a short wait,
@@ -465,7 +729,8 @@ case "$pc_gpu_request" in
 			note "boot menu asked for nouveau, but it could not be loaded on this machine."
 		fi
 		;;
-	software) PC_SOFTWARE_RENDER=1 ;;
+	software) PC_SOFTWARE_RENDER=1
+		PC_SOFTWARE_REASON='the boot menu asked for software rendering' ;;
 esac
 
 # NO DRM DEVICE IS THE ONE STATE NOTHING CAN COMPOSITE ON -- this kernel is built with
@@ -475,14 +740,71 @@ esac
 # boot entry that blacklists nouveau in the KERNEL it simply fails and costs a tenth of a second.
 if [ -z "$(pc_drm_cards)" ]; then
 	# Asked ONLY where it can help: a machine with an NVIDIA display device and nothing driving it.
-	# Reaching for nouveau on a box that has no NVIDIA card cannot produce a screen and would be a
-	# privileged action taken on a guess.
-	if [ -n "$(pc_nvidia_pci)" ] && pc_try_modprobe nouveau && pc_wait_for_drm 50; then
-		note "no DRM device at login; loading nouveau by name produced one."
-	else
+	# Reaching for a GPU module on a box that has no NVIDIA card cannot produce a screen and would be
+	# a privileged action taken on a guess.
+	pc_recovered=''
+	if [ -n "$(pc_nvidia_pci)" ]; then
+		# THE PROPRIETARY DRIVER FIRST, AND NOTHING USED TO ASK FOR IT AT ALL.
+		#
+		# NOTHING AUTOLOADS nvidia.ko. Measured in the shipped image's own `modules.alias`: none of
+		# the five proprietary modules declares a PCI alias, so udev cannot load them by modalias
+		# the way it loads amdgpu or i915 — what loads them on an ordinary Gentoo machine is the
+		# modprobe.d file x11-drivers/nvidia-drivers installs, and an image built without that
+		# package has no such file. And nvidia.ko alone registers no DRM device in any case:
+		# nvidia-drm is the modesetting half, it is never pulled in as a dependency of anything, and
+		# `modeset=1` is what wlroots needs from it.
+		#
+		# So on the DEFAULT boot entry — nouveau refused in the kernel, which is the entry the vast
+		# majority of machines use — the only thing this branch ever tried was nouveau, which that
+		# entry has made impossible to load. It could not succeed, and the way out was one modprobe
+		# it never attempted. Asked by NAME with the parameter spelled out, so it does not depend on
+		# a modprobe.d file that may not be in the image.
+		case " $pc_cmdline " in
+			*" module_blacklist="*nvidia*) ;;   # the nouveau entry asked for the opposite
+			*)
+				if pc_try_modprobe nvidia-drm modeset=1 && pc_wait_for_drm 50; then
+					pc_say "no DRM device at login; loading nvidia-drm produced one."
+					pc_recovered=1
+				fi ;;
+		esac
+		if [ -z "$pc_recovered" ] && pc_try_modprobe nouveau && pc_wait_for_drm 50; then
+			pc_say "no DRM device at login; loading nouveau by name produced one."
+			pc_recovered=1
+		fi
+	fi
+	if [ -z "$pc_recovered" ]; then
 		pc_gpu_reason=$(pc_gpu_diagnosis)
 		rescue "${pc_gpu_reason:-no display driver claimed the GPU — this machine has no DRM device at all}"
 	fi
+fi
+
+# ---- A CARD THAT CANNOT SET A MODE IS NOT A CARD YET --------------------------------------------
+#
+# nvidia-drm's `modeset` defaults to DISABLED, and the file that turns it on ships with
+# x11-drivers/nvidia-drivers. An image built without that package therefore gets a DRM device with no
+# CRTCs from udev, which is the single hardest failure here to see: `pc_drm_cards` answers "card0
+# nvidia", every gate above is satisfied, and wlroots then finds nothing it can display on.
+#
+# The boot line now carries `nvidia_drm.modeset=1`, so this is the repair for a machine already
+# booted from an image that did not -- one reload, by name, with the parameter spelled out. NARROW ON
+# PURPOSE: only when NOTHING on this machine has a connector (a hybrid laptop's dGPU legitimately has
+# none while the iGPU drives the screen, and reloading a module out from under a working desktop is
+# not a thing to do on a guess), and it never rescues on failure -- a genuinely headless card is a
+# fact about the machine, not an error.
+if [ -n "$(pc_drm_cards)" ] && ! pc_any_connector && [ -n "$(pc_nvidia_pci)" ]; then
+	case " $pc_cmdline " in
+		*" module_blacklist="*nvidia*) ;;
+		*)
+			pc_say "the NVIDIA card has a DRM device with no outputs, which is nvidia-drm loaded without modeset=1; reloading it."
+			if pc_module_loaded nvidia_drm; then
+				pc_try_modprobe -r nvidia_drm >/dev/null 2>&1 || true
+			fi
+			if pc_try_modprobe nvidia-drm modeset=1 && pc_wait_for_drm 50 && pc_any_connector; then
+				pc_say "nvidia-drm reloaded with modesetting; the card now has outputs."
+			else
+				pc_say "nvidia-drm could not be reloaded with modesetting; carrying on with what this machine has."
+			fi ;;
+	esac
 fi
 
 if true; then
@@ -490,26 +812,102 @@ if true; then
 	# died on a card its driver could not render with. Same three variables as the virtio path, whose
 	# llvmpipe route is the measured-good one; deliberately NOT WLR_RENDERER=pixman, which is slower
 	# than llvmpipe and is not what that path proved.
-	if [ -n "${PC_SOFTWARE_RENDER:-}" ]; then
+	# One place that turns "this machine must draw in software" into the variables that do it, so a
+	# newly recognised cause cannot pick up a different half of the set than the ones before it. The
+	# retry below re-execs this script with PC_SOFTWARE_RENDER set after a first attempt that died on
+	# a card its driver could not render with; deliberately NOT WLR_RENDERER=pixman, which is slower
+	# than llvmpipe and is not what the measured-good virtio path proved.
+	pc_use_software() {
 		export LIBGL_ALWAYS_SOFTWARE=1
 		export WLR_RENDERER_ALLOW_SOFTWARE=1
 		PC_SHELL_EXTRA_ARGS="${PC_SHELL_EXTRA_ARGS:+$PC_SHELL_EXTRA_ARGS }--use-angle=swiftshader --enable-unsafe-swiftshader"
 		export PC_SHELL_EXTRA_ARGS
-		note "software rendering for this attempt."
-	fi
-	# QEMU's non-GL virtio-vga exposes a DRM card but no accelerated VirGL context. Chromium's
-	# compositor aborts (SIGTRAP) when it tries that unusable render node. Keep physical GPUs and
-	# VirGL-capable guests accelerated; only the virtio device with no render-node capability uses
-	# Mesa's supported llvmpipe path. This is deliberately not Electron --disable-gpu.
-	if grep -qs '^0x1af4$' /sys/class/drm/card*/device/vendor 2>/dev/null; then
-		export LIBGL_ALWAYS_SOFTWARE=1
+		pc_say "software rendering (llvmpipe) for this attempt — $1."
+	}
+	# THE LAST RESORT, AND IT EXISTS BECAUSE llvmpipe WAS MEASURED NOT TO BE ONE.
+	#
+	# On the hybrid NVIDIA laptop the software retry ran and failed IDENTICALLY, in 0.3s, with the
+	# same `DRI2: gbm device using incorrect/incompatible backend` — because LIBGL_ALWAYS_SOFTWARE
+	# changes which GL implementation is used and changes NOTHING about which GBM backend allocated
+	# the buffer. The buffer still came from nvidia-drm_gbm.so, and Mesa still refused it. So the
+	# whole software fallback was a second copy of the first failure and the machine got a console.
+	#
+	# wlroots' pixman renderer uses DRM DUMB BUFFERS and no GL and no GBM at all, which is the only
+	# thing left that does not touch the broken half. It is slower than llvmpipe, which is why it is
+	# third and not second — and a slow desktop is not in the same category as no desktop.
+	if [ -n "${PC_PIXMAN_RENDER:-}" ]; then
+		export WLR_RENDERER=pixman
 		export WLR_RENDERER_ALLOW_SOFTWARE=1
+		export LIBGL_ALWAYS_SOFTWARE=1
+		PC_SHELL_EXTRA_ARGS="${PC_SHELL_EXTRA_ARGS:+$PC_SHELL_EXTRA_ARGS }--use-angle=swiftshader --enable-unsafe-swiftshader"
+		export PC_SHELL_EXTRA_ARGS
+		pc_say "last resort: wlroots' pixman renderer, which needs neither GL nor GBM — ${PC_SOFTWARE_REASON:-the accelerated and llvmpipe attempts both failed}."
+	elif [ -n "${PC_SOFTWARE_RENDER:-}" ]; then
+		pc_use_software "${PC_SOFTWARE_REASON:-asked for}"
+	elif [ -n "$(pc_nvidia_version_mismatch)" ]; then
+		# Measured above: llvmpipe cannot help here, so it is not spent. Straight to the renderer
+		# that does not go through NVIDIA's userspace at all.
+		export PC_PIXMAN_RENDER=1
+		export WLR_RENDERER=pixman WLR_RENDERER_ALLOW_SOFTWARE=1 LIBGL_ALWAYS_SOFTWARE=1
+		PC_SHELL_EXTRA_ARGS="${PC_SHELL_EXTRA_ARGS:+$PC_SHELL_EXTRA_ARGS }--use-angle=swiftshader --enable-unsafe-swiftshader"
+		export PC_SHELL_EXTRA_ARGS
+		pc_say "$(pc_nvidia_version_mismatch) — drawing with pixman, which does not go through either."
+	elif pc_drm_vendor 0x1af4; then
+		# QEMU's non-GL virtio-vga exposes a DRM card but no accelerated VirGL context. Chromium's
+		# compositor aborts (SIGTRAP) when it tries that unusable render node. Keep physical GPUs and
+		# VirGL-capable guests accelerated; only the virtio device with no render-node capability
+		# uses Mesa's supported llvmpipe path. This is deliberately not Electron --disable-gpu.
+		pc_use_software "a virtio GPU with no accelerated VirGL context"
 		# On software virtio scanout, atomic modesetting can leave the displayed frame at its
 		# initial size even though compositor screenshots show the complete current desktop.
-		# Use legacy DRM updates only in this existing virtual GPU software fallback.
+		# Use legacy DRM updates only in this existing virtual GPU software fallback -- it is a
+		# measured virtio scanout fact and must not be generalised to the branch below.
 		export WLR_DRM_NO_ATOMIC=1
-		PC_SHELL_EXTRA_ARGS="${PC_SHELL_EXTRA_ARGS:+$PC_SHELL_EXTRA_ARGS }--use-angle=swiftshader --enable-unsafe-swiftshader"
-		export PC_SHELL_EXTRA_ARGS
+	else
+		# ...AND EVERY OTHER CARD THIS IMAGE HAS NO RENDERER FOR, which is the whole point of
+		# pc_gl_missing_for_cards: an NVIDIA card in an image with no NVIDIA userspace, and a nouveau
+		# card in an image whose Mesa was built without nouveau, both used to reach this line
+		# accelerated and paint nothing. Decided BEFORE the attempt, because the alternative is a
+		# blank desktop for however long the first attempt takes to fail.
+		pc_no_renderer=$(pc_gl_missing_for_cards)
+		if [ -n "$pc_no_renderer" ]; then
+			pc_use_software "this image has no renderer for $pc_no_renderer"
+		fi
+	fi
+	# ---- ON A HYBRID LAPTOP, THE SCREEN IS ON ONE OF THE TWO CARDS -----------------------------
+	#
+	# Measured on the reported machine: an Intel iGPU at 00:02.0 (card0, six connectors, ALL
+	# disconnected) and an NVIDIA dGPU at 01:00.0 (card1) whose DP-5 is the panel. wlroots picks its
+	# primary from the session's GPU list, where `boot_vga` decides -- and on that machine boot_vga
+	# happens to be the NVIDIA card, so it chose right. On the mirror-image machine (panel on the
+	# iGPU, boot_vga on the dGPU) it would choose a card with nothing plugged into it, and the log
+	# this leaves is `Could not match drm and vulkan device`, which says nothing about outputs.
+	#
+	# WHICH CARD HAS A CONNECTED OUTPUT IS NOT A GUESS -- it is `status` under every connector. Only
+	# stated when it is actually a choice (more than one card, and some of them have no connected
+	# output at all); a single-GPU machine and a machine where every card is in use are both left
+	# exactly as they were, and an operator's own WLR_DRM_DEVICES always wins.
+	if [ -z "${WLR_DRM_DEVICES:-}" ]; then
+		pc_lit='' pc_dark='' pc_cards_n=0
+		for pc_card in "$drm_root"/card[0-9]*; do
+			[ -e "$pc_card" ] || continue
+			case "${pc_card##*/}" in *-*) continue ;; esac
+			pc_name=${pc_card##*/}
+			pc_cards_n=$((pc_cards_n + 1))
+			pc_on=''
+			for pc_st in "$drm_root/$pc_name"-*/status; do
+				[ -r "$pc_st" ] || continue
+				IFS= read -r pc_s <"$pc_st" 2>/dev/null || continue
+				[ "$pc_s" != connected ] || { pc_on=1; break; }
+			done
+			if [ -n "$pc_on" ]; then pc_lit="${pc_lit:+$pc_lit:}${PC_DRI_ROOT:-/dev/dri}/$pc_name"
+			else pc_dark="${pc_dark:+$pc_dark:}${PC_DRI_ROOT:-/dev/dri}/$pc_name"; fi
+		done
+		if [ "$pc_cards_n" -gt 1 ] && [ -n "$pc_lit" ] && [ -n "$pc_dark" ]; then
+			WLR_DRM_DEVICES="$pc_lit:$pc_dark"
+			export WLR_DRM_DEVICES
+			pc_say "this machine has $pc_cards_n graphics devices and the screen is on $pc_lit; telling the compositor to start there."
+		fi
 	fi
 	health=${PC_WAYFIRE_HEALTH:-/usr/local/bin/pc-wayfire-health}
 	# Refuse to take the DRM device unless the installed Electron package actually carries a Wayfire
@@ -595,6 +993,7 @@ PC_SESSION_CONFIG_PY
 		fi
 		# Read by rescue(): an empty log means something different before this line and after it.
 		wayfire_started=1
+		pc_say "starting Wayfire on: $(pc_drm_cards | tr '\n' ',' | sed 's/,$//')"
 		wayfire -c "$session_cfg" >"$state_dir/wayfire.log" 2>&1 &
 		wayfire_pid=$!
 		# WAIT ON THE LAUNCHER, NOT ON A CLOCK.
@@ -611,9 +1010,16 @@ PC_SESSION_CONFIG_PY
 		# wait; when it is gone without a ready file the start has FAILED and there is nothing to
 		# wait for, which is also faster than the old timer. The cap is the backstop for a launcher
 		# that hangs rather than exits.
+		#
+		# AND IT SAYS SO WHILE IT WAITS. Five minutes is a defensible cap and a frozen screen for
+		# five minutes is not a defensible report: the machine that was said to "hang right after
+		# the login message" spent that time here, correctly, with nothing on the console. A line
+		# every ten seconds makes a slow boot legible and a stuck one datable.
 		n=0
-		while kill -0 "$wayfire_pid" 2>/dev/null && [ ! -e "$PC_WAYFIRE_READY_FILE" ] && [ "$n" -lt 3000 ]; do
+		while kill -0 "$wayfire_pid" 2>/dev/null && [ ! -e "$PC_WAYFIRE_READY_FILE" ] && [ "$n" -lt "${PC_READY_WAIT_TENTHS:-3000}" ]; do
 			sleep 0.1; n=$((n + 1))
+			[ $((n % ${PC_READY_TICK_TENTHS:-100})) -ne 0 ] \
+				|| printf 'PosterChanOS: waiting for the desktop to draw (%ss)\n' "$((n / 10))" >&2
 			# Only after the compositor has had a moment to run its autostart: asking before that
 			# would call every session a failure before the launcher had been spawned at all.
 			if [ "$n" -gt 100 ] && ! pgrep -f '[p]c-shell-start-wayfire' >/dev/null 2>&1; then
@@ -623,8 +1029,8 @@ PC_SESSION_CONFIG_PY
 		reason="Wayfire exiting on its own"
 		if [ ! -e "$PC_WAYFIRE_READY_FILE" ] && kill -0 "$wayfire_pid" 2>/dev/null; then
 			reason="the shell never signalled ready"
-			note "no ready signal and no launcher after ${n}00ms; stopping Wayfire."
-			kill "$wayfire_pid" 2>/dev/null || true
+			pc_say "the desktop did not draw within ${n}00ms; stopping Wayfire."
+			pc_stop_wayfire
 		elif [ -e "$PC_WAYFIRE_READY_FILE" ] && kill -0 "$wayfire_pid" 2>/dev/null; then
 			# A shell restart deliberately creates a short gap between the old Electron process and
 			# its replacement.  Treating that gap as a compositor failure killed Wayfire, raced the
@@ -673,10 +1079,23 @@ PC_SESSION_CONFIG_PY
 				fi
 				note "shell replaced by pid $shell_pid; Wayfire kept."
 			done
-			kill -0 "$wayfire_pid" 2>/dev/null && kill "$wayfire_pid" 2>/dev/null || true
+			pc_stop_wayfire
 		fi
-		wait "$wayfire_pid"
-		status=$?
+		# `wait` CANNOT TIME OUT, AND THAT MADE IT THE LAST UNBOUNDED LINE IN THIS SCRIPT.
+		#
+		# A compositor stuck inside a driver ioctl does not die from SIGTERM and may not die from
+		# SIGKILL either, and every path above reaches this line. Waiting on such a child is a login
+		# that never says anything again -- exactly the report this whole pass exists for. So the
+		# reap is attempted only when the child is actually gone (pc_stop_wayfire has already spent a
+		# bounded grace and a SIGKILL on it); otherwise the status is recorded as killed and the
+		# script carries on to say so.
+		if kill -0 "$wayfire_pid" 2>/dev/null; then
+			status=137
+			pc_say "Wayfire did not die even on SIGKILL (stuck in the graphics driver); not waiting on it."
+		else
+			wait "$wayfire_pid"
+			status=$?
+		fi
 		# Re-read unconditionally: pc-shell-start-wayfire may replace a failed first GPU/surface attempt,
 		# so the PID remembered when ready was first observed is not necessarily the final live child.
 		if [ -r "$PC_WAYFIRE_SHELL_PID_FILE" ]; then
@@ -710,10 +1129,38 @@ fi
 # card at all would just fail again, more slowly, and bury the reason. The re-exec is what makes it
 # one code path rather than a second copy of the launch -- and PC_SOFTWARE_RENDER is what stops it
 # recurring, since ~/.bash_profile's own boot-attempt guard never sees this.
-if [ -z "${PC_SOFTWARE_RENDER:-}" ] && [ "${status:-1}" -ne 0 ] && [ -n "$(pc_drm_cards)" ]; then
-	note "Wayfire $(describe_status "${status:-}") on this machine's graphics; retrying once with software rendering."
-	PC_SOFTWARE_RENDER=1
-	export PC_SOFTWARE_RENDER
+#
+# AND "THE SHELL NEVER SIGNALLED READY" IS THE CASE THAT MATTERS MOST AND WAS NOT COVERED.
+#
+# It is what an unrenderable card actually produces: wlroots falls back to its pixman renderer, the
+# compositor comes up, the launcher maps a window, the health gate photographs it and finds no
+# painted marker, the launcher gives up -- and THIS script then stops Wayfire, which exits CLEANLY
+# from a signal it handles, i.e. status 0. So the one symptom the software retry was written for
+# ("an empty UI") took the branch that means "the user logged out" and got a console instead of the
+# llvmpipe attempt that draws. A window that never painted is a failed attempt whatever the
+# compositor's exit code says.
+pc_retry_sw=''
+[ "${status:-1}" -eq 0 ] || pc_retry_sw="Wayfire $(describe_status "${status:-}") on this machine's graphics"
+case "${reason:-}" in
+	*"never signalled ready"*) pc_retry_sw="the desktop came up and painted nothing" ;;
+esac
+#
+# THREE ATTEMPTS, EACH ONE GIVING UP SOMETHING THE LAST ONE NEEDED: the card's own driver, then
+# llvmpipe over the card's buffer allocator, then pixman over dumb buffers and nothing else. The
+# third exists because the second was measured to be a copy of the first on the machine this was
+# written for -- see PC_PIXMAN_RENDER above.
+if [ -n "$pc_retry_sw" ] && [ -n "$(pc_drm_cards)" ] && [ -z "${PC_PIXMAN_RENDER:-}" ]; then
+	PC_SOFTWARE_REASON="$pc_retry_sw"
+	export PC_SOFTWARE_REASON
+	if [ -z "${PC_SOFTWARE_RENDER:-}" ]; then
+		pc_say "$pc_retry_sw; retrying once with software rendering."
+		PC_SOFTWARE_RENDER=1
+		export PC_SOFTWARE_RENDER
+	else
+		pc_say "$pc_retry_sw, and software rendering did not help either; trying pixman."
+		PC_PIXMAN_RENDER=1
+		export PC_PIXMAN_RENDER
+	fi
 	if [ -x "$0" ]; then exec "$0"; else exec /bin/sh "$0"; fi
 fi
 

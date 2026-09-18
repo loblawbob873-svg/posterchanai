@@ -81,9 +81,21 @@ class TheBuilderShipsTheInstaller(unittest.TestCase):
         self.assertIn('return 0', self.src[done:end])
 
     def test_live_image_repairs_missing_virtio_gpu_driver_before_packing(self):
+        """...AND NOUVEAU, which is the same rule and the reason this is a LIST now.
+
+        Every driver here is for hardware the build host does not have, so its absence is invisible
+        until somebody boots the image on that hardware: a 2026-09-18 ISO shipped with no nouveau
+        driver in Mesa at all, and the boot menu's "open-source NVIDIA driver" entry was a blank
+        screen. Pinned as the rule (a required set, checked and re-checked around the rebuild) rather
+        than as the literal virgl atom, which was true of one member of it.
+        """
         body = self.fn
-        check = "media-libs/mesa[video_cards_virgl]"
+        check = "media-libs/mesa[video_cards_$WANT_CARD]"
         self.assertGreaterEqual(body.count(check), 2)
+        required = re.search(r'^PC_MESA_REQUIRED_CARDS="([^"]*)"', self.src, re.M)
+        self.assertTrue(required, "the required-driver set is gone")
+        self.assertIn("virgl", required.group(1).split())
+        self.assertIn("nouveau", required.group(1).split())
         # PERSISTED, NOT PASSED. This asserted a one-shot `VIDEO_CARDS=... emerge`, which the next
         # `emerge -uDN @world` reverts -- so the rebuild was paid for on every ISO build and the
         # machine it was built from went back to having no virgl.
@@ -1028,7 +1040,7 @@ def test_the_installed_system_records_its_own_graphics_drivers():
         "the installed make.conf does not record the driver list")
     # And the LiveCD's repair persists rather than passing: a one-shot emerge is undone by the next
     # world update, so the machine the ISO was built from loses virgl again.
-    build = src.split("Rebuilding Mesa with the LiveCD's VirGL driver", 1)[1].split("\n\tfi", 1)[0]
+    build = src.split("Rebuilding Mesa with the drivers this image needs", 1)[1].split("\n\tfi", 1)[0]
     assert "/etc/portage/make.conf" in build
     assert "VIDEO_CARDS=\"$VIDEO_CARDS\" /usr/bin/emerge" not in src
 

@@ -159,7 +159,20 @@ USE_FLAGS=" flatpak dracut -webp -ladspa -gpm npm introspection lame systemd-boo
 # Physical GPUs plus VirGL, which is the accelerated virtio-gpu path used by QEMU/KVM. Without
 # virgl Mesa prints "virtio_gpu: driver missing" on the first installed boot: Sway starts, but EGL
 # cannot render and the VM remains a black screen even though the same live medium appeared fine.
-VIDEO_CARDS="intel amdgpu radeon radeonsi virgl"
+#
+# `nouveau` IS LOAD-BEARING AND WAS MISSING, WHICH MADE THE NVIDIA ESCAPE HATCH A BLANK SCREEN.
+#
+# Measured on the 2026-09-18 image (`unsquashfs -l`): `/usr/lib64/dri/` carried crocus, iris, r300,
+# r600, radeonsi, virtio_gpu, swrast and kms_swrast -- and no nouveau, because this list did not
+# name it. The boot menu's "open-source NVIDIA driver" entry loads nouveau.ko, a DRM device appears,
+# and Mesa then has no driver that can render on it: wlroots comes up, the shell maps a window and
+# paints nothing. Reported off the machine as *"some empty UI with no mouse movement"*, with the
+# compositor running the whole time. One image boots every machine, so the driver list is not
+# allowed to be the build host's hardware -- this is the same lesson `virgl` was added for.
+VIDEO_CARDS="intel amdgpu radeon radeonsi nouveau virgl"
+# THE DRIVERS THE IMAGE IS NOT ALLOWED TO SHIP WITHOUT, as Mesa USE flags. Both are for hardware the
+# BUILD HOST does not have, which is exactly why nothing notices when they go missing.
+PC_MESA_REQUIRED_CARDS="virgl nouveau"
 #
 #PACKAGE CONFIGURATION
 BASE_PACKAGES="net-print/cups-filters net-misc/networkmanager net-wireless/bluez net-fs/sshfs app-shells/starship dev-util/sh sys-boot/plymouth sys-power/acpid app-arch/zip dev-python/virtualenv sys-apps/flatpak sys-power/powertop app-shells/bash-completion sys-power/cpupower media-libs/gexiv2 media-plugins/gst-plugins-pulse mail-mta/postfix app-admin/sysstat sys-apps/smartmontools net-fs/nfs-utils net-firewall/nftables dev-python/pip sys-fs/inotify-tools net-analyzer/nmap app-misc/screen app-portage/gentoolkit sys-fs/dosfstools app-admin/sudo sys-apps/systemd sys-apps/util-linux sys-apps/hwdata app-eselect/eselect-repository dev-vcs/git sys-block/parted sys-process/btop net-vpn/wireguard-tools app-editors/neovim app-misc/fastfetch sys-fs/btrfs-progs net-print/cups sys-firmware/seabios-bin sys-firmware/edk2-bin app-emulation/libvirt app-emulation/qemu app-emulation/virt-viewer app-emulation/spice-vdagent app-crypt/swtpm"
@@ -368,8 +381,26 @@ PINNED_PACKAGES=(">=x11-drivers/nvidia-drivers-581")
 # (see the ruling in project_nvidia_pascal_pin) -- so the menu also offers the exact opposite, where
 # the nvidia modules are blacklisted instead and the session loads nouveau by name. That is the way
 # out for a card 580 cannot drive, and it costs one menu line rather than a conditional blacklist.
+# ...AND `modeset=1` IS ON THE KERNEL COMMAND LINE BECAUSE THE FILE THAT SETS IT CAN BE ABSENT.
+#
+# Measured with `modinfo` on the shipped nvidia-drm.ko (580.173.02):
+#
+#   parm: modeset:Enable atomic kernel modesetting (1 = enable, 0 = disable (default)) (bool)
+#
+# DISABLE IS THE DEFAULT. The comment above says adding a second copy of `options nvidia-drm
+# modeset=1` would duplicate a rule the package already owns, and that was true of a machine that HAS
+# the package -- the 2026-09-18 image did not, so /etc/modprobe.d held nothing but ppp.conf and the
+# module came up with no modesetting at all. udev still autoloads it (measured: modules.alias does
+# carry `pci:v000010DEd*sv*sd*bc03sc00i00* nvidia_drm`), so what an NVIDIA machine got was a DRM
+# device with no CRTCs -- which is not "no driver" and not "a working card", and is the one shape
+# every check here reads as healthy.
+#
+# A module parameter on the KERNEL command line applies to a module loaded later by anything,
+# including udev, and depends on no file inside the image. It costs nothing where the package is
+# present (it is what that package's file says) and nothing where there is no NVIDIA card. This is
+# the one place the two mechanisms are allowed to say the same thing, and the reason is written here.
 PC_DRACUT_OMIT_NOUVEAU='omit_drivers+=" nouveau "'
-PC_LIVE_GPU_CMDLINE='module_blacklist=nouveau'
+PC_LIVE_GPU_CMDLINE='module_blacklist=nouveau nvidia_drm.modeset=1'
 PC_LIVE_NOUVEAU_CMDLINE='module_blacklist=nvidia,nvidia_drm,nvidia_modeset,nvidia_uvm pc.gpu=nouveau'
 PC_LIVE_SOFTWARE_CMDLINE="$PC_LIVE_GPU_CMDLINE pc.gpu=software"
 MASKED_PACKAGES+=(www-apps/jellyfin-bin app-admin/vaultwarden dev-util/nvidia-cuda-toolkit www-apps/radicale www-apps/vaultwarden-web www-apps/radicale net-misc/owncloud-client net-libs/libre-graph-api-cpp-qt-client media-video/obs-studio net-misc/sunshine dev-util/sh net-misc/moonlight app-admin/bitwarden-desktop-bin net-im/element-desktop-bin net-misc/nyx net-libs/stem sys-libs/libudev-compat dev-libs/nss dev-libs/libappindicator media-video/ffmpeg games-util/game-device-udev-rules games-util/steam-launcher net-im/telegram-desktop-bin)
@@ -3158,6 +3189,87 @@ upgradeSelf() {
 	exit 0
 }
 
+# ── IS THE GRAPHICS PAYLOAD IN THE IMAGE THAT WAS JUST PACKED ───────────────────────────────────
+#
+# READS AN `unsquashfs -l` LISTING ON STDIN AND PRINTS WHAT IS MISSING; silence means the image can
+# reach a desktop on every card its boot menu offers one for.
+#
+# WHY THIS EXISTS AS A SEPARATE, DUMB, TEXT-IN FUNCTION. The 2026-09-18 ISO passed every gate this
+# build has: `unsquashfs -l` found the home, the profile, the desktop, Firefox and NetworkManager,
+# the helper-version gates matched, and the boot menu was exactly right. It was unbootable on NVIDIA
+# and blank on nouveau, and the reason was two things NOT being in the image -- which is precisely
+# what an existence check over the packed output can answer and what a check of the BUILD HOST
+# cannot: the host gates above look at portageq, and portageq was not what went wrong.
+#
+# THE RULE IS A PAIR, NOT A LIST. Refusing nouveau on the kernel command line is only safe on an
+# image that ships the proprietary driver instead, and offering a nouveau entry is only useful on an
+# image whose Mesa can render on nouveau. Either half alone is a blank screen on somebody's machine,
+# so the cmdlines are passed IN and each demand is tied to the entry that creates it.
+#
+# $1 = the kernel release whose modules the image ships (the ISO's own kernel).
+# $2 = every `linux` line the boot menu carries, concatenated.
+# $3 = the version of the nvidia.ko being shipped, when it could be read. The NVIDIA userspace in the
+#      image must be that same release -- see the version-mismatch block in liveCD() for the machine
+#      this was measured on. Empty means "not asked", never "agreed".
+liveGpuPayloadProblems() {
+	local KREL="${1:-}" CMDLINES="${2:-}" NVVER="${3:-}" LS PROBLEMS="" F
+	LS="$(cat)"
+	_has() { printf '%s\n' "$LS" | grep -qx "squashfs-root/$1"; }
+	_hasre() { printf '%s\n' "$LS" | grep -qxE "squashfs-root/$1"; }
+	# --- the proprietary NVIDIA driver, demanded by `module_blacklist=nouveau` -------------------
+	#
+	# Every ordinary entry carries that, so on those entries nouveau CANNOT be loaded later even
+	# deliberately: the proprietary userspace is the only way the card draws anything.
+	case "$CMDLINES" in
+		*module_blacklist=nouveau*)
+			# The kernel half. Named for the shipped kernel, because modules for a kernel the image
+			# does not boot are not a driver -- that is exactly the shape of the failing image, which
+			# had .ko files for the running kernel and none for the one portage had installed.
+			for F in nvidia.ko nvidia-modeset.ko nvidia-drm.ko; do
+				_has "usr/lib/modules/$KREL/video/$F" || _has "lib/modules/$KREL/video/$F" \
+					|| PROBLEMS="$PROBLEMS /usr/lib/modules/$KREL/video/$F"
+			done
+			# The userspace half. THIS is what the failing image was missing entirely, and it is the
+			# half no module listing can stand in for: wlroots opens the card through GBM and
+			# Chromium through EGL, and both of those come from the package, not the kernel.
+			_hasre "usr/lib(64)?/libEGL_nvidia\.so\.0" \
+				|| PROBLEMS="$PROBLEMS libEGL_nvidia.so.0"
+			_hasre "usr/lib(64)?/gbm/nvidia-drm_gbm\.so" \
+				|| PROBLEMS="$PROBLEMS gbm/nvidia-drm_gbm.so"
+			_hasre "usr/share/glvnd/egl_vendor\.d/[0-9]+_nvidia\.json" \
+				|| PROBLEMS="$PROBLEMS glvnd/egl_vendor.d/10_nvidia.json"
+			# `options nvidia-drm modeset=1`, which is what wlroots needs and which ships with the
+			# package. Its absence is also the cheapest possible proof the package is not installed.
+			_has "etc/modprobe.d/nvidia.conf" || PROBLEMS="$PROBLEMS /etc/modprobe.d/nvidia.conf"
+			# Not load-bearing for a desktop, and the first thing a person types when they suspect
+			# the driver. An image without it answers "command not found" to the only question they
+			# know how to ask.
+			_hasre "(usr/)?(bin|sbin)/nvidia-smi" || PROBLEMS="$PROBLEMS nvidia-smi"
+			# The halves, compared in the PACKED OUTPUT. The build host was asked the same question
+			# before the pack; this is the one that survives an exclude, a stale tree or a pseudo-file
+			# -- and the version is in the library's own file name, so a listing can answer it.
+			if [ -n "$NVVER" ]; then
+				_hasre "usr/lib(64)?/libnvidia-ml\.so\.$(printf '%s' "$NVVER" | sed 's/\./\\./g')" \
+					|| PROBLEMS="$PROBLEMS libnvidia-ml.so.$NVVER(kernel-module-version)"
+			fi
+			;;
+	esac
+	# --- Mesa's nouveau driver, demanded by the entry that loads nouveau ------------------------
+	case "$CMDLINES" in
+		*pc.gpu=nouveau*)
+			_hasre "usr/lib(64)?/dri/nouveau_dri\.so" \
+				|| PROBLEMS="$PROBLEMS dri/nouveau_dri.so"
+			;;
+	esac
+	# --- and the software path, which is the last line of defence for every card ----------------
+	#
+	# `pc.gpu=software` and the session's own one-shot retry both mean llvmpipe. That is swrast in
+	# Mesa's dri directory, and an image without it has no fallback at all.
+	_hasre "usr/lib(64)?/dri/swrast_dri\.so" || PROBLEMS="$PROBLEMS dri/swrast_dri.so"
+	unset -f _has _hasre
+	[ -z "$PROBLEMS" ] || printf '%s\n' "${PROBLEMS# }"
+}
+
 liveCD() {
 	clear
 	echo
@@ -3230,21 +3342,111 @@ liveCD() {
 	# takes the VT and immediately loses EGL (`virtio_gpu: driver missing`), leaving QEMU at
 	# "Display output is not active".  The image must carry the portable VirGL driver, not merely
 	# promise it in the installer configuration used after boot.
-	if ! portageq has_version / 'media-libs/mesa[video_cards_virgl]' 2>/dev/null; then
-		echo -e "${COLOR_YELLOW}Rebuilding Mesa with the LiveCD's VirGL driver.${COLOR_RESET}"
+	# ...AND THE SAME IS TRUE OF NOUVEAU, WHICH IS WHY THIS IS A LIST AND NOT A VIRGL CHECK.
+	# See PC_MESA_REQUIRED_CARDS: every driver here is for hardware this build host does not have,
+	# so its absence is invisible until somebody boots the image on that hardware.
+	local WANT_CARD MISSING_CARDS=""
+	for WANT_CARD in $PC_MESA_REQUIRED_CARDS; do
+		portageq has_version / "media-libs/mesa[video_cards_$WANT_CARD]" 2>/dev/null \
+			|| MISSING_CARDS="$MISSING_CARDS $WANT_CARD"
+	done
+	if [[ -n "$MISSING_CARDS" ]]; then
+		echo -e "${COLOR_YELLOW}Rebuilding Mesa with the drivers this image needs:$MISSING_CARDS${COLOR_RESET}"
 		# PERSISTED, NOT PASSED. A one-shot `VIDEO_CARDS=... emerge` is reverted by the next
 		# `emerge -uDN @world`, so this rebuild used to be undone silently and paid for again on
 		# every ISO build -- and the machine it was built FROM went back to having no virgl.
 		if ! grep -q '^VIDEO_CARDS=' /etc/portage/make.conf 2>/dev/null; then
 			echo "VIDEO_CARDS=\"$VIDEO_CARDS\"" >>/etc/portage/make.conf
-		elif ! portageq envvar VIDEO_CARDS 2>/dev/null | grep -qw virgl; then
-			sed -i "s/^VIDEO_CARDS=\"\(.*\)\"$/VIDEO_CARDS=\"\1 virgl\"/" /etc/portage/make.conf
+		else
+			for WANT_CARD in $MISSING_CARDS; do
+				portageq envvar VIDEO_CARDS 2>/dev/null | grep -qw "$WANT_CARD" \
+					|| sed -i "s/^VIDEO_CARDS=\"\(.*\)\"$/VIDEO_CARDS=\"\1 $WANT_CARD\"/" \
+						/etc/portage/make.conf
+			done
 		fi
 		/usr/bin/emerge -1 --newuse media-libs/mesa 2>&1 | tee -a "$LOG"
-		if [[ ${PIPESTATUS[0]} -ne 0 ]] || ! portageq has_version / 'media-libs/mesa[video_cards_virgl]' 2>/dev/null; then
-			_lcd_fail "Mesa still lacks video_cards_virgl — the LiveCD graphical VM would be blank."
+		MISSING_CARDS=""
+		for WANT_CARD in $PC_MESA_REQUIRED_CARDS; do
+			portageq has_version / "media-libs/mesa[video_cards_$WANT_CARD]" 2>/dev/null \
+				|| MISSING_CARDS="$MISSING_CARDS $WANT_CARD"
+		done
+		if [[ -n "$MISSING_CARDS" ]]; then
+			_lcd_fail "Mesa still lacks:$MISSING_CARDS — an image without those drivers is a blank screen on the hardware that needs them."
 			return
 		fi
+	fi
+
+	# ---------------------------------------------------------------- the NVIDIA driver
+	#
+	# `gentoo.sh livecd` IMAGES THE BUILD MACHINE, AND THE BUILD MACHINE IS AMD.
+	#
+	# x11-drivers/nvidia-drivers has been in POSTERCHANOS_PACKAGES all along, and the 2026-09-18
+	# image shipped without it: `var/db/pkg/x11-drivers` did not exist in the squashfs at all, there
+	# was no libEGL_nvidia, no /usr/lib64/gbm/nvidia-drm_gbm.so, no NVIDIA json beside 50_mesa.json
+	# in /usr/share/glvnd/egl_vendor.d, no nvidia-smi and no /etc/modprobe.d/nvidia.conf. What WAS
+	# there was five orphan .ko files under /usr/lib/modules/<kernel>/video/ left behind by an
+	# earlier install -- kernel modules with no userspace and no owning package.
+	#
+	# On an NVIDIA machine that image cannot work and cannot say why: the default entry refuses
+	# nouveau in the kernel, nothing loads nvidia (the proprietary nvidia.ko declares NO PCI
+	# modalias -- measured, `modules.alias` in the shipped image has no 10de entry for it -- so udev
+	# never autoloads it, and the modprobe.d file that would is part of the missing package), and the
+	# session finds no DRM device at all.
+	#
+	# So this is asked HERE, before the slow part, and it is not a warning. Steam's gate above is a
+	# warning because Steam is one application; this is the difference between an image that boots on
+	# NVIDIA hardware and one that cannot.
+	if ! portageq has_version / x11-drivers/nvidia-drivers 2>/dev/null; then
+		echo -e "${COLOR_YELLOW}This image must carry the NVIDIA driver and this host has none installed.${COLOR_RESET}"
+		echo -e "${COLOR_YELLOW}Installing x11-drivers/nvidia-drivers (licence and branch pin are written first).${COLOR_RESET}"
+		unmaskPackages
+		/usr/bin/emerge -uDN --autounmask-write x11-drivers/nvidia-drivers 2>&1 | tee -a "$LOG"
+		/usr/sbin/etc-update -q --automode -5 >/dev/null 2>&1
+		/usr/bin/emerge -uDN x11-drivers/nvidia-drivers 2>&1 | tee -a "$LOG"
+		if ! portageq has_version / x11-drivers/nvidia-drivers 2>/dev/null; then
+			_lcd_fail "x11-drivers/nvidia-drivers did not install, so this image could not boot an NVIDIA machine — install it and run this again:  emerge -uDN x11-drivers/nvidia-drivers"
+			return
+		fi
+	fi
+	# THE MODULES MUST BE BUILT FOR THE KERNEL THIS IMAGE WILL SHIP, which is the RUNNING one --
+	# `$(uname -r)`, the same kernel the initramfs below is built for. The failing image is the proof
+	# that a package database entry is not the question: it had the .ko files for the running kernel
+	# and no package, and a host that has just taken a dist-kernel update has the opposite (the
+	# package, and modules only for the kernel it has not booted yet). Both ship a broken image.
+	local NV_KVER="${PC_ISO_KERNEL:-$(uname -r)}" NV_KO=""
+	for NV_KO in "/usr/lib/modules/$NV_KVER/video/nvidia.ko" "/lib/modules/$NV_KVER/video/nvidia.ko"; do
+		[[ -e "$NV_KO" ]] && break || NV_KO=""
+	done
+	if [[ -z "$NV_KO" || ( ! -e "/usr/lib/modules/$NV_KVER/video/nvidia-drm.ko" \
+		&& ! -e "/lib/modules/$NV_KVER/video/nvidia-drm.ko" ) ]]; then
+		_lcd_fail "There is no nvidia.ko/nvidia-drm.ko for kernel $NV_KVER, so the image would carry a driver it cannot load — rebuild it and run this again:  emerge @module-rebuild   (or reboot into the kernel you want to ship)"
+		return
+	fi
+	# ---- AND THE TWO HALVES MUST BE THE SAME RELEASE --------------------------------------------
+	#
+	# THE MODULE IS BUILT FOR A KERNEL AND THE LIBRARIES ARE NOT, SO THEY DRIFT APART SILENTLY.
+	#
+	# Measured on the NVIDIA laptop that could not start the 2026-09-18 image: the module was
+	# 580.173.02 and the userspace 580.178.04. The build host runs 6.18.43 and also has 6.18.48
+	# installed, so `emerge x11-drivers/nvidia-drivers` built its modules for 6.18.48 -- and
+	# `gentoo.sh livecd` ships the RUNNING kernel, whose /usr/lib/modules tree still held the modules
+	# from the PREVIOUS nvidia-drivers. Both halves were present, both looked right, and the NVIDIA
+	# driver refuses to work when they disagree. What that produces is six EGL and Vulkan errors and
+	# `Failed to create renderer` -- nothing that mentions a version.
+	#
+	# This is the check that would have caught it, and it costs one modinfo.
+	local NV_MOD_VER NV_USER_VER NV_ML
+	NV_MOD_VER="$(modinfo -F version "$NV_KO" 2>/dev/null)"
+	NV_ML="$(ls -1 /usr/lib64/libnvidia-ml.so.*.* /usr/lib/libnvidia-ml.so.*.* 2>/dev/null | head -1)"
+	NV_USER_VER="${NV_ML##*/libnvidia-ml.so.}"
+	echo "nvidia: module=${NV_MOD_VER:-?} ($NV_KO) userspace=${NV_USER_VER:-?}" >>"$LOG" 2>/dev/null
+	if [[ -z "$NV_MOD_VER" || -z "$NV_USER_VER" ]]; then
+		_lcd_fail "Could not read the NVIDIA driver versions (module='${NV_MOD_VER:-unreadable}', userspace='${NV_USER_VER:-unreadable}'). An image whose two halves have not been compared is one that may not start on NVIDIA at all."
+		return
+	fi
+	if [[ "$NV_MOD_VER" != "$NV_USER_VER" ]]; then
+		_lcd_fail "The NVIDIA kernel module for $NV_KVER is $NV_MOD_VER and the NVIDIA userspace is $NV_USER_VER. They are two halves of one driver and an NVIDIA machine cannot render with them mismatched. Build the modules for the kernel this ISO will ship and run this again:  emerge @module-rebuild   (or boot the kernel the modules were built for, or set PC_ISO_KERNEL to it)"
+		return
 	fi
 
 	# ---------------------------------------------------------------- can it compress?
@@ -4253,6 +4455,24 @@ DESKTOP
 			END { exit !found }'; then
 		_lcd_fail "The image does not contain /lib/modules/$KVER for its kernel. Network and GPU drivers would not load."
 		return 1
+	fi
+	# ---------------------------------------------------------- can it draw on the cards it offers
+	#
+	# THE ONE GATE THE 2026-09-18 ISO WOULD HAVE FAILED. Every check above passed on an image that
+	# was unbootable on NVIDIA and blank on nouveau; see liveGpuPayloadProblems for what it was
+	# missing and why a build-host check could not have seen it. The boot menu is passed in so each
+	# demand is tied to the entry that creates it -- the cmdlines are read back out of the grub.cfg
+	# this build just wrote, never from a second copy of the variables.
+	if command -v unsquashfs >/dev/null 2>&1; then
+		local GPU_PROBLEMS GPU_CMDLINES
+		GPU_CMDLINES="$(grep -h '^[[:space:]]*linux ' "$WORK/iso/boot/grub/grub.cfg" 2>/dev/null | tr '\n' ' ')"
+		GPU_PROBLEMS="$(printf '%s\n' "$LS" | liveGpuPayloadProblems "$KVER" "$GPU_CMDLINES" "${NV_MOD_VER:-}")"
+		if [[ -n "$GPU_PROBLEMS" ]]; then
+			{ echo "image graphics payload missing: $GPU_PROBLEMS";
+			  echo "boot cmdlines: $GPU_CMDLINES"; } >>"$LOG" 2>/dev/null
+			_lcd_fail "The image's boot menu offers graphics this image cannot render with — missing: $GPU_PROBLEMS. On an NVIDIA machine that is a desktop that never appears, so no ISO was made. Install what is missing (emerge -uDN x11-drivers/nvidia-drivers, emerge -1 --newuse media-libs/mesa) and pack again."
+			return 1
+		fi
 	fi
 	if command -v unsquashfs >/dev/null 2>&1 \
 		&& ! printf '%s\n' "$LS" | grep -qE '^squashfs-root/(usr/)?lib/firmware(/|$)'; then
