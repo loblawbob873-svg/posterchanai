@@ -5012,7 +5012,16 @@ html.pc-oswin .main{ height:100% }
 .call-remote{position:absolute;inset:0;width:100%;height:100%;object-fit:cover;background:#000;z-index:0}
 .call-overlay.rd .call-remote{object-fit:contain;image-rendering:auto;touch-action:none}
 .call-overlay.rd:not(.call-mini){display:grid;grid-template-rows:auto minmax(0,1fr) auto;gap:12px;padding:12px;align-items:stretch}
-.call-overlay.rd:not(.call-mini) .call-head{position:static;grid-row:1;margin:0;padding:0;background:none}
+/* THE HEAD IS A ROW OF THREE THINGS AND ONE OF THEM IS NOW A TOOLBAR. Measured at 390px before this
+   rule: the zoom row ran to x=418 in a 390px window and the overlay clipped it — the slider, the
+   percentage and the follow toggle were simply unreachable on a phone, and nothing scrolled to
+   reach them. The peer block must be allowed to shrink (`min-width:0` beats the default `auto`
+   minimum of a flex item) and the row must be allowed to wrap. */
+.call-overlay.rd:not(.call-mini) .call-head{position:static;grid-row:1;margin:0;padding:0;background:none;
+  flex-wrap:wrap;justify-content:flex-start;row-gap:8px}
+.call-overlay.rd:not(.call-mini) .call-head>div{min-width:0}
+.call-overlay.rd:not(.call-mini) .call-name,.call-overlay.rd:not(.call-mini) .call-status{
+  overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 /* THE STAGE IS WHAT CLIPS A MAGNIFIED DESKTOP. `display:contents` by default, so the minimised
    thumbnail keeps the absolutely-positioned video it has always had and the element adds nothing to
    that layout; in a real session it becomes the grid cell, and `overflow:hidden` is what stops a
@@ -5022,12 +5031,35 @@ html.pc-oswin .main{ height:100% }
 .call-overlay.rd:not(.call-mini) .rd-stage>.call-remote{position:absolute;inset:0;width:100%;height:100%;min-width:0;min-height:0}
 .call-overlay.rd:not(.call-mini) .call-remote{position:relative;grid-row:2;min-width:0;min-height:0}
 /* The zoom control sits in the session header, right-aligned, and is hidden for a camera call. */
-.rd-zoom{margin-left:auto;display:flex;gap:4px;align-items:center}
+.rd-zoom{margin-left:auto;display:flex;gap:4px;align-items:center;flex-wrap:wrap;justify-content:flex-end}
 .rd-zoom[hidden]{display:none}
 .rd-zoom button{min-width:38px;height:28px;padding:0 8px;border-radius:8px;border:1px solid var(--line,#333);
   background:rgba(0,0,0,.45);color:#fff;font:inherit;font-size:12px;cursor:pointer}
 .rd-zoom button:disabled{opacity:.45;cursor:default}
 .rd-zoom button:hover:not(:disabled){background:rgba(255,255,255,.16)}
+/* The mode that is actually in force, and the follow toggle when it is armed. Both are states a
+   person has to be able to READ — a follow that silently moves the picture is the reported bug. */
+.rd-zoom button.on{background:var(--accent,#1d9bf0);border-color:transparent;color:#fff}
+.rd-zoom .rd-zoom-range{width:110px;height:28px;accent-color:var(--accent,#1d9bf0);cursor:pointer;flex:0 0 auto}
+/* On a phone the toolbar gets its own line rather than competing with the peer's name for a row
+   that cannot hold both. `flex-basis:100%` is what forces the wrap the rule above allows. */
+@media (max-width:640px){
+  .rd-zoom{flex-basis:100%;margin-left:0;justify-content:flex-start}
+  .rd-zoom .rd-zoom-range{flex:1 1 60px;width:auto;min-width:60px}
+}
+/* WHERE YOU ARE IN THE REMOTE SCREEN. Indicators, not controls: they are `pointer-events:none` so a
+   magnified desktop never swallows a click meant for the other machine at the edge of the picture. */
+.rd-scroll{position:absolute;background:rgba(255,255,255,.08);border-radius:4px;pointer-events:none;z-index:3}
+.rd-scroll[hidden]{display:none}
+.rd-scroll>i{position:absolute;display:block;background:rgba(255,255,255,.55);border-radius:4px}
+.rd-scroll-v{top:0;bottom:0;inset-inline-end:2px;width:6px}
+.rd-scroll-v>i{left:0;right:0;top:0;height:100%}
+.rd-scroll-h{left:0;right:0;bottom:2px;height:6px}
+.rd-scroll-h>i{top:0;bottom:0;left:0;width:100%}
+/* A picture with somewhere to go says so. `control-on` below still wins with `cursor:none`, which is
+   right: while this viewer is driving, the cursor it shows is the remote one. */
+.call-overlay.rd .call-remote.rd-pannable{cursor:grab}
+.call-overlay.rd .call-remote.rd-panning{cursor:grabbing}
 .call-overlay.rd:not(.call-mini) .call-actions{grid-row:3;margin:0;flex-wrap:wrap;gap:10px}
 .call-overlay.rd.control-on .call-remote{cursor:none}
 .call-overlay.aud .call-remote{display:none}

@@ -39007,7 +39007,13 @@
     if(!_remoteDesktopArmed&&_call&&_call.remoteDesktop)_hangup(false);
     return _remoteDesktopArmed;
   }
-  function _rdSend(obj){try{if(_call&&_call.control&&_call.control.readyState==='open')_call.control.send(JSON.stringify(obj));}catch(_){}}
+  /* Returns whether it actually went out. Almost every caller is an input event, where a drop is
+   * self-correcting (the next mouse move says the same thing again) — but the resolution agreement is
+   * sent ONCE per change, so it is the one message that must not be recorded as sent when the channel
+   * was not open yet. */
+  function _rdSend(obj){try{
+    if(_call&&_call.control&&_call.control.readyState==='open'){_call.control.send(JSON.stringify(obj));return true;}
+  }catch(_){}return false;}
   function _rdReleaseNative(){try{if(window.pcRemoteControl&&pcRemoteControl.release)pcRemoteControl.release();}catch(_){}}
   async function _rdConfigureNative(stream){
     const session=_call;
@@ -39044,6 +39050,39 @@
       p.encodings[0].maxBitrate=24000000;p.encodings[0].maxFramerate=24;
       await sender.setParameters(p);
     }catch(_){}
+  }
+  /* SEND THE SCREEN AT THE SIZE THE VIEWER CAN ACTUALLY SHOW. This is the other half of the report
+   * — "terrible AND INEFFICIENT" — and until now the answer to a 4K desktop in a laptop window was
+   * to encode 8.3 megapixels, put them on the wire and decode them so the compositor could discard
+   * 87% of every frame. The viewer is the only endpoint that knows how big its window is, so it
+   * says, over the control channel it already has, in `scaleResolutionDownBy` steps.
+   *
+   * Measured on a real loopback with a text-heavy 4K source (see `_rdSourceDownscale`): full
+   * resolution is 2992 kbps, 22.6ms of encode per frame here and 3.0ms of decode there; the same
+   * view at what the window can show is 1304 kbps, 7.0ms and 0.83ms. Zooming in raises the demand
+   * back to 1 automatically, so the detail is there exactly when somebody is looking for it.
+   *
+   * It can only ever REDUCE work: `d` is clamped at 1, so a hostile or confused viewer can ask for
+   * a smaller picture and never for a bigger encoder than the one that already shipped. */
+  async function _rdApplyQuality(down){
+    const session=_call;
+    if(!session||!session.caller||!session.pc)return;
+    const d=Math.max(1,Math.min(16,Number(down)||1));
+    if(session.rdQuality===d)return;
+    session.rdQuality=d;
+    const sender=session.pc.getSenders?session.pc.getSenders().find(s=>s.track&&s.track.kind==='video'):null;
+    if(!sender||!sender.getParameters)return;
+    try{
+      const p=sender.getParameters();
+      p.degradationPreference='maintain-resolution';
+      if(!p.encodings||!p.encodings.length)p.encodings=[{}];
+      p.encodings[0].scaleResolutionDownBy=d;
+      p.encodings[0].maxFramerate=24;
+      // The bitrate ceiling follows the pixel count, or a quarter-size picture is handed the whole
+      // 24 Mbps and spends it padding detail nobody can see.
+      p.encodings[0].maxBitrate=Math.max(1500000,Math.round(24000000/(d*d)));
+      await sender.setParameters(p);
+    }catch(_){session.rdQuality=null;}
   }
   async function _rdSwitchScreen(){
     if(!_call||!_call.remoteDesktop||!_call.caller||!_call.pc||_call.nativeSwitching)return;
@@ -39085,7 +39124,7 @@
       // Keep the original WebRTC stream ID when adding sound; a new stream would replace
       // the viewer’s video stream with an audio-only ontrack event.
       // Swap local identity before stopping tracks so Stop sharing does not fire on replacement.
-      activeCall.local=next;activeCall.nativeReady=controlReady;_rdWatchScreen(next);
+      activeCall.local=next;activeCall.nativeReady=controlReady;activeCall.rdQuality=null;_rdWatchScreen(next);
       if(old)old.getTracks().forEach(t=>t.stop());_callUI();
     }finally{activeCall.nativeSwitching=false;}
   }
@@ -39115,10 +39154,14 @@
       if(m.t==='geometry'&&!_call.caller){
         const width=Math.round(Number(m.width)),height=Math.round(Number(m.height));
         if(width>=64&&height>=64&&width<=32768&&height<=32768){
-          _call.remoteGeometry={width,height};_callUI();
+          _call.remoteGeometry={width,height};
+          // A new screen is a new encoder: the resolution agreement went with the old one.
+          _call.rdQualitySent=null;_call.rdQualityWant=null;
+          _callUI();
         }
         return;
       }
+      if(m.t==='quality'&&_call.caller){_rdApplyQuality(m.d);return;}
       if(m.t==='input'&&_call.caller&&_call.controlGranted&&window.pcRemoteControl&&pcRemoteControl.input)
         Promise.resolve(pcRemoteControl.input(m.e||{})).catch(()=>{});
     };
@@ -39134,37 +39177,132 @@
     return {x:Math.max(0,Math.min(1,(e.clientX-left)/Math.max(1,width))),
             y:Math.max(0,Math.min(1,(e.clientY-top)/Math.max(1,height)))};
   }
-  /* ZOOM, BECAUSE "FIT" IS NOT READABLE — reported as "why is remote desktop still hard to see the
-   * screen ... My desktop 4K screen is too tiny on laptop".
+  /* ZOOM AND PAN LIKE A VNC VIEWER, BECAUSE "FIT" IS NOT READABLE AND 1x/2x/3x/4x IS NOT A ZOOM.
    *
-   * Fitting a 3840-wide desktop into a ~1400-wide window is a 36% scale: correct, and unreadable.
-   * That is what every VNC viewer solves with a zoom control, so this is one: Fit, 100%, and steps
-   * between, with the view following the remote pointer while it is magnified.
+   * Reported twice. First "My desktop 4K screen is too tiny on laptop" — fitting a 3840-wide desktop
+   * into a ~1400-wide window is a 36% scale, correct and unreadable. Then, about the control that
+   * answered it: "the remote desktop zoom is terrible and inefficient. zooms way too much, don't fit
+   * like vnc". Both complaints are the same shape — a viewer that has one number (a multiplier over
+   * Fit, in 25% jumps, with no way to steer) where every real viewer has three THINGS:
    *
-   * THE ZOOM IS A CSS TRANSFORM ON THE VIDEO, and that is the load-bearing decision. Every input
-   * this viewer sends is mapped through `video.getBoundingClientRect()` — `_rdVideoPoint` for
-   * absolute positions and the pointer-lock branch for relative motion — and a transformed element
-   * REPORTS ITS TRANSFORMED RECT. So the clicks keep landing where the pointer is with no second
-   * copy of the mapping to keep in step. Sizing the element instead (width in px + scroll) would
-   * have needed exactly that second copy, which is how a zoomed viewer ends up clicking the wrong
-   * thing while looking perfectly fine. */
-  const RD_ZOOM_MIN=1, RD_ZOOM_MAX=4, RD_ZOOM_STEP=1.25;
-  /* What the transform must be, given a zoom and where in the REMOTE screen we want centred.
-   * Pure: no DOM, so tests/test_remote_desktop_zoom_runtime.py can run the real clamping. `view` is
-   * the stage in CSS pixels, `at` is a normalised point of the remote screen (the pointer, usually).
-   * The offsets are clamped so magnified content can never be panned off its own stage — a viewer
-   * showing a band of black beside the desktop is the bug this arithmetic exists to prevent. */
-  function _rdZoomTransform(scale, view, at){
-    const z=Math.max(RD_ZOOM_MIN,Math.min(RD_ZOOM_MAX,Number(scale)||1));
+   *   Fit      the whole screen scaled into the window          (Ctrl+0)
+   *   1:1      remote pixels at actual size, panned              (Ctrl+1)   <- what makes 4K readable
+   *   free     anything between Fit and 200%, in ~8% notches     (Ctrl+wheel, Ctrl +/-)
+   *
+   * SCALE HERE IS A FRACTION OF 1:1, never a multiplier over Fit. That is the whole difference: the
+   * readout says 100% when a remote pixel is a screen pixel, "Fit" is a scale like any other (0.36
+   * on that laptop), and the step is 8% of the picture rather than 25% of whatever Fit happened to
+   * be. The CSS transform still needs the multiplier, so it is DERIVED (`scale/fit`) at the one
+   * place that writes it, and nothing else in this file reasons in multiplier space.
+   *
+   * THE ZOOM IS STILL A CSS TRANSFORM ON THE VIDEO, and that is still the load-bearing decision.
+   * Every input this viewer sends is mapped through `video.getBoundingClientRect()` —
+   * `_rdVideoPoint` for absolute positions and the pointer-lock branch for relative motion — and a
+   * transformed element REPORTS ITS TRANSFORMED RECT. So the clicks keep landing where the pointer
+   * is with no second copy of the mapping to keep in step. Sizing the element instead (width in px
+   * + scroll) would have needed exactly that second copy, which is how a zoomed viewer ends up
+   * clicking the wrong thing while looking perfectly fine. A transform is also the only version of
+   * this that is FREE to pan: it is a compositor property, so dragging the picture repaints nothing.
+   */
+  const RD_ZOOM_TOP=2;            // 200% of 1:1 — past that a desktop is a magnifying glass
+  const RD_ZOOM_NOTCH=1.08;       // one wheel notch, ~8%; the old control jumped 25% of Fit
+  const RD_ZOOM_KEY=1.1;          // one press of + / −
+  const RD_MULT_MIN=0.05, RD_MULT_MAX=32;   // sanity rails on the DERIVED multiplier, nothing more
+  /* What the viewer may ask the host to send, as `scaleResolutionDownBy`. Steps, not a continuum:
+   * every change is a `setParameters` on the sharing machine and a keyframe on the wire, so a
+   * slider dragged across the range must not renegotiate the encoder forty times. */
+  const RD_SRC_STEPS=[1,1.25,1.5,2,2.5,3,4,6,8,12,16];
+  let _rdZoomPref={mode:'fit',scale:1,follow:false};
+  try{
+    const saved=JSON.parse(localStorage.getItem('pc_rd_zoom')||'null');
+    if(saved&&typeof saved==='object')_rdZoomPref=Object.assign(_rdZoomPref,saved);
+  }catch(_){}
+  /* The range this window allows, in fractions of 1:1. `fit` is the bottom because below it the
+   * session would show a band of black beside the desktop and call it zoom — EXCEPT when the remote
+   * screen is smaller than the window (a 1280x1024 desktop on a 1440p laptop), where Fit is already
+   * an enlargement and 1:1 is BELOW it. 1:1 must stay reachable in that case, so the floor is
+   * `min(fit,1)` rather than `fit`, and the ceiling `max(fit,2)` for the same reason in reverse. */
+  function _rdZoomBounds(stageW,stageH,remoteW,remoteH){
+    const sw=Math.max(1,Number(stageW)||1),sh=Math.max(1,Number(stageH)||1);
+    const rw=Math.max(1,Number(remoteW)||1),rh=Math.max(1,Number(remoteH)||1);
+    const fit=Math.min(sw/rw,sh/rh);
+    return {fit:fit,min:Math.min(fit,1),max:Math.max(fit,RD_ZOOM_TOP),
+            content:{width:rw*fit,height:rh*fit}};
+  }
+  function _rdClampScale(scale,bounds){
+    const b=bounds||{min:0.01,max:RD_ZOOM_TOP};
+    const s=Number(scale);
+    if(!isFinite(s)||s<=0)return b.min;
+    return Math.max(b.min,Math.min(b.max,s));
+  }
+  /* Where the centre of the view may sit, in remote-normalised coordinates, at a given multiplier.
+   * The visible window is `1/m` of the screen wide, so its centre cannot be nearer an edge than
+   * half of that. Falls out of the transform clamp below and is kept as its own function because
+   * the STATE must be clamped too: a drag that keeps pushing past the edge and is only clamped at
+   * paint time accumulates an invisible offset, and the drag back does nothing for as long as it
+   * took to build up. */
+  function _rdClampAt(at,mult){
+    const m=Math.max(1,Number(mult)||1),half=0.5/m;
+    const v=(n)=>{const x=Number(n);return isFinite(x)?Math.max(half,Math.min(1-half,x)):0.5;};
+    return {x:v(at&&at.x),y:v(at&&at.y)};
+  }
+  /* What the transform must be, given a multiplier over Fit and where in the REMOTE screen we want
+   * centred. Pure: no DOM, so the maths can be run without a browser. `view` is THE PICTURE'S OWN
+   * BOX in CSS pixels — the letterboxed `object-fit:contain` box, NOT the stage. Those differ
+   * whenever the window is not the remote screen's aspect ratio, i.e. almost always, and using the
+   * stage over-translates by exactly the letterbox: on a 16:10 laptop window showing a 16:9 desktop
+   * the centred point came out ~7% off, which reads as "the zoom drifts". */
+  function _rdZoomTransform(mult, view, at){
+    const z=Math.max(RD_MULT_MIN,Math.min(RD_MULT_MAX,Number(mult)||1));
     const w=Math.max(1,Number(view&&view.width)||1), h=Math.max(1,Number(view&&view.height)||1);
-    const px=Math.max(0,Math.min(1,Number(at&&at.x)));
-    const py=Math.max(0,Math.min(1,Number(at&&at.y)));
-    // Room the magnified picture has to slide, in each direction, from centred.
-    const slackX=w*(z-1)/2, slackY=h*(z-1)/2;
-    // Centre the requested point: at z=1 there is no slack, so this is 0 and Fit is untouched.
-    const x=Math.max(-slackX,Math.min(slackX,(0.5-px)*w*z));
-    const y=Math.max(-slackY,Math.min(slackY,(0.5-py)*h*z));
+    const p=_rdClampAt(at,z);
+    // Room the magnified picture has to slide from centred. Never negative: BELOW Fit (which 1:1 is,
+    // for a remote screen smaller than the window) there is nothing to pan and the offset is 0.
+    // Deliberately REDUNDANT with the `_rdClampAt` above — the two bound the same thing by different
+    // routes, and a mutation of either alone is provably unobservable. Kept because this is the last
+    // line before a `translate()` reaches the compositor, and the failure it prevents (a band of
+    // black beside the desktop, clicks mapped through a picture that is not where it should be) has
+    // no other symptom.
+    const slackX=Math.max(0,w*(z-1)/2), slackY=Math.max(0,h*(z-1)/2);
+    const x=Math.max(-slackX,Math.min(slackX,(0.5-p.x)*w*z));
+    const y=Math.max(-slackY,Math.min(slackY,(0.5-p.y)*h*z));
     return {scale:z,x:Math.round(x),y:Math.round(y)};
+  }
+  /* The remote point the middle of the stage is ACTUALLY showing, read back off the transform the
+   * clamp produced rather than off the request. Anchored zoom has to start from where the picture
+   * is, not from where it was asked to be, or a zoom taken while panned against an edge jumps. */
+  function _rdZoomCentre(t,view){
+    const w=Math.max(1,Number(view&&view.width)||1), h=Math.max(1,Number(view&&view.height)||1);
+    const z=Math.max(RD_MULT_MIN,Number(t&&t.scale)||1);
+    return {x:0.5-(Number(t&&t.x)||0)/(w*z), y:0.5-(Number(t&&t.y)||0)/(h*z)};
+  }
+  /* ANCHORED ZOOM: keep the point under the cursor exactly where it is. `pointer` and `centre` are
+   * remote-normalised; the offset between them shrinks by the ratio of the multipliers, because the
+   * same number of SCREEN pixels is now fewer remote pixels. Zooming at the centre of the window is
+   * the degenerate case and comes out as a no-op, which is what makes the +/− buttons behave. */
+  function _rdZoomAnchor(prevMult,nextMult,pointer,centre){
+    const a=Math.max(RD_MULT_MIN,Number(prevMult)||1), b=Math.max(RD_MULT_MIN,Number(nextMult)||1);
+    const px=Number(pointer&&pointer.x),py=Number(pointer&&pointer.y);
+    const cx=Number(centre&&centre.x),cy=Number(centre&&centre.y);
+    if(!isFinite(px)||!isFinite(py)||!isFinite(cx)||!isFinite(cy))return {x:cx||0.5,y:cy||0.5};
+    const r=a/b;
+    return {x:px-(px-cx)*r, y:py-(py-cy)*r};
+  }
+  /* HOW MUCH SCREEN THE HOST NEEDS TO SEND, and the answer to "inefficient". At Fit, a 4K desktop
+   * shown 1400 pixels wide is being encoded at 3840, pushed through the network at 3840 and decoded
+   * at 3840 so the compositor can throw 87% of every frame away. Measured on a loopback with a
+   * text-heavy 4K source: 2992 kbps, 22.6ms of encode per frame on the sharing machine and 3.0ms of
+   * decode on this one. The same picture at the resolution the window can actually show costs
+   * 1304 kbps and 7.0ms/0.83ms. Nothing about the view changes; two thirds of the cost goes away.
+   * `displayPx` is how wide the remote screen is DRAWN right now (so zooming in raises the demand
+   * back to full resolution, which is exactly when the detail is wanted), and `dpr` is there because
+   * a HiDPI laptop showing 1400 CSS pixels really is showing 2800 device pixels. */
+  function _rdSourceDownscale(displayPx,remotePx,dpr){
+    const shown=Math.max(1,Number(displayPx)||1)*Math.max(1,Number(dpr)||1);
+    const need=Math.max(1,(Math.max(1,Number(remotePx)||1))/shown);
+    let pick=1;
+    for(const step of RD_SRC_STEPS)if(step<=need+1e-6)pick=step;
+    return pick;
   }
   /* LAYOUT pixels, and its own function so a test can hold it to that. `getBoundingClientRect()`
    * is in VISUAL pixels — this client scales whole pages with `body{zoom}` — while a CSS
@@ -39176,43 +39314,234 @@
     const rect=stage.getBoundingClientRect();
     return {width:stage.clientWidth||rect.width||1, height:stage.clientHeight||rect.height||1};
   }
+  /* The ratio between the two spaces above, measured off the stage itself rather than assumed. A
+   * pointer delta arrives in VISUAL pixels and a pan is applied in LAYOUT ones; on a page carrying
+   * `body{zoom}` (this client sets one per viewport) a drag would otherwise move the picture by the
+   * page zoom too much, which is a drag that outruns the cursor. */
+  function _rdVisualRatio(stage){
+    if(!stage)return 1;
+    const rect=stage.getBoundingClientRect(),layout=stage.clientWidth;
+    if(!layout||!rect.width)return 1;
+    const r=rect.width/layout;
+    return isFinite(r)&&r>0.05&&r<20?r:1;
+  }
+  function _rdStageOf(video){
+    return video&&video.parentElement&&video.parentElement.classList&&
+           video.parentElement.classList.contains('rd-stage')?video.parentElement:video;
+  }
   function _rdZoomState(){
     if(!_call)return null;
-    if(!_call.zoom)_call.zoom={scale:1,at:{x:.5,y:.5}};
+    if(!_call.zoom)_call.zoom={mode:_rdZoomPref.mode==='actual'||_rdZoomPref.mode==='free'?_rdZoomPref.mode:'fit',
+                               scale:Number(_rdZoomPref.scale)||1,at:{x:.5,y:.5},follow:!!_rdZoomPref.follow};
     return _call.zoom;
+  }
+  /* The mode is remembered for the NEXT session as well as this one: somebody who works at 1:1 is
+   * not choosing it per connection, and re-choosing it every time is the "terrible" in the report. */
+  function _rdZoomRemember(){
+    const s=_call&&_call.zoom;if(!s)return;
+    _rdZoomPref={mode:s.mode,scale:s.scale,follow:!!s.follow};
+    try{localStorage.setItem('pc_rd_zoom',JSON.stringify(_rdZoomPref));}catch(_){}
+  }
+  /* Everything the current frame needs, measured once. Returns null when there is no session video
+   * to measure, so every caller degrades to "do nothing" rather than to a guess. */
+  function _rdZoomMetrics(){
+    const video=document.getElementById('call-remote');
+    if(!video)return null;
+    const stage=_rdStageOf(video),g=_call&&_call.remoteGeometry;
+    /* THE MINIMISED THUMBNAIL HAS NO STAGE: `.rd-stage` is `display:contents` there, so it has no
+     * box at all — `clientWidth` is 0 and `getBoundingClientRect()` is all zeros. Measured through
+     * the 1x1 fallback that produced, Fit came out as 1/3840 and the derived multiplier pinned at
+     * the sanity ceiling, i.e. a 132px thumbnail scaled 32x. The video is absolutely positioned over
+     * the whole thumbnail in that mode, so IT is the box, and measuring it is also what lets a
+     * minimised session ask the host for a thumbnail-sized stream instead of a 4K one. */
+    let box=_rdStageBox(stage);
+    if(box.width<8||box.height<8)box=_rdStageBox(video);
+    if(box.width<8||box.height<8)return null;
+    const rw=video.videoWidth||(g&&g.width)||box.width, rh=video.videoHeight||(g&&g.height)||box.height;
+    const b=_rdZoomBounds(box.width,box.height,rw,rh);
+    b.remote={width:Math.max(1,rw),height:Math.max(1,rh)};
+    b.stage=box;b.video=video;b.stageEl=stage;b.ratio=_rdVisualRatio(stage);
+    return b;
+  }
+  function _rdScaleNow(state,m){
+    if(!state||!m)return 1;
+    if(state.mode==='fit')return m.fit;
+    if(state.mode==='actual')return _rdClampScale(1,m);
+    return _rdClampScale(state.scale,m);
+  }
+  let _rdZoomFrame=0;
+  /* Coalesced, because the callers are a pointer stream. The follow-the-pointer path used to write
+   * `style.transform` on every `pointermove` and then read `getBoundingClientRect()` on the next
+   * one, which is a forced synchronous layout per mouse move on the screen whose whole job is to
+   * feel immediate. */
+  function _rdApplyZoomSoon(){
+    if(_rdZoomFrame)return;
+    const raf=(typeof requestAnimationFrame==='function')?requestAnimationFrame:(fn)=>setTimeout(fn,16);
+    _rdZoomFrame=raf(()=>{_rdZoomFrame=0;_rdApplyZoom();})||1;
   }
   /* Paint it. Fit clears the transform entirely rather than writing `scale(1)`, so the ordinary
    * session is byte-identical to what shipped before this control existed. */
   function _rdApplyZoom(){
-    const video=document.getElementById('call-remote'), state=_rdZoomState();
-    if(!video||!state)return;
-    const stage=video.parentElement&&video.parentElement.classList.contains('rd-stage')?video.parentElement:video;
-    /* LAYOUT pixels, not the rect. `getBoundingClientRect()` is in VISUAL pixels — this client
-     * scales whole pages with `body{zoom}` — while a CSS `translate()` is resolved in layout
-     * pixels, so measuring with the rect over-translates by exactly the page zoom and the pointer
-     * stops agreeing with the picture. Measured: at 2x centred on 0.25, a rect-derived offset put
-     * the stage centre at 0.32 of the remote screen. `clientWidth` is the same space the transform
-     * is written in, so the two cannot drift. */
-    const box=_rdStageBox(stage);
-    if(state.scale<=RD_ZOOM_MIN+0.001){
-      video.style.transform='';video.style.transformOrigin='';
-    }else{
-      const t=_rdZoomTransform(state.scale,{width:box.width,height:box.height},state.at);
-      video.style.transformOrigin='center center';
-      video.style.transform='translate('+t.x+'px,'+t.y+'px) scale('+t.scale+')';
+    const state=_rdZoomState(),m=_rdZoomMetrics();
+    if(!state||!m)return;
+    const video=m.video;
+    /* A THUMBNAIL IS ALWAYS FIT. The zoom row is hidden in that mode and there is nowhere to pan to,
+     * so a remembered 1:1 must not magnify a 132px picture the moment somebody minimises a session.
+     * The resolution request below still runs, because a thumbnail is exactly when the host should
+     * stop encoding 4K. */
+    if(video.closest&&video.closest('.call-mini')){
+      if(video.style.transform){video.style.transform='';video.style.transformOrigin='';}
+      video.classList.remove('rd-pannable');
+      _rdRequestQuality(m,1);
+      return;
     }
-    const label=document.getElementById('rd-zoom-level');
-    if(label)label.textContent=state.scale<=RD_ZOOM_MIN+0.001?'Fit':Math.round(state.scale*100)+'%';
-    const out=document.getElementById('rd-zoom-out');if(out)out.disabled=state.scale<=RD_ZOOM_MIN+0.001;
-    const inn=document.getElementById('rd-zoom-in');if(inn)inn.disabled=state.scale>=RD_ZOOM_MAX-0.001;
+    const scale=_rdScaleNow(state,m),mult=scale/Math.max(1e-6,m.fit);
+    state.at=_rdClampAt(state.at,mult);
+    const t=_rdZoomTransform(mult,m.content,state.at);
+    const css=(Math.abs(t.scale-1)<0.001&&!t.x&&!t.y)?'':'translate('+t.x+'px,'+t.y+'px) scale('+t.scale+')';
+    if(video.style.transform!==css){video.style.transformOrigin=css?'center center':'';video.style.transform=css;}
+    _rdZoomUI(state,m,scale,t,mult);
+    _rdRequestQuality(m,mult);
   }
-  /* `at` is where to keep in view: the remote pointer while controlling, so magnified control still
-   * works without a second pan gesture competing with the clicks. */
-  function _rdZoomTo(scale,at){
+  /* The readout, the buttons, the slider and the two edge indicators. Every element is optional:
+   * this same code runs in harnesses that mount the video and nothing else. */
+  function _rdZoomUI(state,m,scale,t,mult){
+    const by=(id)=>document.getElementById(id);
+    const pct=Math.round(scale*100);
+    const label=by('rd-zoom-level');
+    if(label){label.textContent=pct+'%';
+      label.title=state.mode==='fit'?'Whole screen ('+pct+'%). Click for Fit.':'Click to fit the whole screen (Ctrl+0)';}
+    const out=by('rd-zoom-out');if(out)out.disabled=scale<=m.min+1e-4;
+    const inn=by('rd-zoom-in');if(inn)inn.disabled=scale>=m.max-1e-4;
+    const fitBtn=by('rd-zoom-fit');if(fitBtn)fitBtn.classList.toggle('on',state.mode==='fit');
+    const oneBtn=by('rd-zoom-actual');if(oneBtn)oneBtn.classList.toggle('on',state.mode==='actual');
+    const follow=by('rd-zoom-follow');
+    if(follow){follow.classList.toggle('on',!!state.follow);follow.setAttribute('aria-pressed',state.follow?'true':'false');}
+    const range=by('rd-zoom-range');
+    if(range&&document.activeElement!==range){
+      const v=Math.round(_rdZoomSlider(scale,m)*1000);
+      if(String(v)!==range.value)range.value=String(v);
+    }
+    /* WHERE YOU ARE IN THE REMOTE SCREEN. A magnified desktop with no indicator is the other half of
+     * "don't fit like vnc": the picture is readable and there is nothing to say whether the rest of
+     * it is above, below or already on screen. Hidden at or below Fit, where there is no rest. */
+    const centre=_rdZoomCentre(t,m.content),span=1/Math.max(1,mult);
+    for(const axis of ['x','y']){
+      const bar=by(axis==='x'?'rd-scroll-h':'rd-scroll-v');if(!bar)continue;
+      const thumb=bar.firstElementChild;
+      if(mult<=1.001){bar.hidden=true;continue;}
+      bar.hidden=false;
+      if(!thumb)continue;
+      const start=Math.max(0,Math.min(1-span,centre[axis]-span/2));
+      thumb.style[axis==='x'?'left':'top']=(start*100).toFixed(2)+'%';
+      thumb.style[axis==='x'?'width':'height']=(span*100).toFixed(2)+'%';
+    }
+    if(m.video&&m.video.classList)
+      m.video.classList.toggle('rd-pannable',mult>1.001);
+  }
+  /* The slider is LOGARITHMIC between Fit and the ceiling. Linear, the 36%-to-100% half of that
+   * laptop's range — the half that contains every scale anybody reads text at — would be the first
+   * third of the track, and the top two thirds would be 100% to 200%. */
+  function _rdZoomSlider(scale,m){
+    const lo=Math.log(Math.max(1e-6,m.min)),hi=Math.log(Math.max(1e-6,m.max));
+    if(hi-lo<1e-6)return 0;
+    return Math.max(0,Math.min(1,(Math.log(Math.max(1e-6,scale))-lo)/(hi-lo)));
+  }
+  function _rdZoomFromSlider(t,m){
+    const lo=Math.log(Math.max(1e-6,m.min)),hi=Math.log(Math.max(1e-6,m.max));
+    return Math.exp(lo+(hi-lo)*Math.max(0,Math.min(1,Number(t)||0)));
+  }
+  /* Ask the host for the resolution this window can actually show. Debounced and de-duplicated: the
+   * message is cheap but `setParameters` on the sharing machine is not, and a dragged slider would
+   * otherwise re-tune the encoder on every frame. */
+  let _rdQualityTimer=0;
+  function _rdRequestQuality(m,mult){
+    if(!_call||_call.caller||!m)return;
+    const shownPx=m.content.width*Math.max(1,mult);
+    const want=_rdSourceDownscale(shownPx,m.remote.width,(typeof devicePixelRatio==='number'&&devicePixelRatio)||1);
+    if(_call.rdQualityWant===want)return;
+    _call.rdQualityWant=want;
+    if(_rdQualityTimer)clearTimeout(_rdQualityTimer);
+    _rdQualityTimer=setTimeout(()=>{
+      _rdQualityTimer=0;
+      if(!_call||_call.caller)return;
+      const d=_call.rdQualityWant;
+      if(d===_call.rdQualitySent)return;
+      /* MARK IT ONLY IF IT WENT OUT. `_rdApplyZoom` runs from `_callUI`, which fires on the `ontrack`
+       * event — routinely BEFORE the control channel finishes opening, so this message is dropped on
+       * the floor at exactly the moment it is first sent. Recorded as sent anyway (the latch-before-
+       * the-attempt shape) it would never be re-sent, and the session would run at full 4K for its
+       * whole life with nothing in any log. Clearing `rdQualityWant` re-arms it, and the channel's
+       * own `onopen` calls `_callUI` — so the first thing that happens after the channel exists is
+       * another attempt. */
+      if(_rdSend({t:'quality',d:d}))_call.rdQualitySent=d;
+      else _call.rdQualityWant=null;
+    },400);
+  }
+  /* --- the four things a person can do to the view ---------------------------------------- */
+  function _rdZoomSetMode(mode){
     const state=_rdZoomState();if(!state)return;
-    state.scale=Math.max(RD_ZOOM_MIN,Math.min(RD_ZOOM_MAX,Number(scale)||1));
-    if(at&&isFinite(at.x)&&isFinite(at.y))state.at={x:Math.max(0,Math.min(1,at.x)),y:Math.max(0,Math.min(1,at.y))};
-    _rdApplyZoom();
+    state.mode=mode==='actual'?'actual':mode==='free'?'free':'fit';
+    if(state.mode==='actual')state.scale=1;
+    if(state.mode==='fit')state.at={x:.5,y:.5};
+    _rdApplyZoom();_rdZoomRemember();
+  }
+  /* `pointer` is the remote-normalised point to keep still — the cursor for Ctrl+wheel, nothing for
+   * the buttons and the keyboard, which zoom about the middle of what is on screen. */
+  function _rdZoomBy(factor,pointer){
+    const state=_rdZoomState(),m=_rdZoomMetrics();
+    if(!state||!m)return;
+    const prev=_rdScaleNow(state,m),next=_rdClampScale(prev*(Number(factor)||1),m);
+    if(Math.abs(next-prev)<1e-6&&!pointer)return;
+    const pm=prev/Math.max(1e-6,m.fit),nm=next/Math.max(1e-6,m.fit);
+    if(pointer){
+      const t=_rdZoomTransform(pm,m.content,_rdClampAt(state.at,pm));
+      state.at=_rdZoomAnchor(pm,nm,pointer,_rdZoomCentre(t,m.content));
+    }
+    state.at=_rdClampAt(state.at,nm);
+    // Landing back ON Fit says so, so the readout and the highlighted button agree with the picture.
+    state.mode=Math.abs(next-m.fit)<1e-3?'fit':'free';
+    state.scale=next;
+    _rdApplyZoom();_rdZoomRemember();
+  }
+  function _rdZoomToScale(scale,pointer){
+    const state=_rdZoomState(),m=_rdZoomMetrics();
+    if(!state||!m)return;
+    const prev=_rdScaleNow(state,m);
+    _rdZoomBy(_rdClampScale(scale,m)/Math.max(1e-6,prev),pointer);
+  }
+  /* PAN, in the VISUAL pixels a pointer delta and a wheel arrive in. Returns whether anything moved,
+   * so a gesture that cannot pan can fall through to being a remote click instead of being eaten. */
+  function _rdPanBy(dx,dy){
+    const state=_rdZoomState(),m=_rdZoomMetrics();
+    if(!state||!m)return false;
+    const mult=_rdScaleNow(state,m)/Math.max(1e-6,m.fit);
+    if(mult<=1.001)return false;
+    const ratio=m.ratio||1;
+    const before=_rdClampAt(state.at,mult);
+    const next=_rdClampAt({x:before.x-(Number(dx)||0)/ratio/(m.content.width*mult),
+                           y:before.y-(Number(dy)||0)/ratio/(m.content.height*mult)},mult);
+    if(Math.abs(next.x-before.x)<1e-9&&Math.abs(next.y-before.y)<1e-9)return false;
+    state.at=next;_rdApplyZoomSoon();return true;
+  }
+  /* FOLLOWING THE REMOTE POINTER IS OPT-IN AND IT EDGE-SCROLLS — it does not re-centre. The old
+   * behaviour re-centred the view on the cursor whenever it moved more than 2% of the screen, which
+   * is a picture that slides while you are trying to read it: half of "the zoom is terrible". On,
+   * it now pans only far enough to bring the pointer back inside a margin, the way a text editor
+   * scrolls to a caret; off (the default), the view never moves on its own at all. */
+  function _rdFollowPointer(p){
+    const state=_rdZoomState();
+    if(!state||!state.follow||!p)return;
+    const m=_rdZoomMetrics();if(!m)return;
+    const mult=_rdScaleNow(state,m)/Math.max(1e-6,m.fit);
+    if(mult<=1.001)return;
+    const reach=(0.5/mult)*0.75;      // keep the cursor inside the middle 75% of the window
+    const at=_rdClampAt(state.at,mult);
+    let x=at.x,y=at.y,moved=false;
+    if(p.x<x-reach){x=p.x+reach;moved=true;}else if(p.x>x+reach){x=p.x-reach;moved=true;}
+    if(p.y<y-reach){y=p.y+reach;moved=true;}else if(p.y>y+reach){y=p.y-reach;moved=true;}
+    if(!moved)return;
+    state.at=_rdClampAt({x:x,y:y},mult);_rdApplyZoomSoon();
   }
   let _rdViewerCleanup=null;
   function _rdBindViewer(video){
@@ -39225,14 +39554,25 @@
     const listen=(target,name,fn,opts)=>{target.addEventListener(name,fn,opts);listeners.push(()=>target.removeEventListener(name,fn,opts));};
     const point=e=>{
       if(document.pointerLockElement!==video)position=_rdVideoPoint(video,e,_call&&_call.remoteGeometry);
-      /* Magnified, the stage shows a WINDOW onto the remote screen, so it follows the pointer —
-       * otherwise controlling anything outside that window means panning first, and there is no
-       * gesture left to pan with while every drag is being sent to the other machine. */
-      const z=_call&&_call.zoom;
-      if(z&&z.scale>RD_ZOOM_MIN+0.001&&(Math.abs(z.at.x-position.x)>0.02||Math.abs(z.at.y-position.y)>0.02))
-        _rdZoomTo(z.scale,position);
+      /* OPT-IN, and an edge-scroll rather than a re-centre. Following used to be unconditional and
+       * re-centred on every 2% of movement, which is a picture sliding under somebody who is trying
+       * to read it — the reported "zooms way too much". */
+      _rdFollowPointer(position);
       return position;
     };
+    /* Is there anything to pan? Below Fit+epsilon the whole screen is on screen, so a middle-click
+     * is a middle-click and belongs to the other machine. */
+    const canPan=()=>{
+      const state=_call&&_call.zoom,m=_rdZoomMetrics();
+      if(!state||!m)return false;
+      return _rdScaleNow(state,m)/Math.max(1e-6,m.fit)>1.001;
+    };
+    /* DRAG-TO-PAN, and the whole difficulty is that every drag is already spoken for: when this
+     * viewer has control, a press is a press on the other machine. So panning takes only the two
+     * gestures that cannot be one — the MIDDLE button (while there is something to pan; at Fit it
+     * still goes through as a middle click), and a PLAIN DRAG when this viewer is not sending input
+     * at all, which is the view-only reading case the zoom exists for in the first place. */
+    let pan=null;
     const release=()=>{
       if(_call===session){
         for(const button of held)_rdSend({t:'input',e:{type:'button',button,down:false,x:position.x,y:position.y}});
@@ -39243,6 +39583,13 @@
     const unlock=()=>{release();if(document.pointerLockElement===video)document.exitPointerLock();if(document.activeElement===video)video.blur();};
     video.rdUnlock=unlock;
     listen(video,'pointerdown',e=>{
+      if(video.closest('.call-mini'))return;
+      if((e.button===1||!active())&&canPan()){
+        pan={id:e.pointerId,x:e.clientX,y:e.clientY};
+        try{video.setPointerCapture(e.pointerId);}catch(_){}
+        video.classList.add('rd-panning');
+        e.preventDefault();return;
+      }
       if(!active()||e.button>2)return;
       video.focus({preventScroll:true});
       try{video.setPointerCapture(e.pointerId);}catch(_){}
@@ -39254,6 +39601,15 @@
       e.preventDefault();
     });
     listen(video,'pointermove',e=>{
+      if(pan&&pan.id===e.pointerId){
+        /* Under pointer lock `clientX` is frozen, so the delta has to come from `movementX`; the
+         * unlocked case uses the real coordinates because a captured pointer can outrun the
+         * movement deltas on a slow frame. */
+        const lockedNow=document.pointerLockElement===video;
+        const dx=lockedNow?(e.movementX||0):e.clientX-pan.x, dy=lockedNow?(e.movementY||0):e.clientY-pan.y;
+        if(!lockedNow){pan.x=e.clientX;pan.y=e.clientY;}
+        _rdPanBy(dx,dy);e.preventDefault();return;
+      }
       if(!active())return;
       if(document.pointerLockElement===video){
         // Reuse the exact contain transform, including letterboxing and every viewer resize.
@@ -39265,21 +39621,71 @@
       }
       const p=point(e);_rdSend({t:'input',e:{type:'absolute',x:p.x,y:p.y}});e.preventDefault();
     });
-    const up=e=>{if(!held.delete(e.button))return;const p=point(e);_rdSend({t:'input',e:{type:'button',button:Math.min(2,e.button|0),down:false,x:p.x,y:p.y}});e.preventDefault();};
+    const endPan=()=>{if(!pan)return false;pan=null;video.classList.remove('rd-panning');return true;};
+    const up=e=>{if(endPan())return;if(!held.delete(e.button))return;const p=point(e);_rdSend({t:'input',e:{type:'button',button:Math.min(2,e.button|0),down:false,x:p.x,y:p.y}});e.preventDefault();};
     listen(video,'pointerup',up);
-    listen(video,'pointercancel',release);
-    listen(video,'lostpointercapture',()=>{if(document.pointerLockElement!==video)release();});
+    listen(video,'pointercancel',e=>{endPan();release();});
+    listen(video,'lostpointercapture',()=>{endPan();if(document.pointerLockElement!==video)release();});
     /* Ctrl/Cmd + wheel is the zoom every viewer and browser already uses, and it must be taken
-     * BEFORE the remote-scroll branch or the other machine scrolls instead of this one magnifying. */
+     * BEFORE the remote-scroll branch or the other machine scrolls instead of this one magnifying.
+     * ANCHORED AT THE POINTER, one ~8% notch at a time: the old control stepped 25% of Fit about the
+     * centre of the window, which is "zooms way too much" and also moves what you were looking at. */
     listen(video,'wheel',e=>{
-      if(!(e.ctrlKey||e.metaKey))return;
-      const state=_rdZoomState();if(!state)return;
-      const at=document.pointerLockElement===video?position:_rdVideoPoint(video,e,_call&&_call.remoteGeometry);
-      _rdZoomTo(state.scale*(e.deltaY<0?RD_ZOOM_STEP:1/RD_ZOOM_STEP),at);
-      e.preventDefault();e.stopPropagation();
+      if(e.ctrlKey||e.metaKey){
+        const at=document.pointerLockElement===video?position:_rdVideoPoint(video,e,_call&&_call.remoteGeometry);
+        _rdZoomBy(e.deltaY<0?RD_ZOOM_NOTCH:1/RD_ZOOM_NOTCH,at);
+        e.preventDefault();e.stopPropagation();return;
+      }
+      /* A viewer that is NOT sending input has no remote scroll to forward, so the wheel is the pan
+       * every VNC viewer gives you and shift is its horizontal half. While controlling, the wheel
+       * still belongs to the other machine (scrolling the remote window is the point), and panning
+       * is the middle-drag, the arrow keys and the follow toggle. */
+      if(!active()&&canPan()){
+        const dx=e.shiftKey?(e.deltaY||e.deltaX):e.deltaX, dy=e.shiftKey?0:e.deltaY;
+        if(_rdPanBy(-dx,-dy)){e.preventDefault();e.stopPropagation();}
+      }
     },{passive:false,capture:true});
     listen(video,'wheel',e=>{if(!active()||e.ctrlKey||e.metaKey)return;const p=point(e);_rdSend({t:'input',e:{type:'absolute',x:p.x,y:p.y}});_rdSend({t:'input',e:{type:'wheel',dy:Math.max(-12,Math.min(12,Math.sign(e.deltaY)))}});e.preventDefault();},{passive:false});
     listen(video,'contextmenu',e=>{if(active())e.preventDefault();});
+    /* THE VIEWER'S OWN KEYS, and they must be taken before the branch that forwards keys to the
+     * other machine — both are capture-phase on `document`, so registration order is the priority.
+     * Scoped to a live, non-minimised desktop session: Ctrl+0 belongs to the browser everywhere
+     * else in this app, and stealing it globally would break page zoom for the whole client. */
+    const viewerKeysApply=()=>_call===session&&!!(_call&&_call.remoteDesktop&&!_call.caller)&&!video.closest('.call-mini');
+    listen(document,'keydown',e=>{
+      if(!viewerKeysApply()||!(e.ctrlKey||e.metaKey)||e.altKey)return;
+      const code=e.code,key=e.key;
+      let handled=true;
+      if(code==='Digit0'||key==='0')_rdZoomSetMode('fit');
+      else if(code==='Digit1'||key==='1')_rdZoomSetMode('actual');
+      else if(key==='+'||key==='='||code==='Equal'||code==='NumpadAdd')_rdZoomBy(RD_ZOOM_KEY);
+      else if(key==='-'||key==='_'||code==='Minus'||code==='NumpadSubtract')_rdZoomBy(1/RD_ZOOM_KEY);
+      /* Arrow keys pan by a quarter of the visible window — the pan gesture that exists while this
+       * viewer has control and every drag is already going to the other machine. */
+      else if(code==='ArrowLeft'||code==='ArrowRight'||code==='ArrowUp'||code==='ArrowDown'){
+        const m=_rdZoomMetrics();
+        if(!m)handled=false;
+        else{
+          const stepX=m.stage.width/4,stepY=m.stage.height/4;
+          handled=_rdPanBy(code==='ArrowLeft'?stepX:code==='ArrowRight'?-stepX:0,
+                           code==='ArrowUp'?stepY:code==='ArrowDown'?-stepY:0);
+        }
+      }
+      else handled=false;
+      if(handled){e.preventDefault();e.stopPropagation();}
+    },true);
+    /* Fit is a function of the WINDOW, so it has to be recomputed when the window changes — and the
+     * resolution asked of the host with it, which is why a resize is an efficiency event and not
+     * only a layout one. ResizeObserver rather than `window.resize` because this session lives in a
+     * PosterChanOS window that is resized without the page ever resizing. */
+    listen(window,'resize',()=>_rdApplyZoomSoon());
+    try{
+      if(typeof ResizeObserver==='function'){
+        const ro=new ResizeObserver(()=>_rdApplyZoomSoon());
+        ro.observe(_rdStageOf(video));
+        listeners.push(()=>ro.disconnect());
+      }
+    }catch(_){}
     listen(document,'pointerlockchange',()=>{
       const next=document.pointerLockElement===video;
       if(locked&&!next){release();video.blur();}locked=next;
@@ -39295,7 +39701,7 @@
       const down=name==='keydown';if(down)keys.add(code);else if(!keys.delete(code))return;
       e.preventDefault();e.stopPropagation();_rdSend({t:'input',e:{type:'key',code,down}});
     },true);
-    _rdViewerCleanup=()=>{unlock();listeners.forEach(off=>off());delete video.dataset.rdControl;delete video.rdUnlock;_rdViewerCleanup=null;};
+    _rdViewerCleanup=()=>{endPan();unlock();listeners.forEach(off=>off());delete video.dataset.rdControl;delete video.rdUnlock;_rdViewerCleanup=null;};
   }
   // getUserMedia failures were all reported as "permission needed", which is wrong in the most common
   // case: on an insecure origin (http:// on a LAN IP) navigator.mediaDevices is undefined, the browser
@@ -39807,9 +40213,11 @@
     if(_call.state!=='ringing') _ringtone(false);
     if(!el){
       el=document.createElement('div'); el.id='call-overlay';
-      el.innerHTML=`<div class="rd-stage"><video id="call-remote" class="call-remote" autoplay playsinline></video></div>
+      el.innerHTML=`<div class="rd-stage"><video id="call-remote" class="call-remote" autoplay playsinline></video>
+          <div class="rd-scroll rd-scroll-v" id="rd-scroll-v" hidden><i></i></div>
+          <div class="rd-scroll rd-scroll-h" id="rd-scroll-h" hidden><i></i></div></div>
         <div class="call-head"><img id="call-av" onerror="this.src='${LOGO}'"><div><div class="call-name" id="call-name"></div><div class="call-status" id="call-status"></div></div>
-          <div class="rd-zoom" id="rd-zoom"><button type="button" id="rd-zoom-out" title="Zoom out" aria-label="Zoom out">&minus;</button><button type="button" id="rd-zoom-level" title="Fit the whole screen">Fit</button><button type="button" id="rd-zoom-in" title="Zoom in" aria-label="Zoom in">+</button></div></div>
+          <div class="rd-zoom" id="rd-zoom"><button type="button" id="rd-zoom-fit" title="Fit the whole screen (Ctrl+0)">Fit</button><button type="button" id="rd-zoom-actual" title="Actual size, remote pixels 1:1 (Ctrl+1)">1:1</button><button type="button" id="rd-zoom-out" title="Zoom out (Ctrl+-)" aria-label="Zoom out">&minus;</button><input type="range" id="rd-zoom-range" class="rd-zoom-range" min="0" max="1000" value="0" aria-label="Zoom"><button type="button" id="rd-zoom-in" title="Zoom in (Ctrl++)" aria-label="Zoom in">+</button><button type="button" id="rd-zoom-level" title="Click to fit the whole screen (Ctrl+0)">100%</button><button type="button" id="rd-zoom-follow" class="rd-follow" title="Follow the remote pointer" aria-label="Follow the remote pointer" aria-pressed="false">&#9678;</button></div></div>
         <video id="call-local" class="call-local" autoplay playsinline muted></video>
         <div class="call-actions" id="call-actions"></div>`;
       const callHost=_call.remoteDesktop?(_rdEnsureHost()||document.body):document.body;
@@ -39839,13 +40247,23 @@
       zoomRow.hidden=!wanted;
       if(wanted&&!zoomRow.dataset.bound){
         zoomRow.dataset.bound='1';
-        const step=(factor)=>{const z=_rdZoomState();if(z)_rdZoomTo(factor?z.scale*factor:1,z.at);};
         const bind=(id,fn)=>{const b=document.getElementById(id);if(b)b.onclick=(ev)=>{ev.stopPropagation();fn();};};
-        bind('rd-zoom-in',()=>step(RD_ZOOM_STEP));
-        bind('rd-zoom-out',()=>step(1/RD_ZOOM_STEP));
+        bind('rd-zoom-fit',()=>_rdZoomSetMode('fit'));
+        bind('rd-zoom-actual',()=>_rdZoomSetMode('actual'));
+        bind('rd-zoom-in',()=>_rdZoomBy(RD_ZOOM_KEY));
+        bind('rd-zoom-out',()=>_rdZoomBy(1/RD_ZOOM_KEY));
         /* The readout is the way BACK: one press returns to the whole screen, which is the state
          * somebody zoomed in from and the only one that needs no aiming. */
-        bind('rd-zoom-level',()=>step(0));
+        bind('rd-zoom-level',()=>_rdZoomSetMode('fit'));
+        /* Following is OFF by default and says so. It is the control that made a magnified session
+         * feel out of control, so it is a thing somebody turns on, never a thing that happens. */
+        bind('rd-zoom-follow',()=>{const z=_rdZoomState();if(!z)return;z.follow=!z.follow;_rdApplyZoom();_rdZoomRemember();});
+        const range=document.getElementById('rd-zoom-range');
+        if(range)range.oninput=(ev)=>{
+          ev.stopPropagation();
+          const m=_rdZoomMetrics();if(!m)return;
+          _rdZoomToScale(_rdZoomFromSlider(Number(range.value)/1000,m));
+        };
       }
       if(wanted)_rdApplyZoom();
     }
@@ -40246,9 +40664,41 @@
      * source: that a click still lands where the pointer is after the picture is magnified. Both are
      * the SHIPPED functions — the mapping is only honest if the test drives the same code the
      * viewer does, against a real transformed element. */
-    __rdZoomTransform: (scale,view,at)=>_rdZoomTransform(scale,view,at),
+    __rdZoomTransform: (mult,view,at)=>_rdZoomTransform(mult,view,at),
     __rdStageBox: (stage)=>_rdStageBox(stage),
     __rdVideoPoint: (video,e)=>_rdVideoPoint(video,e,_call&&_call.remoteGeometry),
+    __rdZoomBounds: (sw,sh,rw,rh)=>_rdZoomBounds(sw,sh,rw,rh),
+    __rdClampScale: (scale,bounds)=>_rdClampScale(scale,bounds),
+    __rdClampAt: (at,mult)=>_rdClampAt(at,mult),
+    __rdZoomCentre: (t,view)=>_rdZoomCentre(t,view),
+    __rdZoomAnchor: (a,b,pointer,centre)=>_rdZoomAnchor(a,b,pointer,centre),
+    __rdSourceDownscale: (displayPx,remotePx,dpr)=>_rdSourceDownscale(displayPx,remotePx,dpr),
+    __rdZoomState: ()=>_rdZoomState(),
+    __rdZoomMetrics: ()=>_rdZoomMetrics(),
+    __rdZoomSetMode: (mode)=>_rdZoomSetMode(mode),
+    __rdZoomBy: (factor,pointer)=>_rdZoomBy(factor,pointer),
+    __rdZoomToScale: (scale,pointer)=>_rdZoomToScale(scale,pointer),
+    __rdPanBy: (dx,dy)=>_rdPanBy(dx,dy),
+    __rdApplyZoom: ()=>_rdApplyZoom(),
+    /* TEST-ONLY, and it can START nothing. It paints the viewer's own UI over a LOCAL stream so a
+     * browser test can drive the SHIPPED controls, handlers, markup and stylesheet instead of a copy
+     * of them — which is the only way to catch the class of bug this control has already had twice
+     * (a mapping that looks perfect and clicks in the wrong place). There is no peer connection and
+     * no signalling: the "control channel" is an array in this page, so every message the viewer
+     * sends lands in `__rdOutbox()` and reaches no other machine. */
+    __rdFakeViewerSession: (opts)=>{
+      const o=opts||{},outbox=[];
+      _call={id:_rid(),peer:(ME&&ME.pubkey)||'',pc:null,local:null,remote:o.stream||null,video:true,
+             remoteDesktop:true,caller:false,state:'connected',controlGranted:!!o.control,
+             remoteGeometry:o.geometry||null,rdOutbox:outbox,
+             control:{readyState:o.channel==='connecting'?'connecting':'open',
+                      send:(text)=>{try{outbox.push(JSON.parse(text));}catch(_){outbox.push(text);}}}};
+      _callUI();
+      return !!document.getElementById('call-remote');
+    },
+    __rdOutbox: ()=>((_call&&_call.rdOutbox)||[]).slice(),
+    __rdSetControl: (on)=>{if(!_call)return false;_call.controlGranted=!!on;_callUI();return !!_call.controlGranted;},
+    __rdOpenChannel: ()=>{if(!_call||!_call.control)return false;_call.control.readyState='open';_callUI();return true;},
     messageUser: (pk) => { pk=safePk(String(pk||'')); if(!pk)return false; if(!dmPeers.has(pk))dmPeers.set(pk,[]); dmActive=pk; switchView('messages'); setTimeout(()=>openDm(pk),80); return true; },
     /* The one pass that fills every `.name[data-prof]` (and avatars, nip05s, @mentions) once a kind-0
      * arrives. A sub-module that paints author names MUST be able to call it, or its names are frozen
