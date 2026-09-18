@@ -116,6 +116,17 @@ def _run_main(tmp_path, extra, monkeypatch):
         return 0
 
     monkeypatch.setattr(MOD, "install", fake_install)
+
+    # THE BOOT PHASE IS RECORDED, NOT MERELY SILENCED. main() now installs and then boots the disk
+    # with no ISO; stubbing that without checking it happened would let a main() that skipped booting
+    # pass — which is precisely the defect this file exists around (the gate promised for months that
+    # it booted the installed disk and never did).
+    def fake_boot(disk, serial_dir, vars_copy, evidence, timeout, memory, cpus):
+        seen["booted"] = True
+        seen["boot_vars"] = str(vars_copy)
+        return 0
+
+    monkeypatch.setattr(MOD, "boot_installed", fake_boot)
     # `main()` refuses to start without qemu on the host, and returns 2 — "could not run" — long
     # before it reaches `install()`. This test is about ARGUMENT PLUMBING (does `--usb` arrive at
     # install?), which needs no qemu at all, so on a host without it the test was failing `2 == 0`
@@ -190,3 +201,29 @@ def test_a_dead_qemu_is_reported_not_raised():
     assert SRC.count("proc.poll() is not None") >= 2, (
         "only the socket-absent case checks whether qemu is still alive")
     assert "could not attach to the guest console" in SRC
+
+
+def test_main_boots_the_disk_it_installed(tmp_path, monkeypatch):
+    """The promise in this module's docstring, pinned.
+
+    `check_livecd_install_vm.py` opened with "Install PosterChanOS from an ISO into a blank virtual
+    disk, then boot that disk with no ISO" and "Exit 0 installed and the installed disk booted", and
+    `main()` did the first half only: it installed, printed OK, deleted the disk and returned 0. The
+    one gate whose stated purpose was proving an installed system boots had never booted one, so
+    "installer failed to make a bootable system" reached a user with every gate green.
+    """
+    seen = _run_main(tmp_path, [], monkeypatch)
+    assert seen.get("booted") is True, (
+        "main() installed and never booted the result — the whole point of this gate")
+
+
+def test_the_boot_reuses_the_nvram_the_install_wrote(tmp_path, monkeypatch):
+    """A FRESH variables file would test the removable-media fallback and call it a pass.
+
+    The EFI boot entry the installer creates lives in OVMF_VARS.fd. Handing the boot phase a clean
+    copy means the guest has no entries at all, so its firmware falls back to EFI/BOOT/BOOTX64.EFI
+    and boots — which is exactly how an install with no boot variable looked healthy in every VM
+    while being unbootable on a machine that had previously run Windows.
+    """
+    seen = _run_main(tmp_path, [], monkeypatch)
+    assert seen.get("boot_vars", "").endswith("OVMF_VARS.fd"), seen

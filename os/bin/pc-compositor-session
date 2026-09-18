@@ -173,6 +173,92 @@ pc_nvidia_pci() {
 	done
 }
 
+# wlr-randr can only ask a compositor that is already answering, so the mode fix waits for the
+# socket rather than for a clock. Tenths of a second; returns 1 if it never appears, which is a
+# failure the session reports through its own paths and not something this should duplicate.
+# $2, when given, is a PID that must stay alive: the compositor. WITHOUT THAT THE CRASH PATH PAYS
+# THIS WAIT. Measured by tests/test_wayfire_session_packaging.py when this was first written — a
+# compositor that dies immediately leaves no socket to find, so the loop ran its full ten seconds and
+# the session's fallback took 10.1s where it must take under 6. A helper for a display that no longer
+# exists has nothing to do, so it leaves the moment the compositor is gone.
+pc_wait_for_wayland() {
+	pc_n=0
+	while [ "$pc_n" -lt "${1:-100}" ]; do
+		if [ -n "${2:-}" ] && ! kill -0 "$2" 2>/dev/null; then return 1; fi
+		for pc_sock in "${XDG_RUNTIME_DIR:-/run/user/$(id -u)}"/wayland-[0-9]*; do
+			case "$pc_sock" in *.lock) continue ;; esac
+			[ ! -S "$pc_sock" ] || {
+				[ -n "${WAYLAND_DISPLAY:-}" ] || { WAYLAND_DISPLAY=${pc_sock##*/}; export WAYLAND_DISPLAY; }
+				return 0
+			}
+		done
+		sleep 0.1
+		pc_n=$((pc_n + 1))
+	done
+	return 1
+}
+
+# ---- A TV THAT NAMES NO PREFERRED MODE MUST NOT GET THE WORST ONE -----------------------------
+#
+# MEASURED 2026-09-17 on a TCL 55S451 (55" TV) over DisplayPort. wayfire.log:
+#
+#   Detected modes:
+#     1920x1080 @ 60.000 Hz        <- first of 27
+#     ... 25 more ...
+#     640x480 @ 59.929 Hz          <- last
+#   connector DP-5: Modesetting with 640x480 @ 59.929 Hz
+#
+# wlroots' wlr_output_preferred_mode() returns the mode flagged PREFERRED in the EDID and, when no
+# mode is flagged, THE LAST ONE IN THE LIST. This TV flags none -- confirmed at runtime, where
+# `wlr-randr` marks a mode `(current)` and not one mode `(preferred)` -- so the desktop came up at
+# 640x480 on a 1080p panel. Reported as "resolution was weird".
+#
+# THE RULE IS NARROW ON PURPOSE. It acts only when the EDID named no preferred mode AND the current
+# mode is SMALLER than the largest one offered: a panel that declares a preference is left alone
+# (its preference is better information than a pixel count), and a mode already at the maximum is
+# never touched. It runs ONCE, at session start, so a resolution somebody chooses afterwards stands.
+# Never downgrades. `PC_NO_MODE_FIX=1` opts out.
+pc_best_unpreferred_modes() {
+	command -v wlr-randr >/dev/null 2>&1 || return 0
+	wlr-randr 2>/dev/null | awk '
+		# Output names start in column 1; modes are indented. Two states, no lookahead.
+		/^[^ \t]/ {
+			if (name != "" && !pref && bestw > 0 && (curw * curh) < (bestw * besth))
+				printf "%s %dx%d %s\n", name, bestw, besth, besthz
+			name = $1; pref = 0; bestw = 0; besth = 0; besthz = ""; curw = 0; curh = 0
+			next
+		}
+		/px,/ {
+			# "    1920x1080 px, 60.000000 Hz (preferred, current)"
+			split($1, wh, "x")
+			w = wh[1] + 0; h = wh[2] + 0; hz = $3
+			if ($0 ~ /preferred/) pref = 1
+			if ($0 ~ /current/)   { curw = w; curh = h }
+			if (w * h > bestw * besth) { bestw = w; besth = h; besthz = hz }
+			else if (w * h == bestw * besth && hz + 0 > besthz + 0) besthz = hz
+		}
+		END {
+			if (name != "" && !pref && bestw > 0 && (curw * curh) < (bestw * besth))
+				printf "%s %dx%d %s\n", name, bestw, besth, besthz
+		}'
+}
+
+pc_fix_unpreferred_modes() {
+	[ -z "${PC_NO_MODE_FIX:-}" ] || return 0
+	pc_any=0
+	pc_best_unpreferred_modes | while read -r pc_out pc_res pc_hz; do
+		[ -n "$pc_out" ] && [ -n "$pc_res" ] || continue
+		pc_any=1
+		if wlr-randr --output "$pc_out" --mode "${pc_res}@${pc_hz}Hz" >/dev/null 2>&1 \
+			|| wlr-randr --output "$pc_out" --mode "$pc_res" >/dev/null 2>&1; then
+			pc_say "$pc_out declared no preferred mode; set $pc_res (its largest) instead of what the EDID left us."
+		else
+			pc_say "$pc_out declared no preferred mode and $pc_res could not be set; leaving the display as it is."
+		fi
+	done
+	return 0
+}
+
 pc_module_loaded() { grep -qs "^$1 " "$proc_modules"; }
 
 # IS THERE A MODESETTING DEVICE, WHICH IS A DIFFERENT QUESTION FROM "IS THERE A CARD".
@@ -996,6 +1082,7 @@ PC_SESSION_CONFIG_PY
 		pc_say "starting Wayfire on: $(pc_drm_cards | tr '\n' ',' | sed 's/,$//')"
 		wayfire -c "$session_cfg" >"$state_dir/wayfire.log" 2>&1 &
 		wayfire_pid=$!
+		( pc_wait_for_wayland 100 "$wayfire_pid" && pc_fix_unpreferred_modes ) &
 		# WAIT ON THE LAUNCHER, NOT ON A CLOCK.
 		#
 		# This was a flat 60 seconds from WAYFIRE's start, and the launcher's own budget does not fit

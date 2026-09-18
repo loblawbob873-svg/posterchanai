@@ -175,7 +175,7 @@ VIDEO_CARDS="intel amdgpu radeon radeonsi nouveau virgl"
 PC_MESA_REQUIRED_CARDS="virgl nouveau"
 #
 #PACKAGE CONFIGURATION
-BASE_PACKAGES="net-print/cups-filters net-misc/networkmanager net-wireless/bluez net-fs/sshfs app-shells/starship dev-util/sh sys-boot/plymouth sys-power/acpid app-arch/zip dev-python/virtualenv sys-apps/flatpak sys-power/powertop app-shells/bash-completion sys-power/cpupower media-libs/gexiv2 media-plugins/gst-plugins-pulse mail-mta/postfix app-admin/sysstat sys-apps/smartmontools net-fs/nfs-utils net-firewall/nftables dev-python/pip sys-fs/inotify-tools net-analyzer/nmap app-misc/screen app-portage/gentoolkit sys-fs/dosfstools app-admin/sudo sys-apps/systemd sys-apps/util-linux sys-apps/hwdata app-eselect/eselect-repository dev-vcs/git sys-block/parted sys-process/btop net-vpn/wireguard-tools app-editors/neovim app-misc/fastfetch sys-fs/btrfs-progs net-print/cups sys-firmware/seabios-bin sys-firmware/edk2-bin app-emulation/libvirt app-emulation/qemu app-emulation/virt-viewer app-emulation/spice-vdagent app-crypt/swtpm"
+BASE_PACKAGES="sys-boot/efibootmgr net-print/cups-filters net-misc/networkmanager net-wireless/bluez net-fs/sshfs app-shells/starship dev-util/sh sys-boot/plymouth sys-power/acpid app-arch/zip dev-python/virtualenv sys-apps/flatpak sys-power/powertop app-shells/bash-completion sys-power/cpupower media-libs/gexiv2 media-plugins/gst-plugins-pulse mail-mta/postfix app-admin/sysstat sys-apps/smartmontools net-fs/nfs-utils net-firewall/nftables dev-python/pip sys-fs/inotify-tools net-analyzer/nmap app-misc/screen app-portage/gentoolkit sys-fs/dosfstools app-admin/sudo sys-apps/systemd sys-apps/util-linux sys-apps/hwdata app-eselect/eselect-repository dev-vcs/git sys-block/parted sys-process/btop net-vpn/wireguard-tools app-editors/neovim app-misc/fastfetch sys-fs/btrfs-progs net-print/cups sys-firmware/seabios-bin sys-firmware/edk2-bin app-emulation/libvirt app-emulation/qemu app-emulation/virt-viewer app-emulation/spice-vdagent app-crypt/swtpm"
 SPECIAL_PACKAGE_USE=("kde-apps/kio-extras samba mtp" "app-db/postgresql icu lz4 nls pam readline server ssl system zlib zstd uuid" "dev-build/meson test test-full" "dev-qt/qtwebengine bindist" "media-sound/sox -opus" "media-video/vlc -opus -theora -vpx" "media-video/ffmpeg webp libass libplacebo" "dev-qt/qtpositioning geoclue" "media-libs/libvpx postproc" "dev-python/pillow webp" "gui-libs/gtk colord sysprof" "media-libs/freetype harfbuzz" "dev-lang/php gmp sodium sysvipc calendar bcmath exif bzip2 intl ctype curl fileinfo filter gd iconv ssl posix session simplexml xmlreader xmlwriter zip zlib postgres png opcache jit cli fpm zip pdo" "net-im/synapse postgres" "net-p2p/qbittorrent webui" "app-crypt/certbot certbot-nginx" "acct-user/git gitea" "app-admin/vaultwarden web postgres" "media-gfx/imagemagick -postscript" "media-gfx/imagemagick -postscript dev-libs/jemalloc statsv" "media-libs/libsdl2 -pipewire vulkan opengl" "media-video/obs-studio pipewire wayland" "media-video/pipewire sound-server bluetooth" "x11-libs/libXrandr abi_x86_32" "mail-mta/postfix sasl" "app-emulation/qemu spice usbredir pipewire virgl" "app-emulation/libvirt qemu virt-network" "app-emulation/virt-viewer spice")
 # THE SAME ENCODERS THE APP ACTUALLY INVOKES, or this desktop can play media and not make any.
 # Measured from the source rather than guessed: `libx264` (127 call sites), `h264_vaapi` (66),
@@ -5124,6 +5124,63 @@ bootloader() {
 		if [ ! -s /boot/EFI/BOOT/BOOTX64.EFI ]; then
 			echo -e "\033[1;31m  EFI/BOOT/BOOTX64.EFI is missing from the target ESP.\033[0m"
 			return 1
+		fi
+		# ---- AND THE FIRMWARE HAS TO BE TOLD, OR NONE OF THE ABOVE IS A BOOTABLE SYSTEM ---------
+		#
+		# `--no-variables` above is right for a chroot and it is why this machine would not boot.
+		#
+		# MEASURED 2026-09-17 on a real ex-Windows machine. The install was complete and correct --
+		# GPT, a 2GB ESP, a 475GB LUKS volume, btrfs subvolumes, systemd-bootx64.efi, EFI/BOOT/
+		# BOOTX64.EFI, a loader entry naming the right kernel/initrd/root=UUID/rd.luks.uuid, and a
+		# keyfile that genuinely opened the volume. The firmware had simply never heard of it:
+		#
+		#   BootOrder: 0000,000B,0009,0013,000F,...
+		#   Boot0000* Windows Boot Manager      <- first, and Windows had just been erased
+		#   (no PosterChanOS entry at all)
+		#
+		# Creating the variable by hand made it boot that instant.
+		#
+		# WHY EVERY VM RUN PASSED. The note above says "the fallback loader is what fresh VM NVRAM
+		# boots first", which is exactly true and exactly the blind spot: a guest with fresh OVMF
+		# variables has no entries, so the firmware falls back to the removable path EFI/BOOT/
+		# BOOTX64.EFI. A machine that has ever booted another OS has a populated NVRAM whose stale
+		# entries are tried first and that fallback is never reached. So an install can pass
+		# check_livecd_install_vm.py and be unbootable on hardware -- the gate is honest about the
+		# disk it boots and blind to the one thing that differs.
+		#
+		# The ESP is read from what is MOUNTED, not from $EFI: this function runs inside the target
+		# chroot, where partitionDetection's /tmp/disk may not exist, and bootctl has just proven
+		# /boot is the ESP.
+		if [ -d /sys/firmware/efi ]; then
+			local ESP_DEV ESP_DISK ESP_PART OLD_NUMS
+			ESP_DEV="$(findmnt -no SOURCE /boot 2>/dev/null)"
+			ESP_DISK=""; ESP_PART=""
+			if [ -n "$ESP_DEV" ]; then
+				ESP_DISK="$(lsblk -ndo PKNAME "$ESP_DEV" 2>/dev/null)"
+				[ -z "$ESP_DISK" ] || ESP_DISK="/dev/$ESP_DISK"
+				ESP_PART="$(cat "/sys/class/block/$(basename "$ESP_DEV")/partition" 2>/dev/null)"
+			fi
+			if ! command -v efibootmgr >/dev/null 2>&1; then
+				echo -e "\033[1;31m  efibootmgr is missing, so the firmware cannot be told about this install.\033[0m"
+				echo -e "\033[1;31m  It will boot only if this machine's firmware falls back to EFI/BOOT/BOOTX64.EFI.\033[0m"
+			elif [ -z "$ESP_DISK" ] || [ -z "$ESP_PART" ]; then
+				echo -e "\033[1;31m  Could not tell which disk and partition the ESP is ($ESP_DEV), so no firmware entry was made.\033[0m"
+				echo -e "\033[1;31m  Add one by hand:  efibootmgr -c -d <disk> -p <partnum> -L PosterChanOS -l '\\EFI\\systemd\\systemd-bootx64.efi'\033[0m"
+			else
+				# A reinstall must not add a second entry: NVRAM is small, and the machine measured
+				# already held seventeen, most of them dead.
+				OLD_NUMS="$(efibootmgr 2>/dev/null | sed -n 's/^Boot\([0-9A-Fa-f]\{4\}\)\*\? PosterChanOS$/\1/p')"
+				for _n in $OLD_NUMS; do efibootmgr -B -b "$_n" >/dev/null 2>&1 || true; done
+				# -c creates AND puts it first in BootOrder, which is the half that matters here.
+				if efibootmgr -c -d "$ESP_DISK" -p "$ESP_PART" -L PosterChanOS \
+					-l '\EFI\systemd\systemd-bootx64.efi' >/dev/null 2>&1; then
+					echo -e "\033[1;33m  Firmware boot entry created: PosterChanOS on $ESP_DISK partition $ESP_PART.\033[0m"
+				else
+					echo -e "\033[1;31m  Could not write the firmware boot entry (efivarfs may be read-only here).\033[0m"
+					echo -e "\033[1;31m  Run this from the live session after the install finishes:\033[0m"
+					echo -e "\033[1;31m    efibootmgr -c -d $ESP_DISK -p $ESP_PART -L PosterChanOS -l '\\EFI\\systemd\\systemd-bootx64.efi'\033[0m"
+				fi
+			fi
 		fi
 		mkdir -p /boot/loader/entries
 		MACHINE_ID=$(cat /etc/machine-id 2>/dev/null)

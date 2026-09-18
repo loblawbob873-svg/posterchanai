@@ -273,6 +273,29 @@ def main():
     with open(os.path.join(PKG, "Manifest"), "w", encoding="utf-8") as fh:
         fh.write(f"DIST posterchan-desktop-{want}.tar.zst {len(blob)} "
                  f"BLAKE2B {blake2b} SHA512 {sha512}\n")
+    # THE SESSION'S PIN MOVES WITH IT, OR THE NEXT DEPLOY IS BLOCKED BY THIS SCRIPT'S OWN WORK.
+    #
+    # `posterchanos-shell` carries `>=app-misc/posterchan-desktop-<version>`, and
+    # tests/test_gentoo_overlay_pin_matches_the_release.py requires the two to be EQUAL ("the session
+    # and the app ship together"). Bumping the desktop alone therefore makes a required gate fail, so
+    # `sync.sh` aborts and deploys NOTHING — which is exactly what happened twice on 2026-09-17,
+    # costing two full gate runs before anyone noticed the failing test named a file this script owns.
+    # Two files that must agree, one of them updated: the same shape as every other bug that night.
+    shell_dir = os.path.join(ROOT, "os", "overlay", "app-misc", "posterchanos-shell")
+    shell = [f for f in os.listdir(shell_dir) if f.endswith(".ebuild")] if os.path.isdir(shell_dir) else []
+    if len(shell) == 1:
+        path = os.path.join(shell_dir, shell[0])
+        with open(path, encoding="utf-8") as fh:
+            text = fh.read()
+        fixed = re.sub(r">=app-misc/posterchan-desktop-[0-9.]+",
+                       f">=app-misc/posterchan-desktop-{want}", text)
+        if fixed != text:
+            with open(path, "w", encoding="utf-8") as fh:
+                fh.write(fixed)
+            print(f"OK  {shell[0]} now requires desktop {want}")
+    else:
+        print(f"WARN  expected one posterchanos-shell ebuild, found {shell}; its desktop pin was "
+              f"NOT updated and the overlay-pin test will fail")
     print(f"OK  overlay now pins {want}")
     print("    run: venv-unified/bin/python -m pytest tests/test_gentoo_overlay_pins_resolve.py")
     return 0

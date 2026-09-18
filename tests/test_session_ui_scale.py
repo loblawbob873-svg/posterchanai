@@ -166,11 +166,32 @@ def test_a_users_own_setting_still_wins():
 
 def test_nothing_here_touches_the_output_scale():
     """Stated as a test because it is the fix everyone reaches for first, and it is the one that
-    costs the games."""
+    costs the games.
+
+    THE BAN IS ON SCALE AND TRANSFORM, NOT ON THE TOOL. This used to assert `"wlr-randr" not in
+    code`, which was the right rule written one level too wide, and it is worth saying why the
+    distinction is real rather than a convenience:
+
+      * `--scale` is the harmful one. Xwayland is given no `-scale`, so a fullscreen game is told to
+        render at the divided size and Wayfire upscales it — blurry, and because the buffer never
+        matches the output mode DIRECT SCANOUT becomes impossible and every frame pays a full
+        composite+scale pass. That is what this file exists to prevent, and it stays banned.
+      * `--mode` is the opposite. A TV whose EDID flags no preferred mode gets wlroots' documented
+        fallback — the LAST mode in the list — which on a TCL 55S451 measured 2026-09-17 meant a
+        1080p panel running at 640x480. Selecting its largest mode makes the buffer match the output
+        exactly, which is the condition direct scanout NEEDS. See
+        tests/test_unpreferred_mode_is_not_the_worst_one.py for that rule and its own edges.
+    """
     code = "\n".join(l for l in SRC.splitlines() if not l.lstrip().startswith("#"))
-    assert "wlr-randr" not in code, (
-        "the session is configuring outputs. Output scale is what makes Xwayland render a game at "
-        "the wrong size and lose direct scanout; the whole point here is that it stays at 1.")
+    for flag in ("--scale", "--transform"):
+        assert flag not in code, (
+            "the session is configuring output %s. Output scale is what makes Xwayland render a game "
+            "at the wrong size and lose direct scanout; the whole point here is that it stays at 1."
+            % flag)
+    # Scale must not arrive by the back door either — wlr-randr takes `--output X --scale N`, and a
+    # future edit could build that string from a variable.
+    assert not re.search(r"wlr-randr[^\n]*scale", code), (
+        "wlr-randr is being handed something scale-shaped; only --mode is permitted here")
 
 
 def test_xft_dpi_is_merged_without_racing_the_x_server():

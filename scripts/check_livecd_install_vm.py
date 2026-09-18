@@ -151,7 +151,9 @@ def install(iso, disk, serial_dir, evidence, timeout, memory, cpus, usb=False):
     if not code:
         print("SKIP  no OVMF firmware on this host; a BIOS guest would not test the bootloader")
         return 2
-    vars_copy = Path(serial_dir, "OVMF_VARS.fd")
+    # KEPT, NOT SCRATCH. The boot phase reuses this exact variables file: the EFI entry the installer
+    # creates lives in it, and giving the boot a fresh copy would silently test the fallback instead.
+    vars_copy = Path(evidence, "OVMF_VARS.fd")
     shutil.copyfile(vars_src, vars_copy)
     sock = Path(serial_dir, "console.sock")
     log = open(Path(evidence, "install-console.log"), "w", encoding="utf-8")
@@ -215,12 +217,111 @@ def install(iso, disk, serial_dir, evidence, timeout, memory, cpus, usb=False):
             print(f"FAIL  the installer exited {exit_code}; transcript in "
                   f"{evidence}/install-console.log")
             return 1
+        # ---- DID THE INSTALLER TELL THE FIRMWARE THIS SYSTEM EXISTS --------------------------
+        #
+        # THE ONE CHECK THAT SEPARATES A VM FROM A REAL MACHINE, AND THE BUG IT MISSED SHIPPED.
+        #
+        # `bootctl --esp-path=/boot --no-variables install` writes the loader to the ESP and
+        # deliberately creates NO EFI boot variable. A guest with fresh OVMF variables has no boot
+        # entries at all, so its firmware falls back to the removable-media path
+        # EFI/BOOT/BOOTX64.EFI and boots perfectly -- which is why booting the disk is NOT sufficient
+        # and why this install looked fine in every VM. A machine that has ever run another OS has a
+        # populated NVRAM whose stale entries are tried first, and that fallback is never reached:
+        # measured 2026-09-17 on an ex-Windows machine whose BootOrder began `Boot0000* Windows Boot
+        # Manager` with Windows already erased, holding no PosterChanOS entry at all. The install was
+        # otherwise complete and correct.
+        #
+        # So the VARIABLE is asserted directly, in the live session that just did the install, where
+        # OVMF's NVRAM is readable. It cannot be inferred from a successful boot.
+        con.send("sudo efibootmgr 2>&1 | grep -c ' PosterChanOS$' | sed 's/^/NVRAM-COUNT=/'")
+        if con.expect(r"NVRAM-COUNT=\d+", 60) is None:
+            print("FAIL  could not read the guest's EFI boot variables")
+            return 1
+        import re as _re
+        found = _re.findall(r"NVRAM-COUNT=(\d+)", con.buf)[-1]
+        if found == "0":
+            print("FAIL  the installer created no PosterChanOS EFI boot entry. This disk boots in a "
+                  "VM only because empty NVRAM falls back to EFI/BOOT/BOOTX64.EFI; on a machine with "
+                  "existing boot entries (any ex-Windows machine) the firmware tries those first and "
+                  "never reaches it. See bootctl's --no-variables in os/gentoo.sh.")
+            return 1
+        print(f"OK  the installer registered {found} PosterChanOS EFI boot entry/entries")
         con.send("sudo poweroff")
         try:
             proc.wait(timeout=120)
         except subprocess.TimeoutExpired:
             proc.terminate()
         return 0
+    finally:
+        log.close()
+        if proc.poll() is None:
+            proc.terminate()
+            try:
+                proc.wait(timeout=15)
+            except subprocess.TimeoutExpired:
+                proc.kill()
+
+
+def boot_installed(disk, serial_dir, vars_copy, evidence, timeout, memory, cpus):
+    """Boot the INSTALLED disk with no ISO and require it to reach a running system.
+
+    THIS FUNCTION IS WHY THIS FILE EXISTS AND IT WAS NEVER WRITTEN. The module docstring has always
+    opened with "Install PosterChanOS from an ISO into a blank virtual disk, then boot that disk with
+    no ISO" and promised "Exit 0 installed and the installed disk booted". `main()` installed, printed
+    OK, deleted the disk and returned 0. The only mention of booting was `--keep-disk`'s "leave the
+    qcow2 behind for check_livecd_vm.py" -- a separate command nobody runs. So the single gate whose
+    stated purpose was proving an installed system boots had never booted one, and "installer failed
+    to make a bootable system" reached a user with every gate green.
+
+    THE SAME NVRAM the install wrote is reused, because the boot entry the installer creates is part
+    of what is under test; a fresh variables file would quietly test the removable-media fallback.
+    """
+    code, _ = ovmf()
+    sock = Path(serial_dir, "boot-console.sock")
+    log = open(Path(evidence, "boot-console.log"), "w", encoding="utf-8")
+    # iso=None leaves out every medium drive, so the only bootable thing is the installed disk.
+    proc = subprocess.Popen(qemu_args(disk, None, sock, code, vars_copy, memory, cpus),
+                            stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, text=True)
+    try:
+        for _ in range(100):
+            if sock.exists() or proc.poll() is not None:
+                break
+            time.sleep(0.1)
+        if proc.poll() is not None:
+            print("FAIL  qemu exited before opening a console for the installed disk: "
+                  + (proc.stderr.read() or "")[-300:])
+            return 1
+        try:
+            con = Serial(sock, log)
+        except OSError as exc:
+            print(f"FAIL  could not attach to the installed system's console ({exc})")
+            return 1
+        # WHAT COUNTS AS BOOTED. The installed system carries `console=ttyS0` from the installer's own
+        # kernel command line, so systemd's progress and any failure both arrive here. A login prompt
+        # or the shell's readiness are both acceptable; the emergency shell, a cryptsetup failure and
+        # silence are not -- and "Failed to start Cryptography Setup" is named because that is the
+        # sentence a real machine printed while every gate was green.
+        good = r"(login:|pc-shell|posterchan|Reached target|Startup finished)"
+        bad = (r"(Failed to start Cryptography Setup|emergency mode|Emergency Shell|"
+               r"Kernel panic|Give root password|Failed to mount /sysroot)")
+        deadline = time.monotonic() + timeout
+        while time.monotonic() < deadline:
+            con.read(1.0)
+            hit = re.search(bad, con.buf)
+            if hit:
+                print(f"FAIL  the installed system did not boot: {hit.group(1)!r} on its console. "
+                      f"Transcript in {evidence}/boot-console.log")
+                return 1
+            if re.search(good, con.buf):
+                print("OK  the installed disk booted with no ISO attached")
+                return 0
+            if proc.poll() is not None:
+                print("FAIL  the installed system's VM exited without booting. Transcript in "
+                      f"{evidence}/boot-console.log")
+                return 1
+        print(f"FAIL  the installed disk printed nothing recognisable within {timeout}s -- neither a "
+              f"login, a systemd target, nor an error. Transcript in {evidence}/boot-console.log")
+        return 1
     finally:
         log.close()
         if proc.poll() is None:
@@ -240,6 +341,8 @@ def main():
     ap.add_argument("--memory", type=int, default=4096)
     ap.add_argument("--cpus", type=int, default=4)
     ap.add_argument("--timeout", type=int, default=3600)
+    ap.add_argument("--boot-timeout", type=int, default=600,
+                    help="how long the INSTALLED disk gets to reach a login or a systemd target")
     ap.add_argument("--evidence-dir", default="")
     ap.add_argument("--usb", action="store_true",
                     help="attach the ISO as a USB disk instead of a CD-ROM — the medium people "
@@ -269,10 +372,15 @@ def main():
     with tempfile.TemporaryDirectory(prefix="pc-install-sock-") as td:
         rc = install(args.iso, disk, td, evidence, args.timeout, args.memory, args.cpus,
                      args.usb)
-    if rc:
-        return rc
-    print(f"OK  PosterChanOS installed from {Path(args.iso).name} onto a blank UEFI disk "
-          f"({disk}); console transcript in {evidence}/install-console.log")
+        if rc:
+            return rc
+        print(f"OK  PosterChanOS installed from {Path(args.iso).name} onto a blank UEFI disk "
+              f"({disk}); console transcript in {evidence}/install-console.log")
+        # AND THEN IT BOOTS IT, which is what this file has always claimed to do. See boot_installed.
+        rc = boot_installed(disk, td, Path(evidence, "OVMF_VARS.fd"), evidence,
+                            args.boot_timeout, args.memory, args.cpus)
+        if rc:
+            return rc
     if not args.keep_disk and not args.disk:
         disk.unlink(missing_ok=True)
     return 0
