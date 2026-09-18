@@ -19,6 +19,34 @@ def _fake(path: Path, name: str, body: str):
     target.chmod(0o755)
 
 
+def _graphics(tmp_path, driver="i915"):
+    """A fabricated /sys for the session's GPU probe.
+
+    The script now decides things from the graphics hardware — whether to rescue before launching,
+    and whether to retry in software — so a harness that let it read the TEST MACHINE's /sys would
+    behave one way here and another on a headless runner. One healthy card, no NVIDIA device.
+    """
+    root = tmp_path / "sys"
+    (root / "drivers" / driver).mkdir(parents=True, exist_ok=True)
+    card = root / "drm" / "card0" / "device"
+    card.mkdir(parents=True, exist_ok=True)
+    link = card / "driver"
+    if not link.exists():
+        link.symlink_to(root / "drivers" / driver)
+    (root / "pci").mkdir(parents=True, exist_ok=True)
+    (root / "modules").write_text(f"{driver} 1 0 - Live 0x0\n", encoding="utf-8")
+    (root / "cmdline").write_text("root=live:CDLABEL=PCLIVE\n", encoding="utf-8")
+    return {"PC_DRM_ROOT": str(root / "drm"), "PC_PCI_ROOT": str(root / "pci"),
+            "PC_PROC_MODULES": str(root / "modules"), "PC_PROC_CMDLINE": str(root / "cmdline")}
+
+
+# What the calls file holds for a session that launched Wayfire `n` times and then gave up. A failed
+# attempt is retried ONCE with software rendering before the console — see the retry in the script.
+def _attempts(tmp_path, n=1):
+    line = f"wayfire:wayfire:-c {tmp_path}/runtime/posterchan-wayfire.ini"
+    return [line] * n + ["rescue"]
+
+
 def _run(tmp_path, selected=None, wayfire_status=0, wayfire_body=None, restarting=False):
     bindir = tmp_path / "bin"
     home = tmp_path / "home"
@@ -39,7 +67,7 @@ def _run(tmp_path, selected=None, wayfire_status=0, wayfire_body=None, restartin
     env = os.environ | {"PATH": f"{bindir}:/usr/bin:/bin", "HOME": str(home),
                         "XDG_RUNTIME_DIR": str(runtime),
                         "PC_WAYFIRE_HEALTH": str(bindir / "pc-wayfire-health"),
-                        "PC_RESCUE_SHELL": str(bindir / "bash")}
+                        "PC_RESCUE_SHELL": str(bindir / "bash")} | _graphics(tmp_path)
     if selected:
         env["PC_COMPOSITOR"] = selected
     # THE SUPERVISION LOOP POLLS AT ONE-SECOND GRANULARITY, so these runs are inherently seconds
@@ -96,7 +124,7 @@ def test_wayfire_failure_leaves_a_console_that_says_why(tmp_path):
     NON-login shell (which cannot re-read ~/.bash_profile) rather than exiting."""
     done, calls = _run(tmp_path, "wayfire", wayfire_status=23)
     assert done.returncode == 0
-    assert calls == [f"wayfire:wayfire:-c {tmp_path}/runtime/posterchan-wayfire.ini", "rescue"]
+    assert calls == _attempts(tmp_path, 2)
     log = tmp_path / "home/.local/state/posterchanos/compositor-fallback.log"
     assert "status 23" in log.read_text(encoding="utf-8")
     src = LAUNCHER.read_text(encoding="utf-8")
@@ -116,7 +144,7 @@ exit 7
 """
     done, calls = _run(tmp_path, "wayfire", wayfire_body=body)
     assert done.returncode == 0
-    assert calls == [f"wayfire:wayfire:-c {tmp_path}/runtime/posterchan-wayfire.ini", "rescue"]
+    assert calls == _attempts(tmp_path, 2)
     runtime = tmp_path / "runtime"
     assert not (runtime / "posterchan-wayfire-ready").exists()
     assert not (runtime / "posterchan-wayfire-shell.pid").exists()
@@ -146,7 +174,7 @@ while :; do sleep 0.1; done
 """
     done, calls = _run(tmp_path, "wayfire", wayfire_body=body)
     assert done.returncode == 0
-    assert calls == [f"wayfire:wayfire:-c {tmp_path}/runtime/posterchan-wayfire.ini", "rescue"]
+    assert calls == _attempts(tmp_path, 1)  # the session STOPPED this one (status 0) — nothing to retry
 
 
 
@@ -164,7 +192,7 @@ while :; do sleep 0.1; done
     done, calls = _run(tmp_path, "wayfire", wayfire_body=body)
     elapsed = time.monotonic() - started
     assert done.returncode == 0
-    assert calls == [f"wayfire:wayfire:-c {tmp_path}/runtime/posterchan-wayfire.ini", "rescue"]
+    assert calls == _attempts(tmp_path, 1)  # the session STOPPED this one (status 0) — nothing to retry
     assert elapsed >= 1.0, "Wayfire was killed when the first shell generation exited"
 
 

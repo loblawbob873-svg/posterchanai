@@ -336,6 +336,42 @@ LICENSED_PACKAGES=("x11-drivers/nvidia-drivers NVIDIA-r2")
 # `options nvidia-drm modeset=1`, which is what wlroots needs and what the ebuild says is now
 # the default. Adding either by hand would be a second copy of a rule upstream already owns.
 PINNED_PACKAGES=(">=x11-drivers/nvidia-drivers-581")
+# ...AND THE PACKAGE'S OWN BLACKLIST WAS NOT ENOUGH ON THE LIVE IMAGE, MEASURED ON REAL HARDWARE.
+#
+# The paragraph above is still true and still the reason we add no second copy of `blacklist
+# nouveau` or `options nvidia-drm modeset=1` -- both were verified present in the shipped ISO, in
+# the squashfs AND inside the live initramfs (dracut reads /usr/lib/dracut/dracut.conf.d even with
+# `--conf /dev/null`, so nvidia-drivers' own `install_items+=" /etc/modprobe.d/nvidia.conf "`
+# applied). The image ships all five nvidia modules built for its own kernel, the full userspace
+# (libEGL_nvidia, the nvidia-drm GBM backend, the glvnd and EGL-external-platform json) and gp107
+# firmware. Nothing was missing.
+#
+# It still came up on nouveau. Photographed off the failing machine:
+#
+#   NVRM: GPU 0000:01:00.0 is already bound to nouveau.
+#   NVRM: The NVIDIA probe routine was not called for 1 device(s).
+#   NVRM: No NVIDIA devices probed.
+#
+# `blacklist` in modprobe.d only refuses a module asked for by ALIAS; it is advice to modprobe, and
+# whatever loaded nouveau on that machine did not take it. The kernel's own `module_blacklist=` is
+# not advice -- `load_module()` refuses the name outright, from every caller -- so the LIVE boot
+# entry carries it, and the live initramfs stops carrying nouveau.ko at all, the same omission the
+# installed path has always made. Two mechanisms, one cause, both written HERE so they cannot drift
+# apart the way a copied rule does.
+#
+# `modprobe.blacklist=` was the obvious spelling and would have done NOTHING: grepping the shipped
+# vmlinuz finds `module_blacklist` and not `modprobe.blacklist`, and the shipped initramfs has no
+# handler for it either. It is a dracut-distro convention, not a parameter of this kernel.
+#
+# THE HARD BLACKLIST IS THE DEFAULT ENTRY, NOT THE ONLY ENTRY. A kernel-blacklisted module cannot be
+# loaded later even deliberately, and this profile deliberately does not support pre-Maxwell cards
+# (see the ruling in project_nvidia_pascal_pin) -- so the menu also offers the exact opposite, where
+# the nvidia modules are blacklisted instead and the session loads nouveau by name. That is the way
+# out for a card 580 cannot drive, and it costs one menu line rather than a conditional blacklist.
+PC_DRACUT_OMIT_NOUVEAU='omit_drivers+=" nouveau "'
+PC_LIVE_GPU_CMDLINE='module_blacklist=nouveau'
+PC_LIVE_NOUVEAU_CMDLINE='module_blacklist=nvidia,nvidia_drm,nvidia_modeset,nvidia_uvm pc.gpu=nouveau'
+PC_LIVE_SOFTWARE_CMDLINE="$PC_LIVE_GPU_CMDLINE pc.gpu=software"
 MASKED_PACKAGES+=(www-apps/jellyfin-bin app-admin/vaultwarden dev-util/nvidia-cuda-toolkit www-apps/radicale www-apps/vaultwarden-web www-apps/radicale net-misc/owncloud-client net-libs/libre-graph-api-cpp-qt-client media-video/obs-studio net-misc/sunshine dev-util/sh net-misc/moonlight app-admin/bitwarden-desktop-bin net-im/element-desktop-bin net-misc/nyx net-libs/stem sys-libs/libudev-compat dev-libs/nss dev-libs/libappindicator media-video/ffmpeg games-util/game-device-udev-rules games-util/steam-launcher net-im/telegram-desktop-bin)
 MASKED_PACKAGES+=(=gui-wm/gamescope-3.16.25-r1)
 
@@ -518,7 +554,11 @@ decryptBoot() {
 	echo
 	printf '%s' "$DISK_PASSWORD" | cryptsetup luksAddKey "$1" /boot/$KEYFILE || return 1
 	echo "install_items+=\" /boot/unlock.sh /boot/$KEYFILE \"" >>/etc/dracut.conf
-	echo "omit_drivers+=\" nouveau \"" >>/etc/dracut.conf
+	# The installed system's half of "nouveau must not reach the card before nvidia does". The live
+	# image's half is in liveCD() below; both spell it with PC_DRACUT_OMIT_NOUVEAU so the two cannot
+	# drift — this one existing while the live one did NOT is exactly how the ISO shipped an
+	# initramfs carrying nouveau.ko.
+	echo "$PC_DRACUT_OMIT_NOUVEAU" >>/etc/dracut.conf
 
 	sed -i "s/none/\/boot\/$KEYFILE/" /etc/crypttab
 	echo "#!/bin/bash" >/boot/unlock.sh
@@ -4250,6 +4290,15 @@ DESKTOP
 	# has a hard dependency on the crypt module deliberately omitted for a public live image. Omit
 	# both sides: the empty configuration is what keeps the host keyfile out.
 	mkdir -p "$WORK/dracut.conf.d"
+	# ...AND ONE RULE OF OUR OWN GOES BACK IN: KEEP NOUVEAU OUT OF THE LIVE INITRAMFS.
+	#
+	# The empty confdir above is about not inheriting this machine's boot secrets, and it was read as
+	# "the live image needs no dracut policy at all". It needs exactly one. nvidia-drivers omits its
+	# own five modules from every initramfs and installs its modprobe.d blacklist into them, so the
+	# shipped ISO's initrd contained nouveau.ko and a blacklist that is only advice — and on real
+	# NVIDIA hardware nouveau took the card before the real root existed. The installed path has
+	# omitted nouveau since the LUKS work; this is the same line, from the same variable.
+	printf '%s\n' "$PC_DRACUT_OMIT_NOUVEAU" >"$WORK/dracut.conf.d/10-posterchan-live.conf"
 	# systemd 258's initrd switch-root fallback loops forever when dmsquash-live's writable root is
 	# backed by mounts below /run: pivot_root returns EINVAL, then the cleanup walker repeatedly sees
 	# /sysroot/run/rootfsbase and never reaches the real root.  Dracut's traditional init performs
@@ -4276,6 +4325,11 @@ DESKTOP
 	# `root=live:CDLABEL=…` is how dmsquash-live finds the medium, so the label here and the one
 	# passed to grub-mkrescue below MUST match — a mismatch boots to a dracut shell with no clue
 	# as to why.
+	# EVERY ENTRY CARRIES A GPU DECISION, because a boot menu whose entries disagree about the
+	# graphics driver is a machine that boots differently depending on which line you picked to see
+	# more log. `$PC_LIVE_GPU_CMDLINE` is the default one (nouveau refused by the kernel); the last
+	# two are the escape hatches the rescue screen names by title, so the words on screen and the
+	# words in the menu have to stay the same words.
 	cat >"$WORK/iso/boot/grub/grub.cfg" <<GRUB
 set default=0
 set timeout=5
@@ -4286,15 +4340,30 @@ menuentry "PosterChan Live" {
     # "Failed to isolate default target" under KVM, while the identical non-quiet boot reaches the
     # first-run desktop.  A visible boot log is preferable to an installer that sometimes never
     # starts, and also leaves an actionable error on screen if real hardware cannot boot.
-    linux /boot/vmlinuz root=live:CDLABEL=$LABEL rd.live.image rd.live.dir=LiveOS rd.live.squashimg=squashfs.img console=tty0 console=ttyS0,115200n8
+    linux /boot/vmlinuz root=live:CDLABEL=$LABEL rd.live.image rd.live.dir=LiveOS rd.live.squashimg=squashfs.img $PC_LIVE_GPU_CMDLINE console=tty0 console=ttyS0,115200n8
     initrd /boot/initramfs.img
 }
 menuentry "PosterChan Live (verbose)" {
-    linux /boot/vmlinuz root=live:CDLABEL=$LABEL rd.live.image rd.live.dir=LiveOS rd.live.squashimg=squashfs.img rd.debug console=tty0 console=ttyS0,115200n8
+    linux /boot/vmlinuz root=live:CDLABEL=$LABEL rd.live.image rd.live.dir=LiveOS rd.live.squashimg=squashfs.img $PC_LIVE_GPU_CMDLINE rd.debug console=tty0 console=ttyS0,115200n8
     initrd /boot/initramfs.img
 }
 menuentry "PosterChan Live (copy to RAM)" {
-    linux /boot/vmlinuz root=live:CDLABEL=$LABEL rd.live.image rd.live.dir=LiveOS rd.live.squashimg=squashfs.img rd.live.ram=1 console=tty0 console=ttyS0,115200n8
+    linux /boot/vmlinuz root=live:CDLABEL=$LABEL rd.live.image rd.live.dir=LiveOS rd.live.squashimg=squashfs.img $PC_LIVE_GPU_CMDLINE rd.live.ram=1 console=tty0 console=ttyS0,115200n8
+    initrd /boot/initramfs.img
+}
+menuentry "PosterChan Live (open-source NVIDIA driver)" {
+    # For an NVIDIA card the proprietary 580 branch cannot drive — anything older than Maxwell, or a
+    # card whose module refuses to load on this kernel.  The nvidia modules are refused instead and
+    # the session loads nouveau by name (the packaged modprobe.d blacklist only stops udev loading
+    # it by alias, which is precisely what makes this entry possible).
+    linux /boot/vmlinuz root=live:CDLABEL=$LABEL rd.live.image rd.live.dir=LiveOS rd.live.squashimg=squashfs.img $PC_LIVE_NOUVEAU_CMDLINE console=tty0 console=ttyS0,115200n8
+    initrd /boot/initramfs.img
+}
+menuentry "PosterChan Live (software rendering)" {
+    # The card is there and its GL stack will not come up.  llvmpipe over the same DRM device draws,
+    # slowly.  The session reaches this on its own after one failed attempt; the entry exists for the
+    # machine where the first attempt is what hangs.
+    linux /boot/vmlinuz root=live:CDLABEL=$LABEL rd.live.image rd.live.dir=LiveOS rd.live.squashimg=squashfs.img $PC_LIVE_SOFTWARE_CMDLINE console=tty0 console=ttyS0,115200n8
     initrd /boot/initramfs.img
 }
 GRUB

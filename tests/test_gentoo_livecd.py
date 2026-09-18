@@ -147,7 +147,12 @@ class LiveCD(unittest.TestCase):
         grub_start = self.code.index('menuentry "PosterChan Live"')
         grub = self.code[grub_start:self.code.index("\nGRUB", grub_start)]
         linux = [line for line in grub.splitlines() if line.lstrip().startswith("linux ")]
-        self.assertEqual(len(linux), 3)
+        # EVERY entry, however many there are. This was a literal 3 and the menu grew a graphics
+        # escape hatch; a count is not the rule, "no entry boots without a serial console" is, and
+        # the count made adding an entry look like a broken test rather than an unchecked one.
+        self.assertGreaterEqual(len(linux), 3, grub)
+        self.assertEqual(len(linux), grub.count("menuentry "),
+                         "an entry with no `linux` line, or two kernels in one entry")
         for line in linux:
             self.assertIn("console=tty0", line)
             self.assertIn("console=ttyS0,115200n8", line)

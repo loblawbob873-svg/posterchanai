@@ -30,6 +30,11 @@ therefore the UNWHITELISTED device; `--gpu virtio` is available for comparison.
 
     PC_LIVECD_ISO=/path/to.iso scripts/check_livecd_session_ready.py
 
+`--gpu none` inverts the question: with no display device at all the session MUST give up, and the
+check is that it gives up in WORDS ("no display driver claimed the GPU") rather than in a number.
+That is the one half of the NVIDIA failure a VM can reproduce — to the compositor, a card taken by
+the wrong driver and a guest with no card are the same machine.
+
 Exit 0 the session declared itself ready, 1 it did not, **2 could not run** (no ISO, no qemu, no
 KVM) — a SKIP with its reason, never a pass.  KVM is required rather than optional: under TCG the
 Electron shell's startup on llvmpipe does not finish inside any timeout worth waiting for, and a
@@ -59,7 +64,17 @@ GAVE_UP = ("no desktop:", "the Wayfire session could not start")
 # The device models this understands, and what each one is for. `VGA` is QEMU's stdvga, which the
 # guest drives with bochs-drm: a real KMS device with no render node, i.e. the shape of a machine
 # whose GPU has no Mesa driver in the image.
-GPUS = {"vga": ["-device", "VGA"], "virtio": ["-device", "virtio-vga"]}
+# `none` is the shape of a machine whose GPU driver did not load: no display device at all, so no
+# DRM node for wlroots to open. It is the closest this repository can get to the NVIDIA failure that
+# nothing here can emulate — measured on the release ISO, an NVIDIA laptop whose card had been taken
+# by nouveau and a `-vga none` guest are the same thing to the compositor, and the old session
+# reported both as a number (`Found 0 GPUs` -> SIGSEGV -> status 255). With this device the session
+# is EXPECTED to give up; what is checked is that its reason is a sentence about the display driver.
+GPUS = {"vga": ["-device", "VGA"], "virtio": ["-device", "virtio-vga"], "none": ["-vga", "none"]}
+
+# The words the rescue screen owes a person whose GPU has no driver. Matched on the serial line,
+# which carries compositor-fallback.log's `no desktop:` copy of the same reason.
+NO_DRIVER = "no display driver claimed the GPU"
 
 ANSI = re.compile(r"\x1b\[[0-9;?]*[a-zA-Z]|\x1b\][0-9;]*[^\x07\x1b]*(?:\x07|\x1b\\)")
 
@@ -78,6 +93,9 @@ def skip(reason: str) -> int:
 
 
 def run(iso: Path, gpu: str, timeout: int, evidence: Path | None) -> int:
+    # With no display device the ONLY acceptable outcome is a legible refusal; coming up would mean
+    # the guest found a GPU this was meant to take away, and the check verified nothing.
+    expect_refusal = gpu == "none"
     qemu = shutil.which(os.environ.get("QEMU", "qemu-system-x86_64"))
     if not qemu:
         return skip("qemu-system-x86_64 is not installed here.")
@@ -138,6 +156,20 @@ def run(iso: Path, gpu: str, timeout: int, evidence: Path | None) -> int:
 
         if verdict == 2:
             return skip(detail)
+        if expect_refusal:
+            text = readable(serial)
+            if verdict == 0:
+                print("with no display device the session claimed to be ready — this check "
+                      "verified nothing about a machine with no DRM node.", file=sys.stderr)
+                return 1
+            if NO_DRIVER not in text:
+                print("the session gave up without naming the cause. A person in front of this "
+                      "machine needs %r, not an exit status:\n%s"
+                      % (NO_DRIVER, "\n".join("    " + l for l in text.splitlines()[-24:])),
+                      file=sys.stderr)
+                return 1
+            print("with no display device the session refused in words: " + NO_DRIVER)
+            return 0
         if verdict == 0:
             print("PosterChanOS live session came up on a %s GPU: %s" % (gpu, detail))
             return 0

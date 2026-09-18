@@ -62,6 +62,131 @@ describe_status() {
 	esac
 }
 
+# ---- WHICH DRIVER HAS THE GPU -----------------------------------------------------------------
+#
+# "WAYFIRE EXITED WITH STATUS 1" ON AN NVIDIA MACHINE WAS NOT A NUMBER PROBLEM, IT WAS A DRIVER
+# FIGHT, AND THE ANSWER WAS ALREADY ON THE SCREEN FOUR LINES ABOVE THE RESCUE TEXT.
+#
+# Photographed off a real NVIDIA laptop booting the 2026-09-13 ISO (the same image that reaches the
+# desktop on an AMD machine):
+#
+#   NVRM: GPU 0000:01:00.0 is already bound to nouveau.
+#   NVRM: The NVIDIA probe routine was not called for 1 device(s).
+#   NVRM: No NVIDIA devices probed.
+#   PosterChanOS: the Wayfire session could not start.
+#     reason: Wayfire exited with status 1 after Wayfire exiting on its own
+#
+# nouveau took the card, the proprietary module was refused it, and the screen reported an exit
+# status. Every fact needed to say that in one sentence is in `/sys` and in `dmesg`, and none of it
+# was read. These helpers read it; `pc_gpu_diagnosis` turns it into the sentence, and the rescue
+# screen prints both the sentence and the facts it came from.
+#
+# Roots are overridable so the decision can be driven over a fabricated /sys in a test -- the
+# failure this exists for happens on hardware nothing here can emulate, so the only way to check the
+# wording is to hand it the shapes.
+drm_root=${PC_DRM_ROOT:-/sys/class/drm}
+pci_root=${PC_PCI_ROOT:-/sys/bus/pci/devices}
+proc_modules=${PC_PROC_MODULES:-/proc/modules}
+
+# Every DRM device the kernel is actually driving, as "cardN driver". `card0-DP-1` is a CONNECTOR
+# and sits in the same directory under the same glob -- counted as a device it turns a machine with
+# one blank output into a machine with three GPUs.
+pc_drm_cards() {
+	for pc_card in "$drm_root"/card[0-9]*; do
+		[ -e "$pc_card" ] || continue
+		case "${pc_card##*/}" in *-*) continue ;; esac
+		# `readlink -f` on a link that is not there answers with the PATH, so an unbound device
+		# would report its driver as "driver". Ask whether it exists first.
+		pc_drv=''
+		[ ! -e "$pc_card/device/driver" ] || pc_drv=$(readlink -f "$pc_card/device/driver" 2>/dev/null)
+		printf '%s %s\n' "${pc_card##*/}" "${pc_drv##*/}"
+	done
+}
+
+# NVIDIA display devices, as "slot deviceid driver" -- vendor 0x10de and PCI class 0x03 (display).
+# Without the class filter this also matches the audio function every modern NVIDIA card carries,
+# which has no driver and would read as an unclaimed GPU on a perfectly healthy machine.
+pc_nvidia_pci() {
+	for pc_dev in "$pci_root"/*; do
+		[ -r "$pc_dev/vendor" ] || continue
+		IFS= read -r pc_v <"$pc_dev/vendor" 2>/dev/null || continue
+		[ "$pc_v" = 0x10de ] || continue
+		pc_c=''
+		[ ! -r "$pc_dev/class" ] || IFS= read -r pc_c <"$pc_dev/class" 2>/dev/null || pc_c=''
+		case "$pc_c" in 0x03*) ;; *) continue ;; esac
+		pc_id=''
+		[ ! -r "$pc_dev/device" ] || IFS= read -r pc_id <"$pc_dev/device" 2>/dev/null || pc_id=''
+		pc_drv=''
+		[ ! -e "$pc_dev/driver" ] || pc_drv=$(readlink -f "$pc_dev/driver" 2>/dev/null)
+		pc_drv=${pc_drv##*/}
+		printf '%s %s %s\n' "${pc_dev##*/}" "$pc_id" "${pc_drv:-none}"
+	done
+}
+
+pc_module_loaded() { grep -qs "^$1 " "$proc_modules"; }
+
+# THE ONE SENTENCE THE SCREEN OWES THE PERSON IN FRONT OF IT. Empty when nothing here is wrong --
+# an ordinary crash on a healthy GPU must not be dressed up as a driver problem.
+pc_gpu_diagnosis() {
+	pc_cards=$(pc_drm_cards)
+	pc_nv=$(pc_nvidia_pci)
+	pc_stolen='' pc_unclaimed=''
+	if [ -n "$pc_nv" ]; then
+		while read -r pc_slot pc_id pc_drv; do
+			[ -n "$pc_slot" ] || continue
+			case "$pc_drv" in
+				nvidia) ;;
+				nouveau) pc_stolen="${pc_stolen:+$pc_stolen }$pc_slot" ;;
+				*) pc_unclaimed="${pc_unclaimed:+$pc_unclaimed }$pc_slot" ;;
+			esac
+		done <<-PC_NV_EOF
+		$pc_nv
+		PC_NV_EOF
+	fi
+	if [ -n "$pc_stolen" ]; then
+		printf '%s' "the NVIDIA card at $pc_stolen was claimed by nouveau, so the proprietary NVIDIA driver was refused it (\"already bound to nouveau\" in dmesg). Reboot and pick \"PosterChan Live\" from the boot menu, which keeps nouveau off the card"
+		return 0
+	fi
+	if [ -z "$pc_cards" ]; then
+		if [ -n "$pc_unclaimed" ]; then
+			printf '%s' "no display driver claimed the GPU: the NVIDIA card at $pc_unclaimed has no kernel driver bound and this machine has no DRM device at all, so there is nothing for the compositor to open. The proprietary driver did not load for this kernel; reboot and pick \"PosterChan Live (open-source NVIDIA driver)\" from the boot menu"
+		else
+			printf '%s' "no display driver claimed the GPU — this machine has no DRM device at all, so there is nothing for the compositor to open"
+		fi
+		return 0
+	fi
+	return 0
+}
+
+# The measurements the sentence was made from, printed underneath it so a photograph of the screen
+# is a complete report and the next question is not "what does dmesg say".
+pc_gpu_facts() {
+	pc_cards=$(pc_drm_cards)
+	printf '%s\n' "  --- graphics ---"
+	if [ -n "$pc_cards" ]; then
+		printf '%s\n' "$pc_cards" | sed 's/^/  drm: /'
+	else
+		printf '%s\n' "  drm: (no DRM device — nothing for a compositor to open)"
+	fi
+	pc_nv=$(pc_nvidia_pci)
+	[ -z "$pc_nv" ] || printf '%s\n' "$pc_nv" | sed 's/^/  nvidia card: /'
+	pc_mods=''
+	for pc_m in nvidia nvidia_drm nouveau amdgpu i915 xe radeon; do
+		! pc_module_loaded "$pc_m" || pc_mods="${pc_mods:+$pc_mods }$pc_m"
+	done
+	printf '%s\n' "  modules: ${pc_mods:-(none of nvidia/nouveau/amdgpu/i915 loaded)}"
+	pc_nvrm=$(dmesg 2>/dev/null | grep -E 'NVRM|nouveau' | tail -n 5)
+	[ -z "$pc_nvrm" ] || printf '%s\n' "$pc_nvrm" | sed 's/^/  kernel: /'
+	printf '%s\n' "  ----------------"
+}
+
+# A seam for tests and for anybody asking this machine what it sees, like PC_UI_SCALE_PROBE below.
+if [ -n "${PC_GPU_PROBE:-}" ]; then
+	printf 'diagnosis: %s\n' "$(pc_gpu_diagnosis)"
+	pc_gpu_facts
+	exit 0
+fi
+
 rescue() {
 	printf '\n%s\n' "PosterChanOS: the Wayfire session could not start."
 	printf '%s\n' "  reason: $*"
@@ -87,6 +212,13 @@ rescue() {
 	else
 		printf '%s\n' "  (Wayfire was never started — the reason above was known before the attempt,"
 		printf '%s\n' "   so there is nothing in its log and nothing about this machine's graphics.)"
+	fi
+	# THE GRAPHICS FACTS, BUT ONLY WHERE THEY ARE FACTS ABOUT THIS FAILURE. The root refusal above
+	# stops before anything touches a GPU and must keep claiming nothing about one; `wayfire_started`
+	# and `pc_gpu_reason` are the two states in which the card is part of the story.
+	if [ -n "${wayfire_started:-}" ] || [ -n "${pc_gpu_reason:-}" ]; then
+		printf '\n'
+		pc_gpu_facts
 	fi
 	# AND THE RETRY LINE MUST NOT INVITE `sudo`, because sudo is the one way to make this fail
 	# again -- see the root check below. "The desktop will not start" and "try it with sudo" is a
@@ -284,7 +416,87 @@ pc_gtk_text_scale() {
 	printf 'Xft.dpi: %s\n' "$pc_dpi" | DISPLAY=${DISPLAY:-:0} xrdb -merge -
 ) >/dev/null 2>&1 &
 
+# ---- A DESKTOP ON THE DRIVER THAT ACTUALLY HAS THE CARD ---------------------------------------
+#
+# A RESCUE CONSOLE IS WORSE THAN A SLOWER DESKTOP, and on the machine this was written for the
+# difference was one `modprobe`. The default boot entry keeps nouveau off the card so the
+# proprietary driver can have it; `pc.gpu=nouveau` is the boot-menu entry that asks for the
+# opposite, and it needs an EXPLICIT modprobe because the nvidia-drivers package ships
+# `blacklist nouveau` in /etc/modprobe.d -- which stops udev loading it by ALIAS and does not stop
+# `modprobe nouveau` by name. That asymmetry is what makes the fallback possible at all.
+#
+# `pc.gpu=software` is the other entry: the card is there and its driver will not render.
+pc_cmdline=''
+[ ! -r "${PC_PROC_CMDLINE:-/proc/cmdline}" ] || IFS= read -r pc_cmdline <"${PC_PROC_CMDLINE:-/proc/cmdline}" 2>/dev/null || pc_cmdline=''
+pc_gpu_request=''
+for pc_arg in $pc_cmdline; do
+	case "$pc_arg" in pc.gpu=*) pc_gpu_request=${pc_arg#pc.gpu=} ;; esac
+done
+
+# modprobe needs root. The live account has passwordless sudo; an installed machine's user does not,
+# and a fallback that cannot run must fail quietly rather than stop the login.
+pc_try_modprobe() {
+	command -v modprobe >/dev/null 2>&1 || return 1
+	modprobe "$1" >/dev/null 2>&1 && return 0
+	command -v sudo >/dev/null 2>&1 || return 1
+	sudo -n modprobe "$1" >/dev/null 2>&1
+}
+
+# udev creates the DRM device a moment after the module lands, so "did that work" is a short wait,
+# not an immediate read.
+pc_wait_for_drm() {
+	pc_n=0
+	while [ "$pc_n" -lt "${1:-30}" ]; do
+		[ -z "$(pc_drm_cards)" ] || return 0
+		sleep 0.1
+		pc_n=$((pc_n + 1))
+	done
+	[ -n "$(pc_drm_cards)" ]
+}
+
+pc_gpu_reason=''
+case "$pc_gpu_request" in
+	nouveau)
+		if pc_module_loaded nouveau; then
+			note "boot menu asked for nouveau; it is already loaded."
+		elif pc_try_modprobe nouveau && pc_wait_for_drm 50; then
+			note "boot menu asked for nouveau; loaded it and a DRM device appeared."
+		else
+			note "boot menu asked for nouveau, but it could not be loaded on this machine."
+		fi
+		;;
+	software) PC_SOFTWARE_RENDER=1 ;;
+esac
+
+# NO DRM DEVICE IS THE ONE STATE NOTHING CAN COMPOSITE ON -- this kernel is built with
+# CONFIG_DRM_SIMPLEDRM unset, so there is no EFI-framebuffer device standing in for a GPU that did
+# not come up. Before giving up, try the open driver by name: on a machine whose proprietary module
+# was refused the card this is the whole difference between a desktop and a text console, and on the
+# boot entry that blacklists nouveau in the KERNEL it simply fails and costs a tenth of a second.
+if [ -z "$(pc_drm_cards)" ]; then
+	# Asked ONLY where it can help: a machine with an NVIDIA display device and nothing driving it.
+	# Reaching for nouveau on a box that has no NVIDIA card cannot produce a screen and would be a
+	# privileged action taken on a guess.
+	if [ -n "$(pc_nvidia_pci)" ] && pc_try_modprobe nouveau && pc_wait_for_drm 50; then
+		note "no DRM device at login; loading nouveau by name produced one."
+	else
+		pc_gpu_reason=$(pc_gpu_diagnosis)
+		rescue "${pc_gpu_reason:-no display driver claimed the GPU — this machine has no DRM device at all}"
+	fi
+fi
+
 if true; then
+	# The retry below re-execs this script with PC_SOFTWARE_RENDER set after a first attempt that
+	# died on a card its driver could not render with. Same three variables as the virtio path, whose
+	# llvmpipe route is the measured-good one; deliberately NOT WLR_RENDERER=pixman, which is slower
+	# than llvmpipe and is not what that path proved.
+	if [ -n "${PC_SOFTWARE_RENDER:-}" ]; then
+		export LIBGL_ALWAYS_SOFTWARE=1
+		export WLR_RENDERER_ALLOW_SOFTWARE=1
+		PC_SHELL_EXTRA_ARGS="${PC_SHELL_EXTRA_ARGS:+$PC_SHELL_EXTRA_ARGS }--use-angle=swiftshader --enable-unsafe-swiftshader"
+		export PC_SHELL_EXTRA_ARGS
+		note "software rendering for this attempt."
+	fi
 	# QEMU's non-GL virtio-vga exposes a DRM card but no accelerated VirGL context. Chromium's
 	# compositor aborts (SIGTRAP) when it tries that unusable render node. Keep physical GPUs and
 	# VirGL-capable guests accelerated; only the virtio device with no render-node capability uses
@@ -486,4 +698,27 @@ PC_SESSION_CONFIG_PY
 	fi
 fi
 
-rescue "Wayfire $(describe_status "${status:-}") after ${reason:-startup}"
+# ---- ONE RETRY, IN SOFTWARE, BEFORE A CONSOLE -------------------------------------------------
+#
+# A CARD WHOSE DRIVER WILL NOT RENDER IS NOT A MACHINE WITHOUT A DESKTOP. The measured NVIDIA
+# failure was nouveau holding the card; the family it belongs to is wider than that one cause --
+# any KMS device whose GL stack cannot come up gives wayfire a live DRM node and no renderer, and
+# the session's only answer was a text console. llvmpipe over the same DRM device is slow and it
+# draws, which is what the virtio path above has always relied on.
+#
+# ONCE, and only with a DRM device to draw on: retrying software rendering on a machine with no
+# card at all would just fail again, more slowly, and bury the reason. The re-exec is what makes it
+# one code path rather than a second copy of the launch -- and PC_SOFTWARE_RENDER is what stops it
+# recurring, since ~/.bash_profile's own boot-attempt guard never sees this.
+if [ -z "${PC_SOFTWARE_RENDER:-}" ] && [ "${status:-1}" -ne 0 ] && [ -n "$(pc_drm_cards)" ]; then
+	note "Wayfire $(describe_status "${status:-}") on this machine's graphics; retrying once with software rendering."
+	PC_SOFTWARE_RENDER=1
+	export PC_SOFTWARE_RENDER
+	if [ -x "$0" ]; then exec "$0"; else exec /bin/sh "$0"; fi
+fi
+
+pc_gpu_reason=$(pc_gpu_diagnosis)
+pc_final="Wayfire $(describe_status "${status:-}") after ${reason:-startup}"
+[ -z "${PC_SOFTWARE_RENDER:-}" ] || pc_final="$pc_final, and again with software rendering"
+[ -z "$pc_gpu_reason" ] || pc_final="$pc_final — $pc_gpu_reason"
+rescue "$pc_final"
