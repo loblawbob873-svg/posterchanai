@@ -21,7 +21,13 @@ set -eu
 # Per identity, writable without sudo, and protected by that identity's 0700 home. A setting under
 # /etc looked persistent but `pc-idle set` ran as the desktop user and could never create it.
 CONF="${PC_IDLE_CONF:-${XDG_CONFIG_HOME:-$HOME/.config}/posterchanos/idle}"
-DEFAULT=120                       # two minutes, which is what was asked for
+DEFAULT=600                       # TEN MINUTES. Two was wrong: pc-idle pushes this value LIVE into
+                                 # wayfire's idle plugin (wf_dpms below), so it OVERRIDES whatever
+                                 # dpms_timeout wayfire.ini carries -- the 600 set there was dead on
+                                 # arrival while this said 120. Measured on a 55" TV 2026-09-18: the
+                                 # screen powered off every 2 min (live value read back as 120), felt
+                                 # as the desktop "flashing / keeps disappearing". These two numbers
+                                 # must agree; wayfire.ini documents the intent, this enforces it.
 HOLD="${XDG_RUNTIME_DIR:-/run/user/$(id -u)}/posterchan-keep-awake"
 
 read_secs() {

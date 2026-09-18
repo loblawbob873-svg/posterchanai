@@ -1168,8 +1168,12 @@ class TheDisplayTurnsItselfOff(unittest.TestCase):
         self.assertIn("pc-idle", self.src[i:i + 300],
                       "pc-idle is started but never copied onto the machine")
 
-    def test_two_minutes_is_the_default(self):
-        self.assertIn("DEFAULT=120", self.idle)
+    def test_ten_minutes_is_the_default(self):
+        # Was DEFAULT=120 (two minutes), but pc-idle pushes this value LIVE into wayfire's idle
+        # plugin, so it OVERRIDES the dpms_timeout wayfire.ini documents as "TEN MINUTES, NOT TWO" —
+        # measured on a 55" TV, the screen powered off every 2 minutes. The two numbers must agree;
+        # this is the enforcing one.
+        self.assertIn("DEFAULT=600", self.idle)
 
     def test_the_timeout_is_read_from_a_file_not_baked_in(self):
         self.assertIn("PC_IDLE_CONF", self.idle)
