@@ -1275,7 +1275,26 @@ if [ -z "$WAYLAND_DISPLAY" ] && [ "$XDG_VTNR" = 1 ]; then
 	printf '%s %s\n' "$pc_boot_id" "$pc_attempts" >"$pc_guard"
 	if [ "$pc_attempts" -gt 2 ]; then
 		echo 'PosterChanOS stopped a graphical-session restart loop.'
-		echo "Diagnostics: $HOME/.local/state/posterchanos/wayfire.log"
+		# THE LOG IS PRINTED, NOT MERELY NAMED. pc-compositor-session's rescue() already
+		# follows that rule for a session that never STARTED; this is the path somebody
+		# reaches when the desktop comes up and then dies, which is the case that was
+		# actually reported -- "restarted desktop", three times, with no evidence attached
+		# any of them. Naming a path asks a person standing in front of a broken
+		# television to know to `cat` a file, on a live USB whose logs die with the boot.
+		# The reason is already written and costs nothing to show.
+		pc_wlog="$HOME/.local/state/posterchanos/wayfire.log"
+		pc_slog="$HOME/.config/posterchan-desktop/shell.log"
+		echo "Diagnostics: $pc_wlog"
+		if [ -s "$pc_wlog" ]; then
+			echo '--- last lines of wayfire.log ---'
+			tail -n 25 "$pc_wlog" 2>/dev/null
+			echo '---------------------------------'
+		fi
+		if [ -s "$pc_slog" ]; then
+			echo '--- last lines of shell.log ---'
+			tail -n 15 "$pc_slog" 2>/dev/null
+			echo '-------------------------------'
+		fi
 		return 0 2>/dev/null || exit 0
 	fi
 	exec /usr/local/bin/pc-compositor-session
@@ -2204,7 +2223,26 @@ if [ -z "$WAYLAND_DISPLAY" ] && [ "$XDG_VTNR" = 1 ]; then
 	printf '%s %s\n' "$pc_boot_id" "$pc_attempts" >"$pc_guard"
 	if [ "$pc_attempts" -gt 2 ]; then
 		echo 'PosterChanOS stopped a graphical-session restart loop.'
-		echo "Diagnostics: $HOME/.local/state/posterchanos/wayfire.log"
+		# THE LOG IS PRINTED, NOT MERELY NAMED. pc-compositor-session's rescue() already
+		# follows that rule for a session that never STARTED; this is the path somebody
+		# reaches when the desktop comes up and then dies, which is the case that was
+		# actually reported -- "restarted desktop", three times, with no evidence attached
+		# any of them. Naming a path asks a person standing in front of a broken
+		# television to know to `cat` a file, on a live USB whose logs die with the boot.
+		# The reason is already written and costs nothing to show.
+		pc_wlog="$HOME/.local/state/posterchanos/wayfire.log"
+		pc_slog="$HOME/.config/posterchan-desktop/shell.log"
+		echo "Diagnostics: $pc_wlog"
+		if [ -s "$pc_wlog" ]; then
+			echo '--- last lines of wayfire.log ---'
+			tail -n 25 "$pc_wlog" 2>/dev/null
+			echo '---------------------------------'
+		fi
+		if [ -s "$pc_slog" ]; then
+			echo '--- last lines of shell.log ---'
+			tail -n 15 "$pc_slog" 2>/dev/null
+			echo '-------------------------------'
+		fi
 		return 0 2>/dev/null || exit 0
 	fi
 	exec /usr/local/bin/pc-compositor-session
@@ -4275,7 +4313,26 @@ if [ -z "$WAYLAND_DISPLAY" ] && { [ "${XDG_VTNR:-}" = 1 ] || [ "$(tty)" = /dev/t
 	printf '%s %s\n' "$pc_boot_id" "$pc_attempts" >"$pc_guard"
 	if [ "$pc_attempts" -gt 2 ]; then
 		echo 'PosterChanOS stopped a graphical-session restart loop.'
-		echo "Diagnostics: $HOME/.local/state/posterchanos/wayfire.log"
+		# THE LOG IS PRINTED, NOT MERELY NAMED. pc-compositor-session's rescue() already
+		# follows that rule for a session that never STARTED; this is the path somebody
+		# reaches when the desktop comes up and then dies, which is the case that was
+		# actually reported -- "restarted desktop", three times, with no evidence attached
+		# any of them. Naming a path asks a person standing in front of a broken
+		# television to know to `cat` a file, on a live USB whose logs die with the boot.
+		# The reason is already written and costs nothing to show.
+		pc_wlog="$HOME/.local/state/posterchanos/wayfire.log"
+		pc_slog="$HOME/.config/posterchan-desktop/shell.log"
+		echo "Diagnostics: $pc_wlog"
+		if [ -s "$pc_wlog" ]; then
+			echo '--- last lines of wayfire.log ---'
+			tail -n 25 "$pc_wlog" 2>/dev/null
+			echo '---------------------------------'
+		fi
+		if [ -s "$pc_slog" ]; then
+			echo '--- last lines of shell.log ---'
+			tail -n 15 "$pc_slog" 2>/dev/null
+			echo '-------------------------------'
+		fi
 		return 0 2>/dev/null || exit 0
 	fi
 	exec /usr/local/bin/pc-compositor-session
