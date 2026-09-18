@@ -34,6 +34,14 @@
     <style name="PcAppTheme" parent="@android:style/Theme.DeviceDefault.NoActionBar">
         <item name="android:windowNoTitle">true</item>
         <item name="android:windowBackground">@android:color/black</item>
+        <!-- OPT OUT OF ANDROID 15 EDGE-TO-EDGE, exactly as AppTheme.NoActionBar does. Without this,
+             on targetSdk 35 the system forces the window under the navigation bar, and the native
+             phone activities that use this theme (the Dialer especially) draw their bottom row —
+             the call button, and the last keypad row — behind the gesture bar. Reported as "the
+             buttons are still cut off on the bottom row." These activities lay out with plain
+             LinearLayouts and android:fitsSystemWindows, which is the pre-15 contract; opting out
+             restores it so the bar sits below the content instead of over it. -->
+        <item name="android:windowOptOutEdgeToEdgeEnforcement" tools:targetApi="35">true</item>
     </style>
 
     <!-- One event line in the calendar widget. A STYLE rather than four copies of the same eight
