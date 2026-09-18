@@ -68,7 +68,19 @@ PAGE = (ROOT / "templates/client.html").read_text(encoding="utf-8")
 #: describes, but for ONE module that is worth a megabyte.
 BUDGET_MB = 9.2
 #: No single asset should be a surprise. app.js is 2.55 MB and is the reason this is not lower.
-BIGGEST_SINGLE_MB = 2.8
+# RAISED 2026-09-18, 2.80 -> 2.85, AND DELIBERATELY BY THE MEASURED AMOUNT AND NOT A ROUND NUMBER.
+#
+# app.js reached 2.82 MB when the Remote Desktop viewer gained real zoom (Fit / 1:1 / free, pointer
+# -anchored, panning) plus the host-side resolution request that stops a 4K desktop being encoded and
+# sent to a window that cannot show it — measured over a real WebRTC loopback at −56% bytes, −69%
+# encode, −72% decode. That is OUR OWN FEATURE CODE, which is the case this assertion's own message
+# exempts ("if this is a LIBRARY rather than our own code it belongs behind the on-demand loader").
+#
+# The ceiling is a DRIFT DETECTOR (see this module's docstring), so it is moved to just above what
+# was measured rather than given headroom: 2.85 leaves ~30 KB, so the next addition trips it too and
+# has to justify itself here. It is not licence to keep growing app.js — the docstring already
+# records that the reclaimable modules are gone and that the split was looked at and called off.
+BIGGEST_SINGLE_MB = 2.85
 
 
 def boot_assets():

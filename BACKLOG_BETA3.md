@@ -50,12 +50,28 @@ test, deployment/package, and relevant real-device check are complete. The insta
       file's own patch, and an unreadable diff is never treated as an empty one.
 - [ ] Terminal/editor never shrink when unfocused. Office, Preview, and Email maximize usable content,
       avoid decorative effects on documents, and open attachments through non-localhost URLs.
+      2026-09-18, measured: the TERMINAL half is IMPLEMENTED AND UNTESTED, which is the state this
+      backlog keeps finding. `static/js/client/term.js` already refuses a re-fit whose frame is not
+      `.focused` ("FOCUS MAY CHANGE Z-ORDER, NEVER TERMINAL GEOMETRY" — parking the shared feed fires
+      ResizeObserver with a temporary size, and fitting there sends SIGWINCH and visibly rewraps a
+      background shell) and additionally dedups on pixel geometry so a reattach that changes nothing
+      cannot move the PTY grid. NOTHING EXERCISES EITHER RULE: `scripts/check_terminal_resize.py`
+      covers desktop→phone→desktop and contains no reference to focus, and it calls `fit.fit()`
+      directly rather than term.js's guarded path, so a test added there would measure FitAddon and
+      not the guard. A real test has to drive the shipped client with two windows.
+      The EDITOR half is not implemented: no focus check exists in `code.js` or `office.js`.
 - [ ] Virtual Machines start attached installer media, show their display, eject media, and boot the
       installed system.
 - [ ] Remote Desktop follow-ups after Beta 3: monitor picker clarity, viewer scaling/quality, accurate
       cursor capture/control, self-device autoapproval, full-screen and ordinary window behavior.
 - [ ] System Settings is reorganized into real separated sections without dashboard widgets mixed
-      into forms; LiveUSB remains a coherent section. Posterfetch lists actual AMD GPU models.
+      into forms; LiveUSB remains a coherent section. ~~Posterfetch lists actual AMD GPU models.~~
+      2026-09-18: the POSTERFETCH half was already done and is measured. `desktop/posterfetch.js`
+      resolves each card's PCI vendor:device against the shipped `pci.ids` instead of printing the
+      driver name — its own comment says this exists so as not to "tell every AMD owner that their
+      GPU is `amdgpu`" — and reads `/sys/class/drm/card*/device`, one row per primary GPU.
+      Evidence: `tests/test_posterfetch.py`, 20 passing, 20 assertions naming real AMD models.
+      The System Settings half is untouched.
 - [ ] Social refreshes after offline without destroying open replies/place; newly opened Social starts
       at top; timeline has a desktop scrollbar; article images have bounded height.
       2026-09-09: the last three were already implemented and now have MEASURED tests (rendered
