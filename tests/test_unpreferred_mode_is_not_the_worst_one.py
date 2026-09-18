@@ -137,5 +137,67 @@ class UnpreferredMode(unittest.TestCase):
             "the mode fix is not run in the background after the compositor starts")
 
 
+
+class TheEscapeHatchIsReachable(unittest.TestCase):
+    """AN OPT-OUT NOBODY CAN REACH IS NOT AN OPT-OUT.
+
+    The fix shipped with `PC_NO_MODE_FIX=1` as its escape — an environment variable. The moment that
+    escape exists for is somebody standing at a boot menu in front of a machine whose desktop will
+    not settle, and at that moment they cannot set an environment variable at all. Reported
+    2026-09-18 as a desktop that "keeps reloading" on the very TV this fix targets, with no way to
+    turn it off from the boot line.
+    """
+
+    def test_the_boot_line_can_turn_the_mode_fix_off(self):
+        self.assertIn("pc.nomodefix", SESSION,
+                      "the mode override cannot be disabled from the kernel command line")
+        # It must be parsed in the SAME loop that reads pc.gpu=, so both are available at the point
+        # the session decides what to do — not after it has already acted.
+        loop = SESSION[SESSION.index("for pc_arg in $pc_cmdline; do"):]
+        loop = loop[:loop.index("\ndone")]
+        self.assertIn("pc.gpu=", loop)
+        self.assertIn("pc.nomodefix", loop)
+        self.assertIn("PC_NO_MODE_FIX", loop,
+                      "the boot-line flag does not set the variable the fix actually checks")
+
+    def test_setting_it_actually_suppresses_the_override(self):
+        """RUN the guard: the flag has to reach the function that would change the mode."""
+        fn = SESSION[SESSION.index("pc_fix_unpreferred_modes() {"):]
+        fn = fn[:fn.index("\n}\n") + 3]
+        self.assertRegex(fn, r'\[ -z "\$\{PC_NO_MODE_FIX:-\}" \] \|\| return 0',
+                         "pc_fix_unpreferred_modes does not check the opt-out first")
+
 if __name__ == "__main__":
     unittest.main()
+
+
+class ItIsOptInNotDefault(unittest.TestCase):
+    """A GUESS ABOUT SOMEBODY'S DISPLAY MUST NOT BE THE DEFAULT.
+
+    "No preferred mode" means the panel did not say which mode it wants; picking the LARGEST is a
+    guess. On the first real machine this ran on it was the wrong one — reported 2026-09-18 as a
+    desktop "only showing in the center of the TV and super high", an output at a resolution the
+    panel displays unscaled. The 640x480 it replaced was ugly and FILLED THE SCREEN. Worse than the
+    bug, and shipped without ever running on a display that has the fault it targets.
+
+    The rule, the narrowing and the tests above are all still right. What was wrong was the default.
+    """
+
+    def test_it_does_nothing_unless_explicitly_asked(self):
+        fn = SESSION[SESSION.index("pc_fix_unpreferred_modes() {"):]
+        fn = fn[:fn.index("\n}\n") + 3]
+        self.assertRegex(fn, r'\[ -n "\$\{PC_MODE_FIX:-\}" \] \|\| return 0',
+                         "the mode override still runs by default — it is a guess about hardware "
+                         "nobody here can see, and it must be asked for")
+
+    def test_both_switches_are_reachable_from_the_boot_line(self):
+        loop = SESSION[SESSION.index("for pc_arg in $pc_cmdline; do"):]
+        loop = loop[:loop.index("\ndone")]
+        self.assertIn("pc.modefix", loop, "no way to turn it ON from the boot menu")
+        self.assertIn("pc.nomodefix", loop, "no way to turn it OFF from the boot menu")
+
+    def test_turning_it_on_still_produces_the_measured_answer(self):
+        """Opt-in must not mean untested: the chooser still picks the TV's largest mode."""
+        lines = UnpreferredMode.decide(UnpreferredMode(), TV)
+        self.assertEqual(1, len(lines), lines)
+        self.assertTrue(lines[0].startswith("DP-5 1920x1080"), lines)

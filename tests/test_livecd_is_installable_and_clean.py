@@ -1118,3 +1118,38 @@ class TheImageCarriesTheInstallerThatBuiltIt(unittest.TestCase):
         self.assertIn("/usr/local/share/posterchanos/gentoo.sh", fn)
         self.assertIn("/usr/bin/gentoo.sh", fn)
         self.assertIn("PCOS_TREE", fn)
+
+
+class TheLiveConsoleSaysHowToGetHelp(unittest.TestCase):
+    """THE LOCKED ACCOUNT IS RIGHT; BEING UNDISCOVERABLE IS NOT.
+
+    `live` ships with `!` in /etc/shadow on purpose — a disc anybody can pick up must not be
+    reachable over ssh. But a machine whose desktop will not start then cannot be diagnosed
+    remotely either, and on 2026-09-17/18 that cost hours: every round of "what does the screen
+    say" went through a person reading a TV across the room, and the one command that opens a door
+    (`echo 'live:...' | sudo chpasswd`) was known only to whoever had read gentoo.sh.
+
+    Printing a sentence sets no password and weakens nothing. The operator opts in deliberately, on
+    a session they are sitting in front of.
+    """
+
+    def test_the_image_writes_a_motd(self):
+        src = GENTOO.read_text()
+        self.assertIn('pseudoput "etc/motd"', src,
+                      "the live console offers no instructions at all")
+
+    def test_it_names_both_the_install_and_the_remote_help_command(self):
+        src = GENTOO.read_text()
+        block = src[src.index('>"$WORK/live-motd"') - 900:src.index('>"$WORK/live-motd"')]
+        self.assertIn("install-live", block, "the motd does not say how to install")
+        self.assertIn("chpasswd", block,
+                      "the motd does not say how to enable remote help, which is the whole point")
+
+    def test_it_sets_no_password_itself(self):
+        """The default stays locked: the motd INSTRUCTS, it does not act."""
+        src = GENTOO.read_text()
+        i = src.index('>"$WORK/live-motd"')
+        block = src[i - 900:i]
+        self.assertNotIn("| sudo chpasswd\n", block.replace("printf", ""),
+                         "the image is setting a live password rather than describing how")
+        self.assertIn("live:!:", src, "the live account is no longer shipped locked")

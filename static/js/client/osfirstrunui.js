@@ -45,6 +45,20 @@
    * can hold a machine for ever, and it holds the machine that most needs a way past it. */
   const KEY_NETWORK_SKIP = 'pc_fr_network_skipped';
   let _netWatch = 0;
+  /* THE WATCHER MUST NOT REBUILD THE SCREEN SOMEBODY IS TYPING INTO.
+   *
+   * Reported from a live boot: "it keeps reloading the password dialog then it reloaded the Join a
+   * network screen", and "stopped responding to clicking the access point". One cause. The network
+   * card polls `net.status()` every two seconds and calls `run()` the moment it sees `online`, and
+   * `run()` TEARS DOWN AND REBUILDS the card — including the access-point buttons whose handlers are
+   * bound to those exact elements. A password prompt is an await in the middle of that: associating
+   * with an AP can report online before the join completes (and a flapping link reports it more than
+   * once), so the rebuild lands underneath the dialog, the typed password goes nowhere, and every
+   * button the user was clicking has been replaced by a new one.
+   *
+   * So the poll stands down while a join is in flight. It is not disabled — an ethernet cable coming
+   * up late is exactly what it exists for — it simply does not act while the person is mid-answer. */
+  let _netBusy = false;
   const get = (k) => { try{ return localStorage.getItem(k); }catch(_){ return null; } };
   const set = (k, v) => { try{ localStorage.setItem(k, v); }catch(_){} };
 
@@ -253,6 +267,7 @@
     try{ clearInterval(_netWatch); }catch(_){}
     _netWatch = setInterval(async () => {
       if(!_el || !_el.contains(card)){ try{ clearInterval(_netWatch); }catch(_){} _netWatch = 0; return; }
+      if(_netBusy) return;   /* somebody is typing a password into this card — see _netBusy */
       let s = null;
       try{ s = await net.status(); }catch(_){ return; }
       if(s && s.online){
@@ -288,19 +303,24 @@
     box.querySelectorAll('[data-ssid]').forEach(b => b.onclick = async () => {
       const ssid = b.dataset.ssid;
       let pw = '';
+      _netBusy = true;   /* held until this join settles, one way or the other */
       if(b.dataset.sec){
         /* The app's own prompt, never `window.prompt` — that dialog does not exist in a WebView and
          * wedges Electron's focus, on the one screen a new machine cannot get past without typing. */
         try{ pw = await PC().uiPrompt('Password for ' + ssid, { password: true, ok: 'Join' }); }
         catch(_){ pw = null; }
-        if(pw === null) return;
+        if(pw === null){ _netBusy = false; return; }
       }
       b.disabled = true;
       say('joining ' + ssid + '…');
       try{
         const r = await net.connect(ssid, pw);
-        if(!r || r.ok === false){ say((r && r.why) || 'could not join ' + ssid); b.disabled = false; return; }
-      }catch(e){ say(String((e && e.message) || e)); b.disabled = false; return; }
+        if(!r || r.ok === false){
+          say((r && r.why) || 'could not join ' + ssid); b.disabled = false; _netBusy = false; return;
+        }
+      }catch(e){ say(String((e && e.message) || e)); b.disabled = false; _netBusy = false; return; }
+      /* Joined. run() rebuilds deliberately now, and the flag is cleared for whatever comes next. */
+      _netBusy = false;
       run();
     });
   }

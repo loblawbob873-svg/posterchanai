@@ -20,7 +20,7 @@ IUSE="monero gamescope"
 # Everything the session needs to be a desktop rather than a compositor with one window in it.
 RDEPEND="
 	>=dev-lang/python-3.10
-	>=app-misc/posterchan-desktop-1.0.1624
+	>=app-misc/posterchan-desktop-1.0.1625
 	dev-vcs/ngit
 	>=gui-wm/wayfire-0.10.1-r2
 	>=gui-libs/posterchan-wayfire-shell-1.0.1-r5

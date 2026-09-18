@@ -369,9 +369,17 @@ def boot_installed(disk, serial_dir, vars_copy, evidence, timeout, memory, cpus)
         # or the shell's readiness are both acceptable; the emergency shell, a cryptsetup failure and
         # silence are not -- and "Failed to start Cryptography Setup" is named because that is the
         # sentence a real machine printed while every gate was green.
-        good = r"(login:|pc-shell|posterchan|Reached target|Startup finished)"
+        # WHAT COUNTS AS BOOTED, NARROWED — `Reached target` used to be in here and it is printed on
+        # the way INTO an emergency shell as readily as into a desktop. Measured 2026-09-18: a guest
+        # whose kernel had no dm-crypt module failed with `unknown target type: crypt`, reached
+        # several targets on its way to emergency mode, and this check called it a successful boot.
+        # That false pass is how an unbootable image reached a user. A login prompt or the shell's
+        # own readiness are evidence; a target is not.
+        good = r"(login:|pc-shell|posterchan-shell|Startup finished)"
         bad = (r"(Failed to start Cryptography Setup|emergency mode|Emergency Shell|"
-               r"Kernel panic|Give root password|Failed to mount /sysroot)")
+               r"Kernel panic|Give root password|Failed to mount /sysroot|"
+               # device-mapper's own words when dm-crypt is missing from the kernel it booted.
+               r"unknown target type|Dependency failed for)")
         deadline = time.monotonic() + timeout
         while time.monotonic() < deadline:
             con.read(1.0)

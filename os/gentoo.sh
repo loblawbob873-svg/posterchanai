@@ -3294,6 +3294,38 @@ pc_canonical_installer() {
 	return 1
 }
 
+# CAN THIS KERNEL UNLOCK AN ENCRYPTED ROOT? A KERNEL WITHOUT dm-crypt CANNOT, AND ONE SHIPPED.
+#
+# MEASURED 2026-09-18 on the machine this was reported from: the installed system booted
+# 6.18.48-gentoo-dist-bin, whose module tree on the build host is INCOMPLETE — no dm-crypt.ko at all,
+# while 6.18.43 has it. `CONFIG_DM_CRYPT=m`, so device-mapper had no `crypt` target and the initramfs
+# (which carries no modules; everything else it needs is built in) could not create one:
+#
+#     device-mapper: unknown target type: crypt
+#     Failed to start Cryptography Setup for luks-<uuid>
+#
+# The keyfile, the crypttab, the UUIDs and the EFI entry were all correct — this looks like every
+# other crypt failure and is none of them. Worse, the module cleanup below deletes every tree except
+# the chosen one, so the WORKING 6.18.43 modules were removed from the disk on the way past.
+#
+# So the newest kernel is no longer automatically the right one: it has to be able to do the job.
+# Answers with the first usable version, newest first, or nothing.
+pc_kernel_can_unlock() {
+	_pck_v="$1"
+	[ -n "$_pck_v" ] && [ -d "/usr/lib/modules/$_pck_v" ] || return 1
+	# Built in is as good as present, and some kernels do build it in.
+	grep -qs 'kernel/drivers/md/dm-crypt\.ko' "/usr/lib/modules/$_pck_v/modules.builtin" && return 0
+	find "/usr/lib/modules/$_pck_v" -name 'dm-crypt.ko*' 2>/dev/null | grep -q . && return 0
+	return 1
+}
+
+pc_best_kernel_version() {
+	for _pck_c in $(ls /usr/lib/modules 2>/dev/null | sort -Vr); do
+		if pc_kernel_can_unlock "$_pck_c"; then printf '%s\n' "$_pck_c"; return 0; fi
+	done
+	return 1
+}
+
 liveCD() {
 	clear
 	echo
@@ -3810,6 +3842,13 @@ FSTAB
 		# that directive, so the perfectly formed live rule was silently unreachable.
 		mkdir -p "$WORK/sudoers.d"
 		printf 'live ALL=(ALL:ALL) NOPASSWD: ALL\n' >"$WORK/sudoers.d/live"
+		# Two lines, both actionable, neither of them a secret.
+		{
+			printf '\n  PosterChanOS live session.\n'
+			printf '  Install to this machine:  sudo gentoo.sh install-live\n'
+			printf '  Allow remote help over ssh (sets a password you choose, this session only):\n'
+			printf '      echo "live:YOURPASSWORD" | sudo chpasswd\n\n'
+		} >"$WORK/live-motd"
 		cat >"$WORK/sudoers" <<-'SUDOERS'
 		Defaults env_reset
 		Defaults secure_path="/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
@@ -4061,6 +4100,17 @@ FSTAB
 			pseudoput "etc/group" f 644 0 0 cat "$WORK/group"
 			pseudoput "etc/shadow" f 640 0 0 cat "$WORK/shadow"
 			pseudoput "etc/sudoers" f 440 0 0 cat "$WORK/sudoers"
+			# THE LOCK ABOVE IS DELIBERATE; WHAT WAS MISSING IS THE WAY TO ASK FOR HELP.
+			#
+			# `live` ships with `!` in /etc/shadow so a disc anybody can pick up cannot be reached
+			# over ssh — that is the right default and it stays. But it also means a machine whose
+			# desktop will not start cannot be diagnosed remotely, and on 2026-09-17/18 that cost
+			# hours: every round of "what does the screen say" had to go through a person reading a
+			# TV, and the one command that opens a door was known only to whoever had read this file.
+			#
+			# So the console says it. No password is set and nothing is weakened by printing a
+			# sentence; the operator opts in deliberately, on a session they are sitting in front of.
+			pseudoput "etc/motd" f 644 0 0 cat "$WORK/live-motd"
 			pseudoput "etc/systemd/system/posterchan-live-network.service" f 644 0 0 cat "$WORK/live-network.service"
 			echo "etc/systemd/system/multi-user.target.wants d 755 0 0"
 			echo "etc/systemd/system/multi-user.target.wants/NetworkManager.service s 777 0 0 /usr/lib/systemd/system/NetworkManager.service"
@@ -5214,6 +5264,29 @@ bootloader() {
 		# 6.18.43-gentoo-dist-bin to 6.18.43-gentoo-dist, so the entry named files that did not exist.
 		KERNEL_VERSION="$(find "/boot/$MACHINE_ID" -mindepth 1 -maxdepth 1 -type d \
 			-printf '%f\n' 2>/dev/null | sort -V | tail -1)"
+		# ...AND IF THAT ONE CANNOT UNLOCK AN ENCRYPTED ROOT, IT IS NOT THE ONE TO BOOT.
+		#
+		# The directory under /boot/<machine-id> is written by kernel-install and is simply the
+		# newest kernel present. On the machine this was reported from that was 6.18.48, whose module
+		# tree carries no dm-crypt.ko — so the install completed, the entry was correct, and the
+		# machine could not open its own disk (`unknown target type: crypt`). Prefer a version that
+		# can; keep the original only when nothing better exists, so a machine with no encrypted root
+		# is unaffected.
+		if [ -n "$KERNEL_VERSION" ] && ! pc_kernel_can_unlock "$KERNEL_VERSION"; then
+			_pck_better="$(pc_best_kernel_version || true)"
+			if [ -n "$_pck_better" ] && [ "$_pck_better" != "$KERNEL_VERSION" ]; then
+				echo -e "\033[1;33m$KERNEL_VERSION has no dm-crypt module; booting $_pck_better instead.\033[0m"
+				KERNEL_VERSION="$_pck_better"
+				mkdir -p "/boot/$MACHINE_ID/$KERNEL_VERSION"
+				[ -f "/boot/vmlinuz-$KERNEL_VERSION" ] \
+					&& cp -f "/boot/vmlinuz-$KERNEL_VERSION" "/boot/$MACHINE_ID/$KERNEL_VERSION/linux"
+			else
+				echo -e "\033[1;31mNo installed kernel has a dm-crypt module, so this encrypted\033[0m"
+				echo -e "\033[1;31minstall could not open its own disk at boot. Nothing was written.\033[0m"
+				echo -e "\033[1;31mRebuild the kernel modules on the build host and make the image again.\033[0m"
+				return 1
+			fi
+		fi
 		KERNEL="kernel-$KERNEL_VERSION"
 		# THE VERSION IS READ FROM A DIRECTORY, SO A MISSING DIRECTORY IS AN EMPTY VERSION -- and
 		# every line below then builds a path with a hole in it. The loader entry names
@@ -5225,7 +5298,9 @@ bootloader() {
 		# Rebuild the layout from what IS on the disk before giving up on it: /boot/vmlinuz is the
 		# kernel the live installer copies off the medium, and /usr/lib/modules names its version.
 		if [ -z "$KERNEL_VERSION" ]; then
-			KERNEL_VERSION="$(ls /usr/lib/modules 2>/dev/null | sort -V | tail -1)"
+			# NEWEST THAT WORKS, not simply newest — see pc_best_kernel_version.
+			KERNEL_VERSION="$(pc_best_kernel_version)" \
+				|| KERNEL_VERSION="$(ls /usr/lib/modules 2>/dev/null | sort -V | tail -1)"
 			if [ -n "$KERNEL_VERSION" ] && [ -f /boot/vmlinuz ]; then
 				echo -e "\033[1;33mNo kernel under /boot/$MACHINE_ID — placing $KERNEL_VERSION there\033[0m"
 				mkdir -p "/boot/$MACHINE_ID/$KERNEL_VERSION"

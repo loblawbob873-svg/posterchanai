@@ -243,7 +243,21 @@ pc_best_unpreferred_modes() {
 		}'
 }
 
+# OFF BY DEFAULT SINCE 2026-09-18, AND THE REASON IS THE WHOLE POINT OF THE RULE ABOVE.
+#
+# "No preferred mode" means the display did not tell us which mode it wants. This code then picked
+# the LARGEST one, which is a GUESS — and on the first real machine it ran on it was the wrong guess:
+# reported as a desktop "only showing in the center of the TV and super high", i.e. an output running
+# at a resolution the panel displays unscaled, filling a fraction of it. The 640x480 it replaced was
+# ugly and it FILLED THE SCREEN; this was worse, and it was shipped without ever running on a display
+# that has the fault it targets.
+#
+# So it is opt-in now: `pc.modefix` on the kernel command line. The measurement, the tests and the
+# narrowing (never downgrade, never override a stated preference) are all still here and still right
+# — what was wrong was making a guess about somebody's display the default. Turn it on deliberately,
+# on a machine where it has been seen to help.
 pc_fix_unpreferred_modes() {
+	[ -n "${PC_MODE_FIX:-}" ] || return 0
 	[ -z "${PC_NO_MODE_FIX:-}" ] || return 0
 	pc_any=0
 	pc_best_unpreferred_modes | while read -r pc_out pc_res pc_hz; do
@@ -780,7 +794,17 @@ pc_cmdline=''
 [ ! -r "${PC_PROC_CMDLINE:-/proc/cmdline}" ] || IFS= read -r pc_cmdline <"${PC_PROC_CMDLINE:-/proc/cmdline}" 2>/dev/null || pc_cmdline=''
 pc_gpu_request=''
 for pc_arg in $pc_cmdline; do
-	case "$pc_arg" in pc.gpu=*) pc_gpu_request=${pc_arg#pc.gpu=} ;; esac
+	case "$pc_arg" in
+		pc.gpu=*) pc_gpu_request=${pc_arg#pc.gpu=} ;;
+		# AN OPT-OUT NOBODY CAN REACH IS NOT AN OPT-OUT.
+		#
+		# The unpreferred-mode fix shipped with `PC_NO_MODE_FIX=1` as its escape — an ENVIRONMENT
+		# VARIABLE, which a person standing at a boot menu in front of a machine that will not settle
+		# cannot set. That is the one moment the escape exists for, so it is also readable from the
+		# kernel command line, exactly like pc.gpu= above: `pc.nomodefix` or `pc.nomodefix=1`.
+		pc.nomodefix|pc.nomodefix=1) PC_NO_MODE_FIX=1; export PC_NO_MODE_FIX ;;
+		pc.modefix|pc.modefix=1) PC_MODE_FIX=1; export PC_MODE_FIX ;;
+	esac
 done
 
 # modprobe needs root. The live account has passwordless sudo; an installed machine's user does not,
