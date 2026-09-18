@@ -872,6 +872,30 @@ class PosterChanOSProfile(unittest.TestCase):
         self.assertIn("media-libs/mesa vulkan", steam, "Mesa may be built without a Vulkan driver")
         self.assertIn("media-libs/vulkan-loader", steam, "the Vulkan driver has no libvulkan.so.1 loader")
         self.assertIn("dev-util/vulkan-tools", steam, "the installed graphics stack cannot be verified")
+        # THE 32-BIT GRAPHICS STACK, per https://wiki.gentoo.org/wiki/Steam. The Steam client is
+        # 32-bit and its vgui2 surface calls glXChooseVisual; steam-launcher pulls glvnd (the GL
+        # dispatcher) but NOT the vendor library glvnd dispatches to, so without a 32-bit Mesa/NVIDIA
+        # GLX the client dies "glXChooseVisual failed / Fatal assert" (measured on the TV 2026-09-18).
+        # And 32-bit Mesa cannot even build without a 32-bit rust/LLVM toolchain ("Unknown compiler
+        # rustc"), which is why the wiki lists all of these with abi_x86_32.
+        for atom in ("media-libs/mesa abi_x86_32", "dev-lang/rust-bin abi_x86_32",
+                     "llvm-core/llvm abi_x86_32", "llvm-core/clang abi_x86_32"):
+            self.assertIn(atom, steam,
+                          f"the wiki's 32-bit toolchain entry '{atom}' is missing; 32-bit Mesa cannot build")
+        # The NVIDIA GLX vendor + its EGL companions (wiki NVIDIA section), GATED on the driver being
+        # installed so an Intel-only machine served by Mesa 32-bit is not made to build the blob's
+        # 32-bit half for nothing.
+        self.assertIn("x11-drivers/nvidia-drivers abi_x86_32", steam,
+                      "the 32-bit Steam client has no NVIDIA GLX vendor and cannot open on an NVIDIA screen")
+        self.assertIn("has_version / x11-drivers/nvidia-drivers", steam,
+                      "the NVIDIA 32-bit GLX is forced unconditionally, even with no NVIDIA card present")
+        # The driver stack is emerged EXPLICITLY (naming Mesa + the toolchain), not left to
+        # steam-launcher's deps — and as a ONESHOT, because a deep-newuse run backtracks into DROPPING
+        # abi_x86_32 to satisfy the 64-bit binhost (the ABI seam configurePortage documents).
+        self.assertRegex(steam, r"emerge -1[^\n]*media-libs/mesa[^\n]*\$NV_STACK",
+                         "the 32-bit driver stack is not emerged explicitly as a oneshot")
+        self.assertNotRegex(steam, r"emerge -uDN[^\n]*media-libs/mesa",
+                            "a deep-newuse emerge of the 32-bit stack drops abi_x86_32 (measured)")
 
         configure = self._fn("configurePortage")
         self.assertIn('ABI_X86="64"', configure, "the installed system has no explicit ABI_X86")

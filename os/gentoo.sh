@@ -2755,11 +2755,66 @@ installSteam() {
 	# packages is covered without anybody editing a list. These two are named as well because they
 	# are measured, and asking for the right ABI up front is better than building the wrong thing,
 	# noticing, and rebuilding -- the sweep becomes the backstop rather than the mechanism.
+	# THE 32-BIT TOOLCHAIN IS WHAT ACTUALLY BUILDS THE 32-BIT GRAPHICS STACK — and leaving it out is
+	# why /usr/lib32 was EMPTY on a shipped machine and the 32-bit Steam client died at glXChooseVisual.
+	#
+	# This follows https://wiki.gentoo.org/wiki/Steam exactly. Steam is 32-bit; Proton games are too;
+	# both need a 32-bit Mesa/GLX/Vulkan stack. Nothing serves 32-bit BINPKGS (gentoo.poster.place
+	# mirrors Gentoo's 64-bit-only binhost), so those libraries are built from source at install time
+	# — and `media-libs/mesa[abi_x86_32]` links 32-bit LLVM and, for rusticl, needs a 32-bit RUST
+	# TARGET. Ask for neither and mesa's own configure aborts: "ERROR: Unknown compiler(s): [['rustc',
+	# …]]" (measured on the TV, 2026-09-18) — so no 32-bit Mesa is ever produced, and with it no
+	# libGLX for the 32-bit client. These are the toolchain atoms the wiki lists for that reason.
+	# `dev-lang/rust` is masked to /rust-bin elsewhere, so the binary Rust is what actually carries the
+	# 32-bit target; both are named for parity with the wiki, the masked one is simply inert.
 	printf '%s\n' 'media-libs/mesa vulkan' \
+		'media-libs/mesa abi_x86_32' \
 		'sys-libs/ncurses abi_x86_32' \
-		'media-libs/harfbuzz abi_x86_32' > /etc/portage/package.use/posterchan-steam
+		'media-libs/harfbuzz abi_x86_32' \
+		'dev-lang/rust abi_x86_32' \
+		'dev-lang/rust-bin abi_x86_32' \
+		'llvm-core/llvm abi_x86_32' \
+		'llvm-core/clang abi_x86_32' > /etc/portage/package.use/posterchan-steam
+	# THE 32-BIT NVIDIA GLX, WITHOUT WHICH THE STEAM CLIENT WON'T OPEN ON AN NVIDIA MACHINE.
+	#
+	# The Steam client's vgui2 surface calls glXChooseVisual on the X (Xwayland) screen; glvnd
+	# dispatches that to the GLX vendor for the screen's GPU, and on a machine whose display is on the
+	# NVIDIA card that vendor is libGLX_nvidia. Mesa 32-bit alone does not supply it — glvnd picks the
+	# vendor by the screen, and the screen is NVIDIA. So the driver and its EGL companions get
+	# abi_x86_32 too, exactly the wiki's NVIDIA list (nvidia-drivers, egl-gbm, egl-wayland) — but only
+	# when the driver is installed, so an Intel-only machine served by Mesa 32-bit is not made to build
+	# the blob's 32-bit half for nothing.
+	local NV_STACK=''
+	if portageq has_version / x11-drivers/nvidia-drivers 2>/dev/null; then
+		printf '%s\n' 'x11-drivers/nvidia-drivers abi_x86_32' \
+			'gui-libs/egl-gbm abi_x86_32' \
+			'gui-libs/egl-wayland abi_x86_32' >> /etc/portage/package.use/posterchan-steam
+		NV_STACK='x11-drivers/nvidia-drivers gui-libs/egl-gbm gui-libs/egl-wayland'
+	fi
 	mkdir -p /etc/portage/package.license
 	echo 'games-util/steam-launcher steam' >/etc/portage/package.license/posterchan-steam
+	# THE 32-BIT DRIVER STACK IS EMERGED EXPLICITLY, AS A ONESHOT, AND THAT IS THE WHOLE FIX.
+	#
+	# steam-launcher's own RDEPEND pulls `virtual/opengl[abi_x86_32]` (glvnd) and a pile of 32-bit
+	# runtime libraries, but NOT Mesa and NOT the video driver — glvnd is only the dispatcher, and the
+	# GLX vendor library it dispatches to (libGLX_mesa / libGLX_nvidia) comes from Mesa/the driver,
+	# which the wiki has you emerge yourself. Emerging steam-launcher alone therefore leaves the client
+	# with a dispatcher and no vendor, which is exactly the glXChooseVisual death.
+	#
+	# The toolchain has to be NAMED here too: `media-libs/mesa[abi_x86_32]` builds 32-bit Mesa but its
+	# rusticl/llvm dependency on rust and LLVM is NOT abi-qualified, so portage will build 32-bit Mesa
+	# against a 64-bit-only rustc — "ERROR: Unknown compiler(s): [['rustc', …]]". Naming rust-bin, LLVM
+	# and clang forces their 32-bit halves first (LLVM/clang arrive as binpkgs; rust-bin unpacks its
+	# 32-bit std; only Mesa actually compiles), so Mesa's 32-bit configure finds a 32-bit rustc.
+	#
+	# ONESHOT, and NOT `-uDN`: measured on the TV, a deep-newuse run of this same set backtracks into
+	# DROPPING abi_x86_32 (it printed `libXrandr ABI_X86="-32*"`) to satisfy the binhost's 64-bit
+	# packages, which is the ABI seam configurePortage documents. A plain oneshot of the named atoms
+	# rebuilds each with abi_x86_32 in dependency order and pulls no such reconciliation. The buildGentoo
+	# sweep afterwards still converges anything left ABI-skewed.
+	emerge -1 --autounmask-write dev-lang/rust-bin llvm-core/llvm llvm-core/clang media-libs/mesa $NV_STACK || true
+	etc-update -q --automode -5
+	emerge -1 dev-lang/rust-bin llvm-core/llvm llvm-core/clang media-libs/mesa $NV_STACK
 	emerge --autounmask-write games-util/steam-launcher media-libs/vulkan-loader dev-util/vulkan-tools || true
 	etc-update -q --automode -5
 	emerge games-util/steam-launcher media-libs/vulkan-loader dev-util/vulkan-tools
