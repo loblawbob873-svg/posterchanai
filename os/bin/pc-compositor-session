@@ -620,6 +620,21 @@ rescue() {
 		printf '%s\n' "  (Wayfire was never started — the reason above was known before the attempt,"
 		printf '%s\n' "   so there is nothing in its log and nothing about this machine's graphics.)"
 	fi
+	# AND THE SHELL'S OWN LOG, for the failure where Wayfire is not the thing that broke. A shell
+	# that crashes in a loop leaves wayfire.log healthy and says everything in its own log, so a
+	# rescue screen that prints only the compositor's log prints the half that is fine.
+	if [ -s "$HOME/.config/posterchan-desktop/shell.log" ]; then
+		printf '\n%s\n' "  --- last lines of shell.log ---"
+		tail -n 15 "$HOME/.config/posterchan-desktop/shell.log" 2>/dev/null | sed 's/^/  /'
+		printf '%s\n' "  -------------------------------"
+	fi
+	# AND THE SESSION'S OWN RUNNING COMMENTARY. "shell replaced by pid N; Wayfire kept." repeated
+	# down this file IS the crash loop, named, and it is the only place that records it.
+	if [ -s "$state_dir/compositor-fallback.log" ]; then
+		printf '\n%s\n' "  --- last lines of compositor-fallback.log ---"
+		tail -n 12 "$state_dir/compositor-fallback.log" 2>/dev/null | sed 's/^/  /'
+		printf '%s\n' "  ---------------------------------------------"
+	fi
 	# THE GRAPHICS FACTS, BUT ONLY WHERE THEY ARE FACTS ABOUT THIS FAILURE. The root refusal above
 	# stops before anything touches a GPU and must keep claiming nothing about one; `wayfire_started`
 	# and `pc_gpu_reason` are the two states in which the card is part of the story.
@@ -1206,6 +1221,14 @@ PC_SESSION_CONFIG_PY
 			# the PID file as a replaceable generation: allow the launcher a bounded interval to
 			# publish a different live PID while Wayfire itself remains healthy.
 			shell_pid=''
+			# A REPLACEMENT IS NORMAL; AN ENDLESS RUN OF THEM IS A CRASH LOOP WITH NO WAY OUT.
+			# This loop had no cap: every replacement was noted and it went round again, for ever.
+			# Because Wayfire itself stays healthy throughout, the .bash_profile restart guard never
+			# sees an exit and never trips -- so the machine does not fall back to a console that
+			# could say why. Reported from a television as the desktop "still keeps restarting at
+			# Join a Network non-stop": each fresh shell draws the first-run wizard, because a
+			# brand-new page has nothing else to draw.
+			pc_gens=0 pc_gen_first=0
 			while kill -0 "$wayfire_pid" 2>/dev/null; do
 				[ ! -r "$PC_WAYFIRE_SHELL_PID_FILE" ] || IFS= read -r shell_pid <"$PC_WAYFIRE_SHELL_PID_FILE"
 				case "$shell_pid" in ''|*[!0-9]*) shell_pid='' ;; esac
@@ -1244,6 +1267,22 @@ PC_SESSION_CONFIG_PY
 					reason="no replacement shell within ${limit}00ms of the last one exiting (restart marker $([ "$limit" -gt 30 ] && echo seen || echo absent))"
 					note "$reason; stopping Wayfire."
 					break
+				fi
+				# ONLY A CRASH COUNTS. `limit` is 600 when pc-shell-restart left a marker -- a
+				# deliberate restart (Ctrl+Alt+Backspace, the post-update reload) -- and 30 when
+				# nothing did, which is a shell that died on its own. Counting deliberate restarts
+				# would drop somebody to a console for pressing a key five times.
+				if [ "$limit" -le 30 ]; then
+					pc_now=$(date +%s 2>/dev/null || echo 0)
+					[ "$pc_gens" -gt 0 ] || pc_gen_first=$pc_now
+					pc_gens=$((pc_gens + 1))
+					pc_span=$((pc_now - pc_gen_first))
+					if [ "$pc_gens" -ge "${PC_SHELL_CRASH_LIMIT:-5}" ] \
+						&& [ "$pc_span" -lt "${PC_SHELL_CRASH_WINDOW:-300}" ] 2>/dev/null; then
+						reason="the desktop shell crashed and was restarted $pc_gens times in ${pc_span}s"
+						note "$reason; stopping Wayfire so the console can say so."
+						break
+					fi
 				fi
 				note "shell replaced by pid $shell_pid; Wayfire kept."
 			done

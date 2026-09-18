@@ -250,6 +250,14 @@ def _node_id(case, root=ROOT):
     return '::'.join(part for part in (path, *(rest.split('.') if rest else []), case.get('name') or '?') if part)
 
 
+def _env_jobs():
+    """`PC_GATE_JOBS` — shard count for a memory-constrained box. 0/unset means "decide by CPU"."""
+    raw = (os.environ.get('PC_GATE_JOBS') or '').strip()
+    if not raw.isdigit():
+        return 0
+    return max(0, min(64, int(raw)))
+
+
 def run_full_suite(root, env, directory, jobs=None):
     """Every test file, in parallel shards. Returns (ok, message)."""
     files = discover_test_files(root)
@@ -260,7 +268,12 @@ def run_full_suite(root, env, directory, jobs=None):
     except (OSError, ValueError):
         durations = {}
     if not jobs:
-        jobs = runpy.run_path(str(Path(__file__).with_name('checkall.py')))['_default_jobs']()
+        # A GATE THAT CANNOT FIT IN MEMORY IS A GATE SOMEBODY SKIPS, which is how unlisted tests
+        # failed against shipped code for days. `_default_jobs()` sizes itself by CPU, and each
+        # shard imports the whole app -- so on a box whose RAM is already committed (a node running
+        # Postgres with large shared buffers, measured here: six shards killed twice before the
+        # first shard finished) the honest answer is fewer shards and a longer wait, never no gate.
+        jobs = _env_jobs() or runpy.run_path(str(Path(__file__).with_name('checkall.py')))['_default_jobs']()
     shards = plan_shards(files, jobs, durations, root)
     checkall = runpy.run_path(str(Path(__file__).with_name('checkall.py')))
     captured = checkall['_captured']
@@ -354,7 +367,7 @@ def _run_shards(root, env, directory, files, shards, durations, captured):
     return True, f'{cases} cases across the full suite in {elapsed:.0f}s'
 
 
-def run_gate(root=ROOT, receipt=None, full=False):
+def run_gate(root=ROOT, receipt=None, full=False, jobs=0):
     try:
         before = source_fingerprint(root)
     except (OSError, subprocess.SubprocessError) as error:
@@ -403,7 +416,7 @@ def run_gate(root=ROOT, receipt=None, full=False):
             return 1
         print('[regressions] PASS: ' + str(len(cases)) + ' required cases, none skipped')
         if full:
-            ok, message = run_full_suite(root, env, directory)
+            ok, message = run_full_suite(root, env, directory, jobs=jobs)
             if not ok:
                 if receipt:
                     Path(receipt).unlink(missing_ok=True)   # the required pass wrote it; this run failed
@@ -428,5 +441,9 @@ if __name__ == '__main__':
     action.add_argument('--verify', help='check a receipt immediately before committing')
     parser.add_argument('--full', action='store_true',
                         help='also run every discovered test under tests/ in parallel shards (sync.sh does)')
+    parser.add_argument('--jobs', type=int, default=0,
+                        help='parallel shards for --full; fewer fits a box whose RAM is committed '
+                             '(also PC_GATE_JOBS). 0 decides by CPU.')
     args = parser.parse_args()
-    raise SystemExit(verify_receipt(args.verify) if args.verify else run_gate(receipt=args.receipt, full=args.full))
+    raise SystemExit(verify_receipt(args.verify) if args.verify
+                     else run_gate(receipt=args.receipt, full=args.full, jobs=args.jobs))
