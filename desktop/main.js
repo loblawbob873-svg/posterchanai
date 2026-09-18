@@ -4013,6 +4013,10 @@ if (!app.requestSingleInstanceLock()) { app.quit(); } else {
   app.whenReady().then(async () => {
     wireReadyElectronModules();
     wirePowerMonitor();
+    // Re-apply the saved power profile: the governor/platform_profile is kernel runtime state that
+    // resets to the boot default every reboot, so a chosen "power saver"/"performance" silently
+    // reverted. restoreProfile() replays the saved choice (no-op if none, unchanged, or unsupported).
+    try { power.restoreProfile().catch(() => {}); } catch (_) {}
     serveBundle();
     tor.setOnChange(pushTorStatus);
     // Before the window: with Tor on, applyProxy() must have run before anything can request a byte,

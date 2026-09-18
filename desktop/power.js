@@ -154,7 +154,19 @@ function profiles() {
   return { available: false, kind: '', list: [], active: '' };
 }
 
-async function setProfile(name) {
+/* THE CHOSEN PROFILE HAS TO SURVIVE A REBOOT, AND SYSFS DOES NOT.
+ *
+ * A governor written to scaling_governor (and the ACPI platform_profile) is kernel runtime state:
+ * it resets to the boot default on every reboot. So "power saver" — or "performance" — silently
+ * reverted every time the machine came back, reported as "the powersave settings need to persist
+ * after reboots, this is crazy". The idle timeout already persists this way (pc-idle writes a conf
+ * and re-applies it at session start); the profile now does the same. The file is the single source
+ * and restoreProfile() replays it from app.whenReady() in main.js. */
+const PROFILE_CONF = process.env.PC_POWER_PROFILE_CONF
+  || path.join(process.env.XDG_CONFIG_HOME || path.join(process.env.HOME || '/root', '.config'),
+               'posterchanos', 'power-profile');
+
+async function setProfile(name, opts) {
   const n = String(name || '');
   const p = profiles();
   /* VALIDATED AGAINST WHAT THIS MACHINE ACTUALLY OFFERS, not against a pattern. The kernel rejects
@@ -179,7 +191,27 @@ async function setProfile(name) {
       catch (_) {}
     }
   }
+  // Persist the CHOICE (not on the restore replay, which is applying what is already saved).
+  if (!opts || opts.persist !== false) {
+    try { fs.mkdirSync(path.dirname(PROFILE_CONF), { recursive: true }); fs.writeFileSync(PROFILE_CONF, n + '\n'); }
+    catch (_) {}
+  }
   return { active: n, kind: p.kind };
+}
+
+/* Re-apply the saved profile at session start. A no-op when nothing was saved, when the saved value
+ * is no longer offered (a kernel/hardware change), or when it is already active — so it is safe to
+ * call unconditionally from main.js's app.whenReady(). Never throws: a machine that cannot set a
+ * profile at boot must still reach the desktop. */
+async function restoreProfile() {
+  let want = '';
+  try { want = fs.readFileSync(PROFILE_CONF, 'utf8').trim(); } catch (_) { return { restored: false, reason: 'none saved' }; }
+  if (!want) return { restored: false, reason: 'none saved' };
+  const p = profiles();
+  if (!p.available || !p.list.includes(want)) return { restored: false, reason: 'not offered' };
+  if (p.active === want) return { restored: false, reason: 'already active' };
+  try { await setProfile(want, { persist: false }); return { restored: true, profile: want }; }
+  catch (e) { return { restored: false, reason: String(e && e.message || e) }; }
 }
 
 /* SLEEP AND HIBERNATE go through systemd, which asks polkit, which normally allows a LOCAL ACTIVE
@@ -252,4 +284,4 @@ async function status() {
 module.exports = { brightness, ddcBrightness, setBrightness, battery, profiles, setProfile,
                    suspend, hibernate, poweroff, reboot, hibernateReady, hibernateConfigured,
                    enableHibernation, keepAwakeStatus,
-                   setKeepAwake, idleTimeout, setIdleTimeout, status, MIN_PERCENT, DDC_ENABLED };
+                   setKeepAwake, idleTimeout, setIdleTimeout, restoreProfile, status, MIN_PERCENT, DDC_ENABLED };
