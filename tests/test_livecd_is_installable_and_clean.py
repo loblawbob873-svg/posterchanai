@@ -1094,14 +1094,27 @@ class TheImageCarriesTheInstallerThatBuiltIt(unittest.TestCase):
                       "the image takes the build host's installed installer, not the one building it")
 
     def test_it_prefers_the_tree_it_is_running_from(self):
+        """Resolution moved into pc_canonical_installer; the RULE is unchanged and now shared.
+
+        Four places copied an installer (the image, and three that seed the installed system), and
+        fixing only this one left the target still being seeded from $PCOS_TREE — which is the file
+        `bootloader()` later EXECUTES inside the chroot. See
+        tests/test_the_image_ships_this_installer.py for the resolver's own behaviour, driven under
+        bash against a stale tree.
+        """
         block = self.fn[self.fn.index("LIVE_INSTALLER="):]
         block = block[:block.index('pseudoput "usr/bin/gentoo.sh"')]
-        self.assertLess(block.index("PCOS_TREE"), len(block),
-                        "the checkout being built from must win over an installed copy")
+        self.assertIn("pc_canonical_installer", block,
+                      "the packed installer no longer goes through the shared resolver")
 
     def test_it_still_has_a_source_when_there_is_no_checkout(self):
-        """A build from an installed system with no tree beside it must not inject an empty file."""
-        block = self.fn[self.fn.index("LIVE_INSTALLER="):]
-        block = block[:block.index('pseudoput "usr/bin/gentoo.sh"')]
-        self.assertIn("/usr/local/share/posterchanos/gentoo.sh", block)
-        self.assertIn("/usr/bin/gentoo.sh", block)
+        """A build from an installed system with no tree beside it must not inject an empty file.
+
+        The fallbacks live in the resolver now, so that is where they are asserted.
+        """
+        src = GENTOO.read_text()
+        fn = src[src.index("pc_canonical_installer() {"):]
+        fn = fn[:fn.index("\n}\n") + 3]
+        self.assertIn("/usr/local/share/posterchanos/gentoo.sh", fn)
+        self.assertIn("/usr/bin/gentoo.sh", fn)
+        self.assertIn("PCOS_TREE", fn)

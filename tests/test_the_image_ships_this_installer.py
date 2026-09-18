@@ -34,55 +34,67 @@ GENTOO = GENTOO_PATH.read_text(encoding="utf-8")
 
 class TheImageShipsThisInstaller(unittest.TestCase):
     def test_the_packed_installer_is_resolved_from_the_running_script(self):
-        """`pseudoput usr/bin/gentoo.sh` must take its bytes from BASH_SOURCE, not from a tree."""
+        """`pseudoput usr/bin/gentoo.sh` takes its bytes from the ONE resolver, which reads
+        BASH_SOURCE first."""
         m = re.search(r'pseudoput "usr/bin/gentoo\.sh".*?cat "\$(\w+)"', GENTOO)
         self.assertIsNotNone(m, "the image no longer installs /usr/bin/gentoo.sh by pseudo-file")
         var = m.group(1)
-        # The assignment chain for that variable must consult the running script FIRST.
         block = GENTOO[:m.start()]
-        assign = block.rindex("local %s=" % var)
-        chain = block[assign:]
-        self.assertIn("BASH_SOURCE", chain,
-                      "the packed installer is not resolved from the running script — this is the "
-                      "$PCOS_TREE bug that shipped a two-week-old installer")
+        assign = block.rindex("%s=" % var)
+        self.assertIn("pc_canonical_installer", block[assign:assign + 200],
+                      "the packed installer is not resolved by pc_canonical_installer")
+        fn = GENTOO[GENTOO.index("pc_canonical_installer() {"):]
+        fn = fn[:fn.index("\n}\n") + 3]
         first = re.search(r"BASH_SOURCE|PCOS_TREE|/usr/local/share/posterchanos|/usr/bin/gentoo\.sh",
-                          chain)
+                          fn)
         self.assertEqual("BASH_SOURCE", first.group(0)[:11],
                          "a stale candidate is consulted before the running script")
 
     def test_a_stale_installed_tree_never_wins(self):
-        """RUN the resolution with a stale $PCOS_TREE present and prove which file it picks.
+        """RUN the resolver with a stale $PCOS_TREE present and prove which file it picks.
 
         This is the shape that actually shipped: an installed tree that exists, is readable, and is
         old. A grep cannot tell "consults BASH_SOURCE" from "consults it second".
         """
-        chain = re.search(
-            r'(local LIVE_INSTALLER=""\n(?:.*\n)*?)\s*# AND IT SAYS WHICH ONE', GENTOO)
-        self.assertIsNotNone(chain, "the LIVE_INSTALLER resolution block moved or was rewritten")
+        fn = GENTOO[GENTOO.index("pc_canonical_installer() {"):]
+        fn = fn[:fn.index("\n}\n") + 3]
         with tempfile.TemporaryDirectory() as tmp:
             tmp = Path(tmp)
             running = tmp / "checkout" / "gentoo.sh"
             running.parent.mkdir()
             running.write_text("#!/bin/bash\n# CURRENT\n")
-            stale_tree = tmp / "installed"
-            (stale_tree / "bin").mkdir(parents=True)
-            (stale_tree / "gentoo.sh").write_text("#!/bin/bash\n# SEPTEMBER 4\n")
-            script = (
-                "set -u\n"
-                f'PCOS_TREE="{stale_tree}"\n'
-                f'LOG=/dev/null\n'
-                + chain.group(1).replace("local ", "")
-                + '\necho "PICKED=$LIVE_INSTALLER"\n')
-            # RUN IT AS A REAL SCRIPT, not `bash -c`: BASH_SOURCE is empty for a command string, so
-            # -c would test the fallback path and call it a pass. `set -u` is on deliberately — an
-            # unset BASH_SOURCE must not abort the build (it did, and this fixture caught it).
+            stale = tmp / "installed"
+            (stale / "bin").mkdir(parents=True)
+            (stale / "gentoo.sh").write_text("#!/bin/bash\n# SEPTEMBER 4\n")
+            script = ("set -u\n" + f'PCOS_TREE="{stale}"\n' + fn
+                      + '\necho "PICKED=$(pc_canonical_installer)"\n')
             resolver = running.parent / "resolve.sh"
             resolver.write_text(script)
             r = subprocess.run(["bash", str(resolver)], capture_output=True, text=True, timeout=30)
             picked = re.search(r"PICKED=(\S*)", r.stdout)
             self.assertIsNotNone(picked, r.stdout + r.stderr)
-            self.assertNotEqual(str(stale_tree / "gentoo.sh"), picked.group(1),
-                                "the stale installed tree was packed into the image")
+            self.assertNotEqual(str(stale / "gentoo.sh"), picked.group(1),
+                                "the stale installed tree won")
+            self.assertEqual(str(resolver), picked.group(1),
+                             "the resolver did not return the running script")
+
+    def test_every_copy_into_the_installed_system_uses_the_same_resolver(self):
+        """THE HALF THAT WAS MISSED, AND IT COST A WHOLE ISO BUILD.
+
+        Fixing only the copy the LIVE IMAGE packs left the installer still seeding the TARGET from
+        `$PCOS_TREE/gentoo.sh`. `bootloader()` runs inside that chroot (see the `TARGET=/` case at the
+        top of gentoo.sh), so the install executed September's installer: the EFI boot entry was never
+        written, `check_livecd_install_vm.py` measured zero PosterChanOS entries in the guest's NVRAM,
+        and every installed machine inherited a two-week-old repair tool.
+        """
+        for m in re.finditer(r'cp -f "\$INSTALLER_SRC" "\$TARGET/usr/bin/gentoo\.sh"', GENTOO):
+            before = GENTOO[:m.start()]
+            assign = before.rindex("INSTALLER_SRC=")
+            self.assertIn("pc_canonical_installer", before[assign:assign + 160],
+                          "a copy into the installed system still resolves through $PCOS_TREE; that "
+                          "is the file a chroot later EXECUTES")
+        self.assertNotIn('INSTALLER_SRC="$PCOS_TREE/gentoo.sh"', GENTOO,
+                         "an install-day tree is still being used as an installer source")
 
     def test_the_build_refuses_when_the_overlay_disagrees(self):
         """An ISO and an `update-posterchan` must not hand out two different installers."""

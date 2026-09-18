@@ -233,7 +233,13 @@ def install(iso, disk, serial_dir, evidence, timeout, memory, cpus, usb=False):
         #
         # So the VARIABLE is asserted directly, in the live session that just did the install, where
         # OVMF's NVRAM is readable. It cannot be inferred from a successful boot.
-        con.send("sudo efibootmgr 2>&1 | grep -c ' PosterChanOS$' | sed 's/^/NVRAM-COUNT=/'")
+        # THE LABEL IS NOT AT THE END OF THE LINE. efibootmgr prints `Boot000C* PosterChanOS` followed
+        # by a TAB and the device path, so an anchored `' PosterChanOS$'` matches nothing and reports a
+        # missing entry on an install that made one. Match the Boot#### line carrying the label, and
+        # echo the raw listing into the transcript so a disagreement can be read rather than guessed.
+        con.send("sudo efibootmgr 2>&1 | sed 's/^/EFIBOOT| /'; "
+                 "sudo efibootmgr 2>&1 | grep -cE '^Boot[0-9A-Fa-f]+\\*?[[:space:]]+PosterChanOS([[:space:]]|$)' "
+                 "| sed 's/^/NVRAM-COUNT=/'")
         if con.expect(r"NVRAM-COUNT=\d+", 60) is None:
             print("FAIL  could not read the guest's EFI boot variables")
             return 1

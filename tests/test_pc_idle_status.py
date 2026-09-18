@@ -288,3 +288,36 @@ def test_the_shipped_config_does_not_arm_a_second_blanker():
     from tests.wayfire_config import sections
     assert int(sections()["idle"]["screensaver_timeout"]) < 0, (
         "wayfire.ini leaves a 3600s screensaver armed under pc-idle's own policy")
+
+
+def test_the_shipped_blanking_delay_is_long_enough_to_read_a_dialog():
+    """120s WAS BEING FELT AS THREE SEPARATE BUGS, NONE OF THEM ABOUT POWER.
+
+    Measured 2026-09-18 from a real machine's wayfire.log — a desktop on a 55" TV over DisplayPort:
+
+        21:53:53  connector DP-5: Turning off
+        21:55:06  connector DP-5: Modesetting with 1920x1080 @ 60.000 Hz   <- a key was pressed
+        21:57:18  connector DP-5: Turning off                              <- 132s later, again
+
+    Reported as "flashing bottom part of screen", "taskbar keeps disappearing" and "wifi password
+    screen keeps disappearing". One cause: a TV re-syncs its link on every wake (the flashing), the
+    shell repaints after it (the taskbar), and a Wayland popup that loses focus across the cycle is
+    gone (the password dialog, which therefore could never be filled in).
+
+    The test above this one fixed the user's CHOSEN value reaching the compositor and called 120 "the
+    packaged two minutes" without revisiting it. This pins the default itself, which is what every
+    live session and every fresh install uses before anyone opens Settings. `pc-idle` still owns the
+    policy; this is only the number a machine starts with.
+    """
+    import re as _re
+    from pathlib import Path as _Path
+    ini = _Path(__file__).resolve().parents[1] / "os/overlay/app-misc/posterchanos-shell/files/wayfire.ini"
+    body = "\n".join(l for l in ini.read_text(encoding="utf-8").splitlines()
+                     if not l.lstrip().startswith("#"))
+    m = _re.search(r"(?m)^\s*dpms_timeout\s*=\s*(-?\d+)", body)
+    assert m, "no dpms_timeout in the shipped wayfire.ini"
+    secs = int(m.group(1))
+    assert secs == -1 or secs >= 300, (
+        "the shipped screen-blank delay is %ds. Below ~5 minutes it fires while somebody is reading "
+        "a dialog or an installer, and on a TV every wake is a link re-sync that reads as the screen "
+        "flashing and the taskbar vanishing." % secs)

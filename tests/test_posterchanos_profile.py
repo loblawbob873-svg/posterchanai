@@ -991,10 +991,22 @@ class GentooOwnsOsRelease(unittest.TestCase):
                 self.assertLess(body.index(required), complete)
 
     def test_installer_copy_uses_the_resolved_asset_tree_not_the_working_directory(self):
+        """The rule is unchanged; the resolution moved into one shared helper.
+
+        This used to pin the literal `$PCOS_TREE/gentoo.sh`, which is install-day state — and that is
+        the copy `bootloader()` EXECUTES inside the target chroot, so an install ran September's
+        installer and never wrote its EFI boot entry. `pc_canonical_installer` prefers the running
+        script and keeps $PCOS_TREE only as a fallback; the working directory is still never used.
+        """
         start = self.src.index("finalizeInstall() {")
         body = self.src[start:self.src.index("\n}", start)]
-        self.assertIn('INSTALLER_SRC="$PCOS_TREE/gentoo.sh"', body)
+        self.assertIn('INSTALLER_SRC="$(pc_canonical_installer)"', body)
         self.assertNotIn("cp -f gentoo.sh", body)
+        # ...and the resolver itself must not fall back to the caller's directory.
+        fn = self.src[self.src.index("pc_canonical_installer() {"):]
+        fn = fn[:fn.index("\n}\n") + 3]
+        self.assertNotIn('"./gentoo.sh"', fn)
+        self.assertNotIn("$PWD", fn)
 
 
 class MoreThanOneScreenWorksWithoutConfiguring(unittest.TestCase):

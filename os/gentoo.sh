@@ -1071,8 +1071,7 @@ buildGentoo() {
 	# Never depend on the caller's working directory. The LiveCD desktop starts this script through
 	# a .desktop file, and its cwd is not the directory containing gentoo.sh; a relative copy either
 	# failed outright or copied a stale unrelated file into the new OS.
-	INSTALLER_SRC="$PCOS_TREE/gentoo.sh"
-	[ -f "$INSTALLER_SRC" ] || INSTALLER_SRC="/usr/local/share/posterchanos/gentoo.sh"
+	INSTALLER_SRC="$(pc_canonical_installer)"
 	if [ ! -f "$INSTALLER_SRC" ]; then
 		echo -e "\033[1;31mPosterChanOS installer source is missing — refusing to create an unrepairable target.\033[0m"
 		return 1
@@ -1221,8 +1220,7 @@ finalizeInstall() {
 	touch $TARGET/etc/posterchanos
 	# Resolve again inside finalization: this function also runs in the target chroot as a fresh shell,
 	# so the build-stage INSTALLER_SRC variable does not cross that process boundary.
-	INSTALLER_SRC="$PCOS_TREE/gentoo.sh"
-	[ -f "$INSTALLER_SRC" ] || INSTALLER_SRC="/usr/local/share/posterchanos/gentoo.sh"
+	INSTALLER_SRC="$(pc_canonical_installer)"
 	if [ ! -f "$INSTALLER_SRC" ]; then
 		echo -e "\033[1;31mPosterChanOS installer source is missing during finalization — refusing to continue.\033[0m"
 		return 1
@@ -3270,6 +3268,32 @@ liveGpuPayloadProblems() {
 	[ -z "$PROBLEMS" ] || printf '%s\n' "${PROBLEMS# }"
 }
 
+# THE INSTALLER THAT IS RUNNING, WHICH IS THE ONLY COPY KNOWN TO BE CURRENT.
+#
+# `$PCOS_TREE` is resolved at the top of this script by looking for a directory containing `bin/`,
+# which on any INSTALLED machine is /usr/local/share/posterchanos -- written once when that machine
+# was installed and never updated since. Every place that copied `$PCOS_TREE/gentoo.sh` therefore
+# handed on the installer from install day.
+#
+# MEASURED 2026-09-18. The live image was fixed to PACK the running script, so its own live-medium
+# scan worked -- and the install still shipped September's installer into the target, because
+# `cp -f "$INSTALLER_SRC" "$TARGET/usr/bin/gentoo.sh"` still read $PCOS_TREE. `bootloader()` then runs
+# INSIDE that chroot (see the `TARGET=/` case at the top of this file), so it executed the OLD file:
+# the EFI boot entry the new installer creates was never written, `check_livecd_install_vm.py` found
+# zero PosterChanOS entries in the guest's NVRAM, and the installed machine also inherited a two-week
+# -old repair tool. One helper, used everywhere, so the two cannot drift again.
+pc_canonical_installer() {
+	for _pci in "${BASH_SOURCE[0]:-}" "${0:-}"; do
+		[ -n "$_pci" ] || continue
+		_pci="$(readlink -f -- "$_pci" 2>/dev/null || true)"
+		[ -n "$_pci" ] && [ -f "$_pci" ] && { printf '%s\n' "$_pci"; return 0; }
+	done
+	for _pci in "$PCOS_TREE/gentoo.sh" /usr/local/share/posterchanos/gentoo.sh /usr/bin/gentoo.sh; do
+		[ -f "$_pci" ] && { printf '%s\n' "$_pci"; return 0; }
+	done
+	return 1
+}
+
 liveCD() {
 	clear
 	echo
@@ -4008,17 +4032,8 @@ FSTAB
 		# installer the operator just invoked. BASH_SOURCE survives being sourced and being reached
 		# through a symlink or a relative path; the old candidates stay only as a last resort for a
 		# shell that somehow reports neither.
-		local LIVE_INSTALLER=""
-		# `:-` on both: under `set -u` a bare ${BASH_SOURCE[0]} ABORTS when it is unset, which is
-		# exactly the "sourced from somewhere unusual" case the fallbacks below exist for.
-		for _src in "${BASH_SOURCE[0]:-}" "${0:-}"; do
-			[ -n "$_src" ] || continue
-			_src="$(readlink -f -- "$_src" 2>/dev/null || true)"
-			[ -n "$_src" ] && [ -f "$_src" ] && { LIVE_INSTALLER="$_src"; break; }
-		done
-		[ -n "$LIVE_INSTALLER" ] || LIVE_INSTALLER="$PCOS_TREE/gentoo.sh"
-		[ -f "$LIVE_INSTALLER" ] || LIVE_INSTALLER="/usr/local/share/posterchanos/gentoo.sh"
-		[ -f "$LIVE_INSTALLER" ] || LIVE_INSTALLER="/usr/bin/gentoo.sh"
+		local LIVE_INSTALLER
+		LIVE_INSTALLER="$(pc_canonical_installer)"
 		# AND IT SAYS WHICH ONE, because every symptom of getting this wrong appears later, on
 		# somebody else's machine, as an installer that behaves like a version nobody is looking at.
 		echo "live installer packed from: $LIVE_INSTALLER ($(wc -l <"$LIVE_INSTALLER" 2>/dev/null) lines)" >>"$LOG" 2>/dev/null
@@ -4809,8 +4824,10 @@ download-setup() {
 		# unrelated file when run from an old checkout. Every other copy of the installer in this
 		# script already resolves through PCOS_TREE; this one did not, and it is the copy the target
 		# uses for `emerge --sync`/repair before finalization replaces it.
-		local INSTALLER_SRC="$PCOS_TREE/gentoo.sh"
-		[ -f "$INSTALLER_SRC" ] || INSTALLER_SRC="/usr/local/share/posterchanos/gentoo.sh"
+		# ...and this one resolves through pc_canonical_installer for the same reason as the other
+		# two: PCOS_TREE is install-day state, and the target's copy is what a chroot later EXECUTES.
+		local INSTALLER_SRC
+		INSTALLER_SRC="$(pc_canonical_installer)"
 		if [ ! -f "$INSTALLER_SRC" ]; then
 			echo -e "\033[1;31mPosterChanOS installer source is missing -- cannot seed the target.\033[0m"
 			return 1
