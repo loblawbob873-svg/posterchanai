@@ -38,7 +38,7 @@ SEGMENT = 6
 # settings, segment length) so a cache filled by the old encoder is never mixed into a new stream.
 ENCODING = 2
 mutation_lock = asyncio.Lock()
-DEFAULT_LIMITS = {"server_kbps": 20000, "viewer_kbps": 1600, "max_streams": 8,
+DEFAULT_LIMITS = {"server_kbps": 20000, "max_streams": 8,
                   "max_transcodes": 2, "cache_mb": 2048}
 _sessions = {}
 _active_transcodes = 0
@@ -130,23 +130,16 @@ CODECS = {"240p": "avc1.64001f,mp4a.40.2", "360p": "avc1.64001f,mp4a.40.2", "480
           "720p": "avc1.640020,mp4a.40.2", "1080p": "avc1.64002a,mp4a.40.2"}
 
 
-# ONE NUMBER, AND ITS NAME SAYS WHAT IT LIMITS: the INTERNET.
+# ONE NUMBER: THE TOTAL THIS NODE WILL PUSH. THERE IS NO PER-VIEWER LIMIT.
 #
-# This is the shape Jellyfin ships -- a single "internet streaming bitrate limit" that applies to
-# REMOTE clients, with viewers on the server's own network unlimited -- and it is the right one.
+# A per-viewer ceiling was tried three ways -- charged to everyone, exempting the LAN, and with a
+# second box for the LAN -- and every one of them throttled a television on the operator's own switch
+# while the machine had bandwidth to spare. It is removed. `server_kbps` bounds the machine, which is
+# what an operator is actually protecting, and the ladder is filtered against that same number so a
+# player is never offered a rung the node cannot carry.
 #
-# The reported fault: a TV on this node's own LAN (192.168.0.49, via the router's nginx and server1's
-# proxy to nas) was paced to `viewer_kbps` 1600, so a ~600 KB 480p segment took 6-13 s -- a 6 s
-# segment delivered slower than real time. The buffer drained, the player fell 480p -> 240p, and at
-# the rung switch the Jellyfin client stopped and restarted the stream.
-#
-# A SECOND SETTING WAS THE WRONG ANSWER AND WAS REMOVED. It was added to avoid "overriding a number
-# the operator typed", but the honest fix for that is to say what the number means: `viewer_kbps` is
-# the per-viewer ceiling on this node's UPLOAD, and a viewer on the same switch spends none of it.
-# Two boxes asked somebody to describe one intention twice, and no other media server asks that.
-#
-# `server_kbps` is unchanged and still applies to EVERYONE, LAN included: it is the total this node
-# will push, which is the bound that protects the machine rather than the uplink.
+# `is_local_address` survives ONLY as a diagnostic: the [media-proxy] slow-segment line ends
+# `local=true|false`, which is how a slow stream is told apart from a distant one.
 import ipaddress as _ipaddress
 
 
@@ -242,13 +235,10 @@ def viewer_address(peer, real_ip='', forwarded='', relayed='', internal=False):
     return str(peer or '')
 
 
-def metered(local):
-    """Whether this viewer is charged against `viewer_kbps`.
-
-    Only the internet is. A viewer on one of this node's own attached subnets reaches it without
-    touching the uplink the setting exists to protect, so the per-viewer ceiling does not apply to
-    them -- `server_kbps`, the total, still does."""
-    return not local
+def metered(local=False):
+    """Kept only so older callers keep working: there is no per-viewer budget to be charged against.
+    Pacing is the node total, for everyone."""
+    return True
 
 
 def profile_kbps(profile):
@@ -258,12 +248,12 @@ def profile_kbps(profile):
 
 
 def allowed_profiles(config, metered=True):
-    """Which rungs a player may be offered. An unmetered (same-network) viewer gets the whole ladder:
-    the cap it would be filtered against is about the uplink, which that viewer does not use."""
-    if not metered:
-        return list(PROFILES)
-    fits = [name for name in PROFILES if profile_kbps(name) * ABR_HEADROOM <= config["viewer_kbps"]]
-    # A cap too small for any rung with margin still plays the lowest one: slow is better than nothing.
+    """Which rungs a player may be offered: those whose peak fits the node's TOTAL with margin.
+    Offering a rung the node cannot carry is a stall, so the playlist and the pacing read one number.
+    `metered` is accepted and ignored; nothing is exempt and nothing is charged twice."""
+    total = (config or {}).get("server_kbps", DEFAULT_LIMITS["server_kbps"])
+    fits = [name for name in PROFILES if profile_kbps(name) * ABR_HEADROOM <= total]
+    # A total too small for any rung with margin still plays the lowest one: slow is better than nothing.
     return fits or [next(iter(PROFILES))]
 
 
@@ -335,10 +325,9 @@ async def paced_bytes(data, viewer, config, order=None, metered=True):
                     for key, due in list(_rate_due.items()):
                         if due < now - 120:
                             _rate_due.pop(key, None)
-                    # The SERVER budget always applies; the per-viewer one is the uplink ceiling and
-                    # is charged only to a viewer who uses the uplink.
-                    budgets = ((("server", config["server_kbps"]), (viewer, config["viewer_kbps"]))
-                               if metered else (("server", config["server_kbps"]),))
+                    # ONE BUDGET: the total this node will push. There is no per-viewer ceiling --
+                    # see the note above.
+                    budgets = (("server", config["server_kbps"]),)
                     delay = max(0, *(_rate_due.get(key, now) - now for key, _ in budgets))
                     blocked = False
                     if streams is not None:

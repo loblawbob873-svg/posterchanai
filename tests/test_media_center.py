@@ -100,7 +100,7 @@ def test_non_admins_are_read_only_even_if_they_own_the_library(api, pubkey):
 def test_bandwidth_caps_filter_and_reject_high_profiles(api):
     client, docs, user, folder = api
     seed(docs, folder)
-    config = {**media.DEFAULT_LIMITS, "viewer_kbps": 650}
+    config = {**media.DEFAULT_LIMITS, "server_kbps": 650}
     assert client.put("/api/media-center/limits", json=config).status_code == 200
     url = client.post("/api/media-center/abc/play/movie").json()["url"]
     manifest = client.get(url)
@@ -112,14 +112,20 @@ def test_bandwidth_caps_filter_and_reject_high_profiles(api):
     assert playlist.text.count("#EXTINF") == 3
     assert "#EXTINF:1.000000" in playlist.text
     assert client.get(url.replace("master.m3u8", "240p-3.ts")).status_code == 404
-    assert client.put("/api/media-center/limits", json={**config, "viewer_kbps": 50000}).status_code == 400
+    # The node total is the only number; a bigger one simply offers more rungs.
+    assert client.put("/api/media-center/limits", json={**config, "server_kbps": 50000}).status_code == 200
 
 
-def test_default_is_200_kilobytes_per_second(api):
+def test_there_is_no_per_viewer_bandwidth_number(api):
+    """The operator sets ONE number, the node total. A per-viewer ceiling was tried three ways and
+    every one of them throttled a television on the operator's own switch; it is gone."""
     client, docs, user, folder = api
-    assert client.get("/api/media-center/limits").json()["viewer_kbps"] * 1000 / 8 == 200000
-    assert client.get("/api/media-center").json()["profiles"] == ["240p", "360p", "480p"]
-    assert routes.Limits().viewer_kbps == media.DEFAULT_LIMITS["viewer_kbps"]
+    assert "viewer_kbps" not in client.get("/api/media-center/limits").json()
+    assert "viewer_kbps" not in media.DEFAULT_LIMITS
+    assert "viewer_kbps" not in routes.Limits.model_fields
+    # The ladder is filtered against that same total, so nothing is offered the node cannot carry.
+    assert client.get("/api/media-center").json()["profiles"] == \
+        media.allowed_profiles(media.DEFAULT_LIMITS)
 
 
 def test_stream_slots_and_expiry(api, monkeypatch):
@@ -242,7 +248,7 @@ def test_proxy_topology_persists_on_its_node(tmp_path, monkeypatch):
 def test_cold_reads_restore_library_sharing_encoder_and_limits(api):
     client, docs, user, folder = api
     seed(docs, folder)["encoder"] = "amd"
-    config = {**media.DEFAULT_LIMITS, "viewer_kbps": 650, "max_streams": 3}
+    config = {**media.DEFAULT_LIMITS, "server_kbps": 650, "max_streams": 3}
     assert client.put("/api/media-center/limits", json=config).status_code == 200
     media._catalog_cache.clear()
     media._sessions.clear()
@@ -392,7 +398,7 @@ def test_actual_byte_pacing_shared_between_users(monkeypatch):
     async def exercise():
         media._rate_due.clear()
         monkeypatch.setattr(media, "_rate_lock", asyncio.Lock())
-        config = {**media.DEFAULT_LIMITS, "server_kbps": 650, "viewer_kbps": 650}
+        config = {**media.DEFAULT_LIMITS, "server_kbps": 650}
         start = asyncio.get_running_loop().time()
         async def consume(viewer):
             return b"".join([chunk async for chunk in media.paced_bytes(b"x" * 65536, viewer, config)])
@@ -407,7 +413,7 @@ def test_slow_viewer_does_not_reserve_other_users_bandwidth(monkeypatch):
     async def exercise():
         media._rate_due.clear()
         monkeypatch.setattr(media, "_rate_lock", asyncio.Lock())
-        config = {**media.DEFAULT_LIMITS, "server_kbps": 20000, "viewer_kbps": 650}
+        config = {**media.DEFAULT_LIMITS, "server_kbps": 20000}
         async def consume(viewer):
             return [chunk async for chunk in media.paced_bytes(b"x" * 32768, viewer, config)]
         first = asyncio.create_task(consume(OWNER))
@@ -811,7 +817,9 @@ def test_audio_language_and_subtitle_endpoints_with_real_media(api):
     assert audio_outputs[0] != audio_outputs[1]
     for suffix in ('&audio=3','&audio=99','&subtitle=99','&subtitle=3'):
         assert client.get(url.replace('master.m3u8','360p-0.ts')+suffix).status_code == 404
-    assert client.get(url.replace('master.m3u8','1080p-0.ts')+'&audio=2').status_code == 404
+    # 1080p fits the default node total, so it is served; a rung ABOVE the total is refused in
+    # test_bandwidth_caps_filter_and_reject_high_profiles.
+    assert client.get(url.replace('master.m3u8','1080p-0.ts')+'&audio=2').status_code == 200
     (root/'.ignore').touch()
     assert client.get(url.replace('master.m3u8','subtitle-3.vtt')).status_code == 404
 
@@ -921,9 +929,11 @@ def test_repeated_multi_viewer_streams_remain_bounded(monkeypatch):
             assert await asyncio.gather(*(viewer(i, number) for i in range(8))) == [32768] * 8
             assert media._active_transcodes == 0 and not media._segment_jobs
         assert calls == 800 and peak == 2
-        assert len(media._rate_due) == 9
-        # Each identity received 400 * 32 KiB, at the enforced default 200 KB/s.
-        assert time.monotonic() - start >= (400 * 32768 - 16384) / 200000
+        assert list(media._rate_due) == ['server']
+        # 8 viewers x 400 x 32 KiB all share ONE budget: the node total. That is the only pacing
+        # there is, and it is still enforced (no per-viewer bucket exists to bypass it).
+        total_bytes = 8 * 400 * 32768
+        assert time.monotonic() - start >= (total_bytes - 16384) / (media.DEFAULT_LIMITS['server_kbps'] * 125)
     asyncio.run(exercise())
 
 

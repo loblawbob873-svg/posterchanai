@@ -271,10 +271,6 @@ async def stop_session(body: StopSession, user=Depends(get_media_user)):
 
 class Limits(BaseModel):
     server_kbps: int = Field(default=20000, ge=650, le=1000000)
-    # The per-viewer ceiling on this node's UPLOAD. Viewers on its own network do not use the
-    # uplink and are not charged against it (see media.metered) -- the same rule Jellyfin's
-    # "internet streaming bitrate limit" follows.
-    viewer_kbps: int = Field(default=1600, ge=650, le=1000000)
     max_streams: int = Field(default=8, ge=1, le=100)
     max_transcodes: int = Field(default=2, ge=1, le=16)
     cache_mb: int = Field(default=2048, ge=32, le=1048576)
@@ -296,8 +292,6 @@ async def get_limits(user=Depends(get_media_admin)):
 
 @router.put("/limits")
 async def set_limits(body: Limits, user=Depends(get_media_admin)):
-    if body.viewer_kbps > body.server_kbps:
-        raise HTTPException(400, "Per-user bandwidth cannot exceed the server limit")
     async with media.mutation_lock:
         await media.write("limits", body.model_dump())
     return body.model_dump()

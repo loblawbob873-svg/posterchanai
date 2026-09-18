@@ -172,7 +172,11 @@ def test_hls_ticket_translation_client_bandwidth_and_stop(api, monkeypatch):
     url = '/jellyfin/' + source['TranscodingUrl']
     master = c.get(url)
     assert master.status_code == 200, master.text
-    assert '360p' in master.text and '480p' in master.text and '720p' not in master.text
+    # The ladder is bounded by the NODE TOTAL (there is no per-viewer number), and the client's own
+    # MaxStreamingBitrate still narrows it — checked below.
+    assert '360p' in master.text and '480p' in master.text
+    assert set(media.allowed_profiles(media.DEFAULT_LIMITS)) == {
+        name for name in media.PROFILES if name + '.m3u8' in master.text}
     assert 'ticket=' not in master.text and '/api/media-center' not in master.text
     assert master.headers['cache-control'] == 'private, no-store'
     variant = urljoin(url, next(line for line in master.text.splitlines() if line and not line.startswith('#')))

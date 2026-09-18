@@ -10226,7 +10226,7 @@
         ${data.can_create?`<details class="mc-tool-card"><summary><span class="mc-tool-icon"><svg class="ic"><use href="#i-bars"></use></svg></span><span><b>Bandwidth &amp; resources</b><small id="mc-limit-summary">200 KB/s per user · GPU / CPU transcoding</small></span><span class="mc-tool-expand">+</span></summary><form id="mc-limits" class="mc-tool-body">
           <p class="muted">Hard limits, enforced by the server in kbps (1,000 kbps = 1 Mbps). The per-user cap is shared across their tabs. The server cap covers all viewers.</p>
           <p><label>Total bandwidth <input name="server_kbps" type="number" min="650" max="1000000" required></label></p>
-          <p><label>Internet bandwidth per user <input name="viewer_kbps" type="number" min="650" max="1000000" required></label><br><small class="muted">Applies to viewers reaching this server over the internet. A TV or phone on this server's own network is not limited — it uses no internet upload — but the total above still applies to everyone.</small></p>
+          
           <p><label>Simultaneous streams <input name="max_streams" type="number" min="1" max="100" required></label></p>
           <p><label>Concurrent transcodes <input name="max_transcodes" type="number" min="1" max="16" required></label></p>
           <p><label>Segment cache (MB) <input name="cache_mb" type="number" min="32" max="1048576" required></label></p>
@@ -10311,7 +10311,7 @@
       const limitsForm=$('#mc-limits');
       if(limitsForm){
         const limits=await api('/limits');if(VIEW!=='media-center'||renderGeneration!==_mediaCenterRenderGeneration)return;
-        $('#mc-limit-summary').textContent=Math.round(limits.viewer_kbps/8)+' KB/s per internet viewer · '+limits.max_streams+' simultaneous streams';
+        $('#mc-limit-summary').textContent=Math.round(limits.server_kbps/8)+' KB/s total · '+limits.max_streams+' simultaneous streams';
         for(const [key,value] of Object.entries(limits)){if(limitsForm.elements[key])limitsForm.elements[key].value=value;}
         limitsForm.onsubmit=e=>{e.preventDefault();act(limitsForm.querySelector('button'),async()=>{
           await api('/limits','PUT',Object.fromEntries(Array.from(new FormData(limitsForm),([k,v])=>[k,Number(v)])));

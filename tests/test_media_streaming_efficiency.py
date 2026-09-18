@@ -61,20 +61,21 @@ def test_a_low_bandwidth_rung_exists_and_fits_a_600_kbps_link():
     # hls.js only climbs to (or stays on) a rung whose BANDWIDTH is under 0.7 of its estimate.
     assert media.profile_kbps("240p") <= 600 * 0.7
     # A cap too small for any rung with margin still gets the lowest one, never an empty playlist.
-    assert media.allowed_profiles({**media.DEFAULT_LIMITS, "viewer_kbps": 400}) == ["240p"]
+    assert media.allowed_profiles({**media.DEFAULT_LIMITS, "server_kbps": 400}) == ["240p"]
 
 
 def test_only_rungs_a_player_can_sustain_are_offered():
     """The 360p/480p flip-flop: a rung is offered only when its PEAK fits the budget with the margin
     an ABR player needs before it climbs."""
     for cap in (700, 1000, 1600, 3000, 8000):
-        config = {**media.DEFAULT_LIMITS, "viewer_kbps": cap}
+        config = {**media.DEFAULT_LIMITS, "server_kbps": cap}
         for name in media.allowed_profiles(config):
             assert media.profile_kbps(name) * media.ABR_HEADROOM <= cap, (cap, name)
+    # (the budget is the node total; there is no per-viewer number)
     # The measured line: at the 1600 kbps cap, 480p stalled when advertised at 1116 kbps and played
     # clean at 996 — the highest rung offered must leave the player at least that margin.
     assert media.profile_kbps("480p") * 1600 / 1000 <= 1600
-    assert media.allowed_profiles(media.DEFAULT_LIMITS) == ["240p", "360p", "480p"]
+    assert media.allowed_profiles({**media.DEFAULT_LIMITS, "server_kbps": 1600}) == ["240p", "360p", "480p"]
 
 
 def test_the_cache_never_mixes_segments_from_another_encoding(tmp_path, monkeypatch):
@@ -104,7 +105,7 @@ def test_an_idle_viewer_gets_a_burst_and_keeps_the_average(monkeypatch):
     monkeypatch.setattr(media, "time", SimpleNamespace(monotonic=lambda: clock["now"]))
     monkeypatch.setattr(media, "asyncio", SimpleNamespace(sleep=sleep))
     monkeypatch.setattr(media, "_rate_due", {})
-    config = {**media.DEFAULT_LIMITS, "server_kbps": 100000, "viewer_kbps": 1600}
+    config = {**media.DEFAULT_LIMITS, "server_kbps": 1600}
     rate = 1600 * 1000 / 8
 
     async def drain(size):
@@ -195,7 +196,7 @@ def test_parallel_segments_of_one_playback_are_delivered_in_order(monkeypatch):
     waiting on arrived at a quarter of the budget, got abandoned as too slow, and dragged the other
     three down with it. The budget now goes to the earliest segment first."""
     _fake_clock(monkeypatch)
-    config = {**media.DEFAULT_LIMITS, "server_kbps": 100000, "viewer_kbps": 1600}
+    config = {**media.DEFAULT_LIMITS, "server_kbps": 1600}
     arrivals = []
 
     async def consume(name, number, playback="ticket"):
@@ -213,7 +214,7 @@ def test_parallel_segments_of_one_playback_are_delivered_in_order(monkeypatch):
 
 def test_a_stalled_earlier_segment_does_not_block_the_rest(monkeypatch):
     clock = _fake_clock(monkeypatch)
-    config = {**media.DEFAULT_LIMITS, "server_kbps": 100000, "viewer_kbps": 1600}
+    config = {**media.DEFAULT_LIMITS, "server_kbps": 1600}
 
     async def exercise():
         monkeypatch.setattr(media, "_rate_lock", asyncio.Lock())

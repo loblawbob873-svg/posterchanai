@@ -19,6 +19,7 @@ The address is decided by `media.viewer_address`, which trusts a forwarded heade
 peer and the node-to-node `X-PC-Media-Client` only on an authenticated hop.
 """
 import ast
+import asyncio
 import re
 from types import SimpleNamespace
 
@@ -89,7 +90,7 @@ def test_a_vpn_peer_is_not_on_the_lan_however_private_its_address_looks(monkeypa
     monkeypatch.setattr(media, "_local_networks", (0.0, None))
 
 
-def test_an_unreadable_interface_table_charges_everybody(monkeypatch):
+def test_an_unreadable_interface_table_is_not_local(monkeypatch):
     """Failing to measure means the viewer is treated as the internet -- paced, which is the
     pre-existing behaviour and a bounded, harmless loss -- and never the other way round. A STALE
     answer must not survive the failure either, which is the shape a cached measurement invites."""
@@ -103,7 +104,6 @@ def test_an_unreadable_interface_table_charges_everybody(monkeypatch):
     monkeypatch.setattr(media, "_local_networks", (0.0, (ipaddress.ip_network("192.168.0.0/24"),)))
     assert media.local_networks() == ()
     assert media.is_local_address("192.168.0.49") is False
-    assert media.metered(media.is_local_address("192.168.0.49")) is True
     monkeypatch.setattr(media, "_local_networks", (0.0, None))
 
 
@@ -135,94 +135,6 @@ def test_the_edge_reads_the_address_the_same_way():
     assert routes.client_address(_request("192.168.0.1", {"X-Real-IP": "192.168.0.49"})) == "192.168.0.49"
     assert routes.client_address(_request("69.145.1.133", {"X-Real-IP": "192.168.0.49"})) == "69.145.1.133"
     assert routes.client_address(_request("")) == ""
-
-
-def test_the_internet_is_charged_and_this_network_is_not(api, monkeypatch):  # noqa: F811
-    """One number. A remote viewer is paced to it; a viewer on this node's own network is not
-    charged against it at all -- and the SERVER total still applies to both."""
-    client, docs, user, folder = api
-    seed(docs, folder)
-    calls, limits = [], dict(media.DEFAULT_LIMITS, viewer_kbps=800)
-
-    async def encoded(*args):
-        return b"segment-bytes"
-
-    async def spy(data, viewer, config, order=None, metered=True):
-        calls.append({"metered": metered, "viewer_kbps": config["viewer_kbps"],
-                      "server_kbps": config["server_kbps"]})
-        yield data
-
-    async def configured():
-        return dict(limits)
-
-    monkeypatch.setattr(media, "segment", encoded)
-    monkeypatch.setattr(media, "prefetch", lambda *args: None)
-    monkeypatch.setattr(media, "paced_bytes", spy)
-    monkeypatch.setattr(media, "limits", configured)
-    url = client.post("/api/media-center/abc/play/movie").json()["url"].replace("master.m3u8", "240p-1.ts")
-
-    monkeypatch.setattr(routes, "client_address", lambda request: "69.145.1.133")
-    assert client.get(url).content == b"segment-bytes"
-    assert calls[-1]["metered"] is True, "a viewer on the internet must be charged the cap"
-
-    monkeypatch.setattr(routes, "client_address", lambda request: "192.168.0.49")
-    assert client.get(url).content == b"segment-bytes"
-    assert calls[-1]["metered"] is False, "a viewer on this network does not use the uplink"
-    # The number itself is never rewritten, and the server-wide total reaches the pacer either way.
-    assert {call["viewer_kbps"] for call in calls} == {800}
-    assert {call["server_kbps"] for call in calls} == {media.DEFAULT_LIMITS["server_kbps"]}
-
-
-def test_the_server_total_still_applies_to_a_viewer_on_this_network():
-    """The per-viewer cap is about the uplink; the total is about the machine, and everybody pays it.
-    Dropping BOTH budgets would let one local player take the whole server."""
-    import inspect
-    source = inspect.getsource(media.paced_bytes)
-    unmetered = source[source.index("if metered else"):]
-    assert '"server"' in unmetered.split(")")[0] + ")", unmetered[:120]
-
-
-def test_the_ladder_follows_the_same_rule_as_the_rate(api, monkeypatch):  # noqa: F811
-    """A player offered a rung its budget cannot carry stalls at that rung, so the master playlist
-    and the pacing must agree about who is charged."""
-    client, docs, user, folder = api
-    seed(docs, folder)
-    limits = dict(media.DEFAULT_LIMITS, viewer_kbps=1600)
-
-    async def configured():
-        return dict(limits)
-
-    monkeypatch.setattr(media, "limits", configured)
-    url = client.post("/api/media-center/abc/play/movie").json()["url"]
-
-    monkeypatch.setattr(routes, "client_address", lambda request: "69.145.1.133")
-    assert "720p.m3u8" not in client.get(url).text, "1600 kbps of uplink cannot carry 720p"
-    assert "720p" not in client.get("/api/media-center").json()["profiles"]
-
-    monkeypatch.setattr(routes, "client_address", lambda request: "192.168.0.49")
-    assert "720p.m3u8" in client.get(url).text, "a viewer on this network is not held to the uplink"
-    # The quality menu is built from this list, so it must answer for the same viewer.
-    assert "720p" in client.get("/api/media-center").json()["profiles"]
-
-
-def test_only_the_internet_is_metered():
-    assert media.metered(False) is True          # not local -> the internet -> charged
-    assert media.metered(True) is False          # this node's own network -> not charged
-
-
-def test_there_is_exactly_one_bandwidth_number_per_viewer():
-    """A second setting was tried and removed. Two boxes asked somebody to describe one intention
-    twice; the fix was to name the one number after what it limits."""
-    assert "lan_kbps" not in media.DEFAULT_LIMITS
-    assert "lan_kbps" not in routes.Limits.model_fields
-    source = (routes.__file__.rsplit("/app/", 1)[0] + "/static/js/client/app.js")
-    form = open(source, encoding="utf-8").read()
-    form = form[form.index('<form id="mc-limits"'):]
-    form = form[:form.index('</form>')]
-    assert 'name="lan_kbps"' not in form
-    # And the one that remains says what it limits, on screen.
-    assert "Internet bandwidth per user" in form
-    assert "own network is not limited" in form
 
 
 def test_the_jellyfin_hop_carries_the_clients_address():
@@ -322,37 +234,52 @@ def test_the_jellyfin_shortcut_says_who_is_asking():
     assert asked >= 2, "list_libraries and hls both take a request"
 
 
-def test_the_node_total_never_binds_below_the_number_the_operator_typed():
-    """THE PER-STREAM NUMBER MUST BE WHAT LIMITS A STREAM, or there are two numbers again.
-
-    Measured live on 2026-09-17, with the per-stream limit already correct: a TV on this node's own
-    LAN -- exempt from `viewer_kbps` by design, so the only budget left was the node total -- took
-    4.471 s to deliver 1,556,480 bytes of a CACHED 1080p segment (`headers_s=0.080`), i.e. 2.79
-    Mbit/s for a rung whose segments peak near 5.6. The node total was 10000 kbps. A 6-second segment
-    arriving in 13 drains the buffer, so the Jellyfin client stalled, cancelled and fell back to
-    480p, over and over -- the "frequent buffering" report, with the per-stream number innocent and
-    every rung above 480p unusable on a gigabit LAN.
-
-    `server_kbps` is the machine's backstop, not a second bandwidth policy: it exists so this node
-    cannot be asked to push more than it can serve. Set below `max_streams * viewer_kbps` it stops
-    being a backstop and becomes a cap nobody typed, binding first and invisibly. The shipped
-    defaults must never be that shape."""
-    limits = media.DEFAULT_LIMITS
-    ceiling = limits["max_streams"] * limits["viewer_kbps"]
-    assert limits["server_kbps"] >= ceiling, (
-        "the shipped node total (%d kbps) is lower than %d streams at the per-stream limit (%d), so "
-        "streams throttle each other while every one of them is inside the only limit anybody set"
-        % (limits["server_kbps"], limits["max_streams"], limits["viewer_kbps"]))
 
 
-def test_a_bigger_node_total_never_changes_what_gets_transcoded():
-    """The two numbers answer different questions and must not leak into each other.
+# ---- ONE NUMBER: THE NODE TOTAL ----------------------------------------------------------------
+# A per-viewer ceiling was tried three ways (charged to everyone, exempting the LAN, and with a
+# second box for the LAN) and every one of them throttled a television on the operator's own switch
+# while the machine had bandwidth to spare. It is gone. What remains is the total this node pushes.
 
-    Raising the node total is how a LAN gets its bandwidth back; it must not also unlock a rung,
-    because what this server transcodes is not a bandwidth decision and was never asked to change.
-    The ladder reads `viewer_kbps` alone, and this keeps it that way."""
-    small = {**media.DEFAULT_LIMITS, "server_kbps": 1000}
-    huge = {**media.DEFAULT_LIMITS, "server_kbps": 10 ** 6}
-    for charged in (True, False):
-        assert media.allowed_profiles(small, charged) == media.allowed_profiles(huge, charged), (
-            "the node total moved the transcode ladder")
+
+def test_there_is_no_per_viewer_bandwidth_anywhere():
+    import re as _re
+    assert "viewer_kbps" not in media.DEFAULT_LIMITS
+    assert "viewer_kbps" not in routes.Limits.model_fields
+    assert "lan_kbps" not in media.DEFAULT_LIMITS and "lan_kbps" not in routes.Limits.model_fields
+    source = (routes.__file__.rsplit("/app/", 1)[0] + "/static/js/client/app.js")
+    form = open(source, encoding="utf-8").read()
+    form = form[form.index('<form id="mc-limits"'):]
+    form = form[:form.index('</form>')]
+    assert 'name="viewer_kbps"' not in form and 'name="lan_kbps"' not in form
+    assert 'name="server_kbps"' in form, "the one number must still have a box to type it in"
+    # And no code path reads a per-viewer number any more.
+    service = open(media.__file__, encoding="utf-8").read()
+    assert not _re.search(r'config\["viewer_kbps"\]|config\.get\("viewer_kbps"', service)
+
+
+def test_every_viewer_is_paced_by_the_total_including_this_network():
+    """The budget is shared and nobody is exempt: a local viewer and a remote one draw on one bucket."""
+    async def exercise():
+        media._rate_due.clear()
+        config = {**media.DEFAULT_LIMITS, "server_kbps": 650}
+        async def consume(viewer):
+            return b"".join([chunk async for chunk in media.paced_bytes(b"x" * 65536, viewer, config)])
+        start = asyncio.get_running_loop().time()
+        await asyncio.gather(consume("192.168.0.49"), consume("69.145.1.133"))
+        elapsed = asyncio.get_running_loop().time() - start
+        assert list(media._rate_due) == ["server"], "a per-viewer bucket came back"
+        # 128 KiB through one 650 kbps budget cannot be instant, wherever the viewers are.
+        assert elapsed >= (2 * 65536 - 16384) * 8 / (650 * 1000)
+    asyncio.run(exercise())
+
+
+def test_the_ladder_is_bounded_by_the_total():
+    """Offering a rung the node cannot carry is a stall; the playlist reads the same number pacing does."""
+    for total in (700, 1600, 5000, 20000):
+        config = {**media.DEFAULT_LIMITS, "server_kbps": total}
+        for name in media.allowed_profiles(config):
+            assert media.profile_kbps(name) * media.ABR_HEADROOM <= total or \
+                name == next(iter(media.PROFILES)), (total, name)
+    assert "1080p" in media.allowed_profiles({**media.DEFAULT_LIMITS, "server_kbps": 20000})
+    assert media.allowed_profiles({**media.DEFAULT_LIMITS, "server_kbps": 400}) == ["240p"]
