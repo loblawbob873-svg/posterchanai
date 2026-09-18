@@ -470,3 +470,49 @@ class Bridge(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class LaunchAlwaysHasADisplay(unittest.TestCase):
+    """STEAM (and every X11 app) NEEDS $DISPLAY, and the shell often has none.
+
+    Measured on the TV 2026-09-18: the live PosterChan shell process had no DISPLAY at all, because
+    Wayfire exec's it from autostart before Xwayland is up and never pushes DISPLAY back into it.
+    Steam is an X11 program: launched from that environment its CEF/GL helper dies immediately
+    ("Missing X server or $DISPLAY"), leaving a `.crash` marker and no window -- "Steam doesn't
+    open". Telegram and Firefox were special-cased; nothing covered Steam. `pc:wm:launch` now fills
+    the gap for EVERY launch, and only when our own environment lacks a DISPLAY (an inherited wins).
+
+    This RUNS the guard extracted from main.js against real environments, so a mutation to it fails.
+    """
+    def setUp(self):
+        self.main = open(MAIN, encoding="utf-8").read()
+        m = re.search(r"if \(!process\.env\.DISPLAY\) \{.*?\n  \}", self.main, re.S)
+        self.assertIsNotNone(m, "the DISPLAY guard is gone from pc:wm:launch")
+        self.guard = m.group(0)
+
+    def _run(self, env_obj, opts_obj):
+        import json
+        js = (
+            "const __out = process.stdout;\n"
+            "(function(process){\n"
+            "  let launchOpts = " + json.dumps(opts_obj) + ";\n"
+            + self.guard + "\n"
+            "  __out.write(JSON.stringify(launchOpts.env || null));\n"
+            "})({ env: " + json.dumps(env_obj) + " });\n"
+        )
+        r = subprocess.run(["node", "-e", js], capture_output=True, text=True, timeout=30)
+        self.assertEqual(0, r.returncode, r.stderr[-500:])
+        return json.loads(r.stdout)
+
+    def test_a_shell_with_no_display_gives_the_child_one(self):
+        out = self._run({}, {})
+        self.assertIsNotNone(out, "no env set on the launch -- the child inherits no DISPLAY")
+        self.assertEqual(":0", out.get("DISPLAY"), "Steam launches with no DISPLAY and crashes")
+
+    def test_an_inherited_display_is_never_overridden(self):
+        out = self._run({"DISPLAY": ":7"}, {})
+        self.assertIsNone(out, "the guard forced an env over the DISPLAY the shell already had")
+
+    def test_an_explicit_launch_display_wins_over_the_default(self):
+        out = self._run({}, {"env": {"DISPLAY": ":9"}})
+        self.assertEqual(":9", out.get("DISPLAY"))

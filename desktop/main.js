@@ -3169,6 +3169,20 @@ ipcMain.handle('pc:wm:launch', async (e, argv, opts) => {
   }
   if (!list.length) throw new Error('nothing to launch');
   let launchOpts = opts || {};
+  /* EVERY LAUNCH INHERITS A DISPLAY, because this shell is routinely exec'd from the compositor's
+   * autostart BEFORE Xwayland has come up, and Wayfire does not retroactively push DISPLAY into an
+   * already-running child. Measured on the TV (2026-09-18): the live shell process had no DISPLAY at
+   * all, even though Xwayland's socket was :0 and the compositor was healthy. An X11 program launched
+   * from that environment — Steam, and any game that is not a native Wayland client — then dies the
+   * instant its CEF/GL helper starts ("Missing X server or $DISPLAY"), leaving a `.crash` marker and
+   * no window, which reads to the user as "Steam doesn't open." Supplying DISPLAY is harmless to
+   * native Wayland clients (they key off WAYLAND_DISPLAY and ignore it), so it is done for ALL
+   * launches when our own environment lacks one; the Telegram/Firefox blocks below still layer what
+   * THEY need on top. Only fills a GAP — an inherited DISPLAY is never overridden. */
+  if (!process.env.DISPLAY) {
+    launchOpts = Object.assign({}, launchOpts,
+      { env: Object.assign({ DISPLAY: ':0' }, launchOpts.env || {}) });
+  }
   /* GAMES LAUNCH DIRECTLY. GAMESCOPE IS OPT-IN, AND IT USED TO BE MANDATORY AND 720p.
    *
    * Every Games-category launch was wrapped in `gamescope -f -b --force-windows-fullscreen` (plus
