@@ -6,6 +6,20 @@ if [ ! -x venv-unified/bin/python ]; then
     echo "[sync] ABORT: venv-unified/bin/python is required for deployment regression checks"
     exit 1
 fi
+# THE OVERLAY BUMP RUNS BEFORE THE GATE, BECAUSE IT EDITS SOURCE.
+#
+# It used to run after the tests and before `--verify`, and it renames an ebuild, rewrites a Manifest
+# and (since 2026-09-18) moves the session package's desktop pin. The gate fingerprints the source it
+# tested and refuses to push if that source changed, so a new desktop release landing mid-run aborted
+# the deploy with "tested source changed; rerun deployment checks" — twice on 2026-09-18, each time
+# costing a full ~25-minute suite run to discover that sync.sh had edited its own inputs.
+#
+# Bumping first is also the honest order: the tree that gets tested is then the tree that gets pushed.
+if [ -x .venv/bin/python ] && ! .venv/bin/python scripts/bump_desktop_overlay.py --check >/tmp/pc-overlay-check.log 2>&1; then
+    echo "[sync] completed desktop release is newer — updating the Gentoo package"
+    .venv/bin/python scripts/bump_desktop_overlay.py
+fi
+
 _regression_receipt=$(mktemp) || exit 1
 trap 'rm -f "$_regression_receipt"' EXIT
 if ! venv-unified/bin/python scripts/deploy_regression_gate.py --full --receipt "$_regression_receipt"; then
@@ -84,10 +98,7 @@ fi
 # already know that run number.  Reconcile against completed releases before every later deploy;
 # otherwise the overlay publisher below is never entered (no os/ diff) and installed PosterChanOS
 # machines remain pinned to an arbitrarily old desktop indefinitely.
-if [ -x .venv/bin/python ] && ! .venv/bin/python scripts/bump_desktop_overlay.py --check >/tmp/pc-overlay-check.log 2>&1; then
-    echo "[sync] completed desktop release is newer — updating the Gentoo package"
-    .venv/bin/python scripts/bump_desktop_overlay.py
-fi
+# (The bump itself now runs BEFORE the regression gate — see the top of this file.)
 
 # What are THIS node's services actually running? That -- not "HEAD before the commit below" -- is the
 # base the restart set has to be computed from, and the two are only the same when sync.sh created the

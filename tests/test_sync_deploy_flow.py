@@ -354,3 +354,26 @@ def test_the_overlay_ebuild_tracks_the_desktop_build():
     assert "The committed ebuild is the sole package version authority" in pub
     assert 'ASSET="PosterChan-${LIVE}-linux-x64.tar.zst"' in pub
     assert "DIST posterchan-desktop-%s.tar.zst" in pub
+
+
+def test_the_overlay_bump_runs_before_the_gate_fingerprints_the_source():
+    """sync.sh MUST NOT EDIT ITS OWN TESTED SOURCE, and it did.
+
+    `deploy_regression_gate.py --full --receipt` fingerprints the source it tested; `--verify` refuses
+    to push if that source changed. `bump_desktop_overlay.py` renames an ebuild, rewrites a Manifest
+    and moves the session package's desktop pin — all source. Run between the two, a desktop release
+    landing mid-deploy aborted the push with "tested source changed; rerun deployment checks", which
+    happened twice on 2026-09-18 and cost a full suite run each time to discover that sync.sh had
+    edited its own inputs.
+
+    Bumping first is also the honest order: the tree that is tested is the tree that is pushed.
+    """
+    from pathlib import Path as _Path
+    src = (_Path(__file__).resolve().parents[1] / "sync.sh").read_text(encoding="utf-8")
+    bump = src.index("bump_desktop_overlay.py --check")
+    gate = src.index("deploy_regression_gate.py --full")
+    verify = src.index("deploy_regression_gate.py --verify")
+    assert bump < gate, (
+        "the overlay bump runs after the regression gate fingerprints the source, so a new desktop "
+        "release mid-deploy makes --verify abort about changes sync.sh made itself")
+    assert gate < verify, "the receipt must be written before it is verified"
