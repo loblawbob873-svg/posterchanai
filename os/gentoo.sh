@@ -2566,7 +2566,15 @@ PROFILE
 		fi
 	done
 	for helper in foot pc-super pc-provision-user pc-session-switch pc-session-auth pc-compositor-session pc-wayfire-action pc-wayfire-health pc-shell-start pc-shell-start-wayfire pc-shell-restart pc-window-cycle pc-window-snap pc-window-close pc-key pc-idle pc-pointer-confine pc-screenshot pc-monero-wallet-rpc update-posterchan; do
-		if [ -f "$PCOS_TREE/bin/$helper" ]; then
+		# SYNCED OVERLAY FIRST. $PCOS_TREE is install-day state on the build host — preferring it
+		# hands the new machine whatever session helpers that host had when IT was installed. The
+		# same ordering shipped a two-week-old installer and a two-week-old wayfire.ini; these are
+		# the files that decide whether the desktop starts at all, so they get the same rule.
+		if [ -n "$PCREPO" ] && [ -f "$PCREPO/app-misc/posterchanos-shell/files/$helper" ]; then
+			cp -f "$PCREPO/app-misc/posterchanos-shell/files/$helper" ${TARGET}/usr/local/bin/$helper
+		elif [ -f "/var/db/repos/posterchan/app-misc/posterchanos-shell/files/$helper" ]; then
+			cp -f "/var/db/repos/posterchan/app-misc/posterchanos-shell/files/$helper" ${TARGET}/usr/local/bin/$helper
+		elif [ -f "$PCOS_TREE/bin/$helper" ]; then
 			cp -f "$PCOS_TREE/bin/$helper" ${TARGET}/usr/local/bin/$helper
 		elif [ -f "$PCOS_TREE/overlay/app-misc/posterchanos-shell/files/$helper" ]; then
 			cp -f "$PCOS_TREE/overlay/app-misc/posterchanos-shell/files/$helper" ${TARGET}/usr/local/bin/$helper
@@ -2584,8 +2592,10 @@ PROFILE
 	# back to, the login lands on a rescue shell. Copy it from the source tree the same way the
 	# helpers are copied.
 	if [ ! -f "${TARGET}/etc/wayfire.ini" ]; then
-		for F in "$PCOS_TREE/overlay/app-misc/posterchanos-shell/files/wayfire.ini" \
-			"/var/db/repos/posterchan/app-misc/posterchanos-shell/files/wayfire.ini"; do
+		# Synced overlay first; $PCOS_TREE is install-day state (see liveCD's note on the same list).
+		for F in "$PCREPO/app-misc/posterchanos-shell/files/wayfire.ini" \
+			"/var/db/repos/posterchan/app-misc/posterchanos-shell/files/wayfire.ini" \
+			"$PCOS_TREE/overlay/app-misc/posterchanos-shell/files/wayfire.ini"; do
 			if [ -f "$F" ]; then
 				install -m 0644 "$F" "${TARGET}/etc/wayfire.ini"
 				break
@@ -2599,8 +2609,10 @@ PROFILE
 	# have run. GTK does not implement zxdg_decoration_manager_v1 (measured: not one occurrence in
 	# libxul), so the compositor cannot frame Firefox and the browser has to draw its own.
 	if [ ! -f "${TARGET}/etc/firefox/policies/policies.json" ]; then
-		for F in "$PCOS_TREE/overlay/app-misc/posterchanos-shell/files/firefox-policies.json" \
-			"/var/db/repos/posterchan/app-misc/posterchanos-shell/files/firefox-policies.json"; do
+		# Same ordering rule as wayfire.ini above: install-day state is the LAST place to look.
+		for F in "$PCREPO/app-misc/posterchanos-shell/files/firefox-policies.json" \
+			"/var/db/repos/posterchan/app-misc/posterchanos-shell/files/firefox-policies.json" \
+			"$PCOS_TREE/overlay/app-misc/posterchanos-shell/files/firefox-policies.json"; do
 			if [ -f "$F" ]; then
 				mkdir -p "${TARGET}/etc/firefox/policies"
 				install -m 0644 "$F" "${TARGET}/etc/firefox/policies/policies.json"
@@ -4008,10 +4020,21 @@ FSTAB
 	# More fundamentally, a distro default config does not start our shell at all. Find the package-owned
 	# config from either a source checkout or the synced overlay and REQUIRE its shell marker; a
 	# missing session config is an image-build error, not something to discover after burning it.
+	# THE SYNCED OVERLAY FIRST, AND $PCOS_TREE ONLY AS A LAST RESORT — SAME FAULT AS THE INSTALLER.
+	#
+	# $PCOS_TREE is written once when the build host was installed and never updated, so preferring it
+	# ships whatever session config that machine had on install day. MEASURED 2026-09-18: an image
+	# built from a checkout carrying `dpms_timeout = 600` shipped `120` — the two-minute screen blank
+	# that was reported as three separate bugs (a TV re-syncing its link reads as the screen flashing,
+	# the shell repainting reads as the taskbar vanishing, and a Wayland popup that loses focus across
+	# the cycle is simply gone, which is why a wifi password could not be typed). The fix was in the
+	# repo, deployed, published — and the image took September's file. Exactly how the installer
+	# shipped a two-week-old copy of itself; see pc_canonical_installer.
 	local LIVE_WAYFIRE=""
 	for F in \
-		"$PCOS_TREE/overlay/app-misc/posterchanos-shell/files/wayfire.ini" \
-		"/var/db/repos/posterchan/app-misc/posterchanos-shell/files/wayfire.ini"; do
+		"$PCREPO/app-misc/posterchanos-shell/files/wayfire.ini" \
+		"/var/db/repos/posterchan/app-misc/posterchanos-shell/files/wayfire.ini" \
+		"$PCOS_TREE/overlay/app-misc/posterchanos-shell/files/wayfire.ini"; do
 		if [ -f "$F" ] && grep -q '/usr/local/bin/pc-shell-start-wayfire' "$F"; then
 			LIVE_WAYFIRE="$F"; break
 		fi

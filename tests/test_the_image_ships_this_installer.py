@@ -120,3 +120,73 @@ class TheImageShipsThisInstaller(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class NothingIsTakenFromInstallDayState(unittest.TestCase):
+    """$PCOS_TREE IS WRITTEN ONCE AT INSTALL TIME AND NEVER UPDATED, SO IT IS THE LAST PLACE TO LOOK.
+
+    This was found three times in one night, each time as a different bug:
+
+      * the INSTALLER — the image shipped a Sept 4 gentoo.sh, so every fix for two weeks was invisible
+        to it and "the installer keeps having issues" had a two-week-old cause;
+      * WAYFIRE.INI — an image built from a checkout carrying `dpms_timeout = 600` shipped `120`,
+        the two-minute screen blank reported as three separate faults (a TV re-syncing its link is
+        the screen "flashing", the shell repainting is the taskbar "disappearing", and a Wayland
+        popup that loses focus across the cycle is gone, which is why a wifi password could not be
+        typed into it);
+      * the SESSION HELPERS — `pc-compositor-session` and friends, i.e. the files that decide whether
+        a desktop starts at all, copied into every installed system from that same tree.
+
+    All three read `$PCOS_TREE` first. The rule is now one rule: the synced overlay, then the portage
+    copy, then install-day state as a fallback that should never be reached on a maintained host.
+    """
+
+    def _orders(self, needle: str) -> list:
+        """EVERY candidate list mentioning `needle`, each as an ordering.
+
+        Checking only the first occurrence made this test vacuous: wayfire.ini is resolved in TWO
+        places (the copy into the installed system and the copy into the image), and a mutation that
+        broke the second passed because the first was still correct. Both must hold, and any future
+        third one is included automatically.
+        """
+        out = []
+        start = 0
+        while True:
+            i = GENTOO.find(needle, start)
+            if i == -1:
+                return out
+            start = i + 1
+            head = GENTOO.rfind("for ", max(0, i - 1500), i)
+            if head == -1:
+                continue
+            # Comments name these paths too — the note explaining why $PCOS_TREE is last mentions it
+            # before any code does, and reading that as a candidate failed a correct ordering.
+            block = "\n".join(l for l in GENTOO[head:i + 400].splitlines()
+                               if not l.lstrip().startswith("#"))
+            seen = []
+            for tag, name in (("$PCREPO", "repo"), ("/var/db/repos/posterchan", "portage"),
+                              ("$PCOS_TREE", "installday")):
+                pos = block.find(tag)
+                if pos != -1:
+                    seen.append((pos, name))
+            if seen:
+                out.append([n for _, n in sorted(seen)])
+
+    def test_the_session_config_is_not_taken_from_install_day_first(self):
+        orders = self._orders("files/wayfire.ini")
+        self.assertTrue(orders, "the wayfire.ini candidate lists moved")
+        for order in orders:
+            self.assertNotEqual("installday", order[0],
+                            "the image takes its session config from $PCOS_TREE — that is how a "
+                            "two-week-old dpms_timeout shipped over a deployed fix")
+
+    def test_the_session_helpers_are_not_taken_from_install_day_first(self):
+        orders = self._orders('files/$helper"')
+        self.assertTrue(orders, "the helper candidate lists moved")
+        for order in orders:
+            self.assertNotEqual("installday", order[0],
+                            "installed systems get their session helpers from $PCOS_TREE")
+
+    def test_the_installer_itself_still_resolves_through_the_one_helper(self):
+        self.assertIn("pc_canonical_installer", GENTOO)
+        self.assertNotIn('INSTALLER_SRC="$PCOS_TREE/gentoo.sh"', GENTOO)
