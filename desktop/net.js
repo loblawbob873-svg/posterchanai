@@ -121,6 +121,21 @@ async function connect(ssid, password){
     await run(['connection', 'up', 'id', ssid], { timeout: 60000 });
     return { ssid, reused: true };
   }
+  /* A PASSWORD MEANS "JOIN FRESH", SO A STALE PROFILE MUST GO FIRST.
+   *
+   * A rejected `device wifi connect` still leaves a saved profile carrying the wrong secret. The
+   * next attempt with a new password then activates THAT broken profile instead of trying the new
+   * one, so a wrong first try can never be recovered by a correct second — and, reported from a TV
+   * where the password was retyped many times, the saved PSK ended up as every attempt concatenated
+   * into one very long string, which nmtui showed and which of course never authenticated. Deleting
+   * the existing profile before a password join guarantees each attempt starts from nothing: the
+   * secret nmcli stores is exactly what was typed this time, and retrying can only help.
+   *
+   * Only when a password was given (an unattended `connection up` reuse is handled above) and only
+   * when one actually exists; a delete of a missing profile is a harmless nonzero we swallow. */
+  if(password && known){
+    try{ await run(['connection', 'delete', 'id', ssid], { timeout: 20000 }); }catch(_){}
+  }
   /* `--ask` is a GLOBAL nmcli option and must precede the object. Appending it after the SSID
    * makes nmcli parse it as an argument to `device wifi connect` and reject every secured network
    * from the live USB. The secret still travels only over stdin, never through argv. */

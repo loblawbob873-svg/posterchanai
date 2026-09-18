@@ -130,6 +130,29 @@ class NmcliClient(unittest.TestCase):
         self.assertTrue(out["c"]["reused"], out)
         self.assertIn("connection up id Cafe: Free", self._argv())
 
+    def test_a_password_join_clears_a_stale_profile_first(self):
+        """RETRYING A WIFI PASSWORD MUST START CLEAN. A rejected `device wifi connect` leaves a saved
+        profile with the wrong secret; the next password attempt would otherwise activate that broken
+        profile, so a correct second try never recovers. Reported from a TV where the password was
+        retyped many times: nmtui showed the saved PSK as every attempt concatenated into one long
+        string. 'Cafe: Free' is a saved network, so a password join deletes it before connecting."""
+        out = self.run_js("out.c = await N.connect('Cafe: Free', 'freshpass');")
+        argv = self._argv()
+        self.assertIn("connection delete id Cafe: Free", argv,
+                      "the stale profile was not cleared, so a wrong prior attempt can never be "
+                      "recovered by a correct one")
+        # order matters: delete BEFORE the connect, or the fresh connect is the thing that gets deleted
+        self.assertLess(argv.index("connection delete id Cafe: Free"),
+                        argv.index("device wifi connect Cafe: Free"),
+                        "the profile was deleted AFTER the join instead of before it")
+        self.assertIn("freshpass", open(self.stdin).read(), "the new password never reached nmcli")
+
+    def test_a_first_time_join_deletes_nothing(self):
+        """A network with no saved profile has nothing to clear — do not fire a spurious delete."""
+        self.run_js("out.c = await N.connect('Neighbour', 'hunter2');")
+        self.assertNotIn("connection delete", self._argv(),
+                         "deleted a profile that never existed on a first-time join")
+
     def test_a_refusal_does_not_kill_the_shell(self):
         """nmcli can exit BEFORE it reads stdin — a rejected password is exactly that, it refuses on
         the arguments alone. Writing the secret then raises EPIPE asynchronously on the stream, and
