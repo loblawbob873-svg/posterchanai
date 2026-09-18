@@ -153,6 +153,61 @@ pc_drm_cards() {
 	done
 }
 
+# THE KERNEL ALREADY RANKED THE MODES, AND NOTHING WAS ASKING IT.
+#
+# wlroots' wlr_output_preferred_mode() returns the mode the EDID flags PREFERRED and, when none is
+# flagged, the LAST mode in the list. A TCL 55S451 flags none, so a 1080p panel came up at 640x480 --
+# reported as "resolution was weird", then "only showing in the center of the TV and super high"
+# after the first attempt at a fix, then "resolution is complete ass still".
+#
+# THE FIRST ATTEMPT WAS RIGHT ABOUT THE MODE AND WRONG ABOUT THE MOMENT. It drove wlr-randr AFTER
+# the compositor and the shell were already up, so the output changed size underneath a desktop that
+# had already laid itself out for 640x480 -- which is exactly a small desktop sitting in the middle
+# of a large picture. Nothing about the chosen mode was wrong; changing it at that point was.
+#
+# The kernel sorts every connector's mode list with drm_mode_sort: the EDID's preferred mode first
+# when there is one, otherwise its own ranking by resolution and refresh. So the FIRST line of
+# /sys/class/drm/<card>-<connector>/modes is either the same answer wlroots would reach (a no-op) or
+# the answer wlroots missed (the fix). It is readable with no compositor running, which is what lets
+# this be written into the config BEFORE wayfire starts, so the desktop is laid out once, correctly.
+#
+# An operator's own [output:NAME] section always wins -- a person who has set a mode has said
+# something this cannot improve on.
+pc_kernel_preferred_modes() {
+	for pc_conn in "$drm_root"/card[0-9]*-*; do
+		[ -r "$pc_conn/status" ] || continue
+		IFS= read -r pc_st <"$pc_conn/status" 2>/dev/null || continue
+		[ "$pc_st" = connected ] || continue
+		IFS= read -r pc_md <"$pc_conn/modes" 2>/dev/null || continue
+		# Plain progressive modes only: an entry like "1920x1080i" is interlaced, and a config that
+		# names a mode wayfire cannot parse is worse than saying nothing.
+		case "$pc_md" in
+			*[!0-9x]*|*x) continue ;;
+			[0-9]*x[0-9]*) ;;
+			*) continue ;;
+		esac
+		pc_nm=${pc_conn##*/}
+		printf '%s %s\n' "${pc_nm#*-}" "$pc_md"
+	done
+}
+
+# Write those modes into the session's private wayfire.ini, before wayfire reads it.
+pc_pin_preferred_modes() {
+	pc_cfg="$1"
+	[ -n "${pc_cfg:-}" ] && [ -f "$pc_cfg" ] && [ -w "$pc_cfg" ] || return 0
+	[ -z "${PC_NO_MODE_PIN:-}" ] || return 0
+	pc_kernel_preferred_modes | while read -r pc_out pc_mode; do
+		[ -n "$pc_out" ] && [ -n "$pc_mode" ] || continue
+		# An explicit section for this output is the operator's answer; do not argue with it.
+		if grep -qs "^[[:space:]]*\[output:$pc_out\][[:space:]]*\$" "$pc_cfg"; then
+			pc_say "output $pc_out already configured in wayfire.ini; leaving its mode alone"
+			continue
+		fi
+		printf '\n[output:%s]\nmode = %s\n' "$pc_out" "$pc_mode" >>"$pc_cfg"
+		pc_say "pinned $pc_out to the kernel's preferred mode $pc_mode"
+	done
+}
+
 # NVIDIA display devices, as "slot deviceid driver" -- vendor 0x10de and PCI class 0x03 (display).
 # Without the class filter this also matches the audio function every modern NVIDIA card carries,
 # which has no driver and would read as an unclaimed GPU on a perfectly healthy machine.
@@ -1101,6 +1156,8 @@ PC_SESSION_CONFIG_PY
 			# Keep a usable desktop if the optional private-copy preparation fails.
 			session_cfg="${PC_WAYFIRE_CONFIG:-/etc/wayfire.ini}"
 		fi
+		# BEFORE wayfire reads it, not after it has drawn. See pc_kernel_preferred_modes.
+		pc_pin_preferred_modes "$session_cfg"
 		# Read by rescue(): an empty log means something different before this line and after it.
 		wayfire_started=1
 		pc_say "starting Wayfire on: $(pc_drm_cards | tr '\n' ',' | sed 's/,$//')"
