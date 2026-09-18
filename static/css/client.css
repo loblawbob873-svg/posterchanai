@@ -7168,7 +7168,11 @@ body.os-on .osw-body > .feed::-webkit-scrollbar-thumb:hover{background:var(--mut
 
 /* A wallpaper from the drive. The emblem behind it goes — two backgrounds fighting is worse than
    either — and the picture covers, because a desktop wallpaper that letterboxes looks broken. */
-.os-desk.has-bg{background-size:cover;background-position:center;background-repeat:no-repeat}
+/* FIT THE WHOLE WALLPAPER, never crop it. `cover` filled the screen by cropping the top and bottom
+ * of anything taller than the display — on the TV that cut the top off the picture (the "TACOS" sign
+ * was gone). `contain` shows the entire image; the area around it is the theme's own dark background,
+ * so nothing the user chose is ever hidden. The scrim below still rides over both. */
+.os-desk.has-bg{background-size:contain;background-position:center;background-repeat:no-repeat;background-color:var(--bg,#0a0a0f)}
 .os-desk.has-bg::before{display:none}
 /* …and a scrim, so white icon labels stay readable over a bright photo. */
 .os-desk.has-bg::after{content:'';position:absolute;inset:0;background:rgba(0,0,0,.28);pointer-events:none}
