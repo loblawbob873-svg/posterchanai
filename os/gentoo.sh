@@ -2175,14 +2175,37 @@ plymouthTheme() {
 	# beside the script; from inside the chroot `$0` is /usr/bin/gentoo.sh and there is no theme
 	# next to it. Both are tried, and a miss is stated rather than skipped — an installer that
 	# quietly leaves the stock splash looks identical to one that set ours.
-	SRC="$PCOS_TREE/plymouth/posterchanos"
-	[ -d "$SRC" ] || SRC="/tmp/plymouth/posterchanos"
-	[ -d "$SRC" ] || SRC="${TARGET}/usr/share/posterchan/plymouth/posterchanos"
-	[ -d "$SRC" ] || SRC="/usr/share/posterchan/plymouth/posterchanos"
-	if [ ! -d "$SRC" ]; then
-		echo -e "\033[1;31mno splash theme found at $SRC — leaving the default\033[0m"
+	# SYNCED OVERLAY FIRST, $PCOS_TREE LAST — THE SAME RULE THE SESSION HELPERS ALREADY FOLLOW.
+	#
+	# $PCOS_TREE is install-day state on the build host: /usr/local/share/posterchanos, written once
+	# when THAT machine was installed and never updated. Its plymouth/ therefore froze at whatever
+	# the theme was on install day. Preferring it copied an 80-line (old-UI) posterchanos.script
+	# OVER the 181-line theme the posterchanos-shell package had already installed to
+	# /usr/share/plymouth/themes/posterchanos — so a fresh install booted the OLD splash even though
+	# the image shipped the new one. Measured on a real TV: ISO /usr/share = 181 lines, ISO
+	# /usr/local/share/posterchanos/plymouth = 80, and the installed disk ended up 80 everywhere.
+	#
+	# The authoritative, always-current copies are the synced overlay and the package's own
+	# /usr/share theme (both updated on every emerge/update). $PCOS_TREE is the last resort, only for
+	# a machine with neither.
+	_pt_repo="$(portageq get_repo_path / posterchan 2>/dev/null)"
+	SRC=""
+	for _pt_cand in \
+		"${_pt_repo:+$_pt_repo/app-misc/posterchanos-shell/files/plymouth}" \
+		"/var/db/repos/posterchan/app-misc/posterchanos-shell/files/plymouth" \
+		"/usr/share/plymouth/themes/posterchanos" \
+		"$PCOS_TREE/plymouth/posterchanos" \
+		"$PCOS_TREE/overlay/app-misc/posterchanos-shell/files/plymouth" \
+		"/tmp/plymouth/posterchanos" \
+		"${TARGET}/usr/share/posterchan/plymouth/posterchanos" \
+		"/usr/share/posterchan/plymouth/posterchanos"; do
+		[ -n "$_pt_cand" ] && [ -f "$_pt_cand/posterchanos.plymouth" ] && { SRC="$_pt_cand"; break; }
+	done
+	if [ -z "$SRC" ]; then
+		echo -e "\033[1;31mno splash theme found (checked overlay, /usr/share and $PCOS_TREE) — leaving the default\033[0m"
 		return 0
 	fi
+	echo -e "\033[1;36m  splash source: $SRC ($(wc -l < "$SRC/posterchanos.script" 2>/dev/null) lines)\033[0m"
 	DEST="${TARGET}/usr/share/plymouth/themes/posterchanos"
 	mkdir -p "$DEST"
 	cp -f "$SRC"/* "$DEST"/
