@@ -58,8 +58,15 @@ test, deployment/package, and relevant real-device check are complete. The insta
       cannot move the PTY grid. NOTHING EXERCISES EITHER RULE: `scripts/check_terminal_resize.py`
       covers desktop→phone→desktop and contains no reference to focus, and it calls `fit.fit()`
       directly rather than term.js's guarded path, so a test added there would measure FitAddon and
-      not the guard. A real test has to drive the shipped client with two windows.
-      The EDITOR half is not implemented: no focus check exists in `code.js` or `office.js`.
+      not the guard.
+      2026-09-19: the terminal half NOW HAS A TEST — tests/client/test_terminal_stays_put_when_unfocused.py
+      extracts the shipped guard and RUNS it against a focused and an unfocused frame (a bare
+      early-return means the unfocused case never reaches the fit) and pins the ORDER (the focus
+      check precedes fit.fit() and the size send), mutation-proven.
+      The EDITOR half is a NON-ISSUE, not a gap: code.js and office.js have NO ResizeObserver /
+      resize / fit / SIGWINCH path at all (measured, zero matches), so nothing reflows the editor
+      on a focus change. Still open on this line: Office/Preview/Email maximize usable content,
+      no decorative effects on documents, and non-localhost attachment URLs.
 - [ ] Virtual Machines start attached installer media, show their display, eject media, and boot the
       installed system.
 - [ ] Remote Desktop follow-ups after Beta 3: monitor picker clarity, viewer scaling/quality, accurate
