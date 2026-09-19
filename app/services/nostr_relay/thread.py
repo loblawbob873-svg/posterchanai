@@ -424,6 +424,9 @@ def _read_config() -> dict:
             "max_ancestors": gi("nostr_relay_max_ancestors", 20),
             "blocked_langs": {x.strip() for x in g("nostr_relay_blocked_langs", "")
                               .replace(",", " ").split() if x.strip()},
+            # Reject kind-1 notes whose whole content is a JSON object/array — spammers flood the
+            # timeline with them. Kind 1 only, so profiles/contacts/app-data/DVM/reposts are safe.
+            "block_json": gb("nostr_relay_block_json_posts", True),
             # Reject notes whose text contains any of these words/phrases (case-insensitive
             # substring). One per line so phrases with spaces work.
             # SCREENED WHERE IT IS READ. A term that matches every string does not filter content,

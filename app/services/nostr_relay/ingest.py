@@ -17,7 +17,7 @@ import logging
 
 from app.services.nostr import relay as _relay
 from app.services.nostr.event import verify_event
-from .langfilter import blocked_language, blocked_word, _NEVER_WORD_FILTERED
+from .langfilter import blocked_language, blocked_word, is_json_content, _NEVER_WORD_FILTERED
 from .bridges import reveals_blocked_bridge, author_on_blocked_bridge, is_bridged_post
 
 logger = logging.getLogger(__name__)
@@ -30,12 +30,16 @@ def _is_evid(x) -> bool:
 # ONE DEFINITION OF WHICH KINDS A BLOCKED WORD APPLIES TO — see langfilter._NEVER_WORD_FILTERED.
 # This path had its own list and the direct-publish path in server.py had another, which is exactly
 # how a word can be "blocked" and still arrive: two filters disagreeing about what they cover.
-def _content_blocked(ev, blocked, blocked_words) -> bool:
-    """True if this event should be rejected by the language/word content filters — applied on
+def _content_blocked(ev, blocked, blocked_words, block_json=True) -> bool:
+    """True if this event should be rejected by the language/word/JSON content filters — applied on
     EVERY ingestion path (sync, ancestor backfill) so blocked content can't sneak in as a
     backfilled reply parent."""
     kind = int(ev.get("kind", 1))
     content = ev.get("content", "")
+    # JSON-blob spam: a kind-1 note whose whole content is a JSON object/array is machine flood, not
+    # a human post. Kind 1 ONLY — profiles/contacts/app-data/DVM/reposts are legitimately JSON.
+    if block_json and kind == 1 and is_json_content(content):
+        return True
     if kind == 1 and blocked and blocked_language(content, blocked):
         return True
     if blocked_words and kind not in _NEVER_WORD_FILTERED and blocked_word(content, blocked_words):
@@ -57,6 +61,7 @@ async def sync_tick(store, gate, server, upstream, cfg) -> int:
     blocked_words = cfg.get("blocked_words")
     blocked_relays = cfg.get("blocked_relays")
     block_bridged = cfg.get("block_bridged")
+    block_json = cfg.get("block_json", True)
     pace = cfg.get("request_pace_sec", 1.0)
     direct = cfg.get("direct", False)
     deadline = time.monotonic() + cfg.get("sync_budget_sec", cfg.get("budget_sec", 100))
@@ -142,7 +147,7 @@ async def sync_tick(store, gate, server, upstream, cfg) -> int:
                 continue   # empty note — spam/noise
             # ONE predicate for both filters, so this path and the backfill path cannot disagree
             # about what "blocked" means — which is how a repost of blocked content got in.
-            if _content_blocked(ev, blocked, blocked_words):
+            if _content_blocked(ev, blocked, blocked_words, block_json):
                 continue
             to_store.append(ev)
         if to_store:
@@ -167,7 +172,7 @@ async def sync_tick(store, gate, server, upstream, cfg) -> int:
             await backfill_ancestors(store, server, upstream, new_events,
                                      cfg.get("max_ancestors", 20), direct,
                                      blocked=blocked, blocked_words=blocked_words, gate=gate,
-                                     block_bridged=block_bridged)
+                                     block_bridged=block_bridged, block_json=block_json)
         except Exception as e:
             logger.warning("[nostr-relay] ancestor backfill failed: %s", e)
 
@@ -378,7 +383,7 @@ async def refresh_member_lists(store, server, upstream, pubkey: str, *, direct: 
 
 async def backfill_ancestors(store, server, upstream, events, max_ancestors: int,
                              direct: bool = False, blocked=None, blocked_words=None, gate=None,
-                             block_bridged=False) -> int:
+                             block_bridged=False, block_json=True) -> int:
     """Walk reply-to (`e`-tag) references up to the thread root, fetching by id any event we
     don't have. Parents may be outside the WoT (stored as origin='ancestor') — the deliberate,
     bounded relaxation that keeps threads whole. Still honours the language/word content
@@ -414,7 +419,7 @@ async def backfill_ancestors(store, server, upstream, events, max_ancestors: int
                 continue
             if int(ev.get("kind", 1)) == 1 and not (ev.get("content") or "").strip():
                 continue   # empty note — don't backfill spam as a thread ancestor
-            if _content_blocked(ev, blocked, blocked_words):
+            if _content_blocked(ev, blocked, blocked_words, block_json):
                 continue
             if await store.add_event(ev, origin="ancestor"):
                 fetched += 1

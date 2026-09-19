@@ -11,11 +11,32 @@ guard (a false positive DELETES the note via the retroactive purge, so both are 
 `LANGUAGES` (code → UI label) drives the clickable toggles in Admin → Relay.
 """
 
+import json
 import re
 from collections import defaultdict
 import logging
 
 logger = logging.getLogger(__name__)
+
+
+def is_json_content(content) -> bool:
+    """True when a note's ENTIRE content is a JSON object or array — machine data, not a human post.
+
+    Spammers flood the timeline with kind-1 notes whose content is a raw JSON blob. A note that
+    merely MENTIONS json ("try {a:1} here") does not parse as a whole, so it passes; only content
+    that IS a complete JSON object `{...}` or array `[...]` is caught. A bare number, boolean, or
+    quoted string is valid JSON too but is ordinary note text, so only dict/list count — and this is
+    applied by the caller to kind 1 ALONE, so profiles (0), contacts (3), app-data (30078), DVM and
+    reposts (6/16, whose content legitimately IS the reposted event's JSON) are never affected.
+    """
+    s = (content or "").strip()
+    if len(s) < 2 or s[0] not in "{[":
+        return False
+    try:
+        parsed = json.loads(s)
+    except (ValueError, TypeError):
+        return False
+    return isinstance(parsed, (dict, list))
 
 # URLs, nostr: URIs and bech32/Lightning entities are long runs of Latin/base32 characters that
 # are NOT language — left in, they inflate the letter count and dilute a short non-Latin note

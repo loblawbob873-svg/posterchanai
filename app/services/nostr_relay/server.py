@@ -22,7 +22,7 @@ from websockets.http11 import Response
 from app.services.nostr.event import verify_event
 from app.services import git_acceptance
 from app.services.vmhost import kinds as _vmhost_kinds
-from .langfilter import blocked_language, blocked_word, _NEVER_WORD_FILTERED
+from .langfilter import blocked_language, blocked_word, is_json_content, _NEVER_WORD_FILTERED
 from .bridges import reveals_blocked_bridge, author_on_blocked_bridge, is_bridged_post
 from .store import retired_kind_reason as _retired_kind_reason
 from app.services.nostr.quotes import quote_pubkeys
@@ -234,6 +234,8 @@ def _curation_summary(c) -> str:
         parts.append("notes containing operator-listed words are rejected")
     if c.get("blocked_langs"):
         parts.append("notes in operator-listed languages are rejected")
+    if c.get("block_json", True):
+        parts.append("notes whose entire content is a JSON object or array are rejected as spam")
     if c.get("block_bridged"):
         parts.append("bridged (NIP-48 proxy) content is rejected")
     if c.get("blocked_relays"):
@@ -1542,6 +1544,13 @@ class RelayServer:
             self._refuse(conn, eid, ev, "blocked: not in web of trust")
             return
         content = ev.get("content", "")
+        # JSON-BLOB SPAM stays kind-1 only, like the language filter: a note whose whole content is a
+        # JSON object/array is machine flood, never a human post — and kind 1 alone spares profiles
+        # (0), contacts (3), app-data (30078), DVM and reposts (6/16, whose content IS the reposted
+        # event's JSON). Off only if the operator turns nostr_relay_block_json_posts off.
+        if kind == 1 and self.cfg.get("block_json", True) and is_json_content(content):
+            self._refuse(conn, eid, ev, "blocked: JSON-only content is not accepted here")
+            return
         # LANGUAGE detection stays kind-1 only: it guesses, and it may only guess about prose.
         if kind == 1:
             blocked = self.cfg.get("blocked_langs")
