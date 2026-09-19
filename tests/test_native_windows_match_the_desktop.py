@@ -118,6 +118,24 @@ def test_every_surface_decoration_skips_is_one_the_ring_skips():
     assert '"PosterChan Desktop"' in rule and '"PosterChan Window"' in rule
 
 
+def test_a_private_firefox_window_is_decorated_like_any_other():
+    """Backlog §3: private windows are decorated. The accent ring is drawn on EVERY application
+    toplevel (window_border = true) and the plugin's skip list is PosterChan's own surfaces only —
+    a private Firefox window shares Firefox's app_id and is an ordinary toplevel, so it wears the
+    exact same ring as a normal one. Pin both halves so a future skip-by-app_id can't quietly
+    exempt (or a disabled ring can't quietly drop) Firefox — private or not."""
+    assert _option("posterchan-shell", "window_border") == "true"
+    # The ring skips only PosterChan's own windows; firefox/Navigator must never be in that set.
+    rule = CPP[CPP.index("static bool is_posterchan"):]
+    rule = rule[:rule.index("\n}")]
+    low = rule.lower()
+    assert "firefox" not in low and "navigator" not in low, \
+        "the ring must frame Firefox (incl. private windows), which draws no server frame itself"
+    # And [decoration]'s title-bar exemption is likewise PosterChan-only, not Firefox.
+    skipped = _option("decoration", "ignore_views", raw=True).lower()
+    assert "firefox" not in skipped and "navigator" not in skipped
+
+
 def test_the_ring_is_not_drawn_on_a_fullscreen_window():
     outer = CPP[CPP.index("wf::geometry_t outer()"):]
     outer = outer[:outer.index("\n    }")]
