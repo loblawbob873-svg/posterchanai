@@ -77,8 +77,8 @@ public class PasteHarness {
           int k = PadFit.keyDp(w, h, n);
           checked++;
           if (k > PadFit.MAX_KEY || k < PadFit.MIN_KEY) bad++;
-          else if (k > PadFit.MIN_KEY && (3 * PadFit.cellDp(k) > w || 4 * PadFit.cellDp(k) + n > h)) bad++;
-          else if (k < PadFit.MAX_KEY && 3 * PadFit.cellDp(k + 1) <= w && 4 * PadFit.cellDp(k + 1) + n <= h) bad++;
+          else if (k > PadFit.MIN_KEY && (3 * PadFit.cellDp(k) > w || 4 * PadFit.cellDp(k) + n + PadFit.FIT_SLACK > h)) bad++;
+          else if (k < PadFit.MAX_KEY && 3 * PadFit.cellDp(k + 1) <= w && 4 * PadFit.cellDp(k + 1) + n + PadFit.FIT_SLACK <= h) bad++;
         }
       }
     }
