@@ -20,6 +20,19 @@ public final class PadFit {
     public static final int MIN_KEY = 44;
 
     /**
+     * THE HARD FLOOR, BELOW WHICH A KEY MUST NOT GO — but a clip is worse than a small key.
+     *
+     * MIN_KEY is the smallest COMFORTABLE key. On a short box (a small or old device, split screen,
+     * a large system font that inflates the number line) four rows of even MIN_KEY plus the number
+     * do not fit — measured on the CI emulator: a 240dp pad box, a 68dp number, and 4*cellDp(44)=232
+     * needing 300dp. keyDp used to return MIN_KEY there anyway, and the centred wrap_content pad then
+     * overflowed: the bottom row was squeezed to zero height and its keys spilled 22px past the box,
+     * i.e. OFF SCREEN AND UNREACHABLE ("key row 3 ends below the pad"). A key you can see and press,
+     * even a small one, beats a row that is not there. So keyDp shrinks to ABS_MIN_KEY when it must.
+     */
+    public static final int ABS_MIN_KEY = 24;
+
+    /**
      * HEADROOM THE ARITHMETIC LEAVES FOR SUB-PIXEL ROUNDING, in dp. keyDp reasons in dp, but Keypad
      * lays each key and its two margins out with `Skin.dp` (a dp→px ROUND) — twelve conversions down
      * the pad, each of which can round up by ~half a pixel. Across four rows that is up to ~6px, which
@@ -40,14 +53,16 @@ public final class PadFit {
 
     /**
      * The largest key diameter (dp) for a pad of 3 columns x 4 rows that fits `widthDp` by
-     * `heightDp`, with `numberDp` of that height already taken by the number above it. When even the
-     * smallest key does not fit, the smallest key — a key too small to read is worse than a clip.
+     * `heightDp`, with `numberDp` of that height already taken by the number above it. When even
+     * ABS_MIN_KEY does not fit, ABS_MIN_KEY — a small visible key beats a clipped, unreachable row
+     * (see ABS_MIN_KEY). Normal screens are unaffected: a tall box returns a large key from the top
+     * of the loop, so shrinking below MIN_KEY only ever happens on a box too short to do better.
      */
     public static int keyDp(int widthDp, int heightDp, int numberDp) {
-        for (int k = MAX_KEY; k > MIN_KEY; k--) {
+        for (int k = MAX_KEY; k > ABS_MIN_KEY; k--) {
             int cell = cellDp(k);
             if (3 * cell <= widthDp && 4 * cell + numberDp + FIT_SLACK <= heightDp) return k;
         }
-        return MIN_KEY;
+        return ABS_MIN_KEY;
     }
 }

@@ -76,8 +76,8 @@ public class PasteHarness {
         for (int n = 40; n <= 90; n += 25) {
           int k = PadFit.keyDp(w, h, n);
           checked++;
-          if (k > PadFit.MAX_KEY || k < PadFit.MIN_KEY) bad++;
-          else if (k > PadFit.MIN_KEY && (3 * PadFit.cellDp(k) > w || 4 * PadFit.cellDp(k) + n + PadFit.FIT_SLACK > h)) bad++;
+          if (k > PadFit.MAX_KEY || k < PadFit.ABS_MIN_KEY) bad++;
+          else if (k > PadFit.ABS_MIN_KEY && (3 * PadFit.cellDp(k) > w || 4 * PadFit.cellDp(k) + n + PadFit.FIT_SLACK > h)) bad++;
           else if (k < PadFit.MAX_KEY && 3 * PadFit.cellDp(k + 1) <= w && 4 * PadFit.cellDp(k + 1) + n + PadFit.FIT_SLACK <= h) bad++;
         }
       }
@@ -86,6 +86,7 @@ public class PasteHarness {
     say("fit-roomy", PadFit.keyDp(411, 700, 67));
     say("fit-tight", PadFit.keyDp(360, 450, 67));
     say("fit-tiny", PadFit.keyDp(200, 120, 67));
+    say("fit-short", PadFit.keyDp(300, 240, 68));
     say("margin", PadFit.marginDp(70) + " " + PadFit.marginDp(69));
   }
 }
@@ -182,7 +183,18 @@ class PasteAndFitRules(unittest.TestCase):
         fit = int(self.out["fit-tight"])
         self.assertLessEqual(4 * _cell(fit) + 67, 450)
         self.assertEqual(self.out["fit-roomy"], "88")
-        self.assertEqual(self.out["fit-tiny"], str(44))
+        # A box far too short for any comfortable key: keyDp drops to the absolute floor rather
+        # than return an unfitting MIN_KEY and clip. ABS_MIN_KEY is 24.
+        self.assertEqual(self.out["fit-tiny"], str(24))
+
+    def test_a_short_box_shrinks_below_min_key_instead_of_clipping(self):
+        """The CI emulator: a 240dp-tall pad box with a 68dp number. Four MIN_KEY rows need
+        300dp, so the pad used to overflow and the bottom row was clipped off screen. keyDp now
+        returns a key BELOW MIN_KEY that actually fits — visible and reachable beats absent."""
+        short = int(self.out["fit-short"])
+        self.assertLess(short, 44, "must shrink below MIN_KEY on a box too short for it")
+        self.assertGreaterEqual(short, 24, "but never below the absolute floor")
+        self.assertLessEqual(4 * _cell(short) + 68 + 6, 240, "and the built pad must fit the box")
 
 
 @unittest.skipIf(not os.path.isdir(PHONE), "no android sources here")
