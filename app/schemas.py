@@ -97,6 +97,7 @@ class SettingsResponse(BaseModel):
     vmhost_storage_dir: str = "/var/lib/posterchan/vms"
     vmhost_public_url: str = ""
     vmhost_public_relay: str = ""
+    vmhost_announce_relays: str = ""
     vmhost_announce: str = "true"
     vmhost_admin_npubs: str = ""
     vmhost_allowed_npubs: str = ""

@@ -63,8 +63,10 @@
       <label>Host name shown to clients <input id="vmhost_display_name" name="vmhost_display_name" placeholder="PosterChan VM host" autocomplete="off"></label>
       <label>Public HTTPS URL (for the console) <input id="vmhost_public_url" name="vmhost_public_url" placeholder="https://poster.place" autocomplete="off" spellcheck="false"></label>
       <label>Public relay URL <input id="vmhost_public_relay" name="vmhost_public_relay" placeholder="wss://poster.place/relay" autocomplete="off" spellcheck="false"></label>
+      <label>Discovery relays (one or more, space/comma-separated) <input id="vmhost_announce_relays" name="vmhost_announce_relays" placeholder="wss://relay.poster.place" autocomplete="off" spellcheck="false"></label>
     </div>
     <p class="settings-help">Public HTTPS URL blank = clients open the console on the same origin as the relay they reached this host through.</p>
+    <p class="settings-help"><strong>Discovery relays</strong> are where this host publishes its public announcement so clients on a DIFFERENT relay (e.g. another node) can find it under Virtual Machines → Find hosts. Set this to the relay your clients use (e.g. <code>wss://relay.poster.place</code>); the announcement still points requests back to this host's own relay. Blank = announce on this node's own relay only.</p>
     <label class="vmh-toggle"><input type="checkbox" id="vmhost_announce" name="vmhost_announce"> Publish a public host announcement (kind 31310; capacity is never published)</label>
   </fieldset>
 

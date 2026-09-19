@@ -18,6 +18,7 @@ DEFAULTS: dict[str, str] = {
     "vmhost_storage_dir": "/var/lib/posterchan/vms",
     "vmhost_public_url": "",
     "vmhost_public_relay": "",
+    "vmhost_announce_relays": "",
     "vmhost_announce": "true",
     "vmhost_admin_npubs": "",
     "vmhost_allowed_npubs": "",
@@ -85,6 +86,7 @@ class VmHostConfig:
     storage_dir: str = "/var/lib/posterchan/vms"
     public_url: str = ""
     public_relay: str = ""
+    announce_relays: str = ""
     announce: bool = True
     admin_pubkeys: list = field(default_factory=list)
     allowed_pubkeys: list = field(default_factory=list)
@@ -119,6 +121,7 @@ class VmHostConfig:
             storage_dir=g("vmhost_storage_dir").strip(),
             public_url=g("vmhost_public_url").strip().rstrip("/"),
             public_relay=g("vmhost_public_relay").strip(),
+            announce_relays=g("vmhost_announce_relays").strip(),
             announce=b("vmhost_announce"),
             admin_pubkeys=_npub_list(s.get("vmhost_admin_npubs", "")),
             allowed_pubkeys=_npub_list(s.get("vmhost_allowed_npubs", "")),

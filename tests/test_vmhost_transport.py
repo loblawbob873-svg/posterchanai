@@ -193,3 +193,36 @@ def test_the_announcement_is_public_addressable_and_carries_no_capacity(tmp_path
     assert ["d", kinds.ANNOUNCE_D] in ev["tags"] and ["relay", "wss://box.example/relay"] in ev["tags"]
     body = json.loads(ev["content"])
     assert body["https"] == "https://box.example" and "ram" not in body and "cpu" not in body
+
+
+def test_announcement_goes_to_the_shared_discovery_relays_for_cross_relay_findhosts(monkeypatch):
+    """A host on its own relay is invisible to a client whose pool never talks to that relay. So the
+    31310 announcement is ALSO published (pool-mode, not direct) to `vmhost_announce_relays` — a
+    shared relay both sides reach — while its `relay` hint still points requests at the host's own
+    relay. Empty discovery list = own relay only (the pre-existing behaviour)."""
+    from app.services.nostr import relay as nostr_relay
+
+    calls = []
+
+    async def fake_publish(relays, event, direct=False):
+        calls.append((list(relays), event, direct))
+        return len(relays)
+
+    monkeypatch.setattr(nostr_relay, "publish", fake_publish)
+
+    ev = transport.build_announcement(NODE_SK, VmHostConfig(display_name="Box"))
+
+    # No discovery relays configured → nothing extra is published.
+    cfg0 = VmHostConfig(announce_relays="")
+    assert transport._discovery_relays(cfg0) == []
+    asyncio.run(transport._publish_to_discovery(ev, cfg0))
+    assert calls == [], "empty discovery list must publish nothing"
+
+    # Configured → the SAME announcement event goes to those relays in POOL mode (direct=False).
+    cfg = VmHostConfig(announce_relays="wss://relay.poster.place, wss://shared.example")
+    assert transport._discovery_relays(cfg) == ["wss://relay.poster.place", "wss://shared.example"]
+    asyncio.run(transport._publish_to_discovery(ev, cfg))
+    assert len(calls) == 1
+    relays, sent, direct = calls[0]
+    assert relays == ["wss://relay.poster.place", "wss://shared.example"]
+    assert sent is ev and direct is False, "discovery publish must be pool mode, not direct"

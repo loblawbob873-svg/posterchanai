@@ -675,6 +675,7 @@ def update_settings(
         # reload the relay keeps copying every private write to a relay the operator has removed.
         # vmhost_peer_hosts: the relay's VM-hosting gate trusts results from exactly these hosts.
         _relay_reload_keys = ("nostr_relay_private_relays", "vmhost_enabled", "vmhost_peer_hosts",
+                          "vmhost_public_relay", "vmhost_announce_relays", "vmhost_public_url", "vmhost_display_name",
                               "nostr_relay_upstream_relays", "nostr_relay_firehose_max_relays",
                               "nostr_relay_ingest_kinds")
         if not _relay_will_restart and any(k in changed_keys for k in _relay_reload_keys):

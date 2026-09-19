@@ -477,8 +477,10 @@ async def _run(cfg, stop: asyncio.Event) -> None:
                 logger.warning("[vmhost] cleaning stale incoming transfers failed: %s", e)
             if cfg.announce and time.time() - last_announce > ANNOUNCE_EVERY:
                 try:
-                    if await publish(build_announcement(sk, cfg)):
+                    _ann = build_announcement(sk, cfg)
+                    if await publish(_ann):
                         _state["announced"] = True
+                    await _publish_to_discovery(_ann, cfg)
                     last_announce = time.time()
                 except Exception as e:
                     logger.debug("[vmhost] announcement failed: %s", e)
@@ -502,6 +504,29 @@ async def _run(cfg, stop: asyncio.Event) -> None:
         _track(t)
 
 
+def _discovery_relays(cfg) -> list:
+    """Extra relays to publish the 31310 announcement to so clients on a DIFFERENT relay can
+    discover this host. The host still listens for requests on its own relay; the announcement's
+    `relay` hint (vmhost_public_relay) is where findHosts then talks to it. Empty = own relay only
+    (the pre-existing behaviour)."""
+    try:
+        from app.services.nostr import relay as nostr_relay
+        return nostr_relay.normalize_relays(cfg.announce_relays or "")
+    except Exception:
+        return []
+
+
+async def _publish_to_discovery(ev: dict, cfg) -> None:
+    extra = _discovery_relays(cfg)
+    if not extra:
+        return
+    try:
+        from app.services.nostr import relay as nostr_relay
+        await nostr_relay.publish(extra, ev)     # pool publish (NOT direct): reaches the shared relay
+    except Exception as e:
+        logger.debug("[vmhost] announcing to discovery relays %s failed: %s", extra, e)
+
+
 async def _retract_announcement(publish=None, sk: Optional[bytes] = None) -> None:
     try:
         if publish is None:
@@ -514,7 +539,14 @@ async def _retract_announcement(publish=None, sk: Optional[bytes] = None) -> Non
 
             async def publish(ev):
                 return bool(await nostr_relay.publish(relay, ev, direct=True))
-        if await publish(build_retraction(sk)):
+        _ret = build_retraction(sk)
+        ok = await publish(_ret)
+        try:
+            from . import config as _cfgmod
+            await _publish_to_discovery(_ret, _cfgmod.current())
+        except Exception:
+            pass
+        if ok:
             _state["announced"] = False
             logger.info("[vmhost] host announcement retracted")
     except Exception as e:
