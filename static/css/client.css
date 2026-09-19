@@ -7168,11 +7168,12 @@ body.os-on .osw-body > .feed::-webkit-scrollbar-thumb:hover{background:var(--mut
 
 /* A wallpaper from the drive. The emblem behind it goes — two backgrounds fighting is worse than
    either — and the picture covers, because a desktop wallpaper that letterboxes looks broken. */
-/* FIT THE WHOLE WALLPAPER, never crop it. `cover` filled the screen by cropping the top and bottom
- * of anything taller than the display — on the TV that cut the top off the picture (the "TACOS" sign
- * was gone). `contain` shows the entire image; the area around it is the theme's own dark background,
- * so nothing the user chose is ever hidden. The scrim below still rides over both. */
-.os-desk.has-bg{background-size:contain;background-position:center;background-repeat:no-repeat;background-color:var(--bg,#0a0a0f)}
+/* STRETCH THE WALLPAPER TO FILL THE SCREEN. `background-size: 100% 100%` scales it to the exact
+ * width AND height of the desktop, so it always fills edge to edge — no cropping (which cut the top
+ * off the TV's "TACOS" image) and no letterboxing (which put black bars down the sides of the
+ * laptop's). It ignores the picture's aspect ratio, so a wallpaper whose shape is far from the
+ * screen's can look stretched — that is the deliberate trade for "always fills, nothing hidden". */
+.os-desk.has-bg{background-size:100% 100%;background-position:center;background-repeat:no-repeat}
 .os-desk.has-bg::before{display:none}
 /* …and a scrim, so white icon labels stay readable over a bright photo. */
 .os-desk.has-bg::after{content:'';position:absolute;inset:0;background:rgba(0,0,0,.28);pointer-events:none}
