@@ -137,9 +137,29 @@ public class DialerDeviceTest {
             s.onActivity(a -> {
                 View wrap = a.findViewById(R.id.pc_dl_padwrap);
                 android.view.ViewGroup pad = a.findViewById(R.id.pc_dl_pad);
+                View numRow = a.findViewById(R.id.pc_dl_numrow);
+                float dens = a.getResources().getDisplayMetrics().density;
                 int[] w = new int[2];
                 wrap.getLocationOnScreen(w);
                 int top = w[1], bottom = w[1] + wrap.getHeight();
+                int[] pl = new int[2]; pad.getLocationOnScreen(pl);
+                // ONE-LINE GEOMETRY DUMP so a single CI run explains a clip precisely rather than a
+                // fourth guess: the box, the content, and the actual rendered rows — px and dp.
+                StringBuilder geo = new StringBuilder();
+                geo.append("density=").append(dens)
+                   .append(" padwrap[top=").append(top).append(" bottom=").append(bottom)
+                   .append(" h=").append(wrap.getHeight()).append("px/").append((int) (wrap.getHeight() / dens)).append("dp]")
+                   .append(" numrow[h=").append(numRow.getHeight()).append("px/").append((int) Math.ceil(numRow.getHeight() / dens)).append("dp]")
+                   .append(" pad[top=").append(pl[1]).append(" h=").append(pad.getHeight()).append("px]");
+                for (int r = 0; r < pad.getChildCount(); r++) {
+                    android.view.ViewGroup row = (android.view.ViewGroup) pad.getChildAt(r);
+                    int[] rl = new int[2]; row.getLocationOnScreen(rl);
+                    View firstKey = row.getChildCount() > 0 ? row.getChildAt(0) : null;
+                    geo.append(" row").append(r).append("[top=").append(rl[1]).append(" h=").append(row.getHeight());
+                    if (firstKey != null) geo.append(" keyh=").append(firstKey.getHeight());
+                    geo.append("]");
+                }
+                geo.append(" content=").append(numRow.getHeight() + pad.getHeight()).append("px vs box=").append(wrap.getHeight()).append("px");
                 int keys = 0;
                 for (int r = 0; r < pad.getChildCount(); r++) {
                     android.view.ViewGroup row = (android.view.ViewGroup) pad.getChildAt(r);
@@ -147,10 +167,12 @@ public class DialerDeviceTest {
                         View key = row.getChildAt(c);
                         int[] k = new int[2];
                         key.getLocationOnScreen(k);
-                        assertTrue("key row " + r + " starts above the pad (clipped at the top)",
-                                k[1] >= top);
-                        assertTrue("key row " + r + " ends below the pad (clipped at the bottom)",
-                                k[1] + key.getHeight() <= bottom);
+                        int overTop = top - k[1];
+                        int overBottom = (k[1] + key.getHeight()) - bottom;
+                        assertTrue("key row " + r + " starts above the pad by " + overTop + "px {" + geo + "}",
+                                overTop <= 0);
+                        assertTrue("key row " + r + " ends below the pad by " + overBottom + "px {" + geo + "}",
+                                overBottom <= 0);
                         keys++;
                     }
                 }
