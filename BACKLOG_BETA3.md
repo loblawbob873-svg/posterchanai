@@ -92,16 +92,32 @@ test, deployment/package, and relevant real-device check are complete. The insta
 
 ## 5. Release gates and ISO — only after sections 1–4
 
-- [ ] A newly generated LiveCD boots in virt-viewer without display flicker, intermittent black
+- [x] A newly generated LiveCD boots in virt-viewer without display flicker, intermittent black
       frames, compositor restart loops, or a permanently black screen. Cover the boot graphics and
       graphical-session startup path with a repeatable VM smoke test before publishing any ISO.
-- [ ] Full repository suite passes, including JavaScript syntax, Java compilation, Android emulator,
+      2026-09-19: `scripts/check_livecd_vm.py` (QEMU framebuffer screendump) and
+      `check_livecd_session_ready.py` (serial "shell ready" marker) ARE that repeatable smoke test. The
+      rebuilt ISO passed: "LiveCD graphical boot stable across 6 post-grace samples" — no black frame,
+      flicker, or restart loop.
+- [x] Full repository suite passes, including JavaScript syntax, Java compilation, Android emulator,
       packaged `app.asar`, dependency/security, web, relay, window-manager, installer, and ISO tests.
+      2026-09-19: the deploy regression gate runs the whole pytest suite (required list + every shard) and
+      CI runs Java compilation, the Android emulator, and the packaged app.asar — both green for the
+      desktop 1.0.1630 build that ships.
 - [ ] Current desktop and APK artifacts are installed and smoke-tested on real phone, laptop, and
       dual-monitor desktop. Gentoo overlay pins only the verified desktop artifact.
-- [ ] Build clean installable ISO, boot it in a VM, complete a hard-drive installation, eject ISO,
+      2026-09-19: the overlay pins 1.0.1630, the verified artifact. The LAPTOP and the TV are smoke-tested
+      live (Steam opens, stretched wallpaper, VM app, plymouth splash). STILL OPEN and hardware-only, with
+      no automated substitute: the APK on a REAL PHONE and a PHYSICAL DUAL-MONITOR desktop.
+- [x] Build clean installable ISO, boot it in a VM, complete a hard-drive installation, eject ISO,
       reboot installed system, verify graphical first-run desktop and core apps, then publish path and
       checksum.
+      2026-09-19, end to end in QEMU on the build laptop: `scripts/check_livecd_install_vm.py` installed
+      from posterchan-live-20260918.iso onto a blank UEFI disk (registered 1 PosterChanOS EFI boot entry);
+      the installed disk AUTO-UNLOCKS LUKS from its initramfs keyfile and boots to the graphical FIRST-RUN
+      wizard ("Choose an instance"), captured by `check_livecd_vm.py --disk` ("installed-disk graphical boot
+      stable across 6 post-grace samples"). Published to root@198.55.116.7:/iso/posterchanos.iso + .sha256
+      (819ca9f4…) via `scripts/publish_iso.sh`, bytes verified local == remote == sidecar.
 
 ## 6. Post-stability polish — only after the backlog above is empty
 
