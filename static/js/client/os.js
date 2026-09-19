@@ -5965,6 +5965,7 @@
               <div class="wgt-mnext wgt-dim"></div>
             </div>
           </div>
+          <div class="wgt-eq" aria-hidden="true">${Array.from({length:14},(_,i)=>`<i style="--i:${i}"></i>`).join('')}</div>
           <div class="wgt-mseek" data-seek role="slider" tabindex="0" aria-label="Seek">
             <div class="wgt-mseekfill"></div>
           </div>
@@ -6060,6 +6061,11 @@
         if(t0) t0.textContent = _mmss(at);
         if(t1) t1.textContent = dur > 0 ? _mmss(dur) : '--:--';
         if(main) main.textContent = (now && now.playing) ? '⏸' : '▶';
+        // The equaliser bars dance only while a track is actually playing — the same
+        // 'obviously playing from across the room' cue the profile player uses. Driven by
+        // the player's state, not a timer, so a paused/stopped widget is quiet.
+        const wm = $('.wgt-music', el);
+        if(wm) wm.classList.toggle('playing', !!(now && now.playing));
         // Shuffle is a MODE, not an action — show whether it is on, or pressing it twice looks like
         // nothing happened the second time.
         const sh = $('[data-m="shuffle"]', el);

@@ -1,22 +1,71 @@
 <!-- VM hosting tab — this node as a Proxmox-like VM host, managed over encrypted Nostr.
-     Every named input here is a setting in SettingsResponse (tests/test_vmhost_admin_settings.py). -->
+     Every named input here is a setting in SettingsResponse (tests/test_vmhost_admin_settings.py).
+     LAYOUT ONLY is decorative: ids/names are load-bearing (admin.js hydrates/saves by id==name), so
+     the redesign never renames, drops or reorders an input away from its label. -->
 <section class="tab-content" id="tab-vms">
+  <style>
+    /* Scoped to this tab — a cleaner, card-based take on the plain fieldset wall, using the admin
+       palette (no new global rules). */
+    #tab-vms fieldset{border:1px solid var(--border-color);border-radius:12px;padding:16px 18px;margin:0 0 16px;
+      background:linear-gradient(180deg,rgba(0,255,255,.03),transparent 70%)}
+    #tab-vms legend{display:flex;align-items:center;gap:8px;color:var(--accent);font-weight:700;font-size:15px;padding:0 8px}
+    #tab-vms legend .vmh-lic{width:16px;height:16px;opacity:.85}
+    #tab-vms .settings-help{color:var(--text-secondary);font-size:12.5px;line-height:1.55}
+    #tab-vms label{display:block;margin:10px 0}
+    #tab-vms label>input[type=text],#tab-vms label>input:not([type]),#tab-vms label>input[type=number],
+    #tab-vms label>input[type=url],#tab-vms label>textarea{display:block;width:100%;margin-top:5px;box-sizing:border-box}
+    /* The master switch, lifted out of the wall into a prominent card. */
+    #tab-vms .vmh-master{display:flex;align-items:center;gap:14px;padding:14px 16px;margin:0 0 14px;
+      border:1px solid var(--border-color);border-radius:12px;background:var(--bg-tertiary)}
+    #tab-vms .vmh-master .vmh-m-txt{flex:1;min-width:0}
+    #tab-vms .vmh-master b{font-size:15px;color:var(--text-primary)}
+    #tab-vms .vmh-master span{display:block;color:var(--text-secondary);font-size:12.5px;margin-top:2px}
+    /* Toggle-style checkboxes. */
+    #tab-vms .vmh-master label,#tab-vms label.vmh-toggle{display:flex;align-items:center;gap:10px;margin:8px 0}
+    #tab-vms label.vmh-toggle{padding:8px 0}
+    /* Numeric limits in a responsive grid instead of a vertical stack. */
+    #tab-vms .vmh-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:6px 18px}
+    #tab-vms .vmh-grid label{margin:8px 0}
+    /* The status board — replaces the old raw text/preformatted status dump. */
+    #tab-vms .vmh-status-head{display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:10px}
+    #tab-vms #vmhost-status-board{display:grid;grid-template-columns:repeat(auto-fit,minmax(240px,1fr));gap:8px}
+    #tab-vms .vmh-srow{display:flex;align-items:center;gap:10px;padding:9px 12px;border:1px solid var(--border-color);
+      border-radius:9px;background:var(--bg-secondary);font-size:13px;min-width:0}
+    #tab-vms .vmh-sdot{flex:none;width:9px;height:9px;border-radius:50%;background:var(--text-secondary);box-shadow:0 0 0 3px rgba(255,255,255,.03)}
+    #tab-vms .vmh-sdot.ok{background:var(--success);box-shadow:0 0 8px rgba(0,255,136,.5)}
+    #tab-vms .vmh-sdot.warn{background:#ffcf2b;box-shadow:0 0 8px rgba(255,207,43,.5)}
+    #tab-vms .vmh-sdot.bad{background:var(--danger);box-shadow:0 0 8px rgba(255,51,102,.5)}
+    #tab-vms .vmh-slabel{color:var(--text-secondary);flex:none}
+    #tab-vms .vmh-sval{color:var(--text-primary);font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;min-width:0}
+    #tab-vms .vmh-status-empty{color:var(--text-secondary);font-size:13px;padding:8px 0}
+    #tab-vms .vmh-status-err{color:var(--danger);font-size:13px;padding:8px 0}
+  </style>
+
+  <div class="vmh-master">
+    <div class="vmh-m-txt">
+      <b>VM host</b>
+      <span>Turn this server into a virtual-machine host clients manage over encrypted Nostr.</span>
+    </div>
+    <label class="vmh-toggle"><input type="checkbox" id="vmhost_enabled" name="vmhost_enabled"> Run on this server</label>
+  </div>
+
   <fieldset>
     <legend>VM hosting</legend>
-    <p class="settings-help">Turns this server into a virtual-machine host that PosterChan clients (web,
-      Android, desktop — even one with only a key and relays) manage from <strong>Virtual Machines</strong>.
-      Requests are NIP-44-encrypted Nostr events addressed to this node's relay identity; the VM console is
-      noVNC over this node's HTTPS, behind a one-use ticket issued over Nostr. Needs libvirt + QEMU/KVM on
-      this machine — <code>./install.sh --vmhost</code> sets it up; see <code>docs/VM_HOSTING.md</code>.</p>
+    <p class="settings-help">Clients (web, Android, desktop — even one with only a key and relays) manage VMs
+      from <strong>Virtual Machines</strong>. Requests are NIP-44-encrypted Nostr events addressed to this
+      node's relay identity; the VM console is noVNC over this node's HTTPS behind a one-use ticket issued
+      over Nostr. Needs libvirt + QEMU/KVM — <code>./install.sh --vmhost</code> sets it up; see
+      <code>docs/VM_HOSTING.md</code>.</p>
     <p class="settings-help"><strong>Security:</strong> the app user needs the <code>libvirt</code> group,
       and membership of that group is effectively root on this machine. Only enable this on a node you are
       willing to trust with that.</p>
-    <label><input type="checkbox" id="vmhost_enabled" name="vmhost_enabled"> Run the VM host on this server</label>
-    <label>Host name shown to clients <input id="vmhost_display_name" name="vmhost_display_name" placeholder="PosterChan VM host" autocomplete="off"></label>
-    <label>Public HTTPS URL (for the console) <input id="vmhost_public_url" name="vmhost_public_url" placeholder="https://poster.place" autocomplete="off" spellcheck="false"></label>
-    <p class="settings-help">Blank = clients open the console on the same origin as the relay they reached this host through.</p>
-    <label>Public relay URL <input id="vmhost_public_relay" name="vmhost_public_relay" placeholder="wss://poster.place/relay" autocomplete="off" spellcheck="false"></label>
-    <label><input type="checkbox" id="vmhost_announce" name="vmhost_announce"> Publish a public host announcement (kind 31310; capacity is never published)</label>
+    <div class="vmh-grid">
+      <label>Host name shown to clients <input id="vmhost_display_name" name="vmhost_display_name" placeholder="PosterChan VM host" autocomplete="off"></label>
+      <label>Public HTTPS URL (for the console) <input id="vmhost_public_url" name="vmhost_public_url" placeholder="https://poster.place" autocomplete="off" spellcheck="false"></label>
+      <label>Public relay URL <input id="vmhost_public_relay" name="vmhost_public_relay" placeholder="wss://poster.place/relay" autocomplete="off" spellcheck="false"></label>
+    </div>
+    <p class="settings-help">Public HTTPS URL blank = clients open the console on the same origin as the relay they reached this host through.</p>
+    <label class="vmh-toggle"><input type="checkbox" id="vmhost_announce" name="vmhost_announce"> Publish a public host announcement (kind 31310; capacity is never published)</label>
   </fieldset>
 
   <fieldset>
@@ -33,55 +82,76 @@
 
   <fieldset>
     <legend>Hypervisor and storage</legend>
-    <label>libvirt URI <input id="vmhost_libvirt_uri" name="vmhost_libvirt_uri" value="qemu:///system" autocomplete="off" spellcheck="false"></label>
-    <label>Storage directory <input id="vmhost_storage_dir" name="vmhost_storage_dir" value="/var/lib/posterchan/vms" autocomplete="off" spellcheck="false"></label>
+    <div class="vmh-grid">
+      <label>libvirt URI <input id="vmhost_libvirt_uri" name="vmhost_libvirt_uri" value="qemu:///system" autocomplete="off" spellcheck="false"></label>
+      <label>Storage directory <input id="vmhost_storage_dir" name="vmhost_storage_dir" value="/var/lib/posterchan/vms" autocomplete="off" spellcheck="false"></label>
+      <label>libvirt network <input id="vmhost_default_network" name="vmhost_default_network" value="default" autocomplete="off"></label>
+      <label>Bridge instead of a network (optional) <input id="vmhost_bridge" name="vmhost_bridge" placeholder="br0" autocomplete="off"></label>
+    </div>
     <p class="settings-help">Disks go in <code>&lt;dir&gt;/&lt;vm-uuid&gt;/</code>; installer ISOs live in <code>&lt;dir&gt;/isos/</code> — copy them there, or download/upload them from Virtual Machines → a host → ISO library. Clients pick from that list and can never name a path.</p>
-    <label>libvirt network <input id="vmhost_default_network" name="vmhost_default_network" value="default" autocomplete="off"></label>
-    <label>Bridge instead of a network (optional) <input id="vmhost_bridge" name="vmhost_bridge" placeholder="br0" autocomplete="off"></label>
   </fieldset>
 
   <fieldset>
     <legend>Limits</legend>
-    <label>Max vCPUs per VM <input type="number" id="vmhost_max_vcpus_per_vm" name="vmhost_max_vcpus_per_vm" value="16" min="1"></label>
-    <label>Max RAM per VM (MiB) <input type="number" id="vmhost_max_ram_mib_per_vm" name="vmhost_max_ram_mib_per_vm" value="65536" min="256"></label>
-    <label>Max disk per VM (GiB) <input type="number" id="vmhost_max_disk_gib_per_vm" name="vmhost_max_disk_gib_per_vm" value="2048" min="1"></label>
-    <label>RAM kept for the host (MiB) <input type="number" id="vmhost_reserve_ram_mib" name="vmhost_reserve_ram_mib" value="2048" min="0"></label>
-    <label>Disk kept free (GiB) <input type="number" id="vmhost_reserve_disk_gib" name="vmhost_reserve_disk_gib" value="20" min="0"></label>
-    <label><input type="checkbox" id="vmhost_allow_overcommit" name="vmhost_allow_overcommit"> Allow overcommitting CPU and memory</label>
-    <label>Console ticket lifetime (seconds) <input type="number" id="vmhost_console_ticket_ttl_sec" name="vmhost_console_ticket_ttl_sec" value="60" min="10" max="600"></label>
-    <label>Console session limit (minutes) <input type="number" id="vmhost_console_max_minutes" name="vmhost_console_max_minutes" value="240" min="1"></label>
-    <label>Guest shutdown timeout before a migration (seconds) <input type="number" id="vmhost_shutdown_timeout_sec" name="vmhost_shutdown_timeout_sec" value="120" min="10"></label>
-    <label>Session key lifetime for remote signers (hours) <input type="number" id="vmhost_session_max_hours" name="vmhost_session_max_hours" value="12" min="1"></label>
-    <label>Keep a migrated VM's source copy (hours, 0 = until an admin deletes it) <input type="number" id="vmhost_migration_keep_source_hours" name="vmhost_migration_keep_source_hours" value="72" min="0"></label>
-    <label>Migration transfer cap (Mbit/s, 0 = none) <input type="number" id="vmhost_transfer_max_mbps" name="vmhost_transfer_max_mbps" value="0" min="0"></label>
-    <label><input type="checkbox" id="vmhost_iso_fetch_enabled" name="vmhost_iso_fetch_enabled"> Let admins download ISOs by URL (public http/https only)</label>
+    <div class="vmh-grid">
+      <label>Max vCPUs per VM <input type="number" id="vmhost_max_vcpus_per_vm" name="vmhost_max_vcpus_per_vm" value="16" min="1"></label>
+      <label>Max RAM per VM (MiB) <input type="number" id="vmhost_max_ram_mib_per_vm" name="vmhost_max_ram_mib_per_vm" value="65536" min="256"></label>
+      <label>Max disk per VM (GiB) <input type="number" id="vmhost_max_disk_gib_per_vm" name="vmhost_max_disk_gib_per_vm" value="2048" min="1"></label>
+      <label>RAM kept for the host (MiB) <input type="number" id="vmhost_reserve_ram_mib" name="vmhost_reserve_ram_mib" value="2048" min="0"></label>
+      <label>Disk kept free (GiB) <input type="number" id="vmhost_reserve_disk_gib" name="vmhost_reserve_disk_gib" value="20" min="0"></label>
+      <label>Console ticket lifetime (seconds) <input type="number" id="vmhost_console_ticket_ttl_sec" name="vmhost_console_ticket_ttl_sec" value="60" min="10" max="600"></label>
+      <label>Console session limit (minutes) <input type="number" id="vmhost_console_max_minutes" name="vmhost_console_max_minutes" value="240" min="1"></label>
+      <label>Guest shutdown timeout before a migration (seconds) <input type="number" id="vmhost_shutdown_timeout_sec" name="vmhost_shutdown_timeout_sec" value="120" min="10"></label>
+      <label>Session key lifetime for remote signers (hours) <input type="number" id="vmhost_session_max_hours" name="vmhost_session_max_hours" value="12" min="1"></label>
+      <label>Keep a migrated VM's source copy (hours, 0 = until deleted) <input type="number" id="vmhost_migration_keep_source_hours" name="vmhost_migration_keep_source_hours" value="72" min="0"></label>
+      <label>Migration transfer cap (Mbit/s, 0 = none) <input type="number" id="vmhost_transfer_max_mbps" name="vmhost_transfer_max_mbps" value="0" min="0"></label>
+    </div>
+    <label class="vmh-toggle"><input type="checkbox" id="vmhost_allow_overcommit" name="vmhost_allow_overcommit"> Allow overcommitting CPU and memory</label>
+    <label class="vmh-toggle"><input type="checkbox" id="vmhost_iso_fetch_enabled" name="vmhost_iso_fetch_enabled"> Let admins download ISOs by URL (public http/https only)</label>
   </fieldset>
 
   <fieldset>
     <legend>Status</legend>
-    <button type="button" class="btn-secondary" id="vmhost-status-btn">Check VM host status</button>
-    <pre id="vmhost-status-result" aria-live="polite">Not checked</pre>
+    <div class="vmh-status-head">
+      <button type="button" class="btn-secondary" id="vmhost-status-btn">Check VM host status</button>
+    </div>
+    <div id="vmhost-status-board"><div class="vmh-status-empty">Not checked yet.</div></div>
   </fieldset>
 </section>
 <script>
 (function(){
+  var board=document.getElementById('vmhost-status-board');
+  function row(state,label,value){
+    var d=document.createElement('div'); d.className='vmh-srow';
+    var dot=document.createElement('span'); dot.className='vmh-sdot'+(state?' '+state:'');
+    var l=document.createElement('span'); l.className='vmh-slabel'; l.textContent=label;
+    var v=document.createElement('span'); v.className='vmh-sval'; v.textContent=value; v.title=value;
+    d.appendChild(dot); d.appendChild(l); d.appendChild(v); return d;
+  }
+  function render(v){
+    board.textContent='';
+    var lv=v.libvirt||{};
+    var rows=[
+      [v.enabled?(v.running?'ok':'warn'):'', 'Host', (v.enabled?'enabled':'disabled')+' · '+(v.running?'running':'stopped')+(v.error?' — '+v.error:'')],
+      [v.node_npub?'ok':'warn', 'Identity', v.node_npub||'no relay identity yet'],
+      [lv.ok?'ok':'bad', 'libvirt', v.libvirt_uri+' — '+(lv.ok?('reachable '+(lv.libvirt||'')):('not reachable'+(lv.error?': '+lv.error:'')))],
+      [v.kvm?'ok':'bad', 'KVM /dev/kvm', v.kvm?'present':'missing'],
+      [v.storage_exists?(v.storage_writable?(v.storage_traversable===false?'warn':'ok'):'bad'):'bad', 'Storage',
+        v.storage_dir+' — '+(v.storage_exists?(v.storage_writable?(v.storage_traversable===false?'writable, not traversable by qemu (chmod o+x)':'writable'):'NOT writable by the app'):'missing')],
+      ['', 'VMs', (v.vms?(v.vms.running+' running / '+v.vms.total+' total'):'—')+' · consoles '+(v.consoles_open==null?'—':v.consoles_open)],
+      ['', 'Access', v.admins+' extra admin(s) · '+v.allowed+' allowed user(s)']
+    ];
+    rows.forEach(function(r){ board.appendChild(row(r[0],r[1],r[2])); });
+  }
   async function vmhostStatus(btn){
-    const out=document.getElementById('vmhost-status-result'); if(btn) btn.disabled=true; out.textContent='Checking…';
+    if(btn) btn.disabled=true;
+    board.innerHTML='<div class="vmh-status-empty">Checking…</div>';
     try{
-      const r=await fetch('/api/admin/vmhost/status',{credentials:'same-origin',cache:'no-store',headers:{Accept:'application/json'}});
-      const v=await r.json(); if(!r.ok) throw new Error(v.detail||('HTTP '+r.status));
-      const lv=v.libvirt||{};
-      out.textContent=[
-        'Enabled: '+(v.enabled?'yes':'no')+' · Running: '+(v.running?'yes':'no')+(v.error?' — '+v.error:''),
-        'Host npub: '+(v.node_npub||'(no relay identity yet)'),
-        'libvirt: '+v.libvirt_uri+' — '+(lv.ok?('reachable '+(lv.libvirt||'')):('not reachable'+(lv.error?': '+lv.error:''))),
-        'KVM (/dev/kvm): '+(v.kvm?'present':'missing'),
-        'Storage: '+v.storage_dir+' — '+(v.storage_exists?(v.storage_writable?'writable':'NOT writable by the app'):'missing')
-          +(v.storage_exists&&v.storage_traversable===false?' — NOT traversable by the qemu user (chmod o+x; ./install.sh --vmhost)':''),
-        'VMs: '+(v.vms?(v.vms.running+' running / '+v.vms.total+' total'):'—')+' · consoles open: '+(v.consoles_open??'—'),
-        'Extra admins: '+v.admins+' · allowed users: '+v.allowed
-      ].join('\n');
-    }catch(e){ out.textContent='Status unavailable: '+String(e&&e.message||e); }
+      var r=await fetch('/api/admin/vmhost/status',{credentials:'same-origin',cache:'no-store',headers:{Accept:'application/json'}});
+      var v=await r.json(); if(!r.ok) throw new Error(v.detail||('HTTP '+r.status));
+      render(v);
+    }catch(e){ board.innerHTML=''; var d=document.createElement('div'); d.className='vmh-status-err';
+      d.textContent='Status unavailable: '+String(e&&e.message||e); board.appendChild(d); }
     finally{ if(btn) btn.disabled=false; }
   }
   document.getElementById('vmhost-status-btn')?.addEventListener('click', function(){ vmhostStatus(this); });
