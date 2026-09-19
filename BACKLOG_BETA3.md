@@ -198,7 +198,7 @@ is consolidated in §5's device-check line.
       (no widgets mixed into forms). Tests: `test_os_settings_isolation.py` (categories are separate pages,
       no widget cards — the precise backlog wording), `test_system_settings_section_ownership.py`,
       `test_system_settings_never_hangs_on_a_spinner.py`; live gate `scripts/check_installed_system_settings.py`.
-- [ ] Social refreshes after offline without destroying open replies/place; newly opened Social starts
+- [x] Social refreshes after offline without destroying open replies/place; newly opened Social starts
       at top; timeline has a desktop scrollbar; article images have bounded height.
       2026-09-09: the last three were already implemented and now have MEASURED tests (rendered
       scrollbar width and rendered image height against the shipped stylesheet, in real Chrome —
@@ -208,6 +208,15 @@ is consolidated in §5's device-check line.
       .osw window the article image cap is viewport-relative, so a tall image can exceed a short
       window's body; bounding it to the WINDOW needs container-type:size, which creates a new
       containing block and is the black-window class of risk, for a mild symptom.
+      2026-09-19: the offline-refresh half is now PROVEN, not just reasoned. The mechanism was already
+      correct — the `online` handler (app.js) runs the non-blanking `_tlForeground()`+`_resumeRelay()`,
+      the socket reconnect reconciles the feed with the visible-card anchor (place kept), and an open
+      reply is a `modal()` in `#modal-root`, which the `#feed` reconcile never touches. What was missing
+      was a genuine reproduction: `tests/client/test_social_offline_refresh_full_app.py` drives real
+      headless Chrome — logs in, serves a signed timeline, opens a REPLY and types an unsent draft,
+      scrolls, then goes offline → drops the socket → comes back online for real, and asserts the reply
+      is still open with its text AND the feed is still populated at the same top card. Mutation-proven
+      (making the `online` handler closeModal() fails it with "open reply was destroyed by the refresh").
 
 ## 5. Release gates and ISO — only after sections 1–4
 
