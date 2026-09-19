@@ -5,6 +5,11 @@
 (function(root){
   'use strict';
   let PC=null, state=null, checkedAt=0, booted=false, _probeSeq=0, _signerLogged=false;
+  // ~10-block change lock after a send (~20 min). A single-output wallet has nothing spendable
+  // until then; the hint lets a tip hand off to the external flow without trusting a stale or
+  // busy-RPC balance, while the wallet SCREEN still re-probes normally (checkedAt is cleared).
+  const _SPEND_LOCK_MS = 20 * 60 * 1000;
+  let _spendLockUntil = 0;
   let _walletOwner, _renderSeq=0;
   function walletOwner(){
     // Older embedders do not expose viewer; keep their single-session behavior.
@@ -37,18 +42,15 @@
    * fresh probe instead of assuming a lock — erring to the local wallet only when it can help.
    */
   function _lockOperatorAfterSpend(){
-    if(state && (Number(state.outputs)||0) <= 1){
-      state = Object.assign({}, state, {unlocked_balance:'0',
-        blocks_to_unlock: Math.max(10, Number(state.blocks_to_unlock)||0)});
-      checkedAt = Date.now();
-    }else{ checkedAt = 0; }
+    checkedAt = 0;                 // the wallet SCREEN must re-probe to show the new balance + history
+    // A single-output wallet just spent its only output; its change locks ~10 blocks, so any balance
+    // read for the next ~20 min is stale. Remember the lock so a tip hands off to the external flow
+    // instead of reopening a sheet the wallet would refuse. Multi-output wallets may still pay — no hint.
+    if(state && (Number(state.outputs)||0) <= 1) _spendLockUntil = Date.now() + _SPEND_LOCK_MS;
   }
   function _lockUserAfterSpend(){
-    if(_meState && (Number(_meState.outputs)||0) <= 1){
-      _meState = Object.assign({}, _meState, {unlocked_balance:'0',
-        blocks_to_unlock: Math.max(10, Number(_meState.blocks_to_unlock)||0)});
-      _meAt = Date.now();
-    }else{ _meAt = 0; }
+    _meAt = 0;
+    if(_meState && (Number(_meState.outputs)||0) <= 1) _meSpendLockUntil = Date.now() + _SPEND_LOCK_MS;
   }
   const esc=s=>String(s==null?'':s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
   const amount=v=>{ const n=Number(v); return Number.isFinite(n)&&n>=0?n:0; };
@@ -1050,7 +1052,7 @@
    * pooled wallet. It is CUSTODIAL and the UI says so where it matters. It is tried AFTER the
    * operator's wallet and BEFORE the external flow, and it declines quietly whenever it cannot
    * help, so the non-custodial path is always still there. */
-  let _meState = null, _meAt = 0, _meSeq = 0;
+  let _meState = null, _meAt = 0, _meSeq = 0, _meSpendLockUntil = 0;
   async function meProbe(force){
     const owner=syncWalletOwner();
     if(!owner) return null;
@@ -1098,9 +1100,12 @@
     if(!s || !s.enabled) return false;
     if(!validAddress(opts && opts.address, s.network)) return false;
     // Nothing spendable: hand it to the external flow rather than open a sheet that would be refused.
-    if(!(amount(s.unlocked_balance) > 0)){
-      const held = amount(s.balance), mins = Math.max(1, Number(s.blocks_to_unlock) || 0) * 2;
-      if(held > 0){ try{ PC.toast('your wallet unlocks in ~' + mins + ' min — using an external wallet'); }catch(_){ } }
+    const _meLockHint = _meSpendLockUntil > Date.now();
+    if(_meLockHint || !(amount(s.unlocked_balance) > 0)){
+      const held = amount(s.balance);
+      const mins = _meLockHint ? Math.max(1, Math.ceil((_meSpendLockUntil - Date.now()) / 60000))
+                               : Math.max(1, Number(s.blocks_to_unlock) || 0) * 2;
+      if(_meLockHint || held > 0){ try{ PC.toast('your wallet unlocks in ~' + mins + ' min — using an external wallet'); }catch(_){ } }
       return false;
     }
     meSendDialog(opts, s);
@@ -1280,10 +1285,12 @@
      * the external flow — which works right now — and SAYS why, so the built-in wallet going quiet
      * for a while is explained rather than mysterious. It takes over again by itself. */
     const spendable = Number(String(s.unlocked_balance == null ? 0 : s.unlocked_balance).replace(/,/g,''));
-    if(s.unlocked_balance != null && (!Number.isFinite(spendable) || spendable <= 0)){
+    const _lockHint = _spendLockUntil > Date.now();
+    if(_lockHint || (s.unlocked_balance != null && (!Number.isFinite(spendable) || spendable <= 0))){
       const held = Number(String(s.balance == null ? 0 : s.balance).replace(/,/g,''));
-      const mins = Math.max(1, Number(s.blocks_to_unlock) || 0) * 2;
-      if(Number.isFinite(held) && held > 0){
+      const mins = _lockHint ? Math.max(1, Math.ceil((_spendLockUntil - Date.now()) / 60000))
+                             : Math.max(1, Number(s.blocks_to_unlock) || 0) * 2;
+      if(_lockHint || (Number.isFinite(held) && held > 0)){
         try{ PC.toast('local wallet unlocks in ~' + mins + ' min (change from your last payment) — using your external wallet'); }catch(_){ }
       }
       return false;
