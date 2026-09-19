@@ -234,8 +234,8 @@ def _curation_summary(c) -> str:
         parts.append("notes containing operator-listed words are rejected")
     if c.get("blocked_langs"):
         parts.append("notes in operator-listed languages are rejected")
-    if c.get("block_json", True):
-        parts.append("notes whose entire content is a JSON object or array are rejected as spam")
+    # JSON-blob rejection is generic SPAM prevention, not curation: GRASP-01 says the curation key
+    # is for policy "beyond generic SPAM prevention", so it is deliberately NOT listed here.
     if c.get("block_bridged"):
         parts.append("bridged (NIP-48 proxy) content is rejected")
     if c.get("blocked_relays"):
