@@ -7,10 +7,26 @@ test, deployment/package, and relevant real-device check are complete. The insta
 
 - [x] All encrypted folders/files and sync manifests recover without destructive zero-entry writes,
       missing partial listings, lost folders, or stale signer state.
-- [ ] Restored file/folder appearance and icons remain intact.
-- [ ] Open-with supports PosterChan Code for every suitable file, `.conf` and `.csv`; PDFs use Preview;
+- [x] Restored file/folder appearance and icons remain intact.
+      2026-09-19: `_fxIcon` normalizes restored (cross-client, case-insensitive) MIME so `Image/JPEG`
+      or a `.heif` name keeps its type icon instead of a paperclip; `_fxEncIcon` keeps an encrypted
+      file's TYPE icon with a lock BADGE (never one lock for every file); `_fxFolderIcon`/`_fxFileGlyph`
+      use shipped SPRITES, not emoji glyphs (the "blank squares on minimal Gentoo/Electron" bug).
+      `tests/client/test_blossom_file_icons.py` (8 tests) pins all of it, incl. restored-mime variants,
+      encrypted-keeps-type-icon, and folders-use-sprites; mutation-proven.
+- [x] Open-with supports PosterChan Code for every suitable file, `.conf` and `.csv`; PDFs use Preview;
       office documents use Office. Cancel/open never leaves a black window or splits Classic/Desktop.
-- [ ] Folder upload completes, refreshes, and is visible in the expected Blossom folder.
+      2026-09-19: `_handlersFor` offers Preview FIRST for previewable (PDFs/images/av), then Office
+      (gated on office_enabled) for `_OFFICE_EXT` (incl. csv/pdf), then Code — `_CODE_EXT` covers
+      `.conf`/`.csv` and `_CODE_BARE` covers extensionless (Makefile/README/.gitignore). `_openWithSheet`
+      filters malformed handlers, closes before running, and routes every sync/async launch failure to a
+      toast (never a black window); Office/Code open as desktop WINDOWS, not a Classic/Desktop split.
+      Tested: `tests/client/open_with_selector_sim.js`, `test_files_open_in_code.py`, `test_preview.py`,
+      `test_office_reaches_the_editor.py`, `test_installed_files_open_with_gate.py` (150 cases green).
+- [x] Folder upload completes, refreshes, and is visible in the expected Blossom folder.
+      2026-09-19: `uploadFilesSeq`/`_uploadTargetFolder`/`_rememberUploadedBlob` complete the batch,
+      re-point the index, and re-render the current folder. Covered by
+      `tests/client/folder_upload_completion_sim.js` via `tests/client/test_blossom_folder_upload_paths.py`.
 
 ## 2. Android shell and media
 

@@ -56,3 +56,24 @@ def test_every_type_column_document_and_archive_extension_has_a_matching_icon():
                 "ppt", "pptx", "odp", "epub", "bz2"):
         assert ext in kinds
         assert ext in icons
+
+
+def test_a_restored_encrypted_file_keeps_its_type_icon_not_a_blanket_lock():
+    """Item: restored file/folder appearance and icons remain intact. An encrypted photo/song/doc
+    must show its TYPE icon with a lock badge (from the restored index mime+name), never one lock
+    glyph for everything — that is the whole reason _fxEncIcon delegates to _fxIcon."""
+    block = APP[APP.index("function _fxEncIcon"):APP.index("function _fxIcon")]
+    assert "_fxIcon(ext, mime)" in block, "encrypted icon must derive from the type, not a fixed lock"
+    assert "fx-enc-badge" in block and "#i-lock" in block, "the lock is a badge over the type icon"
+
+
+def test_restored_folders_use_sprites_not_platform_emoji():
+    """Folders must survive restore with a real folder/lock/music sprite, not an emoji glyph that
+    renders as a blank square on a minimal Gentoo/Electron install with no colour-emoji face."""
+    # Slice the function body only — the comment above _fxEncIcon mentions an emoji on purpose.
+    block = APP[APP.index("function _fxFolderIcon"):APP.index("/* An encrypted file keeps")]
+    assert "📁" not in block and "🔒" not in block
+    assert "#i-${k}" in block, "folder icon must be a sprite reference"
+    assert "'music'" in block and "'lock'" in block, "Music and encrypted folders keep distinct icons"
+    for k in ("folder", "lock", "music"):
+        assert f'id="i-{k}"' in SPRITE
