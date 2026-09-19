@@ -1394,8 +1394,10 @@
 .vms-rail{flex:0 0 300px;display:flex;flex-direction:column;gap:10px;position:sticky;top:0}
 .vms-main{flex:1;min-width:0;display:flex;flex-direction:column;gap:12px}
 .vms-hosts{display:flex;flex-direction:column;gap:10px}
-.vms-host,.vms-vm{all:unset;box-sizing:border-box;display:block;cursor:pointer;background:var(--panel2);border:1px solid var(--line);border-radius:var(--r);padding:12px 14px;color:var(--text);width:100%}
-.vms-host.sel{border-color:var(--neon)}
+.vms-host,.vms-vm{all:unset;box-sizing:border-box;display:block;cursor:pointer;background:var(--panel2);border:1px solid var(--line);border-radius:var(--r);padding:12px 14px;color:var(--text);width:100%;transition:border-color .15s ease,background .15s ease,transform .12s ease,box-shadow .15s ease}
+.vms-host:hover,.vms-vm:hover{border-color:rgba(var(--accent-rgb),.55);background:var(--panel);transform:translateY(-1px);box-shadow:var(--sh-1)}
+.vms-host.sel{border-color:var(--neon);background:rgba(var(--accent-rgb),.10);box-shadow:inset 3px 0 0 var(--neon)}
+.vms-host.sel:hover{transform:none}
 .vms-host-top,.vms-head,.vms-vmhead{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
 .vms-head h2,.vms-vmhead h2{margin:0;font-size:20px;overflow-wrap:anywhere}
 .vms-sp{flex:1}
