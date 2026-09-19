@@ -21,6 +21,35 @@
     }
     return owner;
   }
+  /* AFTER A SPEND, REFLECT THE CHANGE LOCK so the NEXT tip does not dead-end.
+   *
+   * Monero locks the change from a send for ~10 blocks (~20 min). A wallet made of a SINGLE output
+   * tips once and then has nothing spendable until it unlocks. Invalidating the cache by time alone
+   * (checkedAt=0 / _meAt=0) leaves the pre-send FUNDED balance in state/_meState; the very next tip
+   * re-probes, its detailed /balance RPC is busy (the wallet is relaying + rescanning right after a
+   * send), so tip() takes the /status fast-path — which resurrects that stale funded balance, opens
+   * the send sheet, and the now-locked wallet refuses the amount: "i can't zap again because it says
+   * I have to wait 18 min despite nothing pending". Nothing IS pending; it is their own change.
+   *
+   * So reflect the lock optimistically: the next tip's spendable guard hands the payment to the
+   * external flow and SAYS why, and a later detailed probe restores the local sheet the moment funds
+   * are spendable again. A MULTI-output wallet may still pay from another output, so it forces a
+   * fresh probe instead of assuming a lock — erring to the local wallet only when it can help.
+   */
+  function _lockOperatorAfterSpend(){
+    if(state && (Number(state.outputs)||0) <= 1){
+      state = Object.assign({}, state, {unlocked_balance:'0',
+        blocks_to_unlock: Math.max(10, Number(state.blocks_to_unlock)||0)});
+      checkedAt = Date.now();
+    }else{ checkedAt = 0; }
+  }
+  function _lockUserAfterSpend(){
+    if(_meState && (Number(_meState.outputs)||0) <= 1){
+      _meState = Object.assign({}, _meState, {unlocked_balance:'0',
+        blocks_to_unlock: Math.max(10, Number(_meState.blocks_to_unlock)||0)});
+      _meAt = Date.now();
+    }else{ _meAt = 0; }
+  }
   const esc=s=>String(s==null?'':s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
   const amount=v=>{ const n=Number(v); return Number.isFinite(n)&&n>=0?n:0; };
   /* RPC amounts arrive as decimal STRINGS. Never pass atomic units through Number: wallet balances
@@ -657,7 +686,7 @@
         try{
           const made=await request('/api/wallet/xmr/transfer/prepare',{method:'POST',headers:{'Accept':'application/json','Content-Type':'application/json'},body:JSON.stringify({address:pay.address,amount:pay.amount,description:pay.note||''})});
           const out=await request('/api/wallet/xmr/transfer/confirm',{method:'POST',headers:{'Accept':'application/json','Content-Type':'application/json'},body:JSON.stringify({confirmation:made.confirmation})});
-          PC.closeModal();PC.toast('ɱ payment sent'); checkedAt=0;
+          PC.closeModal();PC.toast('ɱ payment sent'); _lockOperatorAfterSpend();
           if(typeof opts.onSent==='function')opts.onSent(pay.amount,out.txid||out.tx_hash||'',{doNotPost});
           if(PC.VIEW==='wallet')render(true);
         }catch(e){
@@ -788,7 +817,7 @@
                       body: JSON.stringify({payments:[{address: to, amount: raw}]})});
                     if(!Array.isArray(receipt?.tx_hash_list) || !receipt.tx_hash_list.length ||
                        !receipt.tx_hash_list.every(hash=>typeof hash==='string' && /^[0-9a-f]{64}$/i.test(hash))) throw unknownPayment();
-                    phase='sent';PC.closeModal(); PC.toast('payment sent'); _meAt = 0; render(true);
+                    phase='sent';PC.closeModal(); PC.toast('payment sent'); _lockUserAfterSpend(); render(true);
                   }catch(e){
                     const msg = (e && e.message) || String(e);
                     const unsure = !!(e && e.unsure) || /may have been sent|did not answer in time/i.test(msg);
@@ -1144,7 +1173,7 @@
               headers:{'Accept':'application/json','Content-Type':'application/json'},
               body: JSON.stringify({payments:[{address:opts.address, amount:val}]})});
             PC.closeModal(); PC.toast('\u0271 tip sent');
-            _meAt = 0;                                    // the balance just changed
+            _lockUserAfterSpend();                        // the change is locking now
             if(typeof opts.onSent === 'function') opts.onSent(val, (out.tx_hash_list||[])[0] || '',{doNotPost});
           }catch(e){
             // Same rule as the node wallet's send: a timeout is an unknown, not a failure.

@@ -142,6 +142,26 @@ def test_a_locked_wallet_lets_the_tip_through_and_says_why(seen):
         "the built-in wallet went quiet with no explanation and no unlock time")
 
 
+def test_a_zap_right_after_a_send_falls_back_instead_of_dead_ending(seen):
+    """THE 20-MINUTE WAIT, BACK AGAIN — and the one path the earlier fixes did not cover.
+
+    After a send, Monero locks the change for ~10 blocks; a single-output wallet then has nothing
+    spendable. The send only invalidated the cache by TIME (checkedAt=0), leaving the pre-send FUNDED
+    balance in place — and the next zap's detailed /balance RPC is busy (the wallet is relaying and
+    rescanning right after a send), so tip() takes the /status fast-path, which resurrected that stale
+    funded balance, opened the send sheet, and the now-locked wallet refused the amount. Reported,
+    again, as "20 min wait time between monero zaps". The fix reflects the change lock in the cache so
+    the next tip hands off to the external flow and says why; a later probe restores the local sheet.
+
+    scenario 11 (lockedKeepsWallet) only covered a locked wallet when the detailed probe ANSWERED —
+    this is the busy-probe path right after a real send, which is how the regression got back in."""
+    got = seen["lockedAfterSend"]
+    assert got["answered"] is False, (
+        "the zap right after a send opened the local sheet on a now-locked wallet — the 20-minute wait")
+    assert got["opened"] is False, "the send sheet opened for a wallet whose change is locking"
+    assert got["toldWhy"] is True, "the local wallet went quiet after a send with no explanation"
+
+
 def test_a_wallet_holding_nothing_still_hands_the_tip_back(seen):
     """The one case where the built-in wallet genuinely cannot help."""
     assert seen["trulyEmpty"]["answered"] is False
@@ -375,3 +395,14 @@ def test_busy_wallet_rpc_does_not_disable_the_local_zap_path(seen):
     assert got["tookMs"] < 4000, "the zap button waited through the wallet RPC's full timeout"
     assert got["prepare"] == 1, "Review did not reach transfer preparation exactly once"
     assert got["confirm"] == 1, "Send did not reach transfer confirmation exactly once"
+
+
+def test_a_user_wallet_zap_right_after_a_send_also_falls_back(seen):
+    """The custodial USER wallet — the path a plain WebUI user hits, not the operator's. Same
+    single-output change-lock after a send; without reflecting it, the next tip's /me/balance is busy
+    and the sheet opened on a now-locked wallet. Falls back to the external flow and says why."""
+    got = seen["userLockedAfterSend"]
+    assert got["answered"] is False, (
+        "the user-wallet zap right after a send opened the sheet on a now-locked wallet — the wait")
+    assert got["opened"] is False, "the user send sheet opened for a wallet whose change is locking"
+    assert got["toldWhy"] is True, "the user wallet went quiet after a send with no explanation"

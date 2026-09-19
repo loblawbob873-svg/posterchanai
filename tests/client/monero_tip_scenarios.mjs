@@ -449,4 +449,81 @@ function meWallet({ enabled = true, unlocked = '1.5', balance = '1.5', blocks = 
                      saysUnlock: /unlocks in about 6 minutes/.test(toasts.join(' ')) };
 }
 
+// 30. AFTER A SEND, THE NEXT ZAP MUST NOT DEAD-END ON A LOCKED WALLET.
+//     A single-output wallet tips once and its change locks for ~20 min. The detailed balance RPC is
+//     busy right after a send (relaying + rescanning), so tip() takes the /status fast-path — which
+//     MUST NOT resurrect the pre-send funded balance and open a sheet the locked wallet then refuses
+//     ("i can't zap again because it says I have to wait 18 min despite nothing pending"). It hands
+//     the second tip to the external flow and says why.
+{
+  let sent = false;
+  const w = boot({ fetcher: (path) => {
+    if (path === '/api/wallet/xmr/status') return OK({ network:'mainnet', zap_fee_percent:'0' });
+    if (path === '/api/wallet/xmr/transfer/prepare') return OK({ confirmation:'tok-'+'z'.repeat(40) });
+    if (path === '/api/wallet/xmr/transfer/confirm') { sent = true; return OK({ tx_hash:'e'.repeat(64) }); }
+    if (path.includes('/balance')) {
+      if (sent) return new Promise(() => {});   // wallet-rpc is busy relaying/rescanning after the send
+      return OK({ balance:'1.5', unlocked_balance:'1.5', num_unspent_outputs:1, blocks_to_unlock:0 });
+    }
+    if (path.includes('/address')) return OK({ address: ADDR });
+    if (path.includes('/history')) return OK({ in:[], out:[] });
+    return OK({});
+  }});
+  await w.api.render();                 // the detailed probe caches the funded, single-output balance
+  let stage = 0, first = null, second = null;
+  w.PC.modal = (html, mounted) => {
+    stage++;
+    if (stage === 1) {
+      const els = { '#mw-scan':{}, '#mw-to':{value:ADDR}, '#mw-amount':{value:'0.01'}, '#mw-note':{value:''}, '#mw-review':{} };
+      first = { querySelector:s=>els[s]||{}, querySelectorAll:()=>[] }; mounted(first);
+    } else {
+      const els = { '#mw-understand':{checked:false}, '#mw-confirm':{disabled:true,textContent:''} };
+      second = { querySelector:s=>els[s]||{} }; mounted(second);
+    }
+  };
+  await w.api.tip({ address:ADDR, name:'x', amount:'0.01' });
+  first.querySelector('#mw-review').onclick();
+  const chk = second.querySelector('#mw-understand'), snd = second.querySelector('#mw-confirm');
+  chk.checked = true; chk.onchange(); await snd.onclick();      // SENT — change now locking, RPC busy
+  let opened2 = false; const toasts = [];
+  w.PC.modal = () => { opened2 = true; }; w.PC.toast = t => toasts.push(String(t));
+  const answered2 = await w.api.tip({ address:ADDR, name:'x', amount:'0.01' });
+  out.lockedAfterSend = { answered: answered2, opened: opened2,
+                          toldWhy: toasts.some(t => /unlocks in ~|external wallet/i.test(t)) };
+}
+
+// 31. THE CUSTODIAL USER WALLET — the SAME 20-min wait after a send, on the path a WebUI user hits.
+//     A single-output user wallet tips once and its change locks ~20 min. After a send only the cache
+//     TIME was invalidated (_meAt=0), leaving the pre-send FUNDED balance in _meState; the next tip's
+//     /me/balance is busy right after the send, so meProbe served the stale funded balance and the
+//     sheet opened on a now-locked wallet. Reflect the lock so the next tip hands off to external.
+{
+  let sent = false;
+  const w = boot({ fetcher: (p) => {
+    if (p.includes('/me/status'))  return OK({ enabled:true, network:'mainnet', fee_percent:'0' });
+    if (p.includes('/me/pay'))     { sent = true; return OK({ tx_hash_list:['c'.repeat(64)], recipients:1 }); }
+    if (p.includes('/me/balance')) {
+      // Right after a send the custodial backend often still reports the OLD funded balance
+      // (it has not rescanned the change lock yet). The client must not trust that and open a
+      // sheet the /me/pay will then refuse — it must reflect the lock it just caused.
+      if (sent) return OK({ address:ADDR, balance:'1.5', unlocked_balance:'1.5', blocks_to_unlock:0, outputs:1 });
+      return OK({ address:ADDR, balance:'1.5', unlocked_balance:'1.5', blocks_to_unlock:0, outputs:1 });
+    }
+    if (p.includes('/me/history')) return OK({ in:[], out:[] });
+    throw new Error('this account cannot open the node wallet');   // the node wallet 403s
+  }});
+  let mounted = null; w.PC.modal = (h, on) => { mounted = on; };
+  await w.api.meTip({ address:ADDR, name:'x', amount:'0.01' });     // funded → sheet opens
+  const amt = { value:'0.01' }, send = { onclick:null, disabled:false, textContent:'' };
+  const stub = { querySelector:s => s==='#mw-me-amt' ? amt : s==='#mw-me-send' ? send : null,
+                 querySelectorAll:() => [] };
+  mounted(stub);
+  if (send.onclick) await send.onclick();                          // SENT — change now locking
+  let opened2 = false; const toasts = [];
+  w.PC.modal = () => { opened2 = true; }; w.PC.toast = t => toasts.push(String(t));
+  const answered2 = await w.api.meTip({ address:ADDR, name:'x', amount:'0.01' });
+  out.userLockedAfterSend = { answered: answered2, opened: opened2,
+                              toldWhy: toasts.some(t => /unlocks in ~|external wallet/i.test(t)) };
+}
+
 console.log(JSON.stringify(out));
