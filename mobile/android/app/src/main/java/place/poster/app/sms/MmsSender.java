@@ -59,22 +59,17 @@ public final class MmsSender {
              * nothing to press. Do not make it the only answer again. */
             Settings settings = new Settings();
             settings.setUseSystemSending(true);
-            /* Subscription routing is DUAL-SIM ONLY. On a genuine dual-SIM phone, relying on the
-             * library's process-global default produced a valid provider outbox row but no carrier
-             * transfer, so we pin the messaging subscription (SMS default, then data). But forcing an
-             * explicit subscription on a SINGLE-SIM phone — or one whose default id is momentarily
-             * stale — sends the MMS over a subscription the carrier transaction cannot bring up, which
-             * Android reports as MMS_ERROR_IO_ERROR and the recipient never receives, WHILE the
-             * library's own default routed it correctly. That override was a single-SIM regression:
-             * a phone with one SIM keeps the default that worked. `activeSimCount` reads 0 (no
-             * override) when READ_PHONE_STATE is unavailable, which is the safe single-SIM behaviour. */
-            if (activeSimCount(ctx) >= 2) {
-                int sub = SubscriptionManager.getDefaultSmsSubscriptionId();
-                if (sub == SubscriptionManager.INVALID_SUBSCRIPTION_ID)
-                    sub = SubscriptionManager.getDefaultDataSubscriptionId();
-                if (sub != SubscriptionManager.INVALID_SUBSCRIPTION_ID)
-                    settings.setSubscriptionId(sub);
-            }
+            /* Route MMS over the ACTIVE subscription, resolved from getActiveSubscriptionInfoList() —
+             * NOT a default-sub getter. On a phone whose physical SIM is disabled and only an eSIM is
+             * active, getDefaultSmsSubscriptionId()/SmsManager.getDefault() can still hand back the
+             * disabled slot's STALE id, and the carrier transaction then fails with MMS_ERROR_IO_ERROR
+             * and the recipient never gets the picture. The single active subscription is unambiguously
+             * the SIM that can actually send. With two active SIMs, prefer the user's messaging (SMS)
+             * default, then the data subscription. When the list can't be read (READ_PHONE_STATE not
+             * granted) leave the subscription unset and let the library default stand. */
+            int sub = activeMmsSubscriptionId(ctx);
+            if (sub != SubscriptionManager.INVALID_SUBSCRIPTION_ID)
+                settings.setSubscriptionId(sub);
             Message message;
             if (video) {
                 message = new Message(body == null ? "" : body, to);
@@ -110,18 +105,29 @@ public final class MmsSender {
         return r;
     }
 
-    /** How many SIMs are active — 0 when it cannot be read (no READ_PHONE_STATE), which callers treat
-     * as single-SIM so they never override the subscription on a phone we cannot measure. */
-    static int activeSimCount(Context ctx) {
+    /** The subscription id MMS should leave on. Exactly one active SIM → that SIM's real id (never a
+     * stale default from a disabled slot — the eSIM-only case). Two or more → the messaging (SMS)
+     * default, then the data subscription. Cannot read the active list (no READ_PHONE_STATE) → INVALID,
+     * so the caller leaves the library default in place. */
+    static int activeMmsSubscriptionId(Context ctx) {
         try {
             SubscriptionManager sm = (SubscriptionManager)
                     ctx.getSystemService(Context.TELEPHONY_SUBSCRIPTION_SERVICE);
-            if (sm == null) return 0;
-            java.util.List<android.telephony.SubscriptionInfo> list = sm.getActiveSubscriptionInfoList();
-            return list == null ? 0 : list.size();
+            java.util.List<android.telephony.SubscriptionInfo> active =
+                    sm == null ? null : sm.getActiveSubscriptionInfoList();
+            if (active != null && active.size() == 1) {
+                return active.get(0).getSubscriptionId();
+            }
+            if (active != null && active.size() >= 2) {
+                int sub = SubscriptionManager.getDefaultSmsSubscriptionId();
+                if (sub == SubscriptionManager.INVALID_SUBSCRIPTION_ID)
+                    sub = SubscriptionManager.getDefaultDataSubscriptionId();
+                return sub;
+            }
         } catch (Throwable t) {
-            return 0;
+            // fall through to INVALID
         }
+        return SubscriptionManager.INVALID_SUBSCRIPTION_ID;
     }
 
     static int carrierLimit() {
