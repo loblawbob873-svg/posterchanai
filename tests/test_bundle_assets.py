@@ -77,7 +77,7 @@ class TestBundleCarriesWhatTheClientAsksFor(unittest.TestCase):
     def test_the_two_that_actually_broke(self):
         """Named, because each was found by a user rather than by a test."""
         refs = referenced()
-        self.assertIn("/static/os-wallpaper.webp", refs,
+        self.assertIn("/static/os-wallpaper-bg.webp", refs,
                       "the desktop-mode wallpaper is no longer referenced — if it moved, this guard "
                       "should follow it rather than be deleted")
         for script in SCRIPTS:

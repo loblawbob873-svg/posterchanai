@@ -18735,6 +18735,16 @@
   });
   // END ACCOUNT NOTIFICATION PREFERENCES
   async function sha256hex(buf){ const h=await crypto.subtle.digest('SHA-256', buf); return [...new Uint8Array(h)].map(b=>b.toString(16).padStart(2,'0')).join(''); }
+  // Hash a File for upload WITHOUT holding it whole in memory. Small files go through crypto.subtle
+  // in one shot; large ones (ISOs, big drive uploads) are hashed in slices via PCSha256 — otherwise
+  // file.arrayBuffer() caps an upload at what a browser tab can allocate (~2 GB), smaller than an ISO.
+  async function hashFileHex(file){
+    try{
+      if(file && typeof file.size === 'number' && file.size > 96*1024*1024 && window.PCSha256)
+        return await window.PCSha256.hexOfFile(file);
+    }catch(_){}
+    return sha256hex(await file.arrayBuffer());
+  }
   const _MIME_EXT={'image/jpeg':'jpg','image/png':'png','image/gif':'gif','image/webp':'webp','image/avif':'avif',
     'video/mp4':'mp4','video/webm':'webm','video/quicktime':'mov','audio/mpeg':'mp3','audio/ogg':'ogg','audio/wav':'wav','audio/mp4':'m4a','audio/aac':'aac','audio/flac':'flac'};
   function extFor(file){ const n=(file.name||'').match(/\.([a-z0-9]{2,5})$/i); if(n) return n[1].toLowerCase(); return _MIME_EXT[file.type]||''; }
@@ -18991,7 +19001,7 @@
      * the original it claims to be a copy of — with nothing in the UI to say so. */
     if(!(opts && opts.noCompress)) file=await compressMedia(file);
     if(tgt.proto==='nip96') return await uploadNip96(file, server, opts);
-    const buf=await file.arrayBuffer(); const hash=await sha256hex(buf);
+    const hash=await hashFileHex(file);
     // Reuse the BATCH auth when this blob's hash is one it already commits to (BUD-01 allows many `x` tags,
     // and the server checks membership). That turns "sign once per file" into ONE signature for the whole
     // batch — the difference between one Amber prompt and one per clip. If the hash isn't covered (e.g.
@@ -19012,17 +19022,36 @@
     // ONLY to our own server: a custom header is part of the CORS preflight, so sending it to a
     // third-party Blossom host that whitelists a fixed header list would fail the whole upload.
     try{ if(file.name && server===_blossomBuiltin().url) hdr['X-Filename']=encodeURIComponent(file.name); }catch(_){}
-    let res;
-    try {
-      res=await fetch(server+'/upload',{ method:'PUT', headers:hdr, body:buf });
-    } catch(e){
-      // fetch rejects (vs. an HTTP error) only when the browser can't complete the request at all:
-      // server unreachable, blocked mixed content (http:// on this https page), or — most often for
-      // a custom server — it doesn't send CORS headers allowing this site to upload to it.
-      throw new Error(`couldn't reach ${server} — check the URL, and that the server allows cross-origin (CORS) uploads`);
+    // Stream the File itself (body:file), never a pre-read ArrayBuffer — the browser sends it in
+    // chunks, so a multi-GB ISO is never resident. With opts.onProgress we use XHR, the only reliable
+    // way to report upload progress; otherwise fetch.
+    let d;
+    if(opts && typeof opts.onProgress === 'function'){
+      d = await new Promise((resolve, reject) => {
+        const x = new XMLHttpRequest();
+        x.open('PUT', server+'/upload');
+        for(const k in hdr){ try{ x.setRequestHeader(k, hdr[k]); }catch(_){} }
+        x.upload.onprogress = e => { try{ opts.onProgress({ loaded: e.loaded, total: e.total || file.size }); }catch(_){} };
+        x.onload = () => {
+          if(x.status>=200 && x.status<300){ let j={}; try{ j=JSON.parse(x.responseText); }catch(_){} resolve(j); }
+          else reject(new Error(x.getResponseHeader('x-reason') || x.responseText || ('upload failed: HTTP '+x.status)));
+        };
+        x.onerror = () => reject(new Error(`couldn't reach ${server} — check the URL, and that the server allows cross-origin (CORS) uploads`));
+        x.send(file);
+      });
+    } else {
+      let res;
+      try {
+        res=await fetch(server+'/upload',{ method:'PUT', headers:hdr, body:file });
+      } catch(e){
+        // fetch rejects (vs. an HTTP error) only when the browser can't complete the request at all:
+        // server unreachable, blocked mixed content (http:// on this https page), or — most often for
+        // a custom server — it doesn't send CORS headers allowing this site to upload to it.
+        throw new Error(`couldn't reach ${server} — check the URL, and that the server allows cross-origin (CORS) uploads`);
+      }
+      if(!res.ok){ const t=await res.text().catch(()=>res.status); throw new Error(res.headers.get('x-reason')||t); }
+      d=await res.json();
     }
-    if(!res.ok){ const t=await res.text().catch(()=>res.status); throw new Error(res.headers.get('x-reason')||t); }
-    const d=await res.json();
     // The URL must carry a file extension so clients (incl. linkify below) can detect the media type
     // and embed/play it. Our server now returns one (BUD-02), and other servers may not — so append
     // ours only when the returned URL doesn't already end in an extension, never blindly (that made

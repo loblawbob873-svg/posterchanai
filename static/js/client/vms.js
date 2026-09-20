@@ -390,7 +390,7 @@
     const f = (d.whoami && d.whoami.host && d.whoami.host.features) || [];
     const has = n => Array.isArray(f) && f.includes(n);
     return { assign: true, migrate: has('cold-migrate'), snapshots: has('snapshots'), console: 'novnc', iso: has('iso-fetch') ? 'library' : 'list',
-             hardware: has('hardware'), access: has('access'), upload: has('iso-upload'), local: false };
+             hardware: has('hardware'), access: has('access'), upload: (has('iso-fetch') || has('iso-upload')), local: false };
   }
 
   async function refresh(pk){
@@ -790,27 +790,35 @@
     try{ const u = new URL(h.relay); return (u.protocol === 'ws:' ? 'http:' : 'https:') + '//' + u.host; }catch(_){ return ''; }
   }
   async function isoUpload(pk, file){
+    // ISOs go through BLOSSOM, not a per-host upload endpoint: the client uploads to the media store
+    // it already uses (public, 5 GB blobs), and the host PULLS the blob from its OWN Blossom by sha256
+    // (iso.fetch {blob}). That needs no inbound URL to the host — the reason the old ticket PUT stalled
+    // for a host (e.g. nas) whose app is not publicly reachable.
     const I = S.iso;
     if(!file || !I) return;
-    I.busy = true; I.msg = 'Asking the host for an upload ticket…'; paint();
-    const t = await call(pk, 'iso.upload_ticket', { name: file.name, size: file.size }, { retries: 0 });
+    I.busy = true; I.msg = 'Uploading ' + file.name + ' to your media store…'; paint();
+    let sha = '';
+    try{
+      const url = await PC.uploadBlob(file, { noCompress: true, folder: 'ISOs',   // never re-encode an ISO; stream (no full buffer)
+        onProgress: e => { if(S.iso === I){ I.msg = 'Uploading ' + file.name + '… ' + mib(e.loaded) + (e.total ? ' of ' + mib(e.total) : ''); paintIsoMsg(); } } });
+      const m = String(url || '').match(/([0-9a-f]{64})/i);
+      sha = m ? m[1].toLowerCase() : '';
+      if(!sha) throw new Error('the media store did not return a blob hash');
+    }catch(e){
+      if(S.iso !== I) return;
+      I.busy = false; I.msg = 'Could not upload the ISO to your media store: ' + ((e && e.message) || e); paint(); return;
+    }
     if(S.iso !== I) return;
-    if(!t.ok){ I.busy = false; I.msg = t.noAnswer ? 'No answer from the host' : (t.error.message || t.error.code); paint(); return; }
-    const url = /^https?:\/\//.test(t.result.url) ? t.result.url : httpBase(hostOf(pk)) + t.result.url;
-    const done = await new Promise(resolve => {
-      const x = new XMLHttpRequest();
-      x.open('PUT', url);
-      x.withCredentials = false;
-      x.upload.onprogress = e => { if(S.iso === I){ I.msg = 'Uploading ' + t.result.name + '… ' + mib(e.loaded) + ' of ' + mib(file.size); paintIsoMsg(); } };
-      x.onload = () => { let j = null; try{ j = JSON.parse(x.responseText); }catch(_){} resolve({ status: x.status, body: j }); };
-      x.onerror = () => resolve({ status: 0, body: null });
-      x.send(file);
-    });
+    I.msg = 'Asking the host to import the ISO…'; paint();
+    const r = await call(pk, 'iso.fetch', { blob: sha, name: file.name }, { retries: 0,
+      onProgress: p => { if(S.iso === I && p && p.bytes != null){ I.msg = isoProgressText(p); paintIsoMsg(); } } });
     if(S.iso !== I) return;
     I.busy = false;
-    if(done.status === 200 && done.body && done.body.ok){ I.msg = 'Uploaded ' + done.body.result.iso.name; openIsos(pk); return; }
-    I.msg = (done.body && done.body.error && done.body.error.message) || (done.status ? 'The upload was refused (HTTP ' + done.status + ')' : 'The upload could not reach ' + url);
-    paint();
+    if(!r.ok){ I.msg = r.noAnswer ? 'No answer from the host — it may still be importing; refresh the library.' : (r.error.message || r.error.code); paint(); return; }
+    if(r.result.iso){ isoAdded(pk, I, r.result.iso); return; }
+    const job = r.result.job || {};
+    I.msg = 'Importing on the host…'; paint();
+    watchIsoJob(pk, I, job.id);
   }
   async function isoDelete(pk, id){
     if(!await PC.uiConfirm('Delete ' + id + ' from this host’s ISO library?', { ok: 'Delete', danger: true })) return;

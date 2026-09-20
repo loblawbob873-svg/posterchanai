@@ -102,6 +102,7 @@ class VmHostConfig:
     console_max_minutes: int = 240
     session_max_hours: int = 12
     iso_fetch_enabled: bool = True
+    blossom_url: str = ""   # this host's OWN Blossom (global blossom_public_url) — trusted for iso.fetch
 
     @classmethod
     def from_settings(cls, s: dict) -> "VmHostConfig":
@@ -137,6 +138,7 @@ class VmHostConfig:
             console_max_minutes=_int(g("vmhost_console_max_minutes"), DEFAULTS["vmhost_console_max_minutes"], 1, 24 * 60),
             session_max_hours=_int(g("vmhost_session_max_hours"), DEFAULTS["vmhost_session_max_hours"], 1, 24 * 30),
             iso_fetch_enabled=b("vmhost_iso_fetch_enabled"),
+            blossom_url=(s.get("blossom_public_url") or "").strip().rstrip("/"),
         )
 
 

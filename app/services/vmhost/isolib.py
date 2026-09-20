@@ -35,6 +35,7 @@ import logging
 import os
 import secrets
 import socket
+import re
 import threading
 import time
 from dataclasses import dataclass
@@ -98,15 +99,27 @@ def _resolve(host: str, port: int) -> list:
     return [info[4][0] for info in socket.getaddrinfo(host, port, type=socket.SOCK_STREAM)]
 
 
+def _host_of(url: str) -> str:
+    """Lowercased host of a URL, or '' — used to match a fetch target against this host's OWN Blossom."""
+    try:
+        import httpx
+        return (httpx.URL(str(url or '')).host or '').lower()
+    except Exception:
+        return ''
+
+
 class PinnedTransport:
     """An httpx transport that resolves each request's host ONCE, refuses it unless every answer is public, and
     connects to the checked address — keeping the Host header and TLS SNI (and so certificate verification) on
     the name. Wraps a real transport; tests may wrap a mock."""
 
-    def __init__(self, inner=None, resolver=_resolve):
+    def __init__(self, inner=None, resolver=_resolve, allow_host=None):
         import httpx
         self.inner = inner if inner is not None else httpx.AsyncHTTPTransport(retries=0)
         self.resolver = resolver
+        # The ONE host whose private/LAN address is permitted (this node's own Blossom). Everything
+        # else stays under the full SSRF block. Set only for a self-constructed blob pull.
+        self.allow_host = (allow_host or "").lower()
 
     async def handle_async_request(self, request):
         import httpx
@@ -120,7 +133,10 @@ class PinnedTransport:
                 addrs = await asyncio.to_thread(self.resolver, host, port)
             except (OSError, UnicodeError):
                 raise FetchRefused("forbidden", "that address does not resolve")
-        if not addrs or any(ip_blocked(a) for a in addrs):
+        if not addrs:
+            raise FetchRefused("forbidden", "that address does not resolve")
+        trusted = bool(self.allow_host) and (host or "").lower() == self.allow_host
+        if not trusted and any(ip_blocked(a) for a in addrs):
             raise FetchRefused("forbidden", "that address is not allowed (private, local or not http/https)")
         ip = str(addrs[0]).split("%", 1)[0]
         ext = dict(request.extensions)
@@ -140,26 +156,31 @@ class PinnedTransport:
         await self.aclose()
 
 
-def make_fetch_client(transport=None, resolver=None):
-    """The one way an ISO download talks to the network: pinned, direct, no environment proxy, no redirects."""
+def make_fetch_client(transport=None, resolver=None, allow_host=None):
+    """The one way an ISO download talks to the network: pinned, direct, no environment proxy, no redirects.
+    `allow_host` (this node's OWN Blossom) may resolve to a private/LAN address; every other host is blocked."""
     import httpx
-    return httpx.AsyncClient(transport=PinnedTransport(transport, resolver or _resolve), trust_env=False,
-                             timeout=httpx.Timeout(30.0, read=120.0), follow_redirects=False)
+    return httpx.AsyncClient(transport=PinnedTransport(transport, resolver or _resolve, allow_host=allow_host),
+                             trust_env=False, timeout=httpx.Timeout(30.0, read=120.0), follow_redirects=False)
 
 
 async def fetch_to_part(url: str, part: Path, max_bytes: int, *, transport=None, resolver=None, progress=None,
-                        now=time.monotonic) -> dict:
+                        now=time.monotonic, allow_host=None) -> dict:
     """GET `url` into `part`, resolving, checking and PINNING every hop. Returns {size, sha256, final_url,
     filename}. Raises FetchRefused (and leaves no part file) on any refusal."""
     import httpx
     from app.services import rss_service
-    client = make_fetch_client(transport, resolver)
+    client = make_fetch_client(transport, resolver, allow_host=allow_host)
+    _allow = (allow_host or "").lower()
     h = hashlib.sha256()
     size = 0
     try:
         cur = url
         for hop in range(MAX_REDIRECTS + 1):
-            if not isinstance(cur, str) or not rss_service.looks_fetchable(cur):
+            # hop 0 to this node's OWN Blossom is trusted (it resolves to a LAN address on purpose);
+            # a REDIRECT (hop > 0) is never trusted, so it can't be bounced to a private/metadata host.
+            _trusted = bool(_allow) and hop == 0 and _host_of(cur) == _allow and str(httpx.URL(cur).scheme) in ("http", "https")
+            if not _trusted and (not isinstance(cur, str) or not rss_service.looks_fetchable(cur)):
                 raise FetchRefused("forbidden", "that address is not allowed (private, local or not http/https)"
                                    if hop == 0 else "the download redirected to an address that is not allowed")
             async with client.stream("GET", cur, headers={"User-Agent": "PosterChan-VMHost/1"}) as r:
@@ -402,9 +423,27 @@ class IsoOps:
         if not self.cfg.iso_fetch_enabled:
             raise _err("forbidden", "downloading ISOs by URL is turned off on this host")
         url = args.get("url")
-        if not isinstance(url, str) or len(url) > 2048 or not url.strip():
-            raise _err("bad_request", "url is required")
-        url = url.strip()
+        blob = args.get("blob")
+        allow_host = ""
+        if blob is not None:
+            # Pull an ISO the client already uploaded to Blossom (the 5 GB blob store), by sha256. The
+            # host builds the URL from ITS OWN trusted blossom_public_url — the client never supplies a
+            # URL — so there is no inbound route to this host to arrange and no SSRF surface to widen.
+            sha = str(blob).strip().lower()
+            if not re.fullmatch(r"[0-9a-f]{64}", sha):
+                raise _err("bad_request", "blob must be a sha256 hex digest")
+            base = (self.cfg.blossom_url or "").rstrip("/")
+            if not base:
+                raise _err("forbidden", "this host has no Blossom server configured to pull an ISO from")
+            url = base + "/" + sha
+            allow_host = _host_of(base)
+        else:
+            if not isinstance(url, str) or len(url) > 2048 or not url.strip():
+                raise _err("bad_request", "url is required")
+            url = url.strip()
+            _bh = _host_of(self.cfg.blossom_url or "")
+            if _bh and _host_of(url) == _bh:
+                allow_host = _bh          # a pasted URL on our OWN Blossom is trusted like a blob pull
         want_name = args.get("name")
         if want_name is not None and not isinstance(want_name, str):
             raise _err("bad_request", "name must be text")
@@ -412,7 +451,7 @@ class IsoOps:
         if want_name and not pre:
             raise _err("bad_request", "that is not a usable ISO file name")
         from app.services import rss_service
-        if not rss_service.looks_fetchable(url):
+        if not allow_host and not rss_service.looks_fetchable(url):
             raise _err("forbidden", "that address is not allowed (private, local or not http/https)")
         if self._iso_active() >= ISO_MAX_CONCURRENT:
             raise _err("busy", f"this host already runs {ISO_MAX_CONCURRENT} ISO transfers — try again when one ends")
@@ -427,12 +466,12 @@ class IsoOps:
                "reserved": cap, "part": str(part), "error": "", "iso": None, "started": int(time.time()), "ended": 0}
         self._prune_jobs()
         self._iso_jobs()[job["id"]] = job
-        task = asyncio.create_task(self._run_fetch_job(job, url, pre, part, cap, progress))
+        task = asyncio.create_task(self._run_fetch_job(job, url, pre, part, cap, progress, allow_host=allow_host))
         self._iso_state()["tasks"][job["id"]] = task
         task.add_done_callback(lambda t, jid=job["id"]: self._iso_state()["tasks"].pop(jid, None))
         return {"job": self._job_view(job)}
 
-    async def _run_fetch_job(self, job: dict, url: str, pre: str, part: Path, cap: int, progress) -> None:
+    async def _run_fetch_job(self, job: dict, url: str, pre: str, part: Path, cap: int, progress, allow_host: str = "") -> None:
         async def tell(p):
             if progress:
                 try:
@@ -449,7 +488,8 @@ class IsoOps:
             try:
                 got = await fetch_to_part(url, part, cap, progress=prog,
                                           transport=getattr(self, "fetch_transport", None),
-                                          resolver=getattr(self, "fetch_resolver", None))
+                                          resolver=getattr(self, "fetch_resolver", None),
+                                          allow_host=allow_host)
             except FetchRefused as e:
                 raise _err(e.code, e.message)
             name = pre or clean_iso_name(got["filename"])
