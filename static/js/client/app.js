@@ -18738,11 +18738,27 @@
   // Hash a File for upload WITHOUT holding it whole in memory. Small files go through crypto.subtle
   // in one shot; large ones (ISOs, big drive uploads) are hashed in slices via PCSha256 — otherwise
   // file.arrayBuffer() caps an upload at what a browser tab can allocate (~2 GB), smaller than an ISO.
+  // The incremental hasher lives in its own file (sha256.js). It is loaded by client.html, but that
+  // template is server-rendered — so an instance running older server code would not carry the <script>
+  // tag, and a big upload would fall back to the arrayBuffer path and OOM. Load it ON DEMAND from the
+  // same static dir (the SW precaches it), so the streaming hash does not depend on the page shell.
+  let _pcSha256Load = null;
+  function _ensurePCSha256(){
+    if(window.PCSha256) return Promise.resolve(window.PCSha256);
+    if(_pcSha256Load) return _pcSha256Load;
+    _pcSha256Load = new Promise((resolve, reject) => {
+      const sc = document.createElement('script');
+      sc.src = '/static/js/client/sha256.js';
+      sc.onload = () => resolve(window.PCSha256 || null);
+      sc.onerror = () => { _pcSha256Load = null; reject(new Error('could not load the streaming hasher')); };
+      document.head.appendChild(sc);
+    });
+    return _pcSha256Load;
+  }
   async function hashFileHex(file){
-    try{
-      if(file && typeof file.size === 'number' && file.size > 96*1024*1024 && window.PCSha256)
-        return await window.PCSha256.hexOfFile(file);
-    }catch(_){}
+    if(file && typeof file.size === 'number' && file.size > 96*1024*1024){
+      try{ const h = await _ensurePCSha256(); if(h) return await h.hexOfFile(file); }catch(_){}
+    }
     return sha256hex(await file.arrayBuffer());
   }
   const _MIME_EXT={'image/jpeg':'jpg','image/png':'png','image/gif':'gif','image/webp':'webp','image/avif':'avif',
