@@ -672,6 +672,13 @@ class OutgoingMms(unittest.TestCase):
         self.assertIn("SubscriptionManager.getDefaultSmsSubscriptionId()", sender)
         self.assertIn("SubscriptionManager.getDefaultDataSubscriptionId()", sender)
         self.assertIn("settings.setSubscriptionId(sub)", sender)
+        # The subscription override is DUAL-SIM ONLY. Forcing an explicit subscription on a single-SIM
+        # phone regressed carrier MMS to MMS_ERROR_IO_ERROR with no delivery (the library default
+        # routed it correctly). The setSubscriptionId call must sit behind an active-SIM >= 2 guard.
+        guard = sender[sender.index("activeSimCount(ctx) >= 2"):sender.index("settings.setSubscriptionId(sub)")]
+        self.assertTrue(guard and "activeSimCount(ctx) >= 2" in guard,
+                        "setSubscriptionId must be gated on activeSimCount(ctx) >= 2 (dual-SIM only)")
+        self.assertIn("getActiveSubscriptionInfoList", sender)
         self.assertIn("sendNewMessage", sender)
         self.assertIn("message.addMedia(raw, type", sender)
         self.assertIn('return "video/mp4"', sender)
