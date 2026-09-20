@@ -78,13 +78,6 @@
                (ev && ev.detail && ev.detail.clean) ? 'The console closed' : 'The console connection dropped');
       });
       rfb.addEventListener('securityfailure', () => status('error', 'The VM refused the console password'));
-      // noVNC initialises its RFB state machine from the WebSocket's `open` EVENT. This socket is
-      // ALREADY open — we ran the {t:open}/{t:ok} handshake on it before creating the RFB — so that
-      // event fired before noVNC attached and never reaches it, leaving the handshake stuck in an
-      // empty init state ("Unknown init state (state: )") the moment the first RFB byte arrives.
-      // noVNC's own "socket already open" fast-path does not run here, so kick the open handler it
-      // installed (which drives _socketOpen → ProtocolVersion) BEFORE the byte stream starts.
-      try{ if(typeof ws.onopen === 'function') ws.onopen(); }catch(_){}
       // After the attach: RFB now owns onmessage, so the host may start the byte stream.
       try{ ws.send(JSON.stringify({ t: 'go' })); }catch(_){}
     };

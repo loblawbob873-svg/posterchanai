@@ -28,11 +28,16 @@ const DataChannel = {
     CLOSED: "closed"
 };
 
+// The standard numeric WebSocket.readyState values AND the RTCDataChannel string states are both
+// listed explicitly. Some hosts (the PosterChan desktop app wraps global WebSocket for tor/relay
+// routing) expose a WebSocket whose static .OPEN/.CONNECTING/... constants are undefined, which made
+// these arrays [undefined, undefined] so readyState never matched and came back "unknown" — that
+// silently broke the noVNC console (neither _socketOpen nor flush ran). The literals cannot be undefined.
 const ReadyStates = {
-    CONNECTING: [WebSocket.CONNECTING, DataChannel.CONNECTING],
-    OPEN: [WebSocket.OPEN, DataChannel.OPEN],
-    CLOSING: [WebSocket.CLOSING, DataChannel.CLOSING],
-    CLOSED: [WebSocket.CLOSED, DataChannel.CLOSED],
+    CONNECTING: [WebSocket.CONNECTING, DataChannel.CONNECTING, 0, "connecting"],
+    OPEN: [WebSocket.OPEN, DataChannel.OPEN, 1, "open"],
+    CLOSING: [WebSocket.CLOSING, DataChannel.CLOSING, 2, "closing"],
+    CLOSED: [WebSocket.CLOSED, DataChannel.CLOSED, 3, "closed"],
 };
 
 // Properties a raw channel must have, WebSocket and RTCDataChannel are two examples
