@@ -1458,7 +1458,7 @@
 .vms-mig-side{display:flex;align-items:center;gap:8px;flex-wrap:wrap;overflow-wrap:anywhere}
 .vms-mig-pre,.vms-mig-done{background:rgba(var(--accent2-rgb),.1);border:1px solid var(--line);border-radius:var(--r-sm);padding:8px 10px;font-size:14px}
 .vms-mig-locked{background:rgba(255,80,80,.1);border:1px solid rgba(255,80,80,.5);border-radius:var(--r-sm);padding:10px;font-size:14px;display:flex;flex-direction:column;gap:8px}
-.vmc{position:fixed;inset:0;z-index:10050;background:#000;display:flex;flex-direction:column}
+.vmc{position:fixed;inset:0;z-index:2147483646;background:#000;display:flex;flex-direction:column}
 .vmc-bar{display:flex;gap:6px;align-items:center;padding:6px 8px;background:var(--bg2);color:var(--text);flex-wrap:wrap}
 .vmc-st{color:var(--muted);font-size:13px}.vmc-sp{flex:1}
 .vmc-screen{flex:1;min-height:0;position:relative;overflow:hidden}
