@@ -219,7 +219,7 @@ def build_domain_xml(spec: DomainSpec) -> str:
         f'<graphics type="vnc" autoport="yes" listen="127.0.0.1" passwd={_a(spec.vnc_passwd or random_vnc_password())}'
         f' passwdValidTo="{VNC_PASSWD_EXPIRED}"><listen type="address" address="127.0.0.1"/></graphics>'
         # No accel3d / gl: a headless host has no GL context to give it (see the module comment).
-        f'<video><model type="virtio" heads="1" primary="yes"/></video>'
+        f'<video><model type="vga" heads="1" primary="yes"/></video>'
         f'<channel type="unix"><target type="virtio" name="org.qemu.guest_agent.0"/></channel>'
         f'<input type="tablet" bus="usb"/><input type="keyboard" bus="usb"/>'
         f'<memballoon model="virtio"/>{tpm}'

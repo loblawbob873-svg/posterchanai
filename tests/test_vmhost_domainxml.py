@@ -46,7 +46,9 @@ def test_the_display_is_headless_vnc_on_loopback_only():
     assert [l.get("address") for l in g[0].findall("listen")] == ["127.0.0.1"]
     assert d.find("devices/graphics[@type='spice']") is None
     model = d.find("devices/video/model")
-    assert model.get("type") == "virtio"
+    assert model.get("type") == "vga"   # a plain VGA framebuffer renders from firmware POST
+    # through GRUB, the kernel and the OS installer; virtio-gpu showed "Display output is not active"
+    # (no scanout) whenever the guest was not actively driving it — a black console during boot/install.
     assert model.find("acceleration") is None and d.find(".//gl") is None, \
         "no accel3d/gl: a headless host has no GL context and the guest boots to black"
 
