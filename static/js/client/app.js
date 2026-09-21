@@ -7082,16 +7082,32 @@
     for(const t of (ev.tags||[])){ if(t[0]==='e' && t[1] && MUTED_THREADS.has(t[1])) return true; }
     return false;
   }
+  // JSON-BLOB SPAM — the client half of the relay's "Reject JSON-only timeline posts". The relay
+  // filter can only keep such notes out of THIS node's store; the timeline also reads public relays
+  // directly (nos.lol, primal…), which is where a flood like `{"id":"p…","n":"mahan","ty":"p"}` —
+  // a chat app's presence beacon published as kind 1 — reached the feed with the toggle ON and not
+  // one copy on our relay. Same rule as langfilter.is_json_content: the WHOLE trimmed content is a
+  // JSON object or array. Kind 1 only (a repost's content legitimately IS JSON). A node that turned
+  // the toggle off says so in /client/config; with no instance at all the default is on.
+  function _isJsonOnlyContent(c){
+    if(typeof c!=='string') return false;
+    const s=c.trim();
+    if(s.length<2 || (s[0]!=='{' && s[0]!=='[')) return false;
+    try{ const v=JSON.parse(s); return v!==null && typeof v==='object'; }catch(_){ return false; }
+  }
+  function _jsonSpam(ev){
+    return !!ev && ev.kind===1 && !(CFG && CFG.block_json_posts===false) && _isJsonOnlyContent(ev.content);
+  }
   function isMutedView(ev){
     if(!ev) return false;
     if(_repostDeleted(ev))return true;
-    if(isMutedAuthor(ev.pubkey) || mutedByWord(ev) || _mutedThread(ev)) return true;
+    if(isMutedAuthor(ev.pubkey) || mutedByWord(ev) || _mutedThread(ev) || _jsonSpam(ev)) return true;
     if(ev.kind===6){
       let inner=null; try{ inner=JSON.parse(ev.content); }catch(_){}
       const orig = inner || Store.get((ev.tags.find(t=>t[0]==='e')||[])[1]);
       const origPk = (orig && orig.pubkey) || (ev.tags.find(t=>t[0]==='p')||[])[1];
       if(origPk && isMutedAuthor(origPk)) return true;
-      if(orig && (mutedByWord(orig) || _mutedThread(orig))) return true;
+      if(orig && (mutedByWord(orig) || _mutedThread(orig) || _jsonSpam(orig))) return true;
     }
     return false;
   }

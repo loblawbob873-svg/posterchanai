@@ -336,6 +336,11 @@ async def client_config(request: Request, db: Session = Depends(get_db)):
         # simply true, which is what makes a relays-only install coherent rather than full of buttons
         # that 404.
         "nostr_only": os.getenv("POSTERCHANAI_NOSTR_ONLY", "0").lower() in ("1", "true", "yes", "on"),
+        # The relay's "Reject JSON-only timeline posts" toggle, so the client can apply the SAME rule
+        # to what it reads from public relays (the relay filter only guards this node's store).
+        # Blank reads as ON, matching the relay's own default.
+        "block_json_posts": (_setting(db, "nostr_relay_block_json_posts", "true") or "true").strip().lower()
+                            in ("1", "true", "yes", "on"),
         # Public source link shown on the logged-out guest card. Overridable so a fork points at
         # its own repo instead of ours.
         "source_url": _setting(db, "source_url", "https://github.com/loblawbob873-svg/posterchanai"),

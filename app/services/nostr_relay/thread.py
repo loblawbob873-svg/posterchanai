@@ -31,7 +31,7 @@ from .server import RelayServer, _git_comment_root
 from .bridges import (relay_domain as _bridge_domain, reveals_blocked_bridge,
                       author_on_blocked_bridge, is_bridged_post)
 from app.services.vmhost import kinds as _vmhost_kinds
-from .langfilter import screen_blocked_words
+from .langfilter import screen_blocked_words, is_json_content
 
 logger = logging.getLogger(__name__)
 
@@ -934,6 +934,13 @@ async def _main(cfg: dict) -> None:
                 return   # EMPTY note — spam/noise, nothing to render; don't store or fan out (matches _on_event)
             if (_bl and blocked_language(content, _bl)) or (_bw and blocked_word(content, _bw)):
                 return
+            # JSON-BLOB SPAM — the same kind-1 rule as the write gate (server._on_event) and the sync
+            # sweep (ingest._content_blocked). It was MISSING here, and the firehose is how nearly all
+            # of the public feed arrives: measured on server1, 26 `{"id":"p…","n":…,"ty":"p"}` notes
+            # from one stranger's "presence" bot were stored origin='wot' with the toggle ON, while the
+            # two paths that did check it never saw them.
+            if cfg.get("block_json", True) and is_json_content(content):
+                return
         if await store.add_event(ev, origin="wot"):
             _fh_mark(eid)   # mark seen ONLY after a successful store (so a transient fail can retry)
             server.subs.fanout(ev, server._send)
@@ -948,7 +955,8 @@ async def _main(cfg: dict) -> None:
                     await _ingest.backfill_ancestors(
                         store, server, cfg["upstream"], [ev], cfg.get("max_ancestors", 20),
                         cfg["direct"], blocked=_bl, blocked_words=_bw, gate=gate,
-                        block_bridged=cfg.get("block_bridged", False))
+                        block_bridged=cfg.get("block_bridged", False),
+                        block_json=cfg.get("block_json", True))
                 except Exception as e:
                     logger.debug("[nostr-relay] firehose ancestor backfill failed: %s", e)
 
@@ -1325,6 +1333,9 @@ async def _main(cfg: dict) -> None:
                                 cfg[key].update(fresh[key])
                             cfg["blocked_relays"] = fresh["blocked_relays"]
                             cfg["block_bridged"] = fresh.get("block_bridged", False)   # proxy-tag filter, live
+                            # Admin Save sends reload-blocks for nostr_relay_block_json_posts too, and this
+                            # handler used to drop it — the toggle only took effect on a relay restart.
+                            cfg["block_json"] = fresh.get("block_json", True)
                             cfg["operator"] = fresh["operator"]
                             cfg["preserve"] = fresh.get("preserve") or fresh["operator"]
                             gate.set_blocked(cfg["blocked_pubkeys"])
