@@ -3753,6 +3753,16 @@ function runOSHelper(args, body) {
     proc.stdin.end(body || '');
   });
 }
+/* The desktop's theme decides the MACHINE's light/dark preference (desktop/colorscheme.js). Only
+ * the OS shell may write it: the Windows/macOS/other-Linux builds are an app on somebody else's
+ * desktop, and changing an app's theme must not rewrite that desktop's own setting. Diagnostic
+ * launches are a second shell looking at the same account, so they do not get a vote either. */
+ipcMain.handle('pc:os:color-scheme', (e, scheme) => {
+  fsGuard(e);
+  if (!SHELL_MODE || process.platform !== 'linux' || diagnostic)
+    return { ok: false, why: 'only the PosterChanOS shell sets the system colour scheme' };
+  return require('./colorscheme').apply(String(scheme || ''));
+});
 ipcMain.handle('pc:os:challenge', async (e, npub, action) => {
   fsGuard(e);
   if (diagnostic) return {ok:false, why:'OS account changes are disabled in diagnostics'};

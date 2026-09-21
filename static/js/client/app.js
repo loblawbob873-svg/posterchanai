@@ -88,7 +88,33 @@
        preview is what somebody is looking at, and a home screen that stayed on the old theme while
        the picker showed the new one would read as the preview not working. */
     try{ if(window.PCPhone && PCPhone.mirrorTheme) PCPhone.mirrorTheme(slug); }catch(_){}
+    _mirrorColorScheme();
   }
+  /* AND INTO THE MACHINE'S, ON POSTERCHANOS. Firefox and every GTK4/libadwaita app take light or
+     dark from the XDG portal's `color-scheme`, which nothing on the OS ever set — so they were
+     light on a dark desktop (desktop/colorscheme.js has the measurement). The answer is read from
+     the stylesheet's own `color-scheme` group, not from a second list of slugs here: that group is
+     already the one place that says which palettes are light. Before the stylesheet has applied
+     the computed value is `normal`, so it waits for `load` rather than guessing. */
+  function _mirrorColorScheme(){
+    if(!(window.pcOS && typeof pcOS.setColorScheme === 'function')) return;
+    const read = () => {
+      let cs = '';
+      try{ cs = String(getComputedStyle(document.documentElement).colorScheme || ''); }catch(_){}
+      if(/\bdark\b/.test(cs)) return 'dark';
+      if(/\blight\b/.test(cs)) return 'light';
+      return '';
+    };
+    const push = (s) => { try{ Promise.resolve(pcOS.setColorScheme(s)).catch(() => {}); }catch(_){} };
+    const now = read();
+    if(now){ push(now); return; }
+    if(document.readyState !== 'complete')
+      window.addEventListener('load', () => { const s = read(); if(s) push(s); }, { once:true });
+  }
+  /* Once at boot too: the head script paints the CACHED theme without calling applyTheme, and on a
+     machine with no instance loadThemeFromServer never runs — so without this the desktop would
+     only tell the machine after somebody next changed the theme. */
+  _mirrorColorScheme();
   // Native app windows share saved settings but have separate documents. Update
   // their palette in place when Settings saves elsewhere, preserving open files.
   // Preview changes never write pc_theme, and received changes must not write it back.

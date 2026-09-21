@@ -629,6 +629,9 @@ if (isOurPage) {
     switch: (npub, proof) => ipcRenderer.invoke('pc:os:switch', String(npub || ''), proof || {}),
     logout: () => ipcRenderer.invoke('pc:os:logout'),
     bootstrap: () => ipcRenderer.sendSync('pc:os:bootstrap'),
+    /* The desktop's theme is light or dark; tell the rest of the machine (Firefox, GTK apps) the
+     * same. See desktop/colorscheme.js. A no-op anywhere but the PosterChanOS shell. */
+    setColorScheme: (scheme) => ipcRenderer.invoke('pc:os:color-scheme', String(scheme || '')),
   });
 
   contextBridge.exposeInMainWorld('pcFs', {

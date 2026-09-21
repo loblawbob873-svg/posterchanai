@@ -99,6 +99,27 @@ if [ -z "${DBUS_SESSION_BUS_ADDRESS:-}" ] && [ -S "$XDG_RUNTIME_DIR/bus" ]; then
 	DBUS_SESSION_BUS_ADDRESS="unix:path=$XDG_RUNTIME_DIR/bus"
 	export DBUS_SESSION_BUS_ADDRESS
 fi
+# FIREFOX DOES NOT READ GTK_THEME TO DECIDE LIGHT OR DARK; IT READS THE PORTAL.
+#
+# GTK_THEME=Adwaita:dark above darkens GTK3 widgets in processes this script starts, and that was
+# the whole of the dark-mode story. Firefox (widget/gtk/nsLookAndFeel.cpp) asks the XDG portal's
+# org.freedesktop.appearance `color-scheme` first, maps 0 -- "no preference", which is what an
+# unset `org.gnome.desktop.interface color-scheme` ('default') serves -- to LIGHT, lets that beat the
+# GTK theme, and then swaps GTK to the light variant to match. Measured on the laptop in a private
+# bus: 'default' -> portal 0 -> Firefox light; 'prefer-dark' -> portal 1 -> dark. libadwaita apps
+# read the same key. So the session says what it is: dark, the flagship theme. Only when the key is
+# still 'default' -- anything else is a choice (the shell's own theme sync in desktop/colorscheme.js
+# writes prefer-light for a light theme) and is left alone. THIS runtime directory's bus only, and
+# only if it exists: gsettings with no bus writes to an in-memory backend nothing else can read.
+pc_seed_color_scheme() {
+	gs=${PC_GSETTINGS:-gsettings}
+	command -v "$gs" >/dev/null 2>&1 || return 0
+	[ -S "$XDG_RUNTIME_DIR/bus" ] || return 0
+	cur=$(DBUS_SESSION_BUS_ADDRESS="unix:path=$XDG_RUNTIME_DIR/bus" "$gs" get org.gnome.desktop.interface color-scheme 2>/dev/null) || return 0
+	[ "$cur" = "'default'" ] || return 0
+	DBUS_SESSION_BUS_ADDRESS="unix:path=$XDG_RUNTIME_DIR/bus" "$gs" set org.gnome.desktop.interface color-scheme prefer-dark 2>/dev/null || true
+}
+pc_seed_color_scheme
 # THE PORTAL KEEPS THE ENVIRONMENT IT STARTED WITH. xdg-desktop-portal is a systemd --user service
 # and can come up before the session exports anything, at which point it holds no WAYLAND_DISPLAY
 # and its wlroots backend reports zero capture sources -- OBS shows a screen-capture source that
