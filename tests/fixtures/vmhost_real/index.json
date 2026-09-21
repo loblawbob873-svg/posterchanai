@@ -158,6 +158,41 @@
    "stderr": "",
    "tool": "virsh"
   },
+  "virsh-domifaddr-arp": {
+   "argv": [
+    "domifaddr",
+    "553cd647-f495-4f7e-a0c1-73a1f83abec4",
+    "--source",
+    "arp"
+   ],
+   "note": "nas.lan; the ARP source reports a /0 prefix",
+   "rc": 0,
+   "stderr": "",
+   "tool": "virsh"
+  },
+  "virsh-domifaddr-lease": {
+   "argv": [
+    "domifaddr",
+    "553cd647-f495-4f7e-a0c1-73a1f83abec4",
+    "--source",
+    "lease"
+   ],
+   "note": "nas.lan, default NAT network (dnsmasq lease)",
+   "rc": 0,
+   "stderr": "",
+   "tool": "virsh"
+  },
+  "virsh-domiflist-inactive": {
+   "argv": [
+    "domiflist",
+    "553cd647-f495-4f7e-a0c1-73a1f83abec4",
+    "--inactive"
+   ],
+   "note": "nas.lan libvirt 12, read-only query of a running VM on the default NAT network",
+   "rc": 0,
+   "stderr": "",
+   "tool": "virsh"
+  },
   "virsh-dominfo-running": {
    "argv": [
     "dominfo",
@@ -264,6 +299,17 @@
     "--config"
    ],
    "note": "",
+   "rc": 0,
+   "stderr": "",
+   "tool": "virsh"
+  },
+  "virsh-net-list-names": {
+   "argv": [
+    "net-list",
+    "--all",
+    "--name"
+   ],
+   "note": "nas.lan; the trailing blank line is virsh output",
    "rc": 0,
    "stderr": "",
    "tool": "virsh"

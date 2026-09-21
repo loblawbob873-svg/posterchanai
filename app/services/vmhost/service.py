@@ -29,7 +29,7 @@ import time
 from typing import Optional
 
 from . import domainxml
-from .backend import BackendError, DomainInfo, is_loopback
+from .backend import BRIDGE_NAME, NET_NAME, BackendError, DomainInfo, is_loopback
 from .config import VmHostConfig
 from .console import ConsoleRegistry
 from .journal import OpJournal
@@ -52,6 +52,7 @@ ADMIN_NEG_CACHE_SEC = 5
 # One libvirt listing is shared by every read op for this long (single-flight). `virsh list` plus three
 # calls per domain, per request, was the cheapest way for one allowed user to load the host.
 DOMAIN_SNAPSHOT_SEC = 3
+ADDR_CACHE_SEC = 60          # a running VM's addresses (virsh domifaddr) are re-read at most once a minute
 
 ERROR_CODES = ("bad_request", "forbidden", "not_found", "conflict", "busy", "insufficient_capacity",
                "unsupported", "rate_limited", "backend_error", "timeout", "version", "internal",
@@ -182,6 +183,7 @@ class VmHostService(HardwareOps, IsoOps, AccessOps, SessionOps):
         self._vm_locks: dict = {}
         self._pw_locks: dict = {}
         self._host_lock = asyncio.Lock()
+        self._addr_cache: dict = {}      # uuid -> (fetched at, [ip, ...]) — `domifaddr` at most once a minute per VM
 
     # ---------------------------------------------------------------- identity & index
     async def admin_pubkeys(self) -> set:
@@ -404,6 +406,8 @@ class VmHostService(HardwareOps, IsoOps, AccessOps, SessionOps):
              "guest": m.guest if m else "", "firmware": m.firmware if m else "",
              "autostart": d.autostart, "labels": list(m.labels) if m else [],
              "created": m.created if m else 0,
+             "net": ({"type": d.nics[0].get("type", ""), "name": d.nics[0].get("source", "")}
+                     if getattr(d, "nics", None) else {"type": "", "name": ""}),
              "migration": dict(m.migration) if (m and m.migration) else {}}
         if role == "admin":
             v["assigned"] = sorted(m.assigned) if m else []
@@ -412,6 +416,77 @@ class VmHostService(HardwareOps, IsoOps, AccessOps, SessionOps):
         else:
             v["assigned"] = [pk] if (m and pk in m.assigned) else []
         return v
+
+    # ---------------------------------------------------------------- networking
+    async def _net_targets(self) -> tuple:
+        """(libvirt networks, host bridges) a VM may be attached to — the ONLY names that may reach a
+        definition. Best-effort: a backend without the calls, or one that fails, offers nothing extra."""
+        nets, brs = [], []
+        try:
+            f = getattr(self.backend, "list_networks", None)
+            nets = list(await f()) if f else []
+        except Exception as e:
+            logger.debug("[vmhost] net-list failed: %s", e)
+        try:
+            f = getattr(self.backend, "list_bridges", None)
+            brs = list(await f()) if f else []
+        except Exception as e:
+            logger.debug("[vmhost] bridge list failed: %s", e)
+        return ([n for n in nets if isinstance(n, str) and NET_NAME.match(n)],
+                [b for b in brs if isinstance(b, str) and BRIDGE_NAME.match(b)])
+
+    async def _resolve_network(self, spec) -> Optional[tuple]:
+        """A client's `network` choice → (network, bridge) for domainxml, or None for "the host default".
+        Refused unless the name is one this host has RIGHT NOW: a string a client made up never reaches XML."""
+        if spec is None:
+            return None
+        if not isinstance(spec, dict) or spec.get("type") not in ("network", "bridge") \
+                or not isinstance(spec.get("name"), str):
+            raise VmHostError("bad_request", 'network must be {"type": "network"|"bridge", "name": "<name>"}')
+        kind, name = spec["type"], spec["name"]
+        nets, brs = await self._net_targets()
+        if kind == "network":
+            if not NET_NAME.match(name) or name not in nets:
+                raise VmHostError("bad_request", "no such virtual network on this host")
+            return (name, "")
+        if not BRIDGE_NAME.match(name) or name not in brs:
+            raise VmHostError("bad_request", "no such bridge on this host")
+        return ("", name)
+
+    async def _enrich(self, views: list, domains: list) -> None:
+        """Add `ips` and `uptime_s` to the views of RUNNING VMs. Best-effort, never a failed op: an address
+        read is a virsh call per VM, so it is cached for a minute; uptime is one /proc scan per request."""
+        running = {d.uuid for d in domains if d.state == "running"}
+        want = [v for v in views if v.get("uuid") in running]
+        if not want:
+            return
+        ups = {}
+        try:
+            f = getattr(self.backend, "uptimes", None)
+            ups = (await f()) if f else {}
+        except Exception as e:
+            logger.debug("[vmhost] uptime scan failed: %s", e)
+        ga = getattr(self.backend, "guest_addresses", None)
+        now = self.now()
+
+        async def addrs(u):
+            hit = self._addr_cache.get(u)
+            if hit and now - hit[0] < ADDR_CACHE_SEC:
+                return hit[1]
+            try:
+                ips = list(await asyncio.wait_for(ga(u), 12)) if ga else []
+            except Exception:
+                ips = []
+            self._addr_cache[u] = (now, ips)
+            return ips
+
+        got = await asyncio.gather(*(addrs(v["uuid"]) for v in want))
+        for v, ips in zip(want, got):
+            v["ips"] = ips
+            if v["uuid"] in ups:
+                v["uptime_s"] = ups[v["uuid"]]
+        for u in [u for u in self._addr_cache if u not in running]:
+            self._addr_cache.pop(u, None)
 
     async def _domain(self, pk: str, role: str, args: dict) -> DomainInfo:
         u = valid_uuid(args.get("vm"))
@@ -450,6 +525,9 @@ class VmHostService(HardwareOps, IsoOps, AccessOps, SessionOps):
                        "reserve_disk_gib": self.cfg.reserve_disk_gib, "overcommit": self.cfg.allow_overcommit},
             "libvirt_version": avail.get("libvirt", ""), "error": avail.get("error", ""),
         })
+        nets, brs = await self._net_targets()
+        out.update({"networks": nets, "bridges": brs, "default_network": self.cfg.default_network,
+                    "bridge": self.cfg.bridge})
         return out
 
     async def _op_vm_list(self, pk, role, args, progress):
@@ -463,11 +541,14 @@ class VmHostService(HardwareOps, IsoOps, AccessOps, SessionOps):
         vis = sorted((d for d in domains if self._visible(d, role, pk)), key=lambda d: (d.name.lower(), d.uuid))
         page = vis[start:start + limit]
         nxt = str(start + limit) if start + limit < len(vis) else None
-        return {"vms": [self._vm_view(d, role, pk) for d in page], "next": nxt}
+        views = [self._vm_view(d, role, pk) for d in page]
+        await self._enrich(views, page)
+        return {"vms": views, "next": nxt}
 
     async def _op_vm_get(self, pk, role, args, progress):
         d = await self._domain(pk, role, args)
         view = self._vm_view(d, role, pk)
+        await self._enrich([view], [d])
         if role == "admin":
             view["hardware"] = await self._hardware(d.uuid)
         return {"vm": view}
@@ -531,6 +612,8 @@ class VmHostService(HardwareOps, IsoOps, AccessOps, SessionOps):
                 raise VmHostError("bad_request", "that is not an ISO from this host's library")
             except FileNotFoundError:
                 raise VmHostError("not_found", "no such ISO in this host's library")
+        chosen = await self._resolve_network(args.get("network"))
+        network, bridge = chosen if chosen else (self.cfg.default_network, self.cfg.bridge)
 
         await self._acquire(self._host_lock, "this host")
         created_dir = None
@@ -565,7 +648,7 @@ class VmHostService(HardwareOps, IsoOps, AccessOps, SessionOps):
             spec = domainxml.DomainSpec(
                 name=name, uuid=vm_uuid, guest=guest, firmware=firmware, vcpus=vcpus, ram_mib=ram,
                 disk_path=str(disk_path), nvram_path=str(self.storage.nvram_path(vm_uuid)),
-                iso_path=iso_path, network=self.cfg.default_network, bridge=self.cfg.bridge, meta=meta)
+                iso_path=iso_path, network=network, bridge=bridge, meta=meta)
             if progress:
                 await progress({"phase": "define", "msg": "defining the VM"})
             await self.backend.define(domainxml.build_domain_xml(spec), str(vm_dir))

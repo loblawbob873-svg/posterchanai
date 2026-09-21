@@ -147,7 +147,8 @@ console.log(JSON.stringify({success,asyncFailure,syncFailure,invocation,unrefs})
         lh = self.local_host()
         for api in ("details", "update", "addDisk", "changeIso", "ejectIso", "addNetwork"):
             self.assertIn("vm." + api + "(", lh)
-        self.assertIn('data-act="settings" ${v.state === \'shutoff\' ? \'\' : \'disabled', ui)
+        self.assertIn('data-act="settings" ${off ? \'\' : \'disabled', ui)
+        self.assertIn("const off = v.state === 'shutoff';", ui)
 
     def test_installation_iso_can_be_ejected_for_a_real_disk_boot(self):
         backend = (ROOT / "desktop" / "vm.js").read_text()

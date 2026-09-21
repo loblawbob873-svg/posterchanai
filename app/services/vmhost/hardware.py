@@ -50,7 +50,7 @@ class HardwareOps:
         d = await self._domain(pk, role, args)
         if d.meta is None or not self.storage.is_managed_dir(d.uuid):
             raise _err("unsupported", "this VM was not created by PosterChan — edit it with virsh")
-        known = {"vm", "vcpus", "ram_mib", "autostart", "boot", "add_disk_gib", "add_nic", "media", "input"}
+        known = {"vm", "vcpus", "ram_mib", "autostart", "boot", "add_disk_gib", "add_nic", "media", "input", "network"}
         extra = sorted(set(args) - known)
         if extra:
             raise _err("bad_request", f"unknown field {extra[0]!r}")
@@ -68,6 +68,8 @@ class HardwareOps:
             raise _err("bad_request", "input must be tablet or mouse")
         if "add_nic" in want and want["add_nic"] is not True:
             raise _err("bad_request", "add_nic must be true")
+        chosen = await self._resolve_network(want["network"]) if "network" in want else None
+        net_name, net_bridge = chosen if chosen else (self.cfg.default_network, self.cfg.bridge)
         media = want.get("media")
         iso_path = None
         if "media" in want:
@@ -123,10 +125,12 @@ class HardwareOps:
                         domainxml.set_boot(root, want["boot"])
                     if "input" in want:
                         domainxml.set_input(root, want["input"])
+                    if chosen:
+                        domainxml.set_primary_nic(root, net_name, net_bridge, windows)
                     if want.get("add_nic"):
                         if len(root.findall("devices/interface")) >= MAX_NICS:
                             raise _err("insufficient_capacity", f"a VM may have at most {MAX_NICS} network adapters")
-                        domainxml.add_nic(root, self.cfg.default_network, self.cfg.bridge, windows)
+                        domainxml.add_nic(root, net_name, net_bridge, windows)
                     if "media" in want:
                         domainxml.set_media(root, iso_path)
                     meta = d.meta
@@ -180,6 +184,8 @@ class HardwareOps:
             wrong.append("pointer")
         if "media" in want and hw["media"] != (media["iso"] if isinstance(media, dict) else ""):
             wrong.append("installer disc")
+        if chosen and hw.get("net") != {"type": "bridge" if net_bridge else "network", "name": net_bridge or net_name}:
+            wrong.append("network")
         if wrong:
             raise _err("backend_error", "the host accepted the change but did not keep: " + ", ".join(wrong))
         self._set_index(after)
