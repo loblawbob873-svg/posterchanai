@@ -5952,7 +5952,8 @@ async def meme_render(data: MemeRenderReq, request: Request, db: Session = Depen
                 stats_service.bump("meme")
         except Exception:
             pass
-        _ext = {"image/gif": "gif", "image/png": "png"}.get(ctype, "mp4")
+        _ext = {"image/gif": "gif", "image/png": "png", "image/jpeg": "jpg",
+                "image/webp": "webp"}.get(ctype, "mp4")
         return Response(content=out, media_type=ctype,
                         headers={"Content-Disposition": f'attachment; filename="meme.{_ext}"'})
     finally:

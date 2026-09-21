@@ -46,6 +46,15 @@ DEFAULT_W, DEFAULT_H, DEFAULT_FPS = 720, 1280, 30
 MAX_GIF_DURATION = 20.0
 GIF_FPS = 12
 GIF_MAX_EDGE = 480
+# EXPORT SIZE (the photo-editor path). The canvas is the COMPOSITE size and stays capped at MAX_DIM, but
+# the file you export can be any size: the finished composite is resampled (lanczos) to `out_w` x
+# `out_h` as the very last step, so a 1080x1080 build can be exported at 2048x2048 for print or at
+# 512x512 for an avatar without touching a layer. Stills get the EXACT numbers (a still has no
+# even-dimension rule — that is h264's); an MP4 rounds each side down to even. 4096 bounds a still at
+# 16.7 MP, which is a large photo, not a denial of service.
+MAX_EXPORT_DIM = 4096
+STILL_FORMATS = ("png", "jpeg", "webp")
+_STILL_TYPES = {"png": "image/png", "jpeg": "image/jpeg", "webp": "image/webp"}
 
 # Per-layer effects expressed directly in the filtergraph. Each entry is a callable taking the layer's
 # resolved geometry/timing and returning ffmpeg filter chain text (applied to that layer's own stream,
@@ -524,6 +533,39 @@ def _mp4_to_gif(mp4: bytes, w: int, h: int) -> bytes:
             pass
 
 
+def export_size(edit: dict, w: int, h: int, fmt: str) -> tuple:
+    """The (width, height) the exported FILE will have. Defaults to the canvas. A still keeps the exact
+    numbers asked for; an MP4 (and the MP4 a GIF is made from) rounds each side down to even, which is
+    the one rule h264 imposes. Out-of-range values are clamped, never refused — a slider at 0 must not
+    turn an export into an error."""
+    ow = int(_num(edit.get("out_w"), 1, MAX_EXPORT_DIM, w))
+    oh = int(_num(edit.get("out_h"), 1, MAX_EXPORT_DIM, h))
+    if fmt not in STILL_FORMATS:
+        ow = max(16, min(MAX_DIM, ow) // 2 * 2)
+        oh = max(16, min(MAX_DIM, oh) // 2 * 2)
+    return ow, oh
+
+
+def _encode_still(png_path: str, fmt: str, quality: int) -> bytes:
+    """ffmpeg writes the frame as a lossless PNG; JPEG and WebP are encoded from it with Pillow, which
+    is always installed and whose quality knob means what it says (ffmpeg's mjpeg `-q:v` runs 2-31 the
+    other way round, and libwebp is an optional ffmpeg build flag)."""
+    if fmt == "png":
+        with open(png_path, "rb") as fh:
+            return fh.read()
+    import io
+    from PIL import Image
+    with Image.open(png_path) as im:
+        im = im.convert("RGB")
+        buf = io.BytesIO()
+        if fmt == "jpeg":
+            im.save(buf, "JPEG", quality=quality, optimize=True,
+                    subsampling=0 if quality >= 90 else 2)
+        else:
+            im.save(buf, "WEBP", quality=quality, method=4)
+        return buf.getvalue()
+
+
 def render(edit: dict, sources: dict) -> tuple:
     """Render the edit list. `sources` maps a layer's `src` key -> local file path (the caller resolves
     and fetches URLs/Blossom hashes, so this stays a pure renderer with no network of its own).
@@ -533,6 +575,8 @@ def render(edit: dict, sources: dict) -> tuple:
       "gif"  — a looping GIF, for the places that still only take one (and for a reaction image)
       "png"  — ONE frame, at `edit["still"]` seconds: a meme is very often a picture, and exporting a
                still used to mean rendering the video and screenshotting it
+      "jpeg" / "webp" — the same one frame, encoded lossy at `edit["quality"]` (1-100, default 90)
+    `edit["out_w"]` / `edit["out_h"]` resample the finished picture to that size (see export_size).
     GIF and PNG carry no audio at all, so a sound-only difference is invisible in them by design.
 
     Raises ValueError on an edit list we refuse, RuntimeError if ffmpeg fails.
@@ -542,10 +586,14 @@ def render(edit: dict, sources: dict) -> tuple:
         raise RuntimeError("ffmpeg is not available on this node")
 
     fmt = str(edit.get("fmt") or "mp4").strip().lower()
-    if fmt not in ("mp4", "gif", "png"):
+    if fmt == "jpg":
+        fmt = "jpeg"
+    if fmt not in ("mp4", "gif") + STILL_FORMATS:
         raise ValueError(f"unknown export format: {fmt}")
     w = int(_num(edit.get("w"), 16, MAX_DIM, DEFAULT_W)) // 2 * 2      # even dims — h264 requires it
     h = int(_num(edit.get("h"), 16, MAX_DIM, DEFAULT_H)) // 2 * 2
+    out_w, out_h = export_size(edit, w, h, fmt)
+    quality = int(_num(edit.get("quality"), 1, 100, 90))
     fps = int(_num(edit.get("fps"), 5, 60, DEFAULT_FPS))
     bg = _ff_colour(edit.get("bg"), "black")
     layers = [l for l in (edit.get("layers") or []) if isinstance(l, dict)]
@@ -572,7 +620,7 @@ def render(edit: dict, sources: dict) -> tuple:
     # never come back. Capped at MAX_GIF_DURATION above, so the extra pass is cheap.
     if fmt == "gif":
         mp4, _ = render({**edit, "fmt": "mp4"}, sources)
-        return _mp4_to_gif(mp4, w, h), "image/gif"
+        return _mp4_to_gif(mp4, out_w, out_h), "image/gif"
 
     tmp = tempfile.mkdtemp(prefix="pcmeme-")
     try:
@@ -898,8 +946,17 @@ def render(edit: dict, sources: dict) -> tuple:
             chains.append(f"{cur}{filt}{tag}")
             cur = tag
 
+        # THE EXPORT SIZE is applied to the FINISHED composite, never to a layer: every layer is laid
+        # out on the canvas exactly as the stage shows it, and the whole picture is then resampled once.
+        # That keeps the preview<->render contract (check_meme_render_match) about the canvas alone.
+        # (A still scales AFTER its one frame is taken — below — so only that frame is resampled.)
+        resize = f"scale={out_w}:{out_h}:flags=lanczos,setsar=1," if (out_w, out_h) != (w, h) else ""
+        if resize and fmt not in STILL_FORMATS:
+            chains.append(f"{cur}{resize.rstrip(',')}[vsz]")
+            cur = "[vsz]"
+
         # ---- A STILL leaves here: no h264 ladder, no audio ----
-        if fmt == "png":
+        if fmt in STILL_FORMATS:
             # ONE frame, taken at the client's playhead. Done with `trim` on the finished composite rather
             # than an output `-ss`: the overlays are gated on ABSOLUTE t, so the frame has to be selected
             # after compositing, and trim is frame-exact where a seek's semantics depend on which side of
@@ -907,7 +964,7 @@ def render(edit: dict, sources: dict) -> tuple:
             at = _num(edit.get("still"), 0, MAX_DURATION, 0)
             at = max(0.0, min(at, max(0.0, duration - 1.0 / fps)))
             chains.append(f"{cur}trim=start={at:.3f}:duration={1.0/fps:.4f},setpts=PTS-STARTPTS,"
-                          f"format=rgb24[vout]")
+                          f"{resize}format=rgb24[vout]")
             out = os.path.join(tmp, "out.png")
             full = cmd + ["-filter_complex", ";".join(chains), "-map", "[vout]", "-an",
                           "-frames:v", "1", out]
@@ -918,11 +975,10 @@ def render(edit: dict, sources: dict) -> tuple:
             if p.returncode != 0 or not os.path.exists(out) or os.path.getsize(out) == 0:
                 err = (p.stderr or b"").decode("utf-8", "replace")[-500:]
                 raise RuntimeError(f"ffmpeg failed: {err}")
-            with open(out, "rb") as fh:
-                data = fh.read()
-            logger.info("[meme] rendered still %dx%d @%.2fs, %d layers -> %s",
-                        w, h, at, len(layers), media_service._human_size(len(data)))
-            return data, "image/png"
+            data = _encode_still(out, fmt, quality)
+            logger.info("[meme] rendered %s %dx%d @%.2fs, %d layers -> %s",
+                        fmt, out_w, out_h, at, len(layers), media_service._human_size(len(data)))
+            return data, _STILL_TYPES[fmt]
 
         # Keep the video tail addressable: the GPU encoder needs a DIFFERENT one (see the loop below),
         # and this exact string — label included — is what gets swapped, so there is nothing else in the

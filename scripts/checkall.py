@@ -356,6 +356,15 @@ CHECKS = {
                                             why="the torrents screen shows the torrents, its tabs "
                                                 "switch, and its 2s repaint keeps the rows and "
                                                 "their buttons"),
+    # The same region with the REAL client.css + torrents.js at 360/390/412px: every button on the
+    # Downloads tab (the strip and each row) must be inside the viewport — Add torrent sat off the
+    # right edge of a phone once torrents.js added Feeds to a one-line strip.
+    "check_torrents_mobile":           dict(group="ui", secs=240,
+                                            why="every Torrents button is on screen at phone width"),
+    # Meme Builder as a photo editor: exact layer resize, image/canvas size, and an export whose
+    # captured edit list renders through the real ffmpeg at exactly the requested size and format.
+    "check_meme_photo_editor":         dict(group="ui", secs=300,
+                                            why="resize/canvas size/export image do what they say"),
     "check_composer_toolbar":          dict(group="ui", secs=420),
     "check_quote_modal":               dict(group="ui", secs=420),
     "check_meme_timeline":             dict(group="ui", secs=420),

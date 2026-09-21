@@ -6070,6 +6070,21 @@ svg.mb-e{margin-inline-end:0}
 .mb-ab{height:34px;line-height:1;padding:0;font-size:15px;cursor:pointer;color:var(--muted);
   background:var(--panel2);border:1px solid var(--line);border-radius:7px}
 .mb-ab:hover{color:var(--text);border-color:var(--neon)}
+/* Photo-editor dialogs (Resize layer / Image & canvas size / Export image). They live in the app's
+   ordinary .modal, so every row is a wrapping flex row: at 360px the % shortcuts drop under the box. */
+.mb-ab.on{color:var(--cyan);border-color:var(--neon);background:rgba(var(--accent-rgb),.18)}
+.modal .mb-f+.mb-f,.modal .mb-frow+.mb-f,.modal .mb-f+.mb-frow,.modal .mb-frow+.mb-frow{margin-top:10px}
+.modal .mb-frow>.mb-f{margin-top:0}
+.mb-f[hidden]{display:none}          /* .mb-f is display:flex, which beats the [hidden] attribute */
+.modal .mb-dlg-acts{margin-top:14px}
+.modal .mb-frow+.muted,.modal .mb-f+.muted{margin-top:8px}
+.mb-pctrow{flex-wrap:wrap;align-items:flex-end}
+.mb-pctrow .mb-f{flex:1 1 110px}
+.mb-pctrow .btn{flex:0 0 auto;min-height:34px}
+.mb-modes{flex-direction:column;gap:6px}
+.mb-modes .mb-check{align-items:flex-start}
+.mb-dlg-acts{justify-content:flex-end;flex-wrap:wrap}
+.mb-dlg-acts .btn{min-width:96px}
 /* The timeline is the scroll PORT; .mb-tlinner is the content, and the ruler and playhead are inside it so
    they stay glued to the lanes when a phone scrolls the timeline sideways. */
 /* overflow-x at EVERY width, not just on a phone: the timeline zoom makes the content wider than the port
