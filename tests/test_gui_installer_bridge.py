@@ -9,7 +9,6 @@ script's progress wrong. Each of those is driven here through the shipped module
 import json
 import os
 import re
-import stat
 import subprocess
 import time
 from pathlib import Path
