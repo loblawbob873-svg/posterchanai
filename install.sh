@@ -59,6 +59,53 @@ if [ "$1" = "--packages" ]; then
     exit 0
 fi
 
+# =============================================================================
+# NON-INTERACTIVE INSTALLS — what PosterChanOS System Settings runs in the background.
+#
+#   ./install.sh --nostr-only [--service-user USER] [--no-start]
+#   ./install.sh --ai [--backend intel|nvidia|amd|cpu] [--service-user USER] [--no-start]
+#
+# These are the SAME install paths a person gets by answering the questions (option 2 "Nostr-only",
+# option 1 "Full"), with every question answered by its default instead of read from a terminal —
+# see `ask` in scripts/install/utils.sh. Nothing is re-implemented for the GUI: without these flags
+# the installer is exactly as interactive as it always was. Parsed here, dispatched at the bottom of
+# this file, because the functions they run are defined further down.
+# =============================================================================
+PC_MODE=""
+case "${1:-}" in
+    --nostr-only) PC_MODE="nostr-only" ;;
+    --ai)         PC_MODE="ai" ;;
+esac
+if [ -n "$PC_MODE" ]; then
+    shift
+    PC_NONINTERACTIVE=1
+    export PC_NONINTERACTIVE
+    while [ $# -gt 0 ]; do
+        case "$1" in
+            --service-user)
+                [ -n "${2:-}" ] || { print_error "--service-user needs a user name"; exit 2; }
+                id -u "$2" >/dev/null 2>&1 || { print_error "no such user: $2"; exit 2; }
+                PC_SERVICE_USER="$2"; export PC_SERVICE_USER; shift 2 ;;
+            --no-start)
+                PC_ANS_START_NOW="n"; shift ;;
+            --backend)
+                case "${2:-}" in
+                    intel) PC_ANS_BACKEND_CHOICE=1 ;;
+                    nvidia) PC_ANS_BACKEND_CHOICE=2 ;;
+                    amd) PC_ANS_BACKEND_CHOICE=3 ;;
+                    cpu) PC_ANS_BACKEND_CHOICE=4 ;;
+                    *) print_error "--backend must be intel, nvidia, amd or cpu"; exit 2 ;;
+                esac
+                shift 2 ;;
+            *) print_error "unknown option for $PC_MODE: $1"; exit 2 ;;
+        esac
+    done
+    # "Full" and "Nostr-only" are the two answers to the first question; every other answer is the
+    # prompt's own default. --ai is the Full stack (LLM + image), which is what "install the AI side"
+    # has always meant in this installer; music/video/voice/searxng stay their own add-on flags.
+    if [ "$PC_MODE" = "ai" ]; then PC_ANS_choice=1; PC_ANS_INSTALL_TYPE=1; else PC_ANS_choice=2; fi
+fi
+
 # Add-on: set up just the ACE-Step music server (venv-music) against an existing install.
 if [ "$1" = "--music" ]; then
     setup_music_server
@@ -164,7 +211,7 @@ select_install_mode() {
     echo "  2) Nostr-only  - just the self-hosted Nostr relay + web client + Blossom (NO AI). Light, no GPU needed."
     echo ""
     local choice
-    read -r -p "Choose [1]: " choice
+    ask choice "Choose [1]: "
     if [ "$choice" = "2" ]; then
         NOSTR_ONLY=1
         print_success "Nostr-only mode: no AI stack will be installed."
@@ -281,8 +328,18 @@ main() {
     # Step 7: Setup Python environment
     setup_python_env
 
+    # Step 7a: THIS IS A FULL INSTALL, SO THE AI IS NOT HIDDEN. A node that started Nostr-only has
+    # `POSTERCHANAI_NOSTR_ONLY=1` in data/secrets.env (install_nostr_only wrote it), and the Nostr-only
+    # summary tells people to "add AI later by re-running ./install.sh and choosing Full" — which
+    # installed every AI dependency and then left every AI surface hidden by that line, with nothing to
+    # say why. Only an existing `=1` is changed; a node that never had the line gets none.
+    if [ -f data/secrets.env ] && grep -q '^export POSTERCHANAI_NOSTR_ONLY=1' data/secrets.env; then
+        sed -i 's/^export POSTERCHANAI_NOSTR_ONLY=1.*/export POSTERCHANAI_NOSTR_ONLY=0/' data/secrets.env
+        print_success "AI features un-hidden (POSTERCHANAI_NOSTR_ONLY=0 in data/secrets.env)"
+    fi
+
     # Step 7b: Provision the relay's instance (operator) key + seed the WoT; prints the instance npub.
-    venv/bin/python scripts/init_instance_key.py || print_warning "instance key init deferred to first run"
+    "${CHAT_VENV_NAME:-venv}/bin/python" scripts/init_instance_key.py || print_warning "instance key init deferred to first run"
 
     # Step 8: Install LLM dependencies (if selected and not Ollama)
     if [ "$INSTALL_LLM" = "1" ] && [ "$LLM_BACKEND" != "ollama" ]; then
@@ -345,7 +402,7 @@ main() {
         echo "Needs a DNS record + its own certificate. Skip it and everything else still works; mini"
         echo "apps just show a blank window. You can do it later with ./install.sh --webxdc"
         WEBXDC_ANS=""
-        read -r -p "Set up the mini-app sandbox origin now? [y/N]: " WEBXDC_ANS || true
+        ask WEBXDC_ANS "Set up the mini-app sandbox origin now? [y/N]: " || true
         case "$WEBXDC_ANS" in
             [Yy]*) setup_webxdc_sandbox || print_warning "Mini-app sandbox not configured; retry with ./install.sh --webxdc (docs/WEBXDC.md)";;
             *) echo "  Skipped. Later:  ./install.sh --webxdc   (docs/WEBXDC.md)";;
@@ -391,5 +448,15 @@ main() {
     print_summary
 }
 
-# Run main installation
+# Non-interactive Nostr-only (see the flag parsing at the top). The same install_nostr_only the
+# interactive "2) Nostr-only" answer runs — minus check_dependencies, whose hard requirements (gcc,
+# cmake) exist for compiling llama.cpp, which a Nostr-only node never does.
+if [ "$PC_MODE" = "nostr-only" ]; then
+    print_banner
+    ensure_system_clock
+    install_nostr_only
+    exit $?
+fi
+
+# Run main installation (interactive, or `--ai`: the same flow with every answer defaulted)
 main "$@"

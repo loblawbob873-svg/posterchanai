@@ -105,7 +105,7 @@ run_updates() {
     # 2) Telegram Bot API server (rebuild to the latest upstream).
     if command -v telegram-bot-api >/dev/null 2>&1; then
         echo ""
-        read -p "Rebuild the local Telegram Bot API server to the latest version (~10-20 min)? [y/N]: " UPD_TG
+        ask UPD_TG "Rebuild the local Telegram Bot API server to the latest version (~10-20 min)? [y/N]: "
         if [[ "$UPD_TG" =~ ^[Yy] ]]; then
             REBUILD=1 bash "$SCRIPT_DIR/scripts/setup-telegram-local-api.sh" \
                 || print_warning "Telegram Bot API server rebuild failed (existing one keeps running)."

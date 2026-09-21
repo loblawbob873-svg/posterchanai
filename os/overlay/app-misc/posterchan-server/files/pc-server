@@ -1,0 +1,263 @@
+#!/bin/bash
+# pc-server — PosterChanOS's one privileged door to the bundled PosterChan server.
+#
+# app-misc/posterchan-server puts the server's CODE on every PosterChanOS machine (/opt/posterchan-server)
+# and nothing else: no Python environment, no database, no unit, nothing listening. It is OFF until
+# somebody presses Enable in System Settings → PosterChan Server, and then THIS script does the work —
+# by running the project's own ./install.sh (`--nostr-only`, `--ai`, `--music`, …) rather than a second
+# copy of what it does. The desktop reaches it through sudo, and the sudoers rule names every verb
+# below with its exact arguments, so the grant is "these few things", never "any command as root".
+#
+#   status                 JSON: what is installed, enabled and running (no root needed)
+#   enable                 set up on first use (Postgres + the Nostr-only install), then start + enable
+#   disable                stop + disable (the database it set up too)
+#   restart                restart the server
+#   logs                   the server's recent journal
+#   install-ai FEATURE     ai | music | video | voice | searxng — the installer's own add-on paths
+#   job                    JSON: the background job's state        job-log    its output
+#
+# Anything slow runs as a TRANSIENT UNIT (systemd-run), not as a child of the desktop: an install takes
+# minutes to an hour, and the shell restarting underneath it (an update, Ctrl+Alt+Backspace) must not
+# kill it half way through pip. systemd also refuses a second unit of the same name, which is the
+# whole of the "one job at a time" rule — there is no lock file to go stale.
+set -u
+
+SELF="$(readlink -f "$0")"
+APP="${PC_SERVER_APP:-/opt/posterchan-server}"
+STATE="${PC_SERVER_STATE:-/var/lib/posterchan-server}"
+SVC_USER="${PC_SERVER_USER:-posterchan-server}"
+UNIT_DIR="${PC_SERVER_UNIT_DIR:-/etc/systemd/system}"
+PG_LIBDIR="${PC_PG_LIBDIR:-/usr/lib64}"
+PG_DATA_ROOT="${PC_PG_DATA_ROOT:-/var/lib/postgresql}"
+PG_ETC_ROOT="${PC_PG_ETC_ROOT:-/etc}"
+PG_SOCKET="/run/postgresql"
+PIP_CACHE="${PC_SERVER_PIP_CACHE:-/var/cache/posterchan-server/pip}"
+UNIT="posterchanai.service"
+SEARX_UNIT="posterchanai-searxng.service"
+JOB_UNIT="posterchan-server-job"
+JOB_LOG="$STATE/job.log"
+JOB_STATE="$STATE/job.state"
+PG_OWNED="$STATE/postgres-owned"
+FEATURES="ai music video voice searxng"
+
+die(){ echo "pc-server: $*" >&2; exit 1; }
+usage(){ echo "usage: pc-server status|enable|disable|restart|logs|job|job-log|install-ai <${FEATURES// /|}>" >&2; exit 2; }
+need_root(){ [ "$(id -u)" = "0" ] || die "this needs root (the desktop runs it through sudo)"; }
+
+# ----------------------------------------------------------------------------------------------- facts
+# Answered from FILES wherever a file answers it. `systemctl is-active` says "inactive" both for a
+# stopped unit and for one that was never installed, which reads exactly like "stopped and should be
+# running" — so "configured" is whether the installer has written the unit, and asked separately.
+configured(){ [ -f "$UNIT_DIR/$UNIT" ]; }
+venv_dir(){ local v; for v in "$APP/venv-unified" "$APP/venv"; do [ -x "$v/bin/python" ] && { echo "$v"; return 0; }; done; return 1; }
+# Installed-package metadata, not an import: `import torch` takes seconds and a status poll must not.
+has_dist(){ local v pat="$1"; v="$(venv_dir)" || return 1
+  compgen -G "$v/lib/python3*/site-packages/$pat" >/dev/null; }
+feature_installed(){
+  case "$1" in
+    ai)      has_dist 'torch-*.dist-info' && has_dist 'llama_cpp_python-*.dist-info' ;;
+    music)   has_dist '*acestep*' || has_dist '*ace_step*' ;;
+    video)   has_dist 'sentencepiece-*.dist-info' && has_dist 'diffusers-*.dist-info' ;;
+    voice)   has_dist 'chatterbox_tts-*.dist-info' ;;
+    searxng) has_dist '*searx*' ;;
+    *) return 1 ;;
+  esac
+}
+secret(){ # the value of `export KEY=...` in data/secrets.env, quotes stripped
+  sed -n "s/^export $1=//p" "$APP/data/secrets.env" 2>/dev/null | tail -n1 | tr -d "\"'"
+}
+pg_slot(){ # the newest PostgreSQL this machine has a server for
+  local d best="" n
+  for d in "$PG_LIBDIR"/postgresql-*/bin/initdb; do
+    [ -x "$d" ] || continue
+    n="${d#"$PG_LIBDIR"/postgresql-}"; n="${n%%/*}"
+    if [ -z "$best" ] || [ "$(printf '%s\n%s\n' "$best" "$n" | sort -V | tail -n1)" = "$n" ]; then best="$n"; fi
+  done
+  [ -n "$best" ] && echo "$best"
+}
+unit_state(){ systemctl "$1" "$2" 2>/dev/null | head -n1; }
+job_running(){ case "$(unit_state is-active "$JOB_UNIT")" in active|activating|reloading) return 0;; esac; return 1; }
+jstr(){ local s="${1//\\/\\\\}"; s="${s//\"/\\\"}"; printf '"%s"' "$s"; }
+jbool(){ if "$@" >/dev/null 2>&1; then printf true; else printf false; fi; }
+job_field(){ sed -n "s/^$1=//p" "$JOB_STATE" 2>/dev/null | tail -n1; }
+
+status(){
+  local slot port feats="" f sep=""
+  slot="$(pg_slot || true)"
+  port="$(secret POSTERCHANAI_PORT)"; case "$port" in ''|*[!0-9]*) port=3051;; esac
+  for f in $FEATURES; do feats="$feats$sep$(jstr "$f"):$(jbool feature_installed "$f")"; sep=","; done
+  printf '{"code":%s,"configured":%s,"venv":%s,"enabled":%s,"active":%s,"port":%s,"relayPort":3052,' \
+    "$(jbool test -f "$APP/install.sh")" "$(jbool configured)" "$(jbool venv_dir)" \
+    "$(jstr "$(unit_state is-enabled "$UNIT")")" "$(jstr "$(unit_state is-active "$UNIT")")" "$port"
+  printf '"nostrOnly":%s,"postgres":{"slot":%s,"active":%s},"features":{%s},' \
+    "$(jbool test "$(secret POSTERCHANAI_NOSTR_ONLY)" = 1)" "$(jstr "$slot")" \
+    "$(jstr "${slot:+$(unit_state is-active "postgresql-$slot.service")}")" "$feats"
+  printf '"job":{"running":%s,"verb":%s,"rc":%s,"started":%s,"finished":%s}}\n' \
+    "$(jbool job_running)" "$(jstr "$(job_field verb)")" "$(jstr "$(job_field rc)")" \
+    "$(jstr "$(job_field started)")" "$(jstr "$(job_field finished)")"
+}
+
+# ------------------------------------------------------------------------------------------- the job
+launch(){ # launch <verb...> — runs `pc-server __run <verb...>` as a transient unit and returns at once
+  need_root
+  job_running && die "another server job is still running — wait for it to finish"
+  mkdir -p "$STATE"
+  : >"$JOB_LOG"; chmod 0600 "$JOB_LOG"
+  printf 'verb=%s\nstarted=%s\n' "$*" "$(date +%s)" >"$JOB_STATE"
+  systemd-run --quiet --collect --unit="$JOB_UNIT" --setenv=PC_SERVER_IN_JOB=1 \
+    --property=KillMode=mixed "$SELF" __run "$@" \
+    || { grep -q '^rc=' "$JOB_STATE" || printf 'rc=125\nfinished=%s\n' "$(date +%s)" >>"$JOB_STATE"
+         die "could not start the job"; }
+  echo "started: $*"
+}
+
+run_job(){ # inside the transient unit only; its output IS the job log the settings page shows
+  [ "${PC_SERVER_IN_JOB:-}" = "1" ] || die "__run is internal"
+  exec >>"$JOB_LOG" 2>&1
+  local rc=0
+  echo "== $(date '+%F %T') pc-server $*"
+  case "$1" in
+    enable)     do_enable || rc=$? ;;
+    install-ai) do_install_ai "$2" || rc=$? ;;
+    *) echo "unknown job $1"; rc=2 ;;
+  esac
+  echo "== finished rc=$rc"
+  printf 'rc=%s\nfinished=%s\n' "$rc" "$(date +%s)" >>"$JOB_STATE"
+  return "$rc"
+}
+
+ensure_account(){
+  id -u "$SVC_USER" >/dev/null 2>&1 && return 0
+  # acct-user/posterchan-server normally made it at emerge time; this is the repair for a machine
+  # that has the code without it (a hand install, a partly-merged update).
+  echo "creating the $SVC_USER system account"
+  useradd --system --user-group --home-dir "$STATE" --shell /sbin/nologin "$SVC_USER"
+}
+
+# POSTGRES IS THE ONE DATABASE (app + relay). The installer can create the role and database but not a
+# cluster — on Gentoo that is `emerge --config`, which is exactly what is run here, once.
+#
+# AUTHENTICATION IS PEER, NOT TRUST. initdb's default (and what install.sh documents) is `trust` for
+# localhost, which on a server box is one admin's machine. PosterChanOS is a machine ANYONE may sign in
+# to with a key, and every one of those accounts could connect to 127.0.0.1 as the database superuser
+# under `trust`. So a cluster set up HERE lets local accounts in only as themselves, maps exactly the
+# service account (and root, which runs the installer) onto the `posterchan` role, and asks for a
+# password on TCP. A cluster that was already there is somebody's; it is used as it is and not edited.
+ensure_postgres(){
+  local slot data etc
+  slot="$(pg_slot)" || { echo "PostgreSQL is not installed (dev-db/postgresql)."; return 1; }
+  data="$PG_DATA_ROOT/$slot/data"; etc="$PG_ETC_ROOT/postgresql-$slot"
+  if [ -z "$(ls -A "$data" 2>/dev/null)" ]; then
+    echo "initialising PostgreSQL $slot"
+    emerge --config "dev-db/postgresql:$slot" || { echo "emerge --config failed"; return 1; }
+    [ -f "$etc/pg_hba.conf" ] || { echo "no $etc/pg_hba.conf after initialisation"; return 1; }
+    printf '%s\n' \
+      "# Written by pc-server (PosterChanOS). Local accounts connect as themselves; see os/bin/pc-server." \
+      "local   all               postgres                  peer" \
+      "local   posterchan_relay  posterchan                peer map=posterchan" \
+      "host    all               all        127.0.0.1/32   scram-sha-256" \
+      "host    all               all        ::1/128        scram-sha-256" >"$etc/pg_hba.conf"
+    printf '%s\n' "# MAPNAME   SYSTEM-USER   PG-USER" \
+      "posterchan  $SVC_USER  posterchan" "posterchan  root  posterchan" >"$etc/pg_ident.conf"
+    echo "$slot" >"$PG_OWNED"
+  fi
+  systemctl enable --now "postgresql-$slot.service" || { echo "postgresql-$slot did not start"; return 1; }
+  local i
+  for i in $(seq 1 30); do
+    runuser -u postgres -- "$PG_LIBDIR/postgresql-$slot/bin/psql" -Atqc 'select 1' >/dev/null 2>&1 && return 0
+    sleep 1
+  done
+  echo "PostgreSQL $slot is not answering"; return 1
+}
+
+set_secret(){ # set_secret KEY VALUE — only when the key is absent (never overwrite an operator's value)
+  local f="$APP/data/secrets.env"
+  mkdir -p "$APP/data"; touch "$f"; chmod 0600 "$f"
+  grep -q "^export $1=" "$f" || echo "export $1=$2" >>"$f"
+}
+
+installer(){ # installer <args…> — the project's own install.sh, as root, told who the service runs as
+  local dsn_env=()
+  if [ -f "$PG_OWNED" ]; then
+    dsn_env=("DATABASE_URL=postgresql+psycopg2://posterchan@/posterchan_relay?host=$PG_SOCKET"
+             "NOSTR_RELAY_PG_DSN=host=$PG_SOCKET dbname=posterchan_relay user=posterchan")
+  fi
+  # pip runs as root here; its cache must be somewhere root owns or pip disables it (and a retried
+  # multi-GB AI install would download everything again).
+  mkdir -p "$PIP_CACHE"
+  ( cd "$APP" && env HOME="$STATE" U2NET_HOME="$STATE/.u2net" PIP_CACHE_DIR="$PIP_CACHE" \
+      ACESTEP_DIR="$APP/ACE-Step-1.5" SEARXNG_SRC_DIR="$APP/searxng-src" \
+      VIDEO_PREFETCH=n VOICE_PREFETCH=n "${dsn_env[@]}" ./install.sh "$@" )
+}
+
+own_tree(){ # the service writes into its own tree (data/, state files); the installer ran as root
+  chown -R "$SVC_USER:$SVC_USER" "$APP"
+  [ -d /var/lib/posterchanai ] && chown -R "$SVC_USER:$SVC_USER" /var/lib/posterchanai
+  return 0
+}
+
+do_enable(){
+  [ -f "$APP/install.sh" ] || { echo "the server code is not installed (app-misc/posterchan-server)"; return 1; }
+  ensure_account || return 1
+  ensure_postgres || return 1
+  if [ -f "$PG_OWNED" ]; then
+    set_secret DATABASE_URL "'postgresql+psycopg2://posterchan@/posterchan_relay?host=$PG_SOCKET'"
+    set_secret NOSTR_RELAY_PG_DSN "'host=$PG_SOCKET dbname=posterchan_relay user=posterchan'"
+  fi
+  if configured && venv_dir >/dev/null; then
+    echo "already set up — starting it"
+  else
+    installer --nostr-only --service-user "$SVC_USER" --no-start || { echo "the installer failed"; return 1; }
+  fi
+  configured || { echo "the installer did not write $UNIT"; return 1; }
+  own_tree
+  systemctl daemon-reload
+  systemctl enable --now "$UNIT" || { echo "$UNIT did not start"; return 1; }
+  echo "PosterChan server enabled"
+}
+
+do_install_ai(){
+  local f="$1"
+  case "$f" in
+    ai)      installer --ai --service-user "$SVC_USER" --no-start ;;
+    music)   installer --music ;;
+    video)   installer --video ;;
+    voice)   installer --voice ;;
+    searxng) installer --searxng ;;
+    *) echo "unknown feature $f"; return 2 ;;
+  esac || { echo "the installer failed"; return 1; }
+  own_tree
+  systemctl daemon-reload
+  # Only a RUNNING server is restarted to pick the feature up; installing never switches one on.
+  if [ "$(unit_state is-active "$UNIT")" = "active" ]; then systemctl restart "$UNIT"; fi
+  echo "installed: $f"
+}
+
+do_disable(){
+  need_root
+  systemctl disable --now "$UNIT" 2>&1 || true
+  if [ -f "$UNIT_DIR/$SEARX_UNIT" ]; then systemctl disable --now "$SEARX_UNIT" 2>&1 || true; fi
+  # The database goes back off only if it was THIS script that brought it up.
+  if [ -f "$PG_OWNED" ]; then systemctl disable --now "postgresql-$(cat "$PG_OWNED").service" 2>&1 || true; fi
+  echo "PosterChan server disabled"
+}
+
+case "${1:-}" in
+  status)  [ $# -eq 1 ] || usage; status ;;
+  enable)  [ $# -eq 1 ] || usage; [ -f "$APP/install.sh" ] || die "the server code is not installed"; launch enable ;;
+  disable) [ $# -eq 1 ] || usage; do_disable ;;
+  restart) [ $# -eq 1 ] || usage; need_root; configured || die "the server is not set up yet"; systemctl restart "$UNIT" && echo restarted ;;
+  logs)    [ $# -eq 1 ] || usage; need_root; journalctl -u "$UNIT" -n 300 --no-pager -o short-iso 2>&1 ;;
+  job)     [ $# -eq 1 ] || usage; printf '{"running":%s,"verb":%s,"rc":%s}\n' "$(jbool job_running)" \
+             "$(jstr "$(job_field verb)")" "$(jstr "$(job_field rc)")" ;;
+  job-log) [ $# -eq 1 ] || usage; tail -c 24000 "$JOB_LOG" 2>/dev/null; true ;;
+  install-ai)
+    [ $# -eq 2 ] || usage
+    case " $FEATURES " in *" $2 "*) ;; *) usage ;; esac
+    venv_dir >/dev/null || die "enable the server first — the AI installs go into its Python environment"
+    case "$2" in music|video|voice)
+      feature_installed ai || die "install \"AI chat + images\" first — $2 runs on its torch stack" ;; esac
+    launch install-ai "$2" ;;
+  __run) shift; run_job "$@" ;;
+  *) usage ;;
+esac

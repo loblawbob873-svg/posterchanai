@@ -93,7 +93,7 @@ PY
     # the Download button in Admin -> Voice.
     local DL_VOICE="${VOICE_PREFETCH:-}"
     if [ -z "$DL_VOICE" ]; then
-        read -p "Pre-download the voice model now (~6GB)? It downloads on first use otherwise. [y/N]: " DL_VOICE
+        ask DL_VOICE "Pre-download the voice model now (~6GB)? It downloads on first use otherwise. [y/N]: "
     fi
     if [[ "$DL_VOICE" =~ ^[Yy] ]]; then
         print_step "Downloading the voice model into the Hugging Face cache..."

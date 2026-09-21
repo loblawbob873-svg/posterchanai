@@ -3671,6 +3671,17 @@ ipcMain.handle('pc:datetime:zones', e => { fsGuard(e); return dateTime.timezones
 ipcMain.handle('pc:datetime:automatic', (e, on) => { fsGuard(e); return dateTime.setAutomatic(on); });
 ipcMain.handle('pc:datetime:timezone', (e, zone) => { fsGuard(e); return dateTime.setTimezone(zone); });
 ipcMain.handle('pc:datetime:time', (e, value) => { fsGuard(e); return dateTime.setTime(value); });
+/* The bundled PosterChan server (System Settings → PosterChan Server). The renderer names a verb; the
+ * bridge maps it onto the helper's fixed sudoers list and passes nothing else through. */
+const pcServer = require('./server.js');
+ipcMain.handle('pc:server:status', e => { fsGuard(e); return pcServer.status(); });
+ipcMain.handle('pc:server:enable', e => { fsGuard(e); return pcServer.enable(); });
+ipcMain.handle('pc:server:disable', e => { fsGuard(e); return pcServer.disable(); });
+ipcMain.handle('pc:server:restart', e => { fsGuard(e); return pcServer.restart(); });
+ipcMain.handle('pc:server:logs', e => { fsGuard(e); return pcServer.logs(); });
+ipcMain.handle('pc:server:job', e => { fsGuard(e); return pcServer.job(); });
+ipcMain.handle('pc:server:job-log', e => { fsGuard(e); return pcServer.jobLog(); });
+ipcMain.handle('pc:server:install-ai', (e, feature) => { fsGuard(e); return pcServer.installAi(String(feature || '')); });
 const systemInfo = require('./system.js');
 ipcMain.handle('pc:system:snapshot', (e, full) => { fsGuard(e); return systemInfo.snapshot(!!full); });
 ipcMain.handle('pc:system:end', (e, pid) => { fsGuard(e); return systemInfo.end(Number(pid)); });

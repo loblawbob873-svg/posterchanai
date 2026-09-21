@@ -1,0 +1,4 @@
+# System Settings → PosterChan Server. Administrators (the machine's first owner is in wheel) may drive
+# the bundled server through its one helper, with exactly these arguments — never an arbitrary command.
+# The list is checked against os/bin/pc-server by tests/test_pc_server_helper.py.
+%wheel ALL=(root) NOPASSWD: /usr/local/bin/pc-server status, /usr/local/bin/pc-server enable, /usr/local/bin/pc-server disable, /usr/local/bin/pc-server restart, /usr/local/bin/pc-server logs, /usr/local/bin/pc-server job, /usr/local/bin/pc-server job-log, /usr/local/bin/pc-server install-ai ai, /usr/local/bin/pc-server install-ai music, /usr/local/bin/pc-server install-ai video, /usr/local/bin/pc-server install-ai voice, /usr/local/bin/pc-server install-ai searxng

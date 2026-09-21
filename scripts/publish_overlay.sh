@@ -101,6 +101,13 @@ if ! git clone -q "$URL" "$TMP/repo" 2>/dev/null; then
     fi
 fi
 STAGE="$TMP/repo"
+# The server package's last PUBLISHED pin, kept aside before the staging tree is emptied:
+# pin_server_overlay.sh carries it over unchanged when the server has not changed since.
+PREV_OVERLAY="$TMP/prev-overlay"
+if [ -d "$STAGE/app-misc/posterchan-server" ]; then
+    mkdir -p "$PREV_OVERLAY/app-misc"
+    cp -a "$STAGE/app-misc/posterchan-server" "$PREV_OVERLAY/app-misc/"
+fi
 find "$STAGE" -mindepth 1 -maxdepth 1 ! -name .git -exec rm -rf -- {} +
 TMP="$STAGE"
 # Copy only source-owned overlay content. Python's focused test runs can leave ignored
@@ -151,6 +158,12 @@ else
 fi
 rm -f "$THEME_DL"
 # <<< firefox theme
+
+# The bundled server's helper has ONE source too (os/bin/pc-server), and its ebuild is pinned to the
+# commit being published — or keeps its last published pin when nothing it installs has changed.
+install -m 0755 "$(dirname "$SRC")/bin/pc-server" "$TMP/app-misc/posterchan-server/files/pc-server"
+"$(dirname "$SRC")/../scripts/pin_server_overlay.sh" "$TMP" "$PREV_OVERLAY" \
+    "$(git -C "$(dirname "$SRC")/.." rev-parse HEAD)"
 
 # A changed ebuild with the same version is invisible to Portage. The shell used to stay 1.0.0 for
 # ever, which is why installed machines said “Already up to date” while keeping an old launcher.

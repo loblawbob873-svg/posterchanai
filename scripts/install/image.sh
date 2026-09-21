@@ -58,7 +58,7 @@ setup_image_deps() {
 
     # Optional: xformers for NVIDIA
     if [ "$GPU_TYPE" = "nvidia" ]; then
-        read -p "Install xformers for faster image generation? [Y/n]: " INSTALL_XFORMERS
+        ask INSTALL_XFORMERS "Install xformers for faster image generation? [Y/n]: "
         INSTALL_XFORMERS=${INSTALL_XFORMERS:-Y}
         if [[ "$INSTALL_XFORMERS" =~ ^[Yy] ]]; then
             echo "  Installing xformers..."

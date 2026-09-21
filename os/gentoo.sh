@@ -287,7 +287,13 @@ sys-apps/xdg-desktop-portal gui-libs/xdg-desktop-portal-wlr sys-apps/xdg-desktop
 media-video/obs-studio \
 sec-keys/openpgp-keys-gentoo-release dev-vcs/git \
 x11-drivers/nvidia-drivers \
-net-vpn/tor gui-apps/swayidle"
+net-vpn/tor gui-apps/swayidle \
+dev-db/postgresql"
+# dev-db/postgresql IS THE BUNDLED SERVER'S DATABASE, INSTALLED AND NEVER STARTED. app-misc/posterchan-server
+# (pulled in by posterchanos-shell) carries the server's code and is OFF until System Settings → PosterChan
+# Server → Enable, where /usr/local/bin/pc-server initialises this cluster (peer auth, not initdb's trust)
+# and runs the project's own ./install.sh --nostr-only. Listed here as well as in that ebuild's RDEPEND so
+# an image built while the overlay is unreachable still has it: a ~11 MB binpkg, no unit enabled.
 # net-misc/networkmanager (nmcli, the whole network tray), app-admin/sudo, sys-apps/systemd
 # (systemctl: sleep, reboot, power profiles) and sys-apps/util-linux (`script`, which IS the local
 # terminal's PTY — see desktop/localterm.js) come from BASE_PACKAGES / @system above. They are

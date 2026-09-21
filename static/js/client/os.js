@@ -2684,6 +2684,168 @@
      .then(r => (r.ok ? r : Object.assign(r, { what })));
   }
 
+  /* SYSTEM SETTINGS → POSTERCHAN SERVER. The server that ships with PosterChanOS, off until enabled.
+   *
+   * Everything here is one verb of the root helper (/usr/local/bin/pc-server, through window.pcServer),
+   * and the helper does the work with the project's own ./install.sh — this page never installs
+   * anything itself. Two jobs (Enable, the AI installs) take minutes to an hour and run as a systemd
+   * unit, so the page reads their progress back rather than owning them: closing Settings, or the
+   * desktop restarting, does not stop an install, and reopening the page finds it where it is.
+   *
+   * "Configured" and "running" are separate facts on purpose: systemd calls a never-installed unit
+   * `inactive`, which reads exactly like "stopped", so the page asks the helper whether the installer
+   * has written the unit at all before it says anything about whether it runs. */
+  const _SERVER_FEATURES = [
+    { id:'ai', name:'AI chat + images', about:'LLM chat and image generation. Several GB of Python packages, and llama.cpp is compiled on this computer — expect up to an hour.' },
+    { id:'searxng', name:'Web search (SearXNG)', about:'This server\'s own private metasearch, used by the AI and by Web Search. A small download.' },
+    { id:'music', name:'Music generation', about:'ACE-Step. The model (about 9 GB) downloads the first time a song is made.', needs:'ai' },
+    { id:'video', name:'Video generation', about:'Text-to-video. The model (about 27 GB) downloads the first time a video is made.', needs:'ai' },
+    { id:'voice', name:'Voice cloning', about:'The voice model (about 6 GB) downloads on first use.', needs:'ai' },
+  ];
+  const _SERVER_PREV_INSTANCE = 'pc_server_prev_instance';
+  function _wireServerSettings(host, card){
+    const aiCard=host.querySelector('[data-pcserver-ai]');
+    const q=sel=>card.querySelector(sel)||(aiCard&&aiCard.querySelector(sel));
+    const summary=q('[data-srv-summary]'), facts=q('[data-srv-facts]'), feats=q('[data-srv-features]');
+    const jobPre=q('[data-srv-job]'), journal=q('[data-srv-journal]');
+    const btn={ enable:q('[data-srv-enable]'), restart:q('[data-srv-restart]'), disable:q('[data-srv-disable]'),
+                admin:q('[data-srv-admin]'), logs:q('[data-srv-logs]'), refresh:q('[data-srv-refresh]') };
+    const instRow=q('[data-srv-instance-row]'), instNote=q('[data-srv-instance-note]'), instBtn=q('[data-srv-instance]');
+    const toast=m=>{ try{ PC().toast(String(m)); }catch(_){} };
+    const ask=async(text,ok)=>{ try{ return PC().uiConfirm ? !!(await PC().uiConfirm(text,{ok})) : false; }catch(_){ return false; } };
+    let s=null, busy=false, timer=0, lastJobShown='';
+    const alive=()=>card.isConnected;
+    /* Newest line visible, but never yank somebody who scrolled up to read an error (liveusb's rule). */
+    const showTail=(pre,text)=>{ if(!pre)return; const following=pre.scrollHeight-pre.scrollTop-pre.clientHeight<24;
+      pre.hidden=false; pre.textContent=text; if(following)pre.scrollTop=pre.scrollHeight; };
+    const jobName=v=>{ v=String(v||''); if(v==='enable')return 'Setting up the server';
+      const f=_SERVER_FEATURES.find(x=>v==='install-ai '+x.id); return f?'Installing '+f.name:v; };
+    const draw=()=>{
+      Object.values(btn).forEach(b=>{ if(b&&b!==btn.refresh)b.disabled=true; });
+      if(!s||!s.available){
+        summary.textContent=(s&&s.reason)||'The PosterChan server is not installed on this computer.';
+        facts.innerHTML=''; feats.innerHTML=''; if(instRow){ instRow.hidden=true; instBtn.disabled=true; } return;
+      }
+      const running=!!(s.job&&s.job.running), active=s.active==='active';
+      const state = running ? jobName(s.job.verb)+'…'
+        : !s.configured ? 'Not set up'
+        : active ? (s.reachable ? 'Running' : 'Starting…')
+        : (s.enabled==='enabled' ? 'Enabled, not running' : 'Off');
+      const failed = !running && s.job && s.job.rc && s.job.rc!=='0';
+      summary.textContent = !s.configured && !running
+        ? 'Not set up. Enabling sets up a database and downloads the server\'s Python packages (about 130 MB, 500 MB on disk), then starts it. It listens on your network on ports '+s.port+' and '+s.relayPort+'.'
+        : failed ? jobName(s.job.verb)+' failed (exit '+s.job.rc+') — the log is below.'
+        : state+(s.nostrOnly?' · Nostr relay + web client':s.configured?' · with AI features':'');
+      const row=(k,v)=>`<div><span>${enc(k)}</span><b>${v}</b></div>`;
+      const urls=a=>(a||[]).map(u=>`<code>${enc(u)}</code>`).join('<br>')||'—';
+      facts.innerHTML=[row('Status',enc(state)),
+        row('Web client', s.configured?`<code>${enc(s.localUrl+'/client')}</code>`+(s.lanUrls&&s.lanUrls.length?'<br>'+urls(s.lanUrls.map(u=>u+'/client')):''):'—'),
+        row('Nostr relay', s.configured?`<code>${enc(s.relayUrl)}</code>`+(s.lanRelayUrls&&s.lanRelayUrls.length?'<br>'+urls(s.lanRelayUrls):''):'—'),
+        row('Database', s.postgres&&s.postgres.slot?enc('PostgreSQL '+s.postgres.slot+(s.postgres.active==='active'?' · running':' · stopped')):'PostgreSQL is not installed')].join('');
+      btn.enable.disabled = running || active;
+      btn.enable.textContent = s.configured ? 'Start server' : 'Enable server';
+      btn.restart.disabled = running || !s.configured || !active;
+      btn.disable.disabled = running || !s.configured || (s.enabled!=='enabled' && !active);
+      btn.admin.disabled = !active || !s.reachable;
+      btn.logs.disabled = !s.configured;
+      feats.innerHTML=_SERVER_FEATURES.map(f=>{
+        const have=!!(s.features&&s.features[f.id]);
+        const blocked = running ? 'another install is running'
+          : !s.venv ? 'enable the server first'
+          : (f.needs && !(s.features&&s.features[f.needs])) ? 'install AI chat + images first' : '';
+        return `<div class="os-printer-row"><div><b>${enc(f.name)}</b><span class="muted small">${enc(f.about)}${blocked&&!have?' · '+enc(blocked):''}</span></div>
+          <span class="os-printer-acts">${have?'<span class="muted">Installed</span>':`<button class="btn" data-srv-install="${enc(f.id)}" ${blocked?'disabled':''}>Install</button>`}</span></div>`;
+      }).join('');
+      feats.querySelectorAll('[data-srv-install]').forEach(b=>b.onclick=()=>installFeature(b.dataset.srvInstall));
+      drawInstance();
+    };
+    /* OPTIONAL, OFF BY DEFAULT: point THIS app at the server on this computer. Changing the instance
+     * reloads the app (main.js setInstance), so it is asked first, and the previous instance is kept
+     * so "stop using it" goes back to exactly where it was rather than to a default. */
+    const drawInstance=async()=>{
+      if(!instRow)return;
+      const sh=window.pcShell;
+      if(!s||!s.configured||s.active!=='active'||!sh||!sh.getInstance||!sh.setInstance){ instRow.hidden=true; instBtn.disabled=true; return; }
+      let cur=''; try{ cur=String(await sh.getInstance()||''); }catch(_){}
+      if(!alive())return;
+      const local=new RegExp('^http://(127\\.0\\.0\\.1|localhost):'+Number(s.port)+'/?$').test(cur);
+      instRow.hidden=false;
+      instNote.textContent = local ? 'This app is using the server on this computer.' : 'This app uses '+(cur||'no server (relays only)')+'.';
+      instBtn.textContent = local ? 'Stop using it' : 'Use this server in this app';
+      instBtn.disabled = !local && !s.reachable;
+      instBtn.onclick=async()=>{
+        if(local){
+          let prev=''; try{ prev=localStorage.getItem(_SERVER_PREV_INSTANCE)||''; }catch(_){}
+          if(!await ask('Switch this app back to '+(prev||'no server (relays only)')+'? It will reload.','Switch back'))return;
+          try{ localStorage.removeItem(_SERVER_PREV_INSTANCE); }catch(_){}
+          await sh.setInstance(prev);
+          return;
+        }
+        if(!await ask('Use the server on this computer for AI, media and the admin panel? The app reloads. Your account and relays do not change.','Use this server'))return;
+        try{ localStorage.setItem(_SERVER_PREV_INSTANCE, cur); }catch(_){}
+        const ok=await sh.setInstance(s.localUrl);
+        if(ok===false) toast('That address was refused.');
+      };
+    };
+    const pollJob=async()=>{
+      clearTimeout(timer); if(!alive())return;
+      let text=''; try{ text=await pcServer.jobLog(); }catch(e){ text=String(e&&e.message||e); }
+      if(!alive())return;
+      showTail(jobPre, text||'Starting…');
+      await refresh(true);
+    };
+    const refresh=async(fromPoll)=>{
+      clearTimeout(timer);
+      const r=await _settingsRead(pcServer.status(),'server');
+      if(!alive())return;
+      if(!r.ok){ summary.textContent = r.timedOut ? 'The server helper did not answer.' : String(r.error||'Could not read the server state.'); return; }
+      s=r.value; draw();
+      const running=!!(s.job&&s.job.running);
+      if(running){ timer=setTimeout(pollJob,2000); return; }
+      /* A finished job's log is shown once — its last lines are the answer to "did it work". On first
+       * paint only a FAILED one is worth showing; yesterday's successful install is not news. */
+      const stamp=(s.job&&s.job.finished)||'';
+      if(stamp&&stamp!==lastJobShown){
+        lastJobShown=stamp;
+        if(fromPoll||s.job.rc!=='0'){ try{ showTail(jobPre, await pcServer.jobLog()); }catch(_){} }
+      }
+      /* Enabled but not answering yet: uvicorn takes a while after systemd says "active". */
+      if(s.active==='active'&&!s.reachable) timer=setTimeout(()=>refresh(false),3000);
+    };
+    /* `job` = the helper started a background unit: show its log straight away rather than after
+     * the first poll interval, since "did anything happen" is the question right after a click. */
+    const act=async(fn,label,job)=>{
+      if(busy)return; busy=true;
+      try{ await fn(); }catch(e){ toast(String(e&&e.message||e)); busy=false; refresh(false); return; }
+      busy=false;
+      if(label) showTail(jobPre,label);
+      if(job) pollJob(); else refresh(true);
+    };
+    const installFeature=async id=>{
+      const f=_SERVER_FEATURES.find(x=>x.id===id); if(!f)return;
+      if(!await ask('Install '+f.name+'? '+f.about+' It runs in the background; you can close Settings.','Install'))return;
+      act(()=>pcServer.installAi(id),'Installing '+f.name+'…',true);
+    };
+    btn.enable.onclick=async()=>{
+      if(s&&!s.configured&&!await ask('Enable the PosterChan server? This sets up PostgreSQL and the server\'s Python packages (about 130 MB), then starts it. It will listen on your network on ports '+s.port+' and '+s.relayPort+'.','Enable server'))return;
+      act(()=>pcServer.enable(), s&&s.configured?'Starting…':'Setting up the server…', true);
+    };
+    btn.disable.onclick=async()=>{
+      if(!await ask('Turn the PosterChan server off? Nothing is deleted; enabling it again starts it where it was.','Turn off'))return;
+      act(()=>pcServer.disable());
+    };
+    btn.restart.onclick=()=>act(()=>pcServer.restart());
+    btn.admin.onclick=()=>{ if(s&&s.adminUrl) window.open(s.adminUrl,'_blank','noopener'); };
+    btn.logs.onclick=async()=>{
+      btn.logs.disabled=true;
+      try{ showTail(journal, await pcServer.logs()||'(the journal has nothing for this server yet)'); journal.scrollTop=journal.scrollHeight; }
+      catch(e){ toast(String(e&&e.message||e)); }
+      finally{ btn.logs.disabled=!(s&&s.configured); }
+    };
+    btn.refresh.onclick=()=>refresh(false);
+    refresh(false);
+  }
+
   async function renderSystemSettings(){
     const host=document.getElementById('feed');
     if(!host) return;
@@ -2790,6 +2952,7 @@
         <button data-page="search" class="${_osSettingsPage==='search'?'on':''}">${iconSvg('i-search')} Search</button>
         <button data-page="datetime" class="${_osSettingsPage==='datetime'?'on':''}">${iconSvg('i-clock')} Date &amp; Time</button>
         <button data-page="users" class="${_osSettingsPage==='users'?'on':''}">${iconSvg('i-user')} Users</button>
+        ${window.pcServer?`<button data-page="server" class="${_osSettingsPage==='server'?'on':''}">${iconSvg('i-relay')} PosterChan Server</button>`:''}
         <button data-page="updates" class="${_osSettingsPage==='updates'?'on':''}">${iconSvg('i-refresh')} Updates</button>
         <button data-page="about" class="${_osSettingsPage==='about'?'on':''}">${iconSvg('i-chart')} About</button>
         <button data-page="liveusb" class="${_osSettingsPage==='liveusb'?'on':''}">${iconSvg('i-drive')} Installation media</button>
@@ -2800,7 +2963,7 @@
         <option value="page:power" ${_osSettingsPage==='power'?'selected':''}>Power &amp; brightness</option>
         <option value="page:search" ${_osSettingsPage==='search'?'selected':''}>Search</option>
         <option value="page:datetime" ${_osSettingsPage==='datetime'?'selected':''}>Date &amp; Time</option>
-        <option value="page:users" ${_osSettingsPage==='users'?'selected':''}>Users</option><option value="page:updates" ${_osSettingsPage==='updates'?'selected':''}>Updates</option>
+        <option value="page:users" ${_osSettingsPage==='users'?'selected':''}>Users</option>${window.pcServer?`<option value="page:server" ${_osSettingsPage==='server'?'selected':''}>PosterChan Server</option>`:''}<option value="page:updates" ${_osSettingsPage==='updates'?'selected':''}>Updates</option>
         <option value="page:about" ${_osSettingsPage==='about'?'selected':''}>About</option>
         <option value="page:liveusb" ${_osSettingsPage==='liveusb'?'selected':''}>Installation media</option>
       </select></label><section data-settings-page="displays" ${_osSettingsPage==='displays'?'':'hidden'}><header class="os-set-pagehead"><div>${iconSvg('i-monitor')}</div><span><h2>Displays</h2><p>Arrange monitors, choose resolution and scaling, then preview safely before saving.</p></span></header>
@@ -2855,6 +3018,15 @@
         <section data-settings-page="users" ${_osSettingsPage==='users'?'':'hidden'}><header class="os-set-pagehead"><div>${iconSvg('i-user')}</div><span><h2>Users</h2><p>The signed-in PosterChan identity and the private operating-system session attached to it.</p></span></header>
           ${identityError?`<div class="empty">${enc(identityError)}</div>`:''}<section class="os-set-card os-user-account"><div class="os-user-avatar">${iconSvg('i-user')}</div><div><span>Current account</span><b>${enc((me()&&((me().profile&&me().profile.name)||me().name))||'PosterChan user')}</b><code>${enc(machineIdentity||((me()&&me().pubkey)||'No local OS identity'))}</code></div></section>
           <div class="os-set-actions"><button class="btn" data-user-profile ${PC().openProfile?'':'disabled'}>Open profile</button><button class="btn primary" data-user-switch ${PC().accountMenu?'':'disabled'}>Switch account</button></div></section>
+        <section data-settings-page="server" ${_osSettingsPage==='server'?'':'hidden'}><header class="os-set-pagehead"><div>${iconSvg('i-relay')}</div><span><h2>PosterChan Server</h2><p>Run your own Nostr relay and web client on this computer. Off until you turn it on.</p></span></header>${window.pcServer?`<div class="os-set-card" data-pcserver>
+          <div class="os-set-cardhead"><b>This computer's server</b><span data-srv-summary>Checking…</span></div>
+          <section class="os-about-grid" data-srv-facts></section>
+          <div class="os-set-actions"><button class="btn primary" data-srv-enable disabled>Enable server</button><button class="btn" data-srv-restart disabled>Restart</button><button class="btn danger" data-srv-disable disabled>Disable</button><button class="btn" data-srv-admin disabled>Open admin panel</button><button class="btn" data-srv-logs disabled>View logs</button><button class="btn" data-srv-refresh>Refresh</button></div>
+          <div class="os-set-actions" data-srv-instance-row hidden><span class="muted" data-srv-instance-note></span><button class="btn" data-srv-instance></button></div>
+          <pre class="os-liveusb-status os-server-log" data-srv-journal hidden></pre></div>
+          <div class="os-set-card" data-pcserver-ai><div class="os-set-cardhead"><b>AI features</b><span>Installed into the server with PosterChan's own installer, in the background. Large downloads — each says how large before it starts.</span></div>
+          <div class="os-printer-list" data-srv-features></div>
+          <pre class="os-liveusb-status os-server-log" data-srv-job hidden></pre></div>`:`<div class="empty">The PosterChan server is not available on this device.</div>`}</section>
         <section data-settings-page="updates" ${_osSettingsPage==='updates'?'':'hidden'}><header class="os-set-pagehead"><div>${iconSvg('i-refresh')}</div><span><h2>Updates</h2><p>Operating-system and installed application updates.</p></span></header>
           <section class="os-set-card os-update-status"><div class="os-set-ready">Automatic</div><div><b>PosterChan updates itself safely</b><span>The desktop downloads signed application updates in the background and offers installation only after the download is complete. PosterChanOS system updates are installed by its guarded updater and restart the desktop when idle.</span></div></section>
           <section class="os-about-grid os-set-card"><div><span>Running build</span><b><code>${enc(String(window.__PC_BUILD||'unknown').slice(0,16))}</code></b></div><div><span>Update channel</span><b>${window.pcShell?'Desktop automatic':'Web deployment'}</b></div></section>
@@ -3090,6 +3262,8 @@
         refresh();
       }
       bindBridgeCard(host);
+      const srv=host.querySelector('[data-pcserver]');
+      if(srv&&window.pcServer) _wireServerSettings(host, srv);
       const live=host.querySelector('[data-liveusb]');
       if(live&&window.pcLiveUSB){
         const out=live.querySelector('[data-live-out]'), iso=live.querySelector('[data-live-iso]');
