@@ -106,7 +106,7 @@ ctx.membershipEvents=async()=>copy([]);ctx.forgetLeftCommunity=()=>{};ctx.rememb
 vm.runInContext(source.slice(source.indexOf('  function cordListHex('),source.indexOf('  function cordListMaterial('))+source.slice(source.indexOf('  // CORD-02 §8: canonical'),source.indexOf('  // Only encrypted, signed envelopes cross')),ctx);
 // Ordinary new-community creation must register its original URL immediately.
 vm.runInContext(source.slice(source.indexOf('  async function mintPublicRoom('),source.indexOf('  async function activateJoinedRoom(')),ctx);
-ctx.inviteParts=url=>({naddr:url.split('/invite/')[1].split('#')[0]});ctx.DISCOVER_RELAYS=copy(['wss://discover.fixture']);
+ctx.inviteParts=url=>({naddr:url.split('/invite/')[1].split('#')[0]});ctx.DISCOVER_RELAYS=copy(['wss://discover.fixture']);ctx.rememberListing=()=>{};
 const mintHost={...concurrentHost,relayUrls:()=>['wss://mint.fixture'],publish:async()=>({ev:{kind:1}}),relayPublishTo:async(_relays,e)=>{calls.push(e);return true;}};
 calls=[];const newRoom=await ctx.mintPublicRoom(mintHost,'Ordinary creation','');assert.deepEqual(calls.map(e=>e.kind),[33302,13303,1059,1059,1059,33301,1]);
 assert.equal(R.inspectControl(newRoom.cord.bundle,newRoom.cord.events).liveInviteLinks[0],P.inviteDetails(newRoom.url).linkSigner);

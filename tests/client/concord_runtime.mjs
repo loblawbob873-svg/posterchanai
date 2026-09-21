@@ -117,7 +117,7 @@ relayClose:id=>{if(typeof id!=='string')throw new Error('relayClose got a '+type
   relayUrls:()=>['wss://relay.example'], signTemplate:async template=>template,
   relayPublishRoom:async(relays,event)=>({ok:!!await window.__PC.relayPublishTo(relays,event),accepted:1,uncertain:false,msg:''}),
   relayPublish:async()=>({ok:true}), relayPublishTo:async(relays,event)=>{calls.publishTargets.push([...relays]);calls.wraps.push(event);return 1;},
-  publish:async()=>({}),
+  publish:async(kind,content,tags)=>({ok:true,ev:{id:'1'.repeat(64),kind,content,tags,pubkey:window.__PC.viewer().pubkey,created_at:1,sig:'s'}}),
   switchView:()=>{ throw new Error('Communities tab used the desktop app router'); },
   switchMessagesTab:view=>{ calls.messagesTab=view; activeView=view; },
   profOf:()=>({}), LOGO:'', linkify:s=>String(s), linkCardHtml:()=>'', hydrateLinkCards:()=>{},

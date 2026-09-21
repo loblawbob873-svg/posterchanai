@@ -69,13 +69,21 @@
         if(!document.querySelector('.csq.sel')) _loadMyChessGames();
       });
     }
+    let _botStartAt=0;
     async function startBotGame(){
       const botPk=safePk(PC.CFG.chess_bot_npub); if(!botPk){ toast('no chess bot configured'); return; }
+      /* ONE START PER GAME. The note is public kind 1 with fixed text + tags, and Amethyst hides an author
+       * after a few events sharing a content+tags hash - measured: one account posted this 7x in 131s by
+       * clicking while the first was in flight. So: refuse while one is starting, and tag each start with
+       * its own short game id so two real games are two different notes. */
+      if(Date.now()-_botStartAt<30000){ toast('a game is already starting…'); return; }
+      _botStartAt=Date.now();
+      const gid=Math.random().toString(36).slice(2,8);
       try{
-        await publish(1, `🤖 start #chess against the bot — I'll be White. The bot will DM me the board; I'll play my moves privately.\n\n#chess #nostr #gamestr`, [['p',botPk],['t','chess'],['t','nostr'],['t','gamestr']]);
+        await publish(1, `🤖 start #chess against the bot (game ${gid}) — I'll be White. The bot will DM me the board; I'll play my moves privately.\n\n#chess #nostr #gamestr`, [['p',botPk],['t','chess'],['t','nostr'],['t','gamestr']]);
         toast('starting game vs the bot ♟️');
         setTimeout(()=>{ if(PC.VIEW==='chess') renderChess(); }, 4500);
-      }catch(e){ toast('could not start game'); }
+      }catch(e){ _botStartAt=0; toast('could not start game'); }
     }
     function _bindChessInvite(){
       const inp=$('#chess-inv'), res=$('#chess-inv-res'); if(!inp) return; let t=null;

@@ -2666,6 +2666,13 @@
         const current={...held,name:room.name};
         const prior=list.entries.find(e=>e.community_id===cid),removed=cordU64(list.tombstones.find(t=>t.community_id===cid)?.removed_at||0);
         const entry=cordMergeEntry(prior,{community_id:cid,current,added_at:cordIntegerMax(now,removed+1n),invite_ref:room.url});
+        /* ONLY WHEN SOMETHING CHANGED. Every caller (join, discover, rekey, staff adoption, the
+         * vault backfill) used to re-sign the whole 33302 fragment with `added_at = now` even when
+         * the vault already held this exact membership — a fresh, near-identical replaceable event
+         * on every public relay in the pool plus the four Concord relays, for no new information.
+         * An entry that differs from the one already held in nothing but its timestamp is not a
+         * change; with no change the write below publishes nothing at all. */
+        if(prior&&cordCanonical({...entry,added_at:0})===cordCanonical({...prior,added_at:0}))continue;
         list.entries=list.entries.filter(e=>e.community_id!==cid);list.entries.push(entry);changed.push(cid);
       }
       return {list,changed};
@@ -3662,6 +3669,50 @@
   }
   function stopLiveSync(){ stopRekeyLive(); if(liveTimer)clearTimeout(liveTimer); liveTimer=null; stopChatLive(); }
   function startLiveSync(p){ if(liveTimer||!document.body.classList.contains)return; liveTimer=setInterval(()=>{refreshRoomMetadata(p);refreshActiveChannel(p);let changed=false;for(const [id,rows] of remoteMessages){const clean=uniqueMessages(rows);if(clean.length!==rows.length||clean.some((m,i)=>m!==rows[i])){remoteMessages.set(id,clean);changed=true;}}if(changed&&document.body.classList.contains('concord-view'))preserveChatScroll(()=>backgroundRender());if(window.PosterCordReader?.sweepExpiredChat)window.PosterCordReader.sweepExpiredChat();for(const [id,d] of deliveries)if(messageExpired(d.made))deliveries.delete(id);if(window.PCConcordCache?.sweepExpired)window.PCConcordCache.sweepExpired().catch(()=>{});},4000); }
+  /* ONE SIGNED LISTING PER ROOM PER ACCOUNT, RE-SENT — NEVER RE-SIGNED.
+   *
+   * The Discover listing is a public kind-1 `${name}\n\n${url}` with the same two `t` tags every
+   * time. "Publish listing" used to sign a NEW one on every click (and after creating the room,
+   * which had already announced it), so each click put another note with identical content and tags
+   * but a different id on the user's public relays. That is precisely what Amethyst's AntiSpamFilter
+   * keys on (hash of content+tags, a second id = spam, five = the author is hidden): reported as
+   * "users are getting censored on amethyst because posterchan is sending multiple similar events
+   * for concord". Re-sending the SAME signed event is idempotent at every relay and counts once. */
+  const listingKey=(pk,url)=>'pc.concord.listing.v1.'+pk+'.'+String(url||'');
+  function rememberListing(pk,url,ev){
+    try{if(pk&&url&&ev&&ev.id&&ev.sig&&ev.pubkey===pk)localStorage.setItem(listingKey(pk,url),JSON.stringify(ev));}catch(_){}
+  }
+  function heldListing(pk,url){
+    try{const ev=JSON.parse(localStorage.getItem(listingKey(pk,url))||'null');
+      return ev&&ev.id&&ev.sig&&ev.pubkey===pk&&ev.kind===1&&String(ev.content||'').includes(String(url))?ev:null;}catch(_){return null;}
+  }
+  async function announceListing(p,room){
+    const pk=String(p&&p.viewer&&p.viewer().pubkey||'');
+    if(!pk||!room||!room.url)throw new Error('sign in to list this community');
+    const held=heldListing(pk,room.url);
+    if(held){
+      const accepted=await p.relayPublishTo([...new Set([...(p.relayUrls?.()||[]),...DISCOVER_RELAYS])],held);
+      if(!accepted)throw new Error('Armada discovery relays rejected the listing');
+      return held;
+    }
+    const made=await p.publish(1,`${room.name}\n\n${room.url}`,[['t','concord'],['t','community']]);
+    const ev=made&&made.ev;if(!ev)throw new Error('the listing could not be signed');
+    // Remembered BEFORE the discovery send, so a refused send is retried with this same event.
+    rememberListing(pk,room.url,ev);
+    const accepted=await p.relayPublishTo(DISCOVER_RELAYS,ev);
+    if(!accepted)throw new Error('Armada discovery relays rejected the listing');
+    return ev;
+  }
+  /* A VOTE THAT REPEATS YOUR CURRENT ANSWER IS NOT A VOTE. The tally keeps each voter's newest
+   * answer, so re-sending the same one changes nothing on screen — but it is a fresh signed 1018
+   * each click. Same answer (as a set; order is not meaning) → publish nothing. */
+  function pollVoteChanged(poll,pubkey,picked){
+    let mine=null,newest=-1;
+    for(const v of (poll&&poll.votes)||[])if(v&&v.pubkey===pubkey&&(Number(v.ms)||0)>=newest){newest=Number(v.ms)||0;mine=new Set(v.optionIds||[]);}
+    const next=new Set(picked||[]);
+    if(!mine)return next.size>0;
+    return mine.size!==next.size||[...next].some(o=>!mine.has(o));
+  }
   async function mintPublicRoom(p,name,icon){
     const viewer=p.viewer?p.viewer():{}; if(!viewer.pubkey||!window.PosterCord)throw new Error('sign in before creating a relay community');
     const relays=[...new Set([...CORD_RELAYS,...(p.relayUrls?p.relayUrls():[])])].slice(0,8);
@@ -3688,6 +3739,7 @@
     if(!context.isCurrent())throw new Error('creating account changed');
     const announcement=await creator.sign({kind:1,created_at:Math.floor(Date.now()/1000),content:`${name}\n\n${made.url}`,tags:[['t','concord'],['t','community']]});
     if(!context.isCurrent())throw new Error('creating account changed');
+    rememberListing(viewer.pubkey,made.url,announcement);
     const announced=await p.relayPublishRoom(DISCOVER_RELAYS,announcement);
     if(!context.isCurrent())throw new Error('creating account changed');
     if(!announced?.ok)throw new Error('Community was created but its discovery announcement was not accepted');
@@ -4159,7 +4211,7 @@
     const membersInvite=$('#cc-members-invite'); if(membersInvite)membersInvite.onclick=()=>{ $('#cc-members-dialog').classList.add('hidden'); $('#cc-join').classList.remove('hidden'); };
     const manageLinks=$('#cc-manage-links');if(manageLinks)manageLinks.onclick=async()=>{const room=saved()[state.community];if(!room?.cord?.bundle)return;try{await showOwnedInviteLinks(p,room);}catch(e){p.toast(e.message||String(e));}};
     const copyLink=$('#cc-copy-link'); if(copyLink)copyLink.onclick=async()=>{ const a=saved(),room=a[state.community]; if(!room)return; if(room.url){p.copyValue(room.url);return;} if(room.cord?.bundle){try{await showOwnedInviteLinks(p,room);}catch(e){p.toast(e.message||String(e));}return;} if(room.url){ p.copyValue(room.url); return; } copyLink.disabled=true; try{ p.toast('upgrading this room to a public relay community…'); const priorMessages=testMessages(room.naddr), upgraded=await mintPublicRoom(p,room.name,room.icon); upgraded.description=room.description||''; a[state.community]=upgraded; save(a); if(priorMessages.length)saveTestMessages(upgraded.naddr,priorMessages); render(); p.copyValue(upgraded.url); p.toast('room upgraded — invite link copied'); }catch(e){ copyLink.disabled=false; p.toast('could not create invite: '+(e&&e.message||e)); } };
-    const publishListing=$('#cc-publish-listing'); if(publishListing)publishListing.onclick=async()=>{ const room=saved()[state.community]; if(!room||!room.url||!room.cord||!Array.isArray(room.cord.events)){ p.toast('This is an old local sandbox; create a relay community to list it'); return; } publishListing.disabled=true; try{ p.toast('publishing to Armada relays…'); for(const ev of room.cord.events)await p.relayPublishTo(CORD_RELAYS,ev); const announcement=await p.publish(1,`${room.name}\n\n${room.url}`,[['t','concord'],['t','community']]); const accepted=await p.relayPublishTo(DISCOVER_RELAYS,announcement.ev); if(!accepted)throw new Error('Armada discovery relays rejected the listing'); p.toast('published to Armada Discover'); }catch(e){ p.toast('could not publish listing: '+(e&&e.message||e)); }finally{ publishListing.disabled=false; } };
+    const publishListing=$('#cc-publish-listing'); if(publishListing)publishListing.onclick=async()=>{ const room=saved()[state.community]; if(!room||!room.url||!room.cord||!Array.isArray(room.cord.events)){ p.toast('This is an old local sandbox; create a relay community to list it'); return; } publishListing.disabled=true; try{ p.toast('publishing to Armada relays…'); for(const ev of room.cord.events)await p.relayPublishTo(CORD_RELAYS,ev); await announceListing(p,room); p.toast('published to Armada Discover'); }catch(e){ p.toast('could not publish listing: '+(e&&e.message||e)); }finally{ publishListing.disabled=false; } };
     const settingsCancel=$('#cc-settings-cancel'); if(settingsCancel)settingsCancel.onclick=()=>{$('#cc-settings-dialog').classList.add('hidden');if(backgroundRenderPending)backgroundRender();};
     const leave=$('#cc-leave-community');if(leave)leave.onclick=async()=>{const initial=saved(),index=state.community,room=initial[index],leavingId=roomIdentity(room);if(!room||!leavingId)return;/* NEVER A NATIVE DIALOG. In the desktop shell `window.confirm` opens a real OS window and leaves the renderer unfocusable; in the APK's WebView it can be suppressed outright, and this confirm was the ONLY gate on Leave — suppressed, it answers false and the button silently does nothing, which is exactly "mobile has no way to leave concord communities". */if(p.uiConfirm&&!await p.uiConfirm('Leave '+roomName(room,index)+'?',{ok:'Leave',danger:true}))return;leave.disabled=true;try{await leaveArmadaMembership(p,room);/* Signing and relay publication can take long enough for membership sync or navigation to change the list. Reload it and remove by durable identity, never by the stale numeric index captured above. */const latest=saved(),activeBefore=latest[state.community],activeId=roomIdentity(activeBefore),removed=removeCommunityByIdentity(latest,leavingId),rooms=removed.rooms;save(rooms);await clearRoomCache(room);if(activeId===leavingId||!activeId){state.community=rooms.length?Math.min(Math.max(removed.index,0),rooms.length-1):null;state.channel=state.community==null?null:'general';mobileChatOpen=false;}else{const activeIndex=rooms.findIndex(item=>roomIdentity(item)===activeId);state.community=activeIndex>=0?activeIndex:(rooms.length?0:null);}if(state.community!=null)localStorage.setItem('pc.concord.active',String(state.community));else localStorage.removeItem('pc.concord.active');render();p.toast('community left');}catch(e){leave.disabled=false;p.toast('could not leave community: '+(e&&e.message||e));}};
     /* THE CONVERSATION HEADER IS NOT A SURFACE ON A PHONE. `.cc-conversation` is display:none until
@@ -4311,6 +4363,7 @@
       const picked=poll.multi
         ? (mine.has(option)?[...mine].filter(x=>x!==option):[...mine,option])
         : [option];
+      if(!pollVoteChanged(poll,viewer.pubkey,picked))return;
       b.disabled=true;
       try{
         if(!room.local){
@@ -4447,7 +4500,11 @@
      * subscription's external sockets and send to one matching managed socket, never a random relay. */
     if(realtime){const sent=(!x.reader.createPlaneAuth&&p.relayPublishFastTo?p.relayPublishFastTo(x.relays,made.wrap):0)+(liveSub&&liveSub.publish?liveSub.publish(made.wrap):0);if(!sent)throw new Error('no live room relay');return made;}
     if(x.reader.createPlaneAuth){const result=await p.relayPublishRoom(x.relays,made.wrap,cordPlaneAuth(x.p,cordPlaneContext(x.p,x.bundle,x.controls,x.room),made.wrap.pubkey,x.relays));if(!result?.ok)throw new Error(result?.msg||'room relays rejected the update');return made;}
-    const [pool,external]=await Promise.all([p.relayPublish(made.wrap),p.relayPublishTo(x.relays,made.wrap)]);if(!(pool&&pool.ok)&&!external)throw new Error(pool&&pool.msg||'room relays rejected the update');return made;}
+    /* The ROOM's relays only. This used to also hand the envelope to the user's general relay pool
+     * (public relays that have nothing to do with the room), so every Webxdc move went out twice
+     * over and landed on relays no member reads. relayPublishRoom includes a managed socket that
+     * IS a room relay, which is the case publishTo alone skipped. */
+    const result=await p.relayPublishRoom(x.relays,made.wrap,null);if(!result||!result.ok)throw new Error(result&&result.msg||'room relays rejected the update');return made;}
   async function webxdcSubscribe(ctx,uuid,realtime,onEvent){
     const R=window.Relay;if(!R||!R.subscribe||!R.subscribeFrom)throw new Error('relay subscription unavailable');
     let urls,filters,receive,plane=null;
@@ -4506,7 +4563,7 @@
     close.publish=event=>(!plane&&R.publishFastTo&&R.publishFastTo(x.relays,event)?1:0)+(external.publish?external.publish(event):0);
     return close;
   }
-  window.PCConcord={render,backgroundRender,refoundingBeforeEvents:true,reviewRefoundingRecipients,refoundRoom,acquireRefoundingControls,createPrivateRoomChannel,mergeDirectInviteRoom,showDirectInvitations,showDirectInviteSender,saveCommunitySettings,timerSettingsHtml,unreadRooms,paintUnreadBadge,emptyChannelHtml,channelUnread,noteChannelReach,invitePreviewHtml,declineInvite,inviteWasDeclined,forgetDeclinedInvite,declinedInvites,sameRoom,uniqueRooms,wake,iconRef,readChat,reconcileChannels,startChatLive,stopChatLive,pollOf,pollHtml,refreshActiveChannel,warmRoomIcons,hydrateRoomStreams,replyParentId,threadRootId,threadIndex,threadView,openInvite:openInviteLink,openNotification,notificationRoute,inviteParts,normalizeIcon,roomIcon,roomRelays,reactionSummary,reactionPickerPosition,notifyMentions,discoverInvites,recoverOwnedInvite,membershipEvents,decodeMembershipLists,mergeArmadaBundle,syncArmadaMemberships,nip29MembershipTags,nip29Memberships,nip29Metadata,nip29History,foldNip29History,nip29PreviousTags,publishNip29Message,syncNip29Memberships,hydrateNip29Room,activateJoinedRoom,resumeActiveRoom,threadParticipants,roomParticipants,typedMentionRecipients,textMentionsViewer,paintMentions,messageMentionsViewer,conversationIsVisible,repaintScrollTop,pendingEchoMatch,applyRoomIconMetadata,channelSectionsHtml,removeCommunityByIdentity,persistArmadaMembership,persistArmadaMemberships,leaveArmadaMembership,leftCommunities,rememberLeftCommunity,forgetLeftCommunity,wasLocallyLeft,memberTapAction,memberViewportIsNarrow,encryptedAttachments,publicAttachments,messageContentHtml,wireRoomMedia,handoffState,acceptHandoff,beginComposerSend,restoreFailedComposer,webxdcOf,resolveWebxdcCard,deriveWebxdcUrlTopic,hydrateWebxdcCards,webxdcQuery,webxdcPublish,webxdcSubscribe,webxdcPeerQuery,webxdcPeerPublish,webxdcPeerSubscribe,refreshOwnedInviteLinks,changeOwnedInviteLink,showOwnedInviteLinks};
+  window.PCConcord={announceListing,pollVoteChanged,render,backgroundRender,refoundingBeforeEvents:true,reviewRefoundingRecipients,refoundRoom,acquireRefoundingControls,createPrivateRoomChannel,mergeDirectInviteRoom,showDirectInvitations,showDirectInviteSender,saveCommunitySettings,timerSettingsHtml,unreadRooms,paintUnreadBadge,emptyChannelHtml,channelUnread,noteChannelReach,invitePreviewHtml,declineInvite,inviteWasDeclined,forgetDeclinedInvite,declinedInvites,sameRoom,uniqueRooms,wake,iconRef,readChat,reconcileChannels,startChatLive,stopChatLive,pollOf,pollHtml,refreshActiveChannel,warmRoomIcons,hydrateRoomStreams,replyParentId,threadRootId,threadIndex,threadView,openInvite:openInviteLink,openNotification,notificationRoute,inviteParts,normalizeIcon,roomIcon,roomRelays,reactionSummary,reactionPickerPosition,notifyMentions,discoverInvites,recoverOwnedInvite,membershipEvents,decodeMembershipLists,mergeArmadaBundle,syncArmadaMemberships,nip29MembershipTags,nip29Memberships,nip29Metadata,nip29History,foldNip29History,nip29PreviousTags,publishNip29Message,syncNip29Memberships,hydrateNip29Room,activateJoinedRoom,resumeActiveRoom,threadParticipants,roomParticipants,typedMentionRecipients,textMentionsViewer,paintMentions,messageMentionsViewer,conversationIsVisible,repaintScrollTop,pendingEchoMatch,applyRoomIconMetadata,channelSectionsHtml,removeCommunityByIdentity,persistArmadaMembership,persistArmadaMemberships,leaveArmadaMembership,leftCommunities,rememberLeftCommunity,forgetLeftCommunity,wasLocallyLeft,memberTapAction,memberViewportIsNarrow,encryptedAttachments,publicAttachments,messageContentHtml,wireRoomMedia,handoffState,acceptHandoff,beginComposerSend,restoreFailedComposer,webxdcOf,resolveWebxdcCard,deriveWebxdcUrlTopic,hydrateWebxdcCards,webxdcQuery,webxdcPublish,webxdcSubscribe,webxdcPeerQuery,webxdcPeerPublish,webxdcPeerSubscribe,refreshOwnedInviteLinks,changeOwnedInviteLink,showOwnedInviteLinks};
   /* A monitor destination may load this module only after its frame-handoff callback has returned.
    * Adopt the one-shot room/channel before app.js invokes render(), then remove it so an ordinary
    * later Communities open cannot replay an old monitor move. */
