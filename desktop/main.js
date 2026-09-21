@@ -33,6 +33,7 @@ let background = null; // background.js imports Tray, so require it only after a
 const vm = require('./vm');
 const bluetooth = require('./bluetooth');
 const liveusb = require('./liveusb');
+const installer = require('./installer');
 const remotecontrol = require('./remotecontrol');
 const diagnostic = require('./diagnostic').resolve(process.argv, process.env);
 /* ProcessSingleton is acquired much later, but Electron chooses its lock directory from userData.
@@ -3137,6 +3138,23 @@ ipcMain.handle('pc:liveusb:devices', (e) => { fsGuard(e); return liveusb.devices
 ipcMain.handle('pc:liveusb:status', (e) => { fsGuard(e); return liveusb.status(); });
 ipcMain.handle('pc:liveusb:build', (e, dir, home) => { fsGuard(e); return liveusb.build(String(dir||''), !!home); });
 ipcMain.handle('pc:liveusb:burn', (e, iso, disk) => { fsGuard(e); return liveusb.burn(String(iso||''), String(disk||'')); });
+/* THE GRAPHICAL INSTALLER (desktop/installer.js → gentoo.sh install-live). `live` is SYNCHRONOUS
+ * because the desktop decides whether to draw the "Install PosterChanOS" icon while it lays the
+ * icons out, and that pass has no await in it; it is one file read, once per page. */
+ipcMain.on('pc:installer:live', (e) => {
+  try{ e.returnValue = fromOurPage(e) ? installer.info() : { live:false, available:false }; }
+  catch(_){ e.returnValue = { live:false, available:false }; }
+});
+ipcMain.handle('pc:installer:info', (e) => { fsGuard(e); return installer.info(); });
+ipcMain.handle('pc:installer:disks', (e) => { fsGuard(e); return installer.disks(); });
+ipcMain.handle('pc:installer:status', (e) => { fsGuard(e); return installer.status(); });
+ipcMain.handle('pc:installer:start', (e, opts) => {
+  fsGuard(e);
+  const o = opts && typeof opts === 'object' ? opts : {};
+  return installer.start({ disk: String(o.disk || ''), size: o.size == null ? null : Number(o.size),
+                           rootName: String(o.rootName || ''), password: String(o.password == null ? '' : o.password),
+                           mode: o.mode === 'resume' ? 'resume' : 'fresh' });
+});
 ipcMain.handle('pc:liveusb:pick-iso', async (e) => {
   fsGuard(e); const r=await dialog.showOpenDialog(dialogOwner(e),{properties:['openFile'],filters:[{name:'ISO images',extensions:['iso']}]});
   return r.canceled?'':(r.filePaths[0]||'');

@@ -151,7 +151,7 @@
    * a window opening on something it cannot show — "System settings just loaded a social feed" —
    * and a prefix would re-open exactly that door. A name is added here only once `PCOS.renderExtra`
    * can draw it in a page with no desktop behind it. */
-  const EXTRA_VIEWS = ['__ossettings', '__tasks', '__remote'];
+  const EXTRA_VIEWS = ['__ossettings', '__tasks', '__remote', '__installer'];
   // Renamed/merged views an older shell may still hand over (os.js LEGACY_VIEWS; app.js switchView maps it).
   const LEGACY_VIEWS = { __vms: 'vms' };
 

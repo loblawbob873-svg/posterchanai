@@ -443,6 +443,27 @@ if (isOurPage) {
     pickDir: () => ipcRenderer.invoke('pc:liveusb:pick-dir'),
   });
 
+  /* The graphical installer. `isLive()` is asked while the desktop draws its icons, so it is a
+   * synchronous answer, fetched once and kept: whether this boot is a live medium does not change
+   * while the page is up. */
+  let _installerInfo = null;
+  const installerInfo = () => {
+    if (_installerInfo) return _installerInfo;
+    try { _installerInfo = ipcRenderer.sendSync('pc:installer:live') || { live:false, available:false }; }
+    catch (_) { _installerInfo = { live:false, available:false }; }
+    return _installerInfo;
+  };
+  contextBridge.exposeInMainWorld('pcInstaller', {
+    isLive: () => !!installerInfo().available,
+    info: () => ipcRenderer.invoke('pc:installer:info'),
+    disks: () => ipcRenderer.invoke('pc:installer:disks'),
+    status: () => ipcRenderer.invoke('pc:installer:status'),
+    start: (opts) => ipcRenderer.invoke('pc:installer:start', opts && typeof opts === 'object' ? {
+      disk: String(opts.disk || ''), size: opts.size == null ? null : Number(opts.size),
+      rootName: String(opts.rootName || ''), password: String(opts.password == null ? '' : opts.password),
+      mode: opts.mode === 'resume' ? 'resume' : 'fresh' } : {}),
+  });
+
   contextBridge.exposeInMainWorld('pcNet', {
     available: () => ipcRenderer.invoke('pc:net:available'),
     status: () => ipcRenderer.invoke('pc:net:status'),

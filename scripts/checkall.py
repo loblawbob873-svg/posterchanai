@@ -337,6 +337,8 @@ CHECKS = {
     "check_concord_mobile":            dict(group="ui", secs=420),
     "check_concord_scroll_mobile":     dict(group="ui", secs=420),
     "check_os_taskbar_search":         dict(group="ui", secs=300),
+    "check_os_installer":              dict(group="ui", secs=300,
+                                            why="live-USB installer: icon, wizard, typed erase, progress"),
     "check_ci_gates":                  dict(group="meta", secs=120),
     # Leaving a community, on the screen a phone actually opens on, and then on the NEXT
     # device — "I left Soapbox many times" was the vault tombstone being unmatchable by the
