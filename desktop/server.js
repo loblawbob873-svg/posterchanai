@@ -67,9 +67,9 @@ async function status() {
     available: true, reachable: up,
     localUrl: 'http://127.0.0.1:' + port,
     adminUrl: 'http://127.0.0.1:' + port + '/admin',
-    relayUrl: 'ws://127.0.0.1:' + relayPort,
+    relayUrl: 'ws://127.0.0.1:' + relayPort + '/relay',
     lanUrls: lan.map(ip => 'http://' + ip + ':' + port),
-    lanRelayUrls: lan.map(ip => 'ws://' + ip + ':' + relayPort),
+    lanRelayUrls: lan.map(ip => 'ws://' + ip + ':' + relayPort + '/relay'),
   });
 }
 

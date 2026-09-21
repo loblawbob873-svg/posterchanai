@@ -107,7 +107,8 @@ class Box:
                "STUB_STATE": str(self.state), "STUB_PGDATA": str(self.pgdata), "STUB_PGETC": str(self.pgetc),
                "PC_SERVER_APP": str(self.app), "PC_SERVER_STATE": str(self.home),
                "PC_SERVER_UNIT_DIR": str(self.units), "PC_PG_LIBDIR": str(self.pglib),
-               "PC_PG_DATA_ROOT": str(self.pgdata), "PC_PG_ETC_ROOT": str(self.pgetc), **extra}
+               "PC_PG_DATA_ROOT": str(self.pgdata), "PC_PG_ETC_ROOT": str(self.pgetc),
+               "PC_SERVER_PIP_CACHE": str(self.tmp / "pipcache"), **extra}
         p = subprocess.run([shutil.which("bash"), str(HELPER), *args], env=env, capture_output=True, text=True,
                            timeout=60)
         return p.returncode, p.stdout + p.stderr, self.log.read_text().splitlines()

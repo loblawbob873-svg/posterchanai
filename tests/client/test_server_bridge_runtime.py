@@ -41,8 +41,8 @@ const api=context.module.exports;
 (async()=>{
   let s=await api.status();
   assert.equal(s.available,true); assert.equal(s.reachable,true);
-  assert.equal(s.adminUrl,'http://127.0.0.1:3051/admin'); assert.equal(s.relayUrl,'ws://127.0.0.1:3052');
-  assert.deepEqual([...s.lanUrls],['http://192.168.1.5:3051']); assert.deepEqual([...s.lanRelayUrls],['ws://192.168.1.5:3052']);
+  assert.equal(s.adminUrl,'http://127.0.0.1:3051/admin'); assert.equal(s.relayUrl,'ws://127.0.0.1:3052/relay');
+  assert.deepEqual([...s.lanUrls],['http://192.168.1.5:3051']); assert.deepEqual([...s.lanRelayUrls],['ws://192.168.1.5:3052/relay']);
   listening=false; s=await api.status(); assert.equal(s.reachable,false,'active is not the same as answering');
   statusJson=JSON.stringify({configured:false,active:'inactive',port:3051,relayPort:3052,job:{}});
   const before=calls.length; s=await api.status(); assert.equal(s.reachable,false);

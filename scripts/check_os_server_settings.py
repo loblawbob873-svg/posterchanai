@@ -62,8 +62,8 @@ window.pcServer = {
     postgres: { slot: '18', active: S.configured ? 'active' : 'inactive' },
     features: Object.assign({}, S.features), job: Object.assign({}, S.job), reachable: S.reachable,
     localUrl: 'http://127.0.0.1:3051', adminUrl: 'http://127.0.0.1:3051/admin',
-    relayUrl: 'ws://127.0.0.1:3052', lanUrls: ['http://192.168.1.5:3051'],
-    lanRelayUrls: ['ws://192.168.1.5:3052'] }),
+    relayUrl: 'ws://127.0.0.1:3052/relay', lanUrls: ['http://192.168.1.5:3051'],
+    lanRelayUrls: ['ws://192.168.1.5:3052/relay'] }),
   enable: async () => { S.calls.push('enable');
     S.job = { running: true, verb: 'enable', rc: '', started: '1', finished: '' };
     finish(() => { S.configured = true; S.venv = true; S.enabled = 'enabled'; S.active = 'active'; S.reachable = true; });
@@ -195,7 +195,7 @@ def verdict(o):
         p.append(f"after setup the page must read Running with admin/restart live: {r}")
     if "finished rc=0" not in r.get("finishedLog", ""):
         p.append("the end of the job log (the answer to 'did it work') was never shown")
-    if "ws://127.0.0.1:3052" not in r.get("facts", "") or "192.168.1.5:3051/client" not in r.get("facts", ""):
+    if "ws://127.0.0.1:3052/relay" not in r.get("facts", "") or "192.168.1.5:3051/client" not in r.get("facts", ""):
         p.append(f"the facts must name the client and relay addresses: {r.get('facts')!r}")
     if r.get("enableCalls") != 1:
         p.append(f"the helper's enable was called {r.get('enableCalls')} times")

@@ -31,6 +31,7 @@ PG_LIBDIR="${PC_PG_LIBDIR:-/usr/lib64}"
 PG_DATA_ROOT="${PC_PG_DATA_ROOT:-/var/lib/postgresql}"
 PG_ETC_ROOT="${PC_PG_ETC_ROOT:-/etc}"
 PG_SOCKET="/run/postgresql"
+PIP_CACHE="${PC_SERVER_PIP_CACHE:-/var/cache/posterchan-server/pip}"
 UNIT="posterchanai.service"
 SEARX_UNIT="posterchanai-searxng.service"
 JOB_UNIT="posterchan-server-job"
@@ -105,7 +106,8 @@ launch(){ # launch <verb...> — runs `pc-server __run <verb...>` as a transient
   printf 'verb=%s\nstarted=%s\n' "$*" "$(date +%s)" >"$JOB_STATE"
   systemd-run --quiet --collect --unit="$JOB_UNIT" --setenv=PC_SERVER_IN_JOB=1 \
     --property=KillMode=mixed "$SELF" __run "$@" \
-    || { printf 'rc=125\nfinished=%s\n' "$(date +%s)" >>"$JOB_STATE"; die "could not start the job"; }
+    || { grep -q '^rc=' "$JOB_STATE" || printf 'rc=125\nfinished=%s\n' "$(date +%s)" >>"$JOB_STATE"
+         die "could not start the job"; }
   echo "started: $*"
 }
 
@@ -180,7 +182,10 @@ installer(){ # installer <args…> — the project's own install.sh, as root, to
     dsn_env=("DATABASE_URL=postgresql+psycopg2://posterchan@/posterchan_relay?host=$PG_SOCKET"
              "NOSTR_RELAY_PG_DSN=host=$PG_SOCKET dbname=posterchan_relay user=posterchan")
   fi
-  ( cd "$APP" && env HOME="$STATE" U2NET_HOME="$STATE/.u2net" \
+  # pip runs as root here; its cache must be somewhere root owns or pip disables it (and a retried
+  # multi-GB AI install would download everything again).
+  mkdir -p "$PIP_CACHE"
+  ( cd "$APP" && env HOME="$STATE" U2NET_HOME="$STATE/.u2net" PIP_CACHE_DIR="$PIP_CACHE" \
       ACESTEP_DIR="$APP/ACE-Step-1.5" SEARXNG_SRC_DIR="$APP/searxng-src" \
       VIDEO_PREFETCH=n VOICE_PREFETCH=n "${dsn_env[@]}" ./install.sh "$@" )
 }
