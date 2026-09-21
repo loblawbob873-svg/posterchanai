@@ -325,6 +325,9 @@ CHECKS = {
     "check_texts_media":               dict(group="ui", secs=420,
                                             why="pictures draw, survive a repaint, read once"),
     "check_files_explorer":            dict(group="ui", secs=600),
+    # Virtual Machines as a Proxmox-style explorer: tree, summary tiles, sortable details table.
+    "check_vms_explorer":              dict(group="ui", secs=420,
+                                            why="tree + sortable VM table at 1280/3840, cards at 390"),
     # The VM console toolbar at every display scale, and outside the popped-out window's DRAG region
     # (a button painted over `-webkit-app-region: drag` loses its clicks to "move the window").
     "check_vm_console_layout":         dict(group="ui", secs=240,

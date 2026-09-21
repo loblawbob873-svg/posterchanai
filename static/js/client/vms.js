@@ -42,6 +42,8 @@
     pk: '', hosts: [], data: {}, screen: 'hosts', host: '', vm: '', filter: 'all',
     doc: { read: false, ok: false, at: 0 }, poll: null, booted: '', console: null, create: null,
     busy: {}, mig: null,
+    // the explorer: table sort, the name/IP filter, collapsed tree nodes
+    sort: { key: 'name', dir: 1 }, q: '', collapsed: {},
     // phase 2
     settings: null, snaps: {}, iso: null, access: null, find: null,
     sessSuspect: {}, sessFail: {}, sessProbe: {},
@@ -279,14 +281,16 @@
     return { uuid: m.name, name: m.name, state: localState(m.state), vcpus: m.cpus || 0,
              ram_mib: m.ramMiB != null ? m.ramMiB : Math.round((m.memoryKiB || 0) / 1024), disk_gib: 0, managed: true,
              guest: '', firmware: '', autostart: !!m.autostart, labels: [], assigned: [],
-             missing_media: (m.missingMedia || [])[0] || '' };
+             missing_media: (m.missingMedia || [])[0] || '',
+             net: m.nic && m.nic.type ? { type: m.nic.type, name: m.nic.source || '' } : undefined };
   }
   function localHardware(d){
     const cd = (d.disks || []).find(x => x.device === 'cdrom');
     const src = cd && cd.source && cd.source !== '-' ? cd.source : '';
     return { boot: d.bootOrder === 'cdrom' ? 'cdrom' : 'disk', input: d.gamingMouse ? 'mouse' : 'tablet',
              nics: d.networks || 0, disks: (d.disks || []).map(x => ({ device: x.device, target: x.target })),
-             media: src ? src.split(/[\\/]/).pop() : '', media_path: src, cdrom: !!cd };
+             media: src ? src.split(/[\\/]/).pop() : '', media_path: src, cdrom: !!cd,
+             net: d.nic && d.nic.type ? { type: d.nic.type, name: d.nic.source || '' } : undefined };
   }
   const LocalHost = {
     features: LOCAL_FEATURES,
@@ -341,7 +345,8 @@
           case 'vm.create': {
             if(!a.iso) return { ok: false, error: { code: 'bad_request', message: 'choose an installer ISO' } };
             const r = await vm.create({ name: a.name, iso: a.iso, guest: a.guest, firmware: a.firmware,
-                                        ramMiB: a.ram_mib, cpus: a.vcpus, diskGiB: a.disk_gib });
+                                        ramMiB: a.ram_mib, cpus: a.vcpus, diskGiB: a.disk_gib,
+                                        network: a.network || { type: 'user' } });
             if(!r || !r.ok) return lerr(r, 'VM creation failed');
             await new Promise(res => setTimeout(res, 300));
             const v = await vm.view(r.name); if(!v || !v.ok) toast((v && v.error) || 'VM created, but its display could not open');
@@ -364,6 +369,10 @@
             if(a.media === 'eject'){ const r = await vm.ejectIso(a.vm); if(!r || !r.ok) return lerr(r, 'could not eject the installer'); }
             else if(a.media && a.media.path){ const r = await vm.changeIso(a.vm, a.media.path); if(!r || !r.ok) return lerr(r, 'could not change the installer'); }
             if(a.input){ const r = await vm.gamingMouse(a.vm, a.input === 'mouse'); if(!r || !r.ok) return lerr(r, 'could not change the pointer'); }
+            if(a.network){
+              if(typeof vm.setNetwork !== 'function') return { ok: false, error: { code: 'unsupported', message: 'this desktop app is too old to change a VM’s network' } };
+              const r = await vm.setNetwork(a.vm, a.network); if(!r || !r.ok) return lerr(r, 'could not change the network');
+            }
             d = await vm.details(a.vm);
             if(!d || !d.ok) return lerr(d, 'saved, but the VM could not be read back');
             return { ok: true, result: { vm: Object.assign(localView(d), { hardware: localHardware(d) }) } };
@@ -570,10 +579,43 @@
     S.screen = 'host'; S.vm = ''; paint(); toast('Deleted');
   }
 
+  /* WHERE A VM'S NETWORK CARD PLUGS IN. A server host says which libvirt networks and Linux bridges it
+   * has (host.info, admin) and refuses any other name; "This computer" lists the bridges System
+   * Settings → Network made (pcNet.bridges), plus user-mode NAT, which needs no setup. A bridge puts
+   * the VM on the LAN with its own address; NAT keeps it behind the host. The value is `type:name`. */
+  const netValue = n => n && n.type ? n.type + ':' + (n.type === 'user' ? '' : (n.name || '')) : '';
+  const parseNet = v => { const t = String(v || ''), i = t.indexOf(':'); if(i < 1) return null;
+    const type = t.slice(0, i), name = t.slice(i + 1); return type === 'user' ? { type } : { type, name }; };
+  const nm = x => typeof x === 'string' ? x : (x && x.name) || '';
+  async function localBridges(){
+    try{ if(window.pcNet && typeof window.pcNet.bridges === 'function'){ const r = await window.pcNet.bridges();
+      return ((r && r.bridges) || []).filter(b => b && b.name); } }catch(_){}
+    return [];
+  }
+  function netChoices(pk, bridges){
+    if(pk === LOCAL_PK) return [{ v: 'user:', l: 'NAT — private network behind this computer (no setup)' }]
+      .concat((bridges || []).map(b => ({ v: 'bridge:' + b.name, off: b.vmReady === false,
+        l: 'Bridge ' + b.name + ' — on your LAN' + (b.vmReady === false ? ' (not set up for VMs — System Settings → Network)' : '') })));
+    const info = (S.data[pk] || {}).info || {};
+    const nets = (Array.isArray(info.networks) ? info.networks : []).map(nm).filter(Boolean);
+    const brs = (Array.isArray(info.bridges) ? info.bridges : []).map(nm).filter(Boolean);
+    return nets.map(n => ({ v: 'network:' + n, l: 'NAT network ' + n })).concat(brs.map(b => ({ v: 'bridge:' + b, l: 'Bridge ' + b + ' — on the host’s LAN' })));
+  }
+  function netDefault(pk){
+    if(pk === LOCAL_PK) return 'user:';
+    const info = (S.data[pk] || {}).info || {};
+    return info.bridge ? 'bridge:' + info.bridge : 'network:' + (info.default_network || 'default');
+  }
+  function netSelect(choices, cur){
+    if(!choices.length) return '';
+    const has = choices.some(c => c.v === cur);
+    return `<label>Network<select class="input" name="net">${has ? '' : `<option value="" selected>${esc(cur ? 'Keep ' + cur.replace(':', ' ') : 'Host default')}</option>`}${choices.map(c => `<option value="${esc(c.v)}" ${c.v === cur ? 'selected' : ''} ${c.off ? 'disabled' : ''}>${esc(c.l)}</option>`).join('')}</select></label>`;
+  }
+
   async function openCreate(pk){
     S.screen = 'create'; S.create = { isos: null, msg: '', busy: false, localIso: '' };
     paint();
-    if(pk === LOCAL_PK){ S.create.isos = []; paint(); return; }
+    if(pk === LOCAL_PK){ const C = S.create; C.isos = []; paint(); C.bridges = await localBridges(); if(S.create === C) paint(); return; }
     const r = await call(pk, 'iso.list');
     if(S.screen !== 'create' || !S.create) return;
     S.create.isos = r.ok ? (r.result.isos || []) : [];
@@ -589,6 +631,8 @@
     const args = { name: val('name'), guest: val('guest'), firmware: val('firmware'),
                    vcpus: Number(val('vcpus')), ram_mib: Number(val('ram_mib')), disk_gib: Number(val('disk_gib')),
                    iso: pk === LOCAL_PK ? (S.create.localIso || '') : (val('iso') || ''), autostart: chk('autostart'), start: chk('start') };
+    const net = parseNet(val('net'));
+    if(net) args.network = net;
     S.create.busy = true; S.create.msg = 'Asking the host…'; paint();
     const r = await call(pk, 'vm.create', args, { timeout: 90000, onProgress: p => {
       if(S.create){ S.create.msg = p.msg || p.phase || 'Working…'; paintCreateMsg(); } } });
@@ -615,6 +659,8 @@
     st.vm = g.result.vm; st.hw = g.result.vm.hardware || {};
     upsertVm(pk, Object.assign({}, g.result.vm));
     st.isos = l.ok ? (l.result.isos || []) : [];
+    if(pk === LOCAL_PK) st.bridges = await localBridges();
+    if(S.settings !== st) return;
     paint();
   }
 
@@ -628,7 +674,7 @@
     const chk = n => !!(f.querySelector('[name="' + n + '"]') || {}).checked;
     return { vcpus: Number(val('vcpus')), ram_mib: Number(val('ram_mib')), autostart: chk('autostart'), boot: val('boot'),
              media: val('media') || '__keep', add_disk_gib: Number(val('add_disk_gib') || 0), add_nic: chk('add_nic'),
-             input: val('input'), pick: st.pick || '' };
+             input: val('input'), pick: st.pick || '', net: val('net') || '' };
   }
   function settingsDelta(x){
     const st = S.settings, v = st.vm, hw = st.hw || {};
@@ -640,6 +686,7 @@
     if(x.input && x.input !== hw.input) out.input = x.input;
     if(x.add_disk_gib > 0) out.add_disk_gib = x.add_disk_gib;
     if(x.add_nic) out.add_nic = true;
+    if(x.net && x.net !== netValue(hw.net)){ const n = parseNet(x.net); if(n) out.network = n; }
     if(st.pk === LOCAL_PK){
       if(x.media === '__eject' && hw.media) out.media = 'eject';
       else if(x.pick) out.media = { path: x.pick };
@@ -1189,6 +1236,17 @@
   }
 
   // ---------------------------------------------------------------- painting
+  /* THE SCREEN IS AN EXPLORER, the way Proxmox's is: a TREE on the left (All hosts → each host → its
+   * VMs, "This computer" first on the desktop app), a SUMMARY + TOOLBAR + sortable DETAILS TABLE for
+   * whatever is selected, and a VM's own page with its action toolbar on top. It used to be a column of
+   * cards that showed a name, a state and one line of specs — nothing you could compare at a glance, and
+   * nothing to say where a VM lived or what it was reachable at.
+   *
+   * Every number here is what the host ANSWERED (host.info / vm.list, cached); a column the host does
+   * not report (an older host, or a field that is admin-only) shows "—", never a guess. Below the wide
+   * breakpoint (a phone, or a desktop window too narrow for two panes) the same data is a list of cards
+   * with the same details, because a nine-column table on a 390px screen is a horizontal scroll bar. */
+  const ic = (id, cls) => `<svg class="ic${cls ? ' ' + cls : ''}" aria-hidden="true"><use href="#${id}"/></svg>`;
   function bar(label, used, total, committed){
     if(!total) return '';
     const pct = x => Math.max(0, Math.min(100, Math.round(100 * x / total)));
@@ -1197,6 +1255,17 @@
   }
   const stateLabel = s => ({ running: 'Running', shutoff: 'Off', paused: 'Paused', stopping: 'Stopping', other: 'Unknown' }[s] || s);
   const roleOf = pk => { const d = S.data[pk]; return d && d.whoami && d.whoami.role; };
+  const hostName = pk => { const h = hostOf(pk) || {}; const d = S.data[pk] || {};
+    return h.name || (d.whoami && d.whoami.host && d.whoami.host.name) || 'VM host'; };
+  const fmtMib = n => { n = Number(n) || 0; return n >= 1024 ? (n / 1024).toFixed(n % 1024 ? 1 : 0) + ' GiB' : n + ' MiB'; };
+  const fmtDur = s => { s = Number(s); if(!isFinite(s) || s < 0) return '—';
+    const d = Math.floor(s / 86400), h = Math.floor(s / 3600) % 24, m = Math.floor(s / 60) % 60;
+    return d ? d + 'd ' + h + 'h' : h ? h + 'h ' + m + 'm' : m ? m + 'm' : Math.floor(s) + 's'; };
+  // The primary NIC as the host described it: `net` ({type,name}) from vm.list, or the local bridge's nic.
+  const netOf = v => { const n = v && v.net; if(!n || !n.type) return '';
+    return n.type === 'bridge' ? 'Bridge ' + (n.name || '') : n.type === 'user' ? 'NAT (user)' : 'NAT ' + (n.name || ''); };
+  const ipsOf = v => (v && Array.isArray(v.ips) ? v.ips : []).filter(x => typeof x === 'string');
+  const upOf = v => v && v.state === 'running' && v.uptime_s != null ? fmtDur(v.uptime_s) : '—';
 
   function statusLine(pk){
     const d = S.data[pk] || {};
@@ -1205,18 +1274,19 @@
     if(d.status === 'loading' && !d.at) return `<div class="vms-seen"><span class="spinner spinner-inline"></span>Asking the host…</div>`;
     return `<div class="vms-seen">${d.status === 'stale' || d.inflight ? '<span class="spinner spinner-inline"></span>' : ''}Last answered ${esc(ago(d.at))}</div>`;
   }
+  const dotOf = pk => { const d = S.data[pk] || {}; return d.status === 'ok' ? 'ok' : d.status === 'noanswer' || d.status === 'error' ? 'bad' : 'wait'; };
 
+  // A host as a CARD — the phone's host list and "Find hosts" results.
   function hostCard(h){
     const d = S.data[h.pubkey] || {};
     const info = d.info || {};
     const role = roleOf(h.pubkey);
-    const dot = d.status === 'ok' ? 'ok' : d.status === 'noanswer' || d.status === 'error' ? 'bad' : 'wait';
     const vms = info.vms ? `${info.vms.running}/${info.vms.total} running` : '';
     const caps = info.cpu ? `<div class="vms-host-cap">${esc(info.cpu.cores)} cores · load ${esc(info.cpu.load1)}</div>
       ${bar('RAM MiB', (info.ram.total_mib - info.ram.free_mib), info.ram.total_mib, info.ram.committed_mib)}
       ${bar('Disk GiB', (info.disk.total_gib - info.disk.free_gib), info.disk.total_gib, info.disk.committed_gib)}` : '';
     return `<button class="vms-host${S.host === h.pubkey ? ' sel' : ''}" data-host="${esc(h.pubkey)}">
-      <div class="vms-host-top"><span class="vms-dot vms-dot-${dot}"></span><b>${esc(h.name || (d.whoami && d.whoami.host && d.whoami.host.name) || 'VM host')}</b>
+      <div class="vms-host-top"><span class="vms-dot vms-dot-${dotOf(h.pubkey)}"></span><b>${esc(hostName(h.pubkey))}</b>
       ${role ? `<span class="vms-role vms-role-${esc(role)}">${esc(role)}</span>` : ''}</div>
       <div class="vms-host-sub">${h.source === 'local' ? 'VMs in this account on this computer' : esc(short(h.pubkey)) + (h.source === 'instance' ? ' · this server' : '')}</div>
       ${caps}${vms ? `<div class="vms-host-cap">${esc(vms)}</div>` : ''}
@@ -1233,10 +1303,115 @@
       <div class="vms-actions"><button class="btn btn-ghost small" data-act="add">+ Add host</button><button class="btn btn-ghost small" data-act="find">Find hosts</button></div>`;
   }
 
-  function vmRow(pk, v){
-    return `<button class="vms-vm" data-vm="${esc(v.uuid)}">
+  // ---- the tree (wide screens): All hosts → host → VM
+  function tree(){
+    const total = S.hosts.reduce((a, h) => a + (((S.data[h.pubkey] || {}).vms) || []).length, 0);
+    const running = S.hosts.reduce((a, h) => a + (((S.data[h.pubkey] || {}).vms) || []).filter(v => v.state === 'running').length, 0);
+    const rows = S.hosts.map(h => {
+      const d = S.data[h.pubkey] || {};
+      const open = !S.collapsed[h.pubkey];
+      const vms = (d.vms || []).slice().sort((a, b) => a.name.localeCompare(b.name));
+      const hostSel = S.host === h.pubkey && S.screen !== 'vm' && S.screen !== 'all';
+      return `<div class="vmx-node">
+        <div class="vmx-hostrow"><button class="vmx-twisty" data-twisty="${esc(h.pubkey)}" aria-label="${open ? 'Collapse' : 'Expand'}" aria-expanded="${open}"><i class="vmx-chev${open ? ' open' : ''}"></i></button>
+        <button class="vms-host vmx-treehost${hostSel ? ' sel' : ''}" data-host="${esc(h.pubkey)}" title="${esc(h.source === 'local' ? 'VMs in this account on this computer' : short(h.pubkey))}">
+          <span class="vms-dot vms-dot-${dotOf(h.pubkey)}"></span>${ic(h.source === 'local' ? 'i-monitor' : 'i-drive')}<b>${esc(hostName(h.pubkey))}</b>
+          <span class="vmx-count">${d.vms ? (d.vms.filter(v => v.state === 'running').length + '/' + d.vms.length) : ''}</span></button></div>
+        ${open && vms.length ? `<div class="vmx-leaves">${vms.map(v => `<button class="vmx-leaf${S.screen === 'vm' && S.host === h.pubkey && S.vm === v.uuid ? ' sel' : ''}" data-leaf-host="${esc(h.pubkey)}" data-leaf-vm="${esc(v.uuid)}">
+          <span class="vmx-st vmx-st-${esc(v.state)}" aria-hidden="true"></span><span class="vmx-leafname">${esc(v.name)}</span></button>`).join('')}</div>` : ''}
+      </div>`;
+    }).join('');
+    return `<aside class="vms-rail vmx-tree" aria-label="VM hosts">
+      <div class="vms-head"><h2>VM hosts</h2><span class="vms-sp"></span><button class="btn small" data-act="find">Find</button><button class="btn small" data-act="add">+ Add</button></div>
+      ${S.hosts.length > 1 ? `<button class="vmx-dc${S.screen === 'all' ? ' sel' : ''}" data-act="all">${ic('i-drive')}<b>All hosts</b><span class="vmx-count">${running}/${total}</span></button>` : ''}
+      ${S.hosts.length ? rows : (S.doc.read ? '<div class="vms-seen">No hosts yet.</div>' : '<div class="spinner"></div>')}
+    </aside>`;
+  }
+
+  // ---- the details table
+  const COLS = [
+    { k: 'state', l: 'Status' }, { k: 'name', l: 'Name' }, { k: 'vcpus', l: 'vCPU', n: 1 }, { k: 'ram', l: 'Memory', n: 1 },
+    { k: 'disk', l: 'Disk', n: 1 }, { k: 'net', l: 'Network / IP' }, { k: 'up', l: 'Uptime', n: 1 },
+    { k: 'host', l: 'Host', all: 1 }, { k: 'assigned', l: 'Assigned', admin: 1 },
+  ];
+  const STATE_ORDER = { running: 0, paused: 1, stopping: 2, other: 3, shutoff: 4 };
+  function sortKey(k, v){
+    switch(k){
+      case 'state': return STATE_ORDER[v.state] != null ? STATE_ORDER[v.state] : 9;
+      case 'vcpus': return Number(v.vcpus) || 0;
+      case 'ram': return Number(v.ram_mib) || 0;
+      case 'disk': return Number(v.disk_gib) || 0;
+      case 'net': return (ipsOf(v)[0] || netOf(v) || '~').toLowerCase();
+      case 'up': return v.state === 'running' && v.uptime_s != null ? Number(v.uptime_s) : -1;
+      case 'host': return hostName(v._pk).toLowerCase();
+      case 'assigned': return (v.assigned || []).length;
+      default: return String(v.name || '').toLowerCase();
+    }
+  }
+  function sortedFiltered(list){
+    let out = list.slice();
+    if(S.filter === 'running') out = out.filter(v => v.state === 'running');
+    if(S.filter === 'stopped') out = out.filter(v => v.state !== 'running');
+    if(S.filter === 'mine') out = out.filter(v => (v.assigned || []).includes(S.pk));
+    const q = (S.q || '').trim().toLowerCase();
+    if(q) out = out.filter(v => (v.name || '').toLowerCase().includes(q) || ipsOf(v).some(ip => ip.includes(q)));
+    const k = S.sort.key, dir = S.sort.dir;
+    out.sort((a, b) => { const x = sortKey(k, a), y = sortKey(k, b);
+      return (x < y ? -1 : x > y ? 1 : 0) * dir || String(a.name).localeCompare(String(b.name)); });
+    return out;
+  }
+  function vmTable(list, opts){
+    const cols = COLS.filter(c => (!c.all || opts.all) && (!c.admin || opts.admin));
+    const head = cols.map(c => `<th scope="col" class="vmx-c-${c.k}${c.n ? ' vmx-num' : ''}"><button class="vmx-sort${S.sort.key === c.k ? ' on' : ''}" data-sort="${c.k}">${esc(c.l)}${S.sort.key === c.k ? `<span class="fx-arrow">${S.sort.dir > 0 ? '▲' : '▼'}</span>` : ''}</button></th>`).join('');
+    const cell = (c, v) => {
+      switch(c.k){
+        case 'state': return `<span class="vmx-stcell"><span class="vmx-st vmx-st-${esc(v.state)}" aria-hidden="true"></span><span class="vms-pill vms-st-${esc(v.state)}">${esc(stateLabel(v.state))}</span>${v.migration && v.migration.state ? '<span class="vms-pill vms-st-paused">migrating</span>' : ''}</span>`;
+        case 'name': return `<b class="vmx-name">${esc(v.name)}</b>${v.guest ? `<small class="vms-seen"> ${esc(v.guest)}</small>` : ''}`;
+        case 'vcpus': return esc(v.vcpus || '—');
+        case 'ram': return v.ram_mib ? esc(fmtMib(v.ram_mib)) : '—';
+        case 'disk': return v.disk_gib ? esc(v.disk_gib) + ' GiB' : '—';
+        case 'net': { const ips = ipsOf(v); return `${ips.length ? `<span class="vmx-ip">${esc(ips.join(', '))}</span>` : ''}<small class="vms-seen">${esc(netOf(v) || (ips.length ? '' : '—'))}</small>`; }
+        case 'up': return esc(upOf(v));
+        case 'host': return esc(hostName(v._pk));
+        case 'assigned': return (v.assigned || []).length ? esc((v.assigned || []).length === 1 ? short(v.assigned[0]) : v.assigned.length + ' people') : '<span class="vms-seen">—</span>';
+      }
+      return '';
+    };
+    const rows = list.map(v => `<tr class="vms-vm vmx-row" data-vm="${esc(v.uuid)}" data-vm-host="${esc(v._pk)}" tabindex="0">${cols.map(c => `<td class="vmx-c-${c.k}${c.n ? ' vmx-num' : ''}">${cell(c, v)}</td>`).join('')}</tr>`).join('');
+    return `<div class="vmx-tablewrap"><table class="vmx-table"><thead><tr>${head}</tr></thead><tbody>${rows}</tbody></table></div>`;
+  }
+  // The same rows as cards, below the wide breakpoint.
+  function vmCard(v, opts){
+    const ips = ipsOf(v);
+    const bits = [v.vcpus ? v.vcpus + ' vCPU' : '', v.ram_mib ? fmtMib(v.ram_mib) : '', v.disk_gib ? v.disk_gib + ' GiB' : '',
+                  ips[0] || netOf(v), v.state === 'running' && v.uptime_s != null ? 'up ' + fmtDur(v.uptime_s) : '',
+                  opts.all ? hostName(v._pk) : ''].filter(Boolean);
+    return `<button class="vms-vm" data-vm="${esc(v.uuid)}" data-vm-host="${esc(v._pk)}">
       <span class="vms-pill vms-st-${esc(v.state)}">${esc(stateLabel(v.state))}</span>
-      <b>${esc(v.name)}</b><span class="vms-spec">${esc(v.vcpus)} vCPU · ${esc(v.ram_mib)} MiB${v.disk_gib ? ' · ' + esc(v.disk_gib) + ' GiB' : ''}</span></button>`;
+      <b>${esc(v.name)}</b><span class="vms-spec">${esc(bits.join(' · '))}</span></button>`;
+  }
+  function listToolbar(opts){
+    const chips = [['all', 'All'], ['running', 'Running'], ['stopped', 'Stopped']].concat(opts.mine ? [['mine', 'Mine']] : []);
+    return `<div class="vmx-listbar"><div class="vms-chips">${chips.map(([k, l]) => `<button class="vms-chip${S.filter === k ? ' on' : ''}" data-filter="${k}">${l}</button>`).join('')}</div>
+      <label class="vmx-search">${ic('i-search')}<input class="input" type="search" data-vmq placeholder="Filter by name or IP" value="${esc(S.q || '')}" aria-label="Filter VMs"></label></div>`;
+  }
+  function tiles(items){
+    return `<div class="vmx-tiles">${items.filter(Boolean).map(t => `<div class="vmx-tile"><span>${esc(t.l)}</span><b>${t.html != null ? t.html : esc(t.v)}</b>${t.sub ? `<small>${t.sub}</small>` : ''}</div>`).join('')}</div>`;
+  }
+  function hostSummary(pk){
+    const d = S.data[pk] || {};
+    const info = d.info || {};
+    const vms = d.vms || [];
+    const running = vms.filter(v => v.state === 'running').length;
+    const out = [{ l: 'Virtual machines', html: `${esc(info.vms ? info.vms.total : vms.length)}`, sub: `${esc(info.vms ? info.vms.running : running)} running` }];
+    if(info.cpu) out.push({ l: 'CPU', v: info.cpu.cores + ' cores', sub: 'load ' + esc(info.cpu.load1) });
+    if(info.ram && info.ram.total_mib) out.push({ l: 'Memory', v: fmtMib(info.ram.total_mib - info.ram.free_mib) + ' used',
+      sub: bar('RAM MiB', info.ram.total_mib - info.ram.free_mib, info.ram.total_mib, info.ram.committed_mib) + `committed ${esc(fmtMib(info.ram.committed_mib))} of ${esc(fmtMib(info.ram.total_mib))}` });
+    if(info.disk && info.disk.total_gib) out.push({ l: 'Storage', v: (info.disk.total_gib - info.disk.free_gib) + ' GiB used',
+      sub: bar('Disk GiB', info.disk.total_gib - info.disk.free_gib, info.disk.total_gib, info.disk.committed_gib) + `${esc(info.disk.free_gib)} GiB free` });
+    if(info.kvm != null || info.libvirt != null) out.push({ l: 'Hypervisor', html: info.kvm === false ? '<span class="vmx-warn">no KVM</span>' : 'KVM',
+      sub: esc(info.libvirt_version || (info.libvirt === false ? 'libvirt unreachable' : 'libvirt')) });
+    return tiles(out);
   }
 
   function hostScreen(pk, wide){
@@ -1244,31 +1419,52 @@
     if(!h) return hostsScreen();
     const d = S.data[pk] || {};
     const role = roleOf(pk);
-    const info = d.info || {};
-    let list = (d.vms || []).slice().sort((a, b) => a.name.localeCompare(b.name));
-    if(S.filter === 'running') list = list.filter(v => v.state === 'running');
-    if(S.filter === 'mine') list = list.filter(v => (v.assigned || []).includes(S.pk));
+    const feat = featuresOf(pk);
+    const list = sortedFiltered((d.vms || []).map(v => Object.assign({ _pk: pk }, v)));
     let body;
     if(!d.vms){
       body = d.status === 'noanswer' || d.status === 'error' ? '' : `<div class="spinner"></div>`;
     }else if(!list.length){
       body = `<div class="empty vms-empty">${d.vms.length ? 'Nothing matches this filter.'
         : role === 'admin' ? 'No virtual machines on this host yet.' : 'No VMs are assigned to you on this host.'}</div>`;
-    }else body = `<div class="vms-list">${list.map(v => vmRow(pk, v)).join('')}</div>`;
+    }else body = wide ? vmTable(list, { admin: role === 'admin' && !feat.local })
+                      : `<div class="vms-list">${list.map(v => vmCard(v, {})).join('')}</div>`;
     return `<div class="vms-head">${wide ? '' : '<button class="btn small vms-back" data-act="back">‹ Hosts</button>'}
-        <h2>${esc(h.name || 'VM host')}</h2>${role ? `<span class="vms-role vms-role-${esc(role)}">${esc(role)}</span>` : ''}
-        <span class="vms-sp"></span><button class="btn small" data-act="retry" data-host="${esc(pk)}" aria-label="Refresh">↻</button>
-        ${h.source !== 'instance' && h.source !== 'local' ? `<button class="btn small" data-act="remove-host" aria-label="Remove host">✕</button>` : ''}</div>
+        <span class="vms-dot vms-dot-${dotOf(pk)}"></span><h2>${esc(hostName(pk))}</h2>${role ? `<span class="vms-role vms-role-${esc(role)}">${esc(role)}</span>` : ''}
+        <span class="vms-sp"></span>
+        ${h.source !== 'instance' && h.source !== 'local' ? `<button class="btn small" data-act="remove-host" aria-label="Remove host" title="Remove this host from your list">✕</button>` : ''}</div>
+      <div class="vms-host-sub">${h.source === 'local' ? 'VMs in this account on this computer' : esc(short(pk)) + (h.source === 'instance' ? ' · this server' : '')}</div>
       ${statusLine(pk)}
-      ${info.cpu ? `<div class="vms-cap">${bar('RAM MiB', info.ram.total_mib - info.ram.free_mib, info.ram.total_mib, info.ram.committed_mib)}
-        ${bar('Disk GiB', info.disk.total_gib - info.disk.free_gib, info.disk.total_gib, info.disk.committed_gib)}
-        <div class="vms-host-cap">${esc(info.cpu.cores)} cores · load ${esc(info.cpu.load1)}${info.kvm === false ? ' · <b>no KVM</b>' : ''}</div></div>` : ''}
-      <div class="vms-chips">${[['all', 'All'], ['running', 'Running']].concat(role === 'admin' && !featuresOf(pk).local ? [['mine', 'Mine']] : [])
-        .map(([k, l]) => `<button class="vms-chip${S.filter === k ? ' on' : ''}" data-filter="${k}">${l}</button>`).join('')}</div>
-      ${body}
-      ${role === 'admin' ? `<div class="vms-actions"><button class="btn btn-neon" data-act="create">+ Create VM</button>
-        ${featuresOf(pk).local ? '' : `<button class="btn btn-ghost" data-act="isos">ISO library</button>`}
-        ${featuresOf(pk).access ? `<button class="btn btn-ghost" data-act="access">Access</button>` : ''}</div>` : ''}`;
+      ${hostSummary(pk)}
+      <div class="vmx-toolbar">
+        ${role === 'admin' ? `<button class="btn btn-neon small" data-act="create">${ic('i-plus')} Create VM</button>
+          ${feat.local ? '' : `<button class="btn btn-ghost small" data-act="isos">ISO library</button>`}
+          ${feat.access ? `<button class="btn btn-ghost small" data-act="access">Access</button>` : ''}` : ''}
+        <span class="vms-sp"></span><button class="btn small" data-act="retry" data-host="${esc(pk)}" aria-label="Refresh" title="Refresh">${ic('i-refresh')}</button>
+      </div>
+      ${d.vms && d.vms.length ? listToolbar({ mine: role === 'admin' && !feat.local }) : ''}
+      ${body}`;
+  }
+
+  // "All hosts" — Proxmox's Datacenter view: every VM on every host in one table, with a Host column.
+  function allScreen(wide){
+    const all = [];
+    let total = 0, running = 0, answered = 0;
+    for(const h of S.hosts){
+      const d = S.data[h.pubkey] || {};
+      if(d.vms) answered++;
+      for(const v of d.vms || []){ all.push(Object.assign({ _pk: h.pubkey }, v)); total++; if(v.state === 'running') running++; }
+    }
+    const list = sortedFiltered(all);
+    const silent = S.hosts.filter(h => ['noanswer', 'error'].includes((S.data[h.pubkey] || {}).status)).length;
+    return `<div class="vms-head"><h2>All hosts</h2><span class="vms-sp"></span></div>
+      ${tiles([{ l: 'Hosts', v: S.hosts.length, sub: answered + ' answered' + (silent ? ' · ' + silent + ' silent' : '') },
+               { l: 'Virtual machines', v: total, sub: running + ' running' }])}
+      ${silent ? '<div class="vms-noanswer">Some hosts did not answer — their VMs are missing from this list until they do.</div>' : ''}
+      ${total ? listToolbar({}) : ''}
+      ${!total ? '<div class="empty vms-empty">No virtual machines on any host yet.</div>'
+        : !list.length ? '<div class="empty vms-empty">Nothing matches this filter.</div>'
+        : wide ? vmTable(list, { all: true }) : `<div class="vms-list">${list.map(v => vmCard(v, { all: true })).join('')}</div>`}`;
   }
 
   function vmScreen(pk, uuid){
@@ -1279,26 +1475,32 @@
     const role = roleOf(pk);
     const feat = featuresOf(pk);
     const running = v.state === 'running' || v.state === 'paused';
-    const b = (act, label, cls, on) => `<button class="btn ${cls || ''}" data-power="${act}" ${on && !S.busy[uuid + ':' + act] ? '' : 'disabled'}>${S.busy[uuid + ':' + act] ? '…' : esc(label)}</button>`;
-    return `<div class="vms-head"><button class="btn small vms-back" data-act="back">‹ ${esc((h && h.name) || 'Host')}</button></div>
-      <div class="vms-vmhead"><h2>${esc(v.name)}</h2><span class="vms-pill vms-st-${esc(v.state)}">${esc(stateLabel(v.state))}</span>${v.migration && v.migration.state ? `<span class="vms-pill vms-st-paused">migrating (${esc(v.migration.state)})</span>` : ''}</div>
+    const off = v.state === 'shutoff';
+    const b = (act, label, icon, cls, on) => `<button class="btn small ${cls || ''}" data-power="${act}" ${on && !S.busy[uuid + ':' + act] ? '' : 'disabled'}>${ic(icon)}${S.busy[uuid + ':' + act] ? '…' : esc(label)}</button>`;
+    const ips = ipsOf(v);
+    return `<div class="vms-head"><button class="btn small vms-back" data-act="back">‹ ${esc(hostName(pk))}</button></div>
+      <div class="vms-vmhead"><span class="vmx-st vmx-st-${esc(v.state)}" aria-hidden="true"></span><h2>${esc(v.name)}</h2><span class="vms-pill vms-st-${esc(v.state)}">${esc(stateLabel(v.state))}</span>${v.migration && v.migration.state ? `<span class="vms-pill vms-st-paused">migrating (${esc(v.migration.state)})</span>` : ''}
+        <span class="vms-sp"></span><small class="vms-seen">on ${esc(hostName(pk))}</small></div>
+      <div class="vmx-toolbar vms-actions vms-power">
+        ${b('start', 'Start', 'i-play', 'btn-neon', !running)}${b('shutdown', 'Shut down', 'i-power', '', running)}${b('reboot', 'Reboot', 'i-refresh', '', running)}${b('destroy', 'Force off', 'i-stop', 'btn-red', running)}
+        <button class="btn small btn-cyan" data-act="console" ${v.state === 'running' ? '' : 'disabled'}>${ic('i-monitor')}${feat.console === 'spice' ? 'Open display' : 'Console'}</button>
+        ${role === 'admin' ? '<span class="vmx-sep" aria-hidden="true"></span>' : ''}
+        ${role === 'admin' && feat.hardware ? `<button class="btn small btn-ghost" data-act="settings" ${off ? '' : 'disabled title="Shut it down first"'}>${ic('i-gear')}Settings</button>` : ''}
+        ${role === 'admin' && feat.local && off ? `<button class="btn small btn-ghost" data-act="boot-disk">Use installed system</button>` : ''}
+        ${role === 'admin' && feat.migrate ? `<button class="btn small btn-ghost" data-act="migrate">${v.migration && v.migration.state ? 'Migration status' : 'Migrate…'}</button>` : ''}
+        ${role === 'admin' ? `<button class="btn small btn-red" data-act="delete" ${off ? '' : 'disabled title="Shut it down first"'}>${ic('i-trash')}Delete</button>` : ''}
+      </div>
       ${statusLine(pk)}
-      <div class="vms-specs"><div><span>vCPUs</span><b>${esc(v.vcpus)}</b></div><div><span>Memory</span><b>${esc(v.ram_mib)} MiB</b></div>
-        <div><span>Disk</span><b>${v.disk_gib ? esc(v.disk_gib) + ' GiB' : '—'}</b></div><div><span>Guest</span><b>${esc(v.guest || '—')} ${esc(v.firmware || '')}</b></div>
-        <div><span>Autostart</span><b>${v.autostart ? 'on' : 'off'}</b></div></div>
+      ${tiles([{ l: 'Status', v: stateLabel(v.state), sub: v.state === 'running' && v.uptime_s != null ? 'up ' + esc(fmtDur(v.uptime_s)) : '' },
+               { l: 'vCPUs', v: v.vcpus || '—' }, { l: 'Memory', v: v.ram_mib ? fmtMib(v.ram_mib) : '—' },
+               { l: 'Disk', v: v.disk_gib ? v.disk_gib + ' GiB' : '—' },
+               { l: 'Network', v: netOf(v) || '—', sub: ips.length ? esc(ips.join(', ')) : (running ? 'no address reported' : '') },
+               { l: 'Guest', v: ((v.guest || '—') + ' ' + (v.firmware || '')).trim() }, { l: 'Autostart', v: v.autostart ? 'on' : 'off' }])}
       ${v.missing_media ? `<div class="vms-noanswer">Installer media moved or is missing: ${esc(v.missing_media)}. Open Settings to replace or eject it.</div>` : ''}
-      ${role === 'admin' && feat.hardware ? `<div class="vms-tools"><button class="btn btn-ghost small" data-act="settings" ${v.state === 'shutoff' ? '' : 'disabled title="Shut it down first"'}>⚙ Settings</button>
-        ${feat.local && v.state === 'shutoff' ? `<button class="btn btn-ghost small" data-act="boot-disk">Use installed system</button>` : ''}</div>` : ''}
       ${role === 'admin' && feat.snapshots ? snapsBlock(pk, uuid, v) : ''}
-      ${role === 'admin' && feat.assign ? `<div class="vms-assign"><div class="vms-sub">Assigned to</div>
+      ${role === 'admin' && feat.assign ? `<div class="vms-assign vmx-section"><div class="vms-sub">Assigned to</div>
         ${(v.assigned || []).map(p => `<div class="vms-assignee"><span>${esc(short(p))}</span><button class="btn small" data-unassign="${esc(p)}">Remove</button></div>`).join('') || '<div class="vms-seen">Nobody — only admins can use it.</div>'}
-        <button class="btn btn-ghost small" data-act="assign">+ Assign to an npub</button></div>` : ''}
-      ${role === 'admin' && feat.migrate ? `<div class="vms-actions"><button class="btn btn-ghost small" data-act="migrate">${v.migration && v.migration.state ? 'Migration status' : 'Migrate…'}</button></div>` : ''}
-      ${role === 'admin' ? `<div class="vms-danger"><button class="btn btn-red small" data-act="delete" ${v.state === 'shutoff' ? '' : 'disabled title="Shut it down first"'}>Delete VM</button></div>` : ''}
-      <div class="vms-actions vms-power">
-        ${b('start', 'Start', 'btn-neon', !running)}${b('shutdown', 'Shut down', '', running)}${b('reboot', 'Reboot', '', running)}${b('destroy', 'Force off', 'btn-red', running)}
-        <button class="btn btn-cyan" data-act="console" ${v.state === 'running' ? '' : 'disabled'}>${feat.console === 'spice' ? 'Open display' : 'Console'}</button>
-      </div>`;
+        <button class="btn btn-ghost small" data-act="assign">+ Assign to an npub</button></div>` : ''}`;
   }
 
   function createScreen(pk){
@@ -1318,6 +1520,7 @@
         ${pk === LOCAL_PK
           ? `<label>Installer ISO<span class="vms-pick"><span class="vms-seen">${esc(C.localIso || 'No file chosen')}</span><button class="btn btn-ghost small" data-act="local-pick-create">Choose file…</button></span></label>`
           : `<label>Installer ISO${isos == null ? ' <span class="spinner spinner-inline"></span>' : ''}<select class="input" name="iso"><option value="">No installer</option>${(isos || []).map(i => `<option value="${esc(i.id)}">${esc(i.name)}</option>`).join('')}</select></label>`}
+        ${netSelect(netChoices(pk, C.bridges), netDefault(pk))}
         <label class="vms-check"><input type="checkbox" name="start" checked> Start it after creating</label>
         <label class="vms-check"><input type="checkbox" name="autostart"> Start with the host</label>
         <div class="vms-createmsg">${esc(C.msg || '')}</div>
@@ -1368,6 +1571,7 @@
         <section class="vms-section"><h3>Advanced hardware</h3><div class="vms-row">
           <label>Add a disk (GiB)<input class="input" name="add_disk_gib" type="number" min="0" ${lim.max_disk_gib ? `max="${esc(lim.max_disk_gib)}"` : ''} placeholder="0 = none" value=""></label>
           <label>Pointer<select class="input" name="input"><option value="tablet" ${hw.input !== 'mouse' ? 'selected' : ''}>Tablet (follows the cursor)</option><option value="mouse" ${hw.input === 'mouse' ? 'selected' : ''}>Relative mouse (games — Ctrl+Alt releases it)</option></select></label></div>
+          ${netSelect(netChoices(st.pk, st.bridges), netValue(hw.net))}
           <label class="vms-check"><input type="checkbox" name="add_nic"> Add a network adapter (has ${esc(hw.nics || 0)})</label></section>
         <div class="vms-createmsg" aria-live="polite">${esc(st.msg || '')}</div>
         <div class="vms-formfoot"><button class="btn btn-ghost" data-act="settings-leave">Back</button><button class="btn btn-neon" data-act="settings-save" disabled>${st.busy ? 'Saving…' : 'Save settings'}</button></div>
@@ -1425,9 +1629,9 @@
 .vms-rail{flex:0 0 300px;display:flex;flex-direction:column;gap:10px;position:sticky;top:0}
 .vms-main{flex:1;min-width:0;display:flex;flex-direction:column;gap:12px}
 .vms-hosts{display:flex;flex-direction:column;gap:10px}
-.vms-host,.vms-vm{all:unset;box-sizing:border-box;display:block;cursor:pointer;background:linear-gradient(180deg,rgba(var(--accent-rgb),.05),var(--panel2) 60%);border:1px solid var(--line);border-radius:var(--r);padding:13px 15px;color:var(--text);width:100%;transition:border-color .15s ease,background .15s ease,transform .12s ease,box-shadow .15s ease}
-.vms-host:hover,.vms-vm:hover{border-color:rgba(var(--accent-rgb),.55);background:var(--panel);transform:translateY(-1px);box-shadow:var(--sh-1)}
-.vms-host.sel{border-color:var(--neon);background:rgba(var(--accent-rgb),.10);box-shadow:inset 3px 0 0 var(--neon)}
+.vms-host:not(.vmx-treehost),button.vms-vm{all:unset;box-sizing:border-box;display:block;cursor:pointer;background:linear-gradient(180deg,rgba(var(--accent-rgb),.05),var(--panel2) 60%);border:1px solid var(--line);border-radius:var(--r);padding:13px 15px;color:var(--text);width:100%;transition:border-color .15s ease,background .15s ease,transform .12s ease,box-shadow .15s ease}
+.vms-host:not(.vmx-treehost):hover,button.vms-vm:hover{border-color:rgba(var(--accent-rgb),.55);background:var(--panel);transform:translateY(-1px);box-shadow:var(--sh-1)}
+.vms-host:not(.vmx-treehost).sel{border-color:var(--neon);background:rgba(var(--accent-rgb),.10);box-shadow:inset 3px 0 0 var(--neon)}
 .vms-host.sel:hover{transform:none}
 .vms-host-top,.vms-head,.vms-vmhead{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
 .vms-host-top b{font-size:15px;letter-spacing:-.01em}
@@ -1443,10 +1647,10 @@
 .vms-bar-used{background:var(--neon);z-index:2}.vms-bar-com{background:rgba(var(--accent2-rgb),.45);z-index:1}
 .vms-noanswer{background:rgba(255,207,43,.1);border:1px solid rgba(255,207,43,.4);border-radius:var(--r-sm);padding:8px 10px;font-size:14px}
 .vms-list{display:flex;flex-direction:column;gap:8px}
-.vms-vm{display:grid;grid-template-columns:auto 1fr;grid-template-rows:auto auto;column-gap:10px;align-items:center;border-left:3px solid var(--line)}
-.vms-vm:has(.vms-st-running){border-left-color:var(--green)}
-.vms-vm:has(.vms-st-paused),.vms-vm:has(.vms-st-stopping){border-left-color:var(--amber)}
-.vms-vm .vms-pill{grid-row:1/3}.vms-vm b{overflow-wrap:anywhere}
+button.vms-vm{display:grid;grid-template-columns:auto 1fr;grid-template-rows:auto auto;column-gap:10px;align-items:center;border-left:3px solid var(--line)}
+button.vms-vm:has(.vms-st-running){border-left-color:var(--green)}
+button.vms-vm:has(.vms-st-paused),button.vms-vm:has(.vms-st-stopping){border-left-color:var(--amber)}
+button.vms-vm .vms-pill{grid-row:1/3}button.vms-vm b{overflow-wrap:anywhere}
 .vms-pill{font-size:12px;border-radius:99px;padding:2px 9px;border:1px solid var(--line);white-space:nowrap}
 .vms-st-running{color:var(--green);border-color:var(--green);background:rgba(0,255,136,.10)}.vms-st-paused,.vms-st-stopping{color:var(--amber);border-color:var(--amber);background:rgba(255,207,43,.10)}
 .vms-chips{display:flex;gap:6px;flex-wrap:wrap}
@@ -1481,6 +1685,58 @@
 .vms-mig-side{display:flex;align-items:center;gap:8px;flex-wrap:wrap;overflow-wrap:anywhere}
 .vms-mig-pre,.vms-mig-done{background:rgba(var(--accent2-rgb),.1);border:1px solid var(--line);border-radius:var(--r-sm);padding:8px 10px;font-size:14px}
 .vms-mig-locked{background:rgba(255,80,80,.1);border:1px solid rgba(255,80,80,.5);border-radius:var(--r-sm);padding:10px;font-size:14px;display:flex;flex-direction:column;gap:8px}
+.vmx.vms-wide{gap:14px}
+.vmx .vmx-tree{flex:0 0 250px;gap:2px;max-height:calc(100dvh / var(--zf,1) - 40px);overflow:auto;padding-right:4px;border-right:1px solid var(--line)}
+.vmx-tree .vms-head{margin-bottom:6px}.vmx-tree .vms-head h2{font-size:16px}
+.vmx-dc,.vmx-treehost,.vmx-leaf{all:unset;box-sizing:border-box;display:flex;align-items:center;gap:7px;width:100%;cursor:pointer;border-radius:var(--r-sm);padding:5px 8px;color:var(--text);min-width:0}
+.vmx-dc:hover,.vmx-treehost:hover,.vmx-leaf:hover{background:rgba(var(--accent-rgb),.08)}
+.vmx-dc.sel,.vmx-treehost.sel,.vmx-leaf.sel{background:rgba(var(--accent-rgb),.16);box-shadow:inset 3px 0 0 var(--neon)}
+.vmx-dc:focus-visible,.vmx-treehost:focus-visible,.vmx-leaf:focus-visible,.vmx-twisty:focus-visible,.vmx-sort:focus-visible,.vmx-row:focus-visible{outline:2px solid var(--neon);outline-offset:-2px}
+.vmx-treehost b,.vmx-dc b{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:14px}
+.vmx-treehost svg.ic,.vmx-dc svg.ic{width:16px;height:16px;color:var(--muted)}
+.vmx-hostrow{display:flex;align-items:center;gap:2px}
+.vmx-twisty{all:unset;cursor:pointer;width:18px;height:22px;display:flex;align-items:center;justify-content:center;flex:0 0 18px;border-radius:4px}
+.vmx-chev{width:6px;height:6px;border-right:2px solid var(--muted);border-bottom:2px solid var(--muted);transform:rotate(-45deg);transition:transform .15s ease}
+.vmx-chev.open{transform:rotate(45deg)}
+.vmx-count{font-size:12px;color:var(--muted);font-variant-numeric:tabular-nums}
+.vmx-leaves{display:flex;flex-direction:column;margin:1px 0 4px 20px;border-left:1px solid var(--line);padding-left:4px}
+.vmx-leaf{padding:4px 8px;font-size:13px}
+.vmx-leafname{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.vmx-st{flex:0 0 auto;width:9px;height:9px;border-radius:50%;background:var(--muted);display:inline-block;opacity:.8}
+.vmx-st-running{background:var(--green);box-shadow:0 0 6px var(--green);opacity:1}
+.vmx-st-paused,.vmx-st-stopping{background:var(--amber);opacity:1}
+.vmx-tiles{display:grid;grid-template-columns:repeat(auto-fill,minmax(170px,1fr));gap:8px}
+.vmx-tile{background:var(--panel2);border:1px solid var(--line);border-radius:var(--r-sm);padding:10px 12px;display:flex;flex-direction:column;gap:3px;min-width:0}
+.vmx-tile>span{color:var(--muted);font-size:12px;text-transform:uppercase;letter-spacing:.05em}
+.vmx-tile>b{font-size:17px;overflow-wrap:anywhere}
+.vmx-tile>small{color:var(--muted);font-size:12px;overflow-wrap:anywhere}
+.vmx-tile .vms-bar{margin:4px 0 2px}.vmx-tile .vms-bar-l{display:none}
+.vmx-warn{color:var(--amber)}
+.vmx-toolbar{display:flex;flex-wrap:wrap;gap:6px;align-items:center;padding:6px;border:1px solid var(--line);border-radius:var(--r-sm);background:var(--panel2)}
+.vmx-toolbar .btn{display:inline-flex;align-items:center;gap:6px}
+.vmx-toolbar svg.ic{width:16px;height:16px}
+.vmx-sep{width:1px;align-self:stretch;background:var(--line);margin:0 4px}
+.vmx-listbar{display:flex;flex-wrap:wrap;gap:8px;align-items:center;justify-content:space-between}
+.vmx-search{display:flex;align-items:center;gap:6px;flex:0 1 260px;min-width:0}
+.vmx-search svg.ic{width:16px;height:16px;color:var(--muted)}
+.vmx-search .input{margin:0;padding:6px 10px;min-width:0}
+.vmx-tablewrap{overflow-x:auto;border:1px solid var(--line);border-radius:var(--r-sm);background:var(--panel)}
+.vmx-table{width:100%;border-collapse:collapse;font-size:14px}
+.vmx-table th{position:sticky;top:0;z-index:1;background:var(--panel2);text-align:left;padding:0;border-bottom:1px solid var(--line);white-space:nowrap}
+.vmx-sort{all:unset;box-sizing:border-box;cursor:pointer;display:flex;align-items:center;gap:4px;width:100%;padding:8px 10px;font-size:12px;font-weight:700;letter-spacing:.05em;text-transform:uppercase;color:var(--muted)}
+.vmx-sort:hover,.vmx-sort.on{color:var(--text)}
+.vmx-num .vmx-sort{justify-content:flex-end}
+.vmx-table td{padding:8px 10px;border-bottom:1px solid var(--line);vertical-align:middle;white-space:nowrap}
+.vmx-table td.vmx-num{text-align:right;font-variant-numeric:tabular-nums}
+.vmx-stcell{display:inline-flex;align-items:center;gap:7px}
+.vmx-table td.vmx-c-net{white-space:normal;min-width:120px}
+.vmx-table td.vmx-c-net small{display:block}
+.vmx-table tr.vmx-row{cursor:pointer}
+.vmx-table tr.vmx-row:hover{background:rgba(var(--accent-rgb),.07)}
+.vmx-table tbody tr:last-child td{border-bottom:0}
+.vmx-name{font-weight:600}
+.vmx-ip{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:13px}
+.vmx-section{border:1px solid var(--line);border-radius:var(--r-sm);padding:10px 12px}
 .vmc{position:fixed;inset:0;z-index:2147483646;background:#000;display:flex;flex-direction:column;-webkit-app-region:no-drag;app-region:no-drag}
 html.pc-oswin .vmc{top:38px}
 .vmc:fullscreen,html.pc-oswin .vmc:fullscreen{top:0}
@@ -1519,6 +1775,7 @@ html.pc-oswin .vmc{top:38px}
     else if(S.screen === 'isos' && S.iso) main = isosScreen();
     else if(S.screen === 'access' && S.access) main = accessScreen();
     else if(S.screen === 'find') main = findScreen();
+    else if(S.screen === 'all' && S.hosts.length) main = allScreen(wide);
     else if(S.screen === 'vm' && S.host) main = vmScreen(S.host, S.vm);
     else if(S.screen === 'create' && S.host) main = createScreen(S.host);
     else if(S.screen === 'migrate' && S.host && S.mig) main = migrateScreen(S.host);
@@ -1533,11 +1790,14 @@ html.pc-oswin .vmc{top:38px}
     const formId = form ? form.id : '';
     if(form && !(fresh && formId === 'vms-settings')) form.querySelectorAll('[name]').forEach(el => { keep[el.name] = el.type === 'checkbox' ? el.checked : el.value; });
     const scroll = feed.scrollTop;
+    // The filter box keeps its caret across a repaint (the list repaints as you type).
+    const q = feed.querySelector('[data-vmq]');
+    const qFocus = !!(q && document.activeElement === q), qPos = qFocus ? q.selectionStart : 0;
     feed.innerHTML = wide
-      ? `<div class="vms vms-wide"><aside class="vms-rail"><div class="vms-head"><h2>VM hosts</h2><span class="vms-sp"></span><button class="btn small" data-act="find">Find</button><button class="btn small" data-act="add">+ Add</button></div>
-           ${S.hosts.length ? S.hosts.map(hostCard).join('') : (S.doc.read ? '<div class="vms-seen">No hosts yet.</div>' : '<div class="spinner"></div>')}</aside>
+      ? `<div class="vms vms-wide vmx">${tree()}
          <section class="vms-main">${S.hosts.length ? main : hostsScreen()}</section></div>`
       : `<div class="vms">${main}</div>`;
+    if(qFocus){ const nq = feed.querySelector('[data-vmq]'); if(nq){ try{ nq.focus(); nq.setSelectionRange(qPos, qPos); }catch(_){} } }
     const nf = formId ? feed.querySelector('#' + formId) : null;
     if(nf) for(const k in keep){ const el = nf.querySelector('[name="' + k + '"]'); if(el){ if(el.type === 'checkbox') el.checked = keep[k]; else el.value = keep[k]; } }
     feed.scrollTop = scroll;
@@ -1553,6 +1813,7 @@ html.pc-oswin .vmc{top:38px}
     on('[data-act=remove-host]', () => removeHost(S.host));
     on('[data-act=back]', () => {
       if(S.screen === 'migrate'){ stopMigWatch(); S.mig = null; S.screen = 'vm'; }
+      else if(S.screen === 'vm' && S.fromAll){ S.screen = 'all'; S.vm = ''; }
       else if(S.screen === 'vm' || S.screen === 'create'){ S.screen = 'host'; S.vm = ''; S.create = null; }
       else if(S.screen === 'isos' || S.screen === 'access'){ S.screen = 'host'; S.iso = null; S.access = null; }
       else if(S.screen === 'find'){ S.screen = 'hosts'; S.find = null; }
@@ -1560,8 +1821,15 @@ html.pc-oswin .vmc{top:38px}
       paint();
     });
     on('[data-filter]', el => { S.filter = el.dataset.filter; paint(); });
-    on('[data-vm]', el => { S.vm = el.dataset.vm; S.screen = 'vm'; paint();
-      if(roleOf(S.host) === 'admin' && featuresOf(S.host).snapshots) loadSnaps(S.host, S.vm); });
+    const openVm = (pk, uuid) => { S.fromAll = S.screen === 'all'; if(pk) S.host = pk; S.vm = uuid; S.screen = 'vm'; paint();
+      if(roleOf(S.host) === 'admin' && featuresOf(S.host).snapshots) loadSnaps(S.host, S.vm); };
+    on('[data-vm]', el => openVm(el.dataset.vmHost, el.dataset.vm));
+    feed.querySelectorAll('tr[data-vm]').forEach(el => { el.onkeydown = (e) => { if(e.key === 'Enter' || e.key === ' '){ e.preventDefault(); openVm(el.dataset.vmHost, el.dataset.vm); } }; });
+    on('[data-leaf-vm]', el => openVm(el.dataset.leafHost, el.dataset.leafVm));
+    on('[data-twisty]', el => { const k = el.dataset.twisty; S.collapsed[k] = !S.collapsed[k]; paint(); });
+    on('[data-act=all]', () => { S.screen = 'all'; S.vm = ''; paint(); S.hosts.forEach(h => refresh(h.pubkey)); });
+    on('[data-sort]', el => { const k = el.dataset.sort; S.sort = S.sort.key === k ? { key: k, dir: -S.sort.dir } : { key: k, dir: 1 }; paint(); });
+    feed.querySelectorAll('[data-vmq]').forEach(el => { el.oninput = () => { S.q = el.value; paint(); }; });
     on('[data-power]', el => power(S.host, S.vm, el.dataset.power));
     on('[data-act=console]', () => { const v = ((S.data[S.host] || {}).vms || []).find(x => x.uuid === S.vm); if(v) openConsole(S.host, v); });
     on('[data-act=assign]', () => assign(S.host, S.vm));
@@ -1653,6 +1921,7 @@ html.pc-oswin .vmc{top:38px}
     _findHosts: findHosts,
     _settingsDelta: settingsDelta,
     _consoleShell: consoleShell,
+    _net: { netChoices, netDefault, netValue, parseNet },
     _style: () => STYLE,
   };
 })();

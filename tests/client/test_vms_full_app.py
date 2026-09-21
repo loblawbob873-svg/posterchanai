@@ -185,7 +185,10 @@ async def main(width):
                 else:
                     assert await b.js("!!document.querySelector('.vms-wide .vms-rail')"), ('desktop has a host rail', await b.js("document.querySelector('#feed').getBoundingClientRect().width"))
                 await b.until("[...document.querySelectorAll('.vms-vm')].some(e=>/alpha/.test(e.innerText))")
-                assert await b.js("/RAM MiB/.test(document.querySelector('#feed').innerText)"), 'admin sees capacity'
+                # The host summary (Proxmox-style tiles): VM count, CPU, memory and storage with their bars.
+                assert await b.js("(()=>{const t=(document.querySelector('.vmx-tiles')||{}).innerText||'';"
+                                  "return /8 cores/.test(t)&&/Memory/i.test(t)&&/Storage/i.test(t)&&/[01] running/.test(t)"
+                                  "&&document.querySelectorAll('.vmx-tiles .vms-bar').length===2;})()"), 'admin sees capacity'
                 assert await b.js("document.querySelector('.vms').scrollWidth <= innerWidth + 1"), 'no horizontal page scroll'
                 await b.js("document.querySelector('.vms-vm').click()")
                 await b.until("!!document.querySelector('[data-power=start]:not([disabled])')")
