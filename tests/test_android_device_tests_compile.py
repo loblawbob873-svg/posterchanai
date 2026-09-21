@@ -67,17 +67,33 @@ public class Message {
   public Message(String b, String a, byte[] image) { }
   public Message(String b, String a, android.graphics.Bitmap image) { }
   public void addMedia(byte[] raw, String mime, String name) { }
+  public void addMedia(byte[] raw, String mime, String contentId, String name) { }
   public void setSave(boolean save) { }
+  public static byte[] bitmapToByteArray(android.graphics.Bitmap b) { return null; }
 }
 """,
             "com/klinker/android/send_message/Transaction.java": """
 package com.klinker.android.send_message;
 public class Transaction {
   public static final long NO_THREAD_ID = -1;
+  public static class MessageInfo { public long token; public android.net.Uri location; public byte[] bytes; }
   public Transaction(android.content.Context c, Settings s) { }
   public void sendNewMessage(Message m) { }
   public Transaction setExplicitBroadcastForSentMms(android.content.Intent i) { return this; }
+  public static MessageInfo getBytes(android.content.Context c, boolean save, String from, String[] to,
+      com.google.android.mms.MMSPart[] parts, String subject) throws Exception { return null; }
 }
+""",
+            "com/google/android/mms/MMSPart.java": """
+package com.google.android.mms;
+public class MMSPart {
+  public String name = "", fileName = "", mimeType = "";
+  public byte[] data;
+}
+""",
+            "com/android/mms/MmsConfig.java": """
+package com.android.mms;
+public class MmsConfig { public static int getMaxMessageSize() { return 819200; } }
 """,
             "com/android/mms/transaction/PushReceiver.java": """
 package com.android.mms.transaction;

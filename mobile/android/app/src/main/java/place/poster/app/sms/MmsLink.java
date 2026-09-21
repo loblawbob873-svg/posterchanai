@@ -147,9 +147,11 @@ final class MmsLink {
      * MUST THIS ATTACHMENT GO AS A LINK? True exactly where the MMS transport REFUSES, and nowhere
      * else.
      *
-     * A PHOTO IS NOT ON THIS PATH. mmslib resizes an image for the carrier, so an ordinary camera
-     * picture still arrives as a real picture message in the recipient's own messaging app, which is
-     * what everybody expects of one; turning that into a link would be a regression dressed as a
+     * A PHOTO IS NOT ON THIS PATH. MmsSender scales and re-encodes it to fit this SIM's ceiling
+     * (MmsImageFit — NOT mmslib, which never resized anything: it compressed the full-resolution
+     * bitmap at quality 90 and the platform refused the PDU), so an ordinary camera picture still
+     * arrives as a real picture message in the recipient's own messaging app, which is what
+     * everybody expects of one; turning that into a link would be a regression dressed as a
      * feature. A VIDEO cannot be transcoded by that library at all — it is refused synchronously
      * above the SIM's ceiling (MmsSender.send) precisely because the alternative is an MMSC that
      * silently drops it — and that refusal was the whole dead end.
