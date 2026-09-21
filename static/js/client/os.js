@@ -288,7 +288,7 @@
 
   function apps(){
     const seen = new Set();
-    return $$('.sidebar .nav .nav-item[data-view]').map(btn => {
+    const sidebar = $$('.sidebar .nav .nav-item[data-view]').map(btn => {
       const view = btn.dataset.view;
       if(!view || seen.has(view)) return null;
       seen.add(view);
@@ -302,8 +302,13 @@
                      || String(btn.dataset.icon || '') };
       // EXTRAS are not sidebar rows, but two of them SHADOW one (#nav-music, #nav-golive) — so they
       // answer to the same switch. `__profile` has no row and is never hidden by this.
-    }).filter(Boolean).concat(EXTRAS.filter(x => x.when())
-                                    .map(x => ({ ...x, off: _navGone(document.getElementById(_EXTRA_ROW[x.view])) })));
+    }).filter(Boolean);
+    const extras = EXTRAS.filter(x => x.when())
+                         .map(x => ({ ...x, off: _navGone(document.getElementById(_EXTRA_ROW[x.view])) }));
+    /* `first` puts an extra AHEAD of the sidebar's apps — the installer on a live USB is the one
+     * thing on that desktop somebody booted it to do, so it is the first icon, not the last. Order
+     * decides where an icon lands only while the layout document has no opinion about it. */
+    return extras.filter(x => x.first).concat(sidebar, extras.filter(x => !x.first));
   }
   const _EXTRA_ROW = { __music: 'nav-music', __golive: 'nav-golive' };
   /* What the LAUNCHER draws: the desktop icons, the folders and the start menu. `apps()` is the
@@ -1116,6 +1121,13 @@
   const me = () => { try{ return (PC().me && PC().me()) || null; }catch(_){ return null; } };
 
   const EXTRAS = [
+    /* INSTALL POSTERCHANOS — on a LIVE boot only. `pcInstaller.isLive()` is the main process
+     * reading the kernel command line (`rd.live.image`, which only the live boot entries carry) and
+     * finding gentoo.sh; an installed machine answers false and never draws this icon. The window
+     * is osinstall.js, loaded on demand, over desktop/installer.js, which runs gentoo.sh. */
+    { view: '__installer', label: 'Install PosterChanOS', icon: '#i-drive', first: true,
+      act: () => openInstaller(),
+      when: () => { try{ return !!(window.pcInstaller && pcInstaller.isLive && pcInstaller.isLive()); }catch(_){ return false; } } },
     { view: '__profile', label: 'My Profile', icon: '#i-user', act: () => PC().openProfile && PC().openProfile(),
       when: () => !!(me() && PC().openProfile) },
     /* Music opens as a WINDOW, not as a bare "start playing" action — it is a library you browse,
@@ -1912,6 +1924,7 @@
     '__ossettings':    { view: '__ossettings',  label: 'System Settings' },
     '__tasks':         { view: '__tasks',       label: 'Task Manager' },
     '__remote':        { view: '__remote',      label: 'Remote Desktop' },
+    '__installer':     { view: '__installer',   label: 'Install PosterChanOS' },
   };
 
   /* …AND WHAT DRAWS IT. Declared HERE, beside the map it has to agree with, because
@@ -1927,6 +1940,7 @@
     '__ossettings': () => renderSystemSettings(),
     '__tasks':      () => _paintExtraInFeed('feed-taskmgr', paintTaskManager),
     '__remote':     () => _paintExtraInFeed('feed-remote',  paintRemoteDesktop),
+    '__installer':  () => _loadInstaller().then(() => _paintExtraInFeed('feed-installer', paintInstaller)),
   };
 
   /* Run one of the extracted painters against this window's own `#feed`.
@@ -2982,6 +2996,38 @@
       };
     };
     draw();
+  }
+
+  /* THE INSTALLER'S PAGE IS LOADED ONLY WHEN IT IS OPENED. It is needed on exactly one kind of
+   * machine — a live USB — so every other page load, on every platform, would pay for it for
+   * nothing. Same version query as this file, so a cached old copy cannot outlive an update. */
+  let _installerLoad = null;
+  function _loadInstaller(){
+    if(window.PCInstaller) return Promise.resolve(window.PCInstaller);
+    if(!_installerLoad) _installerLoad = new Promise((resolve, reject) => {
+      const me = document.querySelector('script[src*="/static/js/client/os.js"]');
+      const q = me && me.getAttribute('src').indexOf('?') >= 0 ? me.getAttribute('src').slice(me.getAttribute('src').indexOf('?')) : '';
+      const s = document.createElement('script');
+      s.src = '/static/js/client/osinstall.js' + q;
+      s.onload = () => window.PCInstaller ? resolve(window.PCInstaller) : reject(new Error('the installer page did not load'));
+      s.onerror = () => { _installerLoad = null; reject(new Error('the installer page could not be loaded')); };
+      (document.head || document.documentElement).appendChild(s);
+    });
+    return _installerLoad;
+  }
+  function paintInstaller(slot){
+    if(!window.PCInstaller){ slot.innerHTML = '<div class="os-pop-none">The installer could not be loaded.</div>'; return () => {}; }
+    return window.PCInstaller.paint(slot);
+  }
+  function openInstaller(){
+    const old=wins.find(x=>x.view==='__installer'); if(old){focusWin(old,false);return old;}
+    /* Direct, like the Task Manager: `__installer` is also the EXTRAS entry whose act() lands here. */
+    const w=openApp('__installer','Install PosterChanOS','#i-drive',null,true,true); if(!w)return null;
+    w.el.classList.add('osw-installer');
+    w.slot.innerHTML='<div class="pci-loading"><div class="spinner"></div></div>';
+    _loadInstaller().then(()=>{ if(!w.disposed) w.onClose=paintInstaller(w.slot); })
+      .catch(err=>{ w.slot.innerHTML='<div class="os-pop-none">'+enc(String((err&&err.message)||err))+'</div>'; });
+    return w;
   }
 
   function openTaskManager(){

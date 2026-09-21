@@ -9882,6 +9882,158 @@ audio.sms-att-img{min-width:220px}
    positions against; without it the session overlay escapes to the viewport. */
 .feed-taskmgr{padding:0!important;height:100%;overflow:hidden!important}
 .feed-remote{padding:0!important;height:100%;overflow:hidden!important;position:relative}
+/* ── Install PosterChanOS (osinstall.js) ─────────────────────────────────────────────────────────
+   The live USB's installer window. Built on the theme tokens only, so it is the same neon-on-glass
+   as the rest of the desktop in the default look and follows every other theme without a copy. */
+.feed-installer{padding:0!important;height:100%;overflow:hidden!important}
+.osw-installer .osw-body{padding:0!important;overflow:hidden}
+.pci{height:100%;min-height:480px;display:grid;grid-template-columns:230px 1fr;color:var(--text);
+  background:radial-gradient(1200px 600px at 110% -10%,rgba(var(--accent2-rgb),.10),transparent 60%),
+             radial-gradient(900px 500px at -10% 110%,rgba(var(--accent-rgb),.10),transparent 60%),var(--bg)}
+svg.ic.pci-ic{width:18px;height:18px;flex:none;stroke-width:1.9}
+.pci-rail{display:flex;flex-direction:column;gap:18px;padding:20px 14px;border-right:1px solid var(--line);
+  background:linear-gradient(180deg,rgba(var(--accent-rgb),.07),transparent 40%),var(--bg2)}
+.pci-brand{display:flex;align-items:center;gap:10px;padding:0 6px}
+.pci-brand img{width:36px;height:36px;border-radius:10px;box-shadow:0 0 18px rgba(var(--accent-rgb),.35)}
+.pci-brand span{display:flex;flex-direction:column;line-height:1.15}
+.pci-brand b{font-size:15px;letter-spacing:.3px}
+.pci-brand small{color:var(--neon);font-size:11px;text-transform:uppercase;letter-spacing:1.6px}
+.pci-steps{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:4px;counter-reset:none}
+.pci-steps li{display:flex;align-items:center;gap:11px;padding:9px 10px;border-radius:10px;color:var(--muted);font-weight:600;font-size:14px}
+.pci-steps li.on{color:var(--text);background:rgba(var(--accent-rgb),.13);box-shadow:inset 3px 0 var(--neon)}
+.pci-steps li.done{color:var(--text)}
+.pci-num{width:26px;height:26px;border-radius:50%;display:grid;place-items:center;font-size:12px;flex:none;
+  border:1px solid var(--line);background:var(--panel)}
+.pci-steps li.on .pci-num{border-color:var(--neon);color:var(--neon);box-shadow:0 0 12px rgba(var(--accent-rgb),.45)}
+.pci-steps li.done .pci-num{background:var(--neon);border-color:var(--neon);color:var(--bg)}
+.pci-steps li.done .pci-num svg.pci-ic{width:14px;height:14px;stroke-width:2.6}
+.pci-rail-foot{margin-top:auto;display:flex;gap:9px;align-items:flex-start;color:var(--muted);font-size:12px;line-height:1.45;padding:0 6px}
+.pci-main{display:flex;flex-direction:column;min-width:0;min-height:0}
+.pci-head{padding:26px 30px 8px}
+.pci-head h2{margin:0 0 6px;font-size:24px;line-height:1.2}
+.pci-head p{margin:0;color:var(--muted);font-size:14px;line-height:1.45}
+.pci-body{flex:1;min-height:0;overflow:auto;padding:14px 30px 18px;display:flex;flex-direction:column;gap:14px}
+.pci-foot{display:flex;align-items:center;justify-content:flex-end;gap:10px;flex-wrap:wrap;padding:14px 30px;
+  border-top:1px solid var(--line);background:var(--panel)}
+.pci-why{margin-right:auto;color:var(--muted);font-size:13px}
+.pci-hint{margin-right:auto;color:var(--muted);font-size:13px}
+.pci-loading{display:flex;align-items:center;justify-content:center;gap:12px;color:var(--muted);padding:40px;flex:1}
+.pci-empty{grid-column:1/-1;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:6px;text-align:center;padding:40px;color:var(--muted)}
+.pci-empty svg.pci-ic{width:48px;height:48px;color:var(--neon)}
+/* welcome */
+.pci-hero{display:grid;grid-template-columns:96px 1fr;gap:22px;align-items:start;padding:18px;border-radius:16px;
+  border:1px solid var(--line);background:var(--panel)}
+.pci-hero-mark{width:96px;height:96px;border-radius:24px;display:grid;place-items:center;color:#fff;
+  background:linear-gradient(135deg,var(--neon),var(--neon2));box-shadow:0 0 34px rgba(var(--accent-rgb),.35)}
+.pci-hero-mark svg.pci-ic{width:52px;height:52px;stroke-width:1.5}
+.pci-points{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:11px}
+.pci-points li{display:flex;gap:10px;align-items:flex-start;line-height:1.45;font-size:14px}
+.pci-points li .pci-ic{color:var(--neon);margin-top:1px}
+.pci-points li:last-child .pci-ic{color:var(--amber)}
+.pci-checks{display:flex;flex-direction:column;gap:8px}
+.pci-check,.pci-note{display:flex;gap:10px;align-items:flex-start;padding:11px 13px;border-radius:12px;font-size:13px;line-height:1.45;
+  border:1px solid var(--line);background:var(--panel)}
+.pci-check.ok .pci-ic{color:var(--green)}
+.pci-check.warn,.pci-note.warn{border-color:rgba(255,207,43,.45)}.pci-check.warn .pci-ic{color:var(--amber)}
+.pci-check.bad,.pci-note.bad{border-color:var(--danger)}.pci-check.bad .pci-ic,.pci-note.bad .pci-ic{color:var(--danger)}
+.pci-note .pci-ic{color:var(--neon)}
+/* disks */
+.pci-toolbar{display:flex;justify-content:flex-end}
+.pci-toolbar .btn{display:inline-flex;align-items:center;gap:6px}
+.pci-disks{display:flex;flex-direction:column;gap:10px}
+.pci-disk{display:grid;grid-template-columns:auto 44px 1fr auto;gap:14px;align-items:center;padding:14px 16px;border-radius:14px;
+  border:1px solid var(--line);background:var(--panel);cursor:pointer;transition:border-color .15s,box-shadow .15s,background .15s}
+.pci-disk:hover{border-color:rgba(var(--accent-rgb),.6)}
+.pci-disk.on{border-color:var(--neon);box-shadow:0 0 0 1px var(--neon),0 0 22px rgba(var(--accent-rgb),.22);background:rgba(var(--accent-rgb),.08)}
+.pci-disk.off{opacity:.55;cursor:not-allowed}
+.pci-disk input{accent-color:var(--neon);width:17px;height:17px}
+.pci-disk-ic{width:44px;height:44px;border-radius:12px;display:grid;place-items:center;background:rgba(var(--accent-rgb),.12);color:var(--neon)}
+.pci-disk-ic svg.pci-ic{width:24px;height:24px}
+.pci-disk-main{display:flex;flex-direction:column;gap:4px;min-width:0}
+.pci-disk-main b{font-size:15px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.pci-disk-main small{color:var(--muted);font-size:12px}
+.pci-parts{display:flex;flex-wrap:wrap;gap:5px}
+.pci-parts i{font-style:normal;font-size:11px;padding:2px 8px;border-radius:999px;border:1px solid var(--line);color:var(--muted)}
+.pci-parts i.empty{border-style:dashed}
+.pci-disk-why{font-size:12px;color:var(--amber)}
+.pci-disk-tag{font-size:12px;color:var(--neon)}
+.pci-size{font-size:18px;font-weight:700;white-space:nowrap}
+.pci-modes{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+.pci-modes label{display:grid;grid-template-columns:auto 1fr;column-gap:10px;row-gap:3px;padding:12px 14px;border-radius:12px;
+  border:1px solid var(--line);background:var(--panel);cursor:pointer}
+.pci-modes label.on{border-color:var(--neon);background:rgba(var(--accent-rgb),.08)}
+.pci-modes input{grid-row:span 2;accent-color:var(--neon)}
+.pci-modes small{color:var(--muted);font-size:12px;line-height:1.4}
+/* security */
+.pci-form{display:flex;flex-direction:column;gap:12px;max-width:560px}
+.pci-field{display:flex;flex-direction:column;gap:6px;font-size:13px;font-weight:600}
+.pci-field small{color:var(--muted);font-weight:400}
+.pci-field .input{width:100%}
+.pci-pw{display:flex;gap:6px}
+.pci-pw .input{flex:1}
+.pci-meter{height:5px;border-radius:5px;background:var(--line);overflow:hidden;margin-top:-4px}
+.pci-meter i{display:block;height:100%;width:0;background:var(--muted);transition:width .2s,background .2s}
+.pci-meter.bad i{background:var(--danger)}.pci-meter.warn i{background:var(--amber)}.pci-meter.ok i{background:var(--green)}
+.pci-meter-t{color:var(--muted);font-size:12px;margin-top:-6px;min-height:14px}
+.pci-adv summary{cursor:pointer;color:var(--muted);font-size:13px;padding:4px 0}
+.pci-adv[open] summary{margin-bottom:8px}
+/* summary */
+.pci-sum{display:grid;grid-template-columns:max-content 1fr;gap:10px 22px;margin:0;padding:18px;border-radius:14px;
+  border:1px solid var(--line);background:var(--panel)}
+.pci-sum dt{color:var(--muted);font-size:13px}
+.pci-sum dd{margin:0;font-size:14px;overflow-wrap:anywhere}
+.pci-danger{padding:16px 18px;border-radius:14px;border:1px solid var(--danger);
+  background:linear-gradient(135deg,rgba(214,31,78,.12),rgba(214,31,78,.03))}
+.pci-danger-h{display:flex;gap:9px;align-items:center;color:var(--danger);font-size:15px}
+.pci-danger p{margin:8px 0 12px;font-size:13px;line-height:1.5;color:var(--text)}
+.pci-danger code{padding:1px 7px;border-radius:6px;background:rgba(0,0,0,.28);color:var(--text);font-weight:700}
+.pci-danger .input{width:100%;max-width:280px;font-family:ui-monospace,SFMono-Regular,Menlo,monospace}
+/* install */
+.pci-progress{padding:18px;border-radius:14px;border:1px solid var(--line);background:var(--panel)}
+.pci-bar{height:12px;border-radius:12px;background:rgba(var(--accent-rgb),.12);overflow:hidden;position:relative}
+.pci-bar i{display:block;height:100%;width:0;border-radius:12px;transition:width .6s ease;
+  background:linear-gradient(90deg,var(--neon),var(--neon2));box-shadow:0 0 16px rgba(var(--accent-rgb),.5)}
+.pci-progress.running .pci-bar i{background-size:200% 100%;animation:pciFlow 2.4s linear infinite;
+  background-image:linear-gradient(90deg,var(--neon),var(--neon2),var(--neon))}
+.pci-progress.done .pci-bar i{background:var(--green)}
+.pci-progress.failed .pci-bar i{background:var(--danger);box-shadow:none}
+@keyframes pciFlow{from{background-position:0 0}to{background-position:-200% 0}}
+.pci-bar-row{display:flex;justify-content:space-between;gap:12px;margin-top:10px;font-size:13px;color:var(--muted)}
+.pci-bar-row b{color:var(--text)}
+.pci-phases{list-style:none;margin:0;padding:0;display:grid;grid-template-columns:repeat(5,1fr);gap:8px}
+.pci-phases li{display:flex;flex-direction:column;align-items:center;gap:7px;text-align:center;font-size:12px;color:var(--muted);line-height:1.3}
+.pci-dot{width:28px;height:28px;border-radius:50%;display:grid;place-items:center;border:2px solid var(--line);background:var(--panel)}
+.pci-dot svg.pci-ic{width:14px;height:14px;stroke-width:2.6}
+.pci-phases li.active{color:var(--text)}
+.pci-phases li.active .pci-dot{border-color:var(--neon);box-shadow:0 0 14px rgba(var(--accent-rgb),.55);animation:pciPulse 1.4s ease-in-out infinite}
+.pci-phases li.done{color:var(--text)}
+.pci-phases li.done .pci-dot{border-color:var(--green);background:var(--green);color:var(--bg)}
+.pci-phases li.failed .pci-dot{border-color:var(--danger);background:var(--danger);color:#fff}
+@keyframes pciPulse{50%{box-shadow:0 0 4px rgba(var(--accent-rgb),.25)}}
+.pci-result{display:flex;gap:14px;align-items:flex-start;padding:16px 18px;border-radius:14px;border:1px solid var(--line);background:var(--panel)}
+.pci-result>svg.pci-ic{width:30px;height:30px}
+.pci-result.ok{border-color:var(--green)}.pci-result.ok>.pci-ic{color:var(--green)}
+.pci-result.bad{border-color:var(--danger)}.pci-result.bad>.pci-ic{color:var(--danger)}
+.pci-result>div{min-width:0;flex:1}
+.pci-result p{margin:6px 0 0;color:var(--muted);font-size:13px;line-height:1.5}
+.pci-tail,.pci-log{margin:10px 0 0;padding:10px 12px;border-radius:10px;background:rgba(0,0,0,.35);border:1px solid var(--line);
+  font:12px/1.5 ui-monospace,SFMono-Regular,Menlo,monospace;color:var(--text);white-space:pre-wrap;overflow-wrap:anywhere}
+.pci-log{max-height:260px;overflow:auto}
+.pci-logbox{display:flex;flex-direction:column;align-items:flex-start}
+.pci-foot .btn{display:inline-flex;align-items:center;gap:7px}
+.pci .btn[disabled]{opacity:.45;cursor:not-allowed}
+@media (max-width:720px){
+  .pci{grid-template-columns:1fr;grid-template-rows:auto 1fr}
+  .pci-rail{flex-direction:row;align-items:center;padding:10px 16px;border-right:0;border-bottom:1px solid var(--line);overflow-x:auto}
+  .pci-brand small,.pci-rail-foot,.pci-steps li span:not(.pci-num){display:none}
+  .pci-steps{flex-direction:row}
+  .pci-head,.pci-body,.pci-foot{padding-left:16px;padding-right:16px}
+  .pci-hero{grid-template-columns:1fr}.pci-hero-mark{width:64px;height:64px}
+  .pci-disk{grid-template-columns:auto 1fr auto}.pci-disk-ic{display:none}
+  .pci-modes{grid-template-columns:1fr}
+  .pci-phases{grid-template-columns:1fr;justify-items:start}.pci-phases li{flex-direction:row}
+  .pci-sum{grid-template-columns:1fr;gap:2px}.pci-sum dd{margin-bottom:8px}
+}
 .os-settings{display:grid;grid-template-columns:210px 1fr;height:100%;min-height:520px;background:#090b11;color:var(--text)}
 .os-set-nav{padding:18px 12px;border-right:1px solid var(--line);background:#0c0f16;box-shadow:8px 0 30px #0002}
 .os-set-title{display:flex;gap:8px;align-items:center;font-size:15px;margin:2px 8px 20px}
