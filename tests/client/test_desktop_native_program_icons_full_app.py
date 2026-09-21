@@ -174,3 +174,67 @@ def test_an_installed_program_is_put_on_the_desktop_started_from_it_and_kept():
         assert not await b.js('__errors'), await b.js('__errors')
 
     asyncio.run(desktop.with_browser('online', '', check, MACHINE))
+
+
+# A Steam library entry exactly as Steam writes it: the desktop-file id is the GAME'S NAME, so it
+# carries a space and an apostrophe, and the program is the Steam client with a steam:// URL.
+STEAM_GAME = "Baldur's Gate 3"
+STEAM_MACHINE = MACHINE.replace(
+    "{id:'steam',name:'Steam',comment:'Games',argv:['/usr/bin/steam'],match:'steam',group:'Games'}]})};",
+    "{id:'steam',name:'Steam',comment:'Games',argv:['/usr/bin/steam'],match:'steam',group:'Games'},"
+    "{id:\"" + STEAM_GAME + "\",name:\"" + STEAM_GAME + "\",comment:'Play this game on Steam',"
+    "argv:['steam','steam://rungameid/1086940'],match:'steam_app_1086940',group:'Games'}]})};")
+assert STEAM_MACHINE != MACHINE
+
+
+@pytest.mark.skipif(not Path('/opt/google/chrome/chrome').exists(), reason='Chrome required')
+def test_a_steam_game_from_the_start_menu_can_be_put_on_the_desktop():
+    """"Unable to add Steam Game entries in the Start Menu to Desktop."
+
+    Two things stood between a Steam game and the desktop, both silent: the key pattern refused a
+    space, so the start menu drew NO "Add to desktop" row for it; and the popup's action crossed
+    main.js's character filter with its apostrophe stripped, naming a program that does not exist.
+    The action is checked against the SAME filter main.js applies, so the desktop sees what it would."""
+    key = 'app:' + STEAM_GAME
+    find = "[...document.querySelectorAll('%s')].find(x=>x.dataset.%s===" + json.dumps(key) + ")"
+    menu_row = find % ('#os-startmenu .os-app', 'app')
+    desk_icon = find % ('#os-root .os-icons .os-icon', 'view')
+
+    async def check(b):
+        await desktop.login(b)
+        origin = await b.js('location.origin')
+        await b.call('Page.navigate', {'url': origin + '/index.html?pcpopup=start'})
+        await b.until('!!' + menu_row)
+        await b.js(menu_row + ".dispatchEvent(new MouseEvent('contextmenu',{bubbles:true,clientX:40,clientY:40}))")
+        await b.until("[...document.querySelectorAll('.os-ctx button')].length>0")
+        rows = await b.js("[...document.querySelectorAll('.os-ctx button')].map(x=>x.textContent.trim())")
+        assert 'Add to desktop' in rows, rows
+        await b.js("[...document.querySelectorAll('.os-ctx button')].find(x=>x.textContent.trim()==='Add to desktop').click()")
+        await b.until('__acts.length>0')
+        # What main.js's pc:popup:act keeps of it — anything outside this set is dropped there.
+        sent = await b.js('__acts[0]')
+        wire = await b.js("__acts[0].replace(/[^a-z0-9_:.@%-]/gi,'')")
+        assert wire == sent, 'main.js would strip part of this action: ' + sent
+
+        await b.call('Page.navigate', {'url': origin + '/index.html'})
+        await b.until("!!document.body && document.body.classList.contains('os-on') && !!document.querySelector('#os-root .os-icons')")
+        await b.until('__wmListeners.length>0')
+        for _ in range(40):
+            await b.js("__wmListeners.forEach(f=>f({name:'tick',payload:'pc:act:'+" + json.dumps(wire) + "}))")
+            await asyncio.sleep(.3)
+            if await b.js('!!' + desk_icon):
+                break
+        assert await b.js('!!' + desk_icon), await b.js("document.querySelector('#os-root').innerText.slice(0,600)")
+        tile = await b.js("(()=>{const t=" + desk_icon + ";return {label:t.querySelector('span').textContent.trim(),"
+                          "missing:t.classList.contains('is-missing')}})()")
+        assert tile == {'label': STEAM_GAME, 'missing': False}, tile
+        await b.js(desk_icon + '.click()')
+        await b.until('__launches.length===1')
+        assert await b.js('__launches[0]') == ['steam', 'steam://rungameid/1086940']
+        await b.until("__events.some(e=>e.kind===30078)")
+        doc = await b.js("""(async()=>{const ev=__events.find(e=>e.kind===30078);
+            return JSON.parse(await __PC.nip44dec(__PC.me().pubkey, ev.content))})()""")
+        assert [n['key'] for n in doc.get('native', [])] == [key], doc
+        assert not await b.js('__errors'), await b.js('__errors')
+
+    asyncio.run(desktop.with_browser('online', '', check, STEAM_MACHINE))

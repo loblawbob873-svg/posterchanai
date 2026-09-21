@@ -344,15 +344,54 @@ class NativeProgramTests(unittest.TestCase):
         self.assertEqual(norm(doc)["folders"][0]["views"], ["chess", "app:steam"])
 
     def test_the_document_is_bounded_and_validated(self):
-        d = norm({"native": [{"key": "app:ok", "name": "N" * 500}, {"key": "notes"}, {"key": "app:bad key"},
+        d = norm({"native": [{"key": "app:ok", "name": "N" * 500}, {"key": "notes"}, {"key": "app:bad\nkey"},
                              {"key": "app:ok", "name": "dup"}, "junk", None]
                             + [{"key": f"app:p{i}"} for i in range(100)]})
         self.assertEqual(d["native"][0], {"key": "app:ok", "name": "N" * 80})
         keys = [n["key"] for n in d["native"]]
         self.assertNotIn("notes", keys, "a view is never a program")
-        self.assertNotIn("app:bad key", keys)
+        self.assertNotIn("app:bad\nkey", keys, "a control character is the one thing a key cannot hold")
         self.assertEqual(keys.count("app:ok"), 1)
         self.assertEqual(len(keys), 48)
+
+    # What Steam actually writes: `~/.local/share/applications/<the game's name>.desktop`, whose
+    # desktop-file id is that name -- spaces, apostrophes, a colon, a registered mark.
+    STEAM_GAMES = ["app:Portal 2", "app:Baldur's Gate 3", "app:DOOM: The Dark Ages",
+                   "app:Tom Clancy's Rainbow Six® Siege"]
+
+    def test_a_steam_game_can_be_put_on_the_desktop(self):
+        """"Unable to add Steam Game entries in the Start Menu to Desktop": the key pattern refused
+        a space, so the start menu offered no "Add to desktop" for them and the document dropped them."""
+        machine = [{"id": k, "name": k[4:], "argv": ["steam", "steam://rungameid/620"]}
+                   for k in self.STEAM_GAMES]
+        doc = {"native": [{"key": k, "name": k[4:]} for k in self.STEAM_GAMES]}
+        self.assertEqual([n["key"] for n in norm(doc)["native"]], self.STEAM_GAMES)
+        lay = native_layout(doc, machine)
+        for k in self.STEAM_GAMES:
+            self.assertIn(k, lay["items"])
+            self.assertEqual((lay["byView"][k]["missing"], lay["byView"][k]["label"]), (False, k[4:]))
+
+    def test_a_steam_game_pinned_to_the_taskbar_survives_a_save(self):
+        pins = ["app:" + k for k in self.STEAM_GAMES] + ["view:notes", "view:bad view", "app:x\ny"]
+        self.assertEqual(norm({"pins": pins})["pins"], ["app:" + k for k in self.STEAM_GAMES] + ["view:notes"])
+
+    def test_a_popup_action_survives_mains_character_filter(self):
+        """The start menu is a popup: its choice crosses to the desktop window through main.js, whose
+        `pc:popup:act` keeps only [a-z0-9_:.@%-]. encodeURIComponent leaves ' ( ) ! * ~ alone, so an
+        apostrophe was STRIPPED and "Baldur's Gate 3" arrived as a program that does not exist."""
+        main = Path(ROOT, "desktop", "main.js").read_text(encoding="utf-8")
+        m = re.search(r"const a = String\(action \|\| ''\)\.replace\((/\[\^[^/]+/gi), ''\)", main)
+        self.assertTrue(m, "main.js's pc:popup:act filter moved — re-point this test")
+        out = _node(f"""
+          const filt = {m.group(1)};
+          const keys = {json.dumps(self.STEAM_GAMES)};
+          console.log(JSON.stringify(keys.map(k => {{
+            const wire = ('desk-add:' + PCOS.__actEncode(k + '\\n' + k.slice(4))).replace(filt, '');
+            const rest = wire.slice('desk-add:'.length);
+            return decodeURIComponent(rest);
+          }})));
+        """)
+        self.assertEqual(out, [k + "\n" + k[4:] for k in self.STEAM_GAMES])
 
     def test_a_document_without_programs_is_unchanged(self):
         self.assertEqual(norm({})["native"], [])

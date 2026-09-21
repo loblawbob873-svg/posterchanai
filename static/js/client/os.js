@@ -66,13 +66,22 @@
    * Only the ACTIONS differ here, because this window is 420px and every one of them opens
    * something that belongs on the desktop behind it. */
   let _menuInPopup = false;
+  /* PERCENT-ENCODE EVERYTHING main.js WOULD STRIP. `encodeURIComponent` leaves `! ' ( ) * ~` as they
+   * are, and `pc:popup:act` keeps only `[a-z0-9_:.@%-]` -- so a Steam game called "Baldur's Gate 3"
+   * crossed the process boundary as "Baldurs Gate 3", named no .desktop entry, and was put on the
+   * desktop as a program that "is not installed" (or launched as "no such app"). Encoding those five
+   * too costs nothing: decodeURIComponent reads %27 exactly as it reads '. */
+  function _actEncode(arg){
+    return encodeURIComponent(String(arg)).replace(/[!'()*~]/g,
+      c => '%' + c.charCodeAt(0).toString(16).toUpperCase());
+  }
   function _menuAct(kind, arg){
     if(!_menuInPopup) return false;
     try{
       if(window.pcPopup && pcPopup.act){
         /* Percent-encoded: a search query or a file path carries spaces, slashes and punctuation,
            and this crosses a process boundary as one string. */
-        _popupTell('act', arg == null || arg === '' ? kind : kind + ':' + encodeURIComponent(String(arg)));
+        _popupTell('act', arg == null || arg === '' ? kind : kind + ':' + _actEncode(arg));
         return true;
       }
     }catch(_){ }
@@ -389,7 +398,17 @@
    *            still say what it was. A device with no machine to launch on (a browser, the APK)
    *            draws none of them and CARRIES them — see `ghosts` in computeLayout. */
   const BLANK = () => ({ v: 1, folders: [], order: [], hidden: [], pos: {}, bg: '', widgets: [], pins: [], native: [] });
-  const NATIVE_RE = /^app:[A-Za-z0-9_.:+@/-]+$/;
+  /* A DESKTOP-FILE ID IS A FILE NAME, and a file name may hold a space. This used to be
+   * `[A-Za-z0-9_.:+@/-]+`, which fits `firefox-bin` and `org.telegram.desktop` and refuses every
+   * Steam game: Steam writes `~/.local/share/applications/<the game's own name>.desktop` -- "Portal
+   * 2.desktop", "Baldur's Gate 3.desktop" -- so the id carries spaces, apostrophes, colons, even a
+   * "®". The start menu then drew no "Add to desktop" row for them at all, "Add a program…" did not
+   * list them, and a taskbar pin was dropped by _normDoc on the next save: "Unable to add Steam
+   * Game entries in the Start Menu to Desktop". Every place this key reaches markup goes through
+   * `enc()`, it is never a CSS selector or a path, and the scan is what resolves it to something
+   * runnable -- so the only characters worth refusing are the CONTROL characters (a newline is the
+   * separator `desk-add` rides on). */
+  const NATIVE_RE = /^app:[^\x00-\x1f\x7f]{1,116}$/;
   const NATIVE_MAX = 48;
 
   let _doc = null;        // the layout as last read/written; null = nothing read yet (draw defaults)
@@ -467,7 +486,9 @@
     const seenPin = new Set();
     for(const p of (Array.isArray(o && o.pins) ? o.pins : [])){
       const s = str(p, 180);
-      if(!/^(view|app):[A-Za-z0-9_.:+@/-]+$/.test(s) || seenPin.has(s)) continue;
+      // A program's pin carries its desktop-file id, which may hold a space -- see NATIVE_RE.
+      const pinOk = /^view:[A-Za-z0-9_.:+@/-]+$/.test(s) || /^app:[^\x00-\x1f\x7f]+$/.test(s);
+      if(!pinOk || seenPin.has(s)) continue;
       seenPin.add(s); out.pins.push(s);
       if(out.pins.length >= 24) break;
     }
@@ -10908,6 +10929,7 @@
                    * rather than inferred from a rendered desktop. */
                   __layout: (list, doc, machine) => computeLayout(list, doc, machine),
                   __normDoc: (d) => _normDoc(d), __orderNow: (lay) => _orderNow(lay),
+                  __actEncode: (s) => _actEncode(s),
                   __fitIcons: (items,pos,maxX,maxY) => fitIconPositions(items,pos,maxX,maxY),
                   /* WHERE AND HOW BIG A WINDOW OPENS, and the compositor rectangle the size
                      hint is derived against. Both are exposed for the same reason as __layout: a
