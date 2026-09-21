@@ -5266,10 +5266,72 @@ hibernation() {
 	echo "AllowSuspendThenHibernate=yes" >>/etc/systemd/sleep.conf
 	echo "HibernateState=disk" >>/etc/systemd/sleep.conf
 	echo "HibernateMode=platform" >>/etc/systemd/sleep.conf
-	echo "HibernateDelaySec=500" >>/etc/systemd/sleep.conf
-	echo "HandleLidSwitch=suspend-then-hibernate" >>/etc/systemd/logind.conf
-	echo "HandleLidSwitchExternalPower=suspend-then-hibernate" >>/etc/systemd/logind.conf
-	unlink /usr/lib/systemd/system/systemd-suspend.service
+	# What the lid, the suspend key and the desktop's Sleep button do is the SLEEP POLICY, written as
+	# drop-ins below rather than appended to logind.conf: an append on every run stacked duplicate
+	# lines, and a drop-in is one file this owns and rewrites. The default once hibernation works is
+	# suspend-then-hibernate after an hour; System Settings → Power changes the delay.
+	#
+	# systemd-suspend.service is no longer unlinked. Removing it made plain `systemctl suspend` fail
+	# outright, which is what the desktop's Sleep button ran -- so "Sleep" was dead on exactly the
+	# machines that had asked for the better behaviour, and "never hibernate" had nothing to fall to.
+	PC_SLEEP_NO_SWAP_CHECK=1 sleepPolicy "${PC_HIBERNATE_DELAY:-3600}"
+}
+
+# THE SLEEP POLICY: what closing the lid, pressing the suspend key and the desktop's Sleep button do.
+# `sleep-policy <seconds>` — the delay before a sleeping machine hibernates; 0 = never (plain suspend).
+# Root, non-interactive and idempotent: it is the backend for System Settings → Power → Hibernation
+# (desktop/power.js setSleepPolicy, through `sudo -n`), and it REWRITES its two drop-ins every time.
+# PC_SYSTEMD_ETC / PC_SYSTEMD_LIB / PC_PROC_SWAPS exist so tests/test_sleep_policy.py can run it
+# against a scratch tree.
+sleepPolicy() {
+	if [ "$(id -u)" != "0" ] && [ -z "${PC_SYSTEMD_ETC:-}" ]; then
+		echo "the sleep policy needs administrator access" >&2; return 1
+	fi
+	local delay="${1:-3600}" mode=suspend-then-hibernate etc="${PC_SYSTEMD_ETC:-/etc/systemd}"
+	case "$delay" in
+		''|*[!0-9]*) echo "sleep-policy: the delay must be whole seconds (0 = never hibernate)" >&2; return 1 ;;
+	esac
+	if [ "$delay" -gt 604800 ]; then
+		echo "sleep-policy: a delay longer than a week is not a delay" >&2; return 1
+	fi
+	[ "$delay" = 0 ] && mode=suspend
+	# Suspend-then-hibernate on a machine with nowhere to write the image is a lid that does nothing.
+	if [ "$mode" != suspend ] && [ -z "${PC_SLEEP_NO_SWAP_CHECK:-}" ] \
+	   && [ "$(awk 'NR>1' "${PC_PROC_SWAPS:-/proc/swaps}" 2>/dev/null | wc -l)" = 0 ]; then
+		echo "sleep-policy: there is no swap to hibernate into — enable hibernation first" >&2; return 1
+	fi
+	mkdir -p "$etc/sleep.conf.d" "$etc/logind.conf.d" || return 1
+	{
+		echo "# PosterChanOS: System Settings → Power → Hibernation. Rewritten on every change."
+		echo "[Sleep]"
+		echo "AllowSuspend=yes"
+		echo "AllowHibernation=yes"
+		echo "AllowSuspendThenHibernate=yes"
+		if [ "$delay" != 0 ]; then echo "HibernateDelaySec=$delay"; fi
+	} >"$etc/sleep.conf.d/90-posterchan.conf" || return 1
+	{
+		echo "# PosterChanOS: System Settings → Power → Hibernation. Rewritten on every change."
+		echo "[Login]"
+		echo "HandleLidSwitch=$mode"
+		echo "HandleLidSwitchExternalPower=$mode"
+		echo "HandleSuspendKey=$mode"
+	} >"$etc/logind.conf.d/90-posterchan.conf" || return 1
+	# "Never hibernate" is plain suspend, which needs the unit an older installer unlinked. Put it back
+	# in /etc (never into the package's /usr/lib) exactly as systemd ships it.
+	if [ "$mode" = suspend ] && [ ! -e "${PC_SYSTEMD_LIB:-/usr/lib/systemd/system}/systemd-suspend.service" ] \
+	   && [ ! -e "$etc/system/systemd-suspend.service" ]; then
+		mkdir -p "$etc/system"
+		printf '%s\n' '[Unit]' 'Description=System Suspend' \
+			'Documentation=man:systemd-suspend.service(8)' 'DefaultDependencies=no' \
+			'Requires=sleep.target' 'After=sleep.target' '' '[Service]' 'Type=oneshot' \
+			'ExecStart=/usr/lib/systemd/systemd-sleep suspend' >"$etc/system/systemd-suspend.service"
+		systemctl daemon-reload >/dev/null 2>&1 || true
+	fi
+	# logind is Type=notify-reload: a reload re-reads logind.conf.d without ending any session. In an
+	# install chroot there is no logind to ask, and the next boot reads the files anyway.
+	systemctl reload systemd-logind >/dev/null 2>&1 || echo "logind will apply this at the next boot" >&2
+	if [ "$mode" = suspend ]; then echo "sleep policy: plain suspend (never hibernate)"
+	else echo "sleep policy: suspend, then hibernate after ${delay}s"; fi
 }
 
 # Enable hibernation on an already-installed PosterChanOS machine. This is also the backend for
@@ -5620,6 +5682,9 @@ elif [ "$1" = "accounts" ]; then
 	accounts
 elif [ "$1" = "hibernate" ]; then
 	hibernateSetup
+elif [ "$1" = "sleep-policy" ]; then
+	# System Settings → Power → Hibernation: seconds from sleep to hibernate, 0 = never. See sleepPolicy.
+	sleepPolicy "$2"
 elif [ "$1" = "bootloader" ]; then
 	# This entry is invoked from inside the target chroot by finalizeInstall. The script's historical
 	# top-level default is /tmp/install for host-side operations; retaining it here makes Plymouth

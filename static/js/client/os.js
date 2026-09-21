@@ -2566,6 +2566,33 @@
 
   let _osSettingsPage='displays';
 
+  /* POWER → HIBERNATION → WHEN THE COMPUTER SLEEPS. Shown only once hibernation is ready, because
+   * before that the only honest answer is "it sleeps". The choice is the delay between sleeping and
+   * hibernating (systemd's HibernateDelaySec), and "Never" is plain sleep. The value shown is read
+   * back from the machine's own configuration (power.js sleepPolicy), so a delay somebody set by
+   * hand — the old installer wrote 500 seconds — appears as itself rather than as a wrong option. */
+  function _sleepDelayLabel(s){
+    const n = Number(s) || 0;
+    if(n <= 0) return 'never';
+    if(n % 3600 === 0) return (n / 3600) + (n === 3600 ? ' hour' : ' hours');
+    if(n % 60 === 0) return (n / 60) + ' minutes';
+    return n + ' seconds';
+  }
+  function _sleepPolicyRow(sp){
+    const p = sp || {};
+    const cur = p.mode === 'suspend' ? 0 : Number(p.delaySec) || 3600;
+    const choices = (Array.isArray(p.choices) && p.choices.length ? p.choices : [0, 1800, 3600, 7200, 10800]).slice();
+    if(!choices.includes(cur)) choices.push(cur);
+    const opts = choices.filter(n => n > 0).sort((a, b) => a - b)
+      .map(n => `<option value="${n}" ${n === cur ? 'selected' : ''}>Sleep, then hibernate after ${_sleepDelayLabel(n)}</option>`)
+      .concat([`<option value="0" ${cur === 0 ? 'selected' : ''}>Sleep only — never hibernate</option>`]).join('');
+    const why = p.canChange === false
+      ? 'Changing this needs the latest PosterChanOS update (Settings → Updates).'
+      : 'Closing the lid, the sleep key and Sleep in the power menu all do this.';
+    return `<section class="os-hibernate os-setting-row os-set-control"><div><b>When the computer sleeps</b><span>${why}</span></div>
+      <select data-sleep-delay data-was="${cur}" aria-label="When the computer sleeps" ${p.canChange === false ? 'disabled' : ''}>${opts}</select></section>`;
+  }
+
   /* SYSTEM SETTINGS → SEARCH. One row per source: a switch and two arrows. The ORDER is the order of
    * the taskbar Search window's sections, so "show my files first" is "move Files on this computer
    * to the top". Written straight away (no Save button on a list of switches), and a write that is
@@ -2792,7 +2819,9 @@
         ${power.profiles&&power.profiles.available?`<section class="os-setting-row os-set-control"><div><b>Power mode</b><span>Balance speed, heat, and battery use.</span></div><select data-power-profile aria-label="Power mode">${power.profiles.list.map(n=>`<option ${n===power.profiles.active?'selected':''}>${enc(n)}</option>`).join('')}</select></section>`:''}
         <section class="os-setting-row os-set-control"><div><b>Keep awake</b><span>Prevent automatic display-off during presentations and long tasks.</span></div><label class="os-set-switch"><input data-keep-awake type="checkbox" ${power.keepAwake?'checked':''}><span>${power.keepAwake?'On':'Off'}</span></label></section>
         <section class="os-hibernate os-setting-row"><div><b>Hibernation</b><span>${power.hibernateConfigured?'Enabled and ready to use.':'Save open apps to disk before the computer powers down.'}</span></div>
-          ${power.hibernateConfigured?'<span class="os-set-ready">Ready</span>':'<button class="btn" data-enable-hibernate>Enable hibernation</button>'}</section>        <section class="os-hibernate os-setting-row os-set-control"><div><b>Turn display off when idle</b><span>The computer stays running; only its displays switch off.</span></div>
+          ${power.hibernateConfigured?'<span class="os-set-ready">Ready</span>':'<button class="btn" data-enable-hibernate>Enable hibernation</button>'}</section>
+        ${power.hibernateConfigured?_sleepPolicyRow(power.sleepPolicy):''}
+        <section class="os-hibernate os-setting-row os-set-control"><div><b>Turn display off when idle</b><span>The computer stays running; only its displays switch off.</span></div>
           <select data-idle-timeout aria-label="Display idle timeout">
             ${[[60,'1 minute'],[120,'2 minutes'],[300,'5 minutes'],[600,'10 minutes'],[1800,'30 minutes'],[0,'Never']].map(([n,label])=>`<option value="${n}" ${Number(power.idleSeconds)===n?'selected':''}>${label}</option>`).join('')}
           </select></section></section>
@@ -2922,6 +2951,17 @@
         hib.disabled=true;hib.textContent='Configuring…';
         try{await pcPower.enableHibernation();PC().toast('Hibernation enabled — reboot once before using it');renderSystemSettings();}
         catch(e){hib.disabled=false;hib.textContent='Enable hibernation';PC().toast(String(e&&e.message||e));}
+      };
+      const sleepSel=host.querySelector('[data-sleep-delay]'); if(sleepSel)sleepSel.onchange=async()=>{
+        const was=sleepSel.dataset.was;
+        sleepSel.disabled=true;
+        try{
+          if(!window.pcPower||!pcPower.setSleepPolicy) throw new Error('this build cannot change the sleep policy');
+          const p=await pcPower.setSleepPolicy(Number(sleepSel.value));
+          sleepSel.dataset.was=sleepSel.value;
+          PC().toast(p&&p.mode==='suspend'?'Sleep no longer hibernates':'Sleep now hibernates after '+_sleepDelayLabel(Number(sleepSel.value)));
+        }catch(e){ sleepSel.value=was; PC().toast(String(e&&e.message||e)); }
+        finally{ sleepSel.disabled=false; }
       };
       const idle=host.querySelector('[data-idle-timeout]'); if(idle)idle.onchange=async()=>{
         idle.disabled=true;

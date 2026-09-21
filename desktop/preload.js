@@ -479,6 +479,7 @@ if (isOurPage) {
     suspend: () => ipcRenderer.invoke('pc:power:suspend'),
     hibernate: () => ipcRenderer.invoke('pc:power:hibernate'),
     enableHibernation: () => ipcRenderer.invoke('pc:power:enable-hibernate'),
+    setSleepPolicy: (seconds) => ipcRenderer.invoke('pc:power:sleep-policy', Number(seconds)),
     poweroff: () => ipcRenderer.invoke('pc:power:poweroff'),
     reboot: () => ipcRenderer.invoke('pc:power:reboot'),
   });

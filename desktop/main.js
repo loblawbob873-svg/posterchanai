@@ -3569,6 +3569,9 @@ ipcMain.handle('pc:power:idle', (e, seconds) => { fsGuard(e); return power.setId
 ipcMain.handle('pc:power:suspend', (e) => { fsGuard(e); return power.suspend(); });
 ipcMain.handle('pc:power:hibernate', (e) => { fsGuard(e); return power.hibernate(); });
 ipcMain.handle('pc:power:enable-hibernate', (e) => { fsGuard(e); return power.enableHibernation(); });
+/* The delay between sleeping and hibernating (0 = never hibernate after sleeping). Validated again
+ * in power.js against the offered list -- a renderer is not trusted with a root-written number. */
+ipcMain.handle('pc:power:sleep-policy', (e, seconds) => { fsGuard(e); return power.setSleepPolicy(Number(seconds)); });
 ipcMain.handle('pc:power:poweroff', (e) => { fsGuard(e); return power.poweroff(); });
 ipcMain.handle('pc:power:reboot', (e) => { fsGuard(e); return power.reboot(); });
 
