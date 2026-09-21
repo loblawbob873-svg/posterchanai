@@ -10215,6 +10215,50 @@
     if(video){video.onpause=null;video.ontimeupdate=null;video.onended=null; video.pause(); video.removeAttribute('src'); video.load(); }
     return releaseMediaCenterSession(session);
   }
+  /* THE PLAYER FITS THE SPACE IT IS SHOWN IN. The video used to be `max-height:65vh` under a
+   * toolbar of three full-width selects: on a phone that put ~250px of controls ABOVE a 330px
+   * picture, and inside a desktop window `vh` is the SCREEN, not the window, so the picture ran off
+   * the bottom of any window shorter than the monitor. Now the title, the picture and the compact
+   * controls are sized together to the scroller they live in (the `#feed`, whether that is the
+   * phone's content area or an os.js window body — the window ADOPTS the feed, so there is no
+   * iframe and no `vh` that means the window), and the video takes whatever height that leaves.
+   * Measured in visual px and converted back through the element's own zoom, because `body{zoom}`
+   * sits between getBoundingClientRect and a px written into a style (client-display-scaling). */
+  let _mediaCenterFitRO=null;
+  function _mediaCenterFitPlayer(){
+    const box=document.getElementById('mc-playback'),stage=box&&box.querySelector('.mc-stage');
+    if(!box||!stage||box.hidden)return;
+    if(document.fullscreenElement===box){box.style.removeProperty('--mc-max-h');return;}
+    let sc=box.parentElement;
+    while(sc&&sc!==document.body&&sc!==document.documentElement){
+      const o=getComputedStyle(sc).overflowY;
+      if(o==='auto'||o==='scroll')break;
+      sc=sc.parentElement;
+    }
+    const vh=window.innerHeight||document.documentElement.clientHeight;
+    let top=0,bottom=vh;
+    if(sc&&sc!==document.body&&sc!==document.documentElement){
+      const r=sc.getBoundingClientRect();top=Math.max(0,r.top);bottom=Math.min(vh,r.bottom);
+    }
+    const br=box.getBoundingClientRect(),sr=stage.getBoundingClientRect();
+    const zoom=box.offsetHeight?br.height/box.offsetHeight:1;
+    const chrome=br.height-sr.height;               // title + controls + padding, visual px
+    const avail=(bottom-top)-chrome-8;
+    const px=Math.max(160,Math.floor(avail/(zoom||1)));
+    box.style.setProperty('--mc-max-h',px+'px');
+    // Re-fit when the scroller (a window being resized) or the title (a long name wrapping onto
+    // another line) changes size. Re-observed only when the TARGETS change: observing is itself a
+    // notification, so re-observing on every fit would call this for ever.
+    const title=box.querySelector('#mc-playing'),scroller=sc&&sc!==document.body&&sc!==document.documentElement?sc:null;
+    if(typeof ResizeObserver!=='undefined'&&(!_mediaCenterFitRO||_mediaCenterFitRO.t!==title||_mediaCenterFitRO.s!==scroller)){
+      if(_mediaCenterFitRO)_mediaCenterFitRO.ro.disconnect();
+      const ro=new ResizeObserver(()=>_mediaCenterFitPlayer());
+      if(scroller)ro.observe(scroller);
+      if(title)ro.observe(title);
+      _mediaCenterFitRO={ro,t:title,s:scroller};
+    }
+  }
+  if(typeof window!=='undefined')window.addEventListener('resize',()=>_mediaCenterFitPlayer());
   async function renderMediaCenter(openLibraryId=null){
     const renderGeneration=++_mediaCenterRenderGeneration;
     stopMediaCenter();
@@ -10263,11 +10307,12 @@
           <button id="mc-jellyfin-revoke" type="button" class="btn btn-ghost">Disconnect all apps</button>
         </div></details>
         </div><p id="mc-status" class="mc-status muted" role="status"></p><div id="mc-libraries" class="mc-libraries"></div>
-        <div id="mc-playback" class="mc-playback" hidden><div class="mc-player-toolbar"><h3 id="mc-playing"></h3><button id="mc-fullscreen" class="btn btn-ghost" type="button" aria-label="Enter full screen">Full screen</button><button id="mc-close-player" class="btn btn-ghost" type="button">Close player</button>
-          <label>Quality <select id="mc-quality"><option value="auto">Best quality within limit</option>
+        <div id="mc-playback" class="mc-playback" hidden><h3 id="mc-playing" class="mc-now-title"></h3>
+          <div class="mc-stage"><video id="mc-player" controls playsinline tabindex="0" aria-label="Media player" preload="metadata"></video></div>
+          <div class="mc-player-toolbar mc-controls"><div class="mc-ctl-btns"><button id="mc-fullscreen" class="btn btn-ghost" type="button" aria-label="Enter full screen">Full screen</button><button id="mc-close-player" class="btn btn-ghost" type="button">Close player</button></div>
+          <div class="mc-ctl-sel"><label><span>Quality</span><select id="mc-quality"><option value="auto">Best quality within limit</option>
             <option value="240p">240p · ~0.4 Mbps</option><option value="360p">360p · ~0.7 Mbps</option><option value="480p">480p · ~1 Mbps</option>
-            <option value="720p">720p · ~2.6 Mbps</option><option value="1080p">1080p · ~5.6 Mbps</option></select></label><label>Audio <select id="mc-audio"><option value="-1">Default</option></select></label><label>Subtitles <select id="mc-subtitles"><option value="-1">Off</option></select></label></div>
-          <video id="mc-player" controls playsinline tabindex="0" aria-label="Media player" preload="metadata" style="width:100%;max-height:65vh"></video>
+            <option value="720p">720p · ~2.6 Mbps</option><option value="1080p">1080p · ~5.6 Mbps</option></select></label><label><span>Audio</span><select id="mc-audio"><option value="-1">Default</option></select></label><label><span>Subtitles</span><select id="mc-subtitles"><option value="-1">Off</option></select></label></div></div>
         </div><div class="mc-browse"><label class="mc-search" hidden>Search this library <input id="mc-search" type="search" class="input" placeholder="Find a title or folder…"></label></div><nav id="mc-folder-nav" aria-label="Media folders"></nav><div id="mc-items"></div></div></div>`;
       for(const tab of feed.querySelectorAll('[role=tab]')){
         tab.onclick=async()=>{_mediaCenterLibraryTab=tab.id==='mc-tab-shared'?'shared':'mine';await renderMediaCenter();document.getElementById(tab.id)?.focus({preventScroll:true});};
@@ -10286,7 +10331,7 @@
           else status.textContent='Use your device’s video player full-screen control.';
         }catch(_){status.textContent='Full screen is unavailable in this window. Use the video player controls.';}
       };
-      playerBox.onfullscreenchange=()=>{const active=document.fullscreenElement===playerBox;fullscreen.textContent=active?'Exit full screen':'Full screen';fullscreen.setAttribute('aria-label',fullscreen.textContent);};
+      playerBox.onfullscreenchange=()=>{_mediaCenterFitPlayer();const active=document.fullscreenElement===playerBox;fullscreen.textContent=active?'Exit full screen':'Full screen';fullscreen.setAttribute('aria-label',fullscreen.textContent);};
       playerBox.onkeydown=e=>{
         if(e.target.matches('input,select,textarea'))return;
         if(e.key.toLowerCase()==='f'){e.preventDefault();fullscreen.click();}
@@ -10551,8 +10596,10 @@
               const session=await api('/'+lib.id+'/play/'+item.id,'POST');
               if(VIEW!=='media-center'||playGeneration!==_mediaCenterPlayGeneration){await releaseMediaCenterSession(session.url);return;}
               _mediaCenterSession=session.url;
-              $('#mc-playback').hidden=false;$('#mc-playback').scrollIntoView({block:'nearest',behavior:'smooth'});{ const np=$('#mc-playing'); np.textContent=item.name; np.title=item.name; }
+              { const np=$('#mc-playing'); np.textContent=item.name; np.title=item.name; }
+              $('#mc-playback').hidden=false;_mediaCenterFitPlayer();$('#mc-playback').scrollIntoView({block:'start',behavior:'smooth'});
               const video=$('#mc-player'),quality=$('#mc-quality');quality.value='auto';
+              video.addEventListener('loadedmetadata',_mediaCenterFitPlayer,{once:true});
               let lastProgress=0;
               const savePosition=()=>{
                 if(video.readyState<1)return;

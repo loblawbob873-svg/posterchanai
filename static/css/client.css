@@ -2042,27 +2042,45 @@ body.embed .feed{max-width:680px;margin:0 auto;padding:14px;height:auto !importa
 .mc-library{display:flex;align-items:center;gap:6px;flex-wrap:wrap;max-width:100%}
 .mc-library-open.active{color:var(--neon);border-color:var(--neon)}
 .mc-share{font-size:12px;max-width:400px;padding:6px}.mc-share[open]{flex-basis:100%}
-.mc-playback{padding:16px 18px;background:var(--panel2);border-bottom:1px solid var(--line)}
-.mc-playback h3{margin-top:0}.mc-playback video{display:block;margin-top:12px;border-radius:12px;background:#000}
+/* The player: title on its OWN line (wraps, never clipped), the picture as big as the space allows
+   (`--mc-max-h` is fitted by app.js `_mediaCenterFitPlayer` to the scroller the player is shown in,
+   so title + picture + controls land on one screen), then one compact control row. */
+.mc-playback{padding:12px 18px 14px;background:var(--panel2);border-bottom:1px solid var(--line)}
+.mc-playback h3{margin-top:0}
+.mc-now-title{margin:0 0 10px;font-size:17px;line-height:1.3;color:var(--text);
+  white-space:normal;overflow-wrap:anywhere;word-break:break-word}
+.mc-stage{background:#000;border-radius:12px;overflow:hidden}
+.mc-stage video{display:block;width:100%;height:auto;max-height:var(--mc-max-h,70vh);min-height:0;
+  object-fit:contain;background:#000;margin:0 auto}
 .mc-browse{padding:14px 18px 0}.mc-search{display:flex;align-items:center;gap:12px;font-size:13px;color:var(--muted)}
 .mc-search input{flex:1;min-width:0}.mc-folder>h3{padding:16px 18px 0;margin:0;font-size:15px;overflow-wrap:anywhere}
 .mc-tile .xdc-cover{aspect-ratio:4/3}.mc-tile[hidden],.mc-folder[hidden],.mc-search[hidden],.mc-playback[hidden]{display:none}
 .mc-tile:focus-within{border-color:var(--neon)}
 .mc-player-toolbar{display:flex;align-items:center;gap:10px;flex-wrap:wrap}
-/* The now-playing title is ONE LINE. The toolbar is `flex-wrap:wrap`, so a long name either
-   overflowed its 120px box (no spaces to break on) or wrapped and pushed Full screen / Close
-   player / Quality onto a second row — the controls moving depending on what you played. The whole
-   name is still readable: it is in the `title` attribute. */
-.mc-player-toolbar h3{flex:1;min-width:120px;margin:0;font-size:15px;
-  overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+/* The now-playing title is NOT in the toolbar any more: it sat there as one ellipsised line, so a
+   long name was cut off, and letting it wrap moved the controls. It is its own line above the
+   picture (`.mc-now-title`), and the control row below is the same shape whatever is playing. */
+.mc-controls{margin-top:10px;flex-wrap:wrap;align-items:flex-end;gap:8px 12px}
+.mc-ctl-btns{display:flex;gap:8px;flex:none}
+.mc-ctl-btns .btn{min-height:38px;padding-block:6px}
+.mc-ctl-sel{display:flex;flex:1 1 420px;gap:8px 10px;min-width:0;justify-content:flex-end}
+.mc-controls .mc-ctl-sel label{display:flex;flex-direction:column;align-items:stretch;gap:2px;flex:1 1 0;
+  min-width:0;max-width:260px;font-size:11px;color:var(--muted)}
+.mc-controls .mc-ctl-sel select{min-height:36px;padding:5px 8px;font-size:13px;width:100%;flex:none}
 .mc-player-toolbar label{display:flex;gap:8px;align-items:center;font-size:13px;min-width:0;max-width:100%;flex:1 1 240px}
 .mc-player-toolbar .btn,.mc-player-toolbar select{min-height:44px}
 .mc-player-toolbar select{background:var(--panel);color:var(--text);border:1px solid var(--line);border-radius:8px;padding:8px;flex:1;min-width:0;max-width:100%}
 .mc-gallery button:focus-visible,.mc-gallery summary:focus-visible,.mc-gallery select:focus-visible,.mc-gallery video:focus-visible{outline:3px solid var(--neon);outline-offset:3px}
 .mc-playback:fullscreen{box-sizing:border-box;display:flex;flex-direction:column;width:100vw;height:100dvh;background:#000;padding:12px 24px;color:#fff}
-.mc-playback:fullscreen video{flex:1;min-height:0;height:0;width:100%;max-height:none!important;object-fit:contain;border-radius:0;margin-top:10px}
+.mc-playback:fullscreen .mc-stage{flex:1;min-height:0;display:flex;border-radius:0}
+.mc-playback:fullscreen video{flex:1;min-height:0;height:auto;width:100%;max-height:none!important;object-fit:contain;border-radius:0}
+.mc-playback:fullscreen .mc-now-title{color:#fff;flex:none}
 .mc-playback:fullscreen .mc-player-toolbar{flex:none;padding:6px 0}
 @media(min-width:1400px){.mc-gallery .xdc-grid{grid-template-columns:repeat(auto-fill,minmax(230px,1fr));gap:22px}.mc-gallery .xdc-tmeta b{font-size:17px}.mc-gallery .xdc-tmeta span{font-size:15px}.mc-gallery .btn{min-height:48px;font-size:15px}.mc-playback:fullscreen .mc-player-toolbar .btn{min-height:52px}.mc-playback:fullscreen .mc-player-toolbar h3{font-size:20px}}
+@media(max-width:600px){.mc-playback{padding:10px 10px 12px}.mc-now-title{font-size:15px;margin-bottom:8px}.mc-stage{border-radius:8px}
+  .mc-ctl-btns{flex:1 1 100%}.mc-ctl-btns .btn{flex:1 1 0;min-width:0}
+  .mc-ctl-sel{flex:1 1 100%;display:grid;grid-template-columns:repeat(3,minmax(0,1fr))}
+  .mc-controls .mc-ctl-sel label{max-width:none}}
 @media(max-width:600px){.mc-tools{padding:10px 12px 0}.mc-tools>details{min-width:0;flex-basis:100%}.mc-search{flex-direction:column;align-items:stretch;gap:6px}.mc-private{align-self:flex-start}}
 @media(max-width:820px){
   .xdc-grid{gap:10px;padding:10px 12px 20px}

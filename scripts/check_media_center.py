@@ -76,6 +76,54 @@ class Browser:
         (ARTIFACTS / name).write_bytes(base64.b64decode(result["data"]))
 
 
+# THE PLAYER USES THE SPACE IT IS SHOWN IN. Measured after playback starts, in VISUAL px throughout
+# (body{zoom} sits between layout and visual px on desktop tiers — never mix the two):
+#   * the whole player — title, picture, controls — fits inside the scroller it lives in (the page,
+#     or a desktop window's feed), so pressing Play shows the picture and its controls together;
+#   * the picture is as big as that allows: either it spans the full width of the player, or it is
+#     as tall as the scroller leaves room for. `max-height:65vh` under a toolbar of three full-width
+#     selects did neither on a phone, and in a desktop window `vh` is the SCREEN, so the picture ran
+#     off the bottom of any window shorter than the monitor.
+PLAYER_LAYOUT = """JSON.stringify((()=>{
+  const box=document.querySelector('#mc-playback'), t=document.querySelector('#mc-playing');
+  const st=box.querySelector('.mc-stage'), v=document.querySelector('#mc-player'), bar=box.querySelector('.mc-controls');
+  if(!st||!bar) return {error:'the player has no .mc-stage / .mc-controls'};
+  box.scrollIntoView({block:'start'});
+  let sc=box.parentElement;
+  while(sc&&sc!==document.body&&sc!==document.documentElement){
+    const o=getComputedStyle(sc).overflowY; if(o==='auto'||o==='scroll')break; sc=sc.parentElement; }
+  const inPage=!sc||sc===document.body||sc===document.documentElement;
+  const R=inPage?{top:0,bottom:innerHeight}:sc.getBoundingClientRect();
+  const top=Math.max(0,R.top), bottom=Math.min(innerHeight,R.bottom);
+  const B=box.getBoundingClientRect(), T=t.getBoundingClientRect(), S=st.getBoundingClientRect(),
+        V=v.getBoundingClientRect(), C=bar.getBoundingClientRect();
+  const z=box.offsetWidth?B.width/box.offsetWidth:1, cs=getComputedStyle(box);
+  const contentW=B.width-(parseFloat(cs.paddingLeft)+parseFloat(cs.paddingRight))*z;
+  const ar=(v.videoWidth||16)/(v.videoHeight||9);
+  const picW=Math.min(V.width,V.height*ar);
+  return {scroller: inPage?'page':(sc.id||sc.className), avail: Math.round(bottom-top),
+          boxTop: Math.round(B.top-top), boxBottom: Math.round(B.bottom-bottom),
+          titleAbove: T.bottom<=S.top+0.5, controlsBelow: C.top>=S.bottom-0.5,
+          stageW: Math.round(S.width), contentW: Math.round(contentW), videoW: Math.round(V.width),
+          videoH: Math.round(V.height), picW: Math.round(picW),
+          roomH: Math.round((bottom-top)-(B.height-S.height))};
+})())"""
+
+
+def assert_player_uses_space(name, m):
+    assert "error" not in m, f"{name}: {m['error']}"
+    assert m["titleAbove"] and m["controlsBelow"], (
+        f"{name}: expected title / picture / controls stacked in that order: {m}")
+    assert m["stageW"] >= m["contentW"] - 2 and m["videoW"] >= m["stageW"] - 1, (
+        f"{name}: the picture area is narrower than the player ({m['videoW']} of {m['contentW']}px): {m}")
+    assert m["boxTop"] >= -1 and m["boxBottom"] <= 1, (
+        f"{name}: the player does not fit the {m['avail']}px it is shown in "
+        f"(top {m['boxTop']}, overshoots the bottom by {m['boxBottom']}px) in {m['scroller']}: {m}")
+    assert m["picW"] >= m["stageW"] - 2 or m["videoH"] >= m["roomH"] - 16, (
+        f"{name}: the picture is neither full width ({m['picW']} of {m['stageW']}px) nor as tall as "
+        f"the space allows ({m['videoH']} of ~{m['roomH']}px): {m}")
+
+
 async def main():
     chrome = shutil.which("google-chrome") or "/opt/google/chrome/chrome"
     assert Path(chrome).exists(), "Chrome is required for this check"
@@ -184,7 +232,7 @@ async def main():
           const nativeFetch=window.fetch.bind(window);const fetch=(url,opts={})=>nativeFetch(url,{...opts,headers:{...Object.fromEntries(new Headers(opts.headers||{})),
             'X-Test-Viewer':new URLSearchParams(location.search).get('viewer')||'OWNER'}});
           let _aiToken='fixture',_aiAuth={};const _setAiToken=t=>{_aiToken=t;};const ensureAiSession=async()=>({});
-          const loadHls=async()=>{};const toast=s=>{window.lastToast=s;};
+          const loadHls=async()=>{};const attachUserAutocomplete=()=>()=>{};const toast=s=>{window.lastToast=s;};
           const copyValue=(v,msg)=>{window.lastCopied=v;window.lastToast=msg||'copied';return Promise.resolve(true);};
         """.replace("'OWNER'", json.dumps(OWNER))
         @app.get("/", response_class=HTMLResponse)
@@ -300,44 +348,46 @@ async def main():
                             f"{name}: the media grid scrolls sideways by {layout['overflow']}px")
                         assert layout['page'] <= 0, (
                             f"{name}: a long title pushed the whole page wider by {layout['page']}px")
-                        # AND THE PLAYER TOOLBAR, which is where a long title actually lands as
-                        # unclamped text. The GRID was never at risk — `.xdc-tile` carries
-                        # `overflow:hidden`, which already resolves a grid item's automatic minimum
-                        # size to 0, so the three assertions above hold with or without any change
-                        # to the tile. (Kept because they are cheap and they pin that.)
-                        #
-                        # The toolbar is `flex-wrap:wrap` around an `<h3>` that had no ellipsis, so
-                        # a long name wrapped and pushed Full screen / Close player / Quality onto
-                        # another row. The test is NOT "the controls are on one row" — on a phone
-                        # they are legitimately meant to wrap, and asserting otherwise fails on a
-                        # correct layout. It is that the layout DOES NOT DEPEND ON THE TITLE: render
-                        # the same toolbar with a short name and a 190-character one and require the
-                        # same shape. That is viewport-independent and is exactly what was reported.
+                        # THE NOW-PLAYING TITLE IS ITS OWN LINE, AND IT IS READ IN FULL. It used to be
+                        # an ellipsised <h3> inside the control toolbar ("The Northern …" on a phone),
+                        # because letting it wrap there pushed Full screen / Close player / Quality
+                        # onto another row. Reported: "the video title should be on its own line so
+                        # it always fits". So: the title sits ABOVE the picture on a line of its own,
+                        # wraps to show every character, and the CONTROLS still do not depend on it —
+                        # render a short name and a 190-character unbroken one, require the same
+                        # control-row shape and a title that is never clipped.
                         async def _toolbar(text):
                             await browser.js("document.querySelector('#mc-playback').hidden=false;"
                                              "document.querySelector('#mc-playing').textContent="
                                              + json.dumps(text))
                             return json.loads(await browser.js("""JSON.stringify((()=>{
+                              const box=document.querySelector('#mc-playback');
                               const h=document.querySelector('#mc-playing');
-                              const bar=h.parentElement, r=h.getBoundingClientRect();
-                              return {barH: Math.round(bar.getBoundingClientRect().height),
-                                      titleH: Math.round(r.height),
-                                      spill: Math.round(r.right - bar.getBoundingClientRect().right)};
+                              const bar=box.querySelector('.mc-controls'), stage=box.querySelector('.mc-stage');
+                              const r=h.getBoundingClientRect(), B=box.getBoundingClientRect();
+                              const cs=getComputedStyle(h);
+                              return {barH: bar ? Math.round(bar.getBoundingClientRect().height) : -1,
+                                      ownLine: h.parentElement===box && !!stage &&
+                                               r.bottom <= stage.getBoundingClientRect().top + 0.5,
+                                      clipped: h.scrollWidth > h.clientWidth + 1 || h.scrollHeight > h.clientHeight + 1 ||
+                                               cs.textOverflow==='ellipsis' || cs.whiteSpace==='nowrap',
+                                      spill: Math.round(r.right - B.right)};
                             })())"""))
                         short = await _toolbar("Short name")
                         long_name = await browser.js("document.querySelector('.mc-tile b').textContent")
                         assert len(long_name) > 120, f"the long-title fixture is only {len(long_name)} chars"
                         wide = await _toolbar(long_name)
+                        assert wide['ownLine'] and short['ownLine'], (
+                            f"{name}: the now-playing title is not on a line of its own above the picture")
+                        assert not wide['clipped'], (
+                            f"{name}: a long now-playing title is clipped/ellipsised instead of wrapping")
                         assert wide['spill'] <= 1, (
-                            f"{name}: the now-playing title escapes the toolbar by {wide['spill']}px")
-                        assert wide['titleH'] == short['titleH'], (
-                            f"{name}: a long title made the now-playing line {wide['titleH']}px tall "
-                            f"where a short one is {short['titleH']}px — it is wrapping, not clipping")
-                        assert wide['barH'] == short['barH'], (
-                            f"{name}: a long title grew the player toolbar from {short['barH']}px to "
+                            f"{name}: the now-playing title escapes the player by {wide['spill']}px")
+                        assert wide['barH'] == short['barH'] and short['barH'] > 0, (
+                            f"{name}: a long title changed the player controls from {short['barH']}px to "
                             f"{wide['barH']}px, moving the controls")
                         await browser.js("document.querySelector('#mc-playback').hidden=true")
-                        print(name, 'PASS: a long title is clipped and the player controls stay put', flush=True)
+                        print(name, 'PASS: the now-playing title is its own line, wraps in full, and the controls stay put', flush=True)
                         if name=='phone':
                             assert (await client.get(f'{app_url}/api/media-center/test/scan')).json()['state']=='running'
                             await browser.js("window.scanFirstCard=document.querySelector('.mc-tile');window.scanFirstImage=scanFirstCard.querySelector('img');document.querySelector('.mc-tile button').click();setTimeout(()=>document.querySelector('.mc-resume-dialog[open] button[value=start]')?.click(),100)",gesture=True)
@@ -359,6 +409,11 @@ async def main():
                         await browser.js("document.querySelector('.mc-tile button').click();setTimeout(()=>document.querySelector('.mc-resume-dialog[open] button[value=start]')?.click(),100)", True)
                         await browser.until("document.querySelector('video')?.currentTime>1")
                         assert await browser.js("document.querySelector('video').videoWidth") == 320
+                        await asyncio.sleep(.3)
+                        layout = json.loads(await browser.js(PLAYER_LAYOUT))
+                        await browser.screenshot(name + "-playing.png")
+                        assert_player_uses_space(name, layout)
+                        print(name, 'PASS: the player fits the screen and the picture uses the space', layout, flush=True)
                         await browser.js("document.querySelector('#mc-subtitles option:last-child').textContent='English (SDH) (Dub) · Full dialogue and translated signs · Subtitle track'")
                         assert await browser.js('document.documentElement.scrollWidth<=innerWidth')
                         assert await browser.js("document.querySelectorAll('#mc-audio option').length") == 3
@@ -378,6 +433,25 @@ async def main():
                         await browser.js("document.querySelector('#mc-close-player').onclick()", True)
                         await browser.until("document.querySelector('#mc-playback').hidden")
                         print(name, "PASS: artwork, grid, search, actual HLS playback, full screen, seek, close", flush=True)
+                        if name == "tv":
+                            # INSIDE A DESKTOP WINDOW. os.js windows ADOPT the #feed (no iframe), so
+                            # the scroller is a 900x520 box on a 1920x1080 screen and `vh` means the
+                            # screen. The player must fit the window, not the monitor.
+                            await browser.js("""(()=>{const st=document.createElement('style');st.id='as-window';
+                              st.textContent='#feed{position:fixed!important;left:160px;top:120px;width:900px!important;'+
+                                'height:520px;overflow-y:auto;margin:0!important;max-width:none!important}';
+                              document.head.append(st);})()""")
+                            await browser.js("document.querySelector('.mc-tile button').click();setTimeout(()=>document.querySelector('.mc-resume-dialog[open] button[value=start]')?.click(),100)", True)
+                            await browser.until("document.querySelector('video')?.currentTime>1")
+                            await asyncio.sleep(.3)
+                            layout = json.loads(await browser.js(PLAYER_LAYOUT))
+                            await browser.screenshot("window-playing.png")
+                            assert layout.get("scroller") == "feed", layout
+                            assert_player_uses_space("window", layout)
+                            await browser.js("document.querySelector('#mc-close-player').onclick()", True)
+                            await browser.until("document.querySelector('#mc-playback').hidden")
+                            await browser.js("document.getElementById('as-window').remove()")
+                            print("window PASS: the player fits a desktop window, not the monitor", layout, flush=True)
                     # Start the recipient chain with an actual administrator share mutation.
                     documents['library:test']['shared_with'] = []
                     private = {**copy.deepcopy(documents['library:test']), 'id':'private',
