@@ -31,6 +31,9 @@
       // missed save becomes 'my project came back different', so make it unconditional.
       unmount(){ try{ stopPlay(false); }catch(_){ if(_playT){ clearInterval(_playT); _playT=null; } } try{ if(P) save(); }catch(_){ } },
       reset(){ P = blank(); sel=null; _fitNext = true; save(); render(); },
+      // The photo-editor entry points, published so a check can drive them without scraping markup.
+      openLayerResize: (id) => openLayerResize(id), openCanvasSize: (m) => openCanvasSize(m),
+      openExport: () => openExport(), exportImage: (o) => exportImage(o), sizeMath: SizeMath,
       // Seed a layer from a URL — how a post gets "opened in" the Meme Builder. Mirrors what the
       // Blossom picker does (addLayer takes the url directly), but callable from outside the module.
       // ME/P are loaded first because this can arrive before render() has ever run for this session.
@@ -935,6 +938,10 @@
         ${PRESETS.map(([n,w,h])=>`<button class="mb-szb${(P.w===w&&P.h===h)?' on':''}" data-size="${w}x${h}"><b>${enc(n)}</b><i>${w}×${h}</i></button>`).join('')}
       </div>
       ${custom ? `<div class="muted small">Currently ${P.w}×${P.h} — a custom shape (⇲ Canvas to this photo). Picking one above rescales every layer to it.</div>` : ''}
+      <div class="mb-frow">
+        <button class="btn btn-cyan small" id="mb-imgsize" title="Resample: change the size of the whole picture, every layer scaled with it"><svg class="ic b-ic" aria-hidden="true"><use href="#i-resize"></use></svg>Image size…</button>
+        <button class="btn btn-cyan small" id="mb-cvsize" title="Crop or add room around the picture; layers keep their pixels"><svg class="ic b-ic" aria-hidden="true"><use href="#i-expand"></use></svg>Canvas size…</button>
+      </div>
       <label class="mb-bgrow" title="This is what shows AROUND a photo that doesn't fill the frame — the bars.">
         <input type="color" id="mb-bg" value="${enc(P.bg)}" aria-label="Canvas background colour">
         <span>Background — the bars around a photo that doesn’t fill the frame</span>
@@ -947,6 +954,7 @@
           <option value="gif" ${_fmt()==='gif'?'selected':''}>GIF (looping, silent)</option>
           <option value="png" ${_fmt()==='png'?'selected':''}>Still image (frame at the playhead)</option>
         </select></label>
+      <button class="btn btn-neon small full" id="mb-export-img" title="Save the frame at the playhead as a PNG, JPEG or WebP at exactly the size you choose"><svg class="ic b-ic" aria-hidden="true"><use href="#i-download"></use></svg>Export image…</button>
       <div class="mb-secttl">This project</div>
       <div class="muted small mb-dbg">${enc(P.name || 'Untitled')} · ${P.layers.length} layer${P.layers.length===1?'':'s'} · ${P.w}×${P.h} · ${projEnd().toFixed(1)}s</div>`;
   }
@@ -1663,6 +1671,7 @@
              <label class="mb-f"><span>W</span><input class="input" type="number" id="mb-f-w" value="${Math.round(l.w)}"></label>
              <label class="mb-f"><span>H</span><input class="input" type="number" id="mb-f-h" value="${Math.round(l.h)}"></label>
            </div>
+           <button class="btn btn-cyan small full" id="mb-resize" title="Set this layer's exact size in pixels or percent"><svg class="ic b-ic" aria-hidden="true"><use href="#i-resize"></use></svg>Resize…</button>
            <button class="btn btn-cyan small full" id="mb-canvas-match" title="Reshape the CANVAS to this photo — the third option: no bars AND nothing cropped"><svg class="ic b-ic" aria-hidden="true"><use href="#i-resize"></use></svg>Canvas to this photo</button>
            <label class="mb-f"><span>Layer name</span><input class="input" id="mb-f-name" maxlength="24" placeholder="${enc(srcName(l.src))}" value="${enc(l.name||'')}"></label>`))}
 
@@ -3356,28 +3365,7 @@
     }, 1000);
     _renderAbort = (typeof AbortController!=='undefined') ? new AbortController() : null;
     try{
-      const _scrub=document.getElementById('mb-scrub');
-      const edit={ w:P.w, h:P.h, fps:P.fps, bg:P.bg, duration:renderEnd(),
-        fmt:_fmt(),
-        // A still is taken AT THE PLAYHEAD — the frame you are looking at is the frame you meant.
-        still:(_fmt()==='png' ? +(_scrub?_scrub.value:0)||0 : 0),
-        layers:P.layers.map(l=>({ type:l.type, src:l.src, start:+l.start, dur:+l.dur, trim:+l.trim||0,
-          x:Math.round(l.x), y:Math.round(l.y), w:Math.round(l.w), h:Math.round(l.h),
-          opacity:+l.opacity, effect:l.effect, sound:l.sound||'', soundVolume:(l.soundVolume==null?1:+l.soundVolume), mute:!!l.mute,
-          flipH:!!l.flipH, flipV:!!l.flipV, rotate:+l.rotate||0,
-          // NOT `+l.volume||1`: that turned a deliberate volume of 0 back into full volume.
-          volume:(l.volume==null?1:+l.volume), fade:!!l.fade,
-          speed:_speedOf(l), xin:+l.xin||0, xout:+l.xout||0,
-          // The WRAPPED text, not the raw text: the renderer draws one line per newline it is given, and
-          // wrapText is the same function the preview lays out, so what you saw is what gets drawn.
-          text:(l.type==='text' ? wrapText(l) : l.text), size:+l.size, color:l.color, stroke:l.stroke,
-          box:!!l.box, boxColor:l.boxColor||'#000000', boxAlpha:(l.boxAlpha==null?0.55:+l.boxAlpha), shadow:!!l.shadow,
-          // The erase mask travels as a URL like `src` does; the server fetches it down the same guarded
-          // path. This payload is an explicit WHITELIST, so a field missing here is a field the renderer
-          // never sees — the erase would preview perfectly on the stage and be silently absent from
-          // every export, which is indistinguishable from "the eraser is broken".
-          mask:l.mask||'',
-          fit:l.fit||'contain', align:_alignOf(l), cx:(l.type==='text' ? _textCenterX(l) : null) })) };
+      const edit=_editPayload(_fmt());
       const auth=await selfProof();
       const r=await fetch('/client/meme/render',{ method:'POST', headers:{'Content-Type':'application/json'},
         body: JSON.stringify({ pubkey: ME.pubkey, auth, edit }),
@@ -3400,6 +3388,35 @@
       if(b){ b.textContent=(_fmt()==='png'?'📷 Still':(_fmt()==='gif'?'🎞️ GIF':'🎬 Render'));
         b.classList.remove('btn-danger'); b.disabled=false; }
     }
+  }
+
+  // THE edit list — what 🎬 Render and 🖼 Export image both send. ONE builder, because the payload is a
+  // WHITELIST (a field missing here is a field the renderer never sees) and caption wrapping is computed
+  // here and nowhere else: a second copy for the export would drift from what the stage shows.
+  function _editPayload(fmt){
+    const _scrub=document.getElementById('mb-scrub');
+    const still=(fmt==='png'||fmt==='jpeg'||fmt==='webp');
+    return { w:P.w, h:P.h, fps:P.fps, bg:P.bg, duration:renderEnd(),
+        fmt,
+        // A still is taken AT THE PLAYHEAD — the frame you are looking at is the frame you meant.
+        still:(still ? +(_scrub?_scrub.value:0)||0 : 0),
+        layers:P.layers.map(l=>({ type:l.type, src:l.src, start:+l.start, dur:+l.dur, trim:+l.trim||0,
+          x:Math.round(l.x), y:Math.round(l.y), w:Math.round(l.w), h:Math.round(l.h),
+          opacity:+l.opacity, effect:l.effect, sound:l.sound||'', soundVolume:(l.soundVolume==null?1:+l.soundVolume), mute:!!l.mute,
+          flipH:!!l.flipH, flipV:!!l.flipV, rotate:+l.rotate||0,
+          // NOT `+l.volume||1`: that turned a deliberate volume of 0 back into full volume.
+          volume:(l.volume==null?1:+l.volume), fade:!!l.fade,
+          speed:_speedOf(l), xin:+l.xin||0, xout:+l.xout||0,
+          // The WRAPPED text, not the raw text: the renderer draws one line per newline it is given, and
+          // wrapText is the same function the preview lays out, so what you saw is what gets drawn.
+          text:(l.type==='text' ? wrapText(l) : l.text), size:+l.size, color:l.color, stroke:l.stroke,
+          box:!!l.box, boxColor:l.boxColor||'#000000', boxAlpha:(l.boxAlpha==null?0.55:+l.boxAlpha), shadow:!!l.shadow,
+          // The erase mask travels as a URL like `src` does; the server fetches it down the same guarded
+          // path. This payload is an explicit WHITELIST, so a field missing here is a field the renderer
+          // never sees — the erase would preview perfectly on the stage and be silently absent from
+          // every export, which is indistinguishable from "the eraser is broken".
+          mask:l.mask||'',
+          fit:l.fit||'contain', align:_alignOf(l), cx:(l.type==='text' ? _textCenterX(l) : null) })) };
   }
 
   // Who the "reply with it" button will answer, or null. Named so the button can say WHOSE post it
@@ -3434,6 +3451,249 @@
       else { l.w = Math.max(2, Math.round((+l.w||0)*rx)); l.h = Math.max(2, Math.round((+l.h||0)*ry)); }
     });
     P.w = w; P.h = h; save(); render();
+  }
+
+  // ---------- photo-editor sizing ----------
+  // Meme Builder doubles as a photo editor: resize a layer to exact pixels, resize the whole picture
+  // ("Image size" — resample: every layer scales with it) or the canvas around it ("Canvas size" —
+  // crop/extend: every layer keeps its pixels and moves with the anchor), and export a still at any
+  // size in PNG/JPEG/WebP. The maths is pure and published on PCMeme.sizeMath for the check.
+  const CANVAS_MAX = 2160;          // = meme_builder_service.MAX_DIM, the composite's own cap
+  const EXPORT_MAX = 4096;          // = meme_builder_service.MAX_EXPORT_DIM, the exported file's cap
+  const LAYER_MAX = 4320;           // the inspector's W/H bound
+  const SizeMath = {
+    // Keep the aspect ratio when one side is typed: `ratio` is w/h at the moment the dialog opened.
+    follow(side, v, ratio){
+      v = Math.max(1, Math.round(+v || 0));
+      return side === 'w' ? { w: v, h: Math.max(1, Math.round(v / ratio)) }
+                          : { w: Math.max(1, Math.round(v * ratio)), h: v };
+    },
+    pct(w, h, p){
+      p = +p || 100;
+      return { w: Math.max(1, Math.round(w * p / 100)), h: Math.max(1, Math.round(h * p / 100)) };
+    },
+    // Canvas size: how far every layer moves when an ow x oh canvas becomes nw x nh around the anchor
+    // (ax/ay in 0, 0.5, 1 — left/centre/right, top/middle/bottom). Growing adds room on the far side
+    // of the anchor, shrinking crops it — the Photoshop "Canvas Size" rule.
+    offset(ow, oh, nw, nh, ax, ay){
+      return { dx: Math.round((nw - ow) * ax), dy: Math.round((nh - oh) * ay) };
+    },
+    even(v, max){ return Math.max(16, Math.min(max || CANVAS_MAX, (Math.round(+v || 0) / 2 | 0) * 2)); },
+    clampExport(v){ return Math.max(1, Math.min(EXPORT_MAX, Math.round(+v || 0))); },
+  };
+
+  // Crop/extend the canvas without resampling anything.
+  function _extendCanvas(w, h, ax, ay){
+    w = SizeMath.even(w); h = SizeMath.even(h);
+    if(w === P.w && h === P.h) return;
+    snap();
+    const o = SizeMath.offset(P.w, P.h, w, h, ax, ay);
+    P.layers.forEach(l=>{
+      if(l.type==='audio') return;
+      l.x = Math.round((+l.x||0) + o.dx); l.y = Math.round((+l.y||0) + o.dy);
+    });
+    P.w = w; P.h = h; save(); render();
+  }
+
+  // Shared bits of the three dialogs: W/H boxes that follow each other while "keep proportions" is on,
+  // and a percent box that scales from the size the dialog OPENED at (so 50% then 200% is back to 100%,
+  // not a quarter).
+  function _sizeFields(root, pre, w0, h0, max, onChange){
+    const $w=root.querySelector('#'+pre+'-w'), $h=root.querySelector('#'+pre+'-h');
+    const $lock=root.querySelector('#'+pre+'-lock'), $pct=root.querySelector('#'+pre+'-pct');
+    let ratio = w0 / h0;
+    const clampV = v => Math.max(1, Math.min(max, Math.round(+v||0)));
+    const tell = () => { if(onChange) onChange(); };
+    const typed = side => {
+      const el = side==='w' ? $w : $h, raw = String(el.value||'').trim();
+      if(raw==='' || !isFinite(+raw) || +raw<=0) return;
+      if($lock && $lock.checked){
+        const r = SizeMath.follow(side, clampV(raw), ratio);
+        if(side==='w') $h.value = clampV(r.h); else $w.value = clampV(r.w);
+      }
+      if($pct) $pct.value = Math.round(100 * (+$w.value) / w0);
+      tell();
+    };
+    $w.addEventListener('input', ()=>typed('w'));
+    $h.addEventListener('input', ()=>typed('h'));
+    if($lock) $lock.addEventListener('change', ()=>{ ratio = (+$w.value||w0) / (+$h.value||h0); tell(); });
+    const setPct = p => { const r = SizeMath.pct(w0, h0, p); $w.value = clampV(r.w); $h.value = clampV(r.h);
+      if($pct) $pct.value = Math.round(+p); if($lock) $lock.checked = true; ratio = w0 / h0; tell(); };
+    if($pct) $pct.addEventListener('input', ()=>{ const v=+$pct.value; if(v>0) setPct(v); });
+    root.querySelectorAll('[data-'+pre+'-pct]').forEach(b=>b.addEventListener('click',()=>setPct(+b.getAttribute('data-'+pre+'-pct'))));
+    return { get w(){ return clampV($w.value); }, get h(){ return clampV($h.value); },
+             set(w, h){ $w.value = clampV(w); $h.value = clampV(h); ratio = w / h; if($pct) $pct.value = Math.round(100*w/w0); tell(); } };
+  }
+  const _sizeRows = (pre, w, h, max, pcts) => `
+      <div class="mb-frow">
+        <label class="mb-f"><span>Width (px)</span><input class="input" type="number" inputmode="numeric" id="${pre}-w" min="1" max="${max}" value="${w}"></label>
+        <label class="mb-f"><span>Height (px)</span><input class="input" type="number" inputmode="numeric" id="${pre}-h" min="1" max="${max}" value="${h}"></label>
+      </div>
+      <label class="mb-f mb-check"><input type="checkbox" id="${pre}-lock" checked><span>Keep proportions</span></label>
+      <div class="mb-frow mb-pctrow">
+        <label class="mb-f"><span>Scale (%)</span><input class="input" type="number" inputmode="numeric" id="${pre}-pct" min="1" max="1000" value="100"></label>
+        ${pcts.map(p=>`<button type="button" class="btn btn-cyan small" data-${pre}-pct="${p}">${p}%</button>`).join('')}
+      </div>`;
+
+  // Per-layer "Resize…": exact pixels for one layer's box.
+  function openLayerResize(id){
+    const l0 = P.layers.find(x=>x.id===id); if(!l0 || !_isVisual(l0)) return;
+    const w0 = Math.max(1, Math.round(+l0.w||1)), h0 = Math.max(1, Math.round(+l0.h||1));
+    const el = document.querySelector('.mb-item[data-id="'+id+'"] img, .mb-item[data-id="'+id+'"] video');
+    const nw = el ? (el.naturalWidth || el.videoWidth || 0) : 0, nh = el ? (el.naturalHeight || el.videoHeight || 0) : 0;
+    PC.modal(`<h3><svg class="ic h-ic" aria-hidden="true"><use href="#i-resize"></use></svg>Resize layer</h3>
+      <div class="muted small mb-dbg">Now ${w0}×${h0} px on a ${P.w}×${P.h} canvas.</div>
+      ${_sizeRows('rz', w0, h0, LAYER_MAX, [25, 50, 200])}
+      <div class="mb-frow">
+        ${nw && nh ? `<button type="button" class="btn btn-cyan small" id="rz-orig" title="The picture's own pixel size, ${nw}×${nh}">Original (${nw}×${nh})</button>` : ''}
+        <button type="button" class="btn btn-cyan small" id="rz-canvas" title="Exactly the canvas size">Canvas (${P.w}×${P.h})</button>
+      </div>
+      <label class="mb-f mb-check"><input type="checkbox" id="rz-centre" checked><span>Keep it centred where it is</span></label>
+      <div class="mb-frow mb-dlg-acts"><button type="button" class="btn btn-ghost small" id="rz-cancel">Cancel</button><button type="button" class="btn btn-neon small" id="rz-go">Resize</button></div>`, root=>{
+      const f = _sizeFields(root, 'rz', w0, h0, LAYER_MAX);
+      const q = s => root.querySelector(s);
+      if(q('#rz-orig')) q('#rz-orig').onclick = () => f.set(nw, nh);
+      q('#rz-canvas').onclick = () => { q('#rz-lock').checked = false; f.set(P.w, P.h); };
+      q('#rz-cancel').onclick = () => PC.closeModal();
+      q('#rz-go').onclick = () => {
+        // By ID, not the object captured above: the project can be reloaded under an open dialog.
+        const l = P.layers.find(x=>x.id===id); if(!l){ PC.closeModal(); return; }
+        const W = f.w, H = f.h;
+        snap();
+        if(q('#rz-centre').checked){
+          const cx = (+l.x||0) + (+l.w||0)/2, cy = (+l.y||0) + (+l.h||0)/2;
+          l.x = Math.round(cx - W/2); l.y = Math.round(cy - H/2);
+        }
+        l.w = W; l.h = H;
+        PC.closeModal(); save(); render();
+        toast(`layer resized to ${W}×${H}`);
+      };
+    });
+  }
+
+  // "Image size" (resample) and "Canvas size" (crop/extend) — one dialog, because they are the same
+  // two numbers with a different meaning, and seeing both choices side by side is what makes the
+  // difference legible.
+  function openCanvasSize(mode){
+    mode = mode === 'extend' ? 'extend' : 'resample';
+    const w0 = P.w, h0 = P.h;
+    let ax = 0.5, ay = 0.5;
+    PC.modal(`<h3><svg class="ic h-ic" aria-hidden="true"><use href="#i-resize"></use></svg>Image &amp; canvas size</h3>
+      <div class="muted small mb-dbg">Now ${w0}×${h0} px.</div>
+      <div class="mb-frow mb-modes" role="radiogroup" aria-label="How to change the size">
+        <label class="mb-f mb-check"><input type="radio" name="cs-mode" value="resample" ${mode==='resample'?'checked':''}><span><b>Image size</b> — scale the picture and every layer with it</span></label>
+        <label class="mb-f mb-check"><input type="radio" name="cs-mode" value="extend" ${mode==='extend'?'checked':''}><span><b>Canvas size</b> — crop or add room; layers keep their pixels</span></label>
+      </div>
+      ${_sizeRows('cs', w0, h0, CANVAS_MAX, [50, 150, 200])}
+      <div class="mb-f" id="cs-anchor-wrap"><span>Anchor — where the picture stays</span><div class="mb-align" id="cs-anchor">
+        ${_AGRID.map(([h,v,t])=>`<button type="button" class="mb-ab${h==='0.5'&&v==='0.5'?' on':''}" data-h="${h}" data-v="${v}" title="${enc(t)}">${enc(t.slice(0,1))}</button>`).join('')}
+      </div></div>
+      <div class="muted small" id="cs-note"></div>
+      <div class="mb-frow mb-dlg-acts"><button type="button" class="btn btn-ghost small" id="cs-cancel">Cancel</button><button type="button" class="btn btn-neon small" id="cs-go">Apply</button></div>`, root=>{
+      const q = s => root.querySelector(s);
+      const cur = () => (root.querySelector('input[name=cs-mode]:checked')||{}).value || 'resample';
+      const note = () => {
+        const m = cur(), W = SizeMath.even(f.w), H = SizeMath.even(f.h);
+        q('#cs-anchor-wrap').hidden = m !== 'extend';
+        q('#cs-note').textContent = (m === 'extend'
+          ? (W < w0 || H < h0 ? 'Shrinking crops the side away from the anchor. ' : '') + 'Layers are not scaled.'
+          : 'Every layer is scaled by the same factor as the canvas.')
+          + ` The canvas becomes ${W}×${H} — even numbers up to ${CANVAS_MAX}, because video needs them. `
+          + 'For an exact odd size or a bigger file, set it in 🖼 Export image.';
+      };
+      const f = _sizeFields(root, 'cs', w0, h0, CANVAS_MAX, note);
+      if(mode === 'extend') q('#cs-lock').checked = false;
+      root.querySelectorAll('input[name=cs-mode]').forEach(r=>r.addEventListener('change',()=>{
+        q('#cs-lock').checked = cur() === 'resample'; q('#cs-lock').dispatchEvent(new Event('change')); note(); }));
+      root.querySelectorAll('#cs-anchor .mb-ab').forEach(b=>b.addEventListener('click',()=>{
+        root.querySelectorAll('#cs-anchor .mb-ab').forEach(x=>x.classList.toggle('on', x===b));
+        ax = +b.dataset.h; ay = +b.dataset.v; }));
+      note();
+      q('#cs-cancel').onclick = () => PC.closeModal();
+      q('#cs-go').onclick = () => {
+        const W = f.w, H = f.h, m = cur();
+        PC.closeModal();
+        if(m === 'extend') _extendCanvas(W, H, ax, ay);
+        else _resizeCanvas(Math.min(CANVAS_MAX, W), Math.min(CANVAS_MAX, H));
+        toast(`canvas is now ${P.w}×${P.h}`);
+      };
+    });
+  }
+
+  // 🖼 Export image: one frame (at the playhead) at the size and in the format you choose. The render
+  // resamples the finished composite to exactly out_w x out_h, and the file goes out through
+  // saveBlobAs — a bare <a download> does nothing at all in the APK.
+  const _EXPORT_FMTS = [['png','PNG — lossless','png'], ['jpeg','JPEG — photos, small','jpg'], ['webp','WebP — small, modern','webp']];
+  function openExport(){
+    if(!P.layers.length){ toast('add a layer first'); return; }
+    const last = P.export || {};
+    const fmt0 = _EXPORT_FMTS.some(f=>f[0]===last.fmt) ? last.fmt : 'png';
+    const q0 = Math.max(1, Math.min(100, +last.quality || 90));
+    const _scrub = document.getElementById('mb-scrub'), at = +(_scrub ? _scrub.value : 0) || 0;
+    PC.modal(`<h3><svg class="ic h-ic" aria-hidden="true"><use href="#i-download"></use></svg>Export image</h3>
+      <div class="muted small mb-dbg">The frame at the playhead (${at.toFixed(1)}s) of your ${P.w}×${P.h} canvas.</div>
+      <label class="mb-f"><span>Format</span><select class="input" id="ex-fmt">
+        ${_EXPORT_FMTS.map(([v,n])=>`<option value="${v}" ${v===fmt0?'selected':''}>${n}</option>`).join('')}
+      </select></label>
+      <label class="mb-f" id="ex-q-wrap"><span>Quality <b id="ex-q-val">${q0}</b></span><input type="range" id="ex-q" min="1" max="100" step="1" value="${q0}"></label>
+      ${_sizeRows('ex', P.w, P.h, EXPORT_MAX, [50, 200])}
+      <div class="muted small" id="ex-note"></div>
+      <div class="mb-frow mb-dlg-acts"><button type="button" class="btn btn-ghost small" id="ex-cancel">Cancel</button><button type="button" class="btn btn-neon small" id="ex-go"><svg class="ic b-ic" aria-hidden="true"><use href="#i-download"></use></svg>Export</button></div>`, root=>{
+      const q = s => root.querySelector(s);
+      const note = () => { q('#ex-note').textContent = `The file will be exactly ${f.w}×${f.h} px (up to ${EXPORT_MAX}).`; };
+      const f = _sizeFields(root, 'ex', P.w, P.h, EXPORT_MAX, note);
+      const paintQ = () => { q('#ex-q-wrap').hidden = q('#ex-fmt').value === 'png'; q('#ex-q-val').textContent = q('#ex-q').value; };
+      q('#ex-fmt').addEventListener('change', paintQ); q('#ex-q').addEventListener('input', paintQ);
+      paintQ(); note();
+      q('#ex-cancel').onclick = () => PC.closeModal();
+      q('#ex-go').onclick = async () => {
+        const go = q('#ex-go'); if(go.disabled) return;
+        const fmt = q('#ex-fmt').value, quality = +q('#ex-q').value, W = f.w, H = f.h;
+        P.export = { fmt, quality }; save();
+        go.disabled = true; go.textContent = 'exporting…';
+        try{
+          const name = await exportImage({ fmt, quality, w: W, h: H });
+          PC.closeModal();
+          toast(name);
+        }catch(err){
+          go.disabled = false; go.textContent = 'Export';
+          q('#ex-note').textContent = '⚠️ ' + _renderErr((err && err.message) || err);
+        }
+      };
+    });
+  }
+
+  // The export itself — separate from the dialog so it can be driven (and checked) on its own.
+  async function exportImage(o){
+    if(_rendering) throw new Error('a render is already running — wait for it to finish');
+    const fmt = _EXPORT_FMTS.some(f=>f[0]===o.fmt) ? o.fmt : 'png';
+    const edit = _editPayload(fmt);
+    edit.out_w = SizeMath.clampExport(o.w); edit.out_h = SizeMath.clampExport(o.h);
+    edit.quality = Math.max(1, Math.min(100, Math.round(+o.quality || 90)));
+    _rendering = true;
+    try{
+      const auth = await selfProof();
+      const r = await fetch('/client/meme/render', { method:'POST', headers:{'Content-Type':'application/json'},
+        body: JSON.stringify({ pubkey: ME.pubkey, auth, edit }) });
+      if(!r.ok){
+        let msg=''; try{ msg=(await r.json()).detail||''; }catch(_){ msg=await r.text().catch(()=>''); }
+        throw new Error(msg || ('export failed ('+r.status+')'));
+      }
+      const blob = await r.blob();
+      // SAY IT IF THE FILE IS NOT WHAT WAS ASKED FOR. A render can overflow to a peer node running older
+      // code, which ignores out_w/out_h (and answers a PNG for any still) — the file would look fine and
+      // be the wrong size, which is the one thing this dialog exists to get right.
+      let got = null;
+      try{ if(typeof createImageBitmap === 'function'){ const bm = await createImageBitmap(blob); got = [bm.width, bm.height]; if(bm.close) bm.close(); } }catch(_){ }
+      const mime = String(blob.type || '');
+      const ext = mime.indexOf('jpeg')>=0 ? 'jpg' : (mime.indexOf('webp')>=0 ? 'webp' : 'png');
+      const base = (P.name || 'meme').replace(/[^\w.-]+/g, '_').slice(0, 40);
+      const fname = `${base}-${edit.out_w}x${edit.out_h}.${ext}`;
+      const how = PC.saveBlobAs ? await PC.saveBlobAs(blob, fname) : 'saved';
+      if(got && (got[0] !== edit.out_w || got[1] !== edit.out_h))
+        return `⚠️ exported ${got[0]}×${got[1]}, not ${edit.out_w}×${edit.out_h} — the server that rendered it is out of date`;
+      return (how === 'shared' ? '✓ shared ' : '✓ saved ') + fname;
+    }finally{ _rendering = false; }
   }
 
   // The canvas is BLACK by default and `contain` letterboxes anything whose shape differs from it, so
@@ -3487,7 +3747,8 @@
     // said — labelling that .gif would hand the user a file that will not open.
     const mime=String(blob.type||'video/mp4');
     const isImg=/^image\//.test(mime);
-    const ext=mime.indexOf('gif')>=0 ? 'gif' : (mime.indexOf('png')>=0 ? 'png' : 'mp4');
+    const ext=mime.indexOf('gif')>=0 ? 'gif' : (mime.indexOf('png')>=0 ? 'png'
+      : (mime.indexOf('jpeg')>=0 ? 'jpg' : (mime.indexOf('webp')>=0 ? 'webp' : 'mp4')));
     // Opened from a post (🎞️ Meme Builder on a note) → offer the reply right here, the way the Effects
     // studio does. Without it the only route back to the thread is copy-link, find the post, paste.
     const to=_replyTarget();
@@ -3500,7 +3761,7 @@
         <button class="btn btn-neon small" id="mb-post"><svg class="ic b-ic" aria-hidden="true"><use href="#i-send"></use></svg>Post to Nostr</button>
         <button class="btn btn-cyan small" id="mb-copy"><svg class="ic b-ic" aria-hidden="true"><use href="#i-link"></use></svg>Upload &amp; copy link</button>
         <button class="btn btn-cyan small" id="mb-again" title="Put this render back on the timeline as a layer, so you can build on top of it"><svg class="ic b-ic" aria-hidden="true"><use href="#i-film"></use></svg>Use as a layer</button>
-        <a class="btn btn-neon small" href="${url}" download="${enc((P.name||'meme').replace(/[^\w.-]+/g,'_').slice(0,40))}.${ext}"><svg class="ic b-ic" aria-hidden="true"><use href="#i-download"></use></svg>Download</a>
+        <button class="btn btn-neon small" id="mb-dl"><svg class="ic b-ic" aria-hidden="true"><use href="#i-download"></use></svg>Download</button>
       </div>
       <div class="muted small" id="mb-reslink"></div>
     </div>`;
@@ -3511,6 +3772,13 @@
       const u=await uploadBlob(file);
       if(el) el.innerHTML='<a href="'+enc(u)+'" target="_blank" rel="noopener">'+enc(u)+'</a>';
       return u;
+    };
+    // saveBlobAs, never a bare <a download>: the APK's WebView ignores a programmatic download, so the
+    // anchor this used to be saved nothing there and said nothing.
+    const dl=document.getElementById('mb-dl');
+    if(dl) dl.onclick=async()=>{
+      const how = PC.saveBlobAs ? await PC.saveBlobAs(blob, (P.name||'meme').replace(/[^\w.-]+/g,'_').slice(0,40)+'.'+ext) : 'saved';
+      dl.textContent = how==='shared' ? '✓ shared' : '✓ saved';
     };
     const c=document.getElementById('mb-copy');
     if(c) c.onclick=async()=>{ try{ const u=await up(); if(PC.copyValue) await PC.copyValue(u, 'link copied', 'Link:'); else toast(u); }
@@ -3591,6 +3859,7 @@
     // The whole photo, scaled to fit inside the canvas. Can't do both: filling a different aspect ratio
     // always crops, and showing everything always leaves bars — so make it an explicit choice.
     on('mb-canvas-match','click',()=>matchCanvasToLayer(l));
+    on('mb-resize','click',()=>openLayerResize(l.id));
     on('mb-fit','click',()=>{ snap(); l.x=0; l.y=0; l.w=P.w; l.h=P.h; l.fit='contain';
       save(); render(); toast('whole photo — bars where the aspect differs'); });
     on('mb-f-name','input',(e)=>{ snapBurst('name:'+l.id); l.name=String(e.target.value||'').slice(0,24); save(); repaint('timeline'); });
@@ -4022,6 +4291,9 @@
     on('mb-zoomout','click',()=>setZoom([..._ZOOMS].reverse().find(z=>z<_zoom()-1e-6) || ZOOM_MIN));
     on('mb-zoomfit','click',()=>{ const z=fitZoom(); if(z) setZoom(z); });
     on('mb-render','click',doRender);
+    on('mb-export-img','click',openExport);
+    on('mb-imgsize','click',()=>openCanvasSize('resample'));
+    on('mb-cvsize','click',()=>openCanvasSize('extend'));
     on('mb-play','click',()=>togglePlay());
     on('mb-scrub','input',(e)=>seek(+e.target.value));
     // Re-render the bar so the button says what it will now produce (📷 Still / 🎞️ GIF / 🎬 Render).
