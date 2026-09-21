@@ -111,8 +111,27 @@ src_install() {
 	#
 	# `Status: default` rather than locked: this is the shipped default and the user may still change
 	# it in about:config, exactly like every other preference on their own machine.
-	insinto /etc/firefox/policies
-	newins "${FILESDIR}/firefox-policies.json" policies.json
+	#
+	# THE CYBERPUNK THEME RIDES THE SAME FILE, AND ONLY WHEN ITS SIGNED COPY IS HERE. Release Firefox
+	# discards an unsigned theme without a word (measured: no entry in extensions.json at all), so
+	# publish_overlay.sh injects the addons.mozilla.org-signed .xpi into FILESDIR or nothing. The
+	# `Extensions.Install` policy runs once per change of its list -- the version is in the file
+	# name, so an upgrade re-runs it -- and never again after the person picks another theme
+	# (measured). `extensions.activeThemeID` as a DEFAULT makes it the theme of every new profile.
+	# Naming a file that is not there would spend that one run on an error, which is why the theme
+	# half is only written when the file exists.
+	local theme=( "${FILESDIR}"/posterchan-cyberpunk-*.xpi )
+	if [[ -f ${theme[0]} ]]; then
+		insinto /usr/share/posterchanos/firefox
+		doins "${theme[0]}"
+		sed -e "s|@THEME_XPI@|/usr/share/posterchanos/firefox/${theme[0]##*/}|" \
+			"${FILESDIR}/firefox-policies-theme.json" > "${T}/policies.json" || die
+		insinto /etc/firefox/policies
+		newins "${T}/policies.json" policies.json
+	else
+		insinto /etc/firefox/policies
+		newins "${FILESDIR}/firefox-policies.json" policies.json
+	fi
 }
 
 pkg_postinst() {

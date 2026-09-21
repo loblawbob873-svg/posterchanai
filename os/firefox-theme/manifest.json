@@ -1,0 +1,71 @@
+{
+  "manifest_version": 2,
+  "name": "PosterChan Cyberpunk",
+  "version": "1.0.0",
+  "description": "PosterChanOS's cyberpunk palette for Firefox: deep violet-black, neon cyan and magenta accents, and text that stays readable.",
+  "author": "PosterChan",
+  "homepage_url": "https://poster.place",
+  "icons": {
+    "48": "images/icon-48.png",
+    "96": "images/icon-96.png",
+    "128": "images/icon-128.png"
+  },
+  "browser_specific_settings": {
+    "gecko": {
+      "id": "cyberpunk-theme@poster.place",
+      "strict_min_version": "128.0",
+      "data_collection_permissions": {
+        "required": ["none"]
+      }
+    }
+  },
+  "theme": {
+    "images": {
+      "theme_frame": "images/logo-banner.png"
+    },
+    "colors": {
+      "frame": "#0a0a0f",
+      "frame_inactive": "#0d0d14",
+      "tab_background_text": "#c3c5e3",
+      "tab_background_separator": "#3a3a58",
+      "tab_selected": "#1a1a2a",
+      "tab_text": "#edeefa",
+      "tab_line": "#3ce8ff",
+      "tab_loading": "#ff5cf0",
+      "toolbar": "#1a1a2a",
+      "toolbar_text": "#edeefa",
+      "bookmark_text": "#edeefa",
+      "icons": "#d8daf2",
+      "icons_attention": "#ff5cf0",
+      "toolbar_top_separator": "#2c2c46",
+      "toolbar_bottom_separator": "#2c2c46",
+      "toolbar_vertical_separator": "#3a3a58",
+      "button_background_hover": "rgba(60, 232, 255, 0.14)",
+      "button_background_active": "rgba(60, 232, 255, 0.24)",
+      "toolbar_field": "#0a0a0f",
+      "toolbar_field_text": "#edeefa",
+      "toolbar_field_border": "rgba(60, 232, 255, 0.30)",
+      "toolbar_field_focus": "#0a0a0f",
+      "toolbar_field_text_focus": "#ffffff",
+      "toolbar_field_border_focus": "#3ce8ff",
+      "toolbar_field_highlight": "#3ce8ff",
+      "toolbar_field_highlight_text": "#0a0a0f",
+      "popup": "#12121a",
+      "popup_text": "#edeefa",
+      "popup_border": "#34345a",
+      "popup_highlight": "#257281",
+      "popup_highlight_text": "#ffffff",
+      "sidebar": "#12121a",
+      "sidebar_text": "#edeefa",
+      "sidebar_border": "#2c2c46",
+      "sidebar_highlight": "#257281",
+      "sidebar_highlight_text": "#ffffff",
+      "ntp_background": "#0a0a0f",
+      "ntp_text": "#edeefa"
+    },
+    "properties": {
+      "color_scheme": "dark",
+      "content_color_scheme": "system"
+    }
+  }
+}

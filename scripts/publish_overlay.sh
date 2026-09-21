@@ -131,6 +131,26 @@ install -m 0644 "$(dirname "$SRC")/plymouth/posterchanos/"* \
 # publisher beside the canonical installer into every timestamped shell package.
 install -m 0755 "$(dirname "$SRC")/../scripts/publish_iso.sh" \
   "$TMP/app-misc/posterchanos-shell/files/publish_iso.sh"
+# >>> firefox theme
+# THE FIREFOX THEME SHIPS SIGNED OR NOT AT ALL. Release Firefox discards an unsigned theme silently
+# (measured on the laptop: no extensions.json entry, no message), so the copy the overlay carries is
+# the one addons.mozilla.org signed, published by .github/workflows/firefox-theme.yml as
+# firefox-theme-v<version>. Missing or unsigned is a NOTE, not a failure: the ebuild then installs
+# the plain policies and every other part of the session still updates.
+THEME_BUILD="$(dirname "$SRC")/firefox-theme/build.py"
+THEME_XPI=$(python3 "$THEME_BUILD" --name)
+THEME_VER=${THEME_XPI#posterchan-cyberpunk-}; THEME_VER=${THEME_VER%.xpi}
+THEME_URL="${THEME_URL_BASE:-https://github.com/loblawbob873-svg/posterchanai/releases/download}/firefox-theme-v${THEME_VER}/${THEME_XPI}"
+rm -f "$TMP/app-misc/posterchanos-shell/files/"posterchan-cyberpunk-*.xpi
+THEME_DL="$(mktemp)"
+if curl -fsSL --retry 2 --max-time 120 -o "$THEME_DL" "$THEME_URL" && python3 "$THEME_BUILD" --signed "$THEME_DL"; then
+    install -m 0644 "$THEME_DL" "$TMP/app-misc/posterchanos-shell/files/$THEME_XPI"
+    echo "[overlay] Firefox theme: $THEME_XPI (signed)"
+else
+    echo "[overlay] NOTE: no SIGNED $THEME_XPI at $THEME_URL — shipping without the Firefox theme" >&2
+fi
+rm -f "$THEME_DL"
+# <<< firefox theme
 
 # A changed ebuild with the same version is invisible to Portage. The shell used to stay 1.0.0 for
 # ever, which is why installed machines said “Already up to date” while keeping an old launcher.
