@@ -1,0 +1,32 @@
+# PosterChanOS system defaults, installed as /etc/xdg/mimeapps.list by app-misc/posterchanos-shell.
+#
+# ONLY THE TYPES NOTHING ELSE ON THIS MACHINE OPENS. Measured on the laptop: `xdg-mime query default`
+# answered NOTHING for a .docx or an .odt, so `xdg-open report.docx` failed; pictures, PDFs and text
+# already had an answer and are deliberately not taken over here. A per-user ~/.config/mimeapps.list
+# still wins over this file, so anybody can choose something else. Generated from the MimeType= line
+# of posterchan-open.desktop; tests/test_pc_open.py fails if the two disagree.
+[Default Applications]
+application/msword=posterchan-open.desktop
+application/vnd.openxmlformats-officedocument.wordprocessingml.document=posterchan-open.desktop
+application/vnd.oasis.opendocument.text=posterchan-open.desktop
+application/rtf=posterchan-open.desktop
+text/rtf=posterchan-open.desktop
+application/vnd.ms-excel=posterchan-open.desktop
+application/vnd.openxmlformats-officedocument.spreadsheetml.sheet=posterchan-open.desktop
+application/vnd.ms-excel.sheet.macroEnabled.12=posterchan-open.desktop
+application/vnd.oasis.opendocument.spreadsheet=posterchan-open.desktop
+application/vnd.ms-powerpoint=posterchan-open.desktop
+application/vnd.openxmlformats-officedocument.presentationml.presentation=posterchan-open.desktop
+application/vnd.oasis.opendocument.presentation=posterchan-open.desktop
+application/vnd.oasis.opendocument.graphics=posterchan-open.desktop
+application/vnd.oasis.opendocument.text-template=posterchan-open.desktop
+application/vnd.oasis.opendocument.spreadsheet-template=posterchan-open.desktop
+application/vnd.oasis.opendocument.presentation-template=posterchan-open.desktop
+application/vnd.oasis.opendocument.graphics-template=posterchan-open.desktop
+application/vnd.oasis.opendocument.text-flat-xml=posterchan-open.desktop
+application/vnd.oasis.opendocument.spreadsheet-flat-xml=posterchan-open.desktop
+application/vnd.oasis.opendocument.presentation-flat-xml=posterchan-open.desktop
+application/vnd.oasis.opendocument.graphics-flat-xml=posterchan-open.desktop
+application/vnd.sun.xml.writer=posterchan-open.desktop
+application/vnd.sun.xml.calc=posterchan-open.desktop
+application/vnd.sun.xml.impress=posterchan-open.desktop

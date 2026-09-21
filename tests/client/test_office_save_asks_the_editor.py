@@ -90,18 +90,23 @@ class ALocalDocumentCanBeOpenedInOffice(unittest.TestCase):
         # "substring not found" about code that is still there.
         return APP[start:APP.index("id:'host'", start)]
 
+    def _opener(self) -> str:
+        """`_hostOpenOffice` -- shared by the chooser and by `pc-open` from a terminal."""
+        start = APP.index("async function _hostOpenOffice(")
+        return APP[start:APP.index("\n  }\n", start)]
+
     def test_the_chooser_offers_office_for_a_document(self):
         body = self._chooser()
         self.assertIn("id:'office'", body)
         self.assertIn("_officeable(name || path, mime)", body,
                       "the Office choice must be gated on the same set the server accepts")
-        self.assertIn("_officeSession(", body, "it must reuse the one office session machinery")
+        self.assertIn("_hostOpenOffice(", body, "the chooser must use the shared host opener")
+        self.assertIn("_officeSession(", self._opener(), "it must reuse the one office session machinery")
 
     def test_it_saves_back_as_bytes_and_never_as_a_string(self):
         """An .odt is a ZIP. Round-tripping it through `writeText` saves a file LibreOffice then
         refuses to open, with nothing said at the time it was destroyed."""
-        body = self._chooser()
-        office = body[body.index("id:'office'"):body.index("id:'code'")]
+        office = self._opener()
         self.assertIn("pcHost.writeBytes(", office)
         self.assertNotIn("writeText(", office)
 

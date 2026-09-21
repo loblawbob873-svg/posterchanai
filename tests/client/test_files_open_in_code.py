@@ -114,7 +114,10 @@ class FilesOpenInCode(unittest.TestCase):
             self.assertIn("await _withModule('code.js', 'PCCode')", body, head)
         host = self.app[self.app.index("id:'code', icon:'&lt;/&gt;'"):
                         self.app.index("id:'host', icon:'🖥")]
-        self.assertIn("await _withModule('code.js', 'PCCode')", host)
+        # The chooser and `pc-open` share ONE opener; the wait lives in it.
+        self.assertIn("await _hostOpenCode(path)", host)
+        opener = _decomment(_fn(self.app, "async function _hostOpenCode("))
+        self.assertIn("await _withModule('code.js', 'PCCode')", opener)
         r = subprocess.run([NODE, LOADER_SIM], capture_output=True, text=True, timeout=30)
         self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
         self.assertIn("lazy module promise holds", r.stdout)
