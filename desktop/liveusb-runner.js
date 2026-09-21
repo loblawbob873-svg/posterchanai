@@ -36,9 +36,14 @@ try{
   if(old.token===spec.token){
     const ok=code===0;
     Object.assign(old,{running:false,launching:false,ok,exitCode:code,finished:Date.now(),error,
-      message:ok?(spec.kind==='build'?'ISO finished':'USB finished — eject it safely')
-                :(error||spec.kind+' failed (exit '+code+')')});
+      message:ok?({build:'ISO finished',install:'PosterChanOS is installed'}[spec.kind]||'USB finished — eject it safely')
+                :(error||(spec.kind==='install'?'The installer':spec.kind)+' failed (exit '+code+')')});
     write(spec.state,old);
   }
-}finally{unlock(spec.lock,spec.token);}
+}finally{
+  /* Files that must not outlive the child (the installer's password hand-over), removed whatever
+   * happened — including a child that died before it read them. */
+  for(const f of Array.isArray(spec.cleanup)?spec.cleanup:[])try{fs.unlinkSync(String(f));}catch(_){}
+  unlock(spec.lock,spec.token);
+}
 process.exit(code===0?0:1);

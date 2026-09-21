@@ -240,3 +240,26 @@ def test_lost_lock_between_supervisor_spawn_and_claim_never_runs_child(tmp_path)
     assert p.returncode != 0 and "ownership changed before claim" in err
     time.sleep(.15)
     assert not invoked.exists(), "an unclaimed supervisor must never invoke sudo/dd"
+
+
+def test_a_build_longer_than_the_handoff_grace_is_still_running(tmp_path):
+    """The supervisor's identity check looked for the job token in /proc/<pid>/cmdline, where it only
+    ever appeared base64-encoded inside the spec — so any job still running after the 2-second
+    hand-off grace was declared "stopped before it finished" (and its lock released). Every test
+    above finishes inside that grace. Found through the graphical installer, which shares this
+    supervisor, on its first real install in a VM; an ISO build takes minutes, so it had the same
+    fault."""
+    import time
+    sudo = tmp_path / "sudo"
+    sudo.write_text("#!/bin/sh\nsleep 4\nexit 0\n")
+    sudo.chmod(0o755)
+    out, state = tmp_path / "images", tmp_path / "state"
+    out.mkdir()
+    env = {**os.environ, "PC_SUDO": str(sudo), "PC_LIVEUSB_STATE_DIR": str(state)}
+    subprocess.check_call(["node", "-e", "require('./desktop/liveusb').build(process.argv[1],false)", str(out)],
+                          cwd=ROOT, env=env)
+    time.sleep(2.8)
+    js = "process.stdout.write(JSON.stringify(require('./desktop/liveusb').status()))"
+    got = json.loads(subprocess.check_output(["node", "-e", js], cwd=ROOT, env=env))
+    assert got["running"] is True and not got["finished"], got
+    assert _wait_status(state, timeout=8)["ok"] is True

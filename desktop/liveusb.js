@@ -81,7 +81,10 @@ function launch(kind,bin,args,env,meta){
    * a replacement UI never guesses success from a stale or partial ISO file. */
   const spec={state:STATE_FILE,log:LOG_FILE,lock:LOCK_FILE,token,kind,bin,args,env:env||{}};
   let p;
-  try{p=spawn(process.execPath,[RUNNER,Buffer.from(JSON.stringify(spec)).toString('base64')],{
+  /* The token rides in argv IN THE CLEAR as well: alive() recognises this supervisor by finding it in
+   * /proc/<pid>/cmdline, and inside the base64 spec it is not there — so every job still running
+   * after the two-second hand-off grace was declared "stopped before it finished". */
+  try{p=spawn(process.execPath,[RUNNER,Buffer.from(JSON.stringify(spec)).toString('base64'),token],{
     env:Object.assign({},process.env,{ELECTRON_RUN_AS_NODE:'1'}),stdio:'ignore',detached:true});}
   catch(e){try{fs.unlinkSync(LOCK_FILE);}catch(_){}job.launching=false;job.finished=Date.now();job.message=String(e.message||e);save();throw e;}
   if(process.env.NODE_ENV==='test'&&Number(process.env.PC_LIVEUSB_TEST_BEFORE_CLAIM_MS)>0)
