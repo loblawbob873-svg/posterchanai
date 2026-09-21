@@ -41,7 +41,7 @@ setup_video_deps() {
     local MODEL="${VIDEO_MODEL:-Wan-AI/Wan2.1-T2V-1.3B-Diffusers}"
     local DL_VIDEO="${VIDEO_PREFETCH:-}"
     if [ -z "$DL_VIDEO" ]; then
-        read -p "Pre-download the video model now ($MODEL, ~27GB)? It downloads on first videogeni otherwise. [y/N]: " DL_VIDEO
+        ask DL_VIDEO "Pre-download the video model now ($MODEL, ~27GB)? It downloads on first videogeni otherwise. [y/N]: "
     fi
     if [[ "$DL_VIDEO" =~ ^[Yy] ]]; then
         print_step "Downloading $MODEL into the Hugging Face cache (this is large)..."

@@ -39,7 +39,7 @@ select_components() {
     echo "     and optionally rebuild the Telegram Bot API server, then restart."
     echo ""
 
-    read -p "Select installation type [1-6, default=1]: " INSTALL_TYPE
+    ask INSTALL_TYPE "Select installation type [1-6, default=1]: "
     INSTALL_TYPE=${INSTALL_TYPE:-1}
 
     # Option 5 is a pure add-on for an existing install: set up ONLY the Telegram
@@ -88,7 +88,7 @@ select_components() {
     # If they picked a plain type (1-4), still offer the add-on.
     if [ "$INSTALL_TELEGRAM_BOTAPI" != "1" ]; then
         echo ""
-        read -p "Also add option 5 (local Telegram Bot API server, for files >20MB)? [y/N]: " WANT_TG_BOTAPI
+        ask WANT_TG_BOTAPI "Also add option 5 (local Telegram Bot API server, for files >20MB)? [y/N]: "
         if [[ "$WANT_TG_BOTAPI" =~ ^[Yy] ]]; then
             INSTALL_TELEGRAM_BOTAPI=1
             echo -e "  ${GREEN}✓ Will set up the local Telegram Bot API server${NC}"
@@ -98,7 +98,7 @@ select_components() {
     # Offer the ACE-Step music server (musicgeni) on any GPU install. It's a separate, heavy
     # add-on (own venv via uv, multi-GB model, systemd service), so it's opt-in.
     echo ""
-    read -p "Set up music generation (ACE-Step / musicgeni)? Separate GPU service, ~9GB model [y/N]: " WANT_MUSIC
+    ask WANT_MUSIC "Set up music generation (ACE-Step / musicgeni)? Separate GPU service, ~9GB model [y/N]: "
     if [[ "$WANT_MUSIC" =~ ^[Yy] ]]; then
         INSTALL_MUSIC=1
         echo -e "  ${GREEN}✓ Will set up the ACE-Step music server${NC}"
@@ -107,7 +107,7 @@ select_components() {
     # Offer text-to-video (videogeni). NATIVE diffusers — rides the image venv (no separate service),
     # just adds a couple deps + an optional model prefetch. Works on CUDA/Arc-XPU/ROCm.
     echo ""
-    read -p "Set up video generation (videogeni)? Native diffusers, shares the image GPU, ~27GB model [y/N]: " WANT_VIDEO
+    ask WANT_VIDEO "Set up video generation (videogeni)? Native diffusers, shares the image GPU, ~27GB model [y/N]: "
     if [[ "$WANT_VIDEO" =~ ^[Yy] ]]; then
         INSTALL_VIDEO=1
         echo -e "  ${GREEN}✓ Will install video generation deps${NC}"
@@ -146,7 +146,7 @@ select_llm_backend() {
         amd) DEFAULT=3 ;;
     esac
 
-    read -p "Select LLM backend [1-4, default=$DEFAULT]: " BACKEND_CHOICE
+    ask BACKEND_CHOICE "Select LLM backend [1-4, default=$DEFAULT]: "
     BACKEND_CHOICE=${BACKEND_CHOICE:-$DEFAULT}
 
     case "$BACKEND_CHOICE" in
@@ -184,7 +184,7 @@ select_image_backend() {
         echo "  • SDXL models need 8GB+ VRAM (12GB recommended)"
         echo "  • First generation is slow (shader compilation)"
         echo ""
-        read -p "Continue with native image generation? [Y/n]: " CONTINUE_AMD
+        ask CONTINUE_AMD "Continue with native image generation? [Y/n]: "
         if [[ "$CONTINUE_AMD" =~ ^[Nn] ]]; then
             INSTALL_IMAGE=0
             IMAGE_BACKEND="remote"

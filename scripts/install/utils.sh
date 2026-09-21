@@ -39,6 +39,42 @@ print_error() {
     echo -e "${RED}✗ $1${NC}"
 }
 
+# ask VAR "PROMPT" — THE ONE WAY THIS INSTALLER ASKS A QUESTION.
+#
+# Interactively it is exactly `read -p "PROMPT" VAR`, so a person at a terminal sees the same
+# installer they always have. With PC_NONINTERACTIVE=1 (./install.sh --nostr-only / --ai, which is
+# what PosterChanOS System Settings runs in the background) it never touches stdin: VAR takes
+# $PC_ANS_<VAR> when the caller supplied one, and otherwise "" — and an empty answer is already every
+# prompt's documented default ([Y/n] -> Y, [y/N] -> N, [1-6, default=1] -> 1).
+#
+# Why a wrapper and not `yes "" | ./install.sh`: under `set -e`, a `read` that hits end-of-input
+# returns 1 and ends the whole install at its first question, with nothing said about why — which is
+# what happens to this installer when a GUI runs it with no terminal attached.
+ask() {
+    local __var="$1" __prompt="$2" __preset="PC_ANS_$1"
+    if [ "${PC_NONINTERACTIVE:-0}" = "1" ]; then
+        printf -v "$__var" '%s' "${!__preset-}"
+        echo "${__prompt}${!__var} [non-interactive]"
+        return 0
+    fi
+    read -p "$__prompt" "$__var"
+}
+
+# The account the service runs as. Normally whoever runs the installer; PosterChanOS runs the
+# installer as root through its privileged helper and names a dedicated system account here, so the
+# unit is never written with User=root.
+service_user() {
+    echo "${PC_SERVICE_USER:-$(whoami)}"
+}
+
+# That account's home — what HOME must be for the service (model caches, ~/.u2net) when the installer
+# itself is running as somebody else.
+service_home() {
+    local h
+    h="$(getent passwd "$(service_user)" 2>/dev/null | cut -d: -f6)"
+    echo "${h:-$HOME}"
+}
+
 print_summary() {
     echo ""
     echo -e "${GREEN}╔═══════════════════════════════════════════════════════════════╗${NC}"
@@ -148,6 +184,8 @@ show_help() {
     echo "Options:"
     echo "  --help, -h       Show this help message"
     echo "  --packages       Show required packages for your distro"
+    echo "  --nostr-only     Non-interactive Nostr-only install (relay + client, no AI) [--service-user U] [--no-start]"
+    echo "  --ai             Non-interactive Full install (LLM + image) [--backend intel|nvidia|amd|cpu] [--service-user U] [--no-start]"
     echo "  --music          Set up the ACE-Step music server (venv-music) for musicgeni"
     echo "  --video          Install the videogeni (text-to-video) deps into the image venv"
     echo "  --turn           Build the built-in Pion TURN relay for voice/video calls"
@@ -202,7 +240,7 @@ ensure_igc_235() {
     fi
     # install-igc.sh (no flag) uses a staged /opt/igc-2.35.5 if present, else downloads.
     local run_igc
-    read -p "  Install IGC 2.35.5 now? (backs up existing IGC; needs sudo) [Y/n]: " run_igc
+    ask run_igc "  Install IGC 2.35.5 now? (backs up existing IGC; needs sudo) [Y/n]: "
     if [[ "$run_igc" =~ ^[Nn] ]]; then
         echo "  Skipped. Install later with: sudo $igc_script --download"
         return 0

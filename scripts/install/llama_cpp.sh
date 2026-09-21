@@ -59,7 +59,7 @@ setup_llama_cpp_intel() {
             *) echo "  Please install the level-zero package for your distribution." ;;
         esac
         echo ""
-        read -p "  Continue anyway? [y/N]: " CONTINUE_LZ
+        ask CONTINUE_LZ "  Continue anyway? [y/N]: "
         if [[ ! "$CONTINUE_LZ" =~ ^[Yy] ]]; then
             exit 1
         fi
@@ -79,7 +79,7 @@ setup_llama_cpp_intel() {
             *) echo "  Please install patchelf for your distribution." ;;
         esac
         echo ""
-        read -p "  Continue anyway? [y/N]: " CONTINUE_PF
+        ask CONTINUE_PF "  Continue anyway? [y/N]: "
         if [[ ! "$CONTINUE_PF" =~ ^[Yy] ]]; then
             exit 1
         fi

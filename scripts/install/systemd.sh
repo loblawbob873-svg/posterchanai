@@ -15,7 +15,7 @@ setup_systemd() {
     fi
 
     print_step "Configure systemd service?"
-    read -p "Install as systemd service? [Y/n]: " INSTALL_SERVICE
+    ask INSTALL_SERVICE "Install as systemd service? [Y/n]: "
     INSTALL_SERVICE=${INSTALL_SERVICE:-Y}
 
     if [[ ! "$INSTALL_SERVICE" =~ ^[Yy] ]]; then
@@ -58,7 +58,7 @@ offer_split_services() {
     echo "  The BOT MANAGER stays with the app deliberately (Admin -> Bots drives it through an"
     echo "  in-process registry), so the app runs role \"app,bots\"."
     echo "  Reversible at any time with: scripts/install_services.sh --revert"
-    read -p "Split into separate services? [y/N]: " SPLIT_SVC
+    ask SPLIT_SVC "Split into separate services? [y/N]: "
     SPLIT_SVC=${SPLIT_SVC:-N}
     if [[ ! "$SPLIT_SVC" =~ ^[Yy] ]]; then
         print_warning "Keeping the single-service layout (role 'all')"
@@ -83,7 +83,7 @@ setup_single_service() {
     sudo systemctl daemon-reload
     print_success "Created systemd service: $SERVICE_NAME"
 
-    read -p "Enable and start service now? [Y/n]: " START_NOW
+    ask START_NOW "Enable and start service now? [Y/n]: "
     START_NOW=${START_NOW:-Y}
 
     if [[ "$START_NOW" =~ ^[Yy] ]]; then
@@ -253,13 +253,13 @@ After=network.target
 
 [Service]
 Type=simple
-User=$(whoami)
+User=$(service_user)
 WorkingDirectory=$SCRIPT_DIR
 EnvironmentFile="-$SCRIPT_DIR/media-center.env"
 
 # Include venv so yt-dlp, ffmpeg and other pip-installed binaries are found
 Environment="PATH=$VENV_PATH/bin:/usr/local/bin:/usr/bin:/bin"
-Environment="HOME=$HOME"
+Environment="HOME=$(service_home)"
 
 # The run script (run-intel.sh) handles:
 # - Detecting and configuring Intel oneAPI
@@ -296,7 +296,7 @@ After=network.target
 
 [Service]
 Type=simple
-User=$(whoami)
+User=$(service_user)
 WorkingDirectory=$SCRIPT_DIR
 EnvironmentFile="-$SCRIPT_DIR/media-center.env"
 Environment="PATH=$VENV_PATH/bin:/usr/local/bin:/usr/bin"

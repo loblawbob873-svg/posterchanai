@@ -293,7 +293,7 @@ Wants=network-online.target
 
 [Service]
 Type=simple
-User=$(id -un)
+User=$(service_user 2>/dev/null || id -un)
 WorkingDirectory=$repo_root
 Environment=POSTERCHANAI_SEARXNG_PORT=${port}
 Environment=SEARXNG_SETTINGS_PATH=${conf_dir}/settings.yml

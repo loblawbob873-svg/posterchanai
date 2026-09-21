@@ -9,7 +9,7 @@ setup_directories() {
     local UPLOAD_PATH="/var/lib/posterchanai"
     if [ ! -d "$UPLOAD_PATH" ]; then
         sudo mkdir -p "$UPLOAD_PATH"
-        sudo chown "$(whoami)":"$(whoami)" "$UPLOAD_PATH"
+        sudo chown "$(service_user)":"$(service_user)" "$UPLOAD_PATH"
         print_success "Created $UPLOAD_PATH"
     else
         print_success "Upload directory exists"
@@ -19,7 +19,7 @@ setup_directories() {
     local MODELS_PATH="$UPLOAD_PATH/models"
     if [ ! -d "$MODELS_PATH" ]; then
         sudo mkdir -p "$MODELS_PATH"
-        sudo chown "$(whoami)":"$(whoami)" "$MODELS_PATH"
+        sudo chown "$(service_user)":"$(service_user)" "$MODELS_PATH"
         print_success "Created $MODELS_PATH"
     fi
 
@@ -34,7 +34,7 @@ setup_directories() {
     local MEDIA_PATH="${POSTERCHANAI_DATA:-$UPLOAD_PATH}/media"
     if [ ! -d "$MEDIA_PATH" ]; then
         sudo mkdir -p -m 750 "$MEDIA_PATH"
-        sudo chown "$(whoami)":"$(whoami)" "$MEDIA_PATH"
+        sudo chown "$(service_user)":"$(service_user)" "$MEDIA_PATH"
     fi
     if [ ! -e "$SCRIPT_DIR/media-center.env" ]; then
         install -m 600 "$SCRIPT_DIR/media-center.env.example" "$SCRIPT_DIR/media-center.env"
@@ -133,7 +133,7 @@ setup_python_env() {
         if [ "${INSTALL_LLM:-0}" = "0" ] && [ "${INSTALL_IMAGE:-0}" = "0" ]; then
             echo "  Skipping Whisper voice-model pre-download (lean install; it downloads on first use if needed)."
         else
-            read -p "Pre-download the Whisper voice model now (~1.5GB)? It downloads on first voice use otherwise. [y/N]: " DL_WHISPER
+            ask DL_WHISPER "Pre-download the Whisper voice model now (~1.5GB)? It downloads on first voice use otherwise. [y/N]: "
             if [[ "$DL_WHISPER" =~ ^[Yy] ]]; then
                 print_step "Downloading Whisper speech recognition model (~1.5GB)..."
                 if python -c "
@@ -264,7 +264,7 @@ download_model() {
     echo "  (search 'CyberRealistic XL') and drop it in the models dir. Not auto-downloaded"
     echo "  because CivitAI requires an account token."
     echo ""
-    read -p "Download a starter LLM? [1/2/3/4/n]: " DOWNLOAD_MODEL
+    ask DOWNLOAD_MODEL "Download a starter LLM? [1/2/3/4/n]: "
 
     local MODELS_PATH="/var/lib/posterchanai/models"
     mkdir -p "$MODELS_PATH" 2>/dev/null || true
