@@ -325,6 +325,10 @@ CHECKS = {
     "check_texts_media":               dict(group="ui", secs=420,
                                             why="pictures draw, survive a repaint, read once"),
     "check_files_explorer":            dict(group="ui", secs=600),
+    # The VM console toolbar at every display scale, and outside the popped-out window's DRAG region
+    # (a button painted over `-webkit-app-region: drag` loses its clicks to "move the window").
+    "check_vm_console_layout":         dict(group="ui", secs=240,
+                                            why="console buttons visible + clickable at .67-1.5"),
     "check_mail_mobile":               dict(group="ui", secs=600),
     "check_concord_mobile":            dict(group="ui", secs=420),
     "check_concord_scroll_mobile":     dict(group="ui", secs=420),

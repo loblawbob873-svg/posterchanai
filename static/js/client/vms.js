@@ -866,6 +866,29 @@
   }
 
   // ---------------------------------------------------------------- console
+  /* The console overlay, built in ONE place so the layout check (scripts/check_vm_console_layout.py)
+   * measures the markup that ships. Its toolbar must never sit under a drag region: in a popped-out
+   * PosterChanOS window the top 38px is #pc-oswin-chrome, which is `-webkit-app-region: drag`, and
+   * Electron decides "drag the window" from the DRAG REGIONS, not from z-index — an element painted on
+   * top of a drag region still loses its clicks to the window move unless it is itself `no-drag`. So a
+   * console that merely out-z-indexed the title bar showed its ✕ Close exactly where a click moved the
+   * window instead ("Close button at top does nothing"). The overlay therefore starts BELOW the title
+   * bar in a popped-out window (the window keeps its own ✕/□/− too) and is `no-drag` throughout. */
+  function consoleShell(name){
+    const el = document.createElement('div');
+    el.id = 'vms-console'; el.className = 'vmc';
+    el.innerHTML = `<div class="vmc-bar">
+        <button class="btn small" data-c="close" aria-label="Close console">✕ Close</button>
+        <b class="vmc-name">${esc(name)}</b><span class="vmc-st">Requesting a console…</span>
+        <span class="vmc-sp"></span>
+        <button class="btn small" data-c="grab" disabled title="Keep the mouse inside the VM — Esc releases it">Grab mouse</button>
+        <button class="btn small" data-c="cad">Ctrl+Alt+Del</button>
+        <button class="btn small" data-c="fit">1:1</button>
+        <button class="btn small" data-c="kbd">Keyboard</button>
+        <button class="btn small" data-c="fs">Full screen</button>
+      </div><div class="vmc-screen"></div><textarea class="vmc-kbd" autocapitalize="off" autocomplete="off" spellcheck="false" aria-label="On-screen keyboard"></textarea>`;
+    return el;
+  }
   async function openConsole(pk, vm){
     if(pk === LOCAL_PK){
       const r = await call(pk, 'console.open', { vm: vm.uuid });
@@ -874,25 +897,25 @@
     }
     if(S.console) closeConsole();
     const h = hostOf(pk);
-    const el = document.createElement('div');
-    el.id = 'vms-console'; el.className = 'vmc';
-    el.innerHTML = `<div class="vmc-bar">
-        <button class="btn small" data-c="close" aria-label="Close console">✕ Close</button>
-        <b class="vmc-name">${esc(vm.name)}</b><span class="vmc-st">Requesting a console…</span>
-        <span class="vmc-sp"></span>
-        <button class="btn small" data-c="cad">Ctrl+Alt+Del</button>
-        <button class="btn small" data-c="fit">1:1</button>
-        <button class="btn small" data-c="kbd">Keyboard</button>
-        <button class="btn small" data-c="fs">Full screen</button>
-      </div><div class="vmc-screen"></div><textarea class="vmc-kbd" autocapitalize="off" autocomplete="off" spellcheck="false" aria-label="On-screen keyboard"></textarea>`;
+    const el = consoleShell(vm.name);
     document.body.appendChild(el);
     const st = el.querySelector('.vmc-st');
-    const setSt = (s, m) => { if(st) st.textContent = m || { connecting: 'Connecting…', connected: 'Connected', closed: 'Closed', error: 'Error' }[s] || s; el.dataset.state = s; };
+    const grabBtn = el.querySelector('[data-c=grab]');
+    const setSt = (s, m) => {
+      if(st) st.textContent = m || { connecting: 'Connecting…', connected: 'Connected', closed: 'Closed', error: 'Error' }[s] || s;
+      el.dataset.state = s;
+      const on = !!(C.handle && C.handle.grabbed && C.handle.grabbed());
+      el.classList.toggle('vmc-on', on);
+      if(grabBtn){ grabBtn.disabled = s !== 'connected'; grabBtn.textContent = on ? 'Mouse grabbed (Esc)' : 'Grab mouse'; }
+    };
     const C = S.console = { el, handle: null, pk, uuid: vm.uuid, fit: true };
     el.querySelector('[data-c=close]').onclick = () => closeConsole();
     el.querySelector('[data-c=cad]').onclick = () => { C.handle && C.handle.ctrlAltDel(); };
     el.querySelector('[data-c=fit]').onclick = (e) => { C.fit = !C.fit; C.handle && C.handle.setFit(C.fit); e.currentTarget.textContent = C.fit ? '1:1' : 'Fit'; };
     el.querySelector('[data-c=fs]').onclick = () => { try{ document.fullscreenElement ? document.exitFullscreen() : el.requestFullscreen(); }catch(_){} };
+    // The grab is ALSO a button: a click on the VM's screen takes it (vmconsole.js), but a control you
+    // can see is how anybody finds out the console can keep the mouse at all.
+    if(grabBtn) grabBtn.onclick = () => { C.handle && C.handle.grab && C.handle.grab(); };
     const kbd = el.querySelector('.vmc-kbd');
     el.querySelector('[data-c=kbd]').onclick = () => { try{ kbd.focus(); }catch(_){} };
     kbd.addEventListener('input', () => {
@@ -1458,8 +1481,13 @@
 .vms-mig-side{display:flex;align-items:center;gap:8px;flex-wrap:wrap;overflow-wrap:anywhere}
 .vms-mig-pre,.vms-mig-done{background:rgba(var(--accent2-rgb),.1);border:1px solid var(--line);border-radius:var(--r-sm);padding:8px 10px;font-size:14px}
 .vms-mig-locked{background:rgba(255,80,80,.1);border:1px solid rgba(255,80,80,.5);border-radius:var(--r-sm);padding:10px;font-size:14px;display:flex;flex-direction:column;gap:8px}
-.vmc{position:fixed;inset:0;z-index:2147483646;background:#000;display:flex;flex-direction:column}
-.vmc-bar{display:flex;gap:6px;align-items:center;padding:6px 8px;background:var(--bg2);color:var(--text);flex-wrap:wrap}
+.vmc{position:fixed;inset:0;z-index:2147483646;background:#000;display:flex;flex-direction:column;-webkit-app-region:no-drag;app-region:no-drag}
+html.pc-oswin .vmc{top:38px}
+.vmc:fullscreen,html.pc-oswin .vmc:fullscreen{top:0}
+.vmc-bar{display:flex;gap:6px;align-items:center;padding:6px 8px;background:var(--bg2);color:var(--text);flex-wrap:wrap;-webkit-app-region:no-drag;app-region:no-drag}
+.vmc-bar .btn{-webkit-app-region:no-drag;app-region:no-drag}
+.vmc.vmc-on [data-c=grab]{border-color:var(--neon);color:var(--neon)}
+.vmc-screen.vmc-grabbed{cursor:none}
 .vmc-st{color:var(--muted);font-size:13px}.vmc-sp{flex:1}
 .vmc-screen{flex:1;min-height:0;position:relative;overflow:hidden}
 .vmc-kbd{position:absolute;left:-9999px;top:0;width:1px;height:1px;opacity:0}
@@ -1624,5 +1652,7 @@
     _local: LocalHost,
     _findHosts: findHosts,
     _settingsDelta: settingsDelta,
+    _consoleShell: consoleShell,
+    _style: () => STYLE,
   };
 })();
