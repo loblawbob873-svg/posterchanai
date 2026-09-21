@@ -4543,12 +4543,45 @@
     }
   }
 
+  /* THE CARRIER'S ANSWER, SAID OUT LOUD.
+   *
+   * `sendMms` resolves when Android ACCEPTS the transaction; whether the carrier then took it
+   * arrives seconds later as the native `smsSent` event (MmsSendReceiver / SmsActionReceiver). Nothing
+   * here listened, so the composer toasted "sent" and a carrier refusal only ever surfaced as a
+   * quietly different bubble on some later provider read — for a picture message the person had
+   * already watched leave the composer. A refusal is now a toast carrying the phone's own reason,
+   * and the thread is re-read from the provider so the failed row (with its Retry) appears at once.
+   * An ambiguous result is deliberately not emitted by the native side, so nothing here can call a
+   * possibly-delivered picture "not sent". */
+  let _sendResultsArmed = false;
+  function armSendResults(){
+    if(_sendResultsArmed) return;
+    const P = plug('addListener');
+    if(!P || typeof P.addListener !== 'function') return;
+    try{ P.addListener('smsSent', ev => { onNativeSendResult(ev); }); _sendResultsArmed = true; }
+    catch(_){ /* an older bridge; the next foreground tries again */ }
+  }
+  async function onNativeSendResult(ev){
+    if(!ev) return;
+    if(!ev.ok){
+      const what = ev.mms ? 'Picture message' : 'Text message';
+      const why = String(ev.error || '') || ('the carrier refused it (code ' + Number(ev.code || 0) + ')');
+      try{ PC.toast(what + ' not sent: ' + why); }catch(_){ }
+    }
+    try{
+      if(!(await phoneState()).canRead) return;
+      await loadFromPhone();
+      if(textsOnScreen()) paint();
+    }catch(_){ /* the toast above is the part that must not be lost */ }
+  }
+
   function init(){
     PC = window.__PC;
     if(!PC){ return setTimeout(init, 50); }
     // Only the live filter starts here. No archive query, provider read or permission prompt:
     // desktop notifications must work before the first visit to Texts without warming history.
     watch();
+    armSendResults();
     /* The handset publishes and drains WITHOUT the screen being open — that is the whole point of an
      * archive. Behind `load` so it never runs before the client has a key, and on visibility rather
      * than a timer: a poll here would run for the life of the battery on a device that already holds
@@ -4564,6 +4597,7 @@
     let foregrounding = null;
     async function foreground(){
       if(document.visibilityState !== 'visible') return;
+      armSendResults();
       /* sms.js is present in every client shell. Browser startup commonly emits focus after the
        * timeline has begun rendering; do not open/decrypt/query the Texts archive for that event.
        * Entering Texts calls render(), which owns the cold load and installs this same retry path. */

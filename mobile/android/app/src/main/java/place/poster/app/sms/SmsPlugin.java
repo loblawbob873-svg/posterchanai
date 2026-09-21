@@ -99,6 +99,16 @@ public class SmsPlugin extends Plugin {
         o.put("row", row);
         o.put("ok", ok);
         o.put("code", code);
+        /* THE REASON TRAVELS WITH THE VERDICT. A picture message's code is an SmsManager MMS result
+         * (MmsFailures has the sentence for each); the client toasts it rather than a bare number,
+         * because "code 8" is not something a person can act on and "mobile data is unavailable"
+         * is. A text's codes are a different table, so they stay a number. */
+        boolean mms = row != null && row.startsWith("content://mms");
+        o.put("mms", mms);
+        if (!ok && mms) {
+            try { o.put("error", MmsFailures.reason(p.getContext(), code, 0)); }
+            catch (Throwable ignored) { }
+        }
         p.notifyListeners("smsSent", o);
     }
 
@@ -556,7 +566,10 @@ public class SmsPlugin extends Plugin {
         } catch (Throwable ignored) {
             // No SIM, no telephony, a tablet, an OEM that guards the config: all "we could not ask".
         }
-        o.put("bytes", bytes > 0 ? bytes : DEFAULT_MMS_MAX);
+        /* Under the TRANSPORT's cap as well as the carrier's: mmslib overrides the platform's
+         * maxMessageSize with its own (MmsSender.transportLimit), so a carrier publishing 1.2MB
+         * still has every PDU over ~800KB refused with MMS_ERROR_IO_ERROR. */
+        o.put("bytes", Math.min(bytes > 0 ? bytes : DEFAULT_MMS_MAX, MmsSender.transportLimit()));
         o.put("measured", bytes > 0);
         call.resolve(o);
     }

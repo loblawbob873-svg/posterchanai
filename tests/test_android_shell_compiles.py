@@ -78,7 +78,15 @@ public class Message {
   public Message(String b, String a, byte[] image) { }
   public Message(String b, String a, android.graphics.Bitmap image) { }
   public void addMedia(byte[] raw, String mime, String name) { }
+  public void addMedia(byte[] raw, String mime, String contentId, String name) { }
   public void setSave(boolean save) { }
+}
+""",
+    # The transport's own PDU size cap (MmsSender.transportLimit). A static in the same AAR.
+    "com/android/mms/MmsConfig.java": """
+package com.android.mms;
+public class MmsConfig {
+  public static int getMaxMessageSize() { return 819200; }
 }
 """,
     "com/klinker/android/send_message/Transaction.java": """

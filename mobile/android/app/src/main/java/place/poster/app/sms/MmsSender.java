@@ -4,6 +4,10 @@ import android.content.Context;
 import android.content.Intent;
 import android.graphics.Bitmap;
 import android.graphics.BitmapFactory;
+import android.graphics.Canvas;
+import android.graphics.Color;
+import android.graphics.Matrix;
+import android.media.ExifInterface;
 import android.os.Bundle;
 import android.telephony.SmsManager;
 import android.telephony.SubscriptionManager;
@@ -11,6 +15,9 @@ import android.telephony.SubscriptionManager;
 import com.klinker.android.send_message.Message;
 import com.klinker.android.send_message.Settings;
 import com.klinker.android.send_message.Transaction;
+
+import java.io.ByteArrayInputStream;
+import java.io.ByteArrayOutputStream;
 
 /** One carrier-MMS send path shared by the foreground plugin and background WebUI outbox. */
 public final class MmsSender {
@@ -75,15 +82,20 @@ public final class MmsSender {
                 message = new Message(body == null ? "" : body, to);
                 message.addMedia(raw, type, name == null || name.isEmpty() ? "video" : name);
             } else {
-                BitmapFactory.Options bounds = new BitmapFactory.Options();
-                bounds.inJustDecodeBounds = true;
-                BitmapFactory.decodeByteArray(raw, 0, raw.length, bounds);
-                if (bounds.outWidth <= 0 || bounds.outHeight <= 0
-                        || (long) bounds.outWidth * (long) bounds.outHeight > 40_000_000L)
-                    throw new IllegalArgumentException("attachment image dimensions are unsafe");
-                Bitmap image = BitmapFactory.decodeByteArray(raw, 0, raw.length);
-                if (image == null) throw new IllegalArgumentException("attachment is not an image");
-                message = new Message(body == null ? "" : body, to, image);
+                /* THE PHOTO IS FITTED HERE, NOT BY THE LIBRARY — see MmsImageFit. The Bitmap
+                 * constructor this used to call re-encodes the FULL-RESOLUTION picture at quality
+                 * 90 and never scales it, so every camera photo became a multi-megabyte PDU that
+                 * the platform refused with MMS_ERROR_IO_ERROR. The bytes handed over below are
+                 * already within this SIM's ceiling and are passed as media, which the library
+                 * copies into the PDU untouched. */
+                int bodyBytes = body == null ? 0
+                        : body.getBytes(java.nio.charset.StandardCharsets.UTF_8).length;
+                int budget = MmsImageFit.budget(carrierLimit(ctx), transportLimit(), bodyBytes);
+                byte[] fitted = prepareImage(raw, type, budget);
+                boolean asIs = fitted == raw;
+                message = new Message(body == null ? "" : body, to);
+                String partName = asIs ? safeName(name, "image.gif") : jpegName(name);
+                message.addMedia(fitted, asIs ? type : "image/jpeg", partName, partName);
             }
             message.setSave(true);
             /* The library's default completion receiver is not contributed by its AAR manifest.
@@ -130,16 +142,143 @@ public final class MmsSender {
         return SubscriptionManager.INVALID_SUBSCRIPTION_ID;
     }
 
+    /** The MMS ceiling for the default SMS manager (callers with no Context), transport-capped. */
     static int carrierLimit() {
+        SmsManager manager = null;
+        try { manager = SmsManager.getDefault(); } catch (Throwable ignored) { }
+        return ceiling(carrierConfigLimit(manager));
+    }
+
+    /** The same, read from the subscription this send actually leaves on. */
+    static int carrierLimit(Context ctx) {
+        SmsManager manager = null;
         try {
-            Bundle cfg = SmsManager.getDefault().getCarrierConfigValues();
+            int sub = activeMmsSubscriptionId(ctx);
+            if (sub != SubscriptionManager.INVALID_SUBSCRIPTION_ID)
+                manager = SmsManager.getSmsManagerForSubscriptionId(sub);
+        } catch (Throwable ignored) { }
+        if (manager == null) try { manager = SmsManager.getDefault(); } catch (Throwable ignored) { }
+        return ceiling(carrierConfigLimit(manager));
+    }
+
+    private static int carrierConfigLimit(SmsManager manager) {
+        try {
+            Bundle cfg = manager == null ? null : manager.getCarrierConfigValues();
             int bytes = cfg == null ? 0 : cfg.getInt("maxMessageSize", 0);
             if (bytes > 64 * 1024) return bytes;
         } catch (Throwable ignored) { }
         return 300 * 1024;
     }
 
+    /**
+     * THE TRANSPORT'S OWN CAP. mmslib passes `maxMessageSize = MmsConfig.getMaxMessageSize()`
+     * (819200 unless its config XML says otherwise) to SmsManager.sendMultimediaMessage as a config
+     * OVERRIDE, so the platform refuses any PDU above it with MMS_ERROR_IO_ERROR even on a carrier
+     * that publishes a larger ceiling. Every size decision — the photo budget, the video refusal,
+     * the WebView's link threshold (SmsPlugin.mmsLimit) — must sit under BOTH numbers.
+     */
+    static int transportLimit() {
+        try {
+            int v = com.android.mms.MmsConfig.getMaxMessageSize();
+            if (v > 64 * 1024) return v;
+        } catch (Throwable ignored) { }
+        return 800 * 1024;
+    }
+
+    /** The lower of a carrier figure and the transport cap. */
+    static int ceiling(int carrier) { return Math.min(carrier, transportLimit()); }
+
     static int videoLimit() { return Math.max(64 * 1024, carrierLimit() - 8 * 1024); }
+
+    /**
+     * The bytes a photo goes into the PDU as: at most `budget`, JPEG, EXIF orientation applied (a
+     * re-encode drops the EXIF tag that told the recipient how to rotate it — and with it the GPS
+     * position, which is why an ordinary photo is re-encoded even when it already fits),
+     * transparency flattened onto white. A GIF that already fits goes untouched so its animation
+     * survives. Throws with a sentence when the picture cannot be read or cannot be made small
+     * enough — never hands the platform a PDU it will refuse.
+     */
+    static byte[] prepareImage(final byte[] raw, String type, int budget) throws Exception {
+        if (MmsImageFit.sendAsIs(type, raw.length, budget)) return raw;
+        BitmapFactory.Options bounds = new BitmapFactory.Options();
+        bounds.inJustDecodeBounds = true;
+        BitmapFactory.decodeByteArray(raw, 0, raw.length, bounds);
+        if (bounds.outWidth <= 0 || bounds.outHeight <= 0)
+            throw new IllegalArgumentException("attachment is not an image");
+        if ((long) bounds.outWidth * (long) bounds.outHeight > 40_000_000L)
+            throw new IllegalArgumentException("attachment image dimensions are unsafe");
+        final int rotation = exifRotation(raw);
+        final int w = bounds.outWidth, h = bounds.outHeight;
+        // One decode per rung of the edge ladder, reused for every quality tried at that edge.
+        final Bitmap[] held = new Bitmap[1];
+        final int[] heldEdge = {-1};
+        try {
+            byte[] out = MmsImageFit.fit((edge, quality) -> {
+                if (heldEdge[0] != edge) {
+                    if (held[0] != null) held[0].recycle();
+                    held[0] = scaledBitmap(raw, w, h, edge, rotation);
+                    heldEdge[0] = edge;
+                }
+                if (held[0] == null) throw new IllegalArgumentException("attachment is not an image");
+                ByteArrayOutputStream stream = new ByteArrayOutputStream();
+                held[0].compress(Bitmap.CompressFormat.JPEG, quality, stream);
+                return stream.toByteArray();
+            }, w, h, budget);
+            if (out == null) throw new IllegalArgumentException(MmsImageFit.tooLarge(budget));
+            return out;
+        } finally {
+            if (held[0] != null) held[0].recycle();
+        }
+    }
+
+    private static Bitmap scaledBitmap(byte[] raw, int w, int h, int edge, int rotation) {
+        BitmapFactory.Options o = new BitmapFactory.Options();
+        o.inSampleSize = MmsImageFit.sampleSize(w, h, edge);
+        Bitmap decoded = BitmapFactory.decodeByteArray(raw, 0, raw.length, o);
+        if (decoded == null) return null;
+        int[] size = MmsImageFit.scaled(decoded.getWidth(), decoded.getHeight(), edge);
+        Matrix m = new Matrix();
+        m.postScale(size[0] / (float) decoded.getWidth(), size[1] / (float) decoded.getHeight());
+        if (rotation != 0) m.postRotate(rotation);
+        Bitmap shaped = Bitmap.createBitmap(decoded, 0, 0, decoded.getWidth(), decoded.getHeight(), m, true);
+        if (shaped != decoded) decoded.recycle();
+        if (!shaped.hasAlpha()) return shaped;
+        // JPEG has no alpha channel: a transparent PNG/WebP would otherwise arrive on BLACK.
+        Bitmap flat = Bitmap.createBitmap(shaped.getWidth(), shaped.getHeight(), Bitmap.Config.ARGB_8888);
+        Canvas c = new Canvas(flat);
+        c.drawColor(Color.WHITE);
+        c.drawBitmap(shaped, 0, 0, null);
+        shaped.recycle();
+        return flat;
+    }
+
+    private static int exifRotation(byte[] raw) {
+        try {
+            ExifInterface exif = new ExifInterface(new ByteArrayInputStream(raw));
+            switch (exif.getAttributeInt(ExifInterface.TAG_ORIENTATION,
+                    ExifInterface.ORIENTATION_NORMAL)) {
+                case ExifInterface.ORIENTATION_ROTATE_90: return 90;
+                case ExifInterface.ORIENTATION_ROTATE_180: return 180;
+                case ExifInterface.ORIENTATION_ROTATE_270: return 270;
+                default: return 0;
+            }
+        } catch (Throwable ignored) {
+            return 0;
+        }
+    }
+
+    /** A re-encoded picture is a JPEG whatever it was called, and its PDU name says so. */
+    static String jpegName(String name) {
+        String n = safeName(name, "image.jpg");
+        int dot = n.lastIndexOf('.');
+        return (dot > 0 ? n.substring(0, dot) : n) + ".jpg";
+    }
+
+    /** PDU content-location/content-id come from this: plain ASCII, never a path or a dotfile. */
+    static String safeName(String name, String fallback) {
+        String n = name == null ? "" : name.replaceAll("[^A-Za-z0-9._-]", "_");
+        return n.isEmpty() || n.startsWith(".") ? fallback : n;
+    }
 
     static String normalizedMime(String mime, String name) {
         String type = mime == null ? "" : mime.split(";", 2)[0].trim()

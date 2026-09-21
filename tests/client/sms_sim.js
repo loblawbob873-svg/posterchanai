@@ -500,6 +500,19 @@ if(opt.fakeIndexedDB){
   };
 }
 
+/* THE NATIVE EVENT CHANNEL, opt-in. The real plugin is a Capacitor proxy with `addListener`, and
+ * the carrier's verdict on a send arrives through it as `smsSent` seconds after `sendMms` resolved.
+ * Opt-in so every older test keeps the plugin shape (and the call transcript) it was written for. */
+const nativeListeners = {};
+if(opt.nativeEvents){
+  PLUGIN.addListener = (name, fn) => {
+    calls.push(['addListener', name]);
+    (nativeListeners[name] = nativeListeners[name] || []).push(fn);
+    return { remove(){} };
+  };
+  global.__PC.toast = msg => { calls.push(['toast', String(msg)]); };
+}
+
 require(path.join(ROOT, 'static', 'js', 'client', 'sms.js'));
 
 (async () => {
@@ -565,6 +578,12 @@ require(path.join(ROOT, 'static', 'js', 'client', 'sms.js'));
       const r = await S._retryFailed(m);
       calls.push(['retryFailedResult', !!(r && r.ok),
                   (r && (r.where || r.error)) || '', (r && r.warning) || '']);
+    }
+    /* `nativeSent:<json>` — the phone's carrier verdict arriving on the plugin's event channel. */
+    else if(step.slice(0, 11) === 'nativeSent:'){
+      const ev = JSON.parse(step.slice(11));
+      for(const fn of (nativeListeners.smsSent || [])) await fn(ev);
+      await new Promise(r => setTimeout(r, 20));
     }
     else if(step === 'render'){ await S.render(); }
     /* A cold route and the desktop focus callback can arrive in the same turn. They must share the

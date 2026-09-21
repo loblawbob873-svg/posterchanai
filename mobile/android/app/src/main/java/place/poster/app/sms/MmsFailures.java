@@ -48,7 +48,9 @@ final class MmsFailures {
             case 9: why = "the selected SIM is invalid"; break;
             case 10: why = "the selected SIM is inactive"; break;
             case 11: why = "mobile data is disabled"; break;
-            case 12: why = "no default messages app is available"; break;
+            // SmsManager.MMS_ERROR_MMS_DISABLED_BY_CARRIER (javap on android-35's android.jar). It
+            // used to say "no default messages app", sending people to the wrong settings screen.
+            case 12: why = "the carrier has disabled picture messages on this SIM"; break;
             case 0: why = "carrier send status is pending — it may already have been sent; confirm with the recipient before retrying"; break;
             case 1: why = "carrier MMS transport failed without a reason"; break;
             default: why = "carrier send failed (code " + code + ")";
