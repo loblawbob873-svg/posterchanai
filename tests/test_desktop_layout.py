@@ -393,6 +393,19 @@ class NativeProgramTests(unittest.TestCase):
         """)
         self.assertEqual(out, [k + "\n" + k[4:] for k in self.STEAM_GAMES])
 
+    def test_search_preferences_normalise_to_every_source_once(self):
+        """System Settings → Search lives in the same document. Whatever is stored -- an older client's
+        partial order, a source a later release adds, junk -- reads back as every known source exactly
+        once, in the saved order first; an absent setting stays absent (the default applies)."""
+        self.assertIsNone(norm({})["search"])
+        self.assertIsNone(norm({"search": "notes-first"})["search"])
+        s = norm({"search": {"order": ["local", "notes", "local", "bogus"], "off": ["nostr", "bogus", "nostr"]}})["search"]
+        self.assertEqual(s["order"], ["local", "notes", "nostr", "apps", "files"])
+        self.assertEqual(s["off"], ["nostr"])
+        # …and the layout carries it to the code that draws Settings and runs the search.
+        out = _node("""console.log(JSON.stringify(PCOS.__layout([], {search:{order:['files'],off:['apps']}}, null).search));""")
+        self.assertEqual(out, {"order": ["files", "nostr", "apps", "notes", "local"], "off": ["apps"]})
+
     def test_a_document_without_programs_is_unchanged(self):
         self.assertEqual(norm({})["native"], [])
         self.assertEqual(native_layout({"order": ["notes", "home"]}, MACHINE)["items"][:2], ["notes", "home"])

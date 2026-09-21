@@ -10676,3 +10676,23 @@ html.os-idle #os-root *{animation:none!important;transition:none!important}
 @media(max-width:600px){.feed-remote .pcrd{padding:12px;gap:12px}.pcrd-hero{padding:12px;gap:10px}.pcrd-hero b{font-size:18px}}
 
 .sms-attachment-draft .sms-draft-preview{width:56px;height:56px;object-fit:contain;border-radius:6px;flex:none}.sms-attachment-draft>span{flex:1}
+
+/* The desktop's taskbar Search window: this computer's own results (apps, Notes, the drive, the
+   disk) as compact rows above or below the Nostr results — os.js _runDesktopSearch. */
+.os-srch-sec[hidden]{display:none}
+.os-srch-list{display:flex;flex-direction:column}
+.os-srch-wait{padding:6px 20px 10px}
+.os-srch-row{display:flex;align-items:center;gap:12px;width:100%;padding:10px 20px;border:0;border-bottom:1px solid var(--line);background:none;color:var(--text);text-align:left;cursor:pointer;font:inherit}
+.os-srch-row:hover,.os-srch-row:focus-visible{background:rgba(var(--accent-rgb),.08);outline:none}
+.os-srch-row>svg.ic,.os-srch-row>img{width:22px;height:22px;flex:none}
+.os-srch-t{display:flex;flex-direction:column;gap:2px;min-width:0}
+.os-srch-t b,.os-srch-t i{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.os-srch-t i{font-style:normal;color:var(--muted);font-size:12px}
+/* System Settings → Search: one row per source — switch, name, position, arrows. */
+.os-srch-prefs{display:flex;flex-direction:column;gap:8px;margin:14px 0 10px}
+.os-srch-pref{display:flex;align-items:center;gap:12px;padding:10px 12px;border:1px solid var(--line);border-radius:10px}
+.os-srch-pref.off .os-srch-pref-t{opacity:.55}
+.os-srch-pref-t{display:flex;flex-direction:column;gap:3px;flex:1;min-width:0}
+.os-srch-pref-t i{font-style:normal;color:var(--muted);font-size:12px}
+.os-srch-pref-n{color:var(--muted);font-size:12px;min-width:1.5em;text-align:right}
+@media(max-width:600px){.os-srch-pref{flex-wrap:wrap}.os-srch-pref-t{flex-basis:60%}}
