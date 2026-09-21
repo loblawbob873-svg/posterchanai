@@ -10216,6 +10216,13 @@ html.pc-oswin .pv-sheet{top:38px}
 /* A device URI is long and a phone is narrow: stack rather than squeeze the buttons off the edge. */
 @media(max-width:640px){.os-printer-row{flex-direction:column;align-items:stretch}
   .os-printer-acts{justify-content:flex-end}}
+/* System Settings → PosterChan Server. `.os-set-actions` is display:flex, which beats the [hidden]
+   attribute's UA display:none — the instance row would show while hidden without this. */
+.os-set-actions[hidden],.os-server-log[hidden]{display:none}
+.os-server-log{max-height:260px}
+.os-set-actions:has(>[data-srv-instance-note]){flex-wrap:wrap}
+[data-srv-facts] code{word-break:break-all}
+[data-pcserver] .os-set-actions{flex-wrap:wrap}
 
 /* Interoperable kind-0 profile music (`fields: [[label,url]]`), as published by Ditto. */
 .prof-music{display:grid;gap:8px;margin:12px 0}

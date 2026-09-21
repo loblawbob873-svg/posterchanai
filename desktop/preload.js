@@ -510,6 +510,19 @@ if (isOurPage) {
     setTime: value => ipcRenderer.invoke('pc:datetime:time', value),
   });
 
+  /* The bundled PosterChan server, off until enabled. Every call is one fixed verb of the root helper
+   * (/usr/local/bin/pc-server, via its sudoers rule); nothing here takes a path or a command. */
+  contextBridge.exposeInMainWorld('pcServer', {
+    status: () => ipcRenderer.invoke('pc:server:status'),
+    enable: () => ipcRenderer.invoke('pc:server:enable'),
+    disable: () => ipcRenderer.invoke('pc:server:disable'),
+    restart: () => ipcRenderer.invoke('pc:server:restart'),
+    logs: () => ipcRenderer.invoke('pc:server:logs'),
+    job: () => ipcRenderer.invoke('pc:server:job'),
+    jobLog: () => ipcRenderer.invoke('pc:server:job-log'),
+    installAi: (feature) => ipcRenderer.invoke('pc:server:install-ai', String(feature || '')),
+  });
+
   contextBridge.exposeInMainWorld('pcSystem', {
     snapshot: (withProcesses) => ipcRenderer.invoke('pc:system:snapshot', !!withProcesses),
     end: (pid) => ipcRenderer.invoke('pc:system:end', Number(pid)),
