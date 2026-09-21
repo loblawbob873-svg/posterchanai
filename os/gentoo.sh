@@ -1243,10 +1243,12 @@ finalizeInstall() {
 	# the noisy diagnostics, any tool which actually persisted state would put it in the wrong user's
 	# home.  Finalization is root work: give every command in setup.sh a root identity and a terminal
 	# value which is valid inside the target.
+	_pc_stage bootloader "Installing the boot loader"
 	PC_INSTALL_PASSWORD="$DISK_PASSWORD" HOME=/root USER=root LOGNAME=root TERM="${TERM:-dumb}" \
 		chroot "$TARGET" /setup.sh
 	# accounts() creates `posterchan`; configure its graphical session only after that. Doing this
 	# before accounts selected the LiveCD's `live` account and copied its autologin onto the NVMe.
+	_pc_stage shell "Setting up the PosterChan desktop"
 	HOME=/root USER=root LOGNAME=root TERM="${TERM:-dumb}" \
 		chroot "$TARGET" /usr/bin/bash /usr/bin/gentoo.sh posterchan-shell
 	# FINALIZATION OWNS THE BOOT SESSION. posterchan-shell also writes these for upgrades and live
@@ -1322,6 +1324,7 @@ POSTERCHAN_PROFILE
 	# child of ~/.config left ~/.config itself root:root 0755; Electron then could not create its
 	# userData directory and Chromium aborted with SIGTRAP before the first desktop window mapped.
 	chroot "$TARGET" /bin/chown -R posterchan:posterchan /home/posterchan
+	_pc_stage verify "Verifying the installed system"
 	# RELEASE GATE, NOT A BEST-EFFORT CHECK. These are the exact omissions that otherwise produce a
 	# technically booted machine at a tty and a stock splash, after the installer claimed success.
 	# Check the target files themselves after every phase that can overwrite them.
@@ -1412,6 +1415,7 @@ POSTERCHAN_PROFILE
 	rm -f $TARGET/setup.sh
 	echo
 	echo -e "\033[1;33mGentoo Installation Complete!\033[0m"
+	_pc_stage done "PosterChanOS is installed"
 	echo
 	echo
 }
@@ -1686,8 +1690,19 @@ liveOSrestore() {
 # Both are the same misunderstanding: on a live medium the SOURCE of the system and the SOURCE of the
 # kernel are two different places. So this is its own path rather than a flag on that one, and
 # `liveOSrestore` is left exactly as it was.
+# PROGRESS FOR THE GRAPHICAL INSTALLER (desktop/installer.js), one line per phase:
+#   ::pc-install:: <stage> <what a person should read>
+# Printed ONLY when PC_INSTALL_PROGRESS is set, so a terminal install prints exactly what it always
+# did. The GUI reads these rather than guessing from the human sentences around them, which are
+# free to change; the exit status is still the only thing that says whether an install succeeded.
+_pc_stage() {
+	[ -n "${PC_INSTALL_PROGRESS:-}" ] || return 0
+	echo "::pc-install:: $*"
+}
+
 liveISOinstall() {
 	clear
+	_pc_stage medium "Finding the live medium"
 	echo -e "${COLOR_CYAN}═══════════════════════════════════════════════════════${COLOR_RESET}"
 	echo -e "${COLOR_BOLD}  ⚡ INSTALL THIS LIVE IMAGE ONTO A DISK ⚡${COLOR_RESET}"
 	echo -e "${COLOR_CYAN}═══════════════════════════════════════════════════════${COLOR_RESET}"
@@ -1782,6 +1797,7 @@ liveISOinstall() {
 		return 1
 	fi
 	echo -e "${COLOR_YELLOW}Kernel source: $KSRC${COLOR_RESET}"
+	_pc_stage disk "Checking the disk"
 
 	# THIS IS A ONE-CLICK INSTALLER. The old path silently assumed menu option 5 (Initialize Disk)
 	# had already been run, even though the Start-menu launcher opens this function directly. A fresh
@@ -1802,14 +1818,29 @@ liveISOinstall() {
 		&& [ "$(blkid -s TYPE -o value "$EFI" 2>/dev/null)" = "vfat" ] \
 		&& cryptsetup isLuks "$BTRFS" >/dev/null 2>&1; then
 		layout_ok=1
-		read -r -p "A prepared encrypted layout exists on /dev/$HARD_DISK. Fresh erase or resume? [f/r]: " mode
+		# PC_INSTALL_MODE=fresh|resume is the graphical installer's answer to this question.
+		if [ -n "${PC_INSTALL_MODE:-}" ]; then
+			mode="$PC_INSTALL_MODE"
+			echo "A prepared encrypted layout exists on /dev/$HARD_DISK: $mode (chosen in the graphical installer)"
+		else
+			read -r -p "A prepared encrypted layout exists on /dev/$HARD_DISK. Fresh erase or resume? [f/r]: " mode
+		fi
 		mode="${mode:-f}"
 	fi
 	if [ "$layout_ok" -eq 0 ] || [[ "$mode" = [fF]* ]]; then
 		echo -e "${COLOR_YELLOW}This will erase every file on /dev/$HARD_DISK.${COLOR_RESET}"
-		read -r -p "Erase /dev/$HARD_DISK and install PosterChanOS? [y/N]: " erase
+		# PC_ASSUME_YES is the scripted "yes", exactly as it is for init-disk: the graphical installer
+		# sets it only after the person typed the disk's name to confirm. Without it an unattended run
+		# reads no answer here and cancels, so nothing can wipe a disk by accident.
+		if [ -n "${PC_ASSUME_YES:-}" ]; then
+			erase=y
+			echo "Erase /dev/$HARD_DISK and install PosterChanOS? yes (confirmed in the graphical installer)"
+		else
+			read -r -p "Erase /dev/$HARD_DISK and install PosterChanOS? [y/N]: " erase
+		fi
 		[[ "$erase" = [yY]* ]] || { echo "Install cancelled; nothing was written."; return 1; }
 		readInstallPassword confirm || return 1
+		_pc_stage format "Partitioning and encrypting /dev/$HARD_DISK"
 		prepareInstallDisk || return 1
 	else
 		readInstallPassword existing || return 1
@@ -1820,6 +1851,7 @@ liveISOinstall() {
 			return 1
 		fi
 	fi
+	_pc_stage mount "Opening the encrypted disk"
 	systemMounts || {
 		echo -e "${COLOR_YELLOW}The encrypted root or EFI partition could not be mounted. Nothing was copied.${COLOR_RESET}"
 		return 1
@@ -1851,6 +1883,7 @@ liveISOinstall() {
 	fi
 	# The squashfs carries no target ESP state. /boot is excluded and the matching kernel/initramfs
 	# are installed separately below from the live medium.
+	_pc_stage copy "Copying PosterChanOS onto the disk"
 	echo -e "${COLOR_CYAN}Copying the system — this is the slow part.${COLOR_RESET}"
 	sudo rsync -aH --one-file-system --info=progress2 \
 		--exclude=/boot/*** $RSYNC_EXCLUDES "$ROOTSRC/" $TARGET/
@@ -1873,6 +1906,7 @@ liveISOinstall() {
 	# Copied SEPARATELY and from wherever it actually lives, which is the whole reason this function
 	# exists. `/boot/*` is excluded above so this is the only thing that writes there, and the
 	# EFI partition mounted at $TARGET/boot is never a delete target.
+	_pc_stage kernel "Installing the kernel"
 	echo -e "${COLOR_CYAN}Installing the kernel${COLOR_RESET}"
 	# The ISO is commonly mounted as HFS+/ISO9660. Neither filesystem can supply Linux ACLs or
 	# extended attributes, and rsync reports that as code 23 when -A/-X are requested even though
@@ -1925,6 +1959,7 @@ liveISOinstall() {
 	local KVER
 	KVER="$(ls $TARGET/lib/modules 2>/dev/null | sort -V | tail -1)"
 	if [ -n "$KVER" ]; then
+		_pc_stage initramfs "Building the boot image"
 		echo -e "${COLOR_CYAN}Building an initramfs for $KVER${COLOR_RESET}"
 		# `kernel-install` first: this profile uses systemd-boot and the Boot Loader Spec layout, and
 		# it is what puts a kernel where bootctl will find it. dracut alone is the fallback for a
@@ -2009,6 +2044,7 @@ liveISOinstall() {
 	# for a locked root, so the one tool for diagnosing the first failure was unavailable.
 	#
 	# Done HERE, immediately after the copy, so it is true even if everything after it fails.
+	_pc_stage accounts "Preparing the installed system"
 	echo -e "${COLOR_CYAN}Unlocking root on the installed system${COLOR_RESET}"
 	echo "root:$ROOT_PASSWORD" | sudo chroot $TARGET /usr/sbin/chpasswd 2>/dev/null \
 		|| echo -e "${COLOR_YELLOW}  could not set a root password — emergency mode will refuse a shell${COLOR_RESET}"
@@ -2924,6 +2960,18 @@ btrfs-tweaks() {
 # a person has one recovery credential to retain. Automation may provide PC_INSTALL_PASSWORD through
 # a protected environment; it is not accepted empty and is never written to /tmp/disk or the target.
 readInstallPassword() {
+	# PC_INSTALL_PASSWORD_FILE is how the graphical installer hands the secret over: an environment
+	# variable or an argument would sit in /proc/<pid>/environ or cmdline for the whole install. It is
+	# read once and the file is removed at once; from then on it is exactly as if PC_INSTALL_PASSWORD
+	# had been set (no confirmation prompt -- the installer asked twice on screen).
+	if [ -z "${PC_INSTALL_PASSWORD:-}" ] && [ -n "${PC_INSTALL_PASSWORD_FILE:-}" ]; then
+		if [ -r "$PC_INSTALL_PASSWORD_FILE" ]; then
+			IFS= read -r PC_INSTALL_PASSWORD <"$PC_INSTALL_PASSWORD_FILE" || true
+		else
+			echo -e "${COLOR_YELLOW}The password file handed over is missing: $PC_INSTALL_PASSWORD_FILE${COLOR_RESET}"
+		fi
+		rm -f -- "$PC_INSTALL_PASSWORD_FILE" 2>/dev/null || true
+	fi
 	local kind="${1:-confirm}" first="${PC_INSTALL_PASSWORD:-}" second=""
 	if [ -z "$first" ]; then
 		read -r -s -p "Disk encryption and recovery password: " first
@@ -4420,8 +4468,8 @@ PROFILE
 	cat >"$WORK/install.desktop" <<'DESKTOP'
 [Desktop Entry]
 Type=Application
-Name=Install PosterChanOS
-Comment=Install this system onto a disk
+Name=Install PosterChanOS (terminal)
+Comment=The text-mode installer — the desktop icon opens the graphical one
 Icon=drive-harddisk
 Exec=foot -T "Install PosterChanOS" -e sh -c 'installer=/usr/bin/gentoo.sh; [ -x "$installer" ] || installer=/usr/local/share/posterchanos/gentoo.sh; if [ "$(id -u)" = 0 ]; then exec "$installer" install-live; else exec sudo "$installer" install-live; fi'
 Terminal=false
@@ -5142,7 +5190,13 @@ partitions() {
 }
 
 setDevices() {
-	if [ -f "/tmp/disk" ]; then
+	# THE GRAPHICAL INSTALLER NAMES ITS DISK IN PC_INSTALL_DISK (desktop/installer.js), and a /tmp/disk
+	# left behind by an earlier attempt must not answer for it: the person picked a disk on screen, and
+	# a stale file from yesterday's try would install somewhere else with nothing to say so. So while
+	# PC_INSTALL_DISK is set, the answer goes through the SAME enumeration and refusals below as a typed
+	# one -- the live medium and anything that is not a whole disk are still refused -- and only the
+	# file this run wrote is trusted afterwards. Unset, nothing here changes.
+	if [ -f "/tmp/disk" ] && { [ -z "${PC_INSTALL_DISK:-}" ] || [ -n "${_PC_DISK_ANSWERED:-}" ]; }; then
 		HARD_DISK=$(cat /tmp/disk | head -1)
 		ROOT_NAME=$(cat /tmp/disk | tail -2 | head -1)
 		SWAP_CHOICE=$(cat /tmp/disk | tail -1 | head -1)
@@ -5215,7 +5269,13 @@ setDevices() {
 		# that gap: an eMMC sold as "8 GB" is 7.45 GiB and misses the floor by measurement, and a
 		# live medium identified wrongly excludes the real disk. The filter's own comment says it
 		# "only governs the safe one-click default"; this makes that true.
-		if [ -z "$DEFAULT_DISK" ]; then
+		if [ -n "${PC_INSTALL_DISK:-}" ]; then
+			# Chosen on screen by the graphical installer. Not a default and not a guess: the
+			# validation below is exactly what a typed name gets, including the live-medium refusal.
+			device="${PC_INSTALL_DISK#/dev/}"
+			root_name="${PC_INSTALL_ROOT_NAME:-gentoo}"
+			echo "Disk Device to Use: /dev/$device (chosen in the graphical installer)"
+		elif [ -z "$DEFAULT_DISK" ]; then
 			echo -e "${COLOR_YELLOW}No disk here can be chosen automatically.${COLOR_RESET}"
 			REJECTED="$(lsblk -bdnro NAME,TYPE,SIZE,MODEL 2>/dev/null | awk -v live="$LIVE_DISK" '
 				$2!="disk" || $1~/^(fd|sr|zram|loop|ram)/ { next }
@@ -5247,13 +5307,22 @@ setDevices() {
 			echo "Refusing to install onto the live boot disk /dev/$device"; return 1
 		fi
 
-		read -r -p 'BTRFS Root Volume name [gentoo]: ' root_name
+		# `${PC_INSTALL_DISK:+:}` turns this prompt into the no-op `:` when the graphical installer
+		# already answered it above, and into nothing at all (so the prompt is exactly as it was)
+		# when a person is typing.
+		${PC_INSTALL_DISK:+:} read -r -p 'BTRFS Root Volume name [gentoo]: ' root_name
 		root_name="${root_name:-gentoo}"
+		# The name becomes a btrfs subvolume and a word in fstab; one handed in by a program is held
+		# to a shape that can be neither a path nor a second fstab field.
+		if [ -n "${PC_INSTALL_DISK:-}" ] && ! [[ "$root_name" =~ ^[A-Za-z0-9][A-Za-z0-9_-]{0,31}$ ]]; then
+			echo "Not a usable volume name: $root_name (letters, digits, - and _ only)"; return 1
+		fi
 
 		HARD_DISK=$device
 		echo $HARD_DISK >/tmp/disk
 		echo $root_name >>/tmp/disk
 		echo none >>/tmp/disk
+		_PC_DISK_ANSWERED=1
 		setDevices
 	fi
 	partitionDetection
