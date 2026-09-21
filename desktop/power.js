@@ -218,14 +218,16 @@ async function restoreProfile() {
  * session to do it without a password. Hibernate additionally needs somewhere to write the image —
  * a machine with no swap cannot do it at all, and offering the button anyway is offering a button
  * that returns an error. */
+const PROC_SWAPS = process.env.PC_PROC_SWAPS || '/proc/swaps';
+const HIBERNATE_CONF = process.env.PC_HIBERNATE_CONF || '/etc/dracut.conf.d/90-posterchan-hibernate.conf';
 function hibernateReady() {
   try {
-    const sw = fs.readFileSync('/proc/swaps', 'utf8').trim().split('\n');
+    const sw = fs.readFileSync(PROC_SWAPS, 'utf8').trim().split('\n');
     return sw.length > 1;
   } catch (_) { return false; }
 }
 function hibernateConfigured() {
-  return hibernateReady() && /resume=UUID=/.test(readStr('/etc/dracut.conf.d/90-posterchan-hibernate.conf'));
+  return hibernateReady() && /resume=UUID=/.test(readStr(HIBERNATE_CONF));
 }
 async function enableHibernation() {
   /* The first provisioned identity is the administrator and has a narrowly auditable sudo path.
@@ -233,7 +235,116 @@ async function enableHibernation() {
   const out = await run('sudo', ['-n', '/usr/bin/gentoo.sh', 'hibernate'], 15 * 60 * 1000);
   return { ok:true, configured:hibernateConfigured(), rebootRequired:true, message:out.trim() };
 }
-const suspend = () => run('systemctl', ['suspend'], 20000).then(() => ({ ok: true }));
+
+/* ── WHAT "SLEEP" MEANS ONCE HIBERNATION WORKS ──────────────────────────────────────────────────
+ *
+ * With hibernation enabled and ready, the default is SUSPEND-THEN-HIBERNATE: the machine sleeps in
+ * RAM (instant wake) and, if nobody wakes it within the delay, writes itself to disk and powers off,
+ * so a laptop left in a bag does not wake up flat. That is what the lid does (logind), what the
+ * suspend key does, and what the desktop's own Sleep button does — the button used to run plain
+ * `systemctl suspend`, which on a machine hibernation() had configured is not even available (the
+ * old installer unlinked systemd-suspend.service), so "Sleep" failed on exactly the machines that
+ * had asked for the better behaviour.
+ *
+ * The delay is systemd's `HibernateDelaySec`; "Never" means plain suspend. Both live in drop-ins
+ * written by `gentoo.sh sleep-policy` (root), and are READ here from the same files systemd reads —
+ * main file first, then `*.conf.d/*.conf` in order, last value wins — so what the panel shows is
+ * what the lid will do, not what this process last asked for. */
+const SYSTEMD_ETC = process.env.PC_SYSTEMD_ETC || '/etc/systemd';
+const GENTOO_SH = process.env.PC_GENTOO_SH || '/usr/bin/gentoo.sh';
+const SLEEP_DELAYS = [1800, 3600, 7200, 10800];      // 30 min, 1 h, 2 h, 3 h — plus 0 = Never
+const DEFAULT_HIBERNATE_DELAY = 3600;
+
+/* systemd time spans: "500", "90s", "30min", "1h", "2h 30min", "1h30m". Unknown → null. */
+function parseSpan(v) {
+  const s = String(v == null ? '' : v).trim().toLowerCase();
+  if (!s) return null;
+  if (/^\d+$/.test(s)) return Number(s);
+  const unit = { us: 1e-6, ms: 1e-3, s: 1, sec: 1, second: 1, seconds: 1, m: 60, min: 60, minute: 60,
+                 minutes: 60, h: 3600, hr: 3600, hour: 3600, hours: 3600, d: 86400, day: 86400, days: 86400 };
+  const re = /(\d+(?:\.\d+)?)\s*([a-z]+)/g;
+  // Every character must belong to a number+unit pair, or it is not a span this reads.
+  if (s.replace(re, '').trim() !== '') return null;
+  let total = 0, any = false, m;
+  while ((m = re.exec(s))) {
+    if (!(m[2] in unit)) return null;
+    total += Number(m[1]) * unit[m[2]]; any = true;
+  }
+  return any ? Math.round(total) : null;
+}
+
+/* The value systemd will use for `[section] key`: the main file, then every drop-in in lexical
+ * order, the last assignment winning. A drop-in directory that does not exist is simply none. */
+function systemdValue(main, section, key) {
+  const files = [path.join(SYSTEMD_ETC, main)];
+  try {
+    const dir = path.join(SYSTEMD_ETC, main + '.d');
+    for (const f of fs.readdirSync(dir).filter((n) => n.endsWith('.conf')).sort()) files.push(path.join(dir, f));
+  } catch (_) {}
+  let val = null;
+  for (const f of files) {
+    let sec = '';
+    for (const raw of readStr(f).split('\n')) {
+      const line = raw.trim();
+      if (!line || line[0] === '#' || line[0] === ';') continue;
+      const h = line.match(/^\[(.+)\]$/);
+      if (h) { sec = h[1]; continue; }
+      if (sec !== section) continue;
+      const eq = line.indexOf('=');
+      if (eq > 0 && line.slice(0, eq).trim() === key) val = line.slice(eq + 1).trim();
+    }
+  }
+  return val;
+}
+
+/** What the lid, the suspend key and the Sleep button do right now. */
+function sleepPolicy() {
+  const ready = hibernateConfigured();
+  const lid = systemdValue('logind.conf', 'Login', 'HandleLidSwitch');
+  /* Ready → suspend-then-hibernate unless somebody chose plain suspend ("Never"). Not ready → plain
+   * suspend whatever the file says: suspend-then-hibernate on a machine that cannot hibernate is a
+   * lid that does nothing. */
+  const mode = ready && lid !== 'suspend' ? 'suspend-then-hibernate' : 'suspend';
+  let delaySec = 0;
+  if (mode === 'suspend-then-hibernate') {
+    const d = parseSpan(systemdValue('sleep.conf', 'Sleep', 'HibernateDelaySec'));
+    delaySec = d && d > 0 ? d : DEFAULT_HIBERNATE_DELAY;
+  }
+  return { hibernateReady: ready, mode, delaySec, choices: [0].concat(SLEEP_DELAYS),
+           canChange: ready && gentooHasSleepPolicy() };
+}
+
+/* AN OLDER gentoo.sh DOES NOT KNOW THIS COMMAND, and its fallback for an unknown one is the
+ * INTERACTIVE INSTALLER MENU — run under `sudo -n` with no terminal. So ask the file before asking
+ * it to do anything: the desktop (asar) and the OS package (which ships gentoo.sh) update separately. */
+function gentooHasSleepPolicy() {
+  try { return /"\$1" = "sleep-policy"/.test(fs.readFileSync(GENTOO_SH, 'utf8')); }
+  catch (_) { return false; }
+}
+
+async function setSleepPolicy(delaySec) {
+  // A NUMBER, not something that coerces to one: Number(null) is 0, which is "never hibernate".
+  const n = typeof delaySec === 'number' ? delaySec : NaN;
+  if (!Number.isInteger(n) || !(n === 0 || SLEEP_DELAYS.includes(n)))
+    throw new Error('choose one of the offered delays');
+  if (n > 0 && !hibernateConfigured()) throw new Error('hibernation is not set up on this computer yet');
+  if (!gentooHasSleepPolicy())
+    throw new Error('this needs the latest PosterChanOS update — install it from Updates, then try again');
+  await run(process.env.PC_SUDO || 'sudo', ['-n', GENTOO_SH, 'sleep-policy', String(n)], 60000);
+  return sleepPolicy();
+}
+
+/* THE SLEEP BUTTON FOLLOWS THE POLICY. When suspend-then-hibernate is the policy and the kernel
+ * refuses it anyway (a firmware that loses the resume image, a swap turned off since), plain
+ * suspend is still better than a button that does nothing. */
+async function suspend() {
+  if (sleepPolicy().mode === 'suspend-then-hibernate') {
+    try { await run('systemctl', ['suspend-then-hibernate'], 20000); return { ok: true, mode: 'suspend-then-hibernate' }; }
+    catch (_) { /* fall through to plain suspend */ }
+  }
+  await run('systemctl', ['suspend'], 20000);
+  return { ok: true, mode: 'suspend' };
+}
 const hibernate = () => {
   if (!hibernateReady()) return Promise.reject(new Error('there is no swap to hibernate into'));
   return run('systemctl', ['hibernate'], 30000).then(() => ({ ok: true }));
@@ -278,10 +389,11 @@ async function status() {
     idleSeconds: await idleTimeout().catch(() => 120),
     canHibernate: hibernateReady(),
     hibernateConfigured: hibernateConfigured(),
+    sleepPolicy: sleepPolicy(),
   };
 }
 
 module.exports = { brightness, ddcBrightness, setBrightness, battery, profiles, setProfile,
                    suspend, hibernate, poweroff, reboot, hibernateReady, hibernateConfigured,
-                   enableHibernation, keepAwakeStatus,
+                   enableHibernation, keepAwakeStatus, sleepPolicy, setSleepPolicy, parseSpan, systemdValue,
                    setKeepAwake, idleTimeout, setIdleTimeout, restoreProfile, status, MIN_PERCENT, DDC_ENABLED };

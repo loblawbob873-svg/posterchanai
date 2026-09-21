@@ -91,6 +91,52 @@
         const n = _lib.notes.get(String(id));
         return n ? { id: n.id, title: n.title || '', body: n.body || '', at: n._at || 0 } : null;
       },
+      /* SEARCH THE NOTEBOOK FROM OUTSIDE IT — the desktop's taskbar Search.
+       *
+       * Unlike `get`, this DOES load the library: somebody typed a word and asked for their notes,
+       * which is exactly the moment the cost is wanted. `load()` is cache-first (the Store, then
+       * decryption), so a notebook already on this device answers without a network round trip. A
+       * library that cannot be opened (not a member, signer gone) answers an empty list rather than
+       * throwing: one source of a search failing must not cost the others their results.
+       *
+       * A title hit ranks above a body hit, then newest first. The snippet is plain text around the
+       * first body match — the caller escapes it; nothing here is ever HTML. */
+      async search(q, limit){
+        const s = String(q || '').trim().toLowerCase();
+        if(s.length < 2) return [];
+        try{ await load(); }catch(_){ return []; }
+        if(!_lib) return [];
+        const cap = Math.max(1, Math.min(+limit || 8, 50));
+        const hits = [];
+        for(const n of _lib.notes.values()){
+          const title = String(n.title || ''), body = String(n.body || '');
+          const ti = title.toLowerCase().indexOf(s), bi = body.toLowerCase().indexOf(s);
+          if(ti < 0 && bi < 0) continue;
+          let snippet = '';
+          if(bi >= 0){
+            const from = Math.max(0, bi - 40);
+            snippet = (from ? '…' : '') + body.slice(from, bi + s.length + 60).replace(/\s+/g, ' ').trim()
+                    + (bi + s.length + 60 < body.length ? '…' : '');
+          } else snippet = body.slice(0, 100).replace(/\s+/g, ' ').trim();
+          hits.push({ id: n.id, title: title || 'Untitled note', snippet, at: n._at || 0, rank: ti >= 0 ? 0 : 1 });
+        }
+        hits.sort((a, b) => a.rank - b.rank || b.at - a.at);
+        return hits.slice(0, cap).map(h => ({ id: h.id, title: h.title, snippet: h.snippet, at: h.at }));
+      },
+      /* OPEN ONE NOTE, from outside the Notes screen. Selects it and clears the list's filters (a
+       * search result must not open into a folder view that hides it); paints now if Notes is the
+       * screen, and otherwise the selection is what the next render opens. Answers whether the note
+       * exists here. */
+      async select(id){
+        try{ await load(); }catch(_){ return false; }
+        if(!_lib || !_lib.notes.has(String(id))) return false;
+        flushEdit();
+        _filter = { folder:FOLDER_ALL, q:'', tag:'' };
+        _draft = null;
+        _sel = String(id);
+        if(PC.VIEW === 'notes') _paint();
+        return true;
+      },
       // The phone folder drawer is an OVERLAY, so the Android back button has to close it before it
       // starts walking the view stack — otherwise Back leaves Notes altogether while a panel is
       // still open over it, which is the "this is just a webview" tell the back handler exists for.

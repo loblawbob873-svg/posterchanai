@@ -66,13 +66,22 @@
    * Only the ACTIONS differ here, because this window is 420px and every one of them opens
    * something that belongs on the desktop behind it. */
   let _menuInPopup = false;
+  /* PERCENT-ENCODE EVERYTHING main.js WOULD STRIP. `encodeURIComponent` leaves `! ' ( ) * ~` as they
+   * are, and `pc:popup:act` keeps only `[a-z0-9_:.@%-]` -- so a Steam game called "Baldur's Gate 3"
+   * crossed the process boundary as "Baldurs Gate 3", named no .desktop entry, and was put on the
+   * desktop as a program that "is not installed" (or launched as "no such app"). Encoding those five
+   * too costs nothing: decodeURIComponent reads %27 exactly as it reads '. */
+  function _actEncode(arg){
+    return encodeURIComponent(String(arg)).replace(/[!'()*~]/g,
+      c => '%' + c.charCodeAt(0).toString(16).toUpperCase());
+  }
   function _menuAct(kind, arg){
     if(!_menuInPopup) return false;
     try{
       if(window.pcPopup && pcPopup.act){
         /* Percent-encoded: a search query or a file path carries spaces, slashes and punctuation,
            and this crosses a process boundary as one string. */
-        _popupTell('act', arg == null || arg === '' ? kind : kind + ':' + encodeURIComponent(String(arg)));
+        _popupTell('act', arg == null || arg === '' ? kind : kind + ':' + _actEncode(arg));
         return true;
       }
     }catch(_){ }
@@ -393,8 +402,62 @@
    *            cache launches "no such app"), and `name` exists only so an uninstalled program can
    *            still say what it was. A device with no machine to launch on (a browser, the APK)
    *            draws none of them and CARRIES them — see `ghosts` in computeLayout. */
-  const BLANK = () => ({ v: 1, folders: [], order: [], hidden: [], pos: {}, bg: '', widgets: [], pins: [], native: [] });
-  const NATIVE_RE = /^app:[A-Za-z0-9_.:+@/-]+$/;
+  /* `search`  — what the taskbar Search looks through and in which order (System Settings → Search):
+   *            `{order:[source…], off:[source…]}`, or null for the default. A DECISION like the rest
+   *            of this document, and it follows the account for the same reason: it is how this
+   *            person searches, not a fact about one machine. */
+  const BLANK = () => ({ v: 1, folders: [], order: [], hidden: [], pos: {}, bg: '', widgets: [], pins: [], native: [],
+                         search: null });
+  /* THE SOURCES THE DESKTOP SEARCH CAN LOOK THROUGH. `local` is this computer's disk, which only
+   * PosterChanOS (and the desktop app) can walk; `files` is the encrypted drive; `notes` is the
+   * NIP-44 notebook, decrypted here. The DEFAULT order keeps Nostr first because that is what the
+   * taskbar box always did — the other sources are additions to it, not replacements, and somebody
+   * who wants Notes or their files first says so in Settings. */
+  const SEARCH_SOURCES = ['nostr', 'apps', 'notes', 'files', 'local'];
+  const SEARCH_LABELS = { nostr: 'Nostr', apps: 'Apps', notes: 'Notes', files: 'Your files',
+                          local: 'Files on this computer' };
+  /* Whatever a document says, in a shape that is always complete: every known source exactly once,
+   * in the saved order with anything the document does not mention (a source added by a later
+   * release, or an older client's document) appended in the default order. Unknown names are
+   * dropped — a source this client cannot search is not one it can show — and nothing throws. */
+  function _normSearch(o){
+    if(!o || typeof o !== 'object' || Array.isArray(o)) return null;
+    const order = [];
+    for(const k of (Array.isArray(o.order) ? o.order : []))
+      if(SEARCH_SOURCES.includes(k) && !order.includes(k)) order.push(k);
+    for(const k of SEARCH_SOURCES) if(!order.includes(k)) order.push(k);
+    const off = [];
+    for(const k of (Array.isArray(o.off) ? o.off : []))
+      if(SEARCH_SOURCES.includes(k) && !off.includes(k)) off.push(k);
+    return { order, off };
+  }
+  /** The effective preferences: the account's, or the default. */
+  function searchPrefs(){
+    let s = null;
+    try{ s = (layout() || {}).search || null; }catch(_){ s = null; }
+    return s ? _normSearch(s) : { order: SEARCH_SOURCES.slice(), off: [] };
+  }
+  /** The sources to search, in order: every one that is not switched off. */
+  function searchPlan(prefs){
+    const p = prefs || searchPrefs();
+    return p.order.filter(k => !p.off.includes(k));
+  }
+  function setSearchPrefs(next){
+    const n = _normSearch(next);
+    if(!n) return Promise.resolve(false);
+    return _apply((doc) => { doc.search = n; });
+  }
+  /* A DESKTOP-FILE ID IS A FILE NAME, and a file name may hold a space. This used to be
+   * `[A-Za-z0-9_.:+@/-]+`, which fits `firefox-bin` and `org.telegram.desktop` and refuses every
+   * Steam game: Steam writes `~/.local/share/applications/<the game's own name>.desktop` -- "Portal
+   * 2.desktop", "Baldur's Gate 3.desktop" -- so the id carries spaces, apostrophes, colons, even a
+   * "®". The start menu then drew no "Add to desktop" row for them at all, "Add a program…" did not
+   * list them, and a taskbar pin was dropped by _normDoc on the next save: "Unable to add Steam
+   * Game entries in the Start Menu to Desktop". Every place this key reaches markup goes through
+   * `enc()`, it is never a CSS selector or a path, and the scan is what resolves it to something
+   * runnable -- so the only characters worth refusing are the CONTROL characters (a newline is the
+   * separator `desk-add` rides on). */
+  const NATIVE_RE = /^app:[^\x00-\x1f\x7f]{1,116}$/;
   const NATIVE_MAX = 48;
 
   let _doc = null;        // the layout as last read/written; null = nothing read yet (draw defaults)
@@ -472,10 +535,13 @@
     const seenPin = new Set();
     for(const p of (Array.isArray(o && o.pins) ? o.pins : [])){
       const s = str(p, 180);
-      if(!/^(view|app):[A-Za-z0-9_.:+@/-]+$/.test(s) || seenPin.has(s)) continue;
+      // A program's pin carries its desktop-file id, which may hold a space -- see NATIVE_RE.
+      const pinOk = /^view:[A-Za-z0-9_.:+@/-]+$/.test(s) || /^app:[^\x00-\x1f\x7f]+$/.test(s);
+      if(!pinOk || seenPin.has(s)) continue;
       seenPin.add(s); out.pins.push(s);
       if(out.pins.length >= 24) break;
     }
+    out.search = _normSearch(o && o.search);
     const seenNat = new Set();
     for(const n of (Array.isArray(o && o.native) ? o.native : [])){
       const key = str(n && n.key, 120);
@@ -613,7 +679,7 @@
     }
     return { items, folders, hidden: [...hidden].map(v => byView.get(v)), pos, bg: d.bg,
              widgets: Array.isArray(d.widgets) ? d.widgets : [], pins: d.pins || [],
-             native: d.native, ghosts };
+             native: d.native, search: d.search, ghosts };
   }
 
   let _lay = null;
@@ -2514,6 +2580,89 @@
 
   let _osSettingsPage='displays';
 
+  /* POWER → HIBERNATION → WHEN THE COMPUTER SLEEPS. Shown only once hibernation is ready, because
+   * before that the only honest answer is "it sleeps". The choice is the delay between sleeping and
+   * hibernating (systemd's HibernateDelaySec), and "Never" is plain sleep. The value shown is read
+   * back from the machine's own configuration (power.js sleepPolicy), so a delay somebody set by
+   * hand — the old installer wrote 500 seconds — appears as itself rather than as a wrong option. */
+  function _sleepDelayLabel(s){
+    const n = Number(s) || 0;
+    if(n <= 0) return 'never';
+    if(n % 3600 === 0) return (n / 3600) + (n === 3600 ? ' hour' : ' hours');
+    if(n % 60 === 0) return (n / 60) + ' minutes';
+    return n + ' seconds';
+  }
+  function _sleepPolicyRow(sp){
+    const p = sp || {};
+    const cur = p.mode === 'suspend' ? 0 : Number(p.delaySec) || 3600;
+    const choices = (Array.isArray(p.choices) && p.choices.length ? p.choices : [0, 1800, 3600, 7200, 10800]).slice();
+    if(!choices.includes(cur)) choices.push(cur);
+    const opts = choices.filter(n => n > 0).sort((a, b) => a - b)
+      .map(n => `<option value="${n}" ${n === cur ? 'selected' : ''}>Sleep, then hibernate after ${_sleepDelayLabel(n)}</option>`)
+      .concat([`<option value="0" ${cur === 0 ? 'selected' : ''}>Sleep only — never hibernate</option>`]).join('');
+    const why = p.canChange === false
+      ? 'Changing this needs the latest PosterChanOS update (Settings → Updates).'
+      : 'Closing the lid, the sleep key and Sleep in the power menu all do this.';
+    return `<section class="os-hibernate os-setting-row os-set-control"><div><b>When the computer sleeps</b><span>${why}</span></div>
+      <select data-sleep-delay data-was="${cur}" aria-label="When the computer sleeps" ${p.canChange === false ? 'disabled' : ''}>${opts}</select></section>`;
+  }
+
+  /* SYSTEM SETTINGS → SEARCH. One row per source: a switch and two arrows. The ORDER is the order of
+   * the taskbar Search window's sections, so "show my files first" is "move Files on this computer
+   * to the top". Written straight away (no Save button on a list of switches), and a write that is
+   * refused — the layout not yet read from a relay, the signer asleep — puts the rows back as they
+   * were, because `_apply` has already said why. */
+  const _SEARCH_HINTS = {
+    nostr: 'Posts, profiles, articles, streams and repositories on your relays',
+    apps: 'This desktop’s apps and the programs installed on this computer',
+    notes: 'Your encrypted notebook — searched on this device, never on a server',
+    files: 'The encrypted drive in Files',
+    local: 'Files and folders on this computer’s disk',
+  };
+  function _searchPrefsHtml(prefs){
+    const p = prefs || searchPrefs();
+    const disk = !!(window.pcHost && typeof pcHost.search === 'function');
+    return p.order.map((k, i) => {
+      const on = !p.off.includes(k);
+      const na = k === 'local' && !disk;
+      return `<div class="os-srch-pref${on ? '' : ' off'}" data-src="${k}">
+        <label class="os-set-switch"><input type="checkbox" data-src-on="${k}" ${on ? 'checked' : ''}
+          aria-label="Search ${enc(SEARCH_LABELS[k])}"><span>${on ? 'On' : 'Off'}</span></label>
+        <span class="os-srch-pref-t"><b>${enc(SEARCH_LABELS[k])}</b><i>${enc(na
+          ? 'Only on PosterChanOS and the desktop app — this device has no disk to search'
+          : _SEARCH_HINTS[k])}</i></span>
+        <span class="os-srch-pref-n">${i + 1}</span>
+        <button class="btn btn-ghost small" data-src-up="${k}" ${i === 0 ? 'disabled' : ''}
+          aria-label="Show ${enc(SEARCH_LABELS[k])} earlier" title="Show earlier">↑</button>
+        <button class="btn btn-ghost small" data-src-down="${k}" ${i === p.order.length - 1 ? 'disabled' : ''}
+          aria-label="Show ${enc(SEARCH_LABELS[k])} later" title="Show later">↓</button></div>`;
+    }).join('');
+  }
+  function _bindSearchPrefs(box){
+    if(!box) return;
+    const paint = (p) => { box.innerHTML = _searchPrefsHtml(p); _bindSearchPrefs(box); };
+    const change = (fn) => {
+      const cur = searchPrefs();
+      const next = { order: cur.order.slice(), off: cur.off.slice() };
+      fn(next);
+      paint(_normSearch(next));                 // optimistic, like every other switch here
+      setSearchPrefs(next).then(ok => { if(!ok) paint(searchPrefs()); },
+                                () => { paint(searchPrefs()); osSay('your search settings could not be saved'); });
+    };
+    box.querySelectorAll('[data-src-on]').forEach(cb => cb.onchange = () => change(n => {
+      const k = cb.dataset.srcOn;
+      n.off = n.off.filter(x => x !== k);
+      if(!cb.checked) n.off.push(k);
+    }));
+    const move = (k, by) => change(n => {
+      const i = n.order.indexOf(k), j = i + by;
+      if(i < 0 || j < 0 || j >= n.order.length) return;
+      n.order.splice(i, 1); n.order.splice(j, 0, k);
+    });
+    box.querySelectorAll('[data-src-up]').forEach(b => b.onclick = () => move(b.dataset.srcUp, -1));
+    box.querySelectorAll('[data-src-down]').forEach(b => b.onclick = () => move(b.dataset.srcDown, 1));
+  }
+
   /* A BRIDGE THAT NEVER ANSWERS IS NOT AN ERROR ANYWHERE — it is a spinner for ever.
    *
    * Reported as "System Settings has window controls but nothing else? wtf". Every read below was
@@ -2638,6 +2787,7 @@
         <button data-page="network" class="${_osSettingsPage==='network'?'on':''}">${iconSvg('i-wifi')} Network</button>
         <button data-page="bluetooth" class="${_osSettingsPage==='bluetooth'?'on':''}">${iconSvg('i-bluetooth')} Bluetooth</button>
         <button data-page="power" class="${_osSettingsPage==='power'?'on':''}">${iconSvg('i-power')} Power &amp; brightness</button>
+        <button data-page="search" class="${_osSettingsPage==='search'?'on':''}">${iconSvg('i-search')} Search</button>
         <button data-page="datetime" class="${_osSettingsPage==='datetime'?'on':''}">${iconSvg('i-clock')} Date &amp; Time</button>
         <button data-page="users" class="${_osSettingsPage==='users'?'on':''}">${iconSvg('i-user')} Users</button>
         <button data-page="updates" class="${_osSettingsPage==='updates'?'on':''}">${iconSvg('i-refresh')} Updates</button>
@@ -2648,6 +2798,7 @@
         <option value="page:appearance" ${_osSettingsPage==='appearance'?'selected':''}>Appearance</option>
         <option value="page:sound" ${_osSettingsPage==='sound'?'selected':''}>Sound</option>${window.pcPrinters?`<option value="page:printers" ${_osSettingsPage==='printers'?'selected':''}>Printers</option>`:''}<option value="page:network" ${_osSettingsPage==='network'?'selected':''}>Network</option><option value="page:bluetooth" ${_osSettingsPage==='bluetooth'?'selected':''}>Bluetooth</option>
         <option value="page:power" ${_osSettingsPage==='power'?'selected':''}>Power &amp; brightness</option>
+        <option value="page:search" ${_osSettingsPage==='search'?'selected':''}>Search</option>
         <option value="page:datetime" ${_osSettingsPage==='datetime'?'selected':''}>Date &amp; Time</option>
         <option value="page:users" ${_osSettingsPage==='users'?'selected':''}>Users</option><option value="page:updates" ${_osSettingsPage==='updates'?'selected':''}>Updates</option>
         <option value="page:about" ${_osSettingsPage==='about'?'selected':''}>About</option>
@@ -2683,10 +2834,15 @@
         <section class="os-setting-row os-set-control"><div><b>Keep awake</b><span>Prevent automatic display-off during presentations and long tasks.</span></div><label class="os-set-switch"><input data-keep-awake type="checkbox" ${power.keepAwake?'checked':''}><span>${power.keepAwake?'On':'Off'}</span></label></section>
         <section class="os-hibernate os-setting-row"><div><b>Hibernation</b><span>${power.hibernateConfigured?'Enabled and ready to use.':'Save open apps to disk before the computer powers down.'}</span></div>
           ${power.hibernateConfigured?'<span class="os-set-ready">Ready</span>':'<button class="btn" data-enable-hibernate>Enable hibernation</button>'}</section>
+        ${power.hibernateConfigured?_sleepPolicyRow(power.sleepPolicy):''}
         <section class="os-hibernate os-setting-row os-set-control"><div><b>Turn display off when idle</b><span>The computer stays running; only its displays switch off.</span></div>
           <select data-idle-timeout aria-label="Display idle timeout">
             ${[[60,'1 minute'],[120,'2 minutes'],[300,'5 minutes'],[600,'10 minutes'],[1800,'30 minutes'],[0,'Never']].map(([n,label])=>`<option value="${n}" ${Number(power.idleSeconds)===n?'selected':''}>${label}</option>`).join('')}
           </select></section></section>
+        <section data-settings-page="search" ${_osSettingsPage==='search'?'':'hidden'}><header class="os-set-pagehead"><div>${iconSvg('i-search')}</div><span><h2>Search</h2><p>What the Search box on the taskbar looks through, and which results come first.</p></span></header>
+          <section class="os-set-card"><div class="os-set-cardhead"><b>Search sources</b><span>Switch a source off to leave it out. The arrows set the order: the top source is shown first. Your choices follow your account to every device.</span></div>
+          <div class="os-srch-prefs" data-search-prefs>${_searchPrefsHtml()}</div>
+          <p class="muted small">The Start menu always lists apps; switching Nostr, Your files or Files on this computer off hides them there too.</p></section></section>
         <section data-settings-page="datetime" ${_osSettingsPage==='datetime'?'':'hidden'}><header class="os-set-pagehead"><div>${iconSvg('i-clock')}</div><span><h2>Date &amp; Time</h2><p>Set this computer's clock and time zone.</p></span></header>
           ${clockError?`<div class="empty" role="alert">${enc(clockError)}</div>`:''}
           ${clock.available?`<section class="os-set-card"><div class="os-set-cardhead"><b data-clock-current>${enc(localClock())}</b><span>${enc(clock.timezone)}</span></div></section>
@@ -2809,6 +2965,17 @@
         hib.disabled=true;hib.textContent='Configuring…';
         try{await pcPower.enableHibernation();PC().toast('Hibernation enabled — reboot once before using it');renderSystemSettings();}
         catch(e){hib.disabled=false;hib.textContent='Enable hibernation';PC().toast(String(e&&e.message||e));}
+      };
+      const sleepSel=host.querySelector('[data-sleep-delay]'); if(sleepSel)sleepSel.onchange=async()=>{
+        const was=sleepSel.dataset.was;
+        sleepSel.disabled=true;
+        try{
+          if(!window.pcPower||!pcPower.setSleepPolicy) throw new Error('this build cannot change the sleep policy');
+          const p=await pcPower.setSleepPolicy(Number(sleepSel.value));
+          sleepSel.dataset.was=sleepSel.value;
+          PC().toast(p&&p.mode==='suspend'?'Sleep no longer hibernates':'Sleep now hibernates after '+_sleepDelayLabel(Number(sleepSel.value)));
+        }catch(e){ sleepSel.value=was; PC().toast(String(e&&e.message||e)); }
+        finally{ sleepSel.disabled=false; }
       };
       const idle=host.querySelector('[data-idle-timeout]'); if(idle)idle.onchange=async()=>{
         idle.disabled=true;
@@ -2990,6 +3157,7 @@
       const reload=host.querySelector('[data-update-reload]');if(reload)reload.onclick=()=>{
         if(window.pcShell&&pcShell.retry)pcShell.retry();else location.reload();
       };
+      _bindSearchPrefs(host.querySelector('[data-search-prefs]'));
       host.querySelectorAll('[data-page]').forEach(b=>b.onclick=()=>{_osSettingsPage=b.dataset.page;renderSystemSettings();});
       const mobile=host.querySelector('[data-settings-mobile]');if(mobile)mobile.onchange=()=>{
         const [kind,value]=String(mobile.value||'').split(':',2);
@@ -8233,6 +8401,46 @@
   function _shellFrontWish(want){
     _sendShellFront({ front: !!want, covers: want ? _shellFrontState.covers : [] });
   }
+  /* A PRESS ON THE DESKTOP RAISES IT, AND ONLY THE FIRST ONE SAYS SO.
+   *
+   * "Clicking a button on the Desktop Music Widget causes all the windows to hide on the desktop."
+   * Nothing was hidden: the desktop surface -- opaque, full-output -- was put ON TOP of them.
+   *
+   * Wayfire's click-to-focus (src/core/wm.cpp `check_focus_surface`, 0.10.1) calls
+   * `focus_raise_view` on EVERY button press, and that is `view_bring_to_front` followed by
+   * `seat->focus_view`. The raise always happens; the keyboard-focus signal -- the only thing IPC
+   * reports as `view-focused` -- is emitted only when the focus CHANGES (`set_keyboard_focus`
+   * returns early for the node that already has it). Main keeps the desktop at the back by
+   * answering every `view-focused` with `send-to-back` (`sinkShellOnFocus`), and send-to-back does
+   * NOT take the keyboard away -- so after the first click the desktop is at the bottom AND still
+   * focused, and the SECOND click on it (the next transport button, the same button again) raises it
+   * with no event for main to answer. Every application on that monitor is then behind it until
+   * something else takes focus.
+   *
+   * The desktop icons never showed it because a click on one opens a window, which takes the focus;
+   * the music widget is the surface people press several times in a row. The taskbar's clock, bell
+   * and tray have the same shape.
+   *
+   * So a press on the desktop's own surface re-asks for the order the moment it lands: main's
+   * `pc:wm:shell-front` handler runs `sinkShellSurfaces()` unconditionally, which is exactly the
+   * repair, and the compositor's raise has already happened by the time the renderer sees the press.
+   * Deliberately NOT through `_sendShellFront`, whose de-duplication is the whole reason nothing was
+   * sent: the state did not change, only the stacking did.
+   *
+   * A press inside one of our in-page WINDOWS is left alone -- System Settings, a folder, a document
+   * drawn on the desktop are the one time it is in front on purpose, and focusWin already speaks for
+   * those. */
+  function _pressResink(e){
+    if(!on || !window.pcWM || typeof pcWM.shellFront !== 'function') return;
+    const t = e && e.target;
+    if(!t || !t.closest || !root || !root.contains(t)) return;
+    if(t.closest('.osw')) return;
+    try{
+      const r = pcWM.shellFront({ front: !!_shellFrontState.front,
+                                  covers: (_shellFrontState.covers || []).slice() });
+      if(r && typeof r.catch === 'function') r.catch(() => {});
+    }catch(_){ }
+  }
   function _publishShellFront(){
     if(!window.pcWM || typeof pcWM.shellFront !== 'function') return;
     let want = false;
@@ -8276,6 +8484,142 @@
   window.addEventListener('blur',_releaseBarPointer);
 
 
+  /* ── THE TASKBAR SEARCH ─────────────────────────────────────────────────────────────────────────
+   *
+   * The box used to be "Search Nostr" and searched nothing else. It is "Search" now, and Enter opens
+   * one Search window holding every source System Settings → Search has switched on, in the order it
+   * chose: the apps on this desktop, the Notes notebook, the encrypted drive, the files on this
+   * computer, and Nostr. Each result opens the thing itself — a note in Notes, a file in Preview /
+   * Office / Code — not the folder it is in.
+   *
+   * Nostr's half is still app.js `runSearch`, unchanged; the local sources are ELEMENTS handed to it
+   * as `head` (above the Nostr results) and `tail` (below), because each fills in on its own clock —
+   * the notebook has to decrypt, the disk walk runs in another process — and a section that waited
+   * for the slowest source would be a search that shows nothing for as long as the radio takes. */
+  let _searchSeq = 0;
+  function _searchRow(icon, title, sub, open){
+    const b = document.createElement('button');
+    b.type = 'button';
+    b.className = 'os-srch-row';
+    b.innerHTML = icon + `<span class="os-srch-t"><b>${enc(title)}</b>${sub ? `<i>${enc(sub)}</i>` : ''}</span>`;
+    b.onclick = (e) => {
+      e.preventDefault(); e.stopPropagation();
+      try{ const r = open(); if(r && typeof r.catch === 'function') r.catch(err => osSay(err)); }
+      catch(err){ osSay(err); }
+    };
+    return b;
+  }
+  const osSay = (err) => { try{ PC().toast(String((err && err.message) || err)); }catch(_){} };
+  /* A note, opened from anywhere on the desktop: select it FIRST (so the Notes window's own render
+   * opens it), bring Notes up, and select again — the window may already have been open, and a
+   * window that already holds its screen is focused, not repainted. */
+  async function _openNoteResult(id){
+    await PC().notesOpen(id);
+    openLauncherApp('notes');
+    const ok = await PC().notesOpen(id);
+    if(!ok) osSay('that note is not in this notebook any more');
+  }
+  /* The rows for one source, or null when this device cannot search it at all (no disk to walk in a
+   * browser tab) — an unavailable source is left out, not shown as "no results". */
+  function _searchSource(key, q){
+    const ql = q.toLowerCase();
+    if(key === 'apps'){
+      return () => {
+        const rows = [];
+        for(const a of launchApps()){
+          if(rows.length >= 8) break;
+          if(String(a.label || '').toLowerCase().includes(ql))
+            rows.push(_searchRow(iconSvg(a.icon), a.label, '', () => openLauncherApp(a.view)));
+        }
+        try{
+          const nat = (window.PCOSShell && PCOSShell.available()) ? (_machineApps || []) : [];
+          for(const a of nat){
+            if(rows.length >= 12) break;
+            if(String(a.name || '').toLowerCase().includes(ql)
+               || String(a.comment || '').toLowerCase().includes(ql))
+              rows.push(_searchRow(appIcon(a), a.name, a.comment || 'Program on this computer',
+                                   () => launchMachineApp(a.id, a.name)));
+          }
+        }catch(_){ }
+        return rows;
+      };
+    }
+    if(key === 'notes'){
+      if(!PC().notesSearch) return null;
+      return async () => (await PC().notesSearch(q, 8)).map(n =>
+        _searchRow(iconSvg('i-note'), n.title, n.snippet, () => _openNoteResult(n.id)));
+    }
+    if(key === 'files'){
+      if(!PC().driveSearch) return null;
+      return async () => {
+        /* The drive index is pulled once per session by whichever screen needs it first; a search
+         * from the taskbar may BE the first, and searching an index that has not been read would say
+         * "nothing" to somebody with thousands of files. */
+        try{ const F = PC().filesIdx && PC().filesIdx(); if(F && !F._pullDone && F.pull) await F.pull(); }catch(_){ }
+        return (PC().driveSearch(q, 8) || []).map(h =>
+          _searchRow(iconSvg('i-drive'), h.name, h.folder || 'Your files',
+                     () => (PC().driveOpenFile ? PC().driveOpenFile(h.sha) : PC().driveReveal(h.sha))));
+      };
+    }
+    if(key === 'local'){
+      if(!(window.pcHost && typeof pcHost.search === 'function')) return null;
+      return async () => ((await pcHost.search(q, { limit: 8 })) || []).map(h =>
+        _searchRow(iconSvg(h.dir ? 'i-folder' : 'i-note'), h.name, h.path,
+                   () => PC().hostOpen(h.path, h.name, '', !!h.dir)));
+    }
+    return null;
+  }
+  function _runDesktopSearch(q){
+    const seq = ++_searchSeq;
+    const plan = searchPlan();
+    const nostrAt = plan.indexOf('nostr');
+    const head = document.createElement('div'), tail = document.createElement('div');
+    head.className = 'os-srch os-srch-head'; tail.className = 'os-srch os-srch-tail';
+    let pending = 0, found = 0;
+    const settle = () => {
+      if(seq !== _searchSeq || pending > 0 || found > 0 || nostrAt >= 0) return;
+      const none = document.createElement('div');
+      none.className = 'empty';
+      none.textContent = plan.length ? 'Nothing matches “' + q + '”.'
+                                     : 'Every search source is switched off — System Settings → Search.';
+      head.appendChild(none);
+    };
+    plan.forEach((key, i) => {
+      if(key === 'nostr') return;
+      const src = _searchSource(key, q);
+      if(!src) return;
+      const sec = document.createElement('section');
+      sec.className = 'os-srch-sec';
+      sec.dataset.source = key;
+      sec.innerHTML = `<div class="search-section-title">${enc(SEARCH_LABELS[key])}</div>
+        <div class="os-srch-list"><div class="muted small os-srch-wait">Searching…</div></div>`;
+      const list = sec.querySelector('.os-srch-list');
+      (nostrAt < 0 || i < nostrAt ? head : tail).appendChild(sec);
+      pending++;
+      Promise.resolve().then(src).then(rows => rows || [], () => []).then(rows => {
+        pending--;
+        if(seq !== _searchSeq) return;          // a newer search owns the window now
+        list.innerHTML = '';
+        if(!rows.length){ sec.hidden = true; sec.dataset.empty = '1'; }
+        else{ found += rows.length; rows.forEach(r => list.appendChild(r)); }
+        settle();
+      });
+    });
+    if(!head.childNodes.length && nostrAt < 0) settle();
+    try{
+      if(!PC().runSearch) throw new Error('search is unavailable here');
+      PC().runSearch(q, { head, tail: tail.childNodes.length ? tail : null, nostr: nostrAt >= 0 });
+    }catch(err){ osSay(err); }
+  }
+  /** Search from the taskbar (or anything else on the desktop): one Search window, every source. */
+  function desktopSearch(q){
+    const query = String(q || '').trim();
+    if(!query) return null;
+    // `rerun`: one Search window shows a succession of queries, so a second search REPLACES what it
+    // is rendering rather than bringing the first one back — see openDoc.
+    return openDoc('search', 'Search', 'i-search', () => _runDesktopSearch(query), false, true);
+  }
+
   function drawBar(){
     _publishShellFront();
     if(!bar || _deferBarDraw()) return;
@@ -8317,7 +8661,7 @@
        <div class="os-qbox">
          <svg class="ic" aria-hidden="true"><use href="#i-search"></use></svg>
          <input id="os-q-bar" class="os-qin" type="search" autocomplete="off"
-                value="${enc(barQuery)}" placeholder="Search Nostr" aria-label="Search Nostr"></div>
+                value="${enc(barQuery)}" placeholder="Search" aria-label="Search"></div>
        <div class="os-tasks"><!-- NO BACKTICKS IN THIS COMMENT: this is template TEXT, not code, so
             a backtick here closes the string and the whole module stops parsing -- every icon in the
             client goes blank, with nothing thrown and nothing logged. It has happened. tests/client/
@@ -8364,9 +8708,10 @@
      * on the desktop — but the real cause was the compose MODAL rendering behind it (see the
      * z-index block in client.css). With that fixed, the timeline's own composer works inside a
      * window, and a second entry point on the taskbar is just clutter. */
-    /* The taskbar box searches NOSTR, not the app list — the start menu already filters apps, and a
-     * second app filter next to it would be the least useful thing that box could do. Results land
-     * in their own window, so searching does not throw away whatever the focused app was showing. */
+    /* The taskbar box searches EVERYTHING the person has switched on in System Settings → Search —
+     * Nostr, and now this desktop's apps, Notes, the drive and the disk too — in the order chosen
+     * there. It used to be Nostr only ("Search Nostr"). Results land in their own window, so
+     * searching does not throw away whatever the focused app was showing. */
     { const qb = $('#os-q-bar', bar);
       if(qb){
         /* drawBar() rebuilds the whole bar — on every window focus, and on the clock tick — so the
@@ -8396,12 +8741,8 @@
           // Submitting empties the box. It is a search bar, not a location bar — leaving the query
           // sitting there just means the next search starts by clearing it.
           qb.value = ''; barQuery = ''; qb.blur();
-          const run = () => { try{ PC().runSearch && PC().runSearch(q); }
-                              catch(err){ PC().toast && PC().toast('search is unavailable here'); } };
-          // `rerun`: one Search window shows a succession of queries, so a second search has to
-          // REPLACE what it is rendering. Without it the window came forward re-running the first
-          // query — see openDoc.
-          openDoc('search', 'Search', 'i-search', run, false, true);
+          // Every source System Settings → Search has on, in its order — see desktopSearch.
+          desktopSearch(q);
         });
       } }
     /* The BELL is the notification button; the clock still opens the same panel because it always
@@ -9409,7 +9750,11 @@
       /* Typing here searches NOSTR — that row is FIRST, so it is what Enter runs, and it opens in
        * its own window like every other result on this desktop. The app list stays underneath
        * because the start menu is also how you find an app, and Windows puts both in one box. */
-      const nrow = q ? `<button class="os-app os-app-find" data-find="1">
+      /* System Settings → Search switches sources OFF here too — Nostr, the drive and the disk. Apps
+       * always list: this is the launcher, and a start menu that could hide its own programs is not
+       * one. The ORDER is the taskbar Search window's business; this menu keeps its own. */
+      const sOff = new Set(searchPrefs().off);
+      const nrow = q && !sOff.has('nostr') ? `<button class="os-app os-app-find" data-find="1">
              <svg class="ic" aria-hidden="true"><use href="#i-search"></use></svg>
              <span>Search Nostr for “${enc(q)}”</span></button>` : '';
       /* THE MACHINE'S OWN PROGRAMS, in the same menu as the app's screens — because on this
@@ -9444,7 +9789,7 @@
        * is slightly late. */
       let drive = '';
       try{
-        const hits = (PC().driveSearch && q) ? PC().driveSearch(q, 6) : [];
+        const hits = (PC().driveSearch && q && !sOff.has('files')) ? PC().driveSearch(q, 6) : [];
         if(hits.length) drive = `<div class="os-applist-h">Your files</div>`
           + hits.map(h => `<button class="os-app" data-sha="${enc(h.sha)}"${
                h.folder ? ` title="${enc(h.folder)}"` : ''}>
@@ -9453,12 +9798,12 @@
 
       let local = '';
       try{
-        const hits = (q && _localQ === q) ? _localHits : [];
+        const hits = (q && _localQ === q && !sOff.has('local')) ? _localHits : [];
         if(hits.length) local = `<div class="os-applist-h">Files on this computer</div>`
-          + hits.map(h => `<button class="os-app" data-path="${enc(h.path)}" title="${enc(h.path)}">
+          + hits.map(h => `<button class="os-app" data-path="${enc(h.path)}" data-dir="${h.dir ? '1' : ''}" title="${enc(h.path)}">
                ${iconSvg(h.dir ? 'folder' : 'note')}<span>${enc(h.name)}</span></button>`).join('');
       }catch(_){ local = ''; }
-      if(q) _askLocal(q);
+      if(q && !sOff.has('local')) _askLocal(q);
 
       const nothing = !list.length && !natives && !drive && !local;
       results.innerHTML = nrow + (list.length
@@ -9472,20 +9817,25 @@
         results.scrollTop = resultScroll;
       }
 
-      /* A DRIVE RESULT OPENS FILES ON THAT FILE, not on Files. `driveReveal` sets the folder and the
-       * drive's own name filter, so the thing that was searched for is the thing on screen. */
-      $$('.os-app[data-sha]', menu).forEach(b => b.onclick = () => {
-        if(_menuAct('sha', b.dataset.sha)) return;   // Files opens on the desktop
+      /* A DRIVE RESULT OPENS THE FILE — Preview, or the Open-with sheet, with "Show in Files" on it
+       * (`driveOpenFile`); only a build without that falls back to revealing it in Files. */
+      const openSha = (b) => {
+        if(_menuAct('sha', b.dataset.sha)) return;   // opens on the desktop
         toggleStart(false);
-        try{ PC().driveReveal && PC().driveReveal(b.dataset.sha); }catch(_){}
-      });
-      /* A LOCAL result is handed to the machine — `xdg-open`, the same thing the host file manager
-       * does — because this desktop has no viewer for an arbitrary file on the disk and pretending
-       * otherwise is how you get a menu entry that opens a blank window. */
-      $$('.os-app[data-path]', menu).forEach(b => b.onclick = () => {
+        try{ (PC().driveOpenFile || PC().driveReveal)(b.dataset.sha); }catch(_){}
+      };
+      /* A LOCAL result opens the way a click in Files → This Computer does (Preview / Office / Code /
+       * hand it to the machine), and a folder opens Files there. Through the desktop window: this
+       * renderer IS the start popup, and closing it first cancelled the very IPC that was meant to
+       * open the file -- the same trap launchMachineApp documents below. */
+      const openPath = (b) => {
+        if(_menuAct('path', b.dataset.path + '\n' + (b.dataset.dir ? '1' : ''))) return;
         toggleStart(false);
-        try{ window.pcHost && pcHost.open(b.dataset.path); }catch(_){}
-      });
+        try{
+          if(PC().hostOpen) PC().hostOpen(b.dataset.path, '', '', !!b.dataset.dir);
+          else if(window.pcHost) pcHost.open(b.dataset.path);
+        }catch(_){}
+      };
       /* Start-menu shortcuts and taskbar pins are both stored in the encrypted account layout. */
       $$('.os-app', menu).forEach(b => b.oncontextmenu = (ev) => {
         ev.preventDefault(); ev.stopPropagation();
@@ -9531,6 +9881,11 @@
       });
       $$('.os-app', menu).forEach(b => b.onclick = () => {
         if(b.dataset.find) return searchNostr(q);
+        /* THIS one handler owns every row's click. The drive and disk rows used to get their own
+         * `onclick` a few lines up and then have it REPLACED by this assignment, which fell through
+         * to `openLauncherApp(undefined)` -- so a file found in the start menu opened nothing. */
+        if(b.dataset.sha !== undefined) return openSha(b);
+        if(b.dataset.path !== undefined) return openPath(b);
         /* A native app is STARTED, which takes as long as it takes — the menu closes first so the
          * desktop is not frozen behind a menu while firefox loads, and the launch reports itself. */
         if(b.dataset.app){
@@ -9906,7 +10261,13 @@
                                       : { reply: rest.slice(0, at), replyPk: rest.slice(at + 1) });
                 }
                 /* The start menu's own results, performed on the desktop that has room for them. */
-                else if(kind === 'sha') PC().driveReveal && PC().driveReveal(val);
+                else if(kind === 'sha') (PC().driveOpenFile || PC().driveReveal)(val);
+                else if(kind === 'path'){
+                  const at = val.indexOf('\n');
+                  const p = at < 0 ? val : val.slice(0, at), dir = at >= 0 && val.slice(at + 1) === '1';
+                  if(PC().hostOpen) PC().hostOpen(p, '', '', dir);
+                  else if(window.pcHost) pcHost.open(p);
+                }
                 else if(kind === 'find'){
                   openDoc('search', 'Search', 'i-search', () => {
                     try{ PC().runSearch && PC().runSearch(val); }catch(_){ }
@@ -10215,6 +10576,9 @@
     // …and so does clicking anywhere that is not the panel or the clock itself. Without this the
     // only way to close it is the clock, which is not where anyone's hand is by then.
     document.addEventListener('pointerdown', _trayAway, true);
+    // …and every press on the desktop's own surface puts it back under the applications. See
+    // _pressResink: Wayfire raises it on each click but reports only the first.
+    document.addEventListener('pointerdown', _pressResink, true);
     /* Repaint on every connection change — the tray icon is the point of the widget, so it cannot
      * wait for the 30s clock tick to notice the relay went. Kept OFF Relay.onStatus: that is a
      * single slot app.js owns for the offline banner and the outbox flush, and assigning it here
@@ -10291,6 +10655,7 @@
     _bgSha = ''; _bgUrl = '';
     try{ _netOff && _netOff(); }catch(_){} _netOff = null;
     document.removeEventListener('pointerdown', _trayAway, true);
+    document.removeEventListener('pointerdown', _pressResink, true);
     window.removeEventListener('online', onNetChange);
     window.removeEventListener('offline', onNetChange);
     toastHost = null; notiOpen = false; netOpen = false;
@@ -11027,6 +11392,7 @@
                    * rather than inferred from a rendered desktop. */
                   __layout: (list, doc, machine) => computeLayout(list, doc, machine),
                   __normDoc: (d) => _normDoc(d), __orderNow: (lay) => _orderNow(lay),
+                  __actEncode: (s) => _actEncode(s),
                   __fitIcons: (items,pos,maxX,maxY) => fitIconPositions(items,pos,maxX,maxY),
                   /* WHERE AND HOW BIG A WINDOW OPENS, and the compositor rectangle the size
                      hint is derived against. Both are exposed for the same reason as __layout: a

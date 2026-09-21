@@ -19885,6 +19885,73 @@
     switchView('blossom');
   }
 
+  /* OPEN THE FILE ITSELF — what a SEARCH result means, where driveReveal is "show me where it is".
+   *
+   * The same decision a click on the file's tile in Files makes (`.file-card > a`), from the same
+   * helpers, so a search result and a tile cannot disagree about what opens a PDF: Preview for what it
+   * can show, otherwise the Open-with sheet (Office / Code / decrypt-and-open), with "Show in Files"
+   * added because a search result — unlike a tile — has not shown you the folder it lives in.
+   *
+   * An unencrypted blob is opened by its URL, which the index does not hold; it is taken from the
+   * last listing Files drew. With no listing in memory there is no address to fetch, and the honest
+   * move is to reveal it in Files (which lists, then shows it) rather than open nothing. */
+  function driveOpenFile(sha){
+    const m = (FilesIdx && FilesIdx.meta && FilesIdx.meta(sha)) || {};
+    const row = Array.isArray(_filesGridList) ? _filesGridList.find(b => b && b.sha256 === sha) : null;
+    const d = { sha: String(sha || ''), name: String(m.name || (row && row.name) || ''),
+                mime: String(m.mime || (row && row.type) || ''), enc: m.enc ? '1' : '0',
+                url: String((row && row.url) || '') };
+    if(!d.sha) return;
+    if(d.enc !== '1' && !d.url){ driveReveal(sha); return; }
+    if(_previewable(_openFileName(d), d.mime)){ openPreviewFile(d, {}); return; }
+    const hs = _handlersFor(d, {});
+    hs.push(d.enc === '1'
+      ? { id:'plain', icon:'🔓', label:'Decrypt and open', hint:'Hands the plaintext to this browser',
+          run:async()=>{ try{ toast('decrypting…'); window.open(await trackUrl(d.sha),'_blank'); }
+                         catch(err){ toast('decrypt failed: '+((err&&err.message)||'')); } } }
+      : { id:'plain', icon:'🌐', label:'Open in a new tab', hint:'However this browser handles it',
+          run:()=>{ try{ window.open(d.url,'_blank'); }catch(_){} } });
+    hs.push({ id:'reveal', icon:'📁', label:'Show in Files', hint:'Open the folder it is in',
+              run:()=>driveReveal(sha) });
+    _openWithSheet(d.name || 'this file', hs);
+  }
+
+  /* A FILE ON THIS COMPUTER, from a search result: the same chooser a click in Files → This Computer
+   * gives it (Preview / Office / Code / hand it to the machine), and a FOLDER opens Files there —
+   * `xdg-open` on a directory hands it to whatever file manager the machine has, and on PosterChanOS
+   * the file manager is this one. */
+  function hostOpen(path, name, mime, isDir){
+    const p = String(path || '');
+    if(!p) return;
+    if(isDir){
+      const H = _hostFs();
+      if(H) try{ H.enter(p); }catch(_){}
+      _syncRoot=''; _syncPath=''; _filesFolder=null; _hostOn=true; _filesTab='computer'; _fxMobileSource='computer';
+      switchView('blossom');
+      return;
+    }
+    const nm = String(name || p.split('/').pop() || p);
+    const openHere = () => Promise.resolve(window.pcHost && pcHost.open ? pcHost.open(p) : { ok:false, why:'this build cannot open a local file' })
+      .then(r => { if(r && r.ok === false) toast(r.why || 'could not open that'); },
+            e => toast(String((e && e.message) || e)));
+    return _openHostFile(p, nm, openHere, String(mime || mimeForName(nm) || ''));
+  }
+
+  /* NOTES, SEARCHABLE FROM THE DESKTOP. The library is decrypted in this page (it is encrypted to the
+   * user's own key and nobody else can read it), so the search runs here or nowhere — there is no
+   * server side to ask. Loads notes.js on demand like every other entry into it. */
+  async function notesSearch(q, limit){
+    try{
+      const N = await _withModule('notes.js', 'PCNotes');
+      return (N && typeof N.search === 'function') ? await N.search(q, limit) : [];
+    }catch(_){ return []; }
+  }
+  async function notesOpen(id){
+    const N = await _withModule('notes.js', 'PCNotes');
+    if(!N || typeof N.select !== 'function') throw new Error('Notes did not load');
+    return N.select(id);
+  }
+
   /* The Music APP: a player, not a folder. Opening Music used to land you in Files → 🎵 Music — the
    * same screen you use to UPLOAD, complete with folder chips and a drop zone — which is a file
    * manager that happens to contain songs. This is the library as a playlist with transport on top;
@@ -23100,7 +23167,16 @@
        * pleasant to edit, but hiding the editor entirely made .conf files, PDFs and extensionless
        * project files impossible to inspect from the machine picker. */
       openable: () => true,
-      openFile: async (path, name, openHere, mime) => {
+      openFile: _openHostFile,
+      toast, prompt: uiPrompt, confirm: uiConfirm,
+    });
+  }
+
+  /* One of this computer's files, opened: Preview for what it can show, else the chooser. A named
+   * function (it was an inline option of the Files pane) so a desktop SEARCH result opens a local
+   * file exactly as a click in Files → This Computer does — see hostOpen. */
+  async function _openHostFile(path, name, openHere, mime){
+    {
         if(_previewable(name || path, mime)){
           try{
             const nm = name || path, type = mime || mimeForName(nm) || '';
@@ -23174,9 +23250,7 @@
         { id:'host', icon:'🖥', label:'This computer',
           hint:'Hand it to whatever this machine opens that with',
           run:() => { if(openHere) openHere(); } }]));
-      },
-      toast, prompt: uiPrompt, confirm: uiConfirm,
-    });
+    }
   }
 
   /* A DELIBERATE PUBLIC COPY from this machine into Blossom. The bridge read is bounded because it
@@ -36576,9 +36650,22 @@
     if(f && f.classList) Array.from(f.classList).forEach(c=>{ if(c.indexOf('feed-')===0) f.classList.remove(c); });
     return f;
   }
-  async function runSearch(q){
+  /* `opts` is the desktop's taskbar search (os.js `desktopSearch`), which shows this computer's own
+   * results -- apps, Notes, the drive, files on the disk -- beside Nostr's, in the order System
+   * Settings → Search chose. They arrive as two live elements: `head` goes above the Nostr results
+   * and `tail` below them. They are ELEMENTS, not HTML, because each fills itself in as its own
+   * answer lands (Notes decrypts, the disk walk returns) and carries its own click handlers, so every
+   * repaint here MOVES them rather than rebuilding them. `nostr:false` is "Nostr search is switched
+   * off": nothing is asked of any relay and the npub/nevent/NIP-05 jumps (Nostr lookups too) are
+   * skipped. Every other caller passes nothing and gets exactly what it always did. */
+  async function runSearch(q, opts){
+    opts=opts||{};
+    const head=opts.head||null, tail=opts.tail||null;
     VIEW='search'; _clearNav(); $('#view-title').textContent='Search';
-    const feed=_feedScrollable(); feed.innerHTML='<div class="spinner"></div>';
+    const feed=_feedScrollable();
+    const place=(html)=>{ feed.innerHTML=html; if(head) feed.prepend(head); if(tail) feed.append(tail); };
+    if(opts.nostr===false){ place(''); if(!head && !tail) feed.innerHTML='<div class="empty">Every search source is switched off — System Settings → Search.</div>'; return; }
+    place('<div class="spinner"></div>');
     // People naturally type a handle as "@name@domain" — strip the leading @ so it matches the NIP-05
     // resolver below (else it falls through to full-text search for the literal string and finds nothing).
     q=q.replace(/^@+/, '').trim(); if(!q) return;
@@ -36672,8 +36759,8 @@
          : (answered ? '<div class="empty">No matching posts.</div>'
                      : `<div class="empty">Your relays didn’t answer in time — this is not "nothing found".<br>
                           <button class="btn btn-cyan small" id="search-retry" style="margin-top:10px">Search again</button></div>`);
-    feed.innerHTML=html; hydrate(feed);
-    { const rb=$('#search-retry',feed); if(rb) rb.onclick=()=>runSearch(q); }
+    place(html); hydrate(feed);
+    { const rb=$('#search-retry',feed); if(rb) rb.onclick=()=>runSearch(q, opts); }
     $$('[data-prof]',feed).forEach(el=> el.onclick=()=>renderProfileView(el.dataset.prof));
     // Discover result cards → open the stream player.
     $$('.article-card',feed).forEach(c=> c.onclick=ev=>{ if(ev.target.closest('[data-prof]')){ renderProfileView(c.dataset.pk); return; } const a=Store.get(c.dataset.id); if(a) openArticle(a); });
@@ -40854,7 +40941,9 @@
      * sub-modules' `PC` binding and skips comment lines by that marker, so a prose line without one
      * reads as code and fails the build — which is exactly what it had been doing.) */
     driveSearch, driveReveal,
-    openDMWith,                                               // → one named route to a conversation, from any window
+    // → the desktop's taskbar Search: open a result ITSELF (not its folder), and search Notes.
+    driveOpenFile, hostOpen, notesSearch, notesOpen,
+    openDMWith,                                              // → one named route to a conversation, from any window
     notifToast,                                               // → the in-app half of a notification (needs no OS permission)
     openExternal,                                             // → web search results, and anything else that must leave the app
     /* THE NATIVE PLUGIN LOOKUP, shared. Not a convenience: `_capPlugin` falls back to
