@@ -2657,7 +2657,7 @@
            ['bluetooth','i-bluetooth','Bluetooth','Discover, pair, and manage nearby devices.','Open Bluetooth controls']].map(([key,ic,title,desc,action])=>`
         <section data-settings-page="${key}" ${_osSettingsPage===key?'':'hidden'}><header class="os-set-pagehead"><div>${iconSvg(ic)}</div><span><h2>${title}</h2><p>${desc}</p></span></header>
           <section class="os-set-card"><div class="os-set-cardhead"><b>${title} controls</b><span>Controls open beside this Settings window and return here when closed.</span></div>
-          ${window.PCOSShell&&PCOSShell.openControl?`<button class="btn primary os-set-open-control" data-open-control="${key}">${action}</button>`:`<div class="empty">${title} controls are unavailable on this device.</div>`}</section></section>`).join('')}
+          ${window.PCOSShell&&PCOSShell.openControl?`<button class="btn primary os-set-open-control" data-open-control="${key}">${action}</button>`:`<div class="empty">${title} controls are unavailable on this device.</div>`}</section>${key==='network'?bridgeCardHtml():''}</section>`).join('')}
         <section data-settings-page="printers" ${_osSettingsPage==='printers'?'':'hidden'}><header class="os-set-pagehead"><div>${iconSvg('i-note')}</div><span><h2>Printers</h2><p>Add a printer and print a test page.</p></span></header>${window.pcPrinters?`<div class="os-set-card" data-printers><div class="os-set-cardhead"><b>Printers on this computer</b><span>CUPS's own pages ask for a Unix password and a PosterChan identity account has none, so printers are managed here — using the administrator rights this account already holds.</span></div>
           <div data-printer-list class="os-printer-list"><div class="empty">Loading…</div></div>
           <div class="os-set-actions"><button class="btn" data-printer-refresh>Refresh</button><button class="btn primary" data-printer-find>Find printers</button><span class="muted" data-printer-status></span></div>
@@ -2908,6 +2908,7 @@
         const rf=prn.querySelector('[data-printer-refresh]'); if(rf)rf.onclick=refresh;
         refresh();
       }
+      bindBridgeCard(host);
       const live=host.querySelector('[data-liveusb]');
       if(live&&window.pcLiveUSB){
         const out=live.querySelector('[data-live-out]'), iso=live.querySelector('[data-live-iso]');
@@ -2982,6 +2983,78 @@
       };
     };
     draw();
+  }
+
+  /* BRIDGES FOR VIRTUAL MACHINES (System Settings → Network). A bridge puts a VM on the LAN: the wired
+   * card becomes a port of a software switch and the machine's own address moves to the switch. The
+   * whole transaction — sudo, the MAC copy, the rollback when no address arrives, qemu's bridge.conf —
+   * lives in desktop/net.js; this is only the form, and it says out loud the one thing a person must
+   * know before pressing the button: the network DROPS for a moment, and Wi-Fi cannot be bridged. */
+  function bridgeCardHtml(){
+    if(!(window.pcNet&&typeof pcNet.bridges==='function')) return '';
+    return `<section class="os-set-card os-bridges" data-bridges><div class="os-set-cardhead"><b>Bridges for virtual machines</b>
+      <span>A bridge connects virtual machines straight to your network, so each one gets its own address from your router instead of hiding behind this computer. Only a wired (ethernet) card can be bridged — Wi-Fi cannot.</span></div>
+      <div data-bridge-list class="os-printer-list"><div class="empty">Loading…</div></div>
+      <form class="os-bridge-form" data-bridge-form onsubmit="return false">
+        <div class="os-bridge-grid">
+          <label>Bridge name<input class="input" name="name" value="br0" maxlength="15" autocomplete="off" spellcheck="false"></label>
+          <label>Wired card<select class="input" name="nic" data-bridge-nic><option value="">Loading…</option></select></label>
+          <label>Addressing<select class="input" name="mode" data-bridge-mode><option value="dhcp">Automatic (DHCP)</option><option value="static">Static</option></select></label>
+        </div>
+        <div class="os-bridge-grid" data-bridge-static hidden>
+          <label>Address/prefix<input class="input" name="address" placeholder="192.168.1.50/24" autocomplete="off"></label>
+          <label>Gateway<input class="input" name="gateway" placeholder="192.168.1.1" autocomplete="off"></label>
+          <label>DNS servers<input class="input" name="dns" placeholder="1.1.1.1, 9.9.9.9" autocomplete="off"></label>
+        </div>
+        <label class="os-bridge-check"><input type="checkbox" name="allowVms" checked> Let this computer's VMs use it (allows the bridge in qemu's bridge.conf and lets qemu-bridge-helper attach them)</label>
+        <p class="os-bridge-warn" role="note">Creating a bridge takes over the wired card: <b>this computer's network drops for a few seconds</b> while its address moves to the bridge. If the bridge gets no address within 30 seconds it is removed and the previous connection comes back.</p>
+        <div class="os-set-actions"><button class="btn" data-bridge-refresh>Refresh</button><button class="btn primary" data-bridge-create>Create bridge</button><span class="muted" role="status" data-bridge-status></span></div>
+      </form></section>`;
+  }
+  function bindBridgeCard(host){
+    const card=host.querySelector('[data-bridges]');
+    if(!card||!(window.pcNet&&pcNet.bridges)) return;
+    const listEl=card.querySelector('[data-bridge-list]'), form=card.querySelector('[data-bridge-form]');
+    const statEl=card.querySelector('[data-bridge-status]'), nicSel=card.querySelector('[data-bridge-nic]');
+    const say=t=>{ if(statEl)statEl.textContent=t||''; };
+    const modeSel=card.querySelector('[data-bridge-mode]'), stat=card.querySelector('[data-bridge-static]');
+    if(modeSel)modeSel.onchange=()=>{ if(stat)stat.hidden=modeSel.value!=='static'; };
+    const draw=(s)=>{
+      if(!s||!s.available){ listEl.innerHTML='<div class="empty">'+enc((s&&s.error)||'NetworkManager is not available on this computer')+'</div>'; return; }
+      const rows=s.bridges||[];
+      listEl.innerHTML=rows.length?rows.map(b=>`<div class="os-printer-row os-bridge-row" data-bridge="${enc(b.name)}"><div><b>${enc(b.name)}</b>
+          <span class="muted small">${enc(b.active?'connected':(b.state||'not connected'))}${b.ipv4&&b.ipv4.length?' · '+enc(b.ipv4.join(', ')):''}${b.ports&&b.ports.length?' · port '+enc(b.ports.join(', ')):''}${b.managed==='libvirt'?' · libvirt NAT network':b.managed==='external'?' · managed by another program':''}</span></div>
+          <span class="os-printer-acts">${b.vmReady?'<span class="os-set-ready">VM-ready</span>':''}${b.managed==='nm'?`<button class="btn danger" data-bridge-delete="${enc(b.name)}">Delete</button>`:''}</span></div>`).join('')
+        :'<div class="empty">No bridges yet.</div>';
+      const nics=(s.nics||[]).filter(n=>!n.port);
+      nicSel.innerHTML=nics.length?nics.map(n=>`<option value="${enc(n.device)}">${enc(n.device)}${n.connection?' — '+enc(n.connection):''}${/^connected/.test(n.state||'')?' (in use)':''}</option>`).join('')
+        :'<option value="">No free wired card</option>';
+      /* Bound after every draw: the rows are replaced wholesale, and a handler on a thrown-away node
+         is a button that quietly does nothing (the printers card learned this first). */
+      $$('[data-bridge-delete]',listEl).forEach(btn=>btn.onclick=async()=>{
+        const name=btn.dataset.bridgeDelete;
+        if(!await PC().uiConfirm('Delete the bridge “'+name+'”? Its wired card goes back to its previous connection, and the network drops for a few seconds. VMs attached to it lose their network.',{ok:'Delete bridge',danger:true})) return;
+        btn.disabled=true; say('removing '+name+'…');
+        let r=null; try{ r=await pcNet.deleteBridge(name); }catch(e){ r={ok:false,error:String(e&&e.message||e)}; }
+        say(r&&r.ok?('removed'+(r.restored?' — back on '+r.restored:'')):(r&&r.error)||'could not remove it'); refresh(); });
+    };
+    const refresh=async()=>{ const r=await _settingsRead(pcNet.bridges(),'bridges');
+      if(r.ok) draw(r.value); else listEl.innerHTML='<div class="empty">'+enc(r.timedOut?'NetworkManager did not answer.':(r.error||'could not read the bridges'))+'</div>'; };
+    const rf=card.querySelector('[data-bridge-refresh]'); if(rf)rf.onclick=refresh;
+    const cr=card.querySelector('[data-bridge-create]');
+    if(cr)cr.onclick=async()=>{
+      const v=n=>{ const el=form.querySelector('[name="'+n+'"]'); return el?String(el.value||'').trim():''; };
+      const spec={name:v('name'),nic:v('nic'),mode:v('mode')==='static'?'static':'dhcp',address:v('address'),gateway:v('gateway'),dns:v('dns'),
+        allowVms:!!(form.querySelector('[name="allowVms"]')||{}).checked};
+      if(!spec.nic){ say('choose a wired card'); return; }
+      if(!await PC().uiConfirm('Create the bridge “'+spec.name+'” on '+spec.nic+'? This computer\'s network drops for a few seconds while '+spec.nic+' becomes a port of the bridge.',{ok:'Create bridge'})) return;
+      cr.disabled=true; say('creating '+spec.name+' — the network may drop for a moment…');
+      let r=null; try{ r=await pcNet.createBridge(spec); }catch(e){ r={ok:false,error:String(e&&e.message||e)}; }
+      cr.disabled=false;
+      say(r&&r.ok?(spec.name+' is up'+(r.ipv4&&r.ipv4.length?' at '+r.ipv4.join(', '):'')+((r.warnings||[]).length?' — '+r.warnings.join(' '):'')):(r&&r.error)||'the bridge could not be created');
+      refresh();
+    };
+    refresh();
   }
 
   function openTaskManager(){

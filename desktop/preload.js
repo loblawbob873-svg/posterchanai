@@ -451,6 +451,12 @@ if (isOurPage) {
                                                     password == null ? '' : String(password)),
     forget: (ssid) => ipcRenderer.invoke('pc:net:forget', String(ssid || '')),
     radio: (on) => ipcRenderer.invoke('pc:net:radio', !!on),
+    bridges: () => ipcRenderer.invoke('pc:net:bridges'),
+    createBridge: (spec) => ipcRenderer.invoke('pc:net:bridge-create', spec && typeof spec === 'object' ? {
+      name: String(spec.name || ''), nic: String(spec.nic || ''), mode: spec.mode === 'static' ? 'static' : 'dhcp',
+      address: String(spec.address || ''), gateway: String(spec.gateway || ''), dns: String(spec.dns || ''),
+      allowVms: spec.allowVms !== false } : {}),
+    deleteBridge: (name) => ipcRenderer.invoke('pc:net:bridge-delete', String(name || '')),
   });
 
   /* Printers. CUPS's own admin pages authenticate a system account through PAM, and a PosterChanOS
@@ -528,6 +534,8 @@ if (isOurPage) {
     ejectIso: (name) => ipcRenderer.invoke('pc:vm:eject-iso', String(name||'')),
     bootDisk: (name) => ipcRenderer.invoke('pc:vm:boot-disk', String(name||'')),
     addNetwork: (name) => ipcRenderer.invoke('pc:vm:add-network', String(name||'')),
+    setNetwork: (name, network) => ipcRenderer.invoke('pc:vm:set-network', String(name||''),
+      network && network.type === 'bridge' ? { type: 'bridge', name: String(network.name||'') } : { type: 'user' }),
     gamingMouse: (name, on) => ipcRenderer.invoke('pc:vm:gaming-mouse', String(name||''), !!on),
     pickIso: () => ipcRenderer.invoke('pc:vm:pick-iso'),
   });

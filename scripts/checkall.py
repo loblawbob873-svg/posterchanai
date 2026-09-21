@@ -219,6 +219,7 @@ CHECKS = {
 
     # --- self-contained, but slower than the default ---------------------------------------------
     "check_os_desktop":                dict(group="ui", secs=900),
+    "check_os_bridges":                dict(group="ui", secs=180),
     # Needs a running instance: it drives the REAL client (app.js + os.js together), because the
     # desktop half lives in one and the thread half in the other and this bug is what they do to
     # each other. The os.js unit harness stubs PC() and cannot see it.

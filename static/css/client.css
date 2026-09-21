@@ -10217,6 +10217,16 @@ html.pc-oswin .pv-sheet{top:38px}
 @media(max-width:640px){.os-printer-row{flex-direction:column;align-items:stretch}
   .os-printer-acts{justify-content:flex-end}}
 
+/* Bridges for virtual machines (System Settings → Network): the printers row shape, plus a form. */
+.os-bridges{margin-top:14px}
+.os-bridge-form{display:flex;flex-direction:column;gap:10px;margin-top:14px;padding-top:14px;border-top:1px solid var(--line)}
+.os-bridge-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:10px}
+.os-bridge-grid[hidden]{display:none}
+.os-bridge-grid label{display:flex;flex-direction:column;gap:4px;font-size:13px;min-width:0}
+.os-bridge-grid .input{width:100%;box-sizing:border-box;min-width:0}
+.os-bridge-check{display:flex;gap:8px;align-items:flex-start;font-size:13px}
+.os-bridge-warn{margin:0;padding:10px 12px;border:1px solid rgba(255,207,43,.45);border-radius:9px;background:rgba(255,207,43,.08);font-size:13px}
+
 /* Interoperable kind-0 profile music (`fields: [[label,url]]`), as published by Ditto. */
 .prof-music{display:grid;gap:8px;margin:12px 0}
 /* PROFILE MUSIC, IN THE PLAYER'S OWN LANGUAGE.
