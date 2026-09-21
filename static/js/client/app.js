@@ -10854,7 +10854,7 @@
     const tabs=`<div class="notif-tabs tor-tabs">
         <button class="ntab${_torTab==='dl'?' on':''}" data-tt="dl">⬇ Downloads</button>
         <button class="ntab${_torTab==='nostr'?' on':''}" data-tt="nostr">🧲 Nostr</button>
-        <span class="tor-sp"></span>${act}</div>`;
+        <span class="tor-sp"></span><span class="tor-acts">${act}</span></div>`;
     const bind=()=>{ $$('.tor-tabs .ntab',feed).forEach(b=> b.onclick=()=>{
       if(_torTab===b.dataset.tt) return; _torTab=b.dataset.tt; _torStopPoll(); renderTorrents(); }); };
     if(_torTab==='dl'){

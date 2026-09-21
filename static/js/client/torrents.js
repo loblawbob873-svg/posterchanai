@@ -428,8 +428,11 @@
       b.className='btn btn-ghost small tor-act'; b.id='tmx-feeds';
       b.textContent='📡 Feeds'; b.title='Subscribe to torrent RSS feeds';
       b.onclick=openFeeds;
+      // Into the strip's action GROUP (app.js wraps them in `.tor-acts`), so on a phone the whole
+      // group wraps onto its own line as one unit instead of pushing Add torrent off the screen.
       const first=tabs.querySelector('.tor-act');
-      if(first) tabs.insertBefore(b, first); else tabs.appendChild(b);
+      if(first) first.parentNode.insertBefore(b, first);
+      else (tabs.querySelector('.tor-acts')||tabs).appendChild(b);
     }
 
     // Richer Add dialog on the button app.js already draws. Re-applied on every repaint because

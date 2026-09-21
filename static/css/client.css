@@ -8559,8 +8559,14 @@ body.os-on .osw-body > .feed::-webkit-scrollbar-thumb:hover{background:var(--mut
 
 /* Torrents: the tab strip carries the tab's action on the right. The strip is a sticky flex row, so
    the button rides in it rather than needing a row of its own underneath. */
-.tor-tabs{align-items:center}
+/* The strip WRAPS, and its buttons live in one `.tor-acts` group pushed to the end. On a phone the
+   tabs plus 📡 Feeds (added by torrents.js) plus Add torrent do not fit one line: as a single
+   sideways-scrolling row, Add torrent sat past the right edge of the screen with no scrollbar to say
+   so. Now the group drops onto its own line, right-aligned, as a unit. Desktop never wraps. */
+.tor-tabs{align-items:center;flex-wrap:wrap}
 .tor-tabs .tor-sp{flex:1;min-width:8px}
+.tor-tabs .tor-acts{display:flex;align-items:center;gap:6px;flex:0 1 auto;flex-wrap:wrap;
+  justify-content:flex-end;margin-inline-start:auto;max-width:100%}
 .tor-tabs .tor-act{flex:0 0 auto;align-self:center;margin:0 0 8px}
 .tor-tabs .tor-act:last-child{margin-inline-end:2px}
 /* Below 560px the strip would have to scroll to reach the buttons, which defeats the point of
