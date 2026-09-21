@@ -141,7 +141,7 @@ const never = () => new Promise(() => {});
   vlog.length = 0;
   const made = await C('local', 'vm.create', { name: 'newvm', iso: '/home/u/alpine.iso', guest: 'linux', firmware: 'efi', vcpus: 2, ram_mib: 2048, disk_gib: 20 });
   assert.ok(made.ok);
-  eq(vlog[0], ['create', { name: 'newvm', iso: '/home/u/alpine.iso', guest: 'linux', firmware: 'efi', ramMiB: 2048, cpus: 2, diskGiB: 20 }]);
+  eq(vlog[0], ['create', { name: 'newvm', iso: '/home/u/alpine.iso', guest: 'linux', firmware: 'efi', ramMiB: 2048, cpus: 2, diskGiB: 20, network: { type: 'user' } }], 'no network chosen = user-mode NAT');
   assert.equal((await C('local', 'vm.create', { name: 'x' })).error.code, 'bad_request', 'a local create needs a picked ISO');
   vlog.length = 0;
   assert.equal((await C('local', 'iso.pick')).result.path, '/home/u/alpine.iso');

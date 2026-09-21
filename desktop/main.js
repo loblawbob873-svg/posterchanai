@@ -3665,6 +3665,7 @@ ipcMain.handle('pc:vm:change-iso', (e, name, iso) => { fsGuard(e); return vm.cha
 ipcMain.handle('pc:vm:eject-iso', (e, name) => { fsGuard(e); return vm.ejectIso(name); });
 ipcMain.handle('pc:vm:boot-disk', (e, name) => { fsGuard(e); return vm.bootDisk(name); });
 ipcMain.handle('pc:vm:add-network', (e, name) => { fsGuard(e); return vm.addNetwork(name); });
+ipcMain.handle('pc:vm:set-network', (e, name, network) => { fsGuard(e); return vm.setNetwork(name, network && network.type === 'bridge' ? { type: 'bridge', name: String(network.name || '') } : { type: 'user' }); });
 ipcMain.handle('pc:vm:gaming-mouse', (e, name, on) => { fsGuard(e); return vm.gamingMouse(name, !!on); });
 ipcMain.handle('pc:vm:pick-iso', async (e) => {
   fsGuard(e); const r=await dialog.showOpenDialog(dialogOwner(e),{title:'Choose installation ISO',properties:['openFile'],
@@ -3734,6 +3735,17 @@ ipcMain.handle('pc:net:connect', (e, ssid, password) => {
 });
 ipcMain.handle('pc:net:forget', (e, ssid) => { fsGuard(e); return net.forget(String(ssid || '')); });
 ipcMain.handle('pc:net:radio', (e, on) => { fsGuard(e); return net.radio(!!on); });
+// Bridges for virtual machines (System Settings -> Network). The spec is rebuilt field by field here and
+// validated again in net.js; the renderer never hands nmcli an argument list.
+ipcMain.handle('pc:net:bridges', (e) => { fsGuard(e); return net.bridges(); });
+ipcMain.handle('pc:net:bridge-create', (e, spec) => {
+  fsGuard(e);
+  const s = spec && typeof spec === 'object' ? spec : {};
+  return net.createBridge({ name: String(s.name || ''), nic: String(s.nic || ''), mode: s.mode === 'static' ? 'static' : 'dhcp',
+                            address: String(s.address || ''), gateway: String(s.gateway || ''), dns: String(s.dns || ''),
+                            allowVms: s.allowVms !== false });
+});
+ipcMain.handle('pc:net:bridge-delete', (e, name) => { fsGuard(e); return net.deleteBridge(String(name || '')); });
 
 /* Provisioning a Unix account for whoever signed in — the one privileged thing the shell asks for,
  * and it is a fixed command with a validated argument (the script refuses anything that is not a

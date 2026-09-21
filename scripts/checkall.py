@@ -219,6 +219,7 @@ CHECKS = {
 
     # --- self-contained, but slower than the default ---------------------------------------------
     "check_os_desktop":                dict(group="ui", secs=900),
+    "check_os_bridges":                dict(group="ui", secs=180),
     # Needs a running instance: it drives the REAL client (app.js + os.js together), because the
     # desktop half lives in one and the thread half in the other and this bug is what they do to
     # each other. The os.js unit harness stubs PC() and cannot see it.
@@ -325,6 +326,13 @@ CHECKS = {
     "check_texts_media":               dict(group="ui", secs=420,
                                             why="pictures draw, survive a repaint, read once"),
     "check_files_explorer":            dict(group="ui", secs=600),
+    # Virtual Machines as a Proxmox-style explorer: tree, summary tiles, sortable details table.
+    "check_vms_explorer":              dict(group="ui", secs=420,
+                                            why="tree + sortable VM table at 1280/3840, cards at 390"),
+    # The VM console toolbar at every display scale, and outside the popped-out window's DRAG region
+    # (a button painted over `-webkit-app-region: drag` loses its clicks to "move the window").
+    "check_vm_console_layout":         dict(group="ui", secs=240,
+                                            why="console buttons visible + clickable at .67-1.5"),
     "check_mail_mobile":               dict(group="ui", secs=600),
     "check_concord_mobile":            dict(group="ui", secs=420),
     "check_concord_scroll_mobile":     dict(group="ui", secs=420),

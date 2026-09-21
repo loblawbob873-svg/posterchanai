@@ -34,6 +34,10 @@ class FakeBackend:
         # redefined by a migration). The app's own snapshots are offline qemu-img tags (img_snapshot_*), not these.
         self.snapshots: dict = {}
         self.img_data: dict = {}         # path -> [(tag, bytes at that snapshot)] — what `qemu-img snapshot -a` restores
+        self.networks: list = ["default"]  # `virsh net-list --all --name`
+        self.bridges: list = []            # Linux bridges in /sys/class/net
+        self.addrs: dict = {}              # uuid -> [ip] (`domifaddr`)
+        self.ups: dict = {}                # uuid -> seconds running (/proc)
 
     async def _enter(self, name, *args):
         self.calls.append((name,) + args)
@@ -56,7 +60,39 @@ class FakeBackend:
     def _info(self, u) -> DomainInfo:
         d = self.domains[u]
         return DomainInfo(uuid=u, name=d["name"], state=d["state"], vcpus=d["vcpus"], ram_mib=d["ram_mib"],
-                          autostart=d["autostart"], meta=domainxml.parse_meta(d["meta_xml"]), disks=[])
+                          autostart=d["autostart"], meta=domainxml.parse_meta(d["meta_xml"]), disks=[],
+                          nics=self._nics(d["xml"]))
+
+    @staticmethod
+    def _nics(xml) -> list:
+        """What `domiflist --inactive` would say about this definition."""
+        try:
+            dev = ET.fromstring(xml).find("devices")
+        except ET.ParseError:
+            return []
+        out = []
+        for i in (dev.findall("interface") if dev is not None else []):
+            n = domainxml.nic_of(i)
+            m, mac = i.find("model"), i.find("mac")
+            out.append({"type": n["type"], "source": n["name"], "model": m.get("type", "") if m is not None else "",
+                        "mac": mac.get("address", "") if mac is not None else ""})
+        return out
+
+    async def list_networks(self):
+        await self._enter("list_networks")
+        return list(self.networks)
+
+    async def list_bridges(self):
+        await self._enter("list_bridges")
+        return list(self.bridges)
+
+    async def guest_addresses(self, vm_uuid):
+        await self._enter("guest_addresses", vm_uuid)
+        return list(self.addrs.get(vm_uuid, []))
+
+    async def uptimes(self):
+        await self._enter("uptimes")
+        return dict(self.ups)
 
     # ---- Protocol
     async def available(self):

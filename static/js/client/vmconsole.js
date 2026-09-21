@@ -58,6 +58,8 @@
       ctrlAltDel(){ try{ rfb && rfb.sendCtrlAltDel(); }catch(_){} },
       setFit(fit){ if(rfb){ rfb.scaleViewport = !!fit; rfb.clipViewport = !fit; } },
       focus(){ try{ rfb && rfb.focus(); }catch(_){} },
+      grab(){ try{ pointerLock && pointerLock.grab(); }catch(_){} },
+      grabbed(){ try{ return !!(pointerLock && pointerLock.grabbed()); }catch(_){ return false; } },
     };
     ws.onopen = () => { try{ ws.send(JSON.stringify({ t: 'open', ticket: o.ticket })); }catch(_){} };
     ws.onerror = () => { if(!rfb && !closed) status('error', 'The console connection failed'); };
@@ -79,13 +81,14 @@
                (ev && ev.detail && ev.detail.clean) ? 'The console closed' : 'The console connection dropped');
       });
       rfb.addEventListener('securityfailure', () => status('error', 'The VM refused the console password'));
-      // OPT-IN POINTER LOCK — "grab" the mouse so it cannot wander off the VM's screen. noVNC has no
+      // POINTER LOCK — "grab" the mouse so it cannot wander off the VM's screen. noVNC has no
       // pointer lock of its own and reads absolute ev.clientX/clientY, so while locked we keep a virtual
       // cursor (seeded at the canvas centre), advance it by the raw movementX/Y CLAMPED to the canvas,
       // and re-dispatch synthetic mouse events at that point to noVNC's canvas — the VM cursor tracks 1:1
-      // and is confined, which works for the absolute (tablet) device the VMs use. It is opt-in (click to
-      // grab, Esc to release), so a phone/desktop that never grabs keeps the ordinary mouse untouched.
-      try{ pointerLock = attachPointerLock(o.target, status); }catch(_){}
+      // and is confined, which works for the absolute (tablet) device the VMs use. A click on the screen
+      // grabs (unless opts.grabOnClick === false), Esc releases; touch never grabs, so a phone keeps its
+      // ordinary input, and nothing is intercepted until the lock is actually held.
+      try{ pointerLock = attachPointerLock(o.target, status, o.grabOnClick !== false); }catch(_){}
       // After the attach: RFB now owns onmessage, so the host may start the byte stream.
       try{ ws.send(JSON.stringify({ t: 'go' })); }catch(_){}
     };
@@ -95,13 +98,29 @@
   /* Confine the mouse to the VM. noVNC reads absolute ev.clientX/clientY, so while the pointer is
    * locked we keep a virtual cursor, move it by the raw movementX/Y clamped to the canvas, and
    * re-dispatch synthetic mouse events at that point — absolute tracking that cannot leave the VM.
-   * Returns { release() }. Opt-in: nothing changes until the user clicks the screen to grab. */
-  function attachPointerLock(target, status){
+   * Returns { grab(), grabbed(), release() }.
+   *
+   * THE GRAB IS TAKEN ON MOUSEDOWN, IN THE CAPTURE PHASE — never on `click`. The first version listened
+   * for `click` on the screen and it could not fire: noVNC's canvas handles `click` itself and calls
+   * stopPropagation(), and on `mousedown` it raises a full-page capture element (setCapture →
+   * #noVNC_mouse_capture_elem) so the `mouseup` lands on THAT and the click's target is <body>. Either
+   * one alone starves a click listener on the screen, so "click the screen to grab the mouse" did
+   * nothing at all — reported as "Cursor Lock ... Still an issue". A capturing mousedown on the screen
+   * runs before any of noVNC's handlers, is a user activation (requestPointerLock needs one), and still
+   * lets the press through to the VM. tests/client/test_vm_console_grab_real_click.py drives a REAL
+   * click at the real noVNC canvas. */
+  function attachPointerLock(target, status, grabOnClick){
     const doc = target.ownerDocument, win = doc.defaultView || root;
-    let vx = 0, vy = 0, dispatching = false, on = false;
+    let vx = 0, vy = 0, dispatching = false, on = false, pressAt = null;
     const canvas = () => target.querySelector('canvas');
     function clientRect(){ const c = canvas(); return c ? c.getBoundingClientRect() : target.getBoundingClientRect(); }
-    function seed(){ const r = clientRect(); vx = r.left + r.width / 2; vy = r.top + r.height / 2; }
+    // Seed the virtual cursor where the grabbing click WAS (so the VM's cursor does not jump), else the
+    // centre; clamped either way.
+    function seed(){
+      const r = clientRect(), p = pressAt; pressAt = null;
+      vx = p ? p.x : r.left + r.width / 2; vy = p ? p.y : r.top + r.height / 2;
+      vx = Math.max(r.left, Math.min(r.right - 1, vx)); vy = Math.max(r.top, Math.min(r.bottom - 1, vy));
+    }
     function relay(type, e){
       const c = canvas(); if(!c) return;
       dispatching = true;
@@ -129,28 +148,52 @@
         deltaMode: e.deltaMode, bubbles: true, cancelable: true, view: win })); }catch(_){}
       dispatching = false;
     }
+    function isLocked(){ const el = doc.pointerLockElement; return !!el && (el === target || target.contains(el)); }
     function onChange(){
-      const locked = doc.pointerLockElement === target || doc.pointerLockElement === canvas();
-      on = !!locked; target.classList.toggle('vmc-grabbed', on);
-      if(on){ seed(); status && status('connected', 'Mouse grabbed — press Esc to release'); }
-      else { status && status('connected', 'Click the screen to grab the mouse'); }
+      const was = on;
+      on = isLocked(); target.classList.toggle('vmc-grabbed', on);
+      if(on && !was){ seed(); status && status('connected', 'Mouse grabbed — press Esc to release'); }
+      else if(!on && was){ status && status('connected', 'Click the screen to grab the mouse'); }
     }
-    function grab(){ if(on) return; try{ (target.requestPointerLock ? target : canvas() || target).requestPointerLock(); }catch(_){} }
-    target.addEventListener('click', grab);
+    function onError(){
+      on = false; target.classList.remove('vmc-grabbed');
+      status && status('connected', 'The mouse could not be grabbed — click the screen again');
+    }
+    function grab(){
+      if(on) return;
+      const el = target.requestPointerLock ? target : (canvas() || target);
+      try{
+        const p = el.requestPointerLock();
+        if(p && typeof p.catch === 'function') p.catch(onError);         // Chrome ≥ 88 returns a promise
+      }catch(_){ onError(); }
+    }
+    function onDown(e){
+      if(on || dispatching || !grabOnClick || e.button !== 0) return;
+      pressAt = { x: e.clientX, y: e.clientY };
+      grab();                                                             // the press itself still reaches the VM
+    }
+    target.addEventListener('mousedown', onDown, true);
     doc.addEventListener('pointerlockchange', onChange);
+    doc.addEventListener('pointerlockerror', onError);
     win.addEventListener('mousemove', onMove, true);
     win.addEventListener('mousedown', onBtn, true);
     win.addEventListener('mouseup', onBtn, true);
     win.addEventListener('wheel', onWheel, { capture: true, passive: false });
-    return { release(){
-      try{ if(doc.pointerLockElement) doc.exitPointerLock(); }catch(_){}
-      target.removeEventListener('click', grab);
-      doc.removeEventListener('pointerlockchange', onChange);
-      win.removeEventListener('mousemove', onMove, true);
-      win.removeEventListener('mousedown', onBtn, true);
-      win.removeEventListener('mouseup', onBtn, true);
-      win.removeEventListener('wheel', onWheel, true);
-    } };
+    return {
+      grab,
+      grabbed: () => on,
+      release(){
+        try{ if(isLocked()) doc.exitPointerLock(); }catch(_){}
+        target.classList.remove('vmc-grabbed');
+        target.removeEventListener('mousedown', onDown, true);
+        doc.removeEventListener('pointerlockchange', onChange);
+        doc.removeEventListener('pointerlockerror', onError);
+        win.removeEventListener('mousemove', onMove, true);
+        win.removeEventListener('mousedown', onBtn, true);
+        win.removeEventListener('mouseup', onBtn, true);
+        win.removeEventListener('wheel', onWheel, true);
+      },
+    };
   }
 
   root.PCVmConsole = { open, wsUrlFor, loadRFB };

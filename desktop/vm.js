@@ -16,6 +16,34 @@ const run = (cmd, args, timeout=20000) => new Promise(resolve => execFile(cmd, a
 const virsh = (args, timeout) => run('virsh', ['--connect', URI].concat(args), timeout);
 const cleanName = n => String(n||'').trim().replace(/[^A-Za-z0-9_.-]+/g, '-')
   .replace(/^[.-]+|[.-]+$/g,'').slice(0,48);
+/* A BRIDGE IS A NAME WE WRITE INTO A DOMAIN DEFINITION, so it is checked twice: the characters (a Linux
+ * interface name, IFNAMSIZ-1) AND that the host actually has a bridge by that name right now -- sysfs is
+ * the authority (/sys/class/net/<name>/bridge exists only for a bridge). A session VM joins it through
+ * qemu-bridge-helper, which System Settings -> Network sets up when it creates the bridge. */
+const SYS_NET = () => process.env.PC_SYS_NET || '/sys/class/net';
+const BRIDGE_RE = /^[A-Za-z][A-Za-z0-9_.-]{0,14}$/;
+function isBridge(name){
+  if(!BRIDGE_RE.test(String(name||''))) return false;
+  try{ return fs.statSync(path.join(SYS_NET(), name, 'bridge')).isDirectory(); }catch(_){ return false; }
+}
+/** The <interface> for a network choice: {type:'user'} (the default, needs no root) or {type:'bridge',name}. */
+function nicXml(network, mac){
+  const n = network || {type:'user'};
+  const macXml = mac && /^[0-9a-f]{2}(:[0-9a-f]{2}){5}$/i.test(mac) ? `<mac address="${mac.toLowerCase()}"/>` : '';
+  if(n.type === 'bridge'){
+    if(!isBridge(n.name)) return {ok:false,error:'There is no bridge called "'+String(n.name||'').slice(0,20)+'" on this computer. Create one in System Settings \u2192 Network \u2192 Bridges for virtual machines.'};
+    return {ok:true, xml:`<interface type="bridge">${macXml}<source bridge="${n.name}"/><model type="e1000e"/></interface>`};
+  }
+  if(n.type && n.type !== 'user') return {ok:false,error:'Unknown network type'};
+  return {ok:true, xml:`<interface type="user">${macXml}<model type="e1000e"/></interface>`};
+}
+/** {type, source} of the first <interface> in a definition. */
+function nicOf(body){
+  const m = String(body||'').match(/<interface\s+type=['"]([a-z]+)['"][^>]*>([\s\S]*?)<\/interface>/);
+  if(!m) return {type:'', source:''};
+  const src = m[2].match(/<source\s+(?:bridge|network|dev)=['"]([^'"]+)['"]/);
+  return {type:m[1], source:src ? src[1] : ''};
+}
 const xml = s => String(s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&apos;'}[c]));
 
 /* DOES THIS QEMU HAVE A 3D VIRTUAL GPU?
@@ -113,7 +141,7 @@ async function details(name){
      * NOT the signal: libvirt adds `<input type='mouse' bus='ps2'/>` to every x86 domain by itself,
      * so reading it reported gaming mode ON for every VM ever created (measured on a fresh one). */
     gamingMouse:!/<input\s+type=['"]tablet['"]/.test(body),
-    networks:(body.match(/<interface\b/g)||[]).length};
+    networks:(body.match(/<interface\b/g)||[]).length, nic:nicOf(body)};
 }
 async function setBootOrder(name, first){
   const d=await details(name);if(!d.ok)return d;
@@ -212,6 +240,24 @@ async function addNetwork(name){ const d=await details(name);if(!d.ok)return d;
   const file=path.join(dir,'domain-network.xml');await fs.promises.writeFile(file,body,{mode:0o600});
   const r=await virsh(['define',file],30000);try{await fs.promises.unlink(file);}catch(_){}
   return r.ok?details(d.name):r; }
+/* MOVE THE FIRST NETWORK ADAPTER to another wire (user-mode NAT <-> a host bridge), keeping its MAC so a
+ * guest's DHCP reservation and its idea of "the same card" survive. Shut-off only, one define, read back. */
+async function setNetwork(name, network){
+  const d=await details(name);if(!d.ok)return d;
+  if(!/shut off|shutoff|inactive/.test(d.state))return {ok:false,error:'Shut down the VM before changing its network'};
+  const x=await virsh(['dumpxml',d.name]);if(!x.ok)return x;
+  const first=x.out.match(/<interface\b[\s\S]*?<\/interface>/);
+  const mac=first&&(first[0].match(/<mac\s+address=['"]([^'"]+)['"]/)||[])[1];
+  const nic=nicXml(network,mac);if(!nic.ok)return nic;
+  const body=first?x.out.replace(first[0],()=>nic.xml):x.out.replace(/\s*<\/devices>/,()=>`\n${nic.xml}\n    </devices>`);
+  const dir=path.join(root(),d.name);await fs.promises.mkdir(dir,{recursive:true,mode:0o700});
+  const file=path.join(dir,'domain-net.xml');await fs.promises.writeFile(file,body,{mode:0o600});
+  const r=await virsh(['define',file],30000);try{await fs.promises.unlink(file);}catch(_){}
+  if(!r.ok)return r;
+  const after=await details(d.name);if(!after.ok)return after;
+  const want=(network&&network.type==='bridge')?{type:'bridge',source:network.name}:{type:'user',source:''};
+  return after.nic.type===want.type&&after.nic.source===want.source?after:{ok:false,error:'The network change did not persist'};
+}
 async function gamingMouse(name, enabled){
   const d=await details(name);if(!d.ok)return d;
   if(!/shut off|shutoff|inactive/.test(d.state))return {ok:false,error:'Shut down the VM before changing mouse mode'};
@@ -246,6 +292,7 @@ async function create(opts){
   const guest=opts&&opts.guest==='windows'?'windows':'linux';
   const firmware=opts&&opts.firmware==='bios'?'bios':'efi';
   if(!name) return {ok:false,error:'Give the VM a name'};
+  const nic=nicXml(opts&&opts.network); if(!nic.ok) return nic;
   try{ if(!(await fs.promises.stat(iso)).isFile()) throw Error(); }catch(_){ return {ok:false,error:'ISO file was not found'}; }
   const exists=await virsh(['dominfo',name]); if(exists.ok) return {ok:false,error:'A VM with that name already exists'};
   const dir=path.join(root(),name); await fs.promises.mkdir(dir,{recursive:true,mode:0o700});
@@ -267,10 +314,10 @@ async function create(opts){
     <devices><emulator>/usr/bin/qemu-system-x86_64</emulator>
       <disk type="file" device="disk"><driver name="qemu" type="qcow2"/><source file="${xml(disk)}"/><target dev="vda" bus="virtio"/></disk>
       <disk type="file" device="cdrom"><driver name="qemu" type="raw"/><source file="${xml(iso)}"/><target dev="sda" bus="sata"/><readonly/></disk>
-      <!-- User-mode NAT requires no root bridge. e1000e is intentionally used for the installer
+      <!-- User-mode NAT (the default) requires no root bridge; a host bridge (network {type:'bridge'}) puts the guest on the LAN. e1000e is intentionally used for the installer
            path because Linux and Windows installation media carry it without an extra VirtIO
            driver disc; an unreachable guest cannot download that missing driver. -->
-      <interface type="user"><model type="e1000e"/></interface>
+      ${nic.xml}
       <!-- A virtio GPU without VirGL/3D advertises a DRM device but cannot initialize EGL. Sway
            then owns the display yet paints only black. Keep SPICE local-only (required for GL) and
            expose the accelerated renderer that both Linux desktops and Windows drivers expect. -->
@@ -323,4 +370,4 @@ async function view(name){
    * above as well, rather than allowing a different PATH entry to win. */
   return launchViewer('/usr/bin/'+bin,args);
 }
-module.exports={available,list,details,update,addDisk,changeIso,ejectIso,bootDisk,addNetwork,gamingMouse,create,action,remove,view,launchViewer,cleanName,successorInstaller,qemu3d,displayXml};
+module.exports={available,list,details,update,addDisk,changeIso,ejectIso,bootDisk,addNetwork,setNetwork,nicXml,nicOf,isBridge,gamingMouse,create,action,remove,view,launchViewer,cleanName,successorInstaller,qemu3d,displayXml};

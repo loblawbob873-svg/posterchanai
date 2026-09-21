@@ -374,6 +374,28 @@ announcements from the pool relays (newest per host), asks each new one `host.wh
 at most 20) and adds only those that ANSWER — i.e. hosts that have you on a list — then saves the
 document (only after a relay answered the read, as always).
 
+### Networks and bridges
+
+A VM is on the host's default wire (`vmhost_default_network`, or `vmhost_bridge` when set) unless the
+admin chooses one: `vm.create` and `vm.update` take `network: {"type": "network"|"bridge", "name": …}`.
+The name must be one the host has **right now** — `host.info` (admin) lists them as `networks` (libvirt,
+`virsh net-list --all --name`) and `bridges` (Linux bridges, `/sys/class/net/*/bridge`), plus
+`default_network` and `bridge`. Anything else — an unknown name, a name shaped like markup, another
+interface type — is `bad_request` before a byte is written; a client string never reaches the XML
+unchecked. `vm.update` moves the FIRST adapter (keeping its MAC and model; a VM with none gets one), is
+confirmed by reading `hardware.net` back, and an `add_nic` in the same Save goes on the chosen wire.
+
+Views carry `net: {type, name}` (the primary adapter, from `virsh domiflist --inactive`). A RUNNING VM also
+carries `ips` (`virsh domifaddr --source lease`, falling back to `--source arp` for a bridged guest whose
+lease libvirt never sees; cached per VM for 60 s so the client's poll is not a virsh call per VM per poll)
+and `uptime_s` (the qemu process's start time from `/proc`, matched by its `-uuid`). All three are
+best-effort: a failed read leaves the field absent (or `ips: []`), never fails the op.
+
+On a PosterChanOS desktop the bridge itself is made in **System Settings → Network → Bridges for virtual
+machines** (`desktop/net.js`, through `sudo -n nmcli`, rolled back if the bridge gets no address), which
+also allows it in `/etc/qemu/bridge.conf` and makes `qemu-bridge-helper` setuid so this computer's
+`qemu:///session` VMs can join it (`pcVM.create({network})` / `pcVM.setNetwork`).
+
 ---
 
 ## 4. The console

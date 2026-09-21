@@ -46,6 +46,7 @@ class DomainInfo:
     autostart: bool = False
     meta: Optional[domainxml.VmMeta] = None
     disks: list = field(default_factory=list)
+    nics: list = field(default_factory=list)   # [{type, source, model, mac}] from `domiflist --inactive`
 
 
 def normalize_state(raw: str) -> str:
@@ -216,6 +217,93 @@ def parse_domblklist(text: str) -> list:
     return out
 
 
+NET_NAME = re.compile(r"^[A-Za-z0-9_.:-]{1,64}$")      # a libvirt network name we will write into XML
+BRIDGE_NAME = re.compile(r"^[A-Za-z0-9_.-]{1,15}$")     # a Linux interface name (IFNAMSIZ - 1)
+
+
+def parse_domiflist(text: str) -> list:
+    """`virsh domiflist <vm> --inactive`: Interface Type Source Model MAC (Interface is `-` when not running)."""
+    out = []
+    for line in str(text or "").splitlines()[2:]:
+        parts = line.split()
+        if len(parts) >= 5:
+            out.append({"type": parts[1], "source": parts[2], "model": parts[3], "mac": parts[4].lower()})
+    return out
+
+
+def parse_domifaddr(text: str) -> list:
+    """`virsh domifaddr`: the addresses, prefix dropped (the ARP source reports a meaningless /0)."""
+    out = []
+    for line in str(text or "").splitlines()[2:]:
+        parts = line.split()
+        if len(parts) >= 4 and parts[2] in ("ipv4", "ipv6"):
+            addr = parts[3].split("/", 1)[0]
+            try:
+                ipaddress.ip_address(addr)
+            except ValueError:
+                continue
+            if addr not in out:
+                out.append(addr)
+    return out
+
+
+def parse_name_list(text: str) -> list:
+    """`virsh net-list --all --name`: one name per line, a trailing blank line."""
+    return [x.strip() for x in str(text or "").splitlines() if NET_NAME.match(x.strip())]
+
+
+def host_bridges(sys_net: str = "/sys/class/net") -> list:
+    """Every Linux bridge on this host (an interface with a `bridge/` directory in sysfs)."""
+    try:
+        names = sorted(os.listdir(sys_net))
+    except OSError:
+        return []
+    return [n for n in names if BRIDGE_NAME.match(n) and os.path.isdir(os.path.join(sys_net, n, "bridge"))]
+
+
+def qemu_uptimes(proc: str = "/proc", now: float | None = None) -> dict:
+    """{vm uuid: seconds running} for every qemu process on this host, read from /proc: the `-uuid` in its
+    command line, its start time (stat field 22, clock ticks after boot) and the boot time (`btime`). A
+    host that hides other users' processes (hidepid) simply yields nothing."""
+    import time
+    out = {}
+    try:
+        btime = 0
+        with open(os.path.join(proc, "stat")) as f:
+            for line in f:
+                if line.startswith("btime "):
+                    btime = int(line.split()[1])
+                    break
+        if not btime:
+            return out
+        hz = os.sysconf("SC_CLK_TCK") if hasattr(os, "sysconf") else 100
+        pids = [p for p in os.listdir(proc) if p.isdigit()]
+    except (OSError, ValueError):
+        return out
+    now = time.time() if now is None else now
+    for pid in pids:
+        try:
+            with open(os.path.join(proc, pid, "cmdline"), "rb") as f:
+                argv = f.read().split(b"\0")
+            if not argv or b"qemu" not in os.path.basename(argv[0]):
+                continue
+            u = ""
+            for i, a in enumerate(argv[:-1]):
+                if a == b"-uuid":
+                    u = argv[i + 1].decode("ascii", "replace").lower()
+                    break
+            if not re.match(r"^[0-9a-f-]{36}$", u):
+                continue
+            with open(os.path.join(proc, pid, "stat")) as f:
+                stat = f.read()
+            fields = stat[stat.rindex(")") + 2:].split()      # after "(comm)": field 3 onward
+            start = btime + int(fields[19]) / hz              # field 22 = index 19 here
+            out[u] = max(0, int(now - start))
+        except (OSError, ValueError, IndexError):
+            continue
+    return out
+
+
 # ---------------------------------------------------------------------------------------- virsh
 async def _run(argv: list, timeout: float, stdin: bytes | None = None) -> tuple:
     try:
@@ -311,8 +399,34 @@ class VirshBackend:
                                          "--details", "--inactive"], 15)
         if code == 0:
             disks = parse_domblklist(bout)
+        nics = []
+        code, iout, _ = await self._run([self.virsh, "--connect", self.uri, "domiflist", vm_uuid, "--inactive"], 15)
+        if code == 0:
+            nics = parse_domiflist(iout)
         return DomainInfo(uuid=d["uuid"] or vm_uuid, name=d["name"], state=d["state"], vcpus=d["vcpus"],
-                          ram_mib=d["ram_mib"], autostart=d["autostart"], meta=meta, disks=disks)
+                          ram_mib=d["ram_mib"], autostart=d["autostart"], meta=meta, disks=disks, nics=nics)
+
+    # ---- networking: what a VM may be attached to, and where a running one can be reached
+    async def list_networks(self) -> list:
+        return parse_name_list(await self._v("net-list", "--all", "--name", timeout=10))
+
+    async def list_bridges(self) -> list:
+        return await asyncio.to_thread(host_bridges)
+
+    async def guest_addresses(self, vm_uuid: str) -> list:
+        """A running VM's addresses: the libvirt DHCP lease (NAT networks), else the host's ARP table
+        (a bridged guest leases from the LAN's own DHCP, which libvirt never sees)."""
+        for source in ("lease", "arp"):
+            code, out, _ = await self._run([self.virsh, "--connect", self.uri, "domifaddr", vm_uuid,
+                                            "--source", source], 10)
+            if code == 0:
+                ips = parse_domifaddr(out)
+                if ips:
+                    return ips
+        return []
+
+    async def uptimes(self) -> dict:
+        return await asyncio.to_thread(qemu_uptimes)
 
     async def define(self, xml: str, workdir: str) -> None:
         path = os.path.join(workdir, "domain.xml")

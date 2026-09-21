@@ -274,6 +274,7 @@ def read_hardware(xml_text: str, iso_dir: str = "") -> dict:
     boots = [b.get("dev") for b in (os_el.findall("boot") if os_el is not None else [])]
     dev = root.find("devices")
     disks, media, nics, inputs = [], "", 0, []
+    net = {"type": "", "name": ""}
     lib = iso_dir.rstrip("/") + "/" if iso_dir else ""
     if dev is not None:
         for d in dev.findall("disk"):
@@ -290,11 +291,14 @@ def read_hardware(xml_text: str, iso_dir: str = "") -> dict:
                 else:
                     entry["media"] = ""
             disks.append(entry)
-        nics = len(dev.findall("interface"))
+        ifaces = dev.findall("interface")
+        nics = len(ifaces)
+        if ifaces:
+            net = nic_of(ifaces[0])
         inputs = [(i.get("type"), i.get("bus")) for i in dev.findall("input")]
     return {"boot": "cdrom" if boots[:1] == ["cdrom"] else "disk",
             "input": "tablet" if any(t == "tablet" for t, _ in inputs) else "mouse",
-            "nics": nics, "disks": disks, "media": media,
+            "nics": nics, "net": net, "disks": disks, "media": media,
             "cdrom": any(d["device"] == "cdrom" for d in disks)}
 
 
@@ -379,6 +383,33 @@ def add_nic(root: ET.Element, network: str, bridge: str, windows: bool) -> None:
         n = ET.SubElement(dev, "interface", {"type": "network"})
         ET.SubElement(n, "source", {"network": network or "default"})
     ET.SubElement(n, "model", {"type": "e1000e" if windows else "virtio"})
+
+
+def nic_of(iface: ET.Element) -> dict:
+    """{type, name} of one <interface>: `network` → the libvirt network, `bridge` → the host bridge."""
+    t = iface.get("type", "")
+    src = iface.find("source")
+    name = ""
+    if src is not None:
+        name = src.get("network", "") if t == "network" else src.get("bridge", "") if t == "bridge" else src.get("dev", "")
+    return {"type": t, "name": name}
+
+
+def set_primary_nic(root: ET.Element, network: str, bridge: str, windows: bool) -> None:
+    """Point the FIRST network adapter at `bridge` (when given) or the libvirt `network`, keeping its MAC and
+    model so the guest sees the same card on a different wire. A VM with no adapter gets one. The names are
+    validated by the caller against the host's live list — this only writes attributes, never markup."""
+    dev = _devices(root)
+    iface = dev.find("interface")
+    if iface is None:
+        add_nic(root, network, bridge, windows)
+        return
+    for child in list(iface):
+        if child.tag in ("source", "virtualport"):
+            iface.remove(child)
+    src = ET.Element("source", {"bridge": bridge} if bridge else {"network": network or "default"})
+    iface.set("type", "bridge" if bridge else "network")
+    iface.insert(0 if iface.find("mac") is None else 1, src)
 
 
 def set_media(root: ET.Element, iso_path) -> None:
