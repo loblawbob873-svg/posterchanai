@@ -8135,6 +8135,46 @@
   function _shellFrontWish(want){
     _sendShellFront({ front: !!want, covers: want ? _shellFrontState.covers : [] });
   }
+  /* A PRESS ON THE DESKTOP RAISES IT, AND ONLY THE FIRST ONE SAYS SO.
+   *
+   * "Clicking a button on the Desktop Music Widget causes all the windows to hide on the desktop."
+   * Nothing was hidden: the desktop surface -- opaque, full-output -- was put ON TOP of them.
+   *
+   * Wayfire's click-to-focus (src/core/wm.cpp `check_focus_surface`, 0.10.1) calls
+   * `focus_raise_view` on EVERY button press, and that is `view_bring_to_front` followed by
+   * `seat->focus_view`. The raise always happens; the keyboard-focus signal -- the only thing IPC
+   * reports as `view-focused` -- is emitted only when the focus CHANGES (`set_keyboard_focus`
+   * returns early for the node that already has it). Main keeps the desktop at the back by
+   * answering every `view-focused` with `send-to-back` (`sinkShellOnFocus`), and send-to-back does
+   * NOT take the keyboard away -- so after the first click the desktop is at the bottom AND still
+   * focused, and the SECOND click on it (the next transport button, the same button again) raises it
+   * with no event for main to answer. Every application on that monitor is then behind it until
+   * something else takes focus.
+   *
+   * The desktop icons never showed it because a click on one opens a window, which takes the focus;
+   * the music widget is the surface people press several times in a row. The taskbar's clock, bell
+   * and tray have the same shape.
+   *
+   * So a press on the desktop's own surface re-asks for the order the moment it lands: main's
+   * `pc:wm:shell-front` handler runs `sinkShellSurfaces()` unconditionally, which is exactly the
+   * repair, and the compositor's raise has already happened by the time the renderer sees the press.
+   * Deliberately NOT through `_sendShellFront`, whose de-duplication is the whole reason nothing was
+   * sent: the state did not change, only the stacking did.
+   *
+   * A press inside one of our in-page WINDOWS is left alone -- System Settings, a folder, a document
+   * drawn on the desktop are the one time it is in front on purpose, and focusWin already speaks for
+   * those. */
+  function _pressResink(e){
+    if(!on || !window.pcWM || typeof pcWM.shellFront !== 'function') return;
+    const t = e && e.target;
+    if(!t || !t.closest || !root || !root.contains(t)) return;
+    if(t.closest('.osw')) return;
+    try{
+      const r = pcWM.shellFront({ front: !!_shellFrontState.front,
+                                  covers: (_shellFrontState.covers || []).slice() });
+      if(r && typeof r.catch === 'function') r.catch(() => {});
+    }catch(_){ }
+  }
   function _publishShellFront(){
     if(!window.pcWM || typeof pcWM.shellFront !== 'function') return;
     let want = false;
@@ -10117,6 +10157,9 @@
     // …and so does clicking anywhere that is not the panel or the clock itself. Without this the
     // only way to close it is the clock, which is not where anyone's hand is by then.
     document.addEventListener('pointerdown', _trayAway, true);
+    // …and every press on the desktop's own surface puts it back under the applications. See
+    // _pressResink: Wayfire raises it on each click but reports only the first.
+    document.addEventListener('pointerdown', _pressResink, true);
     /* Repaint on every connection change — the tray icon is the point of the widget, so it cannot
      * wait for the 30s clock tick to notice the relay went. Kept OFF Relay.onStatus: that is a
      * single slot app.js owns for the offline banner and the outbox flush, and assigning it here
@@ -10193,6 +10236,7 @@
     _bgSha = ''; _bgUrl = '';
     try{ _netOff && _netOff(); }catch(_){} _netOff = null;
     document.removeEventListener('pointerdown', _trayAway, true);
+    document.removeEventListener('pointerdown', _pressResink, true);
     window.removeEventListener('online', onNetChange);
     window.removeEventListener('offline', onNetChange);
     toastHost = null; notiOpen = false; netOpen = false;
