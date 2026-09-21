@@ -161,7 +161,7 @@ class PreviewIsReachable(unittest.TestCase):
     def test_media_click_opens_preview_directly_in_every_source(self):
         self.assertGreaterEqual(self.app.count("if(_previewable(_openFileName("), 2,
                                 "Blossom and synced media must bypass the Open With chooser")
-        start = self.app.index("openFile: async (path, name, openHere, mime)")
+        host = self.app[start:start + 4000]
         host = self.app[start:self.app.index("toast, prompt: uiPrompt", start)]
         self.assertIn("if(_previewable(name || path, mime))", host)
         self.assertIn("await _hostOpenPreview(path, name, mime)", host)

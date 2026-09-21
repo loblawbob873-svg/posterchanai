@@ -339,18 +339,18 @@ class ClickingTheFileIsHowYouOpenIt(unittest.TestCase):
         a local text file can ONLY be opened in the editor \u2014 which is a removal, not an addition."""
         self.assertIn("u.openFile(p, nm, openHere, mime)", self.host,
                       "hostfiles does not pass the machine-open through to the chooser")
-        self.assertIn("openFile: async (path, name, openHere, mime) =>", self.app)
+        self.assertIn("async function _openHostFile(path, name, openHere, mime)", self.app)
         # THE WHOLE FUNCTION, not a fixed number of characters. A 2600-char window read as "the
         # chooser offers only the editor" the moment an Office entry was added ABOVE the machine
         # one — a green-to-red flip caused entirely by the size of the slice, on a chooser that had
         # in fact gained an option rather than lost one.
-        seg = self.app[self.app.index("openFile: async (path, name, openHere, mime) =>"):
-                       self.app.index("toast, prompt: uiPrompt, confirm: uiConfirm,")]
+        seg = self.app[self.app.index("async function _openHostFile(path, name, openHere, mime)"):
+                       self.app.index("async function _openHostFile(path, name, openHere, mime){")+4000]
         self.assertIn("id:'host'", seg, "the chooser for a local file offers only the editor")
 
     def test_the_bridge_call_lives_in_the_file_that_knows_the_bridge(self):
         """app.js must not learn how to open a local path; it takes a callback."""
-        seg = self.app[self.app.index("openFile: async (path, name, openHere, mime) =>"):][:1500]
+        seg = self.app[self.app.index("async function _openHostFile(path, name, openHere, mime)"):][:1500]
         self.assertNotIn("HOST()", seg)
 
 

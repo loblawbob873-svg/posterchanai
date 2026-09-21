@@ -171,7 +171,7 @@ class TestTheCallersUseIt(unittest.TestCase):
         self.assertIn("__hostfile", PRELOAD)
 
     def test_the_client_streams_media_and_still_reads_everything_else(self):
-        chooser = APP[APP.index("openFile: async (path, name, openHere, mime) => {"):]
+        chooser = APP[APP.index("async function _openHostFile(path, name, openHere, mime){"):]
         chooser = chooser[: chooser.index("_openWithSheet(")]
         self.assertIn("await _hostOpenPreview(path, name, mime)", chooser)
         # The media branch lives in the opener the chooser shares with `pc-open`.

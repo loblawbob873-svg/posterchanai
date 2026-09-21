@@ -84,7 +84,7 @@ class ALocalDocumentCanBeOpenedInOffice(unittest.TestCase):
     def _chooser(self) -> str:
         # hostfiles carries metadata on the callable `openHere`, preserving the four-argument
         # opener contract shared by Preview and Code.
-        start = APP.index("openFile: async (path, name, openHere, mime) => {")
+        start = APP.index("async function _openHostFile(path, name, openHere, mime){")
         # To the END OF THE CHOOSER, not a fixed number of characters: a slice measured in bytes
         # stops reaching its own end marker the moment anything above it grows, and then fails as
         # "substring not found" about code that is still there.

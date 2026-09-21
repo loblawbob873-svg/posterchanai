@@ -366,8 +366,8 @@ class TheWiring(unittest.TestCase):
 
     def test_the_chooser_and_the_command_line_share_one_opener_per_app(self):
         app = APP.read_text(encoding="utf-8")
-        chooser = app[app.index("openFile: async (path, name, openHere, mime) => {"):
-                      app.index("toast, prompt: uiPrompt, confirm: uiConfirm,")]
+        chooser = app[app.index("async function _openHostFile(path, name, openHere, mime){"):
+                      app.index("async function _openHostFile(path, name, openHere, mime){")+4000]
         for helper in ("_hostOpenPreview(", "_hostOpenOffice(", "_hostOpenCode("):
             self.assertIn(helper, chooser)
         self.assertEqual(app.count("async function _hostOpenOffice("), 1)

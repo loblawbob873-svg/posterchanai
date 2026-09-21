@@ -135,7 +135,7 @@ class TheEditorOpensAndSavesThem(unittest.TestCase):
         self.assertTrue("openhost" not in self.host, "an Open button came back on a local row")
         self.assertTrue("u.openFile(p, nm, openHere, mime)" in self.host,
                         "clicking a local file does not offer the editor")
-        self.assertTrue("openFile: async (path, name, openHere, mime) =>" in self.app,
+        self.assertTrue("async function _openHostFile(path, name, openHere, mime)" in self.app,
                         "Files never passes an opener to the host view")
 
     def test_the_host_view_does_not_decide_what_text_is(self):
@@ -156,7 +156,7 @@ class TheEditorOpensAndSavesThem(unittest.TestCase):
 
     def test_host_open_with_keeps_files_when_lazy_code_open_fails(self):
         start = self.app.index("id:'code', icon:'&lt;/&gt;', label:'PosterChan Code'",
-                               self.app.index("openFile: async (path, name, openHere, mime)"))
+                               self.app.index("async function _openHostFile(path, name, openHere, mime)"))
         body = self.app[start:self.app.index("{ id:'host'", start)]
         self.assertIn("try{", body)
         self.assertIn("await _hostOpenCode(path)", body)
