@@ -171,8 +171,12 @@ class TestTheCallersUseIt(unittest.TestCase):
         self.assertIn("__hostfile", PRELOAD)
 
     def test_the_client_streams_media_and_still_reads_everything_else(self):
-        body = APP[APP.index("openFile: async (path, name, openHere, mime) => {"):]
-        body = body[: body.index("_openWithSheet(")]
+        chooser = APP[APP.index("openFile: async (path, name, openHere, mime) => {"):]
+        chooser = chooser[: chooser.index("_openWithSheet(")]
+        self.assertIn("await _hostOpenPreview(path, name, mime)", chooser)
+        # The media branch lives in the opener the chooser shares with `pc-open`.
+        body = APP[APP.index("async function _hostOpenPreview("):]
+        body = body[: body.index("\n  }\n")]
         self.assertIn("pcHost.fileUrl", body, "media is still read whole into the renderer")
         self.assertIn("pcHost.read", body,
                       "the byte path is gone, so a picture or a PDF has no way to open")

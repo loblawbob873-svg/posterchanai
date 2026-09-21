@@ -88,7 +88,33 @@
        preview is what somebody is looking at, and a home screen that stayed on the old theme while
        the picker showed the new one would read as the preview not working. */
     try{ if(window.PCPhone && PCPhone.mirrorTheme) PCPhone.mirrorTheme(slug); }catch(_){}
+    _mirrorColorScheme();
   }
+  /* AND INTO THE MACHINE'S, ON POSTERCHANOS. Firefox and every GTK4/libadwaita app take light or
+     dark from the XDG portal's `color-scheme`, which nothing on the OS ever set — so they were
+     light on a dark desktop (desktop/colorscheme.js has the measurement). The answer is read from
+     the stylesheet's own `color-scheme` group, not from a second list of slugs here: that group is
+     already the one place that says which palettes are light. Before the stylesheet has applied
+     the computed value is `normal`, so it waits for `load` rather than guessing. */
+  function _mirrorColorScheme(){
+    if(!(window.pcOS && typeof pcOS.setColorScheme === 'function')) return;
+    const read = () => {
+      let cs = '';
+      try{ cs = String(getComputedStyle(document.documentElement).colorScheme || ''); }catch(_){}
+      if(/\bdark\b/.test(cs)) return 'dark';
+      if(/\blight\b/.test(cs)) return 'light';
+      return '';
+    };
+    const push = (s) => { try{ Promise.resolve(pcOS.setColorScheme(s)).catch(() => {}); }catch(_){} };
+    const now = read();
+    if(now){ push(now); return; }
+    if(document.readyState !== 'complete')
+      window.addEventListener('load', () => { const s = read(); if(s) push(s); }, { once:true });
+  }
+  /* Once at boot too: the head script paints the CACHED theme without calling applyTheme, and on a
+     machine with no instance loadThemeFromServer never runs — so without this the desktop would
+     only tell the machine after somebody next changed the theme. */
+  _mirrorColorScheme();
   // Native app windows share saved settings but have separate documents. Update
   // their palette in place when Settings saves elsewhere, preserving open files.
   // Preview changes never write pc_theme, and received changes must not write it back.
@@ -23122,6 +23148,126 @@
     $$('.fx-home-tile[data-hosthome]', pane).forEach(b => b.onclick = ()=>_openHostFiles());
   }
 
+  /* OPENING A FILE ON THIS COMPUTER IN ONE OF OUR APPS — one function per app, called by the Files
+   * chooser below AND by `pc-open` from a terminal (_openFromCommandLine). Two callers that each
+   * carried their own copy of "how Office opens a local document" would drift the first time either
+   * was edited, which is how the host chooser lost Office in the first place. Each one resolves when
+   * the app owns the file and THROWS with the reason otherwise; the caller decides how to say it. */
+  async function _hostOpenPreview(path, name, mime){
+    const nm = name || String(path).split('/').pop() || path, type = mime || mimeForName(nm) || '';
+    /* MEDIA IS STREAMED, EVERYTHING ELSE IS READ.
+     *
+     * `pcHost.read` pulls the WHOLE file through the bridge -- a synchronous read in the
+     * desktop's main process, then the bytes into this heap. For a picture or a PDF that is
+     * fine and it is what has always happened. For a video it is why one was a black box
+     * with dead controls ("playing video ... is black, buttons hidden") and why a big one
+     * would not open at all ("can't play .webm in file manager"): a Blob URL cannot be
+     * range-requested, so the player can neither seek nor start before the last byte, and
+     * past the bridge's ceiling the read is refused outright.
+     *
+     * `pcHost.fileUrl` is an address main.js serves with Accept-Ranges. Absent on a build
+     * without the handler, and on the web, where this whole branch is unreachable -- so the
+     * fallback is the path that was here before, not a failure. */
+    const streamable = /^(video|audio)\//i.test(type)
+                    || /\.(mp4|m4v|mov|webm|mkv|ogv|avi|3gp|mp3|m4a|aac|ogg|oga|opus|wav|flac)$/i.test(nm);
+    const P = await _withModule('preview.js', 'PCPreview');
+    if(streamable && window.pcHost && pcHost.fileUrl){
+      if(!P || !P.open({ name:nm, mime:type, url:pcHost.fileUrl(path) }))
+        throw new Error('nothing here can show that file');
+      return true;
+    }
+    toast('opening…');
+    const bytes = await window.pcHost.read(path, 256 * 1024 * 1024);
+    const blob = new Blob([bytes], { type });
+    if(!P || !P.open({ name:nm, mime:type || blob.type || '', blob }))
+      throw new Error('nothing here can show that file');
+    return true;
+  }
+  /* Same session machinery as a document on the drive; only the writer differs, and it goes back
+   * as BYTES through `writeBytes`, because round-tripping a zip container through a string quietly
+   * destroys it. `mtime` is the compare-and-swap guard for the first save. */
+  async function _hostOpenOffice(path, name, mime, mtime){
+    if(!(window.pcHost && pcHost.read)) throw new Error('this build cannot read a file on this computer');
+    let openedMtime = Number(mtime) || 0;
+    const bytes = await pcHost.read(path, 128 * 1024 * 1024);
+    const nm = name || String(path).split('/').pop() || 'document';
+    const f = fileFromBytes(bytes, nm, mime || mimeForName(nm) || '');
+    await _officeSession(f, async (updated) => {
+      if(!(pcHost.writeBytes)) throw new Error('this build cannot save back to this computer');
+      const info=await pcHost.writeBytes(path,new Uint8Array(await updated.arrayBuffer()),openedMtime||0);
+      if(info&&info.mtime)openedMtime=info.mtime;
+    });
+    return true;
+  }
+  /* Keep the entire lazy-open transaction guarded: a missing/stale packaged code.js used to reject
+   * into the event loop, leaving Files on one side of the desktop with no editor and no
+   * explanation. Do not switch views until Code confirms it owns a live buffer; a refused/binary
+   * file remains safely where it was. */
+  async function _hostOpenCode(path){
+    const code = await _withModule('code.js', 'PCCode');
+    if(!code || typeof code.openHostFile!=='function') throw new Error('the editor did not load');
+    if(!(await code.openHostFile({ path }))) throw new Error('PosterChan Code would not open it');
+    switchView('code');
+    return true;
+  }
+  /* Files, on THIS COMPUTER, at `dir` — the crumb router's `h:` branch, as one call. */
+  function _hostOpenFolder(dir){
+    const H2 = _hostFs();
+    if(!H2) throw new Error('this build has no access to this computer’s files');
+    _fxRemember();
+    _syncRoot=''; _syncPath=''; _filesFolder=null;
+    H2.enter(dir);
+    _hostOn = true; _filesTab = 'computer'; _fxMobileSource = 'computer';
+    if(VIEW === 'blossom') renderBlossom(); else switchView('blossom');
+    return true;
+  }
+  /* `pc-open` (os/bin/pc-open → desktop/opener.js → here). `auto` picks what a click in Files
+   * would: a picture/video/PDF opens in Preview, a document in Office, anything else in Code — the
+   * editor is the safe fallback for every regular file — and a folder opens in Files. Asking for an
+   * app that cannot take the file is an ERROR the terminal reports, never a silent substitute:
+   * somebody who typed `pc-office notes.txt` wants to be told, not handed an editor. */
+  const _PC_OPEN_APPS = { preview:'Preview', office:'Office', code:'Code', files:'Files' };
+  async function _openFromCommandLine(req){
+    const want = String((req && req.app) || 'auto');
+    const items = Array.isArray(req && req.items) ? req.items : [];
+    const out = [];
+    for(const it of items){
+      const path = String((it && it.path) || '');
+      const name = path.split('/').pop() || path;
+      const mime = mimeForName(name) || '';
+      let app = want;
+      if(app === 'auto'){
+        app = it.kind === 'dir' ? 'files'
+            : _previewable(name, mime) ? 'preview'
+            : (_officeable(name, mime) && window.pcHost && pcHost.read) ? 'office'
+            : 'code';
+      }
+      try{
+        if(app === 'files'){
+          const parent = path.slice(0, path.lastIndexOf('/')) || '/';
+          _hostOpenFolder(it.kind === 'dir' ? path : parent);
+        }
+        else if(it.kind === 'dir') throw new Error('Is a directory (use --files)');
+        else if(app === 'preview'){
+          if(!_previewable(name, mime)) throw new Error('Preview shows pictures, video, audio and PDFs — not this');
+          await _hostOpenPreview(path, name, mime);
+        }
+        else if(app === 'office'){
+          if(!_officeable(name, mime)) throw new Error('PosterChan Office does not open this kind of file');
+          await _hostOpenOffice(path, name, mime, Number(it.mtime) || 0);
+        }
+        else if(app === 'code') await _hostOpenCode(path);
+        else throw new Error('unknown app: ' + app);
+        out.push({ path, ok:true, app:_PC_OPEN_APPS[app] || app });
+      }catch(e){
+        out.push({ path, ok:false, app:_PC_OPEN_APPS[app] || app, why:String((e && e.message) || e) });
+      }
+    }
+    return out;
+  }
+  if(window.pcHost && typeof pcHost.onOpenRequest === 'function'){
+    try{ pcHost.onOpenRequest(_openFromCommandLine); }catch(_){}
+  }
   /* The machine's own disk. The module draws it; this hands it the things that belong to the Files
    * screen — the sort comparator, the view mode, the byte formatter and the app's own prompts — so
    * a folder on this disk is sorted and shaped exactly like a folder on the drive. */
@@ -23178,72 +23324,30 @@
   async function _openHostFile(path, name, openHere, mime){
     {
         if(_previewable(name || path, mime)){
-          try{
-            const nm = name || path, type = mime || mimeForName(nm) || '';
-            /* MEDIA IS STREAMED, EVERYTHING ELSE IS READ.
-             *
-             * `pcHost.read` pulls the WHOLE file through the bridge -- a synchronous read in the
-             * desktop's main process, then the bytes into this heap. For a picture or a PDF that is
-             * fine and it is what has always happened. For a video it is why one was a black box
-             * with dead controls ("playing video ... is black, buttons hidden") and why a big one
-             * would not open at all ("can't play .webm in file manager"): a Blob URL cannot be
-             * range-requested, so the player can neither seek nor start before the last byte, and
-             * past the bridge's ceiling the read is refused outright.
-             *
-             * `pcHost.fileUrl` is an address main.js serves with Accept-Ranges. Absent on a build
-             * without the handler, and on the web, where this whole branch is unreachable -- so the
-             * fallback is the path that was here before, not a failure. */
-            const streamable = /^(video|audio)\//i.test(type)
-                            || /\.(mp4|m4v|mov|webm|mkv|ogv|avi|3gp|mp3|m4a|aac|ogg|oga|opus|wav|flac)$/i.test(nm);
-            const P = await _withModule('preview.js', 'PCPreview');
-            if(streamable && window.pcHost && pcHost.fileUrl){
-              if(!P || !P.open({ name:nm, mime:type, url:pcHost.fileUrl(path) }))
-                toast('nothing here can show that file');
-              return;
-            }
-            toast('opening…');
-            const bytes = await window.pcHost.read(path, 256 * 1024 * 1024);
-            const blob = new Blob([bytes], { type });
-            if(!P || !P.open({ name:nm, mime:type || blob.type || '', blob }))
-              toast('nothing here can show that file');
-          }catch(e){ toast('could not open that: ' + ((e && e.message) || e)); }
+          try{ await _hostOpenPreview(path, name, mime); }
+          catch(e){ toast('could not open that: ' + ((e && e.message) || e)); }
           return;
         }
         /* OFFICE WAS MISSING FROM THIS CHOOSER ENTIRELY. A document on the drive and a document in
          * a synced folder both had an Office button; a document on THIS COMPUTER offered only Code
          * (which refuses a .odt as binary) and "hand it to the machine" — so from Home, clicking an
          * .odt could not open it in the office suite this OS ships with. Same session machinery as
-         * the other two; only the writer differs, and it goes back as BYTES through `writeBytes`,
-         * because round-tripping a zip container through a string quietly destroys it. */
+         * the other two; only the writer differs (see _hostOpenOffice). */
         const officeChoice = (_officeable(name || path, mime) && window.pcHost && pcHost.read) ? [{
           id:'office', icon:'📝', label:'PosterChan Office',
           hint:'Edit it here — saves straight back to this computer',
           run:async() => {
-            try{
-              let openedMtime=Number(openHere&&openHere.mtime)||0;
-              const bytes = await pcHost.read(path, 128 * 1024 * 1024);
-              const nm = name || String(path).split('/').pop() || 'document';
-              const f = fileFromBytes(bytes, nm, mime || mimeForName(nm) || '');
-              await _officeSession(f, async (updated) => {
-                if(!(pcHost.writeBytes)) throw new Error('this build cannot save back to this computer');
-                const info=await pcHost.writeBytes(path,new Uint8Array(await updated.arrayBuffer()),openedMtime||0);
-                if(info&&info.mtime)openedMtime=info.mtime;
-              });
-            }catch(err){ toast('could not open in Office: ' + ((err && err.message) || err)); }
+            try{ await _hostOpenOffice(path, name, mime, Number(openHere&&openHere.mtime)||0); }
+            catch(err){ toast('could not open in Office: ' + ((err && err.message) || err)); }
           } }] : [];
         _openWithSheet(name || path, officeChoice.concat([{
         id:'code', icon:'&lt;/&gt;', label:'PosterChan Code',
         hint:'Edit it here — saves straight back to this computer',
         run:async() => {
-          /* The chooser closes before running this. Keep the entire lazy-open transaction guarded:
-           * a missing/stale packaged code.js used to reject into the event loop, leaving Files on
-           * one side of the desktop with no editor and no explanation. Do not switch views until
-           * Code confirms it owns a live buffer; a refused/binary file remains safely in Files. */
-          try{
-            const code = await _withModule('code.js', 'PCCode');
-            if(!code || typeof code.openHostFile!=='function') throw new Error('the editor did not load');
-            if(await code.openHostFile({ path })) switchView('code');
-          }catch(err){ toast('could not open in Code: ' + ((err && err.message) || err)); }
+          /* The chooser closes before running this, so every failure is caught HERE and said out
+           * loud — see _hostOpenCode for why Files stays put until Code owns a live buffer. */
+          try{ await _hostOpenCode(path); }
+          catch(err){ toast('could not open in Code: ' + ((err && err.message) || err)); }
         } },
         /* Last on the list, and never absent: this is what clicking the file did before the editor
          * existed, and for most files it is still the answer. */

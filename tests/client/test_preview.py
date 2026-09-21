@@ -164,9 +164,13 @@ class PreviewIsReachable(unittest.TestCase):
         start = self.app.index("openFile: async (path, name, openHere, mime)")
         host = self.app[start:self.app.index("toast, prompt: uiPrompt", start)]
         self.assertIn("if(_previewable(name || path, mime))", host)
-        self.assertIn("window.pcHost.read(path, 256 * 1024 * 1024)", host)
+        self.assertIn("await _hostOpenPreview(path, name, mime)", host)
+        # The opener is shared with `pc-open`; the byte path and the name live there.
+        s = self.app.index("async function _hostOpenPreview(")
+        opener = self.app[s:self.app.index("\n  }\n", s)]
+        self.assertIn("window.pcHost.read(path, 256 * 1024 * 1024)", opener)
         # The name is resolved into `nm` first, because the streamed branch needs it too.
-        self.assertIn("P.open({ name:nm", host)
+        self.assertIn("P.open({ name:nm", opener)
 
     def test_blossom_list_without_url_gets_a_canonical_blob_address(self):
         self.assertIn("url:b.url || (server.replace(/\\/$/,'') + '/' + b.sha256)", self.app)

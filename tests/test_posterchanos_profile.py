@@ -180,6 +180,9 @@ class PosterChanOSProfile(unittest.TestCase):
         "ddcutil": "app-misc/ddcutil",
         "sudo": "base:app-admin/sudo",
         "git": "dev-vcs/git",
+        # desktop/colorscheme.js: the portal's light/dark answer Firefox reads. glib is @system; the
+        # SCHEMA it writes is gnome-base/gsettings-desktop-schemas, already in the profile.
+        "gsettings": "base:dev-libs/glib",
         # Windows-only, and never run on this profile.
         "attrib": "base:n/a", "icacls": "base:n/a",
     }

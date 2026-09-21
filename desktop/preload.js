@@ -642,6 +642,25 @@ if (isOurPage) {
     fileUrl: (target) => 'app://posterchan/__hostfile/'
       + String(target || '').split('/').map(encodeURIComponent).join('/'),
     open: (target) => ipcRenderer.invoke('pc:host:open', String(target || '')),
+    /* `pc-open` from a terminal (desktop/opener.js): the page opens each file the way Files would
+     * and answers per file. Registering is what tells the main process this page can answer — a
+     * request before that is refused as "still starting" rather than left to time out. A handler
+     * that throws is still an ANSWER, one failure per file, so the terminal hears why. */
+    onOpenRequest: (fn) => {
+      if (typeof fn !== 'function') return () => {};
+      const h = async (_e, req) => {
+        const items = Array.isArray(req && req.items) ? req.items : [];
+        let out;
+        try { out = await fn({ app: String((req && req.app) || 'auto'), items }); }
+        catch (err) {
+          out = items.map((it) => ({ path: it && it.path, ok: false, why: String((err && err.message) || err) }));
+        }
+        ipcRenderer.send('pc:host:open-result', req && req.id, Array.isArray(out) ? out : []);
+      };
+      ipcRenderer.on('pc:host:open-request', h);
+      ipcRenderer.send('pc:host:open-ready');
+      return () => ipcRenderer.removeListener('pc:host:open-request', h);
+    },
   });
 
   contextBridge.exposeInMainWorld('pcApps', {
@@ -659,6 +678,9 @@ if (isOurPage) {
     switch: (npub, proof) => ipcRenderer.invoke('pc:os:switch', String(npub || ''), proof || {}),
     logout: () => ipcRenderer.invoke('pc:os:logout'),
     bootstrap: () => ipcRenderer.sendSync('pc:os:bootstrap'),
+    /* The desktop's theme is light or dark; tell the rest of the machine (Firefox, GTK apps) the
+     * same. See desktop/colorscheme.js. A no-op anywhere but the PosterChanOS shell. */
+    setColorScheme: (scheme) => ipcRenderer.invoke('pc:os:color-scheme', String(scheme || '')),
   });
 
   contextBridge.exposeInMainWorld('pcFs', {

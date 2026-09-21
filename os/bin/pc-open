@@ -1,0 +1,147 @@
+#!/usr/bin/env python3
+"""pc-open — open files from a terminal in the PosterChanOS desktop's own apps.
+
+    pc-open report.docx               # picks the app the way Files does
+    pc-open --code ~/.bashrc          # or say which: --office --code --preview --files
+    pc-office budget.xlsx   pc-code main.py   pc-preview photo.jpg   pc-files ~/Downloads
+
+Office, Code and Preview are windows inside the running desktop, not programs on disk, so this asks
+the desktop over a socket in your runtime directory ($XDG_RUNTIME_DIR/posterchan-open.sock) and
+prints what it answered. It works from the desktop's own terminal and from an ssh login as the same
+user while that user's desktop is running; it reaches nobody else's.
+
+Exit status: 0 every file opened; 1 at least one did not (each is named on stderr); 2 bad usage;
+3 the desktop is not running (or not answering) for this user.
+"""
+import argparse
+import json
+import os
+import socket
+import sys
+
+SOCKET_NAME = "posterchan-open.sock"
+APPS = ("auto", "preview", "office", "code", "files")
+# The alias IS the choice: `pc-office x` is `pc-open --office x`.
+ALIASES = {"pc-office": "office", "pc-code": "code", "pc-preview": "preview", "pc-files": "files"}
+EXIT_OK, EXIT_FAILED, EXIT_USAGE, EXIT_NO_DESKTOP = 0, 1, 2, 3
+TIMEOUT = float(os.environ.get("PC_OPEN_TIMEOUT", "60"))
+
+
+def default_app(argv0):
+    return ALIASES.get(os.path.basename(argv0 or ""), "auto")
+
+
+def parser(prog, app):
+    p = argparse.ArgumentParser(
+        prog=prog,
+        description="Open files in the PosterChanOS desktop's own apps (Office, Code, Preview, Files).",
+        epilog="With no app named, a picture/video/audio/PDF opens in Preview, a document in Office, "
+               "a folder in Files and anything else in Code. Exit status: 0 all opened, 1 some did "
+               "not, 2 usage, 3 the desktop is not running for this user.")
+    g = p.add_mutually_exclusive_group()
+    for name, what in (("office", "open in PosterChan Office"), ("code", "open in PosterChan Code"),
+                       ("preview", "open in PosterChan Preview"),
+                       ("files", "show in Files (a file's folder, or the folder itself)"),
+                       ("auto", "pick the app by file type, like Files does (the default)")):
+        g.add_argument("--" + name, dest="app", action="store_const", const=name, help=what)
+    p.add_argument("-q", "--quiet", action="store_true", help="print nothing on success")
+    p.add_argument("--socket", default=None, help=argparse.SUPPRESS)
+    p.add_argument("paths", nargs="+", metavar="FILE", help="files (or, with --files, folders) to open")
+    p.set_defaults(app=app)
+    return p
+
+
+def socket_path(explicit=None, env=None):
+    env = os.environ if env is None else env
+    if explicit:
+        return explicit
+    if env.get("PC_OPEN_SOCKET"):
+        return env["PC_OPEN_SOCKET"]
+    run = env.get("XDG_RUNTIME_DIR") or "/run/user/%d" % os.getuid()
+    return os.path.join(run, SOCKET_NAME)
+
+
+def resolve(paths, cwd=None):
+    """Absolute, against THIS shell's working directory — the desktop cannot know it."""
+    cwd = cwd or os.getcwd()
+    return [os.path.normpath(os.path.join(cwd, os.path.expanduser(p))) for p in paths]
+
+
+def check(path, app):
+    """The same words the shell would use, before anything is sent."""
+    if not os.path.lexists(path) or not os.path.exists(path):
+        return "No such file or directory"
+    if os.path.isdir(path):
+        return "" if app in ("files", "auto") else "Is a directory (use --files)"
+    if not os.path.isfile(path):
+        return "Not a regular file"
+    if not os.access(path, os.R_OK):
+        return "Permission denied"
+    return ""
+
+
+def ask(sock_path, app, paths, timeout=TIMEOUT):
+    """One request, one answer. Raises ConnectionError when nothing is listening."""
+    s = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+    s.settimeout(timeout)
+    try:
+        s.connect(sock_path)
+    except (FileNotFoundError, ConnectionRefusedError) as e:
+        s.close()
+        raise ConnectionError(str(e)) from None
+    try:
+        s.sendall((json.dumps({"v": 1, "app": app, "paths": paths}) + "\n").encode())
+        buf = b""
+        while b"\n" not in buf:
+            chunk = s.recv(65536)
+            if not chunk:
+                break
+            buf += chunk
+    finally:
+        s.close()
+    if not buf.strip():
+        raise ConnectionError("the desktop closed the connection without answering")
+    return json.loads(buf.decode("utf-8", "replace").splitlines()[0])
+
+
+def main(argv=None):
+    argv = sys.argv if argv is None else argv
+    prog = os.path.basename(argv[0]) if argv else "pc-open"
+    args = parser(prog, default_app(argv[0] if argv else "")).parse_args(argv[1:])
+    status = EXIT_OK
+    wanted = []
+    for given, path in zip(args.paths, resolve(args.paths)):
+        why = check(path, args.app)
+        if why:
+            print("%s: %s: %s" % (prog, given, why), file=sys.stderr)
+            status = EXIT_FAILED
+        else:
+            wanted.append((given, path))
+    if not wanted:
+        return status
+    sock = socket_path(args.socket)
+    try:
+        reply = ask(sock, args.app, [p for _, p in wanted])
+    except (ConnectionError, socket.timeout, OSError, ValueError) as e:
+        print("%s: the PosterChanOS desktop is not answering for this user (%s: %s)"
+              % (prog, sock, e), file=sys.stderr)
+        return EXIT_NO_DESKTOP
+    results = {r.get("path"): r for r in (reply.get("results") or []) if isinstance(r, dict)}
+    if not results and reply.get("why"):
+        print("%s: %s" % (prog, reply["why"]), file=sys.stderr)
+        # "still starting" is the desktop not being ready, not a problem with the file.
+        return EXIT_NO_DESKTOP if "starting" in reply["why"] else EXIT_FAILED
+    for given, path in wanted:
+        r = results.get(path)
+        if r and r.get("ok"):
+            if not args.quiet:
+                print("opened %s in %s" % (given, r.get("app") or "the desktop"))
+        else:
+            why = (r or {}).get("why") or "the desktop did not answer for this file"
+            print("%s: %s: %s" % (prog, given, why), file=sys.stderr)
+            status = EXIT_FAILED
+    return status
+
+
+if __name__ == "__main__":
+    sys.exit(main())

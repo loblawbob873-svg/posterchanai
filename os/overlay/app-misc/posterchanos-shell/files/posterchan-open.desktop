@@ -1,0 +1,17 @@
+[Desktop Entry]
+Type=Application
+Name=PosterChan Office
+GenericName=Office document editor
+Comment=Open a document in the PosterChanOS desktop's own office editor
+# pc-open asks the RUNNING desktop to open the file (see /usr/local/bin/pc-open --help). Listed here
+# so `xdg-open report.docx` works: before this, nothing on the machine claimed an office document
+# and xdg-open had no answer at all.
+Exec=/usr/local/bin/pc-open %F
+TryExec=/usr/local/bin/pc-open
+Icon=posterchan-desktop
+Terminal=false
+# The start menu lists every visible .desktop file, and this is a file handler, not something to
+# launch on its own: with no file it would only print a usage message nobody sees.
+NoDisplay=true
+Categories=Office;
+MimeType=application/msword;application/vnd.openxmlformats-officedocument.wordprocessingml.document;application/vnd.oasis.opendocument.text;application/rtf;text/rtf;application/vnd.ms-excel;application/vnd.openxmlformats-officedocument.spreadsheetml.sheet;application/vnd.ms-excel.sheet.macroEnabled.12;application/vnd.oasis.opendocument.spreadsheet;application/vnd.ms-powerpoint;application/vnd.openxmlformats-officedocument.presentationml.presentation;application/vnd.oasis.opendocument.presentation;application/vnd.oasis.opendocument.graphics;application/vnd.oasis.opendocument.text-template;application/vnd.oasis.opendocument.spreadsheet-template;application/vnd.oasis.opendocument.presentation-template;application/vnd.oasis.opendocument.graphics-template;application/vnd.oasis.opendocument.text-flat-xml;application/vnd.oasis.opendocument.spreadsheet-flat-xml;application/vnd.oasis.opendocument.presentation-flat-xml;application/vnd.oasis.opendocument.graphics-flat-xml;application/vnd.sun.xml.writer;application/vnd.sun.xml.calc;application/vnd.sun.xml.impress;

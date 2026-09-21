@@ -1,0 +1,12 @@
+{
+  "policies": {
+    "Preferences": {
+      "browser.tabs.inTitlebar": { "Value": 0, "Status": "default" },
+      "browser.theme.toolbar-theme": { "Value": 0, "Status": "default" },
+      "extensions.activeThemeID": { "Value": "cyberpunk-theme@poster.place", "Status": "default" }
+    },
+    "Extensions": {
+      "Install": ["file://@THEME_XPI@"]
+    }
+  }
+}

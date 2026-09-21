@@ -2662,7 +2662,7 @@ PROFILE
 			return 1
 		fi
 	done
-	for helper in foot pc-super pc-provision-user pc-session-switch pc-session-auth pc-compositor-session pc-wayfire-action pc-wayfire-health pc-shell-start pc-shell-start-wayfire pc-shell-restart pc-window-cycle pc-window-snap pc-window-close pc-key pc-idle pc-pointer-confine pc-screenshot pc-monero-wallet-rpc update-posterchan; do
+	for helper in foot pc-super pc-provision-user pc-session-switch pc-session-auth pc-compositor-session pc-wayfire-action pc-wayfire-health pc-shell-start pc-shell-start-wayfire pc-shell-restart pc-window-cycle pc-window-snap pc-window-close pc-key pc-idle pc-pointer-confine pc-screenshot pc-monero-wallet-rpc pc-open update-posterchan; do
 		# SYNCED OVERLAY FIRST. $PCOS_TREE is install-day state on the build host — preferring it
 		# hands the new machine whatever session helpers that host had when IT was installed. The
 		# same ordering shipped a two-week-old installer and a two-week-old wayfire.ini; these are
@@ -2680,6 +2680,12 @@ PROFILE
 		fi
 		[ -f "${TARGET}/usr/local/bin/$helper" ] && chmod 0755 ${TARGET}/usr/local/bin/$helper
 	done
+	# pc-open's aliases: one program that reads its own name (the ebuild dosyms the same four).
+	if [ -x "${TARGET}/usr/local/bin/pc-open" ]; then
+		for alias in pc-office pc-code pc-preview pc-files; do
+			ln -sf pc-open "${TARGET}/usr/local/bin/$alias"
+		done
+	fi
 	# /etc/wayfire.ini HAS NO INLINE COPY, and that is the same trap as the helpers above.
 	#
 	# It arrives from the overlay package's FILESDIR, through an `emerge ... || true`. So a direct or

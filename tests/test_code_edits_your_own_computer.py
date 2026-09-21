@@ -159,10 +159,16 @@ class TheEditorOpensAndSavesThem(unittest.TestCase):
                                self.app.index("openFile: async (path, name, openHere, mime)"))
         body = self.app[start:self.app.index("{ id:'host'", start)]
         self.assertIn("try{", body)
-        self.assertIn("await _withModule('code.js', 'PCCode')", body)
-        self.assertIn("typeof code.openHostFile!=='function'", body)
-        self.assertIn("if(await code.openHostFile({ path })) switchView('code')", body)
+        self.assertIn("await _hostOpenCode(path)", body)
         self.assertIn("catch(err){ toast('could not open in Code:", body)
+        # The one opener the chooser and `pc-open` share: load lazily, and only switch to Code once
+        # it owns a live buffer -- a refusal throws, so Files stays where it was.
+        s = self.app.index("async function _hostOpenCode(")
+        opener = self.app[s:self.app.index("\n  }\n", s)]
+        self.assertIn("await _withModule('code.js', 'PCCode')", opener)
+        self.assertIn("typeof code.openHostFile!=='function'", opener)
+        self.assertIn("if(!(await code.openHostFile({ path }))) throw", opener)
+        self.assertLess(opener.index("openHostFile({ path })"), opener.index("switchView('code')"))
 
     def test_clicking_a_this_computer_video_executes_the_real_handler(self):
         """Paint and click the shipped row. This fails with the production `openable is not

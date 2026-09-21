@@ -3786,6 +3786,66 @@ function runOSHelper(args, body) {
     proc.stdin.end(body || '');
   });
 }
+/* `pc-open` — a terminal asking THIS desktop to open a file in Office, Code, Preview or Files
+ * (desktop/opener.js has the protocol and the checks). The files are opened by the PRIMARY shell
+ * renderer, the same code a click in Files runs; it announces that it can answer with
+ * `pc:host:open-ready`, so a request that lands while the desktop is still loading is told so at
+ * once instead of waiting out a timeout. Shell only: on another OS this is an app, and a terminal
+ * there has that OS's own `xdg-open`. */
+const _openReady = new Set();       // webContents ids whose page registered a handler
+const _openPending = new Map();     // request id -> { resolve, reject, timer, sender }
+let _openSeq = 0;
+ipcMain.on('pc:host:open-ready', (e) => {
+  if (!fromOurPage(e)) return;
+  const id = Number(e.sender.id);
+  if (_openReady.has(id)) return;
+  _openReady.add(id);
+  /* A reloaded page has lost its handler until it registers again; a dead one never will. */
+  const drop = () => _openReady.delete(id);
+  e.sender.once('did-navigate', drop);
+  e.sender.once('render-process-gone', drop);
+  e.sender.once('destroyed', drop);
+});
+ipcMain.on('pc:host:open-result', (e, id, results) => {
+  const p = _openPending.get(Number(id));
+  if (!p || p.sender !== Number(e.sender.id) || !fromOurPage(e)) return;
+  _openPending.delete(Number(id));
+  clearTimeout(p.timer);
+  p.resolve(Array.isArray(results) ? results : []);
+});
+function deliverOpen(app, items) {
+  const target = win && !win.isDestroyed() ? win : null;
+  if (!target || !_openReady.has(Number(target.webContents.id)))
+    return Promise.reject(new Error('the desktop is still starting — try again in a moment'));
+  const id = ++_openSeq;
+  return new Promise((resolve, reject) => {
+    /* Generous: Office reads the whole document through the bridge before it answers. */
+    const timer = setTimeout(() => { _openPending.delete(id); reject(new Error('the desktop did not answer')); }, 45000);
+    _openPending.set(id, { resolve, reject, timer, sender: Number(target.webContents.id) });
+    try { target.webContents.send('pc:host:open-request', { id, app, items }); }
+    catch (err) { clearTimeout(timer); _openPending.delete(id); reject(err); }
+  });
+}
+function wireOpener() {
+  if (!SHELL_MODE || process.platform !== 'linux' || diagnostic) return;
+  const run = process.env.XDG_RUNTIME_DIR || (typeof process.getuid === 'function' ? '/run/user/' + process.getuid() : '');
+  if (!run) return;
+  const opener = require('./opener');
+  try {
+    opener.listen(path.join(run, opener.SOCKET_NAME), (req) => opener.handleWith(deliverOpen, req),
+      { onError: (err) => console.warn('[pc-open] socket:', (err && err.message) || err) });
+  } catch (err) { console.warn('[pc-open] not listening:', (err && err.message) || err); }
+}
+/* The desktop's theme decides the MACHINE's light/dark preference (desktop/colorscheme.js). Only
+ * the OS shell may write it: the Windows/macOS/other-Linux builds are an app on somebody else's
+ * desktop, and changing an app's theme must not rewrite that desktop's own setting. Diagnostic
+ * launches are a second shell looking at the same account, so they do not get a vote either. */
+ipcMain.handle('pc:os:color-scheme', (e, scheme) => {
+  fsGuard(e);
+  if (!SHELL_MODE || process.platform !== 'linux' || diagnostic)
+    return { ok: false, why: 'only the PosterChanOS shell sets the system colour scheme' };
+  return require('./colorscheme').apply(String(scheme || ''));
+});
 ipcMain.handle('pc:os:challenge', async (e, npub, action) => {
   fsGuard(e);
   if (diagnostic) return {ok:false, why:'OS account changes are disabled in diagnostics'};
@@ -4110,6 +4170,7 @@ if (!app.requestSingleInstanceLock()) { app.quit(); } else {
     }
     await reconcileShellDisplays();
     wireShellRecovery();
+    wireOpener();
     watchInstalledBundle();
     background.init({
       show: showWindow,

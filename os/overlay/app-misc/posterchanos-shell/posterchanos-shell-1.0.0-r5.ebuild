@@ -48,9 +48,21 @@ src_install() {
 	# The helpers. pc-key must obey the same limits as the on-screen controls; the repo's
 	# tests/test_pc_key_limits.py is what keeps the two in step, and it runs before this is built.
 	exeinto /usr/local/bin
-	for helper in foot pc-super pc-provision-user pc-session-switch pc-session-auth pc-compositor-session pc-wayfire-action pc-wayfire-health pc-shell-start-wayfire pc-shell-restart pc-window-cycle pc-window-snap pc-window-close pc-key pc-idle pc-pointer-confine pc-screenshot pc-monero-wallet-rpc update-posterchan; do
+	for helper in foot pc-super pc-provision-user pc-session-switch pc-session-auth pc-compositor-session pc-wayfire-action pc-wayfire-health pc-shell-start-wayfire pc-shell-restart pc-window-cycle pc-window-snap pc-window-close pc-key pc-idle pc-pointer-confine pc-screenshot pc-monero-wallet-rpc pc-open update-posterchan; do
 		doexe "${FILESDIR}/${helper}"
 	done
+	# `pc-open` asks the running desktop to open a file in Office, Code, Preview or Files. The
+	# aliases are the same program: it reads its own name, so `pc-office x` is `pc-open --office x`.
+	local alias
+	for alias in pc-office pc-code pc-preview pc-files; do
+		dosym pc-open "/usr/local/bin/${alias}"
+	done
+	# ...and `xdg-open report.docx` reaches it too. Nothing on this machine claimed an office
+	# document, so xdg-open had no answer at all; the defaults cover ONLY those types (see the file).
+	insinto /usr/share/applications
+	doins "${FILESDIR}/posterchan-open.desktop"
+	insinto /etc/xdg
+	newins "${FILESDIR}/posterchanos-mimeapps.list" mimeapps.list
 	insinto /usr/lib/systemd/user
 	doins "${FILESDIR}/posterchan-monero-wallet-rpc.service"
 	# The installed recovery/LiveUSB tool is package-owned too. publish_overlay.sh injects the
@@ -99,11 +111,35 @@ src_install() {
 	#
 	# `Status: default` rather than locked: this is the shipped default and the user may still change
 	# it in about:config, exactly like every other preference on their own machine.
-	insinto /etc/firefox/policies
-	newins "${FILESDIR}/firefox-policies.json" policies.json
+	#
+	# THE CYBERPUNK THEME RIDES THE SAME FILE, AND ONLY WHEN ITS SIGNED COPY IS HERE. Release Firefox
+	# discards an unsigned theme without a word (measured: no entry in extensions.json at all), so
+	# publish_overlay.sh injects the addons.mozilla.org-signed .xpi into FILESDIR or nothing. The
+	# `Extensions.Install` policy runs once per change of its list -- the version is in the file
+	# name, so an upgrade re-runs it -- and never again after the person picks another theme
+	# (measured). `extensions.activeThemeID` as a DEFAULT makes it the theme of every new profile.
+	# Naming a file that is not there would spend that one run on an error, which is why the theme
+	# half is only written when the file exists.
+	local theme=( "${FILESDIR}"/posterchan-cyberpunk-*.xpi )
+	if [[ -f ${theme[0]} ]]; then
+		insinto /usr/share/posterchanos/firefox
+		doins "${theme[0]}"
+		sed -e "s|@THEME_XPI@|/usr/share/posterchanos/firefox/${theme[0]##*/}|" \
+			"${FILESDIR}/firefox-policies-theme.json" > "${T}/policies.json" || die
+		insinto /etc/firefox/policies
+		newins "${T}/policies.json" policies.json
+	else
+		insinto /etc/firefox/policies
+		newins "${FILESDIR}/firefox-policies.json" policies.json
+	fi
 }
 
 pkg_postinst() {
+	# The MimeType= cache, so "Open with" lists PosterChan Office. The DEFAULTS above do not need it
+	# (mimeapps.list names the desktop file directly), which is why a missing tool is not an error.
+	if [[ -z ${ROOT} ]] && command -v update-desktop-database >/dev/null 2>&1; then
+		update-desktop-database -q "${EROOT%/}/usr/share/applications" || true
+	fi
 	# Remote Desktop control uses ydotool's per-user 0600 socket. Enable it globally so each signed-in
 	# identity gets its own daemon/socket; the desktop also starts it lazily for already-open sessions.
 	systemctl --global enable ydotool.service >/dev/null 2>&1 || true
