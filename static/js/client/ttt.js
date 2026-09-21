@@ -58,11 +58,19 @@
           draw(Store.profileList().filter(p=>(((p.meta.name||'')+(p.meta.display_name||'')+(p.meta.nip05||'')).toLowerCase().includes(ql))).slice(0,8));
         }, 250); };
     }
+    let _botStartAt=0;
     async function startBot(){
       const botPk=safePk(PC.CFG.ttt_bot_npub); if(!botPk){ toast('no bot'); return; }
-      try{ await publish(1, `🤖 start tictactoe vs the bot — I'll be X. The bot will DM me the board; I'll play my moves privately.\n\n#tictactoe #nostr #gamestr`, [['p',botPk],['t','tictactoe'],['t','nostr'],['t','gamestr']]);
+      /* ONE START PER GAME. The note is public kind 1 with fixed text + tags, and Amethyst hides an author
+       * after a few events sharing a content+tags hash - measured: one account posted this 7x in 131s by
+       * clicking while the first was in flight. So: refuse while one is starting, and tag each start with
+       * its own short game id so two real games are two different notes. */
+      if(Date.now()-_botStartAt<30000){ toast('a game is already starting…'); return; }
+      _botStartAt=Date.now();
+      const gid=Math.random().toString(36).slice(2,8);
+      try{ await publish(1, `🤖 start tictactoe vs the bot (game ${gid}) — I'll be X. The bot will DM me the board; I'll play my moves privately.\n\n#tictactoe #nostr #gamestr`, [['p',botPk],['t','tictactoe'],['t','nostr'],['t','gamestr']]);
         toast('starting vs the bot ⭕'); setTimeout(()=>{ if(PC.VIEW==='ttt') render(); }, 4500);
-      }catch(e){ toast('could not start'); }
+      }catch(e){ _botStartAt=0; toast('could not start'); }
     }
     async function startGame(pk){
       const botPk=safePk(PC.CFG.ttt_bot_npub); if(!botPk){ toast('no bot'); return; }

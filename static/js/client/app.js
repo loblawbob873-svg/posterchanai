@@ -13554,8 +13554,18 @@
       const tot=card.querySelector('.poll-total'); if(tot) tot.textContent=total+' vote'+(total===1?'':'s');
     }
   }
+  // A vote IN FLIGHT is a vote. The "already voted" guard is only written after the relay answers,
+  // so every click while the first publish was pending signed another identical 1018 - measured on
+  // server1: 8 identical responses from one account in 10s, 4 in 4s from another.
+  const _pollVoting = new Set();
   async function votePoll(pollId, optId){
     if((_myPollVotes[pollId]||new Set()).has(optId)){ toast('already voted'); return; }
+    const key=pollId+'\n'+optId;
+    if(_pollVoting.has(key)) return;
+    _pollVoting.add(key);
+    try{ await _votePollNow(pollId, optId); }finally{ _pollVoting.delete(key); }
+  }
+  async function _votePollNow(pollId, optId){
     try{
       const r=await publish(1018, '', [['e', pollId], ['response', optId]]);   // failure toast by publish()
       if(!(r && r.ok)) return;   // relay didn't store the vote → don't mark it voted (else the guard blocks a retry)
