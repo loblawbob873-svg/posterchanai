@@ -13,7 +13,7 @@ def test_pointer_popups_use_clicked_surface_and_keyboard_ticks_have_one_owner():
     ticks = main[main.index('async function forwardShellTick('):
                  main.index('/* Proton commonly maps an anonymous XWayland')]
     script = r'''
-const assert=require('node:assert/strict'),path=require('node:path');
+const {showWhenReady}=require('''+repr(str(ROOT/'desktop/show-when-ready.js'))+r''');const assert=require('node:assert/strict'),path=require('node:path');
 const __dirname='.',APP_URL='https://example.invalid',POPUP_TITLE='PosterChan Popup';
 const STICKY_POPUPS=new Set(['compose']),_shellScopes=new Map(),_shellSurfaces=new Map();
 let _popupWin=null,_popupKind='',placed=null,created=0,focused='DP-1';
@@ -75,7 +75,7 @@ def test_scaled_volume_nostr_and_notifications_align_with_their_actual_buttons()
     placement = main[main.index('const _BAR_FLYOUTS = new Set('):
                      main.index("ipcMain.handle('pc:popup:close'")]
     script = r'''
-const assert=require('node:assert/strict'),path=require('node:path');
+const {showWhenReady}=require('''+repr(str(ROOT/'desktop/show-when-ready.js'))+r''');const assert=require('node:assert/strict'),path=require('node:path');
 const __dirname='.',APP_URL='https://example.invalid',POPUP_TITLE='PosterChan Popup';
 const STICKY_POPUPS=new Set(['compose']),_shellScopes=new Map([[11,{output:'target'}]]);
 const _workAreas=new Map();

@@ -310,16 +310,35 @@ class SubscriptionManager:
         """Open subscriptions across every connection — the fan-out cost per stored event."""
         return sum(len(s) for s in self._subs.values())
 
-    def fanout(self, ev: dict, send, allow=None) -> None:
+    def fanout(self, ev: dict, send, allow) -> None:
         """Enqueue `ev` to every matching open subscription via `send(conn, obj)` (a
-        non-blocking, drop-on-slow enqueue) — so one slow client can't stall the firehose."""
+        non-blocking, drop-on-slow enqueue) — so one slow client can't stall the firehose.
+
+        `allow` IS REQUIRED, AND THAT IS THE WHOLE POINT OF THIS SIGNATURE. It defaulted to None
+        ("send it to everybody") and five of the seven call sites took the default — including the
+        one inside `backfill_author`, which restores exactly `_PRIVATE_LIB_KINDS`: Notes, the
+        password vault, the calendar, the addressbook, Budget, the files index. The read gate in
+        `_on_req` only ever guarded the STORED pass; a REQ's filters are all registered for live
+        delivery regardless, so a member could pair one filter bound to themselves with an unbound
+        `{"kinds":[30078]}` sibling, hold the socket open, and be handed another user's private
+        library the moment anybody pressed "sync my data" — no error, nothing in any log, and
+        invisible to every test here because they all assert on the stored pass.
+
+        A default that means "no gate" gets taken by whoever adds the next call site, and the leak
+        it opens is silent. So there is no default: a caller with nothing to check passes
+        `lambda conn, ev: True` and says so out loud."""
         for conn, subs in list(self._subs.items()):
-            if allow is not None and not allow(conn, ev):
+            if not allow(conn, ev):
                 continue
             for sub_id, filters in list(subs.items()):
                 if _matches(filters, ev):
                     send(conn, ["EVENT", sub_id, ev])
 
+
+# The ONLY kind-30078 documents whose `p` tag grants a read (see `_addressees`). Both halves must
+# match, because either alone is a tag anybody can write onto anything.
+_ADDRESSED_LABELS = {"pcai-musicshare"}
+_ADDRESSED_D_PREFIXES = ("pcai:musicshare:",)
 
 _IP_CHARS = re.compile(r"^[0-9a-fA-F:.%\[\]]{3,45}$")
 
@@ -1233,6 +1252,49 @@ class RelayServer:
     def _nip78_owner(self, conn, pubkey: str) -> bool:
         return pubkey in self._auth_pubkeys.get(conn, set())
 
+    @staticmethod
+    def _addressees(ev: dict) -> set:
+        """Who a NIP-78 document was ADDRESSED to — and ONLY for the documents this app addresses.
+
+        NIP-78 does not define `p` as an access grant; it is an app-data kind, and this relay
+        accepts 30078 from any member, written by any client. So "a `p` tag means whoever is named
+        may read it" would be a rule imposed on strangers' data for a reason their app never agreed
+        to: a note ABOUT a contact, a mention, a bot's address, an attribution — each becomes
+        readable by the named pubkey, silently, with nothing in the document saying it was shared.
+        The same shape already exists one kind away (`pcai:blackjack:cmd:` / `pcai:holdem:cmd:` are
+        p-tagged to a bot), so a kind change is all it would take.
+
+        The grant is therefore scoped to the documents that ARE a share: `l = pcai-musicshare` with
+        a matching `d` (musicshare.js writes both). Every other 30078 — settings, Notes, calendars,
+        contacts, Budget, the vault, the files index, the desktop layout — stays author-only no
+        matter what tags it carries. Widening this is a deliberate act: add the label here, beside
+        the sentence explaining why the last one was safe."""
+        tags = [t for t in ev.get("tags", []) if isinstance(t, list) and len(t) >= 2 and t[1]]
+        labels = {str(t[1]) for t in tags if t[0] == "l"}
+        d = next((str(t[1]) for t in tags if t[0] == "d"), "")
+        if not (_ADDRESSED_LABELS & labels) or not d.startswith(_ADDRESSED_D_PREFIXES):
+            return set()
+        return {str(t[1]) for t in tags if t[0] == "p"}
+
+    def _nip78_reader(self, conn, ev: dict) -> bool:
+        """Who may READ a NIP-78 document: its author, or somebody it is addressed to.
+
+        THE AUTHOR-ONLY RULE MADE A WHOLE FEATURE IMPOSSIBLE AND SAID NOTHING. Music sharing
+        (musicshare.js) hands a playlist to a recipient as a 30078 document `p`-tagged to them and
+        NIP-44-encrypted to them; measured on this node, the sharer's two documents were stored and
+        served to nobody, because every read was gated on `pubkey in authed` and the recipient is
+        not the author. "Shared with me" was therefore always empty, with nothing in any log --
+        reported as "I shared Music on TV but can't see it on phone or laptop".
+
+        Adding the addressee is not a widening of what a stranger can see: the `p` tag is written by
+        the AUTHOR, the content is encrypted to that same recipient, and this is the rule the relay
+        already applies to DMs (a gift wrap is served to whoever it is addressed to). An
+        unauthenticated connection still gets nothing."""
+        authed = self._auth_pubkeys.get(conn, set())
+        if not authed:
+            return False
+        return str(ev.get("pubkey", "")) in authed or bool(self._addressees(ev) & authed)
+
     def _challenge(self, conn) -> None:
         challenge = self._auth_challenges.get(conn)
         if challenge:
@@ -1644,14 +1706,20 @@ class RelayServer:
             return
         filters = [f for f in filters if isinstance(f, dict)][: self.cfg.get("max_filters_per_req", 10)]
         if self._filter_explicitly_requests_nip78(filters):
-            owners = {str(pk) for f in filters for pk in (f.get("authors") or [])}
             authed = self._auth_pubkeys.get(conn, set())
-            # An owner-bound authors filter is mandatory: omitting it would ask the relay to expose
-            # every user's private documents to one authenticated identity.
-            if not owners or not owners.issubset(authed):
+            owners = {str(pk) for f in filters for pk in (f.get("authors") or [])}
+            # A filter bound to ME as the RECIPIENT is the other legitimate private read: it is how
+            # "shared with me" (musicshare.js) asks for documents somebody else addressed to this
+            # account. Without it that query has no authors to bind and was refused every time.
+            addressed = {str(pk) for f in filters for pk in (f.get("#p") or [])}
+            # One of the two bindings is mandatory: an unbound filter would ask the relay to expose
+            # every user's private documents to one authenticated identity. `_can_serve_event`
+            # re-checks every event anyway, so a mixed REQ can never leak past this gate.
+            if not ((owners and owners.issubset(authed))
+                    or (addressed and addressed.issubset(authed))):
                 self._challenge(conn)
                 self._send(conn, ["CLOSED", sub_id,
-                                  "auth-required: NIP-78 reads require AUTH and matching authors"])
+                                  "auth-required: NIP-78 reads require AUTH as the author or the recipient"])
                 return
         try:
             events = await self.store.query(filters)
@@ -1674,10 +1742,23 @@ class RelayServer:
 
     async def _on_count(self, conn, sub_id, filters) -> None:
         filters = [f for f in filters if isinstance(f, dict)]
-        explicit_private = self._filter_explicitly_requests_nip78(filters)
-        if explicit_private:
-            owners = {str(pk) for f in filters for pk in (f.get("authors") or [])}
-            if not owners or not owners.issubset(self._auth_pubkeys.get(conn, set())):
+        # Deliberately stricter than `_on_req`, which also serves a document to the recipient it is
+        # addressed to: a COUNT has no EVENT frames for `_can_serve_event` to filter, so the only
+        # safe binding here is the one the SQL can be trusted with. Nothing counts shares.
+        #
+        # AND IT IS ASKED OF EVERY FILTER SEPARATELY, because `count_filtered` counts them
+        # separately. Validating the UNION of `authors` let one bound filter carry an unbound
+        # sibling — `[{"kinds":[30078],"authors":[me]}, {"kinds":[30078]}]` passed the gate and
+        # returned a count of EVERY user's private documents. No content and no ids, but "how many
+        # notes does this instance hold for everyone" is not this caller's to know, and the shape
+        # (a gate that unions, a query that does not) is the same mistake `_on_req` survives only
+        # because it re-checks each event afterwards.
+        authed = self._auth_pubkeys.get(conn, set())
+        for f in filters:
+            if not self._filter_explicitly_requests_nip78([f]):
+                continue
+            owners = {str(pk) for pk in (f.get("authors") or [])}
+            if not owners or not owners.issubset(authed):
                 self._challenge(conn)
                 self._send(conn, ["CLOSED", sub_id,
                                   "auth-required: NIP-78 counts require AUTH and matching authors"])
@@ -1723,7 +1804,7 @@ class RelayServer:
     def _can_serve_event(self, conn, ev: dict) -> bool:
         kind = int(ev.get("kind", 0))
         if kind in (78, 30078):
-            return self._nip78_owner(conn, ev.get("pubkey", ""))
+            return self._nip78_reader(conn, ev)
         # PRIVATE GIT METADATA IS STILL PRIVATE DATA.
         #
         # The git HTTP side has refused unauthorised clones of a private repo for a long time, and

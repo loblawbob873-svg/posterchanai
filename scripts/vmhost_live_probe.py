@@ -51,7 +51,7 @@ ADMIN = "ad" * 32
 NODE = "0e" * 32
 READ_ONLY_VIRSH = {"version", "nodeinfo", "nodememstats", "list", "dominfo", "domblklist", "dumpxml", "vncdisplay",
                    "snapshot-list", "snapshot-current", "snapshot-dumpxml", "domstate", "capabilities",
-                   "domcapabilities", "net-list", "net-info", "uri"}
+                   "domcapabilities", "net-list", "net-info", "uri", "domiflist", "domifaddr"}
 PLACEHOLDER_PW = "PCPROBEX"
 
 
@@ -79,7 +79,8 @@ class GuardedRunner:
                 return
             if verb == "qemu-monitor-command" or verb in ("start", "shutdown", "destroy", "reboot", "undefine",
                                                            "autostart", "metadata", "snapshot-create-as",
-                                                           "snapshot-create", "snapshot-revert", "snapshot-delete"):
+                                                           "snapshot-create", "snapshot-revert", "snapshot-delete",
+                                                           "attach-device", "detach-device"):
                 if len(argv) > 4 and (argv[4] in self.mine or argv[4] in self.names):
                     return
                 raise ProbeRefused(f"refusing virsh {verb} on {argv[4] if len(argv) > 4 else '?'}: not a probe VM")
@@ -271,6 +272,7 @@ class Probe:
         self.target = None
         self.iso = None
         self.created_dirs: list = []
+        self.usb = ""             # vendor:product of a real, unused USB device to hot-plug (--usb)
 
     async def op(self, op, args, svc=None):
         res = await (svc or self.svc).handle(ADMIN, op, args, secrets.token_hex(8))
@@ -737,12 +739,94 @@ class Probe:
         return f"offline snapshots {want} carried and revertable on the target"
 
     # ---- 10
+    async def step11_devices(self):
+        """USB hot-plug into the RUNNING probe VM with a real device, and PCI read-only (never attached: the only
+        passable card on a real host is somebody's GPU). USB runs only when --usb names a device that is plugged in and
+        that the host is not using; otherwise it says so and passes nothing off as tested."""
+        from app.services.vmhost import usb as U
+        lst = await self.ok("host.devices.list", {"vm": self.efi["uuid"]})
+        usb_rows = lst["kinds"]["usb"]["devices"]
+        pci_k = lst["kinds"]["pci"]
+        self.fx.save_text("devices-host-list", json.dumps(lst, indent=1, sort_keys=True), "host.devices.list")
+        busy_pci = [x for x in pci_k["devices"] if x["busy"]]
+        pci_note = (f"pci: {len(pci_k['devices'])} listed, checks "
+                    + ", ".join(f"{c['id']}={'ok' if c['ok'] else 'NO'}" for c in pci_k["checks"])
+                    + f", {len(busy_pci)} in use by the host")
+        if pci_k["devices"]:                     # a PCI attach to a RUNNING VM is refused before libvirt is asked
+            n = len(self.runner.calls)
+            res = await self.op("vm.device.attach", {"vm": self.efi["uuid"], "kind": "pci",
+                                                     "address": pci_k["devices"][0]["address"]})
+            check(not res.get("ok") and res["error"]["code"] == "conflict", f"pci attach on a running VM: {res}")
+            check(not any(c["argv"][3:4] == ["attach-device"] for c in self.runner.calls[n:]), "virsh was asked")
+        if not self.usb:
+            self.r.add("11 devices", "PASS", "USB NOT exercised (no --usb given); " + pci_note)
+            return
+        vid, pid = self.usb.split(":")
+        usb_bad = [ch for ch in lst["kinds"]["usb"]["checks"] if not ch["ok"]]
+        if usb_bad:                              # e.g. Gentoo's default QEMU (USE=-usb) has no usb-host device
+            n = len(self.runner.calls)
+            res = await self.op("vm.device.attach", {"vm": self.efi["uuid"], "kind": "usb", "vendor": vid, "product": pid})
+            check(not res.get("ok") and res["error"]["code"] == "unsupported", f"attach with {usb_bad[0]['label']}: {res}")
+            check(not any(c["argv"][3:4] == ["attach-device"] for c in self.runner.calls[n:]), "virsh was asked")
+            self.r.add("11 devices", "PASS", f"USB NOT hot-plugged: {usb_bad[0]['label']} — the attach was refused "
+                       f"before libvirt was asked; " + pci_note)
+            self.r.finding(usb_bad[0]["label"] + " — " + usb_bad[0]["fix"])
+            return
+        row = next((x for x in usb_rows if x["vendor"] == vid and x["product"] == pid), None)
+        check(row is not None, f"--usb {self.usb} is not offered ({[x['label'] for x in usb_rows]})")
+        check(not row["busy"] and not row["used_by"], f"{row['label']} is in use: {row['busy'] or row['used_by']}")
+        node = f"/dev/bus/usb/{row['bus']:03d}/{row['device']:03d}"
+        before = os.stat(node)
+        u = self.efi["uuid"]
+        args = {"vm": u, "kind": "usb", "vendor": vid, "product": pid, "persist": False}
+        r1 = await self.ok("vm.device.attach", args)
+        live = await self.be.dumpxml(u, inactive=False)
+        self.fx.save("virsh-dumpxml-running-usb-hostdev", self.runner.last(virsh_verb("dumpxml", u)))
+        got = U.hostdevs(live)
+        check(any(e["vendor"] == vid and e["bus"] == row["bus"] for e in got), f"live XML lacks the device: {got}")
+        check(not U.hostdevs(await self.be.dumpxml(u, inactive=True)), "persist:false still wrote the saved definition")
+        during = os.stat(node)
+        check(any(d["vendor"] == vid and d["live"] and not d["persistent"] for d in r1["vm"]["devices"]),
+              f"vm.devices: {r1['vm']['devices']}")
+        if self.bios:                            # the same stick for the second probe VM is refused, naming the first
+            res = await self.op("vm.device.attach", dict(args, vm=self.bios["uuid"]))
+            check(not res.get("ok") and res["error"]["code"] == "conflict" and self.efi["name"] in res["error"]["message"],
+                  f"second VM: {res}")
+        await self.ok("vm.device.detach", {"vm": u, "kind": "usb", "vendor": vid, "product": pid})
+        check(not U.hostdevs(await self.be.dumpxml(u, inactive=False)), "the device is still in the running VM")
+        after = None
+        for _ in range(20):
+            await asyncio.sleep(0.5)
+            try:
+                after = os.stat(node)
+                break
+            except FileNotFoundError:
+                continue
+        stopped = ""
+        if self.bios:                            # a STOPPED VM: --config only, read back, and out again
+            if await self.state(self.bios["uuid"]) == "running":
+                await self.ok("vm.power", {"vm": self.bios["uuid"], "action": "destroy"})
+            await self.ok("vm.device.attach", {"vm": self.bios["uuid"], "kind": "usb", "vendor": vid, "product": pid})
+            saved = await self.be.dumpxml(self.bios["uuid"], inactive=True)
+            self.fx.save("virsh-dumpxml-inactive-usb-hostdev", self.runner.last(virsh_verb("dumpxml", self.bios["uuid"])))
+            check(U.hostdevs(saved) == [{"vendor": vid, "product": pid, "bus": None, "device": None}],
+                  f"saved hostdevs {U.hostdevs(saved)}")
+            await self.ok("vm.device.detach", {"vm": self.bios["uuid"], "kind": "usb", "vendor": vid, "product": pid})
+            check(not U.hostdevs(await self.be.dumpxml(self.bios["uuid"], inactive=True)), "still saved after detach")
+            stopped = "; stopped VM: saved + removed"
+        self.r.add("11 devices", "PASS",
+                   f"{row['label']} at {node}: {before.st_uid}:{before.st_gid} {oct(before.st_mode & 0o777)} -> attached "
+                   f"{during.st_uid}:{during.st_gid} {oct(during.st_mode & 0o777)} -> detached "
+                   f"{(str(after.st_uid) + ':' + str(after.st_gid)) if after else 'node gone'}{stopped}; " + pci_note)
+
     async def step10_delete(self):
         done = []
         for vm, svc in ((self.bios, self.svc), (self.efi, self.svc),
                         (self.target, self.target and self.target.get("svc"))):
             if not vm:
                 continue
+            if svc is self.svc and await self.state(vm["uuid"]) == "running":   # a partial --steps run left it on
+                await self.ok("vm.power", {"vm": vm["uuid"], "action": "destroy"})
             res = await self.op("vm.delete", {"vm": vm["uuid"], "confirm_name": vm["name"], "delete_disks": True}, svc=svc)
             check(res.get("ok"), f"delete {vm['name']}: {res.get('error')}")
             check(await self.be.get(vm["uuid"]) is None, f"{vm['name']} is still defined")
@@ -785,7 +869,7 @@ class Probe:
 
 STEPS = [("1", "step1_host"), ("2", "step2_create"), ("3", "step3_start"), ("4", "step4_console"),
          ("5", "step5_power"), ("6", "step6_update"), ("7", "step7_snapshots"), ("8", "step8_images"),
-         ("9", "step9_migration"), ("10", "step10_delete")]
+         ("9", "step9_migration"), ("11", "step11_devices"), ("10", "step10_delete")]
 
 
 async def amain(args) -> int:
@@ -801,6 +885,7 @@ async def amain(args) -> int:
         return 2
     report = Report()
     probe = Probe(storage, args.capture, report)
+    probe.usb = args.usb
     want = set(args.steps.split(",")) if args.steps else None
     failed = False
     try:
@@ -839,6 +924,8 @@ def main():
     ap.add_argument("--storage", required=True)
     ap.add_argument("--capture", default="")
     ap.add_argument("--steps", default="")
+    ap.add_argument("--usb", default="", help="vendor:product of a real USB device the host is NOT using, to hot-plug "
+                                              "into the probe VM (step 11); without it USB is reported as not exercised")
     args = ap.parse_args()
     sys.exit(asyncio.run(amain(args)))
 

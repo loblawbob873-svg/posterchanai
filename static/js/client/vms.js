@@ -46,6 +46,7 @@
     sort: { key: 'name', dir: 1 }, q: '', collapsed: {},
     // phase 2
     settings: null, snaps: {}, iso: null, access: null, find: null,
+    devs: {}, devpick: null,             // a VM's devices (vm.get) and the "Add a device" picker
     sessSuspect: {}, sessFail: {}, sessProbe: {},
   };
   const LOCAL_PK = 'local';
@@ -272,7 +273,12 @@
    * is reshaped to what the server ops return, so the screens cannot tell the two apart except through
    * `features`. Local VMs live in THIS account's home folder, so the local user is their admin. */
   const LOCAL_FEATURES = { assign: false, migrate: false, snapshots: false, console: 'spice', iso: 'picker',
-                           hardware: true, access: false, local: true };
+                           hardware: true, access: false, local: true, devices: true };
+  // PCI is a SERVER feature: only root can hand a card to vfio-pci, and "This computer" runs VMs as your account.
+  const LOCAL_NO_PCI = 'PCI passthrough (graphics cards and other cards) needs a server VM host: only root can hand a card to ' +
+                       'vfio-pci, and “This computer” runs its VMs as your account. USB devices work here.';
+  const localUsbView = d => Object.assign({ kind: 'usb', id: d.vendor + ':' + d.product + '@' + d.bus + '-' + d.device, live: true,
+                                            class_name: '' }, d);
   const hasLocal = () => { try{ return !!(window.pcVM && typeof window.pcVM.list === 'function'); }catch(_){ return false; } };
   const localState = st => { const x = String(st || '').toLowerCase();
     return /running|idle|blocked/.test(x) ? 'running' : /paused/.test(x) ? 'paused' : /shutdown/.test(x) && !/shut off/.test(x) ? 'stopping' : 'shutoff'; };
@@ -316,7 +322,28 @@
           case 'vm.get': {
             const d = await vm.details(a.vm);
             if(!d || !d.ok) return lerr(d, 'could not read this VM');
-            return { ok: true, result: { vm: Object.assign(localView(d), { hardware: localHardware(d) }) } };
+            const view = Object.assign(localView(d), { hardware: localHardware(d) });
+            if(typeof vm.usbDevices === 'function'){ const u = await vm.usbDevices(a.vm); if(u && u.ok) view.devices = u.devices || []; }
+            else view.devices = [];
+            return { ok: true, result: { vm: view } };
+          }
+          case 'host.devices.list': {
+            if(typeof vm.usbList !== 'function')
+              return { ok: false, error: { code: 'unsupported', message: 'this desktop app is too old to pass devices to a VM — update it' } };
+            const r = await vm.usbList();
+            const usb = r && r.ok ? { live: true, checks: r.checks || [], devices: (r.devices || []).map(localUsbView), error: '' }
+              : { live: true, checks: [], devices: [], error: (r && r.error) || 'could not list this computer’s USB devices' };
+            return { ok: true, result: { kinds: { usb, pci: { live: false, checks: [], devices: [], error: LOCAL_NO_PCI } } } };
+          }
+          case 'vm.device.attach': case 'vm.device.detach': {
+            if(a.kind === 'pci') return { ok: false, error: { code: 'unsupported', message: LOCAL_NO_PCI } };
+            if(a.kind !== 'usb') return { ok: false, error: { code: 'bad_request', message: 'unknown device kind' } };
+            const fn = op === 'vm.device.attach' ? vm.usbAttach : vm.usbDetach;
+            if(typeof fn !== 'function') return { ok: false, error: { code: 'unsupported', message: 'this desktop app is too old to pass devices to a VM — update it' } };
+            const r = await fn(a.vm, { vendor: a.vendor, product: a.product, bus: a.bus, device: a.device, persist: a.persist });
+            if(!r || !r.ok) return { ok: false, error: { code: (r && r.code) || 'backend_error', message: (r && r.error) || 'the device change failed' } };
+            const d = await vm.details(a.vm);
+            return { ok: true, result: { vm: Object.assign(d && d.ok ? localView(d) : { uuid: a.vm, name: a.vm }, { devices: r.devices || [] }) } };
           }
           case 'vm.power': {
             const map = { start: 'start', shutdown: 'shutdown', reboot: 'reboot', destroy: 'stop' };
@@ -399,7 +426,8 @@
     const f = (d.whoami && d.whoami.host && d.whoami.host.features) || [];
     const has = n => Array.isArray(f) && f.includes(n);
     return { assign: true, migrate: has('cold-migrate'), snapshots: has('snapshots'), console: 'novnc', iso: has('iso-fetch') ? 'library' : 'list',
-             hardware: has('hardware'), access: has('access'), upload: (has('iso-fetch') || has('iso-upload')), local: false };
+             hardware: has('hardware'), access: has('access'), upload: (has('iso-fetch') || has('iso-upload')), local: false,
+             devices: has('devices') };
   }
 
   async function refresh(pk){
@@ -525,6 +553,18 @@
     writeDoc();
   }
 
+  /* SETTINGS AND DELETE NEED THE VM OFF — AND SAY SO. They used to be `disabled` while it ran, with
+   * the reason only in a hover tooltip: on a laptop (and on every touch screen, which has no hover)
+   * that is a button that "does nothing". They stay pressable; while the VM runs a press explains and
+   * offers the shutdown. True = the VM is already off, go ahead. */
+  async function _needsOff(what){
+    const v = ((S.data[S.host] || {}).vms || []).find(x => x.uuid === S.vm);
+    if(!v || v.state === 'shutoff') return true;
+    if(await PC.uiConfirm(`“${v.name}” is ${stateLabel(v.state).toLowerCase()}. Shut it down first to ${what} — it is asked to shut down cleanly, like pressing the power button.`, { ok: 'Shut down now' }))
+      power(S.host, S.vm, 'shutdown');
+    return false;
+  }
+
   async function power(pk, uuid, action){
     if(action === 'destroy' && !await PC.uiConfirm('Force off this VM? It is like pulling the plug — unsaved work inside it is lost.', { ok: 'Force off', danger: true })) return;
     const key = uuid + ':' + action;
@@ -540,6 +580,8 @@
       paint();
       setTimeout(() => refresh(pk), 1000);
       setTimeout(() => refresh(pk), 4000);
+      // a device's "attached now" follows the power state (a hot-plugged one leaves when the VM stops)
+      if(featuresOf(pk).devices && S.devs[pk + ':' + uuid]) setTimeout(() => { if(S.vm === uuid && S.screen === 'vm') loadDevices(pk, uuid); }, 4500);
     }
   }
 
@@ -771,6 +813,151 @@
     cur.busy = false;
     if(r.ok){ cur.list = r.result.snapshots || []; cur.err = ''; }
     else cur.err = r.noAnswer ? 'No answer from the host' : (r.error.message || r.error.code);
+    paint();
+  }
+
+  // ---------------------------------------------------------------- devices (USB hot-plug, PCI/GPU passthrough)
+  // What a VM has comes from vm.get (`devices`, every role — read only for an assigned user); what the host can give
+  // from host.devices.list (admin). Every refusal is the host's sentence, shown as it came: the host decides what is
+  // busy, what its QEMU/IOMMU can do and what to change — the page never guesses. USB goes into a RUNNING VM (no
+  // shutdown, unlike Settings); PCI only into a stopped one, and a GPU brings its HDMI audio along.
+  const DEV_KIND = { usb: 'USB', pci: 'PCI' };
+  const isOn = v => !!v && (v.state === 'running' || v.state === 'paused');
+  const devKey = x => x.kind === 'pci' ? 'pci:' + x.address : ['usb', x.vendor, x.product, x.bus || '', x.device || ''].join(':');
+  function devState(x, running){
+    const out = [];
+    if(x.kind === 'pci') out.push(running ? 'in use by the VM' : 'handed over when the VM starts');
+    else{
+      if(x.live) out.push('attached now'); else if(running) out.push('not attached now');
+      out.push(x.persistent ? 'kept after restart' : 'until the VM stops');
+    }
+    if(x.present === false) out.push('not plugged into the host');
+    return out.join(' · ');
+  }
+  async function loadDevices(pk, uuid){
+    const k = pk + ':' + uuid;
+    const cur = S.devs[k] = Object.assign(S.devs[k] || {}, { loading: true });
+    paint();
+    const r = await call(pk, 'vm.get', { vm: uuid });
+    cur.loading = false;
+    if(r.ok){ cur.list = (r.result.vm && r.result.vm.devices) || []; cur.err = ''; }
+    else cur.err = r.noAnswer ? 'No answer from the host — its devices are not known right now' : (r.error.message || r.error.code);
+    if(inView()) paint();
+  }
+  function devicesBlock(pk, uuid, v, role){
+    const k = pk + ':' + uuid, dv = S.devs[k];
+    const admin = role === 'admin', running = isOn(v);
+    const rows = dv && dv.list ? (dv.list.length ? dv.list.map(x => {
+      const pciOn = x.kind === 'pci' && v.state !== 'shutoff';
+      return `<div class="vms-dev" data-devrow="${esc(devKey(x))}"><span class="vms-dev-l"><span class="vms-pill vms-dev-k">${esc(DEV_KIND[x.kind] || x.kind)}</span>
+        <span class="vms-dev-t"><b>${esc(x.label || '')}</b><small class="vms-seen">${esc(devState(x, running))}</small></span></span>
+        ${admin ? `<button class="btn small btn-red" data-dev-detach="${esc(devKey(x))}" ${dv.busy || pciOn ? 'disabled' : ''}${pciOn ? ' title="Shut the VM down to remove a PCI device"' : ''}>Detach</button>` : ''}</div>`;
+    }).join('') : '<div class="vms-seen">No USB or PCI devices attached.</div>')
+      : (dv && dv.loading ? '<div class="vms-seen"><span class="spinner spinner-inline"></span>Reading devices…</div>' : '');
+    return `<div class="vms-devs vmx-section"><div class="vms-head"><div class="vms-sub">Devices</div><span class="vms-sp"></span>
+        ${admin ? `<button class="btn btn-ghost small" data-act="dev-add" ${dv && dv.busy ? 'disabled' : ''}>${ic('i-plus')}Add device</button>` : ''}</div>
+      ${rows}${dv && dv.msg ? `<div class="vms-seen">${esc(dv.msg)}</div>` : ''}${dv && dv.err ? `<div class="vms-noanswer">${esc(dv.err)}</div>` : ''}</div>`;
+  }
+  async function devDetach(pk, uuid, key){
+    const k = pk + ':' + uuid, dv = S.devs[k];
+    const x = dv && (dv.list || []).find(d => devKey(d) === key);
+    if(!x || dv.busy) return;
+    const v = vmOf(pk, uuid);
+    const warn = x.kind === 'usb' && x.live
+      ? ' The VM loses it at once — if the VM is using it (a USB drive), eject it inside the VM first or unwritten data is lost.'
+      : x.kind === 'pci' ? ' The card goes back to the host the next time the VM starts without it.' : '';
+    if(!await PC.uiConfirm(`Detach ${x.label} from ${(v && v.name) || 'this VM'}?${warn}`, { ok: 'Detach', danger: true })) return;
+    const args = x.kind === 'pci' ? { vm: uuid, kind: 'pci', address: x.address }
+      : Object.assign({ vm: uuid, kind: 'usb', vendor: x.vendor, product: x.product }, x.bus != null ? { bus: x.bus, device: x.device } : {});
+    dv.busy = true; dv.msg = 'Detaching…'; paint();
+    const r = await call(pk, 'vm.device.detach', args, { timeout: 90000, retries: 0 });
+    dv.busy = false; dv.msg = '';
+    if(r.ok){ dv.list = (r.result.vm && r.result.vm.devices) || []; dv.err = ''; toast('Detached ' + x.label); }
+    else dv.err = r.noAnswer ? 'No answer from the host — the device may or may not be detached; refresh to see' : (r.error.message || r.error.code);
+    paint();
+  }
+  async function openDevicePicker(pk, uuid){
+    S.devpick = { pk, uuid, kind: 'usb', lists: null, loading: true, err: '', sel: '', persist: true, busy: false, msg: '' };
+    S.screen = 'devices'; paint();
+    const r = await call(pk, 'host.devices.list', { vm: uuid });
+    const P = S.devpick;
+    if(!P || P.pk !== pk || P.uuid !== uuid) return;
+    P.loading = false;
+    if(r.ok){ P.lists = r.result.kinds || {}; if(!P.lists.usb && P.lists.pci) P.kind = 'pci'; }
+    else P.err = r.noAnswer ? 'No answer from the host — it may be offline or unreachable right now. Nothing was changed.' : (r.error.message || r.error.code);
+    if(inView()) paint();
+  }
+  function devBlocked(P, x, v){
+    if(x.used_by) return 'Attached to ' + (x.used_by.uuid === P.uuid ? 'this VM already' : 'the VM ' + x.used_by.name);
+    if(x.busy) return 'In use by the host: ' + x.busy;
+    if(x.access === false) return 'Your account cannot open this device';
+    if(x.kind === 'pci'){
+      if(!x.passable) return (x.blockers && x.blockers[0]) || 'Cannot be given to a VM — see the checks';
+      if(v && v.state !== 'shutoff') return 'Shut the VM down to add a PCI device';
+    }
+    return '';
+  }
+  const checkRow = c => `<li class="vms-chk ${c.ok ? 'ok' : 'no'}">${ic(c.ok ? 'i-check' : 'i-warn')}<span><span class="vms-sr">${c.ok ? 'OK: ' : 'Not met: '}</span><b>${esc(c.label)}</b>${c.fix ? `<small>${esc(c.fix)}</small>` : ''}</span></li>`;
+  function devicesScreen(){
+    const P = S.devpick, v = vmOf(P.pk, P.uuid), running = isOn(v);
+    const back = `<div class="vms-head"><button class="btn small vms-back" data-act="back">‹ ${esc((v && v.name) || 'VM')}</button><h2>Add a device</h2></div>`;
+    if(P.loading) return back + '<div class="vms-seen"><span class="spinner spinner-inline"></span>Asking the host which devices it can give…</div>';
+    if(P.err && !P.lists) return back + `<div class="vms-noanswer">${esc(P.err)}</div><div class="vms-actions"><button class="btn small" data-act="dev-add">Try again</button></div>`;
+    const kinds = Object.keys(P.lists || {});
+    const K = (P.lists || {})[P.kind] || { devices: [], checks: [] };
+    const bad = (K.checks || []).filter(c => !c.ok);
+    const list = (K.devices || []).map(x => {
+      const why = devBlocked(P, x, v);
+      const sub = [x.class_name, x.kind === 'pci' ? x.address + (x.driver ? ' · ' + x.driver : '') + (x.group ? ' · IOMMU group ' + x.group : '') : 'bus ' + x.bus + ' · device ' + x.device].filter(Boolean).join(' · ');
+      const also = x.with && x.with.length ? `<small class="vms-seen">Goes with ${esc(x.with.join(', '))} (the same card)</small>` : '';
+      const checks = x.kind === 'pci' && x.checks && x.checks.length && (P.sel === x.id || !x.passable)
+        ? `<ul class="vms-chks">${x.checks.map(checkRow).join('')}</ul>` : '';
+      return `<label class="vms-devopt${why ? ' off' : ''}${P.sel === x.id ? ' on' : ''}"><input type="radio" name="devsel" value="${esc(x.id)}" ${P.sel === x.id ? 'checked' : ''} ${why || P.busy ? 'disabled' : ''}>
+        <span class="vms-dev-t"><b>${esc(x.label)}</b><small class="vms-seen">${esc(sub)}</small>${also}${why ? `<small class="vms-dev-why">${esc(why)}</small>` : ''}${checks}</span></label>`;
+    }).join('');
+    const hostChecks = P.kind === 'pci' && K.checks && K.checks.length
+      ? `<div class="vms-sub">This host</div><ul class="vms-chks">${K.checks.map(checkRow).join('')}</ul>`
+      : bad.length ? `<ul class="vms-chks">${bad.map(checkRow).join('')}</ul>` : '';
+    const vmChecks = P.kind === 'pci' && K.vm_checks && K.vm_checks.length
+      ? `<div class="vms-sub">This VM (recommended)</div><ul class="vms-chks">${K.vm_checks.map(checkRow).join('')}</ul>` : '';
+    const note = P.kind === 'pci'
+      ? `<div class="vms-seen">A PCI card is added to the VM’s settings while it is shut down; the host hands it over when the VM starts and gets it back when it stops.${running ? ' <b>Shut the VM down first.</b>' : ''}</div>`
+      : `<div class="vms-seen">${running ? 'The device is plugged into the running VM right away — no restart needed.' : 'The VM is off: the device is added to its settings and connected when it starts.'}</div>`;
+    // a VM that starts with the host is started by libvirt at boot, past the checks a start from here makes
+    const auto = !!(v && v.autostart);
+    const canAttach = !!P.sel && !P.busy && !bad.length && !auto;
+    return `${back}
+      ${kinds.length > 1 ? `<div class="vms-chips" role="tablist">${kinds.map(kd => `<button class="vms-chip${P.kind === kd ? ' on' : ''}" data-devkind="${esc(kd)}" role="tab" aria-selected="${P.kind === kd}">${esc(DEV_KIND[kd] || kd)}</button>`).join('')}</div>` : ''}
+      ${K.error ? `<div class="vms-noanswer">${esc(K.error)}</div>` : ''}
+      ${auto ? '<div class="vms-noanswer vms-dev-auto">This VM starts with the host (autostart). A device cannot be given to it — a start at boot would take the device without the safety checks. Turn “Start with the host” off in Settings first.</div>' : ''}
+      ${hostChecks}${vmChecks}${K.error ? '' : note}
+      <div class="vms-devlist" role="radiogroup" aria-label="Devices on this host">${list || (K.error ? '' : '<div class="empty">No devices of this kind can be given to a VM on this host.</div>')}</div>
+      <div class="vms-formfoot vms-devfoot">
+        ${P.kind === 'usb' && running ? `<label class="vms-check"><input type="checkbox" id="dev-persist" ${P.persist ? 'checked' : ''} ${P.busy ? 'disabled' : ''}> Keep attached after the VM restarts</label>` : ''}
+        <span class="vms-sp vms-devmsg">${esc(P.msg || '')}</span>
+        <button class="btn small" data-act="back" ${P.busy ? 'disabled' : ''}>Cancel</button>
+        <button class="btn small btn-neon" data-act="dev-attach" ${canAttach ? '' : 'disabled'}>${P.busy ? 'Attaching…' : 'Attach'}</button>
+      </div>`;
+  }
+  async function devAttach(){
+    const P = S.devpick;
+    if(!P || P.busy || !P.sel) return;
+    const K = (P.lists || {})[P.kind] || {};
+    const x = (K.devices || []).find(d => d.id === P.sel);
+    if(!x) return;
+    const running = isOn(vmOf(P.pk, P.uuid));
+    const args = x.kind === 'pci' ? { vm: P.uuid, kind: 'pci', address: x.address }
+      : { vm: P.uuid, kind: 'usb', vendor: x.vendor, product: x.product, bus: x.bus, device: x.device, persist: running ? !!P.persist : true };
+    P.busy = true; P.msg = 'Attaching ' + x.label + '…'; paint();
+    const r = await call(P.pk, 'vm.device.attach', args, { timeout: 90000, retries: 0 });
+    if(S.devpick !== P) return;
+    P.busy = false;
+    if(r.ok){
+      S.devs[P.pk + ':' + P.uuid] = { list: (r.result.vm && r.result.vm.devices) || [] };
+      toast('Attached ' + x.label);
+      S.devpick = null; S.screen = 'vm';
+    }else P.msg = r.noAnswer ? 'No answer from the host — the device may or may not be attached. Go back to see what the VM has.'
+      : (r.error.message || r.error.code);
     paint();
   }
 
@@ -1485,10 +1672,10 @@
         ${b('start', 'Start', 'i-play', 'btn-neon', !running)}${b('shutdown', 'Shut down', 'i-power', 'btn-cyan', running)}${b('reboot', 'Reboot', 'i-refresh', 'btn-cyan', running)}${b('destroy', 'Force off', 'i-stop', 'btn-red', running)}
         <button class="btn small btn-cyan" data-act="console" ${v.state === 'running' ? '' : 'disabled'}>${ic('i-monitor')}${feat.console === 'spice' ? 'Open display' : 'Console'}</button>
         ${role === 'admin' ? '<span class="vmx-sep" aria-hidden="true"></span>' : ''}
-        ${role === 'admin' && feat.hardware ? `<button class="btn small btn-ghost" data-act="settings" ${off ? '' : 'disabled title="Shut it down first"'}>${ic('i-gear')}Settings</button>` : ''}
+        ${role === 'admin' && feat.hardware ? `<button class="btn small btn-ghost" data-act="settings" ${off ? '' : 'title="Shut it down first — press for details"'}>${ic('i-gear')}Settings</button>` : ''}
         ${role === 'admin' && feat.local && off ? `<button class="btn small btn-ghost" data-act="boot-disk">Use installed system</button>` : ''}
         ${role === 'admin' && feat.migrate ? `<button class="btn small btn-ghost" data-act="migrate">${v.migration && v.migration.state ? 'Migration status' : 'Migrate…'}</button>` : ''}
-        ${role === 'admin' ? `<button class="btn small btn-red" data-act="delete" ${off ? '' : 'disabled title="Shut it down first"'}>${ic('i-trash')}Delete</button>` : ''}
+        ${role === 'admin' ? `<button class="btn small btn-red" data-act="delete" ${off ? '' : 'title="Shut it down first — press for details"'}>${ic('i-trash')}Delete</button>` : ''}
       </div>
       ${statusLine(pk)}
       ${tiles([{ l: 'Status', v: stateLabel(v.state), sub: v.state === 'running' && v.uptime_s != null ? 'up ' + esc(fmtDur(v.uptime_s)) : '' },
@@ -1497,6 +1684,7 @@
                { l: 'Network', v: netOf(v) || '—', sub: ips.length ? esc(ips.join(', ')) : (running ? 'no address reported' : '') },
                { l: 'Guest', v: ((v.guest || '—') + ' ' + (v.firmware || '')).trim() }, { l: 'Autostart', v: v.autostart ? 'on' : 'off' }])}
       ${v.missing_media ? `<div class="vms-noanswer">Installer media moved or is missing: ${esc(v.missing_media)}. Open Settings to replace or eject it.</div>` : ''}
+      ${feat.devices ? devicesBlock(pk, uuid, v, role) : ''}
       ${role === 'admin' && feat.snapshots ? snapsBlock(pk, uuid, v) : ''}
       ${role === 'admin' && feat.assign ? `<div class="vms-assign vmx-section"><div class="vms-sub">Assigned to</div>
         ${(v.assigned || []).map(p => `<div class="vms-assignee"><span>${esc(short(p))}</span><button class="btn small" data-unassign="${esc(p)}">Remove</button></div>`).join('') || '<div class="vms-seen">Nobody — only admins can use it.</div>'}
@@ -1674,6 +1862,26 @@ button.vms-vm .vms-pill{grid-row:1/3}button.vms-vm b{overflow-wrap:anywhere}
 .vms-snap,.vms-iso{display:flex;justify-content:space-between;align-items:center;gap:8px;flex-wrap:wrap;background:var(--panel2);border:1px solid var(--line);border-radius:var(--r-sm);padding:8px 10px}
 .vms-snap span,.vms-iso span{min-width:0;overflow-wrap:anywhere}
 .vms-snap-b{display:flex;gap:6px}
+.vms-devs{display:flex;flex-direction:column;gap:6px}
+.vms-devs .btn{display:inline-flex;align-items:center;gap:6px}.vms-devs .btn svg.ic{width:16px;height:16px}
+.vms-dev{display:flex;justify-content:space-between;align-items:center;gap:8px;flex-wrap:wrap;background:var(--panel2);border:1px solid var(--line);border-radius:var(--r-sm);padding:8px 10px}
+.vms-dev-l{display:flex;align-items:center;gap:8px;min-width:0;flex:1}
+.vms-dev-t{display:flex;flex-direction:column;gap:2px;min-width:0;overflow-wrap:anywhere}
+.vms-dev-k{font-size:11px;letter-spacing:.05em;color:var(--neon)}
+.vms-devlist{display:flex;flex-direction:column;gap:6px}
+.vms-devopt{display:flex;align-items:flex-start;gap:10px;background:var(--panel2);border:1px solid var(--line);border-radius:var(--r-sm);padding:10px 12px;cursor:pointer;min-width:0}
+.vms-devopt input{margin-top:3px;flex:0 0 auto;accent-color:var(--neon)}
+.vms-devopt.on{border-color:var(--neon);background:rgba(var(--accent-rgb),.10)}
+.vms-devopt.off{cursor:default;opacity:.75}
+.vms-dev-why{color:var(--amber)}
+.vms-chks{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:4px}
+.vms-chk{display:flex;gap:8px;align-items:flex-start;font-size:13px;overflow-wrap:anywhere}
+.vms-chk>svg.ic{flex:0 0 16px;width:16px;height:16px;margin-top:1px}.vms-chk.ok>svg.ic{color:var(--green)}.vms-chk.no>svg.ic{color:var(--amber)}
+.vms-sr{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0);white-space:nowrap}
+.vms-chk small{display:block;color:var(--muted);white-space:pre-wrap}
+.vms-chk>span:last-child{min-width:0}
+.vms-devfoot{align-items:center;flex-wrap:wrap}.vms-devfoot .vms-check{display:flex;align-items:center;gap:6px;font-size:14px}
+.vms-devmsg{color:var(--muted);font-size:13px;min-width:0;overflow-wrap:anywhere}
 .vms-pick{display:flex;align-items:center;gap:8px;flex-wrap:wrap;min-width:0}
 .vms-pick .vms-seen{overflow-wrap:anywhere;min-width:0}
 .vms-upload{cursor:pointer}
@@ -1775,6 +1983,7 @@ html.pc-oswin .vmc{top:38px}
     else if(S.screen === 'isos' && S.iso) main = isosScreen();
     else if(S.screen === 'access' && S.access) main = accessScreen();
     else if(S.screen === 'find') main = findScreen();
+    else if(S.screen === 'devices' && S.devpick && S.host) main = devicesScreen();
     else if(S.screen === 'all' && S.hosts.length) main = allScreen(wide);
     else if(S.screen === 'vm' && S.host) main = vmScreen(S.host, S.vm);
     else if(S.screen === 'create' && S.host) main = createScreen(S.host);
@@ -1813,6 +2022,7 @@ html.pc-oswin .vmc{top:38px}
     on('[data-act=remove-host]', () => removeHost(S.host));
     on('[data-act=back]', () => {
       if(S.screen === 'migrate'){ stopMigWatch(); S.mig = null; S.screen = 'vm'; }
+      else if(S.screen === 'devices'){ if(S.devpick && S.devpick.busy) return; S.devpick = null; S.screen = 'vm'; loadDevices(S.host, S.vm); }
       else if(S.screen === 'vm' && S.fromAll){ S.screen = 'all'; S.vm = ''; }
       else if(S.screen === 'vm' || S.screen === 'create'){ S.screen = 'host'; S.vm = ''; S.create = null; }
       else if(S.screen === 'isos' || S.screen === 'access'){ S.screen = 'host'; S.iso = null; S.access = null; }
@@ -1822,7 +2032,8 @@ html.pc-oswin .vmc{top:38px}
     });
     on('[data-filter]', el => { S.filter = el.dataset.filter; paint(); });
     const openVm = (pk, uuid) => { S.fromAll = S.screen === 'all'; if(pk) S.host = pk; S.vm = uuid; S.screen = 'vm'; paint();
-      if(roleOf(S.host) === 'admin' && featuresOf(S.host).snapshots) loadSnaps(S.host, S.vm); };
+      if(roleOf(S.host) === 'admin' && featuresOf(S.host).snapshots) loadSnaps(S.host, S.vm);
+      if(featuresOf(S.host).devices) loadDevices(S.host, S.vm); };
     on('[data-vm]', el => openVm(el.dataset.vmHost, el.dataset.vm));
     feed.querySelectorAll('tr[data-vm]').forEach(el => { el.onkeydown = (e) => { if(e.key === 'Enter' || e.key === ' '){ e.preventDefault(); openVm(el.dataset.vmHost, el.dataset.vm); } }; });
     on('[data-leaf-vm]', el => openVm(el.dataset.leafHost, el.dataset.leafVm));
@@ -1834,13 +2045,13 @@ html.pc-oswin .vmc{top:38px}
     on('[data-act=console]', () => { const v = ((S.data[S.host] || {}).vms || []).find(x => x.uuid === S.vm); if(v) openConsole(S.host, v); });
     on('[data-act=assign]', () => assign(S.host, S.vm));
     on('[data-unassign]', el => unassign(S.host, S.vm, el.dataset.unassign));
-    on('[data-act=delete]', () => { const v = ((S.data[S.host] || {}).vms || []).find(x => x.uuid === S.vm); if(v) del(S.host, v); });
+    on('[data-act=delete]', async () => { if(!await _needsOff('delete it')) return; const v = ((S.data[S.host] || {}).vms || []).find(x => x.uuid === S.vm); if(v) del(S.host, v); });
     on('[data-act=create]', () => openCreate(S.host));
     on('[data-act=submit-create]', () => submitCreate(S.host));
     // ---- phase 2
     on('[data-act=find]', () => findHosts());
     on('[data-act=find-back]', () => { S.find = null; S.screen = 'hosts'; paint(); });
-    on('[data-act=settings]', () => openSettings(S.host, S.vm));
+    on('[data-act=settings]', async () => { if(await _needsOff('change its settings')) openSettings(S.host, S.vm); });
     on('[data-act=settings-leave]', () => leaveSettings());
     on('[data-act=settings-save]', () => saveSettings());
     const sf = feed.querySelector('#vms-settings');
@@ -1852,6 +2063,14 @@ html.pc-oswin .vmc{top:38px}
     on('[data-act=boot-disk]', async () => { const pk = S.host, uuid = S.vm; const r = await call(pk, 'vm.boot_disk', { vm: uuid });
       if(!r.ok) toast(r.error.message || r.error.code); refresh(pk); });
     on('[data-act=snap-create]', () => snapCreate(S.host, S.vm));
+    // ---- devices
+    on('[data-act=dev-add]', () => openDevicePicker(S.host, S.vm));
+    on('[data-dev-detach]', el => devDetach(S.host, S.vm, el.dataset.devDetach));
+    on('[data-devkind]', el => { const P = S.devpick; if(P && !P.busy){ P.kind = el.dataset.devkind; P.sel = ''; P.msg = ''; paint(); } });
+    on('[data-act=dev-attach]', () => devAttach());
+    feed.querySelectorAll('input[name=devsel]').forEach(el => { el.onchange = () => { const P = S.devpick; if(P && el.checked){ P.sel = el.value; P.msg = ''; paint(); } }; });
+    const dp = feed.querySelector('#dev-persist');
+    if(dp) dp.onchange = () => { if(S.devpick) S.devpick.persist = dp.checked; };
     on('[data-snap-revert]', el => snapRevert(S.host, S.vm, el.dataset.snapRevert));
     on('[data-snap-delete]', el => snapDelete(S.host, S.vm, el.dataset.snapDelete));
     on('[data-act=isos]', () => openIsos(S.host));
@@ -1886,7 +2105,7 @@ html.pc-oswin .vmc{top:38px}
       closeConsole();
       stopMigWatch();
       Object.assign(S, { pk, hosts: [], data: {}, screen: 'hosts', host: '', vm: '', filter: 'all',
-                         doc: { read: false, ok: false, at: 0 }, create: null, busy: {}, mig: null });
+                         doc: { read: false, ok: false, at: 0 }, create: null, busy: {}, mig: null, devs: {}, devpick: null });
       rpc = null;
       if(pk) loadCache();
     }

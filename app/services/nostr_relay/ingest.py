@@ -165,7 +165,7 @@ async def sync_tick(store, gate, server, upstream, cfg) -> int:
         await store.kv_set("sync_offset", str(i))
 
     for ev in new_events:
-        server.subs.fanout(ev, server._send)
+        server.subs.fanout(ev, server._send, server._can_serve_event)
 
     if cfg.get("fetch_ancestors", True) and new_events:
         try:
@@ -215,7 +215,7 @@ async def _backfill_filter(store, server, upstream, base_filter: dict, *, direct
                 continue
             if await store.add_event(ev, origin="wot"):
                 stored += 1
-                server.subs.fanout(ev, server._send)
+                server.subs.fanout(ev, server._send, server._can_serve_event)
         if oldest >= until:
             break  # no older events found → done
         until = oldest - 1
@@ -373,7 +373,7 @@ async def refresh_member_lists(store, server, upstream, pubkey: str, *, direct: 
                 continue
             if await store.add_event(ev, origin="wot"):
                 stored += 1
-                server.subs.fanout(ev, server._send)
+                server.subs.fanout(ev, server._send, server._can_serve_event)
     except Exception as e:
         logger.debug("[nostr-relay] list refresh failed for %s…: %s", pubkey[:12], e)
     if stored:
@@ -423,7 +423,7 @@ async def backfill_ancestors(store, server, upstream, events, max_ancestors: int
                 continue
             if await store.add_event(ev, origin="ancestor"):
                 fetched += 1
-                server.subs.fanout(ev, server._send)
+                server.subs.fanout(ev, server._send, server._can_serve_event)
                 for t in ev.get("tags", []):
                     if len(t) >= 2 and t[0] == "e" and _is_evid(t[1]):
                         nxt.add(t[1])

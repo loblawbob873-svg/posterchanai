@@ -37,6 +37,21 @@
 # =============================================================================
 
 # Map the Upgrade header so WebSocket connections (chat, the relay) proxy correctly.
+# >>> pc-native-cors-map
+# THE NATIVE APPS' ORIGINS, for the one response the APP never gets to write: nginx's own error page.
+# While the app restarts (every deploy) nginx answers 502 itself, with no CORS header, so the desktop
+# app (app://posterchan) and the APK log "blocked by CORS policy: No 'Access-Control-Allow-Origin'"
+# about what is really "the server is restarting" -- measured on the PosterChanOS VM: both such lines
+# in its log fell inside server1's restart windows, to the second. Keep in step with
+# NATIVE_APP_ORIGINS in app/auth.py; anything else maps to "" and add_header then sends nothing.
+map $http_origin $pc_native_cors {
+    default                 "";
+    "app://posterchan"      $http_origin;
+    "https://localhost"     $http_origin;
+    "capacitor://localhost" $http_origin;
+}
+# <<< pc-native-cors-map
+
 map $http_upgrade $connection_upgrade {
     default upgrade;
     ''      close;
@@ -116,6 +131,56 @@ server {
     proxy_set_header X-Forwarded-Host  $http_host;
     proxy_set_header Upgrade           $http_upgrade;
     proxy_set_header Connection        $connection_upgrade;
+
+    # >>> pc-native-cors-upstream-down
+    # The app is down (restarting, a deploy) or too slow: nginx makes the 502/503/504 itself, so the
+    # app's CORS middleware never runs. A native app then gets an answer it is not allowed to READ, and
+    # the console says CORS -- the wrong diagnosis. For the native origins only, each code is answered
+    # readably and as what it is: a refused upstream (502) is "restarting" (503 + Retry-After), an
+    # nginx 503 is "unavailable", and an upstream TIMEOUT stays a 504 -- a slow app is not a restart.
+    # A PREFLIGHT gets 204 with the grant, or every request carrying Authorization or a JSON body
+    # would still fail CORS on the preflight. Every other origin gets nginx's ordinary page with its
+    # ORIGINAL status. Only errors NGINX makes are caught (no proxy_intercept_errors), so the app's
+    # own 503s pass through untouched.
+    error_page 502 = @pc_upstream_502;
+    error_page 503 = @pc_upstream_503;
+    error_page 504 = @pc_upstream_504;
+    location @pc_upstream_502 {
+        if ($pc_native_cors = "") { return 502; }
+        add_header Access-Control-Allow-Origin      $pc_native_cors always;
+        add_header Access-Control-Allow-Credentials true always;
+        add_header Access-Control-Allow-Methods     "GET, POST, PUT, PATCH, DELETE, OPTIONS" always;
+        add_header Access-Control-Allow-Headers     $http_access_control_request_headers always;
+        add_header Vary                             Origin always;
+        add_header Retry-After                      5 always;
+        if ($request_method = OPTIONS) { return 204; }
+        default_type application/json;
+        return 503 '{"error":"the server is restarting"}';
+    }
+    location @pc_upstream_503 {
+        if ($pc_native_cors = "") { return 503; }
+        add_header Access-Control-Allow-Origin      $pc_native_cors always;
+        add_header Access-Control-Allow-Credentials true always;
+        add_header Access-Control-Allow-Methods     "GET, POST, PUT, PATCH, DELETE, OPTIONS" always;
+        add_header Access-Control-Allow-Headers     $http_access_control_request_headers always;
+        add_header Vary                             Origin always;
+        add_header Retry-After                      5 always;
+        if ($request_method = OPTIONS) { return 204; }
+        default_type application/json;
+        return 503 '{"error":"the server is unavailable"}';
+    }
+    location @pc_upstream_504 {
+        if ($pc_native_cors = "") { return 504; }
+        add_header Access-Control-Allow-Origin      $pc_native_cors always;
+        add_header Access-Control-Allow-Credentials true always;
+        add_header Access-Control-Allow-Methods     "GET, POST, PUT, PATCH, DELETE, OPTIONS" always;
+        add_header Access-Control-Allow-Headers     $http_access_control_request_headers always;
+        add_header Vary                             Origin always;
+        if ($request_method = OPTIONS) { return 204; }
+        default_type application/json;
+        return 504 '{"error":"the server took too long to answer"}';
+    }
+    # <<< pc-native-cors-upstream-down
     proxy_buffering off;
 
     # ---- Optional built-in CODE office editor --------------------------------

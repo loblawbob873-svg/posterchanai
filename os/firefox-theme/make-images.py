@@ -20,6 +20,9 @@ from PIL import Image, ImageDraw
 HERE = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.dirname(os.path.dirname(HERE))
 LOGO = os.path.join(ROOT, "static", "icon-512.png")
+# The CLOSE-UP portrait, not the full-body logo: at tab-strip height a whole figure is a smudge,
+# and "improve the PosterChan avatar so it's more visible" means a FACE. Same character.
+FACE = os.path.join(ROOT, "static", "posterchan-relay.png")
 LOGO_BG = (26, 26, 46)           # the logo's own backdrop, keyed out for the banner
 BANNER_H = 40                    # CSS px; the tab strip is ~40-44 high, the toolbar below is opaque
 BANNER_W = 420
@@ -73,7 +76,8 @@ def keyed_logo():
 BANNER_W = 3840                  # wider than any screen, so the strip is covered edge to edge
 MASCOT_ZONE = 150                # px at the right end that hold the mascot at full strength
 RULE_H = 2                       # the neon rule under the tabs, where no title is ever drawn
-STOPS = [(0.0, (70, 18, 140)), (0.4, (140, 20, 130)), (0.75, (10, 90, 120)), (1.0, (80, 16, 130))]
+# A calm wash: indigo → violet → a hint of teal at the far right, all dark enough for tab text.
+STOPS = [(0.0, (46, 16, 96)), (0.45, (92, 20, 110)), (0.8, (30, 40, 104)), (1.0, (12, 58, 92))]
 
 
 def _grad(t):
@@ -93,52 +97,59 @@ def _cap(col, bg, text, min_ratio):
 
 
 def banner(frame, text, min_ratio=4.6):
-    import random
-    rnd = random.Random(1984)
+    """A CALM strip with ONE thing on it: her.
+
+    The first attempt drew a lit skyline, a neon grid and scanlines across the whole tab bar —
+    "too noisy with the city background", and every bright dot competed with the mascot it was
+    supposed to frame. Art themes that work (the Sleeping Miku theme the user pointed at) are a
+    smooth dark wash with a single character on one side. So: a soft horizontal gradient, one hair-
+    thin neon rule under the tabs, and the mascot HEAD (not a bust — at 40px a head is a face and a
+    bust is a smudge) at full colour in MASCOT_ZONE at the right end.
+
+    Every pixel a tab title can sit on is still capped at 4.5:1 against the tab text; the mascot's
+    own corner is the exception, and it is the last place a row of tabs reaches.
+    """
     W, H = BANNER_W, BANNER_H
     im = Image.new("RGBA", (W, H))
     d = ImageDraw.Draw(im)
     for x in range(W):
         d.line([(x, 0), (x, H - 1)], fill=_cap(_grad(x / (W - 1)), frame, text, min_ratio) + (255,))
-    # Scanlines and a neon grid, dim.
-    for y in range(0, H - RULE_H, 3):
-        d.line([(0, y), (W, y)], fill=(0, 0, 0, 40))
-    for x in range(0, W, 28):
-        t = x / W
-        col = tuple(round(NEON[i] * (1 - t) + NEON2[i] * t) for i in range(3))
-        d.line([(x, 0), (x, H - RULE_H)], fill=_cap(tuple(round(v * .7) for v in col), frame, text, min_ratio) + (255,))
-    # A skyline along the bottom, with lit windows.
-    x = 0
-    while x < W - MASCOT_ZONE:
-        bw, bh = rnd.randint(14, 34), rnd.randint(8, H - 10)
-        d.rectangle([x, H - RULE_H - bh, x + bw, H - RULE_H - 1], fill=(8, 4, 18, 255))
-        for wy in range(H - RULE_H - bh + 3, H - RULE_H - 2, 4):
-            for wx in range(x + 3, x + bw - 2, 5):
-                if rnd.random() < .35:
-                    col = NEON if rnd.random() < .6 else NEON2
-                    d.rectangle([wx, wy, wx + 1, wy + 1], fill=_cap(col, frame, text, min_ratio) + (255,))
-        x += bw + rnd.randint(2, 10)
-    # The neon rule: full strength, cyan into magenta.
+    # A single neon rule along the bottom: cyan into magenta, full strength — tab titles are centred,
+    # never on the bottom rows, and it is what makes the strip read as PosterChan at a glance.
     for x in range(W):
         t = x / (W - 1)
         col = tuple(round(NEON[i] * (1 - t) + NEON2[i] * t) for i in range(3))
         d.line([(x, H - RULE_H), (x, H - 1)], fill=col + (255,))
-    # Every pixel a tab title can sit on is checked here, not only in the test.
+    # The mascot: her HEAD, as tall as the strip, full colour, with a soft glow behind it so she
+    # separates from the wash without a hard plate (a bordered box is the "sticker" look).
+    face = Image.open(FACE).convert("RGBA")
+    head = face.crop((36, 64, 212, 240))           # hood, face and chin, square
+    hh = H - RULE_H
+    head = head.resize((hh, hh), Image.LANCZOS)
+    # Feathered into the wash: an elliptical alpha ramp, so there is no box edge or sticker outline.
+    mask = Image.new("L", head.size, 0)
+    md = ImageDraw.Draw(mask)
+    for r in range(hh // 2, 0, -1):
+        md.ellipse([hh // 2 - r, hh // 2 - r, hh // 2 + r, hh // 2 + r],
+                   fill=int(255 * min(1.0, (1 - r / (hh / 2)) * 3.2)))
+    head.putalpha(Image.composite(head.getchannel("A"), Image.new("L", head.size, 0), mask.point(lambda v: 255 if v else 0))
+                  .point(lambda v: v) if False else Image.eval(mask, lambda v: v))
+    hx = W - head.width - 40
+    glow = Image.new("RGBA", (W, H), (0, 0, 0, 0))
+    gd = ImageDraw.Draw(glow)
+    cx, cy = hx + head.width // 2, hh // 2
+    for r in range(hh, 0, -2):
+        a = int(46 * (1 - r / hh) ** 2)
+        gd.ellipse([cx - r, cy - r // 2 - 2, cx + r, cy + r // 2 + 2], fill=NEON2 + (a,))
+    im.alpha_composite(glow)
+    # Everything a tab title can sit on, checked here as well as in the test.
     px = im.load()
     for y in range(H - RULE_H):
         for x in range(W - MASCOT_ZONE):
             if contrast(text, px[x, y][:3]) < min_ratio:
                 px[x, y] = _cap(px[x, y][:3], frame, text, min_ratio) + (255,)
-    # The mascot, in full colour, on a dark plate with a neon ring.
-    logo = keyed_logo()
-    bust = logo.crop((150, 44, 366, 244))
-    bh = H - RULE_H - 2
-    bust = bust.resize((round(bust.width * bh / bust.height), bh), Image.LANCZOS)
-    bx = W - bust.width - 44
-    d.rounded_rectangle([bx - 6, 0, bx + bust.width + 6, H - RULE_H - 1], radius=8,
-                        fill=(10, 6, 24, 255), outline=NEON2 + (255,), width=1)
-    im.alpha_composite(bust, (bx, 1))
-    return im, (bx, bust.width)
+    im.alpha_composite(head, (hx, 0))
+    return im, (hx, head.width)
 
 
 def pixels(im):

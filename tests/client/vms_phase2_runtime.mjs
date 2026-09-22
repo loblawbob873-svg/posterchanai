@@ -102,7 +102,7 @@ const never = () => new Promise(() => {});
   const who = await C('local', 'host.whoami');
   assert.equal(who.result.role, 'admin');
   eq({ ...who.result.host.features }, { assign: false, migrate: false, snapshots: false, console: 'spice', iso: 'picker',
-                                              hardware: true, access: false, local: true });
+                                              hardware: true, access: false, local: true, devices: true });
   const get = await C('local', 'vm.get', { vm: 'win11' });
   eq({ ...get.result.vm.hardware, disks: undefined },
                    { boot: 'cdrom', input: 'tablet', nics: 1, disks: undefined, media: 'Win11.iso', media_path: '/h/isos/Win11.iso', cdrom: true });
@@ -150,6 +150,29 @@ const never = () => new Promise(() => {});
   assert.ok((await C('local', 'vm.delete', { vm: 'deb', delete_disks: true })).ok);
   eq(vlog[vlog.length - 1], ['remove', 'deb', true]);
   assert.equal((await C('local', 'vm.snapshot.create', { vm: 'deb', name: 'x' })).error.code, 'unsupported');
+
+  // ---- devices on "This computer": USB through pcVM.usb*, PCI refused with the reason (a server feature)
+  const stick = { vendor: '0781', product: '5581', bus: 1, device: 4, label: 'SanDisk Ultra (0781:5581)', busy: '', access: true, used_by: null };
+  const attached = [{ kind: 'usb', vendor: '0781', product: '5581', bus: 1, device: 4, label: stick.label, present: true, key: '0781:5581', live: true, persistent: false }];
+  const dstub = pcVMStub(vlog, { details: () => details, usbList: () => ({ ok: true, checks: [{ id: 'qemu-usb', ok: true }], devices: [stick] }),
+                                 usbAttach: () => ({ ok: true, devices: attached }), usbDevices: () => ({ ok: true, devices: attached }),
+                                 usbDetach: () => ({ ok: false, code: 'not_found', error: 'that device is not attached to this VM' }) });
+  t.g.pcVM = dstub;
+  vlog.length = 0;
+  const hl = await C('local', 'host.devices.list', { vm: 'win11' });
+  assert.ok(hl.ok);
+  eq(hl.result.kinds.usb.devices.map(d => [d.kind, d.id, d.label]), [['usb', '0781:5581@1-4', stick.label]]);
+  assert.match(hl.result.kinds.pci.error, /server VM host/, 'PCI on This computer says why it cannot');
+  const at = await C('local', 'vm.device.attach', { vm: 'win11', kind: 'usb', vendor: '0781', product: '5581', bus: 1, device: 4, persist: false });
+  assert.ok(at.ok, JSON.stringify(at));
+  eq(vlog.find(x => x[0] === 'usbAttach'), ['usbAttach', 'win11', { vendor: '0781', product: '5581', bus: 1, device: 4, persist: false }]);
+  eq(at.result.vm.devices, attached);
+  const gd = await C('local', 'vm.get', { vm: 'win11' });
+  eq(gd.result.vm.devices, attached, 'vm.get carries the VM’s devices');
+  const dt = await C('local', 'vm.device.detach', { vm: 'win11', kind: 'usb', vendor: '0781', product: '5581' });
+  eq([dt.ok, dt.error.code], [false, 'not_found'], 'a desktop refusal keeps its code');
+  assert.equal((await C('local', 'vm.device.attach', { vm: 'win11', kind: 'pci', address: '0000:01:00.0' })).error.code, 'unsupported');
+  t.g.pcVM = stub;
 
   await t.g.PCVms._addHost();
   await tick(10);

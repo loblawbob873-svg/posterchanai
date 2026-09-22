@@ -121,6 +121,10 @@ for module in bip340 bech32; do
   install -m 0644 "$(dirname "$SRC")/../app/services/nostr/$module.py" \
     "$TMP/app-misc/posterchanos-shell/files/$module.py"
 done
+# pc-usb-grant refuses exactly what the VM host refuses because it runs the host's OWN scanner — injected
+# from app/services/vmhost/usb.py here rather than kept as a second copy that could drift.
+install -m 0644 "$(dirname "$SRC")/../app/services/vmhost/usb.py" \
+  "$TMP/app-misc/posterchanos-shell/files/pc_usb_scan.py"
 # ONE CANONICAL INSTALLER. Keeping a second 3,000-line gentoo.sh under FILESDIR guarantees drift;
 # instead inject the repository's os/gentoo.sh into the staging tree that becomes the real overlay.
 # The ebuild owns /usr/bin/gentoo.sh, so every ordinary update now refreshes the LiveUSB/repair tool.

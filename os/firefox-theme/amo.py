@@ -7,7 +7,11 @@ submitted ("version already exists"), so a review slower than one CI job would s
 RESUMABLE instead: every run first asks AMO whether this version exists, and only uploads when it
 does not — so a scheduled re-run simply picks up the signed file once review is done.
 
-  amo.py --xpi FILE --out SIGNED.xpi [--timeout SECONDS]
+  amo.py --xpi FILE --out SIGNED.xpi [--timeout SECONDS] [--channel listed|unlisted]
+
+LISTED waits for a human review (1.1.0 sat there for days while PosterChanOS kept shipping the old
+theme); UNLISTED is signed automatically within minutes and is what PosterChanOS installs. The
+channel for each version is recorded in os/firefox-theme/amo-channel.
 
 Exit 0: SIGNED.xpi written (Mozilla-signed, public). 3: submitted/pending review, nothing written.
 1: AMO refused it (validation errors are printed). Credentials: AMO_JWT_ISSUER / AMO_JWT_SECRET.
@@ -91,7 +95,7 @@ def is_signed(path):
         return any(n.startswith("META-INF/") and n.endswith((".rsa", ".p7s")) for n in z.namelist())
 
 
-def publish(amo, xpi, out, timeout=2400, poll=20, sleep=time.sleep, clock=time.monotonic):
+def publish(amo, xpi, out, timeout=2400, poll=20, sleep=time.sleep, clock=time.monotonic, channel="listed"):
     m = manifest_of(xpi)
     guid, ver = m["browser_specific_settings"]["gecko"]["id"], m["version"]
     vpath = f"/addons/addon/{guid}/versions/v{ver}/"
@@ -99,7 +103,10 @@ def publish(amo, xpi, out, timeout=2400, poll=20, sleep=time.sleep, clock=time.m
     if status == 404:
         with open(xpi, "rb") as f:
             blob = f.read()
-        status, up = amo.call("POST", "/addons/upload/", data={"channel": "listed"},
+        if channel not in ("listed", "unlisted"):
+            print("channel must be listed or unlisted", file=sys.stderr)
+            return 2
+        status, up = amo.call("POST", "/addons/upload/", data={"channel": channel},
                               files={"upload": (os.path.basename(xpi), blob)})
         if status >= 400:
             print("upload refused:", json.dumps(up)[:1500], file=sys.stderr)
@@ -116,17 +123,18 @@ def publish(amo, xpi, out, timeout=2400, poll=20, sleep=time.sleep, clock=time.m
             return 1
         # An add-on that has only ever had UNLISTED versions has no listing yet; a listed version
         # needs one (summary + category). Idempotent, so it is simply sent every first submission.
-        status, r = amo.call("PATCH", f"/addons/addon/{guid}/",
-                             data={"categories": CATEGORIES, "summary": {"en-US": SUMMARY},
-                                   "homepage": {"en-US": m.get("homepage_url", "https://poster.place")}})
-        if status >= 400:
-            print("note: listing metadata not accepted:", json.dumps(r)[:800], file=sys.stderr)
+        if channel == "listed":
+            status, r = amo.call("PATCH", f"/addons/addon/{guid}/",
+                                 data={"categories": CATEGORIES, "summary": {"en-US": SUMMARY},
+                                       "homepage": {"en-US": m.get("homepage_url", "https://poster.place")}})
+            if status >= 400:
+                print("note: listing metadata not accepted:", json.dumps(r)[:800], file=sys.stderr)
         status, v = amo.call("POST", f"/addons/addon/{guid}/versions/",
                              data={"upload": up["uuid"], "license": LICENSE})
         if status >= 400:
             print("version refused:", json.dumps(v)[:1500], file=sys.stderr)
             return 1
-        print(f"submitted {guid} {ver} to the public listing")
+        print(f"submitted {guid} {ver} ({channel})")
     elif status >= 400:
         print("could not read the version:", status, json.dumps(v)[:800], file=sys.stderr)
         return 1
@@ -162,12 +170,13 @@ def main(argv=None):
     ap.add_argument("--xpi", required=True)
     ap.add_argument("--out", required=True)
     ap.add_argument("--timeout", type=int, default=2400)
+    ap.add_argument("--channel", choices=("listed", "unlisted"), default="listed")
     a = ap.parse_args(argv)
     iss, sec = os.environ.get("AMO_JWT_ISSUER"), os.environ.get("AMO_JWT_SECRET")
     if not iss or not sec:
         print("AMO_JWT_ISSUER / AMO_JWT_SECRET are not set", file=sys.stderr)
         return 2
-    return publish(AMO(iss, sec), a.xpi, a.out, timeout=a.timeout)
+    return publish(AMO(iss, sec), a.xpi, a.out, timeout=a.timeout, channel=a.channel)
 
 
 if __name__ == "__main__":

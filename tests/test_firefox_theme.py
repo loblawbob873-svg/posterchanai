@@ -255,6 +255,24 @@ class TheLogo(unittest.TestCase):
         b = self.banner()
         self.assertGreaterEqual(b.width, 1920, "the strip must cover the tab bar edge to edge")
 
+    def test_the_strip_is_calm_not_busy(self):
+        """ "our firefox theme is too noisy with the city background" — the skyline, neon grid and
+        scanlines competed with the mascot they framed. Outside her corner the strip must be a SMOOTH
+        wash: little brightness variation along a row, and no high-frequency flicker between
+        neighbouring pixels (a skyline/grid scores far above both)."""
+        import statistics
+        b = self.banner().convert("RGB")
+        W, H = b.size
+        lum = lambda p: 0.2126 * p[0] + 0.7152 * p[1] + 0.0722 * p[2]
+        rows, flick = [], []
+        for y in range(2, H - MAKER.RULE_H - 2, 4):
+            vals = [lum(b.getpixel((x, y))) for x in range(0, W - MAKER.MASCOT_ZONE, 3)]
+            rows.append(statistics.pstdev(vals))
+            flick.append(statistics.mean(abs(vals[i] - vals[i - 1]) for i in range(1, len(vals))))
+        assert max(rows) < 14, f"the strip is busy along a row (worst sigma {max(rows):.1f})"
+        assert max(flick) < 2.0, f"neighbouring pixels flicker (worst {max(flick):.2f}) — noise is back"
+
+
     def test_the_icon_is_the_posterchan_logo(self):
         logo = Image.open(ROOT / "static" / "icon-512.png").convert("RGB").resize((128, 128), Image.LANCZOS)
         icon = Image.open(THEME / MANIFEST["icons"]["128"]).convert("RGBA")

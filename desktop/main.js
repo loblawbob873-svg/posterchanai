@@ -217,6 +217,7 @@ function instanceChosen() { return cfg.instance != null && String(cfg.instance).
 // Windows, denies itself the camera, and ignores its own IPC.
 const { originOf, isOurs: _isOurs, isWebxdcSandbox: _isWebxdcSandbox } = require('./origin');
 const { isTrustedPage } = require('./page-trust');
+const { showWhenReady } = require('./show-when-ready');
 // "Ours" = the bundle, plus the instance's own pages (the client frames <instance>/admin). With no
 // instance only the bundle qualifies, which is exactly right.
 function isOurs(url) { return _isOurs(url, APP_ORIGIN, instance()); }
@@ -1428,7 +1429,7 @@ function pickScreenSource() {
             additionalArguments: ['--pc-preload-dir=' + __dirname] },
         });
         ipcMain.once('pc:screen:pick', (_e, id) => finish(id));
-        pick.once('ready-to-show', () => { if(!pick.isDestroyed()) pick.show(); });
+        showWhenReady(pick, () => pick.show());
         pick.on('closed', () => { ipcMain.removeAllListeners('pc:screen:pick'); finish(null); });
         /* A picker renderer is disposable, but its PROMISE is not. A missing packaged picker.html
          * or a renderer killed while thumbnails decode used to leave this BrowserWindow black and
@@ -2494,15 +2495,17 @@ async function openPopupWindow(e, kind, rect, arg){
    * desktop surfaces. That matters twice: sway can only be told to move a window it can name, and
    * pc-window-snap decides what a window IS from its title. */
   p.on('page-title-updated', (e) => e.preventDefault());
-  p.once('ready-to-show', () => {
-    if(p.isDestroyed()) return;
+  /* NOT ON THE ready-to-show EVENT ALONE: on a slow, GPU-less machine a hidden window whose page
+   * paints later than ~100ms never gets that event, so the menu was never shown at all. See
+   * show-when-ready.js for the measurement. */
+  showWhenReady(p, () => {
     p.show();
     const geometry = { x: originX + num(r.x, -20000, 20000, 0) * (sourceScale ? sourceScale.x : 1),
                        y: originY + num(r.y, -20000, 20000, 0) * (sourceScale ? sourceScale.y : 1),
                        w: p.getBounds().width, h: p.getBounds().height };
     if(sourceScale) geometry.sourceScale = sourceScale;
     placePopupWindow(p, geometry);
-  });
+  }, { stillWanted: () => _popupWin === p });
   if(!sticky) p.on('blur', () => { if(_popupWin === p) closePopupWindow(); });
   p.on('closed', () => {
     if(_popupWin !== p) return;              // already reported by closePopupWindow
@@ -3699,6 +3702,14 @@ ipcMain.handle('pc:vm:boot-disk', (e, name) => { fsGuard(e); return vm.bootDisk(
 ipcMain.handle('pc:vm:add-network', (e, name) => { fsGuard(e); return vm.addNetwork(name); });
 ipcMain.handle('pc:vm:set-network', (e, name, network) => { fsGuard(e); return vm.setNetwork(name, network && network.type === 'bridge' ? { type: 'bridge', name: String(network.name || '') } : { type: 'user' }); });
 ipcMain.handle('pc:vm:gaming-mouse', (e, name, on) => { fsGuard(e); return vm.gamingMouse(name, !!on); });
+/* USB passthrough for "This computer" (vmusb.js). Ids only cross the bridge — the XML is built in vmusb.js. */
+const usbOpts = (o) => ({ vendor: String((o && o.vendor) || ''), product: String((o && o.product) || ''),
+  bus: o && Number.isInteger(o.bus) ? o.bus : null, device: o && Number.isInteger(o.device) ? o.device : null,
+  persist: !(o && o.persist === false) });
+ipcMain.handle('pc:vm:usb-list', (e) => { fsGuard(e); return vm.usbList(); });
+ipcMain.handle('pc:vm:usb-devices', (e, name) => { fsGuard(e); return vm.usbDevices(name); });
+ipcMain.handle('pc:vm:usb-attach', (e, name, o) => { fsGuard(e); return vm.usbAttach(name, usbOpts(o)); });
+ipcMain.handle('pc:vm:usb-detach', (e, name, o) => { fsGuard(e); return vm.usbDetach(name, usbOpts(o)); });
 ipcMain.handle('pc:vm:pick-iso', async (e) => {
   fsGuard(e); const r=await dialog.showOpenDialog(dialogOwner(e),{title:'Choose installation ISO',properties:['openFile'],
     filters:[{name:'Disc images',extensions:['iso','img']},{name:'All files',extensions:['*']}]});

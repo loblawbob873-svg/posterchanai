@@ -9,7 +9,7 @@
  * cross-origin response, whose status is masked to 0, so an avatar host's 404/blip would be stored as
  * "valid" and served forever, breaking that avatar on every later view (the "no avatars" bug). Opaque
  * third-party avatars still load fresh via the browser's own HTTP cache, which already dedupes them. */
-const CACHE = 'pc-nostr-v1827';
+const CACHE = 'pc-nostr-v1831';
 const MEDIA_CACHE = 'pc-media-v2';        // bump → drops the old (possibly poisoned) media cache on activate
 // Content-addressed blobs fetched by JS rather than by an element: the ENCRYPTED DRIVE — Notes
 // attachments, music tracks, an offloaded note body, the files index. They land in their OWN cache,
@@ -178,6 +178,9 @@ const SHELL = [
   '/static/icon-192.png',
   '/static/icon-512.png',
 ];
+// Derived from SHELL, never a second list: a picture added to the precache above is shell art by that
+// very act, and a hand-kept copy of these paths would drift the first time one was added to only one.
+const SHELL_PATHS = new Set(SHELL);
 
 self.addEventListener('install', e => {
   // App is media-only (the bundle serves the shell), and SHELL lists '/client' which 404s in the app —
@@ -676,9 +679,20 @@ self.addEventListener('fetch', e => {
     url.pathname.startsWith('/static/js/client/') || url.pathname === '/static/css/client.css';
   const isVendorOrIcon = url.pathname.startsWith('/static/vendor/') ||
     /\/static\/(icon-\d+|posterchan-relay|favicon|apple-touch-icon)\.png$/.test(url.pathname);
+  // SHELL ART SHIPS WITH THE BUILD, SO IT MUST FOLLOW THE BUILD. The regex above is a hand-kept list
+  // of the app's own pictures and the default WALLPAPER was not in it (a .webp, added years later),
+  // so it fell through to the destination rules below into MEDIA_CACHE — cache-first, never
+  // revalidated, and deliberately NOT cleared by a shell bump, because it holds the timeline's
+  // avatars. A new default wallpaper therefore reached fresh installs and the bundles and NEVER a
+  // returning user: the CACHE bump every UI deploy makes could not touch it, and the copy precached
+  // in SHELL was never consulted at all, since an image request never opened CACHE. Nothing shows
+  // that from here — the file deploys, the tests pass, the desktop draws last year's picture.
+  // Derived from SHELL rather than listed again, or the next picture repeats this exactly.
+  const isShellArt = url.origin === self.location.origin && SHELL_PATHS.has(url.pathname) &&
+    (e.request.destination === 'image' || e.request.destination === 'video');
 
   if (isAppCode) e.respondWith(freshFirst(e.request));
-  else if (isVendorOrIcon) e.respondWith(cacheFirst(e.request));
+  else if (isVendorOrIcon || isShellArt) e.respondWith(cacheFirst(e.request));
   // Encrypted-drive blobs (fetch(), so destination ''), BEFORE the destination rules below: a public
   // <img> pointing at the same path is ordinary media and keeps going to MEDIA_CACHE.
   else if (isDriveBlob(url, e.request)) e.respondWith(cacheFirstBlob(e.request));

@@ -176,7 +176,7 @@ PC_MESA_REQUIRED_CARDS="virgl nouveau"
 #
 #PACKAGE CONFIGURATION
 BASE_PACKAGES="sys-boot/efibootmgr net-print/cups-filters net-misc/networkmanager net-wireless/bluez net-fs/sshfs app-shells/starship dev-util/sh sys-boot/plymouth sys-power/acpid app-arch/zip dev-python/virtualenv sys-apps/flatpak sys-power/powertop app-shells/bash-completion sys-power/cpupower sys-power/upower media-libs/gexiv2 media-plugins/gst-plugins-pulse mail-mta/postfix app-admin/sysstat sys-apps/smartmontools net-fs/nfs-utils net-firewall/nftables dev-python/pip sys-fs/inotify-tools net-analyzer/nmap app-misc/screen app-portage/gentoolkit sys-fs/dosfstools app-admin/sudo sys-apps/systemd sys-apps/util-linux sys-apps/hwdata app-eselect/eselect-repository dev-vcs/git sys-block/parted sys-process/btop net-vpn/wireguard-tools app-editors/neovim app-misc/fastfetch sys-fs/btrfs-progs net-print/cups sys-firmware/seabios-bin sys-firmware/edk2-bin app-emulation/libvirt app-emulation/qemu app-emulation/virt-viewer app-emulation/spice-vdagent app-crypt/swtpm"
-SPECIAL_PACKAGE_USE=("kde-apps/kio-extras samba mtp" "app-db/postgresql icu lz4 nls pam readline server ssl system zlib zstd uuid" "dev-build/meson test test-full" "dev-qt/qtwebengine bindist" "media-sound/sox -opus" "media-video/vlc -opus -theora -vpx" "media-video/ffmpeg webp libass libplacebo" "dev-qt/qtpositioning geoclue" "media-libs/libvpx postproc" "dev-python/pillow webp" "gui-libs/gtk colord sysprof" "media-libs/freetype harfbuzz" "dev-lang/php gmp sodium sysvipc calendar bcmath exif bzip2 intl ctype curl fileinfo filter gd iconv ssl posix session simplexml xmlreader xmlwriter zip zlib postgres png opcache jit cli fpm zip pdo" "net-im/synapse postgres" "net-p2p/qbittorrent webui" "app-crypt/certbot certbot-nginx" "acct-user/git gitea" "app-admin/vaultwarden web postgres" "media-gfx/imagemagick -postscript" "media-gfx/imagemagick -postscript dev-libs/jemalloc statsv" "media-libs/libsdl2 -pipewire vulkan opengl" "media-video/obs-studio pipewire wayland" "media-video/pipewire sound-server bluetooth" "x11-libs/libXrandr abi_x86_32" "mail-mta/postfix sasl" "app-emulation/qemu spice usbredir pipewire virgl" "app-emulation/libvirt qemu virt-network" "app-emulation/virt-viewer spice")
+SPECIAL_PACKAGE_USE=("kde-apps/kio-extras samba mtp" "app-db/postgresql icu lz4 nls pam readline server ssl system zlib zstd uuid" "dev-build/meson test test-full" "dev-qt/qtwebengine bindist" "media-sound/sox -opus" "media-video/vlc -opus -theora -vpx" "media-video/ffmpeg webp libass libplacebo" "dev-qt/qtpositioning geoclue" "media-libs/libvpx postproc" "dev-python/pillow webp" "gui-libs/gtk colord sysprof" "media-libs/freetype harfbuzz" "dev-lang/php gmp sodium sysvipc calendar bcmath exif bzip2 intl ctype curl fileinfo filter gd iconv ssl posix session simplexml xmlreader xmlwriter zip zlib postgres png opcache jit cli fpm zip pdo" "net-im/synapse postgres" "net-p2p/qbittorrent webui" "app-crypt/certbot certbot-nginx" "acct-user/git gitea" "app-admin/vaultwarden web postgres" "media-gfx/imagemagick -postscript" "media-gfx/imagemagick -postscript dev-libs/jemalloc statsv" "media-libs/libsdl2 -pipewire vulkan opengl" "media-video/obs-studio pipewire wayland" "media-video/pipewire sound-server bluetooth" "x11-libs/libXrandr abi_x86_32" "mail-mta/postfix sasl" "app-emulation/qemu spice usbredir pipewire virgl usb" "app-emulation/libvirt qemu virt-network" "app-emulation/virt-viewer spice")
 # THE SAME ENCODERS THE APP ACTUALLY INVOKES, or this desktop can play media and not make any.
 # Measured from the source rather than guessed: `libx264` (127 call sites), `h264_vaapi` (66),
 # `h264_nvenc` (57), `h264_amf` (10), `libvpx`/`libvpx-vp9` (the alpha WebM path), `libmp3lame`,
@@ -2376,6 +2376,12 @@ PROFILE
 	udevadm trigger --action=add --subsystem-match=backlight >/dev/null 2>&1
 	udevadm trigger --action=add --subsystem-match=leds >/dev/null 2>&1
 
+	# USB DEVICES FOR "THIS COMPUTER"'S VIRTUAL MACHINES ARE GRANTED ONE AT A TIME, NEVER BY A udev RULE.
+	# A session QEMU opens /dev/bus/usb/BBB/DDD as the signed-in account, so that node needs an ACL for them.
+	# A blanket `uaccess` rule would give the seat raw usbfs on every USB disk ever plugged in (disconnect the
+	# kernel driver, send raw SCSI) — root in all but name. /usr/local/bin/pc-usb-grant grants exactly the device
+	# being attached to a VM, after refusing hubs and anything the host uses (installed with the helpers below).
+
 	# THE POWER MODE, WRITABLE WITHOUT ROOT — the same problem as the backlight, one directory over.
 	# /sys/firmware/acpi/platform_profile is root:root 0644, so the panel can READ that this machine
 	# offers low-power/balanced/performance and cannot select one: a row of buttons that report an
@@ -2673,7 +2679,20 @@ PROFILE
 			return 1
 		fi
 	done
-	for helper in foot pc-super pc-provision-user pc-session-switch pc-session-auth pc-compositor-session pc-wayfire-action pc-wayfire-health pc-shell-start pc-shell-start-wayfire pc-shell-restart pc-window-cycle pc-window-snap pc-window-close pc-key pc-idle pc-pointer-confine pc-screenshot pc-monero-wallet-rpc pc-open update-posterchan; do
+	# pc-usb-grant's scanner: the SAME module the VM host uses (app/services/vmhost/usb.py, stdlib only), so the
+	# helper refuses exactly what the host refuses. Root-owned, outside any user's reach.
+	mkdir -p "${TARGET}/usr/local/lib/posterchan"
+	# Same order as the helpers below: the synced overlay (what update-posterchan installs) first.
+	if [ -n "$PCREPO" ] && [ -f "$PCREPO/app-misc/posterchanos-shell/files/pc_usb_scan.py" ]; then
+		install -m 0644 "$PCREPO/app-misc/posterchanos-shell/files/pc_usb_scan.py" "${TARGET}/usr/local/lib/posterchan/pc_usb_scan.py"
+	elif [ -f "/var/db/repos/posterchan/app-misc/posterchanos-shell/files/pc_usb_scan.py" ]; then
+		install -m 0644 "/var/db/repos/posterchan/app-misc/posterchanos-shell/files/pc_usb_scan.py" "${TARGET}/usr/local/lib/posterchan/pc_usb_scan.py"
+	elif [ -f "$PCOS_TREE/../app/services/vmhost/usb.py" ]; then
+		install -m 0644 "$PCOS_TREE/../app/services/vmhost/usb.py" "${TARGET}/usr/local/lib/posterchan/pc_usb_scan.py"
+	else
+		echo -e "\033[1;33m  ! the USB scanner is not in this tree — \"Add USB device\" on This computer will refuse\033[0m"
+	fi
+	for helper in foot pc-super pc-provision-user pc-session-switch pc-session-auth pc-compositor-session pc-wayfire-action pc-wayfire-health pc-shell-start pc-shell-start-wayfire pc-shell-restart pc-window-cycle pc-window-snap pc-window-close pc-key pc-idle pc-pointer-confine pc-screenshot pc-monero-wallet-rpc pc-open pc-usb-grant update-posterchan; do
 		# SYNCED OVERLAY FIRST. $PCOS_TREE is install-day state on the build host — preferring it
 		# hands the new machine whatever session helpers that host had when IT was installed. The
 		# same ordering shipped a two-week-old installer and a two-week-old wayfire.ini; these are
@@ -2759,6 +2778,14 @@ PROFILE
 			"%posterchan ALL=(root) NOPASSWD: /usr/local/bin/pc-session-switch *" \
 			> ${TARGET}/etc/sudoers.d/posterchan-session-switch
 		chmod 0440 ${TARGET}/etc/sudoers.d/posterchan-session-switch
+	fi
+	# ONE USB device, to the person asking, for their own VM — pc-usb-grant checks every argument itself.
+	if [ -f "${TARGET}/usr/local/bin/pc-usb-grant" ]; then
+		chmod 0755 ${TARGET}/usr/local/bin/pc-usb-grant
+		printf '%s\n' \
+			"%posterchan ALL=(root) NOPASSWD: /usr/local/bin/pc-usb-grant grant *, /usr/local/bin/pc-usb-grant revoke *" \
+			> ${TARGET}/etc/sudoers.d/posterchan-usb-grant
+		chmod 0440 ${TARGET}/etc/sudoers.d/posterchan-usb-grant
 	fi
 
 	# Autologin straight into the shell. A display manager is another package, another theme and

@@ -60,6 +60,15 @@ function qemu3d(runner=run){
     .then(r=>!(r.ok||r.out) ? true : /virtio-(?:vga|gpu)-gl/.test(r.out+'\n'+r.error));
   return _gl;
 }
+/* WHICH DEVICE MODELS THIS QEMU HAS, asked of the binary once per process (vmusb.js: USB passthrough needs `usb-host`,
+ * which Gentoo's default USE=-usb leaves out). null = could not ask, which callers read as "unknown", never "no". */
+let _qdevs=null;
+function qemuDevices(runner=run){
+  if(!_qdevs) _qdevs=runner(process.env.PC_QEMU_BIN||'/usr/bin/qemu-system-x86_64',['-device','help'],15000)
+    .then(r=>{const names=new Set([...(r.out+'\n'+r.error).matchAll(/name "([^"]+)"/g)].map(m=>m[1]));return names.size?names:null;});
+  return _qdevs;
+}
+async function qemuHas(dev){const n=await qemuDevices();return n?n.has(dev):null;}
 function displayXml(gl){
   return gl
     ? `<graphics type="spice" autoport="yes"><listen type="none"/><gl enable="yes"/></graphics>
@@ -110,6 +119,8 @@ async function action(name, what){
   const map={start:['start'],shutdown:['shutdown'],reboot:['reboot'],stop:['destroy']};
   if(!map[what]) return {ok:false,error:'unknown action'};
   if(what==='start'){
+    /* USB devices saved in this VM are taken when it starts -- re-check them now, not only when attached. */
+    const guard=await usbPass.startGuard(name);if(!guard.ok)return guard;
     let d=await details(name);if(!d.ok)return d;
     let missing=d.disks.find(x=>x.source&&x.source!=='-'&&!fs.existsSync(x.source));
     if(missing&&missing.device==='cdrom'){
@@ -163,6 +174,12 @@ async function setBootOrder(name, first){
 }
 async function update(name, opts){
   const d=await details(name); if(!d.ok)return d;
+  /* An autostart VM is started by libvirt at sign-in, past the device checks a start from here makes. */
+  if(opts&&opts.autostart&&!d.autostart){
+    const has=await usbPass.hasDevices(d.name);
+    if(has&&has.error)return {ok:false,error:'Could not check this VM\'s USB devices ('+has.error+') — autostart was not turned on.'};
+    if(has)return {ok:false,error:'This VM has USB devices attached. A VM that starts on its own would take them without the safety checks — detach them first.'};
+  }
   if(!/shut off|shutoff|inactive/.test(d.state)) return {ok:false,error:'Shut down the VM before changing its hardware'};
   const ram=Math.max(512,Math.min(65536,Number(opts&&opts.ramMiB)||d.ramMiB));
   const cpus=Math.max(1,Math.min(32,Number(opts&&opts.cpus)||d.cpus));
@@ -370,4 +387,9 @@ async function view(name){
    * above as well, rather than allowing a different PATH entry to win. */
   return launchViewer('/usr/bin/'+bin,args);
 }
-module.exports={available,list,details,update,addDisk,changeIso,ejectIso,bootDisk,addNetwork,setNetwork,nicXml,nicOf,isBridge,gamingMouse,create,action,remove,view,launchViewer,cleanName,successorInstaller,qemu3d,displayXml};
+var usbPass=require('./vmusb').make({virsh,cleanName,root,qemuHas,run});
+const usbList=()=>usbPass.list();
+const usbAttach=(name,opts)=>usbPass.attach(name,opts||{});
+const usbDetach=(name,opts)=>usbPass.detach(name,opts||{});
+const usbDevices=async name=>{name=cleanName(name);return name?{ok:true,devices:await usbPass.vmDevices(name)}:{ok:false,error:'invalid VM name'};};
+module.exports={usbList,usbAttach,usbDetach,usbDevices,qemuHas,available,list,details,update,addDisk,changeIso,ejectIso,bootDisk,addNetwork,setNetwork,nicXml,nicOf,isBridge,gamingMouse,create,action,remove,view,launchViewer,cleanName,successorInstaller,qemu3d,displayXml};

@@ -162,3 +162,28 @@ class Publish(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class Unlisted(Publish):
+    def test_unlisted_is_signed_without_touching_the_listing(self):
+        """1.1.0 sat in the LISTED review queue for days while PosterChanOS kept shipping the old
+        purple theme. The version PosterChanOS installs goes UNLISTED (signed within minutes)."""
+        fake = FakeAMO(approve_after=1); self.addCleanup(fake.close)
+        xpi = Path(self.tmp.name) / "t.xpi"; xpi.write_bytes(_xpi())
+        out = Path(self.tmp.name) / "signed.xpi"
+        client = amo.AMO("issuer", SECRET, api=fake.base + "/api/v5")
+        t = [0.0]
+        def clock():
+            t[0] += 10; return t[0]
+        rc = amo.publish(client, str(xpi), str(out), timeout=100, poll=0, sleep=lambda s: None,
+                         clock=clock, channel="unlisted")
+        self.assertEqual(rc, 0)
+        up = [c for c in fake.calls if c[0] == "POST" and c[1] == "/api/v5/addons/upload/"]
+        self.assertIn(b'name="channel"\r\n\r\nunlisted', up[0][2])
+        self.assertFalse([c for c in fake.calls if c[0] == "PATCH"], "unlisted must not edit the public listing")
+
+    def test_the_workflow_reads_the_recorded_channel(self):
+        wf = (ROOT / ".github/workflows/firefox-theme.yml").read_text()
+        self.assertIn("os/firefox-theme/amo-channel", wf)
+        self.assertIn('--channel "${ch:-listed}"', wf)
+        self.assertEqual((ROOT / "os/firefox-theme/amo-channel").read_text().strip(), "unlisted")

@@ -43,7 +43,16 @@ MAX_DESTINATIONS = 15
 # wallet, not the operator wallet: every account owns a disjoint set of outputs.
 OUTPUT_TARGET = 8
 OUTPUT_LOW_WATER = 4
-OUTPUT_MIN_ATOMIC = 10**9       # 0.001 XMR per resulting output
+# The miner fee sweep_single takes out of the source BEFORE dividing it: a split sized on the gross
+# amount lands its outputs just under OUTPUT_USEFUL_ATOMIC (0.008005 XMR / 4 = ~0.00199). Generous on
+# purpose — a real fee is ~0.00003 XMR.
+SPLIT_FEE_MARGIN_ATOMIC = 10**8   # 0.0001 XMR
+# CAPACITY IS COUNTED IN OUTPUTS THAT CAN PAY A ZAP, NOT IN OUTPUTS. Measured 2026-09-22 on the account
+# that kept waiting ~20 min between zaps: 6 unspent outputs, FIVE of them 0.00001 XMR dust and one
+# 0.28 XMR. The maintainer counted six, called it healthy and never split, so every 0.001 zap spent
+# the one real output and locked its change for 10 blocks. An output counts only if it can fund a
+# typical zap plus its fees on its own.
+OUTPUT_USEFUL_ATOMIC = 2 * 10**9  # 0.002 XMR
 OUTPUT_MAINTENANCE_SECONDS = 60
 
 
@@ -297,21 +306,32 @@ class UserWallets:
         unspent = [t for t in (got.get("transfers") or [])
                    if isinstance(t, dict) and not t.get("spent") and not t.get("frozen")
                    and type(t.get("amount")) is int and t["amount"] > 0]
-        transfers = [t for t in unspent if t.get("unlocked") is True]
+        useful = lambda t: int(t.get("amount") or 0) >= OUTPUT_USEFUL_ATOMIC
+        transfers = [t for t in unspent if t.get("unlocked") is True and useful(t)]
         count = len(transfers)
         if count >= OUTPUT_LOW_WATER:
             return {"account_index": index, "action": "healthy", "spendable_outputs": count}
 
         # A successful split consumes one available source and creates outputs that stay locked for
         # the chain's spend lock. The scheduler runs every minute (and process-local cooldowns vanish
-        # on restart), so looking only at `available` would split another reserve on every tick:
-        # 3 -> 2 -> 1 -> 0 spendable outputs. Locked outputs are an on-wallet, restart-safe witness
-        # that replenishment is already in flight. Wait for them before paying another transaction
-        # fee or consuming another source.
+        # on restart), so without a witness it would split another reserve on every tick. The
+        # restart-safe witness is ON THE WALLET: a split is ONE transaction that gave this account
+        # SEVERAL outputs. A zap's CHANGE is one output — treating it as a split in flight is what
+        # starved replenishment exactly while somebody was zapping. When the RPC gives no tx_hash we
+        # cannot tell the two apart and stay conservative (any locked useful output = in flight).
+        # EVERY locked output is considered here, whatever its size: the witness is the SHAPE of the
+        # transaction (several outputs for this account), and a split whose outputs came out small
+        # must still be seen as in flight, or the next tick splits another reserve.
         locked = [t for t in unspent if t.get("unlocked") is not True]
-        if locked:
+        per_tx: dict[str, int] = {}
+        for t in locked:
+            per_tx[str(t.get("tx_hash") or "")] = per_tx.get(str(t.get("tx_hash") or ""), 0) + 1
+        in_flight = [t for t in locked
+                     if per_tx[str(t.get("tx_hash") or "")] >= 2
+                     or (not t.get("tx_hash") and useful(t))]
+        if in_flight:
             return {"account_index": index, "action": "waiting", "spendable_outputs": count,
-                    "locked_outputs": len(locked), "reason": "output split is still unlocking"}
+                    "locked_outputs": len(in_flight), "reason": "output split is still unlocking"}
 
         # Before a split is mined, its new outputs may not appear in incoming_transfers yet.
         # Pending outgoing transactions are wallet-backed evidence too, surviving worker restarts.
@@ -330,7 +350,8 @@ class UserWallets:
         amount = int(source.get("amount") or 0)
         preserved = max(0, count - 1)
         wanted = OUTPUT_TARGET - preserved
-        outputs = min(wanted, amount // OUTPUT_MIN_ATOMIC)
+        # Each new output must itself be able to pay a zap, or the split manufactures more dust.
+        outputs = min(wanted, max(0, amount - SPLIT_FEE_MARGIN_ATOMIC) // OUTPUT_USEFUL_ATOMIC)
         if outputs < 2:
             return {"account_index": index, "action": "waiting", "spendable_outputs": count,
                     "reason": "not enough unlocked value for useful outputs"}

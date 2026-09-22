@@ -352,6 +352,93 @@
   window.PCCodeHL = { highlight, langOf, esc, RULES, HL_MAX };
 
   // ══════════════════════════════════════════════════════════════════════════════════════════════
+  // Find / replace — pure, DOM-free, run under node by tests/client/test_code_find_replace.py.
+  // ══════════════════════════════════════════════════════════════════════════════════════════════
+
+  /* ONE compiler for every search on this screen — the find bar's count, its marks, Replace,
+   * Replace all and Search in files — so the number shown and what Replace all changes cannot
+   * disagree. A bad regex is an ANSWER ({error}), never a throw: it is typed a character at a
+   * time, and `(` on its way to `(\w+)` must not take the screen down. */
+  const reEsc = (s) => String(s).replace(/[.*+?^${}()|[\]\\\/]/g, '\\$&');
+  function findRe(q, o){
+    o = o || {};
+    if(!q) return { re: null, error: '' };
+    let src = o.re ? q : reEsc(q);
+    if(o.ww) src = '(?<!\\w)(?:' + src + ')(?!\\w)';
+    try{ return { re: new RegExp(src, 'gm' + (o.cs ? '' : 'i')), error: '' }; }
+    catch(_){ return { re: null, error: 'Invalid regular expression' }; }
+  }
+  /* Every match as [start, end]. EMPTY matches are skipped (`^`, `a*`): they cannot be drawn or
+   * selected, and counting them made "3 of 17" name matches nobody could see. Bounded, and says so. */
+  const FIND_MAX = 20000;
+  function findAll(text, q, o, max){
+    // `max ?? FIND_MAX`, never `||`: a caller with no room left passes 0, and `||` read that as
+    // "no limit" — a parallel search lane could then add 20,000 hits past its 2,000 cap.
+    const c = findRe(q, o), out = [], lim = max ?? FIND_MAX;
+    if(!c.re) return { ranges: out, error: c.error, capped: false };
+    let m;
+    while((m = c.re.exec(text)) !== null){
+      if(!m[0]){ c.re.lastIndex++; continue; }
+      if(out.length >= lim) return { ranges: out, error: '', capped: true };
+      out.push([m.index, m.index + m[0].length]);
+    }
+    return { ranges: out, error: '', capped: false };
+  }
+  /* `$1`, `$<name>`, `$&`, `$$` — JavaScript's own replacement syntax, expanded by hand because a
+   * match is re-run at one position rather than through String.replace. `$12` with one group is
+   * `$1` then "2", as in JS. Plain-text mode never expands anything: there `$1` is two characters. */
+  function expand(tpl, m){
+    return String(tpl).replace(/\$(\$|&|<([^>]*)>|\d\d?)/g, (all, k, name) => {
+      if(k === '$') return '$';
+      if(k === '&') return m[0];
+      if(name !== undefined) return m.groups && name in m.groups ? (m.groups[name] || '') : all;
+      const g = (n) => (m[n] == null ? '' : m[n]);
+      if(+k >= 1 && +k < m.length) return g(+k);
+      if(k.length === 2 && +k[0] >= 1 && +k[0] < m.length) return g(+k[0]) + k[1];
+      return all;
+    });
+  }
+  function replacementAt(text, s, q, o, repl){
+    const re = o && o.re ? findRe(q, o).re : null;
+    if(!re) return String(repl);
+    re.lastIndex = s;
+    const m = re.exec(text);
+    return m && m.index === s ? expand(repl, m) : String(repl);
+  }
+  /* Built from the SAME match list the count came from — never a second String.replace, which
+   * would also rewrite the empty matches findAll deliberately does not count. */
+  function replaceAll(text, q, o, repl){
+    const f = findAll(text, q, o, Infinity);
+    let out = '', last = 0;
+    for(const [s, e] of f.ranges){ out += text.slice(last, s) + replacementAt(text, s, q, o, repl); last = e; }
+    return { text: f.ranges.length ? out + text.slice(last) : text, count: f.ranges.length, error: f.error };
+  }
+  /* Which match to go to from a caret position, WRAPPING: forward is the first starting at or
+   * after `pos` (else the first), backward the last starting before it (else the last). */
+  function pick(ranges, pos, dir){
+    const n = ranges.length;
+    if(!n) return -1;
+    if(dir < 0){ for(let i = n - 1; i >= 0; i--) if(ranges[i][0] < pos) return i; return n - 1; }
+    for(let i = 0; i < n; i++) if(ranges[i][0] >= pos) return i;
+    return 0;
+  }
+  const step = (i, n, dir) => (n ? ((i < 0 ? (dir < 0 ? 0 : -1) : i) + dir + n) % n : -1);
+  /* Search in files: matches as lines. Only a WINDOW of each line is kept — a minified file is one
+   * line of a megabyte, and two thousand hits must not each hold a copy of it. */
+  function grep(text, q, o, max){
+    const f = findAll(text, q, o, max), hits = [];
+    let line = 1, ls = 0;
+    for(const [s, e] of f.ranges){
+      for(let nl = text.indexOf('\n', ls); nl >= 0 && nl < s; nl = text.indexOf('\n', ls)){ line++; ls = nl + 1; }
+      let le = text.indexOf('\n', s); if(le < 0) le = text.length;
+      hits.push({ line, s, e, pre: text.slice(Math.max(ls, s - 40), s), mid: text.slice(s, Math.min(e, s + 200)),
+                  post: e < le ? text.slice(e, Math.min(le, e + 80)) : '' });
+    }
+    return { hits, error: f.error, capped: f.capped };
+  }
+  window.PCCodeFind = { findRe, findAll, expand, replaceAll, replacementAt, pick, step, grep, FIND_MAX };
+
+  // ══════════════════════════════════════════════════════════════════════════════════════════════
   // State — see the header. Everything here is painted from, and mirrored to localStorage.
   // ══════════════════════════════════════════════════════════════════════════════════════════════
 
@@ -366,6 +453,9 @@
     gitOpen: false, git: null, gitBusy: false, gitDiff: null,
     status: '', statusKind: '',
     busy: false,
+    // The find bar and Search in files. `at` is where the next search starts from (the caret).
+    find: { open: false, repl: false, q: '', r: '', cs: false, ww: false, re: false, at: 0 },
+    sfOpen: false, sf: { q: '', cs: false, ww: false, re: false, busy: false, results: [], note: '', err: '' },
   };
   let _gitDiffSeq = 0;
 
@@ -393,7 +483,10 @@
      * window being LOOKED AT is the one that writes, and the last write wins — which is what the
      * person means by "this is where I was". */
     try{
-      const slim = { cwd: S.cwd, hostRoot:S.hostRoot, active: S.active, gitOpen:S.gitOpen,
+      const f = S.find, q = S.sf;
+      const slim = { cwd: S.cwd, hostRoot:S.hostRoot, active: S.active, gitOpen:S.gitOpen, sfOpen:S.sfOpen,
+                     find: { open:f.open, repl:f.repl, q:f.q, r:f.r, cs:f.cs, ww:f.ww, re:f.re, at:f.at },
+                     sf: { q:q.q, cs:q.cs, ww:q.ww, re:q.re },
                      termOpen: S.termOpen, termH: S.termH,
                      sideW: S.sideW, expanded: S.expanded, open: [] };
       let budget = PERSIST_MAX;
@@ -431,6 +524,9 @@
       S.cwd = typeof v.cwd === 'string' ? v.cwd : '';
       S.hostRoot = typeof v.hostRoot === 'string' ? v.hostRoot : '';
       S.gitOpen = !!v.gitOpen;
+      S.sfOpen = !!v.sfOpen && !S.gitOpen;
+      for(const [k, o] of [['find', v.find], ['sf', v.sf]]) if(o && typeof o === 'object')
+        for(const key of Object.keys(S[k])) if(typeof o[key] === typeof S[k][key]) S[k][key] = o[key];
       S.termOpen = !!v.termOpen;
       S.termH = Math.max(120, Math.min(900, Number(v.termH) || 260));
       S.sideW = Math.max(150, Math.min(600, Number(v.sideW) || 250));
@@ -574,6 +670,7 @@
       S.hostRoot=path;S.cwd=t.path||path;S.root=path;S.gate='';
       S.tree=(t.entries||[]).map(e=>({name:e.name,path:e.path,dir:!!e.dir,lang:langOf(e.name)}));
       S.treeErr='';S.open=[];S.active=-1;S.gitOpen=false;cancelGitDiff();S.git=null;
+      _sfSeq++;Object.assign(S.sf,{busy:false,results:[],note:'',err:''});
       _incoming=true;
       save(true);
       if(inView())paint();
@@ -1057,9 +1154,10 @@
 
     function activityHtml(){
       return '<nav class="pcc-activity" aria-label="Code views">' +
-        '<button data-code-view="explorer" class="'+(S.gitOpen?'':'on')+'" title="Working Directory" aria-label="Working Directory"><svg class="ic"><use href="#i-folder"></use></svg></button>' +
+        '<button data-code-view="explorer" class="'+(S.gitOpen||S.sfOpen?'':'on')+'" title="Working Directory" aria-label="Working Directory"><svg class="ic"><use href="#i-folder"></use></svg></button>' +
         '<button data-code-view="git" class="'+(S.gitOpen?'on':'')+'" title="Source Control" aria-label="Source Control"><svg class="ic"><use href="#i-git"></use></svg>' +
-          (S.git&&S.git.files&&S.git.files.length?'<em>'+S.git.files.length+'</em>':'')+'</button></nav>';
+          (S.git&&S.git.files&&S.git.files.length?'<em>'+S.git.files.length+'</em>':'')+'</button>' +
+        '<button data-code-view="search" class="'+(S.sfOpen?'on':'')+'" title="Search in files (Ctrl+Shift+H)" aria-label="Search in files"><svg class="ic"><use href="#i-search"></use></svg></button></nav>';
     }
 
     function tabsHtml(){
@@ -1087,10 +1185,11 @@
              '<pre class="pcc-gutter" id="pcc-gutter" aria-hidden="true">' + nums + '</pre>' +
              '<div class="pcc-edit">' +
                '<pre class="pcc-layer pcc-hl" id="pcc-hl" aria-hidden="true">' + body + '\n</pre>' +
+               '<pre class="pcc-layer pcc-fm" id="pcc-fm" aria-hidden="true"></pre>' +
                '<textarea class="pcc-layer pcc-ta" id="pcc-ta" spellcheck="false" autocapitalize="off" ' +
                  'autocorrect="off" autocomplete="off" wrap="off" aria-label="' + enc(d.path) + '">' +
                  esc(d.text) + '</textarea>' +
-             '</div></div>';
+             '</div>' + (S.find.open ? findBarHtml() : '') + '</div>';
     }
 
     function toolbarHtml(){
@@ -1103,6 +1202,8 @@
         '<button class="btn btn-ghost pcc-b" id="pcc-fmt"' + (d && eng ? '' : ' disabled') + ' title="' +
           (eng ? 'Beautify with ' + enc(eng) : 'No formatter on this node for this language') + '">Format</button>' +
         '<button class="btn btn-ghost pcc-b" id="pcc-reload"' + (d ? '' : ' disabled') + '>Reload</button>' +
+        '<button class="btn btn-ghost pcc-b" id="pcc-find-b"' + (d && !S.gitDiff ? '' : ' disabled') +
+          ' title="Find and replace (Ctrl+F, Ctrl+H)">Find</button>' +
         '<span class="pcc-grow"></span>' +
         '<span class="pcc-lang">' + enc(d ? d.lang : '') + (eng ? ' · ' + enc(eng) : '') + '</span>' +
         '<button class="btn btn-ghost pcc-b" id="pcc-term">' + (S.termOpen ? 'Hide' : 'Show') + ' terminal</button>' +
@@ -1129,8 +1230,8 @@
           '<div class="pcc-main">' +
             activityHtml() +
             '<aside class="pcc-side" id="pcc-side">' +
-              '<div class="pcc-crumbs">' + (S.gitOpen?'Source Control':crumbs()) + '</div>' +
-              '<div class="pcc-tree" id="pcc-tree">' + (S.gitOpen?gitHtml():treeHtml()) + '</div>' +
+              '<div class="pcc-crumbs">' + (S.gitOpen?'Source Control':S.sfOpen?'Search':crumbs()) + '</div>' +
+              '<div class="pcc-tree" id="pcc-tree">' + (S.gitOpen?gitHtml():S.sfOpen?sfHtml():treeHtml()) + '</div>' +
               '<div class="pcc-root" title="' + enc(S.root) + '">' + enc(S.root) + '</div>' +
             '</aside>' +
             '<div class="pcc-grip pcc-grip-v" id="pcc-gripv" role="separator" aria-label="Resize file tree"></div>' +
@@ -1164,14 +1265,15 @@
       const ta = $('#pcc-ta'), d = doc();
       if(!ta || !d) return;
       d.sel = { s: ta.selectionStart, e: ta.selectionEnd };
+      S.find.at = ta.selectionStart;
       d.scroll = ta.scrollTop;
       save();
     }
 
     function syncScroll(){
-      const ta = $('#pcc-ta'), hl = $('#pcc-hl'), g = $('#pcc-gutter');
+      const ta = $('#pcc-ta'), hl = $('#pcc-hl'), g = $('#pcc-gutter'), fm = $('#pcc-fm');
       if(!ta) return;
-      if(hl){ hl.scrollTop = ta.scrollTop; hl.scrollLeft = ta.scrollLeft; }
+      for(const l of [hl, fm]) if(l){ l.scrollTop = ta.scrollTop; l.scrollLeft = ta.scrollLeft; }
       if(g) g.scrollTop = ta.scrollTop;
     }
 
@@ -1204,6 +1306,7 @@
         for(let i = 1; i <= lines; i++) nums += i + '\n';
         if(g.textContent !== nums) g.textContent = nums;
       }
+      if(S.find.open) refind();
       syncScroll();
     }
     function scheduleHl(){
@@ -1314,11 +1417,30 @@
     function wire(){
       const on = (sel, ev, fn) => { const el = $(sel); if(el) el.addEventListener(ev, fn); };
 
+      /* The editor's shortcuts, on the whole screen — Ctrl+F must work from the tree or the find
+       * box too, not only from inside the file. NOT from the terminal panel: there Ctrl+H is
+       * backspace and Ctrl+F is forward-char, and taking them would break the shell. */
+      const root = $('.pcc');
+      if(root) root.addEventListener('keydown', (ev) => {
+        if(ev.target.closest && ev.target.closest('#pcc-termhost')) return;
+        const k = String(ev.key || '').toLowerCase(), mod = (ev.ctrlKey || ev.metaKey) && !ev.altKey;
+        const can = doc() && !S.gitDiff;
+        if(mod && k === 'f' && !ev.shiftKey){ if(can){ ev.preventDefault(); openFind(false); } }
+        else if(mod && k === 'h' && ev.shiftKey){ ev.preventDefault(); openSearch(); }
+        else if(mod && k === 'h'){ if(can){ ev.preventDefault(); openFind(true); } }
+        else if(k === 'f3' && can){ ev.preventDefault(); if(S.find.open) nav(ev.shiftKey ? -1 : 1); else openFind(false); }
+        else if(k === 'escape' && S.find.open && ev.target.id === 'pcc-ta'){ ev.preventDefault(); closeFind(); }
+      });
+      on('#pcc-find-b', 'click', () => openFind(false));
+      wireFind();
+      wireSearch();
+
       // Tree + breadcrumbs: ONE delegated listener, so a repaint cannot leave a dead button behind.
       const side = $('#pcc-side');
       if(side) side.addEventListener('click', (ev) => {
-        const b = ev.target.closest && ev.target.closest('[data-dir],[data-file],[data-go]');
+        const b = ev.target.closest && ev.target.closest('[data-dir],[data-file],[data-go],[data-sf]');
         if(!b) return;
+        if(b.hasAttribute('data-sf')){ const [fi, hi] = b.getAttribute('data-sf').split(':').map(Number); return openHit(fi, hi); }
         if(b.hasAttribute('data-go')) return loadTree(b.getAttribute('data-go'));
         if(b.hasAttribute('data-dir')) return loadTree(b.getAttribute('data-dir'));
         openPath(b.getAttribute('data-file'));
@@ -1354,7 +1476,8 @@
       on('#pcc-reload', 'click', reloadDoc);
       document.querySelectorAll('[data-code-view]').forEach(b=>b.addEventListener('click',()=>{
         const git=b.dataset.codeView==='git';
-        S.gitOpen=git;
+        if(b.dataset.codeView==='search') return openSearch();
+        S.gitOpen=git; S.sfOpen=false;
         if(!git)cancelGitDiff();
         save(true);
         paint();
@@ -1392,10 +1515,311 @@
         // being pressed, and that position is as much "where I was" as a typed one.
         ['keyup', 'click', 'select'].forEach(e => ta.addEventListener(e, () => { capture(); showPos(); }));
         restoreCaret();
+        if(S.find.open) refind();
       }
 
       grips();
     }
+
+    // ---- find / replace ------------------------------------------------------------------------
+
+    /* THE MATCHES ARE A THIRD LAYER (#pcc-fm) between the colours and the textarea: the same text in
+     * transparent ink with a <mark> round each match, so a highlight never disturbs the syntax
+     * colouring, and it scrolls with the other two through syncScroll. What it draws is derived —
+     * recomputed from `S.find` and the buffer on every repaint and keystroke, never kept in the DOM.
+     *
+     * EVERY EDIT GOES THROUGH setValue, with the textarea focused for the instant of the write. That
+     * is what puts a Replace on the browser's own undo stack (Replace all is ONE insertText, so ONE
+     * Ctrl+Z) — and it is not optional: execCommand writes into whatever has focus, which while
+     * somebody is typing a replacement is the replace box, not the file. */
+    const F = S.find;
+    let _fr = { ranges: [], error: '', capped: false }, _fi = -1;
+    const fOpts = () => ({ cs: F.cs, ww: F.ww, re: F.re });
+    const OPTS = [['cs', 'Aa', 'Match case'], ['ww', 'ab', 'Whole word'], ['re', '.*', 'Regular expression']];
+    const optsHtml = (o, attr) => OPTS.map(([k, t, l]) => '<button class="pcc-fo' + (o[k] ? ' on' : '') + '" ' + attr +
+      '="' + k + '" title="' + l + '" aria-label="' + l + '" aria-pressed="' + !!o[k] + '">' + t + '</button>').join('');
+    const oneLine = (t) => (t && t.indexOf('\n') < 0 && t.length < 200 ? t : '');
+
+    function findBarHtml(){
+      const inp = (id, ph, v) => '<input id="' + id + '" placeholder="' + ph + '" aria-label="' + ph +
+        '" spellcheck="false" autocomplete="off" autocapitalize="off" value="' + enc(v) + '">';
+      return '<div class="pcc-find" id="pcc-find" role="search">' +
+        '<button class="pcc-fb" id="pcc-f-mode" title="Toggle replace (Ctrl+H)" aria-label="Toggle replace" aria-expanded="' +
+          F.repl + '">' + (F.repl ? '▾' : '▸') + '</button><div class="pcc-frows">' +
+        '<div class="pcc-frow">' + inp('pcc-f-q', 'Find', F.q) + optsHtml(F, 'data-fo') +
+          '<span class="pcc-fn" id="pcc-f-n" aria-live="polite"></span>' +
+          '<button class="pcc-fb" id="pcc-f-prev" title="Previous match (Shift+Enter)" aria-label="Previous match">↑</button>' +
+          '<button class="pcc-fb" id="pcc-f-next" title="Next match (Enter)" aria-label="Next match">↓</button>' +
+          '<button class="pcc-fb" id="pcc-f-x" title="Close (Esc)" aria-label="Close find">×</button></div>' +
+        (F.repl ? '<div class="pcc-frow">' + inp('pcc-f-r', 'Replace', F.r) +
+          '<button class="pcc-fb pcc-fw" id="pcc-f-r1" title="Replace this match (Enter)">Replace</button>' +
+          '<button class="pcc-fb pcc-fw" id="pcc-f-ra" title="Replace every match (Ctrl+Alt+Enter)">All</button></div>' : '') +
+        '</div></div>';
+    }
+
+    function refind(){
+      const d = doc();
+      _fr = F.open && d && typeof d.text === 'string' ? findAll(d.text, F.q, fOpts()) : { ranges: [], error: '', capped: false };
+      _fi = pick(_fr.ranges, F.at, 1);
+      paintMarks();
+    }
+    function paintMarks(){
+      const fm = $('#pcc-fm'), n = $('#pcc-f-n'), d = doc();
+      if(fm){
+        let h = '', last = 0;
+        if(F.open && d && _fr.ranges.length){
+          _fr.ranges.forEach(([s, e], i) => {
+            h += esc(d.text.slice(last, s)) + '<mark' + (i === _fi ? ' class="cur"' : '') + '>' + esc(d.text.slice(s, e)) + '</mark>';
+            last = e;
+          });
+          h += esc(d.text.slice(last)) + '\n';
+        }
+        fm.innerHTML = h;
+      }
+      if(n){
+        const none = !!F.q && !_fr.ranges.length;
+        n.textContent = _fr.error || (!F.q ? '' : none ? 'No results'
+          : (_fi + 1) + ' of ' + _fr.ranges.length + (_fr.capped ? '+' : ''));
+        n.classList.toggle('err', !!_fr.error || none);
+      }
+      syncScroll();
+    }
+    /* Select a match and bring it into view. The <mark> is measured rather than the line counted:
+     * it is exact in BOTH directions, and a match 300 columns into a long line is otherwise a
+     * selection nobody can see. */
+    function goMatch(i){
+      const r = _fr.ranges[i], ta = $('#pcc-ta'), d = doc();
+      if(!r || !d) return paintMarks();
+      _fi = i; F.at = r[0]; d.sel = { s: r[0], e: r[1] };
+      if(ta) try{ ta.setSelectionRange(r[0], r[1]); }catch(_){}
+      paintMarks();
+      const m = $('#pcc-fm mark.cur');
+      if(ta && m){
+        const t = m.offsetTop, l = m.offsetLeft;
+        if(t < ta.scrollTop + 40 || t + m.offsetHeight > ta.scrollTop + ta.clientHeight - 20)
+          ta.scrollTop = Math.max(0, t - ta.clientHeight / 3);
+        if(l < ta.scrollLeft || l + m.offsetWidth > ta.scrollLeft + ta.clientWidth - 20)
+          ta.scrollLeft = Math.max(0, l - ta.clientWidth / 3);
+        d.scroll = ta.scrollTop;
+        syncScroll();
+      }
+      showPos(); save();
+    }
+    /* From the current match, step and wrap; from anywhere else (the caret moved, the text changed)
+     * go to the nearest match in that direction — never skip the one right after the caret. */
+    function nav(dir){
+      refind();
+      const d = doc(), n = _fr.ranges.length, r = _fr.ranges[_fi];
+      if(!n || !d) return;
+      goMatch(r && d.sel && d.sel.s === r[0] && d.sel.e === r[1] ? step(_fi, n, dir) : pick(_fr.ranges, F.at, dir));
+    }
+    function openFind(repl){
+      const d = doc(), ta = $('#pcc-ta');
+      if(!d) return;
+      // Prefill only from a selection somebody MADE: with focus in the find box the file's selection is
+      // the current match, and reading it back would overwrite a regex with its own escaped result.
+      // …and not when that selection IS the current match either (F3 in the file selects it with focus left there).
+      const cur = _fr.ranges && _fr.ranges[_fi];
+      const isMatch = ta && cur && ta.selectionStart === cur[0] && ta.selectionEnd === cur[1];
+      if(ta && document.activeElement === ta && !isMatch){ const t = oneLine(ta.value.slice(ta.selectionStart, ta.selectionEnd)); if(t) F.q = F.re ? reEsc(t) : t; capture(); }
+      if(!F.open || (repl && !F.repl) || !$('#pcc-find')){ F.open = true; F.repl = F.repl || !!repl; save(); paint(); }
+      else{ const q = $('#pcc-f-q'); if(q) q.value = F.q; }
+      refind();
+      if(_fr.ranges.length) goMatch(_fi);
+      const box = $(repl && F.q ? '#pcc-f-r' : '#pcc-f-q');
+      if(box){ box.focus(); box.select(); }
+    }
+    function closeFind(){
+      F.open = false; save(); paint();
+      const ta = $('#pcc-ta');
+      if(ta){ ta.focus({ preventScroll: true }); restoreCaret(); }
+    }
+    function edit(next, s){
+      const ta = $('#pcc-ta'), back = document.activeElement;
+      if(!ta) return;
+      ta.focus({ preventScroll: true });
+      setValue(next, s);
+      if(back && back !== ta && back.focus) back.focus({ preventScroll: true });
+    }
+    // The first press on a match that is not selected SELECTS it, the way VS Code does: a replace
+    // should never land somewhere the person has not been shown.
+    function replaceOne(){
+      const d = doc();
+      refind();
+      const r = _fr.ranges[_fi];
+      if(!d || !r) return;
+      if(!(d.sel && d.sel.s === r[0] && d.sel.e === r[1])) return goMatch(_fi);
+      const rep = replacementAt(d.text, r[0], F.q, fOpts(), F.r);
+      edit(d.text.slice(0, r[0]) + rep + d.text.slice(r[1]), r[0] + rep.length);
+      refind();                                   // F.at is now just past the replacement → the NEXT match
+      if(_fr.ranges.length) goMatch(_fi);
+    }
+    function replaceAllNow(){
+      const d = doc();
+      if(!d) return;
+      const first = findAll(d.text, F.q, fOpts(), 1).ranges[0], r = replaceAll(d.text, F.q, fOpts(), F.r);
+      if(r.error || !r.count) return status(r.error || 'Nothing to replace', r.error ? 'err' : 'warn');
+      edit(r.text, first[0]);
+      refind();
+      status('Replaced ' + r.count + ' occurrence' + (r.count === 1 ? '' : 's'), 'ok');
+    }
+    function wireFind(){
+      const bar = $('#pcc-find'), q = $('#pcc-f-q'), rb = $('#pcc-f-r');
+      if(!bar || !q) return;
+      const again = () => { save(); refind(); if(_fr.ranges.length) goMatch(_fi); };
+      q.addEventListener('input', () => { F.q = q.value; again(); });
+      if(rb) rb.addEventListener('input', () => { F.r = rb.value; save(); });
+      bar.addEventListener('keydown', (ev) => {
+        if(ev.key === 'Escape'){ ev.preventDefault(); ev.stopPropagation(); return closeFind(); }
+        if(ev.key !== 'Enter' || ev.target.tagName !== 'INPUT') return;
+        ev.preventDefault();
+        if(ev.target === rb) return (ev.ctrlKey || ev.metaKey) && ev.altKey ? replaceAllNow() : replaceOne();
+        nav(ev.shiftKey ? -1 : 1);
+      });
+      bar.addEventListener('click', (ev) => {
+        const b = ev.target.closest && ev.target.closest('button');
+        if(!b) return;
+        const o = b.getAttribute('data-fo');
+        if(o){ F[o] = !F[o]; b.classList.toggle('on', F[o]); b.setAttribute('aria-pressed', F[o]); return again(); }
+        if(b.id === 'pcc-f-mode'){
+          F.repl = !F.repl; save(); paint();
+          const box = $(F.repl ? '#pcc-f-r' : '#pcc-f-q'); if(box) box.focus();
+          return;
+        }
+        const fn = { 'pcc-f-prev': () => nav(-1), 'pcc-f-next': () => nav(1), 'pcc-f-x': closeFind,
+                     'pcc-f-r1': replaceOne, 'pcc-f-ra': replaceAllNow }[b.id];
+        if(fn) fn();
+      });
+    }
+
+    // ---- search in files -------------------------------------------------------------------------
+
+    /* THE SAME LISTING AND READING THE EXPLORER USES — pcHost.list/readText for a folder on this
+     * computer, /api/code/tree + /file for the node's workspace — walked breadth-first. There is no
+     * index to go stale; the price is a read per file, so the walk is BOUNDED (files, hits, size)
+     * and every bound that bit is SAID in the summary: a search that silently stopped half way reads
+     * as "it is not in the other half". An OPEN buffer is searched instead of its file on disk, so
+     * unsaved edits are found and the offsets of a hit are offsets into what the tab holds.
+     *
+     * Replace-in-files is deliberately NOT offered: it would write files nobody has open through a
+     * path with no undo stack. Open the hit and use Replace all, which Ctrl+Z can take back. */
+    const SF_SKIP = /^(?:\.git|node_modules|__pycache__|\.mypy_cache|\.pytest_cache|\.cache|venv|venv-unified|\.venv|dist|build|\.gradle|\.idea)$/;
+    const SF_BIN = /\.(?:png|jpe?g|gif|webp|bmp|ico|icns|pdf|zip|gz|tgz|bz2|xz|zst|7z|rar|tar|jar|apk|aab|class|so|o|a|dll|exe|bin|iso|img|dmg|woff2?|ttf|otf|eot|mp[34]|m4a|webm|mkv|mov|avi|ogg|opus|flac|wav|pyc|db|sqlite3?|gguf|safetensors|pt|onnx|npy)$/i;
+    const SF_FILES = 4000, SF_HITS = 2000, SF_BYTES = 1024 * 1024;
+    let _sfSeq = 0;
+    const sfRel = (p) => (S.hostRoot && p.indexOf(S.hostRoot) === 0 ? p.slice(S.hostRoot.replace(/\/+$/, '').length + 1) : p);
+
+    function sfResHtml(){
+      const Q = S.sf;
+      const note = Q.err || Q.note;
+      return (note ? '<div class="pcc-sf-note' + (Q.err ? ' err' : '') + '">' + enc(note) + '</div>' : '') +
+        Q.results.map((f, fi) => {
+          const rel = sfRel(f.path), cut = rel.lastIndexOf('/');
+          return '<div class="pcc-sf-file" title="' + enc(f.path) + '"><b>' + enc(rel.slice(cut + 1)) + '</b><small>' +
+            enc(cut > 0 ? rel.slice(0, cut) : '') + '</small><em>' + f.hits.length + '</em></div>' +
+            f.hits.map((h, hi) => '<button class="pcc-sf-hit" data-sf="' + fi + ':' + hi + '" title="Line ' + h.line +
+              '"><span class="pcc-dn">' + h.line + '</span><code>' + enc(h.pre.replace(/^\s+/, '')) + '<mark>' +
+              enc(h.mid.replace(/\n/g, '⏎')) + '</mark>' + enc(h.post) + '</code></button>').join('');
+        }).join('');
+    }
+    function sfHtml(){
+      return '<div class="pcc-sf"><div class="pcc-frow"><input id="pcc-sf-q" placeholder="Search in files" ' +
+        'aria-label="Search in files" enterkeyhint="search" spellcheck="false" autocomplete="off" autocapitalize="off" value="' +
+        enc(S.sf.q) + '">' + optsHtml(S.sf, 'data-sfo') + '</div><div id="pcc-sf-res">' + sfResHtml() + '</div></div>';
+    }
+    function sfPaint(){ const el = $('#pcc-sf-res'); if(el) el.innerHTML = sfResHtml(); }
+
+    async function runSearch(){
+      const Q = S.sf, seq = ++_sfSeq, o = { cs: Q.cs, ww: Q.ww, re: Q.re }, host = !!S.hostRoot;
+      Object.assign(Q, { results: [], err: '', note: '', busy: false });
+      if(!Q.q) return sfPaint();
+      if(noFolder()){ Q.err = 'Open a folder to search its files'; return sfPaint(); }
+      Q.err = findRe(Q.q, o).error;
+      if(Q.err) return sfPaint();
+      Q.busy = true; Q.note = 'Searching…'; sfPaint();
+      const bufs = {};
+      S.open.forEach(d => { if(typeof d.text === 'string' && !d.blob) bufs[d.host ? d.host.path : d.path] = d.text; });
+      const files = [], dirs = [host ? S.hostRoot : ''];
+      let skipped = 0, more = false, hits = 0, done = 0;
+      while(dirs.length){
+        if(files.length >= SF_FILES){ more = true; break; }
+        const dir = dirs.shift();
+        let t;
+        try{ t = host ? await window.pcHost.list(dir) : await api('/tree?path=' + encodeURIComponent(dir)); }
+        catch(_){ skipped++; continue; }
+        if(seq !== _sfSeq) return;
+        if(t.truncated) more = true;
+        for(const e of t.entries || []){
+          const p = e.path || (t.path ? t.path + '/' + e.name : e.name);
+          if(e.dir){ if(!SF_SKIP.test(e.name) && !e.link) dirs.push(p); }
+          else if(SF_BIN.test(e.name) || e.size > SF_BYTES || e.broken) skipped++;
+          else files.push(p);
+        }
+      }
+      let next = 0;
+      // The query as it was when the search STARTED — the box can change under a running search.
+      const qq = Q.q;
+      const lane = async () => {
+        while(next < files.length && hits < SF_HITS){
+          const p = files[next++];
+          let text = bufs[p];
+          try{
+            if(typeof text !== 'string') text = (host ? await window.PCHostFiles.readText(p) : await api('/file?path=' + encodeURIComponent(p))).text;
+          }catch(_){ skipped++; continue; }
+          if(seq !== _sfSeq) return;
+          done++;
+          if(typeof text !== 'string' || text.indexOf('\0') >= 0){ skipped++; continue; }
+          if(SF_HITS - hits <= 0) break;                    // another lane filled it while this one read
+          const g = grep(text, qq, o, SF_HITS - hits);
+          if(g.hits.length){ hits += g.hits.length; Q.results.push({ path: p, hits: g.hits }); }
+          if(done % 40 === 0){ Q.note = 'Searching… ' + done + ' of ' + files.length + ' files'; sfPaint(); }
+        }
+      };
+      await Promise.all([1, 2, 3, 4, 5, 6].map(lane));
+      if(seq !== _sfSeq) return;
+      Q.results.sort((a, b) => (a.path < b.path ? -1 : a.path > b.path ? 1 : 0));
+      const pl = (n, w) => n + ' ' + w + (n === 1 ? '' : 's');
+      Q.busy = false;
+      Q.note = (hits ? pl(hits, 'result') + ' in ' + pl(Q.results.length, 'file') : 'No results') + ' · ' + pl(done, 'file') + ' searched' +
+        (skipped ? ', ' + skipped + ' skipped (binary, over 1 MB or unreadable)' : '') +
+        (hits >= SF_HITS ? ' — stopped at ' + SF_HITS + ' results' : '') +
+        (more ? ' — this folder has more files than one search reads' : '');
+      sfPaint();
+    }
+    function openSearch(){
+      const ta = $('#pcc-ta');
+      if(ta && document.activeElement === ta){ const t = oneLine(ta.value.slice(ta.selectionStart, ta.selectionEnd)); if(t) S.sf.q = S.sf.re ? reEsc(t) : t; capture(); }
+      S.sfOpen = true; S.gitOpen = false; cancelGitDiff(); save(true); paint();
+      const q = $('#pcc-sf-q'); if(q){ q.focus(); q.select(); }
+    }
+    function wireSearch(){
+      const q = $('#pcc-sf-q');
+      if(!q) return;
+      q.addEventListener('input', () => { S.sf.q = q.value; save(); });
+      q.addEventListener('keydown', (ev) => { if(ev.key === 'Enter'){ ev.preventDefault(); runSearch(); } });
+      document.querySelectorAll('[data-sfo]').forEach(b => b.addEventListener('click', () => {
+        const k = b.getAttribute('data-sfo');
+        S.sf[k] = !S.sf[k]; b.classList.toggle('on', S.sf[k]); b.setAttribute('aria-pressed', S.sf[k]); save();
+        if(S.sf.q) runSearch();
+      }));
+    }
+    /* A hit opens its file WITH THE MATCH SELECTED and scrolled to — the offsets are into the text
+     * that was searched, which for an open tab is the tab itself. */
+    async function openHit(fi, hi){
+      const f = S.sf.results[fi], h = f && f.hits[hi];
+      if(!h || !await openPath(f.path)) return;
+      const d = doc();
+      await hydrate(d);
+      const len = (d.text || '').length;
+      d.sel = { s: Math.min(h.s, len), e: Math.min(h.e, len) };
+      F.at = d.sel.s;
+      if(inView()) paint();
+      restoreCaret();
+      scrollToLine(h.line - 1);
+      const ta = $('#pcc-ta');
+      if(ta){ ta.focus({ preventScroll: true }); try{ ta.setSelectionRange(d.sel.s, d.sel.e); }catch(_){} }
+    }
+
 
     /* PUT THE CARET AND THE SCROLL BACK. This is the visible half of the whole state design: after
      * a refocus, a resize that re-rendered, a Format, or a window rebuilt on another monitor, the
@@ -1547,6 +1971,9 @@
       _loadGitDiff: loadGitDiff,
       _cancelGitDiff: cancelGitDiff,
       _openDiffAt: openDiffAt,
+      _openFind: openFind,
+      _openSearch: openSearch,
+      _runSearch: runSearch,
       _discardFile: discardFile,
       _gitFilePath: gitFilePath,
       _gotoLine: gotoLine,

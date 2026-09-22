@@ -521,6 +521,10 @@ async def client_stats(request: Request, v: str = ""):
     relay_conns = 0
     sockets = 0
     relay_internal = 0
+    # Declared with the others: assigned only inside the try, a relay_status() that raised left it
+    # unbound and the return below 500'd with a NameError -- an error the CORS middleware never
+    # decorates, which the desktop app reports as "blocked by CORS policy".
+    relay_confined = 0
     calls = 0
     try:
         from app.services.nostr_relay.thread import relay_status
