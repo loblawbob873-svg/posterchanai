@@ -21623,7 +21623,7 @@
     else if(!p.length) body = '<div class="muted small fx-secnote">No synced folders</div>';
     else body = p.map(f =>
       `<span class="fx-syncwrap"><button class="folder-chip syncroot${_syncRoot===f.key?' active':''}" data-synckey="${enc(f.key)}"
-         title="${enc(f.key)}${Number.isFinite(f.n)?` — ${f.n} file${f.n===1?'':'s'}`:' — synced on this device'}">🔄 ${enc(f.key)}${Number.isFinite(f.n)?`<span class="fx-n">${f.n}</span>`:''}</button>`
+         title="${enc(f.key)}${Number.isFinite(f.n)?` — ${f.n} file${f.n===1?'':'s'}`:' — synced on this device'}"><svg class="ic b-ic" aria-hidden="true"><use href="#i-refresh"></use></svg>${enc(f.key)}${Number.isFinite(f.n)?`<span class="fx-n">${f.n}</span>`:''}</button>`
       /* Removing a folder from every device leaves its shared record behind for ever — keyed on the
          NAME, so the pair goes on existing with all its history and any device that pairs that name
          later inherits it. There was no way to clear it from anywhere in the app. */
@@ -22295,7 +22295,7 @@
       <div class="fx-tree-children${_fxBlossomOpen?'':' hidden'}" data-fxtree="blossom"><div class="folder-bar">
         <button class="folder-chip${(!_syncRoot&&_filesFolder==='')?' active':''}" data-folder=""><svg class="ic b-ic" aria-hidden="true"><use href="#i-folder"></use></svg>All</button>
         ${_idxUnknown ? '<span class="muted small" id="fx-folders-loading">Loading your folders…</span>'
-          : folders.map(f=>`<button class="folder-chip${(!_syncRoot&&_filesFolder===f)?' active':''}" data-folder="${enc(f)}">${_fxFolderIcon(f)} ${enc(f)}</button>`).join('')}
+          : folders.map(f=>`<button class="folder-chip${(!_syncRoot&&_filesFolder===f)?' active':''}" data-folder="${enc(f)}">${_fxFolderIcon(f)}${enc(f)}</button>`).join('')}
       </div></div></section>` + _fxSyncedHTML() + _fxHostHTML()
       + `${_standalone()?'':`<button class="fx-tree-head${_filesTab==='ai'?' active':''}" data-files-mode="ai"><svg class="ic b-ic" aria-hidden="true"><use href="#i-ai"></use></svg><b>AI Chat files</b></button>`}`
       + `${IS_ADMIN?`<button class="fx-tree-head${_filesTab==='admin'?' active':''}" data-files-mode="admin"><svg class="ic b-ic" aria-hidden="true"><use href="#i-shield"></use></svg><b>Storage admin</b></button>`:''}</div>`;
