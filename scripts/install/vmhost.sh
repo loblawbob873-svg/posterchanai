@@ -223,6 +223,38 @@ vmhost_network() {
     fi
 }
 
+# DOCKER'S FORWARD POLICY DROPS EVERY VM PACKET. Docker sets the iptables FORWARD policy to DROP, and
+# netfilter runs every table's forward hook: libvirt's own nft accept rules pass a VM's packets and
+# Docker's iptables table then drops them. Measured on nas.lan: the VM could reach its gateway and
+# nothing past it — no overlay sync, no binhost, a "running" VM with no network. Docker keeps the
+# DOCKER-USER chain for exactly this, but the rules there vanish on reboot, so a unit re-applies them.
+# Only libvirt's NAT bridges (virbr+) and br0-br3 (what the bridged-network setting creates) are let
+# through — never br+, which would also match Docker's own br-<id> networks and undo their isolation.
+vmhost_docker_forward() {
+    command -v docker >/dev/null 2>&1 || [ -n "${VMHOST_FORCE_DOCKER:-}" ] || return 0
+    local dir="${VMHOST_UNIT_DIR:-/etc/systemd/system}" unit=posterchan-vm-forward.service
+    sudo tee "$dir/$unit" >/dev/null <<'UNIT'
+[Unit]
+Description=Let libvirt VMs through Docker's FORWARD DROP (PosterChan VM host)
+After=docker.service libvirtd.service network-online.target
+Wants=docker.service
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/bin/sh -c 'for i in virbr+ br0 br1 br2 br3; do iptables -C DOCKER-USER -i "$i" -j ACCEPT 2>/dev/null || iptables -I DOCKER-USER -i "$i" -j ACCEPT; iptables -C DOCKER-USER -o "$i" -m conntrack --ctstate RELATED,ESTABLISHED -j ACCEPT 2>/dev/null || iptables -I DOCKER-USER -o "$i" -m conntrack --ctstate RELATED,ESTABLISHED -j ACCEPT; done'
+
+[Install]
+WantedBy=multi-user.target docker.service
+UNIT
+    sudo systemctl daemon-reload >/dev/null 2>&1 || true
+    if sudo systemctl enable --now "$unit" >/dev/null 2>&1; then
+        print_success "Docker is installed: VM traffic is allowed through its FORWARD policy ($unit)"
+    else
+        print_warning "Could not enable $unit — VMs may have no network while Docker's FORWARD policy is DROP"
+    fi
+}
+
 vmhost_check_kvm() {
     local dev="${VMHOST_KVM_DEV:-/dev/kvm}"
     if [ -e "$dev" ]; then
@@ -259,6 +291,7 @@ setup_vmhost() {
 
     print_step "Network"
     vmhost_network
+    vmhost_docker_forward
 
     print_step "KVM"
     vmhost_check_kvm

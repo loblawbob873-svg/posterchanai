@@ -223,3 +223,29 @@ def test_install_sh_wires_the_flag_and_the_help(flag):
     assert 'source "$INSTALL_DIR/vmhost.sh"' in text
     assert f'if [ "$1" = "{flag}" ]; then\n    setup_vmhost\n    exit $?' in text
     assert flag in (ROOT / "scripts" / "install" / "utils.sh").read_text()
+
+
+def test_with_docker_vm_traffic_is_let_through_its_forward_drop(tmp_path):
+    """Measured on nas.lan: Docker's iptables FORWARD policy is DROP, so a VM on libvirt's NAT network
+    reached its gateway and nothing else. The installer must leave a unit that re-applies the
+    DOCKER-USER accepts on every boot — for libvirt's bridges and br0-3, NEVER br+ (Docker's br-<id>)."""
+    h = Host(tmp_path)
+    units = tmp_path / "units"; units.mkdir()
+    docker = h.bin / "docker"; docker.write_text("#!/bin/sh\nexit 0\n"); docker.chmod(0o755)
+    rc, out, calls = h.run(VMHOST_UNIT_DIR=str(units))
+    assert rc == 0, out
+    unit = (units / "posterchan-vm-forward.service").read_text()
+    assert "DOCKER-USER -i \"$i\" -j ACCEPT" in unit and "--ctstate RELATED,ESTABLISHED" in unit
+    assert "virbr+" in unit and "br0" in unit
+    assert " br+ " not in unit and "br+;" not in unit, "br+ would also open Docker's own networks"
+    assert "iptables -C" in unit, "re-running must not stack duplicate rules"
+    assert any("systemctl enable --now posterchan-vm-forward.service" in c for c in calls)
+
+
+def test_without_docker_no_forward_unit(tmp_path):
+    h = Host(tmp_path)
+    units = tmp_path / "units"; units.mkdir()
+    rc, out, calls = h.run(VMHOST_UNIT_DIR=str(units))
+    assert rc == 0, out
+    assert not (units / "posterchan-vm-forward.service").exists()
+    assert not any("posterchan-vm-forward" in c for c in calls)
