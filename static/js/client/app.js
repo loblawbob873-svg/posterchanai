@@ -6220,6 +6220,8 @@
                     /* The VM hosts a person added by hand (Virtual Machines). Left behind on the old
                        pool, the list reads as empty, which looks like the hosts are gone. */
                     /^pcai:vmhosts$/,
+                    /* Music you shared (musicshare.js): the only record of each share. */
+                    /^pcai:musicshare:/,
                     /* The phone's text-message archive. Carried for the same reason as Notes, and
                        for one more: on every device that is not the phone this IS the only copy —
                        the system message store that is authoritative on the handset does not exist
@@ -20113,6 +20115,15 @@
       if(bar){ bar.innerHTML=_plBarHTML(); _bindPlBar(bar, paint); }
       // A playlist that has been deleted (or has not loaded yet) falls back to the whole library
       // rather than drawing an empty screen with no way to explain itself.
+      // Shared with me / by me are musicshare.js views; the library search steps aside.
+      if(_musicShareView()){
+        const qi=$('#ma-q',feed); if(qi) qi.classList.add('hidden');
+        PCMusicShare.renderView(_musicPl, lib, { libraryChanged: () => {
+          try{ _musicAppNow(); if(window.PCOS && PCOS.musicChanged) PCOS.musicChanged(); }catch(_){} } });
+        _musicAppNow();
+        return;
+      }
+      { const qi=$('#ma-q',feed); if(qi) qi.classList.remove('hidden'); }
       const sel = _musicPl && window.PCPlaylists && PCPlaylists.get(_musicPl);
       if(_musicPl && !sel) _musicPl = null;
       _renderMusicList(lib, null, _musicQ, sel ? _plTracks(_musicPl) : null);
@@ -20122,6 +20133,11 @@
     paint();
     // The library is encrypted per-user, so it can only be read once there is a signer. Repaint when
     // it lands; onChange covers an edit made on another device arriving over the live subscription.
+    // Who shared music with me, behind the first paint, so the chip can say so.
+    if(window.PCMusicShare && ME && !GUEST){
+      PCMusicShare.loadIn().then(()=>{ if(document.getElementById('ma-lib') && !_musicShareView()){
+        const bar=$('#ma-plbar',feed); if(bar){ bar.innerHTML=_plBarHTML(); _bindPlBar(bar, paint); } } }).catch(()=>{});
+    }
     if(window.PCPlaylists){
       PCPlaylists.load().then(()=>{ if(document.getElementById('ma-lib')) paint(); }).catch(()=>{});
       PCPlaylists.onChange(()=>{ if(document.getElementById('ma-lib')) paint(); });
@@ -20174,6 +20190,7 @@
       if(qi){ qi.value=_musicQ;
         // Re-render the LIST only. Repainting the whole app would take the caret out of this box.
         qi.oninput=()=>{ _musicQ=qi.value;
+          if(_musicShareView()) return;
           const sel = _musicPl && window.PCPlaylists && PCPlaylists.get(_musicPl);
           _renderMusicList(lib, null, _musicQ, sel ? _plTracks(_musicPl) : null); _musicAppNow(); }; } }
     MusicPlayer.onChange=_musicAppNow;   // the floating player is the single source of truth
@@ -20210,15 +20227,29 @@
     const live = new Map(musicTracks(null).map(t=>[t.sha,t]));
     return pl.tracks.map(sha=>live.get(sha)).filter(Boolean);
   }
+  const _musicShareView = () => !!(window.PCMusicShare && PCMusicShare.isView(_musicPl));
+  // Share what is on screen: the playlist in order, or the (searched) library; missing tracks skipped.
+  function _musicShareCurrent(){
+    if(!window.PCMusicShare){ toast('sharing is still loading'); return; }
+    const pl = _musicPl && PL() && PL().get(_musicPl);
+    const needle = String(_musicQ||'').trim().toLowerCase();
+    const set = pl ? _plTracks(_musicPl) : musicTracks(null).filter(t=>!needle || String(t.m.name||'').toLowerCase().includes(needle));
+    const tracks = set.filter(t=>!t.missing).map(t=>({ sha:t.sha, name:t.m.name||'track', mime:t.m.mime||'audio/mpeg',
+                                                      size:t.m.size||0, ext:_musicExt(t.m) }));
+    PCMusicShare.openShareDialog({ name: pl ? pl.name : (needle ? 'Music: '+_musicQ.trim() : 'My music'), tracks,
+                                   after: ()=>{ try{ _musicPlRepaint(); }catch(_){} } });
+  }
   function _plBarHTML(){
     if(!PL()) return '';
     const ls = PL().all();
     const chip = (id,label,n)=>`<button class="ma-pl${_musicPl===id?' on':''}" data-pl="${enc(id)}">${enc(label)}${n!=null?` <span class="ma-pln">${n}</span>`:''}</button>`;
+    const MS = window.PCMusicShare, real = _musicPl && !_musicShareView();
     return `<div class="ma-pls">
         ${chip('', '🎵 All music', null)}
         ${ls.map(p=>chip(p.id, p.name, p.tracks.length)).join('')}
         <button class="ma-pl ma-plnew" id="ma-plnew" title="New playlist">＋ New</button>
-        ${_musicPl ? `<span class="ma-plsp"></span>
+        ${MS ? MS.barHTML(_musicPl, real) : ''}
+        ${real ? `<span class="ma-plsp"></span>
           <button class="ma-pl" id="ma-plren" title="Rename this playlist">✎</button>
           <button class="ma-pl" id="ma-pldel" title="Delete this playlist">🗑</button>` : ''}
       </div>`;
@@ -20232,8 +20263,9 @@
        * a chip is navigation, and navigation must never interrupt the music. */
       if(!to && _musicPl && !(_audioEl && !_audioEl.paused)) MusicPlayer.refreshQueue();
       _musicPl = to;
-      MusicPlayer._pl = to;   // the widget lists the same set — two pickers, one selection
+      MusicPlayer._pl = _musicShareView() ? null : to;   // two pickers, one selection (shares aren't playlists)
       repaint(); });
+    { const sb=$('#ma-plshare', root); if(sb) sb.onclick=()=>_musicShareCurrent(); }
     { const nb=$('#ma-plnew', root); if(nb) nb.onclick=async()=>{
         const name = await uiPrompt('Name this playlist', { value: '', placeholder: 'New playlist' }); if(!name) return;
         const pl = await PL().create(name.trim());
@@ -20292,7 +20324,7 @@
   let _musicPlRepaint = ()=>{};
   function _musicAppNow(){
     const t=document.getElementById('ma-title'); if(!t) return;
-    const m=MusicPlayer.cur?FilesIdx.meta(MusicPlayer.cur):null;
+    const m=MusicPlayer.cur?_trackMeta(MusicPlayer.cur):null;
     t.textContent=(m&&m.name)||'Nothing playing';
     const sub=document.getElementById('ma-sub');
     const playing=_audioEl && !_audioEl.paused;
@@ -21798,6 +21830,13 @@
           if(e.ps) ids.add(e.ps);
           for(const c of (e.chunks || [])) ids.add(c);
         }
+      }
+      /* Shared-music copies are keep-flagged and in no index — exactly the reclaim set. Unreadable
+       * shares, like an unreadable folder, mean no offer at all. */
+      if(window.PCMusicShare){
+        const shared = await window.PCMusicShare.refIds();
+        if(!shared) return null;
+        for(const sh of shared) ids.add(sh);
       }
       return ids;
     }catch(_){ return null; }
@@ -25540,12 +25579,19 @@
       });
     },
   };
+  // The library's record, or a not-yet-added SHARED track's (musicshare.js): one lookup for every title.
+  function _trackMeta(sha){
+    const m=FilesIdx.meta(sha); if(m) return m;
+    try{ return (window.PCMusicShare && PCMusicShare.meta(sha)) || null; }catch(_){ return null; }
+  }
   async function trackUrl(sha){
     if(_trackUrls[sha]) return _trackUrls[sha];
-    const m=FilesIdx.meta(sha); if(!m||!m.enc) throw new Error('not an encrypted track');
+    // A shared track not in the library: key from the share, bytes from the sharer's server.
+    const sm=FilesIdx.meta(sha)?null:_trackMeta(sha);
+    const m=(sm&&sm.shared)?sm:FilesIdx.meta(sha); if(!m||!m.enc) throw new Error('not an encrypted track');
     // The kept copy first — this is what makes a downloaded library play with the radio off, and it
     // is checked before the network on EVERY platform, not only where a service worker runs.
-    let blob=await MusicOffline.get(sha);
+    let blob=m.shared||await MusicOffline.get(sha);
     if(!blob){
       const r=await fetch(mediaServer()+'/'+sha); if(!r.ok) throw new Error('blob HTTP '+r.status);
       blob=new Uint8Array(await r.arrayBuffer());
@@ -25553,10 +25599,10 @@
     // v2 master-key (IV prepended) or v1 per-track key — _driveDecrypt is the single place that knows,
     // shared with _encFileUrl. A track with NEITHER field used to throw 'no key' here; it now tries the
     // master key, which is what an index entry written before the flag existed actually needs.
-    if(!m.mk && !m.keyenc) console.warn('track', sha.slice(0,8), 'has no key field — trying the master key');
+    if(!m.shared && !m.mk && !m.keyenc) console.warn('track', sha.slice(0,8), 'has no key field — trying the master key');
     // `true`: trackUrl already refused anything without a record (`if(!m||!m.enc) throw` above), so
     // by here the meta IS the index's.
-    const plain=await _driveDecrypt(m, blob, true);
+    const plain=m.shared?await PCMusicShare.plain(sha):await _driveDecrypt(m, blob, true);
     const u=URL.createObjectURL(new Blob([plain],{type:m.mime||'audio/ogg'})); _trackUrls[sha]=u; _trackUrlOrder.push(sha);
     while(_trackUrlOrder.length>6){ const old=_trackUrlOrder.shift(); if(old!==(MusicPlayer&&MusicPlayer.cur) && _trackUrls[old]){ URL.revokeObjectURL(_trackUrls[old]); delete _trackUrls[old]; } }
     return u;
@@ -26156,7 +26202,7 @@
        * down. `_nativeOff` is cleared by play(), which is the only thing that should bring it back. */
       if(!this.cur || this._nativeOff) return Promise.resolve(false);
       const P=_capPlugin('MusicControls','update'); if(!P) return Promise.resolve(false);
-      const m=FilesIdx.meta(this.cur), d=_audioEl?_audioEl.duration:0;
+      const m=_trackMeta(this.cur), d=_audioEl?_audioEl.duration:0;
       try{
         const r=P.update({ title:(m&&m.name)||'Track', artist:'PosterChan',
           playing:!!(_audioEl && !_audioEl.paused),
@@ -26212,7 +26258,7 @@
       this._nativePush();
       if(!('mediaSession' in navigator)) return;
       try{
-        const m=this.cur?FilesIdx.meta(this.cur):null;
+        const m=this.cur?_trackMeta(this.cur):null;
         if(window.MediaMetadata){
           const metadata={title:(m&&m.name)||'Track',artist:'PosterChan',album:'Library'};
           /* Chromium's MediaImage loader rejects Electron's app:// scheme. _media runs on every
@@ -26449,7 +26495,7 @@
        * full app from this object's unchanged state. */
       if(_capPlugin('MusicControls','addListener') || document.getElementById('ma-lib')){
         d.classList.add('hidden'); return;
-      } const m=this.cur?FilesIdx.meta(this.cur):null; const name=(m&&m.name)||'—';
+      } const m=this.cur?_trackMeta(this.cur):null; const name=(m&&m.name)||'—';
       const playing=_audioEl && !_audioEl.paused; const pl=this._loading?'…':(playing?'⏸':'▶');
       const playLabel=this._loading?'Loading track':(playing?'Pause':'Play');
       if(this.min){
@@ -26528,7 +26574,7 @@
       return this.queue; },
     _listHtml(){ const playing=_audioEl && !_audioEl.paused; const shas=this._shownShas();
       if(!shas.length) return `<div class="muted small" style="padding:10px;text-align:center">${this._search?'No matches':'No tracks in Music yet'}</div>`;
-      return shas.map(sha=>{ const mm=FilesIdx.meta(sha)||{}; return `<button class="mp-track${sha===this.cur?' on':''}" data-sha="${sha}"><span class="mp-tnum">${sha===this.cur&&playing?'▶':'♪'}</span><span>${enc(mm.name||'track')}</span></button>`; }).join(''); },
+      return shas.map(sha=>{ const mm=_trackMeta(sha)||{}; return `<button class="mp-track${sha===this.cur?' on':''}" data-sha="${sha}"><span class="mp-tnum">${sha===this.cur&&playing?'▶':'♪'}</span><span>${enc(mm.name||'track')}</span></button>`; }).join(''); },
     _wireList(){ const d=this.el; if(!d) return; d.querySelectorAll('.mp-list .mp-track').forEach(t=> t.onclick=()=>this.play(t.dataset.sha)); },
     _drag(handle){ if(!handle) return; const d=this.el; let sx,sy,ox,oy,on=false;
       const move=e=>{ if(!on) return; const p=e.touches?e.touches[0]:e; d.style.left=Math.max(0,Math.min(innerWidth-50,ox+p.clientX-sx))+'px'; d.style.top=Math.max(0,Math.min(innerHeight-40,oy+p.clientY-sy))+'px'; if(e.cancelable)e.preventDefault(); };
@@ -26750,14 +26796,18 @@
    * single-file UI path; this is for a caller that has already confirmed and is deleting many
    * (notes.js "delete all notes and files"). 404 counts as success: the blob being already gone
    * still means the index entry should go, which is what left files stuck as "delete failed". */
-  async function deleteBlobQuiet(sha){
+  // The Blossom DELETE alone — drops THIS account's reference; the bytes go with the last owner.
+  async function _blobDelete(sha){
     try{
-      const server=mediaServer();
       const auth=await sign(24242,'Delete blob',[['t','delete'],['x',sha],['expiration',String(Math.floor(Date.now()/1000)+3600)]]);
-      const res=await fetch(server+'/'+sha,{ method:'DELETE', headers:{'Authorization':'Nostr '+btoa(JSON.stringify(auth))} });
-      if(res.ok || res.status===404){ try{ FilesIdx.forget(sha); _filesDeleted.add(sha); delete _trackUrls[sha]; }catch(_){ } return true; }
-    }catch(_){ }
-    return false;
+      const res=await fetch(mediaServer()+'/'+sha,{ method:'DELETE', headers:{'Authorization':'Nostr '+btoa(JSON.stringify(auth))} });
+      return res.ok || res.status===404;
+    }catch(_){ return false; }
+  }
+  async function deleteBlobQuiet(sha){
+    if(!await _blobDelete(sha)) return false;
+    try{ FilesIdx.forget(sha); _filesDeleted.add(sha); delete _trackUrls[sha]; }catch(_){ }
+    return true;
   }
   /* Rename a file on the drive.
    *
@@ -41157,6 +41207,24 @@
      * way to lay hands on it, and "is the phone player actually full-screen" is a question only the
      * real element and the real stylesheet can answer. */
     MusicPlayer, MusicOffline,
+    // musicshare.js: HMAC(mk, sha) = a key for ONE shared copy; musicLibraryAdd's verdict is the SAVE.
+    musicShareKey: async (sha) => {
+      let input; try{ input=_masterKeyInput(await FilesIdx._ensureMK()); }catch(_){ return null; }
+      if(!(input instanceof Uint8Array)) return null;
+      return window.PCMusicShare ? PCMusicShare.deriveKey(input, sha) : null;
+    },
+    // The player's own path (offline first, right key), read back.
+    musicPlainOf: async (sha) => new Uint8Array(await (await fetch(await trackUrl(sha))).arrayBuffer()),
+    musicLibrary: () => { try{ FilesIdx._norm(); }catch(_){}
+      return Object.keys(FilesIdx.data.files||{}).filter(sha=>FilesIdx.folderOf(sha)==='Music'); },
+    musicLibraryAdd: async (entries) => {
+      FilesIdx.beginBatch();
+      for(const [sha, m] of entries||[]){ try{ FilesIdx.setFile(sha, m); }catch(_){} }
+      const ok = await FilesIdx.endBatch();
+      try{ await _refreshBlobHave(); }catch(_){}
+      return ok;
+    },
+    releaseBlob: _blobDelete,
     // Re-evaluate the floating player's chrome. The desktop calls this when a window closes or the
     // feed moves, so the transport reappears the instant the Music app is gone rather than on the
     // next audio tick (and at all, when the music is paused and there are no ticks).
@@ -41649,7 +41717,7 @@
     music: () => ({
       now: () => {
         if(!MusicPlayer.cur) return null;
-        const m = FilesIdx.meta(MusicPlayer.cur) || {};
+        const m = _trackMeta(MusicPlayer.cur) || {};
         // What is COMING is most of what a now-playing panel is for: the queue is already in memory,
         // so naming the next track costs a lookup rather than a fetch.
         const q = MusicPlayer.queue || [];

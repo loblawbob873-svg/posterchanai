@@ -8689,6 +8689,24 @@ body.os-on .osw-body > .feed::-webkit-scrollbar-thumb:hover{background:var(--mut
 .ma-pln{opacity:.7;font-weight:500;margin-inline-start:2px}
 .ma-plnew{border-style:dashed;color:var(--cyan);border-color:var(--cyan)}
 .ma-plsp{flex:0 0 auto;width:1px;height:22px;background:var(--line);margin:0 2px}
+.ma-plshare{color:var(--cyan);border-color:rgba(0,240,255,.45)}
+/* Music sharing (musicshare.js): the share cards, the "shared by me" rows and their people. */
+.msh-card{display:flex;flex-direction:column;align-items:flex-start;gap:3px;width:100%;text-align:start;
+  padding:12px 14px;border-radius:13px;background:linear-gradient(180deg,#160a28,#100420);
+  border:1px solid rgba(0,240,255,.3);color:var(--text);font:inherit;cursor:pointer}
+.msh-card:hover{border-color:var(--cyan);box-shadow:0 0 14px rgba(0,240,255,.18)}
+.msh-card b{overflow-wrap:anywhere}
+.msh-note{flex-basis:100%}
+.msh-out{display:flex;flex-direction:column;gap:8px;padding:12px 14px;border-radius:13px;
+  background:var(--panel2);border:1px solid var(--line)}
+.msh-out-head{display:flex;flex-wrap:wrap;gap:6px 10px;align-items:baseline}
+.msh-out-head b{overflow-wrap:anywhere}
+.msh-people{display:flex;flex-wrap:wrap;gap:6px}
+.msh-person{display:inline-flex;align-items:center;gap:4px;padding:3px 4px 3px 10px;border-radius:999px;
+  border:1px solid var(--line);font-size:12px;max-width:100%;overflow-wrap:anywhere}
+.msh-unshare{background:none;border:none;color:var(--danger);cursor:pointer;padding:4px;border-radius:50%;
+  display:inline-flex;opacity:.75;font:inherit}
+.msh-unshare:hover,.msh-unshare:focus-visible{opacity:1}
 .ma-plpick{display:flex;flex-direction:column;gap:8px;max-height:46vh;overflow-y:auto;margin-top:8px}
 .ma-plpickb{justify-content:flex-start;text-align:start}
 /* A finger needs a bigger chip than a mouse, and this strip is scrolled as well as tapped. */

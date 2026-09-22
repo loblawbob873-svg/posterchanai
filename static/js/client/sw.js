@@ -139,6 +139,7 @@ const SHELL = [
   '/static/js/client/termhist.js',
   '/static/js/client/notes.js',
   '/static/js/client/playlists.js',
+  '/static/js/client/musicshare.js',
   '/static/js/client/vaultcore.js',
   '/static/js/client/vault.js',
   '/static/js/client/chess.js',

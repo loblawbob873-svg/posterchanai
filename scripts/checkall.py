@@ -321,6 +321,9 @@ CHECKS = {
     "check_websearch_rate":            dict(group="live", secs=420, serial=True, live_args=[],
                                             why="searches answer at a rate, not once in three"),
     "check_notes_mobile":              dict(group="ui", secs=600),
+    # Three browser contexts against an in-memory relay + Blossom this script serves; also asserts no
+    # Music track-row button renders as the browser default (the "grey boxes" report).
+    "check_music_sharing":             dict(group="ui", secs=300),
     # Picture messages in Texts, on a device that is not the phone. The node simulator has no DOM,
     # and the bug that hid every attachment on the old messages lived entirely in one.
     "check_texts_media":               dict(group="ui", secs=420,

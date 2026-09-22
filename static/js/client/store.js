@@ -159,7 +159,11 @@
          t[1] === 'pcai:dmkey' || t[1] === 'pcai:dmcache' ||
          /* The VM hosts somebody added by hand. Evicted, Virtual Machines shows no hosts until a
             relay hands the list back — which reads as the hosts being gone. */
-         t[1] === 'pcai:vmhosts')) return true;
+         t[1] === 'pcai:vmhosts' ||
+         /* Music this account SHARED (musicshare.js). Pinned only when WE wrote it: it is the one
+            record "Shared by me" and a revoke are built from, whereas a share addressed to us is
+            anybody's to publish — pinning those would let a stranger mint unevictable entries. */
+         (t[1].startsWith('pcai:musicshare:') && ev.pubkey && ev.pubkey === _pinnedViewer()))) return true;
     return false;
   }
   /* ONE event with no `tags` used to take down every timeline in the app, permanently.
