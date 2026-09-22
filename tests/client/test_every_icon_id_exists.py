@@ -20,6 +20,7 @@ import re
 from pathlib import Path
 
 import pytest
+from tests.client_source import client_source
 
 ROOT = Path(__file__).resolve().parents[2]
 SPRITE = ROOT / "static/js/client/sprite.js"
@@ -70,6 +71,6 @@ def test_every_referenced_icon_is_defined(relpath):
 
 def test_the_office_window_icon_in_particular():
     """The reported one, by name, so the fix cannot be silently reverted."""
-    app = (ROOT / "static/js/client/app.js").read_text(encoding="utf-8")
+    app = client_source()
     call = re.search(r"PCOS\.openDoc\('office:'\+session\.id,\s*file\.name,\s*'([^']+)'", app)
     assert call and call.group(1) in defined()

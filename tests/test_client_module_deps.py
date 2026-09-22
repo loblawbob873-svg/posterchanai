@@ -129,6 +129,8 @@ GLOBALS = {
     "CSS", "innerWidth", "innerHeight", "addEventListener", "removeEventListener", "performance",
     "self", "Capacitor", "BarcodeDetector", "jsQR", "katex",
     "Option", "Hls", "IDBKeyRange", "RTCRtpSender", "AbortSignal", "devicePixelRatio",
+    # the desktop shell's preload bridges (desktop/*.js), present only inside the desktop app
+    "pcHost", "pcOS", "pcRemoteControl",
     # this app's other modules, reached as globals by design
     "PC", "Relay", "Store", "NostrTools", "PCQR", "PCZip", "PCSync", "PCNotes", "PCJoplin",
     "PCVault", "PCGit", "PCGitFactory", "PCI18n", "PCI18N", "PCSprite", "PCOutbox", "PCNegentropy",
@@ -184,6 +186,12 @@ let factory=null, global=null;
 for(const st of mod.body){ const e=st.expression;
   if(e&&e.type==='AssignmentExpression'&&e.left.type==='MemberExpression'&&/Function/.test(e.right.type)){ factory=e.right; global=e.left.property.name; } }
 const destructured=[], sRead=new Set(), sWrite=new Set(), returned=new Set();
+// The live-state object is `const S = dep.state` — or `_S` in a module whose moved code declares an
+// `S` of its own (files.js: `const S = window.PCSync`), which would otherwise shadow it.
+let SN='S';
+for(const st of factory.body.body)
+  if(st.type==='VariableDeclaration') for(const d of st.declarations)
+    if(d.id.type==='Identifier'&&d.init&&d.init.type==='MemberExpression'&&d.init.object.name==='dep'&&d.init.property.name==='state') SN=d.id.name;
 for(const st of factory.body.body){
   if(st.type==='VariableDeclaration') for(const d of st.declarations)
     if(d.init&&d.init.type==='Identifier'&&d.init.name==='dep'&&d.id.type==='ObjectPattern')
@@ -192,7 +200,7 @@ for(const st of factory.body.body){
     st.argument.properties.forEach(p=>returned.add(keyName(p)));
 }
 walk(factory.body,n=>{
-  const isS=m=>m&&m.type==='MemberExpression'&&!m.computed&&m.object.type==='Identifier'&&m.object.name==='S';
+  const isS=m=>m&&m.type==='MemberExpression'&&!m.computed&&m.object.type==='Identifier'&&m.object.name===SN;
   if(isS(n)) sRead.add(n.property.name);
   if(n.type==='AssignmentExpression'&&isS(n.left)) sWrite.add(n.left.property.name);
   if(n.type==='UpdateExpression'&&isS(n.argument)) sWrite.add(n.argument.property.name);

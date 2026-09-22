@@ -34,6 +34,7 @@ import os
 import re
 
 import pytest
+from tests.client_source import client_source
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
@@ -43,7 +44,7 @@ def _read(rel):
         return fh.read()
 
 
-APP = _read("static/js/client/app.js")
+APP = client_source()
 STORE = _read("static/js/client/store.js")
 CSS = _read("static/css/client.css")
 HTML = _read("templates/client.html")

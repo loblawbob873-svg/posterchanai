@@ -1,4 +1,5 @@
 'use strict';
+const { clientSource, clientSourceAt, installStateGlobals } = require('./client_source.cjs');
 /* WHAT THE CLIENT ACTUALLY SIGNS WHEN YOU REPLY.
  *
  * Runs the SHIPPED `_commentScope` / `replyKindFor` / `replyTags` from app.js against a set of
@@ -11,7 +12,7 @@
  */
 const fs = require('fs'), vm = require('vm'), path = require('path');
 const root = path.resolve(__dirname, '../..');
-const src = fs.readFileSync(root + '/static/js/client/app.js', 'utf8');
+const src = clientSourceAt(root + '/static/js/client/app.js');
 
 function fn(decl) {
   const at = src.indexOf(decl);
@@ -55,7 +56,7 @@ const ctx = {
   Store: { get: () => null },       // nothing else cached: the common case, and the strictest one
 };
 ctx.window = ctx;
-vm.createContext(ctx);
+vm.createContext(installStateGlobals(ctx) && ctx);
 vm.runInContext([fn('function _commentScope(parent){'),
                  fn('function replyKindFor(parent){'),
                  fn('function replyTags(parent, id, pk){'),

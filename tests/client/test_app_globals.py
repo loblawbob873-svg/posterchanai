@@ -385,7 +385,7 @@ def test_every_view_a_sub_module_sets_can_actually_be_set():
 
     root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
     client = os.path.join(root, "static", "js", "client")
-    app = open(os.path.join(client, "app.js"), encoding="utf-8").read()
+    app = client_source()
 
     writers = []
     for name in sorted(os.listdir(client)):
@@ -410,7 +410,7 @@ def test_report_a_bug_is_reachable_from_a_phone():
     the entry exists, and the dispatch reaches #rb-report rather than growing a second composer."""
     import os
     root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-    app = open(os.path.join(root, "static", "js", "client", "app.js"), encoding="utf-8").read()
+    app = client_source()
     at = app.index("function moreMenu(")
     body = app[at:app.index("function filesMenu(", at)]
     assert "'__bug','bug','Report a Bug'" in body.replace('"', "'"), "the More sheet lost the entry"
@@ -443,7 +443,7 @@ def test_the_terminal_is_gated_to_admins_and_the_ssh_allowlist():
     gating and nav-off to the user's choices, and borrowing either means fighting its owner."""
     import os
     root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-    app = open(os.path.join(root, "static", "js", "client", "app.js"), encoding="utf-8").read()
+    app = client_source()
     assert "function applyTermGate()" in app
     assert "gated-off" in app
     at = app.index("function moreMenu(")

@@ -127,7 +127,11 @@ LIFT_CONSTS = ["_FX_COLS", "_FX_KINDS", "_FILES_PAGE"]
 
 
 def lifted_app_js(sim):
-    src = open(APP, encoding="utf-8").read()
+    # app.js plus the modules split out of it: the Explorer (_renderFilesGrid, _fxSideHTML, …) lives
+    # in files.js now, where app.js's live bindings are read through a state object (`_S.x`).
+    sys.path.insert(0, ROOT)
+    from tests.client_source import client_source, state_shims
+    src = client_source()
 
     picker = lift_re(src, r"\n  function blossomPicker\(.*?\n\n  // ---------- Pics:",
                      "blossomPicker()")
@@ -162,6 +166,8 @@ def lifted_app_js(sim):
             raise SystemExit("FAIL  could not find the picker's folder bar to simulate bug 2")
         body[-1] = body[-1].replace(anchor, "FilesIdx.folders().filter(f=>!FilesIdx.isEncFolder(f))", 1)
 
+    # The live-state object the lifted module functions read, over this page's own stubs.
+    body.append(state_shims("\n".join(body)))
     return "\n".join(body).replace("</script", "<\\/script"), is_enc
 
 

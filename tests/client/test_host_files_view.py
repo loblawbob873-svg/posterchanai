@@ -11,6 +11,7 @@ import shutil
 import subprocess
 import tempfile
 import unittest
+from tests.client_source import client_source
 
 ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 MOD = os.path.join(ROOT, "static", "js", "client", "hostfiles.js")
@@ -83,7 +84,7 @@ class HostFilesView(unittest.TestCase):
             self.assertIn('fx-file-folder', out[view])
             self.assertNotIn('📁', out[view])
 
-        app = open(APP, encoding="utf-8").read()
+        app = client_source()
         self.assertIn("folderIcon: () => _fxFileGlyph('folder')", app)
         self.assertIn("it.dir ? _fxFileGlyph('folder')", app,
                       "synced/restored folders still bypass the packaged icon")
@@ -95,7 +96,7 @@ class HostFilesView(unittest.TestCase):
         self.assertEqual(out["old"], 12, "filesystems without birth time need a useful fallback")
 
     def test_toolbar_has_explicit_sort_controls_and_created_column(self):
-        app = open(APP, encoding="utf-8").read()
+        app = client_source()
         self.assertIn("['modified','Date created']", app)
         self.assertIn('id="fx-sort"', app)
         self.assertIn('id="fx-sort-dir"', app)
@@ -136,7 +137,7 @@ class HostFilesView(unittest.TestCase):
 
     def test_one_selected_file_can_be_shared_to_blossom(self):
         host = open(MOD, encoding="utf-8").read()
-        app = open(APP, encoding="utf-8").read()
+        app = client_source()
         self.assertIn("Save to Files", host)
         self.assertIn("!e.dir", host, "folders are being offered as uploadable files")
         self.assertIn("shareFile: _shareHostFile", app)
@@ -211,7 +212,7 @@ class HostFilesView(unittest.TestCase):
     def test_mobile_locations_button_targets_its_own_explorer_ancestor(self):
         """The toolbar is inside .fx-main, so querying downward from its pane can never find the
         sibling sidebar's .fx-explorer parent. Open and close must resolve their nearest owner."""
-        app = open(APP, encoding="utf-8").read()
+        app = client_source()
         bind = app[app.index("function _fxBindBar"):app.index("/* SEARCH.", app.index("function _fxBindBar"))]
         self.assertIn("open.closest('.fx-explorer')", bind)
         self.assertNotIn("explorer=$('.fx-explorer',pane)", bind)
@@ -251,11 +252,11 @@ class HostFilesView(unittest.TestCase):
     def test_the_files_screen_actually_reaches_it(self):
         """The module could be complete, loaded and precached and called by nothing — which is
         exactly what happened to termhist.js and is invisible from every angle but this one."""
-        src = open(APP, encoding="utf-8").read()
+        src = client_source()
         self.assertIn("PCHostFiles", src, "app.js never reaches for the host source")
         # The DEFINITION is not the wiring — a renderer nothing calls is the termhist.js shape
         # exactly. The branch is what makes the chip do anything.
-        self.assertIn("if(_hostOn) return _renderHostRoot", src.replace("  ", ""),
+        self.assertIn("if(_S._hostOn) return _renderHostRoot", src.replace("  ", ""),
                       "nothing routes the Files screen to the host source, so the chip is inert")
         # AND THE BINDER HAS TO BE IN THE FUNCTION THAT OWNS THE MARKUP. This one was written into
         # the HOME screen's binder by mistake, where it queried a `r` that does not exist in that

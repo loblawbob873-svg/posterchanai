@@ -1,6 +1,7 @@
 import fs from 'node:fs';
 import vm from 'node:vm';
 import assert from 'node:assert/strict';
+import { clientSource, clientSourceAt, installStateGlobals } from './client_source.mjs';
 
 const source = fs.readFileSync(process.env.PC_OFFICE_TEST_SOURCE || new URL('../../static/js/client/app.js', import.meta.url), 'utf8');
 const start = source.indexOf('  async function _officeSession(');
@@ -33,7 +34,7 @@ ctx.window = {__PC:{authFetch:async()=>({ok:true,json:async()=>({id:'session-1',
 if(mode === 'native') {
   ctx.PCOS = ctx.window.PCOS = {isOn:()=>true, openDoc:()=>({slot:host}), closeDoc:()=>{calls.closed++;}};
 }
-vm.createContext(ctx);
+vm.createContext(installStateGlobals(ctx) && ctx);
 vm.runInContext(source.slice(start,end),ctx);
 const file = new Blob(['test document']);file.name='report.odt';
 await ctx._officeSession(file,async()=>{});

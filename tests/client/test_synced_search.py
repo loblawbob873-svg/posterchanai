@@ -16,6 +16,7 @@ import re
 import shutil
 import subprocess
 import unittest
+from tests.client_source import client_source
 
 ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 APP = os.path.join(ROOT, "static", "js", "client", "app.js")
@@ -34,7 +35,7 @@ MANIFEST = {
 @unittest.skipIf(not NODE, "no node on this node")
 class SyncedSearchTests(unittest.TestCase):
     def _search(self, dir_, needle):
-        src = open(APP, encoding="utf-8").read()
+        src = client_source()
         m = re.search(r"\n  function _syncSearch\(paths, dir, match\)\{", src)
         self.assertIsNotNone(m, "_syncSearch moved in app.js")
         i = src.index("{", m.end() - 1)
@@ -90,19 +91,19 @@ class SyncedSearchTests(unittest.TestCase):
         """`DCIM` must not match `DCIMBACKUP/...`."""
         extra = dict(MANIFEST)
         extra["DCIMBACKUP/x (conflict from y, 2026-08-17).jpg"] = {"sha": "f" * 64, "size": 1}
-        src = open(APP, encoding="utf-8").read()
+        src = client_source()
         self.assertIn("const pre = dir ? dir + '/' : '';", src,
                       "the subtree filter no longer treats the prefix as a path boundary")
 
 
 class TheSearchIsWiredTests(unittest.TestCase):
     def test_the_synced_view_uses_the_subtree_search(self):
-        src = open(APP, encoding="utf-8").read()
-        self.assertIn("_syncSearch(paths, _syncPath, _fxMatch)", src,
+        src = client_source()
+        self.assertIn("_syncSearch(paths, _S._syncPath, _fxMatch)", src,
                       "the synced folder view still filters only its current directory")
 
     def test_an_empty_result_says_it_looked_everywhere(self):
-        src = open(APP, encoding="utf-8").read()
+        src = client_source()
         self.assertIn("including sub-folders", src,
                       "an empty search result reads as 'this folder is empty', which is a different "
                       "statement and the one that sent somebody looking for a bug")
@@ -116,8 +117,7 @@ class BulkSelectTests(unittest.TestCase):
 
     @classmethod
     def setUpClass(cls):
-        with open(os.path.join(ROOT, "static", "js", "client", "app.js"), encoding="utf-8") as fh:
-            cls.app = fh.read()
+        cls.app = client_source()
         with open(os.path.join(ROOT, "static", "js", "client", "sync.js"), encoding="utf-8") as fh:
             cls.sync = fh.read()
 

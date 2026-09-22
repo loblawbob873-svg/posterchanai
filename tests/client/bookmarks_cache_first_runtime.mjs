@@ -13,7 +13,8 @@
  * This extracts the shipped renderBookmarks and runs it with a relay that never answers.
  */
 import fs from 'node:fs';
-const app = fs.readFileSync(new URL('../../static/js/client/app.js', import.meta.url), 'utf8');
+import { clientSource, clientSourceAt, installStateGlobals } from './client_source.mjs';
+const app = clientSource();
 const start = app.indexOf('  async function renderBookmarks(){');
 const end = app.indexOf('  // ---------- minimal, SAFE markdown renderer', start);
 if (start < 0 || end < 0) throw new Error('renderBookmarks moved');

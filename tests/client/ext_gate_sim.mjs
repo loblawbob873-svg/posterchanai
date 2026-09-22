@@ -1,6 +1,7 @@
 /* The SHIPPED _extGate against a signer that is asleep, refusing, orphaned, or fine. */
 import fs from 'node:fs';
-const src = fs.readFileSync(new URL('../../static/js/client/app.js', import.meta.url), 'utf8');
+import { clientSource, clientSourceAt, installStateGlobals } from './client_source.mjs';
+const src = clientSource();
 const a = src.indexOf('  const _extGate = {');
 const b = src.indexOf('\n  async function _nip17wrapVia', a);
 if (a < 0 || b < 0) throw new Error('_extGate moved');

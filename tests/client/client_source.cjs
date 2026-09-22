@@ -40,7 +40,8 @@ function clientSourceAt(appPath){
 }
 
 function installStateGlobals(target = globalThis){
-  target.S = new Proxy({}, {
+  // `_S` too: a module whose own code declares an `S` names its state object `_S` (files.js).
+  target.S = target._S = new Proxy({}, {
     get: (_, k) => target[k],
     set: (_, k, v) => { target[k] = v; return true; },
     has: (_, k) => k in target,
@@ -48,4 +49,19 @@ function installStateGlobals(target = globalThis){
   return target.S;
 }
 
-module.exports = { CLIENT, splitModules, clientSource, clientSourceAt, installStateGlobals };
+/* `const S={…};` (and/or `_S`) for a harness whose stubs are LEXICAL — `let ME=…` inside the script
+ * it evaluates — rather than properties of a context object. Getters and setters close over those
+ * bindings, so declare it in the same script, after them. Only the names the lifted code reads are
+ * covered, and only the state objects it actually uses. */
+function stateShim(code){
+  const out = [];
+  for(const sn of ['S', '_S']){
+    const names = [...new Set([...String(code).matchAll(new RegExp('(?<![\\w$.])' + sn + '\\.([A-Za-z_$][\\w$]*)', 'g'))].map(m => m[1]))];
+    if(!names.length) continue;
+    out.push('const ' + sn + '={' + names.map(n =>
+      `get ${n}(){return typeof ${n}!=='undefined'?${n}:undefined;},set ${n}(v){${n}=v;}`).join(',') + '};');
+  }
+  return out.join('\n');
+}
+
+module.exports = { CLIENT, splitModules, clientSource, clientSourceAt, installStateGlobals, stateShim };

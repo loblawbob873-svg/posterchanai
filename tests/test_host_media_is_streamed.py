@@ -24,12 +24,13 @@ import shutil
 import subprocess
 import tempfile
 import unittest
+from tests.client_source import client_source
 
 
 ROOT = Path(__file__).resolve().parents[1]
 MAIN = (ROOT / "desktop/main.js").read_text(encoding="utf-8")
 PRELOAD = (ROOT / "desktop/preload.js").read_text(encoding="utf-8")
-APP = (ROOT / "static/js/client/app.js").read_text(encoding="utf-8")
+APP = client_source()
 PREVIEW = (ROOT / "static/js/client/preview.js").read_text(encoding="utf-8")
 
 

@@ -13,6 +13,7 @@ import subprocess
 import tempfile
 import unittest
 from pathlib import Path
+from tests.client_source import client_source
 
 ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 SIM = os.path.join(ROOT, "tests", "client", "preview_sim.js")
@@ -111,7 +112,7 @@ class PreviewIsReachable(unittest.TestCase):
 
     @classmethod
     def setUpClass(cls):
-        cls.app = _read("static/js/client/app.js")
+        cls.app = client_source()
         cls.tpl = _read("templates/client.html")
         cls.sw = _read("static/js/client/sw.js")
         cls.css = _read("static/css/client.css")

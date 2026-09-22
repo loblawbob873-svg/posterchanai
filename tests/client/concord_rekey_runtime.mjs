@@ -1,5 +1,6 @@
 import fs from 'node:fs';import vm from 'node:vm';import assert from 'node:assert/strict';
 import {createHash,createHmac,hkdfSync,createCipheriv} from 'node:crypto';
+import { clientSource, clientSourceAt, installStateGlobals } from './client_source.mjs';
 globalThis.window=globalThis;
 vm.runInThisContext(fs.readFileSync('static/vendor/nostr/nostr.bundle.js','utf8')+'\nglobalThis.NT=NostrTools');
 vm.runInThisContext(fs.readFileSync(process.env.PC_CORD_REKEY_SOURCE||'static/js/client/cord-reader.js','utf8').replace('return __toCommonJS(pc_cord_reader_exports);','globalThis.fixture={encodeRekeyBlob,decodeRekeyBlob,epochKeyCommitment,rekeyLocator};return __toCommonJS(pc_cord_reader_exports);')+'\nglobalThis.reader=PosterCordReader;');
@@ -34,7 +35,7 @@ const made=await reader.createRekeyWraps(bundle,[],{scope:zero,key:'91'.repeat(3
 console.log('CORD06 independent binary vectors and authenticated rekey lifecycle passed');
 // Real local worker: arbitrary invalid-UTF8 bytes survive with its key kept inside.
 const workerContext={self:{},TextEncoder,TextDecoder,Uint8Array,ArrayBuffer,DataView,crypto:globalThis.crypto,console,Map,Set,setTimeout,clearTimeout};workerContext.globalThis=workerContext;workerContext.self=workerContext;
-vm.createContext(workerContext);workerContext.importScripts=path=>vm.runInContext(fs.readFileSync('.'+path,'utf8'),workerContext);
+vm.createContext(installStateGlobals(workerContext) && workerContext);workerContext.importScripts=path=>vm.runInContext(fs.readFileSync('.'+path,'utf8'),workerContext);
 vm.runInContext(fs.readFileSync('static/js/client/signer-worker.js','utf8'),workerContext);
 let reply;workerContext.postMessage=value=>{reply=value;};
 const call=async(op,args)=>{reply=null;await workerContext.onmessage({data:{id:1,op,args}});assert(reply);return reply;};
@@ -46,7 +47,7 @@ assert(!(await call('cordRekeyDecrypt',{owner:other,peer:owner,ct:encryptBytes(m
 const source=fs.readFileSync('static/js/client/concord.js','utf8'),section=source.slice(source.indexOf('  const rekeySubscriptions='),source.indexOf('  async function refreshRoomMetadata(p){'));
 let activeOwner=member,stored=[{id:'room',communityId:cid,cord:{bundle:structuredClone(bundle)}}],callbacks=[],published=[],saveCount=0;
 const p={cordRekeyDecrypt:decryptBytes},ctx={window:{PosterCordReader:reader,Relay:{subscribe:(_f,o)=>{callbacks.push(o.onEvent);return 1;},subscribeFrom:(_u,_f,o)=>{callbacks.push(o.onEvent);return ()=>{};},close:()=>{}}},console,Map,Set,Promise,JSON,deliveryOwner:()=>activeOwner,roomIdentity:r=>r.id,saved:()=>structuredClone(stored),save:rooms=>{stored=structuredClone(rooms);saveCount++;},cachedEnvelopes:async()=>[],envelopeCacheKey:(...args)=>JSON.stringify(args),cordControlStamp:controls=>(controls||[]).map(e=>e.id).sort(),queryEnvelopeHistory:async()=>[],roomRelays:()=>[],cordPlaneContext:()=>null,roomControls:new Map(),persistArmadaMembership:async(_p,r)=>{published.push(structuredClone(r));},backgroundRender:()=>{},state:{community:0},stopChatLive:()=>{}};
-vm.createContext(ctx);vm.runInContext(section+'\nglobalThis.begin=startRekeyLive;globalThis.stop=stopRekeyLive;',ctx);
+vm.createContext(installStateGlobals(ctx) && ctx);vm.runInContext(section+'\nglobalThis.begin=startRekeyLive;globalThis.stop=stopRekeyLive;',ctx);
 ctx.begin(p,stored[0],[]);assert(callbacks.length===2);for(const callback of callbacks)callback(good);await new Promise(r=>setImmediate(r));assert.equal(saveCount,1,'duplicate delivery across transports adopts once');assert.equal(published.length,1);assert.equal(stored[0].cord.bundle.community_root,'91'.repeat(32));ctx.stop();
 activeOwner=member;stored=[{id:'room',communityId:cid,cord:{bundle:structuredClone(bundle)}}];callbacks=[];saveCount=0;published=[];let release;const blocked={cordRekeyDecrypt:async(a,c)=>{await new Promise(r=>{release=r;});return decryptBytes(a,c);}};ctx.begin(blocked,stored[0],[]);callbacks[0](good);await new Promise(r=>setImmediate(r));assert(release);activeOwner=other;release();await new Promise(r=>setImmediate(r));assert.equal(saveCount,0,'old account decrypt never writes membership');assert.equal(published.length,0);ctx.stop();
 console.log('CORD06 actual worker and account-owned adapter passed');
@@ -61,7 +62,7 @@ const revoke=await controlEdition('3',grantId,{member,role_ids:[]},2,grantHash);
 const staffMade=await reader.createRekeyWraps(bundle,controls,{scope:zero,recipients:[{pubkey:owner},{pubkey:member},{pubkey:other}]},member,async e=>NT.finalizeEvent(e,memberSk),(peer,b)=>encryptBytes(peer,b,memberSk));assert.equal((await reader.inspectRekeys(bundle,controls,staffMade.wraps,member,decryptBytes)).updates[0].control_root,staffMade.control_root,'writer determines staff from actual roster');
 await assert.rejects(()=>reader.createRekeyWraps(bundle,controls,{scope:zero,recipients:[{pubkey:member},{pubkey:other}]},member,async e=>NT.finalizeEvent(e,memberSk),(peer,b)=>encryptBytes(peer,b,memberSk)),/retain the owner/);
 console.log('CORD06 staff citation, demotion and write authority passed');
-const appSource=fs.readFileSync('static/js/client/app.js','utf8'),bridgeStart=appSource.indexOf('    cordRekeyDecrypt: async'),bridgeEnd=appSource.indexOf('    // NIP-51',bridgeStart),bridge=new Function('initial',`let signer=initial,ME={pubkey:'first'};return {api:{${appSource.slice(bridgeStart,bridgeEnd)}},set:(s,p)=>{signer=s;ME={pubkey:p};}};`)({});
+const appSource=clientSourceAt('static/js/client/app.js'),bridgeStart=appSource.indexOf('    cordRekeyDecrypt: async'),bridgeEnd=appSource.indexOf('    // NIP-51',bridgeStart),bridge=new Function('initial',`let signer=initial,ME={pubkey:'first'};return {api:{${appSource.slice(bridgeStart,bridgeEnd)}},set:(s,p)=>{signer=s;ME={pubkey:p};}};`)({});
 await assert.rejects(()=>bridge.api.cordRekeyDecrypt(owner,'ct'),/does not support binary/);
 let resolveBridge;bridge.set({cordRekeyDecrypt:()=>new Promise(r=>{resolveBridge=r;})},'first');const delayed=bridge.api.cordRekeyDecrypt(owner,'ct');bridge.set({},'second');resolveBridge(new Uint8Array(blob()));await assert.rejects(()=>delayed,/account changed/);
 console.log('CORD06 signer capability bridge boundaries passed');

@@ -1,7 +1,8 @@
 import fs from 'node:fs';
 import vm from 'node:vm';
+import { clientSource, clientSourceAt, installStateGlobals } from './client_source.mjs';
 
-const source=fs.readFileSync(new URL('../../static/js/client/app.js',import.meta.url),'utf8');
+const source=clientSource();
 const body=source.split('function startConcordTip',2)[1].split('function invoiceModal',1)[0];
 const calls=[];
 const profiles=new Map([

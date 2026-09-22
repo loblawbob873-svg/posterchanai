@@ -6,6 +6,7 @@
  * again", which needs a fake that counts dials and can close on command. */
 import fs from 'node:fs';
 import vm from 'node:vm';
+import { clientSource, clientSourceAt, installStateGlobals } from './client_source.mjs';
 
 const src = fs.readFileSync(new URL('../../static/js/client/relay.js', import.meta.url), 'utf8');
 const plan = JSON.parse(process.argv[2]);
@@ -50,7 +51,7 @@ const ctx = {
   addEventListener: () => {}, document: { addEventListener: () => {} },
 };
 ctx.window = ctx; ctx.self = ctx; ctx.globalThis = ctx;
-vm.createContext(ctx);
+vm.createContext(installStateGlobals(ctx) && ctx);
 vm.runInContext(src, ctx);
 
 // Advance the fake clock, firing whatever is due.

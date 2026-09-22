@@ -1527,7 +1527,7 @@ window.PCAiFactory = function(dep){
       if(ts===sa && ts!==sb) return [a, b];
     }
     return [a, b];
-  }   // match /client/translate's whitespace collapse
+  }
   function renderTranslate(){
     const feed=$('#feed'); if(!feed) return;
     // NOTE: _ltCancel is intentionally NOT reset here — a stale cancel from navigating away suppresses

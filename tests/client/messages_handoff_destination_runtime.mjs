@@ -1,6 +1,7 @@
 /* Simulate the destination half of a real frame handoff before concord.js is loaded. */
 import fs from 'node:fs';
 import vm from 'node:vm';
+import { clientSource, clientSourceAt, installStateGlobals } from './client_source.mjs';
 
 /* A path argument lets packaging CI execute the same behavior against the bytes inside the
  * Electron bundle.  With no argument this remains the fast source-tree regression test. */
@@ -19,7 +20,7 @@ const context={window,document,
   sessionStorage:{getItem:k=>session.get(k)||null,setItem:(k,v)=>session.set(k,String(v))},
   URL,Blob,fetch:async()=>({ok:false}),setTimeout:()=>0,clearTimeout(){},
   requestAnimationFrame:f=>f(),console};
-vm.createContext(context);vm.runInContext(source,context);
+vm.createContext(installStateGlobals(context) && context);vm.runInContext(source,context);
 
 if(window.__pcConcordHandoff!==undefined)throw Error('one-shot handoff was not cleared');
 const adopted=window.PCConcord.handoffState();

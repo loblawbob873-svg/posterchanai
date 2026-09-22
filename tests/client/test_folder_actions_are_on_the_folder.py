@@ -13,13 +13,14 @@ comes back or the replacement goes missing.
 import re
 import unittest
 from pathlib import Path
+from tests.client_source import client_source
 
 APP = Path(__file__).resolve().parents[2] / "static" / "js" / "client" / "app.js"
 
 
 class FolderActions(unittest.TestCase):
     def setUp(self):
-        self.src = APP.read_text()
+        self.src = client_source()
 
     def test_delete_is_not_a_chip_in_the_navigation_list(self):
         """The regression."""

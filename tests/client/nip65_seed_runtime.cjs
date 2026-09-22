@@ -1,5 +1,5 @@
-const { clientSource, clientSourceAt, installStateGlobals } = require('./client_source.cjs');
 'use strict';
+const { clientSource, clientSourceAt, installStateGlobals } = require('./client_source.cjs');
 /* "FOR SOME REASON, USE MY OWN RELAYS GOT ENABLED AGAIN!" — twice.
  *
  * Runs the SHIPPED `seedRelaysFromNip65` against a stub ClientSettings and relay pool. Reading the

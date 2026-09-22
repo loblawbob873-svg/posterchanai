@@ -2,4 +2,4 @@
 import { createRequire } from 'node:module';
 const require = createRequire(import.meta.url);
 const cs = require('./client_source.cjs');
-export const { CLIENT, splitModules, clientSource, clientSourceAt, installStateGlobals } = cs;
+export const { CLIENT, splitModules, clientSource, clientSourceAt, installStateGlobals, stateShim } = cs;

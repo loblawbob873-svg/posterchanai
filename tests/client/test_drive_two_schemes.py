@@ -26,6 +26,7 @@ import subprocess
 import textwrap
 
 import pytest
+from tests.client_source import client_source, state_shims
 
 ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 APP = os.path.join(ROOT, "static", "js", "client", "app.js")
@@ -57,7 +58,7 @@ def _fn(src, name):
 
 
 def _run(body):
-    src = open(APP, encoding="utf-8").read()
+    src = client_source()
     helpers = "\n".join(_fn(src, n) for n in
                         ("_b64u8", "_aesDecrypt", "_masterKeyInput", "_masterCryptoKey",
                          "_masterDecrypt", "_driveDecrypt"))
@@ -74,6 +75,7 @@ def _run(body):
         const signer = { nip44dec: async () => KEYENC };
         const FilesIdx = { _ensureMK: async () => MK };
         %(helpers)s
+        %(shim)s
         const u8b64 = (u) => Buffer.from(u).toString('base64');
         async function encrypt(key, iv, text, prependIv){
           const ck = await crypto.subtle.importKey('raw', key, 'AES-GCM', false, ['encrypt']);
@@ -88,7 +90,8 @@ def _run(body):
         %(body)s
         })().catch(e => { console.error(e && e.stack || e); process.exit(1); });
         """
-        % {"helpers": textwrap.indent(helpers, "        "), "body": textwrap.indent(textwrap.dedent(body), "        ")}
+        % {"helpers": textwrap.indent(helpers, "        "), "shim": state_shims(helpers),
+           "body": textwrap.indent(textwrap.dedent(body), "        ")}
     )
     path = "/tmp/pcai-drive-schemes.js"
     with open(path, "w") as f:
@@ -198,7 +201,7 @@ def test_a_missing_flag_is_not_a_false_one():
 
 def test_both_readers_go_through_the_one_decryptor():
     """Two of these is how they drifted the first time: trackUrl branched, _encFileUrl did not."""
-    src = open(APP, encoding="utf-8").read()
+    src = client_source()
     assert src.count("_driveDecrypt(") >= 3, "expected the definition plus both call sites"
     body = _fn(src, "_encFileUrl")
     assert "_driveDecrypt(" in body, "_encFileUrl no longer uses the shared decryptor"

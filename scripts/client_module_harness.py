@@ -23,8 +23,10 @@ def module_deps(src: str) -> tuple[list[str], list[str], list[str]]:
     if not m:
         raise ValueError("no `const { … } = dep;` block — not a split module")
     plain = [n.strip() for n in m.group(1).replace("\n", " ").split(",") if n.strip()]
-    read = sorted(set(re.findall(r"(?<![\w$.])S\.([A-Za-z_$][\w$]*)", src)))
-    written = sorted(set(re.findall(r"(?<![\w$.])S\.([A-Za-z_$][\w$]*)\s*(?:=(?!=)|\+\+|--|[-+*/|&]=)", src)))
+    sm = re.search(r"\n  const ([A-Za-z_$][\w$]*) = dep\.state;", src)
+    sn = re.escape(sm.group(1) if sm else "S")
+    read = sorted(set(re.findall(r"(?<![\w$.])" + sn + r"\.([A-Za-z_$][\w$]*)", src)))
+    written = sorted(set(re.findall(r"(?<![\w$.])" + sn + r"\.([A-Za-z_$][\w$]*)\s*(?:=(?!=)|\+\+|--|[-+*/|&]=)", src)))
     return plain, read, written
 
 

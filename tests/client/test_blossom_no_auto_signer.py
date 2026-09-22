@@ -1,7 +1,8 @@
 from pathlib import Path
+from tests.client_source import client_source
 
 
-SRC = (Path(__file__).resolve().parents[2] / "static/js/client/app.js").read_text()
+SRC = client_source()
 
 
 def test_opening_blossom_does_not_automatically_request_a_signature():

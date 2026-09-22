@@ -1,7 +1,8 @@
 /* The SHIPPED detectProto against a stubbed fetch. The question this answers is not "is the code
    there" but "does it still make the request", which is the whole complaint. */
 import fs from 'node:fs';
-const src = fs.readFileSync(new URL('../../static/js/client/app.js', import.meta.url), 'utf8');
+import { clientSource, clientSourceAt, installStateGlobals } from './client_source.mjs';
+const src = clientSource();
 const a = src.indexOf('  async function detectProto(url){');
 const b = src.indexOf('\n  }', a) + 4;
 if (a < 0) throw new Error('detectProto moved');

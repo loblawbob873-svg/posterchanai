@@ -1,6 +1,7 @@
 import fs from 'node:fs';
 import vm from 'node:vm';
 import {createRequire} from 'node:module';
+import { clientSource, clientSourceAt, installStateGlobals } from './client_source.mjs';
 const require=createRequire(import.meta.url);
 const PCPaymentTargets=require('../../static/js/client/payment-targets.js');
 globalThis.window=globalThis;
@@ -9,7 +10,7 @@ const sk=Uint8Array.from({length:32},(_,i)=>i===31?1:0);
 const owner=NostrTools.getPublicKey(sk);
 const signed=(tags,created_at)=>NostrTools.finalizeEvent({kind:10133,content:'',tags,created_at},sk);
 
-const app=fs.readFileSync(new URL('../../static/js/client/app.js',import.meta.url),'utf8');
+const app=clientSource();
 const start=app.indexOf('  const _paymentTargetCache=');
 const end=app.indexOf('  // base58',start);
 if(start<0||end<0)throw new Error('payment-target helpers not found');

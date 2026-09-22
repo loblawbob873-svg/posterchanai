@@ -386,7 +386,7 @@ window.PCSettingsFactory = function(dep){
   // Per-user settings — faithful port of the old web-UI modal (6 tabs). Loads /api/auth/settings,
   // saves text/toggles via PUT, and wires the real connect flows (Telegram link,
   // Pleroma OAuth, Nostr key) to their existing endpoints.
-  let _usMail=[];   // load relay/media prefs from Nostr ONCE per session, not on every re-render
+  let _usMail=[];
   let _userSettingsRender=0;
   async function renderUserSettings(){
     const host=$('#user-settings'); if(!host) return;

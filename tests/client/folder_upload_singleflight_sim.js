@@ -1,7 +1,8 @@
 /* Execute overlapping calls against the production folder-upload function. */
 'use strict';
+const { clientSource, clientSourceAt, installStateGlobals, stateShim } = require('./client_source.cjs');
 const fs=require('fs'),path=require('path'),vm=require('vm');
-const app=fs.readFileSync(path.resolve(__dirname,'../../static/js/client/app.js'),'utf8');
+const app=clientSourceAt(path.resolve(__dirname,'../../static/js/client/app.js'));
 
 function fn(head){
   const i=app.indexOf(head),begin=app.indexOf('{',i);if(i<0||begin<0)throw new Error('missing '+head);
@@ -24,12 +25,13 @@ const context={console,Set,Map,Promise,Math,Date,
   uploadEncFile:async()=>'',uploadMusicTrack:async()=>{},_refreshBlobHave:async()=>{},
   _looksAudio:()=>false,_musicHasSrc:()=>false,enc:String,$:()=>null,
   mediaServer:()=> 'https://blossom.test',VIEW:'blossom',renderBlossom:()=>calls.renders++};
-vm.createContext(context);
+vm.createContext(installStateGlobals(context) && context);
 vm.runInContext(`let _filesFolder=null,_uploadCancel=false,_uploading=0,_uploadBatchAuth=null;
 let _filesGridList=null,_blobHave=new Set(),_blobSizes=new Map();
 ${fn('function _uploadTargetFolder(')}
 ${fn('function _rememberUploadedBlob(')}
 ${fn('async function uploadFilesSeq(')}
+${stateShim(fn('function _uploadTargetFolder(')+fn('function _rememberUploadedBlob(')+fn('async function uploadFilesSeq('))}
 globalThis.run=uploadFilesSeq;globalThis.busy=()=>_uploading;`,context);
 
 (async()=>{

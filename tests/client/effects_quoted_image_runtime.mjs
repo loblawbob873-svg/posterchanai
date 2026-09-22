@@ -1,7 +1,8 @@
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import vm from 'node:vm';
-const source=fs.readFileSync(process.argv[2],'utf8');
+import { clientSource, clientSourceAt, installStateGlobals } from './client_source.mjs';
+const source=clientSourceAt(process.argv[2]);
 const helper=source.slice(source.indexOf('  function postImageUrl('),source.indexOf('  // Shared launcher for the Effects studio:'));
 const action=source.slice(source.indexOf('  async function effectPost('),source.indexOf('  // Consumed by aiMount once'));
 const id=n=>n.toString(16).padStart(64,'0');

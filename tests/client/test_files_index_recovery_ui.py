@@ -1,7 +1,8 @@
 from pathlib import Path
+from tests.client_source import client_source
 
 
-APP = (Path(__file__).parents[2] / "static/js/client/app.js").read_text(encoding="utf-8")
+APP = client_source()
 
 
 def test_recovery_is_explicit_and_ordinary_pull_does_not_fetch_history():

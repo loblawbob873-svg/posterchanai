@@ -1,7 +1,8 @@
 import fs from 'node:fs';
 import vm from 'node:vm';
+import { clientSource, clientSourceAt, installStateGlobals } from './client_source.mjs';
 
-const app=fs.readFileSync(new URL('../../static/js/client/app.js',import.meta.url),'utf8');
+const app=clientSource();
 const start=app.indexOf('  const _DOC_KINDS =');
 const end=app.indexOf('  async function openOfficeFile',start);
 if(start<0||end<0)throw new Error('could not lift the shipped new-document flow');
@@ -33,6 +34,7 @@ let sessionReady=false;
 globalThis.ensureAiSession=async()=>{sessionReady=true;};
 globalThis.window={__PC:{authFetch:async(...args)=>{if(!sessionReady)throw Error('missing session');return fetch(...args);}}};
 
+installStateGlobals();   // files.js reads _filesFolder & co. through its live-state object
 vm.runInThisContext(app.slice(start,end)+'\nglobalThis.__officeTest={_newDocumentModal};',{filename:'app-office-new-document.js'});
 __officeTest._newDocumentModal('text');
 node('nd-name').value='Quarterly/Plan';

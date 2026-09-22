@@ -526,7 +526,7 @@ window.PCStreamsFactory = function(dep){
   let _endedStreams=new Set();
   function _markStreamDeleted(addr){ if(!addr) return; _deletedStreams.add(addr);
     try{ ClientSettings.set('deletedStreams', [..._deletedStreams].slice(-300)); }catch(_){} }
-  let _liveHb=null;
+  let _liveHb=null;       // heartbeat: auto-end the announcement when the HLS feed disappears (OBS stopped)
   function _stopLiveHb(){ if(_liveHb){ clearInterval(_liveHb); _liveHb=null; } }
   function _startLiveHb(){   // if the HLS 404s repeatedly, OBS stopped → mark the stream ended so it doesn't orphan as LIVE
     _stopLiveHb(); let miss=0;

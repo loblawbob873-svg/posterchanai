@@ -5,6 +5,7 @@
  * source assertion can see, because both lists are spelled almost identically.
  */
 import fs from 'node:fs';import vm from 'node:vm';import assert from 'node:assert/strict';
+import { clientSource, clientSourceAt, installStateGlobals } from './client_source.mjs';
 
 const code=fs.readFileSync(process.env.PC_APP_SOURCE||new URL('../../static/js/client/app.js',import.meta.url),'utf8');
 const cut=(from,to)=>{const i=code.indexOf(from);assert(i>=0,'missing: '+from);
@@ -27,7 +28,7 @@ function ctx(){
     _standalone:()=>true,
     _mem:mem};
   c.window=c;
-  vm.createContext(c);
+  vm.createContext(installStateGlobals(c) && c);
   vm.runInContext(slice+'\nglobalThis.TYPES=_NOTIFICATION_TYPES;globalThis.pushState_=()=>_pushPrefState();',c);
   return c;
 }

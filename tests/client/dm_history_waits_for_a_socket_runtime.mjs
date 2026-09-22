@@ -23,6 +23,7 @@
  * Runs the SHIPPED ensureDMs, extracted from app.js, so it cannot drift from what deploys.
  */
 import fs from 'node:fs';import vm from 'node:vm';import assert from 'node:assert/strict';
+import { clientSource, clientSourceAt, installStateGlobals } from './client_source.mjs';
 
 const code = fs.readFileSync(process.env.PC_APP_SOURCE
   || new URL('../../static/js/client/app.js', import.meta.url), 'utf8');
@@ -66,7 +67,7 @@ function run({ ready }){
     },
   };
   c.window = c;
-  vm.createContext(c);
+  vm.createContext(installStateGlobals(c) && c);
   vm.runInContext(ensureDMs + '\nglobalThis.__run = ensureDMs;', c);
   return c.__run().then(() => ({ seen, loaded: c._dmLoaded }));
 }

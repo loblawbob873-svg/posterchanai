@@ -20,7 +20,7 @@ function setup(){
   openThread:(id)=>{c.VIEW='thread';actions.push(['thread',id])},renderProfileView:pk=>actions.push(['profile',pk]),
   ensureAiSession:async()=>({can_ai:true}),_navState:v=>({pcv:v,top:480}),_entityFromPath:()=>null,
   modal(){},window:{},location:{href:'/client'},history:{replaceState:(st,title,url)=>actions.push(['history',url])}};
- installStateGlobals(c);vm.createContext(c);vm.runInContext(helpers+send+artifact+launch,c);
+ installStateGlobals(c);vm.createContext(installStateGlobals(c) && c);vm.runInContext(helpers+send+artifact+launch,c);
  return {c,actions,back,btn,target};
 }
 for(const method of ['sendEffectReply','replyFileUrl']){

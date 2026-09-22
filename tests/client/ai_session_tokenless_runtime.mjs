@@ -1,6 +1,7 @@
 import fs from 'node:fs';
+import { clientSource, clientSourceAt, installStateGlobals } from './client_source.mjs';
 
-const app = fs.readFileSync(new URL('../../static/js/client/app.js', import.meta.url), 'utf8');
+const app = clientSource();
 const start = app.indexOf('  let _aiAuth = null;');
 const end = app.indexOf('  // In-app Admin:', start);
 if(start < 0 || end < 0) throw new Error('ensureAiSession moved');

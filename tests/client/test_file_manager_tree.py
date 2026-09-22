@@ -137,7 +137,7 @@ def test_host_source_shortcuts_do_not_receive_click_event_as_home_flag():
 def test_view_buttons_leave_the_folder_dashboard_and_show_the_selected_file_view():
     bind = APP[APP.index("function _fxBindBar("):APP.index("let _filesFolder = null")]
     assert "ClientSettings.set('filesView', b.dataset.view)" in bind
-    assert "_filesFolder === null) _filesFolder = ''" in bind
+    assert "_S._filesFolder === null) _S._filesFolder = ''" in bind
 
 
 def test_mobile_details_rows_collapse_actions_into_one_menu():

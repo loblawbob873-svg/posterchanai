@@ -12,12 +12,13 @@ import vm from 'node:vm';
 import path from 'node:path';
 import { webcrypto } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
+import { clientSource, clientSourceAt, installStateGlobals } from './client_source.mjs';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = path.resolve(HERE, '..', '..');
 const SHARE_JS = fs.readFileSync(path.join(ROOT, 'static/js/client/musicshare.js'), 'utf8');
 const NOSTR_JS = fs.readFileSync(path.join(ROOT, 'static/vendor/nostr/nostr.bundle.js'), 'utf8');
-const APP_JS = fs.readFileSync(path.join(ROOT, 'static/js/client/app.js'), 'utf8');
+const APP_JS = clientSourceAt(path.join(ROOT, 'static/js/client/app.js'));
 
 // nostr-tools runs in THIS realm: finalizeEvent checks `Array.isArray`-style shapes, and an array
 // built in another vm context is not one of its arrays. The tags are copied across on publish.
@@ -101,7 +102,7 @@ function person(net, name){
     musicLibraryAdd: async entries => { for(const [s, m] of entries) lib.set(s, { m }); return true; },
     toast: () => {}, enc: s => String(s),
   };
-  vm.createContext(ctx);
+  vm.createContext(installStateGlobals(ctx) && ctx);
   vm.runInContext(SHARE_JS, ctx, { filename: 'musicshare.js' });
   return { name, sk, pk, lib, ctx, S: ctx.PCMusicShare, store, mk, ls,
            addTrack: async (plain, name) => { const s = await sha256hex(webcrypto.getRandomValues(new Uint8Array(16)));
@@ -118,7 +119,7 @@ function shippedDriveDecrypt(p){
   const ctx = { crypto: webcrypto, atob, Uint8Array, JSON, ME: { pubkey: p.pk },
     signer: { nip44dec: (peer, ct) => p.ctx.__PC.nip44dec(peer, ct) },
     FilesIdx: { _ensureMK: async () => { throw new Error('a shared track must never need the master key'); } } };
-  vm.createContext(ctx);
+  vm.createContext(installStateGlobals(ctx) && ctx);
   vm.runInContext(src + '\nthis._driveDecrypt=_driveDecrypt;', ctx);
   return ctx._driveDecrypt;
 }

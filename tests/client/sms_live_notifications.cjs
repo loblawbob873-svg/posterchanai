@@ -1,4 +1,5 @@
 'use strict';
+const { clientSource, clientSourceAt, installStateGlobals } = require('./client_source.cjs');
 const vm=require('node:vm'),fs=require('node:fs'),path=require('node:path'),assert=require('node:assert/strict');
 const {webcrypto}=require('node:crypto');
 const scenario=process.argv[2];
@@ -24,7 +25,7 @@ ctx.__PC={VIEW:'home',ME:scenario==='late_login'?{}:{pubkey:'account-a'},enc:Str
  capPlugin:()=>phone?{status:async()=>{state.phoneReads++;return {isDefault:true,telephony:true,canRead:true};}}:null,
  nip44dec:async(_,body)=>{if(hold)await hold;return body;},switchView:view=>{ctx.__PC.VIEW=view;},toast(){},
  filesIdx:()=>null,publish:async()=>({ok:true})};
-vm.createContext(ctx);vm.runInContext(fs.readFileSync(process.env.PC_SMS_TEST_SOURCE||path.resolve(__dirname,'../../static/js/client/sms.js'),'utf8'),ctx);
+vm.createContext(installStateGlobals(ctx) && ctx);vm.runInContext(fs.readFileSync(process.env.PC_SMS_TEST_SOURCE||path.resolve(__dirname,'../../static/js/client/sms.js'),'utf8'),ctx);
 const event=(id,patch={})=>({id,kind:30078,pubkey:ctx.__PC.ME.pubkey,created_at:Math.floor(Date.now()/1000),
  tags:[['d','pcai:sms:'+id],['l','pcai-sms']],content:JSON.stringify({address:'+15550123',body:'Hello',date:Date.now()+1,incoming:true,...patch})});
 (async()=>{
@@ -57,14 +58,14 @@ const event=(id,patch={})=>({id,kind:30078,pubkey:ctx.__PC.ME.pubkey,created_at:
   // Separate module globals share only real platform boundaries: origin storage and Web Locks.
   const other={...ctx,__PC:{...ctx.__PC},Relay:{...ctx.Relay},document:{...ctx.document}};
   other.window=other;other.globalThis=other;delete other.PCSms;
-  vm.createContext(other);vm.runInContext(fs.readFileSync(process.env.PC_SMS_TEST_SOURCE||path.resolve(__dirname,'../../static/js/client/sms.js'),'utf8'),other);
+  vm.createContext(installStateGlobals(other) && other);vm.runInContext(fs.readFileSync(process.env.PC_SMS_TEST_SOURCE||path.resolve(__dirname,'../../static/js/client/sms.js'),'utf8'),other);
   const row=event('shared',{date:Date.now()+60000});
   await Promise.all([live(row),state.subs[1].onEvent(row)]);
   assert.equal(state.events.length,1,'independent windows emitted duplicate OS notifications');
   assert.equal(state.toasts.length,1,'independent windows emitted duplicate toast/sound');
   const reload={...ctx,__PC:{...ctx.__PC},Relay:{...ctx.Relay},document:{...ctx.document}};
   reload.window=reload;reload.globalThis=reload;delete reload.PCSms;
-  vm.createContext(reload);vm.runInContext(fs.readFileSync(process.env.PC_SMS_TEST_SOURCE||path.resolve(__dirname,'../../static/js/client/sms.js'),'utf8'),reload);
+  vm.createContext(installStateGlobals(reload) && reload);vm.runInContext(fs.readFileSync(process.env.PC_SMS_TEST_SOURCE||path.resolve(__dirname,'../../static/js/client/sms.js'),'utf8'),reload);
   await state.subs[2].onEvent(row);
   assert.equal(state.events.length,1,'reload replayed an already announced message');
   reload.pcShell={backgroundOwner:false};await state.subs[2].onEvent(event('secondary',{date:Date.now()+60000}));

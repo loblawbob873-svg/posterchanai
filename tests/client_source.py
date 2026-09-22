@@ -47,16 +47,23 @@ def client_source() -> str:
     return "\n".join(parts)
 
 
-def state_shim(code: str) -> str:
+def state_shim(code: str, state: str = "S") -> str:
     """`const S = {…};` for a node harness that runs a function lifted out of a split module.
 
     Inside a module, app.js's live `let`s are read as `S.ME`, `S.VIEW`, … (getters app.js hands the
     factory). A harness stubs those bindings under their own names (`let ME = …`), so this returns an
-    `S` whose getters and setters ARE those stubs — declare it after them, in the same scope."""
-    names = sorted(set(re.findall(r"(?<![\w$.])S\.([A-Za-z_$][\w$]*)", code)))
-    return "const S={" + ",".join(
+    `S` whose getters and setters ARE those stubs — declare it after them, in the same scope. (A
+    module whose own code declares an `S` names its state object `_S`; pass `state="_S"` for it.)"""
+    names = sorted(set(re.findall(r"(?<![\w$.])" + re.escape(state) + r"\.([A-Za-z_$][\w$]*)", code)))
+    return "const " + state + "={" + ",".join(
         f"get {n}(){{return typeof {n}!=='undefined'?{n}:undefined;}},set {n}(v){{{n}=v;}}"
         for n in names) + "};"
+
+
+def state_shims(code: str) -> str:
+    """state_shim() for every state object the lifted code uses (`S`, and `_S` from files.js)."""
+    return "\n".join(state_shim(code, sn) for sn in ("S", "_S")
+                     if re.search(r"(?<![\w$.])" + re.escape(sn) + r"\.[A-Za-z_$]", code))
 
 
 def client_files() -> list[tuple[str, str]]:

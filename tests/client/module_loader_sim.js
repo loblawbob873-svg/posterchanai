@@ -2,10 +2,11 @@
  * A Promise return is part of the contract: Files must wait for PosterChan Code before handing it
  * a drive, synced-folder, or local file. */
 'use strict';
+const { clientSource, clientSourceAt, installStateGlobals } = require('./client_source.cjs');
 const fs = require('fs');
 const path = require('path');
 const vm = require('vm');
-const app = fs.readFileSync(path.join(__dirname, '../../static/js/client/app.js'), 'utf8');
+const app = clientSourceAt(path.join(__dirname, '../../static/js/client/app.js'));
 
 function fn(head) {
   const i = app.indexOf(head), begin = app.indexOf('{', i);
@@ -41,7 +42,7 @@ const context = {
     createElement() { return {}; },
   },
 };
-vm.createContext(context);
+vm.createContext(installStateGlobals(context) && context);
 vm.runInContext(`const _lateLoad = {}; ${fn('function _withModule(')};
   globalThis.load = () => _withModule('code.js', 'PCCode');
   globalThis.warm = cb => _withModule('code.js', 'PCCode', cb);`, context);

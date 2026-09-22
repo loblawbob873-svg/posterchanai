@@ -3,6 +3,7 @@ import fs from 'node:fs';
 import vm from 'node:vm';
 import path from 'node:path';
 import {webcrypto} from 'node:crypto';
+import { clientSource, clientSourceAt, installStateGlobals } from './client/client_source.mjs';
 
 const dir=path.resolve(process.argv[2]),scenario=process.argv[3];
 let now=1700000000000,seq=0;
@@ -77,7 +78,7 @@ const ctx={browser:B,chrome:B,console,crypto:webcrypto,WebSocket:Socket,Date:clo
   setTimeout:setTimer,clearTimeout:id=>timers.delete(id),setInterval:noop,clearInterval:noop,queueMicrotask,performance,
   atob:s=>Buffer.from(s,'base64').toString('binary'),btoa:s=>Buffer.from(s,'binary').toString('base64'),
   navigator:{onLine:true,userAgent:'Firefox'},fetch:async()=>({ok:false,json:async()=>({})})};
-ctx.self=ctx;ctx.globalThis=ctx;vm.createContext(ctx);
+ctx.self=ctx;ctx.globalThis=ctx;vm.createContext(installStateGlobals(ctx) && ctx);
 for(const file of ['vendor/nostr.bundle.js','vaultcore.js','background.js'])vm.runInContext(fs.readFileSync(path.join(dir,file),'utf8'),ctx,{filename:file});
 await vm.runInContext('ready',ctx);
 T=ctx.NostrTools;appSk=new Uint8Array(32);appSk[31]=7;remoteSk=new Uint8Array(32);remoteSk[31]=8;foreignSk=new Uint8Array(32);foreignSk[31]=9;

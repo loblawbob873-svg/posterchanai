@@ -1,8 +1,9 @@
 from pathlib import Path
+from tests.client_source import client_source
 
 
 ROOT = Path(__file__).resolve().parents[2]
-APP = (ROOT / "static/js/client/app.js").read_text()
+APP = client_source()
 HOST = (ROOT / "static/js/client/hostfiles.js").read_text()
 CSS = (ROOT / "static/css/client.css").read_text()
 
@@ -13,7 +14,7 @@ def test_search_aggregates_all_three_file_sources():
     assert "_syncManifest(pair.key)" in APP
     assert "for(const b of (drive || []))" in APP
     assert "Searching Blossom, Synced Folders and My Computer" in APP
-    assert "if(_filesQ.trim()) return _renderFilesEverywhere(pane)" in APP
+    assert "if(_S._filesQ.trim()) return _renderFilesEverywhere(pane)" in APP
 
 
 def test_search_hits_route_back_to_their_real_source():
