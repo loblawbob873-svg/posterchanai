@@ -364,3 +364,46 @@ def test_a_usb_controller_carrying_the_hosts_keyboard_is_busy(tmp_path):
     (tmp_path / "e").write_text("")
     d = next(x for x in pci.scan(sys, str(tmp_path / "e"), str(tmp_path / "e"), ids_paths=()) if x.address == "0000:11:00.0")
     assert "HID devices" in d.busy
+
+
+# ---- review round 2: ZFS with nothing mounted, IFF_UP, bcachefs, no mount table -----------------------------
+ZS = "  pool: tank\n state: ONLINE\nconfig:\n\n\tNAME        STATE\n\ttank        ONLINE\n\t  /dev/sdx1  ONLINE\n"
+
+
+def test_a_zfs_pool_with_nothing_mounted_is_still_in_use(tmp_path):
+    sys, _ = _usb_disk(tmp_path)
+    d = _one(sys, "22 1 8:1 / / rw - ext4 /dev/nvme0n1p2 rw\n", tmp_path, zpool_status=ZS)[0]
+    assert d.busy == "sdx1 is a member of ZFS pool tank on the host", d.busy
+
+
+def test_an_interface_that_is_up_but_reports_unknown_is_in_use(tmp_path):
+    """operstate is "unknown" for plenty of interfaces that are up (tun, some USB NICs); IFF_UP is the fact."""
+    sys = str(tmp_path / "sys")
+    nicd = usb_dev(sys, "0000:0e:00.0", "4-1", "0bda", "8156", ifaces=("ff",), bus=4, dev=3)
+    nr = os.path.join(nicd, "4-1:1.0", "net", "usb0")
+    w(os.path.join(nr, "operstate"), "unknown")
+    w(os.path.join(nr, "flags"), "0x1003")
+    link(nr, os.path.join(sys, "class/net", "usb0"))
+    assert "usb0" in _one(sys, "", tmp_path, zpool_status="")[0].busy
+
+
+def test_every_member_of_a_multi_device_bcachefs_root_is_the_root(tmp_path):
+    sys, _ = _usb_disk(tmp_path)
+    virtual_block(sys, "nvme0n1p2")
+    # the source names both members
+    d = _one(sys, "22 1 0:31 / / rw - bcachefs /dev/nvme0n1p2:/dev/sdx1 rw\n", tmp_path, zpool_status="")[0]
+    assert d.system is True
+    # and /sys/fs/bcachefs/<uuid>/dev-N/block names them when the source is only one of them
+    for i, m in enumerate(("nvme0n1p2", "sdx1")):
+        os.makedirs(os.path.join(sys, f"fs/bcachefs/abcd/dev-{i}"), exist_ok=True)
+        os.symlink(os.path.realpath(os.path.join(sys, "class/block", m)), os.path.join(sys, f"fs/bcachefs/abcd/dev-{i}/block"))
+    d = _one(sys, "22 1 0:31 / / rw - bcachefs /dev/nvme0n1p2 rw\n", tmp_path, zpool_status="")[0]
+    assert d.system is True
+
+
+def test_an_unreadable_mount_table_refuses_every_disk(tmp_path):
+    sys, _ = _usb_disk(tmp_path)
+    none = str(tmp_path / "no-such-mountinfo")
+    (tmp_path / "sw").write_text("x\n")
+    d = usb.scan(sys, none, str(tmp_path / "sw"), ids_paths=(none,), zpool_status="")[0]
+    assert "could not tell" in d.busy

@@ -339,8 +339,10 @@ class DeviceOps:
         if usb_e:
             try:
                 devices = await self._scan("usb")
-            except Exception:
-                devices = []
+            except Exception as e:
+                # FAIL CLOSED: a start that cannot check what the saved devices match now must not take them
+                raise _err("conflict", "this VM has USB devices saved, and this host could not check them before "
+                                       f"starting it ({getattr(e, 'message', None) or e}) — detach them, or fix the host")
             for e in usb_e:
                 for dev in devices:
                     if usb.matches(e, dev) and (dev.system or dev.busy or dev.hub):
@@ -435,6 +437,10 @@ class DeviceOps:
         persist = _bool(args, "persist", True) if kind.name == "usb" else True
         d, release = await self._device_locked(pk, role, args)
         try:
+            if d.autostart:
+                raise _err("conflict", "this VM starts with the host (autostart), and a start at boot would take the "
+                                       "device without the safety checks a start from here makes — turn \"Start with "
+                                       "the host\" off in Settings first")
             running = d.state in ("running", "paused")
             if kind.name == "pci" and d.state != "shutoff":
                 raise _err("conflict", "shut the VM down to add a PCI device — a card cannot be plugged into a "

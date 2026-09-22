@@ -62,6 +62,17 @@ class HardwareOps:
         add_gib = _int_arg(want, "add_disk_gib", 1, self.cfg.max_disk_gib) if "add_disk_gib" in want else None
         if "autostart" in want and not isinstance(want["autostart"], bool):
             raise _err("bad_request", "autostart must be true or false")
+        if want.get("autostart") is True:
+            # libvirt starts an autostart VM at boot without asking us, and so without the device safety checks a
+            # start from here makes (devices._device_start_guard): no autostart while the VM holds a host device.
+            from . import pci as _pci, usb as _usb
+            try:
+                saved = await self.backend.dumpxml(d.uuid, inactive=True)
+            except Exception as e:
+                raise _err("backend_error", f"could not read this VM's devices: {e}")
+            if _usb.hostdevs(saved) or _pci.hostdevs(saved):
+                raise _err("conflict", "this VM has host devices (USB/PCI) attached — a VM that starts with the host "
+                                       "would take them without the safety checks; detach them first")
         if "boot" in want and want["boot"] not in ("disk", "cdrom"):
             raise _err("bad_request", "boot must be disk or cdrom")
         if "input" in want and want["input"] not in ("tablet", "mouse"):

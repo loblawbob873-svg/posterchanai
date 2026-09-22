@@ -172,10 +172,12 @@ def _mounts(mountinfo: str, swaps: str, sys_root: str = "/sys", zpool_status=Non
                 if len(parts) >= 5 and len(rparts) >= 2:
                     rows.append((parts[2], parts[4].replace("\\040", " "), rparts[0], rparts[1]))
     except OSError:
-        pass
+        out.unresolved.append("/")                        # no mount table: no disk can be shown not to be the root
     btrfs_left, zfs = [], {}
     for mm, mp, fstype, src in rows:
-        names = {n for n in (by_path(src), by_majmin(mm)) if known(n)}
+        # bcachefs names every member in the source: /dev/sda1:/dev/sdb1
+        srcs = src.split(":") if fstype == "bcachefs" else [src]
+        names = {n for n in [by_path(x) for x in srcs] + [by_majmin(mm)] if known(n)}
         if not names and mp == "/":
             try:
                 st = root_dev if root_dev is not None else os.stat("/").st_dev
@@ -188,18 +190,23 @@ def _mounts(mountinfo: str, swaps: str, sys_root: str = "/sys", zpool_status=Non
             out.setdefault(n, []).append(mp)
         if fstype == "zfs":
             zfs.setdefault(src.split("/", 1)[0], []).append(mp)
-        elif not names and fstype == "btrfs":
+        elif not names and fstype in ("btrfs", "bcachefs"):
             btrfs_left.append(mp)
         elif not names and (src.startswith("/dev/") or fstype in ("ext2", "ext3", "ext4", "xfs", "f2fs", "vfat",
                                                                    "bcachefs", "jfs", "reiserfs", "ntfs3")):
             out.unresolved.append(mp)
-    # btrfs: one filesystem, several disks
+    # btrfs and bcachefs: one filesystem, several disks — every member shares the filesystem's mounts
+    members = {}
     fsdir = os.path.join(sys_root, "fs", "btrfs")
-    try:
-        fss = [x for x in os.listdir(fsdir) if os.path.isdir(os.path.join(fsdir, x, "devices"))]
-    except OSError:
-        fss = []
-    members = {fs: sorted(os.listdir(os.path.join(fsdir, fs, "devices"))) for fs in fss}
+    for fs in _ls(fsdir):
+        if os.path.isdir(os.path.join(fsdir, fs, "devices")):
+            members["btrfs:" + fs] = _ls(os.path.join(fsdir, fs, "devices"))
+    bdir = os.path.join(sys_root, "fs", "bcachefs")
+    for fs in _ls(bdir):
+        devs = [os.path.basename(os.path.realpath(os.path.join(bdir, fs, d, "block")))
+                for d in _ls(os.path.join(bdir, fs)) if d.startswith("dev-")]
+        if devs:
+            members["bcachefs:" + fs] = devs
     for fs, devs in members.items():
         mps = sorted({m for d in devs for m in out.get(d, []) if m != "swap"})
         if btrfs_left and (not mps or len(members) == 1):
@@ -210,24 +217,24 @@ def _mounts(mountinfo: str, swaps: str, sys_root: str = "/sys", zpool_status=Non
                     out[d].append(m)
     if btrfs_left and not members:
         out.unresolved.extend(btrfs_left)
-    # ZFS: a dataset lives on every vdev of its pool
-    if zfs:
-        text = _zpool_status() if zpool_status is None else zpool_status
-        pool, vdevs = "", {}
-        for line in (text or "").splitlines():
-            m = re.match(r"\s*pool:\s*(\S+)", line)
-            if m:
-                pool = m.group(1)
-                continue
-            tok = line.split()
-            if pool and tok and tok[0].startswith("/dev/"):
-                vdevs.setdefault(pool, []).append(by_path(tok[0]))
-        for p, mps in zfs.items():
-            if not vdevs.get(p):
-                out.unresolved.extend(mps)
-                continue
-            for d in vdevs[p]:
-                out.setdefault(d, []).extend(mps)
+    # ZFS: every vdev of every IMPORTED pool is in use — mounted or not (a pool with nothing mounted is still
+    # written by the host: scrubs, resilvers, zvols); a mounted dataset lives on every vdev of its pool
+    text = _zpool_status() if zpool_status is None else zpool_status
+    pool, vdevs = "", {}
+    for line in (text or "").splitlines():
+        m = re.match(r"\s*pool:\s*(\S+)", line)
+        if m:
+            pool = m.group(1)
+            continue
+        tok = line.split()
+        if pool and tok and tok[0].startswith("/dev/"):
+            vdevs.setdefault(pool, []).append(by_path(tok[0]))
+    for p, devs in vdevs.items():
+        for d in devs:
+            out.setdefault(d, []).extend(zfs.get(p) or [f"ZFS pool {p}"])
+    for p, mps in zfs.items():
+        if not vdevs.get(p):
+            out.unresolved.extend(mps)
     try:
         with open(swaps, "r", encoding="utf-8", errors="replace") as f:
             for line in list(f)[1:]:
@@ -237,6 +244,23 @@ def _mounts(mountinfo: str, swaps: str, sys_root: str = "/sys", zpool_status=Non
     except OSError:
         pass
     return out
+
+
+def _ls(p: str) -> list:
+    try:
+        return sorted(os.listdir(p))
+    except OSError:
+        return []
+
+
+def iface_up(net_dir: str, name: str) -> bool:
+    """Is a network interface in use? IFF_UP from `flags` (operstate is "unknown" for many up interfaces — tun,
+    some USB adapters, bridges' ports); anything that cannot be read counts as up unless operstate says down."""
+    f = _read(os.path.join(net_dir, name, "flags"))
+    try:
+        return bool(int(f, 16) & 0x1)
+    except ValueError:
+        return _read(os.path.join(net_dir, name, "operstate")) != "down"
 
 
 def root_unresolved(mounts) -> list:
@@ -319,6 +343,8 @@ def scan(sys_root: str = "/sys", mountinfo: str = "/proc/self/mountinfo", swaps:
             mp, via, b = why[0]
             if mp == "swap":
                 d.busy = f"the host uses {b} as swap"
+            elif mp.startswith("ZFS pool "):
+                d.busy = f"{b} is a member of {mp} on the host"
             elif mp and via:
                 d.busy = f"the host has it mounted at {mp} (through {via})"
             elif mp:
@@ -328,7 +354,7 @@ def scan(sys_root: str = "/sys", mountinfo: str = "/proc/self/mountinfo", swaps:
         elif d.blocks and lost:
             d.busy = ("the host could not tell which disk " + ", ".join(lost) + " is on, so no disk is given to a VM "
                       "(refusing rather than risk the one the host runs from)")
-        up = [i for i in net_under(net, real) if _read(os.path.join(net, i, "operstate")) == "up"]
+        up = [i for i in net_under(net, real) if iface_up(net, i)]
         if up and not d.busy:
             d.busy = f"the host's network interface {up[0]} is up on it"
         out.append(d)

@@ -500,3 +500,28 @@ def test_identical_twins_are_two_rows(tmp_path):
     rows = r["result"]["vm"]["devices"]
     assert sorted((d["bus"], d["device"], d["live"], d["persistent"]) for d in rows) == \
         [(1, 3, True, True), (1, 9, True, True)]
+
+
+# ------------------------------------------------------------------------------------------------ review round 2
+def test_autostart_and_host_devices_exclude_each_other(tmp_path):
+    """libvirt starts an autostart VM at boot without asking the service — past _device_start_guard. So a VM with
+    a host device may not be set to start with the host, and a device is not attached to one that is."""
+    svc, be = make(tmp_path)
+    be.domains[U1]["autostart"] = True
+    r = c(svc, ADMIN, "vm.device.attach", {"vm": U1, "kind": "usb", "vendor": "090c", "product": "1000"})
+    assert r["error"]["code"] == "conflict" and "autostart" in r["error"]["message"], r
+    be.domains[U1]["autostart"] = False
+    assert c(svc, ADMIN, "vm.device.attach", {"vm": U1, "kind": "usb", "vendor": "090c", "product": "1000"})["ok"]
+    r = c(svc, ADMIN, "vm.update", {"vm": U1, "autostart": True})
+    assert r["error"]["code"] == "conflict" and "host devices" in r["error"]["message"], r
+    assert be.domains[U1]["autostart"] is False
+
+
+def test_the_usb_start_check_fails_closed_when_the_host_cannot_be_scanned(tmp_path):
+    from app.services.vmhost.backend import BackendError
+    svc, be = make(tmp_path)
+    assert c(svc, ADMIN, "vm.device.attach", {"vm": U1, "kind": "usb", "vendor": "090c", "product": "1000"})["ok"]
+    be.fail["host_devices"] = BackendError("sysfs went away")
+    r = c(svc, ADMIN, "vm.power", {"vm": U1, "action": "start"})
+    assert r["error"]["code"] == "conflict" and "could not check" in r["error"]["message"], r
+    assert not any(x[0] == "start" for x in be.calls)

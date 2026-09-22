@@ -203,7 +203,7 @@ def scan(sys_root: str = "/sys", mountinfo: str = "/proc/self/mountinfo", swaps:
                 why.append("the host's HID devices (keyboard, mouse, controller …) are connected through it (" +
                            ", ".join(sorted(set(hid))) + ")")
         for n in _under(os.path.join(sys_root, "class", "net"), real):
-            if _read(os.path.join(sys_root, "class", "net", n, "operstate")) == "up":
+            if usb.iface_up(os.path.join(sys_root, "class", "net"), n):
                 why.append(f"the host's network interface {n} is up")
                 break
         drm = os.path.join(sys_root, "class", "drm")
