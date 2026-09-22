@@ -101,7 +101,10 @@ def firehose(block_json=True):
     if block_json is not None:
         cfg["block_json"] = block_json
     store = SimpleNamespace(has_event=AsyncMock(return_value=False), add_event=AsyncMock(return_value=True))
-    srv = SimpleNamespace(subs=SimpleNamespace(fanout=Mock()), _send=Mock())
+    # Every fanout is handed `_can_serve_event`, the per-connection read gate — a live event goes
+    # to the subscriptions allowed to see it, never to all of them.
+    srv = SimpleNamespace(subs=SimpleNamespace(fanout=Mock()), _send=Mock(),
+                          _can_serve_event=Mock(return_value=True))
     env = {**vars(thread), "cfg": cfg, "_bl": set(), "_bw": set(), "store": store, "gate": Member(),
            "server": srv, "verify_event": verify_event, "_FH_SEEN": set(), "_fh_mark": Mock()}
     exec(compile(ast.fix_missing_locations(ast.Module(body=[_fn("_firehose_event")], type_ignores=[])),
