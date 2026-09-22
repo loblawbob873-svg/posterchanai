@@ -89,6 +89,12 @@
   .tmx-grid{display:grid;grid-template-columns:1fr 1fr;gap:8px}
   @media(max-width:640px){.tmx-grid{grid-template-columns:1fr}}
   .tmx-modal input[type=text],.tmx-modal input[type=url]{width:100%;box-sizing:border-box}
+  /* Labelled fields in the app's own .input style — they were bare <input>s, i.e. the browser's
+     white default boxes ("URL fields make the UI look terrible"). */
+  .tmx-form{display:flex;flex-direction:column;gap:10px;margin:6px 0 4px}
+  .tmx-form label{display:flex;flex-direction:column;gap:5px;font-size:12px;color:var(--muted,#9fa1c6);min-width:0}
+  .tmx-form .input{margin:0;font-size:14px}
+  .tmx-end{justify-content:flex-end}
   .tmx-hint{font-size:12px;opacity:.7;margin:2px 0 8px}
   `;
   function style(){
@@ -160,7 +166,7 @@
       }).join('');
       b.innerHTML = `<div class="tmx-hint">Unticked files are not downloaded (libtorrent priority 0).
         Nothing is deleted &mdash; ticking one back on resumes it.</div>
-        <input type="text" id="tmx-ffilter" placeholder="Filter this list…">
+        <input class="input" type="search" id="tmx-ffilter" placeholder="Filter this list…">
         <div class="tmx-files">${rows}</div>
         <div class="tmx-hint" id="tmx-fsum"></div>
         <div class="tmx-row">
@@ -279,14 +285,14 @@
            <div class="tmx-hint">Polled every ${enc(j.interval_minutes)} minutes, at most
              ${enc(j.max_per_poll)} new torrent(s) per feed each time. The FIRST check adds nothing:
              it learns what the feed already holds, so subscribing can’t start its whole history.</div>
-           <input type="url" id="tmx-nurl" placeholder="https://…/rss">
-           <div class="tmx-grid" style="margin-top:7px">
-             <input type="text" id="tmx-ntitle" placeholder="Name (optional)">
-             <input type="text" id="tmx-ninc" placeholder="Only titles containing… (comma separated)">
-           </div>
-           <div class="tmx-grid" style="margin-top:7px">
-             <input type="text" id="tmx-nexc" placeholder="Never titles containing…">
-             <button class="btn btn-neon small" id="tmx-nadd">Subscribe</button>
+           <div class="tmx-form">
+             <label>Feed URL<input class="input" type="url" id="tmx-nurl" placeholder="https://…/rss" autocomplete="off" spellcheck="false"></label>
+             <div class="tmx-grid">
+               <label>Name <span class="muted">(optional)</span><input class="input" type="text" id="tmx-ntitle" placeholder="My show"></label>
+               <label>Only titles containing<input class="input" type="text" id="tmx-ninc" placeholder="comma separated"></label>
+             </div>
+             <label>Never titles containing<input class="input" type="text" id="tmx-nexc" placeholder="comma separated"></label>
+             <div class="tmx-row tmx-end"><button class="btn btn-neon small" id="tmx-nadd">Subscribe</button></div>
            </div>
            <div class="tmx-hint">A term wrapped in slashes is a regular expression:
              <code>/S0[12]E\\d\\d/</code>. Leave &ldquo;only&rdquo; empty to take everything the feed lists.</div>`;
@@ -348,9 +354,11 @@
       modal2(`<h3>Filters — ${enc(f.title||f.url)}</h3>
         <div class="tmx-hint">Matched against the release TITLE. Comma separated; a term in slashes is a
           regular expression. &ldquo;Never&rdquo; wins over &ldquo;only&rdquo;.</div>
-        <label class="tmx-hint">Name</label><input type="text" id="tmx-eti" value="${enc(f.title||'')}">
-        <label class="tmx-hint">Only titles containing</label><input type="text" id="tmx-einc" value="${enc(f.include||'')}">
-        <label class="tmx-hint">Never titles containing</label><input type="text" id="tmx-eexc" value="${enc(f.exclude||'')}">
+        <div class="tmx-form">
+        <label>Name<input class="input" type="text" id="tmx-eti" value="${enc(f.title||'')}"></label>
+        <label>Only titles containing<input class="input" type="text" id="tmx-einc" value="${enc(f.include||'')}"></label>
+        <label>Never titles containing<input class="input" type="text" id="tmx-eexc" value="${enc(f.exclude||'')}"></label>
+        </div>
         <div class="tmx-row"><span style="flex:1"></span>
           <button class="btn btn-ghost small" id="tmx-ecancel">Cancel</button>
           <button class="btn btn-neon small" id="tmx-esave">Save</button></div>`, box=>{ r2=box; });
@@ -376,13 +384,13 @@
     if(!modal){ toast('this build has no modal host'); return; }
     let root=null;
     modal(`<h3>🧲 Add a torrent</h3>
-      <input type="text" id="tmx-aq" placeholder="magnet:?xt=… or a link to a .torrent">
+      <div class="tmx-form"><label>Magnet or .torrent link<input class="input" type="text" id="tmx-aq" placeholder="magnet:?xt=… or https://…/file.torrent" autocomplete="off" spellcheck="false"></label></div>
       <label class="tmx-hint" style="display:flex;gap:7px;align-items:center;margin-top:9px">
         <input type="checkbox" id="tmx-apick"> Choose which files to download
       </label>
       <div class="tmx-hint">With a magnet the file list arrives from the swarm a few seconds after
         adding, so the picker opens and waits for it.</div>
-      <div class="tmx-row"><span style="flex:1"></span>
+      <div class="tmx-row tmx-end">
         <button class="btn btn-ghost small" id="tmx-acancel">Cancel</button>
         <button class="btn btn-neon small" id="tmx-aadd">Add</button></div>`, box=>{ root=box; });
     if(root) root.classList.add('tmx-modal');
