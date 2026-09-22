@@ -2052,6 +2052,11 @@ body.embed .feed{max-width:680px;margin:0 auto;padding:14px;height:auto !importa
 .mc-stage{background:#000;border-radius:12px;overflow:hidden}
 .mc-stage video{display:block;width:100%;height:auto;max-height:var(--mc-max-h,70vh);min-height:0;
   object-fit:contain;background:#000;margin:0 auto}
+/* Watching (see _mediaCenterWatch): the library is set aside and the picture takes the height the
+   fit measured, letterboxed — not just capped at it, which left a short video a short box. */
+.mc-watch-hide{display:none!important}
+.mc-watching .mc-playback{border-bottom:0}
+.mc-watching .mc-stage video{height:var(--mc-max-h,70vh)}
 .mc-browse{padding:14px 18px 0}.mc-search{display:flex;align-items:center;gap:12px;font-size:13px;color:var(--muted)}
 .mc-search input{flex:1;min-width:0}.mc-folder>h3{padding:16px 18px 0;margin:0;font-size:15px;overflow-wrap:anywhere}
 .mc-tile .xdc-cover{aspect-ratio:4/3}.mc-tile[hidden],.mc-folder[hidden],.mc-search[hidden],.mc-playback[hidden]{display:none}

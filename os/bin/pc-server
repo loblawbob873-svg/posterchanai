@@ -210,9 +210,13 @@ do_enable(){
     installer --nostr-only --service-user "$SVC_USER" --no-start || { echo "the installer failed"; return 1; }
   fi
   configured || { echo "the installer did not write $UNIT"; return 1; }
+  # SearXNG comes with the server (install.sh installs it on the nostr-only path too). A server set up
+  # before that gets it here, once; a failure only means the node searches elsewhere.
+  feature_installed searxng || installer --searxng || echo "note: SearXNG did not install — web search will use Admin → Tools"
   own_tree
   systemctl daemon-reload
   systemctl enable --now "$UNIT" || { echo "$UNIT did not start"; return 1; }
+  if [ -f "$UNIT_DIR/$SEARX_UNIT" ]; then systemctl enable --now "$SEARX_UNIT" 2>&1 || echo "note: $SEARX_UNIT did not start"; fi
   echo "PosterChan server enabled"
 }
 

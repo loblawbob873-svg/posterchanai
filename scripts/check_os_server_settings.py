@@ -212,8 +212,11 @@ def verdict(o):
     if o.get("instanceRestored") != ["http://127.0.0.1:3051", "https://poster.place"]:
         p.append(f"'Stop using it' did not restore the previous instance: {o.get('instanceRestored')}")
     b = o.get("beforeAi", {})
-    if b.get("ai") != "enabled" or b.get("music") != "disabled" or b.get("searxng") != "enabled":
-        p.append(f"with the server up: AI/search installable, music waits for AI — got {b}")
+    if b.get("ai") != "enabled" or b.get("music") != "disabled":
+        p.append(f"with the server up: AI installable, music waits for AI — got {b}")
+    # SearXNG comes WITH the server (part of the normal install), so it is not offered as an add-on.
+    if b.get("searxng") in ("enabled", "disabled"):
+        p.append(f"SearXNG must not be a separate install button — it is part of the server: {b}")
     if "hour" not in o.get("aiAsked", ""):
         p.append(f"installing AI must say how long it takes before it starts: {o.get('aiAsked')!r}")
     a = o.get("afterAi", {})

@@ -2695,9 +2695,10 @@
    * "Configured" and "running" are separate facts on purpose: systemd calls a never-installed unit
    * `inactive`, which reads exactly like "stopped", so the page asks the helper whether the installer
    * has written the unit at all before it says anything about whether it runs. */
+  /* SearXNG is not on this list: it comes WITH the server (install.sh installs it on the nostr-only
+   * path, and pc-server enable backfills it), the same as on every Full install. */
   const _SERVER_FEATURES = [
     { id:'ai', name:'AI chat + images', about:'LLM chat and image generation. Several GB of Python packages, and llama.cpp is compiled on this computer — expect up to an hour.' },
-    { id:'searxng', name:'Web search (SearXNG)', about:'This server\'s own private metasearch, used by the AI and by Web Search. A small download.' },
     { id:'music', name:'Music generation', about:'ACE-Step. The model (about 9 GB) downloads the first time a song is made.', needs:'ai' },
     { id:'video', name:'Video generation', about:'Text-to-video. The model (about 27 GB) downloads the first time a video is made.', needs:'ai' },
     { id:'voice', name:'Voice cloning', about:'The voice model (about 6 GB) downloads on first use.', needs:'ai' },

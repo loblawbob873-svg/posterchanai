@@ -10286,7 +10286,9 @@
     const br=box.getBoundingClientRect(),sr=stage.getBoundingClientRect();
     const zoom=box.offsetHeight?br.height/box.offsetHeight:1;
     const chrome=br.height-sr.height;               // title + controls + padding, visual px
-    const avail=(bottom-top)-chrome-8;
+    // From where the player STARTS, not the top of its scroller: page padding above it (12px on a
+    // phone) otherwise pushed the controls that far off the bottom.
+    const avail=(bottom-Math.max(top,br.top))-chrome-8;
     const px=Math.max(160,Math.floor(avail/(zoom||1)));
     box.style.setProperty('--mc-max-h',px+'px');
     // Re-fit when the scroller (a window being resized) or the title (a long name wrapping onto
@@ -10302,6 +10304,38 @@
     }
   }
   if(typeof window!=='undefined')window.addEventListener('resize',()=>_mediaCenterFitPlayer());
+  /* WATCHING IS ITS OWN SCREEN. The player used to be one more block on the library page: under the
+   * gallery header, the library tabs and the tool cards, so on the laptop it started 282px down a
+   * 893px window, its controls ran off the bottom and the picture used under two thirds of the
+   * height — "looks the same" after a fix that only resized it in place. While something plays,
+   * everything on the path from the player up to the gallery that is NOT the player is set aside
+   * (a class, not `hidden`, which other code owns), the scroller goes to the top and the fit then
+   * gives the video every remaining pixel. Closing puts it all back, scrolled where it was. */
+  let _mcWatch=null;
+  function _mediaCenterWatch(on){
+    const box=document.getElementById('mc-playback'),gal=box&&box.closest('.mc-gallery');
+    if(!box||!gal)return;
+    if(on){
+      if(_mcWatch&&_mcWatch.box===box)return;
+      let sc=box.parentElement;
+      while(sc&&sc!==document.body){const o=getComputedStyle(sc).overflowY;if(o==='auto'||o==='scroll')break;sc=sc.parentElement;}
+      const scroller=sc&&sc!==document.body?sc:document.scrollingElement;
+      const hidden=[];
+      for(let n=box;n&&n!==gal;n=n.parentElement){
+        for(const sib of n.parentElement.children)if(sib!==n&&!sib.classList.contains('mc-watch-hide')){sib.classList.add('mc-watch-hide');hidden.push(sib);}
+      }
+      _mcWatch={box,gal,hidden,scroller,top:scroller?scroller.scrollTop:0};
+      gal.classList.add('mc-watching');
+      if(scroller)scroller.scrollTop=0;
+    }else{
+      if(!_mcWatch)return;
+      const w=_mcWatch;_mcWatch=null;
+      for(const el of w.hidden)el.classList.remove('mc-watch-hide');
+      w.gal.classList.remove('mc-watching');
+      if(w.scroller)w.scroller.scrollTop=w.top;
+    }
+    _mediaCenterFitPlayer();
+  }
   async function renderMediaCenter(openLibraryId=null){
     const renderGeneration=++_mediaCenterRenderGeneration;
     stopMediaCenter();
@@ -10381,7 +10415,7 @@
       };
       $('#mc-close-player').onclick=async()=>{
         if(document.fullscreenElement===playerBox)await document.exitFullscreen().catch(()=>{});
-        stopMediaCenter(false);playerBox.hidden=true;
+        stopMediaCenter(false);playerBox.hidden=true;_mediaCenterWatch(false);
       };
       const act=async(button,fn)=>{button.disabled=true;status.textContent='Working…';try{await fn();status.textContent='';}catch(e){status.textContent=e.message;}finally{button.disabled=false;}};
       $('#mc-jellyfin-server').textContent=(_instanceBase()||location.origin).replace(/\/$/,'')+'/jellyfin';
@@ -10640,7 +10674,7 @@
               if(VIEW!=='media-center'||playGeneration!==_mediaCenterPlayGeneration){await releaseMediaCenterSession(session.url);return;}
               _mediaCenterSession=session.url;
               { const np=$('#mc-playing'); np.textContent=item.name; np.title=item.name; }
-              $('#mc-playback').hidden=false;_mediaCenterFitPlayer();$('#mc-playback').scrollIntoView({block:'start',behavior:'smooth'});
+              $('#mc-playback').hidden=false;_mediaCenterWatch(true);
               const video=$('#mc-player'),quality=$('#mc-quality');quality.value='auto';
               video.addEventListener('loadedmetadata',_mediaCenterFitPlayer,{once:true});
               let lastProgress=0;

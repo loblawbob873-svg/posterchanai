@@ -112,6 +112,10 @@ def test_nostr_only_completes_with_no_terminal_and_writes_a_unit_for_the_named_a
     assert not [c for c in calls if " enable " in f" {c} " or c.endswith(" start posterchanai")], \
         "--no-start: the caller decides when it runs"
     assert any("CREATE DATABASE posterchan_relay" in c for c in calls)
+    # SearXNG is part of the NORMAL install on this path too, as on the Full one (Step 9d2).
+    src = (ROOT / "install.sh").read_text()
+    body = src[src.index("install_nostr_only() {"):src.index("\n}\n", src.index("install_nostr_only() {"))]
+    assert "setup_searxng ||" in body, "the nostr-only install must install SearXNG, non-fatally"
 
 
 def test_nostr_only_starts_the_service_by_default(co):

@@ -88,7 +88,10 @@ PLAYER_LAYOUT = """JSON.stringify((()=>{
   const box=document.querySelector('#mc-playback'), t=document.querySelector('#mc-playing');
   const st=box.querySelector('.mc-stage'), v=document.querySelector('#mc-player'), bar=box.querySelector('.mc-controls');
   if(!st||!bar) return {error:'the player has no .mc-stage / .mc-controls'};
-  box.scrollIntoView({block:'start'});
+  // NO scrollIntoView here. It used to scroll the player to the top before measuring, so this
+  // measured a layout the app never showed: on the laptop the player sat 282px down a window under
+  // the library, controls off the bottom, and this check passed.
+  const lib=document.querySelector('.mc-library-tabs');
   let sc=box.parentElement;
   while(sc&&sc!==document.body&&sc!==document.documentElement){
     const o=getComputedStyle(sc).overflowY; if(o==='auto'||o==='scroll')break; sc=sc.parentElement; }
@@ -106,12 +109,16 @@ PLAYER_LAYOUT = """JSON.stringify((()=>{
           titleAbove: T.bottom<=S.top+0.5, controlsBelow: C.top>=S.bottom-0.5,
           stageW: Math.round(S.width), contentW: Math.round(contentW), videoW: Math.round(V.width),
           videoH: Math.round(V.height), picW: Math.round(picW),
-          roomH: Math.round((bottom-top)-(B.height-S.height))};
+          roomH: Math.round((bottom-Math.max(top,B.top))-(B.height-S.height)),
+          watching: !!box.closest('.mc-watching'), libraryShown: !!(lib&&lib.getClientRects().length)};
 })())"""
 
 
 def assert_player_uses_space(name, m):
     assert "error" not in m, f"{name}: {m['error']}"
+    assert m["watching"] and not m["libraryShown"], (
+        f"{name}: while a video plays the library must be set aside, not stacked above the player: {m}")
+    assert m["boxTop"] <= 24, f"{name}: the player starts {m['boxTop']}px below the top of its view: {m}"
     assert m["titleAbove"] and m["controlsBelow"], (
         f"{name}: expected title / picture / controls stacked in that order: {m}")
     assert m["stageW"] >= m["contentW"] - 2 and m["videoW"] >= m["stageW"] - 1, (
@@ -119,7 +126,7 @@ def assert_player_uses_space(name, m):
     assert m["boxTop"] >= -1 and m["boxBottom"] <= 1, (
         f"{name}: the player does not fit the {m['avail']}px it is shown in "
         f"(top {m['boxTop']}, overshoots the bottom by {m['boxBottom']}px) in {m['scroller']}: {m}")
-    assert m["picW"] >= m["stageW"] - 2 or m["videoH"] >= m["roomH"] - 16, (
+    assert m["videoH"] >= m["roomH"] - 16, (
         f"{name}: the picture is neither full width ({m['picW']} of {m['stageW']}px) nor as tall as "
         f"the space allows ({m['videoH']} of ~{m['roomH']}px): {m}")
 
@@ -432,6 +439,8 @@ async def main():
                         await browser.until("document.querySelector('video').currentTime>12.3")
                         await browser.js("document.querySelector('#mc-close-player').onclick()", True)
                         await browser.until("document.querySelector('#mc-playback').hidden")
+                        assert await browser.js("!document.querySelector('.mc-watching')&&!!document.querySelector('.mc-library-tabs').getClientRects().length"), (
+                            f"{name}: closing the player must bring the library back")
                         print(name, "PASS: artwork, grid, search, actual HLS playback, full screen, seek, close", flush=True)
                         if name == "tv":
                             # INSIDE A DESKTOP WINDOW. os.js windows ADOPT the #feed (no iframe), so

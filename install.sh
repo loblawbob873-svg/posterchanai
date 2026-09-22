@@ -243,6 +243,13 @@ install_nostr_only() {
 
     setup_systemd            # generic service + run-cpu.sh (sources data/secrets.env)
 
+    # SearXNG is part of the NORMAL install on every path, not an add-on: the Full install has shipped
+    # it by default (Step 9d2) and the nostr-only one silently did not, so a PosterChanOS server enabled
+    # from System Settings had to find a separate "Web search" button to get what every Full node has.
+    # setup_searxng installs only its own dependency block, so it works on requirements-nostr.txt.
+    # Non-fatal, exactly as in the Full path.
+    setup_searxng || print_warning "SearXNG not installed; set Admin → Tools → SearXNG URL, or run ./install.sh --searxng later"
+
     echo ""
     print_success "Nostr-only install complete."
     echo -e "  • Web client + relay: ${BOLD}http://localhost:${POSTERCHANAI_PORT:-3051}/client${NC}  (relay ws on :3052)"

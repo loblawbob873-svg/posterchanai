@@ -62,7 +62,11 @@ echo "install.sh $* | DATABASE_URL=${DATABASE_URL:-} HOME=$HOME ACESTEP_DIR=$ACE
 case "$1" in
   --nostr-only) mkdir -p venv/bin venv/lib/python3.13/site-packages; touch venv/bin/python; chmod +x venv/bin/python
                 echo "[Unit]" > "$PC_SERVER_UNIT_DIR/posterchanai.service"
-                mkdir -p data; echo "export POSTERCHANAI_NOSTR_ONLY=1" >> data/secrets.env ;;
+                mkdir -p data; echo "export POSTERCHANAI_NOSTR_ONLY=1" >> data/secrets.env
+                [ -n "${STUB_OLD_INSTALLER:-}" ] || { mkdir -p venv/lib/python3.13/site-packages/searxng-2026.9.dist-info
+                  echo "[Unit]" > "$PC_SERVER_UNIT_DIR/posterchanai-searxng.service"; } ;;
+  --searxng) mkdir -p venv/lib/python3.13/site-packages/searxng-2026.9.dist-info
+             echo "[Unit]" > "$PC_SERVER_UNIT_DIR/posterchanai-searxng.service" ;;
   --ai) mkdir -p venv/lib/python3.13/site-packages/torch-2.12.dist-info venv/lib/python3.13/site-packages/llama_cpp_python-0.3.dist-info ;;
   --music) mkdir -p venv/lib/python3.13/site-packages/acestep-1.5.dist-info ;;
 esac
@@ -332,3 +336,21 @@ def test_every_program_the_helper_runs_is_provided():
         assert re.search(r"(^|[\s(|;])" + re.escape(cmd) + r"\s", src), f"{cmd} no longer used — drop it here"
     ebuild = next((ROOT / "os/overlay/app-misc/posterchan-server").glob("posterchan-server-*.ebuild")).read_text()
     assert "dev-db/postgresql[server]" in ebuild, "psql/initdb come from the server package"
+
+
+def test_enable_brings_searxng_with_the_server_and_starts_it(box):
+    """ "I thought SearXNG was part of the normal install … but it has a separate button." It is part
+    of the normal install now (install.sh --nostr-only runs setup_searxng, as the Full path always
+    did), and enable starts its unit — no second install step, no separate button."""
+    rc, out, calls = box.run("enable")
+    assert rc == 0, box.job_log()
+    assert not [c for c in calls if c.startswith("install.sh --searxng")], "already installed by --nostr-only"
+    assert "systemctl enable --now posterchanai-searxng.service" in "\n".join(calls)
+    assert box.status()["features"]["searxng"] is True
+
+
+def test_a_server_set_up_before_searxng_came_with_it_gets_it_on_enable(box):
+    rc, out, calls = box.run("enable", STUB_OLD_INSTALLER="1")
+    assert rc == 0, box.job_log()
+    assert [c for c in calls if c.startswith("install.sh --searxng")], "the backfill must install it once"
+    assert "systemctl enable --now posterchanai-searxng.service" in "\n".join(calls)
