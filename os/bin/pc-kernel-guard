@@ -1,0 +1,162 @@
+#!/bin/bash
+# pc-kernel-guard — make sure the kernel this machine boots NEXT is whole, matches its drivers, and
+# is the one the boot loader picks.  `--check` reports; `--repair` (the default) fixes.
+#
+# WHY THIS EXISTS: THE SAME KERNEL REGRESSION, OVER AND OVER, AND EVERY LINK OF IT WAS SILENT.
+# Measured on the laptop (192.168.0.154) and on the ISO build VM, 2026-09-21:
+#   1. gentoo-kernel-bin-6.18.48 was REGISTERED (5,974 module files in its CONTENTS) while only
+#      NVIDIA's five .ko were on disk — its own module tree was gone;
+#   2. so the initramfs installkernel built for it held ZERO modules (the working one: 550) and
+#      that kernel drops to emergency mode — "/dev/disk/by-uuid/… does not exist";
+#   3. loader.conf's `default <machine-id>-*` named a machine-id the system no longer has, so the
+#      machine kept booting 6.18.43 — a kernel NO package owned any more (depcleaned while running,
+#      its sources gone), which nothing can rebuild a module for;
+#   4. nvidia-drivers was then built for 6.18.48 only, so the RUNNING kernel held the previous
+#      NVIDIA module against newer userspace — an NVIDIA machine that cannot render;
+#   5. and `gentoo.sh livecd` packed all of it, so every machine installed from the ISO inherited
+#      a registered-but-empty kernel package.
+# Nothing in that chain logs an error. So this asks each question directly, from the files.
+#
+# Env for tests: PC_ROOT (a fake /), PC_UNAME (the running kernel), PC_EMERGE (the emerge command).
+set -u
+MODE="${1:---repair}"
+case "$MODE" in --check|--repair) ;; *) echo "usage: pc-kernel-guard [--check|--repair]" >&2; exit 2;; esac
+
+R="${PC_ROOT:-}"
+DB="$R/var/db/pkg"
+BOOT="$R/boot"
+RUNNING="${PC_UNAME:-$(uname -r)}"
+EMERGE="${PC_EMERGE:-emerge}"
+RED=$'\033[1;31m'; YEL=$'\033[1;33m'; GRN=$'\033[1;32m'; OFF=$'\033[0m'
+[ -t 1 ] || { RED=; YEL=; GRN=; OFF=; }
+PROBLEMS=0
+say()  { echo "${GRN}[kernel]${OFF} $*"; }
+warn() { echo "${YEL}[kernel]${OFF} $*"; }
+bad()  { echo "${RED}[kernel]${OFF} $*"; PROBLEMS=$((PROBLEMS + 1)); }
+
+modtree() {  # the module directory for a kernel release, merged-/usr or not
+	if [ -d "$R/usr/lib/modules/$1" ]; then echo "$R/usr/lib/modules/$1"; else echo "$R/lib/modules/$1"; fi
+}
+
+# ---- 1. every REGISTERED kernel package still has its module files ------------------------------
+# Answered from the package's own CONTENTS, not from "is there a directory": a directory holding
+# only NVIDIA's modules is exactly what a broken one looks like.
+declare -A KPKG=()        # release -> category/package-version
+declare -A KDIR=()
+declare -A KBROKEN=()
+missing_of() {  # "<missing> <total>" kernel module files of a package's CONTENTS
+	local total=0 missing=0 _ path _rest
+	while read -r _ path _rest; do
+		total=$((total + 1))
+		[ -e "$R$path" ] || missing=$((missing + 1))
+	done < <(grep -E '^obj (/usr)?/lib/modules/[^/]+/kernel/' "$1/CONTENTS")
+	echo "$missing $total"
+}
+for d in "$DB"/sys-kernel/gentoo-kernel-bin-[0-9]* "$DB"/sys-kernel/gentoo-kernel-[0-9]* "$DB"/sys-kernel/vanilla-kernel-[0-9]*; do
+	[ -f "$d/CONTENTS" ] || continue
+	rel="$(grep -m1 -oE '^dir (/usr)?/lib/modules/[^/ ]+$' "$d/CONTENTS" | sed -E 's#.*/modules/##')"
+	[ -n "$rel" ] || continue
+	pkg="sys-kernel/${d##*/}"
+	KPKG[$rel]="$pkg"; KDIR[$rel]="$d"
+	read -r missing total < <(missing_of "$d")
+	if [ "$total" -gt 0 ] && [ "$missing" -gt 0 ]; then
+		KBROKEN[$rel]=1
+		bad "$pkg is installed but $missing of its $total kernel modules are missing from disk"
+	fi
+done
+
+if [ "$MODE" = --repair ]; then
+	for rel in "${!KBROKEN[@]}"; do
+		warn "reinstalling ${KPKG[$rel]} to restore its modules (this also rebuilds its initramfs)"
+		# Judged by the files, never by emerge's exit status alone.
+		if $EMERGE -1 --usepkg --quiet-build=y "=${KPKG[$rel]}" && read -r missing total < <(missing_of "${KDIR[$rel]}") && [ "$missing" -eq 0 ]; then
+			unset "KBROKEN[$rel]"; PROBLEMS=$((PROBLEMS - 1)); say "restored ${KPKG[$rel]}"
+		else
+			bad "could not reinstall ${KPKG[$rel]} — run: emerge -1 =${KPKG[$rel]}"
+		fi
+	done
+fi
+
+# ---- 2. the newest healthy kernel ---------------------------------------------------------------
+NEWEST=""
+for rel in $(printf '%s\n' "${!KPKG[@]}" | sort -V); do
+	[ -n "${KBROKEN[$rel]:-}" ] || NEWEST="$rel"
+done
+[ -n "${KPKG[$RUNNING]:-}" ] || warn "the running kernel $RUNNING is not owned by any package (it was removed while running) — nothing can rebuild a module for it${NEWEST:+; the next boot should move to $NEWEST}"
+if [ -z "$NEWEST" ]; then
+	bad "no installed kernel package is intact — this machine has no kernel it can safely boot next"
+	exit 1
+fi
+
+# ---- 3. out-of-tree drivers built for the kernel that will boot --------------------------------
+nvidia_ok() {  # module for $1 is the same release as the userspace
+	local ko mod user ml
+	ko="$(modtree "$1")/video/nvidia.ko"
+	[ -e "$ko" ] || return 1
+	mod="$(modinfo -F version "$ko" 2>/dev/null)"
+	ml="$(ls -1 "$R"/usr/lib64/libnvidia-ml.so.*.* "$R"/usr/lib/libnvidia-ml.so.*.* 2>/dev/null | head -1)"
+	user="${ml##*/libnvidia-ml.so.}"
+	[ -n "$mod" ] && [ "$mod" = "$user" ]
+}
+if ls -d "$DB"/x11-drivers/nvidia-drivers-* >/dev/null 2>&1; then
+	if ! nvidia_ok "$NEWEST"; then
+		if [ "$MODE" = --repair ]; then
+			warn "the NVIDIA module for $NEWEST does not match the NVIDIA userspace — rebuilding it for $NEWEST"
+			[ -d "$R/usr/src/linux-$NEWEST" ] && command -v eselect >/dev/null 2>&1 && [ -z "$R" ] \
+				&& eselect kernel set "linux-$NEWEST" >/dev/null 2>&1
+			if $EMERGE -1 --quiet-build=y @module-rebuild && nvidia_ok "$NEWEST"; then
+				say "NVIDIA module rebuilt for $NEWEST"
+			else
+				bad "the NVIDIA module for $NEWEST still does not match — run: eselect kernel set linux-$NEWEST && emerge @module-rebuild"
+			fi
+		else
+			bad "the NVIDIA module for $NEWEST does not match the NVIDIA userspace"
+		fi
+	fi
+fi
+
+# ---- 4. the boot loader picks a kernel that can actually start ----------------------------------
+# systemd-boot only. An entry is bootable when its kernel and initrd exist AND the initrd carries
+# kernel modules: the 0-module initrd above is what a kernel with an emptied module tree gets.
+LOADER="$BOOT/loader/loader.conf"
+initrd_has_modules() {
+	command -v lsinitrd >/dev/null 2>&1 || return 0   # cannot look: do not block on it
+	[ "$(lsinitrd "$1" 2>/dev/null | grep -c '\.ko')" -gt 0 ]
+}
+if [ -f "$LOADER" ] && [ -d "$BOOT/loader/entries" ]; then
+	best=""; bestv=""
+	for e in "$BOOT"/loader/entries/*.conf; do
+		[ -f "$e" ] || continue
+		v="$(awk '$1=="version"{print $2; exit}' "$e")"
+		k="$(awk '$1=="linux"{print $2; exit}' "$e")"; i="$(awk '$1=="initrd"{print $2; exit}' "$e")"
+		[ -n "$v" ] && [ -n "$k" ] && [ -f "$BOOT$k" ] || continue
+		[ -z "$i" ] || { [ -f "$BOOT$i" ] && initrd_has_modules "$BOOT$i"; } || { warn "boot entry ${e##*/}: its initramfs holds no kernel modules — never chosen"; continue; }
+		[ -n "${KPKG[$v]:-}" ] && [ -z "${KBROKEN[$v]:-}" ] || continue
+		if [ -z "$bestv" ] || [ "$(printf '%s\n%s\n' "$bestv" "$v" | sort -V | tail -1)" = "$v" ]; then
+			best="${e##*/}"; bestv="$v"
+		fi
+	done
+	cur="$(awk '$1=="default"{print $2; exit}' "$LOADER")"
+	if [ -z "$best" ]; then
+		bad "no systemd-boot entry is for an intact kernel with a usable initramfs"
+	elif [ "$cur" != "$best" ]; then
+		if [ "$MODE" = --repair ]; then
+			cp -p "$LOADER" "$LOADER.pre-kernel-guard"
+			if grep -q '^default ' "$LOADER"; then
+				sed -i "s|^default .*|default $best|" "$LOADER"
+			else
+				echo "default $best" >>"$LOADER"
+			fi
+			say "boot loader now defaults to $bestv ($best; was: ${cur:-unset})"
+		else
+			bad "the boot loader default (${cur:-unset}) is not the newest bootable kernel ($best)"
+		fi
+	else
+		say "boot loader defaults to $bestv"
+	fi
+fi
+
+if [ "$PROBLEMS" -gt 0 ]; then exit 1; fi
+[ "$RUNNING" = "$NEWEST" ] && say "running $RUNNING — kernel, modules and boot entry agree" \
+	|| say "next boot: $NEWEST (running $RUNNING) — reboot to move to it"
+exit 0

@@ -36,6 +36,16 @@ command -v emerge >/dev/null 2>&1 || {
 	exit 1
 }
 
+# THE KERNEL THIS MACHINE BOOTS NEXT IS CHECKED ON EVERY UPDATE — even one that finds nothing new,
+# which is why it runs before any "Already up to date" exit. A kernel package whose module files
+# have gone, a boot default naming a machine-id that no longer exists, or an NVIDIA module built for
+# a different kernel than the one that boots: each is silent until the machine will not start or
+# cannot render. See pc-kernel-guard for the chain that kept recurring.
+if [ -x /usr/local/bin/pc-kernel-guard ]; then
+	/usr/local/bin/pc-kernel-guard --repair \
+		|| echo "${RED}The kernel check found a problem it could not fix — read the lines above before rebooting.${OFF}"
+fi
+
 # A LAN reverse proxy may cache a missing bare-Git path long after the public release channel has
 # recovered.  Ordinary DNS then keeps returning that proxy, so both `emaint` and a plain Git retry
 # fail and the updater misleadingly declares its stale checkout current.  Resolve the SAME HTTPS

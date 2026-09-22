@@ -3652,6 +3652,18 @@ liveCD() {
 			return
 		fi
 	fi
+	# EVERY REGISTERED KERNEL MUST BE WHOLE BEFORE THIS HOST IS COPIED ONTO OTHER MACHINES.
+	# `mksquashfs /` takes the package database with it, so a kernel package whose module files have
+	# gone becomes a registered-but-empty kernel on every machine installed from the image -- the
+	# next kernel update there builds a zero-module initramfs that cannot open the disk. Measured:
+	# the build VM installed from the 0917 image carried gentoo-kernel-bin-6.18.48 with 5 of its
+	# 5,974 modules. pc-kernel-guard asks the question from each package's CONTENTS.
+	local _kg=/usr/local/bin/pc-kernel-guard
+	[[ -x "$_kg" ]] || _kg="$(dirname "$(readlink -f "$0")")/bin/pc-kernel-guard"
+	if [[ -x "$_kg" ]] && ! "$_kg" --check >>"$LOG" 2>&1; then
+		_lcd_fail "A kernel on this machine is not whole, or the boot loader does not pick an intact one (details in the log). Fix it and run this again:  sudo pc-kernel-guard"
+		return
+	fi
 	# THE MODULES MUST BE BUILT FOR THE KERNEL THIS IMAGE WILL SHIP, which is the RUNNING one --
 	# `$(uname -r)`, the same kernel the initramfs below is built for. The failing image is the proof
 	# that a package database entry is not the question: it had the .ko files for the running kernel
@@ -3988,8 +4000,14 @@ FSTAB
 		# /opt is commonly where a builder accumulates SDKs and unrelated server applications.  The
 		# required desktop payloads are PosterChan and Gentoo's prebuilt Firefox. Keep these exact
 		# trees; unrelated SDK/server siblings must not leak into a public image.
+		# BUT NEVER A TREE A PACKAGE OWNS. The image carries /var/db/pkg, so dropping an owned tree
+		# ships a package that is REGISTERED and absent: /opt/rust-bin-* went this way, and every
+		# machine installed from the image then failed Mesa's next build ("Unknown compiler(s):
+		# rustc" through a dangling /usr/bin/rustc) while portage believed rust-bin was installed.
 		for F in /opt/*; do
-			[[ -e "$F" && "$F" != /opt/posterchan && "$F" != /opt/firefox ]] && EXCLUDES+=("${F#/}")
+			[[ -e "$F" && "$F" != /opt/posterchan && "$F" != /opt/firefox ]] || continue
+			grep -qsxF "dir $F" /var/db/pkg/*/*/CONTENTS && continue
+			EXCLUDES+=("${F#/}")
 		done
 
 		# The account files, rewritten. Everything below uid 1000 stays — root and the system users
