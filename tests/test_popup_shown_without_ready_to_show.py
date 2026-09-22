@@ -72,7 +72,10 @@ const _shellScopes=new Map(),path=require('node:path'),__dirname='.';
 let _popupWin=null,_popupKind='';const created=[],placed=[];
 const wm=()=>({outputs:async()=>[],focusedOutputName:async()=>''});
 const placePopupWindow=(p,want)=>placed.push([p,want]);const forwardShellTick=()=>{};
-const closePopupWindow=()=>{const p=_popupWin;_popupWin=null;_popupKind='';if(p&&!p.dead){p.dead=true;p.emit('closed');}};
+// A sticky popup (the composer) closes GRACEFULLY, and a page can veto that: the window is no
+// longer the popup but is still alive. Only stillWanted can decline it -- isDestroyed() cannot.
+const closePopupWindow=()=>{const p=_popupWin,k=_popupKind;_popupWin=null;_popupKind='';
+ if(p&&!p.dead&&!STICKY_POPUPS.has(k)){p.dead=true;p.emit('closed');}};
 class BrowserWindow extends Win{
  constructor(o){super();this.o=o;this.shown=0;created.push(this);}
  getBounds(){return {width:this.o.width,height:this.o.height}}
@@ -86,10 +89,12 @@ class BrowserWindow extends Win{
  await new Promise(r=>setTimeout(r,400));
  assert.equal(created[0].shown,1,'the Start menu window was never shown');
  assert.equal(placed.length,1,'the Start menu was never placed');
- // A replaced popup is not shown behind the new one.
- openPopupWindow({sender:{id:1}},'noti',{});
+ // A replaced popup is not shown behind the new one -- including one whose close was vetoed,
+ // which is still a live window when its grace timer fires.
+ openPopupWindow({sender:{id:1}},'compose',{});
  await openPopupWindow({sender:{id:1}},'tray',{});
  await new Promise(r=>setTimeout(r,400));
+ assert.equal(created[1].dead,false,'the fixture must supersede WITHOUT destroying');
  assert.equal(created[1].shown,0,'a superseded popup was shown');
  assert.equal(created[2].shown,1);
  process.exit(0);
