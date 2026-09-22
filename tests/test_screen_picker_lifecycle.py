@@ -38,6 +38,10 @@ const {EventEmitter}=require('events');
 let pendingSources=[],pickerOpen=false,created=0,loads=0;
 const logs=[];const screenLog=x=>logs.push(String(x));
 const path={join:(...x)=>x.join('/')};const __dirname='/desktop';const win=null;
+// The picker reveals itself through desktop/show-when-ready.js (`ready-to-show` is a race a slow
+// machine loses). Stubbed to the part this test is about — show once, never on a dead window —
+// because the timers in the real helper would only add wall-clock to a question about lifecycle.
+const showWhenReady=(w,show)=>{try{ if(!w.isDestroyed()) show(); }catch(_){}};
 const desktopCapturer={getSources:async()=>[{id:'a',name:'A'},{id:'b',name:'B'}]};
 const ipcMain=new EventEmitter();ipcMain.removeAllListeners=EventEmitter.prototype.removeAllListeners;
 class BrowserWindow extends EventEmitter{
