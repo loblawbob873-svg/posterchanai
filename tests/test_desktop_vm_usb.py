@@ -41,6 +41,8 @@ elif verb == "dominfo":
 elif verb == "domblklist":
     print(" Type   Device   Target   Source\n------------------------------------------------")
 elif verb == "dumpxml":
+    if os.environ.get("FAKE_DUMPXML_FAIL") and "--inactive" in a:
+        sys.stderr.write("error: cannot read the definition\n"); sys.exit(1)
     print(rd(saved) if "--inactive" in a or st != "running" else rd(live))
 elif verb in ("attach-device", "detach-device"):
     body = rd(a[2])
@@ -318,7 +320,8 @@ class UsbGrantHelper(unittest.TestCase):
         (self.proc / "self").mkdir(parents=True)
         (self.proc / "self" / "cgroup").write_text("0::/user.slice/user-%s.slice/session-7.scope\n" % ME)
         gf = self.tmp / "getfacl"
-        gf.write_text('#!/bin/sh\necho "user::rw-"\n[ -n "$STUB_ACL" ] && echo "$STUB_ACL"\necho "group::rw-"\nexit 0\n')
+        gf.write_text('#!/bin/sh\n[ -n "$STUB_GETFACL_FAIL" ] && { echo "getfacl: nope" >&2; exit 1; }\n'
+                      'echo "user::rw-"\n[ -n "$STUB_ACL" ] && printf "%s\\n" "$STUB_ACL"\necho "group::rw-"\nexit 0\n')
         gf.chmod(0o755)
         self.env = {"PC_USB_GRANT_LOGINCTL": str(lc), "PC_USB_GRANT_PROC": str(self.proc),
                     "PC_USB_GRANT_GETFACL": str(gf), "PC_USB_GRANT_ADMIN_GROUP": grp.getgrgid(os.getgid()).gr_name,
@@ -360,7 +363,44 @@ class UsbGrantHelper(unittest.TestCase):
         self.assertEqual(self.acl(), [], "setfacl ran for a refused request")
 
     def test_only_an_admin_may_grant(self):
+        """A REAL group the caller is not in — replacing the membership test with True must fail this."""
+        import grp
+        import pwd
+        me = pwd.getpwuid(os.getuid())
+        other = next((g.gr_name for g in grp.getgrall()
+                      if me.pw_name not in g.gr_mem and g.gr_gid != me.pw_gid), None)
+        self.assertIsNotNone(other, "no group the test user is outside of")
+        self.refused("owner (an administrator)", PC_USB_GRANT_ADMIN_GROUP=other)
         self.refused("owner (an administrator)", PC_USB_GRANT_ADMIN_GROUP="no-such-group-pc")
+
+    def test_a_session_scope_outside_the_login_slice_is_not_the_seat(self):
+        """Only `0::/user.slice/user-<uid>.slice/session-N.scope` — a scope under user@<uid>.service is reachable
+        without sitting at the machine, and another uid's slice is somebody else."""
+        cg = self.proc / "self" / "cgroup"
+        cg.write_text("0::/user.slice/user-%s.slice/user@%s.service/app.slice/session-7.scope\n" % (ME, ME))
+        self.refused("no login session found")
+        cg.write_text("0::/user.slice/user-%d.slice/session-7.scope\n" % (int(ME) + 1))
+        self.refused("no login session found")
+
+    def test_an_unreadable_access_list_and_an_effective_mask_are_refusals(self):
+        self.refused("could not be read", STUB_GETFACL_FAIL="1")
+        self.refused("another account (uid 4242)", STUB_ACL="user:4242:rw-\t#effective:r--")
+
+    def test_the_device_open_in_another_accounts_thread_or_under_another_name(self):
+        node = self.dev / "001" / "003"
+        other_name = self.tmp / "char-189-2"
+        os.link(node, other_name)                                        # one device, two paths
+        fds = self.proc / "999" / "fd"
+        fds.mkdir(parents=True)
+        os.symlink(other_name, fds / "4")
+        (self.proc / "999" / "status").write_text("Name:\tqemu\nUid:\t4343\t4343\t4343\t4343\n")
+        self.refused("uid 4343, pid 999")
+        shutil.rmtree(self.proc / "999")
+        tfd = self.proc / "888" / "task" / "889" / "fd"
+        tfd.mkdir(parents=True)
+        os.symlink(node, tfd / "3")                                       # only a THREAD holds it
+        (self.proc / "888" / "status").write_text("Name:\tqemu\nUid:\t4344\t4344\t4344\t4344\n")
+        self.refused("uid 4344, pid 888")
 
     def test_only_from_the_active_local_seat(self):
         self.refused("not remotely", STUB_REMOTE="yes")                  # an SSH session
@@ -436,3 +476,19 @@ class LocalVmUsbRound2(LocalVmUsbGrantAndDisks):
         self.env["PC_MOUNTINFO"] = str(self.tmp / "no-such-mountinfo")
         devs = {d["vendor"]: d for d in self.js("return v.usbList()")["devices"]}
         self.assertIn("could not tell", devs["090c"]["busy"])
+
+
+class LocalVmUsbRound3(LocalVmUsbGrantAndDisks):
+    def test_a_zpool_that_cannot_answer_while_zfs_is_loaded_refuses_every_disk(self):
+        self.env["PC_ZPOOL_FAIL"] = "1"
+        devs = {d["vendor"]: d for d in self.js("return v.usbList()")["devices"]}
+        self.assertEqual(devs["090c"]["busy"], "", "no ZFS loaded")
+        os.makedirs(os.path.join(self.sys, "module", "zfs"))
+        devs = {d["vendor"]: d for d in self.js("return v.usbList()")["devices"]}
+        self.assertIn("could not tell", devs["090c"]["busy"])
+
+    def test_autostart_is_not_turned_on_when_the_devices_cannot_be_read(self):
+        (self.fake / "state").write_text("shut off")
+        r = self.js("return v.update('vm1',{autostart:true})", FAKE_DUMPXML_FAIL="1")
+        self.assertFalse(r["ok"])
+        self.assertIn("Could not check", r["error"])

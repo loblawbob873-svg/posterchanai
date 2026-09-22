@@ -62,17 +62,6 @@ class HardwareOps:
         add_gib = _int_arg(want, "add_disk_gib", 1, self.cfg.max_disk_gib) if "add_disk_gib" in want else None
         if "autostart" in want and not isinstance(want["autostart"], bool):
             raise _err("bad_request", "autostart must be true or false")
-        if want.get("autostart") is True:
-            # libvirt starts an autostart VM at boot without asking us, and so without the device safety checks a
-            # start from here makes (devices._device_start_guard): no autostart while the VM holds a host device.
-            from . import pci as _pci, usb as _usb
-            try:
-                saved = await self.backend.dumpxml(d.uuid, inactive=True)
-            except Exception as e:
-                raise _err("backend_error", f"could not read this VM's devices: {e}")
-            if _usb.hostdevs(saved) or _pci.hostdevs(saved):
-                raise _err("conflict", "this VM has host devices (USB/PCI) attached — a VM that starts with the host "
-                                       "would take them without the safety checks; detach them first")
         if "boot" in want and want["boot"] not in ("disk", "cdrom"):
             raise _err("bad_request", "boot must be disk or cdrom")
         if "input" in want and want["input"] not in ("tablet", "mouse"):
@@ -96,7 +85,18 @@ class HardwareOps:
             else:
                 raise _err("bad_request", 'media must be {"iso": "<id>"} or "eject"')
 
-        await self._acquire(self._host_lock, "this host")
+        # Turning autostart on is checked against the VM's devices under the SAME host-wide device lock an attach
+        # holds (devices.py), and under the VM lock, after the re-read — so an attach racing this Save cannot land
+        # between the check and the write. Lock order everywhere: devices → host → VM.
+        dev_lock = self._devices_lock() if want.get("autostart") is True else None
+        if dev_lock is not None:
+            await self._acquire(dev_lock, "this host's devices")
+        try:
+            await self._acquire(self._host_lock, "this host")
+        except BaseException:
+            if dev_lock is not None:
+                dev_lock.release()
+            raise
         try:
             lock = self._vm_lock(d.uuid)
             await self._acquire(lock, "this VM")
@@ -106,6 +106,17 @@ class HardwareOps:
                 if d is None:
                     raise _err("not_found", "no such VM")
                 self._migration_guard(d)     # journal (authoritative) + pc:migration metadata, like start
+                if dev_lock is not None:
+                    # libvirt starts an autostart VM at boot without asking us — past the device checks a start from
+                    # here makes (devices._device_start_guard): no autostart while the VM holds a host device.
+                    from . import pci as _pci, usb as _usb
+                    try:
+                        saved = await self.backend.dumpxml(d.uuid, inactive=True)
+                    except Exception as e:
+                        raise _err("backend_error", f"could not read this VM's devices: {e}")
+                    if _usb.hostdevs(saved) or _pci.hostdevs(saved):
+                        raise _err("conflict", "this VM has host devices (USB/PCI) attached — a VM that starts with "
+                                               "the host would take them without the safety checks; detach them first")
                 if d.state != "shutoff":
                     raise _err("conflict", "shut the VM down before changing its hardware")
                 domains = await self.backend.list_domains()
@@ -176,6 +187,8 @@ class HardwareOps:
                 lock.release()
         finally:
             self._host_lock.release()
+            if dev_lock is not None:
+                dev_lock.release()
 
         # CONFIRM by reading back — the definition the host now holds, not what was sent.
         after = await self.backend.get(d.uuid)

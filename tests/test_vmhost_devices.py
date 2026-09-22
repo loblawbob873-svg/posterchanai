@@ -525,3 +525,24 @@ def test_the_usb_start_check_fails_closed_when_the_host_cannot_be_scanned(tmp_pa
     r = c(svc, ADMIN, "vm.power", {"vm": U1, "action": "start"})
     assert r["error"]["code"] == "conflict" and "could not check" in r["error"]["message"], r
     assert not any(x[0] == "start" for x in be.calls)
+
+
+# ------------------------------------------------------------------------------------------------ review round 3
+def test_turning_autostart_on_cannot_race_an_attach(tmp_path):
+    """The autostart check reads the VM's devices under the device lock an attach holds, after the re-read — so a
+    Save racing an attach either sees the device or waits for it; it never turns autostart on beside one."""
+    svc, be = make(tmp_path)
+
+    async def race():
+        gate = be.gate["attach_device"] = asyncio.Event()
+        a = asyncio.ensure_future(svc.handle(ADMIN, "vm.device.attach",
+                                             {"vm": U1, "kind": "usb", "vendor": "090c", "product": "1000"}, "r3-a"))
+        await asyncio.sleep(0.05)
+        u = asyncio.ensure_future(svc.handle(ADMIN, "vm.update", {"vm": U1, "autostart": True}, "r3-u"))
+        await asyncio.sleep(0.3)
+        gate.set()
+        return await asyncio.gather(a, u)
+    ra, ru = run(race())
+    assert ra["ok"], ra
+    assert not ru["ok"] and ru["error"]["code"] == "conflict" and "host devices" in ru["error"]["message"], ru
+    assert be.domains[U1]["autostart"] is False

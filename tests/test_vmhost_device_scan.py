@@ -407,3 +407,15 @@ def test_an_unreadable_mount_table_refuses_every_disk(tmp_path):
     (tmp_path / "sw").write_text("x\n")
     d = usb.scan(sys, none, str(tmp_path / "sw"), ids_paths=(none,), zpool_status="")[0]
     assert "could not tell" in d.busy
+
+
+
+def test_a_zpool_that_cannot_answer_while_zfs_is_loaded_refuses_every_disk(tmp_path, monkeypatch):
+    sys, _ = _usb_disk(tmp_path)
+    virtual_block(sys, "nvme0n1p2")                                  # the root, traceable: nothing else is amiss
+    monkeypatch.setattr(usb, "_zpool_status", lambda: None)          # missing / timed out / nonzero exit
+    d = _one(sys, "22 1 8:1 / / rw - ext4 /dev/nvme0n1p2 rw\n", tmp_path, zpool_status=None)[0]
+    assert d.busy == "", "no ZFS loaded: nothing to fear from a missing zpool"
+    os.makedirs(os.path.join(sys, "module", "zfs"))
+    d = _one(sys, "22 1 8:1 / / rw - ext4 /dev/nvme0n1p2 rw\n", tmp_path, zpool_status=None)[0]
+    assert "could not tell" in d.busy, d.busy

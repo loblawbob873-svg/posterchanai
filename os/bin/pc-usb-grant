@@ -121,7 +121,7 @@ def _not_the_owner_at_the_seat(uid: int) -> str:
         return "only this computer's owner (an administrator) can give a USB device to a VM"
     if not (pw.pw_name in g.gr_mem or pw.pw_gid == g.gr_gid):
         return "only this computer's owner (an administrator) can give a USB device to a VM"
-    sid = _caller_session()
+    sid = _caller_session(uid)
     if not sid:
         return "run this from the desktop session at this computer (no login session found for the request)"
     props = _loginctl(["show-session", sid, "-p", "User", "-p", "Remote", "-p", "Active", "-p", "Seat",
@@ -147,50 +147,67 @@ def _loginctl(args) -> dict:
     return out
 
 
-def _caller_session() -> str:
-    """The logind session the request came from: the `session-N.scope` of this process or its nearest ancestor
-    (sudo keeps the caller's cgroup). A cgroup is set by systemd, not by anything the caller can write."""
-    pid = "self"
-    for _ in range(16):
-        try:
-            with open(os.path.join(PROC, pid, "cgroup")) as f:
-                m = re.search(r"/session-([A-Za-z0-9]+)\.scope", f.read())
-            if m:
-                return m.group(1)
-            with open(os.path.join(PROC, pid, "stat")) as f:
-                st = f.read()
-            pid = st[st.rindex(")") + 2:].split()[1]
-            if pid in ("0", "1"):
-                return ""
-        except (OSError, ValueError, IndexError):
-            return ""
+def _caller_session(uid: int) -> str:
+    """The logind session this request runs in, read from THIS process's cgroup: exactly
+    `0::/user.slice/user-<uid>.slice/session-<id>.scope`, the scope logind creates for a login session. sudo does not
+    move its process to another cgroup, so the helper sits in the caller's own scope. Nothing else counts — not a
+    scope nested under user@<uid>.service (a user's systemd, reachable without being at the seat), not an ancestor
+    process's session, not another uid's slice."""
+    try:
+        with open(os.path.join(PROC, "self", "cgroup")) as f:
+            lines = f.read().splitlines()
+    except OSError:
+        return ""
+    pat = re.compile(r"^0::/user\.slice/user-%d\.slice/session-(\w+)\.scope$" % uid)
+    for line in lines:
+        m = pat.match(line)
+        if m:
+            return m.group(1)
     return ""
 
 
 def _held_by_another(node: str, uid: int) -> str:
-    """Another account already holding this device: a named-user ACL for another uid (a grant nobody revoked), or
-    the node open in another account's process (their VM's QEMU). "" when nobody else holds it."""
+    """Another account already holding this device: a named-user ACL entry for another uid (a grant nobody
+    revoked), or the node open in another account's process or thread (their VM's QEMU). "" when nobody else holds
+    it; an access list that cannot be read is a refusal, never "nobody"."""
     try:
         r = subprocess.run([GETFACL, "-cpn", node], capture_output=True, text=True, timeout=10)
-        for line in r.stdout.splitlines():
-            m = re.fullmatch(r"user:(\d+):([rwx-]{3})", line.strip())
-            if m and int(m.group(1)) != uid and "w" in m.group(2):
-                return f"another account (uid {m.group(1)})"
     except (OSError, subprocess.SubprocessError):
         return "an account this computer could not identify (its access list could not be read)"
-    real = os.path.realpath(node)
+    if r.returncode != 0:
+        return "an account this computer could not identify (its access list could not be read)"
+    for line in r.stdout.splitlines():
+        # `user:1002:rw-\t#effective:r--` is still an entry: match the start, not the whole line
+        m = re.match(r"user:(\d+):([rwx-]{3})", line.strip())
+        if m and int(m.group(1)) != uid and "w" in m.group(2):
+            return f"another account (uid {m.group(1)})"
+    try:
+        want = os.stat(node)
+    except OSError:
+        return "an account this computer could not identify (the device node vanished)"
+
+    def same(link: str) -> bool:
+        """The SAME device, compared by what the file IS (char device + st_rdev, or the same inode), never by the
+        text of a path — /dev/bus/usb/001/003 and /dev/char/189:2 are one device under two names."""
+        try:
+            st = os.stat(link)
+        except OSError:
+            return False
+        if stat.S_ISCHR(st.st_mode) and stat.S_ISCHR(want.st_mode):
+            return st.st_rdev == want.st_rdev
+        return (st.st_dev, st.st_ino) == (want.st_dev, want.st_ino)
+
     for pid in _ls(PROC):
         if not pid.isdigit():
             continue
-        fds = os.path.join(PROC, pid, "fd")
-        for fd in _ls(fds):
-            try:
-                if os.path.realpath(os.path.join(fds, fd)) == real:
+        fd_dirs = [os.path.join(PROC, pid, "fd")] + \
+            [os.path.join(PROC, pid, "task", t, "fd") for t in _ls(os.path.join(PROC, pid, "task")) if t != pid]
+        for fds in fd_dirs:
+            for fd in _ls(fds):
+                if same(os.path.join(fds, fd)):
                     owner = _proc_uid(pid)
                     if owner != uid:
                         return f"a program of another account (uid {owner}, pid {pid}) — probably its VM"
-            except OSError:
-                continue
     return ""
 
 

@@ -38,10 +38,12 @@ function ifaceUp(net, i){
   const f = parseInt(rd(path.join(net, i, 'flags')), 16);
   return Number.isFinite(f) ? !!(f & 1) : rd(path.join(net, i, 'operstate')) !== 'down';
 }
+/** `zpool status -P`, or null when it could not be asked (missing, timeout, nonzero exit). */
 function zpoolStatus(){
+  if(process.env.PC_ZPOOL_FAIL) return null;
   if(process.env.PC_ZPOOL_STATUS != null) return process.env.PC_ZPOOL_STATUS;
   try{ return require('child_process').execFileSync('zpool', ['status', '-P'], { timeout: 10000, encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] }); }
-  catch(_){ return ''; }
+  catch(_){ return null; }
 }
 /** {block name: [mountpoints|'swap']} plus `unresolved` — the same rules as app/services/vmhost/usb.py `_mounts`:
  *  the SOURCE path, the major:minor field via /sys/dev/block (/dev/root), stat('/').dev for an anonymous btrfs
@@ -91,7 +93,9 @@ function mounts(){
   if(btrfsLeft.length && !nfs) unresolved.push(...btrfsLeft);
   // every vdev of every IMPORTED pool is in use, mounted or not; a mounted dataset lives on all of its pool's vdevs
   const vdevs = {}; let pool = '';
-  for(const line of zpoolStatus().split('\n')){
+  const ztext = zpoolStatus();
+  if(ztext == null && fs.existsSync(path.join(SYS(), 'module', 'zfs'))) unresolved.push('/');   // ZFS loaded, unanswerable
+  for(const line of (ztext || '').split('\n')){
     const m = line.match(/^\s*pool:\s*(\S+)/); if(m){ pool = m[1]; continue; }
     const tok = line.trim().split(/\s+/)[0] || '';
     if(pool && tok.startsWith('/dev/')) (vdevs[pool] = vdevs[pool] || []).push(byPath(tok));
@@ -345,8 +349,11 @@ function make({ virsh, cleanName, root, qemuHas, run }){
     }
     return { ok: true };
   }
+  /** true/false, or {error} when the definition cannot be read — never "no devices" by default. */
   async function hasDevices(name){
-    const x = await xmls(cleanName(name)); return !!(x.ok && hostdevs(x.saved).length);
+    const x = await xmls(cleanName(name));
+    if(!x.ok) return { error: x.error || 'could not read this VM\'s definition' };
+    return hostdevs(x.saved).length > 0;
   }
   async function detach(name, opts){
     name = cleanName(name); if(!name) return { ok: false, error: 'invalid VM name' };

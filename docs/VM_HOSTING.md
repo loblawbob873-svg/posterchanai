@@ -748,7 +748,9 @@ on the host at that moment.
 **Never offered:** hubs and root hubs, the device the host boots from, PCI bridges and host plumbing. "The device
 the host boots from" is traced every way a mount can name its disk: the SOURCE path, the major:minor field through
 `/sys/dev/block` (`/dev/root`), `stat('/').st_dev` (a btrfs root's anonymous device), every member of a multi-device
-btrfs (`/sys/fs/btrfs/*/devices`), ZFS vdevs (`zpool status -P`), then up through md/dm/LVM/LUKS holders. A root
+btrfs (`/sys/fs/btrfs/*/devices`), ZFS vdevs (`zpool status -P` — every imported pool's, mounted or not; a
+`zpool` that cannot answer while the zfs module is loaded counts as "any disk may be a pool member"), then up
+through md/dm/LVM/LUKS holders. A root
 filesystem none of those can place makes EVERY disk busy and every disk controller unoffered — fail closed.
 **Listed but refused, with the reason:** anything the host is using — a disk mounted anywhere (nas.lan's USB-SATA
 bridge is a member of the md array under `/raid`), swap, a NIC (PCI or USB) whose interface is up, a USB controller

@@ -116,17 +116,20 @@ def ids_names(vendor: str, product: str, ids_paths=USB_IDS) -> tuple:
     return _IDS_CACHE[key]
 
 
-def _zpool_status() -> str:
-    """`zpool status -P` (full vdev paths), or "" when there is no ZFS here or it cannot be asked."""
+def _zpool_status():
+    """`zpool status -P` (full vdev paths); None when it could not be asked — no zpool binary, a timeout, a nonzero
+    exit. The caller decides what None means: nothing when ZFS is not loaded, "every disk may be a pool member"
+    when it is."""
     import shutil
     import subprocess
     z = shutil.which("zpool")
     if not z:
-        return ""
+        return None
     try:
-        return subprocess.run([z, "status", "-P"], capture_output=True, text=True, timeout=10).stdout
+        r = subprocess.run([z, "status", "-P"], capture_output=True, text=True, timeout=10)
     except (OSError, subprocess.SubprocessError):
-        return ""
+        return None
+    return r.stdout if r.returncode == 0 else None
 
 
 class Mounts(dict):
@@ -220,6 +223,8 @@ def _mounts(mountinfo: str, swaps: str, sys_root: str = "/sys", zpool_status=Non
     # ZFS: every vdev of every IMPORTED pool is in use — mounted or not (a pool with nothing mounted is still
     # written by the host: scrubs, resilvers, zvols); a mounted dataset lives on every vdev of its pool
     text = _zpool_status() if zpool_status is None else zpool_status
+    if text is None and os.path.isdir(os.path.join(sys_root, "module", "zfs")):
+        out.unresolved.append("/")                        # ZFS is loaded and cannot say which disks are its pools
     pool, vdevs = "", {}
     for line in (text or "").splitlines():
         m = re.match(r"\s*pool:\s*(\S+)", line)

@@ -175,8 +175,11 @@ async function setBootOrder(name, first){
 async function update(name, opts){
   const d=await details(name); if(!d.ok)return d;
   /* An autostart VM is started by libvirt at sign-in, past the device checks a start from here makes. */
-  if(opts&&opts.autostart&&!d.autostart&&await usbPass.hasDevices(d.name))
-    return {ok:false,error:'This VM has USB devices attached. A VM that starts on its own would take them without the safety checks — detach them first.'};
+  if(opts&&opts.autostart&&!d.autostart){
+    const has=await usbPass.hasDevices(d.name);
+    if(has&&has.error)return {ok:false,error:'Could not check this VM\'s USB devices ('+has.error+') — autostart was not turned on.'};
+    if(has)return {ok:false,error:'This VM has USB devices attached. A VM that starts on its own would take them without the safety checks — detach them first.'};
+  }
   if(!/shut off|shutoff|inactive/.test(d.state)) return {ok:false,error:'Shut down the VM before changing its hardware'};
   const ram=Math.max(512,Math.min(65536,Number(opts&&opts.ramMiB)||d.ramMiB));
   const cpus=Math.max(1,Math.min(32,Number(opts&&opts.cpus)||d.cpus));
