@@ -143,6 +143,17 @@ ensure_account(){
 # under `trust`. So a cluster set up HERE lets local accounts in only as themselves, maps exactly the
 # service account (and root, which runs the installer) onto the `posterchan` role, and asks for a
 # password on TCP. A cluster that was already there is somebody's; it is used as it is and not edited.
+# TOR IS PART OF THE SERVER. The app starts its own Tor daemons when a `tor` binary exists and says
+# nothing when it does not — measured on the build VM: every upstream relay "connected DIRECT (Tor
+# proxy unavailable)", i.e. the node fetched Nostr from its real IP. net-vpn/tor is in the profile's
+# package list but was absent from machines installed off the image, so it is ensured here. A
+# failure is reported, not fatal: the server still works, just not over Tor.
+ensure_tor(){
+  command -v tor >/dev/null 2>&1 && return 0
+  echo "installing Tor (net-vpn/tor)"
+  emerge -1 --usepkg --getbinpkg net-vpn/tor || { echo "note: Tor did not install — relays will be reached directly"; return 0; }
+}
+
 ensure_postgres(){
   local slot data etc
   slot="$(pg_slot)" || { echo "PostgreSQL is not installed (dev-db/postgresql)."; return 1; }
@@ -200,6 +211,7 @@ do_enable(){
   [ -f "$APP/install.sh" ] || { echo "the server code is not installed (app-misc/posterchan-server)"; return 1; }
   ensure_account || return 1
   ensure_postgres || return 1
+  ensure_tor
   if [ -f "$PG_OWNED" ]; then
     set_secret DATABASE_URL "'postgresql+psycopg2://posterchan@/posterchan_relay?host=$PG_SOCKET'"
     set_secret NOSTR_RELAY_PG_DSN "'host=$PG_SOCKET dbname=posterchan_relay user=posterchan'"

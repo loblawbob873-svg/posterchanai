@@ -137,6 +137,11 @@ setup_searxng() {
     rm -f "$dep_file"
 
     print_step "Installing SearXNG into $venv (--no-deps) ..." 2>/dev/null || echo "Installing SearXNG (--no-deps) ..."
+    # --no-build-isolation builds with the VENV's own setuptools, and the lean nostr-only venv
+    # (requirements-nostr.txt) has none — measured on PosterChanOS: "BackendUnavailable: Cannot
+    # import 'setuptools.build_meta'". The Full venv only worked because something else pulled it in.
+    "$venv/bin/pip" install -q setuptools wheel \
+        || { print_error "could not install setuptools into $venv" 2>/dev/null || echo "ERROR: setuptools"; return 1; }
     "$venv/bin/pip" install -q --no-deps --no-build-isolation -e "$src_dir" \
         || { print_error "pip install failed" 2>/dev/null || echo "ERROR: pip install failed"; return 1; }
     if ! "$py" -c "import searx" >/dev/null 2>&1; then

@@ -354,3 +354,26 @@ def test_a_server_set_up_before_searxng_came_with_it_gets_it_on_enable(box):
     assert rc == 0, box.job_log()
     assert [c for c in calls if c.startswith("install.sh --searxng")], "the backfill must install it once"
     assert "systemctl enable --now posterchanai-searxng.service" in "\n".join(calls)
+
+
+def test_enable_installs_tor_when_the_machine_has_none(box):
+    """Measured on the build VM: with no `tor` binary the app silently reached every upstream relay
+    DIRECT from the machine's own IP. enable must install it."""
+    rc, out, calls = box.run("enable")
+    assert rc == 0, box.job_log()
+    assert any(c.startswith("emerge -1 --usepkg --getbinpkg net-vpn/tor") for c in calls), calls
+
+
+def test_enable_leaves_an_existing_tor_alone(box):
+    tor = box.bin / "tor"
+    tor.write_text("#!/bin/sh\nexit 0\n"); tor.chmod(0o755)
+    rc, out, calls = box.run("enable")
+    assert rc == 0, box.job_log()
+    assert not any("net-vpn/tor" in c for c in calls), calls
+
+
+def test_searxng_gets_setuptools_before_its_no_isolation_build():
+    src = (ROOT / "scripts/install/searxng.sh").read_text()
+    a = src.index('"$venv/bin/pip" install -q setuptools wheel')
+    b = src.index('--no-build-isolation -e "$src_dir"')
+    assert a < b, "setuptools must be in the venv before the --no-build-isolation install"
