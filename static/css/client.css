@@ -2646,7 +2646,16 @@ body.embed .feed{max-width:680px;margin:0 auto;padding:14px;height:auto !importa
 .track-name{flex:1;min-width:0;color:#eaf0ff;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .track-meta{flex:none;color:var(--muted);font-size:12px}
 .track-del{flex:none;background:none;border:none;color:var(--danger);cursor:pointer;font-size:15px;padding:2px 6px;opacity:.7}.track-del:hover{opacity:1}
-.track-dl{flex:none;background:none;border:none;color:var(--muted);cursor:pointer;font-size:15px;padding:4px 6px;opacity:.8}.track-dl:hover{opacity:1;color:var(--cyan,#5ff)}
+/* EVERY icon button on a track row shares one look. `.track-add` (add to a playlist) and `.track-ren`
+   (rename) were added to the markup with no rule at all, so they rendered as the browser's own grey
+   <button> boxes between three themed icons — reported as "+ and Rename are grey boxes". Listing the
+   row's actions in ONE selector is what keeps the next one from shipping unstyled;
+   scripts/check_music_sharing.py fails on any `.track-*` button that still draws the UA default. */
+.track-dl,.track-add,.track-ren,.track-addlib{flex:none;background:none;border:none;color:var(--muted);cursor:pointer;font-size:15px;padding:4px 6px;opacity:.8;border-radius:8px;display:inline-flex;align-items:center;justify-content:center;font:inherit;line-height:1}
+.track-dl:hover,.track-add:hover,.track-ren:hover,.track-addlib:hover{opacity:1;color:var(--cyan,#5ff)}
+.track-dl:focus-visible,.track-add:focus-visible,.track-ren:focus-visible,.track-addlib:focus-visible,.track-keep:focus-visible,.track-del:focus-visible{outline:2px solid var(--cyan,#5ff);outline-offset:1px;opacity:1}
+.track-addlib.on{color:var(--neon2,#5f8);opacity:1;cursor:default}
+.track-addlib[disabled]:not(.on){opacity:.4;cursor:default}
 /* Kept on this device. `on` is a state, not an action — it has to read as "this one is already
    here", or the only way to tell is to turn the radio off and find out. */
 .track-keep{flex:none;background:none;border:none;color:var(--muted);cursor:pointer;font-size:15px;padding:4px 6px;opacity:.8}
@@ -2675,8 +2684,9 @@ body.embed .feed{max-width:680px;margin:0 auto;padding:14px;height:auto !importa
   .track-name{order:1;flex:1 1 calc(100% - 52px);white-space:normal;overflow-wrap:anywhere;
     display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
   .track-meta{order:2;flex:0 1 auto;margin-inline-start:50px}   /* 40px button + the 10px gap → under the title */
-  .track-keep{order:3;margin-inline-start:auto}.track-dl{order:4}.track-del{order:5}
-  .track-keep,.track-dl{padding:8px 8px}   /* a finger-sized target */
+  .track-keep{order:3;margin-inline-start:auto}.track-add,.track-addlib{order:4}.track-dl{order:5}.track-ren{order:6}.track-del{order:7}
+  .msh-track .track-addlib{margin-inline-start:auto}
+  .track-keep,.track-dl,.track-add,.track-ren,.track-addlib{padding:8px 8px}   /* a finger-sized target */
 }
 /* ── Floating cyberpunk music player (hovers over every view; minimizable; draggable) ── */
 #music-player.hidden{display:none}
@@ -8679,6 +8689,24 @@ body.os-on .osw-body > .feed::-webkit-scrollbar-thumb:hover{background:var(--mut
 .ma-pln{opacity:.7;font-weight:500;margin-inline-start:2px}
 .ma-plnew{border-style:dashed;color:var(--cyan);border-color:var(--cyan)}
 .ma-plsp{flex:0 0 auto;width:1px;height:22px;background:var(--line);margin:0 2px}
+.ma-plshare{color:var(--cyan);border-color:rgba(0,240,255,.45)}
+/* Music sharing (musicshare.js): the share cards, the "shared by me" rows and their people. */
+.msh-card{display:flex;flex-direction:column;align-items:flex-start;gap:3px;width:100%;text-align:start;
+  padding:12px 14px;border-radius:13px;background:linear-gradient(180deg,#160a28,#100420);
+  border:1px solid rgba(0,240,255,.3);color:var(--text);font:inherit;cursor:pointer}
+.msh-card:hover{border-color:var(--cyan);box-shadow:0 0 14px rgba(0,240,255,.18)}
+.msh-card b{overflow-wrap:anywhere}
+.msh-note{flex-basis:100%}
+.msh-out{display:flex;flex-direction:column;gap:8px;padding:12px 14px;border-radius:13px;
+  background:var(--panel2);border:1px solid var(--line)}
+.msh-out-head{display:flex;flex-wrap:wrap;gap:6px 10px;align-items:baseline}
+.msh-out-head b{overflow-wrap:anywhere}
+.msh-people{display:flex;flex-wrap:wrap;gap:6px}
+.msh-person{display:inline-flex;align-items:center;gap:4px;padding:3px 4px 3px 10px;border-radius:999px;
+  border:1px solid var(--line);font-size:12px;max-width:100%;overflow-wrap:anywhere}
+.msh-unshare{background:none;border:none;color:var(--danger);cursor:pointer;padding:4px;border-radius:50%;
+  display:inline-flex;opacity:.75;font:inherit}
+.msh-unshare:hover,.msh-unshare:focus-visible{opacity:1}
 .ma-plpick{display:flex;flex-direction:column;gap:8px;max-height:46vh;overflow-y:auto;margin-top:8px}
 .ma-plpickb{justify-content:flex-start;text-align:start}
 /* A finger needs a bigger chip than a mouse, and this strip is scrolled as well as tapped. */
