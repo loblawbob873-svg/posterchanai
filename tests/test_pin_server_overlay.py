@@ -7,6 +7,7 @@ an UNCHANGED server keeps the last published ebuild byte for byte (a new version
 every PosterChanOS machine re-download ~90 MB for a feature most of them have switched off); and a failed
 fetch never fails the publish.
 """
+import re
 import hashlib
 import shutil
 import subprocess
@@ -142,4 +143,5 @@ def test_publish_overlay_runs_the_pin_and_ships_the_one_helper():
 def test_the_committed_pin_has_a_manifest_for_exactly_its_archive():
     manifest = (ROOT / "os/overlay" / PKG / "Manifest").read_text().split()
     version = EBUILD.name.removeprefix("posterchan-server-").removesuffix(".ebuild")
+    version = re.sub(r"-r\d+$", "", version)  # ${P} carries no revision
     assert manifest[0] == "DIST" and manifest[1] == f"posterchan-server-{version}.tar.gz"
