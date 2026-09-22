@@ -61,6 +61,7 @@ EXTRA = r'''
     if(who&&who.name!=='vmhost.invalid')return _hostOp(op,args,who);
     if(op==='host.whoami'){const r=_hostOp(op,args,who);r.result.role=window.__asUser?'user':'admin';r.result.host.features=r.result.host.features.concat(['devices']);return r;}
     if(op==='vm.get'){const r=_hostOp(op,args,who);r.result.vm.devices=devView();if(window.__asUser)delete r.result.vm.hardware;return r;}
+    if(op==='vm.list'){const r=_hostOp(op,args,who);r.result.vms.forEach(v=>{v.autostart=!!window.__autostart;});return r;}
     if(op==='host.devices.list'){__vm.ops.push(op);if(window.__asUser)return {ok:false,error:{code:'forbidden',message:'only a host admin can do that'}};
       return {ok:true,result:{kinds:{usb:{live:true,checks:[{id:'qemu-usb',ok:true,label:'QEMU supports USB passthrough (usb-host)',fix:''}],devices:USB,error:''},pci:PCI}}};}
     if(op==='vm.device.attach'){__vm.ops.push(op);window.__devArgs.push(args);
@@ -164,6 +165,17 @@ async def check(width, height, shots, fails):
                 fail("a PCI card is selectable while the VM runs")
             if shots:
                 await shot(b, shots, f"vmdev-{label}-pci.png")
+            # an autostart VM: the picker says why nothing can be attached (libvirt would start it at boot)
+            await b.js("window.__autostart=true;PCVms._state.data[PCVms._state.host].vms.forEach(v=>v.autostart=true);"
+                       "document.querySelector('[data-devkind=usb]').click()")
+            await b.until("!!document.querySelector('.vms-dev-auto')")
+            await b.js("(()=>{const i=[...document.querySelectorAll('input[name=devsel]')].find(x=>x.value==='0781:5581@1-4');"
+                       "i.checked=true;i.dispatchEvent(new Event('change',{bubbles:true}));})()")
+            if not await b.js("document.querySelector('[data-act=dev-attach]').disabled"):
+                fail("Attach is enabled for a VM that starts with the host")
+            await b.js("window.__autostart=false;PCVms._state.data[PCVms._state.host].vms.forEach(v=>v.autostart=false);"
+                       "document.querySelector('[data-devkind=pci]').click()")
+            await b.until("/IOMMU is on/.test(document.querySelector('.vms').innerText)")
             await b.js("document.querySelector('[data-devkind=usb]').click()")
             await b.until("document.querySelectorAll('.vms-devopt').length===2")
             await b.js("(()=>{const i=[...document.querySelectorAll('input[name=devsel]')].find(x=>x.value==='0781:5581@1-4');"

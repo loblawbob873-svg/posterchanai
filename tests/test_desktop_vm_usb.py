@@ -36,7 +36,10 @@ verb = a[0]
 if verb == "list": print("vm1")
 elif verb == "dominfo":
     if a[1] != "vm1": sys.stderr.write("error: failed to get domain\n"); sys.exit(1)
-    print("Name: vm1\nState:          %s\nCPU(s): 2\nMax memory: 4194304 KiB\nAutostart: disable" % st)
+    print("Name: vm1\nState:          %s\nCPU(s): 2\nMax memory: 4194304 KiB\nAutostart: %s"
+          % (st, "enable" if os.environ.get("FAKE_AUTOSTART") else "disable"))
+elif verb == "domblklist":
+    print(" Type   Device   Target   Source\n------------------------------------------------")
 elif verb == "dumpxml":
     print(rd(saved) if "--inactive" in a or st != "running" else rd(live))
 elif verb in ("attach-device", "detach-device"):
@@ -268,7 +271,10 @@ class LocalVmUsbGrantAndDisks(LocalVmUsb):
         self.assertEqual(sorted((d["bus"], d["device"]) for d in r["devices"]), [(1, 3), (1, 9)])
 
 
-def _grant(tmp, *args, uid="1000", env=None):
+ME = str(os.getuid())
+
+
+def _grant(tmp, *args, uid=ME, env=None):
     import sys as _sys
     e = dict(os.environ, **(env or {}))
     if uid is None:
@@ -300,7 +306,23 @@ class UsbGrantHelper(unittest.TestCase):
         sf = self.tmp / "setfacl"
         sf.write_text("#!/bin/sh\necho \"$*\" >> %s\n" % self.log)
         sf.chmod(0o755)
-        self.env = {"PC_USB_GRANT_LIB": str(lib), "PC_USB_GRANT_SYS": self.sys, "PC_USB_GRANT_DEV": str(self.dev),
+        import grp
+        # the seat: logind says session 7 is seat0's active, local, user-class session of this uid
+        lc = self.tmp / "loginctl"
+        lc.write_text('#!/bin/sh\ncase "$1" in\n'
+                      '  show-session) printf "User=%s\\nRemote=%s\\nActive=%s\\nSeat=seat0\\nClass=user\\n" '
+                      '"${STUB_USER:-@ME@}" "${STUB_REMOTE:-no}" "${STUB_ACTIVE:-yes}";;\n'
+                      '  show-seat) echo "ActiveSession=${STUB_ACTIVE_SESSION:-7}";;\nesac\n'.replace("@ME@", ME))
+        lc.chmod(0o755)
+        self.proc = self.tmp / "proc"
+        (self.proc / "self").mkdir(parents=True)
+        (self.proc / "self" / "cgroup").write_text("0::/user.slice/user-%s.slice/session-7.scope\n" % ME)
+        gf = self.tmp / "getfacl"
+        gf.write_text('#!/bin/sh\necho "user::rw-"\n[ -n "$STUB_ACL" ] && echo "$STUB_ACL"\necho "group::rw-"\nexit 0\n')
+        gf.chmod(0o755)
+        self.env = {"PC_USB_GRANT_LOGINCTL": str(lc), "PC_USB_GRANT_PROC": str(self.proc),
+                    "PC_USB_GRANT_GETFACL": str(gf), "PC_USB_GRANT_ADMIN_GROUP": grp.getgrgid(os.getgid()).gr_name,
+                    "PC_USB_GRANT_LIB": str(lib), "PC_USB_GRANT_SYS": self.sys, "PC_USB_GRANT_DEV": str(self.dev),
                     "PC_USB_GRANT_MOUNTINFO": mountinfo, "PC_USB_GRANT_SWAPS": swaps, "PC_USB_GRANT_SETFACL": str(sf)}
 
     def acl(self):
@@ -309,9 +331,9 @@ class UsbGrantHelper(unittest.TestCase):
     def test_grants_the_callers_uid_on_that_one_node(self):
         r = _grant(self.tmp, "grant", "1", "3", env=self.env)
         self.assertEqual(r.returncode, 0, r.stderr)
-        self.assertEqual(self.acl(), [f"-m u:1000:rw {self.dev}/001/003"])
+        self.assertEqual(self.acl(), [f"-m u:{ME}:rw {self.dev}/001/003"])
         r = _grant(self.tmp, "revoke", "1", "3", env=self.env)
-        self.assertEqual(self.acl()[-1], f"-x u:1000 {self.dev}/001/003")
+        self.assertEqual(self.acl()[-1], f"-x u:{ME} {self.dev}/001/003")
 
     def test_refuses_hubs_host_disks_and_bad_arguments(self):
         cases = [(("grant", "1", "5"), "hub"),                    # the hub
@@ -329,3 +351,88 @@ class UsbGrantHelper(unittest.TestCase):
         r = _grant(self.tmp, "grant", "1", "3", uid="0", env=self.env)
         self.assertNotEqual(r.returncode, 0)
         self.assertEqual(self.acl(), [], "setfacl ran for a refused request")
+
+    # ---- review round 2: an admin, at the active local seat, for a device nobody else holds
+    def refused(self, why, **env):
+        r = _grant(self.tmp, "grant", "1", "3", env=dict(self.env, **env))
+        self.assertNotEqual(r.returncode, 0, env)
+        self.assertIn(why, r.stderr, (env, r.stderr))
+        self.assertEqual(self.acl(), [], "setfacl ran for a refused request")
+
+    def test_only_an_admin_may_grant(self):
+        self.refused("owner (an administrator)", PC_USB_GRANT_ADMIN_GROUP="no-such-group-pc")
+
+    def test_only_from_the_active_local_seat(self):
+        self.refused("not remotely", STUB_REMOTE="yes")                  # an SSH session
+        self.refused("not remotely", STUB_ACTIVE="no")                   # a background session
+        self.refused("ACTIVE desktop session", STUB_ACTIVE_SESSION="9")  # somebody else is at the seat
+        (self.proc / "self" / "cgroup").write_text("0::/system.slice/cron.service\n")
+        self.refused("no login session found")
+
+    def test_never_a_device_another_account_holds(self):
+        self.refused("another account (uid 4242)", STUB_ACL="user:4242:rw-")
+        fds = self.proc / "777" / "fd"
+        fds.mkdir(parents=True)
+        os.symlink(self.dev / "001" / "003", fds / "9")
+        (self.proc / "777" / "status").write_text("Name:\tqemu\nUid:\t4343\t4343\t4343\t4343\n")
+        self.refused("another account (uid 4343, pid 777)")
+        (self.proc / "777" / "status").write_text("Name:\tqemu\nUid:\t%s\t%s\t%s\t%s\n" % (ME, ME, ME, ME))
+        r = _grant(self.tmp, "grant", "1", "3", env=self.env)            # our own VM holding it is fine
+        self.assertEqual(r.returncode, 0, r.stderr)
+
+
+class LocalVmUsbRound2(LocalVmUsbGrantAndDisks):
+    """Review round 2 on "This computer": grant only after every other refusal, revoke on every failure, no
+    autostart with devices, and the saved devices re-checked when the VM starts."""
+
+    def test_the_already_attached_conflict_is_checked_before_any_grant(self):
+        log = self.helper()
+        assert self.js("return v.usbAttach('vm1',{vendor:'090c',product:'1000'})")["ok"]
+        log.write_text("")
+        (self.dev / "001" / "003").chmod(0o444)
+        r = self.js("return v.usbAttach('vm1',{vendor:'090c',product:'1000'})")
+        self.assertEqual(r.get("code"), "conflict")
+        self.assertEqual(log.read_text(), "", "a grant was made for an attach that was then refused")
+
+    def test_a_failed_attach_takes_the_grant_back(self):
+        (self.dev / "001" / "003").chmod(0o444)
+        log = self.helper()
+        r = self.js("return v.usbAttach('vm1',{vendor:'090c',product:'1000'})", FAKE_DROP="1")
+        self.assertFalse(r["ok"])
+        self.assertEqual(log.read_text().splitlines(), ["grant 1 3", "revoke 1 3"])
+
+    def test_no_devices_for_an_autostart_vm_and_no_autostart_with_devices(self):
+        r = self.js("return v.usbAttach('vm1',{vendor:'090c',product:'1000'})", FAKE_AUTOSTART="1")
+        self.assertEqual(r.get("code"), "conflict")
+        self.assertIn("autostart", r["error"])
+        (self.fake / "state").write_text("shut off")
+        assert self.js("return v.usbAttach('vm1',{vendor:'090c',product:'1000'})")["ok"]
+        r = self.js("return v.update('vm1',{autostart:true})")
+        self.assertFalse(r["ok"])
+        self.assertIn("USB devices attached", r["error"])
+
+    def test_a_start_rechecks_the_saved_devices(self):
+        (self.fake / "state").write_text("shut off")
+        assert self.js("return v.usbAttach('vm1',{vendor:'090c',product:'1000'})")["ok"]
+        self.set_mountinfo("40 22 8:65 / /mnt/stick rw - vfat /dev/sde1 rw\n")
+        r = self.js("return v.action('vm1','start')")
+        self.assertFalse(r["ok"])
+        self.assertIn("/mnt/stick", r["error"])
+        self.assertFalse([c for c in self.calls() if c.startswith("start")])
+
+    def test_a_zfs_pool_nothing_mounts_an_up_unknown_nic_and_no_mount_table(self):
+        self.env["PC_ZPOOL_STATUS"] = "  pool: tank\nconfig:\n\t  /dev/sde1  ONLINE\n"
+        kbd = os.path.realpath(os.path.join(self.sys, "bus/usb/devices/1-14"))
+        nr = os.path.join(kbd, "1-14:1.0", "net", "usb0")
+        os.makedirs(nr)
+        Path(nr, "operstate").write_text("unknown\n")
+        Path(nr, "flags").write_text("0x1003\n")
+        os.makedirs(os.path.join(self.sys, "class/net"), exist_ok=True)
+        os.symlink(nr, os.path.join(self.sys, "class/net/usb0"))
+        devs = {d["vendor"]: d for d in self.js("return v.usbList()")["devices"]}
+        self.assertIn("ZFS pool tank", devs["090c"]["busy"])
+        self.assertIn("usb0", devs["046d"]["busy"])
+        self.env["PC_ZPOOL_STATUS"] = ""
+        self.env["PC_MOUNTINFO"] = str(self.tmp / "no-such-mountinfo")
+        devs = {d["vendor"]: d for d in self.js("return v.usbList()")["devices"]}
+        self.assertIn("could not tell", devs["090c"]["busy"])

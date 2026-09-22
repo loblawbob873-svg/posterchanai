@@ -119,6 +119,8 @@ async function action(name, what){
   const map={start:['start'],shutdown:['shutdown'],reboot:['reboot'],stop:['destroy']};
   if(!map[what]) return {ok:false,error:'unknown action'};
   if(what==='start'){
+    /* USB devices saved in this VM are taken when it starts -- re-check them now, not only when attached. */
+    const guard=await usbPass.startGuard(name);if(!guard.ok)return guard;
     let d=await details(name);if(!d.ok)return d;
     let missing=d.disks.find(x=>x.source&&x.source!=='-'&&!fs.existsSync(x.source));
     if(missing&&missing.device==='cdrom'){
@@ -172,6 +174,9 @@ async function setBootOrder(name, first){
 }
 async function update(name, opts){
   const d=await details(name); if(!d.ok)return d;
+  /* An autostart VM is started by libvirt at sign-in, past the device checks a start from here makes. */
+  if(opts&&opts.autostart&&!d.autostart&&await usbPass.hasDevices(d.name))
+    return {ok:false,error:'This VM has USB devices attached. A VM that starts on its own would take them without the safety checks — detach them first.'};
   if(!/shut off|shutoff|inactive/.test(d.state)) return {ok:false,error:'Shut down the VM before changing its hardware'};
   const ram=Math.max(512,Math.min(65536,Number(opts&&opts.ramMiB)||d.ramMiB));
   const cpus=Math.max(1,Math.min(32,Number(opts&&opts.cpus)||d.cpus));
@@ -379,7 +384,7 @@ async function view(name){
    * above as well, rather than allowing a different PATH entry to win. */
   return launchViewer('/usr/bin/'+bin,args);
 }
-const usbPass=require('./vmusb').make({virsh,cleanName,root,qemuHas,run});
+var usbPass=require('./vmusb').make({virsh,cleanName,root,qemuHas,run});
 const usbList=()=>usbPass.list();
 const usbAttach=(name,opts)=>usbPass.attach(name,opts||{});
 const usbDetach=(name,opts)=>usbPass.detach(name,opts||{});

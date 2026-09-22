@@ -761,7 +761,10 @@ exact state reported.
 **The checks run again at START.** `managed='yes'` takes a device from the host when the VM starts — possibly days
 after the attach, and `vm.power` is a session op — so a start re-checks every saved hostdev (busy, host GPU driver,
 IOMMU group, a card no longer on the host) and refuses with the reason. A saved USB entry is vendor:product, so the
-check covers whichever present device matches it now.
+check covers whichever present device matches it now; a USB scan that fails refuses the start (fail closed).
+**No autostart with host devices:** libvirt starts an autostart VM at boot without asking the service, i.e. past
+that check — so a device is not attached to a VM that starts with the host, and autostart cannot be turned on for a
+VM holding one (the picker says so). The same holds on "This computer", whose start re-checks too.
 
 **USB** hot-plugs into a running VM; "Keep attached after the VM restarts" adds `--config`. The saved form is
 vendor/product with `startupPolicy='optional'` (a re-plug keeps working, a missing stick does not stop the VM
@@ -788,9 +791,16 @@ qemu user for as long as the VM holds it, then gives it back — nothing to inst
 account, and the node is root-owned 0664. The grant is ONE DEVICE, AT ATTACH: `desktop/vmusb.js` runs
 `sudo -n /usr/local/bin/pc-usb-grant grant BUS DEV`, which re-checks the device itself (the same scanner as the host,
 installed as `/usr/local/lib/posterchan/pc_usb_scan.py`: no hubs, nothing the host uses) and puts an ACL for the
-CALLER (SUDO_UID) on that one node; detach revokes it, and unplugging removes the node and the ACL. PosterChanOS ships
+CALLER (SUDO_UID) on that one node; detach revokes it, and unplugging removes the node and the ACL. The helper grants
+only to an ADMIN (group wheel — every signed-in identity is in %posterchan, visitors included) who owns the ACTIVE
+LOCAL SEAT (the request's `session-N.scope` must be seat0's active, non-remote logind session — not SSH, not a
+background session), and never a device another account holds (another uid's ACL entry, or the node open in another
+account's process). The desktop asks every other question first and grants last, and takes the grant back on every
+failure after it. PosterChanOS ships
 the helper with `%posterchan ALL=(root) NOPASSWD: …/pc-usb-grant grant *, …/pc-usb-grant revoke *` and builds QEMU
-with `USE=usb`. A blanket udev `uaccess` rule was the first design and was withdrawn in review: it gave the seat raw
+with `USE=usb`; installed machines get the helper, its sudoers file and the scanner from the posterchanos-shell
+package through update-posterchan (the scanner is injected from `app/services/vmhost/usb.py` by
+`publish_overlay.sh`). A blanket udev `uaccess` rule was the first design and was withdrawn in review: it gave the seat raw
 usbfs on every USB disk plugged in (driver disconnect, raw SCSI) — root in all but name.
 PCI passthrough needs root and is a server-host feature; "This computer" says so.
 

@@ -33,6 +33,11 @@ const ls = p => { try{ return fs.readdirSync(p).sort(); }catch(_){ return null; 
 const real = p => { try{ return fs.realpathSync(p); }catch(_){ return p; } };
 const clean = s => String(s || '').replace(/[^\x20-\x7e]/g, '').replace(/\s+/g, ' ').trim().slice(0, 64);
 
+/** IFF_UP from `flags`, not operstate — "unknown" is what many interfaces that ARE up report. */
+function ifaceUp(net, i){
+  const f = parseInt(rd(path.join(net, i, 'flags')), 16);
+  return Number.isFinite(f) ? !!(f & 1) : rd(path.join(net, i, 'operstate')) !== 'down';
+}
 function zpoolStatus(){
   if(process.env.PC_ZPOOL_STATUS != null) return process.env.PC_ZPOOL_STATUS;
   try{ return require('child_process').execFileSync('zpool', ['status', '-P'], { timeout: 10000, encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] }); }
@@ -50,12 +55,15 @@ function mounts(){
   const byMajmin = mm => /^\d+:\d+$/.test(mm || '') && !mm.startsWith('0:') ? path.basename(real(path.join(SYS(), 'dev', 'block', mm))) : '';
   const add = (n, mp) => { (out[n] = out[n] || []); if(!out[n].includes(mp)) out[n].push(mp); };
   const btrfsLeft = [], zfs = {};
-  for(const line of rd(MOUNTINFO()).split('\n')){
+  let table = null;
+  try{ table = fs.readFileSync(MOUNTINFO(), 'utf8'); }catch(_){ unresolved.push('/'); }   // no table: fail closed
+  for(const line of (table || '').split('\n')){
     const [left, right] = line.split(' - ');
     if(!right) continue;
     const L = left.split(' '), R = right.split(' ');
     const mm = L[2] || '', mp = (L[4] || '').replace(/\\040/g, ' '), fstype = R[0] || '', src = R[1] || '';
-    const names = new Set([byPath(src), byMajmin(mm)].filter(known));
+    const srcs = fstype === 'bcachefs' ? src.split(':') : [src];              // bcachefs names every member
+    const names = new Set(srcs.map(byPath).concat([byMajmin(mm)]).filter(known));
     if(!names.size && mp === '/'){
       try{ const st = fs.statSync(process.env.PC_ROOT_PATH || '/'); const d = Number(process.env.PC_ROOT_DEV || st.dev);
         const n = byMajmin(`${Math.floor(d / 256) & 0xfff}:${(d & 0xff) | ((Math.floor(d / 1048576) & 0xfff) << 8)}`);
@@ -63,12 +71,17 @@ function mounts(){
     }
     names.forEach(n => add(n, mp));
     if(fstype === 'zfs') (zfs[src.split('/')[0]] = zfs[src.split('/')[0]] || []).push(mp);
-    else if(!names.size && fstype === 'btrfs') btrfsLeft.push(mp);
+    else if(!names.size && (fstype === 'btrfs' || fstype === 'bcachefs')) btrfsLeft.push(mp);
     else if(!names.size && (src.startsWith('/dev/') || /^(ext[234]|xfs|f2fs|vfat|bcachefs|jfs|reiserfs|ntfs3)$/.test(fstype))) unresolved.push(mp);
   }
   const fsdir = path.join(SYS(), 'fs', 'btrfs');
   const members = {};
-  for(const f of (ls(fsdir) || [])){ const d = ls(path.join(fsdir, f, 'devices')); if(d) members[f] = d; }
+  for(const f of (ls(fsdir) || [])){ const d = ls(path.join(fsdir, f, 'devices')); if(d) members['btrfs:' + f] = d; }
+  const bdir = path.join(SYS(), 'fs', 'bcachefs');
+  for(const f of (ls(bdir) || [])){
+    const d = (ls(path.join(bdir, f)) || []).filter(x => x.startsWith('dev-')).map(x => path.basename(real(path.join(bdir, f, x, 'block'))));
+    if(d.length) members['bcachefs:' + f] = d;
+  }
   const nfs = Object.keys(members).length;
   for(const devs of Object.values(members)){
     let mps = [...new Set(devs.flatMap(d => (out[d] || []).filter(m => m !== 'swap')))];
@@ -76,18 +89,15 @@ function mounts(){
     devs.forEach(d => mps.forEach(m => add(d, m)));
   }
   if(btrfsLeft.length && !nfs) unresolved.push(...btrfsLeft);
-  if(Object.keys(zfs).length){
-    const vdevs = {}; let pool = '';
-    for(const line of zpoolStatus().split('\n')){
-      const m = line.match(/^\s*pool:\s*(\S+)/); if(m){ pool = m[1]; continue; }
-      const tok = line.trim().split(/\s+/)[0] || '';
-      if(pool && tok.startsWith('/dev/')) (vdevs[pool] = vdevs[pool] || []).push(byPath(tok));
-    }
-    for(const [p, mps] of Object.entries(zfs)){
-      if(!(vdevs[p] || []).length){ unresolved.push(...mps); continue; }
-      vdevs[p].forEach(d => mps.forEach(m => add(d, m)));
-    }
+  // every vdev of every IMPORTED pool is in use, mounted or not; a mounted dataset lives on all of its pool's vdevs
+  const vdevs = {}; let pool = '';
+  for(const line of zpoolStatus().split('\n')){
+    const m = line.match(/^\s*pool:\s*(\S+)/); if(m){ pool = m[1]; continue; }
+    const tok = line.trim().split(/\s+/)[0] || '';
+    if(pool && tok.startsWith('/dev/')) (vdevs[pool] = vdevs[pool] || []).push(byPath(tok));
   }
+  for(const [p, ds] of Object.entries(vdevs)) ds.forEach(d => (zfs[p] || [`ZFS pool ${p}`]).forEach(m => add(d, m)));
+  for(const [p, mps] of Object.entries(zfs)) if(!(vdevs[p] || []).length) unresolved.push(...mps);
   for(const line of rd(SWAPS()).split('\n').slice(1)){
     const f = line.trim().split(/\s+/)[0] || '';
     if(f.startsWith('/dev/')) add(byPath(f), 'swap');
@@ -131,7 +141,7 @@ function scan(){
       if(!br.startsWith(r)) continue;
       for(const [mp, via] of uses(block, b, m, 0)){
         if(SYSTEM_MOUNTS.has(mp)) system = true;
-        if(!busy) busy = mp ? (mp === 'swap' ? `this computer uses ${b} as swap` : `this computer has it mounted at ${mp}` + (via ? ` (through ${via})` : ''))
+        if(!busy) busy = mp ? (mp === 'swap' ? `this computer uses ${b} as swap` : mp.startsWith('ZFS pool ') ? `${b} is a member of ${mp} on this computer` : `this computer has it mounted at ${mp}` + (via ? ` (through ${via})` : ''))
           : `this computer is using ${b} (part of ${via})`;
       }
     }
@@ -140,7 +150,7 @@ function scan(){
       busy = 'this computer could not tell which disk ' + m.__unresolved.join(', ') + ' is on, so no disk is given to a VM';
     if(!busy){
       const net = path.join(SYS(), 'class', 'net');
-      const up = (ls(net) || []).find(i => real(path.join(net, i)).startsWith(r) && rd(path.join(net, i, 'operstate')) === 'up');
+      const up = (ls(net) || []).find(i => real(path.join(net, i)).startsWith(r) && ifaceUp(net, i));
       if(up) busy = `this computer's network interface ${up} is up on it`;
     }
     const b = Number(bus), dv = Number(dev);
@@ -197,7 +207,8 @@ function make({ virsh, cleanName, root, qemuHas, run }){
     const saved = await virsh(['dumpxml', name, '--inactive']);
     if(!saved.ok) return saved;
     const live = running(st) ? await virsh(['dumpxml', name]) : null;
-    return { ok: true, state: st, running: running(st), saved: saved.out, live: live && live.ok ? live.out : null };
+    return { ok: true, state: st, running: running(st), saved: saved.out, live: live && live.ok ? live.out : null,
+             autostart: /^Autostart:\s*enable/mi.test(info.out) };
   }
   async function owners(){
     const r = await virsh(['list', '--all', '--name']);
@@ -279,6 +290,7 @@ function make({ virsh, cleanName, root, qemuHas, run }){
     const bad = (await checks()).find(c => !c.ok);
     if(bad) return { ok: false, code: 'unsupported', error: bad.label + '. ' + bad.fix };
     const x = await xmls(name); if(!x.ok) return x;
+    if(x.autostart) return { ok: false, code: 'conflict', error: 'this VM starts on its own when you sign in (autostart), which would take the device without the checks a start from here makes — turn "Start with the host" off in Settings first' };
     if(!x.running && !persist) return { ok: false, code: 'bad_request', error: 'the VM is not running — a device added now is kept in its settings' };
     const devs = scan();
     if(!devs) return { ok: false, code: 'unsupported', error: 'this computer has no USB bus' };
@@ -287,25 +299,54 @@ function make({ virsh, cleanName, root, qemuHas, run }){
     if(found.length > 1) return { ok: false, code: 'bad_request', error: 'more than one device has these ids — name it by bus and device too' };
     const d = found[0];
     if(d.busy) return { ok: false, code: 'conflict', error: `${d.label} is in use by this computer: ${d.busy}` };
-    if(!d.access){
-      const g = await grant('grant', d.bus, d.device);
-      if(!g.ok || !canOpen(d.node)) return { ok: false, code: 'forbidden', error: accessFix(d) + (g.error ? ` (${g.error})` : '') };
-      d.access = true;
-    }
+    // who else has it is asked BEFORE anything is granted, so a refusal leaves nothing behind
     for(const [e, owner] of await owners()){
       if(matches(e, d)) return { ok: false, code: 'conflict', error: owner === name ? `${d.label} is already attached to this VM` : `${d.label} is already attached to the VM ${owner}` };
+    }
+    let granted = false;
+    const fail = async res => { if(granted) await grant('revoke', d.bus, d.device); return res; };
+    if(!d.access){
+      const g = await grant('grant', d.bus, d.device);
+      granted = g.ok;
+      if(!g.ok || !canOpen(d.node)) return fail({ ok: false, code: 'forbidden', error: accessFix(d) + (g.error ? ` (${g.error})` : '') });
+      d.access = true;
     }
     const twins = devs.filter(t => t.vendor === d.vendor && t.product === d.product).length > 1;
     const body = hostdevXml(d.vendor, d.product, twins ? d.bus : null, twins ? d.device : null, true);
     const live = x.running, config = persist || !x.running;
     const r = await change('attach-device', name, body, live, config);
-    if(!r.ok) return Object.assign({ code: /in use/i.test(r.error) ? 'conflict' : 'backend_error' }, r);
+    if(!r.ok) return fail(Object.assign({ code: /in use/i.test(r.error) ? 'conflict' : 'backend_error' }, r));
     const after = await xmls(name);
     const miss = [];
     if(live && !hostdevs(after.live).some(e => matches(e, d))) miss.push('the running VM');
     if(config && !hostdevs(after.saved).some(e => matches(e, d))) miss.push('its saved settings');
-    if(miss.length) return { ok: false, code: 'backend_error', error: 'libvirt accepted the attach but it is not in ' + miss.join(' or ') };
+    if(miss.length){
+      for(const [lv, cf] of [[live, false], [false, config]]) if(lv || cf) await change('detach-device', name, body, lv, cf);
+      return fail({ ok: false, code: 'backend_error', error: 'libvirt accepted the attach but it is not in ' + miss.join(' or ') + ' — what landed was removed again' });
+    }
     return { ok: true, devices: await vmDevices(name) };
+  }
+  /** Before a VM starts: every saved USB device must still be safe to hand over — the host may have mounted the
+   *  stick, or turned the adapter into its uplink, since it was attached. Refuses (and takes back the grant). */
+  async function startGuard(name){
+    name = cleanName(name); if(!name) return { ok: false, error: 'invalid VM name' };
+    const x = await xmls(name); if(!x.ok) return x;
+    const saved = hostdevs(x.saved);
+    if(!saved.length) return { ok: true };
+    const devs = scan();
+    if(!devs) return { ok: false, error: 'this VM has USB devices saved and this computer could not check them — detach them first' };
+    for(const e of saved){
+      for(const d of devs.filter(dd => matches(e, dd))){
+        if(d.busy){
+          if(helper()) await grant('revoke', d.bus, d.device);
+          return { ok: false, error: `This VM's saved devices include ${d.label}, which this computer is using (${d.busy}). Detach it from the VM, or stop using it here, first.` };
+        }
+      }
+    }
+    return { ok: true };
+  }
+  async function hasDevices(name){
+    const x = await xmls(cleanName(name)); return !!(x.ok && hostdevs(x.saved).length);
   }
   async function detach(name, opts){
     name = cleanName(name); if(!name) return { ok: false, error: 'invalid VM name' };
@@ -325,7 +366,7 @@ function make({ virsh, cleanName, root, qemuHas, run }){
       return { ok: false, code: 'backend_error', error: 'libvirt accepted the detach but the device is still attached' };
     return { ok: true, devices: await vmDevices(name) };
   }
-  return { list, attach, detach, vmDevices };
+  return { list, attach, detach, vmDevices, startGuard, hasDevices };
 }
 
 module.exports = { make, scan, mounts, hostdevs, hostdevXml, parseSpec, matches };

@@ -16,7 +16,12 @@ person attaches it to their VM, after the same checks the server makes:
   * never a device holding anything the host uses: a mounted filesystem (traced through md/dm/LVM/LUKS, the
     major:minor table, multi-device btrfs and ZFS vdevs), swap, a network interface that is up — and when the host's
     own root filesystem cannot be traced to a disk, never ANY disk (fail closed);
-  * the grant names the CALLER (SUDO_UID, set by sudo), never a user given on the command line.
+  * the grant names the CALLER (SUDO_UID, set by sudo), never a user given on the command line;
+  * the caller is an ADMIN of this machine (group wheel — every signed-in identity is in %posterchan, visitors
+    included, and raw access to a USB disk is not a visitor's) AND owns the ACTIVE LOCAL SEAT: the request comes
+    from the logind session that is seat0's active one, not an SSH login or a background session;
+  * never a device another account already holds — a named-user ACL for another uid, or the node open in another
+    user's process (their VM).
 
 The ACL dies with the device node: unplug the stick and the grant is gone. sudoers allows exactly
 `pc-usb-grant grant *` and `pc-usb-grant revoke *` for %posterchan; everything else about the arguments is checked
@@ -42,6 +47,10 @@ DEV = env("PC_USB_GRANT_DEV", "/dev/bus/usb")
 MOUNTINFO = env("PC_USB_GRANT_MOUNTINFO", "/proc/self/mountinfo")
 SWAPS = env("PC_USB_GRANT_SWAPS", "/proc/swaps")
 SETFACL = env("PC_USB_GRANT_SETFACL", "/usr/bin/setfacl")
+GETFACL = env("PC_USB_GRANT_GETFACL", "/usr/bin/getfacl")
+LOGINCTL = env("PC_USB_GRANT_LOGINCTL", "/usr/bin/loginctl")
+PROC = env("PC_USB_GRANT_PROC", "/proc")
+ADMIN_GROUP = env("PC_USB_GRANT_ADMIN_GROUP", "wheel")     # the machine's owner (gentoo.sh: the first account)
 
 
 def die(msg, code=1):
@@ -66,6 +75,9 @@ def main(argv):
     if ROOT and not (stat.S_ISCHR(st.st_mode) and os.major(st.st_rdev) == 189):
         die(f"{node} is not a USB device node")
     if verb == "grant":
+        why = _not_the_owner_at_the_seat(int(uid))
+        if why:
+            die(why)
         sys.path.insert(0, LIB)
         try:
             import pc_usb_scan as usb
@@ -85,6 +97,9 @@ def main(argv):
             die(f"{d.label} holds the system this computer runs from")
         if d.busy:
             die(f"{d.label} is in use by this computer: {d.busy}")
+        other = _held_by_another(node, int(uid))
+        if other:
+            die(f"{d.label} is already held by {other}")
         r = subprocess.run([SETFACL, "-m", f"u:{uid}:rw", node], capture_output=True, text=True)
     else:
         r = subprocess.run([SETFACL, "-x", f"u:{uid}", node], capture_output=True, text=True)
@@ -93,6 +108,102 @@ def main(argv):
     if r.returncode != 0:
         die((r.stderr or r.stdout).strip()[:200] or "setfacl failed")
     return 0
+
+
+def _not_the_owner_at_the_seat(uid: int) -> str:
+    """"" when `uid` is an admin sitting at this machine's active seat, else why not."""
+    import grp
+    import pwd
+    try:
+        pw = pwd.getpwuid(uid)
+        g = grp.getgrnam(ADMIN_GROUP)
+    except KeyError:
+        return "only this computer's owner (an administrator) can give a USB device to a VM"
+    if not (pw.pw_name in g.gr_mem or pw.pw_gid == g.gr_gid):
+        return "only this computer's owner (an administrator) can give a USB device to a VM"
+    sid = _caller_session()
+    if not sid:
+        return "run this from the desktop session at this computer (no login session found for the request)"
+    props = _loginctl(["show-session", sid, "-p", "User", "-p", "Remote", "-p", "Active", "-p", "Seat",
+                       "-p", "Class"])
+    if props.get("User") != str(uid) or props.get("Remote") != "no" or props.get("Active") != "yes" \
+            or not props.get("Seat") or props.get("Class", "user") != "user":
+        return "a USB device can only be given from the desktop session in front of this computer, not remotely"
+    seat = _loginctl(["show-seat", props["Seat"], "-p", "ActiveSession"])
+    if seat.get("ActiveSession") != sid:
+        return "a USB device can only be given from the ACTIVE desktop session at this computer"
+    return ""
+
+
+def _loginctl(args) -> dict:
+    try:
+        r = subprocess.run([LOGINCTL, *args], capture_output=True, text=True, timeout=10)
+    except (OSError, subprocess.SubprocessError):
+        return {}
+    out = {}
+    for line in r.stdout.splitlines():
+        k, _, v = line.partition("=")
+        out[k.strip()] = v.strip()
+    return out
+
+
+def _caller_session() -> str:
+    """The logind session the request came from: the `session-N.scope` of this process or its nearest ancestor
+    (sudo keeps the caller's cgroup). A cgroup is set by systemd, not by anything the caller can write."""
+    pid = "self"
+    for _ in range(16):
+        try:
+            with open(os.path.join(PROC, pid, "cgroup")) as f:
+                m = re.search(r"/session-([A-Za-z0-9]+)\.scope", f.read())
+            if m:
+                return m.group(1)
+            with open(os.path.join(PROC, pid, "stat")) as f:
+                st = f.read()
+            pid = st[st.rindex(")") + 2:].split()[1]
+            if pid in ("0", "1"):
+                return ""
+        except (OSError, ValueError, IndexError):
+            return ""
+    return ""
+
+
+def _held_by_another(node: str, uid: int) -> str:
+    """Another account already holding this device: a named-user ACL for another uid (a grant nobody revoked), or
+    the node open in another account's process (their VM's QEMU). "" when nobody else holds it."""
+    try:
+        r = subprocess.run([GETFACL, "-cpn", node], capture_output=True, text=True, timeout=10)
+        for line in r.stdout.splitlines():
+            m = re.fullmatch(r"user:(\d+):([rwx-]{3})", line.strip())
+            if m and int(m.group(1)) != uid and "w" in m.group(2):
+                return f"another account (uid {m.group(1)})"
+    except (OSError, subprocess.SubprocessError):
+        return "an account this computer could not identify (its access list could not be read)"
+    real = os.path.realpath(node)
+    for pid in _ls(PROC):
+        if not pid.isdigit():
+            continue
+        fds = os.path.join(PROC, pid, "fd")
+        for fd in _ls(fds):
+            try:
+                if os.path.realpath(os.path.join(fds, fd)) == real:
+                    owner = _proc_uid(pid)
+                    if owner != uid:
+                        return f"a program of another account (uid {owner}, pid {pid}) — probably its VM"
+            except OSError:
+                continue
+    return ""
+
+
+def _proc_uid(pid: str) -> int:
+    """The REAL uid of a process, from /proc/<pid>/status (-1 when unreadable: counted as somebody else)."""
+    try:
+        with open(os.path.join(PROC, pid, "status")) as f:
+            for line in f:
+                if line.startswith("Uid:"):
+                    return int(line.split()[1])
+    except (OSError, ValueError, IndexError):
+        pass
+    return -1
 
 
 def _ls(p):

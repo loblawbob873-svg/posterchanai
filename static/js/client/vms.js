@@ -911,10 +911,13 @@
     const note = P.kind === 'pci'
       ? `<div class="vms-seen">A PCI card is added to the VM’s settings while it is shut down; the host hands it over when the VM starts and gets it back when it stops.${running ? ' <b>Shut the VM down first.</b>' : ''}</div>`
       : `<div class="vms-seen">${running ? 'The device is plugged into the running VM right away — no restart needed.' : 'The VM is off: the device is added to its settings and connected when it starts.'}</div>`;
-    const canAttach = !!P.sel && !P.busy && !bad.length;
+    // a VM that starts with the host is started by libvirt at boot, past the checks a start from here makes
+    const auto = !!(v && v.autostart);
+    const canAttach = !!P.sel && !P.busy && !bad.length && !auto;
     return `${back}
       ${kinds.length > 1 ? `<div class="vms-chips" role="tablist">${kinds.map(kd => `<button class="vms-chip${P.kind === kd ? ' on' : ''}" data-devkind="${esc(kd)}" role="tab" aria-selected="${P.kind === kd}">${esc(DEV_KIND[kd] || kd)}</button>`).join('')}</div>` : ''}
       ${K.error ? `<div class="vms-noanswer">${esc(K.error)}</div>` : ''}
+      ${auto ? '<div class="vms-noanswer vms-dev-auto">This VM starts with the host (autostart). A device cannot be given to it — a start at boot would take the device without the safety checks. Turn “Start with the host” off in Settings first.</div>' : ''}
       ${hostChecks}${vmChecks}${K.error ? '' : note}
       <div class="vms-devlist" role="radiogroup" aria-label="Devices on this host">${list || (K.error ? '' : '<div class="empty">No devices of this kind can be given to a VM on this host.</div>')}</div>
       <div class="vms-formfoot vms-devfoot">
