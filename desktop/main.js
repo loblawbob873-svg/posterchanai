@@ -3702,6 +3702,14 @@ ipcMain.handle('pc:vm:boot-disk', (e, name) => { fsGuard(e); return vm.bootDisk(
 ipcMain.handle('pc:vm:add-network', (e, name) => { fsGuard(e); return vm.addNetwork(name); });
 ipcMain.handle('pc:vm:set-network', (e, name, network) => { fsGuard(e); return vm.setNetwork(name, network && network.type === 'bridge' ? { type: 'bridge', name: String(network.name || '') } : { type: 'user' }); });
 ipcMain.handle('pc:vm:gaming-mouse', (e, name, on) => { fsGuard(e); return vm.gamingMouse(name, !!on); });
+/* USB passthrough for "This computer" (vmusb.js). Ids only cross the bridge — the XML is built in vmusb.js. */
+const usbOpts = (o) => ({ vendor: String((o && o.vendor) || ''), product: String((o && o.product) || ''),
+  bus: o && Number.isInteger(o.bus) ? o.bus : null, device: o && Number.isInteger(o.device) ? o.device : null,
+  persist: !(o && o.persist === false) });
+ipcMain.handle('pc:vm:usb-list', (e) => { fsGuard(e); return vm.usbList(); });
+ipcMain.handle('pc:vm:usb-devices', (e, name) => { fsGuard(e); return vm.usbDevices(name); });
+ipcMain.handle('pc:vm:usb-attach', (e, name, o) => { fsGuard(e); return vm.usbAttach(name, usbOpts(o)); });
+ipcMain.handle('pc:vm:usb-detach', (e, name, o) => { fsGuard(e); return vm.usbDetach(name, usbOpts(o)); });
 ipcMain.handle('pc:vm:pick-iso', async (e) => {
   fsGuard(e); const r=await dialog.showOpenDialog(dialogOwner(e),{title:'Choose installation ISO',properties:['openFile'],
     filters:[{name:'Disc images',extensions:['iso','img']},{name:'All files',extensions:['*']}]});

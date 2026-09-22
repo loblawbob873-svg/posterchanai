@@ -170,7 +170,7 @@ qemu user. The `vmhost_backend` setting ("auto (virsh)" / "virsh", which did the
 A user asking about a VM that is not theirs gets `not_found`, never `forbidden` (which would confirm it
 exists). Unassigning somebody closes their open console immediately.
 
-Everything that changes a VM or the host — create, delete, assign, **settings, snapshots, ISO
+Everything that changes a VM or the host — create, delete, assign, **settings, snapshots, devices, ISO
 download/upload/delete, access** — is admin-only, and that is enforced in the host's op table
 (`service.OPS`), never by the client hiding a button.
 
@@ -229,6 +229,9 @@ Phase 2 ops (all admin except the session ops):
 | `host.access.get/set` | `set`: `allowed: [npub or hex]` | see §2 |
 | `session.open` | `pk`, `exp`, `scope: "use"`, `proof` | user; must be the REAL key |
 | `session.close` | `pk?` | a session closes itself; a real key closes one or all of its own |
+| `host.devices.list` | `kind?`, `vm?` | admin. Per kind (`usb`, `pci`): the host checks, and the devices it can give — each with `busy`, `used_by` and, for PCI, its checks, IOMMU group and the functions that go with it (§5b) |
+| `vm.device.attach` | `vm`, `kind`; usb: `vendor`, `product`, `bus?`, `device?`, `persist?`; pci: `address` | admin. USB into a RUNNING VM (`--live`, plus `--config` when `persist`) or a stopped one (`--config`); PCI only while shut off. Read back from the live and saved definitions |
+| `vm.device.detach` | as attach | admin; read back. `vm.get` answers `devices` to every role that can see the VM (read only) |
 
 A snapshot/update on a VM a migration holds is refused `migrating` — the same guard as start/delete/assign:
 the migration journal first (a migration still quiescing/exporting has no metadata tag yet), then the
@@ -732,6 +735,76 @@ What a snapshot does NOT capture: hardware settings (vCPUs, memory, NICs) and an
 in memory. A snapshot taken before a disk was added cannot be reverted (`disks_changed`) — it can only be
 deleted. qemu-img allows two snapshots with the same tag (measured: `-c s1` twice made IDs 1 and 3), so a
 create refuses a name any disk already holds, and list shows such leftovers as `orphan`.
+
+## 5b. Devices (USB and PCI passthrough)
+
+A VM page has a **Devices** section; admins get **Add device** (a USB tab and a PCI tab) and **Detach**, an
+assigned user sees the list only. Code: `app/services/vmhost/devices.py` (the ops, kind-generic — a new kind is one
+class), `usb.py` and `pci.py` (read the host from sysfs; nothing there binds or loads anything), and for "This
+computer" `desktop/vmusb.js`. Clients send ids only — `vendor`/`product` exactly `^[0-9a-f]{4}$`, `bus`/`device`
+numbers, a PCI `address` like `0000:01:00.0`; the `<hostdev>` XML is built on the host, and the device must exist
+on the host at that moment.
+
+**Never offered:** hubs and root hubs, the device the host boots from, PCI bridges and host plumbing. "The device
+the host boots from" is traced every way a mount can name its disk: the SOURCE path, the major:minor field through
+`/sys/dev/block` (`/dev/root`), `stat('/').st_dev` (a btrfs root's anonymous device), every member of a multi-device
+btrfs (`/sys/fs/btrfs/*/devices`), ZFS vdevs (`zpool status -P` — every imported pool's, mounted or not; a
+`zpool` that cannot answer while the zfs module is loaded counts as "any disk may be a pool member"), then up
+through md/dm/LVM/LUKS holders. A root
+filesystem none of those can place makes EVERY disk busy and every disk controller unoffered — fail closed.
+**Listed but refused, with the reason:** anything the host is using — a disk mounted anywhere (nas.lan's USB-SATA
+bridge is a member of the md array under `/raid`), swap, a NIC (PCI or USB) whose interface is up, a USB controller
+carrying the host's HID devices, the host's boot display GPU, a GPU on a host graphics driver (nvidia/amdgpu/i915/…),
+and a device another VM holds (named). The owner scan FAILS CLOSED: a VM whose definition cannot be read refuses the
+attach. Attach and detach hold a host-wide device lock, so two admins cannot give one stick to two VMs. Every attach
+and detach is READ BACK from the live and the saved definitions; an attach that half-landed is rolled back and the
+exact state reported.
+
+**The checks run again at START.** `managed='yes'` takes a device from the host when the VM starts — possibly days
+after the attach, and `vm.power` is a session op — so a start re-checks every saved hostdev (busy, host GPU driver,
+IOMMU group, a card no longer on the host) and refuses with the reason. A saved USB entry is vendor:product, so the
+check covers whichever present device matches it now; a USB scan that fails refuses the start (fail closed).
+**No autostart with host devices:** libvirt starts an autostart VM at boot without asking the service, i.e. past
+that check — so a device is not attached to a VM that starts with the host, and autostart cannot be turned on for a
+VM holding one (the picker says so). The same holds on "This computer", whose start re-checks too.
+
+**USB** hot-plugs into a running VM; "Keep attached after the VM restarts" adds `--config`. The saved form is
+vendor/product with `startupPolicy='optional'` (a re-plug keeps working, a missing stick does not stop the VM
+booting); bus/device is pinned only when two plugged-in devices share the ids.
+
+**PCI** goes into a SHUT-OFF VM's definition with `managed='yes'`: libvirt (root) moves the card to vfio-pci when
+the VM starts and back when it stops. A GPU brings its HDMI audio (function .1) and every other function in its IOMMU
+group — never another device in the same slot (an AMD APU carries the board's own audio at .6). The picker shows
+the checklist, each item measured, with the change to make: IOMMU on (`/sys/kernel/iommu_groups` not empty — else
+`intel_iommu=on iommu=pt` / `amd_iommu=on iommu=pt` in `/etc/kernel/cmdline` or GRUB), vfio-pci available, the
+whole IOMMU group can go (bridges may stay), not the host's display GPU, not held by a host driver (else
+`/etc/modprobe.d/vfio.conf`: `options vfio-pci ids=…` + `softdep <driver> pre: vfio-pci`, rebuild the initramfs,
+reboot), and — advisory — UEFI firmware and a q35 machine. Nothing here changes the kernel or the boot loader.
+
+**QEMU must HAVE the device.** Measured on nas.lan: Gentoo builds `app-emulation/qemu` with `USE=-usb`, which leaves
+out `usb-host`; libvirt accepted the attach and QEMU refused it ("'usb-host' is not a valid device model name"). The
+host asks the emulator (`-device help`) and refuses with the fix before libvirt is asked. `./install.sh --vmhost`
+checks it and, on Gentoo, writes `app-emulation/qemu usb` to `/etc/portage/package.use/posterchan-vmhost` and runs
+`emerge --oneshot --changed-use app-emulation/qemu` (running VMs keep the old QEMU until restarted).
+
+**Who opens the device node.** On `qemu:///system` libvirt runs as root and chowns `/dev/bus/usb/BBB/DDD` to the
+qemu user for as long as the VM holds it, then gives it back — nothing to install. "This computer" uses
+`qemu:///session`: libvirt runs as the signed-in account and cannot chown, so QEMU opens the node itself, as that
+account, and the node is root-owned 0664. The grant is ONE DEVICE, AT ATTACH: `desktop/vmusb.js` runs
+`sudo -n /usr/local/bin/pc-usb-grant grant BUS DEV`, which re-checks the device itself (the same scanner as the host,
+installed as `/usr/local/lib/posterchan/pc_usb_scan.py`: no hubs, nothing the host uses) and puts an ACL for the
+CALLER (SUDO_UID) on that one node; detach revokes it, and unplugging removes the node and the ACL. The helper grants
+only to an ADMIN (group wheel — every signed-in identity is in %posterchan, visitors included) who owns the ACTIVE
+LOCAL SEAT (the request's `session-N.scope` must be seat0's active, non-remote logind session — not SSH, not a
+background session), and never a device another account holds (another uid's ACL entry, or the node open in another
+account's process). The desktop asks every other question first and grants last, and takes the grant back on every
+failure after it. PosterChanOS ships
+the helper with `%posterchan ALL=(root) NOPASSWD: …/pc-usb-grant grant *, …/pc-usb-grant revoke *` and builds QEMU
+with `USE=usb`; installed machines get the helper, its sudoers file and the scanner from the posterchanos-shell
+package through update-posterchan (the scanner is injected from `app/services/vmhost/usb.py` by
+`publish_overlay.sh`). A blanket udev `uaccess` rule was the first design and was withdrawn in review: it gave the seat raw
+usbfs on every USB disk plugged in (driver disconnect, raw SCSI) — root in all but name.
+PCI passthrough needs root and is a server-host feature; "This computer" says so.
 
 ## 7. The live probe (phase 4)
 

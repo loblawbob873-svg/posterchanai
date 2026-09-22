@@ -556,6 +556,9 @@ if (isOurPage) {
     end: (pid) => ipcRenderer.invoke('pc:system:end', Number(pid)),
   });
 
+  const usbIds = (o, withPersist) => Object.assign({ vendor: String((o && o.vendor) || ''), product: String((o && o.product) || ''),
+    bus: o && Number.isInteger(o.bus) ? o.bus : null, device: o && Number.isInteger(o.device) ? o.device : null },
+    withPersist ? { persist: !(o && o.persist === false) } : {});
   contextBridge.exposeInMainWorld('pcVM', {
     list: () => ipcRenderer.invoke('pc:vm:list'),
     create: (opts) => ipcRenderer.invoke('pc:vm:create', opts || {}),
@@ -573,6 +576,10 @@ if (isOurPage) {
       network && network.type === 'bridge' ? { type: 'bridge', name: String(network.name||'') } : { type: 'user' }),
     gamingMouse: (name, on) => ipcRenderer.invoke('pc:vm:gaming-mouse', String(name||''), !!on),
     pickIso: () => ipcRenderer.invoke('pc:vm:pick-iso'),
+    usbList: () => ipcRenderer.invoke('pc:vm:usb-list'),
+    usbDevices: (name) => ipcRenderer.invoke('pc:vm:usb-devices', String(name||'')),
+    usbAttach: (name, o) => ipcRenderer.invoke('pc:vm:usb-attach', String(name||''), usbIds(o, true)),
+    usbDetach: (name, o) => ipcRenderer.invoke('pc:vm:usb-detach', String(name||''), usbIds(o, false)),
   });
 
   /* SCREENSHOTS. `available()` answers before anything is drawn, so the tray never offers a button

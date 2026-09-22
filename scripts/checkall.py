@@ -333,6 +333,9 @@ CHECKS = {
     # Virtual Machines as a Proxmox-style explorer: tree, summary tiles, sortable details table.
     "check_vms_explorer":              dict(group="ui", secs=420,
                                             why="tree + sortable VM table at 1280/3840, cards at 390"),
+    # A VM's Devices: USB into a RUNNING VM (picker, busy, persist), the PCI checklist, detach, read-only users.
+    "check_vm_devices":                dict(group="ui", secs=300,
+                                            why="add/detach USB on a running VM, PCI checks, at 1280 and 390"),
     # The VM console toolbar at every display scale, and outside the popped-out window's DRAG region
     # (a button painted over `-webkit-app-region: drag` loses its clicks to "move the window").
     "check_vm_console_layout":         dict(group="ui", secs=240,

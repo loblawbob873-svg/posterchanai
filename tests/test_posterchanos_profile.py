@@ -185,6 +185,9 @@ class PosterChanOSProfile(unittest.TestCase):
         "gsettings": "base:dev-libs/glib",
         # Windows-only, and never run on this profile.
         "attrib": "base:n/a", "icacls": "base:n/a",
+        # desktop/vmusb.js asks `zpool status -P` only when a ZFS dataset is MOUNTED; with no ZFS there is nothing
+        # to ask, and a ZFS root it cannot read is treated as "no disk may be given away" (fail closed).
+        "zpool": "base:n/a",
     }
 
     def _binaries_the_shell_runs(self):
@@ -326,7 +329,10 @@ class PosterChanOSProfile(unittest.TestCase):
         self.assertIn("sudoers.d", body, "the shell cannot create an account it is not allowed to")
         rule = [l for l in body.splitlines() if "NOPASSWD" in l]
         self.assertTrue(rule, "no sudoers rule")
-        self.assertEqual(len(rule), 2, f"unexpected privileged helper rules: {rule}")
+        self.assertEqual(len(rule), 3, f"unexpected privileged helper rules: {rule}")
+        # pc-usb-grant: ONE usb device for the caller's own VM, with exactly the two verbs it knows
+        self.assertTrue(any("NOPASSWD: /usr/local/bin/pc-usb-grant grant *, /usr/local/bin/pc-usb-grant revoke *\""
+                            in l for l in rule), rule)
         self.assertTrue(any("pc-provision-user" in l for l in rule), "provision helper is not allowed")
         self.assertTrue(any("pc-session-switch" in l for l in rule), "session helper is not allowed")
         self.assertTrue(all("ALL=(root) NOPASSWD: /usr/local/bin/" in l and "NOPASSWD: ALL" not in l
