@@ -13,6 +13,17 @@
         android:orientation="vertical"
         android:padding="10dp">
 
+        <!-- WHO SENT IT, in a group. Gone in a one-to-one conversation and gone for every message
+             in a run from the same person, so the line only appears where the speaker changes. -->
+        <TextView
+            android:id="@+id/pc_b_sender"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginBottom="2dp"
+            android:textSize="12sp"
+            android:textStyle="bold"
+            android:visibility="gone" />
+
         <TextView
             android:id="@+id/pc_b_text"
             android:layout_width="wrap_content"
