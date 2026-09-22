@@ -3,8 +3,12 @@
 set -euo pipefail
 
 ISO="${1:-}"
-PUBLISH_HOST="${PC_ISO_PUBLISH_HOST:-root@198.55.116.7}"
-PUBLISH_PATH="${PC_ISO_PUBLISH_PATH:-/iso/posterchanos.iso}"
+# THE ISO IS SERVED FROM HOME NOW. The VPS that used to host iso.poster.place (198.55.116.7) was
+# deleted 2026-09-21. nas.lan holds the file in its distfiles export, which router.lan already mounts
+# at /var/lib/distfiles and serves as https://iso.poster.place/ (nginx vhost iso.conf), exactly the
+# path gentoo.poster.place's overlay and binpkgs take.
+PUBLISH_HOST="${PC_ISO_PUBLISH_HOST:-verita84@nas.lan}"
+PUBLISH_PATH="${PC_ISO_PUBLISH_PATH:-/raid/distfiles/distfiles/iso/posterchanos.iso}"
 STAGING_PATH="${PUBLISH_PATH}.uploading"
 CHECKSUM_PATH="${PUBLISH_PATH}.sha256"
 CHECKSUM_STAGING="${CHECKSUM_PATH}.uploading"

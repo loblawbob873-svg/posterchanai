@@ -11,7 +11,8 @@ GENTOO = ROOT / "os" / "gentoo.sh"
 
 def test_publisher_has_the_stable_release_destination():
     src = PUBLISH.read_text()
-    assert "root@198.55.116.7" in src
+    assert "verita84@nas.lan" in src and "/raid/distfiles/distfiles/iso/posterchanos.iso" in src
+    assert "198.55.116.7" not in src.replace("(198.55.116.7)", ""), "the deleted VPS must not be a target"
     assert "/iso/posterchanos.iso" in src
 
 
@@ -103,3 +104,10 @@ def test_successful_publish_writes_checksum_after_verified_iso(tmp_path):
     assert transaction.index("posterchanos.iso.uploading' '/iso/posterchanos.iso'") < transaction.index(
         "posterchanos.iso.sha256.uploading' '/iso/posterchanos.iso.sha256'")
     assert "and /iso/posterchanos.iso.sha256" in result.stdout
+
+
+def test_a_build_does_not_publish_itself_before_its_gates():
+    """2026-09-21: a clean build uploaded itself before the install/boot gates had run."""
+    src = (ROOT / "os" / "gentoo.sh").read_text()
+    assert 'PUBLISH_ISO="${PC_ISO_PUBLISH:-n}"' in src
+    assert "scripts/publish_iso.sh $ISO" in src, "the build must name the publish step it did not take"
