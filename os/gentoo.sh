@@ -2035,6 +2035,11 @@ liveISOinstall() {
 	# …and the autologin that names it, or the installed machine tries to log in an account that is
 	# no longer there — which is a login prompt, and the exact failure the ISO builder was fixed for.
 	sudo rm -f $TARGET/etc/systemd/system/getty@tty1.service.d/override.conf 2>/dev/null
+	# …and the live medium's "Install PosterChanOS" launcher. livecd writes it into the IMAGE only
+	# (a pseudo-file), but this copies the image onto the disk, so every installed machine carried
+	# it: a start-menu entry that opens a terminal running `sudo gentoo.sh` — "Install PosterChan not
+	# doing anything on laptop". The graphical installer already shows only on a live boot.
+	sudo rm -f $TARGET/usr/share/applications/posterchanos-install.desktop 2>/dev/null
 
 	# ROOT MUST BE ABLE TO LOG IN BEFORE ANYTHING ELSE IS TRIED.
 	#
