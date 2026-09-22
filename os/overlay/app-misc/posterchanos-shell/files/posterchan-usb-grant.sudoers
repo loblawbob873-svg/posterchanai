@@ -1,0 +1,2 @@
+# An identity session may give ONE USB device to its own VM ("This computer"); pc-usb-grant checks every argument.
+%posterchan ALL=(root) NOPASSWD: /usr/local/bin/pc-usb-grant grant *, /usr/local/bin/pc-usb-grant revoke *

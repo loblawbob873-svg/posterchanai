@@ -2682,7 +2682,12 @@ PROFILE
 	# pc-usb-grant's scanner: the SAME module the VM host uses (app/services/vmhost/usb.py, stdlib only), so the
 	# helper refuses exactly what the host refuses. Root-owned, outside any user's reach.
 	mkdir -p "${TARGET}/usr/local/lib/posterchan"
-	if [ -f "$PCOS_TREE/../app/services/vmhost/usb.py" ]; then
+	# Same order as the helpers below: the synced overlay (what update-posterchan installs) first.
+	if [ -n "$PCREPO" ] && [ -f "$PCREPO/app-misc/posterchanos-shell/files/pc_usb_scan.py" ]; then
+		install -m 0644 "$PCREPO/app-misc/posterchanos-shell/files/pc_usb_scan.py" "${TARGET}/usr/local/lib/posterchan/pc_usb_scan.py"
+	elif [ -f "/var/db/repos/posterchan/app-misc/posterchanos-shell/files/pc_usb_scan.py" ]; then
+		install -m 0644 "/var/db/repos/posterchan/app-misc/posterchanos-shell/files/pc_usb_scan.py" "${TARGET}/usr/local/lib/posterchan/pc_usb_scan.py"
+	elif [ -f "$PCOS_TREE/../app/services/vmhost/usb.py" ]; then
 		install -m 0644 "$PCOS_TREE/../app/services/vmhost/usb.py" "${TARGET}/usr/local/lib/posterchan/pc_usb_scan.py"
 	else
 		echo -e "\033[1;33m  ! the USB scanner is not in this tree — \"Add USB device\" on This computer will refuse\033[0m"

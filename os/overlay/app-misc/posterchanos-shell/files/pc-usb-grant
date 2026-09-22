@@ -1,0 +1,114 @@
+#!/usr/bin/python3 -I
+"""pc-usb-grant — give the signed-in person read-write access to ONE USB device, for as long as it stays plugged in,
+so their own virtual machine ("This computer", qemu:///session) can open it.
+
+    sudo pc-usb-grant grant  BUS DEV      setfacl -m u:<caller>:rw /dev/bus/usb/BBB/DDD
+    sudo pc-usb-grant revoke BUS DEV      setfacl -x u:<caller>    /dev/bus/usb/BBB/DDD
+
+WHY A HELPER AND NOT A udev RULE. A session QEMU runs as the user and opens the device node itself; the node is
+root-owned 0664. The first version tagged every non-hub USB device `uaccess`, which hands the seat user raw usbfs
+on EVERY USB disk the moment it is plugged in — USBDEVFS_DISCONNECT plus raw SCSI commands to a disk the host may be
+running from, which is root in all but name, and nothing to do with VMs. This grants ONE device, at the moment the
+person attaches it to their VM, after the same checks the server makes:
+
+  * BUS and DEV are 1-3 digit numbers, nothing else; the device must exist in sysfs right now;
+  * never a hub or a root hub (a hub is everything plugged into it), by device AND interface class;
+  * never a device holding anything the host uses: a mounted filesystem (traced through md/dm/LVM/LUKS, the
+    major:minor table, multi-device btrfs and ZFS vdevs), swap, a network interface that is up — and when the host's
+    own root filesystem cannot be traced to a disk, never ANY disk (fail closed);
+  * the grant names the CALLER (SUDO_UID, set by sudo), never a user given on the command line.
+
+The ACL dies with the device node: unplug the stick and the grant is gone. sudoers allows exactly
+`pc-usb-grant grant *` and `pc-usb-grant revoke *` for %posterchan; everything else about the arguments is checked
+here. `-I` keeps PYTHON* variables and the user's site-packages out of a root process. Tests (never as root) may point
+it at a fake /sys, /dev and scanner with PC_USB_GRANT_* variables; as root those are ignored.
+"""
+import os
+import re
+import stat
+import subprocess
+import sys
+
+ROOT = os.geteuid() == 0
+
+
+def env(name, default):
+    return default if ROOT else os.environ.get(name, default)
+
+
+LIB = env("PC_USB_GRANT_LIB", "/usr/local/lib/posterchan")
+SYS = env("PC_USB_GRANT_SYS", "/sys")
+DEV = env("PC_USB_GRANT_DEV", "/dev/bus/usb")
+MOUNTINFO = env("PC_USB_GRANT_MOUNTINFO", "/proc/self/mountinfo")
+SWAPS = env("PC_USB_GRANT_SWAPS", "/proc/swaps")
+SETFACL = env("PC_USB_GRANT_SETFACL", "/usr/bin/setfacl")
+
+
+def die(msg, code=1):
+    print("pc-usb-grant: " + msg, file=sys.stderr)
+    sys.exit(code)
+
+
+def main(argv):
+    if len(argv) != 3 or argv[0] not in ("grant", "revoke") or not all(re.fullmatch(r"[0-9]{1,3}", a) for a in argv[1:]):
+        die("usage: pc-usb-grant grant|revoke BUS DEV", 2)
+    verb, bus, dev = argv[0], int(argv[1]), int(argv[2])
+    if not (1 <= bus <= 999 and 1 <= dev <= 999):
+        die("bus and device are numbers from 1 to 999", 2)
+    uid = os.environ.get("SUDO_UID", "")
+    if not re.fullmatch(r"[0-9]{1,9}", uid) or uid == "0":
+        die("run this through sudo as the person the device is for")
+    node = os.path.join(DEV, f"{bus:03d}", f"{dev:03d}")
+    try:
+        st = os.lstat(node)
+    except OSError:
+        die(f"there is no USB device {bus}-{dev} ({node})")
+    if ROOT and not (stat.S_ISCHR(st.st_mode) and os.major(st.st_rdev) == 189):
+        die(f"{node} is not a USB device node")
+    if verb == "grant":
+        sys.path.insert(0, LIB)
+        try:
+            import pc_usb_scan as usb
+        except ImportError:
+            die(f"the scanner is missing from {LIB} — reinstall PosterChanOS' shell package")
+        devices = usb.scan(SYS, MOUNTINFO, SWAPS)
+        match = [d for d in devices if d.bus == bus and d.device == dev]
+        hubs = os.path.join(SYS, "bus", "usb", "devices")
+        is_root_hub = any(n.startswith("usb") and _num(os.path.join(hubs, n, "busnum")) == bus and
+                          _num(os.path.join(hubs, n, "devnum")) == dev for n in _ls(hubs))
+        if is_root_hub or not match:
+            die(f"{bus}-{dev} is a root hub or not a USB device this machine can give away")
+        d = match[0]
+        if d.hub:
+            die(f"{d.label} is a hub — a hub is everything plugged into it; pass the device itself")
+        if d.system:
+            die(f"{d.label} holds the system this computer runs from")
+        if d.busy:
+            die(f"{d.label} is in use by this computer: {d.busy}")
+        r = subprocess.run([SETFACL, "-m", f"u:{uid}:rw", node], capture_output=True, text=True)
+    else:
+        r = subprocess.run([SETFACL, "-x", f"u:{uid}", node], capture_output=True, text=True)
+        if r.returncode != 0 and re.search(r"no such|not found", r.stderr, re.I):
+            return 0                                      # nothing granted: nothing to take back
+    if r.returncode != 0:
+        die((r.stderr or r.stdout).strip()[:200] or "setfacl failed")
+    return 0
+
+
+def _ls(p):
+    try:
+        return sorted(os.listdir(p))
+    except OSError:
+        return []
+
+
+def _num(p):
+    try:
+        with open(p) as f:
+            return int(f.read().strip())
+    except (OSError, ValueError):
+        return -1
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv[1:]))
