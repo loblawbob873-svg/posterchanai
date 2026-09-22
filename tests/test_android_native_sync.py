@@ -32,6 +32,7 @@ import subprocess
 import tempfile
 
 import pytest
+from tests.client_source import client_source
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 ANDROID = os.path.join(ROOT, "mobile", "android", "app")
@@ -44,7 +45,7 @@ def _read(*parts):
         return fh.read()
 
 
-APPJS = _read(ROOT, "static", "js", "client", "app.js")
+APPJS = client_source()
 
 SYNC_SRC = [
     os.path.join(JAVA, "sync", "Json.java"),

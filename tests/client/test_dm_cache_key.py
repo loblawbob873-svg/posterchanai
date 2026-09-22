@@ -33,14 +33,14 @@ import tempfile
 import threading
 import unittest
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
+from tests.client_source import client_source
 
 REPO = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 APP = os.path.join(REPO, "static", "js", "client", "app.js")
 
 
 def _module():
-    with open(APP) as fh:
-        src = fh.read()
+    src = client_source()
     i = src.index("  const DmCache = {")
     depth, j, started = 0, i, False
     while j < len(src):

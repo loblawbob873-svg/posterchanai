@@ -17,6 +17,7 @@ failure mode is a control quietly kept pointing at the plaintext path.
 import os
 import re
 import unittest
+from tests.client_source import client_source
 
 REPO = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 APP = os.path.join(REPO, "static", "js", "client", "app.js")
@@ -25,7 +26,7 @@ APP = os.path.join(REPO, "static", "js", "client", "app.js")
 class DmAttachPaths(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
-        cls.src = open(APP).read()
+        cls.src = client_source()
 
     def _one(self, pattern, what):
         found = re.findall(pattern, self.src)

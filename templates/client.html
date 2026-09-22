@@ -520,6 +520,9 @@
 <!-- The encrypted drive index, split out of app.js. Every screen that shows a file reads it
      synchronously, so it ships with the page; app.js reaches it through a Proxy. -->
 <script src="/static/js/client/filesindex.js?v={{ ver }}"></script>
+<!-- Uploads, thumbnails and the media pickers, split out of app.js. Called synchronously from the
+     timeline header, the composer, Mail and Files, so it ships with the page. -->
+<script src="/static/js/client/upload.js?v={{ ver }}"></script>
 <script src="/static/js/client/musicplayer.js?v={{ ver }}"></script>
 <script src="/static/js/client/vaultcore.js?v={{ ver }}"></script>
 <script src="/static/js/client/vault.js?v={{ ver }}"></script>

@@ -36,6 +36,7 @@ import shutil
 import subprocess
 import tempfile
 import unittest
+from tests.client_source import client_source
 
 REPO = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 APP = os.path.join(REPO, "static", "js", "client", "app.js")
@@ -183,8 +184,7 @@ def _run(harness, *, native):
 class AiDownloadNative(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
-        with open(APP) as fh:
-            cls.src = fh.read()
+        cls.src = client_source()
         cls.harness = _harness(cls.src)
 
     def test_native_saves_the_bytes(self):
