@@ -18,6 +18,7 @@ import subprocess
 from pathlib import Path
 
 import pytest
+from tests.client_source import client_source
 
 ROOT = Path(__file__).resolve().parents[2]
 JS = ROOT / "static" / "js" / "client"
@@ -67,8 +68,10 @@ def test_a_game_start_is_one_note_and_two_games_are_two_different_notes(fname, s
 
 
 def test_a_poll_vote_in_flight_is_not_sent_again():
-    src = (JS / "app.js").read_text(encoding="utf-8")
-    body = _slice(src, "  const _pollVoting = new Set();", "  // Pull media URLs OUT of the text")
+    src = client_source()
+    body = _slice(src, "  const _pollVoting = new Set();", "  const MediaDims = (()=>{")
+    # …the next declaration after the poll code in cards.js, where the polls now live; the old
+    # end marker (the media comment) stayed in app.js and is no longer on the other side of it.
     out = _node(HARNESS + "const ME={pubkey:'c'.repeat(64)};const $$=()=>[];" + body + """
 (async()=>{
   await Promise.all([votePoll('p','a'),votePoll('p','a'),votePoll('p','a')]);

@@ -27,6 +27,7 @@ import shutil
 import subprocess
 
 import pytest
+from tests.client_source import client_source
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 APP = os.path.join(ROOT, "static", "js", "client", "app.js")
@@ -39,7 +40,7 @@ OTHER = "aa" * 32
 
 def _fn_source():
     """The real `function isReply(ev){…}` out of app.js, brace-balanced."""
-    src = open(APP, encoding="utf-8").read()
+    src = client_source()
     i = src.index("function isReply(ev)")
     j = src.index("{", i)
     depth, k = 0, j

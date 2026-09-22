@@ -28,6 +28,7 @@ import shutil
 import subprocess
 import tempfile
 import unittest
+from tests.client_source import client_source
 
 REPO = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 APP = os.path.join(REPO, "static", "js", "client", "app.js")
@@ -58,8 +59,7 @@ def _fn(src, name, opener):
 
 
 def _harness():
-    with open(APP) as fh:
-        src = fh.read()
+    src = client_source()
     m = re.search(r"const _LINK_LABEL_MAX = \d+;", src)
     assert m, "_LINK_LABEL_MAX is gone — the label rule moved"
     stubs = r"""

@@ -1,6 +1,7 @@
 """Wire-contract guards for Webxdc launched inside Armada chat scopes."""
 import re
 from pathlib import Path
+from tests.client_source import client_source
 
 ROOT = Path(__file__).resolve().parents[1]
 CONCORD = (ROOT / "static/js/client/concord.js").read_text()
@@ -22,7 +23,7 @@ def test_concord_cards_carry_protocol_and_armada_default_session():
 
 
 def test_social_uploads_publish_the_canonical_topic_contract():
-    app = (ROOT / "static/js/client/app.js").read_text()
+    app = client_source()
     assert "m: MIME_VENDOR" in WEBXDC
     assert "'webxdc-topic':uuid, webxdc:uuid" in WEBXDC
     assert "m['webxdc-topic']" in app
@@ -140,5 +141,5 @@ def test_room_realtime_listens_on_managed_and_external_relays():
     assert "const close=()=>{try{R.close(pooled);}" in CONCORD
     assert "close.publish=event=>(!plane&&R.publishFastTo&&R.publishFastTo(urls,event)?1:0)+(external.publish?external.publish(event):0)" in CONCORD
     assert "liveSub&&liveSub.publish?liveSub.publish(made.wrap):0" in CONCORD
-    assert "relayPublishFastTo: (relays, ev) => Relay.publishFastTo(relays, ev)" in (ROOT / "static/js/client/app.js").read_text()
+    assert "relayPublishFastTo: (relays, ev) => Relay.publishFastTo(relays, ev)" in client_source()
     assert "typeof this.rtSub==='function'?this.rtSub():Relay.close(this.rtSub)" in WEBXDC

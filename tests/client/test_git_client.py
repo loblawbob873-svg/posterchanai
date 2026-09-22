@@ -19,6 +19,7 @@ import re
 import shutil
 import subprocess
 import unittest
+from tests.client_source import client_source
 
 ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 CLIENT = os.path.join(ROOT, "static", "js", "client")
@@ -167,8 +168,7 @@ class RepoIdentityTests(unittest.TestCase):
 
     def test_readable_repo_route_preserves_case_for_naddr_lookup(self):
         """The SPA must query the exact NIP-34 ``d`` tag from a readable repo URL."""
-        with open(os.path.join(CLIENT, "app.js"), encoding="utf-8") as fh:
-            app = fh.read()
+        app = client_source()
         self.assertIn("openNaddr(pk, String(e.repo||''), 30617)", app)
         self.assertNotIn("openNaddr(pk, String(e.repo||'').toLowerCase(), 30617)", app)
 
@@ -206,7 +206,7 @@ class TheContractWithAppJsTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         cls.git = _src(GIT)
-        cls.app = _src(APP)
+        cls.app = client_source()
 
     def test_open_repo_can_set_the_view(self):
         """RUN, never grep: a `set VIEW` existed on window.__PC for a whole evening while git.js

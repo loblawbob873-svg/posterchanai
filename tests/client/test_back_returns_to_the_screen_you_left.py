@@ -29,6 +29,7 @@ Each test here was run against the pre-fix file and fails there.
 import re
 import unittest
 from pathlib import Path
+from tests.client_source import client_source
 
 ROOT = Path(__file__).resolve().parents[2]
 APP = ROOT / "static" / "js" / "client" / "app.js"
@@ -40,7 +41,7 @@ class EveryTapOnAPostIsAHistoryEntry(unittest.TestCase):
 
     @classmethod
     def setUpClass(cls):
-        cls.src = APP.read_text()
+        cls.src = client_source()
 
     def test_the_feed_card_tap_goes_through_openThread(self):
         """`renderThread` renders; `openThread` navigates. A click handler must call the one that
@@ -77,7 +78,7 @@ class AViewIsAHistoryEntry(unittest.TestCase):
 
     @classmethod
     def setUpClass(cls):
-        cls.src = APP.read_text()
+        cls.src = client_source()
 
     def test_switchView_records_the_view_not_just_the_root_path(self):
         self.assertIn("_navView(v);", self.src)
@@ -140,7 +141,7 @@ class AViewIsAHistoryEntry(unittest.TestCase):
 class TheHardwareBackButtonCannotStrandYou(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
-        cls.src = APP.read_text()
+        cls.src = client_source()
 
     def test_it_walks_our_own_entries_first(self):
         blk = self.src[self.src.index("if(typeof VIEW!=='undefined' && VIEW){"):][:600]
@@ -188,7 +189,7 @@ class OnTheDesktopBackClosesTheWindow(unittest.TestCase):
 
     @classmethod
     def setUpClass(cls):
-        cls.app = APP.read_text()
+        cls.app = client_source()
         cls.os = (ROOT / "static" / "js" / "client" / "os.js").read_text()
 
     def test_the_desktop_can_close_a_document_window(self):
@@ -241,8 +242,8 @@ class ARepoComesBackToTheTabYouLeft(unittest.TestCase):
         self.assertIn(".rv-tab[data-tab=", blk)
 
     def test_the_pop_is_what_asks_for_it(self):
-        app = APP.read_text()
-        self.assertIn("openRepo(ev, { restore:_routing })", app,
+        app = client_source()
+        self.assertIn("openRepo(ev, { restore:S._routing })", app,
                       "openNaddr opens a repo without saying whether this was a back press")
 
 

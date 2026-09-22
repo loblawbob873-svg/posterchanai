@@ -19,6 +19,7 @@ both asserted here.
 import re
 import unittest
 from pathlib import Path
+from tests.client_source import client_source
 
 APP = Path(__file__).resolve().parents[2] / "static" / "js" / "client" / "app.js"
 
@@ -48,7 +49,7 @@ def _block(src, start):
 
 class VideoLazyMount(unittest.TestCase):
     def setUp(self):
-        self.src = APP.read_text()
+        self.src = client_source()
 
     def test_media_emits_no_eager_video_src(self):
         """_media() is the one funnel every note video comes through — it must hand out data-vsrc."""
@@ -123,7 +124,7 @@ class OneVideoAtATime(unittest.TestCase):
 
     @classmethod
     def setUpClass(cls):
-        cls.src = APP.read_text()
+        cls.src = client_source()
 
     def test_starting_one_video_pauses_the_others(self):
         m = re.search(r"document\.addEventListener\('play',([\s\S]{0,600}?)\}, true\);", self.src)

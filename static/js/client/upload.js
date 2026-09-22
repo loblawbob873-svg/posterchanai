@@ -21,7 +21,6 @@ window.PCUploadFactory = function(dep){
     checkBlossomAccess, copyValue, enc, isMutedView, isReply, mediaServer, needProfile, openThread,
     profOf, safePk, sendDm, sign, toast, trackUrl, uploadTarget,
   } = dep;
-  // END ACCOUNT NOTIFICATION PREFERENCES
   async function sha256hex(buf){ const h=await crypto.subtle.digest('SHA-256', buf); return [...new Uint8Array(h)].map(b=>b.toString(16).padStart(2,'0')).join(''); }
   // Hash a File for upload WITHOUT holding it whole in memory. Small files go through crypto.subtle
   // in one shot; large ones (ISOs, big drive uploads) are hashed in slices via PCSha256 — otherwise

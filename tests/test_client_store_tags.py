@@ -29,6 +29,7 @@ import subprocess
 import textwrap
 
 import pytest
+from tests.client_source import client_source
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 STORE = os.path.join(ROOT, "static", "js", "client", "store.js")
@@ -141,13 +142,13 @@ def test_an_event_with_no_id_is_refused():
 def test_buildcounts_is_still_the_shape_this_models():
     """These tests reimplement buildCounts' walk. Assert the real one still guards, so the model
     above cannot drift into testing nothing."""
-    src = open(APP, encoding="utf-8").read()
+    src = client_source()
     i = src.index("function buildCounts()")
     body = src[i:src.index("function countsFor(", i)]
     assert "e.tags.length" not in body, "buildCounts reads e.tags.length unguarded again"
     assert "try{" in body and "catch(err)" in body, (
         "buildCounts lost its per-event containment — one unknown-shaped event can again cost the "
         "whole timeline rather than its own counts")
-    assert "ME && e.pubkey===ME.pubkey" in body, (
+    assert "S.ME && e.pubkey===S.ME.pubkey" in body, (
         "buildCounts dereferences ME again: a guest reading the public feed has no key, and that "
         "throws on the first kind-7, taking out every card")

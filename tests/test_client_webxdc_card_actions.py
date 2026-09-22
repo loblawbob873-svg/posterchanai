@@ -21,9 +21,10 @@ import shutil
 import subprocess
 import unittest
 from pathlib import Path
+from tests.client_source import client_source, state_shims
 
 ROOT = Path(__file__).resolve().parents[1]
-APP = (ROOT / "static" / "js" / "client" / "app.js").read_text(encoding="utf-8")
+APP = client_source()
 
 
 def _func(name: str) -> str:
@@ -89,9 +90,12 @@ def _render(fn_name):
     # Everything actsRow reaches for, by name. The repost button asks whether an undo of THIS post is
     # still unconfirmed, and that answer is three hops deep — a missing hop is a ReferenceError inside
     # actsRow, i.e. a card that renders as nothing at all, which is exactly what these tests measure.
-    src = (STUBS + _func("_repostUndoReceipt") + "\n" + _func("_repostUndoPending") + "\n"
-           + _func("_repostAction") + "\n" + _func("_repostActionTitle") + "\n"
-           + _func("actsRow") + "\n" + _func("webxdcFileCard") + "\n")
+    lifted = (_func("_repostUndoReceipt") + "\n" + _func("_repostUndoPending") + "\n"
+              + _func("_repostAction") + "\n" + _func("_repostActionTitle") + "\n"
+              + _func("actsRow") + "\n" + _func("webxdcFileCard") + "\n")
+    # actsRow lives in cards.js now, where app.js's live bindings are read as `S.ME`, `S.BOOKMARKS`,
+    # … — the same stubs above, reached through the state object the module is handed.
+    src = STUBS + lifted + state_shims(lifted) + "\n"
     return _node(src + f"""
       const ev = {{ id:'e1', pubkey:'pk1', kind:1063, created_at:1, content:'a game',
                    tags:[['m','application/x-webxdc'],['url','https://h/a.xdc'],['webxdc','g1']] }};

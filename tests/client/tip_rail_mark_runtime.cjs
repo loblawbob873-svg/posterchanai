@@ -56,7 +56,7 @@ function setup(){
   vm.runInContext(
       part('  function profOf(pk){','  async function _ensurePaymentTargets(){')
     + part('  function isXmrAddr(a){','  // A Monero tip note')
-    + part('  function isCashAddr(a){',"  // Open the payer's BCH wallet")
+    + part('  function isCashAddr(a){','  function bech32ToBytes(')   // …up to where the tip flows moved out (tips.js)
     + part('  function actsRow(ev){','  let _noteCardErrs = 0;')
     + part('  function _tipMarks(n, p){','  function decorateProfiles(){')
     + 'const _profQ=new Set(),_profMiss=new Map();'

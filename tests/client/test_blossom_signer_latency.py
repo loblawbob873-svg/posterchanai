@@ -1,6 +1,6 @@
 """Blossom Drive must paint from local state without waiting on a phone signer."""
 from pathlib import Path
-from tests.client_source import client_source
+from tests.client_source import client_source, module_path
 
 
 APP = client_source()
@@ -17,9 +17,11 @@ def test_drive_render_never_runs_an_upload_capability_probe():
 def test_drive_index_reuses_the_shared_self_proof():
     # FilesIdx stayed in app.js; the Explorer that followed it up to renderPublicFiles moved to
     # files.js. The region is both halves, so it still covers exactly what it covered before.
-    at = APP.index("const FilesIdx = {")
+    # FilesIdx is the whole of filesindex.js, and _vodNameMap (the old end of the region) stayed in
+    # app.js — reading across the concatenation to it would sweep in the modules in between.
+    fi = module_path("filesindex.js").read_text(encoding="utf-8")
     fx = APP.index("function _fxDetailsRow(", APP.index("window.PCFilesFactory = function(dep){"))
-    drive = (APP[at:APP.index("let _vodNameMap", at)]
+    drive = (fi[fi.index("const FilesIdx = {"):]
              + APP[fx:APP.index("async function renderPublicFiles(pane){", fx)])
     assert drive.count("await selfProof()") >= 3
     assert "sign(27235,'files-index'" not in drive

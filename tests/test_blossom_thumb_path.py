@@ -20,6 +20,8 @@ import os
 import re
 import sys
 
+from tests.client_source import client_source
+
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 APP_JS = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
@@ -51,8 +53,7 @@ def test_the_query_form_still_works():
 
 
 def test_the_client_builds_a_path_not_a_query():
-    with open(APP_JS) as fh:
-        src = fh.read()
+    src = client_source()
     m = re.search(r"function thumbUrl\(u\)\{[\s\S]*?\n  \}", src)
     assert m, "thumbUrl moved"
     body = m.group(0)
@@ -62,8 +63,7 @@ def test_the_client_builds_a_path_not_a_query():
 def test_the_lightbox_undoes_both_spellings():
     """The lightbox turns a tile's URL back into the full-res one. It used to only drop ?thumb — with
     the path form that leaves you looking at the 320px JPEG full-screen."""
-    with open(APP_JS) as fh:
-        src = fh.read()
+    src = client_source()
     i = src.index("function openLightbox(")
     norm = src[i:i + 700]
     assert "searchParams.delete('thumb')" in norm, "the query spelling must still be undone"

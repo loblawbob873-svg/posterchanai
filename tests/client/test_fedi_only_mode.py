@@ -2,9 +2,10 @@
 import json
 from pathlib import Path
 import subprocess
+from tests.client_source import client_source
 
 ROOT=Path(__file__).resolve().parents[2]
-APP=(ROOT/'static/js/client/app.js').read_text()
+APP=client_source()
 SOCIAL=APP[APP.index('  // A signed routing marker'):APP.index('  // A guest tried to do something')]
 FILTER=APP[APP.index('  function isFediBridged(ev)'):APP.index('  function _drawTimeline(preserveScroll)')]
 

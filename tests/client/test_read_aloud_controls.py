@@ -51,7 +51,8 @@ class ReadAloudControls(unittest.TestCase):
         # failed for a change that did not touch narration. Strip the comments first.
         import re as _re
         _raw = self.app[self.app.index("function switchView(v, quiet)"):][:4000]
-        sv = _re.sub(r"/\*.*?\*/", "", _raw, flags=_re.S)[:600]
+        sv = _re.sub(r"/\*.*?\*/", "", _raw, flags=_re.S)
+        sv = _re.sub(r"(?m)^\s*//.*$", "", sv)[:600]   # whole-line // comments too, same reason
         self.assertIn("stopNarration", sv, "leaving the screen leaves it reading")
 
     def test_the_chip_is_fixed_to_the_viewport(self):

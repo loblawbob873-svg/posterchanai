@@ -1,13 +1,16 @@
 """Every attachment created by a social composer belongs in Files → Posts."""
 from pathlib import Path
-from tests.client_source import client_source
+from tests.client_source import client_source, module_path
 
 
 APP = client_source()
 
 
 def _composer():
-    return APP[APP.index("function compose("):APP.index("// ---------- Blossom uploads")]
+    # compose() is the last function in compose.js, where it now lives; the Blossom uploads banner
+    # that used to follow it is in another file, so the module's own end is the end of the composer.
+    src = module_path("compose.js").read_text(encoding="utf-8")
+    return src[src.index("function compose("):src.index("\n  return {")]
 
 
 def test_every_direct_composer_upload_files_attachments_under_posts():

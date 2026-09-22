@@ -25,7 +25,7 @@ place. The measurement, so nobody repeats the hour:
     should not spend the hour re-discovering that.
 
 Doing it properly is an await-at-the-door change per module — the app.js split that was already
-looked at and called off. So this file does not slim anything. It turns the measurement into a
+looked at and called off. (It was DONE on 2026-09-22: see the note on BUDGET_MB.) So this file does not slim anything. It turns the measurement into a
 ceiling, because the failure mode is not one bad decision, it is drift: nothing anywhere counted
 this, and a new 1 MB library added to the page would have cost every cold load on every phone with
 nothing to say so.
@@ -66,6 +66,11 @@ PAGE = (ROOT / "templates/client.html").read_text(encoding="utf-8")
 #: other reader is concord.js, which reads `window.PosterCordReader` synchronously in ~38 places, so
 #: dropping the tag is an await at Concord's door, not a tag deletion — the same shape the docstring
 #: describes, but for ONE module that is worth a megabyte.
+#: THE SPLIT HAPPENED (2026-09-22), and this is what it was worth: app.js was ONE 2.85 MB IIFE and
+#: is now 1.37 MB plus twenty factory modules, fifteen of which are fetched on first use. The boot
+#: payload measured by this file went 9.17 -> 8.04 MB without removing a single feature, so the
+#: ceilings below are no longer the ones being pressed against — the next person to raise one should
+#: re-baseline them DOWN to just above what is measured, the way the notes above did on the way up.
 BUDGET_MB = 9.2
 #: No single asset should be a surprise. app.js is 2.55 MB and is the reason this is not lower.
 # RAISED 2026-09-18, 2.80 -> 2.85, AND DELIBERATELY BY THE MEASURED AMOUNT AND NOT A ROUND NUMBER.

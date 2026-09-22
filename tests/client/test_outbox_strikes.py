@@ -22,6 +22,7 @@ import shutil
 import subprocess
 import unittest
 from pathlib import Path
+from tests.client_source import client_source
 
 ROOT = Path(__file__).resolve().parents[2]
 OUTBOX = ROOT / "static" / "js" / "client" / "outbox.js"
@@ -177,7 +178,7 @@ class OutboxStrikeTests(unittest.TestCase):
                         "foregrounding did not replace the consumed retry timer")
 
     def test_resume_readiness_also_drains_without_a_status_transition(self):
-        app = (ROOT / "static" / "js" / "client" / "app.js").read_text()
+        app = client_source()
         start = app.index("function _resumeRelay(){")
         body = app[start:app.index("function _nativeResume", start)]
         self.assertIn("if(ok){ _reaskMissing(); _flushOutbox(); }", body)

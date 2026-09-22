@@ -12,7 +12,7 @@
 import fs from 'node:fs';import vm from 'node:vm';import assert from 'node:assert/strict';
 import { clientSource, clientSourceAt, installStateGlobals } from './client_source.mjs';
 
-const code=fs.readFileSync(process.env.PC_APP_SOURCE||new URL('../../static/js/client/app.js',import.meta.url),'utf8');
+const code=clientSourceAt(process.env.PC_APP_SOURCE||new URL('../../static/js/client/app.js',import.meta.url));   // the player lives in musicplayer.js now
 const tick=code.slice(code.indexOf('    _tick(){'),code.indexOf('    onChange:null,'));
 
 function run({hidden,min=false,currentTime=7.5,cur='sha1',appMounted=false}){
