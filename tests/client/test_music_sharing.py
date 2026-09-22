@@ -71,7 +71,10 @@ def test_scenario(results, name):
 def test_loaded_and_precached():
     """A module in no <script> tag is `PCMusicShare is not defined`; one missing from the service
     worker's shell 404s on a cold offline start while every sibling works."""
-    assert "musicshare.js" in _read("templates", "client.html")
+    # Loaded ON DEMAND (it put the boot payload over budget) — so it must NOT be a boot <script>,
+    # app.js must know how to load it, and the SW must still precache it for offline starts.
+    assert "musicshare.js" not in _read("templates", "client.html")
+    assert "_loadScript('/static/js/client/musicshare.js'" in _read("static", "js", "client", "app.js")
     assert "'/static/js/client/musicshare.js'" in _read("static", "js", "client", "sw.js")
 
 
@@ -126,20 +129,22 @@ def test_the_drive_reclaim_counts_shared_copies_as_referenced():
       const at=src.indexOf('async function _syncRefIds(');
       let i=src.indexOf('{',at), d=0; for(;i<src.length;i++){ if(src[i]==='{')d++; else if(src[i]==='}'&&--d===0)break; }
       const fn=src.slice(at,i+1);
-      const run=async(shared)=>{
-        const ctx={ window:{ PCSync:{ acct:()=>[{key:'f'}], accountFolders:async()=>{},
+      const run=async(shared, loads=true)=>{
+        const ctx={ _musicShareLoad: async()=> loads ? ctx.window.PCMusicShare : null, window:{ PCSync:{ acct:()=>[{key:'f'}], accountFolders:async()=>{},
                                       docs:{ state:async()=>({state:{'a.txt':{sha:'s1'}}}) } },
                              PCMusicShare:{ refIds:async()=>shared } } };
         vm.createContext(ctx); vm.runInContext(fn+';this.f=_syncRefIds;', ctx);
         const r=await ctx.f(); return r ? [...r].sort() : null; };
       (async()=>{ process.stdout.write(JSON.stringify({
-        ok: await run(new Set(['copy1','list1'])), unreadable: await run(null) })); })();
+        ok: await run(new Set(['copy1','list1'])), unreadable: await run(null),
+        noModule: await run(new Set(['copy1']), false) })); })();
     """
     r = subprocess.run(["node", "-e", js, app], capture_output=True, text=True, timeout=60)
     assert r.returncode == 0, r.stderr[-2000:]
     got = json.loads(r.stdout)
     assert got["ok"] == ["copy1", "list1", "s1"], got
     assert got["unreadable"] is None, "an unreadable share list must kill the reclaim offer"
+    assert got["noModule"] is None, "if sharing cannot be loaded the reclaim must not be offered at all"
 
 
 def test_player_reads_titles_through_one_lookup():

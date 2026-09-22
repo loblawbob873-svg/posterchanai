@@ -10291,8 +10291,7 @@
     const br=box.getBoundingClientRect(),sr=stage.getBoundingClientRect();
     const zoom=box.offsetHeight?br.height/box.offsetHeight:1;
     const chrome=br.height-sr.height;               // title + controls + padding, visual px
-    // From where the player STARTS, not the top of its scroller: page padding above it (12px on a
-    // phone) otherwise pushed the controls that far off the bottom.
+    // From where the player starts, not the scroller top (page padding pushed controls off-screen).
     const avail=(bottom-Math.max(top,br.top))-chrome-8;
     const px=Math.max(160,Math.floor(avail/(zoom||1)));
     box.style.setProperty('--mc-max-h',px+'px');
@@ -10309,13 +10308,7 @@
     }
   }
   if(typeof window!=='undefined')window.addEventListener('resize',()=>_mediaCenterFitPlayer());
-  /* WATCHING IS ITS OWN SCREEN. The player used to be one more block on the library page: under the
-   * gallery header, the library tabs and the tool cards, so on the laptop it started 282px down a
-   * 893px window, its controls ran off the bottom and the picture used under two thirds of the
-   * height — "looks the same" after a fix that only resized it in place. While something plays,
-   * everything on the path from the player up to the gallery that is NOT the player is set aside
-   * (a class, not `hidden`, which other code owns), the scroller goes to the top and the fit then
-   * gives the video every remaining pixel. Closing puts it all back, scrolled where it was. */
+  // Watching is its own screen: set the library aside so the player fills the view (it sat under it).
   let _mcWatch=null;
   function _mediaCenterWatch(on){
     const box=document.getElementById('mc-playback'),gal=box&&box.closest('.mc-gallery');
@@ -16891,8 +16884,7 @@
       // Same button, same rule as the sidebar's: a guest is offered a way IN, not a second way out.
       (GUEST ? ['__login','user','Log in'] : ['logout','logout','Logout'])]
       .filter(([v])=> !(window.PC_NOSTR_ONLY && v==='translate') && !(window.PC_NOSTR_ONLY && v==='ai')
-                   // Web Search stays on a nostr-only node: SearXNG ships with every install now, and
-                   // websearch.js hides its AI overview/summarize there. (_standalone() still hides it.)
+                   // Web Search stays on nostr-only nodes (SearXNG ships with them; AI parts hide in websearch.js).
                    // The Terminal is the sheet's whole purpose on a phone: the sidebar is hidden
                    // there, so a view missing from this LIST is a view with no way in — which is
                    // exactly how Email was unreachable before it got its own entry. It is also the
@@ -20138,8 +20130,8 @@
     // The library is encrypted per-user, so it can only be read once there is a signer. Repaint when
     // it lands; onChange covers an edit made on another device arriving over the live subscription.
     // Who shared music with me, behind the first paint, so the chip can say so.
-    if(window.PCMusicShare && ME && !GUEST){
-      PCMusicShare.loadIn().then(()=>{ if(document.getElementById('ma-lib') && !_musicShareView()){
+    if(ME && !GUEST){
+      _musicShareLoad().then(MS=>MS&&MS.loadIn()).then(()=>{ if(document.getElementById('ma-lib') && !_musicShareView()){
         const bar=$('#ma-plbar',feed); if(bar){ bar.innerHTML=_plBarHTML(); _bindPlBar(bar, paint); } } }).catch(()=>{});
     }
     if(window.PCPlaylists){
@@ -20232,9 +20224,21 @@
     return pl.tracks.map(sha=>live.get(sha)).filter(Boolean);
   }
   const _musicShareView = () => !!(window.PCMusicShare && PCMusicShare.isView(_musicPl));
+  // musicshare.js loads on demand (it broke the boot budget); same ?v= as app.js; SW precaches it.
+  let _musicShareP = null;
+  function _musicShareLoad(){
+    if(window.PCMusicShare) return Promise.resolve(window.PCMusicShare);
+    if(!_musicShareP){
+      const me = document.querySelector('script[src*="/static/js/client/app.js"]'), src = me && me.getAttribute('src') || '';
+      const q = src.indexOf('?') >= 0 ? src.slice(src.indexOf('?')) : '';
+      _musicShareP = _loadScript('/static/js/client/musicshare.js' + q).then(() => window.PCMusicShare || null)
+        .catch(e => { _musicShareP = null; throw e; });
+    }
+    return _musicShareP;
+  }
   // Share what is on screen: the playlist in order, or the (searched) library; missing tracks skipped.
-  function _musicShareCurrent(){
-    if(!window.PCMusicShare){ toast('sharing is still loading'); return; }
+  async function _musicShareCurrent(){
+    if(!await _musicShareLoad().catch(() => null)){ toast('sharing could not be loaded — try again'); return; }
     const pl = _musicPl && PL() && PL().get(_musicPl);
     const needle = String(_musicQ||'').trim().toLowerCase();
     const set = pl ? _plTracks(_musicPl) : musicTracks(null).filter(t=>!needle || String(t.m.name||'').toLowerCase().includes(needle));
@@ -21837,8 +21841,11 @@
       }
       /* Shared-music copies are keep-flagged and in no index — exactly the reclaim set. Unreadable
        * shares, like an unreadable folder, mean no offer at all. */
-      if(window.PCMusicShare){
-        const shared = await window.PCMusicShare.refIds();
+      {
+        // Loaded, never skipped: absent, every shared copy would be offered for deletion.
+        const MS = await _musicShareLoad().catch(() => null);
+        if(!MS) return null;
+        const shared = await MS.refIds();
         if(!shared) return null;
         for(const sh of shared) ids.add(sh);
       }
