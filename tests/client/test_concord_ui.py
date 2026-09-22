@@ -3,10 +3,11 @@
 import re
 import subprocess
 from pathlib import Path
+from tests.client_source import client_source
 
 
 ROOT = Path(__file__).resolve().parents[2]
-APP = (ROOT / "static/js/client/app.js").read_text()
+APP = client_source()
 CSS = (ROOT / "static/css/client.css").read_text()
 CONCORD_CSS = (ROOT / "static/css/concord.css").read_text()
 CONCORD = (ROOT / "static/js/client/concord.js").read_text()

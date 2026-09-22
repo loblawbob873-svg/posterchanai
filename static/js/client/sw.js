@@ -157,6 +157,7 @@ const SHELL = [
   '/static/js/client/lightbox.js',
   '/static/js/client/tips.js',
   '/static/js/client/dmthread.js',
+  '/static/js/client/menus.js',
   '/static/js/client/vaultcore.js',
   '/static/js/client/vault.js',
   '/static/js/client/chess.js',
