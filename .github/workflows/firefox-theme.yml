@@ -1,7 +1,8 @@
 name: Firefox theme
 
-# Builds os/firefox-theme into an .xpi, has addons.mozilla.org SIGN it (unlisted — no store page, no
-# human review for a static theme), and publishes the signed file as release firefox-theme-v<version>.
+# Builds os/firefox-theme into an .xpi, PUBLISHES it on addons.mozilla.org as a listed (public)
+# theme via os/firefox-theme/amo.py, and once Mozilla's review has signed it, publishes the signed
+# file as release firefox-theme-v<version>. (1.0.0 was unlisted — signed, but with no store page.)
 #
 # WHY SIGNING IS THE WHOLE JOB. PosterChanOS ships release Firefox (www-client/firefox-bin), and
 # MEASURED on the laptop it discards an unsigned theme without a word — installed through a profile's
@@ -22,6 +23,10 @@ on:
       - 'os/firefox-theme/**'
       - '.github/workflows/firefox-theme.yml'
   workflow_dispatch:
+  # A LISTED version is signed only after Mozilla's review. amo.py is resumable, so this picks the
+  # signed file up whenever review finishes, without anyone re-running the job by hand.
+  schedule:
+    - cron: '17 */6 * * *'
 
 permissions:
   contents: write
@@ -61,34 +66,32 @@ jobs:
             echo "signed=no" >> "$GITHUB_OUTPUT"
           fi
 
-      - name: Sign on addons.mozilla.org (unlisted)
+      - name: Publish on addons.mozilla.org (public listing) and fetch the signed file
+        id: amo
         if: steps.have.outputs.signed == 'no' && env.AMO_JWT_ISSUER != ''
         run: |
-          set -euo pipefail
-          rm -rf /tmp/theme-src /tmp/theme-out && mkdir -p /tmp/theme-src
-          # Sign the SAME BYTES that were built and tested, not the source directory.
-          unzip -q "${{ steps.build.outputs.xpi }}" -d /tmp/theme-src
-          npx --yes web-ext@8 sign \
-            --source-dir /tmp/theme-src \
-            --channel unlisted \
-            --api-key "$AMO_JWT_ISSUER" \
-            --api-secret "$AMO_JWT_SECRET" \
-            --artifacts-dir /tmp/theme-out \
-            --approval-timeout 900000
-          signed=$(ls /tmp/theme-out/*.xpi | head -1)
-          # The file must carry Mozilla's signature, or release Firefox will throw it away.
-          python3 os/firefox-theme/build.py --signed "$signed" \
+          set +e
+          # Submit the SAME BYTES that were built and tested. Exit 3 = awaiting Mozilla's review.
+          python3 os/firefox-theme/amo.py --xpi "${{ steps.build.outputs.xpi }}" \
+            --out "/tmp/${{ steps.build.outputs.name }}" --timeout 2400
+          rc=$?
+          if [ $rc -eq 3 ]; then
+            echo "::notice title=Firefox theme::v${{ steps.build.outputs.ver }} is awaiting Mozilla's review; the scheduled run will publish it once approved"
+            echo "ready=no" >> "$GITHUB_OUTPUT"; exit 0
+          fi
+          [ $rc -eq 0 ] || exit $rc
+          python3 os/firefox-theme/build.py --signed "/tmp/${{ steps.build.outputs.name }}" \
             || { echo "::error title=Firefox theme::AMO returned a file with no signature"; exit 1; }
-          cp "$signed" "/tmp/${{ steps.build.outputs.name }}"
+          echo "ready=yes" >> "$GITHUB_OUTPUT"
 
       - name: Publish the signed theme
-        if: steps.have.outputs.signed == 'no' && env.AMO_JWT_ISSUER != ''
+        if: steps.have.outputs.signed == 'no' && env.AMO_JWT_ISSUER != '' && steps.amo.outputs.ready == 'yes'
         uses: softprops/action-gh-release@v2
         with:
           tag_name: firefox-theme-v${{ steps.build.outputs.ver }}
           name: PosterChan Cyberpunk — Firefox theme ${{ steps.build.outputs.ver }} (signed)
           body: |
-            The PosterChanOS Firefox theme, signed by addons.mozilla.org. PosterChanOS installs it
+            The PosterChanOS Firefox theme, published on addons.mozilla.org (public listing) and signed by Mozilla. PosterChanOS installs it
             through /etc/firefox/policies/policies.json; on any other system open this .xpi in Firefox.
           files: /tmp/${{ steps.build.outputs.name }}
 

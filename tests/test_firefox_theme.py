@@ -14,7 +14,7 @@ Logo."
     so the overlay step that fetches the signed copy is RUN with a stub curl, both ways.
 
 Verified to fail: lowering tab_background_text to #8a8cae (it still clears the plain frame, and
-fails over the logo), or re-saving the banner at full strength, turns this red.
+fails over the strip), tinting or dimming the mascot, or a black strip, turns this red.
 """
 import json
 import os
@@ -28,6 +28,13 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
 THEME = ROOT / "os" / "firefox-theme"
+import importlib.util as _ilu
+_spec = _ilu.spec_from_file_location("pc_theme_maker", THEME / "make-images.py")
+MAKER = _ilu.module_from_spec(_spec)
+try:
+    _spec.loader.exec_module(MAKER)
+except ImportError:  # Pillow missing: TheLogo is skipped anyway
+    MAKER = None
 MANIFEST = json.loads((THEME / "manifest.json").read_text(encoding="utf-8"))
 COLORS = MANIFEST["theme"]["colors"]
 PKG = ROOT / "os" / "overlay" / "app-misc" / "posterchanos-shell"
@@ -189,20 +196,52 @@ class TheLogo(unittest.TestCase):
         return Image.open(THEME / MANIFEST["theme"]["images"]["theme_frame"]).convert("RGBA")
 
     def test_tab_titles_read_on_every_pixel_of_it(self):
+        """Every pixel a tab title can sit on — everything but the mascot's zone at the far right
+        and the neon rule under the tabs (titles are centred, never on the bottom rows)."""
         b = self.banner()
         frame = color("frame")
         text = color("tab_background_text")
         icons = color("icons")
+        W, H = b.size
+        zone, rule = MAKER.MASCOT_ZONE, MAKER.RULE_H
         worst_t, worst_i = 99.0, 99.0
-        data = b.get_flattened_data() if hasattr(b, "get_flattened_data") else b.getdata()
-        for r, g, bl, a in data:
-            if not a:
-                continue
-            px = over((r, g, bl, a / 255.0), frame)
-            worst_t = min(worst_t, ratio(text, px))
-            worst_i = min(worst_i, ratio(icons, px))
-        self.assertGreaterEqual(worst_t, 4.5, "a background tab's title over the logo is %.2f:1" % worst_t)
+        px = b.load()
+        for y in range(H - rule):
+            for x in range(W - zone):
+                r, g, bl, a = px[x, y]
+                if not a:
+                    continue
+                p = over((r, g, bl, a / 255.0), frame)
+                worst_t = min(worst_t, ratio(text, p))
+                worst_i = min(worst_i, ratio(icons, p))
+        self.assertGreaterEqual(worst_t, 4.5, "a background tab's title over the strip is %.2f:1" % worst_t)
         self.assertGreaterEqual(worst_i, 3.0)
+        self.assertLessEqual(zone, 160, "the full-strength zone must stay a small corner")
+
+    def test_the_mascot_is_in_full_colour(self):
+        """The first version tinted her violet and dimmed her to a smudge ("an unreadable
+        PosterChan logo that just looks purple"). Her orange hair must survive as orange."""
+        b = self.banner()
+        W, H = b.size
+        corner = b.crop((W - MAKER.MASCOT_ZONE, 0, W, H)).convert("RGB")
+        data = corner.get_flattened_data() if hasattr(corner, "get_flattened_data") else corner.getdata()
+        orange = sum(1 for r, g, bl in data if r > 190 and 70 < g < 180 and bl < 90)
+        self.assertGreater(orange, 40, "no orange hair in the mascot corner — tinted or dimmed again")
+
+    def test_the_strip_is_colourful_not_black(self):
+        """ "The firefox theme is black ... its not cyberpunk at all." Mean saturation of the strip
+        behind the tabs, and it must carry both neons' hues somewhere."""
+        import colorsys
+        b = self.banner().convert("RGB")
+        W, H = b.size
+        sample = [b.getpixel((x, y)) for x in range(0, W - MAKER.MASCOT_ZONE, 7) for y in range(0, H, 5)]
+        sat = sum(colorsys.rgb_to_hsv(*(c / 255 for c in p))[1] for p in sample) / len(sample)
+        val = sum(max(p) for p in sample) / len(sample) / 255
+        self.assertGreater(sat, 0.45)
+        self.assertGreater(val, 0.18, "the strip is too close to black")
+        hues = {round(colorsys.rgb_to_hsv(*(c / 255 for c in p))[0] * 12) % 12 for p in sample if max(p) > 60}
+        self.assertTrue(hues & {10, 11}, "no magenta/violet in the strip")
+        self.assertTrue(hues & {6, 7}, "no cyan/teal in the strip")
 
     def test_it_stays_in_the_tab_strip(self):
         """Firefox draws theme_frame at the top-right. Anything taller than the strip would run
@@ -214,9 +253,7 @@ class TheLogo(unittest.TestCase):
     def test_it_is_actually_there(self):
         """A watermark dimmed to nothing would pass the readability test trivially."""
         b = self.banner()
-        visible = sum(1 for p in (b.get_flattened_data() if hasattr(b, "get_flattened_data") else b.getdata())
-                      if p[3] > 100)
-        self.assertGreater(visible, 400)
+        self.assertGreaterEqual(b.width, 1920, "the strip must cover the tab bar edge to edge")
 
     def test_the_icon_is_the_posterchan_logo(self):
         logo = Image.open(ROOT / "static" / "icon-512.png").convert("RGB").resize((128, 128), Image.LANCZOS)

@@ -64,52 +64,81 @@ def keyed_logo():
     return im
 
 
-HOLO_DARK, HOLO_LIGHT = (46, 20, 84), (150, 34, 158)   # deep violet → neon magenta, both DARK
+# THE STRIP, not a watermark. The first version dimmed one tinted mascot until tab text read over
+# it, which left a black frame and a purple smudge — readable, and not cyberpunk at all. Now the
+# whole tab strip is drawn: a synthwave gradient, a faint neon grid, a lit skyline and a neon rule,
+# every pixel of which tab titles can sit on is kept dark enough for them (4.5:1, measured below and
+# in the test). The mascot is the one exception, in FULL colour, in MASCOT_ZONE at the right end —
+# the last place a row of tabs reaches, and her orange hair is the logo; dimmed, it is not.
+BANNER_W = 3840                  # wider than any screen, so the strip is covered edge to edge
+MASCOT_ZONE = 150                # px at the right end that hold the mascot at full strength
+RULE_H = 2                       # the neon rule under the tabs, where no title is ever drawn
+STOPS = [(0.0, (70, 18, 140)), (0.4, (140, 20, 130)), (0.75, (10, 90, 120)), (1.0, (80, 16, 130))]
 
 
-def hologram(im):
-    """Recolour the logo as a violet-to-magenta duotone. Readability caps how BRIGHT a pixel here
-    may be, not how saturated: a deep magenta is dark enough for light tab text to read over it and
-    still unmistakably neon, where the logo's own orange hair would have to be dimmed to mud. Dark
-    parts (the black hoodie — most of her) start at violet rather than black, or she vanishes."""
-    out = im.copy()
-    px = out.load()
-    for y in range(out.height):
-        for x in range(out.width):
-            r, g, b, a = px[x, y]
-            if not a:
-                continue
-            t = 0.25 + 0.75 * (lum((r, g, b)) ** 0.5)
-            px[x, y] = tuple(round(HOLO_DARK[i] * (1 - t) + HOLO_LIGHT[i] * t) for i in range(3)) + (a,)
-    return out
+def _grad(t):
+    for (t0, c0), (t1, c1) in zip(STOPS, STOPS[1:]):
+        if t <= t1:
+            u = (t - t0) / (t1 - t0)
+            return tuple(round(c0[i] * (1 - u) + c1[i] * u) for i in range(3))
+    return STOPS[-1][1]
 
 
-def banner(frame, text, min_ratio=4.5):
-    logo = keyed_logo()
-    # Head and hood: the part that is still recognisably her at 40 pixels tall.
-    bust = logo.crop((150, 44, 366, 244))
-    bust = bust.resize((round(bust.width * BANNER_H / bust.height), BANNER_H), Image.LANCZOS)
-    bust = hologram(bust)
-    mascot = Image.new("RGBA", (BANNER_W, BANNER_H), (0, 0, 0, 0))
-    # Clear of the right edge, where Firefox puts the "list all tabs" button in every layout.
-    mascot.alpha_composite(bust, (BANNER_W - bust.width - 52, 0))
-    # A neon rule along the bottom, cyan fading in from the left to magenta under the mascot.
-    rule = Image.new("RGBA", (BANNER_W, BANNER_H), (0, 0, 0, 0))
-    d = ImageDraw.Draw(rule)
-    for x in range(BANNER_W):
-        t = x / (BANNER_W - 1)
+def _cap(col, bg, text, min_ratio):
+    """Darken a decoration colour just enough that tab text still reads over it."""
+    c = col
+    while contrast(text, c) < min_ratio:
+        c = tuple(max(0, round(v * 0.92)) for v in c)
+    return c
+
+
+def banner(frame, text, min_ratio=4.6):
+    import random
+    rnd = random.Random(1984)
+    W, H = BANNER_W, BANNER_H
+    im = Image.new("RGBA", (W, H))
+    d = ImageDraw.Draw(im)
+    for x in range(W):
+        d.line([(x, 0), (x, H - 1)], fill=_cap(_grad(x / (W - 1)), frame, text, min_ratio) + (255,))
+    # Scanlines and a neon grid, dim.
+    for y in range(0, H - RULE_H, 3):
+        d.line([(0, y), (W, y)], fill=(0, 0, 0, 40))
+    for x in range(0, W, 28):
+        t = x / W
         col = tuple(round(NEON[i] * (1 - t) + NEON2[i] * t) for i in range(3))
-        d.point((x, BANNER_H - 1), fill=col + (round(255 * t ** 1.6),))
-    # Each layer is dimmed on its own until the tab text reads on every pixel of it — the largest
-    # opacity that still passes — then the two are stacked. They do not overlap except along the
-    # bottom row, and the stack is re-checked below, so the guarantee holds for what is SHIPPED.
-    mascot, a1 = dim(mascot, frame, text, min_ratio)
-    rule, a2 = dim(rule, frame, text, min_ratio)
-    out = Image.new("RGBA", (BANNER_W, BANNER_H), (0, 0, 0, 0))
-    out.alpha_composite(rule)
-    out.alpha_composite(mascot)
-    out, a3 = dim(out, frame, text, min_ratio)
-    return out, (a1, a2, a3)
+        d.line([(x, 0), (x, H - RULE_H)], fill=_cap(tuple(round(v * .7) for v in col), frame, text, min_ratio) + (255,))
+    # A skyline along the bottom, with lit windows.
+    x = 0
+    while x < W - MASCOT_ZONE:
+        bw, bh = rnd.randint(14, 34), rnd.randint(8, H - 10)
+        d.rectangle([x, H - RULE_H - bh, x + bw, H - RULE_H - 1], fill=(8, 4, 18, 255))
+        for wy in range(H - RULE_H - bh + 3, H - RULE_H - 2, 4):
+            for wx in range(x + 3, x + bw - 2, 5):
+                if rnd.random() < .35:
+                    col = NEON if rnd.random() < .6 else NEON2
+                    d.rectangle([wx, wy, wx + 1, wy + 1], fill=_cap(col, frame, text, min_ratio) + (255,))
+        x += bw + rnd.randint(2, 10)
+    # The neon rule: full strength, cyan into magenta.
+    for x in range(W):
+        t = x / (W - 1)
+        col = tuple(round(NEON[i] * (1 - t) + NEON2[i] * t) for i in range(3))
+        d.line([(x, H - RULE_H), (x, H - 1)], fill=col + (255,))
+    # Every pixel a tab title can sit on is checked here, not only in the test.
+    px = im.load()
+    for y in range(H - RULE_H):
+        for x in range(W - MASCOT_ZONE):
+            if contrast(text, px[x, y][:3]) < min_ratio:
+                px[x, y] = _cap(px[x, y][:3], frame, text, min_ratio) + (255,)
+    # The mascot, in full colour, on a dark plate with a neon ring.
+    logo = keyed_logo()
+    bust = logo.crop((150, 44, 366, 244))
+    bh = H - RULE_H - 2
+    bust = bust.resize((round(bust.width * bh / bust.height), bh), Image.LANCZOS)
+    bx = W - bust.width - 44
+    d.rounded_rectangle([bx - 6, 0, bx + bust.width + 6, H - RULE_H - 1], radius=8,
+                        fill=(10, 6, 24, 255), outline=NEON2 + (255,), width=1)
+    im.alpha_composite(bust, (bx, 1))
+    return im, (bx, bust.width)
 
 
 def pixels(im):
@@ -142,7 +171,7 @@ if __name__ == "__main__":
     img_dir = os.path.join(HERE, "images")
     os.makedirs(img_dir, exist_ok=True)
     b, a = banner(hex_rgb(colors["frame"]), hex_rgb(colors["tab_background_text"]))
-    b.save(os.path.join(img_dir, "logo-banner.png"), optimize=True)
+    b.convert("RGB").save(os.path.join(img_dir, "logo-banner.png"), optimize=True)
     for s in (48, 96, 128):
         icon(s).save(os.path.join(img_dir, "icon-%d.png" % s), optimize=True)
-    print("wrote images/ (banner opacity: mascot %.2f, rule %.2f, stack %.2f)" % a)
+    print("wrote images/ (mascot at x=%d, %dpx wide)" % a)
