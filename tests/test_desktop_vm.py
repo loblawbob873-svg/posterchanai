@@ -147,7 +147,10 @@ console.log(JSON.stringify({success,asyncFailure,syncFailure,invocation,unrefs})
         lh = self.local_host()
         for api in ("details", "update", "addDisk", "changeIso", "ejectIso", "addNetwork"):
             self.assertIn("vm." + api + "(", lh)
-        self.assertIn('data-act="settings" ${off ? \'\' : \'disabled', ui)
+        # A running VM's Settings is NOT disabled (a disabled button with a hover-only reason read as
+        # "does nothing" on the laptop); pressing it explains the VM must be off and offers to shut it down.
+        self.assertIn('data-act="settings"', ui)
+        self.assertIn("if(await _needsOff('change its settings')) openSettings(S.host, S.vm)", ui)
         self.assertIn("const off = v.state === 'shutoff';", ui)
 
     def test_installation_iso_can_be_ejected_for_a_real_disk_boot(self):
