@@ -41,7 +41,7 @@ jobs:
         run: |
           set -euo pipefail
           python3 -m pip install --quiet pytest pillow
-          python3 -m pytest -q tests/test_firefox_theme.py
+          python3 -m pytest -q --noconftest -o addopts= tests/test_firefox_theme.py
           xpi=$(python3 os/firefox-theme/build.py)
           ver=$(python3 -c "import json;print(json.load(open('os/firefox-theme/manifest.json'))['version'])")
           echo "xpi=$xpi" >> "$GITHUB_OUTPUT"
