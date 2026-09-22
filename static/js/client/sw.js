@@ -146,6 +146,7 @@ const SHELL = [
   // tests/test_client_offline_shell.py reads this list by its quote marks.)
   '/static/js/client/mail.js',
   '/static/js/client/ai.js',
+  '/static/js/client/mediacenter.js',
   '/static/js/client/vaultcore.js',
   '/static/js/client/vault.js',
   '/static/js/client/chess.js',

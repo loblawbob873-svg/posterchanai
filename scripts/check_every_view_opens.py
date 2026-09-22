@@ -49,7 +49,8 @@ WIDTHS = [(1440, 1000, False), (390, 844, True)]
 
 # Screens that are reached some other way than a sidebar row, but are still whole views.
 EXTRA_VIEWS = ["profile", "drafts", "notifications", "settings", "bookmarks", "messages", "mail",
-               "ai", "trending", "files", "music", "streams", "articles", "repos", "torrents"]
+               "ai", "trending", "files", "music", "streams", "articles", "repos", "torrents",
+               "media-center", "translate", "calls", "signer"]
 # Views that open something outside #feed (a modal, a sheet, an external app) — not screens.
 NO_FEED = {"compose", "more", "files-menu", "discover", "games", "logout", "admin"}
 

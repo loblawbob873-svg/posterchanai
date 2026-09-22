@@ -223,7 +223,8 @@ class TheContractWithAppJsTests(unittest.TestCase):
             self.skipTest("no node on this node")
         js = """
         const src = require('fs').readFileSync(%s,'utf8');
-        const at = src.indexOf('state: {');
+        // git.js's own facade: app.js now hands other split modules (mail.js, …) state objects too.
+        const at = src.indexOf('state: {', src.indexOf('window.PCGitFactory('));
         if(at < 0){ console.error('no state facade'); process.exit(1); }
         const open = src.indexOf('{', at);
         let d=0, i=open;

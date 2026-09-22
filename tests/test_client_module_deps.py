@@ -128,6 +128,7 @@ GLOBALS = {
     "MediaMetadata", "RTCPeerConnection", "DOMException", "ClipboardItem", "createImageBitmap",
     "CSS", "innerWidth", "innerHeight", "addEventListener", "removeEventListener", "performance",
     "self", "Capacitor", "BarcodeDetector", "jsQR", "katex",
+    "Option", "Hls", "IDBKeyRange", "RTCRtpSender", "AbortSignal", "devicePixelRatio",
     # this app's other modules, reached as globals by design
     "PC", "Relay", "Store", "NostrTools", "PCQR", "PCZip", "PCSync", "PCNotes", "PCJoplin",
     "PCVault", "PCGit", "PCGitFactory", "PCI18n", "PCI18N", "PCSprite", "PCOutbox", "PCNegentropy",

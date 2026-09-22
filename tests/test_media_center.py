@@ -12,6 +12,7 @@ from fastapi.testclient import TestClient
 
 from app.routers import media_center as routes
 from app.services import media_center as media
+from tests.client_source import client_source
 
 OWNER = "11" * 32
 VIEWER = "22" * 32
@@ -527,12 +528,14 @@ def test_media_permission_encrypted_roundtrip_and_cold_hydration(monkeypatch):
 
 
 def test_browser_auth_recovery_executes_real_helper():
-    source = Path('static/js/client/app.js').read_text()
+    source = client_source()
     helper = source[source.index('  async function _mediaCenterFetch('):source.index('  function clearMediaCenterArt(')]
     script = """
 const assert = require('node:assert/strict');
 const realSetTimeout=setTimeout;global.setTimeout=(fn,ms)=>realSetTimeout(fn,Math.min(ms,20));
 let _aiToken='', _aiAuth=null, fail=false, pending=false, statuses=[], calls=[], logins=0, forced=false;
+// mediacenter.js reads app.js's live bindings through the getter object app.js hands it.
+const S={get _aiToken(){return _aiToken;}, set _aiToken(v){_aiToken=v;}, get _aiAuth(){return _aiAuth;}, set _aiAuth(v){_aiAuth=v;}};
 function _setAiToken(token){_aiToken=token;}
 async function ensureAiSession(opts){
  forced=opts.force;
