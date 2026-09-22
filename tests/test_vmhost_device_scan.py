@@ -257,3 +257,16 @@ def test_an_apu_takes_its_hdmi_audio_but_not_the_boards_audio(tmp_path):
     by = {d.address: d for d in devs}
     assert [t.address for t in pci.plan(by["0000:10:00.0"], devs, groups_of(devs))["attach"]] == \
         ["0000:10:00.0", "0000:10:00.1"]
+
+
+def test_a_usb_disk_in_an_array_nothing_mounts_is_still_busy(tmp_path):
+    """An md member whose array is assembled but not mounted (a rebuild, a degraded set being repaired) is in use by
+    the host all the same: handing it to a VM pulls a disk out of a live array."""
+    sys = str(tmp_path / "sys")
+    disk = usb_dev(sys, "0000:0e:00.0", "1-2", "174c", "55aa", bus=1, dev=2)
+    block(sys, os.path.join(disk, "1-2:1.0"), "sdx", parts=("sdx1",))
+    virtual_block(sys, "md7")
+    os.symlink("../../md7", os.path.join(os.path.realpath(os.path.join(sys, "class/block/sdx1")), "holders", "md7"))
+    none = str(tmp_path / "none")
+    d = usb.scan(sys, none, none, ids_paths=(none,))[0]
+    assert d.busy == "the host is using sdx1 (part of md7)" and not d.system
