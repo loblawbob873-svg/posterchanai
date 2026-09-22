@@ -7111,7 +7111,7 @@ body.os-on .osw-body > .feed::-webkit-scrollbar-thumb:hover{background:var(--mut
   background:radial-gradient(1200px 800px at 20% 0%, rgba(var(--accent-rgb),.16), transparent 60%),
              linear-gradient(160deg, var(--bg), var(--bg2, var(--bg)));}
 .os-desk{position:relative;flex:1;min-height:0;overflow:hidden;background-color:#0a0a0f;
-  background-image:url('/static/os-wallpaper-bg.webp'),/* pc-lqip */url('data:image/webp;base64,UklGRp4BAABXRUJQVlA4IJIBAABQCQCdASooABYAPpVCmEilpCIhKrgN+LASiWYAnTLLwsyBK62QXYHPFef+Y/z8uqXnLlfKoHZ0cw5DmuBX8ShM9SE0Y+IN4g+TCwRe1h+iV8P/gAD++5Kxgd602tz5kP/kSN4UZOb6h6iMzhg9PZHcp/6f3tqJYTqddTOsvP9BDYTSzeOKhtPjf4gXqe7dsxiWgYN6GBtFDSvjkTsDcPGSRD+T0PfC5uZZVfeqTfEciRW/0TrneGWIku0VXnrE2PydXACYRuLbPRJay67wFx7bTyPfxD9ueBhxiON7ZUF1FCYtjGS/rPdS7iLPX5PrEpUF43ALDM1fGQXt2tx1TESVlBdCm76iMAh5EOg2hQf22S7zGb6YUgeRSS2UfAtpDKF2aX9rGz2VmBQ+HvwWhCJkEAHykjGJ51coNNiIxvyqPJ66h+qaOgwEmKCIc6XgPYUQTDAJMmwEKffpXDkfYp15dXGpLxs7O91HuWwYVKc6h5Yke30ckdd+QMmD1dmxLvvh51aRl1zw4IuHEW3yfjbrAAA=');
+  background-image:url('/static/os-wallpaper-bg.webp'),/* pc-lqip */url('data:image/webp;base64,UklGRvIAAABXRUJQVlA4IOYAAACwBQCdASocABAAPpU8mUgloyKhMAgAsBKJagCdMoMYGWZleCGVeUBBeKesxIeDE4uGMPUpLwAA/vn8JHACNmme4CDEqKu49aKvUAVga5Ez4jFwf7gjb+cu0Ym3aZIY4yITg/69CKBbxwNlZcDIQdMemW1qUb/MqdvsG4+E/6PzESmJ1Q/T2ebL0f53z0P6R7bx3PVp/BZ/+AvAJNHeRd5u3SB4cFQGjn7AiugZJnFQXv27QzZzpOUJ1iASTjOdymcX3stfH7GIm006mCHsVJMgue9ntsi3yoZEJfEHfHawfrj/4AAAAA==');
   background-size:cover,cover;background-position:center,center;background-repeat:no-repeat,no-repeat}
 /* Full-bleed default wallpaper — the mascot's desk, set to the RIGHT with its own blurred, dimmed
    light filling the left (os/plymouth/generate_wallpaper.py, static/os-wallpaper-bg.webp,
