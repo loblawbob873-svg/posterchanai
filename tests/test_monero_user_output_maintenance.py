@@ -50,7 +50,9 @@ def test_low_capacity_splits_one_output_and_preserves_the_rest(monkeypatch):
     assert method == "sweep_single", "sweep_all would lock every remaining zap output"
     assert params["key_image"] == "largest"
     assert params["account_index"] == 7
-    assert params["outputs"] == 6  # two reserves stay usable; six replenish target eight
+    # 0.009 XMR: six outputs would be 0.0015 each, too small to pay a zap + fees (OUTPUT_USEFUL_ATOMIC);
+    # four 0.00225 outputs can. (Two reserves stay usable.)
+    assert params["outputs"] == 4
     assert result["tx_hash_list"] == ["ab" * 32]
     assert len(transfers) - 1 >= 2, "maintenance did not leave capacity for sequential zaps"
 
