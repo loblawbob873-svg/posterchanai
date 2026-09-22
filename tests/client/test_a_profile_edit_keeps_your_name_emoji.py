@@ -13,6 +13,7 @@ button in instance-access.js. All three now go through one rule.
 import re
 import unittest
 from pathlib import Path
+from tests.client_source import client_source
 
 ROOT = Path(__file__).resolve().parents[2] / "static" / "js" / "client"
 
@@ -34,7 +35,7 @@ def _code_only(src):
 
 class Kind0KeepsEmoji(unittest.TestCase):
     def setUp(self):
-        self.app = _code_only((ROOT / "app.js").read_text())
+        self.app = _code_only(client_source())
         self.ia = _code_only((ROOT / "instance-access.js").read_text())
 
     def test_no_kind0_is_published_with_an_empty_tag_array(self):

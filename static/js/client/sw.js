@@ -147,6 +147,7 @@ const SHELL = [
   '/static/js/client/mail.js',
   '/static/js/client/ai.js',
   '/static/js/client/mediacenter.js',
+  '/static/js/client/profile.js',
   '/static/js/client/vaultcore.js',
   '/static/js/client/vault.js',
   '/static/js/client/chess.js',

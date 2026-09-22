@@ -40,9 +40,15 @@ def _strip_comments_and_strings(src: str) -> str:
     return src
 
 
+def _strip_each_file() -> str:
+    """The stripper, run over app.js and each module split out of it SEPARATELY and then joined — a
+    quote the crude stripper mis-pairs must not run on from one file into the next."""
+    return "\n".join(_strip_comments_and_strings(text) for _, text in client_files())
+
+
 class TestAppJsHasNoPCBinding(unittest.TestCase):
     def test_app_js_never_uses_PC_dot(self):
-        code = _strip_comments_and_strings(client_source())
+        code = _strip_each_file()
         # `PC.` not preceded by a word char, a dot or an underscore — so window.__PC, _PC and PCSync
         # are all left alone; only a bare `PC.something` is a finding.
         hits = [m.start() for m in re.finditer(r"(?<![\w.$_])PC\.", code)]
@@ -148,7 +154,7 @@ class TestUploadsAreFiledSafely(unittest.TestCase):
     """
 
     def test_no_plain_upload_is_filed_under_music(self):
-        src = _strip_comments_and_strings(client_source())
+        src = _strip_each_file()
         # strings are blanked by the stripper, so match the surviving structure of the call
         raw = client_source()
         bad = [m.start() for m in re.finditer(r"uploadBlob\([^;]{0,200}?folder:\s*'Music'", raw)]

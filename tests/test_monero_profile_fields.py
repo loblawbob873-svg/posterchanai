@@ -28,6 +28,7 @@ import subprocess
 import tempfile
 
 import pytest
+from tests.client_source import client_source
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 APP = os.path.join(ROOT, "static", "js", "client", "app.js")
@@ -40,7 +41,7 @@ ADDR = ("47ik6ZUx9MkfTyt9sZRbJk8SJAXCcj44t2vhenUJSAPiB1SJxZSRysvRbMQLVR26"
 
 def _lift(name):
     """The real function out of app.js — never a restatement of it here."""
-    src = open(APP, encoding="utf-8").read()
+    src = client_source()
     m = re.search(r"\n  function " + re.escape(name) + r"\(.*?\n  \}", src, re.S)
     assert m, f"{name} is gone from app.js"
     return m.group(0)
@@ -52,7 +53,7 @@ def xmr_of(profile):
     # so a naive prepend redeclares a const and node refuses the whole file.
     pre = ""
     if "_XMR_RX" not in body.split("function isXmrAddr")[0] or "const _XMR_RX" not in body:
-        m = re.search(r"const _XMR_RX\s*=\s*[^;]+;", open(APP, encoding="utf-8").read())
+        m = re.search(r"const _XMR_RX\s*=\s*[^;]+;", client_source())
         assert m, "_XMR_RX is gone"
         if "const _XMR_RX" not in body:
             pre = m.group(0)
@@ -94,7 +95,7 @@ def test_a_malformed_map_cannot_throw():
 # ---- the write side ----------------------------------------------------------------------------
 
 def test_setting_an_address_writes_every_alias_including_the_map():
-    src = open(APP, encoding="utf-8").read()
+    src = client_source()
     assert "meta.xmr=_xmr; meta.monero_address=_xmr;" in src, "the flat aliases must still be written"
     assert "_m.monero = _xmr;" in src and "meta.cryptocurrency_addresses = _m;" in src, \
         "the map form is what Garnet/Amethyst-fork readers look at"
@@ -105,7 +106,7 @@ def test_setting_an_address_writes_every_alias_including_the_map():
 
 def test_clearing_reaches_the_map_too():
     """A stale address left under a key we no longer write is money going to the wrong place."""
-    src = open(APP, encoding="utf-8").read()
+    src = client_source()
     i = src.index("} else if(_xmrWas){")
     block = src[i:i + 900]
     assert "delete meta.xmr" in block and "delete meta.monero_address" in block

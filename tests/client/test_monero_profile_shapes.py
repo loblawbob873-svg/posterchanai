@@ -32,9 +32,10 @@ import subprocess
 from pathlib import Path
 
 import pytest
+from tests.client_source import client_source
 
 ROOT = Path(__file__).resolve().parents[2]
-APP = (ROOT / "static/js/client/app.js").read_text(encoding="utf-8")
+APP = client_source()
 
 #: The reported account's real address, base58, 95 chars, subaddress form.
 REAL = "85t69QD9cxz19xb8pRnw2gHcurQPkLxfKTUgyAS58QMmYFRQ4va1zML2SwvuL8UTyv5LCee3UxvZo2THxxSC7f5u1gPqfyf"

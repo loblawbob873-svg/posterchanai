@@ -31,6 +31,7 @@ import os
 import re
 
 import pytest
+from tests.client_source import client_source
 
 ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 APPJS = os.path.join(ROOT, "static", "js", "client", "app.js")
@@ -42,7 +43,7 @@ def _read(path):
         return fh.read()
 
 
-APP = _read(APPJS)
+APP = client_source()
 
 
 def _fn(sig):
@@ -123,7 +124,7 @@ def test_a_cached_profile_skips_every_blocking_read(profile):
     empty result) all move behind the paint when there is something cached to paint."""
     assert "const _cached = !!(Store.profile(pk) || Store.feed(e=>e.pubkey===pk).length);" in profile
     guard = profile.index("if(!_cached){")
-    end = profile.index("const p=Store.profile(pk)||{}; const mine=pk===ME.pubkey;")
+    end = profile.index("const p=Store.profile(pk)||{}; const mine=pk===S.ME.pubkey;")
     cold = profile[guard:end]
     for blocking in ("feed.innerHTML=_PROFILE_TOP+", '<div class="spinner">', "await Relay.ready()",
                      "kinds:[0],limit:1", "_loadNotes()"):

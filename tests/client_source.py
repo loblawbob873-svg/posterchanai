@@ -47,6 +47,18 @@ def client_source() -> str:
     return "\n".join(parts)
 
 
+def state_shim(code: str) -> str:
+    """`const S = {…};` for a node harness that runs a function lifted out of a split module.
+
+    Inside a module, app.js's live `let`s are read as `S.ME`, `S.VIEW`, … (getters app.js hands the
+    factory). A harness stubs those bindings under their own names (`let ME = …`), so this returns an
+    `S` whose getters and setters ARE those stubs — declare it after them, in the same scope."""
+    names = sorted(set(re.findall(r"(?<![\w$.])S\.([A-Za-z_$][\w$]*)", code)))
+    return "const S={" + ",".join(
+        f"get {n}(){{return typeof {n}!=='undefined'?{n}:undefined;}},set {n}(v){{{n}=v;}}"
+        for n in names) + "};"
+
+
 def client_files() -> list[tuple[str, str]]:
     """(name, text) for every split module and app.js, SEPARATELY — for a rule that is about one
     scope (each file is its own: app.js's IIFE, or one module's factory)."""

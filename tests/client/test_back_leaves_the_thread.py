@@ -19,6 +19,7 @@ offset.
 import re
 import unittest
 from pathlib import Path
+from tests.client_source import client_source
 
 APP = Path(__file__).resolve().parents[2] / "static" / "js" / "client" / "app.js"
 
@@ -26,7 +27,7 @@ APP = Path(__file__).resolve().parents[2] / "static" / "js" / "client" / "app.js
 class BackLeavesTheThread(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
-        cls.src = APP.read_text()
+        cls.src = client_source()
 
     def test_nav_can_replace_as_well_as_push(self):
         self.assertRegex(self.src, r"function _navUrl\(path, replace\)")
@@ -110,7 +111,7 @@ class TheFeedDoesNotJumpToTheTop(unittest.TestCase):
 
     @classmethod
     def setUpClass(cls):
-        cls.src = APP.read_text()
+        cls.src = client_source()
 
     def test_an_eose_redraw_keeps_the_readers_place(self):
         m = re.search(r"const markEosed = \(\)=>\{[^}]*_drawTimeline\((true|false)\)", self.src)
@@ -158,7 +159,7 @@ class EveryRouteOutOfTheFeedRemembers(unittest.TestCase):
 
     @classmethod
     def setUpClass(cls):
-        cls.src = APP.read_text()
+        cls.src = client_source()
 
     def test_opening_a_post_or_a_profile_remembers_the_feed(self):
         # Anchored on text unique to the route being asserted. `VIEW='thread'` alone also matches the
@@ -210,7 +211,7 @@ class CommentingDoesNotThrowYouToTheTop(unittest.TestCase):
 
     @classmethod
     def setUpClass(cls):
-        cls.src = APP.read_text()
+        cls.src = client_source()
 
     def test_a_repaint_of_the_same_thread_keeps_the_offset(self):
         i = self.src.index("async function renderThread(id, hints){")
@@ -252,7 +253,7 @@ class RepaintingTheCurrentTimelineKeepsThePlace(unittest.TestCase):
 
     @classmethod
     def setUpClass(cls):
-        cls.src = APP.read_text()
+        cls.src = client_source()
 
     def test_a_repaint_of_the_current_timeline_captures_the_offset_itself(self):
         i = self.src.index("function renderTimeline(view, reset){")
@@ -293,7 +294,7 @@ class TheOffsetIsTakenBeforeTheFeedIsBlanked(unittest.TestCase):
 
     @classmethod
     def setUpClass(cls):
-        cls.src = APP.read_text()
+        cls.src = client_source()
 
     def test_the_capture_happens_before_the_spinner(self):
         blank = self.src.index("""feed.innerHTML = '<div class="spinner"></div>'""")

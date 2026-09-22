@@ -1,10 +1,11 @@
 """NIP-A3 Lightning payment-target discovery and zap routing."""
 from pathlib import Path
 import subprocess
+from tests.client_source import client_source
 
 
 ROOT = Path(__file__).resolve().parents[2]
-APP = (ROOT / "static/js/client/app.js").read_text(encoding="utf-8")
+APP = client_source()
 
 
 def test_payment_target_runtime():
