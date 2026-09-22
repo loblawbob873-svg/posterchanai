@@ -47,7 +47,10 @@ WIDTHS = [(390, 844, True), (1280, 860, False)]
 
 def _row_button_classes():
     """Every `track-*` BUTTON class the shipped library row template draws."""
-    src = open(os.path.join(ROOT, "static", "js", "client", "app.js"), encoding="utf-8").read()
+    # The library screen moved out of app.js into music.js: read the client source (both).
+    sys.path.insert(0, ROOT)
+    from tests.client_source import client_source
+    src = client_source()
     at = src.index("function _renderMusicList(")
     body = src[at:src.index("\n  function ", at + 10)]
     return sorted(set(re.findall(r'<button class="(track-[a-z]+)', body)))

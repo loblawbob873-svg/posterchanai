@@ -24,6 +24,7 @@ import os
 import re
 
 import pytest
+from tests.client_source import client_source
 
 ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 APP = os.path.join(ROOT, "static", "js", "client", "app.js")
@@ -31,8 +32,7 @@ APP = os.path.join(ROOT, "static", "js", "client", "app.js")
 
 @pytest.fixture(scope="module")
 def src():
-    with open(APP, encoding="utf-8") as fh:
-        return fh.read()
+    return client_source()
 
 
 def _fn(src, name):

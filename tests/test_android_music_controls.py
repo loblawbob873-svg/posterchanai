@@ -19,6 +19,7 @@ the controls to disappear with nothing in any log to say so:
 from pathlib import Path
 import os
 import re
+from tests.client_source import client_source
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 ANDROID = os.path.join(ROOT, "mobile", "android", "app")
@@ -36,7 +37,7 @@ MAIN = _read(JAVA, "MainActivity.java")
 SERVICE = _read(JAVA, "music", "MusicService.java")
 PLUGIN = _read(JAVA, "music", "MusicPlugin.java")
 WIDGET = _read(JAVA, "music", "MusicWidget.java")
-APPJS = _read(ROOT, "static", "js", "client", "app.js")
+APPJS = client_source()
 
 
 def test_plugin_is_registered_and_named_the_same_on_both_sides():

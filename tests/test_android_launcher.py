@@ -46,6 +46,7 @@ def _code(src):
 HARNESS = r"""
 import java.util.*;
 import place.poster.app.home.*;
+from tests.client_source import client_source
 
 public class Harness {
   static AppShelf.Entry app(String pkg, String label) {
@@ -671,7 +672,7 @@ class LauncherSources(unittest.TestCase):
 
     def test_music_is_a_real_launcher_app_and_deep_link(self):
         tiles = _code(open(os.path.join(HOME, "HomeTiles.java")).read())
-        app = open(os.path.join(ROOT, "static", "js", "client", "app.js"), encoding="utf-8").read()
+        app = client_source()
         self.assertRegex(tiles, r'new Tile\("music",\s*"Music",\s*"music",\s*true\)')
         self.assertIn("'notes','music'", app)
         self.assertIn("if (VIEW==='music') return renderMusicApp()", app)
