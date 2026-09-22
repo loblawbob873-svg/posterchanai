@@ -158,6 +158,10 @@ FIND = r"""(async () => {
   // Ctrl+F again FROM the find box must not replace the regex with the escaped current match.
   __key($('#pcc-f-q'), 'f', {ctrlKey:true}); await __sleep(40);
   out.reKept = $('#pcc-f-q').value;
+  // …nor may F3 IN THE FILE (which selects the match, focus left in the file) then Ctrl+F there.
+  const ta3 = $('#pcc-ta'); ta3.focus(); __key(ta3, 'F3'); await __sleep(40);
+  __key(ta3, 'f', {ctrlKey:true}); await __sleep(60);
+  out.reKeptF3 = $('#pcc-f-q').value;
   out.reOff = await tog('re');
   return out;
 })()"""
@@ -381,6 +385,8 @@ async def drive(url):
                 re_n = len(_re.findall(r"needle_\d", MAIN, _re.I))
                 if not (f["reCount"] or "").endswith(f"of {re_n}"):
                     bad("toggles", f"regex needle_(\\d) gave {f['reCount']!r}, expected {re_n} matches")
+                if f.get("reKeptF3") != "needle_(\\d)":
+                    bad("toggles", f"F3 in the file then Ctrl+F rewrote the regex to {f.get('reKeptF3')!r}")
                 if f["reKept"] != "needle_(\\d)":
                     bad("toggles", f"Ctrl+F from the find box rewrote the query to {f['reKept']!r}")
 
