@@ -72,6 +72,25 @@
       try{
         rfb = new RFB(o.target, ws, { credentials: { password: o.password || '' }, shared: true });
       }catch(err){ status('error', 'The console viewer failed to start'); try{ ws.close(); }catch(_){} return; }
+      /* THE DESKTOP'S UI ZOOM. noVNC measures its box and maps the mouse with getBoundingClientRect,
+       * which is ON-SCREEN (zoomed) size, and treats it as unzoomed CSS pixels. Under the desktop's
+       * zoom (1.25 on a 4K panel) the VM screen was drawn 1.25x too big for its window — its right
+       * part clipped off, "the cursor is not going to the right quarter of the screen" — and pointer
+       * offsets were divided by an unzoomed scale. Both are divided by the EFFECTIVE zoom, measured
+       * on the element itself (visual width / layout width), so this is right at any zoom and a
+       * no-op at 1. tests/client/test_vm_console_grab_real_click.py renders it at 1, 1.25 and 1.5. */
+      const zoomOf = (el) => { try{ const w = el.offsetWidth; return w ? (el.getBoundingClientRect().width / w) || 1 : 1; }catch(_){ return 1; } };
+      if(typeof rfb._screenSize === 'function'){
+        const size = rfb._screenSize.bind(rfb);
+        rfb._screenSize = () => { const s = size(), z = zoomOf(o.target); return { w: s.w / z, h: s.h / z }; };
+      }
+      const disp = rfb._display;
+      if(disp && typeof disp.absX === 'function' && typeof disp.absY === 'function'){
+        const ax = disp.absX.bind(disp), ay = disp.absY.bind(disp);
+        const cz = () => zoomOf(rfb._canvas || o.target.querySelector('canvas') || o.target);
+        disp.absX = (x) => ax(x / cz());
+        disp.absY = (y) => ay(y / cz());
+      }
       rfb.scaleViewport = true;
       rfb.resizeSession = false;
       rfb.addEventListener('connect', () => status('connected', 'Click the screen to grab the mouse'));

@@ -38,6 +38,8 @@ html,body{margin:0;height:100%;background:#111}
 </style></head><body><div id="screen"></div>
 <script>
 window.__errors=[];addEventListener('error',e=>__errors.push(String(e.message||e)));
+const __Q=new URLSearchParams(location.search),__FBW=+(__Q.get('fbw')||64),__FBH=+(__Q.get('fbh')||48);
+if(__Q.get('zoom'))document.documentElement.style.zoom=__Q.get('zoom');
 window.__ptr=[];window.__lockReq=0;window.__status=[];
 // Headless Chrome has no window-manager focus to lock against, so the lock is SIMULATED at the one
 // seam the browser owns: requestPointerLock records the call and makes the element the lock target.
@@ -62,7 +64,7 @@ class FixtureSocket extends EventTarget{
      if(this.rfb==='version'){if(b.length<12)return;this.rx=b.slice(12);this.rfb='sec';this.bin(new Uint8Array([1,1]));continue;}
      if(this.rfb==='sec'){if(b.length<1)return;this.rx=b.slice(1);this.rfb='init';this.bin(new Uint8Array(be32(0)));continue;}
      if(this.rfb==='init'){if(b.length<1)return;this.rx=b.slice(1);this.rfb='normal';const nm=new TextEncoder().encode('fx');
-       this.bin(new Uint8Array([...be16(64),...be16(48),32,24,0,1,...be16(255),...be16(255),...be16(255),16,8,0,0,0,0,...be32(nm.length),...nm]));continue;}
+       this.bin(new Uint8Array([...be16(__FBW),...be16(__FBH),32,24,0,1,...be16(255),...be16(255),...be16(255),16,8,0,0,0,0,...be32(nm.length),...nm]));continue;}
      if(this.rfb!=='normal'||!b.length)return;
      const t=b[0];let len=0;
      if(t===0)len=20;else if(t===2){if(b.length<4)return;len=4+4*((b[2]<<8)|b[3]);}
@@ -103,7 +105,7 @@ async def mouse(b, kind, x, y, button='none', buttons=0):
                                              'buttons': buttons, 'clickCount': 1 if kind != 'mouseMoved' else 0})
 
 
-async def main():
+async def main(query=''):
     server = ThreadingHTTPServer(('127.0.0.1', 0), PageHandler)
     threading.Thread(target=server.serve_forever, daemon=True).start()
     with tempfile.TemporaryDirectory(prefix='pc-vmc-grab-') as profile:
@@ -123,7 +125,7 @@ async def main():
                 b = Browser(ws)
                 await b.call('Page.enable')
                 await b.call('Emulation.setDeviceMetricsOverride', {'width': 1000, 'height': 700, 'deviceScaleFactor': 1, 'mobile': False})
-                await b.call('Page.navigate', {'url': f'http://127.0.0.1:{server.server_port}/vmc-fixture'})
+                await b.call('Page.navigate', {'url': f'http://127.0.0.1:{server.server_port}/vmc-fixture{query}'})
                 for _ in range(100):
                     if await b.js("window.__state==='connected' && !!document.querySelector('#screen canvas')"):
                         break
@@ -192,3 +194,68 @@ def test_the_toolbar_offers_the_grab():
     js = (ROOT / 'static/js/client/vms.js').read_text()
     assert 'data-c="grab"' in js, 'the console toolbar has a Grab mouse button'
     assert '.grab()' in js
+
+
+async def reach(query):
+    """Grab on a SCALED screen under the desktop's UI zoom, push the cursor far right/down and
+    far left/up; return the extreme framebuffer positions the VM received."""
+    server = ThreadingHTTPServer(('127.0.0.1', 0), PageHandler)
+    threading.Thread(target=server.serve_forever, daemon=True).start()
+    with tempfile.TemporaryDirectory(prefix='pc-vmc-reach-') as profile:
+        proc = subprocess.Popen(['/opt/google/chrome/chrome', '--headless=new', '--no-sandbox', '--disable-gpu',
+                                 '--window-size=1000,700', '--remote-debugging-port=0', '--user-data-dir=' + profile,
+                                 'about:blank'], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        try:
+            for _ in range(100):
+                if Path(profile, 'DevToolsActivePort').exists():
+                    break
+                await asyncio.sleep(.1)
+            port = Path(profile, 'DevToolsActivePort').read_text().splitlines()[0]
+            async with httpx.AsyncClient() as h:
+                page = next(p for p in (await h.get('http://127.0.0.1:' + port + '/json')).json() if p.get('type') == 'page')
+            async with websockets.connect(page['webSocketDebuggerUrl'], max_size=20_000_000) as ws:
+                b = Browser(ws)
+                await b.call('Page.enable')
+                await b.call('Emulation.setDeviceMetricsOverride', {'width': 1000, 'height': 700, 'deviceScaleFactor': 1, 'mobile': False})
+                await b.call('Page.navigate', {'url': f'http://127.0.0.1:{server.server_port}/vmc-fixture{query}'})
+                for _ in range(100):
+                    if await b.js("window.__state==='connected' && !!document.querySelector('#screen canvas')"):
+                        break
+                    await asyncio.sleep(.1)
+                await asyncio.sleep(.3)
+                # Where the canvas is ON SCREEN, in the coordinates a real mouse event carries.
+                # On-screen boxes (getBoundingClientRect is already in the zoomed, visual space).
+                r = await b.js("(()=>{const r=document.querySelector('#screen canvas').getBoundingClientRect();return [r.left,r.top,r.width,r.height];})()")
+                box = await b.js("(()=>{const r=document.querySelector('#screen').getBoundingClientRect();return [r.left,r.top,r.width,r.height];})()")
+                cx, cy = r[0] + r[2] / 2, r[1] + r[3] / 2
+                await mouse(b, 'mouseMoved', cx, cy)
+                await mouse(b, 'mousePressed', cx, cy, 'left', 1)
+                await mouse(b, 'mouseReleased', cx, cy, 'left', 0)
+                await asyncio.sleep(.2)
+                for x, y in ((cx, cy), (999, 699), (1, 1), (999, 699)):
+                    await mouse(b, 'mouseMoved', x, y)
+                    await asyncio.sleep(.05)
+                await asyncio.sleep(.2)
+                far = await b.js("__ptr[__ptr.length-1]")
+                await mouse(b, 'mouseMoved', 1, 1)
+                await asyncio.sleep(.2)
+                near = await b.js("__ptr[__ptr.length-1]")
+                fits = r[2] <= box[2] + 1 and r[3] <= box[3] + 1
+                return far, near, await b.js("__errors"), (fits, r, box)
+        finally:
+            proc.terminate()
+            proc.wait(timeout=10)
+            server.shutdown()
+            server.server_close()
+
+
+@pytest.mark.skipif(not Path('/opt/google/chrome/chrome').exists(), reason='Chrome is required')
+@pytest.mark.parametrize('zoom', ['1', '1.25', '1.5'])
+def test_a_grabbed_cursor_reaches_every_edge_of_a_scaled_screen_under_ui_zoom(zoom):
+    """ "the cursor is not going to the right quarter of the screen". A 1280x800 VM scaled into the
+    window, with the desktop's UI zoom: the grabbed cursor must reach the far right and bottom."""
+    far, near, errors, (fits, canvas, box) = asyncio.run(reach(f'?fbw=1280&fbh=800&zoom={zoom}'))
+    assert not errors, errors
+    assert fits, f"zoom {zoom}: the VM screen ({canvas[2]:.0f}x{canvas[3]:.0f}) overflows its window ({box[2]:.0f}x{box[3]:.0f}) — its right edge is cut off"
+    assert far['x'] >= 1270 and far['y'] >= 790, (zoom, far)
+    assert near['x'] <= 5 and near['y'] <= 5, (zoom, near)
