@@ -70,9 +70,17 @@ struct options_t
     std::shared_ptr<wf::config::option_t<bool>> enabled;
     std::shared_ptr<wf::config::option_t<int>> size;
     std::shared_ptr<wf::config::option_t<wf::color_t>> active, inactive;
+    std::shared_ptr<wf::config::option_t<int>> radius;
     int width() const
     {
         return (enabled && enabled->get_value() && size) ? std::clamp(size->get_value(), 0, 32) : 0;
+    }
+
+    /* The corner radius, matching `.osw` in client.css — a native window has to be the same shape as
+     * a PosterChan one or the desktop looks like two desktops. */
+    int round() const
+    {
+        return radius ? std::clamp(radius->get_value(), 0, 64) : 0;
     }
 };
 
@@ -116,13 +124,53 @@ class ring_node_t : public wf::scene::node_t
         return {box.x - b, box.y - b, box.width + 2 * b, box.height + 2 * b};
     }
 
+    /* THE BAND, WITH ROUNDED CORNERS — "Telegram, Terminal and Firefox window borders are not curved
+     * like the regular PosterChan windows".
+     *
+     * A PosterChan window is a `.osw` div with `border-radius:12px`; a native app is a real toplevel,
+     * and this ring was a rectangle XOR a rectangle, so every native window on the desktop had square
+     * corners beside rounded ones. There is no clipping available here — this node paints, it cannot
+     * cut a surface — but it is added in FRONT of the surface, so painting the corner as an ARC both
+     * rounds the frame and covers the app's own square corner underneath it. What is left showing
+     * outside the arc is the ~1px of app content between the outer arc and the window's inset corner,
+     * which at a 2px band and a 12px radius is under a pixel and a half diagonally.
+     *
+     * Built as an explicit union of spans rather than XOR of two rectangles: a wedge subtracted from
+     * the old region would have landed partly in the hole the XOR had already made, and XOR would
+     * have put it back. */
     wf::region_t ring()
     {
         auto o = outer();
         const int b = opts.width();
         if (o.width <= 2 * b || o.height <= 2 * b) return {};
-        wf::region_t r{o};
-        r ^= wf::geometry_t{o.x + b, o.y + b, o.width - 2 * b, o.height - 2 * b};
+        const int R = std::min({opts.round(), o.width / 2, o.height / 2});
+        if (R <= b)
+        {
+            wf::region_t r{o};
+            r ^= wf::geometry_t{o.x + b, o.y + b, o.width - 2 * b, o.height - 2 * b};
+            return r;
+        }
+        wf::region_t r;
+        // The four straight runs, between the corner arcs.
+        r |= wf::geometry_t{o.x + R, o.y, o.width - 2 * R, b};
+        r |= wf::geometry_t{o.x + R, o.y + o.height - b, o.width - 2 * R, b};
+        r |= wf::geometry_t{o.x, o.y + R, b, o.height - 2 * R};
+        r |= wf::geometry_t{o.x + o.width - b, o.y + R, b, o.height - 2 * R};
+        // The arcs: one span per row, between the outer radius and the inner one.
+        const double ri = R - b;
+        for (int row = 0; row < R; row++)
+        {
+            const double dy = R - row - 0.5;
+            const double outer_dx = std::sqrt(std::max(0.0, (double)R * R - dy * dy));
+            const int x0 = (int)std::floor(R - outer_dx);
+            const int x1 = dy < ri ? (int)std::ceil(R - std::sqrt(std::max(0.0, ri * ri - dy * dy))) : R;
+            const int w = std::max(0, x1 - x0);
+            if (!w) continue;
+            r |= wf::geometry_t{o.x + x0, o.y + row, w, 1};                                  // top-left
+            r |= wf::geometry_t{o.x + o.width - x0 - w, o.y + row, w, 1};                    // top-right
+            r |= wf::geometry_t{o.x + x0, o.y + o.height - row - 1, w, 1};                   // bottom-left
+            r |= wf::geometry_t{o.x + o.width - x0 - w, o.y + o.height - row - 1, w, 1};     // bottom-right
+        }
         return r;
     }
 
@@ -247,6 +295,7 @@ class manager_t
         opts.size = config->get_option<int>("posterchan-shell/window_border_size");
         opts.active = config->get_option<wf::color_t>("posterchan-shell/window_border_active_color");
         opts.inactive = config->get_option<wf::color_t>("posterchan-shell/window_border_inactive_color");
+        opts.radius = config->get_option<int>("posterchan-shell/window_border_radius");
         wf::get_core().connect(&on_mapped);
         wf::get_core().connect(&on_unmapped);
         wf::get_core().connect(&on_app_id);

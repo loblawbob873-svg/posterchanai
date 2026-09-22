@@ -20,6 +20,13 @@
       <min>0</min>
       <max>32</max>
     </option>
+    <option name="window_border_radius" type="int">
+      <_short>Window corner radius</_short>
+      <_long>Pixels. Keep equal to the `.osw` border-radius in static/css/client.css: a native app window and a PosterChan window sit on the same desktop, and one square corner beside a round one reads as two desktops. 0 draws the old square ring.</_long>
+      <default>12</default>
+      <min>0</min>
+      <max>64</max>
+    </option>
     <option name="window_border_active_color" type="color">
       <_short>Focused window border</_short>
       <_long>The client's accent at the opacity #pc-oswin-frame.focused draws it, over the desktop colour.</_long>

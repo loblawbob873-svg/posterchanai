@@ -285,3 +285,31 @@ def test_measured_in_a_headless_wayfire(tmp_path):
     assert im.getpixel((290, 78)) == _hex(_root_token("bg")), "the unfocused title bar is not the page colour"
     colours = set(shots["excluded"].getdata())
     assert active not in colours and inactive not in colours, "a PosterChan surface or a fullscreen window was framed"
+
+    # THE CORNERS ARE ROUND, like a PosterChan window's — "Telegram, Terminal and Firefox window
+    # borders are not curved like the regular PosterChan windows".
+    radius = int(_option("posterchan-shell", "window_border_radius"))
+    assert radius == int(re.search(r"^\.osw\{[^}]*?border-radius:(\d+)px", CSS, re.S | re.M).group(1)), \
+        "a native window and a .osw window would have different corners"
+    # The frame's own bounding box, found from the pixels rather than assumed: the leftmost and
+    # topmost place the ring colour appears on the unfocused window.
+    px = shots["framed"].load()
+    w, h = shots["framed"].size
+    xs = [x for x in range(600) for y in range(60, 360) if px[x, y] == inactive]
+    ys = [y for y in range(40, 380) for x in range(0, 600) if px[x, y] == inactive]
+    x0, y0, x1, y1 = min(xs), min(ys), max(xs), max(ys)
+    # The very corner of that box must NOT be ring colour — that is what "rounded" means here — while
+    # the middle of each edge is. A square ring passes the edge half of this and fails the corner.
+    for cx, cy in ((x0, y0), (x1, y0), (x0, y1), (x1, y1)):
+        assert px[cx, cy] != inactive, f"the ring still paints its square corner at {(cx, cy)}"
+    mid = (x0 + x1) // 2
+    assert px[mid, y0] == inactive and px[mid, y1] == inactive, "the straight runs went missing"
+    # And it is an ARC, not a chamfer or one missing pixel: walking down the left corner, the paint
+    # starts further left on every row and has reached the straight edge by the radius. (The top row
+    # itself starts ~R-sqrt(R^2-(R-0.5)^2) in — a circle's top row is short, which is the point.)
+    starts = [next((x for x in range(x0, x0 + 2 * radius) if px[x, y] == inactive), None)
+              for y in range(y0, y0 + radius)]
+    assert all(v is not None for v in starts), f"the corner arc has a gap: {starts}"
+    assert starts == sorted(starts, reverse=True), f"the corner is not an arc: {starts}"
+    assert starts[0] > starts[-1] + 2, f"the corner is a chamfer, not a curve: {starts}"
+    assert starts[-1] - x0 <= 1, f"the arc never meets the straight edge: {starts}"
