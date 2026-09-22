@@ -507,8 +507,18 @@
           const owners=[...new Set(priv.flatMap(f=>Array.isArray(f.authors)&&f.authors.length===1?[String(f.authors[0])]:[]))];
           const room=(sub.filters||[]).length>0&&(sub.filters||[]).every(f=>Array.isArray(f.kinds)&&f.kinds.length>0&&f.kinds.every(k=>Number(k)===1059));
           const user=room&&this._authOwner?this._authOwner():null;
-          const authOwner=user||(owners.length===1?owners[0]:null);
-          const possible=!!user||(priv.length>0&&owners.length===1&&priv.every(f=>Array.isArray(f.authors)&&f.authors.length===1));
+          /* THE OTHER PRIVATE READ IS "ADDRESSED TO ME", and refusing to authenticate for it made a
+           * whole feature silently empty. "Shared with me" (musicshare.js) asks for 30078 documents
+           * somebody ELSE wrote and `p`-tagged to this account — there is no author to bind, so the
+           * owner rule above declined without ever signing, and the view simply had nothing in it.
+           * The account is still the only identity this signs as: every such filter must name THIS
+           * pubkey and nobody else's, which keeps the one-attempt, no-prompt-storm discipline. */
+          const me=this._authOwner?this._authOwner():null;
+          const addressed=!!me&&priv.length>0&&priv.every(f=>Array.isArray(f['#p'])&&f['#p'].length===1&&String(f['#p'][0])===me);
+          // `addressed` is checked before the author binding: a filter that names both (somebody
+          // else's documents addressed to me) can only ever be signed for as ME.
+          const authOwner=user||(addressed?me:(owners.length===1?owners[0]:null));
+          const possible=!!user||addressed||(priv.length>0&&owners.length===1&&priv.every(f=>Array.isArray(f.authors)&&f.authors.length===1));
           sub.authTried=sub.authTried||new Set();
           const finishDenied=()=>{
             sub.eosed.add(conn.url);

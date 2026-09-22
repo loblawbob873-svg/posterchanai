@@ -113,7 +113,10 @@ def test_nip78_read_requires_owner_bound_filter_and_never_leaks_through_broad_qu
     srv._auth_pubkeys[conn] = {owner}
 
     asyncio.run(srv._on_req(conn, "bad", [{"kinds": [30078]}]))
-    assert srv.sent[-1][1][0:3] == ["CLOSED", "bad", "auth-required: NIP-78 reads require AUTH and matching authors"]
+    assert srv.sent[-1][1][0:2] == ["CLOSED", "bad"]
+    # Bound to neither the author nor a recipient: still refused (see
+    # tests/test_music_share_reaches_its_recipient.py for the recipient binding).
+    assert "auth-required" in srv.sent[-1][1][2]
 
     srv.sent.clear()
     asyncio.run(srv._on_req(conn, "mine", [{"kinds": [30078], "authors": [owner]}]))

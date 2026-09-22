@@ -3,7 +3,7 @@
 MEASURED against the live relay:
 
     REQ kinds:[30078] authors:[<owner>] #l:[pcai-pw]
-      -> CLOSED  auth-required: NIP-78 reads require AUTH and matching authors
+      -> CLOSED  auth-required: NIP-78 reads require AUTH as the author or the recipient
 
 A brand-new Firefox install synced nothing and said nothing. The cause was not pairing -- it was
 re-paired twice -- and not the data: the vault is on the relay, 118 documents, every one carrying

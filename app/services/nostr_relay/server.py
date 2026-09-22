@@ -1233,6 +1233,31 @@ class RelayServer:
     def _nip78_owner(self, conn, pubkey: str) -> bool:
         return pubkey in self._auth_pubkeys.get(conn, set())
 
+    @staticmethod
+    def _addressees(ev: dict) -> set:
+        """Who a NIP-78 document was ADDRESSED to: its `p` tags."""
+        return {str(t[1]) for t in ev.get("tags", [])
+                if isinstance(t, list) and len(t) >= 2 and t[0] == "p" and t[1]}
+
+    def _nip78_reader(self, conn, ev: dict) -> bool:
+        """Who may READ a NIP-78 document: its author, or somebody it is addressed to.
+
+        THE AUTHOR-ONLY RULE MADE A WHOLE FEATURE IMPOSSIBLE AND SAID NOTHING. Music sharing
+        (musicshare.js) hands a playlist to a recipient as a 30078 document `p`-tagged to them and
+        NIP-44-encrypted to them; measured on this node, the sharer's two documents were stored and
+        served to nobody, because every read was gated on `pubkey in authed` and the recipient is
+        not the author. "Shared with me" was therefore always empty, with nothing in any log --
+        reported as "I shared Music on TV but can't see it on phone or laptop".
+
+        Adding the addressee is not a widening of what a stranger can see: the `p` tag is written by
+        the AUTHOR, the content is encrypted to that same recipient, and this is the rule the relay
+        already applies to DMs (a gift wrap is served to whoever it is addressed to). An
+        unauthenticated connection still gets nothing."""
+        authed = self._auth_pubkeys.get(conn, set())
+        if not authed:
+            return False
+        return str(ev.get("pubkey", "")) in authed or bool(self._addressees(ev) & authed)
+
     def _challenge(self, conn) -> None:
         challenge = self._auth_challenges.get(conn)
         if challenge:
@@ -1644,14 +1669,20 @@ class RelayServer:
             return
         filters = [f for f in filters if isinstance(f, dict)][: self.cfg.get("max_filters_per_req", 10)]
         if self._filter_explicitly_requests_nip78(filters):
-            owners = {str(pk) for f in filters for pk in (f.get("authors") or [])}
             authed = self._auth_pubkeys.get(conn, set())
-            # An owner-bound authors filter is mandatory: omitting it would ask the relay to expose
-            # every user's private documents to one authenticated identity.
-            if not owners or not owners.issubset(authed):
+            owners = {str(pk) for f in filters for pk in (f.get("authors") or [])}
+            # A filter bound to ME as the RECIPIENT is the other legitimate private read: it is how
+            # "shared with me" (musicshare.js) asks for documents somebody else addressed to this
+            # account. Without it that query has no authors to bind and was refused every time.
+            addressed = {str(pk) for f in filters for pk in (f.get("#p") or [])}
+            # One of the two bindings is mandatory: an unbound filter would ask the relay to expose
+            # every user's private documents to one authenticated identity. `_can_serve_event`
+            # re-checks every event anyway, so a mixed REQ can never leak past this gate.
+            if not ((owners and owners.issubset(authed))
+                    or (addressed and addressed.issubset(authed))):
                 self._challenge(conn)
                 self._send(conn, ["CLOSED", sub_id,
-                                  "auth-required: NIP-78 reads require AUTH and matching authors"])
+                                  "auth-required: NIP-78 reads require AUTH as the author or the recipient"])
                 return
         try:
             events = await self.store.query(filters)
@@ -1676,6 +1707,9 @@ class RelayServer:
         filters = [f for f in filters if isinstance(f, dict)]
         explicit_private = self._filter_explicitly_requests_nip78(filters)
         if explicit_private:
+            # Deliberately stricter than `_on_req`, which also serves a document to the recipient it
+            # is addressed to: a COUNT has no EVENT frames for `_can_serve_event` to filter, so the
+            # only safe binding here is the one the SQL can be trusted with. Nothing counts shares.
             owners = {str(pk) for f in filters for pk in (f.get("authors") or [])}
             if not owners or not owners.issubset(self._auth_pubkeys.get(conn, set())):
                 self._challenge(conn)
@@ -1723,7 +1757,7 @@ class RelayServer:
     def _can_serve_event(self, conn, ev: dict) -> bool:
         kind = int(ev.get("kind", 0))
         if kind in (78, 30078):
-            return self._nip78_owner(conn, ev.get("pubkey", ""))
+            return self._nip78_reader(conn, ev)
         # PRIVATE GIT METADATA IS STILL PRIVATE DATA.
         #
         # The git HTTP side has refused unauthorised clones of a private repo for a long time, and
