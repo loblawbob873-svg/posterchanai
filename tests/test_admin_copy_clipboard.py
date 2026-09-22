@@ -16,6 +16,7 @@ import shutil
 import subprocess
 
 import pytest
+from tests.client_source import client_source
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 ADMIN_JS = os.path.join(ROOT, "static", "js", "admin.js")
@@ -141,6 +142,6 @@ def test_no_sync_try_catch_around_writeText_in_admin_surfaces():
 
 def test_client_delegates_clipboard_write_to_the_admin_iframe():
     """The other half: a cross-origin frame gets no clipboard-write unless the framer grants it."""
-    src = open(CLIENT_JS, encoding="utf-8").read()
+    src = client_source()
     i = src.index("ifr.className='admin-frame'")
     assert "clipboard-write" in src[i:i + 900], "admin iframe must carry allow='clipboard-write'"

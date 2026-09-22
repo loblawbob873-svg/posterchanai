@@ -5,6 +5,7 @@ from pathlib import Path
 
 from tests.client.test_linkify_urls import _harness, _fn
 from app.services.nostr.nostr_service import npub_of
+from tests.client_source import client_source
 
 ROOT = Path(__file__).resolve().parents[2]
 
@@ -17,7 +18,7 @@ def test_new_and_legacy_application_dms_have_openable_profile_mentions():
     start = harness.index('const NT = ')
     end = harness.index('const Store = ', start)
     harness = harness[:start] + 'const NT = () => globalThis.NostrTools;\n' + harness[end:]
-    source = (ROOT / 'static/js/client/app.js').read_text()
+    source = client_source()
     script = (ROOT / 'static/vendor/nostr/nostr.bundle.js').read_text() + '\n' + harness
     script += '\nconst window=globalThis;const applyEmojis=x=>x;\n' + _fn(source, '_dmBodyHtml', 'function _dmBodyHtml(m){')
     script += '\nconst inputs=' + json.dumps(['nostr:' + npub, 'nostr:' + pk]) + ';'

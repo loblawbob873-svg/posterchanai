@@ -26,9 +26,10 @@ lookup correct again rather than merely quiet; the tests below check that both d
 import json
 import subprocess
 from pathlib import Path
+from tests.client_source import client_source
 
 ROOT = Path(__file__).resolve().parents[2]
-APP = (ROOT / "static/js/client/app.js").read_text()
+APP = client_source()
 CONCORD = (ROOT / "static/js/client/concord.js").read_text()
 HTML = (ROOT / "templates/client.html").read_text()
 TILES = (ROOT / "mobile/android/app/src/main/java/place/poster/app/home/HomeTiles.java").read_text()

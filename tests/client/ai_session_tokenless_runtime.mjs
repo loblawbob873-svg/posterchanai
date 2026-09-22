@@ -3,7 +3,9 @@ import { clientSource, clientSourceAt, installStateGlobals } from './client_sour
 
 const app = clientSource();
 const start = app.indexOf('  let _aiAuth = null;');
-const end = app.indexOf('  // In-app Admin:', start);
+  // The AI-auth block ends where app.js's entry points for the split modules begin: the admin
+  // panel comment that used to follow it moved to discover.js.
+const end = app.indexOf('  function _aiDeps(){', start);
 if(start < 0 || end < 0) throw new Error('ensureAiSession moved');
 const shipped = app.slice(start, end);
 

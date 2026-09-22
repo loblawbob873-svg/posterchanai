@@ -1,8 +1,12 @@
 import json,subprocess
 from pathlib import Path
-from tests.client_source import client_source
+from tests.client_source import client_source, state_shims
 APP=client_source()
-SRC=APP[APP.index('  function renderAdmin(opts)'):APP.index('  /* Name the half that is being waited on.')]
+# renderAdmin moved into discover.js; bound by its own closing brace (the comment that used to
+# follow it stayed in app.js). The state shim gives the lifted code app.js's live bindings.
+_at=APP.index('  function renderAdmin(opts)')
+SRC=APP[_at:APP.index('\n  }\n', _at) + 4]
+SRC=SRC+'\n'+state_shims(SRC)
 
 def test_unavailable_signer_shows_recovery_and_retry_opens_admin():
     js='''

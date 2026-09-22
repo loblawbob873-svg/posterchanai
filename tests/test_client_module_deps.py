@@ -135,6 +135,7 @@ GLOBALS = {
     "PC", "Relay", "Store", "NostrTools", "PCQR", "PCZip", "PCSync", "PCNotes", "PCJoplin",
     "PCVault", "PCGit", "PCGitFactory", "PCI18n", "PCI18N", "PCSprite", "PCOutbox", "PCNegentropy",
     "PCOS", "PCTerm", "PCCalendar", "PCContacts", "PCWebxdc", "PCWebSearch", "PCPlaylists",
+    "PCMusicShare", "PCPaymentTargets", "PCPreview", "PCHostFiles", "PCVms", "PCConcord",
     "ClientSettings", "Session", "Outbox", "ICO",
     # app.js's own export, which the moved code already reached as a bare global before it moved
     "__PC",

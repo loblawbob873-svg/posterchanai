@@ -1,11 +1,12 @@
 from pathlib import Path
+from tests.client_source import client_source
 
 
 ROOT = Path(__file__).resolve().parents[2]
 
 
 def test_cold_search_has_two_bounded_retries_and_rechecks_the_socket():
-    src = (ROOT / "static/js/client/app.js").read_text()
+    src = client_source()
     start = src.index("for(let retry=0; postEvs && postEvs.complete === false")
     block = src[start:start + 1100]
     assert "retry<2" in block

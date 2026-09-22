@@ -28,7 +28,7 @@ import shutil
 import subprocess
 import tempfile
 import unittest
-from tests.client_source import client_source
+from tests.client_source import client_source, state_shims
 
 REPO = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 APP = os.path.join(REPO, "static", "js", "client", "app.js")
@@ -58,6 +58,8 @@ def _harness():
         # Shortened so the test does not sit for the real ten seconds; the rule is what is under test.
         "const _TIP_DWELL_MS = 300;",
         _fn(src, "_tipTellOnDismiss", "function _tipTellOnDismiss(root, opts){"),
+        # tips.js reads app.js's live bindings through `S`; the stubs above are those bindings.
+        state_shims(_fn(src, "_tipTellOnDismiss", "function _tipTellOnDismiss(root, opts){")),
     ])
 
 

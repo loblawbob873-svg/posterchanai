@@ -5,6 +5,7 @@ import shutil
 import subprocess
 
 import pytest
+from tests.client_source import client_source
 
 ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 JS = os.path.join(ROOT, "static", "js", "client", "monero-wallet.js")
@@ -86,7 +87,7 @@ def test_incoming_bucket_is_received_even_when_amount_string_has_no_sign():
 
 
 def test_wallet_is_wired_as_optional_module_and_tip_falls_back():
-    app = open(APP, encoding="utf-8").read()
+    app = client_source()
     tpl = open(TPL, encoding="utf-8").read()
     assert "renderModuleView('wallet','monero-wallet.js','PCMoneroWallet','render')" in app
     # The module is LOADED on demand and then asked. Testing the global alone made the built-in
@@ -101,7 +102,7 @@ def test_wallet_is_wired_as_optional_module_and_tip_falls_back():
 
 
 def test_wallet_click_owns_boot_landing_and_more_uses_real_coin_sprite():
-    app = open(APP, encoding="utf-8").read()
+    app = client_source()
     activate = app[app.index("function activateNavView"):app.index("function timelineTop")]
     assert "requestView(target);" in activate
     assert "['wallet','coin','Monero Wallet']" in app

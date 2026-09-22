@@ -22,6 +22,7 @@ import re
 import shutil
 import subprocess
 import unittest
+from tests.client_source import client_source
 
 ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 CLIENT = os.path.join(ROOT, "static", "js", "client")
@@ -35,7 +36,7 @@ def _src(name):
 
 class TestTheButton(unittest.TestCase):
     def setUp(self):
-        self.app = _src("app.js")
+        self.app = client_source()   # the library screen moved into music.js
         at = self.app.index("function _renderMusicList(")
         self.body = self.app[at:self.app.index("\n  function ", at + 10)]
 
