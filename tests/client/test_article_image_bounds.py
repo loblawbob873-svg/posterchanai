@@ -1,9 +1,10 @@
 from pathlib import Path
+from tests.client_source import client_source
 
 
 ROOT = Path(__file__).parents[2]
 CSS = (ROOT / "static/css/client.css").read_text(encoding="utf-8")
-APP = (ROOT / "static/js/client/app.js").read_text(encoding="utf-8")
+APP = client_source()
 
 
 def test_article_body_images_are_bounded_without_being_cropped():

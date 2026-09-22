@@ -18,6 +18,7 @@ installed after the first request, and a wrong postMessage target means a creden
 import os
 import re
 import sys
+from tests.client_source import client_source
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, ROOT)
@@ -84,7 +85,7 @@ def test_the_wrapper_never_clobbers_an_existing_authorization():
 def test_the_client_sends_the_token_to_one_exact_origin():
     """A credential must not be broadcast. '*' here would hand the session to any page that manages to
     end up in that frame."""
-    js = _read(APP_JS)
+    js = client_source()
     i = js.index("function _sendAdminToken()")
     body = js[i:i + 500]
     assert "postMessage({ type:'pc-admin-token'" in body
@@ -93,7 +94,7 @@ def test_the_client_sends_the_token_to_one_exact_origin():
 
 
 def test_the_hello_is_answered_only_for_our_own_frame():
-    js = _read(APP_JS)
+    js = client_source()
     i = js.index("function _bindAdminTokenBridge()")
     body = js[i:i + 600]
     assert "e.source!==_adminFrameEl.contentWindow" in body, \

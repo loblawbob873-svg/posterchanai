@@ -11,9 +11,10 @@ what can be checked here.
 """
 import re
 from pathlib import Path
+from tests.client_source import client_source
 
 ROOT = Path(__file__).resolve().parent.parent
-APP = (ROOT / "static" / "js" / "client" / "app.js").read_text()
+APP = client_source()
 API = (ROOT / "app" / "routers" / "torrent.py").read_text()
 
 

@@ -1,6 +1,7 @@
 import json,subprocess
 from pathlib import Path
-APP=(Path(__file__).resolve().parents[2]/'static/js/client/app.js').read_text()
+from tests.client_source import client_source
+APP=client_source()
 SRC=APP[APP.index('  function renderAdmin(opts)'):APP.index('  /* Name the half that is being waited on.')]
 
 def test_unavailable_signer_shows_recovery_and_retry_opens_admin():
