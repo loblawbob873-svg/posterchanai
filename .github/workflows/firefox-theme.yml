@@ -72,8 +72,11 @@ jobs:
         run: |
           set +e
           # Submit the SAME BYTES that were built and tested. Exit 3 = awaiting Mozilla's review.
+          # The channel per version lives beside the theme: unlisted = signed within minutes (what
+          # PosterChanOS ships), listed = the public page, signed only after a human review.
+          ch=$(tr -d '[:space:]' < os/firefox-theme/amo-channel 2>/dev/null || echo listed)
           python3 os/firefox-theme/amo.py --xpi "${{ steps.build.outputs.xpi }}" \
-            --out "/tmp/${{ steps.build.outputs.name }}" --timeout 2400
+            --out "/tmp/${{ steps.build.outputs.name }}" --timeout 2400 --channel "${ch:-listed}"
           rc=$?
           if [ $rc -eq 3 ]; then
             echo "::notice title=Firefox theme::v${{ steps.build.outputs.ver }} is awaiting Mozilla's review; the scheduled run will publish it once approved"

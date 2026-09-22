@@ -1,7 +1,7 @@
 {
   "manifest_version": 2,
   "name": "PosterChan Cyberpunk",
-  "version": "1.1.0",
+  "version": "1.1.1",
   "description": "PosterChanOS's cyberpunk look for Firefox: a neon synthwave skyline across the tab strip, violet toolbars, cyan and magenta accents, the PosterChan mascot \u2014 and text that stays readable (every pair WCAG AA).",
   "author": "PosterChan",
   "homepage_url": "https://poster.place",
