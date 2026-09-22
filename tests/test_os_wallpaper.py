@@ -3,17 +3,26 @@
 PosterChanOS's session IS the windowed desktop (static/js/client/os.js), so one file is both the
 OS wallpaper and desktop-mode's default: static/os-wallpaper-bg.webp. It must be 3840x2160 so it is
 crisp on a 4K monitor, and client.css must scale it with `cover` (fills any aspect ratio, no
-letterboxing). os/plymouth/generate_wallpaper.py regenerates it deterministically in size.
+letterboxing). os/plymouth/generate_wallpaper.py renders it from os/plymouth/wallpaper-art.webp.
 
-The picture itself is square and the screen is not, so the composition is load-bearing rather than
-decorative and is measured here, not eyeballed: the ICON CORNER must stay dark (os.js lays desktop
-icons out from the top left, and a label is white text with a shadow — over a bright out-of-focus
-neon sign it is unreadable, which is exactly what a centred or left-set picture produces), the
-artwork must actually be in the file (a blur-only render is a plausible bug and looks like a
-deliberately moody wallpaper), and the join between the sharp picture and its blurred extension must
-not read as a vertical seam.
+WHY THE COMPOSITION IS MEASURED HERE AND NOT EYEBALLED: os.js lays desktop icons out from the TOP
+LEFT and draws their labels in white, and this artwork's top left is a paper poster and a lit
+lantern — 45/255 mean and 254 peak in the source, i.e. white text on white paper. The generator
+darkens that side in proportion to each pixel's own brightness, and client.css lays its `::before`
+scrim over the same corner at display time. Three ways that goes wrong silently, one test each:
+
+  * the corner ends up bright and every label loses its contrast — on the one screen where a label
+    is the only thing identifying an app;
+  * it is "fixed" by dimming the whole picture, which costs the wallpaper and nobody notices,
+    because the corner measurement it was aimed at passes;
+  * the art is fitted rather than covered, which letterboxes a 4K screen.
+
+The readability test composites the REAL scrim parsed out of client.css, because the wallpaper and
+the scrim are partners: judged alone, either one can look wrong while what a person sees is fine
+(and a scrim weakened later would silently undo the wash the generator applied).
 """
 import os
+import re
 import subprocess
 import sys
 import tempfile
@@ -22,26 +31,50 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 WP = ROOT / "static/os-wallpaper-bg.webp"
+ART = ROOT / "os/plymouth/wallpaper-art.webp"
 CSS = (ROOT / "static/css/client.css").read_text(encoding="utf-8")
+ICONS = (0.0, 0.0, 0.20, 0.55)      # the slice of the desktop the icon grid is laid out into
+BUSY = (0.45, 0.0, 1.0, 1.0)        # the half the picture has to survive in
 
 
-def _luma(box=None, size=(384, 216)):
+def _grey(path, box=None, size=(384, 216)):
+    import numpy as np
     from PIL import Image
-    with Image.open(WP) as im:
+    with Image.open(path) as im:
         g = im.convert("L").resize(size, Image.LANCZOS)
-    return g.crop(box) if box else g
+    a = np.asarray(g, dtype=float)
+    if box:
+        x0, y0, x1, y1 = box
+        h, w = a.shape
+        a = a[int(h * y0):int(h * y1), int(w * x0):int(w * x1)]
+    return a
 
 
-def _join_x():
-    """Where the sharp picture meets its blurred extension, from the generator's own geometry — a
-    hardcoded band stops containing the join the moment ZOOM or the art's aspect changes, and the
-    seam assertion then passes over empty blur for ever."""
-    import importlib.util
-    spec = importlib.util.spec_from_file_location("pc_wp", ROOT / "os/plymouth/generate_wallpaper.py")
-    gw = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(gw)
-    left = gw.W - gw._panel_size(gw._art())[0]
-    return left, left + gw.FEATHER
+def _scrim():
+    """The `.os-desk::before` gradient as (position, alpha) stops, read from the shipped CSS."""
+    i = CSS.index(".os-desk::before")
+    rule = CSS[i:CSS.index("}", i)]
+    stops = re.findall(r"rgba\([^)]*?,\s*([\d.]+)\)\s+([\d.]+)%", rule)
+    assert stops, "the readability scrim is gone from .os-desk::before"
+    return [(float(pos) / 100.0, float(alpha)) for alpha, pos in stops]
+
+
+def _as_seen(box):
+    """The wallpaper with the scrim over it — what a person actually looks at."""
+    import numpy as np
+    a = _grey(WP, box)
+    stops = _scrim()
+    h, w = a.shape
+    x0, y0, x1, y1 = box
+    # a 135deg gradient: progress runs from the top-left corner to the bottom-right one
+    yy, xx = np.mgrid[0:h, 0:w]
+    t = ((x0 + (xx + 0.5) / w * (x1 - x0)) + (y0 + (yy + 0.5) / h * (y1 - y0))) / 2
+    alpha = np.zeros_like(t)
+    for (p0, a0), (p1, a1) in zip(stops, stops[1:]):
+        m = (t >= p0) & (t <= p1)
+        alpha[m] = a0 + (a1 - a0) * ((t[m] - p0) / (p1 - p0 or 1))
+    alpha[t >= stops[-1][0]] = stops[-1][1]
+    return a * (1 - alpha) + 10 * alpha      # the scrim's own colour is #0a0a0f
 
 
 class TestWallpaper(unittest.TestCase):
@@ -59,72 +92,52 @@ class TestWallpaper(unittest.TestCase):
         rule = CSS[CSS.rindex(".os-desk{", 0, i):i + 40]
         self.assertIn("cover", rule, "the desk wallpaper must be `cover` for 4K / any aspect ratio")
 
-    def test_the_icon_corner_stays_dark_enough_for_labels(self):
-        """os.js draws icons from the top left and their labels are white; the composition puts the
-        dimmed, blurred side of the picture there on purpose. Measured here so moving the artwork
-        (or brightening the ambient fill) cannot quietly cost every label its contrast."""
-        corner = _luma((0, 0, 77, 118))          # the left 20% x top 55% — where the icon grid lives
-        px = list(corner.getdata())
-        self.assertLess(sum(px) / len(px), 45, "the icon corner is too bright for white labels")
-        self.assertLess(max(px), 120, "a bright detail landed under the icon grid")
+    def test_an_icon_label_has_something_to_stand_on(self):
+        """Wallpaper + the shipped scrim, over the corner the icon grid is laid out into. Measured:
+        the source art alone is 45 mean / 254 peak there — a white label on a white poster."""
+        seen = _as_seen(ICONS)
+        self.assertLess(seen.mean(), 40, "the icon corner is too bright for white labels")
+        self.assertLess(seen.max(), 130, "a bright detail (the poster, the lantern) survived under the icons")
 
-    def test_the_artwork_is_in_it_and_on_the_busy_side(self):
-        """A blur-only render (art missing, ambient fill alone) is a real failure mode and looks
-        intentional. The right-hand side must carry both detail and colour."""
+    def test_the_wash_is_local_and_the_picture_survives_it(self):
+        """The cheap way to pass the test above is to dim the whole wallpaper, which costs the
+        picture and passes silently. So the busy half must keep the source's own brightness."""
+        src = _grey(ART, BUSY).mean()
+        out = _grey(WP, BUSY).mean()
+        self.assertGreater(out, src * 0.88, f"the whole picture was dimmed, not just the icon side ({out:.1f} vs {src:.1f})")
+
+    def test_the_artwork_is_in_it(self):
+        """A render carrying no artwork (a fill or a wash alone) is a real failure mode and looks
+        like a deliberately moody wallpaper. The picture side must carry detail AND colour."""
         from PIL import Image
-        right = _luma((172, 0, 384, 216))
-        px = list(right.getdata())
-        mean = sum(px) / len(px)
-        sd = (sum((v - mean) ** 2 for v in px) / len(px)) ** 0.5
-        self.assertGreater(sd, 25, "the right-hand side has no detail — the artwork is not in it")
+        self.assertGreater(_grey(WP, BUSY).std(), 25, "the picture side has no detail — the artwork is not in it")
         with Image.open(WP) as im:
             rgb = im.convert("RGB").resize((384, 216), Image.LANCZOS).crop((172, 0, 384, 216))
         sat = [max(p) - min(p) for p in rgb.getdata()]
         self.assertGreater(sum(sat) / len(sat), 25, "the picture side is nearly grey")
 
-    def test_there_is_no_visible_seam(self):
-        """The sharp picture fades into its own blur over FEATHER px. If that fade is dropped (or
-        narrowed) the join is a vertical line down the desktop — obvious to a person and invisible
-        to every other assertion here. Column MEANS do not see it (a 2160px average of two views of
-        the same scene barely differs across the join), so this measures the per-column mean
-        horizontal STEP and holds the join to the picture's own detail: a seam is a step sharper
-        than anything the artwork contains. Measured: 3.0 as shipped, 11.0 with the fade removed."""
-        import numpy as np
-        from PIL import Image
-        with Image.open(WP) as im:
-            a = np.asarray(im.convert("L"), dtype=float)
-        step = np.abs(np.diff(a, axis=1)).mean(axis=0)
-        x0, x1 = _join_x()
-        joint = step[max(0, x0 - 40):x1 + 40].max()         # the band the fade actually lives in
-        detail = float(np.median(step[x1 + 200:]))          # the artwork's own edges, for scale
-        self.assertLess(joint, 2 * detail,
-                        "a vertical step where the picture meets its blurred extension")
+    def test_it_covers_rather_than_fits(self):
+        """`cover` crops the overflow; `fit` would letterbox a 16:9 screen with flat bars that no
+        size assertion can see — the file is still 3840x2160."""
+        top, bottom = _grey(WP)[0], _grey(WP)[-1]
+        self.assertGreater(top.std(), 5, "the top row is a flat bar — the art was fitted, not covered")
+        self.assertGreater(bottom.std(), 5, "the bottom row is a flat bar — the art was fitted, not covered")
 
     def test_the_shipped_file_is_what_the_generator_makes(self):
         """The wallpaper is a build product of os/plymouth/wallpaper-art.webp. Hand-editing the webp
         works until the next regeneration silently reverts it."""
-        from PIL import Image, ImageChops
-        self.assertTrue((ROOT / "os/plymouth/wallpaper-art.webp").exists(), "the source art is missing")
-        with tempfile.TemporaryDirectory() as tmp:      # never into the working tree: the checks run
-            out = os.path.join(tmp, "wp.webp")           # concurrently against a live deployment
-            r = subprocess.run([sys.executable, str(ROOT / "os/plymouth/generate_wallpaper.py")],
-                               env=dict(os.environ, PC_WALLPAPER_OUT=out), capture_output=True, text=True)
-            self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
-            with Image.open(WP) as a, Image.open(out) as b:
-                a = a.convert("L").resize((96, 54), Image.LANCZOS)
-                b = b.convert("L").resize((96, 54), Image.LANCZOS)
-            d = list(ImageChops.difference(a, b).getdata())
-            self.assertLess(sum(d) / len(d), 4, "the shipped wallpaper is not what the generator renders")
-
-    def test_generator_reproduces_a_4k_image(self):
+        import numpy as np
         from PIL import Image
-        with tempfile.TemporaryDirectory() as tmp:
-            out = os.path.join(tmp, "wp.webp")
+        self.assertTrue(ART.exists(), "the source art is missing")
+        with tempfile.TemporaryDirectory() as tmp:      # never into the working tree: the checks run
+            out = os.path.join(tmp, "wp.webp")          # concurrently against a live deployment
             r = subprocess.run([sys.executable, str(ROOT / "os/plymouth/generate_wallpaper.py")],
                                env=dict(os.environ, PC_WALLPAPER_OUT=out), capture_output=True, text=True)
             self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
             with Image.open(out) as im:
                 self.assertEqual(im.size, (3840, 2160))
+            d = np.abs(_grey(WP, size=(96, 54)) - _grey(out, size=(96, 54)))
+            self.assertLess(d.mean(), 4, "the shipped wallpaper is not what the generator renders")
 
 
 if __name__ == "__main__":
