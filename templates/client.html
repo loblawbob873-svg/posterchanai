@@ -514,6 +514,10 @@
 <script src="/static/js/client/termhist.js?v={{ ver }}"></script>
 <script src="/static/js/client/notes.js?v={{ ver }}"></script>
 <script src="/static/js/client/playlists.js?v={{ ver }}"></script>
+<!-- The music player, split out of app.js. It ships with the page rather than loading on demand:
+     the player is armed at startup so a car or headset button reaches a live session, and app.js
+     reads `MusicPlayer` as an object through a Proxy onto this module. -->
+<script src="/static/js/client/musicplayer.js?v={{ ver }}"></script>
 <script src="/static/js/client/vaultcore.js?v={{ ver }}"></script>
 <script src="/static/js/client/vault.js?v={{ ver }}"></script>
 <script src="/static/js/client/git.js?v={{ ver }}"></script>

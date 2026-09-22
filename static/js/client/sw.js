@@ -159,6 +159,7 @@ const SHELL = [
   '/static/js/client/dmthread.js',
   '/static/js/client/menus.js',
   '/static/js/client/compose.js',
+  '/static/js/client/musicplayer.js',
   '/static/js/client/vaultcore.js',
   '/static/js/client/vault.js',
   '/static/js/client/chess.js',

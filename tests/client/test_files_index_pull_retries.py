@@ -38,6 +38,7 @@ import subprocess
 import tempfile
 from pathlib import Path
 import unittest
+from tests.client_source import client_source
 
 REPO = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 APP = os.path.join(REPO, "static", "js", "client", "app.js")
@@ -59,8 +60,7 @@ def _fn(src, name, opener):
 
 
 def _methods():
-    with open(APP) as fh:
-        src = fh.read()
+    src = client_source()
     # ANCHORED to the FilesIdx object. `ensure(){` and `async pull(){` both appear elsewhere in
     # app.js (MusicPlayer has an ensure of its own), and a test that silently extracts the wrong
     # function tests nothing while looking green — this one failed loudly, which is how it was found.
@@ -142,7 +142,7 @@ function makeIdx(opts){
 
 class FilesIndexPullRetries(unittest.TestCase):
     def test_picker_keeps_indexed_folders_even_when_current_blob_filter_is_empty(self):
-        app = (Path(__file__).resolve().parents[2] / "static/js/client/app.js").read_text()
+        app = client_source()
         # THE RULE, NOT THE CALL TEXT. The bar must be built from the index and must consult
         # isEncFolder — but the exact expression changed when a caller was given a way to ASK for
         # encrypted folders (the Meme Builder needs Music, which is one), and a literal match
