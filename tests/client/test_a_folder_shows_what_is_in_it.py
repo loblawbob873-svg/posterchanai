@@ -20,12 +20,13 @@ import re
 import subprocess
 import unittest
 from pathlib import Path
+from tests.client_source import client_source
 
 APP = Path(__file__).resolve().parents[2] / "static" / "js" / "client" / "app.js"
 
 
 def _run(window, index_files, folder, caller_filter="null"):
-    src = APP.read_text()
+    src = client_source()
     keep = re.search(r"      const _keep = b => \{.*?\n      \};", src, re.S)
     rows = re.search(r"      const _folderRows = f => \{.*?\n      \};", src, re.S)
     if not keep:

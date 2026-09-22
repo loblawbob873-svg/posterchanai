@@ -517,6 +517,9 @@
 <!-- The music player, split out of app.js. It ships with the page rather than loading on demand:
      the player is armed at startup so a car or headset button reaches a live session, and app.js
      reads `MusicPlayer` as an object through a Proxy onto this module. -->
+<!-- The encrypted drive index, split out of app.js. Every screen that shows a file reads it
+     synchronously, so it ships with the page; app.js reaches it through a Proxy. -->
+<script src="/static/js/client/filesindex.js?v={{ ver }}"></script>
 <script src="/static/js/client/musicplayer.js?v={{ ver }}"></script>
 <script src="/static/js/client/vaultcore.js?v={{ ver }}"></script>
 <script src="/static/js/client/vault.js?v={{ ver }}"></script>

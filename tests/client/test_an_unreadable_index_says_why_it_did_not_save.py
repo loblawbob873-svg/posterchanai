@@ -34,6 +34,7 @@ import shutil
 import subprocess
 import tempfile
 import unittest
+from tests.client_source import client_source
 
 REPO = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 APP = os.path.join(REPO, "static", "js", "client", "app.js")
@@ -102,8 +103,7 @@ function makeIdx(blocked){
 
 
 def _run():
-    with open(APP) as fh:
-        src = fh.read()
+    src = client_source()
     save_once = _fn(src, "_saveOnce", "async _saveOnce(){")
     js = PAGE.replace("__SAVE__", save_once)
     js = js[js.index("<script>") + len("<script>"):js.rindex("</script>")]
@@ -156,8 +156,7 @@ class UnreadableIndexSaysWhy(unittest.TestCase):
 
     def test_a_successful_pull_withdraws_the_diagnosis(self):
         """never-latches — a flag that can only go TRUE is a wrong answer waiting to happen."""
-        with open(APP) as fh:
-            src = fh.read()
+        src = client_source()
         # There are two `async pull(` in app.js — the Store's and the drive's — and pull() contains
         # braces inside strings and regexes, which a brace counter mis-bounds. Take the REGION
         # between the drive's pull() and the method that follows it; if either anchor moves this
