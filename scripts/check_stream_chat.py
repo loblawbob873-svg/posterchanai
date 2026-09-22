@@ -28,6 +28,8 @@ import sys
 from pathlib import Path
 
 APP_JS = Path(__file__).resolve().parents[1] / "static" / "js" / "client" / "app.js"
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+from tests.client_source import client_source  # noqa: E402  (app.js + the modules split out of it)
 RELAYS = ["wss://nos.lol", "wss://relay.zap.stream", "wss://relay.damus.io"]
 SAMPLE = 150          # 30311s to pull per relay
 PROBE = 12            # host≠author streams to probe for chat
@@ -49,7 +51,7 @@ def _host(ev):
 
 def check_source():
     """The client must address chat by the 30311's AUTHOR, and still read the host coordinate too."""
-    src = APP_JS.read_text()
+    src = client_source()   # the stream page lives in streams.js now
     problems = []
     if not re.search(r"const saddr=`30311:\$\{e\.pubkey\}:\$\{dtag\}`", src):
         problems.append("the chat coordinate is not built from the stream event's author (e.pubkey)")

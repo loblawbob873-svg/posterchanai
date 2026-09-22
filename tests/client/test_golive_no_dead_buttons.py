@@ -34,6 +34,7 @@ import os
 import re
 
 import pytest
+from tests.client_source import client_source
 
 ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 APPJS = os.path.join(ROOT, "static", "js", "client", "app.js")
@@ -44,7 +45,7 @@ def _read(path):
         return fh.read()
 
 
-APP = _read(APPJS)
+APP = client_source()
 
 
 def _fn(sig):

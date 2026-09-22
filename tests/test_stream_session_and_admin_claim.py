@@ -26,6 +26,7 @@ import subprocess
 from pathlib import Path
 
 import pytest
+from tests.client_source import client_source, state_shim
 
 ROOT = Path(__file__).resolve().parents[1]
 APP_JS = ROOT / "static" / "js" / "client" / "app.js"
@@ -34,7 +35,7 @@ APP_JS = ROOT / "static" / "js" / "client" / "app.js"
 # --- stream session identity ---------------------------------------------------------------------
 
 def test_the_d_tag_is_the_session_not_the_lifetime_publish_token():
-    src = APP_JS.read_text(encoding="utf-8")
+    src = client_source()
     assert "['d', s.token]" not in src, (
         "the 30311 `d` is the publish token again — that token never rotates, so every broadcast "
         "replaces the previous one at the same replaceable address")
@@ -77,14 +78,14 @@ def test_parking_an_ended_event_is_authorized_by_the_token_not_the_raw_d():
 def test_client_and_server_agree_on_how_to_strip_the_session_suffix():
     """Two implementations of one rule; if they drift, the VOD lookup and the liveness probe disagree."""
     from app.services.stream_end_service import token_of
-    js = re.search(r"function _tokenOfD\(d\).*?\.replace\((/.*?/),", APP_JS.read_text(encoding="utf-8"), re.S)
+    js = re.search(r"function _tokenOfD\(d\).*?\.replace\((/.*?/),", client_source(), re.S)
     assert js, "_tokenOfD no longer strips the suffix with a replace()"
     assert "-\\d{9,}$" in js.group(1), f"client strips {js.group(1)!r}, server strips -\\d{{9,}}$"
     assert token_of({"event": {"tags": [["d", "abc-1780000000"]]}}) == "abc"
 
 
 def test_the_watch_link_and_the_announcement_address_the_published_stream():
-    src = APP_JS.read_text(encoding="utf-8")
+    src = client_source()
     assert "identifier:info.token" not in src, (
         "a naddr built from the publish token addresses whichever broadcast most recently overwrote "
         "that address, not this one")
@@ -95,7 +96,7 @@ def test_the_watch_link_and_the_announcement_address_the_published_stream():
 # --- replay stamping ------------------------------------------------------------------------------
 
 def test_the_recording_tag_is_pushed_to_the_relays_other_clients_read():
-    src = APP_JS.read_text(encoding="utf-8")
+    src = client_source()
     fn = src[src.index("async function _backfillRecordingTag"):]
     fn = fn[:fn.index("\n  /* STAMP THE REPLAY")]
     assert "Relay.publishTo(STREAM_RELAYS" in fn, (
@@ -104,7 +105,7 @@ def test_the_recording_tag_is_pushed_to_the_relays_other_clients_read():
 
 
 def test_replays_are_stamped_without_the_streamer_reopening_their_own_stream():
-    src = APP_JS.read_text(encoding="utf-8")
+    src = client_source()
     assert "_stampReplayWhenReady" in src and "_sweepUnstampedReplays" in src
     # ...and both are actually wired, not just defined.
     assert src.count("_stampReplayWhenReady") >= 2, "defined but never called"
@@ -112,7 +113,7 @@ def test_replays_are_stamped_without_the_streamer_reopening_their_own_stream():
 
 
 def test_the_replay_lookup_picks_this_broadcasts_recording():
-    src = APP_JS.read_text(encoding="utf-8")
+    src = client_source()
     assert "const v=(j.vods||[])[0]" not in src, (
         "vods[0] is the newest recording for a token shared by every broadcast, so opening an old "
         "stream plays — and stamps — somebody else's session")
@@ -197,7 +198,7 @@ def test_a_replay_is_never_matched_to_an_earlier_broadcasts_recording(tmp_path):
     difference over a six-hour window, so it reached back and took one. A recording cannot begin before
     the broadcast was announced; "no recording yet" must yield nothing so the caller retries.
     """
-    src = APP_JS.read_text(encoding="utf-8")
+    src = client_source()
     body = src[src.index("async function _vodUrlFor"):]
     body = body[:body.index("\n  /* The tab that was closed")]
     assert "Math.abs((parseInt(v.started_at" not in body, "scoring on |difference| again"
@@ -235,7 +236,7 @@ console.log(JSON.stringify(out));
 def test_a_wrong_recording_tag_can_be_corrected():
     """The stamp bailed on ANY existing `recording`, so a bad one was permanent — which is how four
     events stayed pointed at a dead blob. The sweep is now also the repair path."""
-    src = APP_JS.read_text(encoding="utf-8")
+    src = client_source()
     fn = src[src.index("async function _backfillRecordingTag"):]
     fn = fn[:fn.index("\n  /* STAMP THE REPLAY")]
     assert "if(_cur === vurl) return;" in fn, "no longer a no-op only when the tag already matches"
@@ -264,7 +265,7 @@ def test_the_end_of_stream_message_is_reassuring_not_a_warning():
     on seven real streams: 62-89s end-to-live, uncorrelated with clip length. So the copy states the
     wait and that leaving is safe — a blocking "don't close the app" warning would be false, and false
     warnings are how users learn to dismiss real ones."""
-    src = APP_JS.read_text(encoding="utf-8")
+    src = client_source()
     assert "You can close the app; it finishes on the server." in src
     assert "about a minute" in src
     # ...and it must only promise a replay when one is actually coming.
@@ -276,7 +277,7 @@ def test_a_stream_that_just_ended_does_not_claim_it_has_no_recording():
     """The recording does not exist for ~60-90s after the stream ends. Stating 'no recording available'
     in that window told the streamer their replay had failed while it was still being made — which is
     what made people think they had to sit and wait with the app open."""
-    src = APP_JS.read_text(encoding="utf-8")
+    src = client_source()
     branch = src[src.index("if(!playUrl){"):]
     branch = branch[:branch.index("if(n2) n2.textContent = vurl")]
     assert "_fresh" in branch and "15 * 60" in branch, "no recent-vs-really-absent distinction"
@@ -299,7 +300,7 @@ def test_a_stale_live_announcement_is_not_re_adopted_forever():
       * the announcement must be OLD — the heartbeat needs three misses over ~2 minutes before it ends
         anything, because OBS reconnects. A recent dead feed is still adopted and left to that path.
     """
-    src = (ROOT / "static" / "js" / "client" / "app.js").read_text(encoding="utf-8")
+    src = client_source()
     i = src.index("async function _retireIfOver(")
     body = src[i:src.index("async function _sweepStaleOwnLive(")]
 
@@ -341,13 +342,13 @@ def test_a_401_from_our_api_means_reachable_not_offline(tmp_path):
     means we could not reach it. 5xx is deliberately excluded — a sick origin is exactly when the HLS
     probe fails for reasons unrelated to the broadcast.
     """
-    src = APP_JS.read_text(encoding="utf-8")
+    src = client_source()
     body = src[src.index("async function _serverAnswers("):]
     body = body[:body.index("\n  // On (re)opening Streams")]
 
     harness = tmp_path / "s.js"
     harness.write_text(
-        "let _aiToken='';\nfunction _instanceBase(){ return 'https://poster.place'; }\n" + body + """
+        "let _aiToken='';\n" + state_shim(body) + "\nfunction _instanceBase(){ return 'https://poster.place'; }\n" + body + """
 const HLS='https://poster.place/api/streams/hls/0d1ddd1c187b1cda/index.m3u8';
 async function main(){
   // A faithful Response stub: real fetch gives BOTH .ok and .status, and `ok` is exactly
@@ -420,11 +421,11 @@ def test_stale_own_live_is_swept_without_opening_the_streams_view(tmp_path):
 
     So the sweep asks BY AUTHOR, and runs at startup.
     """
-    src = APP_JS.read_text(encoding="utf-8")
+    src = client_source()
     body = src[src.index("async function _sweepStaleOwnLive("):]
     body = body[:body.index("\n  // On (re)opening Streams")]
 
-    assert "authors:[ME.pubkey]" in body.replace(" ", ""), (
+    assert "authors:[S.ME.pubkey]" in body.replace(" ", ""), (
         "the sweep must ask for OUR OWN events by author — a global limit-80 feed is not guaranteed to "
         "still contain a day-old announcement"
     )
@@ -440,7 +441,7 @@ def test_stale_own_live_is_swept_without_opening_the_streams_view(tmp_path):
 def test_adopt_is_awaited_by_its_caller():
     """It probes the network now, so it returns a promise — a bare call would surface a rejection as an
     unhandled promise rejection, which in this client is a console error nobody reads."""
-    src = (ROOT / "static" / "js" / "client" / "app.js").read_text(encoding="utf-8")
+    src = client_source()
     assert "_a=_adoptOwnLive(streams); if(_a&&_a.catch) _a.catch(()=>{})" in src.replace(" ", "").replace(
         "const_a", "_a"
     ) or "_a.catch(()=>{})" in src, (
@@ -462,7 +463,7 @@ def test_the_streams_grid_includes_what_we_already_hold(tmp_path):
     must survive into the grid, and a stale cached copy must still lose to a newer one from the relay
     (_dedupAddr keeps the newest per address, which is what makes merging safe).
     """
-    src = APP_JS.read_text(encoding="utf-8")
+    src = client_source()
     body = src[src.index("async function renderStreams("):]
     body = body[:body.index("\n  function streamCard(")]
 
@@ -510,7 +511,7 @@ console.log(JSON.stringify(out));
 
 def test_streams_paints_cache_before_a_bounded_network_refresh():
     """A connected relay that never sends EOSE must not leave Streams on a black spinner forever."""
-    src = APP_JS.read_text(encoding="utf-8")
+    src = client_source()
     body = src[src.index("async function renderStreams("):]
     body = body[:body.index("\n  function streamCard(")]
     cache = body.index("Store.query([{ kinds:[30311], limit:80 }])")
@@ -535,7 +536,7 @@ def test_replays_are_stamped_on_startup_not_only_when_streams_is_opened():
     carried no `recording` tag minutes later. The matcher was never the problem — that VOD's start was
     26s after the announce, well inside the ±120s skew — it simply never ran.
     """
-    src = APP_JS.read_text(encoding="utf-8")
+    src = client_source()
     boot = src[src.index("function startApp("):]
     boot = boot[:boot.index("\n  function ")]
     assert "_sweepUnstampedReplays()" in boot, (

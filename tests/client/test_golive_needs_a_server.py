@@ -17,6 +17,7 @@ cleared while the app is running.
 """
 import unittest
 from pathlib import Path
+from tests.client_source import client_source
 
 ROOT = Path(__file__).resolve().parents[2]
 APP = ROOT / "static/js/client/app.js"
@@ -44,13 +45,13 @@ class TheDesktopEntryChecks(unittest.TestCase):
 
 class TheSidebarEntryChecks(unittest.TestCase):
     def test_nav_golive_requires_an_instance(self):
-        src = APP.read_text()
+        src = APP.read_text()   # the SIDEBAR entry, which is app.js's (streams.js has its own #nav-golive)
         i = src.index("$('#nav-golive')")
         self.assertIn("_standalone()", src[i:i + 200],
                       "the sidebar offers Go Live with no server behind it")
 
     def test_the_setting_is_still_honoured(self):
-        src = APP.read_text()
+        src = APP.read_text()   # the SIDEBAR entry, which is app.js's (streams.js has its own #nav-golive)
         i = src.index("$('#nav-golive')")
         self.assertIn("stream_enabled", src[i:i + 200])
 
@@ -63,7 +64,7 @@ class ThePredicateIsReachable(unittest.TestCase):
     def test_standalone_is_on_the_pc_surface(self):
         # Brace-matched, not a fixed window: the surface literal is over 10KB and an 8000-character
         # slice reported this missing while it was three lines further down.
-        src = APP.read_text()
+        src = client_source()
         i = src.index("window.__PC = {")
         depth, k = 0, src.index("{", i)
         while True:

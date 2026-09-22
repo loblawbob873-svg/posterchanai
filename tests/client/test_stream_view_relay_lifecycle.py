@@ -6,9 +6,10 @@ import subprocess
 from pathlib import Path
 
 import pytest
+from tests.client_source import client_source
 
 ROOT = Path(__file__).resolve().parents[2]
-APP = (ROOT / "static/js/client/app.js").read_text()
+APP = client_source()
 RELAY = ROOT / "static/js/client/relay.js"
 pytestmark = pytest.mark.skipif(shutil.which("node") is None, reason="node not installed")
 
@@ -25,7 +26,7 @@ def test_switching_from_streams_aborts_external_directory_sockets(tmp_path):
     assert "readSignal&&readSignal.aborted" in APP
     stale_sweep = APP.split("async function _sweepStaleOwnLive()", 1)[1].split("async function _maybeOfferAnnounce", 1)[0]
     assert "Relay.queryFrom(STREAM_RELAYS" not in stale_sweep
-    assert "Relay.query([{ kinds:[30311], authors:[ME.pubkey] }])" in stale_sweep
+    assert "Relay.query([{ kinds:[30311], authors:[S.ME.pubkey] }])" in stale_sweep
 
     driver = tmp_path / "streams-leave.js"
     driver.write_text(f"""

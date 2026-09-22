@@ -21,9 +21,10 @@ DOM: what is in the live `#feed` is this window's, what is in an `.osw-slot` is 
 """
 import os
 import re
+from tests.client_source import client_source
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-APP = open(os.path.join(ROOT, "static", "js", "client", "app.js"), encoding="utf-8").read()
+APP = client_source()
 
 
 def _fn(name):
