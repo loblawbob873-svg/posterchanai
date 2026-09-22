@@ -221,6 +221,8 @@ class DeviceOps:
             return []
         out = []
         for kname, kind in KINDS.items():
+            if not any(kind.entries(x) for x in (saved, live) if x):
+                continue                                  # no sysfs walk for a kind the VM has none of
             try:
                 devices = await self._scan(kname)
             except Exception:
