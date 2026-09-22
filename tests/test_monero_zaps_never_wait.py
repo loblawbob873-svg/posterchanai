@@ -169,3 +169,34 @@ def test_dust_never_counts_as_capacity():
     c = Chain(MEASURED)
     run(c, [0], warmup=1)
     assert c.splits >= 1, "an account whose only zap-sized output is one must be split"
+
+
+def test_a_split_just_over_a_multiple_is_still_useful_and_still_seen():
+    """Code review of 47c60bf8f: 0.008005 XMR split 4 ways after the fee is ~0.00199 each — under
+    the useful threshold, so the in-flight check could not see it and the next tick split again."""
+    c = Chain([8_005_000_000])
+    w = mod.UserWallets.__new__(mod.UserWallets)
+    w.url, w.user, w.password, w.network = "rpc", "u", "p", "mainnet"
+    w.timeout, w._fee_address, w._fee_at, w._lock = 1, None, 0, asyncio.Lock()
+    w.rpc = c.rpc
+
+    async def go():
+        for _ in range(8):                         # 8 minutes: mined, still locked
+            await w.maintain_account_outputs(ACCOUNT)
+            c.tick_minute()
+    asyncio.run(go())
+    made = [r for r in c.rows if str(r["tx_hash"]).startswith("split")]
+    assert c.splits == 1, f"split {c.splits} times while the first was still unlocking"
+    assert made and all(r["amount"] >= mod.OUTPUT_USEFUL_ATOMIC for r in made), [r["amount"] for r in made]
+
+
+def test_small_locked_outputs_of_one_split_still_count_as_in_flight():
+    c = Chain([30 * XMR // 1000])
+    for _ in range(3):
+        c.rows.append(c._row(1_500_000_000, "small-split", c.height))    # < useful, one tx
+    w = mod.UserWallets.__new__(mod.UserWallets)
+    w.url, w.user, w.password, w.network = "rpc", "u", "p", "mainnet"
+    w.timeout, w._fee_address, w._fee_at, w._lock = 1, None, 0, asyncio.Lock()
+    w.rpc = c.rpc
+    r = asyncio.run(w.maintain_account_outputs(ACCOUNT))
+    assert r["action"] == "waiting" and c.splits == 0, r

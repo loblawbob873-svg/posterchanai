@@ -372,7 +372,9 @@
    * selected, and counting them made "3 of 17" name matches nobody could see. Bounded, and says so. */
   const FIND_MAX = 20000;
   function findAll(text, q, o, max){
-    const c = findRe(q, o), out = [], lim = max || FIND_MAX;
+    // `max ?? FIND_MAX`, never `||`: a caller with no room left passes 0, and `||` read that as
+    // "no limit" — a parallel search lane could then add 20,000 hits past its 2,000 cap.
+    const c = findRe(q, o), out = [], lim = max ?? FIND_MAX;
     if(!c.re) return { ranges: out, error: c.error, capped: false };
     let m;
     while((m = c.re.exec(text)) !== null){
@@ -1616,7 +1618,10 @@
       if(!d) return;
       // Prefill only from a selection somebody MADE: with focus in the find box the file's selection is
       // the current match, and reading it back would overwrite a regex with its own escaped result.
-      if(ta && document.activeElement === ta){ const t = oneLine(ta.value.slice(ta.selectionStart, ta.selectionEnd)); if(t) F.q = F.re ? reEsc(t) : t; capture(); }
+      // …and not when that selection IS the current match either (F3 in the file selects it with focus left there).
+      const cur = _fr.ranges && _fr.ranges[_fi];
+      const isMatch = ta && cur && ta.selectionStart === cur[0] && ta.selectionEnd === cur[1];
+      if(ta && document.activeElement === ta && !isMatch){ const t = oneLine(ta.value.slice(ta.selectionStart, ta.selectionEnd)); if(t) F.q = F.re ? reEsc(t) : t; capture(); }
       if(!F.open || (repl && !F.repl) || !$('#pcc-find')){ F.open = true; F.repl = F.repl || !!repl; save(); paint(); }
       else{ const q = $('#pcc-f-q'); if(q) q.value = F.q; }
       refind();
@@ -1752,6 +1757,8 @@
         }
       }
       let next = 0;
+      // The query as it was when the search STARTED — the box can change under a running search.
+      const qq = Q.q;
       const lane = async () => {
         while(next < files.length && hits < SF_HITS){
           const p = files[next++];
@@ -1762,7 +1769,8 @@
           if(seq !== _sfSeq) return;
           done++;
           if(typeof text !== 'string' || text.indexOf('\0') >= 0){ skipped++; continue; }
-          const g = grep(text, Q.q, o, SF_HITS - hits);
+          if(SF_HITS - hits <= 0) break;                    // another lane filled it while this one read
+          const g = grep(text, qq, o, SF_HITS - hits);
           if(g.hits.length){ hits += g.hits.length; Q.results.push({ path: p, hits: g.hits }); }
           if(done % 40 === 0){ Q.note = 'Searching… ' + done + ' of ' + files.length + ' files'; sfPaint(); }
         }

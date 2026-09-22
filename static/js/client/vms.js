@@ -1497,10 +1497,10 @@
         ${b('start', 'Start', 'i-play', 'btn-neon', !running)}${b('shutdown', 'Shut down', 'i-power', 'btn-cyan', running)}${b('reboot', 'Reboot', 'i-refresh', 'btn-cyan', running)}${b('destroy', 'Force off', 'i-stop', 'btn-red', running)}
         <button class="btn small btn-cyan" data-act="console" ${v.state === 'running' ? '' : 'disabled'}>${ic('i-monitor')}${feat.console === 'spice' ? 'Open display' : 'Console'}</button>
         ${role === 'admin' ? '<span class="vmx-sep" aria-hidden="true"></span>' : ''}
-        ${role === 'admin' && feat.hardware ? `<button class="btn small btn-ghost" data-act="settings" ${off ? '' : 'aria-describedby="vmx-needs-off"'}>${ic('i-gear')}Settings</button>` : ''}
+        ${role === 'admin' && feat.hardware ? `<button class="btn small btn-ghost" data-act="settings" ${off ? '' : 'title="Shut it down first — press for details"'}>${ic('i-gear')}Settings</button>` : ''}
         ${role === 'admin' && feat.local && off ? `<button class="btn small btn-ghost" data-act="boot-disk">Use installed system</button>` : ''}
         ${role === 'admin' && feat.migrate ? `<button class="btn small btn-ghost" data-act="migrate">${v.migration && v.migration.state ? 'Migration status' : 'Migrate…'}</button>` : ''}
-        ${role === 'admin' ? `<button class="btn small btn-red" data-act="delete" ${off ? '' : 'aria-describedby="vmx-needs-off"'}>${ic('i-trash')}Delete</button>` : ''}
+        ${role === 'admin' ? `<button class="btn small btn-red" data-act="delete" ${off ? '' : 'title="Shut it down first — press for details"'}>${ic('i-trash')}Delete</button>` : ''}
       </div>
       ${statusLine(pk)}
       ${tiles([{ l: 'Status', v: stateLabel(v.state), sub: v.state === 'running' && v.uptime_s != null ? 'up ' + esc(fmtDur(v.uptime_s)) : '' },

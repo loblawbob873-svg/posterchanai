@@ -43,7 +43,10 @@ MAX_DESTINATIONS = 15
 # wallet, not the operator wallet: every account owns a disjoint set of outputs.
 OUTPUT_TARGET = 8
 OUTPUT_LOW_WATER = 4
-OUTPUT_MIN_ATOMIC = 10**9       # 0.001 XMR per resulting output
+# The miner fee sweep_single takes out of the source BEFORE dividing it: a split sized on the gross
+# amount lands its outputs just under OUTPUT_USEFUL_ATOMIC (0.008005 XMR / 4 = ~0.00199). Generous on
+# purpose — a real fee is ~0.00003 XMR.
+SPLIT_FEE_MARGIN_ATOMIC = 10**8   # 0.0001 XMR
 # CAPACITY IS COUNTED IN OUTPUTS THAT CAN PAY A ZAP, NOT IN OUTPUTS. Measured 2026-09-22 on the account
 # that kept waiting ~20 min between zaps: 6 unspent outputs, FIVE of them 0.00001 XMR dust and one
 # 0.28 XMR. The maintainer counted six, called it healthy and never split, so every 0.001 zap spent
@@ -316,12 +319,16 @@ class UserWallets:
         # SEVERAL outputs. A zap's CHANGE is one output — treating it as a split in flight is what
         # starved replenishment exactly while somebody was zapping. When the RPC gives no tx_hash we
         # cannot tell the two apart and stay conservative (any locked useful output = in flight).
-        locked = [t for t in unspent if t.get("unlocked") is not True and useful(t)]
+        # EVERY locked output is considered here, whatever its size: the witness is the SHAPE of the
+        # transaction (several outputs for this account), and a split whose outputs came out small
+        # must still be seen as in flight, or the next tick splits another reserve.
+        locked = [t for t in unspent if t.get("unlocked") is not True]
         per_tx: dict[str, int] = {}
         for t in locked:
             per_tx[str(t.get("tx_hash") or "")] = per_tx.get(str(t.get("tx_hash") or ""), 0) + 1
         in_flight = [t for t in locked
-                     if not t.get("tx_hash") or per_tx[str(t.get("tx_hash"))] >= 2]
+                     if per_tx[str(t.get("tx_hash") or "")] >= 2
+                     or (not t.get("tx_hash") and useful(t))]
         if in_flight:
             return {"account_index": index, "action": "waiting", "spendable_outputs": count,
                     "locked_outputs": len(in_flight), "reason": "output split is still unlocking"}
@@ -344,7 +351,7 @@ class UserWallets:
         preserved = max(0, count - 1)
         wanted = OUTPUT_TARGET - preserved
         # Each new output must itself be able to pay a zap, or the split manufactures more dust.
-        outputs = min(wanted, amount // OUTPUT_USEFUL_ATOMIC)
+        outputs = min(wanted, max(0, amount - SPLIT_FEE_MARGIN_ATOMIC) // OUTPUT_USEFUL_ATOMIC)
         if outputs < 2:
             return {"account_index": index, "action": "waiting", "spendable_outputs": count,
                     "reason": "not enough unlocked value for useful outputs"}

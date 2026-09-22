@@ -46,6 +46,7 @@ out.empty = F.findAll(T, '^', {re:true}).ranges.length;
 out.star = F.findAll('aaxaa', 'x*', {re:true}).ranges;
 out.none = F.findAll(T, '', {}).ranges.length;
 out.capped = F.findAll('aaaaa', 'a', {}, 3);
+out.noRoom = F.findAll('aaaaa', 'a', {}, 0);
 out.ra1 = F.replaceAll('foo(1) foo(22)', 'foo\\((\\d+)\\)', {re:true}, 'bar[$1]');
 out.ra2 = F.replaceAll('x=1; y=2', '(\\w)=(\\d)', {re:true}, '$2=$1 $$ $& $<n>');
 out.ra3 = F.replaceAll('cost $1 here', '$1', {}, '$&$1');
@@ -96,6 +97,11 @@ class FindReplaceLogic(unittest.TestCase):
         self.assertEqual(self.out["empty"], 0)
         self.assertEqual(self.out["star"], [[2, 3]])
         self.assertEqual(self.out["none"], 0)
+
+    def test_no_room_left_means_no_hits_not_no_limit(self):
+        """Code review: a search lane with 0 hits of room left passed max=0, which `||` read as
+        "no limit" — up to 20,000 extra hits past the 2,000 cap."""
+        self.assertEqual(len(self.out["noRoom"]["ranges"]), 0)
 
     def test_a_capped_search_says_so(self):
         self.assertEqual(len(self.out["capped"]["ranges"]), 3)
