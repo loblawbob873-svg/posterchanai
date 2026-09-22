@@ -536,6 +536,36 @@ class VirshBackend:
     async def img_snapshot_delete(self, path: str, name: str) -> None:
         await self._img_snapshot("-d", path, name)
 
+    # ---- host devices (devices.py): read the host from sysfs, change a domain with attach/detach-device ----------------
+    async def host_devices(self, kind: str) -> list:
+        """Every device of this kind on the host (usb.scan / pci.scan — sysfs, no root needed)."""
+        from . import pci, usb
+        if kind == "usb":
+            return await asyncio.to_thread(usb.scan)
+        if kind == "pci":
+            return await asyncio.to_thread(pci.scan)
+        raise BackendError("unknown device kind", "bad_request")
+
+    async def pci_host_checks(self) -> list:
+        from . import pci
+        return await asyncio.to_thread(pci.host_checks, "/sys", None, "/proc/cpuinfo", "/etc", self.uri)
+
+    async def _device(self, verb: str, vm_uuid: str, xml_path: str, live: bool, config: bool) -> None:
+        if not (live or config):
+            raise BackendError("nothing to change", "bad_request")
+        # The file is one the service wrote under its own state dir from validated ids; `--` is not accepted by
+        # virsh here, and the path is absolute, so it cannot be read as an option.
+        if not os.path.isabs(xml_path):
+            raise BackendError("device XML path must be absolute", "internal")
+        args = [verb, vm_uuid, xml_path] + (["--live"] if live else []) + (["--config"] if config else [])
+        await self._v(*args, timeout=60)
+
+    async def attach_device(self, vm_uuid: str, xml_path: str, *, live: bool, config: bool) -> None:
+        await self._device("attach-device", vm_uuid, xml_path, live, config)
+
+    async def detach_device(self, vm_uuid: str, xml_path: str, *, live: bool, config: bool) -> None:
+        await self._device("detach-device", vm_uuid, xml_path, live, config)
+
     # ==================================================================================================
     # PHASE 3 — cold-migration primitives (app/services/vmhost/migrate.py is the only caller).
     # Kept in one block, below everything else, so the phase-2 edits above this line never collide.

@@ -36,6 +36,7 @@ from .journal import OpJournal
 from .storage import PathEscape, Storage, clean_name, new_uuid, valid_uuid
 # Phase 2 ops live in their own modules, mixed into the service (so this file only grows by table rows).
 from .access import AccessOps
+from .devices import DeviceOps
 from .hardware import HardwareOps
 from .isolib import IsoOps
 from .sessions import CURRENT_SESSION, SESSION_OPS, SessionOps
@@ -43,7 +44,7 @@ from .sessions import CURRENT_SESSION, SESSION_OPS, SessionOps
 logger = logging.getLogger(__name__)
 
 PROTO_VERSION = 1
-FEATURES = ["novnc", "hardware", "snapshots", "iso-fetch", "iso-upload", "access", "sessions"]
+FEATURES = ["novnc", "hardware", "snapshots", "iso-fetch", "iso-upload", "access", "sessions", "devices"]
 LOCK_WAIT = 2.0
 ADMIN_CACHE_SEC = 60
 # A FAILED admin lookup (account table unreadable) is remembered this long, so a burst of requests —
@@ -86,6 +87,10 @@ OPS = {
     "host.access.set":     ("admin", True),
     "session.open":        ("user", False),
     "session.close":       ("user", False),
+    # ---- host devices: USB hot-plug, PCI/GPU passthrough (devices.py). Admin only, never a session op.
+    "host.devices.list":   ("admin", False),
+    "vm.device.attach":    ("admin", True),
+    "vm.device.detach":    ("admin", True),
 }
 # Non-mutating ops that are still worth a line at INFO when they succeed: each hands out access.
 AUDIT_READS_AT_INFO = frozenset({"console.ticket", "session.open", "session.close", "iso.upload_ticket",
@@ -160,7 +165,7 @@ def _int_arg(args: dict, key: str, lo: int, hi: int, default=None) -> int:
     return n
 
 
-class VmHostService(HardwareOps, IsoOps, AccessOps, SessionOps):
+class VmHostService(HardwareOps, DeviceOps, IsoOps, AccessOps, SessionOps):
     def __init__(self, cfg: VmHostConfig, backend, *, node_pubkey: str, admin_provider=None,
                  storage: Storage | None = None, journal: OpJournal | None = None,
                  consoles: ConsoleRegistry | None = None, now=time.time):
@@ -389,6 +394,10 @@ class VmHostService(HardwareOps, IsoOps, AccessOps, SessionOps):
             if isinstance(a.get("name"), str) and name.startswith("vm.snapshot.") \
                     and re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_.-]{0,47}", a["name"]):
                 fields.append(f"snapshot={a['name']}")
+            if name.startswith("vm.device.") and a.get("kind") in ("usb", "pci"):
+                ident = (f"{a.get('vendor')}:{a.get('product')}" if a["kind"] == "usb" else str(a.get("address")))
+                if re.fullmatch(r"[0-9a-f]{4}:[0-9a-f]{4}|[0-9a-f]{4}:[0-9a-f]{2}:[0-9a-f]{2}\.[0-7]", ident):
+                    fields.append(f"device={a['kind']}:{ident}")
             mig = a.get("migration")
             if isinstance(mig, str) and re.fullmatch(r"[0-9a-f]{16,64}", mig):
                 fields.append(f"migration={mig}")
@@ -551,6 +560,7 @@ class VmHostService(HardwareOps, IsoOps, AccessOps, SessionOps):
         await self._enrich([view], [d])
         if role == "admin":
             view["hardware"] = await self._hardware(d.uuid)
+        view["devices"] = await self._vm_devices(d)      # read-only for an assigned user; changes are admin ops
         return {"vm": view}
 
     async def _op_iso_list(self, pk, role, args, progress):

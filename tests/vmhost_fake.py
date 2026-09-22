@@ -38,6 +38,16 @@ class FakeBackend:
         self.bridges: list = []            # Linux bridges in /sys/class/net
         self.addrs: dict = {}              # uuid -> [ip] (`domifaddr`)
         self.ups: dict = {}                # uuid -> seconds running (/proc)
+        # host devices (devices.py): what sysfs would say, and what a running domain holds LIVE (hot-plugged
+        # hostdevs, which libvirt reports with the resolved bus/device) on top of its saved definition.
+        self.usb_devices: list = []        # [usb.UsbDevice]
+        self.pci_devices: list = []        # [pci.PciDevice]
+        self.pci_checks: list = [{"id": "iommu", "ok": True, "label": "IOMMU is on", "fix": ""},
+                                 {"id": "vfio", "ok": True, "label": "vfio-pci is available", "fix": ""},
+                                 {"id": "system", "ok": True, "label": "qemu:///system", "fix": ""}]
+        self.live_hostdevs: dict = {}      # uuid -> [hostdev xml]
+        self.drop_attach = False           # accept attach-device and keep nothing (the read-back must catch it)
+        self.drop_detach = False
 
     async def _enter(self, name, *args):
         self.calls.append((name,) + args)
@@ -135,14 +145,19 @@ class FakeBackend:
     async def start(self, vm_uuid):
         await self._enter("start", vm_uuid)
         self.domains[vm_uuid]["state"] = "running"
+        root = ET.fromstring(self.domains[vm_uuid]["xml"])
+        self.live_hostdevs[vm_uuid] = [self._resolve(ET.tostring(h, encoding="unicode"))
+                                       for h in root.findall("devices/hostdev")]
 
     async def shutdown(self, vm_uuid):
         await self._enter("shutdown", vm_uuid)
         self.domains[vm_uuid]["state"] = "shutoff"
+        self.live_hostdevs.pop(vm_uuid, None)
 
     async def destroy(self, vm_uuid):
         await self._enter("destroy", vm_uuid)
         self.domains[vm_uuid]["state"] = "shutoff"
+        self.live_hostdevs.pop(vm_uuid, None)
 
     async def reboot(self, vm_uuid):
         await self._enter("reboot", vm_uuid)
@@ -184,7 +199,83 @@ class FakeBackend:
         await self._enter("dumpxml", vm_uuid)
         if vm_uuid not in self.domains:
             raise BackendError("domain not found")
-        return self._reported_xml(vm_uuid)
+        xml = self._reported_xml(vm_uuid)
+        if not inactive and self.domains[vm_uuid]["state"] in ("running", "paused"):
+            xml = re.sub(r"<hostdev\b.*?</hostdev>", "", xml, flags=re.S)
+            xml = xml.replace("</devices>", "".join(self.live_hostdevs.get(vm_uuid, [])) + "</devices>", 1)
+        return xml
+
+    # ---- host devices
+    async def host_devices(self, kind):
+        await self._enter("host_devices", kind)
+        return list(self.usb_devices if kind == "usb" else self.pci_devices)
+
+    async def pci_host_checks(self):
+        await self._enter("pci_host_checks")
+        return [dict(c) for c in self.pci_checks]
+
+    def _resolve(self, hxml: str) -> str:
+        """A hostdev as a RUNNING domain reports it: a USB one carries the bus/device libvirt resolved."""
+        h = ET.fromstring(hxml)
+        if h.get("type") == "usb":
+            src = h.find("source")
+            v, p = src.find("vendor"), src.find("product")
+            if src.find("address") is None and v is not None:
+                vid, pid = v.get("id")[2:], p.get("id")[2:]
+                dev = next((d for d in self.usb_devices if d.vendor == vid and d.product == pid), None)
+                if dev is None:
+                    raise BackendError(f"Did not find USB device {vid}:{pid}")
+                ET.SubElement(src, "address", {"bus": str(dev.bus), "device": str(dev.device)})
+        return ET.tostring(h, encoding="unicode")
+
+    @staticmethod
+    def _same(a: str, b: str) -> bool:
+        from app.services.vmhost import pci, usb
+        ua, ub = usb.hostdevs(f"<domain><devices>{a}</devices></domain>"), usb.hostdevs(f"<domain><devices>{b}</devices></domain>")
+        if ua and ub:
+            x, y = ua[0], ub[0]
+            if x["bus"] is not None and y["bus"] is not None:
+                return (x["bus"], x["device"]) == (y["bus"], y["device"])
+            return (x["vendor"], x["product"]) == (y["vendor"], y["product"])
+        pa, pb = pci.hostdevs(f"<domain><devices>{a}</devices></domain>"), pci.hostdevs(f"<domain><devices>{b}</devices></domain>")
+        return bool(pa and pb and pa[0] == pb[0])
+
+    async def attach_device(self, vm_uuid, xml_path, *, live, config):
+        await self._enter("attach_device", vm_uuid, live, config)
+        with open(xml_path) as f:
+            hxml = f.read()
+        d = self.domains[vm_uuid]
+        if live and d["state"] not in ("running", "paused"):
+            raise BackendError("Requested operation is not valid: domain is not running")
+        for other_uuid, others in self.live_hostdevs.items():
+            if other_uuid != vm_uuid and any(self._same(o, hxml) for o in others):
+                raise BackendError(f"USB device is in use by driver QEMU, domain {self.domains[other_uuid]['name']}")
+        if self.drop_attach:
+            return
+        if live:
+            self.live_hostdevs.setdefault(vm_uuid, []).append(self._resolve(hxml))
+        if config:
+            d["xml"] = d["xml"].replace("</devices>", hxml + "</devices>", 1)
+
+    async def detach_device(self, vm_uuid, xml_path, *, live, config):
+        await self._enter("detach_device", vm_uuid, live, config)
+        with open(xml_path) as f:
+            hxml = f.read()
+        d = self.domains[vm_uuid]
+        if self.drop_detach:
+            return
+        if live:
+            cur = self.live_hostdevs.get(vm_uuid, [])
+            if not any(self._same(o, hxml) for o in cur):
+                raise BackendError("device not found: host usb device not found")
+            self.live_hostdevs[vm_uuid] = [o for o in cur if not self._same(o, hxml)]
+        if config:
+            found = [m.group(0) for m in re.finditer(r"<hostdev\b.*?</hostdev>", d["xml"], flags=re.S)
+                     if self._same(m.group(0), hxml)]
+            if not found:
+                raise BackendError("device not found: host device not found in the configuration")
+            for f_ in found:
+                d["xml"] = d["xml"].replace(f_, "", 1)
 
     # ---- offline snapshots: qemu-img tags live INSIDE the (fake) image, so they travel with its bytes
     TAG_AT, TAG_LEN = 16, 1024
