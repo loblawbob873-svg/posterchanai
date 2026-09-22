@@ -93,12 +93,20 @@ class UsbKind:
         v.update(extra)
         return v
 
+    @staticmethod
+    def loose_key(e: dict) -> str:
+        return f"{e.get('vendor')}:{e.get('product')}"
+
+    def key(self, e: dict) -> str:
+        """Two identical sticks are two rows: an entry that names its bus/device is keyed by them too."""
+        k = self.loose_key(e)
+        return k + (f"@{e['bus']}-{e['device']}" if e.get("bus") is not None and e.get("device") is not None else "")
+
     def entry_view(self, e: dict, devices: list) -> dict:
         host = next((d for d in devices if usb.matches(e, d)), None)
         label = host.label if host else f"USB device ({e.get('vendor') or '????'}:{e.get('product') or '????'})"
         return {"kind": "usb", "vendor": e.get("vendor"), "product": e.get("product"), "bus": e.get("bus"),
-                "device": e.get("device"), "label": label, "present": host is not None,
-                "key": f"{e.get('vendor')}:{e.get('product')}"}
+                "device": e.get("device"), "label": label, "present": host is not None, "key": self.key(e)}
 
     def xml_for(self, dev, devices: list) -> list:
         # vendor/product survives a re-plug (the bus/device numbers do not); the address is pinned only when
@@ -147,6 +155,12 @@ class PciKind:
              "busy": d.busy, "gpu": d.is_gpu, "live": False}
         v.update(extra)
         return v
+
+    @staticmethod
+    def key(e: dict) -> str:
+        return e["address"]
+
+    loose_key = key
 
     def entry_view(self, e: dict, devices: list) -> dict:
         host = next((d for d in devices if d.address == e["address"]), None)
@@ -206,8 +220,11 @@ class DeviceOps:
             try:
                 live, saved = await self._xmls(d)
             except BackendError as e:
-                logger.debug("[vmhost] device scan of %s failed: %s", d.uuid, e)
-                continue
+                if re.search(r"domain not found|failed to get domain|no domain", str(e), re.I):
+                    continue                              # gone since the listing: it holds nothing
+                # FAIL CLOSED: a VM whose definition cannot be read may hold the very device being handed out
+                raise _err("backend_error", f"could not read the devices of the VM {d.name} ({e}) — refusing, so "
+                                            "one device is never given to two VMs")
             for x in (live, saved):
                 if x:
                     out.extend((e, d) for e in kind.entries(x))
@@ -228,22 +245,25 @@ class DeviceOps:
             except Exception:
                 devices = []
             seen = {}
-            for src, xml in (("persistent", saved), ("live", live)):
-                if not xml:
-                    continue
-                for e in kind.entries(xml):
-                    v = kind.entry_view(e, devices)
-                    k = v["key"]
-                    cur = seen.get(k)
-                    if cur is None:
-                        v.update({"live": False, "persistent": False})
-                        seen[k] = cur = v
-                    cur[src] = True
-                    if e.get("bus") is not None and cur.get("bus") is None:
-                        cur["bus"], cur["device"] = e["bus"], e["device"]
-            if not live:
-                for v in seen.values():
-                    v["live"] = False
+            for e in kind.entries(saved or ""):
+                v = kind.entry_view(e, devices)
+                v.update({"live": False, "persistent": True})
+                seen[kind.key(e)] = v
+            for e in kind.entries(live or ""):
+                # a running VM reports the bus/device libvirt resolved: it belongs to the saved entry that pinned
+                # exactly that address, else to an unpinned saved entry with the same ids not yet matched
+                k = kind.key(e)
+                if k not in seen:
+                    loose = kind.loose_key(e)
+                    if loose in seen and not seen[loose]["live"]:
+                        k = loose
+                cur = seen.get(k)
+                if cur is None:
+                    cur = seen[k] = kind.entry_view(e, devices)
+                    cur.update({"live": False, "persistent": False})
+                cur["live"] = True
+                if e.get("bus") is not None and cur.get("bus") is None:
+                    cur["bus"], cur["device"] = e["bus"], e["device"]
             out.extend(seen.values())
         return out
 
@@ -265,7 +285,12 @@ class DeviceOps:
                 continue
             owners = owners_cache.get(kname)
             if owners is None:
-                owners = owners_cache[kname] = await self._owners(kind)
+                try:
+                    owners = owners_cache[kname] = await self._owners(kind)
+                except Exception as e:
+                    entry["error"] = getattr(e, "message", None) or str(e)
+                    out[kname] = entry
+                    continue
 
             def used_by(dev):
                 for e, od in owners:
@@ -298,6 +323,50 @@ class DeviceOps:
             out[kname] = entry
         return {"kinds": out}
 
+    async def _device_start_guard(self, d) -> None:
+        """Re-run the device safety checks for every <hostdev> in a VM's SAVED definition before it starts. The checks
+        at attach time are not enough: `managed='yes'` takes the device from the host when the VM STARTS — days
+        later, perhaps, when the saved stick's vendor:product now matches the host's backup disk, or the card the
+        VM was given is on the nvidia driver the app computes with. vm.power start is a session op, so this is the
+        only place those checks can still happen."""
+        if getattr(self.backend, "host_devices", None) is None:
+            return
+        try:
+            saved = await self.backend.dumpxml(d.uuid, inactive=True)
+        except BackendError as e:
+            raise _err("backend_error", f"could not read this VM's devices before starting it: {e}")
+        usb_e, pci_e = usb.hostdevs(saved), pci.hostdevs(saved)
+        if usb_e:
+            try:
+                devices = await self._scan("usb")
+            except Exception:
+                devices = []
+            for e in usb_e:
+                for dev in devices:
+                    if usb.matches(e, dev) and (dev.system or dev.busy or dev.hub):
+                        why = dev.busy or "the host boots from it"
+                        raise _err("conflict", f"this VM's saved devices include {dev.label}, which the host is using "
+                                               f"({why}) — detach it from the VM, or stop using it on the host, first")
+        if pci_e:
+            devices = await self._scan("pci")
+            bad = [c for c in await self._host_checks("pci") if not c["ok"]]
+            if bad:
+                raise _err("unsupported", "this VM has PCI devices, but " + bad[0]["label"] + ". " + bad[0]["fix"])
+            by = {x.address: x for x in devices}
+            mine = {e["address"] for e in pci_e}
+            for a in sorted(mine):
+                dev = by.get(a)
+                if dev is None:
+                    raise _err("conflict", f"the PCI device {a} saved in this VM is not on this host any more — "
+                                           "detach it from the VM first")
+                if dev.system or dev.busy:
+                    raise _err("conflict", f"this VM's saved devices include {dev.label}, which the host is using "
+                                           f"({dev.busy or 'the host boots from it'}) — detach it or free it first")
+                for m in (x for x in devices if x.group and x.group == dev.group):
+                    if m.address not in mine and not m.cls.startswith("06") and m.driver not in pci.FREE_DRIVERS:
+                        raise _err("conflict", f"{dev.label} is in IOMMU group {dev.group} with {m.address} ({m.label}, "
+                                               f"{m.driver}), which the host uses — a VM gets a whole group or nothing")
+
     async def _host_checks(self, kind: str) -> list:
         f = getattr(self.backend, "device_checks", None)
         if f is None:
@@ -309,19 +378,37 @@ class DeviceOps:
             return []
 
     # ------------------------------------------------------------------------------ attach / detach
+    def _devices_lock(self) -> asyncio.Lock:
+        lk = getattr(self, "_dev_lock", None)
+        if lk is None:
+            lk = self._dev_lock = asyncio.Lock()
+        return lk
+
     async def _device_locked(self, pk, role, args):
+        """(domain, release) with the HOST-WIDE device lock and the VM lock held, in that order: two admins giving
+        one stick to two VMs at once must not both pass the "nobody has it" check before either attaches."""
         d = await self._domain(pk, role, args)
+        dlock = self._devices_lock()
+        await self._acquire(dlock, "this host's devices")
         lock = self._vm_lock(d.uuid)
-        await self._acquire(lock, "this VM")
+        try:
+            await self._acquire(lock, "this VM")
+        except BaseException:
+            dlock.release()
+            raise
+
+        def release():
+            lock.release()
+            dlock.release()
         try:
             d = await self.backend.get(d.uuid)
             if d is None or not self._visible(d, role, pk):
                 raise _err("not_found", "no such VM")
             self._migration_guard(d)
         except BaseException:
-            lock.release()
+            release()
             raise
-        return d, lock
+        return d, release
 
     async def _virsh_device(self, verb: str, d, xml: str, live: bool, config: bool) -> None:
         tmpdir = self.storage.state_dir / "devices"
@@ -346,7 +433,7 @@ class DeviceOps:
         kind = self._kind(args)
         spec = kind.parse(args)
         persist = _bool(args, "persist", True) if kind.name == "usb" else True
-        d, lock = await self._device_locked(pk, role, args)
+        d, release = await self._device_locked(pk, role, args)
         try:
             running = d.state in ("running", "paused")
             if kind.name == "pci" and d.state != "shutoff":
@@ -416,19 +503,67 @@ class DeviceOps:
                 if config and not any(kind.entry_matches(e, t) for e in kind.entries(now_saved or "")):
                     missing.append(f"{t.label} (in its saved settings)")
             if missing:
-                raise _err("backend_error", "the host accepted the attach but did not keep: " + ", ".join(missing))
+                # Take back what DID land, so a half-attached device is never left behind, then say exactly what
+                # the VM holds now — "failed" alone would hide a device the VM may already be using.
+                undo = []
+                for x in xmls:
+                    for lv, cf in ((live, False), (False, config)):
+                        if not (lv or cf):
+                            continue
+                        try:
+                            await self._virsh_device("detach", d, x, lv, cf)
+                        except Exception as e:
+                            undo.append(str(getattr(e, "message", e))[:120])
+                after_live, after_saved = await self._xmls(d)
+                left = []
+                for t in take:
+                    if any(kind.entry_matches(e, t) for e in kind.entries(after_live or "")):
+                        left.append(f"{t.label} (in the running VM)")
+                    if any(kind.entry_matches(e, t) for e in kind.entries(after_saved or "")):
+                        left.append(f"{t.label} (in its saved settings)")
+                state = ("the part that landed was removed again, so the VM does not have it" if not left else
+                         "removing the part that landed did not fully work — the VM still has: " + ", ".join(left) +
+                         (" (" + "; ".join(undo) + ")" if undo else ""))
+                raise _err("backend_error", "the host accepted the attach but did not keep: " + ", ".join(missing) +
+                           "; " + state)
             logger.info("[vmhost] attached %s %s to VM %s (%s) live=%s config=%s by %s", kind.name,
                         ", ".join(t.label for t in take), d.name, d.uuid, live, config, pk[:12])
             view = self._vm_view(d, role, pk)
             view["devices"] = await self._vm_devices(d)
             return {"vm": view}
         finally:
-            lock.release()
+            release()
+
+    @staticmethod
+    def _pci_detach_set(address: str, saved: list, devices: list) -> list:
+        """The saved PCI entries that leave together — the SAME rule attach used (pci.plan), from whichever card
+        `address` belongs to: detaching a GPU takes its audio; detaching its .1 audio takes the GPU with it; a
+        device in the same slot that is not the card's (an APU's board audio at .6) stays. A card that is no longer
+        on the host cannot be planned, so every saved function of its slot leaves with it (nothing left behind)."""
+        by = {x.address: x for x in devices}
+        groups = {}
+        for x in devices:
+            if x.group:
+                groups.setdefault(x.group, []).append(x.address)
+        saved_addrs = {e["address"] for e in saved}
+        dev = by.get(address)
+        if dev is None:
+            slot = address.rsplit(".", 1)[0]
+            return [e for e in saved if e["address"].rsplit(".", 1)[0] == slot]
+        owner = dev
+        if not dev.is_gpu:
+            for g in devices:
+                if g.is_gpu and g.slot == dev.slot and g.address in saved_addrs and \
+                        address in {t.address for t in pci.plan(g, devices, groups)["attach"]}:
+                    owner = g
+                    break
+        want = {t.address for t in pci.plan(owner, devices, groups)["attach"]} if owner.is_gpu else {address}
+        return [e for e in saved if e["address"] in want]
 
     async def _op_vm_device_detach(self, pk, role, args, progress):
         kind = self._kind(args)
         spec = kind.parse(args)
-        d, lock = await self._device_locked(pk, role, args)
+        d, release = await self._device_locked(pk, role, args)
         try:
             running = d.state in ("running", "paused")
             if kind.name == "pci" and d.state != "shutoff":
@@ -442,13 +577,8 @@ class DeviceOps:
                 raise _err("bad_request", "more than one attached device has these ids — name it by bus and device")
             targets = []
             if kind.name == "pci":
-                # a GPU leaves with its other functions, exactly as it came
-                devices = await self._scan("pci")
-                dev = next((x for x in devices if x.address == spec["address"]), None)
-                if dev is not None and dev.is_gpu:
-                    pair = [e for e in kind.entries(saved_xml or "")
-                            if e["address"].rsplit(".", 1)[0] == dev.slot and e["address"] != dev.address]
-                    saved_hits = saved_hits + pair
+                saved_hits = self._pci_detach_set(spec["address"], kind.entries(saved_xml or ""),
+                                                  await self._scan("pci"))
             if live_hits:
                 targets.append((kind.detach_xml(live_hits[0]), True, False))
             for e in saved_hits:
@@ -481,5 +611,5 @@ class DeviceOps:
             view["devices"] = await self._vm_devices(d)
             return {"vm": view}
         finally:
-            lock.release()
+            release()
 

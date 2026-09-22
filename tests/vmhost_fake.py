@@ -51,6 +51,8 @@ class FakeBackend:
         self.live_hostdevs: dict = {}      # uuid -> [hostdev xml]
         self.drop_attach = False           # accept attach-device and keep nothing (the read-back must catch it)
         self.drop_detach = False
+        self.drop_attach_live = False      # keep the --config half of an attach, lose the --live half
+        self.dumpxml_fail: set = set()     # uuids whose definition cannot be read
 
     async def _enter(self, name, *args):
         self.calls.append((name,) + args)
@@ -200,6 +202,8 @@ class FakeBackend:
 
     async def dumpxml(self, vm_uuid, inactive=True):
         await self._enter("dumpxml", vm_uuid)
+        if vm_uuid in self.dumpxml_fail:
+            raise BackendError("internal error: cannot read the definition")
         if vm_uuid not in self.domains:
             raise BackendError("domain not found")
         xml = self._reported_xml(vm_uuid)
@@ -255,7 +259,7 @@ class FakeBackend:
                 raise BackendError(f"USB device is in use by driver QEMU, domain {self.domains[other_uuid]['name']}")
         if self.drop_attach:
             return
-        if live:
+        if live and not self.drop_attach_live:
             self.live_hostdevs.setdefault(vm_uuid, []).append(self._resolve(hxml))
         if config:
             d["xml"] = d["xml"].replace("</devices>", hxml + "</devices>", 1)

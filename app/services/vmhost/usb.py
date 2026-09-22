@@ -116,39 +116,132 @@ def ids_names(vendor: str, product: str, ids_paths=USB_IDS) -> tuple:
     return _IDS_CACHE[key]
 
 
-def _mounts(mountinfo: str, swaps: str) -> dict:
-    """{block device name: [mountpoint or "swap", …]} from /proc/self/mountinfo and /proc/swaps. The SOURCE
-    field is used, not the major:minor field — btrfs reports an anonymous device there (0:NN), so the
-    root filesystem of a btrfs host would otherwise belong to no disk at all."""
-    out: dict = {}
+def _zpool_status() -> str:
+    """`zpool status -P` (full vdev paths), or "" when there is no ZFS here or it cannot be asked."""
+    import shutil
+    import subprocess
+    z = shutil.which("zpool")
+    if not z:
+        return ""
+    try:
+        return subprocess.run([z, "status", "-P"], capture_output=True, text=True, timeout=10).stdout
+    except (OSError, subprocess.SubprocessError):
+        return ""
 
-    def dev_name(src: str) -> str:
-        if not src.startswith("/dev/"):
+
+class Mounts(dict):
+    """{block device name: [mountpoint | "swap", …]}, plus `unresolved`: the mountpoints of the host's own
+    filesystems that could not be traced to any block device. A caller must treat an unresolved SYSTEM mount as
+    "any disk may be the one the host runs from" — failing closed, never open."""
+    unresolved: list
+
+
+def _mounts(mountinfo: str, swaps: str, sys_root: str = "/sys", zpool_status=None, root_dev=None) -> Mounts:
+    """Which block devices the host's filesystems and swap live on. Every way a mount names its device is tried:
+
+      * the SOURCE path (`/dev/mapper/luks-…` → dm-0) — the only one that works for btrfs, whose major:minor
+        field is an anonymous 0:NN;
+      * the major:minor field through /sys/dev/block/M:m — the only one that works for `/dev/root`, which is not
+        a real node;
+      * for `/`, stat('/').st_dev through the same table;
+      * btrfs: every member in /sys/fs/btrfs/<fsid>/devices shares the mounts of the filesystem (a multi-device
+        root lives on several disks, only one of which is the SOURCE);
+      * ZFS: `zpool status -P` names each pool's vdevs; a dataset `pool/x` lives on all of them.
+    What none of these can place is returned in `unresolved`."""
+    out = Mounts()
+    out.unresolved = []
+    block = os.path.join(sys_root, "class", "block")
+
+    def known(name: str) -> bool:
+        return bool(name) and os.path.exists(os.path.join(block, name))
+
+    def by_path(src: str) -> str:
+        return os.path.basename(os.path.realpath(src)) if src.startswith("/dev/") else ""
+
+    def by_majmin(mm: str) -> str:
+        if not re.fullmatch(r"\d+:\d+", mm or "") or mm.startswith("0:"):
             return ""
-        return os.path.basename(os.path.realpath(src))
+        return os.path.basename(os.path.realpath(os.path.join(sys_root, "dev", "block", mm)))
 
+    rows = []
     try:
         with open(mountinfo, "r", encoding="utf-8", errors="replace") as f:
             for line in f:
                 left, _, right = line.partition(" - ")
                 parts, rparts = left.split(), right.split()
-                if len(parts) < 5 or len(rparts) < 2:
-                    continue
-                name = dev_name(rparts[1])
-                if name:
-                    mp = parts[4].replace("\\040", " ")
-                    out.setdefault(name, []).append(mp)
+                if len(parts) >= 5 and len(rparts) >= 2:
+                    rows.append((parts[2], parts[4].replace("\\040", " "), rparts[0], rparts[1]))
     except OSError:
         pass
+    btrfs_left, zfs = [], {}
+    for mm, mp, fstype, src in rows:
+        names = {n for n in (by_path(src), by_majmin(mm)) if known(n)}
+        if not names and mp == "/":
+            try:
+                st = root_dev if root_dev is not None else os.stat("/").st_dev
+                n = by_majmin(f"{os.major(st)}:{os.minor(st)}")
+                if known(n):
+                    names.add(n)
+            except OSError:
+                pass
+        for n in names:
+            out.setdefault(n, []).append(mp)
+        if fstype == "zfs":
+            zfs.setdefault(src.split("/", 1)[0], []).append(mp)
+        elif not names and fstype == "btrfs":
+            btrfs_left.append(mp)
+        elif not names and (src.startswith("/dev/") or fstype in ("ext2", "ext3", "ext4", "xfs", "f2fs", "vfat",
+                                                                   "bcachefs", "jfs", "reiserfs", "ntfs3")):
+            out.unresolved.append(mp)
+    # btrfs: one filesystem, several disks
+    fsdir = os.path.join(sys_root, "fs", "btrfs")
+    try:
+        fss = [x for x in os.listdir(fsdir) if os.path.isdir(os.path.join(fsdir, x, "devices"))]
+    except OSError:
+        fss = []
+    members = {fs: sorted(os.listdir(os.path.join(fsdir, fs, "devices"))) for fs in fss}
+    for fs, devs in members.items():
+        mps = sorted({m for d in devs for m in out.get(d, []) if m != "swap"})
+        if btrfs_left and (not mps or len(members) == 1):
+            mps = sorted(set(mps) | set(btrfs_left))       # cannot tell which fs: every member keeps them all
+        for d in devs:
+            for m in mps:
+                if m not in out.setdefault(d, []):
+                    out[d].append(m)
+    if btrfs_left and not members:
+        out.unresolved.extend(btrfs_left)
+    # ZFS: a dataset lives on every vdev of its pool
+    if zfs:
+        text = _zpool_status() if zpool_status is None else zpool_status
+        pool, vdevs = "", {}
+        for line in (text or "").splitlines():
+            m = re.match(r"\s*pool:\s*(\S+)", line)
+            if m:
+                pool = m.group(1)
+                continue
+            tok = line.split()
+            if pool and tok and tok[0].startswith("/dev/"):
+                vdevs.setdefault(pool, []).append(by_path(tok[0]))
+        for p, mps in zfs.items():
+            if not vdevs.get(p):
+                out.unresolved.extend(mps)
+                continue
+            for d in vdevs[p]:
+                out.setdefault(d, []).extend(mps)
     try:
         with open(swaps, "r", encoding="utf-8", errors="replace") as f:
             for line in list(f)[1:]:
                 p = line.split()
-                if p and dev_name(p[0]):
-                    out.setdefault(dev_name(p[0]), []).append("swap")
+                if p and p[0].startswith("/dev/") and by_path(p[0]):
+                    out.setdefault(by_path(p[0]), []).append("swap")
     except OSError:
         pass
     return out
+
+
+def root_unresolved(mounts) -> list:
+    """The host's own filesystems that could not be traced to a disk."""
+    return [m for m in getattr(mounts, "unresolved", []) if m in SYSTEM_MOUNTS]
 
 
 def _uses(sys_block: str, name: str, mounts: dict, depth: int = 0) -> list:
@@ -172,7 +265,7 @@ def _uses(sys_block: str, name: str, mounts: dict, depth: int = 0) -> list:
 
 
 def scan(sys_root: str = "/sys", mountinfo: str = "/proc/self/mountinfo", swaps: str = "/proc/swaps",
-         ids_paths=None) -> list:
+         ids_paths=None, zpool_status=None, root_dev=None) -> list:
     """Every USB device on this host that is not a hub or a root hub, with `system`/`busy` decided. Raises
     FileNotFoundError when the host has no USB bus in sysfs at all."""
     devs_dir = os.path.join(sys_root, "bus", "usb", "devices")
@@ -182,7 +275,9 @@ def scan(sys_root: str = "/sys", mountinfo: str = "/proc/self/mountinfo", swaps:
         blocks = [(b, os.path.realpath(os.path.join(sys_block, b))) for b in sorted(os.listdir(sys_block))]
     except OSError:
         blocks = []
-    mounts = _mounts(mountinfo, swaps)
+    mounts = _mounts(mountinfo, swaps, sys_root, zpool_status, root_dev)
+    lost = root_unresolved(mounts)
+    net = os.path.join(sys_root, "class", "net")
     out = []
     for n in names:
         base = os.path.join(devs_dir, n)
@@ -230,8 +325,24 @@ def scan(sys_root: str = "/sys", mountinfo: str = "/proc/self/mountinfo", swaps:
                 d.busy = f"the host has it mounted at {mp}"
             else:
                 d.busy = f"the host is using {b} (part of {via})"
+        elif d.blocks and lost:
+            d.busy = ("the host could not tell which disk " + ", ".join(lost) + " is on, so no disk is given to a VM "
+                      "(refusing rather than risk the one the host runs from)")
+        up = [i for i in net_under(net, real) if _read(os.path.join(net, i, "operstate")) == "up"]
+        if up and not d.busy:
+            d.busy = f"the host's network interface {up[0]} is up on it"
         out.append(d)
     return out
+
+
+def net_under(net_dir: str, real_prefix: str) -> list:
+    """Network interfaces whose device lives under `real_prefix` (a USB adapter, a PCI card)."""
+    try:
+        names = sorted(os.listdir(net_dir))
+    except OSError:
+        return []
+    pre = real_prefix if real_prefix.endswith(os.sep) else real_prefix + os.sep
+    return [n for n in names if os.path.realpath(os.path.join(net_dir, n)).startswith(pre)]
 
 
 def offered(devices: list) -> list:

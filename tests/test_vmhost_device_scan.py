@@ -270,3 +270,97 @@ def test_a_usb_disk_in_an_array_nothing_mounts_is_still_busy(tmp_path):
     none = str(tmp_path / "none")
     d = usb.scan(sys, none, none, ids_paths=(none,))[0]
     assert d.busy == "the host is using sdx1 (part of md7)" and not d.system
+
+
+# ---- the root disk, however the mount names it (review: /dev/root, multi-device btrfs, ZFS, swap) --------------
+def _usb_disk(tmp_path, name="1-2", blk="sdx", part="sdx1", vendor="0781"):
+    sys = str(tmp_path / "sys")
+    d = usb_dev(sys, "0000:0e:00.0", name, vendor, "5581", bus=1, dev=int(name.split("-")[1]) + 1)
+    block(sys, os.path.join(d, name + ":1.0"), blk, parts=(part,))
+    return sys, d
+
+
+def _majmin(sys, mm, name):
+    link(os.path.realpath(os.path.join(sys, "class/block", name)), os.path.join(sys, "dev/block", mm))
+
+
+def _one(sys, mi_text, tmp_path, **kw):
+    mi = tmp_path / "mi"
+    mi.write_text(mi_text)
+    sw = kw.pop("swaps", "Filename Type Size Used Priority\n")
+    (tmp_path / "sw").write_text(sw)
+    none = str(tmp_path / "none")
+    return usb.scan(sys, str(mi), str(tmp_path / "sw"), ids_paths=(none,), **kw)
+
+
+def test_dev_root_is_traced_through_its_major_minor(tmp_path):
+    sys, _ = _usb_disk(tmp_path)
+    _majmin(sys, "8:17", "sdx1")
+    d = _one(sys, "22 1 8:17 / / rw - ext4 /dev/root rw\n", tmp_path, zpool_status="")[0]
+    assert d.system is True
+
+
+def test_a_btrfs_root_with_an_anonymous_device_is_traced_through_stat(tmp_path):
+    sys, _ = _usb_disk(tmp_path)
+    _majmin(sys, "8:17", "sdx1")
+    d = _one(sys, "22 1 0:30 / / rw - btrfs /dev/root rw\n", tmp_path, zpool_status="",
+             root_dev=os.makedev(8, 17))[0]
+    assert d.system is True
+
+
+def test_every_member_of_a_multi_device_btrfs_root_is_the_root(tmp_path):
+    sys, _ = _usb_disk(tmp_path)
+    virtual_block(sys, "nvme0n1p2")
+    for m in ("nvme0n1p2", "sdx1"):
+        os.makedirs(os.path.join(sys, "fs/btrfs/1234-abcd/devices"), exist_ok=True)
+        os.symlink("../../../../class/block/" + m, os.path.join(sys, "fs/btrfs/1234-abcd/devices", m))
+    d = _one(sys, "22 1 0:30 /@ / rw - btrfs /dev/nvme0n1p2 rw\n", tmp_path, zpool_status="")[0]
+    assert d.system is True, "the USB half of a two-disk btrfs root was offered"
+
+
+def test_a_zfs_root_is_traced_through_zpool_status(tmp_path):
+    sys, _ = _usb_disk(tmp_path)
+    zs = "  pool: rpool\n state: ONLINE\nconfig:\n\n\tNAME        STATE\n\trpool       ONLINE\n\t  /dev/sdx1  ONLINE\n"
+    d = _one(sys, "22 1 0:40 / / rw - zfs rpool/ROOT/gentoo rw\n", tmp_path, zpool_status=zs)[0]
+    assert d.system is True
+
+
+def test_a_root_nothing_can_trace_refuses_every_disk(tmp_path):
+    sys, _ = _usb_disk(tmp_path)
+    d = _one(sys, "22 1 0:40 / / rw - zfs rpool/ROOT/gentoo rw\n", tmp_path, zpool_status="")[0]
+    assert "could not tell" in d.busy and not d.system
+    # and a PCI controller with any disk behind it is not offered at all
+    psys = str(tmp_path / "psys")
+    ctl = pci_dev(psys, "0000:02:00.0", "15b7", "5017", "010802", "nvme", "13")
+    br = os.path.join(ctl, "nvme/nvme0/nvme0n1")
+    os.makedirs(os.path.join(br, "holders"))
+    link(br, os.path.join(psys, "class/block", "nvme0n1"))
+    (tmp_path / "sw").write_text("x\n")
+    devs = pci.scan(psys, str(tmp_path / "mi"), str(tmp_path / "sw"), ids_paths=(), zpool_status="")
+    assert devs[0].system is True
+
+
+def test_swap_on_a_usb_disk_is_busy(tmp_path):
+    sys, _ = _usb_disk(tmp_path)
+    d = _one(sys, "", tmp_path, swaps="Filename Type Size Used Priority\n/dev/sdx1 partition 8G 0 -2\n",
+             zpool_status="")[0]
+    assert d.busy == "the host uses sdx1 as swap"
+
+
+def test_a_usb_network_adapter_that_is_up_is_busy(tmp_path):
+    sys = str(tmp_path / "sys")
+    nicd = usb_dev(sys, "0000:0e:00.0", "4-1", "0bda", "8156", ifaces=("ff",), bus=4, dev=3)
+    nr = os.path.join(nicd, "4-1:1.0", "net", "enp10s0f3u4")
+    w(os.path.join(nr, "operstate"), "up")
+    link(nr, os.path.join(sys, "class/net", "enp10s0f3u4"))
+    d = _one(sys, "", tmp_path, zpool_status="")[0]
+    assert "enp10s0f3u4" in d.busy
+
+
+def test_a_usb_controller_carrying_the_hosts_keyboard_is_busy(tmp_path):
+    sys = str(tmp_path / "sys")
+    pci_dev(sys, "0000:11:00.0", "1022", "15b8", "0c0330", "xhci_hcd", "32")
+    usb_dev(sys, "0000:11:00.0", "3-1", "046d", "c31c", ifaces=("03",), bus=3, dev=2)
+    (tmp_path / "e").write_text("")
+    d = next(x for x in pci.scan(sys, str(tmp_path / "e"), str(tmp_path / "e"), ids_paths=()) if x.address == "0000:11:00.0")
+    assert "HID devices" in d.busy

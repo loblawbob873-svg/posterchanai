@@ -159,12 +159,14 @@ def host_checks(sys_root: str = "/sys", modules_dir: str | None = None, cpuinfo:
 
 
 def scan(sys_root: str = "/sys", mountinfo: str = "/proc/self/mountinfo", swaps: str = "/proc/swaps",
-         ids_paths=PCI_IDS) -> list:
+         ids_paths=PCI_IDS, zpool_status=None, root_dev=None) -> list:
     """Every PCI device on this host with `hidden`/`system`/`busy` decided (the caller filters)."""
     base = os.path.join(sys_root, "bus", "pci", "devices")
     names = sorted(os.listdir(base))                                  # FileNotFoundError: no PCI bus
     sys_block = os.path.join(sys_root, "class", "block")
-    mounts = usb._mounts(mountinfo, swaps)
+    mounts = usb._mounts(mountinfo, swaps, sys_root, zpool_status, root_dev)
+    lost = usb.root_unresolved(mounts)
+    usb_dir = os.path.join(sys_root, "bus", "usb", "devices")
     out = []
     for a in names:
         if not ADDR.match(a):
@@ -189,6 +191,17 @@ def scan(sys_root: str = "/sys", mountinfo: str = "/proc/self/mountinfo", swaps:
                     why.append(f"the host has {b} mounted at {mp}" + (f" (through {via})" if via else ""))
                 elif not mp and not why:
                     why.append(f"the host is using {b} (part of {via})")
+        if not dev.system and lost and _under(sys_block, real):
+            dev.system = True                             # the root disk could be behind it: never offered
+        if cls.startswith("0c03"):
+            # a USB controller carrying the host's keyboard/mouse: giving it away takes the host's input
+            hid = []
+            for u in _under(usb_dir, real):
+                if ":" in u and _read(os.path.join(usb_dir, u, "bInterfaceClass")).lower() == "03":
+                    hid.append(u.split(":")[0])
+            if hid:
+                why.append("the host's HID devices (keyboard, mouse, controller …) are connected through it (" +
+                           ", ".join(sorted(set(hid))) + ")")
         for n in _under(os.path.join(sys_root, "class", "net"), real):
             if _read(os.path.join(sys_root, "class", "net", n, "operstate")) == "up":
                 why.append(f"the host's network interface {n} is up")

@@ -383,3 +383,120 @@ def test_the_qemu_device_probe_reads_the_real_help_output(tmp_path):
     pci_check = run(B.qemu_device_check("pci", str(fake), runner))
     assert usb_check["ok"] is False and "USE=usb" in usb_check["fix"]      # usb-redir is NOT usb-host
     assert pci_check["ok"] is True
+
+
+# ------------------------------------------------------------------------------------------------ review round 1
+def _replace(be, kind, addr_or_ids, **kw):
+    import dataclasses
+    lst = be.usb_devices if kind == "usb" else be.pci_devices
+    for i, d in enumerate(lst):
+        key = f"{d.vendor}:{d.product}" if kind == "usb" else d.address
+        if key == addr_or_ids:
+            lst[i] = dataclasses.replace(d, **kw)
+
+
+def test_start_rechecks_a_saved_usb_device_the_host_now_uses(tmp_path):
+    """managed hostdevs are taken at START: a saved vendor:product that now matches something the host uses (its
+    backup disk, the uplink NIC) must stop the start, with the reason — vm.power is a session op, so this is the
+    last place the check can happen."""
+    svc, be = make(tmp_path)
+    assert c(svc, ADMIN, "vm.device.attach", {"vm": U1, "kind": "usb", "vendor": "090c", "product": "1000"})["ok"]
+    _replace(be, "usb", "090c:1000", busy="the host has it mounted at /backup")
+    r = c(svc, USER, "vm.power", {"vm": U1, "action": "start"})
+    assert r["error"]["code"] == "conflict" and "/backup" in r["error"]["message"], r
+    assert be.domains[U1]["state"] == "shutoff" and not any(x[0] == "start" for x in be.calls)
+    _replace(be, "usb", "090c:1000", busy="")
+    assert c(svc, USER, "vm.power", {"vm": U1, "action": "start"})["ok"]
+
+
+def test_start_rechecks_a_saved_gpu_and_a_missing_card(tmp_path):
+    svc, be = make(tmp_path)
+    assert c(svc, ADMIN, "vm.device.attach", {"vm": U1, "kind": "pci", "address": "0000:01:00.0"})["ok"]
+    _replace(be, "pci", "0000:01:00.0", driver="nvidia", busy="the host's nvidia driver is using it")
+    r = c(svc, ADMIN, "vm.power", {"vm": U1, "action": "start"})
+    assert r["error"]["code"] == "conflict" and "nvidia" in r["error"]["message"], r
+    be.pci_devices = [RTX_AUDIO]
+    r = c(svc, ADMIN, "vm.power", {"vm": U1, "action": "start"})
+    assert r["error"]["code"] == "conflict" and "not on this host" in r["error"]["message"], r
+    assert not any(x[0] == "start" for x in be.calls)
+
+
+def test_the_owner_scan_fails_closed(tmp_path):
+    svc, be = make(tmp_path)
+    be.dumpxml_fail = {U2}
+    r = c(svc, ADMIN, "vm.device.attach", {"vm": U1, "kind": "usb", "vendor": "090c", "product": "1000"})
+    assert r["error"]["code"] == "backend_error" and "beta" in r["error"]["message"], r
+    assert not any(x[0] == "attach_device" for x in be.calls)
+
+
+def test_two_admins_racing_for_one_stick_get_it_once(tmp_path):
+    svc, be = make(tmp_path)
+
+    async def race():
+        gate = be.gate["attach_device"] = asyncio.Event()
+        a = asyncio.ensure_future(svc.handle(ADMIN, "vm.device.attach",
+                                             {"vm": U1, "kind": "usb", "vendor": "090c", "product": "1000"}, "race-a"))
+        b = asyncio.ensure_future(svc.handle(ADMIN, "vm.device.attach",
+                                             {"vm": U2, "kind": "usb", "vendor": "090c", "product": "1000"}, "race-b"))
+        await asyncio.sleep(0.2)
+        gate.set()
+        return await asyncio.gather(a, b)
+    ra, rb = run(race())
+    assert sorted([ra["ok"], rb["ok"]]) == [False, True], (ra, rb)
+    loser = rb if ra["ok"] else ra
+    assert loser["error"]["code"] == "conflict" and "already attached" in loser["error"]["message"], loser
+    owners = [u for u in (U1, U2) if usb.hostdevs(run(be.dumpxml(u, inactive=True)))]
+    assert len(owners) == 1
+
+
+def test_a_half_landed_attach_is_rolled_back_and_says_so(tmp_path):
+    svc, be = make(tmp_path)
+    be.drop_attach_live = True
+    r = c(svc, ADMIN, "vm.device.attach", {"vm": U2, "kind": "usb", "vendor": "090c", "product": "1000"})
+    assert r["error"]["code"] == "backend_error", r
+    assert "in the running VM" in r["error"]["message"] and "removed again" in r["error"]["message"], r
+    assert usb.hostdevs(run(be.dumpxml(U2, inactive=True))) == [], "the saved half was left behind"
+
+
+APU = pci.PciDevice(address="0000:10:00.0", vendor="1002", product="164e", cls="030000", driver="vfio-pci", group="26")
+APU_HDMI = pci.PciDevice(address="0000:10:00.1", vendor="1002", product="1640", cls="040300", driver="vfio-pci", group="27")
+BOARD_AUDIO = pci.PciDevice(address="0000:10:00.6", vendor="1022", product="15e3", cls="040300", driver="vfio-pci",
+                            group="31")
+
+
+def test_pci_detach_takes_the_card_attach_gave_and_nothing_else(tmp_path):
+    svc, be = make(tmp_path)
+    be.pci_devices = [APU, APU_HDMI, BOARD_AUDIO]
+    assert c(svc, ADMIN, "vm.device.attach", {"vm": U1, "kind": "pci", "address": "0000:10:00.0"})["ok"]
+    assert c(svc, ADMIN, "vm.device.attach", {"vm": U1, "kind": "pci", "address": "0000:10:00.6"})["ok"]
+
+    def saved():
+        return sorted(e["address"] for e in pci.hostdevs(run(be.dumpxml(U1, inactive=True))))
+    assert saved() == ["0000:10:00.0", "0000:10:00.1", "0000:10:00.6"]
+    # detaching the HDMI audio takes its GPU too; the board's own audio at .6 stays
+    assert c(svc, ADMIN, "vm.device.detach", {"vm": U1, "kind": "pci", "address": "0000:10:00.1"})["ok"]
+    assert saved() == ["0000:10:00.6"]
+    assert c(svc, ADMIN, "vm.device.attach", {"vm": U1, "kind": "pci", "address": "0000:10:00.0"})["ok"]
+    assert c(svc, ADMIN, "vm.device.detach", {"vm": U1, "kind": "pci", "address": "0000:10:00.0"})["ok"]
+    assert saved() == ["0000:10:00.6"], "detaching the GPU took the board's audio"
+
+
+def test_pci_detach_of_a_card_that_left_the_host_leaves_nothing_behind(tmp_path):
+    svc, be = make(tmp_path)
+    assert c(svc, ADMIN, "vm.device.attach", {"vm": U1, "kind": "pci", "address": "0000:01:00.0"})["ok"]
+    be.pci_devices = []
+    assert c(svc, ADMIN, "vm.device.detach", {"vm": U1, "kind": "pci", "address": "0000:01:00.0"})["ok"]
+    assert pci.hostdevs(run(be.dumpxml(U1, inactive=True))) == []
+
+
+def test_identical_twins_are_two_rows(tmp_path):
+    svc, be = make(tmp_path)
+    twin = usb.UsbDevice(sysname="1-12", bus=1, device=9, vendor="090c", product="1000", name="Flash Drive")
+    be.usb_devices = [STICK, twin]
+    for dev in (3, 9):
+        r = c(svc, ADMIN, "vm.device.attach", {"vm": U2, "kind": "usb", "vendor": "090c", "product": "1000",
+                                               "bus": 1, "device": dev})
+        assert r["ok"], r
+    rows = r["result"]["vm"]["devices"]
+    assert sorted((d["bus"], d["device"], d["live"], d["persistent"]) for d in rows) == \
+        [(1, 3, True, True), (1, 9, True, True)]

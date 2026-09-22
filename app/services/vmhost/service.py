@@ -585,6 +585,7 @@ class VmHostService(HardwareOps, DeviceOps, IsoOps, AccessOps, SessionOps):
                 self._migration_guard(d)
                 if d.state in ("running", "paused", "stopping"):
                     raise VmHostError("conflict", f"the VM is already {d.state}")
+                await self._device_start_guard(d)       # managed hostdevs are taken NOW, not at attach time
                 await self.backend.start(d.uuid)
             else:
                 if d.state not in ("running", "paused", "stopping"):
