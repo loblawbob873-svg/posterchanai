@@ -5,14 +5,16 @@
  * failures are a list that gets SHORTER and a publish that goes out on a read nobody answered.
  */
 import fs from 'node:fs';import vm from 'node:vm';import assert from 'node:assert/strict';
+import { clientSource, clientSourceAt, installStateGlobals } from './client_source.mjs';
 
-const code=fs.readFileSync(process.env.PC_APP_SOURCE||new URL('../../static/js/client/app.js',import.meta.url),'utf8');
+const code=clientSourceAt(process.env.PC_APP_SOURCE||new URL('../../static/js/client/app.js',import.meta.url));
 const cut=(from,to)=>{const i=code.indexOf(from);assert(i>=0,'missing: '+from);
   const j=code.indexOf(to,i);assert(j>i,'missing: '+to);return code.slice(i,j);};
 
 /* The relay-list policy, plus the two helpers it leans on, taken verbatim. */
 const slice=cut('  function _dropLegacyAutoRelays(){','  function defaultRelays(){')
-  +cut('  function normalizeRelay(u){','  function mergeRelays(');
+  // normalizeRelay up to its own closing brace: mergeRelays, which followed it, moved to settings.js.
+  +cut('  function normalizeRelay(u){','\n  }\n')+'\n  }\n';
 
 function makeCtx({saved={}, nip65=null, complete=true, verify=()=>true}={}){
   const store={...saved};
@@ -30,7 +32,7 @@ function makeCtx({saved={}, nip65=null, complete=true, verify=()=>true}={}){
     _store:store};
   ctx.window=ctx;
   ctx.Relay={query:async()=>{const out=nip65?[nip65]:[];out.complete=complete;return out;}};
-  vm.createContext(ctx);
+  vm.createContext(installStateGlobals(ctx) && ctx);
   // `let _nip65Confirmed` is a lexical binding, not a global — expose a reader for it.
   vm.runInContext(slice+'\nglobalThis.nip65Confirmed=()=>_nip65Confirmed;',ctx);
   return ctx;

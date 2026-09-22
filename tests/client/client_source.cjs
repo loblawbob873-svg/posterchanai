@@ -31,6 +31,8 @@ function clientSource(){
 /* The same, for a harness handed an app.js path (an installed copy, a checkout under test): the
  * split modules are read from beside THAT app.js, and the list of them from that app.js too. */
 function clientSourceAt(appPath){
+  if(appPath instanceof URL) appPath = require('url').fileURLToPath(appPath);
+  appPath = String(appPath);
   const dir = path.dirname(appPath), app = fs.readFileSync(appPath, 'utf8');
   const names = [];
   for(const m of app.matchAll(/_lzGet\('([\w.-]+\.js)'/g)) if(!names.includes(m[1])) names.push(m[1]);

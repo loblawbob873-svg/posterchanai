@@ -14,6 +14,7 @@ import os
 import re
 
 import pytest
+from tests.client_source import client_source
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 SIG = os.path.join(ROOT, "mobile", "android", "app", "src", "main", "java",
@@ -178,7 +179,7 @@ def test_a_failure_is_never_answered_as_success():
 
 
 def test_the_client_can_turn_it_on_and_off():
-    js = _read(APP_JS)
+    js = client_source()
     assert "_renderNip55" in js, "there is no way to enable the native signer"
     seg = js[js.index("  async function _renderNip55(){"):]
     seg = seg[:seg.index("  async function _signerBackgroundHint(box){")]

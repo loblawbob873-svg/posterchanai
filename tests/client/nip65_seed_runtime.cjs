@@ -1,3 +1,4 @@
+const { clientSource, clientSourceAt, installStateGlobals } = require('./client_source.cjs');
 'use strict';
 /* "FOR SOME REASON, USE MY OWN RELAYS GOT ENABLED AGAIN!" — twice.
  *
@@ -8,7 +9,7 @@
  */
 const fs = require('fs'), vm = require('vm'), assert = require('assert/strict'), path = require('path');
 const root = path.resolve(__dirname, '../..');
-const src = fs.readFileSync(root + '/static/js/client/app.js', 'utf8');
+const src = clientSourceAt(root + '/static/js/client/app.js');
 
 function slice(start, end) {
   const a = src.indexOf(start); assert(a >= 0, 'missing: ' + start);
@@ -52,7 +53,7 @@ function setup(settings, nip65Tags, opts = {}) {
       return evs;
     },
   };
-  vm.createContext(ctx);
+  vm.createContext(installStateGlobals(ctx) && ctx);
   vm.runInContext(
     'let _nip65Confirmed = false;'
     + slice('  function _relayTagUrls(ev){', '  /* Set up the relays from the')

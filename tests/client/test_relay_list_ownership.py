@@ -17,9 +17,10 @@ goes out on a read nobody answered. Each rule in it was verified to fail on its 
 from pathlib import Path
 import re
 import subprocess
+from tests.client_source import client_source
 
 ROOT = Path(__file__).resolve().parents[2]
-APP = (ROOT / "static/js/client/app.js").read_text(encoding="utf-8")
+APP = client_source()
 
 
 def test_the_relay_list_is_additive_and_the_publish_is_gated():
@@ -37,7 +38,7 @@ def test_a_kind_10002_write_needs_a_confirmed_read_of_the_existing_list():
     """
     i = APP.index("const relayChanged =")
     block = APP[i:APP.index("if($('input[name=media-mode]')", i)]
-    publish = re.search(r"^\s*if\(_nip65Confirmed\) await publish\(10002,", block, re.M)
+    publish = re.search(r"^\s*if\(S\._nip65Confirmed\) await publish\(10002,", block, re.M)
     assert publish, "the kind-10002 write is not gated on a confirmed read of the existing list"
     assert re.search(r"else toast\(", block), \
         "a refused publish must say so — a save that quietly did half of what it said is worse"

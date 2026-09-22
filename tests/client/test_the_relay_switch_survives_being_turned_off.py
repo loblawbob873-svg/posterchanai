@@ -20,9 +20,10 @@ Neither bug is new (the save line dates to 2026-06-23, the taskbar button to 202
 import re
 import unittest
 from pathlib import Path
+from tests.client_source import client_source
 
 ROOT = Path(__file__).resolve().parent.parent.parent
-APP = (ROOT / "static/js/client/app.js").read_text(encoding="utf-8")
+APP = client_source()
 OS_JS = (ROOT / "static/js/client/os.js").read_text(encoding="utf-8")
 
 
