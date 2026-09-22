@@ -239,6 +239,9 @@ pyyaml>=6.0
 pygments>=2.17
 markdown-it-py>=3.0
 certifi
+# Upstream SearXNG pinned curl_cffi==0.16.3 (2026-09); without it `import searx` fails and the
+# bundled instance never answers — measured on a fresh PosterChanOS server install.
+curl_cffi>=0.16
 # <<< searxng-deps
 
 # SSH terminal (the client's Terminal app). Optional at runtime: ssh_service.available()

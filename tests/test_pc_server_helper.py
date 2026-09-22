@@ -377,3 +377,24 @@ def test_searxng_gets_setuptools_before_its_no_isolation_build():
     a = src.index('"$venv/bin/pip" install -q setuptools wheel')
     b = src.index('--no-build-isolation -e "$src_dir"')
     assert a < b, "setuptools must be in the venv before the --no-build-isolation install"
+
+
+def test_searxng_runs_as_the_service_account_and_gets_the_database(box):
+    """Measured on the build VM: the SearXNG unit ran as root and fell back to 127.0.0.1:5432
+    ("fe_sendauth: no password supplied") — the peer-socket URL lives in secrets.env as `export`
+    lines, which systemd cannot read. The installer is told the service user; a drop-in carries the URL."""
+    rc, out, calls = box.run("enable")
+    assert rc == 0, box.job_log()
+    inst = [c for c in calls if c.startswith("install.sh")]
+    assert inst, calls
+    dropin = box.units / "posterchanai-searxng.service.d" / "pc-server.conf"
+    assert dropin.exists(), "the SearXNG unit gets the server's DATABASE_URL"
+    assert "host=/run/postgresql" in dropin.read_text()
+    src = (ROOT / "os/bin/pc-server").read_text()
+    assert 'PC_SERVICE_USER="$SVC_USER"' in src
+
+
+def test_searxng_deps_include_curl_cffi():
+    req = (ROOT / "requirements.txt").read_text()
+    block = req[req.index("# >>> searxng-deps"):req.index("# <<< searxng-deps")]
+    assert "curl_cffi" in block, "upstream SearXNG imports curl_cffi; without it the instance never starts"

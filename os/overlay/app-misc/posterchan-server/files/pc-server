@@ -196,9 +196,20 @@ installer(){ # installer <args…> — the project's own install.sh, as root, to
   # pip runs as root here; its cache must be somewhere root owns or pip disables it (and a retried
   # multi-GB AI install would download everything again).
   mkdir -p "$PIP_CACHE"
-  ( cd "$APP" && env HOME="$STATE" U2NET_HOME="$STATE/.u2net" PIP_CACHE_DIR="$PIP_CACHE" \
+  ( cd "$APP" && env HOME="$STATE" U2NET_HOME="$STATE/.u2net" PIP_CACHE_DIR="$PIP_CACHE" PC_SERVICE_USER="$SVC_USER" \
       ACESTEP_DIR="$APP/ACE-Step-1.5" SEARXNG_SRC_DIR="$APP/searxng-src" \
       VIDEO_PREFETCH=n VOICE_PREFETCH=n "${dsn_env[@]}" ./install.sh "$@" )
+}
+
+# THE SEARXNG UNIT NEEDS THE SAME DATABASE AS THE SERVER. It reads its own `searxng_enabled` setting
+# from the DB, and on PosterChanOS that DB is only reachable over the peer socket — the URL lives in
+# data/secrets.env as `export` lines, which systemd's EnvironmentFile cannot read. Measured: the unit
+# fell back to 127.0.0.1:5432 ("fe_sendauth: no password supplied"). A drop-in carries it.
+searx_dropin(){
+  [ -f "$UNIT_DIR/$SEARX_UNIT" ] && [ -f "$PG_OWNED" ] || return 0
+  mkdir -p "$UNIT_DIR/$SEARX_UNIT.d"
+  printf '[Service]\nEnvironment="DATABASE_URL=postgresql+psycopg2://posterchan@/posterchan_relay?host=%s"\n' "$PG_SOCKET" \
+    > "$UNIT_DIR/$SEARX_UNIT.d/pc-server.conf"
 }
 
 own_tree(){ # the service writes into its own tree (data/, state files); the installer ran as root
@@ -225,6 +236,7 @@ do_enable(){
   # SearXNG comes with the server (install.sh installs it on the nostr-only path too). A server set up
   # before that gets it here, once; a failure only means the node searches elsewhere.
   feature_installed searxng || installer --searxng || echo "note: SearXNG did not install — web search will use Admin → Tools"
+  searx_dropin
   own_tree
   systemctl daemon-reload
   systemctl enable --now "$UNIT" || { echo "$UNIT did not start"; return 1; }
@@ -239,7 +251,7 @@ do_install_ai(){
     music)   installer --music ;;
     video)   installer --video ;;
     voice)   installer --voice ;;
-    searxng) installer --searxng ;;
+    searxng) installer --searxng && searx_dropin ;;
     *) echo "unknown feature $f"; return 2 ;;
   esac || { echo "the installer failed"; return 1; }
   own_tree
