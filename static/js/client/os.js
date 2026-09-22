@@ -10198,6 +10198,24 @@
     catch(_){ return ''; }
   }
 
+  /**
+   * PERFORM SOMETHING ON THE DESKTOP FROM INSIDE A POPUP WINDOW, without closing the popup.
+   *
+   * A popup renderer (the composer, the notification panel) is its own Electron window with its own
+   * page. `enter()` never runs there, so `PCOS.isOn()` is false and anything that paints into
+   * `#feed` paints into a container client.css hides outright — the work happens where nobody can
+   * see it. `_menuAct` already crosses this boundary for the start menu, but it CLOSES the popup
+   * afterwards, which is right for a menu and destroys a half-written reply.
+   *
+   * Returns false on an ordinary page, where the caller should just do the thing itself.
+   */
+  function askDesktop(kind, arg){
+    if(!popupKind()) return false;
+    if(!(window.pcPopup && typeof pcPopup.act === 'function')) return false;
+    _popupTell('act', arg == null || arg === '' ? kind : kind + ':' + _actEncode(arg));
+    return true;
+  }
+
   function enter(){
     if(on) return;
     /* A WINDOW IS NOT A DESKTOP, AND THIS IS THE ONE PLACE THAT CANNOT BE ROUTED AROUND.
@@ -11531,7 +11549,7 @@
                    * agree with a cold one: boot already restored the desktop before this runs. */
                   mobileLanding: () => { if(!on && !popupKind() && !_authGateUp() && wantsDesktop()) enter(); },
                   wantsDesktop,
-                  isOn: () => on, openDoc, focusDoc, closeDoc, captureReturnTarget, windowOpenHint: _windowOpenHint, routeView, routeApp, snapTo, documentWindow,
+                  isOn: () => on, openDoc, focusDoc, closeDoc, askDesktop, captureReturnTarget, windowOpenHint: _windowOpenHint, routeView, routeApp, snapTo, documentWindow,
                   openSystemSettings, osToast,
                   // app.js calls this when the player's state changes — the Now-playing widget has
                   // nothing to subscribe to, and polling an element we could be told about is the

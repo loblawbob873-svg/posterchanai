@@ -17445,7 +17445,16 @@
       { const x=$('#cmp-close',root); if(x) x.onclick=()=>closeModal(); }
       // Armada-style reply context: one readable parent preview in the composer, not a permanent
       // parent card above every message. Clicking (or pressing Enter) opens the original thread.
-      { const p=$('.cmp-parent',root); if(p){ const go=()=>{ const id=p.dataset.open; closeModal(); openThread(id); };
+      /* IN THE DESKTOP'S COMPOSER POPUP, THE COMPOSER *IS* THE WINDOW. `closeModal(); openThread()`
+       * is right on a page and destructive there: the popup renderer watches #modal-root and closes
+       * the whole window when the modal goes, and `openThread` — with PCOS.isOn() false in a popup —
+       * then paints the thread into a #feed that client.css hides. So the reply window vanished, the
+       * post opened nowhere, and what had been typed survived only as an autosaved draft. Reported
+       * as "reply modal: clicking preview messes up the UI". The shell opens the post instead, and
+       * the composer is left exactly as it was. */
+      { const p=$('.cmp-parent',root); if(p){ const go=()=>{ const id=p.dataset.open;
+          if(window.PCOS && PCOS.askDesktop && PCOS.askDesktop('thread', id)) return;
+          closeModal(); openThread(id); };
         p.onclick=e=>{ if(!e.target.closest('[data-prof]')) go(); };
         p.onkeydown=e=>{ if(e.key==='Enter'||e.key===' '){ e.preventDefault(); go(); } }; } }
       const ta=$('#cmp',root); attachMentionAutocomplete(ta); if(text) ta.value=text;
@@ -27407,7 +27416,16 @@
     markNotifsRead();
     // row opens the post; avatar opens the sender's profile (stop the row handler firing too). EXCLUDE the
     // updater row (.upd-notif) — it keeps its own applyUpdate handler and has no post/profile to open.
-    feed.querySelectorAll('.notif:not(.upd-notif)').forEach(n=> n.onclick=()=> n.dataset.route ? openOsNotificationRoute(n.dataset.route) : n.dataset.prof ? renderProfileView(n.dataset.prof) : openThread(n.dataset.open));
+    /* THE ROW MUST STOP THE EVENT, and a reply notification is why. #feed carries a DELEGATED
+     * `[data-open]` handler (bindFeedActions), and a notification row has `data-open` — so one click
+     * ran this handler AND the delegate. Two calls to openThread in one tick, which the desktop's
+     * "one window per app" guards cannot both catch (the native dedupe reads a compositor snapshot
+     * that is a tick late), so a post opened twice. Worse on a REPLY: its row embeds the parent post
+     * as a real quote card, and `.quoted` carries the PARENT's id — so the two ids differ, every
+     * dedupe correctly declines to merge them, and clicking the biggest part of the row opened two
+     * DIFFERENT post windows. The avatar binding on the next line has always stopped propagation;
+     * the row never did. */
+    feed.querySelectorAll('.notif:not(.upd-notif)').forEach(n=> n.onclick=(ev)=>{ ev.stopPropagation(); n.dataset.route ? openOsNotificationRoute(n.dataset.route) : n.dataset.prof ? renderProfileView(n.dataset.prof) : openThread(n.dataset.open); });
     feed.querySelectorAll('.notif-av').forEach(a=> a.onclick=(ev)=>{ ev.stopPropagation(); renderProfileView(a.dataset.pk); });
     const more=$('#notif-more'); if(more) more.onclick=async ()=>{
       _notifShown+=25;
