@@ -217,6 +217,7 @@ function instanceChosen() { return cfg.instance != null && String(cfg.instance).
 // Windows, denies itself the camera, and ignores its own IPC.
 const { originOf, isOurs: _isOurs, isWebxdcSandbox: _isWebxdcSandbox } = require('./origin');
 const { isTrustedPage } = require('./page-trust');
+const { showWhenReady } = require('./show-when-ready');
 // "Ours" = the bundle, plus the instance's own pages (the client frames <instance>/admin). With no
 // instance only the bundle qualifies, which is exactly right.
 function isOurs(url) { return _isOurs(url, APP_ORIGIN, instance()); }
@@ -1428,7 +1429,7 @@ function pickScreenSource() {
             additionalArguments: ['--pc-preload-dir=' + __dirname] },
         });
         ipcMain.once('pc:screen:pick', (_e, id) => finish(id));
-        pick.once('ready-to-show', () => { if(!pick.isDestroyed()) pick.show(); });
+        showWhenReady(pick, () => pick.show());
         pick.on('closed', () => { ipcMain.removeAllListeners('pc:screen:pick'); finish(null); });
         /* A picker renderer is disposable, but its PROMISE is not. A missing packaged picker.html
          * or a renderer killed while thumbnails decode used to leave this BrowserWindow black and
@@ -2494,15 +2495,17 @@ async function openPopupWindow(e, kind, rect, arg){
    * desktop surfaces. That matters twice: sway can only be told to move a window it can name, and
    * pc-window-snap decides what a window IS from its title. */
   p.on('page-title-updated', (e) => e.preventDefault());
-  p.once('ready-to-show', () => {
-    if(p.isDestroyed()) return;
+  /* NOT ON THE ready-to-show EVENT ALONE: on a slow, GPU-less machine a hidden window whose page
+   * paints later than ~100ms never gets that event, so the menu was never shown at all. See
+   * show-when-ready.js for the measurement. */
+  showWhenReady(p, () => {
     p.show();
     const geometry = { x: originX + num(r.x, -20000, 20000, 0) * (sourceScale ? sourceScale.x : 1),
                        y: originY + num(r.y, -20000, 20000, 0) * (sourceScale ? sourceScale.y : 1),
                        w: p.getBounds().width, h: p.getBounds().height };
     if(sourceScale) geometry.sourceScale = sourceScale;
     placePopupWindow(p, geometry);
-  });
+  }, { stillWanted: () => _popupWin === p });
   if(!sticky) p.on('blur', () => { if(_popupWin === p) closePopupWindow(); });
   p.on('closed', () => {
     if(_popupWin !== p) return;              // already reported by closePopupWindow

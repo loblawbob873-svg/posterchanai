@@ -8,7 +8,7 @@ def test_popup_load_failure_only_closes_its_own_window():
     main=(ROOT/'desktop/main.js').read_text()
     opener=main[main.index('async function openPopupWindow('):main.index('/* WAYLAND GIVES A CLIENT NO SAY')]
     script=r'''
-const assert=require('node:assert/strict'),path=require('node:path');
+const {showWhenReady}=require('''+repr(str(ROOT/'desktop/show-when-ready.js'))+r''');const assert=require('node:assert/strict'),path=require('node:path');
 const APP_URL='app://posterchan/index.html',POPUP_TITLE='PosterChan Popup',STICKY_POPUPS=new Set(),_shellScopes=new Map();
 let _popupWin=null,_popupKind='';const created=[];
 const wm=()=>({outputs:async()=>[],focusedOutputName:async()=>''});
