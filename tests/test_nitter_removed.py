@@ -18,6 +18,7 @@ import subprocess
 import sys
 
 import pytest
+from tests.client_source import client_source
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
@@ -88,7 +89,7 @@ def test_no_ui_control_survives_without_the_feature_behind_it():
     # app.js keeps ONE mention on purpose: the link-action bar that offers MP3/Video on a pasted
     # mirror URL, which is the client half of the kept rewriter. Forbid the removed FEATURE, not the
     # word, or this test becomes an argument for deleting something that works.
-    app = _read("static/js/client/app.js")
+    app = client_source()
     assert "us-nitter" not in app and "nitter_feeds" not in app
     assert "xcancel" in app, ("the link-action bar must know the same mirror hosts the server "
                               "rewrites, or a pasted one loses its download buttons")

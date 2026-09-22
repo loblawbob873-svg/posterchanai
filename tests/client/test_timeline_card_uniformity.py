@@ -25,6 +25,7 @@ repost's own.
 import re
 import unittest
 from pathlib import Path
+from tests.client_source import client_source
 
 ROOT = Path(__file__).resolve().parents[2]
 APP = ROOT / "static" / "js" / "client" / "app.js"
@@ -79,7 +80,7 @@ class EveryHeaderIsOneLine(unittest.TestCase):
 class ARepostSaysWhoAndWhen(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
-        cls.src = APP.read_text()
+        cls.src = client_source()
         cls.css = CSS.read_text()
 
     def test_there_is_exactly_one_builder(self):

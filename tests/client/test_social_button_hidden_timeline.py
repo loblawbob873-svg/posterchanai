@@ -13,6 +13,7 @@ import re
 import shutil
 import subprocess
 import unittest
+from tests.client_source import client_source
 
 ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 APP = os.path.join(ROOT, "static", "js", "client", "app.js")
@@ -30,7 +31,7 @@ def _slice(src, start, end, what):
 class SocialButtonTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
-        src = open(APP, encoding="utf-8").read()
+        src = client_source()
         # the pure decision head of switchView: everything before the PCOS window routing
         head = _slice(src, "function switchView(v, quiet){", "/* PosterChan OS:",
                       "switchView head")
@@ -50,6 +51,7 @@ class SocialButtonTests(unittest.TestCase):
         const ClientSettings = { get: (k, d) => k === 'startTimeline' ? %s : d };
         const tlHiddenSet = () => new Set(%s);
         const _viewNeedsInstance = () => false;
+        const _menusMod = () => null;   // the emoji popover moved to menus.js; nothing is open here
         let _onLandingView = true;
         %s
         %s

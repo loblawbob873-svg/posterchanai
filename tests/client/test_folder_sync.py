@@ -25,6 +25,7 @@ import shutil
 import subprocess
 import textwrap
 import unittest
+from tests.client_source import client_source
 
 REPO = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 MOD = os.path.join(REPO, "static", "js", "client", "foldersync.js")
@@ -757,7 +758,7 @@ class FilesTrashSurface(unittest.TestCase):
 
     def setUp(self):
         root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-        self.app = open(os.path.join(root, "static", "js", "client", "app.js"), encoding="utf-8").read()
+        self.app = client_source()
         self.sync = open(os.path.join(root, "static", "js", "client", "sync.js"), encoding="utf-8").read()
 
     def test_one_restore_loop_shared_by_card_and_files(self):
@@ -808,7 +809,7 @@ class AccountWideRestore(unittest.TestCase):
 
     def setUp(self):
         root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-        self.app = open(os.path.join(root, "static", "js", "client", "app.js"), encoding="utf-8").read()
+        self.app = client_source()
         self.sync = open(os.path.join(root, "static", "js", "client", "sync.js"), encoding="utf-8").read()
         self.exc = open(os.path.join(root, "static", "js", "client", "syncexec.js"), encoding="utf-8").read()
         self.java = open(os.path.join(root, "mobile", "android", "app", "src", "main", "java",
@@ -853,7 +854,7 @@ class ReclaimSeesEveryReference(unittest.TestCase):
 
     def test_the_collector_reads_records_and_counts_tombstones(self):
         root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-        src = open(os.path.join(root, "static", "js", "client", "app.js"), encoding="utf-8").read()
+        src = client_source()
         a = src.index("async function _syncRefIds")
         seg = src[a:a + 1600]
         self.assertIn("S.docs.state(", seg, "the reclaim no longer reads the record set")

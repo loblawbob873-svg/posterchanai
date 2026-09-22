@@ -2,12 +2,13 @@
  * Installed-package gates point PC_INSTALLED_APP_JS at app.js extracted from app.asar, so a source
  * fix cannot make a stale Gentoo package appear green. */
 'use strict';
+const { clientSource, clientSourceAt, installStateGlobals } = require('./client_source.cjs');
 const fs = require('fs');
 const path = require('path');
 const vm = require('vm');
 const root = path.resolve(__dirname, '../..');
-const app = fs.readFileSync(process.env.PC_INSTALLED_APP_JS ||
-  path.join(root, 'static/js/client/app.js'), 'utf8');
+const app = clientSourceAt(process.env.PC_INSTALLED_APP_JS ||
+  path.join(root, 'static/js/client/app.js'));
 
 function fn(head) {
   const i = app.indexOf(head), begin = app.indexOf('{', i);
@@ -29,7 +30,7 @@ function fn(head) {
 }
 
 const context = {};
-vm.createContext(context);
+vm.createContext(installStateGlobals(context) && context);
 vm.runInContext(fn('async function _walkEntries(') + '\n' +
   fn('function _uploadTargetFolder(') + '\n' +
   'globalThis.walk=_walkEntries;globalThis.target=_uploadTargetFolder;', context);

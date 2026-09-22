@@ -3,6 +3,7 @@
 import fs from 'node:fs';
 import vm from 'node:vm';
 import path from 'node:path';
+import { clientSource, clientSourceAt, installStateGlobals } from './client/client_source.mjs';
 
 const dir = path.resolve(process.argv[2] || 'extension') + '/';
 const manifest = JSON.parse(fs.readFileSync(dir + 'manifest.json', 'utf8'));
@@ -55,7 +56,7 @@ const ctx = {
               documentElement: {}, body: { appendChild: noop } },
 };
 ctx.self = ctx; ctx.window = ctx; ctx.globalThis = ctx;
-vm.createContext(ctx);
+vm.createContext(installStateGlobals(ctx) && ctx);
 
 const loaded = [];
 let failure = null;

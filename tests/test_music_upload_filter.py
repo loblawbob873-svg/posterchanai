@@ -21,6 +21,7 @@ import subprocess
 from pathlib import Path
 
 import pytest
+from tests.client_source import client_source
 
 APP = Path(__file__).resolve().parent.parent / "static" / "js" / "client" / "app.js"
 
@@ -49,7 +50,7 @@ CASES = [
 
 
 def _extract():
-    src = APP.read_text()
+    src = client_source()
     m_re = re.search(r"const _AUDIO_EXT = /.*?/i;", src, re.S)
     m_fn = re.search(r"function _looksAudio\(f\)\{.*?\n  \}", src, re.S)
     assert m_re, "_AUDIO_EXT not found in app.js — did the Music upload filter move?"
@@ -85,7 +86,7 @@ def test_plain_mime_check_would_still_fail_these():
 
 
 def _extract_has_src():
-    src = APP.read_text()
+    src = client_source()
     m = re.search(r"function _musicHasSrc\(file\)\{.*?\n  \}", src, re.S)
     assert m, "_musicHasSrc not found in app.js"
     return m.group(0)
@@ -145,7 +146,7 @@ def test_transport_actions_never_land_on_pause():
     A structural check: the behaviour lives inside an async method wired to a real <audio>, so this
     asserts the flag is still threaded through every transport path rather than re-simulating one.
     """
-    src = APP.read_text()
+    src = client_source()
     guard = re.search(r"if\(!\(opts&&opts\.force\) && sha===this\.cur", src)
     assert guard, "play() no longer distinguishes a transport action from tapping the playing track"
     # …to the end of each method, not the end of its first line — both span several lines now.

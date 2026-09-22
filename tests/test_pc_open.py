@@ -25,6 +25,7 @@ import threading
 import time
 import unittest
 from pathlib import Path
+from tests.client_source import client_source
 
 ROOT = Path(__file__).resolve().parent.parent
 CLI = ROOT / "os" / "bin" / "pc-open"
@@ -280,7 +281,7 @@ class WhereAFileLands(unittest.TestCase):
 
     @classmethod
     def setUpClass(cls):
-        app = APP.read_text(encoding="utf-8")
+        app = client_source()
         def grab(start, end):
             i = app.index(start)
             return app[i:app.index(end, i)]
@@ -288,7 +289,10 @@ class WhereAFileLands(unittest.TestCase):
             grab("  const _OFFICE_EXT =", "\n  /* WHAT POSTERCHAN CODE WILL OPEN"),
             grab("  const _PREVIEW_EXT =", "\n  /* Blossom implementations"),
         ])
-        cls.fn = grab("  const _PC_OPEN_APPS =", "\n  if(window.pcHost && typeof pcHost.onOpenRequest")
+        # Up to _openFromCommandLine's own closing brace: the `pcHost.onOpenRequest` registration that
+        # used to follow it stayed in app.js (it must run at boot) while the opener moved to files.js.
+        i = app.index("  const _PC_OPEN_APPS =")
+        cls.fn = app[i:app.index("\n  }\n", app.index("async function _openFromCommandLine(", i)) + 4]
 
     def route(self, app, items, fail=None):
         js = """
@@ -361,11 +365,11 @@ class TheWiring(unittest.TestCase):
         self.assertIn("onOpenRequest: (fn) =>", pre)
         self.assertIn("ipcRenderer.send('pc:host:open-ready')", pre)
         self.assertIn("ipcRenderer.send('pc:host:open-result'", pre)
-        app = APP.read_text(encoding="utf-8")
+        app = client_source()
         self.assertIn("pcHost.onOpenRequest(_openFromCommandLine)", app)
 
     def test_the_chooser_and_the_command_line_share_one_opener_per_app(self):
-        app = APP.read_text(encoding="utf-8")
+        app = client_source()
         chooser = app[app.index("async function _openHostFile(path, name, openHere, mime){"):
                       app.index("async function _openHostFile(path, name, openHere, mime){")+4000]
         for helper in ("_hostOpenPreview(", "_hostOpenOffice(", "_hostOpenCode("):
@@ -415,7 +419,7 @@ class ThePackage(unittest.TestCase):
         self.assertIn('newins "${FILESDIR}/posterchanos-mimeapps.list" mimeapps.list', eb)
 
     def test_every_office_type_it_claims_is_one_office_opens(self):
-        app = APP.read_text(encoding="utf-8")
+        app = client_source()
         exts = re.search(r"const _OFFICE_EXT = /\\\.\(([^)]+)\)\$/i;", app).group(1).split("|")
         claims = {
             "msword": "doc", "wordprocessingml.document": "docx", "opendocument.text": "odt", "rtf": "rtf",

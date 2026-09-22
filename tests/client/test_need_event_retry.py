@@ -32,6 +32,7 @@ import shutil
 import subprocess
 import unittest
 from pathlib import Path
+from tests.client_source import client_source
 
 ROOT = Path(__file__).resolve().parents[2]
 APP = ROOT / "static" / "js" / "client" / "app.js"
@@ -64,7 +65,7 @@ def _extract(src, decl):
 
 
 def _harness(script):
-    src = APP.read_text(encoding="utf-8")
+    src = client_source()
     for decl in ("async function flushEvents(){",):
         assert decl in src, f"{decl!r} is gone from app.js — this test is testing nothing"
     parts = [
@@ -247,7 +248,7 @@ class ReaskOnResume(unittest.TestCase):
     """
 
     def _reask(self, dom, script=""):
-        src = APP.read_text(encoding="utf-8")
+        src = client_source()
         boot = """
 const saved = new Map();
 const Store = { get: id => saved.get(id) || null };
@@ -309,7 +310,7 @@ class ResumeIsWiredToBothSignals(unittest.TestCase):
     """
 
     def test_the_native_listener_block_releases_what_it_arms(self):
-        src = APP.read_text(encoding="utf-8")
+        src = client_source()
         i = src.index("if(!window.__pcNativeBound){")
         block = src[i:src.index("function bindGlobalsOnce()")]
         self.assertIn("_tlBackground()", block, "this test is looking at the wrong block")
@@ -322,7 +323,7 @@ class ResumeIsWiredToBothSignals(unittest.TestCase):
         release it. Counting call sites would be wrong — the resume side is deliberately armed from
         both `resume` and `appStateChange`, the same redundancy `_nativeResume` already has.
         """
-        src = APP.read_text(encoding="utf-8")
+        src = client_source()
 
         def opening_brace(idx):
             """Index of the `{` opening the innermost block that contains idx."""

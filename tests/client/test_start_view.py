@@ -17,6 +17,7 @@ import re
 import subprocess
 import unittest
 from pathlib import Path
+from tests.client_source import client_source
 
 ROOT = Path(__file__).resolve().parents[2]
 APP = ROOT / "static" / "js" / "client" / "app.js"
@@ -65,7 +66,7 @@ console.log(JSON.stringify(_startView()));
 class TestStartViewResolution(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
-        cls.src = APP.read_text(encoding="utf-8")
+        cls.src = client_source()
         cls.fn = _fn(cls.src, "function _startView(){")
 
     def test_default_and_social_land_on_the_timeline(self):

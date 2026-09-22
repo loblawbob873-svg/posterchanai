@@ -1,7 +1,8 @@
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import vm from 'node:vm';
-const src=fs.readFileSync(process.argv[2],'utf8');
+import { clientSourceAt, installStateGlobals } from './client_source.mjs';
+const src=clientSourceAt(process.argv[2]);
 const helpers=src.slice(src.indexOf('  function _effectReturnValid('),src.indexOf('  async function launchEffectStudio('));
 const send=src.slice(src.indexOf('  async function sendEffectReply('),src.indexOf('  // Combined-effects rules'));
 const artifact=src.slice(src.indexOf('  async function replyFileUrl('),src.indexOf('  // Share generated media as a NEW Nostr post:'));
@@ -19,7 +20,7 @@ function setup(){
   openThread:(id)=>{c.VIEW='thread';actions.push(['thread',id])},renderProfileView:pk=>actions.push(['profile',pk]),
   ensureAiSession:async()=>({can_ai:true}),_navState:v=>({pcv:v,top:480}),_entityFromPath:()=>null,
   modal(){},window:{},location:{href:'/client'},history:{replaceState:(st,title,url)=>actions.push(['history',url])}};
- vm.createContext(c);vm.runInContext(helpers+send+artifact+launch,c);
+ installStateGlobals(c);vm.createContext(installStateGlobals(c) && c);vm.runInContext(helpers+send+artifact+launch,c);
  return {c,actions,back,btn,target};
 }
 for(const method of ['sendEffectReply','replyFileUrl']){

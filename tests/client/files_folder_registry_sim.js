@@ -2,11 +2,12 @@
  * and an encrypted or restored file keeps its type icon. Runs the SHIPPED FilesIdx.addFolder /
  * isEncFolder / _norm, uploadFilesSeq, extOfBlob and the icon helpers under node. */
 'use strict';
+const { clientSource, clientSourceAt, installStateGlobals } = require('./client_source.cjs');
 const fs = require('fs');
 const path = require('path');
 const vm = require('vm');
-const app = fs.readFileSync(process.env.PC_INSTALLED_APP_JS ||
-  path.resolve(__dirname, '../../static/js/client/app.js'), 'utf8');
+const app = clientSourceAt(process.env.PC_INSTALLED_APP_JS ||
+  path.resolve(__dirname, '../../static/js/client/app.js'));
 
 function fn(head) {
   const i = app.indexOf(head), begin = app.indexOf('{', i);
@@ -34,7 +35,7 @@ const ctx = { console, Set, Map, Promise, Math, Date, JSON, String, Object, Arra
   VIEW: 'blossom', renderBlossom: () => {}, _signUploadBatch: async () => null, _blossomDenied: () => false,
   requestBlossomAccess: () => {}, uploadMusicTrack: async () => {}, _refreshBlobHave: async () => {},
   _looksAudio: () => false, _musicHasSrc: () => false, Relay: {} };
-vm.createContext(ctx);
+vm.createContext(installStateGlobals(ctx) && ctx);
 vm.runInContext(`
 let _filesFolder=null,_uploadCancel=false,_uploading=0,_uploadBatchAuth=null,_filesGridList=null,_blobHave=new Set(),_blobSizes=new Map();
 ${constLine('const _MIME_EXT={')}

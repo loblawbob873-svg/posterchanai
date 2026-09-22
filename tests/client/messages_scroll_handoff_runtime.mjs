@@ -1,6 +1,7 @@
 import fs from 'node:fs';
+import { clientSource, clientSourceAt, installStateGlobals } from './client_source.mjs';
 
-const src=fs.readFileSync(new URL('../../static/js/client/app.js',import.meta.url),'utf8');
+const src=clientSource();
 function functionText(name){
   const start=src.indexOf(`function ${name}(`);if(start<0)throw Error(`missing ${name}`);
   const brace=src.indexOf('{',start);let depth=0;

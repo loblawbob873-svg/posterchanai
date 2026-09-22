@@ -23,6 +23,7 @@ import subprocess
 import time
 import unittest
 from pathlib import Path
+from tests.client_source import client_source
 
 ROOT = Path(__file__).resolve().parents[2]
 SIM = ROOT / "tests" / "client" / "sms_sim.js"
@@ -538,7 +539,7 @@ class SendingFromAnotherDevice(unittest.TestCase):
     def test_texts_uses_the_instances_gif_picker(self):
         """The server-side picker keeps the connected instance's Giphy/Tenor key out of clients."""
         web = (ROOT / "static/js/client/sms.js").read_text()
-        app = (ROOT / "static/js/client/app.js").read_text()
+        app = client_source()
         self.assertIn('id="sms-gif"', web)
         self.assertIn("PC.gifPicker(input)", web)
         self.assertIn("gifEnabled: () => !!CFG.gif_enabled", app)

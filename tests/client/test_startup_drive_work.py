@@ -1,7 +1,8 @@
 from pathlib import Path
+from tests.client_source import client_source
 
 
-APP = (Path(__file__).resolve().parents[2] / "static/js/client/app.js").read_text()
+APP = client_source()
 
 
 def _body(start, end):
@@ -20,7 +21,8 @@ def test_files_pull_shares_one_inflight_request():
 
 
 def test_music_first_open_has_one_drive_read_for_repaint_and_sweep():
-    music = _body("  function renderMusicApp(){", "  function _musicPhoneSettings")
+    # To its own closing brace: renderMusicApp moved to music.js, _musicPhoneSettings stayed.
+    music = _body("  function renderMusicApp(){", "\n  }\n")
     assert music.count("const indexReady = FilesIdx.ensure()") == 1
     assert "indexReady.then(ok=>ok ? MusicOffline.sweep() : 0)" in music
     assert "indexReady.then(ok=>{ if(ok" in music

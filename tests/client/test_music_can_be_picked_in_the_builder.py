@@ -20,6 +20,7 @@ a track that fails at render. Offering the folder without that is a worse bug th
 import re
 import unittest
 from pathlib import Path
+from tests.client_source import client_source
 
 ROOT = Path(__file__).resolve().parents[2] / "static" / "js" / "client"
 
@@ -41,7 +42,7 @@ def _code_only(src):
 
 class MusicInTheBuilder(unittest.TestCase):
     def setUp(self):
-        self.app = _code_only((ROOT / "app.js").read_text())
+        self.app = _code_only(client_source())
         self.meme = _code_only((ROOT / "meme.js").read_text())
         m = re.search(r"function pickBlossom\(\)\{.*?\n  \}", self.meme, re.S)
         self.assertIsNotNone(m, "pickBlossom not found in meme.js")

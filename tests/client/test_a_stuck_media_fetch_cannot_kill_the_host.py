@@ -18,6 +18,7 @@ import re
 import subprocess
 import unittest
 from pathlib import Path
+from tests.client_source import client_source
 
 ROOT = Path(__file__).resolve().parents[2]
 APP = ROOT / "static" / "js" / "client" / "app.js"
@@ -25,7 +26,7 @@ SW = ROOT / "static" / "js" / "client" / "sw.js"
 
 
 def _harness(media_server, cases):
-    src = APP.read_text()
+    src = client_source()
     m = re.search(r"\(function boundMediaFetches\(\)\{.*?\n  \}\)\(\);", src, re.S)
     if not m:
         raise AssertionError("boundMediaFetches() not found in app.js — the guard is gone")
@@ -156,7 +157,7 @@ class StuckMediaFetch(unittest.TestCase):
 
     def test_a_caller_with_its_own_signal_is_left_alone(self):
         """renderBlossom already aborts at 12s; the guard must not fight an explicit signal."""
-        src = APP.read_text()
+        src = client_source()
         self.assertRegex(src, r"if\s*\(hasSignal\s*\|\|\s*!_watched\(url\)\)\s*return\s*_fetch\(",
                          "the guard no longer defers to a caller's own signal")
 

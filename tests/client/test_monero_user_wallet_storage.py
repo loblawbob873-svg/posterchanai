@@ -38,6 +38,7 @@ import subprocess
 import tempfile
 
 import pytest
+from tests.client_source import client_source
 
 ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 APP = os.path.join(ROOT, "static", "js", "client", "app.js")
@@ -50,7 +51,7 @@ ADDR = ("47ik6ZUx9MkfTyt9sZRbJk8SJAXCcj44t2vhenUJSAPiB1SJxZSRysvRbMQLVR26"
 
 
 def _src():
-    return open(APP, encoding="utf-8").read()
+    return client_source()
 
 
 def _lift(name, src=None):

@@ -28,6 +28,7 @@ import subprocess
 import textwrap
 
 import pytest
+from tests.client_source import client_source
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 APP = os.path.join(ROOT, "static", "js", "client", "app.js")
@@ -120,8 +121,7 @@ def test_bch_direct_ignores_an_address_mentioned_in_a_bio():
 def test_the_profile_editor_prefills_from_direct_keys_only():
     """Source-level, because the editor markup lives inside the IIFE: the BCH input must not be
     populated from the heuristic scan, or the write bug comes straight back."""
-    with open(APP) as f:
-        src = f.read()
+    src = client_source()
     i = src.index('id="pf-bch"')
     field = src[i:i + 260]
     assert "bchDirect(p)" in field, "the BCH profile field is not pre-filled from the direct keys"

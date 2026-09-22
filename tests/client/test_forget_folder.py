@@ -12,6 +12,7 @@ empty document says nothing, which is the truth about a folder nobody syncs.
 """
 import os
 import re
+from tests.client_source import client_source
 
 ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 SYNC = os.path.join(ROOT, "static", "js", "client", "sync.js")
@@ -54,7 +55,7 @@ def test_it_does_nothing_when_there_is_nothing_to_forget():
 
 
 def test_the_button_exists_and_says_what_it_does_not_do():
-    app = _src(APP)
+    app = client_source()
     assert "data-syncforget=" in app, "there is no button in Files → Blossom"
     # The markup and the handler live apart, so anchor on the HANDLER — the markup alone is a button
     # that does nothing.

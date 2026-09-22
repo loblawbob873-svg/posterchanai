@@ -11,6 +11,7 @@ import inspect
 import unittest
 
 from app.routers import client as client_router
+from tests.client_source import client_source
 
 
 class FirstWriterWins(unittest.TestCase):
@@ -35,7 +36,7 @@ class FirstWriterWins(unittest.TestCase):
                       "uploads with the losing key meanwhile")
 
     def test_the_client_adopts_from_the_save_answer(self):
-        app = open("static/js/client/app.js", encoding="utf-8").read()
+        app = client_source()
         a = app.index("losing drive key")
         seg = app[a - 600:a + 900]
         self.assertIn("this._mkWrapped = jr.mk", seg)

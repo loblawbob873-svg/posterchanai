@@ -2,9 +2,10 @@
 import json
 from pathlib import Path
 import subprocess
+from tests.client_source import client_source
 
 ROOT = Path(__file__).resolve().parents[2]
-SOURCE = (ROOT / 'static/js/client/app.js').read_text()
+SOURCE = client_source()
 ACTION = SOURCE[SOURCE.index('  const _DN_BATCH = 100;'):SOURCE.index('  // The wider relays')]
 
 

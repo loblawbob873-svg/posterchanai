@@ -28,6 +28,7 @@ import pytest
 from app.routers import media_center as routes
 from app.services import media_center as media
 from tests.test_media_center import api, seed  # noqa: F401  (fixture reuse)
+from tests.client_source import client_source
 
 
 def _request(peer, headers=None, internal=False):
@@ -170,7 +171,7 @@ def test_every_limit_has_a_box_to_type_it_in():
     """A limit with no input never hydrates and never saves: the operator types a number, Save posts
     nothing for it, and the node quietly keeps the old one. The form is read generically by name."""
     source = routes.__file__.rsplit("/app/", 1)[0] + "/static/js/client/app.js"
-    form = open(source, encoding="utf-8").read()
+    form = client_source()   # the Media Center moved out of app.js into mediacenter.js
     form = form[form.index('<form id="mc-limits"'):]
     form = form[:form.index('</form>')]
     for field in routes.Limits.model_fields:
@@ -248,7 +249,7 @@ def test_there_is_no_per_viewer_bandwidth_anywhere():
     assert "viewer_kbps" not in routes.Limits.model_fields
     assert "lan_kbps" not in media.DEFAULT_LIMITS and "lan_kbps" not in routes.Limits.model_fields
     source = (routes.__file__.rsplit("/app/", 1)[0] + "/static/js/client/app.js")
-    form = open(source, encoding="utf-8").read()
+    form = client_source()   # the Media Center moved out of app.js into mediacenter.js
     form = form[form.index('<form id="mc-limits"'):]
     form = form[:form.index('</form>')]
     assert 'name="viewer_kbps"' not in form and 'name="lan_kbps"' not in form

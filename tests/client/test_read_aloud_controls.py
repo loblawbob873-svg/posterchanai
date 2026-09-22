@@ -12,6 +12,7 @@ loads, reads as "it didn't stick"), and a stop that misses one of its callers.
 """
 import os
 import unittest
+from tests.client_source import client_source
 
 ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 APP = os.path.join(ROOT, "static", "js", "client", "app.js")
@@ -21,8 +22,7 @@ CSS = os.path.join(ROOT, "static", "css", "client.css")
 class ReadAloudControls(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
-        with open(APP, encoding="utf-8") as fh:
-            cls.app = fh.read()
+        cls.app = client_source()
         with open(CSS, encoding="utf-8") as fh:
             cls.css = fh.read()
 
@@ -51,7 +51,8 @@ class ReadAloudControls(unittest.TestCase):
         # failed for a change that did not touch narration. Strip the comments first.
         import re as _re
         _raw = self.app[self.app.index("function switchView(v, quiet)"):][:4000]
-        sv = _re.sub(r"/\*.*?\*/", "", _raw, flags=_re.S)[:600]
+        sv = _re.sub(r"/\*.*?\*/", "", _raw, flags=_re.S)
+        sv = _re.sub(r"(?m)^\s*//.*$", "", sv)[:600]   # whole-line // comments too, same reason
         self.assertIn("stopNarration", sv, "leaving the screen leaves it reading")
 
     def test_the_chip_is_fixed_to_the_viewport(self):

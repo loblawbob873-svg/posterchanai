@@ -29,6 +29,7 @@ import subprocess
 import tempfile
 import unittest
 from unittest import mock
+from tests.client_source import client_source
 
 REPO = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 APP = os.path.join(REPO, "static", "js", "client", "app.js")
@@ -147,8 +148,7 @@ class VideoMountBehaviour(unittest.TestCase):
         `initial` string from the last attempt to say so. `got.count("1") < N_VIDS` still catches the
         opposite failure, where everything mounts eagerly.
         """
-        with open(APP) as fh:
-            src = fh.read()
+        src = client_source()
         page = _page(_extract(src, "const VideoMount = (function()"))
         last = None
         for _ in range(3):

@@ -26,6 +26,7 @@ import shutil
 import subprocess
 
 import pytest
+from tests.client_source import client_source
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 APP_JS = os.path.join(ROOT, "static", "js", "client", "app.js")
@@ -40,7 +41,7 @@ def _signer_source():
     slice is anchored on the two function names, so a rename breaks this loudly instead of quietly
     testing nothing.
     """
-    src = open(APP_JS, encoding="utf-8").read()
+    src = client_source()
     start = src.index("    _grants(qs){")
     end = src.index("    async start(uri, onStatus){")
     body = src[start:end]
@@ -142,7 +143,7 @@ def test_an_empty_perms_parameter_is_not_an_empty_grant():
 # The shape of the thing, asserted against the source
 # --------------------------------------------------------------------------------------------
 def _src():
-    return open(APP_JS, encoding="utf-8").read()
+    return client_source()
 
 
 def _signer_obj():
@@ -242,7 +243,7 @@ def test_the_signer_service_is_started_by_pairing_rather_than_offered():
     src = _src()
     for hook in ("async start(uri, onStatus)", "async resume()"):
         seg = src[src.index("    " + hook):]
-        seg = seg[:4000]
+        seg = seg[:4400]   # the window grew with the `S.` prefixes the split adds to live reads
         assert "_pushNative" in seg, f"{hook} does not hand the pairing to the service"
 
 
@@ -286,7 +287,7 @@ def test_a_foreign_relay_is_asked_about_rather_than_obeyed_or_refused():
     """
     src = _src()
     seg = src[src.index("    async start(uri, onStatus){"): src.index("    async resume(){")]
-    assert "CFG && CFG.relay_url" in seg, "the signer does not know which relay is its own"
+    assert "S.CFG && S.CFG.relay_url" in seg, "the signer does not know which relay is its own"
     assert "uiConfirm" in seg, "a foreign relay is taken without asking, or refused without asking"
     assert "const relay = qrRelay;" in seg, \
         "the QR's relay is not used even after being allowed — the pairing would be made against a "\
@@ -368,7 +369,7 @@ def test_the_list_is_what_tells_two_identical_names_apart():
 
 def _bunker_source():
     """`_acceptBunker` and the `_grants` it calls, lifted out of app.js and made runnable."""
-    src = open(APP_JS, encoding="utf-8").read()
+    src = client_source()
     g0 = src.index("    _grants(qs){")
     g1 = src.index("    _allowed(sess, method, params){")
     a0 = src.index("    _acceptBunker(ev, req){")

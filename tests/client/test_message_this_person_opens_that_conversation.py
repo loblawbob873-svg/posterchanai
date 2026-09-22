@@ -17,10 +17,11 @@ Two independent bugs, and each produced one half of that sentence:
 from pathlib import Path
 import re
 import subprocess
+from tests.client_source import client_source
 
 ROOT = Path(__file__).resolve().parents[2]
 OS_JS = (ROOT / "static/js/client/os.js").read_text(encoding="utf-8")
-APP_JS = (ROOT / "static/js/client/app.js").read_text(encoding="utf-8")
+APP_JS = client_source()
 OSWIN = (ROOT / "static/js/client/oswin.js").read_text(encoding="utf-8")
 
 

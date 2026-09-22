@@ -1,8 +1,10 @@
 """Focused regressions for Concord's thread reply composer."""
 from pathlib import Path
 
+from tests.client_source import client_source
+
 ROOT = Path(__file__).resolve().parents[2]
-APP = (ROOT / "static/js/client/app.js").read_text()
+APP = client_source()   # the composer moved to compose.js
 
 
 def test_empty_reply_stays_in_composer_with_a_readable_error():
@@ -14,7 +16,10 @@ def test_empty_reply_stays_in_composer_with_a_readable_error():
 
 
 def test_reply_parent_preview_opens_the_original_without_per_message_context():
-    compose = APP[APP.index("function compose({reply="):APP.index("function _dtLocal", APP.index("function compose({reply="))]
+    # …to the end of compose.js, which compose() is the last function in: _dtLocal, the old end
+    # marker, stayed in app.js and reading to it would cross every module in between.
+    at = APP.index("function compose({reply=")
+    compose = APP[at:APP.index("\n  return {", at)]
     assert 'class="quoted cmp-parent"' in compose
     assert 'data-open="${enc(o.id)}"' in compose
     assert "closeModal(); openThread(id);" in compose

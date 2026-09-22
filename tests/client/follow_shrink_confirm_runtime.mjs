@@ -1,7 +1,8 @@
 /* Execute the shipped publish() guard: a destructive kind-3 shrink is confirmed only for an
  * explicit user edit, and its recovery baseline moves only after relay acceptance. */
 import fs from 'node:fs';
-const src=fs.readFileSync(new URL('../../static/js/client/app.js',import.meta.url),'utf8');
+import { clientSource, clientSourceAt, installStateGlobals } from './client_source.mjs';
+const src=clientSource();
 const a=src.indexOf('  async function publish(kind, content, tags, opts){');
 const b=src.indexOf('  // A guest tried to do something',a);
 if(a<0||b<0) throw Error('publish moved');

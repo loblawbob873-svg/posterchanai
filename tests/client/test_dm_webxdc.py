@@ -1,10 +1,11 @@
 """WebXDC attachments in encrypted DMs are playable and share one multiplayer identity."""
 
 from pathlib import Path
+from tests.client_source import client_source
 
 
 ROOT = Path(__file__).resolve().parents[2]
-APP = (ROOT / "static/js/client/app.js").read_text()
+APP = client_source()
 WEBXDC = (ROOT / "static/js/client/webxdc.js").read_text()
 CSS = (ROOT / "static/css/client.css").read_text()
 

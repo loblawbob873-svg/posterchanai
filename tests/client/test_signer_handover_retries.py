@@ -32,14 +32,14 @@ import shutil
 import subprocess
 import tempfile
 import unittest
+from tests.client_source import client_source
 
 REPO = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 APP = os.path.join(REPO, "static", "js", "client", "app.js")
 
 
 def _offer():
-    with open(APP) as fh:
-        src = fh.read()
+    src = client_source()
     # Anchored to the signer half — `_offerNative` is unique, but the file has more than one object
     # with a `revive`, and an extraction that grabs the wrong one passes while proving nothing.
     src = src[src.index("  const Nip46Signer = {"):]

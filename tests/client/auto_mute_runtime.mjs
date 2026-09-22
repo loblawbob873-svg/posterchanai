@@ -1,9 +1,10 @@
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import vm from 'node:vm';
+import { clientSource, clientSourceAt, installStateGlobals } from './client_source.mjs';
 const context=vm.createContext({console,TextEncoder,TextDecoder,Uint8Array,crypto:globalThis.crypto});
-vm.runInContext(fs.readFileSync(process.argv[3],'utf8'),context);
-vm.runInContext(fs.readFileSync(process.argv[2],'utf8'),context);
+vm.runInContext(clientSourceAt(process.argv[3]),context);
+vm.runInContext(clientSourceAt(process.argv[2]),context);
 const NT=context.NostrTools, owner=NT.getPublicKey(Uint8Array.from({length:32},(_,i)=>i===31?1:0));
 const key=n=>Uint8Array.from({length:32},(_,i)=>i===31?n:0),pk=n=>NT.getPublicKey(key(n));
 const clock=2000000000000;

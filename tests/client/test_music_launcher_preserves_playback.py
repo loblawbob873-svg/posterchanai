@@ -2,15 +2,16 @@
 
 import re
 from pathlib import Path
+from tests.client_source import client_source
 
 
-APP = (Path(__file__).parents[2] / "static/js/client/app.js").read_text(encoding="utf-8")
+APP = client_source()
 ROOT = Path(__file__).parents[2]
 
 
 def test_reopening_music_keeps_the_existing_track_and_position():
     start = APP.index("function openMusic()")
-    body = APP[start:APP.index("\n  async function renderBlossom", start)]
+    body = APP[start:APP.index("\n  }\n", start) + 4]   # to its own brace: renderBlossom moved to files.js
     assert "renderMusicApp();" in body
     assert "MusicPlayer.play(" not in body
     assert "MusicPlayer.shuffle" not in body

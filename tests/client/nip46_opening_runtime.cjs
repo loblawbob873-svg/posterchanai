@@ -1,5 +1,6 @@
+const { clientSource, clientSourceAt, installStateGlobals } = require('./client_source.cjs');
 const assert=require('node:assert/strict'),fs=require('fs'),vm=require('vm');
-const source=fs.readFileSync(process.argv[2],'utf8');
+const source=clientSourceAt(process.argv[2]);
 const start=source.indexOf('  const Nip46 = {'),end=source.indexOf('\n  };',start)+5;
 function fixture(){
  const sockets=[],timers=new Set();let failConstructor=false;
@@ -10,7 +11,7 @@ function fixture(){
  const ctx={WebSocket:Socket,console,Date,Math,Set,Map,Promise,NIP46_SINCE_SKEW:900,_ncRelays:()=>[],Relay:{worker:{call:async(op,args)=>({pubkey:'app-'+args.sk})}},
   setTimeout(fn,ms){const t=setTimeout(fn,ms===20000?50:ms);timers.add(t);return t;},
   clearTimeout(t){clearTimeout(t);timers.delete(t)}};
- vm.createContext(ctx);vm.runInContext(source.slice(start,end).replace('const Nip46 =','globalThis.Nip46 ='),ctx);
+ vm.createContext(installStateGlobals(ctx) && ctx);vm.runInContext(source.slice(start,end).replace('const Nip46 =','globalThis.Nip46 ='),ctx);
  const n=ctx.Nip46;n.appPk='fixture';
  return {n,ctx,sockets,fail(v){failConstructor=v},close(){n.reset();for(const t of timers)clearTimeout(t)}};
 }

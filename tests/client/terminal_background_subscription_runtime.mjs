@@ -1,5 +1,6 @@
 import fs from 'node:fs';
 import vm from 'node:vm';
+import { clientSource, clientSourceAt, installStateGlobals } from './client_source.mjs';
 
 const source=fs.readFileSync(process.argv[2]||new URL('../../static/js/client/term.js',import.meta.url),'utf8');
 
@@ -16,7 +17,7 @@ function functionSource(name){
   throw Error(`${name} is unterminated`);
 }
 
-const context={};vm.createContext(context);
+const context={};vm.createContext(installStateGlobals(context) && context);
 vm.runInContext(`${functionSource('_makeLocalReplayGate')};this.make=_makeLocalReplayGate`,context);
 
 let epoch=1,cursor=0,drawn='';

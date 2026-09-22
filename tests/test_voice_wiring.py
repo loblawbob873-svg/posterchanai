@@ -21,6 +21,7 @@ import os
 import re
 import sys
 import unittest
+from tests.client_source import client_source
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
@@ -135,7 +136,7 @@ class VoiceMemeBuilder(unittest.TestCase):
         self.assertIn("PC.openVoiceStudio(", meme)
         self.assertIn("onTake", meme)
         self.assertNotIn("pcai:voices", meme, "the builder must not read the voice library itself")
-        app = _read("static/js/client/app.js")
+        app = client_source()
         self.assertIn("\n    openVoiceStudio,", app, "openVoiceStudio must be on the PC bridge")
 
     def test_a_voice_line_is_not_truncated_by_the_video_length(self):
@@ -314,7 +315,7 @@ class VoiceClientUI(unittest.TestCase):
     def test_studio_is_reachable_from_both_render_paths(self):
         """The splash cards and the mid-chat ✨ picker are two separate lists of the same actions —
         adding a feature to one and not the other ships it invisible in the other."""
-        js = _read("static/js/client/app.js")
+        js = client_source()
         self.assertIn('data-gen="voice"', js, "missing from the splash cards")
         self.assertIn("['voice','Clone a voice']", js, "missing from the mid-chat picker")
         # Both routes must DIVERT to the voice studio. openGenStudio drives a prompt sheet, and a
@@ -329,7 +330,7 @@ class VoiceClientUI(unittest.TestCase):
 
     def test_studio_uses_local_modal_helpers(self):
         """app.js PUBLISHES window.__PC — inside it, `PC.modal` is undefined."""
-        js = _read("static/js/client/app.js")
+        js = client_source()
         block = js.split("---- Voice studio ---")[1].split("window.__openVoiceStudio")[0]
         self.assertNotIn("PC.modal(", block)
         self.assertNotIn("PC.closeModal(", block)
@@ -339,7 +340,7 @@ class VoiceClientUI(unittest.TestCase):
         broke the FIRST save for every user — there is no doc to find until you have saved one — and
         the studio complained about relays instead. Reachability comes from Relay.ready(), not from
         whether the query found anything."""
-        js = _read("static/js/client/app.js")
+        js = client_source()
         block = js.split("---- Voice studio ---")[1].split("window.__openVoiceStudio")[0]
         self.assertIn("Relay.ready(", block,
                       "voicesRead must ask the CONNECTION whether it is live")
@@ -353,7 +354,7 @@ class VoiceClientUI(unittest.TestCase):
         function — so without a parameter it is a ReferenceError that only fires once the generation
         has finished, i.e. after ~2 minutes of GPU ("voice failed: opts is not defined"). node --check
         cannot see this: it parses fine."""
-        js = _read("static/js/client/app.js")
+        js = client_source()
         self.assertIn("async function voiceSpeak(voice, text, root, opts)", js)
         self.assertIn("voiceSpeak(v, t, root, opts)", js,
                       "the call site must pass opts through, or the parameter is always undefined")
@@ -361,7 +362,7 @@ class VoiceClientUI(unittest.TestCase):
     def test_blossom_is_a_voice_source_and_does_not_re_upload(self):
         """A clip already on the drive is a name plus a URL — routing it through voiceAdd would upload
         the same bytes again and leave two copies of one clip on Blossom."""
-        js = _read("static/js/client/app.js")
+        js = client_source()
         block = js.split("---- Voice studio ---")[1].split("window.__openVoiceStudio")[0]
         self.assertIn("function voiceAddFromBlossom", block)
         self.assertIn("blossomPicker(null", block)
@@ -373,7 +374,7 @@ class VoiceClientUI(unittest.TestCase):
         """Pressing Speak during a run was rejected by the server's 429, and then the FIRST take
         arrived carrying the earlier line — which reads as "it spoke the old thing instead of what I
         just typed". The button must be dead while one is in flight."""
-        js = _read("static/js/client/app.js")
+        js = client_source()
         block = js.split("---- Voice studio ---")[1].split("window.__openVoiceStudio")[0]
         self.assertIn("goBtn.disabled = true", block)
         self.assertIn("if(goBtn.disabled) return;", block)
@@ -381,14 +382,14 @@ class VoiceClientUI(unittest.TestCase):
     def test_a_long_wait_does_not_eat_typed_text(self):
         """The box is cleared when a take lands, but a generation runs for minutes — clearing text the
         user typed while waiting is destroying work."""
-        js = _read("static/js/client/app.js")
+        js = client_source()
         block = js.split("---- Voice studio ---")[1].split("window.__openVoiceStudio")[0]
         self.assertIn("ta.value.trim() === text.trim()", block)
 
     def test_take_and_chat_bubble_have_separate_blob_urls(self):
         """Dismissing a take revokes its object URL. Sharing one with the transcript bubble would kill
         the audio in the chat — the copy the user is told outlives the modal."""
-        js = _read("static/js/client/app.js")
+        js = client_source()
         block = js.split("---- Voice studio ---")[1].split("window.__openVoiceStudio")[0]
         self.assertIn("const chatUrl = URL.createObjectURL(blob)", block)
         self.assertIn("src=\"${chatUrl}\"", block)
@@ -397,7 +398,7 @@ class VoiceClientUI(unittest.TestCase):
         """The modal is dismissed by tapping the backdrop, and a generation runs for a minute or more —
         so the modal is very often gone by the time the audio arrives. Appending into a detached node
         threw the result away AFTER the GPU had done the work. Delivery must not depend on it."""
-        js = _read("static/js/client/app.js")
+        js = client_source()
         block = js.split("---- Voice studio ---")[1].split("window.__openVoiceStudio")[0]
         self.assertIn("root.isConnected", block,
                       "a stale root from a closed modal looks normal — isConnected is the real test")
@@ -409,7 +410,7 @@ class VoiceClientUI(unittest.TestCase):
     def test_library_write_refuses_on_a_failed_read(self):
         """kind-30078 is REPLACEABLE: writing a list built on an empty/failed read replaces the whole
         library. Same wipe that took out mutes, follows and a drive's file index."""
-        js = _read("static/js/client/app.js")
+        js = client_source()
         block = js.split("---- Voice studio ---")[1].split("window.__openVoiceStudio")[0]
         self.assertIn("if(cur === null) throw", block)
 

@@ -8,9 +8,10 @@ threshold."""
 import os
 import re
 import unittest
+from tests.client_source import client_source
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-APP = open(os.path.join(ROOT, "static", "js", "client", "app.js"), encoding="utf-8").read()
+APP = client_source()
 SVC = open(os.path.join(ROOT, "mobile", "android", "app", "src", "main", "java",
                         "place", "poster", "app", "signer", "SignerRelayService.java"),
            encoding="utf-8").read()

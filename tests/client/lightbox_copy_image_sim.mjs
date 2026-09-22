@@ -5,8 +5,9 @@
    navigator.clipboard.write, and the native bridge was text-only), and every attempt ended in one
    toast telling a mouse user to long-press the image. */
 import fs from 'node:fs';
+import { clientSource, clientSourceAt, installStateGlobals } from './client_source.mjs';
 
-const src = fs.readFileSync(new URL('../../static/js/client/app.js', import.meta.url), 'utf8');
+const src = clientSource();
 const a = src.indexOf('  /* WHAT TO TELL SOMEBODY WHOSE IMAGE COPY DID NOT HAPPEN.');
 if (a < 0) throw new Error('_lbCopyImgFail moved');
 const b = src.indexOf('\n  // Save the media in the lightbox.', a);

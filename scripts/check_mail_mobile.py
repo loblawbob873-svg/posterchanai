@@ -36,6 +36,9 @@ import sys
 import tempfile
 import urllib.request
 
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from client_module_harness import factory_harness_js  # noqa: E402
+
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 WIDTHS = [(390, 844, True), (360, 780, True), (1280, 860, False)]
 PORT = int(os.environ.get("PC_CHECK_PORT") or 9485)
@@ -825,14 +828,22 @@ def _harness_js():
     app_js = os.environ.get("PC_INSTALLED_APP_JS") or os.path.join(
         ROOT, "static", "js", "client", "app.js")
     src = open(app_js, encoding="utf-8").read()
+    # The mail client itself now lives in mail.js, a factory app.js builds on first use. It is built
+    # here the same way, from this page's stubs (scripts/client_module_harness.py).
+    mail_js = os.path.join(os.path.dirname(app_js), "mail.js")
+    mail = open(mail_js, encoding="utf-8").read()
     # Mail attachment rendering shares the shipped file-preview classifier. Keep that helper in the
     # lifted harness too: otherwise the browser check fails before it can render the toolbar/body,
     # while production (where the helper is in the same IIFE) works normally.
     preview_start = src.index("  const _PREVIEW_EXT =")
     preview_end = src.index("  /* Blossom implementations disagree", preview_start)
-    start = src.index("  function _mailDate(ts)")
-    end = src.index("  function safePk(v){", start)
-    return src[preview_start:preview_end] + src[start:end] + HARNESS_TAIL
+    # Two things the mail client takes from app.js rather than owning: the bottom sheet (shared with
+    # other screens) and the key-binding release handle (renderView reads it on every navigation).
+    sheet_start = src.index("  function _sheet(html, onMount){")
+    sheet_end = src.index("\n  }\n", sheet_start) + 4
+    return (src[preview_start:preview_end] + src[sheet_start:sheet_end]
+            + "var _mailKeysOff = null;\n" + mail + "\n"
+            + factory_harness_js(mail, "PCMailFactory", ["Mail"]) + HARNESS_TAIL)
 
 
 def main():

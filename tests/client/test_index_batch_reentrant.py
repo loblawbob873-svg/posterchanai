@@ -26,6 +26,8 @@ import shutil
 import subprocess
 import unittest
 
+from tests.client_source import client_source
+
 HERE = os.path.dirname(os.path.abspath(__file__))
 APP = os.path.join(HERE, "..", "..", "static", "js", "client", "app.js")
 NODE = shutil.which("node") or shutil.which("nodejs")
@@ -33,8 +35,7 @@ NODE = shutil.which("node") or shutil.which("nodejs")
 
 def _lift():
     """beginBatch/endBatch/push out of app.js's IIFE, onto a stub that counts saves."""
-    with open(APP, encoding="utf-8") as fh:
-        src = fh.read()
+    src = client_source()
     out = {}
     for name, pat in (
         # Multi-line now: it arms a guard so a batch nobody closes cannot be held for ever.
@@ -136,7 +137,7 @@ class TestALeakedBatchCannotBePermanent(unittest.TestCase):
     """
 
     def test_the_guard_releases_a_batch_nobody_closed(self):
-        src = open(APP, encoding="utf-8").read()
+        src = client_source()
         at = src.index("beginBatch(){")
         body = src[at:src.index("async endBatch()", at)]
         self.assertIn("_batchGuard", body, "a leaked batch is held for the rest of the session")
@@ -145,7 +146,7 @@ class TestALeakedBatchCannotBePermanent(unittest.TestCase):
                       "it releases the batch without saving what was pending")
 
     def test_closing_the_last_batch_cancels_the_guard(self):
-        src = open(APP, encoding="utf-8").read()
+        src = client_source()
         at = src.index("async endBatch()")
         body = src[at:src.index("folders()", at)]
         self.assertIn("clearTimeout(this._batchGuard)", body,

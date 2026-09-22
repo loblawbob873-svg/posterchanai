@@ -7,6 +7,7 @@ from html import unescape
 from pathlib import Path
 
 import pytest
+from tests.client_source import client_source
 
 ROOT = Path(__file__).resolve().parents[2]
 CHROME = shutil.which('google-chrome-stable') or shutil.which('chromium')
@@ -30,7 +31,7 @@ def browser(tmp_path, body, script, width=1280, css=''):
 
 @pytest.mark.parametrize('enabled,solo,visible', [(False, False, False), (True, False, True), (False, True, True)])
 def test_guest_signup_obeys_registration(tmp_path, enabled, solo, visible):
-    source = (ROOT / 'static/js/client/app.js').read_text()
+    source = client_source()
     helper = source[source.index('  function _registrationOpen('):source.index('  function applyInstanceGating(')]
     guest = source[source.index('  function _guestCardHtml('):source.index('  function _timelineHeaderHtml(')]
     result = browser(tmp_path, '<div id="guest"></div>', f'''
@@ -47,7 +48,7 @@ document.querySelector('#result').textContent=JSON.stringify({{signup:!!document
 @pytest.mark.parametrize('width', [390, 1280])
 @pytest.mark.parametrize('zoom', [0.85, 1.25])
 def test_shared_concord_picker_uses_message_position_after_toolbar_hides(tmp_path, width, zoom):
-    app = (ROOT / 'static/js/client/app.js').read_text()
+    app = client_source()
     cord = (ROOT / 'static/js/client/concord.js').read_text()
     placer = app[app.index('  function _placePop('):app.index('  // Keyboard navigation for the flat')]
     popover = app[app.index('  function openEmojiPopover('):app.index('  // Tapping the react button when')]
@@ -84,7 +85,7 @@ setTimeout(()=>{{
 
 @pytest.mark.parametrize('width', [390, 1280])
 def test_populated_jellyfin_device_names_have_readable_width(tmp_path, width):
-    source = (ROOT / 'static/js/client/app.js').read_text()
+    source = client_source()
     card = source[source.index('<details id="mc-jellyfin"'):]
     card = card[:card.index('</details>') + len('</details>')]
     card = card.replace('Loading devices…', '<div class="mc-device-row"><div><strong>Living Room Roku</strong>'

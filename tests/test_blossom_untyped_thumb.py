@@ -24,6 +24,7 @@ import sys
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from app.services import blossom_service as bs  # noqa: E402
+from tests.client_source import client_source
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
@@ -135,7 +136,7 @@ def test_an_unsniffable_blob_is_not_given_a_permanent_no_thumbnail_sentinel():
 def test_client_asks_for_a_preview_when_the_name_knows_better():
     """The server can only answer what it is asked. blobThumb decides the card AND whether a preview
     URL is requested at all, so both halves are needed and they have to agree."""
-    src = open(os.path.join(ROOT, "static", "js", "client", "app.js"), encoding="utf-8").read()
+    src = client_source()
     assert "if(!t || /^application\\/octet-stream/i.test(t)){ const g = ext && mimeForName('x.' + ext); if(g) t = g; }" in src, \
         "blobThumb must fall back to the extension for an untyped blob"
     assert "function mimeForName(" in src and "const _EXT_MIME" in src
@@ -146,7 +147,7 @@ def test_the_extension_is_resolved_before_the_type_is_consulted():
     matches nothing — so the fallback silently could not fire for any caller that omits `ext`. The
     compose/DM attach picker calls `blobThumb(b)` with one argument, and showed every untyped photo
     as an identical anonymous tile."""
-    src = open(os.path.join(ROOT, "static", "js", "client", "app.js"), encoding="utf-8").read()
+    src = client_source()
     fn = src[src.index("function blobThumb(b, ext){"):]
     fn = fn[:fn.index("\n  }")]
     assert fn.index("if(!ext) ext = extOfBlob(b);") < fn.index("mimeForName("), \
@@ -159,7 +160,7 @@ def test_image_tiles_have_an_error_fallback():
     """A guessed type can be wrong, and a server that cannot preview answers 404 with a day of
     cache. Without a fallback the card shows the browser's broken-image glyph for that long —
     strictly worse than the paperclip it replaced. The video branch always had one."""
-    src = open(os.path.join(ROOT, "static", "js", "client", "app.js"), encoding="utf-8").read()
+    src = client_source()
     assert 'class="ithumb"' in src, "image tiles need a hook to bind an onerror to"
     assert "function _bindThumbFallback(" in src
     assert "$$('.ithumb',root).forEach(im=> im.onerror=" in src
@@ -170,7 +171,7 @@ def test_image_tiles_have_an_error_fallback():
 
 def test_the_write_path_stopped_creating_untyped_blobs():
     """Fixing only the read path leaves every future copy relying on a sniff."""
-    src = open(os.path.join(ROOT, "static", "js", "client", "app.js"), encoding="utf-8").read()
+    src = client_source()
     assert "function fileFromBytes(" in src
     assert "_keepBytes(fileFromBytes(bytes, name), '', {exact:true})" in src, \
         "the synced-folder copy must carry a type — it is what made this bug"
@@ -185,7 +186,7 @@ def test_keeping_a_copy_never_re_encodes_it():
     every kept photo through a 2560px canvas re-encode at quality as low as 0.45, stripping EXIF and
     changing the sha256 — while the toast said it had been saved. "Save a copy" is an ARCHIVE.
     """
-    src = open(os.path.join(ROOT, "static", "js", "client", "app.js"), encoding="utf-8").read()
+    src = client_source()
     assert "if(!(opts && opts.noCompress)) file=await compressMedia(file);" in src, \
         "uploadBlob must offer a way to store the exact bytes"
     assert "const up = Object.assign({folder:'Posts'}, exact ? {noCompress:true} : null);" in src, \

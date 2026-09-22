@@ -101,13 +101,22 @@ def swap(js, old, new, what):
 
 
 def lifted_app_js(sim):
-    src = open(APP, encoding="utf-8").read()
+    # The client source, split: the torrents screen moved into discover.js (a factory app.js builds
+    # on first use), while the card the search list also draws (torrentCard, _magnet) and
+    # _fmtBytes stayed in app.js. Lifted from both, still never a copy.
+    sys.path.insert(0, ROOT)
+    from tests.client_source import client_source, state_shims
+    src = client_source()
 
-    # ONE contiguous region: the NIP-35 publisher, the downloads manager, both tabs, the cards.
+    # The NIP-35 publisher, the downloads manager and both tabs: one contiguous region of
+    # discover.js, from the section's banner to the end of the Nostr tab's renderer.
     js = lift_re(src,
                  r"\n  // ---------- torrents \(NIP-35, kind 2003\) ----------.*?"
-                 r"\n(?=  /\* ---------- git repos \(NIP-34\))",
+                 r"\n  async function _renderTorrentsNostr\(.*?\n  \}\n",
                  "the torrents region")
+    # The cards, which stayed in app.js because the search results draw them too.
+    js += lift_re(src, r"\n  function _magnet\(.*?\n  \}", "_magnet()")
+    js += lift_re(src, r"\n  function torrentCard\(.*?\n  \}", "torrentCard()") + "\n"
     # _fmtBytes lives above it and every row and card calls it.
     js = lift_re(src, r"\n  function _fmtBytes\(.*?\n  \}", "_fmtBytes()") + "\n" + js
 
@@ -116,8 +125,8 @@ def lifted_app_js(sim):
                       "    const list=[];", sim)
     elif sim == "empty-on-error":
         js = swap(js,
-                  "    catch(err){\n      if(VIEW!=='torrents') return;",
-                  "    catch(err){\n      if(VIEW!=='torrents') return;\n"
+                  "    catch(err){\n      if(S.VIEW!=='torrents') return;",
+                  "    catch(err){\n      if(S.VIEW!=='torrents') return;\n"
                   "      box.innerHTML='<div class=\"empty\">Nothing downloading.</div>'; return;", sim)
     elif sim == "nostr-empty":
         js = swap(js, "    const tors=evs.sort((a,b)=>b.created_at-a.created_at);",
@@ -133,12 +142,14 @@ def lifted_app_js(sim):
                       "      return;\n    }", sim)
     elif sim == "leaky-poll":
         js = swap(js,
-                  "      if(VIEW!=='torrents' || _torTab!=='dl' || "
+                  "      if(S.VIEW!=='torrents' || _torTab!=='dl' || "
                   "!document.getElementById('tm-list')){ _torStopPoll(); return; }",
                   "      if(false){ _torStopPoll(); return; }", sim)
     elif sim:
         raise SystemExit("FAIL  unknown simulation %r" % sim)
-    return js
+    # discover.js reads app.js's live bindings (VIEW, GUEST, _aiToken) through `S`; this page's own
+    # `let VIEW = …` stubs are those bindings.
+    return js + "\n" + state_shims(js) + "\n"
 
 
 # --------------------------------------------------------------------------------------------

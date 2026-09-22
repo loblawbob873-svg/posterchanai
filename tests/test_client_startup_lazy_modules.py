@@ -1,9 +1,11 @@
 from pathlib import Path
 
+from tests.client_source import client_source
+
 
 ROOT = Path(__file__).resolve().parents[1]
 HTML = (ROOT / "templates/client.html").read_text()
-APP = (ROOT / "static/js/client/app.js").read_text()
+APP = client_source()   # the Meme Builder entry points live in menus.js and app.js now
 
 
 def test_large_view_only_modules_are_not_on_every_page_load():

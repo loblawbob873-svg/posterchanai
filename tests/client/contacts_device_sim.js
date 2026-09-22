@@ -1,3 +1,4 @@
+const { clientSource, clientSourceAt, installStateGlobals } = require('./client_source.cjs');
 /* Open ⋯ → Addressbooks from the SHIPPED contacts.js, under node, against a HALF-ARRIVED Capacitor.
  *
  * The bug this exists for: on the packaged APK the phone-book row rendered as an EMPTY STRING —
@@ -24,7 +25,7 @@ const opt = JSON.parse(process.argv[2] || '{}');
 const ENV = opt.env || 'full';
 
 /* ---- the shipped plugin lookup ---------------------------------------------------------------- */
-const APPJS = fs.readFileSync(path.join(ROOT, 'static', 'js', 'client', 'app.js'), 'utf8');
+const APPJS = clientSourceAt(path.join(ROOT, 'static', 'js', 'client', 'app.js'));
 
 function grab(header){
   const i = APPJS.indexOf(header);

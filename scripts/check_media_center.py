@@ -35,6 +35,7 @@ from sqlalchemy import create_engine
 from sqlalchemy.orm import Session
 
 from app.models import User
+from scripts.client_module_harness import factory_harness_js
 
 from app.routers import media_center as routes, jellyfin
 from app.services import media_center as media
@@ -231,8 +232,10 @@ async def main():
         app.dependency_overrides[routes.get_db] = database
         nas.dependency_overrides[routes.get_db] = database
 
-        javascript = (ROOT / "static/js/client/app.js").read_text()
-        functions = javascript[javascript.index("  let _mediaCenterLibraryTab="):javascript.index("  // ---------- torrents (NIP-35")]
+        # The Media Center is a module split out of app.js (mediacenter.js, a factory app.js builds
+        # on first use); it is built here the same way, from the bootstrap's stubs below.
+        module = (ROOT / "static/js/client/mediacenter.js").read_text()
+        functions = module + "\n" + factory_harness_js(module, "PCMediaCenterFactory", ["renderMediaCenter"])
         bootstrap = """
           const $=s=>document.querySelector(s);let VIEW='media-center';const _instanceBase=()=>location.origin;
           const enc=s=>String(s).replaceAll('&','&amp;').replaceAll('<','&lt;').replaceAll('"','&quot;');
@@ -591,7 +594,7 @@ async def main():
                         await asyncio.gather(browser.until("document.querySelector('video').currentTime>2"),
                                              second.until("document.querySelector('video').currentTime>2"))
                         assert len(media._sessions) == 2, media._sessions
-                        url = await second.js("_mediaCenterSession")
+                        url = await second.js("window.__mod._mediaCenterSession")
                         documents["library:test"]["shared_with"] = []
                         assert (await client.get(f"{app_url}" + url)).status_code == 404
                         revoked_views = await client.get(f'{app_url}/jellyfin/UserViews', headers=recipient_tv_headers)

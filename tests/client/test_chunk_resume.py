@@ -21,6 +21,7 @@ import shutil
 import subprocess
 import tempfile
 import unittest
+from tests.client_source import client_source
 
 ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 APP = os.path.join(ROOT, "static", "js", "client", "app.js")
@@ -46,8 +47,7 @@ def extract(src, header):
 @unittest.skipIf(not NODE, "no node on this node")
 class ChunkedResume(unittest.TestCase):
     def setUp(self):
-        with open(APP, encoding="utf-8") as fh:
-            self.src = fh.read()
+        self.src = client_source()
         self.fn = extract(self.src, "async getParts(chunks, writePart, expect, have, cs)")
 
     def run_js(self, chunks, expect, have, cs):

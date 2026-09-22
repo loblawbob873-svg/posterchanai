@@ -16,6 +16,7 @@ import re
 import shutil
 import subprocess
 import unittest
+from tests.client_source import client_source
 
 ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 APP = os.path.join(ROOT, "static", "js", "client", "app.js")
@@ -53,7 +54,7 @@ def _fn(src, head):
 class FilesOpenInCode(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
-        cls.app = _read(APP)
+        cls.app = client_source()
         cls.code = _read(CODE)
 
     # ---- the way in -------------------------------------------------------------------------
@@ -245,7 +246,7 @@ class ClickingTheFileIsHowYouOpenIt(unittest.TestCase):
 
     @classmethod
     def setUpClass(cls):
-        cls.app = _read(APP)
+        cls.app = client_source()
         cls.grid = _decomment(_fn(cls.app, "function _renderFilesGrid("))
         cls.host = _decomment(_read(os.path.join(ROOT, "static", "js", "client", "hostfiles.js")))
 
@@ -364,7 +365,7 @@ class OneFileCanBeSelected(unittest.TestCase):
 
     @classmethod
     def setUpClass(cls):
-        cls.app = _read(APP)
+        cls.app = client_source()
         cls.css = _read(os.path.join(ROOT, "static", "css", "client.css"))
 
     def test_a_synced_file_has_its_own_checkbox(self):
@@ -407,7 +408,7 @@ class TheOpenWithChooser(unittest.TestCase):
 
     @classmethod
     def setUpClass(cls):
-        cls.app = _read(APP)
+        cls.app = client_source()
         cls.css = _read(os.path.join(ROOT, "static", "css", "client.css"))
 
     def test_one_handler_opens_straight_away(self):
@@ -454,7 +455,7 @@ class TheOfficeEditorGetsTheScreen(unittest.TestCase):
 
     @classmethod
     def setUpClass(cls):
-        cls.app = _read(APP)
+        cls.app = client_source()
         cls.css = _read(os.path.join(ROOT, "static", "css", "client.css"))
 
     def test_the_sheet_asks_to_be_wide(self):
@@ -571,7 +572,7 @@ class TheExplorerToolbarStaysLiftable(unittest.TestCase):
 
     @classmethod
     def setUpClass(cls):
-        cls.app = _read(APP)
+        cls.app = client_source()
         cls.bar = _decomment(_fn(cls.app, "function _fxBarHTML("))
 
     def test_it_takes_what_it_needs_as_arguments(self):
@@ -617,7 +618,7 @@ class SyncedFoldersOpenInCodeToo(unittest.TestCase):
 
     @classmethod
     def setUpClass(cls):
-        cls.app = _read(APP)
+        cls.app = client_source()
 
     def test_a_synced_file_can_be_opened(self):
         """Clicking the row is the door here too \u2014 there is no button. The row already had a click

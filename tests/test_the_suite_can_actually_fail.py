@@ -82,14 +82,14 @@ MUTATIONS = [
     ),
     (
         "a frozen relay spends the permanent missing-event retry budget",
-        "static/js/client/app.js",
+        "static/js/client/cards.js",   # the missing-event queue moved there with the cards split
         "const answered = live && !threw && evs.complete !== false;",
         "const answered = true;",
         "tests/client/test_need_event_retry.py",
     ),
     (
         "missing events are dropped instead of queued for another attempt",
-        "static/js/client/app.js",
+        "static/js/client/cards.js",   # …and so did this one
         "map.set(id,n); _evQ.add(id); if(n>worst) worst=n;",
         "map.set(id,n); if(n>worst) worst=n;",
         "tests/client/test_need_event_retry.py",
@@ -118,7 +118,7 @@ MUTATIONS = [
     ),
     (
         "the mail composer stops reading clipboard ITEMS, so a pasted screenshot is lost",
-        "static/js/client/app.js",
+        "static/js/client/mail.js",
         "for(const it of [...(cd.items||[])]){",
         "for(const it of []){",
         "tests/client/test_pasting_reaches_the_builder_and_the_email.py",

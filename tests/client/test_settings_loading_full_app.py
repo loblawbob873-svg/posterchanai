@@ -9,7 +9,8 @@ def bundle():
     generator=desktop.bundle.__wrapped__()
     next(generator)
     try:
-        paths=list(desktop.BUNDLE_ROOT.rglob('app.js'))
+        # renderUserSettings lives in settings.js now (split out of app.js, loaded on first use).
+        paths=list(desktop.BUNDLE_ROOT.rglob('app.js'))+list(desktop.BUNDLE_ROOT.rglob('settings.js'))
         assert paths
         changed=0
         for path in paths:

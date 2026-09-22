@@ -21,6 +21,7 @@ from fastapi.testclient import TestClient
 
 from app.routers import office
 from tests.test_office_wopi import OFFICE_USER, registered_office_user
+from tests.client_source import client_source
 
 
 def _app() -> TestClient:
@@ -60,8 +61,7 @@ class ExportIsGated(unittest.TestCase):
     def test_the_client_asks_for_a_format_the_server_offers(self):
         """The button and the allowlist are in different files and different languages."""
         from pathlib import Path
-        app_js = (Path(__file__).resolve().parent.parent / "static" / "js" / "client"
-                  / "app.js").read_text(encoding="utf-8")
+        app_js = client_source()
         asked = set(re.findall(r"/client/office/session/'\+session\.id\+'/export/(\w+)", app_js))
         self.assertTrue(asked, "no client asks for an export at all")
         self.assertTrue(asked <= set(office._EXPORT),

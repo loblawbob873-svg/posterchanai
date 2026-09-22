@@ -19,6 +19,7 @@ the controls to disappear with nothing in any log to say so:
 from pathlib import Path
 import os
 import re
+from tests.client_source import client_source
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 ANDROID = os.path.join(ROOT, "mobile", "android", "app")
@@ -36,7 +37,7 @@ MAIN = _read(JAVA, "MainActivity.java")
 SERVICE = _read(JAVA, "music", "MusicService.java")
 PLUGIN = _read(JAVA, "music", "MusicPlugin.java")
 WIDGET = _read(JAVA, "music", "MusicWidget.java")
-APPJS = _read(ROOT, "static", "js", "client", "app.js")
+APPJS = client_source()
 
 
 def test_plugin_is_registered_and_named_the_same_on_both_sides():
@@ -56,7 +57,7 @@ def test_initial_audio_waits_for_foreground_media_session_before_playing():
     play = APPJS[APPJS.index("async play(sha, opts)"):]
     play = play[:play.index("toggle(){")]
     prime = play.index("await Promise.race([this._nativePush()")
-    audible = play.index("await _audioEl.play()", prime)
+    audible = play.index("await S._audioEl.play()", prime)
     assert prime < audible
     push = APPJS[APPJS.index("_nativePush(){"):APPJS.index("consumeLaunch(){")]
     assert "return r.then(" in push
@@ -125,7 +126,7 @@ def test_packaged_desktop_does_not_retry_unsupported_app_scheme_artwork_each_sec
     body = re.search(r"_media\(\)\{(.*?)\n    \},", APPJS, re.S)
     assert body, "MusicPlayer._media() moved — re-point this test"
     body = body.group(1)
-    assert "new URL(LOGO,location.href)" in body
+    assert "new URL(S.LOGO,location.href)" in body
     assert "art.protocol==='http:'||art.protocol==='https:'||art.protocol==='data:'" in body
     assert "metadata.artwork=" in body
     assert "artwork:[{src:LOGO" not in body
@@ -299,7 +300,7 @@ def test_play_from_outside_works_on_a_page_that_has_never_played():
     # …and the position is only settable once the track is seekable, so the seek happens after play().
     play = APPJS[APPJS.index("async play(sha, opts){"):]
     play = play[: play.index("\n    toggle()")]
-    assert play.index("await _audioEl.play()") < play.index("opts.at>0")
+    assert play.index("await S._audioEl.play()") < play.index("opts.at>0")
 
 
 def test_the_heartbeat_pushes_while_paused():

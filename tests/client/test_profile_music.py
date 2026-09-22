@@ -8,9 +8,10 @@ import subprocess
 import tempfile
 
 import pytest
+from tests.client_source import client_source, state_shim
 
 ROOT = Path(__file__).resolve().parents[2]
-APP = (ROOT / "static/js/client/app.js").read_text(encoding="utf-8")
+APP = client_source()
 CSS = (ROOT / "static/css/client.css").read_text(encoding="utf-8")
 CHROME = shutil.which("google-chrome-stable") or shutil.which("chromium") or shutil.which("chrome")
 TRACK = "https://cdn.example.test/audio/night-drive.mp3"
@@ -65,6 +66,7 @@ def test_own_profile_music_edit_save_reopen_and_play_lifecycle(width):
     function closeModal(){{const n=document.querySelector('.modal-bg');if(n)n.remove()}}
     function modal(html,mount){{closeModal();const bg=document.createElement('div');bg.className='modal-bg';bg.innerHTML='<div class="modal glass">'+html+'</div>';document.body.appendChild(bg);mount(bg.firstElementChild)}}
     function renderProfileView(){{const page=document.querySelector('#page');page.innerHTML='<div class="prof"><button id="edit-prof">Edit</button><div id="prof-music">'+_profileMusicHtml(profile)+'</div></div>';page.querySelector('#edit-prof').onclick=()=>editProfile(profile)}}
+    {state_shim(functions)}
     {functions}
     (async()=>{{
       renderProfileView();document.querySelector('#edit-prof').click();

@@ -24,9 +24,11 @@ from __future__ import annotations
 import subprocess
 from pathlib import Path
 
+from tests.client_source import client_source
+
 ROOT = Path(__file__).resolve().parents[2]
 OS_JS = (ROOT / "static/js/client/os.js").read_text(encoding="utf-8")
-APP_JS = (ROOT / "static/js/client/app.js").read_text(encoding="utf-8")
+APP_JS = client_source()   # the composer lives in compose.js now
 MAIN = (ROOT / "desktop/main.js").read_text(encoding="utf-8")
 CSS = (ROOT / "static/css/client.css").read_text(encoding="utf-8")
 

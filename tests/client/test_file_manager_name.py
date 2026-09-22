@@ -1,9 +1,10 @@
 from pathlib import Path
+from tests.client_source import client_source
 
 
 ROOT = Path(__file__).resolve().parents[2]
 SHELL = (ROOT / "templates/client.html").read_text(encoding="utf-8")
-APP = (ROOT / "static/js/client/app.js").read_text(encoding="utf-8")
+APP = client_source()
 
 
 def test_blossom_route_is_presented_as_file_manager():

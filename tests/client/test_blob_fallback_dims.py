@@ -27,6 +27,7 @@ while the defect itself is one missing call. tests/client/test_media_reserve.py 
 import re
 import unittest
 from pathlib import Path
+from tests.client_source import client_source
 
 APP = Path(__file__).resolve().parents[2] / "static" / "js" / "client" / "app.js"
 
@@ -48,8 +49,8 @@ def _block(src, start):
 class TestBlobFallbackCarriesDims(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
-        cls.src = APP.read_text()
-        cls.body = _block(cls.src, cls.src.index("window.__blobFallback"))
+        cls.src = client_source()
+        cls.body = _block(cls.src, cls.src.index("window.__blobFallback = "))   # the definition, not a card quoting it
 
     def test_every_replacement_video_carries_the_hints(self):
         """Each <video> __blobFallback builds must get _carryDims before it replaces anything.

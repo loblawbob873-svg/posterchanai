@@ -22,6 +22,7 @@ import shutil
 import subprocess
 import tempfile
 import unittest
+from tests.client_source import client_source
 
 REPO = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 APP = os.path.join(REPO, "static", "js", "client", "app.js")
@@ -43,8 +44,7 @@ def _fn(src, name, opener):
 
 
 def _save_method():
-    with open(APP) as fh:
-        src = fh.read()
+    src = client_source()
     # The retry is part of the contract: a failed save that nobody ever tries again is the same
     # silence, one level along — and the edit that failed has usually removed its own way back
     # (once "Remove N missing" empties the local list, that button is gone).
@@ -295,8 +295,7 @@ class FilesIndexSaveReports(unittest.TestCase):
     def test_the_music_tidy_reports_the_verdict_it_was_given(self):
         """The caller is half the bug: with a truthful _save it can still claim success by ignoring
         the answer, which is exactly what it used to do."""
-        with open(APP) as fh:
-            src = fh.read()
+        src = client_source()
         i = src.index("const dead=musicEntries(list).filter(t=>t.missing)")
         block = src[i:i + 1200]
         self.assertIn("await FilesIdx.endBatch()", block)

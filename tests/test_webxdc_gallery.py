@@ -27,6 +27,7 @@ import shutil
 import subprocess
 import unittest
 from pathlib import Path
+from tests.client_source import client_source
 
 ROOT = Path(__file__).resolve().parents[1]
 WEBXDC_JS = ROOT / "static" / "js" / "client" / "webxdc.js"
@@ -339,7 +340,7 @@ class Wiring(unittest.TestCase):
         """The directory would work, but Play cannot: an app runs on `xdc.<instance>`, and with no
         instance the host falls back to the bundle's own origin. A gallery of games that cannot
         start one is worse than no row."""
-        app = APP_JS.read_text(encoding="utf-8")
+        app = client_source()
         block = app[app.index("const INSTANCE_VIEWS = new Set("):]
         self.assertIn("'xdc'", block[:block.index("]);")])
 
@@ -367,7 +368,7 @@ class Wiring(unittest.TestCase):
         """`imeta` is multi-letter and no relay indexes it, so without this hashtag an app posted
         from here can only ever be stumbled upon. Emitted inside imetaTagsFor because there are TEN
         call sites and a hand-copied rule in ten places is this repo's most repeated defect."""
-        src = APP_JS.read_text(encoding="utf-8")
+        src = client_source()
         fn = src[src.index("  function imetaTagsFor(content){"):]
         fn = fn[:fn.index("\n  }") + 4]
         self.assertIn("out.push(['t', 'webxdc'])", fn)
@@ -381,7 +382,7 @@ class Wiring(unittest.TestCase):
 
     def test_the_view_is_reachable_from_every_surface(self):
         """A view with no door is the shape Folder Sync shipped in: all the code, no way in."""
-        app = APP_JS.read_text(encoding="utf-8")
+        app = client_source()
         self.assertIn('data-view="xdc"', TPL.read_text(encoding="utf-8"))          # the sidebar
         self.assertIn("VIEW==='xdc'", app)                                          # the dispatch
         self.assertIn("xdc:'Webxdc", app)                                           # the title

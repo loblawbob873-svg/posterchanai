@@ -19,9 +19,10 @@ the only entry that may CREATE its destination.
 import re
 import unittest
 from pathlib import Path
+from tests.client_source import client_source
 
 ROOT = Path(__file__).resolve().parents[1]
-APP = (ROOT / "static" / "js" / "client" / "app.js").read_text()
+APP = client_source()
 ROUTER = (ROOT / "app" / "routers" / "mail.py").read_text()
 SERVICE = (ROOT / "app" / "services" / "mail_service.py").read_text()
 

@@ -8,9 +8,10 @@ import json
 import re
 import subprocess
 from pathlib import Path
+from tests.client_source import client_source
 
 
-APP = (Path(__file__).parents[2] / "static/js/client/app.js").read_text(encoding="utf-8")
+APP = client_source()
 ROOT = Path(__file__).parents[2]
 
 
@@ -114,7 +115,7 @@ def test_overlapping_upload_batches_cannot_corrupt_shared_batch_state():
 def test_completed_folder_upload_refresh_is_not_deferred_to_a_timer():
     upload = APP[APP.index("async function uploadFilesSeq(files)") :]
     upload = upload[: upload.index("// ---- Music:")]
-    assert "if(VIEW==='blossom') renderBlossom();" in upload
+    assert "if(_S.VIEW==='blossom') renderBlossom();" in upload
     assert "setTimeout(()=>{ if(VIEW==='blossom')" not in upload
 
 

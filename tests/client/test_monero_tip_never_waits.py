@@ -24,6 +24,7 @@ import subprocess
 from pathlib import Path
 
 import pytest
+from tests.client_source import client_source
 
 ROOT = Path(__file__).resolve().parents[2]
 SCEN = Path(__file__).with_name("monero_tip_scenarios.mjs")
@@ -251,7 +252,7 @@ def test_the_three_paths_are_tried_in_the_right_order():
     operator would tip from a custodial account instead of their own; if it came after the URI flow
     it would never be reached at all."""
     from pathlib import Path
-    app = (Path(__file__).resolve().parents[2] / "static/js/client/app.js").read_text(encoding="utf-8")
+    app = client_source()
     at = app.index("async function doXmrTip(")
     block = app[at:app.index("const name=enc(p.name", at)]
     assert block.index("_xmrWallet.tip(_tipOpts)") < block.index("_xmrWallet.meTip(_tipOpts)"), (

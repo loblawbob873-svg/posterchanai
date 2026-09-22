@@ -32,6 +32,7 @@ notification shade.
 """
 import os
 import re
+from tests.client_source import client_source
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 ANDROID = os.path.join(ROOT, "mobile", "android", "app")
@@ -47,7 +48,7 @@ MANIFEST = _read(ANDROID, "src", "main", "AndroidManifest.xml")
 MAIN = _read(JAVA, "MainActivity.java")
 SERVICE = _read(JAVA, "call", "CallService.java")
 PLUGIN = _read(JAVA, "call", "CallPlugin.java")
-APPJS = _read(ROOT, "static", "js", "client", "app.js")
+APPJS = client_source()
 
 
 def test_plugin_is_registered_and_named_the_same_on_both_sides():
@@ -275,7 +276,8 @@ def test_the_apk_can_raise_a_notification_at_all():
     i = APPJS.index("function osNotify(")
     # Slice the whole helper rather than a fixed character budget. Deep-link routing adds fields to
     # the native call but must not make this test lose sight of the browser fallback below it.
-    body = APPJS[i:APPJS.index("\n  function reminderAlert(", i)]
+    # (Bounded by its own closing brace: reminderAlert, which used to follow it, moved to ai.js.)
+    body = APPJS[i:APPJS.index("\n  }\n", i) + 4]
     assert "_capPlugin('PosterChanPush', 'notify')" in body, (
         "osNotify still relies on window.Notification, which does nothing in a WebView")
     assert body.index("_capPlugin('PosterChanPush'") < body.index("window.Notification"), (

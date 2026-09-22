@@ -8,6 +8,7 @@ import time
 
 import pytest
 from websockets.sync.client import connect
+from tests.client_source import client_source
 
 ROOT=Path(__file__).resolve().parents[2]
 
@@ -75,7 +76,7 @@ def chrome(tmp_path_factory):
 
 
 def document(width, context, packs):
-    app=(ROOT/'static/js/client/app.js').read_text()
+    app=client_source()
     placement=app[app.index('  function _placePop('):app.index('  // Keyboard navigation for the flat')]
     picker=app[app.index('  function openEmojiPopover('):app.index('  // Tapping the react button when')]
     buttons=app[app.index('  function _emojiBtn('):app.index('  // ---------- ":shortcode" autocomplete')]

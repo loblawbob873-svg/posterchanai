@@ -1,5 +1,6 @@
 import fs from 'node:fs';
-const app=fs.readFileSync(new URL('../../static/js/client/app.js',import.meta.url),'utf8');
+import { clientSource, clientSourceAt, installStateGlobals } from './client_source.mjs';
+const app=clientSource();
 const start=app.indexOf('  function _guardSignerNip44(s){');
 const end=app.indexOf('  // build + sign an event',start);
 const shipped=app.slice(start,end);

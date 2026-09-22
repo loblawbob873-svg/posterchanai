@@ -12,7 +12,8 @@
  * and an editor that never answers still lets the save proceed (bounded, never a hang).
  */
 import fs from 'fs';
-const src = fs.readFileSync(new URL('../../static/js/client/app.js', import.meta.url), 'utf8');
+import { clientSource, clientSourceAt, installStateGlobals } from './client_source.mjs';
+const src = clientSource();
 
 const start = src.indexOf('const askEditorToSave = (root) => new Promise(resolve => {');
 if (start < 0) throw new Error('askEditorToSave is gone from app.js — the save no longer asks');

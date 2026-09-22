@@ -1,5 +1,6 @@
+const { clientSource, clientSourceAt, installStateGlobals } = require('./client_source.cjs');
 const fs=require('fs'),vm=require('vm'),assert=require('node:assert/strict'),path=require('path');
-const root=process.argv[2],app=fs.readFileSync(path.join(root,'static/js/client/app.js'),'utf8');
+const root=process.argv[2],app=clientSourceAt(path.join(root,'static/js/client/app.js'));
 const router=app.slice(app.indexOf('  function openOsNotificationRoute('),app.indexOf('  window.PCOpenNotificationRoute='));
 const landingStart=app.indexOf('  function _captureSmsWindowLanding(){');
 const landing=app.slice(landingStart,app.indexOf('    const e = _entityFromPath();',landingStart))+'\n}';
@@ -23,7 +24,7 @@ function page({native=false,url='https://fixture.invalid/client',shell=false}={}
   open:(url)=>{log.opened.push(url);return ctx.openResult;},openResult:{},pcWM:shell?{}:null,
   PCOSShell:{available:()=>shell}};
  ctx.window=ctx;ctx.globalThis=ctx;ctx.__PC={switchView:ctx.switchView};
- vm.createContext(ctx);vm.runInContext(oswin,ctx);vm.runInContext(router+landing+';PCOpenNotificationRoute=openOsNotificationRoute;',ctx);
+ vm.createContext(installStateGlobals(ctx) && ctx);vm.runInContext(oswin,ctx);vm.runInContext(router+landing+';PCOpenNotificationRoute=openOsNotificationRoute;',ctx);
  return {ctx,log};
 }
 (async()=>{

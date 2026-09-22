@@ -26,9 +26,9 @@ a second one fail rather than ship.
 import re
 import unittest
 from pathlib import Path
+from tests.client_source import client_source
 
-APP = (Path(__file__).resolve().parents[2] / "static" / "js" / "client" / "app.js").read_text(
-    encoding="utf-8")
+APP = client_source()
 
 
 class OneWayToOpenAFolder(unittest.TestCase):
@@ -56,7 +56,7 @@ class OneWayToOpenAFolder(unittest.TestCase):
 
     def test_delayed_computer_home_result_cannot_repaint_after_leaving_it(self):
         body = APP[APP.index("function _openHostFiles("):APP.index("/* WHERE FILES HAS BEEN")]
-        self.assertGreaterEqual(body.count("_filesTab==='computer' && _hostOn"), 2)
+        self.assertGreaterEqual(body.count("_S._filesTab==='computer' && _S._hostOn"), 2)
 
     def test_both_the_chip_and_the_tile_go_through_it(self):
         for sel, fn in ((".folder-chip[data-folder]", "_fxOpenFolder"),

@@ -21,9 +21,10 @@ import re
 import subprocess
 import unittest
 from pathlib import Path
+from tests.client_source import client_source
 
 HERE = Path(__file__).resolve().parent
-APP = (HERE.parent.parent / "static" / "js" / "client" / "app.js").read_text(encoding="utf-8")
+APP = client_source()
 
 
 class TheEditorIsAskedToSave(unittest.TestCase):

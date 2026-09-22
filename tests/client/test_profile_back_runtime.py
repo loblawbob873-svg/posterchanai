@@ -4,9 +4,10 @@ from __future__ import annotations
 import json
 import subprocess
 from pathlib import Path
+from tests.client_source import client_source, state_shim
 
 
-APP = (Path(__file__).resolve().parents[2] / "static/js/client/app.js").read_text(encoding="utf-8")
+APP = client_source()
 
 
 def _function(name: str) -> str:
@@ -29,6 +30,7 @@ def _run(*, pushed: int, os_doc: bool = False) -> dict:
       const window={{PCOS:{{}}}}, PCOS={{isOn:()=>{str(os_doc).lower()},closeDoc:id=>{{closed.push(id);return true;}}}};
       let _navPushed={pushed};
       const switchView=v=>switched=v, _startTimeline=()=> 'global';
+      {state_shim(_function('_bindProfileBack'))}
       {_function('_bindProfileBack')}
       _bindProfileBack({{}},'alice'); click();
       process.stdout.write(JSON.stringify({{went,switched,closed}}));

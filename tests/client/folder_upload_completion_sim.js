@@ -1,10 +1,11 @@
 /* Execute packaged Files folder-upload completion against an in-memory Blossom/index boundary. */
 'use strict';
+const { clientSource, clientSourceAt, installStateGlobals, stateShim } = require('./client_source.cjs');
 const fs = require('fs');
 const path = require('path');
 const vm = require('vm');
-const app = fs.readFileSync(process.env.PC_INSTALLED_APP_JS ||
-  path.resolve(__dirname, '../../static/js/client/app.js'), 'utf8');
+const app = clientSourceAt(process.env.PC_INSTALLED_APP_JS ||
+  path.resolve(__dirname, '../../static/js/client/app.js'));
 
 function fn(head) {
   const i=app.indexOf(head), begin=app.indexOf('{',i);if(i<0||begin<0)throw new Error('missing '+head);
@@ -29,12 +30,12 @@ const context={console,Set,Promise,Math,Date,saveOK:true,
   uploadEncFile:async f=>'e'.repeat(64),uploadMusicTrack:async()=>{},_refreshBlobHave:async()=>{},
   _looksAudio:()=>false,_musicHasSrc:()=>false,enc:String,$:()=>null,mediaServer:()=>"https://blossom.test",
   setTimeout:f=>{f();return 1},VIEW:'blossom',renderBlossom:()=>calls.renders++};
-vm.createContext(context);
+vm.createContext(installStateGlobals(context) && context);
+const lifted=fn('function _uploadTargetFolder(')+'\n'+fn('function _rememberUploadedBlob(')+'\n'+fn('async function uploadFilesSeq(');
 vm.runInContext(`let _filesFolder=null,_uploadCancel=false,_uploading=0,_uploadBatchAuth=null;
 let _filesGridList=null,_blobHave=new Set(),_blobSizes=new Map();
-${fn('function _uploadTargetFolder(')}
-${fn('function _rememberUploadedBlob(')}
-${fn('async function uploadFilesSeq(')}
+${stateShim(lifted)}
+${lifted}
 globalThis.run=uploadFilesSeq;globalThis.uploading=()=>_uploading;
 globalThis.visible=()=>_filesGridList;globalThis.have=()=>_blobHave;globalThis.sizes=()=>_blobSizes;
 globalThis.failIndex=()=>{globalThis.saveOK=false;};`,context);

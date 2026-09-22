@@ -1,14 +1,15 @@
 /* Executes the shipped Open With routing, not a copy of its regexes.
  * Run: node tests/client/open_with_selector_sim.js */
 'use strict';
+const { clientSource, clientSourceAt, installStateGlobals } = require('./client_source.cjs');
 const fs = require('fs');
 const path = require('path');
 const vm = require('vm');
 const root = path.resolve(__dirname, '../..');
 // The ordinary suite exercises the worktree. Installed-package gates point this at app.js extracted
 // from /opt/posterchan/resources/app.asar, so a green source test cannot hide a stale Gentoo payload.
-const app = fs.readFileSync(process.env.PC_INSTALLED_APP_JS ||
-  path.join(root, 'static/js/client/app.js'), 'utf8');
+const app = clientSourceAt(process.env.PC_INSTALLED_APP_JS ||
+  path.join(root, 'static/js/client/app.js'));
 
 function statement(head) {
   const i = app.indexOf(head);
@@ -45,7 +46,7 @@ const context = {
   modal(html, mount) { sheet = {html, mount}; },
   closeModal() { closed++; },
 };
-vm.createContext(context);
+vm.createContext(installStateGlobals(context) && context);
 vm.runInContext([
   statement('const _OFFICE_EXT ='), statement('const _officeable ='),
   statement('const _CODE_EXT ='), statement('const _CODE_BARE ='), statement('const _codeable ='),

@@ -1,4 +1,5 @@
 'use strict';
+const { clientSource, clientSourceAt, installStateGlobals } = require('./client_source.cjs');
 /* THE RAIL IS ASKED FOR EVEN WHEN THE PROFILE IS ALREADY CACHED.
  *
  * Reported: "something is broken with zapping, the monero/lightning icon don't show on the post
@@ -13,7 +14,7 @@
  * `needProfile`/`needRails` against both cache states and asserts what goes ON THE WIRE.
  */
 const fs=require('fs'),vm=require('vm'),assert=require('assert/strict'),path=require('path');
-const root=path.resolve(__dirname,'../..'),src=fs.readFileSync(root+'/static/js/client/app.js','utf8');
+const root=path.resolve(__dirname,'../..'),src=clientSourceAt(root+'/static/js/client/app.js');
 function part(start,end){const a=src.indexOf(start);assert(a>=0,'missing slice start: '+start);
   const b=src.indexOf(end,a+start.length);assert(b>a,'missing slice end: '+end);return src.slice(a,b);}
 
@@ -34,7 +35,7 @@ function run(cached){
     Relay:{ ready:async()=>true, query:async(filters)=>{ sent.push(filters); return []; } },
     _learnRailsFromEvent:()=>false, renderMe(){}, decorateProfiles(){},
   };
-  vm.createContext(ctx);
+  vm.createContext(installStateGlobals(ctx) && ctx);
   vm.runInContext(slice+'\nthis.__needProfile=needProfile;this.__flush=flushProfiles;', ctx);
   ctx.__needProfile('ab'.repeat(32));
   return { sent, queued:[...ctx._profQ], missed:[...ctx._profMiss.keys()] };
@@ -65,7 +66,7 @@ function run(cached){
       Store:{haveProfile:()=>true,saveProfile(){},saveEvent(){}},
       Relay:{ready:async()=>true,query:async(f)=>{sent.push(f);return [];}},
       _learnRailsFromEvent:()=>false,renderMe(){},decorateProfiles(){}};
-    vm.createContext(ctx);
+    vm.createContext(installStateGlobals(ctx) && ctx);
     vm.runInContext(slice+'\nthis.__flush=flushProfiles;',ctx);
     await ctx.__flush();
     assert.equal(sent.length,1,'no query was sent');
@@ -83,7 +84,7 @@ function run(cached){
       Store:{haveProfile:()=>true,saveProfile(){},saveEvent(){}},
       Relay:{ready:async()=>true,query:async()=>[]},
       _learnRailsFromEvent:()=>false,renderMe(){},decorateProfiles(){}};
-    vm.createContext(ctx);
+    vm.createContext(installStateGlobals(ctx) && ctx);
     vm.runInContext(slice+'\nthis.__flush=flushProfiles;',ctx);
     await ctx.__flush();
     assert.equal(ctx._profMiss.size,0,
@@ -97,7 +98,7 @@ function run(cached){
       Store:{haveProfile:()=>true,saveProfile(){},saveEvent(){}},
       Relay:{ready:async()=>true,query:async()=>[]},
       _learnRailsFromEvent:()=>false,renderMe(){},decorateProfiles(){}};
-    vm.createContext(ctx);
+    vm.createContext(installStateGlobals(ctx) && ctx);
     vm.runInContext(slice+'\nthis.__needProfile=needProfile;',ctx);
     for(let i=0;i<5;i++) ctx.__needProfile(PK);
     assert.equal(ctx._profQ.size,1,

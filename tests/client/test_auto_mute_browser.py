@@ -7,12 +7,13 @@ import json
 
 import pytest
 from tests.client.test_emoji_pack_tabs_layout import chrome
+from tests.client_source import client_source
 
 ROOT = Path(__file__).resolve().parents[2]
 
 
 def document():
-    app = (ROOT / 'static/js/client/app.js').read_text()
+    app = client_source()
     controller = app[app.index('  // Automatic filtering has its own account-scoped cache.'):
                      app.index('  async function fetchMutes(')]
     toggle = app[app.index('  async function toggleMute(pk){'):app.index('  async function fetchPins()')]

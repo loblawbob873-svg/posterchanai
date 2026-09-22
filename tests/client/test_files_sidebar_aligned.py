@@ -14,6 +14,7 @@ import tempfile
 from pathlib import Path
 
 import pytest
+from tests.client_source import client_source
 
 ROOT=Path(__file__).resolve().parents[2]
 css=(ROOT/'static/css/client.css').read_text(); sprite=(ROOT/'static/js/client/sprite.js').read_text()
@@ -49,6 +50,6 @@ def test_every_folder_row_starts_its_icon_and_name_at_the_same_place():
 
 
 def test_the_rows_are_emitted_the_way_this_test_renders_them():
-    app = (ROOT / "static/js/client/app.js").read_text()
+    app = client_source()
     assert "${_fxFolderIcon(f)}${enc(f)}</button>" in app, "icon and name must not be separated by a space"
     assert '>🔄 ${enc(f.key)}' not in app, "synced rows use the same svg icon as every other row"

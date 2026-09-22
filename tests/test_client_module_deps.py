@@ -36,8 +36,12 @@ import pytest
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 CLIENT = os.path.join(ROOT, "static", "js", "client")
 
-# Modules split out of app.js.
-MODULES = ["git.js"]
+from tests.client_source import split_modules
+
+# Modules split out of app.js: git.js (built on first use, loaded by its own <script> tag) plus every
+# module app.js loads on demand through `_lzGet` — read from app.js, so a new split is covered the
+# moment it is wired, with nothing to remember to add here.
+MODULES = ["git.js"] + split_modules()
 
 # Where acorn might live. The repo does not depend on it; these are the places a machine that has
 # built anything JS tends to have one.
@@ -83,6 +87,9 @@ const declared=new Set(), used=new Map();
 walk(ast,(n,p)=>{
   if(n.type==='FunctionDeclaration'&&n.id) declared.add(n.id.name);
   if(n.type==='ClassDeclaration'&&n.id) declared.add(n.id.name);
+  // `(async function poll(){ … setTimeout(poll, 3000); })()` — a named function expression's name
+  // is in scope inside it, and that is how the AI view's recovery poll re-arms itself.
+  if(n.type==='FunctionExpression'&&n.id) declared.add(n.id.name);
   if(n.type==='VariableDeclarator') names(n.id,declared);
   if(n.type==='FunctionDeclaration'||n.type==='FunctionExpression'||n.type==='ArrowFunctionExpression')
     n.params.forEach(x=>names(x,declared));
@@ -121,12 +128,25 @@ GLOBALS = {
     "MediaMetadata", "RTCPeerConnection", "DOMException", "ClipboardItem", "createImageBitmap",
     "CSS", "innerWidth", "innerHeight", "addEventListener", "removeEventListener", "performance",
     "self", "Capacitor", "BarcodeDetector", "jsQR", "katex",
+    "Option", "Hls", "IDBKeyRange", "RTCRtpSender", "AbortSignal", "devicePixelRatio",
+    # the desktop shell's preload bridges (desktop/*.js), present only inside the desktop app
+    "pcHost", "pcOS", "pcRemoteControl",
     # this app's other modules, reached as globals by design
     "PC", "Relay", "Store", "NostrTools", "PCQR", "PCZip", "PCSync", "PCNotes", "PCJoplin",
     "PCVault", "PCGit", "PCGitFactory", "PCI18n", "PCI18N", "PCSprite", "PCOutbox", "PCNegentropy",
     "PCOS", "PCTerm", "PCCalendar", "PCContacts", "PCWebxdc", "PCWebSearch", "PCPlaylists",
+    "PCMusicShare", "PCPaymentTargets", "PCPreview", "PCHostFiles", "PCVms", "PCConcord",
     "ClientSettings", "Session", "Outbox", "ICO",
+    # app.js's own export, which the moved code already reached as a bare global before it moved
+    "__PC",
 }
+
+# Names that were ALREADY unresolved in app.js before any of it moved, carried into a module
+# byte-for-byte. They are listed here by name, not hidden in GLOBALS, because each one is a real
+# bug that predates the split — moving code is not the moment to change what it does, and a
+# module must not be blamed for a ReferenceError it inherited.
+#   showAuthGate  AI chat's guest "Sign in" button calls it; nothing in the client defines it.
+PRE_EXISTING = {"showAuthGate"}
 
 
 def _unresolved(path):
@@ -143,11 +163,121 @@ def test_the_module_resolves_every_name_it_uses(mod):
     path = os.path.join(CLIENT, mod)
     if not os.path.exists(path):
         pytest.skip(f"{mod} has not been split out yet")
-    bad = _unresolved(path)
+    bad = [x for x in _unresolved(path) if x["name"] not in PRE_EXISTING]
     assert not bad, (
         f"{mod} uses names that are neither declared in it nor available globally — each throws "
         f"ReferenceError the moment that code runs:\n  "
         + "\n  ".join(f"{mod}:{x['line']}  {x['name']}" for x in bad))
+
+
+_CONTRACT = r"""
+/* The other half of a split: what a module DESTRUCTURES from `dep` must be what app.js PASSES.
+ * The resolver above only proves a name is declared — `const { foo } = dep` declares `foo` whether
+ * or not app.js ever puts a `foo` on the object, and a missing key is `undefined`, which throws
+ * `foo is not a function` at click time just like a ReferenceError would. */
+const fs=require('fs'), acorn=require(process.env.PC_ACORN);
+const P=f=>acorn.parse(fs.readFileSync(f,'utf8'),{ecmaVersion:'latest'});
+function walk(n,fn){ if(!n||typeof n.type!=='string')return; fn(n);
+  for(const k of Object.keys(n)){ const v=n[k]; if(Array.isArray(v))v.forEach(c=>c&&typeof c.type==='string'&&walk(c,fn));
+    else if(v&&typeof v.type==='string')walk(v,fn); } }
+const keyName=p=>p.key&&(p.key.name||p.key.value);
+const mod=P(process.env.PC_MODULE), app=P(process.env.PC_APP), file=process.env.PC_FILE;
+// module side
+let factory=null, global=null;
+for(const st of mod.body){ const e=st.expression;
+  if(e&&e.type==='AssignmentExpression'&&e.left.type==='MemberExpression'&&/Function/.test(e.right.type)){ factory=e.right; global=e.left.property.name; } }
+const destructured=[], sRead=new Set(), sWrite=new Set(), returned=new Set();
+// The live-state object is `const S = dep.state` — or `_S` in a module whose moved code declares an
+// `S` of its own (files.js: `const S = window.PCSync`), which would otherwise shadow it.
+let SN='S';
+for(const st of factory.body.body)
+  if(st.type==='VariableDeclaration') for(const d of st.declarations)
+    if(d.id.type==='Identifier'&&d.init&&d.init.type==='MemberExpression'&&d.init.object.name==='dep'&&d.init.property.name==='state') SN=d.id.name;
+for(const st of factory.body.body){
+  if(st.type==='VariableDeclaration') for(const d of st.declarations)
+    if(d.init&&d.init.type==='Identifier'&&d.init.name==='dep'&&d.id.type==='ObjectPattern')
+      d.id.properties.forEach(p=>destructured.push(keyName(p)));
+  if(st.type==='ReturnStatement'&&st.argument&&st.argument.type==='ObjectExpression')
+    st.argument.properties.forEach(p=>returned.add(keyName(p)));
+}
+walk(factory.body,n=>{
+  const isS=m=>m&&m.type==='MemberExpression'&&!m.computed&&m.object.type==='Identifier'&&m.object.name===SN;
+  if(isS(n)) sRead.add(n.property.name);
+  if(n.type==='AssignmentExpression'&&isS(n.left)) sWrite.add(n.left.property.name);
+  if(n.type==='UpdateExpression'&&isS(n.argument)) sWrite.add(n.argument.property.name);
+});
+// app.js side: the object handed to the factory — either `_xDeps(){ return {...}; }` named in
+// `_lzGet('<file>', '<global>', _xDeps)`, or an inline `window.<global>({...})` (git.js).
+let depsObj=null, depsFnName=null; const entries=[];
+walk(app,n=>{
+  if(n.type==='CallExpression'&&n.callee.type==='Identifier'&&n.callee.name==='_lzGet'&&n.arguments[0]&&n.arguments[0].value===file)
+    depsFnName=n.arguments[2].name;
+  if(n.type==='CallExpression'&&n.callee.type==='MemberExpression'&&n.callee.property.name===global&&n.arguments[0]&&n.arguments[0].type==='ObjectExpression')
+    depsObj=n.arguments[0];
+});
+if(depsFnName) walk(app,n=>{ if(n.type==='FunctionDeclaration'&&n.id.name===depsFnName){
+  const r=n.body.body.find(s=>s.type==='ReturnStatement'); depsObj=r&&r.argument; } });
+const modFn=depsFnName?depsFnName.replace(/Deps$/,'Mod'):null;
+if(modFn) walk(app,n=>{ if(n.type==='CallExpression'&&n.callee.type==='Identifier'&&n.callee.name==='_lzRun'&&
+  n.arguments[0]&&n.arguments[0].name===modFn) entries.push(n.arguments[2].value); });
+const passed=new Set(), getters=new Set(), setters=new Set();
+for(const p of (depsObj?depsObj.properties:[])){
+  if(keyName(p)==='state'&&p.value.type==='ObjectExpression'){
+    for(const q of p.value.properties){ if(q.kind==='get') getters.add(keyName(q)); if(q.kind==='set') setters.add(keyName(q)); }
+  } else passed.add(keyName(p));
+}
+console.log(JSON.stringify({found:!!depsObj, global,
+  notPassed:destructured.filter(n=>!passed.has(n)),
+  noGetter:[...sRead].filter(n=>!getters.has(n)),
+  noSetter:[...sWrite].filter(n=>!setters.has(n)),
+  entryNotReturned:entries.filter(n=>!returned.has(n)),
+  entries}));
+"""
+
+
+@pytest.mark.parametrize("mod", MODULES)
+def test_app_js_passes_everything_the_module_takes(mod):
+    path = os.path.join(CLIENT, mod)
+    if not os.path.exists(path):
+        pytest.skip(f"{mod} has not been split out yet")
+    env = dict(os.environ, PC_ACORN=ACORN, PC_MODULE=path, PC_APP=os.path.join(CLIENT, "app.js"),
+               PC_FILE=mod)
+    r = subprocess.run(["node", "-e", _CONTRACT], capture_output=True, text=True, timeout=300, env=env)
+    assert r.returncode == 0, r.stderr[:800]
+    got = json.loads(r.stdout)
+    assert got["found"], f"could not find the object app.js hands to {got['global']} for {mod}"
+    assert not got["notPassed"], (
+        f"{mod} destructures these from `dep` but app.js never passes them — each is undefined "
+        f"when that code runs: {got['notPassed']}")
+    assert not got["noGetter"], (
+        f"{mod} reads live state app.js does not expose on `dep.state`: {got['noGetter']}")
+    assert not got["noSetter"], (
+        f"{mod} ASSIGNS live state that `dep.state` has no setter for — the write is silently "
+        f"dropped: {got['noSetter']}")
+    assert not got["entryNotReturned"], (
+        f"app.js calls these entry points of {mod}, which the factory does not return: "
+        f"{got['entryNotReturned']}")
+
+
+def test_the_contract_check_can_fail(tmp_path):
+    """A module taking a dep app.js forgot, reading state with no getter, writing state with no
+    setter, and an entry point the factory never returns — every one must be reported."""
+    mod = tmp_path / "x.js"
+    mod.write_text("window.PCXFactory = function(dep){ const S = dep.state; const { a, b } = dep;\n"
+                   "  function go(){ S.seen = S.ME; return a() + b(); }\n  return { go };\n};\n")
+    app = tmp_path / "app.js"
+    app.write_text("(function(){ let ME=1, seen=0; function a(){} function _xDeps(){ return {\n"
+                   "  state: { get seen(){ return seen; } }, a }; }\n"
+                   "  function _xMod(){ return _lzGet('x.js', 'PCXFactory', _xDeps); }\n"
+                   "  function gone(){ return _lzRun(_xMod, null, 'gone', arguments); }\n})();\n")
+    env = dict(os.environ, PC_ACORN=ACORN, PC_MODULE=str(mod), PC_APP=str(app), PC_FILE="x.js")
+    r = subprocess.run(["node", "-e", _CONTRACT], capture_output=True, text=True, timeout=60, env=env)
+    got = json.loads(r.stdout)
+    assert got["found"]
+    assert got["notPassed"] == ["b"]
+    assert got["noGetter"] == ["ME"]
+    assert got["noSetter"] == ["seen"]
+    assert got["entryNotReturned"] == ["gone"]
 
 
 def test_the_check_can_fail(tmp_path):

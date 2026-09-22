@@ -39,6 +39,7 @@ import subprocess
 import tempfile
 
 import pytest
+from tests.client_source import client_source
 
 ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 APP = os.path.join(ROOT, "static", "js", "client", "app.js")
@@ -86,14 +87,15 @@ def _extract(src, decl):
 
 
 def _sources():
-    src = open(APP, encoding="utf-8").read()
+    src = client_source()
     out = []
     for decl in WANT:
         assert decl in src, f"{decl!r} is gone from app.js — this test is testing nothing"
         out.append(_extract(src, decl))
     # `enc` is a one-line arrow, and the draft is written through it into the textarea, so a broken
     # escape would be a real (and injectable) bug — take the real one rather than a stand-in.
-    m = re.search(r"^\s*(const enc = .*?;)$", src, re.M)
+    # The TOP-LEVEL one (two-space indent): a split module can hold a local `const enc = …` of its own.
+    m = re.search(r"^  (const enc = .*?;)$", src, re.M)
     assert m, "enc is no longer a one-line const in app.js"
     out.append(m.group(1))
     # The draft map itself.

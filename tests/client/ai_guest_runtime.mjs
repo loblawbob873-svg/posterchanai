@@ -1,7 +1,10 @@
-import fs from 'node:fs';
-const app=fs.readFileSync(new URL('../../static/js/client/app.js',import.meta.url),'utf8');
+import { clientSource, installStateGlobals } from './client_source.mjs';
+const app=clientSource();
+installStateGlobals();
 const authStart=app.indexOf('  let _aiAuth = null;');
-const authEnd=app.indexOf('  // In-app Admin:',authStart);
+  // The AI-auth block ends where app.js's entry points for the split modules begin: the admin
+  // panel comment that used to follow it moved to discover.js.
+const authEnd=app.indexOf('  function _aiDeps(){',authStart);
 const aiStart=app.indexOf('  async function renderAI(');
 const aiEnd=app.indexOf('  async function requestAiAccess(){',aiStart);
 const shipped=app.slice(authStart,authEnd)+app.slice(aiStart,aiEnd);

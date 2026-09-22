@@ -1,8 +1,11 @@
 import fs from 'node:fs';
+import { clientSource, clientSourceAt, installStateGlobals } from './client_source.mjs';
 
-const app = fs.readFileSync(new URL('../../static/js/client/app.js', import.meta.url), 'utf8');
+const app = clientSource();
 const authStart = app.indexOf('  let _aiAuth = null;');
-const authEnd = app.indexOf('  // In-app Admin:', authStart);
+  // The AI-auth block ends where app.js's entry points for the split modules begin: the admin
+  // panel comment that used to follow it moved to discover.js.
+const authEnd = app.indexOf('  function _aiDeps(){', authStart);
 const themeStart = app.indexOf('  async function loadThemeFromServer(){');
 const themeEnd = app.indexOf('  // PWA install:', themeStart);
 const shipped = app.slice(authStart, authEnd) + app.slice(themeStart, themeEnd);

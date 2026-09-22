@@ -7,9 +7,10 @@ controls themselves changed during that save.
 """
 
 from pathlib import Path
+from tests.client_source import client_source
 
 
-APP = (Path(__file__).parents[2] / "static/js/client/app.js").read_text()
+APP = client_source()
 
 
 def _block(start: str, end: str) -> str:

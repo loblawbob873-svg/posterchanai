@@ -11,8 +11,9 @@
  * Drives the SHIPPED fetchFollows/_persistFollows, extracted from app.js.
  */
 import fs from 'node:fs';
+import { clientSource, clientSourceAt, installStateGlobals } from './client_source.mjs';
 
-const app = fs.readFileSync(new URL('../../static/js/client/app.js', import.meta.url), 'utf8');
+const app = clientSource();
 /* Anchored on _persistFollows, which exists in EVERY version of this file — not on the guard's own
  * variable. Anchoring on the fix means the pre-fix run dies at extraction with "fetchFollows moved",
  * which is a test that fails for the wrong reason and would hide a real behavioural regression

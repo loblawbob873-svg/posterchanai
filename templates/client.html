@@ -514,6 +514,23 @@
 <script src="/static/js/client/termhist.js?v={{ ver }}"></script>
 <script src="/static/js/client/notes.js?v={{ ver }}"></script>
 <script src="/static/js/client/playlists.js?v={{ ver }}"></script>
+<!-- The music player, split out of app.js. It ships with the page rather than loading on demand:
+     the player is armed at startup so a car or headset button reaches a live session, and app.js
+     reads `MusicPlayer` as an object through a Proxy onto this module. -->
+<!-- The encrypted drive index, split out of app.js. Every screen that shows a file reads it
+     synchronously, so it ships with the page; app.js reaches it through a Proxy. -->
+<script src="/static/js/client/filesindex.js?v={{ ver }}"></script>
+<!-- Uploads, thumbnails and the media pickers, split out of app.js. Called synchronously from the
+     timeline header, the composer, Mail and Files, so it ships with the page. -->
+<script src="/static/js/client/upload.js?v={{ ver }}"></script>
+<script src="/static/js/client/musicplayer.js?v={{ ver }}"></script>
+<!-- Post cards, media and counts, split out of app.js. Every screen builds its cards
+     synchronously while it renders, so this one ships with the page too. -->
+<script src="/static/js/client/cards.js?v={{ ver }}"></script>
+<!-- The remote signers (NIP-55/NIP-46) and the signer service this app runs for other clients,
+     split out of app.js. Every signature a remote-signer account takes goes through it and the
+     service is revived at startup, so it ships with the page. -->
+<script src="/static/js/client/signer.js?v={{ ver }}"></script>
 <script src="/static/js/client/vaultcore.js?v={{ ver }}"></script>
 <script src="/static/js/client/vault.js?v={{ ver }}"></script>
 <script src="/static/js/client/git.js?v={{ ver }}"></script>

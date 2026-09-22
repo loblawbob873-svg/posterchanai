@@ -8,6 +8,7 @@
  * pays it and then trims the copy passes every assertion about its result. */
 import fs from 'node:fs';
 import vm from 'node:vm';
+import { clientSource, clientSourceAt, installStateGlobals } from './client_source.mjs';
 
 const src = fs.readFileSync(new URL('../../static/js/client/store.js', import.meta.url), 'utf8');
 const plan = JSON.parse(process.argv[2]);
@@ -94,7 +95,7 @@ const ctx = {
   } },
 };
 ctx.window = ctx; ctx.self = ctx; ctx.globalThis = ctx;
-vm.createContext(ctx);
+vm.createContext(installStateGlobals(ctx) && ctx);
 vm.runInContext(src, ctx);
 const Store = ctx.window.Store;
 

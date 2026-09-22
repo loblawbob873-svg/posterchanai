@@ -19,6 +19,7 @@ wiring, which is where a Capacitor plugin fails SILENTLY:
 """
 import os
 import re
+from tests.client_source import client_source
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 ANDROID = os.path.join(ROOT, "mobile", "android", "app")
@@ -34,7 +35,7 @@ PLUGIN = _read(JAVA, "scan", "QrScanPlugin.java")
 MAIN = _read(JAVA, "MainActivity.java")
 GRADLE = _read(ANDROID, "build.gradle")
 MANIFEST = _read(ANDROID, "src", "main", "AndroidManifest.xml")
-APPJS = _read(ROOT, "static", "js", "client", "app.js")
+APPJS = client_source()
 
 
 def test_the_plugin_is_registered_or_it_does_not_exist_at_all():

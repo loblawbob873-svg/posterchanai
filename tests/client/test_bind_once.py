@@ -18,6 +18,7 @@ latch, which cannot move — it closes over locals that startApp() must still re
 import re
 import unittest
 from pathlib import Path
+from tests.client_source import client_source
 
 APP = Path(__file__).resolve().parents[2] / "static" / "js" / "client" / "app.js"
 
@@ -57,7 +58,7 @@ def _strip_native_latch(body):
 class TestStartAppBindsNothingGlobal(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
-        cls.src = APP.read_text(encoding="utf-8")
+        cls.src = client_source()
 
     def test_start_app_registers_no_global_listeners_or_timers(self):
         left = _strip_native_latch(_body(self.src, "function startApp(){"))

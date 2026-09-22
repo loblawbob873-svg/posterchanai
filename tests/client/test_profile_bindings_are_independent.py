@@ -17,6 +17,7 @@ Read out of the shipped source rather than driven through a browser: the propert
 import os
 import re
 import unittest
+from tests.client_source import client_source
 
 ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 APP = os.path.join(ROOT, "static", "js", "client", "app.js")
@@ -25,8 +26,7 @@ APP = os.path.join(ROOT, "static", "js", "client", "app.js")
 class ProfileBindings(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
-        with open(APP, encoding="utf-8") as fh:
-            cls.src = fh.read()
+        cls.src = client_source()
 
     def test_copy_npub_is_bound_through_its_own_guard(self):
         """The single most reported casualty of everything above it."""

@@ -16,6 +16,7 @@ source with comments stripped, because the fix's own comment names every symbol 
 import re
 import unittest
 from pathlib import Path
+from tests.client_source import client_source
 
 APP = Path(__file__).resolve().parents[2] / "static" / "js" / "client" / "app.js"
 
@@ -39,7 +40,7 @@ def _code_only(src):
 
 class EmailFolderBrowsing(unittest.TestCase):
     def setUp(self):
-        self.src = _code_only(APP.read_text())
+        self.src = _code_only(client_source())
         m = re.search(r"    browseFolders\(\)\{.*?\n    \},", self.src, re.S)
         self.assertIsNotNone(m, "browseFolders() is gone — there is no folder browser")
         self.browse = m.group(0)

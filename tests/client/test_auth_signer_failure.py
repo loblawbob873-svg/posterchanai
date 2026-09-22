@@ -1,10 +1,11 @@
 import json
 import subprocess
 from pathlib import Path
+from tests.client_source import client_source
 
 
 ROOT = Path(__file__).resolve().parents[2]
-APP = (ROOT / 'static/js/client/app.js').read_text()
+APP = client_source()
 
 
 def test_signer_failure_rejects_and_theme_issues_no_protected_get():

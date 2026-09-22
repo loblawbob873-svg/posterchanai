@@ -378,6 +378,12 @@ CHECKS = {
     # right edge of a phone once torrents.js added Feeds to a one-line strip.
     "check_torrents_mobile":           dict(group="ui", secs=240,
                                             why="every Torrents button is on screen at phone width"),
+    # The app.js split: screens now load their code on first use, and a name that moved out of
+    # reach is a ReferenceError the moment the screen opens — invisible to node --check, to a page
+    # load and to every lifted-region check. This opens EVERY screen in the real client.
+    "check_every_view_opens":          dict(group="ui", secs=420,
+                                            why="every screen in the client opens with zero "
+                                                "JavaScript errors, desktop and phone width"),
     # Meme Builder as a photo editor: exact layer resize, image/canvas size, and an export whose
     # captured edit list renders through the real ffmpeg at exactly the requested size and format.
     "check_meme_photo_editor":         dict(group="ui", secs=300,

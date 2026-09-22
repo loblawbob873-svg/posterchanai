@@ -1,8 +1,9 @@
 """System notifications must preserve the screen/item they describe."""
 from pathlib import Path
+from tests.client_source import client_source
 
 ROOT=Path(__file__).parents[1]
-APP=(ROOT/'static/js/client/app.js').read_text(errors='replace')
+APP=client_source()
 SW=(ROOT/'static/js/client/sw.js').read_text()
 PHONE=(ROOT/'static/js/client/phoneshell.js').read_text()
 PUSH=(ROOT/'mobile/android/app/src/main/java/place/poster/app/push/PushEventService.java').read_text()

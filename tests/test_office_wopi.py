@@ -7,6 +7,7 @@ from fastapi import HTTPException
 from starlette.requests import Request
 
 from app.routers import office
+from tests.client_source import client_source
 
 
 OFFICE_USER = SimpleNamespace(nostr_npub='11'*32)
@@ -88,7 +89,7 @@ def test_distribution_wiring_is_present():
     compose = (root / "docker-compose.yml").read_text()
     install = (root / "install.sh").read_text()
     nginx = (root / "nginx/posterchanai.conf.example").read_text()
-    client = (root / "static/js/client/app.js").read_text()
+    client = client_source()
     # NO PROFILE. The office editor is part of the normal bring-up now, the same way it is part of
     # the normal ./install.sh — behind a profile it was opt-in twice over (you had to know the
     # profile existed AND set POSTERCHANAI_OFFICE), and the 📝 button is hidden when the editor is
@@ -206,7 +207,7 @@ def test_the_client_never_offers_what_the_server_would_refuse():
     error naming the file. The page's list must be a SUBSET: the server may accept more (it asks
     CODE, which advertises ninety-odd), never fewer."""
     import re as _re
-    app = _read("static/js/client/app.js")
+    app = client_source()
     m = _re.search(r"const _OFFICE_EXT = /\\\.\(([^)]*)\)\$/i;", app)
     assert m, "_OFFICE_EXT moved - re-point this test"
     offered = set(m.group(1).split("|"))

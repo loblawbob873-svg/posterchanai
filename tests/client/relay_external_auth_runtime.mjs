@@ -1,6 +1,7 @@
 import fs from 'fs';
 import vm from 'vm';
 import assert from 'node:assert/strict';
+import { clientSource, clientSourceAt, installStateGlobals } from './client_source.mjs';
 class Socket {
   static all=[];
   constructor(url){this.url=url;this.readyState=0;this.sent=[];Socket.all.push(this);}
@@ -12,7 +13,7 @@ class Socket {
 Object.assign(globalThis,{window:globalThis,self:globalThis,WebSocket:Socket,document:{addEventListener(){}},location:{origin:'https://fixture.test',protocol:'https:'}});
 Object.defineProperty(globalThis,'navigator',{value:{onLine:true}});
 globalThis.Worker=class {postMessage(m){queueMicrotask(()=>this.onmessage({data:{id:m.id,ok:true,data:m.args.events.map(e=>({id:e.id,valid:true}))}}));}};
-vm.runInThisContext(fs.readFileSync(process.argv[2],'utf8'));
+vm.runInThisContext(clientSourceAt(process.argv[2]));
 const tick=()=>new Promise(resolve=>setImmediate(resolve));
 let owner='a'.repeat(64),signs=[],release=null,deferred=false;
 Relay.setAuthSigner(async tpl=>{signs.push(tpl);if(deferred)await new Promise(r=>release=r);return{...tpl,pubkey:owner,id:'auth-'+signs.length};},()=>owner);

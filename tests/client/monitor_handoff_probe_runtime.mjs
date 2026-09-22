@@ -1,11 +1,12 @@
 import fs from 'node:fs';
 import vm from 'node:vm';
+import { clientSource, clientSourceAt, installStateGlobals } from './client_source.mjs';
 
 const source=fs.readFileSync(process.argv[2]||new URL('../../static/js/client/os.js',import.meta.url),'utf8');
 const window={};
 const document={addEventListener(){},querySelector(){return null},querySelectorAll(){return []}};
 const context={window,document,getComputedStyle:()=>({zoom:'1'}),console,setTimeout,clearTimeout};
-vm.createContext(context);vm.runInContext(source,context);
+vm.createContext(installStateGlobals(context) && context);vm.runInContext(source,context);
 const probe=window.PCOS.__tryMonitorDirections;
 const rearm=window.PCOS.__rearmFrameHandoffDestination;
 

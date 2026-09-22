@@ -10,8 +10,9 @@
  * the block is present and correct either way, and only its POSITION decides whether it executes.
  */
 import fs from 'node:fs';import vm from 'node:vm';import assert from 'node:assert/strict';
+import { clientSource, clientSourceAt, installStateGlobals } from './client_source.mjs';
 
-const code=fs.readFileSync(process.env.PC_APP_SOURCE||new URL('../../static/js/client/app.js',import.meta.url),'utf8');
+const code=clientSourceAt(process.env.PC_APP_SOURCE||new URL('../../static/js/client/app.js',import.meta.url));   // the player lives in musicplayer.js now
 const tick=code.slice(code.indexOf('    _tick(){'),code.indexOf('    onChange:null,'));
 
 function run({hidden,min=false,currentTime=7.5,cur='sha1',appMounted=false}){
@@ -26,7 +27,7 @@ function run({hidden,min=false,currentTime=7.5,cur='sha1',appMounted=false}){
     _fmtTime:()=>'0:00'};
   ctx.window=ctx;
   ctx.PCOS={musicChanged(){calls.widget++;}};
-  vm.createContext(ctx);
+  vm.createContext(installStateGlobals(ctx) && ctx);
   vm.runInContext('globalThis.P={\n'+tick+'\n_rememberLast(){calls.remember++;},'
     +'_tickApp(){calls.tickApp++;},_media(){calls.media++;},_render(){},'
     +'el:null,cur:null,min:false,_msSec:-1,_scrub:null};',ctx);
@@ -67,7 +68,7 @@ function run({hidden,min=false,currentTime=7.5,cur='sha1',appMounted=false}){
   const ctx={console,Math,Number,_audioEl:{currentTime:7.1,duration:200,paused:false},
     document:{getElementById:()=>({})},_fmtTime:()=>'0:00'};
   ctx.window=ctx;ctx.PCOS={musicChanged(){calls.widget++;}};
-  vm.createContext(ctx);
+  vm.createContext(installStateGlobals(ctx) && ctx);
   vm.runInContext('globalThis.P={\n'+tick+'\n_rememberLast(){},_tickApp(){},'
     +'_media(){calls.media++;},_render(){},el:null,cur:null,min:false,_msSec:-1,_scrub:null};',ctx);
   Object.assign(ctx.P,{el,cur:'sha1'});ctx.calls=calls;

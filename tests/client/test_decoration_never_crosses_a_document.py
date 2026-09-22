@@ -88,8 +88,13 @@ OVERLAYS = {
 }
 
 # A 1x1 white picture, used wherever a surface needs real image bytes.
-PHOTO = ("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='8' height='8'>"
-         "<rect width='8' height='8' fill='white'/></svg>")
+# BASE64, NOT RAW SVG. The raw form carries single quotes, and it is used inside a `style="…"`
+# attribute as `url('…')` — so the CSS string ended at the first attribute quote inside the SVG, the
+# declaration was dropped, and the "user's own picture" surface was never painted at all. It went
+# unnoticed while `.os-desk` had no picture of its own to fall back to; the moment the stylesheet
+# gained a default wallpaper, the surface measured was that wallpaper (many colours, so almost no
+# pixels shared the sampled one) and the harness said so: "rendered no surface to measure".
+PHOTO = "data:image/svg+xml;base64,PHN2ZyB4bWxucz0naHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmcnIHdpZHRoPSc4JyBoZWlnaHQ9JzgnPjxyZWN0IHdpZHRoPSc4JyBoZWlnaHQ9JzgnIGZpbGw9J3doaXRlJy8+PC9zdmc+"
 
 # The five surfaces, built from the shipped class names and nesting: the three readers the first
 # report named, and the two pictures the second one did.

@@ -1,12 +1,13 @@
 """Execute shipped history/preferences with controlled transport, never a public reminder."""
 from pathlib import Path
 import subprocess
+from tests.client_source import client_source
 ROOT=Path(__file__).resolve().parents[2]
 
 def test_reminder_history_reload_failed_hydration_owner_races_and_duplicates():
     js=r'''
 const fs=require('fs'),vm=require('vm'),assert=require('node:assert/strict');
-const s=fs.readFileSync(process.argv[1],'utf8');
+const cs=require(process.argv[2]),s=cs.clientSourceAt(process.argv[1]);
 const block=s.slice(s.indexOf('  // Reminder history is not a Nostr event.'),s.indexOf('  function notifList(){'));
 const alert=s.slice(s.indexOf('  function reminderAlert(text,data={})'),s.indexOf('  // Markdown + the backend',s.indexOf('  function reminderAlert(text,data={})')));
 const NativeDate=Date; Date=class extends NativeDate {static now(){return NativeDate.parse('2026-09-09T13:00:00Z')}};
@@ -16,7 +17,7 @@ function make(){
  localStorage:{getItem:k=>storage.get(k)||null,setItem:(k,v)=>storage.set(k,v)},ensureAiSession:async()=>{},
  _fetchTimeout:async()=>({ok:true,json:async()=>({items:[row]})}),bumpNotif(){},renderNotificationsSoon(){},loadNotifs(){},
  window:{},notificationAllowed:()=>false,osNotify(){throw new Error('muted alert interrupted')},enc:String,LOGO:'',console};
- vm.createContext(c);vm.runInContext(block+alert,c);return c;
+ cs.installStateGlobals(c);vm.createContext(c);vm.runInContext(block+alert,c);return c;
 }
 (async()=>{
  const a=make();a.reminderAlert(row.content,row);assert.equal(a._reminderRows().length,1,'muted history');a.reminderAlert(row.content,row);assert.equal(a._reminderRows().length,1,'dedup');
@@ -35,5 +36,5 @@ function make(){
  console.log('history and account races passed');
 })().catch(e=>{console.error(e);process.exit(1)});
 '''
-    result=subprocess.run(['node','-e',js,str(ROOT/'static/js/client/app.js')],capture_output=True,text=True,timeout=20)
+    result=subprocess.run(['node','-e',js,str(ROOT/'static/js/client/app.js'),str(ROOT/'tests/client/client_source.cjs')],capture_output=True,text=True,timeout=20)
     assert result.returncode==0,result.stderr

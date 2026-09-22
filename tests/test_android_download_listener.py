@@ -19,6 +19,7 @@ import os
 import re
 
 import pytest
+from tests.client_source import client_source
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 MAIN = os.path.join(ROOT, "mobile", "android", "app", "src", "main", "java",
@@ -79,7 +80,7 @@ def test_blob_urls_are_handed_back_to_the_page_not_dropped():
 
 def test_the_page_actually_listens_for_that_hand_back():
     """The other half. An event nobody hears is the same silence, moved."""
-    js = open(APP_JS, encoding="utf-8").read()
+    js = client_source()
     assert "'pcNativeDownload'" in js, "the native side hands blob downloads to nobody"
     seg = js[js.index("'pcNativeDownload'"): js.index("'pcNativeDownload'") + 700]
     assert "saveBlobAs" in seg, "the hand-back does not reach the app's save pipeline"

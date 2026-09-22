@@ -1,4 +1,5 @@
 'use strict';
+const { clientSource, clientSourceAt, installStateGlobals } = require('./client_source.cjs');
 /* A PAYMENT RAIL THE TIP SHEET CAN USE MUST BE VISIBLE ON THE CARD.
  *
  * Reported about deallen@erybody.com: "i can zap him but no icon that he has monero like the
@@ -13,7 +14,7 @@
  * REAL SIGNED events, because an unsigned 10133 must teach the client nothing.
  */
 const fs=require('fs'),vm=require('vm'),assert=require('assert/strict'),crypto=require('crypto'),path=require('path');
-const root=path.resolve(__dirname,'../..'),src=fs.readFileSync(root+'/static/js/client/app.js','utf8');
+const root=path.resolve(__dirname,'../..'),src=clientSourceAt(root+'/static/js/client/app.js');
 function part(start,end){const a=src.indexOf(start);assert(a>=0,'missing slice start: '+start);
   const b=src.indexOf(end,a+start.length);assert(b>a,'missing slice end: '+end);return src.slice(a,b);}
 
@@ -39,7 +40,7 @@ function setup(){
                                querySelectorAll:()=>[]};
   ctx.localStorage={getItem:()=>null,setItem(){},removeItem(){}};
   ctx.addEventListener=()=>{};
-  vm.createContext(ctx);
+  vm.createContext(installStateGlobals(ctx) && ctx);
   vm.runInContext(fs.readFileSync(root+'/static/vendor/nostr/nostr.bundle.js','utf8'),ctx);
   vm.runInContext(fs.readFileSync(root+'/static/js/client/store.js','utf8'),ctx);
   vm.runInContext(fs.readFileSync(root+'/static/js/client/payment-targets.js','utf8'),ctx);
@@ -55,7 +56,7 @@ function setup(){
   vm.runInContext(
       part('  function profOf(pk){','  async function _ensurePaymentTargets(){')
     + part('  function isXmrAddr(a){','  // A Monero tip note')
-    + part('  function isCashAddr(a){',"  // Open the payer's BCH wallet")
+    + part('  function isCashAddr(a){','  function bech32ToBytes(')   // …up to where the tip flows moved out (tips.js)
     + part('  function actsRow(ev){','  let _noteCardErrs = 0;')
     + part('  function _tipMarks(n, p){','  function decorateProfiles(){')
     + 'const _profQ=new Set(),_profMiss=new Map();'

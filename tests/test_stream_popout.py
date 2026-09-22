@@ -29,10 +29,11 @@ import shutil
 import subprocess
 
 import pytest
+from tests.client_source import client_source
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 CSS = open(os.path.join(ROOT, "static", "css", "client.css"), encoding="utf-8").read()
-APP_JS = open(os.path.join(ROOT, "static", "js", "client", "app.js"), encoding="utf-8").read()
+APP_JS = client_source()
 
 
 # ---- 1. the player is the video ---------------------------------------------------------------

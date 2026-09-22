@@ -39,6 +39,7 @@ import shutil
 import subprocess
 import tempfile
 import unittest
+from tests.client_source import client_source
 
 REPO = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 APPJS = os.path.join(REPO, "static", "js", "client", "app.js")
@@ -51,7 +52,7 @@ def _read(path):
         return fh.read()
 
 
-APP = _read(APPJS)
+APP = client_source()
 
 
 # The feed as feedNoteHtml builds it: a reply is a .reply-pair wrapping the label AND the card, and a

@@ -1,9 +1,10 @@
 """Sent must mean the server's Sent mailbox and must catch up when opened."""
 import unittest
 from pathlib import Path
+from tests.client_source import client_source
 
 
-APP = (Path(__file__).resolve().parents[2] / "static/js/client/app.js").read_text(encoding="utf-8")
+APP = client_source()
 SYNC = (Path(__file__).resolve().parents[2] / "app/services/mail_sync.py").read_text(encoding="utf-8")
 ROUTER = (Path(__file__).resolve().parents[2] / "app/routers/mail.py").read_text(encoding="utf-8")
 

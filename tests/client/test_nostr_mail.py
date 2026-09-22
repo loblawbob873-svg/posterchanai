@@ -12,6 +12,7 @@ import re
 import shutil
 import subprocess
 import unittest
+from tests.client_source import client_source
 
 ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 APP = os.path.join(ROOT, "static", "js", "client", "app.js")
@@ -19,7 +20,7 @@ NODE = shutil.which("node") or shutil.which("nodejs")
 
 
 def _lift():
-    src = open(APP, encoding="utf-8").read()
+    src = client_source()
     at = src.index("const NMail = {")
     i = src.index("{", at)
     d = 0
@@ -114,7 +115,7 @@ class CodecTests(unittest.TestCase):
 class WiringTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
-        cls.src = open(APP, encoding="utf-8").read()
+        cls.src = client_source()
 
     def test_nip04_is_refused_with_the_specs_reason(self):
         at = self.src.index("_nmailHtml(nm, m){")

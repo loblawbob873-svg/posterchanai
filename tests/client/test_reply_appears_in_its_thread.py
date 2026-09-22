@@ -36,6 +36,7 @@ import tempfile
 from pathlib import Path
 
 import pytest
+from tests.client_source import client_source
 
 ROOT = Path(__file__).resolve().parents[2]
 APP = ROOT / "static/js/client/app.js"
@@ -44,7 +45,7 @@ pytestmark = pytest.mark.skipif(shutil.which("node") is None, reason="node not i
 
 
 def _src():
-    return APP.read_text(encoding="utf-8")
+    return client_source()
 
 
 def _lift(name, src=None):
@@ -88,11 +89,11 @@ def test_the_composer_actually_uses_the_rule_and_repaints_the_open_thread():
     rather than guessing an id."""
     src = _src()
     tail = src[src.index("if(r && r.ok) toast('posted');"):][:900]
-    assert "_repaintAfterPost(VIEW)" in tail, "the composer no longer asks the rule"
+    assert "_repaintAfterPost(_S.VIEW)" in tail, "the composer no longer asks the rule"
     assert "renderThread._tok" in tail, "the thread branch does not re-render the open thread"
     assert "renderView(true)" in tail
     # And the old hardcoded list must not have grown back beside it.
-    assert "VIEW==='home'||VIEW==='global'||VIEW==='drafts'" not in tail
+    assert "_S.VIEW==='home'||_S.VIEW==='global'||_S.VIEW==='drafts'" not in tail
 
 
 def test_repainting_the_same_thread_keeps_the_readers_place():

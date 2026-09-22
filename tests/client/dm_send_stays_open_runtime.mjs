@@ -1,7 +1,8 @@
 import fs from 'node:fs';
 import vm from 'node:vm';
+import { clientSource, clientSourceAt, installStateGlobals } from './client_source.mjs';
 
-const source = fs.readFileSync(new URL('../../static/js/client/app.js', import.meta.url), 'utf8');
+const source = clientSource();
 const declaration = 'async function sendDm(pk, text){';
 const start = source.indexOf(declaration);
 if(start < 0) throw new Error('sendDm declaration missing');

@@ -14,6 +14,7 @@ every symbol it names exists.
 import re
 import unittest
 from pathlib import Path
+from tests.client_source import client_source
 
 ROOT = Path(__file__).resolve().parents[2]
 APP = ROOT / "static" / "js" / "client" / "app.js"
@@ -28,7 +29,7 @@ EMOJI = re.compile("[\U0001F300-\U0001FAFF←-⇿☀-➿]")
 class MailActionsUseTheSprite(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
-        cls.src = APP.read_text()
+        cls.src = client_source()
         cls.sprite = SPRITE.read_text()
         i = cls.src.index('<div class="mail-actions">')
         cls.row = cls.src[i:cls.src.index("</div>", i)]

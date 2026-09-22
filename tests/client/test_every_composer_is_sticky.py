@@ -19,9 +19,9 @@ real browser to prove the mechanism works; this proves the composers actually us
 import re
 import unittest
 from pathlib import Path
+from tests.client_source import client_source
 
-APP = (Path(__file__).resolve().parents[2] / "static" / "js" / "client" / "app.js").read_text(
-    encoding="utf-8")
+APP = client_source()
 
 
 def _call_span(src, open_paren):

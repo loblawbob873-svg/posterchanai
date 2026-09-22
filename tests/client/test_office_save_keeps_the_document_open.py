@@ -16,10 +16,11 @@ editing compare against the wrong thing.
 from pathlib import Path
 import re
 import unittest
+from tests.client_source import client_source
 
 
 ROOT = Path(__file__).resolve().parents[2]
-APP = (ROOT / "static/js/client/app.js").read_text(encoding="utf-8")
+APP = client_source()
 
 
 def save_handler(code_only=True):

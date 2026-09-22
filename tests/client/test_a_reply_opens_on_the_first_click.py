@@ -37,6 +37,7 @@ import pytest
 import websockets
 
 from tests.client.test_effects_full_app import Browser, Handler, INIT
+from tests.client_source import client_source
 
 # What the desktop holds after one attempt to open a post.
 PROBE = """(() => {
@@ -206,7 +207,7 @@ def test_every_route_into_a_window_knows_a_post_is_not_a_view():
 
     Pinned as a rule in both files, because the failure is structural: switchView accepts anything.
     """
-    app = (Path(__file__).resolve().parents[2] / 'static/js/client/app.js').read_text(encoding='utf-8')
+    app = client_source()
     oswin = (Path(__file__).resolve().parents[2] / 'static/js/client/oswin.js').read_text(encoding='utf-8')
 
     for name, src in (('app.js routeFromPath', app), ('oswin.js re-route', oswin)):
@@ -231,7 +232,7 @@ def test_switchview_itself_refuses_to_render_a_post_window_as_a_view():
     renders nothing, and leaves an apology — so it is the one place that every caller, including the
     one written next, already passes through.
     """
-    app = (Path(__file__).resolve().parents[2] / 'static/js/client/app.js').read_text(encoding='utf-8')
+    app = client_source()
     start = app.index('function switchView(')
     head = app[start:start + 1400]
     assert 'doc:post:' in head, (

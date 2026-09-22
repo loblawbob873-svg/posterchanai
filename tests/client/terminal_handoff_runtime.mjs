@@ -1,5 +1,6 @@
 import fs from 'node:fs';
 import vm from 'node:vm';
+import { clientSource, clientSourceAt, installStateGlobals } from './client_source.mjs';
 
 const source=fs.readFileSync(process.argv[2]||new URL('../../static/js/client/term.js',import.meta.url),'utf8');
 const document={querySelector:()=>null,querySelectorAll:()=>[],addEventListener(){},removeEventListener(){},
@@ -11,7 +12,7 @@ function renderer(remembered=''){
   const context={window,document,location:{origin:'https://test.invalid'},sessionStorage:{
     getItem:k=>memory.get(k)||null,setItem:(k,v)=>memory.set(k,String(v)),removeItem:k=>memory.delete(k)},
     setTimeout:()=>0,clearTimeout(){},requestAnimationFrame:f=>f(),console,URL,WebSocket:function(){}};
-  vm.createContext(context);vm.runInContext(source,context);
+  vm.createContext(installStateGlobals(context) && context);vm.runInContext(source,context);
   return {term:window.PCTerm,memory};
 }
 

@@ -18,6 +18,7 @@ import re
 import shutil
 import subprocess
 import unittest
+from tests.client_source import client_source
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
@@ -96,7 +97,7 @@ class TheEditorOpensAndSavesThem(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         cls.code = _read("static", "js", "client", "code.js")
-        cls.app = _read("static", "js", "client", "app.js")
+        cls.app = client_source()
         cls.host = _read("static", "js", "client", "hostfiles.js")
 
     def test_the_editor_can_open_one(self):

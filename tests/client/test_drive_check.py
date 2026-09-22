@@ -21,6 +21,7 @@ The rules that make the check safe rather than another way to lose data:
 import os
 import re
 import unittest
+from tests.client_source import client_source
 
 ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 APP = os.path.join(ROOT, "static", "js", "client", "app.js")
@@ -29,10 +30,9 @@ APP = os.path.join(ROOT, "static", "js", "client", "app.js")
 class DriveCheckTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
-        with open(APP, encoding="utf-8") as fh:
-            cls.src = fh.read()
+        cls.src = client_source()
         at = cls.src.index("async function driveCheck(btn){")
-        cls.body = cls.src[at:cls.src.index("\n  /* Does the server already hold", at)]
+        cls.body = cls.src[at:cls.src.index("\n  }\n", at) + 4]   # to its own closing brace (the comment that followed it stayed in app.js)
 
     def test_it_is_reachable_from_the_drive(self):
         self.assertIn('class="btn btn-ghost small fx-check"', self.src,
@@ -122,10 +122,9 @@ class DriveCheckRepairGuardTests(unittest.TestCase):
 
     @classmethod
     def setUpClass(cls):
-        with open(APP, encoding="utf-8") as fh:
-            src = fh.read()
+        src = client_source()
         at = src.index("async function driveCheck(btn){")
-        cls.body = src[at:src.index("\n  /* Does the server already hold", at)]
+        cls.body = src[at:src.index("\n  }\n", at) + 4]   # to its own closing brace (the comment that followed it stayed in app.js)
 
     def test_every_candidate_is_confirmed_against_the_server_itself(self):
         """One listing is one opinion. A HEAD per doubted entry is the second one, and an unknown
@@ -172,10 +171,9 @@ class TheProbeTests(unittest.TestCase):
 
     @classmethod
     def setUpClass(cls):
-        with open(APP, encoding="utf-8") as fh:
-            cls.src = fh.read()
+        cls.src = client_source()
         at = cls.src.index("async function driveCheck(btn){")
-        cls.body = cls.src[at:cls.src.index("\n  /* Does the server already hold", at)]
+        cls.body = cls.src[at:cls.src.index("\n  }\n", at) + 4]   # to its own closing brace (the comment that followed it stayed in app.js)
 
     def test_the_check_does_not_use_the_upload_shortcut_as_evidence(self):
         self.assertNotIn("_blobAlreadyStored", self.body,
@@ -215,8 +213,7 @@ class ReclaimTests(unittest.TestCase):
 
     @classmethod
     def setUpClass(cls):
-        with open(APP, encoding="utf-8") as fh:
-            cls.src = fh.read()
+        cls.src = client_source()
 
     def _run(self, list_, index, refs):
         import json

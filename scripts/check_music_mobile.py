@@ -118,7 +118,8 @@ DRIVE = r"""(async () => {
        * has a 0x0 rect and the result says nothing about the scrubber CSS. */
       const app = document.getElementById('app');
       if (app) app.classList.remove('hidden');
-      P.renderMusicApp();
+      // Awaited: the Music screen's code (music.js) loads the first time it is drawn.
+      await P.renderMusicApp();
       await sleep(150);
       const bar = document.getElementById('ma-seek');
       out.appSeek = !!bar;

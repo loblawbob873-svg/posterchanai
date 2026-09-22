@@ -1,5 +1,6 @@
 import re
 from pathlib import Path
+from tests.client_source import client_source
 
 CSS=(Path(__file__).parents[1]/'static/css/client.css').read_text()
 ROOT=Path(__file__).parents[1]
@@ -38,7 +39,7 @@ def test_mobile_actions_are_thumb_sized_and_fit_without_hidden_scrolling():
 
 
 def test_mobile_reader_actions_are_compact_accessible_icons():
-    app = (ROOT / 'static/js/client/app.js').read_text()
+    app = client_source()
     thread = app[app.index('_renderThread(pane, thread, folder, acct, seedUid'):
                  app.index('_msgText(msg)', app.index('_renderThread(pane, thread, folder, acct, seedUid'))]
     # SCOPED TO THE ACTIONS ROW, not to the whole function. This counted every button in
@@ -55,14 +56,14 @@ def test_mobile_reader_actions_are_compact_accessible_icons():
 
 
 def test_packaged_mail_attachments_use_the_configured_instance():
-    app = (ROOT / 'static/js/client/app.js').read_text()
+    app = client_source()
     assert 'function _mailAttachmentUrl(' in app
     assert "if(!/^https?:\\/\\//i.test(base)) return '';" in app
     assert 'data-mail-url="${enc(url)}"' in app
 
 
 def test_viewable_mail_attachments_open_in_the_fitted_preview_app():
-    app = (ROOT / 'static/js/client/app.js').read_text()
+    app = client_source()
     render = app[app.index('_msgBlock(m, folder, acct, expanded)'):
                  app.index('_nmailHtml(nm, m)', app.index('_msgBlock(m, folder, acct, expanded)'))]
     thread = app[app.index('_renderThread(pane, thread, folder, acct, seedUid'):
@@ -77,7 +78,7 @@ def test_viewable_mail_attachments_open_in_the_fitted_preview_app():
 
 
 def test_every_mail_attachment_uses_authenticated_fetch_then_preview_or_save():
-    app = (ROOT / 'static/js/client/app.js').read_text()
+    app = client_source()
     render = app[app.index('_msgBlock(m, folder, acct, expanded)'):
                  app.index('_nmailHtml(nm, m)', app.index('_msgBlock(m, folder, acct, expanded)'))]
     thread = app[app.index('_renderThread(pane, thread, folder, acct, seedUid'):
@@ -85,6 +86,6 @@ def test_every_mail_attachment_uses_authenticated_fetch_then_preview_or_save():
     assert 'data-mail-attachment="1"' in render
     assert "$$('[data-mail-attachment]',pane)" in thread
     opener = app[app.index('async function _openMailAttachment'):app.index('const Mail =', app.index('async function _openMailAttachment'))]
-    assert "'Authorization':'Bearer '+_aiToken" in opener
+    assert "'Authorization':'Bearer '+S._aiToken" in opener
     assert "if(a.dataset.mailPreview==='1')" in opener
     assert "else await saveBlobAs(blob,a.dataset.name||'attachment')" in opener

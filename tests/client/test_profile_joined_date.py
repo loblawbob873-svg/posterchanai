@@ -1,10 +1,11 @@
 """Profiles label relay history as observed activity, not an account creation date."""
 
 from pathlib import Path
+from tests.client_source import client_source
 
 
 ROOT = Path(__file__).resolve().parents[2]
-APP = (ROOT / "static/js/client/app.js").read_text()
+APP = client_source()
 CSS = (ROOT / "static/css/client.css").read_text()
 
 

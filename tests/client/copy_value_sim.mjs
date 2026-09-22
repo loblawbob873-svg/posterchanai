@@ -1,7 +1,8 @@
 /* Execute the SHIPPED copyValue against a stubbed clipboard. Lifted from app.js rather than
    retyped, so the guard under test cannot drift from the one that runs. */
 import fs from 'node:fs';
-const src = fs.readFileSync(new URL('../../static/js/client/app.js', import.meta.url), 'utf8');
+import { clientSource, clientSourceAt, installStateGlobals } from './client_source.mjs';
+const src = clientSource();
 const a = src.indexOf('  function copyValue(text, okMsg, failLabel){');
 if (a < 0) throw new Error('copyValue moved');
 const b = src.indexOf('\n  function _stopLiveHb()', a);

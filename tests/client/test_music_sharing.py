@@ -23,6 +23,7 @@ import shutil
 import subprocess
 
 import pytest
+from tests.client_source import client_source
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.dirname(os.path.dirname(HERE))
@@ -74,13 +75,13 @@ def test_loaded_and_precached():
     # Loaded ON DEMAND (it put the boot payload over budget) — so it must NOT be a boot <script>,
     # app.js must know how to load it, and the SW must still precache it for offline starts.
     assert "musicshare.js" not in _read("templates", "client.html")
-    assert "_loadScript('/static/js/client/musicshare.js'" in _read("static", "js", "client", "app.js")
+    assert "_loadScript('/static/js/client/musicshare.js'" in client_source()
     assert "'/static/js/client/musicshare.js'" in _read("static", "js", "client", "sw.js")
 
 
 def test_carried_on_a_relay_change():
     """The share documents live only on relays: left on the old pool, the recipient's list goes too."""
-    s = _read("static", "js", "client", "app.js")
+    s = client_source()
     carry = s[s.index("const _CARRY_D = ["):]
     carry = carry[:carry.index("];")]
     assert "pcai:musicshare:" in carry
@@ -124,8 +125,10 @@ def test_the_drive_reclaim_counts_shared_copies_as_referenced():
         pytest.skip("node not installed")
     app = os.path.join(ROOT, "static", "js", "client", "app.js")
     js = r"""
-      const fs=require('fs'), vm=require('vm');
-      const src=fs.readFileSync(process.argv[1],'utf8');
+      const fs=require('fs'), vm=require('vm'), path=require('path');
+      // app.js plus the modules split out of it (_syncRefIds lives in files.js), read from beside it.
+      const cs=require(path.resolve(path.dirname(process.argv[1]),'../../../tests/client/client_source.cjs'));
+      const src=cs.clientSourceAt(process.argv[1]);
       const at=src.indexOf('async function _syncRefIds(');
       let i=src.indexOf('{',at), d=0; for(;i<src.length;i++){ if(src[i]==='{')d++; else if(src[i]==='}'&&--d===0)break; }
       const fn=src.slice(at,i+1);
@@ -133,7 +136,7 @@ def test_the_drive_reclaim_counts_shared_copies_as_referenced():
         const ctx={ _musicShareLoad: async()=> loads ? ctx.window.PCMusicShare : null, window:{ PCSync:{ acct:()=>[{key:'f'}], accountFolders:async()=>{},
                                       docs:{ state:async()=>({state:{'a.txt':{sha:'s1'}}}) } },
                              PCMusicShare:{ refIds:async()=>shared } } };
-        vm.createContext(ctx); vm.runInContext(fn+';this.f=_syncRefIds;', ctx);
+        vm.createContext(cs.installStateGlobals(ctx) && ctx); vm.runInContext(fn+';this.f=_syncRefIds;', ctx);
         const r=await ctx.f(); return r ? [...r].sort() : null; };
       (async()=>{ process.stdout.write(JSON.stringify({
         ok: await run(new Set(['copy1','list1'])), unreadable: await run(null),
@@ -150,7 +153,7 @@ def test_the_drive_reclaim_counts_shared_copies_as_referenced():
 def test_player_reads_titles_through_one_lookup():
     """A shared track the player is playing has no drive-index record; every place that names the
     current track must ask `_trackMeta`, or the lock screen/widget says '—' over a playing song."""
-    s = _read("static", "js", "client", "app.js")
+    s = client_source()
     mp = s[s.index("  const MusicPlayer = {"):]
     mp = mp[:mp.index("\n  };")]
     assert "FilesIdx.meta(this.cur)" not in mp and "FilesIdx.meta(sha)" not in mp

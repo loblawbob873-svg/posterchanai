@@ -5,9 +5,10 @@ from pathlib import Path
 import pytest
 from tests.client.test_monero_wallet_send_flow import BOOT, STAGENET
 from tests.client.test_tip_tell_on_dismiss import _fn
+from tests.client_source import client_source, state_shims
 
 ROOT=Path(__file__).resolve().parents[2]
-APP=(ROOT/'static/js/client/app.js').read_text()
+APP=client_source()
 APP_HANDLERS='\n'.join(_fn(APP,name,opener) for name,opener in [
     ('_tipTellOnDismiss','function _tipTellOnDismiss(root, opts){'),
     ('doXmrTip','async function doXmrTip('),
@@ -65,7 +66,7 @@ async function openRoute(route,quiet){
 
 
 def run(script):
-    result=subprocess.run(['node','-e',BOOT+SETUP+APP_HANDLERS+'\n(async()=>{'+script+'\ndone({ok:true});})().catch(e=>{console.error(e);process.exit(1);});'],capture_output=True,text=True,timeout=30)
+    result=subprocess.run(['node','-e',BOOT+SETUP+APP_HANDLERS+state_shims(APP_HANDLERS)+'\n(async()=>{'+script+'\ndone({ok:true});})().catch(e=>{console.error(e);process.exit(1);});'],capture_output=True,text=True,timeout=30)
     assert result.returncode==0,result.stdout+result.stderr
     assert json.loads(result.stdout)['ok']
 

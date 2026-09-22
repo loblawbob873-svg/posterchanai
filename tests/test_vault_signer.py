@@ -14,6 +14,7 @@ import shutil
 import subprocess
 
 import pytest
+from tests.client_source import client_source
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 EXT = os.path.join(ROOT, "extension")
@@ -291,7 +292,7 @@ def test_posterchan_signer_pairing_delegates_without_exporting_the_nsec():
     assert "PC.signerSession && PC.signerSession()" in vault
     assert "Session.load" not in vault[vault.index("if(mode === 'full')"):vault.index("const code =", vault.index("if(mode === 'full')"))]
     assert "payload.nip46" in vault and "remotePk:s.remotePk" in vault
-    app = open(os.path.join(ROOT, "static", "js", "client", "app.js"), encoding="utf-8").read()
+    app = client_source()
     snap = app[app.index("signerSession: () =>"):app.index("me: () =>", app.index("signerSession: () =>"))]
     assert "Nip46.appSk" in snap and "Nip46.remotePk" in snap
     bg = _src("background.js")

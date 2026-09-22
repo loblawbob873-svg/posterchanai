@@ -2,12 +2,13 @@
 import json
 from pathlib import Path
 import subprocess
+from tests.client_source import client_source
 
 ROOT = Path(__file__).resolve().parents[2]
 
 
 def test_quote_only_event_survives_the_list_and_opens_its_own_post():
-    source = (ROOT/'static/js/client/app.js').read_text()
+    source = client_source()
     quote = json.loads((ROOT/'tests/fixtures/nostr/ditto_quote_no_p.json').read_text())
     def segment(a,b): return source[source.index(a):source.index(b,source.index(a))]
     code = '\n'.join([

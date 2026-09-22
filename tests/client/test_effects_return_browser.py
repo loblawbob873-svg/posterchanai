@@ -7,12 +7,13 @@ from html import unescape
 from pathlib import Path
 import pytest
 from .test_notes_new_draft_runtime import CHROME, ROOT
+from tests.client_source import client_source
 
 
 @pytest.mark.skipif(not Path(CHROME).exists(),reason='Chrome is not installed')
 @pytest.mark.parametrize('source_view',['thread','profile'])
 def test_effects_return_control_and_delayed_thread_scroll(source_view):
-    src=(ROOT/'static/js/client/app.js').read_text()
+    src=client_source()
     helpers=src[src.index('  function _effectReturnValid('):src.index('  async function launchEffectStudio(')]
     scroll=src[src.index('  function _putScroll('):src.index('  function _rememberTlScroll(')]
     restore=src[src.index('  function _restoreNavScroll('):src.index('  // "Has a person done anything yet?"')]

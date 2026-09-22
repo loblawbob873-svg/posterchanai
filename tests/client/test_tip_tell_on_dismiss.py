@@ -28,6 +28,7 @@ import shutil
 import subprocess
 import tempfile
 import unittest
+from tests.client_source import client_source, state_shims
 
 REPO = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 APP = os.path.join(REPO, "static", "js", "client", "app.js")
@@ -49,8 +50,7 @@ def _fn(src, name, opener):
 
 
 def _harness():
-    with open(APP) as fh:
-        src = fh.read()
+    src = client_source()
     dwell = re.search(r"const _TIP_DWELL_MS = (\d+);", src)
     assert dwell, "_TIP_DWELL_MS is gone — the dwell rule moved"
     return "\n".join([
@@ -58,6 +58,8 @@ def _harness():
         # Shortened so the test does not sit for the real ten seconds; the rule is what is under test.
         "const _TIP_DWELL_MS = 300;",
         _fn(src, "_tipTellOnDismiss", "function _tipTellOnDismiss(root, opts){"),
+        # tips.js reads app.js's live bindings through `S`; the stubs above are those bindings.
+        state_shims(_fn(src, "_tipTellOnDismiss", "function _tipTellOnDismiss(root, opts){")),
     ])
 
 
@@ -149,8 +151,7 @@ class TipTellOnDismiss(unittest.TestCase):
     def test_both_tip_flows_use_it(self):
         """Monero and Bitcoin Cash are the same flow with a different URI scheme; fixing one and
         leaving the other is how half of this comes back."""
-        with open(APP) as fh:
-            src = fh.read()
+        src = client_source()
         self.assertEqual(src.count("_tipTellOnDismiss(root, {"), 2)
         for fn, opener in (("doXmrTip", "async function doXmrTip("),
                            ("doBchTip", "async function doBchTip(")):
