@@ -163,6 +163,7 @@ const SHELL = [
   '/static/js/client/upload.js',
   '/static/js/client/musicplayer.js',
   '/static/js/client/cards.js',
+  '/static/js/client/signer.js',
   '/static/js/client/vaultcore.js',
   '/static/js/client/vault.js',
   '/static/js/client/chess.js',

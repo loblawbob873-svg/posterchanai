@@ -21,6 +21,8 @@ import os
 import re
 import unittest
 
+from tests.client_source import client_source
+
 ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 TERM = os.path.join(ROOT, "static", "js", "client", "term.js")
 APP = os.path.join(ROOT, "static", "js", "client", "app.js")
@@ -113,8 +115,7 @@ class TheLocalShellNeedsNothing(unittest.TestCase):
     def test_saved_remote_identity_does_not_hold_the_whole_os_behind_reconnect(self):
         """term.js cannot mount until startApp; NIP-46 resume must not block startApp when the
         public identity is already saved locally."""
-        with open(APP, encoding="utf-8") as fh:
-            app = _decomment(fh.read())
+        app = _decomment(client_source())   # the NIP-46 client lives in signer.js now
         start = app.index("const relays = paired.concat(_ncRelays())")
         end = app.index("async signEvent(tpl)", start)
         body = app[start:end]

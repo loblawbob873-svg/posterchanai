@@ -20,6 +20,8 @@ guarded is everything that makes the feature simply ABSENT rather than broken:
 import os
 import re
 
+from tests.client_source import client_source
+
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 JAVA = os.path.join(ROOT, "mobile", "android", "app", "src", "main", "java", "place", "poster", "app")
 CLIENT = os.path.join(ROOT, "static", "js", "client")
@@ -636,7 +638,7 @@ def test_the_key_the_phone_is_given_is_the_wrapped_one():
     """No new secret at rest is the whole reason a native sweep is acceptable. What is handed over is
     the NIP-44 self-wrapped value the drive index already publishes; the phone opens it with the
     account secret its own signer holds."""
-    app = _read(CLIENT, "app.js")
+    app = client_source()
     assert "driveKeyWrapped: () => (FilesIdx && FilesIdx._mkWrapped)" in app, (
         "the accessor hands over something other than the wrapped key"
     )
@@ -650,7 +652,7 @@ def test_the_key_the_phone_is_given_is_the_wrapped_one():
         "an empty key erases the stored one — a configure() that arrives before the signer answers "
         "would silently turn background sync off until somebody opened the app again"
     )
-    assert "public void forget()" in store and "forgetNative" in _read(CLIENT, "app.js"), (
+    assert "public void forget()" in store and "forgetNative" in client_source(), (
         "signing out leaves the wrapped key on a handed-down phone"
     )
 
@@ -741,7 +743,7 @@ def test_the_phone_is_given_an_absolute_server_and_not_its_own_bundle():
     `''` is the standalone case (no instance at all) and must turn the whole thing OFF rather than be
     treated as a base."""
     sync = _read(CLIENT, "sync.js")
-    app = _read(CLIENT, "app.js")
+    app = client_source()
     body = sync[sync.index("async function _pushNativeConfig()"):]
     body = body[:body.index("\n  }")]
     assert "PC.serverOrigin" in body, "the native config is built from the page's own origin"
@@ -974,7 +976,7 @@ def test_folder_sync_arms_the_native_key_itself():
     A feature asks for what it needs, itself.
     """
     sync = _read(CLIENT, "sync.js")
-    app = _read(CLIENT, "app.js")
+    app = client_source()
     runner = _read(JAVA, "sync", "NativeRunner.java")
 
     assert "armNativeSigner" in app, "nothing exposes the arming call to the rest of the client"
@@ -1035,7 +1037,7 @@ def test_the_armed_key_is_this_account_s_key():
     used it; the background sweep DEPENDS on it now, so B's unattended sweep would sign its Blossom
     auth and its manifest proof as A and try to unwrap B's drive key with A's secret — a 403 at best,
     the wrong identity at worst, and silence on both paths."""
-    app = _code_only(_read(CLIENT, "app.js"))
+    app = _code_only(client_source())
     arm = app[app.index("async _armNative()"):]
     arm = arm[:arm.index("\n    },")]
     assert "st.pubkey" in arm and "ME.pubkey" in arm, (
@@ -1048,7 +1050,7 @@ def test_signing_out_takes_the_account_key_off_the_phone():
     `Session`, which logout clears. Folder sync now seals that secret into the Android keystore so an
     unattended sweep can sign — so without this, "log out" leaves the previous account's nsec on a
     handed-down phone, usable by the background signer and by the sweep."""
-    app = _code_only(_read(CLIENT, "app.js"))
+    app = _code_only(client_source())
     body = app[app.index("function logout(){"):]
     body = body[:body.index("_forgetPhonebook()")]
     assert "forgetNative" in body, "the wrapped drive key outlives the session"

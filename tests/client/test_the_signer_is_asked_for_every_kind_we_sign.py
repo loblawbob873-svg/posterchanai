@@ -18,10 +18,11 @@ from __future__ import annotations
 
 import re
 from pathlib import Path
+from tests.client_source import client_source
 
 ROOT = Path(__file__).resolve().parents[2]
 CLIENT = ROOT / "static/js/client"
-APP = (CLIENT / "app.js").read_text(encoding="utf-8")
+APP = client_source()
 
 #: Kinds signed somewhere other than a literal `publish(<n>` / `sign(<n>` call — a variable kind, a
 #: helper, or a constant. Each needs a reason, because the alternative is a silent "no permission".

@@ -243,7 +243,7 @@ def test_the_signer_service_is_started_by_pairing_rather_than_offered():
     src = _src()
     for hook in ("async start(uri, onStatus)", "async resume()"):
         seg = src[src.index("    " + hook):]
-        seg = seg[:4000]
+        seg = seg[:4400]   # the window grew with the `S.` prefixes the split adds to live reads
         assert "_pushNative" in seg, f"{hook} does not hand the pairing to the service"
 
 
@@ -287,7 +287,7 @@ def test_a_foreign_relay_is_asked_about_rather_than_obeyed_or_refused():
     """
     src = _src()
     seg = src[src.index("    async start(uri, onStatus){"): src.index("    async resume(){")]
-    assert "CFG && CFG.relay_url" in seg, "the signer does not know which relay is its own"
+    assert "S.CFG && S.CFG.relay_url" in seg, "the signer does not know which relay is its own"
     assert "uiConfirm" in seg, "a foreign relay is taken without asking, or refused without asking"
     assert "const relay = qrRelay;" in seg, \
         "the QR's relay is not used even after being allowed — the pairing would be made against a "\

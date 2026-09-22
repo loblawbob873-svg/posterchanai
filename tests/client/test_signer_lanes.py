@@ -23,14 +23,14 @@ import shutil
 import subprocess
 import tempfile
 import unittest
+from tests.client_source import client_source
 
 REPO = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 APP = os.path.join(REPO, "static", "js", "client", "app.js")
 
 
 def _pump():
-    with open(APP) as fh:
-        src = fh.read()
+    src = client_source()
     src = src[src.index("  const Nip46 = {"):]          # the CLIENT half, not the signer half
     i = src.index("    _pump(){")
     depth, j, started = 0, i, False

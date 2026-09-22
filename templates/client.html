@@ -527,6 +527,10 @@
 <!-- Post cards, media and counts, split out of app.js. Every screen builds its cards
      synchronously while it renders, so this one ships with the page too. -->
 <script src="/static/js/client/cards.js?v={{ ver }}"></script>
+<!-- The remote signers (NIP-55/NIP-46) and the signer service this app runs for other clients,
+     split out of app.js. Every signature a remote-signer account takes goes through it and the
+     service is revived at startup, so it ships with the page. -->
+<script src="/static/js/client/signer.js?v={{ ver }}"></script>
 <script src="/static/js/client/vaultcore.js?v={{ ver }}"></script>
 <script src="/static/js/client/vault.js?v={{ ver }}"></script>
 <script src="/static/js/client/git.js?v={{ ver }}"></script>

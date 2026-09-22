@@ -19,6 +19,7 @@ the page is told nothing, and the failure is indistinguishable from the bug this
 """
 import os
 import re
+from tests.client_source import client_source
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
@@ -30,7 +31,7 @@ def _read(*parts):
 
 MAIN = _read("desktop", "main.js")
 PRELOAD = _read("desktop", "preload.js")
-APP = _read("static", "js", "client", "app.js")
+APP = client_source()
 
 
 def test_the_main_process_listens_for_the_os_resume():
