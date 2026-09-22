@@ -745,11 +745,23 @@ computer" `desktop/vmusb.js`. Clients send ids only — `vendor`/`product` exact
 numbers, a PCI `address` like `0000:01:00.0`; the `<hostdev>` XML is built on the host, and the device must exist
 on the host at that moment.
 
-**Never offered:** hubs and root hubs, the device the host boots from (followed through md/dm/LVM/LUKS holders), PCI
-bridges and host plumbing. **Listed but refused, with the reason:** anything the host is using — a disk mounted
-anywhere (nas.lan's USB-SATA bridge is a member of the md array under `/raid`), swap, a NIC whose interface is up,
-the host's boot display GPU, a GPU on a host graphics driver (nvidia/amdgpu/i915/…), and a device another VM holds
-(named). Every attach and detach is READ BACK from the live and the saved definitions.
+**Never offered:** hubs and root hubs, the device the host boots from, PCI bridges and host plumbing. "The device
+the host boots from" is traced every way a mount can name its disk: the SOURCE path, the major:minor field through
+`/sys/dev/block` (`/dev/root`), `stat('/').st_dev` (a btrfs root's anonymous device), every member of a multi-device
+btrfs (`/sys/fs/btrfs/*/devices`), ZFS vdevs (`zpool status -P`), then up through md/dm/LVM/LUKS holders. A root
+filesystem none of those can place makes EVERY disk busy and every disk controller unoffered — fail closed.
+**Listed but refused, with the reason:** anything the host is using — a disk mounted anywhere (nas.lan's USB-SATA
+bridge is a member of the md array under `/raid`), swap, a NIC (PCI or USB) whose interface is up, a USB controller
+carrying the host's HID devices, the host's boot display GPU, a GPU on a host graphics driver (nvidia/amdgpu/i915/…),
+and a device another VM holds (named). The owner scan FAILS CLOSED: a VM whose definition cannot be read refuses the
+attach. Attach and detach hold a host-wide device lock, so two admins cannot give one stick to two VMs. Every attach
+and detach is READ BACK from the live and the saved definitions; an attach that half-landed is rolled back and the
+exact state reported.
+
+**The checks run again at START.** `managed='yes'` takes a device from the host when the VM starts — possibly days
+after the attach, and `vm.power` is a session op — so a start re-checks every saved hostdev (busy, host GPU driver,
+IOMMU group, a card no longer on the host) and refuses with the reason. A saved USB entry is vendor:product, so the
+check covers whichever present device matches it now.
 
 **USB** hot-plugs into a running VM; "Keep attached after the VM restarts" adds `--config`. The saved form is
 vendor/product with `startupPolicy='optional'` (a re-plug keeps working, a missing stick does not stop the VM
@@ -773,10 +785,13 @@ checks it and, on Gentoo, writes `app-emulation/qemu usb` to `/etc/portage/packa
 **Who opens the device node.** On `qemu:///system` libvirt runs as root and chowns `/dev/bus/usb/BBB/DDD` to the
 qemu user for as long as the VM holds it, then gives it back — nothing to install. "This computer" uses
 `qemu:///session`: libvirt runs as the signed-in account and cannot chown, so QEMU opens the node itself, as that
-account, and the node is root-owned 0664. PosterChanOS installs `/etc/udev/rules.d/70-posterchan-usb-passthrough.rules`
-(`SUBSYSTEM=="usb", ENV{DEVTYPE}=="usb_device", ATTR{bDeviceClass}!="09", TAG+="uaccess"` — logind then gives the
-person at the seat an ACL, the grant their sound card already has; it must sort before `73-seat-late.rules`) and
-builds QEMU with `USE=usb`. Elsewhere `desktop/vmusb.js` measures access and says which rule to install (as root).
+account, and the node is root-owned 0664. The grant is ONE DEVICE, AT ATTACH: `desktop/vmusb.js` runs
+`sudo -n /usr/local/bin/pc-usb-grant grant BUS DEV`, which re-checks the device itself (the same scanner as the host,
+installed as `/usr/local/lib/posterchan/pc_usb_scan.py`: no hubs, nothing the host uses) and puts an ACL for the
+CALLER (SUDO_UID) on that one node; detach revokes it, and unplugging removes the node and the ACL. PosterChanOS ships
+the helper with `%posterchan ALL=(root) NOPASSWD: …/pc-usb-grant grant *, …/pc-usb-grant revoke *` and builds QEMU
+with `USE=usb`. A blanket udev `uaccess` rule was the first design and was withdrawn in review: it gave the seat raw
+usbfs on every USB disk plugged in (driver disconnect, raw SCSI) — root in all but name.
 PCI passthrough needs root and is a server-host feature; "This computer" says so.
 
 ## 7. The live probe (phase 4)

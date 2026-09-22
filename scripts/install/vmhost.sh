@@ -83,9 +83,9 @@ vmhost_qemu_usb() {
             vmhost_log "Rebuilding QEMU with USB passthrough (USE=usb) — this can take a while"
             sudo emerge --oneshot --changed-use app-emulation/qemu \
                 || { print_warning "Rebuilding QEMU failed — USB devices cannot be given to VMs until it succeeds"; return 0; } ;;
-        arch) sudo pacman -S --needed --noconfirm qemu-hw-usb-host ;;
-        fedora) sudo dnf install -y qemu-device-usb-host ;;
-        suse) sudo zypper --non-interactive install qemu-hw-usb-host ;;
+        arch) sudo pacman -S --needed --noconfirm qemu-hw-usb-host || print_warning "Installing qemu-hw-usb-host failed" ;;
+        fedora) sudo dnf install -y qemu-device-usb-host || print_warning "Installing qemu-device-usb-host failed" ;;
+        suse) sudo zypper --non-interactive install qemu-hw-usb-host || print_warning "Installing qemu-hw-usb-host failed" ;;
         *) : ;;
     esac
     if vmhost_qemu_has "$bin" usb-host; then

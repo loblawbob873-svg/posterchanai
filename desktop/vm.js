@@ -379,7 +379,7 @@ async function view(name){
    * above as well, rather than allowing a different PATH entry to win. */
   return launchViewer('/usr/bin/'+bin,args);
 }
-const usbPass=require('./vmusb').make({virsh,cleanName,root,qemuHas});
+const usbPass=require('./vmusb').make({virsh,cleanName,root,qemuHas,run});
 const usbList=()=>usbPass.list();
 const usbAttach=(name,opts)=>usbPass.attach(name,opts||{});
 const usbDetach=(name,opts)=>usbPass.detach(name,opts||{});

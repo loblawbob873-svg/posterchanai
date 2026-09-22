@@ -279,3 +279,18 @@ def test_a_qemu_with_usb_host_is_left_alone(tmp_path):
     rc, out, calls = h.run()
     assert rc == 0 and not any(c.startswith("emerge") for c in calls)
     assert not (h.etc / "portage").exists()
+
+
+@pytest.mark.parametrize("distro,tool", [("arch", "pacman"), ("fedora", "dnf"), ("suse", "zypper")])
+def test_a_failed_usb_host_package_install_warns_and_carries_on(tmp_path, distro, tool):
+    """Review: the usb-host package line ran under `set -e` with no `|| …`, so a mirror hiccup aborted the whole
+    --vmhost run half way (after packages, before groups/storage/socket)."""
+    h = Host(tmp_path, distro=distro, tools=True)
+    (h.state / "qemu-no-usb").write_text("")
+    stub = h.bin / tool
+    stub.write_text(f'#!/bin/bash\necho "{tool} $*" >> "$STUB_LOG"\nexit 1\n')
+    stub.chmod(0o755)
+    rc, out, calls = h.run()
+    assert rc == 0, out
+    assert any(c.startswith(tool) and "usb-host" in c for c in calls), calls
+    assert "failed" in out and "Final check" in out

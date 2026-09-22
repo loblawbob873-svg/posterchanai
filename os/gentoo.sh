@@ -2376,22 +2376,11 @@ PROFILE
 	udevadm trigger --action=add --subsystem-match=backlight >/dev/null 2>&1
 	udevadm trigger --action=add --subsystem-match=leds >/dev/null 2>&1
 
-	# USB DEVICES FOR "THIS COMPUTER"'S VIRTUAL MACHINES, OPENABLE BY THE PERSON AT THE SEAT.
-	#
-	# The desktop's VMs run on qemu:///session: libvirt and QEMU run as the signed-in account, and a session
-	# libvirt cannot chown anything — so QEMU opens /dev/bus/usb/BBB/DDD itself, as that account, and the node
-	# is root-owned 0664. Without a grant every "Add USB device" fails with Permission denied (desktop/vmusb.js
-	# measures it and names this file). `uaccess` is the grant the seat already gets for its sound card and
-	# camera: logind gives the ACTIVE session an ACL, so it follows whoever is signed in and nobody else — no
-	# group to add every per-npub account to. Hubs are left out (a hub is everything plugged into it). The file
-	# must sort before 73-seat-late.rules, which is what turns the tag into an ACL.
-	cat >/etc/udev/rules.d/70-posterchan-usb-passthrough.rules <<-'UDEV'
-	SUBSYSTEM=="usb", ENV{DEVTYPE}=="usb_device", ATTR{bDeviceClass}!="09", TAG+="uaccess"
-	UDEV
-	udevadm control --reload >/dev/null 2>&1
-	# `change`, not `add`: re-running rules on devices already present is enough for the ACL, and does not
-	# re-announce every USB device to everything listening for hot-plug.
-	udevadm trigger --action=change --subsystem-match=usb >/dev/null 2>&1
+	# USB DEVICES FOR "THIS COMPUTER"'S VIRTUAL MACHINES ARE GRANTED ONE AT A TIME, NEVER BY A udev RULE.
+	# A session QEMU opens /dev/bus/usb/BBB/DDD as the signed-in account, so that node needs an ACL for them.
+	# A blanket `uaccess` rule would give the seat raw usbfs on every USB disk ever plugged in (disconnect the
+	# kernel driver, send raw SCSI) — root in all but name. /usr/local/bin/pc-usb-grant grants exactly the device
+	# being attached to a VM, after refusing hubs and anything the host uses (installed with the helpers below).
 
 	# THE POWER MODE, WRITABLE WITHOUT ROOT — the same problem as the backlight, one directory over.
 	# /sys/firmware/acpi/platform_profile is root:root 0644, so the panel can READ that this machine
@@ -2690,7 +2679,15 @@ PROFILE
 			return 1
 		fi
 	done
-	for helper in foot pc-super pc-provision-user pc-session-switch pc-session-auth pc-compositor-session pc-wayfire-action pc-wayfire-health pc-shell-start pc-shell-start-wayfire pc-shell-restart pc-window-cycle pc-window-snap pc-window-close pc-key pc-idle pc-pointer-confine pc-screenshot pc-monero-wallet-rpc pc-open update-posterchan; do
+	# pc-usb-grant's scanner: the SAME module the VM host uses (app/services/vmhost/usb.py, stdlib only), so the
+	# helper refuses exactly what the host refuses. Root-owned, outside any user's reach.
+	mkdir -p "${TARGET}/usr/local/lib/posterchan"
+	if [ -f "$PCOS_TREE/../app/services/vmhost/usb.py" ]; then
+		install -m 0644 "$PCOS_TREE/../app/services/vmhost/usb.py" "${TARGET}/usr/local/lib/posterchan/pc_usb_scan.py"
+	else
+		echo -e "\033[1;33m  ! the USB scanner is not in this tree — \"Add USB device\" on This computer will refuse\033[0m"
+	fi
+	for helper in foot pc-super pc-provision-user pc-session-switch pc-session-auth pc-compositor-session pc-wayfire-action pc-wayfire-health pc-shell-start pc-shell-start-wayfire pc-shell-restart pc-window-cycle pc-window-snap pc-window-close pc-key pc-idle pc-pointer-confine pc-screenshot pc-monero-wallet-rpc pc-open pc-usb-grant update-posterchan; do
 		# SYNCED OVERLAY FIRST. $PCOS_TREE is install-day state on the build host — preferring it
 		# hands the new machine whatever session helpers that host had when IT was installed. The
 		# same ordering shipped a two-week-old installer and a two-week-old wayfire.ini; these are
@@ -2776,6 +2773,14 @@ PROFILE
 			"%posterchan ALL=(root) NOPASSWD: /usr/local/bin/pc-session-switch *" \
 			> ${TARGET}/etc/sudoers.d/posterchan-session-switch
 		chmod 0440 ${TARGET}/etc/sudoers.d/posterchan-session-switch
+	fi
+	# ONE USB device, to the person asking, for their own VM — pc-usb-grant checks every argument itself.
+	if [ -f "${TARGET}/usr/local/bin/pc-usb-grant" ]; then
+		chmod 0755 ${TARGET}/usr/local/bin/pc-usb-grant
+		printf '%s\n' \
+			"%posterchan ALL=(root) NOPASSWD: /usr/local/bin/pc-usb-grant grant *, /usr/local/bin/pc-usb-grant revoke *" \
+			> ${TARGET}/etc/sudoers.d/posterchan-usb-grant
+		chmod 0440 ${TARGET}/etc/sudoers.d/posterchan-usb-grant
 	fi
 
 	# Autologin straight into the shell. A display manager is another package, another theme and

@@ -3,11 +3,11 @@
  * WHO OPENS THE DEVICE IS THE WHOLE STORY HERE. On a server host (qemu:///system) libvirt runs as root and chowns
  * /dev/bus/usb/BBB/DDD to the qemu user for as long as the VM holds it. A SESSION libvirt runs as you, has no dynamic
  * ownership and can chown nothing: QEMU opens the node itself, as you, so the node must already be read-write for
- * your account. Distributions ship those nodes root-owned 0664 (nas.lan: root:usb 0664), so without a grant every
- * attach fails. PosterChanOS installs /etc/udev/rules.d/70-posterchan-usb-passthrough.rules, which tags every
- * non-hub USB device `uaccess` — systemd-logind then gives the person at the seat an ACL on it, the same grant the
- * seat already gets for its sound card and camera. This module MEASURES that (fs.access on the node) and refuses with
- * the rule to install, instead of letting QEMU fail with a bare "Permission denied".
+ * your account. Distributions ship those nodes root-owned 0664 (nas.lan: root:usb 0664). The grant is per DEVICE and
+ * per ATTACH: `sudo -n /usr/local/bin/pc-usb-grant grant BUS DEV` (PosterChanOS ships it with a sudoers rule for
+ * exactly that) gives the caller an ACL on that one node, after refusing hubs and anything the host uses; detaching
+ * revokes it, and unplugging removes the node and the ACL with it. A blanket udev `uaccess` rule was the first design
+ * and is gone: it handed the seat raw usbfs on every USB disk plugged in — root in all but name.
  *
  * And QEMU must HAVE the device model: Gentoo builds app-emulation/qemu with USE=-usb, which leaves out `usb-host`
  * (measured on nas.lan — the first real attach died inside QEMU). Asked of the binary, like qemu3d in vm.js.
@@ -22,8 +22,8 @@ const path = require('path');
 
 const HEX4 = /^[0-9a-f]{4}$/;
 const SYSTEM_MOUNTS = new Set(['/', '/boot', '/boot/efi', '/efi', '/usr', '/var']);
-const RULE_FILE = '/etc/udev/rules.d/70-posterchan-usb-passthrough.rules';
-const RULE = 'SUBSYSTEM=="usb", ENV{DEVTYPE}=="usb_device", ATTR{bDeviceClass}!="09", TAG+="uaccess"';
+const GRANT = () => process.env.PC_USB_GRANT_BIN || '/usr/local/bin/pc-usb-grant';
+const SWAPS = () => process.env.PC_SWAPS || '/proc/swaps';
 
 const SYS = () => process.env.PC_SYS_ROOT || '/sys';
 const DEV = () => process.env.PC_DEV_USB || '/dev/bus/usb';
@@ -33,16 +33,66 @@ const ls = p => { try{ return fs.readdirSync(p).sort(); }catch(_){ return null; 
 const real = p => { try{ return fs.realpathSync(p); }catch(_){ return p; } };
 const clean = s => String(s || '').replace(/[^\x20-\x7e]/g, '').replace(/\s+/g, ' ').trim().slice(0, 64);
 
+function zpoolStatus(){
+  if(process.env.PC_ZPOOL_STATUS != null) return process.env.PC_ZPOOL_STATUS;
+  try{ return require('child_process').execFileSync('zpool', ['status', '-P'], { timeout: 10000, encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] }); }
+  catch(_){ return ''; }
+}
+/** {block name: [mountpoints|'swap']} plus `unresolved` — the same rules as app/services/vmhost/usb.py `_mounts`:
+ *  the SOURCE path, the major:minor field via /sys/dev/block (/dev/root), stat('/').dev for an anonymous btrfs
+ *  root, every member of a multi-device btrfs, ZFS vdevs from `zpool status -P`, and /proc/swaps. A system mount
+ *  none of these can place is `unresolved`, and the scan then refuses every disk. */
 function mounts(){
-  const out = {};
+  const out = {}; const unresolved = [];
+  const block = path.join(SYS(), 'class', 'block');
+  const known = n => !!n && fs.existsSync(path.join(block, n));
+  const byPath = src => src.startsWith('/dev/') ? path.basename(real(src)) : '';
+  const byMajmin = mm => /^\d+:\d+$/.test(mm || '') && !mm.startsWith('0:') ? path.basename(real(path.join(SYS(), 'dev', 'block', mm))) : '';
+  const add = (n, mp) => { (out[n] = out[n] || []); if(!out[n].includes(mp)) out[n].push(mp); };
+  const btrfsLeft = [], zfs = {};
   for(const line of rd(MOUNTINFO()).split('\n')){
     const [left, right] = line.split(' - ');
     if(!right) continue;
-    const src = (right.split(' ')[1] || '');
-    if(!src.startsWith('/dev/')) continue;
-    const name = path.basename(real(src));
-    (out[name] = out[name] || []).push((left.split(' ')[4] || '').replace(/\\040/g, ' '));
+    const L = left.split(' '), R = right.split(' ');
+    const mm = L[2] || '', mp = (L[4] || '').replace(/\\040/g, ' '), fstype = R[0] || '', src = R[1] || '';
+    const names = new Set([byPath(src), byMajmin(mm)].filter(known));
+    if(!names.size && mp === '/'){
+      try{ const st = fs.statSync(process.env.PC_ROOT_PATH || '/'); const d = Number(process.env.PC_ROOT_DEV || st.dev);
+        const n = byMajmin(`${Math.floor(d / 256) & 0xfff}:${(d & 0xff) | ((Math.floor(d / 1048576) & 0xfff) << 8)}`);
+        if(known(n)) names.add(n); }catch(_){}
+    }
+    names.forEach(n => add(n, mp));
+    if(fstype === 'zfs') (zfs[src.split('/')[0]] = zfs[src.split('/')[0]] || []).push(mp);
+    else if(!names.size && fstype === 'btrfs') btrfsLeft.push(mp);
+    else if(!names.size && (src.startsWith('/dev/') || /^(ext[234]|xfs|f2fs|vfat|bcachefs|jfs|reiserfs|ntfs3)$/.test(fstype))) unresolved.push(mp);
   }
+  const fsdir = path.join(SYS(), 'fs', 'btrfs');
+  const members = {};
+  for(const f of (ls(fsdir) || [])){ const d = ls(path.join(fsdir, f, 'devices')); if(d) members[f] = d; }
+  const nfs = Object.keys(members).length;
+  for(const devs of Object.values(members)){
+    let mps = [...new Set(devs.flatMap(d => (out[d] || []).filter(m => m !== 'swap')))];
+    if(btrfsLeft.length && (!mps.length || nfs === 1)) mps = [...new Set(mps.concat(btrfsLeft))];
+    devs.forEach(d => mps.forEach(m => add(d, m)));
+  }
+  if(btrfsLeft.length && !nfs) unresolved.push(...btrfsLeft);
+  if(Object.keys(zfs).length){
+    const vdevs = {}; let pool = '';
+    for(const line of zpoolStatus().split('\n')){
+      const m = line.match(/^\s*pool:\s*(\S+)/); if(m){ pool = m[1]; continue; }
+      const tok = line.trim().split(/\s+/)[0] || '';
+      if(pool && tok.startsWith('/dev/')) (vdevs[pool] = vdevs[pool] || []).push(byPath(tok));
+    }
+    for(const [p, mps] of Object.entries(zfs)){
+      if(!(vdevs[p] || []).length){ unresolved.push(...mps); continue; }
+      vdevs[p].forEach(d => mps.forEach(m => add(d, m)));
+    }
+  }
+  for(const line of rd(SWAPS()).split('\n').slice(1)){
+    const f = line.trim().split(/\s+/)[0] || '';
+    if(f.startsWith('/dev/')) add(byPath(f), 'swap');
+  }
+  out.__unresolved = unresolved.filter(m => SYSTEM_MOUNTS.has(m));
   return out;
 }
 function uses(block, name, m, depth){
@@ -86,6 +136,13 @@ function scan(){
       }
     }
     if(system) continue;                                                      // never the disk this computer runs from
+    if(!busy && m.__unresolved.length && blocks.some(([, br]) => br.startsWith(r)))
+      busy = 'this computer could not tell which disk ' + m.__unresolved.join(', ') + ' is on, so no disk is given to a VM';
+    if(!busy){
+      const net = path.join(SYS(), 'class', 'net');
+      const up = (ls(net) || []).find(i => real(path.join(net, i)).startsWith(r) && rd(path.join(net, i, 'operstate')) === 'up');
+      if(up) busy = `this computer's network interface ${up} is up on it`;
+    }
     const b = Number(bus), dv = Number(dev);
     const node = path.join(DEV(), String(b).padStart(3, '0'), String(dv).padStart(3, '0'));
     let access = true;
@@ -131,7 +188,7 @@ function parseSpec(o){
   return { vendor, product, bus, device };
 }
 
-function make({ virsh, cleanName, root, qemuHas }){
+function make({ virsh, cleanName, root, qemuHas, run }){
   const running = st => /running|idle|blocked|paused/.test(String(st || '').toLowerCase());
   async function xmls(name){
     const info = await virsh(['dominfo', name]);
@@ -159,10 +216,18 @@ function make({ virsh, cleanName, root, qemuHas }){
       fix: has === false ? "This computer's QEMU was built without USB passthrough. PosterChanOS: update the system (it builds app-emulation/qemu with USE=usb). Other Gentoo: add 'app-emulation/qemu usb' to /etc/portage/package.use and run emerge --oneshot --changed-use app-emulation/qemu (as root)." : '' }];
     return out;
   }
-  const accessFix = d => `Your account cannot open ${d.node}: a virtual machine on "This computer" runs as you, and QEMU must open the device itself. ` +
-    `As root, create ${RULE_FILE} containing:\n${RULE}\nthen run: udevadm control --reload && udevadm trigger --subsystem-match=usb --action=change ` +
-    '(PosterChanOS installs this rule; it gives the person signed in at this computer access to plugged-in USB devices, like their sound card).';
-
+  const accessFix = d => `Your account cannot open ${d.node}: a virtual machine on "This computer" runs as you, and QEMU ` +
+    `must open the device itself. PosterChanOS grants one device at a time with pc-usb-grant (${GRANT()}, through sudo); this computer ` +
+    'does not have it, or it refused. Elsewhere, give your account read-write access to that one device (as root: ' +
+    `setfacl -m u:$USER:rw ${d.node}) — never a rule for every USB device, which would expose every USB disk.`;
+  const helper = () => { try{ fs.accessSync(GRANT(), fs.constants.X_OK); return true; }catch(_){ return false; } };
+  const canOpen = node => { try{ fs.accessSync(node, fs.constants.R_OK | fs.constants.W_OK); return true; }catch(_){ return false; } };
+  /** Ask the privileged helper for THIS device only; the helper repeats every check itself. */
+  async function grant(verb, bus, device){
+    if(!helper()) return { ok: false, error: `${GRANT()} is not installed` };
+    const r = await run('sudo', ['-n', GRANT(), verb, String(bus), String(device)], 20000);
+    return r.ok ? { ok: true } : { ok: false, error: r.error || 'the grant was refused' };
+  }
   async function list(){
     const devs = scan();
     if(!devs) return { ok: false, error: 'this computer has no USB bus' };
@@ -178,15 +243,19 @@ function make({ virsh, cleanName, root, qemuHas }){
     if(!x.ok) return [];
     const devs = scan() || [];
     const seen = {};
-    for(const [src, xml] of [['persistent', x.saved], ['live', x.live]]){
-      for(const e of hostdevs(xml)){
-        const key = e.vendor + ':' + e.product;
-        const host = devs.find(d => matches(e, d));
-        const cur = seen[key] = seen[key] || { kind: 'usb', vendor: e.vendor, product: e.product, bus: e.bus, device: e.device,
-          label: host ? host.label : `USB device (${e.vendor}:${e.product})`, present: !!host, key, live: false, persistent: false };
-        cur[src] = true;
-        if(e.bus != null && cur.bus == null){ cur.bus = e.bus; cur.device = e.device; }
-      }
+    const loose = e => e.vendor + ':' + e.product;
+    const keyOf = e => loose(e) + (e.bus != null && e.device != null ? `@${e.bus}-${e.device}` : '');
+    const view = (e, persistent) => { const host = devs.find(d => matches(e, d));
+      return { kind: 'usb', vendor: e.vendor, product: e.product, bus: e.bus, device: e.device,
+               label: host ? host.label : `USB device (${e.vendor}:${e.product})`, present: !!host, key: keyOf(e),
+               live: false, persistent }; };
+    for(const e of hostdevs(x.saved)) seen[keyOf(e)] = view(e, true);
+    for(const e of hostdevs(x.live)){
+      let k = keyOf(e);
+      if(!seen[k] && seen[loose(e)] && !seen[loose(e)].live) k = loose(e);
+      const cur = seen[k] = seen[k] || view(e, false);
+      cur.live = true;
+      if(e.bus != null && cur.bus == null){ cur.bus = e.bus; cur.device = e.device; }
     }
     return Object.values(seen);
   }
@@ -218,7 +287,11 @@ function make({ virsh, cleanName, root, qemuHas }){
     if(found.length > 1) return { ok: false, code: 'bad_request', error: 'more than one device has these ids — name it by bus and device too' };
     const d = found[0];
     if(d.busy) return { ok: false, code: 'conflict', error: `${d.label} is in use by this computer: ${d.busy}` };
-    if(!d.access) return { ok: false, code: 'forbidden', error: accessFix(d) };
+    if(!d.access){
+      const g = await grant('grant', d.bus, d.device);
+      if(!g.ok || !canOpen(d.node)) return { ok: false, code: 'forbidden', error: accessFix(d) + (g.error ? ` (${g.error})` : '') };
+      d.access = true;
+    }
     for(const [e, owner] of await owners()){
       if(matches(e, d)) return { ok: false, code: 'conflict', error: owner === name ? `${d.label} is already attached to this VM` : `${d.label} is already attached to the VM ${owner}` };
     }
@@ -244,6 +317,9 @@ function make({ virsh, cleanName, root, qemuHas }){
     if(!liveHit && !savedHit) return { ok: false, code: 'not_found', error: 'that device is not attached to this VM' };
     if(liveHit){ const r = await change('detach-device', name, hostdevXml(liveHit.vendor, liveHit.product, liveHit.bus, liveHit.device, false), true, false); if(!r.ok) return r; }
     if(savedHit){ const r = await change('detach-device', name, hostdevXml(savedHit.vendor, savedHit.product, savedHit.bus, savedHit.device, false), false, true); if(!r.ok) return r; }
+    // take back the per-device grant (best effort: an unplugged device took its node and ACL with it)
+    const addr = [liveHit, savedHit].find(e => e && e.bus != null) || (scan() || []).find(d => hit(d));
+    if(addr && helper()) await grant('revoke', addr.bus, addr.device);
     const after = await xmls(name);
     if((liveHit && hostdevs(after.live).some(hit)) || (savedHit && hostdevs(after.saved).some(hit)))
       return { ok: false, code: 'backend_error', error: 'libvirt accepted the detach but the device is still attached' };
@@ -252,4 +328,4 @@ function make({ virsh, cleanName, root, qemuHas }){
   return { list, attach, detach, vmDevices };
 }
 
-module.exports = { make, scan, hostdevs, hostdevXml, parseSpec, matches, RULE, RULE_FILE };
+module.exports = { make, scan, mounts, hostdevs, hostdevXml, parseSpec, matches };
