@@ -24,6 +24,7 @@ which branch a request falls into -- and that is invisible in a string assertion
 """
 import json
 import os
+import re
 import shutil
 import subprocess
 import unittest
@@ -298,6 +299,60 @@ class EncryptedDriveBlobs(unittest.TestCase):
         the content type decides what is allowed to persist."""
         listing = f"https://poster.place/blossom/list/{SHA}"
         self.assertEqual(_stored_in(WEB_SW, listing, "", JSON_BODY), "")
+
+
+WEBP_BODY = {"status": 200, "content-type": "image/webp", "content-length": "469548"}
+WALLPAPER = "https://poster.place/static/os-wallpaper-bg.webp"
+APP_ICON = "https://poster.place/static/icon-192.png"
+TIMELINE_IMG = "https://poster.place/blossom/" + "c" * 64 + ".png"
+
+
+@unittest.skipIf(shutil.which("node") is None, "node not installed")
+class ShellArt(unittest.TestCase):
+    """The build's OWN pictures must follow the build, and they are images, so they did not.
+
+    The default desktop wallpaper, the app icons and the mark are precached in SHELL and deploy with
+    every other client file — but request.destination is 'image', so the router handed them to
+    cacheFirstMedia, i.e. to MEDIA_CACHE: cache-first, never revalidated, and deliberately NOT
+    cleared by a shell bump (it holds the timeline's avatars, which have nothing to do with a
+    deploy). So a new wallpaper reached fresh installs and the desktop/APK bundles and never a
+    returning user, the CACHE bump every UI deploy makes could not touch it, and the precached copy
+    was never even consulted. Nothing about that shows up anywhere: the asset deploys fine.
+
+    These run the real fetch handler, because it is a routing decision and a string assertion cannot
+    see which branch a request falls into."""
+
+    def test_the_wallpaper_comes_from_the_versioned_shell_cache(self):
+        self.assertEqual(_cache_used(WEB_SW, WALLPAPER, "image"), "pc-nostr-v" + _sw_cache_version())
+        self.assertEqual(_stored_in(WEB_SW, WALLPAPER, "image", WEBP_BODY),
+                         "pc-nostr-v" + _sw_cache_version(),
+                         "the wallpaper was written to the media cache, where a deploy cannot reach it")
+
+    def test_the_app_icons_and_the_mark_follow_the_build_too(self):
+        for url in (APP_ICON, "https://poster.place/static/posterchan-relay.png"):
+            self.assertEqual(_cache_used(WEB_SW, url, "image"), "pc-nostr-v" + _sw_cache_version(), url)
+
+    def test_an_ordinary_picture_is_still_media(self):
+        """The rule is SHELL membership, not 'same origin' — the timeline's own images must keep the
+        media cache, which survives shell bumps on purpose."""
+        self.assertEqual(_cache_used(WEB_SW, TIMELINE_IMG, "image"), "pc-media-v2")
+        self.assertEqual(_cache_used(WEB_SW, FEDI_AVATAR, "image"), "pc-media-v2")
+
+    def test_the_paths_are_derived_from_the_precache_list(self):
+        """A second hand-kept copy of these paths drifts the first time art is added to only one."""
+        with open(SW, encoding="utf-8") as fh:
+            src = fh.read()
+        self.assertIn("const SHELL_PATHS = new Set(SHELL)", src)
+
+    def test_the_bundled_app_still_serves_its_own_files(self):
+        """In a bundle the wallpaper is a packaged file; the SW must keep its hands off it or an APK
+        update cannot replace it."""
+        self.assertFalse(_route(APP_SW, WALLPAPER, "image"))
+
+
+def _sw_cache_version():
+    with open(SW, encoding="utf-8") as fh:
+        return re.search(r"const CACHE = 'pc-nostr-v(\d+)'", fh.read()).group(1)
 
 
 if __name__ == "__main__":
