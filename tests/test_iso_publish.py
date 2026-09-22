@@ -11,7 +11,9 @@ GENTOO = ROOT / "os" / "gentoo.sh"
 
 def test_publisher_has_the_stable_release_destination():
     src = PUBLISH.read_text()
-    assert "verita84@nas.lan" in src and "/raid/distfiles/distfiles/iso/posterchanos.iso" in src
+    assert "verita84@router.lan" in src and "/srv/iso/posterchanos.iso" in src
+    # NOT inside nas's distfiles export: its Gentoo mirror sync (--delete) removed the ISO overnight.
+    assert "/raid/distfiles/distfiles/iso" not in src
     assert "198.55.116.7" not in src.replace("(198.55.116.7)", ""), "the deleted VPS must not be a target"
     assert "/iso/posterchanos.iso" in src
 

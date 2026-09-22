@@ -525,6 +525,18 @@
     writeDoc();
   }
 
+  /* SETTINGS AND DELETE NEED THE VM OFF — AND SAY SO. They used to be `disabled` while it ran, with
+   * the reason only in a hover tooltip: on a laptop (and on every touch screen, which has no hover)
+   * that is a button that "does nothing". They stay pressable; while the VM runs a press explains and
+   * offers the shutdown. True = the VM is already off, go ahead. */
+  async function _needsOff(what){
+    const v = ((S.data[S.host] || {}).vms || []).find(x => x.uuid === S.vm);
+    if(!v || v.state === 'shutoff') return true;
+    if(await PC.uiConfirm(`“${v.name}” is ${stateLabel(v.state).toLowerCase()}. Shut it down first to ${what} — it is asked to shut down cleanly, like pressing the power button.`, { ok: 'Shut down now' }))
+      power(S.host, S.vm, 'shutdown');
+    return false;
+  }
+
   async function power(pk, uuid, action){
     if(action === 'destroy' && !await PC.uiConfirm('Force off this VM? It is like pulling the plug — unsaved work inside it is lost.', { ok: 'Force off', danger: true })) return;
     const key = uuid + ':' + action;
@@ -1485,10 +1497,10 @@
         ${b('start', 'Start', 'i-play', 'btn-neon', !running)}${b('shutdown', 'Shut down', 'i-power', 'btn-cyan', running)}${b('reboot', 'Reboot', 'i-refresh', 'btn-cyan', running)}${b('destroy', 'Force off', 'i-stop', 'btn-red', running)}
         <button class="btn small btn-cyan" data-act="console" ${v.state === 'running' ? '' : 'disabled'}>${ic('i-monitor')}${feat.console === 'spice' ? 'Open display' : 'Console'}</button>
         ${role === 'admin' ? '<span class="vmx-sep" aria-hidden="true"></span>' : ''}
-        ${role === 'admin' && feat.hardware ? `<button class="btn small btn-ghost" data-act="settings" ${off ? '' : 'disabled title="Shut it down first"'}>${ic('i-gear')}Settings</button>` : ''}
+        ${role === 'admin' && feat.hardware ? `<button class="btn small btn-ghost" data-act="settings" ${off ? '' : 'aria-describedby="vmx-needs-off"'}>${ic('i-gear')}Settings</button>` : ''}
         ${role === 'admin' && feat.local && off ? `<button class="btn small btn-ghost" data-act="boot-disk">Use installed system</button>` : ''}
         ${role === 'admin' && feat.migrate ? `<button class="btn small btn-ghost" data-act="migrate">${v.migration && v.migration.state ? 'Migration status' : 'Migrate…'}</button>` : ''}
-        ${role === 'admin' ? `<button class="btn small btn-red" data-act="delete" ${off ? '' : 'disabled title="Shut it down first"'}>${ic('i-trash')}Delete</button>` : ''}
+        ${role === 'admin' ? `<button class="btn small btn-red" data-act="delete" ${off ? '' : 'aria-describedby="vmx-needs-off"'}>${ic('i-trash')}Delete</button>` : ''}
       </div>
       ${statusLine(pk)}
       ${tiles([{ l: 'Status', v: stateLabel(v.state), sub: v.state === 'running' && v.uptime_s != null ? 'up ' + esc(fmtDur(v.uptime_s)) : '' },
@@ -1834,13 +1846,13 @@ html.pc-oswin .vmc{top:38px}
     on('[data-act=console]', () => { const v = ((S.data[S.host] || {}).vms || []).find(x => x.uuid === S.vm); if(v) openConsole(S.host, v); });
     on('[data-act=assign]', () => assign(S.host, S.vm));
     on('[data-unassign]', el => unassign(S.host, S.vm, el.dataset.unassign));
-    on('[data-act=delete]', () => { const v = ((S.data[S.host] || {}).vms || []).find(x => x.uuid === S.vm); if(v) del(S.host, v); });
+    on('[data-act=delete]', async () => { if(!await _needsOff('delete it')) return; const v = ((S.data[S.host] || {}).vms || []).find(x => x.uuid === S.vm); if(v) del(S.host, v); });
     on('[data-act=create]', () => openCreate(S.host));
     on('[data-act=submit-create]', () => submitCreate(S.host));
     // ---- phase 2
     on('[data-act=find]', () => findHosts());
     on('[data-act=find-back]', () => { S.find = null; S.screen = 'hosts'; paint(); });
-    on('[data-act=settings]', () => openSettings(S.host, S.vm));
+    on('[data-act=settings]', async () => { if(await _needsOff('change its settings')) openSettings(S.host, S.vm); });
     on('[data-act=settings-leave]', () => leaveSettings());
     on('[data-act=settings-save]', () => saveSettings());
     const sf = feed.querySelector('#vms-settings');

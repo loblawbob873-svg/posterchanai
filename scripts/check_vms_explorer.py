@@ -180,6 +180,27 @@ async def check(width, height, shots, fails):
             heads = await b.js("[...document.querySelectorAll('.vmx-table thead th')].map(t=>t.innerText.trim().toLowerCase())")
             if not any(h.startswith("host") for h in heads):
                 fail(f"All hosts has no Host column ({heads})")
+            # "Virtual Machines -> Settings button does nothing": open a SHUT-OFF VM from All hosts
+            # and press Settings — the hardware form must appear (host view is exercised below too).
+            await b.js("[...document.querySelectorAll('.vmx-table tbody tr')].find(r=>/web-1\\b/.test(r.innerText)).click()")
+            await b.until("!!document.querySelector('.vms-vmhead')")
+            st_all = await b.js("(async()=>{const s=document.querySelector('[data-act=settings]');if(!s)return 'no button';if(s.disabled)return 'disabled';s.click();for(let i=0;i<40;i++){if(document.querySelector('[data-act=settings-leave]')&&/vCPU/i.test(document.body.innerText))return 'ok';await new Promise(r=>setTimeout(r,100));}return 'nothing: '+(document.querySelector('.vms-main,.vmx-main')||document.body).innerText.slice(0,160);})()")
+            if st_all != "ok":
+                fail(f"All hosts → shut-off VM → Settings did not open the settings form ({st_all})")
+            # A RUNNING VM: Settings used to be `disabled` with the reason only in a hover tooltip —
+            # "does nothing" on a laptop or a phone. It must be pressable and explain itself.
+            await b.js("document.querySelector('[data-act=settings-leave]')?.click()")
+            await b.js("document.querySelector('[data-act=all]')?.click()")
+            await b.until("document.querySelectorAll('.vmx-table tbody tr').length===12")
+            await b.js("[...document.querySelectorAll('.vmx-table tbody tr')].find(r=>/web-2\\b/.test(r.innerText)).click()")
+            await b.until("!!document.querySelector('.vms-vmhead')")
+            run_st = await b.js("(async()=>{const s=document.querySelector('[data-act=settings]');if(!s)return 'no button';if(s.disabled)return 'disabled';s.click();for(let i=0;i<30;i++){const d=document.querySelector('.uiconfirm');if(d&&/shut it down first/i.test(d.innerText))return 'explained';await new Promise(r=>setTimeout(r,100));}return 'silent';})()")
+            if run_st != "explained":
+                fail(f"a running VM's Settings button must explain it needs the VM off, not do nothing ({run_st})")
+            await b.js("document.querySelector('.uiconfirm [data-uc=\\'0\\']')?.click()")
+            await b.js("document.querySelector('[data-act=settings-leave]')?.click()")
+            await b.js("document.querySelector('[data-act=all]')?.click()")
+            await b.until("document.querySelectorAll('.vmx-table tbody tr').length===12")
             await b.js("document.querySelector('.vmx-table tbody tr').click()")
             await b.until("!!document.querySelector('.vms-vmhead')")
             await b.js("document.querySelector('[data-act=back]').click()")
