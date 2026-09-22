@@ -155,6 +155,7 @@ const SHELL = [
   '/static/js/client/music.js',
   '/static/js/client/scanner.js',
   '/static/js/client/lightbox.js',
+  '/static/js/client/tips.js',
   '/static/js/client/vaultcore.js',
   '/static/js/client/vault.js',
   '/static/js/client/chess.js',

@@ -25,6 +25,7 @@ import subprocess
 from pathlib import Path
 
 import pytest
+from tests.client_source import client_source
 
 ROOT = Path(__file__).resolve().parents[2]
 NODE = shutil.which("node")
@@ -43,7 +44,7 @@ def test_the_rails_ride_the_profile_request_rather_than_their_own():
     """The resolver was deliberately written to discover 10133 only when a tip flow opens, so a
     timeline does not pay one relay query per author. The fix must keep that promise: a second
     FILTER on the batch is free, a second query is not."""
-    src = APP.read_text(encoding="utf-8")
+    src = client_source()
     flush = src[src.index("async function flushProfiles(){"):src.index("async function fetchMyProfile(){")]
     queries = re.findall(r"Relay\.query\(", flush)
     assert len(queries) == 1, (
@@ -56,7 +57,7 @@ def test_a_rail_never_becomes_the_address_a_tip_is_paid_to():
     """`data-xmr` is what `doTip` pays when the note has been evicted from the Store. The rails map
     holds TYPES, not addresses, and is populated from events this client did not necessarily fetch
     itself — so it may raise a mark and must never reach a wallet."""
-    src = APP.read_text(encoding="utf-8")
+    src = client_source()
     marks = src[src.index("function _tipMarks(n, p){"):src.index("function decorateProfiles(){")]
     for line in marks.splitlines():
         if "dataset.xmr =" in line or "dataset.xmr=" in line:
@@ -85,7 +86,7 @@ def test_a_cached_profile_still_learns_its_rail():
 
 def test_the_rail_lookup_is_not_gated_on_the_profile_cache():
     """The rule in the shipped source, so a future edit cannot quietly re-gate it."""
-    src = APP.read_text(encoding="utf-8")
+    src = client_source()
     need = src[src.index("  function needProfile(pk){"):src.index("  let _profObs=null;")]
     assert "needRails(pk);" in need, "needProfile no longer asks for the rail"
     assert need.index("needRails(pk);") < need.index("Store.haveProfile(pk)) return;"), (

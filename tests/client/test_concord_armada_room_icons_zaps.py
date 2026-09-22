@@ -1,12 +1,13 @@
 """Armada interoperability guards for Concord channel chrome and private zaps."""
 from pathlib import Path
 import subprocess
+from tests.client_source import client_source
 
 
 ROOT = Path(__file__).resolve().parents[2]
 CONCORD = (ROOT / "static/js/client/concord.js").read_text(encoding="utf-8")
 READER = (ROOT / "static/js/client/cord-reader.js").read_text(encoding="utf-8")
-APP = (ROOT / "static/js/client/app.js").read_text(encoding="utf-8")
+APP = client_source()
 CSS = (ROOT / "static/css/concord.css").read_text(encoding="utf-8")
 
 
