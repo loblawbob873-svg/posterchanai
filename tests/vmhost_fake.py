@@ -42,9 +42,12 @@ class FakeBackend:
         # hostdevs, which libvirt reports with the resolved bus/device) on top of its saved definition.
         self.usb_devices: list = []        # [usb.UsbDevice]
         self.pci_devices: list = []        # [pci.PciDevice]
-        self.pci_checks: list = [{"id": "iommu", "ok": True, "label": "IOMMU is on", "fix": ""},
-                                 {"id": "vfio", "ok": True, "label": "vfio-pci is available", "fix": ""},
-                                 {"id": "system", "ok": True, "label": "qemu:///system", "fix": ""}]
+        self.device_checks_by_kind: dict = {
+            "usb": [{"id": "qemu-usb", "ok": True, "label": "QEMU supports USB passthrough (usb-host)", "fix": ""}],
+            "pci": [{"id": "iommu", "ok": True, "label": "IOMMU is on", "fix": ""},
+                    {"id": "vfio", "ok": True, "label": "vfio-pci is available", "fix": ""},
+                    {"id": "system", "ok": True, "label": "qemu:///system", "fix": ""},
+                    {"id": "qemu-pci", "ok": True, "label": "QEMU supports PCI passthrough (vfio-pci)", "fix": ""}]}
         self.live_hostdevs: dict = {}      # uuid -> [hostdev xml]
         self.drop_attach = False           # accept attach-device and keep nothing (the read-back must catch it)
         self.drop_detach = False
@@ -210,9 +213,9 @@ class FakeBackend:
         await self._enter("host_devices", kind)
         return list(self.usb_devices if kind == "usb" else self.pci_devices)
 
-    async def pci_host_checks(self):
-        await self._enter("pci_host_checks")
-        return [dict(c) for c in self.pci_checks]
+    async def device_checks(self, kind):
+        await self._enter("device_checks", kind)
+        return [dict(c) for c in self.device_checks_by_kind.get(kind, [])]
 
     def _resolve(self, hxml: str) -> str:
         """A hostdev as a RUNNING domain reports it: a USB one carries the bus/device libvirt resolved."""

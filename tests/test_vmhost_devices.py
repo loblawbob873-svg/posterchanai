@@ -305,7 +305,8 @@ def test_pci_refuses_an_incomplete_iommu_group(tmp_path):
 
 def test_pci_host_checks_refuse_with_the_fix(tmp_path):
     svc, be = make(tmp_path)
-    be.pci_checks[0] = {"id": "iommu", "ok": False, "label": "IOMMU is off", "fix": "add amd_iommu=on iommu=pt"}
+    be.device_checks_by_kind["pci"][0] = {"id": "iommu", "ok": False, "label": "IOMMU is off",
+                                          "fix": "add amd_iommu=on iommu=pt"}
     r = c(svc, ADMIN, "vm.device.attach", {"vm": U1, "kind": "pci", "address": "0000:01:00.0"})
     assert r["error"]["code"] == "unsupported" and "amd_iommu=on" in r["error"]["message"]
     lst = c(svc, ADMIN, "host.devices.list", {"kind": "pci", "vm": U1})["result"]["kinds"]["pci"]
@@ -352,3 +353,33 @@ def test_libvirt_refusals_become_actionable_codes():
     assert devices_mod._classify(BackendError("Did not find USB device 090c:1000")).code == "not_found"
     e = devices_mod._classify(BackendError("could not open /dev/bus/usb/001/003: Permission denied"))
     assert e.code == "backend_error" and "Devices" in e.message
+
+
+def test_a_qemu_without_usb_host_refuses_before_libvirt_is_asked(tmp_path):
+    """LIVE (nas.lan): Gentoo's QEMU is USE=-usb by default and QEMU answered the first real attach with "'usb-host' is
+    not a valid device model name". The host check says so, with the USE flag, before anything is attached."""
+    svc, be = make(tmp_path)
+    be.device_checks_by_kind["usb"] = [{"id": "qemu-usb", "ok": False, "label": "QEMU has no USB passthrough",
+                                        "fix": "add USE=usb for app-emulation/qemu"}]
+    r = c(svc, ADMIN, "vm.device.attach", {"vm": U2, "kind": "usb", "vendor": "090c", "product": "1000"})
+    assert r["error"]["code"] == "unsupported" and "USE=usb" in r["error"]["message"], r
+    assert not any(x[0] == "attach_device" for x in be.calls)
+    lst = c(svc, ADMIN, "host.devices.list", {"kind": "usb"})["result"]["kinds"]["usb"]
+    assert lst["checks"][0]["ok"] is False and lst["devices"]
+
+
+def test_the_qemu_device_probe_reads_the_real_help_output(tmp_path):
+    from app.services.vmhost import backend as B
+    fake = tmp_path / "qemu-system-x86_64"
+    fake.write_text("#!/bin/sh\n")
+    help_out = ('name "vfio-pci", bus PCI, desc "VFIO-based PCI device assignment"\n'
+                'name "usb-redir", bus usb-bus\n')
+
+    async def runner(argv, timeout, stdin=None):
+        assert argv[1:] == ["-device", "help"]
+        return 0, help_out, ""
+    B._QEMU_DEVICES.clear()
+    usb_check = run(B.qemu_device_check("usb", str(fake), runner))
+    pci_check = run(B.qemu_device_check("pci", str(fake), runner))
+    assert usb_check["ok"] is False and "USE=usb" in usb_check["fix"]      # usb-redir is NOT usb-host
+    assert pci_check["ok"] is True

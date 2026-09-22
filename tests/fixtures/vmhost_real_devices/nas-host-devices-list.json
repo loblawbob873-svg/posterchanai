@@ -1,0 +1,458 @@
+{
+ "kinds": {
+  "pci": {
+   "checks": [
+    {
+     "fix": "",
+     "id": "iommu",
+     "label": "IOMMU is on (33 groups)",
+     "ok": true
+    },
+    {
+     "fix": "",
+     "id": "vfio",
+     "label": "vfio-pci is available",
+     "ok": true
+    },
+    {
+     "fix": "",
+     "id": "system",
+     "label": "libvirt runs as root (qemu:///system)",
+     "ok": true
+    },
+    {
+     "fix": "",
+     "id": "qemu-pci",
+     "label": "QEMU supports PCI passthrough (vfio-pci)",
+     "ok": true
+    }
+   ],
+   "devices": [
+    {
+     "address": "0000:01:00.0",
+     "blockers": [
+      "0000:01:00.0: the host's nvidia driver is using it"
+     ],
+     "busy": "the host's nvidia driver is using it",
+     "checks": [
+      {
+       "fix": "",
+       "id": "group",
+       "label": "IOMMU group 12 can be given whole",
+       "ok": true
+      },
+      {
+       "fix": "Hand it to vfio-pci at boot instead: create /etc/modprobe.d/vfio.conf containing `options vfio-pci ids=10de:2504,10de:228e` and `softdep nvidia pre: vfio-pci`, rebuild the initramfs (dracut --force), and reboot. The host then no longer uses this GPU.",
+       "id": "host-gpu",
+       "label": "The host's nvidia driver is using it",
+       "ok": false
+      }
+     ],
+     "class": "030000",
+     "class_name": "graphics card",
+     "driver": "nvidia",
+     "gpu": true,
+     "group": "12",
+     "id": "0000:01:00.0",
+     "kind": "pci",
+     "label": "NVIDIA Corporation GA106 [GeForce RTX 3060 Lite Hash Rate] (10de:2504)",
+     "live": false,
+     "passable": false,
+     "product": "2504",
+     "used_by": null,
+     "vendor": "10de",
+     "with": [
+      "0000:01:00.1"
+     ]
+    },
+    {
+     "address": "0000:01:00.1",
+     "blockers": [
+      "its IOMMU group 12 also holds 0000:01:00.0 (NVIDIA Corporation GA106 [GeForce RTX 3060 Lite Hash Rate] (10de:2504))"
+     ],
+     "busy": "",
+     "checks": [
+      {
+       "fix": "A VM gets a whole IOMMU group or nothing. Also in this group: 0000:01:00.0 NVIDIA Corporation GA106 [GeForce RTX 3060 Lite Hash Rate] (10de:2504) (nvidia). Move the card to another slot, turn on ACS in the firmware setup, or bind those devices to vfio-pci too.",
+       "id": "group",
+       "label": "IOMMU group 12 also holds devices the host uses",
+       "ok": false
+      }
+     ],
+     "class": "040300",
+     "class_name": "multimedia / audio",
+     "driver": "snd_hda_intel",
+     "gpu": false,
+     "group": "12",
+     "id": "0000:01:00.1",
+     "kind": "pci",
+     "label": "NVIDIA Corporation GA106 High Definition Audio Controller (10de:228e)",
+     "live": false,
+     "passable": false,
+     "product": "228e",
+     "used_by": null,
+     "vendor": "10de",
+     "with": []
+    },
+    {
+     "address": "0000:0c:00.0",
+     "blockers": [
+      "0000:0c:00.0: the host's network interface enp12s0 is up"
+     ],
+     "busy": "the host's network interface enp12s0 is up",
+     "checks": [
+      {
+       "fix": "",
+       "id": "group",
+       "label": "IOMMU group 22 can be given whole",
+       "ok": true
+      },
+      {
+       "fix": "0000:0c:00.0: the host's network interface enp12s0 is up \u2014 stop using it on the host first.",
+       "id": "in-use",
+       "label": "The host is using it",
+       "ok": false
+      }
+     ],
+     "class": "020000",
+     "class_name": "network card",
+     "driver": "r8169",
+     "gpu": false,
+     "group": "22",
+     "id": "0000:0c:00.0",
+     "kind": "pci",
+     "label": "Realtek Semiconductor Co., Ltd. RTL8125 2.5GbE Controller (10ec:8125)",
+     "live": false,
+     "passable": false,
+     "product": "8125",
+     "used_by": null,
+     "vendor": "10ec",
+     "with": []
+    },
+    {
+     "address": "0000:0e:00.0",
+     "blockers": [],
+     "busy": "",
+     "checks": [
+      {
+       "fix": "",
+       "id": "group",
+       "label": "IOMMU group 24 can be given whole",
+       "ok": true
+      }
+     ],
+     "class": "0c0330",
+     "class_name": "USB controller",
+     "driver": "xhci_hcd",
+     "gpu": false,
+     "group": "24",
+     "id": "0000:0e:00.0",
+     "kind": "pci",
+     "label": "Advanced Micro Devices, Inc. [AMD] 600 Series Chipset USB 3.2 Controller (1022:43f7)",
+     "live": false,
+     "passable": true,
+     "product": "43f7",
+     "used_by": null,
+     "vendor": "1022",
+     "with": []
+    },
+    {
+     "address": "0000:0f:00.0",
+     "blockers": [
+      "0000:0f:00.0: the host has sda1 mounted at /raid (through vg-nas)"
+     ],
+     "busy": "the host has sda1 mounted at /raid (through vg-nas)",
+     "checks": [
+      {
+       "fix": "",
+       "id": "group",
+       "label": "IOMMU group 25 can be given whole",
+       "ok": true
+      },
+      {
+       "fix": "0000:0f:00.0: the host has sda1 mounted at /raid (through vg-nas) \u2014 stop using it on the host first.",
+       "id": "in-use",
+       "label": "The host is using it",
+       "ok": false
+      }
+     ],
+     "class": "010601",
+     "class_name": "storage controller",
+     "driver": "ahci",
+     "gpu": false,
+     "group": "25",
+     "id": "0000:0f:00.0",
+     "kind": "pci",
+     "label": "Advanced Micro Devices, Inc. [AMD] 600 Series Chipset SATA Controller (1022:43f6)",
+     "live": false,
+     "passable": false,
+     "product": "43f6",
+     "used_by": null,
+     "vendor": "1022",
+     "with": []
+    },
+    {
+     "address": "0000:10:00.0",
+     "blockers": [
+      "0000:10:00.0: it is the host's boot display GPU; the host's amdgpu driver is using it"
+     ],
+     "busy": "it is the host's boot display GPU; the host's amdgpu driver is using it",
+     "checks": [
+      {
+       "fix": "",
+       "id": "group",
+       "label": "IOMMU group 26 can be given whole",
+       "ok": true
+      },
+      {
+       "fix": "The host shows its console on this card. Give the VM a second GPU instead, or set the other card as the primary display in the firmware setup.",
+       "id": "host-gpu",
+       "label": "This is the host's own display GPU",
+       "ok": false
+      }
+     ],
+     "class": "030000",
+     "class_name": "graphics card",
+     "driver": "amdgpu",
+     "gpu": true,
+     "group": "26",
+     "id": "0000:10:00.0",
+     "kind": "pci",
+     "label": "Advanced Micro Devices, Inc. [AMD/ATI] Raphael (1002:164e)",
+     "live": false,
+     "passable": false,
+     "product": "164e",
+     "used_by": null,
+     "vendor": "1002",
+     "with": [
+      "0000:10:00.1"
+     ]
+    },
+    {
+     "address": "0000:10:00.1",
+     "blockers": [],
+     "busy": "",
+     "checks": [
+      {
+       "fix": "",
+       "id": "group",
+       "label": "IOMMU group 27 can be given whole",
+       "ok": true
+      }
+     ],
+     "class": "040300",
+     "class_name": "multimedia / audio",
+     "driver": "snd_hda_intel",
+     "gpu": false,
+     "group": "27",
+     "id": "0000:10:00.1",
+     "kind": "pci",
+     "label": "Advanced Micro Devices, Inc. [AMD/ATI] Radeon High Definition Audio Controller [Rembrandt/Strix] (1002:1640)",
+     "live": false,
+     "passable": true,
+     "product": "1640",
+     "used_by": null,
+     "vendor": "1002",
+     "with": []
+    },
+    {
+     "address": "0000:10:00.3",
+     "blockers": [],
+     "busy": "",
+     "checks": [
+      {
+       "fix": "",
+       "id": "group",
+       "label": "IOMMU group 29 can be given whole",
+       "ok": true
+      }
+     ],
+     "class": "0c0330",
+     "class_name": "USB controller",
+     "driver": "xhci_hcd",
+     "gpu": false,
+     "group": "29",
+     "id": "0000:10:00.3",
+     "kind": "pci",
+     "label": "Advanced Micro Devices, Inc. [AMD] Raphael/Granite Ridge USB 3.1 xHCI (1022:15b6)",
+     "live": false,
+     "passable": true,
+     "product": "15b6",
+     "used_by": null,
+     "vendor": "1022",
+     "with": []
+    },
+    {
+     "address": "0000:10:00.4",
+     "blockers": [
+      "0000:10:00.4: the host has sdd1 mounted at /raid (through vg-nas)"
+     ],
+     "busy": "the host has sdd1 mounted at /raid (through vg-nas)",
+     "checks": [
+      {
+       "fix": "",
+       "id": "group",
+       "label": "IOMMU group 30 can be given whole",
+       "ok": true
+      },
+      {
+       "fix": "0000:10:00.4: the host has sdd1 mounted at /raid (through vg-nas) \u2014 stop using it on the host first.",
+       "id": "in-use",
+       "label": "The host is using it",
+       "ok": false
+      }
+     ],
+     "class": "0c0330",
+     "class_name": "USB controller",
+     "driver": "xhci_hcd",
+     "gpu": false,
+     "group": "30",
+     "id": "0000:10:00.4",
+     "kind": "pci",
+     "label": "Advanced Micro Devices, Inc. [AMD] Raphael/Granite Ridge USB 3.1 xHCI (1022:15b7)",
+     "live": false,
+     "passable": false,
+     "product": "15b7",
+     "used_by": null,
+     "vendor": "1022",
+     "with": []
+    },
+    {
+     "address": "0000:10:00.6",
+     "blockers": [],
+     "busy": "",
+     "checks": [
+      {
+       "fix": "",
+       "id": "group",
+       "label": "IOMMU group 31 can be given whole",
+       "ok": true
+      }
+     ],
+     "class": "040300",
+     "class_name": "multimedia / audio",
+     "driver": "snd_hda_intel",
+     "gpu": false,
+     "group": "31",
+     "id": "0000:10:00.6",
+     "kind": "pci",
+     "label": "Advanced Micro Devices, Inc. [AMD] Family 17h/19h/1ah HD Audio Controller (1022:15e3)",
+     "live": false,
+     "passable": true,
+     "product": "15e3",
+     "used_by": null,
+     "vendor": "1022",
+     "with": []
+    },
+    {
+     "address": "0000:11:00.0",
+     "blockers": [],
+     "busy": "",
+     "checks": [
+      {
+       "fix": "",
+       "id": "group",
+       "label": "IOMMU group 32 can be given whole",
+       "ok": true
+      }
+     ],
+     "class": "0c0330",
+     "class_name": "USB controller",
+     "driver": "xhci_hcd",
+     "gpu": false,
+     "group": "32",
+     "id": "0000:11:00.0",
+     "kind": "pci",
+     "label": "Advanced Micro Devices, Inc. [AMD] Raphael/Granite Ridge USB 2.0 xHCI (1022:15b8)",
+     "live": false,
+     "passable": true,
+     "product": "15b8",
+     "used_by": null,
+     "vendor": "1022",
+     "with": []
+    }
+   ],
+   "error": "",
+   "live": false,
+   "vm_checks": [
+    {
+     "fix": "",
+     "id": "efi",
+     "label": "UEFI firmware",
+     "ok": true
+    },
+    {
+     "fix": "",
+     "id": "q35",
+     "label": "pc-q35-10.2 machine",
+     "ok": true
+    }
+   ]
+  },
+  "usb": {
+   "checks": [
+    {
+     "fix": "This host's QEMU was built without USB passthrough (no `usb-host` device). Gentoo: add USE=usb for app-emulation/qemu (echo 'app-emulation/qemu usb' >> /etc/portage/package.use/posterchan-vmhost) and re-emerge it (emerge --oneshot --changed-use app-emulation/qemu), or run ./install.sh --vmhost, which does both. Other distributions: install the QEMU package that includes USB host support. Running VMs keep the old QEMU until they are restarted.",
+     "id": "qemu-usb",
+     "label": "QEMU has no USB passthrough (usb-host is missing)",
+     "ok": false
+    }
+   ],
+   "devices": [
+    {
+     "bus": 1,
+     "busy": "",
+     "class": "08",
+     "class_name": "storage",
+     "device": 3,
+     "id": "090c:1000@1-3",
+     "kind": "usb",
+     "label": "Samsung Flash Drive (090c:1000)",
+     "live": true,
+     "manufacturer": "Samsung",
+     "name": "Flash Drive",
+     "product": "1000",
+     "speed": "480",
+     "used_by": null,
+     "vendor": "090c"
+    },
+    {
+     "bus": 1,
+     "busy": "",
+     "class": "03",
+     "class_name": "input device",
+     "device": 2,
+     "id": "0db0:0076@1-2",
+     "kind": "usb",
+     "label": "MSI MYSTIC LIGHT (0db0:0076)",
+     "live": true,
+     "manufacturer": "MSI",
+     "name": "MYSTIC LIGHT",
+     "product": "0076",
+     "speed": "12",
+     "used_by": null,
+     "vendor": "0db0"
+    },
+    {
+     "bus": 6,
+     "busy": "the host has it mounted at /raid (through vg-nas)",
+     "class": "08",
+     "class_name": "storage",
+     "device": 2,
+     "id": "174c:55aa@6-2",
+     "kind": "usb",
+     "label": "ASMT ASMT105x (174c:55aa)",
+     "live": true,
+     "manufacturer": "ASMT",
+     "name": "ASMT105x",
+     "product": "55aa",
+     "speed": "5000",
+     "used_by": null,
+     "vendor": "174c"
+    }
+   ],
+   "error": "",
+   "live": true
+  }
+ }
+}

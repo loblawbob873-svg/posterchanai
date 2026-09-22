@@ -254,7 +254,7 @@ class DeviceOps:
         out = {}
         for kname in kinds:
             kind = KINDS[kname]
-            entry = {"live": kind.live, "devices": [], "checks": [], "error": ""}
+            entry = {"live": kind.live, "devices": [], "checks": await self._host_checks(kname), "error": ""}
             try:
                 devices = await self._scan(kname)
             except Exception as e:
@@ -270,11 +270,10 @@ class DeviceOps:
                     if kind.entry_matches(e, dev):
                         return {"uuid": od.uuid, "name": od.name}
                 return None
+            checks = entry["checks"]
             if kname == "usb":
                 entry["devices"] = [kind.view(x, {"used_by": used_by(x)}) for x in usb.offered(devices)]
             else:
-                checks = await self._pci_host_checks()
-                entry["checks"] = checks
                 groups = {}
                 for x in devices:
                     if x.group:
@@ -297,11 +296,15 @@ class DeviceOps:
             out[kname] = entry
         return {"kinds": out}
 
-    async def _pci_host_checks(self) -> list:
-        f = getattr(self.backend, "pci_host_checks", None)
+    async def _host_checks(self, kind: str) -> list:
+        f = getattr(self.backend, "device_checks", None)
         if f is None:
             return []
-        return list(await f())
+        try:
+            return list(await f(kind))
+        except Exception as e:
+            logger.debug("[vmhost] %s host checks failed: %s", kind, e)
+            return []
 
     # ------------------------------------------------------------------------------ attach / detach
     async def _device_locked(self, pk, role, args):
@@ -361,15 +364,14 @@ class DeviceOps:
             if len(found) > 1:
                 raise _err("bad_request", "more than one device has these ids — name it by bus and device too")
             dev = found[0]
+            bad = [c for c in await self._host_checks(kind.name) if not c["ok"]]
+            if bad:
+                raise _err("unsupported", bad[0]["label"] + ". " + bad[0]["fix"])
             if kind.name == "usb":
                 if dev.busy:
                     raise _err("conflict", f"{dev.label} is in use by the host: {dev.busy}")
                 take, xmls = [dev], kind.xml_for(dev, devices)
             else:
-                checks = await self._pci_host_checks()
-                bad = [c for c in checks if not c["ok"]]
-                if bad:
-                    raise _err("unsupported", bad[0]["label"] + ". " + bad[0]["fix"])
                 groups = {}
                 for x in devices:
                     if x.group:

@@ -546,9 +546,14 @@ class VirshBackend:
             return await asyncio.to_thread(pci.scan)
         raise BackendError("unknown device kind", "bad_request")
 
-    async def pci_host_checks(self) -> list:
+    async def device_checks(self, kind: str) -> list:
+        """The host-wide preconditions for passing this kind of device through, measured: [{id, ok, label, fix}]."""
         from . import pci
-        return await asyncio.to_thread(pci.host_checks, "/sys", None, "/proc/cpuinfo", "/etc", self.uri)
+        out = []
+        if kind == "pci":
+            out += await asyncio.to_thread(pci.host_checks, "/sys", None, "/proc/cpuinfo", "/etc", self.uri)
+        out.append(await qemu_device_check(kind))
+        return out
 
     async def _device(self, verb: str, vm_uuid: str, xml_path: str, live: bool, config: bool) -> None:
         if not (live or config):
@@ -663,6 +668,59 @@ def parse_img_info(text: str) -> dict:
     snaps = [str(x.get("name")) for x in (j.get("snapshots") or []) if isinstance(x, dict) and x.get("name") is not None]
     return {"format": j["format"], "backing": str(backing), "data_file": str(data_file), "virtual_size": vsize,
             "snapshots": snaps}
+
+
+# ---- does THIS host's QEMU have the passthrough device at all? -------------------------------------------------------
+# LIVE (nas.lan, 2026-09-22): the first real USB attach failed inside QEMU with "'usb-host' is not a valid device model
+# name" — Gentoo builds app-emulation/qemu with USE=-usb by default, which leaves out the libusb host device, and
+# libvirt happily accepts the definition first. So the emulator is asked, once per binary version, before anything is
+# attached, and the answer says which USE flag / package to change.
+QEMU_DEVICE = {"usb": ("usb-host", "USB passthrough"), "pci": ("vfio-pci", "PCI passthrough")}
+_QEMU_DEVICES: dict = {}
+
+
+def qemu_emulator() -> str:
+    for p in ("/usr/bin/qemu-system-x86_64", "/usr/libexec/qemu-kvm", "/usr/bin/qemu-kvm"):
+        if os.path.exists(p):
+            return p
+    return shutil.which("qemu-system-x86_64") or ""
+
+
+async def qemu_device_names(binary: str, runner=None) -> Optional[set]:
+    """The device models this QEMU binary knows (`-device help`), cached per (path, mtime); None when it cannot say."""
+    try:
+        key = (binary, os.stat(binary).st_mtime_ns)
+    except OSError:
+        return None
+    if key in _QEMU_DEVICES:
+        return _QEMU_DEVICES[key]
+    code, out, err = await (runner or _run)([binary, "-device", "help"], 20)
+    names = set(re.findall(r'name "([^"]+)"', out + "\n" + err))
+    if not names:
+        return None
+    _QEMU_DEVICES.clear()
+    _QEMU_DEVICES[key] = names
+    return names
+
+
+async def qemu_device_check(kind: str, binary: str | None = None, runner=None) -> dict:
+    dev, what = QEMU_DEVICE[kind]
+    binary = binary if binary is not None else qemu_emulator()
+    names = await qemu_device_names(binary, runner) if binary else None
+    if names is None:
+        return {"id": "qemu-" + kind, "ok": True, "label": f"Could not ask QEMU whether it has {dev}", "fix": ""}
+    ok = dev in names
+    fix = ""
+    if not ok and kind == "usb":
+        fix = ("This host's QEMU was built without USB passthrough (no `usb-host` device). Gentoo: add USE=usb for "
+               "app-emulation/qemu (echo 'app-emulation/qemu usb' >> /etc/portage/package.use/posterchan-vmhost) and "
+               "re-emerge it (emerge --oneshot --changed-use app-emulation/qemu), or run ./install.sh --vmhost, which "
+               "does both. Other distributions: install the QEMU package that includes USB host support. Running VMs "
+               "keep the old QEMU until they are restarted.")
+    elif not ok:
+        fix = "This host's QEMU has no vfio-pci device — install a QEMU built for Linux with VFIO support."
+    return {"id": "qemu-" + kind, "ok": ok,
+            "label": f"QEMU supports {what} ({dev})" if ok else f"QEMU has no {what} ({dev} is missing)", "fix": fix}
 
 
 SNAPSHOT_NAME = r"[A-Za-z0-9][A-Za-z0-9_.-]{0,47}"
