@@ -10371,11 +10371,48 @@ button.pcc-dl:focus-visible{outline:2px solid var(--neon);outline-offset:-2px}
 .pcc-term{height:var(--pcc-term,260px);flex:0 0 var(--pcc-term,260px);min-height:0;
   border-top:1px solid var(--line);background:var(--bg)}
 
+/* ---- find / replace + search in files ----
+   #pcc-fm is a THIRD .pcc-layer (so every glyph metric matches) in transparent ink: only the marks
+   show, tinting the colours under them. The bar floats over the editor's top-right corner. */
+.pcc-editwrap{position:relative}
+.pcc-fm{position:absolute;inset:0;overflow:hidden;pointer-events:none;color:transparent}
+.pcc-fm mark{color:transparent;background:rgba(var(--accent-rgb),.28);border-radius:2px}
+.pcc-fm mark.cur{background:rgba(var(--accent-rgb),.6);box-shadow:0 0 0 1px var(--neon)}
+.pcc-find{position:absolute;top:4px;right:16px;z-index:3;display:flex;align-items:flex-start;gap:3px;
+  width:min(470px,calc(100% - 24px));padding:4px;background:var(--panel);color:var(--text);
+  border:1px solid var(--line);border-radius:6px;box-shadow:0 4px 14px rgba(0,0,0,.35)}
+.pcc-frows{flex:1;min-width:0;display:flex;flex-direction:column;gap:4px}
+.pcc-frow{display:flex;flex-wrap:wrap;align-items:center;gap:3px}
+.pcc-frow input{flex:1 1 110px;min-width:0;height:26px;padding:2px 6px;border:1px solid var(--line);
+  border-radius:4px;background:var(--bg);color:var(--text);font:12px var(--mono)}
+.pcc-frow input:focus{outline:1px solid var(--neon);outline-offset:-1px}
+.pcc-fo,.pcc-fb{flex:none;min-width:26px;height:26px;padding:0 5px;border:1px solid transparent;border-radius:4px;
+  background:none;color:var(--muted);cursor:pointer;font:12px var(--mono)}
+.pcc-fo:hover,.pcc-fb:hover{background:var(--panel2);color:var(--text)}
+.pcc-fo.on{color:var(--text);border-color:var(--neon);background:rgba(var(--accent-rgb),.18)}
+.pcc-fw{font-family:inherit;color:var(--text);border-color:var(--line)}
+.pcc-fn{flex:1 0 auto;min-width:56px;padding:0 3px;color:var(--muted);font-size:12px;white-space:nowrap}
+.pcc-fn.err,.pcc-sf-note.err{color:var(--danger)}
+.pcc-sf{display:flex;flex-direction:column;gap:6px;padding:4px}
+.pcc-sf-note{color:var(--muted);font-size:11px;padding:0 2px}
+.pcc-sf-file{display:flex;align-items:baseline;gap:6px;min-width:0;margin-top:6px;padding:2px}
+.pcc-sf-file b{white-space:nowrap;font-size:12px}
+.pcc-sf-file small{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--muted)}
+.pcc-sf-file em{font-style:normal;color:var(--muted);font-size:11px}
+.pcc-sf-hit{display:flex;gap:6px;width:100%;padding:2px;border:0;border-radius:3px;background:none;
+  color:var(--text);text-align:left;cursor:pointer;font:11px/1.5 var(--mono)}
+.pcc-sf-hit:hover,.pcc-sf-hit:focus-visible{background:var(--panel2)}
+.pcc-sf-hit .pcc-dn{width:30px}
+.pcc-sf-hit code{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:pre;padding:0;
+  background:none;color:inherit;font:inherit}
+.pcc-sf-hit mark{background:rgba(var(--accent-rgb),.4);color:inherit;border-radius:2px}
+
 /* Narrow screens: the tree becomes a strip rather than eating the editor. The desktop shell is
    desktop-only anyway, but the view itself is reachable in a phone browser. */
 @media (max-width:720px){
   .pcc-side{width:150px;flex-basis:150px}
   .pcc-grip-v{display:none}
+  .pcc-find{left:4px;right:4px;width:auto}
 }
 /* Built-in CODE editor: fill the modal on desktop and mobile without giving the iframe page scroll. */
 .office-head{display:flex;align-items:baseline;justify-content:space-between;gap:12px}.office-head h3{margin:0}

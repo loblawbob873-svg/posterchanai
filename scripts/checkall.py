@@ -235,6 +235,7 @@ CHECKS = {
     "check_calendar_mobile":           dict(group="ui", secs=600),
     # Both drive a local stub server and need no instance, so they are `ui`, not `live`.
     "check_code_editor":               dict(group="ui", secs=420),
+    "check_code_find_replace":         dict(group="ui", secs=300),
     # Unlike every self-contained Chrome check, this attaches to an already-running installed
     # Electron process. Its port is intentionally fixed and must not be replaced by the per-check
     # collision-avoidance port assigned below. Account/Office and Admin use real services through
