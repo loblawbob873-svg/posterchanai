@@ -4,7 +4,10 @@ import {pathToFileURL} from 'node:url';
 import assert from 'node:assert/strict';
 const base=process.argv[2]?pathToFileURL(process.argv[2]):new URL('../../static/js/client/app.js',import.meta.url);
 const read=name=>fs.readFileSync(new URL(name,base),'utf8');
-const app=read('app.js'), src=read('concord.js');
+/* ONE SOURCE, modules first: the emoji table moved into cards.js with the split, and a harness that
+ * keeps reading app.js alone stops covering what it names without failing for that reason. */
+const {clientSourceAt}=await import('./client_source.mjs');
+const app=clientSourceAt(new URL('app.js',base)), src=read('concord.js');
 const noop=()=>{}, store=new Map();
 const localStorage={getItem:k=>store.get(k)||null,setItem:(k,v)=>store.set(k,v),removeItem:k=>store.delete(k)};
 const document={querySelector:()=>null,createElement:()=>({dataset:{}}),querySelectorAll:()=>[],addEventListener:noop,

@@ -3,7 +3,11 @@ import vm from 'node:vm';
 import assert from 'node:assert/strict';
 import { clientSource, clientSourceAt, installStateGlobals } from './client_source.mjs';
 
-const source = fs.readFileSync(process.env.PC_OFFICE_TEST_SOURCE || new URL('../../static/js/client/app.js', import.meta.url), 'utf8');
+/* The office session moved into files.js with the split, so this reads the client as ONE source —
+ * modules first, then app.js — rather than app.js alone. Reading app.js directly is how a harness
+ * silently stops covering the thing it names. */
+const source = clientSourceAt(process.env.PC_OFFICE_TEST_SOURCE
+  || new URL('../../static/js/client/app.js', import.meta.url));
 const start = source.indexOf('  async function _officeSession(');
 const end = source.indexOf('  async function _officeStoreDrive(', start);
 assert(start >= 0 && end > start);

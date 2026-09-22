@@ -94,6 +94,10 @@ def test_attachment_send_reloads_durable_state_before_retry(tmp_path):
 class DraftHarness {
  static class Input {String value="caption";String getText(){return value;}void setText(String s){value=s;}}
  Input input=new Input();String address="fixture";long threadId=1;
+ // A group's participants — send() addresses a reply to EVERYBODY when there is more than one, so
+ // the harness carries the field the real screen fills from SmsStore.participants(). Empty here:
+ // these cases are about the attachment draft, and one recipient is the path they were written for.
+ java.util.List<String> people=new java.util.ArrayList<String>();
  Object attachment=null,capturedAttachment=null;MmsDraft.Value attachmentDraft,fresh;
  int pictureSends=0;boolean attachmentBusy(){return false;}
  void restoreAttachmentDraft(){attachmentDraft=fresh;}
@@ -118,10 +122,18 @@ class MmsDraft {static String READY="ready",FAILED="failed";static class Value {
  static void setText(Object ctx,String address,String body){}}
 class MmsFailures {static boolean indeterminate(String error){return error.startsWith("delivery unknown");}}
 class SmsSender {static int calls;static class Result {boolean ok=true;String error="";}static Result send(Object c,String a,String b,long t){calls++;return new Result();}}
+class MmsSender {static int groupTexts;static SmsSender.Result sendGroupText(Object c,String[] to,String body){groupTexts++;return new SmsSender.Result();}}
+// The real rules, compiled in: a stub would let a change to who a reply goes to pass unnoticed here.
+class SmsGroup {static java.util.List<String> replyTo(java.util.List<String> people,String fallback,String me){
+ return place.poster.app.sms.SmsGroup.replyTo(people,fallback,me);}}
 class R {static class string {static int sms_not_default=1,sms_failed=2;}}
 '''
     path=tmp_path/'DraftHarness.java';path.write_text(source)
-    r=subprocess.run(['javac',str(path)],text=True,capture_output=True,timeout=30)
+    # -sourcepath: the reply rules (SmsGroup, and the SmsKeys/SmsMsg it uses) are pure Java and are
+    # compiled in for real. A stub of `replyTo` here would let a change to who a reply goes to pass
+    # this file unnoticed, which is the half of send() that matters most.
+    r=subprocess.run(['javac','-sourcepath',str(ROOT/'mobile/android/app/src/main/java'),
+                      '-d',str(tmp_path),str(path)],text=True,capture_output=True,timeout=60)
     assert r.returncode==0,r.stderr
     r=subprocess.run(['java','-cp',str(tmp_path),'DraftHarness'],text=True,capture_output=True,timeout=20)
     assert r.returncode==0,r.stdout+r.stderr

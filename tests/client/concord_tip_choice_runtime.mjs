@@ -1,6 +1,6 @@
 import fs from 'node:fs';
 import vm from 'node:vm';
-import { clientSource, clientSourceAt, installStateGlobals } from './client_source.mjs';
+import { clientSource, clientSourceAt, installStateGlobals, stateShim } from './client_source.mjs';
 
 const source=clientSource();
 const body=source.split('function startConcordTip',2)[1].split('function invoiceModal',1)[0];
@@ -22,7 +22,9 @@ const context={
   _lightningAddress:async(_pk,profile)=>profile&&(profile.lud16||profile.lud06)||'',
   _tipMethodSheet:(profile,methods,go)=>calls.push(['sheet',profile.name,methods,go]),
 };
-const start=vm.runInNewContext('(async function startConcordTip'+body+')',context);
+/* The split rewrote this module's live-state reads to `S.<name>`, so the extracted body needs the
+ * same shim every other extracted function gets — the names themselves are still this context's. */
+const start=vm.runInNewContext(stateShim(body)+'\n(async function startConcordTip'+body+')',context);
 
 await start('xmr-only',()=>{});
 let sheet=calls.shift();
