@@ -15,6 +15,8 @@ not read as a vertical seam.
 """
 import os
 import subprocess
+import sys
+import tempfile
 import unittest
 from pathlib import Path
 
@@ -30,9 +32,16 @@ def _luma(box=None, size=(384, 216)):
     return g.crop(box) if box else g
 
 
-def _cols(g):
-    w, h = g.size
-    return [sum(g.crop((x, 0, x + 1, h)).getdata()) / h for x in range(w)]
+def _join_x():
+    """Where the sharp picture meets its blurred extension, from the generator's own geometry — a
+    hardcoded band stops containing the join the moment ZOOM or the art's aspect changes, and the
+    seam assertion then passes over empty blur for ever."""
+    import importlib.util
+    spec = importlib.util.spec_from_file_location("pc_wp", ROOT / "os/plymouth/generate_wallpaper.py")
+    gw = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(gw)
+    left = gw.W - gw._panel_size(gw._art())[0]
+    return left, left + gw.FEATHER
 
 
 class TestWallpaper(unittest.TestCase):
@@ -85,9 +94,9 @@ class TestWallpaper(unittest.TestCase):
         with Image.open(WP) as im:
             a = np.asarray(im.convert("L"), dtype=float)
         step = np.abs(np.diff(a, axis=1)).mean(axis=0)
-        w = a.shape[1]
-        joint = step[int(w * 0.22):int(w * 0.42)].max()     # the band the fade lives in
-        detail = float(np.median(step[int(w * 0.45):]))     # the artwork's own edges, for scale
+        x0, x1 = _join_x()
+        joint = step[max(0, x0 - 40):x1 + 40].max()         # the band the fade actually lives in
+        detail = float(np.median(step[x1 + 200:]))          # the artwork's own edges, for scale
         self.assertLess(joint, 2 * detail,
                         "a vertical step where the picture meets its blurred extension")
 
@@ -96,32 +105,26 @@ class TestWallpaper(unittest.TestCase):
         works until the next regeneration silently reverts it."""
         from PIL import Image, ImageChops
         self.assertTrue((ROOT / "os/plymouth/wallpaper-art.webp").exists(), "the source art is missing")
-        out = ROOT / "tests" / "_wp_match.webp"
-        try:
-            env = dict(os.environ, PC_WALLPAPER_OUT=str(out))
-            r = subprocess.run(["python", str(ROOT / "os/plymouth/generate_wallpaper.py")],
-                               env=env, capture_output=True, text=True)
+        with tempfile.TemporaryDirectory() as tmp:      # never into the working tree: the checks run
+            out = os.path.join(tmp, "wp.webp")           # concurrently against a live deployment
+            r = subprocess.run([sys.executable, str(ROOT / "os/plymouth/generate_wallpaper.py")],
+                               env=dict(os.environ, PC_WALLPAPER_OUT=out), capture_output=True, text=True)
             self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
             with Image.open(WP) as a, Image.open(out) as b:
                 a = a.convert("L").resize((96, 54), Image.LANCZOS)
                 b = b.convert("L").resize((96, 54), Image.LANCZOS)
             d = list(ImageChops.difference(a, b).getdata())
             self.assertLess(sum(d) / len(d), 4, "the shipped wallpaper is not what the generator renders")
-        finally:
-            out.unlink(missing_ok=True)
 
     def test_generator_reproduces_a_4k_image(self):
         from PIL import Image
-        out = ROOT / "tests" / "_wp_probe.webp"
-        try:
-            env = dict(os.environ, PC_WALLPAPER_OUT=str(out))
-            r = subprocess.run(["python", str(ROOT / "os/plymouth/generate_wallpaper.py")],
-                               env=env, capture_output=True, text=True)
+        with tempfile.TemporaryDirectory() as tmp:
+            out = os.path.join(tmp, "wp.webp")
+            r = subprocess.run([sys.executable, str(ROOT / "os/plymouth/generate_wallpaper.py")],
+                               env=dict(os.environ, PC_WALLPAPER_OUT=out), capture_output=True, text=True)
             self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
             with Image.open(out) as im:
                 self.assertEqual(im.size, (3840, 2160))
-        finally:
-            out.unlink(missing_ok=True)
 
 
 if __name__ == "__main__":

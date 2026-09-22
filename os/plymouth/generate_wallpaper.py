@@ -10,11 +10,11 @@ handles every aspect ratio. Regenerate:
 
 THE ART IS SQUARE AND THE SCREEN IS NOT, and how that gap is filled is the whole job. A cover-crop of
 a 1:1 picture to 16:9 throws away 44% of it — here the moon, the city skyline and every slogan — and
-upscales what is left by 3x, which on a 4K panel is visibly soft. So the picture is fitted to the
-HEIGHT (a 1.7x upscale, all of it kept) and set flush right, and the rest of the canvas is the same
-picture blurred, dimmed and washed with the boot splash's palette: an out-of-focus continuation of
-its own light, not a border. The seam is feathered over 300px and lands in the artwork's dark
-left-hand foliage, so there is nothing to see.
+upscales what is left by 3x, which on a 4K panel is visibly soft. So the picture is set to a little
+over the screen's height (2.1x, keeping all of its width and all but the top and bottom tenth) and
+flush right, and the rest of the canvas is the same picture blurred, dimmed and washed with the boot
+splash's palette: an out-of-focus continuation of its own light, not a border. The seam is feathered
+over FEATHER px and lands in the artwork's dark left-hand foliage, so there is nothing to see.
 
 Icons and their labels live in the TOP LEFT (os.js lays them out from there), which is precisely
 where that dimmed ambient side is, and `.os-desk::before` in client.css darkens the same corner
@@ -28,9 +28,11 @@ from pathlib import Path
 from PIL import Image, ImageDraw, ImageEnhance, ImageFilter
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-import generate_theme as T   # palette + glow (import-safe)
+import generate_theme as T   # the boot splash's palette (import-safe)
 
 ROOT = Path(__file__).resolve().parents[2]
+# The artwork itself, kept beside this script rather than under posterchanos/ — publish_overlay.sh
+# copies that THEME directory into the initramfs, and a 356 KB picture has no business in a boot image.
 ART = Path(os.environ.get("PC_WALLPAPER_ART") or Path(__file__).resolve().parent / "wallpaper-art.webp")
 OUT = Path(os.environ.get("PC_WALLPAPER_OUT") or ROOT / "static/os-wallpaper-bg.webp")
 W, H = 3840, 2160            # 4K, 16:9; cover-scaled to any monitor
@@ -91,7 +93,7 @@ def panel(art):
     top = round((h - H) * ANCHOR)
     im = im.crop((0, top, w, top + H))
     h = H
-    im = ImageEnhance.Sharpness(im).enhance(1.4)      # a 1.7x upscale is soft; this is not a halo
+    im = ImageEnhance.Sharpness(im).enhance(1.4)      # a 2.1x upscale is soft; this is not a halo
     mask = Image.new("L", (w, h), 255)
     md = ImageDraw.Draw(mask)
     for i in range(FEATHER):
