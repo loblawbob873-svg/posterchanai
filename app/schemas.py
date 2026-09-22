@@ -647,6 +647,10 @@ class SettingsResponse(BaseModel):
     # Onion (v3 hidden service) — expose this deployment at a persistent .onion address (primary Tor
     # daemon hosts it; keys persist in the tor data dir → same address across restarts).
     onion_enabled: str = "false"
+    # Other local services published as their own .onion by the primary Tor — one per line,
+    # "<name> <onion port> <127.0.0.1:port>" (e.g. "akkoma 80 127.0.0.1:8099"). Keys in
+    # <tor_data_dir>/onion_extra/<name>; copy an existing service's keys there to keep its address.
+    tor_extra_onions: str = ""
     # Built-in HTTP proxy settings (ON by default — matches database.py; the "false" fallback made a
     # fresh install read as disabled, so nothing listened on :8118 and every outbound relay connect hit
     # ECONNREFUSED before falling back to direct).

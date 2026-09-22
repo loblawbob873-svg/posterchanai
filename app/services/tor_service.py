@@ -7,6 +7,7 @@ import ipaddress
 import os
 import socket
 import subprocess
+import re
 import threading
 import logging
 import time
@@ -15,6 +16,33 @@ from pathlib import Path
 from typing import Optional
 
 logger = logging.getLogger(__name__)
+
+
+_EXTRA_NAME = re.compile(r"^[a-z0-9][a-z0-9_-]{0,31}$")
+_EXTRA_TARGET = re.compile(r"^(127\.0\.0\.1|localhost|\[::1\]):([0-9]{1,5})$")
+
+
+def parse_extra_onions(text: str) -> list:
+    """`tor_extra_onions`: one service per line, "<name> <onion port> <local host:port>", e.g.
+    "akkoma 80 127.0.0.1:8099". Validated strictly because every line goes into the torrc: a name is
+    a directory under the Tor data dir (no paths), the target must be THIS host (a hidden service
+    forwarding to another machine would publish it through our identity), '#' starts a comment.
+    Bad lines are skipped and logged, never written."""
+    out, seen = [], set()
+    for raw in str(text or "").splitlines():
+        line = raw.split("#", 1)[0].strip()
+        if not line:
+            continue
+        parts = line.split()
+        ok = len(parts) == 3 and _EXTRA_NAME.match(parts[0]) and parts[1].isdigit() \
+            and 1 <= int(parts[1]) <= 65535 and _EXTRA_TARGET.match(parts[2]) \
+            and 1 <= int(_EXTRA_TARGET.match(parts[2]).group(2)) <= 65535 and parts[0] not in seen
+        if not ok:
+            logger.warning("[TOR] ignoring invalid tor_extra_onions line: %r", raw[:120])
+            continue
+        seen.add(parts[0])
+        out.append((parts[0], int(parts[1]), parts[2]))
+    return out
 
 
 class TorService:
@@ -37,6 +65,7 @@ class TorService:
         onion_enabled: bool = False,
         onion_target: str = "",
         onion_relay_port: int = 0,
+        extra_onions: str = "",
     ):
         self.listen_host = listen_host
         self.socks_port = socks_port
@@ -55,6 +84,11 @@ class TorService:
         # reach ws://<onion>:<relay_port>/relay. 0 = don't publish it.
         self.onion_relay_port = int(onion_relay_port or 0)
         self.onion_dir = self.data_dir / "onion_service"
+        # OTHER services on this host published as their own onions by THIS Tor (the Admin setting
+        # `tor_extra_onions`) — so a node needs no second, system Tor just to keep e.g. Akkoma's
+        # .onion. Each gets <data_dir>/onion_extra/<name>; copying an existing service's keys there
+        # keeps its address.
+        self.extra_onions = parse_extra_onions(extra_onions)
 
         self._process: Optional[subprocess.Popen] = None
         self._running = False
@@ -146,6 +180,20 @@ HiddenServicePort 80 {self.onion_target}
 """
             if self.onion_relay_port:
                 config += f"HiddenServicePort {self.onion_relay_port} 127.0.0.1:{self.onion_relay_port}\n"
+        for name, port, target in self.extra_onions:
+            d = self.data_dir / "onion_extra" / name
+            d.mkdir(parents=True, exist_ok=True)
+            try:
+                d.chmod(0o700)                    # tor refuses a hidden-service dir anyone else can read
+                d.parent.chmod(0o700)
+            except OSError:
+                pass
+            config += f"""
+# Extra hidden service: {name}
+HiddenServiceDir {d}
+HiddenServiceVersion 3
+HiddenServicePort {port} {target}
+"""
         logger.info(f"[TOR] Creating torrc: SOCKS {self.listen_host}:{self.socks_port}, DNS {self.listen_host}:{self.dns_port}, exits={self.exit_nodes}, onion={'on' if self.onion_enabled else 'off'}")
         torrc_path.write_text(config)
         return torrc_path
@@ -504,6 +552,7 @@ def start_from_settings() -> bool:
         onion_enabled=_ss.get_bool("onion_enabled"),
         onion_target=f"127.0.0.1:{_app_port}",
         onion_relay_port=_ss.get_int("nostr_relay_port", 3052),
+        extra_onions=_ss.get("tor_extra_onions", ""),
     )
     logger.info("[TOR] built-in Tor %s (SOCKS5 on %s:%s)",
                 "started" if primary else "FAILED to start", listen_host, socks_port)

@@ -44,6 +44,11 @@
             <button type="button" class="btn-primary" id="onion-toggle">🧅 Generate .onion site</button>
             <span id="onion-status" class="muted" style="margin-left:10px;font-size:13px"></span>
         </div>
+        <div class="form-group">
+            <label for="tor_extra_onions">Other onion services on this server</label>
+            <textarea id="tor_extra_onions" name="tor_extra_onions" rows="3" placeholder="akkoma 80 127.0.0.1:8099" spellcheck="false" style="font-family:monospace"></textarea>
+            <small>One per line: <code>name onion-port 127.0.0.1:port</code>. This server's Tor publishes each as its own <code>.onion</code>, so no separate system Tor is needed. To keep an existing address, copy that service's keys into <code>&lt;Tor data dir&gt;/onion_extra/&lt;name&gt;/</code> before saving. Takes effect when Tor restarts.</small>
+        </div>
         <div class="form-group" id="onion-addr-row" style="display:none">
             <label for="onion-addr">Your .onion address</label>
             <div class="onion-addr-row">
