@@ -43,10 +43,11 @@ from html import escape, unescape
 from pathlib import Path
 
 import pytest
+from tests.client_source import client_source
 
 ROOT = Path(__file__).resolve().parents[2]
 CSS = (ROOT / "static/css/client.css").read_text(encoding="utf-8")
-APPJS = (ROOT / "static/js/client/app.js").read_text(encoding="utf-8")
+APPJS = client_source()
 CHROME = (shutil.which("google-chrome-stable") or shutil.which("chromium")
           or shutil.which("chrome"))
 

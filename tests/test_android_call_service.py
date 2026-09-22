@@ -32,6 +32,7 @@ notification shade.
 """
 import os
 import re
+from tests.client_source import client_source
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 ANDROID = os.path.join(ROOT, "mobile", "android", "app")
@@ -47,7 +48,7 @@ MANIFEST = _read(ANDROID, "src", "main", "AndroidManifest.xml")
 MAIN = _read(JAVA, "MainActivity.java")
 SERVICE = _read(JAVA, "call", "CallService.java")
 PLUGIN = _read(JAVA, "call", "CallPlugin.java")
-APPJS = _read(ROOT, "static", "js", "client", "app.js")
+APPJS = client_source()
 
 
 def test_plugin_is_registered_and_named_the_same_on_both_sides():

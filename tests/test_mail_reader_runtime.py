@@ -2,9 +2,10 @@
 from pathlib import Path
 import json, re, shutil, subprocess, tempfile
 import pytest
+from tests.client_source import client_source
 
 ROOT=Path(__file__).resolve().parents[1]
-APP=(ROOT/'static/js/client/app.js').read_text()
+APP=client_source()
 CSS=(ROOT/'static/css/client.css').read_text()
 CHROME=shutil.which('google-chrome-stable') or shutil.which('chromium')
 
@@ -20,7 +21,7 @@ def extract(name):
 
 def test_packaged_attachment_runtime_uses_instance_and_preview():
     js=extract('_mailAttachmentUrl')+'\n'+extract('_openMailAttachment')
-    script=f'''let BASE='https://poster.example',fetched='',opened=0,saved=0,toasts=[];const BUNDLED=true;
+    script=f'''let BASE='https://poster.example',fetched='',opened=0,saved=0,toasts=[];const BUNDLED=true;const S={{get _aiToken(){{return _aiToken}}}};
     const _instanceBase=()=>BASE,_aiToken='token',toast=x=>toasts.push(x),saveBlobAs=async()=>saved++;
     const _withModule=async()=>({{open:o=>{{opened++;return o.name==='photo.png'&&o.mime==='image/png'}}}});
     globalThis.fetch=async u=>{{fetched=u;return new Response(new Blob(['png'],{{type:'image/png'}}),{{status:200}})}};
@@ -46,7 +47,7 @@ def test_packaged_attachment_runtime_uses_instance_and_preview():
 
 def test_office_attachment_runtime_opens_editor_and_saves_edited_copy():
     js=extract('_openMailAttachment')
-    script=f'''let opened=0,saved=0,toasts=[];const _aiToken='',CFG={{office_enabled:true}};
+    script=f'''let opened=0,saved=0,toasts=[];const _aiToken='',CFG={{office_enabled:true}};const S={{_aiToken,CFG}};
     const toast=x=>toasts.push(x),_officeable=(n,m)=>/\\.docx$/i.test(n),
       fileFromBytes=(b,n,t)=>new File([b],n,{{type:t}}),saveBlobAs=async(f,n)=>{{saved++;}},
       _officeSession=async(file,saveBack)=>{{opened++;await saveBack(new File(['edited'],file.name,{{type:file.type}}));}};

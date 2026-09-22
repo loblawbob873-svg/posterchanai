@@ -3,10 +3,11 @@ import asyncio
 from pathlib import Path
 
 from app.routers import mail as mail_router
+from tests.client_source import client_source
 
 
 ROOT = Path(__file__).resolve().parents[1]
-APP = (ROOT / "static/js/client/app.js").read_text(encoding="utf-8")
+APP = client_source()
 ROUTER = (ROOT / "app/routers/mail.py").read_text(encoding="utf-8")
 
 

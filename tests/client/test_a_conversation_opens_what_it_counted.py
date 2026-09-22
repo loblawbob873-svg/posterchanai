@@ -14,6 +14,7 @@ import re
 import subprocess
 import unittest
 from pathlib import Path
+from tests.client_source import client_source
 
 APP = Path(__file__).resolve().parents[2] / "static" / "js" / "client" / "app.js"
 
@@ -24,7 +25,7 @@ def _method(name):
     Anchored on the mail object's own `_key`, not on the first match in the file — there is another
     `_key(m)` earlier (it reads ME) and lifting that one silently tests a different object.
     """
-    src = APP.read_text()
+    src = client_source()
     anchor = src.index("_key(m){ return (m.account||this.acct)")
     start = src.index("\n    " + name + "(", anchor - 4000)
     i, depth, seen = src.index("{", start), 0, False
@@ -40,7 +41,7 @@ def _method(name):
 
 
 def _run(msgs, conv_sent):
-    src = APP.read_text()
+    src = client_source()
     key = _method("_key")
     js = """
 const M = {

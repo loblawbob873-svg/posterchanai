@@ -1,8 +1,9 @@
 """Conversation presentation for Email stays usable with a mouse, keyboard, and phone."""
 from pathlib import Path
+from tests.client_source import client_source
 
 ROOT = Path(__file__).resolve().parents[2]
-APP = (ROOT / "static/js/client/app.js").read_text()
+APP = client_source()
 CSS = (ROOT / "static/css/client.css").read_text()
 
 

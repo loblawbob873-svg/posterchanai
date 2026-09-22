@@ -20,6 +20,7 @@ os.environ.setdefault("POSTERCHANAI_SKIP_DB", "1")
 from fastapi import HTTPException  # noqa: E402
 
 from app.routers import mail as M  # noqa: E402
+from tests.client_source import client_source
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
@@ -120,7 +121,7 @@ class EndpointTests(unittest.TestCase):
     def test_the_client_grounds_the_name_from_the_to_header(self):
         import os
         root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-        app = open(os.path.join(root, "static", "js", "client", "app.js"), encoding="utf-8").read()
+        app = client_source()
         at = app.index("async aiReply(msg")
         body = app[at:at + 2200]
         self.assertIn("myName", body)
@@ -135,7 +136,7 @@ class EndpointTests(unittest.TestCase):
     def test_the_to_line_travels_with_the_message(self):
         import os
         root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-        app = open(os.path.join(root, "static", "js", "client", "app.js"), encoding="utf-8").read()
+        app = client_source()
         at = app.index("_msgText(msg){")
         self.assertIn("msg.to", app[at:at + 1200],
                       "without To: the model cannot know the user's name and invents placeholders")
@@ -208,8 +209,7 @@ class BillFromTextTests(unittest.TestCase):
 class ClientWiringTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
-        with open(os.path.join(ROOT, "static", "js", "client", "app.js"), encoding="utf-8") as fh:
-            cls.app = fh.read()
+        cls.app = client_source()
 
     def test_the_row_has_one_ai_button_and_the_actions_live_in_the_menu(self):
         """The row is a grid; every action added AS A BUTTON costs a phone a column. The mobile

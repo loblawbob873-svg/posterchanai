@@ -28,6 +28,7 @@ import re
 from pathlib import Path
 
 from app.routers.mail import _build_thread, _is_own_sent, _is_reply
+from tests.client_source import client_source
 
 ROOT = Path(__file__).resolve().parents[1]
 SEND = (ROOT / "app/services/mail_service.py").read_text(encoding="utf-8")
@@ -136,7 +137,7 @@ def test_a_reply_is_still_a_reply_however_it_is_filed():
 # account as the whole mailbox however it was spelled — because an installed PWA or an older APK
 # keeps sending the old string for as long as it is cached.
 
-APP_JS = (Path(__file__).resolve().parents[1] / "static/js/client/app.js").read_text(encoding="utf-8")
+APP_JS = client_source()
 MAIL_PY = (Path(__file__).resolve().parents[1] / "app/routers/mail.py").read_text(encoding="utf-8")
 
 

@@ -26,10 +26,11 @@ import subprocess
 from pathlib import Path
 
 import pytest
+from tests.client_source import client_source
 
 ROOT = Path(__file__).resolve().parents[2]
 NODE = shutil.which("node")
-APP = (ROOT / "static/js/client/app.js").read_text(encoding="utf-8")
+APP = client_source()
 ROUTER = (ROOT / "app/routers/mail.py").read_text(encoding="utf-8")
 
 

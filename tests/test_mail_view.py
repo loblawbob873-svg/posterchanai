@@ -16,9 +16,10 @@ exists. A dead click target here is silent — the card still appears, it just t
 import re
 import unittest
 from pathlib import Path
+from tests.client_source import client_source
 
 ROOT = Path(__file__).resolve().parents[1]
-APP = (ROOT / "static" / "js" / "client" / "app.js").read_text()
+APP = client_source()
 OS_JS = (ROOT / "static" / "js" / "client" / "os.js").read_text()
 SHELL = (ROOT / "templates" / "client.html").read_text()
 CSS = (ROOT / "static" / "css" / "client.css").read_text()
@@ -32,7 +33,7 @@ class ViewTests(unittest.TestCase):
         body = APP[start:APP.index("    async render(root)", start)]
         self.assertIn("await ensureAiSession()", body)
         self.assertIn("credentials:'include'", body)
-        self.assertIn("'Authorization':'Bearer '+_aiToken", body)
+        self.assertIn("'Authorization':'Bearer '+S._aiToken", body)
 
     def test_late_mail_response_cannot_overwrite_another_app(self):
         """The accounts request yields while desktop windows share/move #feed. Its continuation

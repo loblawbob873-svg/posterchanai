@@ -9,6 +9,7 @@ paste bug shipped green the first time.
 import re
 import unittest
 from pathlib import Path
+from tests.client_source import client_source
 
 ROOT = Path(__file__).resolve().parents[2]
 MEME = ROOT / "static/js/client/meme.js"
@@ -82,7 +83,7 @@ class PasteReachesTheBuilder(unittest.TestCase):
 
 class PasteReachesTheEmail(unittest.TestCase):
     def setUp(self):
-        self.src = APP.read_text()
+        self.src = client_source()
         self.block = _mail_paste(self.src)
 
     def test_it_is_bound_to_the_body_the_person_types_in(self):

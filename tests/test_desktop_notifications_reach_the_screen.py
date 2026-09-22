@@ -19,6 +19,7 @@ from pathlib import Path
 
 from tests.wayfire_config import sections
 from tests.overlay_paths import shell_ebuild
+from tests.client_source import client_source
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -79,7 +80,7 @@ def test_the_daemon_is_gone_from_the_upgrade_path_too_not_only_the_autostart():
     assert "mako" not in EBUILD.split("src_install", 1)[0], "still a dependency, so it stays installed"
     # And the app still raises its OWN in-app toast for the same event, which is the surface that
     # replaces it — email raises both, so losing the OS one is not losing the notification.
-    app = (ROOT / "static/js/client/app.js").read_text()
+    app = client_source()
     mail = app.split("async sync(manual){", 1)[1].split("\n    },", 1)[0]
     assert "notifToast(" in mail, "email would have no notification at all without a daemon"
     assert "osNotify(" in mail

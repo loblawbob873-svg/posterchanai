@@ -118,7 +118,7 @@ MUTATIONS = [
     ),
     (
         "the mail composer stops reading clipboard ITEMS, so a pasted screenshot is lost",
-        "static/js/client/app.js",
+        "static/js/client/mail.js",
         "for(const it of [...(cd.items||[])]){",
         "for(const it of []){",
         "tests/client/test_pasting_reaches_the_builder_and_the_email.py",

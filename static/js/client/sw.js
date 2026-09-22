@@ -140,6 +140,11 @@ const SHELL = [
   '/static/js/client/notes.js',
   '/static/js/client/playlists.js',
   '/static/js/client/musicshare.js',
+  // Split out of app.js and loaded the first time their screen opens (app.js `_lzLoad`). Not in the
+  // script tags of the page, so nothing else would put them in the cache — and a screen whose code
+  // is not on the device is a screen that cannot open offline. (No apostrophes in these comments:
+  // tests/test_client_offline_shell.py reads this list by its quote marks.)
+  '/static/js/client/mail.js',
   '/static/js/client/vaultcore.js',
   '/static/js/client/vault.js',
   '/static/js/client/chess.js',
