@@ -228,7 +228,14 @@ function status(){
   let log = '';
   try{ log = fs.readFileSync(LOG_FILE, 'utf8'); }catch(_){}
   const p = progress(log);
+  /* THE BAR NEVER MOVES BACKWARDS. rsync --info=progress2 recomputes its total as incremental
+   * recursion discovers files, so its overall percentage can fall (measured in the VM run:
+   * 77 -> 74 -> 77); a bar that jumps back reads as the install undoing itself. Kept per job — a new
+   * job object starts from zero again. */
+  if(p.percent < (job._maxPercent || 0)) p.percent = job._maxPercent;
+  else job._maxPercent = p.percent;
   const out = Object.assign({}, job, { progress: p, log: cleanLog(log.slice(-400000)).slice(-60000) });
+  delete out._maxPercent;
   delete out.token;
   /* A job that ended well IS at the end of the bar, even if the last marker scrolled out of the
    * slice; one that failed keeps the bar where it stopped, which is where the log says to look. */

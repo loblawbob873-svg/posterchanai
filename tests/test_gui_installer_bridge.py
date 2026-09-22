@@ -265,3 +265,18 @@ def test_an_install_longer_than_the_handoff_grace_is_still_running(env):
     st = call("m.status()", env["env"])["ok"]
     assert st["running"] is True and not st["finished"], st
     assert wait_finished(env["env"])["ok"] is True
+
+
+def test_the_progress_bar_never_moves_backwards(env):
+    """Measured in the VM run of this ISO: rsync's overall percentage fell 77 -> 74 -> 77 as its
+    incremental recursion found more files, and the bar jumped back with it."""
+    state = env["tmp"] / "state"
+    state.mkdir(exist_ok=True)
+    log = state / "installer-job.log"
+    js = ("const fs=require('fs');const m=require('./desktop/installer');const L=%r;"
+          "const seen=[];for(const p of ['77%%','74%%','77%%','80%%']){"
+          "fs.appendFileSync(L, (seen.length?'':'::pc-install:: copy Copying\\n')+'\\r 1,000  '+p+'  1MB/s');"
+          "seen.push(m.status().progress.percent)}process.stdout.write(JSON.stringify(seen))") % str(log)
+    seen = json.loads(node(js, env["env"]).stdout)
+    assert seen == sorted(seen), seen
+    assert seen[1] == seen[0], "a fall in rsync's percentage must hold the bar where it was"
