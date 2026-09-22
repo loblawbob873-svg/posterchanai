@@ -7112,8 +7112,9 @@ body.os-on .osw-body > .feed::-webkit-scrollbar-thumb:hover{background:var(--mut
              linear-gradient(160deg, var(--bg), var(--bg2, var(--bg)));}
 .os-desk{position:relative;flex:1;min-height:0;overflow:hidden;
   background:#0a0a0f url('/static/os-wallpaper-bg.webp') center/cover no-repeat}
-/* Full-bleed default wallpaper — the boot-splash mascot on the cyberpunk grid
-   (static/os-wallpaper-bg.webp, 3840x2160 so it stays crisp on a 4K monitor; `cover` fills every
+/* Full-bleed default wallpaper — the mascot's desk, set to the RIGHT with its own blurred, dimmed
+   light filling the left (os/plymouth/generate_wallpaper.py, static/os-wallpaper-bg.webp,
+   3840x2160 so it stays crisp on a 4K monitor; `cover` fills every
    aspect ratio without letterboxing). ::before is a readability SCRIM, darkest at the top-left where
    the icons live, so the (light) labels stay legible over the art. z-index:0 + pointer-events:none
    keep it under the icons/windows and let click-to-dismiss pass through. A user's own picture
