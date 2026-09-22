@@ -145,6 +145,7 @@ const SHELL = [
   // is not on the device is a screen that cannot open offline. (No apostrophes in these comments:
   // tests/test_client_offline_shell.py reads this list by its quote marks.)
   '/static/js/client/mail.js',
+  '/static/js/client/ai.js',
   '/static/js/client/vaultcore.js',
   '/static/js/client/vault.js',
   '/static/js/client/chess.js',

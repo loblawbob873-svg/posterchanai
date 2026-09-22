@@ -1,9 +1,10 @@
 from pathlib import Path
 import re
+from tests.client_source import client_source
 
 
 ROOT = Path(__file__).resolve().parents[2]
-APP = (ROOT / "static/js/client/app.js").read_text()
+APP = client_source()
 MEME = (ROOT / "static/js/client/meme.js").read_text()
 
 

@@ -22,6 +22,7 @@ import shutil
 import subprocess
 import unittest
 from pathlib import Path
+from tests.client_source import client_source
 
 ROOT = Path(__file__).resolve().parents[1]
 APP = ROOT / "static" / "js" / "client" / "app.js"
@@ -33,7 +34,7 @@ def _shipped_artName() -> str:
     app.js is one 26k-line IIFE that cannot be required, so the function is extracted rather than
     reimplemented — a copy in this file would pass forever while the shipped one changed.
     """
-    src = APP.read_text()
+    src = client_source()
     mark = re.search(r"^  const _AI_LABEL_MARKER = .*$", src, re.M)
     fn = re.search(r"^  function _artName\(label, u\)\{.*?^  \}$", src, re.M | re.S)
     assert mark and fn, "app.js no longer defines _AI_LABEL_MARKER / _artName as expected"
@@ -94,7 +95,7 @@ class WiringTests(unittest.TestCase):
     """The name has to travel: label → data-name → handler → the File that is uploaded. Every hop
     was there to be forgotten, and forgetting one is silent — the file just saves under the hash."""
 
-    SRC = APP.read_text()
+    SRC = client_source()
 
     def test_the_three_saving_buttons_carry_the_name(self):
         row = re.search(r"function _aiFileActions\(u, kind, label\)\{.*?\n  \}", self.SRC, re.S)

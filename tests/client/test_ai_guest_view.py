@@ -1,9 +1,10 @@
 import json, subprocess
 from pathlib import Path
+from tests.client_source import client_source
 
 
 ROOT=Path(__file__).resolve().parents[2]
-APP=(ROOT/'static/js/client/app.js').read_text()
+APP=client_source()
 
 
 def test_guest_ai_view_paints_login_state_without_signing_or_fetching():

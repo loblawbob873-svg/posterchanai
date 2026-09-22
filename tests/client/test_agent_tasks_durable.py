@@ -35,6 +35,7 @@ import re
 import shutil
 import subprocess
 import unittest
+from tests.client_source import client_source
 
 REPO = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 APP = os.path.join(REPO, "static", "js", "client", "app.js")
@@ -66,8 +67,7 @@ def _line(src, pattern):
 
 
 def _extract():
-    with open(APP) as fh:
-        src = fh.read()
+    src = client_source()
     return "\n".join([
         _line(src, r"^\s*const _AGT_D = .*$"),
         _line(src, r"^\s*let _agtDoc = .*$"),
@@ -115,6 +115,9 @@ const signer = {
   nip44dec: async (pk, ct)=>{ if(!DECRYPTABLE) throw new Error('bad key'); return JSON.stringify(RELAY_DOC); },
 };
 async function publish(kind, content, tags, opts){ PUBLISHED.push({kind, content, tags}); return {ok:true}; }
+// ai.js reads app.js's live bindings through the getter object app.js hands it (`S.ME`, `S.signer`);
+// the stubs above ARE those bindings here.
+const S = { get ME(){ return ME; }, get signer(){ return signer; } };
 
 %(impl)s
 

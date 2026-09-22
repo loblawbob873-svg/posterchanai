@@ -47,6 +47,13 @@ def client_source() -> str:
     return "\n".join(parts)
 
 
+def client_files() -> list[tuple[str, str]]:
+    """(name, text) for every split module and app.js, SEPARATELY — for a rule that is about one
+    scope (each file is its own: app.js's IIFE, or one module's factory)."""
+    return ([(n, module_path(n).read_text(encoding="utf-8")) for n in split_modules()]
+            + [("app.js", APP.read_text(encoding="utf-8"))])
+
+
 def client_source_path_for(needle: str) -> Path:
     """The ONE shipped file that contains `needle` (app.js or a split module) — for tests that must
     hand a real path to node or git. Raises if it is in none or in more than one."""

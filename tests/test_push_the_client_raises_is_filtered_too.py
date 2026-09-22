@@ -32,6 +32,7 @@ from pathlib import Path
 import pytest
 
 from app.services import direct_push_service, nostr_push_service as nps, push_prefs
+from tests.client_source import client_source
 
 ROOT = Path(__file__).resolve().parents[1]
 PUSH = ROOT / "mobile/android/app/src/main/java/place/poster/app/push"
@@ -188,7 +189,7 @@ def test_the_two_preference_sets_stay_separate():
     assert "!foreground && !DirectPushStore.allowsType(" in java, \
         "the per-device push filter is applied to on-screen app alerts too"
     # …and the client has to actually send it, or the default (false) filters everything.
-    app = (ROOT / "static/js/client/app.js").read_text()
+    app = client_source()
     notify = app[app.index("_capPlugin('PosterChanPush', 'notify')"):]
     notify = notify[:notify.index("return null;")]
     assert "foreground:" in notify, "osNotify does not tell the plugin whether the app is on screen"
@@ -196,9 +197,10 @@ def test_the_two_preference_sets_stay_separate():
 
 
 def test_the_client_tells_the_plugin_which_kind_of_notification_this_is():
-    app = (ROOT / "static/js/client/app.js").read_text()
+    app = client_source()
     fn = app[app.index("  function osNotify(title, body, opts){"):]
-    fn = fn[:fn.index("\n  // Store every delivery before applying interruption preferences.")]
+    # Bounded by its own closing brace: reminderAlert, which used to follow it, moved to ai.js.
+    fn = fn[:fn.index("\n  }\n") + 4]
     call = fn[fn.index("const P = _capPlugin('PosterChanPush', 'notify');"):]
     assert "_notificationType(opts)" in call, \
         "the resolved type never reaches the native gate, so it can only ever govern 'dm' and 'reminders'"

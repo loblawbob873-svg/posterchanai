@@ -1,11 +1,12 @@
 """PosterChan's window-scoped AI affordance stays explicit, contextual, and non-destructive."""
 
 from pathlib import Path
+from tests.client_source import client_source
 
 
 ROOT = Path(__file__).resolve().parents[2]
 OS = (ROOT / "static/js/client/os.js").read_text(encoding="utf-8")
-APP = (ROOT / "static/js/client/app.js").read_text(encoding="utf-8")
+APP = client_source()
 CSS = (ROOT / "static/css/client.css").read_text(encoding="utf-8")
 
 

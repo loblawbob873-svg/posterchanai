@@ -10,14 +10,14 @@ So this compares the two rows to each other rather than to a list someone has to
 import os
 import re
 import unittest
+from tests.client_source import client_source
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 APP = os.path.join(ROOT, "static", "js", "client", "app.js")
 
 
 def _src():
-    with open(APP, encoding="utf-8") as f:
-        return f.read()
+    return client_source()
 
 
 class MediaRows(unittest.TestCase):

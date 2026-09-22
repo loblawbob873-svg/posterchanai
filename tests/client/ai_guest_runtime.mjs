@@ -1,5 +1,6 @@
-import fs from 'node:fs';
-const app=fs.readFileSync(new URL('../../static/js/client/app.js',import.meta.url),'utf8');
+import { clientSource, installStateGlobals } from './client_source.mjs';
+const app=clientSource();
+installStateGlobals();
 const authStart=app.indexOf('  let _aiAuth = null;');
 const authEnd=app.indexOf('  // In-app Admin:',authStart);
 const aiStart=app.indexOf('  async function renderAI(');

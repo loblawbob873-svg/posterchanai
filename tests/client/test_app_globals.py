@@ -18,6 +18,7 @@ equivalent here, so this is the cheapest thing that catches the whole class.
 import os
 import re
 import unittest
+from tests.client_source import client_source, client_files
 
 REPO = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 APP = os.path.join(REPO, "static", "js", "client", "app.js")
@@ -41,7 +42,7 @@ def _strip_comments_and_strings(src: str) -> str:
 
 class TestAppJsHasNoPCBinding(unittest.TestCase):
     def test_app_js_never_uses_PC_dot(self):
-        code = _strip_comments_and_strings(open(APP, encoding="utf-8").read())
+        code = _strip_comments_and_strings(client_source())
         # `PC.` not preceded by a word char, a dot or an underscore — so window.__PC, _PC and PCSync
         # are all left alone; only a bare `PC.something` is a finding.
         hits = [m.start() for m in re.finditer(r"(?<![\w.$_])PC\.", code)]
@@ -76,14 +77,19 @@ class TestNoDuplicateFunctionDeclarations(unittest.TestCase):
     """
 
     def test_no_top_level_function_is_declared_twice(self):
-        src = _strip_comments_and_strings(open(APP, encoding="utf-8").read())
-        # Module-level declarations in this file are indented exactly two spaces.
-        names = re.findall(r"(?m)^  (?:async )?function ([A-Za-z_$][\w$]*)\s*\(", src)
-        dupes = sorted({n for n in names if names.count(n) > 1})
-        self.assertFalse(
-            dupes,
-            "declared more than once at the top level of app.js: %s. The later declaration wins "
-            "silently, so every caller gets whichever one happens to be last in the file." % dupes)
+        # One scope per FILE: app.js's IIFE, and each module split out of it (its factory). app.js
+        # keeps a one-line entry point named like each function that moved — a different scope, so
+        # not a duplicate — while a name declared twice inside any ONE of them still is.
+        for name, text in client_files():
+            src = _strip_comments_and_strings(text)
+            # Module-level declarations in this file are indented exactly two spaces.
+            names = re.findall(r"(?m)^  (?:async )?function ([A-Za-z_$][\w$]*)\s*\(", src)
+            dupes = sorted({n for n in names if names.count(n) > 1})
+            self.assertFalse(
+                dupes,
+                "declared more than once at the top level of %s: %s. The later declaration wins "
+                "silently, so every caller gets whichever one happens to be last in the file."
+                % (name, dupes))
 
     def test_the_check_can_see_a_duplicate(self):
         planted = _strip_comments_and_strings(
@@ -107,7 +113,7 @@ class TestSyncedPrefsRoundTrip(unittest.TestCase):
     """
 
     def test_every_saved_pref_is_also_restored(self):
-        src = open(APP, encoding="utf-8").read()
+        src = client_source()
         saved = set(re.findall(r"saveClientPrefsNostr\(\s*{\s*([^}]*)}", src))
         keys = set()
         for blob in saved:
@@ -124,7 +130,7 @@ class TestSyncedPrefsRoundTrip(unittest.TestCase):
 
     def test_the_budgets_are_in_that_set(self):
         """Named, because they are the ones a reinstall was losing."""
-        src = open(APP, encoding="utf-8").read()
+        src = client_source()
         for key in ("musicOfflineGB", "mediaCacheGB"):
             with self.subTest(key=key):
                 self.assertIn("saveClientPrefsNostr({ %s" % key, src)
@@ -142,9 +148,9 @@ class TestUploadsAreFiledSafely(unittest.TestCase):
     """
 
     def test_no_plain_upload_is_filed_under_music(self):
-        src = _strip_comments_and_strings(open(APP, encoding="utf-8").read())
+        src = _strip_comments_and_strings(client_source())
         # strings are blanked by the stripper, so match the surviving structure of the call
-        raw = open(APP, encoding="utf-8").read()
+        raw = client_source()
         bad = [m.start() for m in re.finditer(r"uploadBlob\([^;]{0,200}?folder:\s*'Music'", raw)]
         if bad:
             lines = sorted({raw[:b].count("\n") + 1 for b in bad})
@@ -165,7 +171,7 @@ class TestUploadsAreFiledSafely(unittest.TestCase):
 
         Both save paths must go through _keepBytes, which is the single answer to where a kept file
         goes."""
-        src = open(APP, encoding="utf-8").read()
+        src = client_source()
         for fn in ("async function saveFileToBlossom", "async function saveEffectToBlossom"):
             i = src.index(fn)
             body = src[i:i + 2000]
@@ -175,7 +181,7 @@ class TestUploadsAreFiledSafely(unittest.TestCase):
                               "where a saved file belongs" % fn)
 
     def test_audio_reaches_the_library_not_a_folder(self):
-        src = open(APP, encoding="utf-8").read()
+        src = client_source()
         self.assertIn("uploadMusicTrack(file)", src,
                       "_keepBytes must hand audio to the library path; a folder called Music is "
                       "encrypted by definition and would list it as an unplayable track")
@@ -186,7 +192,7 @@ class TestUploadsAreFiledSafely(unittest.TestCase):
     def test_uploads_can_be_filed_at_all(self):
         """The composer used to upload straight past the index, so every picture posted from it was
         in the drive as an unnamed sha256."""
-        src = open(APP, encoding="utf-8").read()
+        src = client_source()
         self.assertIn("if(opts && opts.folder) _fileUnder(", src)
         self.assertIn("folder:'Posts'", src)
 
@@ -209,7 +215,7 @@ class TestParkedTimelineKeepsLivePosts(unittest.TestCase):
     """
 
     def test_flush_live_does_not_drop_a_parked_window_s_posts(self):
-        src = open(APP, encoding="utf-8").read()
+        src = client_source()
         i = src.index("function _flushLiveFor(")
         body = src[i:i + 3600]
         self.assertIn("_tlParked()", body,
@@ -223,7 +229,7 @@ class TestParkedTimelineKeepsLivePosts(unittest.TestCase):
     def test_they_are_buffered_in_the_first_place(self):
         """The subscription's own handler gates on VIEW too, so without this there is nothing for
         flushLive to keep."""
-        src = open(APP, encoding="utf-8").read()
+        src = client_source()
         # `_parkedSlot(view)`, not `_tlParked()`: the latter asks "VIEW is not a timeline", which is
         # FALSE whenever the focused window is the OTHER timeline — so with Home in front and
         # Nostrverse parked beside it, the global sub's events were never buffered at all and that
@@ -231,7 +237,7 @@ class TestParkedTimelineKeepsLivePosts(unittest.TestCase):
         self.assertIn("(VIEW===view || _parkedSlot(view))", src)
 
     def test_parked_means_alive_but_not_current(self):
-        src = open(APP, encoding="utf-8").read()
+        src = client_source()
         i = src.index("function _tlParked()")
         body = src[i:i + 300]
         for needle in ("window.PCOS", "tl-notes"):
@@ -251,7 +257,7 @@ class TestSyncedFolderThumbnails(unittest.TestCase):
     """
 
     def test_previews_are_lazy_bounded_capped_and_revoked(self):
-        src = open(APP, encoding="utf-8").read()
+        src = client_source()
         for needle, why in (
             ("IntersectionObserver", "previews must be lazy — a folder can hold thousands"),
             ("_THUMB_PAR", "a fast scroll would otherwise start hundreds of parallel decrypts"),
@@ -264,12 +270,12 @@ class TestSyncedFolderThumbnails(unittest.TestCase):
     def test_a_late_decrypt_does_not_paint_a_dead_card(self):
         """The grid is rebuilt on every navigation, so a decrypt landing after the user moved on
         must not write into a card that has left the page."""
-        src = open(APP, encoding="utf-8").read()
+        src = client_source()
         i = src.index("function _bindThumbs")
         self.assertIn("isConnected", src[i:i + 900])
 
     def test_chunked_photos_and_details_rows_get_thumbnail_targets(self):
-        src = open(APP, encoding="utf-8").read()
+        src = client_source()
         thumbs = src[src.index("async function _thumbFor"):src.index("/* An edit to the shared manifest")]
         # Chunked pictures still go through _syncFileBlob; it now also takes the NAME, because a
         # blob with no type has a blob: URL that `background-image` will not load -- which is what
@@ -290,7 +296,7 @@ class TestSyncedFolderThumbnails(unittest.TestCase):
         or that reaches for the DRIVE's delete (FilesIdx), would be an unguarded way to remove
         someone's files off every machine they own. The screen was read-only when this test was
         written; it is not any more, so the assertion is about the ROUTE rather than the button."""
-        src = open(APP, encoding="utf-8").read()
+        src = client_source()
         # From the renderer to the end of it — an offset window would silently stop covering the
         # handlers as the view grows, which is how a check quietly starts testing nothing.
         i = src.index("async function _renderSyncedRoot")
@@ -326,7 +332,7 @@ def test_the_more_sheet_offers_every_view_the_sidebar_does():
 
     root = Path(__file__).resolve().parents[2]
     shell = (root / "templates" / "client.html").read_text(encoding="utf-8")
-    app = (root / "static" / "js" / "client" / "app.js").read_text(encoding="utf-8")
+    app = client_source()
 
     # Sidebar entries (the desktop nav), minus the ones the phone's bottom bar already carries.
     sidebar = set(re.findall(r'class="nav-item"\s+data-view="([a-z0-9_-]+)"', shell))
@@ -447,7 +453,7 @@ def test_media_center_visibility_requires_admin_or_explicit_permission():
     import subprocess
     from pathlib import Path
     root = Path(__file__).resolve().parents[2]
-    app = (root / 'static/js/client/app.js').read_text()
+    app = client_source()
     start = app.index('  function _mediaAllowed()')
     function = app[start:app.index('\n', start)]
     script = "let GUEST=false,IS_ADMIN=false,_aiAuth=null;" + function + """

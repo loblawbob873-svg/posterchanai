@@ -1,5 +1,6 @@
 from pathlib import Path
 import subprocess
+from tests.client_source import client_source
 
 ROOT = Path(__file__).resolve().parents[2]
 
@@ -11,7 +12,7 @@ def test_effects_return_runtime():
 
 
 def test_effects_has_a_persistent_return_control_and_clears_new_chat_context():
-    source = (ROOT/'static/js/client/app.js').read_text()
+    source = client_source()
     mount = source[source.index('  async function aiMount('):source.index('  async function aiLoadConversations(')]
     assert 'id="ai-back-social" hidden>← Back to Social</button>' in mount
     assert "$('#ai-back-social').onclick=()=>_returnFromEffect(_ai.fxReturn)" in mount
@@ -42,7 +43,7 @@ on=false;assert.equal(captureReturnTarget(),null);
 
 
 def test_effects_conversation_creation_does_not_override_a_new_selection():
-    source = (ROOT/'static/js/client/app.js').read_text()
+    source = client_source()
     helpers=source[source.index('  function _effectReturnValid('):source.index('  async function launchEffectStudio(')]
     start=source[source.index('  async function startEffectStudio('):source.index('  // Telegram-style Effects studio:')]
     new=source[source.index('  async function aiNewConversation('):source.index('  async function aiDeleteConversation(')]
