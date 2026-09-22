@@ -14,7 +14,6 @@ import datetime
 import json
 import glob
 import uuid
-import signal
 import asyncio
 from collections import deque
 import logging
@@ -943,7 +942,7 @@ async def _main(cfg: dict) -> None:
                 return
         if await store.add_event(ev, origin="wot"):
             _fh_mark(eid)   # mark seen ONLY after a successful store (so a transient fail can retry)
-            server.subs.fanout(ev, server._send)
+            server.subs.fanout(ev, server._send, server._can_serve_event)
             # Thread completion: a reply may e-tag parents we don't have. Backfill the ancestor
             # chain (bounded + deduped, parents may be outside the WoT → origin='ancestor') so
             # threads aren't orphaned. This used to run in the sync sweep (off by default now), so

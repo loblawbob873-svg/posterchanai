@@ -139,3 +139,112 @@ def test_the_shipped_client_authenticates_for_a_read_addressed_to_it():
     run = subprocess.run(["node", str(ROOT / "tests/client/nip78_addressed_auth_runtime.mjs")],
                          cwd=ROOT, text=True, capture_output=True, timeout=30)
     assert run.returncode == 0, run.stdout + run.stderr
+
+
+# ---- what a security review of the change above found, each verified to fail without its fix ----
+
+def test_a_private_note_that_happens_to_name_somebody_is_not_shared_with_them():
+    """`p` IS NOT AN ACCESS GRANT IN NIP-78, and this relay stores 30078 written by any client.
+
+    "Whoever is p-tagged may read it" would impose a rule on strangers' app data that their app
+    never agreed to — a note ABOUT a contact, a mention, a bot's address, an attribution. So the
+    grant is scoped to the documents that ARE a share (`l=pcai-musicshare` AND a matching `d`),
+    and everything else stays the author's alone however it is tagged."""
+    note = build_event(SHARER, 30078, "ciphertext",
+                       [["d", "pcai:note:abc"], ["p", _pk(RECIPIENT)]])
+    srv = _server([note])
+    events, closed = _read(srv, object(), [{"kinds": [30078], "#p": [_pk(RECIPIENT)]}],
+                           authed=[_pk(RECIPIENT)])
+    assert events == [], "a p-tagged private note was served to the pubkey it names"
+    assert not closed
+
+    # Half a share is not a share: either tag alone is one anybody can write onto anything.
+    for tags in ([["d", "pcai:musicshare:x:y"], ["p", _pk(RECIPIENT)]],
+                 [["d", "pcai:note:abc"], ["p", _pk(RECIPIENT)], ["l", "pcai-musicshare"]]):
+        srv = _server([build_event(SHARER, 30078, "c", tags)])
+        events, _c = _read(srv, object(), [{"kinds": [30078], "#p": [_pk(RECIPIENT)]}],
+                           authed=[_pk(RECIPIENT)])
+        assert events == [], f"a half-labelled document was treated as a share: {tags}"
+
+
+def test_a_document_addressed_to_a_third_party_is_not_mine_to_read():
+    """The direct negative for the new branch: authenticated, asking with a filter I AM allowed to
+    send, about a share somebody addressed to a third person."""
+    share = _share(_pk(STRANGER))
+    srv = _server([share])
+    me = _pk(RECIPIENT)
+    events, closed = _read(srv, object(), [{"kinds": [30078], "#p": [me]}], authed=[me])
+    assert events == [], "a share addressed to a third party was served"
+    assert not closed
+
+
+def test_asking_for_several_recipients_at_once_is_refused():
+    share = _share(_pk(RECIPIENT))
+    srv = _server([share])
+    me = _pk(RECIPIENT)
+    events, closed = _read(srv, object(),
+                           [{"kinds": [30078], "#p": [me, _pk(STRANGER)]}], authed=[me])
+    assert events == [] and closed and "auth-required" in closed[0]
+
+    # Two filters, each bound to a different person, is the same ask wearing a different shape.
+    events, closed = _read(srv, object(),
+                           [{"kinds": [30078], "#p": [me]}, {"kinds": [30078], "#p": [_pk(STRANGER)]}],
+                           authed=[me])
+    assert events == [] and closed and "auth-required" in closed[0]
+
+
+def test_a_bound_filter_cannot_carry_an_unbound_one_into_the_live_stream():
+    """THE GATE IN `_on_req` ONLY EVER GUARDED THE STORED PASS, and the live half is where the
+    private libraries actually travel.
+
+    Every filter in a REQ is registered for live delivery, and five of the seven `fanout` call
+    sites passed no gate at all — including the one inside `backfill_author`, which restores Notes,
+    the vault, the calendar, the addressbook, Budget and the files index from the private mirrors.
+    So: pair a filter bound to yourself with an unbound sibling, hold the socket, and be handed
+    another user's library the moment they press "sync my data". Nothing logs it."""
+    srv = _server([])
+    me, conn = _pk(RECIPIENT), object()
+    events, closed = _read(srv, conn, [{"kinds": [30078], "#p": [me]}, {"kinds": [30078]}],
+                           authed=[me])
+    assert not closed, "the REQ itself is allowed — the leak was in what it registered"
+
+    srv.sent = []
+    victims_note = build_event(SHARER, 30078, "ciphertext", [["d", "pcai:note:private"]])
+    srv.subs.fanout(victims_note, srv._send, srv._can_serve_event)
+    assert srv.sent == [], "a live 30078 was fanned out to a subscription that may not read it"
+
+    # And the share this connection IS entitled to still arrives, or the fix broke the feature.
+    srv.sent = []
+    srv.subs.fanout(_share(me), srv._send, srv._can_serve_event)
+    assert [m[0] for _c, m in srv.sent] == ["EVENT"], "the recipient stopped receiving live shares"
+
+
+def test_fanout_has_no_ungated_default():
+    """The five leaking call sites all took a default that meant "send it to everybody". A default
+    like that gets taken by whoever adds the next one, so there is no default."""
+    srv = _server([])
+    with pytest.raises(TypeError):
+        srv.subs.fanout(_share(_pk(RECIPIENT)), srv._send)
+
+
+def test_a_count_cannot_ride_along_on_a_bound_filter():
+    """`count_filtered` counts each filter SEPARATELY while the gate validated the UNION of
+    `authors`, so one bound filter carried an unbound sibling and the answer was a count of every
+    user's private documents. No content and no ids — but "how many notes does this instance hold
+    for everyone" is not the caller's to know."""
+    import asyncio
+    me = _pk(SHARER)
+    srv = _server([build_event(SHARER, 30078, "c", [["d", "pcai:note:1"]]),
+                   build_event(RECIPIENT, 30078, "c", [["d", "pcai:note:2"]])])
+    conn = object()
+    srv._auth_pubkeys[conn] = {me}
+    srv.sent = []
+    asyncio.run(srv._on_count(conn, "c1", [{"kinds": [30078], "authors": [me]}, {"kinds": [30078]}]))
+    kinds = [m[0] for _c, m in srv.sent]
+    assert "COUNT" not in kinds, "a mixed COUNT answered with everybody's private documents"
+    assert any(k == "CLOSED" for k in kinds)
+
+    # The ordinary, fully-bound count still works.
+    srv.sent = []
+    asyncio.run(srv._on_count(conn, "c2", [{"kinds": [30078], "authors": [me]}]))
+    assert [m[0] for _c, m in srv.sent] == ["COUNT"]

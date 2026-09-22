@@ -20,7 +20,10 @@ def runtime():
     fresh = {**cfg}
     store = SimpleNamespace(has_event=AsyncMock(return_value=False), add_event=AsyncMock(return_value=True), extend_preserve_pubkeys=Mock())
     gate = Mock();gate.is_member.return_value=True
-    server = SimpleNamespace(subs=SimpleNamespace(fanout=Mock()), _send=Mock())
+    # `_can_serve_event` is the per-connection read gate every fanout must be handed (a live
+    # kind-30078 goes to whoever may read it, never to every open subscription).
+    server = SimpleNamespace(subs=SimpleNamespace(fanout=Mock()), _send=Mock(),
+                             _can_serve_event=Mock(return_value=True))
     env = {**vars(thread), 'cfg':cfg, '_bl':cfg['blocked_langs'], '_bw':cfg['blocked_words'], '_read_config':lambda:fresh, 'store':store,'gate':gate,'server':server, 'verify_event':verify_event, 'blocked_word':blocked_word,'blocked_language':blocked_language,'_FH_SEEN':set(),'_fh_mark':Mock()}
     exec(compile(ast.fix_missing_locations(ast.Module(body=[firehose,reload_fn],type_ignores=[])),thread.__file__,'exec'),env)
     return env, fresh, store, server

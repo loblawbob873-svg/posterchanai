@@ -244,7 +244,10 @@ def firehose_env(node_pubkey=NODE, members=(), vmhost=True, peers=()):
            "vmhost_enabled": vmhost, "vmhost_peer_hosts": list(peers)}
     store = SimpleNamespace(has_event=AsyncMock(return_value=False), add_event=AsyncMock(return_value=True))
     gate = NobodyGate(members=members)
-    srv = SimpleNamespace(subs=SimpleNamespace(fanout=Mock()), _send=Mock())
+    # Every fanout is handed `_can_serve_event`, the per-connection read gate — a live event goes
+    # to the subscriptions allowed to see it, never to all of them.
+    srv = SimpleNamespace(subs=SimpleNamespace(fanout=Mock()), _send=Mock(),
+                          _can_serve_event=Mock(return_value=True))
     env = {**vars(thread), "cfg": cfg, "_bl": set(), "_bw": set(), "store": store, "gate": gate,
            "server": srv, "verify_event": verify_event, "_FH_SEEN": set(), "_fh_mark": Mock()}
     exec(compile(ast.fix_missing_locations(ast.Module(body=[_fn("_firehose_event")], type_ignores=[])),
