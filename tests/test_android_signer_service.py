@@ -44,6 +44,7 @@ import subprocess
 import tempfile
 
 import pytest
+from tests.client_source import client_source
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 ANDROID = os.path.join(ROOT, "mobile", "android")
@@ -281,7 +282,7 @@ def test_the_subscription_asks_for_a_window_not_for_now():
     assert int(got["since"]) == 1000000 - int(got["skew"])
     assert int(got["floor"]) == 0, "a fresh device's clock must not produce a negative since"
 
-    js = _read(APP_JS)
+    js = client_source()
     m = re.search(r"NIP46_SINCE_SKEW\s*=\s*(\d+)", js)
     assert m, "NIP46_SINCE_SKEW is gone from the web signer"
     assert int(m.group(1)) == int(got["skew"]), (
@@ -488,7 +489,7 @@ def test_the_web_half_hands_over_and_stops_listening_itself():
     up, and only then close these sockets. If it is not confirmed, this half must carry on — which is
     also what happens in a browser and on the desktop build, where there is no service at all.
     """
-    js = _read(APP_JS)
+    js = client_source()
     assert "_pushNative" in js and "_standDown" in js
     # The pairing path hands over only AFTER confirming, and the resume path opens nothing if the
     # service took the job.
@@ -509,7 +510,7 @@ def test_the_secret_is_never_handed_to_the_service():
     obvious way to write `_pushNative` is to serialise the session objects wholesale, which would
     include it.
     """
-    js = _read(APP_JS)
+    js = client_source()
     push = js[js.index("async _pushNative()"):]
     push = push[:push.index("_standDown")]
     assert "secret" not in push, "the pairing secret is being published to the native service"
@@ -694,7 +695,7 @@ def test_a_new_pairing_never_revokes_an_existing_one_by_name():
     Measured after removing it: four same-named devices pair, all four get their ACK, all four rows
     persist, and no extra dialog appears.
     """
-    js = _read(APP_JS)
+    js = client_source()
     body = js[js.index("async function onQrScanned(uri)"):]
     body = body[:body.index("await Nip46Signer.start(uri)")]
     assert "revoke(" not in body, (
@@ -719,7 +720,7 @@ def test_the_battery_check_runs_at_boot_and_re_asks_on_every_new_build():
     memory stops being keyed on the BUILD. "Asked once, ever" goes quiet permanently the first time
     somebody says not now — and an app update is exactly the moment the restriction comes back.
     """
-    js = _read(APP_JS)
+    js = client_source()
     assert "_signerBatteryCheck()" in js, "the battery check is never called"
     body = js[js.index("async function _signerBatteryCheck()"):]
     body = body[:body.index("async function _signerBackgroundHint")]
@@ -745,7 +746,7 @@ def test_a_fresh_pairing_checks_doze_after_the_service_is_wanted():
     desktop waits until somebody wakes the phone.  The check belongs after ``start`` has published
     the session and kicked the service, never before it.
     """
-    js = _read(APP_JS)
+    js = client_source()
     body = js[js.index("async function onQrScanned(uri)"):js.index("// ---------- boot ----------")]
     paired = body.index("await Nip46Signer.start(uri)")
     doze = body.index("await _signerBatteryCheck()")
