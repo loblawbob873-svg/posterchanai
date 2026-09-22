@@ -16886,7 +16886,8 @@
       // Same button, same rule as the sidebar's: a guest is offered a way IN, not a second way out.
       (GUEST ? ['__login','user','Log in'] : ['logout','logout','Logout'])]
       .filter(([v])=> !(window.PC_NOSTR_ONLY && v==='translate') && !(window.PC_NOSTR_ONLY && v==='ai')
-                   && !(window.PC_NOSTR_ONLY && v==='websearch')   // the search runs on the instance, so it needs one
+                   // Web Search stays on a nostr-only node: SearXNG ships with every install now, and
+                   // websearch.js hides its AI overview/summarize there. (_standalone() still hides it.)
                    // The Terminal is the sheet's whole purpose on a phone: the sidebar is hidden
                    // there, so a view missing from this LIST is a view with no way in — which is
                    // exactly how Email was unreachable before it got its own entry. It is also the

@@ -255,7 +255,7 @@
             <button class="nav-item active" data-view="global"><svg class="ic"><use href="#i-globe"></use></svg><span>Social</span></button>
             <!-- Web Search: the instance's SearXNG, with Save to Notes / Share / AI summaries. Top level
                  rather than inside Discover — it is a thing you reach for mid-thought, like AI. -->
-            {% if not nostr_only %}<button class="nav-item" data-view="websearch"><svg class="ic"><use href="#i-search"></use></svg><span>Web Search</span></button>{% endif %}
+            {# Web Search is NOT nostr_only-guarded: SearXNG comes with every install, the nostr-only one included (install_nostr_only → setup_searxng), and websearch.js already hides the AI overview/summarize there. #}<button class="nav-item" data-view="websearch"><svg class="ic"><use href="#i-search"></use></svg><span>Web Search</span></button>
             {% if not nostr_only %}<button class="nav-item" data-view="terminal"><svg class="ic"><use href="#i-terminal"></use></svg><span>Terminal</span></button>{% endif %}
             <!-- Virtual Machines: PosterChan VM hosts, managed over Nostr. NOT nostr_only-guarded — the hosts
                  are other servers reached with a key and relays, so it works on any node and in a bundle. -->
