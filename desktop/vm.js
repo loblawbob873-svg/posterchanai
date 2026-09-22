@@ -60,6 +60,15 @@ function qemu3d(runner=run){
     .then(r=>!(r.ok||r.out) ? true : /virtio-(?:vga|gpu)-gl/.test(r.out+'\n'+r.error));
   return _gl;
 }
+/* WHICH DEVICE MODELS THIS QEMU HAS, asked of the binary once per process (vmusb.js: USB passthrough needs `usb-host`,
+ * which Gentoo's default USE=-usb leaves out). null = could not ask, which callers read as "unknown", never "no". */
+let _qdevs=null;
+function qemuDevices(runner=run){
+  if(!_qdevs) _qdevs=runner(process.env.PC_QEMU_BIN||'/usr/bin/qemu-system-x86_64',['-device','help'],15000)
+    .then(r=>{const names=new Set([...(r.out+'\n'+r.error).matchAll(/name "([^"]+)"/g)].map(m=>m[1]));return names.size?names:null;});
+  return _qdevs;
+}
+async function qemuHas(dev){const n=await qemuDevices();return n?n.has(dev):null;}
 function displayXml(gl){
   return gl
     ? `<graphics type="spice" autoport="yes"><listen type="none"/><gl enable="yes"/></graphics>
@@ -370,4 +379,9 @@ async function view(name){
    * above as well, rather than allowing a different PATH entry to win. */
   return launchViewer('/usr/bin/'+bin,args);
 }
-module.exports={available,list,details,update,addDisk,changeIso,ejectIso,bootDisk,addNetwork,setNetwork,nicXml,nicOf,isBridge,gamingMouse,create,action,remove,view,launchViewer,cleanName,successorInstaller,qemu3d,displayXml};
+const usbPass=require('./vmusb').make({virsh,cleanName,root,qemuHas});
+const usbList=()=>usbPass.list();
+const usbAttach=(name,opts)=>usbPass.attach(name,opts||{});
+const usbDetach=(name,opts)=>usbPass.detach(name,opts||{});
+const usbDevices=async name=>{name=cleanName(name);return name?{ok:true,devices:await usbPass.vmDevices(name)}:{ok:false,error:'invalid VM name'};};
+module.exports={usbList,usbAttach,usbDetach,usbDevices,qemuHas,available,list,details,update,addDisk,changeIso,ejectIso,bootDisk,addNetwork,setNetwork,nicXml,nicOf,isBridge,gamingMouse,create,action,remove,view,launchViewer,cleanName,successorInstaller,qemu3d,displayXml};

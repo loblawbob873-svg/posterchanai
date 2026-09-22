@@ -176,7 +176,7 @@ PC_MESA_REQUIRED_CARDS="virgl nouveau"
 #
 #PACKAGE CONFIGURATION
 BASE_PACKAGES="sys-boot/efibootmgr net-print/cups-filters net-misc/networkmanager net-wireless/bluez net-fs/sshfs app-shells/starship dev-util/sh sys-boot/plymouth sys-power/acpid app-arch/zip dev-python/virtualenv sys-apps/flatpak sys-power/powertop app-shells/bash-completion sys-power/cpupower sys-power/upower media-libs/gexiv2 media-plugins/gst-plugins-pulse mail-mta/postfix app-admin/sysstat sys-apps/smartmontools net-fs/nfs-utils net-firewall/nftables dev-python/pip sys-fs/inotify-tools net-analyzer/nmap app-misc/screen app-portage/gentoolkit sys-fs/dosfstools app-admin/sudo sys-apps/systemd sys-apps/util-linux sys-apps/hwdata app-eselect/eselect-repository dev-vcs/git sys-block/parted sys-process/btop net-vpn/wireguard-tools app-editors/neovim app-misc/fastfetch sys-fs/btrfs-progs net-print/cups sys-firmware/seabios-bin sys-firmware/edk2-bin app-emulation/libvirt app-emulation/qemu app-emulation/virt-viewer app-emulation/spice-vdagent app-crypt/swtpm"
-SPECIAL_PACKAGE_USE=("kde-apps/kio-extras samba mtp" "app-db/postgresql icu lz4 nls pam readline server ssl system zlib zstd uuid" "dev-build/meson test test-full" "dev-qt/qtwebengine bindist" "media-sound/sox -opus" "media-video/vlc -opus -theora -vpx" "media-video/ffmpeg webp libass libplacebo" "dev-qt/qtpositioning geoclue" "media-libs/libvpx postproc" "dev-python/pillow webp" "gui-libs/gtk colord sysprof" "media-libs/freetype harfbuzz" "dev-lang/php gmp sodium sysvipc calendar bcmath exif bzip2 intl ctype curl fileinfo filter gd iconv ssl posix session simplexml xmlreader xmlwriter zip zlib postgres png opcache jit cli fpm zip pdo" "net-im/synapse postgres" "net-p2p/qbittorrent webui" "app-crypt/certbot certbot-nginx" "acct-user/git gitea" "app-admin/vaultwarden web postgres" "media-gfx/imagemagick -postscript" "media-gfx/imagemagick -postscript dev-libs/jemalloc statsv" "media-libs/libsdl2 -pipewire vulkan opengl" "media-video/obs-studio pipewire wayland" "media-video/pipewire sound-server bluetooth" "x11-libs/libXrandr abi_x86_32" "mail-mta/postfix sasl" "app-emulation/qemu spice usbredir pipewire virgl" "app-emulation/libvirt qemu virt-network" "app-emulation/virt-viewer spice")
+SPECIAL_PACKAGE_USE=("kde-apps/kio-extras samba mtp" "app-db/postgresql icu lz4 nls pam readline server ssl system zlib zstd uuid" "dev-build/meson test test-full" "dev-qt/qtwebengine bindist" "media-sound/sox -opus" "media-video/vlc -opus -theora -vpx" "media-video/ffmpeg webp libass libplacebo" "dev-qt/qtpositioning geoclue" "media-libs/libvpx postproc" "dev-python/pillow webp" "gui-libs/gtk colord sysprof" "media-libs/freetype harfbuzz" "dev-lang/php gmp sodium sysvipc calendar bcmath exif bzip2 intl ctype curl fileinfo filter gd iconv ssl posix session simplexml xmlreader xmlwriter zip zlib postgres png opcache jit cli fpm zip pdo" "net-im/synapse postgres" "net-p2p/qbittorrent webui" "app-crypt/certbot certbot-nginx" "acct-user/git gitea" "app-admin/vaultwarden web postgres" "media-gfx/imagemagick -postscript" "media-gfx/imagemagick -postscript dev-libs/jemalloc statsv" "media-libs/libsdl2 -pipewire vulkan opengl" "media-video/obs-studio pipewire wayland" "media-video/pipewire sound-server bluetooth" "x11-libs/libXrandr abi_x86_32" "mail-mta/postfix sasl" "app-emulation/qemu spice usbredir pipewire virgl usb" "app-emulation/libvirt qemu virt-network" "app-emulation/virt-viewer spice")
 # THE SAME ENCODERS THE APP ACTUALLY INVOKES, or this desktop can play media and not make any.
 # Measured from the source rather than guessed: `libx264` (127 call sites), `h264_vaapi` (66),
 # `h264_nvenc` (57), `h264_amf` (10), `libvpx`/`libvpx-vp9` (the alpha WebM path), `libmp3lame`,
@@ -2375,6 +2375,23 @@ PROFILE
 	udevadm control --reload >/dev/null 2>&1
 	udevadm trigger --action=add --subsystem-match=backlight >/dev/null 2>&1
 	udevadm trigger --action=add --subsystem-match=leds >/dev/null 2>&1
+
+	# USB DEVICES FOR "THIS COMPUTER"'S VIRTUAL MACHINES, OPENABLE BY THE PERSON AT THE SEAT.
+	#
+	# The desktop's VMs run on qemu:///session: libvirt and QEMU run as the signed-in account, and a session
+	# libvirt cannot chown anything — so QEMU opens /dev/bus/usb/BBB/DDD itself, as that account, and the node
+	# is root-owned 0664. Without a grant every "Add USB device" fails with Permission denied (desktop/vmusb.js
+	# measures it and names this file). `uaccess` is the grant the seat already gets for its sound card and
+	# camera: logind gives the ACTIVE session an ACL, so it follows whoever is signed in and nobody else — no
+	# group to add every per-npub account to. Hubs are left out (a hub is everything plugged into it). The file
+	# must sort before 73-seat-late.rules, which is what turns the tag into an ACL.
+	cat >/etc/udev/rules.d/70-posterchan-usb-passthrough.rules <<-'UDEV'
+	SUBSYSTEM=="usb", ENV{DEVTYPE}=="usb_device", ATTR{bDeviceClass}!="09", TAG+="uaccess"
+	UDEV
+	udevadm control --reload >/dev/null 2>&1
+	# `change`, not `add`: re-running rules on devices already present is enough for the ACL, and does not
+	# re-announce every USB device to everything listening for hot-plug.
+	udevadm trigger --action=change --subsystem-match=usb >/dev/null 2>&1
 
 	# THE POWER MODE, WRITABLE WITHOUT ROOT — the same problem as the backlight, one directory over.
 	# /sys/firmware/acpi/platform_profile is root:root 0644, so the panel can READ that this machine

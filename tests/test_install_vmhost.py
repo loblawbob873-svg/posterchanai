@@ -19,7 +19,8 @@ REAL_TOOLS = ["bash", "sh", "ls", "cat", "grep", "sed", "awk", "tr", "mkdir", "c
 
 STUBS = {
     "sudo": 'if [ "$1" = "-u" ]; then echo "sudo-u $2 ${*:3}" >> "$STUB_LOG"; shift 2; fi; exec "$@"',
-    "emerge": 'echo "emerge $*" >> "$STUB_LOG"; install_tools',
+    "emerge": ('echo "emerge $*" >> "$STUB_LOG"; case " $* " in *" --changed-use "*) touch "$STUB_STATE/qemu-rebuilt";; '
+               '*) install_tools;; esac'),
     "apt-get": 'echo "apt-get $*" >> "$STUB_LOG"; case " $* " in *" install "*) install_tools;; esac',
     "pacman": 'echo "pacman $*" >> "$STUB_LOG"; install_tools',
     "dnf": 'echo "dnf $*" >> "$STUB_LOG"; install_tools',
@@ -99,6 +100,11 @@ class Host:
         self.images.mkdir(parents=True, exist_ok=True)
         self.log = tmp / "calls.log"
         self.distro, self.fstype = distro, fstype
+        # the emulator: `-device help` lists usb-host unless the test says this build lacks it (Gentoo USE=-usb)
+        self.qemu = tmp / "qemu-system-x86_64"
+        self.qemu.write_text('#!/bin/bash\nif [ -f "$STUB_STATE/qemu-no-usb" ] && [ ! -f "$STUB_STATE/qemu-rebuilt" ]; then\n'
+                             '  echo \'name "usb-redir", bus usb-bus\'; exit 0; fi\necho \'name "usb-host", bus usb-bus\'\n')
+        self.qemu.chmod(0o755)
 
     def run(self, **extra):
         self.log.write_text("")
@@ -108,7 +114,7 @@ class Host:
             "STUB_GROUPS": "libvirt kvm qemu", "REAL_STAT": shutil.which("stat"),
             "VMHOST_USER": "svc", "VMHOST_STORAGE": str(self.storage), "VMHOST_LIBVIRT_IMAGES": str(self.images),
             "VMHOST_ETC": str(self.etc), "VMHOST_POLKIT_ACTIONS": str(self.polkit), "VMHOST_KVM_DEV": str(self.kvm),
-            "VMHOST_NETWORK_XML": str(self.netxml), **extra,
+            "VMHOST_NETWORK_XML": str(self.netxml), "VMHOST_QEMU_BIN": str(self.qemu), **extra,
         }
         script = (f'set -e; source "{ROOT}/scripts/install/utils.sh"; source "{ROOT}/scripts/install/detect.sh"; '
                   f'source "{ROOT}/scripts/install/vmhost.sh"; DISTRO={self.distro}; setup_vmhost')
@@ -249,3 +255,27 @@ def test_without_docker_no_forward_unit(tmp_path):
     assert rc == 0, out
     assert not (units / "posterchan-vm-forward.service").exists()
     assert not any("posterchan-vm-forward" in c for c in calls)
+
+
+def test_a_gentoo_qemu_without_usb_host_is_rebuilt_with_use_usb_once(tmp_path):
+    """LIVE (nas.lan): Gentoo's QEMU is USE=-usb by default, so there is no usb-host device and every USB attach dies
+    inside QEMU. The installer asks the EMULATOR, writes the USE flag once and rebuilds with --changed-use."""
+    h = Host(tmp_path, tools=True)
+    (h.state / "qemu-no-usb").write_text("")
+    rc, out, calls = h.run()
+    assert rc == 0, out
+    assert "emerge --oneshot --changed-use app-emulation/qemu" in calls, calls
+    use = (h.etc / "portage" / "package.use" / "posterchan-vmhost").read_text()
+    assert use.splitlines() == ["app-emulation/qemu usb"]
+    assert "QEMU now has USB passthrough" in out
+    rc, out, calls = h.run()
+    assert rc == 0 and not any(c.startswith("emerge") for c in calls), calls
+    assert (h.etc / "portage" / "package.use" / "posterchan-vmhost").read_text() == use
+    assert "QEMU has USB passthrough (usb-host)" in out
+
+
+def test_a_qemu_with_usb_host_is_left_alone(tmp_path):
+    h = Host(tmp_path, tools=True)
+    rc, out, calls = h.run()
+    assert rc == 0 and not any(c.startswith("emerge") for c in calls)
+    assert not (h.etc / "portage").exists()

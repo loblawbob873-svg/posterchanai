@@ -56,6 +56,45 @@ vmhost_packages() {
     print_success "Installed libvirt and QEMU"
 }
 
+vmhost_qemu_has() { "$1" -device help 2>&1 | grep -q "name \"$2\""; }
+
+vmhost_qemu_usb() {
+    # USB PASSTHROUGH NEEDS QEMU'S `usb-host` DEVICE, and Gentoo builds app-emulation/qemu with USE=-usb by default,
+    # which leaves it out. Measured on nas.lan: the first real attach died inside QEMU with "'usb-host' is not a valid
+    # device model name" after libvirt had accepted it. Asked of the emulator itself, not of the USE flags, so a
+    # binary package or another distro's build answers the same question. A VM's Devices section says this too.
+    local bin="${VMHOST_QEMU_BIN:-/usr/bin/qemu-system-x86_64}" use_dir use_file
+    if [ ! -x "$bin" ]; then
+        vmhost_log "no $bin — skipping the USB passthrough check"
+        return 0
+    fi
+    if vmhost_qemu_has "$bin" usb-host; then
+        print_success "QEMU has USB passthrough (usb-host)"
+        return 0
+    fi
+    case "$DISTRO" in
+        gentoo)
+            use_dir="${VMHOST_ETC:-/etc}/portage/package.use"
+            use_file="$use_dir/posterchan-vmhost"
+            if ! grep -qsx 'app-emulation/qemu usb' "$use_file"; then
+                sudo mkdir -p "$use_dir" && echo 'app-emulation/qemu usb' | sudo tee -a "$use_file" >/dev/null \
+                    && vmhost_log "USE=usb for app-emulation/qemu written to $use_file"
+            fi
+            vmhost_log "Rebuilding QEMU with USB passthrough (USE=usb) — this can take a while"
+            sudo emerge --oneshot --changed-use app-emulation/qemu \
+                || { print_warning "Rebuilding QEMU failed — USB devices cannot be given to VMs until it succeeds"; return 0; } ;;
+        arch) sudo pacman -S --needed --noconfirm qemu-hw-usb-host ;;
+        fedora) sudo dnf install -y qemu-device-usb-host ;;
+        suse) sudo zypper --non-interactive install qemu-hw-usb-host ;;
+        *) : ;;
+    esac
+    if vmhost_qemu_has "$bin" usb-host; then
+        print_success "QEMU now has USB passthrough — VMs that are already running get it when they are restarted"
+    else
+        print_warning "QEMU still has no usb-host device: USB devices cannot be given to VMs on this host"
+    fi
+}
+
 vmhost_qemu_group() {
     # The group QEMU runs as: Debian/Ubuntu `libvirt-qemu`, everyone else `qemu`.
     local g
@@ -276,6 +315,7 @@ setup_vmhost() {
 
     print_step "Packages"
     vmhost_packages || return 1
+    vmhost_qemu_usb
     qgroup="$(vmhost_qemu_group)"
 
     print_step "Service user '$user'"
