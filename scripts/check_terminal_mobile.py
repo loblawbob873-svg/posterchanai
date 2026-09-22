@@ -64,16 +64,17 @@ PAGE = """<!doctype html><meta charset="utf-8">
   const s = document.getElementById('tty-screen');
   s.innerHTML = '<div class="xterm"><div class="xterm-viewport"></div>' +
                 '<div class="xterm-screen"></div></div>';
-  const sel = document.getElementById('tty-host');
-  sel.innerHTML = '<option>server1 — verita84@server1.lan</option>';
-  /* "Still running" — the strip that makes a session started on the laptop resumable here. Filled
-   * with what _sessions() actually renders, because an EMPTY strip measures fine and is not the
-   * thing that can push the screen off the bottom of a 320px phone. */
+  /* The TABS — the strip that makes a session started on the laptop resumable here. Filled with
+   * what _paintSessions() actually renders, because an EMPTY strip measures fine and is not the
+   * thing that can push the screen off the bottom of a 320px phone. The menus are closed, as they
+   * are on screen: an open one is an overlay, not part of the bar's row. */
   const ss = document.getElementById('tty-sessions');
-  ss.innerHTML = '<span class="tty-sess-lbl">still running</span>' +
-    ['server1','nas','a-rather-long-host-name'].map(h =>
-      '<span class="tty-sess"><b>' + h + '</b><i>2h</i>' +
-      '<button>Attach</button><button class="tty-kill">Kill</button></span>').join('');
+  ss.innerHTML = ['local · #1','server1','nas · 2','a-rather-long-host-name · user@there: ~/src'].map((h, i) =>
+      '<span class="tty-sess tty-tab tty-ssh' + (i ? '' : ' active') + '"><i class="tty-dot"></i><b>' + h + '</b>' +
+      '<button class="tty-kill">×</button></span>').join('') +
+    '<button class="tty-tab-new" id="tty-tab-new">+</button>';
+  for(const id of ['tty-new-menu','tty-more-menu','tty-find-panel','tty-hist-panel'])
+    document.getElementById(id).hidden = true;
   document.getElementById('tty-state').textContent = 'connected to server1';
   const out = {};
   const bar = document.querySelector('.tty-bar'), keys = document.querySelector('.tty-keys');

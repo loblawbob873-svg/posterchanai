@@ -96,8 +96,12 @@ class TheLocalShellNeedsNothing(unittest.TestCase):
     def test_session_discovery_does_not_await_the_instance_on_desktop(self):
         """Host discovery was fixed first, but render still awaited _sessions and _sessions awaited
         the server.  That left the local PTY unusable until connectivity returned."""
-        body = _decomment(_fn(self.src, "async function _sessions()"))
-        self.assertIn("if(LOCAL()) _remoteSessions();", body)
+        body = _decomment(_fn(self.src, "async function _sessions(waitRemote)"))
+        # Only a NEW REMOTE tab waits for the remote list (it must name itself against it — see
+        # connect); opening the screen and every local tab do not.
+        self.assertIn("if(LOCAL() && !waitRemote) _remoteSessions();", body)
+        render = _decomment(_fn(self.src, "async function render(host)"))
+        self.assertIn("await _sessions();", render)
         self.assertNotIn("if(LOCAL()) await _remoteSessions", body)
         self.assertIn("else await _remoteSessions();", body)
 

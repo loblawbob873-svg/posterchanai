@@ -55,6 +55,45 @@
      * terminal. */
     const HIST = () => window.PCTermHistory || null;
     const LOCAL_HOST = { name: 'local', label: 'this computer', keyed: true, local: true };
+
+    /* THE PALETTE, in PosterChan's colours and READABLE ON ITS OWN BACKGROUND. xterm takes hex, not
+     * CSS variables, so this is the one place a colour is spelled out; the chrome around it uses the
+     * theme tokens. Every entry is measured against `background` by
+     * tests/client/test_terminal_palette_contrast.py: the default foreground ≥ 4.5:1, each of the
+     * sixteen ANSI colours ≥ 3:1 — which is why `black` is a slate and not black: `ls` and every
+     * prompt theme print in it, and ANSI black on a black terminal is text nobody can read.
+     * The terminal stays dark in every client theme on purpose; a shell's colours are chosen by
+     * programs that assume a dark screen. */
+    const TERM_THEME = {
+      background: '#07060e', foreground: '#e4e9ff',
+      cursor: '#3ce8ff', cursorAccent: '#07060e',
+      selectionBackground: 'rgba(60,232,255,.30)', selectionForeground: '#ffffff',
+      black: '#5b5f80', red: '#ff4f7b', green: '#2cf5a3', yellow: '#ffd545',
+      blue: '#5a9dff', magenta: '#ff5cf0', cyan: '#3ce8ff', white: '#c9d1ef',
+      brightBlack: '#7f84a8', brightRed: '#ff7c9e', brightGreen: '#72ffc6', brightYellow: '#fff07e',
+      brightBlue: '#8cbcff', brightMagenta: '#ff94f6', brightCyan: '#93f5ff', brightWhite: '#ffffff',
+    };
+    /* No monospace face is bundled (static/fonts holds Inter and Orbitron), so this is the best
+     * installed one: the coding faces first, then the platform defaults every OS has. */
+    const TERM_FONT = '"JetBrains Mono", "Cascadia Code", "Fira Code", ui-monospace, SFMono-Regular, '
+                    + 'Menlo, Consolas, "DejaVu Sans Mono", "Liberation Mono", monospace';
+
+    /* The cursor wears the THEME's neon — but only when it can be seen on the terminal's dark
+     * ground. Win98's navy or Professional's blue would be a cursor that vanishes. */
+    function _termTheme(){
+      const t = Object.assign({}, TERM_THEME);
+      try{
+        const v = getComputedStyle(document.documentElement).getPropertyValue('--neon').trim();
+        const m = /^#([0-9a-f]{6})$/i.exec(v);
+        if(m){
+          const lin = (c) => { c /= 255; return c <= 0.03928 ? c / 12.92 : Math.pow((c + 0.055) / 1.055, 2.4); };
+          const L = (h) => { const n = parseInt(h.slice(1), 16);
+            return 0.2126 * lin(n >> 16 & 255) + 0.7152 * lin(n >> 8 & 255) + 0.0722 * lin(n & 255); };
+          if((L(v) + 0.05) / (L(t.background) + 0.05) >= 4.5) t.cursor = v;
+        }
+      }catch(_){}
+      return t;
+    }
     const isLocal = (h) => String(h || '') === 'local';
     const localSid = (id) => 'local:' + id;
     const isLocalSid = (x) => /^local:/.test(String(x || ''));
@@ -78,6 +117,11 @@
      * the local/server session list may arrive in a different order on the destination monitor. */
     let handoffOrder = [], handoffScroll = null;
     const tabScroll = new Map();             // session id -> {pinned, aboveBottom}
+    /* What each shell calls itself (OSC 0/2 — every prompt sets `user@host: ~/dir`). It is what
+     * makes a tab say WHICH shell it is rather than only which machine. */
+    const titles = new Map();                // session id -> window title the shell set
+    /* A monitor handoff names the session the destination must show; an ordinary open never does. */
+    let _adopt = '';
     /* xterm's write callback means that its parser consumed the bytes; it does NOT mean Chromium
      * has finished laying out the enlarged scrollback element.  A large reattach measured in the
      * packaged desktop landed at scrollTop 2224 with an actual maximum of 3824 even though the
@@ -314,31 +358,48 @@
       _histPaint();
     }
 
+    /* ONE BAR, AND THE REST IS TERMINAL. The screen used to stack a host picker with five buttons, a
+     * full-width status line, a separate TABS row and the key bar over the emulator, and the shell
+     * got what was left — a fraction of its own window. Now the tabs, the + (which is where a host
+     * is chosen), the status and a handful of icon buttons share one slim strip; Detach and Kill
+     * live in ⋯; find and history float OVER the screen instead of pushing it down; and the key bar
+     * exists only where there is no physical keyboard (CSS: touch pointers and phone widths).
+     *
+     * Static markup — scripts/check_terminal_mobile.py lifts this literal out of the file. */
     function _shellHtml(){
       return `<div class="tty-wrap">
-        <div class="tty-bar">
-          <select class="input tty-host" id="tty-host" aria-label="Host"></select>
-          <button class="btn btn-neon small" id="tty-go" title="Open a separate terminal session">New tab</button>
-          <button class="btn btn-ghost small hidden" id="tty-stop" title="Leave it running">Detach</button>
-          <button class="btn btn-ghost small hidden tty-kill" id="tty-kill" title="End this session">Kill</button>
-          <button class="btn btn-ghost small hidden" id="tty-hist"
-                  title="Commands from your terminals">History</button>
-          <button class="btn btn-ghost small" id="tty-find" title="Find in terminal (Ctrl+Shift+F)">Find</button>
-          <button class="btn btn-ghost small" id="tty-font-less" title="Smaller terminal text" aria-label="Smaller terminal text">A−</button>
-          <button class="btn btn-ghost small" id="tty-font-more" title="Larger terminal text" aria-label="Larger terminal text">A+</button>
-          <span class="tty-state" id="tty-state"></span>
+        <div class="tty-bar" role="toolbar" aria-label="Terminal">
+          <div class="tty-sessions tty-tabs" id="tty-sessions" aria-label="Terminal tabs"></div>
+          <span class="tty-state" id="tty-state" role="status"></span>
+          <div class="tty-tools">
+            <button class="tty-ib hidden" id="tty-hist" title="Commands from your terminals"
+                    aria-label="Command history"><svg class="ic"><use href="#i-clock"></use></svg></button>
+            <button class="tty-ib" id="tty-find" title="Find in terminal (Ctrl+Shift+F)"
+                    aria-label="Find in terminal"><svg class="ic"><use href="#i-search"></use></svg></button>
+            <button class="tty-ib tty-txt" id="tty-font-less" title="Smaller terminal text" aria-label="Smaller terminal text">A−</button>
+            <button class="tty-ib tty-txt" id="tty-font-more" title="Larger terminal text" aria-label="Larger terminal text">A+</button>
+            <button class="tty-ib tty-txt" id="tty-more" title="More" aria-label="More terminal actions"
+                    aria-haspopup="menu" aria-expanded="false">···</button>
+          </div>
+          <div class="tty-menu" id="tty-new-menu" role="menu" aria-label="New terminal" hidden></div>
+          <div class="tty-menu tty-menu-end" id="tty-more-menu" role="menu" aria-label="Terminal actions" hidden>
+            <button class="hidden" id="tty-stop" role="menuitem" title="Leave it running">Detach<small>leave it running</small></button>
+            <button class="hidden tty-kill" id="tty-kill" role="menuitem" title="End this session">Kill session<small>stops what runs in it</small></button>
+            <button id="tty-more-font-reset" role="menuitem">Reset text size</button>
+          </div>
         </div>
-        <div class="tty-find" id="tty-find-panel" hidden>
-          <input class="input" id="tty-find-input" type="search" autocomplete="off"
-                 spellcheck="false" placeholder="Find in terminal" aria-label="Find in terminal">
-          <button class="btn btn-ghost small" id="tty-find-prev" title="Previous match">↑</button>
-          <button class="btn btn-ghost small" id="tty-find-next" title="Next match">↓</button>
-          <span id="tty-find-count" aria-live="polite">0 matches</span>
-          <button class="btn btn-ghost small" id="tty-find-close" title="Close find" aria-label="Close find">×</button>
+        <div class="tty-screen">
+          <div class="tty-fit" id="tty-screen"></div>
+          <div class="tty-find" id="tty-find-panel" hidden>
+            <input class="input" id="tty-find-input" type="search" autocomplete="off"
+                   spellcheck="false" placeholder="Find in terminal" aria-label="Find in terminal">
+            <button class="tty-ib tty-txt" id="tty-find-prev" title="Previous match">↑</button>
+            <button class="tty-ib tty-txt" id="tty-find-next" title="Next match">↓</button>
+            <span id="tty-find-count" aria-live="polite">0 matches</span>
+            <button class="tty-ib tty-txt" id="tty-find-close" title="Close find" aria-label="Close find">×</button>
+          </div>
+          <div class="tty-hist" id="tty-hist-panel" hidden></div>
         </div>
-        <div class="tty-hist" id="tty-hist-panel" hidden></div>
-        <div class="tty-sessions tty-tabs" id="tty-sessions" aria-label="Terminal tabs"></div>
-        <div class="tty-screen"><div class="tty-fit" id="tty-screen"></div></div>
         <div class="tty-keys" id="tty-keys" hidden>
           <button data-k="Escape">esc</button>
           <button data-k="Tab">tab</button>
@@ -357,10 +418,20 @@
       </div>`;
     }
 
-    function _state(msg, cls){
+    /* The status is a WORD OR TWO on the bar, never a line of its own: it used to be a full-width
+     * row, and a red "Could not refresh hosts; retrying…" over the shell cost a row of terminal to
+     * say something about a menu. The long form rides in the tooltip. */
+    let _stateT = null, _baseline = null;
+    function _state(msg, cls, long){
       const s = $('#tty-state'); if(!s) return;
+      if(_stateT){ clearTimeout(_stateT); _stateT = null; }
+      if(!msg && _baseline){ msg = _baseline.msg; cls = _baseline.cls; long = _baseline.long; }
       s.textContent = msg || '';
+      s.title = long || msg || '';
       s.className = 'tty-state' + (cls ? ' ' + cls : '');
+      /* Good news is momentary: "connected" fades back to whatever standing note the screen has
+       * (a browser's "no local shell"), so a lasting fact is not buried under a stale greeting. */
+      if(cls === 'ok') _stateT = setTimeout(() => { _stateT = null; if(s.isConnected) _state(''); }, 4000);
     }
 
     /* THIS MACHINE FIRST, when there is one. On PosterChanOS it is the only host anybody wants, and
@@ -372,13 +443,20 @@
 
     /* The host picker, repainted from `hosts` without disturbing a live session. Split out of
      * _wire so a server list that arrives LATE can be shown without re-binding the whole screen. */
+    /* The + menu IS the host picker now: this computer first (when it has a shell of its own), then
+     * every SSH host the node offers. Choosing one opens a NEW tab there. */
     function _paintHosts(){
-      const sel = $('#tty-host'); if(!sel) return;
-      const keep = sel.value;
-      sel.innerHTML = hosts.length
-        ? hosts.map(h => `<option value="${enc(h.name)}">${enc(h.name)} — ${enc(h.label)}</option>`).join('')
-        : '<option value="">no hosts configured</option>';
-      if(keep && hosts.some(h => h.name === keep)) sel.value = keep;
+      const box = $('#tty-new-menu'); if(!box) return;
+      const remote = hosts.filter(h => h && !h.local);
+      const loc = hosts.find(h => h && h.local);
+      box.innerHTML = (loc
+          ? `<button role="menuitem" data-new="local" class="tty-new-local"><b>Local shell</b>`
+            + `<small>${enc(loc.label)}</small></button>`
+          : `<div class="tty-menu-note">No local shell — a web browser cannot run one.</div>`)
+        + (remote.length ? '<div class="tty-menu-h">SSH</div>' : '')
+        + remote.map(h => `<button role="menuitem" data-new="${enc(h.name)}"><b>${enc(h.name)}</b>`
+            + `<small>${enc(h.label)}</small></button>`).join('')
+        + (remote.length ? '' : '<div class="tty-menu-note">No SSH hosts — add them in Admin → Nodes.</div>');
     }
 
     /* THE OTHER HOSTS, FETCHED BEHIND THE LOCAL ONE. Never awaited by anything that opens a shell —
@@ -411,7 +489,7 @@
         hosts = _withLocal(d.hosts);
         _paintHosts();
       }catch(_){
-        if(generation === _syncHostScope()) _state('Could not refresh hosts; retrying. Saved host choices are retained.', 'err');
+        if(generation === _syncHostScope()) _state('hosts: retrying', 'warn', 'Could not refresh the SSH host list; retrying. Saved hosts are kept.');
       }finally{
         if(generation === _hostsGeneration){ _hostsAsked = false; _scheduleHostsRefresh(); }
       }
@@ -457,7 +535,7 @@
         if(generation !== _syncHostScope()) return false;
         if(r.status === 403){
           hosts = _withLocal([]);
-          if(!hosts.length){ _state('the SSH terminal is switched off, or you are not on its list', 'err'); return false; }
+          if(!hosts.length){ _state('SSH off', 'err', 'The SSH terminal is switched off on this node, or you are not on its list.'); return false; }
           return true;
         }
         if(!r.ok) throw new Error('host list unavailable');
@@ -466,7 +544,7 @@
         if(!Array.isArray(d?.hosts)) throw new Error('invalid host list');
         hosts = _withLocal(d.hosts);
         if(d && d.available === false && !LOCAL()){
-          _state('this node has no SSH library installed — run install.sh', 'err');
+          _state('no SSH', 'err', 'This node has no SSH library installed — run install.sh.');
           return false;
         }
         return true;
@@ -474,8 +552,8 @@
         /* A node that cannot be reached is not a machine without a shell. */
         if(generation !== _syncHostScope()) return false;
         hosts = _withLocal(hosts);
-        if(hosts.length){ _state('Could not refresh hosts; retrying. Saved host choices are retained.', 'err'); return true; }
-        _state('could not reach the server; retrying host discovery', 'err'); return false;
+        if(hosts.length){ _state('hosts: retrying', 'warn', 'Could not refresh the SSH host list; retrying. Saved hosts are kept.'); return true; }
+        _state('offline · retrying', 'err', 'Could not reach the server; retrying host discovery.'); return false;
       }finally{ if(generation === _hostsGeneration) _scheduleHostsRefresh(); }
     }
 
@@ -483,12 +561,12 @@
       const box = $('#tty-screen'); if(!box || !XT()) return false;
       term = new (XT())({
         fontSize: fontSize(),
-        fontFamily: 'ui-monospace, SFMono-Regular, Menlo, Consolas, "DejaVu Sans Mono", monospace',
+        fontFamily: TERM_FONT,
         cursorBlink: true,
+        cursorStyle: 'bar',
         convertEol: false,
         scrollback: 5000,
-        theme: { background: '#07040f', foreground: '#d6e2ff', cursor: '#00f0ff',
-                 selectionBackground: 'rgba(0,240,255,.28)' },
+        theme: _termTheme(),
       });
       try{
         const F = window.FitAddon && (window.FitAddon.FitAddon || window.FitAddon);
@@ -581,6 +659,12 @@
         });
       }catch(_){}
       term.onData(d => { _histTyped(d); _send({ t: 'in', d }); });
+      try{ term.onTitleChange((t) => {
+        if(!sid) return;
+        const v = String(t || '').replace(/\s+/g, ' ').trim().slice(0, 60);
+        if(v === (titles.get(sid) || '')) return;
+        titles.set(sid, v); _paintSessions();
+      }); }catch(_){}
       /* The PTY has to be told the size, and it has to be told the size that xterm actually chose —
        * a mismatch is what makes a shell wrap in the wrong place and redraw over itself. */
       ro = (typeof ResizeObserver !== 'undefined') ? new ResizeObserver(() => _fit()) : null;
@@ -777,11 +861,17 @@
       };
     }
 
-    async function connect(){
-      const sel = $('#tty-host'); if(!sel) return;
-      host = sel.value;
+    /* The host a bare "new terminal" means: this computer when it has a shell, else the first
+     * host the node lists. */
+    function _defaultHost(){
+      const h = hosts.find(x => x && x.local) || hosts[0];
+      return h ? h.name : '';
+    }
+
+    async function connect(hostName){
+      host = String(hostName || _defaultHost() || '');
       const h = hosts.find(x => x.name === host);
-      if(!h){ _state('pick a host', 'err'); return; }
+      if(!h){ _state('no host', 'err', 'Pick a host from the + menu.'); return; }
       // Only ask when the host has no key on the server. Asking anyway would train people to type a
       // password into a box that did not need one — and this machine's own shell never needs one:
       // you are already logged in to it, which is how you are looking at this.
@@ -794,7 +884,7 @@
        * ACCOUNT holds on that host, and one of them can have been opened on another device since
        * the strip was last painted — a stale list picks a name that is taken, and a taken name is
        * the same shell all over again. */
-      try{ await _sessions(); }catch(_){}
+      try{ await _sessions(!h.local); }catch(_){}   // a REMOTE tab must see the remote list before naming itself
       _remember('');                       // a fresh connect is a NEW session, not the old one
       cursor = 0;
       _resetForReplay();
@@ -1051,7 +1141,7 @@
             // session was opened under, which is the one a reconnect has to name.
             if(m.label) label = m.label;
             if(label) asked.add(String(host || '') + '\u0000' + String(label));
-            _state((m.resumed ? 'reattached to ' : 'connected to ') + host, 'ok');
+            _state(m.resumed ? 'reattached' : 'connected', 'ok', (m.resumed ? 'Reattached to ' : 'Connected to ') + host);
             _chrome(true); _fit(); _focus();
             /* A reconnect is not a new terminal. If the person was reading scrollback when the
              * socket dropped, keep that deliberate position; forcing follow mode here yanked them
@@ -1176,6 +1266,16 @@
 
     /* Shells this ACCOUNT still has running. Without this a reload — or a second device — leaves a
      * session alive and unreachable, since the id lives in one browser's localStorage. */
+    /* What a tab is called: the MACHINE, then the shell's own title when it has set one, else the
+     * tmux label (remote) or the PTY number (local). Never a position — see _sessions. */
+    function _tabName(x, n){
+      const h = String(x.host || 'terminal'), lab = String(x.label || '');
+      const t = titles.get(String(x.sid || ''));
+      if(t) return h + ' · ' + t;
+      if(isLocalSid(x.sid)) return h + ' · ' + String(x.sid).replace(/^local:/, '#');
+      return lab ? (lab === 'main' ? h : h + ' · ' + lab) : h + ' · ' + (n + 1);
+    }
+
     function _paintSessions(){
       const box = $('#tty-sessions'); if(!box) return;
       const tabs = live.slice();
@@ -1187,17 +1287,19 @@
           -(rank.has(String(b.sid))?rank.get(String(b.sid)):1e9));
       }
       box.hidden = false;
-      box.innerHTML = '<span class="tty-sess-lbl">tabs</span>' + tabs.map((x, n) => {
+      box.innerHTML = tabs.map((x, n) => {
         const lab = String(x.label || '');
-        const nm = (x.host || 'terminal') + (lab ? (lab === 'main' ? '' : ' ' + lab) : ' ' + (n + 1));
-        return `<span class="tty-sess tty-tab${x.sid === sid ? ' active' : ''}" data-tab="${enc(x.sid)}"
-               data-host="${enc(x.host || '')}" data-label="${enc(lab)}"
-               title="${enc(nm)}"><b>${enc(nm)}</b>`
-        + `<i>${_ago(x.age)}</i>`
-        + `<button data-kill="${enc(x.sid)}" class="tty-kill" title="Close tab"
+        const nm = _tabName(x, n);
+        const kind = isLocalSid(x.sid) ? 'local' : 'ssh';
+        return `<span class="tty-sess tty-tab tty-${kind}${x.sid === sid ? ' active' : ''}" data-tab="${enc(x.sid)}"
+               data-host="${enc(x.host || '')}" data-label="${enc(lab)}" role="tab"
+               aria-selected="${x.sid === sid ? 'true' : 'false'}"
+               title="${enc(nm)} — ${kind === 'local' ? 'this computer' : 'SSH'}, idle ${_ago(x.age)}"><i class="tty-dot"></i><b>${enc(nm)}</b>`
+        + `<button data-kill="${enc(x.sid)}" class="tty-kill" title="Close tab (ends the shell)"
                    aria-label="Close terminal tab">×</button></span>`;
       }).join('')
-        + '<button class="tty-tab-new" id="tty-tab-new" title="New terminal tab">+</button>';
+        + '<button class="tty-tab-new" id="tty-tab-new" title="New terminal" aria-label="New terminal"'
+        + ' aria-haspopup="menu" aria-expanded="false">+</button>';
     }
 
     async function _remoteSessions(){
@@ -1211,7 +1313,7 @@
       }catch(_){}
     }
 
-    async function _sessions(){
+    async function _sessions(waitRemote){
       const box = $('#tty-sessions'); if(!box) return;
       live = [];
       /* THIS MACHINE'S OWN SHELLS. They are listed the same way and for the same reason: a reload,
@@ -1226,7 +1328,7 @@
       /* A local terminal is painted and returned to its opener before ANY instance request. The
        * remote tabs are useful, but connectivity is not a prerequisite for a shell on this device.
        * In particular authFetch can remain pending while the signer relay reconnects. */
-      if(LOCAL()) _remoteSessions();
+      if(LOCAL() && !waitRemote) _remoteSessions();
       else await _remoteSessions();
       /* THESE ARE TABS, not a recovery list. Every row names a distinct PTY; selecting one tears
        * down only the viewing transport and attaches this xterm to that PTY. The processes and
@@ -1249,20 +1351,44 @@
     }
 
     function _chrome(on){
-      const go = $('#tty-go'), stop = $('#tty-stop'), kb = $('#tty-kill'),
-            keys = $('#tty-keys'), sel = $('#tty-host');
-      /* New tab is useful WHILE a terminal is connected. Hiding it at precisely that moment left
-       * only the tiny `+` in the session strip and made the primary control behave like Connect,
-       * not tabs. Each press calls connect(), which first detaches this viewer and then creates a
-       * distinct PTY; the old PTY remains alive and selectable in the strip. */
-      if(go) go.classList.remove('hidden');
+      const stop = $('#tty-stop'), kb = $('#tty-kill'), keys = $('#tty-keys');
+      /* Detach and Kill act on the shell on screen, so they are offered only while there is one.
+       * The key bar follows the same rule; CSS then shows it only without a physical keyboard. */
       if(stop) stop.classList.toggle('hidden', !on);
       if(kb) kb.classList.toggle('hidden', !on);
-      /* This chooses the host for NEW TAB; it does not retarget the running PTY. Keep it usable
-       * while connected, or an automatically opened Local tab makes every saved server
-       * unreachable even though the New tab button is still visible. */
-      if(sel) sel.disabled = false;
       if(keys) keys.hidden = !on;
+    }
+
+    /* The two little menus on the bar. Plain elements inside the terminal's own markup, so they go
+     * wherever the window goes (a desktop window, a popped-out toplevel, a phone) with no popover
+     * layer to lose track of. One open at a time; a click anywhere else or Esc closes it. */
+    function _menuClose(){
+      for(const id of ['#tty-new-menu', '#tty-more-menu']){ const m = $(id); if(m) m.hidden = true; }
+      for(const id of ['#tty-tab-new', '#tty-more']){ const b = $(id); if(b) b.setAttribute('aria-expanded', 'false'); }
+    }
+    function _menuOpen(menuSel, btn){
+      const m = $(menuSel), bar = $('.tty-bar');
+      if(!m || !btn || !bar) return;
+      const was = !m.hidden;
+      _menuClose();
+      if(was) return;
+      if(menuSel === '#tty-new-menu') _paintHosts();
+      m.hidden = false;
+      btn.setAttribute('aria-expanded', 'true');
+      /* Placed under its button, measured in the bar's own (zoomed) space and kept inside it. */
+      try{
+        const br = bar.getBoundingClientRect(), bb = btn.getBoundingClientRect();
+        const k = bar.offsetWidth ? br.width / bar.offsetWidth : 1;
+        const left = Math.max(4, Math.min((bb.left - br.left) / k, bar.offsetWidth - m.offsetWidth - 4));
+        m.style.left = left + 'px'; m.style.right = 'auto';
+      }catch(_){}
+      const first = m.querySelector('button:not(.hidden)');
+      if(first) try{ first.focus(); }catch(_){}
+    }
+    function _menuOutside(ev){
+      const t = ev && ev.target;
+      if(t && t.closest && t.closest('.tty-menu, #tty-tab-new, #tty-more')) return;
+      _menuClose();
     }
 
     function _focus(){
@@ -1337,9 +1463,26 @@
 
     function _wire(){
       _paintHosts();
-      { const b = $('#tty-go'); if(b) b.onclick = () => connect(); }
-      { const b = $('#tty-stop'); if(b) b.onclick = () => detach(); }
-      { const b = $('#tty-kill'); if(b) b.onclick = () => kill(); }
+      { const b = $('#tty-stop'); if(b) b.onclick = () => { _menuClose(); detach(); }; }
+      { const b = $('#tty-kill'); if(b) b.onclick = () => { _menuClose(); kill(); }; }
+      { const b = $('#tty-more'); if(b) b.onclick = (ev) => { ev.stopPropagation(); _menuOpen('#tty-more-menu', b); }; }
+      { const b = $('#tty-more-font-reset'); if(b) b.onclick = () => {
+          _menuClose();
+          try{ localStorage.removeItem('pc_tty_font_size'); }catch(_){}
+          _fitPixels=''; _fit(); _focus();
+        }; }
+      /* THE + MENU: every entry opens a NEW tab on that host. `connect` names the tab itself (see
+       * _freeLabel), so choosing the same SSH host twice is two shells, never one shell twice. */
+      { const m = $('#tty-new-menu'); if(m) m.onclick = (ev) => {
+          const b = ev.target.closest('[data-new]'); if(!b) return;
+          _menuClose(); connect(b.dataset.new);
+        }; }
+      { const bar = $('.tty-bar'); if(bar) bar.onkeydown = (ev) => {
+          if(ev.key === 'Escape' && (!$('#tty-new-menu').hidden || !$('#tty-more-menu').hidden)){
+            ev.preventDefault(); _menuClose(); _focus();
+          }
+        }; }
+      document.addEventListener('pointerdown', _menuOutside, true);
       { const b = $('#tty-find'); if(b) b.onclick = _findOpen; }
       { const b = $('#tty-font-less'); if(b) b.onclick = () => _changeFont(-1); }
       { const b = $('#tty-font-more'); if(b) b.onclick = () => _changeFont(1); }
@@ -1355,7 +1498,7 @@
         } }
       { const box = $('#tty-sessions'); if(box) box.onclick = (ev) => {
           const k = ev.target.closest('[data-kill]'); if(k){ ev.stopPropagation(); return kill(k.dataset.kill); }
-          const add = ev.target.closest('#tty-tab-new'); if(add) return connect();
+          const add = ev.target.closest('#tty-tab-new'); if(add){ ev.stopPropagation(); return _menuOpen('#tty-new-menu', add); }
           const a = ev.target.closest('[data-tab]');
           if(a && a.dataset.tab !== sid) return switchTab(a.dataset.tab, a.dataset.host, a.dataset.label); }; }
       { const k = $('#tty-keys'); if(k) k.onclick = (ev) => {
@@ -1386,6 +1529,10 @@
       window.addEventListener('resize', _fit);
     }
 
+    /* The shell's host name. render() takes a parameter called `host` (the element to mount
+     * into), which shadows this file's `host` inside it — hence a reader defined out here. */
+    function _shellHost(){ return host; }
+
     /* `host` is optional and is how PosterChan Code puts a real shell in its bottom panel.
      *
      * Default `$('#feed')` keeps the Terminal VIEW byte-identical in behaviour. What an embedder
@@ -1414,10 +1561,16 @@
        * with nobody watching it — and coming back found `term` still set while the element it was
        * bound to had been destroyed, so `if(!term && !_mountTerm())` skipped the remount and every
        * byte of output went into a detached node: "connected", over a black screen, until a reload. */
+      /* A RENDER WHILE ALREADY MOUNTED IS A REPAINT, not an opening (a theme change, the same nav
+       * item pressed twice, a handoff repainting its window): the shell on screen stays on screen.
+       * Captured before unmount, which keeps `sid` but forgets that anything was mounted. */
+      const repaint = !!mounted && !!sid;
+      const onScreen = { sid, host: _shellHost(), label };   // `host` here is the ELEMENT
       unmount();
       const epoch = ++renderEpoch;
       feed.innerHTML = _shellHtml();
       mounted = feed;
+      _baseline = null;
       _state('');
       /* The collector is built here rather than on the first keystroke: it has to be watching the
        * shell's OUTPUT from the beginning, because echo is what gives it permission to publish a
@@ -1429,57 +1582,50 @@
       _wire();
       { const hb = $('#tty-hist'); if(hb) hb.onclick = _histToggle; }
       document.addEventListener('visibilitychange', _wake);
-      if(ok && !hosts.length) _state('no hosts configured — add some in Admin → Nodes', 'err');
+      if(ok && !hosts.length) _state('no hosts', 'err', 'No hosts configured — add some in Admin → Nodes.');
       if(ok){
         await _sessions();
         if(epoch !== renderEpoch || mounted !== feed) return;
-        /* COME BACK TO THE SHELL YOU LEFT. The id this device remembers is reattached to on sight —
-         * leaving the Terminal and returning, or reopening the app, should land you back in your
-         * session rather than at a host picker with your work invisible behind it. Anything the
-         * ACCOUNT has running that this device has no id for is offered in the list instead, which
-         * is what makes a session started on the laptop resumable on the phone. */
-        /* A SHELL ON THIS MACHINE, ASKED FOR BY NAME. Ctrl+Enter on PosterChanOS means "give me a
-         * terminal here" the way $mod+Return does in sway, and the one thing it must not do is
-         * reattach to somebody's SSH session on another computer — which is exactly what happened,
-         * because "come back to the shell you left" is remembered per DEVICE and the shell this
-         * device last left was `server1`. Measured on the test machine: pressing the Terminal icon
-         * reattached to `verita84@server1.lan` over the network while the local PTY sat unused, and
-         * that is the whole of "still no terminal app for the laptop, all I see is our remote
-         * terminal".
-         *
-         * So the keystroke NAMES the machine, and naming it wins over the memory. Clicking the
-         * icon still reattaches, because that is the right answer for a session you left running. */
-        if(_want === 'local' && LOCAL() && hosts.some(h => h && h.local)){
-          _want = '';
-          if($('#tty-host')) $('#tty-host').value = 'local';
-          /* Opening Terminal is not the same operation as pressing New tab. Compositor ticks can
-           * be delivered more than once (and a person can press the shortcut twice); creating a
-           * PTY for each delivery left five identical-looking tabs fighting for the same screen.
-           * Resume the remembered local tab, or the newest live local tab. Only the explicit +
-           * button calls connect() when a terminal already exists. */
-          const prev = _recall();
-          const existing = live.find(x => x.sid === prev && isLocalSid(x.sid))
-                        || live.find(x => isLocalSid(x.sid));
-          if(existing) attach(existing.sid, 'local');
-          else connect();
-          if(!XT()) _state('the terminal library did not load', 'err');
-          return;
+        const adopt = _adopt; _adopt = ''; _want = '';
+        /* 1. A MONITOR HANDOFF carries the tab the person was looking at across the seam — the same
+         *    shell, not a new one. */
+        if(adopt && (isLocalSid(adopt) ? LOCAL() : live.some(x => x.sid === adopt))){
+          const s0 = live.find(x => x.sid === adopt) || {};
+          attach(adopt, s0.host || (isLocalSid(adopt) ? 'local' : _shellHost()), s0.label || label);
         }
-        _want = '';
-        const prev = _recall();
-        if(prev && live.some(x => x.sid === prev)){
-          const s0 = live.find(x => x.sid === prev);
-          if(s0 && $('#tty-host')) $('#tty-host').value = s0.host || '';
-          attach(prev, s0 && s0.host, s0 && s0.label);
-        }else{
-          if(prev) _remember('');   // it is gone; do not offer to reattach to nothing
-          /* AN EMPTY TERMINAL STARTS A SESSION. Previously this happened only when `local` was the
-           * sole configured host, so adding one saved SSH server made the desktop Terminal open to
-           * an inert picker. `loadHosts` deliberately puts this computer first on PosterChanOS;
-           * elsewhere the person's first configured host remains the selected default. Existing
-           * sessions are never replaced — they remain as tabs and a remembered one was attached
-           * above. */
-          if(!live.length && hosts.length) connect();
+        /* 2. A REPAINT keeps the shell that was already on screen. */
+        else if(repaint && (isLocalSid(onScreen.sid) ? LOCAL() : live.some(x => x.sid === onScreen.sid))){
+          attach(onScreen.sid, onScreen.host, onScreen.label);
+        }
+        /* 3. OPENING TERMINAL ON A MACHINE WITH A SHELL OF ITS OWN IS A NEW LOCAL SHELL. Always.
+         *
+         * It used to "come back to the shell you left", remembered per browser tab — and the shell
+         * this device last left was, as often as not, an SSH session on another computer, or a
+         * local one sitting in the middle of somebody's `less`. So the Terminal opened onto a
+         * reconnecting remote, or onto a screen that was not a prompt, and was not usable until
+         * the person worked out which tab they were in. The old shells are NOT lost: every one of
+         * them is still a tab on the bar (the account's SSH sessions included), one click away,
+         * and the + menu opens a new one on any saved host. */
+        else if(LOCAL() && hosts.some(h => h && h.local)){
+          connect('local');
+        }
+        /* 4. A BROWSER HAS NO SHELL OF ITS OWN, so this is the SSH terminal it always was: come back
+         *    to the session this tab left, or start one on the first host when nothing is running. */
+        else {
+          if(!LOCAL()){
+            _baseline = { msg: 'no local shell', cls: 'info', long:
+              'A web browser cannot run a shell on this computer — the PosterChan desktop app can. '
+              + 'SSH sessions open from the + menu.' };
+            _state('');
+          }
+          const prev = _recall();
+          if(prev && live.some(x => x.sid === prev)){
+            const s0 = live.find(x => x.sid === prev);
+            attach(prev, s0 && s0.host, s0 && s0.label);
+          }else{
+            if(prev) _remember('');   // it is gone; do not offer to reattach to nothing
+            if(!live.length && hosts.length) connect();
+          }
         }
       }
       // xterm is a separate <script>; if it has not run yet the screen would be a blank box with no
@@ -1504,6 +1650,7 @@
       _fitPixels = '';
       if(_fitT){ clearTimeout(_fitT); _fitT = null; }
       window.removeEventListener('resize', _fit);
+      document.removeEventListener('pointerdown', _menuOutside, true);
       /* The relay subscription goes with the screen. Left running it decrypts other devices'
        * commands into a ring nothing will ever draw, for the rest of the session. */
       _histStop();
@@ -1560,6 +1707,7 @@
       followBottom=!handoffScroll||handoffScroll.pinned!==false;
       _remember(id);
       _want=isLocalSid(id)?'local':'';
+      _adopt=id;
       cursor=0;
       return true;
     }

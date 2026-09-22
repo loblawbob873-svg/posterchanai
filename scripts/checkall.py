@@ -380,6 +380,9 @@ CHECKS = {
     "check_meme_timeline":             dict(group="ui", secs=420),
     "check_terminal_mobile":           dict(group="ui", secs=420),
     "check_terminal_resize":           dict(group="ui", secs=420),
+    # One bar over a window that is >=85% terminal, a NEW local shell on open, the + host menu.
+    "check_terminal_ui":               dict(group="ui", secs=300,
+                                            why="the terminal fills its window and opens a local shell"),
     "check_extension_autofill":        dict(group="ui", secs=420),
     "check_extension_popup":           dict(group="ui", secs=420),
 

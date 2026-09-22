@@ -8,6 +8,26 @@ It is **off by default** and gated twice: `ssh_terminal_enabled`, plus an npub a
 second such path in this codebase — `node_service` reaches nodes you registered, over Nostr; this
 reaches any host you can log into.
 
+## The screen
+
+One slim bar and then the shell — nothing else takes a row. The bar holds the **tabs** (each named
+`host · title`, the title being whatever the shell set, e.g. `local · user@box: ~/src`), a **+** that
+opens a small menu (*Local shell* on a machine that has one, then every saved SSH host), a one-word
+status (its full text is the tooltip), and icon buttons: find (Ctrl+Shift+F), text size −/+, and
+**⋯** for Detach and Kill. Find and the shared command history float over the screen instead of
+pushing it down. The key bar (below) appears only on touch screens and at phone width.
+
+**Opening Terminal on a machine with a shell of its own — the desktop app, PosterChanOS — always
+starts a NEW local shell.** It no longer "comes back" to whatever this tab last had, which was as
+often an SSH session on another computer. Nothing is lost: every running shell, local or remote, is
+still a tab on the bar, and clicking one reattaches it exactly as before. In a plain browser there is
+no local shell (the status and the + menu say so), and the terminal behaves as it always has: it
+reattaches the session this tab left, or opens the first host when nothing is running.
+
+The terminal itself is always dark — its sixteen ANSI colours are a PosterChan palette measured
+readable on that ground (`tests/client/test_terminal_palette_contrast.py`) — while the bar follows the
+client theme. `scripts/check_terminal_ui.py` measures the layout (≥ 85% of a 900×600 window is shell).
+
 ## Setting it up (Admin → Nodes → SSH Terminal)
 
 ```
@@ -30,9 +50,10 @@ belongs to the server, not to the tab you are looking at it through.
 
 * **The connection drops** — a Tor circuit, a phone locking, a train tunnel — and the shell keeps
   running. The client reconnects on its own, with a backoff, and is replayed what it missed.
-* **You close the app.** Same thing. Come back and you are put straight back into it.
+* **You close the app.** Same thing. In a browser you are put straight back into it; on the desktop
+  app a fresh local shell opens and the old session is a tab beside it.
 * **You pick it up on another device.** The session list is scoped to your *account*, so a shell
-  started on the laptop appears under "still running" on the phone. Both may be attached at once.
+  started on the laptop appears as a tab on the phone. Both may be attached at once.
 * **Nothing expires.** `Kill` is what ends a session, and it is a separate button from `Detach` for
   exactly that reason.
 
@@ -41,10 +62,10 @@ detached session is held, an idle timeout while attached, and a hard ceiling on 
 
 ### Tabs are separate shells, and the label is what makes them separate
 
-The strip above the screen is tabs, not a recovery list: every entry is a distinct PTY, and `+` opens
-another one. On a remote host each tab carries a **label** — `main`, then `2`, `3`, … — chosen by the
+The bar above the screen is tabs, not a recovery list: every entry is a distinct PTY, and `+` opens
+another one on the host you pick from its menu. On a remote host each tab carries a **label** — `main`, then `2`, `3`, … — chosen by the
 client as the first one no session of yours is using on that host, and the tab is named after it
-(`server1`, `server1 2`). The label is half of the remote tmux session's name, so it is what decides
+(`server1`, `server1 · 2`) until the shell sets a title of its own. The label is half of the remote tmux session's name, so it is what decides
 which shell you get.
 
 That is not cosmetic. `tmux new-session -A` is attach-or-**create**, so two tabs sharing a label are

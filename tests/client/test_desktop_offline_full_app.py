@@ -223,7 +223,7 @@ async def running_offline():
         await b.js("(()=>{const q=document.querySelector('#os-q');q.value='Terminal';q.dispatchEvent(new Event('input',{bubbles:true}))})()")
         await b.until("!!document.querySelector('#os-startmenu [data-view=terminal]')")
         await b.js("document.querySelector('#os-startmenu [data-view=terminal]').click()")
-        await b.until("!!document.querySelector('#tty-host option[value=local]')")
+        await b.until("!!document.querySelector('#tty-new-menu [data-new=local]')")
         await b.until('__localStarts.length===1')
         await b.until("!!document.querySelector('.xterm-helper-textarea')")
         await b.js("window.__terminalElement=document.querySelector('.xterm');document.querySelector('.xterm-helper-textarea').focus()")
