@@ -2,9 +2,10 @@
 from pathlib import Path
 import json, re, shutil, subprocess, tempfile
 import pytest
+from tests.client_source import client_source
 
 ROOT = Path(__file__).resolve().parents[2]
-APP = (ROOT / "static/js/client/app.js").read_text()
+APP = client_source()
 CSS = (ROOT / "static/css/client.css").read_text()
 CHROME = shutil.which("google-chrome-stable") or shutil.which("chromium")
 

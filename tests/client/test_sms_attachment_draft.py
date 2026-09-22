@@ -1,4 +1,5 @@
 from pathlib import Path
+from tests.client_source import client_source
 
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -68,7 +69,7 @@ def test_texts_attachment_menu_offers_camera_device_and_readable_files():
 
 
 def test_attach_files_uses_connected_instances_cors_safe_media_reader():
-    app = (ROOT / "static/js/client/app.js").read_text()
+    app = client_source()
     picker = JS[JS.index("const fromBlossom ="):
                 JS.index("if(blossomLaunch)", JS.index("const fromBlossom ="))]
     assert "PC.fetchMediaBlob(url)" in picker
@@ -96,7 +97,7 @@ def test_texts_media_opens_in_the_shared_fullscreen_viewer():
     assert "PC.openLightbox(d.url, 'video')" in JS
     assert 'className = \'sms-att-open\'' in JS
     assert "v.onclick" not in JS, "native video controls must not be hijacked by the viewer action"
-    lightbox = (ROOT / "static/js/client/app.js").read_text()
+    lightbox = client_source()
     css = (ROOT / "static/css/client.css").read_text()
     render = lightbox[lightbox.index("function openLightbox"):
                        lightbox.index("function _lbZoom")]
