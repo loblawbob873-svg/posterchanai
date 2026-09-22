@@ -24,8 +24,11 @@ drops the scrim but keeps whatever image it is given).
 Keep any future art's busy half on the RIGHT, and check tests/test_os_wallpaper.py still passes —
 it measures the icon corner, the picture's survival on the right, and that the wash stayed local.
 """
+import base64
+import io
 import math
 import os
+import re
 from pathlib import Path
 
 from PIL import Image, ImageEnhance
@@ -36,6 +39,9 @@ ROOT = Path(__file__).resolve().parents[2]
 ART = Path(os.environ.get("PC_WALLPAPER_ART") or Path(__file__).resolve().parent / "wallpaper-art.webp")
 OUT = Path(os.environ.get("PC_WALLPAPER_OUT") or ROOT / "static/os-wallpaper-bg.webp")
 W, H = 3840, 2160            # 4K, 16:9; cover-scaled to any monitor
+QUALITY = 72                 # a 4K picture behind windows, under a scrim: 88 cost 200 KB for nothing
+LQIP_W = 40                  # the instant placeholder baked into client.css (~400 bytes)
+CSS = Path(os.environ.get("PC_WALLPAPER_CSS") or ROOT / "static/css/client.css")
 ICON_W = 0.42                # the wash reaches this far across before it is gone
 ICON_K = 0.85                # how much of a bright pixel it takes at the very edge
 ICON_GAMMA = 0.45            # <1 → dark pixels are left alone, highlights take the wash
@@ -85,11 +91,46 @@ def vignette(img):
     return Image.composite(dark, img, v.resize((W, H), Image.LANCZOS)).convert("RGB")
 
 
+def lqip(img):
+    """A 40px-wide copy of the wallpaper as a data: URI — the thing that paints IMMEDIATELY.
+
+    "The background image takes a while to load." It is a 4K photograph: even at 380 KB it arrives
+    well after the page, and until it does the desktop is a flat near-black rectangle that looks
+    like a failure. This is ~400 bytes, it travels INSIDE client.css (so it costs no request and
+    cannot arrive late), and the browser scales it to fill the screen — a blurred wash of the right
+    picture in the right colours, replaced by the real one the moment it lands. Nothing in the app
+    has to know it happened.
+
+    It is generated here, from the same image, so it cannot drift into a wash of the OLD wallpaper,
+    which would be a lie that only shows up for the half-second nobody is looking."""
+    small = img.resize((LQIP_W, round(LQIP_W * H / W)), Image.LANCZOS)
+    buf = io.BytesIO()
+    small.save(buf, "WEBP", quality=72, method=6)
+    return "data:image/webp;base64," + base64.b64encode(buf.getvalue()).decode("ascii")
+
+
+def _write_lqip(uri):
+    """Replace the placeholder inside client.css's `.os-desk` rule, between its own markers."""
+    if not CSS.exists():
+        return
+    css = CSS.read_text(encoding="utf-8")
+    new, n = re.subn(r"(/\* pc-lqip \*/url\(')[^']*('\))", lambda m: m.group(1) + uri + m.group(2), css)
+    if not n:
+        raise SystemExit("client.css has no `/* pc-lqip */url('…')` placeholder to fill")
+    if new != css:
+        CSS.write_text(new, encoding="utf-8")
+        print("wrote", CSS, f"lqip {len(uri)} chars")
+
+
 def main():
     img = vignette(icon_wash(cover(_art())))
     img = ImageEnhance.Color(img).enhance(1.04)      # the crop + wash cost a little of the neon
-    img.save(OUT, "WEBP", quality=84, method=6)   # a 4K picture behind windows; 88 cost 150 KB more for no visible gain
+    img.save(OUT, "WEBP", quality=QUALITY, method=6)
     print("wrote", OUT, img.size, f"{OUT.stat().st_size // 1024} KiB")
+    # Only the real render owns the stylesheet: a test rendering into a temp dir must not touch the
+    # working tree (the checks run concurrently against a live deployment).
+    if OUT == Path(ROOT / "static/os-wallpaper-bg.webp") or os.environ.get("PC_WALLPAPER_CSS"):
+        _write_lqip(lqip(img))
 
 
 if __name__ == "__main__":

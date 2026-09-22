@@ -7110,8 +7110,9 @@ body.os-on .osw-body > .feed::-webkit-scrollbar-thumb:hover{background:var(--mut
 .os-root{position:fixed;inset:0;z-index:300;display:flex;flex-direction:column;
   background:radial-gradient(1200px 800px at 20% 0%, rgba(var(--accent-rgb),.16), transparent 60%),
              linear-gradient(160deg, var(--bg), var(--bg2, var(--bg)));}
-.os-desk{position:relative;flex:1;min-height:0;overflow:hidden;
-  background:#0a0a0f url('/static/os-wallpaper-bg.webp') center/cover no-repeat}
+.os-desk{position:relative;flex:1;min-height:0;overflow:hidden;background-color:#0a0a0f;
+  background-image:url('/static/os-wallpaper-bg.webp'),/* pc-lqip */url('data:image/webp;base64,UklGRp4BAABXRUJQVlA4IJIBAABQCQCdASooABYAPpVCmEilpCIhKrgN+LASiWYAnTLLwsyBK62QXYHPFef+Y/z8uqXnLlfKoHZ0cw5DmuBX8ShM9SE0Y+IN4g+TCwRe1h+iV8P/gAD++5Kxgd602tz5kP/kSN4UZOb6h6iMzhg9PZHcp/6f3tqJYTqddTOsvP9BDYTSzeOKhtPjf4gXqe7dsxiWgYN6GBtFDSvjkTsDcPGSRD+T0PfC5uZZVfeqTfEciRW/0TrneGWIku0VXnrE2PydXACYRuLbPRJay67wFx7bTyPfxD9ueBhxiON7ZUF1FCYtjGS/rPdS7iLPX5PrEpUF43ALDM1fGQXt2tx1TESVlBdCm76iMAh5EOg2hQf22S7zGb6YUgeRSS2UfAtpDKF2aX9rGz2VmBQ+HvwWhCJkEAHykjGJ51coNNiIxvyqPJ66h+qaOgwEmKCIc6XgPYUQTDAJMmwEKffpXDkfYp15dXGpLxs7O91HuWwYVKc6h5Yke30ckdd+QMmD1dmxLvvh51aRl1zw4IuHEW3yfjbrAAA=');
+  background-size:cover,cover;background-position:center,center;background-repeat:no-repeat,no-repeat}
 /* Full-bleed default wallpaper — the mascot's desk, set to the RIGHT with its own blurred, dimmed
    light filling the left (os/plymouth/generate_wallpaper.py, static/os-wallpaper-bg.webp,
    3840x2160 so it stays crisp on a 4K monitor; `cover` fills every

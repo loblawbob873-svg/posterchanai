@@ -89,8 +89,34 @@ class TestWallpaper(unittest.TestCase):
         self.assertIn("/static/os-wallpaper-bg.webp", CSS, "client.css no longer references the wallpaper")
         # cover (not a fixed vmin emblem) is what makes it fill a 4K screen and every aspect ratio.
         i = CSS.index("os-wallpaper-bg.webp")
-        rule = CSS[CSS.rindex(".os-desk{", 0, i):i + 40]
+        rule = CSS[CSS.rindex(".os-desk{", 0, i):CSS.index("}", i)]
         self.assertIn("cover", rule, "the desk wallpaper must be `cover` for 4K / any aspect ratio")
+
+    def test_something_paints_before_the_photograph_arrives(self):
+        """"The background image takes a while to load" — it is a 4K photograph, so it does.
+
+        A ~400-byte copy travels INSIDE client.css as a data: URI, costs no request, and cannot
+        arrive late; the browser scales it to fill the screen until the real one lands. It must be
+        generated FROM the shipped wallpaper, or it becomes a wash of the previous picture — a lie
+        that only shows for the half-second nobody is watching, and the reason it is not a
+        hand-pasted string. It must also be the SECOND layer, so the real picture covers it."""
+        import base64
+        import io
+
+        import numpy as np
+        from PIL import Image
+        m = re.search(r"pc-lqip \*/url\('data:image/webp;base64,([^']+)'\)", CSS)
+        self.assertTrue(m, "the instant placeholder is gone from .os-desk")
+        raw = base64.b64decode(m.group(1))
+        self.assertLess(len(raw), 2048, "the placeholder is meant to be a few hundred bytes")
+        i = CSS.index("os-wallpaper-bg.webp")
+        self.assertLess(i, m.start(), "the placeholder must be UNDER the real wallpaper, not over it")
+        with Image.open(io.BytesIO(raw)) as tiny:
+            self.assertEqual(tiny.format, "WEBP")
+            a = np.asarray(tiny.convert("L").resize((20, 11), Image.LANCZOS), dtype=float)
+        b = _grey(WP, size=(20, 11))
+        self.assertLess(np.abs(a - b).mean(), 18,
+                        "the placeholder is a wash of a DIFFERENT picture than the one that follows")
 
     def test_an_icon_label_has_something_to_stand_on(self):
         """Wallpaper + the shipped scrim, over the corner the icon grid is laid out into. Measured:
