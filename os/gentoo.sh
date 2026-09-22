@@ -5045,7 +5045,7 @@ GRUB
 	else
 		echo -e "${COLOR_YELLOW}Not published. Gate it, then publish:${COLOR_RESET}"
 		echo -e "    sudo python3 scripts/check_livecd_install_vm.py $ISO   (on a KVM host, e.g. nas.lan)"
-		echo -e "    sudo python3 scripts/pcos_installer_vm_probe.py $ISO --no-inject"
+		echo -e "    sudo python3 scripts/pcos_installer_vm_probe.py $ISO --no-inject   (the PosterChanOS GUI installer gate)"
 		echo -e "    scripts/publish_iso.sh $ISO   (→ nas.lan → https://iso.poster.place/posterchanos.iso)"
 	fi
 	# A headless `gentoo.sh livecd` has no keyboard. The image is already complete here, so an
