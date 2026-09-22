@@ -95,6 +95,10 @@ public class ThreadActivity extends PcActivity {
         return threadId > 0 ? new long[]{ threadId } : new long[0];
     }
     private String address = "";
+    /* EVERYBODY IN THIS CONVERSATION, not just whoever the provider listed first. Empty until the
+     * first reload answers, and empty for ever on a phone whose Threads table cannot be read -- in
+     * both cases this screen behaves exactly as it did before, with `address` alone. */
+    private java.util.List<String> people = new java.util.ArrayList<String>();
     private ListView list;
     private EditText input;
     private Uri attachment;
@@ -293,16 +297,29 @@ public class ThreadActivity extends PcActivity {
         if (bar != null) bar.setBackground(Skin.bar(this, pal, false));
         View composeBar = findViewById(R.id.pc_th_compose);
         if (composeBar != null) composeBar.setBackground(Skin.panel(this, pal));
-        String label = PhoneBook.label(this, address);
+        boolean group = SmsGroup.isGroup(people);
+        String label = group ? SmsGroup.title(labels()) : PhoneBook.label(this, address);
         name.setText(label);
         name.setTextColor(pal.text);
         Skin.glow(name, pal);
-        sub.setText(label.equals(address) ? "" : address);
+        // In a group the second line says so IN WORDS. A number there is what made a group read as
+        // an ordinary conversation with whoever answered last.
+        sub.setText(group ? SmsGroup.subtitle(people.size()) : (label.equals(address) ? "" : address));
         sub.setTextColor(pal.muted);
-        android.graphics.drawable.Drawable photo = PhoneBook.photoDrawable(this, address);
-        findViewById(R.id.pc_th_add_contact).setVisibility(label.equals(address) ? View.VISIBLE : View.GONE);
-        avatar.setText(photo == null ? initials(label) : "");
-        avatar.setBackground(photo == null ? Skin.avatar(this, pal, label) : photo);
+        android.graphics.drawable.Drawable photo = group ? null : PhoneBook.photoDrawable(this, address);
+        // "Add to contacts" takes ONE number; offered in a group it would silently pick a member.
+        findViewById(R.id.pc_th_add_contact).setVisibility(
+                !group && label.equals(address) ? View.VISIBLE : View.GONE);
+        avatar.setText(group ? String.valueOf(people.size()) : (photo == null ? initials(label) : ""));
+        avatar.setBackground(photo == null ? Skin.avatar(this, pal, group ? "group" : label) : photo);
+        // The title cannot hold seven names, so it is also the way to SEE them.
+        View.OnClickListener open = group ? new View.OnClickListener() {
+            @Override public void onClick(View v) { whoIsHere(); }
+        } : null;
+        name.setOnClickListener(open);
+        avatar.setOnClickListener(open);
+        name.setClickable(group);
+        avatar.setClickable(group);
         icon(R.id.pc_th_back, R.drawable.ic_pc_arrow_left, pal.text);
         icon(R.id.pc_th_call, R.drawable.ic_pc_call, pal.accent);
         icon(R.id.pc_th_add_contact, R.drawable.ic_pc_user, pal.accent);
@@ -348,9 +365,15 @@ public class ThreadActivity extends PcActivity {
                 // conversation and always have been; read from SmsStore alone this screen
                 // showed a thread with its pictures missing and no gap to say so.
                 final SmsReactionThread history = reactionHistory(id, peer);
+                // Who is in it, resolved on this same background pass -- it is a cross-process
+                // query, and the header is redrawn from it rather than from one address.
+                final java.util.List<String> who = SmsStore.participants(ThreadActivity.this, id);
                 main.post(new Runnable() {
                     @Override public void run() {
                         if (id != threadId || generation != reloadGeneration) return;
+                        // "Could not ask" is not "one participant": an empty answer leaves the
+                        // screen exactly as it was rather than demoting a group to one name.
+                        if (!who.isEmpty()) { people = who; applySkin(); }
                         boolean atEnd = list.getLastVisiblePosition() >= adapter.getCount() - 2;
                         adapter.set(history);
                         restoreAttachmentDraft();
@@ -400,7 +423,19 @@ public class ThreadActivity extends PcActivity {
             sendMms(body);
             return;
         }
-        SmsSender.Result r = SmsSender.send(this, address, body, threadId);
+        /* A REPLY IN A GROUP GOES TO THE GROUP. It used to go to `address` — one member, picked by
+         * whichever the provider listed first — so answering "yes, 7pm works" reached one person as
+         * a private message that started its own conversation, and nobody else in the group ever
+         * saw it. There is no such thing as a group SMS, so it leaves as an MMS addressed to
+         * everybody (MmsSender.sendGroupText); a one-to-one reply is untouched ordinary SMS. */
+        /* No "me" is passed: this phone's own number is not reliably knowable (getLine1Number is
+         * usually empty — MmsStore says so where it refuses to use it either). Being WRONG about it
+         * would drop a real participant from the reply, while a self-addressed copy on a carrier
+         * that lists you among the recipients is merely a duplicate. */
+        java.util.List<String> to = SmsGroup.replyTo(people, address, "");
+        SmsSender.Result r = to.size() > 1
+                ? MmsSender.sendGroupText(this, to.toArray(new String[0]), body)
+                : SmsSender.send(this, address, body, threadId);
         if (!r.ok) { say(r.error.isEmpty() ? getString(R.string.sms_failed) : r.error); return; }
         // Cleared only once the row exists. If the send throws, what somebody typed is still there.
         input.setText("");
@@ -892,9 +927,39 @@ public class ThreadActivity extends PcActivity {
         }
     }
 
+    /** Every name in this conversation, and a number to dial for each. */
+    private void whoIsHere() {
+        if (!SmsGroup.isGroup(people)) return;
+        final java.util.List<String> numbers = new java.util.ArrayList<String>(people);
+        java.util.List<String> rows = new java.util.ArrayList<String>();
+        for (String n : numbers) {
+            String who = PhoneBook.label(this, n);
+            rows.add(who.equals(n) ? n : who + "\n" + n);
+        }
+        new AlertDialog.Builder(this)
+                .setTitle(SmsGroup.subtitle(numbers.size()))
+                .setItems(rows.toArray(new CharSequence[0]),
+                        (d, which) -> dial(numbers.get(which)))
+                .setNegativeButton(android.R.string.cancel, null)
+                .show();
+    }
+
+    private java.util.List<String> labels() {
+        java.util.List<String> out = new java.util.ArrayList<String>();
+        for (String n : people) out.add(PhoneBook.label(this, n));
+        return out;
+    }
+
     private void call() {
+        // A GROUP HAS NO ONE NUMBER TO RING. Dialling `address` rang whichever member the provider
+        // listed first, with nothing on screen to say which of them was about to be called.
+        if (SmsGroup.isGroup(people)) { whoIsHere(); return; }
+        dial(address);
+    }
+
+    private void dial(String number) {
         try {
-            startActivity(new Intent(Intent.ACTION_DIAL, Uri.parse("tel:" + Uri.encode(address))));
+            startActivity(new Intent(Intent.ACTION_DIAL, Uri.parse("tel:" + Uri.encode(number))));
         } catch (Throwable t) {
             say(getString(R.string.sms_call_no_dialer));
         }
@@ -1174,6 +1239,7 @@ public class ThreadActivity extends PcActivity {
                     .inflate(R.layout.sms_bubble, parent, false);
             SmsMsg m = at(i);
             LinearLayout wrap = (LinearLayout) v.findViewById(R.id.pc_b_wrap);
+            TextView sender = (TextView) v.findViewById(R.id.pc_b_sender);
             TextView text = (TextView) v.findViewById(R.id.pc_b_text);
             TextView meta = (TextView) v.findViewById(R.id.pc_b_meta);
             Button retry = (Button) v.findViewById(R.id.pc_b_retry);
@@ -1182,6 +1248,23 @@ public class ThreadActivity extends PcActivity {
             if (m == null) return v;
 
             boolean mine = !m.incoming();
+            /* WHO IS SAYING WHAT. Every incoming bubble in a group looked the same whoever sent it
+             * -- "you have no idea who is saying what in the group chat" -- because this screen was
+             * handed one address for the whole conversation and a bubble had nothing else to name.
+             * The message row knows its own sender; it just was never drawn. Labelled only where
+             * the speaker CHANGES, so a run of five from one person stays one label, and coloured
+             * off the normalized number so the same person keeps the same colour down the thread
+             * and across a reopen. Rebound on every recycled view, or a one-to-one conversation
+             * inherits a group's label. */
+            boolean group = SmsGroup.isGroup(people);
+            if (SmsGroup.showsSender(group, at(i - 1), m)) {
+                int[] slots = { pal.accent2, pal.green, pal.amber, pal.accent };
+                sender.setText(PhoneBook.label(ThreadActivity.this, m.address));
+                sender.setTextColor(slots[SmsGroup.colorSlot(m.address, slots.length)]);
+                sender.setVisibility(View.VISIBLE);
+            } else {
+                sender.setVisibility(View.GONE);
+            }
             // A PICTURE MESSAGE WITH NO CAPTION IS AN EMPTY BUBBLE, which reads as a message that
             // failed rather than one this screen cannot draw. This screen labels attachments; the
             // app's own Texts view shows them.

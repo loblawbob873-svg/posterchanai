@@ -112,6 +112,12 @@ public final class SmsStore {
         Map<String, Thread> byPerson = new LinkedHashMap<String, Thread>();
         Map<String, java.util.LinkedHashSet<Long>> ids =
                 new LinkedHashMap<String, java.util.LinkedHashSet<Long>>();
+        // WHO IS IN EACH CONVERSATION, from the messages themselves. This path runs when the
+        // Threads table cannot be read at all, so `participants()` has nothing to offer either --
+        // but every incoming row carries the number that sent it, and in a group those differ.
+        // Without this a group folds to one name here while the platform path names everyone.
+        Map<String, java.util.LinkedHashSet<String>> who =
+                new LinkedHashMap<String, java.util.LinkedHashSet<String>>();
         for (SmsMsg m : rows) {
             String k = groupKey(m);
             Thread t = byPerson.get(k);
@@ -125,11 +131,16 @@ public final class SmsStore {
                 t.date = m.date;
                 byPerson.put(k, t);
                 ids.put(k, new java.util.LinkedHashSet<Long>());
+                who.put(k, new java.util.LinkedHashSet<String>());
             }
             ids.get(k).add(m.threadId);
             t.count++;
             if (m.incoming() && !m.read) t.unread++;
             if (t.address.isEmpty()) t.address = m.address;
+            if (m.address != null && !m.address.trim().isEmpty()) who.get(k).add(m.address.trim());
+            // The provider's own count of a picture message's recipients is a floor on the group's
+            // size: it counts people this phone may never have received a message FROM.
+            if (m.people > t.people) t.people = m.people;
         }
         List<Thread> out = new ArrayList<Thread>(byPerson.values());
         for (Map.Entry<String, Thread> e : byPerson.entrySet()) {
@@ -138,8 +149,18 @@ public final class SmsStore {
             int i = 0;
             for (Long v : set) a[i++] = v;
             e.getValue().ids = a;
+            java.util.LinkedHashSet<String> seen = who.get(e.getKey());
+            Thread t = e.getValue();
+            if (seen != null && seen.size() > 1) {
+                StringBuilder all = new StringBuilder();
+                for (String n : seen) { if (all.length() > 0) all.append(", "); all.append(n); }
+                t.everyone = all.toString();
+                if (seen.size() > t.people) t.people = seen.size();
+            }
         }
-        if (withNames) for (Thread t : out) t.label = PhoneBook.label(ctx, t.address);
+        // Through the same namer as the platform path: folded rows carry `people`/`everyone` too,
+        // and a group named after one member is the bug this screen is here to stop repeating.
+        if (withNames) for (Thread t : out) t.label = groupLabel(ctx, t);
         return out;
     }
 
@@ -235,15 +256,12 @@ public final class SmsStore {
         return out;
     }
 
-    /** Every participant by name, or the one person's. */
-    private static String groupLabel(Context ctx, Thread t) {
+    /** Every participant by name, or the one person's — through SmsGroup, like the open thread. */
+    static String groupLabel(Context ctx, Thread t) {
         if (t.people <= 1 || t.everyone.isEmpty()) return PhoneBook.label(ctx, t.address);
-        StringBuilder b = new StringBuilder();
-        for (String n : t.everyone.split(", ")) {
-            if (b.length() > 0) b.append(", ");
-            b.append(PhoneBook.label(ctx, n));
-        }
-        return b.toString();
+        List<String> labels = new ArrayList<String>();
+        for (String n : t.everyone.split(", ")) labels.add(PhoneBook.label(ctx, n));
+        return SmsGroup.title(labels);
     }
 
     /**
@@ -251,28 +269,68 @@ public final class SmsStore {
      * a conversation row carries a space-separated list of them. Resolved in ONE query for the whole
      * screen; per row it is a cross-process query per conversation on every repaint.
      */
-    private static void fillRecipients(Context ctx, java.util.LinkedHashMap<Thread, String> ids) {
-        if (ids.isEmpty()) return;
+    private static Map<String, String> canonical(Context ctx, java.util.Collection<String> ids) {
+        Map<String, String> number = new java.util.HashMap<String, String>();
         java.util.LinkedHashSet<String> want = new java.util.LinkedHashSet<String>();
-        for (String raw : ids.values()) {
+        for (String raw : ids) {
+            if (raw == null) continue;
             for (String one : raw.trim().split("\\s+")) if (one.matches("\\d+")) want.add(one);
         }
-        Map<String, String> number = new java.util.HashMap<String, String>();
-        if (!want.isEmpty()) {
-            Cursor c = null;
-            try {
-                StringBuilder in = new StringBuilder();
-                for (String one : want) { if (in.length() > 0) in.append(','); in.append(one); }
-                c = ctx.getContentResolver().query(
-                        Uri.withAppendedPath(Telephony.MmsSms.CONTENT_URI, "canonical-addresses"),
-                        new String[]{ "_id", "address" }, "_id IN (" + in + ")", null, null);
-                if (c != null) while (c.moveToNext()) number.put(String.valueOf(c.getLong(0)), str(c, 1));
-            } catch (Throwable t) {
-                Log.w(TAG, "sms: could not resolve who a conversation is with", t);
-            } finally {
-                if (c != null) try { c.close(); } catch (Throwable ignored) { }
-            }
+        if (want.isEmpty()) return number;
+        Cursor c = null;
+        try {
+            StringBuilder in = new StringBuilder();
+            for (String one : want) { if (in.length() > 0) in.append(','); in.append(one); }
+            c = ctx.getContentResolver().query(
+                    Uri.withAppendedPath(Telephony.MmsSms.CONTENT_URI, "canonical-addresses"),
+                    new String[]{ "_id", "address" }, "_id IN (" + in + ")", null, null);
+            if (c != null) while (c.moveToNext()) number.put(String.valueOf(c.getLong(0)), str(c, 1));
+        } catch (Throwable t) {
+            Log.w(TAG, "sms: could not resolve who a conversation is with", t);
+        } finally {
+            if (c != null) try { c.close(); } catch (Throwable ignored) { }
         }
+        return number;
+    }
+
+    /**
+     * EVERYBODY IN ONE CONVERSATION, for the screen that is showing it.
+     *
+     * The list screen has resolved this for years and then dropped it (`t.address = people.get(0)`),
+     * so the OPEN conversation was handed one number: it titled itself with one member of a group,
+     * drew every incoming message identically whoever sent it, and addressed the reply to that one
+     * person. Returns an EMPTY list when the provider cannot be read -- "could not ask" is not "one
+     * participant", and the caller keeps the address it already had.
+     */
+    public static List<String> participants(Context ctx, long threadId) {
+        List<String> out = new ArrayList<String>();
+        if (ctx == null || threadId <= 0) return out;
+        String recipients = null;
+        Cursor c = null;
+        try {
+            c = ctx.getContentResolver().query(
+                    Uri.parse(Telephony.Threads.CONTENT_URI + "?simple=true"),
+                    new String[]{ Telephony.Threads.RECIPIENT_IDS },
+                    Telephony.Threads._ID + " = ?", new String[]{ String.valueOf(threadId) }, null);
+            if (c != null && c.moveToFirst()) recipients = str(c, 0);
+        } catch (Throwable t) {
+            Log.w(TAG, "sms: could not read who a conversation is with", t);
+            return out;
+        } finally {
+            if (c != null) try { c.close(); } catch (Throwable ignored) { }
+        }
+        if (recipients == null || recipients.trim().isEmpty()) return out;
+        Map<String, String> number = canonical(ctx, java.util.Collections.singletonList(recipients));
+        for (String one : recipients.trim().split("\\s+")) {
+            String n = number.get(one);
+            if (n != null && !n.isEmpty() && !out.contains(n)) out.add(n);
+        }
+        return out;
+    }
+
+    private static void fillRecipients(Context ctx, java.util.LinkedHashMap<Thread, String> ids) {
+        if (ids.isEmpty()) return;
+        Map<String, String> number = canonical(ctx, ids.values());
         for (Map.Entry<Thread, String> e : ids.entrySet()) {
             Thread t = e.getKey();
             List<String> people = new ArrayList<String>();

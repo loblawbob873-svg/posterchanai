@@ -34,8 +34,21 @@ public final class MmsSender {
 
     static SmsSender.Result send(Context ctx, String to, String body, byte[] raw,
                                  String mime, String name, String draftKey) {
+        return send(ctx, to == null ? new String[0] : new String[]{ to }, body, raw, mime, name, draftKey);
+    }
+
+    /**
+     * A GROUP GETS ONE MESSAGE, NOT A PRIVATE COPY EACH. `Message(body, String[])` plus
+     * `Settings.setGroup(true)` is what makes the platform send one MMS addressed to everybody, so
+     * the replies stay in the conversation everyone can see. Addressed to one person it is exactly
+     * the single-recipient send this method has always done.
+     */
+    static SmsSender.Result send(Context ctx, String[] to, String body, byte[] raw,
+                                 String mime, String name, String draftKey) {
         SmsSender.Result r = new SmsSender.Result();
-        if (to == null || to.trim().isEmpty()) { r.error = "missing recipient"; return r; }
+        if (to == null || to.length == 0 || to[0] == null || to[0].trim().isEmpty()) {
+            r.error = "missing recipient"; return r;
+        }
         if (raw == null || raw.length == 0) { r.error = "missing attachment"; return r; }
         String type = normalizedMime(mime, name);
         boolean video = type.startsWith("video/");
@@ -66,6 +79,9 @@ public final class MmsSender {
              * nothing to press. Do not make it the only answer again. */
             Settings settings = new Settings();
             settings.setUseSystemSending(true);
+            // Several recipients = one group message. Without this the library sends each of them a
+            // separate private message, which is the same wrong answer this screen used to give.
+            settings.setGroup(to.length > 1);
             /* Route MMS over the ACTIVE subscription, resolved from getActiveSubscriptionInfoList() —
              * NOT a default-sub getter. On a phone whose physical SIM is disabled and only an eSIM is
              * active, getDefaultSmsSubscriptionId()/SmsManager.getDefault() can still hand back the
@@ -113,6 +129,42 @@ public final class MmsSender {
         } catch (Throwable t) {
             MmsFlight.release(ctx);
             r.error = t.getMessage() == null ? "could not send picture message" : t.getMessage();
+        }
+        return r;
+    }
+
+    /**
+     * A TEXT MESSAGE TO A GROUP. SMS has no such thing: addressed to several people it is several
+     * separate private messages, each starting its own conversation, and nobody in the group sees
+     * anybody else's reply. So a group text is an MMS with no media and `setGroup(true)` — which is
+     * what every other messaging app means by "group text".
+     *
+     * Single-recipient text stays ordinary SMS (SmsSender): it is cheaper, it needs no data
+     * connection, and it is what a one-to-one conversation has always sent.
+     */
+    static SmsSender.Result sendGroupText(Context ctx, String[] to, String body) {
+        SmsSender.Result r = new SmsSender.Result();
+        if (to == null || to.length < 2) { r.error = "not a group"; return r; }
+        if (body == null || body.trim().isEmpty()) { r.error = "nothing to send"; return r; }
+        // Claimed and released on the SAME terms as a picture message: MmsSendReceiver releases the
+        // flight on every carrier result, so sending without claiming would clear a picture's claim.
+        if (!MmsFlight.claim(ctx)) { r.error = "another picture message is still being sent"; return r; }
+        try {
+            r.sentAt = System.currentTimeMillis();
+            Settings settings = new Settings();
+            settings.setUseSystemSending(true);
+            settings.setGroup(true);
+            int sub = activeMmsSubscriptionId(ctx);
+            if (sub != SubscriptionManager.INVALID_SUBSCRIPTION_ID) settings.setSubscriptionId(sub);
+            Message message = new Message(body, to);
+            message.setSave(true);
+            Intent sent = new Intent(ctx, MmsSendReceiver.class).setAction(MmsSendReceiver.ACTION_SENT);
+            new Transaction(ctx, settings).setExplicitBroadcastForSentMms(sent).sendNewMessage(message);
+            r.ok = true;
+            r.stored = HasRole.sms(ctx);
+        } catch (Throwable t) {
+            MmsFlight.release(ctx);
+            r.error = t.getMessage() == null ? "could not send group message" : t.getMessage();
         }
         return r;
     }
