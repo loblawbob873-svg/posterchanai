@@ -46,6 +46,16 @@ if [ -x /usr/local/bin/pc-kernel-guard ]; then
 		|| echo "${RED}The kernel check found a problem it could not fix — read the lines above before rebooting.${OFF}"
 fi
 
+# THE LIVE MEDIUM'S INSTALLER LAUNCHER DOES NOT BELONG ON AN INSTALLED MACHINE. Every install copied
+# it off the image (gentoo.sh now strips it at install time); on a machine that is not a live boot
+# and where no package owns it, it is that leftover — a menu entry that opens a terminal and does
+# nothing useful. Removed once, here, so machines installed before the fix lose it on their next update.
+_pc_live_launcher="${PC_LIVE_LAUNCHER:-/usr/share/applications/posterchanos-install.desktop}"
+if [ -f "$_pc_live_launcher" ] && ! grep -qw 'rd.live.image' "${PC_PROC_CMDLINE:-/proc/cmdline}" 2>/dev/null \
+	&& ! { command -v qfile >/dev/null 2>&1 && qfile -q "$_pc_live_launcher" >/dev/null 2>&1; }; then
+	rm -f "$_pc_live_launcher" && echo "${CYA}Removed the live USB's installer launcher (this machine is already installed).${OFF}"
+fi
+
 # A LAN reverse proxy may cache a missing bare-Git path long after the public release channel has
 # recovered.  Ordinary DNS then keeps returning that proxy, so both `emaint` and a plain Git retry
 # fail and the updater misleadingly declares its stale checkout current.  Resolve the SAME HTTPS

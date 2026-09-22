@@ -1482,7 +1482,7 @@
       <div class="vms-vmhead"><span class="vmx-st vmx-st-${esc(v.state)}" aria-hidden="true"></span><h2>${esc(v.name)}</h2><span class="vms-pill vms-st-${esc(v.state)}">${esc(stateLabel(v.state))}</span>${v.migration && v.migration.state ? `<span class="vms-pill vms-st-paused">migrating (${esc(v.migration.state)})</span>` : ''}
         <span class="vms-sp"></span><small class="vms-seen">on ${esc(hostName(pk))}</small></div>
       <div class="vmx-toolbar vms-actions vms-power">
-        ${b('start', 'Start', 'i-play', 'btn-neon', !running)}${b('shutdown', 'Shut down', 'i-power', '', running)}${b('reboot', 'Reboot', 'i-refresh', '', running)}${b('destroy', 'Force off', 'i-stop', 'btn-red', running)}
+        ${b('start', 'Start', 'i-play', 'btn-neon', !running)}${b('shutdown', 'Shut down', 'i-power', 'btn-cyan', running)}${b('reboot', 'Reboot', 'i-refresh', 'btn-cyan', running)}${b('destroy', 'Force off', 'i-stop', 'btn-red', running)}
         <button class="btn small btn-cyan" data-act="console" ${v.state === 'running' ? '' : 'disabled'}>${ic('i-monitor')}${feat.console === 'spice' ? 'Open display' : 'Console'}</button>
         ${role === 'admin' ? '<span class="vmx-sep" aria-hidden="true"></span>' : ''}
         ${role === 'admin' && feat.hardware ? `<button class="btn small btn-ghost" data-act="settings" ${off ? '' : 'disabled title="Shut it down first"'}>${ic('i-gear')}Settings</button>` : ''}

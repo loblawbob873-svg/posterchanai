@@ -9009,6 +9009,14 @@ html.os-on #upload-badge.upbadge{z-index:333}
   border:1px solid transparent;background:none;padding:8px 10px;font-size:15px;
   overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .fx-side .folder-chip:hover{background:rgba(var(--accent-rgb),.10)}
+/* ICON + NAME ROWS ARE NOT ICON-ONLY BUTTONS. `button:not(.tl-fab):has(> svg.ic.b-ic:only-child)` near the
+   top of this file centres icon-only buttons, and `:only-child` ignores TEXT — so "📁 Music" matched
+   it, outranked `.fx-side .folder-chip` (0,4,2 vs 0,2,0) and was centred, each row by its own name
+   length: All, Music and Pictures started at three different x ("All and Music are not aligned").
+   Same specificity here, later in the file, so it wins. */
+.fx-side button.folder-chip:has(> svg.ic.b-ic),.bp-explorer button.folder-chip:has(> svg.ic.b-ic){
+  justify-content:flex-start;flex:0 0 auto}
+.fx-side .folder-chip>svg.ic{flex:0 0 auto}
 .fx-side .folder-chip.active{background:rgba(var(--accent-rgb),.16);border-color:var(--neon);color:var(--text)}
 .fx-side .folder-chip.newfolder{margin-top:8px;border-top:1px solid var(--line);border-radius:0 0 8px 8px;
   padding-top:12px;color:var(--muted)}

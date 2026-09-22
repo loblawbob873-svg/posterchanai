@@ -2035,6 +2035,11 @@ liveISOinstall() {
 	# …and the autologin that names it, or the installed machine tries to log in an account that is
 	# no longer there — which is a login prompt, and the exact failure the ISO builder was fixed for.
 	sudo rm -f $TARGET/etc/systemd/system/getty@tty1.service.d/override.conf 2>/dev/null
+	# …and the live medium's "Install PosterChanOS" launcher. livecd writes it into the IMAGE only
+	# (a pseudo-file), but this copies the image onto the disk, so every installed machine carried
+	# it: a start-menu entry that opens a terminal running `sudo gentoo.sh` — "Install PosterChan not
+	# doing anything on laptop". The graphical installer already shows only on a live boot.
+	sudo rm -f $TARGET/usr/share/applications/posterchanos-install.desktop 2>/dev/null
 
 	# ROOT MUST BE ABLE TO LOG IN BEFORE ANYTHING ELSE IS TRIED.
 	#
@@ -5005,11 +5010,14 @@ GRUB
 	echo
 	echo -e "${COLOR_YELLOW}It is a hybrid image: the same file boots on BIOS and on UEFI.${COLOR_RESET}"
 	echo
-	# A clean release image is deployed under one stable URL. Publish only AFTER every build and
-	# content check above has succeeded, and never upload a personal rescue image that may contain
-	# accounts or secrets. PC_ISO_PUBLISH=n is the explicit escape hatch for a local test build.
+	# PUBLISHING IS OPT-IN (PC_ISO_PUBLISH=y). It used to be the default, so every clean build
+	# uploaded itself the moment it was written — BEFORE the install/boot gates that are the only
+	# proof an image installs (scripts/check_livecd_install_vm.py, scripts/pcos_installer_vm_probe.py
+	# --no-inject), which run in a separate VM afterwards. On 2026-09-21 a build tried to replace the
+	# public ISO ungated. The release path is: build → gates → scripts/publish_iso.sh (nas.lan, served
+	# as https://iso.poster.place/). Never upload a personal rescue image that may contain accounts.
 	local PUBLISH_ISO
-	PUBLISH_ISO="${PC_ISO_PUBLISH:-y}"
+	PUBLISH_ISO="${PC_ISO_PUBLISH:-n}"
 	if [[ "${CLEAN,,}" == y* && "${PUBLISH_ISO,,}" == y* ]]; then
 		local PUBLISHER REPO_PUBLISHER INSTALLED_PUBLISHER
 		# In the checkout this script is os/gentoo.sh, so ../scripts is correct.  The Gentoo
@@ -5035,7 +5043,10 @@ GRUB
 	elif [[ "${CLEAN,,}" != y* ]]; then
 		echo -e "${COLOR_YELLOW}Personal rescue image: not publishing it.${COLOR_RESET}"
 	else
-		echo -e "${COLOR_YELLOW}Publishing disabled by PC_ISO_PUBLISH=$PUBLISH_ISO.${COLOR_RESET}"
+		echo -e "${COLOR_YELLOW}Not published. Gate it, then publish:${COLOR_RESET}"
+		echo -e "    sudo python3 scripts/check_livecd_install_vm.py $ISO   (on a KVM host, e.g. nas.lan)"
+		echo -e "    sudo python3 scripts/pcos_installer_vm_probe.py $ISO --no-inject"
+		echo -e "    scripts/publish_iso.sh $ISO   (→ nas.lan → https://iso.poster.place/posterchanos.iso)"
 	fi
 	# A headless `gentoo.sh livecd` has no keyboard. The image is already complete here, so an
 	# unconditional read leaves the ssh job and its caller hanging forever after a successful build.

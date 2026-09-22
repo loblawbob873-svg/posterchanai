@@ -154,6 +154,15 @@ async def check(width, height, shots, fails):
             for want in ("start", "shutdown", "reboot", "destroy", "console", "settings", "delete"):
                 if want not in acts:
                     fail(f"the VM toolbar has no {want} ({acts})")
+            # "Shutdown, reboot have no color like the rest of the buttons": every power button must be
+            # styled, i.e. its computed colours differ from a plain .btn (compared, not class-matched).
+            plain = await b.js("""(()=>{const t=document.createElement('button');t.className='btn small';
+              document.querySelector('.vmx-toolbar').append(t);const c=getComputedStyle(t);
+              const v=[c.backgroundColor,c.color,c.borderTopColor].join('|');t.remove();
+              return [...document.querySelectorAll('.vmx-toolbar [data-power]')].filter(e=>{const k=getComputedStyle(e);
+                return [k.backgroundColor,k.color,k.borderTopColor].join('|')===v;}).map(e=>e.dataset.power);})()""")
+            if plain:
+                fail(f"power buttons drawn as plain grey buttons, unlike the rest of the toolbar: {plain}")
             if not await b.js("/192\\.168\\.122\\.12/.test(document.querySelector('.vmx-tiles').innerText)"):
                 fail("the VM page does not show its IP")
             if shots:
