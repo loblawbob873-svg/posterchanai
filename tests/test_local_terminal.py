@@ -25,13 +25,14 @@ SCRIPT = shutil.which("script")
 @unittest.skipIf(not NODE or not SCRIPT, "needs node and util-linux script")
 class LocalTerminal(unittest.TestCase):
     def test_local_is_default_without_hiding_saved_server_hosts(self):
-        """PosterChanOS prepends local, starts it when no tabs exist, and keeps every configured
-        server available through New tab after that first session is ready."""
+        """PosterChanOS prepends local, and every configured server stays one click away in the
+        + menu (which replaced the host <select> and its New tab button)."""
         with open(CLIENT, encoding="utf-8") as fh:
             src = fh.read()
         self.assertIn("return LOCAL() ? [LOCAL_HOST].concat(rest) : rest", src)
-        self.assertIn("if(!live.length && hosts.length) connect();", src)
-        self.assertIn("go.classList.remove('hidden')", src)
+        paint = src[src.index("function _paintHosts()"):src.index("let _hostsAsked")]
+        self.assertIn("data-new=\"local\"", paint)
+        self.assertIn("remote.map(h =>", paint)
 
     def run_js(self, body, timeout=30):
         js = ("const T = require(%s);\n(async () => { const out = {};\n"
@@ -166,20 +167,24 @@ class LocalTerminal(unittest.TestCase):
 
     def test_new_tab_stays_visible_and_new_sessions_repaint_the_strip(self):
         """A second PTY is not useful as a tab if its button disappears once connected or the
-        strip keeps showing the old session until the whole Terminal view is reopened."""
+        strip keeps showing the old session until the whole Terminal view is reopened. The + is
+        painted by the strip itself, so it exists whenever the strip does."""
         src = open(CLIENT, encoding="utf-8").read()
-        chrome = src[src.index("function _chrome(on)"):src.index("function _focus()")]
-        self.assertIn("go.classList.remove('hidden')", chrome)
-        self.assertNotIn("go.classList.toggle('hidden', on)", chrome)
+        paint = src[src.index("function _paintSessions()"):src.index("async function _remoteSessions")]
+        self.assertIn('id="tty-tab-new"', paint)
+        chrome = src[src.index("function _chrome(on)"):src.index("function _menuClose()")]
+        self.assertNotIn("tty-tab-new", chrome)
         ready = src[src.index("if(m.t === 'ready')"):src.index("if(m.t === 'gone')")]
         self.assertIn("_sessions();", ready)
 
-    def test_host_picker_stays_enabled_while_a_local_tab_is_connected(self):
-        """The picker selects the host for New tab; an active local PTY must not lock it."""
+    def test_the_new_tab_menu_stays_usable_while_a_local_tab_is_connected(self):
+        """The + menu picks the host for a NEW tab; an active local PTY must not lock it, and
+        choosing an entry opens a new tab there rather than retargeting the running one."""
         src = open(CLIENT, encoding="utf-8").read()
         chrome = src[src.index("function _chrome(on)"):src.index("function _focus()")]
-        self.assertIn("sel.disabled = false", chrome)
-        self.assertNotIn("sel.disabled = on", chrome)
+        self.assertNotIn("tty-new-menu').hidden = on", chrome)
+        wire = src[src.index("function _wire()"):src.index("async function render(")]
+        self.assertIn("connect(b.dataset.new)", wire)
 
     def test_a_fresh_local_tab_replays_bytes_produced_before_attach(self):
         """Posterfetch and a fast prompt exist before the renderer subscribes; dropping that backlog
@@ -215,7 +220,7 @@ class LocalTerminal(unittest.TestCase):
         self.assertIn("m.seq <= cursor", frame)
 
     def test_an_empty_terminal_starts_its_first_session(self):
-        """Configured SSH hosts must not turn PosterChanOS Terminal into an inert host picker."""
+        """Configured SSH hosts must not turn the browser's Terminal into an inert host picker."""
         src = open(CLIENT, encoding="utf-8").read()
         # `async function render(`, NOT `render()`. It took a `host` argument when desktop windows
         # started rendering it into their own element, and this slice went on naming the old
@@ -225,21 +230,34 @@ class LocalTerminal(unittest.TestCase):
         self.assertIn("if(!live.length && hosts.length) connect();", render)
 
     def test_repeated_terminal_shortcuts_do_not_create_duplicate_tabs(self):
-        """Only the explicit New tab control may create another PTY. Repeated compositor ticks or
-        repeated launcher clicks must focus/resume the current local tab."""
+        """OPENING Terminal starts a new local shell; a second shortcut while it is already on the
+        screen must only focus it, and a REPAINT of a mounted terminal must keep the shell on
+        screen — or compositor ticks delivered twice leave identical tabs fighting for one screen."""
         src = open(CLIENT, encoding="utf-8").read()
         start = src.rindex("function openLocal()")
         opened = src[start : src.index("window.PCTerm", start)]
         self.assertIn("if(term) _focus();", opened)
-        self.assertNotIn("connect();", opened)
+        self.assertNotIn("connect(", opened)
         # `async function render(`, NOT `render()`. It took a `host` argument when desktop windows
         # started rendering it into their own element, and this slice went on naming the old
         # signature — so both of these tests raised ValueError instead of asserting anything, which
         # is a test that does not exist, only quieter.
         render = src[src.index("async function render(") : src.index("function unmount()")]
-        start = render.index("if(_want === 'local'")
-        wanted = render[start : render.index("if(!XT())", start)]
-        self.assertIn("existing", wanted)
+        self.assertIn("const repaint = !!mounted && !!sid;", render)
+        self.assertLess(render.index("const repaint"), render.index("unmount();"),
+                        "`mounted` is read after unmount() cleared it — every repaint is an opening")
+        self.assertLess(render.index("attach(onScreen.sid"), render.index("connect('local')"))
+
+    def test_opening_terminal_starts_a_new_local_shell_not_a_remembered_one(self):
+        """The rule the redesign exists for: with a local PTY, opening Terminal is a NEW local shell,
+        never a reattach of what this browser tab last had (often an SSH session elsewhere).
+        Driven end to end in scripts/check_terminal_ui.py; this pins the branch order."""
+        src = open(CLIENT, encoding="utf-8").read()
+        render = src[src.index("async function render(") : src.index("function unmount()")]
+        local = render.index("else if(LOCAL() && hosts.some(h => h && h.local))")
+        self.assertIn("connect('local');", render[local:local + 200])
+        self.assertLess(local, render.index("const prev = _recall();"),
+                        "the remembered session is consulted before the new local shell")
 
     def test_no_typescript_file_is_written(self):
         """`script` writes a verbatim log of the session, including everything typed at a password

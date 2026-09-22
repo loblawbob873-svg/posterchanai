@@ -7255,52 +7255,94 @@ body.os-on .osw-body > .feed::-webkit-scrollbar-thumb:hover{background:var(--mut
    not a content-driven one, or xterm's fit computes 1 row. `feed-term` is the full-height feed mode
    the meme builder and Live Translate already use. */
 .feed-term{display:flex;flex-direction:column;min-height:0;padding:0;overflow:hidden}
-.tty-wrap{display:flex;flex-direction:column;flex:1;min-height:0;background:#07040f}
-/* THE `tm-` PREFIX WAS ALREADY TAKEN, and that was the whole bug.
-   Further down this file, `.tm-bar` and `.tm-state` belong to a PROGRESS METER: `.tm-bar{height:6px}`
-   with a gradient `i` inside it. Those rules come after these, so the terminal's toolbar was handed
-   `height:6px` — its controls hung out of a box a tenth their size ("buttons cut off at the top") and
-   the meter's 6px gradient rendered as the "weird horizontal line". Both reports, one collision.
-   Everything here is `tty-` now; the meter is untouched.
-   I spent two attempted fixes on the flexbox (align-content, min-height) before measuring, and both
-   were treating a symptom of a rule I had not noticed was there. scripts/check_terminal_mobile.py
-   measures every control against its bar at three phone widths, which is what found it. */
-.tty-bar{flex:0 0 auto;display:flex;align-items:center;gap:8px;padding:8px 10px;
-  flex-wrap:wrap;box-sizing:border-box;
-  border-bottom:1px solid var(--line);background:var(--panel2)}
-.tty-host{flex:0 1 auto;min-width:0;max-width:60%;font-size:12px;padding:6px 8px}
-.tty-state{flex:1 1 100%;font-size:11px;color:var(--muted);order:9}
-.tty-state.ok{color:#5dffb0}
-.tty-state.err{color:#ff6b8b}
-.tty-find{flex:0 0 auto;display:flex;align-items:center;gap:8px;padding:6px 10px;
-  border-bottom:1px solid var(--line);background:var(--panel2)}
+.tty-wrap{--tty-bg:#07060e;display:flex;flex-direction:column;flex:1;min-height:0;
+  background:var(--tty-bg);position:relative}
+/* ONE SLIM BAR — tabs, status and a few icon buttons — and the rest of the window is terminal.
+   It used to be a host picker plus five text buttons, a full-width status LINE, a separate TABS row
+   and the key bar, measured at a fraction of a 900x600 window left for the shell. Every colour in
+   the chrome is a theme token so it wears Professional, Win98 or Soviet Gothic as readily as the
+   flagship; only the terminal's own ground is fixed dark (see TERM_THEME in term.js).
+
+   THE `tm-` PREFIX WAS ALREADY TAKEN, and that was once the whole bug: `.tm-bar`/`.tm-state` belong
+   to a PROGRESS METER further down (`.tm-bar{height:6px}`), which hung the old toolbar's controls
+   out of a 6px box. Everything here is `tty-`. scripts/check_terminal_mobile.py measures every
+   control against its bar at three phone widths; scripts/check_terminal_ui.py measures the space. */
+.tty-bar{flex:0 0 auto;display:flex;align-items:center;gap:6px;height:34px;padding:0 6px 0 4px;
+  box-sizing:border-box;position:relative;z-index:3;flex-wrap:nowrap;
+  background:linear-gradient(180deg,var(--panel2),var(--panel));
+  border-bottom:1px solid rgba(var(--accent-rgb),.35);
+  box-shadow:0 1px 14px -4px rgba(var(--accent-rgb),.45);
+  font-family:var(--mono)}
+.tty-state{flex:0 1 auto;min-width:0;max-width:34%;font-size:11px;color:var(--muted);
+  white-space:nowrap;overflow:hidden;text-overflow:ellipsis;letter-spacing:.02em}
+.tty-state:empty{display:none}
+.tty-state.ok{color:var(--green)}
+.tty-state.info{color:var(--muted)}
+.tty-state.warn{color:var(--amber)}
+.tty-state.err{color:var(--danger,#ff6b8b)}
+.tty-tools{flex:0 0 auto;display:flex;align-items:center;gap:2px;margin-inline-start:auto}
+/* The icon buttons: square, borderless until hovered, a neon edge when they are the thing in use. */
+.tty-ib{flex:0 0 auto;display:inline-flex;align-items:center;justify-content:center;
+  width:28px;height:26px;padding:0;border-radius:7px;border:1px solid transparent;
+  background:transparent;color:var(--muted);cursor:pointer;font:600 12px/1 var(--mono)}
+.tty-ib .ic{width:15px;height:15px}
+.tty-ib:hover,.tty-ib[aria-expanded="true"]{color:var(--neon);border-color:rgba(var(--accent-rgb),.45);
+  background:rgba(var(--accent-rgb),.10)}
+.tty-ib:focus-visible{outline:2px solid var(--neon);outline-offset:1px}
+.tty-ib.hidden{display:none}
+.tty-txt{font-size:12px;letter-spacing:-.02em}
+/* FIND floats over the top-right of the screen instead of pushing the shell down a row. */
+.tty-find{position:absolute;z-index:4;top:6px;right:10px;display:flex;align-items:center;gap:4px;
+  padding:4px 4px 4px 6px;max-width:calc(100% - 20px);box-sizing:border-box;
+  background:var(--panel2);border:1px solid rgba(var(--accent-rgb),.55);border-radius:10px;
+  box-shadow:0 6px 24px #0008,0 0 12px rgba(var(--accent-rgb),.25)}
 .tty-find[hidden]{display:none}
-.tty-find .input{flex:1;min-width:80px;padding:6px 8px;font-family:var(--mono)}
-.tty-find>span{min-width:64px;color:var(--muted);font-size:11px;text-align:center;white-space:nowrap}
-.tty-find .btn{min-width:32px;padding-inline:8px}
-/* "Still running" — sessions this ACCOUNT has open that this device is not attached to, which is
-   what makes a shell started on the laptop resumable on the phone. Scrolls sideways rather than
-   wrapping: on a phone this sits above the screen and must never eat rows from it. */
-.tty-sessions{flex:0 0 auto;display:flex;align-items:center;gap:8px;padding:6px 10px;
+.tty-find .input{flex:1;min-width:80px;width:200px;padding:5px 8px;font-size:12px;font-family:var(--mono)}
+.tty-find>span{min-width:58px;color:var(--muted);font-size:11px;text-align:center;white-space:nowrap}
+/* TABS take whatever the bar has left and scroll sideways rather than wrap: a second row would be
+   a row of terminal lost. */
+.tty-sessions{flex:1 1 auto;min-width:0;display:flex;align-items:center;gap:4px;height:100%;
   overflow-x:auto;overflow-y:hidden;white-space:nowrap;-webkit-overflow-scrolling:touch;
-  border-bottom:1px solid var(--line);background:rgba(0,240,255,.04)}
-.tty-sess-lbl{flex:0 0 auto;font-size:11px;letter-spacing:.08em;text-transform:uppercase;
-  color:var(--muted)}
-.tty-sess{flex:0 0 auto;display:inline-flex;align-items:center;gap:6px;padding:4px 4px 4px 8px;
-  border:1px solid var(--line);border-radius:999px;background:var(--panel)}
-.tty-sess b{font-size:12px;font-weight:600;color:var(--text)}
-.tty-sess i{font-size:11px;font-style:normal;color:var(--muted)}
-.tty-sess button{font-size:11px;padding:4px 8px;border-radius:999px;cursor:pointer;
-  border:1px solid var(--line);background:transparent;color:var(--text)}
-.tty-sess button:hover{border-color:var(--accent);color:var(--accent)}
-.tty-tab{cursor:pointer;border-radius:8px;padding-inline-start:10px}
-.tty-tab.active{border-color:var(--accent);background:rgba(0,240,255,.11);
-  box-shadow:inset 0 -2px 0 var(--accent)}
-.tty-tab-new{flex:0 0 auto;width:30px;height:28px;border-radius:8px;border:1px dashed var(--line);
-  background:transparent;color:var(--accent);font-size:20px;line-height:1;cursor:pointer}
-.tty-tab-new:hover{border-color:var(--accent);background:rgba(0,240,255,.08)}
-.tty-kill,.tty-sess button.tty-kill{color:#ff6b8b;border-color:rgba(255,107,139,.4)}
-.tty-kill:hover,.tty-sess button.tty-kill:hover{border-color:#ff6b8b;color:#ff6b8b}
+  scrollbar-width:none}
+.tty-sessions::-webkit-scrollbar{height:0}
+.tty-sess{flex:0 0 auto;display:inline-flex;align-items:center;gap:6px;height:26px;max-width:260px;
+  box-sizing:border-box;padding:0 2px 0 9px;border:1px solid transparent;border-radius:7px;
+  background:transparent;color:var(--muted);cursor:pointer;transition:border-color .15s,background .15s}
+.tty-sess b{font-size:12px;font-weight:600;color:inherit;overflow:hidden;text-overflow:ellipsis;min-width:0}
+.tty-sess:hover{background:rgba(var(--accent-rgb),.07);color:var(--text)}
+.tty-dot{flex:0 0 auto;width:6px;height:6px;border-radius:50%;background:var(--muted);opacity:.7}
+.tty-local .tty-dot{background:var(--green)}
+.tty-ssh .tty-dot{background:var(--neon2)}
+.tty-sess button{flex:0 0 auto;width:20px;height:20px;padding:0;border-radius:5px;border:0;
+  background:transparent;color:inherit;font-size:14px;line-height:1;cursor:pointer;opacity:.55}
+.tty-sess button:hover{opacity:1;background:rgba(var(--accent-rgb),.12)}
+.tty-sess button.tty-kill:hover{color:var(--danger,#ff6b8b)}
+.tty-tab.active{color:var(--text);border-color:rgba(var(--accent-rgb),.75);
+  background:linear-gradient(180deg,rgba(var(--accent-rgb),.16),rgba(var(--accent-rgb),.04));
+  box-shadow:0 0 10px -1px rgba(var(--accent-rgb),.55),inset 0 -2px 0 var(--neon)}
+.tty-tab.active .tty-dot{opacity:1;box-shadow:0 0 6px currentColor}
+.tty-tab-new{flex:0 0 auto;width:26px;height:26px;border-radius:7px;border:1px dashed rgba(var(--accent-rgb),.45);
+  background:transparent;color:var(--neon);font:600 17px/1 var(--mono);cursor:pointer}
+.tty-tab-new:hover,.tty-tab-new[aria-expanded="true"]{border-style:solid;background:rgba(var(--accent-rgb),.12);
+  box-shadow:0 0 10px -2px rgba(var(--accent-rgb),.6)}
+/* The + and ⋯ menus. Inside the bar's own markup (so they travel with the window), positioned by
+   term.js under the button that opened them. */
+.tty-menu{position:absolute;z-index:6;top:calc(100% + 4px);left:4px;min-width:220px;max-width:min(340px,calc(100% - 8px));
+  max-height:60vh;overflow-y:auto;display:flex;flex-direction:column;padding:5px;box-sizing:border-box;
+  background:var(--panel2);border:1px solid rgba(var(--accent-rgb),.5);border-radius:10px;
+  box-shadow:0 10px 30px #0009,0 0 14px -2px rgba(var(--accent-rgb),.35);font-family:var(--mono)}
+.tty-menu[hidden]{display:none}
+.tty-menu button{display:flex;flex-direction:column;align-items:flex-start;gap:1px;width:100%;
+  padding:7px 9px;border:0;border-radius:7px;background:transparent;color:var(--text);
+  text-align:start;cursor:pointer;font:600 12.5px/1.25 var(--mono)}
+.tty-menu button small{font-weight:400;font-size:11px;color:var(--muted)}
+.tty-menu button:hover,.tty-menu button:focus-visible{background:rgba(var(--accent-rgb),.14);outline:0;
+  box-shadow:inset 2px 0 0 var(--neon)}
+.tty-menu button.hidden{display:none}
+.tty-menu button.tty-kill{color:var(--danger,#ff6b8b)}
+.tty-menu-h{padding:8px 9px 3px;font-size:10px;letter-spacing:.14em;text-transform:uppercase;color:var(--muted)}
+.tty-menu-note{padding:6px 9px;font-size:11px;line-height:1.4;color:var(--muted)}
+.tty-new-local b{color:var(--neon)}
 /* The emulator's own element. min-height:0 is load-bearing inside a flex column — without it the
    screen grows to its content and the fit addon never sees a bounded box. */
 /* THE TERMINAL IS MEASURED IN ONE SPACE, WHICH IS WHAT MAKES A HIGHLIGHT LAND WHERE YOU DRAGGED.
@@ -7334,7 +7376,8 @@ body.os-on .osw-body > .feed::-webkit-scrollbar-thumb:hover{background:var(--mut
  *
  * Verified with scripts/check_terminal_selection.py, which measures rendered-row-height against
  * xterm's own cell at every tier -- the two numbers in the table above. */
-.tty-screen{flex:1;min-height:0;padding:6px 4px 2px 8px;overflow:hidden;position:relative}
+.tty-screen{flex:1;min-height:0;padding:6px 4px 2px 8px;overflow:hidden;position:relative;
+  background:var(--tty-bg,#07060e)}
 .tty-fit{position:absolute;inset:0;zoom:calc(1 / var(--zf, 1));
   /* ON THE HOST, NOT .tty-screen: an absolute `inset:0` box ignores its container's padding, so the
      padding above never reached the text and the first column sat under a window's 4px border
@@ -7352,8 +7395,12 @@ body.os-on .osw-body > .feed::-webkit-scrollbar-thumb:hover{background:var(--mut
 /* THE KEY BAR — what makes this usable on a phone. A soft keyboard has no Ctrl, Esc, Tab or arrows,
    and a shell without Ctrl-C is not a shell. Scrolls horizontally rather than wrapping, so it stays
    one line tall on the narrowest screen. */
-.tty-keys{flex:0 0 auto;display:flex;gap:6px;padding:8px 8px;overflow-x:auto;
-  border-top:1px solid var(--line);background:var(--panel2);-webkit-overflow-scrolling:touch}
+/* ONLY WITHOUT A PHYSICAL KEYBOARD: a touch pointer, or a phone-width screen. On a desktop it was a
+   row of buttons duplicating keys that are right there under the person's hands — and `display:flex`
+   used to beat the `hidden` attribute, so it showed even before anything was connected. */
+.tty-keys{flex:0 0 auto;display:none;gap:6px;padding:6px 8px;overflow-x:auto;
+  border-top:1px solid rgba(var(--accent-rgb),.3);background:var(--panel2);-webkit-overflow-scrolling:touch}
+@media (pointer:coarse),(max-width:600px){ .tty-keys:not([hidden]){display:flex} }
 .tty-keys::-webkit-scrollbar{height:0}
 .tty-keys button{flex:none;min-width:42px;height:34px;padding:0 10px;border-radius:8px;
   border:1px solid var(--line);background:var(--panel);color:var(--text);font-size:12px;
@@ -7372,10 +7419,16 @@ body.os-on .osw-body > .feed::-webkit-scrollbar-thumb:hover{background:var(--mut
 .os-hibernate>div{display:flex;flex:1;min-width:0;flex-direction:column;gap:4px}
 .os-hibernate span{color:var(--muted);font-size:12px}.os-hibernate .os-set-ready{color:#5dffb0}
 @media(max-width:820px){
-  .tty-bar{padding:6px 8px}
-  .tty-host{max-width:100%}
+  .tty-bar{height:40px}
+  .tty-ib,.tty-tab-new,.tty-sess{height:32px}
+  .tty-ib{width:32px}
+  .tty-state{max-width:22%}
   .tty-screen{padding:4px 2px 0 4px}
 }
+/* No page heading over the terminal: the bar above names every tab, and the title row cost ~60px of
+   shell in every window. `term-view` is set by app.js while the Terminal is the view. */
+body.term-view .topbar,html.pc-oswin body.term-view .topbar{display:none}
+body.native.term-view .tty-bar{padding-top:env(safe-area-inset-top);height:calc(40px + env(safe-area-inset-top))}
 
 /* ---- desktop widgets -------------------------------------------------------------------------
    Panels that sit ON the desktop. They are ABOVE the wallpaper and BELOW the windows (.osw carries an
@@ -9780,6 +9833,10 @@ html.osfr-on body > .app, html.osfr-on #os-root{ visibility:hidden; }
 .tty-hist{ max-height:38vh; overflow-y:auto; display:flex; flex-direction:column; gap:2px;
            padding:6px; border-block-end:1px solid var(--line);
            background:rgba(0,0,0,.35); }
+.tty-screen>.tty-hist{ position:absolute; z-index:4; top:6px; right:10px; width:min(460px,calc(100% - 20px));
+           box-sizing:border-box; background:var(--panel2); border:1px solid rgba(var(--accent-rgb),.5);
+           border-radius:10px; box-shadow:0 10px 30px #0009; }
+.tty-hist[hidden]{ display:none; }
 .tty-hist-row{ display:flex; align-items:baseline; justify-content:space-between; gap:12px;
                width:100%; padding:6px 8px; border-radius:7px; border:1px solid transparent;
                background:transparent; color:inherit; text-align:start; cursor:pointer;

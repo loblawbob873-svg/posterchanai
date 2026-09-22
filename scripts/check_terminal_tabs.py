@@ -134,7 +134,11 @@ const shellOf = (sid) => (SESS.find(s => s.sid === sid) || {}).shell || '';
     for(let i = 0; i < %(tabs)d; i++){
       const plus = document.querySelector('#tty-tab-new');
       if(!plus){ out.err = 'the + button is not in the strip'; break; }
-      plus.click();
+      plus.click();                                   // + opens the new-tab menu …
+      await sleep(60);
+      const pick = document.querySelector('#tty-new-menu [data-new="server1"]');
+      if(!pick){ out.err = 'the + menu does not offer server1'; break; }
+      pick.click();                                   // … and choosing a host opens a tab there
       await sleep(450);
       out.steps.push({ press: i + 1, sid: PCTerm.sessionId(), shell: shellOf(PCTerm.sessionId()),
                        tabs: tabs() });
