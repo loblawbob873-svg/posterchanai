@@ -9,7 +9,8 @@ SIM = Path(__file__).parent / "client" / "taskbar_native_move_runtime.js"
 
 def test_layout_document_keeps_bounded_namespaced_pins():
     assert "pins: []" in SRC
-    assert "/^(view|app):" in SRC
+    assert "/^view:[A-Za-z0-9_.:+@/-]+$/" in SRC
+    assert "/^app:[^\\x00-\\x1f\\x7f]+$/" in SRC
     assert "out.pins.length >= 24" in SRC
 
 

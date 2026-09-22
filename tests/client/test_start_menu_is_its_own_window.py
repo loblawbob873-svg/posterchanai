@@ -141,7 +141,8 @@ def test_choosing_goes_through_the_bridge():
     # Routed through `_popupTell`, which swallows the REJECTION a fire-and-forget bridge call makes
     # off a compositor -- the try/catch round the call never could. The channel is unchanged.
     assert "_popupTell('act'" in body
-    assert "encodeURIComponent" in body, (
+    enc = _fn(OS_JS, "  function _actEncode(arg){") if "function _actEncode(arg){" in OS_JS else ""
+    assert "encodeURIComponent" in body or ("_actEncode(arg)" in body and "encodeURIComponent" in enc), (
         "a search query or a file path carries spaces and slashes and crosses a process boundary "
         "as one string")
 

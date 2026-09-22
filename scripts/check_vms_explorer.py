@@ -62,7 +62,7 @@ async def check(width, height, shots, fails):
     import websockets
     server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
     threading.Thread(target=server.serve_forever, daemon=True).start()
-    prof = PROFILE + "-" + str(width)
+    prof = PROFILE + "-" + str(width) + "-" + str(os.getpid())
     subprocess.run(["rm", "-rf", prof], check=False)
     chrome = shutil.which("google-chrome-stable") or "/opt/google/chrome/chrome"
     proc = subprocess.Popen([chrome, "--headless=new", "--no-sandbox", "--disable-gpu", f"--remote-debugging-port={PORT}",

@@ -15,6 +15,7 @@ def test_settings_icons_survive_every_desktop_and_mobile_category_change():
     renderer = source[source.index('  async function renderSystemSettings(){'):source.index('  function openTaskManager')]
     icon = source[source.index('  const iconSvg ='):source.index('  // ---- the feed handoff')]
     setup = '''
+const _searchPrefsHtml=()=>'',_bindSearchPrefs=()=>{};
 const wins=[],enc=s=>String(s??''),PC=()=>({}),me=()=>null;
 const settings=()=>({get:(k,v)=>v}),STYLE_KEY='style',UI_SCALE_CHOICES=[1,1.25],uiScaleEffective=()=>1;
 const desktopEffectsMode=()=> 'auto';let _osSettingsPage='appearance';
@@ -80,4 +81,4 @@ window.pcSystem={snapshot:async()=>({})};window.pcPrinters={status:async()=>({av
     assert run.returncode == 0, run.stderr[-1000:]
     result = re.search(r'<pre id="result">(.*?)</pre>', run.stdout, re.S)
     assert result, run.stdout[-1000:]
-    assert json.loads(unescape(result.group(1))) == {'passed': True, 'pages': 12}
+    assert json.loads(unescape(result.group(1))) == {'passed': True, 'pages': 13}
