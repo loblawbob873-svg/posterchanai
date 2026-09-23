@@ -50,6 +50,7 @@ import json
 import os
 import pathlib
 import re
+import runpy
 import shutil
 import signal
 import subprocess
@@ -762,8 +763,13 @@ def main():
     suites = [s for s in suites if s["group"] in groups]
 
     chrome, node = have_chrome(), have_node()
+    # ONE temp dir for the whole run, removed when it ends: every check, every Chrome and every
+    # pytest inherits TMPDIR from here. The default scratch dir used to be /tmp/pc-checkall-<pid>,
+    # never removed -- 523 of them, plus Chrome's own leftovers, sat in a RAM-backed /tmp. See
+    # scripts/private_tmp.py.
+    private = runpy.run_path(str(pathlib.Path(__file__).with_name("private_tmp.py")))["enter"]("pct-check-")
     tmp = pathlib.Path(args.tmp or os.environ.get("PC_CHECK_TMP")
-                       or f"/tmp/pc-checkall-{os.getpid()}")
+                       or os.path.join(private, "checkall"))
     tmp.mkdir(parents=True, exist_ok=True)
 
     if args.brief:                       # the model's copy must not be coloured

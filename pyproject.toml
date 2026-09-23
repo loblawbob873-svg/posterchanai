@@ -34,3 +34,8 @@ ignore = ["E501"]
 # paths can still run a diagnostic script when needed.
 testpaths = ["tests"]
 norecursedirs = ["data", ".git", ".venv", "venv", "venv-unified", "node_modules"]
+# pytest's own tmp_path trees stay at the SHORT system path (see scripts/private_tmp.py: a longer one
+# pushes Unix socket paths past 108 bytes) -- and are deleted by pytest itself: only a FAILED test's
+# directory survives, and only from the latest run. /tmp is RAM on the nodes this runs on.
+tmp_path_retention_policy = "failed"
+tmp_path_retention_count = 1

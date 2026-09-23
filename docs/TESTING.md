@@ -265,6 +265,13 @@ Two conventions to honour, both because the suite runs checks concurrently:
   database. Use pytest's `tmp_path` or a temp dir. A test that touched `streamserver/mediamtx.pid`
   passed on a laptop and failed with PermissionError on every node that was actually serving, which
   is the machine where the answer matters.
+- **Put temp files under `TMPDIR` (`tempfile.mkdtemp()`, pytest's `tmp_path`), never a hardcoded
+  `/tmp/...` path.** `./test.sh`, the deploy gate and a plain `pytest` each point `TMPDIR` at one
+  directory of their own and delete it when the run ends (`scripts/private_tmp.py`), which is also
+  what catches the files headless Chrome leaves behind when a test stops it. `/tmp` is RAM on the
+  nodes: before this, ~8 GB of leftovers (36k Chrome temp files, 523 `pc-checkall-*` dirs) got a
+  deploy killed for low memory. `tests/test_the_suite_cleans_up_after_itself.py` runs a real
+  Chrome test and fails if anything is left.
 
 ### And make sure the check can FAIL
 

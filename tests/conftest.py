@@ -33,6 +33,18 @@ import pytest
 ROOT = Path(__file__).resolve().parents[1]
 
 
+def pytest_configure(config):
+    """THE SUITE CLEANS UP AFTER ITSELF: every temp file this run makes -- pytest's tmp_path trees,
+    tempfile.mkdtemp, and the files headless Chrome leaves in TMPDIR when a test terminates it --
+    goes into ONE directory that is removed when pytest exits. /tmp is RAM on the machines this
+    runs on, and 8 GB of leftovers once got a deploy killed for low memory. Under ./test.sh or the
+    deploy gate the directory already exists and belongs to them. See scripts/private_tmp.py."""
+    import runpy
+    helper = ROOT / "scripts" / "private_tmp.py"
+    if helper.is_file():             # a partial copy of the tree (a mutation test's) may not carry it
+        runpy.run_path(str(helper))["enter"]("pct-pytest-")
+
+
 @pytest.fixture(autouse=True)
 def _isolated_settings(monkeypatch, tmp_path):
     """A settings update in one test must not reconfigure the next test or this host."""

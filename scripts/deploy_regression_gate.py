@@ -373,9 +373,15 @@ def run_gate(root=ROOT, receipt=None, full=False, jobs=0):
     except (OSError, subprocess.SubprocessError) as error:
         print('[regressions] ABORT: cannot identify source under test: ' + str(error))
         return 1
-    with tempfile.TemporaryDirectory(prefix='pc-deploy-regressions-') as directory:
+    # EVERY TEMP FILE THE RUN MAKES GOES IN ONE DIRECTORY THAT GOES WITH IT. /tmp is RAM on the
+    # nodes this gates; a gate run is hundreds of Chromes and each leaves files behind in TMPDIR
+    # (8 GB had piled up when a deploy was killed for low memory). See scripts/private_tmp.py.
+    private_tmp = runpy.run_path(str(Path(__file__).with_name('private_tmp.py')))
+    with tempfile.TemporaryDirectory(prefix='pc-deploy-regressions-') as directory, \
+            private_tmp['scoped']('pct-gate-') as scratch:
         report = Path(directory) / 'results.xml'
-        env = dict(os.environ, PYTEST_DISABLE_PLUGIN_AUTOLOAD='1', PC_REQUIRE_NATIVE_IPC_TEST='1')
+        env = private_tmp['child_env'](
+            dict(os.environ, PYTEST_DISABLE_PLUGIN_AUTOLOAD='1', PC_REQUIRE_NATIVE_IPC_TEST='1'), scratch)
         # Developer filters and mutation-test overrides must not change what a release tests.
         for name in ('PYTEST_ADDOPTS', 'PYTEST_PLUGINS', 'PC_SYNC_TEST_SOURCE',
                      'PC_OFFICE_TEST_SOURCE', 'PC_OFFLINE_APP_ROOT', 'PC_NATIVE_MAIN_SOURCE',
