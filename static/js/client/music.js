@@ -202,9 +202,12 @@ window.PCMusicFactory = function(dep){
        * that playlist; without this the queue stayed pinned to it, so ⏭ walked the playlist while
        * the whole library was on screen. Only when nothing is playing from the old view — pressing
        * a chip is navigation, and navigation must never interrupt the music. */
-      if(!to && S._musicPl && !(S._audioEl && !S._audioEl.paused)) MusicPlayer.refreshQueue();
+      const leaving = !to && S._musicPl && !(S._audioEl && !S._audioEl.paused);
       S._musicPl = to;
       MusicPlayer._pl = _musicShareView() ? null : to;   // two pickers, one selection (shares aren't playlists)
+      // AFTER the selection moves: refreshQueue reads it, and before this it rebuilt from the playlist
+      // being left.
+      if(leaving) MusicPlayer.refreshQueue();
       repaint(); });
     { const sb=$('#ma-plshare', root); if(sb) sb.onclick=()=>_musicShareCurrent(); }
     { const nb=$('#ma-plnew', root); if(nb) nb.onclick=async()=>{
@@ -480,7 +483,10 @@ window.PCMusicFactory = function(dep){
         /* Pressing play inside a playlist makes the PLAYLIST the queue, in its order — otherwise
          * ⏭ walks the whole library from wherever that track happens to sit in it, which is not what
          * "play this playlist" means anywhere else. */
-        if(only && only.length){ MusicPlayer.queue = only.map(t=>t.sha); MusicPlayer.shuffle = false; }
+        /* The playlist becomes the queue; shuffle stays whatever the person set. It used to be
+         * switched OFF here, silently, so turning shuffle on and then tapping a song in a playlist
+         * played the rest in order while the button still looked like it did something. */
+        if(only && only.length){ MusicPlayer.queue = only.filter(t=>!t.missing).map(t=>t.sha); }
         MusicPlayer.play(sha); return;
       }
       if(b.classList.contains('track-dl')){ saveEncrypted(sha, b.dataset.name); return; }

@@ -340,7 +340,13 @@ window.PCMusicPlayerFactory = function(dep){
         }
       }catch(_){}
     },
-    refreshQueue(){ this.queue=musicTracks(null).map(t=>t.sha); if(this.cur && !this.queue.includes(this.cur)) this.queue.unshift(this.cur); },
+    /* THE QUEUE IS THE LIST YOU CHOSE. Every path that rebuilds it -- ⏭ on an empty queue, a track
+     * the queue does not hold, the desktop widget's Shuffle -- used to rebuild it from the whole
+     * LIBRARY, so shuffle inside a playlist wandered out of it ("shuffle is no longer working on
+     * playlists"). The chosen playlist (`_pl`, kept in step with the Music app's chips) wins; with
+     * none chosen it is the library, as before. */
+    refreshQueue(){ const pl=this._plTracks(); this.queue=(pl && pl.length ? pl : musicTracks(null)).map(t=>t.sha);
+      if(this.cur && !this.queue.includes(this.cur)) this.queue.unshift(this.cur); },
     async play(sha, opts){
       this.ensure();
       this._nativeOff=false;   // playing again is what brings the OS controls back after a close

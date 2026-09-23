@@ -823,7 +823,7 @@
       if(b.id === 'msh-shuffle'){
         const M = PC.MusicPlayer, pick = order[Math.floor(Math.random() * order.length)];
         if(!order.length) return;
-        if(M){ M.queue = order.slice(); M.shuffle = true; M.play(pick); }
+        if(M){ M.queue = order.slice(); M.shuffle = true; M.play(pick, { force: true }); }   // force: a pick of the playing song must not pause it
         else if(ctx.play) ctx.play(pick, order);
         return;
       }
@@ -831,7 +831,7 @@
         /* The SHARE becomes the queue, in its order — the rule a playlist follows. */
         const M = PC.MusicPlayer;
         if(ctx.play) ctx.play(b.dataset.sha, order);
-        else if(M){ M.queue = order.slice(); M.shuffle = false; M.play(b.dataset.sha); }
+        else if(M){ M.queue = order.slice(); M.play(b.dataset.sha); }   // shuffle stays as set
         return;
       }
       if(b.classList.contains('track-dl')){
