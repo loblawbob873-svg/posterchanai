@@ -33,7 +33,12 @@ class Browser:
 
     def evaluate(self, expression):
         response=self.command('Runtime.evaluate',{'expression':expression,'returnByValue':True,'awaitPromise':True})
-        assert 'exceptionDetails' not in response,response
+        # The full text, not pytest's truncated repr of the whole CDP envelope: the useful part is
+        # the exception's own description, and it is the first thing you want when a page throws.
+        if 'exceptionDetails' in response:
+            d=response['exceptionDetails']
+            raise AssertionError((d.get('exception') or {}).get('description')
+                                 or d.get('text') or repr(response))
         return response['result'].get('value')
 
     def click(self, selector, touch=False):

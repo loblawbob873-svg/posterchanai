@@ -58,12 +58,16 @@ package com.klinker.android.send_message;
 public class Settings {
   public void setUseSystemSending(boolean b) { }
   public void setSubscriptionId(int id) { }
+  // Group messaging — several recipients become ONE MMS instead of a private copy each.
+  // Signature read off the real AAR (javap com.klinker.android.send_message.Settings, 5.2.6).
+  public void setGroup(boolean group) { }
 }
 """,
             "com/klinker/android/send_message/Message.java": """
 package com.klinker.android.send_message;
 public class Message {
   public Message(String b, String a) { }
+  public Message(String b, String[] a) { }      // the group constructor, same AAR
   public Message(String b, String a, byte[] image) { }
   public Message(String b, String a, android.graphics.Bitmap image) { }
   public void addMedia(byte[] raw, String mime, String name) { }

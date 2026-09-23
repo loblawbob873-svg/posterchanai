@@ -7,12 +7,16 @@ from pathlib import Path
 
 import pytest
 from tests.client.test_emoji_pack_tabs_layout import chrome
+from tests.client_source import client_source, state_shims
 
 ROOT=Path(__file__).resolve().parents[2]
 
 
 def page():
-    app=Path(os.environ.get('PC_PAYMENT_TARGET_APP_SOURCE',ROOT/'static/js/client/app.js')).read_text()
+    # THE WHOLE CLIENT, modules first: the tip flows (doTip/doZap/doXmrTip/startConcordTip) moved
+    # into tips.js, so reading app.js alone finds only the one-line entry points — or nothing.
+    app=(Path(os.environ['PC_PAYMENT_TARGET_APP_SOURCE']).read_text()
+         if os.environ.get('PC_PAYMENT_TARGET_APP_SOURCE') else client_source())
     helper=app[app.index('  const _paymentTargetCache='):app.index('  // base58',app.index('  const _paymentTargetCache='))]
     def function(name):
         start=re.search(r'^  (?:async )?function '+name+r'\(',app,re.M).start()
@@ -53,7 +57,10 @@ const settle=async()=>{for(let i=0;i<15;i++)await new Promise(r=>setTimeout(r,5)
     css=(ROOT/'static/css/client.css').read_text()
     return ('<!doctype html><meta name="viewport" content="width=device-width,initial-scale=1"><style>'+css+'</style><div id="modal-root"></div>'
             +''.join('<script>'+s+'</script>' for s in [(ROOT/'static/vendor/nostr/nostr.bundle.js').read_text(),
-              (ROOT/'static/js/client/payment-targets.js').read_text(),script,helper,functions,'editor();']))
+              (ROOT/'static/js/client/payment-targets.js').read_text(),script,helper,
+              # The tip flows live in tips.js now and read their live state as `S.<name>`; these
+              # stubs declare those names at top level, so the shim hands them straight through.
+              state_shims(functions),functions,'editor();']))
 
 
 @pytest.mark.parametrize('width',[380,1280])

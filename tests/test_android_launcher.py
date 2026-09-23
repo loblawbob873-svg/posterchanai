@@ -15,8 +15,12 @@ import re
 import os
 import shutil
 import subprocess
+import sys
 import tempfile
 import unittest
+
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+from tests.client_source import client_source  # noqa: E402  (the whole client: modules + app.js)
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 JAVA = os.path.join(ROOT, "mobile", "android", "app", "src", "main", "java")
@@ -46,7 +50,6 @@ def _code(src):
 HARNESS = r"""
 import java.util.*;
 import place.poster.app.home.*;
-from tests.client_source import client_source
 
 public class Harness {
   static AppShelf.Entry app(String pkg, String label) {
