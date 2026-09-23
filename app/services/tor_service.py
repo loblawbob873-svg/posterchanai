@@ -422,6 +422,7 @@ def start_tor_service(
     onion_enabled: bool = False,
     onion_target: str = "",
     onion_relay_port: int = 0,
+    extra_onions: str = "",
 ) -> Optional[TorService]:
     """Start ONE Tor instance and return it. Call once per daemon — the second daemon uses its own
     ports + data dir + exit region so the HTTP proxy can load-balance across two independent circuits.
@@ -436,6 +437,11 @@ def start_tor_service(
         onion_enabled=onion_enabled,
         onion_target=onion_target,
         onion_relay_port=onion_relay_port,
+        # THE FACTORY HAD NO SUCH PARAMETER WHILE ITS ONLY CALLER PASSED ONE. TorService accepted
+        # `extra_onions` and start_tor_service did not, so the moment a node actually had the
+        # setting the tor role died with `unexpected keyword argument 'extra_onions'` — the feature
+        # could never have worked, and nothing said so until somebody filled the field in.
+        extra_onions=extra_onions,
     )
     if service.start():
         _services.append(service)

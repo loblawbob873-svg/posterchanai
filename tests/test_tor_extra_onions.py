@@ -44,3 +44,56 @@ def test_it_is_an_admin_setting_that_reaches_start_from_settings():
     assert 'extra_onions=_ss.get("tor_extra_onions", "")' in src
     html = open(os.path.join(os.path.dirname(ts.__file__), "..", "..", "templates", "admin", "tabs", "network.html")).read()
     assert 'id="tor_extra_onions" name="tor_extra_onions"' in html
+
+
+# ---- the one that was missing, and what it cost -------------------------------------------------
+
+def test_start_from_settings_actually_starts(monkeypatch, tmp_path):
+    """RUN the call site. This feature shipped broken and no test noticed.
+
+    `start_from_settings` passed `extra_onions=` to `start_tor_service`, which had no such
+    parameter — the class took one, the factory did not. So the tor role died with
+    `start_tor_service() got an unexpected keyword argument 'extra_onions'` on the first node that
+    actually filled the setting in, taking every .onion and the whole Tor proxy down with it. The
+    test that was supposed to cover this asserted the CALL TEXT was present in the source
+    (`'extra_onions=_ss.get(...)' in src`), which is true of a call that cannot execute.
+
+    So this one calls it, with the launch stubbed: whether the daemon comes up needs a real Tor,
+    but whether the code can be CALLED AT ALL does not, and that is the half that broke.
+    """
+    started = {}
+
+    def fake_start(self):
+        started["service"] = self
+        return True
+
+    monkeypatch.setattr(ts.TorService, "start", fake_start)
+    monkeypatch.setattr(ts, "_services", [])
+    monkeypatch.setattr(ts.TorService, "_instance", None)
+    values = {
+        "tor_enabled": "true", "tor2_enabled": "false",
+        "tor_data_dir": str(tmp_path / "tor"),
+        "tor_extra_onions": "akkoma 80 127.0.0.1:8099",
+    }
+    from app.services import settings_store as store
+    monkeypatch.setattr(store, "get", lambda k, d=None: values.get(k, d))
+    monkeypatch.setattr(store, "get_bool", lambda k, d=False: str(values.get(k, d)).lower() in ("1", "true", "yes", "on"))
+    monkeypatch.setattr(store, "get_int", lambda k, d=0: int(values.get(k, d)))
+
+    assert ts.start_from_settings() is True, "the tor role could not start"
+    assert started["service"].extra_onions == [("akkoma", 80, "127.0.0.1:8099")], \
+        "the setting never reached the daemon that publishes the onion"
+
+
+def test_the_factory_takes_every_argument_the_call_site_gives_it():
+    """The generic form of the bug above: a mismatch between these two is a TypeError at RUNTIME, in
+    a background role, where the only symptom is that Tor is gone."""
+    import ast
+    import inspect
+    takes = set(inspect.signature(ts.start_tor_service).parameters)
+    tree = ast.parse(inspect.getsource(ts.start_from_settings))
+    passed = {kw.arg for node in ast.walk(tree) if isinstance(node, ast.Call)
+              and getattr(node.func, "id", "") == "start_tor_service"
+              for kw in node.keywords if kw.arg}
+    assert passed, "the call site moved — this guard is now watching nothing"
+    assert passed <= takes, f"start_from_settings passes {sorted(passed - takes)}, which the factory has no parameter for"
