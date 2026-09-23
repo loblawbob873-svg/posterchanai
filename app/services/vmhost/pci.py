@@ -29,7 +29,7 @@ from dataclasses import dataclass, field
 
 from . import usb
 
-ADDR = re.compile(r"^([0-9a-f]{4}):([0-9a-f]{2}):([0-1][0-9a-f])\.([0-7])$")
+ADDR = re.compile(r"^([0-9a-f]{4}):([0-9a-f]{2}):([0-1][0-9a-f])\.([0-7])\Z")
 PCI_IDS = ("/usr/share/hwdata/pci.ids", "/usr/share/misc/pci.ids", "/usr/share/pci.ids")
 HOST_GPU_DRIVERS = frozenset({"nvidia", "nouveau", "amdgpu", "radeon", "i915", "xe", "ast", "mgag200", "bochs-drm",
                               "virtio-pci", "qxl", "vmwgfx", "simpledrm", "efifb"})
@@ -193,6 +193,9 @@ def scan(sys_root: str = "/sys", mountinfo: str = "/proc/self/mountinfo", swaps:
                     why.append(f"the host is using {b} (part of {via})")
         if not dev.system and lost and _under(sys_block, real):
             dev.system = True                             # the root disk could be behind it: never offered
+        elif not why and mounts.unresolved and _under(sys_block, real):
+            why.append("the host could not tell which disk " + ", ".join(dict.fromkeys(mounts.unresolved)) +
+                       " is on, and this controller has disks behind it")
         if cls.startswith("0c03"):
             # a USB controller carrying the host's keyboard/mouse: giving it away takes the host's input
             hid = []
@@ -276,7 +279,9 @@ def plan(dev: PciDevice, devices: list, groups: dict) -> dict:
             blockers.append("its IOMMU group " + dev.group + " also holds " +
                             ", ".join(f"{m.address} ({m.label})" for m in extra))
     for t in take:
-        if t.busy:
+        if t.system:                                          # a sibling function the host (may) boot through
+            blockers.append(f"{t.address}: the host may boot from a disk behind it")
+        elif t.busy:
             blockers.append(f"{t.address}: {t.busy}")
     gpu_busy = [t for t in take if t.is_gpu and t.driver in HOST_GPU_DRIVERS]
     if any(t.boot_vga for t in take):

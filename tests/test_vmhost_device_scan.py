@@ -419,3 +419,57 @@ def test_a_zpool_that_cannot_answer_while_zfs_is_loaded_refuses_every_disk(tmp_p
     os.makedirs(os.path.join(sys, "module", "zfs"))
     d = _one(sys, "22 1 8:1 / / rw - ext4 /dev/nvme0n1p2 rw\n", tmp_path, zpool_status=None)[0]
     assert "could not tell" in d.busy, d.busy
+
+
+# ---- review 2026-09-22: fail closed on EVERY untraced filesystem, not only the root ---------------------------------
+def test_an_untraced_data_mount_refuses_every_disk(tmp_path):
+    """The root traces fine, but /raid (ext4 on a source nothing resolves) cannot be placed: it may be on this USB
+    disk, and a VM taking it pulls a mounted filesystem from under the host."""
+    sys, _ = _usb_disk(tmp_path)
+    virtual_block(sys, "nvme0n1p2")
+    d = _one(sys, "22 1 8:1 / / rw - ext4 /dev/nvme0n1p2 rw\n40 22 0:77 / /raid rw - ext4 /dev/gone rw\n",
+             tmp_path, zpool_status="")[0]
+    assert "could not tell" in d.busy and "/raid" in d.busy and not d.system, d.busy
+    # the same for a PCI storage controller with a disk behind it
+    psys = str(tmp_path / "psys")
+    ctl = pci_dev(psys, "0000:02:00.0", "15b7", "5017", "010802", "nvme", "13")
+    br = os.path.join(ctl, "nvme/nvme0/nvme0n1")
+    os.makedirs(os.path.join(br, "holders"))
+    link(br, os.path.join(psys, "class/block", "nvme0n1"))
+    virtual_block(psys, "vda1")                                      # the root, traceable
+    (tmp_path / "pmi").write_text("22 1 8:1 / / rw - ext4 /dev/vda1 rw\n40 22 0:77 / /raid rw - ext4 /dev/gone rw\n")
+    devs = pci.scan(psys, str(tmp_path / "pmi"), str(tmp_path / "sw"), ids_paths=(), zpool_status="")
+    assert "could not tell" in devs[0].busy and not devs[0].system, devs[0].busy
+
+
+def test_an_unreadable_swap_table_refuses_every_disk(tmp_path):
+    sys, _ = _usb_disk(tmp_path)
+    virtual_block(sys, "nvme0n1p2")
+    (tmp_path / "mi").write_text("22 1 8:1 / / rw - ext4 /dev/nvme0n1p2 rw\n")
+    d = usb.scan(sys, str(tmp_path / "mi"), str(tmp_path / "no-swaps"), ids_paths=(), zpool_status="")[0]
+    assert "could not tell" in d.busy, d.busy
+
+
+def test_a_gpu_sibling_the_host_may_boot_through_is_a_blocker(tmp_path):
+    """plan() only blocked on `busy`, but a function traced to an untraceable root is `system` with no `busy` text —
+    taken along with a GPU it would have gone to the VM."""
+    gpu = pci.PciDevice(address="0000:10:00.0", vendor="1002", product="164e", cls="030000", driver="vfio-pci",
+                        group="26")
+    sata = pci.PciDevice(address="0000:10:00.3", vendor="1022", product="7901", cls="010601", driver="ahci",
+                         group="26", system=True)
+    p = pci.plan(gpu, [gpu, sata], {"26": [gpu.address, sata.address]})
+    assert "0000:10:00.3" in {t.address for t in p["attach"]}
+    assert any("0000:10:00.3" in b and "boot" in b for b in p["blockers"]), p["blockers"]
+
+
+def test_a_btrfs_mount_no_filesystem_claims_is_untraced(tmp_path):
+    """Two btrfs filesystems that both resolve, plus a third btrfs mount nothing can place: it used to be dropped."""
+    sys, _ = _usb_disk(tmp_path)
+    virtual_block(sys, "nvme0n1p2")
+    virtual_block(sys, "nvme1n1p1")
+    for fs, m in (("aaaa", "nvme0n1p2"), ("bbbb", "nvme1n1p1")):
+        os.makedirs(os.path.join(sys, f"fs/btrfs/{fs}/devices"), exist_ok=True)
+        os.symlink("../../../../class/block/" + m, os.path.join(sys, f"fs/btrfs/{fs}/devices", m))
+    d = _one(sys, "22 1 0:30 / / rw - btrfs /dev/nvme0n1p2 rw\n23 22 0:31 / /data rw - btrfs /dev/nvme1n1p1 rw\n"
+                  "24 22 0:32 / /srv rw - btrfs /dev/gone rw\n", tmp_path, zpool_status="")[0]
+    assert "could not tell" in d.busy and "/srv" in d.busy, d.busy

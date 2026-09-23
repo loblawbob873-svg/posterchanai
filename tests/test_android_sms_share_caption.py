@@ -13,7 +13,7 @@ def test_shared_caption_commits_only_with_successful_staging(tmp_path):
     harness = r'''
 class Probe {
  static final String EXTRA_THREAD="t", EXTRA_ADDRESS="a", EXTRA_THREADS="ts";
- String address="recipient";long threadId;long[] threadIds;Box input=new Box();Object attachment;
+ String address="recipient";long threadId;java.util.List<String> people=new java.util.ArrayList<String>();long[] threadIds;Box input=new Box();Object attachment;
  Intent current;boolean busy,metadataFailure;int prepared;Runnable ready;
  void handOverComposer(String a){input.setText("");} boolean attachmentBusy(){return busy;}
  Intent getIntent(){return current;}void say(String x){}String getString(int x){return "unreadable";}

@@ -546,3 +546,19 @@ def test_turning_autostart_on_cannot_race_an_attach(tmp_path):
     assert ra["ok"], ra
     assert not ru["ok"] and ru["error"]["code"] == "conflict" and "host devices" in ru["error"]["message"], ru
     assert be.domains[U1]["autostart"] is False
+
+
+# ---- review 2026-09-22 ---------------------------------------------------------------------------------------------
+def test_a_trailing_newline_is_not_a_valid_id(tmp_path):
+    """`$` matches before a trailing newline, so `^…$` let "090c\\n" and "0000:01:00.0\\n" through validation."""
+    svc, be = make(tmp_path)
+    r = c(svc, ADMIN, "vm.device.attach", {"vm": U2, "kind": "usb", "vendor": "090c\n", "product": "1000"})
+    assert not r["ok"] and r["error"]["code"] == "bad_request", r
+    r = c(svc, ADMIN, "vm.device.attach", {"vm": U1, "kind": "pci", "address": "0000:01:00.0\n"})
+    assert not r["ok"] and r["error"]["code"] == "bad_request", r
+    for f in (lambda: usb.hostdev_xml("090c\n", "1000"), lambda: pci.hostdev_xml("0000:01:00.0\n")):
+        try:
+            f()
+            raise AssertionError("built XML from an id with a newline")
+        except ValueError:
+            pass

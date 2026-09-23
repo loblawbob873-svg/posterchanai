@@ -599,7 +599,7 @@ class OutgoingMms(unittest.TestCase):
         self.assertIn("Theme_Black_NoTitleBar_Fullscreen", thread)
         self.assertIn("VideoView video = new VideoView(this)", thread)
         self.assertIn("play.setOnClickListener(v -> showVideo(p))", thread)
-        self.assertIn("MmsSender.send(this, address, body, raw,", thread)
+        self.assertIn("MmsSender.send(this, to, body, raw,", thread)  # to = SmsGroup.replyTo(people, address, ...)
         self.assertIn("setUseSystemSending(true)", sender)
         self.assertIn("org.fossify:mmslib:1.0.0", gradle)
 
@@ -642,7 +642,7 @@ class OutgoingMms(unittest.TestCase):
     def test_native_thread_observes_mms_and_uses_shared_subscription_aware_sender(self):
         thread = open(os.path.join(SMS, "ThreadActivity.java"), encoding="utf-8").read()
         self.assertIn("registerContentObserver(Telephony.Mms.CONTENT_URI", thread)
-        self.assertIn("MmsSender.send(this, address, body, raw,", thread)
+        self.assertIn("MmsSender.send(this, to, body, raw,", thread)  # to = SmsGroup.replyTo(people, address, ...)
         send = thread[thread.index("private void sendMms(String body)") : thread.index("private void messageMenu")]
         self.assertNotIn("new Transaction", send)
 

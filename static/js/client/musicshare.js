@@ -161,9 +161,21 @@
     for(const [k, v] of Object.entries(b || {})) if(!out[k] || v.at > out[k].at) out[k] = v;
     return _cleanDec(out);
   };
-  const _localDec = () => { try{ return _cleanDec(JSON.parse(localStorage.getItem(DECIDE_LOCAL) || '{}')); }catch(_){ return {}; } };
-  const _saveLocalDec = d => { try{ localStorage.setItem(DECIDE_LOCAL, JSON.stringify(d)); }catch(_){} };
-  const decisions = () => (_dec || (_dec = _localDec()));
+  /* THE LOCAL COPY BELONGS TO ONE ACCOUNT. It was a single device-wide key, and an account switch
+   * reloads the page but keeps localStorage — so the next account merged the previous one's answers
+   * (who shared what with them, and what they kept) into ITS OWN relay document on the first load,
+   * and a "reject" given as one person hid the same share from the other. Keyed by pubkey, and the
+   * in-memory copy is dropped whenever the signed-in account is not the one it was read for. */
+  let _decOwner = null;
+  const _me = () => (_boot() && ME() && ME().pubkey) || '';
+  const _decLocalKey = o => DECIDE_LOCAL + ':' + o;
+  const _localDec = () => { const o = _me(); if(!o) return {}; try{ return _cleanDec(JSON.parse(localStorage.getItem(_decLocalKey(o)) || '{}')); }catch(_){ return {}; } };
+  const _saveLocalDec = d => { const o = _me(); if(!o) return; try{ localStorage.setItem(_decLocalKey(o), JSON.stringify(d)); localStorage.removeItem(DECIDE_LOCAL); }catch(_){} };
+  const decisions = () => {
+    const o = _me();
+    if(o !== _decOwner){ _decOwner = o; _dec = null; _decRead = false; }
+    return _dec || (_dec = _localDec());
+  };
 
   /* THE ANSWER FOLLOWS THE ACCOUNT, NOT THE PHONE. localStorage alone is how auto-mute came back on
    * for people who had turned it off on another device: accepting a playlist here and not having it
@@ -180,8 +192,12 @@
         const { evs, complete } = await _query({ kinds:[KIND], authors:[owner], '#d':[DECIDE_D] });
         // newestBy hands back a MAP, not an array — indexing it like one reads every
         // document as absent, which is silent: the answers simply never arrive.
-        const ev = [...newestBy(evs, e => tagOf(e, 'd')).values()][0];
-        if(ev){
+        // Only the account's OWN document: nobody else can encrypt to its self-conversation key, but
+        // a newer foreign event with the same d would still shadow the real one and read as "failed".
+        const ev = [...newestBy(evs.filter(e => e && e.pubkey === owner), e => tagOf(e, 'd')).values()][0];
+        decisions();                                   // re-sync the owner before touching the copy
+        if(owner !== _decOwner){ /* the account changed mid-read: this answer is not theirs */ }
+        else if(ev){
           const body = JSON.parse(await PC.nip44dec(owner, ev.content));
           if(body && body.v === 1){ _dec = _mergeDec(_localDec(), _cleanDec(body.d)); _saveLocalDec(_dec); _decRead = true; }
         }
@@ -199,6 +215,7 @@
   async function _saveDecisions(){
     if(!_boot() || !ME()) return false;
     const owner = ME().pubkey;
+    decisions();                                     // an account switch clears _decRead
     /* Never publish over a document that was never read: an unreachable relay plus a fresh device
      * would replace every answer this account has given with the one just made here — the
      * replaceable-doc wipe the rest of this app is careful about. The local copy still holds it,

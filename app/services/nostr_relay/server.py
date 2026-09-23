@@ -1287,9 +1287,10 @@ class RelayServer:
         reported as "I shared Music on TV but can't see it on phone or laptop".
 
         Adding the addressee is not a widening of what a stranger can see: the `p` tag is written by
-        the AUTHOR, the content is encrypted to that same recipient, and this is the rule the relay
-        already applies to DMs (a gift wrap is served to whoever it is addressed to). An
-        unauthenticated connection still gets nothing."""
+        the AUTHOR and the content is encrypted to that same recipient. An unauthenticated connection
+        still gets nothing. (NOT the DM rule, whatever it looks like: kinds 4/13/1059 have NO read gate
+        here at all — `_can_serve_event` serves them to anyone — and gating them on `p` would break
+        Concord, whose room wraps are p-tagged to a room key, not to the member reading them.)"""
         authed = self._auth_pubkeys.get(conn, set())
         if not authed:
             return False

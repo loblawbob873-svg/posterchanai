@@ -347,6 +347,23 @@ function make({ virsh, cleanName, root, qemuHas, run }){
         }
       }
     }
+    /* THE GRANT DIES WITH THE DEVICE NODE — a reboot or a replug makes a new node with no ACL, and the session QEMU
+     * that opens it as this account then fails the whole start with "Permission denied". So a saved device that is
+     * plugged in and not openable is granted again here, through the same helper and its same checks. Only an
+     * unambiguous match: with twins and no address libvirt refuses on its own, and granting both would give away a
+     * device the VM never takes. */
+    const made = [];
+    for(const e of saved){
+      const hits = devs.filter(dd => matches(e, dd));
+      if(hits.length !== 1 || hits[0].access) continue;
+      const d = hits[0];
+      const g = await grant('grant', d.bus, d.device);
+      if(g.ok) made.push(d);
+      if(!g.ok || !canOpen(d.node)){
+        for(const m of made) await grant('revoke', m.bus, m.device);
+        return { ok: false, error: `This VM's saved devices include ${d.label}. ` + accessFix(d) + (g.error ? ` (${g.error})` : '') };
+      }
+    }
     return { ok: true };
   }
   /** true/false, or {error} when the definition cannot be read — never "no devices" by default. */

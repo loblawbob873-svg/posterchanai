@@ -23,7 +23,7 @@ import re
 import xml.etree.ElementTree as ET
 from dataclasses import dataclass, field
 
-HEX4 = re.compile(r"^[0-9a-f]{4}$")
+HEX4 = re.compile(r"^[0-9a-f]{4}\Z")         # \Z, not $: `$` also matches before a trailing newline
 SYSTEM_MOUNTS = ("/", "/boot", "/boot/efi", "/efi", "/usr", "/var")
 CLASS_NAMES = {
     "01": "audio", "02": "communications", "03": "input device", "05": "physical", "06": "camera / imaging",
@@ -210,16 +210,18 @@ def _mounts(mountinfo: str, swaps: str, sys_root: str = "/sys", zpool_status=Non
                 for d in _ls(os.path.join(bdir, fs)) if d.startswith("dev-")]
         if devs:
             members["bcachefs:" + fs] = devs
+    given = False
     for fs, devs in members.items():
         mps = sorted({m for d in devs for m in out.get(d, []) if m != "swap"})
         if btrfs_left and (not mps or len(members) == 1):
             mps = sorted(set(mps) | set(btrfs_left))       # cannot tell which fs: every member keeps them all
+            given = True
         for d in devs:
             for m in mps:
                 if m not in out.setdefault(d, []):
                     out[d].append(m)
-    if btrfs_left and not members:
-        out.unresolved.extend(btrfs_left)
+    if btrfs_left and not given:
+        out.unresolved.extend(btrfs_left)                 # no filesystem took them: say so, never drop them
     # ZFS: every vdev of every IMPORTED pool is in use — mounted or not (a pool with nothing mounted is still
     # written by the host: scrubs, resilvers, zvols); a mounted dataset lives on every vdev of its pool
     text = _zpool_status() if zpool_status is None else zpool_status
@@ -247,7 +249,7 @@ def _mounts(mountinfo: str, swaps: str, sys_root: str = "/sys", zpool_status=Non
                 if p and p[0].startswith("/dev/") and by_path(p[0]):
                     out.setdefault(by_path(p[0]), []).append("swap")
     except OSError:
-        pass
+        out.unresolved.append("swap")                     # no swap table: any disk may be the host's swap
     return out
 
 
@@ -306,6 +308,10 @@ def scan(sys_root: str = "/sys", mountinfo: str = "/proc/self/mountinfo", swaps:
         blocks = []
     mounts = _mounts(mountinfo, swaps, sys_root, zpool_status, root_dev)
     lost = root_unresolved(mounts)
+    # ANY filesystem (or swap) the host has that could not be traced to a disk may be on this one: a disk is busy
+    # then, not only when it is the root that got lost — a VM taking a disk the host has /raid mounted from is the
+    # same loss, just not of the OS.
+    untraced = list(dict.fromkeys(getattr(mounts, "unresolved", [])))
     net = os.path.join(sys_root, "class", "net")
     out = []
     for n in names:
@@ -356,9 +362,9 @@ def scan(sys_root: str = "/sys", mountinfo: str = "/proc/self/mountinfo", swaps:
                 d.busy = f"the host has it mounted at {mp}"
             else:
                 d.busy = f"the host is using {b} (part of {via})"
-        elif d.blocks and lost:
-            d.busy = ("the host could not tell which disk " + ", ".join(lost) + " is on, so no disk is given to a VM "
-                      "(refusing rather than risk the one the host runs from)")
+        elif d.blocks and untraced:
+            d.busy = ("the host could not tell which disk " + ", ".join(lost or untraced) + " is on, so no disk is "
+                      "given to a VM (refusing rather than risk one the host is using)")
         up = [i for i in net_under(net, real) if iface_up(net, i)]
         if up and not d.busy:
             d.busy = f"the host's network interface {up[0]} is up on it"

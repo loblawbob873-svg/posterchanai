@@ -225,9 +225,18 @@ public class ThreadActivity extends PcActivity {
          * conversation's draft. */
         if (a != null && !a.isEmpty() && !a.equals(address)) handOverComposer(a);
         if (!SmsShare.isConsumed(i) && SmsShare.stream(i) == null && input != null && !body.isEmpty() && input.getText().length() == 0) input.setText(body);
+        final String wasAddress = address;
+        final long wasThread = threadId;
         if (a != null && !a.isEmpty()) address = a;
         if (t > 0) threadId = t;
         else if (!address.isEmpty()) threadId = SmsStore.threadIdFor(this, address);
+        /* THE PARTICIPANTS BELONG TO THE CONVERSATION TOO. onNewIntent moves `address`/`threadId`
+         * but `people` is only replaced when the next reload's participants() answers NON-empty --
+         * so until then (and for ever, for an `sms:` link to somebody with no thread yet) send()
+         * addressed a reply in the NEW conversation to every member of the group just left. */
+        if (!address.equals(wasAddress) || threadId != wasThread) {
+            people = new java.util.ArrayList<String>();
+        }
         long[] many = i.getLongArrayExtra(EXTRA_THREADS);
         // Opened from our own list, which already grouped the conversation. Opened from anywhere
         // else -- an `sms:` link, a share sheet, a notification -- there is only an address, so the
@@ -797,6 +806,8 @@ public class ThreadActivity extends PcActivity {
         sendingLink = true;
         say("Sending it as a private link…");
         final String who = address;
+        // A link posted in a group goes to the group, like any other reply (see send()).
+        final String[] everyone = SmsGroup.replyTo(people, address, "").toArray(new String[0]);
         new Thread(() -> {
             /* THE SIGNER IS NEVER TOUCHED ON THE MAIN LOOPER. SignerKey.load opens the AndroidKeyStore
              * and does a hardware-backed AES-GCM decrypt — tens to hundreds of milliseconds on a TEE
@@ -817,7 +828,9 @@ public class ThreadActivity extends PcActivity {
                     public String upload(byte[] blob) throws Exception { return net.putBlob(blob); }
                     public String upload(File blob) throws Exception { return net.putBlob(blob); }
                     public String sendText(String text) {
-                        SmsSender.Result sent = SmsSender.send(ThreadActivity.this, who, text, threadId);
+                        SmsSender.Result sent = everyone.length > 1
+                                ? MmsSender.sendGroupText(ThreadActivity.this, everyone, text)
+                                : SmsSender.send(ThreadActivity.this, who, text, threadId);
                         return sent.ok ? "" : (sent.error == null || sent.error.isEmpty()
                                 ? getString(R.string.sms_failed) : sent.error);
                     }
@@ -901,7 +914,10 @@ public class ThreadActivity extends PcActivity {
              * subscription; this screen's old duplicate omitted it, producing a provider row that
              * remained at Sending on dual-SIM and stale-default devices. */
             String draftKey = attachmentDraft == null ? null : attachmentDraft.key;
-            SmsSender.Result result = MmsSender.send(this, address, body, raw, mime, fileName, draftKey);
+            /* A PICTURE IN A GROUP GOES TO THE GROUP too: addressed to `address` it reached one
+             * member as a private message, exactly the bug send() fixes for text. */
+            String[] to = SmsGroup.replyTo(people, address, "").toArray(new String[0]);
+            SmsSender.Result result = MmsSender.send(this, to, body, raw, mime, fileName, draftKey);
             if (!result.ok) { say(result.error == null || result.error.isEmpty()
                     ? getString(R.string.sms_failed) : result.error); return; }
             /* SENT MEANS THE COMPOSER IS EMPTY, picture included. The draft used to stay on screen

@@ -28,23 +28,33 @@ def _is_this_host(host: str) -> bool:
     Loopback is not enough, and the Akkoma cutover is why: a service can perfectly well bind the
     machine's LAN address rather than 127.0.0.1 (Akkoma on nas listens on 192.168.0.85:4000), and a
     loopback-only rule refuses to publish the node's own service while claiming the line is invalid.
-    Asked by BINDING: if this process can bind the address, the address is one of ours. That is a
-    local syscall, it needs no DNS and no network, and it cannot be talked into saying yes about
+    Asked by BINDING an IP LITERAL: if this process can bind the address, the address is one of ours.
+    That is a local syscall, it needs no DNS and no network, and it cannot be talked into saying yes about
     another machine the way a "looks private enough" pattern can — which is the check that would
     have let somebody publish their neighbour's printer through this node's identity."""
     h = (host or "").strip().strip("[]")
     if h in ("localhost", "127.0.0.1", "::1"):
         return True
-    for family in (socket.AF_INET, socket.AF_INET6):
-        try:
-            with socket.socket(family, socket.SOCK_STREAM) as probe:
-                probe.bind((h, 0))
-                return True
-        except OSError:
-            continue
-        except Exception:
-            return False
-    return False
+    # AN IP LITERAL, NEVER A NAME. bind() RESOLVES a hostname, and so does Tor when it parses
+    # HiddenServicePort — separately, later. A name that answers 127.0.0.1 to this check can answer
+    # anything to Tor (a rebinding DNS record, an edited hosts file), so a name is refused outright.
+    try:
+        ip = ipaddress.ip_address(h)
+    except ValueError:
+        return False
+    # Link-local (169.254.169.254 is the cloud metadata service) and multicast are never a service
+    # on this machine — refused before the bind, which a host with net.ipv4.ip_nonlocal_bind=1 (or an
+    # IPv6 AnyIP route) would answer "yes" for ANY address.
+    mapped = getattr(ip, "ipv4_mapped", None)        # [::ffff:169.254.169.254] is the same place
+    if any(a.is_link_local or a.is_multicast for a in (ip, mapped) if a is not None):
+        return False
+    family = socket.AF_INET6 if ip.version == 6 else socket.AF_INET
+    try:
+        with socket.socket(family, socket.SOCK_STREAM) as probe:
+            probe.bind((str(ip), 0))
+            return True
+    except Exception:
+        return False
 
 
 def parse_extra_onions(text: str) -> list:

@@ -115,3 +115,25 @@ def test_a_service_on_this_machines_lan_address_is_publishable():
     # and a name. Each would be published through this node's onion identity.
     for bad in ("x 80 8.8.8.8:80", "x 80 203.0.113.7:443", "x 80 example.com:80"):
         assert ts.parse_extra_onions(bad) == [], bad
+
+
+def test_a_name_or_link_local_target_is_refused_even_if_it_binds(monkeypatch):
+    """bind() RESOLVES a hostname and Tor resolves it again, later and separately — so a name that
+    answers 127.0.0.1 to the check (localtest.me, a hosts entry, a rebinding record) can point Tor
+    anywhere. And a host with net.ipv4.ip_nonlocal_bind=1 (or an IPv6 AnyIP route) binds ANY
+    address, so the bind alone would publish the cloud metadata service. Simulate that host."""
+    import socket
+
+    class AnyBind:
+        def __init__(self, *a, **k): pass
+        def bind(self, addr): return None
+        def __enter__(self): return self
+        def __exit__(self, *a): return False
+
+    monkeypatch.setattr(socket, "socket", AnyBind)
+    for bad in ("x 80 169.254.169.254:80", "x 80 [fe80::1]:80", "x 80 [::ffff:169.254.169.254]:80",
+                "x 80 224.0.0.1:80", "x 80 localtest.me:80", "x 80 my-nas.lan:4000"):
+        assert ts.parse_extra_onions(bad) == [], bad
+    # The shapes that ARE this host still pass on such a machine.
+    assert ts.parse_extra_onions("a 80 127.0.0.1:1\nb 80 localhost:2\nc 80 [::1]:3") == [
+        ("a", 80, "127.0.0.1:1"), ("b", 80, "localhost:2"), ("c", 80, "[::1]:3")]

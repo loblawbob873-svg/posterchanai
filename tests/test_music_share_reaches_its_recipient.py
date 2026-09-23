@@ -13,7 +13,7 @@ live one) and were unreadable by the one account they were written for --
     filter names exactly one AUTHOR, so "shared with me" ended its EOSE empty with no prompt.
 
 Three layers, one symptom, nothing in any log. The rule is now "the author, or somebody the author
-addressed it to" -- the same rule the relay already applies to DMs.
+addressed it to" -- and only for a document that IS a share (`l` + `d`).
 """
 import shutil
 import subprocess

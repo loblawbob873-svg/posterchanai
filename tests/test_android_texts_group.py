@@ -18,6 +18,7 @@ right is worth nothing if the Activity holding them does not build, and that flo
 (its klinker shim grew the group API this change needs, signatures read off the real AAR).
 """
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -188,3 +189,36 @@ def test_a_group_text_is_one_message_to_everybody():
     body = open(os.path.join(SMS, "MmsSender.java"), encoding="utf-8").read()
     assert "sendGroupText(" in body
     assert "settings.setGroup(" in body, "without this the library sends each recipient a private copy"
+
+
+def _method(body, signature):
+    start = body.index(signature)
+    depth, i = 0, body.index("{", start)
+    for j in range(i, len(body)):
+        depth += {"{": 1, "}": -1}.get(body[j], 0)
+        if depth == 0:
+            return body[i:j + 1]
+    raise AssertionError("unterminated " + signature)
+
+
+def test_switching_conversation_forgets_the_last_groups_members():
+    """ThreadActivity is singleTop: a notification or an `sms:` link REUSES the open screen through
+    onNewIntent → readIntent, which moves `address`/`threadId`. `people` was replaced only when the
+    next reload's participants() answered NON-empty — so between the two (and for ever, for a new
+    number with no thread yet) a reply typed in the NEW conversation went, as a group MMS, to every
+    member of the group just left. readIntent must drop them when the conversation changes."""
+    body = open(os.path.join(SMS, "ThreadActivity.java"), encoding="utf-8").read()
+    read = _method(body, "private void readIntent(Intent i)")
+    moved = read.index("threadId = t;")
+    assert re.search(r"people\s*=\s*new\s", read[moved:]), \
+        "readIntent changes the conversation but keeps the previous one's participants"
+
+
+def test_a_picture_or_link_in_a_group_goes_to_the_group():
+    """The text path learned to address everybody; the picture path still sent `address` — one
+    member, privately — and so did the big-file link."""
+    body = open(os.path.join(SMS, "ThreadActivity.java"), encoding="utf-8").read()
+    mms = _method(body, "private void sendMms(String body)")
+    assert "SmsGroup.replyTo(" in mms and "MmsSender.send(this, address," not in mms
+    link = _method(body, "private void sendAsLink(")
+    assert "SmsGroup.replyTo(" in link and "MmsSender.sendGroupText(" in link

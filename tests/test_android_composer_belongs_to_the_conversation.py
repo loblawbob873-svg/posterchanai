@@ -106,6 +106,7 @@ public class ComposerHandOver {
   Box input = new Box();
   String address = "";
   long threadId = 0;
+  java.util.List<String> people = new java.util.ArrayList<String>();
   long[] threadIds = new long[0];
   Object attachment, capturedAttachment, attachmentDraft;
   void updateCount(){ }

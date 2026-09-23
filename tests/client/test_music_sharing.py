@@ -247,3 +247,74 @@ def test_it_never_publishes_over_a_document_it_has_not_read():
     save = src[src.index("async function _saveDecisions(){"):]
     save = save[:save.index("\n  }")]
     assert "if(!_decRead)" in save, "a save with no prior read is a wipe"
+
+
+def _run_decisions_js(body):
+    if shutil.which("node") is None:
+        pytest.skip("node not installed")
+    js = """
+      const fs=require('fs'), vm=require('vm');
+      const SRC=fs.readFileSync(process.argv[1],'utf8');
+      const store={};   // ONE device: localStorage outlives the reload an account switch does
+      const A='a'.repeat(64), B='b'.repeat(64), C='c'.repeat(64);
+      function boot(me, relayEvs){
+        const ctx={console, localStorage:{getItem:k=>store[k]||null, setItem:(k,v)=>{store[k]=String(v)}, removeItem:k=>{delete store[k]}},
+          setTimeout, clearTimeout, Date, Math, JSON, Object, Array, Set, Map, Number, String, Boolean, Promise, Uint8Array, Buffer,
+          atob:s=>Buffer.from(String(s),'base64').toString('binary'), btoa:s=>Buffer.from(String(s),'binary').toString('base64')};
+        ctx.window=ctx; ctx.globalThis=ctx; ctx.self=ctx;
+        ctx.published=[];
+        ctx.__PC={ me:()=>({pubkey:me}),
+          nip44enc:async (pk,pt)=>'enc:'+pk+':'+pt,
+          nip44dec:async (pk,ct)=>{ const p='enc:'+pk+':'; if(!String(ct).startsWith(p)) throw new Error('bad mac'); return ct.slice(p.length); },
+          publish:async (k,ct,tags)=>{ ctx.published.push({k,ct,tags}); return {ok:true}; } };
+        ctx.Relay={ready:async()=>{}, query:async()=>relayEvs||[]}; ctx.Store={query:()=>[], saveEvent(){}};
+        vm.createContext(ctx); vm.runInContext(SRC, ctx);
+        ctx.MS=ctx.window.PCMusicShare; return ctx;
+      }
+      (async()=>{ const out={}; """ + body + """ process.stdout.write(JSON.stringify(out)); })()
+        .catch(e=>{ console.error(e); process.exit(1); });
+    """
+    path = os.path.join(ROOT, "static", "js", "client", "musicshare.js")
+    r = subprocess.run(["node", "-e", js, path], capture_output=True, text=True, timeout=120)
+    assert r.returncode == 0, r.stderr[-2000:]
+    return json.loads(r.stdout)
+
+
+def test_decisions_do_not_cross_accounts_on_one_device():
+    """An account switch reloads the page but keeps localStorage. With one device-wide key, B's first
+    load merged A's answers — who shared music with A, and what A kept or refused — into B's OWN
+    relay document, and A's "reject" hid the same share (one body id goes to every recipient) from B."""
+    got = _run_decisions_js("""
+      const a=boot(A, []);
+      await a.MS.loadDecisions();
+      a.MS.decide(C+':trip', false);
+      await new Promise(r=>setTimeout(r,20));
+      const b=boot(B, []);                     // the switch: same storage, a fresh page
+      await b.MS.loadDecisions();
+      out.bSees=Object.keys(b.MS.decisions());
+      b.MS.decide(C+':other', true);
+      await new Promise(r=>setTimeout(r,20));
+      out.bPublished=b.published.map(p=>p.ct).join('|');
+      const a2=boot(A, []);
+      await a2.MS.loadDecisions();
+      out.aStill=Object.keys(a2.MS.decisions());
+    """)
+    assert got["bSees"] == [], f"account B inherited account A's answers: {got['bSees']}"
+    assert "trip" not in got["bPublished"], "account A's answers were published into B's document"
+    assert got["aStill"] == ["c" * 64 + ":trip"], got
+
+
+def test_a_foreign_decisions_document_cannot_shadow_the_owners():
+    """A document with the same `d` from ANOTHER pubkey (a relay that ignores `authors`) could not be
+    decrypted anyway — but being newer, it was picked over the owner's own, the decrypt failed, and
+    the account's answers read as never given."""
+    got = _run_decisions_js("""
+      const own={id:'o', pubkey:A, kind:30078, created_at:100, tags:[['d','pcai:musicshares']],
+                 content:'enc:'+A+':'+JSON.stringify({v:1,d:{[C+':trip']:{yes:true,at:50}}})};
+      const forged={id:'f', pubkey:C, kind:30078, created_at:9999999999, tags:[['d','pcai:musicshares']],
+                 content:'enc:'+C+':'+JSON.stringify({v:1,d:{}})};
+      const a=boot(A, [own, forged]);
+      await a.MS.loadDecisions();
+      out.keys=Object.keys(a.MS.decisions());
+    """)
+    assert got["keys"] == ["c" * 64 + ":trip"], got

@@ -492,3 +492,25 @@ class LocalVmUsbRound3(LocalVmUsbGrantAndDisks):
         r = self.js("return v.update('vm1',{autostart:true})", FAKE_DUMPXML_FAIL="1")
         self.assertFalse(r["ok"])
         self.assertIn("Could not check", r["error"])
+
+
+class LocalVmUsbRound4(LocalVmUsbGrantAndDisks):
+    def test_a_start_regrants_a_saved_device_whose_node_lost_its_acl(self):
+        """The ACL dies with the device node: after a reboot or a replug a saved device's node is root-owned again,
+        and a session QEMU opening it as the user fails the whole start. The start re-grants it (same helper, same
+        checks) — and a refused grant stops the start with the reason instead of libvirt's Permission denied."""
+        (self.fake / "state").write_text("shut off")
+        log = self.helper()
+        assert self.js("return v.usbAttach('vm1',{vendor:'090c',product:'1000'})")["ok"]
+        (self.dev / "001" / "003").chmod(0o444)                          # replugged: a fresh node, no ACL
+        self.js("return v.action('vm1','start')")
+        self.assertEqual(log.read_text().splitlines(), ["grant 1 3"])
+        self.assertTrue([c for c in self.calls() if c.startswith("start")], "the start never reached virsh")
+
+        (self.dev / "001" / "003").chmod(0o444)
+        (self.fake / "calls").write_text("")
+        self.helper(ok=False)
+        r = self.js("return v.action('vm1','start')")
+        self.assertFalse(r["ok"])
+        self.assertIn("refused", r["error"])
+        self.assertFalse([c for c in self.calls() if c.startswith("start")])
