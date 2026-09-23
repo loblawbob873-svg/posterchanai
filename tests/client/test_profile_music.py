@@ -48,6 +48,8 @@ def extract(name):
 @pytest.mark.parametrize("width", [1280, 360])
 def test_own_profile_music_edit_save_reopen_and_play_lifecycle(width):
     edit_at = APP.index("function editProfile(")
+    if APP[:edit_at].endswith("async "):          # the declaration, not the name inside it
+        edit_at -= len("async ")
     edit = APP[edit_at:APP.index("\n  // Show the relays", edit_at)]
     # `_kind0Tags` too: editProfile calls it to carry the NIP-30 name emoji through a kind-0
     # republish, and a lift that omits it throws INSIDE the save — publish is never reached and the
@@ -61,7 +63,7 @@ def test_own_profile_music_edit_save_reopen_and_play_lifecycle(width):
     const $=(s,r=document)=>r.querySelector(s), $$=(s,r=document)=>[...r.querySelectorAll(s)];
     const xmrOf=()=>'',bchDirect=()=>'',isXmrAddr=()=>false,isBchAddr=()=>false;
     const toast=s=>toasts.push(s),uploadBlob=async()=>'',renderMe=()=>{{}};
-    const Store={{saveProfile(e){{profile=JSON.parse(e.content)}},profileEmojis(){{return null}}}};
+    const Store={{saveProfile(e){{profile=JSON.parse(e.content)}},profile(){{return profile}},profileEmojis(){{return null}}}};
     async function publish(kind,content,tags){{published={{kind,content,tags}};return {{ok:true}}}}
     function closeModal(){{const n=document.querySelector('.modal-bg');if(n)n.remove()}}
     function modal(html,mount){{closeModal();const bg=document.createElement('div');bg.className='modal-bg';bg.innerHTML='<div class="modal glass">'+html+'</div>';document.body.appendChild(bg);mount(bg.firstElementChild)}}
@@ -69,14 +71,14 @@ def test_own_profile_music_edit_save_reopen_and_play_lifecycle(width):
     {state_shim(functions)}
     {functions}
     (async()=>{{
-      renderProfileView();document.querySelector('#edit-prof').click();
+      renderProfileView();document.querySelector('#edit-prof').click();await new Promise(r=>setTimeout(r,20));
       const add=document.querySelector('#pf-music-add'),up=document.querySelector('#pf-music-up');
       const ar=add.getBoundingClientRect(),ur=up.getBoundingClientRect(),mb=document.querySelector('.modal').getBoundingClientRect();
       const initiallyVisible=getComputedStyle(add).display!=='none'&&getComputedStyle(up).display!=='none'&&ar.top>=0&&ar.bottom<=innerHeight&&ur.right<=innerWidth;
       add.click();const row=document.querySelector('.pf-music-row');row.querySelector('.pf-music-title').value='Night Drive';row.querySelector('.pf-music-url').value={json.dumps(TRACK)};
       document.querySelector('#pf-save').click();await new Promise(r=>setTimeout(r,30));
       const audio=document.querySelector('#prof-music audio'),playable=!!audio&&audio.controls&&audio.preload==='none'&&audio.src==={json.dumps(TRACK)};
-      document.querySelector('#edit-prof').click();const reopened=document.querySelector('.pf-music-row');
+      document.querySelector('#edit-prof').click();await new Promise(r=>setTimeout(r,20));const reopened=document.querySelector('.pf-music-row');
       const persisted=!!reopened&&reopened.querySelector('.pf-music-title').value==='Night Drive'&&reopened.querySelector('.pf-music-url').value==={json.dumps(TRACK)};
       out.textContent=JSON.stringify({{initiallyVisible,persisted,playable,kind:published&&published.kind,fields:published&&JSON.parse(published.content).fields,over:document.documentElement.scrollWidth-innerWidth,modalLeft:mb.left,modalRight:mb.right,toasts}});
     }})().catch(e=>{{out.textContent=JSON.stringify({{error:String(e),stack:e.stack}})}});

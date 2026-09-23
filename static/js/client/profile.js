@@ -826,7 +826,30 @@ window.PCProfileFactory = function(dep){
       toast(r.ok ? (grant?'granted Blossom access 🌸':'revoked Blossom access') : ('failed: '+(r.error||'')));
     }catch(e){ toast('blossom access change failed'); }
   }
-  function editProfile(p){
+  /* EDIT FROM THE NEWEST PROFILE THERE IS, NEVER FROM WHAT THE PAGE WAS PAINTED WITH.
+   *
+   * A kind-0 is REPLACEABLE: Save publishes the whole form, so a form filled from a stale copy
+   * writes that stale copy back over the newer one. The profile page paints from the cache first
+   * and patches its header when the relay answers -- but its Edit button kept the object it was
+   * PAINTED with. Reported from the PosterChanOS desktop: the About line with "https://poster.place"
+   * was saved (from another device) and shown in the header, and Edit Profile opened without it --
+   * so the next Save would have deleted it. So the editor asks the relay for the latest kind-0 first
+   * (bounded, so a dead relay costs seconds, not the editor) and opens with whatever is newest; the
+   * Store keeps the newest by created_at, so an older answer can never downgrade it. */
+  async function editProfile(p){
+    const me = S.ME && S.ME.pubkey;
+    if(me){
+      const within = (ms, work) => Promise.race([work, new Promise(r => setTimeout(() => r(null), ms))]);
+      try{
+        if(window.Relay && Relay.ready) await within(2500, Relay.ready());
+        const evs = await within(4000, Relay.query([{authors:[me], kinds:[0], limit:1}]));
+        for(const e of (evs || [])) if(e && e.pubkey === me) Store.saveProfile(e);
+      }catch(_){ /* offline: the freshest cached copy below is still better than the painted one */ }
+    }
+    const fresh = me ? Store.profile(me) : null;
+    return _openProfileEditor(fresh || p || {});
+  }
+  function _openProfileEditor(p){
     /* Sticky for the same reason as the composers: a bio and a set of links are typed once, exist
      * nowhere else, and this sheet is a big target. The ✕ keeps it escapable. */
     modal(`<h3 class="cmp-hd">Edit profile<button class="modal-x" id="pf-close" title="Close" aria-label="Close">&#215;</button></h3>
