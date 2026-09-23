@@ -1,4 +1,5 @@
-"""OUR actors: which pubkeys are on the fediverse as `@name@<domain>`, and what they look like.
+"""OUR actors: which pubkeys are on the fediverse as `@name@<domain>` (local users) or
+`@npub1…@<domain>` (any Nostr user, in `everyone` mode), and what they look like.
 
 EVERY LOCAL USER, AUTOMATICALLY. When ActivityPub is on, every name in this node's NIP-05 registry
 (`nostr_relay_nip05_names`, the list this node writes when it grants a name) is an actor -- nobody
@@ -42,14 +43,21 @@ def pubkey_of_name(name: str) -> str:
     return _registry()[0].get((name or "").lower(), "")
 
 
-def _relay_blocked() -> set:
-    from app.services.nostr import nostr_service
-    out = set()
-    for tok in (settings_store.get("nostr_relay_blocked_pubkeys", "") or "").replace(",", "\n").split():
-        h = nostr_service.to_pubkey_hex(tok.strip())
-        if h:
-            out.add(h.lower())
-    return out
+_blocked_cache = {"raw": None, "set": frozenset()}
+
+
+def _relay_blocked() -> frozenset:
+    """Pubkeys blocked on the relay -- parsed once per edit of the setting, not per call."""
+    raw = settings_store.get("nostr_relay_blocked_pubkeys", "") or ""
+    if raw != _blocked_cache["raw"]:
+        from app.services.nostr import nostr_service
+        out = set()
+        for tok in raw.replace(",", "\n").split():
+            h = nostr_service.to_pubkey_hex(tok.strip())
+            if h:
+                out.add(h.lower())
+        _blocked_cache.update(raw=raw, set=frozenset(out))
+    return _blocked_cache["set"]
 
 
 def is_actor(pubkey: str) -> bool:
@@ -65,16 +73,119 @@ def all_actors() -> list:
 
 
 async def member_by_name(name: str) -> str:
-    """The pubkey behind `name` if that local user is on the fediverse, else ""."""
+    """The pubkey behind a handle -- a local user's name, or (in `everyone` mode) any Nostr user's
+    npub -- if that account is on the fediverse, else ""."""
     pk = pubkey_of_name(name)
-    return pk if is_actor(pk) else ""
+    if pk:
+        return pk if is_actor(pk) else ""
+    pk = _npub_pubkey(name)
+    return pk if pk and await exposed(pk) else ""
+
+
+def _npub_pubkey(handle: str) -> str:
+    h = (handle or "").strip().lower()
+    if not h.startswith("npub1"):
+        return ""
+    try:
+        from app.services.nostr import nostr_service
+        return (nostr_service.to_pubkey_hex(h) or "").lower()
+    except Exception:
+        return ""
+
+
+def handle(pubkey: str) -> str:
+    """The name an account has on the fediverse: its local name, or its npub in `everyone` mode --
+    "" when it has none. (Whether that account may be SERVED is `exposed`; this only spells it.)"""
+    pk = (pubkey or "").lower()
+    local = name_of(pk)
+    if local:
+        return local
+    if config.everyone() and pk and pk not in _relay_blocked():
+        from app.services.nostr import nostr_service
+        try:
+            return nostr_service.npub_of(pk)
+        except Exception:
+            return ""
+    return ""
+
+
+_known_cache: dict = {}
+
+
+async def exposed(pubkey: str) -> bool:
+    """May this account be served on the fediverse? A local user always (is_actor); anybody else in
+    `everyone` mode when this relay holds a profile for them -- an address nobody has ever published
+    anything under is not an account, and minting a key for it would let anyone make this server
+    generate keys for made-up npubs."""
+    pk = (pubkey or "").lower()
+    if not pk:
+        return False
+    if is_actor(pk):
+        return True
+    if not config.everyone() or pk in _relay_blocked():
+        return False
+    hit = _known_cache.get(pk)
+    if hit is not None and time.monotonic() - hit[0] < 600:
+        return hit[1]
+    known = await _is_native_nostr_account(pk)
+    _known_cache[pk] = (time.monotonic(), known)
+    if len(_known_cache) > 20000:
+        _known_cache.clear()
+    return known
+
+
+async def _is_native_nostr_account(pk: str) -> bool:
+    """A real Nostr account: it has a profile here, and it is NOT somebody else seen through a
+    bridge. A fediverse puppet (ours) or a mirror account (Mostr and friends, whose profiles carry
+    a `proxy` or `fedibridge` tag) served as `npub…@<our domain>` would put a copy of a fediverse
+    person under this domain -- followable, messageable, signing as them."""
+    if is_puppet(pk):
+        return False
+    ev = await profile_event(pk)
+    if not ev:
+        return False
+    return not any(t and t[0] in ("proxy", "fedibridge") for t in ev.get("tags") or [])
+
+
+def is_puppet(pk: str) -> bool:
+    from app.database import SessionLocal
+    from app.models import FediPuppet
+    db = SessionLocal()
+    try:
+        return db.query(FediPuppet.pubkey_hex).filter(FediPuppet.pubkey_hex == pk).first() is not None
+    finally:
+        db.close()
+
+
+def pubkey_of_actor_url(url: str) -> str:
+    """The pubkey behind one of OUR actor URLs (local name or npub), without deciding exposure."""
+    base = config.base_url()
+    prefix = f"{base}/ap/users/"
+    if not base or not isinstance(url, str) or not url.startswith(prefix):
+        return ""
+    h = url[len(prefix):].split("/")[0].split("#")[0].split("?")[0]
+    return pubkey_of_name(h) or _npub_pubkey(h)
+
+
+class _LocalActors(dict):
+    """{our actor URL: pubkey} -- how an incoming Mention of one of ours is recognised. A plain dict
+    of the local names, that ALSO answers for any `/ap/users/npub1…` URL in `everyone` mode, so a
+    mention of a Nostr user who is not local still becomes a `p` tag they are notified by.
+    Recognising a mention grants nothing, so it is not gated on exposure."""
+    def get(self, key, default=None):
+        hit = dict.get(self, key)
+        if hit:
+            return hit
+        if config.everyone():
+            pk = pubkey_of_actor_url(key)
+            if pk and pk not in _relay_blocked():
+                return pk
+        return default
 
 
 def local_actor_map() -> dict:
-    """{our actor URL: pubkey} for every granted name -- how an incoming Mention of one of ours is
-    recognised. Deliberately NOT gated on membership: recognising a mention grants nothing."""
     base = config.base_url()
-    return {convert.actor_url(base, n): pk for n, pk in _registry()[0].items()} if base else {}
+    return _LocalActors({convert.actor_url(base, n): pk for n, pk in _registry()[0].items()} if base else {})
 
 
 def uses_linked_account(pubkey: str) -> bool:
@@ -86,37 +197,54 @@ def uses_linked_account(pubkey: str) -> bool:
     and can be followed and replied to. Read from the write-back service itself, so the two can never
     disagree about who that is."""
     try:
-        from app.services.fedi_nostr_writeback_service import _bridge_allowed_pubkeys
+        from app.services.fedi_nostr_writeback_service import _bridge_allowed_pubkeys, _bridge_on
+        # ONLY WHILE THE BRIDGE RUNS. The whitelist is per-user flags that outlive the master switch;
+        # with `fedi_bridge_enabled` off nothing carries their activity to the fediverse any more,
+        # and deferring to it would leave them sending nothing at all.
+        if not _bridge_on():
+            return False
         return (pubkey or "").lower() in _bridge_allowed_pubkeys()
     except Exception:
         return False
 
 
-_profile_cache: dict = {}
+from collections import OrderedDict
+
+_profile_cache: "OrderedDict[str, tuple]" = OrderedDict()
+_PROFILE_CACHE_MAX = 5000
 
 
-async def profile(pubkey: str) -> dict:
-    """The member's kind-0 content (parsed), from this node's relay, cached five minutes."""
+async def profile_event(pubkey: str) -> dict | None:
+    """The account's kind-0 EVENT from this node's relay (None when it has none), cached five
+    minutes in a bounded cache -- anybody can make us look up any npub."""
     hit = _profile_cache.get(pubkey)
     if hit and time.monotonic() - hit[0] < 300:
+        _profile_cache.move_to_end(pubkey)
         return hit[1]
     from app.services.fedi_bridge_identity import query_one
     ok, ev = await query_one(settings_store._port(), {"kinds": [0], "authors": [pubkey], "limit": 1})
-    prof = {}
-    if ok and ev:
-        try:
-            prof = json.loads(ev.get("content") or "{}")
-            if not isinstance(prof, dict):
-                prof = {}
-        except ValueError:
-            prof = {}
     if ok:
-        _profile_cache[pubkey] = (time.monotonic(), prof)
-    return prof
+        _profile_cache[pubkey] = (time.monotonic(), ev)
+        _profile_cache.move_to_end(pubkey)
+        while len(_profile_cache) > _PROFILE_CACHE_MAX:
+            _profile_cache.popitem(last=False)
+    return ev if ok else None
 
 
-async def person(name: str, pubkey: str) -> dict:
-    keys = await state.keypair(pubkey)
+async def profile(pubkey: str) -> dict:
+    """The account's kind-0 content, parsed ({} when there is none)."""
+    ev = await profile_event(pubkey)
+    try:
+        prof = json.loads((ev or {}).get("content") or "{}")
+    except ValueError:
+        return {}
+    return prof if isinstance(prof, dict) else {}
+
+
+async def person(name: str, pubkey: str, *, anonymous: bool = False) -> dict:
+    """An account's actor document. `anonymous` is an unauthenticated fetch of it: the only path a
+    stranger can drive for free, so the only one whose first key is rate-limited (state.keypair)."""
+    keys = await state.keypair(pubkey, local=is_actor(pubkey) or not anonymous)
     return convert.person(base=config.base_url(), name=name, profile=await profile(pubkey),
                           public_key_pem=keys["pub"])
 
@@ -135,5 +263,5 @@ async def instance_actor() -> dict:
 
 
 def signing(pubkey: str, keys: dict) -> tuple[str, str]:
-    """(keyId, private PEM) for delivering as a member."""
-    return f"{convert.actor_url(config.base_url(), name_of(pubkey))}#main-key", keys["priv"]
+    """(keyId, private PEM) for delivering as an account (local name or npub)."""
+    return f"{convert.actor_url(config.base_url(), handle(pubkey))}#main-key", keys["priv"]

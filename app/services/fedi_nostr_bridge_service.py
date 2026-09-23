@@ -98,8 +98,23 @@ def _port() -> int:
 # --- moderation -------------------------------------------------------------
 
 def _blocked_domains() -> set:
-    raw = _get("fedi_bridge_blocked_domains", "")
-    return {d.strip().lower().lstrip("@") for d in raw.replace(",", "\n").split() if d.strip()}
+    """The instances in the admin's list (every spelling -- see app/services/fedi_blocklist.py, the
+    parser the ActivityPub server shares so an entry means one thing on both paths)."""
+    from app.services import fedi_blocklist
+    return set(fedi_blocklist.parse(_get("fedi_bridge_blocked_domains", ""))[0])
+
+
+def _account_blocked(acct: str, instance_host: str) -> bool:
+    """A `user@host` line in the admin's list blocks that ONE account. The list used to be compared
+    to hosts only, so such a line never matched and the account was never blocked at all."""
+    from app.services import fedi_blocklist
+    _hosts, accounts = fedi_blocklist.parse(_get("fedi_bridge_blocked_domains", ""))
+    if not accounts:
+        return False
+    a = (acct or "").lower()
+    if a and "@" not in a and instance_host:
+        a = f"{a}@{instance_host.lower()}"
+    return fedi_blocklist.account_blocked(a, accounts)
 
 
 def _host_of(acct: str, instance_host: str) -> str:
@@ -116,11 +131,12 @@ def _is_own_activitypub_host(host: str) -> bool:
 
 
 def _domain_blocked(host: str, blocked: set) -> bool:
-    """True if `host` equals a blocked domain or is a subdomain of one (a.b.c blocked by b.c)."""
+    """True if `host` equals a blocked domain or is a subdomain of one (a.b.c blocked by b.c), in
+    either spelling of an internationalised name."""
     if not host:
         return False
-    h = host.lower()
-    return any(h == d or h.endswith("." + d) for d in blocked)
+    from app.services import fedi_blocklist
+    return fedi_blocklist.host_blocked(host, blocked)
 
 
 async def _refresh_moderation(instance_url: str, token: str) -> None:
@@ -293,7 +309,7 @@ async def _backfill_ancestors(db: Session, port: int, platform: str, instance_ur
             continue
         acct = anc.get("author", {}).get("acct") or ""
         host = _host_of(acct, instance_host)
-        if _domain_blocked(host, blocked) or _author_muted(acct, host, instance_host):
+        if _domain_blocked(host, blocked) or _account_blocked(acct, instance_host) or _author_muted(acct, host, instance_host):
             continue
         try:
             await _deliver(db, port, platform, instance_url, instance_host, raw, anc,
@@ -427,7 +443,7 @@ async def _rewrite_mentions(db: Session, port: int, instance_host: str, content:
         # a NIP-05 registration and a p-tag on a public note purely by being MENTIONED — the blocklist
         # filtered ITEMS, not identities, so the blocked party's identity reached the relay anyway.
         _mhost = acct.rsplit("@", 1)[-1].lower() if "@" in acct else (instance_host or "").lower()
-        if _domain_blocked(_mhost, blocked) or _author_muted(acct, _mhost, instance_host):
+        if _domain_blocked(_mhost, blocked) or _account_blocked(acct, instance_host) or _author_muted(acct, _mhost, instance_host):
             continue
         try:
             p = await ident.ensure_puppet(
@@ -543,7 +559,7 @@ async def _resolve_quote(db: Session, port: int, platform: str, instance_url: st
         return None, None
     acct = qpost.get("author", {}).get("acct") or ""
     host = _host_of(acct, instance_host)
-    if _domain_blocked(host, _blocked_domains()) or _author_muted(acct, host, instance_host):
+    if _domain_blocked(host, _blocked_domains()) or _account_blocked(acct, instance_host) or _author_muted(acct, host, instance_host):
         return None, None
     try:
         eid = await _deliver(db, port, platform, instance_url, instance_host, q_raw, qpost,
@@ -876,6 +892,9 @@ async def _process(db: Session, port: int, platform: str, instance_url: str, ins
         return
     if _domain_blocked(host, blocked_domains):
         _record_skip(db, "domain-blocked", platform=platform, instance_url=instance_url, post=post, detail=host)
+        return
+    if _account_blocked(acct, instance_host):
+        _record_skip(db, "account-blocked", platform=platform, instance_url=instance_url, post=post, detail=acct)
         return
     if _author_muted(acct, host, instance_host):
         _record_skip(db, "author-muted", platform=platform, instance_url=instance_url, post=post, detail=acct)

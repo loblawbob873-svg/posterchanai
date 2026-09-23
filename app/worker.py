@@ -47,6 +47,8 @@ _SCHEDULERS = [
     # ActivityPub delivery: members' Nostr events → their fediverse followers. The tick reads
     # `activitypub_enabled` each time, so it is a no-op until an admin turns the feature on.
     ("activitypub", "app.services.activitypub.outbox", "start_activitypub_delivery"),
+    # ...and the DM bridge's live listener (gift wraps addressed to fediverse puppets).
+    ("activitypub-dm", "app.services.activitypub.dm", "start_dm_listener"),
     ("nostr-push", "app.services.nostr_push_service", "start_nostr_push_scheduler"),
     # New mail → push, for a phone whose screen is off. Self-gating: start_* is a no-op unless
     # `mail_poll_enabled` is on, and it lives HERE rather than in the app process because an IMAP

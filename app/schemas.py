@@ -487,11 +487,14 @@ class SettingsResponse(BaseModel):
     # covers a.mastodon.social). Independent of the read account's own block/mute lists (also honored).
     fedi_bridge_blocked_domains: str = ""
     # ---- ActivityPub server (app/services/activitypub) ----
-    # Members become `@name@<domain>` on the fediverse; everything they receive is stored as Nostr
-    # events (the bridge's puppets), everything they send is read from the relay. OFF by default.
-    # Instance blocking is deliberately NOT a setting here: it is the relay's (nostr_relay_blocked_relays),
-    # which the ActivityPub side reads.
-    activitypub_enabled: bool = False
+    # Local users are `@name@<domain>` on the fediverse, and (activitypub_everyone) any Nostr user this
+    # relay knows is `@npub…@<domain>`; everything received is stored as Nostr events (the bridge's
+    # puppets), everything sent is read from the relay; DMs cross both ways (activitypub_dms). ON out
+    # of the box (config._on_unless_off) -- a node with no domain still answers nothing. Instance
+    # blocking is deliberately NOT a setting here: the relay's and the bridge's lists are read.
+    activitypub_enabled: bool = True
+    activitypub_everyone: bool = True
+    activitypub_dms: bool = True
     activitypub_domain: str = ""       # blank = the NIP-05 domain (where /.well-known/nostr.json answers)
     # ---- "Sign in with an account" on the client login page ----
     # Both are OFF by default: they are the only paths where an identity is created by the SERVER

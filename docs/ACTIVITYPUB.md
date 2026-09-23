@@ -4,14 +4,23 @@ PosterChan can be a fediverse server: Mastodon, Pleroma, Misskey, GoToSocial and
 follow, reply to and boost this node's users, and they can follow fediverse accounts back — with
 **Nostr as the only store**. There is no posts table.
 
-Turn it on in **Admin → Social → Fediverse server (ActivityPub)**. It is off by default, and every
-ActivityPub address answers 404 until it is on.
+It is **on out of the box** (Admin → Social → Fediverse server (ActivityPub)): three switches —
+talk to the fediverse, every Nostr user can talk to the fediverse, direct messages — all on unless
+an admin turns one off. A node with no public domain still answers nothing, because there is no
+address to be reachable at.
 
 ## Who is on the fediverse
 
 **Every local user, automatically.** Each name in this node's NIP-05 registry (Admin → Relay →
 NIP-05 names) is `@name@<domain>`. Nobody signs up; a user's signing key is created the first time
 another server asks for them. The only exclusion is an account blocked on the relay.
+
+**Every Nostr user, too** (the second switch): anybody this relay holds a profile for is
+`@npub1…@<domain>`. Fediverse people can follow, mention and reply to them — and because they do not
+read this relay, those replies and mentions are ALSO published to their own relays (NIP-65 read
+relays), with the author's profile. What they write back to the fediverse (a reply to, mention,
+like or boost of a fediverse post) goes out from their npub account. Keys for such accounts are made
+on first use, at most 30 a minute.
 
 `<domain>` is the **Domain** setting, and blank means the NIP-05 domain — so `name@domain` on Nostr
 and `@name@domain` on the fediverse are one identity. Changing the domain later breaks existing
@@ -47,11 +56,28 @@ one of their posts — otherwise anybody could fill the relay by posting to its 
 and direct posts are never stored: a Nostr kind-1 is public, so storing one would publish a private
 post.
 
+## Direct messages
+
+A fediverse direct message to one of these accounts arrives as an encrypted NIP-17 DM from the
+sender's puppet; a Nostr DM to a fediverse account's puppet is delivered to them as a direct
+message. **This server reads the messages it carries** — that is what a bridge between two
+encryption systems is, and the setting says so. A fediverse account can message someone only if
+that person follows it or wrote to it first. Puppets publish a DM-relay list (kind 10050) naming
+this relay, so any Nostr client knows where to send them.
+
 ## Blocking instances
 
-On the **relay**, not here: Admin → Relay → blocked bridges/relays. Every event this stores carries a
-`proxy` tag naming its original instance, and the relay refuses blocked ones on ingest. The
-ActivityPub side reads that same list so it never fetches from, or delivers to, a blocked instance.
+The lists that already exist — the fediverse bridge's **blocked domains** (Admin → Social) and the
+relay's **blocked bridges/relays** — through one parser (`app/services/fedi_blocklist.py`) shared by
+the bridge and ActivityPub: an instance line blocks it and its subdomains in both spellings of an
+internationalised name (`嘟文.com` and `xn--j5r817a.com`), and a `user@host` line blocks that one
+account. There is no third list.
+
+## Going live on a node that ran the Pleroma bridge
+
+Switch the bridge off (`fedi_bridge_enabled`). While it runs, a user on a linked Pleroma account
+posts through it and ActivityPub sends only their follows; once it is off, ActivityPub carries
+everything for them.
 
 ## Following someone on the fediverse
 

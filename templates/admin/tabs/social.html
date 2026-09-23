@@ -20,9 +20,21 @@
         <legend>Fediverse server (ActivityPub)</legend>
         <div class="form-group">
             <label for="activitypub_enabled">
-                <input type="checkbox" id="activitypub_enabled" name="activitypub_enabled"> Make members reachable on the fediverse
+                <input type="checkbox" id="activitypub_enabled" name="activitypub_enabled"> Talk to the fediverse (on by default)
             </label>
             <small>Every local user with a name on this node (the NIP-05 names on the Relay tab) automatically becomes <code>@name@<span class="ap-dom">your domain</span></code> — Mastodon, Pleroma, Misskey and friends can find, follow and reply to them. Nothing is kept in a separate database: posts that arrive are stored as Nostr events (the same puppet accounts the bridge below uses), and members' own Nostr posts are sent out as they are. A member who already reaches the fediverse through their own linked Pleroma account keeps doing so and is not sent twice. Instances are blocked on the <strong>Relay</strong> tab (Blocked bridges/relays) — that one list covers this too. Takes effect without a restart.</small>
+        </div>
+        <div class="form-group">
+            <label for="activitypub_everyone">
+                <input type="checkbox" id="activitypub_everyone" name="activitypub_everyone"> Every Nostr user can talk to the fediverse
+            </label>
+            <small>Not only local users: anyone on Nostr this relay knows is <code>@npub1…@<span class="ap-dom">your domain</span></code>. Fediverse people can follow, mention and reply to them (delivered to their own relays), and their replies, mentions, likes and boosts of fediverse posts go out.</small>
+        </div>
+        <div class="form-group">
+            <label for="activitypub_dms">
+                <input type="checkbox" id="activitypub_dms" name="activitypub_dms"> Direct messages across the bridge
+            </label>
+            <small>Fediverse direct messages arrive as encrypted Nostr DMs, and Nostr DMs to fediverse accounts are delivered to them. <strong>This server reads these messages as it carries them</strong> — that is what a bridge between two encryption systems is. A fediverse account can only message someone who follows it or has written to it first.</small>
         </div>
         <div class="form-group">
             <label for="activitypub_domain">Domain</label>

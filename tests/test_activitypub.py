@@ -148,6 +148,8 @@ def world(monkeypatch):
     linked = set()
     import app.services.fedi_nostr_writeback_service as wb
     monkeypatch.setattr(wb, "_bridge_allowed_pubkeys", lambda: frozenset(linked))
+    settings["fedi_bridge_enabled"] = "true"
+    monkeypatch.setattr(settings_store, "is_hydrated", lambda: True)
     return {"settings": settings, "docs": docs, "relay": relay, "sent": sent, "Session": Session,
             "linked": linked, "objects": objects}
 
@@ -295,7 +297,10 @@ def test_a_note_the_pleroma_bridge_already_mirrored_is_not_stored_twice(world):
 
 def test_followers_only_is_never_stored(world):
     world["docs"][f"pcai:ap:following:{ALICE}:x"] = {"actor": REMOTE, "inbox": "i", "state": "accepted"}
-    assert run(inbox.process(_create(to=[REMOTE + "/followers"]), REMOTE)) == "ignored: not public"
+    # Not public: it goes to the DM path, which finds it addressed to nobody here -- and either way
+    # nothing becomes a public note.
+    assert run(inbox.process(_create(to=[REMOTE + "/followers"]), REMOTE)).startswith("ignored")
+    assert not [e for e in world["relay"].values() if e["kind"] == 1]
 
 
 def test_a_reply_to_a_member_threads_under_their_post_and_notifies_them(world):
@@ -801,3 +806,311 @@ def test_the_import_gives_each_account_its_bridge_identity(world):
     people = run(importer.puppets_for(s, accounts, "https://pleroma.example"))
     assert [p["acct"] for p in people] == ["user1@mastodon.example"], people
     assert people[0]["pubkey"] == ident.puppet_for(_pleroma_account(1))["pubkey_hex"]
+
+
+# ============================================================================ 11. out of the box, and the blocklist
+
+def test_everything_is_on_out_of_the_box(world):
+    for key in ("activitypub_enabled", "activitypub_everyone", "activitypub_dms"):
+        world["settings"].pop(key, None)
+    assert config.enabled() and config.everyone() and config.dms()
+    world["settings"]["activitypub_dms"] = ""               # saved blank by an older form: still on
+    assert config.dms()
+    world["settings"]["activitypub_dms"] = "false"
+    assert not config.dms()
+    world["settings"].pop("activitypub_domain")
+    assert not config.base_url(), "a node with no domain must stay silent even when on"
+
+
+def test_the_blocklist_reads_the_way_people_write_it():
+    from app.services import fedi_blocklist as fb
+    hosts, accounts = fb.parse("嘟文.com\n@bad.example, https://worse.example/about\n*.wild.example\n"
+                               "szymon@nowicki.io   # one person, not the instance\n")
+    for h in ("xn--j5r817a.com", "嘟文.com", "sub.xn--j5r817a.com", "bad.example", "worse.example", "x.wild.example"):
+        assert fb.host_blocked(h, hosts), h
+    assert not fb.host_blocked("nowicki.io", hosts) and not fb.host_blocked("fine.example", hosts)
+    assert fb.account_blocked("Szymon@nowicki.io", accounts, hosts)
+    assert not fb.account_blocked("someone.else@nowicki.io", accounts, hosts)
+
+
+def test_the_bridge_now_honours_an_account_line(world):
+    from app.services import fedi_nostr_bridge_service as mirror
+    world["settings"]["fedi_bridge_blocked_domains"] = "szymon@nowicki.io\nbad.example"
+    assert mirror._account_blocked("szymon@nowicki.io", "pleroma.example")
+    assert mirror._account_blocked("szymon", "nowicki.io")                  # a local acct on that instance
+    assert not mirror._account_blocked("other@nowicki.io", "pleroma.example")
+    assert mirror._domain_blocked("sub.bad.example", mirror._blocked_domains())
+
+
+def test_a_blocked_account_line_stops_it_at_the_inbox(world):
+    world["settings"]["fedi_bridge_blocked_domains"] = "carol@mastodon.example"
+    assert run(inbox.process(_create(), REMOTE)) == "ignored: blocked account"
+
+
+# ============================================================================ 12. every Nostr user
+
+NOSTR_SK = bytes.fromhex("11" * 32)
+
+
+def _nostr_user(world, sk=NOSTR_SK):
+    from app.services.nostr import nostr_service
+    pk = nostr_service.derive_pubkey(sk)
+    world["relay"]["k" + pk[:10]] = {"id": "k" + pk[:10], "pubkey": pk, "kind": 0, "created_at": 5, "tags": [],
+                                     "content": json.dumps({"name": "Dana"})}
+    return pk, nostr_service.npub_of(pk)
+
+
+def test_any_nostr_user_with_a_profile_is_reachable_by_npub(client, world):
+    pk, npub = _nostr_user(world)
+    r = client.get(f"/.well-known/webfinger?resource=acct:{npub}@{DOMAIN}")
+    assert r.status_code == 200 and r.json()["links"][0]["href"] == f"{BASE}/ap/users/{npub}"
+    doc = client.get(f"/ap/users/{npub}", headers={"Accept": "application/activity+json"}).json()
+    assert doc["name"] == "Dana" and doc["preferredUsername"] == npub
+    from app.services.nostr import nostr_service
+    stranger = nostr_service.npub_of("99" * 32)                           # nothing published, ever
+    assert client.get(f"/.well-known/webfinger?resource=acct:{stranger}@{DOMAIN}").status_code == 404
+    world["settings"]["activitypub_everyone"] = "false"
+    actors._known_cache.clear()
+    assert client.get(f"/ap/users/{npub}").status_code == 404
+
+
+def test_new_keys_for_strangers_are_rate_limited(world, monkeypatch):
+    monkeypatch.setattr(state, "_MINTS_PER_MINUTE", 2)
+    monkeypatch.setattr(state.httpsig, "new_keypair", lambda: ("PRIV", "PUB"))
+    state._mints.clear()
+
+    async def mint(n):
+        return await state.keypair(f"{n:064x}", local=False)
+    run(mint(1)); run(mint(2))
+    with pytest.raises(state.MintLimited):
+        run(mint(3))
+    assert run(state.keypair(f"{4:064x}", local=True))["pub"] == "PUB"      # local users are never limited
+
+
+def test_a_fediverse_reply_to_a_nostr_user_reaches_their_own_relays(world, monkeypatch):
+    from app.services.activitypub import nostrside
+    pk, npub = _nostr_user(world)
+    delivered = []
+
+    async def deliver(to, events, *, dm, force=False):
+        delivered.append((to, [e["kind"] for e in events], dm))
+        return 1
+    monkeypatch.setattr(nostrside, "deliver", deliver)
+    act = _create(extra={"tag": [{"type": "Mention", "href": f"{BASE}/ap/users/{npub}"}]})
+    assert run(inbox.process(act, REMOTE)) == "stored"
+    note = next(e for e in world["relay"].values() if e["kind"] == 1)
+    assert ["p", pk] in note["tags"]
+    assert delivered and delivered[0][0] == pk and delivered[0][1][-1] == 1 and delivered[0][2] is False
+
+
+def test_a_nostr_users_reply_to_a_fediverse_note_goes_out(world, monkeypatch):
+    from app.services import nostr_store
+    pk, npub = _nostr_user(world)
+    s = world["Session"]()
+    puppet = ident.puppet_for(convert.account_from_actor(carol_actor()))
+    s.add(FediPuppet(actor_uri=REMOTE, acct="carol@mastodon.example", pubkey_hex=puppet["pubkey_hex"], nip05_name="c"))
+    s.add(FediBridgeDelivered(platform="activitypub", instance_url="https://mastodon.example", note_id="n",
+                              note_uri="https://mastodon.example/notes/7", nostr_event_id="7" * 64,
+                              nostr_pubkey=puppet["pubkey_hex"]))
+    s.commit()
+    from app.services.activitypub import dm
+    dm._puppets["at"] = 0.0
+    reply = member_post("hi carol", author=pk, created=1_700_000_050,
+                        tags=[["e", "7" * 64, "", "reply"], ["p", puppet["pubkey_hex"]]])
+    unrelated = member_post("just a post", author=pk, created=1_700_000_051)
+
+    async def ws_query(port, filters, strict=False, **kw):
+        f = filters[0]
+        if "authors" in f:
+            return []
+        return [e for e in (reply, unrelated) if e["created_at"] >= f["since"]]
+    monkeypatch.setattr(nostr_store, "_ws_query", ws_query)
+    monkeypatch.setattr(state.httpsig, "new_keypair", lambda: KEY)
+    world["docs"]["pcai:ap:cursor"] = {"since": 1_700_000_000}
+    world["docs"]["pcai:ap:cursor:everyone"] = {"since": 1_700_000_000}
+    run(outbox.tick())
+    creates = [x for x in world["sent"] if x["activity"]["type"] == "Create"]
+    assert len(creates) == 1, "only what concerns the fediverse leaves: %r" % creates
+    assert creates[0]["activity"]["actor"] == f"{BASE}/ap/users/{npub}"
+    assert creates[0]["activity"]["object"]["inReplyTo"] == "https://mastodon.example/notes/7"
+
+
+# ============================================================================ 13. direct messages
+
+ALICE_SK = bytes.fromhex("22" * 32)
+
+
+def _real_alice(world):
+    from app.services.nostr import nostr_service
+    pk = nostr_service.derive_pubkey(ALICE_SK)
+    world["settings"]["nostr_relay_nip05_names"] = f"alice {pk}"
+    actors._names_cache["raw"] = None
+    world["docs"]["pcai:ap:key:" + pk] = {"priv": KEY[0], "pub": KEY[1]}
+    return pk
+
+
+def _direct(to_pk_actor, note_id="https://mastodon.example/dm/1", text="<p>psst</p>"):
+    note = {"id": note_id, "type": "Note", "attributedTo": REMOTE, "content": text, "to": [to_pk_actor], "cc": []}
+    return {"id": note_id + "/a", "type": "Create", "actor": REMOTE, "object": note}
+
+
+def test_a_fediverse_dm_arrives_encrypted_only_for_someone_who_agreed(world):
+    from app.services.nostr import nip17
+    pk = _real_alice(world)
+    act = _direct(f"{BASE}/ap/users/alice")
+    assert "does not follow" in run(inbox.process(act, REMOTE))
+    assert not [e for e in world["relay"].values() if e["kind"] == 1059]
+    carol_puppet = ident.puppet_for(convert.account_from_actor(carol_actor()))["pubkey_hex"]
+    world["relay"]["c" * 64] = {"id": "c" * 64, "pubkey": pk, "kind": 3, "created_at": 9,
+                                "tags": [["p", carol_puppet]], "content": ""}
+    assert run(inbox.process(act, REMOTE)) == "delivered to 1"
+    (wrap,) = [e for e in world["relay"].values() if e["kind"] == 1059]
+    sender, text, rumor = nip17.unwrap(ALICE_SK, wrap)
+    assert sender == carol_puppet and text == "psst"
+    assert not [e for e in world["relay"].values() if e["kind"] == 1], "a DM became a public note"
+    assert run(inbox.process(act, REMOTE)) == "already delivered"
+
+
+def test_a_nostr_dm_to_a_fediverse_account_is_delivered_and_opens_the_conversation(world):
+    from app.services.activitypub import dm
+    from app.services.nostr import nip17
+    pk = _real_alice(world)
+    carol_puppet = ident.puppet_for(convert.account_from_actor(carol_actor()))
+    s = world["Session"]()
+    s.add(FediPuppet(actor_uri=REMOTE, acct="carol@mastodon.example", pubkey_hex=carol_puppet["pubkey_hex"], nip05_name="c"))
+    s.commit()
+    dm._puppets["at"] = 0.0
+    wrap = nip17.wrap(ALICE_SK, carol_puppet["pubkey_hex"], "hello from nostr")
+    assert run(dm.handle_wrap(wrap)) == "sent"
+    (sent,) = world["sent"]
+    note = sent["activity"]["object"]
+    assert note["to"] == [REMOTE] and note["cc"] == [] and "hello from nostr" in note["content"]
+    assert sent["activity"]["actor"] == f"{BASE}/ap/users/alice"
+    assert run(state.in_conversation(pk, REMOTE)), "carol cannot write back"
+    assert run(dm.handle_wrap(wrap)) == "already sent"
+    # ...and now carol's reply gets through without alice following her.
+    assert run(inbox.process(_direct(f"{BASE}/ap/users/alice", "https://mastodon.example/dm/2"), REMOTE)) == "delivered to 1"
+
+
+def test_a_linked_pleroma_senders_dms_are_left_to_the_pleroma_bridge(world):
+    from app.services.activitypub import dm
+    from app.services.nostr import nip17
+    pk = _real_alice(world)
+    world["linked"].add(pk)
+    carol_puppet = ident.puppet_for(convert.account_from_actor(carol_actor()))
+    s = world["Session"]()
+    s.add(FediPuppet(actor_uri=REMOTE, acct="c", pubkey_hex=carol_puppet["pubkey_hex"], nip05_name="c"))
+    s.commit()
+    dm._puppets["at"] = 0.0
+    assert run(dm.handle_wrap(nip17.wrap(ALICE_SK, carol_puppet["pubkey_hex"], "x"))) == "the Pleroma bridge carries it"
+    assert world["sent"] == []
+
+
+def test_puppets_say_where_they_receive_dms_and_the_relay_takes_it(world):
+    """Without a kind-10050 no Nostr client knows where to send a DM to a fediverse account."""
+    s = world["Session"]()
+    world["settings"]["nostr_relay_nip05_domain"] = DOMAIN
+    run(ident.ensure_puppet(s, 1, {"uri": "https://m.example/users/z", "acct": "z@m.example", "display_name": "Z"}))
+    lists = [e for e in world["relay"].values() if e["kind"] == 10050]
+    assert lists and ["relay", f"wss://{DOMAIN}/relay"] in lists[0]["tags"]
+    from pathlib import Path
+    src = (Path(__file__).resolve().parents[1] / "app/services/nostr_relay/server.py").read_text()
+    assert "elif _is_puppet and kind in (0, 1, 3, 5, 6, 7, 10050):" in src
+
+
+def test_with_the_pleroma_bridge_off_a_linked_member_sends_everything_from_here(world):
+    """Going live means switching the Pleroma bridge off. Its per-user whitelist outlives the switch,
+    and deferring to a bridge that no longer runs would leave that member sending NOTHING."""
+    world["linked"].add(ALICE)
+    _with_follower(world)
+    assert run(outbox.plan(member_post("a post"), ALICE)) == []          # the bridge carries it
+    world["settings"]["fedi_bridge_enabled"] = "false"
+    assert [a["type"] for _, a in run(outbox.plan(member_post("a post"), ALICE))] == ["Create"]
+
+
+# ============================================================================ 14. the second review's findings
+
+def test_a_fediverse_puppet_or_another_bridges_mirror_is_never_served_as_ours(world, client):
+    pk, npub = _nostr_user(world)
+    s = world["Session"]()
+    s.add(FediPuppet(actor_uri="https://m.example/users/x", acct="x@m.example", pubkey_hex=pk, nip05_name="x"))
+    s.commit()
+    actors._known_cache.clear()
+    assert not run(actors.exposed(pk)), "a puppet was served as our own account"
+    assert client.get(f"/ap/users/{npub}").status_code == 404
+    other_sk = bytes.fromhex("33" * 32)
+    pk2, npub2 = _nostr_user(world, other_sk)
+    world["relay"]["k" + pk2[:10]]["tags"] = [["proxy", "https://mastodon.social/users/y", "activitypub"]]
+    actors._profile_cache.clear()
+    assert not run(actors.exposed(pk2)), "another bridge's mirror account was served as ours"
+
+
+def test_relay_lists_cannot_point_this_server_at_its_own_network(world):
+    from app.services.activitypub import nostrside
+    got = run(nostrside._clean(["wss://10.0.0.5", "wss://192.168.0.1", "wss://relay.lan", "wss://[::1]",
+                                "wss://127.0.0.1", "wss://8.8.8.8:8443", "ws://8.8.8.8", "wss://8.8.8.8"]))
+    assert got == ["wss://8.8.8.8"], got
+
+
+def test_one_recipient_gets_a_bounded_number_of_pushes(world, monkeypatch):
+    from app.services.activitypub import nostrside
+    monkeypatch.setattr(nostrside, "PUSHES_PER_HOUR", 2)
+    nostrside._pushes.clear()
+    assert nostrside._push_ok("z" * 64) and nostrside._push_ok("z" * 64)
+    assert not nostrside._push_ok("z" * 64)
+
+
+def test_an_unreadable_follower_list_stops_the_everyone_pass_where_it_is(world, monkeypatch):
+    from app.services import nostr_store
+    evs = [member_post("x", author="d" * 64, created=1_700_000_010)]
+
+    async def ws_query(port, filters, strict=False, **kw):
+        return [] if "authors" in filters[0] else evs
+    monkeypatch.setattr(nostr_store, "_ws_query", ws_query)
+    real = nostr_store.list_docs
+
+    async def failing(port, prefix, **kw):
+        if prefix == "pcai:ap:follower:":
+            raise RuntimeError("relay unreachable")
+        return await real(port, prefix, **kw)
+    monkeypatch.setattr(nostr_store, "list_docs", failing)
+    state._nonlocal_cache["at"] = 0.0
+    world["docs"]["pcai:ap:cursor"] = {"since": 1_700_000_000}
+    world["docs"]["pcai:ap:cursor:everyone"] = {"since": 1_700_000_000}
+    with pytest.raises(RuntimeError):
+        run(outbox.tick())
+    assert world["docs"]["pcai:ap:cursor:everyone"]["since"] == 1_700_000_000
+
+
+def test_a_protected_event_is_never_republished(world):
+    _with_follower(world)
+    assert run(outbox.plan(member_post("private-ish", tags=[["-"]]), ALICE)) == []
+
+
+def test_deliveries_and_follows_never_hit_the_anonymous_key_limit(world, monkeypatch):
+    monkeypatch.setattr(state, "_MINTS_PER_MINUTE", 0)
+    monkeypatch.setattr(state.httpsig, "new_keypair", lambda: ("P", "Q"))
+    assert run(state.keypair("e" * 64))["pub"] == "Q"               # a delivery: never limited
+    with pytest.raises(state.MintLimited):
+        run(state.keypair("f" * 64, local=False))                   # an anonymous GET of a stranger
+
+
+def test_a_pasted_profile_link_blocks_that_account_not_the_instance():
+    from app.services import fedi_blocklist as fb
+    hosts, accounts = fb.parse("https://mastodon.social/@bob\n")
+    assert not fb.host_blocked("mastodon.social", hosts)
+    assert fb.account_blocked("bob@mastodon.social", accounts, hosts)
+
+
+def test_a_dm_to_a_blocked_fediverse_account_is_not_sent(world):
+    from app.services.activitypub import dm
+    from app.services.nostr import nip17
+    _real_alice(world)
+    world["settings"]["fedi_bridge_blocked_domains"] = "carol@mastodon.example"
+    carol_puppet = ident.puppet_for(convert.account_from_actor(carol_actor()))
+    s = world["Session"]()
+    s.add(FediPuppet(actor_uri=REMOTE, acct="carol@mastodon.example", pubkey_hex=carol_puppet["pubkey_hex"], nip05_name="c"))
+    s.commit()
+    dm._puppets["at"] = 0.0
+    assert run(dm.handle_wrap(nip17.wrap(ALICE_SK, carol_puppet["pubkey_hex"], "x"))) == "recipient blocked"
+    assert world["sent"] == []

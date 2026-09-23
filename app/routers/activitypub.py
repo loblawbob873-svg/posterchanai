@@ -59,7 +59,7 @@ async def webfinger(resource: str = ""):
     pk = await actors.member_by_name(name) if name else ""
     if not pk:
         raise HTTPException(404, "Not Found")
-    name = actors.name_of(pk)
+    name = actors.handle(pk)
     actor = convert.actor_url(base, name)
     return JSONResponse({"subject": f"acct:{name}@{dom}", "aliases": [actor, f"{base}/users/{name}"],
                          "links": [{"rel": "self", "type": config.AP_CONTENT_TYPE, "href": actor},
@@ -110,8 +110,12 @@ async def actor(name: str, request: Request):
     _on()
     pk = await _member(name)
     if _wants_html(request):
-        return RedirectResponse(f"{config.base_url()}/users/{actors.name_of(pk)}", status_code=302)
-    return _ap(await actors.person(actors.name_of(pk), pk))
+        return RedirectResponse(f"{config.base_url()}/users/{actors.handle(pk)}", status_code=302)
+    try:
+        return _ap(await actors.person(actors.handle(pk), pk, anonymous=True))
+    except state.MintLimited:
+        # A burst of first requests for accounts that are not local users: ask again shortly.
+        return Response(status_code=503, headers={"Retry-After": "60"})
 
 
 def _collection(url: str, total: int) -> dict:
@@ -123,7 +127,7 @@ def _collection(url: str, total: int) -> dict:
 async def followers(name: str):
     _on()
     pk = await _member(name)
-    url = f"{convert.actor_url(config.base_url(), actors.name_of(pk))}/followers"
+    url = f"{convert.actor_url(config.base_url(), actors.handle(pk))}/followers"
     return _ap(_collection(url, await state.follower_count(pk)))
 
 
@@ -131,7 +135,7 @@ async def followers(name: str):
 async def following(name: str):
     _on()
     pk = await _member(name)
-    url = f"{convert.actor_url(config.base_url(), actors.name_of(pk))}/following"
+    url = f"{convert.actor_url(config.base_url(), actors.handle(pk))}/following"
     try:
         n = len(await state.following(pk, strict=False))
     except Exception:
@@ -145,7 +149,7 @@ async def outbox(name: str):
     by its object URL."""
     _on()
     pk = await _member(name)
-    return _ap(_collection(f"{convert.actor_url(config.base_url(), actors.name_of(pk))}/outbox", 0))
+    return _ap(_collection(f"{convert.actor_url(config.base_url(), actors.handle(pk))}/outbox", 0))
 
 
 @router.get("/ap/objects/{event_id}")
@@ -155,10 +159,10 @@ async def note(event_id: str, request: Request):
     _on()
     from app.services.activitypub import outbox as ob
     ev = await ob._event(event_id) if len(event_id) == 64 else None
-    name = actors.name_of(ev.get("pubkey", "")) if ev else ""
-    if not ev or not name or ev.get("kind") not in (1, 1111) or ob._is_mirror(ev):
+    name = actors.handle(ev.get("pubkey", "")) if ev else ""
+    if not ev or not name or ev.get("kind") not in (1, 1111) or ob._is_mirror(ev) or ob._protected(ev):
         raise HTTPException(404, "Not Found")
-    if not await actors.member_by_name(name):
+    if not await actors.exposed(ev["pubkey"]):
         raise HTTPException(404, "Not Found")
     if _wants_html(request):
         return RedirectResponse(f"{config.base_url()}/{convert._nevent_or_note(event_id)}", status_code=302)

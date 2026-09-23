@@ -76,8 +76,8 @@ async def _event(event_id: str) -> dict | None:
 async def resolve_pubkey(pubkey: str) -> dict:
     """{"href", "name", "inbox"?} for a pubkey that has a fediverse address, else {}."""
     base = config.base_url()
-    name = actors.name_of(pubkey)
-    if name:
+    name = actors.handle(pubkey)
+    if name and (actors.is_actor(pubkey) or await actors.exposed(pubkey)):
         return {"href": convert.actor_url(base, name), "name": f"@{name}@{config.domain()}"}
     row = _puppet_row(pubkey)
     if row and row.actor_uri and not config.host_blocked(remote.host_of(row.actor_uri)):
@@ -97,10 +97,22 @@ async def resolve_event(event_id: str) -> dict:
         actor_id = (await _canonical(prow.actor_uri))[0] or prow.actor_uri if prow else ""
         return {"uri": row.note_uri, "actor": actor_id, "remote": True}
     ev = await _event(event_id)
-    if ev and actors.name_of(ev.get("pubkey", "")) and not _is_mirror(ev):
+    if ev and not _is_mirror(ev) and await actors.exposed(ev.get("pubkey", "")):
         return {"uri": convert.object_url(base, event_id),
-                "actor": convert.actor_url(base, actors.name_of(ev["pubkey"])), "remote": False}
+                "actor": convert.actor_url(base, actors.handle(ev["pubkey"])), "remote": False}
     return {}
+
+
+def _blocked_cached(actor_id: str) -> bool:
+    """A follower blocked AFTER it followed (instance or single account) gets nothing more. Uses the
+    actor cache only -- delivery must not fetch every follower on every post."""
+    if config.host_blocked(remote.host_of(actor_id)):
+        return True
+    hit = remote._actors.get((actor_id or "").split("#")[0])
+    if not hit:
+        return False
+    from app.services.activitypub.inbox import acct_of_actor
+    return config.account_blocked(acct_of_actor(hit[1]))
 
 
 def _is_mirror(ev: dict) -> bool:
@@ -157,9 +169,11 @@ async def _inbox_for(actor_uri: str) -> str:
 
 async def plan(ev: dict, member: str) -> list:
     """[(inbox, activity)] to send for one event. Empty when there is nothing to federate."""
-    base, name = config.base_url(), actors.name_of(member)
-    if not base or not name or _is_mirror(ev):
+    base, name = config.base_url(), actors.handle(member)
+    if not base or not name or _is_mirror(ev) or _protected(ev):
         return []
+    if not actors.is_actor(member) and ev.get("kind") == 3:
+        return []          # a non-local user's follows would bring posts only to THIS relay, which they do not read
     # A member on a linked Pleroma account already posts, replies, likes and boosts THERE, so none of
     # that is sent from here (one of each on the fediverse, never two). FOLLOWS are the exception:
     # nobody sees a follow twice, and it is what brings the followed accounts' posts in over ActivityPub.
@@ -168,7 +182,7 @@ async def plan(ev: dict, member: str) -> list:
     me = convert.actor_url(base, name)
     followers_url = f"{me}/followers"
     kind = ev.get("kind")
-    fol = [f["inbox"] for f in await state.followers(member)]
+    fol = [f["inbox"] for f in await state.followers(member) if not _blocked_cached(f.get("actor", ""))]
     out: list = []
 
     if kind in (1, 1111):
@@ -305,7 +319,7 @@ MAX_RETRIES_QUEUED = 5000
 
 
 async def _send(inbox: str, activity: dict, member: str, attempt: int = 0) -> None:
-    keys = await state.keypair(member)
+    keys = await state.keypair(member)               # driven by an event on this relay: never limited
     key_id, priv = actors.signing(member, keys)
     status = await remote.deliver(inbox, activity, key_id=key_id, private_pem=priv)
     if 200 <= status < 300:
@@ -350,26 +364,120 @@ async def _members() -> list:
 
 
 async def tick() -> int:
-    """One pass: read members' events since the cursor, translate, deliver. Returns events handled."""
+    """One round: local users' events, then (in `everyone` mode) what other Nostr users on this relay
+    addressed to the fediverse. Each pass has its own cursor. Returns events handled."""
     if not config.enabled() or not config.base_url():
         return 0
+    if not settings_store.is_hydrated():
+        return 0          # "is the Pleroma bridge on?" and friends cannot be answered yet -- decide nothing
     _stats["last_tick"] = int(time.time())
     await _flush_retries()
+    handled = await _pass(state.CURSOR, await _members(), KINDS, None)
+    if config.everyone():
+        handled += await _pass(state.CURSOR_EVERYONE, None, _EVERYONE_KINDS, await _everyone_filter())
+    return handled
+
+
+_EVERYONE_KINDS = [0, 1, 1111, 5, 6, 7]
+
+
+async def _everyone_filter():
+    """What a NON-local Nostr user publishes that concerns the fediverse: anything by somebody who
+    has followers there, and otherwise only what is addressed to it -- a mention of a fediverse
+    account, a reply/like/boost of one of its notes, or the deletion of something that went out.
+    Never a local user's (the first pass has those), never a puppet's (that is the fediverse
+    talking), never a mirror, never a protected (`-`) event.
+
+    Returns an async predicate over a whole PAGE, so "is this a mirrored note?" is one query per
+    page rather than one per event (almost every reply and reaction carries an `e` tag)."""
+    followed = await state.nostr_users_with_followers()     # raises on a failed read: stop the pass
+    puppets = _puppet_set()
+
+    def _direct(ev: dict, mirrored: set) -> bool:
+        tags = ev.get("tags") or []
+        if any(len(t) > 1 and t[0] in ("p", "P") and t[1] in puppets for t in tags):
+            return True
+        return any(len(t) > 1 and t[0] in ("e", "E") and t[1] in mirrored for t in tags)
+
+    async def page(evs: list) -> set:
+        refs = {t[1] for ev in evs for t in ev.get("tags") or [] if len(t) > 1 and t[0] in ("e", "E")}
+        mirrored = _mirrored_among(refs)
+        deletions = [ev for ev in evs if ev.get("kind") == 5]
+        gone_ids = {t[1] for ev in deletions for t in ev.get("tags") or [] if len(t) > 1 and t[0] == "e"}
+        gone = await _events(list(gone_ids)) if gone_ids else {}
+        gone_refs = {t[1] for g in gone.values() for t in g.get("tags") or [] if len(t) > 1 and t[0] in ("e", "E")}
+        mirrored |= _mirrored_among(gone_refs)
+        ok = set()
+        for ev in evs:
+            pk = ev.get("pubkey", "")
+            if actors.is_actor(pk) or pk in puppets or _is_mirror(ev) or _protected(ev):
+                continue
+            if pk in followed:
+                keep = True
+            elif ev.get("kind") == 0:
+                keep = False
+            elif ev.get("kind") == 5:
+                # A deletion goes out when what it deletes did: a reply we sent must not outlive
+                # its author's delete on the fediverse just because they have no followers there.
+                keep = any(_direct(gone[t[1]], mirrored) for t in ev.get("tags") or []
+                           if len(t) > 1 and t[0] == "e" and t[1] in gone)
+            else:
+                keep = _direct(ev, mirrored)
+            if keep and await actors.exposed(pk):
+                ok.add(ev["id"])
+        return ok
+    return page
+
+
+def _protected(ev: dict) -> bool:
+    """NIP-70: the author asked that this event not be republished by anybody else."""
+    return any(t == ["-"] for t in ev.get("tags") or [])
+
+
+async def _events(ids: list) -> dict:
+    from app.services import nostr_store
+    evs = await nostr_store._ws_query(settings_store._port(), [{"ids": ids[:500]}], strict=True)
+    return {e["id"]: e for e in evs if isinstance(e, dict) and e.get("id")}
+
+
+def _puppet_set() -> frozenset:
+    from app.services.activitypub import dm
+    return dm._puppet_pubkeys()
+
+
+def _mirrored_among(event_ids) -> set:
+    """Which of these event ids are notes mirrored from the fediverse -- ONE query."""
+    ids = list(event_ids)[:2000]
+    if not ids:
+        return set()
+    from app.database import SessionLocal
+    from app.models import FediBridgeDelivered
+    db = SessionLocal()
     try:
-        since = await state.cursor()
+        return {eid for (eid,) in db.query(FediBridgeDelivered.nostr_event_id).filter(
+            FediBridgeDelivered.nostr_event_id.in_(ids), FediBridgeDelivered.note_uri.isnot(None)).all()}
+    finally:
+        db.close()
+
+
+async def _pass(cursor_key: str, authors, kinds: list, qualifies) -> int:
+    """Read since `cursor_key`, translate, deliver, advance. `authors` None = every author (the
+    everyone pass), narrowed by `qualifies`."""
+    try:
+        since = await state.cursor(cursor_key)
     except Exception as e:
         _stats["last_error"] = f"cursor unreadable: {type(e).__name__}"
         return 0                                   # never deliver from a guessed position
     now = int(time.time())
     if not since:
-        await state.set_cursor(now)                # first run: no backfill of everything ever posted
+        await state.set_cursor(now, cursor_key)    # first run: no backfill of everything ever posted
         return 0
-    members = await _members()
-    if not members:
-        await state.set_cursor(now)
+    if authors is not None and not authors:
+        await state.set_cursor(now, cursor_key)
         return 0
-    evs = await _since(members, since)
+    evs = await _since(authors, since, kinds)
     evs = sorted((e for e in evs if e.get("id") not in _seen), key=lambda e: (e.get("created_at", 0), e["id"]))
+    wanted = await qualifies(evs) if qualifies is not None else None
     handled, newest = 0, since
     sem = asyncio.Semaphore(8)
 
@@ -378,6 +486,10 @@ async def tick() -> int:
             await _send(inbox, act, member)
 
     for ev in evs:
+        if wanted is not None and ev["id"] not in wanted:
+            _seen[ev["id"]] = time.time()
+            newest = max(newest, int(ev.get("created_at", 0)))
+            continue
         try:
             jobs = await plan(ev, ev["pubkey"])
         except Exception as e:
@@ -397,12 +509,12 @@ async def tick() -> int:
         _seen[ev["id"]] = time.time()
         newest = max(newest, int(ev.get("created_at", 0)))
         handled += 1
-    if len(_seen) > 20000:
-        for k in sorted(_seen, key=_seen.get)[:10000]:
+    if len(_seen) > 40000:
+        for k in sorted(_seen, key=_seen.get)[:20000]:
             _seen.pop(k, None)
     # Inclusive of the newest second handled (more may share it; `_seen` stops a replay).
     if newest != since:
-        await state.set_cursor(newest)
+        await state.set_cursor(newest, cursor_key)
     return handled
 
 
@@ -410,7 +522,7 @@ _failures: dict = {}
 _MAX_PAGES = 20
 
 
-async def _since(members: list, since: int) -> list:
+async def _since(members, since: int, kinds: list = None) -> list:
     """Everything members published since `since`. The relay answers NEWEST FIRST with a limit, so
     one query after a long quiet spell (worker down, a busy bot) would return only the newest page,
     and a cursor moved to it would skip everything older. So it pages backwards with `until` until a
@@ -418,7 +530,9 @@ async def _since(members: list, since: int) -> list:
     the oldest part is dropped with a note rather than holding delivery up for ever."""
     out, seen_ids, until = [], set(), None
     for _ in range(_MAX_PAGES):
-        flt = {"authors": members, "kinds": KINDS, "since": since, "limit": _PAGE}
+        flt = {"kinds": kinds or KINDS, "since": since, "limit": _PAGE}
+        if members is not None:
+            flt["authors"] = members
         if until is not None:
             flt["until"] = until
         page = await nostr_store._ws_query(settings_store._port(), [flt], strict=True)

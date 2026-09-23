@@ -95,8 +95,27 @@ async def _run(activity: dict, signer: str) -> None:
 
 # ------------------------------------------------------------------------------------ dispatch
 
+def acct_of_actor(doc: dict) -> str:
+    user = str(doc.get("preferredUsername") or "").strip()
+    host = remote.host_of(convert.id_of(doc))
+    return f"{user}@{host}" if user and host else ""
+
+
+async def blocked_actor(actor_id: str) -> bool:
+    """On a blocked instance, or a single account blocked by a `user@host` line in the lists."""
+    if config.host_blocked(remote.host_of(actor_id)):
+        return True
+    try:
+        doc = await remote.actor(actor_id)
+    except remote.FetchError:
+        return False
+    return config.account_blocked(acct_of_actor(doc))
+
+
 async def process(activity: dict, signer: str) -> str:
     """Handle one verified activity; returns what was done (for logs and tests)."""
+    if await blocked_actor(signer):
+        return "ignored: blocked account"
     kind = activity.get("type")
     obj = activity.get("object")
     if kind == "Follow":
@@ -113,6 +132,11 @@ async def process(activity: dict, signer: str) -> str:
         # instance could post as its neighbours.
         if convert.id_of(note.get("attributedTo")) != signer:
             return "ignored: posted for somebody else"
+        if not convert.is_public(note):
+            # Followers-only or direct: never a public kind-1. Addressed to one of ours, it is a
+            # direct message (dm.py) -- delivered privately, and only to someone who agreed to hear.
+            from app.services.activitypub import dm
+            return await dm.receive_direct(note, signer)
         return await store_note(note, signer, need_gate=True)
     if kind == "Announce":
         return await _announce(activity, signer)
@@ -143,9 +167,9 @@ async def _follow(activity: dict, signer: str) -> str:
     if not inbox or remote.host_of(inbox) != remote.host_of(signer):
         return "ignored: follower has no inbox on its own server"
     await state.add_follower(member, signer, inbox)
-    keys = await state.keypair(member)
+    keys = await state.keypair(member)              # a verified Follow is behind it
     key_id, priv = actors.signing(member, keys)
-    me = convert.actor_url(config.base_url(), name)
+    me = convert.actor_url(config.base_url(), actors.handle(member))
     accept = {"@context": convert.AS_CONTEXT, "id": f"{me}#accepts/{int(time.time() * 1000)}",
               "type": "Accept", "actor": me, "object": {k: activity[k] for k in ("id", "type", "actor", "object")
                                                         if k in activity}}
@@ -200,13 +224,17 @@ async def _undo(inner: dict, signer: str) -> str:
 
 async def _puppet(actor_doc: dict) -> dict | None:
     from app.database import SessionLocal
+    from app.services.activitypub import dm
     from app.services.fedi_bridge_identity import ensure_puppet
     db = SessionLocal()
     try:
-        return await ensure_puppet(db, _port(), convert.account_from_actor(actor_doc),
-                                   remote.host_of(convert.id_of(actor_doc)))
+        p = await ensure_puppet(db, _port(), convert.account_from_actor(actor_doc),
+                                remote.host_of(convert.id_of(actor_doc)))
     finally:
         db.close()
+    if p:
+        dm.remember_puppet(p["pubkey_hex"])      # a puppet made a moment ago is still a puppet
+    return p
 
 
 def _delivered(uri: str):
@@ -259,19 +287,27 @@ async def store_note(note: dict, author: str, *, need_gate: bool) -> str:
     uri = convert.id_of(note)
     if not uri or remote.host_of(uri) != remote.host_of(author):
         return "ignored: note is not on its author's server"
+    if await blocked_actor(author):                 # e.g. a blocked account's post, boosted by somebody else
+        return "ignored: blocked account"
     if not convert.is_public(note):
         return "ignored: not public"
     if _delivered(uri):
         return "already stored"
     local = actors.local_actor_map()
     text, tags = convert.note_content(note, local_actors=local)
+    # A mention counts only of an account that IS reachable here -- not of any npub-shaped URL.
+    kept = []
+    for t in tags:
+        if t[0] != "p" or actors.is_actor(t[1]) or await actors.exposed(t[1]):
+            kept.append(t)
+    tags = kept
     parent_id, parent_pk = ("", "")
     reply_to = convert.id_of(note.get("inReplyTo"))
     if reply_to:
         parent_id, parent_pk = await _target(reply_to)
     if need_gate:
         mentions_ours = any(t[0] == "p" for t in tags)
-        replies_to_ours = bool(parent_pk) and bool(actors.name_of(parent_pk))
+        replies_to_ours = bool(parent_pk) and (actors.is_actor(parent_pk) or await actors.exposed(parent_pk))
         followed = author in await state.followed_actors()
         if not (followed or mentions_ours or replies_to_ours):
             return "ignored: nobody here follows or was addressed"
@@ -297,7 +333,23 @@ async def store_note(note: dict, author: str, *, need_gate: bool) -> str:
     if not ok:
         return f"relay refused: {msg}"
     _record(uri, ev["id"], ev["pubkey"], puppet.get("acct", ""))
+    await _reach_nostr_users(ev, puppet)
     return "stored"
+
+
+async def _reach_nostr_users(ev: dict, puppet: dict) -> None:
+    """A reply to, or mention of, a Nostr user who does not read this relay reaches THEIR relays too
+    (with the author's profile), or it would sit here unseen by the one person it was written to."""
+    from app.services.activitypub import nostrside
+    if not config.everyone():
+        return
+    others = [t[1] for t in ev.get("tags", []) if len(t) > 1 and t[0] == "p" and not actors.is_actor(t[1])]
+    if not others:
+        return
+    extra = await nostrside.puppet_identity_events(puppet["pubkey_hex"])
+    for pk in others[:10]:
+        if await actors.exposed(pk):
+            await nostrside.deliver(pk, extra + [ev], dm=False)
 
 
 async def _announce(activity: dict, signer: str) -> str:
@@ -329,6 +381,7 @@ async def _announce(activity: dict, signer: str) -> str:
     if not ok:
         return f"relay refused: {msg}"
     _record(act_id, ev["id"], ev["pubkey"], puppet.get("acct", ""))
+    await _reach_nostr_users(ev, puppet)
     return "boost stored"
 
 
@@ -338,7 +391,7 @@ async def _like(activity: dict, signer: str) -> str:
     if not _own_id(act_id, signer):
         return "ignored: activity id is not the sender's"
     eid, pk = await _target(convert.id_of(activity.get("object")))
-    if not eid or not actors.name_of(pk):
+    if not eid or not (actors.is_actor(pk) or await actors.exposed(pk)):
         return "ignored: like of something that is not ours"
     if _delivered(act_id):
         return "already stored"
@@ -354,6 +407,7 @@ async def _like(activity: dict, signer: str) -> str:
     if not ok:
         return f"relay refused: {msg}"
     _record(act_id, ev["id"], ev["pubkey"], puppet.get("acct", ""))
+    await _reach_nostr_users(ev, puppet)
     return "like stored"
 
 

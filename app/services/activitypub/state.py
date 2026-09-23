@@ -56,8 +56,21 @@ async def _put(d_tag: str, value) -> None:
 
 # ------------------------------------------------------------------------------------ keys
 
-async def keypair(owner: str) -> dict:
-    """{"priv", "pub"} for a member pubkey (or "instance"), created once and then only ever read."""
+_MINTS_PER_MINUTE = 30
+_mints: list = []
+
+
+class MintLimited(Exception):
+    """Too many new keys for accounts that are not local users in the last minute."""
+
+
+async def keypair(owner: str, *, local: bool = True) -> dict:
+    """{"priv", "pub"} for a pubkey (or "instance"), created once and then only ever read.
+
+    `local=False` is ONLY the unauthenticated actor fetch of a non-local account: minting an RSA key
+    costs real CPU and that request costs a stranger nothing, so it is rate-limited. Everything else
+    that mints -- a verified Follow, a delivery driven by an event on this relay -- is paid for by
+    the caller already and is never refused, so a flood of free GETs cannot starve real traffic."""
     hit = _key_cache.get(owner)
     if hit:
         return hit
@@ -67,6 +80,12 @@ async def keypair(owner: str) -> dict:
             return hit
         doc = await _get(_KEY_PREFIX + owner)          # raises if the relay cannot be asked
         if not (isinstance(doc, dict) and doc.get("priv") and doc.get("pub")):
+            if not local:
+                now = time.monotonic()
+                _mints[:] = [t for t in _mints if now - t < 60]
+                if len(_mints) >= _MINTS_PER_MINUTE:
+                    raise MintLimited("too many new accounts at once; try again shortly")
+                _mints.append(now)
             priv, pub = await asyncio.to_thread(httpsig.new_keypair)
             await _put(_KEY_PREFIX + owner, {"priv": priv, "pub": pub, "created": int(time.time())})
             # READ IT BACK and use what the relay holds. The app process and the worker can both
@@ -77,6 +96,10 @@ async def keypair(owner: str) -> dict:
             if not (isinstance(doc, dict) and doc.get("priv") and doc.get("pub")):
                 raise RuntimeError("a new signing key was written but cannot be read back")
         _key_cache[owner] = doc
+        if len(_key_cache) > 5000:                     # bounded: any npub can end up with a key
+            for k in list(_key_cache)[:1000]:
+                if k != "instance":
+                    _key_cache.pop(k, None)
         return doc
 
 
@@ -153,12 +176,49 @@ def forget_followed_cache() -> None:
     _followed_cache["at"] = 0.0
 
 
+# ------------------------------------------------------------------------------------ DM conversations
+
+_CONVO_PREFIX = "pcai:ap:convo:"
+
+
+async def open_conversation(pubkey: str, actor: str) -> None:
+    """`pubkey` messaged `actor`: from now on `actor` may message `pubkey` back."""
+    await _put(f"{_CONVO_PREFIX}{pubkey}:{_h(actor)}", {"actor": actor, "at": int(time.time())})
+
+
+async def in_conversation(pubkey: str, actor: str) -> bool:
+    doc = await nostr_store.get_doc(_port(), f"{_CONVO_PREFIX}{pubkey}:{_h(actor)}", seckey=_seckey())
+    return isinstance(doc, dict) and doc.get("actor") == actor
+
+
 # ------------------------------------------------------------------------------------ cursor
 
-async def cursor() -> int:
-    doc = await _get(_CURSOR)
+CURSOR = _CURSOR
+CURSOR_EVERYONE = "pcai:ap:cursor:everyone"
+
+
+async def cursor(key: str = _CURSOR) -> int:
+    doc = await _get(key)
     return int((doc or {}).get("since") or 0)
 
 
-async def set_cursor(since: int) -> None:
-    await _put(_CURSOR, {"since": int(since)})
+async def set_cursor(since: int, key: str = _CURSOR) -> None:
+    await _put(key, {"since": int(since)})
+
+
+_nonlocal_cache = {"at": 0.0, "set": frozenset()}
+
+
+async def nostr_users_with_followers(max_age: float = 60.0) -> frozenset:
+    """Every pubkey that has at least one live follower on the fediverse, from ONE read, cached a
+    minute. (The everyone pass sends such a user's public posts to them.)"""
+    now = time.monotonic()
+    if _nonlocal_cache["at"] and now - _nonlocal_cache["at"] < max_age:
+        return _nonlocal_cache["set"]
+    # A failed read RAISES: this set decides which posts are sent, and answering "nobody has
+    # followers" would make the everyone pass skip every post it reads -- and move past them.
+    docs = await nostr_store.list_docs(_port(), _FOLLOWER_PREFIX, seckey=_seckey(), strict=True, limit=100000)
+    out = frozenset(d_tag[len(_FOLLOWER_PREFIX):].split(":")[0] for d_tag, d in docs.items()
+                    if isinstance(d, dict) and d.get("actor") and not d.get("gone"))
+    _nonlocal_cache.update(at=now, set=out)
+    return out

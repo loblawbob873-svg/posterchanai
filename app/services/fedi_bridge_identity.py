@@ -275,6 +275,30 @@ async def query_one(port: int, filt: dict, timeout: float = 8.0) -> tuple[bool, 
         return False, None
 
 
+def dm_relay_url() -> str:
+    """This node's public relay address -- where a puppet receives DMs."""
+    url = (settings_store.get("client_relay_url", "") or "").strip()
+    if url.startswith(("ws://", "wss://")):
+        return url
+    domain = nip05_domain()
+    return f"wss://{domain}/relay" if domain else ""
+
+
+async def _publish_dm_relays(port: int, p: dict, broadcast: bool) -> None:
+    """A puppet's NIP-17 DM-relay list (kind 10050) naming THIS relay. A Nostr client sends a DM
+    to wherever the recipient's 10050 says; a puppet with none is a person nobody can write to --
+    and this relay is where its messages can be opened and carried to the fediverse (the relay
+    accepts DMs addressed to puppets). Best effort: the profile is what matters for the mirror."""
+    url = dm_relay_url()
+    if not url:
+        return
+    try:
+        await publish(port, build_event(p, 10050, "", tags=[["relay", url]], object_uri=p["actor_uri"],
+                                        broadcast=broadcast))
+    except Exception as e:
+        logger.debug("[fedi-bridge] DM relay list not published for %s: %s", p.get("acct"), e)
+
+
 async def ensure_puppet(db, port: int, account: dict, instance_host: str = "",
                         profile_refresh: bool = True) -> dict | None:
     """Provision (or refresh) a fediverse account's puppet: upsert the registry row, and (re)publish
@@ -384,6 +408,7 @@ async def ensure_puppet(db, port: int, account: dict, instance_host: str = "",
                          object_uri=p["actor_uri"], broadcast=broadcast)
         ok, msg = await publish(port, ev)
         if ok:
+            await _publish_dm_relays(port, p, broadcast)
             row.profile_sig = sig
             try:
                 db.commit()

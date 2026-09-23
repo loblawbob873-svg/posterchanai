@@ -1494,7 +1494,9 @@ class RelayServer:
             # (is_trusted / is_agent_trusted) before running anything. Accepting the result kind lets a
             # STANDALONE agent (keyless, no local relay) publish its 6xxx result back to a peer's relay.
             pass
-        elif _is_puppet and kind in (0, 1, 3, 5, 6, 7):
+        elif _is_puppet and kind in (0, 1, 3, 5, 6, 7, 10050):
+            # (10050 = the puppet's NIP-17 DM-relay list, naming THIS relay, so a Nostr user can
+            # message a fediverse account: app/services/activitypub/dm.py carries it across.)
             # Fediverse-bridge puppet: the app mirrors the global fediverse timeline through these
             # deterministic per-fedi-user keys. Gate-exempt for the mirrored content kinds only
             # (profile / note / contact-list / repost / reaction / NIP-09 deletion), and ONLY here on

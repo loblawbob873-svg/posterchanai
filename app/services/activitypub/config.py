@@ -1,9 +1,8 @@
 """The ActivityPub settings, read one way everywhere (Admin → Nostr → Fediverse (ActivityPub)).
 
 Every key is declared in `SettingsResponse`, so the admin form hydrates it. Instance blocking is NOT
-a setting here -- it is the relay's (see blocked_domains). Blank-safe on purpose:
-`settings_store.get_bool` reads "" as False, which is right for `activitypub_enabled` (off until an
-admin turns it on) and is why the domain falls back to the NIP-05 domain rather than to nothing.
+a setting here -- it is the relay's (see blocked_domains). The three switches are ON out of the box
+(see _on_unless_off), and the domain falls back to the NIP-05 domain rather than to nothing.
 """
 from __future__ import annotations
 
@@ -14,8 +13,30 @@ LD_CONTENT_TYPE = 'application/ld+json; profile="https://www.w3.org/ns/activitys
 PUBLIC = "https://www.w3.org/ns/activitystreams#Public"
 
 
+def _on_unless_off(key: str) -> bool:
+    """ON OUT OF THE BOX. A key that was never saved -- or saved blank by a form older than it --
+    reads as ON; only an explicit "false" turns it off. `settings_store.get_bool` would read both as
+    False, which for these switches would mean a node that never visited the tab never federates."""
+    v = settings_store.get(key, None)
+    if v is None or str(v).strip() == "":
+        return True
+    return str(v).strip().lower() in ("1", "true", "yes", "on")
+
+
 def enabled() -> bool:
-    return settings_store.get_bool("activitypub_enabled", False)
+    """The master switch. On by default -- but a node with no public domain (no activitypub_domain and
+    no NIP-05 domain) still answers nothing, because there is no address to be reachable at."""
+    return _on_unless_off("activitypub_enabled")
+
+
+def everyone() -> bool:
+    """Every Nostr user this relay knows is reachable as `npub1…@<domain>`, not only local users."""
+    return _on_unless_off("activitypub_everyone")
+
+
+def dms() -> bool:
+    """Direct messages cross the bridge both ways (NIP-17 ⇄ ActivityPub direct notes)."""
+    return _on_unless_off("activitypub_dms")
 
 
 def domain() -> str:
@@ -36,30 +57,32 @@ def base_url() -> str:
     return f"https://{d}" if d else ""
 
 
+def _lists() -> str:
+    return "\n".join(settings_store.get(k, "") or "" for k in ("nostr_relay_blocked_relays", "fedi_bridge_blocked_domains"))
+
+
 def blocked_domains() -> set:
-    """THE RELAY'S BLOCKLIST, READ -- never a second one. Moderation lives on the Nostr relay: every
-    event this module stores carries a NIP-48 `proxy` tag naming its original instance, and the
-    relay drops events whose proxy host is on `nostr_relay_blocked_relays` (bridges.py). Reading
-    the same list here only saves the work of fetching from, and delivering to, an instance the
-    relay would refuse anyway. The Pleroma bridge's list is the same kind of decision, so it
-    applies too; there is deliberately no ActivityPub-only list to drift from both."""
-    from app.services.nostr_relay.bridges import relay_domain
-    out = set()
-    for key in ("nostr_relay_blocked_relays", "fedi_bridge_blocked_domains"):
-        raw = settings_store.get(key, "") or ""
-        for tok in raw.replace(",", "\n").split():
-            h = relay_domain(tok.lstrip("@"))
-            if h:
-                out.add(h)
-    return out
+    """THE BLOCKLISTS THAT ALREADY EXIST, READ -- never a third one. Moderation lives on the relay
+    (every event stored here carries a NIP-48 `proxy` tag naming its instance, and the relay drops
+    blocked ones) and in the fediverse bridge's own list; both are read here, through the one parser
+    the bridge uses too (app/services/fedi_blocklist.py), so an entry means the same thing on both
+    paths -- including `user@host` lines, which block one ACCOUNT, not its whole instance."""
+    from app.services import fedi_blocklist
+    return set(fedi_blocklist.parse(_lists())[0])
 
 
 def host_blocked(host: str) -> bool:
-    from app.services.nostr_relay.bridges import _match
-    h = (host or "").lower()
-    if not h:
+    from app.services import fedi_blocklist
+    if not (host or "").strip():
         return True
-    return _match(h, blocked_domains())
+    return fedi_blocklist.host_blocked(host, fedi_blocklist.parse(_lists())[0])
+
+
+def account_blocked(acct: str) -> bool:
+    """A single blocked account (`user@host` line), or one on a blocked instance."""
+    from app.services import fedi_blocklist
+    hosts, accounts = fedi_blocklist.parse(_lists())
+    return fedi_blocklist.account_blocked(acct, accounts, hosts)
 
 
 def is_own_host(host: str) -> bool:
