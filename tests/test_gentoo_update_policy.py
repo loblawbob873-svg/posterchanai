@@ -7,7 +7,8 @@ import pytest
 
 SOURCE = (Path(__file__).resolve().parents[1] / 'os/gentoo.sh').read_text()
 POLICY = ('gui-libs/wlroots:0.19 x11-backend vulkan\n'
-          'net-libs/gnutls pkcs11 tools\n')
+          'net-libs/gnutls pkcs11 tools\n'
+          'app-emulation/qemu usb usbredir\n')
 
 
 def functions(base):
@@ -205,3 +206,15 @@ def test_abi_policy_refuses_nonregular_destination(tmp_path, kind):
         assert target.read_text() == 'preserve me\n'
     else:
         assert list(abi.iterdir()) == []
+
+
+def test_an_installed_machines_update_turns_usb_passthrough_on(tmp_path):
+    """SPECIAL_PACKAGE_USE is written only by installPackages, so a flag added there later never
+    reached an installed machine: nas.lan and server1 ran QEMU with USE=-usb ("QEMU has no USB
+    passthrough (usb-host is missing)"). The update path's own policy carries it, so the next
+    `gentoo.sh` update rebuilds QEMU with the usb-host device."""
+    result = run(tmp_path, 'refreshUpdateDependencyPolicy')
+    assert result.returncode == 0, result.stderr
+    lines = (tmp_path / 'package.use/posterchan-update-deps').read_text().splitlines()
+    qemu = [line.split() for line in lines if line.startswith('app-emulation/qemu ')]
+    assert qemu and 'usb' in qemu[0][1:], lines

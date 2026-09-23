@@ -794,9 +794,15 @@ refreshUpdateDependencyPolicy() {
 	# The pinned Wayfire uses wlroots 0.19 with its X11 backend. Preserve those flags
 	# when Portage rebuilds that slot against a newer glslang ABI. GnuTLS must keep
 	# the tools/PKCS#11 support required by the installed desktop dependency graph.
+	# QEMU's `usb` is here too, not only in SPECIAL_PACKAGE_USE: that list is written by
+	# installPackages alone, so a flag added to it after a machine was installed never
+	# reached that machine -- updateOS never rewrote it. Without it QEMU has no usb-host
+	# device and a VM cannot be given a USB stick ("QEMU has no USB passthrough").
+	# `-uDN @world` rebuilds QEMU once when the flag first appears.
 	if printf '%s\n' \
 		'gui-libs/wlroots:0.19 x11-backend vulkan' \
-		'net-libs/gnutls pkcs11 tools' >"$policy_tmp" \
+		'net-libs/gnutls pkcs11 tools' \
+		'app-emulation/qemu usb usbredir' >"$policy_tmp" \
 		&& chmod 0644 "$policy_tmp" \
 		&& mv -f -- "$policy_tmp" "$policy_path/posterchan-update-deps"; then
 		return 0
