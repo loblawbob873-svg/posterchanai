@@ -911,7 +911,7 @@ def test_the_background_signer_is_given_a_key_without_exposing_the_phone():
     plug = _read(os.path.join(SIGNER, "SignerPlugin.java"))
     key = _read(os.path.join(SIGNER, "SignerKey.java"))
     act = _read(os.path.join(SIGNER, "SignerActivity.java"))
-    app = _read(os.path.join(ROOT, "static", "js", "client", "app.js"))
+    app = client_source()   # the whole client: the signer moved into signer.js
 
     assert "public void arm(PluginCall call)" in plug, (
         "there is no way for the app to give the background signer a key — it can only ever be a "
@@ -988,7 +988,7 @@ def test_the_panel_can_see_whether_the_crypto_is_in_c():
     disagreed with the Java implementation. That is the right behaviour and it is undiagnosable from
     outside, which is how a phone can be 100x slower than it should be with nothing to show for it."""
     plug = _read(os.path.join(SIGNER, "SignerPlugin.java"))
-    app = _read(os.path.join(ROOT, "static", "js", "client", "app.js"))
+    app = client_source()   # the whole client: the signer moved into signer.js
     for k in ("fastCrypto", "fastEcdh", "fastWhy"):
         assert k in plug, f"status() does not report {k}"
     assert "Native.ecdhActive()" in plug, "the ECDH half is not reported separately from signing"
