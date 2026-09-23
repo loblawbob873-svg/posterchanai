@@ -480,3 +480,55 @@ class ProxyBootDefaults(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class EveryRoleCanActuallyBeStarted(unittest.TestCase):
+    """A ROLE'S STARTER MUST BE CALLABLE, and the table saying so is not evidence.
+
+    `tor` shipped a `start_from_settings` that raised TypeError on its first line of real work
+    (`start_tor_service(..., extra_onions=...)` against a factory with no such parameter). Every
+    test here passed: the wiring table named the right module and function, and the tests above
+    check the table. Nothing called it, so a node's entire Tor stack — its .onion services and the
+    HTTP proxy behind them — went down with nothing in this suite to say so.
+
+    This does not start anything. It asks the two questions that a table cannot answer: does the
+    function exist where the table says, and does every keyword its body hands to another function
+    in the same module exist in that function's signature — the precise shape that broke.
+    """
+
+    def test_every_named_starter_and_stopper_exists(self):
+        import importlib
+        from app import role_runner
+        for role, services in role_runner._ROLE_SERVICES.items():
+            for label, module_name, start_fn, stop_fn in services:
+                module = importlib.import_module(module_name)
+                for fn in (start_fn, stop_fn):
+                    self.assertTrue(callable(getattr(module, fn, None)),
+                                    f"{role}/{label}: {module_name}.{fn} is not callable")
+
+    def test_no_starter_calls_a_sibling_with_an_argument_it_does_not_take(self):
+        import ast
+        import importlib
+        import inspect
+        from app import role_runner
+        for role, services in role_runner._ROLE_SERVICES.items():
+            for label, module_name, start_fn, _stop in services:
+                module = importlib.import_module(module_name)
+                tree = ast.parse(inspect.getsource(getattr(module, start_fn)))
+                for node in ast.walk(tree):
+                    if not isinstance(node, ast.Call) or not isinstance(node.func, ast.Name):
+                        continue
+                    target = getattr(module, node.func.id, None)
+                    if not callable(target) or inspect.isclass(target):
+                        continue
+                    try:
+                        takes = set(inspect.signature(target).parameters)
+                    except (TypeError, ValueError):
+                        continue
+                    if any(p.kind is inspect.Parameter.VAR_KEYWORD
+                           for p in inspect.signature(target).parameters.values()):
+                        continue
+                    passed = {kw.arg for kw in node.keywords if kw.arg}
+                    extra = passed - takes
+                    self.assertFalse(extra, f"{role}/{label}: {module_name}.{start_fn} calls "
+                                            f"{node.func.id}({', '.join(sorted(extra))}=…) — no such parameter")
