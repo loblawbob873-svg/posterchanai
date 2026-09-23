@@ -217,6 +217,21 @@ public final class AppShelf {
         return out;
     }
 
+    /** What adding `key` to the dock does: {@link #DOCK_ADD}, {@link #DOCK_ALREADY} or {@link #DOCK_FULL}. */
+    public static final int DOCK_ADD = 0, DOCK_ALREADY = 1, DOCK_FULL = 2;
+
+    /**
+     * WHETHER ONE MORE APP FITS, and the whole of `max` is the person's. This used to refuse at
+     * `max - 1`, which was the slot reserved for the forced "Phone settings" tile -- a tile that left
+     * the dock long ago (see {@link #dock}), so a phone could hold four apps in a five-slot dock.
+     * Keys that no longer resolve are not counted: an uninstalled app is not drawn, so it must not
+     * take a slot either.
+     */
+    public static int dockAdd(List<Entry> all, List<String> keys, String key, int max) {
+        if (keys != null && keys.contains(key)) return DOCK_ALREADY;
+        return dock(all, keys, Integer.MAX_VALUE).size() >= Math.max(1, max) ? DOCK_FULL : DOCK_ADD;
+    }
+
     /** The entry for a key, or null — an app that has since been uninstalled. */
     public static Entry byKey(List<Entry> all, String key) {
         if (all != null && key != null) for (Entry e : all) if (key.equals(e.key())) return e;

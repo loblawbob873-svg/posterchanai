@@ -559,7 +559,7 @@ window.PCComposeFactory = function(dep){
           // open until the relay accepts it — a blip leaves the text in place to retry rather than orphaning
           // a scopeless draft that would post to the home feed.
           try{ const r=await publish(1111, text, tags);
-            if(r && r.ok){ closeModal(); toast('comment posted'); if(_S.VIEW==='article') openArticle(articleComment); }
+            if(r && r.ok){ closeModal(); toast('comment posted'); if(_S.VIEW==='article') openArticle(articleComment, { inPlace:true }); }
           }catch(e){ toast('post failed: '+((e&&e.message)||e)); } return;
         }
         // 🎨 Background post → render the text onto the chosen background + upload; post the IMAGE (the

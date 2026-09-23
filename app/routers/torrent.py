@@ -182,6 +182,22 @@ def get_bt_service(db: Session):
         return None
 
 
+def _items(results) -> list[dict]:
+    """The one row shape every browse endpoint answers with (catalog, search, nyaa)."""
+    return [
+        {
+            "num": i + 1,
+            "title": t.title,
+            "magnet": t.magnet,
+            "size": t.size,
+            "seeders": t.seeders,
+            "leechers": t.leechers,
+            "url": t.url or "",
+        }
+        for i, t in enumerate(results)
+    ]
+
+
 @router.get("/catalog")
 async def catalog(
     category: str = Query("movies", description="One of: movies, tv, music, anime"),
@@ -197,18 +213,7 @@ async def catalog(
         results = await scrape_torrents(db, category, limit)
         return {
             "category": category,
-            "items": [
-                {
-                    "num": i + 1,
-                    "title": t.title,
-                    "magnet": t.magnet,
-                    "size": t.size,
-                    "seeders": t.seeders,
-                    "leechers": t.leechers,
-                    "url": t.url or "",
-                }
-                for i, t in enumerate(results)
-            ],
+            "items": _items(results),
         }
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
@@ -226,18 +231,7 @@ async def search(
         results = await search_torrents(db, q.strip(), limit)
         return {
             "query": q,
-            "items": [
-                {
-                    "num": i + 1,
-                    "title": t.title,
-                    "magnet": t.magnet,
-                    "size": t.size,
-                    "seeders": t.seeders,
-                    "leechers": t.leechers,
-                    "url": t.url or "",
-                }
-                for i, t in enumerate(results)
-            ],
+            "items": _items(results),
         }
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
@@ -245,28 +239,17 @@ async def search(
 
 @router.get("/nyaa")
 async def nyaa_search(
-    q: str = Query(..., min_length=1),
-    limit: int = Query(20, ge=1, le=50),
+    q: str = Query("", description="Search terms; empty = nyaa's newest uploads"),
+    limit: int = Query(20, ge=1, le=75),
     db: Session = Depends(get_db),
     current_user: Optional[User] = Depends(get_torrent_user)
 ):
-    """Search nyaa.si for anime torrents (for native app). Returns list with title, magnet, size, seeders, leechers."""
+    """Search nyaa.si (or, with no query, list its newest uploads). Returns title, magnet, size, seeders, leechers."""
     try:
-        results = await search_nyaa(q.strip(), limit=limit)
+        results = await search_nyaa(q.strip(), limit=limit, latest=True)
         return {
             "query": q,
-            "items": [
-                {
-                    "num": i + 1,
-                    "title": t.title,
-                    "magnet": t.magnet,
-                    "size": t.size,
-                    "seeders": t.seeders,
-                    "leechers": t.leechers,
-                    "url": t.url or "",
-                }
-                for i, t in enumerate(results)
-            ],
+            "items": _items(results),
         }
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))

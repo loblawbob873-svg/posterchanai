@@ -73,7 +73,10 @@ public class ShareTargetPlugin extends Plugin {
     } catch (Exception ignored) {
     }
     JSObject ret = new JSObject();
-    ret.put("target", AI_ALIAS.equals(cls) ? "ai" : "post");
+    // "office" is the PosterChan Office entry: that share is a document to OPEN (OpenDocPlugin),
+    // and the page's share handler must leave it alone rather than attach it to a new post.
+    ret.put("target", AI_ALIAS.equals(cls) ? "ai"
+        : place.poster.app.office.OpenDocPlugin.OFFICE_ALIAS.equals(cls) ? "office" : "post");
     // Per-share nonce: JS dedups on this so re-sharing the SAME file is a new share, not a swallowed duplicate.
     ret.put("nonce", MainActivity.shareNonce);
     call.resolve(ret);

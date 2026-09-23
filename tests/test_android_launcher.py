@@ -142,6 +142,20 @@ public class Harness {
                           "org.thoughtcrime.securesms/org.thoughtcrime.securesms.Main",
                           "com.android.settings/com.android.settings.Main"), 3).size());
 
+    // 13b. ADDING TO THE DOCK: all five slots are the person's (it refused at four).
+    List<AppShelf.Entry> dockAll = AppShelf.arrange(phone, ours, null, null, "");
+    List<String> four = Arrays.asList("com.android.chrome/com.android.chrome.Main", "com.zebra.app/com.zebra.app.Main",
+        "org.thoughtcrime.securesms/org.thoughtcrime.securesms.Main", "com.android.settings/com.android.settings.Main");
+    List<String> five = new ArrayList<String>(four); five.add("pc:" + HomeTiles.VIEW_APP);
+    List<String> fourAndGone = new ArrayList<String>(four); fourAndGone.add("com.gone.app/x");
+    say("dock-add", AppShelf.dockAdd(dockAll, four, "pc:" + HomeTiles.VIEW_APP, 5) + " "
+        + AppShelf.dockAdd(dockAll, five, "pc:x", 5) + " "
+        + AppShelf.dockAdd(dockAll, four, four.get(0), 5) + " "
+        + AppShelf.dockAdd(dockAll, fourAndGone, "pc:" + HomeTiles.VIEW_APP, 5) + " "
+        + AppShelf.dock(dockAll, five, 5).size());
+    say("dock-fit", HomeMetrics.dockIconDp(360, 360, 5) + " " + HomeMetrics.dockIconDp(320, 320, 5) + " "
+        + HomeMetrics.dockIconDp(411, 411, 3) + " " + HomeMetrics.dockIconDp(800, 1280, 9));
+
     // 14. THE DESKTOP GRID.
     List<Desk.Item> d = new ArrayList<Desk.Item>();
     say("desk-place", Desk.add(d, new Desk.Item("a", 0, 0, 1, 1), 4, 4)
@@ -412,6 +426,24 @@ class Launcher(unittest.TestCase):
 
     def test_an_uninstalled_app_leaves_no_gap_in_the_dock(self):
         self.assertEqual(self.out["dock-gone"], "[]")
+
+    def test_a_phone_dock_takes_five_apps(self):
+        """"there is plenty of space to be able to support 5 dock apps": the add refused at
+        `dockMax() - 1`, the slot once reserved for the forced settings tile. Four apps go in, a
+        fifth goes in, a sixth is refused, a duplicate says so, and an uninstalled app's leftover
+        key does not use up a slot."""
+        self.assertEqual(self.out["dock-add"], "0 2 1 0 5")
+        home = open(os.path.join(HOME, "HomeActivity.java")).read()
+        self.assertNotIn("dockMax() - 1", home, "the dock still keeps a slot back")
+        self.assertIn("AppShelf.dockAdd(", home, "Add to dock does not use the tested rule")
+
+    def test_five_dock_icons_fit_the_phone_they_are_on(self):
+        """Five 52dp icons need exactly 360dp; a 320dp phone gets smaller icons rather than a fifth
+        pushed off the glass, and nothing is ever smaller than a 36dp thumb target."""
+        self.assertEqual(self.out["dock-fit"], "52 44 52 64")
+        at360, at320 = (int(x) for x in self.out["dock-fit"].split()[:2])
+        self.assertLessEqual(5 * (at360 + 12) + 40, 360)
+        self.assertLessEqual(5 * (at320 + 12) + 40, 320)
 
     def test_the_dock_is_capped_so_the_icons_stay_a_usable_size(self):
         self.assertEqual(self.out["dock-cap"], "3")

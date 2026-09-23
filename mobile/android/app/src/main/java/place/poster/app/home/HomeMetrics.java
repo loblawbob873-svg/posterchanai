@@ -68,6 +68,21 @@ public final class HomeMetrics {
     /** The dock icon's side, in dp. Bigger on a tablet for the same reason the cells are. */
     public static int dockIconDp(int smallestWidthDp) { return isTablet(smallestWidthDp) ? 64 : 52; }
 
+    /** The dock's margins + padding (2 x 10dp each side) and one icon's side margins (2 x 6dp). */
+    public static final int DOCK_CHROME_DP = 40, DOCK_GAP_DP = 12;
+
+    /**
+     * THE ICON SIDE THAT LETS `count` ICONS FIT THIS WIDTH. Five 52dp icons need exactly 360dp, which
+     * a common phone has and a narrow one (320dp) does not -- there the fifth would be pushed off the
+     * glass. Never above the normal size and never below 36dp, which is still a thumb target.
+     */
+    public static int dockIconDp(int smallestWidthDp, int widthDp, int count) {
+        int base = dockIconDp(smallestWidthDp);
+        if (count <= 0 || widthDp <= 0) return base;
+        int fit = (widthDp - DOCK_CHROME_DP) / count - DOCK_GAP_DP;
+        return Math.max(36, Math.min(base, fit));
+    }
+
     /**
      * The drawer is a GridView with `numColumns="auto_fit"`, so its column count is this number and
      * the screen width. 80dp on a tablet is a wall of tiny icons; 104 gives about nine across a

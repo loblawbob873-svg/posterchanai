@@ -8703,6 +8703,15 @@ body.native.term-view .tty-bar{padding-top:env(safe-area-inset-top);height:calc(
    needs horizontal room this view does not have on a phone, and every column here is short enough to
    wrap into a meta row. */
 .tm-list{display:flex;flex-direction:column;gap:8px;padding:2px 0 14px}
+/* Nyaa / TGX browse tabs: a search row, TGX's category row, then rows in the Downloads list's own
+   .tm-item look so the three tabs read as one app. */
+.tb-bar{display:flex;gap:8px;align-items:center;margin:2px 0 10px}
+.tb-bar .input{flex:1 1 auto;min-width:0;margin:0}
+.tb-bar .btn{flex:0 0 auto}
+.tb-cats{display:flex;flex-wrap:wrap;gap:6px;margin:0 0 10px}
+.tb-head{margin:0 2px 6px}
+.tb-head:empty{display:none}
+.tb-item .tm-name{white-space:normal;overflow-wrap:anywhere;line-height:1.35}
 .tm-item{padding:10px 12px;border-radius:12px;background:var(--panel2);border:1px solid var(--line)}
 .tm-item.done{border-color:color-mix(in srgb, var(--neon) 40%, var(--line))}
 .tm-item.paused{opacity:.72}
@@ -10490,6 +10499,20 @@ button.pcc-dl:focus-visible{outline:2px solid var(--neon);outline-offset:-2px}
   .office-actions{margin-top:2px;gap:6px}
   .office-actions .btn{min-height:38px}
 }
+/* ON A PHONE THE EDITOR SITS ABOVE THE BOTTOM TAB BAR, NOT UNDER IT. The view fills #feed, which runs
+   to the bottom of the screen, and the tab bar is drawn over that last 62px -- exactly where Close /
+   Save as PDF / Save As / Save live, so the one row that keeps your work was unreachable. Same
+   allowance Files and Mail make. The four actions share ONE row (a document editor cannot spare a
+   second one), and the file name gets a gutter instead of touching the glass. */
+@media(max-width:820px){
+  .feed.feed-office .office-view{padding:6px 8px calc(8px + 62px + env(safe-area-inset-bottom));gap:6px;box-sizing:border-box}
+  .feed.feed-office .office-head{padding:0 2px}
+  .feed.feed-office .office-frame{border-radius:10px}
+  .feed.feed-office .office-actions{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:6px;margin:0}
+  .feed.feed-office .office-actions .btn{min-height:40px;padding-inline:4px;font-size:13px;justify-content:center;
+    white-space:nowrap;overflow:hidden;text-overflow:ellipsis;min-width:0}
+  .feed.feed-office .office-actions .office-long{display:none}
+}
 
 /* PREVIEW — the picture/video/PDF viewer (static/js/client/preview.js).
    Two hosts, one look: a desktop window's slot (.pv-win) and a full-screen sheet (.pv-sheet).
@@ -11067,3 +11090,15 @@ html.os-idle #os-root *{animation:none!important;transition:none!important}
 .os-srch-pref-t i{font-style:normal;color:var(--muted);font-size:12px}
 .os-srch-pref-n{color:var(--muted);font-size:12px;min-width:1.5em;text-align:right}
 @media(max-width:600px){.os-srch-pref{flex-wrap:wrap}.os-srch-pref-t{flex-basis:60%}}
+
+/* Media Center → Move: a folder list that scrolls inside the dialog, and a new-folder field. */
+.mc-mv-modal{max-width:520px}
+.mc-mv-list{max-height:min(46vh,360px);overflow:auto;margin:8px 0;border:1px solid var(--line);border-radius:10px}
+.mc-mv-row{display:flex;align-items:center;gap:9px;padding:9px 11px;border-bottom:1px solid var(--line);cursor:pointer;min-height:40px;box-sizing:border-box}
+.mc-mv-row:last-child{border-bottom:none}
+.mc-mv-row span:first-of-type{flex:1;min-width:0;overflow-wrap:anywhere}
+.mc-mv-row.here{opacity:.55;cursor:default}
+.mc-mv-row input{margin:0;flex:none}
+.mc-mv-new{display:flex;flex-direction:column;gap:5px;font-size:13px;margin-top:6px}
+.mc-mv-new .input{margin:0}
+.mc-mv-acts{justify-content:flex-end;gap:8px;margin-top:8px}

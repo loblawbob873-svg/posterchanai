@@ -842,6 +842,7 @@ public class HomeActivity extends Activity implements DeskView.Host {
         if (dock == null) return;
         dock.removeAllViews();
         List<AppShelf.Entry> row = AppShelf.dock(everything, prefs.dock(), dockMax());
+        dockCount = row.size();
         for (final AppShelf.Entry e : row) dock.addView(dockIcon(e));
         // NO ALL-APPS BUTTON. The drawer opens by swiping up from the home surface (DeskView), which
         // is what every Android launcher has done since Pixel dropped the button and what people's
@@ -849,8 +850,10 @@ public class HomeActivity extends Activity implements DeskView.Host {
         // which is the point of a dock.
     }
 
+    private int dockCount = 0;
+
     private LinearLayout.LayoutParams dockParams() {
-        int s = Skin.dp(this, HomeMetrics.dockIconDp(swDp()));
+        int s = Skin.dp(this, HomeMetrics.dockIconDp(swDp(), widthDp(), dockCount));
         LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(s, s);
         int m = Skin.dp(this, 6);
         lp.setMargins(m, 0, m, 0);
@@ -1176,8 +1179,14 @@ public class HomeActivity extends Activity implements DeskView.Host {
     private void addToDock(AppShelf.Entry e) {
         if (e == null) return;
         List<String> d = new ArrayList<String>(prefs.dock());
-        if (d.contains(e.key())) { toast(getString(R.string.home_already_there)); return; }
-        if (d.size() >= dockMax() - 1) { toast(getString(R.string.home_dock_full)); return; }
+        int verdict = AppShelf.dockAdd(everything, d, e.key(), dockMax());
+        if (verdict == AppShelf.DOCK_ALREADY) { toast(getString(R.string.home_already_there)); return; }
+        if (verdict == AppShelf.DOCK_FULL) { toast(getString(R.string.home_dock_full)); return; }
+        // Keys of uninstalled apps are dropped as the new one goes in, so they cannot creep back
+        // into the count or the saved list.
+        List<String> live = new ArrayList<String>();
+        for (AppShelf.Entry x : AppShelf.dock(everything, d, Integer.MAX_VALUE)) live.add(x.key());
+        d = live;
         d.add(e.key());
         prefs.setDock(d);
         closeDrawer();

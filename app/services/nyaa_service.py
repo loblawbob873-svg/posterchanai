@@ -24,21 +24,25 @@ class NyaaResult:
     url: str = ""
 
 
-async def search_nyaa(query: str, limit: int = 20) -> list[NyaaResult]:
+async def search_nyaa(query: str, limit: int = 20, latest: bool = False) -> list[NyaaResult]:
     """
     Search nyaa.si for torrents.
 
     Args:
         query: Search query
         limit: Maximum number of results to return
+        latest: with an empty query, return nyaa's front page (the newest uploads) instead of
+            nothing. Opt-in, so the `nyaa` command's "no query = usage text" is unchanged.
 
     Returns:
         List of NyaaResult objects
     """
     if not query.strip():
-        return []
-
-    url = f"{NYAA_BASE_URL}/?f=0&c=0_0&q={quote_plus(query)}"
+        if not latest:
+            return []
+        url = f"{NYAA_BASE_URL}/?f=0&c=0_0"
+    else:
+        url = f"{NYAA_BASE_URL}/?f=0&c=0_0&q={quote_plus(query)}"
 
     headers = {
         "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",

@@ -11,9 +11,63 @@
 window.PCMediaCenterFactory = function(dep){
   const S = dep.state;   // live app.js bindings: S.CFG, S.VIEW, S._aiAuth, S._aiToken
   const {
-    $, _instanceBase, _setAiToken, attachUserAutocomplete, copyValue, enc, ensureAiSession,
-    loadHls, toast,
+    $, _instanceBase, _setAiToken, attachUserAutocomplete, closeModal, copyValue, enc, ensureAiSession,
+    loadHls, modal, toast,
   } = dep;
+
+  /* ORGANISE A LIBRARY: move a title into another folder of it (owner + admin only).
+   *
+   * The server renames the FILE (and its subtitles/poster beside it) and rewrites the catalog entry
+   * in place, keeping the title's id, so watch progress and Jellyfin links survive the move. The
+   * folder list is every folder the library already has a title in (and their parents), plus a
+   * field for a new one -- a new folder is the usual reason to organise at all. */
+  function _mcMoveFolders(items){
+    const set=new Set(['.']);
+    for(const item of items){ let f=item.folder||'.'; while(f && f!=='.' && !set.has(f)){ set.add(f); const i=f.lastIndexOf('/'); f=i>0?f.slice(0,i):'.'; } }
+    return [...set].sort((a,b)=>a==='.'?-1:b==='.'?1:a.localeCompare(b,undefined,{numeric:true,sensitivity:'base'}));
+  }
+  async function _mcMoveDialog(lib, item, items, api, done){
+    // The library's REAL folders (an emptied one is still somewhere to put things); the folders
+    // its titles are in are the fallback if the server cannot list them.
+    let disk=[];
+    try{ disk=((await api('/'+lib.id+'/move-targets'))||{}).folders||[]; }catch(_){}
+    const folders=_mcMoveFolders(items.concat(disk.map(f=>({folder:f}))));
+    let root=null;
+    modal(`<h3>Move “${enc(item.name)}”</h3>
+      <p class="muted small">Moves the file on the media server, with its subtitles and poster. Watch progress is kept.</p>
+      <input class="input" type="search" id="mc-mv-filter" placeholder="Filter folders…" aria-label="Filter folders">
+      <div class="mc-mv-list" role="radiogroup" aria-label="Destination folder">${folders.map(f=>`<label class="mc-mv-row${f===item.folder?' here':''}">
+        <input type="radio" name="mc-mv" value="${enc(f)}"${f===item.folder?' disabled':''}>
+        <span>${enc(f==='.'?lib.name+' (top level)':f)}</span>${f===item.folder?'<span class="muted small">current</span>':''}</label>`).join('')}</div>
+      <label class="mc-mv-new">New folder <span class="muted small">(inside the library, e.g. Movies/Action)</span>
+        <input class="input" type="text" id="mc-mv-new" autocomplete="off" spellcheck="false" placeholder="Folder name"></label>
+      <p class="muted small" id="mc-mv-said" role="status"></p>
+      <div class="row mc-mv-acts"><button class="btn btn-ghost" id="mc-mv-cancel">Cancel</button><button class="btn btn-neon" id="mc-mv-go">Move</button></div>`,
+      box=>{ root=box; });
+    if(!root) return;
+    root.classList.add('mc-mv-modal');
+    const q=sel=>root.querySelector(sel), said=q('#mc-mv-said');
+    q('#mc-mv-filter').oninput=e=>{ const t=e.target.value.trim().toLocaleLowerCase();
+      root.querySelectorAll('.mc-mv-row').forEach(r=>{ r.hidden=!!t && !r.textContent.toLocaleLowerCase().includes(t); }); };
+    q('#mc-mv-new').oninput=e=>{ if(e.target.value.trim()) root.querySelectorAll('input[name=mc-mv]').forEach(r=>{ r.checked=false; }); };
+    root.querySelectorAll('input[name=mc-mv]').forEach(r=> r.onchange=()=>{ q('#mc-mv-new').value=''; });
+    q('#mc-mv-cancel').onclick=()=>closeModal();
+    const go=q('#mc-mv-go');
+    go.onclick=async()=>{
+      const typed=q('#mc-mv-new').value.trim().replace(/^\/+|\/+$/g,'');
+      const picked=(root.querySelector('input[name=mc-mv]:checked')||{}).value;
+      const folder=typed || picked;
+      if(!folder){ said.textContent='Choose a folder, or type a new one.'; return; }
+      go.disabled=true; said.textContent='Moving…';
+      try{
+        const r=await api('/'+lib.id+'/move','POST',{items:[item.id], folder, create:!!typed});
+        if(r.errors && r.errors.length){ said.textContent=r.errors[0].error||'Could not move it'; go.disabled=false; return; }
+        closeModal();
+        toast('Moved to '+(folder==='.'?lib.name:folder));
+        done();
+      }catch(e){ said.textContent=e.message||'Could not move it'; go.disabled=false; }
+    };
+  }
 
 
   let _mediaCenterLibraryTab=null;
@@ -444,7 +498,7 @@ window.PCMediaCenterFactory = function(dep){
           if(!refresh){clearMediaCenterArt();list.replaceChildren();}
           else if(_mediaCenterArtObserver)_mediaCenterArtObserver.disconnect();
           for(const card of $('#mc-folder-nav').querySelectorAll('.mc-directory'))fillFolderArt(card,result.items.filter(item=>item.folder===card.dataset.path||item.folder?.startsWith(card.dataset.path+'/')).slice(0,3).map(item=>item.id));
-          list.dataset.library=lib.id;list.dataset.revision=result.revision||lib.revision||'';
+          list.dataset.library=lib.id;list.dataset.revision=result.revision||lib.revision||'';list._mcItems=result.items;
           if(refresh&&list.firstChild?.nodeType===Node.TEXT_NODE)list.replaceChildren();
           const artGeneration=_mediaCenterArtGeneration, artQueue=[];let artActive=0;
           const drainArt=()=>{
@@ -483,16 +537,24 @@ window.PCMediaCenterFactory = function(dep){
               }else grid=section.querySelector('.xdc-grid');
               list.append(section);
             }
-            if(existing.has(item.id)){const card=existing.get(item.id);grid.append(card);if(!card.querySelector('img'))_mediaCenterArtObserver.observe(card);continue;}
+            if(existing.has(item.id)){const card=existing.get(item.id);
+              // A MOVED title keeps its id, so its card is reused: bring its folder along with it.
+              card.dataset.search=(item.name+' '+item.folder).toLocaleLowerCase();
+              const foot=card.querySelector('.xdc-tfoot');if(foot)foot.textContent=item.folder==='.'?lib.name:item.folder;
+              card._mcItem=item;
+              grid.append(card);if(!card.querySelector('img'))_mediaCenterArtObserver.observe(card);continue;}
             const card=document.createElement('article');card.className='xdc-tile mc-tile';card.dataset.item=item.id;
             card.dataset.search=(item.name+' '+item.folder).toLocaleLowerCase();
             const duration=Math.max(1,Math.round(item.duration/60));
             card.innerHTML=`<div class="xdc-cover xdc-cover-none"><svg class="ic" aria-hidden="true"><use href="#i-${item.video?'tv':'music'}"></use></svg></div>
               <div class="xdc-tmeta"><b title="${enc(item.name)}">${enc(item.name)}</b><span class="muted small">${item.video?'Video':'Audio'} · ${duration} min</span>
               <span class="muted small xdc-tfoot">${enc(item.folder==='.'?lib.name:item.folder)}</span></div>
-              <div class="xdc-tacts"><button class="btn btn-neon small">${item.video?'Play':'Listen'}</button></div>`;
+              <div class="xdc-tacts"><button class="btn btn-neon small mc-play">${item.video?'Play':'Listen'}</button>${lib.can_manage?'<button class="btn btn-ghost small mc-move" title="Move to another folder">Move</button>':''}</div>`;
             grid.append(card);_mediaCenterArtObserver.observe(card);
-            const play=card.querySelector('button');
+            card._mcItem=item;
+            const move=card.querySelector('.mc-move');
+            if(move)move.onclick=()=>_mcMoveDialog(lib,card._mcItem||item,list._mcItems||result.items,api,()=>{ if(!open.disabled)open.onclick(); });
+            const play=card.querySelector('.mc-play');
             card.querySelector('.xdc-cover').onclick=()=>play.click();
             play.onclick=()=>act(play,async()=>{
               const resumeAt=await mediaResumePosition(item.name,item.progress?.position||0);if(resumeAt===null)return;

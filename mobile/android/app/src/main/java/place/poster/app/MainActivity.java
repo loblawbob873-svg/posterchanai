@@ -77,6 +77,7 @@ public class MainActivity extends BridgeActivity {
         registerPlugin(place.poster.app.push.PushPlugin.class);
         registerPlugin(place.poster.app.music.MusicPlugin.class);
         registerPlugin(place.poster.app.preview.OpenFilePlugin.class);
+        registerPlugin(place.poster.app.office.OpenDocPlugin.class);
         registerPlugin(place.poster.app.call.CallPlugin.class);
         registerPlugin(place.poster.app.calendar.CalendarPlugin.class);
         // The weather widget is drawn by the LAUNCHER, which has no session and cannot know
@@ -98,6 +99,9 @@ public class MainActivity extends BridgeActivity {
         // authoritative; this is the window the client publishes the encrypted archive from.
         registerPlugin(place.poster.app.sms.SmsPlugin.class);
         if (isSend(getIntent())) shareNonce++;   // cold-started BY a share
+        // Cold-started by "Open with PosterChan Office" (or a share/edit to it): counted the same way,
+        // so the page opens each document once and a resume re-read is not a second open.
+        if (place.poster.app.office.OpenDocPlugin.isDocIntent(getIntent())) place.poster.app.office.OpenDocPlugin.nonce++;
         super.onCreate(savedInstanceState);
         allowMediaWithoutAGesture();
         catchWebViewDownloads();
@@ -372,6 +376,7 @@ public class MainActivity extends BridgeActivity {
     public void onNewIntent(Intent intent) {
         setIntent(intent);
         if (isSend(intent)) shareNonce++;   // a genuinely new share → new nonce
+        if (place.poster.app.office.OpenDocPlugin.isDocIntent(intent)) place.poster.app.office.OpenDocPlugin.nonce++;
         super.onNewIntent(intent);
         // AND TELL THE PAGE A PRESS LANDED. A home-screen tile, a drawer alias or the music widget
         // parks its request in a static (LaunchView / LaunchPress) and starts this activity; the

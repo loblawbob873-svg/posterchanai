@@ -2242,6 +2242,52 @@
     try{ const r = await fetch(dec); if(r && r.ok){ const b = await r.blob(); if(b && b.size) return b; } }catch(_){}
     return null;
   }
+  /* "OPEN WITH POSTERCHAN OFFICE" ON ANDROID (office/OpenDocPlugin.java). A document arrives as the
+   * launch intent -- cold, or through onNewIntent on a warm app -- and is answered ONCE per arrival:
+   * the native side counts them (`nonce`) exactly as it counts shares, so a resume that re-reads the
+   * same intent is not a second open. A PDF goes to Preview; a document to the Office editor, whose
+   * Save writes the edited bytes BACK TO THE FILE THAT WAS OPENED when Android granted write access,
+   * and otherwise saves a copy and says why -- a Save that quietly went nowhere is the one outcome
+   * this must never have. Returns true when it opened something. */
+  let _lastDocNonce = 0;
+  async function _consumeOpenDoc(){
+    const P = _capPlugin('OpenDoc', 'pending');
+    if(!P) return false;
+    let r = null;
+    try{ r = await P.pending(); }
+    catch(e){ try{ toast('Couldn’t read that document: ' + ((e && e.message) || e)); }catch(_){} return false; }
+    if(!r || !r.nonce || r.nonce === _lastDocNonce) return false;
+    if(!r.data){ _lastDocNonce = r.nonce; return false; }          // an arrival that was not a document
+    if(GUEST){ _guestPrompt(); try{ toast('Log in to open the document'); }catch(_){} return false; }   // retried after login
+    _lastDocNonce = r.nonce;
+    const name = r.name || (r.kind === 'pdf' ? 'document.pdf' : 'document');
+    let bytes;
+    try{ bytes = Uint8Array.from(atob(r.data), c => c.charCodeAt(0)); }
+    catch(_){ toast('Couldn’t read that document'); return false; }
+    const file = new File([bytes], name, { type: r.mime || '' });
+    if(r.kind === 'pdf'){
+      if(window.PCPreview && PCPreview.open){ PCPreview.open({ name, mime: 'application/pdf', blob: file }); return true; }
+      toast('Preview is not available in this build'); return false;
+    }
+    const nonce = r.nonce, writable = !!r.writable;
+    const save = async (updated) => {
+      if(writable){
+        try{
+          await P.save({ nonce, data: await _blobToB64(updated) });
+          toast('Saved to ' + name);
+          return;
+        }catch(e){
+          const why = String((e && e.message) || e || '');
+          if(!/read-only/i.test(why)) toast('Couldn’t save back to ' + name + ' (' + why + ') — saving a copy instead');
+        }
+      }
+      await saveBlobAs(updated, name);
+      toast('Saved a copy — the app that opened ' + name + ' did not allow changing the original');
+    };
+    try{ await _officeSession(file, save); }
+    catch(e){ toast('Office unavailable: ' + ((e && e.message) || e)); return false; }
+    return true;
+  }
   let _lastShareSig='';
   async function _consumeSendIntent(){
     try{
@@ -2255,7 +2301,11 @@
       // because it's part of the share's identity: sharing the same photo to the OTHER entry is a NEW share,
       // and keying only on the payload would swallow it as a duplicate (app foregrounds, nothing happens).
       let toAi=false, nonce=null;
-      try{ const ST=_capPlugin('ShareTarget','getTarget'); if(ST){ const t=await ST.getTarget(); toAi=!!(t && t.target==='ai'); if(t && t.nonce!=null) nonce=t.nonce; } }catch(_){}
+      try{ const ST=_capPlugin('ShareTarget','getTarget'); if(ST){ const t=await ST.getTarget();
+        // A share to the "PosterChan Office" entry is a document to OPEN, not a file to post:
+        // _consumeOpenDoc owns it, and attaching it to a new post here as well would do both.
+        if(t && t.target==='office') return false;
+        toAi=!!(t && t.target==='ai'); if(t && t.nonce!=null) nonce=t.nonce; } }catch(_){}
       // NEVER call SI.finish() — it's getActivity().finish(), which CLOSES PosterChan and drops you back in
       // the sharing app (the "opens for a second then back to the file manager" bug). We leave the app open
       // with the composer instead. Because the intent then persists, checkSendIntentReceived keeps returning
@@ -3697,7 +3747,7 @@
       // Activity mid-share we'd come back with the user's screen still being broadcast and nothing in the UI
       // to stop it. Reconcile on every startup.
       try{ _reconcileNativeScreen(); }catch(_){}
-      const _reShare=()=>{ try{ _consumeSendIntent(); }catch(_){} };
+      const _reShare=()=>{ try{ _consumeSendIntent(); }catch(_){} try{ _consumeOpenDoc(); }catch(_){} };
       _reShare();   // cold-start share (app launched by the share intent) — runs each startApp (cheap; deduped)
       // Same shape for the music widget: it can launch the app cold OR foreground it via onNewIntent,
       // and either way the press arrives as an Intent extra rather than a JS event. Consumed natively,
@@ -8271,10 +8321,11 @@
       get VIEW(){ return VIEW; }, set VIEW(v){ VIEW = v; },
       get _aiAuth(){ return _aiAuth; },
       get _aiToken(){ return _aiToken; },
+      get _routing(){ return _routing; },
     },
-    $, $$, InstEmoji, NT, ZAP_ICON, _bindTimelineHeader, _capFeedDom, _clearNav, _dedupAddr,
+    $, $$, InstEmoji, NT, ZAP_ICON, _backOut, _bindTimelineHeader, _capFeedDom, _clearNav, _dedupAddr,
     _feedScrollable, _fmtBytes, _guestPrompt, _hidePill, _hold, _insertAt, _isDesktopApp,
-    _matchAddr, _timelineHeaderHtml, _tlNotes, _webLink, applyEmojis, artTime, articleAddr,
+    _matchAddr, _navTopHtml, _navUrl, _timelineHeaderHtml, _tlNotes, _webLink, applyEmojis, artTime, articleAddr,
     articleCard, cleanupInlineStream, clearSentinel, closeModal, compose, copyValue,
     decorateProfiles, doZap, emojiName, enc, ensureAiSession, feedNoteHtml, fetchNotes, hydrate,
     hydrateCounts, hydrateLinkCards, hydratePolls, invalidateCounts, isMutedView, linkify,
@@ -8324,8 +8375,8 @@
       get _aiAuth(){ return _aiAuth; }, set _aiAuth(v){ _aiAuth = v; },
       get _aiToken(){ return _aiToken; },
     },
-    $, _instanceBase, _setAiToken, attachUserAutocomplete, copyValue, enc, ensureAiSession,
-    loadHls, toast,
+    $, _instanceBase, _setAiToken, attachUserAutocomplete, closeModal, copyValue, enc, ensureAiSession,
+    loadHls, modal, toast,
   }; }
   function _mediaCenterMod(){ return _lzGet('mediacenter.js', 'PCMediaCenterFactory', _mediaCenterDeps); }
   function _mediaCenterLoad(){ return _lzLoad('mediacenter.js', 'PCMediaCenterFactory', _mediaCenterDeps); }
@@ -16076,7 +16127,8 @@
         try{ PCOS.focusDoc && PCOS.focusDoc('post:' + id); }catch(_){}
       }else{
         openThread._osIn = 1;
-        try{ if(PCOS.openDoc('post:'+id, 'Post', 'i-note', ()=>openThread(id, hints))) return; }
+        const _isArt = ((Store.get(id)||{}).kind === 30023);
+        try{ if(PCOS.openDoc('post:'+id, _isArt ? 'Article' : 'Post', _isArt ? 'i-article' : 'i-note', ()=>openThread(id, hints))) return; }
         finally{ openThread._osIn = 0; }
       }
     }
@@ -16124,7 +16176,13 @@
    * routeFromPath used to answer with Nostrverse). */
   function _bindThreadBack(feed, id){
     const tb=$('#th-back',feed); if(!tb) return;
-    tb.onclick=()=>{
+    tb.onclick=()=>_backOut('post:' + (id || renderThread._tok || ''));
+  }
+  /* BACK OUT OF A DOCUMENT (a post, an article): shared by the thread's Back and the article
+   * reader's, so the two cannot drift. `fallback` is the screen for a cold open with no history of
+   * our own to pop (a pasted link) -- the timeline for a post, the Articles list for an article. */
+  function _backOut(docKey, fallback){
+    {
       /* ON THE DESKTOP, BACK IS CLOSING THE WINDOW. A post opened there gets its own frame, and the
        * screen it was opened from is still behind it and untouched — the repo on its Issues tab, at
        * the offset it was left at. Reported as "when I am in an issue, i click back, it brings me
@@ -16137,10 +16195,10 @@
        * Git list underneath. Closing the frame is both the correct desktop gesture and the only one
        * that returns the reader to a screen nothing has repainted. */
       try{ if(window.PCOS && PCOS.isOn() && PCOS.closeDoc
-              && PCOS.closeDoc('post:' + (id || renderThread._tok || ''))) return; }catch(_){}
+              && PCOS.closeDoc(docKey)) return; }catch(_){}
       if(_navPushed>0){ try{ history.back(); return; }catch(_){} }
-      switchView(_startTimeline());
-    };
+      switchView(fallback || _startTimeline());
+    }
   }
   function _paintThreadHead(feed, ev){
     if(!feed || !ev) return;
@@ -16179,7 +16237,13 @@
      * notification was built from it) and the relay has not finished connecting". Waiting for the
      * socket first spends that entire connect on a spinner, for a post the client could have drawn
      * before the first packet left the phone. */
-    { const have=Store.get(id); if(have) _paintThreadHead(feed, have); }
+    /* AN ARTICLE IS A DOCUMENT WINDOW TOO, AND ITS WINDOW IS A POST WINDOW. On the desktop,
+     * openArticle hands the article to openThread so it gets its own frame (and pop-out, focus and
+     * Back-closes-it for free) instead of painting over the Social window it was clicked in, where
+     * the timeline's next redraw landed on top of it. Whatever arrives here holding a long-form
+     * event is drawn by the article reader, in place -- a NIP-23 body is markdown, not a note. */
+    { const have=Store.get(id); if(have && have.kind===30023){ openArticle(have, { inPlace:true }); return; }
+      if(have) _paintThreadHead(feed, have); }
     // A REQ fired at a still-CONNECTING socket is silently DROPPED (relay.js `_send`), so a thread opened
     // COLD — a pasted nevent link, a notification tap, a fresh launch — queried into a dead socket and
     // rendered whatever partial set came back: the "only 1 reply, correct after refresh" bug. Waiting for a
@@ -16188,6 +16252,7 @@
     let ev=Store.get(id);
     if(!ev){ ev=await fetchEvent(id, hints); if(ev) Store.saveEvent(ev); }
     if(!ev){ feed.innerHTML='<div class="empty">Post not found on the relay.</div>'; return; }
+    if(ev.kind===30023){ openArticle(ev, { inPlace:true }); return; }
     // The post we hold, painted now if the Store did not already have it above (a link opened cold,
     // where fetchEvent had to go and get it). Same helper either way — see _paintThreadHead.
     _paintThreadHead(feed, ev);
@@ -19875,6 +19940,9 @@
     // concord.js repaints its own unread count; the ☰ badge sums it with drafts.
     bumpMoreBadge,
     retryInstanceView:view=>{if(VIEW===view)renderView(true);},
+    // The APK's "Open with PosterChan Office" consumer (see _consumeOpenDoc); called from the
+    // native arrival signals, and reachable here for the tests that drive it.
+    consumeOpenDoc:()=>_consumeOpenDoc(),
     editOwnProfile:()=>{if(ME&&!GUEST)editProfile(profOf(ME.pubkey));},
     /* Shared-feed modules may finish network/deferred work after navigation. They must ask who owns
      * the feed before painting; otherwise a late Concord render can replace Code (and vice versa). */

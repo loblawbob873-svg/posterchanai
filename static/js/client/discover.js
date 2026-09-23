@@ -16,9 +16,9 @@
 window.PCDiscoverFactory = function(dep){
   const S = dep.state;   // live app.js bindings: S.BOOKMARKS, S.FOLLOWS, S.GUEST, S.IS_ADMIN, S.LOGO, S.ME, S.VIEW, S._aiAuth, S._aiToken
   const {
-    $, $$, InstEmoji, NT, ZAP_ICON, _bindTimelineHeader, _capFeedDom, _clearNav, _dedupAddr,
+    $, $$, InstEmoji, NT, ZAP_ICON, _backOut, _bindTimelineHeader, _capFeedDom, _clearNav, _dedupAddr,
     _feedScrollable, _fmtBytes, _guestPrompt, _hidePill, _hold, _insertAt, _isDesktopApp,
-    _matchAddr, _timelineHeaderHtml, _tlNotes, _webLink, applyEmojis, artTime, articleAddr,
+    _matchAddr, _navTopHtml, _navUrl, _timelineHeaderHtml, _tlNotes, _webLink, applyEmojis, artTime, articleAddr,
     articleCard, cleanupInlineStream, clearSentinel, closeModal, compose, copyValue,
     decorateProfiles, doZap, emojiName, enc, ensureAiSession, feedNoteHtml, fetchNotes, hydrate,
     hydrateCounts, hydrateLinkCards, hydratePolls, invalidateCounts, isMutedView, linkify,
@@ -70,14 +70,34 @@ window.PCDiscoverFactory = function(dep){
     if(S.VIEW!=='articles' || !list) return;
     list.querySelectorAll('.art-cc').forEach(el=>{ const n=counts.get(el.dataset.addr)||0; if(n) el.textContent=` · 💬 ${n}`; });
   }
-  function openArticle(e){
+  /* AN ARTICLE OPENS AS A DOCUMENT, NOT OVER WHATEVER SCREEN IT WAS CLICKED IN.
+   *
+   * Reported from Social: an article card inside a post painted the reader into the Social window's
+   * feed -- so the timeline's next redraw could land on top of it -- and it pushed no history, so
+   * Back skipped past it (and its own button always went to the Articles list, wherever the reader
+   * had come from). On the desktop it now goes through openThread, which gives it a window of its
+   * own (`doc:post:<id>`) exactly as a post gets; renderThread hands a long-form event back here
+   * with `inPlace`. Everywhere it gets a real address (its naddr), so Back and a reload both work. */
+  function openArticle(e, opts){
+    const inPlace = !!(opts && opts.inPlace);
+    if(!inPlace && !S._routing && window.PCOS && PCOS.isOn() && e && e.id){
+      try{ Store.saveEvent(e); }catch(_){}
+      return openThread(e.id);
+    }
+    /* The address goes in BEFORE the view changes: _navUrl stamps the entry being LEFT with the
+     * current view, so setting 'article' first labelled the timeline's own entry "article" and Back
+     * popped straight back into the article. Arriving through the post window (inPlace), openThread
+     * has already pushed an nevent for this same document, so that entry is REPLACED, not stacked. */
+    try{
+      const d=(e.tags.find(t=>t[0]==='d')||[])[1]||'';
+      _navUrl('/'+NT().nip19.naddrEncode({ kind:e.kind, pubkey:e.pubkey, identifier:d }), inPlace);
+    }catch(_){}
     S.VIEW='article'; _clearNav(); $('#view-title').textContent='Article';
-    const feed=$('#feed'); const p=profOf(e.pubkey); needProfile(e.pubkey);
+    const feed=_feedScrollable(); const p=profOf(e.pubkey); needProfile(e.pubkey);
     const title=(e.tags.find(t=>t[0]==='title')||[])[1]||'(untitled)';
     const img=(e.tags.find(t=>t[0]==='image')||[])[1]||'';
     const mine=e.pubkey===S.ME.pubkey;
-    feed.innerHTML=`<div class="article-view">
-      <button class="btn btn-ghost small" id="art-back"><svg class="ic b-ic" aria-hidden="true"><use href="#i-arrow-left"></use></svg>Articles</button>
+    feed.innerHTML=_navTopHtml('art-back', 'Back')+`<div class="article-view">
       ${img?_hold(`<img class="av-banner" src="${enc(img)}" onerror="this.remove()">`, img, 'image', 'av-banner'):''}
       <h1 class="av-title">${enc(title)}</h1>
       <div class="av-by"><img class="art-av" src="${enc(p.picture||S.LOGO)}" onerror="this.src='${S.LOGO}'"><span class="name" data-prof="${e.pubkey}">${enc(p.name||p.display_name||'anon')}</span><span class="muted small">· ${timeAgo(artTime(e))}</span></div>
@@ -95,7 +115,7 @@ window.PCDiscoverFactory = function(dep){
         <div id="av-comment-list"><div class="spinner"></div></div>
       </div>
     </div>`;
-    $('#art-back').onclick=()=>switchView('articles');
+    $('#art-back').onclick=()=>_backOut('post:'+e.id, 'articles');
     $('#av-bm').onclick=ev=>toggleBookmark(e.id, ev.currentTarget);
     $('#av-zap').onclick=()=>doZap(e.id, e.pubkey);
     { const ed=$('#av-edit'); if(ed) ed.onclick=()=>renderArticleEditor(e); }
@@ -512,9 +532,11 @@ window.PCDiscoverFactory = function(dep){
     const act = _torTab==='dl'
       ? `<button class="btn btn-neon small tor-act" id="tm-add"><svg class="ic b-ic" aria-hidden="true"><use href="#i-magnet"></use></svg>Add torrent</button>
          <button class="btn btn-ghost small icon-only tor-act" id="tm-refresh" title="Refresh now" aria-label="Refresh now"><svg class="ic b-ic" aria-hidden="true"><use href="#i-refresh"></use></svg></button>`
-      : (S.GUEST ? '' : `<button class="btn btn-neon small tor-act" id="tor-add"><svg class="ic b-ic" aria-hidden="true"><use href="#i-magnet"></use></svg>Publish</button>`);
+      : (S.GUEST || _torTab!=='nostr' ? '' : `<button class="btn btn-neon small tor-act" id="tor-add"><svg class="ic b-ic" aria-hidden="true"><use href="#i-magnet"></use></svg>Publish</button>`);
     const tabs=`<div class="notif-tabs tor-tabs">
         <button class="ntab${_torTab==='dl'?' on':''}" data-tt="dl">⬇ Downloads</button>
+        <button class="ntab${_torTab==='nyaa'?' on':''}" data-tt="nyaa">🌸 Nyaa</button>
+        <button class="ntab${_torTab==='tgx'?' on':''}" data-tt="tgx">🌌 TGX</button>
         <button class="ntab${_torTab==='nostr'?' on':''}" data-tt="nostr">🧲 Nostr</button>
         <span class="tor-sp"></span><span class="tor-acts">${act}</span></div>`;
     const bind=()=>{ $$('.tor-tabs .ntab',feed).forEach(b=> b.onclick=()=>{
@@ -529,9 +551,125 @@ window.PCDiscoverFactory = function(dep){
       return;
     }
     _torStopPoll();
+    if(_torTab==='nyaa' || _torTab==='tgx'){
+      feed.innerHTML = tabs + _torBrowseShell(_torTab);
+      bind();
+      _torBrowseBind(feed, _torTab);
+      return;
+    }
     feed.innerHTML = tabs + '<div class="spinner"></div>';
     bind();
     await _renderTorrentsNostr(feed, tabs, bind);
+  }
+
+  /* NYAA and TGX — the same two sites the AI chat's `nyaa` and `torrents` commands read, through the
+   * endpoints those commands' data already comes from (/api/torrent/nyaa, /catalog, /search). They
+   * run on THIS node, through its Tor proxy, never from the browser.
+   *
+   * What a tab last showed lives in module state, not the DOM: #feed is shared by every view and is
+   * blanked on entry, so going to Downloads to watch a torrent start and coming back finds the same
+   * query and the same list, with no refetch. A response is only painted if it is still the latest
+   * request for that tab — a slow search must not land on top of the one typed after it.
+   *
+   * Download adds the magnet to this node's client (the Downloads tab) and STAYS here: the button
+   * turns into "✓ Added". Somebody browsing a list usually wants more than one thing from it, and
+   * being thrown to another tab after every click would make that a chore. */
+  const _TGX_CATS = [['movies','Movies'],['tv','TV'],['music','Music'],['anime','Anime']];
+  const _torBrowse = {
+    nyaa: { q:'', items:null, err:'', seq:0, added:Object.create(null) },
+    tgx:  { q:'', cat:'movies', items:null, err:'', seq:0, added:Object.create(null) },
+  };
+  function _torBrowseShell(src){
+    const st=_torBrowse[src];
+    const cats = src==='tgx' ? `<div class="tb-cats" role="tablist">${_TGX_CATS.map(([k,l])=>
+      `<button class="btn small ${!st.q && st.cat===k ? 'btn-neon' : 'btn-ghost'} tb-cat" data-cat="${k}">${l}</button>`).join('')}</div>` : '';
+    return `<form class="tb-bar" id="tb-form" autocomplete="off">
+        <input class="input" type="search" id="tb-q" enterkeyhint="search" value="${enc(st.q)}"
+          placeholder="${src==='nyaa' ? 'Search nyaa.si' : 'Search TorrentGalaxy'}" aria-label="${src==='nyaa' ? 'Search nyaa.si' : 'Search TorrentGalaxy'}">
+        <button class="btn btn-neon small" type="submit">Search</button>
+      </form>${cats}
+      <div class="tb-head muted small" id="tb-head"></div>
+      <div class="tm-list" id="tb-list"><div class="spinner"></div></div>`;
+  }
+  function _torBrowseRow(src, t, i){
+    const st=_torBrowse[src], added=!!st.added[t.magnet];
+    return `<div class="tm-item tb-item" data-i="${i}">
+      <div class="tm-head"><span class="tm-name tb-name" title="${enc(t.title)}">${enc(t.title)}</span></div>
+      <div class="tm-meta">
+        <span>${enc(t.size||'')}</span>
+        <span title="seeders">⇡ ${Number(t.seeders)||0}</span>
+        <span title="leechers">⇣ ${Number(t.leechers)||0}</span>
+      </div>
+      <div class="tm-acts">
+        <button class="btn ${added?'btn-ghost':'btn-neon'} small tb-get"${added?' disabled':''}>${added?'✓ Added':'<svg class="ic b-ic" aria-hidden="true"><use href="#i-download"></use></svg>Download'}</button>
+        <button class="btn btn-ghost small tb-copy">⧉ Magnet</button>
+      </div></div>`;
+  }
+  function _torBrowsePaint(feed, src){
+    const st=_torBrowse[src], list=$('#tb-list',feed), head=$('#tb-head',feed);
+    if(!list) return;
+    const what = st.q ? `Results for “${st.q}”`
+               : (src==='nyaa' ? 'Newest on nyaa.si' : 'Top '+((_TGX_CATS.find(c=>c[0]===st.cat)||[])[1]||'')+' on TorrentGalaxy');
+    if(head) head.textContent = st.items ? what : '';
+    if(st.err){ list.innerHTML=`<div class="empty">${enc(st.err)}</div>`; return; }
+    if(!st.items){ list.innerHTML='<div class="spinner"></div>'; return; }
+    list.innerHTML = st.items.length ? st.items.map((t,i)=>_torBrowseRow(src,t,i)).join('')
+      : `<div class="empty">Nothing found${st.q?' for “'+enc(st.q)+'”':''}.</div>`;
+    $$('.tb-item',list).forEach(row=>{
+      const t=st.items[+row.dataset.i]; if(!t) return;
+      row.querySelector('.tb-copy').onclick=()=>copyValue(t.magnet, 'magnet copied', 'Magnet link:');
+      const get=row.querySelector('.tb-get');
+      get.onclick=async()=>{
+        if(st.added[t.magnet]) return;
+        get.disabled=true;
+        try{
+          await _torApi('/add',{method:'POST',body:JSON.stringify({magnet:t.magnet})});
+          st.added[t.magnet]=true;
+          get.className='btn btn-ghost small tb-get'; get.textContent='✓ Added';
+          toast('added to Downloads');
+        }catch(err){
+          get.disabled=false;
+          toast(err.status===503 ? 'this server has no torrent client enabled'
+                                 : 'could not add that: '+(err.detail||err.message));
+        }
+      };
+    });
+  }
+  async function _torBrowseLoad(feed, src){
+    const st=_torBrowse[src], seq=++st.seq;
+    st.items=null; st.err=''; _torBrowsePaint(feed, src);
+    const path = src==='nyaa' ? '/nyaa?limit=75'+(st.q?'&q='+encodeURIComponent(st.q):'')
+               : (st.q ? '/search?limit=50&q='+encodeURIComponent(st.q) : '/catalog?limit=50&category='+st.cat);
+    let items=null, err='';
+    try{ const j=await _torApi(path); items=(j&&j.items)||[]; }
+    catch(e){
+      err = e.status===401 || e.status===403 ? 'You don\'t have access to torrents on this server.'
+          : (e.detail || e.message || 'Could not reach '+(src==='nyaa'?'nyaa.si':'TorrentGalaxy')+'.');
+    }
+    if(seq!==st.seq) return;                          // a newer request owns this tab now
+    st.items=items; st.err=err;
+    if(S.VIEW==='torrents' && _torTab===src) _torBrowsePaint(feed, src);
+  }
+  function _torBrowseBind(feed, src){
+    const st=_torBrowse[src];
+    const form=$('#tb-form',feed), q=$('#tb-q',feed);
+    if(form) form.onsubmit=ev=>{
+      ev.preventDefault();
+      const v=(q.value||'').trim();
+      if(v===st.q && st.items && !st.err) return;
+      st.q=v;
+      // Searching TGX leaves the category row; an empty search goes back to it.
+      $$('.tb-cat',feed).forEach(b=> b.className='btn small '+(!st.q && st.cat===b.dataset.cat ? 'btn-neon' : 'btn-ghost')+' tb-cat');
+      _torBrowseLoad(feed, src);
+    };
+    $$('.tb-cat',feed).forEach(b=> b.onclick=()=>{
+      if(!st.q && st.cat===b.dataset.cat && st.items && !st.err) return;
+      st.cat=b.dataset.cat; st.q=''; if(q) q.value='';
+      $$('.tb-cat',feed).forEach(x=> x.className='btn small '+(x===b ? 'btn-neon' : 'btn-ghost')+' tb-cat');
+      _torBrowseLoad(feed, src);
+    });
+    if(st.items || st.err) _torBrowsePaint(feed, src);
+    else _torBrowseLoad(feed, src);
   }
 
   async function _renderTorrentsNostr(feed, tabs, bind){

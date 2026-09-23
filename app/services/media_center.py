@@ -10,6 +10,7 @@ import logging
 import math
 import os
 import re
+import shutil
 import subprocess
 import tempfile
 import time
@@ -592,6 +593,10 @@ def scan(folder, previous=None, on_item=None):
     root = safe_root(folder)
     items, skipped = [], 0
     previous = {item["path"]: item for item in (previous or [])}
+    # A MOVED title keeps the id its OLD path gave it (see move_items), so a new file that later
+    # appears at that old path would compute the same id: two titles, one id, and progress and
+    # Jellyfin links pointing at the wrong one. A new file whose id is taken gets a different one.
+    taken = {item["id"] for item in previous.values()}
     artwork_attempted = set()
     def failed(error):
         raise error  # An unreadable subtree must not silently erase the old catalog.
@@ -617,7 +622,11 @@ def scan(folder, previous=None, on_item=None):
                     generate_folder_art(root, path, old, artwork_attempted)
                     continue
                 metadata = probe(path)
-                items.append({"id": hashlib.sha256(relative.encode()).hexdigest()[:32], "path": relative,
+                new_id = hashlib.sha256(relative.encode()).hexdigest()[:32]
+                if new_id in taken:
+                    new_id = hashlib.sha256(f"{relative}\0{stat.st_mtime_ns}\0{stat.st_size}".encode()).hexdigest()[:32]
+                taken.add(new_id)
+                items.append({"id": new_id, "path": relative,
                               "name": path.stem, "folder": path.parent.relative_to(root).as_posix(),
                               "size": stat.st_size, "mtime_ns": stat.st_mtime_ns, **metadata})
                 if on_item and len(items) <= MAX_LIBRARY_ITEMS:
@@ -629,6 +638,141 @@ def scan(folder, previous=None, on_item=None):
                 raise LibraryLimitError(f"Library limit is {MAX_LIBRARY_ITEMS:,} items; split this folder into libraries")
     items.sort(key=lambda item: (natural(item["folder"]), natural(item["path"])))
     return items, skipped
+
+
+def library_folder(library, relative, create=False):
+    """`relative` resolved to a directory INSIDE this library, never through a symlink or `..`.
+
+    `create` makes the missing tail (an admin typing a new folder name into Move). An ignored
+    subtree is refused: a file moved under a `.ignore` would vanish from the library it was just
+    organised in, which reads as the move having deleted it."""
+    root = safe_root(library["folder"])
+    parts = Path(str(relative or ".").strip().rstrip("/") or ".")
+    if parts.is_absolute() or ".." in parts.parts:
+        raise ValueError("Folder must be inside this library")
+    target = root
+    for part in parts.parts:
+        if part == ".":
+            continue
+        if part.startswith("."):
+            raise ValueError("Folder names cannot start with a dot")
+        target = target / part
+        if target.is_symlink():
+            raise ValueError("Linked folders are not available")
+        if not target.exists():
+            if not create:
+                raise ValueError("That folder does not exist")
+            target.mkdir(mode=0o755)
+        elif not target.is_dir():
+            raise ValueError("That name is a file, not a folder")
+    resolved = target.resolve(strict=True)
+    if resolved != root and root not in resolved.parents:
+        raise ValueError("Folder must be inside this library")
+    if ignored_folder(root, resolved):
+        raise ValueError("That folder is excluded from Media Center (.ignore)")
+    return root, resolved
+
+
+def folder_tree(library, limit=2000):
+    """Every folder a title can be moved INTO: the library's real directories, not just the ones
+    that hold a title today -- an emptied folder is still somewhere to put things. Dot folders,
+    symlinks and `.ignore`d subtrees are left out, exactly as the scanner leaves them out."""
+    root = safe_root(library["folder"])
+    found = ["."]
+    if (root / ".ignore").exists():
+        return found
+    for directory, dirs, files in os.walk(root, followlinks=False):
+        here = Path(directory)
+        dirs[:] = sorted((d for d in dirs if not d.startswith(".") and not (here / d).is_symlink()
+                          and not os.path.lexists(here / d / ".ignore")), key=natural)
+        for name in dirs:
+            found.append((Path(directory) / name).relative_to(root).as_posix())
+            if len(found) >= limit:
+                break
+        if len(found) >= limit:
+            break
+    return sorted(found, key=lambda f: (f != ".", natural(f)))
+
+
+# What may follow a title's stem for a file to be ITS sidecar: optional short tags (a language, `forced`,
+# `sdh`...) and then a subtitle/poster/metadata extension -- `Film.srt`, `Film.en.forced.srt`, `Film.jpg`.
+_SIDECAR_TAIL = re.compile(r"^(?:\.(?:[a-z]{2,3}(?:[-_][a-z0-9]{2,4})?|forced|default|sdh|cc|hi))*"
+                           r"\.(?:srt|ass|ssa|vtt|sub|idx|sup|jpg|jpeg|png|webp|nfo)$", re.I)
+
+
+def _sidecars(source):
+    """Files that belong to ONE title: its stem, then only tags and a sidecar extension.
+
+    A bare "starts with the stem" match is wrong twice over: `Film.mp4` beside `Film.mkv` is another
+    TITLE, and with scene-style dotted names `The.Matrix.Reloaded.en.srt` starts with
+    `The.Matrix.` -- moving The Matrix would carry off the sequel's subtitles and poster."""
+    stem = source.stem
+    for entry in source.parent.iterdir():
+        name = entry.name
+        if (entry != source and name.startswith(stem) and _SIDECAR_TAIL.match(name[len(stem):])
+                and entry.is_file() and not entry.is_symlink()):
+            yield entry
+
+
+def _move_file(source, target):
+    try:
+        os.rename(source, target)
+    except OSError as error:
+        if getattr(error, "errno", None) != 18:          # EXDEV: another mount inside the library
+            raise
+        shutil.move(str(source), str(target))
+
+
+def move_items(library, items, item_ids, destination, create=False):
+    """Move titles to another folder of the same library, ON DISK, and return the new catalog.
+
+    THE ID IS KEPT. It was derived from the path at scan time, but everything else hangs off it --
+    watch progress, a Jellyfin client's item links, the artwork cache -- so the moved entry keeps its
+    id, its probe results and its mtime (a rename preserves it). The next scan then finds a file at
+    the new path whose size and mtime match that entry and reuses it as-is, instead of re-probing it
+    under a new id and quietly losing everybody's place in it.
+
+    Never overwrites: a name already taken in the destination is reported for that title and the
+    rest still move. Returns (items, moved, errors)."""
+    root, dest = library_folder(library, destination, create=create)
+    wanted = set(item_ids)
+    moved, errors, result = [], [], []
+    for item in items:
+        if item["id"] not in wanted:
+            result.append(item)
+            continue
+        try:
+            source = source_path(library, item)
+            if source.parent == dest:
+                result.append(item)
+                continue
+            target = dest / source.name
+            if os.path.lexists(target):
+                raise ValueError(f"{source.name} already exists there")
+            sidecars = [(extra, dest / extra.name) for extra in _sidecars(source)]
+            _move_file(source, target)
+            for extra, extra_target in sidecars:
+                if not os.path.lexists(extra_target):
+                    try:
+                        _move_file(extra, extra_target)
+                    except OSError:
+                        pass                               # a stuck subtitle never undoes the title
+            relative = target.relative_to(root).as_posix()
+            folder = dest.relative_to(root).as_posix()
+            # Re-stat: a move across mounts is a COPY, and a filesystem that keeps coarser times
+            # would otherwise leave an entry `source_path` refuses as "media changed".
+            stat = target.stat()
+            updated = {**item, "path": relative, "folder": folder or ".",
+                       "size": stat.st_size, "mtime_ns": stat.st_mtime_ns}
+            result.append(updated)
+            moved.append(item["id"])
+        except (ValueError, OSError) as error:
+            errors.append({"id": item["id"], "name": item.get("name", ""), "error": str(error)})
+            result.append(item)
+    missing = wanted - {item["id"] for item in items}
+    errors += [{"id": item_id, "name": "", "error": "Not in this library"} for item_id in missing]
+    result.sort(key=lambda item: (natural(item["folder"]), natural(item["path"])))
+    return result, moved, errors
 
 
 _progress_lock = asyncio.Lock()

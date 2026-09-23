@@ -90,6 +90,56 @@
             </intent-filter>
         </activity-alias>
 
+        <!-- "POSTERCHAN OFFICE" IN THE OPEN-WITH AND SHARE SHEETS. Documents open in the Office editor
+             (Save writes back to the same file when Android grants write access) and PDFs in Preview.
+             Its own entry, so Android offers it by name and a person can make it the default for these
+             types ("Always"); a PDF shared to plain "PosterChan" is still a file to post. The rule for
+             what is ours is office/DocIntent.java, and the MIME list here must match its OFFICE_MIMES
+             (tests/test_android_open_documents.py). Enabled from install: a document handler that
+             appears only after a setting is one nobody finds. -->
+        <activity-alias
+            android:name=".OpenInOffice"
+            android:targetActivity=".MainActivity"
+            android:label="PosterChan Office"
+            android:icon="@mipmap/ic_launcher"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="android.intent.action.VIEW" />
+                <action android:name="android.intent.action.EDIT" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <data android:scheme="content" />
+                <data android:scheme="file" />
+                <data android:mimeType="application/pdf" />
+                <data android:mimeType="application/msword" />
+                <data android:mimeType="application/vnd.openxmlformats-officedocument.wordprocessingml.document" />
+                <data android:mimeType="application/vnd.ms-excel" />
+                <data android:mimeType="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" />
+                <data android:mimeType="application/vnd.ms-powerpoint" />
+                <data android:mimeType="application/vnd.openxmlformats-officedocument.presentationml.presentation" />
+                <data android:mimeType="application/vnd.oasis.opendocument.text" />
+                <data android:mimeType="application/vnd.oasis.opendocument.spreadsheet" />
+                <data android:mimeType="application/vnd.oasis.opendocument.presentation" />
+                <data android:mimeType="application/rtf" />
+                <data android:mimeType="text/rtf" />
+            </intent-filter>
+            <intent-filter>
+                <action android:name="android.intent.action.SEND" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <data android:mimeType="application/pdf" />
+                <data android:mimeType="application/msword" />
+                <data android:mimeType="application/vnd.openxmlformats-officedocument.wordprocessingml.document" />
+                <data android:mimeType="application/vnd.ms-excel" />
+                <data android:mimeType="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" />
+                <data android:mimeType="application/vnd.ms-powerpoint" />
+                <data android:mimeType="application/vnd.openxmlformats-officedocument.presentationml.presentation" />
+                <data android:mimeType="application/vnd.oasis.opendocument.text" />
+                <data android:mimeType="application/vnd.oasis.opendocument.spreadsheet" />
+                <data android:mimeType="application/vnd.oasis.opendocument.presentation" />
+                <data android:mimeType="application/rtf" />
+                <data android:mimeType="text/rtf" />
+            </intent-filter>
+        </activity-alias>
+
         <!-- THE HOME SCREEN (opt-in). Everything about this declaration is deliberate.
 
              android:enabled="false" — IT SHIPS OFF. A CATEGORY_HOME activity makes Android offer this

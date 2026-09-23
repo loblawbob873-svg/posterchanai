@@ -2886,7 +2886,7 @@ window.PCFilesFactory = function(dep){
         <iframe class="office-frame" name="${frameName}" title="Office editor"></iframe>
         <form class="office-launch" method="post" action="${enc(session.editor_url)}" target="${frameName}">
           <input type="hidden" name="access_token" value="${enc(session.token)}"><input type="hidden" name="access_token_ttl" value="${session.expires*1000}"></form>
-        <div class="row office-actions"><button class="btn btn-ghost" id="office-close">Close</button><button class="btn btn-ghost" id="office-pdf">Save as PDF…</button><button class="btn btn-ghost" id="office-saveas">Save As…</button><button class="btn btn-neon" id="office-save">Save</button></div>`;
+        <div class="row office-actions"><button class="btn btn-ghost" id="office-close">Close</button><button class="btn btn-ghost" id="office-pdf" aria-label="Save as PDF"><span class="office-long">Save as </span>PDF…</button><button class="btn btn-ghost" id="office-saveas">Save As…</button><button class="btn btn-neon" id="office-save">Save</button></div>`;
       const drop=async()=>{ try{ await fetch(B + '/client/office/session/'+session.id+'?access_token='+encodeURIComponent(session.token),{method:'DELETE'}); }catch(_){} };
       /* `wire` is handed how to shut whatever it was mounted in, so the Save and Close buttons do
        * not have to know which of the two they are living in. */
@@ -2939,7 +2939,7 @@ window.PCFilesFactory = function(dep){
          * path that saves a file in a browser, the desktop shell and the APK alike. */
         const pdfBtn = $('#office-pdf',root);
         if(pdfBtn) pdfBtn.onclick = async e => {
-          const b=e.currentTarget; b.disabled=true; b.textContent='Converting\u2026';
+          const b=e.currentTarget, label=b.innerHTML; b.disabled=true; b.textContent='Converting\u2026';
           try{
             await askEditorToSave(root);
             await new Promise(res=>setTimeout(res,700));
@@ -2949,7 +2949,7 @@ window.PCFilesFactory = function(dep){
             if(!blob.size) throw new Error('the converter returned nothing');
             await _officeSaveCopy(blob, (file.name||'document').replace(/\.[^.]+$/,'') + '.pdf');
           }catch(err){ toast('could not save a PDF: '+((err&&err.message)||err)); }
-          b.disabled=false; b.textContent='Save as PDF…';
+          b.disabled=false; b.innerHTML=label;
         };
         const saveAsBtn=$('#office-saveas',root);
         if(saveAsBtn) saveAsBtn.onclick=async e=>{

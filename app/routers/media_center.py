@@ -245,6 +245,8 @@ router = APIRouter(prefix="/api/media-center", tags=["media-center"], route_clas
                    dependencies=[Depends(proxy_request)])
 _scans = {}
 _scan_previews = {}
+_moving = set()          # library ids with a move in flight; a scan refuses while one is
+_move_locks = {}         # library id -> asyncio.Lock: one move at a time per library, INCLUDING its save
 
 
 class CreateLibrary(BaseModel):
@@ -410,6 +412,8 @@ async def run_scan(library):
 def queue_scan(library, background):
     if any(job["state"] == "running" for job in _scans.values()):
         raise HTTPException(409, "A media scan is already running; wait for it to finish")
+    if library["id"] in _moving:
+        raise HTTPException(409, "Titles are being moved in this library; scan once that finishes")
     _scans[library["id"]] = {"state": "running", "count": 0}
     _scan_previews[library['id']] = {}
     background.add_task(run_scan, library)
@@ -576,6 +580,63 @@ async def share(library_id: str, body: Sharing, user=Depends(get_media_admin)):
             raise HTTPException(400, str(error)) from error
         await media.write("library:" + library_id, library)
         return public_library(library, media.identity(user), admin=True)
+
+
+@router.get("/{library_id}/move-targets")
+async def move_targets(library_id: str, user=Depends(get_media_admin)):
+    library = await library_for(library_id, media.identity(user), owner=True)
+    try:
+        return {"folders": await asyncio.to_thread(media.folder_tree, library)}
+    except (ValueError, OSError) as error:
+        raise HTTPException(400, str(error)) from error
+
+
+class MoveItems(BaseModel):
+    items: list[str]
+    folder: str = "."
+    create: bool = False
+
+
+@router.post("/{library_id}/move")
+async def move_items(library_id: str, body: MoveItems, user=Depends(get_media_admin)):
+    """Organise a library: move titles into another folder of it, on disk (owner + admin only).
+
+    Refused while this library is scanning -- a scan walks the tree and would commit a catalog built
+    from paths that are changing under it."""
+    if not body.items or len(body.items) > 500:
+        raise HTTPException(400, "Choose between 1 and 500 titles to move")
+    # ONE MOVE AT A TIME PER LIBRARY, from its catalog read to its save. Two moves from two tabs
+    # would otherwise each read the catalog before the other saved, and the second save would put
+    # the first title back at a path it no longer has. `_moving` keeps a scan from starting under
+    # it (a scan reads the catalog too). The file work runs OUTSIDE mutation_lock, which every
+    # other library's writes share -- a move across mounts is a copy and can take minutes.
+    lock = _move_locks.setdefault(library_id, asyncio.Lock())
+    async with lock:
+        async with media.mutation_lock:
+            library = await library_for(library_id, media.identity(user), owner=True)
+            if _scans.get(library_id, {}).get("state") == "running":
+                raise HTTPException(409, "This library is scanning; move titles once it finishes")
+            _moving.add(library_id)
+        try:
+            catalog = await media.catalog(library)
+            try:
+                items, moved, errors = await asyncio.to_thread(
+                    media.move_items, library, catalog, body.items, body.folder, body.create)
+            except (ValueError, OSError) as error:
+                raise HTTPException(400, str(error)) from error
+            if moved:
+                # The files ARE moved at this point; a catalog that failed to save only means the
+                # next rescan finds them (under their kept ids) -- say so rather than pretending
+                # nothing happened. An interrupted scan stays interrupted: a move is not a scan.
+                try:
+                    library = await persist_scan_catalog(library, items, library.get("skipped", 0),
+                                                         incomplete=bool(library.get("scan_incomplete")))
+                except Exception as error:
+                    logging.getLogger(__name__).exception("Media Center move: catalog save failed")
+                    raise HTTPException(502, "Files moved, but the library could not be saved; Rescan to update it") from error
+        finally:
+            _moving.discard(library_id)
+    return {"moved": moved, "errors": errors, "revision": scan_revision(library)}
 
 
 def sign_ticket(library, item_id, pubkey, expires):

@@ -192,7 +192,9 @@ def test_the_pdf_button_re_enables_itself():
     start = APP_JS.index("const pdfBtn = $('#office-pdf',root);")
     handler = APP_JS[start:APP_JS.index("const saveAsBtn", start)]
     assert "b.disabled=false" in handler
-    assert "Save as PDF…" in handler
+    # Its label comes back too -- the one it had before "Converting…" (on a phone that is the short
+    # "PDF…", so it is captured from the button rather than retyped here).
+    assert "label=b.innerHTML" in handler.replace(" ", "") and "b.innerHTML=label" in handler.replace(" ", ""), handler
 
 
 def test_cancelling_is_not_reported_as_a_failure():
