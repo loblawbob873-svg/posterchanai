@@ -45,6 +45,18 @@ def pytest_configure(config):
         runpy.run_path(str(helper))["enter"]("pct-pytest-")
 
 
+def pytest_sessionfinish(session, exitstatus):
+    """A run that PASSED deletes pytest's own tmp_path tree; a failed one keeps it to look at (and
+    `tmp_path_retention_count = 1` in pyproject.toml keeps only the latest). Done once, at the END:
+    deleting per test lets pytest hand the next test the same directory name."""
+    if exitstatus != 0:
+        return
+    factory = getattr(session.config, "_tmp_path_factory", None)
+    base = getattr(factory, "_basetemp", None) if factory else None
+    if base:
+        shutil.rmtree(base, ignore_errors=True)
+
+
 @pytest.fixture(autouse=True)
 def _isolated_settings(monkeypatch, tmp_path):
     """A settings update in one test must not reconfigure the next test or this host."""

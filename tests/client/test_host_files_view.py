@@ -151,8 +151,12 @@ class HostFilesView(unittest.TestCase):
         host = open(MOD, encoding="utf-8").read()
         self.assertIn('class="selbox hf-select"', host,
                       "selection still requires Ctrl/right-click and is unusable on touch")
-        self.assertIn("hf-copy", host)
-        self.assertIn("hf-cut", host)
+        # Copy/Cut/Move live in ONE list behind `Actions ▾` beside the selection (and right-click,
+        # which a long-press fires on a phone) -- tests/client/test_this_computer_file_operations_
+        # runtime.py drives that whole flow at 390px with real input.
+        self.assertIn("hf-acts", host, "no Actions button beside the selection")
+        for op in ("['cut',", "['copy',", "['moveTo',"):
+            self.assertIn(op, host, "the selection's actions lost " + op)
         self.assertIn("hf-paste", host)
         self.assertIn("HOST().transfer", host)
 
