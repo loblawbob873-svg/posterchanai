@@ -97,3 +97,21 @@ def test_the_factory_takes_every_argument_the_call_site_gives_it():
               for kw in node.keywords if kw.arg}
     assert passed, "the call site moved — this guard is now watching nothing"
     assert passed <= takes, f"start_from_settings passes {sorted(passed - takes)}, which the factory has no parameter for"
+
+
+def test_a_service_on_this_machines_lan_address_is_publishable():
+    """Loopback was not enough, and the Akkoma cutover is why: Akkoma binds the machine's LAN
+    address (192.168.0.85:4000 on nas), not 127.0.0.1, so a loopback-only rule refused to publish
+    the node's OWN service while reporting the line as invalid.
+
+    "This host" is answered by BINDING the address — a local syscall, no DNS, no network — so it
+    cannot be talked into saying yes about another machine, which is the whole point of the guard:
+    a hidden service forwarding somewhere else publishes that somewhere else under our identity."""
+    import socket
+    mine = socket.gethostbyname(socket.gethostname())
+    assert ts.parse_extra_onions(f"akkoma 80 {mine}:4000") == [("akkoma", 80, f"{mine}:4000")]
+    assert ts.parse_extra_onions("akkoma 80 127.0.0.1:8099") == [("akkoma", 80, "127.0.0.1:8099")]
+    # Somebody else's machine, in three flavours: a public address, a LAN address that is not ours,
+    # and a name. Each would be published through this node's onion identity.
+    for bad in ("x 80 8.8.8.8:80", "x 80 203.0.113.7:443", "x 80 example.com:80"):
+        assert ts.parse_extra_onions(bad) == [], bad

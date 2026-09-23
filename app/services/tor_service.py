@@ -19,14 +19,41 @@ logger = logging.getLogger(__name__)
 
 
 _EXTRA_NAME = re.compile(r"^[a-z0-9][a-z0-9_-]{0,31}$")
-_EXTRA_TARGET = re.compile(r"^(127\.0\.0\.1|localhost|\[::1\]):([0-9]{1,5})$")
+_EXTRA_TARGET = re.compile(r"^([0-9a-zA-Z_.\-]{1,63}|\[[0-9a-fA-F:]{2,45}\]):([0-9]{1,5})$")
+
+
+def _is_this_host(host: str) -> bool:
+    """Is `host` an address THIS machine is reachable at?
+
+    Loopback is not enough, and the Akkoma cutover is why: a service can perfectly well bind the
+    machine's LAN address rather than 127.0.0.1 (Akkoma on nas listens on 192.168.0.85:4000), and a
+    loopback-only rule refuses to publish the node's own service while claiming the line is invalid.
+    Asked by BINDING: if this process can bind the address, the address is one of ours. That is a
+    local syscall, it needs no DNS and no network, and it cannot be talked into saying yes about
+    another machine the way a "looks private enough" pattern can — which is the check that would
+    have let somebody publish their neighbour's printer through this node's identity."""
+    h = (host or "").strip().strip("[]")
+    if h in ("localhost", "127.0.0.1", "::1"):
+        return True
+    for family in (socket.AF_INET, socket.AF_INET6):
+        try:
+            with socket.socket(family, socket.SOCK_STREAM) as probe:
+                probe.bind((h, 0))
+                return True
+        except OSError:
+            continue
+        except Exception:
+            return False
+    return False
 
 
 def parse_extra_onions(text: str) -> list:
     """`tor_extra_onions`: one service per line, "<name> <onion port> <local host:port>", e.g.
     "akkoma 80 127.0.0.1:8099". Validated strictly because every line goes into the torrc: a name is
-    a directory under the Tor data dir (no paths), the target must be THIS host (a hidden service
-    forwarding to another machine would publish it through our identity), '#' starts a comment.
+    a directory under the Tor data dir (no paths), the target must be THIS host — checked by binding
+    it, since a service may listen on the machine's LAN address rather than loopback, and a hidden
+    service forwarding to ANOTHER machine would publish it through our identity. '#' starts a
+    comment.
     Bad lines are skipped and logged, never written."""
     out, seen = [], set()
     for raw in str(text or "").splitlines():
@@ -34,9 +61,11 @@ def parse_extra_onions(text: str) -> list:
         if not line:
             continue
         parts = line.split()
+        target = _EXTRA_TARGET.match(parts[2]) if len(parts) == 3 else None
         ok = len(parts) == 3 and _EXTRA_NAME.match(parts[0]) and parts[1].isdigit() \
-            and 1 <= int(parts[1]) <= 65535 and _EXTRA_TARGET.match(parts[2]) \
-            and 1 <= int(_EXTRA_TARGET.match(parts[2]).group(2)) <= 65535 and parts[0] not in seen
+            and 1 <= int(parts[1]) <= 65535 and target \
+            and 1 <= int(target.group(2)) <= 65535 and parts[0] not in seen \
+            and _is_this_host(target.group(1))
         if not ok:
             logger.warning("[TOR] ignoring invalid tor_extra_onions line: %r", raw[:120])
             continue
