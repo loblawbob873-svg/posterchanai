@@ -296,6 +296,27 @@ async def lookup(acct: str, user=Depends(get_current_user)):
     return {"pubkey": p["pubkey_hex"], "npub": p["npub"], "acct": p.get("acct", ""), "actor": convert.id_of(doc)}
 
 
+@router.post("/api/activitypub/import-following")
+async def import_following(user=Depends(get_current_user)):
+    """The member's linked Pleroma/Mastodon following list, as puppet pubkeys for the client to add
+    to its contact list (see importer.py)."""
+    _on()
+    if not (getattr(user, "pleroma_instance_url", "") and getattr(user, "pleroma_access_token", "")):
+        raise HTTPException(400, "Connect your Pleroma/Mastodon account in Settings first")
+    from app.database import SessionLocal
+    from app.services.activitypub import importer
+    try:
+        accounts = await importer.following(user.pleroma_instance_url, user.pleroma_access_token)
+    except Exception as e:
+        raise HTTPException(502, f"Could not read who you follow there: {type(e).__name__}")
+    db = SessionLocal()
+    try:
+        people = await importer.puppets_for(db, accounts, user.pleroma_instance_url)
+    finally:
+        db.close()
+    return {"following": len(accounts), "people": people}
+
+
 @router.get("/api/admin/activitypub/status")
 async def admin_status(user=Depends(get_admin_user)):
     """What Admin → Fediverse (ActivityPub) shows: whether it is on, the address people use, who

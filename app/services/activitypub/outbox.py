@@ -81,7 +81,9 @@ async def resolve_pubkey(pubkey: str) -> dict:
         return {"href": convert.actor_url(base, name), "name": f"@{name}@{config.domain()}"}
     row = _puppet_row(pubkey)
     if row and row.actor_uri and not config.host_blocked(remote.host_of(row.actor_uri)):
-        return {"href": row.actor_uri, "name": f"@{row.acct}" if row.acct else row.actor_uri, "remote": True}
+        canonical, _inbox = await _canonical(row.actor_uri)
+        href = canonical or row.actor_uri
+        return {"href": href, "name": f"@{row.acct}" if row.acct else href, "remote": True}
     return {}
 
 
@@ -92,7 +94,8 @@ async def resolve_event(event_id: str) -> dict:
     row = _mirror_row(event_id)
     if row and row.note_uri:
         prow = _puppet_row(row.nostr_pubkey or "")
-        return {"uri": row.note_uri, "actor": prow.actor_uri if prow else "", "remote": True}
+        actor_id = (await _canonical(prow.actor_uri))[0] or prow.actor_uri if prow else ""
+        return {"uri": row.note_uri, "actor": actor_id, "remote": True}
     ev = await _event(event_id)
     if ev and actors.name_of(ev.get("pubkey", "")) and not _is_mirror(ev):
         return {"uri": convert.object_url(base, event_id),
@@ -137,11 +140,17 @@ def _referenced_pubkeys(ev: dict) -> list:
     return uniq[:30]
 
 
-async def _inbox_for(actor_uri: str) -> str:
+async def _canonical(actor_uri: str) -> tuple[str, str]:
+    """(canonical actor id, inbox) for an address from our own records -- see remote.actor(alias)."""
     try:
-        return remote.inbox_of(await remote.actor(actor_uri))
+        doc = await remote.actor(actor_uri, alias=True)
     except remote.FetchError:
-        return ""
+        return "", ""
+    return str(doc.get("id") or "").split("#")[0], remote.inbox_of(doc)
+
+
+async def _inbox_for(actor_uri: str) -> str:
+    return (await _canonical(actor_uri))[1]
 
 
 # ------------------------------------------------------------------------------------ translation
@@ -150,6 +159,11 @@ async def plan(ev: dict, member: str) -> list:
     """[(inbox, activity)] to send for one event. Empty when there is nothing to federate."""
     base, name = config.base_url(), actors.name_of(member)
     if not base or not name or _is_mirror(ev):
+        return []
+    # A member on a linked Pleroma account already posts, replies, likes and boosts THERE, so none of
+    # that is sent from here (one of each on the fediverse, never two). FOLLOWS are the exception:
+    # nobody sees a follow twice, and it is what brings the followed accounts' posts in over ActivityPub.
+    if ev.get("kind") != 3 and actors.uses_linked_account(member):
         return []
     me = convert.actor_url(base, name)
     followers_url = f"{me}/followers"
@@ -229,6 +243,8 @@ async def plan(ev: dict, member: str) -> list:
 
 async def _follows(ev: dict, member: str, me: str) -> list:
     """Follow the fediverse accounts newly in the contact list; unfollow the ones taken out."""
+    # By CANONICAL actor id: a puppet made by the Pleroma bridge is keyed on a profile URL, and the
+    # Follow, the Accept that answers it and the posts that follow are all by the canonical id.
     wanted = {}
     for t in ev.get("tags") or []:
         if len(t) > 1 and t[0] == "p":
@@ -236,16 +252,20 @@ async def _follows(ev: dict, member: str, me: str) -> list:
             if row and row.actor_uri and not config.host_blocked(remote.host_of(row.actor_uri)):
                 wanted[row.actor_uri] = True
     current = await state.following(member)
+    resolved = {}
+    for alias in sorted(wanted):
+        canonical, inbox = await _canonical(alias)
+        if canonical and inbox:
+            resolved[canonical] = inbox
+    unresolved_known = {a for a in wanted if a in current}      # keep what we cannot re-check right now
     out = []
-    for actor_uri in sorted(set(wanted) - set(current)):
-        inbox = await _inbox_for(actor_uri)
-        if not inbox:
-            continue
+    for actor_uri in sorted(set(resolved) - set(current)):
+        inbox = resolved[actor_uri]
         follow = {"@context": convert.AS_CONTEXT, "id": f"{me}#follows/{_h(actor_uri)}", "type": "Follow",
                   "actor": me, "object": actor_uri}
         await state.set_following(member, actor_uri, inbox, "pending")
         out.append((inbox, follow))
-    for actor_uri in sorted(set(current) - set(wanted)):
+    for actor_uri in sorted(set(current) - set(resolved) - unresolved_known):
         inbox = current[actor_uri].get("inbox") or await _inbox_for(actor_uri)
         await state.drop_following(member, actor_uri)
         if inbox:
@@ -324,9 +344,9 @@ async def _flush_retries(limit: int = 200) -> None:
 
 
 async def _members() -> list:
-    """Every local user on the fediverse, minus those whose activity already goes out through
-    their own linked Pleroma account (see actors.uses_linked_account)."""
-    return [pk for pk in actors.all_actors() if not actors.uses_linked_account(pk)]
+    """Every local user on the fediverse. (Those on a linked Pleroma account send only follows from
+    here -- see `plan`.)"""
+    return actors.all_actors()
 
 
 async def tick() -> int:

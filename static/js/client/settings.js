@@ -27,7 +27,7 @@ window.PCSettingsFactory = function(dep){
     _stopCelebrations, _updateAutoMutes, _updateNewPostsPill, _wireNavHide,
     _wireNotificationSettings, _wirePushToggle, _wireStayConnected, _withPhoneShell, applyTheme,
     carryPrivateToRelays, closeModal, copyValue, defaultRelays, detectProto, enc, ensureAiSession,
-    logout, modal, normalizeRelay, openQrScanner, publish, qrImg, renderMessages, renderView,
+    followMany, logout, modal, normalizeRelay, openQrScanner, publish, qrImg, renderMessages, renderView,
     restoreMediaServer, saveClientPrefsNostr, saveMutedWords, sign, siteDefaultTheme,
     stashPrivateBeforeRelayChange, stopNarration, switchView, timeAgo, toast, uiConfirm, uiPrompt,
     userRelays,
@@ -600,6 +600,7 @@ window.PCSettingsFactory = function(dep){
               ? `<div class="muted small">✓ Connected to ${enc(s.pleroma_instance_url||'')}</div><button class="btn btn-ghost small" id="us-plr-disc" style="color:var(--danger)">Disconnect</button>`
               : `<button class="btn btn-ghost small" id="us-plr-conn">Connect with OAuth</button>`}
             ${s.pleroma_has_access_token ? `<div class="muted small">Following a bridged fediverse account on Nostr also follows the real account here. Reconnect once if follows don't take (grants the follow permission).</div>` : ''}
+            ${s.pleroma_has_access_token ? `<div class="us-plr-import"><button class="btn btn-ghost small" id="us-plr-import">Follow everyone you follow there</button><span class="muted small" id="us-plr-import-said" role="status"></span></div><div class="muted small">Adds the accounts you follow on ${enc(s.pleroma_instance_url||'that server')} to your follows here, so they are in your home timeline. When this node's fediverse server is on, your @name here follows them too.</div>` : ''}
             <label class="fld" style="flex-direction:row;justify-content:space-between;align-items:center">Bridge my fedi DMs &amp; notifications to Nostr<label class="switch"><input type="checkbox" id="us-fedi-bridge" ${s.fedi_bridge_enabled?'checked':''}><span class="slider"></span></label></label>
             <div class="muted small">Your fediverse DMs arrive as Nostr DMs and your notifications as Nostr events; replying/liking/reposting a bridged post posts back through this account. Needs a NIP-05 name on this instance.</div>
             <label class="fld" style="flex-direction:row;justify-content:space-between;align-items:center">Cross-post my posts to the Fediverse<label class="switch"><input type="checkbox" id="us-fedi-crosspost" ${s.fedi_crosspost_enabled?'checked':''}><span class="slider"></span></label></label>
@@ -1128,6 +1129,25 @@ window.PCSettingsFactory = function(dep){
         const r=await fetch('/api/pleroma/oauth/start',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({instance_url:url})}); const d=await r.json().catch(()=>({}));
         if(!r.ok){ st.textContent=d.detail||'failed'; return; } window.open(d.auth_url,'_blank'); st.textContent='waiting for authorization…';
         _awaitLink(s=>!!s.pleroma_has_access_token, st, 'pleroma_connected'); }; }
+    /* IMPORT WHO YOU FOLLOW ON THE LINKED ACCOUNT. The server reads the list and gives each account
+     * its bridge identity; the contact list is signed HERE, by you, through followMany -- one merged
+     * kind-3 publish (union of the relay's copy and memory), never a rebuild from the list alone. */
+    { const b=$('#us-plr-import'); if(b) b.onclick=async()=>{
+        const said=$('#us-plr-import-said');
+        b.disabled=true; if(said) said.textContent=' Reading who you follow…';
+        try{
+          try{ await ensureAiSession(); }catch(_){}
+          const r=await fetch('/api/activitypub/import-following',{method:'POST'});
+          const j=await r.json().catch(()=>({}));
+          if(!r.ok) throw new Error(typeof j.detail==='string' ? j.detail : ('HTTP '+r.status));
+          const pks=(j.people||[]).map(p=>p.pubkey).filter(Boolean);
+          if(said) said.textContent=' Adding '+pks.length+'…';
+          const added=pks.length ? await followMany(pks, { skipPleroma:true }) : 0;
+          const msg='Following '+added+' more ('+(pks.length-added)+' you already followed, of '+(j.following||0)+' there)';
+          if(said) said.textContent=' ✓ '+msg; toast(msg);
+        }catch(e){ if(said) said.textContent=' '+((e&&e.message)||e); toast('Import failed: '+((e&&e.message)||e)); }
+        b.disabled=false;
+    }; }
     { const d=$('#us-plr-disc'); if(d) d.onclick=async()=>{ if(!await uiConfirm('Disconnect Pleroma?'))return; await fetch('/api/pleroma/disconnect',{method:'POST'}); renderUserSettings(); }; }
     // Finance: remove the stored key
     // API keys

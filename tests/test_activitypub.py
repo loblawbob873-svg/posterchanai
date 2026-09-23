@@ -114,8 +114,11 @@ def world(monkeypatch):
         sent.append({"inbox": inbox_url, "activity": activity, "key_id": key_id})
         return 202
 
-    async def remote_actor(uri, refresh=False):
-        if uri.split("#")[0] == REMOTE:
+    async def remote_actor(uri, refresh=False, alias=False):
+        uri = uri.split("#")[0]
+        if uri == REMOTE:
+            return carol_actor()
+        if alias and uri == "https://mastodon.example/@carol":     # the profile URL serves the same actor
             return carol_actor()
         raise remote.FetchError("unknown actor " + uri)
 
@@ -415,8 +418,31 @@ def test_following_a_fediverse_account_sends_a_follow(world):
 
 
 def test_a_member_on_a_linked_pleroma_account_is_not_sent_twice(world):
-    world["linked"].add(BOB)
-    assert run(outbox._members()) == [ALICE]
+    """Their posts, replies, likes and boosts go out through their own Pleroma account, so none of
+    that is sent from here. Their FOLLOWS are: nobody sees a follow twice, and it is what brings the
+    followed accounts' posts in over ActivityPub."""
+    world["linked"].add(ALICE)
+    _with_follower(world)
+    assert run(outbox.plan(member_post("a post"), ALICE)) == []
+    s = world["Session"]()
+    puppet = ident.puppet_for(convert.account_from_actor(carol_actor()))
+    s.add(FediPuppet(actor_uri=REMOTE, acct="carol@mastodon.example", pubkey_hex=puppet["pubkey_hex"], nip05_name="c"))
+    s.commit()
+    contacts = member_post("", kind=3, tags=[["p", puppet["pubkey_hex"]]])
+    assert [a["type"] for _, a in run(outbox.plan(contacts, ALICE))] == ["Follow"]
+
+
+def test_a_bridge_puppet_keyed_on_a_profile_url_is_followed_by_its_real_id(world):
+    """The Pleroma bridge keys puppets on the account's PROFILE URL (`/@carol`). The Follow -- and so
+    the Accept and the posts that come after it -- must use the actor's canonical id (`/users/carol`),
+    or every follow of an existing bridge puppet would silently fail."""
+    s = world["Session"]()
+    s.add(FediPuppet(actor_uri="https://mastodon.example/@carol", acct="carol@mastodon.example",
+                     pubkey_hex="c4" * 32, nip05_name="c"))
+    s.commit()
+    jobs = run(outbox.plan(member_post("", kind=3, tags=[["p", "c4" * 32]]), ALICE))
+    assert [(a["type"], a["object"]) for _, a in jobs] == [("Follow", REMOTE)]
+    assert REMOTE in run(state.following(ALICE))
 
 
 def test_every_local_user_is_an_actor_except_blocked_ones(world):
@@ -730,3 +756,48 @@ def test_a_failed_translation_does_not_move_the_cursor_past_it(world, monkeypatc
     world["linked"].add(BOB)
     assert run(outbox.tick()) == 0
     assert world["docs"]["pcai:ap:cursor"]["since"] == 1_700_000_000, "the cursor moved past an event never sent"
+
+
+# ============================================================================ 10. importing who you follow
+
+def _pleroma_account(n, host="mastodon.example"):
+    return {"id": str(n), "acct": f"user{n}@{host}", "username": f"user{n}", "display_name": f"User {n}",
+            "url": f"https://{host}/@user{n}", "avatar": ""}
+
+
+def test_the_import_reads_every_page_and_never_leaves_the_instance(world, monkeypatch):
+    from app.services.activitypub import importer
+    import httpx
+    inst = "https://pleroma.example"
+    asked = []
+
+    def handler(request):
+        asked.append(str(request.url))
+        assert request.headers["authorization"] == "Bearer tok"
+        if "max_id=2" in str(request.url):
+            return httpx.Response(200, json=[_pleroma_account(3)],
+                                  headers={"link": '<https://evil.example/steal?max_id=9>; rel="next"'})
+        return httpx.Response(200, json=[_pleroma_account(1), _pleroma_account(2)],
+                              headers={"link": f'<{inst}/api/v1/accounts/me/following?max_id=2>; rel="next"'})
+
+    real_client = httpx.AsyncClient
+    monkeypatch.setattr(importer.httpx, "AsyncClient",
+                        lambda **kw: real_client(transport=httpx.MockTransport(handler), **kw))
+
+    async def verify(instance_url, token):
+        return {"id": "me"}
+    monkeypatch.setattr(importer.pleroma_service, "verify_credentials", verify)
+    got = run(importer.following(inst, "tok"))
+    assert [a["id"] for a in got] == ["1", "2", "3"]
+    assert not any("evil.example" in u for u in asked), "the member's token was sent off their instance"
+
+
+def test_the_import_gives_each_account_its_bridge_identity(world):
+    from app.services.activitypub import importer
+    accounts = [_pleroma_account(1), _pleroma_account(2, "blocked.example"),
+                {"id": "9", "acct": "alice@" + DOMAIN, "url": f"{BASE}/ap/users/alice", "username": "alice"},
+                _pleroma_account(1)]
+    s = world["Session"]()
+    people = run(importer.puppets_for(s, accounts, "https://pleroma.example"))
+    assert [p["acct"] for p in people] == ["user1@mastodon.example"], people
+    assert people[0]["pubkey"] == ident.puppet_for(_pleroma_account(1))["pubkey_hex"]

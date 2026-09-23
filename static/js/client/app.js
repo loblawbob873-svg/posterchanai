@@ -5575,7 +5575,7 @@
   // Follow many at once (e.g. "Follow all back") in a SINGLE kind-3 publish, merged onto the union of
   // the relay's current list + in-memory FOLLOWS (same anti-wipe rule as _editPList). Returns the count
   // actually added so callers can toast/refresh.
-  async function followMany(pks){
+  async function followMany(pks, opts){
     const evs = await Relay.query([{ authors:[ME.pubkey], kinds:[3], limit:1 }]);
     const cur = evs.length ? evs.sort((a,b)=>b.created_at-a.created_at)[0] : null;
     const pset = new Set([...FOLLOWS, ...(cur?cur.tags.filter(t=>t[0]==='p'&&t[1]).map(t=>t[1]):[])]);
@@ -5587,7 +5587,9 @@
     if(!(r && r.ok)){ fresh.forEach(pk=>FOLLOWS.delete(pk)); return 0; }   // relay didn't store it → revert the local adds
     _persistFollows();
     // follow-bridge the newly-followed bridged accounts on Pleroma too (same as single toggleFollow)
-    if(_pleromaLinked!==false) for(const pk of fresh){ const actor=Store.profileProxy(pk); if(actor) _followBridgedPleroma(actor); }
+    // Skipped for an IMPORT from that same Pleroma account: every one of them is already followed
+    // there, and asking again would be one pointless API call per account.
+    if(_pleromaLinked!==false && !(opts && opts.skipPleroma)) for(const pk of fresh){ const actor=Store.profileProxy(pk); if(actor) _followBridgedPleroma(actor); }
     return added;
   }
   // Returns true when the follow/unfollow actually landed on the relay (callers that show UI state check it).
@@ -15946,7 +15948,7 @@
     _stopCelebrations, _updateAutoMutes, _updateNewPostsPill, _wireNavHide,
     _wireNotificationSettings, _wirePushToggle, _wireStayConnected, _withPhoneShell, applyTheme,
     carryPrivateToRelays, closeModal, copyValue, defaultRelays, detectProto, enc, ensureAiSession,
-    logout, modal, normalizeRelay, openQrScanner, publish, qrImg, renderMessages, renderView,
+    followMany, logout, modal, normalizeRelay, openQrScanner, publish, qrImg, renderMessages, renderView,
     restoreMediaServer, saveClientPrefsNostr, saveMutedWords, sign, siteDefaultTheme,
     stashPrivateBeforeRelayChange, stopNarration, switchView, timeAgo, toast, uiConfirm, uiPrompt,
     userRelays,

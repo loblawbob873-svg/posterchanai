@@ -90,20 +90,28 @@ async def fetch_json(url: str, *, signed: bool = True) -> dict:
     raise FetchError("too many redirects")
 
 
-async def actor(uri: str, *, refresh: bool = False) -> dict:
-    """A remote actor document, cached for an hour. Its `id` must be the address it was fetched as
-    (after redirects the id is re-checked by the caller where identity matters)."""
+async def actor(uri: str, *, refresh: bool = False, alias: bool = False) -> dict:
+    """A remote actor document, cached for an hour.
+
+    By default its `id` must be EXACTLY the address it was fetched as: this is the path signature
+    verification takes, and an actor document can claim any id, so a same-host upload claiming to be
+    a neighbour must not be believed.
+
+    `alias=True` is for addresses that came from OUR OWN records -- the Pleroma bridge keys a puppet
+    on a profile URL (`/@alice`), which serves the actor whose canonical id is `/users/alice`. That is
+    accepted when the SAME server answers (a server speaks for its own accounts), and callers then
+    use the returned document's own `id`, never the alias, as the identity."""
     uri = (uri or "").split("#")[0]
     hit = _actors.get(uri)
-    if hit and not refresh and time.monotonic() - hit[0] < _ACTOR_TTL:
+    if hit and not refresh and time.monotonic() - hit[0] < _ACTOR_TTL \
+            and (alias or str(hit[1].get("id") or "").split("#")[0] == uri):
         _actors.move_to_end(uri)
         return hit[1]
     doc = await fetch_json(uri)
     if doc.get("type") not in ("Person", "Service", "Application", "Group", "Organization"):
         raise FetchError(f"{uri} is not an actor")
-    # The document must BE the actor that was asked for, not merely live on the same host: an actor
-    # document can claim any id, and that id is what every later check trusts.
-    if str(doc.get("id") or "").split("#")[0] != uri:
+    canonical = str(doc.get("id") or "").split("#")[0]
+    if canonical != uri and not (alias and canonical and host_of(canonical) == host_of(uri)):
         raise FetchError("the actor document is not the actor that was asked for")
     _actors[uri] = (time.monotonic(), doc)
     _actors.move_to_end(uri)

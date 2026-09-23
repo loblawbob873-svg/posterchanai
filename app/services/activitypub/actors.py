@@ -79,10 +79,12 @@ def local_actor_map() -> dict:
 
 def uses_linked_account(pubkey: str) -> bool:
     """THE COMPATIBILITY RULE WITH THE PLEROMA BRIDGE: a member whose Nostr activity already reaches
-    the fediverse through their OWN linked Pleroma account (the write-back whitelist) is not ALSO
-    delivered from `@name@<domain>` -- one like, one boost, one reply on the fediverse, never two
-    from two different identities. Their actor still exists, and can still be followed and replied
-    to. Read from the write-back service itself, so the two can never disagree about who that is."""
+    the fediverse through their OWN linked Pleroma account (the write-back whitelist) does not post,
+    reply, like or boost ALSO from `@name@<domain>` -- one of each on the fediverse, never two from
+    two identities. Their FOLLOWS are still sent from here (outbox.plan): a follow is seen by nobody
+    twice, and it is what brings the followed accounts' posts in over ActivityPub. Their actor exists
+    and can be followed and replied to. Read from the write-back service itself, so the two can never
+    disagree about who that is."""
     try:
         from app.services.fedi_nostr_writeback_service import _bridge_allowed_pubkeys
         return (pubkey or "").lower() in _bridge_allowed_pubkeys()
