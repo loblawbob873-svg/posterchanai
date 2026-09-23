@@ -14,6 +14,12 @@ overlap -- the ids the renderer publishes as `covers` with `front: true` (pcWM.s
    stale `_foreignFocused` (Firefox had the keyboard a moment ago), and the shell's focus was then
    answered by the bottom guard's lowerShell.
 
+3. "I can't open music anymore ... I see it on the taskbar." Measured on the desktop: the Music
+   window was drawn, buried under the popped-out Terminal and Social. A press on its taskbar button
+   is a press on the desktop surface, so Wayfire hands the desktop the keyboard; the adopt pass sees
+   that before `click` fires, `_webTaskActive` then called Music "the window you are using", and the
+   button MINIMISED it. The answer is taken at pointerdown now.
+
 The fixture is the compositor as main presents it: a snapshot with the desktop's own surface, a
 popped-out PosterChan window and Firefox, and a log of what the page publishes. Neither case has a
 press on the frame -- pc-open arrives over a socket and Search opens from a key press in the bar.
@@ -40,10 +46,15 @@ const __rows=()=>[
    rect:{x:0,y:0,width:innerWidth,height:innerHeight},focused:__wm.focus===13},
   {id:35,app:'place.poster.desktop',title:'PosterChan Window — notes',workspace:'1',
    rect:{x:200,y:60,width:400,height:400},focused:__wm.focus===35},
+  // The popped-out TERMINAL -- our own app id, so never "foreign", and in every report the window
+  // that had the keyboard when the thing behind it went missing.
+  {id:31,app:'place.poster.desktop',title:'PosterChan Window — terminal',workspace:'1',
+   rect:{x:40,y:30,width:innerWidth-80,height:innerHeight-140},focused:__wm.focus===31},
   {id:40,app:'firefox',title:'Mozilla Firefox',workspace:'1',
    rect:{x:0,y:0,width:innerWidth,height:innerHeight-60},focused:__wm.focus===40}];
-window.pcWM={windows:async()=>__rows(),onEvent:()=>()=>{},launch:async()=>({pid:1}),
-  snapshot:async()=>({windows:__rows(),allIds:[13,35,40],shellId:13}),
+window.pcWM={windows:async()=>__rows(),launch:async()=>({pid:1}),
+  snapshot:async()=>({windows:__rows(),allIds:[13,31,35,40],shellId:13}),
+  onEvent:(cb)=>{__wm.emit=cb;return()=>{}},
   focus:async(id)=>{__wm.log.push({focus:id});__wm.focus=id;return true},
   shellFront:async(w)=>{__wm.log.push({front:!!(w&&w.front),covers:(w&&w.covers)||[]});return true}};
 '''
@@ -94,5 +105,35 @@ def test_a_taskbar_search_is_not_sunk_under_the_browser_that_had_focus():
         assert all(x.get('front') is not False for x in after), \
             'focusWin stated the front and then its own drawBar took it back: ' + json.dumps(log)
         assert 40 in _last_front(log)['covers'], log
+
+    asyncio.run(desktop.with_browser('online', '', check, COMPOSITOR))
+
+
+@pytest.mark.skipif(not Path('/opt/google/chrome/chrome').exists(), reason='Chrome required')
+def test_a_buried_windows_taskbar_button_raises_it_even_though_the_press_focuses_the_desktop():
+    async def check(b):
+        await _ready(b)
+        await b.until("typeof __wm.emit==='function'")
+        await b.js("window.__w=PCOS.openDoc('buried','Music','i-music',()=>{},true);true")
+        await b.until("!!document.querySelector('.os-task[data-id]')")
+        # The terminal takes the keyboard; the desktop learns it from the compositor.
+        await b.js("__wm.focus=31;__wm.emit({name:'window',change:'focus'})")
+        await asyncio.sleep(.5)
+        # Wayfire's click-to-focus: the PRESS focuses the desktop, and the event reaches the page
+        # over IPC once the press itself has been dispatched -- never inside it.
+        await b.js("window.addEventListener('pointerdown',()=>{__wm.focus=13;"
+                   "setTimeout(()=>__wm.emit({name:'window',change:'focus'}),0)},true);true")
+        box = await b.js("(()=>{const t=[...document.querySelectorAll('.os-task[data-id]')].find(x=>"
+                         "/music/i.test(x.title||x.getAttribute('aria-label')||x.textContent));"
+                         "const r=t.getBoundingClientRect();return [r.left+r.width/2,r.top+r.height/2]})()")
+        await b.call('Input.dispatchMouseEvent', {'type': 'mousePressed', 'x': box[0], 'y': box[1],
+                                                  'button': 'left', 'buttons': 1, 'clickCount': 1})
+        await asyncio.sleep(.25)          # a real press lasts ~100ms; the adopt pass lands inside it
+        await b.call('Input.dispatchMouseEvent', {'type': 'mouseReleased', 'x': box[0], 'y': box[1],
+                                                  'button': 'left', 'buttons': 0, 'clickCount': 1})
+        await asyncio.sleep(.5)
+        state = await b.js("({min:!!__w.min,cls:__w.el.className})")
+        assert not state['min'], 'the taskbar press minimised the window it was meant to raise: %r' % state
+        assert 31 in _last_front(await b.js('__wm.log'))['covers']
 
     asyncio.run(desktop.with_browser('online', '', check, COMPOSITOR))

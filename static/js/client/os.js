@@ -8657,6 +8657,22 @@
       if(_barDrawPending){ _barDrawPending=false; drawBar(); }
     },0);
   }
+  /* WHAT THE PRESS FOUND, NOT WHAT THE PRESS CAUSED. A press on the taskbar is a press on the
+   * desktop surface, and Wayfire answers it by giving that surface the keyboard -- so by the time
+   * `click` fires, the adopt pass has usually flipped `_shellHasKeyboard` to true, and
+   * `_webTaskActive` reported the window you were NOT using as the one you were. The button then
+   * MINIMISED it. Measured on the desktop: Music drawn on the right monitor, buried under the
+   * popped-out Terminal and Social, and its taskbar button "did nothing". The answer is taken
+   * here, at pointerdown, before the compositor has reacted; a keyboard activation has no press
+   * and asks at the click as before. */
+  let _taskPress = null;
+  document.addEventListener('pointerdown',e=>{
+    const tb = e.button===0 && e.target && e.target.closest && e.target.closest('.os-task');
+    if(tb && tb.dataset.id){
+      const pw = wins.find(x => String(x.id) === tb.dataset.id);
+      _taskPress = { id: tb.dataset.id, at: Date.now(), active: !!(pw && _webTaskActive(pw)) };
+    }
+  },true);
   document.addEventListener('pointerdown',e=>{
     if(e.button!==0 || !bar) return;
     if(!bar.contains(e.target) && !(root && root.contains(e.target)
@@ -8968,7 +8984,10 @@
        * only when this surface is the one holding the keyboard. Otherwise the press means "bring
        * that window forward", and answering it with a minimise is why System Settings could be
        * raised once and never again. */
-      if(_webTaskActive(w)) minimise(w); else focusWin(w);
+      const press = _taskPress && _taskPress.id === b.dataset.id && Date.now() - _taskPress.at < 3000
+        ? _taskPress : null;
+      _taskPress = null;
+      if(press ? press.active : _webTaskActive(w)) minimise(w); else focusWin(w);
     });
     $$('.os-task', bar).forEach(b => b.oncontextmenu = (e) => {
       e.preventDefault(); e.stopPropagation();
