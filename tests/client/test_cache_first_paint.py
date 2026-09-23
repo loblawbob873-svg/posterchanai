@@ -102,7 +102,9 @@ def test_back_works_during_the_wait(thread):
     # know which one), so match the call rather than one frozen signature.
     assert thread.count("_bindThreadBack(feed,") >= 1
     binder = _fn("function _bindThreadBack(feed, id){")
-    assert "history.back()" in binder and "_startTimeline()" in binder
+    assert "_backOut('post:'" in binder, "the thread's Back does not go through the shared helper"
+    back = _fn("function _backOut(docKey, fallback){")     # shared with the article reader's Back
+    assert "history.back()" in back and "_startTimeline()" in back
     assert APP.count("function _bindThreadBack(") == 1, \
         "two copies of the Back binding is how one of them goes stale"
 

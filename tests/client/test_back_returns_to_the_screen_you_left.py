@@ -198,10 +198,17 @@ class OnTheDesktopBackClosesTheWindow(unittest.TestCase):
                          "closeDoc is defined but not on window.PCOS — the same shape as the "
                          "`PC._fmtBytes is not a function` trap")
 
+    def _back_out(self):
+        """The thread's Back and the article's Back share ONE helper, `_backOut(docKey, fallback)`,
+        so the rule lives there -- and the thread's binder must hand it its own post's key."""
+        binder = self.app[self.app.index("function _bindThreadBack(feed, id){"):][:400]
+        self.assertIn("_backOut('post:' +", binder, "the thread's Back no longer names its own post window")
+        return self.app[self.app.index("function _backOut(docKey, fallback){"):][:1800]
+
     def test_the_threads_back_button_prefers_it(self):
-        blk = self.app[self.app.index("function _bindThreadBack(feed, id){"):][:1600]
+        blk = self._back_out()
         self.assertIn("PCOS.isOn()", blk)
-        self.assertIn("PCOS.closeDoc('post:'", blk)
+        self.assertIn("PCOS.closeDoc(docKey)", blk)
         self.assertLess(blk.index("PCOS.closeDoc"), blk.index("history.back()"),
                         "history is popped before the window is closed, which paints the previous "
                         "screen INTO the Post window and leaves the real one open behind it")
@@ -209,9 +216,9 @@ class OnTheDesktopBackClosesTheWindow(unittest.TestCase):
     def test_it_still_falls_through_when_there_is_no_window(self):
         """A thread reached by a deep link or a back/forward pop paints in place — focusDoc never
         conjures a window — so closeDoc answers false and the history path must still run."""
-        blk = self.app[self.app.index("function _bindThreadBack(feed, id){"):][:1600]
+        blk = self._back_out()
         self.assertIn("_navPushed>0", blk)
-        self.assertIn("switchView(_startTimeline())", blk)
+        self.assertIn("switchView(fallback || _startTimeline())", blk)
         close = self.os[self.os.index("function closeDoc(key){"):][:260]
         self.assertIn("if(!w) return false;", close)
 
