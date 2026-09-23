@@ -7,7 +7,7 @@ import json
 
 import pytest
 from tests.client.test_emoji_pack_tabs_layout import chrome
-from tests.client_source import client_source
+from tests.client_source import client_source, state_shims
 
 ROOT = Path(__file__).resolve().parents[2]
 
@@ -17,6 +17,8 @@ def document():
     controller = app[app.index('  // Automatic filtering has its own account-scoped cache.'):
                      app.index('  async function fetchMutes(')]
     toggle = app[app.index('  async function toggleMute(pk){'):app.index('  async function fetchPins()')]
+    # The settings pane and its handlers moved to settings.js in the app.js split, where app.js's
+    # live bindings (ME, GUEST, _autoMuteEngine, …) are read as `S.<name>` — hence state_shims below.
     controls = app[app.index("    { const toggle=$('#set-auto-mute'), update=$('#set-auto-mute-update');"):
                    app.index("    { const wb=$('#set-words-save');")]
     start = app.index('<div class="us-pane" data-pane="muted">')
@@ -84,7 +86,7 @@ _renderDmPeerRows();
 document.querySelector('#feed-note').dataset.pk=pub(2);
 const originalInput=document.querySelector('#dm-in'), originalAttachment=document.querySelector('#dm-atts');
 originalInput.value='Keep this unsent draft';originalInput.setSelectionRange(2,7);
-''' .replace('PANEL', panel) + controls + r'''
+''' .replace('PANEL', panel) + state_shims(controls) + controls + r'''
 _syncAutoMutes().catch(()=>{});
 window.booted=true;
 '''

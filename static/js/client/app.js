@@ -15138,7 +15138,24 @@
   }; }
   function _dmThreadMod(){ return _lzGet('dmthread.js', 'PCDmThreadFactory', _dmThreadDeps); }
   function _dmThreadLoad(){ return _lzLoad('dmthread.js', 'PCDmThreadFactory', _dmThreadDeps); }
-  function _scheduleDmRefresh(){ const m=_dmThreadMod(); if(m) return m._scheduleDmRefresh.apply(null, arguments); }   // nothing to do until it has loaded
+  /* THE MODULE DRAWS THE CONVERSATION; THE INBOX LIST IS DRAWN HERE, AND IT STILL HAS TO REPAINT.
+   *
+   * `_scheduleDmRefresh` has two branches — an open conversation (dmthread.js) and, with none open,
+   * the Messages LIST (renderMessages, which stayed in app.js). Delegating the whole function meant
+   * the ordinary case was silently dropped: you open Messages, no conversation is open, so the
+   * module is never loaded, so an arriving or decrypting gift wrap repainted nothing. Measured on
+   * the shipped bundle: open → newest DM on screen went 1880ms before the split to 3030ms after,
+   * and what closed the gap was not speed, it was the list finally being told to draw.
+   *
+   * `dmActive` implies the module is loaded — opening a conversation is what loads it — so the
+   * fallback is only ever the list. */
+  let _dmListRefreshTimer=null;
+  function _scheduleDmRefresh(){
+    const m=_dmThreadMod(); if(m) return m._scheduleDmRefresh.apply(null, arguments);
+    if(_dmListRefreshTimer || VIEW!=='messages' || dmActive) return;
+    _dmListRefreshTimer=setTimeout(()=>{ _dmListRefreshTimer=null;
+      if(VIEW==='messages' && !dmActive) renderMessages(); }, 350);   // same debounce as the module's
+  }
   function renderDmThread(){ return _lzRun(_dmThreadMod, _dmThreadLoad, 'renderDmThread', arguments); }
 
   /* ---------- Profiles: moved to static/js/client/profile.js, loaded on first use ----------

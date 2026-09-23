@@ -5,7 +5,7 @@ import { clientSource, clientSourceAt, installStateGlobals } from './client_sour
 const src = clientSource();
 const a = src.indexOf('  function copyValue(text, okMsg, failLabel){');
 if (a < 0) throw new Error('copyValue moved');
-const b = src.indexOf('\n  function _stopLiveHb()', a);
+const b = src.indexOf('\n  function _fetchTimeout(', a);
 if (b < 0) throw new Error('copyValue end marker moved');
 const shipped = src.slice(a, b);
 
@@ -19,7 +19,8 @@ globalThis.window = {};
 // The desktop/APK route, which is the one that actually runs on the machines this bug was reported from.
 globalThis.window.pcClip = { write: (s) => { written = s; return Promise.resolve(true); } };
 
-const copyValue = new Function(`${shipped}; return copyValue;`)();
+// The newline is load-bearing: the slice can end inside a `//` comment, which would swallow the return.
+const copyValue = new Function(`${shipped}\n; return copyValue;`)();
 const out = {};
 
 await copyValue(Promise.resolve('note1realvalue'), 'ok', 'Copy:');

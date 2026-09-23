@@ -1,15 +1,15 @@
 /* Runs the SHIPPED `_failPending` and the SHIPPED `ws.onclose` body against a stub session, so the
  * question "what happens to a request that was in flight when the relay died" is answered by the
  * code that answers it in the app. */
-import { readFileSync } from 'node:fs';
 import { runInNewContext } from 'node:vm';
+import { clientSource } from './client_source.mjs';
 
-const APP = new URL('../../static/js/client/app.js', import.meta.url);
-const src = readFileSync(APP, 'utf8');
+// The whole client, not app.js alone: the NIP-46 session ships in signer.js since the split.
+const src = clientSource();
 
 function slice(start, end) {
   const i = src.indexOf(start);
-  if (i < 0) throw new Error('not found in app.js: ' + start);
+  if (i < 0) throw new Error('not found in the client: ' + start);
   const j = src.indexOf(end, i);
   if (j < 0) throw new Error('end not found after: ' + start);
   return src.slice(i, j);

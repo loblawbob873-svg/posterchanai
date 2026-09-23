@@ -34,7 +34,9 @@ import subprocess
 import tempfile
 import unittest
 
-from .test_video_mount_browser import _extract, APP, CHROME
+from tests.client_source import client_source
+
+from .test_video_mount_browser import _extract, CHROME
 
 N_VIDS = 12          # more than MAX_MOUNTED (8), so the cap has to evict
 
@@ -115,8 +117,8 @@ def _run(page):
 class FirstFrameGrace(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
-        with open(APP) as fh:
-            src = fh.read()
+        # The whole client, not app.js alone: VideoMount ships in cards.js since the split.
+        src = client_source()
         cls.rows = {r[0]: r[1:] for r in _run(_page(_extract(src, "const VideoMount = (function()")))}
 
     def test_a_loading_video_survives_leaving_the_viewport(self):

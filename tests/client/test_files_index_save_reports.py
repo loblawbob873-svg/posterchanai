@@ -22,7 +22,7 @@ import shutil
 import subprocess
 import tempfile
 import unittest
-from tests.client_source import client_source
+from tests.client_source import client_source, state_shims
 
 REPO = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 APP = os.path.join(REPO, "static", "js", "client", "app.js")
@@ -61,6 +61,9 @@ const sleep = ms => new Promise(r=>setTimeout(r,ms));
 const toasts = [];
 const toast = m => toasts.push(String(m));
 let ME = { pubkey: 'ab'.repeat(32) };
+// FilesIdx ships in filesindex.js since the split, where app.js's live `let`s read as `S.*`; this
+// makes that `S` the stubs declared here.
+__STATE__
 let signOk = true, fetchStatus = 200, fetchWhy = 'refused: 3990 entries -> 1568';
 let signs = 0, bodies = [], confirmAnswer = true, asked = 0, pulls = 0, restoreOnPull = false;
 const sign = async () => { signs++; if (!signOk) throw new Error('signer request timed out'); return {id:'e'}; };
@@ -212,7 +215,9 @@ class FilesIndexSaveReports(unittest.TestCase):
         try:
             path = os.path.join(tmp, "t.html")
             with open(path, "w") as fh:
-                fh.write(PAGE.replace("__SAVE__", _save_method()))
+                method = _save_method()
+                fh.write(PAGE.replace("__STATE__", state_shims(method))
+                             .replace("__SAVE__", method))
             res = subprocess.run(
                 [chrome, "--headless", "--no-sandbox", "--disable-gpu",
                  "--virtual-time-budget=15000", "--dump-dom", "file://" + path],

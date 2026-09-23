@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
 """Run the real Blossom attachment picker at an Android-sized viewport."""
-import asyncio, json, os, re, shutil, subprocess, tempfile, urllib.request
+import asyncio, json, os, re, shutil, subprocess, sys, tempfile, urllib.request
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-APP = os.path.join(ROOT, "static/js/client/app.js")
+sys.path.insert(0, ROOT)
+from tests.client_source import client_source, state_shims  # noqa: E402  (app.js + its split modules)
 # The runner hands every check its own port (checkall.py: PORT_BASE + index) because the
 # browser checks run CONCURRENTLY. Hardcoded, two of them running at once bind the same HTTP
 # server port and attach to the same Chrome — the bug that made four checks share 9473. The
@@ -23,10 +24,12 @@ def lift(src, start, end):
 
 
 def page():
-    src = open(APP, encoding="utf-8").read()
+    # blossomPicker moved to upload.js in the app.js split, _fmtBytes stayed — so read the whole
+    # client, and give the lifted picker an `S` over this page's stubs for app.js's live bindings.
+    src = client_source()
     picker = lift(src, "  function blossomPicker(", "\n\n  // ---------- Pics:")
     fmt = re.search(r"\n  function _fmtBytes\(.*?\n  \}", src, re.S).group(0)
-    return TEMPLATE.replace("/* FUNCTIONS */", fmt + "\n" + picker)
+    return TEMPLATE.replace("/* FUNCTIONS */", state_shims(picker) + "\n" + fmt + "\n" + picker)
 
 
 TEMPLATE = r'''<!doctype html><meta name="viewport" content="width=device-width,initial-scale=1">

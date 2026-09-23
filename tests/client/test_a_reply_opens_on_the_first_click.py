@@ -234,7 +234,9 @@ def test_switchview_itself_refuses_to_render_a_post_window_as_a_view():
     """
     app = client_source()
     start = app.index('function switchView(')
-    head = app[start:start + 1400]
+    # Wide enough to reach the first thing switchView changes: since the split that line goes
+    # through menus.js (`_menusMod().openEmojiPopover`), a few hundred characters further in.
+    head = app[start:start + 2000]
     assert 'doc:post:' in head, (
         'switchView does not recognise a post window. Every caller then has to remember, and the '
         'two that exist already got it wrong once each.')

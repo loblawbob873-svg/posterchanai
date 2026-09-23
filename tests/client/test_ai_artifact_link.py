@@ -21,7 +21,9 @@ download path, it is the SAME one: a `/api/files/` link becomes that button.
   check-can-fail         the same message, run through aiFormat with the rule removed, DOES produce
                          the bare anchor — so a pass here means the rule, not the harness
 
-The renderer is extracted from app.js rather than copied, so it cannot drift from what ships.
+The renderer is extracted from the shipped client rather than copied, so it cannot drift from what
+ships — markdown (mdToHtml) is app.js's, aiFormat and _artName moved to ai.js, so the slice reads
+every module plus app.js rather than app.js alone.
 """
 import json
 import os
@@ -31,8 +33,7 @@ import subprocess
 import tempfile
 import unittest
 
-REPO = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-APP = os.path.join(REPO, "static", "js", "client", "app.js")
+from tests.client_source import client_source
 
 # The message the server writes (command_service/system.py) — verbatim shape, with a real artifact
 # path off a run that happened.
@@ -44,7 +45,7 @@ BACKUP_MSG = (
 
 
 def _fn(src, name, opener):
-    """Pull one top-level function out of app.js by brace counting from its opening line."""
+    """Pull one top-level function out of the client by brace counting from its opening line."""
     i = src.index(opener)
     depth, j, started = 0, i, False
     while j < len(src):
@@ -60,7 +61,7 @@ def _fn(src, name, opener):
 
 
 def _const(src, name):
-    """One single-line `const NAME = …;` declaration, as written."""
+    """One single-line `const NAME = …;` declaration, as written (ai.js's, since the split)."""
     m = re.search(r"^\s*const %s\s*=.*$" % re.escape(name), src, re.M)
     assert m, "%s is gone — the renderer moved" % name
     return m.group(0).strip()
@@ -157,8 +158,7 @@ def _run(page_src):
 class AiArtifactLink(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
-        with open(APP) as fh:
-            cls.src = fh.read()
+        cls.src = client_source()
 
     def test_artifact_is_a_button(self):
         o = _run(PAGE % (_harness(self.src), json.dumps(BACKUP_MSG)))

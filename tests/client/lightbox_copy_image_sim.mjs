@@ -23,6 +23,10 @@ process.on('unhandledRejection', () => {});
 const PNG = new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 1, 2, 3]);
 const pngBlob = { type: 'image/png', arrayBuffer: async () => PNG.buffer.slice(0) };
 
+/* lightbox.js is a split module, so app.js's live `let`s are read through `S` (S._aiToken here).
+   This makes that `S` the globals the stubs below define, so the shipped read finds them. */
+installStateGlobals();
+
 let toasts = [];
 globalThis.toast = (m) => { toasts.push(String(m)); };
 globalThis._aiToken = '';

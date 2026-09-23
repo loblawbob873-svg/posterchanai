@@ -9,7 +9,7 @@ import subprocess
 import tempfile
 
 import pytest
-from tests.client_source import client_source
+from tests.client_source import client_source, state_shims
 
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -48,6 +48,8 @@ def _function(name):
 
 @pytest.mark.skipif(not CHROME, reason="Chrome is unavailable")
 def test_warned_quote_is_blurred_until_reveal_while_safe_quote_is_not_gated():
+    # quotedDiv ships in cards.js since the split, where app.js's live `let`s read as `S.*`; the
+    # shim makes that `S` the stubs declared just above it.
     script = f"""
       const BLUR_NSFW=true, NO_IMAGES=false, LOGO='logo.png';
       const profOf=()=>({{name:'Alice',picture:'avatar.png'}}),needProfile=()=>{{}},npubOf=()=> 'npub1alice';
@@ -55,6 +57,7 @@ def test_warned_quote_is_blurred_until_reveal_while_safe_quote_is_not_gated():
       const mediaParts=()=>({{mediaFirst:true,gallery:'<div class="media-row"><img src="media.png"></div>',text:'caption'}});
       const applyEmojis=x=>x,linkify=x=>x,stripQuoteRef=x=>x;
       const isSensitive=e=>(e.tags||[]).some(t=>t[0]==='content-warning'||(t[0]==='t'&&t[1]==='nsfw'));
+      {state_shims(_function('quotedDiv'))}
       {_function('_cwRevealInner')}
       {_function('quotedDiv')}
       const warned={{id:'warned',pubkey:'a',created_at:1,content:'photo',tags:[['content-warning','nudity']]}};

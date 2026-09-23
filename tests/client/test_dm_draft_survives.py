@@ -10,7 +10,8 @@ of a second after the toast said someone had answered. The attachment went with 
 strip is DERIVED from image URLs sitting in that same text (`wireImgAttach`), so there was no
 separate copy of it to survive.
 
-The functions run here are EXTRACTED from static/js/client/app.js, not retyped, and they run in real
+The functions run here are EXTRACTED from the shipped client (the DM thread lives in
+dmthread.js since the app.js split), not retyped, and they run in real
 headless Chrome — the bug lives entirely in DOM lifetime (which nodes are replaced, which listeners
 go with them, where the caret is), which is exactly what a hand-written fake DOM would model away.
 Same reasoning as test_client_qr_encoder.py decoding real QRs instead of comparing pixels.
@@ -39,10 +40,8 @@ import subprocess
 import tempfile
 
 import pytest
-from tests.client_source import client_source
+from tests.client_source import client_source, state_shims
 
-ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-APP = os.path.join(ROOT, "static", "js", "client", "app.js")
 CHROME = shutil.which("google-chrome-stable") or shutil.which("google-chrome") or shutil.which("chromium")
 
 pytestmark = pytest.mark.skipif(CHROME is None, reason="chrome not installed")
@@ -90,7 +89,7 @@ def _sources():
     src = client_source()
     out = []
     for decl in WANT:
-        assert decl in src, f"{decl!r} is gone from app.js — this test is testing nothing"
+        assert decl in src, f"{decl!r} is gone from the client — this test is testing nothing"
         out.append(_extract(src, decl))
     # `enc` is a one-line arrow, and the draft is written through it into the textarea, so a broken
     # escape would be a real (and injectable) bug — take the real one rather than a stand-in.
@@ -108,7 +107,10 @@ def _sources():
     m = re.search(r"^\s*(let _dmHandoffScroll = null;)", src, re.M)
     assert m, "DM handoff scroll state is gone — re-audit the renderer extraction"
     out.append(m.group(1))
-    return "\n".join(out)
+    # Inside dmthread.js app.js's live bindings are read as `S.dmActive`, `S.CFG`, … — give the
+    # lifted code an `S` whose getters/setters ARE this page's stubs, declared in their scope.
+    body = "\n".join(out)
+    return body + "\n" + state_shims(body)
 
 
 HARNESS = r"""

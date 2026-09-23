@@ -37,7 +37,9 @@ const ctx = { console, Set, Map, Promise, Math, Date, JSON, String, Object, Arra
   _looksAudio: () => false, _musicHasSrc: () => false, Relay: {} };
 vm.createContext(installStateGlobals(ctx) && ctx);
 vm.runInContext(`
-let _filesFolder=null,_uploadCancel=false,_uploading=0,_uploadBatchAuth=null,_filesGridList=null,_blobHave=new Set(),_blobSizes=new Map();
+// var, not let: since the split these are app.js bindings files.js reads as _S.<name>, and
+// installStateGlobals resolves those to properties of the vm context — a lexical let is invisible to it.
+var _filesFolder=null,_uploadCancel=false,_uploading=0,_uploadBatchAuth=null,_filesGridList=null,_blobHave=new Set(),_blobSizes=new Map();
 ${constLine('const _MIME_EXT={')}
 const FilesIdx = {
   data: {folders:['Music'], files:{}, encFolders:['Private']}, _pullDone:true, pushes:0,

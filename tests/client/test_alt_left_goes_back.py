@@ -27,7 +27,7 @@ import subprocess
 from pathlib import Path
 
 import pytest
-from tests.client_source import client_source
+from tests.client_source import client_source, state_shims
 
 APP = client_source()
 
@@ -53,6 +53,7 @@ def press(key="ArrowLeft", alt=True, ctrl=False, shift=False, tag="DIV",
       let _navPushed = %(pushed)d;
       let went = false;
       global.history = { back: () => { went = true; } };
+      %(shim)s
       %(fn)s
       _bindAltLeftGoesBack();
       let prevented = false;
@@ -60,7 +61,7 @@ def press(key="ArrowLeft", alt=True, ctrl=False, shift=False, tag="DIV",
                 target:{ tagName:%(tag)s, isContentEditable:%(editable)s },
                 preventDefault: () => { prevented = true; } });
       process.stdout.write(JSON.stringify({went, prevented}));
-    """ % {"fn": _handler(), "pushed": pushed, "key": json.dumps(key),
+    """ % {"fn": _handler(), "shim": state_shims(_handler()), "pushed": pushed, "key": json.dumps(key),
            "alt": "true" if alt else "false", "ctrl": "true" if ctrl else "false",
            "shift": "true" if shift else "false", "tag": json.dumps(tag),
            "editable": "true" if editable else "false"}

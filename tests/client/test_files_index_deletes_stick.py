@@ -19,7 +19,8 @@ already been made truthful — which is how the merge, rather than the signer, w
   bounded                 tombstones are capped and aged out; this is a shield against copies still
                           in flight, not a second index
 
-The methods are extracted from app.js rather than copied, so they cannot drift from what ships.
+The methods are extracted from the shipped client rather than copied, so they cannot drift from
+what ships — FilesIdx now lives in filesindex.js, so the slice reads every module plus app.js.
 """
 import json
 import os
@@ -29,8 +30,7 @@ import subprocess
 import tempfile
 import unittest
 
-REPO = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-APP = os.path.join(REPO, "static", "js", "client", "app.js")
+from tests.client_source import client_source
 
 
 def _fn(src, name, opener):
@@ -49,8 +49,7 @@ def _fn(src, name, opener):
 
 
 def _harness():
-    with open(APP) as fh:
-        src = fh.read()
+    src = client_source()
     caps = re.search(r"_DEL_MAX: (\d+), _DEL_TTL: ([^,\n]+),", src)
     assert caps, "the tombstone caps are gone"
     parts = [

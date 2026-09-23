@@ -10,10 +10,12 @@ import tempfile
 
 import pytest
 
+from tests.client_source import client_source
 
 ROOT = Path(__file__).resolve().parents[2]
 CSS = (ROOT / "static/css/client.css").read_text(encoding="utf-8")
-APP = (ROOT / "static/js/client/app.js").read_text(encoding="utf-8")
+# The whole client, not app.js alone: the mini player ships in musicplayer.js since the split.
+APP = client_source()
 CHROME = (shutil.which("google-chrome-stable") or shutil.which("google-chrome") or
           shutil.which("chromium"))
 

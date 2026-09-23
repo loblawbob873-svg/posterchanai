@@ -21,9 +21,12 @@ import re
 import unittest
 from pathlib import Path
 
+from tests.client_source import client_source
+
 ROOT = Path(__file__).resolve().parents[2]
 CSS = (ROOT / "static" / "css" / "client.css").read_text(encoding="utf-8")
-APP = (ROOT / "static" / "js" / "client" / "app.js").read_text(encoding="utf-8")
+# The whole client, not app.js alone: the viewer ships in lightbox.js since the split.
+APP = client_source()
 
 
 def rule(selector: str) -> str:
