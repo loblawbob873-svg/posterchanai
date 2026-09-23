@@ -4554,6 +4554,9 @@
                        indistinguishable from never having turned it on — the exact shape of "why is
                        it disabled again?". */
                     /^pcai:automute$/,
+                    /* …and the shared playlists you accepted, for the same reason: left on the old
+                       pool, every offer is offered again and the playlists you kept disappear. */
+                    /^pcai:musicshares$/,
                     /^pcai:agent-tasks$/, /^pcai:dmkey$/, /^pcai:dmcache$/,
                     /* The VM hosts a person added by hand (Virtual Machines). Left behind on the old
                        pool, the list reads as empty, which looks like the hosts are gone. */

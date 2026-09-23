@@ -125,6 +125,104 @@
   }
   const trackCount = b => (b && (b.tl ? b.tl.n : b.tracks.length)) || 0;
 
+  /* ACCEPTING A SHARE — the recipient's own decision, kept on the ACCOUNT rather than the device.
+   *
+   * A share used to be a place you visited: an inbox of cards, and inside each one a screen of its
+   * own with its own back button. Reported from the APK — "playlists that are shared with you should
+   * just appear as a regular playlist for simplicity. The Shared With Me button should be you
+   * accepting or rejecting the share." So the inbox is now only the DECISION, and everything that
+   * survives it is an ordinary playlist chip beside your own.
+   *
+   * Stored in ClientSettings (a private per-account document), not localStorage: accepting a share
+   * on the phone and finding it missing on the desktop is the same feature failing. A rejected key
+   * is remembered too — otherwise the next refresh offers it again, which is a "no" that does not
+   * stick. Both lists hold KEYS (`<from>:<id>`), so re-sharing under a new id asks again, and a
+   * sharer cannot flip somebody's answer by editing the document they already answered about. */
+  const DECIDE_D = 'pcai:musicshares', DECIDE_LOCAL = 'musicShareDecisions';
+  let _dec = null, _decRead = false, _decLoading = null;
+
+  const _cleanDec = o => {
+    const out = {};
+    for(const [k, v] of Object.entries(o && typeof o === 'object' ? o : {})){
+      if(typeof k !== 'string' || k.length > 200 || !v || typeof v !== 'object') continue;
+      const at = Math.max(0, Number(v.at) || 0);
+      if(at) out[k] = { yes: v.yes === true, at };
+    }
+    // Bounded like every other list here: a decision is small, but the document is replaceable and
+    // somebody who is shared with daily should not grow one for ever.
+    return Object.fromEntries(Object.entries(out).sort((a, b) => b[1].at - a[1].at).slice(0, 500));
+  };
+  /* NEWEST WINS, PER KEY. Two devices can answer the same offer while one of them is offline, and a
+   * union of two sets cannot say which answer came later — it can only say both happened, which for
+   * accept-vs-reject is no answer at all. A timestamp per key makes the merge total and makes an
+   * offline "no" survive a later sync of an older "yes". */
+  const _mergeDec = (a, b) => {
+    const out = { ...(a || {}) };
+    for(const [k, v] of Object.entries(b || {})) if(!out[k] || v.at > out[k].at) out[k] = v;
+    return _cleanDec(out);
+  };
+  const _localDec = () => { try{ return _cleanDec(JSON.parse(localStorage.getItem(DECIDE_LOCAL) || '{}')); }catch(_){ return {}; } };
+  const _saveLocalDec = d => { try{ localStorage.setItem(DECIDE_LOCAL, JSON.stringify(d)); }catch(_){} };
+  const decisions = () => (_dec || (_dec = _localDec()));
+
+  /* THE ANSWER FOLLOWS THE ACCOUNT, NOT THE PHONE. localStorage alone is how auto-mute came back on
+   * for people who had turned it off on another device: accepting a playlist here and not having it
+   * on the desktop is the same feature failing the same way. So the decisions live in a private
+   * kind-30078 document (NIP-44 to yourself — nobody, including this node, learns whose music you
+   * kept), with the local copy as the offline-capable cache that is merged into it, never over it. */
+  async function loadDecisions(){
+    if(!_boot() || !ME()) return decisions();
+    const owner = ME().pubkey;
+    if(_decLoading && _decLoading.owner === owner) return _decLoading.promise;
+    const job = { owner };
+    job.promise = (async () => {
+      try{
+        const { evs, complete } = await _query({ kinds:[KIND], authors:[owner], '#d':[DECIDE_D] });
+        const ev = newestBy(evs, e => tagOf(e, 'd'))[0];
+        if(ev){
+          const body = JSON.parse(await PC.nip44dec(owner, ev.content));
+          if(body && body.v === 1){ _dec = _mergeDec(_localDec(), _cleanDec(body.d)); _saveLocalDec(_dec); _decRead = true; }
+        }
+        // A relay that ANSWERED and holds nothing means this account has never decided anywhere
+        // else, so ours is the only copy and may be published. One that did not answer means
+        // nothing at all, and must not be read as "there is none".
+        else if(complete) _decRead = true;
+      }catch(_){}
+      _decLoading = null;
+      return decisions();
+    })();
+    _decLoading = job;
+    return job.promise;
+  }
+  async function _saveDecisions(){
+    if(!_boot() || !ME()) return false;
+    const owner = ME().pubkey;
+    /* Never publish over a document that was never read: an unreachable relay plus a fresh device
+     * would replace every answer this account has given with the one just made here — the
+     * replaceable-doc wipe the rest of this app is careful about. The local copy still holds it,
+     * and the next load merges it in. */
+    if(!_decRead){ loadDecisions().then(ok => { if(_decRead) _saveDecisions(); }); return false; }
+    try{
+      const ct = await PC.nip44enc(owner, JSON.stringify({ v:1, d: decisions() }));
+      const r = await PC.publish(KIND, ct, [['d', DECIDE_D]], { quiet:true });
+      return !!(r && r.ok);
+    }catch(_){ return false; }
+  }
+  const accepted = () => new Set(Object.entries(decisions()).filter(([, v]) => v.yes).map(([k]) => k));
+  const rejected = () => new Set(Object.entries(decisions()).filter(([, v]) => !v.yes).map(([k]) => k));
+  function decide(key, yes){
+    if(!key) return;
+    _dec = _cleanDec({ ...decisions(), [key]: { yes: !!yes, at: Math.floor(Date.now() / 1000) } });
+    _saveLocalDec(_dec);
+    _saveDecisions();          // fire and forget: the local copy already answered the UI
+    _changed();
+  }
+  /* The three groups every screen here is built from. A share that was accepted and then STOPPED by
+   * its sharer simply stops appearing — `inShares()` no longer lists it — and the stale key in the
+   * decisions is harmless, which is why nothing prunes it on a read that may have failed. */
+  const acceptedShares = () => { const a = accepted(); return inShares().filter(s => a.has(s.key)); };
+  const pendingShares  = () => { const a = accepted(), r = rejected(); return inShares().filter(s => !a.has(s.key) && !r.has(s.key)); };
+
   /* The recipient's library record for an added track. `keyenc` is the v1 per-file key shape the
    * drive already reads ({k, iv}, NIP-44 to self), so the player needs no new branch — and the key
    * is WRAPPED, because a small drive index is stored inline where the server can read it. */
@@ -568,7 +666,13 @@
     </div>`;
   }
 
-  let _openKey = null;       // the incoming share on screen, kept across repaints
+  /* SHARED WITH ME — the decision, and nothing else.
+   *
+   * It used to be an inbox of cards that opened into a screen per share, with its own back button
+   * and its own "Add N to my library". That is two places to learn for something that is, to the
+   * person receiving it, just a playlist somebody sent. Now: accept and it becomes a playlist chip;
+   * reject and it goes away and stays away. Nothing here plays anything, because deciding whether
+   * to keep a stranger's playlist is not the moment to start the music. */
   async function renderIn(el, ctx){
     if(!_boot() || !el) return;
     ctx = ctx || {};
@@ -576,50 +680,87 @@
     if(!_in) el.innerHTML = '<div class="spinner"></div>';
     else _paintIn(el, ctx);
     try{ await loadIn(); }catch(_){}
-    if(el.isConnected) await _paintIn(el, ctx);
+    if(el.isConnected) _paintIn(el, ctx);
   }
-  async function _paintIn(el, ctx){
-    const shares = inShares();
-    const cur = _openKey && _in && _in.get(_openKey);
+  function _paintIn(el, ctx){
+    const waiting = pendingShares(), have = acceptedShares();
+    el.innerHTML = `<div class="music-head"><div class="music-head-primary">
+        <button class="btn btn-ghost small" id="msh-refresh">${icon('refresh')}Refresh</button></div>
+        <span class="music-count muted small">${waiting.length
+            ? `${waiting.length} waiting for an answer`
+            : (have.length ? `${have.length} accepted · they are playlists now` : 'nothing waiting')}</span></div>`
+      + (waiting.length ? waiting.map(s => `<div class="msh-card msh-offer" data-key="${E(s.key)}">
+            <b>${E(s.body.name)}</b>
+            <span class="muted small">from ${E(who(s.from))} · ${trackCount(s.body)} song${trackCount(s.body) === 1 ? '' : 's'}</span>
+            <div class="msh-offer-act">
+              <button class="btn btn-neon small msh-yes" data-key="${E(s.key)}">Accept</button>
+              <button class="btn btn-ghost small msh-no" data-key="${E(s.key)}">Reject</button>
+            </div></div>`).join('')
+        : `<div class="empty">${have.length
+              ? 'Nothing new. Accepted shares are in the playlist bar.'
+              : `Nothing has been shared with you yet${_inOk ? '' : ' — or the relays did not answer; try Refresh'}.`}</div>`);
+    el.onclick = async ev => {
+      const b = ev.target.closest && ev.target.closest('button'); if(!b || !el.contains(b)) return;
+      if(b.id === 'msh-refresh'){ b.disabled = true; await loadIn(); if(el.isConnected) _paintIn(el, ctx); return; }
+      const yes = b.classList.contains('msh-yes'), no = b.classList.contains('msh-no');
+      if(!yes && !no) return;
+      const sh = _in && _in.get(b.dataset.key); if(!sh) return;
+      decide(b.dataset.key, yes);
+      toast(yes ? `“${(sh.body && sh.body.name) || 'Shared music'}” is in your playlists` : 'rejected');
+      // Accepting SHOWS it: the chip appeared in a bar that may be scrolled off screen, and "it
+      // says it accepted and nothing happened" is the same complaint in a different hat. The host
+      // selects the chip when it can; on its own this module still draws the playlist it just made.
+      if(yes){ if(ctx.open) ctx.open(b.dataset.key); else if(el.isConnected) renderShared(b.dataset.key, el, ctx); return; }
+      if(el.isConnected) _paintIn(el, ctx);
+    };
+  }
+
+  /* AN ACCEPTED SHARE, DRAWN AS A PLAYLIST. Same header as the library's own (Shuffle, Refresh, a
+   * count), same track rows — the only thing that marks it out is one line saying whose it is and
+   * that adding a song keeps it. */
+  async function renderShared(key, el, ctx){
+    if(!_boot() || !el) return;
+    ctx = ctx || {};
+    el.className = 'music-list msh';
+    el.innerHTML = '<div class="spinner"></div>';
+    if(!_in) { try{ await loadIn(); }catch(_){} }
+    const cur = _in && _in.get(key);
     if(!cur){
-      _openKey = null;
-      el.innerHTML = `<div class="music-head"><div class="music-head-primary">
-          <button class="btn btn-ghost small" id="msh-refresh">${icon('refresh')}Refresh</button></div>
-          <span class="music-count muted small">${shares.length} shared with you</span></div>`
-        + (shares.length ? shares.map(s => `<button class="msh-card" data-key="${E(s.key)}">
-            <b>${E(s.body.name)}</b><span class="muted small">from ${E(who(s.from))} · ${trackCount(s.body)} song${trackCount(s.body) === 1 ? '' : 's'}</span></button>`).join('')
-          : `<div class="empty">Nothing has been shared with you yet${_inOk ? '' : ' — or the relays did not answer; try Refresh'}.</div>`);
-      el.onclick = async ev => {
-        const b = ev.target.closest && ev.target.closest('.msh-card,#msh-refresh'); if(!b) return;
-        if(b.id === 'msh-refresh'){ b.disabled = true; await loadIn(); if(el.isConnected) _paintIn(el, ctx); return; }
-        _openKey = b.dataset.key; _paintIn(el, ctx);
-      };
+      el.innerHTML = `<div class="empty">This share is no longer available — whoever shared it has stopped.</div>`;
       return;
     }
-    el.innerHTML = '<div class="spinner"></div>';
     let tracks;
     try{ tracks = await tracksOf(cur); }
-    catch(e){ el.innerHTML = `<div class="empty">Couldn’t open this share: ${E((e && e.message) || e)}</div><button class="btn btn-ghost small" id="msh-back">← Back</button>`;
-              el.querySelector('#msh-back').onclick = () => { _openKey = null; _paintIn(el, ctx); }; return; }
+    catch(e){ el.innerHTML = `<div class="empty">Couldn’t open this playlist: ${E((e && e.message) || e)}</div>`; return; }
+    if(!el.isConnected) return;
     register(cur, tracks);
     const lib = new Set((PC.musicLibrary && PC.musicLibrary()) || []);
     const missing = tracks.filter(t => !lib.has(t.s)).length;
+    const order = tracks.map(t => t.s);
     el.innerHTML = `<div class="music-head">
         <div class="music-head-primary">
-          <button class="btn btn-ghost small" id="msh-back">← Shared with me</button>
-          <button class="btn btn-neon small" id="msh-addall"${missing ? '' : ' disabled'}>${icon('plus')}${missing ? `Add ${missing} to my library` : 'All in your library'}</button>
+          <button class="btn btn-neon small" id="msh-shuffle"${tracks.length ? '' : ' disabled'}>${icon('shuffle')}Shuffle</button>
+          <button class="btn btn-ghost small" id="msh-refresh">${icon('refresh')}Refresh</button>
+          <button class="btn btn-ghost small" id="msh-addall"${missing ? '' : ' disabled'}>${icon('plus')}${missing ? `Keep ${missing}` : 'Kept'}</button>
         </div>
-        <span class="music-count muted small"><b>${E(cur.body.name)}</b> from ${E(who(cur.from))} · ${tracks.length} song${tracks.length === 1 ? '' : 's'}</span>
-        <span class="msh-note muted small">These play from ${E(who(cur.from))}’s copy while it is shared. Add them to keep your own — songs you add stay yours even if the share is stopped.</span>
+        <span class="music-count muted small">${tracks.length} song${tracks.length === 1 ? '' : 's'} · from ${E(who(cur.from))}</span>
+        <span class="msh-note muted small">These play from ${E(who(cur.from))}’s copy while it is shared. Keep a song and it stays yours even if the share is stopped.</span>
       </div>` + tracks.map(t => _row(t, lib.has(t.s))).join('');
     el.onclick = async ev => {
       const b = ev.target.closest && ev.target.closest('button'); if(!b || !el.contains(b)) return;
-      if(b.id === 'msh-back'){ _openKey = null; _paintIn(el, ctx); return; }
+      if(b.id === 'msh-refresh'){ b.disabled = true; await loadIn(); if(el.isConnected) renderShared(key, el, ctx); return; }
+      if(b.id === 'msh-shuffle'){
+        const M = PC.MusicPlayer, pick = order[Math.floor(Math.random() * order.length)];
+        if(!order.length) return;
+        if(M){ M.queue = order.slice(); M.shuffle = true; M.play(pick); }
+        else if(ctx.play) ctx.play(pick, order);
+        return;
+      }
       if(b.classList.contains('track-play')){
         /* The SHARE becomes the queue, in its order — the rule a playlist follows. */
-        const order = tracks.map(t => t.s), M = PC.MusicPlayer;
+        const M = PC.MusicPlayer;
         if(ctx.play) ctx.play(b.dataset.sha, order);
-        else if(M){ M.queue = order; M.shuffle = false; M.play(b.dataset.sha); }
+        else if(M){ M.queue = order.slice(); M.shuffle = false; M.play(b.dataset.sha); }
         return;
       }
       if(b.classList.contains('track-dl')){
@@ -632,12 +773,12 @@
       if(!pick) return;
       b.disabled = true;
       const was = b.innerHTML;
-      const r = await addToLibrary(cur, pick, s => { if(b.id === 'msh-addall' && s.total) b.textContent = `Adding ${s.done} / ${s.total}…`; });
+      const r = await addToLibrary(cur, pick, st => { if(b.id === 'msh-addall' && st.total) b.textContent = `Keeping ${st.done} / ${st.total}…`; });
       b.innerHTML = was;
-      toast(r.added ? `added ${r.added} song${r.added === 1 ? '' : 's'} to your library` + (r.failed ? ` — ${r.failed} failed: ${r.error}` : '')
-                    : r.skipped && !r.failed ? 'already in your library' : 'not added — ' + (r.error || 'unknown error'));
+      toast(r.added ? `kept ${r.added} song${r.added === 1 ? '' : 's'}` + (r.failed ? ` — ${r.failed} failed: ${r.error}` : '')
+                    : r.skipped && !r.failed ? 'already yours' : 'not kept — ' + (r.error || 'unknown error'));
       if(ctx.libraryChanged) try{ ctx.libraryChanged(); }catch(_){}
-      if(el.isConnected) _paintIn(el, ctx);
+      if(el.isConnected) renderShared(key, el, ctx);
     };
   }
 
@@ -696,23 +837,35 @@
     };
   }
 
-  /* The Music app's chips. Shared with me / by me are VIEWS, not playlists: two reserved ids the
-   * playlist bar selects like any chip, which app.js hands back to renderView. */
+  /* The Music app's chips.
+   *
+   * An ACCEPTED share is a playlist chip like any other — same shape, same place in the bar, opened
+   * the same way. Only the two inbox views are reserved ids. "Shared with me" carries the number of
+   * shares still WAITING on an answer, so it reads as a thing to deal with rather than a folder;
+   * when nothing is waiting it is not a badge, it is just where the offers arrive.
+   *
+   * A share's chip id is its key (`<from>:<id>`), which is why `isView` has to recognise those too:
+   * the bar hands the id back to renderView, and an accepted share draws its own tracks. */
   const V_IN = '__shared_in', V_OUT = '__shared_out';
-  const isView = id => id === V_IN || id === V_OUT;
+  const isShare = id => !!id && !!_in && _in.has(id) && accepted().has(id);
+  const isView = id => id === V_IN || id === V_OUT || isShare(id);
   function barHTML(cur, real){
-    const n = inShares().length;
-    const chip = (id, label, c) => `<button class="ma-pl${cur === id ? ' on' : ''}" data-pl="${id}">${E(label)}${c ? ` <span class="ma-pln">${c}</span>` : ''}</button>`;
-    return `<span class="ma-plsp"></span>${chip(V_IN, '📥 Shared with me', n)}${chip(V_OUT, '📤 Shared by me', 0)}`
+    const waiting = pendingShares().length;
+    const chip = (id, label, c) => `<button class="ma-pl${cur === id ? ' on' : ''}" data-pl="${E(id)}">${E(label)}${c ? ` <span class="ma-pln">${c}</span>` : ''}</button>`;
+    return acceptedShares().map(s => chip(s.key, s.body.name, trackCount(s.body))).join('')
+      + `<span class="ma-plsp"></span>${chip(V_IN, '📥 Shared with me', waiting)}${chip(V_OUT, '📤 Shared by me', 0)}`
       + (isView(cur) ? '' : `<button class="ma-pl ma-plshare" id="ma-plshare" title="${real ? 'Share this playlist with other people' : 'Share the songs on screen with other people'}">🔗 Share</button>`);
   }
-  const renderView = (id, el, ctx) => id === V_IN ? renderIn(el, ctx) : renderOut(el, ctx);
+  const renderView = (id, el, ctx) => id === V_IN ? renderIn(el, ctx)
+    : id === V_OUT ? renderOut(el, ctx) : renderShared(id, el, ctx);
 
   window.PCMusicShare = {
-    isView, barHTML, renderView,
+    isView, isShare, barHTML, renderView, renderShared,
+    // acceptance
+    decide, acceptedShares, pendingShares, loadDecisions, decisions,
     // data
     loadIn, loadOut, inShares, outShares, tracksOf, share, addRecipients, revoke, addToLibrary, refIds,
-    resolveRecipients, inCount: () => inShares().length,
+    resolveRecipients, inCount: () => pendingShares().length,
     // player
     register, meta, plain,
     // ui

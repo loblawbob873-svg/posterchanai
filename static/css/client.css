@@ -8632,7 +8632,13 @@ body.native.term-view .tty-bar{padding-top:env(safe-area-inset-top);height:calc(
   .music-head{align-items:stretch;gap:6px}
   .music-head-primary{order:1;display:grid;grid-template-columns:repeat(3,minmax(0,1fr));
     width:100%;gap:6px}
-  .music-head-primary .btn{min-width:0;width:100%;padding:6px 4px;white-space:nowrap}
+  /* NOWRAP IN A FIXED COLUMN IS HOW TEXT LEAVES A BUTTON. Three equal columns on a phone, a label
+     that does not fit, and nothing allowed to wrap or shrink: the words simply drew past the border
+     ("the text on the two buttons are bleeding out the button"). Wrapping is the honest answer for
+     a label that is genuinely long — the row grows by a line and everything stays inside its own
+     box — and `anywhere` covers a single word wider than the column, which nothing else can. */
+  .music-head-primary .btn{min-width:0;width:100%;padding:6px 4px;
+    white-space:normal;overflow-wrap:anywhere;line-height:1.2;text-align:center}
   .music-count{order:2;flex:1 1 100%;width:100%;padding-inline:2px}
   .music-head-secondary{order:3;margin-inline-start:0;width:100%}
 }
@@ -8751,6 +8757,10 @@ body.native.term-view .tty-bar{padding-top:env(safe-area-inset-top);height:calc(
   border:1px solid rgba(0,240,255,.3);color:var(--text);font:inherit;cursor:pointer}
 .msh-card:hover{border-color:var(--cyan);box-shadow:0 0 14px rgba(0,240,255,.18)}
 .msh-card b{overflow-wrap:anywhere}
+.msh-offer{gap:8px}
+/* Accept / Reject sit on one row and stay there: a decision is two words, and a phone is narrow. */
+.msh-offer-act{display:flex;gap:8px;width:100%;margin-top:4px}
+.msh-offer-act .btn{flex:1 1 0;min-width:0;white-space:normal;overflow-wrap:anywhere}
 .msh-note{flex-basis:100%}
 .msh-out{display:flex;flex-direction:column;gap:8px;padding:12px 14px;border-radius:13px;
   background:var(--panel2);border:1px solid var(--line)}

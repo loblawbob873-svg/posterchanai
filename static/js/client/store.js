@@ -156,6 +156,9 @@
          t[1].startsWith('pcai:files-index') ||
          t[1].startsWith('pcai:playlist') || t[1] === 'pcai:budget' ||
          t[1] === 'pcai:desktop' || t[1] === 'pcai:automute' || t[1] === 'pcai:agent-tasks' ||
+         /* Which shared playlists you accepted. Evicted by a firehose it reads as "you have decided
+            nothing", so every offer you already answered comes back to be answered again. */
+         t[1] === 'pcai:musicshares' ||
          t[1] === 'pcai:dmkey' || t[1] === 'pcai:dmcache' ||
          /* The VM hosts somebody added by hand. Evicted, Virtual Machines shows no hosts until a
             relay hands the list back — which reads as the hosts being gone. */

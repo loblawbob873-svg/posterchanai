@@ -99,8 +99,12 @@ window.PCMusicFactory = function(dep){
       // Shared with me / by me are musicshare.js views; the library search steps aside.
       if(_musicShareView()){
         const qi=$('#ma-q',feed); if(qi) qi.classList.add('hidden');
-        PCMusicShare.renderView(S._musicPl, lib, { libraryChanged: () => {
-          try{ _musicAppNow(); if(window.PCOS && PCOS.musicChanged) PCOS.musicChanged(); }catch(_){} } });
+        PCMusicShare.renderView(S._musicPl, lib, {
+          libraryChanged: () => {
+            try{ _musicAppNow(); if(window.PCOS && PCOS.musicChanged) PCOS.musicChanged(); }catch(_){} },
+          // Accepting a share selects it, so the answer lands on the playlist itself rather than on
+          // a chip that may be scrolled off the end of the bar.
+          open: key => { S._musicPl = key; paint(); } });
         _musicAppNow();
         return;
       }
@@ -308,7 +312,7 @@ window.PCMusicFactory = function(dep){
     const head = `<div class="music-head">
       <div class="music-head-primary">
         <button class="btn btn-neon small" id="mus-shuffle"${liveAll?'':' disabled'}>
-          <svg class="ic b-ic" aria-hidden="true"><use href="#i-shuffle"></use></svg>${only ? 'Shuffle playlist' : 'Shuffle'}</button>
+          <svg class="ic b-ic" aria-hidden="true"><use href="#i-shuffle"></use></svg>Shuffle</button>
         <button class="btn btn-ghost small" id="mus-refresh" title="Fetch the library again — songs added on another device appear here">
           <svg class="ic b-ic" aria-hidden="true"><use href="#i-refresh"></use></svg>Refresh</button>
         ${!only ? `<button class="btn btn-ghost small" id="mus-delall"${tracks.length?'':' disabled'}

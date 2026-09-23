@@ -157,3 +157,93 @@ def test_player_reads_titles_through_one_lookup():
     mp = s[s.index("  const MusicPlayer = {"):]
     mp = mp[:mp.index("\n  };")]
     assert "FilesIdx.meta(this.cur)" not in mp and "FilesIdx.meta(sha)" not in mp
+
+
+# ---- accepting a share, and what it becomes -------------------------------------------------------
+
+def test_an_accepted_share_is_an_ordinary_playlist_chip():
+    """"Playlists that are shared with you should just appear as a regular playlist for simplicity.
+    The Shared With Me button should be you accepting or rejecting the share."
+
+    A share used to be a place you visited: an inbox of cards, each opening a screen of its own with
+    its own back button. So the bar is asked directly — an unanswered share is NOT a playlist, an
+    accepted one IS one (with its track count, like any playlist), and the inbox chip counts only
+    what is still waiting."""
+    if shutil.which("node") is None:
+        pytest.skip("node not installed")
+    src = _read("static", "js", "client", "musicshare.js")
+    js = """
+      const fs=require('fs'), vm=require('vm');
+      const store={};
+      const ctx={console, localStorage:{getItem:k=>store[k]||null, setItem:(k,v)=>{store[k]=String(v)}, removeItem:k=>{delete store[k]}},
+        setTimeout, clearTimeout, Date, Math, JSON, Object, Array, Set, Map, Number, String, Boolean, Promise,
+        // cleanItem decodes every key with atob; without it each track is 'invalid' and a share is empty.
+        atob:s=>Buffer.from(String(s),'base64').toString('binary'), btoa:s=>Buffer.from(String(s),'binary').toString('base64'),
+        Uint8Array, Buffer};
+      ctx.window=ctx; ctx.globalThis=ctx; ctx.self=ctx;
+      ctx.__PC={ me:()=>({pubkey:'a'.repeat(64)}), nip44enc:async()=>'ct', nip44dec:async()=>'{}',
+                 publish:async()=>({ok:true}) };
+      // The module reads window.Relay / window.Store, so that is where the fakes go.
+      ctx.Relay={ready:async()=>{}, query:async()=>[]}; ctx.Store={query:()=>[], saveEvent(){}};
+      vm.createContext(ctx); vm.runInContext(fs.readFileSync(process.argv[1],'utf8'), ctx);
+      const MS=ctx.window.PCMusicShare;
+      const ME='a'.repeat(64), THEM='b'.repeat(64);
+      // Two offers, delivered the way the relay delivers them — through the module's own loadIn,
+      // so the shapes here are the shipped ones rather than a fixture's idea of them.
+      const body=(id,name,n)=>({v:1,id,name,from:THEM,srv:'',created:1,updated:1,
+        tracks:Array.from({length:n},(_,i)=>({s:String(i).padStart(64,'0'),k:'A'.repeat(43)+'=',iv:'b'.repeat(16),n:'t'+i,m:'audio/mpeg',z:1,e:'mp3'})),tl:null});
+      const bodies={trip:body('trip','Road trip',2), study:body('study','Study',5)};
+      const ev=id=>({id:id+'x', pubkey:THEM, kind:30078, created_at:10, content:id,
+        tags:[['d','pcai:musicshare:'+id+':'+ME.slice(0,16)],['p',ME],['l','pcai-musicshare']]});
+      ctx.Store={query:()=>[ev('trip'),ev('study')], saveEvent(){}};
+      ctx.__PC.nip44dec=async (pk,ct)=>JSON.stringify(bodies[ct]);
+      const out={};
+      (async()=>{
+        await MS.loadIn();
+        const KEY=id=>THEM+':'+id;
+        out.waitingBar=MS.barHTML('', false);
+        MS.decide(KEY('trip'), true);
+        out.acceptedBar=MS.barHTML('', false);
+        out.isView=[MS.isView(KEY('trip')), MS.isView(KEY('study')), MS.isView('__shared_in')];
+        out.accepted=MS.acceptedShares().map(s=>s.body.name);
+        out.pending=MS.pendingShares().map(s=>s.body.name);
+        MS.decide(KEY('study'), false);
+        out.afterReject={accepted:MS.acceptedShares().length, pending:MS.pendingShares().length};
+        out.decisions=Object.keys(MS.decisions()).length;
+        process.stdout.write(JSON.stringify(out));
+      })().catch(e=>{ console.error(e); process.exit(1); });
+    """
+    path = os.path.join(ROOT, "static", "js", "client", "musicshare.js")
+    r = subprocess.run(["node", "-e", js, path], capture_output=True, text=True, timeout=120)
+    assert r.returncode == 0, r.stderr[-2000:]
+    got = json.loads(r.stdout)
+    assert "Road trip" not in got["waitingBar"], "an unanswered share is already a playlist chip"
+    assert 'ma-pln">2<' in got["waitingBar"], "the inbox chip does not count the shares waiting"
+    assert "Road trip" in got["acceptedBar"] and 'ma-pln">2<' in got["acceptedBar"], \
+        f"an accepted share is not a playlist chip with its track count: {got['acceptedBar'][:200]}"
+    assert got["isView"] == [True, False, True], "an accepted share must route to its own renderer"
+    assert got["accepted"] == ["Road trip"] and got["pending"] == ["Study"]
+    assert got["afterReject"] == {"accepted": 1, "pending": 0}, "a rejected share came back"
+    assert got["decisions"] == 2
+
+
+def test_the_decisions_follow_the_account():
+    """localStorage alone is how auto-mute came back on for people who had turned it off elsewhere.
+    Accepting a playlist on the phone and not having it on the desktop is the same failure, so the
+    answers live in a private per-account document — which means the two registrations every such
+    document here has needed at least once."""
+    assert "'pcai:musicshares'" in _read("static", "js", "client", "store.js"), \
+        "not pinned: a firehose evicts it and every answered offer is offered again"
+    carry = _read("static", "js", "client", "app.js")
+    carry = carry[carry.index("const _CARRY_D = ["):]
+    assert "pcai:musicshares" in carry[:carry.index("];")], \
+        "not carried: left on the old relay pool, the playlists you kept disappear"
+
+
+def test_it_never_publishes_over_a_document_it_has_not_read():
+    """The replaceable-doc wipe: an unreachable relay plus a fresh device would otherwise replace
+    every answer this account has ever given with the one just made here."""
+    src = _read("static", "js", "client", "musicshare.js")
+    save = src[src.index("async function _saveDecisions(){"):]
+    save = save[:save.index("\n  }")]
+    assert "if(!_decRead)" in save, "a save with no prior read is a wipe"

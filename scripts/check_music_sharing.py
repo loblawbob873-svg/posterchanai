@@ -9,9 +9,10 @@ musicshare.js, client.css and nostr-tools against one relay and one Blossom serv
 the real server: a DELETE drops one reference, the bytes go with the last one.
 
   A-shares           A picks two songs, types B's npub into the share dialog and presses Share.
-  B-sees             B's "Shared with me" lists it, from A, with both songs.
+  B-sees             B is OFFERED it under "Shared with me" — Accept / Reject, nothing else.
+  B-accepts          Accepting makes it an ordinary playlist chip; rejecting makes it stay gone.
   B-plays            B presses play; the bytes are fetched, decrypted and DECODED as audio.
-  B-adds             "Add 2 to my library" — B's server now counts B as an owner of those bytes.
+  B-adds             "Keep 2" — B's server now counts B as an owner of those bytes.
   C-blind            C (a stranger) sees nothing, and cannot decrypt A's document to B even when
                      handed the ciphertext.
   A-revokes          "Stop sharing" in "Shared by me".
@@ -23,6 +24,7 @@ the real server: a DELETE drops one reference, the bytes go with the last one.
                      the day it is added) and every button the share views draw must NOT render as the
                      browser's default button, at phone and desktop width.
   overflow           the share views push the page sideways at 390px.
+  bleed              a label is drawn outside its own button (reported on the APK at phone width).
 
 Exit 0 = clean, 1 = problems, 2 = could not run (no Chrome / no websockets).
 """
@@ -315,7 +317,21 @@ AUDIT = r"""(() => {
     if(cs.backgroundColor === ua.bg && cs.borderTopStyle === ua.border)
       bad.push((b.className || b.id || b.tagName) + ' bg=' + cs.backgroundColor + ' border=' + cs.borderTopStyle);
   }
-  return { bad, ua, overflow: document.documentElement.scrollWidth - window.innerWidth,
+  /* TEXT LEAVING ITS BUTTON — the report was "the text on the two buttons are bleeding out the
+     button", which is not page overflow (the button keeps its size, the words simply draw past it)
+     and not a grey button. Measured against the CONTENTS' own rectangle rather than scrollWidth,
+     because an `overflow:visible` box reports nothing unusual for the one thing being asked about. */
+  const bleed = [];
+  for(const b of document.querySelectorAll('#feed button, #probe button')){
+    if(b.offsetParent === null || !b.textContent.trim()) continue;
+    const range = document.createRange(); range.selectNodeContents(b);
+    const t = range.getBoundingClientRect(), r = b.getBoundingClientRect();
+    range.detach && range.detach();
+    if(!t.width) continue;
+    const over = Math.max(r.left - t.left, t.right - r.right);
+    if(over > 1) bleed.push((b.id || b.className || b.tagName) + ' by ' + Math.round(over) + 'px: ' + b.textContent.trim().slice(0, 40));
+  }
+  return { bad, bleed, ua, overflow: document.documentElement.scrollWidth - window.innerWidth,
            rows: document.querySelectorAll('#probe .track button').length };
 })()"""
 
@@ -385,18 +401,39 @@ async def drive(base, problems):
             if not wire or "Road trip" in wire or "Sunrise" in wire:
                 problems.append("C-blind: the share document is readable on the wire")
 
-            # ---- B sees it and plays it ----
+            # ---- B is OFFERED it, accepts, and it becomes a playlist ----
+            # "Shared with me" is the decision; what survives it is an ordinary playlist chip.
             await B.js("PCMusicShare.renderIn(document.getElementById('feed'), window.__ctx); true")
-            if not await B.until("document.querySelector('.msh-card') && /Road trip/.test(document.querySelector('.msh-card').textContent)"
-                                 " && /Alice/.test(document.querySelector('.msh-card').textContent)"):
-                problems.append("B-sees: 'Road trip' from Alice is not under Shared with me")
+            if not await B.until("document.querySelector('.msh-offer') && /Road trip/.test(document.querySelector('.msh-offer').textContent)"
+                                 " && /Alice/.test(document.querySelector('.msh-offer').textContent)"):
+                problems.append("B-sees: 'Road trip' from Alice is not offered under Shared with me")
+                return 1
+            if not await B.js("!!document.querySelector('.msh-yes') && !!document.querySelector('.msh-no')"):
+                problems.append("B-sees: the offer has no Accept / Reject")
                 return 1
             bar = await B.js("PCMusicShare.barHTML('', false)")
             if "Shared with me" not in bar or 'ma-pln">1<' not in bar or "ma-plshare" not in bar:
-                problems.append("B-sees: the Music chip bar does not announce the share: " + bar[:300])
-            await B.js("document.querySelector('.msh-card').click(); true")
+                problems.append("B-sees: the chip bar does not count the waiting share: " + bar[:300])
+            if "Road trip" in bar:
+                problems.append("B-sees: an UNANSWERED share is already a playlist chip")
+            await B.js("document.querySelector('.msh-yes').click(); true")
             if not await B.until("document.querySelectorAll('.msh-track').length === 2"):
-                problems.append("B-sees: the share did not open to its two songs")
+                problems.append("B-accepts: accepting did not open the playlist with its two songs")
+                return 1
+            bar = await B.js("PCMusicShare.barHTML('', false)")
+            if "Road trip" not in bar or 'ma-pln">2<' not in bar:
+                problems.append("B-accepts: the accepted share is not a playlist chip: " + bar[:300])
+            if 'ma-pln">1<' in bar.split("Shared with me")[-1][:60]:
+                problems.append("B-accepts: 'Shared with me' still counts a share that was answered")
+            # …and the rejected one stays gone, which is what makes "no" mean no.
+            key = await B.js("(PCMusicShare.acceptedShares()[0]||{}).key||''")
+            await B.js(f"PCMusicShare.decide({json.dumps(key)}, false); true")
+            if await B.js("PCMusicShare.acceptedShares().length") != 0 or await B.js("PCMusicShare.pendingShares().length") != 0:
+                problems.append("B-rejects: a rejected share did not stay rejected")
+            await B.js(f"PCMusicShare.decide({json.dumps(key)}, true); true")
+            await B.js("PCMusicShare.renderShared(" + json.dumps(key) + ", document.getElementById('feed'), window.__ctx); true")
+            if not await B.until("document.querySelectorAll('.msh-track').length === 2"):
+                problems.append("B-accepts: the playlist did not redraw after re-accepting")
                 return 1
             await B.js("document.querySelector('.msh-track .track-play').click(); true")
             if not await B.until("window.__played"):
@@ -423,11 +460,26 @@ async def drive(base, problems):
                     problems.append(f"grey-buttons @{w}px: renders as the browser's default button: {b}")
                 if r["overflow"] > 1:
                     problems.append(f"overflow @{w}px: the shared view is {r['overflow']}px wider than the screen")
+                if r.get("bleed"):
+                    problems.append(f"bleed @{w}px: text is drawn outside its own button — " + "; ".join(r["bleed"][:3]))
+            # AND THE BLEED DETECTOR PROVES IT CAN FAIL. With the labels shortened ("Shuffle", not
+            # "Shuffle playlist"; "Keep 2", not "Add 2 to my library") nothing on screen overflows
+            # any more, so a silent detector and a working one look identical. This plants exactly
+            # what was reported - a long label in a narrow button that may not wrap - and requires
+            # it to be caught, then takes it away again.
+            await B.js("document.getElementById('probe').insertAdjacentHTML('beforeend',"
+                       "'<div class=\"music-head\"><div class=\"music-head-primary\">"
+                       "<button class=\"btn btn-ghost small\" id=\"bleedprobe\" style=\"white-space:nowrap;width:70px\">"
+                       "Add 2 to my library</button></div></div>'); true")
+            probe = await B.js(AUDIT)
+            if not any("bleedprobe" in b for b in probe.get("bleed", [])):
+                problems.append("the bleed detector did not catch a label drawn outside its own button")
+            await B.js("document.getElementById('bleedprobe').closest('.music-head').remove(); true")
             await B.js("document.getElementById('probe').remove(); true")
 
             # ---- B adds both to the library ----
             await B.js("document.getElementById('msh-addall').click(); true")
-            if not await B.until("window.__toasts.some(t => /^added 2 songs/.test(t))", 30):
+            if not await B.until("window.__toasts.some(t => /^kept 2 songs/.test(t))", 30):
                 problems.append("B-adds: no 'added 2 songs' — " + json.dumps(await B.js("window.__toasts")))
                 return 1
             added = await B.js("[...__lib.keys()]")
