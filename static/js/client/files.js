@@ -1500,6 +1500,17 @@ window.PCFilesFactory = function(dep){
    * same: it is a network write that other people's machines will act on, so it says what it did, it
    * drops the cached manifest (the view must never redraw from the copy it just invalidated) and it
    * asks for the folder counts again, since the number beside the folder is now wrong. */
+  /* Every folder a synced folder's manifest implies, sorted -- a manifest has no folders of its own,
+   * only paths, so a folder exists exactly while something live is inside it. */
+  function _syncFolderList(paths){
+    const out = new Set();
+    for(const p in (paths || {})){
+      const e = paths[p]; if(!e || e.deletedAt) continue;
+      const parts = p.split('/'); parts.pop();
+      for(let i = 1; i <= parts.length; i++) out.add(parts.slice(0, i).join('/'));
+    }
+    return [...out].sort((a, b) => a.localeCompare(b));
+  }
   async function _syncEdit(what, run){
     const key = _S._syncRoot;
     try{
@@ -1753,6 +1764,7 @@ window.PCFilesFactory = function(dep){
         <button class="btn btn-ghost small" id="ss-all" aria-pressed="${_ssAll?'true':'false'}">${_ssAll?'\u2611 Deselect all':'\u2610 Select all'}${fileItems.length?' ('+fileItems.length+')':''}</button>
         <button class="btn btn-ghost small" id="ss-none"${_syncSel.size?'':' disabled'}><svg class="ic b-ic" aria-hidden="true"><use href="#i-close"></use></svg>Select none</button>
         <span class="muted small" id="ss-count" style="margin:0 4px">${_syncSel.size?_syncSel.size+' selected':'none selected'}</span>
+        <button class="btn btn-ghost small" id="ss-move"${_syncSel.size ? '' : ' disabled'} aria-haspopup="menu"><svg class="ic b-ic" aria-hidden="true"><use href="#i-folder"></use></svg>Move to…</button>
         <button class="btn btn-neon small" id="ss-del"${_syncSel.size ? '' : ' disabled'} style="color:var(--danger)"><svg class="ic b-ic" aria-hidden="true"><use href="#i-trash"></use></svg>Delete on every device</button>
       </div>` : '';
     const trashbar = _inTrash ? `<div class="sync-selbar">
@@ -1801,6 +1813,7 @@ window.PCFilesFactory = function(dep){
       _syncSelOn = _syncSel.size > 0;
       const c = $('#ss-count', grid); if(c) c.textContent = _syncSel.size ? _syncSel.size + ' selected' : 'none selected';
       const d2 = $('#ss-del', grid); if(d2) d2.disabled = !_syncSel.size;
+      const m2 = $('#ss-move', grid); if(m2) m2.disabled = !_syncSel.size;
       const n2 = $('#ss-none', grid); if(n2) n2.disabled = !_syncSel.size;
       const a2 = $('#ss-all', grid); if(a2){
         const every = !!fileItems.length && fileItems.every(it => _syncSel.has(it.path));
@@ -1857,6 +1870,37 @@ window.PCFilesFactory = function(dep){
           toast('nothing was deleted: ' + ((e && e.message) || e));
         }
       };
+      /* MOVE TO… — every folder of this synced folder, from the manifest already on screen, plus a
+       * new one. A move is a rename of the paths, so it is one write and every device carries it out
+       * on its next sweep; nothing is downloaded or uploaded. */
+      const mv = $('#ss-move', grid);
+      if(mv) mv.onclick = () => {
+        const moving = [..._syncSel];
+        if(!moving.length) return;
+        const folders = _syncFolderList(paths).filter(d => !moving.some(m => d === m || d.startsWith(m + '/')));
+        const here = _S._syncPath || '';
+        const opts = [['\u0000', '\u2302 ' + _S._syncRoot + ' (top level)']]
+          .concat(folders.map(d => [d, '\ud83d\udcc1 ' + d]))
+          .concat([['\u0001', '\u2795 New folder\u2026']]);
+        openMenuPopover(mv, opts, async (v) => {
+          let dir = v === '\u0000' ? '' : v;
+          if(v === '\u0001'){
+            const typed = await uiPrompt('Name of the new folder (use / for a subfolder)',
+                                         { value: here ? here + '/' : '', ok:'Move here' });
+            if(typed === null) return;
+            dir = String(typed).trim().replace(/^\/+|\/+$/g, '');
+            if(!dir){ toast('type a folder name'); return; }
+          }
+          mv.disabled = true;
+          try{
+            await _syncEdit('move', () => PCSync.edit.move(_S._syncRoot, moving, dir));
+            toast('moved ' + moving.length + ' file' + (moving.length === 1 ? '' : 's') + ' to '
+                  + (dir || _S._syncRoot) + ' \u2014 every device applies it on its next sweep');
+            _syncSel.clear(); _syncSelOn = false;
+            renderBlossom();
+          }catch(_){ mv.disabled = false; }
+        });
+      };
       if(_syncSelOn){
         // Row click toggles the tick instead of downloading; the tick lives on the row class.
         const rowsOf = (path) => $$('.dlsync', grid).filter(b => b.dataset.path === path)
@@ -1868,6 +1912,7 @@ window.PCFilesFactory = function(dep){
           });
           const c = $('#ss-count', grid); if(c) c.textContent = _syncSel.size + ' selected';
           const d = $('#ss-del', grid); if(d) d.disabled = !_syncSel.size;
+          const m = $('#ss-move', grid); if(m) m.disabled = !_syncSel.size;
         };
         $$('.dlsync', grid).forEach(b => {
           const row = b.closest('.file-card, .fx-row');
@@ -2241,6 +2286,7 @@ window.PCFilesFactory = function(dep){
       openable: () => true,
       openFile: _openHostFile,
       toast, prompt: uiPrompt, confirm: uiConfirm,
+      menu: openMenuPopover, copy: copyValue,
     });
   }
 

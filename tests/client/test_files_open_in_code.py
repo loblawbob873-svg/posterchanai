@@ -670,9 +670,9 @@ class DesktopCodeOpensProjects(unittest.TestCase):
         self.assertIn("id=\"pcc-open-folder\"", code)
         self.assertIn("h.pickDirectory()", code)
         self.assertIn("if(S.hostRoot) return openHostFile({path})", code)
-        self.assertIn("pickDirectory: () => ipcRenderer.invoke('pc:host:pickDirectory')", preload)
+        self.assertRegex(preload, r"pickDirectory: \(opts\) => ipcRenderer\.invoke\('pc:host:pickDirectory'")
         self.assertIn("ipcMain.handle('pc:host:pickDirectory'", main)
-        self.assertIn("properties: ['openDirectory']", main)
+        self.assertRegex(main, r"properties: \['openDirectory'")
 
 
 if __name__ == "__main__":

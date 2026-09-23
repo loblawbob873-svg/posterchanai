@@ -621,7 +621,7 @@ if (isOurPage) {
       ipcRenderer.on('pc:host:notification-click', h);
       return () => ipcRenderer.removeListener('pc:host:notification-click', h);
     },
-    pickDirectory: () => ipcRenderer.invoke('pc:host:pickDirectory'),
+    pickDirectory: (opts) => ipcRenderer.invoke('pc:host:pickDirectory', opts && typeof opts === 'object' ? opts : {}),
     pickFile: (opts) => ipcRenderer.invoke('pc:host:pickFile', opts || {}).then((r) => r && ({
       name:String(r.name||'file'), type:String(r.type||'application/octet-stream'), size:Number(r.size)||0,
       path:String(r.path||''), mtime:Number(r.mtime)||0, data:new Uint8Array(r.data)

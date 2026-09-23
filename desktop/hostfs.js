@@ -145,6 +145,18 @@ function freeName(dir, name, exists) {
   throw new Error('nowhere to put it');
 }
 
+/* "report (copy).pdf", then "report (copy 2).pdf". A dotfile keeps its dot at the front. */
+function copyName(dir, name, exists) {
+  const has = exists || ((p) => { try { fs.lstatSync(p); return true; } catch (_) { return false; } });
+  const ext = name.startsWith('.') && name.indexOf('.', 1) < 0 ? '' : path.extname(name);
+  const stem = name.slice(0, name.length - ext.length);
+  for (let i = 1; i < 10000; i++) {
+    const n = stem + (i === 1 ? ' (copy)' : ' (copy ' + i + ')') + ext;
+    if (!has(path.join(dir, n))) return n;
+  }
+  throw new Error('nowhere to put it');
+}
+
 function trashDir(env) {
   const e = env || process.env;
   const base = e.XDG_DATA_HOME || path.join(e.HOME || os.homedir(), '.local', 'share');
@@ -224,7 +236,12 @@ function transfer(items, destination, move) {
   if (!sources.length) throw new Error('nothing selected');
   const planned = sources.map(from => {
     fs.lstatSync(from);
-    const to = path.join(dest, path.basename(from));
+    /* COPY INTO THE SAME FOLDER IS A DUPLICATE, the way every file manager does it. It used to be
+     * refused as a collision with itself ("there is already something called report.pdf"), so
+     * Copy followed by Paste in the folder you were in simply did not work. A MOVE there is still
+     * refused below: it would be a no-op wearing a success message. */
+    const here = !move && path.dirname(from) === dest;
+    const to = path.join(dest, here ? copyName(dest, path.basename(from)) : path.basename(from));
     if (to === from) throw new Error('source and destination are the same');
     if (dest === from || dest.startsWith(from + path.sep))
       throw new Error('a folder cannot be copied inside itself');
@@ -453,6 +470,6 @@ async function gitAction(root,action,paths,message){
   return {ok:true};
 }
 
-module.exports = { list, roots, search, trash, mkdir, rename, transfer, open, clean, parentOf, shape,
+module.exports = { list, roots, search, trash, mkdir, rename, transfer, copyName, open, clean, parentOf, shape,
   readText, writeText, writeBytes, gitStatus, gitDiff, gitAction,
                    trashInfo, freeName, trashDir };

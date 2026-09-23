@@ -1704,6 +1704,42 @@
             throw new Error('“' + d + '” was created on another device a moment ago — nothing was changed');
       });
     },
+    /* MOVE A SELECTION INTO ANOTHER FOLDER of the same synced folder -- `rename` for many paths at
+     * once, in ONE write, with every one of rename's refusals: nothing lands on a live path, nothing
+     * goes inside a file or inside itself, and the merge-time check runs on the final read. `dir` is
+     * the destination folder relative to the synced folder's root; '' is the root itself. */
+    async move(key, froms, dir){
+      const into = String(dir || '').replace(/^\/+|\/+$/g, '');
+      if(into && RESERVED.test(into)) throw new Error('that name is reserved by folder sync');
+      const want = Array.from(new Set((froms || []).map(String).filter(Boolean)));
+      if(!want.length) throw new Error('nothing selected');
+      let dests = [];
+      return _mutate(key, api => {
+        dests = [];
+        for(const from of want){
+          const list = _liveUnder(api.paths, from);
+          if(!list.length) throw new Error('“' + from + '” is not in this folder any more');
+          const to = (into ? into + '/' : '') + from.split('/').pop();
+          if(to === from) continue;                                   // already there
+          if(into === from || into.indexOf(from + '/') === 0)
+            throw new Error('a folder cannot be moved inside itself');
+          const blocked = _blockedBy(api.paths, to);
+          if(blocked) throw new Error(blocked);
+          for(const p of list){
+            const dest = to + p.slice(from.length);
+            if(api.paths[dest] && !api.paths[dest].deletedAt) throw new Error('“' + dest + '” already exists');
+            api.put(dest, Object.assign({}, api.paths[p], { device: deviceName() }));
+            api.drop(p);
+            dests.push(dest);
+          }
+        }
+        if(!dests.length) throw new Error('they are already in that folder');
+      }, fresh => {
+        for(const d of dests)
+          if(fresh[d] && !fresh[d].deletedAt)
+            throw new Error('“' + d + '” was created on another device a moment ago — nothing was changed');
+      });
+    },
     /* PUT FILES INTO A SYNCED FOLDER FROM HERE, with the manifest written every CHECKPOINT of them
      * rather than every one.
      *

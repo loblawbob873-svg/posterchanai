@@ -172,6 +172,27 @@ class HostFs(unittest.TestCase):
         self.assertNotIn("overwrote", out)
         self.assertIn("already", out["why"])
 
+    def test_copy_then_paste_in_the_same_folder_makes_a_numbered_duplicate(self):
+        """Copy + Paste where you are is how a file manager duplicates a file. It was refused as a
+        collision with itself ("there is already something called notes.txt")."""
+        open(os.path.join(self.d, "notes.txt"), "w").write("original")
+        os.mkdir(os.path.join(self.d, "album"))
+        open(os.path.join(self.d, ".bashrc"), "w").write("rc")
+        out = self.js("""
+          out.a = H.transfer([D + '/notes.txt'], D, false).items[0].to;
+          out.b = H.transfer([D + '/notes.txt'], D, false).items[0].to;
+          out.dir = H.transfer([D + '/album'], D, false).items[0].to;
+          out.dot = H.transfer([D + '/.bashrc'], D, false).items[0].to;
+          try { H.transfer([D + '/notes.txt'], D, true); out.moved = true; } catch (e) { out.why = e.message; }
+        """)
+        self.assertEqual(out["a"], os.path.join(self.d, "notes (copy).txt"))
+        self.assertEqual(out["b"], os.path.join(self.d, "notes (copy 2).txt"))
+        self.assertEqual(out["dir"], os.path.join(self.d, "album (copy)"))
+        self.assertEqual(out["dot"], os.path.join(self.d, ".bashrc (copy)"))
+        self.assertEqual(open(os.path.join(self.d, "notes (copy 2).txt")).read(), "original")
+        self.assertEqual(open(os.path.join(self.d, "notes.txt")).read(), "original")
+        self.assertNotIn("moved", out, "a move into its own folder must not report success")
+
     def test_a_folder_cannot_be_pasted_inside_itself(self):
         os.mkdir(os.path.join(self.d, "tree"))
         os.mkdir(os.path.join(self.d, "tree", "child"))

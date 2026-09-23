@@ -4,6 +4,9 @@
 
 # Poster-chan AI
 
+<a href="https://poster.place"><img src="docs/promo/posterchan-client.webp" alt="PosterChan — more than a Nostr client: full Desktop or Classic view, encrypted drive and folder sync, password manager, Notes over Nostr, calendar and contacts, Monero and Lightning zaps, calls, mini-app games, Android phone mode" width="49%" /></a>
+<a href="#quick-start-backend-and-web-ui"><img src="docs/promo/posterchan-selfhost.webp" alt="Run your own node — relay, Blossom and NIP-05; Jellyfin-compatible media server; Git over Nostr; virtual machines; local AI; office suite; live streaming; PosterChanOS" width="49%" /></a>
+
 ### A Nostr-powered personal cloud, Jellyfin-compatible media server, and self-hosted AI powerhouse — on your hardware, under your keys.
 
 **Replace the cloud, then put a GPU behind it.** Your notes, calendar, contacts, addressbook, files, photos, passwords, bookmarks, mail, music and folder sync — all of it living as **encrypted Nostr events on a relay you run**, reachable from a web client, a desktop app, an Android app, and from any CalDAV/CardDAV phone client you already own. No account with anybody, no per-seat billing, no vendor holding the keys.

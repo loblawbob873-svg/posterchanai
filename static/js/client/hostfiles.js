@@ -107,8 +107,60 @@
          + 'them back from any file manager on it.';
   }
 
+  const cssEsc = (v) => (typeof CSS !== 'undefined' && CSS.escape) ? CSS.escape(v) : String(v).replace(/["\\]/g, '\\$&');
+  /* What the clipboard holds, in words, on the button that will act on it. */
+  function pasteLabel(clip){
+    const n = (clip && clip.paths || []).length;
+    return (clip && clip.move ? 'Move ' : 'Paste ') + (n === 1 ? '1 item' : n + ' items') + ' here';
+  }
+  function clipNote(clip){
+    const n = (clip && clip.paths || []).length;
+    return (n === 1 ? '1 item' : n + ' items') + (clip && clip.move ? ' cut' : ' copied')
+         + ' — open a folder and paste (Ctrl+V)';
+  }
+  function doneNote(n, move, dest){
+    const leaf = String(dest || '').split(/[\\/]/).filter(Boolean).pop() || String(dest || '/');
+    return (move ? 'moved ' : 'copied ') + (n === 1 ? '1 item' : n + ' items') + ' to ' + leaf;
+  }
+
+  /* THE KEYBOARD, the way every file manager has it. One listener for the page, acting on the pane
+   * this module drew last -- and only while that pane is on screen, nothing editable has the caret,
+   * no menu or dialog is up, and (on the desktop) its window is the focused one. Ctrl+C in a note
+   * must copy text, not files. */
+  function _editable(t){
+    return !!(t && (t.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(t.tagName || '')));
+  }
+  function _onKey(e){
+    const pane = _pane, a = _act;
+    if(!pane || !a || !pane.isConnected || e.defaultPrevented) return;
+    if(_editable(e.target) || _editable(document.activeElement)) return;
+    if(!pane.getClientRects().length) return;                       // hidden: another view is up
+    const win = pane.closest && pane.closest('.osw');
+    if(win && !win.classList.contains('focused')) return;
+    if(document.querySelector('.menu-pop, .modal-bg, .ui-dialog')) return;
+    const k = String(e.key || '').toLowerCase(), mod = e.ctrlKey || e.metaKey;
+    let run = null;
+    if(mod && !e.shiftKey && !e.altKey){
+      if(k === 'c') run = a.copy; else if(k === 'x') run = a.cut;
+      else if(k === 'v') run = _clipboard ? () => a.paste() : null;
+      else if(k === 'a') run = a.selectAll;
+    } else if(!mod && !e.altKey){
+      if(k === 'delete') run = _sel.size ? a.trash : null;
+      else if(k === 'f2') run = _sel.size === 1 ? a.rename : null;
+      else if(k === 'escape') run = (_sel.size || _clipboard) ? a.clear : null;
+    }
+    if(!run) return;
+    e.preventDefault();
+    run();
+  }
+  function _bindKeys(){
+    if(_keysBound || typeof document === 'undefined' || !document.addEventListener) return;
+    _keysBound = true;
+    document.addEventListener('keydown', _onKey);
+  }
+
   const API = { available, keyOf, order, crumbs, parentPath, pretty, deletePrompt, extOf, barCrumbs,
-                allSelected, H };
+                allSelected, pasteLabel, clipNote, doneNote, H };
 
   /* ── the visible half ────────────────────────────────────────────────────────────────────────
    *
@@ -117,6 +169,9 @@
    * is how a module ends up depending on a private name that gets renamed.
    */
   let _path = '', _sel = new Set(), _hidden = false, _home = '', _clipboard = null;
+  /* The pane last drawn and the actions it offers, for the keyboard. One listener for the life of
+   * the page (see _onKey) acting on whatever this module most recently rendered. */
+  let _pane = null, _act = null, _keysBound = false;
 
   const state = () => ({ path: _path, hidden: _hidden });
   const at = () => _path;
@@ -288,25 +343,23 @@
     if(q) rows = rows.filter(e => String(e.name || '').toLowerCase().includes(q));
 
     const bar = u.bar ? u.bar(barCrumbs(_path, _home)) : '';
+    const everySelected = allSelected(rows, _sel);
     const oneSelected = _sel.size === 1
       ? rows.find(e => e.path === [..._sel][0] && !e.dir) : null;
-    const everySelected=allSelected(rows,_sel);
     pane.innerHTML = bar
       + `<div class="fx-actions">
            <button class="btn btn-ghost small hf-up"${listing.parent ? '' : ' disabled'}>Up</button>
            <button class="btn btn-ghost small hf-new">New folder</button>
            <button class="btn btn-ghost small hf-all" aria-pressed="${everySelected?'true':'false'}">${everySelected?'Deselect all':'Select all'}${rows.length ? ' (' + rows.length + ')' : ''}</button>
            <button class="btn btn-ghost small hf-none"${_sel.size ? '' : ' disabled'}>Select none</button>
-           ${_clipboard ? `<button class="btn btn-cyan small hf-paste">${_clipboard.move ? 'Move' : 'Paste'} here</button>` : ''}
-           <button class="btn btn-ghost small hf-hidden">${_hidden ? 'Hide dotfiles' : 'Show dotfiles'}</button>
+           <button class="btn btn-ghost small hf-more" aria-label="More" title="Show or hide dotfiles">⋯</button>
+           ${_clipboard ? `<button class="btn btn-cyan small hf-paste">${pasteLabel(_clipboard)}</button>
+             <button class="btn btn-ghost small hf-unclip" aria-label="Cancel" title="Forget what was cut or copied">✕</button>` : ''}
            <span class="spacer"></span>
            ${_sel.size ? `<span class="muted small">${_sel.size} selected</span>
              ${oneSelected && typeof u.shareFile === 'function'
                ? '<button class="btn btn-cyan small hf-share">Save to Files</button>' : ''}
-             <button class="btn btn-ghost small hf-copy">Copy</button>
-             <button class="btn btn-ghost small hf-cut">Cut</button>
-             <button class="btn btn-ghost small hf-rename"${_sel.size === 1 ? '' : ' disabled'}>Rename</button>
-             <button class="btn btn-ghost small hf-del">Move to trash</button>` : ''}
+             <button class="btn btn-ghost small hf-acts" aria-haspopup="menu">Actions ▾</button>` : ''}
          </div>
          <div class="files-grid${details ? ' details' : ''}" id="hf-grid">${
            q && !rows.length
@@ -324,31 +377,159 @@
     if(details && u.bindCols && grid) u.bindCols(grid);
 
     if(listing.parent){ const up = $('.hf-up'); if(up) up.onclick = () => { enter(listing.parent); again(); }; }
-    { const allBtn=$('.hf-all'); if(allBtn) allBtn.onclick = () => {
-        const paths=rows.map(r=>r.path), all=allSelected(rows,_sel);
-        if(all) paths.forEach(p=>_sel.delete(p)); else paths.forEach(p=>_sel.add(p));
+    const byPath = new Map(rows.map(r => [r.path, r]));
+    const say = (e) => u.toast(String((e && e.message) || e));
+    const chosen = () => [..._sel].map(x => byPath.get(x)).filter(Boolean);
+
+    /* EVERY FILE OPERATION, ONCE. The toolbar, the right-click menu and the keyboard all call these,
+     * so the three cannot drift into three slightly different ideas of what "paste" does. They used
+     * to exist only as toolbar buttons that appeared AFTER a selection, which needs Ctrl+click or
+     * the small tick box -- reported as "I don't see move for My Computer files", about a Cut and a
+     * Paste that were there all along and could not be found. */
+    const act = {
+      cut: () => remember(true),
+      copy: () => remember(false),
+      paste: (into) => pasteInto(into || _path),
+      moveTo: () => sendTo(true),
+      copyTo: () => sendTo(false),
+      newFolder: async () => {
+        let name = '';
+        try{ name = await u.prompt('Name for the new folder', { ok: 'Create' }); }catch(_){ return; }
+        if(!name) return;
+        try{ await HOST().mkdir(_path, name); }catch(e){ say(e); }
+        again();
+      },
+      selectAll: () => { rows.forEach(r => _sel.add(r.path)); again(); },
+      clear: () => {
+        if(_sel.size){ _sel = new Set(); again(); return true; }
+        if(_clipboard){ _clipboard = null; again(); return true; }
+        return false;
+      },
+      rename: async () => {
+        if(_sel.size !== 1) return;
+        const r = byPath.get([..._sel][0]); if(!r) return;
+        let to = '';
+        try{ to = await u.prompt('Rename “' + r.name + '”', { value: r.name, ok: 'Rename' }); }
+        catch(_){ return; }
+        if(!to || to === r.name) return;
+        try{ await HOST().rename(r.path, to); }
+        catch(e){ say(e); }
+        _sel = new Set();
+        again();
+      },
+      trash: async () => {
+        const list = chosen(); if(!list.length) return;
+        let ok = false;
+        try{ ok = await u.confirm(deletePrompt(list), { ok: 'Move to trash', danger: true }); }
+        catch(_){ ok = false; }
+        if(!ok) return;
+        for(const r of list){
+          try{ await HOST().trash(r.path); }
+          catch(e){ u.toast(r.name + ': ' + String((e && e.message) || e)); }
+        }
+        _sel = new Set();
+        again();
+      },
+      copyPath: async () => {
+        const list = chosen(); if(!list.length) return;
+        const text = list.map(r => r.path).join('\n');
+        if(typeof u.copy === 'function') return u.copy(text, list.length === 1 ? 'path copied' : 'paths copied');
+        try{ await navigator.clipboard.writeText(text); u.toast('path copied'); }catch(e){ say(e); }
+      },
+    };
+    function remember(move){
+      if(!_sel.size) return;
+      _clipboard = { paths: [..._sel], move: !!move };
+      _sel = new Set();
+      u.toast(clipNote(_clipboard));
+      again();
+    }
+    async function pasteInto(dest){
+      if(!_clipboard) return;
+      const clip = _clipboard;
+      try{
+        await HOST().transfer(clip.paths, dest, clip.move);
+        /* A CUT IS SPENT BY ITS PASTE; A COPY IS NOT. The copied files are still where they were,
+         * so pasting them into a second folder is a perfectly ordinary thing to do. */
+        if(clip.move) _clipboard = null;
+        u.toast(doneNote(clip.paths.length, clip.move, dest));
+      }catch(e){ say(e); }
+      again();
+    }
+    /* MOVE TO… / COPY TO… pick the destination in the machine's own folder chooser, so moving a
+     * file somewhere does not mean first finding that folder in this pane. A build without the
+     * chooser falls back to the clipboard, which gets there in two steps instead of one. */
+    async function sendTo(move){
+      const list = chosen(); if(!list.length) return;
+      const h = HOST();
+      if(!h.pickDirectory){
+        remember(move);
+        u.toast('Open the folder they should go to, then press Paste');
+        return;
+      }
+      let dest = null;
+      try{ dest = await h.pickDirectory({ title: move ? 'Move to…' : 'Copy to…', defaultPath: _path }); }
+      catch(e){ say(e); return; }
+      if(!dest) return;
+      try{
+        await h.transfer(list.map(r => r.path), dest, move);
+        u.toast(doneNote(list.length, move, dest));
+        _sel = new Set();
+      }catch(e){ say(e); }
+      again();
+    }
+    _pane = pane; _act = act;
+    _bindKeys();
+
+    const pick = (m) => { const f = act[m] || (m === 'open' && menuOpen) || (m === 'pasteInto' && menuPasteInto)
+                                 || (m === 'selectNone' && (() => { _sel = new Set(); again(); }))
+                                 || (m === 'dotfiles' && (() => { _hidden = !_hidden; again(); })); if(f) f(); };
+    /* THE ONE LIST OF THINGS YOU CAN DO TO A SELECTION, shown by right-click and by Actions ▾ alike. */
+    const itemsFor = (one) => [
+      ...(one ? [['open', 'Open']] : []),
+      ['cut', 'Cut'], ['copy', 'Copy'],
+      ...(one && one.dir && _clipboard ? [['pasteInto', 'Paste into “' + one.name + '”']] : []),
+      ['moveTo', 'Move to…'], ['copyTo', 'Copy to…'],
+      ...(one ? [['rename', 'Rename']] : []),
+      ['copyPath', one ? 'Copy path' : 'Copy paths'],
+      ['trash', 'Move to trash', 'danger'],
+    ];
+    { const more = $('.hf-more'); if(more) more.onclick = () => {
+        if(typeof u.menu !== 'function') return;
+        u.menu(more, [['dotfiles', _hidden ? 'Hide dotfiles' : 'Show dotfiles']], pick);
+      }; }
+    { const allBtn = $('.hf-all'); if(allBtn) allBtn.onclick = () => {
+        const paths = rows.map(r => r.path);
+        if(allSelected(rows, _sel)) paths.forEach(p => _sel.delete(p)); else paths.forEach(p => _sel.add(p));
         again();
       }; }
-    { const noneBtn=$('.hf-none'); if(noneBtn) noneBtn.onclick = () => { _sel = new Set(); again(); }; }
-    { const hiddenBtn=$('.hf-hidden'); if(hiddenBtn) hiddenBtn.onclick = () => { _hidden = !_hidden; again(); }; }
+    { const noneBtn = $('.hf-none'); if(noneBtn) noneBtn.onclick = () => { _sel = new Set(); again(); }; }
     const paste = $('.hf-paste');
-    if(paste) paste.onclick = async () => {
-      paste.disabled = true;
-      try{
-        await HOST().transfer(_clipboard.paths, _path, _clipboard.move);
-        _clipboard = null;
-      }catch(e){ u.toast(String((e && e.message) || e)); }
-      again();
-    };
-    $('.hf-new').onclick = async () => {
-      let name = '';
-      try{ name = await u.prompt('Name for the new folder', { ok: 'Create' }); }catch(_){ return; }
-      if(!name) return;
-      try{ await HOST().mkdir(_path, name); }catch(e){ u.toast(String((e && e.message) || e)); }
-      again();
-    };
+    if(paste) paste.onclick = () => { paste.disabled = true; act.paste(); };
+    { const unclip = $('.hf-unclip'); if(unclip) unclip.onclick = () => { _clipboard = null; again(); }; }
+    $('.hf-new').onclick = act.newFolder;
 
-    const byPath = new Map(rows.map(r => [r.path, r]));
+    /* RIGHT-CLICK IS A MENU, as it is in every file manager. It used to toggle the selection, which
+     * nobody expects and which left the operations with no second way in. */
+    const menuAt = (ev, items) => {
+      if(typeof u.menu !== 'function' || !items.length) return false;
+      const a = document.createElement('span');
+      a.style.cssText = 'position:fixed;width:1px;height:1px;left:' + ev.clientX + 'px;top:' + ev.clientY + 'px';
+      document.documentElement.appendChild(a);
+      try{ u.menu(a, items, pick); }
+      finally{ a.remove(); }
+      return true;
+    };
+    let menuOpen = null, menuPasteInto = null;
+    if(grid) grid.oncontextmenu = (ev) => {
+      if(ev.target.closest && ev.target.closest('.file-card[data-p]')) return;
+      ev.preventDefault();
+      menuAt(ev, [
+        ...(_clipboard ? [['paste', pasteLabel(_clipboard)]] : []),
+        ['newFolder', 'New folder'],
+        ['selectAll', 'Select all'],
+      ]);
+    };
     $$('#hf-grid .file-card[data-p]').forEach(el => {
       const p = el.dataset.p;
       const select = el.querySelector('.hf-select');
@@ -387,46 +568,75 @@
       };
       el.oncontextmenu = (ev) => {
         ev.preventDefault();
-        if(_sel.has(p)) _sel.delete(p); else _sel.add(p);
-        again();
+        /* The menu acts on the SELECTION, so a right-click on something outside it makes it the
+         * selection first -- the way every file manager behaves, and the only reading under which
+         * "Cut" in that menu cannot surprise you by cutting three other files. */
+        if(!_sel.has(p)){ _sel = new Set([p]); markSelected(); }
+        menuOpen = () => el.onclick({ ctrlKey:false, metaKey:false, shiftKey:false, preventDefault(){} , _viaMenu:true });
+        menuPasteInto = () => act.paste(p);
+        const shown = menuAt(ev, itemsFor(_sel.size === 1 ? byPath.get(p) : null));
+        if(!shown) again();
       };
+      /* DRAG A FILE ONTO A FOLDER TO MOVE IT; hold Ctrl to copy. Dragging something outside the
+       * selection drags just that thing, so a stray drag never carries files you forgot you had
+       * ticked. */
+      el.draggable = true;
+      el.ondragstart = (ev) => {
+        const paths = _sel.has(p) ? [..._sel] : [p];
+        try{
+          ev.dataTransfer.setData('application/x-pc-host-paths', JSON.stringify(paths));
+          ev.dataTransfer.effectAllowed = 'copyMove';
+        }catch(_){ }
+      };
+      if(el.dataset.d){
+        const carries = (ev) => { try{ return [...ev.dataTransfer.types].includes('application/x-pc-host-paths'); }
+                                  catch(_){ return false; } };
+        el.ondragover = (ev) => {
+          if(!carries(ev)) return;
+          ev.preventDefault();
+          try{ ev.dataTransfer.dropEffect = (ev.ctrlKey || ev.altKey) ? 'copy' : 'move'; }catch(_){ }
+          el.classList.add('drop-target');
+        };
+        el.ondragleave = () => el.classList.remove('drop-target');
+        el.ondrop = async (ev) => {
+          el.classList.remove('drop-target');
+          if(!carries(ev)) return;
+          ev.preventDefault();
+          let paths = [];
+          try{ paths = JSON.parse(ev.dataTransfer.getData('application/x-pc-host-paths')) || []; }catch(_){ }
+          paths = paths.filter(x => x && x !== p);
+          if(!paths.length) return;
+          const move = !(ev.ctrlKey || ev.altKey);
+          try{
+            await HOST().transfer(paths, p, move);
+            u.toast(doneNote(paths.length, move, p));
+            _sel = new Set();
+          }catch(e){ say(e); }
+          again();
+        };
+      }
     });
+    /* A selection drawn in place, for the right-click case: repainting the whole pane under the
+     * pointer would detach the card the menu is about to be anchored beside. */
+    function markSelected(){
+      $$('#hf-grid .file-card[data-p]').forEach(c => c.classList.toggle('selected', _sel.has(c.dataset.p)));
+    }
 
     if(_sel.size){
-      const remember = (move) => { _clipboard = { paths:[..._sel], move:!!move }; _sel = new Set(); again(); };
-      $('.hf-copy').onclick = () => remember(false);
-      $('.hf-cut').onclick = () => remember(true);
+      const actsBtn = $('.hf-acts');
+      if(actsBtn) actsBtn.onclick = () => {
+        const one = _sel.size === 1 ? byPath.get([..._sel][0]) : null;
+        if(one){ const card = pane.querySelector('.file-card[data-p="' + cssEsc(one.path) + '"]');
+                 menuOpen = card ? () => card.onclick({ ctrlKey:false, metaKey:false, shiftKey:false, preventDefault(){} }) : null;
+                 menuPasteInto = () => act.paste(one.path); }
+        if(typeof u.menu === 'function') u.menu(actsBtn, itemsFor(one), pick);
+      };
       const sh = $('.hf-share');
       if(sh && oneSelected) sh.onclick = async () => {
         sh.disabled = true;
         try{ await u.shareFile(oneSelected); }
         catch(e){ u.toast(String((e && e.message) || e)); }
         finally{ sh.disabled = false; }
-      };
-      $('.hf-del').onclick = async () => {
-        const chosen = [...(_sel)].map(x => byPath.get(x)).filter(Boolean);
-        let ok = false;
-        try{ ok = await u.confirm(deletePrompt(chosen), { ok: 'Move to trash', danger: true }); }
-        catch(_){ ok = false; }
-        if(!ok) return;
-        for(const r of chosen){
-          try{ await HOST().trash(r.path); }
-          catch(e){ u.toast(r.name + ': ' + String((e && e.message) || e)); }
-        }
-        _sel = new Set();
-        again();
-      };
-      const rn = $('.hf-rename');
-      if(_sel.size === 1 && rn) rn.onclick = async () => {
-        const r = byPath.get([..._sel][0]); if(!r) return;
-        let to = '';
-        try{ to = await u.prompt('Rename “' + r.name + '”', { value: r.name, ok: 'Rename' }); }
-        catch(_){ return; }
-        if(!to || to === r.name) return;
-        try{ await HOST().rename(r.path, to); }
-        catch(e){ u.toast(String((e && e.message) || e)); }
-        _sel = new Set();
-        again();
       };
     }
   }

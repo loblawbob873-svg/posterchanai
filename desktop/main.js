@@ -3395,9 +3395,14 @@ ipcMain.handle('pc:host:notify', (e, options) => {
   note.on('click',()=>{try{if(owner){owner.show();owner.focus();}if(!e.sender.isDestroyed())e.sender.send('pc:host:notification-click',route);}catch(_){}});
   note.show();return true;
 });
-ipcMain.handle('pc:host:pickDirectory', async (e) => {
+ipcMain.handle('pc:host:pickDirectory', async (e, options) => {
   fsGuard(e);
-  const r = await dialog.showOpenDialog(dialogOwner(e), { title: 'Open project folder', properties: ['openDirectory'] });
+  /* Files asks with its own title ("Move to…"); Code asks with none and keeps its old one. */
+  const o = options && typeof options === 'object' ? options : {};
+  const title = String(o.title || 'Open project folder').slice(0, 80);
+  const start = typeof o.defaultPath === 'string' ? hostfs().clean(o.defaultPath) : '';
+  const r = await dialog.showOpenDialog(dialogOwner(e), Object.assign({ title, properties: ['openDirectory', 'createDirectory'] },
+                                                                     start ? { defaultPath: start } : {}));
   return r.canceled || !r.filePaths || !r.filePaths[0] ? null : hostfs().clean(r.filePaths[0]);
 });
 ipcMain.handle('pc:host:pickFile', async (e, options) => {
