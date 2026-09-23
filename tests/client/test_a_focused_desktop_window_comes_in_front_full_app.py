@@ -66,6 +66,16 @@ def _last_front(log):
     return fronts[-1]
 
 
+async def _until_front(b, cover_id, timeout=15.0):
+    """Wait until the page has published front:true with `cover_id` among the covers."""
+    expr = ("(()=>{const f=__wm.log.filter(x=>'front' in x);const l=f[f.length-1];"
+            "return !!(l&&l.front&&l.covers.includes(%s))})()" % cover_id)
+    for _ in range(int(timeout / .1)):
+        if await b.js(expr):
+            return
+        await asyncio.sleep(.1)
+
+
 async def _ready(b):
     await desktop.login(b)
     await b.until("!!document.body && document.body.classList.contains('os-on') && !!document.querySelector('#os-desk')")
@@ -82,7 +92,9 @@ def test_a_maximised_preview_is_put_above_a_smaller_window_it_covers():
         opened = await b.js("PCPreview.open({name:'m.pdf',mime:'application/pdf',"
                             "blob:new Blob(['%PDF-1.4'],{type:'application/pdf'})})")
         assert opened is True
-        await asyncio.sleep(1.5)
+        # Poll, never sleep: under a loaded full-suite run the snapshot round trip is slow, and a
+        # fixed 1.5s read the log before the cover list had been published.
+        await _until_front(b, "35")
         log = await b.js('__wm.log')
         last = _last_front(log)
         assert last['front'] is True, log
@@ -98,7 +110,7 @@ def test_a_taskbar_search_is_not_sunk_under_the_browser_that_had_focus():
         await _ready(b)
         await b.js("(()=>{const q=document.querySelector('#os-q-bar');q.focus();q.value='bitcoin';"
                    "q.dispatchEvent(new KeyboardEvent('keydown',{key:'Enter',bubbles:true}))})()")
-        await asyncio.sleep(1.5)
+        await _until_front(b, "40")
         assert await b.js("[...document.querySelectorAll('.osw.focused .osw-title')].some(t=>/search/i.test(t.textContent))")
         log = await b.js('__wm.log')
         after = log[next(i for i, x in enumerate(log) if x.get('front') is True):]
@@ -131,7 +143,7 @@ def test_a_buried_windows_taskbar_button_raises_it_even_though_the_press_focuses
         await asyncio.sleep(.25)          # a real press lasts ~100ms; the adopt pass lands inside it
         await b.call('Input.dispatchMouseEvent', {'type': 'mouseReleased', 'x': box[0], 'y': box[1],
                                                   'button': 'left', 'buttons': 0, 'clickCount': 1})
-        await asyncio.sleep(.5)
+        await _until_front(b, "31")
         state = await b.js("({min:!!__w.min,cls:__w.el.className})")
         assert not state['min'], 'the taskbar press minimised the window it was meant to raise: %r' % state
         assert 31 in _last_front(await b.js('__wm.log'))['covers']

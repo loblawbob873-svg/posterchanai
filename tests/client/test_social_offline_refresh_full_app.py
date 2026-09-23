@@ -173,7 +173,7 @@ async def run_cycle():
 
 @pytest.mark.skipif(not Path("/opt/google/chrome/chrome").exists(), reason="no chrome")
 def test_offline_online_keeps_the_open_reply_and_the_place():
-    before, after = asyncio.get_event_loop().run_until_complete(run_cycle())
+    before, after = asyncio.run(run_cycle())
     # The socket really dropped and the timeline really re-queried after coming back.
     assert after["dropped"] >= 1, after
     assert after["reqs"] >= 2, after
