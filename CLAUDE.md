@@ -1496,6 +1496,17 @@ would have handled it fine).
   forwards Pleroma notifications to a user's Telegram; replying to a forwarded
   message posts back to the platform (`SocialReplyMap` maps Telegram msg → target). Per-user
   toggle (User Settings → Telegram) + global kill-switch (default on).
+- **ActivityPub server, stored as Nostr events** (`app/services/activitypub/`, `app/routers/activitypub.py`,
+  Admin → Social; `docs/ACTIVITYPUB.md`). Off by default (`activitypub_enabled`). Every name in the
+  NIP-05 registry is automatically `@name@<domain>`. Incoming content = Nostr events signed by the
+  bridge's PUPPET keys, deduped in `FediBridgeDelivered` (`platform="activitypub"`, note_id = URI);
+  members' own events are read from the relay and delivered by the worker's `activitypub` job. It is
+  ONE system with the bridge below: same puppet key both paths, a write-back (linked Pleroma) member is
+  never also sent from the AP actor, the Pleroma mirror skips `@x@<our domain>` (and `_deliver` threads
+  a reply under the member's real event), write-back resolves AP rows by URI. **Instance blocking is
+  the relay's list** (`nostr_relay_blocked_relays`), read, never duplicated. Paths are under `/ap/`
+  because router.lan 410s `/inbox` + `/users/*/inbox` for the retired Pleroma. Keys are never minted
+  after a failed relay read. `tests/test_activitypub.py`.
 - **Fediverse ↔ Nostr bridge** — three worker services, all sharing `fedi_normalize.py`:
   - **`fedi_nostr_bridge_service.py`** (fedi → Nostr): mirrors a Pleroma timeline onto
     Nostr under a **puppet** key per fedi author (deterministically derived, so an author keeps

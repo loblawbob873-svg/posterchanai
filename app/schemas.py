@@ -486,6 +486,13 @@ class SettingsResponse(BaseModel):
     # are never mirrored. One host per line/comma; a parent domain covers subdomains (mastodon.social
     # covers a.mastodon.social). Independent of the read account's own block/mute lists (also honored).
     fedi_bridge_blocked_domains: str = ""
+    # ---- ActivityPub server (app/services/activitypub) ----
+    # Members become `@name@<domain>` on the fediverse; everything they receive is stored as Nostr
+    # events (the bridge's puppets), everything they send is read from the relay. OFF by default.
+    # Instance blocking is deliberately NOT a setting here: it is the relay's (nostr_relay_blocked_relays),
+    # which the ActivityPub side reads.
+    activitypub_enabled: bool = False
+    activitypub_domain: str = ""       # blank = the NIP-05 domain (where /.well-known/nostr.json answers)
     # ---- "Sign in with an account" on the client login page ----
     # Both are OFF by default: they are the only paths where an identity is created by the SERVER
     # rather than in the browser, so a node opts in deliberately.

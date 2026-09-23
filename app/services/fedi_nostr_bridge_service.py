@@ -107,6 +107,14 @@ def _host_of(acct: str, instance_host: str) -> str:
     return host or instance_host
 
 
+def _is_own_activitypub_host(host: str) -> bool:
+    try:
+        from app.services.activitypub import config as ap_config
+        return ap_config.enabled() and ap_config.is_own_host(host)
+    except Exception:
+        return False
+
+
 def _domain_blocked(host: str, blocked: set) -> bool:
     """True if `host` equals a blocked domain or is a subdomain of one (a.b.c blocked by b.c)."""
     if not host:
@@ -655,6 +663,17 @@ async def _deliver(db: Session, port: int, platform: str, instance_url: str, ins
     from app.services.fedi_only_service import suppress_mirror
     if suppress_mirror(db, account, instance_host):
         return None
+    # The same guard as _process, here too: ancestors and quoted posts reach this without passing
+    # through _process, and a fediverse reply to one of our members has that member's post as its
+    # ancestor. It is on the relay already, as the member's own event (see _is_own_activitypub_host).
+    # Its object URL (/ap/objects/<event id>) names that event, so hand the id back: the caller
+    # then threads the fediverse reply under the member's REAL post rather than under nothing.
+    if _is_own_activitypub_host(_host_of(ident.acct_of(account, instance_host), instance_host)):
+        from app.services.activitypub import config as ap_config, convert as ap_convert
+        own = ap_convert.event_id_from_object_url(ap_config.base_url(), raw.get("uri") or "")
+        if not own:
+            _record_skip(db, "own-activitypub", platform=platform, instance_url=instance_url, post=post)
+        return own or None
     p = await ident.ensure_puppet(db, port, account, instance_host)
     if not p:
         _record_skip(db, "no-puppet", platform=platform, instance_url=instance_url, post=post,
@@ -849,6 +868,12 @@ async def _process(db: Session, port: int, platform: str, instance_url: str, ins
         return
     acct = post.get("author", {}).get("acct") or ""
     host = _host_of(acct, instance_host)
+    # OUR OWN USERS, SEEN FROM THE FEDIVERSE. With the ActivityPub server on, a member's post reaches
+    # this timeline as `@name@<our domain>` -- and it is already on the relay, as the member's own
+    # Nostr event. Mirroring it would put a puppet copy of our own user beside the real one.
+    if _is_own_activitypub_host(host):
+        _record_skip(db, "own-activitypub", platform=platform, instance_url=instance_url, post=post, detail=host)
+        return
     if _domain_blocked(host, blocked_domains):
         _record_skip(db, "domain-blocked", platform=platform, instance_url=instance_url, post=post, detail=host)
         return
@@ -884,6 +909,10 @@ async def _check_deletions(db: Session, port: int, instance_url: str, token: str
         return (db.query(FediBridgeDelivered)
                 .filter(FediBridgeDelivered.instance_url == instance_url,
                         FediBridgeDelivered.note_id != "",   # skip write-back TOMBSTONES (no status to check)
+                        # ActivityPub rows (app/services/activitypub) record a note URI where this
+                        # expects a status id: asked about as a status it 404s, and would be DELETED
+                        # here as "gone on the source". Their deletions arrive as Delete activities.
+                        FediBridgeDelivered.platform != "activitypub",
                         FediBridgeDelivered.id > after_id)
                 .order_by(FediBridgeDelivered.id.asc()).limit(_DELETION_BATCH).all())
     rows = _sweep(_after)
@@ -1010,6 +1039,7 @@ async def _drain_timeline(db: Session, port: int, platform: str, instance_url: s
         # carry no status id, so resuming from them would skip forward-resume and drop downtime posts.
         last = (db.query(FediBridgeDelivered)
                 .filter(FediBridgeDelivered.instance_url == instance_url,
+                        FediBridgeDelivered.platform != "activitypub",   # a URI is not a timeline cursor
                         FediBridgeDelivered.note_id != "")
                 .order_by(FediBridgeDelivered.id.desc()).first())
         if last and last.note_id:
@@ -1173,6 +1203,7 @@ def _seed_recon_state(db: Session, instance_url: str, instance_host: str, want: 
             _take(a)
     for (a,) in (db.query(FediBridgeDelivered.author_acct)
                    .filter(FediBridgeDelivered.instance_url == instance_url,
+                           FediBridgeDelivered.platform != "activitypub",
                            FediBridgeDelivered.author_acct.isnot(None),
                            FediBridgeDelivered.author_acct != "")
                    .order_by(FediBridgeDelivered.id.desc())

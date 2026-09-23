@@ -44,6 +44,9 @@ _SCHEDULERS = [
     ("fedi-nostr-bridge", "app.services.fedi_nostr_bridge_service", "start_fedi_bridge_scheduler"),
     ("fedi-nostr-writeback", "app.services.fedi_nostr_writeback_service", "start_fedi_writeback_listener"),
     ("fedi-nostr-personal", "app.services.fedi_nostr_personal_service", "start_fedi_personal_scheduler"),
+    # ActivityPub delivery: members' Nostr events → their fediverse followers. The tick reads
+    # `activitypub_enabled` each time, so it is a no-op until an admin turns the feature on.
+    ("activitypub", "app.services.activitypub.outbox", "start_activitypub_delivery"),
     ("nostr-push", "app.services.nostr_push_service", "start_nostr_push_scheduler"),
     # New mail → push, for a phone whose screen is off. Self-gating: start_* is a no-op unless
     # `mail_poll_enabled` is on, and it lives HERE rather than in the app process because an IMAP

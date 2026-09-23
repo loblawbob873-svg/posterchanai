@@ -267,6 +267,20 @@ server {
         proxy_send_timeout 3600s;
     }
 
+    # ---- ActivityPub (the fediverse server; Admin → Social) -----------------
+    # Explicit, so no cache or header rule later added to `location /` can reach it: ActivityPub
+    # answers depend on the Accept header, and inbox signatures cover the Host and exact path. It is
+    # a 404 until `activitypub_enabled` is on. Deliberately under /ap/ -- a node that once ran
+    # Pleroma may still answer 410 for /inbox and /users/*/inbox to stop old retry storms.
+    location ^~ /ap/ {
+        proxy_pass http://posterchanai_app;
+        proxy_cache off;
+        client_max_body_size 2m;     # an activity is a few KB; the app itself refuses over 1 MB
+    }
+    location = /.well-known/webfinger { proxy_pass http://posterchanai_app; proxy_cache off; }
+    location = /.well-known/nodeinfo  { proxy_pass http://posterchanai_app; proxy_cache off; }
+    location ^~ /nodeinfo/            { proxy_pass http://posterchanai_app; proxy_cache off; }
+
     # ---- OpenAI-compatible API (/v1/...) -----------------------------------
     location ^~ /v1 {
         proxy_pass http://posterchanai_app;   # nginx forwards Authorization as-is

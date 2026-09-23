@@ -602,7 +602,10 @@ async def _resolve_target_id(user, row) -> str | None:
     resolve the canonical AP URI on the user's instance so they act on their own copy."""
     bridge_host = urlparse(row.instance_url).netloc.split(":")[0].lower()
     user_host = urlparse(user.pleroma_instance_url).netloc.split(":")[0].lower()
-    if bridge_host == user_host:
+    # A note that came in over ActivityPub (app/services/activitypub) records its URI where a Pleroma
+    # mirror records a status id, so it is ALWAYS resolved by URI -- even on the same host, where the
+    # stored "id" would otherwise be handed to the status API as if it were one.
+    if bridge_host == user_host and getattr(row, "platform", "") != "activitypub":
         return row.note_id
     if not row.note_uri:
         return None

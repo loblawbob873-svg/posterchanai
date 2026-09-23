@@ -296,6 +296,8 @@ app.include_router(nostr_router)
 app.include_router(blossom_router)
 from app.routers import instance_welcome
 app.include_router(instance_welcome.router)
+from app.routers import activitypub as activitypub_router   # ActivityPub server; content stored as Nostr events (404 until enabled)
+app.include_router(activitypub_router.router)
 app.include_router(client_router)
 
 # The bundled CalDAV server (Radicale), mounted INSIDE this app at /caldav — no second port, no

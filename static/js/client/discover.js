@@ -814,6 +814,19 @@ window.PCDiscoverFactory = function(dep){
       const retry=$('#admin-session-retry'); if(retry) retry.onclick=()=>renderAdmin({force:true});
     });
   }
+  /* `user@server` → that fediverse account's Nostr identity on this node (ActivityPub lookup; 404
+   * on a node without it). Relative on purpose: the bundled apps' fetch shim sends /api/* to the
+   * instance, exactly as it does for every other /api call here. */
+  async function _fediLookup(acct){
+    try{
+      try{ await ensureAiSession(); }catch(_){}
+      const f = (window.__PC && window.__PC.authFetch) || ((u,o)=>fetch(u,{credentials:'include',...(o||{})}));
+      const r = await f('/api/activitypub/lookup?acct=' + encodeURIComponent(acct));
+      if(!r.ok) return '';
+      const j = await r.json();
+      return (j && /^[0-9a-f]{64}$/.test(j.pubkey||'')) ? j.pubkey : '';
+    }catch(_){ return ''; }
+  }
   /* `opts` is the desktop's taskbar search (os.js `desktopSearch`), which shows this computer's own
    * results -- apps, Notes, the drive, files on the disk -- beside Nostr's, in the order System
    * Settings → Search chose. They arrive as two live elements: `head` goes above the Nostr results
@@ -843,6 +856,13 @@ window.PCDiscoverFactory = function(dep){
     if(/^[\w.\-+]+@[\w.\-]+\.[a-z]{2,}$/i.test(q)){
       const rp=await nip05Resolve(q.toLowerCase());
       if(rp){ return renderProfileView(rp); }
+      /* NOT A NOSTR ADDRESS? IT MAY BE A FEDIVERSE ONE. `alice@mastodon.social` fails NIP-05 (that
+       * server has no nostr.json), and this node -- when its ActivityPub server is on -- can find the
+       * account and give it the same Nostr identity the fediverse bridge gives everyone there. Its
+       * profile then opens like any other, and following it is an ActivityPub Follow. A node without
+       * the feature answers 404 and the search simply carries on as before. */
+      const fedi = await _fediLookup(q);
+      if(fedi){ return renderProfileView(fedi); }
     }
     // 3. posts via NIP-50 full-text (relay indexes note content); profiles by name/nip05 over the
     //    locally-cached profile set (the relay's FTS doesn't cover kind-0, so we match what we know).
