@@ -854,7 +854,10 @@
      * correctly linked, and none of that was visible. A note with a body opens RENDERED, with its
      * images decrypted and shown; the pen switches to editing. A new or empty note opens in the
      * editor, because there is nothing to read. */
-    const readFirst = !isNew && !!(n.body || '').trim();
+    /* …and a LARGE note is not an empty one. Its body is offloaded to a blob (`bodyRef`) and
+     * fetched below, so at this line `n.body` is still '' and it opened as raw source — the notes
+     * most worth reading rendered were exactly the ones that never were. */
+    const readFirst = !isNew && (!!(n.body || '').trim() || !!n.bodyRef);
     document.querySelector('.nt-wrap').classList.add('nt-open');
     const folders = Array.from(_lib.folders.values()).sort((a,b)=>(a.name||'').localeCompare(b.name||''));
     host.innerHTML = `
@@ -973,7 +976,7 @@
         }
       })();
     }
-    if(readFirst){
+    if(readFirst && !(n.bodyRef && !n.body)){      // an offloaded body renders when it arrives
       const r = $('.nt-render', host);
       r.innerHTML = renderBody(n, n.body);
       hydrateRes(r, n);

@@ -1752,7 +1752,16 @@
      * anything, it is the thing that just happened. `_shellFrontWish(true)` states it, and the
      * ordinary recomputation from drawBar still governs every later frame -- including sinking the
      * surface again the moment a foreign application really does take the keyboard. */
-    if(w.native == null) _shellFrontWish(true);
+    /* …AND THE STALE FLAG IS CLEARED, NOT MERELY OUT-SHOUTED. `drawBar()` runs further down THIS
+     * function and re-derives the wish from `_foreignFocused`, which still names the application
+     * that held the keyboard a moment ago -- so the stated `true` was followed, in the same tick,
+     * by a derived `false`, and main then answered the shell's own focus with the bottom guard's
+     * lowerShell. Measured with a fake compositor: Firefox focused, a taskbar search, and the
+     * published sequence was front:true, front:false, covers:[…] with front:false — the Search
+     * window drawn and sunk under Firefox ("always stays behind firefox"). Focusing a frame the
+     * desktop draws is the desktop taking the keyboard; the next adopt pass re-reads the real
+     * answer from the compositor and puts the flag back if that did not happen. */
+    if(w.native == null){ _foreignFocused = false; _shellFrontWish(true); }
     /* AN ADOPTED APPLICATION TAKING FOCUS ENDS THE COVER LIST, and forgetting that pins real
      * windows under the desktop with nothing on screen still claiming the space. `covers` describes
      * ONE in-page frame's overlap; the moment the thing you clicked is a compositor window of its

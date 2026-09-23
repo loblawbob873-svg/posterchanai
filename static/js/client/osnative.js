@@ -356,9 +356,17 @@
     for(const row of (rows||[])){
       if(!row || row.id==null || row.own || row.fullscreen) continue;
       const r=row.rect;
-      const covered=!!(focusedRect && r && coversMoreThanASliver(
-        {left:Number(r.x)||0,top:Number(r.y)||0,width:Number(r.width)||0,height:Number(r.height)||0},
-        focusedRect));
+      const box=r&&{left:Number(r.x)||0,top:Number(r.y)||0,width:Number(r.width)||0,height:Number(r.height)||0};
+      /* EITHER WAY ROUND. `coversMoreThanASliver(a, b)` asks how much of B the overlap is, which is
+       * the right question for PARKING an app (do not hide a big browser because a small frame laps
+       * its corner) and only half of this one. Asked only about the frame, a MAXIMISED Preview over
+       * a 1358px Notes window overlaps a small fraction of ITSELF, so Notes was never listed, never
+       * went under the desktop, and drew over the document just opened -- measured on the desktop
+       * with `pc-open math.pdf`: the frame was focused and maximised, and `covers` went out empty.
+       * A window this frame mostly covers is as covered as one that mostly covers the frame; two
+       * big windows lapping at a corner still fail both tests and stay where they are. */
+      const covered=!!(focusedRect && box && (coversMoreThanASliver(box, focusedRect)
+                                              || coversMoreThanASliver(focusedRect, box)));
       (covered?hide:show).push(Number(row.id));
     }
     return {hide,show};
