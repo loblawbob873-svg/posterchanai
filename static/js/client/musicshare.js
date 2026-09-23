@@ -314,6 +314,7 @@
     }
     _out = out; _outOk = complete;
     _changed();
+    if(complete && _pending().length) drainPending().catch(() => {});
     return outShares();
   }
 
@@ -519,6 +520,16 @@
       if(!sh) return { ok:false, error:'not found' };
       const targets = (pks && pks.length ? cleanRecipients(pks) : [...sh.to.keys()])
         .filter(pk => sh.to.get(pk) && !sh.to.get(pk).dead);
+      /* WHICH COPIES THIS SHARE USES, READ BEFORE ANYTHING IS TOMBSTONED. Once the last document
+       * is emptied this device can never learn it again -- and a big share keeps its song list in a
+       * sealed blob that has to be fetched, which is exactly the read that can fail. */
+      const ending = targets.length && [...sh.to.entries()].every(([pk, r]) => r.dead || targets.includes(pk));
+      let copies = null;
+      if(ending && sh.body){
+        copies = sh.body.tl ? [sh.body.tl.s] : [];
+        try{ for(const t of await tracksOf(sh)) copies.push(t.s); }
+        catch(_){ /* the list blob could not be read: its own address is still known and released */ }
+      }
       let bad = 0;
       for(const pk of targets){
         const d = dTag(id, pk);
@@ -527,9 +538,12 @@
         if(r && r.ok) sh.to.set(pk, { at: (r.ev && r.ev.created_at) || now(), dead:true }); else bad++;
       }
       let released = 0;
-      if(![...sh.to.values()].some(r => !r.dead)) released = await _releaseUnused(sh);
+      if(copies && ![...sh.to.values()].some(r => !r.dead)){
+        _pendingAdd(copies);
+        released = await _drain();
+      }
       _changed();
-      return { ok: !bad, failed: bad, released };
+      return { ok: !bad, failed: bad, released, owed: copies ? _pending().length : 0 };
     });
   }
 
@@ -548,20 +562,51 @@
     }
     return refs;
   }
-  async function _releaseUnused(sh){
-    if(!sh.body || !PC.releaseBlob) return 0;
-    const refs = await _liveRefs(sh);
-    if(!refs) return 0;
-    let mine;
-    try{ mine = await tracksOf(sh); }catch(_){ return 0; }
-    const drop = mine.map(t => t.s).concat(sh.body.tl ? [sh.body.tl.s] : []).filter(s => !refs.has(s));
-    let n = 0;
-    for(const s of drop){ if(await PC.releaseBlob(s)) n++; }
-    const c = _cache(), gone = new Set(drop);
-    for(const k of Object.keys(c)) if(gone.has(c[k].s)) delete c[k];
+  /* RELEASING A FINISHED SHARE'S COPIES, NOW OR LATER -- never never.
+   *
+   * It used to be one attempt at the moment of the last "stop sharing", and two things made that
+   * attempt silently the only one: a read that was not COMPLETE (correctly) released nothing, and a
+   * DELETE that failed dropped its copy from the device cache anyway. Either way the copy stayed on
+   * the server for ever -- and because the documents were already tombstoned, nothing could ever
+   * work out again which copies they had used.
+   *
+   * So the addresses are written down FIRST (`pcaiMusicShareRelease:<me>`), and a copy leaves that
+   * list only when the server has let it go or a live share turns out to use it again. `_drain`
+   * runs after the stop and after every later COMPLETE read, and it always asks `_liveRefs` first:
+   * a copy something live points at is never released, whatever the list says. A release only
+   * drops THIS account's reference -- a recipient who added the song owns the same bytes. */
+  const _pendKey = () => 'pcaiMusicShareRelease:' + ((ME() && ME().pubkey) || '');
+  function _pending(){
+    try{ const v = JSON.parse(localStorage.getItem(_pendKey()) || '[]');
+         return Array.isArray(v) ? v.filter(x => HEX64.test(String(x))) : []; }
+    catch(_){ return []; }
+  }
+  function _pendingSet(list){ try{ localStorage.setItem(_pendKey(), JSON.stringify([...new Set(list)])); }catch(_){} }
+  function _pendingAdd(list){
+    _pendingSet(_pending().concat((list || []).filter(x => HEX64.test(String(x)))));
+    /* The device cache maps a library song to its shared copy so a re-share can reuse it -- and it
+     * is what refIds protects. A copy on its way out must not be protected by it. */
+    const gone = new Set(list || []), c = _cache();
+    for(const k of Object.keys(c)) if(c[k] && gone.has(c[k].s)) delete c[k];
     _cacheSet(c);
+  }
+  async function _drain(){
+    const pend = _pending();
+    if(!pend.length || !PC || !PC.releaseBlob) return 0;
+    const refs = await _liveRefs(null);
+    if(!refs) return 0;                                  // could not tell: keep every one for later
+    let n = 0; const keep = [];
+    for(const s of pend){
+      if(refs.has(s)) continue;                          // shared again since: nothing to release
+      let ok = false;
+      try{ ok = !!(await PC.releaseBlob(s)); }catch(_){ ok = false; }
+      if(ok) n++; else keep.push(s);
+    }
+    _pendingSet(keep);
     return n;
   }
+  /** Retry any release still owed. Serialized with every other write. Resolves how many went. */
+  function drainPending(){ return _boot() && ME() ? serial(_drain) : Promise.resolve(0); }
 
   /* For the drive check's reclaim: the share copies are keep-flagged and named by no drive index, so
    * without this they are "orphans" — and reclaiming them would break every recipient's playback. */
@@ -847,6 +892,7 @@
         b.disabled = true;
         const r = await revoke(sh.id, one);
         toast(r.ok ? 'stopped sharing' + (r.released ? ` — ${r.released} shared cop${r.released === 1 ? 'y' : 'ies'} removed from the server` : '')
+                     + (r.owed ? ' — the rest of its shared copies are removed the next time your relays answer in full' : '')
                    : 'not everyone could be updated — try again');
         if(el.isConnected) _paintOut(el, ctx);
         return;
@@ -891,6 +937,7 @@
     decide, acceptedShares, pendingShares, loadDecisions, decisions,
     // data
     loadIn, loadOut, inShares, outShares, tracksOf, share, addRecipients, revoke, addToLibrary, refIds,
+    drainPending, pendingReleases: () => _pending(),
     resolveRecipients, inCount: () => pendingShares().length,
     // player
     register, meta, plain,

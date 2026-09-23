@@ -54,7 +54,7 @@ function makeNet(){
     Object.defineProperty(out, 'complete', { value: net.relayComplete, enumerable: false }); return out; };
   net.put = async (pk, bytes) => { const s = await sha256hex(bytes); net.uploads++;
     const b = net.blobs.get(s) || { bytes, owners: new Set() }; b.owners.add(pk); net.blobs.set(s, b); return s; };
-  net.del = (pk, s) => { const b = net.blobs.get(s); if(!b) return true; b.owners.delete(pk); if(!b.owners.size) net.blobs.delete(s); return true; };
+  net.del = (pk, s) => { if(net.failDel && net.failDel.has(s)) return false; const b = net.blobs.get(s); if(!b) return true; b.owners.delete(pk); if(!b.owners.size) net.blobs.delete(s); return true; };
   return net;
 }
 
@@ -292,6 +292,98 @@ await run('adding twice does not duplicate, and uploads nothing the second time'
   const a1 = await B.S.addToLibrary(ins[0], bt); const up = net.uploads;
   const a2 = await B.S.addToLibrary(ins[0], bt);
   return { ok: a1.added === 1 && a2.added === 0 && a2.skipped === 1 && net.uploads === up && B.lib.size === 1, a1, a2 };
+});
+
+/* ---- UNSHARING CLEANS UP, EVENTUALLY AND SAFELY -------------------------------------------------
+ * A share's copies are the sharer's blobs. Stopping the share must release them -- but only after a
+ * COMPLETE read proves nothing live still points at them, and a release that could not happen then
+ * must happen LATER, not never: the documents are tombstoned by then, so "which copies" is only
+ * known if it was written down before. */
+const ownedBy = (net, pk) => [...net.blobs.entries()].filter(([, b]) => b.owners.has(pk)).map(([s]) => s);
+const shareOne = async (net, A, B, n, seed) => {
+  const s = await A.addTrack(wav(n, seed), 'song' + seed);
+  const r = await A.S.share({ name: 'p' + seed, tracks: [{ sha: s, name: 'song' + seed, mime: 'audio/wav', size: n, ext: 'wav' }], to: [B.pk] });
+  const bIn = await B.S.loadIn(); const bt = await B.S.tracksOf(bIn.find(x => x.id === r.id) || bIn[0]);
+  return { r, copy: bt[0].s, bIn, bt };
+};
+
+await run('a release skipped by an incomplete read happens on the next complete one', async () => {
+  const net = makeNet(); const A = person(net, 'A'), B = person(net, 'B');
+  const { r, copy, bIn, bt } = await shareOne(net, A, B, 2500, 11);
+  await B.S.addToLibrary(bIn[0], bt);                          // B keeps it
+  net.relayComplete = false; await A.S.loadOut();
+  const rv = await A.S.revoke(r.id);
+  const heldAfterRevoke = net.blobs.get(copy).owners.has(A.pk);
+  net.relayComplete = true; await A.S.loadOut(); await A.S.drainPending();
+  const b = net.blobs.get(copy);
+  return { ok: rv.ok && rv.released === 0 && heldAfterRevoke && !!b && !b.owners.has(A.pk) && b.owners.has(B.pk)
+             && A.S.pendingReleases().length === 0,
+           rv, heldAfterRevoke, owners: b && [...b.owners].length, pending: A.S.pendingReleases() };
+});
+
+await run('stopping with one of two people keeps the copy; the last one releases it', async () => {
+  const net = makeNet(); const A = person(net, 'A'), B = person(net, 'B'), D = person(net, 'D');
+  const s = await A.addTrack(wav(1800, 12), 'x');
+  const r = await A.S.share({ name: 'two', tracks: [{ sha: s, name: 'x', mime: 'audio/wav', size: 1800, ext: 'wav' }], to: [B.pk, D.pk] });
+  await A.S.loadOut();
+  const r1 = await A.S.revoke(r.id, [B.pk]);
+  const dIn = await D.S.loadIn(); const dt = await D.S.tracksOf(dIn[0]); D.S.register(dIn[0], dt);
+  const dStill = (await D.S.plain(dt[0].s)).length;
+  const bSees = (await B.S.loadIn()).length;
+  const r2 = await A.S.revoke(r.id, [D.pk]);
+  return { ok: r1.ok && r1.released === 0 && dStill === 1800 && bSees === 0 && r2.ok && r2.released === 1
+             && !net.blobs.has(dt[0].s), r1, r2, dStill, bSees };
+});
+
+await run('a release that fails is retried, not forgotten', async () => {
+  const net = makeNet(); const A = person(net, 'A'), B = person(net, 'B');
+  const { r, copy } = await shareOne(net, A, B, 1200, 13);
+  await A.S.loadOut();
+  net.failDel = new Set([copy]);
+  const rv = await A.S.revoke(r.id);
+  const pendingAfterFail = A.S.pendingReleases().slice();
+  net.failDel = null;
+  await A.S.loadOut(); await A.S.drainPending();
+  return { ok: rv.ok && rv.released === 0 && pendingAfterFail.includes(copy) && !net.blobs.has(copy)
+             && A.S.pendingReleases().length === 0, rv, pendingAfterFail };
+});
+
+await run("a big share's sealed song list and its songs are all released", async () => {
+  const net = makeNet(); const A = person(net, 'A'), B = person(net, 'B');
+  const tracks = [];
+  for(let i = 0; i < 330; i++){ const s = await A.addTrack(wav(48, 100 + i), 'Big ' + i + ' ' + 'y'.repeat(40));
+    tracks.push({ sha: s, name: A.lib.get(s).m.name, mime: 'audio/wav', size: 48, ext: 'wav' }); }
+  const r = await A.S.share({ name: 'Huge', tracks, to: [B.pk] });
+  const before = ownedBy(net, A.pk).length;
+  await A.S.loadOut();
+  const rv = await A.S.revoke(r.id);
+  return { ok: rv.ok && before === 331 && ownedBy(net, A.pk).length === 0 && rv.released === 331, before, left: ownedBy(net, A.pk).length, rv };
+});
+
+await run('sharing again after stopping works and plays', async () => {
+  const net = makeNet(); const A = person(net, 'A'), B = person(net, 'B');
+  const s = await A.addTrack(wav(900, 14), 'again');
+  const t = [{ sha: s, name: 'again', mime: 'audio/wav', size: 900, ext: 'wav' }];
+  const r1 = await A.S.share({ name: 'first', tracks: t, to: [B.pk] });
+  await A.S.loadOut(); await A.S.revoke(r1.id);
+  const r2 = await A.S.share({ name: 'second', tracks: t, to: [B.pk] });
+  const bIn = await B.S.loadIn(); const bt = await B.S.tracksOf(bIn[0]); B.S.register(bIn[0], bt);
+  const played = await B.S.plain(bt[0].s);
+  return { ok: r2.ok && bIn.length === 1 && eq(played, wav(900, 14)), r2, n: bIn.length };
+});
+
+await run('a copy shared again before the retry is not released', async () => {
+  const net = makeNet(); const A = person(net, 'A'), B = person(net, 'B'), D = person(net, 'D');
+  const s = await A.addTrack(wav(700, 15), 'back');
+  const t = [{ sha: s, name: 'back', mime: 'audio/wav', size: 700, ext: 'wav' }];
+  const r1 = await A.S.share({ name: 'first', tracks: t, to: [B.pk] });
+  net.relayComplete = false; await A.S.loadOut(); await A.S.revoke(r1.id);   // release deferred
+  net.relayComplete = true;
+  await A.S.share({ name: 'again', tracks: t, to: [D.pk] });                  // same copy, live again
+  await A.S.loadOut(); await A.S.drainPending();
+  const dIn = await D.S.loadIn(); const dt = await D.S.tracksOf(dIn[0]); D.S.register(dIn[0], dt);
+  let plays = false; try{ plays = eq(await D.S.plain(dt[0].s), wav(700, 15)); }catch(_){ plays = false; }
+  return { ok: plays && A.S.pendingReleases().length === 0, plays, pending: A.S.pendingReleases() };
 });
 
 process.stdout.write(JSON.stringify(out));

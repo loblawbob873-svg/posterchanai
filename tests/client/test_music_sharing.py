@@ -57,6 +57,12 @@ SCENARIOS = [
     "a document addressed to somebody else is not a share with me",
     "writes are serialized",
     "adding twice does not duplicate, and uploads nothing the second time",
+    "a release skipped by an incomplete read happens on the next complete one",
+    "stopping with one of two people keeps the copy; the last one releases it",
+    "a release that fails is retried, not forgotten",
+    "a big share's sealed song list and its songs are all released",
+    "sharing again after stopping works and plays",
+    "a copy shared again before the retry is not released",
 ]
 
 
