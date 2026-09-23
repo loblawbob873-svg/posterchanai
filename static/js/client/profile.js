@@ -12,7 +12,7 @@ window.PCProfileFactory = function(dep){
   const {
     $, $$, FOLLOWERS, FilesIdx, NT, STREAM_RELAYS, _FEED_MAX_CARDS, _bindPaymentTargetEditor,
     _dedupAddr, _feedScrollable, _hidePill, _isDeletedStream, _kind0Tags, _loadPaymentTargets,
-    _navUrl, _protectedProfileFollows, _rememberTlScroll, _shaFromUrl, _startTimeline,
+    _navTopHtml, _navUrl, _protectedProfileFollows, _rememberTlScroll, _shaFromUrl, _startTimeline,
     _syncRightbar, articleCard, bchDirect, bchOf, cleanupInlineStream, clearSentinel, closeModal,
     copyValue, decorateProfiles, decorateVerified, doBchTip, doBlock, doXmrTip, doZap, emojiName,
     enc, ensureMyFollowers, feedNoteHtml, followMany, hasMedia, hydrate, invalidateCounts,
@@ -194,7 +194,7 @@ window.PCProfileFactory = function(dep){
       return ts;
     }catch(_){ return 0; }
   }
-  const _PROFILE_TOP = `<div class="thread-top"><button class="btn btn-ghost small" id="prof-back" title="Back" aria-label="Back to previous screen"><svg class="ic b-ic" aria-hidden="true"><use href="#i-arrow-left"></use></svg></button></div>`;
+  const _PROFILE_TOP = _navTopHtml('prof-back', 'Back to previous screen');
   function _bindProfileBack(feed, pk){
     const back=$('#prof-back',feed); if(!back) return;
     back.onclick=()=>{

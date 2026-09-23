@@ -1105,6 +1105,22 @@ html.os-on .cal-bar,html.os-on .ct-bar{background-attachment:scroll}
 .topbar h2{margin:0;font-size:24px;letter-spacing:.4px;font-weight:800;line-height:1.2}
 /* The thread's own "←", matching the header button every other detail view already has. */
 .thread-top{display:flex;align-items:center;margin:0 0 10px}
+/* THE WINDOW'S NAVIGATION ROW (desktop mode). A lone ← in an empty strip read as leftover UI; in a
+   window it is a toolbar now — Back, labelled, on the left and the PosterChan avatar on the right
+   where IE3 kept its logo. `--pc-logo` follows Admin → Site's custom logo (app.js). The phone keeps
+   the compact arrow: the label and avatar only exist inside a desktop window. */
+:root{--pc-logo:url("/static/posterchan-relay.png")}
+.pc-nav-label,.pc-nav-logo{display:none}
+body.os-on .osw .pc-navbar{position:sticky;top:-8px;z-index:4;gap:10px;margin:-8px 0 12px;padding:6px 10px;   /* -8px: flush under the title bar (the window feed has 8px top padding) */
+  background:color-mix(in srgb,var(--panel) 92%,transparent);border-bottom:1px solid var(--line);
+  backdrop-filter:blur(8px)}
+body.os-on .osw .pc-nav-back{display:inline-flex;align-items:center;gap:6px;padding:6px 14px 6px 10px;
+  border-radius:999px;border:1px solid var(--line);font-weight:600;line-height:1}
+body.os-on .osw .pc-nav-back:hover{border-color:var(--cyan);box-shadow:0 0 0 3px rgba(var(--accent-rgb),.18)}
+body.os-on .osw .pc-nav-label{display:inline}
+body.os-on .osw .pc-nav-logo{display:block;margin-left:auto;width:36px;height:36px;flex:0 0 36px;
+  border-radius:9px;background:var(--pc-logo) center/cover no-repeat;border:1px solid var(--line);
+  box-shadow:0 0 12px rgba(var(--accent-rgb),.28)}
 .searchbox{flex:1;min-width:0;max-width:720px;margin:0 16px}   /* min-width:0 → shrinks so the topbar buttons (Calls/Drafts/New post) always fit, never clipped */
 /* Exactly ONE search box at any width: the sidebar owns it on desktop, the topbar on mobile (where the
    sidebar is display:none). Two visible inputs would be duplicate UI; two hidden ones would be no search. */

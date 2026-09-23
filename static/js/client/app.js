@@ -2441,6 +2441,7 @@
     // marks, and point the favicon/splash at it. Blank → keep the built-in PosterChan logo.
     if (CFG.logo_url){
       LOGO = CFG.logo_url;
+      try{ document.documentElement.style.setProperty('--pc-logo', 'url("' + String(LOGO).replace(/["\\\n]/g, encodeURIComponent) + '")'); }catch(_){}
       try{
         document.querySelectorAll('link[rel="icon"],link[rel="shortcut icon"],link[rel="apple-touch-icon"]').forEach(l=>l.href=CFG.logo_url);
         document.querySelectorAll('.logo-img,.brand-logo').forEach(img=>img.src=CFG.logo_url);
@@ -15177,7 +15178,7 @@
     },
     $, $$, FOLLOWERS, FilesIdx, NT, STREAM_RELAYS, _FEED_MAX_CARDS, _bindPaymentTargetEditor,
     _dedupAddr, _feedScrollable, _hidePill, _isDeletedStream, _kind0Tags, _loadPaymentTargets,
-    _navUrl, _protectedProfileFollows, _rememberTlScroll, _shaFromUrl, _startTimeline,
+    _navTopHtml, _navUrl, _protectedProfileFollows, _rememberTlScroll, _shaFromUrl, _startTimeline,
     _syncRightbar, articleCard, bchDirect, bchOf, cleanupInlineStream, clearSentinel, closeModal,
     copyValue, decorateProfiles, decorateVerified, doBchTip, doBlock, doXmrTip, doZap, emojiName,
     enc, ensureMyFollowers, feedNoteHtml, followMany, hasMedia, hydrate, invalidateCounts,
@@ -16102,7 +16103,16 @@
    * It deliberately does NOT try to be the final render in miniature. No ancestor chain, no
    * missing-parent notice, no reply count: every one of those is a CLAIM that needs the network this
    * paint exists not to wait for, and a wrong claim early is worse than a right one late. */
-  const _THREAD_TOP = `<div class="thread-top"><button class="btn btn-ghost small" id="th-back" title="Back"><svg class="ic b-ic" aria-hidden="true"><use href="#i-arrow-left"></use></svg></button></div>`;
+  /* THE ROW ABOVE A POST OR A PROFILE: Back on the left and, in a desktop window, the PosterChan
+   * avatar on the right where Internet Explorer 3 kept its logo. ONE builder for every screen that
+   * has such a row, so they cannot drift into five slightly different strips. The label and the
+   * avatar are CSS-gated to desktop windows (`body.os-on .osw`); on a phone the row stays the
+   * compact arrow it was. The avatar is `--pc-logo`, painted from LOGO, so a custom logo (Admin →
+   * Site) follows without re-rendering a string built before the config arrived. */
+  function _navTopHtml(id, aria){
+    return `<div class="thread-top pc-navbar"><button class="btn btn-ghost small pc-nav-back" id="${id}" title="Back" aria-label="${enc(aria || 'Back')}"><svg class="ic b-ic" aria-hidden="true"><use href="#i-arrow-left"></use></svg><span class="pc-nav-label">Back</span></button><span class="pc-nav-logo" aria-hidden="true"></span></div>`;
+  }
+  const _THREAD_TOP = _navTopHtml('th-back', 'Back');
   /* Back, bound the same way by both paints — a spinner you cannot leave is the other half of the
    * complaint, and two copies of this binding is how one of them goes stale.
    *
