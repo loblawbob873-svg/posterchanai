@@ -11083,6 +11083,28 @@
     }catch(_){ try{ PC().toast('screenshots are not available here'); }catch(__){} }
   }
 
+  /* A SCREENSHOT MUST NOT COST THE WINDOW YOU WERE LOOKING AT.
+   *
+   * Choosing an area runs `slurp`, a full-screen overlay that takes the keyboard; when it goes,
+   * Wayfire gives the keyboard to the topmost APPLICATION -- the desktop is kept at the bottom, so
+   * that is Firefox -- and the desktop then (correctly, as far as it knows) steps back behind it.
+   * Music, drawn on the desktop, went with it: reported as "can't even take a screenshot because
+   * firefox then covers music". So the screenshot remembers which of the desktop's own windows was
+   * in front and puts it back when the capture is over, cancelled or not. Nothing is remembered
+   * when the desktop was not in front -- a screenshot of Firefox leaves Firefox where it was. */
+  function frontSnapshot(){
+    if(!on || !_shellFrontState.front) return null;
+    const w = wins.find(x => x && x.el && x.native == null && !x.min && x.el.classList.contains('focused'));
+    return w ? { id: w.id } : null;
+  }
+  function frontRestore(snap){
+    if(!snap) return false;
+    const w = wins.find(x => x && x.id === snap.id);
+    if(!w || w.min || !w.el || !w.el.isConnected) return false;
+    focusWin(w, false);
+    return true;
+  }
+
   function toggle(){ on ? exit() : enter(); }
 
   /* Restore on load when the screen is wide enough. A remembered desktop on a window that has since
@@ -11577,7 +11599,7 @@
                    * agree with a cold one: boot already restored the desktop before this runs. */
                   mobileLanding: () => { if(!on && !popupKind() && !_authGateUp() && wantsDesktop()) enter(); },
                   wantsDesktop,
-                  isOn: () => on, openDoc, focusDoc, closeDoc, askDesktop, captureReturnTarget, windowOpenHint: _windowOpenHint, routeView, routeApp, snapTo, documentWindow,
+                  isOn: () => on, openDoc, focusDoc, closeDoc, frontSnapshot, frontRestore, askDesktop, captureReturnTarget, windowOpenHint: _windowOpenHint, routeView, routeApp, snapTo, documentWindow,
                   openSystemSettings, osToast,
                   // app.js calls this when the player's state changes — the Now-playing widget has
                   // nothing to subscribe to, and polling an element we could be told about is the

@@ -236,3 +236,51 @@ def test_a_day_at_the_desk_never_leaves_a_window_behind_or_an_app_pinned_under_t
         'switching between two desktop windows dropped the front: %r' % s['switch']
     assert s['closed'] and not s['closed']['front'] and s['closed']['covers'] == [], \
         'closing every desktop window left applications pinned under the desktop: %r' % s['closed']
+
+
+SHOT = r'''
+/* grim/slurp as the page sees them: the capture takes a moment, and slurp's overlay closing hands
+ * the keyboard to the topmost application -- Firefox -- which the compositor then reports. */
+window.pcShot = { available: async () => ({ ok: true, region: true }),
+  take: async () => { __wm.shots = (__wm.shots || 0) + 1;
+    __wm.focus = 40; setTimeout(() => __wm.emit({ name: 'window', change: 'focus' }), 0);
+    await new Promise(r => setTimeout(r, 400));
+    return { ok: true, path: '/home/u/Pictures/Screenshots/shot.png' }; } };
+'''
+
+
+@pytest.mark.skipif(not Path('/opt/google/chrome/chrome').exists(), reason='Chrome required')
+def test_a_screenshot_gives_back_the_window_that_was_in_front():
+    """"can't even take a screenshot because firefox then covers music" -- and the other direction:
+    a screenshot taken while Firefox was in use must leave Firefox where it was."""
+    got = {}
+
+    async def check(b):
+        await _ready(b)
+        await b.until("typeof __wm.emit==='function' && !!window.PCOSShell && !!PCOSShell.takeShot")
+        # Music in front of Firefox.
+        await b.js("window.__m=PCOS.openDoc('shot-music','Music','i-music',()=>{},true);true")
+        await _until_front(b, "40")
+        await b.js("__wm.log=[]")
+        await b.js("PCOSShell.takeShot('screen');true")
+        await _until(b, "(__wm.shots||0)>=1")
+        await asyncio.sleep(1.5)
+        log = await b.js('__wm.log')
+        got['with_music'] = {'last': _front(log), 'refocused': {'focus': 13} in log}
+        # Now Firefox is the thing in use: a second screenshot must not drag Music back over it.
+        await b.js("__wm.focus=40;__wm.emit({name:'window',change:'focus'});true")
+        await asyncio.sleep(.6)
+        await b.js("__wm.log=[]")
+        await b.js("PCOSShell.takeShot('screen');true")
+        await _until(b, "(__wm.shots||0)>=2")
+        await asyncio.sleep(1.5)
+        log = await b.js('__wm.log')
+        got['with_firefox'] = {'last': _front(log), 'focused_shell': {'focus': 13} in log}
+
+    asyncio.run(desktop.with_browser('online', '', check, COMPOSITOR + SHOT))
+    w = got['with_music']
+    assert w['last'] and w['last']['front'] and 40 in w['last']['covers'] and w['refocused'], \
+        'after the screenshot Firefox covered the window that was in front: %r' % w
+    f = got['with_firefox']
+    assert not f['focused_shell'] and not (f['last'] and f['last']['front']), \
+        'a screenshot of Firefox pulled the desktop in front of it: %r' % f

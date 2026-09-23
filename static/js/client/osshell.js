@@ -1372,11 +1372,19 @@
         mode = 'screen';
       }
     }
+    /* Which of the desktop's own windows was in front -- asked BEFORE the flyout closes, since the
+     * capture (slurp's overlay) hands the keyboard to whatever application is on top afterwards.
+     * See os.js frontSnapshot. */
+    const PCOS = root.PCOS;
+    let keep = null;
+    try{ keep = PCOS && PCOS.frontSnapshot ? PCOS.frontSnapshot() : null; }catch(_){ keep = null; }
+    const giveBack = () => { try{ if(keep && PCOS.frontRestore) PCOS.frontRestore(keep); }catch(_){} };
     closePop();
     await new Promise(r => setTimeout(r, 180));
     let res = null;
     try{ res = await sh.take({ mode: mode || 'screen' }); }
-    catch(e){ toast(String((e && e.message) || e)); return null; }
+    catch(e){ giveBack(); toast(String((e && e.message) || e)); return null; }
+    giveBack();
     /* CANCELLED IS NOT FAILED. `slurp` exits nonzero when somebody presses Escape, and a toast
      * apologising every time a person changes their mind is noise. */
     if(!res || res.cancelled) return res || null;
