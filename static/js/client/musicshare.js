@@ -178,7 +178,9 @@
     job.promise = (async () => {
       try{
         const { evs, complete } = await _query({ kinds:[KIND], authors:[owner], '#d':[DECIDE_D] });
-        const ev = newestBy(evs, e => tagOf(e, 'd'))[0];
+        // newestBy hands back a MAP, not an array — indexing it like one reads every
+        // document as absent, which is silent: the answers simply never arrive.
+        const ev = [...newestBy(evs, e => tagOf(e, 'd')).values()][0];
         if(ev){
           const body = JSON.parse(await PC.nip44dec(owner, ev.content));
           if(body && body.v === 1){ _dec = _mergeDec(_localDec(), _cleanDec(body.d)); _saveLocalDec(_dec); _decRead = true; }
@@ -301,7 +303,14 @@
   async function loadIn(){
     if(!_boot() || !ME()) return [];
     const me = ME().pubkey;
-    const { evs, complete } = await _query({ kinds:[KIND], '#p':[me], '#l':[L_TAG] });
+    /* The offers and the answers arrive together, on purpose. A device that read the shares but not
+     * the decisions shows every playlist you already accepted as an offer waiting to be accepted
+     * again — which is the whole point of keeping the answers on the account rather than the
+     * phone. One call site, so it cannot be forgotten by the next screen that lists shares. */
+    const [{ evs, complete }] = await Promise.all([
+      _query({ kinds:[KIND], '#p':[me], '#l':[L_TAG] }),
+      loadDecisions().catch(() => {}),
+    ]);
     const docs = newestBy(evs.filter(e => e.pubkey !== me), e => e.pubkey + '|' + tagOf(e, 'd'));
     const inb = new Map();
     for(const ev of docs.values()){

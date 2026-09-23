@@ -25,6 +25,7 @@ the real server: a DELETE drops one reference, the bytes go with the last one.
                      browser's default button, at phone and desktop width.
   overflow           the share views push the page sideways at 390px.
   bleed              a label is drawn outside its own button (reported on the APK at phone width).
+  B-elsewhere        B's SECOND device (same key, empty storage) sees the accepted playlist too.
 
 Exit 0 = clean, 1 = problems, 2 = could not run (no Chrome / no websockets).
 """
@@ -359,10 +360,14 @@ async def drive(base, problems):
             return 2
         import secrets
         keys = {n: secrets.token_hex(32) for n in "ABC"}
+        # D IS B'S SECOND DEVICE: the same account key, its own browser context and therefore its
+        # own empty localStorage. It is the only way to ask the question the feature turns on —
+        # "can I see the shared music on all my devices?" — rather than assume it.
+        keys["D"] = keys["B"]
         async with websockets.connect(ver["webSocketDebuggerUrl"], max_size=64 * 1024 * 1024) as bws:
             browser = Page(bws)
             conns, pages = [], {}
-            for n in "ABC":
+            for n in "ABCD":
                 cx = await browser.call("Target.createBrowserContext")
                 t = await browser.call("Target.createTarget", {"url": "about:blank", "browserContextId": cx["browserContextId"]})
                 ws = await websockets.connect(f"ws://127.0.0.1:{PORT}/devtools/page/{t['targetId']}", max_size=64 * 1024 * 1024)
@@ -375,7 +380,7 @@ async def drive(base, problems):
                     print(f"SKIP  page {n} never loaded musicshare.js")
                     return 2
                 pages[n] = p
-            A, B, C = pages["A"], pages["B"], pages["C"]
+            A, B, C, B2 = pages["A"], pages["B"], pages["C"], pages["D"]
             pk = {n: await pages[n].js("window.__PC.me().pubkey") for n in "ABC"}
             npub_b = await A.js(f"NostrTools.nip19.npubEncode({json.dumps(pk['B'])})")
             for p in pages.values():
@@ -425,6 +430,19 @@ async def drive(base, problems):
                 problems.append("B-accepts: the accepted share is not a playlist chip: " + bar[:300])
             if 'ma-pln">1<' in bar.split("Shared with me")[-1][:60]:
                 problems.append("B-accepts: 'Shared with me' still counts a share that was answered")
+            # ---- AND B'S SECOND DEVICE SEES IT, because the answer is on the account ----
+            # Same key, its own browser context and therefore its own empty storage: this is the
+            # question the feature turns on — "can I see the shared music on all my devices?"
+            await B2.js("PCMusicShare.loadIn(); true")
+            if not await B2.until("PCMusicShare.acceptedShares().length === 1", 20):
+                problems.append("B-elsewhere: the accepted playlist did not reach B's other device")
+            else:
+                bar2 = await B2.js("PCMusicShare.barHTML('', false)")
+                if "Road trip" not in bar2:
+                    problems.append("B-elsewhere: it is not a playlist chip there: " + bar2[:200])
+                if await B2.js("PCMusicShare.pendingShares().length") != 0:
+                    problems.append("B-elsewhere: a share answered on the other device is offered again here")
+
             # …and the rejected one stays gone, which is what makes "no" mean no.
             key = await B.js("(PCMusicShare.acceptedShares()[0]||{}).key||''")
             await B.js(f"PCMusicShare.decide({json.dumps(key)}, false); true")
