@@ -133,6 +133,20 @@ class FakeBackend:
         vcpus = int(re.search(r"<vcpu>(\d+)</vcpu>", xml).group(1))
         ram = int(re.search(r'<memory unit="MiB">(\d+)</memory>', xml).group(1))
         meta = domainxml.parse_meta(xml)
+        # LIBVIRT GIVES EVERY ADAPTER A MAC ON DEFINE (52:54:00:… for QEMU) and dumpxml reports it from then
+        # on. Without this the fake held adapters no real host has, and anything that names an adapter by
+        # its MAC -- remove_nic, the add_nic read-back -- had nothing to name.
+        if "<interface" in xml:
+            root = ET.fromstring(xml)
+            changed = False
+            for iface in root.findall("devices/interface"):
+                if iface.find("mac") is None:
+                    self._mac_seq = getattr(self, "_mac_seq", 0) + 1
+                    n = self._mac_seq
+                    ET.SubElement(iface, "mac", {"address": "52:54:00:%02x:%02x:%02x" % ((n >> 16) & 255, (n >> 8) & 255, n & 255)})
+                    changed = True
+            if changed:
+                xml = ET.tostring(root, encoding="unicode")
         with open(os.path.join(workdir, "domain.xml"), "w") as f:
             f.write(xml)
         prev = self.domains.get(u) or {}

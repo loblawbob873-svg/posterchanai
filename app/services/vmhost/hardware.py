@@ -50,7 +50,8 @@ class HardwareOps:
         d = await self._domain(pk, role, args)
         if d.meta is None or not self.storage.is_managed_dir(d.uuid):
             raise _err("unsupported", "this VM was not created by PosterChan — edit it with virsh")
-        known = {"vm", "vcpus", "ram_mib", "autostart", "boot", "add_disk_gib", "add_nic", "media", "input", "network"}
+        known = {"vm", "vcpus", "ram_mib", "autostart", "boot", "add_disk_gib", "add_nic", "media", "input", "network",
+                 "nic_network", "remove_nic"}
         extra = sorted(set(args) - known)
         if extra:
             raise _err("bad_request", f"unknown field {extra[0]!r}")
@@ -70,6 +71,20 @@ class HardwareOps:
             raise _err("bad_request", "add_nic must be true")
         chosen = await self._resolve_network(want["network"]) if "network" in want else None
         net_name, net_bridge = chosen if chosen else (self.cfg.default_network, self.cfg.bridge)
+        # AN ADDED ADAPTER ON ITS OWN NETWORK. `network` re-points the FIRST adapter, and an adapter added in
+        # the same request used to follow it -- so a router VM (WAN on the LAN bridge, a second card on an
+        # isolated test network) could not be built: adding the test-network card dragged the WAN card
+        # onto it too. `nic_network` names the new card's network and leaves the first one alone.
+        if "nic_network" in want and not want.get("add_nic"):
+            raise _err("bad_request", "nic_network needs add_nic")
+        nic_chosen = await self._resolve_network(want["nic_network"]) if "nic_network" in want else None
+        add_name, add_bridge = nic_chosen if nic_chosen else (net_name, net_bridge)
+        drop_mac = None
+        if "remove_nic" in want:
+            drop_mac = str(want["remove_nic"]).lower()
+            if not domainxml.MAC_RE.match(drop_mac):
+                raise _err("bad_request", "remove_nic must be the adapter's MAC address")
+        adapters_before = []
         media = want.get("media")
         iso_path = None
         if "media" in want:
@@ -147,12 +162,15 @@ class HardwareOps:
                         domainxml.set_boot(root, want["boot"])
                     if "input" in want:
                         domainxml.set_input(root, want["input"])
+                    adapters_before = [domainxml.nic_detail(i) for i in root.findall("devices/interface")]
+                    if drop_mac:
+                        domainxml.remove_nic(root, drop_mac)
                     if chosen:
                         domainxml.set_primary_nic(root, net_name, net_bridge, windows)
                     if want.get("add_nic"):
                         if len(root.findall("devices/interface")) >= MAX_NICS:
                             raise _err("insufficient_capacity", f"a VM may have at most {MAX_NICS} network adapters")
-                        domainxml.add_nic(root, net_name, net_bridge, windows)
+                        domainxml.add_nic(root, add_name, add_bridge, windows)
                     if "media" in want:
                         domainxml.set_media(root, iso_path)
                     meta = d.meta
@@ -210,6 +228,19 @@ class HardwareOps:
             wrong.append("installer disc")
         if chosen and hw.get("net") != {"type": "bridge" if net_bridge else "network", "name": net_bridge or net_name}:
             wrong.append("network")
+        after_macs = [a.get("mac") for a in hw.get("adapters", [])]
+        if drop_mac and drop_mac in after_macs:
+            wrong.append("adapter removal")
+        if want.get("add_nic"):
+            # The new adapter is APPENDED, so it is the last one, and there is exactly one more than there
+            # was (less any removed in the same save). Counted, not diffed by MAC: an adapter libvirt had not
+            # yet given an address would read as "new" on both sides of the save.
+            after_list = hw.get("adapters", [])
+            expect = len(adapters_before) + 1 - (1 if drop_mac else 0)
+            last = after_list[-1] if after_list else {}
+            if len(after_list) != expect or {"type": last.get("type"), "name": last.get("name")} != \
+                    {"type": "bridge" if add_bridge else "network", "name": add_bridge or add_name or "default"}:
+                wrong.append("new network adapter")
         if wrong:
             raise _err("backend_error", "the host accepted the change but did not keep: " + ", ".join(wrong))
         self._set_index(after)

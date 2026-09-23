@@ -648,6 +648,22 @@
     const info = (S.data[pk] || {}).info || {};
     return info.bridge ? 'bridge:' + info.bridge : 'network:' + (info.default_network || 'default');
   }
+  /* NETWORK ADAPTERS ON A SERVER HOST: every card with its wire and MAC, one to take away, and a new one on
+   * a network of its own. A router VM needs exactly this -- its WAN card on the LAN bridge and a second card
+   * on an isolated network -- and "Add a network adapter" used to put the new card wherever the FIRST card
+   * pointed. One removal per Save, matching the host (`remove_nic` names one MAC). */
+  function adaptersHtml(st, hw){
+    const list = Array.isArray(hw.adapters) ? hw.adapters : [];
+    const wire = a => (a.type === 'bridge' ? 'Bridge ' : a.type === 'network' ? 'Network ' : '') + (a.name || '?');
+    const rows = list.map((a, i) => `<li class="vms-nic"><span class="vms-nic-name">Adapter ${i + 1} · ${esc(wire(a))}</span><span class="vms-seen vms-nic-mac">${esc(a.mac || '')}</span></li>`).join('');
+    // The MAC is the VALUE; the label says which adapter in words, so it fits a phone-width select.
+    const rm = list.map((a, i) => a.mac ? `<option value="${esc(a.mac)}">Remove adapter ${i + 1} (${esc(wire(a))})</option>` : '').join('');
+    const choices = netChoices(st.pk, st.bridges);
+    return `<div class="vms-nics"><span class="vms-niclabel">Network adapters</span>${rows ? `<ul class="vms-niclist">${rows}</ul>` : '<div class="vms-seen">No network adapter.</div>'}
+      ${rm ? `<label>Remove an adapter<select class="input" name="remove_nic"><option value="">Keep them all</option>${rm}</select></label>` : ''}
+      <label class="vms-check"><input type="checkbox" name="add_nic"> Add an adapter${choices.length ? ' on' : ''}</label>
+      ${choices.length ? `<select class="input" name="nic_net" aria-label="Network for the new adapter">${choices.map(c => `<option value="${esc(c.v)}" ${c.off ? 'disabled' : ''}>${esc(c.l)}</option>`).join('')}</select>` : ''}</div>`;
+  }
   function netSelect(choices, cur){
     if(!choices.length) return '';
     const has = choices.some(c => c.v === cur);
@@ -716,7 +732,8 @@
     const chk = n => !!(f.querySelector('[name="' + n + '"]') || {}).checked;
     return { vcpus: Number(val('vcpus')), ram_mib: Number(val('ram_mib')), autostart: chk('autostart'), boot: val('boot'),
              media: val('media') || '__keep', add_disk_gib: Number(val('add_disk_gib') || 0), add_nic: chk('add_nic'),
-             input: val('input'), pick: st.pick || '', net: val('net') || '' };
+             input: val('input'), pick: st.pick || '', net: val('net') || '',
+             nic_net: val('nic_net') || '', remove_nic: val('remove_nic') || '' };
   }
   function settingsDelta(x){
     const st = S.settings, v = st.vm, hw = st.hw || {};
@@ -727,7 +744,12 @@
     if(x.boot && x.boot !== hw.boot) out.boot = x.boot;
     if(x.input && x.input !== hw.input) out.input = x.input;
     if(x.add_disk_gib > 0) out.add_disk_gib = x.add_disk_gib;
-    if(x.add_nic) out.add_nic = true;
+    if(x.add_nic){
+      out.add_nic = true;
+      // Its own network, never "wherever adapter 1 points" -- see adaptersHtml. Local VMs have no choice.
+      if(st.pk !== LOCAL_PK && x.nic_net){ const n = parseNet(x.nic_net); if(n) out.nic_network = n; }
+    }
+    if(st.pk !== LOCAL_PK && x.remove_nic) out.remove_nic = x.remove_nic;
     if(x.net && x.net !== netValue(hw.net)){ const n = parseNet(x.net); if(n) out.network = n; }
     if(st.pk === LOCAL_PK){
       if(x.media === '__eject' && hw.media) out.media = 'eject';
@@ -1760,7 +1782,7 @@
           <label>Add a disk (GiB)<input class="input" name="add_disk_gib" type="number" min="0" ${lim.max_disk_gib ? `max="${esc(lim.max_disk_gib)}"` : ''} placeholder="0 = none" value=""></label>
           <label>Pointer<select class="input" name="input"><option value="tablet" ${hw.input !== 'mouse' ? 'selected' : ''}>Tablet (follows the cursor)</option><option value="mouse" ${hw.input === 'mouse' ? 'selected' : ''}>Relative mouse (games — Ctrl+Alt releases it)</option></select></label></div>
           ${netSelect(netChoices(st.pk, st.bridges), netValue(hw.net))}
-          <label class="vms-check"><input type="checkbox" name="add_nic"> Add a network adapter (has ${esc(hw.nics || 0)})</label></section>
+          ${local ? `<label class="vms-check"><input type="checkbox" name="add_nic"> Add a network adapter (has ${esc(hw.nics || 0)})</label>` : adaptersHtml(st, hw)}</section>
         <div class="vms-createmsg" aria-live="polite">${esc(st.msg || '')}</div>
         <div class="vms-formfoot"><button class="btn btn-ghost" data-act="settings-leave">Back</button><button class="btn btn-neon" data-act="settings-save" disabled>${st.busy ? 'Saving…' : 'Save settings'}</button></div>
       </form>`;
@@ -1857,6 +1879,10 @@ button.vms-vm .vms-pill{grid-row:1/3}button.vms-vm b{overflow-wrap:anywhere}
 .vms-cold{display:flex;flex-direction:column;align-items:center}
 .vms-section{display:flex;flex-direction:column;gap:8px;border:1px solid var(--line);border-radius:var(--r-sm);padding:10px 12px}
 .vms-section h3{margin:0;font-size:15px;color:var(--neon);letter-spacing:-.01em}
+.vms-nics{display:flex;flex-direction:column;gap:8px}.vms-niclabel{font-size:14px}
+.vms-niclist{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:6px}
+.vms-nic{display:flex;flex-wrap:wrap;align-items:baseline;justify-content:space-between;gap:2px 12px;padding:8px 12px;border:1px solid var(--line);border-radius:var(--r-sm)}
+.vms-nic-name{font-size:14px;min-width:0}.vms-nic-mac{font-family:ui-monospace,monospace;font-size:12px;white-space:nowrap}
 .vms-formfoot{position:sticky;bottom:0;z-index:4;display:flex;justify-content:flex-end;gap:8px;padding:10px 0;background:var(--canvas);border-top:1px solid var(--line)}
 .vms-snaps{display:flex;flex-direction:column;gap:6px}
 .vms-snap,.vms-iso{display:flex;justify-content:space-between;align-items:center;gap:8px;flex-wrap:wrap;background:var(--panel2);border:1px solid var(--line);border-radius:var(--r-sm);padding:8px 10px}

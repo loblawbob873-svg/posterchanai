@@ -273,7 +273,7 @@ def read_hardware(xml_text: str, iso_dir: str = "") -> dict:
     os_el = root.find("os")
     boots = [b.get("dev") for b in (os_el.findall("boot") if os_el is not None else [])]
     dev = root.find("devices")
-    disks, media, nics, inputs = [], "", 0, []
+    disks, media, nics, inputs, adapters = [], "", 0, [], []
     net = {"type": "", "name": ""}
     lib = iso_dir.rstrip("/") + "/" if iso_dir else ""
     if dev is not None:
@@ -293,12 +293,13 @@ def read_hardware(xml_text: str, iso_dir: str = "") -> dict:
             disks.append(entry)
         ifaces = dev.findall("interface")
         nics = len(ifaces)
+        adapters = [nic_detail(i) for i in ifaces]
         if ifaces:
             net = nic_of(ifaces[0])
         inputs = [(i.get("type"), i.get("bus")) for i in dev.findall("input")]
     return {"boot": "cdrom" if boots[:1] == ["cdrom"] else "disk",
             "input": "tablet" if any(t == "tablet" for t, _ in inputs) else "mouse",
-            "nics": nics, "net": net, "disks": disks, "media": media,
+            "nics": nics, "net": net, "adapters": adapters, "disks": disks, "media": media,
             "cdrom": any(d["device"] == "cdrom" for d in disks)}
 
 
@@ -383,6 +384,33 @@ def add_nic(root: ET.Element, network: str, bridge: str, windows: bool) -> None:
         n = ET.SubElement(dev, "interface", {"type": "network"})
         ET.SubElement(n, "source", {"network": network or "default"})
     ET.SubElement(n, "model", {"type": "e1000e" if windows else "virtio"})
+
+
+MAC_RE = re.compile(r"^[0-9a-f]{2}(:[0-9a-f]{2}){5}$")
+
+
+def nic_detail(iface: ET.Element) -> dict:
+    """{type, name, mac, model} of one <interface> — what the VM settings list shows per adapter, and the
+    MAC is what `remove_nic` names. nic_of stays the {type, name} pair the network checks compare."""
+    mac = iface.find("mac")
+    model = iface.find("model")
+    return dict(nic_of(iface), mac=(mac.get("address", "") if mac is not None else "").lower(),
+                model=model.get("type", "") if model is not None else "")
+
+
+def remove_nic(root: ET.Element, mac: str) -> None:
+    """Drop the adapter with this MAC. The address is the only stable name an adapter has: its order can
+    change and two adapters can sit on the same network."""
+    want = str(mac or "").lower()
+    if not MAC_RE.match(want):
+        raise EditError("that is not a MAC address")
+    dev = _devices(root)
+    for iface in dev.findall("interface"):
+        m = iface.find("mac")
+        if m is not None and m.get("address", "").lower() == want:
+            dev.remove(iface)
+            return
+    raise EditError("this VM has no network adapter with that MAC address")
 
 
 def nic_of(iface: ET.Element) -> dict:

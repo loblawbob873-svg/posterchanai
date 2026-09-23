@@ -12,6 +12,7 @@ noVNC, the signer and the DOM — is the shipped code. Run at a phone width (390
 (1280), because the two lay the screen out differently.
 """
 import asyncio
+import json
 import tempfile
 import threading
 import subprocess
@@ -57,14 +58,18 @@ function hostOp(op,args,who){
   if(who&&who.name!=='vmhost.invalid'){ if(op==='host.whoami')return {ok:true,result:{role:'user',host:{name:who.name==='vmhost2.invalid'?'Second host':'Found host',features:FEATURES}}};
     if(op==='host.info')return {ok:true,result:{name:'x',vms:{running:0,total:0}}}; if(op==='vm.list')return {ok:true,result:{vms:[],next:null}}; return {ok:false,error:{code:'forbidden',message:'no'}}; }
   if(op==='host.whoami')return {ok:true,result:{role:'admin',host:{name:'Fixture host',version:1,features:FEATURES}}};
-  if(op==='vm.get')return {ok:true,result:{vm:Object.assign(vmView(),{hardware:{boot:'disk',input:'tablet',nics:1,disks:[{device:'disk',target:'vda'}],media:'',cdrom:false}})}};
+  if(op==='vm.get')return {ok:true,result:{vm:Object.assign(vmView(),{hardware:{boot:'disk',input:'tablet',nics:2,net:{type:'bridge',name:'br0'},
+    adapters:[{type:'bridge',name:'br0',mac:'52:54:00:00:00:01',model:'virtio'},{type:'network',name:'default',mac:'52:54:00:00:00:02',model:'virtio'}],
+    disks:[{device:'disk',target:'vda'}],media:'',cdrom:false}})}};
   if(op==='vm.update'){ if(__vm.state!=='shutoff')return {ok:false,error:{code:'conflict',message:'shut it down'}}; if(args.vcpus)__vm.vcpus=args.vcpus;
-    return {ok:true,result:{vm:Object.assign(vmView(),{hardware:{boot:args.boot||'disk',input:args.input||'tablet',nics:1,disks:[],media:'',cdrom:false}})}}; }
+    return {ok:true,result:{vm:Object.assign(vmView(),{hardware:{boot:args.boot||'disk',input:args.input||'tablet',nics:2,net:{type:'bridge',name:'br0'},
+      adapters:[{type:'bridge',name:'br0',mac:'52:54:00:00:00:01',model:'virtio'},{type:'network',name:'default',mac:'52:54:00:00:00:02',model:'virtio'}],
+      disks:[],media:'',cdrom:false}})}}; }
   if(op==='iso.list')return {ok:true,result:{isos:[{id:'debian.iso',name:'debian.iso',size:654311424}],jobs:[],fetch_enabled:true}};
   if(op==='vm.snapshot.list')return {ok:true,result:{vm:args.vm,snapshots:__vm.snaps}};
   if(op==='vm.snapshot.create'){if(__vm.state!=='shutoff')return {ok:false,error:{code:'conflict',message:'shut the VM down to take a snapshot'}};__vm.snaps.push({name:args.name,created:'2026-09-16 12:00 UTC',state:'ok',disks:['vda'],description:''});return {ok:true,result:{vm:args.vm,snapshots:__vm.snaps}};}
   if(op==='host.access.get')return {ok:true,result:{allowed:[],admins:[],admins_editable:false}};
-  if(op==='host.info')return {ok:true,result:{name:'Fixture host',kvm:true,libvirt:true,vms:{running:__vm.state==='running'?1:0,total:1},
+  if(op==='host.info')return {ok:true,result:{name:'Fixture host',kvm:true,libvirt:true,networks:['default','pc-testlan'],bridges:['br0'],bridge:'br0',vms:{running:__vm.state==='running'?1:0,total:1},
     cpu:{cores:8,load1:0.3},ram:{total_mib:32768,free_mib:20000,committed_mib:2048},disk:{total_gib:500,free_gib:400,committed_gib:20},
     limits:{max_vcpus:16,max_ram_mib:65536,max_disk_gib:2048,reserve_ram_mib:2048,reserve_disk_gib:20}}};
   if(op==='vm.list')return {ok:true,result:{vms:[vmView()],next:null}};
@@ -227,6 +232,20 @@ async def main(width):
                 assert await b.js("JSON.stringify(__vm.args['vm.update'])==='{\"vm\":\"11111111-1111-4111-8111-111111111111\",\"vcpus\":4}'"), \
                     await b.js("JSON.stringify(__vm.args['vm.update'])")
                 assert await b.js("document.querySelector('[data-act=settings-save]').disabled"), 'after a save nothing is dirty'
+                # ---------------- network adapters: each on its OWN network, and one taken away by MAC
+                # (a router VM: WAN card on the LAN bridge, a second card on an isolated test network)
+                assert await b.js("[...document.querySelectorAll('.vms-nic')].map(e=>e.innerText).join('|').includes('52:54:00:00:00:02')"), \
+                    'the settings list every adapter with its MAC'
+                await b.js("""(()=>{const f=document.querySelector('#vms-settings');
+                    const set=(n,v)=>{const e=f.querySelector('[name='+n+']');if(e.type==='checkbox')e.checked=v;else e.value=v;e.dispatchEvent(new Event('change',{bubbles:true}));e.dispatchEvent(new Event('input',{bubbles:true}));};
+                    set('remove_nic','52:54:00:00:00:02');set('add_nic',true);set('nic_net','network:pc-testlan');})()""")
+                await b.until("!document.querySelector('[data-act=settings-save]').disabled")
+                await b.js("__vm.ops.length=0;document.querySelector('[data-act=settings-save]').click()")
+                await b.until("__vm.ops.includes('vm.update')")
+                sent = await b.js("JSON.stringify(__vm.args['vm.update'])")
+                assert json.loads(sent) == {"vm": "11111111-1111-4111-8111-111111111111", "add_nic": True,
+                                            "nic_network": {"type": "network", "name": "pc-testlan"},
+                                            "remove_nic": "52:54:00:00:00:02"}, sent
                 await b.js("document.querySelector('[data-act=settings-leave]').click()")
                 await b.until("!!document.querySelector('.vms-vmhead')")
                 # ---------------- snapshots
