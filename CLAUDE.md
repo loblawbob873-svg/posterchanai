@@ -1497,12 +1497,17 @@ would have handled it fine).
   message posts back to the platform (`SocialReplyMap` maps Telegram msg → target). Per-user
   toggle (User Settings → Telegram) + global kill-switch (default on).
 - **ActivityPub server, stored as Nostr events** (`app/services/activitypub/`, `app/routers/activitypub.py`,
-  Admin → Social; `docs/ACTIVITYPUB.md`). Off by default (`activitypub_enabled`). Every name in the
-  NIP-05 registry is automatically `@name@<domain>`. Incoming content = Nostr events signed by the
+  Admin → Social; `docs/ACTIVITYPUB.md`). ON OUT OF THE BOX (`activitypub_enabled`/`_everyone`/`_dms`,
+  blank = on; no domain = silent). Every name in the NIP-05 registry is `@name@<domain>`, and every
+  NATIVE Nostr account with a profile here is `@npub…@<domain>` (never a puppet or another bridge's
+  mirror); replies/mentions to non-local users are pushed to THEIR relays (`nostrside.py`,
+  SSRF-checked). DMs cross both ways (`dm.py`: NIP-17 ⇄ AP direct notes, via derived puppet keys;
+  only to someone who follows the sender or wrote first). Blocklists: ONE parser
+  (`app/services/fedi_blocklist.py`) for bridge + AP — subdomains, IDN, `user@host` = one account. Incoming content = Nostr events signed by the
   bridge's PUPPET keys, deduped in `FediBridgeDelivered` (`platform="activitypub"`, note_id = URI);
   members' own events are read from the relay and delivered by the worker's `activitypub` job. It is
   ONE system with the bridge below: same puppet key both paths, a write-back (linked Pleroma) member is
-  never also sent from the AP actor, the Pleroma mirror skips `@x@<our domain>` (and `_deliver` threads
+  never also sent from the AP actor WHILE `fedi_bridge_enabled` is on (follows always are), the Pleroma mirror skips `@x@<our domain>` (and `_deliver` threads
   a reply under the member's real event), write-back resolves AP rows by URI. **Instance blocking is
   the relay's list** (`nostr_relay_blocked_relays`), read, never duplicated. Paths are under `/ap/`
   because router.lan 410s `/inbox` + `/users/*/inbox` for the retired Pleroma. Keys are never minted
