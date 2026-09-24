@@ -146,13 +146,43 @@ async def following(name: str):
     return _ap(_collection(url, n))
 
 
+_outbox_counts: dict = {}
+
+
 @router.get("/ap/users/{name}/outbox")
-async def outbox(name: str):
-    """The count only. The posts themselves are on Nostr; a remote server that wants one fetches it
-    by its object URL."""
+async def outbox(name: str, page: str = "", max_id: int = 0):
+    """An account's recent public posts, newest first, paged -- what Akkoma and Mastodon read to show
+    a profile's posts. It used to answer the count only (always 0), so a profile opened on another
+    server showed nothing but what had been delivered to it."""
     _on()
     pk = await _member(name)
-    return _ap(_collection(f"{convert.actor_url(config.base_url(), actors.handle(pk))}/outbox", 0))
+    url = f"{convert.actor_url(config.base_url(), actors.handle(pk))}/outbox"
+    from app.services.activitypub import outbox as ob
+    if page:
+        try:
+            items, oldest = await ob.public_posts(pk, until=max_id, limit=20)
+        except Exception:
+            raise HTTPException(503, "could not read the relay")
+        doc = {"@context": convert.AS_CONTEXT, "id": f"{url}?page=true" + (f"&max_id={max_id}" if max_id else ""),
+               "type": "OrderedCollectionPage", "partOf": url, "orderedItems": items}
+        if items and oldest:
+            doc["next"] = f"{url}?page=true&max_id={oldest}"
+        return _ap(doc)
+    # The total is only a label ("123 posts"); counted from one bounded read, kept five minutes.
+    hit = _outbox_counts.get(pk)
+    if hit and time.monotonic() - hit[0] < 300:
+        total = hit[1]
+    else:
+        try:
+            from app.services import nostr_store, settings_store
+            evs = await nostr_store._ws_query(settings_store._port(), [{"kinds": [1], "authors": [pk], "limit": 2000}])
+            total = sum(1 for e in evs if not any(len(t) > 1 and t[0] in ("proxy", "-") for t in e.get("tags") or []))
+        except Exception:
+            total = 0
+        _outbox_counts[pk] = (time.monotonic(), total)
+        if len(_outbox_counts) > 5000:
+            _outbox_counts.clear()
+    return _ap({**_collection(url, total), "first": f"{url}?page=true"})
 
 
 @router.get("/ap/objects/{event_id}")

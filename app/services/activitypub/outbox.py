@@ -302,6 +302,46 @@ async def _follows(ev: dict, member: str, me: str) -> list:
     return out
 
 
+async def public_posts(member: str, *, until: int = 0, limit: int = 20) -> tuple[list, int]:
+    """(Create activities, oldest created_at) for a member's recent public posts, newest first -- what
+    their OUTBOX collection serves. A remote server fills a profile from it: Akkoma and Mastodon read
+    it when somebody opens the profile, and with it empty they showed only whatever had happened to
+    be delivered to them (one post, or none). The same conversion and the same rules as delivery:
+    no mirrors, no protected events, and a reply only when it answers something on the fediverse."""
+    base, name = config.base_url(), actors.handle(member)
+    if not base or not name:
+        return [], 0
+    me = convert.actor_url(base, name)
+    flt = {"kinds": [1], "authors": [member], "limit": max(limit * 3, 30)}
+    if until:
+        flt["until"] = int(until) - 1
+    evs = await nostr_store._ws_query(settings_store._port(), [flt], strict=True)
+    evs.sort(key=lambda e: (-int(e.get("created_at") or 0), e.get("id", "")))
+    items, oldest = [], 0
+    for ev in evs:
+        oldest = int(ev.get("created_at") or 0)
+        if _is_mirror(ev) or _protected(ev):
+            continue
+        reply_uri = reply_actor = ""
+        parent = parent_of(ev)
+        if parent:
+            target = await resolve_event(parent)
+            if not target:
+                continue
+            reply_uri, reply_actor = target["uri"], target.get("actor", "")
+        mentions = {}
+        for pk in _referenced_pubkeys(ev):
+            who = await resolve_pubkey(pk)
+            if who:
+                mentions[pk] = who
+        note = convert.note_from_event(ev, base=base, actor=me, followers=f"{me}/followers", mentions=mentions,
+                                       in_reply_to=reply_uri, reply_to_actor=reply_actor)
+        items.append(convert.create(note, me))
+        if len(items) >= limit:
+            break
+    return items, oldest
+
+
 def _h(s: str) -> str:
     return hashlib.sha256(s.encode()).hexdigest()[:16]
 

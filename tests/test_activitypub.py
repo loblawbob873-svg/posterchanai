@@ -1452,3 +1452,34 @@ def test_incoming_emoji_reactions_keep_their_emoji(world):
     got = {e["content"]: e for e in world["relay"].values() if e["kind"] == 7}
     assert ["emoji", "blobcat", EMO] in got[":blobcat:"]["tags"], "a custom reaction arrived as bare text"
     assert "🎉" in got
+
+
+# ============================================================================ 19. the outbox
+
+def test_the_outbox_serves_recent_posts_so_a_profile_is_not_empty(client, world, monkeypatch):
+    """Akkoma and Mastodon fill a remote profile from its outbox. It answered a count of 0, so a
+    profile opened on another server showed nothing ("profile not visible on detroitriotcity")."""
+    from app.services import nostr_store
+
+    async def ws_query(port, filters, **kw):
+        f = filters[0]
+        rows = [e for e in world["relay"].values() if e["kind"] in f.get("kinds", [])
+                and e["pubkey"] in f.get("authors", [e["pubkey"]])
+                and e["created_at"] <= f.get("until", 1 << 62)]
+        return sorted(rows, key=lambda e: -e["created_at"])[: f.get("limit", 500)]
+    monkeypatch.setattr(nostr_store, "_ws_query", ws_query)
+    for i in range(25):
+        p = member_post(f"post {i}", created=1_700_000_000 + i)
+        world["relay"][p["id"]] = p
+    mirror = member_post("not mine", created=1_700_001_000, tags=[["proxy", "https://x.example/1", "activitypub"]])
+    world["relay"][mirror["id"]] = mirror
+    h = {"Accept": "application/activity+json"}
+    coll = client.get("/ap/users/alice/outbox", headers=h).json()
+    assert coll["totalItems"] == 25 and coll["first"].endswith("/outbox?page=true")
+    page = client.get(coll["first"].replace(BASE, ""), headers=h).json()
+    texts = [a["object"]["content"] for a in page["orderedItems"]]
+    assert len(texts) == 20 and texts[0] == "<p>post 24</p>" and "not mine" not in " ".join(texts)
+    assert all(a["type"] == "Create" and a["object"]["attributedTo"] == f"{BASE}/ap/users/alice"
+               for a in page["orderedItems"])
+    rest = client.get(page["next"].replace(BASE, ""), headers=h).json()
+    assert [a["object"]["content"] for a in rest["orderedItems"]] == [f"<p>post {i}</p>" for i in range(4, -1, -1)]
