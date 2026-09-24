@@ -11102,3 +11102,7 @@ html.os-idle #os-root *{animation:none!important;transition:none!important}
 .mc-mv-new{display:flex;flex-direction:column;gap:5px;font-size:13px;margin-top:6px}
 .mc-mv-new .input{margin:0}
 .mc-mv-acts{justify-content:flex-end;gap:8px;margin-top:8px}
+/* Settings → Fediverse: import follows (address box + button + result line) */
+.us-plr-import{display:flex;flex-wrap:wrap;gap:6px;align-items:center;margin-top:6px}
+.us-plr-import .input{flex:1 1 180px;min-width:0}
+#us-plr-import-said{flex-basis:100%}

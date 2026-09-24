@@ -600,7 +600,7 @@ window.PCSettingsFactory = function(dep){
               ? `<div class="muted small">✓ Connected to ${enc(s.pleroma_instance_url||'')}</div><button class="btn btn-ghost small" id="us-plr-disc" style="color:var(--danger)">Disconnect</button>`
               : `<button class="btn btn-ghost small" id="us-plr-conn">Connect with OAuth</button>`}
             ${s.pleroma_has_access_token ? `<div class="muted small">Following a bridged fediverse account on Nostr also follows the real account here. Reconnect once if follows don't take (grants the follow permission).</div>` : ''}
-            ${s.pleroma_has_access_token ? `<div class="us-plr-import"><button class="btn btn-ghost small" id="us-plr-import">Follow everyone you follow there</button><span class="muted small" id="us-plr-import-said" role="status"></span></div><div class="muted small">Adds the accounts you follow on ${enc(s.pleroma_instance_url||'that server')} to your follows here, so they are in your home timeline. When this node's fediverse server is on, your @name here follows them too.</div>` : ''}
+            <div class="us-plr-import"><input class="input" id="us-plr-import-acct" autocomplete="off" spellcheck="false" placeholder="${s.pleroma_has_access_token?'this account, or name@server':'you@your.old.server'}" aria-label="Fediverse account to import follows from"><button class="btn btn-ghost small" id="us-plr-import">Follow everyone ${s.pleroma_has_access_token?'you follow there':'it follows'}</button><span class="muted small" id="us-plr-import-said" role="status"></span></div><div class="muted small">Adds the accounts a fediverse account follows to your follows here, so they are in your home timeline — your linked account${s.pleroma_has_access_token?' ('+enc(s.pleroma_instance_url||'')+')':''}, or any account whose follow list is public, by its address (no login needed). When this node's fediverse server is on, your @name here follows them too.</div>
             <label class="fld" style="flex-direction:row;justify-content:space-between;align-items:center">Bridge my fedi DMs &amp; notifications to Nostr<label class="switch"><input type="checkbox" id="us-fedi-bridge" ${s.fedi_bridge_enabled?'checked':''}><span class="slider"></span></label></label>
             <div class="muted small">Your fediverse DMs arrive as Nostr DMs and your notifications as Nostr events; replying/liking/reposting a bridged post posts back through this account. Needs a NIP-05 name on this instance.</div>
             <label class="fld" style="flex-direction:row;justify-content:space-between;align-items:center">Cross-post my posts to the Fediverse<label class="switch"><input type="checkbox" id="us-fedi-crosspost" ${s.fedi_crosspost_enabled?'checked':''}><span class="slider"></span></label></label>
@@ -1137,12 +1137,16 @@ window.PCSettingsFactory = function(dep){
         b.disabled=true; if(said) said.textContent=' Reading who you follow…';
         try{
           try{ await ensureAiSession(); }catch(_){}
-          const r=await fetch('/api/activitypub/import-following',{method:'POST'});
+          const acct=(($('#us-plr-import-acct')||{}).value||'').trim();
+          const r=await fetch('/api/activitypub/import-following',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(acct?{account:acct}:{})});
           const j=await r.json().catch(()=>({}));
           if(!r.ok) throw new Error(typeof j.detail==='string' ? j.detail : ('HTTP '+r.status));
           const pks=(j.people||[]).map(p=>p.pubkey).filter(Boolean);
           if(said) said.textContent=' Adding '+pks.length+'…';
-          const added=pks.length ? await followMany(pks, { skipPleroma:true }) : 0;
+          // throwOnFail: a follow list the relay did not take must say so. It used to come back as
+          // "0 added", which the line below turned into "N you already followed" -- a success message
+          // over an import that had changed nothing.
+          const added=pks.length ? await followMany(pks, { skipPleroma:true, throwOnFail:true }) : 0;
           const msg='Following '+added+' more ('+(pks.length-added)+' you already followed, of '+(j.following||0)+' there)';
           if(said) said.textContent=' ✓ '+msg; toast(msg);
         }catch(e){ if(said) said.textContent=' '+((e&&e.message)||e); toast('Import failed: '+((e&&e.message)||e)); }

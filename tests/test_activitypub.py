@@ -1114,3 +1114,135 @@ def test_a_dm_to_a_blocked_fediverse_account_is_not_sent(world):
     dm._puppets["at"] = 0.0
     assert run(dm.handle_wrap(nip17.wrap(ALICE_SK, carol_puppet["pubkey_hex"], "x"))) == "recipient blocked"
     assert world["sent"] == []
+
+
+# ============================================================================ 12. follows made before it was on
+
+def _k3_relay(world, monkeypatch, *, fail=False):
+    from app.services import nostr_store
+
+    async def ws_query(port, filters, timeout=6.0, **kw):
+        if fail:
+            raise RuntimeError("relay unreachable")
+        f = filters[0]
+        cand = [e for e in world["relay"].values() if e["kind"] in f.get("kinds", [])
+                and e["pubkey"] in f.get("authors", [])]
+        return sorted(cand, key=lambda e: -e["created_at"])[: f.get("limit", 500)]
+    monkeypatch.setattr(nostr_store, "_ws_query", ws_query)
+    outbox._caught_up.clear()
+
+
+def _carol_puppet(world):
+    s = world["Session"]()
+    puppet = ident.puppet_for(convert.account_from_actor(carol_actor()))
+    s.add(FediPuppet(actor_uri=REMOTE, acct="carol@mastodon.example", pubkey_hex=puppet["pubkey_hex"], nip05_name="c"))
+    s.commit()
+    return puppet["pubkey_hex"]
+
+
+def test_a_contact_list_from_before_the_server_was_on_is_followed(world, monkeypatch):
+    """The delivery pass only sees contact lists published after its cursor, and its first run sets
+    the cursor to now -- so a member who already followed fediverse accounts had a fediverse account
+    that followed nobody. The catch-up turns the CURRENT list into Follows, once."""
+    carol = _carol_puppet(world)
+    k3 = member_post("", kind=3, tags=[["p", carol], ["p", BOB]], created=1_690_000_000)
+    world["relay"][k3["id"]] = k3
+    _k3_relay(world, monkeypatch)
+    run(outbox.catch_up_follows(limit=10))
+    assert [(s["activity"]["type"], s["activity"]["object"]) for s in world["sent"]] == [("Follow", REMOTE)]
+    assert REMOTE in run(state.following(ALICE))
+    assert world["docs"]["pcai:ap:k3:" + ALICE]["since"] == 1_690_000_000
+    # A restart (the in-process memory gone) does not send it again: the marker holds.
+    outbox._caught_up.clear()
+    world["sent"].clear()
+    run(outbox.catch_up_follows(limit=10))
+    assert world["sent"] == []
+
+
+def test_the_catch_up_decides_nothing_on_a_relay_it_cannot_read(world, monkeypatch):
+    carol = _carol_puppet(world)
+    k3 = member_post("", kind=3, tags=[["p", carol]], created=1_690_000_000)
+    world["relay"][k3["id"]] = k3
+    _k3_relay(world, monkeypatch, fail=True)
+    run(outbox.catch_up_follows(limit=10))
+    assert world["sent"] == []
+    assert "pcai:ap:k3:" + ALICE not in world["docs"], "an unread list was recorded as handled"
+    _k3_relay(world, monkeypatch)                       # readable again: it happens then
+    run(outbox.catch_up_follows(limit=10))
+    assert [s["activity"]["type"] for s in world["sent"]] == ["Follow"]
+
+
+def test_a_list_the_delivery_pass_handled_is_not_caught_up_again(world, monkeypatch):
+    carol = _carol_puppet(world)
+    world["docs"]["pcai:ap:cursor"] = {"since": 1_700_000_000}
+    world["docs"]["pcai:ap:cursor:everyone"] = {"since": 1_700_000_000}
+    k3 = member_post("", kind=3, tags=[["p", carol]], created=1_700_000_050)
+    world["relay"][k3["id"]] = k3
+
+    async def since(members, since, kinds=None):
+        return [e for e in world["relay"].values() if e["created_at"] > since and e["kind"] in (kinds or outbox.KINDS)
+                and (members is None or e["pubkey"] in members)]
+    monkeypatch.setattr(outbox, "_since", since)
+    world["settings"]["activitypub_everyone"] = "false"
+    run(outbox.tick())
+    assert [s["activity"]["type"] for s in world["sent"]] == ["Follow"]
+    assert world["docs"]["pcai:ap:k3:" + ALICE]["since"] == 1_700_000_050
+    world["sent"].clear()
+    _k3_relay(world, monkeypatch)
+    run(outbox.catch_up_follows(limit=10))
+    assert world["sent"] == []
+
+
+# ============================================================================ 13. importing from a public follow list
+
+def _public_server(monkeypatch, *, following, hidden=False, count=None):
+    from app.services.activitypub import importer
+    import httpx
+    asked = []
+
+    def handler(request):
+        asked.append(request)
+        assert "authorization" not in request.headers, "a public import sent credentials"
+        if request.url.path == "/api/v1/accounts/lookup":
+            if request.url.params.get("acct") != "me":
+                return httpx.Response(404, json={"error": "not found"})
+            return httpx.Response(200, json={"id": "42", "following_count": count if count is not None else len(following)})
+        if request.url.path == "/api/v1/accounts/42/following":
+            if hidden:
+                return httpx.Response(403, json={"error": "hidden"})
+            return httpx.Response(200, json=following)
+        return httpx.Response(404)
+    real_client = httpx.AsyncClient
+    monkeypatch.setattr(importer.httpx, "AsyncClient",
+                        lambda **kw: real_client(transport=httpx.MockTransport(handler), **kw))
+
+    async def ok(url):
+        return None
+    monkeypatch.setattr(remote, "_check", ok)
+    return asked
+
+
+def test_a_public_follow_list_imports_by_address_with_no_login(world, monkeypatch):
+    from app.services.activitypub import importer
+    _public_server(monkeypatch, following=[_pleroma_account(1), _pleroma_account(2)])
+    accounts, base = run(importer.public_following("@me@old.example"))
+    assert base == "https://old.example"
+    assert [a["id"] for a in accounts] == ["1", "2"]
+
+
+def test_a_public_import_says_why_it_cannot(world, monkeypatch):
+    from app.services.activitypub import importer
+    _public_server(monkeypatch, following=[], hidden=True, count=12)
+    with pytest.raises(ValueError, match="private"):
+        run(importer.public_following("me@old.example"))
+    with pytest.raises(ValueError, match="not found"):
+        run(importer.public_following("nobody@old.example"))
+    with pytest.raises(ValueError, match="name@server"):
+        run(importer.public_following("just-a-name"))
+
+
+def test_a_public_import_never_reaches_a_private_address(world, monkeypatch):
+    from app.services.activitypub import importer
+    for handle in ("me@127.0.0.1", "me@10.0.0.5:8080"):
+        with pytest.raises(ValueError, match="Cannot read"):
+            run(importer.public_following(handle))

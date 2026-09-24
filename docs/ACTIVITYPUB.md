@@ -79,6 +79,19 @@ Switch the bridge off (`fedi_bridge_enabled`). While it runs, a user on a linked
 posts through it and ActivityPub sends only their follows; once it is off, ActivityPub carries
 everything for them.
 
+## Bringing your follows across
+
+Settings → Fediverse → **Follow everyone you follow there** adds the accounts an old fediverse
+account follows to your Nostr follows: your linked account, or — typed as `name@server` — any
+account whose follow list is public (Pleroma, Akkoma, Mastodon, GoToSocial), with no login. If the
+relay does not take the new follow list, the button says so; it never reports a failure as "already
+followed".
+
+Whatever fediverse accounts are ALREADY in your follow list are followed from `@you@<domain>`
+automatically (the worker's follow catch-up, one pass per member): a list written before this server
+was switched on is never a "new" event for the delivery loop, so without it a member who had followed
+hundreds of accounts through the Pleroma bridge had a fediverse account that followed nobody.
+
 ## Following someone on the fediverse
 
 Search for `@user@their.server` in the client. The node finds the account and opens its profile;

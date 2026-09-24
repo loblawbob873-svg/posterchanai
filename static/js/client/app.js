@@ -5584,7 +5584,9 @@
     if(!added) return 0;
     const nonP = cur ? cur.tags.filter(t=>t[0]!=='p') : [];
     const r=await publish(3, cur?cur.content:'', nonP.concat([...pset].filter(p=>p!==ME.pubkey).map(p=>['p',p])), {userFollowEdit:true});
-    if(!(r && r.ok)){ fresh.forEach(pk=>FOLLOWS.delete(pk)); return 0; }   // relay didn't store it → revert the local adds
+    if(!(r && r.ok)){ fresh.forEach(pk=>FOLLOWS.delete(pk));   // relay didn't store it → revert the local adds
+      if(opts && opts.throwOnFail) throw new Error(r && r.cancelled ? 'cancelled' : ((r && r.msg) || 'your follow list was not saved — no relay accepted it'));
+      return 0; }
     _persistFollows();
     // follow-bridge the newly-followed bridged accounts on Pleroma too (same as single toggleFollow)
     // Skipped for an IMPORT from that same Pleroma account: every one of them is already followed

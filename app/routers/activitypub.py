@@ -301,21 +301,35 @@ async def lookup(acct: str, user=Depends(get_current_user)):
 
 
 @router.post("/api/activitypub/import-following")
-async def import_following(user=Depends(get_current_user)):
-    """The member's linked Pleroma/Mastodon following list, as puppet pubkeys for the client to add
-    to its contact list (see importer.py)."""
+async def import_following(request: Request, user=Depends(get_current_user)):
+    """A fediverse following list, as puppet pubkeys for the client to add to its contact list (see
+    importer.py): the member's linked Pleroma/Mastodon account, or -- with {"account": "name@server"}
+    -- any account whose follow list is public, which needs no login at all."""
     _on()
-    if not (getattr(user, "pleroma_instance_url", "") and getattr(user, "pleroma_access_token", "")):
-        raise HTTPException(400, "Connect your Pleroma/Mastodon account in Settings first")
+    try:
+        body = await request.json()
+    except Exception:
+        body = {}
+    handle = str((body or {}).get("account") or "").strip() if isinstance(body, dict) else ""
     from app.database import SessionLocal
     from app.services.activitypub import importer
     try:
-        accounts = await importer.following(user.pleroma_instance_url, user.pleroma_access_token)
+        if handle:
+            accounts, instance_url = await importer.public_following(handle)
+        else:
+            if not (getattr(user, "pleroma_instance_url", "") and getattr(user, "pleroma_access_token", "")):
+                raise HTTPException(400, "Type the account to import from (name@server), or connect it in Settings")
+            instance_url = user.pleroma_instance_url
+            accounts = await importer.following(instance_url, user.pleroma_access_token)
+    except HTTPException:
+        raise
+    except ValueError as e:
+        raise HTTPException(400, str(e))
     except Exception as e:
         raise HTTPException(502, f"Could not read who you follow there: {type(e).__name__}")
     db = SessionLocal()
     try:
-        people = await importer.puppets_for(db, accounts, user.pleroma_instance_url)
+        people = await importer.puppets_for(db, accounts, instance_url)
     finally:
         db.close()
     return {"following": len(accounts), "people": people}

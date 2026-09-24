@@ -378,6 +378,67 @@ async def tick() -> int:
     return handled
 
 
+# ------------------------------------------------------------------------------ follow catch-up
+
+_K3 = "pcai:ap:k3:"            # per member: created_at of the contact list last turned into Follows
+_CATCHUP_PER_RUN = 3
+_caught_up: set = set()        # members settled in this process -- newer lists are `_pass`'s job
+
+
+async def catch_up_follows(limit: int = _CATCHUP_PER_RUN) -> int:
+    """Follow the fediverse accounts already in each member's contact list.
+
+    The delivery pass only ever sees contact lists published AFTER its cursor, and its first run
+    sets the cursor to "now" -- so a list written before the fediverse server was switched on is
+    never an event it handles, and a member who already followed three hundred fediverse accounts
+    (through the Pleroma bridge, say) had a fediverse account that followed nobody. With the bridge
+    then switched off, nothing of theirs arrived from anywhere, and nothing said so.
+
+    `_follows` works from the WHOLE list against what is recorded as followed, so running it once on
+    the current list is exactly the missing step, and running it again is harmless. The marker is
+    the list's created_at: a member is revisited only when a newer list exists that nothing has
+    handled (`_pass` moves the marker too). Its own job, outside the tick's timeout, because one
+    member can be hundreds of actor fetches and a cancelled run would leave Follows recorded as
+    asked-for that were never sent."""
+    if not config.enabled() or not config.base_url() or not settings_store.is_hydrated():
+        return 0
+    done = 0
+    for member in await _members():
+        if done >= limit:
+            break
+        if member in _caught_up:
+            continue
+        try:
+            mark = await state.cursor(_K3 + member)
+            evs = await nostr_store._ws_query(settings_store._port(),
+                                              [{"kinds": [3], "authors": [member], "limit": 1}], strict=True)
+        except Exception:
+            continue                                   # unreadable: ask again next run, decide nothing
+        latest = max(evs, key=lambda e: e.get("created_at", 0)) if evs else None
+        at = int(latest.get("created_at", 0)) if latest else 1
+        if mark >= at:
+            _caught_up.add(member)
+            continue
+        if latest is not None:
+            done += 1
+            try:
+                jobs = await plan(latest, member)
+            except Exception as e:
+                logger.info("[activitypub] follow catch-up for %s failed: %s: %s", member[:12], type(e).__name__, e)
+                continue
+            sem = asyncio.Semaphore(8)
+
+            async def one(inbox, act):
+                async with sem:
+                    await _send(inbox, act, member)
+            await asyncio.gather(*(one(i, a) for i, a in jobs))
+            if jobs:
+                logger.info("[activitypub] follow catch-up: %s sent %d follow change(s)", member[:12], len(jobs))
+        await state.set_cursor(at, _K3 + member)
+        _caught_up.add(member)
+    return done
+
+
 _EVERYONE_KINDS = [0, 1, 1111, 5, 6, 7]
 
 
@@ -505,6 +566,11 @@ async def _pass(cursor_key: str, authors, kinds: list, qualifies) -> int:
             jobs = []
         if jobs:
             await asyncio.gather(*(one(i, a, ev["pubkey"]) for i, a in jobs))
+        if ev.get("kind") == 3 and authors is not None:
+            try:
+                await state.set_cursor(int(ev.get("created_at", 0)), _K3 + ev["pubkey"])
+            except Exception:
+                pass                                   # the catch-up then re-checks it: harmless
         _failures.pop(ev["id"], None)
         _seen[ev["id"]] = time.time()
         newest = max(newest, int(ev.get("created_at", 0)))
@@ -574,8 +640,16 @@ def start_activitypub_delivery() -> None:
                 pass
     _job.last = None
 
+    async def _catchup():
+        try:
+            await catch_up_follows()
+        except Exception as e:
+            logger.info("[activitypub] follow catch-up failed: %s: %s", type(e).__name__, e)
+
     _scheduler = AsyncIOScheduler()
     _scheduler.add_job(_job, "interval", seconds=_TICK_SECONDS, id="activitypub_delivery",
+                       max_instances=1, coalesce=True)
+    _scheduler.add_job(_catchup, "interval", seconds=60, id="activitypub_follow_catchup",
                        max_instances=1, coalesce=True)
     _scheduler.start()
     logger.info("[activitypub] delivery loop started (every %ss; off until activitypub_enabled)", _TICK_SECONDS)
