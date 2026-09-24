@@ -1172,25 +1172,35 @@ def test_the_catch_up_decides_nothing_on_a_relay_it_cannot_read(world, monkeypat
     assert [s["activity"]["type"] for s in world["sent"]] == ["Follow"]
 
 
-def test_a_list_the_delivery_pass_handled_is_not_caught_up_again(world, monkeypatch):
+def test_the_delivery_pass_hands_a_contact_list_to_the_catch_up_and_keeps_going(world, monkeypatch):
+    """A contact list of hundreds of fediverse accounts is hundreds of actor fetches. Inside the tick's
+    time limit it timed out, the cursor never moved, and every post behind it waited ("I didn't see
+    anything on DRC"). The tick now passes the list to the catch-up and delivers what follows it."""
     carol = _carol_puppet(world)
+    _with_follower(world)
     world["docs"]["pcai:ap:cursor"] = {"since": 1_700_000_000}
     world["docs"]["pcai:ap:cursor:everyone"] = {"since": 1_700_000_000}
     k3 = member_post("", kind=3, tags=[["p", carol]], created=1_700_000_050)
+    post = member_post("after the follow list", created=1_700_000_060)
     world["relay"][k3["id"]] = k3
+    world["relay"][post["id"]] = post
 
     async def since(members, since, kinds=None):
         return [e for e in world["relay"].values() if e["created_at"] > since and e["kind"] in (kinds or outbox.KINDS)
                 and (members is None or e["pubkey"] in members)]
     monkeypatch.setattr(outbox, "_since", since)
     world["settings"]["activitypub_everyone"] = "false"
-    run(outbox.tick())
-    assert [s["activity"]["type"] for s in world["sent"]] == ["Follow"]
-    assert world["docs"]["pcai:ap:k3:" + ALICE]["since"] == 1_700_000_050
-    world["sent"].clear()
     _k3_relay(world, monkeypatch)
+    run(outbox.tick())
+    assert [s["activity"]["type"] for s in world["sent"]] == ["Create"], "the post waited behind the follow list"
+    assert world["docs"]["pcai:ap:cursor"]["since"] == 1_700_000_060
+    world["sent"].clear()
     run(outbox.catch_up_follows(limit=10))
-    assert world["sent"] == []
+    assert [s["activity"]["type"] for s in world["sent"]] == ["Follow"]
+    world["sent"].clear()
+    outbox._caught_up.clear()
+    run(outbox.catch_up_follows(limit=10))
+    assert world["sent"] == [], "a handled list was followed again"
 
 
 # ============================================================================ 13. importing from a public follow list

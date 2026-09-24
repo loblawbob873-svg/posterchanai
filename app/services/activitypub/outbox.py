@@ -267,8 +267,14 @@ async def _follows(ev: dict, member: str, me: str) -> list:
                 wanted[row.actor_uri] = True
     current = await state.following(member)
     resolved = {}
-    for alias in sorted(wanted):
-        canonical, inbox = await _canonical(alias)
+    # Concurrently: a contact list of a few hundred fediverse accounts is a few hundred actor fetches,
+    # and one after another that outlived every time limit it ran under.
+    sem = asyncio.Semaphore(12)
+
+    async def one(alias):
+        async with sem:
+            return await _canonical(alias)
+    for canonical, inbox in await asyncio.gather(*(one(a) for a in sorted(wanted))):
         if canonical and inbox:
             resolved[canonical] = inbox
     unresolved_known = {a for a in wanted if a in current}      # keep what we cannot re-check right now
@@ -397,7 +403,7 @@ async def catch_up_follows(limit: int = _CATCHUP_PER_RUN) -> int:
     `_follows` works from the WHOLE list against what is recorded as followed, so running it once on
     the current list is exactly the missing step, and running it again is harmless. The marker is
     the list's created_at: a member is revisited only when a newer list exists that nothing has
-    handled (`_pass` moves the marker too). Its own job, outside the tick's timeout, because one
+    handled -- the delivery pass hands every new contact list here. Its own job, outside the tick's timeout, because one
     member can be hundreds of actor fetches and a cancelled run would leave Follows recorded as
     asked-for that were never sent."""
     if not config.enabled() or not config.base_url() or not settings_store.is_hydrated():
@@ -551,6 +557,17 @@ async def _pass(cursor_key: str, authors, kinds: list, qualifies) -> int:
             _seen[ev["id"]] = time.time()
             newest = max(newest, int(ev.get("created_at", 0)))
             continue
+        if ev.get("kind") == 3 and authors is not None:
+            # A member's contact list is the catch-up's job, never the tick's. Turning a list of a few
+            # hundred fediverse accounts into Follows is a few hundred actor fetches; inside the tick's
+            # time limit it timed out, the cursor never moved, and every post, reply and like queued
+            # behind it waited too ("I didn't see anything on DRC"). The catch-up has no limit and runs
+            # every minute; it sees this list as newer than its marker and handles it there.
+            _caught_up.discard(ev["pubkey"])
+            _seen[ev["id"]] = time.time()
+            newest = max(newest, int(ev.get("created_at", 0)))
+            handled += 1
+            continue
         try:
             jobs = await plan(ev, ev["pubkey"])
         except Exception as e:
@@ -566,11 +583,6 @@ async def _pass(cursor_key: str, authors, kinds: list, qualifies) -> int:
             jobs = []
         if jobs:
             await asyncio.gather(*(one(i, a, ev["pubkey"]) for i, a in jobs))
-        if ev.get("kind") == 3 and authors is not None:
-            try:
-                await state.set_cursor(int(ev.get("created_at", 0)), _K3 + ev["pubkey"])
-            except Exception:
-                pass                                   # the catch-up then re-checks it: harmless
         _failures.pop(ev["id"], None)
         _seen[ev["id"]] = time.time()
         newest = max(newest, int(ev.get("created_at", 0)))
