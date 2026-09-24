@@ -1923,6 +1923,20 @@
     }catch(_){ }
   }
   _capturePostToolLanding();
+  /* THE POST A TOOL WINDOW WAS OPENED FOR, handed to the tool once the window is on its view.
+   *
+   * There are TWO places a window lands on its view at boot -- routeFromPath (a deep link, a guest) and
+   * the signed-in landing in startApp -- and only the first ran this. On PosterChanOS a window always
+   * boots SIGNED IN (the shell shares the session), so the post was captured and then dropped: "AI chat
+   * opens but no effects dialog", and "Meme Builder: I have to do it twice for the image to appear on
+   * the timeline" -- the second click worked only because the window then existed and the post arrived
+   * over the route channel instead. Both landings call this now; it consumes the id, so whichever runs
+   * second finds nothing to do. tests/client/test_post_tool_window_lands_full_app.py. */
+  function _runPendingPostTool(v){
+    if(!_pendingPostTool || !(v==='meme' || v==='ai')) return;
+    const id=_pendingPostTool; _pendingPostTool='';
+    setTimeout(()=>{ try{ (v==='meme' ? memeBuildPost : effectPost)(id); }catch(_){ } }, 0);
+  }
   /* …and a SEARCH window (`?pcwin=doc:search&pcq=<query>`): the query is all it needs to rebuild. */
   let _pendingSearch = '';
   /* The one place a Search window runs the query it was opened with -- reached from routeFromPath
@@ -1982,10 +1996,7 @@
       if(v === 'doc:search'){ _searchWindowLanding(); return; }
       if(v){
         switchView(v);
-        if(_pendingPostTool){
-          const id=_pendingPostTool; _pendingPostTool='';
-          setTimeout(()=>{ try{ (v==='meme' ? memeBuildPost : effectPost)(id); }catch(_){ } }, 0);
-        }
+        _runPendingPostTool(v);
         return;
       }
     }
@@ -3668,6 +3679,7 @@
           try{ if(window.PCTerm && PCTerm.openLocal) PCTerm.openLocal(); }catch(_){ }
         }
         try{ switchView(_win); }catch(_){}
+        _runPendingPostTool(_win);
       }
       else if(!_osHome && !_publicViewRequests){ switchView(_startView()); _onLandingView = true; }
     }
