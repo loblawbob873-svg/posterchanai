@@ -33,6 +33,30 @@ def overlay_release(directory: Path = OVERLAY) -> str:
     return tag
 
 
+PUBLISHED = "https://gentoo.poster.place/posterchan-overlay.git"
+
+
+def published_release(url: str = PUBLISHED) -> str:
+    """The release the PUBLISHED overlay pins -- what installed machines actually download.
+
+    It is not always the committed one: the overlay is published by a deploy, after the build that
+    runs this. Protecting only the committed ebuild deleted 1.0.1668 while the published overlay
+    still pinned it, and every `update-posterchan` answered 404. Raises when it cannot be read."""
+    import tempfile
+    with tempfile.TemporaryDirectory() as tmp:
+        subprocess.run(["git", "clone", "--quiet", "--no-checkout", url, tmp], check=True,
+                       stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=120)
+        names = subprocess.check_output(["git", "-C", tmp, "ls-tree", "--name-only", "HEAD",
+                                         "app-misc/posterchan-desktop/"], text=True, timeout=60).split()
+    found = [n.rsplit("/", 1)[-1] for n in names if n.endswith(".ebuild")]
+    if len(found) != 1:
+        raise RuntimeError(f"published overlay has {len(found)} desktop ebuilds")
+    tag = "desktop-v" + found[0].removeprefix("posterchan-desktop-").removesuffix(".ebuild")
+    if not TAG.fullmatch(tag):
+        raise RuntimeError(f"published overlay pins an invalid version: {found[0]}")
+    return tag
+
+
 def stale_tags(releases: list[dict], keep: int, protect: set[str]) -> list[str]:
     versioned: list[tuple[tuple[int, int, int], str]] = []
     for release in releases:
@@ -65,6 +89,13 @@ def main() -> int:
     # automatic rather than another workflow argument somebody can forget.
     protect = set(args.protect)
     protect.add(overlay_release())
+    try:
+        protect.add(published_release())
+    except Exception as e:
+        # Unknown is never "nothing to protect": an extra release costs nothing, a deleted one
+        # breaks every installed machine's update.
+        print(f"cannot read the published overlay ({type(e).__name__}: {e}); pruning nothing")
+        return 0
     doomed = stale_tags(releases, args.keep, protect)
     for tag in doomed:
         print(f"prune obsolete Desktop release {tag}")
