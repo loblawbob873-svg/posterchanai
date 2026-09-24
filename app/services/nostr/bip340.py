@@ -84,6 +84,11 @@ def _has_even_y(point) -> bool:
 
 
 _PUBKEY_CACHE: dict = {}
+# Native derivation (libsecp256k1 or OpenSSL), set by _activate_fast_pubkey once it has matched the
+# pure-Python result. The cache above only helps a key seen twice: the relay's startup derives every
+# user's storage pubkey ONCE (~2,400 on poster.place, twice over) and at ~35ms each the relay took 85
+# seconds to start listening -- the fediverse got 503s and the worker could not reach it on every deploy.
+_fast_pubkey = None
 _PUBKEY_CACHE_MAX = 4096
 
 
@@ -103,8 +108,7 @@ def pubkey_from_seckey(seckey: bytes) -> bytes:
     d0 = int.from_bytes(seckey, "big")
     if not (1 <= d0 <= n - 1):
         raise ValueError("secret key out of range")
-    P = _point_mul(G, d0)
-    v = _bytes_from_int(_x(P))
+    v = _fast_pubkey(d0) if _fast_pubkey is not None else _bytes_from_int(_x(_point_mul(G, d0)))
     if len(_PUBKEY_CACHE) >= _PUBKEY_CACHE_MAX:   # simple bound — cheap to recompute on miss
         _PUBKEY_CACHE.clear()
     _PUBKEY_CACHE[ck] = v
@@ -244,3 +248,30 @@ def _activate_fast_sign() -> None:
 
 
 _activate_fast_sign()
+
+
+def _activate_fast_pubkey() -> None:
+    """Enable a native x-only pubkey derivation only if it equals the pure implementation on fixed
+    keys (small, large, the top of the range). libsecp256k1 first, then OpenSSL's secp256k1 -- which
+    some builds (FIPS) leave out, and then this stays pure-Python."""
+    global _fast_pubkey
+
+    def _cc(d: int) -> bytes:
+        from coincurve import PrivateKey as _CCPriv
+        return _CCPriv(d.to_bytes(32, "big")).public_key.format(compressed=True)[1:]
+
+    def _ossl(d: int) -> bytes:
+        from cryptography.hazmat.primitives.asymmetric import ec
+        return ec.derive_private_key(d, ec.SECP256K1()).public_key().public_numbers().x.to_bytes(32, "big")
+
+    probes = (1, 7, 0xDEADBEEF, n - 1, int.from_bytes(hashlib.sha256(b"pubkey-probe").digest(), "big") % n)
+    for cand in (_cc, _ossl):
+        try:
+            if all(cand(d) == _bytes_from_int(_x(_point_mul(G, d))) for d in probes):
+                _fast_pubkey = cand
+                return
+        except Exception:
+            continue
+
+
+_activate_fast_pubkey()
