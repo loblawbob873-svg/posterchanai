@@ -4,7 +4,7 @@ import subprocess
 import pytest
 
 ROOT=Path(__file__).resolve().parents[1]
-SCENARIOS=['healthy','first-stalled','close-before-open','dial-timeout','close-after-publish',
+SCENARIOS=['healthy','oversize-nip44-sign','first-stalled','close-before-open','dial-timeout','close-after-publish',
            'dropped-reply','zombie','auth-message','concurrent','rejection','wrong-peer',
            'bad-signature','wrong-recipient','cancel','session-change','permission-denied',
            'healthy-nip44','dm-close','dm-drop-nip44','approval-delay','subscription-failure',

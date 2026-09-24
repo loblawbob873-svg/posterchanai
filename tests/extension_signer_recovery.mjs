@@ -106,6 +106,20 @@ const handler=(method,params)=>new Promise(resolve=>listeners[0]({type:'nostr',m
 let result;
 if(scenario==='healthy'||scenario==='first-stalled'||scenario==='healthy-nip44'){
   result=await until(track(call()));assert(result.done&&!result.error,JSON.stringify({result,published:published.length,events,state:vm.runInContext('({generation:N46.generation,pending:N46.pending.size,sockets:N46.sockets.map(w=>w.readyState)})',ctx)}));assert(now-started<2000);assert.equal(published.length,1);
+}else if(scenario==='oversize-nip44-sign'){
+  // A follow list of ~1000 people is ~70KB: past NIP-44's 65535-byte plaintext ceiling. The request
+  // must go out as NIP-04 for that one call, or signing dies before anything is sent
+  // ("signEvent failed: invalid plaintext size: must be between 1 and 65535 bytes").
+  ctx.bigTpl=JSON.stringify({kind:3,created_at:1700000000,content:'',
+    tags:Array.from({length:1000},(_,i)=>['p',i.toString(16).padStart(64,'0')])});
+  result=await until(track(vm.runInContext('N46.sign(JSON.parse(bigTpl))',ctx)));
+  assert(result.done&&!result.error,String(result.errorText));
+  assert.equal(result.value.kind,3);assert.equal(result.value.tags.length,1000);
+  const sent=JSON.parse(published[published.length-1].wire)[1];
+  assert(sent.content.includes('?iv='),'an oversize request must go out as NIP-04');
+  // An ordinary request on the same session still uses the session's own scheme.
+  const small=await until(track(call()));assert(small.done&&!small.error);
+  assert(!JSON.parse(published[published.length-1].wire)[1].content.includes('?iv='),'small requests stay NIP-44');
 }else if(scenario==='close-before-open'||scenario==='dial-timeout'){
   result=await until(track(vm.runInContext('N46.open()',ctx)),5000);assert(result.done&&result.error);assert(now-started<=4500);
 }else if(scenario==='repeated-auth-dm-latency'){

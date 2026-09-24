@@ -623,7 +623,14 @@ const N46 = {
     const generation=this._session(), n=cfg.nip46,sk=this._appSk();
     if(signal&&signal.aborted)throw new Error('Signer request cancelled');
     const id='x'+randomId(), body=JSON.stringify({id,method,params});
-    const enc=n.enc==='nip44'?'nip44':'nip04',content=await this._crypt(enc,n.remotePk,body,sk);
+    /* NIP-44 refuses a plaintext over 65535 bytes; NIP-04 has no ceiling. A contact list of ~1000
+     * people is ~70KB, so as NIP-44 it died HERE, before anything was sent ("signEvent failed:
+     * invalid plaintext size") -- an import could never save. Oversize goes out as NIP-04 for that
+     * one request, as the web client's own NIP-46 path does (signer.js _rpc); the reply is read in
+     * whichever scheme it comes back in (_decrypt), and the session's scheme is left alone. */
+    let enc=n.enc==='nip44'?'nip44':'nip04';
+    if(enc==='nip44'&&new TextEncoder().encode(body).length>65535)enc='nip04';
+    const content=await this._crypt(enc,n.remotePk,body,sk);
     if(generation!==this.generation)throw new Error('Signer session changed');
     if(signal&&signal.aborted)throw new Error('Signer request cancelled');
     const ev=NT().finalizeEvent({kind:24133,created_at:Math.floor(Date.now()/1000),tags:[['p',n.remotePk]],content},sk);
