@@ -86,7 +86,12 @@ async def resolve_pubkey(pubkey: str) -> dict:
         href = await actors.actor_id(pubkey)
         shown = await actors.readable_handle(pubkey) or name
         if href:
-            return {"href": href, "name": f"@{shown}@{config.domain()}"}
+            # `url` is the PROFILE address our actor document advertises (convert.person). The link in
+            # the text must be exactly that: Akkoma/Pleroma recognise a mention link by comparing it to
+            # the account's `url`, and our actor id (…/ap/users/…) is not it -- so every mention of one
+            # of ours opened poster.place in a new tab instead of the profile inside Akkoma.
+            return {"href": href, "url": f"{config.base_url()}/users/{await actors.ap_handle(pubkey)}",
+                    "name": f"@{shown}@{config.domain()}"}
     row = _puppet_row(pubkey)
     # A blocked ACCOUNT (a `user@host` line, or its puppet npub on the relay blocklist) is as out of
     # reach as a blocked instance: a member's mention or reply must not deliver to it either.
@@ -95,7 +100,8 @@ async def resolve_pubkey(pubkey: str) -> dict:
             and not actors.puppet_blocked(row.actor_uri, row.acct or ""):
         canonical, _inbox = await _canonical(row.actor_uri)
         href = canonical or row.actor_uri
-        return {"href": href, "name": f"@{row.acct}" if row.acct else href, "remote": True}
+        return {"href": href, "url": await _profile_url(row.actor_uri) or href,
+                "name": f"@{row.acct}" if row.acct else href, "remote": True}
     return {}
 
 
@@ -222,6 +228,23 @@ async def _canonical(actor_uri: str) -> tuple[str, str]:
     except remote.FetchError:
         return "", ""
     return str(doc.get("id") or "").split("#")[0], remote.inbox_of(doc)
+
+
+async def _profile_url(actor_uri: str) -> str:
+    """The profile page a fediverse account's own actor document names (`url`) -- what its server's
+    front end, and every other, matches a mention link against. "" when it names none (the caller then
+    links the actor id, which is what Pleroma and Akkoma use as their `url` anyway)."""
+    try:
+        doc = await remote.actor(actor_uri, alias=True)
+    except remote.FetchError:
+        return ""
+    u = doc.get("url")
+    if isinstance(u, list):
+        u = next((x for x in u if isinstance(x, str) or isinstance(x, dict)), "")
+    if isinstance(u, dict):
+        u = u.get("href") or ""
+    u = u if isinstance(u, str) else ""
+    return u if u.startswith("https://") and remote.host_of(u) == remote.host_of(actor_uri) else ""
 
 
 async def _inbox_for(actor_uri: str) -> str:

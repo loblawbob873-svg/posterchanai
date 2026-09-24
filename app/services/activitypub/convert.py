@@ -184,7 +184,10 @@ def text_to_html(text: str, *, base: str, mentions: dict, drop_urls=(), links: d
             if who:
                 name = who.get("name") or ""
                 short = name.lstrip("@").split("@")[0]
-                out.append(f'<span class="h-card"><a href="{html.escape(who["href"], quote=True)}" '
+                # The PROFILE url, not the actor id: a front end knows a mention by the account's `url`
+                # (the Mention tag below the text still carries the id, which is what servers match on).
+                link = who.get("url") or who["href"]
+                out.append(f'<span class="h-card"><a href="{html.escape(link, quote=True)}" '
                            f'class="u-url mention">@<span>{html.escape(short)}</span></a></span>')
             else:
                 label = html.escape(value[:14] + "…")

@@ -3129,3 +3129,29 @@ def test_an_object_is_503_not_404_while_the_relay_cannot_answer(client, world, m
     world["relay"][post["id"]] = post
     _relay_reads_fail(monkeypatch, {"on": True})
     assert client.get(f"/ap/objects/{post['id']}", headers={"Accept": "application/activity+json"}).status_code == 503
+
+
+def test_a_mention_links_the_profile_url_the_actor_advertises(client, world):
+    """"clicking on them brings me to poster.place instead of opening in akkoma". Akkoma/Pleroma know a
+    mention link by comparing it with the account's `url`; our text linked the actor id
+    (…/ap/users/…), which is not it, so every mention of one of ours opened a new tab. The text links
+    the profile url; the Mention tag keeps the actor id (what servers match)."""
+    _with_follower(world)
+    from app.services.nostr import nostr_service
+    ev = member_post(f"hi nostr:{nostr_service.npub_of(BOB)}", tags=[["p", BOB]])
+    note = run(outbox.plan(ev, ALICE))[0][1]["object"]
+    bob_doc = client.get("/ap/users/bob", headers={"Accept": "application/activity+json"}).json()
+    assert f'href="{bob_doc["url"]}"' in note["content"], note["content"]
+    assert {"type": "Mention", "href": bob_doc["id"], "name": f"@bob@{DOMAIN}"} in note["tag"]
+
+
+def test_a_fediverse_mention_links_that_accounts_own_profile_url(world):
+    world["actors"][REMOTE]["url"] = "https://mastodon.example/@carol"
+    s = world["Session"]()
+    carol = run(ident.ensure_puppet(s, 1, convert.account_from_actor(carol_actor()), "mastodon.example"))
+    who = run(outbox.resolve_pubkey(carol["pubkey_hex"]))
+    assert who["url"] == "https://mastodon.example/@carol" and who["href"] == REMOTE
+    # a `url` on ANOTHER host is not believed: the actor id is linked instead
+    world["actors"][REMOTE]["url"] = "https://evil.example/phish"
+    remote._actors.clear()
+    assert run(outbox.resolve_pubkey(carol["pubkey_hex"]))["url"] == REMOTE
