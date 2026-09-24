@@ -7,7 +7,8 @@ fixtures, and every request the page makes is recorded so the test checks what w
 what was drawn:
 
   * Nyaa opens on the newest uploads (a query-less /nyaa), a search asks for exactly that query;
-  * TGX opens on Movies (/catalog), a category chip and a search each ask for their own list;
+  * TGX opens on EVERY category (/catalog?category=all, sectioned), a category chip and a search each
+    ask for their own list;
   * Download POSTs the row's magnet to /add, the row says it was added, and the view stays put;
   * a slow earlier search cannot land on top of a later one;
   * leaving for Downloads and coming back repaints the same results without asking again;
@@ -45,6 +46,8 @@ window.__torReq=[];
     if(q==='slow'){await new Promise(r=>setTimeout(r,900));return ok({query:q,items:[row('SLOW RESULT',0)]});}
     return ok({query:q,items:(q?['Q:'+q+' one','Q:'+q+' two']:['[Sub] Newest Show - 01 [1080p]','[Sub] Another Show - 12 [720p] '+'x'.repeat(160)]).map(row)});
   }
+  if(path==='/catalog' && p.searchParams.get('category')==='all')
+    return ok({category:'all',items:[['ALL:movies 1','movies'],['ALL:movies 2','movies'],['ALL:tv 1','tv']].map(([t,c],i)=>({...row(t,i),category:c}))});
   if(path==='/catalog') return ok({category:p.searchParams.get('category'),items:['CAT:'+p.searchParams.get('category')+' A','CAT:'+p.searchParams.get('category')+' B'].map(row)});
   if(path==='/search'){
     const q=p.searchParams.get('q');
@@ -110,6 +113,8 @@ def test_nyaa_and_tgx_tabs_browse_search_and_download():
         # --- TGX: Movies, a category chip, a search, and a refusal
         await tab(b, 'tgx')
         got['tgx_default'] = await b.js(ITEMS)
+        got['tgx_sections'] = await b.js("[...document.querySelectorAll('#tb-list .tb-sec')].map(e=>e.textContent)")
+        got['tgx_head'] = await b.js("document.getElementById('tb-head').textContent")
         await b.js("document.querySelector('.tb-cat[data-cat=tv]').click();true")
         await b.until("[...document.querySelectorAll('#tb-list .tb-name')].some(e=>e.textContent.startsWith('CAT:tv'))")
         got['tgx_tv'] = await b.js(ITEMS)
@@ -137,11 +142,15 @@ def test_nyaa_and_tgx_tabs_browse_search_and_download():
     assert got['back_again'] == ['Q:fast one', 'Q:fast two'] and got['back_query'] == 'fast', got
     assert got['nyaa_requests_added'] == 0, 'coming back to the tab searched again'
 
-    assert got['tgx_default'] == ['CAT:movies A', 'CAT:movies B'], got['tgx_default']
+    # TGX opens on EVERY category, sectioned -- what the chat's bare `torrents` shows ("you are only
+    # showing top movies").
+    assert got['tgx_default'] == ['ALL:movies 1', 'ALL:movies 2', 'ALL:tv 1'], got['tgx_default']
+    assert got['tgx_sections'] == ['Movies', 'TV'], got['tgx_sections']
+    assert 'every category' in got['tgx_head'], got['tgx_head']
     assert got['tgx_tv'] == ['CAT:tv A', 'CAT:tv B'], got['tgx_tv']
     assert got['tgx_chip_off'] == 0, 'a search still shows a category as selected'
     assert 'proxy' in got['tgx_error'], got['tgx_error']
-    assert ['/catalog', 'movies', None] in got['tgx_reqs'] and ['/catalog', 'tv', None] in got['tgx_reqs']
+    assert ['/catalog', 'all', None] in got['tgx_reqs'] and ['/catalog', 'tv', None] in got['tgx_reqs']
     assert ['/search', None, 'ubuntu'] in got['tgx_reqs'], got['tgx_reqs']
 
 

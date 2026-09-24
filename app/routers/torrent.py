@@ -200,15 +200,29 @@ def _items(results) -> list[dict]:
 
 @router.get("/catalog")
 async def catalog(
-    category: str = Query("movies", description="One of: movies, tv, music, anime"),
+    category: str = Query("movies", description="One of: all, movies, tv, music, anime"),
     limit: int = Query(15, ge=1, le=50),
     db: Session = Depends(get_db),
     current_user: Optional[User] = Depends(get_torrent_user)
 ):
-    """Browse torrents by category (for native app). Returns list with title, magnet, size, seeders, leechers. Runs on this server (scraping), not forwarded to bt_server_url."""
+    """Browse torrents by category (for native app). Returns list with title, magnet, size, seeders, leechers. Runs on this server (scraping), not forwarded to bt_server_url.
+
+    `all` is what the chat's bare `torrents` command shows -- every category at once, each row naming
+    its own (`limit` is then PER category, as the command's overview is)."""
     category = category.lower()
+    if category == "all":
+        from app.services.torrent_service import scrape_all_categories
+        try:
+            grouped = await scrape_all_categories(db, limit_per_category=limit)
+        except ValueError as e:
+            raise HTTPException(status_code=400, detail=str(e))
+        items = []
+        for cat, results in grouped.items():
+            for row in _items(results):
+                items.append({**row, "num": len(items) + 1, "category": cat})
+        return {"category": "all", "items": items}
     if category not in ("movies", "tv", "music", "anime"):
-        raise HTTPException(status_code=400, detail="category must be one of: movies, tv, music, anime")
+        raise HTTPException(status_code=400, detail="category must be one of: all, movies, tv, music, anime")
     try:
         results = await scrape_torrents(db, category, limit)
         return {

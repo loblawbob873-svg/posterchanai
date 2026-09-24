@@ -92,3 +92,22 @@ def test_catalog_and_search_answer_in_the_same_row_shape(api, monkeypatch):
         "num": 1, "title": "Film", "magnet": row.magnet, "size": "2 GB", "seeders": 5, "leechers": 1, "url": ""}
     assert [i["num"] for i in api.get("/api/torrent/search", params={"q": "x"}).json()["items"]] == [1, 2]
     assert api.get("/api/torrent/catalog", params={"category": "games"}).status_code == 400
+
+
+def test_all_is_every_category_each_row_naming_its_own(api, monkeypatch):
+    """What the chat's bare `torrents` shows: every category at once. The TGX tab opened on Movies
+    alone and read as "only showing top movies"."""
+    from app.services import torrent_service
+    row = lambda t: SimpleNamespace(title=t, magnet="magnet:?xt=urn:btih:" + "4" * 40, size="1 GB",
+                                    seeders=3, leechers=0, url=None)
+    asked = []
+
+    async def scrape_all(db, limit_per_category=5):
+        asked.append(limit_per_category)
+        return {"movies": [row("M1"), row("M2")], "tv": [row("T1")], "music": [], "anime": [row("A1")]}
+    monkeypatch.setattr(torrent_service, "scrape_all_categories", scrape_all)
+    got = api.get("/api/torrent/catalog", params={"category": "all", "limit": 15}).json()
+    assert got["category"] == "all"
+    assert [(i["title"], i["category"], i["num"]) for i in got["items"]] == \
+        [("M1", "movies", 1), ("M2", "movies", 2), ("T1", "tv", 3), ("A1", "anime", 4)]
+    assert asked == [15], "the limit is per category"

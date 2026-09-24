@@ -8713,6 +8713,7 @@ body.native.term-view .tty-bar{padding-top:env(safe-area-inset-top);height:calc(
 .tb-bar{display:flex;gap:8px;align-items:center;margin:2px 0 10px}
 .tb-bar .input{flex:1 1 auto;min-width:0;margin:0}
 .tb-bar .btn{flex:0 0 auto}
+.tb-sec{margin:14px 2px 6px;font-size:12px;font-weight:800;letter-spacing:.08em;text-transform:uppercase;color:var(--muted)}
 .tb-cats{display:flex;flex-wrap:wrap;gap:6px;margin:0 0 10px}
 .tb-head{margin:0 2px 6px}
 .tb-head:empty{display:none}

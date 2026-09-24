@@ -574,10 +574,12 @@ window.PCDiscoverFactory = function(dep){
    * Download adds the magnet to this node's client (the Downloads tab) and STAYS here: the button
    * turns into "✓ Added". Somebody browsing a list usually wants more than one thing from it, and
    * being thrown to another tab after every click would make that a chore. */
-  const _TGX_CATS = [['movies','Movies'],['tv','TV'],['music','Music'],['anime','Anime']];
+  /* `all` first and the default: the chat's `torrents` command opens on EVERY category, and a tab that
+   * opened on Movies alone read as "only showing top movies" beside it. */
+  const _TGX_CATS = [['all','All'],['movies','Movies'],['tv','TV'],['music','Music'],['anime','Anime']];
   const _torBrowse = {
     nyaa: { q:'', items:null, err:'', seq:0, added:Object.create(null) },
-    tgx:  { q:'', cat:'movies', items:null, err:'', seq:0, added:Object.create(null) },
+    tgx:  { q:'', cat:'all', items:null, err:'', seq:0, added:Object.create(null) },
   };
   function _torBrowseShell(src){
     const st=_torBrowse[src];
@@ -609,11 +611,17 @@ window.PCDiscoverFactory = function(dep){
     const st=_torBrowse[src], list=$('#tb-list',feed), head=$('#tb-head',feed);
     if(!list) return;
     const what = st.q ? `Results for “${st.q}”`
-               : (src==='nyaa' ? 'Newest on nyaa.si' : 'Top '+((_TGX_CATS.find(c=>c[0]===st.cat)||[])[1]||'')+' on TorrentGalaxy');
+               : (src==='nyaa' ? 'Newest on nyaa.si'
+                  : st.cat==='all' ? 'Top of every category on TorrentGalaxy'
+                  : 'Top '+((_TGX_CATS.find(c=>c[0]===st.cat)||[])[1]||'')+' on TorrentGalaxy');
     if(head) head.textContent = st.items ? what : '';
     if(st.err){ list.innerHTML=`<div class="empty">${enc(st.err)}</div>`; return; }
     if(!st.items){ list.innerHTML='<div class="spinner"></div>'; return; }
-    list.innerHTML = st.items.length ? st.items.map((t,i)=>_torBrowseRow(src,t,i)).join('')
+    // The overview is sectioned the way the command's is: a heading wherever the category changes.
+    const _secName = c => ((_TGX_CATS.find(x=>x[0]===c)||[])[1]) || c;
+    list.innerHTML = st.items.length ? st.items.map((t,i)=>
+        (t.category && (i===0 || st.items[i-1].category!==t.category)
+          ? `<div class="tb-sec">${enc(_secName(t.category))}</div>` : '') + _torBrowseRow(src,t,i)).join('')
       : `<div class="empty">Nothing found${st.q?' for “'+enc(st.q)+'”':''}.</div>`;
     $$('.tb-item',list).forEach(row=>{
       const t=st.items[+row.dataset.i]; if(!t) return;
@@ -639,7 +647,8 @@ window.PCDiscoverFactory = function(dep){
     const st=_torBrowse[src], seq=++st.seq;
     st.items=null; st.err=''; _torBrowsePaint(feed, src);
     const path = src==='nyaa' ? '/nyaa?limit=75'+(st.q?'&q='+encodeURIComponent(st.q):'')
-               : (st.q ? '/search?limit=50&q='+encodeURIComponent(st.q) : '/catalog?limit=50&category='+st.cat);
+               : (st.q ? '/search?limit=50&q='+encodeURIComponent(st.q)
+                  : '/catalog?limit='+(st.cat==='all'?15:50)+'&category='+st.cat);
     let items=null, err='';
     try{ const j=await _torApi(path); items=(j&&j.items)||[]; }
     catch(e){
