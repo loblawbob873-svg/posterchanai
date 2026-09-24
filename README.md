@@ -4,8 +4,8 @@
 
 # Poster-chan AI
 
-<a href="https://poster.place"><img src="docs/promo/posterchan-client.webp" alt="PosterChan — more than a Nostr client: full Desktop or Classic view, encrypted drive and folder sync, password manager, Notes over Nostr, calendar and contacts, Monero and Lightning zaps, calls, mini-app games, Android phone mode" width="49%" /></a>
-<a href="#quick-start-backend-and-web-ui"><img src="docs/promo/posterchan-selfhost.webp" alt="Run your own node — relay, Blossom and NIP-05; Jellyfin-compatible media server; Git over Nostr; virtual machines; local AI; office suite; live streaming; PosterChanOS" width="49%" /></a>
+<a href="https://poster.place"><img src="docs/promo/posterchan-client.webp" alt="PosterChan — more than a Nostr client: Nostr and the fediverse in one timeline (you are @you@poster.place on Mastodon too), full Desktop or Classic view, encrypted drive and folder sync, password manager, Notes over Nostr, calendar and contacts, Monero and Lightning zaps, calls, mini-app games, Android phone mode" width="49%" /></a>
+<a href="#quick-start-backend-and-web-ui"><img src="docs/promo/posterchan-selfhost.webp" alt="Run your own node — relay, Blossom and NIP-05; a native ActivityPub server (@name@yourdomain on the fediverse); Jellyfin-compatible media server; Git over Nostr; virtual machines; local AI; office suite; live streaming; PosterChanOS" width="49%" /></a>
 
 ### A Nostr-powered personal cloud, Jellyfin-compatible media server, and self-hosted AI powerhouse — on your hardware, under your keys.
 
