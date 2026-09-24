@@ -1271,3 +1271,38 @@ def test_importing_from_this_server_says_to_type_the_old_account(world):
     from app.services.activitypub import importer
     with pytest.raises(ValueError, match="OLD account"):
         run(importer.public_following(f"@alice@{DOMAIN}"))
+
+
+# ============================================================================ 15. mentions are links, not text
+
+def test_mentions_in_a_fediverse_post_become_profile_links(world):
+    """A fediverse note carries its mentions as plain text plus a Mention list. Stored as-is the names
+    were dead text and only our own users were tagged ("usernames not clickable in fediverse posts").
+    Ours link their real key; anybody else links their puppet, the way the Pleroma bridge does."""
+    from app.services.nostr import bech32
+    world["docs"][f"pcai:ap:following:{ALICE}:x"] = {"actor": REMOTE, "inbox": "i", "state": "accepted"}
+    note = _create(content="<p>@alice @dave@other.example hi there</p>", extra={"tag": [
+        {"type": "Mention", "href": f"{BASE}/ap/users/alice", "name": f"@alice@{DOMAIN}"},
+        {"type": "Mention", "href": "https://other.example/users/dave", "name": "@dave@other.example"}]})
+    assert run(inbox.process(note, REMOTE)) == "stored"
+    ev = next(e for e in world["relay"].values() if e["kind"] == 1)
+    alice_ref = "nostr:" + bech32.encode("npub", bytes.fromhex(ALICE))
+    assert alice_ref in ev["content"], ev["content"]
+    assert "@dave" not in ev["content"] and ev["content"].count("nostr:npub1") == 2, ev["content"]
+    ps = [t[1] for t in ev["tags"] if t[0] == "p"]
+    assert ALICE in ps and len(ps) == 2 and len(set(ps)) == 2, ps
+    assert ev["content"].endswith("hi there")
+
+
+def test_a_reply_that_mentions_its_parent_author_tags_them_once(world):
+    """The parent's author is p-tagged for the thread AND named in the Mention list; they were tagged
+    twice (the report's post carried the same p tag two times)."""
+    mine = member_post("my post")
+    world["relay"][mine["id"]] = mine
+    act = _create(content="<p>@alice I see you</p>", extra={
+        "inReplyTo": convert.object_url(BASE, mine["id"]),
+        "tag": [{"type": "Mention", "href": f"{BASE}/ap/users/alice", "name": f"@alice@{DOMAIN}"}]})
+    assert run(inbox.process(act, REMOTE)) == "stored"
+    reply = next(e for e in world["relay"].values() if e["kind"] == 1 and e["id"] != mine["id"])
+    assert [t for t in reply["tags"] if t[0] == "p"] == [["p", ALICE]], reply["tags"]
+    assert reply["content"].startswith("nostr:npub1") and reply["content"].endswith("I see you")

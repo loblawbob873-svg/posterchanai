@@ -315,13 +315,15 @@ async def store_note(note: dict, author: str, *, need_gate: bool) -> str:
         return "ignored: empty"
     if len(text) > 60000:
         return "ignored: too long"
+    text, more = await _link_mentions(note, text, remote.host_of(author), is_reply=bool(reply_to))
+    tags += [t for t in more if t not in tags]
     who = await remote.actor(author)
     puppet = await _puppet(who)
     if not puppet:
         return "ignored: no puppet"
     if parent_id:
         tags = [["e", parent_id, "", "root"], ["e", parent_id, "", "reply"]] + \
-               ([["p", parent_pk]] if parent_pk else []) + tags
+               ([["p", parent_pk]] if parent_pk else []) + [t for t in tags if t != ["p", parent_pk]]
     emap = _emoji_url_map([{"shortcode": str(t.get("name") or "").strip(":"),
                             "url": convert.id_of((t.get("icon") or {}).get("url")) or (t.get("icon") or {}).get("url")}
                            for t in note.get("tag") or [] if isinstance(t, dict) and t.get("type") == "Emoji"])
@@ -335,6 +337,61 @@ async def store_note(note: dict, author: str, *, need_gate: bool) -> str:
     _record(uri, ev["id"], ev["pubkey"], puppet.get("acct", ""))
     await _reach_nostr_users(ev, puppet)
     return "stored"
+
+
+async def _link_mentions(note: dict, text: str, author_host: str, *, is_reply: bool) -> tuple[str, list]:
+    """Make the note's @mentions CLICKABLE: each `@name` / `@name@host` in the text becomes a
+    `nostr:npub…` reference (which every client renders as a profile link) and the person is p-tagged.
+
+    A fediverse note carries its mentions as plain text plus a `Mention` tag list. Stored as-is, the
+    names were dead text and only OUR members were tagged -- "usernames not clickable in fediverse
+    posts". A mention of one of our users (or an npub account here) links THEIR key; anybody else gets
+    the same treatment the Pleroma bridge has always given a mirrored post (`_rewrite_mentions`: the
+    account's puppet, the blocklist, the bare-vs-qualified handle rules), so the two paths render a
+    mention identically. A reply's leading run of @-recipients (which fediverse clients hide) is
+    dropped, as the bridge does."""
+    import re as _re
+    from app.database import SessionLocal
+    from app.services import fedi_nostr_bridge_service as bridge
+    from app.services.nostr import bech32
+    ours, theirs = [], []
+    for t in note.get("tag") or []:
+        if not isinstance(t, dict) or t.get("type") != "Mention":
+            continue
+        href = convert.id_of(t.get("href"))
+        name = str(t.get("name") or "").strip().lstrip("@")
+        if not href or not name:
+            continue
+        user, _, host = name.partition("@")
+        host = (host or remote.host_of(href)).lower()
+        pk = actors.pubkey_of_actor_url(href) if config.is_own_host(remote.host_of(href)) else ""
+        if pk:
+            if actors.is_actor(pk) or await actors.exposed(pk):
+                ours.append((user, host, pk))
+        elif not config.is_own_host(remote.host_of(href)):
+            theirs.append({"url": href, "acct": f"{user}@{host}", "username": user})
+    tags = []
+    for user, host, pk in sorted(ours, key=lambda x: -len(x[0])):
+        ref = "nostr:" + bech32.encode("npub", bytes.fromhex(pk))
+        text = _re.sub(r"@" + _re.escape(f"{user}@{host}") + r"(?![A-Za-z0-9_.\-@])", ref, text, flags=_re.I)
+        text = _re.sub(r"(?<![\w@/])@" + _re.escape(user) + r"(?![A-Za-z0-9_.\-@])", ref, text)
+        tags.append(["p", pk])
+    if theirs:
+        db = SessionLocal()
+        try:
+            text, ptags = await bridge._rewrite_mentions(db, _port(), author_host, text, theirs,
+                                                         bridge._blocked_domains())
+        except Exception as e:
+            logger.info("[activitypub] mentions left as text: %s: %s", type(e).__name__, e)
+            ptags = []
+        finally:
+            db.close()
+        tags += [t for t in ptags if t not in tags]
+    if is_reply:
+        stripped = bridge._LEADING_MENTIONS_RE.sub("", text).strip()
+        if stripped:
+            text = stripped
+    return text, tags
 
 
 async def _reach_nostr_users(ev: dict, puppet: dict) -> None:

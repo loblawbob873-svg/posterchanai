@@ -1511,7 +1511,7 @@ would have handled it fine).
   a reply under the member's real event), write-back resolves AP rows by URI. **Instance blocking is
   the relay's list** (`nostr_relay_blocked_relays`), read, never duplicated. Paths are under `/ap/`
   because router.lan 410s `/inbox` + `/users/*/inbox` for the retired Pleroma. Keys are never minted
-  after a failed relay read. **Follows that predate it are caught up** (`outbox.catch_up_follows`, its own job, marker `pcai:ap:k3:<pk>`): the delivery cursor starts at "now", so an existing contact list was never an event and the member's AP account followed nobody. Import takes a linked account OR any public `name@server` list; a refused kind-3 is an error, never "0 more". `tests/test_activitypub.py`.
+  after a failed relay read. **Follows that predate it are caught up** (`outbox.catch_up_follows`, its own job, marker `pcai:ap:k3:<pk>`): the delivery cursor starts at "now", so an existing contact list was never an event and the member's AP account followed nobody. Import takes a linked account OR any public `name@server` list; a refused kind-3 is an error, never "0 more"; "already followed" is judged against the RELAY's kind-3, never the page's FOLLOWS. Incoming mentions go through the bridge's `_rewrite_mentions` (`inbox._link_mentions`) so `@name` is a `nostr:npub` link, not dead text. Split-DNS neighbours (`activitypub_lan_hosts` + the bridge instance) bypass only the private-address check. `tests/test_activitypub.py`.
 - **Fediverse ↔ Nostr bridge** — three worker services, all sharing `fedi_normalize.py`:
   - **`fedi_nostr_bridge_service.py`** (fedi → Nostr): mirrors a Pleroma timeline onto
     Nostr under a **puppet** key per fedi author (deterministically derived, so an author keeps
