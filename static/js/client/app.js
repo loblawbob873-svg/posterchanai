@@ -5578,9 +5578,14 @@
   async function followMany(pks, opts){
     const evs = await Relay.query([{ authors:[ME.pubkey], kinds:[3], limit:1 }]);
     const cur = evs.length ? evs.sort((a,b)=>b.created_at-a.created_at)[0] : null;
-    const pset = new Set([...FOLLOWS, ...(cur?cur.tags.filter(t=>t[0]==='p'&&t[1]).map(t=>t[1]):[])]);
+    /* "Already followed" means the RELAY's list has them, never this page's FOLLOWS alone. A follow
+     * list that was signed but never stored (a failed publish whose optimistic copy survived a
+     * reload) leaves FOLLOWS holding people no relay knows about -- and judged against FOLLOWS, every
+     * retry of the same import found "nothing new", published nothing, and reported success. */
+    const held = new Set(cur?cur.tags.filter(t=>t[0]==='p'&&t[1]).map(t=>t[1]):[]);
+    const pset = new Set([...FOLLOWS, ...held]);
     let added=0; const fresh=[];
-    for(const pk of pks){ if(pk && pk!==ME.pubkey && !pset.has(pk)){ pset.add(pk); FOLLOWS.add(pk); added++; fresh.push(pk); } }
+    for(const pk of pks){ if(pk && pk!==ME.pubkey && !held.has(pk)){ added++; if(!pset.has(pk)){ pset.add(pk); FOLLOWS.add(pk); fresh.push(pk); } } }
     if(!added) return 0;
     const nonP = cur ? cur.tags.filter(t=>t[0]!=='p') : [];
     const r=await publish(3, cur?cur.content:'', nonP.concat([...pset].filter(p=>p!==ME.pubkey).map(p=>['p',p])), {userFollowEdit:true});

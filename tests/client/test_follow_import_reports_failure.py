@@ -24,12 +24,12 @@ def _fn(src: str, head: str) -> str:
     raise AssertionError("unbalanced " + head)
 
 
-def _run(publish_result, opts):
+def _run(publish_result, opts, follows=("a",)):
     if not shutil.which("node"):
         pytest.skip("node not installed")
     body = _fn((ROOT / "static/js/client/app.js").read_text(), "async function followMany(")
     script = f"""
-const ME={{pubkey:'me'}}; const FOLLOWS=new Set(['a']); let persisted=0, pub=null;
+const ME={{pubkey:'me'}}; const FOLLOWS=new Set({json.dumps(list(follows))}); let persisted=0, pub=null;
 const Relay={{query:async()=>[{{kind:3,created_at:1,content:'',tags:[['p','a']]}}]}};
 async function publish(k,c,t,o){{ pub=t; return {json.dumps(publish_result)}; }}
 function _persistFollows(){{ persisted++; }}
@@ -65,3 +65,10 @@ def test_the_import_button_asks_for_the_error():
     call = src[src.index("#us-plr-import'"):]
     call = call[:call.index("b.disabled=false")]
     assert "followMany(pks" in call and "throwOnFail:true" in call.replace(" ", "")
+
+
+def test_people_only_this_page_thinks_it_follows_are_still_published():
+    """FOLLOWS can hold follows no relay stored (a failed publish that survived a reload). Judged
+    against FOLLOWS, the import found nothing new and never published -- 'finished, no error'."""
+    got = _run({"ok": True}, {"skipPleroma": True, "throwOnFail": True}, follows=("a", "b", "c"))
+    assert got["ok"] is True and got["n"] == 2 and got["persisted"] == 1
