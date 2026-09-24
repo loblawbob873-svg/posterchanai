@@ -2229,6 +2229,21 @@
        * caller whose contract is "did you open something" rather than "give me the frame"; the
        * internal `openApp` callers still want the in-page object and still get null. */
       if(real){ _openedReal = true; return null; }
+      /* REFUSED BECAUSE IT ALREADY EXISTS -- ON THE OTHER MONITOR. This renderer sees only its own
+       * monitor's windows (`nativeTasks` is scoped), so `mine` above misses a Messages window on the
+       * other screen; the open is then refused by main's one-window-per-app rule, which also brings
+       * that window forward. Falling through from here drew an IN-PAGE Messages frame instead, and
+       * showing an in-page frame raises the whole desktop surface over every window it overlaps:
+       * "if I click on Messages, Global disappears" -- measured on the two-monitor desk, Social still
+       * mapped and simply covered. The app's own window has already been focused; stop here. */
+      try{
+        const popAs = popOutView({view, appView:view});
+        if(popAs && window.PCOSWin && PCOSWin.enabled() && window.pcWM && typeof pcWM.hasAppWindow === 'function'
+           && pcWM.hasAppWindow(popAs)){
+          _openedReal = true;
+          return null;
+        }
+      }catch(_){ }
     }
     const existing = wins.find(w => sameAppWindow(w.view, view));
     if(existing){

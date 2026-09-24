@@ -71,6 +71,16 @@ function pcWindowView(raw) {
     return String(u.searchParams.get('pcwin') || '');
   } catch (_) { return ''; }
 }
+/* "DOES THIS APP ALREADY HAVE ITS WINDOW?" -- asked by a desktop renderer whose open was just refused.
+ * A shell surface sees only the compositor windows on ITS OWN monitor, so a launch of Messages on the
+ * right screen could not see the Messages window on the left one; the open was refused (below, the
+ * singleton) and the renderer read that as "no real window could be made" and drew an in-page frame
+ * -- which raises the whole desktop surface and covered every window on that monitor. Reported as
+ * "if I click on Messages, Global disappears". The answer is this map, which is global. */
+function hasPcAppWindow(view) {
+  const prior = pcAppWindows.get(String(view || ''));
+  return !!(prior && (prior.pending || !prior.isDestroyed()));
+}
 function claimPcAppWindow(raw) {
   const view = pcWindowView(raw);
   if (!view) return false;
@@ -2227,6 +2237,9 @@ function displays(){
 }
 
 ipcMain.handle('pc:wm:available', (e) => { fsGuard(e); return wm().available(); });
+ipcMain.on('pc:win:has', (e, view) => {
+  try { fsGuard(e); e.returnValue = hasPcAppWindow(view); } catch (_) { e.returnValue = false; }
+});
 ipcMain.handle('pc:wm:windows', async (e) => { fsGuard(e); return scopedWindows(e, await wm().windows()); });
 /* "WHICH COMPOSITOR WINDOW AM I" HAS NO ANSWER ON A MACHINE WITH NO COMPOSITOR, AND THAT IS NOT AN
  * ERROR. On Windows and macOS `wm()` has no socket, so this REJECTED -- and `pc:wm:self` is what a
