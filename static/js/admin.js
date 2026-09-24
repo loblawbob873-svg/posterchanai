@@ -218,6 +218,9 @@ async function loadSettings() {
                         // Always use database value, even if empty
                         // This ensures database values take precedence over HTML defaults
                         el.value = dbValue;
+                        // The baseline is what the FIELD holds, which a browser may have normalised
+                        // (an <input> drops line breaks) -- or an untouched field would read as changed.
+                        loadedValues.set(key, el.value);
                     }
                 }
             }
@@ -237,30 +240,37 @@ document.getElementById('resetNewsSourcesBtn')?.addEventListener('click', () => 
     document.getElementById('news_sources').value = DEFAULT_NEWS_SOURCES;
 });
 
-// Save settings - send all named form values so DB stays in sync (fixes missed updates when only "changed" fields were sent)
-document.getElementById('settingsForm').addEventListener('submit', async (e) => {
-    e.preventDefault();
-    const form = e.target;
+// SAVE SENDS WHAT YOU CHANGED -- never the whole form.
+//
+// It used to send every field, i.e. the values as they were when this page was LOADED. Anything
+// changed elsewhere in the meantime was silently put back: a block made from the client
+// ("nostr_relay_blocked_pubkeys") was undone by the next Admin Save -- twice in one evening, so a
+// blocked fediverse account kept posting. Lists edited from other screens (blocked pubkeys and
+// relays, NIP-05 names, whitelists) are exactly the ones that go stale. A field this page never
+// loaded is still sent when it has a value (a key the server did not report cannot be "unchanged").
+function _norm(v) { return String(v ?? '').replace(/\r\n/g, '\n'); }
+function buildSettingsPayload(form, loaded) {
     const settings = {};
     for (const el of form.querySelectorAll('input, textarea, select')) {
-        if (el.name) {
-            let currentValue;
-            if (el.type === 'checkbox') {
-                currentValue = el.checked ? 'true' : 'false';
-            } else {
-                currentValue = el.value || '';
+        if (!el.name) continue;
+        const current = el.type === 'checkbox' ? (el.checked ? 'true' : 'false') : (el.value || '');
+        const before = loaded.get(el.name);
+        if (before === undefined) {
+            if (el.type === 'number' ? (current !== '' && current !== el.getAttribute('value')) : current !== '') {
+                settings[el.name] = current;
             }
-            const loadedValue = loadedValues.get(el.name);
-            // Send field if: we have a value from DB (so form was populated and we persist current state), or it's a new/changed value
-            if (loadedValue !== undefined) {
-                settings[el.name] = currentValue;
-            } else if (el.type === 'number' && currentValue !== '' && currentValue !== el.getAttribute('value')) {
-                settings[el.name] = currentValue;
-            } else if (loadedValue === undefined && currentValue !== '') {
-                settings[el.name] = currentValue;
-            }
+        } else if (_norm(current) !== _norm(before)) {
+            settings[el.name] = current;
         }
     }
+    return settings;
+}
+if (typeof module !== 'undefined') module.exports = { buildSettingsPayload };
+
+document.getElementById('settingsForm')?.addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const settings = buildSettingsPayload(e.target, loadedValues);
+    if (!Object.keys(settings).length) { pcAlert('Nothing changed.'); return; }
 
     try {
         const response = await csrfFetch('/api/admin/settings', {
@@ -269,6 +279,8 @@ document.getElementById('settingsForm').addEventListener('submit', async (e) => 
             body: JSON.stringify({ settings })
         });
         if (response.ok) {
+            // What was saved is now the baseline, so saving again sends nothing twice.
+            for (const [k, v] of Object.entries(settings)) loadedValues.set(k, v);
             pcAlert('Settings saved!');
         } else {
             pcAlert('Failed to save settings');
