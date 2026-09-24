@@ -50,3 +50,42 @@ def test_the_post_and_the_bio_draw_their_emoji():
     assert got.get('post'), got
     assert got['bio']['imgs'] == [':fluffytail:', ':fox_love:', ':fluffytail:'], got
     assert ':fluffytail:' not in got['bio']['text'], "the bio still shows shortcode text: %r" % got
+
+
+DUCK = "db72120fbd902e9437b0ba5296cb7c16ff440f7c8e5fed2cd1fb207e4fc6868a"
+DUCK_NAME = ":catnoears: Big Duck :mrquackers2:"
+DUCK_TAGS = [["emoji", "catnoears", "https://pl.kitsunemimi.club/emoji/catnoears.png"],
+             ["emoji", "mrquackers2", "https://pl.kitsunemimi.club/emoji/mrquackers2.png"]]
+
+
+@pytest.mark.skipif(not Path('/opt/google/chrome/chrome').exists(), reason='Chrome required')
+def test_a_mentioned_name_gets_its_emoji_when_they_arrive_after_it():
+    """"it was the emojis in the name in the reply": the reply mentions somebody whose NAME is custom
+    emoji. When the name was known but its NIP-30 map was not yet (a profile cached before its tags
+    were), the mention was drawn as shortcode text and marked done -- so the refetch that brought the
+    map in had nothing left to patch."""
+    got = {}
+    reply = dict(NOTE, id="f" * 64, content=f"nostr:{{npub}} thanks :foxnoears:", tags=NOTE["tags"] + [["p", DUCK]])
+
+    async def check(b):
+        await desktop.login(b)
+        await b.until("!!window.__PC")
+        npub = await b.js(f"NostrTools.nip19.npubEncode('{DUCK}')")
+        ev = dict(reply, content=reply["content"].replace("{npub}", npub))
+        bare = {"id": "d" * 64, "pubkey": DUCK, "kind": 0, "created_at": 1790000000, "sig": "", "tags": [],
+                "content": json.dumps({"name": DUCK_NAME})}
+        # The name first, its emoji map not yet -- then the thread is drawn.
+        await b.js("Store.saveProfile(" + json.dumps(bare) + ");Store.saveEvent(" + json.dumps(ev) + ");true")
+        await b.js(f"__PC.openThread('{ev['id']}');true")
+        await b.until("[...document.querySelectorAll('a.mention')].some(a=>a.textContent.includes('Big Duck'))")
+        got['before'] = await b.js("[...document.querySelectorAll('a.mention')].find(a=>a.textContent.includes('Big Duck')).querySelectorAll('img.emoji-inline').length")
+        # The same kind-0 arrives again WITH its tags (the refetch emojiName asks for), and decorate runs.
+        tagged = dict(bare, tags=DUCK_TAGS)
+        await b.js("Store.saveProfile(" + json.dumps(tagged) + ");__PC.decorateProfiles();true")
+        await asyncio.sleep(.3)
+        got['after'] = await b.js("[...document.querySelectorAll('a.mention')].find(a=>a.textContent.includes('Big Duck')||a.querySelector('img'))"
+                                  "?.querySelectorAll('img.emoji-inline').length")
+
+    asyncio.run(desktop.with_browser('online', '', check, ''))
+    assert got['before'] == 0, got
+    assert got['after'] == 2, "the mention kept its :shortcode: text after the emoji arrived: %r" % got
