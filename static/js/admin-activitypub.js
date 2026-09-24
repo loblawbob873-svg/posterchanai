@@ -1,4 +1,4 @@
-// Admin → Social → "Fediverse server (ActivityPub)": the status under the two settings.
+// Admin → Fediverse (data-tab "social"): the status box at the top of the tab.
 // The settings themselves load and save generically (admin.js, by id/name); this only READS
 // /api/admin/activitypub/status, when the tab is opened or Check status is pressed.
 (function () {
@@ -17,8 +17,8 @@
             j = await r.json();
         } catch (e) { box.textContent = 'Could not read the status: ' + e.message; return; }
         document.querySelectorAll('.ap-dom').forEach(el => { el.textContent = j.domain || 'your domain'; });
-        if (!j.enabled) { box.innerHTML = 'Off. Tick the box above and Save to turn it on.'; return; }
-        if (!j.domain) { box.innerHTML = '⚠ No domain: set one above, or set the NIP-05 domain on the Relay tab.'; return; }
+        if (!j.enabled) { box.innerHTML = 'Off. Tick “Talk to the fediverse” below and Save to turn it on.'; return; }
+        if (!j.domain) { box.innerHTML = '⚠ No domain: set one below, or set the NIP-05 domain on the Relay tab.'; return; }
         const on = (j.members || []).filter(m => m.member);
         const rows = on.map(m => `<tr><td><code>${esc(m.handle)}</code></td><td>${m.followers}</td></tr>`).join('');
         const d = j.delivery || {};

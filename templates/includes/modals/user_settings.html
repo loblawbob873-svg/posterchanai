@@ -11,7 +11,7 @@
                 <button class="user-tab-btn active" data-tab="profile">Profile</button>
                 <button class="user-tab-btn" data-tab="mail">Mail</button>
                 <button class="user-tab-btn" data-tab="telegram">Telegram</button>
-                <button class="user-tab-btn" data-tab="social">Social</button>
+                <button class="user-tab-btn" data-tab="social">Nostr</button>
                 <button class="user-tab-btn" data-tab="apikeys">API Keys</button>
             </div>
 
@@ -137,7 +137,7 @@ www.coindesk.com/price/xrp/news|XRP News"></textarea>
                             <label>
                                 <input type="checkbox" id="socialNotifEnabled"> Relay social notifications to Telegram
                             </label>
-                            <small>Forward new notifications (mentions, replies, DMs, follows, reactions) from your connected Pleroma/Nostr accounts to this Telegram chat. Reply to a forwarded message to respond on that platform.</small>
+                            <small>Forward your new Nostr notifications — mentions, replies, DMs, follows and reactions, the fediverse's included — to this Telegram chat. Reply to a forwarded message to answer it on Nostr.</small>
                         </div>
 
                         <div class="form-group" style="margin-top: 8px;">
@@ -149,14 +149,7 @@ www.coindesk.com/price/xrp/news|XRP News"></textarea>
 
                 <!-- Social Tab -->
                 <div class="user-tab-content" id="user-tab-social">
-                    
-
-                    
-
-
-
-
-                    <fieldset style="margin-top: 24px;">
+                    <fieldset>
                         <legend>Nostr Integration</legend>
                         <p class="fieldset-info">Connect a Nostr key to post and forward notifications. Nostr has no instance: you paste your <strong>secret key</strong>, posts publish to your <strong>relays</strong>, and media uploads to an external <strong>Blossom/NIP-96 host</strong>. The key is stored on this server and never shown again.</p>
 

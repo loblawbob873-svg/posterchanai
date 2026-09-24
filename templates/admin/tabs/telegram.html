@@ -68,4 +68,19 @@
         </div>
         <div id="telegramStatus" class="test-result"></div>
     </fieldset>
+
+    <fieldset>
+        <legend>Notification relay</legend>
+        <div class="form-group">
+            <label for="social_notif_enabled">
+                <input type="checkbox" id="social_notif_enabled" name="social_notif_enabled"> Forward Nostr notifications to Telegram
+            </label>
+            <small>Mentions, replies, comments, reposts and reactions — the fediverse's included, since they arrive on Nostr — sent to each user's linked Telegram chat, where replying answers on Nostr. On by default; each user still opts in under User Settings → Telegram. Uncheck only to turn the feature off server-wide.</small>
+        </div>
+        <div class="form-group">
+            <label for="social_notif_poll_seconds">Poll interval (seconds)</label>
+            <input type="number" id="social_notif_poll_seconds" name="social_notif_poll_seconds" value="60" min="15">
+            <small>How often to check for new notifications (minimum 15). Restart after changing.</small>
+        </div>
+    </fieldset>
 </div>

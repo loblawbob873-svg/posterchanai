@@ -1,40 +1,23 @@
-<!-- Social tab — the fediverse server (ActivityPub) and the notification relay to Telegram.
-     Per-user options live in the client's User Settings → Fediverse. -->
+<!-- Fediverse tab (data-tab stays "social" so saved links and the remembered tab keep working) —
+     this node's ActivityPub server. Per-user options live in the client's Settings → Fediverse; the
+     Telegram notification relay moved to the Telegram tab, which is where it delivers. -->
 <div class="tab-content" id="tab-social">
     <fieldset>
-        <legend>Social Notification Relay</legend>
+        <legend>Status</legend>
         <div class="form-group">
-            <label for="social_notif_enabled">
-                <input type="checkbox" id="social_notif_enabled" name="social_notif_enabled"> Enable Social Notification Relay
-            </label>
-            <small>Master kill-switch for forwarding Nostr notifications (mentions, replies, reposts, reactions — fediverse ones included) to Telegram (on by default). Each user still opts in under User Settings → Telegram; uncheck this only to disable the feature server-wide.</small>
-        </div>
-        <div class="form-group">
-            <label for="social_notif_poll_seconds">Poll Interval (seconds)</label>
-            <input type="number" id="social_notif_poll_seconds" name="social_notif_poll_seconds" value="60" min="15">
-            <small>How often to check for new notifications (minimum 15). Restart after changing.</small>
+            <div id="ap_status" class="ap-status" role="status" style="color:#888;">Open this tab to load the status.</div>
+            <button type="button" class="btn-secondary" id="ap_status_refresh" style="margin-top:8px">Check again</button>
         </div>
     </fieldset>
 
     <fieldset>
         <legend>Fediverse server (ActivityPub)</legend>
+        <p class="fieldset-info">This node is a fediverse server: Mastodon, Pleroma, Akkoma, Misskey, GoToSocial and Lemmy can find, follow, reply to, react to and message its users, and they can follow fediverse accounts back. Nothing is kept in a separate database — what arrives is stored as Nostr events, and members' own Nostr posts are sent out as they are published. Takes effect without a restart.</p>
         <div class="form-group">
             <label for="activitypub_enabled">
-                <input type="checkbox" id="activitypub_enabled" name="activitypub_enabled"> Talk to the fediverse (on by default)
+                <input type="checkbox" id="activitypub_enabled" name="activitypub_enabled"> Talk to the fediverse <span class="muted">(on by default)</span>
             </label>
-            <small>Every local user with a name on this node (the NIP-05 names on the Relay tab) automatically becomes <code>@name@<span class="ap-dom">your domain</span></code> — Mastodon, Pleroma, Misskey and friends can find, follow and reply to them. Nothing is kept in a separate database: posts that arrive are stored as Nostr events (the same puppet accounts the bridge below uses), and members' own Nostr posts are sent out as they are. A member who already reaches the fediverse through their own linked Pleroma account keeps doing so and is not sent twice. Instances are blocked on the <strong>Relay</strong> tab (Blocked bridges/relays) — that one list covers this too. Takes effect without a restart.</small>
-        </div>
-        <div class="form-group">
-            <label for="activitypub_everyone">
-                <input type="checkbox" id="activitypub_everyone" name="activitypub_everyone"> Every Nostr user can talk to the fediverse
-            </label>
-            <small>Not only local users: anyone on Nostr this relay knows is <code>@npub1…@<span class="ap-dom">your domain</span></code>. Fediverse people can follow, mention and reply to them (delivered to their own relays), and their replies, mentions, likes and boosts of fediverse posts go out.</small>
-        </div>
-        <div class="form-group">
-            <label for="activitypub_dms">
-                <input type="checkbox" id="activitypub_dms" name="activitypub_dms"> Direct messages across the bridge
-            </label>
-            <small>Fediverse direct messages arrive as encrypted Nostr DMs, and Nostr DMs to fediverse accounts are delivered to them. <strong>This server reads these messages as it carries them</strong> — that is what a bridge between two encryption systems is. A fediverse account can only message someone who follows it or has written to it first.</small>
+            <small>Every local user with a name on this node (the NIP-05 names on the Relay tab) is <code>@name@<span class="ap-dom">your domain</span></code>.</small>
         </div>
         <div class="form-group">
             <label for="activitypub_domain">Domain</label>
@@ -42,24 +25,42 @@
             <small>Where <code>/.well-known/webfinger</code> answers. Leave blank to use the NIP-05 domain, so <code>name@domain</code> on Nostr and <code>@name@domain</code> on the fediverse are one identity. Changing it later breaks existing follows.</small>
         </div>
         <div class="form-group">
-            <label for="activitypub_lan_hosts">Fediverse servers on this network</label>
-            <textarea id="activitypub_lan_hosts" name="activitypub_lan_hosts" rows="2" placeholder="one per line, e.g. pleroma.example.com" autocomplete="off" spellcheck="false"></textarea>
-            <small>Servers whose public name resolves to a <strong>private</strong> address from here (split DNS — hosted behind the same router). They are otherwise refused, because this server never fetches private addresses for strangers. The Pleroma bridge's instance is trusted without being listed.</small>
-        </div>
-        <div class="form-group">
-            <label for="fedi_bridge_blocked_domains">Blocked instances and accounts (one per line)</label>
-            <textarea id="fedi_bridge_blocked_domains" name="fedi_bridge_blocked_domains" rows="4" placeholder="spam.example&#10;bad.instance.tld&#10;someone@elsewhere.example"></textarea>
-            <small>Nothing from these reaches this server and nothing is sent to them. An instance line covers its subdomains and both spellings of an internationalised name; <code>user@host</code> (or a profile link) blocks that one account. The relay's own blocked-relays list (Relay tab) is honoured too.</small>
-        </div>
-        <div class="form-group">
-            <label for="fedi_bridge_broadcast">
-                <input type="checkbox" id="fedi_bridge_broadcast" name="fedi_bridge_broadcast"> Share fediverse posts with other Nostr relays
+            <label for="activitypub_everyone">
+                <input type="checkbox" id="activitypub_everyone" name="activitypub_everyone"> Every Nostr user can talk to the fediverse
             </label>
-            <small><strong>Off by default.</strong> Fediverse posts stored here stay on this relay. Turn on to let them federate to the wider Nostr network.</small>
+            <small>Not only local users: anyone on Nostr this relay holds a profile for gets a readable handle (<code>@dana_4b56@<span class="ap-dom">your domain</span></code>). Fediverse people can follow, mention and reply to them — delivered to their own relays — and their replies, reactions and boosts of fediverse posts go out.</small>
         </div>
         <div class="form-group">
-            <button type="button" class="btn-secondary" id="ap_status_refresh">Check status</button>
-            <div id="ap_status" class="ap-status" role="status" style="margin-top:8px;color:#888;">Open this tab to load the status.</div>
+            <label for="activitypub_dms">
+                <input type="checkbox" id="activitypub_dms" name="activitypub_dms"> Direct messages between the fediverse and Nostr
+            </label>
+            <small>Fediverse direct messages arrive as encrypted Nostr DMs, and Nostr DMs to fediverse accounts are delivered to them. <strong>This server reads these messages as it carries them</strong> — any bridge between two encryption systems does. Anyone who is not blocked can write; a user who mutes a fediverse account (their Nostr mute list) stops its messages.</small>
         </div>
+    </fieldset>
+
+    <fieldset>
+        <legend>Blocking</legend>
+        <div class="form-group">
+            <label for="fedi_bridge_blocked_domains">Blocked instances and accounts <span class="muted">(one per line)</span></label>
+            <textarea id="fedi_bridge_blocked_domains" name="fedi_bridge_blocked_domains" rows="5" placeholder="spam.example&#10;bad.instance.tld&#10;someone@elsewhere.example"></textarea>
+            <small>Nothing from these reaches this server and nothing is sent to them. An instance line covers its subdomains and both spellings of an internationalised name; <code>user@host</code> (or a profile link) blocks that one account. The Relay tab's <strong>Blocked bridges/relays</strong> list is honoured too, and blocking a fediverse person's npub on the relay (or from the client) blocks them here.</small>
+        </div>
+    </fieldset>
+
+    <fieldset>
+        <details>
+            <summary style="cursor:pointer;font-weight:600">Advanced</summary>
+            <div class="form-group" style="margin-top:10px">
+                <label for="activitypub_lan_hosts">Fediverse servers on this network</label>
+                <textarea id="activitypub_lan_hosts" name="activitypub_lan_hosts" rows="2" placeholder="one per line, e.g. pleroma.example.com" autocomplete="off" spellcheck="false"></textarea>
+                <small>Servers whose public name resolves to a <strong>private</strong> address from here (split DNS — hosted behind the same router). They are otherwise refused, because this server never fetches private addresses for strangers.</small>
+            </div>
+            <div class="form-group">
+                <label for="fedi_bridge_broadcast">
+                    <input type="checkbox" id="fedi_bridge_broadcast" name="fedi_bridge_broadcast"> Share fediverse posts with other Nostr relays
+                </label>
+                <small><strong>Off by default.</strong> Fediverse posts stored here stay on this relay. Turn on to let them federate to the wider Nostr network.</small>
+            </div>
+        </details>
     </fieldset>
 </div>

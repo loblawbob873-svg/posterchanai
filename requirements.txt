@@ -282,3 +282,6 @@ solders==0.29.0
 embit==0.8.0
 bitcash==1.2.0
 # XRP has its own offline SDK environment; see requirements-exodus-xrp.txt.
+# Media Center reads this node's attached subnets (media_center.local_networks) -- an ImportError there is
+# swallowed, silently treating every client as remote. It was only ever installed by hand.
+psutil>=5.9

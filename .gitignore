@@ -19,6 +19,10 @@ pip-log.txt
 # Virtual environments
 venv/
 venv*/
+# WITHOUT the slash too: a worktree's venv SYMLINK is a file, which `venv*/` does not match --
+# committed once, it was checked out OVER server1's real venv and deleted it.
+/venv*
+/.venv
 env/
 .venv/
 ENV/
