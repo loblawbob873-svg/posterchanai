@@ -121,6 +121,20 @@ def build_mention_prefix(status_obj, own_acct=None, include_author=True):
     return " ".join("@" + acct for acct in mentions) + " "
 
 
+def _sniff_image(data):
+    """(mime, extension) for the image formats a post carries, from the bytes themselves; None if unknown."""
+    head = data[:16]
+    if head.startswith((b"GIF87a", b"GIF89a")):
+        return "image/gif", ".gif"
+    if head.startswith(b"\x89PNG\r\n\x1a\n"):
+        return "image/png", ".png"
+    if head.startswith(b"\xff\xd8\xff"):
+        return "image/jpeg", ".jpg"
+    if head[:4] == b"RIFF" and data[8:12] == b"WEBP":
+        return "image/webp", ".webp"
+    return None
+
+
 def upload_media_to_pleroma(image_bytes, filename="image.png", mime="image/png"):
     # A (bytes, mime) tuple is the normal way callers carry a non-PNG image — the post card is
     # compressed to JPEG server-side, and the defaults above would otherwise upload it as
@@ -140,10 +154,25 @@ def upload_media_to_pleroma(image_bytes, filename="image.png", mime="image/png")
     if not isinstance(image_bytes, bytes):
         print(f"ERROR: upload_media_to_pleroma received {type(image_bytes).__name__} instead of bytes")
         return None
+    if not image_bytes:
+        # Never upload nothing: Pleroma stores an empty file and the post goes out with a broken image.
+        print("ERROR: upload_media_to_pleroma was given 0 bytes; not uploading")
+        return None
+    # WHAT THE BYTES ARE, not what the caller assumed: the blockbot's image is a GIF and was uploaded
+    # as "image.png" / image/png. Only the IMAGE default is corrected -- audio/video callers name theirs.
+    if mime == "image/png":
+        sniffed = _sniff_image(image_bytes)
+        if sniffed:
+            mime, ext = sniffed
+            filename = filename.rsplit(".", 1)[0] + ext
     # Try v2 then v1 endpoint for compatibility
     endpoints = [f"{PLEROMA_ENDPOINT}/api/v2/media", f"{PLEROMA_ENDPOINT}/api/v1/media"]
-    files = {"file": (filename, BytesIO(image_bytes), mime)}
     for endpoint in endpoints:
+        # A FRESH stream for every attempt. One BytesIO was shared by both: the v2 attempt read it to the
+        # end, and when v2 failed (a timeout on a 7 MB GIF, 2026-09-24) the v1 retry uploaded ZERO bytes
+        # -- Pleroma stored an empty file and the blockbot posted a broken image. It had worked for months
+        # only because v2 had never failed before.
+        files = {"file": (filename, BytesIO(image_bytes), mime)}
         try:
             r = requests.post(
                 endpoint, headers=mastodon_headers, files=files, timeout=60
