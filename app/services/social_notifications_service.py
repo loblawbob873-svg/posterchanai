@@ -77,7 +77,7 @@ def _norm_pleroma(n: dict) -> dict:
     }
 
 
-_NOSTR_KIND_TYPE = {1: "mention", 6: "repost", 7: "reaction"}
+_NOSTR_KIND_TYPE = {1: "mention", 1111: "mention", 6: "repost", 7: "reaction"}
 
 # pubkey hex → display label (NIP-05 / profile name), resolved once from kind-0 metadata.
 _nostr_name_cache: dict = {}

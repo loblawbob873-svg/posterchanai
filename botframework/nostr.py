@@ -225,8 +225,9 @@ def _reply_parent_id(ev: dict) -> str | None:
 
 
 def _shape_note(ev: dict) -> dict | None:
-    """Turn a raw Nostr kind-1 event into the note dict the listeners consume."""
-    if not ev or ev.get("kind") != 1:
+    """Turn a raw Nostr kind-1 note, or a kind-1111 comment (how replies are sent), into the note
+    dict the listeners consume."""
+    if not ev or ev.get("kind") not in (1, 1111):
         return None
     created = ev.get("created_at", 0)
     iso = datetime.fromtimestamp(created, tz=timezone.utc).isoformat().replace("+00:00", "Z")
@@ -405,7 +406,7 @@ def get_mentions(limit=40):
     except Exception as e:
         logger.warning(f"[nostr] get_mentions failed: {e}")
         return []
-    notes = [_shape_note(ev) for ev in events if ev.get("kind") == 1]
+    notes = [_shape_note(ev) for ev in events if ev.get("kind") in (1, 1111)]
     notes = [n for n in notes if n]
     # Anti-loop at the SOURCE: drop mentions from ANOTHER of our bots so no listener (games included)
     # ever engages a sibling bot. Covers every get_mentions() consumer in one place.

@@ -131,11 +131,13 @@ async def post_note(seckey: bytes, relays, text: str, reply_to: dict | None = No
                     hashtags: list | None = None) -> dict:
     """Build, sign and publish a kind-1 note. Uploads media first and embeds URLs.
 
-    `reply_to` is a parent event dict to reply to (adds NIP-10 tags). `hashtags` adds NIP-12
+    `reply_to` is a parent event dict to reply to (adds NIP-10 tags) -- or, when the parent is a
+    NIP-22 comment (kind 1111), the answer is a comment in the same thread. `hashtags` adds NIP-12
     indexed `t` tags (so the note shows up in those #hashtag feeds). Returns the event.
     """
     relays = relay.normalize_relays(relays) or DEFAULT_RELAYS
-    tags = _event.reply_tags(reply_to) if reply_to else []
+    kind = 1111 if reply_to and reply_to.get("kind") == 1111 else 1
+    tags = (_event.comment_tags(reply_to) if kind == 1111 else _event.reply_tags(reply_to)) if reply_to else []
     had_text = bool((text or "").strip())
     text, media_tags = await _attach_media(seckey, text, media_list or [], media_cfg or {})
     # Don't publish a junk empty note: if the only content was media and every upload failed
@@ -152,7 +154,7 @@ async def post_note(seckey: bytes, relays, text: str, reply_to: dict | None = No
             if h and h not in seen:
                 seen.add(h)
                 tags.append(["t", h])
-    ev = _event.build_event(seckey, 1, text, tags=tags)
+    ev = _event.build_event(seckey, kind, text, tags=tags)
     await relay.publish(relays, ev)
     return ev
 
@@ -179,9 +181,10 @@ async def repost(seckey: bytes, relays, target: dict) -> dict:
 # --- reading ----------------------------------------------------------------
 
 async def fetch_mentions(pubkey_hex: str, relays, since: int | None = None, limit: int = 50) -> list[dict]:
-    """kind-1/6/7 events that #p-tag the given pubkey (mentions/replies/reposts/reactions)."""
+    """kind-1/6/7/1111 events that #p-tag the given pubkey (mentions/replies/reposts/reactions, and
+    NIP-22 comments -- the kind every reply made in this client is)."""
     relays = relay.normalize_relays(relays) or DEFAULT_RELAYS
-    flt: dict = {"kinds": [1, 6, 7], "#p": [pubkey_hex], "limit": limit}
+    flt: dict = {"kinds": [1, 6, 7, 1111], "#p": [pubkey_hex], "limit": limit}
     if since:
         flt["since"] = int(since) + 1
     return await relay.query(relays, [flt])

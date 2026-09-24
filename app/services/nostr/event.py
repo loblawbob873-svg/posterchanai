@@ -77,6 +77,20 @@ def verify_self_auth(auth_b64: str, pubkey_hex: str, purpose: str | None = None)
             and abs(int(ev.get("created_at", 0)) - int(time.time())) <= 300)
 
 
+def comment_tags(parent: dict) -> list:
+    """NIP-22 tags for a comment (kind 1111) answering the kind-1111 comment `parent`: the root scope
+    (the uppercase E/A/I/K/P tags) carried forward unchanged, and the parent itself in lowercase.
+
+    Clients -- this one included -- send every reply to a note as a kind-1111 comment, so a bot that
+    answered one with a NIP-10 kind-1 reply put its answer outside the thread the question lives in."""
+    tags = [list(t) for t in parent.get("tags", [])
+            if len(t) >= 2 and t[0] in ("E", "A", "I", "K", "P")]
+    tags += [["e", parent.get("id"), "", parent.get("pubkey", "")], ["k", "1111"]]
+    if parent.get("pubkey"):
+        tags.append(["p", parent["pubkey"]])
+    return tags
+
+
 def reply_tags(parent: dict, root_id: str | None = None) -> list:
     """Build NIP-10 e/p tags for a reply to `parent`.
 
