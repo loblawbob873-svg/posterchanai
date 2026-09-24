@@ -3155,3 +3155,60 @@ def test_a_fediverse_mention_links_that_accounts_own_profile_url(world):
     world["actors"][REMOTE]["url"] = "https://evil.example/phish"
     remote._actors.clear()
     assert run(outbox.resolve_pubkey(carol["pubkey_hex"]))["url"] == REMOTE
+
+
+# ============================================================================ 24. "Delete all my posts"
+
+def test_delete_all_my_posts_reaches_every_follower_a_slice_per_tick_and_blocks_nothing(world, monkeypatch):
+    """Settings → "Delete all my posts" is one kind-5 per hundred events. For a real account (128
+    follower inboxes, measured) one of them is ~2,000 deliveries; sent inline it outran the tick's time
+    limit, was cancelled before being marked done, and went out again from the top every tick -- while
+    every post queued behind it never went out at all. It is queued, sent a slice per tick, resumed
+    from the saved position (a restart included), and each Delete reaches each follower exactly once."""
+    from app.services import nostr_store
+    for n in range(5):
+        world["docs"][f"pcai:ap:follower:{ALICE}:{n}"] = {"actor": f"https://s{n}.example/users/f",
+                                                           "inbox": f"https://s{n}.example/inbox"}
+    posts = [member_post(f"post {i}", created=1_600_000_000 + i) for i in range(100)]
+    delete = member_post("", kind=5, tags=[["e", p["id"]] for p in posts] + [["k", "1"]], created=1_700_000_001)
+    later = member_post("a new post after the purge", created=1_700_000_002)
+    for ev in (delete, later):
+        world["relay"][ev["id"]] = ev
+
+    async def ws_query(port, filters, strict=False, **kw):
+        f = filters[0]
+        return sorted([e for e in (delete, later) if e["created_at"] >= f.get("since", 0)
+                       and e["kind"] in f.get("kinds", [e["kind"]])], key=lambda e: -e["created_at"])
+    monkeypatch.setattr(nostr_store, "_ws_query", ws_query)
+    monkeypatch.setattr(outbox, "_DRAIN_PER_TICK", 200)
+    world["docs"]["pcai:ap:cursor"] = {"since": 1_700_000_000}
+
+    run(outbox.tick())
+    deletes = [s for s in world["sent"] if s["activity"]["type"] == "Delete"]
+    assert len(deletes) == 200, f"{len(deletes)} deliveries in one tick -- the deletion was sent inline"
+    assert any(s["activity"]["type"] == "Create" for s in world["sent"]), "a new post waited behind the purge"
+    assert world["docs"]["pcai:ap:delq:" + delete["id"]]["pos"] == 200
+
+    outbox._seen.clear()                               # a worker restart: only the relay documents remain
+    outbox._done.clear()
+    for _ in range(4):
+        run(outbox.tick())
+    deletes = [(s["inbox"], s["activity"]["object"]["id"]) for s in world["sent"] if s["activity"]["type"] == "Delete"]
+    want = {(f"https://s{n}.example/inbox", convert.object_url(BASE, p["id"])) for n in range(5) for p in posts}
+    assert set(deletes) == want and len(deletes) == len(want), "a Delete was lost or sent twice"
+    assert world["docs"]["pcai:ap:delq:" + delete["id"]] == {"done": True}
+    assert len([s for s in world["sent"] if s["activity"]["type"] == "Create"]) == 5   # once per follower, not re-sent
+
+
+def test_a_queued_deletion_is_only_ever_sent_as_its_own_author(world):
+    """The queue entry names a member; a kind-5 that is not theirs (or not a kind-5) sends nothing."""
+    _with_follower(world)
+    bogus = member_post("not a deletion", created=1_700_000_003)
+    world["relay"][bogus["id"]] = bogus
+    run(state.queue_deletion(bogus["id"], ALICE, 999))
+    foreign = member_post("", kind=5, tags=[["e", "ab" * 32]], author=BOB, created=1_700_000_004)
+    world["relay"][foreign["id"]] = foreign
+    run(state.queue_deletion(foreign["id"], ALICE, 999))
+    assert run(outbox.drain_deletions()) == 0
+    assert world["sent"] == []
+    assert run(state.deletions()) == {}

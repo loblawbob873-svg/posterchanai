@@ -130,6 +130,13 @@ following it there is sent as an ActivityPub Follow, and their posts arrive from
 | a profile (0) | Update(Person) |
 | a contact list (3) | Follow / Undo(Follow) for fediverse accounts added or removed |
 
+**Settings → "Delete all my posts"** publishes one kind-5 per hundred events (posts, polls, comments,
+reactions, reposts). Each becomes a Delete / Undo to every follower inbox and every server the event
+was sent to beyond them — about 2,000 deliveries per kind-5 for an account with 128 follower inboxes.
+A kind-5 that plans more than 300 deliveries is queued (`pcai:ap:delq:<id>`, with its position) and sent
+1,500 deliveries per tick, resuming after a restart, so a purge never holds up new posts. Sent inline,
+one outran the tick's time limit and was re-sent from the top every tick. Admin → Social status shows how many are still being sent.
+
 ## Relays — reaching instances where nobody follows you
 
 The fediverse has no global feed: a post is delivered to its author's followers and nowhere else. A

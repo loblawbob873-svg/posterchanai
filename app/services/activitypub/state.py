@@ -433,3 +433,29 @@ async def load_retries() -> dict:
     docs = await nostr_store.list_docs(_port(), _RETRY_PREFIX, seckey=_seckey(), strict=True, limit=20000)
     return {k[len(_RETRY_PREFIX):]: v for k, v in docs.items()
             if isinstance(v, dict) and not v.get("done") and v.get("inbox") and v.get("activity")}
+
+
+# ------------------------------------------------------------------------------- deletion backlog
+
+# A LARGE deletion (Settings → "Delete all my posts" is one kind-5 per hundred events, and each one is
+# ~2,000 deliveries for an account with 128 follower inboxes) is sent a slice per tick instead of
+# inline. One document per kind-5 holding how far it got, so a worker restart resumes it.
+_DELETION_PREFIX = "pcai:ap:delq:"
+
+
+async def queue_deletion(event_id: str, member: str, total: int) -> None:
+    await _put(_DELETION_PREFIX + event_id, {"member": member, "pos": 0, "total": total, "at": int(time.time())})
+
+
+async def deletion_progress(event_id: str, entry: dict) -> None:
+    await _put(_DELETION_PREFIX + event_id, entry)
+
+
+async def finish_deletion(event_id: str) -> None:
+    await _put(_DELETION_PREFIX + event_id, {"done": True})
+
+
+async def deletions() -> dict:
+    docs = await nostr_store.list_docs(_port(), _DELETION_PREFIX, seckey=_seckey(), strict=True, limit=20000)
+    return {k[len(_DELETION_PREFIX):]: v for k, v in docs.items()
+            if isinstance(v, dict) and not v.get("done") and v.get("member")}

@@ -4120,12 +4120,12 @@
   // carrying up to _DN_BATCH `e` tags — NIP-09 allows many). Best-effort broadcast to the wider write relays so
   // copies elsewhere go too; local removal is immediate so the feed reflects it without a reload.
   const _DN_BATCH = 100;
-  const _DN_KINDS = [1, 6, 7, 16, 1311, 30311];
+  const _DN_KINDS = [1, 1068, 1111, 6, 7, 16, 1311, 30311];   // polls (1068) and comments (1111) are posts too -- and both federate
   async function _deleteAllMyNotes(){
     if(GUEST || !ME){ _guestPrompt&&_guestPrompt(); return; }
     const author=ME.pubkey;
     const st=document.getElementById('set-del-notes-status'); const setS=(m)=>{ if(st) st.textContent=m; };
-    if(!await uiConfirm('Delete ALL your posts, replies, likes/reactions and reposts, streams and stream chat? This asks relays to remove this activity and CANNOT be undone.\n\nYour profile, follows and DMs are NOT affected.')) return;
+    if(!await uiConfirm('Delete ALL your posts, polls, replies, likes/reactions and reposts, streams and stream chat? This asks relays — and the fediverse servers your posts reached — to remove this activity and CANNOT be undone.\n\nYour profile, follows and DMs are NOT affected.')) return;
     setS('Finding your posts, reactions, reposts and streams…');
     const ids=new Map(); let until=Math.floor(Date.now()/1000)+1, limit=200, incomplete=false;
     while(true){

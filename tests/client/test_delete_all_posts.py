@@ -109,3 +109,12 @@ def test_public_stream_cleanup_in_private_mode_is_explicit():
     result=run_action([event(30311)], fedi_only=True)
     assert result['sent'][0]['opts']['publicDeletion'] is True
     assert result['removed']==['mine-30311']
+
+
+def test_polls_and_comments_are_deleted_too():
+    """Both federate (a poll is a Question on the fediverse, a comment a reply); left out, "delete all
+    my posts" left them up on Nostr AND the fediverse."""
+    result = run_action([event(1068), event(1111), event(1)])
+    assert set(result['removed']) == {'mine-1068', 'mine-1111', 'mine-1'}
+    assert {('k', '1068'), ('k', '1111')} <= {tuple(t) for t in result['sent'][0]['tags'] if t[0] == 'k'}
+    assert 'fediverse' in result['confirms'][0]

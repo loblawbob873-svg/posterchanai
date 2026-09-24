@@ -38,7 +38,7 @@ _PAGE = 500
 _RETRY_DELAYS = (60, 300, 1800)
 _seen: dict = {}                 # event id → time processed (so the inclusive cursor second is not replayed)
 _retries: list = []              # [(due, inbox, activity, member, attempt, key)] -- also on the relay
-_stats = {"delivered": 0, "failed": 0, "last_error": "", "last_tick": 0, "queued": 0}
+_stats = {"delivered": 0, "failed": 0, "last_error": "", "last_tick": 0, "queued": 0, "deleting": 0}
 _scheduler = None
 _SENT = "pcai:ap:sent:"          # per-Like record of who it was sent to, so an Undo reaches them
 
@@ -729,7 +729,50 @@ async def tick() -> int:
     handled = await _pass(state.CURSOR, await _members(), KINDS, None)
     if config.everyone():
         handled += await _pass(state.CURSOR_EVERYONE, None, _EVERYONE_KINDS, await _everyone_filter())
+    try:
+        await drain_deletions()
+    except Exception as e:
+        logger.info("[activitypub] deletion backlog not drained: %s: %s", type(e).__name__, e)
     return handled
+
+
+_INLINE_DELETION = 300        # deliveries a kind-5 may send inside the pass; more goes to the backlog
+_DRAIN_PER_TICK = 1500        # backlog deliveries per tick (~30s at 16 at a time)
+
+
+async def drain_deletions(budget: int = 0) -> int:
+    """Send the next slice of the queued large deletions, oldest first. The kind-5 is re-read and
+    re-planned (the plan is deterministic: per deleted id, sorted inboxes) and resumed at the saved
+    position, so a restart continues where it stopped; a re-sent Delete is harmless, a lost one is not."""
+    budget = budget or _DRAIN_PER_TICK
+    queue = await state.deletions()
+    _stats["deleting"] = len(queue)
+    sent = 0
+    sem = asyncio.Semaphore(16)
+
+    async def one(inbox, act, member):
+        async with sem:
+            await _send(inbox, act, member)
+
+    for eid, entry in sorted(queue.items(), key=lambda kv: (kv[1].get("at", 0), kv[0])):
+        if sent >= budget:
+            break
+        ev = await _event(eid, strict=True)
+        if not ev or ev.get("kind") != 5 or ev.get("pubkey") != entry.get("member"):
+            await state.finish_deletion(eid)          # not a deletion by the member it was queued for
+            continue
+        jobs = await plan(ev, ev["pubkey"])
+        pos = max(0, int(entry.get("pos") or 0))
+        chunk = jobs[pos:pos + budget - sent]
+        await asyncio.gather(*(one(i, a, ev["pubkey"]) for i, a in chunk), return_exceptions=True)
+        pos += len(chunk)
+        sent += len(chunk)
+        if pos >= len(jobs):
+            await state.finish_deletion(eid)
+            _stats["deleting"] = max(0, _stats.get("deleting", 1) - 1)
+        else:
+            await state.deletion_progress(eid, dict(entry, pos=pos, total=len(jobs)))
+    return sent
 
 
 # ------------------------------------------------------------------------------ poll tallies
@@ -1047,6 +1090,14 @@ async def _pass(cursor_key: str, authors, kinds: list, qualifies) -> int:
             continue
         try:
             jobs = await plan(ev, ev["pubkey"])
+            if ev.get("kind") == 5 and len(jobs) > _INLINE_DELETION:
+                # "Delete all my posts": sent a slice per tick by drain_deletions. Inline, one of these
+                # outran the tick's time limit, was cancelled before being marked done, and was sent
+                # again from the top every tick -- with every post queued behind it never going out.
+                await state.queue_deletion(ev["id"], ev["pubkey"], len(jobs))
+                jobs = []
+                done[ev["id"][:16]] = int(ev.get("created_at", 0))
+                sent_any = True
         except Exception as e:
             # STOP HERE rather than step over it: the usual cause is a relay read that failed (the
             # follower list is read strictly), and moving the cursor past the event would lose it

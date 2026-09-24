@@ -24,7 +24,7 @@
         const d = j.delivery || {};
         box.innerHTML = `<div>On — <strong>${on.length}</strong> member(s) on the fediverse as <code>@name@${esc(j.domain)}</code>.</div>`
             + (rows ? `<table class="ap-table" style="margin-top:6px"><tr><th>Handle</th><th>Followers</th></tr>${rows}</table>` : '')
-            + `<div style="margin-top:6px">Delivered ${d.delivered || 0}, failed ${d.failed || 0}, waiting to retry ${d.queued || 0}`
+            + `<div style="margin-top:6px">Delivered ${d.delivered || 0}, failed ${d.failed || 0}, waiting to retry ${d.queued || 0}${d.deleting ? `, deletions being sent ${d.deleting}` : ''}`
             + (d.last_error ? ` — last problem: ${esc(d.last_error)}` : '') + '</div>'
             + ((j.relays || []).length ? `<div style="margin-top:6px">Relays (${esc(j.relay_scope === 'everyone' ? 'every account' : 'named accounts')}): `
                 + j.relays.map(r => `<code>${esc(r.inbox)}</code> — ${esc(r.state)}`).join('; ') + '</div>' : '')
