@@ -87,3 +87,14 @@ def test_an_unreadable_published_overlay_prunes_nothing(monkeypatch, capsys):
     monkeypatch.setattr(p, "published_release", lambda url=p.PUBLISHED: "desktop-v1.0.1")
     p.main()
     assert [c[3] for c in calls if c[:3] == ["gh", "release", "delete"]] == ["desktop-v1.0.2"]
+
+
+def test_the_workflow_keeps_enough_builds_to_cover_a_deploy_in_flight():
+    """sync.sh pins the overlay to the newest build before its gate and publishes the pin after it;
+    the build of the previous push finishing in between must not delete that release. With --keep 1
+    it did (1.0.1680), and the deploy was refused."""
+    import re
+    wf = (Path(__file__).resolve().parents[1] / ".github" / "workflows" / "desktop.yml").read_text()
+    m = re.search(r"prune_desktop_releases\.py[^\n]*\n(?:[^\n]*\n){0,4}?\s*--keep (\d+)", wf)
+    assert m, "the workflow no longer passes --keep to the pruner"
+    assert int(m.group(1)) >= 3, "one kept build cannot cover a deploy whose pin is not yet committed"

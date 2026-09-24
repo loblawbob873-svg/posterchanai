@@ -538,13 +538,19 @@ jobs:
       # forever buries the APK, extension and other downloads on GitHub's Releases page.  Retain a
       # only the current immutable build and explicitly protect the version this workflow published.
       # Cleanup runs only after both immutable and rolling releases were published successfully.
+      # KEEP 3, NOT 1. A deploy pins the overlay to the newest build at its START (sync.sh bumps
+      # before its ~25-minute gate) and commits/publishes that pin only at the END — so for the whole
+      # gate the pin exists only in a working tree this job cannot see. With --keep 1, the build of
+      # the PREVIOUS push finishing inside that window deleted the release being pinned (1.0.1680,
+      # 2026-09-24), and the gate then refused the deploy. Three builds cover back-to-back deploys at
+      # the cost of two extra releases on the page.
       - name: Prune obsolete Desktop build releases
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           python3 scripts/prune_desktop_releases.py \
             --repo "$GITHUB_REPOSITORY" \
-            --keep 1 \
+            --keep 3 \
             --protect "desktop-v1.0.${{ github.run_number }}"
 
       # THE GENTOO OVERLAY PINS A VERSION, AND A ROLLING TAG CANNOT HOLD ONE.
