@@ -460,11 +460,23 @@ async def _like(activity: dict, signer: str) -> str:
     puppet = await _puppet(await remote.actor(signer))
     if not puppet:
         return "ignored: no puppet"
-    content = str(activity.get("content") or "").strip() or "+"
-    if len(content) > 32:
+    # The emoji: Pleroma/Akkoma send EmojiReact with `content`; Misskey a Like with
+    # `_misskey_reaction`; Mastodon a bare Like ("+"). A CUSTOM emoji comes as `:shortcode:` plus an
+    # Emoji tag with its image -- carried over as a NIP-30 emoji tag, or Nostr clients would show the
+    # shortcode as text.
+    content = str(activity.get("content") or activity.get("_misskey_reaction") or "").strip() or "+"
+    if len(content) > 64:
         content = "+"
-    ev = build_event(puppet, 7, content, tags=[["e", eid], ["p", pk], ["k", "1"]], object_uri=act_id,
-                     broadcast=config.broadcast())
+    tags = [["e", eid], ["p", pk], ["k", "1"]]
+    if content.startswith(":") and content.endswith(":") and len(content) > 2:
+        sc = content.strip(":")
+        for t in convert._as_list(activity.get("tag")):
+            if isinstance(t, dict) and t.get("type") == "Emoji" and str(t.get("name") or "").strip(":") == sc:
+                url = convert.id_of((t.get("icon") or {}).get("url")) or (t.get("icon") or {}).get("url")
+                if isinstance(url, str) and url.startswith("https://"):
+                    tags.append(["emoji", sc, url])
+                break
+    ev = build_event(puppet, 7, content, tags=tags, object_uri=act_id, broadcast=config.broadcast())
     ok, msg = await publish(_port(), ev)
     if not ok:
         return f"relay refused: {msg}"

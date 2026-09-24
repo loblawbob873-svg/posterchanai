@@ -957,15 +957,19 @@ def _direct(to_pk_actor, note_id="https://mastodon.example/dm/1", text="<p>psst<
     return {"id": note_id + "/a", "type": "Create", "actor": REMOTE, "object": note}
 
 
-def test_a_fediverse_dm_arrives_encrypted_only_for_someone_who_agreed(world):
+def test_a_fediverse_dm_arrives_encrypted_unless_the_sender_is_muted(world):
+    """Anyone not blocked may DM, as on Nostr. (Requiring a follow silently dropped the first DM
+    anybody sent -- "I tried to DM myself from detroitriotcity but never got it".)"""
     from app.services.nostr import nip17
     pk = _real_alice(world)
-    act = _direct(f"{BASE}/ap/users/alice")
-    assert "does not follow" in run(inbox.process(act, REMOTE))
-    assert not [e for e in world["relay"].values() if e["kind"] == 1059]
     carol_puppet = ident.puppet_for(convert.account_from_actor(carol_actor()))["pubkey_hex"]
-    world["relay"]["c" * 64] = {"id": "c" * 64, "pubkey": pk, "kind": 3, "created_at": 9,
+    world["relay"]["m" * 64] = {"id": "m" * 64, "pubkey": pk, "kind": 10000, "created_at": 9,
                                 "tags": [["p", carol_puppet]], "content": ""}
+    muted = _direct(f"{BASE}/ap/users/alice", note_id="https://mastodon.example/dm/0")
+    assert run(inbox.process(muted, REMOTE)) == "ignored: the recipient muted the sender"
+    assert not [e for e in world["relay"].values() if e["kind"] == 1059]
+    del world["relay"]["m" * 64]
+    act = _direct(f"{BASE}/ap/users/alice")
     assert run(inbox.process(act, REMOTE)) == "delivered to 1"
     (wrap,) = [e for e in world["relay"].values() if e["kind"] == 1059]
     sender, text, rumor = nip17.unwrap(ALICE_SK, wrap)
@@ -1391,3 +1395,60 @@ def test_no_handle_is_minted_on_a_failed_read(world, monkeypatch):
     monkeypatch.setattr(nostr_store, "get_doc", broken)
     assert run(actors.readable_handle(pk)) == npub
     assert not [k for k in world["docs"] if k.startswith("pcai:ap:nick")]
+
+
+# ============================================================================ 18. custom emoji and emoji reactions
+
+EMO = "https://poster.place/emoji/blobcat.png"
+
+
+def _mirrored_carol_note(world):
+    s = world["Session"]()
+    puppet = ident.puppet_for(convert.account_from_actor(carol_actor()))
+    s.add(FediPuppet(actor_uri=REMOTE, acct="carol@mastodon.example", pubkey_hex=puppet["pubkey_hex"], nip05_name="c"))
+    s.add(FediBridgeDelivered(platform="activitypub", instance_url="https://mastodon.example", note_id="n",
+                              note_uri="https://mastodon.example/notes/7", nostr_event_id="7" * 64,
+                              nostr_pubkey=puppet["pubkey_hex"]))
+    s.commit()
+    return puppet["pubkey_hex"]
+
+
+def test_a_post_with_custom_emoji_carries_their_images(world):
+    """Without an Emoji tag the fediverse prints ":blobcat:" as text ("custom emojis are not
+    displaying on the fediverse")."""
+    _with_follower(world)
+    ev = member_post("hi :blobcat: and :unknown:", tags=[["emoji", "blobcat", EMO], ["emoji", "unused", EMO]])
+    note = run(outbox.plan(ev, ALICE))[0][1]["object"]
+    emo = [t for t in note["tag"] if t["type"] == "Emoji"]
+    assert emo == [{"id": EMO, "type": "Emoji", "name": ":blobcat:",
+                    "icon": {"type": "Image", "mediaType": "image/png", "url": EMO}}]
+    assert ":blobcat:" in note["content"]
+
+
+def test_emoji_reactions_go_out_as_reactions_and_a_dislike_stays_home(world):
+    carol = _mirrored_carol_note(world)
+    tags = [["e", "7" * 64], ["p", carol], ["k", "1"]]
+    plain = run(outbox.plan(member_post("+", kind=7, tags=tags), ALICE))[0][1]
+    assert plain["type"] == "Like" and "content" not in plain
+    fire = run(outbox.plan(member_post("🔥", kind=7, tags=tags, created=1_700_000_001), ALICE))[0][1]
+    assert fire["content"] == "🔥" and fire["_misskey_reaction"] == "🔥"
+    custom = run(outbox.plan(member_post(":blobcat:", kind=7, tags=tags + [["emoji", "blobcat", EMO]],
+                                         created=1_700_000_002), ALICE))[0][1]
+    assert custom["content"] == ":blobcat:" and custom["tag"][0]["icon"]["url"] == EMO
+    assert run(outbox.plan(member_post("-", kind=7, tags=tags, created=1_700_000_003), ALICE)) == []
+
+
+def test_incoming_emoji_reactions_keep_their_emoji(world):
+    mine = member_post("react to me")
+    world["relay"][mine["id"]] = mine
+    target = convert.object_url(BASE, mine["id"])
+    custom = {"id": "https://mastodon.example/react/1", "type": "EmojiReact", "actor": REMOTE, "object": target,
+              "content": ":blobcat:", "tag": [{"type": "Emoji", "name": ":blobcat:",
+                                               "icon": {"type": "Image", "url": EMO}}]}
+    assert run(inbox.process(custom, REMOTE)) == "like stored"
+    misskey = {"id": "https://mastodon.example/react/2", "type": "Like", "actor": REMOTE, "object": target,
+               "_misskey_reaction": "🎉"}
+    assert run(inbox.process(misskey, REMOTE)) == "like stored"
+    got = {e["content"]: e for e in world["relay"].values() if e["kind"] == 7}
+    assert ["emoji", "blobcat", EMO] in got[":blobcat:"]["tags"], "a custom reaction arrived as bare text"
+    assert "🎉" in got

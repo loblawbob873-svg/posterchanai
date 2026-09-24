@@ -157,6 +157,27 @@ def hashtags(ev: dict) -> list:
     return sorted(tags)[:20]
 
 
+def emoji_tags(ev: dict, text: str = None) -> list:
+    """ActivityPub `Emoji` tags for the custom emoji a Nostr event uses (NIP-30 ['emoji', shortcode,
+    url]). The `:shortcode:` stays in the text; Mastodon, Pleroma and Misskey draw the image from the
+    matching tag -- without it they print the shortcode ("custom emojis are not displaying"). Only
+    shortcodes the text actually uses, and only https images."""
+    text = ev.get("content") or "" if text is None else text
+    out, seen = [], set()
+    for t in ev.get("tags") or []:
+        if len(t) < 3 or t[0] != "emoji":
+            continue
+        sc, url = str(t[1] or "").strip(":"), str(t[2] or "").strip()
+        if not sc or sc in seen or not url.startswith("https://") or f":{sc}:" not in text:
+            continue
+        seen.add(sc)
+        out.append({"id": url, "type": "Emoji", "name": f":{sc}:",
+                    "icon": {"type": "Image", "mediaType": media_type_of(url) or "image/png", "url": url}})
+        if len(out) >= 30:
+            break
+    return out
+
+
 def note_from_event(ev: dict, *, base: str, actor: str, followers: str, mentions: dict,
                     in_reply_to: str = "", reply_to_actor: str = "") -> dict:
     """A member's kind-1 as a public ActivityPub Note, addressed like Mastodon addresses one."""
@@ -168,6 +189,7 @@ def note_from_event(ev: dict, *, base: str, actor: str, followers: str, mentions
     tag = [{"type": "Mention", "href": m["href"], "name": m.get("name") or m["href"]}
            for m in mentions.values() if m.get("href")]
     tag += [{"type": "Hashtag", "href": f"{base}/tags/{h}", "name": f"#{h}"} for h in hashtags(ev)]
+    tag += emoji_tags(ev)
     note = {
         "id": object_url(base, ev["id"]),
         "type": "Note",
@@ -207,11 +229,19 @@ def create(note: dict, actor: str) -> dict:
 
 
 def like(ev: dict, *, base: str, actor: str, target: str) -> dict:
+    """A reaction. "+" is a plain Like; an emoji is a Like CARRYING it, the one shape every server
+    understands: Mastodon counts a favourite, while Pleroma, Akkoma and Misskey show the emoji
+    reaction -- they read `content` and Misskey's `_misskey_reaction`. A custom emoji rides as an
+    `Emoji` tag with its image, or it arrives as bare `:shortcode:` text."""
     content = (ev.get("content") or "+").strip()
     act = {"@context": AS_CONTEXT, "id": activity_url(base, ev["id"]), "type": "Like",
            "actor": actor, "object": target}
     if content not in ("+", ""):
-        act["content"] = content[:32]          # an emoji reaction (Misskey/Pleroma read `content`)
+        act["content"] = content[:64]
+        act["_misskey_reaction"] = content[:64]
+        emo = emoji_tags(ev, content)
+        if emo:
+            act["tag"] = emo
     return act
 
 

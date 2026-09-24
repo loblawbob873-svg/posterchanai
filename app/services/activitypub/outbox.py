@@ -221,6 +221,8 @@ async def plan(ev: dict, member: str) -> list:
             act = convert.announce(ev, base=base, actor=me, followers=followers_url, target=target["uri"],
                                    target_actor=target.get("actor", ""))
             out = [(i, act) for i in sorted(set(fol) | ({author_inbox} if author_inbox else set()))]
+        elif (ev.get("content") or "").strip() == "-":
+            return []                          # a NIP-25 dislike: the fediverse has no such thing
         else:
             act = convert.like(ev, base=base, actor=me, target=target["uri"])
             if author_inbox:

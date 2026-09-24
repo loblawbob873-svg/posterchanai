@@ -67,20 +67,23 @@ def _mark(key: str, event_id: str, pubkey: str) -> None:
 
 
 async def may_message(recipient: str, sender_actor: str, sender_puppet: str) -> bool:
-    """The recipient follows the sender (their contact list holds the sender's puppet), or wrote to
-    the sender first."""
-    if await state.in_conversation(recipient, sender_actor):
-        return True
+    """Anyone may DM, as on Nostr and Mastodon -- blocked instances, accounts and keys never get this
+    far (inbox.process refuses them first). The one exception is somebody the recipient has MUTED:
+    their public mute list (kind 10000) naming the sender's key. A mute list that cannot be read does
+    not drop the message -- a DM lost to a slow relay is worse than one from somebody unwanted.
+
+    (It used to require the recipient to FOLLOW the sender or have written first, which silently
+    dropped the first DM anybody on the fediverse sent -- stricter than Nostr itself.)"""
     from app.services.fedi_bridge_identity import query_one
-    ok, contacts = await query_one(settings_store._port(), {"kinds": [3], "authors": [recipient], "limit": 1})
-    return bool(ok and contacts) and any(len(t) > 1 and t[0] == "p" and t[1] == sender_puppet
-                                         for t in contacts.get("tags", []))
+    ok, mutes = await query_one(settings_store._port(), {"kinds": [10000], "authors": [recipient], "limit": 1})
+    return not (ok and mutes and any(len(t) > 1 and t[0] == "p" and t[1] == sender_puppet
+                                     for t in mutes.get("tags", [])))
 
 
 # ------------------------------------------------------------------------------------ fediverse → nostr
 
 async def receive_direct(note: dict, signer: str) -> str:
-    """A non-public note from `signer`: DM each of our addressees who has agreed to hear from them."""
+    """A non-public note from `signer`: DM each of our addressees (unless they muted the sender)."""
     from app.services.activitypub import inbox
     from app.services.fedi_bridge_identity import publish
     from app.services.nostr import nip17
@@ -121,8 +124,7 @@ async def receive_direct(note: dict, signer: str) -> str:
         _mark(key, wrap["id"], puppet["pubkey_hex"])
         sent += 1
     if not sent:
-        return "already delivered" if done else \
-            "ignored: the recipient does not follow the sender and has not written to them"
+        return "already delivered" if done else "ignored: the recipient muted the sender"
     return f"delivered to {sent}"
 
 
