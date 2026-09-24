@@ -8905,6 +8905,7 @@
   function bindDmMediaActions(){ return _lzRun(_cardsMod, _cardsLoad, 'bindDmMediaActions', arguments); }
   function bindFeedActions(){ return _lzRun(_cardsMod, _cardsLoad, 'bindFeedActions', arguments); }
   function countsFor(){ return _lzRun(_cardsMod, _cardsLoad, 'countsFor', arguments); }
+  function emojiHtml(){ return _lzRun(_cardsMod, _cardsLoad, 'emojiHtml', arguments); }
   function emojiName(){ return _lzRun(_cardsMod, _cardsLoad, 'emojiName', arguments); }
   function feedNoteHtml(){ return _lzRun(_cardsMod, _cardsLoad, 'feedNoteHtml', arguments); }
   function hydratePolls(){ return _lzRun(_cardsMod, _cardsLoad, 'hydratePolls', arguments); }
@@ -15158,7 +15159,7 @@
     _dedupAddr, _feedScrollable, _hidePill, _isDeletedStream, _kind0Tags, _loadPaymentTargets,
     _navTopHtml, _navUrl, _protectedProfileFollows, _rememberTlScroll, _shaFromUrl, _startTimeline,
     _syncRightbar, articleCard, bchDirect, bchOf, cleanupInlineStream, clearSentinel, closeModal,
-    copyValue, decorateProfiles, decorateVerified, doBchTip, doBlock, doXmrTip, doZap, emojiName,
+    copyValue, decorateProfiles, decorateVerified, doBchTip, doBlock, doXmrTip, doZap, emojiHtml, emojiName,
     enc, ensureMyFollowers, feedNoteHtml, followMany, hasMedia, hydrate, invalidateCounts,
     isBchAddr, isMutedAuthor, isReply, isXmrAddr, linkify, loadSentinel, mediaParts, modal,
     needProfile, niceNip05, noteHtml, openDMWith, openMenuPopover, openStream, profOf, publish,

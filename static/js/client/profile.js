@@ -14,7 +14,7 @@ window.PCProfileFactory = function(dep){
     _dedupAddr, _feedScrollable, _hidePill, _isDeletedStream, _kind0Tags, _loadPaymentTargets,
     _navTopHtml, _navUrl, _protectedProfileFollows, _rememberTlScroll, _shaFromUrl, _startTimeline,
     _syncRightbar, articleCard, bchDirect, bchOf, cleanupInlineStream, clearSentinel, closeModal,
-    copyValue, decorateProfiles, decorateVerified, doBchTip, doBlock, doXmrTip, doZap, emojiName,
+    copyValue, decorateProfiles, decorateVerified, doBchTip, doBlock, doXmrTip, doZap, emojiHtml, emojiName,
     enc, ensureMyFollowers, feedNoteHtml, followMany, hasMedia, hydrate, invalidateCounts,
     isBchAddr, isMutedAuthor, isReply, isXmrAddr, linkify, loadSentinel, mediaParts, modal,
     needProfile, niceNip05, noteHtml, openDMWith, openMenuPopover, openStream, profOf, publish,
@@ -148,7 +148,7 @@ window.PCProfileFactory = function(dep){
     const av=feed.querySelector('.pav'); if(av){ const s=p.picture||S.LOGO; if(av.getAttribute('src')!==s) av.src=s; }
     const bn=feed.querySelector('.prof .banner'); if(bn){ const want=p.banner?`<img src="${enc(p.banner)}" onerror="this.remove()">`:''; if(bn.innerHTML!==want) bn.innerHTML=want; }
     const h2=feed.querySelector('.prof .pbody h2'); if(h2){ const vchk=h2.querySelector('.vchk'); h2.innerHTML=emojiName(pk,p.name||p.display_name||'anon'); if(vchk) h2.appendChild(vchk); }
-    const ab=feed.querySelector('.prof .about'); if(ab) ab.innerHTML=linkify(p.about||'');
+    const ab=feed.querySelector('.prof .about'); if(ab) ab.innerHTML=emojiHtml(pk, linkify(p.about||''));
     /* THE TIP AFFORDANCES ARE PROFILE FACTS TOO, AND THIS PATCH DID NOT TOUCH THEM.
        Reported against a real profile: "he added a payment target for xmr but no way to zap him".
        His kind-0 carries `monero_address`, `xmr` AND `cryptocurrency_addresses.monero`, and the
@@ -296,7 +296,7 @@ window.PCProfileFactory = function(dep){
         ${isXmrAddr(xmrOf(p))?`<button class="ln-addr xmr" id="prof-xmr" title="tip Monero (XMR)">ɱ ${enc(xmrOf(p).slice(0,10))}…${enc(xmrOf(p).slice(-6))}</button>`:''}
         ${isBchAddr(bchOf(p))?`<button class="ln-addr bch" id="prof-bch" title="tip Bitcoin Cash (BCH)"><svg class="ic b-ic" aria-hidden="true"><use href="#i-coin"></use></svg>${enc(bchOf(p).slice(0,14))}…${enc(bchOf(p).slice(-6))}</button>`:''}
         <div class="prof-joined" id="prof-joined" hidden title="Based on available relay history. Your actual join date may be earlier. This date is calculated automatically and cannot be changed in profile settings."><svg class="ic" aria-hidden="true"><use href="#i-clock"></use></svg><span>Earliest activity found</span><b></b></div>
-        <div class="about">${linkify(p.about||'')}</div>
+        <div class="about">${emojiHtml(pk, linkify(p.about||''))}</div>
         <div id="prof-music">${_profileMusicHtml(p)}</div>
         <div class="follow-stats"><button class="statbtn" id="show-posts"><b>·</b> Posts</button><button class="statbtn" id="show-following"><b>·</b> Following</button><button class="statbtn" id="show-followers"><b>·</b> Followers</button></div>
       </div></div>

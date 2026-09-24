@@ -614,6 +614,15 @@ window.PCCardsFactory = function(dep){
     return safe.replace(/:([a-zA-Z0-9_+\-]+(?:@[a-zA-Z0-9.\-]+)?):/g,(m,sc)=>
       map[sc]?`<img class="emoji-inline" src="${enc(map[sc])}" alt="${enc(m)}" title="${enc(m)}" loading="lazy">`:m);
   }
+  /* A profile's custom emoji in FORMATTED text -- the bio. emojiName escapes its input, so it cannot
+   * run over linkify's markup; this applies the profile's own NIP-30 map to finished HTML the way
+   * applyEmojis does for a note (skipping inside tags). The bio used to be linkify() alone, so a
+   * fediverse account's ":fluffytail::fox_love:" showed as shortcode text on its profile. */
+  function emojiHtml(pk, html){
+    const map=(Store.profileEmojis&&Store.profileEmojis(pk));
+    if(!map){ if(_SC_RE.test(html||'')) _refetchEmojiProfile(pk); return html||''; }
+    return applyEmojis(html, { tags: Object.entries(map).map(([k,v])=>['emoji',k,v]) });
+  }
   // ---------- instance custom emoji (NIP-30) ----------
   // The operator's emoji packs (Admin → Emoji, served by /client/emojis). Loaded ONCE,
   // lazily, on the first picker open — a real pack is thousands of entries, so it is never part of
@@ -1316,7 +1325,7 @@ window.PCCardsFactory = function(dep){
 
   return {
     _dimAttrs, _dimLearn, _healGhostPairs, _hold, _mcSync, _media, _reaskMissing, actsRow, addrDiv,
-    applyEmojis, applySobLive, bindDmMediaActions, bindFeedActions, countsFor, emojiName,
+    applyEmojis, applySobLive, bindDmMediaActions, bindFeedActions, countsFor, emojiHtml, emojiName,
     feedNoteHtml, hydratePolls, invalidateCounts, mediaParts, myReaction, myReactionIds, needAddr,
     needEvent, noteHtml, openNaddr, quotedDiv, reactDisp, replyParentId, repostWithWarning,
     get MediaDims(){ return MediaDims; },
