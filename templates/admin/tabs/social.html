@@ -41,8 +41,8 @@
     <fieldset>
         <legend>Relays</legend>
         <div class="form-group">
-            <label for="activitypub_relays">Relay inboxes <span class="muted">(one per line)</span></label>
-            <textarea id="activitypub_relays" name="activitypub_relays" rows="3" placeholder="https://relay.fedi.buzz/inbox&#10;https://relay.intahnet.co.uk/inbox" autocomplete="off" spellcheck="false"></textarea>
+            <label for="activitypub_relays">Relays <span class="muted">(one per line — the relay's inbox or actor address)</span></label>
+            <textarea id="activitypub_relays" name="activitypub_relays" rows="3" placeholder="https://relay.fedi.agency/actor&#10;https://relay.fedi.buzz/inbox" autocomplete="off" spellcheck="false"></textarea>
             <small>A post reaches only its author's fediverse followers — the fediverse has no global feed. A <strong>relay</strong> re-shares the public posts it is sent to every instance subscribed to it, which is how a small server's posts appear elsewhere. This server subscribes to each relay listed (status above) and sends it public top-level posts — not replies or boosts — and their deletions. Removing a relay unsubscribes.</small>
         </div>
         <div class="form-group">

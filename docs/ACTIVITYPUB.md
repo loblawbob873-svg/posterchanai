@@ -137,8 +137,10 @@ Nostr user here with no fediverse followers is reachable (their profile and outb
 but never delivered. An ActivityPub **relay** fixes that: this server subscribes, sends the relay its
 public posts, and the relay re-shares each one to every instance subscribed to it.
 
-* **Admin → Social → Relays**: list relay **inbox** URLs (e.g. `https://relay.fedi.buzz/inbox`), one per
-  line. The instance actor (`/ap/actor`) sends each `Follow {object: as:Public}`; nothing is sent until
+* **Admin → Social → Relays**: list relays one per line, by **inbox** (`https://relay.fedi.buzz/inbox`) or by
+  **actor** (`https://relay.fedi.agency/actor` — the actor is fetched and its same-host inbox used). The
+  instance actor (`/ap/actor`) sends each a Follow (`object: as:Public` for an inbox, the relay actor for
+  an actor address); nothing is sent until
   the relay answers `Accept`. Each relay's state (pending / accepted / rejected) shows in the status
   box. A relay that never answers is asked again after an hour; one removed from the list is sent
   `Undo(Follow)`. A LitePub relay that follows back is answered — only if it is listed.

@@ -3032,3 +3032,40 @@ def test_a_rejected_relay_is_asked_again_later_and_a_late_accept_is_honoured(wor
     # the relay answers the EARLIER Follow late: still honoured
     assert run(inbox.process({"type": "Accept", "id": "https://relay.example/a", "actor": RELAY_ACTOR,
                               "object": first}, RELAY_ACTOR)) == "relay accepted"
+
+
+def test_a_relay_listed_by_its_actor_address_is_followed_at_its_inbox(world):
+    """Entered in Admin as `https://relay.fedi.agency/actor` (an ActivityRelay) -- the address relay
+    front pages and Pleroma give. The Follow goes to the INBOX its actor document names, naming the
+    relay actor (LitePub), and posts go there once it accepts."""
+    from app.services.activitypub import relays
+    actor = "https://relay.example/actor"
+    world["actors"][actor] = {"id": actor, "type": "Application", "preferredUsername": "relay",
+                              "inbox": "https://relay.example/inbox",
+                              "endpoints": {"sharedInbox": "https://relay.example/inbox"}}
+    world["settings"]["activitypub_relays"] = actor
+    relays.forget_cache()
+    assert run(relays.reconcile()) == 1
+    sent = world["sent"][-1]
+    assert sent["inbox"] == "https://relay.example/inbox"
+    assert sent["activity"]["type"] == "Follow" and sent["activity"]["object"] == actor
+    fid = sent["activity"]["id"]
+    # an Accept signed by ANOTHER actor on the same host is not the relay's
+    assert run(inbox.process({"type": "Accept", "id": "https://relay.example/x", "actor": "https://relay.example/users/eve",
+                              "object": fid}, "https://relay.example/users/eve")).startswith("ignored")
+    assert run(inbox.process({"type": "Accept", "id": "https://relay.example/a", "actor": actor,
+                              "object": {"id": fid, "type": "Follow"}}, actor)) == "relay accepted"
+    _with_follower(world)
+    assert "https://relay.example/inbox" in [i for i, _ in run(outbox.plan(member_post("to the relay"), ALICE))]
+
+
+def test_a_relay_actor_whose_inbox_is_elsewhere_gets_nothing(world):
+    from app.services.activitypub import relays
+    actor = "https://relay.example/actor"
+    world["actors"][actor] = {"id": actor, "type": "Application", "inbox": "https://victim.example/inbox"}
+    world["settings"]["activitypub_relays"] = actor
+    relays.forget_cache()
+    assert run(relays.reconcile()) == 0
+    assert not [s for s in world["sent"] if "victim.example" in s["inbox"]]
+    doc = world["docs"][relays._PREFIX + relays._h(actor)]
+    assert doc["state"] == "unreachable"

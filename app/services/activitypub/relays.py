@@ -108,7 +108,7 @@ async def accepted_inboxes(max_age: float = 60.0) -> list:
         subs = await subscriptions()
     except Exception:
         return _accepted_cache["list"]
-    out = sorted(i for i, d in subs.items() if d.get("state") == "accepted" and i in listed)
+    out = sorted(d.get("deliver") or i for i, d in subs.items() if d.get("state") == "accepted" and i in listed)
     _accepted_cache.update(at=now, list=out)
     return out
 
@@ -142,7 +142,7 @@ async def relay_actors(max_age: float = 60.0) -> frozenset:
         return _actors_cache["set"]
     listed = set(configured())
     out = frozenset(str(d.get("actor") or "").split("#")[0] for i, d in subs.items()
-                    if i in listed and d.get("actor") and d.get("state") in ("accepted", "pending", "rejected"))
+                    if i in listed and d.get("actor") and d.get("state") in ("accepted", "pending", "rejected", "unreachable"))
     _actors_cache.update(at=now, set=out)
     return out
 
@@ -154,6 +154,25 @@ def carries(ev: dict, member: str) -> bool:
     if ev.get("kind") not in (1, 1068) or outbox.parent_of(ev):
         return False
     return actors.is_actor(member) or scope() == "everyone"
+
+
+async def _target(entry: str) -> tuple[str, str]:
+    """(inbox to POST to, relay actor id) for a listed relay address. An admin may paste either form:
+    the INBOX (`…/inbox`, Mastodon's convention) or the relay's ACTOR (`…/actor`, how Pleroma and most
+    relay front pages name it -- measured: relay.fedi.agency, an ActivityRelay, was entered that way).
+    An actor is fetched from its own server and its inbox must be on that same host; ("", "") when it
+    cannot be resolved, which sends nothing."""
+    from app.services.activitypub import remote
+    if entry.rstrip("/").endswith("/inbox"):
+        return entry, ""
+    try:
+        doc = await remote.actor(entry)
+    except remote.FetchError:
+        return "", ""
+    inbox = remote.inbox_of(doc)
+    if not inbox or remote.host_of(inbox) != remote.host_of(entry):
+        return "", ""
+    return inbox, str(doc.get("id") or entry).split("#")[0]
 
 
 async def reconcile() -> int:
@@ -183,6 +202,8 @@ async def reconcile() -> int:
             continue
         if st == "rejected" and now - int(cur.get("at") or 0) < _RETRY_REJECTED:
             continue
+        if st == "unreachable" and now - int(cur.get("at") or 0) < _RETRY_PENDING:
+            continue
         # RE-READ before writing: the app process may have recorded the relay's Accept a moment ago,
         # and writing "pending" over it would send one more Follow and stop delivery until answered.
         try:
@@ -191,14 +212,23 @@ async def reconcile() -> int:
             continue
         if again.get("state") == "accepted":
             continue
+        deliver_to, relay_actor = await _target(inbox)
+        if not deliver_to:
+            await _save(inbox, {"state": "unreachable", "follow_id": again.get("follow_id") or "",
+                                "follow_ids": again.get("follow_ids") or []})
+            logger.info("[activitypub] relay %s: its actor could not be read -- nothing sent", remote.host_of(inbox))
+            continue
         fid = follow_id(inbox)
-        follow = {"@context": convert.AS_CONTEXT, "id": fid, "type": "Follow", "actor": me, "object": config.PUBLIC}
+        # A relay named by its ACTOR is followed the LitePub way (the Follow names that actor, which
+        # Pleroma relays require and ActivityRelay accepts); one named by its inbox, Mastodon's way.
+        follow = {"@context": convert.AS_CONTEXT, "id": fid, "type": "Follow", "actor": me,
+                  "object": relay_actor or config.PUBLIC}
         # The last few Follow ids are ALL honoured: a relay may answer an earlier one late, or answer a
         # repeated Follow with nothing because it already considers us subscribed.
         recent = ([fid] + [x for x in (again.get("follow_ids") or []) if isinstance(x, str)])[:5]
         await _save(inbox, {"state": "pending", "follow_id": fid, "follow_ids": recent,
-                            "actor": again.get("actor") or ""})
-        status = await remote.deliver(inbox, follow, key_id=key_id, private_pem=priv)
+                            "actor": relay_actor or again.get("actor") or "", "deliver": deliver_to})
+        status = await remote.deliver(deliver_to, follow, key_id=key_id, private_pem=priv)
         logger.info("[activitypub] relay %s: Follow sent (HTTP %s)", remote.host_of(inbox), status)
         sent += 1
     for inbox, cur in subs.items():
@@ -210,9 +240,9 @@ async def reconcile() -> int:
             continue
         fid = cur.get("follow_id") or ""
         undo = {"@context": convert.AS_CONTEXT, "id": f"{fid or me}/undo/{now}", "type": "Undo", "actor": me,
-                "object": {"id": fid, "type": "Follow", "actor": me, "object": config.PUBLIC}}
+                "object": {"id": fid, "type": "Follow", "actor": me, "object": cur.get("actor") or config.PUBLIC}}
         await _save(inbox, {"state": "removed", "follow_id": fid})
-        status = await remote.deliver(inbox, undo, key_id=key_id, private_pem=priv)
+        status = await remote.deliver(cur.get("deliver") or inbox, undo, key_id=key_id, private_pem=priv)
         logger.info("[activitypub] relay %s: unsubscribed (HTTP %s)", remote.host_of(inbox), status)
         sent += 1
     if sent:
@@ -234,14 +264,14 @@ async def answer(kind: str, obj, signer: str) -> str:
         ids = [cur.get("follow_id")] + [x for x in (cur.get("follow_ids") or []) if isinstance(x, str)]
         if not fid or fid not in ids:
             continue
-        if remote.host_of(signer) != remote.host_of(inbox):
+        if remote.host_of(signer) != remote.host_of(inbox) or (cur.get("actor") and signer != cur.get("actor")):
             return "ignored: answered by somebody other than the relay"
         if inbox not in configured():
             return "ignored: that relay is no longer listed"
         if cur.get("state") in ("accepted", "rejected") and cur.get("state") == ("accepted" if kind == "Accept" else "rejected"):
             return f"relay already {cur.get('state')}"
         await _save(inbox, {"state": "accepted" if kind == "Accept" else "rejected", "follow_id": fid,
-                            "follow_ids": ids[:5], "actor": signer})
+                            "follow_ids": ids[:5], "actor": signer, "deliver": cur.get("deliver") or inbox})
         forget_cache()
         logger.info("[activitypub] relay %s %sed our subscription", remote.host_of(inbox), kind.lower())
         return f"relay {kind.lower()}ed"
