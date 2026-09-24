@@ -575,7 +575,9 @@ def test_android_phone_host_negotiates_html_without_changing_api_discovery(api):
         assert response.headers['content-type'].startswith('text/html')
         assert 'main.posterchan.bundle.js' in response.text
         assert 'no-store' in response.headers['cache-control']
-        assert response.headers['vary'] == 'Accept'
+        # The page is negotiated on Accept, so a cache must never hand it to an API client: that is the
+        # rule. Starlette >= 1.x also adds Origin under CORS, which is correct and changes nothing here.
+        assert 'accept' in [v.strip().lower() for v in response.headers['vary'].split(',')]
         assert c.get(path).json()['ProductName'] == 'Jellyfin Server'
     # The native discovery request stays JSON even if a client sends a browser Accept header.
     assert c.get('/jellyfin/System/Info/Public', headers={'Accept': 'text/html'}).json()['Id']
