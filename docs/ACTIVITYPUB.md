@@ -130,6 +130,35 @@ following it there is sent as an ActivityPub Follow, and their posts arrive from
 | a profile (0) | Update(Person) |
 | a contact list (3) | Follow / Undo(Follow) for fediverse accounts added or removed |
 
+## Relays — reaching instances where nobody follows you
+
+The fediverse has no global feed: a post is delivered to its author's followers and nowhere else. A
+Nostr user here with no fediverse followers is reachable (their profile and outbox serve their posts)
+but never delivered. An ActivityPub **relay** fixes that: this server subscribes, sends the relay its
+public posts, and the relay re-shares each one to every instance subscribed to it.
+
+* **Admin → Social → Relays**: list relay **inbox** URLs (e.g. `https://relay.fedi.buzz/inbox`), one per
+  line. The instance actor (`/ap/actor`) sends each `Follow {object: as:Public}`; nothing is sent until
+  the relay answers `Accept`. Each relay's state (pending / accepted / rejected) shows in the status
+  box. A relay that never answers is asked again after an hour; one removed from the list is sent
+  `Undo(Follow)`. A LitePub relay that follows back is answered — only if it is listed.
+* **What goes**: public, top-level posts and polls (not replies, not boosts), each signed by its own
+  author, and the Delete when one is deleted.
+* **Whose**: *Accounts with a name on this server* (default), or *Every Nostr account this server
+  serves* — hundreds of posts an hour; relay operators block firehose-sized instances, and most of
+  those accounts never chose the fediverse.
+* **What a relay pushes back** (every post of every other member instance) is acknowledged with a 202
+  and not processed: nobody here follows those authors, and verifying each one would cost a key fetch
+  per post and trip the per-host budget, which a relay reads as a dead subscriber.
+
+## Follows, both ways
+
+* **Nostr → fediverse**: adding a fediverse account to your contact list sends a Follow; it is
+  *pending* until that server answers — Accept admits their posts, Reject drops it.
+* **Fediverse → Nostr**: their Follow is accepted, and their puppet publishes a contact list naming
+  the accounts here it follows — the event every Nostr client turns into **"X followed you"**. An
+  unfollow or a block republishes it without you.
+
 ## Security model (reviewed 2026-09-24)
 
 Every rule below is a test in `tests/test_activitypub.py`, and each test was checked to FAIL with

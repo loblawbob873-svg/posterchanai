@@ -26,6 +26,8 @@
             + (rows ? `<table class="ap-table" style="margin-top:6px"><tr><th>Handle</th><th>Followers</th></tr>${rows}</table>` : '')
             + `<div style="margin-top:6px">Delivered ${d.delivered || 0}, failed ${d.failed || 0}, waiting to retry ${d.queued || 0}`
             + (d.last_error ? ` — last problem: ${esc(d.last_error)}` : '') + '</div>'
+            + ((j.relays || []).length ? `<div style="margin-top:6px">Relays (${esc(j.relay_scope === 'everyone' ? 'every account' : 'named accounts')}): `
+                + j.relays.map(r => `<code>${esc(r.inbox)}</code> — ${esc(r.state)}`).join('; ') + '</div>' : '')
             + ((j.blocked_instances || []).length ? `<div>Blocked instances: ${j.blocked_instances.map(esc).join(', ')}</div>` : '');
     }
 

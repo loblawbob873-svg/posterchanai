@@ -366,6 +366,19 @@ async def _verified(request: Request) -> tuple[dict, str]:
     key_host = remote.host_of(params.get("keyId") or "")
     if key_host and (config.host_blocked(key_host) or config.host_blocked(remote.host_of(convert.id_of(activity.get("actor"))))):
         raise HTTPException(202, "Accepted")
+    # A SUBSCRIBED RELAY PUSHES EVERY POST OF EVERY OTHER MEMBER INSTANCE HERE, and none of it is
+    # anything this server stores (nobody here follows those authors -- the inbox would verify each
+    # one, fetch keys, and drop it). Verified one by one that is a key fetch and an RSA check per post,
+    # and past the per-host budget it is a 429 -- which a relay reads as a dead subscriber and drops.
+    # So what a relay RELAYS is acknowledged without work; only its answers to us (Accept/Reject, its
+    # own Follow) go on to be verified.
+    from app.services.activitypub import relays as _relays
+    _inner = activity.get("object") if isinstance(activity.get("object"), dict) else {}
+    _answers_us = activity.get("type") in ("Accept", "Reject", "Follow") \
+        or (activity.get("type") == "Undo" and _inner.get("type") == "Follow")
+    _key_actor = str(params.get("keyId") or "").split("#")[0]
+    if _key_actor and not _answers_us and _key_actor in await _relays.relay_actors():
+        raise HTTPException(202, "relay")
     headers = {k.lower(): v for k, v in request.headers.items()}
     headers["host"] = config.domain()
     path = request.url.path + (f"?{request.url.query}" if request.url.query else "")
@@ -464,7 +477,8 @@ async def _receive(request: Request) -> Response:
         return _relay_down()
     except HTTPException as e:
         if e.status_code == 202:
-            _rate_ok(ip)                       # unverified, and it may cost one fetch (confirm_gone)
+            if e.detail != "relay":            # a subscribed relay's traffic is expected, and costs nothing
+                _rate_ok(ip)                   # unverified, and it may cost one fetch (confirm_gone)
             return Response(status_code=202)
         if e.status_code in (400, 401, 413):
             _rate_ok(ip)
@@ -610,6 +624,13 @@ async def admin_status(user=Depends(get_admin_user)):
                                            seckey=settings_store._operator_seckey(None)) or {}
     except Exception:
         report = {}
+    from app.services.activitypub import relays
+    try:
+        subs = await relays.subscriptions(strict=False)
+    except Exception:
+        subs = {}
+    relay_rows = [{"inbox": i, "state": (subs.get(i) or {}).get("state") or "not yet asked"} for i in relays.configured()]
     return {"enabled": config.enabled(), "domain": config.domain(), "base": base,
+            "relays": relay_rows, "relay_scope": relays.scope(),
             "webfinger": f"{base}/.well-known/webfinger?resource=acct:NAME@{config.domain()}" if base else "",
             "blocked_instances": sorted(config.blocked_domains()), "members": rows, "delivery": report}

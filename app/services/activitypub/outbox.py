@@ -160,7 +160,10 @@ def parent_of(ev: dict) -> str:
         hit = next((t for t in es if len(t) > 3 and t[3] == marker), None)
         if hit:
             return hit[1]
-    plain = [t for t in es if len(t) < 4 or not t[3]]
+    # Only a real NIP-10 MARKER in the 4th place says what a tag is. Clients also put the PARENT'S
+    # PUBKEY there (["e", id, relay, <pubkey>]) -- read as "marked" that made every such reply look
+    # top-level, and it was federated as a new post with no thread (2026-09-24).
+    plain = [t for t in es if len(t) < 4 or t[3] not in ("mention", "reply", "root")]
     return plain[-1][1] if plain else ""
 
 
@@ -299,6 +302,11 @@ async def plan(ev: dict, member: str) -> list:
                 inbox = await _inbox_for(who["href"])
                 if inbox:
                     extra.add(inbox)
+        # ACCEPTED relays take public top-level posts in scope (relays.carries). Recorded with the
+        # other extra inboxes, so the post's Delete reaches the relays too.
+        from app.services.activitypub import relays
+        if relays.carries(ev, member):
+            extra |= set(await relays.accepted_inboxes())
         targets |= extra
         await _remember_sent(ev["id"], extra - set(fol), kind=kind, by=member)
         out = [(i, act) for i in sorted(targets)]
@@ -520,7 +528,7 @@ async def _remember_sent(event_id: str, inbox, kind: int = 7, *, by: str = "", t
     inboxes = [i for i in inboxes if i]
     if not inboxes and kind not in (6, 7, 1018):
         return                        # a post to followers only: nothing beyond them to remember
-    doc = {"inbox": inboxes[0] if inboxes else "", "inboxes": inboxes[:50], "kind": kind}
+    doc = {"inbox": inboxes[0] if inboxes else "", "inboxes": inboxes[:200], "kind": kind}
     if by:
         doc["by"] = by
     if target:
@@ -686,6 +694,11 @@ async def tick() -> int:
         return 0          # "is the Pleroma bridge on?" and friends cannot be answered yet -- decide nothing
     _stats["last_tick"] = int(time.time())
     await _flush_retries()
+    try:
+        from app.services.activitypub import relays
+        await relays.reconcile()
+    except Exception as e:
+        logger.info("[activitypub] relay subscriptions not reconciled: %s: %s", type(e).__name__, e)
     handled = await _pass(state.CURSOR, await _members(), KINDS, None)
     if config.everyone():
         handled += await _pass(state.CURSOR_EVERYONE, None, _EVERYONE_KINDS, await _everyone_filter())
@@ -855,6 +868,8 @@ async def _everyone_filter():
     page rather than one per event (almost every reply and reaction carries an `e` tag)."""
     followed = await state.nostr_users_with_followers()     # raises on a failed read: stop the pass
     puppets = _puppet_set()
+    from app.services.activitypub import relays
+    to_relays = relays.scope() == "everyone" and bool(await relays.accepted_inboxes())
 
     def _direct(ev: dict, mirrored: set) -> bool:
         tags = ev.get("tags") or []
@@ -877,6 +892,8 @@ async def _everyone_filter():
                 continue
             if pk in followed:
                 keep = True
+            elif to_relays and ev.get("kind") in (1, 1068) and not parent_of(ev):
+                keep = True                    # relay scope "everyone": every public top-level post
             elif ev.get("kind") == 0:
                 keep = False
             elif ev.get("kind") == 5:

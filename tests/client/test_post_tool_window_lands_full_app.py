@@ -86,6 +86,10 @@ async def _tool_window(view):
                         await asyncio.sleep(.25)
                     await asyncio.sleep(3.0)          # the builder's own first render and project restore
                     got['clips'] = await b.js("document.querySelectorAll('.mb-clip').length")
+                    # the reply this build is FOR must name the post's author, or posting it back
+                    # carries no p tag and never notifies them
+                    got['reply_pk'] = await b.js("((JSON.parse(localStorage.getItem('pc_meme_project')||'{}').replyTo)||{}).pk||''")
+                    got['author'] = await b.js("__PC.me().pubkey")
                 got['errors'] = await b.js('__errors')
         finally:
             proc.terminate()
@@ -103,3 +107,4 @@ def test_an_effect_window_opens_the_effects_studio_on_the_first_click():
 def test_a_meme_builder_window_puts_the_posts_image_on_the_timeline_on_the_first_click():
     got = asyncio.run(_tool_window('meme'))
     assert got['clips'] >= 1, "the Meme Builder opened with nothing on its timeline: %r" % got
+    assert got['reply_pk'] == got['author'], "the reply target forgot whose post it was: %r" % got

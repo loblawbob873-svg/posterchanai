@@ -9561,6 +9561,9 @@
       .map(u=>u.replace(/[)\].,!?]+$/,'')).find(u=>_isMediaUrl(u));
     if(!url){ toast('this post has no image or video to build with'); return; }
     const isVid=/\.(mp4|webm|mov|m4v)(\?|#|$)/i.test(url);
+    // A tool WINDOW is handed only the post id: the author comes from the post, or a reply posted back
+    // from the builder would carry no `p` tag and never notify them.
+    pk = pk || ev.pubkey || '';
     switchView('meme');
     // switchView renders the builder; seed AFTER that so our layer isn't wiped by its own first
     // render — the same ordering bug the Effects studio hit with _ai.pendingFx.
@@ -9580,7 +9583,7 @@
     if(!ev){ toast('post not loaded'); return; }
     const url=await effectImageUrl(ev);
     if(!url){ toast('this post has no image to apply an effect to'); return; }
-    launchEffectStudio(url, { id, pk });
+    launchEffectStudio(url, { id, pk: pk || ev.pubkey || '' });
   }
   // Consumed by aiMount once the chat is fully mounted + conversations loaded — so the attach + guide
   // land last and survive. Opens a fresh conversation for the effect, fetches the source image, attaches.

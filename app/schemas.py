@@ -488,6 +488,8 @@ class SettingsResponse(BaseModel):
     activitypub_dms: bool = True
     activitypub_domain: str = ""       # blank = the NIP-05 domain (where /.well-known/nostr.json answers)
     activitypub_lan_hosts: str = ""    # fediverse servers that resolve to a PRIVATE address here (split DNS)
+    activitypub_relays: str = ""       # relay INBOX urls, one per line (app/services/activitypub/relays.py)
+    activitypub_relay_scope: str = "local"   # local = accounts with a name here; everyone = every account served
     # ---- "Sign in with an account" on the client login page ----
     # Both are OFF by default: they are the only paths where an identity is created by the SERVER
     # rather than in the browser, so a node opts in deliberately.

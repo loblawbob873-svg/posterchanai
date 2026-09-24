@@ -184,6 +184,9 @@ async def process(activity: dict, signer: str) -> str:
     if kind == FORWARDED_DELETE:
         return await _forwarded_delete(convert.id_of(obj))
     if kind == "Follow":
+        if convert.id_of(obj) == f"{config.base_url()}/ap/actor":
+            from app.services.activitypub import relays
+            return await relays.follow_back(activity, signer)
         async with _lock(f"follow:{signer}"):
             return await _follow(activity, signer)
     if kind == "Undo":
@@ -194,6 +197,9 @@ async def process(activity: dict, signer: str) -> str:
     if kind == "Flag":
         return await _flag(activity, signer)
     if kind in ("Accept", "Reject"):
+        from app.services.activitypub import relays
+        if relays.is_relay_follow(convert.id_of(obj)):
+            return await relays.answer(kind, obj, signer)
         return await _accept(kind, obj, signer)
     if kind == "Block":
         return await _block(activity, signer, undo=False)
@@ -322,31 +328,46 @@ async def _announce_follows(actor: str, actor_doc, member: str, *, following: bo
     here it follows. A Nostr client raises "X followed you" for exactly that event -- without it, a
     fediverse follow was accepted and recorded and the person followed was never told.
 
-    Best effort, and never allowed to cost the follow itself: the Accept has to go out regardless."""
+    Best effort, and never allowed to cost the follow itself: the Accept has to go out regardless.
+    One at a time per account (a Follow of one member racing an Undo of another would lose one), and
+    NEVER broadcast beyond this relay: who follows whom is something a fediverse user may have chosen
+    to hide, so it goes only to the person followed."""
+    async with _lock(f"follows:{actor}"):
+        await _announce_follows_locked(actor, actor_doc, member, following=following)
+
+
+async def _announce_follows_locked(actor: str, actor_doc, member: str, *, following: bool) -> None:
     try:
         members = set(await state.follows_of(actor))
         if (member in members) == following:
             return                                    # nothing changed: republishing would re-notify
         members = members | {member} if following else members - {member}
         await state.set_follows_of(actor, sorted(members))
-        doc = actor_doc if isinstance(actor_doc, dict) else await remote.actor(actor)
-        puppet = await _puppet(doc)
+        puppet = None
+        try:
+            doc = actor_doc if isinstance(actor_doc, dict) else await remote.actor(actor)
+            puppet = await _puppet(doc)
+        except remote.FetchError:
+            pass
         if not puppet:
-            return
+            # An account that can no longer be fetched (deleted, its server down) still has its key:
+            # the unfollow is published rather than left saying "follows you" for ever.
+            from app.services.fedi_bridge_identity import puppet_from_actor
+            row_actor = await asyncio.to_thread(_puppet_actor_uri, actor)
+            puppet = puppet_from_actor(row_actor or actor)
         from app.services.fedi_bridge_identity import build_event, publish, query_one
         # STRICTLY NEWER than the list it replaces. A kind-3 is replaceable, and two in one second (a
         # follow and its undo, back to back) are a tie a relay breaks by the LOWER id -- which can keep
         # the follow and throw away the unfollow.
         ok, prev = await query_one(_port(), {"kinds": [3], "authors": [puppet["pubkey_hex"]], "limit": 1})
         at = max(int(time.time()), int((prev or {}).get("created_at") or 0) + 1)
-        ev = build_event(puppet, 3, "", tags=[["p", m] for m in sorted(members)], broadcast=config.broadcast(),
-                         created_at=at)
+        ev = build_event(puppet, 3, "", tags=[["p", m] for m in sorted(members)], broadcast=False, created_at=at)
         ok, msg = await publish(_port(), ev)
         if not ok:
             logger.info("[activitypub] follow of %s not announced on Nostr: %s", member[:12], msg)
             return
-        # A Nostr user here in `everyone` mode reads their OWN relays, not this one.
-        if following and not actors.is_actor(member):
+        # A Nostr user here in `everyone` mode reads their OWN relays, not this one -- the unfollow too.
+        if not actors.is_actor(member) and (following or await actors.exposed(member)):
             from app.services.activitypub import nostrside
             await nostrside.deliver(member, [ev], dm=False)
     except Exception as e:
@@ -886,6 +907,19 @@ async def confirm_gone(actor: str) -> None:
         pass
     finally:
         _confirming.discard(actor)
+
+
+def _puppet_actor_uri(actor: str) -> str:
+    """The actor address a fediverse account's puppet key was DERIVED from (the old bridge may have
+    keyed it on the profile URL) -- so a re-derived key is the same key."""
+    from app.database import SessionLocal
+    from app.models import FediPuppet
+    db = SessionLocal()
+    try:
+        row = db.query(FediPuppet).filter(FediPuppet.actor_uri == actor).first()
+        return row.actor_uri if row else ""
+    finally:
+        db.close()
 
 
 def _actor_of_puppet(pubkey: str) -> str:

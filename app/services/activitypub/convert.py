@@ -22,7 +22,11 @@ AS_CONTEXT = ["https://www.w3.org/ns/activitystreams", "https://w3id.org/securit
                "schema": "http://schema.org#", "PropertyValue": "schema:PropertyValue", "value": "schema:value"}]
 
 _URL_RE = re.compile(r"https?://[^\s<>\"']+")
-_NOSTR_REF_RE = re.compile(r"nostr:((?:npub1|nprofile1|note1|nevent1|naddr1)[023456789acdefghjklmnpqrstuvwxyz]+)", re.I)
+# A reference to a person or a post: `nostr:npub1…` (NIP-21) -- or the BARE bech32, which is how most
+# clients (and a paste) put one in the text. Only the `nostr:` form was read, so "I tagged an account but
+# it showed as an npub on the fediverse": the bare npub went out as 63 characters of text. A bare one
+# must stand on its own -- never inside a URL, a path or a word -- and be long enough to be real.
+_NOSTR_REF_RE = re.compile(r"(?:nostr:|(?<![\w/:@#.=?&%-]))((?:npub1|nprofile1|note1|nevent1|naddr1)[023456789acdefghjklmnpqrstuvwxyz]{50,})", re.I)
 _HASHTAG_RE = re.compile(r"(?<![\w/#&])#([A-Za-z0-9_]{1,64})\b")
 _IMAGE_EXT = re.compile(r"\.(?:jpe?g|png|gif|webp|avif)(?:[?#]|$)", re.I)
 _VIDEO_EXT = re.compile(r"\.(?:mp4|webm|mov|m4v)(?:[?#]|$)", re.I)

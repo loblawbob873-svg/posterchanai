@@ -85,6 +85,9 @@ def world(monkeypatch):
     outbox._retries_loaded = False
     state._moved_cache.update(at=0.0, map={})
     inbox._locks.clear()
+    from app.services.activitypub import relays as _relays
+    _relays.forget_cache()
+    _relays._accepted_cache['list'] = []
 
     docs = {}
 
@@ -2830,3 +2833,202 @@ def test_a_nostr_follow_request_to_the_fediverse_round_trips(world):
     assert run(inbox.process({"type": "Reject", "id": REMOTE + "#reject/1", "actor": REMOTE,
                               "object": fid}, REMOTE)) == "follow rejected"
     assert REMOTE not in run(state.following(ALICE))
+
+
+# ============================================================================ 21. relays
+
+RELAY_INBOX = "https://relay.example/inbox"
+RELAY_ACTOR = "https://relay.example/actor"
+
+
+def _relays_on(world, *, scope="local", accepted=True):
+    from app.services.activitypub import relays
+    world["settings"]["activitypub_relays"] = RELAY_INBOX + "  # the big one"
+    world["settings"]["activitypub_relay_scope"] = scope
+    relays.forget_cache()
+    if accepted:
+        world["docs"][relays._PREFIX + relays._h(RELAY_INBOX)] = {
+            "inbox": RELAY_INBOX, "state": "accepted", "follow_id": f"{BASE}/ap/actor#relay-follow/x/1",
+            "actor": RELAY_ACTOR}
+    return relays
+
+
+def test_the_relay_list_is_https_unique_and_never_this_node_or_a_blocked_host(world):
+    from app.services.activitypub import relays
+    world["settings"]["activitypub_relays"] = "\n".join([
+        "https://relay.example/inbox", "https://relay.example/inbox", "http://plain.example/inbox",
+        f"https://{DOMAIN}/ap/inbox", "https://blocked.example/inbox", "not a url", "",
+        "https://two.example/inbox # a comment"])
+    assert relays.configured() == ["https://relay.example/inbox", "https://two.example/inbox"]
+
+
+def test_a_listed_relay_is_followed_once_by_the_instance_actor_and_unfollowed_when_removed(world):
+    relays = _relays_on(world, accepted=False)
+    assert run(relays.reconcile()) == 1
+    follow = world["sent"][-1]
+    assert follow["inbox"] == RELAY_INBOX and follow["key_id"] == f"{BASE}/ap/actor#main-key"
+    act = follow["activity"]
+    assert act["type"] == "Follow" and act["actor"] == f"{BASE}/ap/actor" and act["object"] == config.PUBLIC
+    assert run(relays.reconcile()) == 0, "a pending Follow was re-sent on the next tick"
+    # nothing is sent to a relay that has not accepted
+    _with_follower(world)
+    assert RELAY_INBOX not in [i for i, _ in run(outbox.plan(member_post("hello"), ALICE))]
+    world["settings"]["activitypub_relays"] = ""
+    assert run(relays.reconcile()) == 1
+    undo = world["sent"][-1]["activity"]
+    assert undo["type"] == "Undo" and undo["object"]["id"] == act["id"] and undo["object"]["type"] == "Follow"
+
+
+def test_only_the_relays_own_host_can_accept_our_follow(world):
+    relays = _relays_on(world, accepted=False)
+    run(relays.reconcile())
+    fid = world["sent"][-1]["activity"]["id"]
+    assert relays.is_relay_follow(fid)
+    assert run(inbox.process({"type": "Accept", "id": "https://evil.example/a", "actor": "https://evil.example/actor",
+                              "object": fid}, "https://evil.example/actor")) == "ignored: answered by somebody other than the relay"
+    assert run(relays.accepted_inboxes(max_age=0)) == []
+    assert run(inbox.process({"type": "Accept", "id": "https://relay.example/a", "actor": RELAY_ACTOR,
+                              "object": f"{BASE}/ap/actor#relay-follow/nope/1"}, RELAY_ACTOR)) == "ignored: not a relay follow we sent"
+    assert run(inbox.process({"type": "Accept", "id": "https://relay.example/a", "actor": RELAY_ACTOR,
+                              "object": {"id": fid, "type": "Follow"}}, RELAY_ACTOR)) == "relay accepted"
+    assert run(relays.accepted_inboxes(max_age=0)) == [RELAY_INBOX]
+
+
+def test_a_member_post_goes_to_an_accepted_relay_and_so_does_its_deletion(world):
+    _relays_on(world)
+    _with_follower(world)
+    post = member_post("for everyone")
+    assert RELAY_INBOX in [i for i, _ in run(outbox.plan(post, ALICE))]
+    delete = run(outbox.plan(member_post("", kind=5, tags=[["e", post["id"]]]), ALICE))
+    assert (RELAY_INBOX, "Delete") in [(i, a["type"]) for i, a in delete]
+
+
+def test_replies_and_boosts_never_go_to_a_relay(world):
+    _relays_on(world)
+    _with_follower(world)
+    remote_note = _mirror(world)
+    reply = member_post("a reply", tags=[["e", remote_note, "", "reply"]])
+    assert RELAY_INBOX not in [i for i, _ in run(outbox.plan(reply, ALICE))]
+    boost = member_post("", kind=6, tags=[["e", remote_note]])
+    assert RELAY_INBOX not in [i for i, _ in run(outbox.plan(boost, ALICE))]
+
+
+def test_the_scope_decides_whether_a_nostr_user_without_a_name_reaches_the_relays(world, monkeypatch):
+    pk, _npub = _nostr_user(world)
+    _relay_filter(world, monkeypatch)
+    post = member_post("from a plain npub", author=pk)
+    world["relay"][post["id"]] = post
+    _relays_on(world, scope="local")
+    assert RELAY_INBOX not in [i for i, _ in run(outbox.plan(post, pk))]
+    assert post["id"] not in run(run(outbox._everyone_filter())([post]))
+    _relays_on(world, scope="everyone")
+    assert RELAY_INBOX in [i for i, _ in run(outbox.plan(post, pk))]
+    assert post["id"] in run(run(outbox._everyone_filter())([post]))
+
+
+def test_what_a_relay_relays_is_acknowledged_without_verifying_it(client, world, monkeypatch):
+    """A subscribed relay pushes every post of every other member instance. Verified one by one that
+    is a key fetch per post and a 429 past the host budget, which a relay reads as a dead subscriber."""
+    _relays_on(world)
+    fetched = []
+
+    async def pk(key_id, refresh=False):
+        fetched.append(key_id)
+        return RELAY_ACTOR, CAROL_KEY[1]
+    monkeypatch.setattr(remote, "public_key", pk)
+    announce = {"id": "https://relay.example/a/1", "type": "Announce", "actor": RELAY_ACTOR,
+                "object": "https://elsewhere.example/notes/1"}
+    assert _post_signed(client, announce, key_id=RELAY_ACTOR + "#main-key").status_code == 202
+    assert fetched == [] and client.scheduled == []
+    # its ANSWER to us is still verified
+    accept = {"id": "https://relay.example/a/2", "type": "Accept", "actor": RELAY_ACTOR,
+              "object": f"{BASE}/ap/actor#relay-follow/x/1"}
+    assert _post_signed(client, accept, key_id=RELAY_ACTOR + "#main-key").status_code == 202
+    assert fetched and client.scheduled
+
+
+def test_a_listed_relay_that_follows_back_is_accepted_and_a_stranger_is_not(world):
+    world["actors"][RELAY_ACTOR] = {"id": RELAY_ACTOR, "type": "Application", "preferredUsername": "relay",
+                                    "inbox": RELAY_INBOX}
+    follow = {"id": "https://relay.example/f/1", "type": "Follow", "actor": RELAY_ACTOR, "object": f"{BASE}/ap/actor"}
+    world["settings"]["activitypub_relays"] = ""
+    assert run(inbox.process(follow, RELAY_ACTOR)).startswith("ignored")
+    _relays_on(world, accepted=False)
+    assert run(inbox.process(follow, RELAY_ACTOR)).startswith("relay follow accepted")
+    sent = world["sent"][-1]
+    assert sent["inbox"] == RELAY_INBOX and sent["activity"]["type"] == "Accept"
+    assert sent["activity"]["actor"] == f"{BASE}/ap/actor"
+
+
+def test_a_reply_whose_e_tag_carries_the_parents_pubkey_is_still_a_reply(world):
+    """Measured on poster.place, nevent1qqsf7qtu…: a reply tagged ["e", id, relay, <parent pubkey>] went
+    out as a TOP-LEVEL post. The 4th place is a marker only when it IS one (reply/root/mention)."""
+    parent = "0000f626c48e07d686d01c2bfc31fbd594eb60fc1208b2251bf6b29f7436a1ad"
+    ev = member_post("check out this account lol", tags=[
+        ["e", parent, "wss://poster.place/relay", "2495d53db24bd7e229cfafba318f0f282c2646dabb610f5b070b53ee6d86d9ec"],
+        ["p", "2495d53db24bd7e229cfafba318f0f282c2646dabb610f5b070b53ee6d86d9ec"]])
+    assert outbox.parent_of(ev) == parent
+    # and a quote still is not a parent
+    assert outbox.parent_of(member_post("quote", tags=[["e", parent, "", "mention"]])) == ""
+
+
+def test_a_bare_npub_in_the_text_is_a_mention_on_the_fediverse(world):
+    """Measured on detroitriotcity.com: a post whose text began with a BARE `npub1v28hlk…` (no `nostr:`)
+    arrived as 63 characters of text -- "I tagged an account but it showed as an npub". A bare bech32
+    reference is a reference; one inside a URL is still just the URL."""
+    from app.services.nostr import nostr_service
+    npub = nostr_service.npub_of(BOB)
+    ev = member_post(f"{npub} try https://poster.place/{npub} for the coolest nostr experience")
+    assert BOB in outbox._referenced_pubkeys(ev)
+    note = convert.note_from_event(ev, base=BASE, actor=f"{BASE}/ap/users/alice", followers="f",
+                                   mentions={BOB: {"href": f"{BASE}/ap/users/bob", "name": f"@bob@{DOMAIN}"}})
+    assert 'class="u-url mention">@<span>bob</span>' in note["content"], note["content"]
+    assert note["content"].count("@<span>bob</span>") == 1, "the npub inside the URL became a mention too"
+    assert f"https://poster.place/{npub}" in note["content"]
+    # plans a Mention of bob, like the nostr: form does
+    _with_follower(world)
+    jobs = run(outbox.plan(ev, ALICE))
+    assert any(t.get("type") == "Mention" and t.get("href") == f"{BASE}/ap/users/bob" for t in jobs[0][1]["object"]["tag"])
+    # a word that merely starts with "npub1" is not a reference
+    assert not list(convert._NOSTR_REF_RE.finditer("see npub1abc for details"))
+
+
+
+def test_a_pleroma_relay_on_an_instances_own_host_does_not_silence_that_instance(client, world, monkeypatch):
+    """A Pleroma/Akkoma relay is `https://<instance>/relay`. Dropping relay traffic by HOST silenced
+    every post, deletion, block and DM from that instance's people. Only the relay's own ACTOR is
+    acknowledged without work."""
+    from app.services.activitypub import relays
+    world["settings"]["activitypub_relays"] = "https://mastodon.example/inbox"
+    world["docs"][relays._PREFIX + relays._h("https://mastodon.example/inbox")] = {
+        "inbox": "https://mastodon.example/inbox", "state": "accepted", "follow_id": "x",
+        "actor": "https://mastodon.example/relay"}
+    relays.forget_cache()
+    r = _post_signed(client, _create())                  # carol, on the relay's host, signing as herself
+    assert r.status_code == 202 and client.scheduled, "a person on the relay's instance was silenced"
+    client.scheduled.clear()
+
+    async def pk(key_id, refresh=False):
+        return "https://mastodon.example/relay", CAROL_KEY[1]
+    monkeypatch.setattr(remote, "public_key", pk)
+    announce = {"id": "https://mastodon.example/relay/a/1", "type": "Announce", "actor": "https://mastodon.example/relay",
+                "object": "https://elsewhere.example/notes/1"}
+    assert _post_signed(client, announce, key_id="https://mastodon.example/relay#main-key").status_code == 202
+    assert client.scheduled == [], "what the relay relayed was processed"
+
+
+def test_a_rejected_relay_is_asked_again_later_and_a_late_accept_is_honoured(world):
+    relays = _relays_on(world, accepted=False)
+    run(relays.reconcile())
+    first = world["sent"][-1]["activity"]["id"]
+    run(inbox.process({"type": "Reject", "id": "https://relay.example/r", "actor": RELAY_ACTOR, "object": first}, RELAY_ACTOR))
+    doc = world["docs"][relays._PREFIX + relays._h(RELAY_INBOX)]
+    assert doc["state"] == "rejected"
+    assert run(relays.reconcile()) == 0                     # not straight away
+    doc["at"] = 0                                            # a day later
+    assert run(relays.reconcile()) == 1
+    second = world["sent"][-1]["activity"]["id"]
+    assert second != first
+    # the relay answers the EARLIER Follow late: still honoured
+    assert run(inbox.process({"type": "Accept", "id": "https://relay.example/a", "actor": RELAY_ACTOR,
+                              "object": first}, RELAY_ACTOR)) == "relay accepted"
