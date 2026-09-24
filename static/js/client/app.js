@@ -7709,36 +7709,18 @@
     }
     return out;
   }
-  // A note mirrored in from the fediverse by a bridge. TWO markers, and both earn their place:
-  //   * `fedibridge` — our own bridge stamps this on EVERY puppet event it signs (the relay validates
-  //     it, see fedi_bridge_identity.sign_puppet), so it is the complete marker for this instance.
-  //   * NIP-48 `proxy` … `activitypub` — the interoperable one. It catches notes bridged by Mostr and
-  //     anything else this relay merely receives, which our own tag by definition cannot.
-  function isFediBridged(ev){
-    if(!ev || !ev.tags) return false;
-    for(const t of ev.tags){
-      if(!t) continue;
-      if(t[0]==='fedibridge') return true;
-      if(t[0]==='proxy' && String(t[2]||'').toLowerCase()==='activitypub') return true;
-    }
-    return false;
-  }
   // TIMELINE ONLY. This is reached solely from _drawTimeline, which returns early unless the view is
   // home/global — deliberately, because hiding the fediverse from your feed must NOT hide fediverse
   // people from Notifications or Messages. Those are addressed to YOU: swallowing a bridged mention or
   // DM would read as the bridge being broken, and you would never know a reply had arrived.
   function _tlFilter(view){
     const hideR = ClientSettings.get('hideReplies', false);
-    // Default TRUE — the bridge mirrors whole remote timelines, so left visible it is most of what a
-    // new account sees on Nostr. A REPOST of a bridged note is left alone: the wrapper is a real Nostr
-    // user choosing to share it, which is not the firehose this filter exists to keep out.
-    // NEVER someone you follow: with the fediverse server, following a fediverse account is how you
-    // get its posts, and hiding them made every fediverse follow invisible on Home.
-    const hideFedi = ClientSettings.get('hideFediBridge', true);
+    // NO "hide the fediverse" here any more. That switch (on by default) existed while the Pleroma
+    // bridge mirrored whole remote timelines onto Nostr; with the native fediverse server those posts
+    // are this node's own, so everybody -- a logged-out visitor on the main page included -- sees them.
     const follows = view==='home' ? (e=>FOLLOWS.has(e.pubkey)) : null;
     return ev => (!follows || follows(ev))
-              && !(hideR && isReply(ev))
-              && !(hideFedi && isFediBridged(ev) && !FOLLOWS.has(ev.pubkey));
+              && !(hideR && isReply(ev));
   }
   function _drawTimeline(preserveScroll){
     if(VIEW!=='home' && VIEW!=='global') return;
@@ -10969,15 +10951,6 @@
       if(!_prefTouched.has('hideReplies') && typeof pr.hideReplies==='boolean'
          && pr.hideReplies!==ClientSettings.get('hideReplies', false)){
         ClientSettings.set('hideReplies', pr.hideReplies);
-        if(VIEW==='home'||VIEW==='global'){ try{ renderView(true); }catch(_){} }
-      }
-      // Same shape as hideReplies above, and for the same reason: adopting the synced value without a
-      // redraw leaves the feed showing whatever the previous setting produced. Compared against the
-      // SAME `true` default the filter reads, so a device that has never toggled it doesn't count as a
-      // difference and force a pointless re-render on every login.
-      if(!_prefTouched.has('hideFediBridge') && typeof pr.hideFediBridge==='boolean'
-         && pr.hideFediBridge!==ClientSettings.get('hideFediBridge', true)){
-        ClientSettings.set('hideFediBridge', pr.hideFediBridge);
         if(VIEW==='home'||VIEW==='global'){ try{ renderView(true); }catch(_){} }
       }
       // Landing timeline. The boot view is picked from the LOCAL cache (the relay hasn't answered yet),

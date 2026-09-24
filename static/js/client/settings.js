@@ -584,9 +584,6 @@ window.PCSettingsFactory = function(dep){
             <b>Notifications</b>, with everything else that decides when you are interrupted.</div>
         </div>
         <div class="us-pane" data-pane="social">
-          <label class="fld" style="flex-direction:row;justify-content:space-between;align-items:center">Hide fediverse posts in timelines<label class="switch"><input type="checkbox" id="set-hide-fedi" ${ClientSettings.get('hideFediBridge',true)?'checked':''}><span class="slider"></span></label></label>
-          <div class="muted small">On by default. Hides fediverse posts from people you do NOT follow — Home and Nostrverse otherwise fill with everything other users here follow. People you follow always show, and mentions, replies and DMs from the fediverse always reach you.</div>
-
           <div class="us-conn"><div class="set-title small">Bring your follows over</div>
             <div class="us-plr-import"><input class="input" id="us-plr-import-acct" autocomplete="off" spellcheck="false" placeholder="you@your.old.server" aria-label="Fediverse account to import follows from"><button class="btn btn-ghost small" id="us-plr-import">Follow everyone it follows</button><span class="muted small" id="us-plr-import-said" role="status"></span></div>
             <div class="muted small">Type an old fediverse account (Pleroma, Akkoma, Mastodon, GoToSocial) and follow everyone it follows from here. Needs a public follow list — no login. When this node's fediverse server is on, your @name here follows them too.</div>
@@ -873,12 +870,6 @@ window.PCSettingsFactory = function(dep){
         toast(hr.checked?'replies hidden in timelines':'replies shown in timelines');
         // `fn` is captured when a timeline renders, so the change only takes effect on a re-render.
         if(S.VIEW==='home'||S.VIEW==='global') renderView(true);
-      }; }
-    { const hf=$('#set-hide-fedi'); if(hf) hf.onchange=()=>{
-        ClientSettings.set('hideFediBridge', hf.checked);
-        _prefTouched.add('hideFediBridge'); saveClientPrefsNostr({ hideFediBridge: hf.checked });
-        toast(hf.checked?'fediverse posts hidden in timelines':'fediverse posts shown in timelines');
-        if(S.VIEW==='home'||S.VIEW==='global') renderView(true);   // same captured-`fn` reason as above
       }; }
     { const ra=$('#set-read-aloud'); if(ra) ra.onchange=()=>{
         const on = ra.checked;

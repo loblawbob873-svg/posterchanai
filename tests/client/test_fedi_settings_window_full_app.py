@@ -20,7 +20,7 @@ def test_a_fediverse_setting_save_keeps_settings_window(relays_enabled, change_r
         await desktop.login(b)
         await b.until('PCOS.isOn()')
         await b.js("__PC.switchView('settings')")
-        await b.until("!!document.querySelector('#set-hide-fedi')")
+        await b.until("!!document.querySelector('#us-save')")
         await b.js("""
           document.querySelector('.us-tab[data-tab=social]').click();
           window.__settingsHost=document.querySelector('#user-settings');
@@ -37,14 +37,13 @@ def test_a_fediverse_setting_save_keeps_settings_window(relays_enabled, change_r
           };
         """)
         assert await b.js('!!__settingsWindow'), 'fixture must exercise a real desktop window'
-        await b.js("document.querySelector('#set-hide-fedi').click()")
+        assert await b.js("!!document.querySelector('#us-plr-import-acct')"), 'the Fediverse tab lost its import box'
         assert await b.js('__routes') == []
         if change_relay_toggle:
             await b.js("document.querySelector('#set-relays-on').click()")
         await b.js("document.querySelector('#us-save').click()")
         await b.until("(document.querySelector('#us-save-status')?.innerText||'').includes('Saved')")
         assert await b.js('__settingsWrites.length') == 1
-        assert await b.js("JSON.parse(localStorage.getItem('pc_nostr_settings')||'{}').hideFediBridge") is False
         reload_scheduled = await b.js("document.querySelector('#us-save-status').innerText.includes('reloading')")
         if change_relay_toggle:
             assert reload_scheduled, 'an explicit relay on/off change still needs reconnect'
@@ -66,9 +65,9 @@ def test_a_fediverse_setting_save_keeps_settings_window(relays_enabled, change_r
 def test_native_settings_reload_keeps_app_role_after_route_query_removed(reload_from_save):
     async def check(b):
         await desktop.login(b)
-        await b.until("!!document.querySelector('#set-hide-fedi')")
+        await b.until("!!document.querySelector('#us-save')")
         assert await b.js('PCOSWin.isWindow()')
-        await b.js("document.querySelector('.us-tab[data-tab=social]').click();document.querySelector('#set-hide-fedi').click();document.querySelector('#us-save').click()")
+        await b.js("document.querySelector('.us-tab[data-tab=social]').click();document.querySelector('#us-save').click()")
         await b.until("(document.querySelector('#us-save-status')?.innerText||'').includes('Saved')")
         assert not await b.js("document.querySelector('#us-save-status').innerText.includes('reloading')")
         assert await b.js("JSON.parse(localStorage.getItem('pc_nostr_settings')).blossomEnabled") is False
@@ -81,7 +80,7 @@ def test_native_settings_reload_keeps_app_role_after_route_query_removed(reload_
             await asyncio.sleep(.9)
         else:
             await b.call('Page.reload',{})
-        await b.until("!!window.__PC&&!!window.PCOSWin&&!!__PC.me()&&!!document.querySelector('#set-hide-fedi')")
+        await b.until("!!window.__PC&&!!window.PCOSWin&&!!__PC.me()&&!!document.querySelector('#us-save')")
         assert await b.js('__documentIdentity')!=before
         assert await b.js("PCOSWin.isWindow() && PCOSWin.viewOf()==='settings'")
         assert await b.js("document.documentElement.classList.contains('pc-oswin')")

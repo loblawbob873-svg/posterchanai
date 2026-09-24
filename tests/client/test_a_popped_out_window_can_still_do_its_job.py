@@ -131,8 +131,10 @@ def test_the_first_paint_of_a_new_window_also_routes_an_extra():
 def test_the_extra_landing_falls_through_when_it_cannot_draw():
     """renderExtra answers false for a name it does not know; the ordinary landing must still
     happen, or an unrecognised window would show nothing at all."""
-    block = APP[APP.index("async function routeFromPath()"):][:1600]
-    assert "if(v){ switchView(v); return; }" in block
+    block = APP[APP.index("async function routeFromPath()"):][:2400]
+    # The landing may do more after it (a post handed to a tool window), but it must still happen.
+    assert re.search(r"if\(v\)\{\s*switchView\(v\);", block), "no ordinary landing after the extra"
+    assert block.index("PCOS.renderExtra(v)") < block.index("switchView(v)")
 
 
 # ───────────────────────── the other three extras, which had the same defect ─────────────────────

@@ -15,7 +15,9 @@ async function run(name,{events,remote=[],expected,fetches=[],fail=false}){
  const seen=[],launched=[],toasts=[];
  const context=vm.createContext({Store:{get:i=>cache.get(i),saveEvent:e=>cache.set(e.id,e)},
   fetchEvent:async i=>{seen.push(i);if(fail)throw Error('relay unavailable');return network.get(i);},
-  toast:m=>toasts.push(m),launchEffectStudio:(url,reply)=>launched.push({url,reply})});
+  toast:m=>toasts.push(m),launchEffectStudio:(url,reply)=>launched.push({url,reply}),
+  // Outside a PosterChanOS window the post is handled in place -- what the real helper answers here.
+  _postToolWindow:()=>false});
  vm.runInContext(helper+'\n'+action,context);
  await context.effectPost(events[0].id,events[0].pubkey);
  assert.deepEqual(seen,fetches,name+' fetches');

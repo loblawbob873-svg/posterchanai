@@ -233,8 +233,6 @@ class SocialReplyMap(Base):
     created_at = Column(DateTime, default=datetime.utcnow)
 
 
-
-
 class BlossomBlob(Base):
     """A blob stored by the built-in Blossom server (BUD-01/02). Content-addressed:
     the row key is the blob's sha256, so the same bytes uploaded by several users are
@@ -329,7 +327,6 @@ class StreamVOD(Base):
     created_at = Column(Integer, nullable=False)        # unix seconds — finalize/upload time
 
 
-
 class FediPuppet(Base):
     """A fediverse account mirrored into the Nostr side by the Nostr↔Fediverse bridge.
 
@@ -391,118 +388,6 @@ class FediBridgeDelivered(Base):
     deleted_at = Column(DateTime, nullable=True)
 
 
-class FediBridgeSkipped(Base):
-    """Why a fediverse post was NOT mirrored. The counterpart to FediBridgeDelivered.
-
-    Until this existed a skip was indistinguishable from "never saw it": every early return in
-    _process/_deliver dropped the post with no row, no log and no counter, so a coverage gap could
-    only be found by hand-diffing the instance against the relay (which is how 5 of one account's
-    40 recent posts turned out to be missing — all of them hashtag-heavy). Recording the REASON is
-    what makes the next gap announce itself instead of needing a forensic session.
-
-    Not a dedup key — _seen/_delivered_by_uri still own that. Purely diagnostic, and prunable."""
-    __tablename__ = "fedi_bridge_skipped"
-    __table_args__ = (
-        Index('ix_fedi_skip_uri', 'note_uri'),
-        Index('ix_fedi_skip_reason', 'reason', 'created_at'),
-    )
-
-    id = Column(Integer, primary_key=True, autoincrement=True)
-    platform = Column(String(20), nullable=True)
-    instance_url = Column(String(255), nullable=True)
-    note_id = Column(String(255), nullable=True)
-    note_uri = Column(String(512), nullable=True)
-    author_acct = Column(String(255), nullable=True)
-    reason = Column(String(40), nullable=False)          # short code, e.g. "blocked", "oversized"
-    detail = Column(String(500), nullable=True)          # free text (relay message, exception, …)
-    created_at = Column(DateTime, default=datetime.utcnow)
-
-
-class FediReconcileState(Base):
-    """Per-author cursor for the reconciliation pass.
-
-    The drain reads TIMELINES, which are a filtered, ephemeral view: anything the instance keeps out
-    of one is skipped by the forward-only cursor and lost permanently. Reconciliation re-reads each
-    author's OWN outbox (/api/v1/accounts/:id/statuses) and re-delivers whatever never landed, which
-    is cause-agnostic — it repairs timeline omissions, transient publish failures and restart gaps
-    alike without us having to diagnose each one first.
-
-    One row per (instance_url, acct). `account_id` caches the instance's id for that acct so the
-    hourly pass costs one request per author instead of two."""
-    __tablename__ = "fedi_reconcile_state"
-    __table_args__ = (
-        Index('ix_fedi_recon_acct', 'instance_url', 'acct', unique=True),
-        Index('ix_fedi_recon_checked', 'last_checked_at'),
-    )
-
-    id = Column(Integer, primary_key=True, autoincrement=True)
-    instance_url = Column(String(255), nullable=False)
-    acct = Column(String(255), nullable=False)
-    account_id = Column(String(64), nullable=True)       # id on the instance (cached lookup)
-    last_checked_at = Column(DateTime, nullable=True)    # drives least-recently-checked rotation
-    last_repaired = Column(Integer, default=0)           # posts re-delivered on the last pass
-    total_repaired = Column(Integer, default=0)
-    last_error = Column(String(300), nullable=True)
-
-
-class FediOnlyEvent(Base):
-    """Owner-only social history for the HTTP Fediverse route; never exposed through Nostr REQ."""
-    __tablename__ = "fedi_only_events"
-    id = Column(String(64), primary_key=True)
-    user_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
-    created_at = Column(BigInteger, nullable=False, index=True)
-    raw = Column(Text, nullable=False)
-    deleted = Column(Boolean, default=False, nullable=False)
-
-
-class FediBridgeAction(Base):
-    """A write-back INTERACTION (favourite / emoji reaction / reblog) performed on the fediverse for one
-    Nostr event — so a later NIP-09 delete of that event can UNDO it.
-
-    Needed because at un-react time the facts are already gone: FediBridgeDelivered only maps notes we
-    POSTED, and the relay hard-deletes the kind-7/6 the moment the kind-5 lands (store._insert_one), so
-    the deleted event's target and emoji can't be read back. `emoji` is stored in the exact form the
-    instance accepted, since removing a reaction means replaying it to the same URL with DELETE.
-
-    A row is ALSO the durable "we already did this" marker the write-back checks before acting, which is
-    why an undone row is TOMBSTONED (undone_at) rather than deleted. Deleting it would let the reconnect
-    replay of the still-live kind-7 re-perform a reaction the user had explicitly removed."""
-    __tablename__ = "fedi_bridge_action"
-    __table_args__ = (Index('ix_fedi_action_event', 'nostr_event_id'),)
-
-    id = Column(Integer, primary_key=True, autoincrement=True)
-    nostr_event_id = Column(String(64), nullable=False)  # the kind-7/6 we acted on
-    nostr_pubkey = Column(String(64), nullable=False)    # its author (scopes the undo to its own actor)
-    platform = Column(String(20), nullable=False)        # "pleroma"
-    instance_url = Column(String(255), nullable=False)   # instance the action was performed on
-    target_id = Column(String(255), nullable=False)      # status id acted upon
-    action = Column(String(12), nullable=False)          # "favourite" | "react" | "reblog"
-    emoji = Column(String(120), nullable=True)           # "react" only, as sent
-    created_at = Column(DateTime, default=datetime.utcnow)
-    undone_at = Column(DateTime, nullable=True)          # set when un-done; the row STAYS as the marker
-
-
-class FediBridgeMap(Base):
-    """Personal-plane reply routing: maps a Nostr event the bridge delivered to a user (a NIP-17 DM
-    or a notification mirror) → the fediverse target to act on when the user replies on Nostr.
-
-    Maps a delivered notification back to its fedi target. `kind` distinguishes a DM (reply stays visibility=direct
-    in the same conversation) from a notification (reply to the referenced status)."""
-    __tablename__ = "fedi_bridge_map"
-    __table_args__ = (Index('ix_fedi_map_event', 'nostr_event_id'),)
-
-    id = Column(Integer, primary_key=True, autoincrement=True)
-    user_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
-    nostr_event_id = Column(String(64), nullable=False)  # the DM/notif event we delivered to the user
-    kind = Column(String(10), nullable=False)            # "dm" | "notif"
-    platform = Column(String(20), nullable=False)
-    instance_url = Column(String(255), nullable=False)
-    peer_pubkey = Column(String(64), nullable=True)      # the sender/actor puppet pubkey (DM convo key)
-    target_id = Column(String(255), nullable=True)       # status id to reply to (notif) / latest in convo (dm)
-    visibility = Column(String(20), nullable=True)       # preserve the parent's visibility
-    created_at = Column(DateTime, default=datetime.utcnow)
-
-
 class Bot(Base):
     """A managed bot from the merged ~/posterchan framework (now botframework/).
 
@@ -557,7 +442,6 @@ class SavedSearch(Base):
     created_at = Column(DateTime, default=datetime.utcnow)
 
     user = relationship("User", backref="saved_searches")
-
 
 
 class ScheduledPost(Base):
