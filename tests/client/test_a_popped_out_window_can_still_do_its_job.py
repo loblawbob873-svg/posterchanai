@@ -122,7 +122,7 @@ def test_the_first_paint_of_a_new_window_also_routes_an_extra():
     """`routeFromPath` is what lands a freshly-opened window on its view, and it called switchView
     directly. Patching only the re-route channel would leave a NEW System Settings window showing
     the timeline — which is the whole bug, just moved to the path people actually take."""
-    block = APP[APP.index("async function routeFromPath()"):][:1600]
+    block = APP[APP.index("async function routeFromPath()"):][:2400]
     assert "PCOS.renderExtra(v)" in block, "a new window still lands via switchView only"
     assert block.index("PCOS.renderExtra(v)") < block.index("switchView(v)"), \
         "switchView runs first, so the window paints the timeline"

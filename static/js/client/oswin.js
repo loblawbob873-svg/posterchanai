@@ -160,6 +160,9 @@
    * timeline and left no way back to it ("choose Meme Builder on a post, build it, send the reply,
    * no way to go back to social"). */
   const POST_TOOLS = ['meme', 'ai'];
+  /* A Search window is rebuilt from its QUERY -- plain text the user typed, capped, never markup:
+   * it is only ever handed to the search box's own renderer, which escapes it. */
+  const SEARCH_ARG = 120;
 
   function routable(view){
     let v = String(view || '');
@@ -168,6 +171,7 @@
     // A post window is named `doc:post:<event id>` — colons and all — so it fails the plain
     // identifier test below. It is routable because the child can fetch that id; see popOutView.
     if(/^doc:post:[0-9a-f]{64}$/i.test(v)) return true;
+    if(v === 'doc:search') return true;       // rebuilt from its query (see open / SEARCH_ARG)
     if(!v || !/^[a-z0-9_-]+$/i.test(v)) return false;
     try{ return !!root.document.querySelector('.nav-item[data-view="' + v + '"]'); }
     catch(_){ return false; }
@@ -209,8 +213,9 @@
      * navigated Social window before the compositor snapshot catches up. */
     const o = Object.assign({}, opts || {});
     const arg = view==='texts' ? String(o.arg||'').trim()
+      : view==='doc:search' ? String(o.arg||'').trim().slice(0, SEARCH_ARG)
       : POST_TOOLS.includes(view) && /^[0-9a-f]{64}$/i.test(String(o.arg||'')) ? String(o.arg).toLowerCase() : '';
-    if(arg && (arg.length>80 || /[\x00-\x1f\x7f]/.test(arg)))return null;
+    if(arg && (arg.length>(view==='doc:search' ? SEARCH_ARG : 80) || /[\x00-\x1f\x7f]/.test(arg)))return null;
     routeExisting(view, arg);
     // Direct opens use the same measured app size as icon/Start launches.
     // Explicit pop-out dimensions remain authoritative.
@@ -224,7 +229,7 @@
       }catch(_){}
     }
     const url = root.location.pathname + '?' + PARAM + '=' + encodeURIComponent(String(view || ''))
-      + (arg ? (view==='texts' ? '&pcsms=' : '&pcpost=') + encodeURIComponent(arg) : '');
+      + (arg ? (view==='texts' ? '&pcsms=' : view==='doc:search' ? '&pcq=' : '&pcpost=') + encodeURIComponent(arg) : '');
     /* The size is a HINT to the compositor, passed as window features because a frameless Electron
      * child takes its geometry from them. sway may place it elsewhere and that is fine: it is the
      * window manager now, which is the entire point of this change. */
@@ -278,6 +283,8 @@
             root.__PC.openDMWith(arg);
           /* A POST handed to a tool (🎞️ Meme Builder / 🎬 Effect on a post) that already has its own
              window: the post id is the whole argument, validated as one before anything reads it. */
+          else if(arg && v==='doc:search' && root.PCOS && typeof root.PCOS.searchHere==='function')
+            root.PCOS.searchHere(arg);
           else if(arg && POST_TOOLS.includes(v) && /^[0-9a-f]{64}$/i.test(arg) && root.__PC
                   && typeof root.__PC.postTool==='function')
             root.__PC.postTool(v, arg);

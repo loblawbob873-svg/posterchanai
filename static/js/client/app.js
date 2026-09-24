@@ -1923,6 +1923,27 @@
     }catch(_){ }
   }
   _capturePostToolLanding();
+  /* …and a SEARCH window (`?pcwin=doc:search&pcq=<query>`): the query is all it needs to rebuild. */
+  let _pendingSearch = '';
+  /* The one place a Search window runs the query it was opened with -- reached from routeFromPath
+   * AND from switchView's floor, whichever arrives first (the other finds nothing left to run).
+   * os.js owns the search sources and may still be loading when a fresh window lands. */
+  async function _searchWindowLanding(){
+    const q=_pendingSearch; _pendingSearch='';
+    if(!q) return;
+    for(let i=0; i<50 && !(window.PCOS && typeof PCOS.searchHere==='function'); i++)
+      await new Promise(r=>setTimeout(r,100));
+    if(window.PCOS && typeof PCOS.searchHere==='function') PCOS.searchHere(q);
+  }
+  (function _captureSearchLanding(){
+    try{
+      if(!_inWin() || PCOSWin.viewOf()!=='doc:search') return;
+      const uri=new URL(location.href), q=uri.searchParams.get('pcq');
+      if(q===null) return;
+      uri.searchParams.delete('pcq'); history.replaceState(history.state,'',uri.pathname+uri.search+uri.hash);
+      _pendingSearch = q.trim().slice(0, 120);
+    }catch(_){ }
+  })();
   /* Hand a post to a tool in ITS OWN WINDOW, from any window that is not already that tool. True when
    * that happened (the caller then does nothing here); false everywhere without windows -- a browser
    * tab, the phone, the classic UI, the in-page desktop (which routes through switchView itself). */
@@ -1957,6 +1978,8 @@
        * shape as the System Settings lie above. Open the post instead. */
       const _post = /^doc:post:([0-9a-f]{64})$/i.exec(v || '');
       if(_post){ openThread(_post[1]); return; }
+      /* A SEARCH WINDOW is not a view either: it runs the query it was opened with, in this page. */
+      if(v === 'doc:search'){ _searchWindowLanding(); return; }
       if(v){
         switchView(v);
         if(_pendingPostTool){
@@ -6160,6 +6183,8 @@
       const _pw = /^doc:post:([0-9a-f]{64})$/i.exec(String(v || ''));
       if(_pw && typeof openThread === 'function'){ openThread(_pw[1]); return; }
     }
+    // …and a SEARCH window, which is rebuilt from its query (see _searchWindowLanding).
+    if(String(v || '') === 'doc:search'){ _searchWindowLanding(); return; }
     // The desktop's old "Local VMs" screen merged into Virtual Machines ("This computer" is its first host).
     if(v === '__vms') v = 'vms';
     // The open popover, if this screen ever opened one: `closeActive` is a property the real

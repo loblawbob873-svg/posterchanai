@@ -8832,6 +8832,16 @@
   function desktopSearch(q){
     const query = String(q || '').trim();
     if(!query) return null;
+    /* ON POSTERCHANOS THE RESULTS ARE A REAL WINDOW, or they open BEHIND every app.
+     *
+     * "search from taskbar is opening Search window behind other windows". A `doc:` frame is drawn
+     * on the desktop surface, and every app on PosterChanOS is a compositor toplevel ABOVE that
+     * surface -- so the Search frame could never come in front of Social or Messages. The query is
+     * the whole of what a Search window needs, so, like a post, it opens as its own toplevel
+     * carrying it (?pcwin=doc:search&pcq=), and an open one is handed the next query instead. */
+    try{
+      if(window.PCOSWin && PCOSWin.enabled() && PCOSWin.open('doc:search', 'Search', { arg: query })) return null;
+    }catch(_){ }
     // `rerun`: one Search window shows a succession of queries, so a second search REPLACES what it
     // is rendering rather than bringing the first one back — see openDoc.
     return openDoc('search', 'Search', 'i-search', () => _runDesktopSearch(query), false, true);
@@ -11610,6 +11620,8 @@
   }
 
   window.PCOS = { enter, exit, suspend, toggle, restore, refresh, renderExtra,
+                  // A popped-out Search window runs the same search in its own page (oswin/app.js).
+                  searchHere: q => { if(String(q||'').trim()) _runDesktopSearch(String(q).trim()); },
                   metrics, applyUiScale, setUiScale, uiScaleEffective,
                   /* An Android launcher tile lands in the mode the device is in — see wantsDesktop.
                    * Entering here (rather than leaving the choice to boot) is what makes a warm tile
