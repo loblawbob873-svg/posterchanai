@@ -305,6 +305,7 @@ async def _follow(activity: dict, signer: str) -> str:
     if signer in await _ob._gone():
         await state.unmark_gone(signer)
         _ob._gone_cache["at"] = 0.0
+    await _announce_follows(signer, who, member, following=True)
     keys = await state.keypair(member)              # a verified Follow is behind it
     key_id, priv = await actors.signing(member, keys)
     me = await actors.actor_id(member)
@@ -314,6 +315,42 @@ async def _follow(activity: dict, signer: str) -> str:
     personal = who.get("inbox") if remote.host_of(who.get("inbox") or "") == remote.host_of(signer) else ""
     status = await remote.deliver(personal or inbox, accept, key_id=key_id, private_pem=priv)
     return f"follower added (accept HTTP {status})"
+
+
+async def _announce_follows(actor: str, actor_doc, member: str, *, following: bool) -> None:
+    """Say it the NOSTR way: the fediverse account's puppet publishes a contact list naming the accounts
+    here it follows. A Nostr client raises "X followed you" for exactly that event -- without it, a
+    fediverse follow was accepted and recorded and the person followed was never told.
+
+    Best effort, and never allowed to cost the follow itself: the Accept has to go out regardless."""
+    try:
+        members = set(await state.follows_of(actor))
+        if (member in members) == following:
+            return                                    # nothing changed: republishing would re-notify
+        members = members | {member} if following else members - {member}
+        await state.set_follows_of(actor, sorted(members))
+        doc = actor_doc if isinstance(actor_doc, dict) else await remote.actor(actor)
+        puppet = await _puppet(doc)
+        if not puppet:
+            return
+        from app.services.fedi_bridge_identity import build_event, publish, query_one
+        # STRICTLY NEWER than the list it replaces. A kind-3 is replaceable, and two in one second (a
+        # follow and its undo, back to back) are a tie a relay breaks by the LOWER id -- which can keep
+        # the follow and throw away the unfollow.
+        ok, prev = await query_one(_port(), {"kinds": [3], "authors": [puppet["pubkey_hex"]], "limit": 1})
+        at = max(int(time.time()), int((prev or {}).get("created_at") or 0) + 1)
+        ev = build_event(puppet, 3, "", tags=[["p", m] for m in sorted(members)], broadcast=config.broadcast(),
+                         created_at=at)
+        ok, msg = await publish(_port(), ev)
+        if not ok:
+            logger.info("[activitypub] follow of %s not announced on Nostr: %s", member[:12], msg)
+            return
+        # A Nostr user here in `everyone` mode reads their OWN relays, not this one.
+        if following and not actors.is_actor(member):
+            from app.services.activitypub import nostrside
+            await nostrside.deliver(member, [ev], dm=False)
+    except Exception as e:
+        logger.info("[activitypub] follow of %s not announced on Nostr: %s: %s", member[:12], type(e).__name__, e)
 
 
 async def _accept(kind: str, obj, signer: str) -> str:
@@ -359,6 +396,7 @@ async def _undo(inner: dict, signer: str) -> str:
         member = await actors.member_of_path(_our_member_name(convert.id_of(inner.get("object"))))
         if member:
             await state.remove_follower(member, signer)
+            await _announce_follows(signer, None, member, following=False)
             return "follower removed"
     if not itype and inner.get("id"):
         # An Undo naming the Follow by ID ONLY (allowed, and sent that way by some servers): mapped
@@ -366,6 +404,7 @@ async def _undo(inner: dict, signer: str) -> str:
         rec = await state.follow_by_id(inner["id"])
         if rec.get("member") and rec.get("actor") == signer:
             await state.remove_follower(rec["member"], signer)
+            await _announce_follows(signer, None, rec["member"], following=False)
             return "follower removed"
     return await _delete(convert.id_of(inner), signer, undo=True)
 
@@ -387,6 +426,7 @@ async def _block(activity: dict, signer: str, *, undo: bool) -> str:
         acct = ""
     await state.record_block(member, signer, acct)
     await state.remove_follower(member, signer)
+    await _announce_follows(signer, None, member, following=False)
     if signer in await state.following(member, strict=False):
         await state.drop_following(member, signer)
     return "block recorded"

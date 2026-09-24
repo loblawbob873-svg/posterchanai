@@ -325,6 +325,24 @@ async def unmark_gone(actor: str) -> None:
     await _put(_GONE_PREFIX + _h(actor), {"actor": actor, "back": True, "at": int(time.time())})
 
 
+# ------------------------------------------------------------------------------------ followers, as Nostr sees them
+
+# The accounts HERE a fediverse account follows -- what its puppet's kind-3 contact list names, which is
+# how a Nostr client learns "carol followed you" (the notification every client already raises for a
+# contact list that p-tags you). One document per fediverse account.
+_FOLLOWS_OF_PREFIX = "pcai:ap:followsof:"
+
+
+async def follows_of(actor: str) -> list:
+    doc = await _get(_FOLLOWS_OF_PREFIX + _h(actor))
+    return [m for m in ((doc or {}).get("members") or []) if isinstance(m, str)]
+
+
+async def set_follows_of(actor: str, members: list) -> None:
+    await _put(_FOLLOWS_OF_PREFIX + _h(actor), {"actor": actor, "members": sorted(set(members)),
+                                                 "at": int(time.time())})
+
+
 # ------------------------------------------------------------------------------------ follow ids
 
 # The id of each incoming Follow, so an Undo that names ONLY that id (allowed, and sent by some

@@ -2764,3 +2764,69 @@ def test_an_import_stops_reading_an_answer_that_is_too_large(world, monkeypatch)
     monkeypatch.setattr(importer, "MAX_PAGE_BYTES", 200)
     with pytest.raises(ValueError, match="too large"):
         run(importer.public_following("me@old.example"))
+
+
+# ============================================================================ 22. follow requests, both ways
+
+def _puppet_contact_lists(world):
+    carol = ident.puppet_for(convert.account_from_actor(carol_actor()))["pubkey_hex"]
+    return [e for e in world["relay"].values() if e["kind"] == 3 and e["pubkey"] == carol]
+
+
+def test_a_fediverse_follow_tells_the_person_followed_the_nostr_way(world):
+    """"we need to make sure following requests work both ways on the bridge, especially with
+    notifications when they follow you". A fediverse Follow was accepted and recorded and the person
+    followed was never told. Now carol's puppet publishes a contact list naming who she follows here --
+    the event every Nostr client turns into "carol followed you"."""
+    follow = {"id": REMOTE + "#follows/1", "type": "Follow", "actor": REMOTE, "object": f"{BASE}/ap/users/alice"}
+    assert run(inbox.process(follow, REMOTE)).startswith("follower added")
+    lists = _puppet_contact_lists(world)
+    assert len(lists) == 1 and ["p", ALICE] in lists[0]["tags"]
+    # the same Follow again (servers retry) must not notify twice
+    run(inbox.process(follow, REMOTE))
+    assert len(_puppet_contact_lists(world)) == 1
+    # following a second member names both
+    run(inbox.process(dict(follow, id=REMOTE + "#follows/2", object=f"{BASE}/ap/users/bob"), REMOTE))
+    latest = max(_puppet_contact_lists(world), key=lambda e: (e["created_at"], e["id"]))
+    assert {t[1] for t in latest["tags"] if t[0] == "p"} == {ALICE, BOB}
+
+
+def test_a_fediverse_unfollow_takes_the_person_out_of_the_contact_list(world):
+    follow = {"id": REMOTE + "#follows/1", "type": "Follow", "actor": REMOTE, "object": f"{BASE}/ap/users/alice"}
+    run(inbox.process(follow, REMOTE))
+    n = len(_puppet_contact_lists(world))
+    assert run(inbox.process({"type": "Undo", "id": REMOTE + "#undo/1", "actor": REMOTE,
+                              "object": follow}, REMOTE)) == "follower removed"
+    lists = _puppet_contact_lists(world)
+    assert len(lists) == n + 1
+    latest = max(lists, key=lambda e: (e["created_at"], e["id"]))
+    assert ["p", ALICE] not in latest["tags"]
+
+
+def test_an_unfollow_by_id_alone_also_updates_the_contact_list(world):
+    follow = {"id": REMOTE + "#follows/9", "type": "Follow", "actor": REMOTE, "object": f"{BASE}/ap/users/alice"}
+    run(inbox.process(follow, REMOTE))
+    run(inbox.process({"type": "Undo", "id": REMOTE + "#undo/9", "actor": REMOTE, "object": REMOTE + "#follows/9"}, REMOTE))
+    latest = max(_puppet_contact_lists(world), key=lambda e: (e["created_at"], e["id"]))
+    assert ["p", ALICE] not in latest["tags"]
+
+
+def test_a_nostr_follow_request_to_the_fediverse_round_trips(world):
+    """Nostr → fediverse: adding a fediverse account to the contact list sends a Follow, which stays
+    PENDING until that server answers; Accept opens the door to its posts, Reject closes it."""
+    s = world["Session"]()
+    carol = run(ident.ensure_puppet(s, 1, convert.account_from_actor(carol_actor()), "mastodon.example"))
+    k3 = member_post("", kind=3, tags=[["p", carol["pubkey_hex"]]])
+    jobs = run(outbox._follows(k3, ALICE, f"{BASE}/ap/users/alice"))
+    assert [a["type"] for _, a in jobs] == ["Follow"] and jobs[0][1]["object"] == REMOTE
+    assert run(state.following(ALICE))[REMOTE]["state"] == "pending"
+    fid = jobs[0][1]["id"]
+    assert run(inbox.process({"type": "Accept", "id": REMOTE + "#accept/1", "actor": REMOTE,
+                              "object": {"id": fid, "type": "Follow", "actor": f"{BASE}/ap/users/alice",
+                                         "object": REMOTE}}, REMOTE)) == "follow accepted"
+    assert run(state.following(ALICE))[REMOTE]["state"] == "accepted"
+    state.forget_followed_cache()
+    assert REMOTE in run(state.followed_actors())          # her posts now get in
+    assert run(inbox.process({"type": "Reject", "id": REMOTE + "#reject/1", "actor": REMOTE,
+                              "object": fid}, REMOTE)) == "follow rejected"
+    assert REMOTE not in run(state.following(ALICE))
