@@ -183,6 +183,17 @@ _DROPPED_COLUMNS = (
     ("users", "misskey_instance_url"),
     ("users", "misskey_api_token"),
     ("users", "misskey_notif_since"),
+    # The Pleroma bridge, Pleroma sign-in and account linking were removed in full (the native
+    # ActivityPub server replaced them). Dropped, not merely unread: pleroma_access_token holds a
+    # live credential for every account that was ever linked. pleroma_enabled/_instance_url/_acct
+    # are KEPT (see User): relay_access_policy still exempts the accounts they identify.
+    ("users", "pleroma_access_token"),
+    ("users", "pleroma_notif_since"),
+    ("users", "fedi_bridge_enabled"),
+    ("users", "fedi_bridge_dm_since"),
+    ("users", "fedi_bridge_notif_since"),
+    ("users", "fedi_crosspost_enabled"),
+    ("users", "fedi_only"),
 )
 
 
@@ -356,13 +367,7 @@ def init_db():
             # seeded so a fresh node just works once an operator drops a pack in; it stays empty
             # until then, and the client's picker simply shows no custom section.
             "custom_emoji_dir": "assets/emoji",
-            # Nostr ↔ Fediverse bridge — non-secret defaults (instance_url/token/blocked_domains are
-            # deployment-specific, left to the schema defaults). Master switch OFF so deploying the
-            # code is inert until an admin configures a read account in Admin → Social.
-            "fedi_bridge_enabled": "false",
-            "fedi_bridge_type": "global",
-            "fedi_bridge_poll_seconds": "90",
-            "fedi_bridge_include_replies": "true",
+            # Fediverse server: fediverse posts stay on this relay unless an admin shares them.
             "fedi_bridge_broadcast": "false",
             # Built-in Nostr web-of-trust relay (own thread; serves NIP-01 at /relay on
             # nostr_relay_port). Default OFF; ships a starter WoT seed set so a fresh node has

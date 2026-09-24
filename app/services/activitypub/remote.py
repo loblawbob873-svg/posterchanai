@@ -8,7 +8,9 @@ unsigned GET with 401.
 from __future__ import annotations
 
 import asyncio
+import ipaddress
 import json
+import socket
 import logging
 import time
 from collections import OrderedDict
@@ -32,6 +34,48 @@ class FetchError(Exception):
     pass
 
 
+class _PinnedTransport(httpx.AsyncHTTPTransport):
+    """Connects to the address that was CHECKED, not to whatever the name resolves to a moment later.
+
+    `_check` resolves a host and refuses private addresses; httpx then resolved it AGAIN to connect.
+    A name whose DNS answers public-then-private (rebinding, TTL 0) passed the first and reached the
+    second -- a signed request from this server into its own network, driven by a keyId anybody can
+    send. Here the name is resolved once, every answer is judged, and the connection is made to that
+    IP with the original name kept for TLS (SNI + certificate check) and the Host header."""
+
+    async def handle_async_request(self, request):
+        host = request.url.host
+        trusted = config.lan_trusted(host)
+        try:
+            infos = await asyncio.to_thread(socket.getaddrinfo, host, request.url.port or 443,
+                                            type=socket.SOCK_STREAM)
+        except OSError as e:
+            raise httpx.ConnectError(f"cannot resolve {host}") from e
+        addrs = []
+        for info in infos:
+            try:
+                ip = ipaddress.ip_address(info[4][0])
+            except ValueError:
+                continue
+            if not trusted and (ip.is_private or ip.is_loopback or ip.is_link_local or ip.is_reserved
+                                or ip.is_multicast or ip.is_unspecified):
+                raise httpx.ConnectError(f"{host} resolves to a private address")
+            addrs.append(ip)
+        if not addrs:
+            raise httpx.ConnectError(f"cannot resolve {host}")
+        ip = addrs[0]
+        request.url = request.url.copy_with(host=str(ip))
+        request.extensions = {**request.extensions, "sni_hostname": host}
+        return await super().handle_async_request(request)
+
+
+def client(**kw) -> httpx.AsyncClient:
+    """The one HTTP client for talking to other servers: pinned to checked addresses, no redirects
+    followed on its own, and never the process's proxy settings."""
+    kw.setdefault("timeout", _TIMEOUT)
+    return httpx.AsyncClient(transport=_PinnedTransport(), follow_redirects=False, trust_env=False, **kw)
+
+
 def host_of(url: str) -> str:
     return (urlparse(url or "").hostname or "").lower()
 
@@ -41,6 +85,13 @@ async def _check(url: str) -> None:
     p = urlparse(url or "")
     if p.scheme != "https" or not looks_fetchable(url):
         raise FetchError(f"not a fetchable https address: {url[:120]}")
+    try:
+        port = p.port
+    except ValueError:
+        raise FetchError("not a fetchable https address")
+    if port not in (None, 443) and not config.lan_trusted(p.hostname or ""):
+        # Only the https port: any port made every fetch a probe of whatever a host listens on.
+        raise FetchError(f"not a fetchable https address: port {port}")
     if config.host_blocked(p.hostname or "") or config.is_own_host(p.hostname or ""):
         raise FetchError(f"{p.hostname} is blocked or is this node")
     if not config.lan_trusted(p.hostname or "") and not await asyncio.to_thread(is_safe_host, url):
@@ -53,17 +104,32 @@ async def instance_key() -> tuple[str, str]:
     return f"{config.base_url()}/ap/actor#main-key", doc["priv"]
 
 
+_TOTAL_SECONDS = 30.0
+
+
 async def fetch_json(url: str, *, signed: bool = True) -> dict:
-    """GET an ActivityPub document. Raises FetchError for anything but a JSON object."""
+    """GET an ActivityPub document. Raises FetchError for anything but a JSON object.
+
+    Bounded in TOTAL time, not only per read: a server trickling a byte every few seconds never
+    trips a read timeout, and would hold the inbox slot that is waiting on it for as long as it
+    liked."""
+    try:
+        async with asyncio.timeout(_TOTAL_SECONDS):
+            return await _fetch_json(url, signed=signed)
+    except TimeoutError as e:
+        raise FetchError(f"{host_of(url)} took too long to answer") from e
+
+
+async def _fetch_json(url: str, *, signed: bool = True) -> dict:
     key_id, priv = (await instance_key()) if signed else ("", "")
-    async with httpx.AsyncClient(timeout=_TIMEOUT, follow_redirects=False, trust_env=False) as client:
+    async with client() as http:
         for _hop in range(4):
             await _check(url)
             headers = {"Accept": _ACCEPT, "User-Agent": _USER_AGENT}
             if signed:
                 headers.update(httpsig.sign("GET", url, key_id=key_id, private_pem=priv))
             try:
-                async with client.stream("GET", url, headers=headers) as r:
+                async with http.stream("GET", url, headers=headers) as r:
                     if r.status_code in (301, 302, 303, 307, 308) and r.headers.get("location"):
                         nxt = urljoin(url, r.headers["location"])
                         # NEVER across hosts. A document's authority is the host that served it, so an
@@ -136,12 +202,18 @@ async def public_key(key_id: str, *, refresh: bool = False) -> tuple[str, str]:
         owner = await actor(base, refresh=refresh)
     else:
         doc = await fetch_json(base)
-        if str(doc.get("id") or "") != key_id:
-            raise FetchError("the key document is not the key that was named")
-        if doc.get("type") in ("Key", "CryptographicKey") or ("owner" in doc and "publicKeyPem" in doc):
+        doc_id = str(doc.get("id") or "")
+        pk = doc.get("publicKey") if isinstance(doc.get("publicKey"), dict) else {}
+        if doc_id == key_id and (doc.get("type") in ("Key", "CryptographicKey")
+                                 or ("owner" in doc and "publicKeyPem" in doc)):
             owner = await actor(str(doc.get("owner") or ""), refresh=refresh)
-        elif doc.get("type") in ("Person", "Service", "Application", "Group", "Organization"):
+        elif doc_id == key_id and doc.get("type") in ("Person", "Service", "Application", "Group", "Organization"):
             owner = await actor(base, refresh=refresh)
+        elif pk.get("id") == key_id and doc_id and host_of(doc_id) == key_host:
+            # GoToSocial: its keyId (`…/users/u/main-key`) has no fragment and answers with a stub of
+            # the ACTOR, whose id is the actor's. The stub is not trusted -- the owner is fetched from
+            # its own address below and must itself publish this key.
+            owner = await actor(doc_id, refresh=refresh)
         else:
             raise FetchError("the keyId is neither a key nor an actor")
     if host_of(owner.get("id")) != key_host:
@@ -179,9 +251,9 @@ async def webfinger(handle: str) -> str:
     url = f"https://{host}/.well-known/webfinger?resource=acct:{user}@{host}"
     await _check(url)
     body = bytearray()
-    async with httpx.AsyncClient(timeout=_TIMEOUT, follow_redirects=False, trust_env=False) as client:
+    async with client() as http:
         try:
-            async with client.stream("GET", url, headers={"Accept": "application/jrd+json, application/json",
+            async with http.stream("GET", url, headers={"Accept": "application/jrd+json, application/json",
                                                           "User-Agent": _USER_AGENT}) as r:
                 if r.status_code != 200:
                     raise FetchError(f"{host} does not know {user}")
@@ -216,8 +288,8 @@ async def deliver(inbox: str, activity: dict, *, key_id: str, private_pem: str) 
     headers = {"Content-Type": config.AP_CONTENT_TYPE, "Accept": _ACCEPT, "User-Agent": _USER_AGENT}
     headers.update(httpsig.sign("POST", inbox, key_id=key_id, private_pem=private_pem, body=body))
     try:
-        async with httpx.AsyncClient(timeout=_TIMEOUT, follow_redirects=False, trust_env=False) as client:
-            r = await client.post(inbox, content=body, headers=headers)
+        async with client() as http:
+            r = await http.post(inbox, content=body, headers=headers)
             return r.status_code
     except httpx.HTTPError as e:
         logger.info("[activitypub] delivery to %s failed: %s", host_of(inbox), type(e).__name__)

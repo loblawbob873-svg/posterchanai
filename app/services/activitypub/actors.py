@@ -126,16 +126,37 @@ def all_actors() -> list:
 async def member_by_name(name: str) -> str:
     """The pubkey behind a handle -- a local user's name, or (in `everyone` mode) any Nostr user's
     readable handle or npub -- if that account is on the fediverse, else ""."""
+    # A readable handle already given out WINS over a registry name spelled the same: the registry is
+    # written by public signup, so checked first it let anyone register `alice_4b56` and take over
+    # the fediverse address of the Nostr user already known everywhere by it.
+    if config.everyone() and _NICK_RE.fullmatch((name or "").lower()):
+        try:
+            owner = await state.owner_of_nick(name.lower())
+        except Exception:
+            owner = ""
+        if owner:
+            return owner if await exposed(owner) else ""
     pk = pubkey_of_name(name)
     if pk:
         return pk if is_actor(pk) else ""
     pk = _npub_pubkey(name)
-    if not pk and config.everyone() and _NICK_RE.fullmatch((name or "").lower()):
-        try:
-            pk = await state.owner_of_nick(name.lower())
-        except Exception:
-            pk = ""
     return pk if pk and await exposed(pk) else ""
+
+
+async def name_is_someone_elses_handle(name: str, pubkey: str = "") -> bool:
+    """Whether a registry name would collide with a fediverse address another account already has:
+    an npub, or a readable handle claimed by a different key. An unreadable relay says yes -- a
+    signup can pick another name, a taken address cannot be given back."""
+    n = (name or "").strip().lower()
+    if n.startswith("npub1"):
+        return True
+    if not _NICK_RE.fullmatch(n):
+        return False
+    try:
+        owner = await state.owner_of_nick(n)
+    except Exception:
+        return True
+    return bool(owner) and owner != (pubkey or "").lower()
 
 
 # A readable handle: letters/digits/underscore, ending in `_` + a hex prefix of the key -- the shape
@@ -177,6 +198,8 @@ async def readable_handle(pubkey: str) -> str:
             base = _nick_base(await profile(pk))
             for n in (4, 6, 8, 12, 16):
                 cand = f"{base}_{pk[:n]}"
+                if pubkey_of_name(cand) not in ("", pk):
+                    continue                        # a local user's name is never minted as a handle
                 owner = await state.owner_of_nick(cand)
                 if owner in ("", pk):
                     await state.claim_nick(pk, cand)
@@ -296,26 +319,6 @@ class _LocalActors(dict):
 def local_actor_map() -> dict:
     base = config.base_url()
     return _LocalActors({convert.actor_url(base, n): pk for n, pk in _registry()[0].items()} if base else {})
-
-
-def uses_linked_account(pubkey: str) -> bool:
-    """THE COMPATIBILITY RULE WITH THE PLEROMA BRIDGE: a member whose Nostr activity already reaches
-    the fediverse through their OWN linked Pleroma account (the write-back whitelist) does not post,
-    reply, like or boost ALSO from `@name@<domain>` -- one of each on the fediverse, never two from
-    two identities. Their FOLLOWS are still sent from here (outbox.plan): a follow is seen by nobody
-    twice, and it is what brings the followed accounts' posts in over ActivityPub. Their actor exists
-    and can be followed and replied to. Read from the write-back service itself, so the two can never
-    disagree about who that is."""
-    try:
-        from app.services.fedi_nostr_writeback_service import _bridge_allowed_pubkeys, _bridge_on
-        # ONLY WHILE THE BRIDGE RUNS. The whitelist is per-user flags that outlive the master switch;
-        # with `fedi_bridge_enabled` off nothing carries their activity to the fediverse any more,
-        # and deferring to it would leave them sending nothing at all.
-        if not _bridge_on():
-            return False
-        return (pubkey or "").lower() in _bridge_allowed_pubkeys()
-    except Exception:
-        return False
 
 
 from collections import OrderedDict

@@ -1,7 +1,7 @@
 """Auto-split from callbacks.py: misc callback handlers. Bodies moved verbatim."""
-from ._common import ChatService, CommandService, User, _CONSUMED, _HELP_SECTIONS, _flashcard_decks_cache, _geni_image_cache, _link_action_cache, _nostr_post_cache, _pleroma_post_cache, asyncio, logger, telegram_service, time
-from .keyboards import _has_nostr, _has_pleroma, _help_main_keyboard, _recover_post_text, _strip_hashtags
-from .senders import User, _deliver_pin_result, _geni_image_cache, _has_nostr, _has_pleroma, _link_content_for_llm, _offer_social_post, _pleroma_post_cache, _post_to_nostr, _send_flashcard, _send_screenshot, asyncio, logger, telegram_service, time
+from ._common import ChatService, CommandService, User, _CONSUMED, _HELP_SECTIONS, _flashcard_decks_cache, _geni_image_cache, _link_action_cache, _nostr_post_cache, asyncio, logger, telegram_service, time
+from .keyboards import _has_nostr, _help_main_keyboard, _recover_post_text, _strip_hashtags
+from .senders import User, _deliver_pin_result, _geni_image_cache, _has_nostr, _link_content_for_llm, _offer_social_post, _post_to_nostr, _send_flashcard, _send_screenshot, asyncio, logger, telegram_service, time
 
 
 async def _cb_rem(update, db, chat_id, data, callback_query, callback_query_id):
@@ -257,8 +257,7 @@ async def _cb_lnk(update, db, chat_id, data, callback_query, callback_query_id):
 
 
 async def _cb_glowtextpost(update, db, chat_id, data, callback_query, callback_query_id):
-        _gp = (_pleroma_post_cache.get(chat_id)
-               or _nostr_post_cache.get(chat_id))
+        _gp = _nostr_post_cache.get(chat_id)
         if _gp in (None, _CONSUMED):
             _gp = _recover_post_text(callback_query) or None
         if not _gp:
@@ -294,56 +293,10 @@ async def _cb_glowtextpost(update, db, chat_id, data, callback_query, callback_q
         return {"ok": True}
 
 
-async def _cb_plr(update, db, chat_id, data, callback_query, callback_query_id):
-        action = data.split(":", 1)[1]
-
-        if action == "skip":
-            _pleroma_post_cache.pop(chat_id, None)
-            _nostr_post_cache.pop(chat_id, None)
-            _geni_image_cache.pop(chat_id, None)
-            await telegram_service.send_message(chat_id, "Post skipped.")
-            return {"ok": True}
-
-        # action == "post"
-        pending_post = _pleroma_post_cache.pop(chat_id, None)
-        if pending_post == _CONSUMED:
-            await telegram_service.send_message(chat_id, "Already posted via 'Post to All'.")
-            return {"ok": True}
-        if pending_post is None:
-            pending_post = _recover_post_text(callback_query) or None
-        if pending_post is None:
-            await telegram_service.send_message(chat_id, "No pending Pleroma post found. Please generate a new post.")
-            return {"ok": True}
-
-        plr_user = db.query(User).filter(
-            User.telegram_chat_id == chat_id,
-            User.telegram_enabled == True
-        ).first()
-
-        if not plr_user or not _has_pleroma(plr_user):
-            await telegram_service.send_message(chat_id, "Pleroma is not configured on your account.")
-            return {"ok": True}
-
-        _plr_image = _geni_image_cache.get(chat_id)  # .get so other platforms can still use it
-        try:
-            from app.services.pleroma_service import post_status as _pleroma_post_status
-            await _pleroma_post_status(
-                plr_user.pleroma_instance_url,
-                plr_user.pleroma_access_token,
-                pending_post,
-                image_bytes=_plr_image,
-            )
-            await telegram_service.send_message(chat_id, "✅ Posted to Pleroma!")
-        except Exception as plr_err:
-            logger.error(f"Pleroma post error: {plr_err}", exc_info=True)
-            await telegram_service.send_message(chat_id, f"❌ Failed to post to Pleroma: {plr_err}")
-
-
 async def _cb_nostr(update, db, chat_id, data, callback_query, callback_query_id):
         action = data.split(":", 1)[1]
 
         if action == "skip":
-            _pleroma_post_cache.pop(chat_id, None)
             _nostr_post_cache.pop(chat_id, None)
             _geni_image_cache.pop(chat_id, None)
             await telegram_service.send_message(chat_id, "Post skipped.")
@@ -388,25 +341,11 @@ async def _cb_allpost(update, db, chat_id, data, callback_query, callback_query_
 
         # Recover post text from message if caches were lost (e.g. service restart).
         # Shared _recover_post_text() strips the prompt and refuses to post a bare
-        # prompt — same helper used by the individual mk:/plr: handlers.
+        # prompt — same helper used by the individual mk:/nostr: handlers.
 
         results = []
 
         _all_image = _geni_image_cache.get(chat_id)
-
-        # Pleroma
-        plr_post = _pleroma_post_cache.pop(chat_id, None) or _recover_post_text(callback_query)
-        if (plr_post or _all_image) and all_user and _has_pleroma(all_user):
-            try:
-                from app.services.pleroma_service import post_status as _plr_status
-                await _plr_status(all_user.pleroma_instance_url, all_user.pleroma_access_token, plr_post,
-                                  image_bytes=_all_image)
-                results.append("✅ Pleroma")
-            except Exception as _e:
-                logger.error(f"all:post Pleroma error: {_e}", exc_info=True)
-                results.append(f"❌ Pleroma: {_e}")
-            # Sentinel prevents old Pleroma button from double-posting
-            _pleroma_post_cache[chat_id] = _CONSUMED
 
         # Nostr
         nostr_post = _nostr_post_cache.pop(chat_id, None) or _recover_post_text(callback_query)

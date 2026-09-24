@@ -200,7 +200,7 @@ _HELP_SECTIONS = {
         "• `post` — rewrite it into a viral, engaging post\n"
         "• `post raw` — share it *exactly as written*, no rewrite \\(also `verbatim`\\)\n"
         "• `post <instructions>` — rewrite it your way\n\n"
-        "I then show share buttons for your connected platforms \\(Pleroma / Nostr\\)\\.\n\n"
+        "I then show share buttons for Nostr \\(and on to the fediverse\\)\\.\n\n"
         "*Examples:*\n"
         "\\(reply to a good answer\\) `post raw`\n"
         "\\(reply to an article\\) `post professional`\n"
@@ -215,7 +215,6 @@ _HELP_SECTIONS = {
 }
 router = APIRouter(prefix="/api/telegram", tags=["telegram"])
 _MAX_SEEN_IDS = 500  # Keep a bounded window; Telegram won't replay further back
-_pleroma_post_cache: dict = {}
 _nostr_post_cache: dict = {}
 _CONSUMED = "__consumed__"
 _geni_image_cache: dict = {}

@@ -41,9 +41,6 @@ _SCHEDULERS = [
      "start_calendar_subscriptions_scheduler"),
     # Pay-to-stay zap watcher — a no-op tick unless nostr_relay_paid_retention_enabled is on.
     ("paid-retention", "app.services.paid_retention_service", "start_paid_retention_scheduler"),
-    ("fedi-nostr-bridge", "app.services.fedi_nostr_bridge_service", "start_fedi_bridge_scheduler"),
-    ("fedi-nostr-writeback", "app.services.fedi_nostr_writeback_service", "start_fedi_writeback_listener"),
-    ("fedi-nostr-personal", "app.services.fedi_nostr_personal_service", "start_fedi_personal_scheduler"),
     # ActivityPub delivery: members' Nostr events → their fediverse followers. The tick reads
     # `activitypub_enabled` each time, so it is a no-op until an admin turns the feature on.
     ("activitypub", "app.services.activitypub.outbox", "start_activitypub_delivery"),

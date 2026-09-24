@@ -14,9 +14,8 @@ the relay by the same id (`/ap/objects/<event id>`), so there is exactly one cop
     kind 3         → Follow / Undo(Follow) for fediverse accounts (puppets) added to or removed from
                                     the contact list -- which is what brings their posts in
 
-COMPATIBILITY WITH THE PLEROMA BRIDGE: a member whose activity already reaches the fediverse through
-their own linked Pleroma account is skipped entirely here (actors.uses_linked_account), and anything
-carrying a `proxy` tag is a mirror, never a member's own words, so it is never sent back out.
+Anything carrying a `proxy` tag is a mirror of somebody else's words (a note that arrived from the
+fediverse, or another bridge's copy), never a member's own, so it is never sent back out.
 """
 from __future__ import annotations
 
@@ -81,7 +80,11 @@ async def resolve_pubkey(pubkey: str) -> dict:
         shown = await actors.readable_handle(pubkey) or name
         return {"href": convert.actor_url(base, name), "name": f"@{shown}@{config.domain()}"}
     row = _puppet_row(pubkey)
-    if row and row.actor_uri and not config.host_blocked(remote.host_of(row.actor_uri)):
+    # A blocked ACCOUNT (a `user@host` line, or its puppet npub on the relay blocklist) is as out of
+    # reach as a blocked instance: a member's mention or reply must not deliver to it either.
+    if row and row.actor_uri and not config.host_blocked(remote.host_of(row.actor_uri)) \
+            and not (row.acct and config.account_blocked(row.acct)) \
+            and not actors.puppet_blocked(row.actor_uri, row.acct or ""):
         canonical, _inbox = await _canonical(row.actor_uri)
         href = canonical or row.actor_uri
         return {"href": href, "name": f"@{row.acct}" if row.acct else href, "remote": True}
@@ -115,6 +118,20 @@ def _blocked_cached(actor_id: str) -> bool:
     from app.services.activitypub.inbox import acct_of_actor
     acct = acct_of_actor(hit[1])
     return config.account_blocked(acct) or actors.puppet_blocked(actor_id, acct)
+
+
+_gone_cache = {"at": 0.0, "set": frozenset()}
+
+
+async def _gone() -> frozenset:
+    """Deleted fediverse accounts (state.mark_gone), read at most every five minutes."""
+    now = time.monotonic()
+    if now - _gone_cache["at"] > 300:
+        try:
+            _gone_cache.update(at=now, set=frozenset(await state.gone_actors()))
+        except Exception:
+            _gone_cache["at"] = now - 240           # try again in a minute; keep the last good set
+    return _gone_cache["set"]
 
 
 def _is_mirror(ev: dict) -> bool:
@@ -154,6 +171,32 @@ def _referenced_pubkeys(ev: dict) -> list:
     return uniq[:30]
 
 
+async def _post_refs(ev: dict) -> tuple[dict, str]:
+    """({bech32: fediverse address}, quoted address) for the posts an event references -- NIP-18's
+    `q` tag and `nostr:note1…/nevent1…` in the text. A post with no fediverse address is left to
+    the converter (it links this node's page for it)."""
+    from app.services.nostr import bech32
+    refs = {}
+    for m in convert._NOSTR_REF_RE.finditer(ev.get("content") or ""):
+        value = m.group(1)
+        if value.lower().startswith(("note1", "nevent1")):
+            raw = bech32.decode_any(value)
+            if raw:
+                refs[value] = raw.hex()
+    q = next((t[1] for t in ev.get("tags") or [] if len(t) > 1 and t[0] == "q"
+              and len(t[1]) == 64), "")
+    links, by_id = {}, {}
+    for eid in list(dict.fromkeys(list(refs.values()) + ([q] if q else [])))[:5]:
+        target = await resolve_event(eid)
+        if target:
+            by_id[eid] = target["uri"]
+    for value, eid in refs.items():
+        if eid in by_id:
+            links[value] = by_id[eid]
+    quote = by_id.get(q) if q else next((by_id[e] for e in refs.values() if e in by_id), "")
+    return links, quote or ""
+
+
 async def _canonical(actor_uri: str) -> tuple[str, str]:
     """(canonical actor id, inbox) for an address from our own records -- see remote.actor(alias)."""
     try:
@@ -176,19 +219,20 @@ async def plan(ev: dict, member: str) -> list:
         return []
     if not actors.is_actor(member) and ev.get("kind") == 3:
         return []          # a non-local user's follows would bring posts only to THIS relay, which they do not read
-    # A member on a linked Pleroma account already posts, replies, likes and boosts THERE, so none of
-    # that is sent from here (one of each on the fediverse, never two). FOLLOWS are the exception:
-    # nobody sees a follow twice, and it is what brings the followed accounts' posts in over ActivityPub.
-    if ev.get("kind") != 3 and actors.uses_linked_account(member):
-        return []
     me = convert.actor_url(base, name)
     followers_url = f"{me}/followers"
     kind = ev.get("kind")
-    fol = [f["inbox"] for f in await state.followers(member) if not _blocked_cached(f.get("actor", ""))]
+    gone = await _gone()
+    fol = [f["inbox"] for f in await state.followers(member)
+           if not _blocked_cached(f.get("actor", "")) and f.get("actor") not in gone]
     out: list = []
 
     if kind in (1, 1111):
         parent = parent_of(ev)
+        if kind == 1111 and not parent:
+            # A comment on an article (`a`) or a web page (`i`): nothing on the fediverse it could
+            # reply to, and sent anyway it arrived as a standalone post with no context.
+            return []
         reply_uri = reply_actor = ""
         if parent:
             target = await resolve_event(parent)
@@ -200,15 +244,20 @@ async def plan(ev: dict, member: str) -> list:
             who = await resolve_pubkey(pk)
             if who:
                 mentions[pk] = who
+        links, quote = await _post_refs(ev)
         note = convert.note_from_event(ev, base=base, actor=me, followers=followers_url, mentions=mentions,
-                                       in_reply_to=reply_uri, reply_to_actor=reply_actor)
+                                       in_reply_to=reply_uri, reply_to_actor=reply_actor, links=links, quote=quote)
         act = convert.create(note, me)
         targets = set(fol)
+        extra = set()
         for who in list(mentions.values()) + ([{"href": reply_actor, "remote": target["remote"]}] if reply_actor else []):
             if who.get("remote") and who.get("href"):
                 inbox = await _inbox_for(who["href"])
                 if inbox:
-                    targets.add(inbox)
+                    extra.add(inbox)
+        targets |= extra
+        if extra - set(fol):
+            await _remember_sent(ev["id"], extra - set(fol), kind=kind)
         out = [(i, act) for i in sorted(targets)]
 
     elif kind in (6, 7):
@@ -221,13 +270,15 @@ async def plan(ev: dict, member: str) -> list:
             act = convert.announce(ev, base=base, actor=me, followers=followers_url, target=target["uri"],
                                    target_actor=target.get("actor", ""))
             out = [(i, act) for i in sorted(set(fol) | ({author_inbox} if author_inbox else set()))]
+            if author_inbox:
+                await _remember_sent(ev["id"], author_inbox, kind=6)
         elif (ev.get("content") or "").strip() == "-":
             return []                          # a NIP-25 dislike: the fediverse has no such thing
         else:
             act = convert.like(ev, base=base, actor=me, target=target["uri"])
             if author_inbox:
                 out = [(author_inbox, act)]
-                await _remember_sent(ev["id"], author_inbox)
+                await _remember_sent(ev["id"], author_inbox, kind=7)
 
     elif kind == 5:
         kinds = {t[1] for t in ev.get("tags") or [] if len(t) > 1 and t[0] == "k"}
@@ -235,18 +286,25 @@ async def plan(ev: dict, member: str) -> list:
             if len(t) < 2 or t[0] != "e":
                 continue
             gone = t[1]
-            if "7" in kinds and "1" not in kinds:
-                inbox = await _sent_to(gone)
+            # What it was is taken from our own record of sending it first: many clients send a
+            # kind-5 with no `k` tag, and read from the tags alone deleting a reaction sent a Delete
+            # of a Note (and never the Undo the liked author needed).
+            rec = await _sent_rec(gone)
+            was = str(rec.get("kind") or "")
+            if not was:
+                was = "7" if ("7" in kinds and "1" not in kinds) else "6" if ("6" in kinds and "1" not in kinds) else "1"
+            extra = set(rec.get("inboxes") or [])
+            if was == "7":
                 act = convert.undo(convert.activity_url(base, gone), "Like", base=base, actor=me, target="",
                                    deletion_id=ev["id"])
-                out += [(inbox, act)] if inbox else []
-            elif "6" in kinds and "1" not in kinds:
+                out += [(i, act) for i in sorted(extra)]
+            elif was == "6":
                 act = convert.undo(convert.activity_url(base, gone), "Announce", base=base, actor=me, target="",
                                    deletion_id=ev["id"])
-                out += [(i, act) for i in sorted(set(fol))]
+                out += [(i, act) for i in sorted(set(fol) | extra)]
             else:
                 act = convert.delete_note(gone, base=base, actor=me, followers=followers_url, deletion_id=ev["id"])
-                out += [(i, act) for i in sorted(set(fol))]
+                out += [(i, act) for i in sorted(set(fol) | extra)]
 
     elif kind == 0:
         doc = await actors.person(name, member)
@@ -285,24 +343,27 @@ async def _follows(ev: dict, member: str, me: str) -> list:
     out = []
     for actor_uri in sorted(set(resolved) - set(current)):
         inbox = resolved[actor_uri]
-        follow = {"@context": convert.AS_CONTEXT, "id": f"{me}#follows/{_h(actor_uri)}", "type": "Follow",
-                  "actor": me, "object": actor_uri}
-        await state.set_following(member, actor_uri, inbox, "pending")
+        # A NEW id every time: Pleroma and Akkoma drop an activity whose id they already hold, so a
+        # follow → unfollow → follow again reused the first Follow's id and the refollow was ignored
+        # (for ever "pending"). The hash of the target stays first -- _accept maps an Accept back by it.
+        fid = f"{me}#follows/{_h(actor_uri)}/{int(time.time() * 1000)}"
+        follow = {"@context": convert.AS_CONTEXT, "id": fid, "type": "Follow", "actor": me, "object": actor_uri}
+        await state.set_following(member, actor_uri, inbox, "pending", follow_id=fid)
         out.append((inbox, follow))
     for actor_uri in sorted(set(current) - set(resolved) - unresolved_known):
         inbox = current[actor_uri].get("inbox") or await _inbox_for(actor_uri)
         await state.drop_following(member, actor_uri)
         if inbox:
-            out.append((inbox, {"@context": convert.AS_CONTEXT, "id": f"{me}#follows/{_h(actor_uri)}/undo",
+            fid = current[actor_uri].get("id") or f"{me}#follows/{_h(actor_uri)}"   # older records: the old id
+            out.append((inbox, {"@context": convert.AS_CONTEXT, "id": f"{fid}/undo/{int(time.time() * 1000)}",
                                 "type": "Undo", "actor": me,
-                                "object": {"id": f"{me}#follows/{_h(actor_uri)}", "type": "Follow",
-                                           "actor": me, "object": actor_uri}}))
+                                "object": {"id": fid, "type": "Follow", "actor": me, "object": actor_uri}}))
     if out:
         state.forget_followed_cache()
     return out
 
 
-async def public_posts(member: str, *, until: int = 0, limit: int = 20) -> tuple[list, int]:
+async def public_posts(member: str, *, until: int = 0, after: str = "", limit: int = 20) -> tuple[list, int, str]:
     """(Create activities, oldest created_at) for a member's recent public posts, newest first -- what
     their OUTBOX collection serves. A remote server fills a profile from it: Akkoma and Mastodon read
     it when somebody opens the profile, and with it empty they showed only whatever had happened to
@@ -310,16 +371,21 @@ async def public_posts(member: str, *, until: int = 0, limit: int = 20) -> tuple
     no mirrors, no protected events, and a reply only when it answers something on the fediverse."""
     base, name = config.base_url(), actors.handle(member)
     if not base or not name:
-        return [], 0
+        return [], 0, ""
     me = convert.actor_url(base, name)
     flt = {"kinds": [1], "authors": [member], "limit": max(limit * 3, 30)}
     if until:
-        flt["until"] = int(until) - 1
+        # INCLUSIVE, with the id of the last one served as the tie-break: `until - 1` skipped every
+        # post published in the same second as the last one on the previous page.
+        flt["until"] = int(until)
     evs = await nostr_store._ws_query(settings_store._port(), [flt], strict=True)
     evs.sort(key=lambda e: (-int(e.get("created_at") or 0), e.get("id", "")))
-    items, oldest = [], 0
+    items, oldest, last_id = [], 0, ""
     for ev in evs:
-        oldest = int(ev.get("created_at") or 0)
+        ts = int(ev.get("created_at") or 0)
+        if until and ts == int(until) and after and ev.get("id", "") <= after:
+            continue
+        oldest, last_id = ts, ev.get("id", "")
         if _is_mirror(ev) or _protected(ev):
             continue
         reply_uri = reply_actor = ""
@@ -334,33 +400,50 @@ async def public_posts(member: str, *, until: int = 0, limit: int = 20) -> tuple
             who = await resolve_pubkey(pk)
             if who:
                 mentions[pk] = who
+        links, quote = await _post_refs(ev)
         note = convert.note_from_event(ev, base=base, actor=me, followers=f"{me}/followers", mentions=mentions,
-                                       in_reply_to=reply_uri, reply_to_actor=reply_actor)
+                                       in_reply_to=reply_uri, reply_to_actor=reply_actor, links=links, quote=quote)
         items.append(convert.create(note, me))
         if len(items) >= limit:
             break
-    return items, oldest
+    return items, oldest, last_id
+
+
+def counts_as_public(ev: dict) -> bool:
+    """Whether an event is one of the posts an outbox serves (a label's count, so replies are
+    included without resolving their parents)."""
+    return not _is_mirror(ev) and not _protected(ev)
 
 
 def _h(s: str) -> str:
     return hashlib.sha256(s.encode()).hexdigest()[:16]
 
 
-async def _remember_sent(event_id: str, inbox: str) -> None:
+async def _remember_sent(event_id: str, inbox, kind: int = 7) -> None:
+    """Where an event went BEYOND the followers (the replied-to author, the mentioned, the boosted or
+    liked author) and what it was -- so its deletion reaches the same servers, as the right verb,
+    even when the kind-5 carries no `k` tag and the relay has already dropped the original."""
+    inboxes = [inbox] if isinstance(inbox, str) else sorted(set(inbox))
+    inboxes = [i for i in inboxes if i]
+    if not inboxes:
+        return
     try:
         await nostr_store.put_doc(settings_store._port(), settings_store._operator_seckey(None),
-                                  _SENT + event_id, {"inbox": inbox})
+                                  _SENT + event_id, {"inbox": inboxes[0], "inboxes": inboxes[:50], "kind": kind})
     except Exception:
         pass
 
 
-async def _sent_to(event_id: str) -> str:
+async def _sent_rec(event_id: str) -> dict:
     try:
         doc = await nostr_store.get_doc(settings_store._port(), _SENT + event_id,
                                         seckey=settings_store._operator_seckey(None))
-        return (doc or {}).get("inbox", "")
     except Exception:
-        return ""
+        return {}
+    if not isinstance(doc, dict):
+        return {}
+    inboxes = doc.get("inboxes") or ([doc["inbox"]] if doc.get("inbox") else [])
+    return {"kind": doc.get("kind"), "inboxes": [i for i in inboxes if isinstance(i, str) and i]}
 
 
 # ------------------------------------------------------------------------------------ delivery
@@ -368,10 +451,43 @@ async def _sent_to(event_id: str) -> str:
 MAX_RETRIES_QUEUED = 5000
 
 
+_down: dict = {}                 # host -> (consecutive failures, resting until)
+_DOWN_AFTER = 5
+
+
+def _host_resting(host: str) -> float:
+    """Seconds a server that keeps failing is left alone for (0 when it is not)."""
+    n, until = _down.get(host, (0, 0.0))
+    return max(0.0, until - time.time())
+
+
+def _note_result(host: str, ok: bool) -> None:
+    """A per-server circuit breaker. A dead instance used to cost a 12-second timeout on EVERY post
+    to EVERY one of its followers; after a run of failures it rests (15 minutes, doubling to 4 hours)
+    and what was meant for it waits in the retry queue instead."""
+    if ok:
+        _down.pop(host, None)
+        return
+    n = _down.get(host, (0, 0.0))[0] + 1
+    until = time.time() + min(900 * 2 ** max(0, n - _DOWN_AFTER), 4 * 3600) if n >= _DOWN_AFTER else 0.0
+    _down[host] = (n, until)
+    if len(_down) > 20000:
+        for k in sorted(_down, key=lambda k: _down[k][1])[:4000]:
+            _down.pop(k, None)
+
+
 async def _send(inbox: str, activity: dict, member: str, attempt: int = 0) -> None:
+    host = remote.host_of(inbox)
+    resting = _host_resting(host)
+    if resting:
+        if attempt < len(_RETRY_DELAYS) and len(_retries) < MAX_RETRIES_QUEUED:
+            _retries.append((time.time() + max(resting, _RETRY_DELAYS[attempt]), inbox, activity, member, attempt + 1))
+        _stats["failed"] += 1
+        return
     keys = await state.keypair(member)               # driven by an event on this relay: never limited
     key_id, priv = actors.signing(member, keys)
     status = await remote.deliver(inbox, activity, key_id=key_id, private_pem=priv)
+    _note_result(host, 200 <= status < 500 and status not in (408, 429))
     if 200 <= status < 300:
         _stats["delivered"] += 1
         return
@@ -706,6 +822,14 @@ def start_activitypub_delivery() -> None:
     _scheduler.add_job(_job, "interval", seconds=_TICK_SECONDS, id="activitypub_delivery",
                        max_instances=1, coalesce=True)
     _scheduler.add_job(_catchup, "interval", seconds=60, id="activitypub_follow_catchup",
+                       max_instances=1, coalesce=True)
+
+    def _prune():
+        from app.services.activitypub import ledger
+        n = ledger.prune()
+        if n:
+            logger.info("[activitypub] pruned %d delivered-note record(s) past retention", n)
+    _scheduler.add_job(_prune, "interval", hours=24, id="activitypub_ledger_prune",
                        max_instances=1, coalesce=True)
     _scheduler.start()
     logger.info("[activitypub] delivery loop started (every %ss; off until activitypub_enabled)", _TICK_SECONDS)

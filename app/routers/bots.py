@@ -34,14 +34,16 @@ class BotPayload(BaseModel):
     name: str
     enabled: bool = True
     bot_type: str = "text"          # "text" | "image"
-    platform: str = "pleroma"       # "pleroma"
+    platform: str = "nostr"         # "nostr" (a Nostr account on this node, on the fediverse via its
+    #                                 ActivityPub server) | "pleroma" (an account on a Pleroma instance)
     host: Optional[str] = ""        # node hostname; empty = any node
     modes: Optional[str] = ""       # comma-separated main.py flags
     config: Dict[str, Any] = {}     # all other per-bot fields (creds, prompt, feature opts)
 
 
 class OAuthTokenPayload(BaseModel):
-    platform: str = "pleroma"       # "pleroma" (OAuth password grant)
+    platform: str = "nostr"         # "nostr" (a Nostr account on this node, on the fediverse via its
+    #                                 ActivityPub server) | "pleroma" (an account on a Pleroma instance) (OAuth password grant)
     server: str                     # instance URL, e.g. https://poster.place
     username: str                   # bot account login (handle, no leading @)
     password: str
@@ -186,6 +188,12 @@ async def provision_nostr_identity(payload: ProvisionPayload, request: Request,
     of Trust. The profile (name/nip05/avatar) is saved in the bot's config and published by the bot
     itself on startup (when it's an operator key → always accepted), which is far more reliable than
     racing the WoT here. Returns the nsec+npub (+ resolved nip05) for the form to save."""
+    return await _mint_identity(payload.nip05 or "", request.url.hostname or "")
+
+
+async def _mint_identity(nip05: str, host: str) -> dict:
+    """The server's half of a new bot identity: a fresh key, the operator following it, the relay's
+    Web of Trust taking it in. Shared by "Generate identity" and by creating a bot without a key."""
     from app.services.nostr import bip340, bech32, event as _nevent
     from app.services import settings_store, keystore
 
@@ -203,8 +211,7 @@ async def provision_nostr_identity(payload: ProvisionPayload, request: Request,
     #    dropping human grants (e.g. the admin) from the list. Don't touch the whitelist for bots.
 
     # 2) resolve the nip05 (local part → name@thishost) — the actual registration happens on Save
-    host = request.url.hostname or ""
-    nip05 = (payload.nip05 or "").strip()
+    nip05 = (nip05 or "").strip()
     if nip05 and "@" not in nip05:
         nip05 = f"{nip05}@{host}"
 
@@ -401,17 +408,51 @@ def _vet_config(config: dict) -> dict:
     return cfg
 
 
+def _free_nip05_name(wanted: str, pubkey_hex: str = "") -> str:
+    """A name in this node's NIP-05 registry that is FREE (or already this key's). Registering a bot
+    replaces any line with the same name, so an automatic name must never be one somebody holds."""
+    from app.services import settings_store
+    taken = {}
+    for ln in (settings_store.get("nostr_relay_nip05_names", "") or "").split("\n"):
+        toks = ln.strip().replace("=", " ").replace(",", " ").split()
+        if len(toks) >= 2 and not toks[0].startswith("#"):
+            taken[toks[0].lower()] = nostr_service.to_pubkey_hex(toks[1])
+    base = re.sub(r"[^a-z0-9_.-]", "", (wanted or "").lower()).strip("._-")[:30] or "bot"
+    for cand in [base, base + "-bot"] + [f"{base}-bot{i}" for i in range(2, 100)]:
+        if taken.get(cand) in (None, pubkey_hex):
+            return cand
+    return base + "-" + os.urandom(3).hex()
+
+
+def _ensure_identity(name: str, config: dict, host: str) -> dict:
+    """A Nostr bot created or saved WITHOUT a key gets one -- a free NIP-05 name and its display name
+    too -- so it is @name@<domain> on the fediverse from its first start with nothing to paste. A key
+    the admin supplied (or "Generate identity" made) is kept exactly as given."""
+    cfg = dict(config or {})
+    if cfg.get("nostr_nsec"):
+        return cfg
+    local = _free_nip05_name((cfg.get("nostr_profile_nip05") or "").split("@", 1)[0] or name)
+    minted = _run_async(_mint_identity(local, host))
+    cfg["nostr_nsec"] = minted["nsec"]
+    cfg["nostr_profile_nip05"] = minted["nip05"] or local
+    cfg.setdefault("nostr_profile_name", name)
+    return cfg
+
+
 @router.post("", status_code=status.HTTP_201_CREATED)
-def create_bot(payload: BotPayload, db: Session = Depends(get_db),
+def create_bot(payload: BotPayload, request: Request, db: Session = Depends(get_db),
                admin: User = Depends(get_admin_user)):
+    config = payload.config
+    if (payload.platform or "nostr") == "nostr":
+        config = _ensure_identity(payload.name.strip(), config, request.url.hostname or "")
     bot = Bot(
         name=payload.name.strip(),
         enabled=payload.enabled,
         bot_type=payload.bot_type,
-        platform=payload.platform,
+        platform=payload.platform or "nostr",
         host=(payload.host or "").strip(),
-        modes=_concord_default((payload.modes or "").strip(), payload.config),
-        config=json.dumps(_vet_config(payload.config)),
+        modes=_concord_default((payload.modes or "").strip(), config),
+        config=json.dumps(_vet_config(config)),
     )
     db.add(bot)
     try:
@@ -436,7 +477,7 @@ def create_bot(payload: BotPayload, db: Session = Depends(get_db),
 
 
 @router.put("/{bot_id}")
-def update_bot(bot_id: int, payload: BotUpdate, db: Session = Depends(get_db),
+def update_bot(bot_id: int, payload: BotUpdate, request: Request, db: Session = Depends(get_db),
                admin: User = Depends(get_admin_user)):
     bot = db.query(Bot).filter(Bot.id == bot_id).first()
     if not bot:
@@ -455,8 +496,12 @@ def update_bot(bot_id: int, payload: BotUpdate, db: Session = Depends(get_db),
     if payload.modes is not None:
         bot.modes = payload.modes.strip()
     if payload.config is not None:
-        # Both halves, or editing an existing bot walks straight past the check.
-        bot.config = json.dumps(_vet_config(payload.config))
+        # Both halves, or editing an existing bot walks straight past the check. A Nostr bot saved
+        # without a key (e.g. one just switched over from Pleroma) gets its identity here.
+        cfg = payload.config
+        if (bot.platform or "") == "nostr":
+            cfg = _ensure_identity(bot.name, cfg, request.url.hostname or "")
+        bot.config = json.dumps(_vet_config(cfg))
     try:
         db.commit()
     except IntegrityError:

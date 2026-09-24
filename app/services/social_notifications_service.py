@@ -1,5 +1,6 @@
-"""Relay Pleroma notifications to a user's Telegram chat, and post
-replies back to the originating platform when the user replies to a forwarded message.
+"""Relay a user's Nostr notifications to their Telegram chat, and post replies back to Nostr when
+the user replies to a forwarded message. (The Pleroma half went with the Pleroma bridge: fediverse
+accounts now reach this node over ActivityPub and arrive as Nostr events, so they are relayed here.)
 
 A background poller (started from app.main on port 3051, mirroring logs_scheduler) calls
 poll_once() on an interval. The Telegram webhook handler calls handle_reply() when a user
@@ -15,7 +16,6 @@ from sqlalchemy.orm import Session
 
 import json
 from app.models import User, SocialReplyMap, UserSetting
-from app.services import pleroma_service
 from app.services import settings_store
 from app.services.nostr import nostr_service
 from app.services.telegram_service import TelegramService
@@ -56,25 +56,6 @@ def _strip_html(raw: str) -> str:
     return html.unescape(text).strip()
 
 
-
-
-def _norm_pleroma(n: dict) -> dict:
-    acct = n.get("account") or {}
-    status = n.get("status") or {}
-    actor_str = "@" + (acct.get("acct") or acct.get("username", "?"))
-    return {
-        "platform": "pleroma",
-        "type": n.get("type", "notification"),
-        "actor": actor_str,
-        "actor_display": acct.get("display_name") or acct.get("username") or actor_str,
-        "actor_avatar": acct.get("avatar"),
-        "text": _strip_html(status.get("content", "")) if status else "",
-        "reply_target": status.get("id") if status else None,
-        "room_id": None,
-        "event_id": None,
-        "visibility": status.get("visibility", "public") if status else "public",
-        "url": status.get("url") if status else None,
-    }
 
 
 _NOSTR_KIND_TYPE = {1: "mention", 1111: "mention", 6: "repost", 7: "reaction"}
@@ -140,7 +121,7 @@ def _norm_nostr(ev: dict, actor_label: Optional[str] = None) -> dict:
     }
 
 
-_PLATFORM_ICON = {"pleroma": "💧", "nostr": "🟣"}
+_PLATFORM_ICON = {"nostr": "🟣"}
 
 
 def _format(norm: dict) -> str:
@@ -232,44 +213,6 @@ async def _deliver(db: Session, tg: TelegramService, user: User, chat_id: str, n
     return True
 
 
-async def _relay_pleroma(db: Session, tg: TelegramService, user: User, chat_id: str) -> None:
-    if not user.pleroma_notif_since:
-        # First poll: establish the cursor without forwarding the backlog.
-        raw = await pleroma_service.fetch_notifications(
-            user.pleroma_instance_url, user.pleroma_access_token, limit=1)
-        if raw:
-            user.pleroma_notif_since = raw[0].get("id")
-            db.commit()
-        return
-    # Drain forward from the cursor page-by-page with min_id (GAPLESS). A single since_id fetch drops
-    # everything beyond one page when more than `limit` notifications arrive between polls (the
-    # "missing a bunch" bug); min_id returns the items immediately after the cursor so nothing is lost.
-    for _ in range(_NOTIF_DRAIN_PAGES):
-        raw = await pleroma_service.fetch_notifications(
-            user.pleroma_instance_url, user.pleroma_access_token,
-            min_id=user.pleroma_notif_since, limit=_NOTIF_PAGE)
-        if not raw:
-            break
-        last_ok = None
-        for n in reversed(raw):       # API returns newest-first → deliver oldest-first (chronological)
-            if not await _deliver(db, tg, user, chat_id, _norm_pleroma(n)):
-                break                 # Telegram send failed → stop; advance only to the last delivered
-            last_ok = n.get("id")
-        if last_ok:                   # advance to the newest SUCCESSFULLY-delivered (not the newest fetched)
-            user.pleroma_notif_since = last_ok
-            _prune(db)
-            try:
-                db.commit()
-            except Exception:         # poll txn killed (idle timeout) → persist the cursor in a fresh
-                db.rollback()         # session so we don't re-deliver this whole page next poll
-                from app.database import commit_in_fresh_session
-                commit_in_fresh_session(lambda s: setattr(s.get(User, user.id), "pleroma_notif_since", last_ok))
-        if not last_ok or len(raw) < _NOTIF_PAGE:   # send failure, or partial page (caught up) → stop draining
-            break
-
-
-
-
 def _nostr_cfg(user: User) -> tuple[bytes, list, dict]:
     """(seckey, relays, media_cfg) for a user's linked Nostr account."""
     seckey = nostr_service.decode_seckey(user.nostr_nsec)
@@ -309,11 +252,6 @@ async def _relay_nostr(db: Session, tg: TelegramService, user: User, chat_id: st
 
 async def _poll_user(db: Session, tg: TelegramService, user: User) -> None:
     chat_id = str(user.telegram_chat_id)
-    if user.pleroma_enabled and user.pleroma_instance_url and user.pleroma_access_token:
-        try:
-            await _relay_pleroma(db, tg, user, chat_id)
-        except Exception as e:
-            logger.warning(f"[social] pleroma relay failed for user {user.id}: {e}")
     if getattr(user, "nostr_enabled", False) and user.nostr_nsec:
         try:
             await _relay_nostr(db, tg, user, chat_id)
@@ -363,14 +301,6 @@ async def handle_reply(db: Session, chat_id, reply_to_message_id: int, text: str
     if not user:
         return None
     try:
-        if row.platform == "pleroma":
-            if not row.target_id:
-                return "⚠️ That notification has nothing to reply to."
-            await pleroma_service.post_status(
-                user.pleroma_instance_url, user.pleroma_access_token, text,
-                visibility=row.visibility or "public", in_reply_to_id=row.target_id,
-            )
-            return "✅ Reply posted to Pleroma."
         if row.platform == "nostr":
             if not row.target_id:
                 return "⚠️ That notification has nothing to reply to."

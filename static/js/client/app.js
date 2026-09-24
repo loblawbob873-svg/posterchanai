@@ -134,13 +134,6 @@
       const r=await fetch('/api/auth/settings'); if(!r.ok) return;
       const s=await r.json();
       if(s && s.theme) applyTheme(s.theme);
-      if(s && typeof s.fedi_only==='boolean'){
-        _fediModeSupported=true; _setFediOnly(s.fedi_only);
-        try{
-          await _loadFediOnlyHistory();
-          if(VIEW==='home'||VIEW==='global') _drawTimeline(true);
-        }catch(e){ console.warn(e.message); }
-      }
     }catch(_){}
   }
   // PWA install: capture the install prompt (fires before the app mounts) so a button can trigger it.
@@ -1503,84 +1496,12 @@
     } finally { _selfProofP=null; } })();
     return _selfProofP;
   }
-  // A signed routing marker keeps Fediverse-only actions private across retries and cache syncs.
-  const _FEDI_SOCIAL_KINDS = new Set([1,5,6,7,16,1068,1018,1111,1311,30023,30311]);
-  /* What the BRIDGE can actually deliver in Fediverse-only mode -- a mirror of
-   * `fedi_only_service.SUPPORTED_KINDS`. It is deliberately SMALLER than the set above: that one
-   * decides which kinds the mode APPLIES to (and so must never reach a relay), this one decides
-   * which of them can be carried to the fediverse. A kind in the first and not the second has
-   * nowhere to go, which is why publish() refuses it out loud instead of signing it.
-   * `tests/test_fedi_only_mode.py` fails if the two copies drift. */
-  /* Must match fedi_only_service.SUPPORTED_KINDS. 1111 is the ordinary reply kind — every
-     reply to a kind-1 note gets a NIP-22 scope from `_commentScope` — so omitting it here
-     refused EVERY reply in Fediverse-only mode, with a message about a post type. */
-  const _FEDI_DELIVERABLE_KINDS = new Set([1,5,6,7,16,1111]);
-  let _fediModeSupported=null;
+  // Social kinds are bound to the account that started them: a signer switched mid-publish must not
+  // post as somebody else.
+  const _SOCIAL_KINDS = new Set([1,5,6,7,16,1068,1018,1111,1311,30023,30311]);
+  // A "fediverse-only" event: the retired Pleroma mode signed these and never published them to a
+  // relay. None are made any more; the marker is still read so an old one is never sent anywhere.
   function _fediOnlyEvent(ev){ return !!(ev && (ev.tags||[]).some(t=>t[0]==='client-mode' && t[1]==='fedi-only')); }
-  function _fediOnly(){ return !!(ME && ClientSettings.get('fediOnly:'+ME.pubkey,false)); }
-  function _setFediOnly(value){
-    if(!ME) return;
-    const changed=_fediOnly()!==!!value;
-    ClientSettings.set('fediOnly:'+ME.pubkey,!!value);
-    if(changed && (VIEW==='home' || VIEW==='global')){ try{ switchView(VIEW); }catch(_){} }
-  }
-  async function _loadFediOnlyHistory(all=false){
-    if(_standalone() || !ME) return [];
-    const pk=ME.pubkey, out=[]; let cursor='';
-    await ensureAiSession();
-    do{
-      const r=await fetch('/api/pleroma/private-events?limit=200'+cursor);
-      if(!r.ok) throw new Error('Could not load your Fediverse-only history');
-      const d=await r.json(), events=Array.isArray(d.events)?d.events:[];
-      if(!ME || ME.pubkey!==pk) throw new Error('Account changed — history load stopped');
-      for(const ev of events) if(ev.pubkey===pk && _fediOnlyEvent(ev)){
-        Store.saveEvent(ev); if(ev.kind===5) _applyDeletion(ev); out.push(ev);
-      }
-      if(!all || events.length<200) break;
-      const last=events[events.length-1], next='&before='+last.created_at+'&before_id='+encodeURIComponent(last.id);
-      if(next===cursor) throw new Error('Could not finish loading Fediverse-only history');
-      cursor=next;
-    }while(true);
-    invalidateCounts();
-    return out;
-  }
-  async function _refreshFediOnly(){
-    if(_standalone()) return _fediOnly();
-    const pk=ME && ME.pubkey;
-    await ensureAiSession();
-    const r=await fetch('/api/auth/settings');
-    if(!r.ok) throw new Error('Could not check your posting mode. Try again.');
-    const s=await r.json();
-    if(!ME || ME.pubkey!==pk) throw new Error('Account changed — posting stopped');
-    _fediModeSupported=typeof s.fedi_only==='boolean';
-    if(!_fediModeSupported){
-      if(_fediOnly()) throw new Error('Your instance needs an update before Fediverse-only posting can work');
-      return false;
-    }
-    _setFediOnly(s.fedi_only);
-    return s.fedi_only;
-  }
-  Relay.socialRoute=async function(ev, broadcastOnly=false){
-    if(!_FEDI_SOCIAL_KINDS.has(ev.kind)) return null;
-    if(_standalone()) return (_fediOnly() || _fediOnlyEvent(ev))
-      ? {ok:false,noQueue:true,msg:'Connect your PosterChan instance to post to the Fediverse'} : null;
-    const pk=ME && ME.pubkey;
-    try{
-      await ensureAiSession();
-      if(!ME || ME.pubkey!==pk) throw new Error('Account changed — posting stopped');
-      if(_fediModeSupported!==true && !_fediOnlyEvent(ev)){
-        await _refreshFediOnly();
-        if(_fediModeSupported===false && !_fediOnly()) return null;
-      }
-      const r=await fetch('/api/pleroma/social-publish',{method:'POST',headers:{'Content-Type':'application/json'},
-        body:JSON.stringify({event:ev,broadcast_only:broadcastOnly})});
-      if(!r.ok) throw new Error('Could not reach the Fediverse posting route ('+r.status+')');
-      const d=await r.json();
-      if(d.route==='nostr' && !_fediOnlyEvent(ev)) return null;
-      if(d.route!=='fediverse') throw new Error('Could not confirm your posting mode');
-      return {ok:!!d.ok,msg:d.msg||'',fediverse:true,noQueue:true};
-    }catch(e){ return {ok:false,noQueue:_fediOnly()||_fediOnlyEvent(ev),msg:e.message||'Could not check your posting mode'}; }
-  };
 
   /* EVERY PUBLISH IS COUNTED WHILE IT IS IN FLIGHT, because the composer closes its modal BEFORE it
    * publishes (a slow relay must not hold the dialog open) — and on the desktop a reply's modal is its
@@ -1649,38 +1570,7 @@
         }
       }
     }
-    if(_FEDI_SOCIAL_KINDS.has(kind)){
-      try{
-        if(await _refreshFediOnly() && !(kind===5 && opts && opts.publicDeletion) && !(tags||[]).some(t=>t[0]==='client-mode' && t[1]==='fedi-only')){
-          /* REFUSE BEFORE SIGNING WHAT THE BRIDGE CANNOT DELIVER.
-           *
-           * Marking an event fedi-only means it is NEVER published to a relay -- that is the mode's
-           * whole promise. But the server only delivers a subset (fedi_only_service.SUPPORTED_KINDS),
-           * so for a poll, a comment, a live chat message, an article or a live event the post went
-           * nowhere at all: not to Nostr, because it was marked; not to the fediverse, because the
-           * route refused it. Signed, sent, and dropped.
-           *
-           * Reported as "Drafts don't work either ... for fediverse bridge": a reply to an article
-           * or a comment is kind 1111 (see replyKindFor), which is exactly one of these.
-           *
-           * Saying so HERE, before the signature and the round trip, is the difference between a
-           * sentence naming the post type and a silent failure. The draft is kept either way -- the
-           * caller only removes it on ok -- so nothing is lost, and the person can post it with
-           * Fediverse-only mode off. */
-          if(!_FEDI_DELIVERABLE_KINDS.has(kind)){
-            const msg='Fediverse-only mode cannot send this post type (kind '+kind+') — '
-                      +'turn the mode off to post it to Nostr.';
-            toast(msg); return {ok:false,noQueue:true,msg};
-          }
-          tags=[...(tags||[]),['client-mode','fedi-only']];
-        }
-      }catch(e){
-        if(_fediOnly() || !ME || ME.pubkey!==postingAuthor){ toast(e.message); return {ok:false,noQueue:true,msg:e.message}; }
-        // Normal-mode drafts may still enter the offline outbox. Relay.socialRoute
-        // checks the server policy before any later delivery; no unchecked fallback.
-      }
-      if(!ME || ME.pubkey!==postingAuthor) return {ok:false,noQueue:true,msg:'Account changed — posting stopped'};
-    }
+    if(_SOCIAL_KINDS.has(kind) && (!ME || ME.pubkey!==postingAuthor)) return {ok:false,noQueue:true,msg:'Account changed — posting stopped'};
     // Interop (OPT-IN, default off): stamp your Monero address on your kind-1 notes (like Nosmero) so ANY
     // client can tip you straight from a post. Off by default — attaching a receiving address to EVERY post
     // links all your posts to one Monero identifier (a real privacy/correlation cost). Enable it in Edit
@@ -1690,7 +1580,7 @@
     if(!InstEmoji.loaded && InstEmoji.SC_RE.test(content||'')) { try{ await InstEmoji.load(); }catch(_){ } }
     tags = _enrichTags(kind, tags, content);
     const ev = await sign(kind, content, tags, kind===30078 && opts && Number.isSafeInteger(opts.createdAt) ? opts.createdAt : undefined);
-    if((_FEDI_SOCIAL_KINDS.has(kind) || kind===30078) && ev.pubkey!==postingAuthor) return {ok:false,noQueue:true,msg:'Account changed — posting stopped'};
+    if((_SOCIAL_KINDS.has(kind) || kind===30078) && ev.pubkey!==postingAuthor) return {ok:false,noQueue:true,msg:'Account changed — posting stopped'};
     if(opts && opts.deferLocal && (!ME || ME.pubkey!==postingAuthor)) return {ok:false,noQueue:true,msg:'Account changed — posting stopped'};
     if(!(opts && opts.deferLocal)){ Store.saveEvent(ev); invalidateCounts(); applySobLive(ev); }   // destructive requests wait for acknowledgement
     if(opts && typeof opts.onSigned==='function')opts.onSigned(ev);
@@ -2903,7 +2793,7 @@
   async function _loginProviders(){
     if(_providers) return _providers;
     try{ _providers = await fetch('/api/auth/providers').then(r=>r.ok?r.json():null); }catch(_){ }
-    return (_providers = _providers || { google:false, pleroma:false, pleroma_instance:'' });
+    return (_providers = _providers || { google:false });
   }
   function _stripQuery(){
     try{ history.replaceState(null, '', location.pathname + location.hash); }catch(_){ }
@@ -2939,10 +2829,10 @@
     }
   }
   function _custodialNotice(j){
-    modal(`<h3><svg class="ic h-ic" aria-hidden="true"><use href="#i-check"></use></svg>Signed in with ${enc(j.provider === 'google' ? 'Google' : 'your fediverse account')}</h3>
+    modal(`<h3><svg class="ic h-ic" aria-hidden="true"><use href="#i-check"></use></svg>Signed in with Google</h3>
       <div class="muted" style="line-height:1.6">
         <p>Your new Nostr identity was created <b>on this server</b>, so you can sign in again from any
-        device with ${enc(j.provider === 'google' ? 'Google' : 'that account')}.</p>
+        device with Google.</p>
         <p>That also means this server holds its key. Your secret key is in
         <b>Settings → Account</b> — save it somewhere safe, and you can take this identity to any other
         Nostr app, or move to a signer whenever you like.</p>
@@ -2953,25 +2843,10 @@
   async function _bindAccountLogins(){
     const p = await _loginProviders();
     const sec = $('#auth-accounts'); if(!sec) return;
-    if(!p.google && !p.pleroma) return;              // node offers neither — the section stays hidden
+    if(!p.google) return;                            // node offers none — the section stays hidden
     sec.classList.remove('hidden');
     const g = $('#btn-google');
     if(p.google && g){ g.classList.remove('hidden'); g.onclick = ()=>{ location.href = '/api/auth/google/start'; }; }
-    const pl = $('#btn-pleroma'), inp = $('#pleroma-instance');
-    if(p.pleroma && pl){
-      pl.classList.remove('hidden');
-      if(inp){ inp.classList.remove('hidden'); if(p.pleroma_instance) inp.value = p.pleroma_instance; }
-      pl.onclick = async ()=>{
-        authErr(''); pl.disabled = true;
-        try{
-          const r = await fetch('/api/auth/pleroma/start', { method:'POST', headers:{'Content-Type':'application/json'},
-                     body: JSON.stringify({ instance_url: (inp && inp.value || '').trim() }) });
-          const j = await r.json().catch(()=>({}));
-          if(!r.ok || !j.auth_url) throw new Error(j.detail || 'could not reach that instance');
-          location.href = j.auth_url;
-        }catch(e){ authErr((e && e.message) || 'could not start that sign-in'); pl.disabled = false; }
-      };
-    }
   }
 
   async function loginNsec(){
@@ -4180,10 +4055,6 @@
     if(!await uiConfirm('Delete ALL your posts, replies, likes/reactions and reposts, streams and stream chat? This asks relays to remove this activity and CANNOT be undone.\n\nYour profile, follows and DMs are NOT affected.')) return;
     setS('Finding your posts, reactions, reposts and streams…');
     const ids=new Map(); let until=Math.floor(Date.now()/1000)+1, limit=200, incomplete=false;
-    if(_fediModeSupported===true || _fediOnly()){
-      try{ for(const ev of await _loadFediOnlyHistory(true)) if(_DN_KINDS.includes(ev.kind)) ids.set(ev.id,ev); }
-      catch(_){ incomplete=true; }
-    }
     while(true){
       if(!ME || ME.pubkey!==author){ setS('Account changed — deletion stopped.'); return; }
       let batch=[];
@@ -5593,10 +5464,6 @@
       if(opts && opts.throwOnFail) throw new Error(r && r.cancelled ? 'cancelled' : ((r && r.msg) || 'your follow list was not saved — no relay accepted it'));
       return 0; }
     _persistFollows();
-    // follow-bridge the newly-followed bridged accounts on Pleroma too (same as single toggleFollow)
-    // Skipped for an IMPORT from that same Pleroma account: every one of them is already followed
-    // there, and asking again would be one pointless API call per account.
-    if(_pleromaLinked!==false && !(opts && opts.skipPleroma)) for(const pk of fresh){ const actor=Store.profileProxy(pk); if(actor) _followBridgedPleroma(actor); }
     return added;
   }
   // Returns true when the follow/unfollow actually landed on the relay (callers that show UI state check it).
@@ -5604,22 +5471,7 @@
     const have=FOLLOWS.has(pk);
     if(!await _editPList(3, pk, !have)) return false;   // relay didn't store the kind-3 → don't fake the follow
     have?FOLLOWS.delete(pk):FOLLOWS.add(pk); _persistFollows(); toast(have?'unfollowed':'followed');
-    // Follow-bridge: if we just FOLLOWED a bridged account (has a NIP-48 proxy = a real AP actor), also
-    // follow the real account on the user's linked Pleroma. Fire-and-forget — never blocks/undoes the
-    // Nostr follow. Self-gates: after one "not linked" answer it stops trying for the rest of the session.
-    if(!have && _pleromaLinked!==false){ const actor=Store.profileProxy(pk); if(actor) _followBridgedPleroma(actor); }
     return true;
-  }
-  async function _followBridgedPleroma(actor){
-    try{
-      const r=await fetch('/api/pleroma/follow-bridged',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({actor})});
-      const j=await r.json().catch(()=>({}));
-      if(j.connected===false){ _pleromaLinked=false; return; }   // no Pleroma linked → silent, stop this session
-      if(j.needs_reconnect){ _pleromaLinked=false; toast('Reconnect Pleroma once to enable follow-syncing'); return; }   // shown ONCE/session, then stop
-      _pleromaLinked=true;
-      if(j.ok) toast('✓ also followed on Pleroma');
-      // other errors (couldn't resolve / transient) are silent — never nag on a successful Nostr follow
-    }catch(_){}
   }
   // Who follows ME — the authors of kind-3 contact lists that p-tag my pubkey. Loaded once, lazily
   // (on the first people list), then cached. Used to badge "Follows you" / mark mutuals.
@@ -6604,7 +6456,7 @@
     // render as orphaned posts in a flat feed (they belong in the thread / a Channels view).
     // Channel messages (42) stay out too; channel definitions are compact enough to remain
     // discoverable here.
-    if (VIEW==='home' && !_fediOnly()) return [{ kinds:[1,6,1068,5,30023], authors:[...FOLLOWS], limit:_flim(80) }];
+    if (VIEW==='home') return [{ kinds:[1,6,1068,5,30023], authors:[...FOLLOWS], limit:_flim(80) }];
     return [{ kinds:[1,6,1068,5,30023], limit:_flim(120) }];
   }
   // NIP-09: a kind-5 removes the AUTHOR'S OWN events it e-tags. Drop them from the cache, the feed,
@@ -6755,7 +6607,6 @@
       el.textContent=msg;
     }catch(_){ el.textContent=''; }
   }
-  let _pleromaLinked = null;   // follow-bridge gate, learned lazily per session: null=unknown, false=no Pleroma (skip), true=linked
   // Data saver = ONE manual toggle (NO_IMAGES): it holds content images/videos as tap-to-load
   // placeholders — that (not fewer posts) is where the bandwidth actually goes. No connection sniffing:
   // a carrier throttle looks like normal 5G to the browser, so auto-detection was unreliable.
@@ -7818,11 +7669,9 @@
     // user choosing to share it, which is not the firehose this filter exists to keep out.
     // NEVER someone you follow: with the fediverse server, following a fediverse account is how you
     // get its posts, and hiding them made every fediverse follow invisible on Home.
-    const fediOnly=_fediOnly();
-    const hideFedi = !fediOnly && ClientSettings.get('hideFediBridge', true);
-    const follows = view==='home' && !fediOnly ? (e=>FOLLOWS.has(e.pubkey)) : null;
-    return ev => (!fediOnly || isFediBridged(ev) || _fediOnlyEvent(ev))
-              && (!follows || follows(ev))
+    const hideFedi = ClientSettings.get('hideFediBridge', true);
+    const follows = view==='home' ? (e=>FOLLOWS.has(e.pubkey)) : null;
+    return ev => (!follows || follows(ev))
               && !(hideR && isReply(ev))
               && !(hideFedi && isFediBridged(ev) && !FOLLOWS.has(ev.pubkey));
   }
@@ -15953,7 +15802,7 @@
     _fillMediaCacheStat, _fillMusicOfflineStat, _flushPending, _fmtBytes, _hasNativeTor,
     _instanceBase, _langOptions, _loadAutoMute, _loginProviders, _navHideHtml, _navLabel,
     _normInstance, _notificationPane, _paintAutoMuteControls, _parsePresets, _postEffectsOn,
-    _prefTouched, _scheduleAutoMutes, _setFediOnly, _sheet, _signerBackgroundHint, _standalone,
+    _prefTouched, _scheduleAutoMutes, _sheet, _signerBackgroundHint, _standalone,
     _stopCelebrations, _updateAutoMutes, _updateNewPostsPill, _wireNavHide,
     _wireNotificationSettings, _wirePushToggle, _wireStayConnected, _withPhoneShell, applyTheme,
     carryPrivateToRelays, closeModal, copyValue, defaultRelays, detectProto, enc, ensureAiSession,
@@ -16086,37 +15935,11 @@
       });
     });
   }
-  /* ONE EVENT OUT OF THIS ACCOUNT'S FEDIVERSE-ONLY HISTORY.
-   *
-   * A fedi-only note is signed, cross-posted and DELIBERATELY never published to a relay, so no
-   * amount of asking relays can find it. `_loadFediOnlyHistory` pulls the most recent page at boot,
-   * which covers the timeline; it does not cover a thread opened COLD -- from a notification, or
-   * from a pasted nevent link -- and that is exactly when somebody follows a fediverse reply back to
-   * the post it answers. Returns null for anything this cannot be: a guest, a bundle with no
-   * instance, an account not in fedi-only mode, or an id the archive does not hold. */
-  async function _fetchFediOnlyEvent(id){
-    if(_standalone() || GUEST || !ME || !id) return null;
-    if(!_fediOnly() && _fediModeSupported !== true) return null;
-    const pk=ME.pubkey;
-    try{
-      await ensureAiSession();
-      const r=await fetch('/api/pleroma/private-events?ids='+encodeURIComponent(id));
-      if(!r.ok) return null;
-      const d=await r.json(), events=Array.isArray(d.events)?d.events:[];
-      if(!ME || ME.pubkey!==pk) return null;           // the account switcher ran inside this fetch
-      const ev=events.find(x=>x && x.id===id && x.pubkey===pk && _fediOnlyEvent(x));
-      if(ev){ Store.saveEvent(ev); return ev; }
-    }catch(_){ }
-    return null;
-  }
   async function fetchEvent(id, hints){
     let r=await Relay.query([{ ids:[id] }]); if(r[0]) return r[0];
     const pub=await fetchFromPublicRelays([{ ids:[id] }], 4500, hints);
     for(const ev of pub){ try{ const v=await Relay.worker.call('verify',{event:ev}); if(v&&v.valid) return ev; }catch(_){} }
-    /* LAST, because it is the rare case and it costs a request to this node. Every relay has been
-     * asked by now, so nothing here can shadow a real answer -- and a fedi-only post is the one kind
-     * of event for which every one of those answers is correctly "no". */
-    return await _fetchFediOnlyEvent(id);
+    return null;
   }
   function openThread(id, relays){
     // A stray/empty id (e.g. a click that leaked from a closing modal backdrop, or a malformed

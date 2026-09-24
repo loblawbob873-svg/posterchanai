@@ -168,6 +168,21 @@ The bots are managed from **Admin → Bots** (`templates/admin/tabs/bots.html` +
   `botframework/config.py` reads its old globals from env (manager-injected). The `Bot` model is
   identity/filter columns + a JSON `config` blob (mirrors the old per-bot dict). Global settings
   are the `bots_*` keys in `SettingsResponse`.
+- **Nostr is the default platform, and a Nostr bot mints its own identity.** Create/update of a
+  Nostr bot with no `nostr_nsec` calls `_ensure_identity` → `_mint_identity` (key, operator follow,
+  WoT) and takes a NIP-05 name from `_free_nip05_name` — the bot's name, then `-bot`, `-bot2`… —
+  because `_nip05_set` REPLACES a registry line with the same name, so an automatic name that
+  collided would silently take a person's NIP-05 (and their `@name@<domain>` fediverse account).
+  That registry name is also what makes the bot an ActivityPub actor. A pasted key is kept.
+  **Pleroma stays a bot platform** (a node runs a Pleroma block bot); the Pleroma half of
+  blockbot/engagement still reads Pleroma's own DB. A NOSTR bot's `--blockbot`/`--blocks`/
+  `--scalps`/`--fba`/`--topposts` dispatch (main.py, by `PLEROMA_ENDPOINT` vs `NOSTR_NSEC`) to
+  `nostr_blockbot.py`/`nostr_engagement.py`, which read `/api/community/*`
+  (`community_stats.py`: fediverse `Block`s recorded by the AP inbox + public kind-10000 mute
+  lists naming a member or a puppet; bot API key). `community_api.Unavailable` is "could not ask",
+  never "no new blocks" — read as empty it rewrites the seen-set and the next good read
+  re-announces everything; the FIRST look announces nothing for the same reason.
+  `tests/test_community_bots.py` runs `main.py` itself (`--help` + the Nostr dispatch).
 - **Master kill-switch:** `bots_manager_enabled` (default **off**). The manager runs NO bots
   until it's on — so deploying the merged code is safe while the legacy `posterchan.service`
   still owns the bots. **Cutover per node:** retire `posterchan.service` (stop+disable), then flip
@@ -193,7 +208,7 @@ The bots are managed from **Admin → Bots** (`templates/admin/tabs/bots.html` +
 
 | Area | Where |
 |------|-------|
-| Routers | `app/routers/*.py` (auth, chat, admin, telegram, pleroma, nostr, streams, …) |
+| Routers | `app/routers/*.py` (auth, chat, admin, telegram, nostr, activitypub, community, streams, …) |
 | Services | `app/services/*.py` (business logic; routers stay thin) |
 | Models | `app/models.py` (SQLAlchemy); DB init + migrations in `app/database.py` |
 | Schemas | `app/schemas.py` (Pydantic) |
@@ -352,9 +367,8 @@ arg (`clip <start> <end>`).
 
 APScheduler `AsyncIOScheduler`. The pollers run in a **separate worker process**
 (`app/worker.py`, spawned from `app/main.py` **only on port 3051** so they can't double-run):
-`logs_scheduler`, `social_notifications_service`, `uptime_service`, and the
-three fediverse↔Nostr bridge services (`fedi_nostr_bridge_service`, `fedi_nostr_writeback_service`,
-`fedi_nostr_personal_service`). Each exposes idempotent `start_*`/`stop_*` helpers. The in-process
+`logs_scheduler`, `social_notifications_service`, `uptime_service`, and the ActivityPub delivery
+jobs (`activitypub`: delivery, follow catch-up, the daily `FediBridgeDelivered` ledger prune). Each exposes idempotent `start_*`/`stop_*` helpers. The in-process
 port-3051 schedulers (relay, streams, bot manager, reminders, DVM, blossom cleanup, tor) stay in
 `app/main.py`. **Worker gotcha:** the worker must read `*_enabled` flags from the DB, not
 build-time defaults — a service reading the default silently never runs.
@@ -1493,49 +1507,73 @@ would have handled it fine).
   **system-health report** (`logs_scheduler`, see Schedulers) reuses `run_agent` over these same
   nodes, so it needs `node_exec_enabled`.
 - **Social notification relay** (`app/services/social_notifications_service.py`): poller
-  forwards Pleroma notifications to a user's Telegram; replying to a forwarded
+  forwards a user's NOSTR notifications (mentions, replies, 1111 comments, reactions, reposts —
+  the fediverse's included, since they arrive on Nostr) to their Telegram; replying to a forwarded
   message posts back to the platform (`SocialReplyMap` maps Telegram msg → target). Per-user
   toggle (User Settings → Telegram) + global kill-switch (default on).
 - **ActivityPub server, stored as Nostr events** (`app/services/activitypub/`, `app/routers/activitypub.py`,
   Admin → Social; `docs/ACTIVITYPUB.md`). ON OUT OF THE BOX (`activitypub_enabled`/`_everyone`/`_dms`,
   blank = on; no domain = silent). Every name in the NIP-05 registry is `@name@<domain>`, and every
-  NATIVE Nostr account with a profile here is `@npub…@<domain>` (never a puppet or another bridge's
-  mirror); replies/mentions to non-local users are pushed to THEIR relays (`nostrside.py`,
-  SSRF-checked). DMs cross both ways (`dm.py`: NIP-17 ⇄ AP direct notes, via derived puppet keys;
-  only to someone who follows the sender or wrote first). Blocklists: ONE parser
-  (`app/services/fedi_blocklist.py`) for bridge + AP — subdomains, IDN, `user@host` = one account. Incoming content = Nostr events signed by the
-  bridge's PUPPET keys, deduped in `FediBridgeDelivered` (`platform="activitypub"`, note_id = URI);
-  members' own events are read from the relay and delivered by the worker's `activitypub` job. It is
-  ONE system with the bridge below: same puppet key both paths, a write-back (linked Pleroma) member is
-  never also sent from the AP actor WHILE `fedi_bridge_enabled` is on (follows always are), the Pleroma mirror skips `@x@<our domain>` (and `_deliver` threads
-  a reply under the member's real event), write-back resolves AP rows by URI. **Instance blocking is
-  the relay's list** (`nostr_relay_blocked_relays`), read, never duplicated. Paths are under `/ap/`
-  because router.lan 410s `/inbox` + `/users/*/inbox` for the retired Pleroma. Keys are never minted
-  after a failed relay read. **Follows that predate it are caught up** (`outbox.catch_up_follows`, its own job, marker `pcai:ap:k3:<pk>`): the delivery cursor starts at "now", so an existing contact list was never an event and the member's AP account followed nobody. Import takes a linked account OR any public `name@server` list; a refused kind-3 is an error, never "0 more"; "already followed" is judged against the RELAY's kind-3, never the page's FOLLOWS. Incoming mentions go through the bridge's `_rewrite_mentions` (`inbox._link_mentions`) so `@name` is a `nostr:npub` link, not dead text. Split-DNS neighbours (`activitypub_lan_hosts` + the bridge instance) bypass only the private-address check. `tests/test_activitypub.py`.
-- **Fediverse ↔ Nostr bridge** — three worker services, all sharing `fedi_normalize.py`:
-  - **`fedi_nostr_bridge_service.py`** (fedi → Nostr): mirrors a Pleroma timeline onto
-    Nostr under a **puppet** key per fedi author (deterministically derived, so an author keeps
-    one npub). `note_uri` (canonical AP URI) is the cross-instance dedup key, `note_id` the
-    same-instance fallback. First poll only sets the cursor (no backfill); later polls **drain
-    forward** page-by-page with `min_id`/`sinceId` — a single `since_id` fetch silently drops
-    everything past `limit` when a busy feed outruns one page (the old missing-posts bug). The
-    drain commits its cursor per page and **sorts by id**, so a partial drain resumes with no gap.
-  - **`fedi_nostr_writeback_service.py`** (Nostr → fedi): a Nostr reply/reaction/repost on a
-    bridged post is performed back on the fediverse under the acting user's own linked account.
-    **NIP-25 gotcha:** for kinds 6/7 the target is the **last** `e` tag, not the reply-marked one
-    — `_referenced_event_ids` prefers the reply marker, so the target resolver is kind-aware.
-  - **`fedi_nostr_personal_service.py`**: per-user personal fedi notifications → Nostr DMs.
-    Keeps its **own** cursors so it never consumes the Telegram relay's.
-  - **Identity** (`fedi_bridge_identity.py`): `nip05_name_for` appends a sha256[:6] digest
-    whenever sanitising the handle is lossy — without it two distinct fedi accounts could claim
-    one NIP-05 name (a hijack; 54 rows were repaired). `ensure_puppet` reuses an existing puppet
-    by `acct` rather than minting a second one.
-  - **Access** (`fedi_bridge_access.py`): `enable(db, user, by_admin=False)` is gated on the
-    `fedi_bridge_self_serve` setting (default **OFF**) — self-serve enable was a privilege
-    escalation. Instance URLs go through the `rss_service` SSRF guard
-    (`looks_fetchable`/`is_safe_host`, `follow_redirects=False`).
-  - **`fedi_normalize.py`** is extracted VERBATIM from the old bridge and is **proven** code —
-    change it only with a very good reason; every bridge service depends on it.
+  NATIVE Nostr account with a profile here has a READABLE handle (`@dana_4b56@<domain>`,
+  `actors.readable_handle`, claimed once in `pcai:ap:nick:`/`nickof:` so a rename cannot move it —
+  npubs on the fediverse "look terrible"); WebFinger's subject MUST equal `preferredUsername@domain`
+  or Mastodon drops the account, while the actor id stays `/ap/users/<npub>`. Replies/mentions to
+  non-local users are pushed to THEIR relays (`nostrside.py`, SSRF-checked). DMs cross both ways
+  (`dm.py`: NIP-17 ⇄ AP direct notes, via derived puppet keys) from ANYONE not blocked — refused only
+  when the recipient's kind-10000 mute list names the sender's puppet (a "follows or wrote first"
+  rule silently ate every first message). Incoming content = Nostr events signed by PUPPET keys
+  (`fedi_bridge_identity.ensure_puppet`, still the one place a fediverse person gets a key), deduped
+  in `FediBridgeDelivered` (`platform="activitypub"`, note_id = URI; pruned daily on the relay's
+  retention by `activitypub/ledger.py`, 0 = keep); members' own events are read from the relay and
+  delivered by the worker's `activitypub` job. Custom emoji: NIP-30 ⇄ AP `Emoji` tags; a reaction is a
+  `Like` with `content` + `_misskey_reaction` + an `Emoji` tag (NIP-25 `-` is never sent). The outbox
+  is a real paged collection read from the relay. Blocking: instance lines are
+  `fedi_bridge_blocked_domains` + the relay's `nostr_relay_blocked_relays` through ONE parser
+  (`fedi_blocklist.py`); one fediverse PERSON is blocked by blocking their puppet npub on the relay
+  (`actors.puppet_blocked` matches the table AND the re-derived key); a remote `Block` of a member is
+  recorded (`pcai:ap:blocked:`) and cuts both follows. Paths are under `/ap/` because router.lan 410s
+  `/inbox` + `/users/*/inbox` for the retired Pleroma. Keys are never minted after a failed relay
+  read. **Follows that predate it are caught up** (`outbox.catch_up_follows`, its own job, marker
+  `pcai:ap:k3:<pk>`; a kind-3 is handed to it, never resolved inside the delivery tick — a 956-p list
+  timed the tick out and stalled all delivery). Import takes any public `name@server` list; a refused
+  kind-3 is an error, never "0 more"; "already followed" is judged against the RELAY's kind-3.
+  Incoming mentions become `nostr:npub` links (`activitypub/mentions.py`). Split-DNS neighbours
+  (`activitypub_lan_hosts`) bypass only the private-address check. `tests/test_activitypub.py`.
+  **THE 2026-09-24 REVIEW (docs/ACTIVITYPUB.md "Security model"/"Compatibility"; every rule a test
+  verified to fail without it).** The two HIGH findings were one shape: **third-party claims about an
+  account were taken as its identity.** A Mention tag's `href`/`name` and an imported follow list's
+  `uri`/`acct`/name/avatar are what the SENDER wrote, and `ensure_puppet` reused a record by `acct`
+  alone — so one note could pre-register `victim@mastodon.social` against the sender's address (their
+  key, DMs and deletion rights followed), and one import answer could republish anyone's profile.
+  Mentions (`inbox._resolve_mentions`) and imports (`importer.puppets_for`) now build identities ONLY
+  from `remote.actor(uri)` (fetched from its own host, id checked), and handle-reuse is limited to one
+  person's two addresses on ONE server (`_same_person_alias`: same host and a `/@` profile URL — which
+  also stops a Lemmy `/u/foo` sharing `/c/foo`'s key). Also: the inbox budget is charged to the
+  VERIFIED signer (charged to the claimed keyId host, junk naming mastodon.social 429'd it), unverified
+  traffic to the connection (`_client_ip` trusts forwarded headers only from a private peer); pending
+  work is capped per sender; `fetch_json` has a TOTAL deadline; `remote.client()` is the one outbound
+  HTTP client — `_PinnedTransport` connects to the IP it judged (DNS rebinding), port 443 only; a 401
+  never echoes the fetch error (port scanner); a readable handle beats a same-spelled registry name and
+  `claim-nip05` refuses a name that is somebody's handle; `/api/community/*` is bots-key/admin-key only
+  (`get_bot_auth` — who blocked whom is private); emoji/avatar URLs https-only. Interop: GoToSocial's
+  fragment-less keyId (actor stub → owner fetched, must publish the key); FEP-1b12 group Announce of a
+  Create is unwrapped; `Update(Note)` REPLACES the stored copy (publish new, then delete old; author
+  only); a self-`Delete` of an account that can no longer verify is CONFIRMED with its own server
+  (`confirm_gone`: 410/404) and then `pcai:ap:gone:` stops delivery; a forwarded Create (signer ≠
+  actor) is a POINTER fetched from its own server (`inbox.FORWARDED`); a Follow id is unique per follow
+  and stored in the following doc (Pleroma drops a repeated id → a refollow stayed pending for ever);
+  `pcai:ap:sent:<id>` records every inbox beyond the followers AND the kind, so a kind-5 with no `k`
+  tag still sends the right verb to the right servers; a per-host circuit breaker (`_down`) rests a
+  dead server; outbox paging is a (timestamp, id) cursor (`until - 1` skipped same-second posts).
+- **THE PLEROMA BRIDGE IS REMOVED (2026-09-23)** — the timeline mirror, write-back, personal plane,
+  bridge access grants, fedi-only client mode, Sign in with Pleroma, Telegram → Pleroma posting and
+  Pleroma → Telegram alerts. The ActivityPub server replaced all of it. What SURVIVES, on purpose:
+  `fedi_bridge_identity.py` (puppet keys — a mirrored person keeps their npub), `fedi_normalize.py`
+  (proven normaliser the inbox uses), `fedi_blocklist.py`, `FediBridgeDelivered`/`FediPuppet`, the
+  settings `fedi_bridge_blocked_domains` + `fedi_bridge_broadcast` (now under the AP fieldset in
+  Admin → Social), and `pleroma_service.py` (the Pleroma BOTS still use it). The User columns went
+  into `_DROPPED_COLUMNS`. A "remove every fedi_bridge reference" pass will grep straight onto those —
+  don't.
 - **PosterChanOS** (`os/gentoo.sh` + `os/bin/` + `os/overlay/`): a Gentoo profile whose DESKTOP IS THE
   CLIENT. sway execs `pc-shell-start`, which runs `desktop/main.js --shell`; the desktop itself is
   `static/js/client/os.js` (windows, icons, taskbar, widgets, start menu) and `osshell.js` (the

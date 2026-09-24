@@ -54,6 +54,7 @@ async def _plan(db, exempt_fediverse=True):
             continue
     if exempt_fediverse:
         keep.update(pk for pk, in db.query(FediPuppet.pubkey_hex).all())
+        # Accounts that linked a fediverse account under the retired bridge (legacy columns).
         keep.update(ns.to_pubkey_hex(u.nostr_npub) for u in users if u.nostr_npub and
                     (u.pleroma_acct or u.pleroma_enabled or u.pleroma_instance_url))
     # Verify before any mutation: an unavailable profile source aborts the entire plan.

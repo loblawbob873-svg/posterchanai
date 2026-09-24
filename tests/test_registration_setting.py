@@ -39,7 +39,7 @@ def test_every_public_user_creation_path_checks_the_switch():
     social = (ROOT / "app/routers/social_login.py").read_text()
     client = (ROOT / "app/routers/client.py").read_text()
     assert auth.count("registration_service.enabled()") >= 1
-    assert social.count("registration_service.enabled()") >= 2
+    assert social.count("registration_service.enabled()") >= 1   # Google (Pleroma sign-in was removed)
     signup = client[client.index("async def signup_follow("):client.index("class ClaimAdmin", client.index("async def signup_follow("))]
     assert "registration_service.enabled()" in signup
     assert "status_code=403" in signup
@@ -87,7 +87,7 @@ def test_admin_creation_paths_are_deliberately_not_gated():
     # Anchored on the signature: a bare name also matches `stream_access_status`, a read-only
     # route that neither creates a user nor should be admin-gated.
     for fn in ("async def user_caps_set(data", "async def stream_access(data",
-               "async def ai_access(data", "async def bridge_access_grant(data"):
+               "async def ai_access(data"):
         body = route[route.index(fn):]
         body = body[:body.index("\n@router.") if "\n@router." in body else len(body)]
         assert "_verify_admin_auth" in body, f"{fn} is no longer admin-gated"

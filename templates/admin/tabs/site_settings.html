@@ -51,17 +51,6 @@
             <em>this server</em> rather than in the visitor's browser. Everything else on that screen (extension,
             remote signer, pasted nsec) keeps the key on the device and is unaffected.
         </small>
-        <div class="form-group">
-            <label for="pleroma_login_enabled">
-                <input type="checkbox" id="pleroma_login_enabled" name="pleroma_login_enabled"> Enable Pleroma / Mastodon login
-            </label>
-            <small>Sign in with a fediverse account. The OAuth app is registered on the instance automatically (public <code>/api/v1/apps</code>) — nothing to configure on their side. A visitor whose account is already linked here (Fediverse bridge / User Settings → Social) is signed in as that same account, not a new one.</small>
-        </div>
-        <div class="form-group">
-            <label for="pleroma_login_instance">Default instance offered</label>
-            <input type="url" id="pleroma_login_instance" name="pleroma_login_instance" placeholder="https://pleroma.example">
-            <small>Pre-filled on the login form; the visitor can type a different one. Blank = the Read Account instance from <strong>Admin → Social</strong>.</small>
-        </div>
         <div class="form-group" style="margin-top:15px;padding-top:12px;border-top:1px solid var(--border-color,#333);">
             <label for="google_login_enabled">
                 <input type="checkbox" id="google_login_enabled" name="google_login_enabled"> Enable Google login

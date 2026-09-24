@@ -17,7 +17,7 @@ logger = logging.getLogger(__name__)
 from app.models import User, APIKey, VerificationToken
 from app.schemas import (
     UserLogin, UserResponse, Token, APIKeyCreate, APIKeyResponse, APIKeyListItem,
-    UserSettingsUpdate, UserSettingsResponse, BridgeAccessRequest
+    UserSettingsUpdate, UserSettingsResponse
 )
 from app.auth import verify_password, create_access_token, get_current_user, get_password_hash
 from app.services.email_service import EmailService
@@ -647,10 +647,6 @@ def get_user_settings(current_user: User = Depends(get_current_user), db: Sessio
         telegram_notifications=current_user.telegram_notifications if hasattr(current_user, 'telegram_notifications') else "",
         telegram_pending_key=current_user.telegram_key if hasattr(current_user, 'telegram_key') else None,
         telegram_key_expires_at=current_user.telegram_key_expires_at if hasattr(current_user, 'telegram_key_expires_at') else None,
-        # Pleroma settings
-        pleroma_enabled=current_user.pleroma_enabled if hasattr(current_user, 'pleroma_enabled') else False,
-        pleroma_instance_url=current_user.pleroma_instance_url if hasattr(current_user, 'pleroma_instance_url') else None,
-        pleroma_has_access_token=bool(current_user.pleroma_access_token) if hasattr(current_user, 'pleroma_access_token') else False,
         # Nostr settings (key linked via /api/nostr/connect; never returned, only presence)
         nostr_enabled=current_user.nostr_enabled if hasattr(current_user, 'nostr_enabled') else False,
         nostr_npub=current_user.nostr_npub if hasattr(current_user, 'nostr_npub') else None,
@@ -659,9 +655,6 @@ def get_user_settings(current_user: User = Depends(get_current_user), db: Sessio
         nostr_media_service=current_user.nostr_media_service if hasattr(current_user, 'nostr_media_service') else None,
         nostr_media_endpoint=current_user.nostr_media_endpoint if hasattr(current_user, 'nostr_media_endpoint') else None,
         social_notif_enabled=current_user.social_notif_enabled if hasattr(current_user, 'social_notif_enabled') else False,
-        fedi_bridge_enabled=current_user.fedi_bridge_enabled if hasattr(current_user, 'fedi_bridge_enabled') else False,
-        fedi_crosspost_enabled=current_user.fedi_crosspost_enabled if hasattr(current_user, 'fedi_crosspost_enabled') else False,
-        fedi_only=bool(getattr(current_user, "fedi_only", False)),
     )
 
 
@@ -672,14 +665,6 @@ def update_user_settings(
     db: Session = Depends(get_db)
 ):
     """Update current user's settings including custom AI service configuration"""
-    if (settings.fedi_only is True and current_user.pleroma_instance_url and current_user.pleroma_access_token
-            and (not current_user.fedi_only or not current_user.pleroma_acct)):
-        import asyncio as _aio
-        from app.services.fedi_only_service import verify_link
-        try:
-            _aio.run(verify_link(current_user))
-        except Exception:
-            raise HTTPException(status_code=400, detail="Could not verify your Fediverse account. Reconnect it before enabling Fediverse-only mode.")
     # Update notification email if provided
     if settings.notification_email is not None:
         notification_email = settings.notification_email.strip()
@@ -773,16 +758,6 @@ def update_user_settings(
         current_user.social_notif_enabled = settings.social_notif_enabled
 
 
-    # Nostr ↔ Fediverse bridge: opt in to personal DMs + notifications on the Nostr side
-    if settings.fedi_bridge_enabled is not None:
-        current_user.fedi_bridge_enabled = settings.fedi_bridge_enabled
-
-    # Cross-post my top-level Nostr notes to my linked Pleroma account
-    if settings.fedi_crosspost_enabled is not None:
-        current_user.fedi_crosspost_enabled = settings.fedi_crosspost_enabled
-    if settings.fedi_only is not None:
-        current_user.fedi_only = settings.fedi_only
-
     try:
         # Flush changes to database before commit
         db.flush()
@@ -823,26 +798,6 @@ def update_user_settings(
         raise HTTPException(status_code=500, detail=f"Unexpected error: {str(e)}")
 
     return {"message": "Settings updated"}
-
-
-@router.post("/bridge-access")
-async def bridge_access(
-    data: BridgeAccessRequest,
-    current_user: User = Depends(get_current_user),
-    db: Session = Depends(get_db),
-):
-    """1-click Bridge Access: auto-create a fediverse account on the configured home instance, copy
-    this user's Nostr profile, register their NIP-05, and enable both bridge toggles (or disable)."""
-    from app.services import fedi_bridge_access
-    try:
-        result = await (fedi_bridge_access.enable(db, current_user) if data.enable
-                        else fedi_bridge_access.disable(db, current_user))
-    except Exception as e:
-        logger.error(f"[Auth] bridge-access failed for {current_user.username}: {e}", exc_info=True)
-        raise HTTPException(status_code=500, detail=f"Bridge access error: {e}")
-    if not result.get("ok"):
-        raise HTTPException(status_code=400, detail=result.get("error") or "Bridge access failed")
-    return result
 
 
 @router.post("/avatar")

@@ -254,6 +254,22 @@ def post_to_pleroma(message):
         return False
 
 
+def post_to_nostr(message):
+    """A Nostr bot posts as its own account; the node's fediverse server delivers it to the bot's
+    fediverse followers too. (Before this, a Nostr bot with --hashtagbot posted nothing at all.)"""
+    if BLOCK_PHRASE and BLOCK_PHRASE in message:
+        logging.warning("Message contains blocked phrase; not posting.")
+        return False
+    try:
+        from nostr import post_image_to_fediverse
+        post_image_to_fediverse(message)
+        logging.info("Posted trending hashtags to Nostr")
+        return True
+    except Exception as e:
+        logging.error(f"Error posting trending hashtags to Nostr: {e}")
+        return False
+
+
 def post_trending_hashtags(print_only=False):
     """Fetch and post trending hashtags"""
     logging.info("Fetching trending hashtags from Fediverse")
@@ -277,9 +293,10 @@ def post_trending_hashtags(print_only=False):
         # Post to configured platform
         if PLEROMA_ENDPOINT:
             return post_to_pleroma(message)
-        else:
-            logging.error("No platform configured for posting")
-            return False
+        if os.getenv("NOSTR_NSEC"):
+            return post_to_nostr(message)
+        logging.error("No platform configured for posting")
+        return False
 
 
 def should_post_now():

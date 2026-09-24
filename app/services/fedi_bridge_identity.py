@@ -17,6 +17,7 @@ Public surface:
 
 import re
 import json
+from urllib.parse import urlparse
 import asyncio
 import hashlib
 import logging
@@ -112,6 +113,13 @@ def nip05_name_for(acct: str) -> str:
     return name
 
 
+def _https_or_blank(url) -> str:
+    """A profile picture is shown to every reader: only an https address is kept (a plain-http or
+    LAN one would let the remote server track readers or reach into their network)."""
+    u = str(url or "").strip()
+    return u if u.startswith("https://") and len(u) < 2048 else ""
+
+
 def puppet_for(account: dict, instance_host: str = "") -> dict:
     """Resolve the full puppet identity for a fediverse account (no I/O, no DB)."""
     actor_uri = actor_uri_of(account)
@@ -132,8 +140,8 @@ def puppet_for(account: dict, instance_host: str = "") -> dict:
         # NIP-30 tags below). The BIO is fediverse HTML (<br>, <a>, entities) → flatten to text or the
         # client shows raw markup. Custom-emoji shortcode→url map drives the profile's NIP-30 emoji tags.
         "display_name": (account.get("display_name") or account.get("name") or "").strip(),
-        "avatar_url": (account.get("avatar") or account.get("avatar_static")
-                       or account.get("avatarUrl") or "").strip(),
+        "avatar_url": _https_or_blank(account.get("avatar") or account.get("avatar_static")
+                                      or account.get("avatarUrl") or ""),
         "about": _strip_html(account.get("note") or account.get("description") or ""),
         "emojis": _emoji_url_map(account.get("emojis")),
     }
@@ -299,6 +307,18 @@ async def _publish_dm_relays(port: int, p: dict, broadcast: bool) -> None:
         logger.debug("[fedi-bridge] DM relay list not published for %s: %s", p.get("acct"), e)
 
 
+def _same_person_alias(a: str, b: str) -> bool:
+    """Two actor addresses that are ONE person's two URI forms: the SAME server, and one of them a
+    profile URL (`https://host/@alice` beside `https://host/users/alice`) -- the only split the reuse
+    below exists for. A handle alone never proves it: an `acct` is whatever the sender typed, so
+    reusing on it let any server that named `victim@mastodon.social` first claim that person's key
+    (a Mention tag, an import answer), and on Lemmy `/u/foo` and `/c/foo` share `foo@host`."""
+    pa, pb = urlparse(a or ""), urlparse(b or "")
+    if not pa.hostname or (pa.hostname or "").lower() != (pb.hostname or "").lower():
+        return False
+    return (pa.path or "").startswith("/@") or (pb.path or "").startswith("/@")
+
+
 async def ensure_puppet(db, port: int, account: dict, instance_host: str = "",
                         profile_refresh: bool = True) -> dict | None:
     """Provision (or refresh) a fediverse account's puppet: upsert the registry row, and (re)publish
@@ -329,7 +349,7 @@ async def ensure_puppet(db, port: int, account: dict, instance_host: str = "",
         alt = (db.query(FediPuppet)
                .filter(FediPuppet.acct == p["acct"])
                .order_by(FediPuppet.created_at.asc()).first())
-        if alt is not None:
+        if alt is not None and _same_person_alias(alt.actor_uri, p["actor_uri"]):
             actor_uri = alt.actor_uri            # keep the original key (and its derived pubkey)
             p = puppet_for({**account, "uri": alt.actor_uri, "url": alt.actor_uri}, instance_host)
             row = alt

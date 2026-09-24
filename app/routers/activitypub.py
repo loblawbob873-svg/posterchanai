@@ -7,7 +7,9 @@ collide with them.
 """
 from __future__ import annotations
 
+import asyncio
 import json
+import re
 import logging
 import time
 
@@ -73,24 +75,54 @@ async def webfinger(resource: str = ""):
 @router.get("/.well-known/nodeinfo")
 async def nodeinfo_links():
     _on()
-    return JSONResponse({"links": [{"rel": "http://nodeinfo.diaspora.software/ns/schema/2.1",
-                                    "href": f"{config.base_url()}/nodeinfo/2.1"}]})
+    base = config.base_url()
+    return JSONResponse({"links": [
+        {"rel": "http://nodeinfo.diaspora.software/ns/schema/2.1", "href": f"{base}/nodeinfo/2.1"},
+        {"rel": "http://nodeinfo.diaspora.software/ns/schema/2.0", "href": f"{base}/nodeinfo/2.0"}]})
+
+
+@router.get("/.well-known/host-meta")
+async def host_meta():
+    """The XRD pointer to WebFinger. Older servers and some clients ask here first."""
+    _on()
+    xml = ('<?xml version="1.0" encoding="UTF-8"?>\n'
+           '<XRD xmlns="http://docs.oasis-open.org/ns/xri/xrd-1.0">'
+           f'<Link rel="lrdd" template="{config.base_url()}/.well-known/webfinger?resource={{uri}}"/></XRD>')
+    return Response(xml, media_type="application/xrd+xml")
+
+
+def _nodeinfo(version: str) -> dict:
+    from app.services import registration_service
+    users = len(actors.all_actors())
+    software = {"name": "posterchan", "version": "1"}
+    if version == "2.1":
+        software["repository"] = "https://github.com/loblawbob873-svg/posterchanai"
+    try:
+        open_reg = bool(registration_service.enabled())
+    except Exception:
+        open_reg = False
+    return {
+        "version": version,
+        "software": software,
+        "protocols": ["activitypub"],
+        "services": {"inbound": [], "outbound": []},
+        "openRegistrations": open_reg,
+        # Only what is counted for certain: activity figures would need a relay scan per request.
+        "usage": {"users": {"total": users}},
+        "metadata": {"nodeName": config.domain(), "nostr": True},
+    }
 
 
 @router.get("/nodeinfo/2.1")
 async def nodeinfo():
     _on()
-    users = len(actors.all_actors())
-    return JSONResponse({
-        "version": "2.1",
-        "software": {"name": "posterchan", "version": "1",
-                     "repository": "https://github.com/loblawbob873-svg/posterchanai"},
-        "protocols": ["activitypub"],
-        "services": {"inbound": [], "outbound": []},
-        "openRegistrations": False,
-        "usage": {"users": {"total": users}},
-        "metadata": {"nodeName": config.domain(), "nostr": True},
-    })
+    return JSONResponse(_nodeinfo("2.1"))
+
+
+@router.get("/nodeinfo/2.0")
+async def nodeinfo_20():
+    _on()
+    return JSONResponse(_nodeinfo("2.0"))
 
 
 # ------------------------------------------------------------------------------------ actors
@@ -126,6 +158,16 @@ def _collection(url: str, total: int) -> dict:
             "type": "OrderedCollection", "totalItems": total}
 
 
+@router.get("/ap/users/{name}/featured")
+async def featured(name: str):
+    """Pinned posts. Nostr has no pins this server tracks yet, so it is an EMPTY collection -- served
+    rather than 404, because Mastodon fetches it for every profile and logs the miss as an error."""
+    _on()
+    pk = await _member(name)
+    url = f"{convert.actor_url(config.base_url(), actors.handle(pk))}/featured"
+    return _ap({**_collection(url, 0), "orderedItems": []})
+
+
 @router.get("/ap/users/{name}/followers")
 async def followers(name: str):
     _on()
@@ -147,10 +189,12 @@ async def following(name: str):
 
 
 _outbox_counts: dict = {}
+_count_runs: list = []
+COUNTS_PER_MINUTE = 30
 
 
 @router.get("/ap/users/{name}/outbox")
-async def outbox(name: str, page: str = "", max_id: int = 0):
+async def outbox(name: str, page: str = "", max_id: int = 0, after: str = ""):
     """An account's recent public posts, newest first, paged -- what Akkoma and Mastodon read to show
     a profile's posts. It used to answer the count only (always 0), so a profile opened on another
     server showed nothing but what had been delivered to it."""
@@ -158,28 +202,38 @@ async def outbox(name: str, page: str = "", max_id: int = 0):
     pk = await _member(name)
     url = f"{convert.actor_url(config.base_url(), actors.handle(pk))}/outbox"
     from app.services.activitypub import outbox as ob
+    after = after if re.fullmatch(r"[0-9a-f]{1,64}", after or "") else ""
     if page:
         try:
-            items, oldest = await ob.public_posts(pk, until=max_id, limit=20)
+            items, oldest, last_id = await ob.public_posts(pk, until=max_id, after=after[:64], limit=20)
         except Exception:
             raise HTTPException(503, "could not read the relay")
-        doc = {"@context": convert.AS_CONTEXT, "id": f"{url}?page=true" + (f"&max_id={max_id}" if max_id else ""),
+        here = f"{url}?page=true" + (f"&max_id={max_id}&after={after[:64]}" if max_id else "")
+        doc = {"@context": convert.AS_CONTEXT, "id": here,
                "type": "OrderedCollectionPage", "partOf": url, "orderedItems": items}
         if items and oldest:
-            doc["next"] = f"{url}?page=true&max_id={oldest}"
+            doc["next"] = f"{url}?page=true&max_id={oldest}&after={last_id}"
         return _ap(doc)
     # The total is only a label ("123 posts"); counted from one bounded read, kept five minutes.
     hit = _outbox_counts.get(pk)
-    if hit and time.monotonic() - hit[0] < 300:
+    now = time.monotonic()
+    _count_runs[:] = [t for t in _count_runs if now - t < 60]
+    if hit and (now - hit[0] < 300 or len(_count_runs) >= COUNTS_PER_MINUTE):
         total = hit[1]
+    elif len(_count_runs) >= COUNTS_PER_MINUTE:
+        # The count is a label; anybody can ask for any npub's outbox, and each uncounted one is a
+        # 2000-event read. Past the node-wide budget the collection is served without one.
+        return _ap({"@context": convert.AS_CONTEXT, "id": url, "type": "OrderedCollection",
+                    "first": f"{url}?page=true"})
     else:
+        _count_runs.append(now)
         try:
             from app.services import nostr_store, settings_store
             evs = await nostr_store._ws_query(settings_store._port(), [{"kinds": [1], "authors": [pk], "limit": 2000}])
-            total = sum(1 for e in evs if not any(len(t) > 1 and t[0] in ("proxy", "-") for t in e.get("tags") or []))
+            total = sum(1 for e in evs if ob.counts_as_public(e))
         except Exception:
             total = 0
-        _outbox_counts[pk] = (time.monotonic(), total)
+        _outbox_counts[pk] = (now, total)
         if len(_outbox_counts) > 5000:
             _outbox_counts.clear()
     return _ap({**_collection(url, total), "first": f"{url}?page=true"})
@@ -191,7 +245,11 @@ async def note(event_id: str, request: Request):
     (a mirror, somebody else's event, a DM) is 404 -- this is not a window onto the relay."""
     _on()
     from app.services.activitypub import outbox as ob
-    ev = await ob._event(event_id) if len(event_id) == 64 else None
+    ev = await ob._event(event_id) if re.fullmatch(r"[0-9a-f]{64}", event_id) else None
+    if ev is None and re.fullmatch(r"[0-9a-f]{64}", event_id) and await _deleted_by_member(event_id):
+        # Gone, not unknown: 410 + a Tombstone is how a server learns to drop its copy.
+        return JSONResponse({"@context": convert.AS_CONTEXT, "id": convert.object_url(config.base_url(), event_id),
+                             "type": "Tombstone"}, status_code=410, media_type=config.AP_CONTENT_TYPE)
     name = actors.handle(ev.get("pubkey", "")) if ev else ""
     if not ev or not name or ev.get("kind") not in (1, 1111) or ob._is_mirror(ev) or ob._protected(ev):
         raise HTTPException(404, "Not Found")
@@ -208,10 +266,25 @@ async def note(event_id: str, request: Request):
         who = await ob.resolve_pubkey(pk)
         if who:
             mentions[pk] = who
+    links, quote = await ob._post_refs(ev)
     doc = convert.note_from_event(ev, base=base, actor=me, followers=f"{me}/followers", mentions=mentions,
-                                  in_reply_to=target.get("uri", ""), reply_to_actor=target.get("actor", ""))
+                                  in_reply_to=target.get("uri", ""), reply_to_actor=target.get("actor", ""),
+                                  links=links, quote=quote)
     doc["@context"] = convert.AS_CONTEXT
     return _ap(doc)
+
+
+async def _deleted_by_member(event_id: str) -> bool:
+    """Whether a member deleted this event (a kind-5 by an account on the fediverse naming it)."""
+    from app.services import nostr_store, settings_store
+    try:
+        evs = await nostr_store._ws_query(settings_store._port(), [{"kinds": [5], "#e": [event_id], "limit": 5}])
+    except Exception:
+        return False
+    for d in evs or []:
+        if d.get("pubkey") and (actors.is_actor(d["pubkey"]) or await actors.exposed(d["pubkey"])):
+            return True
+    return False
 
 
 # ------------------------------------------------------------------------------------ inbox
@@ -219,9 +292,16 @@ async def note(event_id: str, request: Request):
 async def _verified(request: Request) -> tuple[dict, str]:
     """(activity, signer actor id), or raise. The signature is checked against the PUBLIC host:
     behind router.lan the upstream request may carry another Host header than the one signed."""
-    body = await request.body()
-    if len(body) > MAX_BODY:
+    # Refuse an oversized body BEFORE holding it: request.body() buffers all of it first.
+    cl = request.headers.get("content-length") or ""
+    if cl.isdigit() and int(cl) > MAX_BODY:
         raise HTTPException(413, "Too large")
+    buf = bytearray()
+    async for chunk in request.stream():
+        buf.extend(chunk)
+        if len(buf) > MAX_BODY:
+            raise HTTPException(413, "Too large")
+    body = bytes(buf)
     try:
         activity = json.loads(body)
     except ValueError:
@@ -255,49 +335,89 @@ async def _verified(request: Request) -> tuple[dict, str]:
     # An account that has been DELETED can no longer be fetched, so its own Delete can never
     # verify; answering 401 makes its server retry that forever. It is gone either way.
     if activity.get("type") == "Delete" and isinstance(last, remote.FetchError):
+        actor = convert.id_of(activity.get("actor"))
+        if actor and convert.id_of(activity.get("object")) == actor:
+            t = asyncio.create_task(inbox.confirm_gone(actor))
+            _bg.add(t)
+            t.add_done_callback(_bg.discard)
         raise HTTPException(202, "Accepted")
-    raise HTTPException(401, f"Signature not accepted: {last}")
+    # The reason is logged, never answered: the error text of a fetch we made on the sender's say-so
+    # ("HTTP 404 from …", a connect error) would turn this endpoint into a port scanner.
+    logger.info("[activitypub] signature from %s not accepted: %s", remote.host_of(params["keyId"]), last)
+    raise HTTPException(401, "Signature not accepted")
 
 
+_bg: set = set()
 _refreshed: dict = {}            # keyId -> when it was last force-refreshed
 _hits: dict = {}                 # remote host -> (window start, count)
 PER_HOST_PER_MINUTE = 300
 
 
-def _rate_ok(host: str) -> bool:
+def _rate_ok(host: str, *, peek: bool = False) -> bool:
     """A per-server budget: one instance cannot make this node mint puppets and fetch actors
-    without limit. Generous -- a busy server sends a burst after every popular post."""
+    without limit. Generous -- a busy server sends a burst after every popular post. `peek` asks
+    without charging (the connection's budget is only spent by requests that failed to verify).
+
+    Full, the table drops its OLDEST windows, never everybody's: clearing it on overflow let
+    anyone reset every budget by naming 10,000 hosts."""
     now = time.monotonic()
     start, n = _hits.get(host, (now, 0))
     if now - start > 60:
         start, n = now, 0
+    if peek:
+        return n < PER_HOST_PER_MINUTE
     _hits[host] = (start, n + 1)
     if len(_hits) > 10000:
-        _hits.clear()
+        for k in sorted(_hits, key=lambda k: _hits[k][0])[:2000]:
+            _hits.pop(k, None)
     return n < PER_HOST_PER_MINUTE
+
+
+def _client_ip(request: Request) -> str:
+    """Who is actually connected. Behind the reverse proxy the peer is the proxy itself, so the
+    address it forwarded is used then -- and only then (a direct client cannot pick its own)."""
+    peer = request.client.host if request.client else ""
+    fwd = (request.headers.get("x-real-ip") or request.headers.get("x-forwarded-for") or "").split(",")[0].strip()
+    try:
+        import ipaddress
+        addr = ipaddress.ip_address(peer)
+        if fwd and (addr.is_private or addr.is_loopback):
+            return fwd
+    except ValueError:
+        pass
+    return peer
 
 
 async def _receive(request: Request) -> Response:
     _on()
-    peer = (request.headers.get("signature") or "")
-    try:
-        from app.services.activitypub.httpsig import parse
-        peer_host = remote.host_of(parse(peer)["keyId"])
-    except Exception:
-        peer_host = ""
-    if peer_host and not _rate_ok(peer_host):
+    # The budget is charged to WHO SIGNED, after verification. Charged to the keyId's host before it,
+    # anybody could spend a real instance's budget by naming it in junk requests and make every
+    # genuine delivery from it 429. Unverified traffic is charged to the connection instead.
+    ip = "ip:" + _client_ip(request)
+    if not _rate_ok(ip, peek=True):
         return Response(status_code=429, headers={"Retry-After": "60"})
     try:
         activity, signer = await _verified(request)
     except HTTPException as e:
         if e.status_code == 202:
+            _rate_ok(ip)                       # unverified, and it may cost one fetch (confirm_gone)
             return Response(status_code=202)
+        if e.status_code in (400, 401, 413):
+            _rate_ok(ip)
         raise
-    if convert.id_of(activity.get("actor")) != signer:
-        raise HTTPException(401, "Signed by somebody other than the actor")
     host = remote.host_of(signer)
+    if not _rate_ok(host):
+        return Response(status_code=429, headers={"Retry-After": "60"})
     if config.is_own_host(host) or config.host_blocked(host):
         return Response(status_code=202)          # blocked instances: accepted and dropped, so they stop
+    if convert.id_of(activity.get("actor")) != signer:
+        # A FORWARDED reply (Mastodon relays its users' replies, signed by itself). Refusing it made
+        # the forwarder retry for days; it is taken as a pointer and fetched from its own server.
+        if activity.get("type") in ("Create", "Update") and convert.id_of(activity.get("object")):
+            if not inbox.schedule({"type": inbox.FORWARDED, "object": convert.id_of(activity.get("object"))}, signer):
+                return Response(status_code=503, headers={"Retry-After": "120"})
+            return Response(status_code=202)
+        raise HTTPException(401, "Signed by somebody other than the actor")
     if not inbox.schedule(activity, signer):
         return Response(status_code=503, headers={"Retry-After": "120"})
     return Response(status_code=202)
@@ -335,9 +455,8 @@ async def lookup(acct: str, user=Depends(get_current_user)):
 
 @router.post("/api/activitypub/import-following")
 async def import_following(request: Request, user=Depends(get_current_user)):
-    """A fediverse following list, as puppet pubkeys for the client to add to its contact list (see
-    importer.py): the member's linked Pleroma/Mastodon account, or -- with {"account": "name@server"}
-    -- any account whose follow list is public, which needs no login at all."""
+    """A fediverse account's public following list, as puppet pubkeys for the client to add to its
+    contact list (see importer.py). Body: {"account": "name@server"}."""
     _on()
     try:
         body = await request.json()
@@ -346,27 +465,37 @@ async def import_following(request: Request, user=Depends(get_current_user)):
     handle = str((body or {}).get("account") or "").strip() if isinstance(body, dict) else ""
     # What arrived, never who: the host only (a public server name), so a report of "it said X"
     # can be matched to what the browser actually sent.
-    logger.info("[activitypub] import-following: %s (content-type %s)",
-                f"host={handle.rpartition('@')[2][:80]}" if handle else "no address, linked account",
-                (request.headers.get("content-type") or "-")[:40])
+    logger.info("[activitypub] import-following: %s",
+                f"host={handle.rpartition('@')[2][:80]}" if handle else "no address")
+    if not handle:
+        raise HTTPException(400, "Type the account to import from, as name@server")
+    # One import per member at a time, and not more than one a minute: each resolves up to 5000
+    # actors from their own servers, which is this node's bandwidth spent on the member's behalf.
+    now = time.monotonic()
+    if user.id in _importing or now - _imported.get(user.id, -1e9) < 60:
+        raise HTTPException(429, "An import is already running or just ran -- wait a minute and try again")
+    _importing.add(user.id)
+    try:
+        return await _import(handle)
+    finally:
+        _importing.discard(user.id)
+        _imported[user.id] = time.monotonic()
+
+
+_importing: set = set()
+_imported: dict = {}
+
+
+async def _import(handle: str) -> dict:
     from app.database import SessionLocal
     from app.services.activitypub import importer
     try:
-        if handle:
-            accounts, instance_url = await importer.public_following(handle)
-        else:
-            if not (getattr(user, "pleroma_instance_url", "") and getattr(user, "pleroma_access_token", "")):
-                logger.info("[activitypub] import-following refused: no address and no linked account")
-                raise HTTPException(400, "Type the account to import from (name@server), or connect it in Settings")
-            instance_url = user.pleroma_instance_url
-            accounts = await importer.following(instance_url, user.pleroma_access_token)
-    except HTTPException:
-        raise
+        accounts, instance_url = await importer.public_following(handle)
     except ValueError as e:
         logger.info("[activitypub] import-following refused: %s", str(e)[:200])
         raise HTTPException(400, str(e))
     except Exception as e:
-        raise HTTPException(502, f"Could not read who you follow there: {type(e).__name__}")
+        raise HTTPException(502, f"Could not read who that account follows: {type(e).__name__}")
     db = SessionLocal()
     try:
         people = await importer.puppets_for(db, accounts, instance_url)
@@ -401,7 +530,6 @@ async def admin_status(user=Depends(get_admin_user)):
         for pk, name in sorted(by_pk.items(), key=lambda x: x[1])[:500]:
             member = actors.is_actor(pk)
             rows.append({"name": name, "handle": f"@{name}@{config.domain()}", "member": member,
-                         "via_linked_account": actors.uses_linked_account(pk),
                          "followers": await state.follower_count(pk) if member else 0})
     try:
         report = await nostr_store.get_doc(settings_store._port(), "pcai:ap:stats",

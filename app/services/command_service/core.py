@@ -45,7 +45,7 @@ class CommandService(_BillMixin, _SearchMixin, _GenMixin, _MediaMixin, _Torrents
         "circlecrop": "Circle-crop an attached image (transparent PNG)",
         "ocr": "Read the text out of an attached image or PDF (OCR, no translation): ocr",
         "flashcards": "Make an interactive multiple-choice study quiz from an attached PDF/image/slide deck, or a URL: flashcards <url>",
-        "post": "Share text (and an optional attached image) to your connected Pleroma/Nostr: post <text>",
+        "post": "Share text (and an optional attached image) to Nostr and the fediverse: post <text>",
         "remind": "Set a reminder in natural language: remind <what> <when> (e.g. remind open the oven in 10m, remind me next tuesday to call mom). Delivered in the web UI and Telegram.",
         "reminders": "Show your pending reminders (clickable to cancel): reminders",
         "pin": "Pin something you run often — a search or any command: pin <query|command> (e.g. pin latest xrp news, or pin screenshot https://google.com)",

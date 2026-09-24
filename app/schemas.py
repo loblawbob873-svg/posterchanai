@@ -466,32 +466,23 @@ class SettingsResponse(BaseModel):
     uptime_alert_npubs: str = ""          # npubs to DM (one per line/comma; empty = the admin's own npub)
     # Nostr Stats Bot is now a per-bot FEATURE (Bot.config.stats_enabled), not a global setting —
     # see app/services/stats_bot_service.py + the Bots tab. (No global stats_bot_* keys.)
-    # Social notification relay (Pleroma → Telegram)
+    # Social notification relay (Nostr → Telegram)
     social_notif_enabled: str = "true"       # global kill-switch (on by default; per-user toggle in User Settings is the real control)
     social_notif_poll_seconds: str = "60"    # poll interval in seconds
-    fedi_bridge_enabled: str = "false"          # master switch for the whole bridge (default off)
-    fedi_bridge_instance_url: str = ""          # the shared read account's instance
-    fedi_bridge_access_token: str = ""          # the shared read account's token (READ-only use)
-    fedi_bridge_type: str = "global"            # which timeline to mirror: global | local | home
-    fedi_bridge_poll_seconds: str = "90"
-    fedi_bridge_include_replies: str = "true"   # mirror replies (threaded via e/p tags) too
-    # Broadcast the mirrored fediverse notes to OTHER Nostr relays (upstream). Default OFF — the
-    # mirror stays local to this instance's relay; flip on to federate it to the wider network.
+    # Fediverse server: share fediverse posts stored here with other Nostr relays. Default OFF -- they
+    # stay on this relay. (The key keeps its bridge-era name so an existing choice carries over.)
     fedi_bridge_broadcast: str = "false"
-    # Admin token on the home instance (= the read instance above) for the 1-click "Bridge Access"
-    # feature, which auto-creates a fediverse account for a native Nostr user via the Pleroma admin
-    # API. Blank → fall back to the read access token (if that account has admin rights).
-    fedi_bridge_admin_token: str = ""
-    # Admin domain blocklist enforced AT INGEST: posts whose author host (or origin instance) matches
-    # are never mirrored. One host per line/comma; a parent domain covers subdomains (mastodon.social
-    # covers a.mastodon.social). Independent of the read account's own block/mute lists (also honored).
+    # Fediverse server: blocked instances / accounts (Admin → Social). One per line: an instance blocks
+    # it and its subdomains in both spellings of an IDN; `user@host` blocks one account. Read together
+    # with the relay's blocked-relays list through app/services/fedi_blocklist.py. (Bridge-era key
+    # name kept so the existing list carries over.)
     fedi_bridge_blocked_domains: str = ""
     # ---- ActivityPub server (app/services/activitypub) ----
     # Local users are `@name@<domain>` on the fediverse, and (activitypub_everyone) any Nostr user this
     # relay knows is `@npub…@<domain>`; everything received is stored as Nostr events (the bridge's
     # puppets), everything sent is read from the relay; DMs cross both ways (activitypub_dms). ON out
     # of the box (config._on_unless_off) -- a node with no domain still answers nothing. Instance
-    # blocking is deliberately NOT a setting here: the relay's and the bridge's lists are read.
+    # blocking is fedi_bridge_blocked_domains above plus the relay's blocked-relays list.
     activitypub_enabled: bool = True
     activitypub_everyone: bool = True
     activitypub_dms: bool = True
@@ -500,12 +491,6 @@ class SettingsResponse(BaseModel):
     # ---- "Sign in with an account" on the client login page ----
     # Both are OFF by default: they are the only paths where an identity is created by the SERVER
     # rather than in the browser, so a node opts in deliberately.
-    # Pleroma/Mastodon: the OAuth app is registered per instance at runtime (POST /api/v1/apps, the
-    # same public endpoint the existing account-linking flow uses), so there is no client id/secret to
-    # configure here — only which instance the login form offers by default. Blank = the bridge's read
-    # instance (fedi_bridge_instance_url); the user can type another one.
-    pleroma_login_enabled: str = "false"
-    pleroma_login_instance: str = ""
     # Google: one OAuth 2.0 **Web application** client from the Google Cloud console. Its authorised
     # redirect URI must be exactly <public base>/api/auth/google/callback, and the consent screen needs
     # the openid/email/profile scopes. The secret is stored like every other setting — in the
@@ -993,27 +978,15 @@ class UserSettingsUpdate(BaseModel):
     mail_accounts: Optional[List[dict]] = None  # List of {email, imap_server, imap_port, smtp_server, smtp_port, password}
     # Telegram settings — linking/unlinking managed via /api/telegram/*, not here
     telegram_notifications: Optional[str] = None
-    # Pleroma settings (read-only via /api/pleroma/connect; exposed here for display)
-    pleroma_enabled: Optional[bool] = None
-    pleroma_instance_url: Optional[str] = None
     # Nostr settings (key linked via /api/nostr/connect; relays/media editable here)
     nostr_enabled: Optional[bool] = None
     nostr_relays: Optional[str] = None
     nostr_media_service: Optional[str] = None
     nostr_media_endpoint: Optional[str] = None
-    # Relay social notifications (Pleroma) to Telegram
+    # Relay social notifications (Nostr) to Telegram
     social_notif_enabled: Optional[bool] = None
-    # Nostr ↔ Fediverse bridge: opt in to personal fedi DMs + notifications on the Nostr side
-    fedi_bridge_enabled: Optional[bool] = None
-    # Cross-post my top-level Nostr notes to my linked Pleroma account
-    fedi_crosspost_enabled: Optional[bool] = None
-    fedi_only: Optional[bool] = None
     # NOTE: the global relay/Blossom/GIF settings that used to live here were MOVED to
     # SettingsResponse (they're admin-global, not per-user) — see that class.
-
-
-class BridgeAccessRequest(BaseModel):
-    enable: bool = True   # True = 1-click provision + enable; False = disable bridge access
 
 
 class UserSettingsResponse(BaseModel):
@@ -1029,10 +1002,6 @@ class UserSettingsResponse(BaseModel):
     telegram_notifications: str = ""
     telegram_pending_key: Optional[str] = None       # Pending link key (exposed to owner only)
     telegram_key_expires_at: Optional[datetime] = None
-    # Pleroma settings
-    pleroma_enabled: bool = False
-    pleroma_instance_url: Optional[str] = None
-    pleroma_has_access_token: bool = False
     # Nostr settings (the secret key is never returned, only whether one is set)
     nostr_enabled: bool = False
     nostr_npub: Optional[str] = None
@@ -1040,10 +1009,5 @@ class UserSettingsResponse(BaseModel):
     nostr_relays: Optional[str] = None
     nostr_media_service: Optional[str] = None
     nostr_media_endpoint: Optional[str] = None
-    # Relay social notifications (Pleroma) to Telegram
+    # Relay social notifications (Nostr) to Telegram
     social_notif_enabled: bool = False
-    # Nostr ↔ Fediverse bridge: personal fedi DMs + notifications mirrored to the Nostr side
-    fedi_bridge_enabled: bool = False
-    # Cross-post my top-level Nostr notes to my linked Pleroma account
-    fedi_crosspost_enabled: bool = False
-    fedi_only: bool = False

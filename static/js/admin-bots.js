@@ -157,17 +157,17 @@ function onBotFormChange() {
     show('bot_grp_features', !isImage);
 
     // Per-PLATFORM feature applicability — hide (and uncheck, so it's never saved) any feature the
-    // selected platform can't run. Fediverse-only features need the Pleroma DB or admin
-    // token (block / welcome / report / unfollow → don't apply to Nostr); Nostr-only are
-    // the NIP-90 DVM + the Nostr game referees (don't apply to Fediverse). Cross-platform
-    // ones (reply / hashtag) always show.
+    // selected platform can't run. Pleroma-only features need the Pleroma DB or admin token
+    // (welcome / report / unfollow); Nostr-only are the NIP-90 DVM + the Nostr game referees.
+    // Both: reply, hashtag and BLOCK -- a Nostr bot's block bot reads this node (fediverse Blocks
+    // at its ActivityPub server, public Nostr mute lists) instead of the Pleroma DB.
     const isFedi = platform === 'pleroma';
     const showFeat = (f, on) => {
         const c = _g('bot_ft_' + f); if (!c) return;
         const lbl = c.closest('label'); if (lbl) lbl.style.display = on ? '' : 'none';
         if (!on && c.checked) c.checked = false;
     };
-    ['block', 'welcome', 'report', 'unfollow'].forEach(f => showFeat(f, isFedi));
+    ['welcome', 'report', 'unfollow'].forEach(f => showFeat(f, isFedi));
     ['dvm', 'concord', 'chess', 'ttt', 'hangman', 'connect4', 'blackjack', 'holdem', 'stats'].forEach(f => showFeat(f, isNostr));
     // Nostr Stats: show the Preview/Post block only when its feature is ticked (Nostr-only).
     show('bot_grp_stats', isNostr && ck('bot_ft_stats'));
@@ -225,8 +225,8 @@ function onBotFormChange() {
       } }
 
     // Per-feature sections appear only when their feature is enabled.
-    // block / welcome / report / unfollow all need the Pleroma DB.
-    const needsDb = ck('bot_ft_block') || ck('bot_ft_welcome') || ck('bot_ft_report') || ck('bot_ft_unfollow');
+    // welcome / report / unfollow need the Pleroma DB, and so does block on a PLEROMA bot.
+    const needsDb = isFedi && (ck('bot_ft_block') || ck('bot_ft_welcome') || ck('bot_ft_report') || ck('bot_ft_unfollow'));
     show('bot_grp_db', !isImage && needsDb);
     show('bot_grp_oauth', platform === 'pleroma');  // password connect (fedi)
     show('bot_grp_pleroma_admin', platform === 'pleroma' && !isImage && ck('bot_ft_report'));  // report only
@@ -264,7 +264,7 @@ function openBotModal(id) {
     _setVal('bot_f_id', b ? b.id : '');
     _setVal('bot_f_name', b ? b.name : '');
     _setVal('bot_f_type', b ? b.bot_type : 'text');
-    _setVal('bot_f_platform', b ? b.platform : 'pleroma');
+    _setVal('bot_f_platform', b ? b.platform : 'nostr');
     _setVal('bot_f_host', b ? b.host : '');
 
     const cfg = (b && b.config) ? b.config : {};
@@ -277,7 +277,7 @@ function openBotModal(id) {
       if (pv) { if (u) { pv.src = u; pv.style.display = ''; } else { pv.removeAttribute('src'); pv.style.display = 'none'; } } }
 
     // features from modes
-    const plat = b ? b.platform : 'pleroma';
+    const plat = b ? b.platform : 'nostr';
     const modes = (b && b.modes) ? b.modes.split(',').map(m => m.trim()) : [];
     _setChk('bot_ft_reply', modes.includes('--' + plat));               // reply on the bot's own platform
     Object.entries(BOT_FEATURES).forEach(([cid, flag]) => _setChk(cid, modes.includes(flag)));

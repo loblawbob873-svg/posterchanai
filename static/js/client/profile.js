@@ -728,10 +728,9 @@ window.PCProfileFactory = function(dep){
   // sign + call the ones that actually changed (fewer signer prompts).
   async function openPermissions(pk){
     if(!S.IS_ADMIN) return;
-    let caps={}, aiOn=false, blossomOn=false, bridgeOn=false, streamOn=false;
+    let caps={}, aiOn=false, blossomOn=false, streamOn=false;
     try{ const r=await fetch('/client/ai-access?pubkey='+encodeURIComponent(pk)).then(r=>r.json()); aiOn=!!(r&&r.enabled); }catch(_){}
     try{ const r=await fetch('/client/blossom-access?pubkey='+encodeURIComponent(pk)).then(r=>r.json()); blossomOn=!!(r&&r.whitelisted); }catch(_){}
-    try{ const r=await fetch('/client/bridge-access?pubkey='+encodeURIComponent(pk)).then(r=>r.json()); bridgeOn=!!(r&&r.enabled); }catch(_){}
     try{ const r=await fetch('/client/stream-access?pubkey='+encodeURIComponent(pk)).then(r=>r.json()); streamOn=!!(r&&r.enabled); }catch(_){}
     try{ const r=await fetch('/client/user-caps?pubkey='+encodeURIComponent(pk)).then(r=>r.json()); if(r&&r.exists) caps=r.caps||{}; }catch(_){}
     let nipName='', nipDomain=location.host;
@@ -746,7 +745,6 @@ window.PCProfileFactory = function(dep){
       ${row('data-cap="can_media"', !!caps.can_media, '📺 Media Center <span class="muted small">(browse and play shared libraries)</span>')}
       ${row('id="perm-stream"', streamOn, '🔴 Live streaming <span class="muted small">(Go Live)</span>')}
       <label class="fld" style="flex-direction:row;align-items:center;gap:8px"><input type="checkbox" id="perm-nip05" ${nipName?'checked':''}> 🪪 NIP-05 <span class="muted small">${enc((nipName||defNip||('user'+pk.slice(0,8)))+'@'+nipDomain)}</span></label>
-      ${row('id="perm-bridge"', bridgeOn, '🌉 Bridge Access <span class="muted small">(create fedi account + enable bridge)</span>')}
       <hr style="border:none;border-top:1px solid var(--line,#333);margin:10px 0">
       <p class="muted small">AI features</p>
       ${C.map(([k,l])=>row('data-cap="'+k+'"', !!caps[k], l)).join('')}
@@ -791,14 +789,6 @@ window.PCProfileFactory = function(dep){
             const auth=await sign(27235,'user-caps',[['p',pk]]);
             const r=await fetch('/client/user-caps',{method:'POST',headers:{'Content-Type':'application/json'},
               body:JSON.stringify({target:pk,caps:out,auth:btoa(JSON.stringify(auth))})}).then(r=>r.json()); ok=ok&&r.ok;
-          }
-          const wantBridge=$('#perm-bridge',root).checked;
-          if(wantBridge!==bridgeOn){
-            toast(wantBridge?'creating fediverse account…':'disabling bridge…');
-            const auth=await sign(27235,'bridge-access',[['action',wantBridge?'grant':'revoke'],['p',pk]]);
-            const r=await fetch('/client/bridge-access',{method:'POST',headers:{'Content-Type':'application/json'},
-              body:JSON.stringify({target:pk,grant:wantBridge,auth:btoa(JSON.stringify(auth))})}).then(r=>r.json());
-            ok=ok&&r.ok; if(r&&!r.ok&&r.error) toast(r.error);
           }
           toast(ok?'permissions saved':'some changes failed'); closeModal();
         }catch(_){ toast('save failed'); }

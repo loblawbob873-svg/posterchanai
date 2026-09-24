@@ -13,10 +13,16 @@ from datetime import datetime, timezone
 from app.services.activitypub.config import PUBLIC
 
 AS_CONTEXT = ["https://www.w3.org/ns/activitystreams", "https://w3id.org/security/v1",
-              {"Hashtag": "as:Hashtag", "sensitive": "as:sensitive"}]
+              {"Hashtag": "as:Hashtag", "sensitive": "as:sensitive",
+               "manuallyApprovesFollowers": "as:manuallyApprovesFollowers", "quoteUrl": "as:quoteUrl",
+               "toot": "http://joinmastodon.org/ns#", "Emoji": "toot:Emoji", "blurhash": "toot:blurhash",
+               "discoverable": "toot:discoverable", "indexable": "toot:indexable",
+               "misskey": "https://misskey-hub.net/ns#", "_misskey_quote": "misskey:_misskey_quote",
+               "_misskey_reaction": "misskey:_misskey_reaction",
+               "schema": "http://schema.org#", "PropertyValue": "schema:PropertyValue", "value": "schema:value"}]
 
 _URL_RE = re.compile(r"https?://[^\s<>\"']+")
-_NOSTR_REF_RE = re.compile(r"nostr:((?:npub1|nprofile1)[023456789acdefghjklmnpqrstuvwxyz]+)", re.I)
+_NOSTR_REF_RE = re.compile(r"nostr:((?:npub1|nprofile1|note1|nevent1|naddr1)[023456789acdefghjklmnpqrstuvwxyz]+)", re.I)
 _HASHTAG_RE = re.compile(r"(?<![\w/#&])#([A-Za-z0-9_]{1,64})\b")
 _IMAGE_EXT = re.compile(r"\.(?:jpe?g|png|gif|webp|avif)(?:[?#]|$)", re.I)
 _VIDEO_EXT = re.compile(r"\.(?:mp4|webm|mov|m4v)(?:[?#]|$)", re.I)
@@ -74,6 +80,40 @@ def media_type_of(url: str) -> str:
     return ""
 
 
+def attachments(ev: dict) -> list:
+    """ActivityPub attachments for the event's media, NIP-92 `imeta` first: the type from its `m`
+    (else the file extension), plus `alt` → name, `dim` → width/height and `blurhash`. Only media
+    whose type is KNOWN are attachments -- Mastodon drops an attachment it cannot type, and the link
+    has already been taken out of the text, so an untyped one simply vanished. Those stay as links."""
+    meta = {}
+    for t in ev.get("tags") or []:
+        if not t or t[0] != "imeta":
+            continue
+        fields = {}
+        for part in t[1:]:
+            if isinstance(part, str) and " " in part:
+                k, v = part.split(" ", 1)
+                fields.setdefault(k, v.strip())
+        if fields.get("url"):
+            meta[fields["url"]] = fields
+    out = []
+    for u in media_urls(ev):
+        f = meta.get(u, {})
+        mt = f.get("m") if re.fullmatch(r"(image|video|audio)/[\w.+-]{1,40}", f.get("m") or "") else ""
+        mt = mt or media_type_of(u)
+        if not mt:
+            continue
+        a = {"type": {"image": "Image", "video": "Video", "audio": "Audio"}[mt.split("/")[0]],
+             "mediaType": mt, "url": u, "name": (f.get("alt") or "")[:1500] or None}
+        dim = re.fullmatch(r"(\d{1,5})x(\d{1,5})", f.get("dim") or "")
+        if dim:
+            a["width"], a["height"] = int(dim.group(1)), int(dim.group(2))
+        if re.fullmatch(r"[0-9A-Za-z#$%*+,\-.:;=?@\[\]^_{|}~]{6,100}", f.get("blurhash") or ""):
+            a["blurhash"] = f["blurhash"]
+        out.append(a)
+    return out
+
+
 def media_urls(ev: dict) -> list:
     """Attachments: NIP-92 `imeta` urls first, then bare media links in the text, in order, unique."""
     out = []
@@ -94,7 +134,7 @@ def media_urls(ev: dict) -> list:
     return uniq[:8]
 
 
-def text_to_html(text: str, *, base: str, mentions: dict, drop_urls=()) -> str:
+def text_to_html(text: str, *, base: str, mentions: dict, drop_urls=(), links: dict = None) -> str:
     """Nostr plain text → the small HTML subset Mastodon renders (p, br, a, span.h-card).
 
     `mentions` maps a hex pubkey to {"href", "name"} for everyone who has a fediverse address;
@@ -122,6 +162,14 @@ def text_to_html(text: str, *, base: str, mentions: dict, drop_urls=()) -> str:
                 label = html.escape(url.split("://", 1)[1] if "://" in url else url)
                 out.append(f'<a href="{safe}" rel="nofollow noopener noreferrer" target="_blank">{label}</a>')
             out.append(html.escape(tail))
+        elif not value.lower().startswith(("npub1", "nprofile1")):
+            # A reference to a POST (note1/nevent1/naddr1): a link to it -- its fediverse address
+            # when it has one (`links`), else this node's page for it -- never 60 characters of
+            # bech32 printed as text.
+            href = (links or {}).get(value) or f"{base}/{value}"
+            label = html.escape(href.split("://", 1)[-1][:60])
+            out.append(f'<a href="{html.escape(href, quote=True)}" rel="nofollow noopener noreferrer" '
+                       f'target="_blank">{label}</a>')
         else:
             pk = ""
             try:
@@ -179,10 +227,17 @@ def emoji_tags(ev: dict, text: str = None) -> list:
 
 
 def note_from_event(ev: dict, *, base: str, actor: str, followers: str, mentions: dict,
-                    in_reply_to: str = "", reply_to_actor: str = "") -> dict:
-    """A member's kind-1 as a public ActivityPub Note, addressed like Mastodon addresses one."""
-    atts = media_urls(ev)
-    content = text_to_html(ev.get("content") or "", base=base, mentions=mentions, drop_urls=atts)
+                    in_reply_to: str = "", reply_to_actor: str = "", links: dict = None,
+                    quote: str = "") -> dict:
+    """A member's kind-1 as a public ActivityPub Note, addressed like Mastodon addresses one.
+
+    `links` maps a referenced post's bech32 (note1/nevent1/naddr1) to its fediverse address;
+    `quote` is the address of the post this one QUOTES -- sent in all three spellings servers read
+    (`quoteUrl` Akkoma/Pleroma, `_misskey_quote` Misskey, `quoteUri` Fedibird), with the link
+    left in the text for servers that read none of them."""
+    att = attachments(ev)
+    atts = [a["url"] for a in att]
+    content = text_to_html(ev.get("content") or "", base=base, mentions=mentions, drop_urls=atts, links=links)
     cc = [followers] + sorted({m["href"] for m in mentions.values() if m.get("href")})
     if reply_to_actor and reply_to_actor not in cc:
         cc.append(reply_to_actor)
@@ -200,10 +255,11 @@ def note_from_event(ev: dict, *, base: str, actor: str, followers: str, mentions
         "cc": cc,
         "url": f"{base}/{_nevent_or_note(ev['id'])}",
         "tag": tag,
-        "attachment": [{"type": "Document", "mediaType": media_type_of(u) or "application/octet-stream",
-                        "url": u, "name": None} for u in atts],
+        "attachment": att,
         "sensitive": False,
     }
+    if quote:
+        note["quoteUrl"] = note["_misskey_quote"] = note["quoteUri"] = quote
     cw = next((t for t in ev.get("tags") or [] if t and t[0] == "content-warning"), None)
     if cw is not None:
         note["sensitive"] = True
@@ -278,9 +334,23 @@ def person(*, base: str, name: str, profile: dict, public_key_pem: str, username
         "inbox": f"{actor}/inbox", "outbox": f"{actor}/outbox",
         "followers": f"{actor}/followers", "following": f"{actor}/following",
         "endpoints": {"sharedInbox": f"{base}/ap/inbox"},
-        "manuallyApprovesFollowers": False, "discoverable": True,
+        "manuallyApprovesFollowers": False, "discoverable": True, "indexable": True,
+        "featured": f"{actor}/featured",
         "publicKey": {"id": f"{actor}#main-key", "owner": actor, "publicKeyPem": public_key_pem},
     }
+    # Profile FIELDS (Mastodon's metadata table): what the kind-0 says about where else to find them.
+    fields = []
+    site = str(profile.get("website") or "").strip()
+    if site.startswith("https://") and len(site) < 500:
+        esc = html.escape(site, quote=True)
+        fields.append(("Website", f'<a href="{esc}" rel="me nofollow noopener noreferrer" '
+                                  f'target="_blank">{html.escape(site.split("://", 1)[1])}</a>'))
+    for label, key in (("Lightning", "lud16"), ("NIP-05", "nip05")):
+        v = str(profile.get(key) or "").strip()
+        if v and len(v) < 200 and re.fullmatch(r"[\w.+-]+@[\w.-]+", v):
+            fields.append((label, html.escape(v)))
+    if fields:
+        doc["attachment"] = [{"type": "PropertyValue", "name": n, "value": v} for n, v in fields]
     pic = (profile.get("picture") or "").strip()
     if pic.startswith("https://"):
         doc["icon"] = {"type": "Image", "url": pic, "mediaType": media_type_of(pic) or "image/jpeg"}
@@ -340,7 +410,20 @@ def note_content(note: dict, *, local_actors: dict) -> tuple[str, list]:
     and a content warning into NIP-36."""
     from app.services.fedi_normalize import _strip_html
     text = _strip_html(str(note.get("content") or ""))
-    urls = []
+    kind = note.get("type")
+    title = _strip_html(str(note.get("name") or "")).strip()[:300] if kind in ("Article", "Page") else ""
+    if title and not text.startswith(title):
+        # An Article's `name` is its TITLE; dropped, a blog post arrived as a body with no heading.
+        text = f"{title}\n\n{text}".strip()
+    if kind == "Question":
+        # A poll's choices live in oneOf/anyOf, not in the content: without them it was a question
+        # with no answers. (Voting stays on the poll's own server -- the link below goes there.)
+        opts = [_strip_html(str(o.get("name") or "")).strip()[:200]
+                for o in _as_list(note.get("oneOf") or note.get("anyOf")) if isinstance(o, dict)]
+        opts = [o for o in opts if o][:20]
+        if opts:
+            text = (text + "\n\n" + "\n".join(f"◯ {o}" for o in opts)).strip()
+    urls, imeta = [], []
     for a in _as_list(note.get("attachment")):
         if isinstance(a, dict):
             u = a.get("url")
@@ -349,9 +432,28 @@ def note_content(note: dict, *, local_actors: dict) -> tuple[str, list]:
             u = id_of(u) if not isinstance(u, str) else u
             if isinstance(u, str) and u.startswith("https://") and u not in text:
                 urls.append(u)
+                # NIP-92: what the attachment IS, so a Nostr client can size it before it loads,
+                # blur it while it does, and read its description out.
+                meta = [f"url {u}"]
+                mt = str(a.get("mediaType") or "")
+                if re.fullmatch(r"(image|video|audio)/[\w.+-]{1,40}", mt):
+                    meta.append(f"m {mt}")
+                if isinstance(a.get("width"), int) and isinstance(a.get("height"), int):
+                    meta.append(f"dim {a['width']}x{a['height']}")
+                if re.fullmatch(r"[0-9A-Za-z#$%*+,\-.:;=?@\[\]^_{|}~]{6,100}", str(a.get("blurhash") or "")):
+                    meta.append(f"blurhash {a['blurhash']}")
+                alt = " ".join(str(a.get("name") or "").split())[:1500]
+                if alt:
+                    meta.append(f"alt {alt}")
+                if len(meta) > 1:
+                    imeta.append(["imeta"] + meta)
     if urls:
         text = (text + "\n\n" + "\n".join(urls)).strip()
-    tags, seen_p = [], set()      # p tags are bounded by who is OURS; t tags are capped below
+    quote = next((q for q in (id_of(note.get(k)) for k in ("quoteUrl", "_misskey_quote", "quoteUri", "quote"))
+                  if isinstance(q, str) and q.startswith("https://")), "")
+    if quote and quote not in text:
+        text = (text + "\n\n" + quote).strip()   # the quoted post, as a link every client renders
+    tags, seen_p = list(imeta[:8]), set()      # p tags are bounded by who is OURS; t tags are capped below
     for t in _as_list(note.get("tag")):
         if not isinstance(t, dict):
             continue
@@ -364,6 +466,9 @@ def note_content(note: dict, *, local_actors: dict) -> tuple[str, list]:
             name = str(t.get("name") or "").lstrip("#").strip().lower()
             if name and len(name) <= 64 and sum(1 for x in tags if x[0] == "t") < 20:
                 tags.append(["t", name])
-    if note.get("sensitive") or note.get("summary"):
+    if kind in ("Article", "Page"):
+        if note.get("sensitive"):
+            tags.append(["content-warning", ""])   # an Article's `summary` is its abstract, not a CW
+    elif note.get("sensitive") or note.get("summary"):
         tags.append(["content-warning", str(note.get("summary") or "")[:200]])
     return text, tags

@@ -109,6 +109,11 @@ async def add_follower(member: str, actor: str, inbox: str) -> None:
     await _put(f"{_FOLLOWER_PREFIX}{member}:{_h(actor)}", {"actor": actor, "inbox": inbox, "at": int(time.time())})
 
 
+async def is_follower(member: str, actor: str) -> bool:
+    doc = await _get(f"{_FOLLOWER_PREFIX}{member}:{_h(actor)}")
+    return isinstance(doc, dict) and bool(doc.get("actor")) and not doc.get("gone")
+
+
 async def remove_follower(member: str, actor: str) -> None:
     # A replaceable document cannot be un-written by us; a tombstone replaces it.
     await _put(f"{_FOLLOWER_PREFIX}{member}:{_h(actor)}", {"actor": actor, "gone": True, "at": int(time.time())})
@@ -130,9 +135,11 @@ async def follower_count(member: str) -> int:
 
 # ------------------------------------------------------------------------------------ following
 
-async def set_following(member: str, actor: str, inbox: str, state: str) -> None:
-    await _put(f"{_FOLLOWING_PREFIX}{member}:{_h(actor)}",
-               {"actor": actor, "inbox": inbox, "state": state, "at": int(time.time())})
+async def set_following(member: str, actor: str, inbox: str, state: str, follow_id: str = "") -> None:
+    doc = {"actor": actor, "inbox": inbox, "state": state, "at": int(time.time())}
+    if follow_id:
+        doc["id"] = follow_id                 # the Follow's own id, which an Undo must name
+    await _put(f"{_FOLLOWING_PREFIX}{member}:{_h(actor)}", doc)
 
 
 async def drop_following(member: str, actor: str) -> None:
@@ -160,6 +167,44 @@ async def claim_nick(pubkey: str, nick: str) -> None:
     still resolves) rather than a key naming a handle nobody can look up."""
     await _put(_NICK_OWNER_PREFIX + nick.lower(), {"pk": pubkey, "at": int(time.time())})
     await _put(_NICK_PREFIX + pubkey, {"nick": nick, "at": int(time.time())})
+
+
+_GONE_PREFIX = "pcai:ap:gone:"
+
+
+async def mark_gone(actor: str) -> None:
+    """A fediverse account that no longer exists (its own Delete, confirmed by its server). Kept so
+    delivery stops posting to it -- it cannot Undo its follows any more, so nothing else would."""
+    await _put(_GONE_PREFIX + _h(actor), {"actor": actor, "at": int(time.time())})
+
+
+async def gone_actors() -> set:
+    docs = await nostr_store.list_docs(_port(), _GONE_PREFIX, seckey=_seckey(), strict=False, limit=100000)
+    return {d["actor"] for d in docs.values() if isinstance(d, dict) and d.get("actor")}
+
+
+_BLOCKED_PREFIX = "pcai:ap:blocked:"
+
+
+async def record_block(member: str, actor: str, acct: str) -> None:
+    """A fediverse account blocked one of ours (an incoming Block). Kept so the block bot can say so
+    and count it -- the equivalent of the Block rows Pleroma kept in its own database."""
+    await _put(f"{_BLOCKED_PREFIX}{member}:{_h(actor)}", {"actor": actor, "acct": acct, "at": int(time.time())})
+
+
+async def undo_block(member: str, actor: str) -> None:
+    await _put(f"{_BLOCKED_PREFIX}{member}:{_h(actor)}", {"actor": actor, "gone": True, "at": int(time.time())})
+
+
+async def blocks(*, strict: bool = True) -> list:
+    """[{"member", "actor", "acct", "at"}] for every live block of one of ours."""
+    docs = await nostr_store.list_docs(_port(), _BLOCKED_PREFIX, seckey=_seckey(), strict=strict, limit=100000)
+    out = []
+    for d_tag, d in docs.items():
+        if isinstance(d, dict) and d.get("actor") and not d.get("gone"):
+            out.append({"member": d_tag[len(_BLOCKED_PREFIX):].split(":")[0], "actor": d["actor"],
+                        "acct": d.get("acct", ""), "at": int(d.get("at") or 0)})
+    return out
 
 
 async def following(member: str, *, strict: bool = True) -> dict:

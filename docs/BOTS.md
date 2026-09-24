@@ -13,7 +13,8 @@ in-process. No separate repo, no hand-edited `bots_config.py`.
 
 A **bot** is one long-running listener (or a scheduled image poster) on one fediverse account:
 
-- **Platforms:** Pleroma/Mastodon, Nostr.
+- **Platforms:** **Nostr** (the default) and Pleroma/Mastodon. A Nostr bot is on the fediverse too:
+  its NIP-05 name here makes it `@name@<domain>` through the node's ActivityPub server.
 - **Types:** **text** (continuous listener) or **image** (scheduled poster, daily at 0/6/12/18).
 - **Features** (text bots) map to behaviours: reply to mentions and the
   blockbot / welcome / report / hashtag / unfollow daemons.
@@ -69,13 +70,16 @@ The modal shows only the fields the chosen platform/type needs:
 
 - **Name, Type, Platform, Host** — `Host` empty = run on any node; otherwise must match the
   node's hostname (so each node runs only its own bots).
-- **Credentials** — Pleroma: Server URL, Bot username, Access token (Pleroma report bot
-  also needs an **admin token**).
+- **Credentials** — Nostr: leave the key EMPTY and Save makes the bot's account: a fresh key, a
+  NIP-05 name on this node (the bot's name, or `<name>-bot`, `<name>-bot2`, … — never a name
+  somebody already holds, because registering replaces a line with the same name), a profile, and
+  a follow from the operator. A key you paste is kept as it is. Pleroma: Server URL, Bot username,
+  Access token (Pleroma report bot also needs an **admin token**).
 - **Features** (text bots) → `main.py` modes: Reply to mentions, Welcome, Block,
   Report, Hashtag, Unfollow, **Data Vending Machine (NIP-90)**. (No raw `--flags` to type.)
 - **Personality prompt.**
 - **Voice / narration** — TTS voice/rate/pitch, auto-narrate.
-- **Pleroma database name** — for block/welcome/report bots.
+- **Pleroma database name** — for Pleroma block/welcome/report bots only.
 - **Per-feature content** — welcome message/prompt/image/lookback, block image/prompt, report
   image/prompt, unfollow image/silent-mode (shown only when that feature is enabled).
 - **Advanced (JSON)** — any extra keys (e.g. `shamebot_rooms`, `stickers_enabled`). A key from a
@@ -83,6 +87,27 @@ The modal shows only the fields the chosen platform/type needs:
 
 On/Off per bot toggles `enabled`; the manager reconciles within a few seconds. (Nothing runs
 unless the master kill-switch is also on.)
+
+### The block bot on Nostr (and the fediverse)
+
+`--blockbot` picks its platform from the bot's credentials: a Pleroma bot runs the original
+`blockbot.py` against Pleroma's database; a Nostr bot runs `botframework/nostr_blockbot.py`, which
+reads this node's `/api/community/*` endpoints (`app/routers/community.py` over
+`app/services/community_stats.py`, authenticated with the bot API key):
+
+- **blocks** — both halves of "who blocked whom here": a fediverse account's `Block` of one of
+  our users (recorded by the ActivityPub server), and public Nostr mute lists (kind 10000) that
+  name one of our users or a fediverse person. New ones are announced; the bot remembers what it
+  has seen (`.last_blockbot_<hash>.json`) and its FIRST look announces nothing, so it never posts
+  every block that already existed.
+- **scalps** / **fba** — the most-blocked leaderboard and the daily roundup.
+- **topposts** (`nostr_engagement.py`) — the day's most reacted-to and reposted member posts, and
+  daily/monthly active members.
+
+"Could not ask" (the app down, the relay unreachable) is an error the bot logs, never "no new
+blocks" — so an outage cannot rewrite its memory and make it re-announce everything afterwards.
+An AI rewording of an announcement is used only if it still contains every handle
+(`validate_block_message`).
 
 ### Data Vending Machine (NIP-90)
 

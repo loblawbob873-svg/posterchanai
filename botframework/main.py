@@ -51,7 +51,7 @@ def main():
         "--holdem", action="store_true", help="#holdem — deal multiplayer Texas Hold'em"
     )
     parser.add_argument(
-        "--blockbot", action="store_true", help="Start the Pleroma Blockbot daemon"
+        "--blockbot", action="store_true", help="Start the Blockbot daemon (Pleroma, or Nostr + the fediverse)"
     )
     parser.add_argument(
         "--blocks", action="store_true", help="Run blockbot blocks function once"
@@ -460,37 +460,43 @@ def main():
         print("Starting Auto-post preview (no posting)...")
         autopost(print_only=True)
     elif args.blockbot:
-        from blockbot import background, waitToStart
-        from config import PLEROMA_ENDPOINT
-        waitToStart()
+        from config import PLEROMA_ENDPOINT, NOSTR_NSEC
         if PLEROMA_ENDPOINT:
+            from blockbot import background, waitToStart
+            waitToStart()
             print("Starting Pleroma blockbot daemon...")
             background()
+        elif NOSTR_NSEC:
+            # A Nostr bot: blocks come from this node (fediverse Blocks at its ActivityPub server,
+            # public Nostr mute lists), and it posts as its own account -- see nostr_blockbot.py.
+            from nostr_blockbot import background, waitToStart
+            waitToStart()
+            print("Starting the Nostr block bot daemon...")
+            background()
         else:
-            print("ERROR: PLEROMA_ENDPOINT is not configured")
+            print("ERROR: the block bot needs a Pleroma account or a Nostr key")
             return
-    elif args.blocks:
-        from blockbot import blocks, init_db
-        init_db()
-        blocks(print_only=False)
-    elif args.blocks_print:
-        from blockbot import blocks, init_db
-        init_db()
-        blocks(print_only=True)
-    elif args.scalps:
-        from blockbot import scalps, init_db
-        init_db()
-        scalps(print_only=False)
-    elif args.scalps_print:
-        from blockbot import scalps, init_db
-        init_db()
-        scalps(print_only=True)
-    elif args.fba:
-        from blockbot import fba
-        fba()
+    elif args.blocks or args.blocks_print or args.scalps or args.scalps_print or args.fba:
+        from config import PLEROMA_ENDPOINT
+        if PLEROMA_ENDPOINT:
+            import blockbot as bb
+            if not args.fba:
+                bb.init_db()
+        else:
+            import nostr_blockbot as bb
+        if args.blocks or args.blocks_print:
+            bb.blocks(print_only=args.blocks_print)
+        elif args.scalps or args.scalps_print:
+            bb.scalps(print_only=args.scalps_print)
+        else:
+            bb.fba()
     elif args.topposts:
-        from engagement import daily_top_posts, post_active_user_stats, init_db
-        init_db()
+        from config import PLEROMA_ENDPOINT
+        if PLEROMA_ENDPOINT:
+            from engagement import daily_top_posts, post_active_user_stats, init_db
+            init_db()
+        else:
+            from nostr_engagement import daily_top_posts, post_active_user_stats
         try:
             daily_top_posts(print_only=False)
             time.sleep(5)  # Brief delay between posts
@@ -499,8 +505,12 @@ def main():
             print("\n\nShutting down...")
             return
     elif args.topposts_print:
-        from engagement import daily_top_posts, post_active_user_stats, init_db
-        init_db()
+        from config import PLEROMA_ENDPOINT
+        if PLEROMA_ENDPOINT:
+            from engagement import daily_top_posts, post_active_user_stats, init_db
+            init_db()
+        else:
+            from nostr_engagement import daily_top_posts, post_active_user_stats
         try:
             daily_top_posts(print_only=True)
             print("\n--- DAU/MAU Stats ---\n")

@@ -162,9 +162,6 @@ _OWNED = (
     # Notification transport is called by the push API and reminder/mail/Nostr workers.
     ("app/services/push_service.py", (APP, WORKER)),
     ("app/services/direct_push_service.py", (APP, WORKER)),
-    ("app/services/fedi_nostr_bridge_service.py", (WORKER,)),
-    ("app/services/fedi_nostr_writeback_service.py", (WORKER,)),
-    ("app/services/fedi_nostr_personal_service.py", (WORKER,)),
     ("app/services/stream_service.py", (MEDIA,)),
     ("app/services/turn_service.py", (MEDIA,)),
     ("streamserver/", (MEDIA,)),

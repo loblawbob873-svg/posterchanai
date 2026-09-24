@@ -48,22 +48,12 @@ GOOGLE_TOKEN = "https://oauth2.googleapis.com/token"
 GOOGLE_USERINFO = "https://openidconnect.googleapis.com/v1/userinfo"
 
 # Pending OAuth round-trips and finished-but-uncollected logins. Both are per-process dicts with a
-# short TTL — the same pattern (and the same single-worker caveat) as the pending-state map in
-# routers/pleroma.py. Nothing durable belongs here: a lost entry costs one retry of the login.
+# short TTL, and the single-worker caveat that implies. Nothing durable belongs here: a lost entry costs one retry of the login.
 _STATES: dict[str, dict] = {}
 _STATE_TTL = 600        # 10 min to finish a consent screen
 _HANDOFFS: dict[str, dict] = {}
 _HANDOFF_TTL = 120      # the browser collects immediately; this is only for a slow redirect
 
-# How many already-linked accounts a Pleroma login will probe to backfill their handle (see
-# _find_pleroma_user). Bounded so one login can't turn into hundreds of calls to an instance.
-_ACCT_BACKFILL_LIMIT = 25
-
-# What a fediverse sign-in asks the instance for. ONE constant because the scope is fixed when the
-# app is REGISTERED and then repeated on the authorize URL — if the two ever disagree the instance
-# rejects the consent request, so they must not be able to drift apart.
-# Matches routers/pleroma.py's "user" target exactly: connecting an account should leave it usable.
-_PLEROMA_LOGIN_SCOPES = "read write follow"
 
 
 def _evict() -> None:
@@ -85,19 +75,6 @@ def _setting(key: str, default: str = "") -> str:
 
 def _on(key: str) -> bool:
     return str(_setting(key, "false")).strip().lower() in ("1", "true", "yes", "on")
-
-
-def _norm_host(url: str) -> str:
-    """Bare lowercase host of an instance URL — what two spellings of the same instance share."""
-    u = (url or "").strip().lower().rstrip("/")
-    u = u.split("://", 1)[1] if "://" in u else u
-    return u.split("/", 1)[0].split("@")[-1]
-
-
-def _configured_instances() -> set:
-    """Instance hosts the OPERATOR set, which are therefore not untrusted visitor input."""
-    return {h for h in (_norm_host(_setting("pleroma_login_instance")),
-                        _norm_host(_setting("fedi_bridge_instance_url"))) if h}
 
 
 def _base_url(request: Request) -> str:
@@ -222,8 +199,6 @@ def providers():
     takes no DB session: every value comes from the settings cache, and this is hit on every cold
     load of the login page."""
     return {
-        "pleroma": _on("pleroma_login_enabled"),
-        "pleroma_instance": _setting("pleroma_login_instance") or _setting("fedi_bridge_instance_url"),
         "google": bool(_on("google_login_enabled") and _setting("google_client_id")
                        and _setting("google_client_secret")),
     }
@@ -351,257 +326,6 @@ async def google_callback(request: Request, code: str = None, state: str = None,
     await _ensure_identity(db, user)
     return RedirectResponse(f"/client?login={_handoff(user, 'google', email or 'Google', created)}",
                             status_code=302)
-
-
-# --- Pleroma / Mastodon -------------------------------------------------------------------------
-
-def _acct_of(account: dict, instance_url: str) -> str:
-    """`user@host` for an account as its own instance reports it (`acct` is bare there)."""
-    acct = (account.get("acct") or account.get("username") or "").strip()
-    if not acct:
-        return ""
-    if "@" not in acct:
-        acct = f"{acct}@{urllib.parse.urlparse(instance_url).hostname or ''}"
-    return acct.lower()[:255]
-
-
-def apply_fedi_access(user) -> bool:
-    """Grant AI + Blossom to someone who just proved they hold a fediverse account. True if changed.
-
-    A bare Nostr signup stays gated until an admin approves, because anyone can mint a keypair. A
-    fediverse sign-in is different: holding an account on an instance we allow sign-in from IS the
-    identity check `can_ai` stands in for, and leaving it off meant a fedi user connected an account
-    and then couldn't use the thing they came for.
-
-    Runs on EVERY sign-in, not just the first, so people who linked before this (or through Settings)
-    aren't left locked out with no way to see why. It only ever widens — except when an admin has
-    REVOKED access, which is the whole reason `access_revoked` exists: re-granting there would make a
-    revocation last precisely until the user's next login, i.e. not be a revocation at all.
-    """
-    if getattr(user, "access_revoked", False):
-        return False
-    if user.can_ai and user.can_blossom:
-        return False
-    user.can_ai = True
-    user.can_blossom = True
-    return True
-
-
-class _ProbeUnavailable(Exception):
-    """We could not determine whether this fediverse account is already linked here.
-
-    Distinct from "it isn't linked": the caller mints a new account on the latter, and doing that on
-    uncertainty forks an existing user's identity."""
-
-
-async def _find_pleroma_user(db: Session, instance_url: str, acct: str) -> User | None:
-    """The User this fediverse account already belongs to, if any.
-
-    Straight match on the recorded handle first. Accounts linked BEFORE pleroma_acct existed have
-    none recorded, so those get backfilled here — ask the instance who each stored token belongs to,
-    bounded, once per account. Without this every existing bridge user signing in with Pleroma would
-    be handed a brand-new empty identity instead of their own.
-
-    Raises _ProbeUnavailable when a probe FAILED rather than answered, because the caller's "no match"
-    branch MINTS A NEW ACCOUNT. Treating an unreachable instance as "this person is new" is how one
-    dropped request forks somebody's identity into a second, empty account — the same trap the Google
-    flow hit, and the same failure/absence conflation that stripped mentions in the bridge resolver.
-    A 401/403 IS an answer (that token is dead, so it isn't a match); anything else is not.
-    """
-    hit = db.query(User).filter(User.pleroma_instance_url == instance_url,
-                                User.pleroma_acct == acct).first()
-    if hit:
-        return hit
-    from app.services.pleroma_service import verify_credentials
-    stale = (db.query(User)
-             .filter(User.pleroma_instance_url == instance_url,
-                     User.pleroma_access_token.isnot(None),
-                     User.pleroma_acct.is_(None))
-             .limit(_ACCT_BACKFILL_LIMIT + 1).all())
-    # The cap is a bound on how much work one login may do, but an unprobed account is an UNKNOWN
-    # account, not an absent one — if the owner is past the cap we must not conclude they're new.
-    truncated = len(stale) > _ACCT_BACKFILL_LIMIT
-    if truncated:
-        logger.info("[social-login] %d unlabelled pleroma links on %s — probing the first %d",
-                    len(stale), instance_url, _ACCT_BACKFILL_LIMIT)
-        stale = stale[:_ACCT_BACKFILL_LIMIT]
-    async def _who(u):
-        """(user, acct, unknown). `unknown` marks "the probe didn't answer", NOT "not a match"."""
-        try:
-            return u, _acct_of(await verify_credentials(instance_url, u.pleroma_access_token), instance_url), False
-        except httpx.HTTPStatusError as e:
-            code = e.response.status_code if e.response is not None else 0
-            if code in (401, 403):
-                return u, "", False      # revoked/expired token — a real answer: not this person
-            return u, "", True           # 429/5xx — the instance couldn't say
-        except Exception:
-            return u, "", True           # reset/timeout/DNS — the instance couldn't say
-
-    # CONCURRENTLY: this runs inside someone's login. Sequentially, 25 probes against a slow instance
-    # is 25 round trips stacked end to end — long enough that the person gives up and retries, which
-    # starts the whole thing again.
-    import asyncio
-    found, unknown = None, False
-    for u, got, failed in await asyncio.gather(*[_who(u) for u in stale]):
-        if failed:
-            unknown = True
-            continue
-        if not got:
-            continue
-        u.pleroma_acct = got             # backfilled, so this probe never has to run for them again
-        if got == acct:
-            found = u
-    db.commit()                          # keep the handles we DID resolve, even if others failed
-    if found is None and (unknown or truncated):
-        # Concurrency makes this likelier than it looks: 25 probes at once is exactly what gets
-        # rate-limited (429), and this instance is reachable — we just authenticated against it.
-        # `truncated` counts too: the owner may simply be one of the accounts we never asked about.
-        # Each probe backfills a handle permanently, so retrying works through the backlog and the
-        # condition clears itself instead of wedging.
-        raise _ProbeUnavailable()
-    return found
-
-
-class PleromaLoginStart(BaseModel):
-    instance_url: str = ""
-
-
-@router.post("/pleroma/start")
-async def pleroma_start(data: PleromaLoginStart, request: Request):
-    """Register this app on the instance (public /api/v1/apps — no admin anything) and return the
-    consent URL.
-
-    Asks for the SAME scopes as linking an account by hand (routers/pleroma.py's "user" target), so
-    signing in once leaves you able to actually use the account you just connected. It was `read`
-    on the theory that signing in isn't permission to post as you — but that left a first-time user
-    connected and unable to post, needing a second, separate trip through Settings to become useful.
-    NOT the bridge target's `admin:read admin:write`: those are for the operator's own account
-    creating fediverse accounts, no ordinary user on someone else's instance would be granted them,
-    and some instances fail the whole authorize request on a scope they won't grant."""
-    if not _on("pleroma_login_enabled"):
-        raise HTTPException(status_code=403, detail="fediverse sign-in is not enabled on this server")
-    instance = (data.instance_url or "").strip().rstrip("/")
-    if not instance:
-        instance = (_setting("pleroma_login_instance") or _setting("fedi_bridge_instance_url")).rstrip("/")
-    if not instance.startswith(("http://", "https://")):
-        instance = "https://" + instance if instance else ""
-    if not instance:
-        raise HTTPException(status_code=400, detail="which instance?")
-    # Same SSRF guard the bridge puts on instance URLs — this one is typed in by an anonymous visitor.
-    # EXCEPT for the instance(s) the operator configured: those are not visitor input, and the guard
-    # rejects them for a reason that has nothing to do with SSRF. A self-hosted instance commonly
-    # resolves to a LAN address from inside its own network (split-horizon DNS — detroitriotcity.com
-    # is 192.168.0.1 here, via the same nginx that serves /static), so the un-exempted guard blocks
-    # sign-in to the node's OWN instance while happily allowing every stranger's.
-    if _norm_host(instance) not in _configured_instances():
-        try:
-            from app.services.rss_service import is_safe_host, looks_fetchable
-            if not looks_fetchable(instance) or not is_safe_host(instance):
-                raise HTTPException(status_code=400, detail="that instance address isn't allowed")
-        except HTTPException:
-            raise
-        except Exception:
-            pass
-    from app.services.pleroma_service import register_app, build_auth_url
-    redirect_uri = f"{_base_url(request)}/api/auth/pleroma/callback"
-    try:
-        app_data = await register_app(instance, redirect_uri, scopes=_PLEROMA_LOGIN_SCOPES)
-    except Exception as e:
-        raise HTTPException(status_code=502, detail=f"could not reach that instance: {e}")
-    cid, csec = app_data.get("client_id"), app_data.get("client_secret")
-    if not cid or not csec:
-        raise HTTPException(status_code=502, detail="that instance did not return client credentials")
-    _evict()
-    state = secrets.token_urlsafe(24)
-    _STATES[state] = {"t": time.time(), "p": "pleroma", "instance": instance,
-                      "client_id": cid, "client_secret": csec, "redirect_uri": redirect_uri}
-    return {"auth_url": build_auth_url(instance, cid, redirect_uri,
-                                       scopes=_PLEROMA_LOGIN_SCOPES) + f"&state={state}"}
-
-
-@router.get("/pleroma/callback")
-async def pleroma_callback(code: str = None, state: str = None, error: str = None,
-                           db: Session = Depends(get_db)):
-    if error:
-        return _error_page(f"The instance returned: {error}")
-    if not code or not state:
-        return _error_page("Missing code or state.")
-    _evict()
-    pending = _STATES.pop(state, None)
-    if not pending or pending.get("p") != "pleroma":
-        return _error_page("That sign-in took too long — please try again.")
-    from app.services.pleroma_service import exchange_code, verify_credentials
-    instance = pending["instance"]
-    try:
-        token = await exchange_code(instance_url=instance, client_id=pending["client_id"],
-                                    client_secret=pending["client_secret"],
-                                    redirect_uri=pending["redirect_uri"], code=code)
-        account = await verify_credentials(instance, token)
-    except Exception as e:
-        logger.warning("[social-login] pleroma exchange failed: %s", e)
-        return _error_page(f"Sign-in failed: {e}")
-    acct = _acct_of(account, instance)
-    if not acct:
-        return _error_page("That instance did not say who you are.")
-
-    try:
-        user = await _find_pleroma_user(db, instance, acct)
-    except _ProbeUnavailable:
-        # Fail CLOSED. Signing in again costs the user seconds; minting a duplicate identity because
-        # one probe timed out costs an operator a manual DB repair (see the Google strays).
-        logger.warning("[social-login] could not rule out an existing account for %s on %s — "
-                       "refusing to create one", acct, instance)
-        return _error_page("Could not check whether you already have an account here — the instance "
-                           "didn't finish answering. Please try signing in again in a moment.", 503)
-    created = False
-    if not user:
-        from app.services import registration_service
-        if not registration_service.enabled():
-            return _error_page(registration_service.closed_message(), 403)
-        user = User(
-            username=_unique_username(db, acct.split("@")[0]), email=None, password_hash="",
-            is_admin=False, email_verified=True,
-            can_image=True, can_music=True, can_video=False, can_torrent=False,
-            can_blossom=False, can_ai=False,   # apply_fedi_access below grants these
-        )
-        from app.auth import get_password_hash
-        user.password_hash = get_password_hash(secrets.token_urlsafe(32))
-        db.add(user)
-        db.commit()
-        db.refresh(user)
-        created = True
-        logger.info("[social-login] pleroma signup: %s (%s)", user.username, acct)
-    # Signing in IS the link: fill in the Social settings this account would otherwise have to be
-    # configured by hand, so a fresh account comes back already connected to its instance.
-    user.pleroma_instance_url = instance
-    user.pleroma_acct = acct
-    # …but do NOT overwrite a token that is already there. This flow now asks for the same
-    # `read write follow` an ordinary hand-link does, so it can no longer cost a normal user their
-    # write access — but the OPERATOR's bridge token also carries `admin:read admin:write`, and
-    # replacing it here would strip those. That failure surfaces far from its cause, as
-    # "Insufficient permissions: admin:read:accounts" the next time the bridge creates an account.
-    if not user.pleroma_access_token:
-        user.pleroma_access_token = token
-        user.pleroma_enabled = True
-        # Signing in WITH a fediverse account is opting that account onto the bridge. Without this the
-        # link is inert: the write-back whitelist (fedi_nostr_writeback_service._refresh_allowed) only
-        # admits a user with one of these two on, so a fresh fedi sign-in could read the bridged
-        # timeline while nothing they posted, replied or reacted ever reached the fediverse. It's the
-        # same pair `fedi_bridge_access.enable()` flips for the admin's 1-click grant, so "on the
-        # bridge" means one thing everywhere. Only on the FIRST link — a later sign-in must not undo
-        # someone who turned the toggles off in Settings — and never against a REVOCATION, for the
-        # reason apply_fedi_access spells out: a ban that lasts until the next login is not a ban.
-        if not getattr(user, "access_revoked", False):
-            user.fedi_bridge_enabled = True
-            user.fedi_crosspost_enabled = True
-            logger.info("[social-login] bridge enabled for %s (%s) on first fedi link", user.username, acct)
-    if apply_fedi_access(user):
-        logger.info("[social-login] granted AI+Blossom to %s (%s)", user.username, acct)
-    elif user.access_revoked:
-        logger.info("[social-login] %s signed in but access was revoked — not re-granting", user.username)
-    db.commit()
-    await _ensure_identity(db, user)
-    return RedirectResponse(f"/client?login={_handoff(user, 'pleroma', acct, created)}", status_code=302)
 
 
 # --- linking Google to a key you already have ---------------------------------------------------

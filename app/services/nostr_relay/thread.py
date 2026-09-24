@@ -649,21 +649,6 @@ def _collect_preserve_pubkeys(db) -> list:
         # was supposed to keep. It must be visible in the journal, not swallowed.
         logger.warning("[nostr-relay] nip05 preserve collection FAILED (%s) — those authors are "
                        "unprotected this pass", e)
-    # Puppets of local users' linked fediverse accounts.
-    try:
-        from sqlalchemy import func
-        from app.models import FediPuppet, User
-        accts = {(a or "").strip().lower().lstrip("@")
-                 for (a,) in db.query(User.pleroma_acct).filter(User.pleroma_acct.isnot(None)).all()}
-        accts.discard("")
-        if accts:
-            for (pk,) in db.query(FediPuppet.pubkey_hex).filter(
-                    func.lower(FediPuppet.acct).in_(accts)).all():
-                if pk:
-                    out.add(pk)
-    except Exception as e:
-        logger.warning("[nostr-relay] bridged-user puppet preserve collection FAILED (%s) — bridged "
-                       "users' mirrored posts are unprotected this pass", e)
     return list(out)
 
 

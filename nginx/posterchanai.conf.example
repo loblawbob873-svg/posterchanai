@@ -279,6 +279,7 @@ server {
     }
     location = /.well-known/webfinger { proxy_pass http://posterchanai_app; proxy_cache off; }
     location = /.well-known/nodeinfo  { proxy_pass http://posterchanai_app; proxy_cache off; }
+    location = /.well-known/host-meta { proxy_pass http://posterchanai_app; proxy_cache off; }
     location ^~ /nodeinfo/            { proxy_pass http://posterchanai_app; proxy_cache off; }
 
     # ---- OpenAI-compatible API (/v1/...) -----------------------------------

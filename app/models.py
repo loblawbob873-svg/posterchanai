@@ -57,15 +57,6 @@ class User(Base):
     telegram_key_expires_at = Column(DateTime, nullable=True)  # Expiry for the pending link key
 
 
-    # Pleroma integration settings
-    pleroma_enabled = Column(Boolean, default=False)
-    pleroma_instance_url = Column(String(500), nullable=True)
-    pleroma_access_token = Column(String(500), nullable=True)
-    # Which account that token belongs to (`user@host`), recorded so "sign in with Pleroma" can find
-    # an EXISTING linked user instead of minting a second identity for the same person. Backfilled
-    # from the instance on first login for accounts linked before this column existed.
-    pleroma_acct = Column(String(255), nullable=True, index=True)
-
     # Nostr integration settings. Identity is a secret key (nsec/hex); posts publish to the
     # user's relays; media uploads to an external Blossom/NIP-96 host (not an "instance").
     nostr_enabled = Column(Boolean, default=False)
@@ -86,22 +77,17 @@ class User(Base):
     stream_record = Column(Boolean, default=False)
 
 
-    # Social notification relay → Telegram (master per-user toggle + per-platform cursors)
+    # LEGACY, read-only: who linked a fediverse account under the retired Pleroma bridge. Nothing
+    # writes these any more; relay_access_policy still exempts those accounts (exempt_fediverse),
+    # and dropping the columns would silently revoke their access on the next 15-minute run.
+    pleroma_enabled = Column(Boolean, default=False)
+    pleroma_instance_url = Column(String(500), nullable=True)
+    pleroma_acct = Column(String(255), nullable=True, index=True)
+
+    # Social notification relay → Telegram (master per-user toggle + cursor)
     social_notif_enabled = Column(Boolean, default=False)
-    pleroma_notif_since = Column(Text, nullable=True)   # last-seen Pleroma notification id
     nostr_notif_since = Column(Text, nullable=True)     # last-seen Nostr event created_at (unix)
 
-    # Nostr ↔ Fediverse bridge: per-user opt-in for the PERSONAL plane (your fedi DMs arrive as
-    # NIP-17 Nostr DMs, your fedi notifications as the matching Nostr events). The public global-
-    # timeline mirror is server-wide (admin setting) and independent of this. Needs a linked Pleroma
-    # account + a linked Nostr identity. Cursors are kept separate from the Telegram relay's.
-    fedi_bridge_enabled = Column(Boolean, default=False)
-    fedi_bridge_dm_since = Column(Text, nullable=True)      # last-seen fedi direct-conversation id
-    fedi_bridge_notif_since = Column(Text, nullable=True)   # last-seen fedi notification id
-    # Cross-post: when on, this user's top-level Nostr notes are federated to their linked Pleroma
-    # account as new public posts (replies/likes/reposts already federate via the write-back path).
-    fedi_crosspost_enabled = Column(Boolean, default=False)
-    fedi_only = Column(Boolean, default=False)  # view bridge posts; send social activity through HTTP only
 
     created_at = Column(DateTime, default=datetime.utcnow)
 
@@ -534,9 +520,9 @@ class Bot(Base):
     name = Column(String(100), unique=True, nullable=False, index=True)
     enabled = Column(Boolean, default=True)              # should the manager keep it running / scheduled
     bot_type = Column(String(20), default="text")        # "text" (long-running) | "image" (scheduled)
-    platform = Column(String(20), default="pleroma")     # "pleroma"
+    platform = Column(String(20), default="nostr")        # always "nostr": the Pleroma platform was retired
     host = Column(String(100), nullable=True)            # node hostname that runs it; empty = any node
-    modes = Column(Text, default="")                     # comma-separated main.py flags, e.g. "--pleroma"
+    modes = Column(Text, default="")                     # comma-separated main.py flags, e.g. "--nostr"
     config = Column(Text, default="{}")                  # JSON: all other per-bot fields (creds, prompt, feature opts)
     created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)

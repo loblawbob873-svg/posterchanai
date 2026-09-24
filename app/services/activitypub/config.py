@@ -99,11 +99,10 @@ def lan_hosts() -> set:
     Split DNS is ordinary on a self-hosted network: a neighbour served by the same front proxy
     resolves to that proxy's LAN address, so the SSRF guard (never fetch a private address on a
     stranger's say-so) refused every request to it -- the import, key fetches and deliveries alike.
-    Only names an ADMIN wrote down are trusted: the Pleroma bridge's own instance, and the explicit
-    list. Never a name that merely resolves nearby -- `router.lan` does too."""
+    Only names an ADMIN wrote down are trusted. Never a name that merely resolves nearby --
+    `router.lan` does too."""
     out = set()
-    raw = "\n".join([settings_store.get("fedi_bridge_instance_url", "") or "",
-                     settings_store.get("activitypub_lan_hosts", "") or ""])
+    raw = settings_store.get("activitypub_lan_hosts", "") or ""
     for line in raw.replace(",", "\n").splitlines():
         h = _host_of_line(line)
         if h and "." in h:
@@ -121,5 +120,6 @@ def is_own_host(host: str) -> bool:
 
 
 def broadcast() -> bool:
-    """Whether incoming fediverse content may leave this relay (the Pleroma bridge's switch)."""
+    """Whether incoming fediverse content may leave this relay (Admin → Social → "Share fediverse
+    posts with other relays"; the key keeps its old name so an existing choice carries over)."""
     return settings_store.get_bool("fedi_bridge_broadcast", False)

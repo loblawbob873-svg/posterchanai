@@ -1,8 +1,7 @@
-"""Fediverse object normalisers — Pleroma/Mastodon → one flat dict.
+"""Fediverse text helpers: HTML flattened to text, and custom emoji (NIP-30 tags) from a platform's
+emoji list. Used by the ActivityPub server (inbox/convert) and the puppet identity code.
 
-Extracted VERBATIM from the old fedi_timeline_service, which has since been deleted; this is the
-proven normalisation logic it was built on. Consumers: fedi_nostr_bridge_service,
-fedi_nostr_personal_service, fedi_bridge_identity.
+(The Pleroma status normalisers that lived here went with the Pleroma bridge.)
 """
 import html as _html
 import re
@@ -16,62 +15,6 @@ def _strip_html(raw: str) -> str:
     text = _BREAK_RE.sub("\n", raw or "")
     text = _TAG_RE.sub("", text)
     return _html.unescape(text).strip()
-
-
-def _norm_pleroma(s: dict) -> dict:
-    acct_obj = s.get("account") or {}
-    media = [{"url": m.get("url"), "mime": ""} for m in (s.get("media_attachments") or []) if m.get("url")]
-    # `quote` = a quote-post's quoted status; `reblog` (with empty content) = a plain boost.
-    quote = None
-    sub = s.get("quote") or s.get("reblog")
-    if sub:
-        sub_acct = sub.get("account") or {}
-        quote = {
-            "acct": sub_acct.get("acct") or sub_acct.get("username", "?"),
-            "display": sub_acct.get("display_name") or sub_acct.get("username", ""),
-            "text": _strip_html(sub.get("content", "")),
-            "html": sub.get("content"),
-            "emojis": _emoji_url_map(sub_acct.get("emojis")),
-            "content_emojis": _emoji_url_map(sub.get("emojis")),
-        }
-    return {
-        "id": s.get("id"),
-        "uri": s.get("uri") or s.get("url"),   # always present for local statuses
-        "author": {
-            "acct": acct_obj.get("acct") or acct_obj.get("username", "?"),
-            "display": acct_obj.get("display_name") or acct_obj.get("username", ""),
-            "avatar_url": acct_obj.get("avatar"),
-            "url": acct_obj.get("url"),        # profile page on the author's instance
-            "emojis": _emoji_url_map(acct_obj.get("emojis")),
-        },
-        "text": _strip_html(s.get("content", "")),
-        "html": s.get("content"),              # Pleroma content is already HTML
-        "media": media,
-        "quote": quote,
-        "content_emojis": _emoji_url_map(s.get("emojis")),   # custom emoji used in the content
-        "url": s.get("url") or s.get("uri"),   # human URL to the post/thread
-        "in_reply_to_id": s.get("in_reply_to_id"),  # parent status id (for thread reply chains)
-        "replies_count": s.get("replies_count") or 0,
-        "created_at": s.get("created_at"),
-    }
-
-
-def _norm(platform: str, raw: dict) -> dict:
-    return _norm_pleroma(raw)
-
-
-def _canonical_uri(platform: str, instance_url: str, post: dict) -> str | None:
-    """The cross-instance AP URI used to resolve a post on a member's own instance and to
-    dedup federated copies."""
-    return post.get("uri") or None
-
-
-# --- rendering --------------------------------------------------------------
-
-# Mention/profile anchors in post HTML. We strip these to plain text: clients that unfurl a
-# fediverse profile link (`/users/x` or `/@x`) render the user's whole profile card + bio below
-# every post — unwanted bloat. Removing the <a> (keeping the @name text) leaves the mention
-# readable without a previewable link.
 
 
 def emoji_tags_for(text: str, emap: dict, limit: int = 30) -> list:
@@ -96,14 +39,22 @@ def emoji_tags_for(text: str, emap: dict, limit: int = 30) -> list:
 def _emoji_url_map(raw) -> dict:
     """Normalize a platform emoji field (a list of {shortcode,url}, or a {name: url} dict)
     to {shortcode: url}. Both shapes are accepted — instances differ."""
+    # https only: these URLs reach every reader's browser as image sources, so a plain-http or
+    # LAN address would let a remote server track readers or probe their network.
     if isinstance(raw, dict):
-        return {k: v for k, v in raw.items() if v}
+        return {k: v for k, v in raw.items() if _https(v)}
     if isinstance(raw, list):
         out = {}
         for e in raw:
+            if not isinstance(e, dict):
+                continue
             sc = e.get("shortcode") or e.get("name")
             url = e.get("url") or e.get("static_url")
-            if sc and url:
+            if sc and _https(url):
                 out[sc] = url
         return out
     return {}
+
+
+def _https(url) -> bool:
+    return isinstance(url, str) and url.startswith("https://") and len(url) < 2048

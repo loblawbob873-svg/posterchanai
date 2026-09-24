@@ -23,7 +23,7 @@ window.PCSettingsFactory = function(dep){
     _fillMediaCacheStat, _fillMusicOfflineStat, _flushPending, _fmtBytes, _hasNativeTor,
     _instanceBase, _langOptions, _loadAutoMute, _loginProviders, _navHideHtml, _navLabel,
     _normInstance, _notificationPane, _paintAutoMuteControls, _parsePresets, _postEffectsOn,
-    _prefTouched, _scheduleAutoMutes, _setFediOnly, _sheet, _signerBackgroundHint, _standalone,
+    _prefTouched, _scheduleAutoMutes, _sheet, _signerBackgroundHint, _standalone,
     _stopCelebrations, _updateAutoMutes, _updateNewPostsPill, _wireNavHide,
     _wireNotificationSettings, _wirePushToggle, _wireStayConnected, _withPhoneShell, applyTheme,
     carryPrivateToRelays, closeModal, copyValue, defaultRelays, detectProto, enc, ensureAiSession,
@@ -584,28 +584,12 @@ window.PCSettingsFactory = function(dep){
             <b>Notifications</b>, with everything else that decides when you are interrupted.</div>
         </div>
         <div class="us-pane" data-pane="social">
-          ${typeof s.fedi_only==='boolean' ? `
-          <label class="fld" style="flex-direction:row;justify-content:space-between;align-items:center">Fediverse-only mode<label class="switch"><input type="checkbox" id="us-fedi-only" ${s.fedi_only?'checked':''}><span class="slider"></span></label></label>
-          <div class="muted small">Show only bridge posts in timelines. Send posts, replies, likes and reposts through your linked Fediverse account without publishing them to Nostr. Private app data and messages keep working. Requires a connected Fediverse account to post.</div>
-          ` : ''}
-
-          <div id="us-fedi-hide-options" ${s.fedi_only?'hidden':''}>
           <label class="fld" style="flex-direction:row;justify-content:space-between;align-items:center">Hide fediverse posts in timelines<label class="switch"><input type="checkbox" id="set-hide-fedi" ${ClientSettings.get('hideFediBridge',true)?'checked':''}><span class="slider"></span></label></label>
-          <div class="muted small">On by default. The bridge mirrors whole fediverse timelines onto Nostr under stand-in keys — this keeps them out of Home and Nostrverse. Mentions, replies and DMs from fediverse people still reach you either way.</div>
-          </div>
+          <div class="muted small">On by default. Hides fediverse posts from people you do NOT follow — Home and Nostrverse otherwise fill with everything other users here follow. People you follow always show, and mentions, replies and DMs from the fediverse always reach you.</div>
 
-          <div class="us-conn"><div class="set-title small">Pleroma / Mastodon</div>
-            <label class="fld">Instance URL<input class="input" id="us-plr-url" value="${enc(s.pleroma_instance_url||'')}" placeholder="https://pleroma.example"></label>
-            ${s.pleroma_has_access_token
-              ? `<div class="muted small">✓ Connected to ${enc(s.pleroma_instance_url||'')}</div><button class="btn btn-ghost small" id="us-plr-disc" style="color:var(--danger)">Disconnect</button>`
-              : `<button class="btn btn-ghost small" id="us-plr-conn">Connect with OAuth</button>`}
-            ${s.pleroma_has_access_token ? `<div class="muted small">Following a bridged fediverse account on Nostr also follows the real account here. Reconnect once if follows don't take (grants the follow permission).</div>` : ''}
-            <div class="us-plr-import"><input class="input" id="us-plr-import-acct" autocomplete="off" spellcheck="false" placeholder="${s.pleroma_has_access_token?'this account, or name@server':'you@your.old.server'}" aria-label="Fediverse account to import follows from"><button class="btn btn-ghost small" id="us-plr-import">Follow everyone ${s.pleroma_has_access_token?'you follow there':'it follows'}</button><span class="muted small" id="us-plr-import-said" role="status"></span></div><div class="muted small">Adds the accounts a fediverse account follows to your follows here, so they are in your home timeline — your linked account${s.pleroma_has_access_token?' ('+enc(s.pleroma_instance_url||'')+')':''}, or any account whose follow list is public, by its address (no login needed). When this node's fediverse server is on, your @name here follows them too.</div>
-            <label class="fld" style="flex-direction:row;justify-content:space-between;align-items:center">Bridge my fedi DMs &amp; notifications to Nostr<label class="switch"><input type="checkbox" id="us-fedi-bridge" ${s.fedi_bridge_enabled?'checked':''}><span class="slider"></span></label></label>
-            <div class="muted small">Your fediverse DMs arrive as Nostr DMs and your notifications as Nostr events; replying/liking/reposting a bridged post posts back through this account. Needs a NIP-05 name on this instance.</div>
-            <label class="fld" style="flex-direction:row;justify-content:space-between;align-items:center">Cross-post my posts to the Fediverse<label class="switch"><input type="checkbox" id="us-fedi-crosspost" ${s.fedi_crosspost_enabled?'checked':''}><span class="slider"></span></label></label>
-            <div class="muted small">When on, your top-level Nostr notes are also posted to your linked Pleroma account as public posts. Replies stay where you make them.</div>
-            <div class="us-stat muted small" id="us-plr-stat"></div>
+          <div class="us-conn"><div class="set-title small">Bring your follows over</div>
+            <div class="us-plr-import"><input class="input" id="us-plr-import-acct" autocomplete="off" spellcheck="false" placeholder="you@your.old.server" aria-label="Fediverse account to import follows from"><button class="btn btn-ghost small" id="us-plr-import">Follow everyone it follows</button><span class="muted small" id="us-plr-import-said" role="status"></span></div>
+            <div class="muted small">Type an old fediverse account (Pleroma, Akkoma, Mastodon, GoToSocial) and follow everyone it follows from here. Needs a public follow list — no login. When this node's fediverse server is on, your @name here follows them too.</div>
           </div>
         </div>
         <div class="us-pane" data-pane="keys">
@@ -1101,37 +1085,9 @@ window.PCSettingsFactory = function(dep){
         }catch(_){ box.textContent='failed'; } }; }
     { const u=$('#us-tg-unlink'); if(u) u.onclick=async()=>{ if(!await uiConfirm('Unlink Telegram?'))return;
         await fetch('/api/telegram/unlink',{method:'POST'}); toast('unlinked'); renderUserSettings(); }; }
-    // Wait for an account link to actually land, then re-render.
-    //
-    // This used to rely SOLELY on the callback page doing window.opener.postMessage(...). When the OAuth page
-    // opens as a tab rather than a popup (or the browser nulls `opener` under cross-origin-opener rules) that
-    // message never arrives — so the token was saved server-side while the panel still said "Connect with
-    // OAuth". The user re-authorises, it works again, and still looks broken. Poll the server for the truth
-    // instead; the postMessage stays as a fast path when it does work.
-    function _awaitLink(done, statusEl, msgName){
-      let stop=false;
-      const finish=()=>{ if(stop) return; stop=true; window.removeEventListener('message',h); renderUserSettings(); };
-      const h=e=>{ if(e.data===msgName) finish(); };
-      window.addEventListener('message',h);
-      const t0=Date.now();
-      (async function poll(){
-        while(!stop && Date.now()-t0 < 180000){
-          await new Promise(r=>setTimeout(r, 2000));
-          if(stop) return;
-          try{ const s=await fetch('/api/auth/settings').then(r=>r.ok?r.json():null); if(s && done(s)) return finish(); }catch(_){}
-        }
-        if(!stop){ stop=true; window.removeEventListener('message',h);
-          if(statusEl) statusEl.textContent='still not linked — if you approved it, reload this page'; }
-      })();
-    }
-    // Pleroma OAuth (opens the instance in a new tab; we then wait for the link to actually appear)
-    { const c=$('#us-plr-conn'); if(c) c.onclick=async()=>{ const st=$('#us-plr-stat'); const url=$('#us-plr-url').value.trim(); if(!url){st.textContent='enter the instance URL';return;} st.textContent='registering app…';
-        const r=await fetch('/api/pleroma/oauth/start',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({instance_url:url})}); const d=await r.json().catch(()=>({}));
-        if(!r.ok){ st.textContent=d.detail||'failed'; return; } window.open(d.auth_url,'_blank'); st.textContent='waiting for authorization…';
-        _awaitLink(s=>!!s.pleroma_has_access_token, st, 'pleroma_connected'); }; }
-    /* IMPORT WHO YOU FOLLOW ON THE LINKED ACCOUNT. The server reads the list and gives each account
-     * its bridge identity; the contact list is signed HERE, by you, through followMany -- one merged
-     * kind-3 publish (union of the relay's copy and memory), never a rebuild from the list alone. */
+    /* IMPORT WHO AN OLD FEDIVERSE ACCOUNT FOLLOWS. The server reads its public list and gives each
+     * account its puppet identity; the contact list is signed HERE, by you, through followMany -- one
+     * merged kind-3 publish (union of the relay's copy and memory), never a rebuild from the list alone. */
     { const b=$('#us-plr-import'); if(b) b.onclick=async()=>{
         // The box and the result line are read from the BUTTON's own row, never by a page-wide id:
         // Settings can be on the page twice (a desktop window over the modal), and $('#id') found the
@@ -1151,13 +1107,12 @@ window.PCSettingsFactory = function(dep){
           // throwOnFail: a follow list the relay did not take must say so. It used to come back as
           // "0 added", which the line below turned into "N you already followed" -- a success message
           // over an import that had changed nothing.
-          const added=pks.length ? await followMany(pks, { skipPleroma:true, throwOnFail:true }) : 0;
+          const added=pks.length ? await followMany(pks, { throwOnFail:true }) : 0;
           const msg='Following '+added+' more ('+(pks.length-added)+' you already followed, of '+(j.following||0)+' there)';
           if(said) said.textContent=' ✓ '+msg; toast(msg);
         }catch(e){ if(said) said.textContent=' '+((e&&e.message)||e); toast('Import failed: '+((e&&e.message)||e)); }
         b.disabled=false;
     }; }
-    { const d=$('#us-plr-disc'); if(d) d.onclick=async()=>{ if(!await uiConfirm('Disconnect Pleroma?'))return; await fetch('/api/pleroma/disconnect',{method:'POST'}); renderUserSettings(); }; }
     // Finance: remove the stored key
     // API keys
     $('#us-key-new').onclick=async()=>{ const name=$('#us-key-name').value.trim();
@@ -1166,11 +1121,6 @@ window.PCSettingsFactory = function(dep){
     // Presets are only persisted on Save if the user actually edited them (else an unrelated Save clobbers).
     let _presetsEdited=false;
     { const zi=$('#us-zap-presets'), xi=$('#us-xmr-presets'), bi=$('#us-bch-presets'); if(zi) zi.oninput=()=>_presetsEdited=true; if(xi) xi.oninput=()=>_presetsEdited=true; if(bi) bi.oninput=()=>_presetsEdited=true; }
-    { const fm=$('#us-fedi-only'); if(fm){
-      const update=()=>{ const hide=$('#us-fedi-hide-options'), cross=$('#us-fedi-crosspost');
-        if(hide) hide.hidden=fm.checked; if(cross) cross.disabled=fm.checked; };
-      fm.onchange=update; update();
-    } }
     // Save (text + toggles; connect flows persist themselves)
     $('#us-save').onclick=async()=>{
       // Amount presets are CLIENT prefs (not account columns): only touch them if the user actually EDITED
@@ -1196,11 +1146,7 @@ window.PCSettingsFactory = function(dep){
       const _fv=(id)=>{ const el=$(id); return el ? String(el.value||'').trim() : ''; };
       const _fc=(id)=>{ const el=$(id); return el ? !!el.checked : false; };
       const body={ notification_email:_fv('#us-email'), news_sources:($('#us-news-src')||{}).value||'',
-        telegram_notifications:_fv('#us-tg-notif'), social_notif_enabled:_fc('#us-social-notif'),
-                fedi_bridge_enabled:_fc('#us-fedi-bridge'),
-        fedi_crosspost_enabled:_fc('#us-fedi-crosspost'),
-        ...($('#us-fedi-only') ? {fedi_only:_fc('#us-fedi-only')} : {}),
-        pleroma_instance_url:_fv('#us-plr-url'),
+        telegram_notifications:_fv('#us-tg-notif'), ...($('#us-social-notif') ? {social_notif_enabled:_fc('#us-social-notif')} : {}),
         theme:($('#us-theme')&&$('#us-theme').value)||'cyberpunk',
         mail_accounts:usCollectMail() };
       const st=$('#us-save-status'); if(st) st.textContent='saving…';
@@ -1271,7 +1217,7 @@ window.PCSettingsFactory = function(dep){
         return;
       }
       try{ const r=await fetch('/api/auth/settings',{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
-        if(r.ok){ applyTheme(body.theme); if(typeof body.fedi_only==='boolean') _setFediOnly(body.fedi_only); toast('settings saved');
+        if(r.ok){ applyTheme(body.theme); toast('settings saved');
           if(st) st.textContent=needReload?'✓ Saved — reloading':'✓ Saved';
           if(needReload) setTimeout(()=>location.reload(),600);
         } else if(st) st.textContent='save failed ('+r.status+')';

@@ -94,8 +94,8 @@
                 <div class="form-group">
                     <label for="bot_f_platform">Platform</label>
                     <select id="bot_f_platform" onchange="onBotFormChange()">
-                        <option value="pleroma">Pleroma</option>
-                        <option value="nostr">Nostr</option>
+                        <option value="nostr">Nostr — an account on this node (on the fediverse too)</option>
+                        <option value="pleroma">Pleroma — an account on a Pleroma instance</option>
                     </select>
                 </div>
                 <div class="form-group">
@@ -142,7 +142,7 @@
                  media uploads to an external Blossom/NIP-96 host (not an "instance"). -->
             <div id="bot_grp_nostr" style="display:none">
                 <div class="form-group">
-                    <label for="bot_f_nostr_nsec">Secret key <span class="bots-dim">(nsec1… or 64-char hex — filled by Generate, or paste your own)</span></label>
+                    <label for="bot_f_nostr_nsec">Secret key <span class="bots-dim">(leave empty and one is created on Save, with a free @name here — or Generate, or paste your own nsec1… / hex)</span></label>
                     <input type="password" id="bot_f_nostr_nsec" autocomplete="new-password" placeholder="nsec1…">
                     <div style="margin-top:.4rem;display:flex;flex-wrap:wrap;gap:.4rem">
                         <button type="button" class="btn-small" id="bot_nsec_toggle" onclick="toggleBotNsec()">👁 Reveal</button>

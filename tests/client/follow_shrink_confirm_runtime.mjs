@@ -21,11 +21,11 @@ globalThis.InstEmoji={loaded:true,SC_RE:/$a/}; globalThis._enrichTags=(k,t)=>t;
 globalThis.invalidateCounts=()=>{}; globalThis.applySobLive=()=>{};
 globalThis.window={}; globalThis.toast=()=>{};
 /* `publish` is lifted on its own, so anything it CLOSES OVER has to be supplied here. Fedi-only
-   mode added a `_FEDI_SOCIAL_KINDS` read inside it, and without this the harness dies with a bare
+   mode added a `_SOCIAL_KINDS` read inside it (the account-switch guard), and without this the harness dies with a bare
    ReferenceError -- which reads as "the follows guard is broken" and is nothing of the sort. Lifted
    from app.js rather than retyped, so the set cannot drift from the one the code uses. */
-globalThis._FEDI_SOCIAL_KINDS = (() => {
-  const m = /_FEDI_SOCIAL_KINDS\s*=\s*new Set\(\[([^\]]*)\]\)/.exec(src);
+globalThis._SOCIAL_KINDS = (() => {
+  const m = /_SOCIAL_KINDS\s*=\s*new Set\(\[([^\]]*)\]\)/.exec(src);
   return new Set(m ? m[1].split(',').map(x => Number(x.trim())).filter(n => !Number.isNaN(n)) : []);
 })();
 globalThis._fediOnly = () => false;

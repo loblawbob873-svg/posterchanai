@@ -13,7 +13,7 @@
 
 **Your own Jellyfin-compatible media server:** [Media Center](docs/MEDIA_CENTER.md) turns server or NAS folders into private, folder-sorted libraries with cover cards, mobile/TV playback and full-screen video. Connect supported Jellyfin clients to `https://your-instance/jellyfin` using Quick Connect ([tested clients and compatibility scope](docs/JELLYFIN_COMPATIBILITY.md)), share with approved Nostr users, stream through a NAS proxy, and transcode with NVIDIA, AMD/VA-API or CPU fallback. Catalogs stay as encrypted events on your local relay; media files stay on disk and are not federated. Bandwidth defaults to 200 KB/s per viewer, with bounded transcoding and a `/tmp` cache.
 
-**Then the part a cloud drive can't do:** the same box runs your own models. Chat, image, voice, video and music generation, a private metasearch engine, live streaming, and autonomous bots on **Telegram, Pleroma & Nostr** — driven by cloud LLMs or the built-in native `llama.cpp` (CPU / CUDA / ROCm / **Intel Arc**). One FastAPI backend, an OpenAI-compatible `/v1/`, and a web-of-trust relay on PostgreSQL that *is* the datastore.
+**Then the part a cloud drive can't do:** the same box runs your own models. Chat, image, voice, video and music generation, a private metasearch engine, live streaming, a **fediverse (ActivityPub) server**, and autonomous bots on **Telegram, Nostr & Pleroma** — driven by cloud LLMs or the built-in native `llama.cpp` (CPU / CUDA / ROCm / **Intel Arc**). One FastAPI backend, an OpenAI-compatible `/v1/`, and a web-of-trust relay on PostgreSQL that *is* the datastore.
 
 [![Python](https://img.shields.io/badge/Python-3.10%2B-3776AB?logo=python&logoColor=white)](https://www.python.org/)
 [![FastAPI](https://img.shields.io/badge/FastAPI-async-009688?logo=fastapi&logoColor=white)](https://fastapi.tiangolo.com/)
@@ -94,7 +94,8 @@ Then, when you want more:
 - 🔌 **Bring any model, or host it** — cloud (any OpenAI-compatible API) or the **built-in native `llama.cpp`** backend (CPU / CUDA / HIP / **Intel Arc SYCL**), round-robin load-balanced across several boxes with a shared GPU lock so one card serves chat, images, video and music without thrashing.
 - 🎨 **Generate on your own silicon** — images, **text-to-video**, **text-to-music** (ACE-Step, in-process), TTS/STT and voice cloning, talking-picture lip-sync, a meme builder, website screenshots, YouTube/X summarize & download, and interactive study flashcards.
 - 🔎 **Your own search engine** — a **SearXNG instance bundled with the node**, running inside the app, behind a search screen with AI overviews and citations. Your node can be your browser's search engine.
-- 🤖 **It's also a bot platform** — drive everything from **Telegram**, and run autonomous **Pleroma / Nostr** bots from a single admin tab.
+- 🤖 **It's also a bot platform** — drive everything from **Telegram**, and run autonomous **Nostr / Pleroma** bots from a single admin tab.
+- 🌐 **It's also a fediverse server** — every user here is `@name@your.domain` on Mastodon, Pleroma, Akkoma and Misskey, with Nostr as the only store.
 - 🔴 **Go live from OBS** — RTMP to the bundled **MediaMTX** (RTMP → HLS), announced on Nostr via **NIP-53**, with a bitrate clamp so one streamer doesn't cost you a viewer's worth of upload each.
 - 🛠️ **Hackable & honest** — thin routers, services for logic, an interactive installer, and an OpenAI-compatible `/v1/` that agentic coding clients (e.g. opencode) can drive against your local models.
 
@@ -145,7 +146,7 @@ A companion **browser extension** (Firefox, and Chrome / Brave via MV3) makes yo
 - **Music generation** (`musicgeni`): text-to-song with [ACE-Step 1.5](https://github.com/ace-step/ACE-Step-1.5) running **native in-process** — the app's own venv, torch and GPU lock, no sidecar service and no HTTP hop (fits a 12 GB GPU); load-balanced + VRAM-swapped across nodes like image gen. With no lyrics supplied the LLM writes them, so you get vocals by default (`instrumental` skips it); each song comes back as a branded MP4 — the track over a PosterChan background with the end-card outro. Web UI + Telegram. See [docs/MUSIC.md](docs/MUSIC.md)
 - **Video generation** (`videogeni`): native in-process text-to-video via **diffusers** — point it at *any* model (Wan2.1 / LTX / CogVideoX, auto-detected) to match your GPU; runs on CUDA / Intel Arc (XPU) / AMD (ROCm), load-balanced + VRAM-swapped across nodes like image gen, with a branded watermark and optional 720p/1080p upscale. Web UI + Telegram. See [docs/VIDEO.md](docs/VIDEO.md)
 - **Website screenshots**: full-page capture with the `screenshot <url>` command (also `shot` / `ss`) — works in the web UI and Telegram. Uses headless Chrome (JS-aware, so SPAs render), Firefox fallback (see [Requirements](#requirements)).
-- **YouTube / X**: summarize a video **from its transcript** (so summaries and link-posts reflect the actual content, not the page), grab thumbnails, or **download** audio (MP3) / video with the `ytdl` command — in the web UI, Telegram, and Pleroma. A video download can be trimmed and/or shrunk in one command (`ytdl video <url> clip 0:10 0:30 compress`); Telegram also offers these as buttons after the download
+- **YouTube / X**: summarize a video **from its transcript** (so summaries and link-posts reflect the actual content, not the page), grab thumbnails, or **download** audio (MP3) / video with the `ytdl` command — in the web UI, Telegram, and the bots. A video download can be trimmed and/or shrunk in one command (`ytdl video <url> clip 0:10 0:30 compress`); Telegram also offers these as buttons after the download
 
 ### Your personal cloud (mail, calendar, contacts, files, sync)
 
@@ -218,20 +219,17 @@ A companion **browser extension** (Firefox, and Chrome / Brave via MV3) makes yo
 
 ### Bots & social
 
-- **Bot manager (Admin → Bots)**: run autonomous fediverse bots — Pleroma reply bots,
-  plus blockbot/welcome/report/hashtag/unfollow daemons — from a
-  single admin tab (add/edit, On/Off, live status), backed by the database. The bot framework is
-  **bundled in this repo** (`botframework/`) and supervised in-process; no separate repo or
-  hand-edited config file. See [Bot manager](docs/BOTS.md).
+- **Bot manager (Admin → Bots)**: run autonomous bots — Nostr reply bots (the default), Pleroma
+  reply bots, plus blockbot/welcome/report/hashtag/unfollow daemons — from a single admin tab
+  (add/edit, On/Off, live status). A new Nostr bot with no key gets one on Save, with a NIP-05 name
+  on this node — which also makes it `@name@your.domain` on the fediverse. The bot framework is
+  **bundled in this repo** (`botframework/`) and supervised in-process. See [Bot manager](docs/BOTS.md).
 - **Telegram bot** drives chat, commands, and media from your phone
-- **Social posting** to **Pleroma/Mastodon** and **Nostr**: turn any reply, link, or topic into a post with the `post` command (rewrite, verbatim, or with your own instructions). See [Social posting from the bots](#social-posting-from-the-bots).
-- **Social notification relay**: forward mentions/replies/DMs from Pleroma/Nostr to Telegram and reply right from the chat. See [Social notifications to Telegram](#social-notifications-to-telegram).
-- **Nostr** (keypair identity — no instance, no signup): run a **Nostr reply bot** and link your own `nsec` to post & reply. Handles mentions, replies, reactions, reposts, plus `geni`/image **effects**; publishes to **multiple relays**; uploads media to a **Blossom** (BUD-02) or **NIP-96** host (e.g. nostr.build) embedded with `imeta`; supports **NIP-05** verification. The bot only replies when actually addressed (first mention / direct reply — no thread-spam), is **rate-limited per sender** (with an exempt list), and all bot/social egress can route through the built-in **Tor** proxy. Pure-Python signing (BIP-340) — no native deps.
-- **Fediverse ↔ Nostr bridge**: mirror a Pleroma timeline (home/global/local) onto Nostr. Each fediverse author is published under a stable **puppet** key (derived deterministically, so an author keeps one npub across restarts and instances), with avatar + display name, custom emoji as NIP-30 tags, media, quote-posts, and replies threaded via NIP-10 markers. Federated copies are deduped on the canonical AP URI, so the same post arriving from two instances mirrors once.
-  - **Write-back**: a reply, reaction or repost made on Nostr is performed **back** on the fediverse under the acting user's own linked account — not the bridge's.
-  - **Personal plane** (opt-in per user): your own fediverse notifications arrive as the matching Nostr events, and your fedi DMs as **NIP-17** gift-wrapped Nostr DMs, keeping their direct visibility on reply.
-
-  Configure under Admin → Social. Self-serve enrolment is off by default (`fedi_bridge_self_serve`).
+- **Social posting** to **Nostr**: turn any reply, link, or topic into a post with the `post` command (rewrite, verbatim, or with your own instructions) — it reaches the fediverse too, through this node's ActivityPub server. See [Social posting from the bots](#social-posting-from-the-bots).
+- **Social notification relay**: forward Nostr mentions/replies/reactions (fediverse ones included) to Telegram and reply right from the chat. See [Social notifications to Telegram](#social-notifications-to-telegram).
+- **Nostr** (keypair identity — no instance, no signup): run a **Nostr reply bot** and link your own `nsec` to post & reply. Handles mentions, replies, comments (NIP-22), reactions, reposts, plus `geni`/image **effects**; publishes to **multiple relays**; uploads media to a **Blossom** (BUD-02) or **NIP-96** host (e.g. nostr.build) embedded with `imeta`; supports **NIP-05** verification. The bot only replies when actually addressed (first mention / direct reply — no thread-spam), is **rate-limited per sender** (with an exempt list), and all bot/social egress can route through the built-in **Tor** proxy. Pure-Python signing (BIP-340) — no native deps.
+- **ActivityPub server** (on out of the box; Admin → Social): the node is a fediverse server whose
+  only store is Nostr — no posts table. See [ActivityPub server](#activitypub-server).
 - **Translate**: translate text or a replied-to message to any language (`translate`), shared across the web UI and Telegram.
 
 ### Extensibility & admin
@@ -359,8 +357,8 @@ The **installer** sets up the virtual environment, dependencies, optional GPU ba
 
 ### Social posting from the bots
 
-Connect a social account in **User Settings → Pleroma**, then use
-the `post` command from the **Telegram** bot to publish.
+Link your `nsec` in **User Settings → Nostr**, then use the `post` command from the **Telegram**
+bot to publish. What you post reaches the fediverse as well, from `@you@your.domain`.
 
 **Telegram** — reply to any message (a bot answer, a link, a photo) and send:
 
@@ -370,24 +368,53 @@ the `post` command from the **Telegram** bot to publish.
 | `post raw` | Shares the reply **exactly as written** — no rewrite (aliases: `verbatim`, `as-is`, `exact`) |
 | `post <instructions>` | Rewrites following your instructions, e.g. `post professional`, `post funny and short`, `post don't include links` |
 
-The bot then shows share buttons (**📣 Pleroma / Nostr**, **🚀 Post to All**,
-**❌ Skip**) for whichever platforms you've connected. Replying to a photo shares the
-image itself. The source URL is appended by default; `post don't include links` (or
-"no links", "without url", …) omits it.
+The bot then shows a **📣 Nostr** share button (and **❌ Skip**). Replying to a photo shares the
+image itself. The source URL is appended by default; `post don't include links` (or "no links",
+"without url", …) omits it.
 
 ### Social notifications to Telegram
 
-Forward new notifications from your connected **Pleroma / Nostr** accounts to your
-linked Telegram chat, and reply to them without leaving Telegram. Enable it per-user in
-**User Settings → Telegram → "Relay social notifications to Telegram"** (the admin must also
-turn on the global switch in **Admin → Social → Social Notification Relay**, where the poll
-interval is set).
+Forward new Nostr notifications to your linked Telegram chat, and reply to them without leaving
+Telegram. Enable it per-user in **User Settings → Telegram → "Relay social notifications to
+Telegram"** (the admin must also turn on the global switch in **Admin → Social → Social
+Notification Relay**, where the poll interval is set).
 
-- New mentions, replies, DMs, follows, and reactions/boosts are forwarded as they arrive.
-- **Reply** to a forwarded message in Telegram to respond on the originating platform — your
-  reply is posted as a reply to the original post (inheriting its visibility).
-- **Pleroma:** DMs are direct-visibility mentions, so they arrive as normal
-  notifications and forward with full content; your reply stays `direct`.
+- New mentions, replies, comments, DMs, follows, and reactions/reposts are forwarded as they arrive
+  — including the ones that come from the fediverse, which arrive on Nostr through the ActivityPub
+  server.
+- **Reply** to a forwarded message in Telegram to answer it on Nostr.
+
+### ActivityPub server
+
+PosterChan is a fediverse server: Mastodon, Pleroma, Akkoma, Misskey and GoToSocial can find, follow,
+reply to, boost, react to and message this node's users, and they can follow fediverse accounts back.
+It is **on out of the box** (Admin → Social → Fediverse server) once the node has a public domain.
+
+- **Every user is on the fediverse automatically**: each NIP-05 name this node granted is
+  `@name@your.domain`, and — with the second switch — any Nostr user this relay holds a profile for
+  has a readable handle too (`@dana_4b56@your.domain`, never a 63-character npub).
+- **Nostr is the only store.** Incoming posts, replies, likes, boosts and profiles become ordinary
+  Nostr events signed by a stable per-person key; followers, follows and signing keys are
+  encrypted operator-signed documents on the relay. Your own posts are read from the relay as they
+  are published — nothing is copied.
+- **Both directions**: posts, NIP-22 comments, reposts, reactions (custom emoji included, both ways),
+  deletions, profile edits, follows, and **direct messages** (NIP-17 ⇄ AP direct notes — this server
+  reads the messages it carries; anyone you have not blocked or muted can write to you).
+- **A real outbox**: a profile opened on another server shows the account's recent public posts.
+- **Bring your follows**: Settings → Fediverse → type your old account (`name@old.server`) and every
+  account it follows is followed from your new one.
+- **Blocking**: Admin → Social → blocked instances (a domain, its subdomains, or one `user@host`),
+  plus the relay's own blocklists; a fediverse user's Block is honoured and cuts both follows.
+- **Works with the rest of the fediverse**: Mastodon, Pleroma/Akkoma, Misskey, GoToSocial and
+  Lemmy communities; edits, quote posts, alt text and blurhash, articles and polls, host-meta and
+  NodeInfo. **Security-reviewed**: an account's identity only ever comes from its own server, never
+  from what a post, a boost or an import says about it; every fetch is pinned to a checked public
+  address; budgets are charged to who signed. Details in the docs.
+- **Web server**: `/ap/*`, `/.well-known/webfinger`, `/.well-known/nodeinfo` and
+  `/.well-known/host-meta` must reach the app uncached with the `Host` header intact — see
+  `nginx/posterchanai.conf.example`.
+
+Details: [docs/ACTIVITYPUB.md](docs/ACTIVITYPUB.md).
 
 ### Remote node management
 
@@ -458,7 +485,7 @@ the Arc environment.
 | Path | Description |
 |------|-------------|
 | `app/` | FastAPI app, routers (auth, chat, admin, TTS, STT, mail, torrent, bots, etc.), services |
-| `botframework/` | Merged autonomous bot framework (Pleroma listener + daemons); spawned by `app/services/bot_manager_service.py`. See [docs/BOTS.md](docs/BOTS.md) |
+| `botframework/` | Merged autonomous bot framework (Nostr + Pleroma listeners, daemons); spawned by `app/services/bot_manager_service.py`. See [docs/BOTS.md](docs/BOTS.md) |
 | `templates/` | Jinja2 HTML (login, chat, admin, modals) |
 | `static/` | CSS, JS, icons, mascot assets |
 | `os/` | PosterChanOS installer, Sway session, boot theme, system helpers and Gentoo overlay |

@@ -3752,68 +3752,6 @@ async def ai_requests(db: Session = Depends(get_db)):
     return JSONResponse({"ok": True, "requests": out})
 
 
-class BridgeAccessGrantReq(BaseModel):
-    target: str          # npub/hex to grant/revoke bridge access for
-    grant: bool = True
-    auth: str            # admin-signed event (p-tags target), same proof as /ai-access
-
-
-@router.get("/bridge-access")
-async def bridge_access_status(pubkey: str, db: Session = Depends(get_db)):
-    """Whether a user currently has Bridge Access (fedi bridge / cross-post enabled), so the admin
-    Permissions panel shows the right toggle state."""
-    h = nostr_service.to_pubkey_hex(pubkey)
-    if not h:
-        return JSONResponse({"ok": False, "error": "invalid pubkey"}, status_code=400)
-    u = db.query(User).filter(User.nostr_npub == nostr_service.npub_of(h)).first()
-    on = bool(u and (getattr(u, "fedi_bridge_enabled", False) or getattr(u, "fedi_crosspost_enabled", False)))
-    return JSONResponse({"ok": True, "enabled": on})
-
-
-@router.post("/bridge-access")
-async def bridge_access_grant(data: BridgeAccessGrantReq, db: Session = Depends(get_db)):
-    """Admin-only: grant Bridge Access to a user (auto-create their fediverse account, copy profile,
-    set NIP-05, enable cross-post + DMs/notifications) or revoke it. The admin whitelists anyone —
-    no requirement that the user hold a NIP-05 on this domain."""
-    target = nostr_service.to_pubkey_hex(data.target)
-    if not target:
-        return JSONResponse({"ok": False, "error": "invalid target"}, status_code=400)
-    if not _verify_admin_auth(db, data.auth, target, "bridge-access"):
-        return JSONResponse({"ok": False, "error": "admin authorization required"}, status_code=403)
-    npub = nostr_service.npub_of(target)
-    u = db.query(User).filter(User.nostr_npub == npub).first()
-    if not u:
-        if not data.grant:
-            return JSONResponse({"ok": True})   # nothing to revoke for a non-existent account
-        # Onboard a native Nostr user who has never signed in: create their User row (mirrors the
-        # nostr_login signup) so the admin can grant Bridge Access to ANY npub, then provision below.
-        from app.auth import get_password_hash
-        import secrets as _secrets
-        base = "npub_" + npub[4:16]
-        username = base
-        for i in range(2, 100):
-            if not db.query(User).filter(User.username == username).first():
-                break
-            username = f"{base}{i}"
-        u = User(username=username, email=None,
-                 password_hash=get_password_hash(_secrets.token_urlsafe(32)),
-                 is_admin=False, email_verified=True, nostr_npub=npub,
-                 can_image=True, can_music=True, can_video=False, can_torrent=False,
-                 can_blossom=False, can_ai=False)
-        db.add(u)
-        db.commit()
-        db.refresh(u)
-        try:
-            await follow_and_admit(db, target)   # admit to the relay WoT + operator follow
-        except Exception as e:
-            logger.warning("[bridge-access] follow/admit for new user failed: %s", e)
-    from app.services import fedi_bridge_access
-    r = await (fedi_bridge_access.enable(db, u, by_admin=True) if data.grant else fedi_bridge_access.disable(db, u))
-    if not r.get("ok"):
-        return JSONResponse({"ok": False, "error": r.get("error") or "failed"}, status_code=400)
-    return JSONResponse({"ok": True})
-
-
 _USER_CAPS = ("can_image", "can_music", "can_video", "can_torrent", "can_media")
 
 
@@ -6023,13 +5961,17 @@ async def claim_nip05(data: ClaimNip05, request: Request, db: Session = Depends(
                              "message": registration_service.closed_message()}, status_code=403)
     base = _sanitize_nip05_name(data.name) or ("user" + pk[:8])
     name, taken = base, set(names.keys())
+    from app.services.activitypub import actors as ap_actors
     i = 1
-    while name in taken:
+    # A name that is already somebody's fediverse address (an npub, a readable handle) is taken too.
+    while name in taken or (i <= 20 and await ap_actors.name_is_someone_elses_handle(name, pk)):
         i += 1
         name = f"{base}{i}"
         if i > 9999:
             name = "user" + pk[:12]
             break
+    if i > 20 and name not in taken and await ap_actors.name_is_someone_elses_handle(name, pk):
+        name = "user" + pk[:12]                  # never handle-shaped: no underscore
     try:
         npub = nostr_service.npub_of(pk)
     except Exception:

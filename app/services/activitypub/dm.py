@@ -11,13 +11,10 @@
 THE SERVER READS THESE MESSAGES IN TRANSIT. That is what any bridge between two encryption schemes
 is; the admin setting says so in as many words.
 
-WHO MAY MESSAGE WHOM. Anybody may be reachable (`everyone` mode), so a fediverse account may message
-one of ours only if that person FOLLOWS it, or wrote to it first (a conversation they opened) --
-the fediverse's own "limit DMs to people I follow" rule. Without it, reachability would be a spam
-address for every Nostr user this relay knows.
-
-The Pleroma bridge already carries DMs for a member on a linked Pleroma account (write-back), so
-their messages are not also sent from here.
+WHO MAY MESSAGE WHOM. Anybody who is not blocked: a fediverse account may message one of ours unless
+its instance or account is blocked, or the recipient's public mute list (kind 10000) names the
+sender's puppet -- muting somebody on Nostr is how a Nostr user says "not from them". (It used to be
+"only if that person follows it or wrote first", which silently ate every first message.)
 """
 from __future__ import annotations
 
@@ -198,9 +195,6 @@ async def handle_wrap(wrap: dict) -> str:
         if sender in puppets:
             results.append("between two puppets")          # never bridge the bridge to itself
             continue
-        if actors.uses_linked_account(sender):
-            results.append("the Pleroma bridge carries it")
-            continue
         if not await actors.exposed(sender):
             results.append("sender is not reachable on the fediverse")
             continue
@@ -216,7 +210,9 @@ async def handle_wrap(wrap: dict) -> str:
                 "content": convert.text_to_html(text, base=base, mentions={}),
                 "published": convert.iso(rumor.get("created_at") or int(time.time())),
                 "to": [canonical], "cc": [],
-                "tag": [{"type": "Mention", "href": canonical, "name": canonical}]}
+                "tag": [{"type": "Mention", "href": canonical,
+                         # The HANDLE, as every server writes it -- a URL here showed as the name.
+                         "name": f"@{acct}" if acct and "@" in acct else canonical}]}
         act = convert.create(note, me)
         keys = await state.keypair(sender)          # a real signed message is behind it
         key_id, priv = actors.signing(sender, keys)

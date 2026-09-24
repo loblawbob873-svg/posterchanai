@@ -32,7 +32,6 @@ from app.routers import sharelink as sharelink_router   # /f/<sha> — a shared 
 from app.routers import admin_emoji
 from app.routers import git as git_router
 from app.routers.telegram import router as telegram_router
-from app.routers.pleroma import router as pleroma_router
 from app.routers.social_login import router as social_login_router
 from app.routers.nostr import router as nostr_router
 from app.routers.blossom import router as blossom_router
@@ -290,14 +289,15 @@ app.include_router(git_router.router)  # /api/git/* (GRASP git host: provision/l
 app.include_router(git_router.smart_router)  # /git/* smart-HTTP reverse-proxy (active only when git_server_proxy_url set)
 app.include_router(storage.router)
 app.include_router(telegram_router)
-app.include_router(pleroma_router)
-app.include_router(social_login_router)   # /api/auth/{google,pleroma}/* — sign in with an account
+app.include_router(social_login_router)   # /api/auth/google/* — sign in with an account
 app.include_router(nostr_router)
 app.include_router(blossom_router)
 from app.routers import instance_welcome
 app.include_router(instance_welcome.router)
 from app.routers import activitypub as activitypub_router   # ActivityPub server; content stored as Nostr events (404 until enabled)
 app.include_router(activitypub_router.router)
+from app.routers import community as community_router   # /api/community/* — facts the community bots post (bot API key)
+app.include_router(community_router.router)
 app.include_router(client_router)
 
 # The bundled CalDAV server (Radicale), mounted INSIDE this app at /caldav — no second port, no
@@ -1673,6 +1673,15 @@ async def nostr_entity_page(entity: str, request: Request):
 
 @app.get("/users/{name}", response_class=HTMLResponse)
 async def nostr_user_page(name: str, request: Request):
-    """Friendly profile URL: poster.place/users/<name> (a NIP-05 local name or npub)."""
+    """Friendly profile URL: poster.place/users/<name> (a NIP-05 local name or npub).
+
+    It is ALSO the address the retired Pleroma used as each account's ActivityPub id, and fediverse
+    servers that met it then still ask it for the actor. Answered with this HTML page, they could no
+    longer read the account at all; an ActivityPub request is sent on to the actor instead."""
+    accept = (request.headers.get("accept") or "").lower()
+    if "activity+json" in accept or "ld+json" in accept:
+        from fastapi.responses import RedirectResponse
+        from urllib.parse import quote
+        return RedirectResponse(f"/ap/users/{quote(name, safe='')}", status_code=301)
     from app.routers.client import client_app
     return await client_app(request)
