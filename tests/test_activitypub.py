@@ -1246,3 +1246,28 @@ def test_a_public_import_never_reaches_a_private_address(world, monkeypatch):
     for handle in ("me@127.0.0.1", "me@10.0.0.5:8080"):
         with pytest.raises(ValueError, match="Cannot read"):
             run(importer.public_following(handle))
+
+
+# ============================================================================ 14. split DNS: neighbours on this network
+
+def test_a_server_on_this_network_is_reachable_only_when_an_admin_named_it(world, monkeypatch):
+    """detroitriotcity.com resolves to the router's LAN address from here (split DNS), so the SSRF
+    guard refused it -- the import, and every key fetch and delivery with it. Trusted: the Pleroma
+    bridge's instance and the admin's list. Never a name that merely resolves nearby (router.lan)."""
+    from app.services import rss_service
+    monkeypatch.setattr(rss_service, "is_safe_host", lambda url: False)     # everything resolves privately
+    real_check = remote._check
+    world["settings"]["fedi_bridge_instance_url"] = "https://drc.example/"
+    world["settings"]["activitypub_lan_hosts"] = "https://other.example/path  # ours too\nthird.example:8443"
+    for ok in ("https://drc.example/users/a", "https://other.example/inbox", "https://third.example/x"):
+        run(real_check(ok))
+    with pytest.raises(remote.FetchError, match="private address"):
+        run(real_check("https://evil.example/"))
+    with pytest.raises(remote.FetchError):
+        run(real_check("https://router.lan/admin"))
+
+
+def test_importing_from_this_server_says_to_type_the_old_account(world):
+    from app.services.activitypub import importer
+    with pytest.raises(ValueError, match="OLD account"):
+        run(importer.public_following(f"@alice@{DOMAIN}"))

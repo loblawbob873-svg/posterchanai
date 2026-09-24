@@ -43,8 +43,9 @@ async def _check(url: str) -> None:
         raise FetchError(f"not a fetchable https address: {url[:120]}")
     if config.host_blocked(p.hostname or "") or config.is_own_host(p.hostname or ""):
         raise FetchError(f"{p.hostname} is blocked or is this node")
-    if not await asyncio.to_thread(is_safe_host, url):
-        raise FetchError(f"{p.hostname} resolves to a private address")
+    if not config.lan_trusted(p.hostname or "") and not await asyncio.to_thread(is_safe_host, url):
+        raise FetchError(f"{p.hostname} resolves to a private address -- if it is a server on your "
+                         "own network, add it under Admin → Social → Fediverse servers on this network")
 
 
 async def instance_key() -> tuple[str, str]:

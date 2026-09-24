@@ -46,6 +46,8 @@ async def public_following(handle: str) -> tuple[list[dict], str]:
     if not user or not _HOST.fullmatch(host or ""):
         raise ValueError("Type the account as name@server")
     base = f"https://{host}"
+    if config.is_own_host(host):
+        raise ValueError(f"{user}@{host} is this server -- type your OLD account, e.g. name@your.old.server")
     try:
         await remote._check(base + "/")
     except remote.FetchError as e:

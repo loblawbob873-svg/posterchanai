@@ -85,6 +85,36 @@ def account_blocked(acct: str) -> bool:
     return fedi_blocklist.account_blocked(acct, accounts, hosts)
 
 
+def _host_of_line(line: str) -> str:
+    h = line.split("#")[0].strip().lower()
+    for pre in ("https://", "http://"):
+        if h.startswith(pre):
+            h = h[len(pre):]
+    return h.split("/")[0].split(":")[0].lstrip("@").strip(".")
+
+
+def lan_hosts() -> set:
+    """Fediverse servers that may resolve to a PRIVATE address from here.
+
+    Split DNS is ordinary on a self-hosted network: a neighbour served by the same front proxy
+    resolves to that proxy's LAN address, so the SSRF guard (never fetch a private address on a
+    stranger's say-so) refused every request to it -- the import, key fetches and deliveries alike.
+    Only names an ADMIN wrote down are trusted: the Pleroma bridge's own instance, and the explicit
+    list. Never a name that merely resolves nearby -- `router.lan` does too."""
+    out = set()
+    raw = "\n".join([settings_store.get("fedi_bridge_instance_url", "") or "",
+                     settings_store.get("activitypub_lan_hosts", "") or ""])
+    for line in raw.replace(",", "\n").splitlines():
+        h = _host_of_line(line)
+        if h and "." in h:
+            out.add(h)
+    return out
+
+
+def lan_trusted(host: str) -> bool:
+    return (host or "").lower().split(":")[0].strip(".") in lan_hosts()
+
+
 def is_own_host(host: str) -> bool:
     d = domain()
     return bool(d) and (host or "").lower().split(":")[0] == d

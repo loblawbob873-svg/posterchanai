@@ -42,6 +42,11 @@
             <small>Where <code>/.well-known/webfinger</code> answers. Leave blank to use the NIP-05 domain, so <code>name@domain</code> on Nostr and <code>@name@domain</code> on the fediverse are one identity. Changing it later breaks existing follows.</small>
         </div>
         <div class="form-group">
+            <label for="activitypub_lan_hosts">Fediverse servers on this network</label>
+            <textarea id="activitypub_lan_hosts" name="activitypub_lan_hosts" rows="2" placeholder="one per line, e.g. pleroma.example.com" autocomplete="off" spellcheck="false"></textarea>
+            <small>Servers whose public name resolves to a <strong>private</strong> address from here (split DNS — hosted behind the same router). They are otherwise refused, because this server never fetches private addresses for strangers. The Pleroma bridge's instance is trusted without being listed.</small>
+        </div>
+        <div class="form-group">
             <button type="button" class="btn-secondary" id="ap_status_refresh">Check status</button>
             <div id="ap_status" class="ap-status" role="status" style="margin-top:8px;color:#888;">Open this tab to load the status.</div>
         </div>
