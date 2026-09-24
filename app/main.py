@@ -241,6 +241,10 @@ from app.routers import jellyfin
 app.include_router(jellyfin.account_router)
 app.include_router(jellyfin.router)
 app.add_middleware(jellyfin.ClientCORS)
+# OUTERMOST: the fediverse's reads of our public documents are served from memory for a few minutes
+# (a relay subscription makes every subscribed instance fetch each post it is shown -- see readcache.py).
+from app.services.activitypub.readcache import ActivityPubReadCache  # noqa: E402
+app.add_middleware(ActivityPubReadCache)
 app.router.add_event_handler("shutdown", media_center.close_proxy)
 app.include_router(news.router)
 app.include_router(websearch.router)  # /api/websearch/* (Web Search screen: SearXNG proxy, reader, AI overview)
