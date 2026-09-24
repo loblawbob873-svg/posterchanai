@@ -1752,7 +1752,7 @@ def test_a_given_out_handle_cannot_be_registered_by_somebody_else(world, monkeyp
     owner = "4b56" + "0" * 60
     run(state.claim_nick(owner, "dana_4b56"))
 
-    async def exposed(pk):
+    async def exposed(pk, **kw):
         return True
     monkeypatch.setattr(actors, "exposed", exposed)
     world["settings"]["nostr_relay_nip05_names"] = f"alice {ALICE}\ndana_4b56 {BOB}"
@@ -3069,3 +3069,63 @@ def test_a_relay_actor_whose_inbox_is_elsewhere_gets_nothing(world):
     assert not [s for s in world["sent"] if "victim.example" in s["inbox"]]
     doc = world["docs"][relays._PREFIX + relays._h(actor)]
     assert doc["state"] == "unreachable"
+
+
+# ============================================================================ 23. "could not ask" is never "no"
+
+def _relay_reads_fail(monkeypatch, failing):
+    """query_one answering (False, None) -- the relay did not answer -- while `failing["on"]`."""
+    real = ident.query_one
+
+    async def query_one(port, filt, timeout=8.0):
+        if failing["on"]:
+            return False, None
+        return await real(port, filt, timeout)
+    monkeypatch.setattr(ident, "query_one", query_one)
+
+
+def test_an_account_is_503_while_the_relay_cannot_answer_and_served_once_it_can(client, world, monkeypatch):
+    """Measured 2026-09-24 under a relay-subscription flood: a profile read failed, the account answered
+    404 -- which Akkoma records as "does not exist" -- and the "no" was remembered for ten minutes, so
+    the link stayed dead after the relay recovered ("the pagan passion link doesn't even work")."""
+    pk, npub = _nostr_user(world)
+    failing = {"on": True}
+    _relay_reads_fail(monkeypatch, failing)
+    r = client.get(f"/ap/users/{npub}", headers={"Accept": "application/activity+json"})
+    assert r.status_code == 503, "a failed read was answered as 'no such account'"
+    failing["on"] = False
+    r = client.get(f"/ap/users/{npub}", headers={"Accept": "application/activity+json"})
+    assert r.status_code == 200, "the failed read was remembered as 'no'"
+
+
+def test_a_mention_is_never_downgraded_to_a_link_because_a_read_failed(world, monkeypatch):
+    """Delivery RAISES instead -- the pass stops and retries -- rather than sending the post with the
+    mention as a bare npub link for good."""
+    pk, npub = _nostr_user(world)
+    _with_follower(world)
+    failing = {"on": True}
+    _relay_reads_fail(monkeypatch, failing)
+    ev = member_post(f"hello nostr:{npub}", tags=[["p", pk]])
+    with pytest.raises(actors.RelayUnavailable):
+        run(outbox.plan(ev, ALICE))
+    failing["on"] = False
+    jobs = run(outbox.plan(ev, ALICE))
+    assert any(t.get("type") == "Mention" for t in jobs[0][1]["object"]["tag"])
+
+
+def test_a_reply_is_not_kept_on_nostr_because_its_parent_could_not_be_read(world, monkeypatch):
+    parent = member_post("the parent")
+    world["relay"][parent["id"]] = parent
+    _with_follower(world)
+    failing = {"on": True}
+    _relay_reads_fail(monkeypatch, failing)
+    reply = member_post("a reply", tags=[["e", parent["id"], "", "reply"]])
+    with pytest.raises(actors.RelayUnavailable):
+        run(outbox.plan(reply, ALICE))
+
+
+def test_an_object_is_503_not_404_while_the_relay_cannot_answer(client, world, monkeypatch):
+    post = member_post("words")
+    world["relay"][post["id"]] = post
+    _relay_reads_fail(monkeypatch, {"on": True})
+    assert client.get(f"/ap/objects/{post['id']}", headers={"Accept": "application/activity+json"}).status_code == 503

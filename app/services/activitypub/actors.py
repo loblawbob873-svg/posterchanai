@@ -124,7 +124,7 @@ def all_actors() -> list:
     return [pk for pk in _registry()[1] if pk not in blocked]
 
 
-async def member_by_name(name: str) -> str:
+async def member_by_name(name: str, *, strict: bool = False) -> str:
     """The pubkey behind a handle -- a local user's name, or (in `everyone` mode) any Nostr user's
     readable handle or npub -- if that account is on the fediverse, else ""."""
     # A readable handle already given out WINS over a registry name spelled the same: the registry is
@@ -136,12 +136,12 @@ async def member_by_name(name: str) -> str:
         except Exception:
             owner = ""
         if owner:
-            return owner if await exposed(owner) else ""
+            return owner if await exposed(owner, strict=strict) else ""
     pk = pubkey_of_name(name)
     if pk:
         return pk if is_actor(pk) else ""
     pk = _npub_pubkey(name)
-    return pk if pk and await exposed(pk) else ""
+    return pk if pk and await exposed(pk, strict=strict) else ""
 
 
 async def name_is_someone_elses_handle(name: str, pubkey: str = "") -> bool:
@@ -288,7 +288,7 @@ async def actor_id(pubkey: str) -> str:
     return convert.actor_url(config.base_url(), h) if h else ""
 
 
-async def member_of_path(name: str) -> str:
+async def member_of_path(name: str, *, strict: bool = False) -> str:
     """The pubkey behind `/ap/users/<name>` -- the account whose PINNED id this is, else whoever the
     name means today (member_by_name) -- if that account is on the fediverse, else ""."""
     n = (name or "").strip().lower()
@@ -303,10 +303,10 @@ async def member_of_path(name: str) -> str:
         if owner:
             _pin_owner_cache[n] = owner
     if owner:
-        return owner if await exposed(owner) else ""
+        return owner if await exposed(owner, strict=strict) else ""
     # Not anybody's pinned id: whoever the name means today. Their document still carries their own
     # pinned id, so an old or alternative spelling of an address is an alias, never a second account.
-    return await member_by_name(name)
+    return await member_by_name(name, strict=strict)
 
 
 def _npub_pubkey(handle: str) -> str:
@@ -339,7 +339,12 @@ def handle(pubkey: str) -> str:
 _known_cache: dict = {}
 
 
-async def exposed(pubkey: str) -> bool:
+class RelayUnavailable(OSError):
+    """This node's relay could not be asked. An OSError, so the HTTP routes answer it as "try again
+    shortly" (503) like every other failed strict read."""
+
+
+async def exposed(pubkey: str, *, strict: bool = False) -> bool:
     """May this account be served on the fediverse? A local user always (is_actor); anybody else in
     `everyone` mode when this relay holds a profile for them -- an address nobody has ever published
     anything under is not an account, and minting a key for it would let anyone make this server
@@ -354,21 +359,29 @@ async def exposed(pubkey: str) -> bool:
     hit = _known_cache.get(pk)
     if hit is not None and time.monotonic() - hit[0] < 600:
         return hit[1]
-    known = await _is_native_nostr_account(pk)
+    try:
+        known = await _is_native_nostr_account(pk, strict=True)
+    except RelayUnavailable:
+        # NOTHING IS REMEMBERED about a read that failed. Cached as "no", a relay that was busy for a few
+        # seconds made an account 404 for the next ten minutes -- and a fediverse server that fetched it
+        # in that window recorded it as not existing (2026-09-24, a mention on Akkoma that "didn't work").
+        if strict:
+            raise
+        return False
     _known_cache[pk] = (time.monotonic(), known)
     if len(_known_cache) > 20000:
         _known_cache.clear()
     return known
 
 
-async def _is_native_nostr_account(pk: str) -> bool:
+async def _is_native_nostr_account(pk: str, *, strict: bool = False) -> bool:
     """A real Nostr account: it has a profile here, and it is NOT somebody else seen through a
     bridge. A fediverse puppet (ours) or a mirror account (Mostr and friends, whose profiles carry
     a `proxy` or `fedibridge` tag) served as `npub…@<our domain>` would put a copy of a fediverse
     person under this domain -- followable, messageable, signing as them."""
     if is_puppet(pk):
         return False
-    ev = await profile_event(pk)
+    ev = await profile_event(pk, strict=strict)
     if not ev:
         return False
     return not any(t and t[0] in ("proxy", "fedibridge") for t in ev.get("tags") or [])
@@ -427,7 +440,7 @@ _profile_cache: "OrderedDict[str, tuple]" = OrderedDict()
 _PROFILE_CACHE_MAX = 5000
 
 
-async def profile_event(pubkey: str) -> dict | None:
+async def profile_event(pubkey: str, *, strict: bool = False) -> dict | None:
     """The account's kind-0 EVENT from this node's relay (None when it has none), cached five
     minutes in a bounded cache -- anybody can make us look up any npub."""
     hit = _profile_cache.get(pubkey)
@@ -436,6 +449,11 @@ async def profile_event(pubkey: str) -> dict | None:
         return hit[1]
     from app.services.fedi_bridge_identity import query_one
     ok, ev = await query_one(settings_store._port(), {"kinds": [0], "authors": [pubkey], "limit": 1})
+    if not ok and strict:
+        # "Could not ask" is not "has no profile". Read as "no", a relay hiccup during delivery turned a
+        # mention into a bare link and a reply into a post that stayed on Nostr -- for good, since the
+        # delivery pass had moved on (2026-09-24, under a relay-subscription flood).
+        raise RelayUnavailable("the relay did not answer a profile read")
     if ok:
         _profile_cache[pubkey] = (time.monotonic(), ev)
         _profile_cache.move_to_end(pubkey)

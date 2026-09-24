@@ -70,7 +70,8 @@ async def webfinger(resource: str = ""):
         return JSONResponse({"subject": f"acct:{dom}@{dom}", "links": [
             {"rel": "self", "type": config.AP_CONTENT_TYPE, "href": f"{base}/ap/actor"}]}, media_type=_JRD)
     try:
-        pk = (await (actors.member_of_path(name) if by_path else actors.member_by_name(name))) if name else ""
+        pk = (await (actors.member_of_path(name, strict=True) if by_path
+                     else actors.member_by_name(name, strict=True))) if name else ""
         if not pk:
             raise HTTPException(404, "Not Found")
         name = await actors.ap_handle(pk)
@@ -163,7 +164,7 @@ async def instance_outbox():
 
 async def _member(name: str) -> str:
     try:
-        pk = await actors.member_of_path(name)
+        pk = await actors.member_of_path(name, strict=True)
     except _RELAY_DOWN:
         raise HTTPException(503, "Try again shortly", headers={"Retry-After": "30"})
     if not pk:
@@ -302,14 +303,21 @@ async def note(event_id: str, request: Request):
     (a mirror, somebody else's event, a DM) is 404 -- this is not a window onto the relay."""
     _on()
     from app.services.activitypub import outbox as ob
-    ev = await ob._event(event_id) if re.fullmatch(r"[0-9a-f]{64}", event_id) else None
+    try:
+        ev = await ob._event(event_id, strict=True) if re.fullmatch(r"[0-9a-f]{64}", event_id) else None
+    except _RELAY_DOWN:
+        return _relay_down()                       # never a 404 (cached, and believed) for "could not ask"
     if ev is None and re.fullmatch(r"[0-9a-f]{64}", event_id) and await _deleted_by_member(event_id):
         # Gone, not unknown: 410 + a Tombstone is how a server learns to drop its copy.
         return JSONResponse({"@context": convert.AS_CONTEXT, "id": convert.object_url(config.base_url(), event_id),
                              "type": "Tombstone"}, status_code=410, media_type=config.AP_CONTENT_TYPE)
     if not ev or ev.get("kind") not in ob.POST_KINDS or ob._is_mirror(ev) or ob._protected(ev):
         raise HTTPException(404, "Not Found")
-    if not actors.handle(ev.get("pubkey", "")) or not await actors.exposed(ev["pubkey"]):
+    try:
+        shown = bool(actors.handle(ev.get("pubkey", ""))) and await actors.exposed(ev["pubkey"], strict=True)
+    except _RELAY_DOWN:
+        return _relay_down()
+    if not shown:
         raise HTTPException(404, "Not Found")
     if _wants_html(request):
         return RedirectResponse(f"{config.base_url()}/{convert._nevent_or_note(event_id)}", status_code=302)

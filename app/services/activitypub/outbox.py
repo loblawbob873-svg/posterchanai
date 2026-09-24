@@ -69,16 +69,20 @@ def _mirror_row(event_id: str):
         db.close()
 
 
-async def _event(event_id: str) -> dict | None:
+async def _event(event_id: str, *, strict: bool = False) -> dict | None:
     from app.services.fedi_bridge_identity import query_one
     ok, ev = await query_one(settings_store._port(), {"ids": [event_id], "limit": 1})
+    if not ok and strict:
+        raise actors.RelayUnavailable("the relay did not answer an event read")
     return ev if ok else None
 
 
 async def resolve_pubkey(pubkey: str) -> dict:
     """{"href", "name", "inbox"?} for a pubkey that has a fediverse address, else {}."""
     name = actors.handle(pubkey)
-    if name and (actors.is_actor(pubkey) or await actors.exposed(pubkey)):
+    # STRICT: a relay that did not answer RAISES here, and the delivery pass stops and retries, instead of
+    # sending the post with this mention downgraded to a bare link.
+    if name and (actors.is_actor(pubkey) or await actors.exposed(pubkey, strict=True)):
         href = await actors.actor_id(pubkey)
         shown = await actors.readable_handle(pubkey) or name
         if href:
@@ -104,11 +108,11 @@ async def resolve_event(event_id: str) -> dict:
         prow = _puppet_row(row.nostr_pubkey or "")
         actor_id = (await _canonical(prow.actor_uri))[0] or prow.actor_uri if prow else ""
         return {"uri": row.note_uri, "actor": actor_id, "remote": True}
-    ev = await _event(event_id)
+    ev = await _event(event_id, strict=True)      # unanswered: raise, never "a Nostr-only thread"
     # Only what IS served as an object: a member's reaction, a protected post or an article has no
     # /ap/objects/ address (it answers 404), and a reply naming one arrived pointing at nothing.
     if ev and ev.get("kind") in POST_KINDS and not _is_mirror(ev) and not _protected(ev) \
-            and await actors.exposed(ev.get("pubkey", "")):
+            and await actors.exposed(ev.get("pubkey", ""), strict=True):
         actor = await actors.actor_id(ev["pubkey"])
         if actor:
             return {"uri": convert.object_url(base, event_id), "actor": actor, "remote": False}
