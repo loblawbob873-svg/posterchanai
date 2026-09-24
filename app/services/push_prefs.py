@@ -24,7 +24,7 @@ logger = logging.getLogger(__name__)
 # The SAME vocabulary the client's _NOTIFICATION_TYPES uses. One list of names, or a toggle labelled
 # "Likes and reactions" silences something else (or nothing at all) and no test would notice.
 PUSH_TYPES = ("email", "dm", "likes", "replies", "quotes", "mentions", "reposts",
-              "zaps", "concord", "channels", "sms", "reminders")
+              "zaps", "concord", "channels", "sms", "reminders", "follows")
 
 
 def push_type(ev: dict, recipient: str = "") -> str:
@@ -39,6 +39,8 @@ def push_type(ev: dict, recipient: str = "") -> str:
         return ""
     if kind == 9735:
         return "zaps"
+    if kind == 3:
+        return "follows"
     if kind == 7:
         return "likes"
     if kind == 6:

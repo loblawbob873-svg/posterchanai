@@ -11084,7 +11084,7 @@
   const _NOTIFICATION_TYPES = [['email','Email'],['dm','Direct messages'],['likes','Likes and reactions'],
     ['replies','Replies'],['quotes','Quote posts'],['mentions','Mentions'],['reposts','Reposts'],
     ['zaps','Zaps and tips'],['concord','Concord mentions'],['channels','Chat rooms'],
-    ['sms','Text messages'],['reminders','Reminders']];
+    ['sms','Text messages'],['reminders','Reminders'],['follows','New followers']];
   const _NOTIFICATION_SOUNDS = ['chime','soft','bright','off'];
   function _notificationOwner(){ return (ME && ME.pubkey)||''; }
   function _notificationClean(value){

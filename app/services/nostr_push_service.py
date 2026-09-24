@@ -73,6 +73,8 @@ def _title(ev: dict, name: str, recipient: str = "") -> str:
     who = name or "Someone"
     if k == 9735:
         return "⚡ You were zapped"          # author of a 9735 is the zap service, not the zapper
+    if k == 3:
+        return f"🫂 {who} followed you"
     if k == 7:
         emoji = (ev.get("content") or "").strip()
         return f"{who} reacted {emoji or '❤️'}"
@@ -233,6 +235,44 @@ async def _poll_channels():
         db.close()
 
 
+_SEED_LIMIT = 5000
+
+
+async def _is_new_follower(recipient: str, follower: str) -> bool:
+    """True exactly ONCE per (recipient, follower): the first time this follower's contact list is seen
+    naming the recipient. The first time a RECIPIENT is seen at all, every follower the relay already
+    knows is recorded silently -- a kind-3 arriving is not evidence of a NEW follow, and without the seed
+    turning this on would announce everybody who already followed them."""
+    from app.database import SessionLocal
+    from app.models import PushFollowSeen
+    db = SessionLocal()
+    try:
+        have = lambda f: db.query(PushFollowSeen).filter(PushFollowSeen.recipient == recipient,
+                                                         PushFollowSeen.follower == f).first() is not None
+        if not have(""):
+            try:
+                lists = await relay.query(_local_relay(), [{"kinds": [3], "#p": [recipient], "limit": _SEED_LIMIT}],
+                                          timeout=8)
+            except Exception:
+                return False                    # could not ask: say nothing rather than guess
+            known = {e.get("pubkey") for e in lists or [] if e.get("pubkey")} | {""}
+            for f in known:
+                if not have(f):
+                    db.add(PushFollowSeen(recipient=recipient, follower=f))
+            db.commit()
+        if have(follower):
+            return False
+        db.add(PushFollowSeen(recipient=recipient, follower=follower))
+        db.commit()
+        return True
+    except Exception as e:
+        db.rollback()
+        logger.info(f"[nostr-push] follow bookkeeping failed: {e}")
+        return False
+    finally:
+        db.close()
+
+
 async def _poll():
     global _cursor
     from app.database import SessionLocal
@@ -253,7 +293,8 @@ async def _poll():
         since = _cursor - 5                   # small overlap for clock skew
         _cursor = now
 
-        evs = await relay.query(_local_relay(), [{"kinds": _KINDS, "#p": list(by_pk.keys()), "_include_quotes": True, "since": since}], timeout=8)
+        evs = await relay.query(_local_relay(), [{"kinds": _KINDS, "#p": list(by_pk.keys()), "_include_quotes": True, "since": since},
+                                                 {"kinds": [3], "#p": list(by_pk.keys()), "since": since}], timeout=8)
         for ev in evs:
             eid = ev.get("id")
             if not eid or eid in _seen:
@@ -262,6 +303,9 @@ async def _poll():
             author = ev.get("pubkey", "")
             ptags = [t[1] for t in (ev.get("tags") or []) if len(t) >= 2 and t[0] == "p"]
             recips = [pk for pk in set(ptags) | quote_pubkeys(ev) if pk in by_pk and pk != author]   # not your own event
+            if ev.get("kind") == 3:
+                # A FOLLOW: only for a follower this watcher has never seen follow them.
+                recips = [pk for pk in recips if await _is_new_follower(pk, author)]
             if not recips:
                 continue
             name = await _name_for(author)
@@ -273,6 +317,10 @@ async def _poll():
                 ntype = push_prefs.push_type(ev, pk)
                 payload = {"title": "PosterChan", "body": _title(ev, name, pk), "eid": eid,
                            "author": author, "type": ntype}
+                if ev.get("kind") == 3:
+                    # There is no post to open: a tap lands on Notifications, where the follow is listed.
+                    payload.pop("eid", None)
+                    payload["view"] = "notifications"
                 for s in by_pk[pk]:
                     # Per DEVICE: a phone and a laptop may want different things, and the row is
                     # where the client mirrored the answer to. Unset means send (see push_prefs).

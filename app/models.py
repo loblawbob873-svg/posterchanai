@@ -496,6 +496,20 @@ class PushSentWrap(Base):
     created_at = Column(DateTime, default=datetime.utcnow, index=True, nullable=False)
 
 
+class PushFollowSeen(Base):
+    """Who the push watcher already knows follows whom -- so a FOLLOW push goes out once, for a new
+    follower, and never again when that follower re-saves their contact list (a kind-3 is the WHOLE
+    list, republished on every follow or unfollow they make of anyone). One row per pair; the row with
+    follower "" marks a recipient whose existing followers were recorded silently the first time they
+    were seen, so switching this on does not announce everybody who already follows them. A table and
+    not a Nostr document: a popular account's follower set does not fit in one."""
+    __tablename__ = "push_follow_seen"
+
+    recipient = Column(String(64), primary_key=True)
+    follower = Column(String(64), primary_key=True)
+    first_seen = Column(DateTime, default=datetime.utcnow)
+
+
 class PushSubscription(Base):
     """One notification device tied to a Nostr pubkey.
 
