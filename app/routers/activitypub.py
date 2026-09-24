@@ -12,7 +12,7 @@ import logging
 import time
 
 from fastapi import APIRouter, Depends, HTTPException, Request
-from fastapi.responses import JSONResponse, RedirectResponse, Response
+from fastapi.responses import FileResponse, JSONResponse, RedirectResponse, Response
 
 from app.auth import get_admin_user, get_current_user
 from app.services.activitypub import actors, config, convert, httpsig, inbox, remote, state
@@ -340,6 +340,20 @@ async def import_following(request: Request, user=Depends(get_current_user)):
     finally:
         db.close()
     return {"following": len(accounts), "people": people}
+
+
+# THE RETIRED PLEROMA'S FAVICON ADDRESS. poster.place ran Pleroma before this server, and every
+# fediverse server that met it then STORED that instance's favicon URL (Akkoma: the account's
+# `akkoma.instance.favicon`) and refreshes it only when it decides to. The file behind it is gone,
+# so posts from here showed no instance icon at all on those servers. Answering that one exact
+# address with our icon fixes every stale record at once; nothing else under /media/ is served.
+_OLD_PLEROMA_FAVICON = "/media/cb/93/65/cb9365f4ea06831500dde507896aa018db5da207979abdc44add6cc00a67e2e9.webp"
+_ICON = __import__("pathlib").Path(__file__).resolve().parents[2] / "static" / "icon-192.png"
+
+
+@router.get(_OLD_PLEROMA_FAVICON, include_in_schema=False)
+async def old_pleroma_favicon():
+    return FileResponse(str(_ICON), media_type="image/png", headers={"Cache-Control": "public, max-age=86400"})
 
 
 @router.get("/api/admin/activitypub/status")

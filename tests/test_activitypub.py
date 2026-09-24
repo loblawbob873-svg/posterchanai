@@ -1316,3 +1316,11 @@ def test_a_reply_that_mentions_its_parent_author_tags_them_once(world):
     reply = next(e for e in world["relay"].values() if e["kind"] == 1 and e["id"] != mine["id"])
     assert [t for t in reply["tags"] if t[0] == "p"] == [["p", ALICE]], reply["tags"]
     assert reply["content"].startswith("nostr:npub1") and reply["content"].endswith("I see you")
+
+
+def test_the_retired_pleromas_favicon_address_shows_our_icon(client):
+    """Servers that met poster.place when it ran Pleroma stored that instance's favicon URL and keep
+    using it; the file is gone, so our posts showed no instance icon there."""
+    r = client.get("/media/cb/93/65/cb9365f4ea06831500dde507896aa018db5da207979abdc44add6cc00a67e2e9.webp")
+    assert r.status_code == 200 and r.headers["content-type"] == "image/png" and r.content[:4] == b"\x89PNG"
+    assert client.get("/media/cb/93/65/other.webp").status_code == 404, "only that one address is served"
