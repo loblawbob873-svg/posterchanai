@@ -1111,14 +1111,19 @@ html.os-on .cal-bar,html.os-on .ct-bar{background-attachment:scroll}
    the compact arrow: the label and avatar only exist inside a desktop window. */
 :root{--pc-logo:url("/static/posterchan-relay.png")}
 .pc-nav-label,.pc-nav-logo{display:none}
-body.os-on .osw .pc-navbar{position:sticky;top:-8px;z-index:4;gap:10px;margin:-8px 0 12px;padding:6px 10px;   /* -8px: flush under the title bar (the window feed has 8px top padding) */
+/* TWO KINDS OF WINDOW, ONE ROW. `body.os-on .osw` is a window drawn INSIDE the desktop page (desktop
+   mode in a browser); `html.pc-oswin` is a PosterChanOS window, which is a separate document with no
+   `.osw` in it at all -- every app on PosterChanOS opens that way, so gated on `.osw` alone the row
+   never appeared on the machine it was asked for ("I updated desktop but still don't see that back
+   button and logo fix in Social"). */
+body.os-on .osw .pc-navbar,html.pc-oswin .pc-navbar{position:sticky;top:-8px;z-index:4;gap:10px;margin:-8px 0 12px;padding:6px 10px;   /* -8px: flush under the title bar (the window feed has 8px top padding) */
   background:color-mix(in srgb,var(--panel) 92%,transparent);border-bottom:1px solid var(--line);
   backdrop-filter:blur(8px)}
-body.os-on .osw .pc-nav-back{display:inline-flex;align-items:center;gap:6px;padding:6px 14px 6px 10px;
+body.os-on .osw .pc-nav-back,html.pc-oswin .pc-nav-back{display:inline-flex;align-items:center;gap:6px;padding:6px 14px 6px 10px;
   border-radius:999px;border:1px solid var(--line);font-weight:600;line-height:1}
-body.os-on .osw .pc-nav-back:hover{border-color:var(--cyan);box-shadow:0 0 0 3px rgba(var(--accent-rgb),.18)}
-body.os-on .osw .pc-nav-label{display:inline}
-body.os-on .osw .pc-nav-logo{display:block;margin-left:auto;width:36px;height:36px;flex:0 0 36px;
+body.os-on .osw .pc-nav-back:hover,html.pc-oswin .pc-nav-back:hover{border-color:var(--cyan);box-shadow:0 0 0 3px rgba(var(--accent-rgb),.18)}
+body.os-on .osw .pc-nav-label,html.pc-oswin .pc-nav-label{display:inline}
+body.os-on .osw .pc-nav-logo,html.pc-oswin .pc-nav-logo{display:block;margin-left:auto;width:36px;height:36px;flex:0 0 36px;
   border-radius:9px;background:var(--pc-logo) center/cover no-repeat;border:1px solid var(--line);
   box-shadow:0 0 12px rgba(var(--accent-rgb),.28)}
 .searchbox{flex:1;min-width:0;max-width:720px;margin:0 16px}   /* min-width:0 → shrinks so the topbar buttons (Calls/Drafts/New post) always fit, never clipped */

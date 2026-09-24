@@ -85,3 +85,64 @@ def test_outside_a_window_the_row_stays_the_compact_arrow():
     asyncio.run(desktop.with_browser('online', '', check, ''))
     assert got['phone'] == {'label': 'none', 'logo': 'none'}, got
     assert ':root{--pc-logo:' in html
+
+
+ROW = ('<div class="thread-top pc-navbar"><button class="btn btn-ghost small pc-nav-back" id="prof-back" title="Back" '
+       'aria-label="Back"><svg class="ic b-ic" aria-hidden="true"><use href="#i-arrow-left"></use></svg>'
+       '<span class="pc-nav-label">Back</span></button><span class="pc-nav-logo" aria-hidden="true"></span></div>')
+
+
+def test_the_row_markup_is_the_builders():
+    """ROW below must stay the markup `_navTopHtml` writes, or the window test measures something else."""
+    app = (Path(__file__).resolve().parents[2] / 'static/js/client/app.js').read_text(encoding='utf-8')
+    for part in ('class="thread-top pc-navbar"', 'class="btn btn-ghost small pc-nav-back"',
+                 '<span class="pc-nav-label">Back</span>', '<span class="pc-nav-logo" aria-hidden="true">'):
+        assert part in app and part in ROW, part
+
+
+POPPED = r'''(()=>{
+  const row=[...document.querySelectorAll('.pc-navbar')].find(r=>r.offsetParent); if(!row) return {row:false};
+  const bar=document.getElementById('pc-oswin-chrome');
+  const back=row.querySelector('.pc-nav-back'), label=row.querySelector('.pc-nav-label'), logo=row.querySelector('.pc-nav-logo');
+  const r=row.getBoundingClientRect(), b=bar?bar.getBoundingClientRect():{bottom:NaN}, br=back.getBoundingClientRect(), lr=logo.getBoundingClientRect();
+  return {row:true, oswin:document.documentElement.classList.contains('pc-oswin'), osw:!!document.querySelector('.osw'),
+    gap:Math.round(r.top-b.bottom), label:getComputedStyle(label).display!=='none' && label.textContent.trim(),
+    logoShown:getComputedStyle(logo).display!=='none' && lr.width>=24,
+    logoRight:Math.round(r.right-lr.right), backLeft:Math.round(br.left-r.left), sticky:getComputedStyle(row).position};
+})()'''
+
+
+@pytest.mark.skipif(not Path('/opt/google/chrome/chrome').exists(), reason='Chrome required')
+def test_a_posterchanos_window_gets_the_same_toolbar():
+    """EVERY APP ON PosterChanOS IS A POPPED-OUT WINDOW -- its own document (`html.pc-oswin`), with no
+    `.osw` in it. The row was gated on `.osw` alone, so it never appeared on the machine it was asked
+    for, through several desktop releases, while the test above (a window INSIDE the desktop page)
+    passed every time. This opens the client exactly as PosterChanOS opens an app: `?pcwin=`."""
+    got = {}
+
+    async def check(b):
+        await desktop.login(b)
+        await b.until("document.documentElement.classList.contains('pc-oswin') && !!document.getElementById('pc-oswin-chrome')")
+        # The row as `_navTopHtml` writes it, in the window's own feed: what is under test is whether
+        # the WINDOW's stylesheet dresses it, which is exactly what failed (the offline fixture has no
+        # relay, so the profile itself never finishes loading here).
+        await b.js("(()=>{const f=document.querySelector('#feed');f.innerHTML=" + json.dumps(ROW) +
+                   "+'<div style=\"height:3000px\"></div>';return true})()")
+        await asyncio.sleep(.3)
+        got['win'] = await b.js(POPPED)
+        # Measured against the SCROLLER's top edge -- the window keeps the view's own header above it.
+        got['scrolled'] = await b.js("(()=>{const r=document.querySelector('.pc-navbar');let s=r.parentElement;"
+                                     "while(s&&!(s.scrollHeight>s.clientHeight+10&&/auto|scroll/.test(getComputedStyle(s).overflowY)))s=s.parentElement;"
+                                     "const top=()=>Math.round(r.getBoundingClientRect().top-s.getBoundingClientRect().top);"
+                                     "const before=top();s.scrollTop=800;return {scroller:!!s,before,after:top()}})()")
+
+    asyncio.run(desktop.with_browser('online', '?pcwin=profile', check, ''))
+    sc = got['scrolled']
+    assert sc['scroller'] and abs(sc['before']) <= 1 and abs(sc['after']) <= 1, \
+        'the toolbar is not flush at the top of the window content, or does not stay there: %r' % got
+    w = got['win']
+    assert w['row'] and w['oswin'] and not w['osw'], got
+    assert w['label'] == 'Back', 'no labelled Back in a PosterChanOS window: %r' % w
+    assert w['logoShown'], 'no avatar at the right of the row in a PosterChanOS window: %r' % w
+    assert w['logoRight'] <= 16 and w['backLeft'] <= 16, w
+    assert w['sticky'] == 'sticky', w
