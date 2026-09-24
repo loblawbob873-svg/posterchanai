@@ -10,6 +10,7 @@ These run the gate's own logic; the end-to-end install is the gate, run against 
 from pathlib import Path
 import ast
 import importlib.util
+import re
 import subprocess
 import sys
 
@@ -121,7 +122,7 @@ def _run_main(tmp_path, extra, monkeypatch):
     # with no ISO; stubbing that without checking it happened would let a main() that skipped booting
     # pass — which is precisely the defect this file exists around (the gate promised for months that
     # it booted the installed disk and never did).
-    def fake_boot(disk, serial_dir, vars_copy, evidence, timeout, memory, cpus):
+    def fake_boot(disk, serial_dir, vars_copy, evidence, timeout, memory, cpus, **kw):
         seen["booted"] = True
         seen["boot_vars"] = str(vars_copy)
         return 0
@@ -259,3 +260,87 @@ def test_the_boot_check_can_actually_hear_the_installed_system():
     called = src[src.index("def boot_installed("):]
     called = called[:called.index("\ndef ", 1)] if "\ndef " in called[1:] else called
     assert "_make_installed_boot_audible(" in called, "the helper exists but is never called"
+
+
+# ---- the server, switched on FROM the installed system (--server)
+
+class _FakeConsole:
+    """The installed guest's serial console: every line sent is ECHOED (as a real tty does -- which is
+    what proves a marker cannot be matched from the command text itself) and answered by the first
+    rule whose pattern matches the command."""
+    def __init__(self, rules):
+        self.buf = "posterchanos login: "
+        self.rules = rules
+        self.sent = []
+
+    def send(self, line):
+        self.sent.append(line)
+        self.buf += line + "\n"
+        for pattern, answer in self.rules:
+            if re.search(pattern, line):
+                out = answer() if callable(answer) else answer
+                if out:
+                    self.buf += out + "\n"
+                break
+
+    def expect(self, pattern, timeout, since=0):
+        m = re.compile(pattern).search(self.buf, since)
+        return m.end() if m else None
+
+
+def _stage(rules, **kw):
+    ticks = iter(range(0, 10 ** 6, 5))
+    con = _FakeConsole(rules)
+    rc = MOD.server_stage(con, "pc-vm-test-only", kw.pop("timeout", 600), "/tmp/ev",
+                          poll=0, clock=lambda: next(ticks), sleep=lambda s: None)
+    return rc, con
+
+
+def _answers(job_rc="0", posts=(0, 3, 12), code=True):
+    jobs = iter(['PCJOB| {"running":true,"verb":"enable","rc":""}'])
+    counts = iter(posts)
+    return [
+        (r"^root$", "Password: "),
+        (r"^pc-vm-test-only$", "root@posterchanos:~#"),
+        (r"ROOT-\$\(id -u\)", "ROOT-0"),
+        (r"pc-server status", 'PCSTATUS| {"code":%s,"configured":false}' % ("true" if code else "false")),
+        (r"pc-server enable", "started: enable\nENABLE-RC=0"),
+        (r"pc-server job \|", lambda: next(jobs, 'PCJOB| {"running":false,"verb":"enable","rc":"%s"}' % job_rc)),
+        (r"job-log", "JOBLOG| pip failed\nJOBLOG-END"),
+        (r"SVC=", "SVC=active HTTP=200"),
+        (r"POSTS=", lambda: "POSTS=%d" % next(counts, posts[-1])),
+        (r"journalctl", "SVCLOG| no upstream\nSVCLOG-END"),
+    ]
+
+
+def test_the_server_passes_only_once_nostr_posts_are_seen_arriving():
+    rc, con = _stage(_answers())
+    assert rc == 0, con.buf
+    assert sum("POSTS=" in s for s in con.sent) >= 2, "it passed before posts were counted"
+    assert any("pc-server enable" in s for s in con.sent)
+
+
+def test_a_failed_server_install_fails_the_gate_with_its_log():
+    rc, con = _stage(_answers(job_rc="1"))
+    assert rc == 1
+    assert any("job-log" in s for s in con.sent), "the job's own log was not captured"
+
+
+def test_a_server_that_runs_but_receives_no_posts_fails():
+    """Active and answering on 3051 is not the pass condition: a node whose relay syncs nothing is
+    useless, and that is the failure the user asked this gate to catch."""
+    rc, con = _stage(_answers(posts=(0,)), timeout=600)
+    assert rc == 1, con.buf
+    assert any("journalctl" in s for s in con.sent)
+
+
+def test_an_image_without_the_server_code_fails_before_enabling_anything():
+    rc, con = _stage(_answers(code=False))
+    assert rc == 1
+    assert not any("pc-server enable" in s for s in con.sent)
+
+
+def test_with_server_the_installed_guest_gets_a_network():
+    joined = " ".join(MOD.qemu_args("/d", None, "/s", None, None, 1, 1, net=True))
+    assert "-nic user,model=virtio-net-pci" in joined
+    assert "-nic" not in " ".join(MOD.qemu_args("/d", "/x.iso", "/s", None, None, 1, 1))

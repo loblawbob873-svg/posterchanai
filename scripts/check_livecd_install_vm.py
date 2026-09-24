@@ -20,7 +20,16 @@ systemd-boot entry; a SeaBIOS guest would boot the disk through a path the produ
 prove nothing about the bootloader. OVMF variables are COPIED per run -- the firmware writes its
 boot entries into them, so a shared file makes the second run's result depend on the first.
 
-Exit 0 installed and the installed disk booted, 1 it did not, 2 could not run.
+THE SERVER, FROM THE INSTALLED SYSTEM (`--server`). PosterChanOS carries the server's code and runs
+none of it until somebody presses System Settings → PosterChan Server → Enable, which is `pc-server
+enable`: a Postgres cluster, Tor, the project's own `install.sh --nostr-only`, a unit. That path runs
+on an installed machine and nowhere else, so nothing here had ever exercised it -- an image whose
+server could not be switched on passed every gate. With `--server` the booted disk is logged into as
+root (the password the install was given), `pc-server enable` is run and waited for, and the server
+must then be active and answering on 3051.
+
+Exit 0 installed and the installed disk booted (and, with --server, served), 1 it did not, 2 could
+not run.
 """
 from __future__ import annotations
 
@@ -37,6 +46,8 @@ import time
 
 
 HERE = Path(__file__).resolve().parent
+# A disposable, VM-only credential: the disk's passphrase AND root's password on the installed guest.
+INSTALL_PASSWORD = "pc-vm-test-only"
 sys.path.insert(0, str(HERE))
 
 
@@ -104,12 +115,16 @@ class Serial:
         time.sleep(0.15)
 
 
-def qemu_args(disk, iso, serial_path, code, vars_copy, memory, cpus, usb=False):
+def qemu_args(disk, iso, serial_path, code, vars_copy, memory, cpus, usb=False, net=False):
     args = ["qemu-system-x86_64", "-machine", "q35,accel=kvm:tcg", "-cpu", "max",
             "-m", str(memory), "-smp", str(cpus), "-display", "none", "-no-reboot",
             "-drive", f"file={disk},if=virtio,format=qcow2",
             "-chardev", f"socket,id=pcserial,path={serial_path},server=on,wait=off",
             "-serial", "chardev:pcserial"]
+    if net:
+        # The server install fetches its Python packages: a NIC it can DHCP on, named rather than left
+        # to QEMU's default (which a -nodefaults anywhere up the chain would silently remove).
+        args += ["-nic", "user,model=virtio-net-pci"]
     if code:
         args[1:1] = ["-drive", f"if=pflash,format=raw,unit=0,readonly=on,file={code}",
                      "-drive", f"if=pflash,format=raw,unit=1,file={vars_copy}"]
@@ -314,7 +329,110 @@ def _make_installed_boot_audible(disk, evidence):
             subprocess.run(["qemu-nbd", "--disconnect", nbd], capture_output=True, timeout=60)
 
 
-def boot_installed(disk, serial_dir, vars_copy, evidence, timeout, memory, cpus):
+def server_stage(con, password, timeout, evidence, *, poll=10.0, clock=time.monotonic, sleep=time.sleep):
+    """Switch the bundled server on FROM the installed system, the way System Settings does it.
+
+    `con` is the installed system's console, already at a login prompt. Returns 0 when the server was
+    set up and answers, 1 otherwise -- with the job's own log in the transcript, because "the server
+    did not start" cannot be acted on without it."""
+    def ask(cmd, pattern, wait):
+        mark = len(con.buf)
+        con.send(cmd)
+        if con.expect(pattern, wait, mark) is None:
+            return None
+        return re.findall(pattern, con.buf[mark:])[-1]
+
+    # ---- log in as root: the install unlocked root with the password it was given
+    mark = len(con.buf)
+    con.send("")
+    if con.expect(r"login:", 60, max(0, mark - 400)) is None:
+        print("FAIL  the installed system gave no login prompt on its serial console")
+        return 1
+    con.send("root")
+    if con.expect(r"[Pp]assword:", 30, mark) is None:
+        print("FAIL  no password prompt for root on the installed system")
+        return 1
+    con.send(password)
+    if ask("echo ROOT-$(id -u)", r"ROOT-(\d+)", 60) != "0":
+        print("FAIL  could not log in as root on the installed system with the install's password")
+        return 1
+    print("OK  logged in to the installed system as root")
+
+    status = ask("pc-server status | sed 's/^/PCSTATUS| /'", r"PCSTATUS\| (\{.*\})", 60)
+    if status is None or '"code":true' not in status:
+        print("FAIL  the server's code is not on the installed system (app-misc/posterchan-server): "
+              f"{status!r}")
+        return 1
+    rc = ask("pc-server enable; echo ENABLE-RC=$?", r"ENABLE-RC=(\d+)", 120)
+    if rc != "0":
+        print(f"FAIL  `pc-server enable` would not start its job (exit {rc})")
+        return 1
+    print("OK  `pc-server enable` started -- waiting for the install")
+    deadline = clock() + timeout
+    job = None
+    while clock() < deadline:
+        job = ask("pc-server job | sed 's/^/PCJOB| /'", r"PCJOB\| (\{.*\})", 60)
+        if job and '"running":false' in job and re.search(r'"rc":"\d+"', job):
+            break
+        sleep(poll)
+    else:
+        print(f"FAIL  the server install was still running after {timeout}s. Transcript in "
+              f"{evidence}/boot-console.log")
+        return 1
+    job_rc = re.search(r'"rc":"(\d+)"', job).group(1)
+    if job_rc != "0":
+        ask("pc-server job-log | tail -n 120 | sed 's/^/JOBLOG| /'; echo JOBLOG-END", r"(JOBLOG-END)", 60)
+        print(f"FAIL  the server install failed (rc={job_rc}); its log is in {evidence}/boot-console.log "
+              "(lines starting JOBLOG|)")
+        return 1
+    print("OK  the server install finished")
+    deadline = clock() + 300
+    last = ""
+    while clock() < deadline:
+        last = ask("echo SVC=$(systemctl is-active posterchanai.service) "
+                   "HTTP=$(curl -s -o /dev/null -m 10 -w '%{http_code}' http://127.0.0.1:3051/client)",
+                   r"SVC=([a-z-]+) HTTP=(\d{3})", 30) or ""
+        if last and last[0] == "active" and last[1] in ("200", "301", "302", "307", "308"):
+            print(f"OK  the server is running and answering on 3051 (HTTP {last[1]})")
+            return _posts_flow(ask, evidence, clock=clock, sleep=sleep, poll=poll)
+        sleep(poll)
+    ask("journalctl -u posterchanai.service -n 80 --no-pager | sed 's/^/SVCLOG| /'; echo SVCLOG-END",
+        r"(SVCLOG-END)", 60)
+    print(f"FAIL  the server was set up but is not answering on 3051 (last: {last!r}); its journal is in "
+          f"{evidence}/boot-console.log (lines starting SVCLOG|)")
+    return 1
+
+
+POSTS_WANTED = 5
+
+
+def _posts_flow(ask, evidence, *, clock, sleep, poll, timeout=900):
+    """THE PASS CONDITION IS POSTS ARRIVING, NOT A UNIT BEING ACTIVE. A server can answer on 3051 with
+    a relay that syncs nothing -- no upstream reachable, a database it cannot write, a gate that drops
+    everything -- and that node is useless. So it must be SEEN receiving Nostr posts (kind 1, into its
+    own Postgres). And the moment it is, the caller powers the guest off: a test node left syncing
+    spends this project's rate limits with every upstream relay it talks to."""
+    q = ("runuser -u postgres -- psql -d posterchan_relay -Atc "
+         "\"select 'POSTS=' || count(*) from events where kind=1\" 2>&1 | tail -n1")
+    deadline = clock() + timeout
+    seen = -1
+    while clock() < deadline:
+        got = ask(q, r"POSTS=(\d+)", 60)
+        if got is not None:
+            seen = int(got)
+            if seen >= POSTS_WANTED:
+                print(f"OK  Nostr posts are flowing into the installed node ({seen} kind-1 events) -- stopping it now")
+                return 0
+        sleep(poll)
+    ask("journalctl -u posterchanai.service -n 120 --no-pager | grep -iE 'relay|sync|upstream|error' "
+        "| sed 's/^/SVCLOG| /'; echo SVCLOG-END", r"(SVCLOG-END)", 60)
+    print(f"FAIL  the server runs but no Nostr posts arrived in {timeout}s (kind-1 events: {seen}); its "
+          f"journal is in {evidence}/boot-console.log (lines starting SVCLOG|)")
+    return 1
+
+
+def boot_installed(disk, serial_dir, vars_copy, evidence, timeout, memory, cpus, *, server=False,
+                   password="", server_timeout=5400):
     """Boot the INSTALLED disk with no ISO and require it to reach a running system.
 
     THIS FUNCTION IS WHY THIS FILE EXISTS AND IT WAS NEVER WRITTEN. The module docstring has always
@@ -348,7 +466,7 @@ def boot_installed(disk, serial_dir, vars_copy, evidence, timeout, memory, cpus)
     sock = Path(serial_dir, "boot-console.sock")
     log = open(Path(evidence, "boot-console.log"), "w", encoding="utf-8")
     # iso=None leaves out every medium drive, so the only bootable thing is the installed disk.
-    proc = subprocess.Popen(qemu_args(disk, None, sock, code, vars_copy, memory, cpus),
+    proc = subprocess.Popen(qemu_args(disk, None, sock, code, vars_copy, memory, cpus, net=server),
                             stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, text=True)
     try:
         for _ in range(100):
@@ -390,6 +508,8 @@ def boot_installed(disk, serial_dir, vars_copy, evidence, timeout, memory, cpus)
                 return 1
             if re.search(good, con.buf):
                 print("OK  the installed disk booted with no ISO attached")
+                if server:
+                    return server_stage(con, password, server_timeout, evidence)
                 return 0
             if proc.poll() is not None:
                 print("FAIL  the installed system's VM exited without booting. Transcript in "
@@ -423,6 +543,13 @@ def main():
     ap.add_argument("--usb", action="store_true",
                     help="attach the ISO as a USB disk instead of a CD-ROM — the medium people "
                          "actually boot, and the only one on which the live-medium search can fail")
+    ap.add_argument("--server", action="store_true",
+                    help="after booting the installed disk, switch the bundled server on from it "
+                         "(pc-server enable) and require it to answer on 3051")
+    ap.add_argument("--server-timeout", type=int, default=5400)
+    ap.add_argument("--rounds", type=int, default=1,
+                    help="repeat the whole run from a BLANK disk this many times (a server pass is "
+                         "only believed after a second fresh install)")
     ap.add_argument("--keep-disk", action="store_true",
                     help="leave the installed qcow2 behind for check_livecd_vm.py --disk")
     args = ap.parse_args()
@@ -436,7 +563,18 @@ def main():
             print(f"SKIP  {tool} is not installed on this host")
             return 2
 
-    evidence = Path(args.evidence_dir or tempfile.mkdtemp(prefix="pc-install-vm-"))
+    base_evidence = Path(args.evidence_dir or tempfile.mkdtemp(prefix="pc-install-vm-"))
+    for round_no in range(1, max(1, args.rounds) + 1):
+        evidence = base_evidence if args.rounds <= 1 else Path(base_evidence, f"round-{round_no}")
+        if args.rounds > 1:
+            print(f"=== round {round_no} of {args.rounds}: a blank disk")
+        rc = _one_round(args, evidence)
+        if rc:
+            return rc
+    return 0
+
+
+def _one_round(args, evidence):
     evidence.mkdir(parents=True, exist_ok=True)
     disk = Path(args.disk or Path(evidence, "installed.qcow2"))
     # A BLANK disk every run. Installing over a previous install proves the resume path, not the
@@ -454,7 +592,8 @@ def main():
               f"({disk}); console transcript in {evidence}/install-console.log")
         # AND THEN IT BOOTS IT, which is what this file has always claimed to do. See boot_installed.
         rc = boot_installed(disk, td, Path(evidence, "OVMF_VARS.fd"), evidence,
-                            args.boot_timeout, args.memory, args.cpus)
+                            args.boot_timeout, args.memory, args.cpus, server=args.server,
+                            password=INSTALL_PASSWORD, server_timeout=args.server_timeout)
         if rc:
             return rc
     if not args.keep_disk and not args.disk:
