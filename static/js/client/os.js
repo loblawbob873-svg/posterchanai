@@ -4699,6 +4699,16 @@
     return true;
   }
 
+  function _silenceMedia(root){
+    if(!root) return;
+    try{
+      root.querySelectorAll('video,audio').forEach(m => {
+        if(m.closest('#music-player')) return;
+        try{ if(!m.paused) m.pause(); }catch(_){}
+      });
+    }catch(_){}
+  }
+
   function closeWin(w, opts){
     const i = wins.indexOf(w);
     if(i < 0) return;
@@ -4718,6 +4728,13 @@
         try{ Promise.resolve(pcWM.close(w.native)).catch(() => {}); }catch(_){}
       }
     }
+    /* CLOSING A WINDOW SILENCES WHAT WAS PLAYING IN IT. The window shows the SHARED #feed, and
+     * releaseFeed() below does not destroy it -- it moves it, video and all, back to its hidden home.
+     * A playing video therefore kept playing, invisible and unreachable: "I played video in a social
+     * post then closed the social post window and I hear the song playing still". Measured: after
+     * ✕ the element was still connected, still in #feed, `paused === false`. Music is not in here
+     * (its player lives outside every window; see the music rule below), so this cannot stop it. */
+    _silenceMedia(w.body);
     if(realFeed && realFeed.parentElement === w.body) releaseFeed();
     w.el.remove();
     /* Music playback belongs to the phone/session, not to the window that happens to display its

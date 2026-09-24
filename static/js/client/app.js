@@ -1607,7 +1607,10 @@
       const queued = !r.noQueue && !(opts && opts.noQueue) && window.Outbox && Outbox.canQueue(kind) && Outbox.add(ev);
       if (queued){
         try{ refreshOfflineBar(); }catch(_){}
-        if(!(opts && opts.quiet)) toast('saved — this will send when you’re back online');
+        if(!(opts && opts.quiet)) toast(_queuedToast(r.msg));
+        // Queued while CONNECTED (the relay refused or did not answer): nothing else would ever
+        // retry it -- the outbox drains on a reconnect, and the socket never dropped.
+        if(r.msg !== 'offline') _retryOutboxSoon();
         return { ev, ...r, queued:true };
       }
       try{ Store.removeEvent(ev.id); }catch(_){} invalidateCounts();
@@ -4658,6 +4661,33 @@
   }
   window.addEventListener('pc:outbox-delivered',e=>{if(_reconcileDraftDelivery(e.detail&&e.detail.ev)&&VIEW==='drafts')renderDrafts();});
   window.addEventListener('storage',e=>{if(e.key==='pc_outbox_delivered'&&_reconcileDeliveredDrafts()&&VIEW==='drafts')renderDrafts();});
+  /* WHAT A QUEUED POST SAYS. "When you're back online" is only true when the pool had NO usable
+   * socket (`offline`). A refusal or a missing answer while connected said the same thing -- on
+   * 2026-09-24 every reaction during a server fault read "will send when you're back online" to
+   * somebody the client itself showed as online, which hid the fault and blamed their network. */
+  function _queuedToast(msg){
+    if(msg === 'offline') return 'saved — this will send when you’re back online';
+    const why = String(msg || '').trim();
+    return 'the relay didn’t take it' + (why && why !== 'timeout' ? ' (' + why.slice(0, 80) + ')' : '')
+         + ' — saved, trying again shortly';
+  }
+  /* Retry a queue that filled while connected: 15s, then 1 min, then 5 min. One pending timer at
+   * a time, and the schedule restarts from the top whenever a new item joins. */
+  let _outboxRetryT = null, _outboxRetryN = 0;
+  function _retryOutboxSoon(){
+    clearTimeout(_outboxRetryT); _outboxRetryN = 0;
+    const step = () => {
+      const delays = [15000, 60000, 300000];
+      if(_outboxRetryN >= delays.length) return;
+      _outboxRetryT = setTimeout(() => {
+        _outboxRetryN++;
+        if(!window.Outbox || !Outbox.count()) return;
+        _flushOutbox();
+        step();
+      }, delays[_outboxRetryN]);
+    };
+    step();
+  }
   function _flushOutbox(){
     if(!window.Outbox || !Outbox.count()) return;
     setTimeout(()=>{ Outbox.flush().then(res=>{

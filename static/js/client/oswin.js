@@ -329,6 +329,15 @@
     try{ state.label = String(root.__PC_WINDOW_LABEL__ || ''); }catch(_){ }
     root.__PC_WIN_STATE__ = state;
     installChrome(state);
+    /* A window that goes away takes its sound with it. Destroying the document normally does that,
+     * but this window shares the DESKTOP'S renderer process, and "I closed the post window and the
+     * song kept playing" is not something to leave to that detail. `pagehide` fires on unload only --
+     * never on minimise -- so a minimised video keeps playing as it should. */
+    try{
+      root.addEventListener('pagehide', () => {
+        try{ root.document.querySelectorAll('video,audio').forEach(m => { try{ m.pause(); }catch(_){ } }); }catch(_){ }
+      });
+    }catch(_){ }
     return state;
   }
 

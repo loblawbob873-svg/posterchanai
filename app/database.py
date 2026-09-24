@@ -183,17 +183,17 @@ _DROPPED_COLUMNS = (
     ("users", "misskey_instance_url"),
     ("users", "misskey_api_token"),
     ("users", "misskey_notif_since"),
-    # The Pleroma bridge, Pleroma sign-in and account linking were removed in full (the native
-    # ActivityPub server replaced them). Dropped, not merely unread: pleroma_access_token holds a
-    # live credential for every account that was ever linked. pleroma_enabled/_instance_url/_acct
-    # are KEPT (see User): relay_access_policy still exempts the accounts they identify.
-    ("users", "pleroma_access_token"),
-    ("users", "pleroma_notif_since"),
-    ("users", "fedi_bridge_enabled"),
-    ("users", "fedi_bridge_dm_since"),
-    ("users", "fedi_bridge_notif_since"),
-    ("users", "fedi_crosspost_enabled"),
-    ("users", "fedi_only"),
+    # A COLUMN IS DROPPED ONE RELEASE AFTER THE CODE STOPS READING IT, never in the same one.
+    # Startup runs this list, so the release that drops a column must not share the database with
+    # a process still reading it -- and one did: booting the bridge-removal release beside the
+    # running one dropped users.pleroma_access_token & co. out from under it, every user query
+    # 500'd, and reactions and shares failed as "will send when you're back online" (2026-09-24).
+    # tests/test_dropped_columns_wait_a_release.py enforces it against origin/master.
+    #
+    # PENDING, for the release after the Pleroma bridge removal (unread since then; drop them
+    # once that release is everywhere): users.pleroma_access_token, pleroma_notif_since,
+    # fedi_bridge_enabled, fedi_bridge_dm_since, fedi_bridge_notif_since, fedi_crosspost_enabled,
+    # fedi_only. pleroma_enabled/_instance_url/_acct stay: relay_access_policy still reads them.
 )
 
 
