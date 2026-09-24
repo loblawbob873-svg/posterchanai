@@ -18,52 +18,92 @@ window.PCMediaCenterFactory = function(dep){
   /* ORGANISE A LIBRARY: move a title into another folder of it (owner + admin only).
    *
    * The server renames the FILE (and its subtitles/poster beside it) and rewrites the catalog entry
-   * in place, keeping the title's id, so watch progress and Jellyfin links survive the move. The
-   * folder list is every folder the library already has a title in (and their parents), plus a
-   * field for a new one -- a new folder is the usual reason to organise at all. */
+   * in place, keeping the title's id, so watch progress and Jellyfin links survive the move.
+   *
+   * A FOLDER BROWSER, NOT A LIST OF PATHS. The first version listed every folder of the library at
+   * once -- `Movies`, `Movies/Action`, `Movies/Action/1980s`, … up to two thousand radio buttons --
+   * which on a real library is a wall nobody can read. Now it opens at the top level showing only the
+   * folders THERE; a folder is opened by tapping it, the breadcrumb goes back up, and "Move here" puts
+   * the title in the folder being looked at. A new folder is made inside the one being looked at. */
   function _mcMoveFolders(items){
     const set=new Set(['.']);
     for(const item of items){ let f=item.folder||'.'; while(f && f!=='.' && !set.has(f)){ set.add(f); const i=f.lastIndexOf('/'); f=i>0?f.slice(0,i):'.'; } }
     return [...set].sort((a,b)=>a==='.'?-1:b==='.'?1:a.localeCompare(b,undefined,{numeric:true,sensitivity:'base'}));
   }
+  // {parent path: [child paths]} -- '.' is the library's top level.
+  function _mcMoveTree(folders){
+    const kids={};
+    for(const f of folders){
+      if(f==='.') continue;
+      const i=f.lastIndexOf('/'), parent=i>0?f.slice(0,i):'.';
+      (kids[parent]=kids[parent]||[]).push(f);
+    }
+    for(const k in kids) kids[k].sort((a,b)=>a.localeCompare(b,undefined,{numeric:true,sensitivity:'base'}));
+    return kids;
+  }
+  const _mcMoveJoin=(dir,name)=>dir==='.'?name:dir+'/'+name;
   async function _mcMoveDialog(lib, item, items, api, done){
     // The library's REAL folders (an emptied one is still somewhere to put things); the folders
     // its titles are in are the fallback if the server cannot list them.
     let disk=[];
     try{ disk=((await api('/'+lib.id+'/move-targets'))||{}).folders||[]; }catch(_){}
-    const folders=_mcMoveFolders(items.concat(disk.map(f=>({folder:f}))));
-    let root=null;
+    const kids=_mcMoveTree(_mcMoveFolders(items.concat(disk.map(f=>({folder:f})))));
+    const here=item.folder||'.';
+    const label=f=>f==='.'?lib.name:f.split('/').join(' › ');
+    let root=null, cur='.';
     modal(`<h3>Move “${enc(item.name)}”</h3>
-      <p class="muted small">Moves the file on the media server, with its subtitles and poster. Watch progress is kept.</p>
-      <input class="input" type="search" id="mc-mv-filter" placeholder="Filter folders…" aria-label="Filter folders">
-      <div class="mc-mv-list" role="radiogroup" aria-label="Destination folder">${folders.map(f=>`<label class="mc-mv-row${f===item.folder?' here':''}">
-        <input type="radio" name="mc-mv" value="${enc(f)}"${f===item.folder?' disabled':''}>
-        <span>${enc(f==='.'?lib.name+' (top level)':f)}</span>${f===item.folder?'<span class="muted small">current</span>':''}</label>`).join('')}</div>
-      <label class="mc-mv-new">New folder <span class="muted small">(inside the library, e.g. Movies/Action)</span>
-        <input class="input" type="text" id="mc-mv-new" autocomplete="off" spellcheck="false" placeholder="Folder name"></label>
+      <p class="muted small">Now in <b>${enc(label(here))}</b>. Open a folder, then choose Move here. Subtitles, poster and watch progress go with it.</p>
+      <nav class="mc-mv-crumbs" id="mc-mv-crumbs" aria-label="Folder path"></nav>
+      <input class="input" type="search" id="mc-mv-filter" placeholder="Filter these folders…" aria-label="Filter folders" hidden>
+      <div class="mc-mv-list" id="mc-mv-list"></div>
+      <label class="mc-mv-new"><span id="mc-mv-new-label">New folder here</span>
+        <input class="input" type="text" id="mc-mv-new" autocomplete="off" spellcheck="false" placeholder="Folder name (optional)"></label>
       <p class="muted small" id="mc-mv-said" role="status"></p>
-      <div class="row mc-mv-acts"><button class="btn btn-ghost" id="mc-mv-cancel">Cancel</button><button class="btn btn-neon" id="mc-mv-go">Move</button></div>`,
+      <div class="row mc-mv-acts"><button class="btn btn-ghost" id="mc-mv-cancel">Cancel</button><button class="btn btn-neon" id="mc-mv-go">Move here</button></div>`,
       box=>{ root=box; });
     if(!root) return;
     root.classList.add('mc-mv-modal');
-    const q=sel=>root.querySelector(sel), said=q('#mc-mv-said');
-    q('#mc-mv-filter').oninput=e=>{ const t=e.target.value.trim().toLocaleLowerCase();
-      root.querySelectorAll('.mc-mv-row').forEach(r=>{ r.hidden=!!t && !r.textContent.toLocaleLowerCase().includes(t); }); };
-    q('#mc-mv-new').oninput=e=>{ if(e.target.value.trim()) root.querySelectorAll('input[name=mc-mv]').forEach(r=>{ r.checked=false; }); };
-    root.querySelectorAll('input[name=mc-mv]').forEach(r=> r.onchange=()=>{ q('#mc-mv-new').value=''; });
+    const q=sel=>root.querySelector(sel), said=q('#mc-mv-said'), go=q('#mc-mv-go'), nw=q('#mc-mv-new'), filter=q('#mc-mv-filter');
+    const target=()=>{ const typed=nw.value.trim().replace(/^\/+|\/+$/g,'').replace(/\/{2,}/g,'/'); return typed?_mcMoveJoin(cur,typed):cur; };
+    const refreshGo=()=>{
+      const t=target();
+      go.disabled=t===here;
+      go.textContent=nw.value.trim()?'Create and move':'Move here';
+      said.textContent=t===here?'It is already in this folder.':'';
+    };
+    const open=dir=>{
+      cur=dir; filter.value=''; nw.value='';
+      const parts=dir==='.'?[]:dir.split('/');
+      const crumbs=[['.',lib.name]].concat(parts.map((p,i)=>[parts.slice(0,i+1).join('/'),p]));
+      q('#mc-mv-crumbs').innerHTML=crumbs.map(([path,name],i)=>(i?'<span class="sep" aria-hidden="true">›</span>':'')+
+        `<button type="button" data-path="${enc(path)}"${i===crumbs.length-1?' aria-current="location"':''}>${enc(name)}</button>`).join('');
+      const list=kids[dir]||[];
+      filter.hidden=list.length<=12;
+      q('#mc-mv-list').innerHTML=list.length?list.map(f=>{
+        const name=f.slice(f.lastIndexOf('/')+1), deeper=!!(kids[f]&&kids[f].length);
+        return `<button type="button" class="mc-mv-dir" data-path="${enc(f)}"><svg class="ic" aria-hidden="true"><use href="#i-folder"></use></svg>`+
+          `<span class="nm">${enc(name)}</span>${f===here?'<span class="muted small">current</span>':''}`+
+          (deeper?'<svg class="ic chev" aria-hidden="true"><use href="#i-chevron-right"></use></svg>':'')+'</button>';
+      }).join(''):'<p class="muted small mc-mv-empty">No folders in here.</p>';
+      q('#mc-mv-new-label').textContent='New folder in '+(dir==='.'?lib.name:parts[parts.length-1]);
+      refreshGo();
+    };
+    q('#mc-mv-crumbs').onclick=e=>{ const b=e.target.closest('button[data-path]'); if(b && !b.hasAttribute('aria-current')) open(b.dataset.path); };
+    q('#mc-mv-list').onclick=e=>{ const b=e.target.closest('.mc-mv-dir'); if(b) open(b.dataset.path); };
+    filter.oninput=()=>{ const t=filter.value.trim().toLocaleLowerCase();
+      root.querySelectorAll('.mc-mv-dir').forEach(r=>{ r.hidden=!!t && !r.textContent.toLocaleLowerCase().includes(t); }); };
+    nw.oninput=refreshGo;
     q('#mc-mv-cancel').onclick=()=>closeModal();
-    const go=q('#mc-mv-go');
+    open('.');
     go.onclick=async()=>{
-      const typed=q('#mc-mv-new').value.trim().replace(/^\/+|\/+$/g,'');
-      const picked=(root.querySelector('input[name=mc-mv]:checked')||{}).value;
-      const folder=typed || picked;
-      if(!folder){ said.textContent='Choose a folder, or type a new one.'; return; }
+      const folder=target(), create=!!nw.value.trim();
+      if(folder===here) return;
       go.disabled=true; said.textContent='Moving…';
       try{
-        const r=await api('/'+lib.id+'/move','POST',{items:[item.id], folder, create:!!typed});
+        const r=await api('/'+lib.id+'/move','POST',{items:[item.id], folder, create});
         if(r.errors && r.errors.length){ said.textContent=r.errors[0].error||'Could not move it'; go.disabled=false; return; }
         closeModal();
-        toast('Moved to '+(folder==='.'?lib.name:folder));
+        toast('Moved to '+label(folder));
         done();
       }catch(e){ said.textContent=e.message||'Could not move it'; go.disabled=false; }
     };

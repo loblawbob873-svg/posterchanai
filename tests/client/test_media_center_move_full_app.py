@@ -4,8 +4,10 @@ The server half (the file really moves, the id is kept) is tests/test_media_cent
 drives the SHIPPED bundle against a stub media node and checks the part a person sees:
 
   * a library you manage shows Move on every title; one shared WITH you shows none;
-  * the dialog lists the library's folders (the title's own marked current and not selectable)
-    and accepts a NEW folder, sending exactly {items:[id], folder, create};
+  * the dialog is a FOLDER BROWSER: it opens at the top level showing only the folders there (never
+    every nested path at once), a folder is opened by tapping it, the breadcrumb goes back up, and
+    "Move here" moves into the folder being looked at -- refused where the title already is;
+  * a NEW folder is made inside the folder being looked at, sending exactly {items:[id], folder, create};
   * after the move the same card (same id) shows its new folder -- the list is not rebuilt around it;
   * a refusal from the server is shown in the dialog, which stays open;
   * at a phone width the dialog fits the screen.
@@ -72,22 +74,42 @@ def test_an_admin_moves_a_title_from_the_library_view():
         got['moves'] = await b.js("document.querySelectorAll('#mc-items .mc-tile .mc-move').length")
         await b.js("document.querySelector('.mc-tile[data-item=film1] .mc-move').click();true")
         await b.until("!!document.querySelector('.mc-mv-modal')")
-        got['folders'] = await b.js("[...document.querySelectorAll('.mc-mv-row')].map(r=>[r.querySelector('input').value,r.querySelector('input').disabled])")
+        rows = "[...document.querySelectorAll('.mc-mv-dir')].map(r=>r.dataset.path)"
+        crumbs = "[...document.querySelectorAll('#mc-mv-crumbs button')].map(b=>b.textContent)"
+        got['top'] = await b.js(rows)
+        got['top_crumbs'] = await b.js(crumbs)
+        got['go_at_top'] = await b.js("[document.getElementById('mc-mv-go').disabled, document.getElementById('mc-mv-go').textContent]")
+        # Deeper: open Movies, see only what is inside it.
+        await b.js("document.querySelector('.mc-mv-dir[data-path=\"Movies\"]').click();true")
+        await b.until("document.querySelectorAll('#mc-mv-crumbs button').length===2")
+        got['inside_movies'] = await b.js(rows)
+        got['movies_crumbs'] = await b.js(crumbs)
+        # The folder it is already in cannot be the destination.
+        await b.js("document.querySelector('#mc-mv-crumbs button[data-path=\".\"]').click();true")
+        await b.js("document.querySelector('.mc-mv-dir[data-path=\"Inbox\"]').click();true")
+        await b.until("document.querySelectorAll('#mc-mv-crumbs button').length===2")
+        got['go_in_current'] = await b.js("document.getElementById('mc-mv-go').disabled")
 
         # A refusal is shown in the dialog, which stays open.
-        await b.js("document.getElementById('mc-mv-new').value='Taken';document.getElementById('mc-mv-go').click();true")
+        await b.js("document.querySelector('#mc-mv-crumbs button[data-path=\".\"]').click();true")
+        await b.js("document.getElementById('mc-mv-new').value='Taken';document.getElementById('mc-mv-new').dispatchEvent(new Event('input'));document.getElementById('mc-mv-go').click();true")
         await b.until("/already exists/.test(document.getElementById('mc-mv-said').textContent)")
         got['still_open'] = await b.js("!!document.querySelector('.mc-mv-modal')")
 
-        await b.js("document.getElementById('mc-mv-new').value='Movies/Sci-Fi/';document.getElementById('mc-mv-go').click();true")
+        # A new folder INSIDE the folder being looked at.
+        await b.js("document.querySelector('.mc-mv-dir[data-path=\"Movies\"]').click();true")
+        await b.until("document.querySelectorAll('#mc-mv-crumbs button').length===2")
+        await b.js("document.getElementById('mc-mv-new').value='Sci-Fi/';document.getElementById('mc-mv-new').dispatchEvent(new Event('input'));document.getElementById('mc-mv-go').click();true")
         await b.until("!document.querySelector('.mc-mv-modal')")
         await b.until("(document.querySelector('.mc-tile[data-item=film1] .xdc-tfoot')||{}).textContent==='Movies/Sci-Fi'")
         got['move_req'] = await b.js("__mcReq.filter(r=>/\\/move$/.test(r.path)).map(r=>JSON.parse(r.body))")
 
-        # Picking an existing folder from the list.
+        # Moving into an existing folder: open it, Move here.
         await b.js("document.querySelector('.mc-tile[data-item=film2] .mc-move').click();true")
         await b.until("!!document.querySelector('.mc-mv-modal')")
-        await b.js("document.querySelector('.mc-mv-row input[value=Inbox]').click();document.getElementById('mc-mv-go').click();true")
+        await b.js("document.querySelector('.mc-mv-dir[data-path=\"Inbox\"]').click();true")
+        await b.until("document.querySelectorAll('#mc-mv-crumbs button').length===2")
+        await b.js("document.getElementById('mc-mv-go').click();true")
         await b.until("(document.querySelector('.mc-tile[data-item=film2] .xdc-tfoot')||{}).textContent==='Inbox'")
         got['last_req'] = await b.js("JSON.parse(__mcReq.filter(r=>/\\/move$/.test(r.path)).pop().body)")
 
@@ -97,11 +119,16 @@ def test_an_admin_moves_a_title_from_the_library_view():
 
     asyncio.run(desktop.with_browser('online', '', check, FIXTURE))
     assert got['moves'] == 2, got
-    assert ['Inbox', True] in got['folders'], 'the current folder is offered as a destination: %r' % got['folders']
-    assert ['.', False] in got['folders'] and ['Movies', False] in got['folders'] and ['Movies/Drama', False] in got['folders'], got['folders']
-    assert ['Empty Folder', False] in got['folders'], 'a folder with no titles in it is not offered: %r' % got['folders']
+    # Only the TOP level at first -- never every nested path at once.
+    assert got['top'] == ['Empty Folder', 'Inbox', 'Movies'], got['top']
+    assert got['top_crumbs'] == ['Movies'], got['top_crumbs']
+    assert got['go_at_top'] == [False, 'Move here'], got['go_at_top']
+    assert got['inside_movies'] == ['Movies/Drama'], got['inside_movies']
+    assert got['movies_crumbs'] == ['Movies', 'Movies'], got['movies_crumbs']
+    assert got['go_in_current'] is True, 'the folder a title is already in was offered as its destination'
     assert got['still_open'], 'a refused move closed the dialog'
     assert got['move_req'][-1] == {'items': ['film1'], 'folder': 'Movies/Sci-Fi', 'create': True}, got['move_req']
+    assert got['move_req'][0] == {'items': ['film1'], 'folder': 'Taken', 'create': True}, got['move_req']
     assert got['last_req'] == {'items': ['film2'], 'folder': 'Inbox', 'create': False}, got['last_req']
     assert got['shared_moves'] == 0, 'a library shared WITH this user offers Move'
 

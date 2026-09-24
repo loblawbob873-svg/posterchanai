@@ -11099,12 +11099,19 @@ html.os-idle #os-root *{animation:none!important;transition:none!important}
 
 /* Media Center → Move: a folder list that scrolls inside the dialog, and a new-folder field. */
 .mc-mv-modal{max-width:520px}
-.mc-mv-list{max-height:min(46vh,360px);overflow:auto;margin:8px 0;border:1px solid var(--line);border-radius:10px}
-.mc-mv-row{display:flex;align-items:center;gap:9px;padding:9px 11px;border-bottom:1px solid var(--line);cursor:pointer;min-height:40px;box-sizing:border-box}
-.mc-mv-row:last-child{border-bottom:none}
-.mc-mv-row span:first-of-type{flex:1;min-width:0;overflow-wrap:anywhere}
-.mc-mv-row.here{opacity:.55;cursor:default}
-.mc-mv-row input{margin:0;flex:none}
+.mc-mv-crumbs{display:flex;flex-wrap:wrap;align-items:center;gap:2px;margin:8px 0 4px;font-size:14px}
+.mc-mv-crumbs button{background:none;border:0;color:var(--neon);font:inherit;padding:5px 6px;border-radius:6px;cursor:pointer;min-height:32px;overflow-wrap:anywhere;text-align:left}
+.mc-mv-crumbs button:hover{background:rgba(var(--accent-rgb),.1)}
+.mc-mv-crumbs button[aria-current]{color:var(--text);font-weight:600;cursor:default;background:none}
+.mc-mv-crumbs .sep{color:var(--muted)}
+.mc-mv-list{max-height:min(46vh,360px);overflow:auto;margin:6px 0 8px;border:1px solid var(--line);border-radius:10px}
+.mc-mv-dir{display:flex;align-items:center;gap:10px;width:100%;box-sizing:border-box;padding:10px 12px;min-height:44px;border:0;border-bottom:1px solid var(--line);background:none;color:var(--text);font:inherit;text-align:left;cursor:pointer}
+.mc-mv-dir:last-child{border-bottom:none}
+.mc-mv-dir:hover,.mc-mv-dir:focus-visible{background:rgba(var(--accent-rgb),.08)}
+.mc-mv-dir .ic{flex:none;width:18px;height:18px}
+.mc-mv-dir .chev{color:var(--muted);width:16px;height:16px}
+.mc-mv-dir .nm{flex:1;min-width:0;overflow-wrap:anywhere}
+.mc-mv-empty{padding:14px;margin:0;text-align:center}
 .mc-mv-new{display:flex;flex-direction:column;gap:5px;font-size:13px;margin-top:6px}
 .mc-mv-new .input{margin:0}
 .mc-mv-acts{justify-content:flex-end;gap:8px;margin-top:8px}
