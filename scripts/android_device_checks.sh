@@ -61,7 +61,11 @@ require_device() {
   fi
 }
 
-APK=$(find mobile/android -path '*debug*' -name '*.apk' | head -1)
+# The APP, never the instrumentation APK beside it: both live under a *debug* path, `find` returns
+# them in directory order (not name order), and when the androidTest one came first the app was never
+# installed — "Activity class … MainActivity does not exist", blamed on the launch, APK publication
+# blocked. The workflow's own install line already excluded it; this one did not.
+APK=$(find mobile/android -path '*debug*' -name '*.apk' ! -name '*androidTest*' | head -1)
 [ -n "$APK" ] || { echo "no debug APK built"; exit 1; }
 
 say "install $APK"
