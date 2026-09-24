@@ -233,13 +233,15 @@ def undo(inner_id: str, inner_type: str, *, base: str, actor: str, target: str, 
             "actor": actor, "object": {"id": inner_id, "type": inner_type, "actor": actor, "object": target}}
 
 
-def person(*, base: str, name: str, profile: dict, public_key_pem: str) -> dict:
-    """A member's actor document, filled from their kind-0 (`profile`, already parsed)."""
+def person(*, base: str, name: str, profile: dict, public_key_pem: str, username: str = "") -> dict:
+    """A member's actor document, filled from their kind-0 (`profile`, already parsed). `name` is the
+    address (/ap/users/<name>); `username` the handle it SHOWS, when that differs (a Nostr user's
+    readable handle -- see actors.readable_handle)."""
     actor = actor_url(base, name)
     doc = {
         "@context": AS_CONTEXT,
         "id": actor, "type": "Person",
-        "preferredUsername": name,
+        "preferredUsername": username or name,
         "name": (profile.get("display_name") or profile.get("name") or name)[:100],
         "summary": text_to_html(profile.get("about") or "", base=base, mentions={}),
         "url": f"{base}/users/{name}",

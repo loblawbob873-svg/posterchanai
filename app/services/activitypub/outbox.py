@@ -78,7 +78,8 @@ async def resolve_pubkey(pubkey: str) -> dict:
     base = config.base_url()
     name = actors.handle(pubkey)
     if name and (actors.is_actor(pubkey) or await actors.exposed(pubkey)):
-        return {"href": convert.actor_url(base, name), "name": f"@{name}@{config.domain()}"}
+        shown = await actors.readable_handle(pubkey) or name
+        return {"href": convert.actor_url(base, name), "name": f"@{shown}@{config.domain()}"}
     row = _puppet_row(pubkey)
     if row and row.actor_uri and not config.host_blocked(remote.host_of(row.actor_uri)):
         canonical, _inbox = await _canonical(row.actor_uri)

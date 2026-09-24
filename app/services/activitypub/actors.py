@@ -9,6 +9,8 @@ account's own profile. The one exclusion is an account blocked on the relay.
 """
 from __future__ import annotations
 
+import re
+
 import json
 import logging
 import time
@@ -123,12 +125,71 @@ def all_actors() -> list:
 
 async def member_by_name(name: str) -> str:
     """The pubkey behind a handle -- a local user's name, or (in `everyone` mode) any Nostr user's
-    npub -- if that account is on the fediverse, else ""."""
+    readable handle or npub -- if that account is on the fediverse, else ""."""
     pk = pubkey_of_name(name)
     if pk:
         return pk if is_actor(pk) else ""
     pk = _npub_pubkey(name)
+    if not pk and config.everyone() and _NICK_RE.fullmatch((name or "").lower()):
+        try:
+            pk = await state.owner_of_nick(name.lower())
+        except Exception:
+            pk = ""
     return pk if pk and await exposed(pk) else ""
+
+
+# A readable handle: letters/digits/underscore, ending in `_` + a hex prefix of the key -- the shape
+# readable_handle mints, so no local name or npub can be mistaken for one.
+_NICK_RE = re.compile(r"[a-z0-9_]{1,24}_[0-9a-f]{4,16}")
+
+
+def _nick_base(profile: dict) -> str:
+    for raw in (profile.get("display_name"), profile.get("name"), (profile.get("nip05") or "").split("@")[0]):
+        s = re.sub(r"[^a-z0-9_]+", "_", str(raw or "").lower()).strip("_")
+        s = re.sub(r"_+", "_", s)[:20].strip("_")
+        if s and s != "_":
+            return s
+    return "nostr"
+
+
+
+
+async def readable_handle(pubkey: str) -> str:
+    """The handle an account SHOWS on the fediverse. A local user's name; for any other Nostr user
+    (`everyone` mode) a readable one made once from their profile name and a short key suffix --
+    `alice_4b56` -- instead of a 63-character npub. It is stored the first time and never recomputed,
+    so a profile rename cannot break the follows and mentions that name it; the actor's ADDRESS stays
+    /ap/users/<npub>, and WebFinger answers for both. A failed relay read falls back to the npub for
+    this call and mints nothing -- a handle is only ever created on the strength of a real answer."""
+    pk = (pubkey or "").lower()
+    local = name_of(pk)
+    if local:
+        return local
+    npub = handle(pk)
+    if not npub:
+        return ""
+    hit = _nick_cache.get(pk)
+    if hit:
+        return hit
+    try:
+        nick = await state.nick_of(pk)
+        if not nick:
+            base = _nick_base(await profile(pk))
+            for n in (4, 6, 8, 12, 16):
+                cand = f"{base}_{pk[:n]}"
+                owner = await state.owner_of_nick(cand)
+                if owner in ("", pk):
+                    await state.claim_nick(pk, cand)
+                    nick = cand
+                    break
+    except Exception:
+        return npub
+    if not nick:
+        return npub
+    _nick_cache[pk] = nick
+    while len(_nick_cache) > 20000:
+        _nick_cache.popitem(last=False)
+    return nick
 
 
 def _npub_pubkey(handle: str) -> str:
@@ -259,6 +320,8 @@ def uses_linked_account(pubkey: str) -> bool:
 
 from collections import OrderedDict
 
+_nick_cache: OrderedDict = OrderedDict()   # pubkey -> readable handle (readable_handle)
+
 _profile_cache: "OrderedDict[str, tuple]" = OrderedDict()
 _PROFILE_CACHE_MAX = 5000
 
@@ -295,7 +358,7 @@ async def person(name: str, pubkey: str, *, anonymous: bool = False) -> dict:
     stranger can drive for free, so the only one whose first key is rate-limited (state.keypair)."""
     keys = await state.keypair(pubkey, local=is_actor(pubkey) or not anonymous)
     return convert.person(base=config.base_url(), name=name, profile=await profile(pubkey),
-                          public_key_pem=keys["pub"])
+                          public_key_pem=keys["pub"], username=await readable_handle(pubkey))
 
 
 async def instance_actor() -> dict:

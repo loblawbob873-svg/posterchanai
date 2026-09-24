@@ -61,7 +61,10 @@ async def webfinger(resource: str = ""):
         raise HTTPException(404, "Not Found")
     name = actors.handle(pk)
     actor = convert.actor_url(base, name)
-    return JSONResponse({"subject": f"acct:{name}@{dom}", "aliases": [actor, f"{base}/users/{name}"],
+    # The SUBJECT is the handle the actor shows (preferredUsername): Mastodon checks that the two
+    # agree before it displays it. Asked by npub or by readable handle, the answer is the same.
+    shown = await actors.readable_handle(pk) or name
+    return JSONResponse({"subject": f"acct:{shown}@{dom}", "aliases": [actor, f"{base}/users/{name}"],
                          "links": [{"rel": "self", "type": config.AP_CONTENT_TYPE, "href": actor},
                                    {"rel": "http://webfinger.net/rel/profile-page", "type": "text/html",
                                     "href": f"{base}/users/{name}"}]}, media_type=_JRD)

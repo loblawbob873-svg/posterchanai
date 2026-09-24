@@ -70,6 +70,9 @@ def world(monkeypatch):
     state._followed_cache["map"] = {}
     remote._actors.clear()
     ident._PUPPET_CACHE.clear()           # process-wide in the bridge; each test has a fresh database
+    actors._nick_cache.clear()
+    actors._profile_cache.clear()
+    actors._known_cache.clear()
     outbox._seen.clear()
     outbox._retries.clear()
 
@@ -865,7 +868,7 @@ def test_any_nostr_user_with_a_profile_is_reachable_by_npub(client, world):
     r = client.get(f"/.well-known/webfinger?resource=acct:{npub}@{DOMAIN}")
     assert r.status_code == 200 and r.json()["links"][0]["href"] == f"{BASE}/ap/users/{npub}"
     doc = client.get(f"/ap/users/{npub}", headers={"Accept": "application/activity+json"}).json()
-    assert doc["name"] == "Dana" and doc["preferredUsername"] == npub
+    assert doc["name"] == "Dana" and doc["preferredUsername"] == f"dana_{pk[:4]}"
     from app.services.nostr import nostr_service
     stranger = nostr_service.npub_of("99" * 32)                           # nothing published, ever
     assert client.get(f"/.well-known/webfinger?resource=acct:{stranger}@{DOMAIN}").status_code == 404
@@ -1340,3 +1343,51 @@ def test_a_fediverse_account_blocked_by_key_is_refused_at_the_inbox(world):
     # ...and nothing more is DELIVERED to them either.
     world["docs"][f"pcai:ap:follower:{ALICE}:1"] = {"actor": REMOTE, "inbox": "https://mastodon.example/inbox"}
     assert run(outbox.plan(member_post("to my followers"), ALICE)) == []
+
+
+# ============================================================================ 17. readable handles for Nostr users
+
+def test_a_nostr_user_shows_a_readable_handle_not_an_npub(client, world):
+    """`@npub1…@poster.place` on every fediverse post "looks terrible". The handle an account SHOWS is
+    made once from its profile name plus a short key suffix; its address stays /ap/users/<npub> and
+    WebFinger answers by either name with the same subject, which is what Mastodon checks."""
+    pk, npub = _nostr_user(world)
+    nick = f"dana_{pk[:4]}"
+    doc = client.get(f"/ap/users/{npub}", headers={"Accept": "application/activity+json"}).json()
+    assert doc["id"] == f"{BASE}/ap/users/{npub}" and doc["preferredUsername"] == nick
+    for asked in (nick, npub):
+        r = client.get(f"/.well-known/webfinger?resource=acct:{asked}@{DOMAIN}").json()
+        assert r["subject"] == f"acct:{nick}@{DOMAIN}", asked
+        assert r["links"][0]["href"] == f"{BASE}/ap/users/{npub}", asked
+    # ...and a mention of them in an outgoing post reads @dana_xxxx, not a key.
+    who = run(outbox.resolve_pubkey(pk))
+    assert who["name"] == f"@{nick}@{DOMAIN}" and who["href"] == f"{BASE}/ap/users/{npub}"
+
+
+def test_a_readable_handle_never_changes_and_never_collides(world):
+    pk, npub = _nostr_user(world)
+    first = run(actors.readable_handle(pk))
+    # A profile rename does not move it (follows and mentions name the handle).
+    world["relay"]["k" + pk[:10]]["content"] = json.dumps({"name": "Somebody Else"})
+    world["relay"]["k" + pk[:10]]["created_at"] = 99
+    actors._nick_cache.clear()
+    actors._profile_cache.clear()
+    assert run(actors.readable_handle(pk)) == first
+    # Somebody else already holding "dana_<same prefix>" gets a longer suffix, never the same name.
+    other = "%s%s" % (pk[:4], "0" * 60)
+    world["relay"]["kx"] = {"id": "kx", "pubkey": other, "kind": 0, "created_at": 5, "tags": [],
+                            "content": json.dumps({"name": "Dana"})}
+    got = run(actors.readable_handle(other))
+    assert got != first and got.startswith("dana_" + other[:6])
+    assert run(actors.member_by_name(got)) == other and run(actors.member_by_name(first)) == pk
+
+
+def test_no_handle_is_minted_on_a_failed_read(world, monkeypatch):
+    pk, npub = _nostr_user(world)
+
+    async def broken(*a, **k):
+        raise RuntimeError("relay down")
+    from app.services import nostr_store
+    monkeypatch.setattr(nostr_store, "get_doc", broken)
+    assert run(actors.readable_handle(pk)) == npub
+    assert not [k for k in world["docs"] if k.startswith("pcai:ap:nick")]

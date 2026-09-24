@@ -139,6 +139,29 @@ async def drop_following(member: str, actor: str) -> None:
     await _put(f"{_FOLLOWING_PREFIX}{member}:{_h(actor)}", {"actor": actor, "gone": True, "at": int(time.time())})
 
 
+# Readable handles for Nostr users with no name here (see actors.readable_handle): assigned once and
+# kept, both ways, so the handle survives a profile rename and resolves back to its owner.
+_NICK_PREFIX = "pcai:ap:nick:"            # pubkey -> {"nick"}
+_NICK_OWNER_PREFIX = "pcai:ap:nickof:"    # nick   -> {"pk"}
+
+
+async def nick_of(pubkey: str) -> str:
+    doc = await _get(_NICK_PREFIX + pubkey)          # raises when the relay cannot be asked
+    return str((doc or {}).get("nick") or "")
+
+
+async def owner_of_nick(nick: str) -> str:
+    doc = await _get(_NICK_OWNER_PREFIX + nick.lower())
+    return str((doc or {}).get("pk") or "")
+
+
+async def claim_nick(pubkey: str, nick: str) -> None:
+    """Owner first: a crash between the two writes leaves a name pointing at its key (harmless, it
+    still resolves) rather than a key naming a handle nobody can look up."""
+    await _put(_NICK_OWNER_PREFIX + nick.lower(), {"pk": pubkey, "at": int(time.time())})
+    await _put(_NICK_PREFIX + pubkey, {"nick": nick, "at": int(time.time())})
+
+
 async def following(member: str, *, strict: bool = True) -> dict:
     """{actor: {"inbox", "state"}} for the remote accounts a member follows (live ones only)."""
     docs = await nostr_store.list_docs(_port(), f"{_FOLLOWING_PREFIX}{member}:", seckey=_seckey(), strict=strict,
