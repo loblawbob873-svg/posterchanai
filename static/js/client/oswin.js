@@ -155,6 +155,12 @@
   // Renamed/merged views an older shell may still hand over (os.js LEGACY_VIEWS; app.js switchView maps it).
   const LEGACY_VIEWS = { __vms: 'vms' };
 
+  /* The tools a POST can be handed to from its menu. Opened from a window, they open in their OWN
+   * window carrying the post's id -- painted into the window the post was in, they replaced the
+   * timeline and left no way back to it ("choose Meme Builder on a post, build it, send the reply,
+   * no way to go back to social"). */
+  const POST_TOOLS = ['meme', 'ai'];
+
   function routable(view){
     let v = String(view || '');
     if(Object.prototype.hasOwnProperty.call(LEGACY_VIEWS, v)) v = LEGACY_VIEWS[v];
@@ -202,7 +208,8 @@
      * monitor (or a click one frame earlier) already created the singleton. It also returns a
      * navigated Social window before the compositor snapshot catches up. */
     const o = Object.assign({}, opts || {});
-    const arg = view==='texts' ? String(o.arg||'').trim() : '';
+    const arg = view==='texts' ? String(o.arg||'').trim()
+      : POST_TOOLS.includes(view) && /^[0-9a-f]{64}$/i.test(String(o.arg||'')) ? String(o.arg).toLowerCase() : '';
     if(arg && (arg.length>80 || /[\x00-\x1f\x7f]/.test(arg)))return null;
     routeExisting(view, arg);
     // Direct opens use the same measured app size as icon/Start launches.
@@ -217,7 +224,7 @@
       }catch(_){}
     }
     const url = root.location.pathname + '?' + PARAM + '=' + encodeURIComponent(String(view || ''))
-      + (arg ? '&pcsms='+encodeURIComponent(arg) : '');
+      + (arg ? (view==='texts' ? '&pcsms=' : '&pcpost=') + encodeURIComponent(arg) : '');
     /* The size is a HINT to the compositor, passed as window features because a frameless Electron
      * child takes its geometry from them. sway may place it elsewhere and that is fine: it is the
      * window manager now, which is the entire point of this change. */
@@ -269,6 +276,11 @@
             root.PCOpenNotificationRoute('texts:'+encodeURIComponent(arg));
           else if(arg && v==='messages' && root.__PC && typeof root.__PC.openDMWith==='function')
             root.__PC.openDMWith(arg);
+          /* A POST handed to a tool (🎞️ Meme Builder / 🎬 Effect on a post) that already has its own
+             window: the post id is the whole argument, validated as one before anything reads it. */
+          else if(arg && POST_TOOLS.includes(v) && /^[0-9a-f]{64}$/i.test(arg) && root.__PC
+                  && typeof root.__PC.postTool==='function')
+            root.__PC.postTool(v, arg);
           /* An EXTRA is drawn by the desktop's own renderer, never by switchView — which does not
              validate its argument and would fall through to the timeline under the right title. */
           else if(EXTRA_VIEWS.includes(v) && root.PCOS && typeof root.PCOS.renderExtra==='function')
@@ -416,7 +428,7 @@
     }catch(_){ }
   }
 
-  const API = { isWindow, viewOf, desktop, enabled, open, routeExisting, routable, adopt,
+  const API = { isWindow, viewOf, desktop, enabled, open, routeExisting, routable, adopt, POST_TOOLS,
                 installFrame, PARAM, TITLE };
   root.PCOSWin = API;
   if(typeof module !== 'undefined' && module.exports) module.exports = API;

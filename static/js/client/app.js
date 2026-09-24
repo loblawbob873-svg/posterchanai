@@ -1911,6 +1911,34 @@
     }
   }
   _captureSmsWindowLanding();
+  /* …and a TOOL window opened for a post (`?pcwin=meme&pcpost=<id>`, see oswin.js POST_TOOLS). */
+  let _pendingPostTool = '';
+  function _capturePostToolLanding(){
+    try{
+      if(!_inWin() || !(PCOSWin.POST_TOOLS||[]).includes(PCOSWin.viewOf())) return;
+      const uri=new URL(location.href), id=uri.searchParams.get('pcpost');
+      if(id===null) return;
+      uri.searchParams.delete('pcpost'); history.replaceState(history.state,'',uri.pathname+uri.search+uri.hash);
+      if(/^[0-9a-f]{64}$/i.test(id)) _pendingPostTool=id.toLowerCase();
+    }catch(_){ }
+  }
+  _capturePostToolLanding();
+  /* Hand a post to a tool in ITS OWN WINDOW, from any window that is not already that tool. True when
+   * that happened (the caller then does nothing here); false everywhere without windows -- a browser
+   * tab, the phone, the classic UI, the in-page desktop (which routes through switchView itself). */
+  function _postToolWindow(view, id){
+    try{
+      if(!_inWin() || PCOSWin.viewOf()===view || !/^[0-9a-f]{64}$/i.test(String(id||''))) return false;
+      /* A window does not open windows -- the DESKTOP does (oswin.enabled() is false in here on
+       * purpose). Ask the desktop this window belongs to; with none (it closed), paint here as before. */
+      const desk = PCOSWin.desktop(), W = desk && desk.PCOSWin;
+      if(!W || !W.enabled() || !W.routable(view)) return false;
+      // open() also re-routes an already-open tool window (the shell then refuses a second one).
+      W.open(view, view==='meme' ? 'Meme Builder' : 'AI', { arg: id });
+      toast(view==='meme' ? '🎞️ opening the Meme Builder…' : 'opening the Effects studio…');
+      return true;
+    }catch(_){ return false; }
+  }
   async function routeFromPath(){
     /* A WINDOW LANDS ON THE VIEW IT WAS OPENED FOR. Gated on `isWindow()`, which is false in a
      * browser tab, in the APK and in the desktop's own shell — so no existing boot path moves. That
@@ -1929,7 +1957,14 @@
        * shape as the System Settings lie above. Open the post instead. */
       const _post = /^doc:post:([0-9a-f]{64})$/i.exec(v || '');
       if(_post){ openThread(_post[1]); return; }
-      if(v){ switchView(v); return; }
+      if(v){
+        switchView(v);
+        if(_pendingPostTool){
+          const id=_pendingPostTool; _pendingPostTool='';
+          setTimeout(()=>{ try{ (v==='meme' ? memeBuildPost : effectPost)(id); }catch(_){ } }, 0);
+        }
+        return;
+      }
     }
     const e = _entityFromPath();
     if(!e){ switchView(_startTimeline()); return; }   // the root path IS "back to my timeline"
@@ -9498,6 +9533,7 @@
   // and it takes VIDEO as well as images. The media stays a URL (the builder loads it like any
   // Blossom layer) rather than being downloaded and re-uploaded.
   async function memeBuildPost(id, pk){
+    if(_postToolWindow('meme', id)) return;
     let ev=Store.get(id); if(!ev){ ev=await fetchEvent(id); if(ev) Store.saveEvent(ev); }
     if(!ev){ toast('post not loaded'); return; }
     const mp=mediaParts(ev.content||'');
@@ -9519,6 +9555,7 @@
   // 🎬 Effect: copy the post's image into a fresh AI chat (the effects studio) and remember the post,
   // so the generated effect can be posted back as a reply. Guides the user with tappable effects.
   async function effectPost(id, pk){
+    if(_postToolWindow('ai', id)) return;
     let ev=Store.get(id); if(!ev){ ev=await fetchEvent(id); if(ev) Store.saveEvent(ev); }
     if(!ev){ toast('post not loaded'); return; }
     const url=await effectImageUrl(ev);
@@ -19804,6 +19841,8 @@
     // concord.js repaints its own unread count; the ☰ badge sums it with drafts.
     bumpMoreBadge,
     retryInstanceView:view=>{if(VIEW===view)renderView(true);},
+    // oswin.js: a post handed to an already-open Meme Builder / Effects window (see POST_TOOLS).
+    postTool:(view,id)=>{ if(!/^[0-9a-f]{64}$/i.test(String(id||'')))return; (view==='meme'?memeBuildPost:effectPost)(id); },
     // The APK's "Open with PosterChan Office" consumer (see _consumeOpenDoc); called from the
     // native arrival signals, and reachable here for the tests that drive it.
     consumeOpenDoc:()=>_consumeOpenDoc(),
