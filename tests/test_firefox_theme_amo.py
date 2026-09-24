@@ -187,3 +187,38 @@ class Unlisted(Publish):
         self.assertIn("os/firefox-theme/amo-channel", wf)
         self.assertIn('--channel "${ch:-listed}"', wf)
         self.assertEqual((ROOT / "os/firefox-theme/amo-channel").read_text().strip(), "unlisted")
+
+
+def test_older_theme_releases_are_retired_only_after_the_new_one_is_published(tmp_path):
+    """The Releases page listed three themes side by side. The retire step runs under the SAME
+    condition as the publish, after it, confirms the new release exists, and never deletes it."""
+    import os, stat, subprocess, yaml
+    root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    wf = yaml.safe_load(open(os.path.join(root, ".github", "workflows", "firefox-theme.yml")))
+    steps = wf["jobs"][next(iter(wf["jobs"]))]["steps"]
+    names = [s.get("name") for s in steps]
+    pub, ret = names.index("Publish the signed theme"), names.index("Retire older theme releases")
+    assert ret > pub and steps[ret]["if"] == steps[pub]["if"]
+
+    bin_dir = tmp_path / "bin"; bin_dir.mkdir()
+    log = tmp_path / "deleted"
+    gh = bin_dir / "gh"
+    gh.write_text(f"""#!/bin/bash
+case "$1 $2" in
+  "release view") [ "$3" = firefox-theme-v1.1.2 ]; exit $?;;
+  "release list") printf 'firefox-theme-v1.0.0\\nfirefox-theme-v1.1.1\\nfirefox-theme-v1.1.2\\nextension-latest\\n';;
+  "release delete") echo "$3" >> {log};;
+esac
+""")
+    gh.chmod(gh.stat().st_mode | stat.S_IEXEC)
+    script = steps[ret]["run"].replace("${{ steps.build.outputs.ver }}", "1.1.2")
+    env = dict(os.environ, PATH=f"{bin_dir}:{os.environ['PATH']}", GITHUB_REPOSITORY="o/r")
+    r = subprocess.run(["bash", "-e", "-c", script], capture_output=True, text=True, env=env)
+    assert r.returncode == 0, r.stderr
+    assert log.read_text().split() == ["firefox-theme-v1.0.0", "firefox-theme-v1.1.1"]
+
+    # Not published → nothing is deleted.
+    log.unlink()
+    script = steps[ret]["run"].replace("${{ steps.build.outputs.ver }}", "9.9.9")
+    r = subprocess.run(["bash", "-e", "-c", script], capture_output=True, text=True, env=env)
+    assert r.returncode != 0 and not log.exists()

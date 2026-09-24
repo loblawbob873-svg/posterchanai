@@ -98,6 +98,20 @@ jobs:
             through /etc/firefox/policies/policies.json; on any other system open this .xpi in Firefox.
           files: /tmp/${{ steps.build.outputs.name }}
 
+      # ONE theme release, not one per version. Each version used to stay behind as its own release,
+      # so the Releases page listed three "PosterChan Cyberpunk" themes side by side. Nothing reads an
+      # old one — publish_overlay.sh fetches exactly the current version and copies it into the image
+      # — so once the new version is PUBLISHED (never before: until then the old one is the only
+      # signed copy there is) every other firefox-theme-v* release and its tag go.
+      - name: Retire older theme releases
+        if: steps.have.outputs.signed == 'no' && env.AMO_JWT_ISSUER != '' && steps.amo.outputs.ready == 'yes'
+        run: |
+          keep="firefox-theme-v${{ steps.build.outputs.ver }}"
+          gh release view "$keep" --repo "$GITHUB_REPOSITORY" >/dev/null || { echo "::error::$keep is not published; keeping the old ones"; exit 1; }
+          gh release list --repo "$GITHUB_REPOSITORY" --limit 200 --json tagName --jq '.[].tagName' \
+            | grep '^firefox-theme-v' | grep -vx "$keep" \
+            | while read -r t; do gh release delete "$t" --yes --cleanup-tag --repo "$GITHUB_REPOSITORY" && echo "retired $t"; done
+
       - name: No credentials
         if: steps.have.outputs.signed == 'no' && env.AMO_JWT_ISSUER == ''
         run: echo "::warning title=Firefox theme::AMO credentials are not configured — the theme was built but not signed, so PosterChanOS will not ship it"

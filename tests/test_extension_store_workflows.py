@@ -154,3 +154,55 @@ def test_the_version_gate_can_see_the_previous_commit():
     assert "github.event.before" in gate, (
         "comparing against HEAD~1 skips the release when a push carries several commits and the "
         "bump was the first of them")
+
+
+# ---- addons.mozilla.org --------------------------------------------------------------------------
+
+def _amo(tmp_path, web_ext_output):
+    """Run the real AMO step with `npx` (i.e. web-ext) answering `web_ext_output`."""
+    import zipfile
+    d = tmp_path / "extension" / "dist"
+    d.mkdir(parents=True, exist_ok=True)
+    with zipfile.ZipFile(d / "posterchan-passwords.zip", "w") as z:
+        z.writestr("manifest.json", "{}")
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir(exist_ok=True)
+    npx = bin_dir / "npx"
+    npx.write_text("#!/bin/bash\ncat <<'OUT'\n" + web_ext_output + "\nOUT\nexit 1\n")
+    npx.chmod(npx.stat().st_mode | stat.S_IEXEC)
+    script = _step("Submit to addons.mozilla.org")["run"].replace("${{ steps.ver.outputs.v }}", "9.9.9")
+    return _run(script, tmp_path, "#!/bin/bash\nexit 1\n",
+                {"AMO_JWT_ISSUER": "iss", "AMO_JWT_SECRET": "sec"})
+
+
+def test_an_approval_timeout_is_a_submission_not_a_failure(tmp_path):
+    """1.4.12, verbatim: web-ext waited 15 minutes for a reviewer and gave up. The upload had been
+    validated and was in Mozilla's queue, but the step failed — and with it the GitHub release."""
+    r = _amo(tmp_path, "Building web extension from /tmp/ffsrc\nWaiting for validation...\n"
+                       "Waiting for approval...\n\nWebExtError: Approval: timeout exceeded. When approved "
+                       "the signed XPI file can be downloaded from https://addons.mozilla.org/en-US/"
+                       "developers/addon/posterchan-passwords/versions/6509910")
+    assert r.returncode == 0, r.stdout + r.stderr
+    assert "waiting for Mozilla's approval" in r.stdout
+
+
+def test_amo_says_nothing_recognisable_is_still_a_failure(tmp_path):
+    r = _amo(tmp_path, "Building web extension from /tmp/ffsrc\nsomething unexpected")
+    assert r.returncode != 0, "an unrecognised web-ext answer was reported as a submission"
+
+
+def test_amo_duplicate_version_is_still_a_failure(tmp_path):
+    r = _amo(tmp_path, "WebExtError: Version 1.4.12 already exists")
+    assert r.returncode != 0
+
+
+def test_github_gets_the_build_whatever_the_stores_said():
+    """A store that is slow or says no is that store's audience only. The rolling GitHub release
+    (what poster.place/extension/unpacked and /chrome hand out) and the other store must still run —
+    but never on a build that failed its own checks."""
+    for name in ("Publish to the Chrome Web Store", "Retire the previous rolling release",
+                 "Publish rolling release"):
+        cond = str(_step(name).get("if", ""))
+        assert "!cancelled()" in cond, f"{name} is skipped when an earlier store step fails"
+        assert "steps.core.outcome == 'success'" in cond, f"{name} would ship a build that failed its checks"
+    assert _step("The shipped core must match the app's").get("id") == "core"

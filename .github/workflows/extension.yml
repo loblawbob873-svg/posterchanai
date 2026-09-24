@@ -66,6 +66,7 @@ jobs:
       # tests/test_vault_extension.py exists to catch, and it is cheap to check again here where the
       # artifact is actually produced.
       - name: The shipped core must match the app's
+        id: core
         run: |
           a=$(sha256sum static/js/client/vaultcore.js | cut -d' ' -f1)
           b=$(sha256sum extension/vaultcore.js       | cut -d' ' -f1)
@@ -156,6 +157,14 @@ jobs:
           # by Mozilla, and every one of them was then reported here as a red build. Worse than
           # cosmetic: `exit 1` skips the Chrome step and the rolling-release publish that follow, so
           # the download links kept serving an older build while AMO had the new one.
+          # A FOURTH shape, and the one that cost 1.4.12 its GitHub release: web-ext waits 15 minutes
+          # for approval and then says "Approval: timeout exceeded. When approved the signed XPI file can
+          # be downloaded from …". The upload was VALIDATED and is sitting in Mozilla's queue — that is
+          # a submission, not a failure, and AMO publishes it when a reviewer gets to it.
+          if grep -qiE 'approval: timeout exceeded' /tmp/amo.log; then
+            echo "::notice title=AMO::version ${{ steps.ver.outputs.v }} was accepted and is waiting for Mozilla's approval"
+            exit 0
+          fi
           grep -qiE 'submitted|uploaded|your add-on|signed xpi downloaded' /tmp/amo.log \
             && echo "::notice title=AMO::version ${{ steps.ver.outputs.v }} submitted for review" \
             || { echo "::error title=AMO::no confirmation in web-ext output"; exit 1; }
@@ -168,7 +177,9 @@ jobs:
       #
       # Set up with scripts/cws_refresh_token.py (one-off, needs a human to click Allow).
       - name: Publish to the Chrome Web Store
-        if: steps.bump.outputs.changed == 'yes' && env.CWS_CLIENT_ID != ''
+        # A store is a separate audience from the other store and from GitHub: Mozilla being slow or
+        # refusing must not stop Chrome users getting the build, nor the GitHub download links.
+        if: ${{ !cancelled() && steps.core.outcome == 'success' && steps.bump.outputs.changed == 'yes' && env.CWS_CLIENT_ID != '' }}
         run: |
           set -euo pipefail
           tok=$(curl -fsS -X POST https://oauth2.googleapis.com/token \
@@ -215,12 +226,18 @@ jobs:
           print(f"::notice title=Chrome Web Store::submitted ({', '.join(st)})")
           PY
 
+      # These two run WHATEVER the stores said (but never on a build that failed its own checks).
+      # They used to follow the store steps with the default `success()`, so one AMO step that timed
+      # out waiting for a reviewer left poster.place/extension/unpacked and /chrome handing out a build
+      # two releases old, with the new one built and thrown away.
       - name: Retire the previous rolling release
+        if: ${{ !cancelled() && steps.core.outcome == 'success' }}
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: gh release delete extension-latest --yes --repo "$GITHUB_REPOSITORY" || true
 
       - name: Publish rolling release
+        if: ${{ !cancelled() && steps.core.outcome == 'success' }}
         uses: softprops/action-gh-release@v2
         with:
           tag_name: extension-latest
