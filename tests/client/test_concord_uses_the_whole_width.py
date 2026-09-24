@@ -65,23 +65,28 @@ def measure(width: int, css: str = CSS, concord: str = CONCORD, oswin: bool = Fa
   </main>
 </div>
 <script>{oswin_js}</script>
-<pre id="out"></pre><script>requestAnimationFrame(()=>{{
+<pre id="out"></pre><script>(()=>{{
+  // Measured SYNCHRONOUSLY: getBoundingClientRect forces layout. This waited for a
+  // requestAnimationFrame, and under load headless Chrome dumps the DOM before any frame is
+  // produced -- an empty <pre>, a JSONDecodeError, and a deploy blocked by a flaky test.
   const q=s=>document.querySelector(s), w=e=>e?Math.round(e.getBoundingClientRect().width):0;
   out.textContent=JSON.stringify({{viewport:window.innerWidth, app:w(q('.app')),
     main:w(q('.main')), ccApp:w(q('.cc-app')), conv:w(q('.cc-conversation')),
-    zoom:getComputedStyle(document.body).zoom}});}});</script>"""
+    zoom:getComputedStyle(document.body).zoom}});}})();</script>"""
     with tempfile.TemporaryDirectory() as td:
         html = Path(td) / "c.html"
         html.write_text(page, encoding="utf-8")
-        done = subprocess.run(
-            [CHROME, "--headless=new", "--no-sandbox", "--disable-gpu",
-             f"--window-size={width},1000", "--force-device-scale-factor=1",
-             "--virtual-time-budget=1200", "--dump-dom", html.as_uri()],
-            capture_output=True, text=True, timeout=120)
-        assert done.returncode == 0, done.stderr[-1000:]
-        found = re.search(r'<pre id="out">(.*?)</pre>', done.stdout, re.S)
-        assert found, done.stdout[-1000:]
-        return json.loads(unescape(found.group(1)))
+        for _attempt in range(3):          # a starved browser can still hand back an empty page
+            done = subprocess.run(
+                [CHROME, "--headless=new", "--no-sandbox", "--disable-gpu",
+                 f"--window-size={width},1000", "--force-device-scale-factor=1",
+                 "--virtual-time-budget=1200", "--dump-dom", html.as_uri()],
+                capture_output=True, text=True, timeout=120)
+            assert done.returncode == 0, done.stderr[-1000:]
+            found = re.search(r'<pre id="out">(.*?)</pre>', done.stdout, re.S)
+            if found and found.group(1).strip():
+                return json.loads(unescape(found.group(1)))
+        raise AssertionError("the page never reported its measurements: " + done.stdout[-1000:])
 
 
 @pytest.mark.parametrize("width", WIDTHS)
