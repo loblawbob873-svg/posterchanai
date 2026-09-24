@@ -104,6 +104,7 @@ public class MainActivity extends BridgeActivity {
         if (place.poster.app.office.OpenDocPlugin.isDocIntent(getIntent())) place.poster.app.office.OpenDocPlugin.nonce++;
         super.onCreate(savedInstanceState);
         allowMediaWithoutAGesture();
+        keepWebViewClearOfSystemBars();
         catchWebViewDownloads();
         openPopupsInARealBrowser();
         surviveRenderProcessDeath();
@@ -301,6 +302,43 @@ public class MainActivity extends BridgeActivity {
      * party that could use it to make noise; the "user gesture" rule exists to stop web pages doing
      * that, and this is the app's own player being asked by the app's own service.
      */
+    /**
+     * THE PAGE MUST NOT START UNDER THE STATUS BAR -- "many things are cut off at the top": the Social
+     * search, Notes, and the Terminal's bar (all of it: that one has no padding of its own).
+     *
+     * The themes opt out of Android 15's forced edge-to-edge, and where the system honours that it
+     * insets the window itself and this sees ZERO insets -- nothing changes. But not every device
+     * honours it, and when the window is drawn under the bars the client cannot fix it: a WebView's
+     * env(safe-area-inset-top) reports a display CUTOUT, never the status bar, so every CSS rule that
+     * reserves the inset adds 0 and the top of every screen sits under the clock. So the WebView is
+     * placed below the bars natively, by the insets the system actually reports, and the bars are
+     * then consumed so the page does not also pad for them.
+     */
+    private void keepWebViewClearOfSystemBars() {
+        try {
+            final android.view.View wv = getBridge().getWebView();
+            final int types = androidx.core.view.WindowInsetsCompat.Type.systemBars()
+                    | androidx.core.view.WindowInsetsCompat.Type.displayCutout();
+            androidx.core.view.ViewCompat.setOnApplyWindowInsetsListener(wv, (v, insets) -> {
+                androidx.core.graphics.Insets bars = insets.getInsets(types);
+                android.view.ViewGroup.LayoutParams raw = v.getLayoutParams();
+                if (raw instanceof android.view.ViewGroup.MarginLayoutParams) {
+                    android.view.ViewGroup.MarginLayoutParams lp = (android.view.ViewGroup.MarginLayoutParams) raw;
+                    if (lp.leftMargin != bars.left || lp.topMargin != bars.top
+                            || lp.rightMargin != bars.right || lp.bottomMargin != bars.bottom) {
+                        lp.setMargins(bars.left, bars.top, bars.right, bars.bottom);
+                        v.setLayoutParams(lp);
+                    }
+                }
+                return new androidx.core.view.WindowInsetsCompat.Builder(insets)
+                        .setInsets(types, androidx.core.graphics.Insets.NONE).build();
+            });
+            androidx.core.view.ViewCompat.requestApplyInsets(wv);
+        } catch (Throwable ignored) {
+            // Never fatal: the worst case is exactly the layout that shipped before this.
+        }
+    }
+
     private void allowMediaWithoutAGesture() {
         try {
             // After super.onCreate(): the bridge and its WebView do not exist before it.
