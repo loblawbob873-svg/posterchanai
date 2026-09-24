@@ -110,9 +110,10 @@ def _blocked_cached(actor_id: str) -> bool:
         return True
     hit = remote._actors.get((actor_id or "").split("#")[0])
     if not hit:
-        return False
+        return actors.puppet_blocked(actor_id)
     from app.services.activitypub.inbox import acct_of_actor
-    return config.account_blocked(acct_of_actor(hit[1]))
+    acct = acct_of_actor(hit[1])
+    return config.account_blocked(acct) or actors.puppet_blocked(actor_id, acct)
 
 
 def _is_mirror(ev: dict) -> bool:

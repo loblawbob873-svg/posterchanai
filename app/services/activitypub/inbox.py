@@ -102,14 +102,19 @@ def acct_of_actor(doc: dict) -> str:
 
 
 async def blocked_actor(actor_id: str) -> bool:
-    """On a blocked instance, or a single account blocked by a `user@host` line in the lists."""
+    """On a blocked instance, a single account blocked by a `user@host` line in the lists, or an
+    account whose key is blocked on the relay (a block made from the client -- see
+    actors.puppet_blocked)."""
     if config.host_blocked(remote.host_of(actor_id)):
+        return True
+    if actors.puppet_blocked(actor_id):
         return True
     try:
         doc = await remote.actor(actor_id)
     except remote.FetchError:
         return False
-    return config.account_blocked(acct_of_actor(doc))
+    acct = acct_of_actor(doc)
+    return config.account_blocked(acct) or actors.puppet_blocked(actor_id, acct)
 
 
 async def process(activity: dict, signer: str) -> str:

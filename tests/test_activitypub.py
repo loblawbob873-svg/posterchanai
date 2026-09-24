@@ -1324,3 +1324,19 @@ def test_the_retired_pleromas_favicon_address_shows_our_icon(client):
     r = client.get("/media/cb/93/65/cb9365f4ea06831500dde507896aa018db5da207979abdc44add6cc00a67e2e9.webp")
     assert r.status_code == 200 and r.headers["content-type"] == "image/png" and r.content[:4] == b"\x89PNG"
     assert client.get("/media/cb/93/65/other.webp").status_code == 404, "only that one address is served"
+
+
+# ============================================================================ 16. a block made from the client
+
+def test_a_fediverse_account_blocked_by_key_is_refused_at_the_inbox(world):
+    """Blocking somebody from the client blocks their KEY on the relay -- for a fediverse account, its
+    puppet's. Posts that arrive over ActivityPub are written by the server itself, so the inbox has to
+    ask too: "I blocked them but I still see new posts"."""
+    world["docs"][f"pcai:ap:following:{ALICE}:x"] = {"actor": REMOTE, "inbox": "i", "state": "accepted"}
+    assert run(inbox.process(_create(), REMOTE)) == "stored"          # followed: stored
+    puppet = ident.puppet_for(convert.account_from_actor(carol_actor()))
+    world["settings"]["nostr_relay_blocked_pubkeys"] = puppet["npub"]
+    assert run(inbox.process(_create("https://mastodon.example/notes/2"), REMOTE)) == "ignored: blocked account"
+    # ...and nothing more is DELIVERED to them either.
+    world["docs"][f"pcai:ap:follower:{ALICE}:1"] = {"actor": REMOTE, "inbox": "https://mastodon.example/inbox"}
+    assert run(outbox.plan(member_post("to my followers"), ALICE)) == []

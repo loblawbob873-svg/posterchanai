@@ -60,6 +60,55 @@ def _relay_blocked() -> frozenset:
     return _blocked_cache["set"]
 
 
+def puppet_blocked(actor_id: str, acct: str = "") -> bool:
+    """A fediverse account whose stand-in Nostr key is on the RELAY's blocklist.
+
+    Blocking somebody from the client (or Admin → Relay → blocked pubkeys) blocks their KEY, and a
+    fediverse account's key is its puppet's. The relay refuses that key -- but posts arriving over
+    ActivityPub are written here by the server itself, so the inbox has to ask too, or a blocked
+    fediverse account kept appearing ("I blocked them but I still see new posts"). Checks every key
+    this account has had: the stored puppet rows (by actor id and by handle -- the retired Pleroma
+    bridge keyed some on a profile URL) and the key derived from the actor id."""
+    blocked = _relay_blocked()
+    if not blocked or not actor_id:
+        return False
+    ck = (actor_id, (acct or "").lower())
+    if _puppet_block_cache.get("set") is not blocked:        # the list changed: every answer is stale
+        _puppet_block_cache.clear()
+        _puppet_block_cache["set"] = blocked
+    if ck in _puppet_block_cache:
+        return _puppet_block_cache[ck]
+    keys = set()
+    try:
+        from sqlalchemy import func, or_
+        from app.database import SessionLocal
+        from app.models import FediPuppet
+        db = SessionLocal()
+        try:
+            conds = [FediPuppet.actor_uri == actor_id.split("#")[0]]
+            if acct:
+                conds.append(func.lower(FediPuppet.acct) == acct.lower().lstrip("@"))
+            keys |= {pk for (pk,) in db.query(FediPuppet.pubkey_hex).filter(or_(*conds)).all() if pk}
+        finally:
+            db.close()
+    except Exception:
+        pass
+    try:
+        from app.services import fedi_bridge_identity as ident
+        keys.add(ident.puppet_for({"url": actor_id.split("#")[0], "acct": acct or ""})["pubkey_hex"])
+    except Exception:
+        pass
+    hit = any(k.lower() in blocked for k in keys)
+    if len(_puppet_block_cache) > 5000:
+        _puppet_block_cache.clear()
+        _puppet_block_cache["set"] = blocked
+    _puppet_block_cache[ck] = hit
+    return hit
+
+
+_puppet_block_cache: dict = {}
+
+
 def is_actor(pubkey: str) -> bool:
     """A local user this node gave a name, and not blocked on the relay."""
     pk = (pubkey or "").lower()
