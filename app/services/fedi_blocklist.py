@@ -48,7 +48,9 @@ def parse(raw: str) -> tuple[frozenset, frozenset]:
     for line in (raw or "").splitlines():
         line = line.split("#", 1)[0]
         for tok in line.replace(",", " ").split():
-            t = tok.strip().lower()
+            # Stray punctuation from a pasted list (`bad.example;`, a quoted host) kept verbatim matched
+            # nothing, silently.
+            t = tok.strip().strip("\"'`;<>()[]{}|").lower()
             for pre in ("https://", "http://", "wss://", "ws://"):
                 if t.startswith(pre):
                     t = t[len(pre):]
@@ -58,7 +60,8 @@ def parse(raw: str) -> tuple[frozenset, frozenset]:
                 t = f"{path[1:].split('/')[0].split('@')[0]}@{host_part}"
             else:
                 t = host_part
-            t = t.lstrip("@").removeprefix("*.").strip(".")
+            # `*.bad.example` and `*bad.example` both mean the instance and its subdomains.
+            t = t.lstrip("@").removeprefix("*.").lstrip("*").strip(".")
             if not t:
                 continue
             if "@" in t:                                   # user@host -- one account
@@ -84,7 +87,9 @@ def host_blocked(host: str, hosts) -> bool:
 def account_blocked(acct: str, accounts, hosts=frozenset()) -> bool:
     """`user@host` is a blocked account, or lives on a blocked instance."""
     a = (acct or "").strip().lower().lstrip("@")
-    user, _, host = a.partition("@")
+    # The HOST is after the LAST `@`: a username is the sender's text, and split at the first `@`,
+    # `bob@x@evil.com` compared host `x@evil.com` and slipped past a `bob@evil.com` line.
+    user, _, host = a.rpartition("@")
     if not user or not host:
         return False
     if host_blocked(host, hosts):

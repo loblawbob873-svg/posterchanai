@@ -124,7 +124,9 @@ following it there is sent as an ActivityPub Follow, and their posts arrive from
 | a post (kind 1) | Create(Note) to followers — replies only when the parent is on the fediverse or is one of our users' posts (a reply deep in a Nostr-only thread would arrive with no context) |
 | a comment (kind 1111) | the same, as a reply |
 | a repost (6) / reaction (7) | Announce / Like of a fediverse note or one of our users' posts |
-| a deletion (5) | Delete / Undo |
+| a poll (1068, NIP-88) | Create(Question) — `oneOf`/`anyOf`, `endTime`; its tallies go out as Update(Question) every five minutes while they change, to the followers and every server that voted |
+| a vote (1018) on a fediverse poll | the standard answer: a Note with the option's `name`, in reply to the Question, to its author only |
+| a deletion (5) | Delete / Undo — only of the deleter's OWN events |
 | a profile (0) | Update(Person) |
 | a contact list (3) | Follow / Undo(Follow) for fediverse accounts added or removed |
 
@@ -156,6 +158,11 @@ its rule removed.
   never says why -- that error text would make the inbox a port scanner.
 * **Remote images are https only** (emoji, avatars): anything else would let a remote server track
   readers or reach into their network.
+* **Only the author deletes.** Outgoing, a kind-5 naming somebody else's event is never turned into a
+  Delete (Pleroma and Akkoma honour a Delete from the object's own domain, i.e. from any member here).
+* **Private networks stay private.** Outbound fetches refuse every non-global address, CGNAT/Tailscale
+  (100.64.0.0/10) included; a delivery never reads the answer's body, and every read has a total
+  deadline and a size cap (the import included).
 * **Who blocked whom is private.** `/api/community/*` answers the bots' configured key, an admin's
   key or a peer node -- not any member's API key -- and one server can add at most three blockers
   to a member's leaderboard count.
@@ -179,9 +186,29 @@ its rule removed.
 | a deleted post | 410 with a Tombstone |
 | a server that keeps failing | rests (15 min, doubling to 4 h) with its deliveries queued |
 
-Not supported yet: incoming Move (account migration), Flag (reports), outgoing polls, pinned posts
-(`featured` is served empty), Undo of a Follow given only by id, and a delivery queue that survives
-a worker restart.
+| a poll (Question) | stored as a NIP-88 poll (kind 1068) Nostr users can vote in; their votes go back to its server. An Update that only changes the counts is ignored, so no Nostr vote is lost |
+| a vote on one of ours | stored as a kind-1018 under a key derived per voter per poll (NOT the voter's puppet: Mastodon shows only numbers, and a Nostr vote is public); multiple choice is merged into one vote |
+| Move (account migration) | believed only when the NEW account's own `alsoKnownAs` names the old one; every member following the old account follows the new one, and a contact list naming the old puppet is read as the new account |
+| Flag (a report) about one of ours | stored as a NIP-56 report (kind 1984) by the reporter's puppet, naming the reported account and posts |
+| pinned posts | `featured` serves the account's NIP-51 pin list (kind 10001) |
+| Undo of a Follow given only by its id | mapped back through the id recorded when the Follow arrived, for the account that sent it |
+| a Delete forwarded by a third server | accepted, then confirmed with the post's own server (404/410/Tombstone) before anything is removed |
+| a server on the blocklist | answered 202 BEFORE its signature is checked (its key cannot be fetched), so it stops retrying |
+| the ten seconds after a restart | 503 + Retry-After while the relay starts, never a 500 |
+
+**An actor's id never moves.** It is pinned the first time the account federates
+(`pcai:ap:id:<pubkey>` ⇄ `pcai:ap:idof:<handle>`): a Nostr user followed as their npub who later
+claims a name here keeps `/ap/users/<npub>` (their handle becomes the name; WebFinger answers both),
+and a registry name given to somebody else later can never take the first holder's address.
+
+**Delivery survives restarts and late events.** The retry queue is on the relay (`pcai:ap:retry:*`),
+and each pass re-reads a trailing window behind its cursor (6 h for local users, 30 min in
+`everyone` mode) with what was already sent remembered, so an event signed offline, relayed late or
+behind a fast clock still goes out, once. A Nostr → fediverse DM whose recipient is briefly down is
+retried (1 min → 2 h).
+
+Not supported yet: outgoing Move, outgoing Block (a mute list stays private), articles (kind 30023)
+going out as Article, and edits going out (Nostr has no edit).
 
 ## Web server
 

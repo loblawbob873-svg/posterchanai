@@ -180,7 +180,7 @@ async def mark_gone(actor: str) -> None:
 
 async def gone_actors() -> set:
     docs = await nostr_store.list_docs(_port(), _GONE_PREFIX, seckey=_seckey(), strict=False, limit=100000)
-    return {d["actor"] for d in docs.values() if isinstance(d, dict) and d.get("actor")}
+    return {d["actor"] for d in docs.values() if isinstance(d, dict) and d.get("actor") and not d.get("back")}
 
 
 _BLOCKED_PREFIX = "pcai:ap:blocked:"
@@ -290,3 +290,128 @@ async def nostr_users_with_followers(max_age: float = 60.0) -> frozenset:
                     if isinstance(d, dict) and d.get("actor") and not d.get("gone"))
     _nonlocal_cache.update(at=now, set=out)
     return out
+
+
+# ------------------------------------------------------------------------------------ pinned actor ids
+
+# AN ACTOR'S ID NEVER MOVES. It used to be spelled from whatever the account was called at the time
+# (`/ap/users/<registry name>`, else `/ap/users/<npub>`), so a Nostr user followed as their npub who
+# later claimed a name here became a NEW account on every server -- deliveries signed by an actor
+# nobody followed, and a refetch of the old address answering with a different id. The first spelling
+# an account federates under is recorded here, both ways, and is what it is called from then on.
+_ID_PREFIX = "pcai:ap:id:"            # pubkey -> {"h"}
+_ID_OWNER_PREFIX = "pcai:ap:idof:"    # h      -> {"pk"}
+
+
+async def pinned_handle(pubkey: str) -> str:
+    doc = await _get(_ID_PREFIX + pubkey)            # raises when the relay cannot be asked
+    return str((doc or {}).get("h") or "")
+
+
+async def owner_of_handle(h: str) -> str:
+    doc = await _get(_ID_OWNER_PREFIX + h.lower())
+    return str((doc or {}).get("pk") or "")
+
+
+async def pin_handle(pubkey: str, h: str) -> None:
+    """Owner first, like claim_nick: a crash between the two writes leaves a name that resolves."""
+    await _put(_ID_OWNER_PREFIX + h.lower(), {"pk": pubkey, "at": int(time.time())})
+    await _put(_ID_PREFIX + pubkey, {"h": h, "at": int(time.time())})
+
+
+async def unmark_gone(actor: str) -> None:
+    """An account marked gone that is plainly back (it just followed one of ours, verified): a
+    suspended-then-restored Mastodon account sends Delete(actor) and later returns."""
+    await _put(_GONE_PREFIX + _h(actor), {"actor": actor, "back": True, "at": int(time.time())})
+
+
+# ------------------------------------------------------------------------------------ follow ids
+
+# The id of each incoming Follow, so an Undo that names ONLY that id (allowed, and sent by some
+# servers) can be mapped back to the member it was for.
+_FOLLOW_ID_PREFIX = "pcai:ap:followid:"
+
+
+async def remember_follow_id(follow_id: str, member: str, actor: str) -> None:
+    await _put(_FOLLOW_ID_PREFIX + _h(follow_id), {"member": member, "actor": actor, "at": int(time.time())})
+
+
+async def follow_by_id(follow_id: str) -> dict:
+    doc = await _get(_FOLLOW_ID_PREFIX + _h(follow_id))
+    return doc if isinstance(doc, dict) else {}
+
+
+# ------------------------------------------------------------------------------------ moves
+
+# A fediverse account that MOVED (Move activity, confirmed by the new account's alsoKnownAs). The
+# members' contact lists still name the old account's puppet and cannot be rewritten here (they are
+# signed by the members), so delivery reads the old actor as the new one through this map.
+_MOVED_PREFIX = "pcai:ap:moved:"
+_moved_cache = {"at": 0.0, "map": {}}
+
+
+async def record_move(old: str, new: str) -> None:
+    await _put(_MOVED_PREFIX + _h(old), {"old": old, "new": new, "at": int(time.time())})
+    _moved_cache["at"] = 0.0
+
+
+async def moves(max_age: float = 120.0) -> dict:
+    """{old actor: new actor}, cached; a failed read keeps the last good map."""
+    now = time.monotonic()
+    if _moved_cache["at"] and now - _moved_cache["at"] < max_age:
+        return _moved_cache["map"]
+    try:
+        docs = await nostr_store.list_docs(_port(), _MOVED_PREFIX, seckey=_seckey(), strict=True, limit=100000)
+    except Exception:
+        return _moved_cache["map"]
+    out = {d["old"]: d["new"] for d in docs.values() if isinstance(d, dict) and d.get("old") and d.get("new")}
+    _moved_cache.update(at=now, map=out)
+    return out
+
+
+# ------------------------------------------------------------------------------------ polls
+
+_POLL_VOTERS_PREFIX = "pcai:ap:pollvoters:"     # poll event id -> {"inboxes": [...]} (app process)
+_POLL_TALLY_PREFIX = "pcai:ap:polltally:"       # poll event id -> {"counts", "voters"} (worker)
+
+
+async def add_poll_voter_inbox(poll_id: str, inbox: str) -> None:
+    doc = await _get(_POLL_VOTERS_PREFIX + poll_id) or {}
+    inboxes = [i for i in (doc.get("inboxes") or []) if isinstance(i, str)]
+    if inbox and inbox not in inboxes and len(inboxes) < 500:
+        await _put(_POLL_VOTERS_PREFIX + poll_id, {"inboxes": inboxes + [inbox]})
+
+
+async def poll_voter_inboxes(poll_id: str) -> list:
+    doc = await nostr_store.get_doc(_port(), _POLL_VOTERS_PREFIX + poll_id, seckey=_seckey())
+    return [i for i in ((doc or {}).get("inboxes") or []) if isinstance(i, str)]
+
+
+async def poll_tally(poll_id: str) -> dict:
+    doc = await _get(_POLL_TALLY_PREFIX + poll_id)
+    return doc if isinstance(doc, dict) else {}
+
+
+async def set_poll_tally(poll_id: str, tally: dict) -> None:
+    await _put(_POLL_TALLY_PREFIX + poll_id, tally)
+
+
+# ------------------------------------------------------------------------------------ retry queue
+
+# Deliveries waiting to be retried, ONE DOCUMENT EACH, so a worker restart (every deploy) does not
+# silently drop what a resting server was owed. Removed by writing a tombstone.
+_RETRY_PREFIX = "pcai:ap:retry:"
+
+
+async def save_retry(key: str, entry: dict) -> None:
+    await _put(_RETRY_PREFIX + key, entry)
+
+
+async def drop_retry(key: str) -> None:
+    await _put(_RETRY_PREFIX + key, {"done": True})
+
+
+async def load_retries() -> dict:
+    docs = await nostr_store.list_docs(_port(), _RETRY_PREFIX, seckey=_seckey(), strict=True, limit=20000)
+    return {k[len(_RETRY_PREFIX):]: v for k, v in docs.items()
+            if isinstance(v, dict) and not v.get("done") and v.get("inbox") and v.get("activity")}

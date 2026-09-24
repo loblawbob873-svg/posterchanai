@@ -178,6 +178,9 @@ async def handle_wrap(wrap: dict) -> str:
         if _done(key):
             results.append("already sent")
             continue
+        if key in _retrying:
+            results.append("waiting to be retried")
+            continue
         actor_uri, acct = _puppet_actor(puppet_pk)
         if not actor_uri:
             continue
@@ -203,7 +206,10 @@ async def handle_wrap(wrap: dict) -> str:
             results.append("recipient unreachable or blocked")
             continue
         base = config.base_url()
-        me = convert.actor_url(base, actors.handle(sender))
+        me = await actors.actor_id(sender)
+        if not me:
+            results.append("sender is not reachable on the fediverse")
+            continue
         # The id is OURS (from the wrap, whose id the relay verified), never the sender-supplied
         # rumor id, which nothing checks.
         note = {"id": f"{base}/ap/dm/{wrap.get('id', '')}/{puppet_pk[:16]}", "type": "Note", "attributedTo": me,
@@ -215,15 +221,56 @@ async def handle_wrap(wrap: dict) -> str:
                          "name": f"@{acct}" if acct and "@" in acct else canonical}]}
         act = convert.create(note, me)
         keys = await state.keypair(sender)          # a real signed message is behind it
-        key_id, priv = actors.signing(sender, keys)
+        key_id, priv = await actors.signing(sender, keys)
         status = await remote.deliver(inbox_url, act, key_id=key_id, private_pem=priv)
         if 200 <= status < 300:
+            _mark(key, wrap.get("id", ""), sender)   # first: a cancel after this must not resend
             await state.open_conversation(sender, canonical)
-            _mark(key, wrap.get("id", ""), sender)
             results.append("sent")
+        elif status == 0 or status >= 500 or status in (408, 429):
+            # The recipient's server is briefly down. Sent once and forgotten, the message was lost
+            # with nothing on either side to say so -- a wrap is re-read only on a reconnect.
+            _retry_later(key, inbox_url, act, sender, canonical, wrap.get("id", ""))
+            results.append(f"HTTP {status}, will retry")
         else:
+            logger.info("[activitypub] DM to %s refused: HTTP %s", remote.host_of(inbox_url), status)
             results.append(f"HTTP {status}")
     return ", ".join(results) or "nothing to do"
+
+
+_RETRY_DELAYS = (60, 300, 1800, 7200)
+_retrying: set = set()
+
+
+def _retry_later(key: str, inbox_url: str, act: dict, sender: str, canonical: str, wrap_id: str) -> None:
+    if key in _retrying or len(_retrying) >= 1000:
+        return
+    _retrying.add(key)
+
+    async def run():
+        try:
+            for delay in _RETRY_DELAYS:
+                await asyncio.sleep(delay)
+                keys = await state.keypair(sender)
+                key_id, priv = await actors.signing(sender, keys)
+                status = await remote.deliver(inbox_url, act, key_id=key_id, private_pem=priv)
+                if 200 <= status < 300:
+                    _mark(key, wrap_id, sender)
+                    await state.open_conversation(sender, canonical)
+                    return
+                if not (status == 0 or status >= 500 or status in (408, 429)):
+                    break
+            logger.info("[activitypub] DM to %s given up after retries", remote.host_of(inbox_url))
+        except Exception as e:
+            logger.info("[activitypub] DM retry failed: %s: %s", type(e).__name__, e)
+        finally:
+            _retrying.discard(key)
+    t = asyncio.get_running_loop().create_task(run())
+    _retry_tasks.add(t)
+    t.add_done_callback(_retry_tasks.discard)
+
+
+_retry_tasks: set = set()
 
 
 # ------------------------------------------------------------------------------------ the listener

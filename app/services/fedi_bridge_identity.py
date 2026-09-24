@@ -120,10 +120,24 @@ def _https_or_blank(url) -> str:
     return u if u.startswith("https://") and len(u) < 2048 else ""
 
 
+_COMMUNITY_PATH = re.compile(r"^/(?:c|m)/[^/]+/?$")
+
+
+def is_community_uri(uri: str) -> bool:
+    """A Lemmy (`/c/foo`) or Mbin (`/m/foo`) community -- which shares its `foo@host` handle with the
+    PERSON `/u/foo` on the same server."""
+    return bool(_COMMUNITY_PATH.match(urlparse(uri or "").path or ""))
+
+
 def puppet_for(account: dict, instance_host: str = "") -> dict:
     """Resolve the full puppet identity for a fediverse account (no I/O, no DB)."""
     actor_uri = actor_uri_of(account)
     acct = acct_of(account, instance_host)
+    nip05 = nip05_name_for(acct)
+    if is_community_uri(actor_uri):
+        # Its own name: the person and the community have separate keys, and one NIP-05 name for both
+        # (the relay's map is last-write-wins) flipped between them on every profile refresh.
+        nip05 = f"{nip05[:57].strip('._-')}_group"
     sk = bridge_keys.derive_seckey(_secret(), actor_uri)
     pubkey_hex = nostr_service.derive_pubkey(sk)
     host = acct.partition("@")[2] or instance_host
@@ -134,14 +148,15 @@ def puppet_for(account: dict, instance_host: str = "") -> dict:
         "actor_uri": actor_uri,
         "acct": acct,
         "host": host,
-        "nip05_name": nip05_name_for(acct),
+        "nip05_name": nip05,
         # display_name is PLAIN TEXT on Mastodon/Pleroma (never HTML) — do NOT tag-strip it, or
         # angle-bracket kaomoji like <(^o^)> get eaten. It keeps its :shortcode: emoji (rendered via the
         # NIP-30 tags below). The BIO is fediverse HTML (<br>, <a>, entities) → flatten to text or the
         # client shows raw markup. Custom-emoji shortcode→url map drives the profile's NIP-30 emoji tags.
         "display_name": (account.get("display_name") or account.get("name") or "").strip(),
         "avatar_url": _https_or_blank(account.get("avatar") or account.get("avatar_static")
-                                      or account.get("avatarUrl") or ""),
+                                      or account.get("avatarUrl") or "") if isinstance(
+            account.get("avatar") or account.get("avatar_static") or account.get("avatarUrl") or "", str) else "",
         "about": _strip_html(account.get("note") or account.get("description") or ""),
         "emojis": _emoji_url_map(account.get("emojis")),
     }
@@ -204,10 +219,8 @@ def _account_profile_sig(account: dict) -> str:
     dn = (account.get("display_name") or account.get("name") or "").strip()
     about = _strip_html(account.get("note") or account.get("description") or "")
     etags = emoji_tags_for(dn + " " + about, _emoji_url_map(account.get("emojis")), limit=20)
-    return _profile_sig_from(
-        dn,
-        (account.get("avatar") or account.get("avatar_static") or account.get("avatarUrl") or "").strip(),
-        about, etags)
+    av = account.get("avatar") or account.get("avatar_static") or account.get("avatarUrl") or ""
+    return _profile_sig_from(dn, av.strip() if isinstance(av, str) else "", about, etags)
 
 
 # Provisioned-this-process puppets: actor_uri → {"p": puppet dict, "sig": profile sig}. A hit skips

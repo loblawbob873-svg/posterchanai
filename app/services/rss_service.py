@@ -94,7 +94,9 @@ def is_safe_host(url: str) -> bool:
             ip = ipaddress.ip_address(info[4][0])
         except ValueError:
             return False
-        if ip.is_private or ip.is_loopback or ip.is_link_local or ip.is_reserved or ip.is_multicast or ip.is_unspecified:
+        # `not is_global` catches what the flags miss -- CGNAT/Tailscale 100.64.0.0/10 is none of them.
+        if ip.is_private or ip.is_loopback or ip.is_link_local or ip.is_reserved or ip.is_multicast \
+                or ip.is_unspecified or not ip.is_global:
             return False
     return True
 

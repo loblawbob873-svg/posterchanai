@@ -315,11 +315,101 @@ def delete_note(ev_id: str, *, base: str, actor: str, followers: str, deletion_i
 
 
 def undo(inner_id: str, inner_type: str, *, base: str, actor: str, target: str, deletion_id: str) -> dict:
+    """Undo of a Like/Announce. `target` is what the inner activity was ABOUT, and it is not optional
+    in practice: Mastodon and Misskey find the favourite to remove through it, so an Undo naming ""
+    reached them and removed nothing."""
     return {"@context": AS_CONTEXT, "id": activity_url(base, deletion_id, "undo"), "type": "Undo",
             "actor": actor, "object": {"id": inner_id, "type": inner_type, "actor": actor, "object": target}}
 
 
-def person(*, base: str, name: str, profile: dict, public_key_pem: str, username: str = "") -> dict:
+# ------------------------------------------------------------------------------------ polls (NIP-88)
+
+def poll_options(ev: dict) -> list:
+    """[(option id, label)] of a kind-1068 poll, in order."""
+    out, seen = [], set()
+    for t in ev.get("tags") or []:
+        if len(t) > 1 and t[0] == "option" and t[1] and t[1] not in seen:
+            seen.add(t[1])
+            out.append((str(t[1]), str(t[2] if len(t) > 2 and t[2] else t[1])[:200]))
+    return out[:20]
+
+
+def poll_multi(ev: dict) -> bool:
+    return any(len(t) > 1 and t[0] == "polltype" and t[1] == "multiplechoice" for t in ev.get("tags") or [])
+
+
+def poll_end(ev: dict) -> int:
+    for t in ev.get("tags") or []:
+        if len(t) > 1 and t[0] == "endsAt":
+            try:
+                return int(t[1])
+            except (TypeError, ValueError):
+                return 0
+    return 0
+
+
+def question_from_event(ev: dict, *, base: str, actor: str, followers: str, mentions: dict,
+                        counts: dict = None, voters: int = 0, now: int = 0, **kw) -> dict:
+    """A member's NIP-88 poll (kind 1068) as a Question -- what Mastodon, Pleroma, Akkoma and Misskey
+    draw as a poll and let their users vote in. `counts` is {option id: votes} as tallied here."""
+    note = note_from_event(ev, base=base, actor=actor, followers=followers, mentions=mentions, **kw)
+    note["type"] = "Question"
+    counts = counts or {}
+    choices = [{"type": "Note", "name": label, "replies": {"type": "Collection", "totalItems": int(counts.get(oid, 0))}}
+               for oid, label in poll_options(ev)]
+    note["anyOf" if poll_multi(ev) else "oneOf"] = choices
+    note["votersCount"] = int(voters)
+    end = poll_end(ev)
+    if end:
+        note["endTime"] = iso(end)
+        if end <= (now or int(datetime.now(timezone.utc).timestamp())):
+            note["closed"] = iso(end)
+    return note
+
+
+def vote_note(*, vote_id: str, actor: str, question: str, question_actor: str, label: str) -> dict:
+    """One answer to a fediverse poll, the way every server sends one: a Note carrying the option's
+    NAME and no content, in reply to the Question, addressed to its author only."""
+    return {"@context": AS_CONTEXT, "id": vote_id, "type": "Note", "attributedTo": actor, "name": label,
+            "inReplyTo": question, "to": [question_actor], "cc": []}
+
+
+def is_vote(note: dict) -> bool:
+    """A poll answer: a Note with a `name`, no body, in reply to something."""
+    return (isinstance(note, dict) and note.get("type") == "Note" and bool(str(note.get("name") or "").strip())
+            and not str(note.get("content") or "").strip() and bool(id_of(note.get("inReplyTo"))))
+
+
+def question_poll(note: dict) -> tuple[list, bool, int]:
+    """([(option id, label)], multiple choice?, end time) of an incoming Question."""
+    from app.services.fedi_normalize import _strip_html
+    multi = bool(note.get("anyOf")) and not note.get("oneOf")
+    opts = []
+    for i, o in enumerate(_as_list(note.get("anyOf") if multi else note.get("oneOf"))):
+        if isinstance(o, dict):
+            label = _strip_html(str(o.get("name") or "")).strip()[:200]
+            if label:
+                opts.append((f"opt{i + 1}", label))
+    end = parse_time(note.get("endTime") or note.get("closed"))
+    return opts[:20], multi, end
+
+
+def icon_url(v) -> str:
+    """The https URL of an image reference in any shape ActivityStreams allows: a string, a Link or
+    Image object (whose `url` may itself be a string, a Link or a list), or a list of those."""
+    for _ in range(4):
+        if isinstance(v, list):
+            v = v[0] if v else None
+        elif isinstance(v, dict):
+            v = v.get("url") if v.get("url") is not None else v.get("href")
+        else:
+            break
+    u = v.strip() if isinstance(v, str) else ""
+    return u if u.startswith("https://") and len(u) < 2048 else ""
+
+
+def person(*, base: str, name: str, profile: dict, public_key_pem: str, username: str = "",
+           consented: bool = True) -> dict:
     """A member's actor document, filled from their kind-0 (`profile`, already parsed). `name` is the
     address (/ap/users/<name>); `username` the handle it SHOWS, when that differs (a Nostr user's
     readable handle -- see actors.readable_handle)."""
@@ -334,7 +424,9 @@ def person(*, base: str, name: str, profile: dict, public_key_pem: str, username
         "inbox": f"{actor}/inbox", "outbox": f"{actor}/outbox",
         "followers": f"{actor}/followers", "following": f"{actor}/following",
         "endpoints": {"sharedInbox": f"{base}/ap/inbox"},
-        "manuallyApprovesFollowers": False, "discoverable": True, "indexable": True,
+        # Search indexing is the account's to agree to: a local user joined this server, while a
+        # Nostr user served in `everyone` mode never asked to be put in a fediverse search index.
+        "manuallyApprovesFollowers": False, "discoverable": bool(consented), "indexable": bool(consented),
         "featured": f"{actor}/featured",
         "publicKey": {"id": f"{actor}#main-key", "owner": actor, "publicKeyPem": public_key_pem},
     }
@@ -391,17 +483,20 @@ def account_from_actor(actor: dict) -> dict:
     from urllib.parse import urlparse
     aid = id_of(actor)
     host = urlparse(aid).hostname or ""
-    user = str(actor.get("preferredUsername") or "").strip()
-    icon = actor.get("icon")
-    if isinstance(icon, list):
-        icon = icon[0] if icon else None
-    emojis = [{"shortcode": str(t.get("name") or "").strip(":"), "url": id_of((t.get("icon") or {}).get("url"))
-               or str((t.get("icon") or {}).get("url") or "")}
+    user = username_of(actor)
+    emojis = [{"shortcode": str(t.get("name") or "").strip(":"), "url": icon_url(t.get("icon"))}
               for t in _as_list(actor.get("tag")) if isinstance(t, dict) and t.get("type") == "Emoji"]
     return {"uri": aid, "url": aid, "acct": f"{user}@{host}" if user and host else "",
             "username": user, "display_name": str(actor.get("name") or user or "").strip(),
-            "avatar": (icon or {}).get("url") if isinstance(icon, dict) else "",
+            "avatar": icon_url(actor.get("icon")),
             "note": str(actor.get("summary") or ""), "emojis": emojis}
+
+
+def username_of(actor: dict) -> str:
+    """An actor's preferredUsername, or "" when it could not be a handle. It is the SENDER'S text,
+    and `bob@x` in it made `bob@x@evil.com` -- a handle no `bob@evil.com` block line matches."""
+    user = str(actor.get("preferredUsername") or "").strip()
+    return user if re.fullmatch(r"[^\s@/:#?]{1,100}", user) else ""
 
 
 def note_content(note: dict, *, local_actors: dict) -> tuple[str, list]:

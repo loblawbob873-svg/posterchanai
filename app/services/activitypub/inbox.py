@@ -110,7 +110,7 @@ async def _run(activity: dict, signer: str) -> None:
 # ------------------------------------------------------------------------------------ dispatch
 
 def acct_of_actor(doc: dict) -> str:
-    user = str(doc.get("preferredUsername") or "").strip()
+    user = convert.username_of(doc)
     host = remote.host_of(convert.id_of(doc))
     return f"{user}@{host}" if user and host else ""
 
@@ -132,6 +132,31 @@ async def blocked_actor(actor_id: str) -> bool:
 
 
 FORWARDED = "_ForwardedCreate"
+FORWARDED_DELETE = "_ForwardedDelete"
+
+
+async def _forwarded_delete(object_id: str) -> str:
+    """A Delete a third server FORWARDED (Mastodon forwards the deletion of a reply, signed by itself).
+    Its word proves nothing, so the object's OWN server is asked: gone there (404/410, or a
+    Tombstone) is the proof, and the stored copy goes. Answered 401, the forwarder retried for days."""
+    if not object_id:
+        return "ignored: forwarded nothing"
+    row = await asyncio.to_thread(_delivered, object_id)
+    if not row:
+        return "ignored: nothing stored for that"
+    author = await asyncio.to_thread(_actor_of_puppet, row.nostr_pubkey or "")
+    if not author or remote.host_of(author) != remote.host_of(object_id):
+        return "ignored: not a note by someone on its own server"
+    try:
+        doc = await remote.fetch_json(object_id)
+        gone = doc.get("type") == "Tombstone"
+    except remote.FetchError as e:
+        gone = str(e).startswith(("HTTP 410", "HTTP 404"))
+    if not gone:
+        return "ignored: still there on its own server"
+    from app.services.fedi_bridge_identity import delete_note
+    ok = await delete_note(_port(), author, row.nostr_event_id, broadcast=config.broadcast())
+    return "deleted (confirmed with its server)" if ok else "relay refused the deletion"
 
 
 async def _forwarded(object_id: str) -> str:
@@ -156,10 +181,18 @@ async def process(activity: dict, signer: str) -> str:
     obj = activity.get("object")
     if kind == FORWARDED:
         return await _forwarded(convert.id_of(obj))
+    if kind == FORWARDED_DELETE:
+        return await _forwarded_delete(convert.id_of(obj))
     if kind == "Follow":
-        return await _follow(activity, signer)
+        async with _lock(f"follow:{signer}"):
+            return await _follow(activity, signer)
     if kind == "Undo":
-        return await _undo(obj if isinstance(obj, dict) else {"id": convert.id_of(obj)}, signer)
+        async with _lock(f"follow:{signer}"):
+            return await _undo(obj if isinstance(obj, dict) else {"id": convert.id_of(obj)}, signer)
+    if kind == "Move":
+        return await _move(activity, signer)
+    if kind == "Flag":
+        return await _flag(activity, signer)
     if kind in ("Accept", "Reject"):
         return await _accept(kind, obj, signer)
     if kind == "Block":
@@ -172,6 +205,9 @@ async def process(activity: dict, signer: str) -> str:
         # instance could post as its neighbours.
         if convert.id_of(note.get("attributedTo")) != signer:
             return "ignored: posted for somebody else"
+        if convert.is_vote(note):
+            # A poll answer: addressed to the poll's author only, so it would otherwise be read as a DM.
+            return await _vote(note, signer)
         if not convert.is_public(note):
             # Followers-only or direct: never a public kind-1. Addressed to one of ours, it is a
             # direct message (dm.py) -- delivered privately, and only to someone who agreed to hear.
@@ -188,12 +224,37 @@ async def process(activity: dict, signer: str) -> str:
             return "account deleted"
         return await _delete(convert.id_of(obj), signer)
     if kind == "Update" and isinstance(obj, dict) and obj.get("type") in ("Note", "Article", "Question", "Page"):
-        return await _edit(obj, signer)
+        async with _lock(f"edit:{convert.id_of(obj)}"):
+            return await _edit(obj, signer)
     if kind == "Update" and isinstance(obj, dict) and obj.get("type") in ("Person", "Service", "Group"):
         if convert.id_of(obj) == signer:
             await _puppet(await remote.actor(signer, refresh=True))
             return "profile refreshed"
     return f"ignored: {kind}"
+
+
+_locks: dict = {}
+
+
+class _lock:
+    """One activity at a time per key (per signer for follows, per note for edits). They run as
+    concurrent tasks, so an Undo arriving right behind its Follow could finish first and the Follow
+    then re-add a follower who had just left; two Updates of one note each stored a new copy."""
+    def __init__(self, key: str):
+        self.key = key
+
+    async def __aenter__(self):
+        entry = _locks.setdefault(self.key, [asyncio.Lock(), 0])
+        entry[1] += 1
+        await entry[0].acquire()
+
+    async def __aexit__(self, *exc):
+        entry = _locks.get(self.key)
+        if entry:
+            entry[0].release()
+            entry[1] -= 1
+            if entry[1] <= 0:
+                _locks.pop(self.key, None)
 
 
 # ------------------------------------------------------------------------------------ follows
@@ -221,7 +282,7 @@ def _new_follower_ok(host: str) -> bool:
 
 async def _follow(activity: dict, signer: str) -> str:
     name = _our_member_name(convert.id_of(activity.get("object")))
-    member = await actors.member_by_name(name) if name else ""
+    member = await actors.member_of_path(name) if name else ""
     if not member:
         return "ignored: not one of our actors"
     if convert.id_of(activity.get("actor")) != signer:
@@ -236,9 +297,17 @@ async def _follow(activity: dict, signer: str) -> str:
     if not known and not _new_follower_ok(remote.host_of(signer)):
         return "ignored: too many new followers from that server this hour"
     await state.add_follower(member, signer, inbox)
+    if convert.id_of(activity):
+        await state.remember_follow_id(convert.id_of(activity), member, signer)
+    # An account marked GONE that follows again is plainly back (Mastodon deletes a suspended account
+    # and restores it on unsuspend): left marked, it would never be delivered to again.
+    from app.services.activitypub import outbox as _ob
+    if signer in await _ob._gone():
+        await state.unmark_gone(signer)
+        _ob._gone_cache["at"] = 0.0
     keys = await state.keypair(member)              # a verified Follow is behind it
-    key_id, priv = actors.signing(member, keys)
-    me = convert.actor_url(config.base_url(), actors.handle(member))
+    key_id, priv = await actors.signing(member, keys)
+    me = await actors.actor_id(member)
     accept = {"@context": convert.AS_CONTEXT, "id": f"{me}#accepts/{int(time.time() * 1000)}",
               "type": "Accept", "actor": me, "object": {k: activity[k] for k in ("id", "type", "actor", "object")
                                                         if k in activity}}
@@ -257,7 +326,7 @@ async def _accept(kind: str, obj, signer: str) -> str:
     follow = obj if isinstance(obj, dict) else {}
     me = convert.id_of(follow.get("actor")) or follow_id.split("#follows/")[0]
     name = _our_member_name(me)
-    member = await actors.member_by_name(name) if name else ""
+    member = await actors.member_of_path(name) if name else ""
     if not member:
         return "ignored: not our follow"
     target = convert.id_of(follow.get("object"))
@@ -287,9 +356,16 @@ async def _undo(inner: dict, signer: str) -> str:
     if itype == "Block":
         return await _block(inner, signer, undo=True)
     if itype == "Follow" or _our_member_name(convert.id_of(inner.get("object"))):
-        member = await actors.member_by_name(_our_member_name(convert.id_of(inner.get("object"))))
+        member = await actors.member_of_path(_our_member_name(convert.id_of(inner.get("object"))))
         if member:
             await state.remove_follower(member, signer)
+            return "follower removed"
+    if not itype and inner.get("id"):
+        # An Undo naming the Follow by ID ONLY (allowed, and sent that way by some servers): mapped
+        # back through the id recorded when the Follow arrived -- and only by the account that sent it.
+        rec = await state.follow_by_id(inner["id"])
+        if rec.get("member") and rec.get("actor") == signer:
+            await state.remove_follower(rec["member"], signer)
             return "follower removed"
     return await _delete(convert.id_of(inner), signer, undo=True)
 
@@ -299,7 +375,7 @@ async def _block(activity: dict, signer: str, *, undo: bool) -> str:
     the leaderboard of most-blocked accounts), and -- as Mastodon does -- a block ends the follows
     between the two in both directions, so nothing keeps being delivered across it."""
     name = _our_member_name(convert.id_of(activity.get("object")))
-    member = await actors.member_by_name(name) if name else ""
+    member = await actors.member_of_path(name) if name else ""
     if not member:
         return "ignored: not one of our actors"
     if undo:
@@ -372,7 +448,7 @@ async def _target(uri: str) -> tuple[str, str]:
     if eid:
         ev = await _event(eid)
         return (eid, ev.get("pubkey", "")) if ev else ("", "")
-    row = _delivered(uri)
+    row = await asyncio.to_thread(_delivered, uri)
     return (row.nostr_event_id, row.nostr_pubkey or "") if row else ("", "")
 
 
@@ -387,10 +463,13 @@ async def store_note(note: dict, author: str, *, need_gate: bool, depth: int = 0
         return "ignored: blocked account"
     if not convert.is_public(note):
         return "ignored: not public"
-    if _delivered(uri):
+    if await asyncio.to_thread(_delivered, uri):
         return "already stored"
     local = actors.local_actor_map()
-    text, tags = convert.note_content(note, local_actors=local)
+    # A POLL becomes a NIP-88 poll (kind 1068) that Nostr users can vote in -- their votes go back to
+    # its server (outbox._vote). Its options are tags, so they are not also listed in the text.
+    poll_opts, poll_multi, poll_end = convert.question_poll(note) if note.get("type") == "Question" else ([], False, 0)
+    text, tags = convert.note_content({**note, "type": "Note"} if len(poll_opts) >= 2 else note, local_actors=local)
     # A mention counts only of an account that IS reachable here -- not of any npub-shaped URL.
     kept = []
     for t in tags:
@@ -449,17 +528,23 @@ async def store_note(note: dict, author: str, *, need_gate: bool, depth: int = 0
         qid, _qpk = await _target(quote)
         if qid:
             tags.append(["q", qid])         # NIP-18: a client draws the quoted post under this one
-    emap = _emoji_url_map([{"shortcode": str(t.get("name") or "").strip(":"),
-                            "url": convert.id_of((t.get("icon") or {}).get("url")) or (t.get("icon") or {}).get("url")}
-                           for t in note.get("tag") or [] if isinstance(t, dict) and t.get("type") == "Emoji"])
+    emap = _emoji_url_map([{"shortcode": str(t.get("name") or "").strip(":"), "url": convert.icon_url(t.get("icon"))}
+                           for t in convert._as_list(note.get("tag")) if isinstance(t, dict) and t.get("type") == "Emoji"])
     tags += emoji_tags_for(text, emap)
+    kind = 1
+    if len(poll_opts) >= 2:
+        kind = 1068
+        tags += [["option", oid, label] for oid, label in poll_opts]
+        tags.append(["polltype", "multiplechoice" if poll_multi else "singlechoice"])
+        if poll_end:
+            tags.append(["endsAt", str(poll_end)])
     ts = convert.parse_time(note.get("published")) or int(time.time())
-    ev = build_event(puppet, 1, text, tags=tags, object_uri=uri, broadcast=config.broadcast(),
+    ev = build_event(puppet, kind, text, tags=tags, object_uri=uri, broadcast=config.broadcast(),
                      created_at=min(ts, int(time.time())))
     ok, msg = await publish(_port(), ev)
     if not ok:
         return f"relay refused: {msg}"
-    _record(uri, ev["id"], ev["pubkey"], puppet.get("acct", ""))
+    await asyncio.to_thread(_record, uri, ev["id"], ev["pubkey"], puppet.get("acct", ""))
     await _reach_nostr_users(ev, puppet)
     return "stored"
 
@@ -475,20 +560,23 @@ async def _resolve_mentions(cands: list) -> list:
     DMs, their deletions). An account already known here is used as it is recorded."""
     from app.database import SessionLocal
     from app.models import FediPuppet
-    out, fetch = [], []
-    db = SessionLocal()
-    try:
-        for href, user, host in cands:
-            if config.host_blocked(host) or config.host_blocked(remote.host_of(href)):
-                continue
-            row = db.query(FediPuppet).filter(FediPuppet.actor_uri == href).first()
-            if row is not None and row.acct:
-                out.append({"url": href, "acct": row.acct, "username": row.acct.split("@")[0],
-                            "shown": f"{user}@{host}"})
-            else:
-                fetch.append((href, user, host))
-    finally:
-        db.close()
+    def known():
+        out, fetch = [], []
+        db = SessionLocal()
+        try:
+            for href, user, host in cands:
+                if config.host_blocked(host) or config.host_blocked(remote.host_of(href)):
+                    continue
+                row = db.query(FediPuppet).filter(FediPuppet.actor_uri == href).first()
+                if row is not None and row.acct:
+                    out.append({"url": href, "acct": row.acct, "username": row.acct.split("@")[0],
+                                "shown": f"{user}@{host}"})
+                else:
+                    fetch.append((href, user, host))
+        finally:
+            db.close()
+        return out, fetch
+    out, fetch = await asyncio.to_thread(known)
 
     async def one(href, user, host):
         try:
@@ -590,7 +678,7 @@ async def _announce(activity: dict, signer: str) -> str:
         return "ignored: activity id is not the sender's"
     if not convert.is_public(activity):
         return "ignored: not public"
-    if _delivered(act_id):
+    if await asyncio.to_thread(_delivered, act_id):
         return "already stored"
     obj = activity.get("object")
     # FEP-1b12: a GROUP (a Lemmy community, a Guppe group) relays its members' posts as an Announce of
@@ -623,7 +711,7 @@ async def _announce(activity: dict, signer: str) -> str:
     ok, msg = await publish(_port(), ev)
     if not ok:
         return f"relay refused: {msg}"
-    _record(act_id, ev["id"], ev["pubkey"], puppet.get("acct", ""))
+    await asyncio.to_thread(_record, act_id, ev["id"], ev["pubkey"], puppet.get("acct", ""))
     await _reach_nostr_users(ev, puppet)
     return "boost stored"
 
@@ -636,7 +724,7 @@ async def _like(activity: dict, signer: str) -> str:
     eid, pk = await _target(convert.id_of(activity.get("object")))
     if not eid or not (actors.is_actor(pk) or await actors.exposed(pk)):
         return "ignored: like of something that is not ours"
-    if _delivered(act_id):
+    if await asyncio.to_thread(_delivered, act_id):
         return "already stored"
     puppet = await _puppet(await remote.actor(signer))
     if not puppet:
@@ -653,43 +741,77 @@ async def _like(activity: dict, signer: str) -> str:
         sc = content.strip(":")
         for t in convert._as_list(activity.get("tag")):
             if isinstance(t, dict) and t.get("type") == "Emoji" and str(t.get("name") or "").strip(":") == sc:
-                url = convert.id_of((t.get("icon") or {}).get("url")) or (t.get("icon") or {}).get("url")
-                if isinstance(url, str) and url.startswith("https://"):
+                url = convert.icon_url(t.get("icon"))
+                if url:
                     tags.append(["emoji", sc, url])
                 break
     ev = build_event(puppet, 7, content, tags=tags, object_uri=act_id, broadcast=config.broadcast())
     ok, msg = await publish(_port(), ev)
     if not ok:
         return f"relay refused: {msg}"
-    _record(act_id, ev["id"], ev["pubkey"], puppet.get("acct", ""))
+    await asyncio.to_thread(_record, act_id, ev["id"], ev["pubkey"], puppet.get("acct", ""))
     await _reach_nostr_users(ev, puppet)
     return "like stored"
 
 
 async def _edit(obj: dict, signer: str) -> str:
-    """An edited post (Update of a Note -- also how a poll's counts change). A Nostr kind-1 cannot be
-    changed, so the stored copy is REPLACED: the new version is published, and only once it is the
-    old one is deleted. Only the author may do it (the same rule as a deletion)."""
+    """An edited post (Update of a Note). A Nostr kind-1 cannot be changed, so the stored copy is
+    REPLACED: the new version is published, and only once it is the old one is deleted. Only the
+    author may do it (the same rule as a deletion). Runs one at a time per note (see `process`).
+
+    A POLL is sent an Update every time somebody votes, and replacing it would throw away every vote
+    Nostr users cast on the stored copy -- so an Update that changes only the counts changes nothing."""
     from app.services.fedi_bridge_identity import delete_note
     note = await authentic(obj, signer)
     if convert.id_of(note.get("attributedTo")) != signer:
         return "ignored: edit for somebody else"
     uri = convert.id_of(note)
-    row = _delivered(uri)
+    row = await asyncio.to_thread(_delivered, uri)
     if not row:
         return "ignored: edit of a note not stored here"
-    if _actor_of_puppet(row.nostr_pubkey or "") != signer:
+    author = await _author_of(row, signer)
+    if not author:
         return "ignored: edit by somebody other than the author"
     if not convert.is_public(note):
         return "ignored: not public"
     old = row.nostr_event_id
-    _forget(uri)
-    result = await store_note(note, signer, need_gate=False)
+    if note.get("type") == "Question":
+        stored = await _event(old)
+        opts, _multi, end = convert.question_poll(note)
+        if stored and stored.get("kind") == 1068 and [l for _, l in convert.poll_options(stored)] == [l for _, l in opts]:
+            text, _t = convert.note_content({**note, "type": "Note"}, local_actors=actors.local_actor_map())
+            if (text or "").strip() == (stored.get("content") or "").strip() or not text.strip():
+                return "ignored: poll counts only"
+    old_acct = row.author_acct or ""
+    await asyncio.to_thread(_forget, uri)
+    result = "not stored"
+    try:
+        result = await store_note(note, signer, need_gate=False)
+    finally:
+        if result != "stored":
+            # Put the old copy's mapping back -- on a refusal AND on a failure or a timeout, or the
+            # old post could never be deleted and a re-delivered Create would store a duplicate.
+            await asyncio.to_thread(_record, uri, old, row.nostr_pubkey or "", old_acct)
     if result != "stored":
-        _record(uri, old, row.nostr_pubkey or "", row.author_acct or "")   # keep the old copy's mapping
         return f"edit not stored: {result}"
-    await delete_note(_port(), signer, old, broadcast=config.broadcast())
+    await delete_note(_port(), author, old, broadcast=config.broadcast())
     return "edited"
+
+
+async def _author_of(row, signer: str) -> str:
+    """The actor a stored post's puppet was derived from, IF that is the signer -- by identity, not by
+    spelling: the old bridge may have given this person their puppet under the other form of their
+    address (/@alice vs /users/alice). "" when the signer is not the author."""
+    author = await asyncio.to_thread(_actor_of_puppet, row.nostr_pubkey or "")
+    if not author:
+        return ""
+    if author == signer:
+        return author
+    try:
+        signer_puppet = await _puppet(await remote.actor(signer))
+    except remote.FetchError:
+        signer_puppet = None
+    return author if signer_puppet and signer_puppet.get("pubkey_hex") == row.nostr_pubkey else ""
 
 
 def _forget(uri: str) -> None:
@@ -742,21 +864,155 @@ async def _delete(uri: str, signer: str, *, undo: bool = False) -> str:
     any account on an instance would otherwise delete its neighbours' posts. The stored event's
     puppet is mapped back to the actor it was derived from, and that must be the signer."""
     from app.services.fedi_bridge_identity import delete_note
-    row = _delivered(uri)
+    row = await asyncio.to_thread(_delivered, uri)
     if not row:
         return "ignored: nothing stored for that"
-    # By IDENTITY, not by URI spelling: the bridge may have given this person their puppet under the
-    # other form of their address (/@alice vs /users/alice), and then the stored actor differs from
-    # the signer while the person is the same. The puppet's key is what cannot be spelled two ways.
-    author = _actor_of_puppet(row.nostr_pubkey or "")
+    author = await _author_of(row, signer)
     if not author:
         return "ignored: deletion by somebody other than the author"
-    if author != signer:
-        try:
-            signer_puppet = await _puppet(await remote.actor(signer))
-        except remote.FetchError:
-            signer_puppet = None
-        if not signer_puppet or signer_puppet.get("pubkey_hex") != row.nostr_pubkey:
-            return "ignored: deletion by somebody other than the author"
     ok = await delete_note(_port(), author, row.nostr_event_id, broadcast=config.broadcast())
     return ("undone" if undo else "deleted") if ok else "relay refused the deletion"
+
+
+# ------------------------------------------------------------------------------------ polls
+
+def _voter_anchor(poll_uri: str, voter: str) -> str:
+    """The key a fediverse account VOTES with, one per voter per poll. A vote is public on Nostr
+    (NIP-88 counts kind-1018 events by pubkey), while Mastodon shows only the numbers -- so it is NOT
+    the voter's puppet: a keyed hash no reader can reverse, stable so a second vote replaces the first."""
+    import hashlib
+    import hmac
+    from app.services.fedi_bridge_identity import _secret
+    tag = hmac.new(_secret(), f"vote\n{poll_uri}\n{voter}".encode(), hashlib.sha256).hexdigest()[:32]
+    return f"{poll_uri}#voter-{tag}"
+
+
+async def _vote(note: dict, signer: str) -> str:
+    """A fediverse account voting in one of OUR polls (a kind-1068 of a member): stored as a NIP-88
+    vote (kind 1018), which is what our tally and every Nostr client count. Multiple choice arrives
+    as one Note per option; they are merged into the voter's one vote, because NIP-88 counts only a
+    pubkey's latest response."""
+    from app.services.fedi_bridge_identity import build_event, publish, puppet_from_actor, query_one
+    vote_uri = convert.id_of(note)
+    if not _own_id(vote_uri, signer):
+        return "ignored: vote id is not the sender's"
+    eid, pk = await _target(convert.id_of(note.get("inReplyTo")))
+    if not eid or not (actors.is_actor(pk) or await actors.exposed(pk)):
+        return "ignored: vote on a poll that is not ours"
+    poll = await _event(eid)
+    if not poll or poll.get("kind") != 1068:
+        return "ignored: not a poll"
+    end = convert.poll_end(poll)
+    if end and end < int(time.time()):
+        return "ignored: poll closed"
+    label = str(note.get("name") or "").strip()
+    oid = next((o for o, l in convert.poll_options(poll) if l == label), "")
+    if not oid:
+        return "ignored: no such option"
+    if await asyncio.to_thread(_delivered, vote_uri):
+        return "already stored"
+    voter = puppet_from_actor(_voter_anchor(convert.object_url(config.base_url(), eid), signer))
+    chosen = [oid]
+    ok, prev = await query_one(_port(), {"kinds": [1018], "authors": [voter["pubkey_hex"]], "#e": [eid], "limit": 1})
+    if ok and prev:
+        before = [t[1] for t in prev.get("tags") or [] if len(t) > 1 and t[0] == "response"]
+        if not convert.poll_multi(poll):
+            return "ignored: already voted"
+        if oid in before:
+            return "already stored"
+        chosen = before + [oid]
+    # LATER than the vote it replaces, strictly: NIP-88 counts a pubkey's latest response, and two in
+    # the same second (one Note per option arrives back to back) is a tie any reader may break wrongly.
+    at = max(int(time.time()), int((prev or {}).get("created_at") or 0) + 1)
+    ev = build_event(voter, 1018, "", tags=[["e", eid], ["p", pk]] + [["response", o] for o in chosen],
+                     broadcast=config.broadcast(), created_at=at)
+    ok, msg = await publish(_port(), ev)
+    if not ok:
+        return f"relay refused: {msg}"
+    await asyncio.to_thread(_record, vote_uri, ev["id"], ev["pubkey"], "")
+    try:
+        who = await remote.actor(signer)
+        inbox_url = remote.inbox_of(who)
+        if inbox_url and remote.host_of(inbox_url) == remote.host_of(signer):
+            await state.add_poll_voter_inbox(eid, inbox_url)      # it hears the new counts
+    except Exception:
+        pass
+    return "vote stored"
+
+
+# ------------------------------------------------------------------------------------ moves, reports
+
+async def _move(activity: dict, signer: str) -> str:
+    """An account MOVED (Mastodon's account migration). Believed only when the NEW account names the
+    old one in its own `alsoKnownAs` -- fetched from its own server -- or anybody could redirect
+    somebody else's followers. Every member following the old account then follows the new one."""
+    old = convert.id_of(activity.get("object"))
+    new = convert.id_of(activity.get("target"))
+    if old != signer or not new or new == old:
+        return "ignored: a move of somebody else"
+    if await blocked_actor(new):
+        return "ignored: moved to a blocked account"
+    try:
+        doc = await remote.actor(new, refresh=True)
+    except remote.FetchError:
+        return "ignored: the new account could not be read"
+    if signer not in [convert.id_of(x) for x in convert._as_list(doc.get("alsoKnownAs"))]:
+        return "ignored: the new account does not confirm the move"
+    await state.record_move(old, new)
+    inbox_url = remote.inbox_of(doc)
+    members = (await state.followed_actors(max_age=0)).get(old, set())
+    moved = 0
+    for member in sorted(members):
+        me = await actors.actor_id(member)
+        if not me or not inbox_url:
+            continue
+        from app.services.activitypub.outbox import _h
+        fid = f"{me}#follows/{_h(new)}/{int(time.time() * 1000)}"
+        follow = {"@context": convert.AS_CONTEXT, "id": fid, "type": "Follow", "actor": me, "object": new}
+        await state.set_following(member, new, inbox_url, "pending", follow_id=fid)
+        await state.drop_following(member, old)
+        keys = await state.keypair(member)
+        key_id, priv = await actors.signing(member, keys)
+        await remote.deliver(inbox_url, follow, key_id=key_id, private_pem=priv)
+        moved += 1
+    state.forget_followed_cache()
+    await _puppet(doc)
+    return f"moved ({moved} follow(s) moved)"
+
+
+async def _flag(activity: dict, signer: str) -> str:
+    """A report (Flag) from another server about one of ours: stored as a NIP-56 report (kind 1984)
+    signed by the reporter's puppet, which is how this node's reports are read. Only reports that
+    name OUR accounts or posts are kept -- anything else is not this server's to hear."""
+    from app.services.fedi_bridge_identity import build_event, publish
+    base = config.base_url()
+    people, posts = [], []
+    for o in convert._as_list(activity.get("object"))[:20]:
+        uri = convert.id_of(o)
+        eid = convert.event_id_from_object_url(base, uri)
+        if eid:
+            ev = await _event(eid)
+            if ev and (actors.is_actor(ev.get("pubkey", "")) or await actors.exposed(ev.get("pubkey", ""))):
+                posts.append(eid)
+                people.append(ev["pubkey"])
+            continue
+        name = _our_member_name(uri)
+        pk = await actors.member_of_path(name) if name else ""
+        if pk:
+            people.append(pk)
+    people = list(dict.fromkeys(people))
+    if not people:
+        return "ignored: a report about nobody here"
+    try:
+        puppet = await _puppet(await remote.actor(signer))
+    except remote.FetchError:
+        puppet = None
+    if not puppet:
+        return "ignored: no puppet"
+    reason = " ".join(str(activity.get("content") or "").split())[:1000]
+    tags = [["p", pk, "other"] for pk in people[:10]] + [["e", eid, "other"] for eid in posts[:10]]
+    ev = build_event(puppet, 1984, reason, tags=tags, broadcast=False)
+    ok, msg = await publish(_port(), ev)
+    logger.info("[activitypub] report from %s about %d account(s)%s", remote.host_of(signer), len(people),
+                "" if ok else f" not stored: {msg}")
+    return "report stored" if ok else f"relay refused: {msg}"

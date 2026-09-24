@@ -9,10 +9,10 @@ list into ActivityPub Follows.
 """
 from __future__ import annotations
 
+import asyncio
+import json
 import re
 from urllib.parse import urlparse
-
-import httpx
 
 from app.services import settings_store
 from app.services.activitypub import config
@@ -23,6 +23,35 @@ _NEXT = re.compile(r'<([^>]+)>;\s*rel="next"')
 
 
 _HOST = re.compile(r"[a-z0-9.-]+\.[a-z0-9-]+(:\d{1,5})?", re.I)
+_PAGE_SECONDS = 30
+
+
+class _Answer:
+    def __init__(self, status: int, headers, body: bytes):
+        self.status_code, self.headers, self.content = status, headers, body
+
+    def json(self):
+        return json.loads(self.content)
+
+
+async def _get(client, url: str, **kw) -> _Answer:
+    """GET with the size cap enforced WHILE reading and a total time limit. `client.get()` buffers
+    the whole body first, so a server a member typed could stream gigabytes into this process before
+    the size check ever ran (or drip a byte every few seconds and hold the import open for ever)."""
+    from app.services.activitypub import remote
+    try:
+        async with asyncio.timeout(_PAGE_SECONDS):
+            async with client.stream("GET", url, **kw) as r:
+                body = bytearray()
+                async for chunk in r.aiter_bytes():
+                    body.extend(chunk)
+                    if len(body) > MAX_PAGE_BYTES:
+                        raise ValueError(f"{urlparse(url).hostname} answered with something too large to read")
+                return _Answer(r.status_code, r.headers, bytes(body))
+    except TimeoutError:
+        raise ValueError(f"{urlparse(url).hostname} took too long to answer")
+    except remote.httpx.HTTPError as e:
+        raise ValueError(f"Could not reach {urlparse(url).hostname}: {type(e).__name__}")
 
 
 async def public_following(handle: str) -> tuple[list[dict], str]:
@@ -43,15 +72,16 @@ async def public_following(handle: str) -> tuple[list[dict], str]:
     except remote.FetchError as e:
         raise ValueError(f"Cannot read {host}: {e}") from e
     async with remote.client(timeout=25) as client:
-        r = await client.get(f"{base}/api/v1/accounts/lookup", params={"acct": user})
+        r = await _get(client, f"{base}/api/v1/accounts/lookup", params={"acct": user})
     if r.status_code == 404:
         raise ValueError(f"{user}@{host} was not found")
     if r.status_code != 200:
         raise ValueError(f"{host} did not answer the lookup (HTTP {r.status_code}) -- "
                          "it may not be a Mastodon-compatible server")
-    if len(r.content) > MAX_PAGE_BYTES:
-        raise ValueError(f"{host} answered the lookup with something too large to be an account")
-    me = r.json() if r.headers.get("content-type", "").startswith("application/json") else {}
+    try:
+        me = r.json() if r.headers.get("content-type", "").startswith("application/json") else {}
+    except ValueError:
+        me = {}
     if not isinstance(me, dict) or not me.get("id"):
         raise ValueError(f"{host} did not return an account for {user}")
     out = await _pages(base, str(me["id"]), None)
@@ -71,13 +101,17 @@ async def _pages(base: str, account_id: str, token: str | None) -> list[dict]:
                 await remote._check(url)          # every page, not only the first address
             except remote.FetchError as e:
                 raise ValueError(f"Cannot read {urlparse(url).hostname}: {e}") from e
-            r = await client.get(url, headers=headers)
-            if len(r.content) > MAX_PAGE_BYTES:
-                raise ValueError("that server answered with a page too large to read")
+            r = await _get(client, url, headers=headers)
             if not token and r.status_code in (401, 403):
                 break                                  # a hidden list: the caller says so
-            r.raise_for_status()
-            page = r.json()
+            if r.status_code != 200:
+                if out:
+                    break                              # keep what was read; a later page failing loses nothing
+                raise ValueError(f"{urlparse(url).hostname} answered HTTP {r.status_code}")
+            try:
+                page = r.json()
+            except ValueError:
+                break
             if not isinstance(page, list) or not page:
                 break
             out += [a for a in page if isinstance(a, dict)]
@@ -85,7 +119,8 @@ async def _pages(base: str, account_id: str, token: str | None) -> list[dict]:
             nxt = m.group(1) if m else ""
             # Pages stay on the account's own instance -- the Link header is the instance's to set,
             # but never ours to follow off it with the member's token attached.
-            url = nxt if nxt and urlparse(nxt).hostname == urlparse(base).hostname else ""
+            # And https only: a plain-http "next" failed the fetch guard and threw away every page read.
+            url = nxt if nxt.startswith("https://") and urlparse(nxt).hostname == urlparse(base).hostname else ""
     return out[:MAX_ACCOUNTS]
 
 
@@ -127,6 +162,9 @@ async def puppets_for(db, accounts: list, instance_url: str) -> list[dict]:
         acct = account.get("acct") or ""
         if not acct or config.account_blocked(acct):
             continue
+        from app.services.activitypub import actors
+        if actors.puppet_blocked(account["uri"], acct):
+            continue                                   # blocked from the client: never re-followed
         p = await ensure_puppet(db, port, account, remote.host_of(account["uri"]))
         if p and p["pubkey_hex"] not in seen:
             seen.add(p["pubkey_hex"])

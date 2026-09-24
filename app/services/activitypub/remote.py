@@ -57,8 +57,10 @@ class _PinnedTransport(httpx.AsyncHTTPTransport):
                 ip = ipaddress.ip_address(info[4][0])
             except ValueError:
                 continue
+            # `not is_global` too: CGNAT/Tailscale (100.64.0.0/10) is none of private, reserved or
+            # link-local to Python, and it is somebody's internal network all the same.
             if not trusted and (ip.is_private or ip.is_loopback or ip.is_link_local or ip.is_reserved
-                                or ip.is_multicast or ip.is_unspecified):
+                                or ip.is_multicast or ip.is_unspecified or not ip.is_global):
                 raise httpx.ConnectError(f"{host} resolves to a private address")
             addrs.append(ip)
         if not addrs:
@@ -278,19 +280,28 @@ async def webfinger(handle: str) -> str:
 
 
 async def deliver(inbox: str, activity: dict, *, key_id: str, private_pem: str) -> int:
-    """POST a signed activity. Returns the HTTP status (0 when it never got an answer)."""
+    """POST a signed activity. Returns the HTTP status (0 when it never got an answer, which is
+    retried; 403 when WE refuse the address -- blocked or this node -- which retrying cannot change).
+
+    The answer's BODY is never read: nothing here needs it, and read in full it let any follower's
+    inbox stream gigabytes into this process, or trickle a byte at a time to hold the delivery tick."""
+    h = host_of(inbox)
+    if config.host_blocked(h) or config.is_own_host(h):
+        logger.info("[activitypub] not delivering to %s: blocked or this node", h)
+        return 403
     try:
         await _check(inbox)
     except FetchError as e:
-        logger.info("[activitypub] not delivering to %s: %s", host_of(inbox), e)
+        logger.info("[activitypub] not delivering to %s: %s", h, e)
         return 0
     body = json.dumps(activity, separators=(",", ":")).encode()
     headers = {"Content-Type": config.AP_CONTENT_TYPE, "Accept": _ACCEPT, "User-Agent": _USER_AGENT}
     headers.update(httpsig.sign("POST", inbox, key_id=key_id, private_pem=private_pem, body=body))
     try:
-        async with client() as http:
-            r = await http.post(inbox, content=body, headers=headers)
-            return r.status_code
-    except httpx.HTTPError as e:
-        logger.info("[activitypub] delivery to %s failed: %s", host_of(inbox), type(e).__name__)
+        async with asyncio.timeout(_TOTAL_SECONDS):
+            async with client() as http:
+                async with http.stream("POST", inbox, content=body, headers=headers) as r:
+                    return r.status_code
+    except (httpx.HTTPError, TimeoutError) as e:
+        logger.info("[activitypub] delivery to %s failed: %s", h, type(e).__name__)
         return 0

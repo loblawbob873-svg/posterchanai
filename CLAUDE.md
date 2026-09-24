@@ -1565,6 +1565,22 @@ would have handled it fine).
   `pcai:ap:sent:<id>` records every inbox beyond the followers AND the kind, so a kind-5 with no `k`
   tag still sends the right verb to the right servers; a per-host circuit breaker (`_down`) rests a
   dead server; outbox paging is a (timestamp, id) cursor (`until - 1` skipped same-second posts).
+  **THE THIRD PASS (same day) — the id, the cursor, and polls.** (1) **An actor's id is PINNED** the
+  first time it federates (`actors.ap_handle`, `pcai:ap:id:`/`idof:`) — it used to be spelled from the
+  CURRENT name, so a Nostr user followed as their npub who then claimed a NIP-05 name became a new
+  account on every server and their followers silently stopped getting posts. Build ids with
+  `actors.actor_id(pk)`, never `convert.actor_url(base, actors.handle(pk))`; resolve a path with
+  `member_of_path`. (2) **The delivery cursor is a `created_at`** (the author's claim), so each pass
+  re-reads a trailing window with the sent set persisted in the cursor doc (`done`), and the cursor is
+  clamped to the clock — an offline-signed, late-relayed or fast-clock event was skipped for good.
+  (3) **A blocked server is answered 202 BEFORE verification** — its key can never be fetched, so it
+  got 401s for ever (the old test stubbed the key fetch, which is why it passed). (4) **Polls both ways**
+  (NIP-88 1068/1018 ⇄ Question/answer Notes; tallies by `outbox.poll_updates`; a fediverse vote is
+  signed by a per-voter-per-poll key, never the voter's puppet; counts-only Updates never replace the
+  stored poll), plus Move (alsoKnownAs-confirmed), Flag → kind 1984, pins → `featured`, bare-id
+  Undo(Follow), a relay-persisted retry queue, DM retries. The relay's puppet kind list gained
+  1018/1068/1984. `build_object` is the ONE Note/Question builder for delivery, `/ap/objects`, the
+  outbox and `featured`.
 - **THE PLEROMA BRIDGE IS REMOVED (2026-09-23)** — the timeline mirror, write-back, personal plane,
   bridge access grants, fedi-only client mode, Sign in with Pleroma, Telegram → Pleroma posting and
   Pleroma → Telegram alerts. The ActivityPub server replaced all of it. What SURVIVES, on purpose:

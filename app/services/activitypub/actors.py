@@ -9,6 +9,7 @@ account's own profile. The one exclusion is an account blocked on the relay.
 """
 from __future__ import annotations
 
+import asyncio
 import re
 
 import json
@@ -131,7 +132,7 @@ async def member_by_name(name: str) -> str:
     # the fediverse address of the Nostr user already known everywhere by it.
     if config.everyone() and _NICK_RE.fullmatch((name or "").lower()):
         try:
-            owner = await state.owner_of_nick(name.lower())
+            owner = await _nick_owner(name.lower())
         except Exception:
             owner = ""
         if owner:
@@ -179,40 +180,133 @@ async def readable_handle(pubkey: str) -> str:
     """The handle an account SHOWS on the fediverse. A local user's name; for any other Nostr user
     (`everyone` mode) a readable one made once from their profile name and a short key suffix --
     `alice_4b56` -- instead of a 63-character npub. It is stored the first time and never recomputed,
-    so a profile rename cannot break the follows and mentions that name it; the actor's ADDRESS stays
-    /ap/users/<npub>, and WebFinger answers for both. A failed relay read falls back to the npub for
-    this call and mints nothing -- a handle is only ever created on the strength of a real answer."""
+    so a profile rename cannot break the follows and mentions that name it; the actor's ADDRESS is
+    pinned separately (ap_handle), and WebFinger answers for both. A failed relay read falls back to
+    the npub for this call and mints nothing -- a handle is only ever created on the strength of a
+    real answer."""
     pk = (pubkey or "").lower()
     local = name_of(pk)
     if local:
-        return local
-    npub = handle(pk)
-    if not npub:
+        # A registry name spelled like a readable handle somebody ELSE already has (an admin-typed
+        # `dan_2024`): shown as this account's handle, WebFinger would answer it with the other
+        # account, and no server could follow this one. It gets a handle of its own instead.
+        try:
+            other = await _nick_owner(local)
+        except Exception:
+            other = ""
+        if not other or other == pk:
+            return local
+    fallback = local or handle(pk)
+    if not fallback:
         return ""
     hit = _nick_cache.get(pk)
     if hit:
         return hit
     try:
-        nick = await state.nick_of(pk)
-        if not nick:
-            base = _nick_base(await profile(pk))
-            for n in (4, 6, 8, 12, 16):
-                cand = f"{base}_{pk[:n]}"
-                if pubkey_of_name(cand) not in ("", pk):
-                    continue                        # a local user's name is never minted as a handle
-                owner = await state.owner_of_nick(cand)
-                if owner in ("", pk):
+        async with _nick_lock:
+            nick = await state.nick_of(pk)
+            if not nick:
+                base = _nick_base(await profile(pk))
+                for n in (4, 6, 8, 12, 16):
+                    cand = f"{base}_{pk[:n]}"
+                    if pubkey_of_name(cand) not in ("", pk):
+                        continue                        # a local user's name is never minted as a handle
+                    if await state.owner_of_handle(cand) not in ("", pk):
+                        continue                        # nor another account's pinned address
+                    if await state.owner_of_nick(cand) not in ("", pk):
+                        continue
                     await state.claim_nick(pk, cand)
-                    nick = cand
-                    break
+                    # READ IT BACK: the app process and the worker can claim at once, and the loser
+                    # would advertise a handle whose WebFinger answers with somebody else.
+                    await asyncio.sleep(0.3)
+                    if await state.owner_of_nick(cand) == pk:
+                        nick = cand
+                        break
     except Exception:
-        return npub
+        return fallback
     if not nick:
-        return npub
+        return fallback
     _nick_cache[pk] = nick
+    _nick_owner_cache[nick] = (float("inf"), pk)
     while len(_nick_cache) > 20000:
         _nick_cache.popitem(last=False)
     return nick
+
+
+async def _nick_owner(nick: str) -> str:
+    """state.owner_of_nick, cached: a claimed handle never changes hands, so a hit is kept for good and
+    a miss for a minute -- anybody can make us ask about any handle-shaped name."""
+    n = (nick or "").lower()
+    hit = _nick_owner_cache.get(n)
+    now = time.monotonic()
+    if hit and now < hit[0]:
+        return hit[1]
+    owner = await state.owner_of_nick(n)
+    _nick_owner_cache[n] = (float("inf") if owner else now + 60, owner)
+    while len(_nick_owner_cache) > 20000:
+        _nick_owner_cache.popitem(last=False)
+    return owner
+
+
+async def ap_handle(pubkey: str) -> str:
+    """The path segment of an account's ACTOR ID -- `/ap/users/<this>` -- pinned the first time the
+    account federates and never changed after (see state.pin_handle). "" when the account has no
+    fediverse address at all. Raises when the relay cannot be asked: an id must never be guessed."""
+    pk = (pubkey or "").lower()
+    if not pk:
+        return ""
+    hit = _pin_cache.get(pk)
+    if hit:
+        return hit
+    h = await state.pinned_handle(pk)
+    if not h:
+        cand = handle(pk)
+        if not cand:
+            return ""
+        owner = await state.owner_of_handle(cand)
+        if owner and owner != pk:
+            # The name was given to somebody else before (a registry name reassigned): that address
+            # is theirs for good, so this account federates under its npub.
+            from app.services.nostr import nostr_service
+            cand = nostr_service.npub_of(pk)
+        await state.pin_handle(pk, cand)
+        h = cand
+    elif not (is_actor(pk) or config.everyone()) or pk in _relay_blocked():
+        return ""
+    _pin_cache[pk] = h
+    _pin_owner_cache[h.lower()] = pk
+    while len(_pin_cache) > 20000:
+        _pin_cache.popitem(last=False)
+    while len(_pin_owner_cache) > 20000:
+        _pin_owner_cache.popitem(last=False)
+    return h
+
+
+async def actor_id(pubkey: str) -> str:
+    """This account's actor URL ("" when it has none)."""
+    h = await ap_handle(pubkey)
+    return convert.actor_url(config.base_url(), h) if h else ""
+
+
+async def member_of_path(name: str) -> str:
+    """The pubkey behind `/ap/users/<name>` -- the account whose PINNED id this is, else whoever the
+    name means today (member_by_name) -- if that account is on the fediverse, else ""."""
+    n = (name or "").strip().lower()
+    if not n:
+        return ""
+    owner = _pin_owner_cache.get(n)
+    if owner is None:
+        try:
+            owner = await state.owner_of_handle(n)
+        except Exception:
+            owner = ""
+        if owner:
+            _pin_owner_cache[n] = owner
+    if owner:
+        return owner if await exposed(owner) else ""
+    # Not anybody's pinned id: whoever the name means today. Their document still carries their own
+    # pinned id, so an old or alternative spelling of an address is an alias, never a second account.
+    return await member_by_name(name)
 
 
 def _npub_pubkey(handle: str) -> str:
@@ -297,7 +391,7 @@ def pubkey_of_actor_url(url: str) -> str:
     if not base or not isinstance(url, str) or not url.startswith(prefix):
         return ""
     h = url[len(prefix):].split("/")[0].split("#")[0].split("?")[0]
-    return pubkey_of_name(h) or _npub_pubkey(h)
+    return _pin_owner_cache.get(h.lower()) or pubkey_of_name(h) or _npub_pubkey(h)
 
 
 class _LocalActors(dict):
@@ -324,6 +418,10 @@ def local_actor_map() -> dict:
 from collections import OrderedDict
 
 _nick_cache: OrderedDict = OrderedDict()   # pubkey -> readable handle (readable_handle)
+_nick_owner_cache: OrderedDict = OrderedDict()   # handle -> (valid until, owner pubkey)
+_nick_lock = asyncio.Lock()
+_pin_cache: OrderedDict = OrderedDict()    # pubkey -> pinned id handle (ap_handle)
+_pin_owner_cache: OrderedDict = OrderedDict()    # pinned id handle -> pubkey
 
 _profile_cache: "OrderedDict[str, tuple]" = OrderedDict()
 _PROFILE_CACHE_MAX = 5000
@@ -356,12 +454,13 @@ async def profile(pubkey: str) -> dict:
     return prof if isinstance(prof, dict) else {}
 
 
-async def person(name: str, pubkey: str, *, anonymous: bool = False) -> dict:
+async def person(pubkey: str, *, anonymous: bool = False) -> dict:
     """An account's actor document. `anonymous` is an unauthenticated fetch of it: the only path a
     stranger can drive for free, so the only one whose first key is rate-limited (state.keypair)."""
     keys = await state.keypair(pubkey, local=is_actor(pubkey) or not anonymous)
-    return convert.person(base=config.base_url(), name=name, profile=await profile(pubkey),
-                          public_key_pem=keys["pub"], username=await readable_handle(pubkey))
+    return convert.person(base=config.base_url(), name=await ap_handle(pubkey), profile=await profile(pubkey),
+                          public_key_pem=keys["pub"], username=await readable_handle(pubkey),
+                          consented=is_actor(pubkey))
 
 
 async def instance_actor() -> dict:
@@ -377,6 +476,20 @@ async def instance_actor() -> dict:
             "publicKey": {"id": f"{actor}#main-key", "owner": actor, "publicKeyPem": keys["pub"]}}
 
 
-def signing(pubkey: str, keys: dict) -> tuple[str, str]:
-    """(keyId, private PEM) for delivering as an account (local name or npub)."""
-    return f"{convert.actor_url(config.base_url(), handle(pubkey))}#main-key", keys["priv"]
+async def signing(pubkey: str, keys: dict) -> tuple[str, str]:
+    """(keyId, private PEM) for delivering as an account -- under its PINNED id."""
+    return f"{await actor_id(pubkey)}#main-key", keys["priv"]
+
+
+async def featured_ids(pubkey: str) -> list:
+    """The event ids an account PINNED (its NIP-51 kind-10001 list), newest pin first -- what its
+    `featured` collection serves. [] when it has none or the relay cannot be read."""
+    from app.services.fedi_bridge_identity import query_one
+    try:
+        ok, ev = await query_one(settings_store._port(), {"kinds": [10001], "authors": [pubkey], "limit": 1})
+    except Exception:
+        return []
+    if not ok or not ev:
+        return []
+    ids = [t[1] for t in ev.get("tags") or [] if len(t) > 1 and t[0] == "e" and len(t[1]) == 64]
+    return list(reversed(ids))[:20]

@@ -36,6 +36,16 @@ def _ap(doc: dict, status: int = 200) -> Response:
                     media_type=config.AP_CONTENT_TYPE, headers={"Cache-Control": "max-age=60"})
 
 
+# The relay a strict state read could not reach -- the ten seconds after a restart while it starts, or
+# an outage. That is "ask again shortly" (503 + Retry-After), never a 500: a 500 on an actor fetch
+# reads as a broken account to the asking server, and on the inbox as a delivery it should back off.
+_RELAY_DOWN = (OSError, TimeoutError, asyncio.TimeoutError)
+
+
+def _relay_down() -> Response:
+    return Response(status_code=503, headers={"Retry-After": "30"})
+
+
 def _wants_html(request: Request) -> bool:
     accept = (request.headers.get("accept") or "").lower()
     return "text/html" in accept and "activity+json" not in accept and "ld+json" not in accept
@@ -53,15 +63,21 @@ async def webfinger(resource: str = ""):
         user, _, host = res[5:].lstrip("@").partition("@")
         if host.lower() == dom:
             name = user
-    elif res.startswith(f"{base}/ap/users/"):
-        name = res[len(f"{base}/ap/users/"):].split("/")[0]
+    by_path = False
+    if res.startswith(f"{base}/ap/users/"):
+        name, by_path = res[len(f"{base}/ap/users/"):].split("/")[0], True
     if name == dom or res in (f"{base}/ap/actor", f"acct:{dom}@{dom}"):
         return JSONResponse({"subject": f"acct:{dom}@{dom}", "links": [
             {"rel": "self", "type": config.AP_CONTENT_TYPE, "href": f"{base}/ap/actor"}]}, media_type=_JRD)
-    pk = await actors.member_by_name(name) if name else ""
-    if not pk:
+    try:
+        pk = (await (actors.member_of_path(name) if by_path else actors.member_by_name(name))) if name else ""
+        if not pk:
+            raise HTTPException(404, "Not Found")
+        name = await actors.ap_handle(pk)
+    except _RELAY_DOWN:
+        return _relay_down()
+    if not name:
         raise HTTPException(404, "Not Found")
-    name = actors.handle(pk)
     actor = convert.actor_url(base, name)
     # The SUBJECT is the handle the actor shows (preferredUsername): Mastodon checks that the two
     # agree before it displays it. Asked by npub or by readable handle, the answer is the same.
@@ -130,14 +146,40 @@ async def nodeinfo_20():
 @router.get("/ap/actor")
 async def instance_actor():
     _on()
-    return _ap(await actors.instance_actor())
+    try:
+        return _ap(await actors.instance_actor())
+    except _RELAY_DOWN:
+        return _relay_down()
+
+
+@router.get("/ap/actor/outbox")
+async def instance_outbox():
+    """The instance actor posts nothing, but it advertises an outbox, and a 404 there is logged as an
+    error by the servers that look."""
+    _on()
+    url = f"{config.base_url()}/ap/actor/outbox"
+    return _ap({**_collection(url, 0), "orderedItems": []})
 
 
 async def _member(name: str) -> str:
-    pk = await actors.member_by_name(name)
+    try:
+        pk = await actors.member_of_path(name)
+    except _RELAY_DOWN:
+        raise HTTPException(503, "Try again shortly", headers={"Retry-After": "30"})
     if not pk:
         raise HTTPException(404, "Not Found")
     return pk
+
+
+async def _url_of(pk: str) -> str:
+    """The account's PINNED actor URL (see actors.ap_handle)."""
+    try:
+        me = await actors.actor_id(pk)
+    except _RELAY_DOWN:
+        raise HTTPException(503, "Try again shortly", headers={"Retry-After": "30"})
+    if not me:
+        raise HTTPException(404, "Not Found")
+    return me
 
 
 @router.get("/ap/users/{name}")
@@ -147,10 +189,12 @@ async def actor(name: str, request: Request):
     if _wants_html(request):
         return RedirectResponse(f"{config.base_url()}/users/{actors.handle(pk)}", status_code=302)
     try:
-        return _ap(await actors.person(actors.handle(pk), pk, anonymous=True))
+        return _ap(await actors.person(pk, anonymous=True))
     except state.MintLimited:
         # A burst of first requests for accounts that are not local users: ask again shortly.
         return Response(status_code=503, headers={"Retry-After": "60"})
+    except _RELAY_DOWN:
+        return _relay_down()
 
 
 def _collection(url: str, total: int) -> dict:
@@ -160,19 +204,29 @@ def _collection(url: str, total: int) -> dict:
 
 @router.get("/ap/users/{name}/featured")
 async def featured(name: str):
-    """Pinned posts. Nostr has no pins this server tracks yet, so it is an EMPTY collection -- served
-    rather than 404, because Mastodon fetches it for every profile and logs the miss as an error."""
+    """Pinned posts: the account's NIP-51 pin list (kind 10001), as the objects themselves -- what
+    Mastodon, Akkoma and Misskey show at the top of a profile. A pin that is not a public post of this
+    account (a mirror, somebody else's, deleted) is left out."""
     _on()
     pk = await _member(name)
-    url = f"{convert.actor_url(config.base_url(), actors.handle(pk))}/featured"
-    return _ap({**_collection(url, 0), "orderedItems": []})
+    me = await _url_of(pk)
+    from app.services.activitypub import outbox as ob
+    items = []
+    for eid in await actors.featured_ids(pk):
+        ev = await ob._event(eid)
+        if not ev or ev.get("pubkey") != pk:
+            continue
+        obj, _ctx = await ob.build_object(ev, me)
+        if obj is not None:
+            items.append(obj)
+    return _ap({**_collection(f"{me}/featured", len(items)), "orderedItems": items})
 
 
 @router.get("/ap/users/{name}/followers")
 async def followers(name: str):
     _on()
     pk = await _member(name)
-    url = f"{convert.actor_url(config.base_url(), actors.handle(pk))}/followers"
+    url = f"{await _url_of(pk)}/followers"
     return _ap(_collection(url, await state.follower_count(pk)))
 
 
@@ -180,7 +234,7 @@ async def followers(name: str):
 async def following(name: str):
     _on()
     pk = await _member(name)
-    url = f"{convert.actor_url(config.base_url(), actors.handle(pk))}/following"
+    url = f"{await _url_of(pk)}/following"
     try:
         n = len(await state.following(pk, strict=False))
     except Exception:
@@ -200,7 +254,7 @@ async def outbox(name: str, page: str = "", max_id: int = 0, after: str = ""):
     server showed nothing but what had been delivered to it."""
     _on()
     pk = await _member(name)
-    url = f"{convert.actor_url(config.base_url(), actors.handle(pk))}/outbox"
+    url = f"{await _url_of(pk)}/outbox"
     from app.services.activitypub import outbox as ob
     after = after if re.fullmatch(r"[0-9a-f]{1,64}", after or "") else ""
     if page:
@@ -229,13 +283,16 @@ async def outbox(name: str, page: str = "", max_id: int = 0, after: str = ""):
         _count_runs.append(now)
         try:
             from app.services import nostr_store, settings_store
-            evs = await nostr_store._ws_query(settings_store._port(), [{"kinds": [1], "authors": [pk], "limit": 2000}])
+            evs = await nostr_store._ws_query(settings_store._port(), [{"kinds": [1, 1068], "authors": [pk], "limit": 2000}],
+                                              strict=True)
             total = sum(1 for e in evs if ob.counts_as_public(e))
         except Exception:
-            total = 0
+            # Unreadable is not "no posts": served without a count, and not remembered.
+            return _ap({"@context": convert.AS_CONTEXT, "id": url, "type": "OrderedCollection",
+                        "first": f"{url}?page=true"})
         _outbox_counts[pk] = (now, total)
-        if len(_outbox_counts) > 5000:
-            _outbox_counts.clear()
+        while len(_outbox_counts) > 5000:
+            _outbox_counts.pop(next(iter(_outbox_counts)))
     return _ap({**_collection(url, total), "first": f"{url}?page=true"})
 
 
@@ -250,26 +307,17 @@ async def note(event_id: str, request: Request):
         # Gone, not unknown: 410 + a Tombstone is how a server learns to drop its copy.
         return JSONResponse({"@context": convert.AS_CONTEXT, "id": convert.object_url(config.base_url(), event_id),
                              "type": "Tombstone"}, status_code=410, media_type=config.AP_CONTENT_TYPE)
-    name = actors.handle(ev.get("pubkey", "")) if ev else ""
-    if not ev or not name or ev.get("kind") not in (1, 1111) or ob._is_mirror(ev) or ob._protected(ev):
+    if not ev or ev.get("kind") not in ob.POST_KINDS or ob._is_mirror(ev) or ob._protected(ev):
         raise HTTPException(404, "Not Found")
-    if not await actors.exposed(ev["pubkey"]):
+    if not actors.handle(ev.get("pubkey", "")) or not await actors.exposed(ev["pubkey"]):
         raise HTTPException(404, "Not Found")
     if _wants_html(request):
         return RedirectResponse(f"{config.base_url()}/{convert._nevent_or_note(event_id)}", status_code=302)
-    base = config.base_url()
-    me = convert.actor_url(base, name)
-    parent = ob.parent_of(ev)
-    target = await ob.resolve_event(parent) if parent else {}
-    mentions = {}
-    for pk in ob._referenced_pubkeys(ev):
-        who = await ob.resolve_pubkey(pk)
-        if who:
-            mentions[pk] = who
-    links, quote = await ob._post_refs(ev)
-    doc = convert.note_from_event(ev, base=base, actor=me, followers=f"{me}/followers", mentions=mentions,
-                                  in_reply_to=target.get("uri", ""), reply_to_actor=target.get("actor", ""),
-                                  links=links, quote=quote)
+    me = await _url_of(ev["pubkey"])
+    doc, _ctx = await ob.build_object(ev, me)
+    if doc is None:
+        # A reply deep in a Nostr-only thread: it was never sent, and it is not served either.
+        raise HTTPException(404, "Not Found")
     doc["@context"] = convert.AS_CONTEXT
     return _ap(doc)
 
@@ -312,6 +360,12 @@ async def _verified(request: Request) -> tuple[dict, str]:
         params = httpsig.parse(request.headers.get("signature") or "")
     except httpsig.SignatureError:
         raise HTTPException(401, "Unsigned")
+    # A BLOCKED server is answered BEFORE verification. Its key cannot be fetched (every fetch from a
+    # blocked host is refused), so it used to fail as a 401 -- which a server retries for days --
+    # and never reached the "accepted and dropped" answer meant for it. Nothing it sent is used.
+    key_host = remote.host_of(params.get("keyId") or "")
+    if key_host and (config.host_blocked(key_host) or config.host_blocked(remote.host_of(convert.id_of(activity.get("actor"))))):
+        raise HTTPException(202, "Accepted")
     headers = {k.lower(): v for k, v in request.headers.items()}
     headers["host"] = config.domain()
     path = request.url.path + (f"?{request.url.query}" if request.url.query else "")
@@ -324,8 +378,11 @@ async def _verified(request: Request) -> tuple[dict, str]:
     for refresh in ((False, True) if may_refresh else (False,)):
         if refresh:
             _refreshed[params["keyId"]] = now
+            # Full, the OLDEST are dropped, never everybody's: clearing the table on overflow let
+            # anyone re-arm every key's refresh by naming 5000 junk keyIds.
             if len(_refreshed) > 5000:
-                _refreshed.clear()
+                for k in sorted(_refreshed, key=_refreshed.get)[:1000]:
+                    _refreshed.pop(k, None)
         try:
             owner, pem = await remote.public_key(params["keyId"], refresh=refresh)
             httpsig.verify(request.method, path, headers, body, pem, params)
@@ -333,13 +390,15 @@ async def _verified(request: Request) -> tuple[dict, str]:
         except (remote.FetchError, httpsig.SignatureError) as e:
             last = e
     # An account that has been DELETED can no longer be fetched, so its own Delete can never
-    # verify; answering 401 makes its server retry that forever. It is gone either way.
-    if activity.get("type") == "Delete" and isinstance(last, remote.FetchError):
-        actor = convert.id_of(activity.get("actor"))
-        if actor and convert.id_of(activity.get("object")) == actor:
-            t = asyncio.create_task(inbox.confirm_gone(actor))
-            _bg.add(t)
-            t.add_done_callback(_bg.discard)
+    # verify; answering 401 makes its server retry that forever. It is gone either way. ONLY an
+    # account deleting ITSELF: a post's Delete whose key fetch merely failed (a 429, a timeout) must
+    # be retried by its sender, or the post it deletes stays here for good.
+    actor = convert.id_of(activity.get("actor"))
+    if activity.get("type") == "Delete" and isinstance(last, remote.FetchError) \
+            and actor and convert.id_of(activity.get("object")) == actor:
+        t = asyncio.create_task(inbox.confirm_gone(actor))
+        _bg.add(t)
+        t.add_done_callback(_bg.discard)
         raise HTTPException(202, "Accepted")
     # The reason is logged, never answered: the error text of a fetch we made on the sender's say-so
     # ("HTTP 404 from …", a connect error) would turn this endpoint into a port scanner.
@@ -377,7 +436,10 @@ def _client_ip(request: Request) -> str:
     """Who is actually connected. Behind the reverse proxy the peer is the proxy itself, so the
     address it forwarded is used then -- and only then (a direct client cannot pick its own)."""
     peer = request.client.host if request.client else ""
-    fwd = (request.headers.get("x-real-ip") or request.headers.get("x-forwarded-for") or "").split(",")[0].strip()
+    # X-Real-IP is set by our proxy. Of X-Forwarded-For only the LAST entry is: the proxy appends the
+    # address it saw, while everything before it is whatever the client chose to send.
+    fwd = (request.headers.get("x-real-ip") or "").strip() or \
+        (request.headers.get("x-forwarded-for") or "").split(",")[-1].strip()
     try:
         import ipaddress
         addr = ipaddress.ip_address(peer)
@@ -398,6 +460,8 @@ async def _receive(request: Request) -> Response:
         return Response(status_code=429, headers={"Retry-After": "60"})
     try:
         activity, signer = await _verified(request)
+    except _RELAY_DOWN:
+        return _relay_down()
     except HTTPException as e:
         if e.status_code == 202:
             _rate_ok(ip)                       # unverified, and it may cost one fetch (confirm_gone)
@@ -415,6 +479,12 @@ async def _receive(request: Request) -> Response:
         # the forwarder retry for days; it is taken as a pointer and fetched from its own server.
         if activity.get("type") in ("Create", "Update") and convert.id_of(activity.get("object")):
             if not inbox.schedule({"type": inbox.FORWARDED, "object": convert.id_of(activity.get("object"))}, signer):
+                return Response(status_code=503, headers={"Retry-After": "120"})
+            return Response(status_code=202)
+        # A forwarded DELETE (Mastodon forwards a reply's deletion too): confirmed with the post's own
+        # server. A 401 here was retried for days, exactly like the forwarded Create used to be.
+        if activity.get("type") == "Delete" and convert.id_of(activity.get("object")):
+            if not inbox.schedule({"type": inbox.FORWARDED_DELETE, "object": convert.id_of(activity.get("object"))}, signer):
                 return Response(status_code=503, headers={"Retry-After": "120"})
             return Response(status_code=202)
         raise HTTPException(401, "Signed by somebody other than the actor")
@@ -447,6 +517,10 @@ async def lookup(acct: str, user=Depends(get_current_user)):
         doc = await remote.actor(uri)
     except remote.FetchError as e:
         raise HTTPException(404, str(e))
+    # A blocked account (a `user@host` line, or its puppet blocked on the relay) is not looked up:
+    # this would mint it a puppet and hand it to the member to follow.
+    if await inbox.blocked_actor(convert.id_of(doc)):
+        raise HTTPException(404, "That account is blocked on this server")
     p = await inbox._puppet(doc)
     if not p:
         raise HTTPException(404, "That account could not be mirrored")

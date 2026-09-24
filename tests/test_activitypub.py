@@ -76,6 +76,15 @@ def world(monkeypatch):
     outbox._gone_cache.update(at=0.0, set=frozenset())
     inbox._pending_by_host.clear()
     inbox._new_followers.clear()
+    # Process-wide caches of PERMANENT facts (a pinned id, a claimed handle): right for a process,
+    # wrong across tests that each start a fresh relay.
+    actors._pin_cache.clear()
+    actors._pin_owner_cache.clear()
+    actors._nick_owner_cache.clear()
+    outbox._done.clear()
+    outbox._retries_loaded = False
+    state._moved_cache.update(at=0.0, map={})
+    inbox._locks.clear()
 
     docs = {}
 
@@ -942,7 +951,12 @@ def test_puppets_say_where_they_receive_dms_and_the_relay_takes_it(world):
     assert lists and ["relay", f"wss://{DOMAIN}/relay"] in lists[0]["tags"]
     from pathlib import Path
     src = (Path(__file__).resolve().parents[1] / "app/services/nostr_relay/server.py").read_text()
-    assert "elif _is_puppet and kind in (0, 1, 3, 5, 6, 7, 10050):" in src
+    import re as _re
+    m = _re.search(r"elif _is_puppet and kind in \(([\d, ]+)\):", src)
+    assert m, "the relay's puppet branch is gone"
+    kinds = {int(k) for k in m.group(1).replace(" ", "").split(",") if k}
+    # a DM-relay list, a fediverse poll, a vote on a member's poll, and a Flag as a NIP-56 report
+    assert {0, 1, 5, 6, 7, 10050, 1068, 1018, 1984} <= kinds
 
 
 
@@ -1142,7 +1156,7 @@ def _public_server(monkeypatch, *, following, hidden=False, count=None):
             return httpx.Response(200, json=following)
         return httpx.Response(404)
     real_client = httpx.AsyncClient
-    monkeypatch.setattr(importer.httpx, "AsyncClient",
+    monkeypatch.setattr(httpx, "AsyncClient",
                         lambda **kw: real_client(**{**kw, "transport": httpx.MockTransport(handler)}))
 
     async def ok(url):
@@ -1658,7 +1672,10 @@ def test_every_fetch_is_guarded_on_every_hop(world, monkeypatch):
     for host in ("b.example", "blocked.example", "inside.example", DOMAIN, "127.0.0.1", "http://a.", ":2375"):
         assert not any(host in u for u in asked), (host, asked)
     n = len(asked)
-    for inbox_url in ("https://blocked.example/inbox", "https://inside.example/inbox", "http://a.example/inbox"):
+    # A BLOCKED inbox is refused for good (403: retrying cannot change it); an unreachable one is
+    # "no answer" (0), which the queue retries.
+    assert run(REAL_DELIVER("https://blocked.example/inbox", {"type": "Create"}, key_id="k", private_pem=KEY[0])) == 403
+    for inbox_url in ("https://inside.example/inbox", "http://a.example/inbox"):
         assert run(REAL_DELIVER(inbox_url, {"type": "Create"}, key_id="k", private_pem=KEY[0])) == 0
     assert len(asked) == n, "a delivery reached a guarded address"
 
@@ -2205,3 +2222,545 @@ def test_counting_outboxes_has_a_node_wide_budget(client, world, monkeypatch):
     second = client.get("/ap/users/bob/outbox", headers=h)
     assert second.status_code == 200 and "totalItems" not in second.json() and second.json()["first"]
     assert len(reads) == 1
+
+
+# ============================================================================ 20. the third review + polls and the standard features
+#
+# Every test below was checked to FAIL with its rule removed (see the commit message for the list).
+
+def _relay_filter(world, monkeypatch):
+    """`nostr_store._ws_query` answered from the world relay, honouring the filter fields the shipped
+    queries use (ids, kinds, authors, #e, since, until, limit)."""
+    from app.services import nostr_store
+
+    def match(e, f):
+        if f.get("ids") and e["id"] not in f["ids"]:
+            return False
+        if f.get("kinds") and e["kind"] not in f["kinds"]:
+            return False
+        if f.get("authors") and e["pubkey"] not in f["authors"]:
+            return False
+        if f.get("#e") and not any(len(t) > 1 and t[0] == "e" and t[1] in f["#e"] for t in e["tags"]):
+            return False
+        if "since" in f and e["created_at"] < f["since"]:
+            return False
+        if "until" in f and e["created_at"] > f["until"]:
+            return False
+        return True
+
+    async def ws_query(port, filters, strict=False, **kw):
+        out = [e for e in world["relay"].values() if any(match(e, f) for f in filters)]
+        out.sort(key=lambda e: -e["created_at"])
+        return out[:max(f.get("limit", 500) for f in filters)]
+    monkeypatch.setattr(nostr_store, "_ws_query", ws_query)
+
+    async def query_one(port, filt, timeout=8.0):
+        hit = await ws_query(port, [filt])
+        return True, (hit[0] if hit else None)
+    monkeypatch.setattr(ident, "query_one", query_one)
+
+
+# ---- the inbox's answers
+
+def test_a_blocked_server_is_answered_202_before_its_key_is_fetched(client, monkeypatch):
+    """Its key CANNOT be fetched (every fetch from a blocked host is refused), so verifying first made
+    every delivery from it a 401 -- retried for days -- and the 'accepted and dropped' 202 meant for
+    it was unreachable. (The older test stubbed the key fetch to succeed, which is why it passed.)"""
+    fetched = []
+
+    async def pk(key_id, refresh=False):
+        fetched.append(key_id)
+        raise remote.FetchError("blocked.example is blocked or is this node")
+    monkeypatch.setattr(remote, "public_key", pk)
+    act = _create()
+    act["actor"] = "https://blocked.example/users/x"
+    assert _post_signed(client, act, key_id="https://blocked.example/users/x#main-key").status_code == 202
+    assert fetched == [] and client.scheduled == []
+
+
+def test_a_post_delete_whose_key_fetch_failed_is_retried_not_swallowed(client, monkeypatch):
+    """Only an account deleting ITSELF may be accepted unverified (its key is gone with it). A post's
+    Delete answered 202 on a failed fetch (a 429, a timeout) was never re-sent, and the post stayed."""
+    async def pk(key_id, refresh=False):
+        raise remote.FetchError("HTTP 429 from mastodon.example")
+    monkeypatch.setattr(remote, "public_key", pk)
+    delete_post = {"id": REMOTE + "#delete/1", "type": "Delete", "actor": REMOTE,
+                   "object": "https://mastodon.example/notes/1"}
+    assert _post_signed(client, delete_post).status_code == 401
+    delete_self = {"id": REMOTE + "#delete/2", "type": "Delete", "actor": REMOTE, "object": REMOTE}
+    assert _post_signed(client, delete_self).status_code == 202
+
+
+def test_a_forwarded_delete_is_accepted_and_confirmed_with_the_posts_server(client, world, monkeypatch):
+    act = {"id": "https://mastodon.example/users/mallory#delete/9", "type": "Delete",
+           "actor": "https://other.example/users/dave", "object": "https://other.example/notes/5"}
+    assert _post_signed(client, act).status_code == 202          # signed by carol's server, for dave
+    assert client.scheduled == [({"type": inbox.FORWARDED_DELETE, "object": "https://other.example/notes/5"}, REMOTE)]
+
+
+def test_forwarded_delete_removes_the_copy_only_when_its_own_server_says_gone(world, monkeypatch):
+    world["docs"][f"pcai:ap:following:{ALICE}:x"] = {"actor": REMOTE, "inbox": "i", "state": "accepted"}
+    assert run(inbox.process(_create(), REMOTE)) == "stored"
+    deleted = []
+
+    async def delete_note(port, actor, eid, broadcast=False):
+        deleted.append((actor, eid))
+        return True
+    monkeypatch.setattr(ident, "delete_note", delete_note)
+
+    async def still_there(url, signed=True):
+        return {"id": url, "type": "Note"}
+    monkeypatch.setattr(remote, "fetch_json", still_there)
+    assert run(inbox.process({"type": inbox.FORWARDED_DELETE, "object": "https://mastodon.example/notes/1"}, REMOTE)) \
+        == "ignored: still there on its own server"
+
+    async def gone(url, signed=True):
+        raise remote.FetchError("HTTP 410 from mastodon.example")
+    monkeypatch.setattr(remote, "fetch_json", gone)
+    assert run(inbox.process({"type": inbox.FORWARDED_DELETE, "object": "https://mastodon.example/notes/1"}, REMOTE)) \
+        == "deleted (confirmed with its server)"
+    assert deleted and deleted[0][0] == REMOTE
+
+
+def test_an_unreachable_relay_is_a_503_never_a_500(client, world, monkeypatch):
+    """The ten seconds after a restart, before the relay accepts: strict reads raise, and a 500 on the
+    actor or the inbox tells the asking server something is broken rather than 'ask again'."""
+    async def refused(*a, **k):
+        raise ConnectionRefusedError(111, "Connection refused")
+    from app.services import nostr_store
+    monkeypatch.setattr(nostr_store, "get_doc", refused)
+    state._key_cache.clear()
+    r = client.get("/ap/users/alice", headers={"Accept": "application/activity+json"})
+    assert r.status_code == 503 and r.headers.get("retry-after")
+    assert client.get(f"/.well-known/webfinger?resource=acct:alice@{DOMAIN}").status_code == 503
+
+
+# ---- an actor's id never moves
+
+def test_an_actor_id_is_pinned_when_the_account_gets_a_name_later(client, world):
+    """A Nostr user followed as their npub who later claims a name here used to become a NEW account
+    everywhere: deliveries signed as /ap/users/<name>, which nobody followed."""
+    pk, npub = _nostr_user(world)
+    doc = client.get(f"/ap/users/{npub}", headers={"Accept": "application/activity+json"}).json()
+    assert doc["id"] == f"{BASE}/ap/users/{npub}"
+    world["settings"]["nostr_relay_nip05_names"] += f"\ndana {pk}"
+    actors._names_cache["raw"] = None
+    assert run(actors.actor_id(pk)) == f"{BASE}/ap/users/{npub}"
+    actors._pin_cache.clear()                                   # a fresh process reads the pin back
+    assert run(actors.actor_id(pk)) == f"{BASE}/ap/users/{npub}"
+    again = client.get("/ap/users/dana", headers={"Accept": "application/activity+json"}).json()
+    assert again["id"] == f"{BASE}/ap/users/{npub}" and again["preferredUsername"] == "dana"
+    wf = client.get(f"/.well-known/webfinger?resource=acct:dana@{DOMAIN}").json()
+    assert wf["links"][0]["href"] == f"{BASE}/ap/users/{npub}"
+
+
+def test_a_name_given_to_somebody_else_later_never_takes_the_first_ones_address(world):
+    assert run(actors.actor_id(ALICE)) == f"{BASE}/ap/users/alice"
+    other = "d4" * 32
+    world["settings"]["nostr_relay_nip05_names"] = f"alice {other}\nbob {BOB}"
+    actors._names_cache["raw"] = None
+    from app.services.nostr import nostr_service
+    assert run(actors.actor_id(other)) == f"{BASE}/ap/users/{nostr_service.npub_of(other)}"
+    assert run(actors.member_of_path("alice")) == ""                   # alice is no longer a member...
+    world["settings"]["nostr_relay_nip05_names"] = f"alice {other}\nbob {BOB}\nalice2 {ALICE}"
+    actors._names_cache["raw"] = None
+    assert run(actors.member_of_path("alice")) == ALICE                # ...and the address stays hers
+
+
+# ---- the outbox
+
+def test_a_quote_marked_mention_is_not_a_parent(world):
+    _with_follower(world)
+    ev = member_post("look at this nostr:note1xyz", tags=[["e", "9" * 64, "", "mention"]])
+    assert outbox.parent_of(ev) == ""
+    jobs = run(outbox.plan(ev, ALICE))
+    assert jobs and "inReplyTo" not in jobs[0][1]["object"]
+
+
+def test_an_unlike_names_what_was_liked(world, monkeypatch):
+    """Mastodon and Misskey find the favourite to remove through the Undo's inner `object`; sent as ""
+    the unlike reached them and removed nothing."""
+    world["actors"][REMOTE] = carol_actor()
+    remote_note = _mirror(world)
+    like = member_post("+", kind=7, tags=[["e", remote_note], ["p", "x" * 64]])
+    jobs = run(outbox.plan(like, ALICE))
+    assert jobs and jobs[0][1]["type"] == "Like"
+    unlike = member_post("", kind=5, tags=[["e", like["id"]]])
+    undo = run(outbox.plan(unlike, ALICE))
+    assert undo and undo[0][1]["type"] == "Undo"
+    assert undo[0][1]["object"]["object"] == "https://mastodon.example/notes/77"
+
+
+def _mirror(world, uri="https://mastodon.example/notes/77"):
+    """A fediverse note stored here as carol's puppet: its Nostr event id."""
+    s = world["Session"]()
+    p = run(ident.ensure_puppet(s, 1, convert.account_from_actor(carol_actor()), "mastodon.example"))
+    eid = "7" * 64
+    world["relay"][eid] = {"id": eid, "pubkey": p["pubkey_hex"], "kind": 1, "created_at": 1_700_000_000,
+                           "tags": [["proxy", uri, "activitypub"]], "content": "remote words"}
+    inbox._record(uri, eid, p["pubkey_hex"], "carol@mastodon.example")
+    return eid
+
+
+def test_a_member_cannot_send_a_delete_of_another_members_post(world):
+    """The relay refuses such a kind-5 for its own copy, but the outbox would still have sent a Delete
+    of it signed by the deleter -- and Pleroma/Akkoma honour a Delete from the object's own domain."""
+    _with_follower(world)
+    world["docs"][f"pcai:ap:follower:{BOB}:1"] = {"actor": REMOTE, "inbox": "https://mastodon.example/inbox"}
+    post = member_post("alice's words")
+    world["relay"][post["id"]] = post
+    assert run(outbox.plan(member_post("", kind=5, tags=[["e", post["id"]]], author=BOB), BOB)) == []
+    own = run(outbox.plan(member_post("", kind=5, tags=[["e", post["id"]]]), ALICE))
+    assert own and own[0][1]["type"] == "Delete"
+    # The post already gone from the relay (its author deleted it): our record of who SENT it decides.
+    reply = member_post("alice's reply to the fediverse")
+    world["docs"][outbox._SENT + reply["id"]] = {"inbox": "https://m.example/inbox",
+                                                 "inboxes": ["https://m.example/inbox"], "kind": 1, "by": ALICE}
+    assert run(outbox.plan(member_post("", kind=5, tags=[["e", reply["id"]]], author=BOB), BOB)) == []
+
+
+def test_a_deletion_in_everyone_mode_goes_out_by_our_record_of_sending(world, monkeypatch):
+    """The relay removes the author's own event as it stores the kind-5, so the filter that looked the
+    deleted event up found nothing and the Delete never left: the reply stayed on the fediverse."""
+    pk, _npub = _nostr_user(world)
+    world["docs"][outbox._SENT + "e" * 64] = {"inbox": "https://mastodon.example/inbox",
+                                              "inboxes": ["https://mastodon.example/inbox"], "kind": 1, "by": pk}
+    _relay_filter(world, monkeypatch)
+    page = run(outbox._everyone_filter())
+    deletion = member_post("", kind=5, tags=[["e", "e" * 64]], author=pk)
+    world["relay"][deletion["id"]] = deletion
+    assert deletion["id"] in run(page([deletion]))
+
+
+def test_an_event_that_arrives_late_is_still_sent_and_only_once(world, monkeypatch):
+    """The cursor is a created_at -- the author's say-so. One signed offline and replayed later is
+    older than the cursor by the time it is here, and was skipped for good."""
+    import time as _t
+    _with_follower(world)
+    _relay_filter(world, monkeypatch)
+    now = int(_t.time())
+    world["docs"]["pcai:ap:cursor"] = {"since": now - 10}
+    late = member_post("written offline", created=now - 3600)
+    world["relay"][late["id"]] = late
+    run(outbox.tick())
+    assert [a for a in world["sent"] if a["activity"]["type"] == "Create"], "the late post was never sent"
+    n = len(world["sent"])
+    outbox._seen.clear()                                        # a worker restart
+    outbox._done.clear()
+    run(outbox.tick())
+    assert len(world["sent"]) == n, "a restart sent it again"
+
+
+def test_a_future_dated_event_does_not_move_the_cursor_past_the_clock(world, monkeypatch):
+    import time as _t
+    _with_follower(world)
+    _relay_filter(world, monkeypatch)
+    now = int(_t.time())
+    world["docs"]["pcai:ap:cursor"] = {"since": now - 10}
+    ahead = member_post("from a fast clock", created=now + 900)
+    world["relay"][ahead["id"]] = ahead
+    run(outbox.tick())
+    assert world["docs"]["pcai:ap:cursor"]["since"] <= int(_t.time())
+
+
+def test_an_outage_never_unfollows_somebody_still_in_the_contact_list(world, monkeypatch):
+    """A puppet from the old bridge is keyed on /@carol while the follow is recorded as /users/carol;
+    with carol's server briefly down, an unrelated contact-list edit unfollowed her."""
+    s = world["Session"]()
+    p = run(ident.ensure_puppet(s, 1, {"uri": "https://mastodon.example/@carol", "acct": "carol@mastodon.example",
+                                       "display_name": "Carol"}, "mastodon.example"))
+    world["docs"][f"pcai:ap:following:{ALICE}:c"] = {"actor": REMOTE, "inbox": "https://mastodon.example/inbox",
+                                                    "state": "accepted"}
+
+    async def down(uri, refresh=False, alias=False):
+        raise remote.FetchError("mastodon.example took too long to answer")
+    monkeypatch.setattr(remote, "actor", down)
+    k3 = member_post("", kind=3, tags=[["p", p["pubkey_hex"]]])
+    assert run(outbox._follows(k3, ALICE, f"{BASE}/ap/users/alice")) == []
+    assert not world["docs"][f"pcai:ap:following:{ALICE}:c"].get("gone")
+
+
+def test_a_retry_survives_a_worker_restart(world, monkeypatch):
+    calls = []
+
+    async def deliver(inbox_url, activity, *, key_id, private_pem):
+        calls.append(inbox_url)
+        return 503 if len(calls) == 1 else 202
+    monkeypatch.setattr(remote, "deliver", deliver)
+    run(outbox._send("https://mastodon.example/inbox", {"id": "x", "type": "Create"}, ALICE))
+    assert [k for k, v in world["docs"].items() if k.startswith("pcai:ap:retry:") and not v.get("done")]
+    outbox._retries.clear()                                     # the worker restarts
+    outbox._retries_loaded = False
+    run(outbox._load_retries())
+    outbox._retries[:] = [(0.0,) + r[1:] for r in outbox._retries]   # due now
+    run(outbox._flush_retries())
+    assert calls == ["https://mastodon.example/inbox"] * 2
+    assert not [k for k, v in world["docs"].items() if k.startswith("pcai:ap:retry:") and not v.get("done")]
+
+
+# ---- the inbox
+
+def test_an_edit_that_fails_keeps_the_old_copy_deletable(world, monkeypatch):
+    world["docs"][f"pcai:ap:following:{ALICE}:x"] = {"actor": REMOTE, "inbox": "i", "state": "accepted"}
+    assert run(inbox.process(_create(), REMOTE)) == "stored"
+
+    async def boom(*a, **k):
+        raise RuntimeError("timed out")
+    monkeypatch.setattr(inbox, "store_note", boom)
+    edited = dict(_create()["object"], content="<p>edited</p>")
+    with pytest.raises(RuntimeError):
+        run(inbox._edit(edited, REMOTE))
+    assert inbox._delivered("https://mastodon.example/notes/1"), "the old copy lost its mapping"
+
+
+def test_an_account_marked_gone_that_follows_again_is_delivered_to(world):
+    run(state.mark_gone(REMOTE))
+    outbox._gone_cache.update(at=0.0, set=frozenset())
+    assert REMOTE in run(outbox._gone())
+    follow = {"id": REMOTE + "#follows/1", "type": "Follow", "actor": REMOTE, "object": f"{BASE}/ap/users/alice"}
+    assert run(inbox.process(follow, REMOTE)).startswith("follower added")
+    assert REMOTE not in run(outbox._gone())
+    _with_follower(world)
+    assert run(outbox.plan(member_post("back again"), ALICE))
+
+
+def test_an_undo_naming_only_the_follow_id_unfollows(world):
+    follow = {"id": REMOTE + "#follows/7", "type": "Follow", "actor": REMOTE, "object": f"{BASE}/ap/users/alice"}
+    run(inbox.process(follow, REMOTE))
+    assert run(state.is_follower(ALICE, REMOTE))
+    other = "https://mastodon.example/users/mallory"
+    assert run(inbox._undo({"id": REMOTE + "#follows/7"}, other)) != "follower removed"
+    assert run(inbox.process({"type": "Undo", "id": REMOTE + "#undo/7", "actor": REMOTE,
+                              "object": REMOTE + "#follows/7"}, REMOTE)) == "follower removed"
+    assert not run(state.is_follower(ALICE, REMOTE))
+
+
+def test_a_move_moves_the_follow_only_when_the_new_account_confirms_it(world):
+    new = "https://new.example/users/carol"
+    run(state.set_following(ALICE, REMOTE, "i", "accepted"))
+    world["actors"][new] = {"id": new, "type": "Person", "preferredUsername": "carol", "inbox": new + "/inbox"}
+    move = {"id": REMOTE + "#move", "type": "Move", "actor": REMOTE, "object": REMOTE, "target": new}
+    assert run(inbox.process(move, REMOTE)) == "ignored: the new account does not confirm the move"
+    world["actors"][new]["alsoKnownAs"] = [REMOTE]
+    assert run(inbox.process(move, REMOTE)).startswith("moved (1")
+    following = run(state.following(ALICE))
+    assert new in following and REMOTE not in following
+    assert any(a["activity"]["type"] == "Follow" and a["activity"]["object"] == new for a in world["sent"])
+    assert run(state.moves()) == {REMOTE: new}
+
+
+def test_a_report_about_a_member_becomes_a_nip56_report(world):
+    post = member_post("reported words")
+    world["relay"][post["id"]] = post
+    flag = {"id": "https://mastodon.example/flags/1", "type": "Flag", "actor": REMOTE, "content": "spam",
+            "object": [f"{BASE}/ap/users/alice", convert.object_url(BASE, post["id"])]}
+    assert run(inbox.process(flag, REMOTE)) == "report stored"
+    rep = [e for e in world["relay"].values() if e["kind"] == 1984]
+    assert rep and ["p", ALICE, "other"] in rep[0]["tags"] and ["e", post["id"], "other"] in rep[0]["tags"]
+    assert run(inbox.process(dict(flag, object=["https://elsewhere.example/users/x"]), REMOTE)) \
+        == "ignored: a report about nobody here"
+
+
+def test_a_malformed_emoji_or_icon_does_not_cost_the_post(world):
+    """`icon` may be a string or a list in ActivityStreams; `.get("url")` on it raised and dropped the
+    note (and made every Like and Announce from that actor fail)."""
+    world["docs"][f"pcai:ap:following:{ALICE}:x"] = {"actor": REMOTE, "inbox": "i", "state": "accepted"}
+    world["actors"][REMOTE]["icon"] = ["https://mastodon.example/c.png"]
+    world["actors"][REMOTE]["tag"] = [{"type": "Emoji", "name": ":a:", "icon": "https://mastodon.example/a.png"}]
+    act = _create(content="<p>hi :a: :b:</p>")
+    act["object"]["tag"] = [{"type": "Emoji", "name": ":a:", "icon": ["https://mastodon.example/a.png"]},
+                            {"type": "Emoji", "name": ":b:", "icon": {"url": {"href": "https://mastodon.example/b.png"}}}]
+    assert run(inbox.process(act, REMOTE)) == "stored"
+    ev = [e for e in world["relay"].values() if e["kind"] == 1][-1]
+    assert ["emoji", "a", "https://mastodon.example/a.png"] in ev["tags"]
+    assert ["emoji", "b", "https://mastodon.example/b.png"] in ev["tags"]
+
+
+# ---- polls
+
+def _member_poll(world, multi=False, end=0):
+    tags = [["option", "opt1", "Red"], ["option", "opt2", "Blue"],
+            ["polltype", "multiplechoice" if multi else "singlechoice"]]
+    if end:
+        tags.append(["endsAt", str(end)])
+    poll = member_post("Which colour?", kind=1068, tags=tags)
+    world["relay"][poll["id"]] = poll
+    return poll
+
+
+def _vote_note(poll, name, n=1, who=REMOTE):
+    return {"id": f"{who}#votes/{n}", "type": "Note", "attributedTo": who, "name": name,
+            "inReplyTo": convert.object_url(BASE, poll["id"]), "to": [f"{BASE}/ap/users/alice"]}
+
+
+def test_a_member_poll_goes_out_as_a_question(world):
+    _with_follower(world)
+    poll = _member_poll(world, end=1_900_000_000)
+    jobs = run(outbox.plan(poll, ALICE))
+    q = jobs[0][1]["object"]
+    assert q["type"] == "Question" and [o["name"] for o in q["oneOf"]] == ["Red", "Blue"]
+    assert q["endTime"] == convert.iso(1_900_000_000) and q["votersCount"] == 0
+    multi = _member_poll(world, multi=True)
+    assert "anyOf" in run(outbox.plan(multi, ALICE))[0][1]["object"]
+
+
+def test_a_fediverse_vote_is_counted_under_a_key_that_is_not_the_voters(world, monkeypatch):
+    _relay_filter(world, monkeypatch)
+    poll = _member_poll(world)
+    create = {"type": "Create", "id": REMOTE + "#votes/1/activity", "actor": REMOTE, "object": _vote_note(poll, "Blue")}
+    assert run(inbox.process(create, REMOTE)) == "vote stored"
+    votes = [e for e in world["relay"].values() if e["kind"] == 1018]
+    assert len(votes) == 1 and ["response", "opt2"] in votes[0]["tags"] and ["e", poll["id"]] in votes[0]["tags"]
+    carol_puppet = ident.puppet_for(convert.account_from_actor(carol_actor()))["pubkey_hex"]
+    assert votes[0]["pubkey"] != carol_puppet, "a fediverse vote is anonymous there, and must stay so here"
+    assert run(inbox.process(dict(create, object=_vote_note(poll, "Red", 2)), REMOTE)) == "ignored: already voted"
+    assert run(inbox.process(dict(create, object=_vote_note(poll, "Green", 3)), REMOTE)) == "ignored: no such option"
+
+
+def test_a_multiple_choice_vote_is_one_vote_with_every_option(world, monkeypatch):
+    _relay_filter(world, monkeypatch)
+    poll = _member_poll(world, multi=True)
+    for n, name in enumerate(("Red", "Blue"), 1):
+        create = {"type": "Create", "id": f"{REMOTE}#votes/{n}/activity", "actor": REMOTE,
+                  "object": _vote_note(poll, name, n)}
+        assert run(inbox.process(create, REMOTE)) == "vote stored"
+    counts, voters = outbox.count_votes(poll, [e for e in world["relay"].values() if e["kind"] == 1018])
+    assert counts == {"opt1": 1, "opt2": 1} and voters == 1
+
+
+def test_a_polls_counts_go_out_when_they_change(world, monkeypatch):
+    _relay_filter(world, monkeypatch)
+    _with_follower(world)
+    import time as _t
+    poll = _member_poll(world)
+    poll["created_at"] = int(_t.time()) - 60
+    world["relay"].pop(next(k for k, v in world["relay"].items() if v is poll))
+    world["relay"][poll["id"]] = poll
+    world["docs"]["pcai:ap:pollvoters:" + poll["id"]] = {"inboxes": ["https://voter.example/inbox"]}
+    assert run(outbox.poll_updates([ALICE])) == 0                   # nothing to say yet
+    vote = member_post("", kind=1018, tags=[["e", poll["id"]], ["response", "opt1"]], author=BOB)
+    world["relay"][vote["id"]] = vote
+    assert run(outbox.poll_updates([ALICE])) == 1
+    upd = [a for a in world["sent"] if a["activity"]["type"] == "Update"]
+    assert {a["inbox"] for a in upd} == {"https://mastodon.example/inbox", "https://voter.example/inbox"}
+    q = upd[0]["activity"]["object"]
+    assert q["type"] == "Question" and q["oneOf"][0]["replies"]["totalItems"] == 1 and q["votersCount"] == 1
+    assert run(outbox.poll_updates([ALICE])) == 0                   # unchanged: nothing re-sent
+
+
+def test_a_fediverse_poll_arrives_as_a_poll_nostr_users_can_vote_in(world, monkeypatch):
+    _relay_filter(world, monkeypatch)
+    world["docs"][f"pcai:ap:following:{ALICE}:x"] = {"actor": REMOTE, "inbox": "i", "state": "accepted"}
+    act = _create(note_id="https://mastodon.example/polls/1", content="<p>Tea or coffee?</p>")
+    act["object"].update(type="Question", endTime="2030-01-01T00:00:00Z",
+                         oneOf=[{"type": "Note", "name": "Tea"}, {"type": "Note", "name": "Coffee"}])
+    assert run(inbox.process(act, REMOTE)) == "stored"
+    poll = [e for e in world["relay"].values() if e["kind"] == 1068][0]
+    assert ["option", "opt1", "Tea"] in poll["tags"] and ["polltype", "singlechoice"] in poll["tags"]
+    assert "Coffee" not in poll["content"]
+    # Mastodon sends an Update of the Question on every vote: counts only, so the poll (and every
+    # Nostr vote on it) is kept.
+    upd = dict(act["object"], oneOf=[{"type": "Note", "name": "Tea", "replies": {"totalItems": 5}},
+                                     {"type": "Note", "name": "Coffee"}])
+    assert run(inbox._edit(upd, REMOTE)) == "ignored: poll counts only"
+    # A member's vote goes back to the poll's server as the standard answer.
+    vote = member_post("", kind=1018, tags=[["e", poll["id"]], ["response", "opt2"]])
+    jobs = run(outbox.plan(vote, ALICE))
+    assert jobs and jobs[0][0] == "https://mastodon.example/inbox"
+    ans = jobs[0][1]["object"]
+    assert ans["name"] == "Coffee" and ans["inReplyTo"] == "https://mastodon.example/polls/1" and ans["to"] == [REMOTE]
+
+
+def test_pinned_posts_are_the_featured_collection(client, world, monkeypatch):
+    _relay_filter(world, monkeypatch)
+    post = member_post("pinned words")
+    world["relay"][post["id"]] = post
+    pins = member_post("", kind=10001, tags=[["e", post["id"]], ["e", "9" * 64]])
+    world["relay"][pins["id"]] = pins
+    doc = client.get("/ap/users/alice/featured", headers={"Accept": "application/activity+json"}).json()
+    assert doc["totalItems"] == 1 and doc["orderedItems"][0]["id"] == convert.object_url(BASE, post["id"])
+    assert client.get("/ap/actor/outbox").status_code == 200
+
+
+# ---- the edges
+
+def test_the_fetch_guard_refuses_cgnat_addresses(monkeypatch):
+    import socket
+    from app.services import rss_service
+    monkeypatch.setattr(socket, "getaddrinfo", lambda *a, **k: [(2, 1, 6, "", ("100.100.1.1", 443))])
+    assert rss_service.is_safe_host("https://sneaky.example/") is False
+
+
+def test_a_blocklist_reads_stars_punctuation_and_usernames_with_at_signs():
+    from app.services import fedi_blocklist
+    hosts, accounts = fedi_blocklist.parse("*bad.example\nworse.example;\n\"quoted.example\"\nbob@evil.com")
+    assert {"bad.example", "worse.example", "quoted.example"} <= hosts
+    assert fedi_blocklist.account_blocked("bob@evil.com", accounts)
+    # the host is after the LAST @, so a crafted username cannot move the account to another host
+    assert fedi_blocklist.account_blocked("bob@x@evil.com", frozenset(), frozenset({"evil.com"}))
+    assert convert.username_of({"preferredUsername": "bob@x"}) == ""
+    assert inbox.acct_of_actor({"id": "https://evil.com/users/1", "preferredUsername": "bob@x"}) == ""
+
+
+def test_a_lemmy_person_and_community_of_the_same_name_get_different_nip05_names():
+    person = ident.puppet_for({"uri": "https://lemmy.example/u/foo", "acct": "foo@lemmy.example"})
+    group = ident.puppet_for({"uri": "https://lemmy.example/c/foo", "acct": "foo@lemmy.example"})
+    assert person["pubkey_hex"] != group["pubkey_hex"] and person["nip05_name"] != group["nip05_name"]
+
+
+def test_a_registry_name_that_is_somebody_elses_handle_is_not_shown_as_ones_own(world):
+    other, dan = "e5" * 32, "f6" * 32
+    world["docs"]["pcai:ap:nickof:dan_2024"] = {"pk": other}
+    world["settings"]["nostr_relay_nip05_names"] += f"\ndan_2024 {dan}"
+    actors._names_cache["raw"] = None
+    assert run(actors.readable_handle(dan)) not in ("dan_2024", "")
+
+
+def test_a_lookup_of_a_blocked_account_mints_nothing(client, world):
+    world["settings"]["fedi_bridge_blocked_domains"] = "carol@mastodon.example"
+    from app.routers import activitypub as routes
+    from app.auth import get_current_user
+    client.app.dependency_overrides[get_current_user] = lambda: type("U", (), {"id": 1})()
+    r = client.get(f"/api/activitypub/lookup?acct={REMOTE}")
+    assert r.status_code == 404
+    s = world["Session"]()
+    assert s.query(FediPuppet).count() == 0
+
+
+def test_indexing_consent_is_only_asserted_for_local_users(client, world):
+    pk, npub = _nostr_user(world)
+    doc = client.get(f"/ap/users/{npub}", headers={"Accept": "application/activity+json"}).json()
+    assert doc["indexable"] is False and doc["discoverable"] is False
+    alice = client.get("/ap/users/alice", headers={"Accept": "application/activity+json"}).json()
+    assert alice["indexable"] is True
+
+
+def test_an_outgoing_dm_is_retried_when_the_recipients_server_is_down(world, monkeypatch):
+    """Sent once and forgotten, a Nostr → fediverse DM written while the other server hiccupped was
+    lost with nothing on either side to say so."""
+    from app.services.activitypub import dm
+    calls = []
+
+    async def deliver(inbox_url, activity, *, key_id, private_pem):
+        calls.append(inbox_url)
+        return 502 if len(calls) == 1 else 202
+    monkeypatch.setattr(remote, "deliver", deliver)
+    real_sleep = asyncio.sleep
+
+    async def fast(_s):
+        await real_sleep(0)
+    monkeypatch.setattr(dm.asyncio, "sleep", fast)
+
+    async def go():
+        dm._retry_later("w1:abc", "https://mastodon.example/inbox", {"id": "x", "type": "Create"}, ALICE, REMOTE, "w1")
+        await asyncio.gather(*list(dm._retry_tasks))
+    run(go())
+    assert calls == ["https://mastodon.example/inbox"] * 2 and dm._done("w1:abc")
+
+
+def test_an_import_stops_reading_an_answer_that_is_too_large(world, monkeypatch):
+    from app.services.activitypub import importer
+    _public_server(monkeypatch, following=[_pleroma_account(n) for n in range(50)])
+    monkeypatch.setattr(importer, "MAX_PAGE_BYTES", 200)
+    with pytest.raises(ValueError, match="too large"):
+        run(importer.public_following("me@old.example"))
