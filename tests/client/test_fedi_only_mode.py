@@ -82,6 +82,8 @@ R._send=m=>{frames.push(m);queueMicrotask(()=>R._okWaiters.get(m[1].id).settle({
   const f=ctx._tlFilter(view);assert.equal(f(native),false);assert.equal(f(bridge),true);assert.equal(f(interop),true);assert.equal(f(privatePost.ev),true);
  }
  ctx._setFediOnly(false);assert.equal(ctx._tlFilter('global')(native),true);assert.equal(ctx._tlFilter('global')(bridge),false);
+ // A fediverse account you FOLLOW is never hidden -- following is how its posts reach you now.
+ ctx.FOLLOWS.add('puppet');for(const view of ['home','global'])assert.equal(ctx._tlFilter(view)(bridge),true,view);ctx.FOLLOWS.delete('puppet');
  mode=false;noSettings=true;routeDown=true;
  const frameCount=frames.length, pending=await ctx.publish(1,'offline normal post',[]);
  assert.equal(pending.ok,false);assert.equal(pending.queued,true);assert.equal(queued,1);assert.equal(frames.length,frameCount);

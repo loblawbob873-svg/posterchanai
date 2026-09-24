@@ -7816,13 +7816,15 @@
     // Default TRUE — the bridge mirrors whole remote timelines, so left visible it is most of what a
     // new account sees on Nostr. A REPOST of a bridged note is left alone: the wrapper is a real Nostr
     // user choosing to share it, which is not the firehose this filter exists to keep out.
+    // NEVER someone you follow: with the fediverse server, following a fediverse account is how you
+    // get its posts, and hiding them made every fediverse follow invisible on Home.
     const fediOnly=_fediOnly();
     const hideFedi = !fediOnly && ClientSettings.get('hideFediBridge', true);
     const follows = view==='home' && !fediOnly ? (e=>FOLLOWS.has(e.pubkey)) : null;
     return ev => (!fediOnly || isFediBridged(ev) || _fediOnlyEvent(ev))
               && (!follows || follows(ev))
               && !(hideR && isReply(ev))
-              && !(hideFedi && isFediBridged(ev));
+              && !(hideFedi && isFediBridged(ev) && !FOLLOWS.has(ev.pubkey));
   }
   function _drawTimeline(preserveScroll){
     if(VIEW!=='home' && VIEW!=='global') return;
