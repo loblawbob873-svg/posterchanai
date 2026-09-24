@@ -60,7 +60,9 @@ def test_a_gms_induced_kill_is_reported_as_infrastructure_not_as_a_failing_test(
     grep = [ln for ln in SCRIPT.splitlines()
             if "grep" in ln and "place" in ln and "gms" in ln and not ln.lstrip().startswith("#")]
     assert grep, "nothing in the runner detects a GMS-induced kill"
-    detect = grep[0]
+    # The LAST detector is the post-mortem's; an earlier one decides whether to re-run first
+    # (test_android_instrumented_evidence.py runs that behaviour).
+    detect = grep[-1]
     assert "Killing" in detect, detect
     # It must read the UNFILTERED buffer; the tag-filtered one cannot see an ActivityManager line.
     window = SCRIPT[SCRIPT.index(detect):SCRIPT.index(detect) + 500]

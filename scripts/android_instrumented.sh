@@ -66,45 +66,72 @@ timeout --kill-after=2s 120s adb install -r -g "$APK" || { echo "instrumentation
 # Kept for the post-mortem below: the distinguishing sentence is gradle's, and it is only on stdout.
 # Only reports produced by THIS invocation can prove device execution. Gradle can succeed with
 # NO-SOURCE or leave old XML behind after an interrupted run.
-rm -rf app/build/outputs/androidTest-results/connected app/build/reports/androidTests/connected || {
-  echo "::error::Could not clear prior instrumentation reports; fresh execution cannot be verified"
-  exit 1
-}
-./gradlew :app:connectedDebugAndroidTest --console=plain 2>&1 | tee /tmp/pc-instrumented.log
-rc=${PIPESTATUS[0]}
-# The HTML/XML report is the only place per-test failures are legible; publish it either way.
-mkdir -p /tmp/pc-androidtest
-cp -r app/build/reports/androidTests/connected/. /tmp/pc-androidtest/ 2>/dev/null || true
-cp -r app/build/outputs/androidTest-results/connected/. /tmp/pc-androidtest/ 2>/dev/null || true
-# Preserve the actual main AND test merge outputs before any failed-run verdict. A source manifest
-# removal cannot prove that the installed instrumentation variant omitted a library initializer.
-find app/build/intermediates/merged_manifest app/build/intermediates/merged_manifests \
-     app/build/intermediates/packaged_manifests -type f -name AndroidManifest.xml \
-     -exec cp --parents '{}' /tmp/pc-androidtest/ \; 2>/dev/null || true
-cp -r app/build/outputs/logs /tmp/pc-androidtest/manifest-merger-logs 2>/dev/null || true
-# AND THE LOGCAT THE TESTS THEMSELVES WROTE. A device test can MEASURE something there is no
-# assertion for — whether an OEM ships the system widget picker, how many widget providers the image
-# has — and the XML report carries only failures. Without this the only way to get a fact off the
-# device was to fail a test on purpose.
-timeout --kill-after=5s 20s adb logcat -d -s PosterChan:* TestRunner:* \
-  > /tmp/pc-androidtest/logcat-instrumented.txt 2>/dev/null || true
-# AND THE UNFILTERED BUFFER, BECAUSE A CRASH DOES NOT LOG UNDER OUR TAGS.
+# PLAY SERVICES DYING IS NOT A VERDICT, AND IT WAS BLOCKING EVERY APK FOR A DAY.
 #
-# The tag filter above is right for a test that MEASURES something and wrong for the failure that
-# actually happens: when the app process dies, gradle says "Instrumentation run failed due to
-# Process crashed", the HTML report carries a test name and no message, and the filtered logcat
-# shows `started:` with no `finished:` — three artifacts and not one line of cause, because the
-# stack is logged by AndroidRuntime/chromium/DEBUG. Measured on run 34400576969: 112 tests, one
-# failure, zero evidence. The crash buffer is separate from main and survives a died process, so
-# both are taken.
-timeout --kill-after=5s 30s adb logcat -d -v threadtime \
-  > /tmp/pc-androidtest/logcat-instrumented-full.txt 2>/dev/null || true
-timeout --kill-after=5s 20s adb logcat -d -b crash -v threadtime \
-  > /tmp/pc-androidtest/logcat-instrumented-crash.txt 2>/dev/null || true
-# A native crash writes a tombstone rather than a Java stack; a WebView renderer death is one.
-timeout --kill-after=5s 20s adb shell "ls -t /data/tombstones 2>/dev/null | head -3" \
-  > /tmp/pc-androidtest/tombstones.txt 2>/dev/null || true
-cp /tmp/pc-instrumented.log /tmp/pc-androidtest/ 2>/dev/null || true
+# The google_apis image restarts com.google.android.gms.persistent on its own, and the ActivityManager
+# then kills every process holding one of its providers -- ours holds the fonts provider because the
+# WebView inside it asks GMS for its fonts (measured on run 36035831617: FontLog "Google Sans" and
+# "Noto Color Emoji Compat" queries a second after WebView loaded, then "Killing 5032:place.poster.app
+# ... depends on provider com.google.android.gms/.fonts.provider.FontsProvider in dying proc"). The
+# post-mortem below already calls that "did not run" (exit 2) -- correctly, it is not a pass -- and the
+# APK workflow refuses to publish without a pass, so a GMS hiccup on ONE run stopped the APK shipping
+# for 17 hours. So that ONE cause earns ONE more attempt on the same device, with the logcat cleared
+# first so the post-mortem reads THIS attempt. Anything else, or GMS dying twice, is reported as before.
+attempt=1
+while :; do
+  timeout --kill-after=5s 20s adb logcat -c >/dev/null 2>&1 || true
+  rm -rf app/build/outputs/androidTest-results/connected app/build/reports/androidTests/connected || {
+    echo "::error::Could not clear prior instrumentation reports; fresh execution cannot be verified"
+    exit 1
+  }
+  ./gradlew :app:connectedDebugAndroidTest --console=plain 2>&1 | tee /tmp/pc-instrumented.log
+  rc=${PIPESTATUS[0]}
+  # The HTML/XML report is the only place per-test failures are legible; publish it either way.
+  mkdir -p /tmp/pc-androidtest
+  cp -r app/build/reports/androidTests/connected/. /tmp/pc-androidtest/ 2>/dev/null || true
+  cp -r app/build/outputs/androidTest-results/connected/. /tmp/pc-androidtest/ 2>/dev/null || true
+  # Preserve the actual main AND test merge outputs before any failed-run verdict. A source manifest
+  # removal cannot prove that the installed instrumentation variant omitted a library initializer.
+  find app/build/intermediates/merged_manifest app/build/intermediates/merged_manifests \
+       app/build/intermediates/packaged_manifests -type f -name AndroidManifest.xml \
+       -exec cp --parents '{}' /tmp/pc-androidtest/ \; 2>/dev/null || true
+  cp -r app/build/outputs/logs /tmp/pc-androidtest/manifest-merger-logs 2>/dev/null || true
+  # AND THE LOGCAT THE TESTS THEMSELVES WROTE. A device test can MEASURE something there is no
+  # assertion for — whether an OEM ships the system widget picker, how many widget providers the image
+  # has — and the XML report carries only failures. Without this the only way to get a fact off the
+  # device was to fail a test on purpose.
+  timeout --kill-after=5s 20s adb logcat -d -s PosterChan:* TestRunner:* \
+    > /tmp/pc-androidtest/logcat-instrumented.txt 2>/dev/null || true
+  # AND THE UNFILTERED BUFFER, BECAUSE A CRASH DOES NOT LOG UNDER OUR TAGS.
+  #
+  # The tag filter above is right for a test that MEASURES something and wrong for the failure that
+  # actually happens: when the app process dies, gradle says "Instrumentation run failed due to
+  # Process crashed", the HTML report carries a test name and no message, and the filtered logcat
+  # shows `started:` with no `finished:` — three artifacts and not one line of cause, because the
+  # stack is logged by AndroidRuntime/chromium/DEBUG. Measured on run 34400576969: 112 tests, one
+  # failure, zero evidence. The crash buffer is separate from main and survives a died process, so
+  # both are taken.
+  timeout --kill-after=5s 30s adb logcat -d -v threadtime \
+    > /tmp/pc-androidtest/logcat-instrumented-full.txt 2>/dev/null || true
+  timeout --kill-after=5s 20s adb logcat -d -b crash -v threadtime \
+    > /tmp/pc-androidtest/logcat-instrumented-crash.txt 2>/dev/null || true
+  # A native crash writes a tombstone rather than a Java stack; a WebView renderer death is one.
+  timeout --kill-after=5s 20s adb shell "ls -t /data/tombstones 2>/dev/null | head -3" \
+    > /tmp/pc-androidtest/tombstones.txt 2>/dev/null || true
+  cp /tmp/pc-instrumented.log /tmp/pc-androidtest/ 2>/dev/null || true
+  if [ "$rc" -ne 0 ] && [ "$attempt" -lt 2 ] \
+     && grep -qE "Killing [0-9]+:place\.poster\.app.*dying proc com\.google\.android\.gms" \
+          /tmp/pc-androidtest/logcat-instrumented-full.txt 2>/dev/null \
+     && device_present; then
+    echo "::warning title=Instrumented tests re-run::Play Services died and took the app with it; running the instrumented checks once more on the same device (a re-run, not a pass)."
+    echo "- Play Services killed the app on attempt 1; the instrumented checks were run again." >> "${GITHUB_STEP_SUMMARY:-/dev/null}"
+    cp /tmp/pc-androidtest/logcat-instrumented-full.txt /tmp/pc-androidtest-attempt1-logcat.txt 2>/dev/null || true
+    attempt=2
+    continue
+  fi
+  break
+done
+[ -f /tmp/pc-androidtest-attempt1-logcat.txt ] && cp /tmp/pc-androidtest-attempt1-logcat.txt /tmp/pc-androidtest/logcat-instrumented-attempt1.txt 2>/dev/null || true
 
 # THE POST-MORTEM. Reports are copied first so a skip still publishes whatever the device produced.
 # Only two shapes count as "did not run", and both are about the DEVICE, never about a test:
