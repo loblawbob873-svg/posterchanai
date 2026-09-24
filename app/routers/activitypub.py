@@ -311,6 +311,11 @@ async def import_following(request: Request, user=Depends(get_current_user)):
     except Exception:
         body = {}
     handle = str((body or {}).get("account") or "").strip() if isinstance(body, dict) else ""
+    # What arrived, never who: the host only (a public server name), so a report of "it said X"
+    # can be matched to what the browser actually sent.
+    logger.info("[activitypub] import-following: %s (content-type %s)",
+                f"host={handle.rpartition('@')[2][:80]}" if handle else "no address, linked account",
+                (request.headers.get("content-type") or "-")[:40])
     from app.database import SessionLocal
     from app.services.activitypub import importer
     try:
@@ -318,12 +323,14 @@ async def import_following(request: Request, user=Depends(get_current_user)):
             accounts, instance_url = await importer.public_following(handle)
         else:
             if not (getattr(user, "pleroma_instance_url", "") and getattr(user, "pleroma_access_token", "")):
+                logger.info("[activitypub] import-following refused: no address and no linked account")
                 raise HTTPException(400, "Type the account to import from (name@server), or connect it in Settings")
             instance_url = user.pleroma_instance_url
             accounts = await importer.following(instance_url, user.pleroma_access_token)
     except HTTPException:
         raise
     except ValueError as e:
+        logger.info("[activitypub] import-following refused: %s", str(e)[:200])
         raise HTTPException(400, str(e))
     except Exception as e:
         raise HTTPException(502, f"Could not read who you follow there: {type(e).__name__}")

@@ -1133,11 +1133,16 @@ window.PCSettingsFactory = function(dep){
      * its bridge identity; the contact list is signed HERE, by you, through followMany -- one merged
      * kind-3 publish (union of the relay's copy and memory), never a rebuild from the list alone. */
     { const b=$('#us-plr-import'); if(b) b.onclick=async()=>{
-        const said=$('#us-plr-import-said');
+        // The box and the result line are read from the BUTTON's own row, never by a page-wide id:
+        // Settings can be on the page twice (a desktop window over the modal), and $('#id') found the
+        // other, empty copy -- so the typed address never left the page and the server answered
+        // "connect an account first" to somebody who had just typed one.
+        const row=b.closest('.us-plr-import')||document;
+        const said=row.querySelector('#us-plr-import-said');
         b.disabled=true; if(said) said.textContent=' Reading who you follow…';
         try{
           try{ await ensureAiSession(); }catch(_){}
-          const acct=(($('#us-plr-import-acct')||{}).value||'').trim();
+          const acct=((row.querySelector('#us-plr-import-acct')||{}).value||'').trim();
           const r=await fetch('/api/activitypub/import-following',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(acct?{account:acct}:{})});
           const j=await r.json().catch(()=>({}));
           if(!r.ok) throw new Error(typeof j.detail==='string' ? j.detail : ('HTTP '+r.status));
