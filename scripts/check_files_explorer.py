@@ -65,7 +65,7 @@ PROFILE = os.environ.get("PC_CHECK_PROFILE") or "/tmp/pc-files-explorer-check"
 LIFT = ["_fxDetailsRow", "_fxColsHTML", "_fxBarHTML", "_fxBindBar", "_fxBytes", "_fxWhen", "_fxType", "_fxFileGlyph", "_fxIcon",
         "_fxView", "_fxSort", "_fxCompare"]
 # Data the lifted functions close over. Same rule: taken verbatim, never restated here.
-LIFT_CONST = ["_FX_COLS", "_FX_KINDS"]
+LIFT_CONST = ["_FX_COLS", "_FX_KINDS", "_FX_SORT_CHOICES"]
 
 
 def lift(src, name):
@@ -87,7 +87,14 @@ def lift_const(src, name):
 
 
 def page():
-    src = open(APP).read()
+    # The split moved these functions from app.js into files.js; read the client the way the tests do
+    # (every split module + app.js) unless an installed app.js was named explicitly.
+    if os.environ.get("PC_INSTALLED_APP_JS"):
+        src = open(APP).read()
+    else:
+        sys.path.insert(0, ROOT)
+        from tests.client_source import client_source
+        src = client_source()
     lifted = ("\n".join(lift_const(src, c) for c in LIFT_CONST)
               + "\n" + "\n".join(lift(src, n) for n in LIFT))
     return PAGE_TMPL.replace("/*__LIFTED__*/", lifted)
@@ -107,6 +114,8 @@ const enc = s => String(s==null?'':s).replace(/[&<>"']/g, c=>({'&':'&amp;','<':'
 // The drive's search box is part of the lifted toolbar, and its query is module state in app.js.
 // Empty here: this harness measures LAYOUT, and every assertion is about an unfiltered drive.
 let _filesQ = '';
+// files.js reads its module state through `_S` (the object app.js hands every split module).
+const _S = { _filesQ: '' };
 const $ = (s,r) => (r||document).querySelector(s);
 const $$ = (s,r) => Array.from((r||document).querySelectorAll(s));
 window.ClientSettings = { _v:{filesView:'details', filesSort:{by:'name', dir:1}},

@@ -196,6 +196,13 @@ window.PCFilesFactory = function(dep){
    * measuring a copy of the markup that has drifted from the real one — so it must not close over
    * anything that only exists at runtime. Reading `_fxHist` here made the whole check SKIP with
    * "the page never rendered", which is a check that cannot run rather than one that passes. */
+  /* THE SORT IS ONE CHOICE, SAID IN WORDS. It was a column name ("Date created") plus a separate
+   * ▲/▼ button, which on a phone reads as no way to sort by newest at all -- reported exactly so,
+   * while newest-first was the default the whole time. Each option names BOTH halves; the arrow
+   * stays beside it on a desktop for the people who flip it with a click. */
+  const _FX_SORT_CHOICES = [['modified',-1,'Newest first'],['modified',1,'Oldest first'],
+    ['name',1,'Name A–Z'],['name',-1,'Name Z–A'],['size',-1,'Largest first'],['size',1,'Smallest first'],
+    ['type',1,'Type A–Z'],['type',-1,'Type Z–A']];
   function _fxBarHTML(crumbs, canBack, canNewFolder){
     const v = _fxView();
     const s = _fxSort();
@@ -220,7 +227,7 @@ window.PCFilesFactory = function(dep){
       <div class="fx-views">
         ${canNewFolder ? `<button class="fx-newfolder" id="bl-newfolder" title="New folder"><svg class="ic b-ic" aria-hidden="true"><use href="#i-plus"></use></svg><span>New folder</span></button>` : ''}
         ${canNewFolder ? `<button class="fx-newfolder" id="bl-newdoc" title="New document"><svg class="ic b-ic" aria-hidden="true"><use href="#i-note"></use></svg><span>New document</span></button>` : ''}
-        <label class="fx-sort-wrap"><span>Sort by</span><select class="fx-sort" id="fx-sort" aria-label="Sort by">${_FX_COLS.map(([k,l])=>`<option value="${k}"${s.by===k?' selected':''}>${l}</option>`).join('')}</select></label>
+        <label class="fx-sort-wrap"><span>Sort by</span><select class="fx-sort" id="fx-sort" aria-label="Sort by">${_FX_SORT_CHOICES.map(([k,d,l])=>`<option value="${k}:${d}"${s.by===k&&s.dir===d?' selected':''}>${l}</option>`).join('')}</select></label>
         <button class="fx-sort-dir" id="fx-sort-dir" title="Reverse sort" aria-label="Reverse sort">${s.dir===1?'▲':'▼'}</button>
         <button class="fx-vw${v==='tiles'?' on':''}" data-view="tiles" title="Tiles" aria-label="Tiles"><svg class="ic b-ic" aria-hidden="true"><use href="#i-grid"></use></svg></button>
         <button class="fx-vw${v==='details'?' on':''}" data-view="details" title="Details" aria-label="Details"><svg class="ic b-ic" aria-hidden="true"><use href="#i-bars"></use></svg></button>
@@ -307,9 +314,8 @@ window.PCFilesFactory = function(dep){
       renderBlossom();
     });
     { const sort=$('#fx-sort',pane); if(sort) sort.onchange=()=>{
-        const cur=_fxSort();
-        ClientSettings.set('filesSort',{by:sort.value,dir:(sort.value==='name'||sort.value==='type')?1:-1});
-        if(cur.by===sort.value) ClientSettings.set('filesSort',cur);
+        const [by,d]=String(sort.value).split(':');
+        ClientSettings.set('filesSort',{by,dir:d==='1'?1:-1});
         renderBlossom();
       };
       const dir=$('#fx-sort-dir',pane); if(dir) dir.onclick=()=>{ const cur=_fxSort();
@@ -2641,7 +2647,9 @@ window.PCFilesFactory = function(dep){
     const vis=_filesVisibleShas(grid), n=_filesSel.size;
     grid.classList.toggle('selmode', n>0);   // drives the card cursor (tap = select, not open)
     const allSel = vis.length && vis.every(sha=>_filesSel.has(sha));
-    bar.innerHTML = `<button class="btn btn-ghost small" id="bl-selall">${allSel?'☑':'☐'} Select all${vis.length?' ('+vis.length+')':''}</button>`
+    /* Icons, never ☐/☑/⧉: those are TEXT, and Android's system font has none of them -- every one
+     * drew as an empty tofu box. The sprite is drawn, so it looks the same on every platform. */
+    bar.innerHTML = `<button class="btn btn-ghost small" id="bl-selall"><svg class="ic b-ic" aria-hidden="true"><use href="#i-check"></use></svg>${allSel?'Deselect all':'Select all'}${vis.length?' ('+vis.length+')':''}</button>`
       + `<button class="btn btn-ghost small" id="bl-selnone"${n?'':' disabled'}><svg class="ic b-ic" aria-hidden="true"><use href="#i-close"></use></svg>Select none</button>`
       + `<span class="muted small" style="margin:0 4px">${n?(n+' selected'):'none selected'}</span>`
       + `<button class="btn btn-cyan small" id="bl-seldl"${n?'':' disabled'}><svg class="ic b-ic" aria-hidden="true"><use href="#i-download"></use></svg>Download</button>`
@@ -3325,7 +3333,7 @@ window.PCFilesFactory = function(dep){
             + ` data-mime="${enc(m.mime||b.type||'')}" data-enc="${m.enc?'1':'0'}"`,
         icon: m.enc ? _fxEncIcon(ext, m.mime) : _fxIcon(ext, (b.type && !/octet-stream/i.test(b.type)) ? b.type : (m.mime||b.type)), name: nm || (m.enc ? 'encrypted' : dlName), title: nm || dlName,
         size:_fxBytes(b.size), type:(m.enc?'🔒 ':'')+_fxType(ext), when:_fxWhen(b.uploaded),
-        acts: (m.enc ? '' : `<button class="copy" data-url="${enc(b.url)}" title="Copy URL">⧉</button>`) + dl + ren + move + del,
+        acts: (m.enc ? '' : `<button class="copy" data-url="${enc(b.url)}" title="Copy URL" aria-label="Copy URL"><svg class="ic b-ic" aria-hidden="true"><use href="#i-link"></use></svg></button>`) + dl + ren + move + del,
       });
       /* THE OPENERS, ON THE TILE ITSELF.
        *
@@ -3341,7 +3349,7 @@ window.PCFilesFactory = function(dep){
       }
       return `<div class="file-card${sel}" draggable="true" data-sha="${b.sha256}"><a href="${enc(b.url)}" data-url="${enc(b.url)}" data-name="${enc(nm||dlName)}" data-sha="${b.sha256}" data-mime="${enc(b.type||'')}" data-enc="0" target="_blank">${blobThumb(b, ext)}</a>
         ${box}
-        <button class="copy" data-url="${enc(b.url)}" title="Copy URL">⧉</button>${del}
+        <button class="copy" data-url="${enc(b.url)}" title="Copy URL" aria-label="Copy URL"><svg class="ic b-ic" aria-hidden="true"><use href="#i-link"></use></svg></button>${del}
         <div class="meta"><span class="fname" title="${enc(nm||dlName)}">${enc(fileLabel(nm,ext,b.size))}</span><span class="fc-acts">${dl}${ren}${move}</span></div></div>`;
     }).join('') + (_more>0 ? `<button class="btn btn-ghost bl-more" data-id="bl-more" style="grid-column:1/-1;justify-self:center;margin:10px 0"><svg class="ic b-ic" aria-hidden="true"><use href="#i-arrow-down"></use></svg>Load ${Math.min(_more,_FILES_PAGE)} more · ${_more} left</button>` : '')) : (_S._filesQ.trim()
         ? '<div class="empty">Nothing'+(_S._filesFolder?(' in '+enc(_S._filesFolder)):' on your drive')
