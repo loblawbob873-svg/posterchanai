@@ -22,7 +22,10 @@ def test_interrupt_cancels_queued_checks_and_reaps_running_children(tmp_path):
     )
     second = tmp_path / "second.py"
     second.write_text(f"from pathlib import Path; Path({str(queued)!r}).touch()\n")
+    # A terminal's Ctrl-C: set SIGINT explicitly, because a backgrounded deploy runs its whole tree
+    # with SIGINT ignored and Python keeps that (see test_deploy_process_cleanup.py).
     code = f"""
+import signal; signal.signal(signal.SIGINT, signal.default_int_handler)
 from pathlib import Path
 from scripts import checkall
 import sys
