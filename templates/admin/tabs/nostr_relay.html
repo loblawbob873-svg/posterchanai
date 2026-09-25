@@ -384,8 +384,16 @@
             <small>Reject text notes (kind 1) whose content contains any of these (case-insensitive substring). One per line.</small>
         </div>
         <div class="form-group">
-            <label for="nostr_relay_blocked_pubkeys">Blocked accounts (pubkeys)</label>
-            <textarea id="nostr_relay_blocked_pubkeys" name="nostr_relay_blocked_pubkeys" rows="4" placeholder="npub1…&#10;or 64-char hex"></textarea>
+            <label for="blk_search">Blocked accounts</label>
+            <div id="blk_panel" class="blk-panel">
+                <input type="search" id="blk_search" placeholder="Search by name, NIP-05 or npub…" autocomplete="off">
+                <div id="blk_summary" class="blk-summary">Open this tab to load the list.</div>
+                <div id="blk_list" class="blk-list"></div>
+            </div>
+            <details class="blk-raw">
+                <summary>Edit as text (npub or hex, one per line)</summary>
+                <textarea id="nostr_relay_blocked_pubkeys" name="nostr_relay_blocked_pubkeys" rows="8" placeholder="npub1…&#10;or 64-char hex"></textarea>
+            </details>
             <small>Hard denylist — these accounts are rejected <strong>even if in the Web of Trust</strong> (new posts blocked at ingest). Their already-stored notes are removed by the nightly purge or the “Purge now” button below. npub or hex, one per line.</small>
         </div>
         <div class="form-group">

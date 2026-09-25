@@ -198,3 +198,19 @@ legend{ color: var(--accent); font-weight:700; padding:0 6px; }
   .external-storage-actions{ justify-content:flex-end; }
   .modal-content{ width:96vw; max-width:96vw; max-height:88vh; overflow:auto; }
 }
+
+/* Admin → Relay: the blocked-accounts list (admin-blocklist.js) */
+.blk-panel{ display:flex; flex-direction:column; gap:6px; }
+.blk-panel input[type=search]{ width:100%; box-sizing:border-box; }
+.blk-summary{ color: var(--text-secondary); font-size:.9em; }
+.blk-list{ max-height:360px; overflow-y:auto; border:1px solid var(--border-color); border-radius:6px; }
+.blk-row{ display:flex; align-items:center; gap:10px; padding:6px 8px; border-bottom:1px solid var(--border-color); }
+.blk-row:last-child{ border-bottom:0; }
+.blk-pic{ width:32px; height:32px; border-radius:50%; object-fit:cover; flex:0 0 32px; }
+.blk-nopic{ display:inline-block; background: var(--border-color); }
+.blk-who{ flex:1 1 auto; min-width:0; }
+.blk-name{ white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+.blk-id{ color: var(--text-secondary); font-size:.85em; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+.blk-more{ padding:6px 8px; color: var(--text-secondary); font-size:.85em; }
+.blk-raw{ margin-top:6px; }
+.blk-raw textarea{ width:100%; box-sizing:border-box; }

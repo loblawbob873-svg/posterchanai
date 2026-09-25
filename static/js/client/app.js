@@ -9226,7 +9226,42 @@
       const r = await fetch('/client/block', { method:'POST', headers:{'Content-Type':'application/json'},
         body: JSON.stringify({ target: pk, auth: btoa(JSON.stringify(auth)) }) }).then(r=>r.json());
       toast(r.ok ? 'blocked on relay' : ('block failed: ' + (r.error||'')));
+      if(r.ok && _relayBlocked) _relayBlocked.add(pk);
     } catch(e){ toast('block failed'); }
+  }
+  /* The relay's blocklist, as the admin's ⋯ menu needs it: "Unblock author" for somebody already on it.
+   * A stray "🚫 Block author" used to be permanent in practice -- the only way back was one bare npub in
+   * a 461-line admin text box. Fetched with a signed admin proof (who is blocked is moderation state),
+   * kept two minutes, shared by concurrent callers; null = not known, and the menu then offers Block. */
+  let _relayBlocked=null, _relayBlockedAt=0, _relayBlockedP=null;
+  function ensureRelayBlocked(){
+    if(!IS_ADMIN) return Promise.resolve(null);
+    if(_relayBlocked && Date.now()-_relayBlockedAt<120000) return Promise.resolve(_relayBlocked);
+    if(_relayBlockedP) return _relayBlockedP;
+    _relayBlockedP=(async()=>{
+      try{
+        const auth=await sign(27235, 'blocked-list', []);
+        const r=await fetch('/client/blocked-list', { method:'POST', headers:{'Content-Type':'application/json'},
+          body: JSON.stringify({ auth: btoa(JSON.stringify(auth)) }) }).then(r=>r.json());
+        if(r && r.ok){ _relayBlocked=new Set(r.pubkeys||[]); _relayBlockedAt=Date.now(); }
+      }catch(_){}
+      finally{ _relayBlockedP=null; }
+      return _relayBlocked;
+    })();
+    return _relayBlockedP;
+  }
+  function isRelayBlocked(pk){ return !!(_relayBlocked && _relayBlocked.has(pk)); }
+  async function doUnblock(pk){
+    if(!IS_ADMIN) return;
+    if(!await uiConfirm('Unblock this account on the relay? Its new posts are accepted again (posts already purged do not come back).',
+                        {ok:'Unblock'})) return;
+    try {
+      const auth = await sign(27235, 'unblock', [['action','unblock'],['p',pk]]);
+      const r = await fetch('/client/block', { method:'POST', headers:{'Content-Type':'application/json'},
+        body: JSON.stringify({ target: pk, remove: true, auth: btoa(JSON.stringify(auth)) }) }).then(r=>r.json());
+      toast(r.ok ? 'unblocked on relay' : ('unblock failed: ' + (r.error||'')));
+      if(r.ok && _relayBlocked) _relayBlocked.delete(pk);
+    } catch(e){ toast('unblock failed'); }
   }
   function eTags(id,pk){ const t=[['e',id]]; if(pk)t.push(['p',pk]); return t; }
   // The emoji picker is the only way to react now (the dedicated 🤍 like button was removed). After
@@ -9382,8 +9417,9 @@
     },
     $, $$, InstEmoji, NT, REACTION_EMOJIS, _AC_MAX, _AC_RE, _blossomDenied, _emojiBtn,
     _emojiRecent, _emojiRemember, _ltNorm, _placePop, _popKeys, _rootIdOf, _scalePop, _webLink,
-    _withModule, closeModal, compose, copyValue, decorateCounts, doBlock, doDelete, eTags,
-    effectPost, enc, fetchEvent, invalidateCounts, isMutedAuthor, launchEffectStudio, linkify,
+    _withModule, closeModal, compose, copyValue, decorateCounts, doBlock, doDelete, doUnblock, eTags,
+    effectPost, enc, ensureRelayBlocked, fetchEvent, invalidateCounts, isMutedAuthor, isRelayBlocked,
+    launchEffectStudio, linkify,
     mediaParts, memeBuildPost, modal, myReaction, myReactionIds, needProfile, niceNip05, npubOf,
     postImageUrl, profOf, publish, repostWithWarning, requestBlossomAccess, switchView, toast,
     toggleBookmark, toggleMute, toggleMuteThread, togglePin, uiPrompt, uploadBlob,

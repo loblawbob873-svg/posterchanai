@@ -342,6 +342,44 @@ def get_settings(
     return resp
 
 
+class RelayUnblockReq(BaseModel):
+    target: str          # npub or hex
+
+
+@router.get("/relay/blocked")
+async def relay_blocked(db: Session = Depends(get_db), admin: User = Depends(get_admin_user)):
+    """The relay's blocked accounts WITH their names and pictures (from this relay's profiles), for the
+    searchable list in Admin → Relay. An entry with no profile here is still listed, by npub."""
+    from app.services import relay_blocklist
+    from app.services.nostr import nostr_service
+    pks = relay_blocklist.blocked_hex()
+    found, names_ok = await relay_blocklist.profiles(pks)
+    rows = []
+    for h in pks:
+        p = found.get(h) or {}
+        try:
+            npub = nostr_service.npub_of(h)
+        except Exception:
+            npub = h
+        rows.append({"pubkey": h, "npub": npub, "name": p.get("name", ""),
+                     "picture": p.get("picture", ""), "nip05": p.get("nip05", "")})
+    return {"accounts": rows, "names_complete": names_ok}
+
+
+@router.post("/relay/unblock")
+def relay_unblock(data: RelayUnblockReq, db: Session = Depends(get_db), admin: User = Depends(get_admin_user)):
+    """Take one account off the relay's blocklist and apply it live -- the list's Unblock button."""
+    from app.services import relay_blocklist
+    from app.services.nostr import nostr_service
+    target = nostr_service.to_pubkey_hex((data.target or "").strip())
+    if not target:
+        raise HTTPException(status_code=400, detail="not an npub or hex pubkey")
+    r = relay_blocklist.set_blocked(db, target, False)
+    if not r.get("ok"):
+        raise HTTPException(status_code=400, detail=r.get("error") or "could not unblock")
+    return r
+
+
 @router.post("/models/{kind}/download")
 def models_download(kind: str, admin: User = Depends(get_admin_user)):
     """Start an on-demand model download (kind = chat | image | music) in the background. Models are

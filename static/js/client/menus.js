@@ -19,8 +19,9 @@ window.PCMenusFactory = function(dep){
   const {
     $, $$, InstEmoji, NT, REACTION_EMOJIS, _AC_MAX, _AC_RE, _blossomDenied, _emojiBtn,
     _emojiRecent, _emojiRemember, _ltNorm, _placePop, _popKeys, _rootIdOf, _scalePop, _webLink,
-    _withModule, closeModal, compose, copyValue, decorateCounts, doBlock, doDelete, eTags,
-    effectPost, enc, fetchEvent, invalidateCounts, isMutedAuthor, launchEffectStudio, linkify,
+    _withModule, closeModal, compose, copyValue, decorateCounts, doBlock, doDelete, doUnblock, eTags,
+    effectPost, enc, ensureRelayBlocked, fetchEvent, invalidateCounts, isMutedAuthor, isRelayBlocked,
+    launchEffectStudio, linkify,
     mediaParts, memeBuildPost, modal, myReaction, myReactionIds, needProfile, niceNip05, npubOf,
     postImageUrl, profOf, publish, repostWithWarning, requestBlossomAccess, switchView, toast,
     toggleBookmark, toggleMute, toggleMuteThread, togglePin, uiPrompt, uploadBlob,
@@ -308,8 +309,10 @@ window.PCMenusFactory = function(dep){
     try{ const r=await Relay.publish(ev); toast(r&&r.ok ? '📡 rebroadcast to relays' : ('relay: '+((r&&r.msg)||'rejected'))); }
     catch(_){ toast('rebroadcast failed'); }
   }
-  function openPostMenu(id, pk, art, anchorBtn){
+  async function openPostMenu(id, pk, art, anchorBtn){
     const mine = pk===S.ME.pubkey;
+    // An admin sees Block OR Unblock for the author, so the relay's list is read first (cached).
+    if(S.IS_ADMIN && !mine){ try{ await ensureRelayBlocked(); }catch(_){} }
     const items=[['bookmark', S.BOOKMARKS.has(id)?'🔖 Remove bookmark':'🔖 Bookmark'], ['copyid','🔗 Copy link']];
     if(mine) items.push(['delete','🗑️ Delete','danger']);   // near the top so it's reachable on a crowded menu
     if(!window.PC_NOSTR_ONLY) items.push(['translate','🌐 Translate']);   // uses the node's AI backend
@@ -329,7 +332,7 @@ window.PCMenusFactory = function(dep){
     { const _r=_rootIdOf(Store.get(id))||id;
       items.push(['mutethread', S.MUTED_THREADS.has(_r)?'🔔 Unmute conversation':'🔕 Mute conversation']); }
     if(!mine) items.push(['mute', isMutedAuthor(pk)?'🔊 Unmute author':'🔇 Mute author']);   // personal NIP-51 mute (any user)
-    if(S.IS_ADMIN && !mine) items.push(['block','🚫 Block author','danger']);
+    if(S.IS_ADMIN && !mine) items.push(isRelayBlocked(pk) ? ['unblock','✅ Unblock author'] : ['block','🚫 Block author','danger']);
     openMenuPopover(anchorBtn, items, a=>{
       if(a==='bookmark'){ toggleBookmark(id, null).then(()=>{ if(anchorBtn) anchorBtn.classList.toggle('on', S.BOOKMARKS.has(id)); }); return; }
       if(a==='copyid'){ let _lk=id, _m='id copied';
@@ -350,6 +353,7 @@ window.PCMenusFactory = function(dep){
       if(a==='mutethread') return toggleMuteThread(_rootIdOf(Store.get(id))||id);
       if(a==='mute') return toggleMute(pk);
       if(a==='block') return doBlock(pk);
+      if(a==='unblock') return doUnblock(pk);
     });
   }
   // 🧾 Raw event — the signed object exactly as it sits on the relay. Nostr is a protocol of plain JSON and

@@ -3480,44 +3480,28 @@ async def block_pubkey(data: BlockReq, db: Session = Depends(get_db)):
     target = nostr_service.to_pubkey_hex(data.target)
     if not target:
         return JSONResponse({"ok": False, "error": "invalid target"}, status_code=400)
-    if not _verify_admin_auth(db, data.auth, target, "block"):
+    # An unblock is signed as "unblock": a captured block proof cannot be replayed to undo it.
+    if not _verify_admin_auth(db, data.auth, target, "unblock" if data.remove else "block"):
         return JSONResponse({"ok": False, "error": "admin signature required (or stale request)"}, status_code=403)
-    # Never block the node's own operator/bot keys — that would reject the operator's signup-follow
-    # events and break new-account admission, with no in-app way to recover.
-    if not data.remove:
-        from app.services.blossom_service import _operator_pubkeys
-        if target in _operator_pubkeys(db):
-            return JSONResponse({"ok": False, "error": "refusing to block an operator key"}, status_code=400)
+    from app.services import relay_blocklist
+    r = relay_blocklist.set_blocked(db, target, not data.remove)
+    if not r.get("ok"):
+        return JSONResponse(r, status_code=400)
+    return JSONResponse(r)
 
-    blocked_val = settings_store.get("nostr_relay_blocked_pubkeys")
-    current = []
-    if blocked_val:
-        for tok in blocked_val.replace(",", "\n").split():
-            h = nostr_service.to_pubkey_hex(tok.strip())
-            if h:
-                current.append(h)
-    cur = set(current)   # canonical hex set
-    if data.remove:
-        cur.discard(target)
-    else:
-        cur.add(target)
-    # store as npubs (readable in the Admin → Relay "Blocked accounts" box; relay converts back)
-    out = []
-    for h in sorted(cur):
-        try:
-            out.append(nostr_service.npub_of(h))
-        except Exception:
-            out.append(h)
-    value = "\n".join(out)
-    settings_store.put("nostr_relay_blocked_pubkeys", value)
 
-    try:
-        from app.services.nostr_relay.thread import trigger_block_reload
-        trigger_block_reload()
-    except Exception as e:
-        logger.warning("[client] block reload failed: %s", e)
+class BlockedListReq(BaseModel):
+    auth: str            # base64 of a kind-27235 event with content "blocked-list", signed by an admin
 
-    return JSONResponse({"ok": True, "blocked": not data.remove, "count": len(cur)})
+
+@router.post("/blocked-list")
+async def blocked_list(data: BlockedListReq, db: Session = Depends(get_db)):
+    """Admin-only: the relay's blocked pubkeys (hex), so the ⋯ menu can offer Unblock for a blocked
+    author. Who is blocked is moderation state, so it takes the same admin proof as /block."""
+    if not _verify_admin_signer(db, data.auth, "blocked-list"):
+        return JSONResponse({"ok": False, "error": "admin signature required (or stale request)"}, status_code=403)
+    from app.services import relay_blocklist
+    return JSONResponse({"ok": True, "pubkeys": relay_blocklist.blocked_hex()})
 
 
 # ----- Blossom upload access (admin grants/revokes via the client's profile menu) -----
