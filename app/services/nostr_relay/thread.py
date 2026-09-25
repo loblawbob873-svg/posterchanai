@@ -798,8 +798,9 @@ async def _main(cfg: dict) -> None:
     if not cfg["wot_enabled"]:
         logger.info("[nostr-relay] WoT disabled — open publishing; skipping trust-graph build, "
                     "daily refresh, metadata backfill, sync sweep and firehose (no cross-node work)")
-    elif not gate.members():
-        logger.info("[nostr-relay] no cached WoT snapshot — building the trust graph now (first run)")
+    elif _needs_first_wot_build(len(gate.members()), _read_wot_stamp(cfg)):
+        logger.info("[nostr-relay] WoT never built (%d member(s) in the snapshot) — building the trust "
+                    "graph now (first run)", len(gate.members()))
         asyncio.create_task(_initial_wot_build(gate, store, cfg, _relay.stop_event))
     else:
         logger.info("[nostr-relay] WoT warm from snapshot (%d members) — last build %dh ago, "
@@ -1544,6 +1545,19 @@ async def _sync_loop(store, gate, server, cfg, stop: asyncio.Event) -> None:
 
 def _wot_stamp_path(cfg) -> str:
     return _relay_db_path() + ".wot_built"
+
+
+def _needs_first_wot_build(members: int, stamp: float) -> bool:
+    """Build the trust graph at startup? Only on a FIRST run -- never on an ordinary restart, which
+    must not trigger a 37k-follow crawl.
+
+    "First run" used to mean "the snapshot is empty", and a fresh node's never is: the operator is
+    admitted as a member before any build, so the snapshot holds ONE member and the relay called it
+    warm -- "WoT warm from snapshot (1 members) -- last build 497312h ago, skipping rebuild". Its
+    firehose then asked 18 relays for the operator's posts alone, and a brand-new PosterChanOS server
+    received nothing for up to a day (found 2026-09-25 by the ISO gate: 0 kind-1 events in 15 minutes).
+    The build STAMP is what records that a graph was ever built; 0 means never."""
+    return members == 0 or not stamp
 
 
 def _read_wot_stamp(cfg) -> float:
