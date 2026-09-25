@@ -374,7 +374,11 @@ async def plan(ev: dict, member: str) -> list:
             act = convert.like(ev, base=base, actor=me, target=target["uri"])
             inboxes = {author_inbox} - {""}
             if not target.get("remote"):
-                inboxes |= await _copies_of(target_id)
+                # A member's post: every server holding a copy, AND the reactor's own followers -- the
+                # addressing Pleroma/Akkoma give a reaction themselves, and the only way a server that
+                # met the post through an interaction (not a follow) hears of it: the author of a post
+                # reacted to may have no fediverse followers at all.
+                inboxes |= await _copies_of(target_id) | set(fol)
             out = [(i, act) for i in sorted(inboxes)]
             await _remember_sent(ev["id"], inboxes, kind=7, by=member, target=target["uri"])
 
