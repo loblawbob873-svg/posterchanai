@@ -62,4 +62,48 @@ public final class PageClearsTheStatusBarDeviceTest {
             assertTrue("the page starts under the status bar: " + got.get(), ok.get());
         }
     }
+
+    /**
+     * THE GALAXY S25 CASE: One UI 8 drew the window under the status bar AND the WebView's insets
+     * listener was never handed the bars, so the first fix (margin = the insets delivered) did nothing
+     * and the search sat under the clock. Reproduced here: the window forced edge-to-edge, the
+     * listener starved. The WebView must still end up below the status bar -- measured, not told.
+     */
+    @Test
+    public void theWebViewClearsTheStatusBarEvenWhenItsInsetsListenerIsHandedNothing() {
+        try (ActivityScenario<MainActivity> sc = ActivityScenario.launch(MainActivity.class)) {
+            SystemClock.sleep(3000);
+            sc.onActivity(a -> {
+                androidx.core.view.WindowCompat.setDecorFitsSystemWindows(a.getWindow(), false);
+                WebView wv = find(a.getWindow().getDecorView());
+                if (wv != null) {
+                    androidx.core.view.ViewCompat.setOnApplyWindowInsetsListener(wv,
+                            (v, insets) -> androidx.core.view.WindowInsetsCompat.CONSUMED);
+                    ViewGroup.LayoutParams raw = wv.getLayoutParams();
+                    if (raw instanceof ViewGroup.MarginLayoutParams) {
+                        ((ViewGroup.MarginLayoutParams) raw).setMargins(0, 0, 0, 0);
+                        wv.setLayoutParams(raw);
+                    }
+                    wv.requestLayout();
+                }
+            });
+            SystemClock.sleep(2000);
+            AtomicReference<String> got = new AtomicReference<>("");
+            AtomicReference<Boolean> ok = new AtomicReference<>(false);
+            sc.onActivity(a -> {
+                View decor = a.getWindow().getDecorView();
+                WebView wv = find(decor);
+                if (wv == null) { got.set("no WebView"); return; }
+                int[] at = new int[2];
+                wv.getLocationOnScreen(at);
+                WindowInsets root = decor.getRootWindowInsets();
+                int statusBottom = root == null ? 0 : (Build.VERSION.SDK_INT >= 30
+                        ? root.getInsetsIgnoringVisibility(WindowInsets.Type.statusBars()).top
+                        : root.getStableInsetTop());
+                got.set("webview top=" + at[1] + " status bar bottom=" + statusBottom);
+                ok.set(statusBottom > 0 && at[1] >= statusBottom);
+            });
+            assertTrue("edge-to-edge with a starved listener: the page is under the status bar: " + got.get(), ok.get());
+        }
+    }
 }

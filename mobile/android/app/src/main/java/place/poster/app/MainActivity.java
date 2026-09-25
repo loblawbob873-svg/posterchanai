@@ -319,23 +319,46 @@ public class MainActivity extends BridgeActivity {
             final android.view.View wv = getBridge().getWebView();
             final int types = androidx.core.view.WindowInsetsCompat.Type.systemBars()
                     | androidx.core.view.WindowInsetsCompat.Type.displayCutout();
+            // The bars still arrive here where they arrive at all -- consumed, so the page does not
+            // also pad for them -- but the margin is decided by MEASURING (SystemBarClearance), because
+            // on some devices (Galaxy S25, One UI 8) the page is drawn under the status bar while this
+            // listener is handed nothing.
             androidx.core.view.ViewCompat.setOnApplyWindowInsetsListener(wv, (v, insets) -> {
-                androidx.core.graphics.Insets bars = insets.getInsets(types);
-                android.view.ViewGroup.LayoutParams raw = v.getLayoutParams();
-                if (raw instanceof android.view.ViewGroup.MarginLayoutParams) {
-                    android.view.ViewGroup.MarginLayoutParams lp = (android.view.ViewGroup.MarginLayoutParams) raw;
-                    if (lp.leftMargin != bars.left || lp.topMargin != bars.top
-                            || lp.rightMargin != bars.right || lp.bottomMargin != bars.bottom) {
-                        lp.setMargins(bars.left, bars.top, bars.right, bars.bottom);
-                        v.setLayoutParams(lp);
-                    }
-                }
+                v.post(() -> clearSystemBars(v, types));
                 return new androidx.core.view.WindowInsetsCompat.Builder(insets)
                         .setInsets(types, androidx.core.graphics.Insets.NONE).build();
             });
+            // Every layout re-checks: a rotation, a split screen, a bar that appears later.
+            wv.addOnLayoutChangeListener((v, l, t, r, b, ol, ot, or, ob) -> v.post(() -> clearSystemBars(v, types)));
             androidx.core.view.ViewCompat.requestApplyInsets(wv);
+            wv.post(() -> clearSystemBars(wv, types));
         } catch (Throwable ignored) {
             // Never fatal: the worst case is exactly the layout that shipped before this.
+        }
+    }
+
+    /** Move the WebView clear of whatever system bar overlaps it NOW, measured in window coordinates. */
+    private void clearSystemBars(android.view.View v, int types) {
+        try {
+            androidx.core.view.WindowInsetsCompat root = androidx.core.view.ViewCompat.getRootWindowInsets(v);
+            android.view.ViewGroup.LayoutParams raw = v.getLayoutParams();
+            if (root == null || !(raw instanceof android.view.ViewGroup.MarginLayoutParams)) return;
+            android.view.ViewGroup.MarginLayoutParams lp = (android.view.ViewGroup.MarginLayoutParams) raw;
+            androidx.core.graphics.Insets bars = root.getInsets(types);
+            android.view.View win = v.getRootView();
+            int[] at = new int[2];
+            v.getLocationInWindow(at);
+            int[] want = SystemBarClearance.margins(at[0], at[1], at[0] + v.getWidth(), at[1] + v.getHeight(),
+                    new int[] {lp.leftMargin, lp.topMargin, lp.rightMargin, lp.bottomMargin},
+                    win.getWidth(), win.getHeight(),
+                    new int[] {bars.left, bars.top, bars.right, bars.bottom});
+            if (lp.leftMargin != want[0] || lp.topMargin != want[1]
+                    || lp.rightMargin != want[2] || lp.bottomMargin != want[3]) {
+                lp.setMargins(want[0], want[1], want[2], want[3]);
+                v.setLayoutParams(lp);
+            }
+        } catch (Throwable ignored) {
+            // A measurement that fails leaves the layout as it is.
         }
     }
 
