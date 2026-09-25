@@ -11,6 +11,7 @@ bar is the same bug with the tiles merely dimmer.
 The sibling rule `.files-selbar` already had exactly this treatment, which is the clearest evidence
 it was an omission rather than a decision.
 """
+import re
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -30,12 +31,20 @@ def test_the_toolbar_stays_put_and_is_opaque():
     assert "z-index:" in rule, rule
 
 
-def test_it_matches_the_selection_bar_that_already_did_this():
-    """Same scroller, same problem, and that one was already solved — so the two must not drift."""
-    fx, sel = _rule(".fx-bar"), _rule(".files-selbar")
-    for prop in ("position:sticky", "top:0", "z-index:3", "background:var(--bg)"):
+def test_the_toolbar_is_above_everything_that_scrolls_under_it():
+    """This used to REQUIRE the toolbar and the selection bar to share z-index:3 "so the two must not
+    drift". Equal was the bug: two sticky strips at the same top and level, so the selection bar slid
+    over the toolbar, and a list row's ⋯ menu (z-index:4) painted over both -- on a phone, every scroll
+    (APK 1.0.2371). The rule that holds: the toolbar is sticky, opaque, and above an OPEN row menu;
+    inside the Explorer the selection bar does not stick at all."""
+    fx = _rule(".fx-bar")
+    for prop in ("position:sticky", "top:0", "background:var(--bg)"):
         assert prop in fx, (prop, fx)
-        assert prop in sel, (prop, sel)
+    bar_z = int(re.search(r"z-index:(\d+)", fx).group(1))
+    open_menu = re.search(r"\.fx-mobile-actions\[open\]\{z-index:(\d+)\}", CSS)
+    assert open_menu and bar_z > int(open_menu.group(1)), "an open row menu must stay UNDER the toolbar"
+    assert not re.search(r"\.fx-mobile-actions\{[^}]*z-index", CSS), "a CLOSED row menu must not be raised"
+    assert ".fx-explorer .files-selbar{position:static}" in CSS
 
 
 def test_the_grid_is_the_thing_that_scrolls():
