@@ -56,19 +56,29 @@ setup_music_server() {
     local TORCH_VER TORCH_IDX
     TORCH_VER="$("$PY" -c 'import torch;print(torch.__version__)' 2>/dev/null || echo "")"
     case "$TORCH_VER" in
-        *xpu*)  TORCH_IDX="https://download.pytorch.org/whl/xpu" ;;
-        *rocm*) TORCH_IDX="https://download.pytorch.org/whl/rocm6.3" ;;
-        *cu12*) TORCH_IDX="https://download.pytorch.org/whl/cu121" ;;
+        # The index of the torch ACTUALLY installed (its +suffix), so a node set up earlier keeps a
+        # matching torchaudio; 2.11.0 is torchaudio's last release and runs beside torch 2.12.x.
+        *xpu*)    TORCH_IDX="$PC_TORCH_XPU_INDEX" ;;
+        *rocm*)   TORCH_IDX="https://download.pytorch.org/whl/rocm${TORCH_VER##*+rocm}" ;;
+        *+cu*)    TORCH_IDX="https://download.pytorch.org/whl/cu${TORCH_VER##*+cu}" ;;
         *)      TORCH_IDX="" ;;
     esac
+    # torchaudio is built per torch release up to 2.11 and stopped there: match the torch base
+    # version when it is 2.11 or older, else take the last release (2.11.0) beside torch 2.12+.
+    local TA_VER BASE="${TORCH_VER%%+*}"
+    if [ -n "$BASE" ] && [ "$(printf '%s\n' "${BASE%.*}" 2.11 | sort -V | head -1)" = "${BASE%.*}" ]; then
+        TA_VER="$BASE"
+    else
+        TA_VER="${PC_TORCHAUDIO_VERSION:-2.11.0}"
+    fi
     if "$PY" -c 'import torchaudio' 2>/dev/null; then
         print_step "torchaudio already present"
     elif [ -n "$TORCH_IDX" ]; then
         print_step "Installing torchaudio from $TORCH_IDX (matching torch $TORCH_VER)..."
-        "$VENV/bin/pip" install -q --no-deps torchaudio --index-url "$TORCH_IDX" \
+        "$VENV/bin/pip" install -q --no-deps "torchaudio==$TA_VER" --index-url "$TORCH_IDX" \
             || print_warning "torchaudio install failed — music will not load until it is present"
     else
-        "$VENV/bin/pip" install -q --no-deps torchaudio || print_warning "torchaudio install failed"
+        "$VENV/bin/pip" install -q --no-deps "torchaudio==$TA_VER" || print_warning "torchaudio install failed"
     fi
 
     print_step "Installing ACE-Step into the app venv (--no-deps)..."

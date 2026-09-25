@@ -103,9 +103,11 @@ setup_python_env() {
     # requirements.txt step finds torch satisfied and doesn't pull a CPU build over it. Modern
     # stack — no IPEX (EOL after 2.8), no numpy<2 pin (torch 2.12 ships with numpy 2).
     if [ "$BACKEND" = "intel" ]; then
-        print_step "Installing PyTorch 2.12 XPU (native, bundles oneAPI runtime)..."
-        pip install torch==2.12.0 torchvision --index-url https://download.pytorch.org/whl/xpu -q \
-            || pip install torch==2.12.0 --index-url https://download.pytorch.org/whl/xpu -q
+        # 2.12.x+xpu bundles oneAPI 2025.3.2 -- the runtime the Intel image's base carries; 2.14+xpu
+        # bundles 2026.1. Do not move this past 2.12.x without moving that too.
+        print_step "Installing PyTorch $PC_TORCH_VERSION XPU (native, bundles oneAPI runtime)..."
+        pip install "torch==$PC_TORCH_VERSION" torchvision --index-url "$PC_TORCH_XPU_INDEX" -q \
+            || pip install "torch==$PC_TORCH_VERSION" --index-url "$PC_TORCH_XPU_INDEX" -q
     fi
 
     print_step "Installing Python dependencies..."

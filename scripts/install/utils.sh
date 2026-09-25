@@ -251,3 +251,29 @@ ensure_igc_235() {
         print_warning "IGC install failed - run manually later: sudo $igc_script --download"
     fi
 }
+
+
+# ONE GPU STACK: the same torch the Docker images ship (Dockerfile ARG TORCH_VERSION /
+# TORCHAUDIO_VERSION / TORCH_ROCM_INDEX), verified 2026-09-25 on an Intel Arc A770, an RTX 3060 and an
+# RX 6750 XT. tests/test_install_gpu_stack.py keeps the two equal -- they drifted to cu121 + a ROCm
+# NIGHTLY here while the images moved on.
+PC_TORCH_VERSION=2.12.1
+PC_TORCHAUDIO_VERSION=2.11.0       # torchaudio's LAST release -- there is no 2.12; it runs beside 2.12.x
+PC_TORCH_ROCM_INDEX=https://download.pytorch.org/whl/rocm7.2
+PC_TORCH_XPU_INDEX=https://download.pytorch.org/whl/xpu
+
+# CUDA torch is built per toolkit, and each toolkit needs a minimum DRIVER: cu130 needs 580+, cu129
+# 575+, cu126 560+. The installed driver decides -- a cu130 wheel on a 570 driver installs cleanly and
+# then reports no GPU. With no nvidia-smi (a fresh box, driver not installed yet) the newest is right.
+pc_torch_cuda_index() {
+    local drv
+    drv=$(nvidia-smi --query-gpu=driver_version --format=csv,noheader 2>/dev/null | head -1 | cut -d. -f1)
+    if [ -z "$drv" ] || ! [ "$drv" -eq "$drv" ] 2>/dev/null || [ "$drv" -ge 580 ]; then
+        echo https://download.pytorch.org/whl/cu130
+    elif [ "$drv" -ge 575 ]; then
+        echo https://download.pytorch.org/whl/cu129
+    else
+        [ "$drv" -lt 560 ] && echo "  NVIDIA driver $drv is older than 560; PyTorch $PC_TORCH_VERSION needs 560 or newer for the GPU" >&2
+        echo https://download.pytorch.org/whl/cu126
+    fi
+}

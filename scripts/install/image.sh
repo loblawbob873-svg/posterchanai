@@ -72,8 +72,9 @@ setup_image_deps() {
 
 setup_pytorch_nvidia() {
     if ! python3 -c "import torch; assert torch.cuda.is_available()" 2>/dev/null; then
-        echo "  Installing PyTorch with CUDA support..."
-        pip install torch torchvision --index-url https://download.pytorch.org/whl/cu121 -q
+        local IDX; IDX="$(pc_torch_cuda_index)"
+        echo "  Installing PyTorch $PC_TORCH_VERSION with CUDA support ($IDX)..."
+        pip install "torch==$PC_TORCH_VERSION" torchvision --index-url "$IDX" -q
     fi
     print_success "PyTorch CUDA ready"
 }
@@ -100,7 +101,7 @@ setup_pytorch_amd() {
     # Use home dir for temp to avoid small /tmp issues
     mkdir -p "$HOME/tmp"
     TMPDIR="$HOME/tmp" TEMP="$HOME/tmp" TMP="$HOME/tmp" \
-        pip install --no-cache-dir torch torchvision --index-url https://download.pytorch.org/whl/nightly/rocm7.0 || {
+        pip install --no-cache-dir "torch==$PC_TORCH_VERSION" torchvision --index-url "$PC_TORCH_ROCM_INDEX" || {
             print_error "PyTorch ROCm installation failed!"
             rm -rf "$HOME/tmp"
             exit 1
