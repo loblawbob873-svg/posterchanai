@@ -1126,6 +1126,14 @@ body.os-on .osw .pc-nav-label,html.pc-oswin .pc-nav-label{display:inline}
 body.os-on .osw .pc-nav-logo,html.pc-oswin .pc-nav-logo{display:block;margin-left:auto;width:36px;height:36px;flex:0 0 36px;
   border-radius:9px;background:var(--pc-logo) center/cover no-repeat;border:1px solid var(--line);
   box-shadow:0 0 12px rgba(var(--accent-rgb),.28)}
+/* FILES AND OFFICE CARRY THE SAME AVATAR, top right of their title row. They have no Back row for the
+   badge to live in (a post or a profile does), so in a PosterChanOS window it sits at the end of the
+   view's own heading instead -- "Files and Office should have the PosterChan avatar like Social and
+   the others". Same size, border and glow as .pc-nav-logo; `--pc-logo` follows a custom site logo. */
+html.pc-oswin .main:has(> #feed.feed-files)>.topbar::after,
+html.pc-oswin .main:has(> #feed.feed-office)>.topbar::after{content:"";display:block;margin-left:auto;
+  width:36px;height:36px;flex:0 0 36px;border-radius:9px;background:var(--pc-logo) center/cover no-repeat;
+  border:1px solid var(--line);box-shadow:0 0 12px rgba(var(--accent-rgb),.28)}
 .searchbox{flex:1;min-width:0;max-width:720px;margin:0 16px}   /* min-width:0 → shrinks so the topbar buttons (Calls/Drafts/New post) always fit, never clipped */
 /* Exactly ONE search box at any width: the sidebar owns it on desktop, the topbar on mobile (where the
    sidebar is display:none). Two visible inputs would be duplicate UI; two hidden ones would be no search. */
@@ -9128,7 +9136,10 @@ html.os-on #upload-badge.upbadge{z-index:333}
 .fx-tree-head b{font-size:13px}
 .fx-tree-children{padding-inline-start:20px;border-inline-start:1px solid var(--line);margin-inline-start:12px}
 .fx-tree-children.hidden{display:none}
-.fx-main{min-width:0;padding:12px;display:flex;flex-direction:column;gap:10px}
+/* 6px on top, not 12: the sidebar's first row ("Files") and the toolbar's first row share a centre
+   line. At 12 the middle column sat 6px lower than the left one ("the middle column is slightly
+   lower") -- tests/client/test_files_columns_align_full_app.py measures it in a desktop window. */
+.fx-main{min-width:0;padding:6px 12px 12px;display:flex;flex-direction:column;gap:10px}
 .fx-search-results{display:flex;flex-direction:column;min-width:0;overflow:auto}
 .fx-search-hit{display:grid;grid-template-columns:110px minmax(160px,1.5fr) minmax(120px,1fr) 90px 150px;
   gap:10px;align-items:center;width:100%;min-width:0;padding:8px 10px;border:0;border-bottom:1px solid var(--line);
@@ -10504,6 +10515,10 @@ button.pcc-dl:focus-visible{outline:2px solid var(--neon);outline-offset:-2px}
    for legacy/deep-link mounts which can paint the editor one frame before `feed-office` is applied;
    those otherwise collapse to the toolbar's content height and look like a tiny white rectangle. */
 .feed.feed-office .office-view{height:auto;min-height:0}
+/* A host that is BOTH a window (.office-win) and the view (.office-view) -- a native PosterChanOS
+   window -- keeps the window's inset. `.office-view{padding:0}` comes later and used to win, which
+   put Close/Save on the window's own bottom and right edges, under the compositor's accent ring. */
+.office-win.office-view{padding:10px 12px 12px}
 /* A no-feed document lives in `.osw-slot` permanently, including while focused. The generic slot
    is a subdued parked-app snapshot (opacity + outer padding + scrolling); none of those belong on
    a live maximised editor. Keep Office's own deliberate 10px inner spacing. */
