@@ -10515,10 +10515,10 @@ button.pcc-dl:focus-visible{outline:2px solid var(--neon);outline-offset:-2px}
    for legacy/deep-link mounts which can paint the editor one frame before `feed-office` is applied;
    those otherwise collapse to the toolbar's content height and look like a tiny white rectangle. */
 .feed.feed-office .office-view{height:auto;min-height:0}
-/* A host that is BOTH a window (.office-win) and the view (.office-view) -- a native PosterChanOS
+/* In a native PosterChanOS window the host is BOTH a window (.office-win) and the view (.office-view); it
    window -- keeps the window's inset. `.office-view{padding:0}` comes later and used to win, which
    put Close/Save on the window's own bottom and right edges, under the compositor's accent ring. */
-.office-win.office-view{padding:10px 12px 12px}
+html.pc-oswin .office-win.office-view{padding:10px 12px 12px}
 /* A no-feed document lives in `.osw-slot` permanently, including while focused. The generic slot
    is a subdued parked-app snapshot (opacity + outer padding + scrolling); none of those belong on
    a live maximised editor. Keep Office's own deliberate 10px inner spacing. */
