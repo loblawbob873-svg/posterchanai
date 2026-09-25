@@ -976,12 +976,20 @@ def _build_thread(seed: dict, allmsgs: list) -> list:
         if not added:
             break
     msgs = list(members.values())
+    # A REPLY CANNOT PREDATE ITS CONVERSATION. When the header graph holds the conversation's ROOT (a
+    # message that is not itself a reply), nothing older can belong to it -- so the subject passes
+    # below admit nothing from before that root (a day of slack for clocks and time zones). Reported:
+    # a NEW email titled "Payroll" opened with 85 older messages above it, every "Re: Payroll" and
+    # sent "Payroll" back to 2022. When the start is unknown (a reply whose parent we lack), no floor.
+    roots = [m.get("ts") or 0 for m in msgs if not _is_reply(m)]
+    floor = (min(roots) - 86400) if roots else None
+    not_before = (lambda m: floor is None or (m.get("ts") or 0) >= floor)
     if len(msgs) <= 1:                                  # no header links → fall back to subject
         ns = _normsubj(seed.get("subject", ""))
         if ns:
             by = {}
             for m in allmsgs:
-                if _normsubj(m.get("subject", "")) == ns and (_is_reply(m) or _is_own_sent(m)):
+                if _normsubj(m.get("subject", "")) == ns and (_is_reply(m) or _is_own_sent(m)) and not_before(m):
                     by[(m.get("folder"), m.get("uid"))] = m
             by[(seed.get("folder"), seed.get("uid"))] = seed
             msgs = list(by.values())
@@ -1007,7 +1015,7 @@ def _build_thread(seed: dict, allmsgs: list) -> list:
         for m in allmsgs:
             if (m.get("folder"), m.get("uid")) in held:
                 continue
-            if not _is_own_sent(m) or not isolated(m):
+            if not _is_own_sent(m) or not isolated(m) or not not_before(m):
                 continue
             if _normsubj(m.get("subject", "")) == ns_own:
                 msgs.append(m)
