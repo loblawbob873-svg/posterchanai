@@ -300,3 +300,28 @@ def test_the_updater_no_longer_talks_about_sway():
     src = (ROOT / "os/bin/update-posterchan").read_text(encoding="utf-8")
     code = "\n".join(l for l in src.splitlines() if not l.lstrip().startswith("#"))
     assert "sway" not in code, code
+
+
+def test_the_server_code_is_updated_where_it_is_installed_and_never_installed_by_an_update(tmp_path):
+    """PKGS named the desktop and the session only: no PosterChanOS machine ever updated its server
+    code, and the ISO build host packed a stale server into every image (2026-09-25). RUN the choice
+    with a stub qlist, both ways."""
+    import subprocess
+    src = (ROOT / "os/bin/update-posterchan").read_text()
+    fn = src[src.index("_pc_update_set() {"):]
+    fn = fn[:fn.index("\n}\n") + 3]
+    pkgs = src[src.index('PKGS="'):].split("\n", 1)[0]
+    out = {}
+    for case, installed in (("server", "app-misc/posterchan-server-1.0.1"), ("none", "")):
+        stub = tmp_path / case
+        stub.mkdir()
+        (stub / "qlist").write_text(f"#!/bin/sh\necho '{installed}'\n")
+        (stub / "qlist").chmod(0o755)
+        r = subprocess.run(["bash", "-c", f"{pkgs}\n{fn}\n_pc_update_set"], capture_output=True, text=True,
+                           env=dict(os.environ, PATH=f"{stub}:{os.environ['PATH']}"), timeout=20)
+        assert r.returncode == 0, r.stderr
+        out[case] = r.stdout.split()
+    assert "app-misc/posterchan-server" in out["server"], "an installed server is never updated"
+    assert "app-misc/posterchan-server" not in out["none"], "an update INSTALLED the server"
+    assert {"app-misc/posterchan-desktop", "app-misc/posterchanos-shell"} <= set(out["none"])
+    assert 'PKGS="$(_pc_update_set)"' in src

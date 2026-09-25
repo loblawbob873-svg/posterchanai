@@ -164,7 +164,19 @@ _pc_audit_desktop_asar() {
 # verification").
 #
 # So: use portage where portage owns it, and otherwise do exactly what the installer did.
-have_pkgs="$(qlist -Iv app-misc/posterchan-desktop app-misc/posterchanos-shell 2>/dev/null | sort)"
+# THE SERVER'S CODE TOO, WHEREVER IT IS INSTALLED -- and only there: an update must never be what
+# installs it. PKGS named the desktop and the session only, so app-misc/posterchan-server was never
+# updated by this script on ANY machine: a PosterChanOS node running the server kept the code it was
+# installed with, and the ISO build host (updated by this) packed a two-day-old server into every
+# image -- found 2026-09-25 when a relay fix deployed everywhere was absent from the ISO under test.
+# The server ebuild restarts a RUNNING server itself and leaves a stopped one stopped.
+_pc_update_set() {
+	local set="$PKGS"
+	[ -n "$(qlist -I app-misc/posterchan-server 2>/dev/null)" ] && set="$set app-misc/posterchan-server"
+	echo "$set"
+}
+
+have_pkgs="$(qlist -Iv app-misc/posterchan-desktop app-misc/posterchanos-shell app-misc/posterchan-server 2>/dev/null | sort)"
 
 if [ -n "$have_pkgs" ]; then
 	echo "${CYA}Syncing the PosterChanOS overlay${OFF}"
@@ -179,13 +191,14 @@ if [ -n "$have_pkgs" ]; then
 			echo "${YEL}Could not reach the overlay — trying the update with what is already here.${OFF}"
 		fi
 	fi
+	PKGS="$(_pc_update_set)"
 	echo "${CYA}Updating${OFF} $PKGS"
 	if ! emerge -u --quiet-build=n $PKGS; then
 		echo
 		echo "${RED}The update failed. Nothing was replaced — the running desktop is untouched.${OFF}"
 		exit 1
 	fi
-	after="$(qlist -Iv app-misc/posterchan-desktop app-misc/posterchanos-shell 2>/dev/null | sort)"
+	after="$(qlist -Iv app-misc/posterchan-desktop app-misc/posterchanos-shell app-misc/posterchan-server 2>/dev/null | sort)"
 	echo
 	if [ "$have_pkgs" = "$after" ]; then
 		echo "${GRN}Already up to date.${OFF}"
