@@ -71,3 +71,19 @@ if [[ "$PUBLISHED_SHA" != "$LOCAL_SHA" ]]; then
 	exit 1
 fi
 echo "Published $PUBLISH_HOST:$PUBLISH_PATH and $CHECKSUM_PATH (sha256 $LOCAL_SHA)"
+
+# DEVDRIVE.CLOUD, the second home for the same verified image -- only after the router.lan copy above
+# is in place and checked, and only on a machine that holds BOTH API keys (mode 600, never in the
+# repo): ~/.config/posterchan/devdrive.key1 and devdrive.key2. Its failure is reported but does not
+# undo the primary publish, which already succeeded; the previous devdrive copy stays until a new
+# one is verified (scripts/publish_devdrive.py).
+DEVDRIVE_CONF="${XDG_CONFIG_HOME:-$HOME/.config}/posterchan"
+if [[ -s "$DEVDRIVE_CONF/devdrive.key1" && -s "$DEVDRIVE_CONF/devdrive.key2" ]]; then
+	DEVDRIVE_PY="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/publish_devdrive.py"
+	PY="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/venv-unified/bin/python"
+	[[ -x "$PY" ]] || PY=python3
+	if ! "$PY" "$DEVDRIVE_PY" "$ISO"; then
+		echo "devdrive.cloud publish FAILED (router.lan copy is published); rerun: $PY $DEVDRIVE_PY $ISO" >&2
+		exit 1
+	fi
+fi
