@@ -2065,6 +2065,27 @@ liveISOinstall() {
 	if [ -f $TARGET/var/lib/libvirt/secrets/secrets-encryption-key ] && [ ! -s $TARGET/var/lib/libvirt/secrets/secrets-encryption-key ]; then
 		sudo rm -f $TARGET/var/lib/libvirt/secrets/secrets-encryption-key 2>/dev/null
 	fi
+	# …and GROUP MEMBERSHIPS OF ACCOUNTS THAT ARE NOT HERE. The image's /etc/group comes from the build
+	# host, whose users are removed from passwd/shadow but stayed listed as MEMBERS: a fresh install
+	# (2026-09-25, found by the System Settings server test) had `wheel:…:root,verita84,live,
+	# pc-5ac337fb7cb82127` and 14 more such lines. No password, so no login -- but `pc-<hash>` names
+	# are derived from a Nostr key, so that key signing in on ANY machine installed from the image was
+	# handed admin without being its owner. Keep only members that have an account on this disk.
+	for GF in $TARGET/etc/group $TARGET/etc/gshadow; do
+		[ -f "$GF" ] && [ -f $TARGET/etc/passwd ] || continue
+		# group: members are field 4; gshadow: administrators field 3 AND members field 4.
+		sudo awk -F: -v OFS=: -v shadow="$([ "${GF##*/}" = gshadow ] && echo 1)" '
+			NR == FNR { have[$1] = 1; next }
+			function keep(list,   n, i, m, out, seen) {
+				n = split(list, m, ","); out = ""
+				for (i = 1; i <= n; i++) if (m[i] in have && !(m[i] in seen)) { seen[m[i]] = 1; out = out (out == "" ? "" : ",") m[i] }
+				return out
+			}
+			{ if (NF >= 4) { $4 = keep($4); if (shadow) $3 = keep($3) } print }
+		' $TARGET/etc/passwd "$GF" | sudo tee "$GF.pcnew" >/dev/null \
+			&& sudo chmod --reference="$GF" "$GF.pcnew" 2>/dev/null; sudo chown --reference="$GF" "$GF.pcnew" 2>/dev/null
+		[ -s "$GF.pcnew" ] && sudo mv -f "$GF.pcnew" "$GF" || sudo rm -f "$GF.pcnew"
+	done
 	# …and the live medium's "Install PosterChanOS" launcher. livecd writes it into the IMAGE only
 	# (a pseudo-file), but this copies the image onto the disk, so every installed machine carried
 	# it: a start-menu entry that opens a terminal running `sudo gentoo.sh` — "Install PosterChan not
