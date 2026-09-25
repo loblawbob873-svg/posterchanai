@@ -310,7 +310,7 @@
       <button class="bg-check" data-act="paid" title="${paid?'mark unpaid':'mark paid'}" aria-label="${paid?'mark unpaid':'mark paid'}">${paid?'✅':'⬜'}</button>
       <span class="bg-name">${enc(b.name)}${hidden?' <i class="bg-flag">skipped</i>':''}${!b.is_recurring?' <i class="bg-flag">one-time</i>':''}</span>
       <span class="bg-amt ${b.is_income?'in':'out'}">${b.is_income?'+':'−'}${enc(money(b.cost))}</span>
-      <button class="bg-more" data-act="menu" aria-label="more">☰</button>
+      <button class="bg-more" data-act="menu" aria-label="more" title="More"><svg class="ic b-ic" aria-hidden="true"><use href="#i-menu"></use></svg></button>
     </div>`;
   }
 
@@ -338,7 +338,7 @@
       ${box}
       <span class="bg-name"><span class="bg-itxt">${enc(i.name)}</span><i class="bg-flag bg-planflag" data-act="gotoplan" title="open the plan “${enc(c.name)}”">${enc(c.name)}</i>${hidden?' <i class="bg-flag">skipped</i>':''}</span>
       <span class="bg-amt out">−${enc(money(i.amount))}</span>
-      <button class="bg-more" data-act="itemmenu" aria-label="more">☰</button>
+      <button class="bg-more" data-act="itemmenu" aria-label="more" title="More"><svg class="ic b-ic" aria-hidden="true"><use href="#i-menu"></use></svg></button>
     </div>`;
   }
 
@@ -356,7 +356,7 @@
         <button class="bg-check" data-act="catpaid" aria-label="toggle paid">${c.paid==='Y'?'✅':'⬜'}</button>
         <span class="bg-name">${enc(c.name)}${hidden?' <i class="bg-flag">skipped</i>':''}</span>
         <span class="bg-amt out">${enc(money(catTotal(c.id)))}</span>
-        <button class="bg-more" data-act="catmenu" aria-label="more">☰</button>
+        <button class="bg-more" data-act="catmenu" aria-label="more" title="More"><svg class="ic b-ic" aria-hidden="true"><use href="#i-menu"></use></svg></button>
       </div>
       <div class="bg-items">
         ${items.map(i=>`<div class="bg-item${settledItem(i,c)?' done':''}" data-item="${i.id}">
@@ -417,7 +417,7 @@
       <div class="bg-head">
         <div class="bg-monthrow">
           <div class="bg-month">${enc(monthLabel())}</div>
-          <button class="btn btn-ghost small" id="bg-reset" title="mark every recurring bill and plan unpaid again">↺ Reset month</button>
+          <button class="btn btn-ghost small" id="bg-reset" title="mark every recurring bill and plan unpaid again"><svg class="ic b-ic" aria-hidden="true"><use href="#i-refresh"></use></svg>Reset month</button>
         </div>
         <div class="bg-tiles">
           ${tile('Income', money(s.income), 'in')}

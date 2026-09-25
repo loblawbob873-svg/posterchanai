@@ -5029,6 +5029,11 @@ html.pc-oswin .main{ height:100% }
   padding:8px 14px;border-radius:10px;display:inline-flex;align-items:center;gap:6px}
 .bg-tab:hover{color:var(--text)}
 .bg-tab.on{color:var(--neon);border-color:var(--line);background:color-mix(in srgb, var(--neon) 12%, var(--panel2))}
+/* BOTH TABS LOOK LIKE TABS. The unselected one was bare text with a transparent border, so after adding a
+   plan (which lands on Plans) "Bills" -- the main budget screen -- did not read as something you could
+   tap: "after adding a plan, no way to go back to main budget screen". Framed, dimmer than the selected. */
+.bg-tab:not(.ghost):not(.on){border-color:var(--line);background:var(--panel2);color:var(--text)}
+.bg-more svg{width:16px;height:16px;vertical-align:-3px}
 .bg-tab .bg-n{font-style:normal;font-size:11px;background:var(--amber);color:var(--bg);border-radius:9px;padding:1px 8px;font-weight:800}
 .bg-tab.ghost{font-size:17px;padding:6px 12px}
 
