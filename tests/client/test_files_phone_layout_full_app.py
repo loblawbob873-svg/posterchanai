@@ -47,7 +47,7 @@ MEASURE = r'''(()=>{
  for(const y of [br.top+18, br.top+(br.height/2), fr.top+fr.height/2])
    for(const x of [20, vw/2, vw-20]){
      const top=document.elementFromPoint(x,y);
-     if(top && !bar.contains(top)) out.problems.push('covered at '+Math.round(x)+','+Math.round(y)+' by .'+String(top.className||top.tagName).slice(0,40));
+     if(top && !bar.contains(top)){ out.problems.push('covered at '+Math.round(x)+','+Math.round(y)+' by .'+String(top.className||top.tagName).slice(0,40)); break; }
    }
  for(const el of bar.querySelectorAll('button,select,input')){
    if(getComputedStyle(el).display==='none') continue;
@@ -80,8 +80,11 @@ SCROLL = r'''(()=>{let s=document.querySelector('.fx-bar');
 
 
 @pytest.mark.skipif(not Path('/opt/google/chrome/chrome').exists(), reason='Chrome required')
+@pytest.mark.parametrize('view', ['tiles', 'details'])
 @pytest.mark.parametrize('width,height', [(390, 844), (360, 780)])
-def test_files_all_on_a_phone(width, height):
+def test_files_all_on_a_phone(width, height, view):
+    """`details` is where each row carries a ⋯ menu -- which was z-index:4 over a z-index:3 toolbar and
+    painted over it on every scroll (APK 1.0.2371). The tiles-only version of this test passed through it."""
     async def check(b):
         await b.call('Emulation.setDeviceMetricsOverride',
                      {'width': width, 'height': height, 'deviceScaleFactor': 2, 'mobile': True})
@@ -91,13 +94,17 @@ def test_files_all_on_a_phone(width, height):
         # "All": the whole drive.
         await b.js("(()=>{const a=[...document.querySelectorAll('button,[data-folder]')].find(e=>/^\\s*All( files)?\\s*$/i.test(e.textContent)||e.dataset.folder==='');a&&a.click()})()")
         await b.until("document.querySelectorAll('.file-card[data-sha]').length>=30")
+        if view == 'details':
+            await b.js("document.querySelector('[data-view=\"details\"]').click()")
+            await b.until("!!document.querySelector('.files-grid.details .fx-mobile-actions')")
         top = await b.js(MEASURE)
         assert top['problems'] == [], top['problems']
         assert top['sortSelected'] == 'Newest first', top
         assert 'Oldest first' in top['sortOptions'] and 'Name A–Z' in top['sortOptions'], top
-        await b.js(SCROLL)
-        await asyncio.sleep(.3)
-        scrolled = await b.js(MEASURE)
-        assert scrolled['problems'] == [], scrolled['problems']
+        for dy in ('150', '700'):       # just stuck, and deep in the list
+            await b.js(SCROLL.replace('700', dy))
+            await asyncio.sleep(.3)
+            scrolled = await b.js(MEASURE)
+            assert scrolled['problems'] == [], (dy, scrolled['problems'][:4])
 
     asyncio.run(desktop.with_browser('online', '', check, DRIVE))

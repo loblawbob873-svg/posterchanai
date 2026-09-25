@@ -9236,7 +9236,7 @@ html.os-on #upload-badge.upbadge{z-index:333}
    transparent sticky bar is the same bug with the tiles merely dimmer. */
 .fx-bar{display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap;
   padding-bottom:8px;border-bottom:1px solid var(--line);
-  position:sticky;top:0;z-index:3;background:var(--bg)}
+  position:sticky;top:0;z-index:10;background:var(--bg)}   /* above an OPEN row menu (4); below drawers/dialogs */
 .fx-crumbs{display:flex;align-items:center;gap:2px;min-width:0;flex-wrap:wrap}
 .fx-crumb{background:none;border:0;font:inherit;font-size:15px;font-weight:600;color:var(--muted);
   cursor:pointer;padding:4px 8px;border-radius:8px;max-width:240px;
@@ -9374,7 +9374,11 @@ html.os-on #upload-badge.upbadge{z-index:333}
   .files-grid.details.nosel .file-card.row{grid-template-columns:minmax(0,1fr) 66px 44px}
   .fx-c-type,.fx-c-modified,.fx-type,.fx-mod{display:none}
   .files-grid.details .file-card.row>.fc-acts{display:none}
-  .fx-mobile-actions{display:block;position:relative;justify-self:end;z-index:4}
+  /* Raised ONLY while open, so the opened list draws over the rows below it. Raised closed (it was
+     z-index:4 always) every row's ⋯ painted OVER the sticky toolbar as the list scrolled under it --
+     "the hamburger menu still bleeding through the area above the file list". */
+  .fx-mobile-actions{display:block;position:relative;justify-self:end}
+  .fx-mobile-actions[open]{z-index:4}
   .fx-mobile-actions>summary{list-style:none;width:42px;height:42px;border-radius:50%;cursor:pointer;
     display:grid;place-items:center;color:var(--muted);font-size:24px;line-height:1}
   .fx-mobile-actions>summary::-webkit-details-marker{display:none}
