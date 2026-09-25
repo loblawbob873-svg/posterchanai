@@ -266,7 +266,13 @@ window.PCProfileFactory = function(dep){
       for(let attempt=0; attempt<3; attempt++){
         try{ notes=await Relay.query([{authors:[pk],kinds:[1,1068,6],limit:80}]); }catch(_){ notes=[]; }   // polls + reposts
         if(S.VIEW!=='profile' || myGen!==_profGen) return false;   // navigated away / a newer profile opened
-        if(notes.length || Store.feed(e=>e.pubkey===pk).length) break;
+        /* AN ANSWER NO RELAY FINISHED IS NOT "NOTHING MORE", WHATEVER THE CACHE HOLDS. This broke out as
+           soon as the cache had ANY note by this author -- so a profile the timeline had shown one post
+           of, opened while the socket was busy, painted that one post and never asked again: "profile
+           says 3766 posts but it lists 1 -- I had to reload". Only a COMPLETE answer may end the retries;
+           a complete empty one with a cache is a real "that's all". */
+        const incomplete = notes && notes.complete === false;
+        if(!incomplete && (notes.length || Store.feed(e=>e.pubkey===pk).length)) break;
         await new Promise(r=>setTimeout(r, 450*(attempt+1)));
       }
       notes.forEach(n=>Store.saveEvent(n));
