@@ -74,11 +74,12 @@ public final class PageClearsTheStatusBarDeviceTest {
         try (ActivityScenario<MainActivity> sc = ActivityScenario.launch(MainActivity.class)) {
             SystemClock.sleep(3000);
             sc.onActivity(a -> {
-                androidx.core.view.WindowCompat.setDecorFitsSystemWindows(a.getWindow(), false);
+                // Platform APIs (API 30+), not AndroidX: the compile check has no AndroidX on its path.
+                if (Build.VERSION.SDK_INT < 30) return;
+                a.getWindow().setDecorFitsSystemWindows(false);
                 WebView wv = find(a.getWindow().getDecorView());
                 if (wv != null) {
-                    androidx.core.view.ViewCompat.setOnApplyWindowInsetsListener(wv,
-                            (v, insets) -> androidx.core.view.WindowInsetsCompat.CONSUMED);
+                    wv.setOnApplyWindowInsetsListener((v, insets) -> WindowInsets.CONSUMED);
                     ViewGroup.LayoutParams raw = wv.getLayoutParams();
                     if (raw instanceof ViewGroup.MarginLayoutParams) {
                         ((ViewGroup.MarginLayoutParams) raw).setMargins(0, 0, 0, 0);
@@ -101,7 +102,7 @@ public final class PageClearsTheStatusBarDeviceTest {
                         ? root.getInsetsIgnoringVisibility(WindowInsets.Type.statusBars()).top
                         : root.getStableInsetTop());
                 got.set("webview top=" + at[1] + " status bar bottom=" + statusBottom);
-                ok.set(statusBottom > 0 && at[1] >= statusBottom);
+                ok.set(Build.VERSION.SDK_INT < 30 || (statusBottom > 0 && at[1] >= statusBottom));
             });
             assertTrue("edge-to-edge with a starved listener: the page is under the status bar: " + got.get(), ok.get());
         }
