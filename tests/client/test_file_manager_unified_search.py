@@ -81,3 +81,14 @@ def test_unified_sort_normalizes_dates_and_types_from_every_source():
 def test_unified_results_do_not_overflow_a_phone():
     assert ".fx-search-hit{display:grid" in CSS
     assert ".fx-search-path,.fx-search-date{display:none}" in CSS
+
+
+def test_clicking_a_computer_file_result_opens_it():
+    """RUNS the shipped search and clicks the hits: a FILE opens (Preview/chooser), a folder browses."""
+    import shutil, subprocess
+    import pytest
+    if not shutil.which('node'):
+        pytest.skip('node is required')
+    runtime = Path(__file__).with_name('unified_search_open_runtime.mjs')
+    r = subprocess.run(['node', str(runtime)], capture_output=True, text=True, timeout=20)
+    assert r.returncode == 0, r.stdout + r.stderr

@@ -2430,6 +2430,17 @@ window.PCFilesFactory = function(dep){
            * cross-platform path ancestry for breadcrumbs and Up, so search uses the same rule. */
           H.enter(r.dir?p:(H.parentPath(p)||p)); } _S._hostOn=true; _S._syncRoot=''; _S._filesFolder=null; _S._fxMobileSource='computer'; }
       renderBlossom();
+      /* A FILE HIT IS AN OPEN, not a trip to its folder. It used to stop at the folder above, so
+       * clicking the result you searched for did nothing you could see. Files still lands on that
+       * folder (Back and the rest of the directory stay one step away); the file itself goes
+       * through the exact open a click in This Computer uses: Preview, or the chooser. */
+      if(r.source==='computer' && !r.dir && r.path){
+        const p=String(r.path), nm=String(r.name||p.split(/[\\/]/).pop()||p);
+        const openHere=()=>Promise.resolve(window.pcHost&&pcHost.open?pcHost.open(p):{ok:false,why:'this build cannot open a local file'})
+          .then(x=>{ if(x&&x.ok===false) toast(x.why||'could not open that'); }, e=>toast(String((e&&e.message)||e)));
+        openHere.mtime=Number(r.mtime||r.modified)||0;
+        _openHostFile(p, nm, openHere, String(r.mime||mimeForName(nm)||''));
+      }
     });
   }
   async function renderPublicFiles(pane){
