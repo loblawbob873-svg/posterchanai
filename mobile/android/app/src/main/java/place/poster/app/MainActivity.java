@@ -77,6 +77,7 @@ public class MainActivity extends BridgeActivity {
         registerPlugin(place.poster.app.push.PushPlugin.class);
         registerPlugin(place.poster.app.music.MusicPlugin.class);
         registerPlugin(place.poster.app.preview.OpenFilePlugin.class);
+        registerPlugin(place.poster.app.preview.PrintPlugin.class);
         registerPlugin(place.poster.app.office.OpenDocPlugin.class);
         registerPlugin(place.poster.app.call.CallPlugin.class);
         registerPlugin(place.poster.app.calendar.CalendarPlugin.class);

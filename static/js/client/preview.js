@@ -225,17 +225,130 @@
     return (i ? n.toFixed(1) : String(n)) + ' ' + u[i];
   }
 
+  /* PRINT. The WebView ignores window.print() -- a WebView prints only through Android's
+   * PrintManager -- so the APK asks the native `Print` plugin (PrintPlugin.java). Everywhere else a
+   * hidden frame holding just the file is printed: the picture itself, or a PDF's pages drawn by the
+   * pdf.js this viewer already carries, so nothing depends on the browser having a PDF viewer.
+   * Video and audio have nothing to put on paper. */
+  function nativePrint() {
+    try { var cap = PC().capPlugin && PC().capPlugin('Print', 'print'); return cap && cap.print ? cap : null; }
+    catch (_) { return null; }
+  }
+  function isNative() {
+    try { return !!(root.Capacitor && root.Capacitor.isNativePlatform && root.Capacitor.isNativePlatform()); }
+    catch (_) { return false; }
+  }
+  function canPrint(kind) { return kind === 'image' || kind === 'pdf'; }
+  async function blobToB64(blob) {
+    var bytes = new Uint8Array(await blob.arrayBuffer()), binary = '';
+    for (var at = 0; at < bytes.length; at += 0x8000) binary += String.fromCharCode.apply(null, bytes.subarray(at, at + 0x8000));
+    return btoa(binary);
+  }
+  async function printFrameHTML(blob, kind, urls) {
+    if (kind === 'image') {
+      var u = URL.createObjectURL(blob); urls.push(u);
+      return '<img src="' + u + '">';
+    }
+    var lib = await loadPdfJs();
+    var pdf = await lib.getDocument({ data: new Uint8Array(await blob.arrayBuffer()) }).promise;
+    var parts = [];
+    try {
+      for (var i = 1; i <= pdf.numPages; i++) {
+        var page = await pdf.getPage(i), vp = page.getViewport({ scale: 2 });
+        var c = document.createElement('canvas'); c.width = Math.ceil(vp.width); c.height = Math.ceil(vp.height);
+        await page.render({ canvasContext: c.getContext('2d'), viewport: vp }).promise;
+        var png = await new Promise(function (r) { c.toBlob(r, 'image/png'); });
+        var pu = URL.createObjectURL(png); urls.push(pu); parts.push('<img src="' + pu + '">');
+        try { page.cleanup(); } catch (_) {}
+      }
+    } finally { try { pdf.destroy(); } catch (_) {} }
+    return parts.join('');
+  }
+  async function printFile(blob, name, kind) {
+    if (!blob || !canPrint(kind)) { toast('there is nothing to print in this file'); return 'none'; }
+    if (isNative()) {
+      var cap = nativePrint();
+      if (!cap) { toast('printing needs the latest version of the app'); return 'unsupported'; }
+      if (Number(blob.size) > NATIVE_OPEN_MAX) { toast('this file is over 32 MB, too large to print from the app'); return 'too-large'; }
+      await cap.print({ data: await blobToB64(blob), mime: blob.type || '', name: name || 'document' });
+      return 'native';
+    }
+    var urls = [];
+    var html = await printFrameHTML(blob, kind, urls);
+    var f = document.createElement('iframe');
+    f.className = 'pv-print-frame';
+    f.setAttribute('aria-hidden', 'true');
+    f.style.cssText = 'position:fixed;right:0;bottom:0;width:0;height:0;border:0';
+    f.srcdoc = '<!doctype html><html><head><meta charset="utf-8"><title>' + H(name) + '</title><style>'
+      + '@page{margin:10mm}html,body{margin:0;background:#fff}'
+      + 'img{display:block;max-width:100%;max-height:100vh;margin:0 auto;object-fit:contain;break-after:page}'
+      + 'img:last-child{break-after:auto}</style></head><body>' + html + '</body></html>';
+    var loaded = new Promise(function (r) { f.onload = r; });
+    document.body.appendChild(f);
+    await loaded;
+    var doc = f.contentDocument;
+    await Promise.all([].slice.call((doc && doc.images) || []).map(function (im) {
+      return im.complete ? null : new Promise(function (r) { im.onload = im.onerror = r; });
+    }));
+    var gone = false;
+    var cleanup = function () {
+      if (gone) return; gone = true;
+      try { f.remove(); } catch (_) {}
+      urls.forEach(function (u) { try { URL.revokeObjectURL(u); } catch (_) {} });
+    };
+    try { f.contentWindow.addEventListener('afterprint', function () { setTimeout(cleanup, 500); }); } catch (_) {}
+    setTimeout(cleanup, 10 * 60 * 1000);
+    f.contentWindow.focus();
+    f.contentWindow.print();
+    return 'frame';
+  }
+
+  /* SHARE. On the APK: the file goes to the cache and out through Android's share sheet (the same
+   * Filesystem + Share plugins saveBlobAs uses). In a browser that can share files: navigator.share.
+   * Nowhere else is the button drawn, since a Share that cannot share is a dead control. */
+  function nativeShare() {
+    var P = (root.Capacitor && root.Capacitor.Plugins) || {};
+    return isNative() && P.Filesystem && P.Share ? P : null;
+  }
+  function canShare(name, mime) {
+    if (nativeShare()) return true;
+    try {
+      return !!(root.navigator && navigator.share && navigator.canShare
+        && navigator.canShare({ files: [new File([''], name || 'file', { type: mime || 'application/octet-stream' })] }));
+    } catch (_) { return false; }
+  }
+  async function shareFile(blob, name) {
+    name = name || 'file';
+    var P = nativeShare();
+    if (P) {
+      var w = await P.Filesystem.writeFile({ path: name, data: await blobToB64(blob), directory: 'CACHE' });
+      try { await P.Share.share({ title: name, files: [w.uri], dialogTitle: 'Share ' + name }); }
+      catch (_) { /* dismissing the sheet is a cancel, not a failure */ }
+      return 'native';
+    }
+    try { await navigator.share({ title: name, files: [new File([blob], name, { type: blob.type || 'application/octet-stream' })] }); }
+    catch (e) { if (!e || e.name !== 'AbortError') throw e; }
+    return 'web';
+  }
+
+  /* THE BAR IS TWO ROWS ON A PHONE: the name with its size and the close button, then the actions.
+   * It was one row, so on a phone the name was squeezed to nothing between five buttons ("you can't
+   * see the file name when opened, the name and buttons are all together"). The close button is
+   * therefore NOT inside .pv-acts any more -- it belongs to the title row. */
   function bodyHTML(name, mime, size, kind) {
     var head = '<div class="pv-bar">'
-      + '<span class="pv-name" title="' + H(name) + '">' + H(name) + '</span>'
-      + '<span class="pv-size muted small">' + H(fmtSize(size)) + '</span>'
+      + '<span class="pv-title"><span class="pv-name" title="' + H(name) + '">' + H(name) + '</span>'
+      + '<span class="pv-size muted small">' + H(fmtSize(size)) + '</span></span>'
       + '<span class="pv-acts">'
       + (kind === 'image' ? '<button class="btn btn-ghost small pv-zoom">Actual size</button>'
-                            + '<button class="btn btn-ghost small pv-rot" title="Rotate">&#8635;</button>' : '')
+                            + '<button class="btn btn-ghost small pv-rot" title="Rotate" aria-label="Rotate">&#8635;</button>' : '')
       + (kind === 'pdf' && nativeOpen() ? '<button class="btn btn-ghost small pv-open">Open in app</button>' : '')
+      + (canPrint(kind) ? '<button class="btn btn-ghost small pv-print">Print</button>' : '')
+      + (canShare(name, mime) ? '<button class="btn btn-ghost small pv-share">Share</button>' : '')
       + '<button class="btn btn-ghost small pv-dl">Download</button>'
+      + '</span>'
       + '<button class="btn btn-ghost small pv-x" aria-label="Close">&#10005;</button>'
-      + '</span></div>';
+      + '</div>';
     var body;
     if (kind === 'image') {
       body = '<div class="pv-body pv-img-wrap"><img class="pv-img" alt="' + H(name) + '"></div>';
@@ -334,6 +447,19 @@
       var b = blob ? Promise.resolve(blob) : fetch(url).then(function (r) { return r.blob(); });
       b.then(function (x) { return openElsewhere(x, name || 'document.pdf'); })
         .catch(function (e) { toast('could not open that PDF: ' + ((e && e.message) || e)); });
+    };
+    var bytes = function () { return blob ? Promise.resolve(blob) : fetch(url).then(function (r) { return r.blob(); }); };
+    var pr = q('.pv-print');
+    if (pr) pr.onclick = function () {
+      pr.disabled = true;
+      bytes().then(function (b) { return printFile(b, name, kind); })
+        .catch(function (e) { toast('could not print: ' + ((e && e.message) || e)); })
+        .then(function () { pr.disabled = false; });
+    };
+    var sh = q('.pv-share');
+    if (sh) sh.onclick = function () {
+      bytes().then(function (b) { return shareFile(b, name); })
+        .catch(function (e) { toast('could not share: ' + ((e && e.message) || e)); });
     };
     var x = q('.pv-x'); if (x) x.onclick = shut;
     return cleanup;
@@ -510,5 +636,6 @@
   root.PCPreview = { open: open, acceptHandoff: acceptHandoff, handles: handles, kindOf: kindOf,
                      isImage: isImage, isVideo: isVideo, isAudio: isAudio, isPdf: isPdf,
                      loadPdfJs: loadPdfJs, isOpen: isOpen, close: close,
-                     _openElsewhere: openElsewhere, _renderPdf: renderPdf };
+                     _openElsewhere: openElsewhere, _renderPdf: renderPdf,
+                     _printFile: printFile, _shareFile: shareFile };
 })(window);

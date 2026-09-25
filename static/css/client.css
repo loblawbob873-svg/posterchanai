@@ -2514,6 +2514,18 @@ body.embed .feed{max-width:680px;margin:0 auto;padding:14px;height:auto !importa
    scroll a long folder picking files — otherwise you select, scroll down, and the buttons are gone. */
 .files-selbar{display:flex;align-items:center;gap:8px;flex-wrap:wrap;padding:8px 4px;position:sticky;top:0;z-index:3;background:var(--bg)}
 .files-selbar:empty{display:none}
+/* INSIDE THE EXPLORER THE SELECTION BAR DOES NOT STICK. The toolbar above it is sticky at top:0 too,
+   same z-index, and later in the document -- so on a scroll the selection bar slid UP over the
+   toolbar and hid Back/Up/Sort/the search box while the files ran underneath what was left
+   ("scrolling down, file list bleeds into buttons"). One sticky strip per pane. */
+.fx-explorer .files-selbar{position:static}
+.file-card .copy svg,.file-card .movebtn svg{width:14px;height:14px;vertical-align:-2px}
+/* The tile's own openers (download, rename, move) are a row UNDER the name. `.movebtn` kept the
+   absolute top-corner position it had before it moved into that row, which on a phone tile put it
+   straight on top of the checkbox; rename had no style at all and drew as a grey system button. */
+.file-card .meta .movebtn,.file-card .meta .renbtn{position:static;background:none;border:none;
+  color:var(--muted);cursor:pointer;font-size:15px;padding:4px 6px;line-height:1;border-radius:6px}
+.file-card .meta .movebtn:hover,.file-card .meta .renbtn:hover{color:var(--cyan,#5ff)}
 /* NO BOX AROUND A FILE. A bordered, filled card per item is a web design; a file manager draws the
    ICON and the NAME on the desktop background and nothing else. The border and the panel fill were
    the "box around folders and files".
@@ -9169,7 +9181,13 @@ html.os-on #upload-badge.upbadge{z-index:333}
   .fx-side .folder-chip{width:100%;min-height:46px;flex:none;border:1px solid var(--line);
     border-radius:9px;padding:10px 12px;background:var(--panel);color:var(--text)}
   .fx-main{padding:6px 0}
-  .fx-bar{gap:8px;padding:0 2px 10px}
+  /* 10px of gutter: at 2px the search box's rounded border met the screen edge and the phone
+     clipped it on both sides. */
+  .fx-bar{gap:8px;padding:0 10px 10px}
+  /* On a phone the choice says the direction itself ("Newest first"), so the arrow and the
+     "Sort by" label go -- they were what pushed the view toggle off the right edge. */
+  .fx-sort-wrap>span,.fx-sort-dir{display:none}
+  .fx-sort{max-width:150px}
   .fx-nav{order:1}
   .fx-crumbs{order:2;flex:1;flex-wrap:nowrap;overflow:hidden}
   .fx-crumbs .fx-crumb:not(.on),.fx-crumbs .fx-sep{display:none}
@@ -10536,7 +10554,9 @@ button.pcc-dl:focus-visible{outline:2px solid var(--neon);outline-offset:-2px}
 html.pc-oswin .pv-sheet{top:38px}
 .pv-bar{display:flex;align-items:center;gap:10px;padding:8px 10px;flex:0 0 auto;
   border-bottom:1px solid var(--line);background:var(--panel)}
+.pv-title{display:flex;align-items:baseline;gap:8px;min-width:0;flex:1 1 auto}
 .pv-name{font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;min-width:0}
+.pv-x{flex:0 0 auto}
 .pv-size{flex:0 0 auto}
 .pv-acts{margin-left:auto;display:flex;gap:6px;flex:0 0 auto}
 .pv-body{flex:1 1 auto;min-height:0;display:flex;align-items:center;justify-content:center;
@@ -10556,7 +10576,15 @@ html.pc-oswin .pv-sheet{top:38px}
 .pv-pdf-body{display:block;background:#202124;padding:10px;overflow:auto}
 .pv-pdf-pages{width:100%;display:flex;flex-direction:column;align-items:center;gap:10px;min-height:100%}
 .pv-pdf-page{display:block;max-width:100%;height:auto;background:#fff;box-shadow:0 2px 12px #0008}
-@media(max-width:640px){.pv-bar{padding:6px 8px;gap:6px}.pv-name{font-size:.95em}}
+/* A PHONE GETS TWO ROWS: the name (with the size and ✕) on its own line, the actions below it and
+   free to wrap. One row gave the name whatever five buttons left over, which was nothing. */
+@media(max-width:640px){
+  .pv-bar{padding:8px 10px;gap:6px 8px;flex-wrap:wrap}
+  .pv-title{order:1;flex:1 1 0}
+  .pv-name{font-size:1em}
+  .pv-x{order:2}
+  .pv-acts{order:3;flex:1 1 100%;margin-left:0;flex-wrap:wrap}
+}
 
 /* Concord threads. A reply count on a root, and the bar that says you are inside one.
    Deliberately built from the tokens the rest of Concord already uses — a thread is the same
