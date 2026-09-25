@@ -3247,3 +3247,27 @@ def test_a_new_follower_receives_the_accounts_recent_posts_oldest_first(world, m
     world["sent"].clear()
     run(follow_and_wait(dict(follow, id="https://mastodon.example/f/10")))
     assert [s["activity"]["type"] for s in world["sent"]] == ["Accept"]
+
+
+def test_a_reaction_to_a_members_post_reaches_the_servers_holding_it(world):
+    """Reported: a 😭 on a PosterChan post never showed on Akkoma. A reaction's Like went ONLY to the
+    reacted post's author's inbox when that author was remote -- a member's post has no remote author,
+    so the Like went to nobody. It now goes where the post went: the author's followers and the
+    inboxes recorded for the post (mentions, relays); and its Undo follows it there."""
+    alice_fol = "https://detroitriotcity.example/inbox"
+    world["docs"][f"pcai:ap:follower:{ALICE}:1"] = {"actor": "https://detroitriotcity.example/users/v",
+                                                   "inbox": alice_fol}
+    post = member_post("a post on PosterChan")
+    world["relay"][post["id"]] = post
+    world["docs"]["pcai:ap:sent:" + post["id"]] = {"inbox": "https://mentioned.example/inbox",
+                                                   "inboxes": ["https://mentioned.example/inbox"], "kind": 1}
+    obj = convert.object_url(BASE, post["id"])
+    for who, when in ((BOB, 1_700_000_050), (ALICE, 1_700_000_051)):   # another member, and the author
+        react = member_post("😭", kind=7, author=who, tags=[["e", post["id"]], ["p", ALICE]], created=when)
+        jobs = run(outbox.plan(react, who))
+        assert sorted(i for i, _ in jobs) == [alice_fol, "https://mentioned.example/inbox"], (who, jobs)
+        assert all(a["type"] == "Like" and a["object"] == obj and a["content"] == "😭"
+                   and a["_misskey_reaction"] == "😭" for _, a in jobs)
+    undo = member_post("", kind=5, author=ALICE, tags=[["e", react["id"]], ["k", "7"]], created=1_700_000_060)
+    assert sorted((i, a["type"], a["object"]["type"]) for i, a in run(outbox.plan(undo, ALICE))) \
+        == [(alice_fol, "Undo", "Like"), ("https://mentioned.example/inbox", "Undo", "Like")]

@@ -300,6 +300,20 @@ async def _follower_inboxes(member: str) -> list:
             if not _blocked_cached(f.get("actor", "")) and f.get("actor") not in gone]
 
 
+async def _copies_of(post_id: str) -> set:
+    """Every server holding a copy of a MEMBER's post: its author's followers plus the inboxes it went
+    to beyond them (the replied-to, the mentioned, accepted relays). A reaction to a member's post has
+    no remote author to go to, and was sent to nobody -- so an emoji reaction made here never showed on
+    Akkoma or anywhere else, because a server only learns of a reaction it is sent."""
+    try:
+        post = await _event(post_id, strict=True)
+    except Exception:
+        return set()
+    if not post or not post.get("pubkey"):
+        return set()
+    return set(await _follower_inboxes(post["pubkey"])) | set((await _sent_rec(post_id)).get("inboxes") or [])
+
+
 async def plan(ev: dict, member: str) -> list:
     """[(inbox, activity)] to send for one event. Empty when there is nothing to federate."""
     base = config.base_url()
@@ -358,9 +372,11 @@ async def plan(ev: dict, member: str) -> list:
             return []                          # a NIP-25 dislike: the fediverse has no such thing
         else:
             act = convert.like(ev, base=base, actor=me, target=target["uri"])
-            if author_inbox:
-                out = [(author_inbox, act)]
-            await _remember_sent(ev["id"], {author_inbox} - {""}, kind=7, by=member, target=target["uri"])
+            inboxes = {author_inbox} - {""}
+            if not target.get("remote"):
+                inboxes |= await _copies_of(target_id)
+            out = [(i, act) for i in sorted(inboxes)]
+            await _remember_sent(ev["id"], inboxes, kind=7, by=member, target=target["uri"])
 
     elif kind == 5:
         kinds = {t[1] for t in ev.get("tags") or [] if len(t) > 1 and t[0] == "k"}
