@@ -2421,7 +2421,7 @@ function closePopupWindow(){
  * that would throw away what you typed the first time you clicked the desktop or reached for a file
  * dialog — the exact loss `.modal-sticky` exists to prevent on the web. So these kinds keep focus
  * discipline of their own: they close when the user closes them. */
-const STICKY_POPUPS = new Set(['compose']);
+const STICKY_POPUPS = new Set(['compose', 'bugreport']);   // composers: keep focus, never close on blur
 /* PRESSING SUPER MUST NOT DEPEND ON WHAT THE SHELL REMEMBERS.
  *
  * The desktop used to keep `startOpen` and decide open-or-close from it. That flag is a guess about

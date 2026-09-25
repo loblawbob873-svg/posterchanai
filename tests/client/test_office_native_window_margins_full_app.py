@@ -69,3 +69,26 @@ def test_files_and_office_windows_carry_the_posterchan_avatar_top_right():
 
     extra = office.BOUNDARIES + "window.pcShell.windowContext={role:'app',view:'blossom'};window.pcShell.backgroundOwner=false;"
     asyncio.run(desktop.with_browser('online', '?pcwin=blossom', check, extra))
+
+
+@pytest.mark.skipif(not Path('/opt/google/chrome/chrome').exists(), reason='Chrome required')
+@pytest.mark.parametrize('view', ['texts', 'messages', 'notes', 'settings', 'notifications', 'music'])
+def test_every_window_with_a_title_row_carries_the_avatar(view):
+    """ "texts is missing the posterchan avatar top right like other windows" -- a rule for every
+    window, not a list of views that goes stale."""
+    got = {}
+
+    async def check(b):
+        await desktop.login(b)
+        await b.until("!!document.querySelector('#view-title') && document.querySelector('#view-title').textContent.trim()")
+        got.update(await b.js(LOGO))
+
+    extra = "window.pcShell.windowContext={role:'app',view:'%s'};window.pcShell.backgroundOwner=false;" % view
+    asyncio.run(desktop.with_browser('online', '?pcwin=' + view, check, extra))
+    assert got.get('visible'), got
+    assert got['content'] not in ('none', 'normal') and 'posterchan-relay' in got['bg'], f'{view}: no avatar: {got}'
+
+
+def test_a_window_with_a_back_row_does_not_get_a_second_avatar():
+    css = (Path(__file__).resolve().parents[2] / "static/css/client.css").read_text()
+    assert "html.pc-oswin .main:not(:has(.pc-navbar))>.topbar::after" in css

@@ -1215,7 +1215,8 @@
      * the one issue composer (attachments and @mentions included), so the OS cannot drift into a
      * second incompatible bug-report format. */
     { view: '__bug', label: 'Bug Report', icon: '#i-bug',
-      act: () => { const b=document.getElementById('rb-report'); if(b) b.click();
+      act: () => { if(_bugReportInWindow()) return;
+                   const b=document.getElementById('rb-report'); if(b) b.click();
                    else if(PC().toast) PC().toast('bug reporting is unavailable'); },
       when: () => !!me() },
     { view: '__tasks', label: 'Task Manager', icon: '#i-chart', act: () => openTaskManager(),
@@ -11189,6 +11190,48 @@
     return true;
   }
 
+  /* THE BUG REPORT, IN ITS OWN WINDOW, for the reply composer's reason. Clicking `#rb-report` from
+   * the launcher opened the issue composer as a modal in the DESKTOP'S page -- the surface every app
+   * window sits above -- so on PosterChanOS it appeared behind all of them ("Bug Report window hides
+   * behind all other windows"). The popup runs the same `#rb-report` path (configured repo, sign-in,
+   * the one issue composer); it only changes which surface it is drawn on. */
+  function _bugReportInWindow(){
+    if(!on || popupKind()) return false;
+    if(!(_popupWindows() && pcPopup.open)) return false;
+    const w = Math.min(760, Math.max(460, Math.round(vwL() * 0.46)));
+    const h = Math.min(820, Math.max(460, Math.round(vhL() * 0.72)));
+    try{
+      const wD = popupPx(w), hD = popupPx(h);
+      pcPopup.open('bugreport', { x: Math.round((window.innerWidth - wD) / 2),
+                                  y: Math.round((window.innerHeight - hD) / 2),
+                                  width: wD, height: hD }, '{}');
+    }catch(_){ return false; }
+    return true;
+  }
+  function renderBugReportPopup(){
+    document.body.classList.add('os-popup-body', 'os-popup-compose');
+    try{ if(window.PCOSWin && PCOSWin.installFrame) PCOSWin.installFrame(); }catch(_){ }
+    /* Closing the composer closes the window -- after any publish settled (see renderComposePopup:
+       closing a window ends its renderer, which would lose an issue that was still being signed). */
+    const root = document.getElementById('modal-root');
+    if(root){
+      let seen = false, closing = false;
+      new MutationObserver(() => {
+        if(root.querySelector('.modal-bg')){ seen = true; return; }
+        if(!seen || closing) return;
+        closing = true;
+        setTimeout(async () => {
+          try{ const pc = PC(); if(pc && pc.publishesSettled) await pc.publishesSettled(); }catch(_){ }
+          try{ window.close(); }catch(_){ }
+        }, 0);
+      }).observe(root, { childList: true });
+    }
+    const go = () => { const b = document.getElementById('rb-report');
+      if(b) b.click(); else { try{ PC().toast('bug reporting is unavailable'); }catch(_){ } setTimeout(() => window.close(), 2500); } };
+    if(document.getElementById('rb-report') && PC().me && PC().me()) go();
+    else { let n = 0; const t = setInterval(() => { if((PC().me && PC().me()) || ++n > 40){ clearInterval(t); go(); } }, 250); }
+  }
+
   /* Drawn INSIDE that window: the client's own composer, on a surface that is above applications.
    * It publishes from here — same origin, same key, same relays — and the desktop behind it sees
    * the new post arrive through its own subscription, with nothing to hand back. */
@@ -11418,6 +11461,7 @@
         else if(k === 'noti') renderNotiPopup();
         else if(k === 'net') renderNetPopup();
         else if(k === 'compose') renderComposePopup();
+        else if(k === 'bugreport') renderBugReportPopup();
         /* The tray draws itself — it is osshell.js's panel, built from the machine's own bridges,
            and those exist in this renderer exactly as they do in the desktop's. */
         else if(k === 'tray'){

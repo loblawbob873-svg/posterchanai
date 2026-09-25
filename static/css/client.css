@@ -1126,12 +1126,15 @@ body.os-on .osw .pc-nav-label,html.pc-oswin .pc-nav-label{display:inline}
 body.os-on .osw .pc-nav-logo,html.pc-oswin .pc-nav-logo{display:block;margin-left:auto;width:36px;height:36px;flex:0 0 36px;
   border-radius:9px;background:var(--pc-logo) center/cover no-repeat;border:1px solid var(--line);
   box-shadow:0 0 12px rgba(var(--accent-rgb),.28)}
-/* FILES AND OFFICE CARRY THE SAME AVATAR, top right of their title row. They have no Back row for the
+/* THE WINDOW'S AVATAR, top right of its title row. They have no Back row for the
    badge to live in (a post or a profile does), so in a PosterChanOS window it sits at the end of the
    view's own heading instead -- "Files and Office should have the PosterChan avatar like Social and
    the others". Same size, border and glow as .pc-nav-logo; `--pc-logo` follows a custom site logo. */
-html.pc-oswin .main:has(> #feed.feed-files)>.topbar::after,
-html.pc-oswin .main:has(> #feed.feed-office)>.topbar::after{content:"";display:block;margin-left:auto;
+/* EVERY window with a title row, not a list of them -- Texts, Messages, Notes, Settings… were each
+   missing it ("texts is missing the posterchan avatar top right like other windows"), and a list is
+   exactly what goes stale when a view is added. A window whose Back row already carries the avatar
+   (.pc-navbar: posts, profiles, articles) does not get a second; the timelines hide the title row. */
+html.pc-oswin .main:not(:has(.pc-navbar))>.topbar::after{content:"";display:block;margin-left:auto;
   width:36px;height:36px;flex:0 0 36px;border-radius:9px;background:var(--pc-logo) center/cover no-repeat;
   border:1px solid var(--line);box-shadow:0 0 12px rgba(var(--accent-rgb),.28)}
 .searchbox{flex:1;min-width:0;max-width:720px;margin:0 16px}   /* min-width:0 → shrinks so the topbar buttons (Calls/Drafts/New post) always fit, never clipped */

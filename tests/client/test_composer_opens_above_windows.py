@@ -21,6 +21,8 @@ is merely behind a window.
 """
 from __future__ import annotations
 
+import re
+
 import subprocess
 from pathlib import Path
 
@@ -79,7 +81,9 @@ def test_the_host_exists_only_while_the_windowed_desktop_does():
 
 def test_the_composer_window_does_not_close_when_you_click_away():
     """Every other popup is a menu and should. This one holds what somebody typed."""
-    assert "STICKY_POPUPS = new Set(['compose'])" in MAIN.replace('"', "'")
+    # The RULE, not the literal: compose is sticky (a second sticky kind -- bugreport -- is fine).
+    sticky = re.search(r"STICKY_POPUPS = new Set\(\[([^\]]*)\]\)", MAIN)
+    assert sticky and "'compose'" in sticky.group(1), sticky and sticky.group(0)
 
 
 def test_it_is_resizable_unlike_a_menu():
