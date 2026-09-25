@@ -50,7 +50,7 @@ raise SystemExit(rc)
         owned = list(map(int, pids.read_text().split()))
         if ending in ('interrupt', 'terminate'):
             runner.send_signal(signal.SIGINT if ending == 'interrupt' else signal.SIGTERM)
-        stdout, stderr = runner.communicate(timeout=5)
+        stdout, stderr = runner.communicate(timeout=30)   # a hang guard; a loaded parallel shard needs more than 5s to import the gate
         expected = {'timeout': 124, 'interrupt': 130, 'terminate': 130, 'success': 0}[ending]
         assert runner.returncode == expected, stdout + stderr
         wait_for(lambda: not any(running(pid) for pid in owned), 'gate leaked an owned child')
@@ -67,7 +67,7 @@ raise SystemExit(rc)
                 os.kill(pid, signal.SIGKILL)
             except ProcessLookupError:
                 pass
-        runner.communicate(timeout=5)
+        runner.communicate(timeout=30)
         sentinel.terminate(); sentinel.wait(timeout=5)
 
 
