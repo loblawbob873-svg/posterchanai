@@ -2057,6 +2057,14 @@ liveISOinstall() {
 	if grep -q 'PosterChanOS live session' $TARGET/etc/motd 2>/dev/null; then
 		sudo rm -f $TARGET/etc/motd 2>/dev/null
 	fi
+	# …and ANY machine's systemd credential secret: it is bound to the machine id it was made on, and an
+	# ISO built before the image learned to exclude it carries the build host's. A stale one makes the
+	# installed machine's first `systemd-creds encrypt` delete it and write libvirt an EMPTY key, which
+	# breaks libvirtd for good (see the image's EXCLUDES). The machine makes its own on first use.
+	sudo rm -f $TARGET/var/lib/systemd/credential.secret 2>/dev/null
+	if [ -f $TARGET/var/lib/libvirt/secrets/secrets-encryption-key ] && [ ! -s $TARGET/var/lib/libvirt/secrets/secrets-encryption-key ]; then
+		sudo rm -f $TARGET/var/lib/libvirt/secrets/secrets-encryption-key 2>/dev/null
+	fi
 	# …and the live medium's "Install PosterChanOS" launcher. livecd writes it into the IMAGE only
 	# (a pseudo-file), but this copies the image onto the disk, so every installed machine carried
 	# it: a start-menu entry that opens a terminal running `sudo gentoo.sh` — "Install PosterChan not
@@ -3918,6 +3926,13 @@ liveCD() {
 		var/log/journal .snapshots
 		boot efi
 		etc/fstab etc/machine-id etc/crypttab etc/dracut.conf.d
+		# AND systemd's CREDENTIAL SECRET, which is the build host's identity just as machine-id is:
+		# bound to ITS machine id. Shipped, every installed machine's first `systemd-creds encrypt` found
+		# it -- "comes from a different machine ID, deleting" -- and libvirt's key generator wrote an EMPTY
+		# /var/lib/libvirt/secrets/secrets-encryption-key -- which its own ConditionPathExists=! then kept
+		# for ever, so libvirtd failed every boot -- "Failed at step CREDENTIALS ... Bad message" -- and the
+		# VMs app was dead on every install. Found 2026-09-25 by the release gate's server stage.
+		var/lib/systemd/credential.secret
 		# AND etc/disk, WHICH NAMES A DISK ON THE MACHINE THE IMAGE WAS BUILT FROM.
 		# partitionDetection reads it (`head -1`) whenever /tmp/disk is absent, so an ISO carrying
 		# the build host's copy proposes THAT disk to somebody installing on different hardware.

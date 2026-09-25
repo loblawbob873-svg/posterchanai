@@ -69,6 +69,10 @@ src_install() {
 	newins "${FILESDIR}/posterchanos-mimeapps.list" mimeapps.list
 	insinto /usr/lib/systemd/user
 	doins "${FILESDIR}/posterchan-monero-wallet-rpc.service"
+	# libvirt's secret key can never be left empty, and an empty one (every install before 2026-09-25)
+	# is made again -- see the file. A VENDOR drop-in, so an admin's own in /etc still wins.
+	insinto /usr/lib/systemd/system/virt-secret-init-encryption.service.d
+	newins "${FILESDIR}/virt-secret-init-encryption-posterchanos.conf" 50-posterchanos.conf
 	# The installed recovery/LiveUSB tool is package-owned too. publish_overlay.sh injects the
 	# canonical os/gentoo.sh into FILESDIR, so an ordinary update cannot leave an older installer.
 	dobin "${FILESDIR}/gentoo.sh"

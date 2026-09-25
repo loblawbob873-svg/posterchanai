@@ -24,9 +24,10 @@ THE SERVER, FROM THE INSTALLED SYSTEM (`--server`). PosterChanOS carries the ser
 none of it until somebody presses System Settings → PosterChan Server → Enable, which is `pc-server
 enable`: a Postgres cluster, Tor, the project's own `install.sh --nostr-only`, a unit. That path runs
 on an installed machine and nowhere else, so nothing here had ever exercised it -- an image whose
-server could not be switched on passed every gate. With `--server` the booted disk is logged into as
-root (the password the install was given), `pc-server enable` is run and waited for, and the server
-must then be active and answering on 3051.
+server could not be switched on passed every gate. With `--server` the booted disk gets a root shell
+from the TEST (systemd's debug shell on a second serial port -- a finished install has no root login,
+by design), `pc-server enable` is run and waited for, the server must then be active and answering on
+3051, and Nostr posts must be seen arriving.
 
 Exit 0 installed and the installed disk booted (and, with --server, served), 1 it did not, 2 could
 not run.
@@ -115,12 +116,17 @@ class Serial:
         time.sleep(0.15)
 
 
-def qemu_args(disk, iso, serial_path, code, vars_copy, memory, cpus, usb=False, net=False):
+def qemu_args(disk, iso, serial_path, code, vars_copy, memory, cpus, usb=False, net=False, shell_path=None):
     args = ["qemu-system-x86_64", "-machine", "q35,accel=kvm:tcg", "-cpu", "max",
             "-m", str(memory), "-smp", str(cpus), "-display", "none", "-no-reboot",
             "-drive", f"file={disk},if=virtio,format=qcow2",
             "-chardev", f"socket,id=pcserial,path={serial_path},server=on,wait=off",
             "-serial", "chardev:pcserial"]
+    if shell_path:
+        # A SECOND serial port (ttyS1) for the server stage's root shell -- see boot_installed. ttyS0
+        # keeps its login prompt, which is the boot check's evidence and must not be disturbed.
+        args += ["-chardev", f"socket,id=pcshell,path={shell_path},server=on,wait=off",
+                 "-serial", "chardev:pcshell"]
     if net:
         # The server install fetches its Python packages: a NIC it can DHCP on, named rather than left
         # to QEMU's default (which a -nodefaults anywhere up the chain would silently remove).
@@ -283,8 +289,9 @@ def install(iso, disk, serial_dir, evidence, timeout, memory, cpus, usb=False):
                 proc.kill()
 
 
-def _make_installed_boot_audible(disk, evidence):
-    """Add a serial console to the INSTALLED loader entry, in the test's copy of the disk.
+def _make_installed_boot_audible(disk, evidence, extra=""):
+    """Add a serial console to the INSTALLED loader entry, in the test's copy of the disk -- and `extra`
+    kernel arguments when a stage needs them (the server stage's root shell).
 
     Returns a short description of what changed, or "" when nothing could be edited (in which case
     the boot check still runs and simply has less to read).
@@ -317,6 +324,10 @@ def _make_installed_boot_audible(disk, evidence):
                     line = line.replace(" quiet", "").replace(" splash", "")
                     line += " console=tty0 console=ttyS0,115200n8"
                     changed.append(conf.name)
+                if line.startswith("options ") and extra and extra.strip() not in line:
+                    line += " " + extra.strip()
+                    if conf.name not in changed:
+                        changed.append(conf.name)
                 out.append(line)
             conf.write_text("\n".join(out) + "\n", encoding="utf-8")
         subprocess.run(["sync"], capture_output=True, timeout=30)
@@ -329,12 +340,13 @@ def _make_installed_boot_audible(disk, evidence):
             subprocess.run(["qemu-nbd", "--disconnect", nbd], capture_output=True, timeout=60)
 
 
-def server_stage(con, password, timeout, evidence, *, poll=10.0, clock=time.monotonic, sleep=time.sleep):
+def server_stage(con, timeout, evidence, *, poll=10.0, clock=time.monotonic, sleep=time.sleep):
     """Switch the bundled server on FROM the installed system, the way System Settings does it.
 
-    `con` is the installed system's console, already at a login prompt. Returns 0 when the server was
-    set up and answers, 1 otherwise -- with the job's own log in the transcript, because "the server
-    did not start" cannot be acted on without it."""
+    `con` is the TEST's root shell on the installed system (systemd's debug shell on ttyS1 -- see
+    boot_installed; an installed machine deliberately has no root login). Returns 0 when the server
+    was set up, answers, and receives posts; 1 otherwise -- with the job's own log in the transcript,
+    because "the server did not start" cannot be acted on without it."""
     def ask(cmd, pattern, wait):
         mark = len(con.buf)
         con.send(cmd)
@@ -342,21 +354,19 @@ def server_stage(con, password, timeout, evidence, *, poll=10.0, clock=time.mono
             return None
         return re.findall(pattern, con.buf[mark:])[-1]
 
-    # ---- log in as root: the install unlocked root with the password it was given
-    mark = len(con.buf)
-    con.send("")
-    if con.expect(r"login:", 60, max(0, mark - 400)) is None:
-        print("FAIL  the installed system gave no login prompt on its serial console")
+    # ---- the root shell answers (it starts early in boot, so keep asking), then boot finishes: the
+    # server install needs the network and everything multi-user brings up.
+    deadline = clock() + 300
+    while clock() < deadline:
+        if ask("echo ROOT-$(id -u)", r"ROOT-(\d+)", 10) == "0":
+            break
+        sleep(poll)
+    else:
+        print(f"FAIL  the test's root shell on ttyS1 never answered as root; transcript in {evidence}/root-shell.log")
         return 1
-    con.send("root")
-    if con.expect(r"[Pp]assword:", 30, mark) is None:
-        print("FAIL  no password prompt for root on the installed system")
-        return 1
-    con.send(password)
-    if ask("echo ROOT-$(id -u)", r"ROOT-(\d+)", 60) != "0":
-        print("FAIL  could not log in as root on the installed system with the install's password")
-        return 1
-    print("OK  logged in to the installed system as root")
+    print("OK  a root shell on the installed system (the test's debug shell -- root has no login, by design)")
+    state = ask("systemctl is-system-running --wait; echo BOOT-STATE", r"(\w+)\s*\r?\nBOOT-STATE", 600)
+    print(f"OK  the installed system finished booting ({state or 'state unknown'})")
 
     status = ask("pc-server status | sed 's/^/PCSTATUS| /'", r"PCSTATUS\| (\{.*\})", 60)
     if status is None or '"code":true' not in status:
@@ -432,7 +442,7 @@ def _posts_flow(ask, evidence, *, clock, sleep, poll, timeout=900):
 
 
 def boot_installed(disk, serial_dir, vars_copy, evidence, timeout, memory, cpus, *, server=False,
-                   password="", server_timeout=5400):
+                   server_timeout=5400):
     """Boot the INSTALLED disk with no ISO and require it to reach a running system.
 
     THIS FUNCTION IS WHY THIS FILE EXISTS AND IT WAS NEVER WRITTEN. The module docstring has always
@@ -460,13 +470,24 @@ def boot_installed(disk, serial_dir, vars_copy, evidence, timeout, memory, cpus,
     # This edits the TEST COPY of the disk's boot entry, never the ISO, and changes no code path that
     # decides whether the system boots -- same kernel, same initramfs, same crypt setup, one extra
     # console and the ordinary log level.
-    added = _make_installed_boot_audible(disk, evidence)
+    # ---- THE SERVER STAGE NEEDS ROOT, AND AN INSTALLED MACHINE HAS NO ROOT LOGIN ----------------
+    #
+    # A completed install locks root on purpose (`passwd -l root` at the end of the install: the first
+    # key-backed person becomes the administrator). The first version of this stage logged in as root
+    # with the install password and could not -- "Login incorrect" behind a locked hash, measured
+    # 2026-09-25 by booting the gate's disk by hand. The product is right and the test was wrong, so
+    # the test gets root the way a test may: systemd's own debug shell, on a SECOND serial port that
+    # exists only in this VM, added to the TEST COPY of the boot entry. ttyS0 and its login prompt --
+    # the boot evidence above -- are untouched, and so is everything the ISO ships.
+    shell_sock = Path(serial_dir, "root-shell.sock") if server else None
+    added = _make_installed_boot_audible(disk, evidence, extra="systemd.debug_shell=ttyS1" if server else "")
     if added:
         print(f"OK  boot entry made audible for the test ({added})")
     sock = Path(serial_dir, "boot-console.sock")
     log = open(Path(evidence, "boot-console.log"), "w", encoding="utf-8")
     # iso=None leaves out every medium drive, so the only bootable thing is the installed disk.
-    proc = subprocess.Popen(qemu_args(disk, None, sock, code, vars_copy, memory, cpus, net=server),
+    proc = subprocess.Popen(qemu_args(disk, None, sock, code, vars_copy, memory, cpus, net=server,
+                                      shell_path=shell_sock),
                             stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, text=True)
     try:
         for _ in range(100):
@@ -509,7 +530,12 @@ def boot_installed(disk, serial_dir, vars_copy, evidence, timeout, memory, cpus,
             if re.search(good, con.buf):
                 print("OK  the installed disk booted with no ISO attached")
                 if server:
-                    return server_stage(con, password, server_timeout, evidence)
+                    try:
+                        shell = Serial(shell_sock, open(Path(evidence, "root-shell.log"), "w", encoding="utf-8"))
+                    except OSError as exc:
+                        print(f"FAIL  could not attach to the test's root shell on ttyS1 ({exc})")
+                        return 1
+                    return server_stage(shell, server_timeout, evidence)
                 return 0
             if proc.poll() is not None:
                 print("FAIL  the installed system's VM exited without booting. Transcript in "
@@ -593,7 +619,7 @@ def _one_round(args, evidence):
         # AND THEN IT BOOTS IT, which is what this file has always claimed to do. See boot_installed.
         rc = boot_installed(disk, td, Path(evidence, "OVMF_VARS.fd"), evidence,
                             args.boot_timeout, args.memory, args.cpus, server=args.server,
-                            password=INSTALL_PASSWORD, server_timeout=args.server_timeout)
+                            server_timeout=args.server_timeout)
         if rc:
             return rc
     if not args.keep_disk and not args.disk:

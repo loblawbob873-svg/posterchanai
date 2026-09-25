@@ -802,7 +802,8 @@ class PosterChanOSProfile(unittest.TestCase):
         RSYNC_EXCLUDES has excluded this file from snapshots for the same reason for far longer."""
         body = self._fn("liveCD")
         excl = body[body.index("local EXCLUDES=("):body.index(")", body.index("local EXCLUDES=("))]
-        for path in ("etc/fstab", "etc/machine-id", "etc/crypttab", "etc/disk"):
+        for path in ("etc/fstab", "etc/machine-id", "etc/crypttab", "etc/disk",
+                     "var/lib/systemd/credential.secret"):
             self.assertIn(path, excl, f"{path} would ship inside the image")
 
     def test_the_session_waits_for_the_network_to_be_online_not_merely_started(self):

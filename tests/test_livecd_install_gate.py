@@ -265,11 +265,11 @@ def test_the_boot_check_can_actually_hear_the_installed_system():
 # ---- the server, switched on FROM the installed system (--server)
 
 class _FakeConsole:
-    """The installed guest's serial console: every line sent is ECHOED (as a real tty does -- which is
-    what proves a marker cannot be matched from the command text itself) and answered by the first
-    rule whose pattern matches the command."""
+    """The TEST's root shell on the installed guest (systemd's debug shell on ttyS1): every line sent
+    is ECHOED (as a real tty does -- which is what proves a marker cannot be matched from the command
+    text itself) and answered by the first rule whose pattern matches the command."""
     def __init__(self, rules):
-        self.buf = "posterchanos login: "
+        self.buf = "sh-5.2# "
         self.rules = rules
         self.sent = []
 
@@ -291,7 +291,7 @@ class _FakeConsole:
 def _stage(rules, **kw):
     ticks = iter(range(0, 10 ** 6, 5))
     con = _FakeConsole(rules)
-    rc = MOD.server_stage(con, "pc-vm-test-only", kw.pop("timeout", 600), "/tmp/ev",
+    rc = MOD.server_stage(con, kw.pop("timeout", 600), "/tmp/ev",
                           poll=0, clock=lambda: next(ticks), sleep=lambda s: None)
     return rc, con
 
@@ -300,9 +300,8 @@ def _answers(job_rc="0", posts=(0, 3, 12), code=True):
     jobs = iter(['PCJOB| {"running":true,"verb":"enable","rc":""}'])
     counts = iter(posts)
     return [
-        (r"^root$", "Password: "),
-        (r"^pc-vm-test-only$", "root@posterchanos:~#"),
         (r"ROOT-\$\(id -u\)", "ROOT-0"),
+        (r"is-system-running", "running\nBOOT-STATE"),
         (r"pc-server status", 'PCSTATUS| {"code":%s,"configured":false}' % ("true" if code else "false")),
         (r"pc-server enable", "started: enable\nENABLE-RC=0"),
         (r"pc-server job \|", lambda: next(jobs, 'PCJOB| {"running":false,"verb":"enable","rc":"%s"}' % job_rc)),
@@ -344,3 +343,33 @@ def test_with_server_the_installed_guest_gets_a_network():
     joined = " ".join(MOD.qemu_args("/d", None, "/s", None, None, 1, 1, net=True))
     assert "-nic user,model=virtio-net-pci" in joined
     assert "-nic" not in " ".join(MOD.qemu_args("/d", "/x.iso", "/s", None, None, 1, 1))
+
+
+def test_the_server_stage_never_logs_in_because_an_installed_machine_has_no_root_login():
+    """A finished install locks root on purpose (`passwd -l root`; the first key-backed person is the
+    admin). The first version logged in as root with the install password and failed on every image
+    -- "Login incorrect" behind the lock, measured by booting the gate's disk by hand. The stage uses
+    the test's own root shell and must never type a user name or a password."""
+    rc, con = _stage(_answers())
+    assert rc == 0, con.buf
+    assert "root" not in con.sent and "pc-vm-test-only" not in con.sent, con.sent
+    assert any("is-system-running" in s for s in con.sent), "the server install started before boot finished"
+
+
+def test_a_root_shell_that_never_answers_fails_the_gate():
+    rules = [r for r in _answers() if "ROOT-" not in r[0]]
+    rc, con = _stage(rules)
+    assert rc == 1
+    assert not any("pc-server enable" in s for s in con.sent)
+
+
+def test_the_root_shell_is_a_second_serial_port_that_only_the_server_stage_adds():
+    with_shell = " ".join(MOD.qemu_args("/d", None, "/s", None, None, 1, 1, net=True, shell_path="/r"))
+    assert "socket,id=pcshell,path=/r" in with_shell and with_shell.count("-serial") == 2
+    assert " ".join(MOD.qemu_args("/d", None, "/s", None, None, 1, 1)).count("-serial") == 1
+    src = Path(MOD.__file__).read_text()
+    boot = src[src.index("def boot_installed("):]
+    assert 'extra="systemd.debug_shell=ttyS1" if server else ""' in boot, \
+        "the debug shell must be added for the server stage only, and on ttyS1 (ttyS0 is the boot evidence)"
+    helper = src[src.index("def _make_installed_boot_audible("):src.index("def server_stage(")]
+    assert ".iso" not in helper, "the root shell is being added to the ISO, not to the test's disk copy"
