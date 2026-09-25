@@ -208,8 +208,8 @@ window.PCProfileFactory = function(dep){
          falling through turned the window into a timeline whose history then sent every later Back
          to the profile it was first opened on. */
       try{
-        const ctx = window.pcShell && pcShell.windowContext, v = String((ctx && ctx.view) || '');
-        if(document.documentElement.classList.contains('pc-oswin') && /^doc:(post|prof):[0-9a-f]{64}$/i.test(v)){
+        const ctx = window.pcShell && window.pcShell.windowContext, v = String((ctx && ctx.view) || '');
+        if(window.document.documentElement.classList.contains('pc-oswin') && /^doc:(post|prof):[0-9a-f]{64}$/i.test(v)){
           window.close(); return;
         }
       }catch(_){}

@@ -16157,12 +16157,8 @@
        * that returns the reader to a screen nothing has repainted. */
       try{ if(window.PCOS && PCOS.isOn() && PCOS.closeDoc
               && PCOS.closeDoc(docKey)) return; }catch(_){}
-      /* …AND ON POSTERCHANOS THE POST IS ITS OWN NATIVE WINDOW, where the frame above does not exist
-       * (PCOS is off inside it). Back used to fall through to the history/timeline branches below:
-       * the post window turned INTO a timeline, the person kept reading in it, and every later post
-       * opened from there joined THAT window's history -- so Back from any new post went to the post
-       * the window was first opened on ("clicking back on a new post I opened brings me back to an
-       * older post I was looking at, every time"). A post or profile window's Back closes it. */
+      /* On PosterChanOS a post/profile is its own native window (PCOS is off there): Back CLOSES it.
+       * Falling through turned it into a timeline whose history sent every later Back to the first post. */
       try{
         const ctx = window.pcShell && pcShell.windowContext, v = String((ctx && ctx.view) || '');
         if(document.documentElement.classList.contains('pc-oswin') && /^doc:(post|prof):[0-9a-f]{64}$/i.test(v)){
