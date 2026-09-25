@@ -44,3 +44,12 @@ officeserver/
 # Depth model is fetched at runtime by docker-entrypoint.sh (keep image lean, build reproducible)
 assets/depth_anything_v2_vits.onnx
 *.onnx
+
+# Build artifacts and local tool state that live in a working tree but never in a checkout. The image
+# does `COPY . /app`, so without these a local build sent a 41 GB context and baked 12 GB of ISOs
+# (iso-out/) into the image -- found 2026-09-25 during the GPU-stack upgrade.
+iso-out/
+*.iso
+*.qcow2
+.claude/
+.recovery/

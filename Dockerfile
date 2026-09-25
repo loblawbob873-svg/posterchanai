@@ -5,9 +5,9 @@
 # A single build-arg `GPU` selects the compute backend and its base image:
 #
 #   docker build -t posterchanai:cpu   --build-arg GPU=cpu   .
-#   docker build -t posterchanai:cuda  --build-arg GPU=cuda  --build-arg BASE_IMAGE=nvidia/cuda:12.5.1-devel-ubuntu24.04 .   # NVIDIA
+#   docker build -t posterchanai:cuda  --build-arg GPU=cuda  --build-arg BASE_IMAGE=nvidia/cuda:13.0.3-devel-ubuntu24.04 .   # NVIDIA
 #   docker build -t posterchanai:rocm  --build-arg GPU=rocm  .   # AMD (ROCm userspace installed onto ubuntu:24.04)
-#   docker build -t posterchanai:intel --build-arg GPU=intel --build-arg BASE_IMAGE=intel/oneapi-basekit:2025.2.2-0-devel-ubuntu24.04 .   # Intel Arc / XPU
+#   docker build -t posterchanai:intel --build-arg GPU=intel --build-arg BASE_IMAGE=intel/oneapi-basekit:2025.3.2-0-devel-ubuntu24.04 .   # Intel Arc / XPU
 #   docker build -t posterchanai:nostr --build-arg GPU=nostr --build-arg INSTALL_BROWSER=false .
 # (BASE_IMAGE defaults to ubuntu:24.04, so cpu/nostr/rocm need only GPU; cuda/intel must pass it.)
 #                                                # Nostr-only: relay + Nostr web client + Blossom,
@@ -30,16 +30,16 @@
 # Ubuntu and install ROCm USER-SPACE ourselves below (no DKMS — only the host amdgpu kernel driver
 # is needed). Standalone `docker build` must pass BASE_IMAGE to match GPU (see the header examples):
 #   cpu / nostr : ubuntu:24.04
-#   cuda        : nvidia/cuda:12.5.1-devel-ubuntu24.04
-#   intel       : intel/oneapi-basekit:2025.2.2-0-devel-ubuntu24.04  (oneAPI 2025.2+ — the 2025.0
+#   cuda        : nvidia/cuda:13.0.3-devel-ubuntu24.04
+#   intel       : intel/oneapi-basekit:2025.3.2-0-devel-ubuntu24.04  (oneAPI 2025.3.2 = torch 2.12.x+xpu's own runtime — the 2025.0
 #                 SYCL compiler has a codegen bug that makes the Arc emit EMPTY thinking/code gens)
 #   rocm        : ubuntu:24.04   (or AMD's prebuilt rocm/dev-ubuntu-24.04:*-complete — the repo
 #                 install below is then a harmless no-op re-add)
 ARG GPU=cpu
 ARG BASE_IMAGE=ubuntu:24.04
-# ROCm >= 6.3 is required: the current llama.cpp HIP backend uses OCP FP8 types
+# ROCm >= 6.3 is required (7.2 in use): the current llama.cpp HIP backend uses OCP FP8 types
 # (__hip_fp8_e4m3) that don't exist in ROCm 6.2 (the HIP build fails to compile).
-ARG ROCM_VERSION=6.3.4
+ARG ROCM_VERSION=7.2.4
 
 # --- Go build stage: the built-in Pion TURN/STUN relay for voice/video calls (tiny static binary) ---
 FROM golang:1.26-alpine AS turnbuild
@@ -50,7 +50,7 @@ COPY turnserver/ ./
 RUN CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o pion-turn .
 
 # --- Download stage: the built-in MediaMTX media server for OBS streaming (prebuilt binary, no build) ---
-FROM alpine:3.20 AS streamdl
+FROM alpine:3.24 AS streamdl
 ARG TARGETARCH
 ARG MEDIAMTX_VERSION=v1.19.2
 ARG MEDIAMTX_SHA256_AMD64=f9c601cc303ceca8fad2883917b022882672c5bc56311e92dbceb16e5f20c60c
@@ -83,7 +83,9 @@ RUN if [ "$GPU" = "rocm" ]; then set -eux; \
         apt-get update && apt-get install -y --no-install-recommends wget gnupg ca-certificates && \
         mkdir -p --mode=0755 /etc/apt/keyrings && \
         wget -qO- https://repo.radeon.com/rocm/rocm.gpg.key | gpg --dearmor > /etc/apt/keyrings/rocm.gpg && \
-        echo "deb [arch=amd64 signed-by=/etc/apt/keyrings/rocm.gpg] https://repo.radeon.com/amdgpu/${ROCM_VERSION}/ubuntu noble main" \
+        # ROCm 7.x publishes its graphics userspace under graphics/<version>; the 6.x path
+        # (amdgpu/<version>) is a 404 for 7.2.4 and a 404 source fails `apt-get update` outright.
+        echo "deb [arch=amd64 signed-by=/etc/apt/keyrings/rocm.gpg] https://repo.radeon.com/graphics/${ROCM_VERSION}/ubuntu noble main" \
             > /etc/apt/sources.list.d/amdgpu.list && \
         echo "deb [arch=amd64 signed-by=/etc/apt/keyrings/rocm.gpg] https://repo.radeon.com/rocm/apt/${ROCM_VERSION} noble main" \
             > /etc/apt/sources.list.d/rocm.list && \
@@ -169,11 +171,24 @@ WORKDIR /app
 # torch is installed FIRST from the right wheel index so the later diffusers
 # step (transformers pulls torch) finds it already satisfied and does
 # not drag in a CPU build over it. llama-cpp-python is compiled for the backend.
-ARG TORCH_CUDA_INDEX=https://download.pytorch.org/whl/cu121
-ARG TORCH_ROCM_INDEX=https://download.pytorch.org/whl/rocm6.3
+# ONE torch for every GPU image, and the one production runs (server1: 2.12.x+xpu). The index names the
+# accelerator stack and MUST match the base image: cu130 on CUDA 13.0, rocm7.2 on ROCm 7.2, xpu on
+# oneAPI 2025.3 -- torch 2.12.x+xpu bundles EXACTLY oneAPI 2025.3.2, the base below, so the image never
+# mixes two oneAPI runtimes (see run-intel.sh). torch 2.14+xpu bundles oneAPI 2026.1, for which Intel
+# publishes no base image: do not move the Intel image past 2.12.x until one exists.
+# Upgraded 2026-09-25 from cu121 (torch for CUDA 12.1 inside a CUDA 12.5 base) and rocm6.3.
+ARG TORCH_VERSION=2.12.1
+ARG TORCH_CUDA_INDEX=https://download.pytorch.org/whl/cu130
+ARG TORCH_ROCM_INDEX=https://download.pytorch.org/whl/rocm7.2
 ARG TORCH_XPU_INDEX=https://download.pytorch.org/whl/xpu
-ARG TORCH_XPU_VERSION=2.12.0
-# LLAMA_CPP_VERSION empty = latest. Intel branch pins 0.3.28 below (built with the 2025.2 base's
+ARG TORCH_XPU_VERSION=${TORCH_VERSION}
+# torchaudio is in maintenance and its LAST release is 2.11.0 on every index (there is no 2.12); a
+# ==${TORCH_VERSION} pin fails every INSTALL_MUSIC build. server1 runs exactly 2.11.0 beside 2.12.x.
+ARG TORCHAUDIO_VERSION=2.11.0
+# CUDA 13 dropped Maxwell/Pascal/Volta; building for them is a compile ERROR, not a warning. Turing (7.5)
+# through Blackwell, as real code, plus PTX of the newest for anything later.
+ARG CUDA_ARCHITECTURES=75-real;80-real;86-real;89-real;90-real;100-real;120
+# LLAMA_CPP_VERSION empty = latest. Intel branch pins 0.3.28 below (built with the oneAPI base's
 # icx/icpx — fixes the 2025.0 SYCL codegen empty-gen bug; 2025.2 ships the headers 0.3.28 needs).
 ARG LLAMA_CPP_VERSION=
 # AMDGPU_TARGETS: which HIP GPU arches to build llama.cpp kernels for. Defaults to
@@ -192,17 +207,17 @@ RUN set -eux; \
           pip install "llama-cpp-python${LLAMA_CPP_VERSION:+==$LLAMA_CPP_VERSION}" ; \
         ;; \
       cuda) \
-        pip install torch torchvision --index-url "$TORCH_CUDA_INDEX" ; \
+        pip install "torch==${TORCH_VERSION}" torchvision --index-url "$TORCH_CUDA_INDEX" ; \
         # The devel image ships a BUILD-TIME stub libcuda (the real driver lib is mounted at runtime
         # by the nvidia container runtime). Newer llama.cpp links the CUDA driver API (cuMem*) so the
         # link fails with "libcuda.so.1 not found" unless we expose the stub as .so.1 + on LIBRARY_PATH.
         ln -sf /usr/local/cuda/lib64/stubs/libcuda.so /usr/local/cuda/lib64/stubs/libcuda.so.1 ; \
         LIBRARY_PATH="/usr/local/cuda/lib64/stubs:${LIBRARY_PATH:-}" \
-        CMAKE_ARGS="-DGGML_CUDA=ON -DCMAKE_SHARED_LINKER_FLAGS=-Wl,-rpath-link,/usr/local/cuda/lib64/stubs -DCMAKE_EXE_LINKER_FLAGS=-Wl,-rpath-link,/usr/local/cuda/lib64/stubs" \
+        CMAKE_ARGS="-DGGML_CUDA=ON -DCMAKE_CUDA_ARCHITECTURES=${CUDA_ARCHITECTURES} -DCMAKE_SHARED_LINKER_FLAGS=-Wl,-rpath-link,/usr/local/cuda/lib64/stubs -DCMAKE_EXE_LINKER_FLAGS=-Wl,-rpath-link,/usr/local/cuda/lib64/stubs" \
           pip install "llama-cpp-python${LLAMA_CPP_VERSION:+==$LLAMA_CPP_VERSION}" ; \
         ;; \
       rocm) \
-        pip install torch torchvision --index-url "$TORCH_ROCM_INDEX" ; \
+        pip install "torch==${TORCH_VERSION}" torchvision --index-url "$TORCH_ROCM_INDEX" ; \
         ( HIP_PATH=/opt/rocm ROCM_PATH=/opt/rocm \
           CMAKE_ARGS="-DGGML_HIP=ON -DAMDGPU_TARGETS=${AMDGPU_TARGETS}" \
             pip install "llama-cpp-python${LLAMA_CPP_VERSION:+==$LLAMA_CPP_VERSION}" ) \
@@ -264,7 +279,7 @@ RUN if [ "$INSTALL_MUSIC" = "1" ] && [ "$GPU" != "nostr" ]; then \
         cuda)  _TA_INDEX="$TORCH_CUDA_INDEX" ;; \
         *)     _TA_INDEX="https://download.pytorch.org/whl/cpu" ;; \
       esac; \
-      pip install --no-deps torchaudio --index-url "$_TA_INDEX"; \
+      pip install --no-deps "torchaudio==${TORCHAUDIO_VERSION}" --index-url "$_TA_INDEX"; \
       git clone --depth 1 --branch "$ACESTEP_REF" https://github.com/ace-step/ACE-Step-1.5.git /opt/ace-step; \
       pip install --no-deps -e /opt/ace-step; \
       python3 -c 'from acestep.handler import AceStepHandler' ; \

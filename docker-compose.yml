@@ -271,7 +271,7 @@ services:
       context: .
       # BASE_IMAGE selects the CUDA toolkit base; passing it here (not via a base-* stage) means
       # only this profile ever references it, so cpu/nostr builds don't pull it.
-      args: { GPU: cuda, BASE_IMAGE: "${CUDA_BASE:-nvidia/cuda:12.5.1-devel-ubuntu24.04}",
+      args: { GPU: cuda, BASE_IMAGE: "${CUDA_BASE:-nvidia/cuda:13.0.3-devel-ubuntu24.04}",
               INSTALL_MUSIC: "${POSTERCHANAI_MUSIC:-0}", INSTALL_VOICE: "${POSTERCHANAI_VOICE:-0}" }
     # Requires the NVIDIA Container Toolkit on the host.
     deploy:
@@ -313,7 +313,7 @@ services:
       context: .
       # oneAPI 2025.2+ base (2025.0's SYCL compiler makes the Arc emit EMPTY thinking/code gens).
       # Only this profile references it, so cpu/nostr builds never pull the heavy oneAPI image.
-      args: { GPU: intel, BASE_IMAGE: "${INTEL_BASE:-intel/oneapi-basekit:2025.2.2-0-devel-ubuntu24.04}",
+      args: { GPU: intel, BASE_IMAGE: "${INTEL_BASE:-intel/oneapi-basekit:2025.3.2-0-devel-ubuntu24.04}",
               INSTALL_MUSIC: "${POSTERCHANAI_MUSIC:-0}", INSTALL_VOICE: "${POSTERCHANAI_VOICE:-0}" }
     # Intel Arc: expose the render nodes; host needs the i915 driver.
     devices:

@@ -86,7 +86,7 @@ image even on a box where you previously built `cuda`.
 You normally never need this — compose does it. But if you build/run by hand:
 
 ```bash
-docker build -t posterchanai:cuda --build-arg GPU=cuda --build-arg BASE_IMAGE=nvidia/cuda:12.5.1-devel-ubuntu24.04 .
+docker build -t posterchanai:cuda --build-arg GPU=cuda --build-arg BASE_IMAGE=nvidia/cuda:13.0.3-devel-ubuntu24.04 .
 # GPU = cpu | cuda | rocm | intel | nostr.  cpu/nostr/rocm need only GPU; cuda/intel also pass BASE_IMAGE.
 ```
 
