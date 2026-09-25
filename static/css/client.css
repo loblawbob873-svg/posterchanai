@@ -8888,6 +8888,15 @@ body.native.term-view .tty-bar{padding-top:env(safe-area-inset-top);height:calc(
   border-top:1px solid var(--line)}
 .os-foot .spacer{flex:1}
 .os-foot .os-exit{flex:0 0 auto}
+/* ICON-ONLY, like Windows 11's start-menu footer: round, borderless, highlighted on hover/focus. The
+   account chip keeps the rest of the row and truncates its name rather than pushing the icons out. */
+.os-foot .os-acct{flex:0 1 auto;min-width:0}
+.os-foot-acts{display:flex;align-items:center;gap:2px;flex:0 0 auto}
+.os-foot-btn{width:38px;height:38px;display:grid;place-items:center;border:0;border-radius:50%;
+  background:transparent;color:var(--muted);cursor:pointer;padding:0}
+.os-foot-btn .ic{width:18px;height:18px}
+.os-foot-btn:hover,.os-foot-btn:focus-visible{background:rgba(var(--accent-rgb),.14);color:var(--text);outline:none}
+.os-foot-btn:active{background:rgba(var(--accent-rgb),.24)}
 .os-acct{display:flex;align-items:center;gap:8px;padding:6px 8px;border-radius:9px;border:0;
   background:none;color:var(--text);cursor:pointer;font-family:inherit;font-size:15px;min-height:48px;
   max-width:100%;min-width:0}

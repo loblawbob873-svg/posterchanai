@@ -8520,12 +8520,63 @@
     }
   }
 
+  /* THE START MENU'S FOOTER, THE WAY WINDOWS 11 DRAWS IT: you on the left (avatar + name, which
+   * opens the account switcher), and ICON-ONLY buttons on the right -- Settings, Power, Full screen,
+   * Classic, Log out. It was two worded buttons ("⛶ Full screen", "⤢ Classic") and nothing else.
+   * Every button names itself in `title` AND `aria-label`: an icon is not a label to a screen reader.
+   * Power is offered only where there is a machine to power (pcPower -- PosterChanOS), never as a
+   * dead button in a browser. Each one goes through footAct, which on PosterChanOS hands the action
+   * to the DESKTOP (the menu is a popup window that closes the moment it is used) and in the in-page
+   * desktop performs it here. */
+  function footActs(){
+    const b = (kind, icon, label, id) => `<button class="os-foot-btn" data-foot="${kind}"${id ? ` id="${id}"` : ''}`
+      + ` title="${enc(label)}" aria-label="${enc(label)}"><svg class="ic" aria-hidden="true"><use href="#${icon}"></use></svg></button>`;
+    const full = isFull();
+    return `<div class="os-foot-acts">`
+      + b('settings', 'i-gear', 'Settings')
+      + (window.pcPower ? b('power', 'i-power', 'Power') : '')
+      + b('full', full ? 'i-minimize' : 'i-expand', full ? 'Leave full screen (F11)' : 'Full screen (F11)', 'os-full')
+      + b('classic', 'i-layout', 'Classic layout -- leave the desktop', 'os-exit')
+      + b('logout', 'i-logout', 'Log out')
+      + `</div>`;
+  }
+  /* Performed on the DESKTOP: from the popup's `pc:act:` message, or directly in the in-page menu.
+     `anchor` is what a flyout opens against -- the Start button, since the menu is gone by then. */
+  async function footAct(kind){
+    const startBtn = () => document.getElementById('os-start') || document.body;
+    if(kind === 'settings'){
+      if(window.pcDisplays && pcDisplays.status) openSystemSettings();
+      else openLauncherApp('settings');
+    }else if(kind === 'power'){
+      if(window.PCOSShell && PCOSShell.openControl) await PCOSShell.openControl('power', startBtn());
+    }else if(kind === 'full') toggleFull();
+    else if(kind === 'classic') exit();
+    else if(kind === 'accounts'){
+      if(PC().accountMenu) PC().accountMenu(startBtn()); else if(PC().openProfile) PC().openProfile();
+    }else if(kind === 'logout'){
+      /* On PosterChanOS "log out" ends the SESSION (back to the sign-in screen) -- the same call the
+         account menu makes; in a browser it signs this device out of the client. */
+      const ask = PC().uiConfirm;
+      if(ask && !(await ask('Log out?', { ok: 'Log out' }))) return;
+      if(window.PCOSShell && PCOSShell.logoutSession && window.pcShell) await PCOSShell.logoutSession();
+      else if(PC().logout) PC().logout();
+    }
+  }
   function meChip(){
     if(!me()) return '';
+    /* FROM THE PROFILE, NOT FROM THE SIDEBAR. This used to copy #me-card's picture and name out of the
+       page -- and on PosterChanOS the start menu is its OWN popup window, which never draws that sidebar,
+       so the OS menu showed an anonymous chip while the web desktop showed you ("I see it on WebUI
+       desktop but not OS"). The profile is in the Store in every window; #me-card is the fallback. */
     let src = '', name = '';
     try{
-      const img = document.querySelector('#me-card img'); if(img) src = img.getAttribute('src') || '';
-      const mn = document.querySelector('#me-card .mn'); if(mn) name = (mn.textContent || '').trim();
+      const v = PC().viewer && PC().viewer(), pr = (v && v.profile) || {};
+      src = String(pr.picture || pr.image || '');
+      name = String(pr.display_name || pr.displayName || pr.name || '').trim();
+    }catch(_){}
+    try{
+      if(!src){ const img = document.querySelector('#me-card img'); if(img) src = img.getAttribute('src') || ''; }
+      if(!name){ const mn = document.querySelector('#me-card .mn'); if(mn) name = (mn.textContent || '').trim(); }
     }catch(_){}
     const pic = src ? `<img src="${enc(src)}" alt="">`
                     : '<svg class="ic" aria-hidden="true"><use href="#i-user"></use></svg>';
@@ -9929,9 +9980,7 @@
     menu.innerHTML =
       `<input class="input os-search" id="os-q" placeholder="Search apps" autocomplete="off">
        <div class="os-applist" id="os-applist"></div>
-       <div class="os-foot">${meChip()}<span class="spacer"></span>
-         <button class="os-exit" id="os-full" title="Full screen (F11)">${isFull()?'⛶ Windowed':'⛶ Full screen'}</button>
-         <button class="os-exit" id="os-exit" title="Leave the desktop">⤢ Classic</button></div>`;
+       <div class="os-foot">${meChip()}<span class="spacer"></span>${footActs()}</div>`;
     root.appendChild(menu);
 
     /* TYPE AND IT SEARCHES, which is what a start menu is for.
@@ -10160,9 +10209,12 @@
     /* The account chip opens the switcher, anchored to itself. Its first row is the identity you are
      * signed in as and opens your profile, so nothing that used to be reachable has moved further
      * away. */
-    { const ab = $('#os-acct', menu);
+    const bindAcct = (ab) => {
       if(ab) ab.onclick = (e) => {
         e.stopPropagation();
+        /* On PosterChanOS this menu is a popup that closes as soon as it is used, which would take a
+           switcher opened in it along with it -- so the DESKTOP opens it (footAct 'accounts'). */
+        if(_menuAct('accounts')) return;
         /* Open the flyout BEFORE closing the start menu. The other order looks harmless and is not:
          * closing the menu removes this button from the document, so the anchor it is positioned
          * against measures 0x0 at 0,0 and the flyout lands in the TOP-LEFT corner of the screen. */
@@ -10171,9 +10223,31 @@
           else if(PC().openProfile) PC().openProfile();
         }catch(err){ PC().toast && PC().toast('could not open your accounts'); }
         toggleStart(false);
-      }; }
-    { const fb = $('#os-full', menu); if(fb) fb.onclick = () => { toggleStart(false); toggleFull(); }; }
-    { const xb = $('#os-exit', menu); if(xb) xb.onclick = () => { toggleStart(false); exit(); }; }
+      }; };
+    bindAcct($('#os-acct', menu));
+    /* THE MENU CAN BE DRAWN BEFORE WE KNOW WHO YOU ARE. On PosterChanOS the start menu is a popup -- a
+       fresh page every time it opens -- and it draws at once, while the saved sign-in is still being
+       restored; meChip() then has nobody to show, and nothing drew it again: the OS menu had no
+       avatar or name while the web desktop, signed in long before the menu opened, did ("I see it on
+       WebUI desktop but not OS"). So a menu drawn anonymous watches for the sign-in and adds you. */
+    if(!$('#os-acct', menu)){
+      const m0 = menu; let n = 0;
+      const t = setInterval(() => {
+        if(!m0.isConnected || ++n > 100){ clearInterval(t); return; }
+        if(!me()) return;
+        clearInterval(t);
+        const foot = $('.os-foot', m0); if(!foot || $('#os-acct', foot)) return;
+        foot.insertAdjacentHTML('afterbegin', meChip());
+        bindAcct($('#os-acct', foot));
+      }, 150);
+    }
+    menu.querySelectorAll('[data-foot]').forEach(fb => fb.onclick = (e) => {
+      e.stopPropagation();
+      const kind = fb.dataset.foot;
+      if(_menuAct(kind)) return;          // PosterChanOS: the desktop performs it; this popup closes
+      toggleStart(false);
+      Promise.resolve(footAct(kind)).catch(err => { try{ PC().toast(String((err && err.message) || err)); }catch(_){ } });
+    });
     const q = $('#os-q', menu);
     q.oninput = () => paint(q.value.trim());
     q.onkeydown = (e) => {
@@ -10537,8 +10611,8 @@
                     try{ PC().runSearch && PC().runSearch(val); }catch(_){ }
                   }, false, true);
                 }
-                else if(kind === 'full') toggleFull();
-                else if(kind === 'classic') exit();
+                else if(['full', 'classic', 'settings', 'power', 'logout', 'accounts'].includes(kind))
+                  Promise.resolve(footAct(kind)).catch(() => {});
                 else if(kind === 'net-reconnect'){
                   const api=PC();
                   if(api&&api.reconnectNetwork) Promise.resolve(api.reconnectNetwork()).catch(()=>{});
