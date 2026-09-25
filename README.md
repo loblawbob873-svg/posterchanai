@@ -498,6 +498,7 @@ the Arc environment.
 
 ## Documentation
 
+- **[docs/RELEASE.md](docs/RELEASE.md)** — Test and publish a build, start to finish: the test suite, deploying, the apps, and building, gating and publishing the PosterChanOS ISO
 - **[docs/DOCKER.md](docs/DOCKER.md)** — Turnkey Docker image (CPU / NVIDIA / AMD / Intel Arc): build matrix, GPU run flags, model auto-download, opt-ins, HTTPS via the `tls` profile, and OpenAI-client/opencode setup
 - **[docs/NOSTR_DOCKER.md](docs/NOSTR_DOCKER.md)** — Nostr-only instance, start to finish: empty VPS → HTTPS → claiming admin → relay/NIP-05/Blossom config → backups
 - **[docs/BOTS.md](docs/BOTS.md)** — Bot manager: the merged `botframework/`, Admin → Bots, per-bot config, the single server endpoint, and per-node cutover

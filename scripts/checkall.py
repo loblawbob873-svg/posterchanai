@@ -286,6 +286,11 @@ CHECKS = {
     # Boots an ISO (or an installed disk) and proves the graphical session STAYS visible. Same
     # shape: it skips without an image, and it owns a QEMU guest, so it does not share the box with
     # the other heavy gates.
+    # The Settings BUTTON, not the helper it calls: sign in as the first owner, System Settings →
+    # PosterChan Server → Enable (+ its confirmation), follow the panel to a running server. Needs an
+    # installed VM behind a tunnel (scripts/vm_server_ui_boot.py); SKIPS (exit 2) without one.
+    "check_server_enable_ui":          dict(group="ui", secs=5700, serial=True,
+                                            why="Enable in System Settings sets up and starts the server"),
     "check_livecd_vm":                 dict(group="ui", secs=900, serial=True,
                                             why="the image reaches a desktop and keeps it"),
     # ...and that one judges PIXELS, which a rescue console also has. This asks the SESSION, by
