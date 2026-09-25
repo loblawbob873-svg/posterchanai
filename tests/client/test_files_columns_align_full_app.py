@@ -36,6 +36,27 @@ def test_sidebar_and_toolbar_share_a_centre_line_in_a_desktop_window():
         m = await b.js(MEASURE)
         assert m and m['side'] is not None and m['main'], m
         for y in m['main']:
-            assert abs(y - m['side']) <= 2, f"toolbar row centre {y:.1f} vs sidebar row {m['side']:.1f}: {m}"
+            assert abs(y - m['side']) <= 1.5, f"toolbar row centre {y:.1f} vs sidebar row {m['side']:.1f}: {m}"
 
     asyncio.run(desktop.with_browser('online', '', check))
+
+
+MEASURE_DOC = MEASURE.replace("const w=[...document.querySelectorAll('.osw')].pop(); if(!w) return null;",
+                              "const w=document;")
+
+
+@pytest.mark.skipif(not Path('/opt/google/chrome/chrome').exists(), reason='Chrome required')
+def test_the_same_holds_in_a_posterchanos_window():
+    """A PosterChanOS app is its own document at full size; the in-page desktop is zoomed ~0.72, which
+    shrank a 2.6px mismatch under the 2px tolerance -- the machine it was reported on is this one."""
+    async def check(b):
+        await desktop.login(b)
+        await b.until("!!document.querySelector('.fx-side .fx-tree-head') && !!document.querySelector('#fx-find')")
+        await asyncio.sleep(.3)
+        m = await b.js(MEASURE_DOC)
+        assert m and m['side'] is not None and m['main'], m
+        for y in m['main']:
+            assert abs(y - m['side']) <= 1.5, f"toolbar row centre {y:.1f} vs sidebar row {m['side']:.1f}: {m}"
+
+    extra = "window.pcShell.windowContext={role:'app',view:'blossom'};window.pcShell.backgroundOwner=false;"
+    asyncio.run(desktop.with_browser('online', '?pcwin=blossom', check, extra))

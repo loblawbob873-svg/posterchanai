@@ -2581,6 +2581,11 @@ body.embed .feed{max-width:680px;margin:0 auto;padding:14px;height:auto !importa
 /* Centred under the icon — a desktop label, not a list row. */
 .files-grid:not(.details) .file-card .meta{justify-content:center;text-align:center}
 .files-grid:not(.details) .file-card .meta .fc-acts{margin:0 auto}
+/* A NAME IS THE THING YOU READ, so it is in the text colour at a readable size. It inherited .meta's
+   11px `--muted` -- the colour for SECONDARY text (sizes, dates), which several themes make a dark grey
+   ("the folder and file names are hard to read, dark grey? really"). Sizes and dates stay muted. */
+.file-card .meta .fname,.fx-name .fname,.fx-side .folder-chip:not(.active){color:var(--text)}
+.file-card .meta .fname{font-size:12.5px;font-weight:500}
 .file-card .meta .fname{flex:1 1 100%;min-width:0;overflow:hidden;line-height:1.45;
   white-space:normal;overflow-wrap:anywhere;word-break:break-word;
   display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical}
@@ -9124,7 +9129,7 @@ html.os-on #upload-badge.upbadge{z-index:333}
   display:inline-flex;align-items:center;justify-content:center}
 .fx-nb:hover:not(:disabled){border-color:var(--neon);color:var(--neon)}
 .fx-nb:disabled{opacity:.35;cursor:default}
-.fx-side{border-inline-end:1px solid var(--line);background:var(--panel2);padding:10px;min-width:0;
+.fx-side{border-inline-end:1px solid var(--line);background:var(--panel2);padding:12px 10px 10px;min-width:0;
   max-height:70vh;overflow-y:auto}
 .fx-side-mobile-head,.fx-locations-open{display:none}
 .fx-tree{display:flex;flex-direction:column;gap:4px}
@@ -9136,9 +9141,11 @@ html.os-on #upload-badge.upbadge{z-index:333}
 .fx-tree-head b{font-size:13px}
 .fx-tree-children{padding-inline-start:20px;border-inline-start:1px solid var(--line);margin-inline-start:12px}
 .fx-tree-children.hidden{display:none}
-/* 6px on top, not 12: the sidebar's first row ("Files") and the toolbar's first row share a centre
-   line. At 12 the middle column sat 6px lower than the left one ("the middle column is slightly
-   lower") -- tests/client/test_files_columns_align_full_app.py measures it in a desktop window. */
+/* The sidebar's first row ("Files") and the toolbar's first row share a centre line: .fx-main tops at
+   6px and .fx-side at 12px (its row is shorter than the toolbar's). At 12/10 the middle column sat 6px
+   lower ("the middle column is slightly lower"); at 6/10 still 2.6px in a PosterChanOS window, hidden
+   in the in-page desktop by its 0.72 zoom. tests/client/test_files_columns_align_full_app.py measures
+   BOTH window kinds. */
 .fx-main{min-width:0;padding:6px 12px 12px;display:flex;flex-direction:column;gap:10px}
 .fx-search-results{display:flex;flex-direction:column;min-width:0;overflow:auto}
 .fx-search-hit{display:grid;grid-template-columns:110px minmax(160px,1.5fr) minmax(120px,1fr) 90px 150px;

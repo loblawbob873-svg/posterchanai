@@ -2435,7 +2435,21 @@ window.PCFilesFactory = function(dep){
            * invalid file path after choosing a unified-search hit. The host module already owns
            * cross-platform path ancestry for breadcrumbs and Up, so search uses the same rule. */
           H.enter(r.dir?p:(H.parentPath(p)||p)); } _S._hostOn=true; _S._syncRoot=''; _S._filesFolder=null; _S._fxMobileSource='computer'; }
-      renderBlossom();
+      const shown = renderBlossom();
+      /* EVERY SOURCE'S FILE HIT OPENS -- a Blossom file through driveOpenFile (the same decision its
+       * tile makes), a synced file by clicking ITS tile once the folder has drawn (only the tile
+       * carries the chunk list a synced file is decrypted from). Only My Computer was handled, so a
+       * synced office document "goes back to Files, never opens". */
+      if(r.source==='blossom' && !r.dir && r.sha){
+        const P = window.__PC; if(P && typeof P.driveOpenFile==='function') P.driveOpenFile(r.sha);
+      }
+      if(r.source==='synced' && !r.dir && r.path){
+        Promise.resolve(shown).then(()=>{
+          const card = [...document.querySelectorAll('.file-card:not(.isdir)')].find(c => {
+            const b = c.querySelector('.dlsync'); return b && b.dataset.path === r.path; });
+          if(card) card.click(); else toast('opened its folder -- '+(r.name||'the file')+' is not listed there');
+        }, ()=>{});
+      }
       /* A FILE HIT IS AN OPEN, not a trip to its folder. It used to stop at the folder above, so
        * clicking the result you searched for did nothing you could see. Files still lands on that
        * folder (Back and the rest of the directory stay one step away); the file itself goes
