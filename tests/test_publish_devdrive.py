@@ -114,3 +114,13 @@ def test_publish_iso_runs_it_only_after_the_router_publish_and_only_when_configu
     step = sh.index("publish_devdrive.py")
     assert step > sh.index('echo "Published $PUBLISH_HOST:$PUBLISH_PATH'), "devdrive must run after the verified router publish"
     assert "devdrive.key2" in sh[step - 600:step + 200]
+
+
+def test_the_stable_link_page_forwards_to_the_verified_upload_and_escapes_it():
+    page = pd.redirect_page("https://devdrive.cloud/abc123/posterchan-live-20260925.iso",
+                            "posterchan-live-20260925.iso", "ab" * 32)
+    assert 'content="0; url=https://devdrive.cloud/abc123/posterchan-live-20260925.iso"' in page
+    assert "ab" * 32 in page and "noindex" in page
+    for bad in ('https://devdrive.cloud/x"><script>', "http://devdrive.cloud/x", "https://evil.example/x", ""):
+        with pytest.raises(pd.Refused):
+            pd.redirect_page(bad, "n", "s")

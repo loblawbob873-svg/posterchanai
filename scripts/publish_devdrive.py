@@ -22,7 +22,9 @@ or bad arguments (nothing was sent).
 from __future__ import annotations
 
 import hashlib
+import html
 import json
+import subprocess
 import os
 import re
 import sys
@@ -34,6 +36,35 @@ API = os.environ.get("PC_DEVDRIVE_API", "https://devdrive.cloud/api/v2")
 FOLDER = os.environ.get("PC_DEVDRIVE_FOLDER", "PosterChanOS")
 CONF = Path(os.environ.get("XDG_CONFIG_HOME", Path.home() / ".config")) / "posterchan"
 ISO_NAME = re.compile(r"^posterchan-live-\d{8}\.iso$")
+
+
+# THE STABLE ADDRESS. devdrive gives every upload a new URL and has no "replace this file's bytes"
+# call, so the README cannot link a devdrive file directly. It links https://iso.poster.place/devdrive/
+# instead: a page on OUR host that forwards to the newest verified devdrive copy. Rewritten only after
+# a verified upload, staged and renamed like the ISO itself, so it never points at a half-done one.
+PAGE_HOST = os.environ.get("PC_ISO_PUBLISH_HOST", "verita84@router.lan")
+PAGE_DIR = os.environ.get("PC_DEVDRIVE_PAGE_DIR", "/srv/iso/devdrive")
+_URL = re.compile(r"^https://devdrive\.cloud/[A-Za-z0-9._~/%-]+$")
+
+
+def redirect_page(url: str, name: str, sha256: str) -> str:
+    if not _URL.match(url or ""):
+        raise Refused(f"refusing to publish an unexpected download URL: {url!r}")
+    u, n = html.escape(url, quote=True), html.escape(name)
+    return ("<!doctype html><html><head><meta charset=\"utf-8\">"
+            f"<meta http-equiv=\"refresh\" content=\"0; url={u}\"><title>PosterChanOS download</title>"
+            "<meta name=\"robots\" content=\"noindex\"></head><body>"
+            f"<p>Taking you to the PosterChanOS image on devdrive.cloud: <a href=\"{u}\">{n}</a></p>"
+            f"<p>sha256 <code>{html.escape(sha256)}</code> &middot; also at "
+            "<a href=\"https://iso.poster.place/posterchanos.iso\">iso.poster.place</a></p></body></html>\n")
+
+
+def write_page(page: str) -> None:
+    if not re.fullmatch(r"[A-Za-z0-9._-]+@[A-Za-z0-9._:-]+", PAGE_HOST) or not re.fullmatch(r"/[A-Za-z0-9._/-]+", PAGE_DIR):
+        raise Refused("unsafe page host or directory")
+    cmd = (f"mkdir -p '{PAGE_DIR}' && cat > '{PAGE_DIR}/index.html.uploading' && "
+           f"chmod 0644 '{PAGE_DIR}/index.html.uploading' && mv -f '{PAGE_DIR}/index.html.uploading' '{PAGE_DIR}/index.html'")
+    subprocess.run(["ssh", PAGE_HOST, cmd], input=page, text=True, check=True, timeout=60)
 
 
 class Refused(Exception):
@@ -156,6 +187,12 @@ def main(argv: list[str]) -> int:
     except OSError:
         pass
     print(f"devdrive: published {rec['file']} -> {rec['url']} (sha256 {rec['sha256']})")
+    try:
+        write_page(redirect_page(rec["url"], rec["file"], rec["sha256"]))
+        print("devdrive: https://iso.poster.place/devdrive/ now points at it")
+    except (Refused, subprocess.SubprocessError, OSError) as e:
+        print(f"devdrive: uploaded, but the stable link was NOT updated: {e}", file=sys.stderr)
+        return 1
     return 0
 
 
