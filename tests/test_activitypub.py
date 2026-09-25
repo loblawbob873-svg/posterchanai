@@ -3212,3 +3212,38 @@ def test_a_queued_deletion_is_only_ever_sent_as_its_own_author(world):
     assert run(outbox.drain_deletions()) == 0
     assert world["sent"] == []
     assert run(state.deletions()) == {}
+
+
+# ============================================================================ 25. a new follower gets the history
+
+def test_a_new_follower_receives_the_accounts_recent_posts_oldest_first(world, monkeypatch):
+    """Akkoma never loads a remote account's older posts: a profile there showed only what had been
+    delivered since somebody followed -- "no posts are showing on akkoma". A NEW follower's server is
+    now sent the recent posts (the outbox's own Create activities, so the same ids), oldest first;
+    once a day per follower, so follow/unfollow cannot turn it into a flood."""
+    from app.services import nostr_store
+    posts = [member_post(f"post {i}", created=1_700_000_000 + i) for i in range(30)]
+
+    async def ws_query(port, filters, strict=False, **kw):
+        f = filters[0]
+        return sorted([p for p in posts if p["kind"] in f.get("kinds", [1])], key=lambda e: -e["created_at"])[:f["limit"]]
+    monkeypatch.setattr(nostr_store, "_ws_query", ws_query)
+    inbox._backfilled.clear()
+    follow = {"id": "https://mastodon.example/f/9", "type": "Follow", "actor": REMOTE, "object": f"{BASE}/ap/users/alice"}
+
+    async def follow_and_wait(act):
+        out = await inbox.process(act, REMOTE)
+        await asyncio.gather(*list(inbox._backfill_tasks))
+        return out
+    assert run(follow_and_wait(follow)).startswith("follower added")
+    kinds = [s["activity"]["type"] for s in world["sent"]]
+    assert kinds[0] == "Accept" and kinds[1:] == ["Create"] * outbox.BACKFILL_POSTS, kinds
+    contents = [s["activity"]["object"]["content"] for s in world["sent"][1:]]
+    assert contents[0] == "<p>post 10</p>" and contents[-1] == "<p>post 29</p>", "not oldest first / not the newest 20"
+    assert all(s["inbox"] == "https://mastodon.example/inbox" for s in world["sent"][1:])   # the shared inbox, like posts
+
+    # unfollow and follow again the same day: the Accept, but not the history a second time
+    run(inbox.process({"type": "Undo", "actor": REMOTE, "object": follow}, REMOTE))
+    world["sent"].clear()
+    run(follow_and_wait(dict(follow, id="https://mastodon.example/f/10")))
+    assert [s["activity"]["type"] for s in world["sent"]] == ["Accept"]

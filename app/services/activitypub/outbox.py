@@ -504,6 +504,38 @@ async def _vote(ev: dict, member: str, me: str) -> list:
     return out
 
 
+BACKFILL_POSTS = 20
+
+
+async def backfill(member: str, inbox: str) -> int:
+    """Send a new follower's server the member's recent public posts -- the same Create activities the
+    outbox serves, so the same object ids (the server stores each once, however often it is sent).
+    Oldest first, so the newest lands on top of a profile that orders by arrival. Returns how many
+    were accepted; never raises (a failure costs only the history, never the follow)."""
+    try:
+        items, _oldest, _last = await public_posts(member, limit=BACKFILL_POSTS)
+        if not items:
+            return 0
+        keys = await state.keypair(member)
+        key_id, priv = await actors.signing(member, keys)
+    except Exception as e:
+        logger.info("[activitypub] backfill for %s not sent: %s: %s", member[:12], type(e).__name__, e)
+        return 0
+    ok = 0
+    for act in reversed(items):
+        try:
+            status = await remote.deliver(inbox, act, key_id=key_id, private_pem=priv)
+        except Exception:
+            status = 0
+        if 200 <= status < 300:
+            ok += 1
+        elif status in (0, 408, 429) or status >= 500:
+            break                                   # the server is struggling: stop, do not pile on
+    logger.info("[activitypub] backfilled %d/%d post(s) of %s to %s", ok, len(items), member[:12],
+                remote.host_of(inbox))
+    return ok
+
+
 async def public_posts(member: str, *, until: int = 0, after: str = "", limit: int = 20) -> tuple[list, int, str]:
     """(Create activities, oldest created_at) for a member's recent public posts, newest first -- what
     their OUTBOX collection serves. A remote server fills a profile from it: Akkoma and Mastodon read

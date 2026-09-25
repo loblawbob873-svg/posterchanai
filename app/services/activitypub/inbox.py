@@ -320,7 +320,34 @@ async def _follow(activity: dict, signer: str) -> str:
                                                         if k in activity}}
     personal = who.get("inbox") if remote.host_of(who.get("inbox") or "") == remote.host_of(signer) else ""
     status = await remote.deliver(personal or inbox, accept, key_id=key_id, private_pem=priv)
+    if not known and 200 <= status < 300:
+        _backfill_later(member, signer, inbox)          # where their posts are delivered too
     return f"follower added (accept HTTP {status})"
+
+
+# A NEW follower is sent the account's recent posts. Akkoma (and Pleroma) never load a remote
+# account's older posts -- a profile there shows only what was DELIVERED after somebody followed, so
+# every account here looked empty on the fediverse however much it had posted ("no posts are showing
+# on akkoma"). Its default ObjectAgePolicy keeps a delivered old post out of timelines and on the
+# profile, which is exactly what this is for. Background (the inbox answer must stay quick), once per
+# member+follower a day (a follow/unfollow loop cannot make it a flood), best effort.
+_backfilled: dict = {}
+_backfill_tasks: set = set()
+
+
+def _backfill_later(member: str, follower: str, inbox: str) -> None:
+    now = time.time()
+    key = (member, follower)
+    if now - _backfilled.get(key, 0) < 86400:
+        return
+    _backfilled[key] = now
+    if len(_backfilled) > 20000:
+        for k in sorted(_backfilled, key=_backfilled.get)[:10000]:
+            _backfilled.pop(k, None)
+    from app.services.activitypub import outbox as _ob
+    task = asyncio.ensure_future(_ob.backfill(member, inbox))
+    _backfill_tasks.add(task)
+    task.add_done_callback(_backfill_tasks.discard)
 
 
 async def _announce_follows(actor: str, actor_doc, member: str, *, following: bool) -> None:
