@@ -2041,6 +2041,22 @@ liveISOinstall() {
 	# …and the autologin that names it, or the installed machine tries to log in an account that is
 	# no longer there — which is a login prompt, and the exact failure the ISO builder was fixed for.
 	sudo rm -f $TARGET/etc/systemd/system/getty@tty1.service.d/override.conf 2>/dev/null
+	# …AND THE SERIAL CONSOLE'S, which names the same account. The image gained it later (a headless or
+	# IPMI install needs a console that logs itself in) and this removal never followed, so every
+	# installed machine's ttyS0 tried to autologin `live` about once a second, for ever: "User not known
+	# to the underlying authentication module", and a serial console nothing could log in to -- found
+	# by the release gate's server stage, the first thing ever to log in over it after an install.
+	sudo rm -f $TARGET/etc/systemd/system/serial-getty@ttyS0.service.d/override.conf 2>/dev/null
+	# …and the live boot's network gate. It is live-image-only by design (its own comment says so) and
+	# makes multi-user.target REQUIRE NetworkManager be active -- right for a disc whose Welcome needs
+	# nmcli, wrong for an installed machine, where NetworkManager failing must not fail the boot target.
+	sudo rm -f $TARGET/etc/systemd/system/posterchan-live-network.service \
+		$TARGET/etc/systemd/system/multi-user.target.d/posterchan-live-network.conf 2>/dev/null
+	# …and the live motd ("PosterChanOS live session. Install to this machine: …"), shown at every login
+	# of an installed machine. Only when it IS that text: a motd somebody wrote is theirs.
+	if grep -q 'PosterChanOS live session' $TARGET/etc/motd 2>/dev/null; then
+		sudo rm -f $TARGET/etc/motd 2>/dev/null
+	fi
 	# …and the live medium's "Install PosterChanOS" launcher. livecd writes it into the IMAGE only
 	# (a pseudo-file), but this copies the image onto the disk, so every installed machine carried
 	# it: a start-menu entry that opens a terminal running `sudo gentoo.sh` — "Install PosterChan not
