@@ -204,6 +204,15 @@ window.PCProfileFactory = function(dep){
        * and returns to the configured starting timeline instead of navigating out of PosterChan. */
       try{ if(window.PCOS && PCOS.isOn() && PCOS.closeDoc
               && PCOS.closeDoc('prof:' + pk)) return; }catch(_){}
+      /* A PosterChanOS profile WINDOW closes -- the same rule as a post window (see app.js _backOut):
+         falling through turned the window into a timeline whose history then sent every later Back
+         to the profile it was first opened on. */
+      try{
+        const ctx = window.pcShell && pcShell.windowContext, v = String((ctx && ctx.view) || '');
+        if(document.documentElement.classList.contains('pc-oswin') && /^doc:(post|prof):[0-9a-f]{64}$/i.test(v)){
+          window.close(); return;
+        }
+      }catch(_){}
       if(S._navPushed>0){ try{ history.back(); return; }catch(_){} }
       switchView(_startTimeline());
     };
