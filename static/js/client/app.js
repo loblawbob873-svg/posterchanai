@@ -14603,7 +14603,7 @@
       // The interrupting toast/OS notification stays gated on `live`, so restoring a backlog on login
       // doesn't fire a burst of them. It names the SENDER only, never the message — so it says the same
       // thing whether or not "Hide DM previews until opened" is on.
-      if(live) _dmNotify(selfNote ? null : peer, selfNote);
+      if(live) _dmNotify(selfNote ? null : peer, selfNote, selfNote ? rumor.content : '');
     }
     _scheduleDmRefresh();
     return true;
@@ -14818,13 +14818,20 @@
     for(const [pk,arr] of dmPeers){ if(isMutedAuthor(pk)) continue;
       const selfThread = pk===ME.pubkey;
       for(const m of arr){ if((!m.mine || selfThread) && (m.t||0)>seen) n++; } } _dmUnread=n; bumpDm(); }
-  function _dmNotify(fromPk, selfNote){
+  function _dmNotify(fromPk, selfNote, text){
     if(!notificationAllowed('dm'))return;
-    // A note to self is how the server delivers system notifications (agent run finished, uptime
-    // alerts) — "you sent you a message" would be both confusing and wrong. Say what it is.
+    /* A NOTE TO SELF IS HOW THE SERVER TALKS TO ITS ADMIN (a user applying for a name, an agent run
+     * finishing, an uptime alert) — on a single-admin node the operator key IS the admin's. It used to
+     * say "New notification — saved to your notes to self", which describes the DELIVERY and nothing
+     * about the event: an access application read like something the admin had saved ("it's nothing
+     * about a user requesting permission"). So it says what the message says: its first line. With
+     * "Hide DM previews until opened" on it still names nothing — but it no longer claims a save. */
     if(selfNote){
-      notifToast('🔔 <b>New notification</b> — saved to your notes to self', LOGO);
-      osNotify('🔔 New notification', 'Saved to your notes to self', { tag:'pc-dm', type:'dm', route:'messages' });
+      const line = String(text || '').split('\n').map(x => x.trim()).find(Boolean) || '';
+      const said = line.replace(/nostr:(npub|nprofile)1[02-9ac-hj-np-z]{20,}/g, 'someone').slice(0, 140);
+      const body = (!said || ClientSettings.get('hideDmPreview', false)) ? 'Open Messages to read it' : said;
+      notifToast('🔔 <b>Notification</b> — ' + enc(body), LOGO);
+      osNotify('🔔 Notification', body, { tag:'pc-dm', type:'dm', route:'messages' });
       return;
     }
     const p=fromPk?profOf(fromPk):{}; const who=p.name||p.display_name||'someone';
