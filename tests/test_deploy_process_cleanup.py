@@ -33,8 +33,12 @@ def test_gate_cleans_its_children_and_leaves_unrelated_processes(tmp_path, endin
                 f"p=subprocess.Popen([sys.executable,'-c',{child!r}])\n"
                 f"pathlib.Path({str(pids)!r}).write_text(str(os.getpid())+' '+str(p.pid))\n"
                 + ("print('finished')\n" if ending == 'success' else "time.sleep(30)\n"))
+    # An operator's Ctrl-C comes from a terminal, where SIGINT is never ignored. A deploy started
+    # with `&` from a non-interactive shell runs its whole tree with SIGINT = SIG_IGN, which Python
+    # then keeps -- so without this line the "interrupt" case measured how sync.sh was LAUNCHED.
     code = f"""
-import importlib.util, os, pathlib, sys
+import importlib.util, os, pathlib, signal, sys
+signal.signal(signal.SIGINT, signal.default_int_handler)
 spec=importlib.util.spec_from_file_location('gate', {str(ROOT/'scripts/deploy_regression_gate.py')!r})
 gate=importlib.util.module_from_spec(spec); spec.loader.exec_module(gate)
 rc,out=gate._run_required_tests([sys.executable,'-c',{workload!r}],pathlib.Path({str(tmp_path)!r}),os.environ,pathlib.Path({str(tmp_path/'run.log')!r}),timeout={.5 if ending == 'timeout' else 10})
