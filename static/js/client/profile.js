@@ -16,7 +16,7 @@ window.PCProfileFactory = function(dep){
     _syncRightbar, articleCard, bchDirect, bchOf, cleanupInlineStream, clearSentinel, closeModal,
     copyValue, decorateProfiles, decorateVerified, doBchTip, doBlock, doXmrTip, doZap, emojiHtml, emojiName,
     enc, ensureMyFollowers, feedNoteHtml, followMany, hasMedia, hydrate, invalidateCounts,
-    isBchAddr, isMutedAuthor, isReply, isXmrAddr, linkify, loadSentinel, mediaParts, modal,
+    isBchAddr, isMutedAuthor, isReply, isXmrAddr, linkify, loadSentinel, mediaParts, modal, mountAlbums,
     needProfile, niceNip05, noteHtml, openDMWith, openMenuPopover, openStream, profOf, publish,
     renderMe, renderView, showPaymentTargets, sign, startCall, streamCard, streamHost, switchView,
     timeAgo, toast, toggleFollow, toggleMute, uiConfirm, uploadBlob, xmrOf,
@@ -300,7 +300,7 @@ window.PCProfileFactory = function(dep){
         <div id="prof-music">${_profileMusicHtml(p)}</div>
         <div class="follow-stats"><button class="statbtn" id="show-posts"><b>·</b> Posts</button><button class="statbtn" id="show-following"><b>·</b> Following</button><button class="statbtn" id="show-followers"><b>·</b> Followers</button></div>
       </div></div>
-      <div class="prof-tabs"><button class="prof-tab active" data-tab="notes">Notes</button><button class="prof-tab" data-tab="replies">Replies</button><button class="prof-tab" data-tab="media">Media</button><button class="prof-tab" data-tab="articles">Articles</button><button class="prof-tab" data-tab="streams">Streams</button></div>
+      <div class="prof-tabs"><button class="prof-tab active" data-tab="notes">Notes</button><button class="prof-tab" data-tab="replies">Replies</button><button class="prof-tab" data-tab="media">Media</button><button class="prof-tab" data-tab="albums">Albums</button><button class="prof-tab" data-tab="articles">Articles</button><button class="prof-tab" data-tab="streams">Streams</button></div>
       <div id="prof-list"></div>`;
     _bindProfileBack(feed,pk);
     _nostrFirstSeen(pk).then(ts=>{
@@ -324,6 +324,9 @@ window.PCProfileFactory = function(dep){
         // gallery only — take each post's bare media tags (not the row/carousel wrapper) and grid them
         const items=m.map(e=>mediaParts(e.content).items.join('')).join('');
         return `<div class="media-grid">${items}</div>`; }
+      // Albums (NIP-51 picture sets) draw themselves: albums.js fills this once the tab is opened. A
+      // constant placeholder, so a background refresh of the profile (same HTML → skipped) never wipes it.
+      if(tab==='albums') return '<div id="prof-albums" class="alb-root"></div>';
       if(tab==='articles'){ const a=_dedupAddr(Store.feed(e=>e.pubkey===pk && e.kind===30023)).slice(0,lim);
         return a.length ? a.map(articleCard).join('') : `<div class="empty">${_prof.artLoaded?'No articles yet.':'Loading…'}</div>`; }
       if(tab==='streams'){ const s=_dedupAddr(Store.byKind(30311).filter(e=> (e.pubkey===pk || streamHost(e)===pk) && !_isDeletedStream(e))).slice(0,lim);   // NOT Store.feed() — that allowlists kinds 1/6/1068/30023/40, so it silently drops every 30311
@@ -413,6 +416,7 @@ window.PCProfileFactory = function(dep){
     try{
     $$('.prof-tab',feed).forEach(t=> t.onclick=async()=>{ $$('.prof-tab',feed).forEach(x=>x.classList.toggle('active',x===t)); const tab=t.dataset.tab; _prof.tab=tab; fillList(tab); hydrate(feed);
       if(tab==='streams') _wireProfStreamClicks();
+      if(tab==='albums'){ try{ await mountAlbums($('#prof-albums', feed), pk); }catch(e){ const el=$('#prof-albums', feed); if(el) el.innerHTML=`<div class="empty">Couldn’t open albums — ${enc(String((e&&e.message)||e).slice(0,120))}</div>`; } }
       // Articles (kind-30023) aren't part of the initial note load — lazy-fetch them once on first open.
       if(tab==='articles' && !_prof.artLoaded){ _prof.artLoaded=true;
         try{ const a=await Relay.query([{authors:[pk],kinds:[30023],limit:40}]); for(const e of (a||[])) Store.saveEvent(e); }catch(_){}

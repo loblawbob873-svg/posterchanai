@@ -1579,7 +1579,10 @@
     // — so fetch it here before tagging rather than silently publishing a bare :shortcode:.
     if(!InstEmoji.loaded && InstEmoji.SC_RE.test(content||'')) { try{ await InstEmoji.load(); }catch(_){ } }
     tags = _enrichTags(kind, tags, content);
-    const ev = await sign(kind, content, tags, kind===30078 && opts && Number.isSafeInteger(opts.createdAt) ? opts.createdAt : undefined);
+    // An explicit created_at, for replaceable documents whose next version must be STRICTLY newer than the
+    // last: two saves in one second tie, and NIP-01 then keeps the LOWER id -- the newer edit lost about
+    // half the time. 30078 (app documents) and 30006 (photo albums, albums.js) pass one.
+    const ev = await sign(kind, content, tags, (kind===30078 || kind===30006) && opts && Number.isSafeInteger(opts.createdAt) ? opts.createdAt : undefined);
     if((_SOCIAL_KINDS.has(kind) || kind===30078) && ev.pubkey!==postingAuthor) return {ok:false,noQueue:true,msg:'Account changed — posting stopped'};
     if(opts && opts.deferLocal && (!ME || ME.pubkey!==postingAuthor)) return {ok:false,noQueue:true,msg:'Account changed — posting stopped'};
     if(!(opts && opts.deferLocal)){ Store.saveEvent(ev); invalidateCounts(); applySobLive(ev); }   // destructive requests wait for acknowledgement
@@ -15210,7 +15213,7 @@
     _syncRightbar, articleCard, bchDirect, bchOf, cleanupInlineStream, clearSentinel, closeModal,
     copyValue, decorateProfiles, decorateVerified, doBchTip, doBlock, doXmrTip, doZap, emojiHtml, emojiName,
     enc, ensureMyFollowers, feedNoteHtml, followMany, hasMedia, hydrate, invalidateCounts,
-    isBchAddr, isMutedAuthor, isReply, isXmrAddr, linkify, loadSentinel, mediaParts, modal,
+    isBchAddr, isMutedAuthor, isReply, isXmrAddr, linkify, loadSentinel, mediaParts, modal, mountAlbums,
     needProfile, niceNip05, noteHtml, openDMWith, openMenuPopover, openStream, profOf, publish,
     renderMe, renderView, showPaymentTargets, sign, startCall, streamCard, streamHost, switchView,
     timeAgo, toast, toggleFollow, toggleMute, uiConfirm, uploadBlob, xmrOf,
@@ -18053,6 +18056,15 @@
     _blobToB64, _blossomDenied, _guestPrompt, _isNativeApp, _serverOrigin, _trapFocus, copyValue,
     fetchMediaBlob, fileNameFor, requestBlossomAccess, saveMedia, sniffExt, toast, uploadBlob,
   }; }
+  // Profile → Albums: NIP-51 picture sets of NIP-68 pictures (albums.js), loaded when the tab opens.
+  function _albumsDeps(){ return {
+    state: { get ME(){ return ME; } },
+    $, $$, blossomPicker, closeModal, enc, imetaTagsFor, modal, openLightbox, publish, toast, uiConfirm,
+    uploadBlob,
+  }; }
+  function _albumsMod(){ return _lzGet('albums.js', 'PCAlbumsFactory', _albumsDeps); }
+  function _albumsLoad(){ return _lzLoad('albums.js', 'PCAlbumsFactory', _albumsDeps); }
+  function mountAlbums(){ return _lzRun(_albumsMod, _albumsLoad, 'mount', arguments); }
   function _lightboxMod(){ return _lzGet('lightbox.js', 'PCLightboxFactory', _lightboxDeps); }
   function _lightboxLoad(){ return _lzLoad('lightbox.js', 'PCLightboxFactory', _lightboxDeps); }
   function nativeOpenBlob(){ return _lzRun(_lightboxMod, _lightboxLoad, 'nativeOpenBlob', arguments); }

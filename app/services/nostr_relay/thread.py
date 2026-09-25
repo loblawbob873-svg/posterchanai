@@ -407,7 +407,9 @@ def _read_config() -> dict:
             # 10005 is the NIP-51 "public chats" join list. Each node's push watcher reads it to decide
             # whose devices to notify about a channel message, so a list published on one node has to
             # reach the others or that user gets chat pushes from one node only.
-            "ingest_kinds": [int(k) for k in (g("nostr_relay_ingest_kinds", "0,1,3,5,6,7,21,22,1063,1068,1111,9735,10000,10001,10002,10003,10005,10007,10050,10063,10133,2003,2004,30000,30001,30003,30023,30311,34235,30017,30018,30617,30618,1617,1618,1619,1621,1622,1623,1630,1631,1632,1633,31922,31923,31924,31925")
+            # 20 = NIP-68 pictures and 30006 = NIP-51 picture sets: Profile → Albums. Without them an album
+            # made in Olas (or any other client) never reaches this relay, and ours are the only ones it shows.
+            "ingest_kinds": [int(k) for k in (g("nostr_relay_ingest_kinds", "0,1,3,5,6,7,20,21,22,1063,1068,1111,9735,10000,10001,10002,10003,10005,10007,10050,10063,10133,2003,2004,30000,30001,30003,30006,30023,30311,34235,30017,30018,30617,30618,1617,1618,1619,1621,1622,1623,1630,1631,1632,1633,31922,31923,31924,31925")
                              .replace(" ", "").split(",")) if k.strip().lstrip("-").isdigit() and int(k) not in range(40,45)],
             "author_batch": gi("nostr_relay_author_batch", 200),
             # Politeness / anti-blast: pace upstream requests and outbox publishes so we don't
