@@ -73,6 +73,12 @@ Then, when you want more:
 
 ### PosterChanOS
 
+- 💿 **Download** — **[posterchanos.iso](https://iso.poster.place/posterchanos.iso)** (about 4 GB,
+  checksum: **[posterchanos.iso.sha256](https://iso.poster.place/posterchanos.iso.sha256)**). One
+  hybrid image boots on both BIOS and UEFI; write it to a USB stick with
+  `sudo dd if=posterchanos.iso of=/dev/sdX bs=4M status=progress oflag=sync` (or Rufus / balenaEtcher),
+  then boot it to try the desktop live or install it. Every published image has first installed and
+  booted itself in a VM — see [docs/RELEASE.md](docs/RELEASE.md).
 - 🖥️ **A Nostr-native desktop operating system** — **PosterChanOS** is the Gentoo-based, encrypted
   bare-metal edition of PosterChan. It boots directly into the PosterChan desktop shell on Sway, so
   Social, Messages, Notes, Files, Music, Terminal and the rest are applications rather than tabs
