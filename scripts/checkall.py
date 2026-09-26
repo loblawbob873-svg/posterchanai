@@ -155,6 +155,12 @@ CHECKS = {
     "check_signer_transport":          dict(group="live", secs=420, serial=True, live_args=[]),
     "check_client_icon_themes":        dict(group="live", secs=600),
     "check_client_mobile":             dict(group="live", secs=600),
+    # "Stuck loading on mobile": a CSP <meta> had switched off Chrome's preload scanner, so ~70 blocking
+    # scripts loaded one per round trip. The ui half serves the shipped shell with a per-request delay
+    # (loopback hides round trips from every other check); the live half loads a real instance cold +
+    # repeat under throttled 4G, through the CDN and the real cache headers.
+    "check_client_load_speed":         dict(group="ui", secs=240),
+    "check_client_load_speed_live":    dict(group="live", secs=420, live_args=["{live}"]),
     "check_dm_video_live":             dict(group="live", secs=420),
     "check_drive_blob_fetch":          dict(group="live", secs=420,
                                               live_args=[], live_env={"PC_ORIGIN": "{live}"}),

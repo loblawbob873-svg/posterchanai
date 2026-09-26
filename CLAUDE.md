@@ -231,6 +231,17 @@ claiming a reply count it has not counted — an empty answer dressed up as an a
 than a spinner. So the split is on *having something real to show*, never on a timeout, and the early
 paint states nothing it has not checked. `tests/client/test_cache_first_paint.py`.
 
+**NO CSP `<meta>` IN THE CLIENT SHELL — SEND IT AS A HEADER.** Reported twice as "poster.place looks stuck
+loading on mobile" (the raw HTML's bottom nav, no header, no feed, the progress bar still running): the
+client boots on DOMContentLoaded behind ~70 blocking `<script>` tags, and a `<meta http-equiv=
+"Content-Security-Policy" content="upgrade-insecure-requests">` in `<head>` had switched off Chrome's
+preload scanner, so they loaded ONE PER ROUND TRIP — 15.7 s cold / 13.3 s repeat on 4G, ~60 s on 3G,
+measured. The policy is now the response header in `render_client_shell` (https only). Every other check
+loads over loopback where a round trip is free, so none could see it: `scripts/check_client_load_speed.py`
+(ui: the shipped shell behind a per-request delay; fails on script concurrency) and `_live.py` (a real
+instance, cold + repeat, throttled 4G). Also: **server1 renders templates from this working tree and
+reloads them on save**, so an uncommitted `templates/` edit is live on poster.place before any deploy.
+
 **A VIEW THAT QUERIES ON ENTRY MUST WAIT FOR A SOCKET THAT CAN ANSWER — `await Relay.ready()`.** A REQ
 written to a CONNECTING socket is silently dropped (`relay.js _send`), and the moment a view is most
 likely to be opened against one is right after somebody logs in. `renderProfileView` and `flushEvents`

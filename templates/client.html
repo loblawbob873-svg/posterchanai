@@ -21,10 +21,10 @@
          reads when asking "what does a stranger see".
          Cached locally on every theme change/settings load; the Nostr-stored value re-syncs on login. -->
     <script>try{var d='{{ default_theme|default("cyberpunk") }}';var t=localStorage.getItem('pc_theme')||d;if(t!=='cyberpunk')document.documentElement.setAttribute('data-theme',t);}catch(e){}</script>
-    <!-- Avatars/media: auto-upgrade http:// to https:// (mixed content is otherwise blocked on
-         this https page) and send no Referer (many image CDNs 403 a cross-origin referrer). These
-         are the usual reasons a profile's name shows but its picture falls back to the logo. -->
-    {% if secure %}<meta http-equiv="Content-Security-Policy" content="upgrade-insecure-requests">{% endif %}
+    <!-- Avatars/media: send no Referer (many image CDNs 403 a cross-origin referrer). The http:// →
+         https:// upgrade is the Content-Security-Policy RESPONSE HEADER (render_client_shell), never a
+         <meta> here: a CSP <meta> switches off Chrome's preload scanner, and the ~70 blocking scripts
+         below then load one at a time — "stuck loading on mobile" for 15-60 s. -->
     <meta name="referrer" content="no-referrer">
     <title>{{ meta.title if meta else "PosterChan · Nostr" }}</title>
     <!-- LINK PREVIEW. The client is one SPA behind many shareable URLs, so a shared link used to

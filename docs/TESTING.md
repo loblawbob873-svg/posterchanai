@@ -94,6 +94,13 @@ Meme Builder, the windowed desktop, Notes, Calendar, Contacts, Mail, the vault, 
 Files explorer, the composer and quote modals, the terminal, the browser extension. They need no
 server, no keys and no network — they are the ones to run on every change.
 
+**Load speed is measured, not assumed.** `check_client_load_speed` (ui) serves the shipped client shell
+behind a 150 ms delay per request, because every other check loads over loopback where a round trip costs
+nothing, which is how 70 scripts loading one after another went unseen until users called the site "stuck
+loading on mobile". It fails if fewer than 4 scripts are ever in flight, or if boot takes over half the
+one-at-a-time cost. `check_client_load_speed_live` (live) loads a real instance cold and repeat over a
+throttled 4G profile (budgets: 10 s / 6 s to DOMContentLoaded).
+
 `live` needs a URL because those checks log in with throwaway keys and talk to real relays. They are
 the slowest and the only ones that can go red for reasons outside this checkout.
 

@@ -217,13 +217,20 @@ async def render_client_shell(request: Request, db, meta: dict | None = None):
     # `secure` gates the upgrade-insecure-requests CSP: harmless over HTTPS (server1 via Cloudflare),
     # but over plain HTTP (e.g. http://nas.lan:3051 on the LAN) it would force every script/CSS to
     # https://<host> — which a node serving bare HTTP doesn't have — breaking the whole page.
+    # It is a response HEADER, not a <meta>: a CSP <meta> disables Chrome's preload scanner, so the
+    # shell's ~70 blocking scripts were fetched one after another (15 s on 4G, ~60 s on 3G of a blank
+    # page). tests/test_client_shell_parallel_scripts.py.
     proto = request.headers.get("x-forwarded-proto") or request.url.scheme
+    secure = proto == "https"
+    headers = {"Cache-Control": "no-store, no-cache, must-revalidate, max-age=0", "Pragma": "no-cache"}
+    if secure:
+        headers["Content-Security-Policy"] = "upgrade-insecure-requests"
     # Nostr-only deployments hide the AI tab + AI compose actions (POSTERCHANAI_NOSTR_ONLY=1).
     nostr_only = os.getenv("POSTERCHANAI_NOSTR_ONLY", "0").lower() in ("1", "true", "yes", "on")
     from app.services import registration_service
     return _TEMPLATES.TemplateResponse(request, "client.html",
         {"request": request, "ver": _static_version(), "build": _build_sha(),
-         "secure": proto == "https", "meta": meta,
+         "secure": secure, "meta": meta,
          "nostr_only": nostr_only, "default_theme": _default_theme(db),
          # ONE parse, not two. This re-implemented registration_service.enabled()'s rule inline,
          # which is the "two copies of one rule" shape this codebase keeps paying for — and it
@@ -235,7 +242,7 @@ async def render_client_shell(request: Request, db, meta: dict | None = None):
         # `?v=<mtime>` tokens for the JS/CSS, so a stale page pins the whole client to OLD assets — deploys
         # looked like they "weren't reaching the desktop app". The assets already revalidate; the shell that
         # references them must never be cached, or the cache-busting it exists to provide cannot work.
-        headers={"Cache-Control": "no-store, no-cache, must-revalidate, max-age=0", "Pragma": "no-cache"})
+        headers=headers)
 
 
 @router.get("/meme-font.ttf")
