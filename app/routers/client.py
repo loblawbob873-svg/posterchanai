@@ -911,7 +911,11 @@ async def client_compress_video(file: UploadFile = File(...)):
 
         async with _COMPRESS_VIDEO_SEM:
             try:
-                await asyncio.to_thread(media_service.compress_video_file, in_path, out_path)
+                # A CEILING, not just a quality: without one a detailed clip re-encodes BIGGER than
+                # the phone's file and the post goes up uncompressed (see social_video_ceiling_kbps).
+                cap = await asyncio.to_thread(media_service.social_video_ceiling_kbps, in_path)
+                await asyncio.to_thread(media_service.compress_video_file, in_path, out_path,
+                                        max_kbps=cap)
             except Exception as e:
                 logger.warning(f"[client] compress-video failed: {e}")
                 return JSONResponse({"error": "compression failed"}, status_code=503)

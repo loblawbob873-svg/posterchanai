@@ -113,6 +113,11 @@ window.PCUploadFactory = function(dep){
   // and, crucially, keeps base64 chat attachments under the size that made multi-image / big-image
   // sends hang. Skips animated/vector (gif/svg) and anything already small; never upsizes. Pure
   // browser canvas work, so it's cheap and offloads the server.
+  function _opaque(cv){
+    const d=cv.getContext('2d').getImageData(0,0,cv.width,cv.height).data;
+    for(let i=3;i<d.length;i+=4) if(d[i]<255) return false;
+    return true;
+  }
   async function compressImage(file, opts){
     const o = opts || {}; const maxDim = o.maxDim || 2560, maxBytes = o.maxBytes || 800*1024, minQ = o.minQ || 0.45;
     try{
@@ -128,14 +133,32 @@ window.PCUploadFactory = function(dep){
       w=Math.round(w*scale); h=Math.round(h*scale);
       const cv=document.createElement('canvas'); cv.width=w; cv.height=h;
       cv.getContext('2d').drawImage(bmp,0,0,w,h); if(bmp.close) bmp.close();
-      const outType = isPng ? 'image/png' : 'image/jpeg';
-      // JPEG: actually ENFORCE the size cap — step the quality down until the blob is under maxBytes
-      // (was a no-op before: maxBytes only gated the early return, so big photos still uploaded big).
-      // PNG has no quality knob, so it's a single lossless pass.
-      let blob=await new Promise(r=> cv.toBlob(r, outType, 0.9));
-      if(!isPng){ let q=0.9; while(blob && blob.size>maxBytes && q>minQ){ q-=0.12; blob=await new Promise(r=> cv.toBlob(r,'image/jpeg',q)); } }
+      // ENFORCE the size cap — step the quality down until the blob is under maxBytes (was a no-op
+      // before: maxBytes only gated the early return, so big photos still uploaded big).
+      const lossy = async type=>{
+        let q=0.9, b=await new Promise(r=> cv.toBlob(r, type, q));
+        while(b && b.type===type && b.size>maxBytes && q>minQ){ q-=0.12; b=await new Promise(r=> cv.toBlob(r, type, q)); }
+        return b && b.type===type ? b : null;                       // toBlob falls back to PNG for a type it can't encode
+      };
+      let blob;
+      if(!isPng) blob=await lossy('image/jpeg');
+      else {
+        // A PNG has no quality knob, so the lossless pass only helps when the SCALE did the work. A
+        // 2560px screenshot is inside maxDim, re-encodes no smaller, and went up at full size (5.9 MB)
+        // — the cap was only ever enforced for JPEG. Over the cap it becomes WebP, which keeps alpha;
+        // where the browser cannot encode WebP an OPAQUE one becomes JPEG, and a transparent one stays
+        // lossless PNG rather than being flattened onto black.
+        // OPT-IN (`lossyPng`), and only compressMedia — the Blossom/Social upload — opts in. AI chat
+        // calls this for its >8 MB safety reduce and must keep a PNG lossless: OCR and read-text are
+        // what a screenshot goes there for, and lossy artifacts smear exactly the small text they read.
+        blob=await new Promise(r=> cv.toBlob(r, 'image/png'));
+        if(o.lossyPng && blob && blob.size>maxBytes){
+          const alt=await lossy('image/webp') || (_opaque(cv) ? await lossy('image/jpeg') : null);
+          if(alt) blob=alt;
+        }
+      }
       if(!blob || blob.size>=file.size) return file;                // never make it bigger
-      const ext = isPng ? 'png' : 'jpg';
+      const outType=blob.type || 'image/png', ext=_MIME_EXT[outType] || 'png';
       return new File([blob], (file.name||'image').replace(/\.\w+$/,'')+'.'+ext, {type:outType});
     }catch(_){ return file; }
   }
@@ -176,7 +199,7 @@ window.PCUploadFactory = function(dep){
   // the uploaded blob, and every file falls back to its own signature — one Amber prompt per clip.
   async function compressMedia(file){
     if(_preparedForUpload.has(file)) return file;
-    const out = _isVideoFile(file) ? await compressVideo(file) : await compressImage(file);
+    const out = _isVideoFile(file) ? await compressVideo(file) : await compressImage(file, {lossyPng:true});
     try{ _preparedForUpload.add(out); }catch(_){}
     return out;
   }

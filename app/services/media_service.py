@@ -15,6 +15,7 @@ Images use Pillow, PDF uses PyMuPDF (fitz), video uses the system ffmpeg binary
 (same dependency already used by the thumbnail/transcode services).
 """
 import io
+import json
 import logging
 import os
 import shutil
@@ -422,7 +423,8 @@ def _have_zscale(ffmpeg: str) -> bool:
     return _zscale_cache
 
 
-def _video_encode_cmd(ffmpeg, encoder, in_path, out_path, scale_filter, crf, preset, input_args=None):
+def _video_encode_cmd(ffmpeg, encoder, in_path, out_path, scale_filter, crf, preset, input_args=None,
+                      max_kbps=None):
     """Build the ffmpeg command for a specific H.264 encoder.
 
     `input_args` goes immediately before `-i` for callers whose input isn't a plain file — the only
@@ -453,17 +455,29 @@ def _video_encode_cmd(ffmpeg, encoder, in_path, out_path, scale_filter, crf, pre
     pre, vf = [], scale_filter
     if hdr:
         vf = scale_filter + ',' + _sdr_filter(info, _have_zscale(ffmpeg))
+    # `max_kbps` makes the bitrate a CEILING, spelled per encoder exactly as the live-stream clamp
+    # measured them (stream_service): a plain constant-quality encode has NO ceiling, so a detailed or
+    # grainy clip comes out BIGGER than the phone's own file (measured: 9.2 MB -> 17.3 MB on the Arc's
+    # `-qp 28`), and the caller then has to keep the original — i.e. nothing was compressed at all.
+    cap = []
+    if max_kbps:
+        v, buf = f"{int(max_kbps)}k", f"{int(max_kbps) * 2}k"
+        cap = ['-maxrate', v, '-bufsize', buf]
     if encoder == "h264_nvenc":
-        venc = ['-c:v', 'h264_nvenc', '-preset', 'p5', '-cq', str(crf)]
+        venc = ['-c:v', 'h264_nvenc', '-preset', 'p5']
+        # capped quality: -cq with `-b:v 0` (a non-zero -b:v would re-assert a target and pad)
+        venc += (['-rc', 'vbr', '-cq', str(crf), '-b:v', '0'] + cap) if cap else ['-cq', str(crf)]
     elif encoder == "h264_vaapi":
         pre = ['-vaapi_device', _render_node()]
         # The tonemap is CPU work and must happen BEFORE the frame is uploaded to a GPU surface.
         vf = vf + ',format=nv12,hwupload'
-        venc = ['-c:v', 'h264_vaapi', '-qp', str(crf)]
+        # VBR is the only iHD mode that honours maxrate (ICQ/QVBR ignore it — measured for the clamp).
+        venc = ['-c:v', 'h264_vaapi'] + ((['-rc_mode', 'VBR', '-b:v', f"{int(max_kbps)}k"] + cap)
+                                         if cap else ['-qp', str(crf)])
     elif encoder == "h264_amf":
         venc = ['-c:v', 'h264_amf', '-rc', 'cqp', '-qp_i', str(crf), '-qp_p', str(crf)]
     else:  # libx264
-        venc = ['-c:v', 'libx264', '-preset', preset, '-crf', str(crf)]
+        venc = ['-c:v', 'libx264', '-preset', preset, '-crf', str(crf)] + cap
     # nv12 IS 8-bit, so VAAPI needs no -pix_fmt; naming one there fights the hwupload chain.
     depth = [] if encoder == "h264_vaapi" else ['-pix_fmt', 'yuv420p']
     return [ffmpeg] + pre + list(input_args or []) + ['-i', in_path, '-vf', vf] + venc + depth + _SDR_TAGS + [
@@ -480,6 +494,7 @@ def compress_video_file(
     max_resolution: Tuple[int, int] = VIDEO_MAX_RESOLUTION,
     input_args=None,
     timeout: int = 3600,
+    max_kbps: Optional[int] = None,
 ) -> str:
     """Compress a video FILE→FILE (H.264/AAC, downscaled). Returns `out_path`.
 
@@ -510,7 +525,8 @@ def compress_video_file(
 
     last_err = ""
     for encoder in candidates:
-        cmd = _video_encode_cmd(ffmpeg, encoder, in_path, out_path, scale_filter, crf, preset, input_args)
+        cmd = _video_encode_cmd(ffmpeg, encoder, in_path, out_path, scale_filter, crf, preset, input_args,
+                                max_kbps=max_kbps)
         result = subprocess.run(cmd, capture_output=True, timeout=timeout, text=True)
         if result.returncode == 0 and os.path.exists(out_path) and os.path.getsize(out_path) > 0:
             if encoder != "libx264":
@@ -523,6 +539,36 @@ def compress_video_file(
             os.unlink(out_path)
 
     raise RuntimeError(f"video compression failed (tried {candidates}): {last_err}")
+
+
+# A video posted to a feed is watched on phones over mobile data by everyone who scrolls past it.
+SOCIAL_VIDEO_MAX_KBPS = 4000
+
+
+def social_video_ceiling_kbps(in_path: str) -> int:
+    """The video bitrate ceiling for a clip being POSTED: 4 Mbps, or 60% of what the source already
+    uses, whichever is lower — so the result is meaningfully smaller than what the user picked instead
+    of a same-size re-encode that loses a generation of quality for nothing. An unreadable source gets
+    the plain 4 Mbps."""
+    ffmpeg = resolve_ffmpeg()
+    probe = (ffmpeg[:-6] + "ffprobe") if ffmpeg.endswith("ffmpeg") else "ffprobe"
+    src = 0
+    try:
+        out = subprocess.run(
+            [probe, "-v", "error", "-show_entries", "format=bit_rate:stream=codec_type,bit_rate",
+             "-of", "json", in_path], capture_output=True, timeout=20)
+        info = json.loads(out.stdout or b"{}")
+        streams = info.get("streams") or []
+        vid = [int(s.get("bit_rate") or 0) for s in streams if s.get("codec_type") == "video"]
+        src = vid[0] if vid and vid[0] else 0
+        if not src:   # mkv/webm carry no per-stream rate: the container total minus the audio
+            aud = sum(int(s.get("bit_rate") or 0) for s in streams if s.get("codec_type") == "audio")
+            src = max(0, int((info.get("format") or {}).get("bit_rate") or 0) - aud)
+    except Exception:
+        src = 0
+    if src <= 0:
+        return SOCIAL_VIDEO_MAX_KBPS
+    return max(300, min(SOCIAL_VIDEO_MAX_KBPS, int(src * 0.6 / 1000)))
 
 
 def compress_video(
