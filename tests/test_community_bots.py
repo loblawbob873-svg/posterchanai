@@ -73,6 +73,12 @@ def world(monkeypatch):
         return list(fedi_blocks)
     from app.services.activitypub import state
     monkeypatch.setattr(state, "blocks", blocks)
+    # No public relays in a unit test: community_stats also asks the node's upstream relays for mute
+    # lists (tests/test_nostr_mute_notifier.py covers that half), and a test must not reach the network.
+    from app.services import community_stats
+    monkeypatch.setattr(community_stats, "_upstream_relays", lambda: [])
+    monkeypatch.setattr(community_stats, "_ext_lists", {})
+    monkeypatch.setattr(community_stats, "_ext_state", {"at": 0.0})
     return {"settings": settings, "relay": relay, "fedi": fedi_blocks, "Session": Session}
 
 

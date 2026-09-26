@@ -2,6 +2,7 @@
 endpoints -- what the block bot and the daily stats used to read straight out of Pleroma's database.
 Authenticated with the bot API key the manager injects (POSTERCHANAI_API_KEY)."""
 import json
+import os
 from urllib import parse, request
 
 from config import POSTERCHANAI_API_ENDPOINT, POSTERCHANAI_API_KEY
@@ -17,6 +18,10 @@ def get(path: str, **params) -> dict:
     headers = {"Accept": "application/json"}
     if (POSTERCHANAI_API_KEY or "").strip():
         headers["X-API-Key"] = POSTERCHANAI_API_KEY.strip()
+    # The manager-issued credential: works with no bots API key configured at all.
+    token = (os.getenv("POSTERCHANAI_COMMUNITY_TOKEN") or "").strip()
+    if token:
+        headers["X-PC-Community-Token"] = token
     try:
         with request.urlopen(request.Request(url, headers=headers), timeout=60) as r:
             return json.loads(r.read().decode("utf-8"))

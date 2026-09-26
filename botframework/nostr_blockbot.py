@@ -7,7 +7,7 @@ arrives at the ActivityPub server as a Block, and on Nostr a block is a public m
 posts as its own Nostr account, which the node's fediverse server delivers to its fediverse
 followers -- so the announcements reach both networks.
 
-    blocks()   every minute: announce blocks that are new since the last look
+    blocks()   every minute: announce blocks (fediverse) and mutes (Nostr) new since the last look
     scalps()   daily: the leaderboard of our most-blocked accounts
     fba()      daily: the most-defederated instances (fba.ryona.agency)
 """
@@ -52,18 +52,23 @@ def _state_path() -> str:
 
 
 def _load_seen():
+    """{key: last time it was seen}. An older memory file stored a bare list; it loads as seen now."""
     try:
         with open(_state_path()) as f:
             d = json.load(f)
-        return set(d.get("seen") or []), True
+        seen = d.get("seen") or {}
+        if isinstance(seen, list):
+            now = int(time.time())
+            seen = {k: now for k in seen}
+        return dict(seen), True
     except (OSError, ValueError):
-        return set(), False
+        return {}, False
 
 
-def _save_seen(seen: set) -> None:
+def _save_seen(seen: dict) -> None:
     tmp = _state_path() + ".tmp"
     with open(tmp, "w") as f:
-        json.dump({"seen": sorted(seen), "at": int(time.time())}, f)
+        json.dump({"seen": seen, "at": int(time.time())}, f)
     os.replace(tmp, _state_path())
 
 
@@ -71,23 +76,49 @@ def _key(b: dict) -> str:
     return f"{b.get('via')}|{b.get('blocker')}|{b.get('blocked')}"
 
 
-def new_blocks(current: list, seen: set, had_memory: bool) -> tuple:
+# How long a block/mute must be ABSENT before it is forgotten (and so announced again if it comes
+# back). Nostr mutes are read from several public relays; one of them not answering, or the app
+# restarting before its cache refills, makes a mute briefly invisible, and forgetting it at once
+# re-announced the same mute the next time it was seen.
+FORGET_AFTER = 3 * 86400
+MAX_LINES = 10
+
+
+def new_blocks(current: list, seen: dict, had_memory: bool, now: int | None = None) -> tuple:
     """(to announce, what to remember). The FIRST look only remembers: without a memory every block
-    that already exists would be announced at once. A block that was lifted is forgotten, so one
-    put back later is news again."""
+    that already exists would be announced at once. A block that has been gone for FORGET_AFTER is
+    forgotten, so one put back later is news again."""
+    now = int(time.time()) if now is None else now
     keys = {_key(b): b for b in current}
     fresh = [b for k, b in keys.items() if k not in seen] if had_memory else []
-    return fresh, set(keys)
+    remember = {k: t for k, t in seen.items() if now - int(t or 0) < FORGET_AFTER}
+    remember.update({k: now for k in keys})
+    return fresh, remember
 
 
-def validate_block_message(ai_msg: str, handles: list) -> bool:
+def _line(b: dict) -> str:
+    """A Nostr "block" is a public MUTE list, and it is announced as what it is."""
+    if b.get("via") == "fediverse":
+        return f"BLOCKER: {b['blocker_handle']} blocked {b['blocked_handle']} (on the fediverse)"
+    return f"MUTER: {b['blocker_handle']} muted {b['blocked_handle']} (on Nostr)"
+
+
+def validate_block_message(ai_msg: str, handles: list, mutes: bool = False) -> bool:
     """The model may reword the post, never the names: every handle must survive verbatim, and no
-    other script may creep in (a known failure of the smaller models)."""
+    other script may creep in (a known failure of the smaller models). A batch holding a Nostr MUTE
+    must still say so -- the prompt's own example is "blocked", and a model that follows it turns
+    every mute into a block that never happened."""
     if not ai_msg:
         return False
     low = ai_msg.lower()
     if any(h.lower() not in low for h in handles):
         logging.warning("AI block message dropped or changed a name; using the plain message")
+        return False
+    words = low
+    for h in handles:                               # an npub can itself contain the letters "mute"
+        words = words.replace(h.lower(), " ")
+    if mutes and "mute" not in words:
+        logging.warning("AI block message called a mute a block; using the plain message")
         return False
     if re.search(r"[一-鿿぀-ゟ゠-ヿ가-힯]", ai_msg):
         return False
@@ -106,14 +137,18 @@ def blocks(print_only=False):
         _save_seen(remember)
     if not fresh:
         return
-    lines = [f"BLOCKER: {b['blocker_handle']} blocked {b['blocked_handle']}"
-             + (" (on the fediverse)" if b.get("via") == "fediverse" else " (on Nostr)") for b in fresh]
-    msg = "\n".join(lines)
-    handles = [h for b in fresh for h in (b["blocker_handle"], b["blocked_handle"])]
+    # One post, however many arrived at once. Past MAX_LINES the rest are counted, not listed --
+    # they are remembered either way, so none of them comes back as a post of its own later.
+    shown = fresh[:MAX_LINES]
+    msg = "\n".join(_line(b) for b in shown)
+    if len(fresh) > MAX_LINES:
+        msg += f"\n…and {len(fresh) - MAX_LINES} more"
+    handles = [h for b in shown for h in (b["blocker_handle"], b["blocked_handle"])]
     if _ai_on():
         try:
             ai_msg = (generate_reply(BLOCK_PROMPT.format(block_details=msg) + " /no_think") or "").replace("/no_think", "").strip()
-            if ai_msg and "None" not in ai_msg and validate_block_message(ai_msg, handles):
+            if ai_msg and "None" not in ai_msg and validate_block_message(
+                    ai_msg, handles, mutes=any(b.get("via") != "fediverse" for b in shown)):
                 msg = re.sub(r"\bBLOCKEE:\s*", "", ai_msg)
         except Exception as e:
             logging.warning(f"[BLOCKBOT] AI wording failed, using the plain message: {e}")

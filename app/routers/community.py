@@ -16,9 +16,18 @@ from app.utils import lb_auth
 
 
 async def get_bot_auth(request: Request, x_api_key: Optional[str] = Header(None),
-                       authorization: Optional[str] = Header(None), db: Session = Depends(get_db)) -> bool:
+                       authorization: Optional[str] = Header(None),
+                       x_pc_community_token: Optional[str] = Header(None),
+                       db: Session = Depends(get_db)) -> bool:
     if lb_auth.is_internal(request):
         return True
+    # The manager-issued bot credential (community_stats.bot_token) -- scoped to THESE endpoints.
+    tok = (x_pc_community_token or "").strip()
+    if tok:
+        import hmac
+        from app.services import community_stats
+        if hmac.compare_digest(tok, community_stats.bot_token()):
+            return True
     key = (x_api_key or "").strip() or ((authorization or "")[7:].strip()
                                          if (authorization or "").startswith("Bearer ") else "")
     if not key:

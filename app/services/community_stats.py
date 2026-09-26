@@ -26,6 +26,21 @@ def _port() -> int:
     return settings_store._port()
 
 
+def bot_token() -> str:
+    """The credential the bot manager hands every bot it spawns, good for /api/community/* ONLY.
+
+    The block bot read this API with the operator-configured bots API key, and with none configured
+    it sent nothing: every poll was a 401 that the bot logs as "could not read" and retries for ever,
+    so a freshly created block bot announced nothing, silently. The manager runs in the process that
+    serves this API, so it can hand over a credential nobody has to type: an HMAC of the app's own
+    persisted SECRET_KEY, stable across restarts (a new value on every restart would change every
+    bot's environment and restart them all), and scoped to these read-only endpoints."""
+    import hashlib
+    import hmac
+    from app.auth import SECRET_KEY
+    return hmac.new(str(SECRET_KEY).encode(), b"pcai-community-bot-v1", hashlib.sha256).hexdigest()
+
+
 def members() -> dict:
     """{pubkey: "@name@domain"} for every name this node granted (the NIP-05 registry)."""
     from app.services.activitypub import actors, config
@@ -66,6 +81,104 @@ async def _query(filters: list) -> list:
     return await nostr_store._ws_query(_port(), filters, timeout=10.0, strict=True)
 
 
+# ---- mute lists that never reached this relay ---------------------------------------------------
+#
+# A mute list lives on its AUTHOR's relays. Somebody on Damus or Primal who mutes one of our members
+# publishes that list there, and this relay only holds it if its firehose happened to pull it in.
+# Measured 2026-09-26 against the 159 poster.place members: 1,564 (muter, member) pairs across four
+# public relays, 583 of them on this relay -- the block bot could see about a third of the mutes.
+#
+# So the relays this node syncs with are asked too, and each author's NEWEST list wins wherever it
+# was found. Three rules, each because the alternative announces something false:
+#   * every event's signature is verified -- a relay can serve anything, and an unverified list
+#     would let anyone announce that a stranger muted one of ours;
+#   * the result is CACHED and only ever replaced by a newer list: a relay that fails to answer must
+#     not read as "they unmuted", or the bot forgets the mute and announces it again later;
+#   * asked at most every _EXT_TTL seconds -- the bot polls every minute, the upstream relays should
+#     not be asked that often.
+_EXT_TTL = 600
+_EXT_RELAYS_MAX = 6
+_ext_lists: dict = {}          # author pubkey -> newest verified kind-10000 naming a member
+_ext_state = {"at": 0.0}
+_ext_lock = None
+
+
+def _upstream_relays() -> list:
+    from app.services.nostr import nostr_service
+    ups = nostr_service.relay.normalize_relays(settings_store.get("nostr_relay_upstream_relays", "") or "")
+    return (ups or list(nostr_service.DEFAULT_RELAYS))[:_EXT_RELAYS_MAX]
+
+
+async def _ask_relay(uri: str, pks: list) -> list:
+    """Every kind-10000 this relay holds that names one of `pks`. Raises when it cannot be asked."""
+    from app.services.nostr import nostr_service
+    import json as _json
+    import asyncio
+    out = []
+    async with nostr_service.relay._connect(uri, False, max_size=1 << 24, close_timeout=2) as ws:
+        for i in range(0, len(pks), 50):
+            sid = "mute%d" % i
+            await ws.send(_json.dumps(["REQ", sid, {"kinds": [10000], "#p": pks[i:i + 50], "limit": 2000}]))
+            while True:
+                msg = _json.loads(await asyncio.wait_for(ws.recv(), 15))
+                if msg[0] == "EVENT" and len(msg) > 2 and isinstance(msg[2], dict):
+                    out.append(msg[2])
+                elif msg[0] in ("EOSE", "CLOSED"):
+                    break
+            await ws.send(_json.dumps(["CLOSE", sid]))
+    return out
+
+
+def _newer(a: dict, b: dict | None) -> bool:
+    if b is None:
+        return True
+    return (a.get("created_at", 0), a.get("id", "")) > (b.get("created_at", 0), b.get("id", ""))
+
+
+def _keep_verified(events: list, pks: set) -> list:
+    from app.services.nostr.event import verify_event
+    now = time.time()
+    keep = []
+    for ev in events:
+        if not isinstance(ev, dict) or ev.get("kind") != 10000:
+            continue
+        if not isinstance(ev.get("created_at"), int) or ev["created_at"] > now + 300:
+            continue
+        if not any(len(t) > 1 and t[0] == "p" and t[1] in pks for t in ev.get("tags") or []):
+            continue
+        try:
+            if verify_event(ev):
+                keep.append(ev)
+        except Exception:
+            continue
+    return keep
+
+
+async def external_mute_lists(pks: list) -> list:
+    """The newest verified mute list per author, from the upstream relays, naming one of `pks`."""
+    import asyncio
+    global _ext_lock
+    if not pks:
+        return []
+    if _ext_lock is None:
+        _ext_lock = asyncio.Lock()
+    async with _ext_lock:
+        if time.time() - _ext_state["at"] < _EXT_TTL:
+            return list(_ext_lists.values())
+        relays = _upstream_relays()
+        results = await asyncio.gather(*(asyncio.wait_for(_ask_relay(u, pks), 60) for u in relays),
+                                       return_exceptions=True)
+        got = [ev for r in results if isinstance(r, list) for ev in r]
+        answered = sum(1 for r in results if isinstance(r, list))
+        verified = await asyncio.to_thread(_keep_verified, got, set(pks))
+        for ev in verified:
+            if _newer(ev, _ext_lists.get(ev["pubkey"])):
+                _ext_lists[ev["pubkey"]] = ev
+        # A pass where NO relay answered is retried soon rather than trusted for _EXT_TTL.
+        _ext_state["at"] = time.time() if answered else time.time() - _EXT_TTL + 60
+        return list(_ext_lists.values())
+
+
 async def mute_relations(known: dict | None = None) -> list:
     """[{blocker, blocked, at, via:"nostr"}] -- public mutes by one of ours, or of one of ours."""
     known = members() if known is None else known
@@ -74,10 +187,13 @@ async def mute_relations(known: dict | None = None) -> list:
         return []
     lists = await _query([{"kinds": [10000], "authors": pks, "limit": len(pks) + 10}])
     lists += await _query([{"kinds": [10000], "#p": pks, "limit": 5000}])
+    try:
+        lists += await external_mute_lists(pks)
+    except Exception:
+        pass                                       # the local relay's answer still stands
     newest: dict = {}
     for ev in lists:                               # a replaceable list: only its newest version counts
-        cur = newest.get(ev.get("pubkey"))
-        if cur is None or ev.get("created_at", 0) > cur.get("created_at", 0):
+        if _newer(ev, newest.get(ev.get("pubkey"))):
             newest[ev.get("pubkey")] = ev
     out, seen = [], set()
     for author, ev in newest.items():

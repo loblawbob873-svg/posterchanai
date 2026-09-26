@@ -195,6 +195,12 @@ def _load_global_env():
         env["POSTERCHANAI_API_ENDPOINT"] = server
         env["OPENAI_ENDPOINT"] = server + "/api/chat/completions"
     env["USE_POSTERCHANAI"] = "true"   # always use the unified server (native diffusers)
+    # Read access to /api/community/* for the block bot and the daily stats, with no key to configure.
+    try:
+        from app.services import community_stats
+        env["POSTERCHANAI_COMMUNITY_TOKEN"] = community_stats.bot_token()
+    except Exception as e:
+        logger.warning("[BOTS] no community token for bots: %s", e)
     resolved = _bot_searxng_url()
     if resolved:
         env["SEARXNG_URL"] = resolved

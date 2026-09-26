@@ -69,7 +69,7 @@ SQL_PASS = os.getenv("SQL_PASS")
 SQL_HOST = os.getenv("SQL_HOST")
 SQL_DATABASE = os.getenv("SQL_DATABASE")
 BLOCK_IMAGE = os.getenv("BLOCK_IMAGE", "/home/verita84/posterchan/bot.png")
-BLOCK_PROMPT = os.getenv("BLOCK_PROMPT", "Generate a post about this block event. Be dramatic and entertaining. Use a stern male tone. Include the blocker's profile link. CRITICAL: You MUST preserve the exact usernames and domains exactly as provided. Do NOT change any usernames or domains. Do NOT mix languages - respond ONLY in English. Use the format 'BLOCKER: @user@domain blocked @user2@domain2' (the first user performed the block, the second was blocked). Do NOT include the word BLOCKEE in the post. Do not reverse blocker and blockee. Use the exact same usernames and domains from the block details. Respond only with the post in English. Block details: {block_details}")
+BLOCK_PROMPT = os.getenv("BLOCK_PROMPT", "Generate a post about this block event. Be dramatic and entertaining. Use a stern male tone. Include the blocker's profile link. CRITICAL: You MUST preserve the exact usernames and domains exactly as provided. Do NOT change any usernames or domains. Do NOT mix languages - respond ONLY in English. Use the format 'BLOCKER: @user@domain blocked @user2@domain2' (the first user performed the block, the second was blocked). Do NOT include the word BLOCKEE in the post. Do not reverse blocker and blockee. Use the exact same usernames and domains from the block details. A line that says 'muted' is a Nostr mute, not a block: keep the word 'muted' for it and never call it a block. Respond only with the post in English. Block details: {block_details}")
 
 # Unfollowbot Configuration
 UNFOLLOW_IMAGE = os.getenv("UNFOLLOW_IMAGE", "/home/verita84/posterchan/bot.png")
