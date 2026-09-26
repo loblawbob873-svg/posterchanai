@@ -150,6 +150,28 @@ def test_a_nostr_bot_without_a_key_gets_one_and_a_free_name(world, monkeypatch):
     assert kept == {"nostr_nsec": "nsec1mine"} and minted == ["weather"], "a supplied key was replaced"
 
 
+def test_a_bot_with_a_generated_key_and_no_name_still_gets_a_nip05(world, monkeypatch):
+    """"Generate identity" with a blank NIP-05 field saved a bot with a key and NO name: no
+    @name@<domain>, no nip05 in its profile (bot `fever`, 2026-09-26). The key is kept exactly as
+    given; the NAME is still assigned -- free, or already this key's, never somebody else's."""
+    from app.routers import bots
+    from app.services.nostr import bech32, bip340
+    sk = bytes([9]) * 32
+    nsec, pub = bech32.encode("nsec", sk), bip340.pubkey_from_seckey(sk).hex()
+    world["settings"]["nostr_relay_nip05_names"] = f"jonnyfever {ALICE}"
+    monkeypatch.setattr(bots, "_mint_identity", lambda *a: (_ for _ in ()).throw(AssertionError("minted a new key")))
+    cfg = bots._ensure_identity("fever", {"nostr_nsec": nsec, "nostr_profile_name": "JonnyFever"}, "poster.place")
+    assert cfg["nostr_nsec"] == nsec, "the generated key was replaced"
+    assert cfg["nostr_profile_nip05"] == "jonnyfever-bot@poster.place", \
+        "the bot took a name somebody holds, or got none: %r" % cfg.get("nostr_profile_nip05")
+    world["settings"]["nostr_relay_nip05_names"] = f"jonnyfever {pub}"
+    assert bots._ensure_identity("fever", {"nostr_nsec": nsec, "nostr_profile_name": "JonnyFever"},
+                                 "poster.place")["nostr_profile_nip05"] == "jonnyfever@poster.place", \
+        "the bot's OWN registered name must be reused, not a -bot variant"
+    chosen = {"nostr_nsec": nsec, "nostr_profile_nip05": "jf@poster.place"}
+    assert bots._ensure_identity("fever", dict(chosen), "poster.place") == chosen, "a chosen NIP-05 was changed"
+
+
 @pytest.fixture
 def blockbot(monkeypatch, tmp_path):
     here = os.path.join(os.path.dirname(__file__), "..", "botframework")

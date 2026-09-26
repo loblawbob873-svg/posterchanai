@@ -29,7 +29,6 @@ passes as long as no conversation is ever shown a draft that was not typed in it
 import http.server
 import json
 import os
-import re
 import shutil
 import socketserver
 import subprocess
@@ -101,7 +100,7 @@ function openThread(fragment){
   [...document.querySelectorAll('.sms-thread')].find(b => b.dataset.k.includes(fragment)).click();
 }
 
-(async () => {
+window.__report = (async () => {
   try{
     say('render'); await PCSms.render();          // the real cold load: watch() + load() + paint()
     const S = PCSms._state();
@@ -152,8 +151,60 @@ function openThread(fragment){
     log.draft_keys = Object.keys(S.draft || {});
   }catch(e){ log.ERROR = String((e && e.stack) || e); }
   out.textContent = JSON.stringify(log, null, 1);
+  return JSON.stringify(log);
 })();
 </script>"""
+
+
+def _await_report(chrome, profile, url, deadline_s=120):
+    """Open `url` in headless Chrome and return the string window.__report resolves to."""
+    import asyncio
+    import os
+    import time
+    import urllib.request
+    import websockets
+    proc = subprocess.Popen([chrome, "--headless=new", "--no-sandbox", "--disable-gpu",
+                             "--remote-debugging-port=0", "--user-data-dir=" + profile, url],
+                            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    try:
+        port_file, until = os.path.join(profile, "DevToolsActivePort"), time.time() + 30
+        while not os.path.exists(port_file) and time.time() < until:
+            time.sleep(0.1)
+        port = open(port_file).read().split()[0]
+        ws_url = None
+        while not ws_url and time.time() < until:
+            try:
+                pages = json.load(urllib.request.urlopen("http://127.0.0.1:%s/json" % port))
+                ws_url = next((p["webSocketDebuggerUrl"] for p in pages if p["type"] == "page"), None)
+            except OSError:
+                pass
+            if not ws_url:
+                time.sleep(0.1)
+        if not ws_url:
+            raise unittest.SkipTest("chrome never opened the harness")
+
+        async def ask():
+            async with websockets.connect(ws_url, max_size=1 << 24) as ws:
+                for _ in range(600):
+                    await ws.send(json.dumps({"id": 1, "method": "Runtime.evaluate", "params": {
+                        "expression": "window.__report || null", "awaitPromise": True, "returnByValue": True}}))
+                    while True:
+                        r = json.loads(await ws.recv())
+                        if r.get("id") == 1:
+                            break
+                    v = r.get("result", {}).get("result", {}).get("value")
+                    if v:
+                        await ws.send(json.dumps({"id": 2, "method": "Browser.close"}))
+                        return v
+                    await asyncio.sleep(0.1)
+                raise AssertionError("the scenario never reported: %r" % (r,))
+        return asyncio.run(asyncio.wait_for(ask(), deadline_s))
+    finally:
+        try:
+            proc.wait(timeout=15)
+        except subprocess.TimeoutExpired:
+            proc.kill()
+            proc.wait()
 
 
 class Handler(http.server.SimpleHTTPRequestHandler):
@@ -187,21 +238,15 @@ class SmsComposerBelongsToTheConversation(unittest.TestCase):
         port = server.server_address[1]
         threading.Thread(target=server.serve_forever, daemon=True).start()
         profile = tempfile.mkdtemp(prefix="pcsmsdraft-")
+        # AWAIT THE SCENARIO over CDP -- not --virtual-time-budget + --dump-dom. That dump returns when
+        # VIRTUAL time runs out, while the scenario's awaits run in real time, so on a loaded box (the
+        # deploy gate's parallel shards) the page was dumped half-way and all six tests failed together
+        # -- reproduced 3 runs in 5 under CPU load. This waits for window.__report to resolve.
         try:
-            res = subprocess.run(
-                [chrome, "--headless=new", "--no-sandbox", "--disable-gpu",
-                 "--user-data-dir=" + profile, "--virtual-time-budget=20000", "--dump-dom",
-                 "http://127.0.0.1:%d/harness.html" % port],
-                capture_output=True, text=True, timeout=300).stdout
+            raw = _await_report(chrome, profile, "http://127.0.0.1:%d/harness.html" % port)
         finally:
             server.shutdown()
             shutil.rmtree(profile, ignore_errors=True)
-        m = re.search(r'<pre id="out">(.*?)</pre>', res, re.S)
-        if not m or not m.group(1).strip():
-            raise unittest.SkipTest("page did not evaluate")
-        raw = m.group(1)
-        for a, b in (("&amp;", "&"), ("&lt;", "<"), ("&gt;", ">"), ("&quot;", '"')):
-            raw = raw.replace(a, b)
         cls.r = json.loads(raw)
         assert "ERROR" not in cls.r, cls.r
 

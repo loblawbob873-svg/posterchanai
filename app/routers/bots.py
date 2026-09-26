@@ -430,6 +430,19 @@ def _ensure_identity(name: str, config: dict, host: str) -> dict:
     the admin supplied (or "Generate identity" made) is kept exactly as given."""
     cfg = dict(config or {})
     if cfg.get("nostr_nsec"):
+        # The KEY is kept exactly as given -- but a bot with a key and NO NIP-05 name still gets one.
+        # "Generate identity" only resolves a name typed into the form first, and this function used
+        # to return here, so a bot made with Generate and a blank NIP-05 field had a key, a follow
+        # and no name at all: no @name@<domain>, no nip05 in its profile ("made an account for a bot
+        # but no profile or nip05", bot `fever`, 2026-09-26). The name is free-or-already-its-own.
+        if not (cfg.get("nostr_profile_nip05") or "").strip():
+            try:
+                pub = nostr_service.derive_pubkey(nostr_service.decode_seckey(cfg["nostr_nsec"]))
+            except Exception:
+                return cfg                       # an unreadable key is _vet_config's to refuse
+            local = _free_nip05_name(cfg.get("nostr_profile_name") or name, pub)
+            cfg["nostr_profile_nip05"] = f"{local}@{host}" if host else local
+            cfg.setdefault("nostr_profile_name", name)
         return cfg
     local = _free_nip05_name((cfg.get("nostr_profile_nip05") or "").split("@", 1)[0] or name)
     minted = _run_async(_mint_identity(local, host))

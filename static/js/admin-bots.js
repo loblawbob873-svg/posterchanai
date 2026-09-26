@@ -271,7 +271,7 @@ function openBotModal(id) {
     BOT_KNOWN_KEYS.forEach(k => _setVal('bot_f_' + k, cfg[k]));
     BOT_KNOWN_CHECKS.forEach(k => _setChk('bot_f_' + k, cfg[k]));
     // transient widgets (the profile fields themselves persist via BOT_KNOWN_KEYS above)
-    { const af = _g('bot_f_nostr_avatar_file'); if (af) af.value = ''; }
+    { const af = _g('bot_f_nostr_avatar_file'); if (af) { af.value = ''; delete af.dataset.uploaded; } }
     { const ps = _g('bot_provision_status'); if (ps) ps.textContent = ''; }
     { const pv = _g('bot_avatar_preview'); const u = cfg.nostr_profile_picture;
       if (pv) { if (u) { pv.src = u; pv.style.display = ''; } else { pv.removeAttribute('src'); pv.style.display = 'none'; } } }
@@ -464,7 +464,8 @@ async function provisionBot() {
                     body: JSON.stringify({ nsec: d.nsec, picture_data: dataUrl }),
                 });
                 const ud = await ur.json().catch(() => ({}));
-                if (ur.ok && ud.url) { _setVal('bot_f_nostr_profile_picture', ud.url); _showAvatarPreview(ud.url); }
+                if (ur.ok && ud.url) { _setVal('bot_f_nostr_profile_picture', ud.url); _showAvatarPreview(ud.url);
+                                        fEl.dataset.uploaded = _avatarFileKey(fEl.files[0]); }
             } catch (_) { /* avatar optional */ }
         }
         if (st) st.innerHTML = `✅ Identity created — <code>${d.npub}</code><br>`
@@ -495,9 +496,27 @@ async function uploadBotAvatar() {
         const d = await r.json().catch(() => ({}));
         if (!r.ok || !d.url) throw new Error(d.detail || 'upload failed');
         _setVal('bot_f_nostr_profile_picture', d.url); _showAvatarPreview(d.url);
+        fEl.dataset.uploaded = _avatarFileKey(fEl.files[0]);
         if (st) st.textContent = '✅ Avatar uploaded — click Save to apply.';
-    } catch (err) { if (st) st.textContent = '❌ ' + err.message; }
+        return true;
+    } catch (err) { if (st) st.textContent = '❌ ' + err.message; return false; }
 }
+
+// A picked avatar file is UPLOADED, not just picked. It used to wait for the separate ⬆ Upload
+// button, and Save ignored it: a bot saved five times after choosing a picture still had no
+// nostr_profile_picture ("avatar url does not get set when uploading avatar file", 2026-09-26).
+function _avatarFileKey(f) { return f ? [f.name, f.size, f.lastModified].join('|') : ''; }
+function _avatarPending() {
+    const fEl = _g('bot_f_nostr_avatar_file');
+    const f = fEl && fEl.files && fEl.files[0];
+    return !!f && fEl.dataset.uploaded !== _avatarFileKey(f);
+}
+document.addEventListener('change', e => {
+    if (!e.target || e.target.id !== 'bot_f_nostr_avatar_file') return;
+    const id = _val('bot_f_id');
+    const nsec = _g('bot_f_nostr_nsec') ? _g('bot_f_nostr_nsec').value.trim() : '';
+    if (id || nsec) uploadBotAvatar();          // with no key yet, Generate uploads it (see provisionBot)
+});
 
 // Test → Preview: generate one post from the bot's SAVED config and show it (no posting).
 async function previewPost() {
@@ -562,6 +581,15 @@ async function saveBot() {
     const id = _val('bot_f_id');
     const name = _val('bot_f_name');
     if (!name) { errEl.textContent = 'Name is required.'; return; }
+    // A picture chosen but not uploaded yet goes up FIRST, so the URL it produces is what Save stores.
+    if (_avatarPending()) {
+        const idNow = _val('bot_f_id');
+        const nsecNow = _g('bot_f_nostr_nsec') ? _g('bot_f_nostr_nsec').value.trim() : '';
+        if ((idNow || nsecNow) && !(await uploadBotAvatar())) {
+            errEl.textContent = 'The avatar could not be uploaded — nothing was saved. See the message above.';
+            return;
+        }
+    }
     const type = _val('bot_f_type');
     const platform = _val('bot_f_platform');
 
