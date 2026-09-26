@@ -4,6 +4,7 @@ Called by the bot process (botframework/nostrListener.py) with the credential th
 THAT bot (talkbot_service.token). The face, voice and mouth come from the bot's own saved config, so a
 bot can only ever render as itself. See app/services/talkbot_service.py.
 """
+import secrets
 from typing import Optional
 
 from fastapi import APIRouter, Depends, Header, HTTPException
@@ -31,11 +32,12 @@ async def bot_talk(req: TalkReq, x_pc_talk_token: Optional[str] = Header(None),
         cfg = talkbot_service.bot_config(db, req.bot)
     except LookupError:
         raise HTTPException(status_code=404, detail="no such bot")
-    if not (cfg.get("talk_face_sha") and cfg.get("talk_voice_sha")):
+    faces = talkbot_service.faces_of(cfg)
+    if not (faces and cfg.get("talk_voice_sha")):
         raise HTTPException(status_code=409, detail="this bot has no face or voice set (Admin → Bots)")
+    face = secrets.choice(faces)                  # a different picture from reply to reply
     try:
-        clip = await talkbot_service.render(db, cfg["talk_face_sha"], cfg["talk_voice_sha"],
-                                            cfg.get("talk_mouth"), req.text)
+        clip = await talkbot_service.render(db, face["sha"], cfg["talk_voice_sha"], face["mouth"], req.text)
     except RuntimeError as e:
         raise HTTPException(status_code=503, detail=str(e))
     return Response(content=clip, media_type="video/mp4")

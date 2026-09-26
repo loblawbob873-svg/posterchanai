@@ -435,7 +435,13 @@ def _build_env(bot_dict: dict, base_env: dict) -> dict:
             setif("nostr_random_reply_per_hour", "NOSTR_RANDOM_REPLY_PER_HOUR")
             # Talking replies: the bot sends text to /api/bots/talk and posts the clip it gets back.
             # Its credential is scoped to rendering as THIS bot (talkbot_service.token).
-            if bot_dict.get("talk_enabled") and bot_dict.get("talk_face_sha") and bot_dict.get("talk_voice_sha"):
+            try:
+                from app.services import talkbot_service as _tb
+                _talk_ready = bool(bot_dict.get("talk_enabled") and bot_dict.get("talk_voice_sha")
+                                   and _tb.faces_of(bot_dict))
+            except Exception:
+                _talk_ready = False
+            if _talk_ready:
                 try:
                     from app.services import talkbot_service
                     env["NOSTR_TALK"] = "1"

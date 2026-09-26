@@ -20,7 +20,7 @@ const BOT_KNOWN_KEYS = [
     'block_image', 'report_image', 'unfollow_image',
     // Talking replies: the face + voice are Blossom hashes set by the upload buttons, the mouth is a
     // JSON placement set by dragging — hidden fields, so the ordinary Save persists all three.
-    'talk_face_sha', 'talk_voice_sha', 'talk_mouth', 'talk_max_words',
+    'talk_faces', 'talk_voice_sha', 'talk_max_words',
     'auto_post_interval_min', 'auto_post_interval_max', 'auto_post_max_per_day',
     'auto_post_quiet_hours', 'auto_post_seed', 'auto_post_topics',
     'text',  // image bot: caption posted with the image (IMAGE_POSTER_TEXT)
@@ -273,7 +273,7 @@ function openBotModal(id) {
     const cfg = (b && b.config) ? b.config : {};
     BOT_KNOWN_KEYS.forEach(k => _setVal('bot_f_' + k, cfg[k]));
     BOT_KNOWN_CHECKS.forEach(k => _setChk('bot_f_' + k, cfg[k]));
-    _talkPaint();
+    _talkSel = 0; _talkPaint();
     // transient widgets (the profile fields themselves persist via BOT_KNOWN_KEYS above)
     { const af = _g('bot_f_nostr_avatar_file'); if (af) { af.value = ''; delete af.dataset.uploaded; } }
     { const ps = _g('bot_provision_status'); if (ps) ps.textContent = ''; }
@@ -696,14 +696,25 @@ async function statsRunNow() {
 // --- Talking replies (app/services/talkbot_service.py) ---------------------------------------------
 // Face + voice upload to this node's Blossom (owned by the bot's key, never swept); their hashes and
 // the mouth placement live in hidden form fields, so Save persists them with everything else.
+// Up to 3 faces, each {sha, mouth}: the list lives in #bot_f_talk_faces (JSON) and ONE is selected for
+// placing its mouth. Each reply picks a face at random (app/routers/bot_talk.py).
+const TALK_MAX_FACES = 3;
+let _talkSel = 0;
+function _talkFaces() {
+    try { const a = JSON.parse(_val('bot_f_talk_faces') || '[]'); if (Array.isArray(a)) return a.filter(f => f && f.sha); } catch (_) {}
+    return [];
+}
+function _talkSetFaces(a) { _setVal('bot_f_talk_faces', a.length ? JSON.stringify(a.slice(0, TALK_MAX_FACES)) : ''); }
 function _talkMouth() {
-    try { const m = JSON.parse(_val('bot_f_talk_mouth') || 'null'); if (m && typeof m === 'object') return m; } catch (_) {}
-    return { x: 0.5, y: 0.62, w: 0.12, angle: 0, anime: false };
+    const f = _talkFaces()[_talkSel];
+    const m = f && f.mouth;
+    return (m && typeof m === 'object') ? m : { x: 0.5, y: 0.62, w: 0.12, angle: 0, anime: false };
 }
 function _talkSetMouth(m) {
     const c = v => Math.min(1, Math.max(0, +v || 0));
-    const out = { x: c(m.x), y: c(m.y), w: Math.min(0.4, Math.max(0.02, +m.w || 0.12)), angle: +m.angle || 0, anime: !!m.anime };
-    _setVal('bot_f_talk_mouth', JSON.stringify(out));
+    const faces = _talkFaces(); if (!faces[_talkSel]) return;
+    faces[_talkSel].mouth = { x: c(m.x), y: c(m.y), w: Math.min(0.4, Math.max(0.02, +m.w || 0.12)), angle: +m.angle || 0, anime: !!m.anime };
+    _talkSetFaces(faces);
     _talkPaintMouth();
 }
 function _talkPaintMouth() {
@@ -712,19 +723,28 @@ function _talkPaintMouth() {
     const w = _g('bot_talk_mouth_w'); if (w) w.value = Math.round(m.w * 100);
     _setChk('bot_talk_mouth_anime', m.anime);
 }
-function _talkPaint() {
-    const on = _g('bot_f_talk_enabled') && _g('bot_f_talk_enabled').checked;
-    const grp = _g('bot_grp_talk'); if (grp) grp.style.display = on ? '' : 'none';
-    const sha = _val('bot_f_talk_face_sha');
+function _talkPaintFaces() {
+    const faces = _talkFaces(), box = _g('bot_talk_faces');
+    if (_talkSel >= faces.length) _talkSel = Math.max(0, faces.length - 1);
+    if (box) box.innerHTML = faces.map((f, i) =>
+        `<span class="bot-talk-face${i === _talkSel ? ' sel' : ''}" data-talk-face="${i}" title="Face ${i + 1} — click to place its mouth">`
+        + `<img src="/blossom/${f.sha}" alt="Face ${i + 1}"><button type="button" class="x" data-talk-del="${i}" aria-label="Remove face ${i + 1}">×</button></span>`).join('');
+    const sha = faces[_talkSel] && faces[_talkSel].sha;
     const stage = _g('bot_talk_stage'), row = _g('bot_talk_mouth_row'), img = _g('bot_talk_face_img');
     if (stage) stage.hidden = !sha; if (row) row.hidden = !sha;
     if (img && sha) img.src = '/blossom/' + sha;
+    const add = _g('bot_talk_face_file'); if (add) add.hidden = faces.length >= TALK_MAX_FACES;
+    _talkPaintMouth();
+}
+function _talkPaint() {
+    const on = _g('bot_f_talk_enabled') && _g('bot_f_talk_enabled').checked;
+    const grp = _g('bot_grp_talk'); if (grp) grp.style.display = on ? '' : 'none';
     const vs = _g('bot_talk_voice_state');
     if (vs) vs.textContent = _val('bot_f_talk_voice_sha') ? '✓ voice set' : 'no voice yet';
     ['bot_talk_face_file', 'bot_talk_voice_file'].forEach(id => { const f = _g(id); if (f) f.value = ''; });
     const pv = _g('bot_talk_preview'); if (pv) { pv.hidden = true; pv.removeAttribute('src'); }
     const ps = _g('bot_talk_preview_state'); if (ps) ps.textContent = '';
-    _talkPaintMouth();
+    _talkPaintFaces();
 }
 function _talkOwner() {
     const id = _val('bot_f_id');
@@ -752,12 +772,15 @@ document.addEventListener('change', async e => {
     try {
         if (st) st.textContent = '⏳ uploading…';
         if (t.id === 'bot_talk_face_file') {
+            const faces = _talkFaces();
+            if (faces.length >= TALK_MAX_FACES) throw new Error('3 faces at most — remove one first');
             const d = await _talkUpload('face', file, st);
-            _setVal('bot_f_talk_face_sha', d.sha);
             const m = d.mouth || {};
-            _talkSetMouth({ x: m.x, y: m.y, w: m.w, angle: m.angle, anime: m.anime });
-            _talkPaint();
-            if (st) st.textContent = m.found ? '✓ face set — mouth found; drag to adjust' : '✓ face set — drag the marker onto the mouth';
+            faces.push({ sha: d.sha, mouth: { x: m.x, y: m.y, w: m.w, angle: m.angle || 0, anime: !!m.anime } });
+            _talkSetFaces(faces); _talkSel = faces.length - 1;
+            _talkPaintFaces(); t.value = '';
+            if (st) st.textContent = (m.found ? `✓ face ${faces.length} added — mouth found; drag to adjust`
+                                              : `✓ face ${faces.length} added — drag the marker onto the mouth`);
         } else {
             const d = await _talkUpload('voice', file, st);
             _setVal('bot_f_talk_voice_sha', d.sha);
@@ -783,10 +806,16 @@ document.addEventListener('pointerdown', e => {
     const up = () => { document.removeEventListener('pointermove', move); document.removeEventListener('pointerup', up); };
     document.addEventListener('pointermove', move); document.addEventListener('pointerup', up);
 });
+document.addEventListener('click', e => {
+    const del = e.target && e.target.closest && e.target.closest('[data-talk-del]');
+    if (del) { const faces = _talkFaces(); faces.splice(+del.dataset.talkDel, 1); _talkSetFaces(faces); _talkPaintFaces(); return; }
+    const pick = e.target && e.target.closest && e.target.closest('[data-talk-face]');
+    if (pick) { _talkSel = +pick.dataset.talkFace; _talkPaintFaces(); }
+});
 document.addEventListener('click', async e => {
     if (!e.target || e.target.id !== 'bot_talk_preview_btn') return;
     const st = _g('bot_talk_preview_state'), v = _g('bot_talk_preview');
-    const face = _val('bot_f_talk_face_sha'), voice = _val('bot_f_talk_voice_sha');
+    const sel = _talkFaces()[_talkSel], face = sel && sel.sha, voice = _val('bot_f_talk_voice_sha');
     if (!face || !voice) { if (st) st.textContent = '❌ upload a face and a voice first'; return; }
     if (st) st.textContent = '⏳ rendering (speech + animation)…';
     try {

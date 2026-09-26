@@ -100,24 +100,49 @@ def _client(monkeypatch, cfg, rendered):
     return TestClient(app)
 
 
+def _faces(*shas):
+    return json.dumps([{"sha": s, "mouth": {"x": 0.1 * (i + 1), "y": 0.6, "w": 0.1}} for i, s in enumerate(shas)])
+
+
 def test_the_bot_endpoint_renders_only_with_that_bots_own_assets(monkeypatch):
-    cfg = {"alice": {"talk_face_sha": "f" * 64, "talk_voice_sha": "v" * 64, "talk_mouth": '{"x":0.5}'},
-           "bob": {"talk_face_sha": "b" * 64, "talk_voice_sha": "c" * 64}}
+    cfg = {"alice": {"talk_faces": _faces("f" * 64), "talk_voice_sha": "v" * 64},
+           "bob": {"talk_faces": _faces("b" * 64), "talk_voice_sha": "c" * 64}}
     rendered = []
     with _client(monkeypatch, cfg, rendered) as c:
         ok = c.post("/api/bots/talk", json={"bot": "alice", "text": "hi"},
                     headers={"X-PC-Talk-Token": tb.token("alice")})
         assert ok.status_code == 200 and ok.headers["content-type"] == "video/mp4"
-        assert rendered == [("f" * 64, "v" * 64, '{"x":0.5}', "hi")]
+        assert rendered[0][0] == "f" * 64 and rendered[0][1] == "v" * 64 and rendered[0][3] == "hi"
+        assert rendered[0][2]["x"] == pytest.approx(0.1), "the face's OWN mouth placement must be used"
         stolen = c.post("/api/bots/talk", json={"bot": "bob", "text": "hi"},
                         headers={"X-PC-Talk-Token": tb.token("alice")})
         assert stolen.status_code == 401, "alice's credential rendered as bob"
         assert c.post("/api/bots/talk", json={"bot": "alice", "text": "hi"}).status_code == 401
 
 
+def test_each_reply_picks_one_of_up_to_three_faces_with_its_own_mouth(monkeypatch):
+    shas = ["1" * 64, "2" * 64, "3" * 64]
+    cfg = {"alice": {"talk_faces": _faces(*shas, "4" * 64), "talk_voice_sha": "v" * 64}}
+    rendered = []
+    with _client(monkeypatch, cfg, rendered) as c:
+        for _ in range(60):
+            c.post("/api/bots/talk", json={"bot": "alice", "text": "hi"}, headers={"X-PC-Talk-Token": tb.token("alice")})
+    used = {r[0] for r in rendered}
+    assert used == set(shas), f"expected all three faces over 60 replies and never a 4th, got {used}"
+    for face, _v, mouth, _t in rendered:
+        assert mouth["x"] == pytest.approx(0.1 * (shas.index(face) + 1)), "a face was drawn with another face's mouth"
+
+
+def test_faces_are_validated():
+    got = tb.faces_of({"talk_faces": json.dumps([{"sha": "a" * 64}, {"sha": "nope"}, "junk", {"sha": "b" * 64,
+                                                  "mouth": {"x": 9}}])})
+    assert [f["sha"] for f in got] == ["a" * 64, "b" * 64] and got[1]["mouth"]["x"] == 1.0
+    assert tb.faces_of({}) == [] and tb.faces_of({"talk_faces": "not json"}) == []
+
+
 def test_a_bot_without_a_face_or_voice_is_told_so(monkeypatch):
     rendered = []
-    with _client(monkeypatch, {"carol": {"talk_face_sha": "f" * 64}}, rendered) as c:
+    with _client(monkeypatch, {"carol": {"talk_faces": _faces("f" * 64)}}, rendered) as c:
         r = c.post("/api/bots/talk", json={"bot": "carol", "text": "hi"},
                    headers={"X-PC-Talk-Token": tb.token("carol")})
     assert r.status_code == 409 and rendered == []
@@ -193,12 +218,12 @@ def test_the_manager_turns_talking_on_only_when_it_is_fully_set_up(monkeypatch):
     from app.services import bot_manager_service as bm, settings_store
     monkeypatch.setattr(settings_store, "get", lambda k, d=None: d)
     base = {"name": "talky", "platform": "nostr", "bot_type": "text", "modes": ["--nostr"],
-            "nostr_nsec": "11" * 32, "talk_enabled": True, "talk_face_sha": "f" * 64,
+            "nostr_nsec": "11" * 32, "talk_enabled": True, "talk_faces": _faces("f" * 64),
             "talk_voice_sha": "v" * 64, "talk_max_words": "12"}
     env = bm._build_env(dict(base), {})
     assert env.get("NOSTR_TALK") == "1" and env.get("NOSTR_TALK_BOT") == "talky"
     assert env.get("NOSTR_TALK_TOKEN") == tb.token("talky") and env.get("NOSTR_TALK_MAX_WORDS") == "12"
-    for missing in ("talk_enabled", "talk_face_sha", "talk_voice_sha"):
+    for missing in ("talk_enabled", "talk_faces", "talk_voice_sha"):
         env = bm._build_env({k: v for k, v in base.items() if k != missing}, {})
         assert "NOSTR_TALK" not in env, f"talking turned on without {missing}"
 

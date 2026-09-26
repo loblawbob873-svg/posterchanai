@@ -213,11 +213,11 @@
                         <span class="bots-dim">(each reply is a short video of the face below saying it, in the voice below — mentions and random replies alike; what it says comes from the <b>Personality prompt</b>, kept to the word limit below; falls back to text if a render fails)</span></label>
                 </div>
                 <div id="bot_grp_talk" class="bot-talk" style="display:none">
-                    <input type="hidden" id="bot_f_talk_face_sha">
+                    <input type="hidden" id="bot_f_talk_faces">
                     <input type="hidden" id="bot_f_talk_voice_sha">
-                    <input type="hidden" id="bot_f_talk_mouth">
                     <div class="form-group">
-                        <label>Face <span class="bots-dim">(a picture with a visible mouth — photo or drawing; then drag the marker onto the mouth)</span></label>
+                        <label>Faces <span class="bots-dim">(up to 3 pictures with a visible mouth — each reply picks one at random. Click a face to place ITS mouth: drag the marker onto it)</span></label>
+                        <div class="bot-talk-faces" id="bot_talk_faces"></div>
                         <input type="file" id="bot_talk_face_file" accept="image/*">
                         <div class="bot-talk-stage" id="bot_talk_stage" hidden>
                             <img id="bot_talk_face_img" alt="The talking bot's face">

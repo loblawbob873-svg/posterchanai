@@ -71,6 +71,25 @@ def clean_mouth(m) -> dict | None:
     return out
 
 
+MAX_FACES = 3
+
+
+def faces_of(cfg: dict) -> list:
+    """The bot's faces as [{sha, mouth}] -- up to MAX_FACES, each with ITS OWN mouth placement (the
+    mouth sits somewhere different in every picture). One is picked at random for each reply."""
+    raw = cfg.get("talk_faces")
+    if isinstance(raw, str):
+        try:
+            raw = json.loads(raw) if raw.strip() else []
+        except ValueError:
+            raw = []
+    out = []
+    for f in raw if isinstance(raw, list) else []:
+        if isinstance(f, dict) and re.fullmatch(r"[0-9a-f]{64}", str(f.get("sha") or "")):
+            out.append({"sha": f["sha"], "mouth": clean_mouth(f.get("mouth"))})
+    return out[:MAX_FACES]
+
+
 def clean_text(text: str) -> str:
     """What gets spoken: no links or nostr references (they would be read out letter by letter)."""
     t = re.sub(r"https?://\S+|nostr:\S+|\b(?:npub1|nprofile1|note1|nevent1|naddr1)\w+", "", text or "")

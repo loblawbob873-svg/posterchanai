@@ -34,6 +34,10 @@ function world({ id = '', nsec = '', uploadOk = true } = {}) {
   const fetch = async (url, opt = {}) => {
     const body = opt.body ? JSON.parse(opt.body) : null;
     calls.push({ url, method: opt.method || 'GET', body });
+    if (url.endsWith('/talk/face')) {
+      const n = calls.filter(c => c.url.endsWith('/talk/face')).length;
+      return { ok: true, json: async () => ({ sha: String(n).repeat(64), mouth: { found: true, x: 0.1 * n, y: 0.6, w: 0.1 } }) };
+    }
     if (url.endsWith('/upload-avatar')) {
       return uploadOk ? { ok: true, json: async () => ({ url: 'https://poster.place/blossom/abc.png' }) }
                       : { ok: false, statusText: 'nope', json: async () => ({ detail: 'blossom refused' }) };
@@ -50,7 +54,24 @@ function world({ id = '', nsec = '', uploadOk = true } = {}) {
     el('bot_f_nostr_avatar_file').files = [{ name: 'fever.png', size: 1234, lastModified: 42, type: 'image/png' }];
     (handlers.change || []).forEach(h => h({ target: el('bot_f_nostr_avatar_file') }));
   };
-  return { el, calls, api: ctx.__api, pick };
+  const addFace = () => {
+    el('bot_talk_face_file').files = [{ name: 'face.png', size: 99, lastModified: 1, type: 'image/png' }];
+    (handlers.change || []).forEach(h => h({ target: el('bot_talk_face_file') }));
+  };
+  const click = (attrs) => {
+    const target = { id: '', closest: sel => (Object.keys(attrs).some(k => sel === `[${k}]`)
+      ? { dataset: Object.fromEntries(Object.entries(attrs).map(([k, v]) => [k.replace(/^data-/, '').replace(/-(\w)/g, (_, c) => c.toUpperCase()), v])) }
+      : null) };
+    (handlers.click || []).forEach(h => h({ target }));
+  };
+  const drag = (x, y) => {
+    el('bot_talk_stage').getBoundingClientRect = () => ({ left: 0, top: 0, width: 100, height: 100 });
+    (handlers.pointerdown || []).forEach(h => h({ target: el('bot_talk_mouth'), clientX: x, clientY: y, preventDefault() {} }));
+    (handlers.pointerup || []).forEach(h => h({}));
+  };
+  document.addEventListener = (type, fn) => (handlers[type] = handlers[type] || []).push(fn);
+  document.removeEventListener = () => {};
+  return { el, calls, api: ctx.__api, pick, addFace, click, drag };
 }
 const settle = () => new Promise(r => setTimeout(r, 20));
 const uploads = c => c.filter(x => x.url.endsWith('/upload-avatar'));
@@ -85,6 +106,24 @@ const saves = c => c.filter(x => /\/api\/admin\/bots(\/\d+)?$/.test(x.url) && x.
   await w.api.saveBot(); await settle();
   check(saves(w.calls).length === 0, 'saved anyway after the avatar upload failed');
   check(/avatar could not be uploaded/.test(w.el('botModalError').textContent), 'no message said why');
+}
+
+{ // talking replies: up to 3 faces, each with its OWN mouth, all saved
+  const w = world({ id: '27' });
+  const faces = () => JSON.parse(w.el('bot_f_talk_faces').value || '[]');
+  for (let i = 0; i < 4; i++) { w.addFace(); await settle(); }
+  check(faces().length === 3, 'expected 3 faces (a 4th refused), got ' + faces().length);
+  check(w.calls.filter(c => c.url.endsWith('/talk/face')).length === 3, 'a 4th face was uploaded anyway');
+  w.click({ 'data-talk-face': '0' });                 // select face 1 …
+  w.drag(40, 70);                                     // … and move ITS mouth
+  const f = faces();
+  check(Math.abs(f[0].mouth.x - 0.4) < 1e-9 && Math.abs(f[0].mouth.y - 0.7) < 1e-9, 'dragging did not move face 1\'s mouth');
+  check(Math.abs(f[2].mouth.x - 0.3) < 1e-9, 'dragging face 1 moved another face\'s mouth');
+  w.click({ 'data-talk-del': '1' });                  // remove face 2
+  check(faces().map(x => x.sha[0]).join('') === '13', 'removing face 2 removed the wrong one: ' + faces().map(x => x.sha[0]));
+  await w.api.saveBot(); await settle();
+  const saved = JSON.parse(saves(w.calls)[0].body.config.talk_faces || '[]');
+  check(saved.length === 2 && saved[0].mouth.x === f[0].mouth.x, 'Save did not persist the faces and their mouths');
 }
 
 if (failures.length) { console.error(failures.map(f => '✗ ' + f).join('\n')); process.exit(1); }
