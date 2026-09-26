@@ -174,6 +174,99 @@ def _claim(note_id) -> bool:
 _load_ids()
 
 
+
+# ---- talking replies (app/services/talkbot_service.py) ------------------------------------------
+# With NOSTR_TALK on, a reply is a SHORT line spoken by the bot's face (the Meme Builder's `talk`):
+# the text goes to /api/bots/talk and the clip that comes back is posted with it. Short because speech
+# costs ~10x realtime on the shared GPU. A render that fails falls back to the plain text reply, so a
+# person is never left without an answer because the GPU was busy.
+_TALK_ON = (os.getenv("NOSTR_TALK", "") or "").strip() in ("1", "true", "yes", "on")
+_TALK_BOT = (os.getenv("NOSTR_TALK_BOT", "") or "").strip()
+_TALK_TOKEN = (os.getenv("NOSTR_TALK_TOKEN", "") or "").strip()
+try:
+    _TALK_MAX_WORDS = max(3, min(60, int(os.getenv("NOSTR_TALK_MAX_WORDS", "15") or 15)))
+except ValueError:
+    _TALK_MAX_WORDS = 15
+
+
+def _talk_prompt(prompt: str) -> str:
+    """Ask for a reply short enough to speak quickly."""
+    if not _TALK_ON:
+        return prompt
+    return (f"{prompt}\n\n(Your answer will be SPOKEN ALOUD by a talking picture: reply in ONE short "
+            f"sentence of at most {_TALK_MAX_WORDS} words - no links, hashtags, emojis or lists.)")
+
+
+def _talk_clip(text: str):
+    """The talking clip for `text` (MP4 bytes), or None when it could not be made."""
+    if not (_TALK_ON and _TALK_BOT and _TALK_TOKEN and text):
+        return None
+    import json as _json
+    from urllib import request as _rq
+    from config import POSTERCHANAI_API_ENDPOINT
+    base = (POSTERCHANAI_API_ENDPOINT or "http://127.0.0.1:3051").rstrip("/")
+    req = _rq.Request(base + "/api/bots/talk", method="POST",
+                      data=_json.dumps({"bot": _TALK_BOT, "text": text}).encode(),
+                      headers={"Content-Type": "application/json", "X-PC-Talk-Token": _TALK_TOKEN})
+    try:
+        with _rq.urlopen(req, timeout=600) as r:
+            if r.status == 200 and (r.headers.get("Content-Type") or "").startswith("video/"):
+                return r.read()
+    except Exception as e:
+        print(f"[nostr] talking clip failed, replying with text: {e}", flush=True)
+    return None
+
+
+def _send_spoken(send, text: str):
+    """Reply with `text`, spoken by the bot's face when talking replies are on. `send(text, **media)`
+    is the channel's reply function."""
+    clip = _talk_clip(text) if _TALK_ON else None
+    if clip:
+        send(text, video_bytes=clip)
+    else:
+        send(text)
+
+
+# ---- random replies: whom not to bother ---------------------------------------------------------
+_RR_AUTHORS_FILE = os.path.join(script_dir, f".random_reply_authors_{_state_suffix()}.json")
+_RR_AUTHOR_GAP = 86400      # never start a thread with the same person twice in a day
+
+
+def _rr_recent_authors() -> dict:
+    import json as _json
+    try:
+        with open(_RR_AUTHORS_FILE) as f:
+            d = _json.load(f)
+        now = time.time()
+        return {k: v for k, v in d.items() if isinstance(v, (int, float)) and now - v < _RR_AUTHOR_GAP}
+    except (OSError, ValueError, AttributeError):
+        return {}
+
+
+def _rr_note_author(pk: str) -> None:
+    import json as _json
+    d = _rr_recent_authors()
+    d[pk] = int(time.time())
+    try:
+        fd, tmp = tempfile.mkstemp(dir=os.path.dirname(_RR_AUTHORS_FILE), prefix=".rr_authors_")
+        with os.fdopen(fd, "w") as f:
+            _json.dump(d, f)
+        os.replace(tmp, _RR_AUTHORS_FILE)
+    except Exception as e:
+        print(f"[nostr] could not record random-reply author: {e}", flush=True)
+
+
+def _muted_us(pk: str, own: str) -> bool:
+    """Does `pk`'s public mute list name this bot? Unknown (relay unreachable) counts as YES --
+    replying unasked to someone who may have muted us is the one mistake this must not make."""
+    try:
+        evs = _nk._run(_nk._svc.relay.query(_nk._RELAYS, [{"kinds": [10000], "authors": [pk], "limit": 1}])) or []
+    except Exception:
+        return True
+    evs.sort(key=lambda e: e.get("created_at", 0), reverse=True)
+    return bool(evs) and any(len(t) > 1 and t[0] == "p" and t[1] == own for t in evs[0].get("tags") or [])
+
+
 def imageposter():
     """One-shot: generate an image from IMAGE_POSTER_PROMPT and post it to Nostr.
     Entry point for `main.py --image` (manager schedule + admin Test-Post). Uses the
@@ -385,9 +478,9 @@ def _dispatch(note, prompt_text, own, thread_history, reply=None, sender_key=Non
         return
 
     # Plain reply.
-    reply_text = generate_reply(prompt_text, thread_history=thread_history, ping=False)
+    reply_text = generate_reply(_talk_prompt(prompt_text), thread_history=thread_history, ping=False)
     if reply_text:
-        reply(reply_text)
+        _send_spoken(reply, reply_text)
 
 
 def process_random_replies():
@@ -432,14 +525,19 @@ def process_random_replies():
         text = (note.get("text") or "").strip()
         if not text or _NOSTR_TOKEN_RE.sub("", text).strip() == "":
             continue
+        if pk in _rr_recent_authors():
+            continue                       # already started a thread with this person today
+        if _muted_us(pk, own):
+            continue                       # they muted this bot -- never reply to them unasked
         if not _rr_starts.allow("global"):
             break                          # per-hour start budget spent → stop scanning this poll
         try:
-            reply = generate_reply(
+            reply = generate_reply(_talk_prompt(
                 "Reply briefly, warmly and on-topic (1-2 sentences, no hashtags) to this stranger's "
-                f"post: {text[:1500]}", thread_history=None, ping=False)
+                f"post: {text[:1500]}"), thread_history=None, ping=False)
             if reply:
-                send_reply(note, reply)
+                _send_spoken(lambda t, **m: send_reply(note, t, **m), reply)
+                _rr_note_author(pk)
                 _rr_threads[nid] = 1       # this top-level note is now a tracked thread root
                 print(f"[nostr] random-reply → {nid[:12]} (@{meta.get('username','?')} {nip05})", flush=True)
         except Exception as e:

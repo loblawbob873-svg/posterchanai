@@ -658,3 +658,15 @@
     .emoji-grid { grid-template-columns: repeat(auto-fill, minmax(72px, 1fr)); max-height: 320px; }
     .emoji-bar select, .emoji-search { flex: 1 1 100%; }
 }
+
+/* Talking replies (Admin → Bots): the face with a draggable mouth marker. The marker is positioned in
+   PERCENT of the picture, which is exactly the normalised placement add_talk takes. */
+.bot-talk-stage { position: relative; display: inline-block; max-width: min(420px, 100%); margin-top: 8px;
+    touch-action: none; user-select: none; }
+.bot-talk-stage img { display: block; max-width: 100%; height: auto; border-radius: 8px; }
+.bot-talk-mouth { position: absolute; height: 14px; transform: translate(-50%, -50%); border: 2px solid #ff4fd8;
+    border-radius: 50%; background: rgba(255, 79, 216, .18); cursor: grab; box-shadow: 0 0 0 2px rgba(0,0,0,.45); }
+.bot-talk-mouth:active { cursor: grabbing; }
+.bot-talk-row { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 14px; margin-top: 8px; }
+.bot-talk-row input[type=range] { flex: 1 1 140px; min-width: 120px; }
+#bot_talk_preview { display: block; max-width: min(420px, 100%); margin-top: 8px; border-radius: 8px; }

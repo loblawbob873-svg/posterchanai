@@ -18,13 +18,16 @@ const BOT_KNOWN_KEYS = [
     'tts_voice', 'tts_rate', 'tts_pitch',
     'welcome_message', 'welcome_image', 'welcome_lookback_minutes',
     'block_image', 'report_image', 'unfollow_image',
+    // Talking replies: the face + voice are Blossom hashes set by the upload buttons, the mouth is a
+    // JSON placement set by dragging — hidden fields, so the ordinary Save persists all three.
+    'talk_face_sha', 'talk_voice_sha', 'talk_mouth', 'talk_max_words',
     'auto_post_interval_min', 'auto_post_interval_max', 'auto_post_max_per_day',
     'auto_post_quiet_hours', 'auto_post_seed', 'auto_post_topics',
     'text',  // image bot: caption posted with the image (IMAGE_POSTER_TEXT)
     'image_negative',  // image bot: negative prompt (IMAGE_POSTER_NEGATIVE)
 ];
 // Config keys backed by a checkbox.
-const BOT_KNOWN_CHECKS = ['auto_narrate', 'unfollow_silent_mode', 'auto_post_enabled', 'random_scenes', 'nostr_random_reply'];
+const BOT_KNOWN_CHECKS = ['auto_narrate', 'unfollow_silent_mode', 'auto_post_enabled', 'random_scenes', 'nostr_random_reply', 'talk_enabled'];
 // feature checkbox id -> main.py mode flag
 const BOT_FEATURES = {
     bot_ft_welcome: '--welcome', bot_ft_block: '--blockbot',
@@ -270,6 +273,7 @@ function openBotModal(id) {
     const cfg = (b && b.config) ? b.config : {};
     BOT_KNOWN_KEYS.forEach(k => _setVal('bot_f_' + k, cfg[k]));
     BOT_KNOWN_CHECKS.forEach(k => _setChk('bot_f_' + k, cfg[k]));
+    _talkPaint();
     // transient widgets (the profile fields themselves persist via BOT_KNOWN_KEYS above)
     { const af = _g('bot_f_nostr_avatar_file'); if (af) af.value = ''; }
     { const ps = _g('bot_provision_status'); if (ps) ps.textContent = ''; }
@@ -659,3 +663,112 @@ async function statsRunNow() {
         if (st) st.textContent = r.ok ? ('✅ ' + (d.message || 'posted')) : ('❌ ' + (d.detail || 'failed'));
     } catch (e) { if (st) st.textContent = '❌ ' + ((e && e.message) || e); }
 }
+
+
+// --- Talking replies (app/services/talkbot_service.py) ---------------------------------------------
+// Face + voice upload to this node's Blossom (owned by the bot's key, never swept); their hashes and
+// the mouth placement live in hidden form fields, so Save persists them with everything else.
+function _talkMouth() {
+    try { const m = JSON.parse(_val('bot_f_talk_mouth') || 'null'); if (m && typeof m === 'object') return m; } catch (_) {}
+    return { x: 0.5, y: 0.62, w: 0.12, angle: 0, anime: false };
+}
+function _talkSetMouth(m) {
+    const c = v => Math.min(1, Math.max(0, +v || 0));
+    const out = { x: c(m.x), y: c(m.y), w: Math.min(0.4, Math.max(0.02, +m.w || 0.12)), angle: +m.angle || 0, anime: !!m.anime };
+    _setVal('bot_f_talk_mouth', JSON.stringify(out));
+    _talkPaintMouth();
+}
+function _talkPaintMouth() {
+    const mk = _g('bot_talk_mouth'), m = _talkMouth();
+    if (mk) { mk.style.left = (m.x * 100) + '%'; mk.style.top = (m.y * 100) + '%'; mk.style.width = (m.w * 100) + '%'; }
+    const w = _g('bot_talk_mouth_w'); if (w) w.value = Math.round(m.w * 100);
+    _setChk('bot_talk_mouth_anime', m.anime);
+}
+function _talkPaint() {
+    const on = _g('bot_f_talk_enabled') && _g('bot_f_talk_enabled').checked;
+    const grp = _g('bot_grp_talk'); if (grp) grp.style.display = on ? '' : 'none';
+    const sha = _val('bot_f_talk_face_sha');
+    const stage = _g('bot_talk_stage'), row = _g('bot_talk_mouth_row'), img = _g('bot_talk_face_img');
+    if (stage) stage.hidden = !sha; if (row) row.hidden = !sha;
+    if (img && sha) img.src = '/blossom/' + sha;
+    const vs = _g('bot_talk_voice_state');
+    if (vs) vs.textContent = _val('bot_f_talk_voice_sha') ? '✓ voice set' : 'no voice yet';
+    ['bot_talk_face_file', 'bot_talk_voice_file'].forEach(id => { const f = _g(id); if (f) f.value = ''; });
+    const pv = _g('bot_talk_preview'); if (pv) { pv.hidden = true; pv.removeAttribute('src'); }
+    const ps = _g('bot_talk_preview_state'); if (ps) ps.textContent = '';
+    _talkPaintMouth();
+}
+function _talkOwner() {
+    const id = _val('bot_f_id');
+    const nsec = _g('bot_f_nostr_nsec') ? _g('bot_f_nostr_nsec').value.trim() : '';
+    if (!id && !nsec) throw new Error('Generate an identity (or Save the bot) first — the files are stored under the bot’s key.');
+    return nsec ? { nsec } : { bot_id: Number(id) };
+}
+async function _talkUpload(kind, file, stateEl) {
+    const body = Object.assign(_talkOwner(), { data: await _readFileDataURL(file), filename: file.name || '' });
+    const r = await csrfFetch('/api/admin/bots/talk/' + kind, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+    const d = await r.json().catch(() => ({}));
+    if (!r.ok) throw new Error(d.detail || r.statusText);
+    return d;
+}
+document.addEventListener('change', async e => {
+    const t = e.target;
+    if (!t || !t.id) return;
+    if (t.id === 'bot_f_talk_enabled') { _talkPaint(); return; }
+    if (t.id === 'bot_talk_mouth_w') { const m = _talkMouth(); m.w = (+t.value || 12) / 100; _talkSetMouth(m); return; }
+    if (t.id === 'bot_talk_mouth_anime') { const m = _talkMouth(); m.anime = t.checked; _talkSetMouth(m); return; }
+    const st = _g(t.id === 'bot_talk_voice_file' ? 'bot_talk_voice_state' : 'bot_talk_preview_state');
+    const file = t.files && t.files[0];
+    if (!file || (t.id !== 'bot_talk_face_file' && t.id !== 'bot_talk_voice_file')) return;
+    try {
+        if (st) st.textContent = '⏳ uploading…';
+        if (t.id === 'bot_talk_face_file') {
+            const d = await _talkUpload('face', file, st);
+            _setVal('bot_f_talk_face_sha', d.sha);
+            const m = d.mouth || {};
+            _talkSetMouth({ x: m.x, y: m.y, w: m.w, angle: m.angle, anime: m.anime });
+            _talkPaint();
+            if (st) st.textContent = m.found ? '✓ face set — mouth found; drag to adjust' : '✓ face set — drag the marker onto the mouth';
+        } else {
+            const d = await _talkUpload('voice', file, st);
+            _setVal('bot_f_talk_voice_sha', d.sha);
+            _talkPaint();
+            const vs = _g('bot_talk_voice_state'); if (vs) vs.textContent = `✓ voice set (${d.seconds}s)`;
+        }
+    } catch (err) { if (st) st.textContent = '❌ ' + ((err && err.message) || err); t.value = ''; }
+});
+// Drag the mouth marker — pointer events, so it works with a finger as well as a mouse.
+document.addEventListener('pointerdown', e => {
+    const mk = e.target && e.target.id === 'bot_talk_mouth' ? e.target : null;
+    const stage = _g('bot_talk_stage');
+    if (!stage || !(mk || (e.target && e.target.id === 'bot_talk_face_img'))) return;
+    e.preventDefault();
+    const move = ev => {
+        const r = stage.getBoundingClientRect();
+        if (!r.width || !r.height) return;
+        const m = _talkMouth();
+        m.x = (ev.clientX - r.left) / r.width; m.y = (ev.clientY - r.top) / r.height;
+        _talkSetMouth(m);
+    };
+    move(e);
+    const up = () => { document.removeEventListener('pointermove', move); document.removeEventListener('pointerup', up); };
+    document.addEventListener('pointermove', move); document.addEventListener('pointerup', up);
+});
+document.addEventListener('click', async e => {
+    if (!e.target || e.target.id !== 'bot_talk_preview_btn') return;
+    const st = _g('bot_talk_preview_state'), v = _g('bot_talk_preview');
+    const face = _val('bot_f_talk_face_sha'), voice = _val('bot_f_talk_voice_sha');
+    if (!face || !voice) { if (st) st.textContent = '❌ upload a face and a voice first'; return; }
+    if (st) st.textContent = '⏳ rendering (speech + animation)…';
+    try {
+        const name = _val('bot_f_nostr_profile_name') || _val('bot_f_name') || 'your bot';
+        const r = await csrfFetch('/api/admin/bots/talk/preview', {
+            method: 'POST', headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ face_sha: face, voice_sha: voice, mouth: _talkMouth(), text: `Hi! I'm ${name}. Nice to meet you.` }) });
+        if (!r.ok) { const d = await r.json().catch(() => ({})); throw new Error(d.detail || r.statusText); }
+        const blob = await r.blob();
+        if (v) { v.src = URL.createObjectURL(blob); v.hidden = false; }
+        if (st) st.textContent = '✓ this is what a reply looks like';
+    } catch (err) { if (st) st.textContent = '❌ ' + ((err && err.message) || err); }
+});

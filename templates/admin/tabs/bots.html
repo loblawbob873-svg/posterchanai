@@ -205,6 +205,45 @@
                     <label for="bot_f_nostr_random_reply_quiet">Random-reply quiet hours <span class="bots-dim">(HH-HH, 24h local; e.g. 23-07; blank = any time)</span></label>
                     <input type="text" id="bot_f_nostr_random_reply_quiet" placeholder="23-07">
                 </div>
+                <!-- TALKING REPLIES: every reply is a short line spoken by a face (the Meme Builder's talk).
+                     The face + voice are stored on this node's Blossom (never swept); the hashes ride in
+                     hidden fields so the ordinary Save persists them. See app/services/talkbot_service.py. -->
+                <div class="form-group">
+                    <label><input type="checkbox" id="bot_f_talk_enabled"> Talking replies
+                        <span class="bots-dim">(each reply is a short video of the face below saying it, in the voice below — mentions and random replies alike; what it says comes from the <b>Personality prompt</b>, kept to the word limit below; falls back to text if a render fails)</span></label>
+                </div>
+                <div id="bot_grp_talk" class="bot-talk" style="display:none">
+                    <input type="hidden" id="bot_f_talk_face_sha">
+                    <input type="hidden" id="bot_f_talk_voice_sha">
+                    <input type="hidden" id="bot_f_talk_mouth">
+                    <div class="form-group">
+                        <label>Face <span class="bots-dim">(a picture with a visible mouth — photo or drawing; then drag the marker onto the mouth)</span></label>
+                        <input type="file" id="bot_talk_face_file" accept="image/*">
+                        <div class="bot-talk-stage" id="bot_talk_stage" hidden>
+                            <img id="bot_talk_face_img" alt="The talking bot's face">
+                            <div class="bot-talk-mouth" id="bot_talk_mouth" title="Drag onto the mouth"></div>
+                        </div>
+                        <div class="bot-talk-row" id="bot_talk_mouth_row" hidden>
+                            <label for="bot_talk_mouth_w">Mouth width</label>
+                            <input type="range" id="bot_talk_mouth_w" min="2" max="40" step="1" value="12">
+                            <label><input type="checkbox" id="bot_talk_mouth_anime"> Drawing / anime <span class="bots-dim">(redraws the mouth instead of moving the jaw)</span></label>
+                        </div>
+                    </div>
+                    <div class="form-group">
+                        <label>Voice <span class="bots-dim">(a clip of the voice: 5–30 s of clear speech, audio or video)</span></label>
+                        <input type="file" id="bot_talk_voice_file" accept="audio/*,video/*">
+                        <span class="bots-dim" id="bot_talk_voice_state"></span>
+                    </div>
+                    <div class="form-group">
+                        <label for="bot_f_talk_max_words">Longest reply, in words <span class="bots-dim">(short = fast: speech costs ~10× its length on the GPU; default 15)</span></label>
+                        <input type="number" id="bot_f_talk_max_words" placeholder="15" min="3" max="60">
+                    </div>
+                    <div class="form-group">
+                        <button type="button" class="btn btn-secondary" id="bot_talk_preview_btn">▶ Preview a reply</button>
+                        <span class="bots-dim" id="bot_talk_preview_state"></span>
+                        <video id="bot_talk_preview" controls playsinline hidden></video>
+                    </div>
+                </div>
             </div>
 
             
