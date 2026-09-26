@@ -5099,8 +5099,8 @@ GRUB
 	# uploaded itself the moment it was written — BEFORE the install/boot gates that are the only
 	# proof an image installs (scripts/check_livecd_install_vm.py, scripts/pcos_installer_vm_probe.py
 	# --no-inject), which run in a separate VM afterwards. On 2026-09-21 a build tried to replace the
-	# public ISO ungated. The release path is: build → gates → scripts/publish_iso.sh (nas.lan, served
-	# as https://iso.poster.place/). Never upload a personal rescue image that may contain accounts.
+	# public ISO ungated. The release path is: build → gates → scripts/publish_iso.sh (Cloudflare R2,
+	# served as https://iso.poster.place/). Never upload a personal rescue image that may contain accounts.
 	local PUBLISH_ISO
 	PUBLISH_ISO="${PC_ISO_PUBLISH:-n}"
 	if [[ "${CLEAN,,}" == y* && "${PUBLISH_ISO,,}" == y* ]]; then

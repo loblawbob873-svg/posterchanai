@@ -80,6 +80,7 @@ src_install() {
 	# tooling. Keep the publisher outside PATH: gentoo.sh invokes it by this exact package-owned path.
 	exeinto /usr/local/libexec/posterchanos
 	doexe "${FILESDIR}/publish_iso.sh"
+	doexe "${FILESDIR}/publish_r2.py"
 
 	# The greeter may create an identity account, and an identity session may switch to another
 	# identity. Keep both grants package-owned: gentoo.sh writes the same rules during an install,

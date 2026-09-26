@@ -74,4 +74,7 @@ gets qemu OOM-killed.
 scripts/publish_iso.sh "$ISO"   # uploads, verifies sha256, then swaps it in atomically
 ```
 
-It serves at <https://iso.poster.place/posterchanos.iso> with a `.sha256` beside it.
+iso.poster.place is the custom domain of the Cloudflare R2 bucket `posterchan`, so this uploads there
+(staged, verified, then swapped in — the old image serves until the new one is whole) and then reads the
+public URL back. Credentials: `~/.config/posterchan/{cloudflare.account,r2.access_key_id,r2.secret_access_key}`
+(mode 600, never in the repo). It serves at <https://iso.poster.place/posterchanos.iso> with a `.sha256` beside it.

@@ -142,6 +142,8 @@ install -m 0644 "$(dirname "$SRC")/plymouth/posterchanos/"* \
 # publisher beside the canonical installer into every timestamped shell package.
 install -m 0755 "$(dirname "$SRC")/../scripts/publish_iso.sh" \
   "$TMP/app-misc/posterchanos-shell/files/publish_iso.sh"
+install -m 0755 "$(dirname "$SRC")/../scripts/publish_r2.py" \
+  "$TMP/app-misc/posterchanos-shell/files/publish_r2.py"
 # >>> firefox theme
 # THE FIREFOX THEME SHIPS SIGNED OR NOT AT ALL. Release Firefox discards an unsigned theme silently
 # (measured on the laptop: no extensions.json entry, no message), so the copy the overlay carries is

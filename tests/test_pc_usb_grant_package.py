@@ -26,7 +26,7 @@ def _run_src_install(tmp_path):
     # what publish_overlay.sh injects before the package is built
     for name, src in (("bip340.py", "app/services/nostr/bip340.py"), ("bech32.py", "app/services/nostr/bech32.py"),
                       ("pc_usb_scan.py", "app/services/vmhost/usb.py"), ("gentoo.sh", "os/gentoo.sh"),
-                      ("publish_iso.sh", "scripts/publish_iso.sh")):
+                      ("publish_iso.sh", "scripts/publish_iso.sh"), ("publish_r2.py", "scripts/publish_r2.py")):
         shutil.copy(ROOT / src, files / name)
     (files / "plymouth").mkdir(exist_ok=True)
     (files / "plymouth" / "x.png").write_text("")

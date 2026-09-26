@@ -1,17 +1,18 @@
 #!/bin/bash
-# Atomically publish a verified PosterChanOS image under the stable public filename.
+# Publish a GATED PosterChanOS image as https://iso.poster.place/posterchanos.iso.
 set -euo pipefail
 
 ISO="${1:-}"
-# THE ISO IS SERVED FROM HOME NOW, FROM router.lan's OWN DISK (/srv/iso), which nginx serves as
-# https://iso.poster.place/ (vhost in nginx/iso.poster.place.conf) through the Cloudflare tunnel. The VPS
-# (198.55.116.7) was deleted 2026-09-21. It was first put in nas's distfiles export, and that tree's
-# Gentoo mirror sync (--delete) removed it overnight — never publish into a synced mirror tree.
-PUBLISH_HOST="${PC_ISO_PUBLISH_HOST:-verita84@router.lan}"
-PUBLISH_PATH="${PC_ISO_PUBLISH_PATH:-/srv/iso/posterchanos.iso}"
-STAGING_PATH="${PUBLISH_PATH}.uploading"
-CHECKSUM_PATH="${PUBLISH_PATH}.sha256"
-CHECKSUM_STAGING="${CHECKSUM_PATH}.uploading"
+# iso.poster.place IS THE CUSTOM DOMAIN OF THE CLOUDFLARE R2 BUCKET `posterchan` (since 2026-09-25), so
+# the image is served by Cloudflare and nothing at home spends upload bandwidth on 4 GB downloads. It
+# used to live on router.lan's disk (/srv/iso), before that in nas's distfiles export (whose Gentoo
+# mirror sync --delete removed it overnight), and before that on a VPS (198.55.116.7, deleted
+# 2026-09-21). publish_r2.py uploads to a staging key, verifies it, and only then replaces the public
+# object, so a failure at any step leaves the previous image serving.
+#
+# Credentials never touch the repo: ~/.config/posterchan/{cloudflare.account,r2.access_key_id,
+# r2.secret_access_key} (mode 600). Without them this exits 2 having sent nothing.
+PUBLIC_URL="${PC_ISO_PUBLIC_URL:-https://iso.poster.place/posterchanos.iso}"
 
 if [[ -z "$ISO" || ! -f "$ISO" || ! -s "$ISO" ]]; then
 	echo "Usage: $0 /absolute/path/to/posterchan-live-YYYYMMDD.iso" >&2
@@ -21,69 +22,39 @@ if [[ "$ISO" != /* ]]; then
 	echo "Refusing a relative ISO path: $ISO" >&2
 	exit 2
 fi
-if [[ "$PUBLISH_PATH" != /* || "$PUBLISH_PATH" == "/" ]]; then
-	echo "Refusing unsafe publish path: $PUBLISH_PATH" >&2
+
+HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+R2_PY="$HERE/publish_r2.py"
+PY="$HERE/../venv-unified/bin/python"
+[[ -x "$PY" ]] || PY=python3
+if [[ ! -f "$R2_PY" ]]; then
+	echo "The R2 publisher is missing beside this script: $R2_PY" >&2
 	exit 2
 fi
-# Both values are embedded in scp/remote-shell arguments. Keep optional overrides useful for a
-# staging server without letting whitespace or shell punctuation become remote commands.
-if [[ ! "$PUBLISH_HOST" =~ ^[A-Za-z0-9._-]+@[A-Za-z0-9._:-]+$ ]]; then
-	echo "Refusing unsafe publish host: $PUBLISH_HOST" >&2
-	exit 2
-fi
-if [[ ! "$PUBLISH_PATH" =~ ^/[A-Za-z0-9._/-]+$ ]]; then
-	echo "Refusing unsafe publish path: $PUBLISH_PATH" >&2
-	exit 2
-fi
-PUBLISH_DIR="${PUBLISH_PATH%/*}"
 
-LOCAL_SHA="$(sha256sum "$ISO" | awk '{print $1}')"
-echo "Publishing $ISO to $PUBLISH_HOST:$PUBLISH_PATH"
+LOCAL_SHA="$(sha256sum "$ISO" | cut -d' ' -f1)"
+LOCAL_SIZE="$(stat -c %s "$ISO")"
+echo "Publishing $ISO ($LOCAL_SIZE bytes, sha256 $LOCAL_SHA) to $PUBLIC_URL"
+rc=0
+"$PY" "$R2_PY" "$ISO" || rc=$?
+if [[ $rc -ne 0 ]]; then
+	echo "NOT published (publish_r2.py exited $rc) -- $PUBLIC_URL still serves the previous image" >&2
+	exit "$rc"
+fi
 
-# Readers keep receiving the previous complete image until the upload and checksum both succeed.
-ssh "$PUBLISH_HOST" "mkdir -p '$PUBLISH_DIR' && rm -f '$STAGING_PATH' '$CHECKSUM_STAGING'"
-scp -- "$ISO" "$PUBLISH_HOST:$STAGING_PATH"
-REMOTE_SHA="$(ssh "$PUBLISH_HOST" "sha256sum '$STAGING_PATH'" | awk '{print $1}')"
-if [[ "$REMOTE_SHA" != "$LOCAL_SHA" ]]; then
-	ssh "$PUBLISH_HOST" "rm -f '$STAGING_PATH' '$CHECKSUM_STAGING'" || true
-	echo "ISO checksum mismatch: local $LOCAL_SHA, remote $REMOTE_SHA" >&2
+# READ BACK WHAT THE INTERNET GETS, not what the upload said. R2 verified its own object; this checks the
+# public name end to end -- the custom domain, the edge, and DNS. On the LAN iso.poster.place used to be
+# answered by router.lan's wildcard rewrite, which would "verify" an image nobody outside can see.
+PUBLISHED_SHA="$(curl -fsS --max-time 60 -H 'Cache-Control: no-cache' "$PUBLIC_URL.sha256" | cut -d' ' -f1 || true)"
+PUBLISHED_SIZE="$(curl -fsSI --max-time 60 -H 'Cache-Control: no-cache' "$PUBLIC_URL" \
+	| tr -d '\r' | sed -n 's/^[Cc]ontent-[Ll]ength: *//p' | tail -1 || true)"
+if [[ -z "$PUBLISHED_SHA" || -z "$PUBLISHED_SIZE" ]]; then
+	# The R2 object IS replaced by now; say so rather than implying the upload failed.
+	echo "Published to R2, but $PUBLIC_URL could not be read back (checksum '${PUBLISHED_SHA}', size '${PUBLISHED_SIZE}')" >&2
 	exit 1
 fi
-# Publish a standard sha256sum sidecar too.  It is staged only after the uploaded bytes have been
-# independently hashed, then both renames happen in one remote shell after every fallible write.
-# Readers therefore never receive a partial ISO or a sidecar for an upload that failed verification.
-ISO_NAME="${PUBLISH_PATH##*/}"
-ssh "$PUBLISH_HOST" "printf '%s  %s\\n' '$LOCAL_SHA' '$ISO_NAME' > '$CHECKSUM_STAGING' && chmod 0644 '$STAGING_PATH' '$CHECKSUM_STAGING' && mv -f '$STAGING_PATH' '$PUBLISH_PATH' && mv -f '$CHECKSUM_STAGING' '$CHECKSUM_PATH'"
-# READ THE SIDECAR BACK WITH `cut`, NOT `awk`. This line used to send awk a field reference
-# through two levels of quoting as `\\$1`; bash turned that into a literal backslash, the remote
-# awk died with "unexpected character '\\'", and under `set -e` the failed command substitution
-# aborted the script HERE -- after the renames. So a correct publish printed neither its success
-# line nor its failure line and exited nonzero, which reads as "the ISO did not go out" about an
-# ISO that had. `cut` needs no escaping and cannot be got wrong the same way.
-PUBLISHED_SHA="$(ssh "$PUBLISH_HOST" "cut -d' ' -f1 '$CHECKSUM_PATH'" || true)"
-if [[ -z "$PUBLISHED_SHA" ]]; then
-	# The bytes and the sidecar are already in place by now; say so rather than implying otherwise.
-	echo "Published, but the sidecar could not be read back for verification: $CHECKSUM_PATH" >&2
+if [[ "$PUBLISHED_SHA" != "$LOCAL_SHA" || "$PUBLISHED_SIZE" != "$LOCAL_SIZE" ]]; then
+	echo "$PUBLIC_URL serves a different image: sha256 $PUBLISHED_SHA / $PUBLISHED_SIZE bytes, local $LOCAL_SHA / $LOCAL_SIZE" >&2
 	exit 1
 fi
-if [[ "$PUBLISHED_SHA" != "$LOCAL_SHA" ]]; then
-	echo "Published checksum sidecar does not match: sidecar $PUBLISHED_SHA, local $LOCAL_SHA" >&2
-	exit 1
-fi
-echo "Published $PUBLISH_HOST:$PUBLISH_PATH and $CHECKSUM_PATH (sha256 $LOCAL_SHA)"
-
-# DEVDRIVE.CLOUD, the second home for the same verified image -- only after the router.lan copy above
-# is in place and checked, and only on a machine that holds BOTH API keys (mode 600, never in the
-# repo): ~/.config/posterchan/devdrive.key1 and devdrive.key2. Its failure is reported but does not
-# undo the primary publish, which already succeeded; the previous devdrive copy stays until a new
-# one is verified (scripts/publish_devdrive.py).
-DEVDRIVE_CONF="${XDG_CONFIG_HOME:-$HOME/.config}/posterchan"
-if [[ -s "$DEVDRIVE_CONF/devdrive.key1" && -s "$DEVDRIVE_CONF/devdrive.key2" ]]; then
-	DEVDRIVE_PY="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/publish_devdrive.py"
-	PY="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/venv-unified/bin/python"
-	[[ -x "$PY" ]] || PY=python3
-	if ! "$PY" "$DEVDRIVE_PY" "$ISO"; then
-		echo "devdrive.cloud publish FAILED (router.lan copy is published); rerun: $PY $DEVDRIVE_PY $ISO" >&2
-		exit 1
-	fi
-fi
+echo "Published $PUBLIC_URL and $PUBLIC_URL.sha256 (sha256 $LOCAL_SHA)"
