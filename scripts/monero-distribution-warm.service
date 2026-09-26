@@ -1,0 +1,23 @@
+# nas.lan: keep monerod's output-distribution cache holding the full chain, so a zap never pays the rebuild.
+# Why: scripts/monero_distribution_warm.py. Install:
+#   sudo cp scripts/monero-distribution-warm.service /etc/systemd/system/
+#   sudo systemctl daemon-reload && sudo systemctl enable --now monero-distribution-warm.service
+[Unit]
+Description=Keep monerod's output distribution cached (a spend must not rebuild it)
+After=monerod.service
+Wants=monerod.service
+
+[Service]
+Type=simple
+User=verita84
+Group=verita84
+ExecStart=/usr/bin/python3 /home/verita84/posterchanai/scripts/monero_distribution_warm.py
+Restart=always
+RestartSec=30
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=read-only
+
+[Install]
+WantedBy=multi-user.target
