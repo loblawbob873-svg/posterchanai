@@ -855,10 +855,79 @@ _COMPRESS_VIDEO_SEM = asyncio.Semaphore(2)
 # rejection into a slow one. Note the scratch files land in TMPDIR, which is tmpfs (RAM) on these nodes —
 # so the real cost of this number is `_COMPRESS_VIDEO_SEM * 2 * MAX` of RAM in the worst case.
 _COMPRESS_VIDEO_MAX = 512 * 1024 * 1024
+_COMPRESS_VIDEO_SLOTS = 2          # == the semaphore's size; `_compress_busy` is what the LB reads
+_compress_busy = [0]               # local encodes holding (or queued for) a slot right now
+_compress_rr = [0]                 # round-robin cursor over peers for overflow
+_COMPRESS_FWD_HEADER = "x-pcai-compress-fwd"
+
+
+def _compress_peer_client():
+    """The HTTP client a forward goes out on. A function so tests can hand in an ASGI transport."""
+    import httpx
+    # read is per-chunk, not total: a peer encoding a big clip sends nothing until it is done.
+    return httpx.AsyncClient(timeout=httpx.Timeout(900.0, connect=5.0))
+
+
+async def _compress_lb_forward(request: Request, in_path: str, out_path: str, filename: str):
+    """Overflow load balancer for /media/compress-video: hand the clip to a peer node (round-robin over
+    `chat_server_urls`, the fleet list every other LB uses) and bring its smaller MP4 back into
+    `out_path`. Returns:
+
+      ("ok", headers)   the peer's result is in out_path
+      ("same", None)    the peer answered 204 — it could not make it smaller; keep the original
+      None              run it here: already a forwarded job (loop guard), no peers, or every peer
+                        refused/failed (busy 429, 5xx, down) — the local queue is still the answer,
+                        exactly as before this existed. A forward can never lose a post.
+
+    The endpoint is anonymous and the clip is the user's own public post, so the peer needs nothing
+    but the bytes; it stores nothing (the browser uploads the result to Blossom itself)."""
+    if request.headers.get(_COMPRESS_FWD_HEADER):
+        return None
+    try:
+        from app.services import settings_store, video_factory
+        peers = video_factory.parse_video_server_urls(settings_store.get("chat_server_urls", "") or "")
+    except Exception as e:
+        logger.debug("[client] compress-video lb skipped: %s", e)
+        return None
+    if not peers:
+        return None
+    start = _compress_rr[0] % len(peers); _compress_rr[0] += 1
+    for k in range(len(peers)):
+        peer = peers[(start + k) % len(peers)].rstrip("/")
+        try:
+            async with _compress_peer_client() as c:
+                with open(in_path, "rb") as fh:
+                    async with c.stream("POST", peer + "/client/media/compress-video",
+                                        files={"file": (filename or "video.mp4", fh, "application/octet-stream")},
+                                        headers={_COMPRESS_FWD_HEADER: "1"}) as r:
+                        if r.status_code == 204:
+                            logger.info("[client] compress-video forwarded to %s -> 204 (nothing smaller)", peer)
+                            return ("same", None)
+                        ct = (r.headers.get("content-type") or "").split(";")[0].strip()
+                        if r.status_code != 200 or ct != "video/mp4":
+                            logger.info("[client] compress-video peer %s answered %d — trying next/local",
+                                        peer, r.status_code)
+                            continue
+                        n = 0
+                        with open(out_path, "wb") as out:
+                            async for chunk in r.aiter_bytes(1024 * 1024):
+                                n += len(chunk)
+                                out.write(chunk)
+                        if not n:
+                            continue
+                        logger.info("[client] compress-video forwarded to %s -> %d bytes", peer, n)
+                        return ("ok", {k2: r.headers[k2] for k2 in ("x-original-size", "x-compressed-size")
+                                       if k2 in r.headers})
+        except Exception as e:
+            logger.info("[client] compress-video peer %s failed — trying next/local: %s", peer, e)
+            with contextlib.suppress(OSError):
+                os.unlink(out_path)
+            continue
+    return None
 
 
 @router.post("/media/compress-video")
-async def client_compress_video(file: UploadFile = File(...)):
+async def client_compress_video(request: Request, file: UploadFile = File(...)):
     """Compress a video before it's uploaded to a media server — the video half of what `compressImage`
     does in the browser for stills, which returns non-images untouched (so posted clips went up at full
     size). The client uploads here, gets the smaller file back, and it's THAT it hashes and pushes to
@@ -875,9 +944,6 @@ async def client_compress_video(file: UploadFile = File(...)):
     import tempfile as _tempfile
     from starlette.background import BackgroundTask
     from app.services import media_service
-
-    if not media_service.ffmpeg_available():
-        return JSONResponse({"error": "video compression unavailable"}, status_code=503)
 
     # Keep the client's extension (ffmpeg picks its demuxer from it) but only the shape of one — the
     # filename is client-supplied and gets joined into a path here.
@@ -909,7 +975,35 @@ async def client_compress_video(file: UploadFile = File(...)):
         if not size:
             return JSONResponse({"error": "empty upload"}, status_code=400)
 
-        async with _COMPRESS_VIDEO_SEM:
+        # LOAD BALANCING: overflow only. A clip goes to a peer when this node cannot start it now —
+        # both encoder slots taken — or cannot do it at all (no ffmpeg). Otherwise it stays here: the
+        # encode runs on the GPU's media engine in a second or two, and a LAN round trip of the whole
+        # file both ways would cost more than it saves.
+        have_ffmpeg = media_service.ffmpeg_available()
+        if not have_ffmpeg or _compress_busy[0] >= _COMPRESS_VIDEO_SLOTS:
+            fwd = await _compress_lb_forward(request, in_path, out_path, file.filename or "")
+            if fwd and fwd[0] == "same":
+                return Response(status_code=204)
+            if fwd and fwd[0] == "ok":
+                out_size = os.path.getsize(out_path)
+                if out_size >= size:
+                    return Response(status_code=204)
+                keep_tmp = True
+                return FileResponse(
+                    out_path, media_type="video/mp4", filename="compressed.mp4",
+                    headers={"X-Original-Size": str(size), "X-Compressed-Size": str(out_size)},
+                    background=BackgroundTask(_shutil.rmtree, tmp_dir, ignore_errors=True),
+                )
+        if not have_ffmpeg:
+            return JSONResponse({"error": "video compression unavailable"}, status_code=503)
+
+        _compress_busy[0] += 1
+        try:
+            await _COMPRESS_VIDEO_SEM.acquire()
+        except BaseException:
+            _compress_busy[0] -= 1
+            raise
+        try:
             try:
                 # A CEILING, not just a quality: without one a detailed clip re-encodes BIGGER than
                 # the phone's file and the post goes up uncompressed (see social_video_ceiling_kbps).
@@ -919,6 +1013,9 @@ async def client_compress_video(file: UploadFile = File(...)):
             except Exception as e:
                 logger.warning(f"[client] compress-video failed: {e}")
                 return JSONResponse({"error": "compression failed"}, status_code=503)
+        finally:
+            _COMPRESS_VIDEO_SEM.release()
+            _compress_busy[0] -= 1
 
         out_size = os.path.getsize(out_path)
         # Never hand back something BIGGER. Re-encoding an already-thin clip inflates it (the same trap
@@ -1555,8 +1652,7 @@ async def meme_effect(data: MemeEffectReq, request: Request, db: Session = Depen
     pk = nostr_service.to_pubkey_hex(data.pubkey or "")
     if not pk or not _verify_self_auth(data.auth, pk):
         raise HTTPException(status_code=401, detail="bad auth")
-    from app.services.instance_membership import require_pubkey
-    await require_pubkey(pk)
+    await _require_member_unless_fleet_forward(request, pk)
     # A forwarded job renders here and hands the BYTES back — the node that took the user's request
     # stores them. So a render peer needs ffmpeg, not a media store: `blossom_enabled` is per-node and
     # is off on a node that only holds bytes for someone else's Blossom (nas), which used to 503 every
@@ -1830,8 +1926,7 @@ async def meme_apply_effect(data: MemeApplyEffectReq, request: Request, db: Sess
     pk = nostr_service.to_pubkey_hex(data.pubkey or "")
     if not pk or not _verify_self_auth(data.auth, pk):
         raise HTTPException(status_code=401, detail="bad auth")
-    from app.services.instance_membership import require_pubkey
-    await require_pubkey(pk)
+    await _require_member_unless_fleet_forward(request, pk)
     # Forwarded job → return bytes, let the requesting node store them (see meme_effect).
     _fwded = bool(request is not None and request.headers.get("x-pcai-meme-fwd"))
     if not _fwded and not blossom_service.is_enabled(db):
@@ -2039,8 +2134,7 @@ async def meme_talk(data: MemeTalkReq, request: Request, db: Session = Depends(g
     pk = nostr_service.to_pubkey_hex(data.pubkey or "")
     if not pk or not _verify_self_auth(data.auth, pk):
         raise HTTPException(status_code=401, detail="bad auth")
-    from app.services.instance_membership import require_pubkey
-    await require_pubkey(pk)
+    await _require_member_unless_fleet_forward(request, pk)
     # Forwarded job → return bytes, let the requesting node store them (see meme_effect).
     _fwded = bool(request is not None and request.headers.get("x-pcai-meme-fwd"))
     if not _fwded and not blossom_service.is_enabled(db):
@@ -5690,6 +5784,35 @@ async def _meme_store_peer_media(request: "Request", db: Session, body: dict, su
                          "alpha": (r.headers.get("x-pcai-effect-alpha") or "0") == "1"})
 
 
+def _is_fleet_forward(request, header: str = "x-pcai-meme-fwd") -> bool:
+    """Is this a job another node of OUR fleet forwarded here, having already authorized the user?
+
+    The routing header alone proves nothing — anyone can send it — so it counts only alongside the
+    node-to-node shared secret (`lb_auth`, the same proof the image/music/video balancers carry,
+    fail-closed: no secret configured means nothing is trusted)."""
+    try:
+        from app.utils import lb_auth
+        return bool(request is not None and request.headers.get(header)) and lb_auth.is_internal(request)
+    except Exception:
+        return False
+
+
+async def _require_member_unless_fleet_forward(request, pk: str) -> None:
+    """The membership gate for a render route, EXCEPT for a job a fleet peer already gated.
+
+    Re-checking on the peer is what made the render balancer a no-op: membership is THIS node's
+    NIP-05 registry plus its own relay's copy of the profile, and the peer is a different node —
+    so a poster.place member's forwarded render was refused there (403, or 503 when its lookup of a
+    profile it does not hold timed out; measured: nas answered 503 to server1's forward at
+    2026-09-26 15:01:20) and every render quietly ran on the origin node anyway. The user's own
+    signature is still verified on the peer by the caller; only the registry question is skipped,
+    and only for a forward carrying the fleet's shared secret."""
+    if _is_fleet_forward(request):
+        return
+    from app.services.instance_membership import require_pubkey
+    await require_pubkey(pk)
+
+
 async def _meme_lb_forward(request: "Request", subpath: str, body: dict, db: Session | None = None):
     """Node load balancer for meme/effect RENDER jobs: hand the job to a peer (round-robin) and return
     its Response, so renders spread across the fleet instead of piling onto one box (this is the
@@ -5722,7 +5845,10 @@ async def _meme_lb_forward(request: "Request", subpath: str, body: dict, db: Ses
             url = "%s/client/meme/%s" % (peer, subpath)
             try:
                 async with httpx.AsyncClient(timeout=httpx.Timeout(300.0, connect=8.0)) as c:
-                    r = await c.post(url, json=body, headers={"x-pcai-meme-fwd": "1"})
+                    # lb_auth: the proof that lets the peer skip re-checking membership in ITS
+                    # registry (see _require_member_unless_fleet_forward).
+                    from app.utils import lb_auth
+                    r = await c.post(url, json=body, headers=lb_auth.headers({"x-pcai-meme-fwd": "1"}))
                 if r.status_code == 403 or r.status_code >= 500:
                     continue   # A peer may not have the profile yet; verified origin can render locally.
                 logger.info("[meme] render forwarded to %s (%s) -> %d", peer, subpath, r.status_code)
@@ -5773,8 +5899,7 @@ async def meme_render(data: MemeRenderReq, request: Request, db: Session = Depen
     pk = nostr_service.to_pubkey_hex(data.pubkey or "")
     if not pk or not _verify_self_auth(data.auth, pk):
         raise HTTPException(status_code=401, detail="bad auth")
-    from app.services.instance_membership import require_pubkey
-    await require_pubkey(pk)
+    await _require_member_unless_fleet_forward(request, pk)
 
     # Busy-overflow LB: if this node's render queue is full, run the whole project on a peer node and
     # stream its MP4 back — so several memes render across the fleet at once (the ffmpeg analogue of the

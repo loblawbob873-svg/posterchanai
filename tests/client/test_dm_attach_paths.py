@@ -50,11 +50,19 @@ class DmAttachPaths(unittest.TestCase):
     def test_the_file_picker_encrypts_in_both_composers(self):
         """The thread composer AND the new-conversation modal. The modal was missed the first time,
         which meant a FIRST message — the one most likely to carry something private — uploaded in
-        the clear no matter what the lock said."""
+        the clear no matter what the lock said.
+
+        Both now go through ONE upload loop (dmAttachFiles), which is also what a Music track and a
+        synced-folder file go through — so the rule is: each composer calls it, and it obeys the
+        lock. (tests/client/dm_attach_sources_runtime.mjs runs it.)"""
+        loop = re.search(r"async function dmAttachFiles\(inp, files, st\)\{(.*?)\n  \}", self.src, re.S)
+        self.assertTrue(loop, "dmAttachFiles moved — re-point this test")
+        self.assertIn("uploadSharedEnc", loop.group(1), "the shared upload loop never encrypts")
+        self.assertIn("dmEncOn()", loop.group(1), "the shared upload loop does not consult the lock")
         for anchor in ("#dm-file',root).onchange=", "#dm-file').onchange="):
-            h = self._blocks(anchor)[0]
-            self.assertIn("uploadSharedEnc", h, f"{anchor} never encrypts")
-            self.assertIn("dmEncOn()", h, f"{anchor} does not consult the lock")
+            h = self._blocks(anchor, 300)[0]
+            self.assertIn("dmAttachFiles(", h, f"{anchor} bypasses the lock-aware upload loop")
+            self.assertNotIn("uploadBlob(", h, f"{anchor} uploads on its own again")
 
     def test_the_public_post_composer_never_encrypts(self):
         """The same shape of handler backs #cmp-file, and a public note encrypted to nobody is just a
@@ -90,7 +98,7 @@ class DmAttachPaths(unittest.TestCase):
         never uploaded and never met the lock — a plaintext PNG from eleven hours earlier rendered
         perfectly on a client that cannot decrypt anything."""
         self.assertIn("function dmPickMedia(", self.src)
-        body = re.search(r"function dmPickMedia\(inp\)\{(.*?)\n  \}", self.src, re.S).group(1)
+        body = re.search(r"function dmPickMedia\(inp, st\)\{(.*?)\n  \}", self.src, re.S).group(1)
         self.assertIn("encryptExistingUrl", body, "the drive picker must re-upload encrypted")
         self.assertIn("dmEncOn()", body, "the drive picker must consult the lock")
         for site in self._one(r"#dm-files'(?:,root)?\)\.onclick=(\S+)", "the 🌸 buttons"):
@@ -100,13 +108,13 @@ class DmAttachPaths(unittest.TestCase):
     def test_the_drive_picker_admits_the_original_is_still_public(self):
         """Re-uploading encrypted keeps the LINK private; it cannot un-publish the copy already on
         the drive. Implying otherwise is the failure this whole feature is about."""
-        body = re.search(r"function dmPickMedia\(inp\)\{(.*?)\n  \}", self.src, re.S).group(1)
+        body = re.search(r"function dmPickMedia\(inp, st\)\{(.*?)\n  \}", self.src, re.S).group(1)
         self.assertRegex(body, r"still public", "the toast must not imply the original is now private")
 
     def test_already_encrypted_drive_content_is_not_double_wrapped(self):
         """A file from an encrypted folder is master-key ciphertext. Wrapping it again leaves the
         recipient able to peel one layer and holding ciphertext they have no key for."""
-        body = re.search(r"function dmPickMedia\(inp\)\{(.*?)\n  \}", self.src, re.S).group(1)
+        body = re.search(r"function dmPickMedia\(inp, st\)\{(.*?)\n  \}", self.src, re.S).group(1)
         self.assertIn("octet-stream", body)
 
     # --- 🎬 GIFs ----------------------------------------------------------------------------------

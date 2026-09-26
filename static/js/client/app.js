@@ -11918,6 +11918,7 @@
   function openPreviewFile(){ return _lzRun(_filesMod, _filesLoad, 'openPreviewFile', arguments); }
   function openSyncCodeFile(){ return _lzRun(_filesMod, _filesLoad, 'openSyncCodeFile', arguments); }
   function openSyncOfficeFile(){ return _lzRun(_filesMod, _filesLoad, 'openSyncOfficeFile', arguments); }
+  function pickSyncedFile(){ return _lzRun(_filesMod, _filesLoad, 'pickSyncedFile', arguments); }
   function renderBlossom(){ return _lzRun(_filesMod, _filesLoad, 'renderBlossom', arguments, true); }
   function renderOfficeHome(){ return _lzRun(_filesMod, _filesLoad, 'renderOfficeHome', arguments, true); }
   function saveBlobDoc(){ return _lzRun(_filesMod, _filesLoad, 'saveBlobDoc', arguments); }
@@ -12312,8 +12313,60 @@
    *
    * A GIF is somebody else's URL on somebody else's server. There is nothing to encrypt and no
    * honest way to make one private, so the lock says plainly that this one isn't. */
-  function dmPickMedia(inp){
-    return () => blossomPicker(inp, async ({url, type, ext}) => {
+  /* ONE upload loop for every way a file reaches a message — 📎 from the device, a Music track, a
+     file out of a synced folder. The 🔒 choice is read HERE, per file, so no source can quietly
+     skip it; the loop used to be copied into the thread and the new-message dialog separately.
+     Ends with an 'input' event, which is what the preview strip, the draft save and the Send
+     button all hang off (see dmPickMedia). `st` is an optional status line. */
+  async function dmAttachFiles(inp, files, st){
+    const encOn=dmEncOn(); let n=0;
+    for(let i=0;i<files.length;i++){
+      const say=t=>{ if(st) st.textContent=t; else if(t) toast(t); };
+      try{
+        if(encOn || files.length>1) say(`${encOn?'encrypting':'uploading'} ${i+1}/${files.length}…`);
+        const url=encOn ? await uploadSharedEnc(files[i], st) : await uploadBlob(files[i]);
+        inp.value+=(inp.value && !/\s$/.test(inp.value) ? ' ' : '')+url; n++;
+      }catch(err){ say('upload failed: '+((err&&err.message)||err)); if(!st) continue; return n; }
+    }
+    if(st) st.textContent='';
+    inp.dispatchEvent(new Event('input', {bubbles:true}));
+    return n;
+  }
+  /* The 📎 menu, shared by the thread and the new-message dialog so the two cannot drift. */
+  function dmAttachMenu(anchor, inp, fileInput, st){
+    const rows=[['file','📎 File from this device']];
+    if(!_standalone()) rows.push(['synced','🔄 From a synced folder']);
+    if(window.PCWebxdc&&PCWebxdc.attach) rows.push(['webxdc','🎮 Multiplayer mini app']);
+    openMenuPopover(anchor, rows, async a=>{
+      if(a==='file') fileInput.click();
+      else if(a==='webxdc') PCWebxdc.attach(inp);
+      else if(a==='synced'){
+        const f=await pickSyncedFile();
+        if(f){ if(!dmEncOn()) toast('sending a readable copy of '+f.name+' — turn on 🔒 to encrypt it to this conversation');
+               await dmAttachFiles(inp, [f], st); }
+      }
+    });
+  }
+  /* A drive file stored ENCRYPTED (every Music track) is ciphertext under its own key: sent as a
+     link it opens as nothing for the person you sent it to. Decrypt it here and attach the result
+     like a file from the device. */
+  async function _dmDecryptedDriveFile(sha, name, type){
+    const local=await encFileUrl(sha, type);
+    if(!local) throw new Error('it could not be decrypted on this device');
+    const blob=await (await fetch(local)).blob();
+    return new File([blob], name || 'file', { type: type || blob.type || '' });
+  }
+  function dmPickMedia(inp, st){
+    return () => blossomPicker(inp, async ({url, type, ext, sha, enc:isEnc, name}) => {
+      if(isEnc && sha){
+        try{
+          toast('decrypting '+(name||'that file')+'…');
+          const f=await _dmDecryptedDriveFile(sha, name, type);
+          if(!dmEncOn()) toast('sending a readable copy of '+(name||'that file')+' — turn on 🔒 to encrypt it to this conversation');
+          await dmAttachFiles(inp, [f], st);
+        }catch(err){ toast("couldn't attach that file: "+((err&&err.message)||err)); }
+        return;
+      }
       // Dispatch 'input' exactly as the picker's own insert path does. Calling the attachment-strip
       // sync directly instead looks equivalent and isn't: the composer hangs its textarea autogrow,
       // its DRAFT SAVE and the Send button's enabled state off that same event, so a file picked
@@ -12336,6 +12389,10 @@
       }catch(err){
         toast("Couldn't encrypt that file: " + ((err && err.message) || err));
       }
+    }, {
+      /* MUSIC is an encrypted folder, and pickers hide those unless the caller can decrypt what it
+         picks — this one can (above), so the Music folder is offered here too. */
+      allowEncrypted: true,
     });
   }
 
@@ -15095,22 +15152,13 @@
         ac.classList.remove('hidden'); ac.innerHTML=matches.map(p=>`<div class="mention-opt" data-pk="${p.pubkey}"><img src="${enc(p.meta.picture||LOGO)}" onerror="this.src='${LOGO}'"><b>${enc(p.meta.name||p.meta.display_name||'anon')}</b></div>`).join('');
         $$('[data-pk]',ac).forEach(el=> el.onmousedown=ev=>{ ev.preventDefault(); toPk=el.dataset.pk; to.value='@'+((Store.profile(toPk)||{}).name||NT().nip19.npubEncode(toPk).slice(0,12)); ac.classList.add('hidden'); });
       });
-      $('#dm-attach',root).onclick=e=>{
-        const rows=[['file','📎 File']];
-        if(window.PCWebxdc&&PCWebxdc.attach) rows.push(['webxdc','🎮 Multiplayer mini app']);
-        openMenuPopover(e.currentTarget,rows,a=>{ if(a==='file') $('#dm-file',root).click(); else if(a==='webxdc') PCWebxdc.attach(body); });
-      };
+      $('#dm-attach',root).onclick=e=>dmAttachMenu(e.currentTarget, body, $('#dm-file',root), $('#dm-status',root));
       // Honours the same 🔒 preference as an open thread's composer — it is a per-DEVICE choice, and
       // a first message to someone is no less private than the tenth. (Its own toggle would be a
       // second switch for one setting; the thread topbar owns it.)
-      $('#dm-file',root).onchange=async e=>{ const files=[...e.target.files]; const encOn=dmEncOn();
-        for(let i=0;i<files.length;i++){ const st=$('#dm-status',root);
-          st.textContent=`${encOn?'encrypting':'uploading'} ${i+1}/${files.length}…`;
-          try{ const url=encOn ? await uploadSharedEnc(files[i], st) : await uploadBlob(files[i]);
-            body.value+=(body.value?'\n':'')+url; }
-          catch(err){ st.textContent='upload failed: '+err.message; return; } }
-        $('#dm-status',root).textContent=''; _newSync(); };
-      $('#dm-files',root).onclick=dmPickMedia(body);
+      $('#dm-file',root).onchange=async e=>{ const files=[...e.target.files]; e.target.value='';
+        await dmAttachFiles(body, files, $('#dm-status',root)); _newSync(); };
+      $('#dm-files',root).onclick=dmPickMedia(body, $('#dm-status',root));
       { const g=$('#dm-gif',root); if(g) g.onclick=dmPickGif(body); }
       $('#dm-go',root).onclick=async()=>{
         let pk=toPk||safePk(to.value.trim().replace(/^@/,''));
@@ -15173,9 +15221,9 @@
     },
     $, $$, NT, _DM_INIT, _DM_STEP, _applyAutoMuteToView, _decorateDmFileAtts, _dmClock,
     _dmDayLabel, _dmFull, _dmShown, _restoreDmScroll, applyEmojis, attachEmojiAutocomplete,
-    copyValue, decorateEncAtts, decryptMsg, dmEncOn, dmPeers, dmPickGif, dmPickMedia, emojiName,
-    enc, ensureDmInboxList, ingestDM, isMutedAuthor, linkify, needProfile, niceNip05,
-    openMenuPopover, profOf, renderMessages, renderProfileView, sendDm, toast, toggleMute,
+    copyValue, decorateEncAtts, decryptMsg, dmAttachFiles, dmAttachMenu, dmEncOn, dmPeers, dmPickGif,
+    dmPickMedia, emojiName, enc, ensureDmInboxList, ingestDM, isMutedAuthor, linkify, needProfile,
+    niceNip05, openMenuPopover, profOf, renderMessages, renderProfileView, sendDm, toast, toggleMute,
     uploadBlob, uploadSharedEnc, wireImgAttach,
   }; }
   function _dmThreadMod(){ return _lzGet('dmthread.js', 'PCDmThreadFactory', _dmThreadDeps); }

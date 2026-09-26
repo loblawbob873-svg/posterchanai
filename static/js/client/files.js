@@ -3799,10 +3799,101 @@ window.PCFilesFactory = function(dep){
     if(_S.VIEW==='blossom') renderBlossom();
   }
 
+  /* PICK ONE FILE OUT OF A SYNCED FOLDER — AND GET THE FILE, NOT A LINK TO ITS CIPHERTEXT.
+   *
+   * Messages could attach anything from the device and anything public on the drive, and nothing
+   * from a synced folder: those files are per-path records whose bytes are sealed Blossom blobs
+   * (whole, or a chunk list for anything over 16 MB), so there is no URL a recipient could open.
+   * This walks the same account-wide pair list, manifest and decrypting fetch the Files screen uses
+   * (`_adoptSyncPairs`/`_ensureSyncPairs`, `_syncManifest`/`_syncEntries`, `_syncFileBlob`) and
+   * resolves to a plain File, which the caller then attaches exactly as if it had been picked off
+   * the device — so the conversation's 🔒 choice applies to it like to anything else.
+   *
+   * A SUB-modal of its own, like blossomPicker, because it is opened from inside another modal (the
+   * new-message dialog) and `modal()` would replace that. Resolves null on cancel. */
+  const _SYNC_PICK_MAX = 512 * 1024 * 1024;
+  function pickSyncedFile(){
+    return new Promise(resolve => {
+      const bg = document.createElement('div'); bg.className = 'modal-bg modal-sub sp-picker-bg';
+      bg.innerHTML = `<div class="modal glass neon-border bp-modal sp-picker" role="dialog" aria-label="Choose a file from a synced folder">
+        <div class="bp-head sp-head"><button type="button" class="mini sp-up" aria-label="Back" hidden>←</button>
+          <h3 class="sp-title">🔄 Synced folders</h3><span class="spacer"></span>
+          <button type="button" class="mini sp-close" aria-label="Cancel">×</button></div>
+        <div class="sp-list"><div class="spinner"></div></div></div>`;
+      let done = false;
+      const onKey = e => { if(e.key === 'Escape'){ e.preventDefault(); e.stopPropagation(); finish(null); } };
+      const finish = v => {
+        if(done) return; done = true;
+        document.removeEventListener('keydown', onKey, true);
+        bg.remove();
+        const root = $('#modal-root'); if(!root || !root.children.length) document.body.classList.remove('modal-open');
+        resolve(v);
+      };
+      document.addEventListener('keydown', onKey, true);
+      bg.onclick = e => { if(e.target === bg) finish(null); };
+      $('#modal-root').appendChild(bg); document.body.classList.add('modal-open');
+      bg.querySelector('.sp-close').onclick = () => finish(null);
+      const list = bg.querySelector('.sp-list'), title = bg.querySelector('.sp-title'), up = bg.querySelector('.sp-up');
+      let root = '', path = '';
+      const row = (ic, label, sub, attr) => `<button type="button" class="sp-row" ${attr}><span class="sp-ic" aria-hidden="true">${ic}</span>`
+        + `<span class="sp-name">${enc(label)}</span><span class="sp-sub muted small">${sub}</span></button>`;
+      const byName = (a, b) => String(a.name).localeCompare(String(b.name), undefined, { numeric:true, sensitivity:'base' });
+      const showFolders = async () => {
+        root = ''; path = ''; up.hidden = true; title.textContent = '🔄 Synced folders';
+        _adoptSyncPairs();          // every open: sync.js's current list, not whatever was cached first
+        if(!Array.isArray(_syncPairs)){
+          list.innerHTML = '<div class="spinner"></div>';
+          try{ await _ensureSyncPairs(); }catch(_){}
+          if(done) return;
+        }
+        const pairs = Array.isArray(_syncPairs) ? _syncPairs : null;
+        if(!pairs){ list.innerHTML = '<div class="empty">Your synced folders couldn’t be loaded just now.</div>'; return; }
+        if(!pairs.length){ list.innerHTML = '<div class="empty">No synced folders on this account — set one up in Folder Sync.</div>'; return; }
+        list.innerHTML = pairs.map(f => row('📁', f.key, Number.isFinite(f.n) ? `${f.n} file${f.n===1?'':'s'}` : '',
+                                           `data-root="${enc(f.key)}"`)).join('');
+        list.querySelectorAll('[data-root]').forEach(b => b.onclick = () => { root = b.dataset.root; path = ''; showDir(); });
+        const first = list.querySelector('.sp-row'); if(first) first.focus();
+      };
+      const showDir = async () => {
+        up.hidden = false; title.textContent = '🔄 ' + root + (path ? ' / ' + path : '');
+        list.innerHTML = '<div class="spinner"></div>';
+        let paths;
+        try{ paths = await _syncManifest(root); }
+        catch(e){ if(!done) list.innerHTML = '<div class="empty">Couldn’t read “' + enc(root) + '” (' + enc((e && e.message) || e) + ').</div>'; return; }
+        if(done) return;
+        const { dirs, files } = _syncEntries(paths, path);
+        dirs.sort(byName); files.sort(byName);
+        if(!dirs.length && !files.length){ list.innerHTML = '<div class="empty">“' + enc(path || root) + '” is empty.</div>'; return; }
+        list.innerHTML = dirs.map(d => row('📁', d.name, `${d.n} file${d.n===1?'':'s'}`, `data-dir="${enc(d.name)}"`)).join('')
+          + files.map((f, i) => row('📄', f.name, _fmtBytes(f.size || 0), `data-file="${i}"`)).join('');
+        list.querySelectorAll('[data-dir]').forEach(b => b.onclick = () => { path = path ? path + '/' + b.dataset.dir : b.dataset.dir; showDir(); });
+        list.querySelectorAll('[data-file]').forEach(b => b.onclick = async () => {
+          const f = files[+b.dataset.file];
+          if(!f) return;
+          if(!f.sha && !(f.chunks && f.chunks.length)){ toast('that file has not finished syncing yet'); return; }
+          if((f.size || 0) > _SYNC_PICK_MAX){ toast('that file is too big to attach (' + _fmtBytes(f.size) + ' — 512 MB max)'); return; }
+          const sub = b.querySelector('.sp-sub'); if(sub) sub.textContent = 'fetching…';
+          list.querySelectorAll('.sp-row').forEach(x => x.disabled = true);
+          try{
+            const blob = await _syncFileBlob(f.sha, f.chunks, f.name);
+            finish(new File([blob], f.name, { type: blob.type || mimeForName(f.name) || '' }));
+          }catch(e){
+            if(done) return;
+            list.querySelectorAll('.sp-row').forEach(x => x.disabled = false);
+            if(sub) sub.textContent = _fmtBytes(f.size || 0);
+            toast('couldn’t fetch ' + f.name + ': ' + ((e && e.message) || e));
+          }
+        });
+        const first = list.querySelector('.sp-row'); if(first) first.focus();
+      };
+      up.onclick = () => { if(!path) showFolders(); else { path = path.includes('/') ? path.slice(0, path.lastIndexOf('/')) : ''; showDir(); } };
+      showFolders();
+    });
+  }
   return {
     _blobAlreadyStored, _driveDecrypt, _filesSelBar, _officeSession, _openFromCommandLine,
     _openHostFile, _openWithSheet, _syncBlobBytes, _walkEntries, encFileUrl, openCodeFile,
-    openOfficeFile, openPreviewFile, openSyncCodeFile, openSyncOfficeFile, renderBlossom,
+    openOfficeFile, openPreviewFile, openSyncCodeFile, openSyncOfficeFile, pickSyncedFile, renderBlossom,
     renderOfficeHome, saveBlobDoc, uploadEncFile,
   };
 };

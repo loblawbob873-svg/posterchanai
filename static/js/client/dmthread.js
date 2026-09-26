@@ -15,9 +15,9 @@ window.PCDmThreadFactory = function(dep){
   const {
     $, $$, NT, _DM_INIT, _DM_STEP, _applyAutoMuteToView, _decorateDmFileAtts, _dmClock,
     _dmDayLabel, _dmFull, _dmShown, _restoreDmScroll, applyEmojis, attachEmojiAutocomplete,
-    copyValue, decorateEncAtts, decryptMsg, dmEncOn, dmPeers, dmPickGif, dmPickMedia, emojiName,
-    enc, ensureDmInboxList, ingestDM, isMutedAuthor, linkify, needProfile, niceNip05,
-    openMenuPopover, profOf, renderMessages, renderProfileView, sendDm, toast, toggleMute,
+    copyValue, decorateEncAtts, decryptMsg, dmAttachFiles, dmAttachMenu, dmEncOn, dmPeers, dmPickGif,
+    dmPickMedia, emojiName, enc, ensureDmInboxList, ingestDM, isMutedAuthor, linkify, needProfile,
+    niceNip05, openMenuPopover, profOf, renderMessages, renderProfileView, sendDm, toast, toggleMute,
     uploadBlob, uploadSharedEnc, wireImgAttach,
   } = dep;
   // Coalesce a STORM of incoming-message renders into ONE every 350ms. On load, the NIP-17 sub replays
@@ -274,11 +274,7 @@ window.PCDmThreadFactory = function(dep){
     const _syncAtts = wireImgAttach(inp, $('#dm-atts'), {enc:true});
     decorateEncAtts($('#dm-msgs'));   // first paint of this thread
     _decorateDmFileAtts($('#dm-msgs'));
-    $('#dm-attach').onclick=e=>{
-      const rows=[['file','📎 File']];
-      if(window.PCWebxdc&&PCWebxdc.attach) rows.push(['webxdc','🎮 Multiplayer mini app']);
-      openMenuPopover(e.currentTarget,rows,a=>{ if(a==='file') $('#dm-file').click(); else if(a==='webxdc') PCWebxdc.attach(inp); });
-    };
+    $('#dm-attach').onclick=e=>dmAttachMenu(e.currentTarget, inp, $('#dm-file'));
     // 🔒 is opt-in and OFF by default: an encrypted file is unreadable to anyone not running this
     // client, so it can't be the silent default for a conversation with a Damus user. Remembered per
     // device (not per thread) — someone who encrypts once usually means it.
@@ -295,12 +291,8 @@ window.PCDmThreadFactory = function(dep){
       if(lk) lk.onclick=()=>{ ClientSettings.set('dmEncryptAtts', !dmEncOn()); paint();
         toast(dmEncOn() ? '🔒 Attachments will be encrypted' : '🔓 Attachments upload readable'); };
       paint(); }
-    $('#dm-file').onchange=async e=>{ const files=[...e.target.files]; const encOn=dmEncOn();
-      for(let i=0;i<files.length;i++){ try{
-        if(encOn) toast('encrypting '+(i+1)+'/'+files.length+'…');
-        const url=encOn ? await uploadSharedEnc(files[i]) : await uploadBlob(files[i]);
-        inp.value+=(inp.value&&!/\s$/.test(inp.value)?' ':'')+url; }catch(err){ toast('upload failed: '+((err&&err.message)||err)); } }
-      e.target.value=''; _syncAtts(); inp.focus(); };
+    $('#dm-file').onchange=async e=>{ const files=[...e.target.files]; e.target.value='';
+      await dmAttachFiles(inp, files); _syncAtts(); inp.focus(); };
     $('#dm-files').onclick=dmPickMedia(inp);
     { const g=$('#dm-gif'); if(g) g.onclick=dmPickGif(inp); }
     let _dmSending=false;

@@ -39,9 +39,14 @@ def test_dm_body_renders_the_standard_passive_webxdc_card():
 
 
 def test_both_dm_composers_offer_mini_apps_inside_attach_menu():
-    assert APP.count("['webxdc','🎮 Multiplayer mini app']") == 2
-    assert "PCWebxdc.attach(inp)" in APP
-    assert "PCWebxdc.attach(body)" in APP
+    # ONE 📎 menu (dmAttachMenu) serves the thread and the new-message dialog, so they cannot drift;
+    # each composer hands it its own text box, which is what the mini app attaches into.
+    assert APP.count("['webxdc','🎮 Multiplayer mini app']") == 1
+    menu = APP[APP.index("function dmAttachMenu(anchor, inp, fileInput, st){"):]
+    menu = menu[:menu.index("\n  }\n")]
+    assert "PCWebxdc.attach(inp)" in menu
+    assert "$('#dm-attach').onclick=e=>dmAttachMenu(e.currentTarget, inp," in APP
+    assert "$('#dm-attach',root).onclick=e=>dmAttachMenu(e.currentTarget, body," in APP
     # Do not consume another permanent mobile composer column for this action.
     assert 'id="dm-webxdc"' not in APP
 

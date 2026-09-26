@@ -19,10 +19,20 @@ class PublicWorkMiddleware:
         '/client/compose-from-url': 128 * 1024,
         '/client/hashtags': 128 * 1024,
     }
+    # Paths with their OWN concurrency pool instead of the shared 2. Video compression is the one helper
+    # that can hand work to another node (client.py: _compress_lb_forward), which only happens when this
+    # node's two encoder slots are FULL — and a shared cap of 2 refused the third upload with a 429
+    # before the balancer could ever see it. Its own pool also stops two videos from locking translate,
+    # speech-to-text and narrate out of the whole node.
+    POOLS = {
+        '/client/media/compress-video': 4,
+    }
+    SHARED_CAP = 2
 
     def __init__(self, app):
         self.app = app
         self.active = 0
+        self.pool_active = {}
         self.windows = {}
 
     async def __call__(self, scope, receive, send):
@@ -38,7 +48,9 @@ class PublicWorkMiddleware:
                 del self.windows[key]
         address = (scope.get('client') or ('unknown',))[0]
         queue = self.windows.get(address, deque())
-        if self.active >= 2 or len(queue) >= 60 or (address not in self.windows and len(self.windows) >= 4096):
+        pool = self.POOLS.get(path)
+        busy = (self.pool_active.get(path, 0) >= pool) if pool else (self.active >= self.SHARED_CAP)
+        if busy or len(queue) >= 60 or (address not in self.windows and len(self.windows) >= 4096):
             return await JSONResponse({'detail': 'Helper capacity reached; retry shortly'}, status_code=429,
                 headers={'Retry-After': '5', 'Cache-Control': 'no-store'})(scope, receive, send)
         queue.append(now)
@@ -52,12 +64,18 @@ class PublicWorkMiddleware:
                 if total > self.LIMITS[path]:
                     raise HTTPException(status_code=413, detail='Helper upload too large')
             return message
-        self.active += 1
+        if pool:
+            self.pool_active[path] = self.pool_active.get(path, 0) + 1
+        else:
+            self.active += 1
         async def work():
             try:
                 await self.app(scope, bounded_receive, send)
             finally:
-                self.active -= 1
+                if pool:
+                    self.pool_active[path] -= 1
+                else:
+                    self.active -= 1
         task = asyncio.create_task(work())
         task.add_done_callback(lambda done: None if done.cancelled() else done.exception())
         # A disconnected client must not free its capacity while an encoder/thread
