@@ -7,6 +7,9 @@
 <a href="https://poster.place"><img src="docs/promo/posterchan-client.webp" alt="PosterChan — more than a Nostr client: Nostr and the fediverse in one timeline (you are @you@poster.place on Mastodon too), full Desktop or Classic view, encrypted drive and folder sync, password manager, Notes over Nostr, calendar and contacts, Monero and Lightning zaps, calls, mini-app games, Android phone mode" width="49%" /></a>
 <a href="#quick-start-backend-and-web-ui"><img src="docs/promo/posterchan-selfhost.webp" alt="Run your own node — relay, Blossom and NIP-05; a native ActivityPub server (@name@yourdomain on the fediverse); Jellyfin-compatible media server; Git over Nostr; virtual machines; local AI; office suite; live streaming; PosterChanOS" width="49%" /></a>
 
+<a href="#posterchanos"><img src="https://media.poster.place/c4ff3966bd6490cc759360a68340cce155a2e0f77230c72fb5ec513c233b1c3f.png" alt="The PosterChanOS desktop" width="98%" /></a>
+<br /><sub><b>PosterChanOS</b> — the Nostr-native desktop operating system</sub>
+
 ### A Nostr-powered personal cloud, Jellyfin-compatible media server, and self-hosted AI powerhouse — on your hardware, under your keys.
 
 **Replace the cloud, then put a GPU behind it.** Your notes, calendar, contacts, addressbook, files, photos, passwords, bookmarks, mail, music and folder sync — all of it living as **encrypted Nostr events on a relay you run**, reachable from a web client, a desktop app, an Android app, and from any CalDAV/CardDAV phone client you already own. No account with anybody, no per-seat billing, no vendor holding the keys.
