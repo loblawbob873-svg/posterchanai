@@ -68,10 +68,27 @@ class MusicInTheBuilder(unittest.TestCase):
         self.assertIn("m.enc && !opts.allowEncrypted", self.app,
                       "encrypted blobs are still filtered out regardless of the caller's opt-in")
 
-    def test_every_other_caller_is_unchanged(self):
-        """A composer publishes a URL; it must never be handed ciphertext nobody else can fetch."""
-        self.assertNotIn("allowEncrypted: true", self.app,
-                         "something in app.js opted a URL-publishing caller into encrypted files")
+    def test_every_caller_that_opts_in_decrypts_before_it_publishes(self):
+        """A composer publishes a URL; it must never be handed ciphertext nobody else can fetch.
+
+        This used to assert that NOTHING in app.js opts in. Messages now does (Music in a DM) — and
+        is allowed to for exactly the builder's reason: it decrypts the pick into a file and attaches
+        THAT, returning before any URL is inserted. So the rule is checked per caller rather than as
+        "nobody": every function passing `allowEncrypted: true` must branch on the encrypted flag,
+        decrypt, and return from that branch."""
+        opted = [m.start() for m in re.finditer(r"allowEncrypted:\s*true", self.app)]
+        for at in opted:
+            start = self.app.rfind("\n  function ", 0, at)
+            start2 = self.app.rfind("\n  async function ", 0, at)
+            fn = self.app[max(start, start2):at]
+            name = re.match(r"\s*(?:async )?function (\w+)", fn)
+            name = name.group(1) if name else "?"
+            branch = re.search(r"if\(\s*\w*[eE]nc\w*\s*&&\s*sha\s*\)\{(.*?)\n      \}", fn, re.S)
+            self.assertTrue(branch, f"{name} opts into encrypted files but never branches on the encrypted flag")
+            self.assertRegex(branch.group(1), r"encFileUrl|_dmDecryptedDriveFile",
+                             f"{name} would publish ciphertext: its encrypted branch never decrypts")
+            self.assertIn("return", branch.group(1),
+                          f"{name}'s encrypted branch falls through to inserting the ciphertext URL")
 
     def test_a_picked_track_is_made_fetchable_before_it_becomes_a_layer(self):
         """The server fetches layers[].src, so a blob: URL previews and then fails at render."""
