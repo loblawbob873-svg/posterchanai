@@ -433,6 +433,17 @@ def _build_env(bot_dict: dict, base_env: dict) -> dict:
             setif("nostr_random_reply", "NOSTR_RANDOM_REPLY")
             setif("nostr_random_reply_quiet", "NOSTR_RANDOM_REPLY_QUIET")
             setif("nostr_random_reply_per_hour", "NOSTR_RANDOM_REPLY_PER_HOUR")
+            # Talking replies: the bot sends text to /api/bots/talk and posts the clip it gets back.
+            # Its credential is scoped to rendering as THIS bot (talkbot_service.token).
+            if bot_dict.get("talk_enabled") and bot_dict.get("talk_face_sha") and bot_dict.get("talk_voice_sha"):
+                try:
+                    from app.services import talkbot_service
+                    env["NOSTR_TALK"] = "1"
+                    env["NOSTR_TALK_BOT"] = str(bot_dict.get("name") or "")
+                    env["NOSTR_TALK_TOKEN"] = talkbot_service.token(str(bot_dict.get("name") or ""))
+                    setif("talk_max_words", "NOSTR_TALK_MAX_WORDS")
+                except Exception as e:
+                    logger.warning("[BOTS] talking replies not enabled for %s: %s", bot_dict.get("name"), e)
             # Reply listener is opt-in: Admin → Bots "reply" maps to `--nostr` in `modes` (admin-bots.js).
             # When it's UNCHECKED, modes is empty and _cmd_for still defaults to `--nostr` so a stats /
             # identity bot goes live + publishes kind-0 — but it must NOT reply to mentions. Flag that

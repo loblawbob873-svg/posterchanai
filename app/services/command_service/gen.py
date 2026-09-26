@@ -273,13 +273,11 @@ class _GenMixin:
         the "no clip attached" case alone, so a caller that also wanted a PICTURE can say what it
         actually needs without swallowing the specific reason a clip that WAS attached failed.
 
-        Shared by `voice` and `talk` so the two cannot drift on what counts as a reference, what the
-        cap is, or how a bad clip is worded.
+        Shared by `voice` and `talk` (and, through voice_reference.normalize_reference, the talking
+        reply bot) so they cannot drift on what counts as a reference, what the cap is, or how a bad
+        clip is worded.
         """
-        import asyncio as _asyncio
-        import os
-
-        from app.services import media_service, settings_store
+        from app.services import media_service
 
         # A VIDEO is fine — ffmpeg pulls the track out below, which is what makes "reply to a clip
         # with `voice ...`" work without the user converting anything first.
@@ -294,29 +292,8 @@ class _GenMixin:
             return None, None, (missing_msg
                                 or "That attachment has no audio in it — I need a clip of the voice.")
 
-        # The upload keeps its own filename, so it goes in a SUBDIRECTORY: written beside the
-        # output, an attachment that happens to be called `ref.wav` IS the output path, and ffmpeg
-        # refuses ("cannot edit existing files in-place") on a clip that is otherwise perfect.
-        in_dir = os.path.join(tmp_dir, "in")
-        os.makedirs(in_dir, exist_ok=True)
-        src = os.path.join(in_dir, os.path.basename(ref[0] or "ref"))
-        with open(src, "wb") as f:
-            f.write(ref[1])
-        # Normalise to what the model wants: mono 24kHz WAV, trimmed to the reference cap. A long
-        # reference buys nothing (the model uses a few seconds) and costs upload + memory on every
-        # forwarded request, so the cap is enforced HERE, once, before any of that.
-        max_ref = int(float(settings_store.get("voice_max_ref_seconds", "30") or 30))
-        wav_path = os.path.join(tmp_dir, "ref.wav")
-        ff = media_service.resolve_ffmpeg()
-        proc = await _asyncio.create_subprocess_exec(
-            ff, "-y", "-i", src, "-t", str(max_ref), "-ar", "24000", "-ac", "1", wav_path,
-            stdout=_asyncio.subprocess.DEVNULL, stderr=_asyncio.subprocess.PIPE)
-        _, err = await proc.communicate()
-        if proc.returncode != 0 or not os.path.exists(wav_path):
-            return None, None, ("Couldn't read any audio out of that clip: "
-                                + err[-200:].decode("utf-8", "replace"))
-        with open(wav_path, "rb") as f:
-            return wav_path, f.read(), None
+        from app.services.voice_reference import normalize_reference
+        return await normalize_reference(ref[1], ref[0], tmp_dir)
 
     async def _voice_command(self, arg: str, attachments: Optional[list] = None) -> dict:
         """Speak text in a CLONED voice. `voice <text>` with a short clip of the voice attached.

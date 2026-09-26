@@ -287,6 +287,8 @@ app.include_router(vmhost_router.router)     # /api/admin/vmhost/status
 app.include_router(vmhost_router.ws_router)  # /ws/vmconsole — noVNC behind a ticket obtained over Nostr
 app.include_router(youtube_thumb.router)
 app.include_router(bots.router)
+from app.routers import bot_talk as _bot_talk   # talking replies: a bot's text -> its talking-face clip
+app.include_router(_bot_talk.router)
 app.include_router(calls.router)  # /api/calls/turn-credentials (ICE config for voice/video calls)
 app.include_router(streams.router)  # /api/streams/* (OBS streaming: MediaMTX auth hook, ingest info, HLS proxy)
 app.include_router(git_router.router)  # /api/git/* (GRASP git host: provision/list/announce; 404 unless git_server_enabled)

@@ -349,6 +349,84 @@ async def upload_bot_avatar(payload: AvatarPayload, db: Session = Depends(get_db
         raise HTTPException(status_code=500, detail=f"upload failed: {e}")
 
 
+class TalkAssetPayload(BaseModel):
+    bot_id: Optional[int] = None     # existing bot → its stored nsec owns the asset
+    nsec: Optional[str] = ""         # a bot being created → the just-minted nsec
+    data: str = ""                   # data: URL / base64
+    filename: str = ""
+
+
+class TalkPreviewPayload(BaseModel):
+    face_sha: str = ""
+    voice_sha: str = ""
+    mouth: Optional[Dict[str, Any]] = None
+    text: str = "Hello! This is how I sound."
+
+
+def _payload_nsec(db: Session, bot_id, nsec) -> str:
+    nsec = (nsec or "").strip()
+    if not nsec and bot_id is not None:
+        bot = db.query(Bot).filter(Bot.id == bot_id).first()
+        if bot:
+            try:
+                nsec = (json.loads(bot.config or "{}")).get("nostr_nsec", "")
+            except (ValueError, TypeError):
+                nsec = ""
+    if not nsec:
+        raise HTTPException(status_code=400, detail="no bot key (generate an identity or save the bot first)")
+    return nsec
+
+
+def _payload_bytes(raw: str) -> bytes:
+    import base64 as _b64
+    raw = (raw or "").strip()
+    if raw.startswith("data:"):
+        raw = raw.partition(",")[2]
+    try:
+        return _b64.b64decode(raw)
+    except Exception:
+        raise HTTPException(status_code=400, detail="could not read the uploaded file")
+
+
+# ---- talking replies (app/services/talkbot_service.py) ----------------------------------------
+@router.post("/talk/face")
+async def upload_talk_face(payload: TalkAssetPayload, db: Session = Depends(get_db),
+                           admin: User = Depends(get_admin_user)):
+    """Store the face a talking bot speaks with; answer where the mouth appears to be."""
+    from app.services import talkbot_service
+    try:
+        return await talkbot_service.save_face(db, _payload_nsec(db, payload.bot_id, payload.nsec),
+                                               _payload_bytes(payload.data))
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+@router.post("/talk/voice")
+async def upload_talk_voice(payload: TalkAssetPayload, db: Session = Depends(get_db),
+                            admin: User = Depends(get_admin_user)):
+    """Store the voice a talking bot speaks in (normalised once, here)."""
+    from app.services import talkbot_service
+    try:
+        return await talkbot_service.save_voice(db, _payload_nsec(db, payload.bot_id, payload.nsec),
+                                                _payload_bytes(payload.data), payload.filename)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+@router.post("/talk/preview")
+async def talk_preview(payload: TalkPreviewPayload, db: Session = Depends(get_db),
+                       admin: User = Depends(get_admin_user)):
+    """Render one line with the settings in the form (saved or not) — what a reply will look like."""
+    from fastapi.responses import Response
+    from app.services import talkbot_service
+    try:
+        clip = await talkbot_service.render(db, payload.face_sha, payload.voice_sha, payload.mouth,
+                                            payload.text or "Hello!")
+    except RuntimeError as e:
+        raise HTTPException(status_code=503, detail=str(e))
+    return Response(content=clip, media_type="video/mp4")
+
+
 def _concord_default(modes: str, config: dict) -> str:
     """A bot CREATED with a room invite gets the listener, unless its modes already decided.
 
