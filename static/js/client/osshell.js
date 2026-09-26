@@ -676,11 +676,27 @@
        * the current button by its stable action before measuring it. */
       if(!anchor.isConnected || !anchor.offsetWidth){
         const key = _popAnchorKey || (anchor.dataset && anchor.dataset.os) || '';
-        const fresh = key && document.querySelector(`[data-os="${CSS.escape(key)}"]`);
+        /* BY ID AS WELL. The start menu's Power button anchors on #os-start, which has no data-os —
+         * and the pc:act tick that delivers the press redraws the taskbar, so by the time the panel
+         * is placed the button it was handed is a detached copy. With nothing to re-find it by, this
+         * returned without placing the panel at all and it painted BELOW the screen (measured on the
+         * laptop: y = 1080 of 1080) — "the power button on the start menu does nothing". */
+        const fresh = (key && document.querySelector(`[data-os="${CSS.escape(key)}"]`))
+          || (anchor.id && document.getElementById(anchor.id));
         if(fresh){ anchor = fresh; _popAnchor = fresh; }
       }
       const r = anchor.getBoundingClientRect();
-      if(!anchor.isConnected || r.width <= 0 || r.height <= 0) return;
+      if(!anchor.isConnected || r.width <= 0 || r.height <= 0){
+        /* Still nothing to measure: put it where a taskbar panel belongs rather than nowhere. A
+         * panel that opens off-screen is indistinguishable from a button that does nothing. */
+        const bar = document.getElementById('os-bar');
+        const bh = bar ? bar.getBoundingClientRect().height : 48;
+        d.style.left = '8px';
+        d.style.top = Math.max(8, window.innerHeight - bh - (d.offsetHeight || 200) - 10) + 'px';
+        d.style.maxHeight = Math.max(160, window.innerHeight - bh - 16) + 'px';
+        d.style.overflowY = 'auto';
+        return;
+      }
       const w = d.offsetWidth || 280, h = d.offsetHeight || 200;
       const zf = (anchor.offsetWidth > 0 && r.width > 0) ? (r.width / anchor.offsetWidth) : 1;
       const L = r.left / zf, T = r.top / zf, W = r.width / zf;

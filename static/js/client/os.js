@@ -8532,11 +8532,17 @@
     const b = (kind, icon, label, id) => `<button class="os-foot-btn" data-foot="${kind}"${id ? ` id="${id}"` : ''}`
       + ` title="${enc(label)}" aria-label="${enc(label)}"><svg class="ic" aria-hidden="true"><use href="#${icon}"></use></svg></button>`;
     const full = isFull();
+    /* WHERE THIS IS THE MACHINE'S DESKTOP (pcPower -- the same test that offers Power), Full screen
+     * and Classic are not offered. Full screen reached the desktop as a tick, which is not a user
+     * gesture, so requestFullscreen refused it -- and the shell already fills the output, so there
+     * was nothing to enlarge: measured on the laptop, three states identical, a dead button.
+     * Classic would take the desktop down and leave the machine with no taskbar at all. */
+    const machine = !!window.pcPower;
     return `<div class="os-foot-acts">`
       + b('settings', 'i-gear', 'Settings')
-      + (window.pcPower ? b('power', 'i-power', 'Power') : '')
-      + b('full', full ? 'i-minimize' : 'i-expand', full ? 'Leave full screen (F11)' : 'Full screen (F11)', 'os-full')
-      + b('classic', 'i-layout', 'Classic layout -- leave the desktop', 'os-exit')
+      + (machine ? b('power', 'i-power', 'Power') : '')
+      + (machine ? '' : b('full', full ? 'i-minimize' : 'i-expand', full ? 'Leave full screen (F11)' : 'Full screen (F11)', 'os-full'))
+      + (machine ? '' : b('classic', 'i-layout', 'Classic layout -- leave the desktop', 'os-exit'))
       + b('logout', 'i-logout', 'Log out')
       + `</div>`;
   }
