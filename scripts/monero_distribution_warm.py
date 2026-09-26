@@ -3,26 +3,27 @@
 
 Every transaction a wallet builds starts with `/get_output_distribution.bin` for amount 0 over the WHOLE
 chain (`from_height 0`, `to_height 0` = the tip) — the decoy selection needs it. monerod answers that from
-a cache in `rpc::RpcHandler::get_output_distribution` (src/rpc/rpc_handler.cpp), and the cache is ONE
-slot: every amount-0 answer overwrites it, whatever its range. The wallet then makes a SECOND amount-0
-request in the same transaction — the pre-fork segregation range (`from ≈ fork - recent`,
-`to = fork + 1`, wallet2.cpp `get_outs`) — which overwrites the slot with a range nobody asks for again.
+a cache in `rpc::RpcHandler::get_output_distribution` (src/rpc/rpc_handler.cpp): ONE slot, kept IN MEMORY,
+extended cheaply block by block — and empty after every monerod restart, replaced by any amount-0 request
+with a different range, and dropped by a reorg deeper than the 10 blocks it can rewind.
 
-So the NEXT spend misses and monerod rebuilds the distribution from block 0, walking the block table of a
-271 GB LMDB under a lock every other RPC call waits on. Measured on nas.lan (2026-09-25):
+Whatever request finds it empty rebuilds it from block 0, walking the block table of a 271 GB LMDB under
+a lock every other RPC waits on. Measured on nas.lan (2026-09-25):
 
     full distribution, cached           0.04 s
-    after one segregation-range call   14.2 s   (pages still warm)
-    cold, after a monerod restart       ~5 min  (a zap: prepare OK, then "check your history";
-                                                  the wallet timed out and built nothing)
+    rebuild, chain pages still in RAM  14 s
+    rebuild, cold                      ~5 min  (monerod answers NOTHING meanwhile)
 
-How long that takes depends on what the page cache happens to hold at the moment somebody presses Send,
-which is why it was "perfectly fine" for weeks and then was not.
+That night's zap was the first spend since monerod restarted on 09-24: prepare OK, then "check your
+history" — the wallet timed out and built nothing. (Measured the same night, with a logging proxy between
+a wallet RPC and monerod: an ordinary transfer asks for the full-chain distribution only, both times a
+cache hit, so a normal spend does NOT evict it — the wallet's pre-fork segregation request is not made on
+this path, and turning those wallet settings off would change nothing.)
 
-This asks for exactly the wallet's full-chain request every INTERVAL seconds. While the slot holds it,
-that is a cache hit (the 0.04 s above — a block arriving only EXTENDS it). After a spend has evicted it,
-this pays the rebuild within INTERVAL seconds, off the path of anybody waiting, and keeps the pages it
-reads hot. It changes nothing a wallet does and holds no state: stop it and behaviour is exactly as before.
+This asks for exactly the wallet's full-chain request every INTERVAL seconds, starting with monerod.
+While the slot holds it, that is a cache hit (the 0.04 s above — a block arriving only EXTENDS it). After a
+restart, a deep reorg or an odd request from an outside wallet on the public node has emptied it, this pays
+the rebuild within INTERVAL seconds, so no spend is ever the first request. It changes nothing a wallet does and holds no state: stop it and behaviour is exactly as before.
 """
 import json, os, re, sys, time, urllib.request
 

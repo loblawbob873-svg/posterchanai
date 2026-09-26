@@ -1,11 +1,11 @@
 """A spend must not be the request that rebuilds monerod's output distribution.
 
 The fake daemon below is a port of the cache in monerod's rpc::RpcHandler::get_output_distribution
-(src/rpc/rpc_handler.cpp, v0.18): ONE slot keyed on (amount 0, from_height, to_height), overwritten by
-every amount-0 answer, `to_height 0` read as the tip. A wallet's transaction makes the full-chain request
-and then the pre-fork segregation request (wallet2.cpp get_outs), so the slot ends every spend holding
-the wrong range. Measured on nas.lan: 0.04 s cached, 14 s after that eviction, ~5 min cold — a zap that
-timed out and built nothing (2026-09-25).
+(src/rpc/rpc_handler.cpp, v0.18): ONE in-memory slot keyed on (amount 0, from_height, to_height), replaced
+by every amount-0 answer, `to_height 0` read as the tip, EMPTY after a restart. A wallet's transfer asks for
+the full chain (measured through a logging proxy on nas.lan: two .bin requests, both that key). Measured:
+0.04 s cached, 14 s warm rebuild, ~5 min cold — the first zap after a monerod restart timed out and built
+nothing (2026-09-25).
 """
 import importlib.util, json, pathlib, threading
 from http.server import BaseHTTPRequestHandler, HTTPServer
@@ -17,10 +17,11 @@ _spec.loader.exec_module(warm)
 
 TIP = 3770613
 FORK = 1546000
-#: The two amount-0 requests wallet2 makes while building ONE transaction.
+#: What wallet2 asks while building a transaction (get_rct_distribution).
 WALLET_FULL = {"amounts": [0], "from_height": 0, "to_height": 0, "binary": True, "compress": True}
-WALLET_SEGREGATION = {"amounts": [0], "from_height": FORK - 4765, "to_height": FORK + 1,
-                      "cumulative": True, "binary": True}
+#: Any OTHER amount-0 range — an outside wallet on the public node — replaces the slot.
+FOREIGN_RANGE = {"amounts": [0], "from_height": FORK - 4765, "to_height": FORK + 1,
+                 "cumulative": True, "binary": True}
 
 
 class FakeMonerod:
@@ -39,10 +40,12 @@ class FakeMonerod:
         self.slot = key            # every amount-0 answer overwrites the slot
         return {"status": "OK", "distributions": [{"amount": 0}]}
 
+    def restart(self):
+        self.slot = None
+
     def spend(self):
-        """What one wallet transaction asks, in order."""
+        """The distribution request one wallet transaction makes."""
         self.distribution(WALLET_FULL)
-        self.distribution(WALLET_SEGREGATION)
 
     def serve(self):
         daemon = self
@@ -72,26 +75,36 @@ class FakeMonerod:
 FULL_KEY = (0, TIP - 1)
 
 
-def test_without_the_warmer_every_spend_after_the_first_rebuilds_from_block_zero():
-    """The failure, reproduced: this is what a zap paid on nas.lan. If this stops failing the model is wrong."""
+def test_without_the_warmer_the_first_spend_after_a_restart_rebuilds_from_block_zero():
+    """The failure, reproduced: what a zap paid on nas.lan. If this stops failing the model is wrong."""
     d = FakeMonerod()
-    d.distribution(WALLET_FULL)            # cache primed, as if by an earlier call
+    d.spend()
+    d.restart()
+    d.rebuilds.clear()
+    d.spend()
+    assert FULL_KEY in d.rebuilds
+
+
+def test_a_normal_spend_does_not_evict_the_cache():
+    """Measured through a logging proxy: a transfer asks only for the full chain, so spends keep hitting."""
+    d = FakeMonerod()
     d.spend()
     d.rebuilds.clear()
-    d.spend()                              # the next zap
-    assert FULL_KEY in d.rebuilds, "the second spend should have to rebuild the full distribution"
+    for _ in range(3):
+        d.spend()
+    assert d.rebuilds == []
 
 
-def test_with_the_warmer_between_spends_a_spend_is_always_a_cache_hit():
+def test_with_the_warmer_no_spend_is_ever_the_first_request():
     d = FakeMonerod()
     srv, url = d.serve()
     try:
-        for _ in range(3):
-            d.spend()                      # each spend leaves the slot holding the segregation range
+        for disturb in (d.restart, lambda: d.distribution(FOREIGN_RANGE), d.restart):
+            disturb()                      # a restart, or an outside wallet's different range
             ok, _, detail = warm.warm_once(url, timeout=5)
             assert ok, detail
             d.rebuilds.clear()
-            d.distribution(WALLET_FULL)    # the next spend's first request
+            d.spend()
             assert FULL_KEY not in d.rebuilds, "the spend paid the rebuild the warmer exists to pay"
     finally:
         srv.shutdown()
