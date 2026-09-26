@@ -5,6 +5,7 @@ import time
 import datetime
 import pytz
 import psycopg2
+import akkoma_db
 import logging
 import threading
 from config import (
@@ -54,6 +55,18 @@ conn = None
 conn_lock = threading.Lock()
 
 
+def _connect():
+    """Open the Akkoma DB connection in AUTOCOMMIT mode.
+
+    psycopg2 opens a transaction implicitly on the first execute() and keeps it open until
+    commit(), and this bot only ever reads — so without autocommit the whole process ran inside ONE
+    transaction that never ended ("idle in transaction" for as long as the bot lived). That held an
+    AccessShareLock on `users` (every DROP/ALTER/pg_repack on it waited behind the bot) and pinned
+    the xmin horizon, so VACUUM could not reclaim a dead row anywhere in the instance's database.
+    A failed query also left the connection in an aborted transaction, failing every later poll."""
+    return akkoma_db.connect(SQL_DATABASE, SQL_USER, SQL_PASS, SQL_HOST)
+
+
 def init_db():
     global conn
 
@@ -65,16 +78,7 @@ def init_db():
         f"Connecting to DB: host={SQL_HOST if SQL_HOST else 'Unix socket'}, dbname={SQL_DATABASE}, user={SQL_USER}"
     )
     try:
-        if SQL_HOST:
-            conn = psycopg2.connect(
-                dbname=SQL_DATABASE, user=SQL_USER, password=SQL_PASS, host=SQL_HOST,
-                connect_timeout=10
-            )
-        else:
-            conn = psycopg2.connect(
-                dbname=SQL_DATABASE, user=SQL_USER, password=SQL_PASS,
-                connect_timeout=10
-            )
+        conn = _connect()
         logging.debug("Database connection established")
     except Exception as e:
         logging.error(f"Failed to connect to database: {e}")
@@ -102,16 +106,7 @@ def run_psql(query, params=None):
         except (psycopg2.OperationalError, psycopg2.InterfaceError) as e:
             logging.warning(f"Database connection lost: {e}. Attempting to reconnect...")
             try:
-                if SQL_HOST:
-                    conn = psycopg2.connect(
-                        dbname=SQL_DATABASE, user=SQL_USER, password=SQL_PASS, host=SQL_HOST,
-                        connect_timeout=10
-                    )
-                else:
-                    conn = psycopg2.connect(
-                        dbname=SQL_DATABASE, user=SQL_USER, password=SQL_PASS,
-                        connect_timeout=10
-                    )
+                conn = _connect()
                 logging.info("Database reconnection successful")
                 with conn.cursor() as cur:
                     cur.execute(query, params)

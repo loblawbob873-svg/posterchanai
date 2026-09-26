@@ -7,6 +7,7 @@ import pytz
 import json
 import sys
 import psycopg2
+import akkoma_db
 import logging
 import threading
 from urllib.parse import urlparse
@@ -75,16 +76,7 @@ def init_db():
         f"Connecting to DB: host={SQL_HOST if SQL_HOST else 'Unix socket'}, dbname={SQL_DATABASE}, user={SQL_USER}"
     )
     try:
-        if SQL_HOST:
-            conn = psycopg2.connect(
-                dbname=SQL_DATABASE, user=SQL_USER, password=SQL_PASS, host=SQL_HOST,
-                connect_timeout=10
-            )
-        else:
-            conn = psycopg2.connect(
-                dbname=SQL_DATABASE, user=SQL_USER, password=SQL_PASS,
-                connect_timeout=10
-            )
+        conn = akkoma_db.connect(SQL_DATABASE, SQL_USER, SQL_PASS, SQL_HOST)
         logging.debug("Database connection established")
     except Exception as e:
         logging.error(f"Failed to connect to database: {e}")
@@ -113,16 +105,7 @@ def run_psql(query, params=None):
         except (psycopg2.OperationalError, psycopg2.InterfaceError) as e:
             logging.warning(f"Database connection lost: {e}. Attempting to reconnect...")
             try:
-                if SQL_HOST:
-                    conn = psycopg2.connect(
-                        dbname=SQL_DATABASE, user=SQL_USER, password=SQL_PASS, host=SQL_HOST,
-                        connect_timeout=10
-                    )
-                else:
-                    conn = psycopg2.connect(
-                        dbname=SQL_DATABASE, user=SQL_USER, password=SQL_PASS,
-                        connect_timeout=10
-                    )
+                conn = akkoma_db.connect(SQL_DATABASE, SQL_USER, SQL_PASS, SQL_HOST)
                 logging.info("Database reconnection successful")
                 with conn.cursor() as cur:
                     cur.execute(query, params)

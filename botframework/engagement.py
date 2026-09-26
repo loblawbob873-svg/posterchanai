@@ -6,6 +6,7 @@ import datetime
 import pytz
 import re
 import psycopg2
+import akkoma_db
 import logging
 import signal
 import sys
@@ -42,21 +43,7 @@ def init_db():
         with conn_lock:
             if conn is None or conn.closed:
                 # Support Unix socket when SQL_HOST is empty
-                if SQL_HOST:
-                    conn = psycopg2.connect(
-                        host=SQL_HOST,
-                        database=SQL_DATABASE,
-                        user=SQL_USER,
-                        password=SQL_PASS,
-                        connect_timeout=10
-                    )
-                else:
-                    conn = psycopg2.connect(
-                        database=SQL_DATABASE,
-                        user=SQL_USER,
-                        password=SQL_PASS,
-                        connect_timeout=10
-                    )
+                conn = akkoma_db.connect(SQL_DATABASE, SQL_USER, SQL_PASS, SQL_HOST)
                 # Set statement timeout to 30 seconds
                 cursor = conn.cursor()
                 cursor.execute("SET statement_timeout = '30s'")
@@ -75,16 +62,7 @@ def run_psql(query, params=None):
         # Initialize if needed within the lock to prevent race conditions
         if conn is None or conn.closed:
             try:
-                if SQL_HOST:
-                    conn = psycopg2.connect(
-                        dbname=SQL_DATABASE, user=SQL_USER, password=SQL_PASS, host=SQL_HOST,
-                        connect_timeout=10
-                    )
-                else:
-                    conn = psycopg2.connect(
-                        dbname=SQL_DATABASE, user=SQL_USER, password=SQL_PASS,
-                        connect_timeout=10
-                    )
+                conn = akkoma_db.connect(SQL_DATABASE, SQL_USER, SQL_PASS, SQL_HOST)
                 logging.debug("Database connection established in run_psql")
             except Exception as e:
                 logging.error(f"Failed to connect to database: {e}")
