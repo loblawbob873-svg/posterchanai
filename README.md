@@ -7,8 +7,12 @@
 <a href="https://poster.place"><img src="docs/promo/posterchan-client.webp" alt="PosterChan — more than a Nostr client: Nostr and the fediverse in one timeline (you are @you@poster.place on Mastodon too), full Desktop or Classic view, encrypted drive and folder sync, password manager, Notes over Nostr, calendar and contacts, Monero and Lightning zaps, calls, mini-app games, Android phone mode" width="49%" /></a>
 <a href="#quick-start-backend-and-web-ui"><img src="docs/promo/posterchan-selfhost.webp" alt="Run your own node — relay, Blossom and NIP-05; a native ActivityPub server (@name@yourdomain on the fediverse); Jellyfin-compatible media server; Git over Nostr; virtual machines; local AI; office suite; live streaming; PosterChanOS" width="49%" /></a>
 
-<a href="#posterchanos"><img src="https://media.poster.place/c4ff3966bd6490cc759360a68340cce155a2e0f77230c72fb5ec513c233b1c3f.png" alt="The PosterChanOS desktop" width="98%" /></a>
-<br /><sub><b>PosterChanOS</b> — the Nostr-native desktop operating system</sub>
+<table>
+<tr>
+<td width="50%" align="center"><a href="#posterchanos"><img src="https://media.poster.place/c4ff3966bd6490cc759360a68340cce155a2e0f77230c72fb5ec513c233b1c3f.png" alt="The PosterChanOS desktop" width="100%" /></a><br /><sub><b>Desktop</b> — PosterChanOS, the Nostr-native desktop operating system</sub></td>
+<td width="50%" align="center"><a href="#nostr-web-client"><img src="https://media.poster.place/0a3e9823839169c2785aa3430ba1f18caf11bc42614555ea542cbcd8fe0983b6.png" alt="The PosterChan client in Classic mode" width="100%" /></a><br /><sub><b>Classic</b> — the Nostr web client in Classic mode</sub></td>
+</tr>
+</table>
 
 ### A Nostr-powered personal cloud, Jellyfin-compatible media server, and self-hosted AI powerhouse — on your hardware, under your keys.
 
