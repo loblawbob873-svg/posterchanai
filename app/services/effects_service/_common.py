@@ -753,14 +753,35 @@ def _gradient_cylinder(w: int, h: int, base):
     return strip.resize((w, h))
 
 
+def _rank(img, filt, k: int):
+    """`img.filter(filt(k))` for MaxFilter/MinFilter, as repeated 3x3 passes.
+
+    A k x k square max/min is exactly k//2 passes of 3x3 (same bytes, borders
+    included) and Pillow's rank filter costs k*k per pixel, so this is several
+    times cheaper for the splatter tiles' 7-13px kernels."""
+    for _ in range(max(k // 2, 0)):
+        img = img.filter(filt(3))
+    return img
+
+
+# Largest size a `tile_cap` scatter renders a tile at; bigger tiles are scaled up afterwards.
+SCATTER_TILE_CAP = 224
+
+
 def _scatter_overlay(data: bytes, make_tile, count: int = 0,
-                     max_rotation: float = 180.0) -> bytes:
+                     max_rotation: float = 180.0, tile_cap: bool = False) -> bytes:
     """Scatter randomly sized/rotated overlay tiles over an image.
 
     `make_tile(size)` renders one RGBA tile (e.g. `_make_dildo`/`_make_poo`);
     `count` <= 0 auto-scales with the image area; `max_rotation` bounds the random
     spin per tile (±deg). Returns JPEG bytes. Shared by the dildo and poo gags so
     the scatter/flatten/save logic lives in one place.
+
+    `tile_cap` renders each tile at no more than SCATTER_TILE_CAP and scales it up.
+    The cum/blood splatters need it: their rank filters (MaxFilter/MinFilter) cost
+    kernel² per pixel with both kernel and tile growing with the photo, so a 12 MP
+    phone photo took 60-80 s and users gave up on a render that was still running.
+    They are soft blurred blobs, so the upscale loses nothing visible.
     """
     import random
     from PIL import Image, ImageOps
@@ -790,9 +811,20 @@ def _scatter_overlay(data: bytes, make_tile, count: int = 0,
         lo, hi = max(int(base * 0.12), 12), max(int(base * 0.28), 24)
         for _ in range(count):
             size = random.randint(lo, hi)
-            tile = make_tile(size)
-            tile = tile.rotate(random.uniform(-max_rotation, max_rotation),
-                               expand=True, resample=Image.BICUBIC)
+            angle = random.uniform(-max_rotation, max_rotation)
+            if tile_cap and size > SCATTER_TILE_CAP:
+                # Render, rotate and trim while the tile is small, THEN scale it to size: the
+                # canvas is mostly transparent margin, and rotating/compositing that margin at
+                # photo size was most of the remaining cost.
+                tile = make_tile(SCATTER_TILE_CAP).rotate(angle, expand=True, resample=Image.BICUBIC)
+                bbox = tile.getchannel("A").getbbox()
+                if bbox:
+                    tile = tile.crop(bbox)
+                k = size / SCATTER_TILE_CAP
+                tile = tile.resize((max(1, round(tile.width * k)), max(1, round(tile.height * k))),
+                                   Image.LANCZOS)
+            else:
+                tile = make_tile(size).rotate(angle, expand=True, resample=Image.BICUBIC)
             # Allow partial overhang off every edge so the scatter reaches the borders.
             x = random.randint(-tile.width // 3, max(W - tile.width * 2 // 3, 1))
             y = random.randint(-tile.height // 3, max(H - tile.height * 2 // 3, 1))

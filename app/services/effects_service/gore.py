@@ -1,5 +1,5 @@
 """Auto-split from the original effects_service.py monolith. No behavior change."""
-from ._common import List, OutputFile, Path, Tuple, _BLOOD_COLORS, _CUM_COLORS, _DILDO_COLORS, _FIRE_ANIM_FPS, _FIRE_ANIM_FRAMES, _FIRE_ANIM_LOOPS, _POO_COLORS, _alive_or_still, _effects_animate, _gradient_cylinder, _gradient_sphere, _human_size, _scatter_overlay, _shade, io, is_image, logger
+from ._common import List, OutputFile, Path, Tuple, _BLOOD_COLORS, _CUM_COLORS, _DILDO_COLORS, _FIRE_ANIM_FPS, _FIRE_ANIM_FRAMES, _FIRE_ANIM_LOOPS, _POO_COLORS, _alive_or_still, _effects_animate, _gradient_cylinder, _gradient_sphere, _human_size, _rank, _scatter_overlay, _shade, io, is_image, logger
 
 def _make_dildo(h: int):
     """Render one shaded, semi-anatomical dildo (pointing up) on a transparent tile.
@@ -276,16 +276,19 @@ def _make_cum(h: int, rng=None, grow: float = 1.0):
     from PIL import Image, ImageDraw, ImageFilter, ImageChops
     random = rng if rng is not None else _rnd
 
-    W = max(int(h * 1.15), 18)
-    H = max(int(h * 1.15), 18)
+    # S is the splatter's own scale; the CANVAS is larger. The flung strands, their droplet heads
+    # and satellite flecks reach ~0.9*S from the centre, and on an S-wide canvas they were cut off
+    # by the tile's square edge — every splat carried a straight-edged clip across the photo.
+    S = max(int(h * 1.15), 18)
+    W = H = int(S * 1.9)
     base = random.choice(_CUM_COLORS)[:3]
-    cx, cy = W * 0.5, H * 0.52
+    cx, cy = W * 0.5, H * 0.5 + S * 0.02
     phase = random.uniform(0, math.tau)
 
     # --- build the splatter SHAPE on an alpha mask (lets us rim/shade it after) ---
     mask = Image.new("L", (W, H), 0)
     md = ImageDraw.Draw(mask)
-    main_r = W * 0.19
+    main_r = S * 0.19
 
     def _dot(x, y, r):
         md.ellipse([x - r, y - r, x + r, y + r], fill=255)
@@ -326,16 +329,16 @@ def _make_cum(h: int, rng=None, grow: float = 1.0):
 
     # Morphological close (dilate→erode) to seal any thin gaps between strokes,
     # then a light blur for soft edges.
-    _k = max(int(W * 0.02) | 1, 3)
-    mask = mask.filter(ImageFilter.MaxFilter(_k)).filter(ImageFilter.MinFilter(_k))
-    sil = mask.filter(ImageFilter.GaussianBlur(max(W * 0.012, 0.7)))  # soft edges
+    _k = max(int(S * 0.02) | 1, 3)
+    mask = _rank(_rank(mask, ImageFilter.MaxFilter, _k), ImageFilter.MinFilter, _k)
+    sil = mask.filter(ImageFilter.GaussianBlur(max(S * 0.012, 0.7)))  # soft edges
 
     tile = Image.new("RGBA", (W, H), (0, 0, 0, 0))
 
     # --- soft translucent dark rim just outside the shape (so white reads on white) ---
-    grow = max(int(W * 0.03) | 1, 3)
-    ring = ImageChops.subtract(sil.filter(ImageFilter.MaxFilter(grow)), sil)
-    ring = ring.filter(ImageFilter.GaussianBlur(max(W * 0.02, 1)))
+    grow = max(int(S * 0.03) | 1, 3)
+    ring = ImageChops.subtract(_rank(sil, ImageFilter.MaxFilter, grow), sil)
+    ring = ring.filter(ImageFilter.GaussianBlur(max(S * 0.02, 1)))
     rim = Image.new("RGBA", (W, H), (50, 50, 60, 0))
     rim.putalpha(ring.point(lambda a: int(a * 0.55)))
     tile.alpha_composite(rim)
@@ -346,8 +349,8 @@ def _make_cum(h: int, rng=None, grow: float = 1.0):
     tile.alpha_composite(body)
 
     # --- inner edge shading (darker cream rim) for a little volume ---
-    inner = ImageChops.subtract(sil, sil.filter(ImageFilter.MinFilter(grow)))
-    inner = inner.filter(ImageFilter.GaussianBlur(max(W * 0.012, 0.6)))
+    inner = ImageChops.subtract(sil, _rank(sil, ImageFilter.MinFilter, grow))
+    inner = inner.filter(ImageFilter.GaussianBlur(max(S * 0.012, 0.6)))
     shade = Image.new("RGBA", (W, H), _shade(base, 0.82)[:3] + (0,))
     shade.putalpha(ImageChops.multiply(inner, sil).point(lambda a: int(a * 0.33)))
     tile.alpha_composite(shade)
@@ -363,7 +366,7 @@ def _make_cum(h: int, rng=None, grow: float = 1.0):
         hy = cy + random.uniform(-main_r * 0.5, main_r * 0.1)
         hr = main_r * random.uniform(0.12, 0.26)
         hd.ellipse([hx - hr, hy - hr * 0.7, hx + hr, hy + hr * 0.7], fill=235)
-    hlmask = hlmask.filter(ImageFilter.GaussianBlur(max(W * 0.012, 0.6)))
+    hlmask = hlmask.filter(ImageFilter.GaussianBlur(max(S * 0.012, 0.6)))
     hl = Image.new("RGBA", (W, H), (255, 255, 255, 0))
     hl.putalpha(ImageChops.multiply(hlmask, sil))
     tile.alpha_composite(hl)
@@ -376,7 +379,7 @@ def add_cum(data: bytes, count: int = 0) -> bytes:
 
     `count` <= 0 auto-scales with the image area. Returns JPEG bytes.
     """
-    return _scatter_overlay(data, _make_cum, count)
+    return _scatter_overlay(data, _make_cum, count, tile_cap=True)
 
 
 def cum_attachments(
@@ -433,11 +436,13 @@ def _make_blood(h: int, rng=None, grow: float = 1.0):
     from PIL import Image, ImageDraw, ImageFilter, ImageChops
     random = rng if rng is not None else _rnd
 
-    W = max(int(h * 1.5), 24)
-    H = max(int(h * 1.5), 24)
+    # S is the splatter's own scale; the canvas is larger so the strands and spray (which reach
+    # ~0.62*S from the centre) are not cut off by the tile's square edge. See _make_cum.
+    S = max(int(h * 1.5), 24)
+    W = H = int(S * 1.35)
     base = random.choice(_BLOOD_COLORS)[:3]
     cx, cy = W * 0.5, H * 0.5
-    main_r = W * 0.15
+    main_r = S * 0.15
     phase = random.uniform(0, math.tau)
 
     mask = Image.new("L", (W, H), 0)
@@ -510,14 +515,14 @@ def _make_blood(h: int, rng=None, grow: float = 1.0):
         _dot(cx + math.cos(a) * d, cy + math.sin(a) * d,
              main_r * random.uniform(0.02, 0.07))
 
-    sil = mask.filter(ImageFilter.GaussianBlur(max(W * 0.005, 0.5)))
+    sil = mask.filter(ImageFilter.GaussianBlur(max(S * 0.005, 0.5)))
 
     tile = Image.new("RGBA", (W, H), (0, 0, 0, 0))
 
     # Soft dark rim just outside the shape -> depth / separation from the photo.
-    ring_px = max(int(W * 0.025) | 1, 3)
-    ring = ImageChops.subtract(sil.filter(ImageFilter.MaxFilter(ring_px)), sil)
-    ring = ring.filter(ImageFilter.GaussianBlur(max(W * 0.02, 1)))
+    ring_px = max(int(S * 0.025) | 1, 3)
+    ring = ImageChops.subtract(_rank(sil, ImageFilter.MaxFilter, ring_px), sil)
+    ring = ring.filter(ImageFilter.GaussianBlur(max(S * 0.02, 1)))
     rim = Image.new("RGBA", (W, H), (20, 0, 0, 0))
     rim.putalpha(ring.point(lambda a: int(a * 0.6)))
     tile.alpha_composite(rim)
@@ -528,8 +533,8 @@ def _make_blood(h: int, rng=None, grow: float = 1.0):
     tile.alpha_composite(body)
 
     # Darker inner edge for a pooled, glossy look.
-    inner = ImageChops.subtract(sil, sil.filter(ImageFilter.MinFilter(ring_px)))
-    inner = inner.filter(ImageFilter.GaussianBlur(max(W * 0.012, 0.6)))
+    inner = ImageChops.subtract(sil, _rank(sil, ImageFilter.MinFilter, ring_px))
+    inner = inner.filter(ImageFilter.GaussianBlur(max(S * 0.012, 0.6)))
     shade = Image.new("RGBA", (W, H), _shade(base, 0.55)[:3] + (0,))
     shade.putalpha(ImageChops.multiply(inner, sil).point(lambda a: int(a * 0.5)))
     tile.alpha_composite(shade)
@@ -544,7 +549,7 @@ def _make_blood(h: int, rng=None, grow: float = 1.0):
                 hx + main_r * 0.11, hy + main_r * 0.22], fill=200)
     hd.ellipse([cx + main_r * 0.12, cy - main_r * 0.02,
                 cx + main_r * 0.20, cy + main_r * 0.06], fill=120)
-    hlmask = hlmask.filter(ImageFilter.GaussianBlur(max(W * 0.012, 0.6)))
+    hlmask = hlmask.filter(ImageFilter.GaussianBlur(max(S * 0.012, 0.6)))
     hl = Image.new("RGBA", (W, H), (255, 235, 235, 0))
     hl.putalpha(ImageChops.multiply(hlmask, sil))
     tile.alpha_composite(hl)
@@ -558,7 +563,7 @@ def add_blood(data: bytes, count: int = 0) -> bytes:
     `count` <= 0 auto-scales with the image area. Full spin: a splatter has no
     "up", unlike the dripping pool this used to draw. Returns JPEG bytes.
     """
-    return _scatter_overlay(data, _make_blood, count)
+    return _scatter_overlay(data, _make_blood, count, tile_cap=True)
 
 
 def blood_attachments(
