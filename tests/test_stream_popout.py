@@ -41,7 +41,9 @@ APP_JS = client_source()
 def test_stream_player_class_is_on_the_video_element():
     """The premise the dead selector got wrong. If this ever becomes a wrapper, the popout rules
     that style `.stream-player` directly have to be revisited — which is the point of asserting it."""
-    assert re.search(r'<video class="stream-player"', APP_JS), \
+    # The class may be followed by others (a content warning adds `st-veiled`); what matters is that
+    # `stream-player` is the <video> element's own first class.
+    assert re.search(r'<video class="stream-player(?=["$\s])', APP_JS), \
         ".stream-player is no longer the <video> itself — recheck every body.popout .stream-player rule"
 
 

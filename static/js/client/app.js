@@ -8462,8 +8462,11 @@
     const st=streamStatus(e);
     const badge = st==='live'?'<span class="live-badge">● LIVE</span>' : st==='ended'?'<span class="ended-badge">ended</span>' : st==='planned'?'<span class="planned-badge">soon</span>' : '';
     const viewers=(e.tags.find(t=>t[0]==='current_participants')||[])[1];
+    // NIP-32 language label, set from Go Live's Language field -- two letters on the thumbnail.
+    const lang=((e.tags.find(t=>t[0]==='l' && t[2]==='ISO-639-1')||[])[1]||'').toLowerCase();
     return `<article class="stream-card" data-id="${e.id}" data-pk="${hpk}">
-      <div class="stream-thumb">${img?_hold(`<img src="${enc(img)}" loading="lazy" onerror="this.parentElement.classList.add('noimg')">`, img):'<span class="stream-play">▶</span>'}${badge}</div>
+      <div class="stream-thumb">${img?_hold(`<img src="${enc(img)}" loading="lazy" onerror="this.parentElement.classList.add('noimg')">`, img):'<span class="stream-play">▶</span>'}${badge}${
+        /^[a-z]{2}$/.test(lang)?`<span class="stream-lang" title="Language">${enc(lang.toUpperCase())}</span>`:''}</div>
       <div class="stream-meta"><div class="stream-title">${enc(title)}</div>
         <div class="art-by"><img class="art-av" src="${enc(p.picture||LOGO)}" onerror="this.src='${LOGO}'"><span class="name" data-prof="${hpk}">${enc(p.name||p.display_name||'anon')}</span>${viewers?`<span class="muted small">· ${enc(viewers)} watching</span>`:''}</div>
       </div></article>`;
@@ -19970,6 +19973,8 @@
     // concord.js repaints its own unread count; the ☰ badge sums it with drafts.
     bumpMoreBadge,
     retryInstanceView:view=>{if(VIEW===view)renderView(true);},
+    // A stream's page, reachable for the test that checks what viewers are shown of its details.
+    openStream:(e)=>openStream(e),
     // Git → New issue, reachable for the test that proves a retried publish re-sends the same event.
     newRepoIssue:(repo)=>newRepoIssue(repo),
     // "Choose one of my images" — the Go Live cover picker, reachable for reuse and for its tests.

@@ -129,6 +129,7 @@ window.PCStreamsFactory = function(dep){
     const _tag=(n)=>(e.tags.find(t=>t[0]===n)||[])[1]||'';
     const title=_tag('title')||'(untitled stream)';
     const summary=_tag('summary');
+    const det=_liveDetailsOf(e);
     const st=streamStatus(e);
     // An ENDED stream's `streaming` tag still points at the (now dead) live URL while `recording` holds
     // the replay — and most clients (zap.stream, OvenMediaEngine) leave BOTH tags on the event. Preferring
@@ -163,6 +164,8 @@ window.PCStreamsFactory = function(dep){
       <div class="row" style="justify-content:space-between"><button class="btn btn-ghost small" id="st-back"><svg class="ic b-ic" aria-hidden="true"><use href="#i-arrow-left"></use></svg>Streams</button><span style="display:flex;gap:6px">${isMine?'':`<button class="btn btn-neon small" id="st-tip"><svg class="ic b-ic" aria-hidden="true"><use href="#i-zap"></use></svg>Tip</button>`}<button class="btn btn-cyan small" id="st-chat-toggle"><svg class="ic b-ic" aria-hidden="true"><use href="#i-chat"></use></svg>Chat</button>${isDesktop()?`<button class="btn btn-cyan small" id="st-window" title="Open this stream and its live chat in a separate window you can drag to another monitor">🗔 Window</button>`:''}${isMine?`<button class="btn btn-ghost small" id="st-del" style="color:var(--danger,#e0245e)"><svg class="ic b-ic" aria-hidden="true"><use href="#i-trash"></use></svg>Delete</button>`:''}</span></div>
       <h1 class="av-title">${enc(title)}${st==='live'?' <span class="live-badge">● LIVE</span>':''}</h1>
       <div class="av-by"><img class="art-av" src="${enc(p.picture||S.LOGO)}" onerror="this.src='${S.LOGO}'"><span class="name" data-prof="${hpk}">${enc(p.name||p.display_name||'anon')}</span>${st?`<span class="muted small">· ${enc(st)}</span>`:''}<span class="muted small" id="st-viewers">${_viewersTag(e)?` · 👁 ${enc(_viewersTag(e))} watching`:''}</span></div>
+      ${(det.lang||det.tags.length)?`<div class="st-details">${det.lang?`<span class="st-lang" title="Language">🌐 ${enc(_liveLangName(det.lang))}</span>`:''}${
+        det.tags.map(t=>`<span class="st-tag">#${enc(t)}</span>`).join('')}</div>`:''}
       <div class="stream-layout${(!_chatPopout() && ClientSettings.get('streamChatHidden',false))?' chat-hidden':''}">
         <div class="stream-main">
           ${selfLive?`<div class="st-self">
@@ -173,8 +176,11 @@ window.PCStreamsFactory = function(dep){
             <div class="st-self-actions">
               ${watchLink?`<button class="btn btn-neon small" id="st-selflink"><svg class="ic b-ic" aria-hidden="true"><use href="#i-link"></use></svg>Copy watch link</button>`:''}
               <button class="btn btn-ghost small" id="st-selfprev"><svg class="ic b-ic" aria-hidden="true"><use href="#i-play"></use></svg>Preview it anyway (muted)</button>
+              <button class="btn btn-ghost small" id="st-editdet"><svg class="ic b-ic" aria-hidden="true"><use href="#i-pen"></use></svg>Edit details</button>
             </div></div>`:''}
-          ${(url||st==='ended')?`<video class="stream-player" id="st-video" controls playsinline${selfLive?' hidden':''}></video>
+          ${(det.cw!=null && !isMine && (url||st==='ended'))?`<div class="st-cw" id="st-cw"><div>⚠ ${enc(det.cw||'This stream is marked sensitive')}</div>
+            <button class="btn btn-ghost small" id="st-cw-show">Show stream</button></div>`:''}
+          ${(url||st==='ended')?`<video class="stream-player${(det.cw!=null && !isMine)?' st-veiled':''}" id="st-video" controls playsinline${selfLive?' hidden':''}></video>
             <div class="muted small" id="st-note"></div>
             <div class="row">${isDesktop()&&url?`<button class="btn btn-ghost small" id="st-pop">⧉ Pop out player</button>`:''}${url?`<a class="btn btn-ghost small" href="${enc(url)}" target="_blank" rel="noopener"><svg class="ic b-ic" aria-hidden="true"><use href="#i-play"></use></svg>Open stream URL</a>`:''}</div>`:'<div class="empty">No stream URL provided.</div>'}
           ${summary?`<div class="about">${linkify(summary)}</div>`:''}
@@ -187,6 +193,14 @@ window.PCStreamsFactory = function(dep){
       </div>
     </div>`;
     $('#st-back').onclick=()=>{ _closeStreamChat(); switchView('streams'); };
+    // A content warning holds the stream back until the viewer chooses to see it -- sound included,
+    // since a veiled video that plays audio is not held back at all.
+    { const cw=$('#st-cw'), v=$('#st-video');
+      if(cw && v){ const hold=()=>{ if(v.classList.contains('st-veiled')) try{ v.pause(); }catch(_){} };
+        v.addEventListener('play', hold);
+        $('#st-cw-show').onclick=()=>{ v.classList.remove('st-veiled'); cw.remove(); v.removeEventListener('play', hold);
+          try{ const p=v.play(); if(p && p.catch) p.catch(()=>{}); }catch(_){} }; } }
+    { const b=$('#st-editdet'); if(b) b.onclick=()=>_editLiveDetails(); }
     /* Chat → the chat in its OWN window, player untouched. On a desktop the chat is always on
      * screen beside the video anyway, so a show/hide toggle was solving a problem nobody had; what
      * people actually want is the chat on the second monitor. Popping the WHOLE stream to get that
@@ -616,7 +630,7 @@ window.PCStreamsFactory = function(dep){
       const s0={ token:_tokenOfD(sid0), d:sid0,
                  title:(mine.tags.find(t=>t[0]==='title')||[])[1]||'Live stream', hls,
                  starts:(mine.tags.find(t=>t[0]==='starts')||[])[1]||String(mine.created_at),
-                 image:(mine.tags.find(t=>t[0]==='image')||[])[1]||'' };
+                 image:(mine.tags.find(t=>t[0]==='image')||[])[1]||'', details:_liveDetailsOf(mine) };
       const r=await publish(30311, '', _liveBase(s0).concat(
         [['status','ended'], ['ends', String(Math.floor(Date.now()/1000))]]));
       // Mirror on a SIGNED EVENT, not on r.ok — deliberately not _mirrorStream here. The phantom being
@@ -700,7 +714,9 @@ window.PCStreamsFactory = function(dep){
     // (viewer count / end) would otherwise drop the cover we announced with.
     _liveStream={ token:tok, d:sid, title:(mine.tags.find(t=>t[0]==='title')||[])[1]||'Live stream',
                   hls:(mine.tags.find(t=>t[0]==='streaming')||[])[1]||'', starts,
-                  image:(mine.tags.find(t=>t[0]==='image')||[])[1]||'' };
+                  image:(mine.tags.find(t=>t[0]==='image')||[])[1]||'',
+                  // …and the details, for the same reason as `image`.
+                  details:_liveDetailsOf(mine) };
     if(_liveStream.hls) _startLiveHb();
     // Re-park the end-of-stream fallback: this stream may predate it, or the original park may have failed.
     // Harmless if one is already stored — the server keeps the "went live" state across a re-park.
@@ -786,6 +802,7 @@ window.PCStreamsFactory = function(dep){
     }catch(_){ }
     modal(`<h3><svg class="ic h-ic" aria-hidden="true"><use href="#i-live"></use></svg>Go Live</h3>
       <label class="fld">Title<input class="input" id="gl-title" placeholder="What are you streaming?" maxlength="120" autofocus></label>
+      ${_liveDetailsHtml(_liveDetailsDefault())}
       <label class="muted small" style="display:flex;gap:8px;align-items:center;margin:6px 0"><input type="checkbox" id="gl-announce" checked> Also announce to followers (a post with a watch link)</label>
       ${info.record_available?`<label class="muted small" style="display:flex;gap:8px;align-items:center;margin:6px 0"><input type="checkbox" id="gl-record" ${info.record_enabled?'checked':''}> Save my streams — recorded and kept in your “Past streams”</label>`:''}
       ${info.quality_available?`<div class="gl-q">
@@ -818,6 +835,7 @@ window.PCStreamsFactory = function(dep){
       <p class="muted small">Start OBS, then tap below to announce it on Nostr (Discover → Streams).</p>
       <div class="row gl-actions"><button class="btn btn-neon" id="gl-go" disabled><svg class="ic b-ic" aria-hidden="true"><use href="#i-live"></use></svg>Announce and Stream</button><button class="btn btn-ghost" id="gl-cancel">Close</button></div>
       <p class="muted small hidden" id="gl-need">↑ Pick what you want to broadcast first — the button turns on once you have.</p>`, root=>{
+      _liveDetailsWire(root);
       const title=()=>($('#gl-title',root).value||'').trim()||'Live stream';
       const announce=()=>!!($('#gl-announce',root)||{}).checked;
       const cover=()=>($('#gl-img',root).value||'').trim();
@@ -892,6 +910,9 @@ window.PCStreamsFactory = function(dep){
         btn.disabled=true; btn.textContent='Announcing…';
         const revive=()=>{ _going=false; btn.innerHTML=was; sync(); };
         const t=title(), a=announce(), c=cover(), s=src()||'obs';
+        // Every go-live path hands `info` to _publishLive, so the details ride on it.
+        info.details=_liveDetailsRead(root);
+        try{ ClientSettings.set('liveDetailsLast', info.details); }catch(_){}
         if(s==='cam'){ const f=facing(); closeModal(); return _phoneGoLive(info, t, a, c, { facing:f }); }
         if(s==='screen'){ closeModal(); return _screenGoLive(info, t, a, c); }
         try{ const ev=await _publishLive(info, t, c); _startLiveHb();   // OBS path: HLS heartbeat detects OBS stopping
@@ -1029,6 +1050,72 @@ window.PCStreamsFactory = function(dep){
   // update, end, and the parked end-sentinel) and it is REPLACEABLE — so a tag any one of them omits is
   // erased for every client. That's why `starts` is threaded through, and it's why `image` must be too:
   // set the cover once at go-live and the first viewer-count update would otherwise wipe it.
+  /* LIVE DETAILS -- description, tags, language and a content warning, asked for by a streamer who
+   * wanted to "put more details into live". All four are standard NIP-53/NIP-32/NIP-36 tags, so
+   * zap.stream and Amethyst see the same thing: `summary`, one `t` per tag, the ISO-639-1 label pair
+   * `L`/`l`, and `content-warning`. They live on the stream object as ONE `details` value that
+   * _liveBase emits, because the 30311 is replaceable and re-signed in four places -- a field added
+   * anywhere else would be erased by the first viewer-count update, as the cover once was. */
+  const _LIVE_LANGS=[['en','English'],['pt','Português'],['es','Español'],['fr','Français'],['de','Deutsch'],
+    ['it','Italiano'],['nl','Nederlands'],['pl','Polski'],['ru','Русский'],['uk','Українська'],['tr','Türkçe'],
+    ['ar','العربية'],['hi','हिन्दी'],['id','Bahasa Indonesia'],['ja','日本語'],['ko','한국어'],['zh','中文']];
+  function _liveLangName(c){ const f=_LIVE_LANGS.find(x=>x[0]===c); return f ? f[1] : String(c||'').toUpperCase(); }
+  function _liveNormTags(raw){
+    const list=Array.isArray(raw) ? raw.join(' ') : String(raw||'');
+    return [...new Set(list.split(/[\s,]+/).map(t=>t.replace(/^#+/,'').toLowerCase()
+      .replace(/[^\p{L}\p{N}_-]/gu,'')).filter(t=>t && t.length<=32))].slice(0,10);
+  }
+  // `cw`: null = no warning; a string (possibly empty) = a warning, with that reason.
+  function _liveDetails(d){
+    d=d||{}; const lang=String(d.lang||'').toLowerCase();
+    return { summary:String(d.summary||'').trim().slice(0,1000), tags:_liveNormTags(d.tags),
+             lang:/^[a-z]{2}$/.test(lang) ? lang : '', cw:d.cw==null ? null : String(d.cw).trim().slice(0,200) };
+  }
+  function _liveDetailsOf(ev){
+    const tg=(ev && ev.tags) || [];
+    const cwT=tg.find(t=>t[0]==='content-warning');
+    return _liveDetails({ summary:(tg.find(t=>t[0]==='summary')||[])[1]||'',
+      tags:tg.filter(t=>t[0]==='t').map(t=>t[1]||''),
+      lang:(tg.find(t=>t[0]==='l' && t[2]==='ISO-639-1')||[])[1]||'',
+      cw:cwT ? (cwT[1]||'') : null });
+  }
+  function _liveDetailTags(d){
+    d=_liveDetails(d);
+    return [ ...(d.summary ? [['summary', d.summary]] : []), ...d.tags.map(t=>['t', t]),
+             ...(d.lang ? [['L','ISO-639-1'], ['l', d.lang, 'ISO-639-1']] : []),
+             ...(d.cw!=null ? [['content-warning', d.cw]] : []) ];
+  }
+  // The form fields, shared by Go Live and "Edit details" so the two can never disagree.
+  function _liveDetailsHtml(d){
+    d=_liveDetails(d);
+    return `<label class="fld">Description <span class="muted small">— what the stream is about</span>
+        <textarea class="input" id="gl-summary" rows="3" maxlength="1000" placeholder="What’s on, a schedule, links…">${enc(d.summary)}</textarea></label>
+      <label class="fld">Tags <span class="muted small">— up to 10, separated by spaces</span>
+        <input class="input" id="gl-tags" maxlength="400" placeholder="anime gaming music" value="${enc(d.tags.join(' '))}"></label>
+      <div class="gl-detrow">
+        <label class="fld">Language<select class="input" id="gl-lang"><option value="">—</option>${
+          _LIVE_LANGS.map(([c,n])=>`<option value="${c}"${c===d.lang?' selected':''}>${enc(n)}</option>`).join('')}</select></label>
+        <label class="muted small gl-cwopt"><input type="checkbox" id="gl-cw"${d.cw!=null?' checked':''}> Content warning</label>
+      </div>
+      <input class="input${d.cw!=null?'':' hidden'}" id="gl-cwr" maxlength="200" placeholder="Why? (optional — shown before the stream plays)" value="${enc(d.cw||'')}">`;
+  }
+  function _liveDetailsRead(root){
+    const cwOn=!!($('#gl-cw',root)||{}).checked;
+    return _liveDetails({ summary:($('#gl-summary',root)||{}).value, tags:($('#gl-tags',root)||{}).value,
+      lang:($('#gl-lang',root)||{}).value, cw:cwOn ? (($('#gl-cwr',root)||{}).value||'') : null });
+  }
+  function _liveDetailsWire(root){
+    const cb=$('#gl-cw',root), r=$('#gl-cwr',root);
+    if(cb && r) cb.onchange=()=>r.classList.toggle('hidden', !cb.checked);
+  }
+  // What this device used last time -- people stream the same kind of thing, in the same language.
+  function _liveDetailsDefault(){
+    let last=null; try{ last=ClientSettings.get('liveDetailsLast', null); }catch(_){}
+    const d=_liveDetails(last||{});
+    if(!d.lang){ const nav=String((navigator.language||'')).slice(0,2).toLowerCase();
+                 if(_LIVE_LANGS.some(x=>x[0]===nav)) d.lang=nav; }
+    return d;
+  }
   function _liveBase(s){
     // NIP-53 `relays` tag: tells OTHER clients (zap.stream, Amethyst) which relays carry this stream's
     // kind-1311 chat. We publish/read chat on the local relay + STREAM_RELAYS (see _sendStreamChat /
@@ -1050,6 +1137,7 @@ window.PCStreamsFactory = function(dep){
       ...(s.starts ? [['starts', s.starts]] : []),
       ['p', S.ME.pubkey, '', 'host'],
       ...(chatRelays.length ? [['relays', ...chatRelays]] : []),
+      ..._liveDetailTags(s.details),
     ];
   }
   async function _publishLive(info, title, image){
@@ -1061,6 +1149,7 @@ window.PCStreamsFactory = function(dep){
     // Prefer the id minted when the Go Live modal opened, so the watch link it already showed is the
     // one this stream actually publishes under. Fall back for callers that never opened that modal.
     _liveStream={ token:info.token, d:(info.d || (info.token+'-'+starts)), title, hls:info.hls_url, starts, image:cover,
+                  details:_liveDetails(info.details),
                   // Only promise a replay when this node records AND this user opted in.
                   record: !!(info.record_available && info.record_enabled) };
     const r = await publish(30311, '', _liveBase(_liveStream).concat([['status','live']]));
@@ -1309,6 +1398,30 @@ window.PCStreamsFactory = function(dep){
   function _stopViewerPoll(){ if(_viewerPoll){ clearInterval(_viewerPoll); _viewerPoll=null; } }
   // Re-sign the live 30311 with the current headcount, so viewers on ANY NIP-53 client (zap.stream, Amethyst)
   // see it too — not just this app. Best-effort: a failure here must never disturb the broadcast.
+  // Change the description/tags/language/warning of the stream you are broadcasting. The 30311 is
+  // replaceable, so this is one re-sign -- through _liveBase like every other, carrying the headcount
+  // the last viewer poll measured so the edit does not reset "watching" to nothing.
+  function _editLiveDetails(){
+    const s=_liveStream; if(!s || !S.ME) return;
+    modal(`<h3><svg class="ic h-ic" aria-hidden="true"><use href="#i-live"></use></svg>Stream details</h3>
+      ${_liveDetailsHtml(s.details)}
+      <div class="row gl-actions"><button class="btn btn-neon" id="gl-det-save">Save</button><button class="btn btn-ghost" id="gl-det-x">Cancel</button></div>`, root=>{
+      _liveDetailsWire(root);
+      $('#gl-det-x',root).onclick=closeModal;
+      $('#gl-det-save',root).onclick=async ev=>{
+        const btn=ev.currentTarget; btn.disabled=true;
+        const was=s.details; s.details=_liveDetailsRead(root);
+        try{ ClientSettings.set('liveDetailsLast', s.details); }catch(_){}
+        try{
+          const r=await publish(30311, '', _liveBase(s).concat([['status','live'],
+            ...(_viewersLast>=0 ? [['current_participants', String(_viewersLast)]] : [])]));
+          if(!(r && r.ok)) throw new Error((r && r.msg) || 'not stored');
+          _mirrorStream(r); closeModal(); toast('stream details updated');
+          if(r.ev && S.VIEW==='stream') openStream(r.ev);
+        }catch(err){ s.details=was; btn.disabled=false; toast('couldn’t update the stream: '+((err&&err.message)||err)); }
+      };
+    });
+  }
   async function _publishViewers(n){
     const s=_liveStream; if(!s||!s.token||!S.ME) return;
     try{ const r=await publish(30311, '', _liveBase(s).concat([['status','live'], ['current_participants', String(n)]]));
