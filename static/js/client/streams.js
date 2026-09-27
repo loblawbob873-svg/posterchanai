@@ -919,6 +919,14 @@ window.PCStreamsFactory = function(dep){
     // the backdrop close the layer without telling us.
     if(($('#modal-root')||document).querySelector('.bp-modal')) return;
     const server=mediaServer();
+    /* WHERE YOUR DRIVE IS: the media server you chose AND this node's own. A fresh device adopts the
+     * first server of your kind-10063 list as its media server (restoreMediaServer), and several public
+     * Blossom servers do not implement BUD-02 `/list` at all -- blossom.jumble.social answers 404. So a
+     * user whose list starts with one of those could NEVER pick a cover, and was told to check their
+     * connection, while every image they had uploaded here sat on this node's drive answering in 20 ms.
+     * Reported from Android 16 / browser. Both are read and merged; each blob keeps its own server. */
+    const _inst=_instanceBase(), builtin=_inst ? _inst+'/blossom' : '';
+    const sources=[...new Set([server, builtin].filter(Boolean))];
     let imgs=[], cur='', ui=null;
     subModal(`<div class="bp-head"><h3><svg class="ic h-ic" aria-hidden="true"><use href="#i-image"></use></svg>Choose a cover</h3>
       <p class="muted small" id="bp-count">Reading your drive…</p>
@@ -940,7 +948,7 @@ window.PCStreamsFactory = function(dep){
     });
     const alive=()=> !!(ui && ui.root && ui.root.isConnected);
     const say=(msg, count)=>{ if(!alive()) return; ui.cnt.textContent=count||''; ui.grid.innerHTML=`<div class="muted small">${enc(msg)}</div>`; };
-    const urlOf=b=> b.url || (server+'/'+b.sha256);
+    const urlOf=b=> b.url || ((b._src||server)+'/'+b.sha256);
     const draw=()=>{
       if(!alive()) return;
       const shown=imgs.filter(b=> cur==='' || (FilesIdx.folderOf(b.sha256)||'')===cur);
@@ -961,9 +969,30 @@ window.PCStreamsFactory = function(dep){
     try{ await Promise.race([ FilesIdx.ensure(), new Promise(r=>setTimeout(r, 12000)) ]); }catch(_){ }
     if(!alive()) return;   // closed while we were reading
 
-    let list=null;
-    try{ const r=await _fetchTimeout(server+'/list/'+S.ME.pubkey, {}, 20000); if(r.ok) list=await r.json(); }catch(_){ }
+    // Every source at once. A source ANSWERS (a list), REFUSES (it answered with an HTTP status -- a
+    // server without `/list` is not a network problem), or is UNREACHABLE (no answer at all).
+    const answers=await Promise.all(sources.map(async src=>{
+      try{
+        const r=await _fetchTimeout(src+'/list/'+S.ME.pubkey, {}, 20000);
+        if(!r.ok) return {src, status:r.status};
+        const j=await r.json();
+        return Array.isArray(j) ? {src, list:j.map(b=>Object.assign({_src:src}, b))} : {src, status:r.status};
+      }catch(_){ return {src, status:0}; }
+    }));
     if(!alive()) return;
+    const listed=answers.filter(a=>a.list);
+    let list=null;
+    if(listed.length){
+      const seen=new Set(); list=[];
+      for(const a of listed) for(const b of a.list){ if(b && b.sha256 && !seen.has(b.sha256)){ seen.add(b.sha256); list.push(b); } }
+    }
+    // A server that ANSWERED but cannot list files is said by name: "check your connection" over a
+    // server that is up and simply has no `/list` sends somebody to debug a network that is fine.
+    if(!list && answers.length && answers.every(a=>a.status>=400)){
+      let host=server; try{ host=new URL(server).host; }catch(_){ }
+      say(`Your media server (${host}) doesn’t let apps list your files, so there’s nothing to choose from here. Paste an image link instead, or choose a server that supports listing in Settings → Media.`, '');
+      return;
+    }
     // "I could not ask" is not "you have nothing" — saying "no images yet" over an unreachable drive
     // sends you off to upload a picture you already have. Offer the retry instead.
     if(!list){
@@ -1950,7 +1979,7 @@ window.PCStreamsFactory = function(dep){
     });
   }
   return {
-    _closeStreamChat, _forgetDeletedStream, _goLive, _reconcileNativeScreen, _stopStreamsReads,
+    _closeStreamChat, _forgetDeletedStream, _goLive, _pickBlossomImage, _reconcileNativeScreen, _stopStreamsReads,
     _sweepStaleOwnLive, _sweepUnstampedReplays, cleanupInlineStream, closeMini, openStream,
     renderStreams,
   };

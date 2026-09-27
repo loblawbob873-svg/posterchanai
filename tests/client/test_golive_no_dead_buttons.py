@@ -81,8 +81,12 @@ def test_the_cover_sheet_opens_before_the_first_network_await(picker):
 
 def test_reading_the_drive_is_time_bounded(picker):
     """A stalled fetch has no timeout of its own, so both legs need one."""
-    assert "_fetchTimeout(server+'/list/'" in picker, \
+    # The rule, not the call text: it now lists every source (your media server AND this node's
+    # drive), and each of those reads must be time-bounded. A bare fetch() anywhere in the picker
+    # would be one that can stall for minutes.
+    assert re.search(r"_fetchTimeout\(\s*src\s*\+\s*'/list/'", picker), \
         "the drive listing must go through _fetchTimeout — a bare fetch() can stall for minutes"
+    assert not re.search(r"(?<![\w.])fetch\(", picker), "a bare fetch() in the picker has no timeout"
     # `ensure()`, not `pull()`: the four call sites that each latched "pull once" on the ATTEMPT
     # (so one failed pull hid every folder on the page until a reload) went through one gate that
     # latches on the RESULT — see tests/client/test_files_index_pull_retries.py. The rule this test

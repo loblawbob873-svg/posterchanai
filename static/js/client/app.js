@@ -8443,6 +8443,7 @@
   function _closeStreamChat(){ const m=_streamsMod(); if(m) return m._closeStreamChat.apply(null, arguments); }   // nothing to do until it has loaded
   function _forgetDeletedStream(){ return _lzRun(_streamsMod, _streamsLoad, '_forgetDeletedStream', arguments); }
   function _goLive(){ return _lzRun(_streamsMod, _streamsLoad, '_goLive', arguments); }
+  function _pickBlossomImage(){ return _lzRun(_streamsMod, _streamsLoad, '_pickBlossomImage', arguments); }
   function _reconcileNativeScreen(){ return _lzRun(_streamsMod, _streamsLoad, '_reconcileNativeScreen', arguments); }
   function _stopStreamsReads(){ const m=_streamsMod(); if(m) return m._stopStreamsReads.apply(null, arguments); }   // nothing to do until it has loaded
   function _sweepStaleOwnLive(){ return _lzRun(_streamsMod, _streamsLoad, '_sweepStaleOwnLive', arguments); }
@@ -19969,6 +19970,8 @@
     // concord.js repaints its own unread count; the ☰ badge sums it with drafts.
     bumpMoreBadge,
     retryInstanceView:view=>{if(VIEW===view)renderView(true);},
+    // "Choose one of my images" — the Go Live cover picker, reachable for reuse and for its tests.
+    pickDriveImage:(onPick)=>_pickBlossomImage(onPick),
     // oswin.js: a post handed to an already-open Meme Builder / Effects window (see POST_TOOLS).
     postTool:(view,id)=>{ if(!/^[0-9a-f]{64}$/i.test(String(id||'')))return; (view==='meme'?memeBuildPost:effectPost)(id); },
     // The APK's "Open with PosterChan Office" consumer (see _consumeOpenDoc); called from the
