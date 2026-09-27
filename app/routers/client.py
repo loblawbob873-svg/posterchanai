@@ -2664,7 +2664,7 @@ def _looks_like_html_page(text: str) -> bool:
     return head.startswith("<!doctype html") or head.startswith("<html")
 
 
-async def _grasp_readme(clone_url: str) -> str | None:
+async def _grasp_readme(clone_url: str, headers: dict | None = None) -> str | None:
     """If clone_url is a Nostr/GRASP repo (…/<npub|hex>/<id>.git), read the README straight from THIS
     node's git host raw endpoint (<npub>/<id>.git/raw/HEAD/README.md) — our /git/ is smart-HTTP (pack)
     only, so the forge-URL candidates never match it. We reach the git host we PROXY to (git_server_proxy_url,
@@ -2688,7 +2688,8 @@ async def _grasp_readme(clone_url: str) -> str | None:
         async with httpx.AsyncClient(timeout=httpx.Timeout(8.0, connect=4.0)) as c:
             for name in ("README.md", "readme.md", "README", "readme", "README.markdown", "Readme.md"):
                 try:
-                    r = await c.get("%s/%s/%s.git/raw/HEAD/%s" % (host_base, owner_seg, rid, name))
+                    r = await c.get("%s/%s/%s.git/raw/HEAD/%s" % (host_base, owner_seg, rid, name),
+                                    headers=headers or None)
                     if r.status_code == 200 and r.content:
                         return r.content[:_README_MAX].decode("utf-8", "ignore")
                 except Exception:
@@ -2699,7 +2700,7 @@ async def _grasp_readme(clone_url: str) -> str | None:
 
 
 @router.get("/git/readme")
-async def git_readme(url: str):
+async def git_readme(request: Request, url: str):
     """Fetch a repo's README markdown from its forge given a clone/web URL — powers Discover → Git
     Repos' repo-detail view. Public helper (mirrors /preview): SSRF-guarded, size-capped, best-effort
     across Gitea/Forgejo/GitHub/GitLab, AND our own self-hosted GRASP host. Returns {ok, markdown, source}."""
@@ -2708,6 +2709,15 @@ async def git_readme(url: str):
     if not url or not url.startswith(("http://", "https://")):
         return JSONResponse({"ok": False, "error": "bad url"}, status_code=400)
     now = time.time()
+    # A SIGNED README IS NEVER CACHED, NOR ANSWERED FROM THE CACHE. The cache is keyed by URL and
+    # shared by every caller, so a private repo's README fetched with its owner's credential would be
+    # served to the next anonymous caller -- and the "no README" an anonymous caller cached would hide
+    # it from the owner for the TTL.
+    read_auth = _git_read_auth(request)
+    if read_auth:
+        _g = await _grasp_readme(url, read_auth)
+        return JSONResponse({"ok": True, "markdown": _g, "source": "grasp"} if _g is not None
+                            else {"ok": False, "error": "no README found"})
     hit = _readme_cache.get(url)
     if hit and hit[0] > now:
         return JSONResponse(hit[1])
@@ -2807,13 +2817,28 @@ def _grasp_url(clone_url: str, route: str, path: str = "", *, ref: str = "HEAD",
                                           ("/" + quote(path)) if path else "", q)
 
 
-async def _grasp_json(u: str, timeout: float = 10.0):
+def _git_read_auth(request) -> dict:
+    """The VIEWER'S OWN read credential for a private repo, passed through to the git host untouched.
+
+    A private repo's browse routes are read-gated on the hosting node exactly like a clone: a NIP-98
+    `Nostr <base64>` token, method GET, bound to `<id>.git`, at most a minute old, signed by the owner,
+    a maintainer or a listed reader. Without it every browse call answered 404 and a private repo
+    opened to an empty page. This node never mints one and never checks one -- the host does, against
+    its own ACL -- so passing it on grants nothing the signer did not already have. `X-Git-Auth` for
+    fetches; `?auth=` only because a navigation cannot carry a header."""
+    v = (request.headers.get("x-git-auth") or request.query_params.get("auth") or "").strip() if request else ""
+    if v and not v.startswith("Nostr "):
+        v = "Nostr " + v
+    return {"Authorization": v} if v.startswith("Nostr ") and len(v) <= 8192 else {}
+
+
+async def _grasp_json(u: str, timeout: float = 10.0, headers: dict | None = None):
     """GET one of the git host's JSON browse routes -> (payload, error_response). The three read
     endpoints below differ only in URL and timeout, so the fetch/erroring lives here once."""
     try:
         import httpx
         async with httpx.AsyncClient(timeout=httpx.Timeout(timeout, connect=4.0)) as c:
-            r = await c.get(u)
+            r = await c.get(u, headers=headers or None)
             if r.status_code != 200:
                 return None, JSONResponse({"ok": False, "error": "not found"}, status_code=404)
             return r.json(), None
@@ -2822,40 +2847,40 @@ async def _grasp_json(u: str, timeout: float = 10.0):
 
 
 @router.get("/git/tree")
-async def git_tree(url: str, path: str = "", ref: str = "HEAD"):
+async def git_tree(request: Request, url: str, path: str = "", ref: str = "HEAD"):
     """List a directory in a self-hosted GRASP repo (the Files browser). Proxies the git host's tree route
     (git ls-tree). Only Nostr-owned (npub/hex) repos we host/proxy — everything else 400s."""
     u = _grasp_url(url, "tree", path, ref=ref)
     if not u:
         return JSONResponse({"ok": False, "error": "not a self-hosted repo"}, status_code=400)
-    data, err = await _grasp_json(u, 10.0)
+    data, err = await _grasp_json(u, 10.0, _git_read_auth(request))
     return err or JSONResponse({"ok": True, **data})
 
 
 @router.get("/git/log")
-async def git_log(url: str, path: str = "", ref: str = "HEAD", limit: int = 50):
+async def git_log(request: Request, url: str, path: str = "", ref: str = "HEAD", limit: int = 50):
     """Commit history for a self-hosted GRASP repo (the Commits view + a file's history). Proxies the
     git host's log route. Only Nostr-owned (npub/hex) repos we host/proxy — everything else 400s."""
     u = _grasp_url(url, "log", path, ref=ref,
                    extra="limit=%d" % max(1, min(int(limit or 50), 200)))
     if not u:
         return JSONResponse({"ok": False, "error": "not a self-hosted repo"}, status_code=400)
-    data, err = await _grasp_json(u, 20.0)
+    data, err = await _grasp_json(u, 20.0, _git_read_auth(request))
     return err or JSONResponse({"ok": True, **data})
 
 
 @router.get("/git/refs")
-async def git_refs(url: str):
+async def git_refs(request: Request, url: str):
     """Branches + tags of a self-hosted GRASP repo — what the repo view's ref switcher is built from."""
     tgt = _grasp_host_target(url)
     if not tgt:
         return JSONResponse({"ok": False, "error": "not a self-hosted repo"}, status_code=400)
-    data, err = await _grasp_json("%s/%s/%s.git/refs" % tgt, 10.0)
+    data, err = await _grasp_json("%s/%s/%s.git/refs" % tgt, 10.0, _git_read_auth(request))
     return err or JSONResponse({"ok": True, **data})
 
 
 @router.get("/git/commit")
-async def git_commit(url: str, sha: str):
+async def git_commit(request: Request, url: str, sha: str):
     """One commit with its per-file stats and patch — "what changed in this commit". The host bounds
     the patch size and flags `truncated`, so a giant commit can't be used to pull an unbounded body."""
     import re as _re
@@ -2864,12 +2889,13 @@ async def git_commit(url: str, sha: str):
         return JSONResponse({"ok": False, "error": "not a self-hosted repo"}, status_code=400)
     if not _re.fullmatch(r"[0-9a-fA-F]{7,40}", (sha or "").strip()):
         return JSONResponse({"ok": False, "error": "bad sha"}, status_code=400)
-    data, err = await _grasp_json("%s/%s/%s.git/commit/%s" % (*tgt, sha.strip()), 25.0)
+    data, err = await _grasp_json("%s/%s/%s.git/commit/%s" % (*tgt, sha.strip()), 25.0,
+                                  _git_read_auth(request))
     return err or JSONResponse({"ok": True, **data})
 
 
 @router.get("/git/blob")
-async def git_blob(url: str, path: str, ref: str = "HEAD"):
+async def git_blob(request: Request, url: str, path: str, ref: str = "HEAD"):
     """One file's content from a self-hosted GRASP repo (Files browser). Text -> {ok, text}; binary or
     >1 MB -> {ok, binary:true, size} (the client shows a note/download instead of rendering)."""
     if not (path or "").strip("/"):
@@ -2880,7 +2906,7 @@ async def git_blob(url: str, path: str, ref: str = "HEAD"):
     try:
         import httpx
         async with httpx.AsyncClient(timeout=httpx.Timeout(12.0, connect=4.0)) as c:
-            r = await c.get(u)
+            r = await c.get(u, headers=_git_read_auth(request) or None)
             if r.status_code != 200:
                 return JSONResponse({"ok": False, "error": "not found"}, status_code=404)
             content = r.content
@@ -2895,7 +2921,7 @@ async def git_blob(url: str, path: str, ref: str = "HEAD"):
 
 
 @router.get("/git/download")
-async def git_download(url: str, path: str, ref: str = "HEAD"):
+async def git_download(request: Request, url: str, path: str, ref: str = "HEAD"):
     """Download one file from a self-hosted GRASP repo as an attachment — streamed straight through
     from the git host so a large file never lands in this process's memory. Binary-safe (unlike /blob,
     which exists to RENDER text), which is what "save this file" needs."""
@@ -2910,7 +2936,7 @@ async def git_download(url: str, path: str, ref: str = "HEAD"):
     import httpx
     client = httpx.AsyncClient(timeout=httpx.Timeout(120.0, connect=4.0))
     try:
-        req = client.build_request("GET", u)
+        req = client.build_request("GET", u, headers=_git_read_auth(request) or None)
         resp = await client.send(req, stream=True)
     except Exception:
         await client.aclose()
@@ -2935,7 +2961,7 @@ async def git_download(url: str, path: str, ref: str = "HEAD"):
 
 
 @router.get("/git/paths")
-async def git_paths(url: str, ref: str = "HEAD"):
+async def git_paths(request: Request, url: str, ref: str = "HEAD"):
     """Every file path in a self-hosted repo at one ref — the index the Files tab's finder searches.
 
     Names only, and deliberately so: /tree labels each row with the commit that last touched it,
@@ -2947,14 +2973,14 @@ async def git_paths(url: str, ref: str = "HEAD"):
         return JSONResponse({"ok": False, "error": "not a self-hosted repo"}, status_code=400)
     host_base, owner_seg, rid = tgt
     u = "%s/%s/%s.git/paths/HEAD?ref=%s" % (host_base, owner_seg, rid, quote(ref or "HEAD", safe=""))
-    j, err = await _grasp_json(u, timeout=30.0)
+    j, err = await _grasp_json(u, timeout=30.0, headers=_git_read_auth(request))
     if err:
         return err
     return JSONResponse({"ok": True, **j})
 
 
 @router.get("/git/raw")
-async def git_raw(url: str, path: str, ref: str = "HEAD"):
+async def git_raw(request: Request, url: str, path: str, ref: str = "HEAD"):
     """One file's bytes at a plain, linkable URL — what "Raw" opens and what `curl` can fetch.
 
     ALWAYS `text/plain; charset=utf-8`, with `nosniff` and a sandbox CSP, whatever the file actually
@@ -2973,7 +2999,8 @@ async def git_raw(url: str, path: str, ref: str = "HEAD"):
     import httpx
     client = httpx.AsyncClient(timeout=httpx.Timeout(30.0, connect=4.0))
     try:
-        resp = await client.send(client.build_request("GET", u), stream=True)
+        resp = await client.send(client.build_request("GET", u, headers=_git_read_auth(request) or None),
+                                 stream=True)
     except Exception:
         await client.aclose()
         return JSONResponse({"ok": False, "error": "read failed"}, status_code=502)
@@ -2998,7 +3025,7 @@ async def git_raw(url: str, path: str, ref: str = "HEAD"):
 
 
 @router.get("/git/archive")
-async def git_archive(url: str, ref: str = "HEAD", fmt: str = "tar.gz"):
+async def git_archive(request: Request, url: str, ref: str = "HEAD", fmt: str = "tar.gz"):
     """The whole repository at one ref, as a source tarball/zip — the "Download source" every forge
     has, and the only way to get a copy of a project without installing git.
 
@@ -3024,7 +3051,8 @@ async def git_archive(url: str, ref: str = "HEAD", fmt: str = "tar.gz"):
     # short — an unreachable host must still fail fast.
     client = httpx.AsyncClient(timeout=httpx.Timeout(None, connect=5.0))
     try:
-        resp = await client.send(client.build_request("GET", u), stream=True)
+        resp = await client.send(client.build_request("GET", u, headers=_git_read_auth(request) or None),
+                                 stream=True)
     except Exception:
         await client.aclose()
         return JSONResponse({"ok": False, "error": "read failed"}, status_code=502)

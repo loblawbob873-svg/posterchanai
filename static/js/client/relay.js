@@ -503,7 +503,15 @@
           // no owner, several owners, or a repeated refusal can never be satisfied by the active
           // account; blindly re-signing here was an unbounded NIP-46/NIP-55 prompt storm.
           sub.eosed.delete(conn.url);
-          const priv=(sub.filters||[]).filter(f=>(f.kinds||[]).some(k=>Number(k)===78||Number(k)===30078));
+          /* A PRIVATE GIT REPOSITORY is the third private read: the relay withholds its 30617/30618
+           * from a connection that has not authenticated as a maintainer, and says `auth-required`
+           * when the REQ was bound to that author. Only ever for THIS account's own repos -- asking
+           * a signer to sign as somebody else can only fail, and with a remote signer it is a
+           * prompt for nothing every time a stranger's profile lists their repositories. */
+          const me0=this._authOwner?this._authOwner():null;
+          const repoKind=k=>Number(k)===30617||Number(k)===30618;
+          const priv=(sub.filters||[]).filter(f=>(f.kinds||[]).some(k=>Number(k)===78||Number(k)===30078||
+            (repoKind(k)&&!!me0&&Array.isArray(f.authors)&&f.authors.length===1&&String(f.authors[0])===me0)));
           const owners=[...new Set(priv.flatMap(f=>Array.isArray(f.authors)&&f.authors.length===1?[String(f.authors[0])]:[]))];
           const room=(sub.filters||[]).length>0&&(sub.filters||[]).every(f=>Array.isArray(f.kinds)&&f.kinds.length>0&&f.kinds.every(k=>Number(k)===1059));
           const user=room&&this._authOwner?this._authOwner():null;

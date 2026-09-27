@@ -1736,12 +1736,28 @@ class RelayServer:
         # writer drains the shared per-connection queue — otherwise a big response (with other
         # subs also enqueuing) overflows it and this client loses events it asked for. (The EOSE
         # itself is safe either way now: _OutQ never drops a control frame.)
+        withheld_repo = False
         for n, ev in enumerate(reversed(events)):
             if not self._can_serve_event(conn, ev):
+                withheld_repo = withheld_repo or self._is_private_repo_event(ev)
                 continue
             self._send(conn, ["EVENT", sub_id, ev])
             if n % 512 == 511:
                 await asyncio.sleep(0)
+        # SAY WHEN A PRIVATE REPO WAS LEFT OUT OF AN AUTHOR-BOUND ANSWER. Withholding one silently
+        # (an ordinary EOSE) is indistinguishable from "this person has no such repo", so a client
+        # has nothing to act on -- the owner's own Git page listed none of their private repos, ever.
+        # `auth-required` is the answer NIP-42 defines for exactly this, and the client already signs
+        # once and asks again when it gets it. Only for a REQ bound to authors this connection is not
+        # authenticated as: a broad listing never prompts anybody, and it says nothing more than
+        # "this author has something private", which the git host's 401 already says to anyone.
+        if withheld_repo:
+            owners = {str(pk) for f in filters for pk in (f.get("authors") or [])}
+            if owners and not owners.issubset(self._auth_pubkeys.get(conn, set())):
+                self._challenge(conn)
+                self._send(conn, ["CLOSED", sub_id,
+                                  "auth-required: private repositories need AUTH as a maintainer or reader"])
+                return
         self._send(conn, ["EOSE", sub_id])
         self.subs.add(conn, sub_id, filters)
 

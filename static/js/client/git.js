@@ -290,7 +290,20 @@ window.PCGitFactory = function(dep){
     // problem: searching a truncated set reports "no match" for a repo that is really on the relay.
     // Ask for the relay's MAXIMUM (store.py clamps to 5000) rather than omitting the field: a filter
     // with no limit is read as `limit or 500`, so leaving it out is the 500 cap, not the absence of one.
-    let evs=[]; try{ evs=await Relay.query([{ kinds:[30617], limit:5000 }]); }catch(_){}
+    /* YOUR OWN REPOS ARE ASKED FOR SEPARATELY, BOUND TO YOU. A private repo's announcement is only
+     * served to a connection authenticated as a maintainer, and a broad listing never authenticates
+     * (it must not prompt anybody), so the owner's private repos -- admintools, configs -- were missing
+     * from their own Git page with nothing to say so. Bound to this account, the relay answers
+     * `auth-required` and relay.js signs once and asks again. */
+    const _me=(!S.GUEST && S.ME && S.ME.pubkey) || '';
+    let evs=[];
+    try{
+      const [all, own]=await Promise.all([
+        Relay.query([{ kinds:[30617], limit:5000 }]).catch(()=>[]),
+        _me ? Relay.query([{ kinds:[30617], authors:[_me], limit:500 }], 10000).catch(()=>[]) : [],
+      ]);
+      evs=[...(all||[]), ...(own||[])];
+    }catch(_){}
     /* Stars are re-read on EVERY entry, not latched for the page: a star made in another app (the
      * ngit website) or on another device landed on the relay and this view kept answering from the
      * set it loaded at first open — "i starred a repo on ngit again and still does not appear".
@@ -550,6 +563,11 @@ window.PCGitFactory = function(dep){
         };
       });
   }
+  // GRASP-08: a repo is private when its own announcement says so (the relay and the git host read
+  // the same tag; the value is compared case-insensitively there too).
+  function _repoIsPrivate(e){
+    return !!(e && (e.tags||[]).some(t=>t[0]==='private' && String(t[1]||'').toLowerCase()==='true'));
+  }
   function repoCard(e){
     const p=profOf(e.pubkey); needProfile(e.pubkey);
     const name=(e.tags.find(t=>t[0]==='name')||[])[1]||(e.tags.find(t=>t[0]==='d')||[])[1]||'(unnamed repo)';
@@ -559,7 +577,7 @@ window.PCGitFactory = function(dep){
     const wurl=_mdUrl(web[0]||'');   // scheme-allowlist (http/https only) — a relay-supplied javascript: href must never become clickable
     const share=_repoShareUrl(e);
     return `<article class="repo-card" data-id="${e.id}" data-pk="${e.pubkey}">
-      <div class="repo-card-hd"><span class="repo-card-ico">🌱</span><span class="repo-card-name">${enc(name)}</span></div>
+      <div class="repo-card-hd"><span class="repo-card-ico">🌱</span><span class="repo-card-name">${enc(name)}</span>${_repoIsPrivate(e)?`<span class="repo-private" title="Private — only its owner, maintainers and readers can see or clone it"><svg class="ic" aria-hidden="true"><use href="#i-lock"></use></svg>Private</span>`:''}</div>
       <div class="repo-card-desc">${desc?enc(desc.slice(0,150)):'<span class="muted">git repository</span>'}</div>
       <div class="repo-card-by"><img class="repo-card-av" src="${enc(p.picture||S.LOGO)}" onerror="this.src='${S.LOGO}'" data-prof="${e.pubkey}"><span class="name" data-prof="${e.pubkey}">${enc(p.name||p.display_name||'anon')}</span>${
         _repoHostname(e)?`<span class="repo-host${_repoHostedHere(e)?' here':''}" title="${enc(_repoHostname(e))}">${enc(_repoHostname(e))}</span>`:''}</div>
@@ -720,8 +738,30 @@ window.PCGitFactory = function(dep){
     const q=new URLSearchParams({url:_rv.cloneUrl, ref:_rv.ref, ...(params||{})});
     return `/client/git/${route}?${q}`;
   }
+  /* A PRIVATE REPO IS READ WITH THE VIEWER'S OWN SIGNATURE. The git host gates every browse route of
+   * a private repo exactly like a clone (GRASP-08: a NIP-98 token, method GET, bound to `<id>.git`,
+   * at most 60s old, signed by the owner, a maintainer or a reader), so without one the repo opened
+   * to nothing. ONE token covers every read of this repo for 40s -- a repo view makes a dozen reads
+   * at once, and a signer (a remote one especially) must not be asked a dozen times. The in-flight
+   * signature is shared for the same reason. A public repo never signs anything. */
+  let _rvTok=null;
+  function _rvReadAuth(){
+    if(!_rv || !_rv.private || S.GUEST || !S.ME) return Promise.resolve(null);
+    const url=_rv.cloneUrl, now=Date.now();
+    if(_rvTok && _rvTok.url===url && _rvTok.pending) return _rvTok.pending;
+    if(_rvTok && _rvTok.url===url && _rvTok.v && now-_rvTok.at<40000) return Promise.resolve(_rvTok.v);
+    const pending=Promise.resolve().then(()=>sign(27235,'',[['u',url],['method','GET']]))
+      .then(ev=>{ const v='Nostr '+btoa(JSON.stringify(ev)); _rvTok={url, at:Date.now(), v}; return v; })
+      .catch(()=>{ _rvTok=null; return null; });
+    _rvTok={url, pending};
+    return pending;
+  }
+  async function _rvFetch(u){
+    const a=await _rvReadAuth();
+    return fetch(u, a ? {headers:{'X-Git-Auth':a}} : undefined);
+  }
   async function _rvJson(route, params){
-    try{ return await fetch(_rvUrl(route,params)).then(r=>r.json()); }catch(_){ return {ok:false}; }
+    try{ return await _rvFetch(_rvUrl(route,params)).then(r=>r.json()); }catch(_){ return {ok:false}; }
   }
   /* Which tab each repo was last read on, keyed by its naddr.
    *
@@ -763,7 +803,7 @@ window.PCGitFactory = function(dep){
     // Hosted somewhere else, but on a forge that speaks the same URL shape. The distinction matters
     // to the README panel below: it is fetching across the internet, not off this node.
     const isForeignGrasp=!isGrasp && _graspShaped(cloneUrl);
-    _rv = isGrasp ? {ev:e, cloneUrl, ref:'HEAD', refName:'', refs:null, canWrite:_rvCanWrite(e),
+    _rv = isGrasp ? {ev:e, cloneUrl, ref:'HEAD', refName:'', refs:null, canWrite:_rvCanWrite(e), private:_repoIsPrivate(e),
                      filesLoaded:false, commitsLoaded:false, path:''} : null;
     feed.innerHTML=`<div class="repo-view">
       <button class="btn btn-ghost small" id="repo-back"><svg class="ic b-ic" aria-hidden="true"><use href="#i-arrow-left"></use></svg>Repos</button>
@@ -866,7 +906,8 @@ window.PCGitFactory = function(dep){
            * life of the view — including on SUCCESS, which never restored anything at all. */
           const was=db.innerHTML;
           const done=(txt)=>{ db.innerHTML=enc(txt); setTimeout(()=>{ if(db.isConnected) db.innerHTML=was; }, 4000); };
-          if(!isNativeApp || !isNativeApp()){
+          // A private repo cannot be a plain navigation either: a navigation carries no signature.
+          if((!isNativeApp || !isNativeApp()) && !_rv.private){
             /* target=_blank, NOT a same-tab navigation. On success the endpoint's
              * Content-Disposition: attachment keeps the page put — but on `no such ref`, a dead
              * host or a proxy 502 the answer is JSON with no disposition, and a same-tab click
@@ -879,7 +920,7 @@ window.PCGitFactory = function(dep){
           }
           db.disabled=true; db.innerHTML=enc('packing…');
           try{
-            const r=await fetch(u); if(!r.ok) throw new Error('HTTP '+r.status);
+            const r=await _rvFetch(u); if(!r.ok) throw new Error('HTTP '+r.status);
             const how=await saveBlobAs(await r.blob(), nm);
             done(how==='shared' ? '✓ shared' : '✓ saved');
           }catch(err){ toast('couldn’t download the source: '+((err&&err.message)||err)); db.innerHTML=was; }
@@ -892,7 +933,7 @@ window.PCGitFactory = function(dep){
       const box=$('#rv-readme',feed); if(!box) return;
       if(!readmeSrc){ box.innerHTML=`<div class="muted small">No clone/web URL on this repo.</div>`; return; }
       try{
-        const r=await fetch('/client/git/readme?url='+encodeURIComponent(readmeSrc));
+        const r=await _rvFetch('/client/git/readme?url='+encodeURIComponent(readmeSrc));
         const j=await r.json();
         if(S.VIEW!=='repo') return;
         if(j && j.ok && j.markdown){ box.innerHTML=mdToHtml(j.markdown);
@@ -1201,7 +1242,7 @@ window.PCGitFactory = function(dep){
   async function _openRepoCommit(feed, sha){
     const box=$('#rv-commits',feed); if(!box || !sha || !_rv) return;
     box.innerHTML='<div class="spinner"></div>';
-    let j={}; try{ j=await fetch(`/client/git/commit?url=${encodeURIComponent(_rv.cloneUrl)}&sha=${encodeURIComponent(sha)}`).then(r=>r.json()); }catch(_){}
+    let j={}; try{ j=await _rvFetch(`/client/git/commit?url=${encodeURIComponent(_rv.cloneUrl)}&sha=${encodeURIComponent(sha)}`).then(r=>r.json()); }catch(_){}
     if(S.VIEW!=='repo' || !_rv) return;
     if(!j||!j.ok){ box.innerHTML='<div class="rv-empty muted small">Couldn’t load that commit.</div>'; _loadRepoCommits(feed); return; }
     const files=j.files||[];
@@ -1413,9 +1454,14 @@ window.PCGitFactory = function(dep){
     // "Download" is a plain link to the streaming endpoint, so the browser (and the app's WebView) uses
     // its own save flow — fetching the bytes into JS just to re-offer them would break on big files.
     const dl=_rvUrl('download',{path});
+    // A private repo's Raw and Download are fetched WITH the viewer's signature and handed over as a
+    // blob: a plain link is a navigation, which carries none, and the host would refuse it.
     const acts=`<span class="fb-fvacts">
-        <a class="btn btn-ghost small" href="${enc(_rvUrl('raw',{path}))}" target="_blank" rel="noopener" title="This file's raw bytes at a plain URL — quotable, curl-able, linkable"><svg class="ic b-ic" aria-hidden="true"><use href="#i-link"></use></svg>Raw</a>
-        <a class="btn btn-ghost small" href="${enc(dl)}" download="${enc(name)}" title="Download this file"><svg class="ic b-ic" aria-hidden="true"><use href="#i-download"></use></svg>Download</a>
+        ${_rv.private
+          ? `<button class="btn btn-ghost small" id="fv-raw" title="This file's raw bytes"><svg class="ic b-ic" aria-hidden="true"><use href="#i-link"></use></svg>Raw</button>
+        <button class="btn btn-ghost small" id="fv-dl" title="Download this file"><svg class="ic b-ic" aria-hidden="true"><use href="#i-download"></use></svg>Download</button>`
+          : `<a class="btn btn-ghost small" href="${enc(_rvUrl('raw',{path}))}" target="_blank" rel="noopener" title="This file's raw bytes at a plain URL — quotable, curl-able, linkable"><svg class="ic b-ic" aria-hidden="true"><use href="#i-link"></use></svg>Raw</a>
+        <a class="btn btn-ghost small" href="${enc(dl)}" download="${enc(name)}" title="Download this file"><svg class="ic b-ic" aria-hidden="true"><use href="#i-download"></use></svg>Download</a>`}
         <button class="btn btn-ghost small" id="fv-hist" title="Commits that touched this file"><svg class="ic b-ic" aria-hidden="true"><use href="#i-clock"></use></svg>History</button>
         ${(_rvMayEdit() && !j.binary)?`<button class="btn btn-neon small" id="fv-edit"><svg class="ic b-ic" aria-hidden="true"><use href="#i-pen"></use></svg>Edit</button>`:''}
         ${_rvMayEdit()?`<button class="btn btn-ghost small" id="fv-del" style="color:var(--danger,#e0245e)"><svg class="ic b-ic" aria-hidden="true"><use href="#i-trash"></use></svg>Delete</button>`:''}
@@ -1433,6 +1479,19 @@ window.PCGitFactory = function(dep){
         $$('.rv-tab',feed).forEach(x=>x.classList.toggle('active',x.dataset.tab==='commits'));
         $$('.rv-panel',feed).forEach(pn=> pn.hidden = pn.dataset.panel!=='commits');
         _rv.commitsLoaded=true; _loadRepoCommits(feed, path);
+      }; }
+    { const b=$('#fv-dl',fv); if(b) b.onclick=async()=>{
+        try{ const r=await _rvFetch(dl); if(!r.ok) throw new Error('HTTP '+r.status);
+             await saveBlobAs(await r.blob(), name); }
+        catch(err){ toast('couldn’t download '+name+': '+((err&&err.message)||err)); }
+      }; }
+    { const b=$('#fv-raw',fv); if(b) b.onclick=async()=>{
+        const w=window.open('', '_blank');           // opened in the click, or a popup blocker eats it
+        try{ const r=await _rvFetch(_rvUrl('raw',{path})); if(!r.ok) throw new Error('HTTP '+r.status);
+             const u=URL.createObjectURL(new Blob([await r.arrayBuffer()], {type:'text/plain;charset=utf-8'}));
+             if(w) w.location.href=u; else window.open(u, '_blank');
+             setTimeout(()=>URL.revokeObjectURL(u), 60000); }
+        catch(err){ if(w) w.close(); toast('couldn’t open '+name+': '+((err&&err.message)||err)); }
       }; }
     { const e=$('#fv-edit',fv); if(e) e.onclick=()=>_editRepoFile(feed, path, j.text||'', {}); }
     { const d=$('#fv-del',fv); if(d) d.onclick=async()=>{
