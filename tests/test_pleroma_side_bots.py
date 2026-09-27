@@ -46,13 +46,47 @@ def akkoma(monkeypatch):
     with admin.cursor() as c:
         c.execute(f"CREATE SCHEMA {schema}")
         c.execute(f"CREATE TABLE {schema}.users (id uuid PRIMARY KEY, nickname text, local boolean, "
-                  f"inserted_at timestamp without time zone)")
+                  f"inserted_at timestamp without time zone, ap_id text)")
+        c.execute(f"CREATE TABLE {schema}.following_relationships (id serial PRIMARY KEY, follower_id uuid, "
+                  f"following_id uuid, state integer)")
+        # Akkoma's real column order -- the old blockbot read row[3], which is updated_at
+        c.execute(f"CREATE TABLE {schema}.activities (id uuid PRIMARY KEY, data jsonb, "
+                  f"inserted_at timestamp without time zone, updated_at timestamp without time zone)")
     monkeypatch.setenv("PGOPTIONS", f"-c search_path={schema}")
 
     def add(nick, local=True, minutes_ago=1):
         with admin.cursor() as c:
             c.execute(f"INSERT INTO {schema}.users VALUES (%s, %s, %s, (now() at time zone 'utc') - make_interval(mins => %s))",
                       (str(uuid.uuid4()), nick, local, minutes_ago))
+    def block(actor, target, minutes_ago=0.0):
+        import json as _j
+        with admin.cursor() as c:
+            c.execute(f"INSERT INTO {schema}.activities VALUES (%s, %s, "
+                      f"(now() at time zone 'utc') - make_interval(secs => %s), (now() at time zone 'utc') + interval '7 days')",
+                      (str(uuid.uuid4()), _j.dumps({"type": "Block", "actor": actor, "object": target}), minutes_ago * 60))
+    add.block = block
+
+    def follow(follower_ap, followed_ap):
+        ids = []
+        with admin.cursor() as c:
+            for ap in (follower_ap, followed_ap):
+                c.execute(f"SELECT id FROM {schema}.users WHERE ap_id = %s", (ap,))
+                row = c.fetchone()
+                if not row:
+                    uid = str(uuid.uuid4())
+                    c.execute(f"INSERT INTO {schema}.users (id, nickname, local, inserted_at, ap_id) "
+                              f"VALUES (%s, %s, %s, now(), %s)", (uid, ap.rstrip('/').split('/')[-1],
+                                                                  'detroitriotcity.com' in ap, ap))
+                    row = (uid,)
+                ids.append(row[0])
+            c.execute(f"INSERT INTO {schema}.following_relationships (follower_id, following_id, state) "
+                      f"VALUES (%s, %s, 2) RETURNING id", tuple(ids))
+            return c.fetchone()[0]
+
+    def unfollow(rel_id):
+        with admin.cursor() as c:
+            c.execute(f"DELETE FROM {schema}.following_relationships WHERE id = %s", (rel_id,))
+    add.follow, add.unfollow, add.schema = follow, unfollow, schema
     yield add
     with admin.cursor() as c:
         c.execute(f"DROP SCHEMA {schema} CASCADE")
@@ -265,3 +299,118 @@ def test_a_blocked_phrase_is_never_posted(tags, monkeypatch):
         assert hb.post_to_nostr("fine") is True and sent == ["fine"]
     finally:
         sys.modules.pop("nostr", None)
+
+
+# ============================== Pleroma block bot (real Postgres) ==================================
+
+@pytest.fixture
+def blockbot(monkeypatch, tmp_path, akkoma):
+    bb = _fresh(monkeypatch, "blockbot", SQL_DATABASE=DSN["dbname"], SQL_USER=DSN["user"], SQL_PASS="x",
+                SQL_HOST=DSN["host"], PLEROMA_ENDPOINT="https://detroitriotcity.com", AUTO_NARRATE="false",
+                OPENAI_ENDPOINT="")
+    monkeypatch.setattr(bb, "LAST_BLOCK_ID_FILE", str(tmp_path / "last_block"))
+    monkeypatch.setattr(bb, "BLOCK_IMAGE", "")
+    monkeypatch.setattr(bb, "OPENAI_ENDPOINT", "")
+    posted = []
+    monkeypatch.setattr(bb, "pleroma_post_image_to_fediverse", lambda msg, *a, **k: posted.append(msg))
+    bb.conn = None
+    bb.init_db()
+    return bb, posted, akkoma.block
+
+
+A, B = "https://detroitriotcity.com/users/alice", "https://poa.st/users/bob"
+
+
+def test_the_first_look_announces_no_history(blockbot):
+    bb, posted, block = blockbot
+    block(A, B, minutes_ago=30)
+    bb.blocks()
+    assert posted == [], "the first poll announced a block from before the bot started"
+
+
+def test_a_new_block_is_announced_once_with_full_handles(blockbot):
+    bb, posted, block = blockbot
+    bb.blocks()
+    block(A, B)
+    bb.blocks()
+    bb.blocks()
+    assert len(posted) == 1, posted
+    assert "@alice@detroitriotcity.com" in posted[0] and "@bob@poa.st" in posted[0], posted[0]
+
+
+def test_a_late_poll_catches_every_block_since_the_last(blockbot, monkeypatch):
+    """The old rule announced only the PREVIOUS CLOCK MINUTE; a late poll lost the rest for good."""
+    bb, posted, block = blockbot
+    import datetime as dt
+    earlier = (dt.datetime.now(dt.timezone.utc).replace(tzinfo=None) - dt.timedelta(minutes=10)).isoformat()
+    open(bb.LAST_BLOCK_ID_FILE, "w").write(earlier)       # the bot last looked 10 minutes ago
+    block(A, B, minutes_ago=7)
+    block("https://poa.st/users/carol", A, minutes_ago=2)
+    bb.blocks()
+    assert len(posted) == 1 and "@bob@poa.st" in posted[0] and "@carol@poa.st" in posted[0], posted
+
+
+def test_a_failed_post_is_tried_again(blockbot, monkeypatch):
+    bb, posted, block = blockbot
+    bb.blocks()
+    block(A, B)
+
+    def boom(*a, **k):
+        raise RuntimeError("pleroma down")
+    monkeypatch.setattr(bb, "pleroma_post_image_to_fediverse", boom)
+    bb.blocks()
+    monkeypatch.setattr(bb, "pleroma_post_image_to_fediverse", lambda msg, *a, **k: posted.append(msg))
+    bb.blocks()
+    assert len(posted) == 1, "a block whose post failed was lost"
+
+
+# ============================== unfollow bot (real Postgres) =======================================
+
+@pytest.fixture
+def unfollows(monkeypatch, tmp_path, akkoma):
+    ub = _fresh(monkeypatch, "unfollowbot", SQL_DATABASE=DSN["dbname"], SQL_USER=DSN["user"], SQL_PASS="x",
+                SQL_HOST=DSN["host"], PLEROMA_ENDPOINT="https://detroitriotcity.com", AUTO_NARRATE="false",
+                OPENAI_ENDPOINT="")
+    monkeypatch.setattr(ub, "PLEROMA_FOLLOWING_SNAPSHOT_FILE", str(tmp_path / "snapshot.json"))
+    monkeypatch.setattr(ub, "UNFOLLOW_IMAGE", "")
+    monkeypatch.setattr(ub, "OPENAI_ENDPOINT", "")
+    posted = []
+    monkeypatch.setattr(ub, "pleroma_post_image_to_fediverse", lambda msg, *a, **k: posted.append(msg))
+    ub.conn = None
+    ub.init_db()                                              # connect exactly as the bot does
+    return ub, posted, akkoma
+
+
+LOCAL, REMOTE = "https://detroitriotcity.com/users/alice", "https://poa.st/users/bob"
+
+
+def test_a_remote_unfollow_of_a_member_is_announced_once(unfollows):
+    ub, posted, db = unfollows
+    rel = db.follow(REMOTE, LOCAL)
+    db.follow(LOCAL, REMOTE)                                  # our member following out: not tracked
+    db.follow("https://detroitriotcity.com/users/carol", LOCAL)   # local -> local: not tracked
+    ub.pleroma_unfollows()
+    assert posted == [], "the first look announced something"
+    db.unfollow(rel)
+    ub.pleroma_unfollows()
+    ub.pleroma_unfollows()
+    assert len(posted) == 1 and "@bob@poa.st unfollowed @alice@detroitriotcity.com" in posted[0], posted
+
+
+def test_a_database_outage_announces_nothing_and_keeps_the_snapshot(unfollows, monkeypatch):
+    """[] from a failed query used to read as "nobody follows anyone": every follow was announced
+    as an unfollow and the empty list overwrote the snapshot."""
+    ub, posted, db = unfollows
+    db.follow(REMOTE, LOCAL)
+    db.follow("https://poa.st/users/dave", LOCAL)
+    ub.pleroma_unfollows()
+    before = open(ub.PLEROMA_FOLLOWING_SNAPSHOT_FILE).read()
+    monkeypatch.setenv("PGOPTIONS", "-c search_path=no_such_schema")   # the tables vanish from view
+    ub.conn.close()                                           # and the live connection drops
+    ub.pleroma_unfollows()
+    assert posted == [], f"a database outage announced {len(posted)} fake unfollow(s)"
+    assert open(ub.PLEROMA_FOLLOWING_SNAPSHOT_FILE).read() == before, "the snapshot was overwritten"
+    monkeypatch.setenv("PGOPTIONS", f"-c search_path={db.schema}")
+    ub.conn = None
+    ub.pleroma_unfollows()
+    assert posted == [], "recovering from the outage announced unfollows that never happened"

@@ -263,41 +263,41 @@ def save_last_block_id(block_id):
 
 
 def blocks(print_only=False):
-    # 1. Get current timestamp in %y-%m-%d %H:%M
-    now = datetime.datetime.now(pytz.timezone("Atlantic/Reykjavik"))
-    # Calculate the timestamp for the previous minute
-    previous_minute = now - datetime.timedelta(minutes=1)
-    now_str = previous_minute.strftime("%y-%m-%d %H:%M")
+    """Announce Block activities recorded since the last one announced.
 
-    # 2. Run query and store all block activity rows
-    query = "SELECT * FROM activities WHERE data->>'type' = 'Block';"
+    It used to announce only blocks whose inserted_at fell in the PREVIOUS CLOCK MINUTE, found by
+    `SELECT *` and reading row[3] -- which is updated_at, not inserted_at. A poll that ran late (the
+    loop sleeps 60 s AFTER its work) skipped that minute's blocks for good. Now a cursor: the
+    inserted_at of the last block handled, kept in LAST_BLOCK_ID_FILE. The FIRST look only records
+    "now" -- without a memory every block ever made would be announced at once."""
+    cursor = None
+    raw = get_last_block_id()
+    if raw:
+        try:
+            cursor = datetime.datetime.fromisoformat(raw)
+        except ValueError:
+            cursor = None                   # an old id-style memory: start fresh, announce nothing
+    if cursor is None:
+        now = datetime.datetime.now(datetime.timezone.utc).replace(tzinfo=None)
+        if not print_only:
+            save_last_block_id(now.isoformat())
+        return
     data_rows = run_psql(
-        query
-    )  # each row expected to have at least (id, data_dict, created_at, ...)
-
-    # 3. Iterate and filter by timestamp matching now_str (up to minute)
+        "SELECT id, data, inserted_at FROM activities "
+        "WHERE data->>'type' = 'Block' AND inserted_at > %s ORDER BY inserted_at ASC LIMIT 50;",
+        (cursor,),
+    )
     matches = []
+    newest = cursor
     for row in data_rows:
-        # Assuming inserted_at is index 2 or 3; adjust if needed
-        inserted_at = row[3] if len(row) > 2 else None
-        if not inserted_at:
-            continue
-        # Format inserted_at to '%y-%m-%d %H:%M' for comparison
-        inserted_str = inserted_at.strftime("%y-%m-%d %H:%M")
-        if inserted_str != now_str:
-            continue
-
-        data = row[1]  # data field assumed index 1
-        print(f"Debug Row Data: {inserted_at}")
+        inserted_at = row[2]
+        if inserted_at and inserted_at > newest:
+            newest = inserted_at
+        data = row[1] or {}
         actor_url = data.get("actor", "")
         object_url = data.get("object", "")
         if not actor_url or not object_url:
             continue
-
-        # Debug: Log the raw URLs from database
-        logging.debug(f"Raw actor_url from DB: {actor_url}")
-        logging.debug(f"Raw object_url from DB: {object_url}")
-
         # Extract username from URL (last path segment)
         blocker = actor_url.rstrip("/").split("/")[-1]
         blocked = object_url.rstrip("/").split("/")[-1]
@@ -383,7 +383,10 @@ def blocks(print_only=False):
                         pleroma_post_image_to_fediverse(msg, audio_bytes=audio_bytes, video_bytes=video_bytes)
                 except Exception as e:
                     logging.error(f"Failed to post: {e}")
-                    # Don't try to post again if it already failed
+                    return                           # the cursor stays put: tried again next poll
+    if newest > cursor and not print_only:
+        save_last_block_id(newest.isoformat())
+
 
 def scalps(print_only=False):
     instance = PLEROMA_ENDPOINT.replace("https://", "").replace("http://", "")

@@ -125,6 +125,29 @@ def run_psql(query, params=None):
         return []
 
 
+def _fetch_all(query, params=None):
+    """Like run_psql, but None when the database COULD NOT BE ASKED. run_psql answers [] for both
+    "no rows" and "the query failed", and for the unfollow check those are opposites: an empty
+    current-follows list after a database hiccup announced EVERY follow as an unfollow, and wrote the
+    empty list over the snapshot."""
+    global conn
+    for _attempt in (1, 2):
+        try:
+            if conn is None:
+                conn = akkoma_db.connect(SQL_DATABASE, SQL_USER, SQL_PASS, SQL_HOST)
+            with conn.cursor() as cur:
+                cur.execute(query, params)
+                return cur.fetchall()
+        except Exception as e:
+            logging.warning(f"[unfollow] query failed ({e}); {'retrying' if _attempt == 1 else 'giving up this round'}")
+            try:
+                conn.close()
+            except Exception:
+                pass
+            conn = None
+    return None
+
+
 def load_following_snapshot(snapshot_file=FOLLOWING_SNAPSHOT_FILE):
     """Load the snapshot of following relationships from file"""
     try:
@@ -208,7 +231,9 @@ def get_pleroma_current_follows():
     WHERE fr.state = 2;
     '''
 
-    rows = run_psql(query)
+    rows = _fetch_all(query)
+    if rows is None:
+        return None                      # could not ask -- never the same as "nobody follows anyone"
 
     # Build a dict: key = "follower@host->followee@host", value = row data
     follows = {}
@@ -247,6 +272,9 @@ def pleroma_unfollows(print_only=False):
 
     # Get current following relationships
     current_follows = get_pleroma_current_follows()
+    if current_follows is None:
+        logging.warning("[unfollow] could not read follows; nothing announced, snapshot kept")
+        return
 
     # First run - just save snapshot without reporting
     if not old_snapshot:

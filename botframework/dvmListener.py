@@ -102,18 +102,22 @@ def process_job_requests():
     except Exception as e:
         print(f"[dvm] query failed: {e}", flush=True)
         return
-    _since = int(time.time()) - 5   # small overlap so we don't miss boundary events
-
+    next_since = int(time.time()) - 5   # small overlap so we don't miss boundary events
     done = 0
     for ev in sorted(events, key=lambda e: e.get("created_at", 0)):
         rid = ev.get("id")
         if not rid or rid in _SEEN or ev.get("pubkey") == _nk._PUBKEY:
             continue
-        _SEEN.add(rid)
         if ev.get("kind") not in _SUPPORTED:
+            _SEEN.add(rid)
             continue
+        # The per-poll cap is checked BEFORE a request is marked seen, and the cursor resumes at
+        # the first request not reached: it used to mark the capped one seen and move the cursor to
+        # "now", so a burst of more than _MAX_PER_POLL jobs silently lost everything past the cap.
         if done >= _MAX_PER_POLL:
+            next_since = min(next_since, int(ev.get("created_at", 0)) - 1)
             break
+        _SEEN.add(rid)
         prompt = _input_text(ev)
         if not prompt:
             _feedback(ev, "error", "no input provided")
@@ -141,5 +145,6 @@ def process_job_requests():
             except Exception:
                 pass
 
+    _since = next_since
     if len(_SEEN) > 5000:
         _SEEN.clear()

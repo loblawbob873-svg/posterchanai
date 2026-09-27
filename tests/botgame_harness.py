@@ -123,7 +123,8 @@ class GameWorld:
         for attr in ("_IDS_FILE", "_DM_IDS_FILE", "_LOCK_FILE"):
             if hasattr(self.game, attr):
                 monkeypatch.setattr(self.game, attr, str(tmp_path / f"{module}{attr}"))
-        monkeypatch.setattr(self.game, "script_dir", str(tmp_path))
+        if hasattr(self.game, "script_dir"):
+            monkeypatch.setattr(self.game, "script_dir", str(tmp_path))
         # The bot reads the SAME clock (without advancing it): its pointer timestamps and the players'
         # DM timestamps have to be comparable, or "sent before the pointer" means nothing here.
         import time as _real
@@ -165,6 +166,15 @@ class GameWorld:
         ev = E.build_event(who.sk, 1, text, tags=tags, created_at=self._now())
         asyncio.run(self.relay.publish(None, ev))
         return ev["id"]
+
+    def publish(self, who, kind, content="", tags=()):
+        ev = E.build_event(who.sk, kind, content, tags=[list(t) for t in tags], created_at=self._now())
+        asyncio.run(self.relay.publish(None, ev))
+        return ev
+
+    def events(self, kind):
+        return sorted(asyncio.run(self.relay.query(None, [{"kinds": [kind], "authors": [BOT_PK]}])),
+                      key=lambda e: e["created_at"])
 
     def dm(self, who, text):
         asyncio.run(self.relay.publish(None, nip17.wrap(who.sk, BOT_PK, text)))
