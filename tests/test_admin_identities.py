@@ -146,7 +146,7 @@ const ctx = {
   console, JSON, Promise, setTimeout,
   loadedValues: loaded,
   location: { hash: '' },
-  window: { pcConfirm: async () => true },
+  pcConfirm: async () => true, window: {},
   fetch: async (url, opt) => {
     calls.push([url, opt && opt.body]);
     if (url.endsWith('/identities')) return { ok: true, json: async () => ({ names_complete: true,

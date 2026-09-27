@@ -77,8 +77,9 @@
         const row = btn.closest('.ids-row');
         const name = row && row.dataset.name;
         if (!name) return;
-        const ok = window.pcConfirm ? await window.pcConfirm(`Remove the identity "${name}"? Its owner loses the address (and any access it grants).`)
-                                    : true;
+        const ok = (typeof pcConfirm === 'function')
+            ? await pcConfirm(`Remove the identity "${name}"? Its owner loses the address (and any access it grants).`)
+            : true;
         if (!ok) return;
         btn.disabled = true;
         btn.textContent = 'Removing…';
