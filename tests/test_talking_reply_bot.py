@@ -422,3 +422,61 @@ def test_the_best_take_is_kept_and_garbage_is_refused(monkeypatch):
     _takes(monkeypatch, {b"take1": "no", b"take2": "nope", b"take3": "nah"})
     with pytest.raises(RuntimeError):
         run(tb.speak_checked(None, LINE, b"v", "/ref"))
+
+
+# ---- talking only + a budget that survives restarts ---------------------------------------------
+
+@pytest.fixture
+def talk_only(monkeypatch, tmp_path):
+    monkeypatch.syspath_prepend(BOTS)
+    for k, v in {"NOSTR_NSEC": "11" * 32, "NOSTR_TALK": "1", "NOSTR_TALK_BOT": "talky", "NOSTR_TALK_TOKEN": "tok",
+                 "NOSTR_TALK_ONLY": "1"}.items():
+        monkeypatch.setenv(k, v)
+    sys.modules.pop("nostrListener", None)
+    mod = importlib.import_module("nostrListener")
+    monkeypatch.setattr(mod, "_RR_AUTHORS_FILE", str(tmp_path / "authors.json"))
+    monkeypatch.setattr(mod, "_RR_STARTS_FILE", str(tmp_path / "starts.json"))
+    return mod
+
+
+def test_talking_only_never_falls_back_to_text(talk_only, monkeypatch):
+    sent = []
+    monkeypatch.setattr(talk_only, "_talk_clip", lambda text: None)
+    talk_only._send_spoken(lambda t, **m: sent.append((t, m)), "hello")
+    assert sent == [], "talking-only posted a text reply when the render failed"
+
+
+def test_talking_only_answers_a_command_with_the_face(talk_only, monkeypatch):
+    sent = []
+
+    def no_commands(*a, **k):
+        raise AssertionError("a command feature ran in talking-only mode")
+    for name in ("smart_search", "search_and_download_images", "fetch_news_from_source", "process_media"):
+        if hasattr(talk_only, name):
+            monkeypatch.setattr(talk_only, name, no_commands)
+    monkeypatch.setattr(talk_only, "generate_reply", lambda prompt, **k: "Well well well.")
+    monkeypatch.setattr(talk_only, "_talk_clip", lambda text: b"CLIP")
+    note = {"id": "n1", "text": "search cats", "user": {"pubkey": "ab" * 32}, "_event": {}}
+    talk_only._dispatch(note, "search cats", "cd" * 32, None, reply=lambda t="", **m: sent.append((t, m)))
+    assert sent == [("", {"video_bytes": b"CLIP"})], sent
+
+
+def test_the_manager_passes_talking_only(monkeypatch):
+    from app.services import bot_manager_service as bm, settings_store
+    monkeypatch.setattr(settings_store, "get", lambda k, d=None: d)
+    base = {"name": "talky", "platform": "nostr", "bot_type": "text", "modes": ["--nostr"], "nostr_nsec": "11" * 32,
+            "talk_enabled": True, "talk_faces": _faces("f" * 64), "talk_voice_sha": "v" * 64}
+    assert "NOSTR_TALK_ONLY" not in bm._build_env(dict(base), {})
+    assert bm._build_env(dict(base, talk_only=True), {}).get("NOSTR_TALK_ONLY") == "1"
+
+
+def test_the_hourly_budget_survives_a_restart(talk_only, monkeypatch, tmp_path):
+    """It lived in memory, so each save of the bot (a restart) handed out a fresh budget."""
+    monkeypatch.setattr(talk_only, "_RR_PER_HOUR", 2)
+    assert talk_only._rr_budget_allows() and talk_only._rr_budget_allows()
+    assert not talk_only._rr_budget_allows(), "the budget did not run out"
+    sys.modules.pop("nostrListener", None)                  # the bot restarts
+    again = importlib.import_module("nostrListener")
+    monkeypatch.setattr(again, "_RR_STARTS_FILE", str(tmp_path / "starts.json"))
+    monkeypatch.setattr(again, "_RR_PER_HOUR", 2)
+    assert not again._rr_budget_allows(), "a restart handed out a fresh hourly budget"

@@ -235,6 +235,10 @@
                         <span class="bots-dim" id="bot_talk_voice_state"></span>
                     </div>
                     <div class="form-group">
+                        <label><input type="checkbox" id="bot_f_talk_only"> Talking only
+                            <span class="bots-dim">(never reply in text: a reply whose render fails is skipped, and the command features — search, images, media tools — are off for this bot)</span></label>
+                    </div>
+                    <div class="form-group">
                         <label for="bot_f_talk_max_words">Longest reply, in words <span class="bots-dim">(short = fast: speech costs ~10× its length on the GPU; default 15)</span></label>
                         <input type="number" id="bot_f_talk_max_words" placeholder="15" min="3" max="60">
                     </div>

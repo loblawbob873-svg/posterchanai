@@ -27,7 +27,7 @@ const BOT_KNOWN_KEYS = [
     'image_negative',  // image bot: negative prompt (IMAGE_POSTER_NEGATIVE)
 ];
 // Config keys backed by a checkbox.
-const BOT_KNOWN_CHECKS = ['auto_narrate', 'unfollow_silent_mode', 'auto_post_enabled', 'random_scenes', 'nostr_random_reply', 'talk_enabled'];
+const BOT_KNOWN_CHECKS = ['auto_narrate', 'unfollow_silent_mode', 'auto_post_enabled', 'random_scenes', 'nostr_random_reply', 'talk_enabled', 'talk_only'];
 // feature checkbox id -> main.py mode flag
 const BOT_FEATURES = {
     bot_ft_welcome: '--welcome', bot_ft_block: '--blockbot',

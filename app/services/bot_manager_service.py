@@ -448,6 +448,8 @@ def _build_env(bot_dict: dict, base_env: dict) -> dict:
                     env["NOSTR_TALK_BOT"] = str(bot_dict.get("name") or "")
                     env["NOSTR_TALK_TOKEN"] = talkbot_service.token(str(bot_dict.get("name") or ""))
                     setif("talk_max_words", "NOSTR_TALK_MAX_WORDS")
+                    if bot_dict.get("talk_only"):
+                        env["NOSTR_TALK_ONLY"] = "1"
                 except Exception as e:
                     logger.warning("[BOTS] talking replies not enabled for %s: %s", bot_dict.get("name"), e)
             # Reply listener is opt-in: Admin → Bots "reply" maps to `--nostr` in `modes` (admin-bots.js).

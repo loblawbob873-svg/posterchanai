@@ -183,6 +183,9 @@ _load_ids()
 _TALK_ON = (os.getenv("NOSTR_TALK", "") or "").strip() in ("1", "true", "yes", "on")
 _TALK_BOT = (os.getenv("NOSTR_TALK_BOT", "") or "").strip()
 _TALK_TOKEN = (os.getenv("NOSTR_TALK_TOKEN", "") or "").strip()
+# Talking ONLY: never a text reply. A render that fails is skipped rather than answered in text, and
+# the command features (search, images, media tools, narration) are off -- every answer is the face.
+_TALK_ONLY = _TALK_ON and (os.getenv("NOSTR_TALK_ONLY", "") or "").strip() in ("1", "true", "yes", "on")
 try:
     _TALK_MAX_WORDS = max(3, min(60, int(os.getenv("NOSTR_TALK_MAX_WORDS", "15") or 15)))
 except ValueError:
@@ -244,6 +247,8 @@ def _send_spoken(send, text: str):
     clip = _talk_clip(text) if _TALK_ON else None
     if clip:
         send("", video_bytes=clip)       # the clip says it; the post is the video alone
+    elif _TALK_ONLY:
+        print("[nostr] talking-only: render failed, reply skipped (no text fallback)", flush=True)
     else:
         send(text)
 
@@ -275,6 +280,33 @@ def _rr_note_author(pk: str) -> None:
         os.replace(tmp, _RR_AUTHORS_FILE)
     except Exception as e:
         print(f"[nostr] could not record random-reply author: {e}", flush=True)
+
+
+_RR_STARTS_FILE = os.path.join(script_dir, f".random_reply_starts_{_state_suffix()}.json")
+
+
+def _rr_budget_allows() -> bool:
+    """The random-reply hourly budget, kept ON DISK. It lived in memory, so every save of the bot
+    in Admin → Bots (each one restarts it) handed out a fresh budget -- fever sent 3 random replies
+    in ~2 minutes while being edited. Takes a slot when there is one."""
+    import json as _json
+    now = time.time()
+    try:
+        with open(_RR_STARTS_FILE) as f:
+            starts = [t for t in _json.load(f) if isinstance(t, (int, float)) and now - t < _RR_WINDOW]
+    except (OSError, ValueError, TypeError):
+        starts = []
+    if len(starts) >= _RR_PER_HOUR:
+        return False
+    starts.append(now)
+    try:
+        fd, tmp = tempfile.mkstemp(dir=os.path.dirname(_RR_STARTS_FILE), prefix=".rr_starts_")
+        with os.fdopen(fd, "w") as f:
+            _json.dump(starts, f)
+        os.replace(tmp, _RR_STARTS_FILE)
+    except Exception as e:
+        print(f"[nostr] could not record random-reply start: {e}", flush=True)
+    return True
 
 
 def _muted_us(pk: str, own: str) -> bool:
@@ -389,6 +421,12 @@ def _dispatch(note, prompt_text, own, thread_history, reply=None, sender_key=Non
     reply = reply or (lambda text="", **kw: _post(note, text, **kw))
     if sender_key is None:
         sender_key = (note.get("user") or {}).get("pubkey", "") if isinstance(note, dict) else ""
+    if _TALK_ONLY:
+        # every answer is the talking face: no commands, straight to the in-character line
+        reply_text = generate_reply(_talk_prompt(prompt_text), thread_history=thread_history, ping=False)
+        if reply_text:
+            _send_spoken(reply, reply_text)
+        return
     lower = prompt_text.lower()
     # Media / effect commands on an attached or linked file.
     media_cmd = next((c for c in MEDIA_COMMANDS if lower == c or lower.startswith(c + " ")), None)
@@ -550,7 +588,7 @@ def process_random_replies():
             continue                       # already started a thread with this person today
         if _muted_us(pk, own):
             continue                       # they muted this bot -- never reply to them unasked
-        if not _rr_starts.allow("global"):
+        if not _rr_budget_allows():
             break                          # per-hour start budget spent → stop scanning this poll
         try:
             reply = generate_reply(_talk_prompt(
