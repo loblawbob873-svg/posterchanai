@@ -2011,11 +2011,20 @@ liveISOinstall() {
 		# below it out of an empty string.
 		#
 		# The Boot Loader Spec layout is a documented directory shape, so it is written directly.
-		local MID
+		local MID KIMG _pair
 		MID="$(sudo cat $TARGET/etc/machine-id 2>/dev/null)"
-		if [ -n "$MID" ] && [ -f "$TARGET/boot/vmlinuz" ]; then
+		# The image and the version travel together -- see pc_target_kernel_image.
+		_pair="$(pc_target_kernel_image "$TARGET" "$KVER")" || _pair=""
+		if [ -n "$_pair" ]; then
+			if [ "${_pair%% *}" != "$KVER" ]; then
+				echo -e "${COLOR_YELLOW}  no kernel image for $KVER on this medium — installing ${_pair%% *}, the kernel it booted${COLOR_RESET}"
+			fi
+			KVER="${_pair%% *}" KIMG="${_pair#* }"
+		fi
+		if [ -n "$MID" ] && [ -n "$KIMG" ]; then
 			sudo mkdir -p "$TARGET/boot/$MID/$KVER"
-			sudo cp -f "$TARGET/boot/vmlinuz" "$TARGET/boot/$MID/$KVER/linux"
+			# -L: a dist-kernel's image is a symlink into /usr/src, and the ESP holds no symlinks.
+			sudo cp -fL "$KIMG" "$TARGET/boot/$MID/$KVER/linux"
 			sudo chroot $TARGET /usr/bin/dracut --force --add "$DRACUT_ADD" \
 				"/boot/$MID/$KVER/initrd" "$KVER" \
 				|| echo -e "${COLOR_YELLOW}  dracut failed here — the bootloader step tries again${COLOR_RESET}"
@@ -3594,6 +3603,36 @@ pc_best_kernel_version() {
 	for _pck_c in $(ls /usr/lib/modules 2>/dev/null | sort -Vr); do
 		if pc_kernel_can_unlock "$_pck_c"; then printf '%s\n' "$_pck_c"; return 0; fi
 	done
+	return 1
+}
+
+# THE KERNEL IMAGE AN INSTALL COPIES MUST BE THE VERSION ITS INITRAMFS AND MODULES ARE FOR.
+#
+# The install used to copy $TARGET/boot/vmlinuz -- the kernel the LIVE MEDIUM booted -- into
+# /boot/<machine-id>/<newest module tree>/linux. Those are the same kernel only while the machine
+# the image was built from had exactly one. Measured 2026-09-27: the build host had just upgraded
+# 6.18.48 -> 6.18.50 and not rebooted, so the medium booted 6.18.48 while the newest tree on it was
+# 6.18.50. Every install then paired a 6.18.48 kernel with a 6.18.50 initramfs, the kernel could not
+# load that initramfs's dm-crypt, and the machine stopped at `crypt: unknown target type` -- the
+# same console line as a missing module, from a module that was there, for the wrong kernel.
+#
+# A Gentoo dist-kernel keeps its own image at /lib/modules/<version>/vmlinuz, so that one is taken
+# for the version being installed. Only when there is none is the live kernel used -- and then under
+# ITS OWN version (`uname -r` in the live session), never renamed to another one.
+# Usage: pc_target_kernel_image <target-root> <version>. Prints "<version> <image>", or fails.
+pc_target_kernel_image() {
+	_pti_root="$1" _pti_v="$2"
+	if [ -n "$_pti_v" ] && [ -e "$_pti_root/lib/modules/$_pti_v/vmlinuz" ]; then
+		printf '%s %s\n' "$_pti_v" "$_pti_root/lib/modules/$_pti_v/vmlinuz"; return 0
+	fi
+	if [ -n "$_pti_v" ] && [ -e "$_pti_root/usr/lib/modules/$_pti_v/vmlinuz" ]; then
+		printf '%s %s\n' "$_pti_v" "$_pti_root/usr/lib/modules/$_pti_v/vmlinuz"; return 0
+	fi
+	[ -f "$_pti_root/boot/vmlinuz" ] || return 1
+	_pti_live="$(uname -r)"
+	if [ -d "$_pti_root/lib/modules/$_pti_live" ] || [ -d "$_pti_root/usr/lib/modules/$_pti_live" ]; then
+		printf '%s %s\n' "$_pti_live" "$_pti_root/boot/vmlinuz"; return 0
+	fi
 	return 1
 }
 
