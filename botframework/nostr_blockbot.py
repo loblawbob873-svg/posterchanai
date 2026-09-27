@@ -100,7 +100,7 @@ def _line(b: dict) -> str:
     """A Nostr "block" is a public MUTE list, and it is announced as what it is."""
     if b.get("via") == "fediverse":
         return f"BLOCKER: {b['blocker_handle']} blocked {b['blocked_handle']} (on the fediverse)"
-    return f"MUTER: {b['blocker_handle']} muted {b['blocked_handle']} (on Nostr)"
+    return f"{b['blocker_handle']} muted {b['blocked_handle']} (on Nostr)"
 
 
 def validate_block_message(ai_msg: str, handles: list, mutes: bool = False) -> bool:
@@ -149,7 +149,7 @@ def blocks(print_only=False):
             ai_msg = (generate_reply(BLOCK_PROMPT.format(block_details=msg) + " /no_think") or "").replace("/no_think", "").strip()
             if ai_msg and "None" not in ai_msg and validate_block_message(
                     ai_msg, handles, mutes=any(b.get("via") != "fediverse" for b in shown)):
-                msg = re.sub(r"\bBLOCKEE:\s*", "", ai_msg)
+                msg = re.sub(r"\b(?:BLOCKEE|MUTER|MUTEE):\s*", "", ai_msg)   # a mute is said plainly
         except Exception as e:
             logging.warning(f"[BLOCKBOT] AI wording failed, using the plain message: {e}")
     print(msg)
