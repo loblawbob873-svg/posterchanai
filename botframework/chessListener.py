@@ -167,9 +167,22 @@ def _get_player_game(pk: str):
 
 
 def _set_player_game(pk: str, gameid: str):
-    ev = _ev.build_event(_nk._SECKEY, _KIND_APP, json.dumps({"gameid": gameid}, separators=(",", ":")),
+    ev = _ev.build_event(_nk._SECKEY, _KIND_APP, json.dumps({"gameid": gameid, "since": int(time.time())}, separators=(",", ":")),
                          tags=[["d", _player_dtag(pk)]])
     _nk._run(_nk._svc.relay.publish(_nk._RELAYS, ev))
+
+
+def _player_since(pk):
+    """When the player's game pointer was last set. A BARE DM is routed by that pointer, so a DM sent
+    BEFORE it was set cannot be a move in this game: it was about something else (or no game at all).
+    Without this, a stray DM left unclaimed for up to the lookback window was replayed as the FIRST
+    MOVE of the next game the player joined -- a hangman guesser's earlier "pancake" won a game the
+    moment its word was set. A pointer written before this field existed reads 0 (no change)."""
+    doc = _load_doc(_player_dtag(pk))
+    try:
+        return int(doc.get("since") or 0) if isinstance(doc, dict) else 0
+    except (TypeError, ValueError):
+        return 0
 
 
 # ---- nostr helpers -----------------------------------------------------------
@@ -724,6 +737,9 @@ def process_chess():
             continue
         if not gameid:
             gameid = _get_player_game(sender)   # bare DM reply → the player's pending game
+            if gameid and dm.get("created_at", 0) < _player_since(sender):
+                _claim_dm(rid)                      # older than the pointer: never a move here
+                continue
         if not gameid:
             continue
         if not _claim_dm(rid):
