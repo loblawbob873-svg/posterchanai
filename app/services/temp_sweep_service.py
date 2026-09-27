@@ -56,6 +56,8 @@ _APP_TEMP_PREFIXES: Tuple[str, ...] = (
     # — and it escaped the sweep from the day it was written, which is what the drift test caught.
     "pagerender_",
     "parallax_",
+    # Talking replies (talkbot_service): the rendered line's WAV, and the voice clip being normalised.
+    "talkbot_", "talkbot_voice_",
     # `pcai_` ones are the prefixes THIS change introduced, on call sites that previously had none.
     # They are namespaced where the obvious name would have been generic enough to collide with
     # another program's temp files (`tts_`, `stt_`, `doc_`, `char_`, `client_probe_`) — the one way
