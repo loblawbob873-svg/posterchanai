@@ -169,11 +169,17 @@ async def render(db, face_sha: str, voice_sha: str, mouth, text: str) -> bytes:
         raise RuntimeError("nothing to say")
     face = await _read_blob(db, face_sha)
     voice = await _read_blob(db, voice_sha)
-    wav, where = await voice_factory.generate_voice(db, line, voice)
-    if not wav:
-        raise RuntimeError("the voice model returned nothing")
     tmp = tempfile.mkdtemp(prefix="talkbot_")
     try:
+        # The LOCAL voice path needs the reference as a FILE; given only bytes, voice_factory logged
+        # "local failed: no local copy of the reference clip" and sent every render to another node --
+        # this node's GPU never spoke a single talking reply.
+        ref_path = os.path.join(tmp, "ref.wav")
+        with open(ref_path, "wb") as f:
+            f.write(voice)
+        wav, where = await voice_factory.generate_voice(db, line, voice, reference_path=ref_path)
+        if not wav:
+            raise RuntimeError("the voice model returned nothing")
         path = os.path.join(tmp, "line.wav")
         with open(path, "wb") as f:
             f.write(wav)

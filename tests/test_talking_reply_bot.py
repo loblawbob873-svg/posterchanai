@@ -161,6 +161,9 @@ def test_a_reply_renders_as_a_talking_clip_with_sound(monkeypatch, tmp_path):
 
     async def generate_voice(db, text, reference, reference_path=None):
         assert reference == voice, "the bot's own voice clip must be the reference"
+        # Without a FILE the local path refuses ("no local copy of the reference clip") and every
+        # render went to another node -- this node's GPU never spoke.
+        assert reference_path and open(reference_path, "rb").read() == voice, "no local reference file"
         return _wav(tmp_path, 2), "local"
     from app.services import voice_factory
     monkeypatch.setattr(tb, "_read_blob", read_blob)
@@ -261,6 +264,24 @@ def test_a_failed_render_still_answers_in_text(listener, monkeypatch):
 def test_the_prompt_asks_for_a_short_spoken_line(listener):
     p = listener._talk_prompt("what's up?")
     assert p.startswith("what's up?") and "at most 9 words" in p
+    low = p.lower()
+    assert "talking" not in low and "video" not in low and "spoken" not in low, \
+        "telling the model it is a talking picture made it narrate that instead of answering"
+
+
+def test_a_models_preamble_is_not_said_or_posted(listener):
+    real = 'Here\'s a talking head of Jonny Fever:\n\n"Listen here, you little shit. I don\'t know what that means'
+    assert listener._spoken_line(real) == "Listen here, you little shit. I don't know what that means"
+    assert listener._spoken_line('Here is my reply: "Well Well Well, look who it is."') == "Well Well Well, look who it is."
+    for kept in ("Here's the thing: rates went up.", "Yeah, rates go up and people panic.", '"Nope," he said.'):
+        assert listener._spoken_line(kept) == kept, kept
+
+
+def test_the_cleaned_line_is_what_is_rendered_and_posted(listener, monkeypatch):
+    sent, rendered = [], []
+    monkeypatch.setattr(listener, "_talk_clip", lambda text: rendered.append(text) or b"CLIP")
+    listener._send_spoken(lambda t, **m: sent.append(t), 'Here\'s a talking head:\n"Hi there."')
+    assert rendered == ["Hi there."] and sent == ["Hi there."]
 
 
 def test_the_clip_is_asked_for_as_this_bot_with_its_credential(listener, monkeypatch):

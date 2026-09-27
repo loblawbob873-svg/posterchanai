@@ -193,8 +193,27 @@ def _talk_prompt(prompt: str) -> str:
     """Ask for a reply short enough to speak quickly."""
     if not _TALK_ON:
         return prompt
-    return (f"{prompt}\n\n(Your answer will be SPOKEN ALOUD by a talking picture: reply in ONE short "
-            f"sentence of at most {_TALK_MAX_WORDS} words - no links, hashtags, emojis or lists.)")
+    # Do NOT say it will be a video or a talking picture: told that, models narrate it ("Here's a
+    # talking head of Jonny Fever:") instead of answering in character (fever, 2026-09-26 19:11).
+    return (f"{prompt}\n\n(Reply in character with ONE short sentence of at most {_TALK_MAX_WORDS} words. "
+            f"Plain words only: no links, hashtags, emojis, lists, quotation marks or stage directions.)")
+
+
+# Only a preamble that INTRODUCES something (a line break or an opening quote follows the colon):
+# "Here's the thing: rates went up" is an answer and stays exactly as written.
+_PREAMBLE_RE = re.compile(r"^\s*(?:here'?s|here is|okay,? here'?s)\b[^:\n]{0,90}:[ \t]*(?:\n+|(?=[\"“]))",
+                          re.IGNORECASE)
+
+
+def _spoken_line(text: str) -> str:
+    """The line a talking reply SAYS and posts: a model's own preamble ("Here's a talking head of
+    X:") and the quotation marks it wrapped the answer in are not part of the answer."""
+    t = _PREAMBLE_RE.sub("", (text or "").strip(), count=1).strip()
+    if len(t) >= 2 and t[0] in "\"“'" and t[-1] in "\"”'":
+        t = t[1:-1].strip()
+    elif t[:1] in "\"“" and t.count('"') + t.count("“") + t.count("”") == 1:
+        t = t[1:].strip()                                     # an opening quote that never closes
+    return t or (text or "").strip()
 
 
 def _talk_clip(text: str):
@@ -220,6 +239,8 @@ def _talk_clip(text: str):
 def _send_spoken(send, text: str):
     """Reply with `text`, spoken by the bot's face when talking replies are on. `send(text, **media)`
     is the channel's reply function."""
+    if _TALK_ON:
+        text = _spoken_line(text)
     clip = _talk_clip(text) if _TALK_ON else None
     if clip:
         send(text, video_bytes=clip)
