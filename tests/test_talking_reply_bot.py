@@ -92,7 +92,7 @@ def _client(monkeypatch, cfg, rendered):
             raise LookupError(name)
         return cfg[name]
 
-    async def render(db, face, voice, mouth, text):
+    async def render(db, face, voice, mouth, text, **kw):
         rendered.append((face, voice, mouth, text))
         return b"\x00\x00\x00\x18ftypmp42clip"
     monkeypatch.setattr(tb, "bot_config", bot_config)
@@ -182,6 +182,7 @@ def test_a_reply_renders_as_a_talking_clip_with_sound(monkeypatch, tmp_path):
     from app.services import voice_factory
     monkeypatch.setattr(tb, "_read_blob", read_blob)
     monkeypatch.setattr(voice_factory, "generate_voice", generate_voice)
+    monkeypatch.setattr(tb, "hear", lambda wav: "Hello there!")      # a sine wave has no words to hear
     clip = run(tb.render(None, "f" * 64, "v" * 64, {"x": 0.5, "y": 0.67, "w": 0.2}, "Hello there!"))
     out = tmp_path / "clip.mp4"
     out.write_bytes(clip)
@@ -350,3 +351,74 @@ def test_random_replies_reach_each_person_once_a_day(listener, monkeypatch):
     later = listener.time.time() + listener._RR_AUTHOR_GAP + 5
     monkeypatch.setattr(listener.time, "time", lambda: later)
     assert "a" * 64 not in listener._rr_recent_authors(), "a day later they may be answered again"
+
+
+# ---- the speech is the line ---------------------------------------------------------------------
+
+def test_a_long_line_is_cut_to_the_limit_at_a_sentence_end():
+    t = "Well well well. " + "This goes on and on " * 10 + "forever."
+    got = tb.clean_text(t, max_words=8)
+    assert got == "Well well well.", got
+    got = tb.clean_text("one two three four five six seven eight nine ten", max_words=6)
+    assert got == "one two three four five six.", got
+    assert tb.clean_text("short and sweet.", max_words=6) == "short and sweet."
+
+
+def test_coverage_counts_the_words_that_were_said():
+    assert tb.coverage("The Jews canceling me? Nah, they're too scared.", "Did you use canceling me? No, they're too scared.") < 0.8
+    assert tb.coverage("Yeah, rates go up and people panic.", "yeah rates go up and people panic") == 1.0
+    assert tb.coverage("Damn, 1,094 sats.", "Damn, one thousand ninety four sats.") == 1.0, "digits are not words"
+
+
+@pytest.mark.skipif(not HAVE_FFMPEG, reason="needs ffmpeg")
+def test_dead_air_is_trimmed_and_speech_is_kept(tmp_path):
+    """The real failure: 19.6 s of silence before the line."""
+    p = str(tmp_path / "gappy.wav")
+    subprocess.run(["ffmpeg", "-v", "error", "-y",
+                    "-f", "lavfi", "-i", "anullsrc=r=24000:cl=mono:d=5",
+                    "-f", "lavfi", "-i", "sine=f=300:d=1:sample_rate=24000",
+                    "-f", "lavfi", "-i", "anullsrc=r=24000:cl=mono:d=3",
+                    "-f", "lavfi", "-i", "sine=f=300:d=1:sample_rate=24000",
+                    "-filter_complex", "[0][1][2][3]concat=n=4:v=0:a=1", "-ac", "1", p], check=True, timeout=60)
+    before = open(p, "rb").read()
+    after = tb.tidy_silence(before)
+    assert tb.wav_seconds(before) == pytest.approx(10, abs=0.2)
+    assert 1.8 <= tb.wav_seconds(after) <= 3.5, tb.wav_seconds(after)   # 10 s -> the 2 s of sound + short gaps
+
+
+def _takes(monkeypatch, heard_by_take, secs=2):
+    from app.services import voice_factory
+    n = {"i": 0}
+
+    async def generate_voice(db, text, reference, reference_path=None):
+        n["i"] += 1
+        return (f"take{n['i']}").encode(), "local"
+    monkeypatch.setattr(voice_factory, "generate_voice", generate_voice)
+    monkeypatch.setattr(tb, "tidy_silence", lambda wav: wav)
+    monkeypatch.setattr(tb, "wav_seconds", lambda wav: secs if not isinstance(secs, dict) else secs[wav])
+    monkeypatch.setattr(tb, "hear", lambda wav: heard_by_take[wav])
+    return n
+
+
+LINE = "Well well well, look who finally showed up today."
+
+
+def test_a_take_that_drops_words_is_made_again(monkeypatch):
+    n = _takes(monkeypatch, {b"take1": "look who showed", b"take2": LINE})
+    wav, where, report = run(tb.speak_checked(None, LINE, b"v", "/ref"))
+    assert wav == b"take2" and n["i"] == 2 and report[0]["coverage"] < 0.8 <= report[1]["coverage"]
+
+
+def test_a_take_padded_with_dead_air_is_made_again(monkeypatch):
+    n = _takes(monkeypatch, {b"take1": LINE, b"take2": LINE}, secs={b"take1": 25.0, b"take2": 3.0})
+    wav, *_ = run(tb.speak_checked(None, LINE, b"v", "/ref"))
+    assert wav == b"take2", "a 25 s take of a 9-word line was posted"
+
+
+def test_the_best_take_is_kept_and_garbage_is_refused(monkeypatch):
+    _takes(monkeypatch, {b"take1": "well", b"take2": "well well look who finally", b"take3": "look"})
+    wav, *_ = run(tb.speak_checked(None, LINE, b"v", "/ref"))
+    assert wav == b"take2", "not the best of three"
+    _takes(monkeypatch, {b"take1": "no", b"take2": "nope", b"take3": "nah"})
+    with pytest.raises(RuntimeError):
+        run(tb.speak_checked(None, LINE, b"v", "/ref"))

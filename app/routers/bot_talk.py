@@ -64,7 +64,12 @@ async def bot_talk(req: TalkReq, x_pc_talk_token: Optional[str] = Header(None),
     idx, face = next_face(req.bot, faces)
     logger.info("[talkbot] %s speaks with face %d/%d (%s)", req.bot, idx + 1, len(faces), face["sha"][:12])
     try:
-        clip = await talkbot_service.render(db, face["sha"], cfg["talk_voice_sha"], face["mouth"], req.text)
+        try:
+            limit = max(3, min(60, int(cfg.get("talk_max_words") or 15)))
+        except (TypeError, ValueError):
+            limit = 15
+        clip = await talkbot_service.render(db, face["sha"], cfg["talk_voice_sha"], face["mouth"], req.text,
+                                            max_words=limit + limit // 3)   # a little slack over the ask
     except RuntimeError as e:
         raise HTTPException(status_code=503, detail=str(e))
     return Response(content=clip, media_type="video/mp4")
