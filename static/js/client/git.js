@@ -1112,6 +1112,10 @@ window.PCGitFactory = function(dep){
           // mid-publish. On a phone that also means no bottom nav (body.modal-open hides it), i.e. an app
           // you have to kill. Inside the try it becomes a line of red text you can read and report.
           const pub=$('#ri-pub',root);
+          // ONE ISSUE PER FORM, HOWEVER MANY PRESSES. An issue whose publish was not confirmed may
+          // still have landed -- measured: four copies of one report in 51 s, each a press after a
+          // "timeout". So the event signed for this subject+body is kept, and a press with the same
+          // text re-sends THAT event (a relay stores one copy of an id), never a newly signed one.
           try{
             const subj=($('#ri-subj',root).value||'').trim();
             const body=ta.value.trim();
@@ -1127,8 +1131,20 @@ window.PCGitFactory = function(dep){
             imetaTagsFor(body).forEach(t=>tags.push(t));   // NIP-92 media metadata, same as a post
             st.textContent='publishing…';
             if(pub) pub.disabled=true;                  // one issue per press, not one per impatient tap
-            const r=await publish(1621, body, tags);
-            if(r && r.ok===false){ st.textContent='relay: '+(r.msg||'rejected'); return; }
+            const sameText=JSON.stringify([subj, body]);
+            let r;
+            if(root._signedIssue && root._signedIssue.text===sameText){
+              r=await Relay.publish(root._signedIssue.ev);
+              if(r && r.ok){ try{ Store.saveEvent(root._signedIssue.ev); }catch(_){ } }
+            }else{
+              r=await publish(1621, body, tags, {onSigned:ev=>{ root._signedIssue={ev, text:sameText}; }});
+            }
+            if(r && r.ok===false){
+              st.textContent = r.msg==='timeout'
+                ? 'No relay confirmed it yet — it may still arrive. Publishing again re-sends this same issue; it won’t make a copy.'
+                : 'relay: '+(r.msg||'rejected');
+              return;
+            }
             toast('issue published');
             closeModal();
             // AFTER the modal is gone, and in its own guard: openRepo re-renders the whole view, and a

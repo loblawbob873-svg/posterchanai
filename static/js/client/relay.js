@@ -481,9 +481,18 @@
          * badge for a post other people already received. Untrusted relays do not get this shortcut;
          * their EVENT still has to pass verification below. */
         const wireEv = m[2];
-        if(conn.trusted && wireEv && wireEv.id){
+        /* DELIVERY EVIDENCE DOES NOT NEED TRUST, IT NEEDS OUR OWN EVENT BACK. An untrusted relay's
+         * events are signature-checked before anyone sees them -- but a copy whose id AND signature
+         * are exactly the ones we just signed is our event, byte for byte, and proves nothing less
+         * than a verification would. Requiring `trusted` here meant that with "use my own relays" on
+         * (verify:true, so NO connection is trusted) a lost OK could never be recovered: every one
+         * became an 8-second "timeout" for an event the relay had stored, and pressing Publish again
+         * signed a duplicate -- four copies of one git issue from one person in a minute. */
+        const pend = wireEv && wireEv.id ? this._okWaiters.get(wireEv.id) : null;
+        const ours = !!(pend && pend.event && pend.event.sig && wireEv.sig === pend.event.sig);
+        if((conn.trusted || ours) && wireEv && wireEv.id){
           const ack = this._okWaiters.get(wireEv.id);
-          if(ack){ this._okWaiters.delete(wireEv.id); ack.settle({ ok:true, msg:'relay echo' }); }
+          if(ack && !ack.auth && (conn.trusted || ours)){ this._okWaiters.delete(wireEv.id); ack.settle({ ok:true, msg:'relay echo' }); }
           try{ if(window.Outbox && Outbox.has(wireEv.id)){ if(Outbox.acknowledgeDelivery)Outbox.acknowledgeDelivery(wireEv.id);else Outbox.remove(wireEv.id); } }catch(_){}
         }
         const sub = this._subs.get(m[1]); if (!sub || !sub.onEvent) return;
@@ -882,7 +891,9 @@
             // healthy relay merely because it refused or did not store this particular event.
             for(const snapshot of deliverySockets){
               const c=snapshot.conn;
-              if(!c.trusted || this._conns.get(c.url)!==c || c.ws!==snapshot.socket ||
+              // Trust is about whose SIGNATURES we check, not whether a socket is alive: a silent
+              // socket is rebuilt the same way for a pool of the user's own (untrusted) relays.
+              if(this._conns.get(c.url)!==c || c.ws!==snapshot.socket ||
                  !c.ws || c.ws.readyState!==1 || c._lastRx!==snapshot.received)continue;
               // Several drafts may be waiting on this same dead transport. Carry every
               // still-pending event that was actually sent on that exact socket to its replacement.

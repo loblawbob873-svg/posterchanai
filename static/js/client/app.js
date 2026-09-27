@@ -19970,6 +19970,8 @@
     // concord.js repaints its own unread count; the ☰ badge sums it with drafts.
     bumpMoreBadge,
     retryInstanceView:view=>{if(VIEW===view)renderView(true);},
+    // Git → New issue, reachable for the test that proves a retried publish re-sends the same event.
+    newRepoIssue:(repo)=>newRepoIssue(repo),
     // "Choose one of my images" — the Go Live cover picker, reachable for reuse and for its tests.
     pickDriveImage:(onPick)=>_pickBlossomImage(onPick),
     // oswin.js: a post handed to an already-open Meme Builder / Effects window (see POST_TOOLS).
