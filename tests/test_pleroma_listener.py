@@ -370,3 +370,27 @@ def test_the_shim_sends_an_image_only_reply_like_the_client_does(monkeypatch):
     ok = shim.send_reply(st, "", own_acct=BOT, image_bytes=[(PNG, "image/png")])
     assert sent and sent[0][0] == "@alice" and sent[0][1]["media"], "an image-only reply was dropped"
     assert ok is True
+
+
+# ============================== the bot list names accounts, not substrings ===========================
+
+def test_people_whose_names_contain_a_listed_bot_are_still_answered(world):
+    """BOT_BLACKLIST holds `news`, `anime`, `candy`, `jeet`... It was matched as a SUBSTRING, so
+    @newsom, @animefan and @candyman were silently never answered, and nor was anyone who merely
+    mentioned one of them. A listed name is an account name, compared whole."""
+    pl, bot = world
+    a = pl.mention("newsom", f"@{BOT} hello")
+    b = pl.mention("animefan@other.example", f"@{BOT} hi")
+    c = pl.mention("alice", f"@{BOT} have you met @candyman?", mentions=(BOT, "candyman"))
+    bot.poll()
+    for st in (a, b, c):
+        assert len(bot.replies_to(st)) == 1, f"{st['account']['acct']}: {st['content']} went unanswered"
+
+
+def test_the_listed_bots_themselves_are_still_ignored_on_any_server(world):
+    pl, bot = world
+    pl.mention("news@other.example", f"@{BOT} breaking")
+    pl.mention("Anime", f"@{BOT} hi")
+    pl.mention("alice", f"@{BOT} ask @news@other.example", mentions=(BOT, "news@other.example"))
+    bot.poll()
+    assert pl.posts == []

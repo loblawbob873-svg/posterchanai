@@ -216,6 +216,17 @@ def test_a_report_involving_a_bot_is_not_announced(reports, monkeypatch):
     assert posted == [], "a bot-involved report was announced (bot-to-bot loop risk)"
 
 
+def test_a_report_by_a_person_whose_name_contains_a_bot_name_is_announced(reports, monkeypatch):
+    """`news` in BOT_BLACKLIST used to swallow every report filed by @newsom or @goodnews."""
+    rb, queue, posted = reports
+    monkeypatch.setattr(rb, "BOT_BLACKLIST", ["news"])
+    queue["reports"] = [_report(1)]
+    rb.report_pleroma()
+    queue["reports"] = [_report(1), _report(2, reporter="goodnews", target="newsom@other.example")]
+    rb.report_pleroma()
+    assert len(posted) == 1, "a person's report was dropped as a bot's"
+
+
 def test_an_unreachable_admin_api_changes_nothing(reports):
     rb, queue, posted = reports
     queue["reports"] = [_report(1)]

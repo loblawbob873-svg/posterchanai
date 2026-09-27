@@ -62,7 +62,7 @@ from posterchanai_api import process_media, capture_screenshot, fetch_ytdl_media
 from searxng import search_web, smart_search, search_images, summarize_search_results, format_image_results, search_and_download_images
 from tts import generate_speech_with_retries, generate_narration_video
 from news import fetch_news_from_source
-from core.utils import strip_html, contains_bad_words
+from core.utils import strip_html, contains_bad_words, is_listed_bot, mentions_listed_bot
 from config import IMAGE_POSTER_FREQ
 from config import IMAGE_POSTER_PROMPT
 from config import IMAGE_POSTER_TEXT
@@ -396,7 +396,7 @@ def process_notifications():
 
         # Check if sender is in bot blacklist (prevents bot-to-bot loops)
         sender_acct = status.get("account", {}).get("acct", "").lower()
-        if any(bot in sender_acct for bot in bot_blacklist):
+        if is_listed_bot(sender_acct, bot_blacklist):
             print(f"[DEBUG] Skipping notification {nid} - sender {sender_acct} is in bot_blacklist")
             continue
 
@@ -424,7 +424,7 @@ def process_notifications():
         # Only skip if content has @botname or botname@ pattern (actual mentions, not just words)
         own_username = PLEROMA_USERNAME.lstrip("@").lower() if PLEROMA_USERNAME else ""
         other_bots = [b for b in bot_blacklist if b.lower() != own_username]
-        if any(f"@{b}" in lower_content or f"{b}@" in lower_content for b in other_bots):
+        if mentions_listed_bot(lower_content, other_bots):
             print(f"[DEBUG] Skipping mention due to bot_blacklist @mention", flush=True)
             continue
 

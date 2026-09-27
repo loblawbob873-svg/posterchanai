@@ -26,7 +26,7 @@ from ai import generate_reply, is_ai_configured
 import nostr as _nk
 from searxng import smart_search, summarize_search_results, search_and_download_images
 from news import fetch_news_from_source
-from core.utils import contains_bad_words
+from core.utils import contains_bad_words, is_listed_bot
 from posterchanai_api import process_media, capture_screenshot, fetch_ytdl_media, parse_ytdl_postaction
 
 get_mentions = _nk.get_mentions
@@ -642,7 +642,7 @@ def process_mentions():
             continue  # never reply to self
         if (user.get("pubkey") or "").lower() in BOT_NOSTR_PUBKEYS:
             continue  # never reply to ANOTHER of our nostr bots (anti-loop, by pubkey)
-        if any(b in (user.get("username") or "").lower() for b in blacklist):
+        if is_listed_bot(user.get("username") or "", blacklist):
             continue
         # Only respond when actually ADDRESSED (first mention / reply to the bot) — not when
         # the bot is just a NIP-10 p-tag carried forward through a thread it's in. Otherwise

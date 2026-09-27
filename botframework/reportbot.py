@@ -19,6 +19,7 @@ from config import (
 )
 from pleroma import post_to_fediverse as pleroma_post, post_image_to_fediverse as pleroma_post_image
 from ai import generate_reply
+from core.utils import is_listed_bot
 from tts import generate_speech_with_retries, generate_narration_video
 
 # Cache for bot avatar URL
@@ -295,7 +296,7 @@ def report_pleroma(print_only=False):
             # Skip reports involving bots to prevent bot-to-bot loops
             reporter_lower = reporter_acct.lower()
             target_lower = target_acct.lower()
-            if any(bot in reporter_lower or bot in target_lower for bot in BOT_BLACKLIST):
+            if is_listed_bot(reporter_lower, BOT_BLACKLIST) or is_listed_bot(target_lower, BOT_BLACKLIST):
                 logging.debug(f"Skipping Pleroma report {report_id} - involves bot user")
                 continue
 

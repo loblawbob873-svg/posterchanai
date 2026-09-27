@@ -161,3 +161,20 @@ def contains_bad_words(text: str) -> bool:
     """Return True if text contains any prohibited word (whole-word match)."""
     lower_text = text.lower()
     return any(pattern.search(lower_text) for pattern in _BAD_WORDS_PATTERNS)
+
+
+def is_listed_bot(handle, blacklist) -> bool:
+    """True when `handle` is one of the listed bot ACCOUNTS: `name`, `@name` or `name@server`, compared
+    whole on the name, case-insensitively. BOT_BLACKLIST was matched as a substring, and its entries
+    are ordinary words -- `news`, `anime`, `candy` -- so @newsom, @animefan and @candyman were never
+    answered, nor anyone who mentioned them, nor any report they filed, with nothing logged."""
+    name = (handle or "").strip().lstrip("@").split("@", 1)[0].lower()
+    return bool(name) and name in {(b or "").strip().lstrip("@").split("@", 1)[0].lower() for b in blacklist}
+
+
+_MENTION_RE = re.compile(r'(?<![\w@])@([\w.-]+(?:@[\w.-]+)?)')
+
+
+def mentions_listed_bot(text, blacklist) -> bool:
+    """True when `text` @mentions a listed bot account (see is_listed_bot)."""
+    return any(is_listed_bot(m, blacklist) for m in _MENTION_RE.findall(text or ""))
