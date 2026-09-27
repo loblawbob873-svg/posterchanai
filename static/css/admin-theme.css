@@ -214,3 +214,6 @@ legend{ color: var(--accent); font-weight:700; padding:0 6px; }
 .blk-more{ padding:6px 8px; color: var(--text-secondary); font-size:.85em; }
 .blk-raw{ margin-top:6px; }
 .blk-raw textarea{ width:100%; box-sizing:border-box; }
+.ids-badge{ display:inline-block; margin-left:6px; padding:0 6px; border-radius:9px; font-size:.75em; vertical-align:1px; }
+.ids-ok{ background: rgba(46,204,113,.18); color:#2ecc71; }
+.ids-no{ background: rgba(231,76,60,.15); color:#e74c3c; }

@@ -380,6 +380,29 @@ def relay_unblock(data: RelayUnblockReq, db: Session = Depends(get_db), admin: U
     return r
 
 
+class RelayIdentityRemoveReq(BaseModel):
+    name: str
+
+
+@router.get("/relay/identities")
+async def relay_identities(request: Request, db: Session = Depends(get_db), admin: User = Depends(get_admin_user)):
+    """The NIP-05 identities this node grants, with each owner's name/picture from this relay and
+    whether their profile really publishes the address -- the Identities list in Admin → Relay."""
+    from app.routers.client import _nip05_domain
+    from app.services import nip05_registry
+    return await nip05_registry.rows(_nip05_domain(request, db))
+
+
+@router.post("/relay/identity/remove")
+def relay_identity_remove(data: RelayIdentityRemoveReq, admin: User = Depends(get_admin_user)):
+    """Revoke one NIP-05 name and apply it live -- the list's Remove button."""
+    from app.services import nip05_registry
+    r = nip05_registry.remove(data.name)
+    if not r.get("ok"):
+        raise HTTPException(status_code=400, detail=r.get("error") or "could not remove")
+    return r
+
+
 @router.post("/models/{kind}/download")
 def models_download(kind: str, admin: User = Depends(get_admin_user)):
     """Start an on-demand model download (kind = chat | image | music) in the background. Models are

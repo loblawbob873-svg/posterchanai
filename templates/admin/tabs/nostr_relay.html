@@ -429,9 +429,17 @@
             <small>The relay subprocess answers NIP-05 lookups so <code>name@yourdomain</code> verifies. Point your reverse proxy's <code>/.well-known/nostr.json</code> at the relay port (default 3052). Changes apply immediately (no restart).</small>
         </div>
         <div class="form-group">
-            <label for="nostr_relay_nip05_names">Identities</label>
-            <textarea id="nostr_relay_nip05_names" name="nostr_relay_nip05_names" rows="4" placeholder="verita84 npub1…&#10;alice 64-char-hex"></textarea>
-            <small>One per line: <code>&lt;name&gt; &lt;npub-or-hex&gt;</code>. Use <code>_</code> as the name for the domain root identity (<code>_@yourdomain</code>). New web-client signups are auto-assigned a name here.</small>
+            <label for="ids_search">Identities</label>
+            <div id="ids_panel" class="blk-panel">
+                <input type="search" id="ids_search" placeholder="Search by name, address, profile or npub…" autocomplete="off">
+                <div id="ids_summary" class="blk-summary">Open this tab to load the list.</div>
+                <div id="ids_list" class="blk-list"></div>
+            </div>
+            <details class="blk-raw">
+                <summary>Edit as text (<code>name npub-or-hex</code>, one per line)</summary>
+                <textarea id="nostr_relay_nip05_names" name="nostr_relay_nip05_names" rows="8" placeholder="verita84 npub1…&#10;alice 64-char-hex"></textarea>
+            </details>
+            <small>✓ = their own profile publishes exactly that address (what grants access to this node's features). One per line: <code>&lt;name&gt; &lt;npub-or-hex&gt;</code>. Use <code>_</code> as the name for the domain root identity (<code>_@yourdomain</code>). New web-client signups are auto-assigned a name here.</small>
         </div>
         <div class="form-group">
             <label for="nostr_relay_nip05_domain">Signup name domain</label>
