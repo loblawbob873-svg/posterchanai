@@ -4391,7 +4391,7 @@
     if(list.length) list = [...new Set([...list, ...defaultRelays().filter(Boolean)])];
     if (!list.length && CFG && CFG.relay_url) return Relay.connect(CFG.relay_url);
     if (!list.length) list = defaultRelays().filter(Boolean);
-    if (list.length) Relay.configure({ urls: list, verify: true });
+    if (list.length) Relay.configure({ urls: list, verify: true, home: (CFG && CFG.relay_url) || '' });
   }
 
   /* A PERSON-PRESSED RECONNECT IS A FULL RECOVERY, not a repaint and not merely a socket poke.

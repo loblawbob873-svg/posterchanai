@@ -300,9 +300,12 @@
 
     // Connect to an explicit set of relays. verify=true makes the pool signature-verify every
     // incoming event (used for user-supplied relays); verify=false trusts them (built-in WoT relay).
-    configure({ urls, verify } = {}){
+    configure({ urls, verify, home } = {}){
       urls = [...new Set((urls||[]).map(_relayUrl).filter(u=>u&&!_isBlockedRelay(u)))];
       this._verify = !!verify;
+      // This instance's own relay. `trusted` is about whose SIGNATURES are checked and is false for
+      // EVERY socket once the user runs their own relay list, so it cannot also stand for "ours".
+      this._home = home ? _relayUrl(home) : null;
       this.url = urls[0] || null;
       // drop connections no longer wanted
       for (const [u, c] of this._conns){ if (!urls.includes(u)){ c.destroy(); this._conns.delete(u); this._connGone(c); } }
@@ -891,9 +894,11 @@
             // healthy relay merely because it refused or did not store this particular event.
             for(const snapshot of deliverySockets){
               const c=snapshot.conn;
-              // Trust is about whose SIGNATURES we check, not whether a socket is alive: a silent
-              // socket is rebuilt the same way for a pool of the user's own (untrusted) relays.
-              if(this._conns.get(c.url)!==c || c.ws!==snapshot.socket ||
+              // Rebuild only OUR sockets -- a trusted one, or this instance's own relay, which is
+              // untrusted whenever the user runs their own relay list. A stranger's relay is never
+              // churned from here (tests/client/test_relay_publish_stale_connected.py).
+              if(!(c.trusted || (this._home && c.url===this._home)) ||
+                 this._conns.get(c.url)!==c || c.ws!==snapshot.socket ||
                  !c.ws || c.ws.readyState!==1 || c._lastRx!==snapshot.received)continue;
               // Several drafts may be waiting on this same dead transport. Carry every
               // still-pending event that was actually sent on that exact socket to its replacement.

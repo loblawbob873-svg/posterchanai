@@ -44,7 +44,8 @@ const ev = () => { n++; return { id: String(n).padStart(64, 'a'), kind: 1621, co
                                  pubkey: 'b'.repeat(64), created_at: 1, tags: [] }; };
 (async () => {
   const out = {};
-  Relay.configure({ urls: ['wss://mine.test'], verify: true });   // the user's own relays: nothing trusted
+  // The user's own relays (nothing trusted); this instance's relay is among them as `home`.
+  Relay.configure({ urls: ['wss://mine.test'], verify: true, home: 'wss://mine.test' });
   await sleep(30);
   const first = FakeWS.all[0];
 
@@ -104,6 +105,8 @@ def test_a_copy_with_another_signature_is_not_our_event(result):
 
 
 def test_a_silent_socket_is_rebuilt_and_the_event_resent(result):
+    """Only for this instance's own relay: a stranger's relay is never churned (that rule is pinned by
+    test_relay_publish_stale_connected.py's `untrusted` case, which configures no home)."""
     assert result["rebuilt"], "a socket that stopped answering was never replaced"
     assert result["resent"], "the pending event was not re-sent on the replacement socket"
     assert result["silent"] is True
