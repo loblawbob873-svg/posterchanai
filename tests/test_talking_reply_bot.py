@@ -92,7 +92,7 @@ def _client(monkeypatch, cfg, rendered):
             raise LookupError(name)
         return cfg[name]
 
-    async def render(db, face, voice, mouth, text):
+    async def render(db, face, voice, mouth, text, **kw):
         rendered.append((face, voice, mouth, text))
         return b"\x00\x00\x00\x18ftypmp42clip"
     monkeypatch.setattr(tb, "bot_config", bot_config)
@@ -133,6 +133,20 @@ def test_each_reply_picks_one_of_up_to_three_faces_with_its_own_mouth(monkeypatc
         assert mouth["x"] == pytest.approx(0.1 * (shas.index(face) + 1)), "a face was drawn with another face's mouth"
 
 
+def test_faces_come_in_shuffled_rounds_never_twice_in_a_row():
+    """Every face once per round, in random order; never the same face on consecutive replies --
+    a plain random pick showed fever the same picture three times running."""
+    from app.routers import bot_talk
+    faces = [{"sha": c * 64, "mouth": None} for c in "123"]
+    picks = [bot_talk.next_face("bag-test", faces)[0] for _ in range(300)]
+    assert all(a != b for a, b in zip(picks, picks[1:])), "the same face twice in a row"
+    for r in range(0, 300, 3):
+        assert sorted(picks[r:r + 3]) == [0, 1, 2], f"round {r // 3} did not use every face once"
+    assert len({tuple(picks[r:r + 3]) for r in range(0, 300, 3)}) > 1, "the order never changes"
+    one = [{"sha": "9" * 64, "mouth": None}]
+    assert [bot_talk.next_face("solo", one)[0] for _ in range(3)] == [0, 0, 0]
+
+
 def test_faces_are_validated():
     got = tb.faces_of({"talk_faces": json.dumps([{"sha": "a" * 64}, {"sha": "nope"}, "junk", {"sha": "b" * 64,
                                                   "mouth": {"x": 9}}])})
@@ -161,10 +175,14 @@ def test_a_reply_renders_as_a_talking_clip_with_sound(monkeypatch, tmp_path):
 
     async def generate_voice(db, text, reference, reference_path=None):
         assert reference == voice, "the bot's own voice clip must be the reference"
+        # Without a FILE the local path refuses ("no local copy of the reference clip") and every
+        # render went to another node -- this node's GPU never spoke.
+        assert reference_path and open(reference_path, "rb").read() == voice, "no local reference file"
         return _wav(tmp_path, 2), "local"
     from app.services import voice_factory
     monkeypatch.setattr(tb, "_read_blob", read_blob)
     monkeypatch.setattr(voice_factory, "generate_voice", generate_voice)
+    monkeypatch.setattr(tb, "hear", lambda wav: "Hello there!")      # a sine wave has no words to hear
     clip = run(tb.render(None, "f" * 64, "v" * 64, {"x": 0.5, "y": 0.67, "w": 0.2}, "Hello there!"))
     out = tmp_path / "clip.mp4"
     out.write_bytes(clip)
@@ -248,7 +266,7 @@ def test_a_talking_reply_carries_the_clip(listener, monkeypatch):
     sent = []
     monkeypatch.setattr(listener, "_talk_clip", lambda text: b"CLIP")
     listener._send_spoken(lambda t, **m: sent.append((t, m)), "hello")
-    assert sent == [("hello", {"video_bytes": b"CLIP"})]
+    assert sent == [("", {"video_bytes": b"CLIP"})], "a talking reply posts the video alone, no text"
 
 
 def test_a_failed_render_still_answers_in_text(listener, monkeypatch):
@@ -261,6 +279,24 @@ def test_a_failed_render_still_answers_in_text(listener, monkeypatch):
 def test_the_prompt_asks_for_a_short_spoken_line(listener):
     p = listener._talk_prompt("what's up?")
     assert p.startswith("what's up?") and "at most 9 words" in p
+    low = p.lower()
+    assert "talking" not in low and "video" not in low and "spoken" not in low, \
+        "telling the model it is a talking picture made it narrate that instead of answering"
+
+
+def test_a_models_preamble_is_not_said_or_posted(listener):
+    real = 'Here\'s a talking head of Jonny Fever:\n\n"Listen here, you little shit. I don\'t know what that means'
+    assert listener._spoken_line(real) == "Listen here, you little shit. I don't know what that means"
+    assert listener._spoken_line('Here is my reply: "Well Well Well, look who it is."') == "Well Well Well, look who it is."
+    for kept in ("Here's the thing: rates went up.", "Yeah, rates go up and people panic.", '"Nope," he said.'):
+        assert listener._spoken_line(kept) == kept, kept
+
+
+def test_the_cleaned_line_is_what_is_rendered_and_posted(listener, monkeypatch):
+    sent, rendered = [], []
+    monkeypatch.setattr(listener, "_talk_clip", lambda text: rendered.append(text) or b"CLIP")
+    listener._send_spoken(lambda t, **m: sent.append(t), 'Here\'s a talking head:\n"Hi there."')
+    assert rendered == ["Hi there."] and sent == [""], "the cleaned line is spoken; the post is the video"
 
 
 def test_the_clip_is_asked_for_as_this_bot_with_its_credential(listener, monkeypatch):
@@ -315,3 +351,74 @@ def test_random_replies_reach_each_person_once_a_day(listener, monkeypatch):
     later = listener.time.time() + listener._RR_AUTHOR_GAP + 5
     monkeypatch.setattr(listener.time, "time", lambda: later)
     assert "a" * 64 not in listener._rr_recent_authors(), "a day later they may be answered again"
+
+
+# ---- the speech is the line ---------------------------------------------------------------------
+
+def test_a_long_line_is_cut_to_the_limit_at_a_sentence_end():
+    t = "Well well well. " + "This goes on and on " * 10 + "forever."
+    got = tb.clean_text(t, max_words=8)
+    assert got == "Well well well.", got
+    got = tb.clean_text("one two three four five six seven eight nine ten", max_words=6)
+    assert got == "one two three four five six.", got
+    assert tb.clean_text("short and sweet.", max_words=6) == "short and sweet."
+
+
+def test_coverage_counts_the_words_that_were_said():
+    assert tb.coverage("The Jews canceling me? Nah, they're too scared.", "Did you use canceling me? No, they're too scared.") < 0.8
+    assert tb.coverage("Yeah, rates go up and people panic.", "yeah rates go up and people panic") == 1.0
+    assert tb.coverage("Damn, 1,094 sats.", "Damn, one thousand ninety four sats.") == 1.0, "digits are not words"
+
+
+@pytest.mark.skipif(not HAVE_FFMPEG, reason="needs ffmpeg")
+def test_dead_air_is_trimmed_and_speech_is_kept(tmp_path):
+    """The real failure: 19.6 s of silence before the line."""
+    p = str(tmp_path / "gappy.wav")
+    subprocess.run(["ffmpeg", "-v", "error", "-y",
+                    "-f", "lavfi", "-i", "anullsrc=r=24000:cl=mono:d=5",
+                    "-f", "lavfi", "-i", "sine=f=300:d=1:sample_rate=24000",
+                    "-f", "lavfi", "-i", "anullsrc=r=24000:cl=mono:d=3",
+                    "-f", "lavfi", "-i", "sine=f=300:d=1:sample_rate=24000",
+                    "-filter_complex", "[0][1][2][3]concat=n=4:v=0:a=1", "-ac", "1", p], check=True, timeout=60)
+    before = open(p, "rb").read()
+    after = tb.tidy_silence(before)
+    assert tb.wav_seconds(before) == pytest.approx(10, abs=0.2)
+    assert 1.8 <= tb.wav_seconds(after) <= 3.5, tb.wav_seconds(after)   # 10 s -> the 2 s of sound + short gaps
+
+
+def _takes(monkeypatch, heard_by_take, secs=2):
+    from app.services import voice_factory
+    n = {"i": 0}
+
+    async def generate_voice(db, text, reference, reference_path=None):
+        n["i"] += 1
+        return (f"take{n['i']}").encode(), "local"
+    monkeypatch.setattr(voice_factory, "generate_voice", generate_voice)
+    monkeypatch.setattr(tb, "tidy_silence", lambda wav: wav)
+    monkeypatch.setattr(tb, "wav_seconds", lambda wav: secs if not isinstance(secs, dict) else secs[wav])
+    monkeypatch.setattr(tb, "hear", lambda wav: heard_by_take[wav])
+    return n
+
+
+LINE = "Well well well, look who finally showed up today."
+
+
+def test_a_take_that_drops_words_is_made_again(monkeypatch):
+    n = _takes(monkeypatch, {b"take1": "look who showed", b"take2": LINE})
+    wav, where, report = run(tb.speak_checked(None, LINE, b"v", "/ref"))
+    assert wav == b"take2" and n["i"] == 2 and report[0]["coverage"] < 0.8 <= report[1]["coverage"]
+
+
+def test_a_take_padded_with_dead_air_is_made_again(monkeypatch):
+    n = _takes(monkeypatch, {b"take1": LINE, b"take2": LINE}, secs={b"take1": 25.0, b"take2": 3.0})
+    wav, *_ = run(tb.speak_checked(None, LINE, b"v", "/ref"))
+    assert wav == b"take2", "a 25 s take of a 9-word line was posted"
+
+
+def test_the_best_take_is_kept_and_garbage_is_refused(monkeypatch):
+    _takes(monkeypatch, {b"take1": "well", b"take2": "well well look who finally", b"take3": "look"})
+    wav, *_ = run(tb.speak_checked(None, LINE, b"v", "/ref"))
+    assert wav == b"take2", "not the best of three"
+    _takes(monkeypatch, {b"take1": "no", b"take2": "nope", b"take3": "nah"})
+    with pytest.raises(RuntimeError):
+        run(tb.speak_checked(None, LINE, b"v", "/ref"))
