@@ -26,3 +26,5 @@ test_*_regen.png
 stickers/
 .concord_seen.json
 .concord_hello.json
+.random_reply_authors_*
+.rr_authors_*
