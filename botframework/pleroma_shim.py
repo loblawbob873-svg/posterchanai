@@ -93,16 +93,17 @@ def _normalize_media(image_bytes=None, audio_bytes=None, video_bytes=None):
 
 def send_reply(status_obj, reply_text, own_acct=None, visibility=None,
                image_bytes=None, audio_bytes=None, video_bytes=None):
-    # Identical guards to pleroma.send_reply.
-    if not reply_text and not video_bytes:
+    # Identical guards to pleroma.send_reply -- including the image-only reply (`meme` and every image
+    # effect), which this guard once refused, silently dropping all of them in shim mode.
+    if not reply_text and not video_bytes and not image_bytes:
         print("Reply is None or empty; not sending to Mastodon.")
-        return
+        return None
     if reply_text and BLOCK_PHRASE and BLOCK_PHRASE in reply_text:
         print("Reply contains blocked phrase; not sending to Mastodon.")
-        return
+        return None
 
     mention_prefix = build_mention_prefix(status_obj, own_acct)
-    if video_bytes and not reply_text:
+    if (video_bytes or image_bytes) and not reply_text:
         full_status = mention_prefix.strip()
     else:
         full_status = f"{mention_prefix} {reply_text}".strip()
@@ -117,8 +118,12 @@ def send_reply(status_obj, reply_text, own_acct=None, visibility=None,
             media=media or None,
         ))
         print("Replied successfully (via app service).")
+        return True
     except Exception as e:
+        # The app service does not say whether the server answered, so the outcome is unknown and
+        # the caller must not retry (see pleroma.send_reply).
         print(f"[shim] send_reply failed: {e}")
+        return None
 
 
 def post_image_to_fediverse(text, image_bytes=None, audio_bytes=None, video_bytes=None):

@@ -194,16 +194,19 @@ def upload_media_to_pleroma(image_bytes, filename="image.png", mime="image/png")
 def send_reply(
     status_obj, reply_text, own_acct=None, visibility=None, image_bytes=None, audio_bytes=None, video_bytes=None
 ):
+    """Post a reply. Returns True when Pleroma accepted it, False when Pleroma ANSWERED with a refusal
+    (so it certainly was not posted, and the caller may try again), and None when nothing was sent or
+    the outcome is unknown -- a timeout may well have posted it, so it must not be retried."""
     # Do not send if there's nothing to post: no text AND no media (video subtitles
     # carry the text for video; an image-only reply — e.g. `meme` — is also valid).
     if not reply_text and not video_bytes and not image_bytes:
         print("Reply is None or empty; not sending to Mastodon.")
-        return
+        return None
 
     # Prevent sending any reply that contains the BLOCK_PHRASE
     if reply_text and BLOCK_PHRASE and BLOCK_PHRASE in reply_text:
         print("Reply contains blocked phrase; not sending to Mastodon.")
-        return
+        return None
 
     url = f"{PLEROMA_ENDPOINT}/api/v1/statuses"
     mention_prefix = build_mention_prefix(status_obj, own_acct)
@@ -281,12 +284,18 @@ def send_reply(
                 print(f"[DEBUG] Response mentions: {[m.get('acct') for m in mentions]}")
             except (json.JSONDecodeError, KeyError, TypeError):
                 pass
-        else:
-            print(f"Failed to send reply: {r.status_code} - {r.text[:200]}")
+            return True
+        print(f"Failed to send reply: {r.status_code} - {r.text[:200]}")
+        return False
     except requests.exceptions.Timeout:
         print(f"Send reply timed out after {REQUEST_TIMEOUT}s")
+    except requests.exceptions.ConnectionError as e:
+        # Never reached the server: certainly not posted.
+        print(f"Send reply failed: {e}")
+        return False
     except requests.exceptions.RequestException as e:
         print(f"Send reply failed: {e}")
+    return None
 
 def post_image_to_fediverse(text, image_bytes=None, audio_bytes=None, video_bytes=None):
     text = text or ""  # caption may be unset (image-only post) — avoid None in checks below

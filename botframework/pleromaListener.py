@@ -45,7 +45,15 @@ get_last_20_seconds_notifications = _pl.get_last_20_seconds_notifications
 get_status = _pl.get_status
 get_notifications = _pl.get_notifications
 get_own_account = _pl.get_own_account
-send_reply = _pl.send_reply
+_sends = []   # what each send_reply for the mention being handled came back with
+
+
+def send_reply(*args, **kwargs):
+    """_pl.send_reply, remembering the outcome so a mention whose every reply Pleroma refused is
+    released for the next poll instead of staying claimed and unanswered (see _release_if_refused)."""
+    outcome = _pl.send_reply(*args, **kwargs)
+    _sends.append(outcome)
+    return outcome
 post_image_to_fediverse = _pl.post_image_to_fediverse
 get_thread_history = _pl.get_thread_history
 get_thread_images = _pl.get_thread_images
@@ -295,6 +303,29 @@ def _try_claim_status(status_id):
 _load_processed_ids()
 
 
+def _release_if_refused(nid, status_id):
+    """A status is claimed BEFORE it is answered (so two processes never both answer it). If every
+    reply for it was refused by Pleroma -- an answer, so certainly not posted -- the claim is given
+    back and the next poll answers it; kept, that person would never be answered at all. The
+    two-minute mention window bounds the retries. Any accepted or unknown outcome (a timeout may
+    have posted) keeps the claim: a double reply is worse than a late one."""
+    if not _sends or any(o is not False for o in _sends):
+        return
+    print(f"[WARN] Pleroma refused the reply to {status_id}; will retry next poll", flush=True)
+    try:
+        with open(_LOCK_FILE, "w") as lock_f:
+            fcntl.flock(lock_f.fileno(), fcntl.LOCK_EX)
+            try:
+                _load_processed_ids()         # AFTER this, or the claim's own save puts both back
+                _processed_notification_ids.discard(nid)
+                _replied_status_ids.discard(status_id)
+                _save_processed_ids()
+            finally:
+                fcntl.flock(lock_f.fileno(), fcntl.LOCK_UN)
+    except Exception as e:
+        print(f"[ERROR] Failed to release status {status_id}: {e}")
+
+
 def generate_image(prompt_text):
     # Use retry version to ensure requests aren't missed. Always via image_backend → the
     # posterchanai server (the unified image backend).
@@ -314,7 +345,10 @@ def process_notifications():
     # Create a local copy to avoid mutating the config
     bot_blacklist = [bot for bot in BOT_BLACKLIST if bot != PLEROMA_USERNAME]
 
+    # None/garbage is what an HTML error page behind a proxy parses to: nothing to do this poll.
     notifications = get_notifications()
+    if not isinstance(notifications, list):
+        notifications = []
 
     # Filter to mentions from the last 2 minutes (we have persistent tracking to prevent duplicates)
     # Restart guard: a freshly spawned listener must not re-answer mentions the previous
@@ -423,247 +457,251 @@ def process_notifications():
                 print(f"[DEBUG] Status {status_id} already claimed by another process, skipping")
                 continue
 
-            # Use pre-compiled patterns for performance
-            contains_bad = contains_bad_words(lower_content)
+            _sends.clear()
+            try:
+                # Use pre-compiled patterns for performance
+                contains_bad = contains_bad_words(lower_content)
 
-            # Handle media commands (compress/clip/convert/meme) on an attached file.
-            lower_prompt = prompt_text.lower()
-            _media_cmd = None
-            for _c in ("compress", "clip", "convert", "meme", "dildo", "poo", "cum", "blood", "bullethole", "fire", "nakedman", "glow", "gay", "blacked", "kosher", "blue", "barked", "hava", "indian", "yakety", "yamete", "curb", "depressing", "fahh", "helpme", "gong", "fbi", "redeem", "gigity", "beavis", "heat", "smell", "hood", "akbar", "retard", "whoabuddy", "diarrhea", "seth", "robocop", "titan", "terminator", "reze", "vibe", "rebecca", "makima", "sopranos", "cheers", "munsters", "happydays", "dontwanttowait", "strangerthings", "adamsfamily", "xmen", "futurama", "charliesangles", "differentstroke", "seinfeld", "jerry", "onepiece", "overtaken", "freebird", "kanye", "darkness", "bike", "jobs", "ree", "liberal", "moving", "harlem", "chimp", "consider", "clay", "uwu", "wasteland", "mixalot", "nonematters", "thug", "feltedtables", "prayer", "feliz", "sleepwell", "horse", "knightrider", "hugebitch"):
-                if lower_prompt == _c or lower_prompt.startswith(_c + " "):
-                    _media_cmd = _c
-                    break
-            if _media_cmd:
-                _media_arg = prompt_text[len(_media_cmd):].strip()
-                # meme bakes the user's caption into a publicly-posted image, so it
-                # gets the same bad-word gate as geni (compress/clip/convert add no text).
-                if _media_cmd == "meme" and contains_bad:
-                    print(f"[DEBUG] BLOCKED: meme caption contains bad words")
-                    send_reply(status, "I cannot add that text to an image.",
-                               own_acct=own_acct, visibility=visibility)
-                else:
-                    _handle_media_command(status, _media_cmd, _media_arg, own_acct, visibility)
-
-            # Handle screenshot command: the backend captures the page and returns a
-            # PNG, which the bot posts back as an image attachment.
-            elif lower_prompt in ("screenshot", "shot", "ss") \
-                    or lower_prompt.startswith(("screenshot ", "shot ", "ss ")):
-                _ss_url = prompt_text.split(None, 1)[1].strip() if len(prompt_text.split(None, 1)) > 1 else ""
-                if not _ss_url:
-                    send_reply(status, "Usage: screenshot <url> — e.g. screenshot example.com",
-                               own_acct=own_acct, visibility=visibility)
-                else:
-                    print(f"→ Screenshot request: {_ss_url[:80]}")
-                    png, err = capture_screenshot(_ss_url)
-                    if png:
-                        send_reply(status, f"📸 {_ss_url}", own_acct=own_acct, visibility=visibility, image_bytes=[png])
-                    else:
-                        send_reply(status, err or "❌ Screenshot failed.", own_acct=own_acct, visibility=visibility)
-
-            # Handle ytdl command: download YouTube/X media on the backend and post
-            # it back as an audio (default) or video attachment.
-            elif lower_prompt == "ytdl" or lower_prompt.startswith("ytdl "):
-                _yt_arg = prompt_text[4:].strip()  # after "ytdl"
-                _as_video = False
-                if _yt_arg.lower().startswith("video"):
-                    _as_video = True
-                    _yt_arg = _yt_arg[5:].strip()
-                elif _yt_arg.lower().startswith("mp3"):
-                    _yt_arg = _yt_arg[3:].strip()
-                # Optional `clip <start> <end>` / `compress` modifiers — these only apply
-                # to video, so their presence implies `video` even without the keyword.
-                _yt_url, _yt_clip, _yt_compress = parse_ytdl_postaction(_yt_arg)
-                if _yt_clip or _yt_compress:
-                    _as_video = True
-                _yt_elapsed = time.monotonic() - _ytdl_last_request.get(sender_acct, 0.0)
-                if not _yt_url:
-                    send_reply(status, "Usage: ytdl <url> (audio), ytdl video <url>, or ytdl video <url> clip 0:10 0:30 compress",
-                               own_acct=own_acct, visibility=visibility)
-                elif _yt_elapsed < _YTDL_COOLDOWN_SECONDS:
-                    send_reply(status, f"⏳ Please wait {int(_YTDL_COOLDOWN_SECONDS - _yt_elapsed)}s before another download.",
-                               own_acct=own_acct, visibility=visibility)
-                else:
-                    _ytdl_last_request[sender_acct] = time.monotonic()
-                    print(f"→ ytdl request ({'video' if _as_video else 'audio'}): {_yt_url[:80]}")
-                    _media, _mime, _err = fetch_ytdl_media(_yt_url, video=_as_video, clip=_yt_clip, compress=_yt_compress)
-                    if _media and (_as_video or (_mime or '').startswith('video/')):
-                        send_reply(status, f"🎬 {_yt_url}", own_acct=own_acct, visibility=visibility, video_bytes=_media)
-                    elif _media:
-                        send_reply(status, f"🎵 {_yt_url}", own_acct=own_acct, visibility=visibility, audio_bytes=_media)
-                    else:
-                        send_reply(status, f"❌ Download failed: {_err or 'unknown error'}",
+                # Handle media commands (compress/clip/convert/meme) on an attached file.
+                lower_prompt = prompt_text.lower()
+                _media_cmd = None
+                for _c in ("compress", "clip", "convert", "meme", "dildo", "poo", "cum", "blood", "bullethole", "fire", "nakedman", "glow", "gay", "blacked", "kosher", "blue", "barked", "hava", "indian", "yakety", "yamete", "curb", "depressing", "fahh", "helpme", "gong", "fbi", "redeem", "gigity", "beavis", "heat", "smell", "hood", "akbar", "retard", "whoabuddy", "diarrhea", "seth", "robocop", "titan", "terminator", "reze", "vibe", "rebecca", "makima", "sopranos", "cheers", "munsters", "happydays", "dontwanttowait", "strangerthings", "adamsfamily", "xmen", "futurama", "charliesangles", "differentstroke", "seinfeld", "jerry", "onepiece", "overtaken", "freebird", "kanye", "darkness", "bike", "jobs", "ree", "liberal", "moving", "harlem", "chimp", "consider", "clay", "uwu", "wasteland", "mixalot", "nonematters", "thug", "feltedtables", "prayer", "feliz", "sleepwell", "horse", "knightrider", "hugebitch"):
+                    if lower_prompt == _c or lower_prompt.startswith(_c + " "):
+                        _media_cmd = _c
+                        break
+                if _media_cmd:
+                    _media_arg = prompt_text[len(_media_cmd):].strip()
+                    # meme bakes the user's caption into a publicly-posted image, so it
+                    # gets the same bad-word gate as geni (compress/clip/convert add no text).
+                    if _media_cmd == "meme" and contains_bad:
+                        print(f"[DEBUG] BLOCKED: meme caption contains bad words")
+                        send_reply(status, "I cannot add that text to an image.",
                                    own_acct=own_acct, visibility=visibility)
+                    else:
+                        _handle_media_command(status, _media_cmd, _media_arg, own_acct, visibility)
 
-            # Handle help command: list available commands.
-            elif lower_prompt.strip() in ("help", "/help", "commands", "?"):
-                send_reply(status, _BOT_HELP_TEXT, own_acct=own_acct, visibility=visibility)
-
-            # Handle search command: search <query>
-            elif lower_prompt.startswith("search ") or " search " in lower_prompt:
-                # Extract query after "search"
-                search_match = re.search(r'\bsearch\s+(.+)', prompt_text, re.IGNORECASE)
-                if search_match:
-                    query = search_match.group(1).strip()
-                    if query:
-                        print(f"[DEBUG] Web search ({len(query or '')} chars)")
-                        results, categories = smart_search(query)
-                        if results:
-                            reply_text = summarize_search_results(results, query, categories)
-                            send_reply(status, reply_text, own_acct=own_acct, visibility=visibility)
+                # Handle screenshot command: the backend captures the page and returns a
+                # PNG, which the bot posts back as an image attachment.
+                elif lower_prompt in ("screenshot", "shot", "ss") \
+                        or lower_prompt.startswith(("screenshot ", "shot ", "ss ")):
+                    _ss_url = prompt_text.split(None, 1)[1].strip() if len(prompt_text.split(None, 1)) > 1 else ""
+                    if not _ss_url:
+                        send_reply(status, "Usage: screenshot <url> — e.g. screenshot example.com",
+                                   own_acct=own_acct, visibility=visibility)
+                    else:
+                        print(f"→ Screenshot request: {_ss_url[:80]}")
+                        png, err = capture_screenshot(_ss_url)
+                        if png:
+                            send_reply(status, f"📸 {_ss_url}", own_acct=own_acct, visibility=visibility, image_bytes=[png])
                         else:
-                            send_reply(status, f'No results found for "{query}".', own_acct=own_acct, visibility=visibility)
+                            send_reply(status, err or "❌ Screenshot failed.", own_acct=own_acct, visibility=visibility)
+
+                # Handle ytdl command: download YouTube/X media on the backend and post
+                # it back as an audio (default) or video attachment.
+                elif lower_prompt == "ytdl" or lower_prompt.startswith("ytdl "):
+                    _yt_arg = prompt_text[4:].strip()  # after "ytdl"
+                    _as_video = False
+                    if _yt_arg.lower().startswith("video"):
+                        _as_video = True
+                        _yt_arg = _yt_arg[5:].strip()
+                    elif _yt_arg.lower().startswith("mp3"):
+                        _yt_arg = _yt_arg[3:].strip()
+                    # Optional `clip <start> <end>` / `compress` modifiers — these only apply
+                    # to video, so their presence implies `video` even without the keyword.
+                    _yt_url, _yt_clip, _yt_compress = parse_ytdl_postaction(_yt_arg)
+                    if _yt_clip or _yt_compress:
+                        _as_video = True
+                    _yt_elapsed = time.monotonic() - _ytdl_last_request.get(sender_acct, 0.0)
+                    if not _yt_url:
+                        send_reply(status, "Usage: ytdl <url> (audio), ytdl video <url>, or ytdl video <url> clip 0:10 0:30 compress",
+                                   own_acct=own_acct, visibility=visibility)
+                    elif _yt_elapsed < _YTDL_COOLDOWN_SECONDS:
+                        send_reply(status, f"⏳ Please wait {int(_YTDL_COOLDOWN_SECONDS - _yt_elapsed)}s before another download.",
+                                   own_acct=own_acct, visibility=visibility)
+                    else:
+                        _ytdl_last_request[sender_acct] = time.monotonic()
+                        print(f"→ ytdl request ({'video' if _as_video else 'audio'}): {_yt_url[:80]}")
+                        _media, _mime, _err = fetch_ytdl_media(_yt_url, video=_as_video, clip=_yt_clip, compress=_yt_compress)
+                        if _media and (_as_video or (_mime or '').startswith('video/')):
+                            send_reply(status, f"🎬 {_yt_url}", own_acct=own_acct, visibility=visibility, video_bytes=_media)
+                        elif _media:
+                            send_reply(status, f"🎵 {_yt_url}", own_acct=own_acct, visibility=visibility, audio_bytes=_media)
+                        else:
+                            send_reply(status, f"❌ Download failed: {_err or 'unknown error'}",
+                                       own_acct=own_acct, visibility=visibility)
+
+                # Handle help command: list available commands.
+                elif lower_prompt.strip() in ("help", "/help", "commands", "?"):
+                    send_reply(status, _BOT_HELP_TEXT, own_acct=own_acct, visibility=visibility)
+
+                # Handle search command: search <query>
+                elif lower_prompt.startswith("search ") or " search " in lower_prompt:
+                    # Extract query after "search"
+                    search_match = re.search(r'\bsearch\s+(.+)', prompt_text, re.IGNORECASE)
+                    if search_match:
+                        query = search_match.group(1).strip()
+                        if query:
+                            print(f"[DEBUG] Web search ({len(query or '')} chars)")
+                            results, categories = smart_search(query)
+                            if results:
+                                reply_text = summarize_search_results(results, query, categories)
+                                send_reply(status, reply_text, own_acct=own_acct, visibility=visibility)
+                            else:
+                                send_reply(status, f'No results found for "{query}".', own_acct=own_acct, visibility=visibility)
+                        else:
+                            send_reply(status, "Please provide a search query. Usage: search <query>", own_acct=own_acct, visibility=visibility)
                     else:
                         send_reply(status, "Please provide a search query. Usage: search <query>", own_acct=own_acct, visibility=visibility)
-                else:
-                    send_reply(status, "Please provide a search query. Usage: search <query>", own_acct=own_acct, visibility=visibility)
 
-            # Handle images command: images <query>
-            elif lower_prompt.startswith("images ") or " images " in lower_prompt:
-                # Extract query after "images"
-                images_match = re.search(r'\bimages\s+(.+)', prompt_text, re.IGNORECASE)
-                if images_match:
-                    query = images_match.group(1).strip()
-                    if query:
-                        # Check for bad words in the query
-                        if contains_bad_words(query.lower()):
-                            print(f"[DEBUG] BLOCKED: image search query contains bad words "
-                                  f"({len(query or '')} chars)")
-                            send_reply(status, "I cannot search for images with that content.", own_acct=own_acct, visibility=visibility)
-                            continue
-                        print(f"[DEBUG] Image search ({len(query or '')} chars)")
-                        reply_text, image_list = search_and_download_images(query, max_images=4)
-                        if image_list:
-                            send_reply(status, reply_text, own_acct=own_acct, visibility=visibility, image_bytes=image_list)
+                # Handle images command: images <query>
+                elif lower_prompt.startswith("images ") or " images " in lower_prompt:
+                    # Extract query after "images"
+                    images_match = re.search(r'\bimages\s+(.+)', prompt_text, re.IGNORECASE)
+                    if images_match:
+                        query = images_match.group(1).strip()
+                        if query:
+                            # Check for bad words in the query
+                            if contains_bad_words(query.lower()):
+                                print(f"[DEBUG] BLOCKED: image search query contains bad words "
+                                      f"({len(query or '')} chars)")
+                                send_reply(status, "I cannot search for images with that content.", own_acct=own_acct, visibility=visibility)
+                                continue
+                            print(f"[DEBUG] Image search ({len(query or '')} chars)")
+                            reply_text, image_list = search_and_download_images(query, max_images=4)
+                            if image_list:
+                                send_reply(status, reply_text, own_acct=own_acct, visibility=visibility, image_bytes=image_list)
+                            else:
+                                # Fallback to text links if download failed
+                                send_reply(status, reply_text, own_acct=own_acct, visibility=visibility)
                         else:
-                            # Fallback to text links if download failed
-                            send_reply(status, reply_text, own_acct=own_acct, visibility=visibility)
+                            send_reply(status, "Please provide a search query. Usage: images <query>", own_acct=own_acct, visibility=visibility)
                     else:
                         send_reply(status, "Please provide a search query. Usage: images <query>", own_acct=own_acct, visibility=visibility)
-                else:
-                    send_reply(status, "Please provide a search query. Usage: images <query>", own_acct=own_acct, visibility=visibility)
 
-            # Handle news command: news <source>
-            elif lower_prompt.startswith("news ") or " news " in lower_prompt:
-                news_match = re.search(r'\bnews\s+(.+)', prompt_text, re.IGNORECASE)
-                if news_match:
-                    source = news_match.group(1).strip()
-                    if source:
-                        print(f"[DEBUG] News request for: {source}")
-                        try:
-                            reply_text = fetch_news_from_source(source, max_headlines=10)
-                            print(f"[DEBUG] News fetched, waiting 60 seconds before posting...")
-                            time.sleep(60)
-                            send_reply(status, reply_text, own_acct=own_acct, visibility=visibility)
-                        except Exception as e:
-                            print(f"[DEBUG] News error: {e}")
-                            import traceback
-                            traceback.print_exc()
-                            send_reply(status, f"Sorry, there was an error fetching news: {str(e)}", own_acct=own_acct, visibility=visibility)
+                # Handle news command: news <source>
+                elif lower_prompt.startswith("news ") or " news " in lower_prompt:
+                    news_match = re.search(r'\bnews\s+(.+)', prompt_text, re.IGNORECASE)
+                    if news_match:
+                        source = news_match.group(1).strip()
+                        if source:
+                            print(f"[DEBUG] News request for: {source}")
+                            try:
+                                reply_text = fetch_news_from_source(source, max_headlines=10)
+                                print(f"[DEBUG] News fetched, waiting 60 seconds before posting...")
+                                time.sleep(60)
+                                send_reply(status, reply_text, own_acct=own_acct, visibility=visibility)
+                            except Exception as e:
+                                print(f"[DEBUG] News error: {e}")
+                                import traceback
+                                traceback.print_exc()
+                                send_reply(status, f"Sorry, there was an error fetching news: {str(e)}", own_acct=own_acct, visibility=visibility)
+                        else:
+                            send_reply(status, "Please provide a news source. Usage: news <source> (e.g., news drudge)", own_acct=own_acct, visibility=visibility)
                     else:
                         send_reply(status, "Please provide a news source. Usage: news <source> (e.g., news drudge)", own_acct=own_acct, visibility=visibility)
-                else:
-                    send_reply(status, "Please provide a news source. Usage: news <source> (e.g., news drudge)", own_acct=own_acct, visibility=visibility)
 
-            elif "geni" in user_content.lower():
-                if contains_bad:
-                    print(
-                        f"Image generation blocked due to BAD_WORD match in notification: {', '.join(BAD_WORDS)}"
-                    )
-                    send_reply(
-                        status,
-                        "I cannot generate images for that content.",
-                        own_acct=own_acct,
-                        visibility=visibility,
-                    )
-                else:
-                    try:
-                        print(f"Starting image generation ({len(prompt_text or '')} chars)")
-                        image_bytes = generate_image(prompt_text)
-                        if image_bytes:
-                            print(f"Image generation successful ({len(image_bytes)} bytes)")
-                            send_reply(
-                                status,
-                                "Here is your image. Hope you like it.",
-                                own_acct=own_acct,
-                                visibility=visibility,
-                                image_bytes=image_bytes,
-                            )
-                        else:
-                            # Just log to console, don't spam user with failure messages
-                            print("ERROR: Image generation returned None after all retries")
-                    except Exception as e:
-                        # Just log to console, don't spam user with failure messages
-                        print(f"ERROR: Image generation exception: {e}")
-                        import traceback
-                        traceback.print_exc()
-            # Handle /narrate command - generate reply with TTS video
-            elif "/narrate" in lower_prompt:
-                # Check if AI is configured
-                if not is_ai_configured():
-                    print("[TTS] AI not configured, skipping /narrate")
-                    continue
-                # Remove /narrate from prompt
-                narrate_prompt = re.sub(r'/narrate\s*', '', prompt_text, flags=re.IGNORECASE).strip()
-                if not narrate_prompt:
-                    send_reply(status, "Please provide a message to narrate. Usage: /narrate <your message>", own_acct=own_acct, visibility=visibility)
-                else:
-                    reply_text = generate_reply(narrate_prompt, thread_history=thread_history, ping=False, narrate_mode=True)
-                    if reply_text:
-                        # Get avatar URL for video (Pleroma uses 'avatar' field)
-                        avatar_url = own.get("avatar") if own else None
-                        if avatar_url:
-                            print(f"[TTS] Generating video with avatar...")
-                            video_bytes = generate_narration_video(reply_text, avatar_url)
-                            if video_bytes:
-                                print(f"[TTS] Generated {len(video_bytes)} bytes of video")
-                                # Empty text - reply is in video subtitles
-                                send_reply(status, "", own_acct=own_acct, visibility=visibility, video_bytes=video_bytes)
+                elif "geni" in user_content.lower():
+                    if contains_bad:
+                        print(
+                            f"Image generation blocked due to BAD_WORD match in notification: {', '.join(BAD_WORDS)}"
+                        )
+                        send_reply(
+                            status,
+                            "I cannot generate images for that content.",
+                            own_acct=own_acct,
+                            visibility=visibility,
+                        )
+                    else:
+                        try:
+                            print(f"Starting image generation ({len(prompt_text or '')} chars)")
+                            image_bytes = generate_image(prompt_text)
+                            if image_bytes:
+                                print(f"Image generation successful ({len(image_bytes)} bytes)")
+                                send_reply(
+                                    status,
+                                    "Here is your image. Hope you like it.",
+                                    own_acct=own_acct,
+                                    visibility=visibility,
+                                    image_bytes=image_bytes,
+                                )
                             else:
-                                # Fallback to audio only
+                                # Just log to console, don't spam user with failure messages
+                                print("ERROR: Image generation returned None after all retries")
+                        except Exception as e:
+                            # Just log to console, don't spam user with failure messages
+                            print(f"ERROR: Image generation exception: {e}")
+                            import traceback
+                            traceback.print_exc()
+                # Handle /narrate command - generate reply with TTS video
+                elif "/narrate" in lower_prompt:
+                    # Check if AI is configured
+                    if not is_ai_configured():
+                        print("[TTS] AI not configured, skipping /narrate")
+                        continue
+                    # Remove /narrate from prompt
+                    narrate_prompt = re.sub(r'/narrate\s*', '', prompt_text, flags=re.IGNORECASE).strip()
+                    if not narrate_prompt:
+                        send_reply(status, "Please provide a message to narrate. Usage: /narrate <your message>", own_acct=own_acct, visibility=visibility)
+                    else:
+                        reply_text = generate_reply(narrate_prompt, thread_history=thread_history, ping=False, narrate_mode=True)
+                        if reply_text:
+                            # Get avatar URL for video (Pleroma uses 'avatar' field)
+                            avatar_url = own.get("avatar") if own else None
+                            if avatar_url:
+                                print(f"[TTS] Generating video with avatar...")
+                                video_bytes = generate_narration_video(reply_text, avatar_url)
+                                if video_bytes:
+                                    print(f"[TTS] Generated {len(video_bytes)} bytes of video")
+                                    # Empty text - reply is in video subtitles
+                                    send_reply(status, "", own_acct=own_acct, visibility=visibility, video_bytes=video_bytes)
+                                else:
+                                    # Fallback to audio only
+                                    audio_bytes = generate_speech_with_retries(reply_text)
+                                    send_reply(status, reply_text, own_acct=own_acct, visibility=visibility, audio_bytes=audio_bytes)
+                            else:
                                 audio_bytes = generate_speech_with_retries(reply_text)
                                 send_reply(status, reply_text, own_acct=own_acct, visibility=visibility, audio_bytes=audio_bytes)
-                        else:
-                            audio_bytes = generate_speech_with_retries(reply_text)
-                            send_reply(status, reply_text, own_acct=own_acct, visibility=visibility, audio_bytes=audio_bytes)
-            else:
-                # Use narrate_mode if AUTO_NARRATE is enabled
-                reply_text = generate_reply(prompt_text, thread_history=thread_history, ping=False, narrate_mode=AUTO_NARRATE)
-                if not reply_text:
-                    print(
-                        "Generated reply is None or empty; skipping send_reply."
-                    )
                 else:
-                    # If AUTO_NARRATE is enabled, generate video with TTS
-                    if AUTO_NARRATE:
-                        print("[TTS] AUTO_NARRATE enabled, generating video...")
-                        avatar_url = own.get("avatar") if own else None
-                        if avatar_url:
-                            print(f"[TTS] Generating video with avatar...")
-                            video_bytes = generate_narration_video(reply_text, avatar_url)
-                            if video_bytes:
-                                print(f"[TTS] Generated {len(video_bytes)} bytes of video")
-                                # Empty text - reply is in video subtitles
-                                send_reply(status, "", own_acct=own_acct, visibility=visibility, video_bytes=video_bytes)
+                    # Use narrate_mode if AUTO_NARRATE is enabled
+                    reply_text = generate_reply(prompt_text, thread_history=thread_history, ping=False, narrate_mode=AUTO_NARRATE)
+                    if not reply_text:
+                        print(
+                            "Generated reply is None or empty; skipping send_reply."
+                        )
+                    else:
+                        # If AUTO_NARRATE is enabled, generate video with TTS
+                        if AUTO_NARRATE:
+                            print("[TTS] AUTO_NARRATE enabled, generating video...")
+                            avatar_url = own.get("avatar") if own else None
+                            if avatar_url:
+                                print(f"[TTS] Generating video with avatar...")
+                                video_bytes = generate_narration_video(reply_text, avatar_url)
+                                if video_bytes:
+                                    print(f"[TTS] Generated {len(video_bytes)} bytes of video")
+                                    # Empty text - reply is in video subtitles
+                                    send_reply(status, "", own_acct=own_acct, visibility=visibility, video_bytes=video_bytes)
+                                else:
+                                    # Fallback to audio only
+                                    print("[TTS] Video failed, trying audio...")
+                                    audio_bytes = generate_speech_with_retries(reply_text)
+                                    if audio_bytes:
+                                        send_reply(status, reply_text, own_acct=own_acct, visibility=visibility, audio_bytes=audio_bytes)
+                                    else:
+                                        send_reply(status, reply_text, own_acct=own_acct, visibility=visibility)
                             else:
-                                # Fallback to audio only
-                                print("[TTS] Video failed, trying audio...")
+                                # No avatar, use audio only
+                                print(f"[TTS] No avatar URL, using audio...")
                                 audio_bytes = generate_speech_with_retries(reply_text)
                                 if audio_bytes:
+                                    print(f"[TTS] Generated {len(audio_bytes)} bytes of audio")
                                     send_reply(status, reply_text, own_acct=own_acct, visibility=visibility, audio_bytes=audio_bytes)
                                 else:
+                                    print("[TTS] Audio generation failed, sending text only")
                                     send_reply(status, reply_text, own_acct=own_acct, visibility=visibility)
                         else:
-                            # No avatar, use audio only
-                            print(f"[TTS] No avatar URL, using audio...")
-                            audio_bytes = generate_speech_with_retries(reply_text)
-                            if audio_bytes:
-                                print(f"[TTS] Generated {len(audio_bytes)} bytes of audio")
-                                send_reply(status, reply_text, own_acct=own_acct, visibility=visibility, audio_bytes=audio_bytes)
-                            else:
-                                print("[TTS] Audio generation failed, sending text only")
-                                send_reply(status, reply_text, own_acct=own_acct, visibility=visibility)
-                    else:
-                        send_reply(status, reply_text, own_acct=own_acct, visibility=visibility)
+                            send_reply(status, reply_text, own_acct=own_acct, visibility=visibility)
+            finally:
+                _release_if_refused(nid, status_id)
 
     # Save processed IDs to file after each run
     _save_processed_ids()
