@@ -16807,7 +16807,10 @@
           // Mark the unresolved ones with data-mpk so decorateProfiles can fill them in when the kind-0 lands.
           const mp=Store.profile(pk)||{}; needProfile(pk);
           const nm=mp.name||mp.display_name||niceNip05(mp.nip05);
-          return pre+`<a href="#" class="mention" data-np="${NT().nip19.npubEncode(pk)}"${nm?'':` data-mpk="${pk}"`}>@${nm?emojiName(pk,nm):'profile'}</a>`;
+          // Until (unless) a name is known, show WHICH account it is: a short npub. The literal word
+          // "profile" read as a name -- "@bulletbill22 muted @profile" in the block bot's posts.
+          const np=NT().nip19.npubEncode(pk);
+          return pre+`<a href="#" class="mention" data-np="${np}"${nm?'':` data-mpk="${pk}"`}>@${nm?emojiName(pk,nm):np.slice(0,10)+'…'+np.slice(-5)}</a>`;
         }
         if(d.type==='note' || d.type==='nevent'){
           const id = d.type==='note' ? d.data : d.data.id;

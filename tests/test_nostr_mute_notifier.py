@@ -202,7 +202,7 @@ def test_a_nostr_mute_is_announced_as_a_mute(bot):
     b.blocks()                                            # first look remembers only
     rows.append(dict(MUTE))
     b.blocks()
-    assert posted == ["MUTER: nostr:npub1muter muted @alice@poster.place (on Nostr)"]
+    assert posted == ["nostr:npub1muter muted @alice@poster.place (on Nostr)"], "no MUTER: prefix on a mute"
 
 
 def test_a_mute_that_blinks_out_for_a_poll_is_not_announced_twice(bot):
