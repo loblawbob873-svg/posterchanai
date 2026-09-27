@@ -133,6 +133,20 @@ def test_each_reply_picks_one_of_up_to_three_faces_with_its_own_mouth(monkeypatc
         assert mouth["x"] == pytest.approx(0.1 * (shas.index(face) + 1)), "a face was drawn with another face's mouth"
 
 
+def test_faces_come_in_shuffled_rounds_never_twice_in_a_row():
+    """Every face once per round, in random order; never the same face on consecutive replies --
+    a plain random pick showed fever the same picture three times running."""
+    from app.routers import bot_talk
+    faces = [{"sha": c * 64, "mouth": None} for c in "123"]
+    picks = [bot_talk.next_face("bag-test", faces)[0] for _ in range(300)]
+    assert all(a != b for a, b in zip(picks, picks[1:])), "the same face twice in a row"
+    for r in range(0, 300, 3):
+        assert sorted(picks[r:r + 3]) == [0, 1, 2], f"round {r // 3} did not use every face once"
+    assert len({tuple(picks[r:r + 3]) for r in range(0, 300, 3)}) > 1, "the order never changes"
+    one = [{"sha": "9" * 64, "mouth": None}]
+    assert [bot_talk.next_face("solo", one)[0] for _ in range(3)] == [0, 0, 0]
+
+
 def test_faces_are_validated():
     got = tb.faces_of({"talk_faces": json.dumps([{"sha": "a" * 64}, {"sha": "nope"}, "junk", {"sha": "b" * 64,
                                                   "mouth": {"x": 9}}])})
@@ -251,7 +265,7 @@ def test_a_talking_reply_carries_the_clip(listener, monkeypatch):
     sent = []
     monkeypatch.setattr(listener, "_talk_clip", lambda text: b"CLIP")
     listener._send_spoken(lambda t, **m: sent.append((t, m)), "hello")
-    assert sent == [("hello", {"video_bytes": b"CLIP"})]
+    assert sent == [("", {"video_bytes": b"CLIP"})], "a talking reply posts the video alone, no text"
 
 
 def test_a_failed_render_still_answers_in_text(listener, monkeypatch):
@@ -281,7 +295,7 @@ def test_the_cleaned_line_is_what_is_rendered_and_posted(listener, monkeypatch):
     sent, rendered = [], []
     monkeypatch.setattr(listener, "_talk_clip", lambda text: rendered.append(text) or b"CLIP")
     listener._send_spoken(lambda t, **m: sent.append(t), 'Here\'s a talking head:\n"Hi there."')
-    assert rendered == ["Hi there."] and sent == ["Hi there."]
+    assert rendered == ["Hi there."] and sent == [""], "the cleaned line is spoken; the post is the video"
 
 
 def test_the_clip_is_asked_for_as_this_bot_with_its_credential(listener, monkeypatch):

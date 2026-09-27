@@ -243,7 +243,7 @@ def _send_spoken(send, text: str):
         text = _spoken_line(text)
     clip = _talk_clip(text) if _TALK_ON else None
     if clip:
-        send(text, video_bytes=clip)
+        send("", video_bytes=clip)       # the clip says it; the post is the video alone
     else:
         send(text)
 
