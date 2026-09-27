@@ -1089,7 +1089,7 @@ window.PCStreamsFactory = function(dep){
   function _liveDetailsHtml(d){
     d=_liveDetails(d);
     return `<label class="fld">Description <span class="muted small">— what the stream is about</span>
-        <textarea class="input" id="gl-summary" rows="3" maxlength="1000" placeholder="What’s on, a schedule, links…">${enc(d.summary)}</textarea></label>
+        <textarea class="input gl-summary" id="gl-summary" rows="3" maxlength="1000" placeholder="What’s on, a schedule, links…">${enc(d.summary)}</textarea></label>
       <label class="fld">Tags <span class="muted small">— up to 10, separated by spaces</span>
         <input class="input" id="gl-tags" maxlength="400" placeholder="anime gaming music" value="${enc(d.tags.join(' '))}"></label>
       <div class="gl-detrow">
@@ -1097,7 +1097,7 @@ window.PCStreamsFactory = function(dep){
           _LIVE_LANGS.map(([c,n])=>`<option value="${c}"${c===d.lang?' selected':''}>${enc(n)}</option>`).join('')}</select></label>
         <label class="muted small gl-cwopt"><input type="checkbox" id="gl-cw"${d.cw!=null?' checked':''}> Content warning</label>
       </div>
-      <input class="input${d.cw!=null?'':' hidden'}" id="gl-cwr" maxlength="200" placeholder="Why? (optional — shown before the stream plays)" value="${enc(d.cw||'')}">`;
+      <input class="input${d.cw!=null?'':' hidden'}" id="gl-cwr" maxlength="200" placeholder="Reason (optional)" value="${enc(d.cw||'')}">`;
   }
   function _liveDetailsRead(root){
     const cwOn=!!($('#gl-cw',root)||{}).checked;

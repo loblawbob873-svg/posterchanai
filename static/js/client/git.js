@@ -1137,7 +1137,9 @@ window.PCGitFactory = function(dep){
               r=await Relay.publish(root._signedIssue.ev);
               if(r && r.ok){ try{ Store.saveEvent(root._signedIssue.ev); }catch(_){ } }
             }else{
-              r=await publish(1621, body, tags, {onSigned:ev=>{ root._signedIssue={ev, text:sameText}; }});
+              // quiet: this form says what happened in its own words; the generic toast would repeat
+              // it as a bare "timeout" underneath.
+              r=await publish(1621, body, tags, {quiet:true, onSigned:ev=>{ root._signedIssue={ev, text:sameText}; }});
             }
             if(r && r.ok===false){
               st.textContent = r.msg==='timeout'
