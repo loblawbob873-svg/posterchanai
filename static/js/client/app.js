@@ -4568,6 +4568,8 @@
                        indistinguishable from never having turned it on — the exact shape of "why is
                        it disabled again?". */
                     /^pcai:automute$/,
+                    /* Go Live templates: left behind they read as never saved. */
+                    /^pcai:livetemplates$/,
                     /* …and the shared playlists you accepted, for the same reason: left on the old
                        pool, every offer is offered again and the playlists you kept disappear. */
                     /^pcai:musicshares$/,

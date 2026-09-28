@@ -54,15 +54,28 @@ def test_the_games_folder_opens_over_the_window_you_were_using(focused):
     asyncio.run(desktop.with_browser("online", "", check, COMPOSITOR + INGEST))
 
 
+GO_LIVE_OPENERS = {
+    "api": "window.__PC.goLive ? __PC.goLive() : document.getElementById('nav-golive').click()",
+    # The way a person opens it on PosterChanOS: the desktop icon / start-menu entry.
+    "desktop-icon": "(document.querySelector('.os-icon[data-view=\"__golive\"],.os-icon[data-view=\"golive\"]')"
+                    "||document.getElementById('nav-golive')).click()",
+}
+
+
 @pytest.mark.skipif(not Path("/opt/google/chrome/chrome").exists(), reason="Chrome required")
-def test_go_live_opens_over_the_window_you_were_using():
+@pytest.mark.parametrize("focused", [40, 35], ids=["firefox", "a-popped-out-posterchan-window"])
+@pytest.mark.parametrize("opener", sorted(GO_LIVE_OPENERS))
+def test_go_live_opens_over_the_window_you_were_using(focused, opener):
     async def check(b):
         await _ready(b)
-        await b.js("window.__PC.goLive ? __PC.goLive() : document.getElementById('nav-golive').click()")
+        await b.js(f"__wm.focus={focused};__wm.emit&&__wm.emit({{name:'window',change:'focus'}})")
+        await asyncio.sleep(.5)
+        await b.js("__wm.log.length=0")
+        await b.js(GO_LIVE_OPENERS[opener])
         await b.until("!!document.querySelector('#gl-title')")
-        await _until_front(b, "40")
+        await _until_front(b, str(focused))
         last = _last_front(await b.js("__wm.log"))
-        assert last["front"] is True and 40 in last["covers"], \
-            f"the Go Live sheet was left behind Firefox: {await b.js('__wm.log')}"
+        assert last["front"] is True and focused in last["covers"], \
+            f"the Go Live sheet was left behind window {focused}: {await b.js('__wm.log')}"
 
     asyncio.run(desktop.with_browser("online", "", check, COMPOSITOR + INGEST))

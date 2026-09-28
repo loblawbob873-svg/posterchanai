@@ -156,6 +156,8 @@
          t[1].startsWith('pcai:files-index') ||
          t[1].startsWith('pcai:playlist') || t[1] === 'pcai:budget' ||
          t[1] === 'pcai:desktop' || t[1] === 'pcai:automute' || t[1] === 'pcai:agent-tasks' ||
+         /* Go Live templates (client/livetemplates.js). Evicted, the menu reads as "you never saved any". */
+         t[1] === 'pcai:livetemplates' ||
          /* Which shared playlists you accepted. Evicted by a firehose it reads as "you have decided
             nothing", so every offer you already answered comes back to be answered again. */
          t[1] === 'pcai:musicshares' ||

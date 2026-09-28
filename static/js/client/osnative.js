@@ -351,8 +351,20 @@
    * floating Telegram/Firefox surface, so overlapping external surfaces must be parked while that
    * frame owns focus. Keep this decision pure: os.js supplies rectangles in compositor pixels and
    * performs the bounded hide/show operations. */
-  function domStackPlan(rows, focusedRect){
-    const hide=[], show=[];
+  /* `opts.modal`: the rectangle is a SHEET (Go Live, a confirm, anything modal() draws), not a
+   * window. A sheet is something the person must read and answer, so it has to be WHOLLY visible:
+   * any window lapping it by more than a sliver goes under, whatever fraction of either it is. The
+   * fraction rule below is right for frames (a small frame must not push a big browser away because
+   * they share a corner) and wrong here -- measured, a Go Live sheet half under a focused popped-out
+   * Social window stayed half under it: "Go Live opens behind the active window". */
+  function _lapsAtAll(a, b){
+    if(!overlaps(a, b)) return false;
+    const wide = Math.min(a.left + a.width, b.left + b.width) - Math.max(a.left, b.left);
+    const tall = Math.min(a.top + a.height, b.top + b.height) - Math.max(a.top, b.top);
+    return wide >= Math.min(SLIVER, a.width, b.width) && tall >= Math.min(SLIVER, a.height, b.height);
+  }
+  function domStackPlan(rows, focusedRect, opts){
+    const hide=[], show=[], modal=!!(opts && opts.modal);
     for(const row of (rows||[])){
       if(!row || row.id==null || row.own || row.fullscreen) continue;
       const r=row.rect;
@@ -365,8 +377,9 @@
        * with `pc-open math.pdf`: the frame was focused and maximised, and `covers` went out empty.
        * A window this frame mostly covers is as covered as one that mostly covers the frame; two
        * big windows lapping at a corner still fail both tests and stay where they are. */
-      const covered=!!(focusedRect && box && (coversMoreThanASliver(box, focusedRect)
-                                              || coversMoreThanASliver(focusedRect, box)));
+      const covered=!!(focusedRect && box && (modal ? _lapsAtAll(box, focusedRect)
+                                              : (coversMoreThanASliver(box, focusedRect)
+                                                 || coversMoreThanASliver(focusedRect, box))));
       (covered?hide:show).push(Number(row.id));
     }
     return {hide,show};

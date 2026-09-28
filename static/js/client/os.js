@@ -1591,7 +1591,7 @@
   const _domCoveredNative = new Set();
   let _domStackGen = 0;
 
-  async function _stackDomAboveNative(w, focusToken){
+  async function _stackDomAboveNative(w, focusToken, opts){
     if(!w || w.native != null || !window.pcWM || !NAT() || !NAT().domStackPlan) return;
     const gen=++_domStackGen;
     let snap=null;
@@ -1639,7 +1639,7 @@
      * Minimising somebody's browser to show a Settings window is precisely "opening a new window
      * hides all the other windows"; do not do it where the compositor can be asked. */
     const others=rows.map(r=>r&&Number(r.id)===shellId?Object.assign({},r,{own:true}):r);
-    const plan=NAT().domStackPlan(others,rect);
+    const plan=NAT().domStackPlan(others,rect,opts);
     if(typeof pcWM.shellFront==='function'){
       _shellCoverWish(plan.hide);
     }else{
@@ -8737,7 +8737,7 @@
     if(up){
       _foreignFocused = false;          // opened from the desktop, which is where the person is now
       _shellFrontWish(true);
-      try{ _stackDomAboveNative({ el: box }, _claimFocus()); }catch(_){ }
+      try{ _stackDomAboveNative({ el: box }, _claimFocus(), { modal:true }); }catch(_){ }
       return;
     }
     // Closed: the order goes back to whatever the desktop's own focused window needs, or nothing.

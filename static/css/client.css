@@ -5559,6 +5559,13 @@ html.pc-oswin .main{ height:100% }
    duplicate upload, or blank → a bare ▶ tile on Discover → Streams), so it's now a single "choose
    from your drive" pick. */
 .gl-cover-acts{display:flex;justify-content:center;gap:8px;flex-wrap:wrap;margin:6px 0 2px}
+/* Go Live templates + the editable announcement post (livetemplates.js) */
+.gl-tpl{margin:2px 0 8px}
+.gl-tplrow{display:flex;gap:6px;align-items:center;flex-wrap:wrap;margin-top:4px}
+.gl-tplrow select.input,.gl-tplrow input.input{flex:1 1 180px;min-width:0;width:auto}
+.gl-tplrow .btn{flex:0 0 auto}
+.gl-post{width:100%;box-sizing:border-box;resize:vertical;min-height:84px;font:inherit}
+#gl-tpl-msg{margin:4px 0 0}
 /* .row is left-aligned by default; the sheet's two closing buttons read better centred. */
 .row.gl-actions{justify-content:center;margin-top:14px}
 

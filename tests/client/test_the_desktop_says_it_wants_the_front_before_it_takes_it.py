@@ -107,15 +107,15 @@ class TestFocusWinOrder(unittest.TestCase):
 
 class TestTheCoverListIsMeasured(unittest.TestCase):
     def test_the_stack_pass_publishes_what_the_frame_overlaps(self):
-        body = _decls(_fn(OS_JS, "  async function _stackDomAboveNative(w, focusToken){"))
-        self.assertIn("domStackPlan(others,rect)", body)
+        body = _decls(_fn(OS_JS, "  async function _stackDomAboveNative(w, focusToken, opts){"))
+        self.assertIn("domStackPlan(others,rect,opts)", body)
         self.assertIn("_shellCoverWish(plan.hide)", body,
                       "the overlap is computed and thrown away")
 
     def test_it_no_longer_takes_applications_off_the_screen(self):
         """Minimising somebody's browser to show a Settings window is precisely "opening a new
         window hides all the other windows". Only the no-compositor fallback may still do it."""
-        body = _decls(_fn(OS_JS, "  async function _stackDomAboveNative(w, focusToken){"))
+        body = _decls(_fn(OS_JS, "  async function _stackDomAboveNative(w, focusToken, opts){"))
         hide = body.index("pcWM.hide(id)")
         guard = body.index("typeof pcWM.shellFront==='function'")
         self.assertLess(guard, hide,
@@ -125,7 +125,7 @@ class TestTheCoverListIsMeasured(unittest.TestCase):
         """It is an ordinary toplevel like Telegram, and a frame drawn over it must go in front of
         it by the same means. Exempting everything sharing our app-id is "social is stuck behind
         terminal" seen from the other end -- only the desktop's OWN surface may be skipped."""
-        body = _decls(_fn(OS_JS, "  async function _stackDomAboveNative(w, focusToken){"))
+        body = _decls(_fn(OS_JS, "  async function _stackDomAboveNative(w, focusToken, opts){"))
         line = [l for l in body.splitlines() if "const others=rows.map(" in l][0]
         self.assertIn("Number(r.id)===shellId", line)
         self.assertNotIn("poster", line, "every window sharing our app-id is exempted again")

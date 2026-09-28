@@ -801,9 +801,20 @@ window.PCStreamsFactory = function(dep){
       watchUrl=_webLink(NT().nip19.naddrEncode({identifier:info.d, pubkey:S.ME.pubkey, kind:30311, relays:_r}));
     }catch(_){ }
     modal(`<h3><svg class="ic h-ic" aria-hidden="true"><use href="#i-live"></use></svg>Go Live</h3>
+      <div class="gl-tpl">
+        <label class="fld" for="gl-tpl-sel">Template <span class="muted small">— reuse a title, description, cover and post</span></label>
+        <div class="gl-tplrow"><select class="input" id="gl-tpl-sel" aria-label="Template"><option value="">— none —</option></select>
+          <button type="button" class="btn btn-ghost small" id="gl-tpl-save">Save as template</button>
+          <button type="button" class="btn btn-ghost small hidden" id="gl-tpl-del">Delete</button></div>
+        <div class="gl-tplrow hidden" id="gl-tpl-namerow"><input class="input" id="gl-tpl-name" maxlength="60" placeholder="Template name" aria-label="Template name">
+          <button type="button" class="btn btn-neon small" id="gl-tpl-ok">Save</button><button type="button" class="btn btn-ghost small" id="gl-tpl-cancel">Cancel</button></div>
+        <p class="muted small hidden" id="gl-tpl-msg" role="status"></p>
+      </div>
       <label class="fld">Title<input class="input" id="gl-title" placeholder="What are you streaming?" maxlength="120" autofocus></label>
       ${_liveDetailsHtml(_liveDetailsDefault())}
       <label class="muted small" style="display:flex;gap:8px;align-items:center;margin:6px 0"><input type="checkbox" id="gl-announce" checked> Also announce to followers (a post with a watch link)</label>
+      <label class="fld" id="gl-post-wrap">Announcement post <span class="muted small">— <code>{title}</code> and <code>{link}</code> are filled in when you go live</span>
+        <textarea class="input gl-post" id="gl-post" rows="4" maxlength="4000" spellcheck="true"></textarea></label>
       ${info.record_available?`<label class="muted small" style="display:flex;gap:8px;align-items:center;margin:6px 0"><input type="checkbox" id="gl-record" ${info.record_enabled?'checked':''}> Save my streams — recorded and kept in your “Past streams”</label>`:''}
       ${info.quality_available?`<div class="gl-q">
         <div class="muted small">Quality — lower it if your connection is slow or you're on mobile data:</div>
@@ -844,8 +855,9 @@ window.PCStreamsFactory = function(dep){
       // Cover image: PICK ONE FROM YOUR BLOSSOM DRIVE. It used to be a URL box plus an upload button —
       // three ways to get this wrong (paste a dead link, upload a duplicate, or leave it blank and get
       // a bare ▶ tile on Discover → Streams). Your drive already holds the images you'd use.
+      let showPrev=()=>{};
       { const ip=$('#gl-img',root), pv=$('#gl-img-prev',root), pk=$('#gl-img-pick',root), cl=$('#gl-img-clear',root);
-        const showPrev=()=>{ const u=cover();
+        showPrev=()=>{ const u=cover();
           if(u){ pv.src=u; pv.classList.remove('hidden'); cl.classList.remove('hidden'); }
           else { pv.classList.add('hidden'); cl.classList.add('hidden'); } };
         // Default to your avatar — the same value _publishLive falls back to, but VISIBLE, so the
@@ -855,6 +867,7 @@ window.PCStreamsFactory = function(dep){
         pv.onerror=()=>pv.classList.add('hidden');
         cl.onclick=()=>{ ip.value=''; showPrev(); };
         pk.onclick=()=> _pickBlossomImage(url=>{ ip.value=url; showPrev(); }); }
+      _liveTplWire(root, ()=>showPrev());
       $$('[data-copy]',root).forEach(b=> b.onclick=()=> _copyFrom($('#'+b.dataset.copy,root)));
       { const rc=$('#gl-record',root); if(rc) rc.onchange=()=>{ rc.disabled=true;
           _streamFetch('/api/streams/record',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({enabled:rc.checked})})
@@ -913,6 +926,8 @@ window.PCStreamsFactory = function(dep){
         // Every go-live path hands `info` to _publishLive, so the details ride on it.
         info.details=_liveDetailsRead(root);
         try{ ClientSettings.set('liveDetailsLast', info.details); }catch(_){}
+        info.post=($('#gl-post',root)||{}).value||'';
+        try{ ClientSettings.set('livePostLast', info.post); }catch(_){}
         if(s==='cam'){ const f=facing(); closeModal(); return _phoneGoLive(info, t, a, c, { facing:f }); }
         if(s==='screen'){ closeModal(); return _screenGoLive(info, t, a, c); }
         try{ const ev=await _publishLive(info, t, c); _startLiveHb();   // OBS path: HLS heartbeat detects OBS stopping
@@ -921,6 +936,78 @@ window.PCStreamsFactory = function(dep){
         }catch(_){ revive(); toast('couldn’t announce the stream — try again'); }
       };
     });
+  }
+  // Go Live templates + the editable announcement post (client/livetemplates.js holds the rules).
+  // One store per account: the account copy is an encrypted pcai:livetemplates document, the device
+  // copy is what paints the menu instantly (and what survives a relay that could not be read).
+  let _liveTplStore=null;
+  function _liveTpl(){
+    const owner=S.ME && S.ME.pubkey;
+    if(!window.PCLiveTpl || !owner || S.GUEST) return null;
+    if(_liveTplStore && _liveTplStore.owner===owner) return _liveTplStore.s;
+    const key='pc_live_tpl:'+owner;
+    const s=PCLiveTpl.store({ owner,
+      query:f=>Relay.query(f),
+      publish:(k,c,t)=>publish(k,c,t,{quiet:true}),
+      enc:(pk,t)=>S.signer.nip44enc(pk,t), dec:(pk,t)=>S.signer.nip44dec(pk,t),
+      local:{ get:()=>{ try{ return JSON.parse(localStorage.getItem(key)||'[]'); }catch(_){ return []; } },
+              set:l=>{ try{ localStorage.setItem(key, JSON.stringify(l)); }catch(_){ } } } });
+    _liveTplStore={ owner, s };
+    return s;
+  }
+  function _liveTplWire(root, repaintCover){
+    const post=$('#gl-post',root), wrap=$('#gl-post-wrap',root), ann=$('#gl-announce',root);
+    if(post){ let last=null; try{ last=ClientSettings.get('livePostLast', null); }catch(_){}
+      post.value = (typeof last==='string' && last.trim()) ? last : (window.PCLiveTpl ? PCLiveTpl.DEFAULT_POST : ''); }
+    if(ann && wrap){ const sync=()=>wrap.classList.toggle('hidden', !ann.checked); ann.addEventListener('change', sync); sync(); }
+    const st=_liveTpl(), sel=$('#gl-tpl-sel',root);
+    if(!st || !sel){ const box=root.querySelector('.gl-tpl'); if(box) box.classList.add('hidden'); return; }
+    const msg=(t)=>{ const m=$('#gl-tpl-msg',root); if(!m) return; m.textContent=t||''; m.classList.toggle('hidden', !t); };
+    let list=st.list();
+    const paint=()=>{ const cur=sel.value;
+      sel.innerHTML='<option value="">— none —</option>'+list.map(t=>`<option value="${enc(t.name)}">${enc(t.name)}</option>`).join('');
+      sel.value=list.some(t=>t.name===cur) ? cur : '';
+      $('#gl-tpl-del',root).classList.toggle('hidden', !sel.value); };
+    paint();
+    st.load().then(l=>{ if(root.isConnected){ list=l; paint(); } }).catch(()=>{});
+    const setv=(id,v)=>{ const e=$(id,root); if(e) e.value=v; };
+    sel.onchange=()=>{
+      const t=list.find(x=>x.name===sel.value);
+      $('#gl-tpl-del',root).classList.toggle('hidden', !t);
+      if(!t) return;
+      setv('#gl-title', t.title); setv('#gl-summary', t.summary); setv('#gl-tags', (t.tags||[]).join(' '));
+      setv('#gl-lang', t.lang||'');
+      const cw=$('#gl-cw',root), cwr=$('#gl-cwr',root);
+      if(cw){ cw.checked = t.cw!=null; if(cwr){ cwr.value=t.cw||''; cwr.classList.toggle('hidden', !cw.checked); } }
+      if(t.cover){ setv('#gl-img', t.cover); repaintCover(); }
+      if(post && t.post) post.value=t.post;
+      msg(`Filled in from “${t.name}” — edit anything before you go live.`);
+    };
+    const nameRow=$('#gl-tpl-namerow',root), nameIn=$('#gl-tpl-name',root);
+    $('#gl-tpl-save',root).onclick=()=>{ nameRow.classList.remove('hidden');
+      nameIn.value = sel.value || ($('#gl-title',root).value||'').trim().slice(0,60); nameIn.focus(); nameIn.select(); };
+    $('#gl-tpl-cancel',root).onclick=()=>nameRow.classList.add('hidden');
+    const doSave=async()=>{
+      const name=(nameIn.value||'').trim();
+      if(!name){ nameIn.focus(); return; }
+      const d=_liveDetailsRead(root);
+      const tpl={ name, title:($('#gl-title',root).value||'').trim(), summary:d.summary, tags:d.tags, lang:d.lang, cw:d.cw,
+                  cover:($('#gl-img',root).value||'').trim(), post:post?post.value:'' };
+      const b=$('#gl-tpl-ok',root); b.disabled=true;
+      try{ const r=await st.save(l=>PCLiveTpl.upsert(l, tpl));
+        list=r.list; sel.value=name; paint(); nameRow.classList.add('hidden');
+        msg(r.synced ? `Saved “${name}”.` : `Saved “${name}” on this device — it will reach your other devices once your relays answer.`);
+      } finally { b.disabled=false; }
+    };
+    $('#gl-tpl-ok',root).onclick=doSave;
+    nameIn.addEventListener('keydown',e=>{ if(e.key==='Enter'){ e.preventDefault(); e.stopPropagation(); doSave(); }
+                                           if(e.key==='Escape'){ e.stopPropagation(); nameRow.classList.add('hidden'); } });
+    $('#gl-tpl-del',root).onclick=async()=>{
+      const name=sel.value; if(!name) return;
+      if(typeof uiConfirm==='function' && !(await uiConfirm(`Delete the template “${name}”?`))) return;
+      const r=await st.save(l=>PCLiveTpl.remove(l, name));
+      list=r.list; sel.value=''; paint(); msg(`Deleted “${name}”.`);
+    };
   }
   // Pick an image you already have on your Blossom drive. Used by Go Live's cover picker; kept
   // generic (takes a callback) so anything else needing "choose one of my images" can reuse it.
@@ -1221,7 +1308,9 @@ window.PCStreamsFactory = function(dep){
       const relays=[S.CFG && S.CFG.relay_url].filter(Boolean);   // include our relay so external clients can resolve the naddr
       const _d = info.d || info.token;   // same address the 30311 was published under
       const naddr=NT().nip19.naddrEncode({identifier:_d, pubkey:S.ME.pubkey, kind:30311, relays});
-      await publish(1, `🔴 I’m live now: ${title}\n\n▶ Watch: ${_webLink(naddr)}\n\nnostr:${naddr}`,
+      const text = window.PCLiveTpl ? PCLiveTpl.renderPost(info.post, { title, link:_webLink(naddr), naddr })
+                                    : `🔴 I’m live now: ${title}\n\n▶ Watch: ${_webLink(naddr)}\n\nnostr:${naddr}`;
+      await publish(1, text,
         [['t','livestream'], ['a', `30311:${S.ME.pubkey}:${_d}`, '', 'root']]);
     }catch(_){}
   }
