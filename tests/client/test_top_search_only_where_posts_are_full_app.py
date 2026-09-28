@@ -23,6 +23,10 @@ from tests.client.test_effects_full_app import Browser, Handler, INIT
 NO_SEARCH = ["notes", "mail", "news", "meme", "concord", "vms", "wallet", "signer", "bookmarks"]
 SEARCH = ["notifications", "home"]
 VISIBLE = "(()=>{const s=document.querySelector('.topbar .searchbox');return !!s&&s.offsetParent!==null})()"
+# The PosterChan avatar at the end of every phone title row ("do that for mobile"), search or not.
+AVATAR = ("(()=>{const t=document.querySelector('.topbar');if(!t||t.offsetParent===null)return 'no topbar';"
+          "const a=getComputedStyle(t,'::after');const r=t.getBoundingClientRect();"
+          "return a.content!=='none'&&a.backgroundImage.includes('url(')&&parseFloat(a.width)===36})()")
 
 
 async def run():
@@ -59,6 +63,7 @@ async def run():
                     await b.js(f"__PC.switchView({json.dumps(v)})")
                     await asyncio.sleep(0.4)
                     out[v] = await b.js(VISIBLE)
+                    out["avatar:" + v] = await b.js(AVATAR)
                 # Notes -> a profile, which sets VIEW without switchView.
                 await b.js("__PC.switchView('notes')")
                 await asyncio.sleep(0.4)
@@ -77,3 +82,5 @@ def test_the_top_search_is_only_on_screens_about_posts():
     wrong = [v for v in NO_SEARCH if out[v]] + [v for v in SEARCH if not out[v]]
     assert not wrong, f"top search visibility wrong on {wrong}: {out}"
     assert out["notes->profile"], "a profile opened from Notes kept Notes' hidden search"
+    no_avatar = [v for v in NO_SEARCH + SEARCH if out["avatar:" + v] is not True and out["avatar:" + v] != "no topbar"]
+    assert not no_avatar, f"no PosterChan avatar top-right on the phone title row of {no_avatar}: {out}"

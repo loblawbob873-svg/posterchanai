@@ -1139,6 +1139,14 @@ body.os-on .osw .pc-nav-logo,html.pc-oswin .pc-nav-logo{display:block;margin-lef
 html.pc-oswin .main:not(:has(.pc-navbar))>.topbar::after{content:"";display:block;margin-left:auto;
   width:36px;height:36px;flex:0 0 36px;border-radius:9px;background:var(--pc-logo) center/cover no-repeat;
   border:1px solid var(--line);box-shadow:0 0 12px rgba(var(--accent-rgb),.28)}
+/* …AND ON A PHONE, every screen's title row gets it too ("do that for mobile") -- the same badge,
+   top right. The search box, where a screen keeps one, shrinks to make room (it is flex:1). */
+@media(max-width:820px){
+  .main:not(:has(.pc-navbar))>.topbar::after{content:"";display:block;margin-left:auto;
+    width:36px;height:36px;flex:0 0 36px;border-radius:9px;background:var(--pc-logo) center/cover no-repeat;
+    border:1px solid var(--line);box-shadow:0 0 12px rgba(var(--accent-rgb),.28)}
+  .topbar .searchbox{margin-right:10px}
+}
 .searchbox{flex:1;min-width:0;max-width:720px;margin:0 16px}   /* min-width:0 → shrinks so the topbar buttons (Calls/Drafts/New post) always fit, never clipped */
 /* Exactly ONE search box at any width: the sidebar owns it on desktop, the topbar on mobile (where the
    sidebar is display:none). Two visible inputs would be duplicate UI; two hidden ones would be no search. */
