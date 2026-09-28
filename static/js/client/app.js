@@ -6491,6 +6491,7 @@
     if(renderModuleView('stats','stats.js','PCStats','render')) return;
     if(renderModuleView('analytics','user-analytics.js','PCUserAnalytics','render')) return;
     if(renderModuleView('budget','budget.js','PCBudget','render')) return;
+    if(renderModuleView('calculator','calculator.js','PCCalc','render')) return;
     if (VIEW==='notes'){
       if(window.PCNotes) return window.PCNotes.render();
       const f=$('#feed'); if(f) f.innerHTML='<div class="spinner"></div>';
@@ -10214,7 +10215,7 @@
     // and it was buried in Discover → Streams where nobody found it. Mirrors the desktop sidebar item.
     // Icons come from the shared sprite via ICO() — the same glyphs the desktop sidebar uses, so the
     // phone and desktop navs never drift apart (and they take the theme's colour, unlike emoji).
-    const items=[['concord','users','Communities'],['ai','ai','PosterChan AI'],['mail','mail','Email'],['websearch','search','Web Search'],['terminal','terminal','Terminal'],['vms','monitor','Virtual Machines'],['calendar','clock','Calendar'],['contacts','user','Contacts'],['calls','phone','Calls'],['__remote','monitor','Remote Desktop'],['__golive','live','Go Live'],['translate','translate','Live Translate'],['notes','note','Notes'],['texts','chat','Texts'],['__music','music','Music'],['wallet','coin','Monero Wallet'],['vault','key','Passwords'],['drafts','draft','Drafts'],['meme','tv','Meme Builder'],['repos','git','Git'],['media-center','tv','Media Center'],['bookmarks','bookmark','Bookmarks'],['analytics','chart','My Analytics'],['__discover','compass','Discover'],['__games','gamepad','Games'],['__files','folder','Files'],['profile','user','Profile'],['__bug','bug','Report a Bug'],['__accounts','user','Switch account'],['signer','key','Signer'],['settings','gear','Settings'],
+    const items=[['concord','users','Communities'],['ai','ai','PosterChan AI'],['mail','mail','Email'],['websearch','search','Web Search'],['terminal','terminal','Terminal'],['vms','monitor','Virtual Machines'],['calendar','clock','Calendar'],['contacts','user','Contacts'],['calls','phone','Calls'],['__remote','monitor','Remote Desktop'],['__golive','live','Go Live'],['translate','translate','Live Translate'],['notes','note','Notes'],['calculator','calc','Calculator'],['texts','chat','Texts'],['__music','music','Music'],['wallet','coin','Monero Wallet'],['vault','key','Passwords'],['drafts','draft','Drafts'],['meme','tv','Meme Builder'],['repos','git','Git'],['media-center','tv','Media Center'],['bookmarks','bookmark','Bookmarks'],['analytics','chart','My Analytics'],['__discover','compass','Discover'],['__games','gamepad','Games'],['__files','folder','Files'],['profile','user','Profile'],['__bug','bug','Report a Bug'],['__accounts','user','Switch account'],['signer','key','Signer'],['settings','gear','Settings'],
       // Same button, same rule as the sidebar's: a guest is offered a way IN, not a second way out.
       (GUEST ? ['__login','user','Log in'] : ['logout','logout','Logout'])]
       .filter(([v])=> !(window.PC_NOSTR_ONLY && v==='translate') && !(window.PC_NOSTR_ONLY && v==='ai')

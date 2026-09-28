@@ -24,6 +24,7 @@ public final class TileIcons {
         if ("bars".equals(icon)) return R.drawable.ic_pc_bars;
         if ("bell".equals(icon)) return R.drawable.ic_pc_bell;
         if ("bookmark".equals(icon)) return R.drawable.ic_pc_bookmark;
+        if ("calc".equals(icon)) return R.drawable.ic_pc_calc;
         if ("calendar".equals(icon)) return R.drawable.ic_pc_calendar;
         if ("call".equals(icon)) return R.drawable.ic_pc_call;
         if ("cards".equals(icon)) return R.drawable.ic_pc_cards;

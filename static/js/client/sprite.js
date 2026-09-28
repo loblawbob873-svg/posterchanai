@@ -43,6 +43,7 @@
   <symbol id="i-bars" viewBox="0 0 24 24"><path d="M4 20h16"/><rect x="5.8" y="11" width="3.6" height="6"/><rect x="14.6" y="6.6" width="3.6" height="10.4"/></symbol>
   <symbol id="i-gamepad" viewBox="0 0 24 24"><rect x="2.6" y="7.4" width="18.8" height="9.6" rx="4.6"/><path d="M7 10.6v3.4M5.3 12.3h3.4"/><circle cx="15.8" cy="11.4" r=".95" fill="currentColor" stroke="none"/><circle cx="18" cy="13.8" r=".95" fill="currentColor" stroke="none"/></symbol>
   <symbol id="i-pawn" viewBox="0 0 24 24"><circle cx="12" cy="6.8" r="2.6"/><path d="M9.6 9.2c0 2-1.1 2.9-1.6 4.6h8c-.5-1.7-1.6-2.6-1.6-4.6"/><path d="M8 13.8h8l1.3 6H6.7z"/></symbol>
+  <symbol id="i-calc" viewBox="0 0 24 24"><rect x="5" y="2.8" width="14" height="18.4" rx="2.4"/><rect x="7.6" y="5.4" width="8.8" height="3.8" rx=".8"/><path d="M8.4 12.6h.01M12 12.6h.01M15.6 12.6h.01M8.4 15.6h.01M12 15.6h.01M15.6 15.6v2.6M8.4 18.4h3.6"/></symbol>
   <symbol id="i-hash" viewBox="0 0 24 24"><path d="M9 3.6v16.8M15 3.6v16.8M3.6 9h16.8M3.6 15h16.8"/></symbol>
   <symbol id="i-target" viewBox="0 0 24 24"><circle cx="12" cy="12" r="8.6"/><circle cx="12" cy="12" r="4.4"/><circle cx="12" cy="12" r=".9" fill="currentColor" stroke="none"/></symbol>
   <symbol id="i-discs" viewBox="0 0 24 24"><rect x="3.4" y="3.4" width="17.2" height="17.2" rx="2.6"/><circle cx="8.6" cy="8.6" r="2"/><circle cx="15.4" cy="8.6" r="2"/><circle cx="8.6" cy="15.4" r="2"/><circle cx="15.4" cy="15.4" r="2"/></symbol>
