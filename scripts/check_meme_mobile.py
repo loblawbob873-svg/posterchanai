@@ -50,7 +50,7 @@ PROFILE = os.environ.get("PC_CHECK_PROFILE") or "/tmp/pc-meme-mobile-check"
 
 # Per-layer controls the inspector must offer for a selected IMAGE layer. Named, because "it renders"
 # is not the check — a button that silently stopped being emitted still renders a panel.
-EXPECTED = ["mb-nobg", "mb-talk", "mb-fit", "mb-fill", "mb-split", "mb-cutall", "mb-erase"]
+EXPECTED = ["mb-nobg", "mb-talk", "mb-fit", "mb-fill", "mb-split", "mb-cutall", "mb-erase", "mb-magic"]
 
 PAGE = """<!doctype html><html><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">

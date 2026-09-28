@@ -75,10 +75,10 @@ def test_only_a_secret_bearing_render_forward_skips_the_registry(monkeypatch, se
 
 
 def test_every_forwarded_render_route_uses_the_fleet_gate():
-    """render/effect/apply-effect/talk are the four routes `_meme_lb_forward` sends to a peer. A route
+    """render/effect/apply-effect/talk/magic-erase are the routes `_meme_lb_forward` sends to a peer. A route
     left on the bare membership check is the same no-op balancer again, for that route only."""
     import inspect
-    for fn in (C.meme_render, C.meme_effect, C.meme_apply_effect, C.meme_talk):
+    for fn in (C.meme_render, C.meme_effect, C.meme_apply_effect, C.meme_talk, C.meme_magic_erase):
         src = inspect.getsource(fn)
         assert "_require_member_unless_fleet_forward(request, pk)" in src, fn.__name__
         assert "await require_pubkey(pk)" not in src, fn.__name__

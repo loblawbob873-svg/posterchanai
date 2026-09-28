@@ -1648,6 +1648,7 @@
         ${(l.type!=='image' && l.fxPose) ? `<button class="btn btn-cyan small full" id="mb-talk" title="Make this character say a line in one of your cloned voices. It is animated from the character's own artwork, so the pose stays exactly as it is."><svg class="ic b-ic" aria-hidden="true"><use href="#i-mic"></use></svg>Make it talk</button>` : ''}
         ${l.type==='image' ? `<button class="btn btn-cyan small full" id="mb-nobg" title="Cut the subject out of this photo and drop the background, so the layers underneath show through. Same cut-out the removebackground command does. Undo with ↺ below."><svg class="ic b-ic" aria-hidden="true"><use href="#i-wand"></use></svg>Remove the background</button>
         <button class="btn btn-cyan small full" id="mb-talk" title="The face in this picture says a line in one of your cloned voices, with its mouth animated to the speech. Becomes a video layer; undo with ↺ below."><svg class="ic b-ic" aria-hidden="true"><use href="#i-mic"></use></svg>Make it talk</button>` : ''}
+        ${l.type==='image' ? `<button class="btn btn-cyan small full" id="mb-magic" title="Brush over something you want GONE — a person, a sign, a stray cable — and it is filled in to match what is around it. Unlike Erase parts, nothing turns see-through. Undo with ↺ below."><svg class="ic b-ic" aria-hidden="true"><use href="#i-ai"></use></svg>Magic Eraser</button>` : ''}
         <button class="btn btn-cyan small full" id="mb-erase" title="Rub parts of this layer out with your finger or the mouse. What you erase turns see-through, so the layers underneath show through it."><svg class="ic b-ic" aria-hidden="true"><use href="#i-broom"></use></svg>Erase parts${l.mask?' (erased)':''}</button>
         ${l.mask ? `<button class="btn btn-cyan small full" id="mb-erase-clear" title="Put every erased part of this layer back"><svg class="ic b-ic" aria-hidden="true"><use href="#i-restore"></use></svg>Undo the erase</button>` : ''}
         ${l.origSrc ? `<button class="btn btn-cyan small full" id="mb-fx-revert" title="Put this layer's original picture back — the effect (or the background cut-out) that replaced it is undone"><svg class="ic b-ic" aria-hidden="true"><use href="#i-restore"></use></svg>Undo the effect on this layer</button>` : ''}`}
@@ -2695,28 +2696,39 @@
   const MASK_EDGE = 1024;          // cap on the mask's long edge — see below
   // Undo REPLAYS strokes rather than stacking bitmaps. A 1024px mask is 4 MB as ImageData, so even a
   // shallow bitmap stack is tens of megabytes on a phone; a stroke is a few hundred bytes of points.
-  function eraseParts(l){
+  //
+  // ✨ MAGIC ERASER (`magic`) is the same dialog with the brush meaning the opposite thing: instead of
+  // a keep-mask that starts opaque and is rubbed AWAY, it paints a fill-mask that starts EMPTY (white =
+  // "fill this in"). Apply sends it once to /client/meme/magic-erase and the layer's picture is REPLACED
+  // by the filled result — nothing is stored on the layer, so there is no mask to keep in step later.
+  function eraseParts(l, magic){
+    magic = !!magic && l.type === 'image';
     const isVid = l.type === 'video';
-    PC.modal(`<h3>✂ Erase parts of this layer</h3>
+    const head = magic
+      ? `<h3>✨ Magic Eraser</h3>
+      <div class="muted small" style="margin-bottom:8px">Brush over what you want gone — cover all of it,
+        a little past its edges. It is filled in to match what is around it.</div>`
+      : `<h3>✂ Erase parts of this layer</h3>
       <div class="muted small" style="margin-bottom:8px">Rub out what you don’t want — it turns
-        see-through, so whatever is under it shows through. ${isVid?'The whole clip is erased in the same place.':''}</div>
+        see-through, so whatever is under it shows through. ${isVid?'The whole clip is erased in the same place.':''}</div>`;
+    PC.modal(`${head}
       <div class="mb-er-wrap" id="er-wrap">
         ${isVid ? `<video id="er-src" src="${enc(l.src)}#t=0.1" muted playsinline preload="auto"></video>`
                 : `<img id="er-src" src="${enc(l.src)}" alt="">`}
         <canvas id="er-ov"></canvas>
       </div>
       <div class="mb-er-tools">
-        <button class="btn btn-cyan small on" id="er-rub" title="Rub the picture out"><svg class="ic b-ic" aria-hidden="true"><use href="#i-broom"></use></svg>Erase</button>
-        <button class="btn btn-ghost small" id="er-put" title="Paint an erased part back in"><svg class="ic b-ic" aria-hidden="true"><use href="#i-restore"></use></svg>Restore</button>
+        <button class="btn btn-cyan small on" id="er-rub" title="${magic?'Brush over what should disappear':'Rub the picture out'}"><svg class="ic b-ic" aria-hidden="true"><use href="#i-${magic?'wand':'broom'}"></use></svg>${magic?'Brush':'Erase'}</button>
+        <button class="btn btn-ghost small" id="er-put" title="${magic?'Take the brush off a part you did not mean to cover':'Paint an erased part back in'}"><svg class="ic b-ic" aria-hidden="true"><use href="#i-restore"></use></svg>${magic?'Unbrush':'Restore'}</button>
         <button class="btn btn-ghost small" id="er-undo" disabled title="Undo the last stroke"><svg class="ic b-ic" aria-hidden="true"><use href="#i-undo"></use></svg>Undo</button>
-        <button class="btn btn-ghost small" id="er-all" title="Put the whole layer back">Clear all</button>
+        <button class="btn btn-ghost small" id="er-all" title="${magic?'Clear every brush stroke':'Put the whole layer back'}">Clear all</button>
       </div>
       <label class="mb-f"><span>Brush size <b id="er-bv">18%</b></span>
         <input type="range" id="er-b" min="2" max="60" step="1" value="18"></label>
       <div class="muted small" id="er-hint">Loading the picture…</div>
       <div class="mb-frow" style="margin-top:12px">
         <button class="btn btn-ghost small" id="er-cancel">Cancel</button>
-        <button class="btn btn-neon small" id="er-go" disabled>Apply</button>
+        <button class="btn btn-neon small" id="er-go" disabled>${magic?'Remove it':'Apply'}</button>
       </div>`, root => {
       const $q = s => root.querySelector(s);
       const wrap = $q('#er-wrap'), art = $q('#er-src'), ov = $q('#er-ov');
@@ -2735,7 +2747,10 @@
       // drawn (the live path) — round caps and joins make a polyline and its segments identical, so the
       // two agree pixel for pixel.
       function drawOp(c, mode, r, pts){
-        c.globalCompositeOperation = mode === 'rub' ? 'destination-out' : 'source-over';
+        // Erase parts: the mask is what to KEEP, so rubbing cuts it away. Magic Eraser: the mask is what
+        // to FILL, so brushing adds to it. Same strokes, opposite polarity.
+        const adds = magic ? mode === 'rub' : mode === 'put';
+        c.globalCompositeOperation = adds ? 'source-over' : 'destination-out';
         c.strokeStyle = '#fff'; c.fillStyle = '#fff';
         c.lineWidth = r * 2; c.lineCap = 'round'; c.lineJoin = 'round';
         if(pts.length === 1){          // a TAP is a dot, not a zero-length line (which strokes nothing)
@@ -2749,7 +2764,7 @@
       }
       function syncBtns(){
         undoBtn.disabled = !ops.length;
-        go.disabled = busy || (!ops.length && !cleared);
+        go.disabled = busy || (magic ? !ops.some(o => o.mode === 'rub') : (!ops.length && !cleared));
       }
       // FULL replay — undo, Clear all, and the initial paint. Deliberately NOT what a pointermove uses:
       // replaying every stroke per move is quadratic in the length of the drag, which on a phone is a
@@ -2758,7 +2773,8 @@
         const c = msk.getContext('2d');
         c.globalCompositeOperation = 'source-over';
         c.clearRect(0, 0, msk.width, msk.height);
-        if(base) c.drawImage(base, 0, 0, msk.width, msk.height);
+        if(magic){ /* a fill-mask starts EMPTY — nothing is to be filled until it is brushed */ }
+        else if(base) c.drawImage(base, 0, 0, msk.width, msk.height);
         else { c.fillStyle = '#fff'; c.fillRect(0, 0, msk.width, msk.height); }
         ops.forEach(op => drawOp(c, op.mode, op.r, op.pts));
         paintOv();
@@ -2770,6 +2786,15 @@
         const c = ov.getContext('2d');
         c.globalCompositeOperation = 'source-over';
         c.clearRect(0, 0, ov.width, ov.height);
+        if(magic){
+          // The scrim IS the fill-mask: shown exactly where it has been brushed.
+          c.drawImage(msk, 0, 0, ov.width, ov.height);
+          c.globalCompositeOperation = 'source-in';
+          c.fillStyle = 'rgba(32,200,255,.5)';
+          c.fillRect(0, 0, ov.width, ov.height);
+          c.globalCompositeOperation = 'source-over';
+          return;
+        }
         c.fillStyle = 'rgba(255,32,96,.45)';
         c.fillRect(0, 0, ov.width, ov.height);
         c.globalCompositeOperation = 'destination-out';   // keep the scrim ONLY where the mask is gone
@@ -2827,12 +2852,12 @@
         const k = Math.min(1, MASK_EDGE / Math.max(nw, nh));
         msk.width = Math.max(2, Math.round(nw * k)); msk.height = Math.max(2, Math.round(nh * k));
         ov.width = msk.width; ov.height = msk.height;
-        hint.textContent = 'Drag over the picture to rub it out.';
+        hint.textContent = magic ? 'Drag over the thing you want removed.' : 'Drag over the picture to rub it out.';
         // Continue a previous erase. crossOrigin so the canvas stays EXPORTABLE — drawing a
         // cross-origin image without it taints the canvas and toBlob() then throws SecurityError,
         // which would only surface at Apply, after the work. A mask we cannot read is not fatal:
         // start clean and say so, rather than silently dropping the old erase without a word.
-        if(l.mask){
+        if(l.mask && !magic){
           const mi = new Image(); mi.crossOrigin = 'anonymous';
           mi.onload = () => { base = mi; rebuild(); };
           mi.onerror = () => { hint.textContent = 'Could not re-open the earlier erase — starting fresh.';
@@ -2850,13 +2875,58 @@
         if(art.complete && art.naturalWidth) ready(art.naturalWidth, art.naturalHeight);
       }
 
-      $q('#er-cancel').onclick = () => PC.closeModal();
+      let abandoned = false;
+      $q('#er-cancel').onclick = () => { abandoned = true; PC.closeModal(); };
       // RE-RESOLVE the layer by id before writing to it. `l` was captured when the dialog opened, and an
       // upload is a real round trip; anything that reloads the project in between (re-entering the view
       // runs `P = load()`) rebuilds P.layers as NEW objects, so the captured one becomes an orphan and
       // the mask would be written to something no longer on the timeline — silently, with the toast
       // still saying it worked. The exact hazard applyMemeEffect and Make-it-talk both hit for real.
       const live = () => P.layers.find(x => x.id === l.id) || l;
+      // ✨ Send the fill-mask once, INLINE (it is thrown away afterwards — uploading it would leave a
+      // blob on the user's drive per click), and swap the layer's picture for the filled one. Shares
+      // _fxBusy with the other server renders, whose per-user cooldown would 429 a second one anyway.
+      async function magicGo(){
+        if(busy) return;
+        if(_fxBusy){ toast('still working on the last one — hang on'); return; }
+        busy = true; _fxBusy = true; syncBtns();
+        const t0 = Date.now();
+        const tick = () => { hint.textContent = 'Filling in the background… ' + Math.round((Date.now() - t0) / 1000) + 's'; };
+        tick(); const clock = setInterval(tick, 500);
+        go.textContent = 'Working…';
+        try{
+          const blob = await new Promise(res => msk.toBlob(res, 'image/png'));
+          if(!blob) throw new Error('could not read the brush strokes');
+          const mask = await new Promise((res, rej) => { const fr = new FileReader();
+            fr.onload = () => res(String(fr.result)); fr.onerror = () => rej(fr.error); fr.readAsDataURL(blob); });
+          const auth = await selfProof();
+          const r = await fetch('/client/meme/magic-erase', { method:'POST', headers:{'Content-Type':'application/json'},
+            body: JSON.stringify({ pubkey: ME.pubkey, auth, url: live().src, mask }) });
+          const j = await r.json().catch(() => ({}));
+          if(!r.ok || !j.url) throw new Error(j.detail || j.error || ('HTTP ' + r.status));
+          if(abandoned) return;          // Cancel was pressed while it worked — leave the layer alone
+          const cur = live();
+          snap();
+          // Same bookkeeping as an effect, so "↺ Undo the effect on this layer" puts the photo back —
+          // and only on the FIRST change, so a chain of fills reverts all the way to the original.
+          if(!cur.origSrc){ cur.origSrc = cur.src; cur.origType = cur.type; cur.origName = cur.name || ''; cur.origDur = +cur.dur || 0; }
+          // The result is the SAME SIZE as the source, so an existing Erase-parts mask still lines up
+          // and is kept.
+          cur.src = j.url; cur.type = 'image';
+          save(); render();
+          PC.closeModal();
+          toast(j.method !== 'lama' && j.model === 'downloading'
+            ? '✨ removed with the quick filler — a better one is downloading; try again in a minute for a cleaner fill'
+            : '✨ removed — ↺ undo puts it back');
+        }catch(err){
+          if(!abandoned){ hint.textContent = 'That did not work: ' + ((err && err.message) || err);
+            toast('magic eraser failed: ' + ((err && err.message) || err)); }
+        }finally{
+          clearInterval(clock); busy = false; _fxBusy = false;
+          if(!abandoned){ go.textContent = 'Remove it'; syncBtns(); }
+        }
+      }
+      if(magic){ go.onclick = magicGo; return; }
       go.onclick = () => {
         if(busy) return;
         // Cleared back to nothing: drop the mask entirely rather than uploading an all-opaque PNG that
@@ -4057,6 +4127,9 @@
     // background cut-out rather than replacing it: rembg swaps the layer's picture (and needs origSrc to
     // undo), while this leaves the source alone and is undone by dropping one field.
     on('mb-erase','click',()=>eraseParts(l));
+    // ✨ Magic Eraser — the same brush, the opposite result: the brushed region is FILLED IN from its
+    // surroundings server-side and becomes the layer's new picture (so ↺ Undo the effect puts it back).
+    on('mb-magic','click',()=>eraseParts(l, true));
     on('mb-erase-clear','click',()=>{
       if(!l.mask) return;
       snap(); l.mask=''; save(); render(); toast('erase undone — the whole layer is back');

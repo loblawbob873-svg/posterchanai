@@ -236,6 +236,7 @@ CHECKS = {
     # branch never ran there and every app opening as an unmanageable toplevel went unnoticed.
     "check_desktop_app_without_a_compositor": dict(group="live", secs=420),
     "check_meme_mobile":               dict(group="ui", secs=600),
+    "check_meme_magic_eraser":         dict(group="ui", secs=300),
     # Opens a 100-video player after its grid. Running beside five other Chromium instances can
     # delay the player repaint past the probe and report its already-rendered Back button missing.
     "check_meme_render_match":         dict(group="ui", secs=600),

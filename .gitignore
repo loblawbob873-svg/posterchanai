@@ -101,6 +101,8 @@ botframework/stickers/
 # Depth-Anything ONNX model for parallax (large, fetched per-node, never commit)
 assets/depth_anything_v2_vits.onnx
 *.onnx
+# …and the Magic Eraser's in-flight LaMa download (inpaint_service writes <model>.part, then renames)
+*.onnx.part
 nostr.json
 
 # built by install.sh --turn / Dockerfile (not committed)

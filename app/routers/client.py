@@ -2221,6 +2221,97 @@ async def meme_talk(data: MemeTalkReq, request: Request, db: Session = Depends(g
                          "is_video": True, "alpha": is_alpha})
 
 
+class MemeMagicEraseReq(BaseModel):
+    pubkey: str
+    auth: str                    # base64 signed kind-27235 by this pubkey — same self-proof as /meme/effect
+    url: str                     # the layer's source IMAGE url
+    mask: str                    # PNG, base64 (a data: URL is fine): WHITE = fill this in
+
+
+# The mask travels INLINE, unlike an erase mask (which the layer keeps, so it is uploaded): this one
+# is used once and thrown away, and uploading it would leave a blob on the user's drive per click.
+# It is a ≤1024px PNG of flat strokes — measured tens of KB — so the cap is generous, not tight.
+_MAGIC_MASK_MAX_B64 = 8 * 1024 * 1024
+
+
+# ✨ Magic Eraser: brush over an object on an image layer and it is filled in to match what is
+# around it (app/services/inpaint_service.py). CPU only (LaMa on onnxruntime's CPU provider, else
+# OpenCV, else numpy), so no GPUResourceLock — but it IS a render, so it takes the render slot,
+# the per-user cooldown and the fleet overflow exactly like /meme/talk.
+@router.post("/meme/magic-erase")
+async def meme_magic_erase(data: MemeMagicEraseReq, request: Request, db: Session = Depends(get_db)):
+    import base64 as _b64
+    from app.services import blossom_service, inpaint_service
+
+    pk = nostr_service.to_pubkey_hex(data.pubkey or "")
+    if not pk or not _verify_self_auth(data.auth, pk):
+        raise HTTPException(status_code=401, detail="bad auth")
+    await _require_member_unless_fleet_forward(request, pk)
+    _fwded = bool(request is not None and request.headers.get("x-pcai-meme-fwd"))
+    if not _fwded and not blossom_service.is_enabled(db):
+        raise HTTPException(status_code=503, detail="media storage (Blossom) is disabled on this node")
+
+    # The mask is checked BEFORE the cooldown is charged: a malformed request should say so, not
+    # also cost the user the next four seconds.
+    raw_mask = (data.mask or "").strip()
+    if raw_mask.startswith("data:"):
+        raw_mask = raw_mask.split(",", 1)[-1]
+    if not raw_mask:
+        raise HTTPException(status_code=400, detail="brush over what you want removed first")
+    if len(raw_mask) > _MAGIC_MASK_MAX_B64:
+        raise HTTPException(status_code=400, detail="mask too large")
+    try:
+        mask = _b64.b64decode(raw_mask, validate=True)
+    except Exception:
+        raise HTTPException(status_code=400, detail="bad mask")
+    if not mask.startswith(b"\x89PNG\r\n\x1a\n"):
+        raise HTTPException(status_code=400, detail="bad mask (expected a PNG)")
+
+    _now = time.monotonic()
+    if _now - _effect_cooldown.get(pk, 0.0) < _EFFECT_COOLDOWN_S:
+        raise HTTPException(status_code=429, detail="one at a time — give the last render a moment")
+    _effect_cooldown[pk] = _now
+
+    # First use on a node that may run the model starts its one-time background download; THIS
+    # request is answered by the classical filler rather than waiting on 200 MB.
+    model = inpaint_service.ensure_model()
+
+    _fwd = await _meme_lb_forward(request, "magic-erase",
+                                  {"pubkey": data.pubkey, "auth": data.auth, "url": data.url,
+                                   "mask": data.mask},
+                                  db=db)
+    if _fwd is not None:
+        return _fwd
+
+    img, _ct = await _fetch_media_guarded(data.url, _own_media_hosts(db))
+    if not img:
+        raise HTTPException(status_code=400, detail="empty image")
+    if len(img) > 80 * 1024 * 1024:
+        raise HTTPException(status_code=400, detail="image too large (80 MB limit)")
+
+    async with _meme_slot():
+        try:
+            png, method = await asyncio.to_thread(inpaint_service.magic_erase, img, mask)
+        except ValueError as e:
+            # Every ValueError here is about the INPUT (nothing brushed, unreadable picture, too
+            # many megapixels) — a sentence the user can act on, not a 500.
+            raise HTTPException(status_code=400, detail=str(e))
+        except Exception as e:
+            logger.warning("[meme] magic-erase failed for %s: %s", pk[:12], e)
+            raise HTTPException(status_code=500, detail="magic eraser failed")
+
+    if _fwded:
+        return Response(content=png, media_type="image/png", headers={
+            "x-pcai-effect-name": "magic-erase",
+            "x-pcai-effect-dur": "0",
+            "x-pcai-effect-method": method,
+        })
+    desc = await blossom_service.save_blob(db, pk, png, "image/png")
+    url = f"{_blossom_url(request, db)}/{desc['sha256']}.png"
+    return JSONResponse({"ok": True, "url": url, "effect": "magic-erase", "is_video": False,
+                         "method": method, "model": model})
+
+
 @router.get("/proxy-image")
 async def client_proxy_image(url: str = Query(...)):
     """Same-origin image proxy for the Nostr web client (e.g. the Effects studio grabbing a post's
@@ -5773,7 +5864,7 @@ async def _meme_adopt_peer_blob(db: Session, peer: str, payload: dict) -> bool:
 # ffmpeg but not a blob store — the node holding the user's request owns the storage (see
 # _meme_store_peer_media). A subpath missing from here is not a silent no-op: the LB hands the raw
 # bytes straight back to the browser, which is expecting {url,...}, so the edit never lands.
-_MEME_RAW_MEDIA_SUBPATHS = ("effect", "apply-effect", "talk")
+_MEME_RAW_MEDIA_SUBPATHS = ("effect", "apply-effect", "talk", "magic-erase")
 
 
 async def _meme_store_peer_media(request: "Request", db: Session, body: dict, subpath: str, r):
@@ -5807,9 +5898,13 @@ async def _meme_store_peer_media(request: "Request", db: Session, body: dict, su
     # `alpha` only exists for talk, and only its client reads it — a transparent clip is SILENT, so
     # that flag is what tells the browser to put the spoken line on the timeline as its own layer.
     # Carried through here because a forwarded render is the same render.
-    return JSONResponse({"ok": True, "url": url, "dur": dur, "effect": name,
-                         "is_video": ct.startswith("video/"),
-                         "alpha": (r.headers.get("x-pcai-effect-alpha") or "0") == "1"})
+    out = {"ok": True, "url": url, "dur": dur, "effect": name,
+           "is_video": ct.startswith("video/"),
+           "alpha": (r.headers.get("x-pcai-effect-alpha") or "0") == "1"}
+    # Magic Eraser says WHICH filler ran, so the client can tell a classical fill from the model's.
+    if r.headers.get("x-pcai-effect-method"):
+        out["method"] = r.headers.get("x-pcai-effect-method")
+    return JSONResponse(out)
 
 
 def _is_fleet_forward(request, header: str = "x-pcai-meme-fwd") -> bool:
