@@ -209,20 +209,51 @@ async def mute_relations(known: dict | None = None) -> list:
     return out
 
 
+def _ref(pk: str) -> str:
+    """How a post TAGS an account: a `nostr:npub…` reference. Nostr clients render it as the person's
+    name and notify them (the post carries the matching `p` tag), and the fediverse side turns it into
+    a real @mention for anyone with a fediverse address. A printed `@name@domain` does neither."""
+    return "nostr:" + _npub(pk)
+
+
+def _puppet_of(actor: str) -> str:
+    """The Nostr key a fediverse account is mirrored under, or "" when it has none yet."""
+    try:
+        from app.database import SessionLocal
+        from app.models import FediPuppet
+        db = SessionLocal()
+        try:
+            row = db.query(FediPuppet).filter(FediPuppet.actor_uri == actor).first()
+            return (row.pubkey_hex or "") if row else ""
+        finally:
+            db.close()
+    except Exception:
+        return ""
+
+
 async def blocks() -> list:
-    """Every block involving this community, from both sides, each with printable names."""
+    """Every block involving this community, from both sides: printable names (`*_handle`) and the
+    references a post tags them with (`*_ref`)."""
     from app.services.activitypub import actors, state
     known = members()
     out = []
     for b in await state.blocks():
         # The member is keyed by pubkey; the blocker is a fediverse actor, named by its @user@host.
         member = b["member"]
+        local = actors.handle(member)
+        puppet = _puppet_of(b["actor"])
         out.append({"blocker": b["actor"], "blocked": member, "at": b["at"], "via": "fediverse",
                     "blocker_handle": ("@" + b["acct"]) if b.get("acct") else b["actor"],
-                    "blocked_handle": known.get(member) or ("@" + actors.handle(member))})
+                    # A member with no name here used to print as a bare "@" -- which a model then
+                    # "completed" with an invented name. Never an empty handle.
+                    "blocked_handle": known.get(member) or (("@" + local) if local else _ref(member)),
+                    "blocker_ref": _ref(puppet) if puppet else (("@" + b["acct"]) if b.get("acct") else b["actor"]),
+                    "blocked_ref": _ref(member)})
     for r in await mute_relations(known):
         r["blocker_handle"] = handle(r["blocker"], known)
         r["blocked_handle"] = handle(r["blocked"], known)
+        r["blocker_ref"] = _ref(r["blocker"])
+        r["blocked_ref"] = _ref(r["blocked"])
         out.append(r)
     out.sort(key=lambda r: r["at"])
     return out

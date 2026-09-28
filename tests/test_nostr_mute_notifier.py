@@ -241,12 +241,102 @@ def test_an_old_memory_file_still_loads(bot, tmp_path):
     assert posted == [], "a mute remembered by the previous version must not be re-announced"
 
 
-def test_an_ai_rewording_may_not_turn_a_mute_into_a_block(bot):
+def test_ai_commentary_may_not_turn_a_mute_into_a_block(bot):
     b, _, _ = bot
-    handles = ["nostr:npub1muter", "@alice@poster.place"]
-    assert not b.validate_block_message("BLOCKER: nostr:npub1muter blocked @alice@poster.place!", handles, mutes=True)
-    assert b.validate_block_message("nostr:npub1muter just MUTED @alice@poster.place!", handles, mutes=True)
-    assert b.validate_block_message("BLOCKER: nostr:npub1muter blocked @alice@poster.place", handles, mutes=False)
+    assert b.commentary("They got blocked hard.", mutes=True) == ""
+    assert b.commentary("Another mute for the collection.", mutes=True) == "Another mute for the collection."
+    assert b.commentary("Blocked, and deserved it.", mutes=False) == "Blocked, and deserved it."
+
+
+# ---- the reported post: wrong tags, a doubled @, an npub that was never written -----------------
+# "@bettygold@fedibird.com blocked @@liminal 🦠 (on the fediverse) ... @bettygold just took down
+#  @npub1 from their feed ... under the control of @mastodon@social.dev" -- a member with no name on
+# this node printed as a bare "@", and the model "completed" it and invented two more names.
+
+REPORTED_AI_TEXT = """@bettygold@fedibird.com blocked @@liminal 🦠 (on the fediverse)
+
+This is what happens when you dare to speak out against the globalist elite!
+
+@bettygold just took down @npub1 from their feed. Another victim of platform censorship.
+And the fediverse is becoming a centralized cartel under the control of @mastodon@social.dev."""
+
+BLOCK = {"via": "fediverse", "blocker": "https://fedibird.com/users/bettygold", "blocked": "b" * 64,
+         "blocker_handle": "@bettygold@fedibird.com", "blocked_handle": "nostr:npub1liminal",
+         "blocker_ref": "nostr:npub1bettypuppet", "blocked_ref": "nostr:npub1liminal", "at": 2}
+
+
+def test_a_block_is_announced_with_tagging_references_and_no_prefix(bot):
+    b, posted, rows = bot
+    b.blocks()
+    rows.append(dict(BLOCK))
+    b.blocks()
+    assert posted == ["nostr:npub1bettypuppet blocked nostr:npub1liminal (on the fediverse)"], posted
+
+
+def test_the_models_names_never_reach_the_post(bot, monkeypatch):
+    """The reported text, verbatim, as the model's answer: every name in it is dropped with it, and
+    the headline -- built by the bot, with tags -- is what gets posted."""
+    b, posted, rows = bot
+    monkeypatch.setattr(b, "_ai_on", lambda: True)
+    monkeypatch.setattr(b, "generate_reply", lambda prompt, **k: REPORTED_AI_TEXT)
+    b.blocks()
+    rows.append(dict(BLOCK))
+    b.blocks()
+    [post] = posted
+    assert post == "nostr:npub1bettypuppet blocked nostr:npub1liminal (on the fediverse)", post
+    assert "@@" not in post and "@npub1 " not in post and "social.dev" not in post
+
+
+def test_clean_commentary_goes_under_the_headline(bot, monkeypatch):
+    b, posted, rows = bot
+    monkeypatch.setattr(b, "_ai_on", lambda: True)
+    asked = []
+    monkeypatch.setattr(b, "generate_reply", lambda prompt, **k: asked.append(prompt) or "Another one bites the dust.")
+    b.blocks()
+    rows.append(dict(BLOCK))
+    b.blocks()
+    assert posted == ["nostr:npub1bettypuppet blocked nostr:npub1liminal (on the fediverse)\n\nAnother one bites the dust."]
+    assert "Do NOT write any usernames" in asked[0] and "@bettygold@fedibird.com" in asked[0], \
+        "the model must know who did what (readably) and be told not to name anyone"
+
+
+def test_a_member_with_no_name_here_is_never_a_bare_at(monkeypatch):
+    """The server side of the report: `"@" + actors.handle(member)` was "@" for a member with no local
+    name, and that empty handle is what the model filled in."""
+    from app.services.activitypub import actors, state
+    monkeypatch.setattr(cs, "members", lambda: {})
+    monkeypatch.setattr(actors, "handle", lambda pk: "")
+    member = "c" * 64
+
+    async def fake_blocks():
+        return [{"member": member, "actor": "https://fedibird.com/users/bettygold", "acct": "bettygold@fedibird.com", "at": 5}]
+
+    async def no_mutes(known):
+        return []
+    monkeypatch.setattr(state, "blocks", fake_blocks)
+    monkeypatch.setattr(cs, "mute_relations", no_mutes)
+    monkeypatch.setattr(cs, "_puppet_of", lambda actor: "d" * 64)
+    [row] = asyncio.run(cs.blocks())
+    assert row["blocked_handle"].startswith("nostr:npub1") and row["blocked_handle"] != "@"
+    assert row["blocked_ref"] == "nostr:" + cs._npub(member)
+    assert row["blocker_ref"] == "nostr:" + cs._npub("d" * 64), "the fediverse blocker is tagged via its puppet"
+
+
+def test_a_bot_note_tags_everyone_it_names(monkeypatch):
+    """NIP-27: a `nostr:npub…` in the text is a mention only with a matching `p` tag."""
+    from app.services.nostr import nostr_service as ns, bip340
+    pk1 = bip340.pubkey_from_seckey(bytes([5]) * 32).hex()
+    pk2 = bip340.pubkey_from_seckey(bytes([6]) * 32).hex()
+    sent = []
+
+    async def publish(relays, ev, *a, **k):
+        sent.append(ev)
+        return 1
+    monkeypatch.setattr(ns.relay, "publish", publish)
+    text = f"nostr:{ns.npub_of(pk1)} blocked nostr:{ns.npub_of(pk2)} (on the fediverse) and nostr:{ns.npub_of(pk1)} again"
+    asyncio.run(ns.post_note(bytes([9]) * 32, ["ws://x"], text))
+    ps = [t[1] for t in sent[0]["tags"] if t[0] == "p"]
+    assert ps == [pk1, pk2], sent[0]["tags"]
 
 
 def test_the_upstream_relay_list_really_resolves(monkeypatch):

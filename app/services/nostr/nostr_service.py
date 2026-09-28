@@ -7,6 +7,7 @@ uploaded to an external Blossom/NIP-96 host and its URL embedded in the content
 """
 
 import logging
+import re
 
 from . import bech32, bip340, event as _event, relay, media
 
@@ -126,6 +127,22 @@ async def _attach_media(seckey: bytes, text: str, mediae: list, media_cfg: dict)
     return text, tags
 
 
+_MENTION_REF_RE = re.compile(r"nostr:((?:npub1|nprofile1)[023456789acdefghjklmnpqrstuvwxyz]{50,})", re.I)
+
+
+def _mentioned_pubkeys(text: str) -> list:
+    """Hex pubkeys of every `nostr:npub…`/`nostr:nprofile…` in the text, in order, once each."""
+    out = []
+    for m in _MENTION_REF_RE.finditer(text or ""):
+        try:
+            pk = to_pubkey_hex(m.group(1)) or ""
+        except Exception:
+            pk = ""
+        if len(pk) == 64 and pk not in out:
+            out.append(pk)
+    return out
+
+
 async def post_note(seckey: bytes, relays, text: str, reply_to: dict | None = None,
                     media_list: list | None = None, media_cfg: dict | None = None,
                     hashtags: list | None = None) -> dict:
@@ -146,6 +163,10 @@ async def post_note(seckey: bytes, relays, text: str, reply_to: dict | None = No
     if not had_text and media_list and not media_tags:
         raise RuntimeError("post_note: all media uploads failed; refusing to publish an empty note")
     tags = tags + media_tags
+    # NIP-27: a `nostr:npub…`/`nprofile…` in the text is a MENTION only with a matching `p` tag --
+    # without one no client notifies the person or treats the name as a tag, and it is how the
+    # block bot's posts named people and tagged nobody.
+    tags = tags + [["p", pk] for pk in _mentioned_pubkeys(text) if not any(t[:2] == ["p", pk] for t in tags)]
     # NIP-12 hashtag tags (indexed, lowercased, deduped) so the note lands in #hashtag feeds.
     if hashtags:
         seen = set()

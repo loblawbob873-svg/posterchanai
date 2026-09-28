@@ -96,14 +96,50 @@ def new_blocks(current: list, seen: dict, had_memory: bool, now: int | None = No
     return fresh, remember
 
 
+def _who(b: dict, side: str) -> str:
+    """The name a post TAGS: the `nostr:npub…` reference when the server sent one (clients render it
+    as the person's name, and it carries a `p` tag), else the printable handle. Never empty."""
+    return (b.get(f"{side}_ref") or b.get(f"{side}_handle") or b.get(side) or "someone").strip()
+
+
 def _line(b: dict) -> str:
-    """A Nostr "block" is a public MUTE list, and it is announced as what it is."""
+    """One headline line, built HERE and never by the model: the only way the names in a post are
+    guaranteed to be the right people, spelled so that they tag. A Nostr "block" is a public MUTE
+    list, and it is announced as what it is."""
     if b.get("via") == "fediverse":
-        return f"BLOCKER: {b['blocker_handle']} blocked {b['blocked_handle']} (on the fediverse)"
-    return f"{b['blocker_handle']} muted {b['blocked_handle']} (on Nostr)"
+        return f"{_who(b, 'blocker')} blocked {_who(b, 'blocked')} (on the fediverse)"
+    return f"{_who(b, 'blocker')} muted {_who(b, 'blocked')} (on Nostr)"
 
 
-def validate_block_message(ai_msg: str, handles: list, mutes: bool = False) -> bool:
+# What the model is asked for, on top of the operator's prompt: commentary, no names. The headline
+# already names everyone -- correctly and as tags -- and a model that "helps" by repeating a name
+# invents one: "@@liminal", "@npub1", "@mastodon@social.dev" all reached a real post.
+_COMMENTARY_ONLY = (" IMPORTANT: the post already begins with the line(s) above saying who did what; they "
+                    "are added separately. Write ONLY the commentary that goes underneath them, at most "
+                    "three sentences. Do NOT write any usernames, @handles, npubs, nostr: links or "
+                    "domains, and do not repeat the line(s) above.")
+_NAMEISH = re.compile(r"@[\w.-]|\bnpub1|\bnprofile1|nostr:|https?://|\b[\w-]+\.(?:com|org|net|social|place|io|dev)\b", re.I)
+
+
+def commentary(ai_msg: str, mutes: bool = False) -> str:
+    """The model's text if it is usable as commentary under the headline, else "". Unusable: it names
+    anyone (a name can only be wrong there -- the right ones are already above), repeats a headline,
+    calls a mute a block, or drifts into another script (a known failure of the smaller models)."""
+    text = re.sub(r"\b(?:BLOCKER|BLOCKEE|MUTER|MUTEE):\s*", "", (ai_msg or "")).strip()
+    if not text or text == "None":
+        return ""
+    if _NAMEISH.search(text):
+        logging.warning("AI block commentary named someone; posting the headline alone")
+        return ""
+    if mutes and re.search(r"\bblock(?:ed|s)?\b", text, re.I) and not re.search(r"\bmute", text, re.I):
+        logging.warning("AI block commentary called a mute a block; posting the headline alone")
+        return ""
+    if re.search(r"[一-鿿぀-ゟ゠-ヿ가-힯]", text):
+        return ""
+    return text
+
+
+def validate_block_message(ai_msg: str, handles: list, mutes: bool = False) -> bool:  # kept for scalps-style callers
     """The model may reword the post, never the names: every handle must survive verbatim, and no
     other script may creep in (a known failure of the smaller models). A batch holding a Nostr MUTE
     must still say so -- the prompt's own example is "blocked", and a model that follows it turns
@@ -143,13 +179,17 @@ def blocks(print_only=False):
     msg = "\n".join(_line(b) for b in shown)
     if len(fresh) > MAX_LINES:
         msg += f"\n…and {len(fresh) - MAX_LINES} more"
-    handles = [h for b in shown for h in (b["blocker_handle"], b["blocked_handle"])]
     if _ai_on():
         try:
-            ai_msg = (generate_reply(BLOCK_PROMPT.format(block_details=msg) + " /no_think") or "").replace("/no_think", "").strip()
-            if ai_msg and "None" not in ai_msg and validate_block_message(
-                    ai_msg, handles, mutes=any(b.get("via") != "fediverse" for b in shown)):
-                msg = re.sub(r"\b(?:BLOCKEE|MUTER|MUTEE):\s*", "", ai_msg)   # a mute is said plainly
+            # The model is told who did what in READABLE names (it writes better commentary knowing
+            # them), and asked for commentary only; the post itself names people with the headline.
+            readable = "\n".join(f"{b.get('blocker_handle')} {'blocked' if b.get('via') == 'fediverse' else 'muted'} "
+                                 f"{b.get('blocked_handle')}" for b in shown)
+            ai_msg = (generate_reply(BLOCK_PROMPT.format(block_details=readable) + _COMMENTARY_ONLY + " /no_think")
+                      or "").replace("/no_think", "").strip()
+            extra = commentary(ai_msg, mutes=any(b.get("via") != "fediverse" for b in shown))
+            if extra:
+                msg = msg + "\n\n" + extra
         except Exception as e:
             logging.warning(f"[BLOCKBOT] AI wording failed, using the plain message: {e}")
     print(msg)
