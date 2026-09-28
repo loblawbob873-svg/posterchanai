@@ -45,7 +45,7 @@ const __rows=()=>[
   {id:13,app:'place.poster.desktop',title:'PosterChan Desktop',workspace:'1',
    rect:{x:0,y:0,width:innerWidth,height:innerHeight},focused:__wm.focus===13},
   {id:35,app:'place.poster.desktop',title:'PosterChan Window — notes',workspace:'1',
-   rect:{x:200,y:60,width:400,height:400},focused:__wm.focus===35},
+   rect:__wm.rect35||{x:200,y:60,width:400,height:400},focused:__wm.focus===35},
   // The popped-out TERMINAL -- our own app id, so never "foreign", and in every report the window
   // that had the keyboard when the thing behind it went missing.
   {id:31,app:'place.poster.desktop',title:'PosterChan Window — terminal',workspace:'1',

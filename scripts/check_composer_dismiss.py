@@ -34,6 +34,17 @@ import tempfile
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 APP = os.path.join(ROOT, "static", "js", "client", "app.js")
+
+
+def _client_src() -> str:
+    """app.js AND the modules split out of it (tests/client_source.py): the code these checks lift
+    moved into compose.js, discover.js, … when app.js was split, and a check that only reads app.js
+    fails with "substring not found" — or worse, finds the one-line entry point instead."""
+    import sys as _sys
+    if ROOT not in _sys.path:
+        _sys.path.insert(0, ROOT)
+    from tests.client_source import client_source
+    return client_source()
 CSS = os.path.join(ROOT, "static", "css", "client.css")
 CHROME = (shutil.which("chromium") or shutil.which("chromium-browser")
           or shutil.which("google-chrome") or shutil.which("google-chrome-stable"))
@@ -112,7 +123,7 @@ def main():
         print("SKIP  no chrome on this node")
         return 2
     try:
-        src = open(APP, encoding="utf-8").read()
+        src = _client_src()
         modal_src = _fn(src, "function modal(html, onMount)", "modal")
         close_src = _fn(src, "function closeModal()", "closeModal")
         # THE FLINCH MOVED OUT OF modal() AND THIS HARNESS HAS TO FOLLOW IT.

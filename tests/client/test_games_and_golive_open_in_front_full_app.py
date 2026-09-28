@@ -44,6 +44,12 @@ def test_the_games_folder_opens_over_the_window_you_were_using(focused):
         await b.js(f"__wm.focus={focused};__wm.emit&&__wm.emit({{name:'window',change:'focus'}})")
         await asyncio.sleep(.5)
         await b.until("!!document.querySelector('.os-icon[data-view=\"folder:games\"]')")
+        # Put the focused popped-out window where the folder OPENS, so this asks "does the folder come
+        # in front of the window it overlaps" -- not "does the desktop still place it where it did when
+        # this test was written". Adding one app icon (Calculator) moved the folder off the fixed
+        # rectangle and the old assertion was left testing a bare corner lap.
+        if focused == 35:
+            await b.js("__wm.rect35={x:Math.round(innerWidth*.3),y:40,width:Math.round(innerWidth*.45),height:Math.round(innerHeight*.8)}")
         await b.js("document.querySelector('.os-icon[data-view=\"folder:games\"]').click()")
         await b.until("[...document.querySelectorAll('.osw .osw-title')].some(t=>/games/i.test(t.textContent))")
         await _until_front(b, str(focused))

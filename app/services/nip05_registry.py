@@ -55,13 +55,14 @@ def remove(name: str) -> dict:
         return {"ok": False, "error": "settings are still loading — try again in a moment"}
     raw = settings_store.get(KEY, "") or ""
     want = (name or "").strip().lower()
-    kept, removed = [], 0
+    kept, removed, owners = [], 0, set()
     for ln in raw.split("\n"):
         s = ln.strip()
         if s and not s.startswith("#"):
             toks = s.replace("=", " ").replace(",", " ").split()
             if len(toks) >= 2 and toks[0].lower() == want:
                 removed += 1
+                owners.add(toks[1])
                 continue
         kept.append(ln)
     if not removed:
@@ -72,7 +73,24 @@ def remove(name: str) -> dict:
         trigger_nip05_reload()
     except Exception:
         pass
-    return {"ok": True, "removed": removed, "value": settings_store.get(KEY, "") or ""}
+    return {"ok": True, "removed": removed, "value": settings_store.get(KEY, "") or "",
+            "orphaned": orphaned(owners)}
+
+
+def orphaned(owner_tokens) -> list:
+    """The keys among `owner_tokens` that hold NO name in the registry any more -- the ones whose
+    access should go. A key that still has another name here is still a member."""
+    from app.services.nostr import nostr_service
+    still = set(_names().values())
+    out = set()
+    for t in owner_tokens or ():
+        try:
+            h = nostr_service.to_pubkey_hex(str(t).strip())
+        except Exception:
+            h = None
+        if h and h not in still:
+            out.add(h)
+    return sorted(out)
 
 
 async def remove_unverified(domain: str, shown: list) -> dict:
@@ -94,15 +112,16 @@ async def remove_unverified(domain: str, shown: list) -> dict:
     shown_l = {str(n or "").strip().lower() for n in (shown or []) if str(n or "").strip()}
     doomed = {r["name"].lower() for r in cur["identities"] if not r["verified"] and r["name"].lower() in shown_l}
     if not doomed:
-        return {"ok": True, "removed": 0, "names": [], "value": settings_store.get(KEY, "") or ""}
+        return {"ok": True, "removed": 0, "names": [], "value": settings_store.get(KEY, "") or "", "orphaned": []}
     raw = settings_store.get(KEY, "") or ""
-    kept, gone = [], []
+    kept, gone, owners = [], [], set()
     for ln in raw.split("\n"):
         s = ln.strip()
         if s and not s.startswith("#"):
             toks = s.replace("=", " ").replace(",", " ").split()
             if len(toks) >= 2 and toks[0].lower() in doomed:
                 gone.append(toks[0])
+                owners.add(toks[1])
                 continue
         kept.append(ln)
     settings_store.put(KEY, "\n".join(l for l in kept if l.strip()))
@@ -111,4 +130,5 @@ async def remove_unverified(domain: str, shown: list) -> dict:
         trigger_nip05_reload()
     except Exception:
         pass
-    return {"ok": True, "removed": len(gone), "names": gone, "value": settings_store.get(KEY, "") or ""}
+    return {"ok": True, "removed": len(gone), "names": gone, "value": settings_store.get(KEY, "") or "",
+            "orphaned": orphaned(owners)}

@@ -86,7 +86,7 @@
         const name = row && row.dataset.name;
         if (!name) return;
         const ok = (typeof pcConfirm === 'function')
-            ? await pcConfirm(`Remove the identity "${name}"? Its owner loses the address (and any access it grants).`)
+            ? await pcConfirm(`Remove the identity "${name}"? Its owner loses the address and their permissions on this node.`)
             : true;
         if (!ok) return;
         btn.disabled = true;
@@ -97,6 +97,7 @@
             const j = await r.json().catch(() => ({}));
             if (!r.ok) throw new Error(j.detail || ('HTTP ' + r.status));
             rows = rows.filter(x => x.name !== name);
+            if (j.revoke_error && window.pcAlert) window.pcAlert('Removed, but their permissions could not be revoked: ' + j.revoke_error);
             // Keep the text box -- what Save sends -- in step, and make it the baseline.
             const ta = document.getElementById('nostr_relay_nip05_names');
             if (ta && typeof j.value === 'string') {
@@ -113,6 +114,14 @@
         }
     }
 
+    // What the server revoked along with the names (relay_access_policy.revoke_identities).
+    function revokedText(j) {
+        const r = (j && j.revoked) || {};
+        if (j && j.revoke_error) return 'Permissions NOT fully revoked.';
+        return r.accounts || r.whitelist
+            ? `Revoked permissions for ${r.accounts || 0} account(s)${r.whitelist ? `, ${r.whitelist} removed from the Blossom whitelist` : ''}.`
+            : '';
+    }
     // The names a bulk remove may take: exactly the "not in profile" rows on screen right now. The
     // server removes only those that STILL fail its own check (nip05_registry.remove_unverified).
     function unverifiedNames(list) { return (list || []).filter(r => !r.verified).map(r => r.name); }
@@ -123,7 +132,7 @@
         const sample = names.slice(0, 8).join(', ') + (names.length > 8 ? `, and ${names.length - 8} more` : '');
         const ok = (typeof pcConfirm === 'function')
             ? await pcConfirm(`Remove ${names.length} identit${names.length === 1 ? 'y' : 'ies'} whose profile does not publish the address? `
-                + `Their owners lose the address (and any access it grants): ${sample}.`)
+                + `Their owners lose the address AND their permissions on this node (AI, Blossom, image/music/video, torrents, Media Center, live streaming): ${sample}.`)
             : true;
         if (!ok) return;
         btn.disabled = true;
@@ -140,7 +149,8 @@
             }
             await load();
             const sum = document.getElementById('ids_summary');
-            if (sum) sum.textContent = `Removed ${j.removed || 0}. ` + sum.textContent;
+            if (sum) sum.textContent = `Removed ${j.removed || 0}. ${revokedText(j)} ` + sum.textContent;
+            if (j.revoke_error && window.pcAlert) window.pcAlert('The names were removed, but their permissions could not all be revoked: ' + j.revoke_error + ' — run it again.');
         } catch (e) {
             btn.disabled = false;
             btn.textContent = 'Remove all not in profile';
@@ -160,5 +170,5 @@
         document.addEventListener('input', e => { if (e.target && e.target.id === 'ids_search') draw(); });
         if (typeof location !== 'undefined' && location.hash === '#tab-relay') document.addEventListener('DOMContentLoaded', load);
     }
-    if (typeof module !== 'undefined') module.exports = { matches, sortRows, rowHtml, unverifiedNames };
+    if (typeof module !== 'undefined') module.exports = { matches, sortRows, rowHtml, unverifiedNames, revokedText };
 })();

@@ -393,14 +393,28 @@ async def relay_identities(request: Request, db: Session = Depends(get_db), admi
     return await nip05_registry.rows(_nip05_domain(request, db))
 
 
+async def _revoke_removed(db, r: dict) -> dict:
+    """After identities are removed, take away the access they carried (relay_access_policy
+    .revoke_identities) and say how it went. The names are already gone either way; a failed revoke is
+    REPORTED, never hidden behind the removal's success."""
+    from app.services import relay_access_policy
+    try:
+        r["revoked"] = await relay_access_policy.revoke_identities(db, r.get("orphaned") or [])
+    except Exception as e:
+        logger.warning(f"[Admin] revoking removed identities' access failed: {e}")
+        r["revoke_error"] = str(e) or "could not revoke their permissions"
+    return r
+
+
 @router.post("/relay/identity/remove")
-def relay_identity_remove(data: RelayIdentityRemoveReq, admin: User = Depends(get_admin_user)):
-    """Revoke one NIP-05 name and apply it live -- the list's Remove button."""
+async def relay_identity_remove(data: RelayIdentityRemoveReq, db: Session = Depends(get_db),
+                                admin: User = Depends(get_admin_user)):
+    """Revoke one NIP-05 name and apply it live -- the list's Remove button -- and the access it gave."""
     from app.services import nip05_registry
     r = nip05_registry.remove(data.name)
     if not r.get("ok"):
         raise HTTPException(status_code=400, detail=r.get("error") or "could not remove")
-    return r
+    return await _revoke_removed(db, r)
 
 
 class RelayIdentitiesPruneReq(BaseModel):
@@ -426,6 +440,7 @@ async def relay_identities_remove_unverified(data: RelayIdentitiesPruneReq, requ
         except Exception as e:
             logger.warning(f"[Admin] identity prune write-through failed: {e}")
             r["durable"] = False
+        r = await _revoke_removed(db, r)
     return r
 
 

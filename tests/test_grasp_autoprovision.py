@@ -39,8 +39,11 @@ REPO = "demo"
 BASE = "https://poster.place/git"
 
 
-def announcement(clone=None, private=False, repo=REPO):
-    tags = [["d", repo], ["clone", clone if clone is not None else "%s/%s/%s.git" % (BASE, NPUB, repo)]]
+def announcement(clone=None, private=False, repo=REPO, relays=None):
+    # `relays` as ngit writes it: the service's relay, derived from its clone URL (GRASP-01 wants both).
+    from urllib.parse import urlparse
+    tags = [["d", repo], ["clone", clone if clone is not None else "%s/%s/%s.git" % (BASE, NPUB, repo)],
+            ["relays", relays if relays is not None else "wss://%s/git" % urlparse(BASE).hostname]]
     if private:
         tags.append(["private", "true"])
     return build_event(OWNER_SK, git_auth.ANNOUNCE_KIND, "", tags=tags)
@@ -62,8 +65,11 @@ class _Cur:
         self._conn.sql.append(sql)
         if "FROM events" in sql:
             _repo, _kind, pubkey = params
+            # Honour the SQL's own comparison: case-insensitive only when it says lower(...).
+            ci = "lower(t.value) = lower(%s)" in sql
+            same = (lambda a, b: a.lower() == b.lower()) if ci else (lambda a, b: a == b)
             self._rows = [(json.dumps(e),) for e in self._conn.events if e["pubkey"] == pubkey
-                          and any(t[:2] == ["d", _repo] for t in e["tags"])]
+                          and any(t[0] == "d" and same(t[1], _repo) for t in e["tags"])]
         elif "FROM users" in sql:
             if self._conn.no_users_table:
                 raise RuntimeError('relation "users" does not exist')
@@ -331,3 +337,60 @@ def test_a_BROWSE_route_can_never_allocate_disk(tmp_path, monkeypatch):
         httpd.shutdown()
     assert code == 404
     assert ghs.repo_exists(OWNER, REPO) is False, "a browse route provisioned a repository"
+
+
+# ------------------------------------------------------------------ one policy: advertised == enforced
+
+def test_closed_in_the_admin_actually_closes(host):
+    """Admin → Git and NIP-11 `repo_acceptance_criteria` use `git_repo_acceptance`; the host used to
+    enforce a private `git_server_accept_policy` with no UI, so "closed" changed only the sentence.
+    Found in the 2026-09-28 GRASP review."""
+    assert host(_Conn([announcement()], local_npubs=[NPUB], wot=[OWNER]), accept_policy="closed") is False
+    assert host(_Conn([announcement()]), allowlist=NPUB, accept_policy="closed") is False, \
+        "closed means closed: the allowlist does not reopen it (git_acceptance.accepts)"
+    assert ghs.repo_exists(OWNER, REPO) is False
+
+
+@pytest.mark.parametrize("policy,local,wot,want", [
+    ("account_or_wot", True, False, True), ("account_or_wot", False, True, True),
+    ("account_or_wot", False, False, False), ("account", True, False, True), ("account", False, True, False),
+    ("wot", False, True, True), ("wot", True, False, False), ("open", False, False, True),
+    ("allowlist", True, True, False),
+])
+def test_the_host_decides_exactly_as_git_acceptance_does(host, policy, local, wot, want):
+    from app.services import git_acceptance
+    conn = _Conn([announcement()], local_npubs=[NPUB] if local else [], wot=[OWNER] if wot else [])
+    assert host(conn, accept_policy=policy) is want
+    assert git_acceptance.accepts(policy, has_account=local, in_wot=wot, allowlisted=False) is want
+
+
+def test_the_host_is_configured_from_the_setting_nip11_advertises():
+    import inspect
+    from app.services import git_acceptance, git_http_service
+    src = inspect.getsource(git_http_service)
+    assert '"accept_policy": g(git_acceptance.SETTING, git_acceptance.DEFAULT)' in src
+    assert "git_server_accept_policy" not in src.split('"accept_policy"')[1].split("\n")[0]
+    # The old private spellings keep their meaning.
+    assert [git_acceptance.normalize(v) for v in ("any", "local", "local-or-wot", "bogus")] == \
+        ["open", "account", "account_or_wot", git_acceptance.DEFAULT]
+
+
+def test_an_announcement_that_names_our_clone_but_not_our_relay_is_refused(host):
+    """GRASP-01: "MUST reject git repository announcements that do not list the service in both
+    `clone` and `relays` tags". The check stopped at `clone`; its 30618 state would never reach us."""
+    assert host(_Conn([announcement(relays="wss://elsewhere.example/relay")], wot=[OWNER])) is False
+    assert ghs.repo_exists(OWNER, REPO) is False
+    ev = announcement()
+    ev = dict(ev, tags=[t for t in ev["tags"] if t[0] != "relays"])
+    from app.services.nostr.event import build_event as _b
+    bare = _b(OWNER_SK, git_auth.ANNOUNCE_KIND, "", tags=ev["tags"])
+    assert host(_Conn([bare], wot=[OWNER])) is False
+
+
+
+def test_a_repo_named_with_capitals_finds_its_announcement(host):
+    """`ngit init --name MyRepo` announces d=MyRepo; the host's on-disk id is lowercased, and the
+    lookup by that id found nothing -- ngit polled for ever (2026-09-28 GRASP review)."""
+    ann = announcement(repo="MyRepo", clone="%s/%s/MyRepo.git" % (BASE, NPUB))
+    assert host(_Conn([ann], wot=[OWNER]), repo=ghs.sanitize_repo_id("MyRepo")) is True
+    assert ghs.repo_exists(OWNER, "myrepo")

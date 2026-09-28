@@ -38,6 +38,17 @@ import urllib.request
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 APP = os.path.join(ROOT, "static", "js", "client", "app.js")
+
+
+def _client_src() -> str:
+    """app.js AND the modules split out of it (tests/client_source.py): the code these checks lift
+    moved into compose.js, discover.js, … when app.js was split, and a check that only reads app.js
+    fails with "substring not found" — or worse, finds the one-line entry point instead."""
+    import sys as _sys
+    if ROOT not in _sys.path:
+        _sys.path.insert(0, ROOT)
+    from tests.client_source import client_source
+    return client_source()
 CSS = os.path.join(ROOT, "static", "css", "client.css")
 SPRITE = os.path.join(ROOT, "static", "js", "client", "sprite.js")
 PORT = int(os.environ.get("PC_CHECK_PORT") or 9475)
@@ -96,7 +107,7 @@ def _template(src: str) -> str:
 
 
 def _page(css: str, sprite: str, quote: bool, short: bool = False) -> str:
-    body = _resolve(_template(open(APP, encoding="utf-8").read()), keep_branches=not quote)
+    body = _resolve(_template(_client_src()), keep_branches=not quote)
     body = body.replace("${title}", "Quote post" if quote else "New post")
     ctx = ""
     if quote:

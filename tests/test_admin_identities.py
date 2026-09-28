@@ -93,7 +93,7 @@ def test_the_remove_endpoint_reports_a_refusal(registry):
     from fastapi import HTTPException
     from app.routers import admin
     with pytest.raises(HTTPException) as e:
-        admin.relay_identity_remove(admin.RelayIdentityRemoveReq(name="nobody"), admin=None)
+        asyncio.run(admin.relay_identity_remove(admin.RelayIdentityRemoveReq(name="nobody"), db=None, admin=None))
     assert e.value.status_code == 400
 
 

@@ -123,6 +123,7 @@
         try {
             const r = await fetch('/api/admin/relay/list?key=' + encodeURIComponent(key));
             const j = await r.json().catch(() => ({}));
+            if (r.status === 404 || r.status === 405) { legacy(key); return; }
             if (!r.ok) throw new Error(j.detail || ('HTTP ' + r.status));
             st.rows = j.items || [];
             st.complete = j.names_complete !== false;
@@ -130,6 +131,16 @@
         } catch (e) {
             if (sum) sum.textContent = 'Could not load the list: ' + e.message;
         } finally { st.loading = false; }
+    }
+    /* A SERVER OLDER THAN THIS PAGE has no list endpoint (the page is served from a checkout that can
+     * be ahead of the running backend -- server1 reloads templates on save, router.lan pulls /static
+     * on its own). Then the list is not a list: fold it away and open the text box, which Save has
+     * always sent. "Could not load the list: Not Found" over a closed box left nothing to edit. */
+    function legacy(key) {
+        const panel = document.querySelector(`.rl-panel[data-key="${key}"]`), ta = document.getElementById(key);
+        if (panel) panel.hidden = true;
+        const det = ta && ta.closest('details.blk-raw');
+        if (det) { det.open = true; const sm = det.querySelector('summary'); if (sm) sm.textContent = 'One per line — applied on Save'; }
     }
     function loadAll() { Object.keys(LISTS).forEach(k => { mount(k); load(k); }); }
 

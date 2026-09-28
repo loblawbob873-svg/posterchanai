@@ -499,7 +499,10 @@ def announcement_urls(event, tag_name: str) -> list:
 
 
 # --------------------------------------------------------------------------- Postgres reads
-# One indexed query each; no scans (see the JOIN on event_tags(tag,value) + events(kind,pubkey)).
+# One query each, driven by events(kind,pubkey). The `d` match is CASE-INSENSITIVE: the host's
+# on-disk id is lowercased (git_host_service.sanitize_repo_id), so `ngit init --name MyRepo` asked for
+# `myrepo` and never found its own announcement -- it polled for ever and every push was refused
+# (2026-09-28 GRASP review). An owner's `Foo` and `foo` therefore share one repository here.
 
 #: How many times the maintainer walk may expand. GRASP-01 says "recursive" and supplies NO bound;
 #: neither does NIP-34, and ngit's own loop simply runs to a fixpoint over a LOCAL cache where the
@@ -521,7 +524,7 @@ def load_announcement(conn, pubkey_hex: str, repo_id: str):
     with conn.cursor() as cur:
         cur.execute(
             "SELECT e.raw FROM events e "
-            "JOIN event_tags t ON t.event_id = e.id AND t.tag = 'd' AND t.value = %s "
+            "JOIN event_tags t ON t.event_id = e.id AND t.tag = 'd' AND lower(t.value) = lower(%s) "
             "WHERE e.kind = %s AND e.pubkey = %s "
             "ORDER BY e.created_at DESC LIMIT 4",
             (repo_id, ANNOUNCE_KIND, pubkey_hex))
@@ -643,7 +646,7 @@ def load_state_events(conn, owner_hex: str, repo_id: str, maintainers) -> list:
     with conn.cursor() as cur:
         cur.execute(
             "SELECT e.raw FROM events e "
-            "JOIN event_tags t ON t.event_id = e.id AND t.tag = 'd' AND t.value = %s "
+            "JOIN event_tags t ON t.event_id = e.id AND t.tag = 'd' AND lower(t.value) = lower(%s) "
             "WHERE e.kind = %s AND e.pubkey = ANY(%s) "
             "ORDER BY e.created_at DESC LIMIT 8",
             (repo_id, STATE_KIND, mlist))

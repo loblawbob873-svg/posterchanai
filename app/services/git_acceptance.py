@@ -57,10 +57,17 @@ POLICIES: dict[str, str] = {
 }
 
 
+# The git host's OLD private spelling of the same policies (`git_server_accept_policy`, which had
+# no UI). The host now reads SETTING; these keep a value written under the old names meaning what
+# it meant.
+_ALIASES = {"any": "open", "local": "account", "local_or_wot": "account_or_wot"}
+
+
 def normalize(raw) -> str:
     """A stored value that names no policy falls back to the DEFAULT rather than to the most
     permissive entry. A typo in a settings box must never widen who may allocate disk here."""
     v = (str(raw or "")).strip().lower().replace("-", "_")
+    v = _ALIASES.get(v, v)
     return v if v in POLICIES else DEFAULT
 
 

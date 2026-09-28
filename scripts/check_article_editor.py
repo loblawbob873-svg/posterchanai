@@ -44,13 +44,24 @@ import urllib.request
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 APP = os.path.join(ROOT, "static", "js", "client", "app.js")
+
+
+def _client_src() -> str:
+    """app.js AND the modules split out of it (tests/client_source.py): the code these checks lift
+    moved into compose.js, discover.js, … when app.js was split, and a check that only reads app.js
+    fails with "substring not found" — or worse, finds the one-line entry point instead."""
+    import sys as _sys
+    if ROOT not in _sys.path:
+        _sys.path.insert(0, ROOT)
+    from tests.client_source import client_source
+    return client_source()
 WIDTHS = [(390, 844, True), (360, 780, True), (900, 800, False), (1280, 860, False)]
 PORT = int(os.environ.get("PC_CHECK_PORT") or 9491)
 PROFILE = os.environ.get("PC_CHECK_PROFILE") or "/tmp/pc-article-editor-check"
 
 def editor_markup():
     """The editor's own template literal, out of app.js, with its ${...} holes filled in."""
-    src = open(APP, encoding="utf-8").read()
+    src = _client_src()
     m = re.search(r'feed\.innerHTML=`(<div class="article-editor">.*?)`;\n', src, re.S)
     if not m:
         raise SystemExit("could not find the article editor's template in app.js — if it was "

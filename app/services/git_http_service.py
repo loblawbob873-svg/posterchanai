@@ -18,6 +18,8 @@ this supervisor adds no steady CPU load.
 import logging
 import os
 import subprocess
+
+from app.services import git_acceptance
 import sys
 import threading
 import time
@@ -148,7 +150,10 @@ def _read_config() -> dict:
             #   allowlist     only `git_server_allowlist` (plus the two above are ignored)
             #   any           anybody who can publish a 30617 naming us  — an OPEN DISK-ALLOCATION
             #                 PRIMITIVE; only sensible behind a quota this code does not have
-            "accept_policy": g("git_server_accept_policy", "local-or-wot"),
+            # THE SAME SETTING NIP-11 advertises and Admin → Git edits (git_acceptance.SETTING). It
+            # used to be a private `git_server_accept_policy` with no UI, so choosing "closed" in the
+            # admin changed only the advertised sentence, never what the host did.
+            "accept_policy": g(git_acceptance.SETTING, git_acceptance.DEFAULT),
             "read_require_method": gb("git_server_read_require_method", True),
             "pg_dsn": g("nostr_relay_pg_dsn", os.environ.get(
                 "NOSTR_RELAY_PG_DSN", "host=127.0.0.1 port=5432 dbname=posterchan_relay user=posterchan")),

@@ -6307,7 +6307,7 @@
        Messages; it has its own row now, so the special case would light the wrong one. */
     $$('.nav-item[data-view]').forEach(b=> b.classList.toggle('active', b.dataset.view===v));
     _syncRightbar();
-    $('#view-title').textContent = { home:'Home', texts:'Texts', global:'Nostrverse', trending:'Trending', notifications:'Notifications', messages:'Messages', concord:'Communities', mail:'Email ✉️', drafts:'Drafts', bookmarks:'Bookmarks', analytics:'My Analytics 📈', articles:'Articles', markets:'Markets 📈', streams:'Streams', calls:'Calls 📞', pics:'Pics', torrents:'Torrents 🧲', 'media-center':'Media Center', repos:'Git 🌱', repo:'Repo', news:'News 🗞️', websearch:'Web Search 🔎', vms:'Virtual Machines 🖥️', code:'PosterChan Code 💻', calendar:'Calendar 📅', contacts:'Contacts 👥', notes:'Notes 📝', sync:'Folder Sync 🔄', vault:'Passwords 🔑', wallet:'Monero Wallet ɱ', exodus:'Wallet 💼', budget:'Budget 💰', stats:'Server Stats 📊', chess:'Chess ♟️', ttt:'Tic-Tac-Toe ⭕', hangman:'Hangman 🎯', connect4:'Connect Four 🔴', blackjack:'Blackjack 🃏', holdem:"Texas Hold'em 🃏", xdc:'Webxdc 🎮', meme:'Meme Builder 🎬', blossom:'Files', profile:'Profile', settings:'Settings', ai:'PosterChan AI', translate:'Live Translate 🌐', admin:'Admin', terminal:'Terminal', office:'PosterChan Office', signer:'Signer',
+    $('#view-title').textContent = { home:'Home', texts:'Texts', global:'Nostrverse', trending:'Trending', notifications:'Notifications', messages:'Messages', concord:'Communities', mail:'Email ✉️', drafts:'Drafts', bookmarks:'Bookmarks', analytics:'My Analytics 📈', articles:'Articles', markets:'Markets 📈', streams:'Streams', calls:'Calls 📞', pics:'Pics', torrents:'Torrents 🧲', 'media-center':'Media Center', repos:'Git 🌱', repo:'Repo', news:'News 🗞️', websearch:'Web Search 🔎', vms:'Virtual Machines 🖥️', code:'PosterChan Code 💻', calendar:'Calendar 📅', contacts:'Contacts 👥', notes:'Notes 📝', sync:'Folder Sync 🔄', vault:'Passwords 🔑', wallet:'Monero Wallet ɱ', exodus:'Wallet 💼', budget:'Budget 💰',calculator:'Calculator', stats:'Server Stats 📊', chess:'Chess ♟️', ttt:'Tic-Tac-Toe ⭕', hangman:'Hangman 🎯', connect4:'Connect Four 🔴', blackjack:'Blackjack 🃏', holdem:"Texas Hold'em 🃏", xdc:'Webxdc 🎮', meme:'Meme Builder 🎬', blossom:'Files', profile:'Profile', settings:'Settings', ai:'PosterChan AI', translate:'Live Translate 🌐', admin:'Admin', terminal:'Terminal', office:'PosterChan Office', signer:'Signer',
       /* The desktop's own screens are routed by an internal id; the heading is what a person reads,
        * and "__ossettings" is not a word (it was, on every System Settings window). */
       __ossettings:'System Settings', __tasks:'Task Manager', __remote:'Remote Desktop',
@@ -15459,22 +15459,6 @@
   /* One place that raises an OS-level notification. Everything that wants one goes through here so
    * the permission check, the click-to-focus and the icon cannot drift between callers — clicking a
    * system notification that does nothing is worse than not having sent it. */
-  /* A NOTIFICATION OPENED FROM A POPPED-OUT WINDOW GOES TO THE DESKTOP.
-   *
-   * "Clicking on Toaster notification with the global window open turns that window into
-   * Notifications with no way to go back to Social." On PosterChanOS Social is its own window -- its
-   * own page -- and a toast or a native notification raised there was routed IN that page, so its
-   * `switchView('notifications')` (or openThread) painted over the timeline the person was reading.
-   * A window does not open windows; the desktop does. Hand it the destination, and it opens
-   * Notifications (or the post) in a window of its own. No desktop to ask: route here as before. */
-  function _notifRouteViaDesktop(route){
-    try{
-      if(!_inWin()) return false;
-      const desk=PCOSWin.desktop(), P=desk && desk.__PC;
-      if(!P || typeof P.openNotificationRoute!=='function') return false;
-      return P.openNotificationRoute(String(route||'notifications')) !== false;
-    }catch(_){ return false; }
-  }
   function openOsNotificationRoute(route){
     if(_notifRouteViaDesktop(route)) return true;
     const value=String(route||'');
@@ -15505,7 +15489,23 @@
     }
     switchView(value==='concord'?'concord':value==='messages'?'messages':'notifications');
     return true;
+  }  /* A NOTIFICATION OPENED FROM A POPPED-OUT WINDOW GOES TO THE DESKTOP.
+   *
+   * "Clicking on Toaster notification with the global window open turns that window into
+   * Notifications with no way to go back to Social." On PosterChanOS Social is its own window -- its
+   * own page -- and a toast or a native notification raised there was routed IN that page, so its
+   * `switchView('notifications')` (or openThread) painted over the timeline the person was reading.
+   * A window does not open windows; the desktop does. Hand it the destination, and it opens
+   * Notifications (or the post) in a window of its own. No desktop to ask: route here as before. */
+  function _notifRouteViaDesktop(route){
+    try{
+      if(!_inWin()) return false;
+      const desk=PCOSWin.desktop(), P=desk && desk.__PC;
+      if(!P || typeof P.openNotificationRoute!=='function') return false;
+      return P.openNotificationRoute(String(route||'notifications')) !== false;
+    }catch(_){ return false; }
   }
+
   window.PCOpenNotificationRoute=openOsNotificationRoute;
   function osNotify(title, body, opts){
     if(!notificationAllowed(_notificationType(opts)))return null;

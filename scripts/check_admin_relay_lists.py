@@ -24,7 +24,7 @@ KEYS = ["nostr_relay_posterchan_origins", "nostr_relay_wot_seeds", "nostr_dvm_pe
         "nostr_relay_upstream_relays", "nostr_relay_private_relays"]
 
 
-def page(names_complete):
+def page(names_complete, old_server=False):
     import jinja2
     env = jinja2.Environment(loader=jinja2.FileSystemLoader(os.path.join(ROOT, "templates")))
     tab = env.get_template("admin/tabs/nostr_relay.html").render(cache_bust="1")
@@ -53,6 +53,7 @@ const IDS=[{name:'alice',address:'alice@poster.place',npub:'npub1a',verified:tru
 window.fetch=async(url,opt)=>{
   const u=new URL(url,location.href), body=opt&&opt.body?JSON.parse(opt.body):null;
   const ok=j=>({ok:true,status:200,json:async()=>j});
+  if(u.pathname==='/api/admin/relay/list'&&__OLD__) return {ok:false,status:404,json:async()=>({detail:'Not Found'})};
   if(u.pathname==='/api/admin/relay/list'&&!body) return ok({key:u.searchParams.get('key'),items:rowsOf(u.searchParams.get('key')),names_complete:true});
   if(u.pathname==='/api/admin/relay/list'){ window.__posts.push(body);
     let lines=DB[body.key].split('\n').filter(Boolean);
@@ -65,7 +66,7 @@ window.fetch=async(url,opt)=>{
   return {ok:false,status:404,json:async()=>({})};
 };
 window.csrfFetch=window.fetch; window.pcConfirm=async()=>true;
-</script>""".replace("__NAMES_COMPLETE__", "true" if names_complete else "false")
+</script>""".replace("__NAMES_COMPLETE__", "true" if names_complete else "false").replace("__OLD__", "true" if old_server else "false")
     fill = "<script>" + "".join(
         f"document.getElementById({json.dumps(k)}).value=DB[{json.dumps(k)}];loadedValues.set({json.dumps(k)},DB[{json.dumps(k)}]);"
         for k in KEYS) + "</script>"
@@ -131,7 +132,7 @@ async def run():
     chrome = next((shutil.which(x) for x in ("chromium", "google-chrome", "google-chrome-stable") if shutil.which(x)), None)
     if not chrome:
         print("SKIP no Chrome"); return 2
-    pages = {"/": page(True), "/unread": page(False)}
+    pages = {"/": page(True), "/unread": page(False), "/old": page(True, old_server=True)}
 
     class H(http.server.SimpleHTTPRequestHandler):
         def __init__(self, *a, **kw):
@@ -227,11 +228,21 @@ async def run():
                                                 "returnByValue": True})
             if z.get("result", {}).get("value"):
                 fails.append(("unread", "bulk remove offered while profiles could not be read"))
+            # A backend older than the page (no list endpoint): the text box is open and editable,
+            # and no "Could not load the list" is left standing over a closed box.
+            await load("/old", 360, 780, True)
+            z = await call("Runtime.evaluate", {"expression": """(()=>{const ks=%s;return ks.map(k=>{const t=document.getElementById(k),
+                p=document.querySelector('.rl-panel[data-key="'+k+'"]'),d=t&&t.closest('details');
+                return {k, open:!!(d&&d.open), vis:!!t&&t.offsetParent!==null, panelHidden:!!(p&&p.hidden),
+                        err:/Could not load/.test((p&&p.textContent)||'')}})})()""" % json.dumps(KEYS), "returnByValue": True})
+            for row in z.get("result", {}).get("value") or [{"k": "?", "open": False}]:
+                if not (row["open"] and row["vis"] and row["panelHidden"] and not row["err"]):
+                    fails.append(("old server", row))
             if fails:
                 for f in fails:
                     print("FAIL", *f)
                 return 1
-            print("Admin relay lists: clean at", ", ".join(f"{w}px" for w, _, _ in VIEWPORTS), "+ unread-profile guard")
+            print("Admin relay lists: clean at", ", ".join(f"{w}px" for w, _, _ in VIEWPORTS), "+ unread-profile guard + old-server fallback")
             return 0
     finally:
         proc.terminate(); srv.shutdown(); td.cleanup()

@@ -566,7 +566,10 @@ async def public_posts(member: str, *, until: int = 0, after: str = "", limit: i
     me = await actors.actor_id(member) if base else ""
     if not me:
         return [], 0, ""
-    flt = {"kinds": [1, 1068], "authors": [member], "limit": max(limit * 3, 30)}
+    # Every kind DELIVERY sends (POST_KINDS, comments included): a comment that went out to the
+    # fediverse and was then missing from the outbox read as deleted to anybody paging the profile.
+    # build_object below applies the same which-replies rule delivery does.
+    flt = {"kinds": list(POST_KINDS), "authors": [member], "limit": max(limit * 3, 30)}
     if until:
         # INCLUSIVE, with the id of the last one served as the tie-break: `until - 1` skipped every
         # post published in the same second as the last one on the previous page.
@@ -691,18 +694,25 @@ async def _forget_retry(key: str) -> None:
 
 
 _retries_loaded = False
+_retries_loaded_at = 0.0
+# The retry documents are also written by the APP process: an inbox Accept that failed is handed
+# here (inbox._accept_later), because this worker is what retries. Read once, those would wait for
+# the next restart -- so the queue is re-read on this interval and new documents are merged in.
+_RELOAD_RETRIES_EVERY = 300
 
 
 async def _load_retries() -> None:
-    """Once per process: pick up the deliveries a previous worker left queued."""
-    global _retries_loaded
-    if _retries_loaded:
+    """Pick up the deliveries a previous worker left queued -- and, every few minutes, the ones the
+    app process queued since."""
+    global _retries_loaded, _retries_loaded_at
+    if _retries_loaded and time.time() - _retries_loaded_at < _RELOAD_RETRIES_EVERY:
         return
     try:
         saved = await state.load_retries()
     except Exception:
         return                                   # try again next tick; never assume "none"
     _retries_loaded = True
+    _retries_loaded_at = time.time()
     have = {r[5] for r in _retries}
     for key, e in sorted(saved.items(), key=lambda kv: float(kv[1].get("due") or 0))[:MAX_RETRIES_QUEUED]:
         if key not in have and isinstance(e.get("activity"), dict):

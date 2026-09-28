@@ -247,12 +247,16 @@ class _Handler(BaseHTTPRequestHandler):
         self.end_headers()
 
     def _deny(self, code: int, msg: str, *, auth: bool = False):
-        body = (msg + "\n").encode()
+        # A GRASP-08 challenge has an EMPTY body: the header is the whole answer, and a strict client
+        # reads anything else as a failure rather than as "sign a token and ask again".
+        body = b"" if auth else (msg + "\n").encode()
         self.send_response(code)
         self._send_cors()
         if auth:
-            # WWW-Authenticate advertises the NIP-98 scheme so a GRASP client knows to sign a header.
-            self.send_header("WWW-Authenticate", 'Nostr realm="grasp"')
+            # WWW-Authenticate advertises the NIP-98 scheme so a GRASP client knows to sign a header,
+            # and — GRASP-08 — with the HTTP method the token must name. Reads and pushes alike sign
+            # `method=GET` (see _read_gate_ok: the tag is compared to GET, not to this request's verb).
+            self.send_header("WWW-Authenticate", 'Nostr realm="grasp", method="GET"')
             # ...and Basic, because ngit's libgit2 transport only attempts a scheme the server
             # actually offers — with Nostr alone it gives up instead of calling a credential helper.
             # The "password" it then sends is a base64 NIP-98 event (see git_auth.verify_nip98
@@ -299,33 +303,32 @@ class _Handler(BaseHTTPRequestHandler):
 
         Takes an open cursor rather than a connection: the caller has already paid for one and this
         must not be a second connect per probe."""
-        policy = str(_CONFIG.get("accept_policy", "local-or-wot")).strip().lower()
-        if policy == "any":
-            return True
-        # An explicit operator allowlist always grants, under every policy — it is how a key that is
-        # in no social graph (a CI key, a fresh operator) gets in at all.
+        from app.services import git_acceptance
         from app.services.nostr import nostr_service
-        for tok in (_CONFIG.get("allowlist", "") or "").replace(",", "\n").split():
-            if nostr_service.to_pubkey_hex(tok.strip()) == owner_hex:
-                return True
-        if policy == "allowlist":
+        # ONE policy, decided by git_acceptance.accepts -- the same function and the same setting
+        # the relay renders into NIP-11 `repo_acceptance_criteria` (GRASP-01), so the advertised
+        # rule is the enforced rule. Only the LOOKUPS happen here, and only the ones the policy needs.
+        policy = git_acceptance.normalize(_CONFIG.get("accept_policy", git_acceptance.DEFAULT))
+        if policy == "closed":
             return False
-        if policy in ("local-or-wot", "local"):
+        allowlisted = any(nostr_service.to_pubkey_hex(tok.strip()) == owner_hex
+                          for tok in (_CONFIG.get("allowlist", "") or "").replace(",", "\n").split())
+        has_account = in_wot = False
+        if not allowlisted and policy in ("account", "account_or_wot"):
             npub = nostr_service.npub_of(owner_hex) or ""
             try:
                 cur.execute("SELECT 1 FROM users WHERE nostr_npub = %s LIMIT 1", (npub,))
-                if cur.fetchone() is not None:
-                    return True
+                has_account = cur.fetchone() is not None
             except Exception:
                 # No `users` table here (the relay DB need not be the app's on every deployment).
                 # That is "this criterion cannot be evaluated", not "denied" — WoT below still can.
                 log.info("[git-host] no local-account table on the relay DSN; accept policy falls "
                          "back to web-of-trust only")
-        if policy in ("local-or-wot", "wot"):
+        if not allowlisted and not has_account and policy in ("wot", "account_or_wot"):
             cur.execute("SELECT 1 FROM wot WHERE pubkey = %s LIMIT 1", (owner_hex,))
-            if cur.fetchone() is not None:
-                return True
-        return False
+            in_wot = cur.fetchone() is not None
+        return git_acceptance.accepts(policy, has_account=has_account, in_wot=in_wot,
+                                      allowlisted=allowlisted)
 
     def _service_is_named_by(self, ev) -> bool:
         """GRASP-01: "MUST reject git repository announcements that do not list the service in both
@@ -347,9 +350,20 @@ class _Handler(BaseHTTPRequestHandler):
         from urllib.parse import urlparse
         want = urlparse(base)
         want_host, want_path = (want.hostname or "").lower(), want.path.rstrip("/")
+        named_clone = False
         for u in git_auth.announcement_urls(ev, "clone"):
             got = urlparse(u if "://" in u else "https://" + u)
             if (got.hostname or "").lower() == want_host and got.path.startswith(want_path):
+                named_clone = True
+                break
+        if not named_clone:
+            return False
+        # …and `relays`, by HOST (see above). It used to stop at the clone tag while this docstring
+        # already said both -- and a 30617 whose relays name nobody here is one whose 30618 state
+        # never reaches us, so the repo would be provisioned and then refuse every push.
+        for u in git_auth.announcement_urls(ev, "relays"):
+            got = urlparse(u if "://" in u else "wss://" + u)
+            if (got.hostname or "").lower() == want_host:
                 return True
         return False
 
@@ -851,9 +865,15 @@ class _Handler(BaseHTTPRequestHandler):
         service = _wants_service(parsed.path, parsed.query, method)
         if service is None:
             return self._deny(404, "not found")
-        # READ GATE: upload-pack (clone/pull) on a private repo needs NIP-98 read auth. receive-pack
-        # (push) is authorized inside the pre-receive hook regardless of private/public.
-        if service == "git-upload-pack" and not self._read_gate_ok(owner_hex, repo_id):
+        # GATE, FOR BOTH SERVICES. GRASP-08: every GET and POST to a private repo carries NIP-98 auth
+        # or gets a 401. It used to cover upload-pack only -- but `info/refs?service=git-receive-pack`
+        # is a ref advertisement too (git-http-backend lists every ref + sha, http.receivepack=true),
+        # so an anonymous GET printed a private repo's branches; and the receive-pack POST reached the
+        # pre-receive hook, which admits `refs/nostr/<id>` before any auth, i.e. anonymous writes into
+        # a private repo. On a PUBLIC repo this is a no-op (_read_gate_ok answers True with no DB
+        # read): pushes there are still authorized by the hook's maintainer-signed 30618 check.
+        # tests/test_grasp08_private_repo_push_side_is_gated.py
+        if service in ("git-upload-pack", "git-receive-pack") and not self._read_gate_ok(owner_hex, repo_id):
             return self._deny(401, "authentication required (private repo)", auth=True)
         return self._exec_backend(method, owner_hex, repo_id, rest, parsed.query)
 

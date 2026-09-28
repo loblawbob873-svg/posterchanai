@@ -251,20 +251,37 @@ async def webfinger(handle: str) -> str:
     if not user or not host or "/" in host:
         raise FetchError("expected user@host")
     url = f"https://{host}/.well-known/webfinger?resource=acct:{user}@{host}"
-    await _check(url)
     body = bytearray()
+    # REDIRECTS ARE FOLLOWED, BY HAND. A split-domain server (Mastodon LOCAL_DOMAIN/WEB_DOMAIN,
+    # GoToSocial's account-domain, Akkoma) answers `@user@example.com` with a redirect to
+    # `social.example.com`, and RFC 7033 §4.2 says clients follow it. The shared client follows
+    # nothing on its own (so no hop escapes the address checks), so every hop is re-checked here:
+    # https only, and _check (blocklist, own host, private address) on each Location. The actor
+    # document is still fetched and its id verified afterwards, so a redirect cannot name anybody.
     async with client() as http:
-        try:
-            async with http.stream("GET", url, headers={"Accept": "application/jrd+json, application/json",
-                                                          "User-Agent": _USER_AGENT}) as r:
-                if r.status_code != 200:
-                    raise FetchError(f"{host} does not know {user}")
-                async for chunk in r.aiter_bytes():
-                    body.extend(chunk)
-                    if len(body) > MAX_BYTES:
-                        raise FetchError("WebFinger answer too large")
-        except httpx.HTTPError as e:
-            raise FetchError(f"{type(e).__name__} asking {host}") from e
+        for _hop in range(4):
+            await _check(url)
+            try:
+                async with http.stream("GET", url, headers={"Accept": "application/jrd+json, application/json",
+                                                              "User-Agent": _USER_AGENT}) as r:
+                    if r.status_code in (301, 302, 303, 307, 308):
+                        loc = r.headers.get("location") or ""
+                        if not loc:
+                            raise FetchError(f"{host} redirected nowhere")
+                        from urllib.parse import urljoin
+                        url = urljoin(url, loc)
+                        continue
+                    if r.status_code != 200:
+                        raise FetchError(f"{host} does not know {user}")
+                    async for chunk in r.aiter_bytes():
+                        body.extend(chunk)
+                        if len(body) > MAX_BYTES:
+                            raise FetchError("WebFinger answer too large")
+                    break
+            except httpx.HTTPError as e:
+                raise FetchError(f"{type(e).__name__} asking {host}") from e
+        else:
+            raise FetchError(f"{host} redirected too many times")
     try:
         doc = json.loads(bytes(body))
     except ValueError as e:

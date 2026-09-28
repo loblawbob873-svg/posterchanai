@@ -301,7 +301,10 @@ async def _follow(activity: dict, signer: str) -> str:
         return "ignored: follower has no inbox on its own server"
     known = await state.is_follower(member, signer)
     if not known and not _new_follower_ok(remote.host_of(signer)):
-        return "ignored: too many new followers from that server this hour"
+        # ANSWERED, not dropped: without a Reject the follow sits at "Requested" on their side for
+        # ever (Mastodon, GoToSocial). One per follower per hour -- the cap exists to bound work.
+        await _reject_follow(activity, member, signer, who, inbox)
+        return "rejected: too many new followers from that server this hour"
     await state.add_follower(member, signer, inbox)
     if convert.id_of(activity):
         await state.remember_follow_id(convert.id_of(activity), member, signer)
@@ -322,7 +325,52 @@ async def _follow(activity: dict, signer: str) -> str:
     status = await remote.deliver(personal or inbox, accept, key_id=key_id, private_pem=priv)
     if not known and 200 <= status < 300:
         _backfill_later(member, signer, inbox)          # where their posts are delivered too
+    if not 200 <= status < 300:
+        await _accept_later(personal or inbox, accept, member, status)
     return f"follower added (accept HTTP {status})"
+
+
+# THE ACCEPT IS THE FOLLOW. Mastodon and GoToSocial keep a follow at "Requested" until an Accept
+# lands, while we have already recorded the follower -- and a pending request is not a follow there,
+# so followers-only delivery to that person can be discarded. An Accept lost to a 5xx or a timeout
+# used to be lost for good; it now joins the worker's persisted retry queue (outbox._send retries
+# on 0/5xx/408/429 and gives up on any other 4xx, which is an answer).
+async def _accept_later(inbox_url: str, accept: dict, member: str, status: int) -> None:
+    if not (status == 0 or status >= 500 or status in (408, 429)):
+        return
+    from app.services.activitypub import outbox as _ob
+    try:
+        key = _ob._retry_key(inbox_url, accept)
+        await state.save_retry(key, {"due": time.time() + _ob._RETRY_DELAYS[0], "inbox": inbox_url,
+                                     "activity": accept, "member": member, "attempt": 1})
+    except Exception as e:
+        logger.info("[activitypub] could not queue the Accept for retry: %s", e)
+
+
+_rejected: dict = {}
+
+
+async def _reject_follow(activity: dict, member: str, signer: str, who: dict, inbox_url: str) -> None:
+    """Answer a follow we will not take with Reject(Follow), once per follower per hour."""
+    now = time.monotonic()
+    k = (member, signer)
+    if now - _rejected.get(k, -1e9) < 3600:
+        return
+    _rejected[k] = now
+    if len(_rejected) > 20000:
+        for kk in sorted(_rejected, key=_rejected.get)[:4000]:
+            _rejected.pop(kk, None)
+    try:
+        keys = await state.keypair(member)
+        key_id, priv = await actors.signing(member, keys)
+        me = await actors.actor_id(member)
+        reject = {"@context": convert.AS_CONTEXT, "id": f"{me}#rejects/{int(time.time() * 1000)}",
+                  "type": "Reject", "actor": me,
+                  "object": {k2: activity[k2] for k2 in ("id", "type", "actor", "object") if k2 in activity}}
+        personal = (who or {}).get("inbox") if remote.host_of((who or {}).get("inbox") or "") == remote.host_of(signer) else ""
+        await remote.deliver(personal or inbox_url, reject, key_id=key_id, private_pem=priv)
+    except Exception as e:
+        logger.info("[activitypub] could not send Reject(Follow): %s", e)
 
 
 # A NEW follower is sent the account's recent posts. Akkoma (and Pleroma) never load a remote

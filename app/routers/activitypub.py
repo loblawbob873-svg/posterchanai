@@ -33,7 +33,10 @@ def _on() -> None:
 
 def _ap(doc: dict, status: int = 200) -> Response:
     return Response(json.dumps(doc, separators=(",", ":")), status_code=status,
-                    media_type=config.AP_CONTENT_TYPE, headers={"Cache-Control": "max-age=60"})
+                    media_type=config.AP_CONTENT_TYPE,
+                    # Vary: the same URL is an HTML redirect for a browser and JSON for a server, and
+                    # both are cacheable -- without it a shared cache hands one the other's answer.
+                    headers={"Cache-Control": "max-age=60", "Vary": "Accept"})
 
 
 # The relay a strict state read could not reach -- the ten seconds after a restart while it starts, or
@@ -53,10 +56,19 @@ def _wants_html(request: Request) -> bool:
 
 # ------------------------------------------------------------------------------------ discovery
 
+# Discovery documents are PUBLIC and carry no credential, so any origin may read them. RFC 7033 §5
+# requires `Access-Control-Allow-Origin` on WebFinger, and a browser-based client resolving a handle
+# here was refused without it. (app/main.py _ScopedCORS leaves these paths to us.)
+_OPEN = {"Access-Control-Allow-Origin": "*"}
+
 @router.get("/.well-known/webfinger")
 async def webfinger(resource: str = ""):
     _on()
     res = resource.strip()
+    # RFC 7033 §4.2: a missing or malformed `resource` is a 400, not "no such account".
+    if not res or not re.match(r"^(acct:@?[^@\s]+@[^@\s]+|https?://\S+)$", res, re.I):
+        return JSONResponse({"error": "resource must be acct:user@host or an https URI"},
+                            status_code=400, headers=_OPEN)
     base, dom = config.base_url(), config.domain()
     name = ""
     if res.lower().startswith("acct:"):
@@ -68,7 +80,8 @@ async def webfinger(resource: str = ""):
         name, by_path = res[len(f"{base}/ap/users/"):].split("/")[0], True
     if name == dom or res in (f"{base}/ap/actor", f"acct:{dom}@{dom}"):
         return JSONResponse({"subject": f"acct:{dom}@{dom}", "links": [
-            {"rel": "self", "type": config.AP_CONTENT_TYPE, "href": f"{base}/ap/actor"}]}, media_type=_JRD)
+            {"rel": "self", "type": config.AP_CONTENT_TYPE, "href": f"{base}/ap/actor"}]}, media_type=_JRD,
+            headers=_OPEN)
     try:
         pk = (await (actors.member_of_path(name, strict=True) if by_path
                      else actors.member_by_name(name, strict=True))) if name else ""
@@ -86,7 +99,7 @@ async def webfinger(resource: str = ""):
     return JSONResponse({"subject": f"acct:{shown}@{dom}", "aliases": [actor, f"{base}/users/{name}"],
                          "links": [{"rel": "self", "type": config.AP_CONTENT_TYPE, "href": actor},
                                    {"rel": "http://webfinger.net/rel/profile-page", "type": "text/html",
-                                    "href": f"{base}/users/{name}"}]}, media_type=_JRD)
+                                    "href": f"{base}/users/{name}"}]}, media_type=_JRD, headers=_OPEN)
 
 
 @router.get("/.well-known/nodeinfo")
@@ -95,7 +108,8 @@ async def nodeinfo_links():
     base = config.base_url()
     return JSONResponse({"links": [
         {"rel": "http://nodeinfo.diaspora.software/ns/schema/2.1", "href": f"{base}/nodeinfo/2.1"},
-        {"rel": "http://nodeinfo.diaspora.software/ns/schema/2.0", "href": f"{base}/nodeinfo/2.0"}]})
+        {"rel": "http://nodeinfo.diaspora.software/ns/schema/2.0", "href": f"{base}/nodeinfo/2.0"}]},
+        headers=_OPEN)
 
 
 @router.get("/.well-known/host-meta")
@@ -105,7 +119,7 @@ async def host_meta():
     xml = ('<?xml version="1.0" encoding="UTF-8"?>\n'
            '<XRD xmlns="http://docs.oasis-open.org/ns/xri/xrd-1.0">'
            f'<Link rel="lrdd" template="{config.base_url()}/.well-known/webfinger?resource={{uri}}"/></XRD>')
-    return Response(xml, media_type="application/xrd+xml")
+    return Response(xml, media_type="application/xrd+xml", headers=_OPEN)
 
 
 def _nodeinfo(version: str) -> dict:
@@ -133,13 +147,15 @@ def _nodeinfo(version: str) -> dict:
 @router.get("/nodeinfo/2.1")
 async def nodeinfo():
     _on()
-    return JSONResponse(_nodeinfo("2.1"))
+    return JSONResponse(_nodeinfo("2.1"), headers=_OPEN,
+                        media_type='application/json; profile="http://nodeinfo.diaspora.software/ns/schema/2.1#"')
 
 
 @router.get("/nodeinfo/2.0")
 async def nodeinfo_20():
     _on()
-    return JSONResponse(_nodeinfo("2.0"))
+    return JSONResponse(_nodeinfo("2.0"), headers=_OPEN,
+                        media_type='application/json; profile="http://nodeinfo.diaspora.software/ns/schema/2.0#"')
 
 
 # ------------------------------------------------------------------------------------ actors

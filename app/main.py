@@ -88,7 +88,10 @@ class _ScopedCORS(CORSMiddleware):
     Nostr approval endpoint remains under the normal credentialed allowlist."""
     # /api/vmhost/iso/: an ISO upload is PUT by a client on ANY origin (the host is somebody else's
     # server); its credential is a single-use ticket in the path, never a cookie, so it answers `*`.
-    _OWN_CORS = ("/blossom", "/git/", "/jellyfin/", "/api/vmhost/iso/")   # trailing slash: must not swallow a future /gitea-style route
+    # /.well-known/webfinger|host-meta|nodeinfo and /nodeinfo/: public discovery documents that answer
+    # `*` themselves (routers/activitypub.py _OPEN; RFC 7033 §5).
+    _OWN_CORS = ("/blossom", "/git/", "/jellyfin/", "/api/vmhost/iso/",
+                 "/.well-known/webfinger", "/.well-known/host-meta", "/.well-known/nodeinfo", "/nodeinfo/")   # trailing slash: must not swallow a future /gitea-style route
 
     async def __call__(self, scope, receive, send):
         if scope.get("type") == "http" and scope.get("path", "").startswith(self._OWN_CORS):

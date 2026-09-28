@@ -346,6 +346,61 @@ def test_a_follow_is_recorded_and_accepted_as_the_member(world):
     assert run(state.followers(ALICE)) == []
 
 
+def test_an_accept_lost_to_an_outage_is_retried_by_the_worker(world, monkeypatch):
+    """A follow stays "Requested" on Mastodon/GoToSocial until the Accept lands. It was sent once; a
+    5xx lost it for good. Now it is saved to the persisted retry queue, and the WORKER (a different
+    process) picks it up without a restart. 2026-09-28 AP review."""
+    statuses = iter([503, 202])
+
+    async def deliver(inbox_url, activity, *, key_id, private_pem):
+        world["sent"].append({"inbox": inbox_url, "activity": activity, "key_id": key_id})
+        return next(statuses)
+    monkeypatch.setattr(remote, "deliver", deliver)
+    follow = {"id": "https://mastodon.example/f/9", "type": "Follow", "actor": REMOTE, "object": f"{BASE}/ap/users/alice"}
+    assert run(inbox.process(follow, REMOTE)) == "follower added (accept HTTP 503)"
+    queued = {k: v for k, v in world["docs"].items() if k.startswith("pcai:ap:retry:") and not v.get("done")}
+    assert len(queued) == 1, "the lost Accept was not queued"
+    (entry,) = queued.values()
+    assert entry["activity"]["type"] == "Accept" and entry["activity"]["object"]["id"] == follow["id"]
+    # The worker, already running (its queue loaded long ago), finds it on its next re-read.
+    from app.services.activitypub import outbox as ob
+    monkeypatch.setattr(ob, "_retries", [])
+    monkeypatch.setattr(ob, "_retries_loaded", True)
+    monkeypatch.setattr(ob, "_retries_loaded_at", 0.0)
+    monkeypatch.setattr(ob, "_down", {})
+    entry["due"] = 0
+    world["docs"][next(iter(queued))] = entry
+    run(ob._flush_retries())
+    accepts = [x for x in world["sent"] if x["activity"]["type"] == "Accept"]
+    assert len(accepts) == 2, "the worker never retried the Accept"
+    assert all(v.get("done") for k, v in world["docs"].items() if k.startswith("pcai:ap:retry:")), \
+        "a delivered retry was left queued"
+
+
+def test_a_refused_answer_is_not_retried(world, monkeypatch):
+    """A 4xx is an ANSWER (the follow is gone on their side); retrying it only makes us the storm."""
+    async def deliver(inbox_url, activity, *, key_id, private_pem):
+        return 404
+    monkeypatch.setattr(remote, "deliver", deliver)
+    follow = {"id": "https://mastodon.example/f/10", "type": "Follow", "actor": REMOTE, "object": f"{BASE}/ap/users/alice"}
+    run(inbox.process(follow, REMOTE))
+    assert not [k for k in world["docs"] if k.startswith("pcai:ap:retry:")]
+
+
+def test_a_follow_over_the_per_server_cap_is_rejected_not_ignored(world, monkeypatch):
+    """Without a Reject the follow sits at "Requested" for ever on their side."""
+    monkeypatch.setattr(inbox, "_new_follower_ok", lambda host: False)
+    monkeypatch.setattr(inbox, "_rejected", {})
+    follow = {"id": "https://mastodon.example/f/11", "type": "Follow", "actor": REMOTE, "object": f"{BASE}/ap/users/alice"}
+    assert run(inbox.process(follow, REMOTE)).startswith("rejected")
+    (sent,) = world["sent"]
+    assert sent["activity"]["type"] == "Reject" and sent["activity"]["object"]["id"] == follow["id"]
+    assert sent["activity"]["actor"] == f"{BASE}/ap/users/alice"
+    assert run(state.followers(ALICE)) == [], "a rejected follower was recorded"
+    run(inbox.process(dict(follow, id="https://mastodon.example/f/12"), REMOTE))
+    assert len(world["sent"]) == 1, "one Reject per follower per hour, not one per follow"
+
+
 def test_a_follow_of_somebody_who_is_not_ours_is_ignored(world):
     follow = {"id": "x", "type": "Follow", "actor": REMOTE, "object": f"{BASE}/ap/users/nobody"}
     assert run(inbox.process(follow, REMOTE)) == "ignored: not one of our actors"
@@ -489,6 +544,28 @@ def test_webfinger_finds_a_local_user(client):
     assert r.status_code == 200 and r.json()["links"][0]["href"] == f"{BASE}/ap/users/alice"
     assert client.get(f"/.well-known/webfinger?resource=acct:nobody@{DOMAIN}").status_code == 404
     assert client.get("/.well-known/webfinger?resource=acct:alice@elsewhere.example").status_code == 404
+
+
+def test_webfinger_is_readable_cross_origin_and_400s_a_bad_resource(client):
+    """RFC 7033 §5: Access-Control-Allow-Origin on WebFinger (a browser client resolving a handle was
+    refused); §4.2: a missing or malformed `resource` is a 400, not 404. 2026-09-28 AP review."""
+    r = client.get(f"/.well-known/webfinger?resource=acct:alice@{DOMAIN}", headers={"Origin": "https://x.example"})
+    assert r.headers.get("access-control-allow-origin") == "*"
+    for bad in ("", "alice", "acct:", "acct:alice", "javascript:alert(1)"):
+        rr = client.get("/.well-known/webfinger?resource=" + bad)
+        assert rr.status_code == 400, (bad, rr.status_code)
+        assert rr.headers.get("access-control-allow-origin") == "*"
+    assert client.get(f"/.well-known/webfinger?resource=acct:@alice@{DOMAIN}").status_code == 200
+    for path in ("/.well-known/nodeinfo", "/nodeinfo/2.1", "/nodeinfo/2.0", "/.well-known/host-meta"):
+        assert client.get(path).headers.get("access-control-allow-origin") == "*", path
+
+
+def test_the_app_leaves_discovery_cors_to_the_router():
+    """The credentialed native-origin CORS middleware would otherwise answer these for its own
+    allowlist and append Allow-Credentials, which a browser rejects next to `*`."""
+    from app.main import _ScopedCORS
+    for p in ("/.well-known/webfinger", "/.well-known/host-meta", "/.well-known/nodeinfo", "/nodeinfo/2.1"):
+        assert p.startswith(_ScopedCORS._OWN_CORS), p
 
 
 def test_everything_is_404_while_it_is_off(client, world):
@@ -1742,7 +1819,7 @@ def test_one_server_can_add_only_so_many_new_followers_an_hour(world, monkeypatc
         carol_actor(), id="https://mastodon.example/users/dan", inbox="https://mastodon.example/users/dan/inbox")
     dan = dict(follow, id="https://mastodon.example/f/3", actor="https://mastodon.example/users/dan")
     assert run(inbox.process(dan, "https://mastodon.example/users/dan")) == \
-        "ignored: too many new followers from that server this hour"
+        "rejected: too many new followers from that server this hour"
 
 
 def test_a_given_out_handle_cannot_be_registered_by_somebody_else(world, monkeypatch):
@@ -3275,3 +3352,24 @@ def test_a_reaction_to_a_members_post_reaches_the_servers_holding_it(world):
     undo = member_post("", kind=5, tags=[["e", react["id"]], ["k", "7"]], created=1_700_000_060)
     assert sorted((i, a["type"], a["object"]["type"]) for i, a in run(outbox.plan(undo, ALICE))) \
         == [(alice_fol, "Undo", "Like"), (ment, "Undo", "Like")]
+
+
+
+def test_the_outbox_reads_every_kind_delivery_sends(world, monkeypatch):
+    """Comments (kind 1111) were delivered but never served by the outbox (2026-09-28 AP review)."""
+    asked = []
+
+    async def q(port, filters, **kw):
+        asked.extend(filters)
+        return []
+    monkeypatch.setattr(outbox.nostr_store, "_ws_query", q)
+    run(outbox.public_posts(ALICE))
+    assert asked and set(asked[0]["kinds"]) == set(outbox.POST_KINDS)
+
+
+
+def test_nodeinfo_names_its_schema_and_documents_vary_on_accept(client):
+    r = client.get("/nodeinfo/2.1")
+    assert 'profile="http://nodeinfo.diaspora.software/ns/schema/2.1#"' in r.headers["content-type"]
+    a = client.get("/ap/users/alice", headers={"Accept": "application/activity+json"})
+    assert "accept" in a.headers.get("vary", "").lower()

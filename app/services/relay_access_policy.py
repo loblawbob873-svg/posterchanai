@@ -23,6 +23,25 @@ def configuration():
 
 
 
+def _infrastructure_keys(db, users=None) -> set:
+    """Admins, this node's bots and its GPU-sharing peers: infrastructure, not consumer grants.
+    Nothing in this module ever revokes them."""
+    keep = set()
+    for u in (users if users is not None else db.query(User).all()):
+        if u.is_admin and u.nostr_npub:
+            keep.add(ns.to_pubkey_hex(u.nostr_npub))
+    from app.services import nostr_dvm
+    keep.update(nostr_dvm.peer_pubkeys())
+    for bot in db.query(Bot).all():
+        try:
+            key = json.loads(bot.config or "{}").get("nostr_nsec")
+            if key:
+                keep.add(ns.derive_pubkey(ns.decode_seckey(key)))
+        except (ValueError, TypeError):
+            continue
+    return keep
+
+
 async def _plan(db, exempt_fediverse=True):
     from app.services.nostr_relay.thread import _parse_nip05
     settings.hydrate_from_db(db)
@@ -37,21 +56,8 @@ async def _plan(db, exempt_fediverse=True):
         raise ValueError("Configure a NIP-05 domain and registered names before running this policy")
     registered = {pk.lower() for pk in names.values()}
     qualified_keys = set()
-    keep = set()
     users = db.query(User).all()
-    # Infrastructure identities are not consumer access grants.
-    for u in users:
-        if u.is_admin and u.nostr_npub:
-            keep.add(ns.to_pubkey_hex(u.nostr_npub))
-    from app.services import nostr_dvm
-    keep.update(nostr_dvm.peer_pubkeys())
-    for bot in db.query(Bot).all():
-        try:
-            key = json.loads(bot.config or "{}").get("nostr_nsec")
-            if key:
-                keep.add(ns.derive_pubkey(ns.decode_seckey(key)))
-        except (ValueError, TypeError):
-            continue
+    keep = _infrastructure_keys(db, users)
     if exempt_fediverse:
         keep.update(pk for pk, in db.query(FediPuppet.pubkey_hex).all())
         # Accounts that linked a fediverse account under the retired bridge (legacy columns).
@@ -199,3 +205,71 @@ def stop():
     if _scheduler is not None:
         _scheduler.shutdown(wait=False)
         _scheduler = None
+
+
+# Everything the Additional-permissions panel can grant one account.
+REVOKE_FIELDS = ("can_ai", "can_blossom", "can_image", "can_music", "can_video", "can_torrent",
+                 "can_media", "can_stream")
+
+
+async def revoke_identities(db, pubkeys) -> dict:
+    """Take away the access a NIP-05 identity carried, for keys whose identity was just REMOVED.
+
+    "Remove all not in profile" (and a single Remove) took the name off the registry, which ends the
+    NIP-05 entitlement (nip05_access) at once -- but a grant written onto the account (the can_*
+    columns, the shared `blossom_whitelist`) outlived it until the access policy's next run, and that
+    policy is OFF unless an operator turns it on. So removing somebody left them their AI, Blossom
+    and streaming. This revokes exactly the removed keys, the same way `run` does (grant columns off,
+    access_revoked on, the account written through to the relay BEFORE the local commit), and edits
+    the whitelist line by line so nobody else's hand-written entry is rewritten.
+
+    Never touches infrastructure (admins, bots, GPU peers). Raises if a write-through fails, leaving
+    that account as it was, so the caller can say the revoke did not finish."""
+    keys = {str(pk or "").lower() for pk in (pubkeys or []) if pk}
+    if not keys:
+        return {"accounts": 0, "whitelist": 0, "protected": []}
+    async with _lock:
+        protected = keys & _infrastructure_keys(db)
+        targets = keys - protected
+        out = {"accounts": 0, "whitelist": 0, "protected": sorted(protected)}
+        npubs = {}
+        for pk in targets:
+            try:
+                npubs[ns.npub_of(pk)] = pk
+            except Exception:
+                continue
+        users = db.query(User).filter(User.nostr_npub.in_(list(npubs))).all() if npubs else []
+        for u in users:
+            previous = {f: getattr(u, f) for f in REVOKE_FIELDS + ("access_revoked",)}
+            for f in REVOKE_FIELDS:
+                setattr(u, f, False)
+            u.access_revoked = True
+            try:
+                with db.no_autoflush:
+                    ok = await users_store.sync_user(db, u, force=True)
+            except Exception:
+                ok = False
+            if not ok:
+                for f, v in previous.items():
+                    setattr(u, f, v)
+                db.rollback()
+                raise RuntimeError("account synchronization failed; some permissions were not revoked")
+            db.commit()
+            out["accounts"] += 1
+        # The shared Blossom whitelist: drop only these keys' lines; every other line stays verbatim.
+        raw = settings.get("blossom_whitelist", "") or ""
+        kept, dropped = [], 0
+        for line in raw.replace(",", "\n").split("\n"):
+            tok = line.strip()
+            if tok and ns.to_pubkey_hex(tok) in targets:
+                dropped += 1
+                continue
+            kept.append(line)
+        if dropped:
+            value = "\n".join(l for l in kept if l.strip())
+            if await settings.write_through(db, {"blossom_whitelist": value}) != 1:
+                raise RuntimeError("Blossom whitelist synchronization failed; account permissions were revoked")
+            settings.put("blossom_whitelist", value, write_relay=False)
+            out["whitelist"] = dropped
+        blossom_service.invalidate_operator_cache()
+        return out

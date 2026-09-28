@@ -108,12 +108,19 @@ const saves = c => c.filter(x => /\/api\/admin\/bots(\/\d+)?$/.test(x.url) && x.
   check(/avatar could not be uploaded/.test(w.el('botModalError').textContent), 'no message said why');
 }
 
-{ // talking replies: up to 3 faces, each with its OWN mouth, all saved
+{ // talking replies: at most 10 faces (talkbot_service.MAX_FACES); an 11th is refused, not uploaded
+  const w = world({ id: '28' });
+  const faces = () => JSON.parse(w.el('bot_f_talk_faces').value || '[]');
+  for (let i = 0; i < 11; i++) { w.addFace(); await settle(); }
+  check(faces().length === 10, 'expected 10 faces (an 11th refused), got ' + faces().length);
+  check(w.calls.filter(c => c.url.endsWith('/talk/face')).length === 10, 'an 11th face was uploaded anyway');
+}
+
+{ // talking replies: each face has its OWN mouth, all saved
   const w = world({ id: '27' });
   const faces = () => JSON.parse(w.el('bot_f_talk_faces').value || '[]');
-  for (let i = 0; i < 4; i++) { w.addFace(); await settle(); }
-  check(faces().length === 3, 'expected 3 faces (a 4th refused), got ' + faces().length);
-  check(w.calls.filter(c => c.url.endsWith('/talk/face')).length === 3, 'a 4th face was uploaded anyway');
+  for (let i = 0; i < 3; i++) { w.addFace(); await settle(); }
+  check(faces().length === 3, 'expected 3 faces, got ' + faces().length);
   w.click({ 'data-talk-face': '0' });                 // select face 1 …
   w.drag(40, 70);                                     // … and move ITS mouth
   const f = faces();
