@@ -768,8 +768,12 @@ window.PCProfileFactory = function(dep){
     try{ const r=await fetch('/client/blossom-access?pubkey='+encodeURIComponent(pk)).then(r=>r.json()); blossomOn=!!(r&&r.whitelisted); }catch(_){}
     try{ const r=await fetch('/client/stream-access?pubkey='+encodeURIComponent(pk)).then(r=>r.json()); streamOn=!!(r&&r.enabled); }catch(_){}
     try{ const r=await fetch('/client/user-caps?pubkey='+encodeURIComponent(pk)).then(r=>r.json()); if(r&&r.exists) caps=r.caps||{}; }catch(_){}
-    let nipName='', nipDomain=location.host;
-    try{ const r=await fetch('/client/admin-nip05?pubkey='+encodeURIComponent(pk)).then(r=>r.json()); if(r&&r.ok){ nipName=r.name||''; if(r.nip05) nipDomain=r.nip05.split('@')[1]||nipDomain; } }catch(_){}
+    /* The domain is the NODE'S NIP-05 domain, as the server reports it. `location.host` is the shell's
+     * own origin -- `localhost` in the APK, `posterchan` in the desktop app -- which is how this panel
+     * came to offer "alice@localhost". The instance's host is only the fallback for an old server. */
+    let nipName='', nipDomain=((()=>{ try{ const b=window.__PC_API_BASE__; return b ? new URL(b).host : location.host; }catch(_){ return location.host; } })());
+    try{ const r=await fetch('/client/admin-nip05?pubkey='+encodeURIComponent(pk)).then(r=>r.json());
+      if(r&&r.ok){ nipName=r.name||''; nipDomain=r.domain || (r.nip05 && r.nip05.split('@')[1]) || nipDomain; } }catch(_){}
     const _pp=profOf(pk)||{};
     const defNip=((_pp.name||_pp.display_name||'')).toLowerCase().replace(/[^a-z0-9_.\-]/g,'').replace(/^[._\-]+|[._\-]+$/g,'').slice(0,30);
     const C=[['can_image','🖼️ Image'],['can_music','🎵 Music'],['can_video','🎬 Video'],['can_torrent','🧲 Torrents']];

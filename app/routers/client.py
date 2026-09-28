@@ -6146,7 +6146,9 @@ async def admin_nip05_status(pubkey: str, request: Request, db: Session = Depend
     names, _ = _parse_nip05(settings_store.get("nostr_relay_nip05_names", "") or "", "")
     cur = next((n for n, hx in names.items() if hx == h), None)
     domain = _nip05_domain(request, db)
-    return JSONResponse({"ok": True, "name": cur, "nip05": (f"{cur}@{domain}" if cur else None)})
+    # `domain` always: the panel shows "<name>@<domain>" BEFORE a name is granted, and the only other
+    # source it had was the page's own host -- `localhost` in the APK, `posterchan` in the desktop app.
+    return JSONResponse({"ok": True, "name": cur, "domain": domain, "nip05": (f"{cur}@{domain}" if cur else None)})
 
 
 @router.post("/admin-nip05")

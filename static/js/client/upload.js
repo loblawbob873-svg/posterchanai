@@ -426,7 +426,7 @@ window.PCUploadFactory = function(dep){
     if(!op){ toast('no admin contact is configured on this server'); return; }
     if(btn){ btn.disabled=true; btn.textContent='Sending…'; }
     const me=profOf(S.ME.pubkey)||{}; const nm=me.name||me.display_name||'A user';
-    const body=`🔴 Live-streaming access request\n${nm} (${S.ME.npub}) would like permission to go live on ${location.host}. You can grant it in Admin → Users (🔴 Go Live).`;
+    const body=`🔴 Live-streaming access request\n${nm} (${S.ME.npub}) would like permission to go live on ${((()=>{ try{ const b=window.__PC_API_BASE__; return b ? new URL(b).host : location.host; }catch(_){ return location.host; } })())}. You can grant it in Admin → Users (🔴 Go Live).`;
     // RECORD it server-side as well as DMing. A DM alone is what Blossom does, and it loses the
     // request entirely if the admin never reads that inbox; the record shows up in the admin queue.
     try{
@@ -443,7 +443,7 @@ window.PCUploadFactory = function(dep){
     if(!op){ if(btn) toast('no admin contact is configured on this server'); return; }
     if(btn){ btn.disabled=true; btn.textContent='Sending…'; }
     const me=profOf(S.ME.pubkey)||{}; const nm=me.name||me.display_name||'A user';
-    const body=`🌸 Blossom upload-access request\n${nm} (${S.ME.npub}) would like permission to upload files on ${location.host}. You can grant it in Admin → Users.`;
+    const body=`🌸 Blossom upload-access request\n${nm} (${S.ME.npub}) would like permission to upload files on ${((()=>{ try{ const b=window.__PC_API_BASE__; return b ? new URL(b).host : location.host; }catch(_){ return location.host; } })())}. You can grant it in Admin → Users.`;
     try{ await sendDm(op, body); _blossomReqSent=true; toast('✅ Request sent to the admin'); if(btn) btn.textContent='✅ Request sent'; }
     catch(e){ toast('could not send the request'); if(btn){ btn.disabled=false; btn.textContent='🌸 Request upload access'; } }
   }

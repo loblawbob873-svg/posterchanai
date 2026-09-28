@@ -16755,7 +16755,48 @@
     if(!e.target.closest) return;
     const card=e.target.closest('.link-card[data-url]'); if(!card) return;
     e.preventDefault(); e.stopPropagation();
+    if(_openOwnEntityUrl(card.dataset.url)) return;
     window.open(card.dataset.url, '_blank', 'noopener');
+  }, true);
+  /* A LINK TO ONE OF THIS INSTANCE'S OWN NOSTR ADDRESSES OPENS IN THE APP, NOT OVER IT.
+   *
+   * "Clicking on a article link in a Social post ... should open in a new window, otherwise you
+   * sometimes get back navigation issues or new social posts loading over it." A post that shares
+   * `https://poster.place/naddr1…` carries a plain target=_blank link. In the APK an in-scope link
+   * is a NAVIGATION of the one WebView -- the whole client reloads onto that URL, Back leaves the
+   * app's history behind, and the boot's routing (`_routing`) paints the article in place over
+   * whatever feed was there. On the desktop it went to the external browser instead of a PosterChan
+   * window. So a link whose origin is this instance and whose path is a bech32 entity goes through
+   * the same openers a `nostr:` reference uses: on PosterChanOS an article or post gets ITS OWN
+   * post window (openArticle → openThread), elsewhere the in-app reader with a real history entry.
+   * Any other link on this host (a Blossom file, /r/ repo pages, the admin) is left alone. */
+  function _ownEntityOf(url){
+    let u; try{ u=new URL(String(url||''), location.href); }catch(_){ return null; }
+    if(!/^https?:$/.test(u.protocol)) return null;
+    const mine=new Set([location.origin]);
+    for(const b of [_instanceBase(), _serverOrigin()]){ try{ if(b) mine.add(new URL(b).origin); }catch(_){ } }
+    if(!mine.has(u.origin)) return null;
+    let p=u.pathname; try{ p=decodeURIComponent(p); }catch(_){ }
+    const m=p.replace(/^\/client(?=\/|$)/,'').match(/^\/(?:nostr:)?((?:npub1|nprofile1|note1|nevent1|naddr1)[023456789acdefghjklmnpqrstuvwxyz]+)\/?$/i);
+    return m ? m[1] : null;
+  }
+  function _openOwnEntityUrl(url){
+    const ent=_ownEntityOf(url); if(!ent) return false;
+    let d; try{ d=NT().nip19.decode(ent); }catch(_){ return false; }
+    if(d.type==='naddr'){ openNaddr(d.data.pubkey, d.data.identifier, d.data.kind); return true; }
+    if(d.type==='nevent'){ openThread(d.data.id, d.data.relays); return true; }
+    if(d.type==='note'){ openThread(d.data); return true; }
+    if(d.type==='npub'){ renderProfileView(d.data); return true; }
+    if(d.type==='nprofile'){ renderProfileView(d.data.pubkey); return true; }
+    return false;
+  }
+  document.addEventListener('click', e=>{
+    if(e.defaultPrevented || e.button || e.metaKey || e.ctrlKey || e.shiftKey || e.altKey || !e.target.closest) return;
+    const a=e.target.closest('a[href]'); if(!a) return;
+    if(!a.closest('.note,.article-view,.dm-bubble,.quoted,.av-comments,.ac-item,.markdown')) return;
+    if(!_ownEntityOf(a.href)) return;
+    e.preventDefault(); e.stopPropagation();
+    _openOwnEntityUrl(a.href);
   }, true);
   // YouTube video id from watch / youtu.be / shorts / embed / live URLs (else null).
   function ytId(u){
