@@ -362,6 +362,20 @@ function serveBundle() {
     if (!full.startsWith(WWW + path.sep) && full !== WWW) {
       return new Response('forbidden', { status: 403 });
     }
+    /* AN APP ROUTE IS THE SHELL. The client moves its own URL to the thing on screen (`/npub1…`,
+     * `/naddr1…`, `/r/<npub>/<repo>`, `/users/<name>`), and the web server answers any such path with
+     * the client. This handler looked for a FILE by that name, so a reload -- or a window opened --
+     * while the desktop sat on a profile/post/repo came up as a black page reading "not found".
+     * Only EXTENSIONLESS paths fall back: a missing script, stylesheet or image is still a real 404,
+     * so a broken bundle is not hidden behind the shell. */
+    const _isRoute = !path.extname(rel) && !rel.startsWith('/static/') && !rel.startsWith('/__');
+    if (_isRoute) {
+      try { await fs.promises.access(full); } catch (_) {
+        const shell = await fs.promises.readFile(path.join(WWW, 'index.html'));
+        return new Response(shell, { status: 200, headers: { 'Content-Type': 'text/html; charset=utf-8',
+                                                             'Cache-Control': 'no-store' } });
+      }
+    }
     try {
       const body = await fs.promises.readFile(full);
       const type = _MIME[path.extname(full).toLowerCase()] || 'application/octet-stream';

@@ -91,6 +91,14 @@
 
   /* Only where a compositor window is possible AND asked for. The desktop shell is the one place:
    * a browser tab has no such thing, and the APK's WebView is a single surface. */
+  /* The document every window loads: the bundle's index.html (app://posterchan) or the web client's
+   * root. See open(). */
+  function shellPath(){
+    try{
+      if(root.location.protocol === 'app:' || typeof root.__PC_API_BASE__ !== 'undefined') return '/index.html';
+    }catch(_){ }
+    return '/';
+  }
   function enabled(){
     try{
       /* `pcWM` is the compositor bridge and exists ONLY in the PosterChanOS shell — not in a
@@ -229,7 +237,14 @@
         }
       }catch(_){}
     }
-    const url = root.location.pathname + '?' + PARAM + '=' + encodeURIComponent(String(view || ''))
+    /* THE SHELL DOCUMENT, NEVER WHEREVER THE DESKTOP PAGE HAS NAVIGATED TO. This was
+     * `location.pathname`: after the desktop showed a profile, a post or a repo, its URL is a deep
+     * path (`/npub1…`, `/naddr1…`, `/r/…`), and the bundle's app:// handler has no SPA fallback --
+     * it looks for a FILE by that name. Every app window opened after that was a black page reading
+     * "not found", on whichever machine had last viewed something ("all the posterchan apps are not
+     * functioning on my laptop now"). The window's view is carried by ?pcwin=, and a deep link by
+     * routePath, so nothing needs the desktop's path. */
+    const url = shellPath() + '?' + PARAM + '=' + encodeURIComponent(String(view || ''))
       + (arg ? (view==='texts' ? '&pcsms=' : view==='doc:search' ? '&pcq=' : '&pcpost=') + encodeURIComponent(arg) : '');
     /* The size is a HINT to the compositor, passed as window features because a frameless Electron
      * child takes its geometry from them. sway may place it elsewhere and that is fine: it is the
@@ -443,7 +458,7 @@
     }catch(_){ }
   }
 
-  const API = { isWindow, viewOf, desktop, enabled, open, routeExisting, routable, adopt, POST_TOOLS,
+  const API = { isWindow, viewOf, desktop, enabled, open, routeExisting, routable, adopt, POST_TOOLS, shellPath,
                 installFrame, PARAM, TITLE };
   root.PCOSWin = API;
   if(typeof module !== 'undefined' && module.exports) module.exports = API;
