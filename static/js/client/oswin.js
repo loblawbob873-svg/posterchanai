@@ -91,13 +91,16 @@
 
   /* Only where a compositor window is possible AND asked for. The desktop shell is the one place:
    * a browser tab has no such thing, and the APK's WebView is a single surface. */
-  /* The document every window loads: the bundle's index.html (app://posterchan) or the web client's
-   * root. See open(). */
+  /* The document every window loads: the bundle's index.html (app://posterchan) or, on the web, the
+   * own page path. See open(). */
   function shellPath(){
     try{
       if(root.location.protocol === 'app:' || typeof root.__PC_API_BASE__ !== 'undefined') return '/index.html';
     }catch(_){ }
-    return '/';
+    /* On the web the server renders the shell for every app route, and the client may be mounted
+     * under a prefix (`/client`), so the page's own path is always a shell document. Only the
+     * app:// bundle serves FILES, where a deep path is a missing file. */
+    try{ return root.location.pathname || '/'; }catch(_){ return '/'; }
   }
   function enabled(){
     try{
