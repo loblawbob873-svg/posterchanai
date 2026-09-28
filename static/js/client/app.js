@@ -372,7 +372,7 @@
   function _syncTopSearch(){
     try{ document.body.classList.toggle('no-topsearch', !TOP_SEARCH_VIEWS.has(String(VIEW || ''))); }catch(_){}
   }
-  const INSTANCE_VIEWS = new Set(['ai', 'translate', 'markets', 'news', 'torrents', 'media-center',
+  const INSTANCE_VIEWS = new Set(['ai', 'tg', 'translate', 'markets', 'news', 'torrents', 'media-center',
                                   /* The multi-chain wallet is held BY the node: with no instance there is
                                      no seed, no balance lookup and nothing to show. */
                                   'exodus',
@@ -6307,7 +6307,7 @@
        Messages; it has its own row now, so the special case would light the wrong one. */
     $$('.nav-item[data-view]').forEach(b=> b.classList.toggle('active', b.dataset.view===v));
     _syncRightbar();
-    $('#view-title').textContent = { home:'Home', texts:'Texts', global:'Nostrverse', trending:'Trending', notifications:'Notifications', messages:'Messages', concord:'Communities', mail:'Email ✉️', drafts:'Drafts', bookmarks:'Bookmarks', analytics:'My Analytics 📈', articles:'Articles', markets:'Markets 📈', streams:'Streams', calls:'Calls 📞', pics:'Pics', torrents:'Torrents 🧲', 'media-center':'Media Center', repos:'Git 🌱', repo:'Repo', news:'News 🗞️', websearch:'Web Search 🔎', vms:'Virtual Machines 🖥️', code:'PosterChan Code 💻', calendar:'Calendar 📅', contacts:'Contacts 👥', notes:'Notes 📝', sync:'Folder Sync 🔄', vault:'Passwords 🔑', wallet:'Monero Wallet ɱ', exodus:'Wallet 💼', budget:'Budget 💰',calculator:'Calculator', stats:'Server Stats 📊', chess:'Chess ♟️', ttt:'Tic-Tac-Toe ⭕', hangman:'Hangman 🎯', connect4:'Connect Four 🔴', blackjack:'Blackjack 🃏', holdem:"Texas Hold'em 🃏", xdc:'Webxdc 🎮', meme:'Meme Builder 🎬', blossom:'Files', profile:'Profile', settings:'Settings', ai:'PosterChan AI', translate:'Live Translate 🌐', admin:'Admin', terminal:'Terminal', office:'PosterChan Office', signer:'Signer',
+    $('#view-title').textContent = { home:'Home', texts:'Texts', global:'Nostrverse', trending:'Trending', notifications:'Notifications', messages:'Messages', concord:'Communities', mail:'Email ✉️', drafts:'Drafts', bookmarks:'Bookmarks', analytics:'My Analytics 📈', articles:'Articles', markets:'Markets 📈', streams:'Streams', calls:'Calls 📞', pics:'Pics', torrents:'Torrents 🧲', 'media-center':'Media Center', repos:'Git 🌱', repo:'Repo', news:'News 🗞️', websearch:'Web Search 🔎', vms:'Virtual Machines 🖥️', code:'PosterChan Code 💻', calendar:'Calendar 📅', contacts:'Contacts 👥', notes:'Notes 📝', sync:'Folder Sync 🔄', vault:'Passwords 🔑', wallet:'Monero Wallet ɱ', exodus:'Wallet 💼', budget:'Budget 💰',calculator:'Calculator',tg:'Telegram', stats:'Server Stats 📊', chess:'Chess ♟️', ttt:'Tic-Tac-Toe ⭕', hangman:'Hangman 🎯', connect4:'Connect Four 🔴', blackjack:'Blackjack 🃏', holdem:"Texas Hold'em 🃏", xdc:'Webxdc 🎮', meme:'Meme Builder 🎬', blossom:'Files', profile:'Profile', settings:'Settings', ai:'PosterChan AI', translate:'Live Translate 🌐', admin:'Admin', terminal:'Terminal', office:'PosterChan Office', signer:'Signer',
       /* The desktop's own screens are routed by an internal id; the heading is what a person reads,
        * and "__ossettings" is not a word (it was, on every System Settings window). */
       __ossettings:'System Settings', __tasks:'Task Manager', __remote:'Remote Desktop',
@@ -6492,6 +6492,7 @@
     if(renderModuleView('analytics','user-analytics.js','PCUserAnalytics','render')) return;
     if(renderModuleView('budget','budget.js','PCBudget','render')) return;
     if(renderModuleView('calculator','calculator.js','PCCalc','render')) return;
+    if(renderModuleView('tg','telegram.js','PCTelegram','render')) return;
     if (VIEW==='notes'){
       if(window.PCNotes) return window.PCNotes.render();
       const f=$('#feed'); if(f) f.innerHTML='<div class="spinner"></div>';
@@ -10215,7 +10216,7 @@
     // and it was buried in Discover → Streams where nobody found it. Mirrors the desktop sidebar item.
     // Icons come from the shared sprite via ICO() — the same glyphs the desktop sidebar uses, so the
     // phone and desktop navs never drift apart (and they take the theme's colour, unlike emoji).
-    const items=[['concord','users','Communities'],['ai','ai','PosterChan AI'],['mail','mail','Email'],['websearch','search','Web Search'],['terminal','terminal','Terminal'],['vms','monitor','Virtual Machines'],['calendar','clock','Calendar'],['contacts','user','Contacts'],['calls','phone','Calls'],['__remote','monitor','Remote Desktop'],['__golive','live','Go Live'],['translate','translate','Live Translate'],['notes','note','Notes'],['calculator','calc','Calculator'],['texts','chat','Texts'],['__music','music','Music'],['wallet','coin','Monero Wallet'],['vault','key','Passwords'],['drafts','draft','Drafts'],['meme','tv','Meme Builder'],['repos','git','Git'],['media-center','tv','Media Center'],['bookmarks','bookmark','Bookmarks'],['analytics','chart','My Analytics'],['__discover','compass','Discover'],['__games','gamepad','Games'],['__files','folder','Files'],['profile','user','Profile'],['__bug','bug','Report a Bug'],['__accounts','user','Switch account'],['signer','key','Signer'],['settings','gear','Settings'],
+    const items=[['concord','users','Communities'],['ai','ai','PosterChan AI'],['mail','mail','Email'],['websearch','search','Web Search'],['terminal','terminal','Terminal'],['vms','monitor','Virtual Machines'],['calendar','clock','Calendar'],['contacts','user','Contacts'],['calls','phone','Calls'],['__remote','monitor','Remote Desktop'],['__golive','live','Go Live'],['translate','translate','Live Translate'],['notes','note','Notes'],['calculator','calc','Calculator'],['tg','send','Telegram'],['texts','chat','Texts'],['__music','music','Music'],['wallet','coin','Monero Wallet'],['vault','key','Passwords'],['drafts','draft','Drafts'],['meme','tv','Meme Builder'],['repos','git','Git'],['media-center','tv','Media Center'],['bookmarks','bookmark','Bookmarks'],['analytics','chart','My Analytics'],['__discover','compass','Discover'],['__games','gamepad','Games'],['__files','folder','Files'],['profile','user','Profile'],['__bug','bug','Report a Bug'],['__accounts','user','Switch account'],['signer','key','Signer'],['settings','gear','Settings'],
       // Same button, same rule as the sidebar's: a guest is offered a way IN, not a second way out.
       (GUEST ? ['__login','user','Log in'] : ['logout','logout','Logout'])]
       .filter(([v])=> !(window.PC_NOSTR_ONLY && v==='translate') && !(window.PC_NOSTR_ONLY && v==='ai')

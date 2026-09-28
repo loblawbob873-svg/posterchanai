@@ -409,7 +409,7 @@ PC_DRACUT_OMIT_NOUVEAU='omit_drivers+=" nouveau "'
 PC_LIVE_GPU_CMDLINE='module_blacklist=nouveau nvidia_drm.modeset=1'
 PC_LIVE_NOUVEAU_CMDLINE='module_blacklist=nvidia,nvidia_drm,nvidia_modeset,nvidia_uvm pc.gpu=nouveau'
 PC_LIVE_SOFTWARE_CMDLINE="$PC_LIVE_GPU_CMDLINE pc.gpu=software"
-MASKED_PACKAGES+=(www-apps/jellyfin-bin app-admin/vaultwarden dev-util/nvidia-cuda-toolkit www-apps/radicale www-apps/vaultwarden-web www-apps/radicale net-misc/owncloud-client net-libs/libre-graph-api-cpp-qt-client media-video/obs-studio net-misc/sunshine dev-util/sh net-misc/moonlight app-admin/bitwarden-desktop-bin net-im/element-desktop-bin net-misc/nyx net-libs/stem sys-libs/libudev-compat dev-libs/nss dev-libs/libappindicator media-video/ffmpeg games-util/game-device-udev-rules games-util/steam-launcher net-im/telegram-desktop-bin)
+MASKED_PACKAGES+=(www-apps/jellyfin-bin app-admin/vaultwarden dev-util/nvidia-cuda-toolkit www-apps/radicale www-apps/vaultwarden-web www-apps/radicale net-misc/owncloud-client net-libs/libre-graph-api-cpp-qt-client media-video/obs-studio net-misc/sunshine dev-util/sh net-misc/moonlight app-admin/bitwarden-desktop-bin net-im/element-desktop-bin net-misc/nyx net-libs/stem sys-libs/libudev-compat dev-libs/nss dev-libs/libappindicator media-video/ffmpeg games-util/game-device-udev-rules games-util/steam-launcher)
 MASKED_PACKAGES+=(=gui-wm/gamescope-3.16.25-r1)
 
 fixSound() {

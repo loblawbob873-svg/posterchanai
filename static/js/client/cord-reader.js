@@ -9377,6 +9377,7 @@ var PosterCordReader = (() => {
     createPlaneAuth: () => createPlaneAuth,
     createWebxdcWrap: () => createWebxdcWrap,
     createMetadataWrap: () => createMetadataWrap,
+    createGuestbookWrap: () => createGuestbookWrap,
     createInviteRegistryWrap: () => createInviteRegistryWrap,
     createChannelWrap: () => createChannelWrap,
     createPrivateChannelPlan: () => createPrivateChannelPlan,
@@ -27230,6 +27231,23 @@ Set the \`cycles\` parameter to \`"ref"\` to resolve cyclical schemas with defs.
     return plan.next;
   }
 
+  /* CORD-02 §5 GUESTBOOK WRITER: a member's own Join or Leave (kind 3306, the content IS the verb),
+   * sealed ENCRYPTED (20013) and wrapped at the CURRENT epoch's guestbook key. We only ever READ these,
+   * so our members were invisible in Armada/Vector member lists until they posted, and somebody who
+   * left from this client stayed "observably present" to everybody else. A Join may carry the invite
+   * attribution CORD-05 asks it to echo: ["invite", <creator hex>, <label>]. */
+  async function createGuestbookWrap(bundle, verb, pubkey, signEvent, invite) {
+    if (verb !== "join" && verb !== "leave") throw new Error("guestbook verb must be join or leave");
+    if (!/^[0-9a-f]{64}$/.test(pubkey || "")) throw new Error("invalid member pubkey");
+    const guest = guestbookGroups(bundle)[0];
+    if (!guest) throw new Error("no guestbook key is held for this community");
+    const tags = [];
+    if (verb === "join" && invite && /^[0-9a-f]{64}$/.test(invite.creator || ""))
+      tags.push(["invite", invite.creator, String(invite.label || "").slice(0, 256)]);
+    const rumor = buildRumor({ kind: 3306, pubkey, content: verb, ms: Date.now(), tags });
+    const seal = await sealRumor(rumor, KIND_SEAL_ENCRYPTED, guest, { signEvent });
+    return { rumorId: rumor.id, wrap: wrapSeal(seal, guest), epoch: guest.epoch };
+  }
   function dissolutionGroup(bundle) {
     const community=runtime(bundle);return groupKeyCached('concord/dissolved',community.id,ZERO32);
   }

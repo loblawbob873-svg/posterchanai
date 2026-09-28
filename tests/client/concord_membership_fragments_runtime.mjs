@@ -4,6 +4,9 @@ import assert from 'node:assert/strict';
 import {makeRealm,loadInto,into} from '../../botframework/cord_realm.mjs';
 const root=new URL('../../',import.meta.url),source=fs.readFileSync(new URL('static/js/client/concord.js',root),'utf8');
 const ctx=makeRealm(),copy=into(ctx);loadInto(ctx,new URL('static/vendor/nostr/nostr.bundle.js',root));
+// Leaving now publishes a guestbook Leave first (CORD-02 §5); the writer itself is covered by
+// concord_guestbook_writer_runtime.mjs, so here it is a recorded no-op.
+ctx.__guestbook=[];ctx.publishGuestbook=async(p,room,verb)=>{ctx.__guestbook.push(verb);return false;};
 const NT=ctx.NostrTools,sk=NT.generateSecretKey(),owner=NT.getPublicKey(sk),key=NT.nip44.v2.utils.getConversationKey(sk,owner);
 const hex=n=>n.toString(16).padStart(64,'0'),b64=h=>Buffer.from(h,'hex').toString('base64url');
 let viewer=owner,relay=[],published=[],stale=false,signHook=null;

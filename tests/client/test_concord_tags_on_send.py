@@ -12,8 +12,9 @@ Two halves, because the composer has two ways to mean a person:
 
   * `typedMentionRecipients` resolves @handles in the TEXT against the room's participants, so a
     name typed by hand tags too. Driven here against the shipped function.
-  * the send handler pushes ['P',pk] and ['p',pk] for every resolved person — the uppercase for
-    CORD's own addressing and the lowercase so ordinary Nostr clients see the mention. Asserted at
+  * the send handler pushes ['p',pk] for every resolved person. (It also pushed ['P',pk], on the
+    belief that uppercase was CORD's mention addressing; CORD-03 §3 reserves uppercase K/E/P for the
+    THREAD ROOT, so a mention there made the root author ambiguous — 2026-09-28 CORD review.) Asserted at
     the source, because the handler is an inline onclick with no seam to call.
 """
 import json
@@ -74,7 +75,7 @@ class TheSendPathCarriesTheTags(unittest.TestCase):
 
     def test_both_tag_forms_are_pushed(self):
         send = self._send()
-        self.assertIn("mentionTags.push(['P',pk],['p',pk])", send,
+        self.assertIn("mentionTags.push(['p',pk])", send,
                       "the composer stopped tagging mentioned people")
 
     def test_autocompleted_and_typed_mentions_both_count(self):

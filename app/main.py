@@ -221,6 +221,8 @@ templates = Jinja2Templates(directory=templates_path)
 # chat.router has /api/files/{username}/{conversation_id}/{filename} which could match
 # files.router has /api/files/view/{file_path:path} which should take precedence for /view/ paths
 app.include_router(auth.router)
+from app.routers import telegram_client as _tgc_router
+app.include_router(_tgc_router.router)   # the Telegram client (sign in once, every window/tablet)
 app.include_router(push.router)   # PWA Web Push (VAPID subscribe + delivery)
 app.include_router(files.router)  # Register files router first to avoid conflicts
 app.include_router(chat.router)

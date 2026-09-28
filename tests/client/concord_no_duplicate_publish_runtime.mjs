@@ -21,6 +21,9 @@ const slice=(from,to)=>{const a=source.indexOf(from),b=source.indexOf(to,a+1);as
 // ---------------------------------------------------------------- 1. membership vault
 {
   const ctx=makeRealm(),copy=into(ctx);loadInto(ctx,new URL('static/vendor/nostr/nostr.bundle.js',root));
+// Leaving now publishes a guestbook Leave first (CORD-02 §5); the writer itself is covered by
+// concord_guestbook_writer_runtime.mjs, so here it is a recorded no-op.
+ctx.__guestbook=[];ctx.publishGuestbook=async(p,room,verb)=>{ctx.__guestbook.push(verb);return false;};
   const NT=ctx.NostrTools,sk=NT.generateSecretKey(),owner=NT.getPublicKey(sk),key=NT.nip44.v2.utils.getConversationKey(sk,owner);
   const hex=n=>n.toString(16).padStart(64,'0'),b64=h=>Buffer.from(h,'hex').toString('base64url');
   let relay=[],published=[];

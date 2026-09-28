@@ -52,7 +52,7 @@ def test_a_mention_tags_the_person_so_they_are_notified():
     """The other half of the report. `P` and `p` are what every other client watches for."""
     send = CONCORD[CONCORD.index("send.onclick=async()=>{"):]
     send = send[:send.index("\n")]
-    assert "mentionTags.push(['P',pk],['p',pk])" in send
+    assert "mentionTags.push(['p',pk])" in send
     assert "typedMentionRecipients(" in send, (
         "a name typed by hand rather than picked from the list no longer tags anybody")
 

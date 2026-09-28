@@ -32,8 +32,12 @@ class ThreadsBehave(unittest.TestCase):
         src = open(CONCORD, encoding="utf-8").read()
         send = src[src.index("send.onclick=async()=>{"):]
         send = send[:send.index("\n")]
-        self.assertIn("['K',String(target.kind||9)],['E',messageId(target),'',target.pubkey||'']", send)
-        self.assertIn("['k',String(target.kind||9)],['e',messageId(target),'',target.pubkey||'']", send)
+        self.assertIn("cordReplyTags(target,messageId(target)", send)
+        helper = src[src.index("function cordReplyTags("):]
+        helper = helper[:helper.index("\n  }\n")]
+        self.assertIn("['K',String(target.kind||9)],['E',targetId,'',target.pubkey||'']", helper)
+        self.assertIn("['k',String(target.kind||9)],['e',targetId,'',target.pubkey||'']", helper)
+        # (tests/client/concord_guestbook_writer_runtime.mjs RUNS the helper against CORD-03 §3.)
         self.assertIn("wireKind=target?1111:9", send)
 
     def test_opening_a_thread_targets_it_for_the_next_reply(self):

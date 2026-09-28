@@ -177,8 +177,11 @@ def test_thread_replies_tag_every_participant_once_but_never_the_sender():
     assert 'rootId(node)!==root' in block
     assert 'node.pubkey!==viewerPubkey' in block
     assert 'people.add(node.pubkey)' in block
-    assert "replyTags.push(['P',pk],['p',pk])" in CONCORD
-    assert "filter(t=>['K','E'].includes(t[0]))" in CONCORD
+    # Participants are notified in lowercase `p`, once, never the sender; uppercase K/E/P are the
+    # thread root inherited verbatim (CORD-03 §3). Behaviour: concord_guestbook_writer_runtime.mjs.
+    assert "cordReplyTags(target,messageId(target),threadParticipants(m,target,viewer.pubkey),viewer.pubkey)" in CONCORD
+    assert "filter(t=>['K','E','P'].includes(t[0]))" in CONCORD
+    assert "pk!==self" in CONCORD
 
 
 def test_starred_channels_have_a_distinct_nonduplicated_section():
@@ -527,7 +530,7 @@ def test_concord_standard_controls_are_wired_not_decorative():
     assert "(t[0]==='p'||t[0]==='P')&&String(t[1]||'')===viewer.pubkey" in CONCORD, (
         "a p/P tag no longer decides whether a message mentions you")
     assert "mentionRecipients.set(handle.toLowerCase(),choice.pk)" in CONCORD
-    assert "mentionTags.push(['P',pk],['p',pk])" in CONCORD
+    assert "mentionTags.push(['p',pk])" in CONCORD
     # The text half of the same rule: a client that writes only the handle (no p tag) must still
     # register as a mention. Same move as above — it now lives in messageMentionsViewer.
     assert "textMentionsViewer(String(m.text||''),viewerHandles(viewer,me))" in CONCORD
@@ -640,7 +643,7 @@ def test_concord_messages_support_persisted_replies_and_reactions():
     assert 'function messageId(m)' in CONCORD
     assert 'data-cc-reply=' in CONCORD
     assert 'wireKind=target?1111:9' in CONCORD
-    assert "['E',messageId(target)" in CONCORD
+    assert "['E',targetId" in CONCORD
     assert 'data-cc-react=' in CONCORD
     assert 'data-cc-react-toggle=' in CONCORD
     assert 'saveTestMessages(storeId,m)' in CONCORD

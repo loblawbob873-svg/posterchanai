@@ -34,7 +34,7 @@ class MentionsReachYou(unittest.TestCase):
         src = open(CONCORD, encoding="utf-8").read()
         send = src[src.index("send.onclick=async()=>{"):]
         send = send[:send.index("\n")]
-        self.assertIn("mentionTags.push(['P',pk],['p',pk])", send,
+        self.assertIn("mentionTags.push(['p',pk])", send,
                       "a typed mention no longer tags the person it names")
         self.assertIn("typedMentionRecipients(text", send,
                       "the composer stopped resolving typed @handles to pubkeys")

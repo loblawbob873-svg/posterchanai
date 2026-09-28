@@ -305,6 +305,8 @@
             {% if not nostr_only %}<button class="nav-item" data-view="translate"><svg class="ic"><use href="#i-translate"></use></svg><span>Live Translate</span></button>{% endif %}
             <button class="nav-item" data-view="notes"><svg class="ic"><use href="#i-note"></use></svg><span>Notes</span></button>
             <button class="nav-item" data-view="calculator"><svg class="ic"><use href="#i-calc"></use></svg><span>Calculator</span></button>
+            <!-- Telegram (client/telegram.js): computers and tablets only -- phones already run Telegram. -->
+            <button class="nav-item nav-tg" data-view="tg"><svg class="ic"><use href="#i-send"></use></svg><span>Telegram</span></button>
             <!-- The phone's text messages, archived encrypted so they can be read and answered from
                  any device. Not gated on an instance: it is relay-only, like Notes. -->
             <button class="nav-item" data-view="texts"><svg class="ic"><use href="#i-chat"></use></svg><span>Texts</span></button>
@@ -492,6 +494,7 @@
 <script src="/static/js/client/os.js?v={{ ver }}"></script>
 <script src="/static/js/client/budget.js?v={{ ver }}"></script>
 <script src="/static/js/client/calculator.js?v={{ ver }}"></script>
+<script src="/static/js/client/telegram.js?v={{ ver }}"></script>
 <script src="/static/js/client/joplin.js?v={{ ver }}"></script>
 <!-- webxdc mini apps: zip.js reads the .xdc, webxdc.js runs it in the sandbox origin. Loaded before
      app.js needs them only in the sense that noteCard calls PCWebxdc lazily — both guard for absence. -->
