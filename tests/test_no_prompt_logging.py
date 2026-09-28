@@ -30,6 +30,8 @@ CONTENT = (
     "prompt", "prompt_text", "clean_prompt", "system_prompt", "custom_system_prompt",
     "user_message", "user_content", "content_preview", "ocr_text", "reply_text",
     "source_text", "translate_messages", "query", "user_prompt", "message_text",
+    # Texts ✨ (texts_ai_service): the SMS thread sent to the model and the reply it drafted.
+    "draft", "context_lines", "sms_text",
 )
 
 # A log/print call, and an interpolation of one of those names anywhere in it. `{prompt}`,

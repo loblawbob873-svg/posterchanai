@@ -1174,7 +1174,7 @@
         // notification recipient. An old decrypt may finish later but cannot commit this epoch.
         S.msgs.clear(); S.threads = []; S.open = ''; S.q = '';
         for(const draft of Object.values(S.draft)) if(draft.previewUrl) URL.revokeObjectURL(draft.previewUrl);
-        S.draft = Object.create(null); S.scroll = Object.create(null); S.sending = new Set();
+        S.draft = Object.create(null); S.scroll = Object.create(null); S.sending = new Set(); S.aiBusy = new Set();
         S.ready = false; S.loading = false; S.localRead = false; S.lastRead = null;
         S.mmsRefused = false; S.mmsCapped = false; S.mmsAudited = false;
         S.error = ''; S.emptyWhy = ''; S.historyIncomplete=false; S.archive = {running:false,published:0,error:'',attempted:false,refused:0};
@@ -3992,6 +3992,129 @@
         c.who.length > 1 ? `<b>${c.who.length}</b>` : ''}</span>`).join('') + '</span>';
   }
 
+  /* ✨ A SUGGESTED REPLY TO THE LAST MESSAGE.
+   *
+   * The node's OWN model (POST /api/texts/ai-reply — the same CommandService chat path as Mail's
+   * "AI reply") drafts one text and it lands IN THE COMPOSER, unsent and editable. Nothing here
+   * sends: the person reads it, edits it and presses Send themselves, exactly as with a draft they
+   * typed.
+   *
+   * WHAT LEAVES THE DEVICE IS THE TAIL OF THE CONVERSATION AND NOTHING ELSE: at most AI_CONTEXT
+   * messages, each labelled me/them. No number, no contact name, no dates.
+   *
+   * SHOWN ONLY WHERE IT CAN WORK. Hidden on a Nostr-only node and in a bundle with no instance (the
+   * same two conditions that hide every other server-backed surface), and hidden until the server
+   * has said this account may use AI at all — the probe asks the endpoint itself, so the answer is
+   * nip05_access's predicate and not a client-side guess about `can_ai`. A button that could only
+   * ever answer "AI access not enabled" is the thing Web Search learned not to draw.
+   *
+   * BUSY IS KEYED ON THE CONVERSATION and held on module state, like S.sending: paint() rebuilds the
+   * composer on every incoming message, and a latch that lived in the render would let a second tap
+   * start a second request the moment anything arrived. */
+  const AI_CONTEXT = 10;
+  let _aiReply = null, _aiReplyFor = '', _aiProbe = null, _aiProbeAt = 0;
+  function aiReplyBlocked(){
+    return !!window.PC_NOSTR_ONLY || !!(PC && PC.standalone && PC.standalone());
+  }
+  function aiReplyShown(){
+    return !aiReplyBlocked() && _aiReply === true && _aiReplyFor === (ME().pubkey || '');
+  }
+  function paintAiButton(){
+    const b = PC && PC.$ ? PC.$('#sms-ai') : null;
+    if(!b) return;
+    b.hidden = !aiReplyShown();
+    const busy = !!(S.aiBusy && S.aiBusy.has(S.open));
+    b.disabled = busy;
+    b.classList.toggle('busy', busy);
+    b.setAttribute('aria-busy', busy ? 'true' : 'false');
+    b.title = busy ? 'Drafting a reply…' : 'Suggest a reply (AI)';
+  }
+  function aiReplyProbe(){
+    const who = ME().pubkey || '';
+    if(aiReplyBlocked() || !who){ _aiReply = false; _aiReplyFor = who; return Promise.resolve(false); }
+    if(_aiReplyFor === who && _aiReply !== null) return Promise.resolve(_aiReply);
+    // "Could not ask" is retried, but not on every repaint.
+    if(_aiProbe || (_aiReplyFor === who && Date.now() - _aiProbeAt < 30000)) return _aiProbe || Promise.resolve(null);
+    _aiProbeAt = Date.now();
+    _aiProbe = (async () => {
+      try{
+        await PC.ensureAiSession();
+        const r = await PC.authFetch('/api/texts/ai-reply', { method:'POST',
+          headers:{'Content-Type':'application/json'}, body: JSON.stringify({probe:true}) });
+        let j = null; try{ j = await r.json(); }catch(_){ }
+        if((ME().pubkey || '') !== who) return null;          // the account changed under us
+        if(r.ok && j && typeof j.allowed === 'boolean'){ _aiReply = j.allowed; _aiReplyFor = who; }
+        else if(r.status === 401 || r.status === 403){ _aiReply = false; _aiReplyFor = who; }
+        else _aiReplyFor = who;                                 // unknown: stays hidden, asked again later
+      }catch(_){ _aiReplyFor = who; }
+      finally{ _aiProbe = null; }
+      paintAiButton();
+      return _aiReply;
+    })();
+    return _aiProbe;
+  }
+  /* The bounded tail of a conversation, oldest first: {me, text}. Reactions are not turns of the
+     conversation (they are drawn as chips), and a picture with no caption is still something the
+     other person SAID, so it is named rather than dropped. */
+  function aiContext(t){
+    const rx = reactionsFor(t);
+    const out = [];
+    for(const m of (t && t.msgs) || []){
+      if(rx.consumed.has(String(m.doc || ''))) continue;
+      let text = String(m.body || '').trim();
+      if(!text && ((m.parts || []).length || mmsWithoutMedia(m))){
+        const video = (m.parts || []).some(p => /^video\//i.test(String(p.ct || p.type || '')));
+        text = video ? '[a video]' : '[a picture]';
+      }
+      if(text) out.push({ me: !m.incoming, text: text.slice(0, 1000) });
+    }
+    return out.slice(-AI_CONTEXT);
+  }
+  async function aiSuggest(threadKey){
+    S.aiBusy = S.aiBusy || new Set();
+    if(S.aiBusy.has(threadKey)) return;
+    const t = S.threads.find(x => x.key === threadKey);
+    if(!t) return;
+    const messages = aiContext(t);
+    if(!messages.length){ PC.toast('There is no message to reply to yet.'); return; }
+    const owner = ME().pubkey || '';
+    S.aiBusy.add(threadKey); paintAiButton();
+    try{
+      try{ await PC.ensureAiSession(); }
+      catch(_){ PC.toast('Sign in to PosterChan to use AI replies.'); return; }
+      let r = null, j = null;
+      try{
+        r = await PC.authFetch('/api/texts/ai-reply', { method:'POST',
+          headers:{'Content-Type':'application/json'}, body: JSON.stringify({messages}) });
+        try{ j = await r.json(); }catch(_){ }
+      }catch(_){ PC.toast('Could not reach the server for a suggested reply.'); return; }
+      if((ME().pubkey || '') !== owner) return;                // another account now owns this screen
+      const text = j && j.ok && typeof j.content === 'string' ? j.content.trim() : '';
+      if(!r.ok || !text){
+        if(r.status === 401 || r.status === 403){ _aiReply = false; _aiReplyFor = owner; }
+        PC.toast((j && (j.error || j.detail)) || 'The AI could not draft a reply — try again.');
+        return;
+      }
+      /* Never silently overwrite something the person typed while waiting. */
+      const typed = String(draftFor(threadKey).text || '').trim();
+      if(typed && typed !== text){
+        const ok = PC.uiConfirm ? await PC.uiConfirm('Replace what you typed with the suggested reply?',
+                                                     {ok:'Replace'}) : false;
+        if(!ok) return;
+      }
+      setDraft(threadKey, {text});
+      const input = PC.$('#sms-in');
+      if(input && S.open === threadKey){
+        input.value = text;
+        try{ input.focus(); input.setSelectionRange(text.length, text.length); }catch(_){ }
+      }
+      PC.toast('Suggested reply ready — edit it, then send');
+    }finally{
+      S.aiBusy.delete(threadKey);
+      paintAiButton();
+    }
+  }
+
   function paintThread(feed, enc){
     /* A focus change, attachment draft, receipt, contact refresh, or relay event can repaint the
        whole thread. Capture the OLD element before replacing it. Its data key is authoritative:
@@ -4080,6 +4203,7 @@
           <input id="sms-camera" type="file" accept="image/*" capture="environment" hidden>
           <button class="btn small" id="sms-emoji" title="Add emoji" aria-label="Add emoji">${ICO('smile','b-ic')}</button>
           ${(PC.gifEnabled && PC.gifEnabled())?`<button class="btn small" id="sms-gif" title="Add GIF" aria-label="Add GIF">${ICO('film','b-ic')}</button>`:''}
+          <button class="btn small sms-ai${S.aiBusy&&S.aiBusy.has(t.key)?' busy':''}" id="sms-ai" type="button" title="Suggest a reply (AI)" aria-label="Suggest a reply with AI"${aiReplyShown()?'':' hidden'}${S.aiBusy&&S.aiBusy.has(t.key)?' disabled aria-busy="true"':''}>✨</button>
           <input class="input" id="sms-in" placeholder="Text message" value="${enc(draft.text)}">
           <button class="btn btn-neon" id="sms-send">${ICO('send','b-ic')}Send</button>
         </div>
@@ -4111,6 +4235,12 @@
     }, {unicodeOnly:true});
     const gifBtn = PC.$('#sms-gif');
     if(gifBtn) gifBtn.onclick = () => { if(PC.gifPicker) PC.gifPicker(input); };
+    const aiBtn = PC.$('#sms-ai');
+    if(aiBtn){
+      const aiKey = t.key;
+      aiBtn.onclick = () => { aiSuggest(aiKey); };
+      if(_aiReply === null || _aiReplyFor !== (ME().pubkey || '')) aiReplyProbe();
+    }
     const pick = PC.$('#sms-file'), camera = PC.$('#sms-camera'), attachBtn = PC.$('#sms-attach');
     const attachmentOwner = ME() && ME().pubkey, attachmentEpoch = _archiveEpoch;
     const ownsAttachment = () => attachmentOwner === (ME() && ME().pubkey) && attachmentEpoch === _archiveEpoch;
@@ -4682,6 +4812,11 @@
                    // thread labels from the same messages; no relay or phone read is necessary.
                    refreshNames: () => { rebuild(); if(textsOnScreen()) paint(); },
                    _state: () => S, _key: key, _outboxId: outboxId, _docId: docIdFor,
+                   // ✨ suggested reply: the bounded context builder and the probe's state, for
+                   // tests/client/test_sms_ai_reply_full_app.py.
+                   _aiContext: aiContext,
+                   _ai: () => ({ reply:_aiReply, for:_aiReplyFor, probing:!!_aiProbe }),
+                   _aiReset: () => { _aiReply = null; _aiReplyFor = ''; _aiProbe = null; _aiProbeAt = 0; },
                    // Pure scroll primitives let the window-lifecycle suite exercise actual state
                    // transitions without replacing this implementation with a test-only copy.
                    _scrollState: scrollState, _putScroll: putScroll,

@@ -10114,6 +10114,12 @@ audio.sms-att-img{min-width:220px}
 /* The paperclip/emoji buttons were 32px against a 41px Send and a 45px input: a ragged row, and a
    touch target under 40px on a phone. Stretch them to the row. */
 .sms-compose{align-items:stretch}.sms-compose .input{margin:0}.sms-compose>.btn.small{min-width:40px;min-height:40px;padding-inline:10px}
+/* ✨ Suggest a reply (sms.js aiSuggest). `.btn` sets a display, which beats the [hidden] attribute. */
+.sms-compose>.sms-ai[hidden]{display:none}
+.sms-compose>.sms-ai{font-size:16px;line-height:1}
+.sms-compose>.sms-ai.busy{opacity:.6;cursor:progress;animation:smsAiPulse 1s ease-in-out infinite}
+@keyframes smsAiPulse{50%{opacity:.25}}
+@media(max-width:420px){.sms-compose{gap:6px}.sms-compose>.btn.small{padding-inline:8px}}
 /* Add an attachment: one full-width row per source (see sms.js attachBtn). */
 .sms-attach-sources{display:grid;gap:8px}
 .sms-src{display:flex;align-items:center;gap:14px;width:100%;min-height:60px;padding:10px 14px;text-align:start;font:inherit;color:var(--text);background:var(--panel2);border:1px solid var(--line);border-radius:12px;cursor:pointer}

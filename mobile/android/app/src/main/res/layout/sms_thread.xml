@@ -156,6 +156,18 @@
             android:contentDescription="@string/sms_add_emoji"
             android:src="@drawable/ic_pc_smile" />
 
+        <!-- Suggest a reply (SmsAiReply): the sprite's sparkle (#i-ai), the web client's ✨. GONE
+             until the node has said this account may use AI: a button that can only ever answer
+             "not available" is not offered. -->
+        <ImageView
+            android:id="@+id/pc_th_ai"
+            android:layout_width="44dp"
+            android:layout_height="44dp"
+            android:padding="11dp"
+            android:contentDescription="@string/sms_ai_reply"
+            android:src="@drawable/ic_pc_ai"
+            android:visibility="gone" />
+
         <place.poster.app.sms.SmsComposeInput
             android:id="@+id/pc_th_input"
             android:layout_width="0dp"

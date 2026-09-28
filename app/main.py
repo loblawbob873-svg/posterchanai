@@ -31,6 +31,7 @@ from app.routers import office as office_router  # built-in CODE + WOPI document
 from app.routers import sharelink as sharelink_router   # /f/<sha> — a shared encrypted file, decrypted in the recipient's browser
 from app.routers import admin_emoji
 from app.routers import git as git_router
+from app.routers import texts as texts_router   # /api/texts/* (Texts ✨ suggested reply)
 from app.routers.telegram import router as telegram_router
 from app.routers.social_login import router as social_login_router
 from app.routers.nostr import router as nostr_router
@@ -273,6 +274,7 @@ try:
 except Exception as _card_err:
     logging.getLogger(__name__).warning("[carddav] contacts API not mounted: %s", _card_err)
 app.include_router(mail.router)
+app.include_router(texts_router.router)  # /api/texts/ai-reply (web session or a signed native request)
 app.include_router(torrent.router)
 app.include_router(rss.router)
 app.include_router(markets.router)

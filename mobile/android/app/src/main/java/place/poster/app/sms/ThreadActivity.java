@@ -38,6 +38,7 @@ import android.util.LruCache;
 
 import androidx.core.content.FileProvider;
 
+import place.poster.app.signer.Nostr;
 import place.poster.app.signer.SignerKey;
 import place.poster.app.signer.SignerRelayService;
 import place.poster.app.sync.SyncNet;
@@ -169,6 +170,10 @@ public class ThreadActivity extends PcActivity {
         findViewById(R.id.pc_th_emoji).setOnClickListener(new View.OnClickListener() {
             @Override public void onClick(View v) { pickEmoji(); }
         });
+        aiButton = (ImageView) findViewById(R.id.pc_th_ai);
+        aiButton.setOnClickListener(new View.OnClickListener() {
+            @Override public void onClick(View v) { suggestReply(); }
+        });
         findViewById(R.id.pc_th_call).setOnClickListener(new View.OnClickListener() {
             @Override public void onClick(View v) { call(); }
         });
@@ -250,6 +255,7 @@ public class ThreadActivity extends PcActivity {
     protected void onStart() {
         super.onStart();
         applySkin();
+        aiDecided = false;    // the account or its AI access may have changed while we were away
         reload();
         watcher = new ContentObserver(main) {
             @Override public void onChange(boolean self) { reload(); }
@@ -335,6 +341,7 @@ public class ThreadActivity extends PcActivity {
         icon(R.id.pc_th_send, R.drawable.ic_pc_send, pal.onAccent());
         icon(R.id.pc_th_attach, R.drawable.ic_pc_paperclip, pal.accent);
         icon(R.id.pc_th_emoji, R.drawable.ic_pc_smile, pal.accent);
+        icon(R.id.pc_th_ai, R.drawable.ic_pc_ai, pal.accent);
         findViewById(R.id.pc_th_send).setBackground(Skin.pill(this, pal, pal.accent, true));
         input.setTextColor(pal.text);
         input.setHintTextColor(pal.muted);
@@ -389,10 +396,109 @@ public class ThreadActivity extends PcActivity {
                         // bottom. Yanking somebody out of what they were reading because a message
                         // arrived is the thing every messaging app gets wrong once.
                         if (atEnd) list.setSelection(adapter.getCount() - 1);
+                        refreshAi();
                     }
                 });
             }
         }, "pc-sms-thread").start();
+    }
+
+    /* ✨ SUGGEST A REPLY — see SmsAiReply. The node's own model drafts one text from the tail of this
+     * conversation and it lands IN THE COMPOSER, unsent; the person edits it and presses Send.
+     *
+     * BUSY IS KEYED ON THE CONVERSATION AND OUTLIVES THIS SCREEN, like the web client's S.aiBusy: a
+     * rotation or a notification tap rebuilds the Activity while the request is still out, and a
+     * latch that lived on the instance would let a second tap start a second request. */
+    private static final java.util.Set<String> aiBusy =
+            java.util.Collections.synchronizedSet(new java.util.HashSet<String>());
+    private ImageView aiButton;
+    private boolean aiProbing, aiDecided;
+
+    /** Show the ✨ only with a server, a key to sign with, and the server's "yes" for that key. */
+    private void refreshAi() {
+        if (aiButton == null) return;
+        paintAiBusy();
+        /* reload() runs on every provider change; the keystore read and the probe need not. Once
+         * this screen has a definite answer it keeps it until the next onStart. */
+        if (aiProbing || aiDecided) return;
+        aiProbing = true;
+        new Thread(() -> {
+            final SyncStore store = new SyncStore(ThreadActivity.this);
+            final String api = store.apiBase();
+            final byte[] sec = api.isEmpty() ? null : SignerKey.load(ThreadActivity.this);
+            final String pub = sec == null ? "" : Nostr.hex(Nostr.pubkey(sec));
+            Boolean allowed = SmsAiReply.cached(pub);
+            if (allowed == null && sec != null) {
+                SmsAiReply.Result r = SmsAiReply.call(api, sec, null);
+                SmsAiReply.remember(pub, r.allowed);
+                allowed = r.allowed;
+            }
+            final boolean show = SmsAiReply.visible(api, sec != null, allowed);
+            // "Could not ask" (a dead radio) is not an answer: the next reload asks again.
+            final boolean decided = api.isEmpty() || sec == null || allowed != null;
+            main.post(() -> {
+                aiProbing = false;
+                aiDecided = decided;
+                if (aiButton != null) aiButton.setVisibility(show ? View.VISIBLE : View.GONE);
+            });
+        }, "pc-sms-ai-probe").start();
+    }
+
+    private void paintAiBusy() {
+        if (aiButton == null) return;
+        boolean busy = aiBusy.contains(address);
+        aiButton.setEnabled(!busy);
+        aiButton.setAlpha(busy ? 0.4f : 1f);
+        aiButton.setContentDescription(getString(busy ? R.string.sms_ai_busy : R.string.sms_ai_reply));
+    }
+
+    private void suggestReply() {
+        final String who = address;
+        if (who.isEmpty() || aiBusy.contains(who)) return;          // a second tap while busy: nothing
+        final List<java.util.Map<String, Object>> ctx = SmsAiReply.context(adapter.all());
+        if (ctx.isEmpty()) { say(getString(R.string.sms_ai_nothing)); return; }
+        aiBusy.add(who);
+        paintAiBusy();
+        new Thread(() -> {
+            // Off the main looper: SignerKey.load is a hardware-backed keystore decrypt.
+            final byte[] sec = SignerKey.load(ThreadActivity.this);
+            final SmsAiReply.Result r = SmsAiReply.call(new SyncStore(ThreadActivity.this).apiBase(), sec, ctx);
+            if (r.refused && sec != null) SmsAiReply.remember(Nostr.hex(Nostr.pubkey(sec)), Boolean.FALSE);
+            main.post(() -> {
+                aiBusy.remove(who);
+                paintAiBusy();
+                if (r.refused && aiButton != null) aiButton.setVisibility(View.GONE);
+                if (!r.ok) { say(r.error); return; }
+                if (!who.equals(address)) {
+                    // The screen moved to another conversation while the model worked. The draft
+                    // belongs to the one it was asked for, and only if nothing was typed there.
+                    if (MmsDraft.text(ThreadActivity.this, who).trim().isEmpty()) {
+                        MmsDraft.setText(ThreadActivity.this, who, r.text);
+                    }
+                    return;
+                }
+                String typed = input.getText().toString().trim();
+                if (!typed.isEmpty() && !typed.equals(r.text)) {
+                    new AlertDialog.Builder(ThreadActivity.this)
+                            .setMessage(R.string.sms_ai_replace)
+                            .setPositiveButton(R.string.sms_ai_replace_ok, (d, w) -> fillComposer(r.text))
+                            .setNegativeButton(android.R.string.cancel, null)
+                            .show();
+                    return;
+                }
+                fillComposer(r.text);
+            });
+        }, "pc-sms-ai-reply").start();
+    }
+
+    /** Into the composer, never onto the carrier: the person reads it, edits it and sends it. */
+    private void fillComposer(String text) {
+        input.setText(text);
+        input.setSelection(input.getText().length());
+        input.requestFocus();
+        MmsDraft.setText(this, address, text);
+        updateCount();
+        say(getString(R.string.sms_ai_ready));
     }
 
     private void updateCount() {
@@ -1248,6 +1354,8 @@ public class ThreadActivity extends PcActivity {
             history = value; rows = value.visible; notifyDataSetChanged();
         }
         SmsMsg at(int i) { return i >= 0 && i < rows.size() ? rows.get(i) : null; }
+        /** What is on screen, reactions already folded into chips — the ✨'s context. */
+        List<SmsMsg> all() { return new ArrayList<SmsMsg>(rows); }
 
         @Override public int getCount() { return rows.size(); }
         @Override public Object getItem(int i) { return at(i); }
