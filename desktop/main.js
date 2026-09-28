@@ -3763,11 +3763,30 @@ ipcMain.handle('pc:vm:pick-iso', async (e) => {
 /* SCREENSHOTS. See screenshot.js for why this is grim and not capturePage() or desktopCapturer.
  * `available` is asked separately so a tray can hide a button that could only ever fail. */
 ipcMain.handle('pc:shot:available', (e) => { fsGuard(e); return require('./screenshot.js').available(); });
+/* PRINT SCREEN'S PROMPT (osshell.js shotPrompt): the whole screen is captured to a private staging
+ * file BEFORE the prompt is drawn, and handed back with a small preview; Save moves it into
+ * ~/Pictures/Screenshots, Cancel or "Select region" deletes it. See screenshot.js commit/discard. */
+ipcMain.handle('pc:shot:stage', async (e) => {
+  fsGuard(e);
+  const r = await require('./screenshot.js').capture({ mode: 'screen', stage: true });
+  if (!r.ok) return r;
+  let preview = '';
+  try {
+    const { nativeImage } = require('electron');
+    const img = nativeImage.createFromPath(r.path);
+    if (!img.isEmpty()) preview = img.resize({ width: 640 }).toDataURL();
+  } catch (_) { }
+  return Object.assign({}, r, { preview });
+});
+ipcMain.handle('pc:shot:discard', (e, p) => { fsGuard(e); return require('./screenshot.js').discard(p); });
 ipcMain.handle('pc:shot:take', async (e, opts) => {
   fsGuard(e);
   const o = opts || {};
-  const r = await require('./screenshot.js').capture({ mode: String(o.mode || 'screen'),
-                                                       geometry: o.geometry });
+  /* `staged`: keep a picture the prompt already took (Save / Copy) instead of taking a new one --
+   * a second capture now would be a picture of the prompt closing. */
+  const r = o.staged ? require('./screenshot.js').commit(o.staged)
+                     : await require('./screenshot.js').capture({ mode: String(o.mode || 'screen'),
+                                                                  geometry: o.geometry });
   if (!r.ok || o.copy === false) return r;
   /* THE CLIPBOARD, WITH ELECTRON'S OWN API RATHER THAN `wl-copy`.
    *

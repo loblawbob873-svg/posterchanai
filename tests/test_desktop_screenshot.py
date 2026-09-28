@@ -182,3 +182,38 @@ class Screenshot(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+@unittest.skipIf(not NODE, "no node on this node")
+class PrintScreenStagesThenAsks(Screenshot):
+    """Print Screen now asks what to keep. The picture is taken FIRST (into a private staging folder),
+    so the prompt is never in it; only Save puts it in ~/Pictures/Screenshots; Cancel deletes it; and
+    commit/discard -- which take a path from the renderer -- refuse anything that is not a staged
+    shot."""
+
+    def test_stage_commit_discard(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            home, tmpd = os.path.join(tmp, "home"), os.path.join(tmp, "tmp")
+            os.makedirs(home); os.makedirs(tmpd)
+            secret = os.path.join(home, "secret.png")
+            with open(secret, "w") as fh:
+                fh.write("mine")
+            self.stub(tmp, "grim", 'for a; do last="$a"; done; printf "PNGDATA" > "$last"')
+            env = {"PATH": tmp + ":" + os.environ["PATH"], "HOME": home, "TMPDIR": tmpd}
+            out = self.run_js("""
+              const a = await S.capture({ mode:'screen', stage:true });
+              out.staged = a.ok && a.staged && a.path.startsWith(S.stageDir());
+              out.notInPictures = !require('fs').existsSync(require('path').join(S.shotDir()));
+              const kept = S.commit(a.path);
+              out.kept = kept.ok && kept.path.startsWith(S.shotDir()) && require('fs').readFileSync(kept.path,'utf8') === 'PNGDATA';
+              out.stagedGone = !require('fs').existsSync(a.path);
+              out.again = S.commit(a.path).ok;
+              const b = await S.capture({ mode:'screen', stage:true });
+              out.dropped = S.discard(b.path).ok && !require('fs').existsSync(b.path);
+              out.refuseHome = S.commit(%s).ok || S.discard(%s).ok;
+              out.refuseDotdot = S.discard(S.stageDir() + '/../' + require('path').basename(%s)).ok;
+              out.secretSafe = require('fs').readFileSync(%s,'utf8') === 'mine';
+            """ % ((json.dumps(secret),) * 4), env=env)
+        self.assertEqual(out, {"staged": True, "notInPictures": True, "kept": True, "stagedGone": True,
+                               "again": False, "dropped": True, "refuseHome": False,
+                               "refuseDotdot": False, "secretSafe": True}, out)

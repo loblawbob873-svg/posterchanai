@@ -589,6 +589,8 @@ if (isOurPage) {
   contextBridge.exposeInMainWorld('pcShot', {
     available: () => ipcRenderer.invoke('pc:shot:available'),
     take: (opts) => ipcRenderer.invoke('pc:shot:take', opts || {}),
+    stage: () => ipcRenderer.invoke('pc:shot:stage'),
+    discard: (p) => ipcRenderer.invoke('pc:shot:discard', String(p || '')),
   });
 
   contextBridge.exposeInMainWorld('pcTerm', {

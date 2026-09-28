@@ -4388,7 +4388,8 @@
    * nothing behind it — and a key that quietly throws is worse than one that is not bound. */
   function _shot(mode){
     try{
-      if(window.PCOSShell && PCOSShell.takeShot) PCOSShell.takeShot(mode);
+      if(window.PCOSShell && PCOSShell.shotPrompt) PCOSShell.shotPrompt(mode);
+      else if(window.PCOSShell && PCOSShell.takeShot) PCOSShell.takeShot(mode);
     }catch(_){ }
   }
 
@@ -11273,7 +11274,9 @@
    * owns the modes, the refusals and the toast, so the tray tile and this key cannot drift. */
   function shoot(mode){
     try{
-      if(window.PCOSShell && PCOSShell.takeShot) PCOSShell.takeShot(mode);
+      // The KEY asks what to keep (osshell.js shotPrompt); the tray tile already offers the modes.
+      if(window.PCOSShell && PCOSShell.shotPrompt) PCOSShell.shotPrompt(mode);
+      else if(window.PCOSShell && PCOSShell.takeShot) PCOSShell.takeShot(mode);
       else PC().toast('screenshots are not available here');
     }catch(_){ try{ PC().toast('screenshots are not available here'); }catch(__){} }
   }

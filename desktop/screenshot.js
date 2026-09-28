@@ -116,7 +116,7 @@ async function capture(opts) {
     if (!geometry) return { ok: false, why: 'that is not a screen area' };
   }
 
-  const dir = shotDir();
+  const dir = o.stage ? stageDir() : shotDir();
   const file = path.join(dir, shotName());
   try { fs.mkdirSync(dir, { recursive: true }); }
   catch (e) { return { ok: false, why: 'could not make ' + dir + ': ' + ((e && e.message) || e) }; }
@@ -159,7 +159,52 @@ async function capture(opts) {
    * clipboard, no subprocess, nothing to inherit. It also keeps this module free of an electron
    * import, which is what lets tests/test_desktop_screenshot.py run it under plain node.
    */
-  return { ok: true, path: file, bytes: size, copied: false, dir };
+  return { ok: true, path: file, bytes: size, copied: false, dir, staged: !!o.stage };
+}
+
+/* STAGING: PRINT SCREEN ASKS WHAT TO DO, AND THE PICTURE IS TAKEN BEFORE IT ASKS.
+ *
+ * The key now opens a prompt (Save to Pictures · Select region · Copy · Cancel). The capture has to
+ * happen FIRST -- a prompt drawn on screen and then photographed is a screenshot of the prompt --
+ * so the whole screen is written here, to a private staging folder, and only a Save moves it into
+ * ~/Pictures/Screenshots. Cancel (or a region instead) deletes it: nothing the person turned down
+ * is left lying in their Pictures.
+ *
+ * `commit` and `discard` take a path from the RENDERER, so each accepts only a file that is
+ * directly inside the staging folder under our own naming. Anything else -- `../`, a symlink out,
+ * somebody's document -- is refused, never moved or deleted. */
+function stageDir() {
+  return path.join(os.tmpdir(), 'posterchan-shots-' + (process.getuid ? process.getuid() : 'u'));
+}
+function _staged(p) {
+  const f = path.resolve(String(p || ''));
+  if (path.dirname(f) !== path.resolve(stageDir())) return null;
+  if (!/^PosterChan-\d{4}-\d{2}-\d{2}-\d{6}\.png$/.test(path.basename(f))) return null;
+  try { if (!fs.lstatSync(f).isFile()) return null; } catch (_) { return null; }
+  return f;
+}
+function commit(p) {
+  const f = _staged(p);
+  if (!f) return { ok: false, why: 'that screenshot is gone — take it again' };
+  const dir = shotDir();
+  try { fs.mkdirSync(dir, { recursive: true }); }
+  catch (e) { return { ok: false, why: 'could not make ' + dir + ': ' + ((e && e.message) || e) }; }
+  let dest = path.join(dir, path.basename(f));
+  for (let n = 2; fs.existsSync(dest); n++) dest = path.join(dir, path.basename(f, '.png') + '-' + n + '.png');
+  try { fs.renameSync(f, dest); }
+  catch (_) {
+    // A tmpfs /tmp and a disk /home are different filesystems: rename cannot cross them.
+    try { fs.copyFileSync(f, dest); fs.unlinkSync(f); }
+    catch (e) { return { ok: false, why: (e && e.message) || String(e) }; }
+  }
+  let size = 0; try { size = fs.statSync(dest).size; } catch (_) { size = 0; }
+  if (!size) return { ok: false, why: 'the screenshot came back empty' };
+  return { ok: true, path: dest, bytes: size, dir, copied: false };
+}
+function discard(p) {
+  const f = _staged(p);
+  if (!f) return { ok: false };
+  try { fs.unlinkSync(f); return { ok: true }; } catch (_) { return { ok: false }; }
 }
 
 /* IS THERE ACTUALLY AN IMAGE ON THE CLIPBOARD? Asked of a real Wayland client, because nothing
@@ -185,4 +230,4 @@ async function clipboardHasImage() {
   } catch (_) { return false; }
 }
 
-module.exports = { available, capture, clipboardHasImage, shotDir, shotName, parseGeometry, has };
+module.exports = { available, capture, commit, discard, stageDir, clipboardHasImage, shotDir, shotName, parseGeometry, has };

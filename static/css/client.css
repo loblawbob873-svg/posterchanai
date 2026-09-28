@@ -11306,3 +11306,33 @@ html.os-idle #os-root *{animation:none!important;transition:none!important}
 /* The album form's description is a line or two, not an essay: the global textarea minimum drew it
    ~220px tall on a phone and pushed Create below the fold with the keyboard up. */
 .alb-form textarea.alb-f-desc{min-height:0;height:96px;max-height:30vh;resize:vertical}
+
+/* ── Print Screen's prompt (osshell.js shotPrompt) — a capture HUD, not a form ───────────────────── */
+.modal.shot-modal{width:min(560px,calc(100vw - 24px));max-width:none;padding:0;overflow:hidden;
+  border:1px solid rgba(var(--accent-rgb),.65);border-radius:14px;
+  background:linear-gradient(160deg,color-mix(in srgb,var(--panel2) 92%,transparent),color-mix(in srgb,var(--bg) 96%,transparent));
+  box-shadow:0 0 0 1px rgba(var(--accent-rgb),.18),0 0 38px rgba(var(--accent-rgb),.28),0 24px 70px #000c}
+.shot-prompt{position:relative;padding:14px 16px 12px;display:flex;flex-direction:column;gap:12px}
+.shot-prompt::before{content:"";position:absolute;inset:0;pointer-events:none;opacity:.35;
+  background:repeating-linear-gradient(0deg,transparent 0 3px,rgba(var(--accent-rgb),.07) 3px 4px)}
+.shot-hd{display:flex;align-items:baseline;gap:10px;flex-wrap:wrap;font-family:var(--font-mono,ui-monospace,monospace);letter-spacing:.12em}
+.shot-hd b{color:var(--accent);text-shadow:0 0 12px rgba(var(--accent-rgb),.7);font-size:15px}
+.shot-glyph{color:#ff2b6d;text-shadow:0 0 10px #ff2b6d;animation:shotPulse 1.2s ease-in-out infinite}
+.shot-sub{color:var(--muted);font-size:11px;letter-spacing:.2em;text-transform:uppercase}
+@keyframes shotPulse{50%{opacity:.35}}
+.shot-prev{display:block;width:100%;max-height:40vh;object-fit:contain;border-radius:8px;
+  border:1px solid rgba(var(--accent-rgb),.4);background:#000;box-shadow:inset 0 0 20px #000}
+.shot-acts{display:grid;grid-template-columns:repeat(auto-fit,minmax(118px,1fr));gap:8px}
+.shot-btn{position:relative;display:flex;flex-direction:column;align-items:flex-start;gap:4px;min-height:52px;padding:9px 11px;
+  border:1px solid rgba(var(--accent-rgb),.38);border-radius:8px;background:rgba(var(--accent-rgb),.07);color:var(--text);
+  font:inherit;text-align:left;cursor:pointer;clip-path:polygon(0 0,calc(100% - 10px) 0,100% 10px,100% 100%,0 100%);
+  transition:background .12s,box-shadow .12s,border-color .12s}
+.shot-btn b{font-size:13px}
+.shot-btn kbd{font:600 10px var(--font-mono,ui-monospace,monospace);color:var(--muted);letter-spacing:.08em}
+.shot-btn:hover,.shot-btn:focus-visible{outline:none;border-color:var(--accent);background:rgba(var(--accent-rgb),.16);
+  box-shadow:0 0 14px rgba(var(--accent-rgb),.35)}
+.shot-btn.shot-save{border-color:var(--accent);background:rgba(var(--accent-rgb),.18)}
+.shot-btn.shot-save b{color:var(--accent)}
+.shot-btn.shot-cancel{border-color:rgba(255,43,109,.45);background:rgba(255,43,109,.06)}
+.shot-foot{font:11px var(--font-mono,ui-monospace,monospace);color:var(--muted);letter-spacing:.06em}
+@media (prefers-reduced-motion:reduce){.shot-glyph{animation:none}}

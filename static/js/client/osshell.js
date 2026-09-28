@@ -1410,6 +1410,72 @@
     return res;
   }
 
+  /* PRINT SCREEN ASKS. "When screenshot keys are pressed, prompt user with nice cyberpunk-style UI
+   * to save to Pictures or select region." The whole screen is captured FIRST, to a private staging
+   * file (desktop/screenshot.js), so the prompt is never in the picture; the prompt then shows it:
+   *   Save to Pictures (Enter) · Save & copy (C) · Select region (R) · Cancel (Esc).
+   * Only a save puts anything in ~/Pictures/Screenshots; Cancel and "Select region" delete the
+   * staged whole-screen shot, so nothing turned down is left behind. A helper too old to stage, or
+   * a machine with no dialog to draw, falls back to taking the shot directly -- a key that does
+   * nothing is the one outcome this feature must never have. */
+  let _shotPromptBusy = false;
+  async function shotPrompt(mode){
+    const sh = root.pcShot, P = APP();
+    if(!sh || typeof sh.stage !== 'function' || typeof P.modal !== 'function') return takeShot(mode);
+    if(_shotPromptBusy) return null;
+    _shotPromptBusy = true;
+    let st = null;
+    try{ st = await sh.stage(); }
+    catch(e){ _shotPromptBusy = false; toast(String((e && e.message) || e)); return null; }
+    if(!st || !st.ok){ _shotPromptBusy = false; toast((st && st.why) || 'the screenshot did not work'); return st; }
+    const can = _shotCan || await shotAvailable().catch(() => null) || { region: false };
+    const esc = (x) => String(x == null ? '' : x).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+    let settled = false;
+    const done = () => { settled = true; _shotPromptBusy = false; try{ P.closeModal(); }catch(_){ } };
+    const drop = () => { try{ const r = sh.discard(st.path); if(r && r.catch) r.catch(() => {}); }catch(_){ } };
+    return new Promise(resolve => {
+      P.modal(`<div class="shot-prompt" role="dialog" aria-label="Screenshot">
+        <div class="shot-hd"><span class="shot-glyph" aria-hidden="true">◉</span><b>SCREEN CAPTURED</b><span class="shot-sub">choose what to keep</span></div>
+        ${st.preview ? `<img class="shot-prev" src="${esc(st.preview)}" alt="The screenshot">` : ''}
+        <div class="shot-acts">
+          <button class="shot-btn shot-save" data-shot-act="save"><b>Save to Pictures</b><kbd>Enter</kbd></button>
+          <button class="shot-btn" data-shot-act="copy"><b>Save &amp; copy</b><kbd>C</kbd></button>
+          ${can.region ? `<button class="shot-btn" data-shot-act="region"><b>Select region</b><kbd>R</kbd></button>` : ''}
+          <button class="shot-btn shot-cancel" data-shot-act="cancel"><b>Cancel</b><kbd>Esc</kbd></button>
+        </div>
+        <div class="shot-foot">~/Pictures/Screenshots${can.region ? '' : ' · selecting a region needs slurp'}</div>
+      </div>`, box => {
+        box.classList.add('shot-modal');
+        const act = async (a) => {
+          if(settled) return;
+          if(a === 'cancel'){ drop(); done(); resolve({ cancelled: true }); return; }
+          if(a === 'region'){ drop(); done(); await new Promise(r => setTimeout(r, 180)); resolve(await takeShot('region')); return; }
+          done();
+          let res = null;
+          try{ res = await sh.take({ staged: st.path, copy: a === 'copy' }); }
+          catch(e){ toast(String((e && e.message) || e)); resolve(null); return; }
+          if(!res || !res.ok){ toast((res && res.why) || 'the screenshot did not save'); resolve(res); return; }
+          const m = /Screenshots\/[^/]+$/.exec(String(res.path || ''));
+          toast('Screenshot saved · ' + (m ? m[0] : res.path) + (res.copied ? ' · copied' : ''));
+          resolve(res);
+        };
+        box.querySelectorAll('[data-shot-act]').forEach(b => b.onclick = () => act(b.dataset.shotAct));
+        box.addEventListener('keydown', e => {
+          const k = e.key;
+          if(k === 'Escape'){ e.preventDefault(); e.stopPropagation(); act('cancel'); }
+          else if(k === 'Enter' && !(e.target && e.target.matches && e.target.matches('[data-shot-act]'))){ e.preventDefault(); act('save'); }
+          else if((k === 'r' || k === 'R') && can.region){ e.preventDefault(); act('region'); }
+          else if(k === 'c' || k === 'C'){ e.preventDefault(); act('copy'); }
+        }, true);
+        // Closed some other way (the backdrop, another sheet replacing it): nothing was chosen.
+        const bg = box.parentElement;
+        const watch = new MutationObserver(() => { if(!bg.isConnected){ watch.disconnect(); if(!settled){ settled = true; _shotPromptBusy = false; drop(); resolve({ cancelled: true }); } } });
+        try{ watch.observe(document.getElementById('modal-root') || document.body, { childList: true }); }catch(_){ }
+        setTimeout(() => { const b = box.querySelector('.shot-save'); if(b) b.focus(); }, 0);
+      });
+    });
+  }
+
   /* The screenshot tile OFFERS THE MODES rather than assuming one — but it offers them in the order
    * the keyboard does. Print picks a rectangle and Shift+Print takes the screen, so "Choose an
    * area" leads here too; a menu whose first row is the one the key does NOT do teaches the wrong
@@ -1605,7 +1671,7 @@
                 profileMenu, machineApps, mergedApps, allApps, wifiIcon, volIcon, batterySvg,
                 ensureAccount, provisioned, identity, activateAccount, logoutSession,
                 panelHTML, quickHTML, taskbarHTML, launcherHTML, render, watch,
-                takeShot, shotAvailable, closePop, openControl, openTrayPopup, wifiReason,
+                takeShot, shotPrompt, shotAvailable, closePop, openControl, openTrayPopup, wifiReason,
                 setViewOpener, refresh, paintTray, bindApps, bindPanel,
                 summary: () => _sum, rows: () => _rows, readAt: () => _readAt };
   root.PCOSShell = API;

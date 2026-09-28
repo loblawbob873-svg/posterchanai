@@ -20064,6 +20064,9 @@
   window.__PC = {
     // os.js: the desktop's compose window must not close while its reply is still being sent.
     publishesSettled,
+    // The one themed sheet. osshell.js draws Print Screen's prompt with it, so the desktop comes in
+    // front of the applications for it exactly as for any other sheet (os.js _sheetChanged).
+    modal, closeModal,
     attachUserAutocomplete,
     cordDirectContext, cordDirectModule, cordInviteLinksModule, sendCordDirectInvite,
     // Republish the encrypted libraries to the current relay pool (Settings → relays, and
