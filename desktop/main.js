@@ -758,6 +758,78 @@ function armHealthMarkerRetirement(target){
 }
 
 // ---- window ------------------------------------------------------------------------------------
+/* THE RIGHT-CLICK MENU, for EVERY PosterChan window -- the desktop surface AND each popped-out
+ * window (oswin.js). It used to be installed on the main window only, and on PosterChanOS Social,
+ * Notes, a reply or a new post are typed in a popped-out window: the misspelling was underlined in
+ * red and there was no menu to pick the right word from ("Need SpellCheck hints in Social, replies,
+ * new post, notes"). did-create-window installs the same menu on each child. */
+/* The dictionary: the OS locale, with en-US beside it -- set explicitly, because a session with no
+ * language set checks nothing on a machine whose locale has no downloadable dictionary (C/POSIX, a
+ * minimal install), and the red underline then never appears either. Once per session. */
+const _spellSessions = new WeakSet();
+function ensureSpellLanguages(ses) {
+  try {
+    if (!ses || _spellSessions.has(ses) || typeof ses.setSpellCheckerLanguages !== 'function') return;
+    _spellSessions.add(ses);
+    const avail = ses.availableSpellCheckerLanguages || [];
+    const loc = String((app && app.getLocale && app.getLocale()) || '');
+    const want = [...new Set([loc, loc.split('-')[0], 'en-US'])].filter(l => l && avail.includes(l));
+    if (want.length) ses.setSpellCheckerLanguages(want);
+  } catch (_) { }
+}
+function installContextMenu(created) {
+  ensureSpellLanguages(created.webContents.session);
+  created.webContents.on('context-menu', (_e, params) => {
+    const items = [];
+    if (params.misspelledWord) {
+      for (const s of params.dictionarySuggestions) {
+        items.push({ label: s, click: () => created.webContents.replaceMisspelling(s) });
+      }
+      if (!params.dictionarySuggestions.length) items.push({ label: 'No suggestions', enabled: false });
+      items.push({ type: 'separator' });
+      items.push({
+        label: 'Add to dictionary',
+        click: () => created.webContents.session.addWordToSpellCheckerDictionary(params.misspelledWord),
+      });
+      items.push({ type: 'separator' });
+    }
+    if (params.linkURL) {
+      items.push({ label: 'Open link in browser', click: () => shell.openExternal(params.linkURL) });
+      items.push({ label: 'Copy link address', click: async () => { try { await clipboard.writeText(params.linkURL); } catch (_) {} } });
+      items.push({ type: 'separator' });
+    }
+    /* AN IMAGE HAD NO ENTRIES AT ALL, so right-clicking one built a menu of cut/copy/paste with
+       every item DISABLED (an image is not editable and selects nothing). On Wayland a native menu
+       is its own window, so the whole interaction was "a window appears and the menu does nothing"
+       — reported exactly that way. `copyImageAt` is used rather than `clipboard.writeImage`,
+       because writeImage does not take the Wayland selection (the same reason the screenshot path
+       verifies with `wl-paste`), and because it copies the DECODED image Chromium already holds
+       instead of re-fetching a URL that may be an authenticated blob. */
+    if (params.mediaType === 'image' && params.srcURL) {
+      items.push({ label: 'Copy image', click: () => created.webContents.copyImageAt(params.x, params.y) });
+      items.push({ label: 'Save image…', click: () => created.webContents.downloadURL(params.srcURL) });
+      // A data: or blob: source is this page's own memory: there is no address another program
+      // could open, so offering one would put a string on the clipboard that resolves nowhere.
+      if (/^https?:/i.test(params.srcURL)) {
+        items.push({ label: 'Copy image address', click: async () => { try { await clipboard.writeText(params.srcURL); } catch (_) {} } });
+        items.push({ label: 'Open image in browser', click: () => shell.openExternal(params.srcURL) });
+      }
+      items.push({ type: 'separator' });
+    }
+    const canEdit = params.isEditable;
+    items.push({ role: 'cut', enabled: canEdit && params.editFlags.canCut });
+    items.push({ role: 'copy', enabled: params.editFlags.canCopy });
+    items.push({ role: 'paste', enabled: canEdit && params.editFlags.canPaste });
+    if (canEdit) items.push({ role: 'selectAll' });
+    /* NEVER POP AN ALL-DEAD MENU. On Wayland this is a real window appearing on screen, so a menu
+       in which nothing can be clicked is indistinguishable from a bug — which is how the missing
+       image case was reported. If every item is disabled, show nothing at all. */
+    const usable = items.some(i => i.type !== 'separator' && i.enabled !== false);
+    if (!usable) return;
+    Menu.buildFromTemplate(items).popup({ window: created });
+  });
+}
+
 function createWindow(assignment) {
   const primary = !assignment || assignment.primary !== false;
   const b = primary ? (cfg.bounds || {}) : (assignment.rect || {});
@@ -917,55 +989,7 @@ function createWindow(assignment) {
   // the red underline — there was no way to act on it, and no cut/copy/paste either. Chromium hands us the
   // suggestions in params.dictionarySuggestions; replaceMisspelling() applies one. Built per-event because
   // the suggestions differ for every word.
-  created.webContents.on('context-menu', (_e, params) => {
-    const items = [];
-    if (params.misspelledWord) {
-      for (const s of params.dictionarySuggestions) {
-        items.push({ label: s, click: () => created.webContents.replaceMisspelling(s) });
-      }
-      if (!params.dictionarySuggestions.length) items.push({ label: 'No suggestions', enabled: false });
-      items.push({ type: 'separator' });
-      items.push({
-        label: 'Add to dictionary',
-        click: () => created.webContents.session.addWordToSpellCheckerDictionary(params.misspelledWord),
-      });
-      items.push({ type: 'separator' });
-    }
-    if (params.linkURL) {
-      items.push({ label: 'Open link in browser', click: () => shell.openExternal(params.linkURL) });
-      items.push({ label: 'Copy link address', click: async () => { try { await clipboard.writeText(params.linkURL); } catch (_) {} } });
-      items.push({ type: 'separator' });
-    }
-    /* AN IMAGE HAD NO ENTRIES AT ALL, so right-clicking one built a menu of cut/copy/paste with
-       every item DISABLED (an image is not editable and selects nothing). On Wayland a native menu
-       is its own window, so the whole interaction was "a window appears and the menu does nothing"
-       — reported exactly that way. `copyImageAt` is used rather than `clipboard.writeImage`,
-       because writeImage does not take the Wayland selection (the same reason the screenshot path
-       verifies with `wl-paste`), and because it copies the DECODED image Chromium already holds
-       instead of re-fetching a URL that may be an authenticated blob. */
-    if (params.mediaType === 'image' && params.srcURL) {
-      items.push({ label: 'Copy image', click: () => created.webContents.copyImageAt(params.x, params.y) });
-      items.push({ label: 'Save image…', click: () => created.webContents.downloadURL(params.srcURL) });
-      // A data: or blob: source is this page's own memory: there is no address another program
-      // could open, so offering one would put a string on the clipboard that resolves nowhere.
-      if (/^https?:/i.test(params.srcURL)) {
-        items.push({ label: 'Copy image address', click: async () => { try { await clipboard.writeText(params.srcURL); } catch (_) {} } });
-        items.push({ label: 'Open image in browser', click: () => shell.openExternal(params.srcURL) });
-      }
-      items.push({ type: 'separator' });
-    }
-    const canEdit = params.isEditable;
-    items.push({ role: 'cut', enabled: canEdit && params.editFlags.canCut });
-    items.push({ role: 'copy', enabled: params.editFlags.canCopy });
-    items.push({ role: 'paste', enabled: canEdit && params.editFlags.canPaste });
-    if (canEdit) items.push({ role: 'selectAll' });
-    /* NEVER POP AN ALL-DEAD MENU. On Wayland this is a real window appearing on screen, so a menu
-       in which nothing can be clicked is indistinguishable from a bug — which is how the missing
-       image case was reported. If every item is disabled, show nothing at all. */
-    const usable = items.some(i => i.type !== 'separator' && i.enabled !== false);
-    if (!usable) return;
-    Menu.buildFromTemplate(items).popup({ window: created });
-  });
+  installContextMenu(created);
 
   // Ordinary links belong in the user's real browser. The only frameless children this shell owns
   // are explicit `pcwin` application surfaces; silently turning a same-origin target=_blank into a
@@ -975,6 +999,7 @@ function createWindow(assignment) {
   created.webContents.on('did-create-window', (child, details) => {
     const view = pcWindowView(details && details.url);
     if (!view) return;
+    installContextMenu(child);
     pcAppWindows.set(view, child);
     /* A managed PosterChan window is still a browser surface. Without its own open/navigation
      * policy, a link clicked from Social inside that window bypasses the desktop's handler and
@@ -1056,6 +1081,7 @@ function createWindow(assignment) {
          * exactly what "PosterChan Window — terminal" was photographed as. */
         webPreferences: {
           preload: path.join(__dirname, 'preload.js'), contextIsolation: true,
+          spellcheck: true,
           /* The same two arguments the desktop's own surfaces get. `--pc-preload-dir` is how the
            * preload finds its siblings; `--pc-secondary-surface` withholds folder-sync ownership,
            * which a WINDOW must never claim — it is a view onto the desktop's client, and a second

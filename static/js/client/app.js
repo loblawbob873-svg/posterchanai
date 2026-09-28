@@ -13367,7 +13367,7 @@
     // ONE place a live notification, DM or new email announces itself, so the two cannot disagree
     // about what arrived. onClick names where the card should GO — email belongs in Messages, not in
     // the Notifications view this used to send everything to.
-    const go = onClick || (() => switchView('notifications'));
+    const go = onClick || (() => { if(!_notifRouteViaDesktop('notifications')) switchView('notifications'); });
     try{ if(window.PCOS && PCOS.isOn() && PCOS.osToast){ PCOS.osToast(html, pic, go, notificationType); return; } }catch(_){}
     const t=document.createElement('div'); t.className='toast notif-toast';
     t.innerHTML=`<img src="${enc(pic||LOGO)}" onerror="this.src='${LOGO}'"><span>${html}</span>`;
@@ -15458,7 +15458,24 @@
   /* One place that raises an OS-level notification. Everything that wants one goes through here so
    * the permission check, the click-to-focus and the icon cannot drift between callers — clicking a
    * system notification that does nothing is worse than not having sent it. */
+  /* A NOTIFICATION OPENED FROM A POPPED-OUT WINDOW GOES TO THE DESKTOP.
+   *
+   * "Clicking on Toaster notification with the global window open turns that window into
+   * Notifications with no way to go back to Social." On PosterChanOS Social is its own window -- its
+   * own page -- and a toast or a native notification raised there was routed IN that page, so its
+   * `switchView('notifications')` (or openThread) painted over the timeline the person was reading.
+   * A window does not open windows; the desktop does. Hand it the destination, and it opens
+   * Notifications (or the post) in a window of its own. No desktop to ask: route here as before. */
+  function _notifRouteViaDesktop(route){
+    try{
+      if(!_inWin()) return false;
+      const desk=PCOSWin.desktop(), P=desk && desk.__PC;
+      if(!P || typeof P.openNotificationRoute!=='function') return false;
+      return P.openNotificationRoute(String(route||'notifications')) !== false;
+    }catch(_){ return false; }
+  }
   function openOsNotificationRoute(route){
+    if(_notifRouteViaDesktop(route)) return true;
     const value=String(route||'');
     if(value==='texts'){switchView('texts');return true;}
     if(value.startsWith('texts:')){
@@ -20274,6 +20291,7 @@
     driveOpenFile, hostOpen, notesSearch, notesOpen,
     openDMWith,                                              // → one named route to a conversation, from any window
     notifToast,                                               // → the in-app half of a notification (needs no OS permission)
+    openNotificationRoute: openOsNotificationRoute,           // → a popped-out window hands its notification clicks here (the desktop)
     openExternal,                                             // → web search results, and anything else that must leave the app
     /* THE NATIVE PLUGIN LOOKUP, shared. Not a convenience: `_capPlugin` falls back to
      * `Capacitor.registerPlugin(name)`, which is what a plugin registered in Java but with no JS
