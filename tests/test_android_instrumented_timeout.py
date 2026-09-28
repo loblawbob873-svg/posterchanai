@@ -24,4 +24,4 @@ def test_contact_monitor_cannot_intercept_the_activity_scenario_launch_it_depend
     assert src.index("ActivityScenario.launch(launch)") < src.index("instrumentation.addMonitor(monitor)")
     assert "onStartActivity(Intent intent)" in src
     assert "new Instrumentation.ActivityResult(Activity.RESULT_CANCELED, null)" in src
-    assert "editor.getStringExtra(ContactsContract.Intents.Insert.PHONE)" in src
+    assert 'assertEquals("contact-add:" + Uri.encode(number), LaunchView.take(' in src

@@ -389,20 +389,22 @@ class SmsSources(unittest.TestCase):
         src = self._code(THREAD_ACTIVITY)
         layout = open(THREAD_LAYOUT, encoding="utf-8").read()
         self.assertIn('android:id="@+id/pc_th_add_contact"', layout)
-        self.assertIn("Intent.ACTION_INSERT, ContactsContract.Contacts.CONTENT_URI", src)
-        self.assertIn("ContactsContract.Intents.Insert.PHONE, address", src)
+        # PosterChan's OWN editor, prefilled -- the platform ACTION_INSERT editor offers no PosterChan
+        # storage (tests/client/test_texts_add_contact_opens_posterchan.py).
+        self.assertIn('LaunchView.request("contact-add:" + Uri.encode(address.trim())', src)
+        self.assertNotIn("Intent.ACTION_INSERT", src)
         self.assertIn("PhoneBook.forget()", src)
 
         device = open(os.path.join(ROOT, "mobile", "android", "app", "src", "androidTest", "java",
                                    "place", "poster", "app", "sms", "SmsContactDeviceTest.java"),
                       encoding="utf-8").read()
         self.assertIn("add.performClick()", device)
-        self.assertIn("Intent.ACTION_INSERT", device)
+        self.assertIn("Add contact still opened the phone's contact editor", device)
         self.assertIn("onStartActivity(Intent intent)", device)
         self.assertIn("ActivityScenario.launch(launch)", device)
         self.assertLess(device.index("ActivityScenario.launch(launch)"),
                         device.index("instrumentation.addMonitor(monitor)"))
-        self.assertIn("editor.getStringExtra(ContactsContract.Intents.Insert.PHONE)", device)
+        self.assertIn('assertEquals("contact-add:" + Uri.encode(number), LaunchView.take(', device)
 
     def test_each_step_of_delivery_is_guarded_separately(self):
         """One try around all three would mean a failing notification costs the message."""

@@ -946,7 +946,7 @@ window.PCStreamsFactory = function(dep){
     if(!window.PCLiveTpl || !owner || S.GUEST) return null;
     if(_liveTplStore && _liveTplStore.owner===owner) return _liveTplStore.s;
     const key='pc_live_tpl:'+owner;
-    const s=PCLiveTpl.store({ owner,
+    const s=window.PCLiveTpl.store({ owner,
       query:f=>Relay.query(f),
       publish:(k,c,t)=>publish(k,c,t,{quiet:true}),
       enc:(pk,t)=>S.signer.nip44enc(pk,t), dec:(pk,t)=>S.signer.nip44dec(pk,t),
@@ -958,7 +958,7 @@ window.PCStreamsFactory = function(dep){
   function _liveTplWire(root, repaintCover){
     const post=$('#gl-post',root), wrap=$('#gl-post-wrap',root), ann=$('#gl-announce',root);
     if(post){ let last=null; try{ last=ClientSettings.get('livePostLast', null); }catch(_){}
-      post.value = (typeof last==='string' && last.trim()) ? last : (window.PCLiveTpl ? PCLiveTpl.DEFAULT_POST : ''); }
+      post.value = (typeof last==='string' && last.trim()) ? last : (window.PCLiveTpl ? window.PCLiveTpl.DEFAULT_POST : ''); }
     if(ann && wrap){ const sync=()=>wrap.classList.toggle('hidden', !ann.checked); ann.addEventListener('change', sync); sync(); }
     const st=_liveTpl(), sel=$('#gl-tpl-sel',root);
     if(!st || !sel){ const box=root.querySelector('.gl-tpl'); if(box) box.classList.add('hidden'); return; }
@@ -994,7 +994,7 @@ window.PCStreamsFactory = function(dep){
       const tpl={ name, title:($('#gl-title',root).value||'').trim(), summary:d.summary, tags:d.tags, lang:d.lang, cw:d.cw,
                   cover:($('#gl-img',root).value||'').trim(), post:post?post.value:'' };
       const b=$('#gl-tpl-ok',root); b.disabled=true;
-      try{ const r=await st.save(l=>PCLiveTpl.upsert(l, tpl));
+      try{ const r=await st.save(l=>window.PCLiveTpl.upsert(l, tpl));
         list=r.list; sel.value=name; paint(); nameRow.classList.add('hidden');
         msg(r.synced ? `Saved “${name}”.` : `Saved “${name}” on this device — it will reach your other devices once your relays answer.`);
       } finally { b.disabled=false; }
@@ -1005,7 +1005,7 @@ window.PCStreamsFactory = function(dep){
     $('#gl-tpl-del',root).onclick=async()=>{
       const name=sel.value; if(!name) return;
       if(typeof uiConfirm==='function' && !(await uiConfirm(`Delete the template “${name}”?`))) return;
-      const r=await st.save(l=>PCLiveTpl.remove(l, name));
+      const r=await st.save(l=>window.PCLiveTpl.remove(l, name));
       list=r.list; sel.value=''; paint(); msg(`Deleted “${name}”.`);
     };
   }
@@ -1308,7 +1308,7 @@ window.PCStreamsFactory = function(dep){
       const relays=[S.CFG && S.CFG.relay_url].filter(Boolean);   // include our relay so external clients can resolve the naddr
       const _d = info.d || info.token;   // same address the 30311 was published under
       const naddr=NT().nip19.naddrEncode({identifier:_d, pubkey:S.ME.pubkey, kind:30311, relays});
-      const text = window.PCLiveTpl ? PCLiveTpl.renderPost(info.post, { title, link:_webLink(naddr), naddr })
+      const text = window.PCLiveTpl ? window.PCLiveTpl.renderPost(info.post, { title, link:_webLink(naddr), naddr })
                                     : `🔴 I’m live now: ${title}\n\n▶ Watch: ${_webLink(naddr)}\n\nnostr:${naddr}`;
       await publish(1, text,
         [['t','livestream'], ['a', `30311:${S.ME.pubkey}:${_d}`, '', 'root']]);
