@@ -359,6 +359,19 @@
    * Hidden, not disabled. A greyed row still invites a click and still has to explain itself; a
    * standalone install is not a degraded PosterChan, it is a Nostr client, and it should read like
    * one. Anyone who wants the rest can name an instance in Settings and they all come back. */
+  /* WHERE THE TOP SEARCH BELONGS -- an ALLOW-list. It searches posts and profiles, and only ever shows
+   * on a phone (the desktop's lives under the sidebar logo), where it took half the title row. On a
+   * tool screen it is noise: reported one screen at a time -- Notes, Email, News, the Meme Builder,
+   * Communities, Remote Desktop, Virtual Machines, the Monero Wallet, the Signer, Bookmarks -- so it is kept
+   * where posts are the point, and every screen added later starts without it. */
+  const TOP_SEARCH_VIEWS = new Set(['home', 'global', 'trending', 'notifications', 'profile', 'thread',
+                                    'search', 'articles']);
+  /* Read from the CURRENT view, and called from the two helpers every direct VIEW= caller runs right
+   * after (profile, thread and search results set VIEW without switchView), so none keeps the
+   * previous screen's answer. */
+  function _syncTopSearch(){
+    try{ document.body.classList.toggle('no-topsearch', !TOP_SEARCH_VIEWS.has(String(VIEW || ''))); }catch(_){}
+  }
   const INSTANCE_VIEWS = new Set(['ai', 'translate', 'markets', 'news', 'torrents', 'media-center',
                                   /* The multi-chain wallet is held BY the node: with no instance there is
                                      no seed, no balance lookup and nothing to show. */
@@ -5969,6 +5982,7 @@
   let _rbLoaded=false;   // has the rail ever actually been built? (loadRightbar no-ops while it's hidden)
   let _rbBooted=false;   // has the post-onReady delay elapsed? gates the retry below off the cold socket
   function _syncRightbar(){
+    _syncTopSearch();                          // every view change passes through here -- see TOP_SEARCH_VIEWS
     // Deliberately its OWN body class, NOT the rb-collapsed one the ▸ toggle uses: that toggle
     // persists to localStorage, so reusing it would write "collapsed" into the user's saved
     // preference on a trip to Settings and leave the rail gone once they navigated back.
@@ -6309,6 +6323,7 @@
     /* The Terminal carries no page heading either: its own bar names every tab, and a "Terminal"
      * title row over it was ~60px of shell lost in every window (client.css `body.term-view`). */
     document.body.classList.toggle('term-view', v==='terminal');
+    _syncTopSearch();                          // see TOP_SEARCH_VIEWS
     /* `quiet` = adopt this view WITHOUT painting it. The desktop restores a window's REAL DOM when
      * you focus it, so the screen is already correct and only the bookkeeping above needs to agree.
      * Optional and falsy by default, so every existing caller — all of classic mode — is unchanged. */

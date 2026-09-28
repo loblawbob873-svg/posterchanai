@@ -1103,6 +1103,8 @@ html.os-on .cal-bar,html.os-on .ct-bar{background-attachment:scroll}
 .topbar{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:20px 14px 12px;
   background:transparent;border:0;position:sticky;top:0;z-index:5}
 .topbar h2{margin:0;font-size:24px;letter-spacing:.4px;font-weight:800;line-height:1.2}
+/* The topbar search only where posts are the point -- app.js TOP_SEARCH_VIEWS (an allow-list). */
+body.no-topsearch .topbar .searchbox{display:none}
 /* The thread's own "←", matching the header button every other detail view already has. */
 .thread-top{display:flex;align-items:center;margin:0 0 10px}
 /* THE WINDOW'S NAVIGATION ROW (desktop mode). A lone ← in an empty strip read as leftover UI; in a
