@@ -96,10 +96,24 @@ def test_status_and_addresses_never_carry_the_phrase(client):
     _created(client)
     phrase = client.post("/api/wallet/exodus/reveal").json()["mnemonic"]
     for path in ("/api/wallet/exodus/status", "/api/wallet/exodus/addresses"):
-        text = client.get(path).text
+        res = client.get(path)
+        text = res.text
         assert phrase not in text, f"{path} leaked the recovery phrase"
-        for word in phrase.split()[:3]:
-            assert f'"{word}"' not in text
+        # Words must not appear as VALUES. Matching '"word"' in the raw text failed at random: the
+        # phrase is random BIP-39 and "library" is a BIP-39 word as well as a key of /status (1 run
+        # in ~700 aborted a deploy on it).
+        def values(o):
+            if isinstance(o, dict):
+                for v in o.values():
+                    yield from values(v)
+            elif isinstance(o, list):
+                for v in o:
+                    yield from values(v)
+            elif isinstance(o, str):
+                yield o
+        found = set(values(res.json()))
+        for word in phrase.split():
+            assert word not in found, f"{path} carries a phrase word as a value"
 
 
 def test_reveal_is_a_post_not_a_get(client):
@@ -323,3 +337,19 @@ def test_monero_recovery_exports_only_on_explicit_post(client):
     assert len(words.split()) == 25
     keys = Monero.FromPrivateSpendKey(MoneroMnemonicDecoder().Decode(words))
     assert keys.PrimaryAddress() == client.get('/api/wallet/exodus/addresses').json()['addresses']['XMR']
+
+
+def test_a_phrase_word_that_is_also_a_key_name_is_not_a_leak(client, monkeypatch):
+    """Reproduces the gate flake deterministically: a phrase starting with "library"."""
+    bip = pytest.importorskip("bip_utils")
+    from app.services import exodus_wallet_service as W
+    # A VALID phrase whose first word is "library": the first word is the top 11 bits of the entropy.
+    words = bip.Bip39MnemonicDecoder  # noqa: F841 — the library is present
+    from bip_utils.bip.bip39.bip39_mnemonic_utils import Bip39WordsListGetter
+    from bip_utils import Bip39Languages, Bip39MnemonicEncoder
+    idx = Bip39WordsListGetter().GetByLanguage(Bip39Languages.ENGLISH).GetWordIdx("library")
+    entropy = (idx << 117).to_bytes(16, "big")
+    fixed = str(Bip39MnemonicEncoder(Bip39Languages.ENGLISH).Encode(entropy))
+    assert fixed.split()[0] == "library"
+    monkeypatch.setattr(W, "new_mnemonic", lambda *a, **k: fixed)
+    test_status_and_addresses_never_carry_the_phrase(client)
