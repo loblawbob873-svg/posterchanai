@@ -1251,6 +1251,16 @@ def start_activitypub_delivery() -> None:
     _scheduler.add_job(_catchup, "interval", seconds=60, id="activitypub_follow_catchup",
                        max_instances=1, coalesce=True)
 
+    # The history of every account followed BEFORE inbound backfill existed, a couple a minute.
+    async def _history():
+        try:
+            from app.services.activitypub import backfill
+            await backfill.catch_up()
+        except Exception as e:
+            logger.info("[activitypub] history catch-up failed: %s: %s", type(e).__name__, e)
+    _scheduler.add_job(_history, "interval", seconds=60, id="activitypub_history_catchup",
+                       max_instances=1, coalesce=True)
+
     async def _polls():
         try:
             await asyncio.wait_for(poll_updates(), timeout=240)

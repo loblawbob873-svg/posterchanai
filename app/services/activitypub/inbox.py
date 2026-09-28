@@ -428,6 +428,9 @@ async def _accept(kind: str, obj, signer: str) -> str:
         if current.get("state") != "accepted":
             await state.set_following(member, signer, current.get("inbox") or "", "accepted",
                                       follow_id=current.get("id") or "")
+        # Following somebody shows their history, not a blank profile until they next post.
+        from app.services.activitypub import backfill
+        backfill.schedule(signer)
     else:
         await state.drop_following(member, signer)
     state.forget_followed_cache()
@@ -494,6 +497,11 @@ async def _puppet(actor_doc: dict) -> dict | None:
         db.close()
     if p:
         dm.remember_puppet(p["pubkey_hex"])      # a puppet made a moment ago is still a puppet
+        try:
+            from app.services.activitypub import backfill
+            backfill.discovered(convert.id_of(actor_doc))   # Pleroma's "fetch initial posts"
+        except Exception:
+            pass
     return p
 
 
@@ -540,6 +548,9 @@ async def _target(uri: str) -> tuple[str, str]:
     return (row.nostr_event_id, row.nostr_pubkey or "") if row else ("", "")
 
 
+MAX_THREAD_DEPTH = 20          # ancestors fetched for a reply whose thread is missing here
+
+
 async def store_note(note: dict, author: str, *, need_gate: bool, depth: int = 0) -> str:
     """Store a public note as the author's puppet kind-1. Returns what happened."""
     from app.services.fedi_bridge_identity import build_event, publish
@@ -575,15 +586,17 @@ async def store_note(note: dict, author: str, *, need_gate: bool, depth: int = 0
         followed = author in await state.followed_actors()
         if not (followed or mentions_ours or replies_to_ours):
             return "ignored: nobody here follows or was addressed"
-    if reply_to and not parent_known and depth == 0:
+    if reply_to and not parent_known and depth < MAX_THREAD_DEPTH:
         # A reply to something not stored here would become a top-level post with no thread. Bring
-        # the parent in -- ONE level, from its own server, and only for a note already admitted.
+        # the parent in, from its own server, and ITS parent, up the chain -- Pleroma's
+        # federation_incoming_replies_max_depth. It used to be ONE level, which left every deeper
+        # thread starting halfway down with its opening posts missing.
         try:
             pdoc = await asyncio.wait_for(remote.fetch_object(reply_to), timeout=20)
             pauthor = convert.id_of(pdoc.get("attributedTo"))
             if pdoc.get("type") in ("Note", "Article", "Question", "Page") and pauthor \
                     and remote.host_of(pauthor) == remote.host_of(reply_to):
-                await store_note(pdoc, pauthor, need_gate=False, depth=1)
+                await store_note(pdoc, pauthor, need_gate=False, depth=depth + 1)
                 parent_id, parent_pk = await _target(reply_to)
         except Exception as e:
             logger.info("[activitypub] parent of %s not fetched: %s", remote.host_of(uri), type(e).__name__)

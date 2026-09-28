@@ -16140,10 +16140,29 @@
     for(const ev of pub){ try{ const v=await Relay.worker.call('verify',{event:ev}); if(v&&v.valid) return ev; }catch(_){} }
     return null;
   }
+  /* A FEDIVERSE post's replies are fetched from its own server when its thread is opened here -- only the
+   * replies of accounts somebody here follows were ever delivered (activitypub/backfill.py). Only for a
+   * post that came from the fediverse (its NIP-48 `proxy … activitypub` tag); once per thread per
+   * session; reopens the thread once, only if something new was stored. */
+  const _fediThreadAsked = new Set();
+  let _fediThreadOpen = '';            // the thread openThread last opened
+  function _fediFetchThread(id){
+    const ev = Store.get(id);
+    if(!ev || _fediThreadAsked.has(id) || !(ev.tags||[]).some(t => t[0]==='proxy' && t[2]==='activitypub')) return;
+    _fediThreadAsked.add(id);
+    fetch('/client/ap/fetch-thread', { method:'POST', headers:{'Content-Type':'application/json'},
+                                       body: JSON.stringify({ event_id: id }) })
+      .then(r => r.json()).then(j => {
+        const stored = j && j.result && j.result.stored;
+        if(stored > 0 && VIEW === 'thread' && _fediThreadOpen === id) openThread(id);
+      }).catch(() => {});
+  }
   function openThread(id, relays){
     // A stray/empty id (e.g. a click that leaked from a closing modal backdrop, or a malformed
     // route) must NOT navigate to a thread and flash "Post not found on the relay" — just no-op.
     if(!id || typeof id!=='string' || id.length<10){ return; }
+    _fediThreadOpen = id;
+    _fediFetchThread(id);
     // The open popover, if this screen ever opened one: `closeActive` is a property the real
     // function carries, and the entry point here is not that function (see menus.js).
     { const _m=_menusMod(); if(_m && _m.openEmojiPopover.closeActive) _m.openEmojiPopover.closeActive(); }

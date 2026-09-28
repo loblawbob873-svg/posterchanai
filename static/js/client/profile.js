@@ -217,6 +217,21 @@ window.PCProfileFactory = function(dep){
       switchView(_startTimeline());
     };
   }
+  /* A FEDIVERSE person's posts are fetched from their own server when their profile is opened here --
+   * the inbox only ever receives what somebody follows, so a person nobody here follows showed one post
+   * in twenty (activitypub/backfill.py). The server answers "not fediverse" for anybody else. Once per
+   * profile per session; repaints once, only if something new was stored. */
+  const _fediAsked = new Set();
+  function _fediFetchProfile(pk, gen){
+    if(!pk || _fediAsked.has(pk) || (S.ME && S.ME.pubkey === pk)) return;
+    _fediAsked.add(pk);
+    fetch('/client/ap/fetch-profile', { method:'POST', headers:{'Content-Type':'application/json'},
+                                        body: JSON.stringify({ pubkey: pk }) })
+      .then(r => r.json()).then(j => {
+        const stored = j && j.result && j.result.stored;
+        if(stored > 0 && S.VIEW === 'profile' && gen === _profGen) renderProfileView(pk);
+      }).catch(() => {});
+  }
   async function renderProfileView(pk){
     _rememberTlScroll();          // opening a profile is leaving the feed — see _rememberTlScroll
     // PosterChan OS: a profile opens in its OWN window, for the same reason a post does — opening
@@ -239,6 +254,7 @@ window.PCProfileFactory = function(dep){
     try{ _navUrl('/'+NT().nip19.npubEncode(pk)); }catch(_){}   // shareable URL: poster.place/<npub>
     if(S.VIEW!=='profile'){ S.VIEW='profile'; $$('.nav-item[data-view]').forEach(b=>b.classList.toggle('active',b.dataset.view==='profile')); $('#view-title').textContent='Profile'; _syncRightbar(); }
     const myGen = ++_profGen;   // this render's token — every async step below bails if a newer profile opened
+    _fediFetchProfile(pk, myGen);
     const feed=$('#feed');
     // The profile is a NORMAL scrolling view, but the chat/DM/AI/translate views set an overflow:hidden
     // modifier class on #feed (full-height inner-scroll layout). Those are only toggled in the timeline

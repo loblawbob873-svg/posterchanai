@@ -6237,3 +6237,89 @@ async def client_deeplink(path: str, request: Request, db: Session = Depends(get
     if not (_DEEPLINK_ENTITY.match(seg) or seg.lower() in ("users", "r")):
         raise HTTPException(status_code=404, detail="Not Found")
     return await render_client_shell(request, db)
+
+
+# ---- fediverse: fetch what was never delivered (activitypub/backfill.py) -------------------------
+# A profile or thread of somebody nobody here follows showed only what happened to be delivered. The
+# client names WHAT it is looking at by Nostr id -- a puppet pubkey or a stored event id -- and the
+# server maps that to the fediverse address it recorded itself, so these can never be pointed at an
+# arbitrary URL. Each account/thread is read at most every few hours and one read runs at a time.
+_ap_fetch_hits: dict = {}
+
+
+def _ap_fetch_allowed(request: Request) -> bool:
+    ip = (request.client.host if request and request.client else "") or "?"
+    now = time.time()
+    hits = [t for t in _ap_fetch_hits.get(ip, []) if now - t < 60][-30:]
+    if len(hits) >= 30:
+        return False
+    hits.append(now)
+    _ap_fetch_hits[ip] = hits
+    if len(_ap_fetch_hits) > 5000:
+        _ap_fetch_hits.clear()
+    return True
+
+
+async def _ap_fetch_run(coro, timeout: float = 25.0) -> dict:
+    """Run a fetch, answering within `timeout`; one that takes longer finishes in the background."""
+    task = asyncio.ensure_future(coro)
+    try:
+        return await asyncio.wait_for(asyncio.shield(task), timeout)
+    except asyncio.TimeoutError:
+        return {"pending": True}
+    except Exception as e:
+        return {"error": type(e).__name__}
+
+
+class ApProfileReq(BaseModel):
+    pubkey: str
+
+
+@router.post("/ap/fetch-profile")
+async def ap_fetch_profile(req: ApProfileReq, request: Request):
+    """Bring in a fediverse person's recent posts when their profile is opened here."""
+    import re as _re
+    pk = (req.pubkey or "").strip().lower()
+    if not _re.fullmatch(r"[0-9a-f]{64}", pk):
+        return JSONResponse({"ok": False, "error": "bad pubkey"}, status_code=400)
+    if not _ap_fetch_allowed(request):
+        return JSONResponse({"ok": False, "error": "slow down"}, status_code=429)
+    from app.database import SessionLocal
+    from app.models import FediPuppet
+    db = SessionLocal()
+    try:
+        row = db.query(FediPuppet).filter(FediPuppet.pubkey_hex == pk).first()
+        actor = row.actor_uri if row else ""
+    finally:
+        db.close()
+    if not actor:
+        return {"ok": True, "fediverse": False}
+    from app.services.activitypub import backfill
+    return {"ok": True, "fediverse": True, "result": await _ap_fetch_run(backfill.backfill_actor(actor))}
+
+
+class ApThreadReq(BaseModel):
+    event_id: str
+
+
+@router.post("/ap/fetch-thread")
+async def ap_fetch_thread(req: ApThreadReq, request: Request):
+    """Bring in the replies a fediverse post's own server lists, when its thread is opened here."""
+    import re as _re
+    eid = (req.event_id or "").strip().lower()
+    if not _re.fullmatch(r"[0-9a-f]{64}", eid):
+        return JSONResponse({"ok": False, "error": "bad event id"}, status_code=400)
+    if not _ap_fetch_allowed(request):
+        return JSONResponse({"ok": False, "error": "slow down"}, status_code=429)
+    from app.database import SessionLocal
+    from app.models import FediBridgeDelivered
+    db = SessionLocal()
+    try:
+        row = db.query(FediBridgeDelivered).filter(FediBridgeDelivered.nostr_event_id == eid).first()
+        uri = (row.note_uri or row.note_id) if row else ""
+    finally:
+        db.close()
+    if not uri or not uri.startswith("https://"):
+        return {"ok": True, "fediverse": False}
+    from app.services.activitypub import backfill
+    return {"ok": True, "fediverse": True, "result": await _ap_fetch_run(backfill.thread_replies(uri))}
