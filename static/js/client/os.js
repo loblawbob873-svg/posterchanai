@@ -2061,6 +2061,10 @@
      * the view string alone — which is what the blanket refusal was protecting, and still does. A
      * post is an event id: the child looks it up exactly as a shared link would. */
     if(/^doc:post:[0-9a-f]{64}$/i.test(v)) return v;
+    /* …AND A PROFILE, FOR THE SAME REASON. It is a pubkey, rebuilt exactly as a shared npub link is,
+     * and refused here it became an in-page frame on the DESKTOP SURFACE -- which sits below every
+     * real toplevel, so "My profile" opened BEHIND Social with nothing to say it had opened at all. */
+    if(/^doc:prof:[0-9a-f]{64}$/i.test(v)) return v;
     if(!v || v.indexOf('doc:') === 0 || v.indexOf('__') === 0 || v.indexOf('folder:') === 0) return '';
     if(!/^[a-z0-9_-]+$/i.test(v)) return '';
     try{ return document.querySelector('.nav-item[data-view="' + v + '"]') ? v : ''; }
@@ -8715,6 +8719,38 @@
       if(r && typeof r.catch === 'function') r.catch(() => {});
     }catch(_){ }
   }
+  /* A SHEET IS DRAWN ON THE DESKTOP SURFACE TOO, AND IT WAS NEVER COUNTED.
+   *
+   * "Go Live opens behind Social": Go Live (and every sheet a desktop action opens -- modal() in
+   * app.js, `#modal-root`) is not a window in `wins`, so nothing asked the compositor to bring the
+   * desktop forward for it, and the next taskbar redraw derived `front:false` because no frame was
+   * focused. The sheet was there, behind whatever the person had been using. It is treated exactly
+   * like a focused frame now: forward, and covering the windows its box overlaps. */
+  const _sheetBox = () => { const r = document.getElementById('modal-root');
+                            return r ? r.querySelector('.modal-bg > .modal') : null; };
+  let _sheetWasUp = false;
+  function _sheetChanged(){
+    const box = on ? _sheetBox() : null, up = !!box;
+    if(up === _sheetWasUp) return;
+    _sheetWasUp = up;
+    if(!window.pcWM || typeof pcWM.shellFront !== 'function') return;
+    if(up){
+      _foreignFocused = false;          // opened from the desktop, which is where the person is now
+      _shellFrontWish(true);
+      try{ _stackDomAboveNative({ el: box }, _claimFocus()); }catch(_){ }
+      return;
+    }
+    // Closed: the order goes back to whatever the desktop's own focused window needs, or nothing.
+    const f = wins.find(w => w && !w.min && w.native == null && w.el && w.el.classList.contains('focused'));
+    if(f){ try{ _stackDomAboveNative(f, _claimFocus()); }catch(_){ } }
+    _publishShellFront();
+  }
+  let _sheetObs = null;
+  function _watchSheets(){
+    if(_sheetObs || !document.body || typeof MutationObserver !== 'function') return;
+    _sheetObs = new MutationObserver(_sheetChanged);
+    _sheetObs.observe(document.body, { attributes: true, attributeFilter: ['class'] });
+  }
   function _publishShellFront(){
     if(!window.pcWM || typeof pcWM.shellFront !== 'function') return;
     let want = false;
@@ -8723,7 +8759,7 @@
      * raised above Firefox is not one. So the rule is off entirely outside desktop mode, and `exit`
      * says so at the moment it changes rather than waiting for a draw that will never come. */
     try{ want = !on || (!_foreignFocused
-      && wins.some(w => w && !w.min && w.el && w.el.classList.contains('focused'))); }
+      && (wins.some(w => w && !w.min && w.el && w.el.classList.contains('focused')) || !!_sheetBox())); }
     catch(_){ want = false; }
     _sendShellFront({ front: want, covers: want ? _shellFrontState.covers : [] });
   }
@@ -10369,6 +10405,7 @@
 
   function enter(){
     if(on) return;
+    _watchSheets();
     /* A WINDOW IS NOT A DESKTOP, AND THIS IS THE ONE PLACE THAT CANNOT BE ROUTED AROUND.
      *
      * A PosterChan window (oswin.js) is a same-origin child, so it reads the SAME remembered

@@ -1995,6 +1995,9 @@
        * shape as the System Settings lie above. Open the post instead. */
       const _post = /^doc:post:([0-9a-f]{64})$/i.exec(v || '');
       if(_post){ openThread(_post[1]); return; }
+      // …nor is a profile window: open that profile, as a shared npub link would.
+      const _prof = /^doc:prof:([0-9a-f]{64})$/i.exec(v || '');
+      if(_prof){ renderProfileView(_prof[1]); return; }
       /* A SEARCH WINDOW is not a view either: it runs the query it was opened with, in this page. */
       if(v === 'doc:search'){ _searchWindowLanding(); return; }
       if(v){
@@ -6197,6 +6200,8 @@
     {
       const _pw = /^doc:post:([0-9a-f]{64})$/i.exec(String(v || ''));
       if(_pw && typeof openThread === 'function'){ openThread(_pw[1]); return; }
+      const _pf = /^doc:prof:([0-9a-f]{64})$/i.exec(String(v || ''));
+      if(_pf && typeof renderProfileView === 'function'){ renderProfileView(_pf[1]); return; }
     }
     // …and a SEARCH window, which is rebuilt from its query (see _searchWindowLanding).
     if(String(v || '') === 'doc:search'){ _searchWindowLanding(); return; }

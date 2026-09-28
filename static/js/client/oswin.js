@@ -171,6 +171,7 @@
     // A post window is named `doc:post:<event id>` — colons and all — so it fails the plain
     // identifier test below. It is routable because the child can fetch that id; see popOutView.
     if(/^doc:post:[0-9a-f]{64}$/i.test(v)) return true;
+    if(/^doc:prof:[0-9a-f]{64}$/i.test(v)) return true;   // a profile: the child opens that pubkey
     if(v === 'doc:search') return true;       // rebuilt from its query (see open / SEARCH_ARG)
     if(!v || !/^[a-z0-9_-]+$/i.test(v)) return false;
     try{ return !!root.document.querySelector('.nav-item[data-view="' + v + '"]'); }
@@ -300,6 +301,8 @@
            * window printed "Nothing here can show doc:post:43698d01…". Same rule, both paths. */
           else if(/^doc:post:[0-9a-f]{64}$/i.test(v) && root.__PC && typeof root.__PC.openThread==='function')
             root.__PC.openThread(v.slice('doc:post:'.length));
+          else if(/^doc:prof:[0-9a-f]{64}$/i.test(v) && root.__PC && typeof root.__PC.openProfile==='function')
+            root.__PC.openProfile(v.slice('doc:prof:'.length));
           else if(root.__PC&&typeof root.__PC.switchView==='function')root.__PC.switchView(v);
         }catch(_){}
         try{root.focus();}catch(_){}
