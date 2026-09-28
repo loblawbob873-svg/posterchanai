@@ -362,9 +362,9 @@
   /* WHERE THE TOP SEARCH BELONGS -- an ALLOW-list. It searches posts and profiles, and only ever shows
    * on a phone (the desktop's lives under the sidebar logo), where it took half the title row. On a
    * tool screen it is noise: reported one screen at a time -- Notes, Email, News, the Meme Builder,
-   * Communities, Remote Desktop, Virtual Machines, the Monero Wallet, the Signer, Bookmarks -- so it is kept
+   * Communities, Remote Desktop, Virtual Machines, the Monero Wallet, the Signer, Bookmarks, Notifications -- so it is kept
    * where posts are the point, and every screen added later starts without it. */
-  const TOP_SEARCH_VIEWS = new Set(['home', 'global', 'trending', 'notifications', 'profile', 'thread',
+  const TOP_SEARCH_VIEWS = new Set(['home', 'global', 'trending', 'profile', 'thread',
                                     'search', 'articles']);
   /* Read from the CURRENT view, and called from the two helpers every direct VIEW= caller runs right
    * after (profile, thread and search results set VIEW without switchView), so none keeps the

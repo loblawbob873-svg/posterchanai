@@ -20,8 +20,8 @@ import websockets
 
 from tests.client.test_effects_full_app import Browser, Handler, INIT
 
-NO_SEARCH = ["notes", "mail", "news", "meme", "concord", "vms", "wallet", "signer", "bookmarks"]
-SEARCH = ["notifications", "home"]
+NO_SEARCH = ["notes", "mail", "news", "meme", "concord", "vms", "wallet", "signer", "bookmarks", "notifications"]
+SEARCH = ["home"]
 VISIBLE = "(()=>{const s=document.querySelector('.topbar .searchbox');return !!s&&s.offsetParent!==null})()"
 # The PosterChan avatar at the end of every phone title row ("do that for mobile"), search or not.
 AVATAR = ("(()=>{const t=document.querySelector('.topbar');if(!t||t.offsetParent===null)return 'no topbar';"
