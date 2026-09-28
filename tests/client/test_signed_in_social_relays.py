@@ -54,7 +54,9 @@ def test_custom_relay_preference_is_not_overwritten_by_bootstrap():
 def test_the_union_uses_the_normal_live_subscription_pool():
     connect = _code(_function("connectRelays"))
     timeline = _code(_function("renderTimeline"))
-    assert "Relay.configure({ urls: list, verify: true })" in connect
+    # The rule, not the spelling: the union goes through the ONE managed pool, verified. (`home`, the
+    # instance's own relay, was added to the same call and broke an exact-text match.)
+    assert re.search(r"Relay\.configure\(\{\s*urls:\s*list,\s*verify:\s*true\b", connect), connect
     assert "Relay.subscribe(timelineFilter()" in timeline
     assert "subscribeFrom" not in timeline
 
