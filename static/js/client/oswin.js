@@ -390,6 +390,7 @@
       const bar=root.document.createElement('header');bar.id='pc-oswin-chrome';
       bar.className=root.localStorage.getItem('osDesktopStyle')==='mac'?'mac':'';
       bar.innerHTML='<span class="pc-oswin-title"></span><span class="pc-oswin-buttons">'
+        +'<button data-action="ai" class="pc-oswin-ai-btn" title="AI for this window (Shift-click: add to AI context)" aria-label="AI for this window">✨</button>'
         +'<button data-action="min" title="Minimise" aria-label="Minimise">−</button>'
         +'<button data-action="max" title="Maximise" aria-label="Maximise">□</button>'
         +'<button data-action="close" title="Close" aria-label="Close">×</button></span>';
@@ -413,6 +414,10 @@
        * question thousands of times to get the same answer. */
       installFrame();
       bar.querySelector('[data-action="close"]').onclick=()=>root.close();
+      /* ✨ -- the same AI panel the desktop's in-page windows have (os.js pageWindowAI). */
+      bar.querySelector('[data-action="ai"]').onclick=e=>{
+        try{ if(root.PCOS && root.PCOS.pageWindowAI) root.PCOS.pageWindowAI(e.currentTarget, e); }catch(_){ }
+      };
       /* THE COMPOSITOR IS THE BETTER ANSWER AND NOT THE ONLY ONE.
        *
        * `pcWM.self()` asks a compositor which of its windows this page is, and on Windows and macOS

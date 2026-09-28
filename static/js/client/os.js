@@ -2508,6 +2508,41 @@
     return [['Summarize','Summarize what is visible in this window.'],['What can I do?','Suggest three useful things AI can help accomplish in this window.'],['Extract tasks','Extract decisions and next actions from this window.']];
   }
   function closeWindowAI(w){ const p=w&&w.aiPanel;if(p){p.remove();w.aiPanel=null;} }
+  /* WHERE "Open in AI" GOES. In a popped-out window (PosterChanOS: Social, Notes, Files… are each
+   * their own toplevel) the AI screen must open on the DESKTOP, in its own window -- asked here, it
+   * would repaint the very window the person asked about. No desktop to ask: this page, as before. */
+  function _aiTarget(){
+    try{
+      if(window.PCOSWin && PCOSWin.isWindow()){
+        const d=PCOSWin.desktop(), P=d && d.__PC;
+        if(P && typeof P.askWindowContext==='function') return P;
+      }
+    }catch(_){ }
+    return PC();
+  }
+  /* ✨ FOR A POPPED-OUT WINDOW. "AI features built into the PosterChan windows on the web UI are
+   * missing on PosterChanOS": the ✨ lives in the in-page `.osw` title bar, and on PosterChanOS the
+   * windows are real toplevels whose title bar is oswin.js's own. This is the SAME panel
+   * (toggleWindowAI), handed the page itself as its window -- so the suggestions, the selection
+   * rule, "watch this window" and the privacy line cannot drift between the two. */
+  let _pageWin=null;
+  function pageWindowAI(button, event){
+    if(!_pageWin){
+      const feed=document.getElementById('feed')||document.body;
+      _pageWin={ el:document.body, body:feed, slot:feed, native:null, pageWindow:true };
+    }
+    let label='';
+    try{ label=(document.querySelector('#pc-oswin-chrome .pc-oswin-title')||{}).textContent||''; }catch(_){ }
+    try{ _pageWin.appView=(window.PCOSWin && PCOSWin.viewOf()) || ''; }catch(_){ _pageWin.appView=''; }
+    // The app's NAME, as the sidebar spells it ("Social", not the route "global").
+    let named='';
+    try{ const n=document.querySelector('.nav-item[data-view="'+CSS.escape(_pageWin.appView)+'"] span, .nav-item[data-view="'+CSS.escape(_pageWin.appView)+'"] b');
+         named=n ? n.textContent.trim() : ''; }catch(_){ }
+    label=String(label||'').replace(/^PosterChan Window\s*[—-]\s*/,'').trim();
+    _pageWin.title=(label && label!==_pageWin.appView ? label : named || label || document.title || 'Window');
+    toggleWindowAI(_pageWin, button, event);
+    if(_pageWin.aiPanel) _pageWin.aiPanel.classList.add('pc-oswin-ai');
+  }
   function toggleWindowAI(w,button,event){
     if(event&&event.shiftKey){
       if(_aiContextWins.has(w)){_aiContextWins.delete(w);w.el.classList.remove('ai-context');PC().toast('Window removed from AI context');}
@@ -2529,7 +2564,7 @@
       ${w.native==null?`<label class="osw-ai-agent"><input type="checkbox" data-ai-watch ${w.aiWatch?'checked':''}> Watch this window and glow when its contents change</label>`:''}
       <footer><span>Review before sending · no automatic changes</span><button class="btn btn-neon" data-ai-ask>Open in AI</button></footer>`;
     w.el.appendChild(panel);
-    const launch=instruction=>{instruction=String(instruction||'').trim();if(!instruction)return;const agent=!!(panel.querySelector('[data-ai-agent]')||{}).checked;closeWindowAI(w);try{PC().askWindowContext({windows:contexts},instruction,{agent});}catch(_){try{PC().toast('AI is unavailable');}catch(__){}}};
+    const launch=instruction=>{instruction=String(instruction||'').trim();if(!instruction)return;const agent=!!(panel.querySelector('[data-ai-agent]')||{}).checked;closeWindowAI(w);try{_aiTarget().askWindowContext({windows:contexts},instruction,{agent});}catch(_){try{PC().toast('AI is unavailable');}catch(__){}}};
     panel.querySelector('[data-ai-dismiss]').onclick=()=>closeWindowAI(w);
     const clear=panel.querySelector('[data-ai-clear]');if(clear)clear.onclick=()=>{_aiContextWins.forEach(x=>x.el.classList.remove('ai-context'));_aiContextWins.clear();closeWindowAI(w);toggleWindowAI(w,button);};
     panel.querySelectorAll('[data-ai-action]').forEach(b=>b.onclick=()=>launch(suggestions[+b.dataset.aiAction][1]));
@@ -11805,7 +11840,7 @@
                   mobileLanding: () => { if(!on && !popupKind() && !_authGateUp() && wantsDesktop()) enter(); },
                   wantsDesktop,
                   isOn: () => on, openDoc, focusDoc, closeDoc, frontSnapshot, frontRestore, askDesktop, captureReturnTarget, windowOpenHint: _windowOpenHint, routeView, routeApp, snapTo, documentWindow,
-                  openSystemSettings, osToast,
+                  openSystemSettings, osToast, pageWindowAI,
                   // app.js calls this when the player's state changes — the Now-playing widget has
                   // nothing to subscribe to, and polling an element we could be told about is the
                   // mistake the games were just fixed for.

@@ -35,7 +35,7 @@ def test_native_apps_are_metadata_only_not_silently_screen_scraped():
 
 def test_actions_open_a_reviewable_ai_draft_instead_of_auto_sending_or_mutating():
     assert "Review before sending · no automatic changes" in OS
-    assert "PC().askWindowContext({windows:contexts},instruction,{agent})" in OS
+    assert "_aiTarget().askWindowContext({windows:contexts},instruction,{agent})" in OS
     assert "function askWindowContext(ctx,instruction,opts)" in APP
     assert "switchView('ai')" in APP
     assert "ta.value=_aiWindowDraft" in APP
