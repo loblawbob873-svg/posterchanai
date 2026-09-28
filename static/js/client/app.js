@@ -1197,6 +1197,12 @@
   // local-key path so bot↔player game DMs decrypt for ALL login types, not just local nsec.
   async function _nip17unwrapVia(nip44dec, wrap){
     const seal = JSON.parse(await nip44dec(wrap.pubkey, wrap.content));
+    /* NIP-59: the seal is a kind-13 event SIGNED by the sender. The rumor below is decrypted with the
+     * NIP-44 key shared with seal.pubkey, which a forger cannot derive, so an unsigned seal could not
+     * carry a readable rumor anyway — but the spec requires the check and the remote-signer paths
+     * (NIP-07/46/55) are exactly where nothing else looks at the seal. */
+    const NTs = window.NostrTools;
+    if (!seal || seal.kind !== 13 || !(NTs && NTs.verifyEvent && NTs.verifyEvent(seal))) throw new Error('nip17: seal signature invalid');
     const rumor = JSON.parse(await nip44dec(seal.pubkey, seal.content));
     if (rumor.pubkey !== seal.pubkey) throw new Error('nip17: seal/rumor author mismatch');
     return rumor;
@@ -20099,7 +20105,7 @@
     viewer: () => {
       const stored = ME && ME.pubkey ? Store.profile(ME.pubkey) : null;
       const profile = stored || {};
-      return { pubkey:(ME&&ME.pubkey)||'', npub:(ME&&ME.npub)||'', profile, profileKnown:stored!=null };
+      return { pubkey:(ME&&ME.pubkey)||'', npub:(ME&&ME.npub)||'', profile, profileKnown:stored!=null, mode:(ME&&ME.mode)||'' };
     },
     /* The clipboard, for the sub-modules. `navigator.clipboard` works in a browser and in NEITHER
        shell (the APK's WebView and the desktop's app:// origin both refuse it), so a module that

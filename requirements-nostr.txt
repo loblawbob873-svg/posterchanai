@@ -114,3 +114,7 @@ embit==0.8.0
 bitcash==1.2.0
 # Media Center: this node's attached subnets (see requirements.txt).
 psutil>=5.9
+# Telegram client inside PosterChan (app/services/telegram_client): MTProto, pure Python. Not AI, and
+# a Nostr-only node is a web-UI/desktop node like any other -- without it the Telegram app's sign-in
+# fails on import. `Manager.configured()` also reports "not set up" when the library is absent.
+telethon>=1.45,<2

@@ -97,7 +97,7 @@ window.__PC = {
   toast:s=>calls.toasts.push(String(s)),
   openEmojiPopover:(_anchor,pick)=>pick('😀',()=>{}),
   insertAt:(input,value)=>{ input.value+=value; },
-  uploadBlob:async file=>'https://files.example/'+file.name,
+  uploadBlob:async file=>{(calls.uploads=calls.uploads||[]).push(file);return 'https://files.example/'+(file.name||('sealed-'+calls.uploads.length));},
   askOsNotify:async()=>{ calls.notified++; return 'granted'; },
   startGroupCall:peers=>{ calls.group++; calls.groupPeers=peers; },
   copyValue:value=>{ calls.copied=value; },
@@ -555,9 +555,12 @@ const input=control('cc-input');
 control('cc-emoji').click();
 if(input.value!=='😀') throw new Error('emoji control failed');
 input.value='';
-const file=control('cc-file'); file.files=[{name:'photo.png',size:1000}];
+const file=control('cc-file'); file.files=[{name:'photo.png',type:'image/png',size:1000,arrayBuffer:async()=>new Uint8Array(1000).fill(7).buffer}];
 await file.onchange();
-if(input.value!=='https://files.example/photo.png') throw new Error('attachment control failed');
+if(!/^https:\/\/files\.example\/sealed-\d+$/.test(input.value)) throw new Error('attachment control failed: '+input.value);
+/* An encrypted room uploads CIPHERTEXT, nameless (Vector's imeta; test_concord_vector_parity). */
+{const up=calls.uploads[calls.uploads.length-1],b=new Uint8Array(await up.arrayBuffer());
+ if(up.name||b.length!==1000+16||b.every(x=>x===7)) throw new Error('the room attachment was uploaded in the clear');}
 input.value='';
 /* PASTE IS DISPATCHED AT THE DOCUMENT, THE WAY A BROWSER DOES IT.
  *
@@ -574,10 +577,12 @@ const firePaste=(clipboardData)=>{
   return ()=>prevented;
 };
 document.activeElement=input;
-const pastedImage={name:'clipboard.png',type:'image/png',size:900};
+const pastedImage={name:'clipboard.png',type:'image/png',size:900,arrayBuffer:async()=>new Uint8Array(900).fill(7).buffer};
 let wasPrevented=firePaste({items:[{kind:'file',type:'image/png',getAsFile:()=>pastedImage}],files:[]});
-await new Promise(resolve=>setTimeout(resolve,0));
-if(!wasPrevented() || input.value!=='https://files.example/clipboard.png') throw new Error('clipboard image paste failed');
+/* The upload is sealed first (AES-GCM in WebCrypto), which is more than one tick. */
+const settle=async box=>{for(let i=0;i<100&&!box.value;i++)await new Promise(resolve=>setTimeout(resolve,5));};
+await settle(input);
+if(!wasPrevented() || !/^https:\/\/files\.example\/sealed-\d+$/.test(input.value)) throw new Error('clipboard image paste failed');
 
 /* AND AGAIN AFTER A RE-RENDER, which is the whole point: the composer node is replaced and the
    paste must still reach the NEW one. */
@@ -588,10 +593,10 @@ replaceComposerOnWrite=true;
 PCConcord.render();
 const input2=control('cc-input');
 document.activeElement=input2;
-const second={name:'second.png',type:'image/png',size:901};
+const second={name:'second.png',type:'image/png',size:901,arrayBuffer:async()=>new Uint8Array(901).fill(7).buffer};
 wasPrevented=firePaste({items:[],files:[second]});
-await new Promise(resolve=>setTimeout(resolve,0));
-if(!wasPrevented() || input2.value!=='https://files.example/second.png')
+await settle(input2);
+if(!wasPrevented() || !/^https:\/\/files\.example\/sealed-\d+$/.test(input2.value))
   throw new Error('paste stopped working after a re-render — the detached-composer bug');
 
 input2.value='';
@@ -739,7 +744,7 @@ if(disclosureRow.classList.contains('cc-actions-open')||disclosure.attributes['a
 // A live relay message, profile/icon metadata hydration and attachment hydration each call the same
 // whole-workspace render path. Exercise actual textarea replacement (not merely a source assertion)
 // while a reply, attachment URL, mention query, focus and non-collapsed selection are active.
-const draftInput=control('cc-input'),draftUrl='https://files.example/photo.png';
+const draftInput=control('cc-input'),draftUrl='https://files.example/sealed-1'; // the first (encrypted) upload above
 // Let the earlier settings-dialog focus timer settle; this scenario begins with the composer as the
 // intentional active control, exactly like a person typing when relay/profile repaints arrive.
 await new Promise(resolve=>setTimeout(resolve,25));

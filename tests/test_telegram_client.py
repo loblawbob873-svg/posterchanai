@@ -266,6 +266,24 @@ def test_not_configured_is_a_sentence_not_a_crash():
         run(mgr.send_code(None, U(1), "+15550104477"))
 
 
+def test_a_node_without_the_library_says_not_set_up(monkeypatch):
+    """A Nostr-only node installed requirements-nostr.txt, which did not list telethon: sign-in 500'd
+    on import. Both requirement lists carry it now, and a node that still lacks it says "not set up"."""
+    monkeypatch.setattr(M, "telethon_available", lambda: False)
+    mgr = M.Manager(store=Store(), api=lambda: (1, "hash"))
+    assert run(mgr.status(None, U(1)))["configured"] is False
+    with pytest.raises(M.TGError, match="Admin"):
+        run(mgr.send_code(None, U(1), "+15550104477"))
+
+
+def test_both_requirement_lists_install_the_library():
+    import pathlib
+    root = pathlib.Path(__file__).resolve().parents[1]
+    for name in ("requirements.txt", "requirements-nostr.txt"):
+        lines = [l.split("#")[0].strip().lower() for l in (root / name).read_text().splitlines()]
+        assert any(l.startswith("telethon") for l in lines), name
+
+
 def test_nothing_before_sign_in(world):
     mgr, _, _, _ = world
     for call in (lambda: mgr.dialogs(None, U(1)), lambda: mgr.send_text(None, U(1), 42, "x"),

@@ -31,6 +31,14 @@ def _api_config():
     return int(api_id), api_hash
 
 
+def telethon_available() -> bool:
+    import importlib.util
+    try:
+        return importlib.util.find_spec("telethon") is not None
+    except (ImportError, ValueError):
+        return False
+
+
 def default_client_factory(session: str, api):
     from telethon import TelegramClient
     from telethon.sessions import StringSession
@@ -128,7 +136,9 @@ class Manager:
 
     # ---- lifecycle ------------------------------------------------------------------------------
     def configured(self) -> bool:
-        return self._api() is not None
+        # No library = not set up, said as such on screen, rather than a sign-in that 500s on import
+        # (a node installed from an older requirements list, or a hand-built venv).
+        return self._api() is not None and (self._factory is not default_client_factory or telethon_available())
 
     def account(self, user_id: int) -> Account:
         a = self._accounts.get(user_id)
@@ -141,6 +151,9 @@ class Manager:
         if api is None:
             raise TGError("Telegram is not set up on this server yet — an admin enters the API id and "
                           "hash from my.telegram.org in Admin → Telegram.")
+        if not self.configured():
+            raise TGError("Telegram is not set up on this server yet — its Telegram library is missing "
+                          "(an admin re-runs the installer, or Admin → Telegram once it is installed).")
         if a.client is None:
             a.client = self._factory(session, api)
         if not a.client.is_connected():

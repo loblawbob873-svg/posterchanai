@@ -19,7 +19,8 @@ def test_member_menu_supports_profile_and_owner_only_ban():
     assert "openMemberMenu(e,target)" in JS
     assert "row.onpointerdown" in JS and "550" in JS
     assert "View profile" in JS
-    assert "canBan=isOwner&&target!==viewer.pubkey" in JS
+    assert "canBan=notSelf&&(isOwner||memberMay(_room,viewer.pubkey,'BAN'))" in JS
+    assert "notSelf=target!==viewer.pubkey&&target!==boundOwnerPk" in JS, "the owner or yourself offered for a ban" 
     assert "Ban from community" in JS
     assert "p.openProfile(target)" in JS
     bind = JS[JS.index("function bind(me){"):]

@@ -364,7 +364,8 @@ def test_authors_can_delete_their_own_messages_after_relay_acceptance():
     assert "const own=found.pubkey===viewer.pubkey;" in CONCORD
     assert "if(!own&&!mayModerate){" in CONCORD, "a stranger can delete somebody else's message"
     assert "p.uiConfirm(own?'Delete this message?'" in CONCORD
-    assert "[['e',id],['k',String(found.kind||9)]],5" in CONCORD
+    # A moderator's kind-5 now also cites its Grant (`vac`, CORD-04 §5 — Vector build_delete_rumor).
+    assert "[['e',id],['k',String(found.kind||9)],...citation],5" in CONCORD
     assert "messages.filter(m=>messageId(m)!==id)" in CONCORD
     assert "if(!removeMessageRow(id))preserveChatScroll(()=>render())" in CONCORD
     assert "above?Math.max(0,top-lost):top" in CONCORD
@@ -393,7 +394,9 @@ def test_the_moderation_flags_are_derived_where_they_are_used():
 
 def test_owner_can_publish_an_interoperable_cord_ban():
     assert 'data-cc-member-ban' in CONCORD
-    assert 'canBan=isOwner&&target!==viewer.pubkey' in CONCORD
+    # The owner's ban (with key rotation) — and, since Vector parity, a BAN holder's banlist write.
+    assert "canBan=notSelf&&(isOwner||memberMay(_room,viewer.pubkey,'BAN'))" in CONCORD
+    assert "void (isOwner?banMember(target):staffModerate(target,'ban'))" in CONCORD
     assert 'const banMember=async target=>' in CONCORD
     assert 'reader.createBanWrap' in CONCORD
     run = subprocess.run(['node', str(ROOT/'tests/client/concord_rekey_runtime.mjs')], cwd=ROOT, capture_output=True, text=True, timeout=30)

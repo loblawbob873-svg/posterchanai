@@ -9354,9 +9354,11 @@ var PosterCordReader = (() => {
     createPinListWrap: () => createPinListWrap,
     adoptStaffControlWrap: () => adoptStaffControlWrap,
     createRoleGrantWrap: () => createRoleGrantWrap,
+    createRoleWrap: () => createRoleWrap,
     prepareRefounding: () => prepareRefounding,
     resumeRefounding: () => resumeRefounding,
     inspectDissolution: () => inspectDissolution,
+    dissolutionPubkey: () => dissolutionPubkey,
     createDissolutionWrap: () => createDissolutionWrap,
     encryptRekeyBytes: () => encryptRekeyBytes,
     decryptRekeyBytes: () => decryptRekeyBytes,
@@ -9365,6 +9367,11 @@ var PosterCordReader = (() => {
     inspectRekeys: () => inspectRekeys,
     applyRekeyUpdates: () => applyRekeyUpdates,
     createBanWrap: () => createBanWrap,
+    createKickWrap: () => createKickWrap,
+    authorityCitation: () => authorityCitation,
+    createChannelEditWrap: () => createChannelEditWrap,
+    createTypingWrap: () => createTypingWrap,
+    inspectTyping: () => inspectTyping,
     createCommunity: () => createCommunity,
     validateInviteBundle: () => validateInviteBundle,
     parseJoinMaterial: () => parseJoinMaterial,
@@ -26960,6 +26967,7 @@ Set the \`cycles\` parameter to \`"ref"\` to resolve cyclical schemas with defs.
       name: folded.metadata?.name || community.name,
       description: folded.metadata?.description || "",
       icon: folded.metadata?.picture || folded.metadata?.icon || "",
+      banner: folded.metadata?.banner || null,
       relays: community.relays,
       relaysAuthoritative: !!folded.metadata?.relaysPresent,
       controlPubkeys: groups.map((g) => g.pk),
@@ -26982,6 +26990,10 @@ Set the \`cycles\` parameter to \`"ref"\` to resolve cyclical schemas with defs.
       liveInviteLinks: [...folded.liveInviteLinks],
       registriesByCreator: Object.fromEntries(folded.registriesByCreator),
       members: [...new Set(folded.roster.grants.filter(g => g.roleIds.length && !folded.banned.has(g.member)).map(g => g.member))],
+      /* The role graph, for a role menu: server roles with their decimal permission string, and who
+       * holds which (Vector's Admin / Moderator). */
+      roles: folded.roster.roles.map(r => ({ id: r.roleId, name: r.name, position: r.position, permissions: r.permissions.toString(), scope: r.scope && r.scope.kind || "server" })),
+      grants: Object.fromEntries(folded.roster.grants.filter(g => !folded.banned.has(g.member)).map(g => [g.member, [...g.roleIds]])),
       channels: channels.map((ch) => ({ id: ch.idHex, name: ch.name, private: ch.isPrivate, readOnly: !!ch.readOnly, streamPubkeys: ch.streams.map((s) => s.group.pk) }))
     };
   }
@@ -27052,16 +27064,22 @@ Set the \`cycles\` parameter to \`"ref"\` to resolve cyclical schemas with defs.
     const {community,folded}=control(bundle,wraps);
     return !folded.banned.has(pubkey)&&(pubkey===community.owner||rolesOf(folded.roster,pubkey).some(r=>permsContain(r.permissions,Permissions.PIN_MESSAGES)&&(r.scope.kind==='server'||r.scope.channelId===channelId)));
   }
-  async function createPinListWrap(bundle,wraps,channelId,entries,pubkey,signEvent) {
+  async function createPinListWrap(bundle,wraps,channelId,entries,pubkey,signEvent,opts={}) {
     requireActiveMembership(bundle,channelId);
     const {community,groups,folded,channels}=control(bundle,wraps),channel=channels.find(c=>c.idHex===channelId),state=inspectPinList(bundle,wraps,channelId);
-    if(!state.available||!channel?.current||folded.channels.get(channelId)?.deleted)throw new Error('pin list history is unavailable; refusing to overwrite it');
+    /* A channel nobody has pinned in yet has NO pin-list entity, and Vector's first pin is version 1
+     * of it. "No head" is ALSO what a device sees when it simply has not read the list, so refusing is
+     * the default (tests/client/concord_rekey_runtime.mjs) and the FIRST pin is an explicit opt-in the
+     * pin button makes after a full control read — without it nobody here could ever pin. A head that
+     * exists but cannot be read (a sealed list from an epoch we lack) always refuses. */
+    const firstPin=!!(opts&&opts.firstPin)&&!folded.pins.get(channelId)&&!folded.heads.get(bytesToHex2(pinsLocator(community.id,hex32(channelId))));
+    if((!state.available&&!firstPin)||!channel?.current||folded.channels.get(channelId)?.deleted)throw new Error('pin list history is unavailable; refusing to overwrite it');
     if(pubkey!==community.owner&&!rolesOf(folded.roster,pubkey).some(r=>permsContain(r.permissions,Permissions.PIN_MESSAGES)&&(r.scope.kind==='server'||r.scope.channelId===channelId)))throw new Error('pin permission is required for this channel');
     const authority=controlWriteAuthority(community,folded,pubkey,Permissions.PIN_MESSAGES,'pin messages');
     if(!Array.isArray(entries)||entries.length>25||entries.some(p=>!verifyPinProof(p,channelId)))throw new Error('invalid pin entries');
     const content=JSON.stringify(channel.isPrivate?{epoch:channel.current.epoch.toString(),sealed:encryptChecked(channel.current.group.convKey,JSON.stringify({entries}))}:{entries});
     if(utf8Len(content)>32768)throw new Error('pin list exceeds encrypted byte budget');
-    const eid=bytesToHex2(pinsLocator(community.id,hex32(channelId))),head=folded.heads.get(eid),tags=[[TAG_SUBKIND,VSK_PIN_LIST],[TAG_ENTITY,eid],[TAG_EVERSION,(head.version+1n).toString()],...authority,[TAG_EPREV,bytesToHex2(head.hash)]];
+    const eid=bytesToHex2(pinsLocator(community.id,hex32(channelId))),head=folded.heads.get(eid),tags=[[TAG_SUBKIND,VSK_PIN_LIST],[TAG_ENTITY,eid],[TAG_EVERSION,head?(head.version+1n).toString():'1'],...authority,...(head?[[TAG_EPREV,bytesToHex2(head.hash)]]:[])];
     const rumor=buildRumor({kind:KIND_CONTROL,content,pubkey,ms:Date.now(),tags}),group=writableControlGroup(groups);
     return {wrap:wrapSeal(await sealRumor(rumor,KIND_SEAL_PLAINTEXT,group,{signEvent}),group),rumorId:rumor.id};
   }
@@ -27248,6 +27266,103 @@ Set the \`cycles\` parameter to \`"ref"\` to resolve cyclical schemas with defs.
     const seal = await sealRumor(rumor, KIND_SEAL_ENCRYPTED, guest, { signEvent });
     return { rumorId: rumor.id, wrap: wrapSeal(seal, guest), epoch: guest.epoch };
   }
+  /* KICK (guestbook kind 3309, CORD-02 §5 / Vector build_kick_rumor): `p` = the target, `vac` =
+   * the kicker's Grant unless the owner acts. Whether it is honoured is the reader's call
+   * (guestbookCanKick); refusing here what it would ignore keeps the button honest. */
+  async function createKickWrap(bundle, controlWraps, targetPubkey, pubkey, signEvent) {
+    requireActiveMembership(bundle);
+    const target = String(targetPubkey || "").toLowerCase(), me = String(pubkey || "").toLowerCase();
+    if (!/^[0-9a-f]{64}$/.test(target) || !/^[0-9a-f]{64}$/.test(me)) throw new Error("invalid member pubkey");
+    const { community, folded } = control(bundle, controlWraps);
+    if (target === community.owner) throw new Error("the community owner cannot be kicked");
+    if (target === me) throw new Error("use Leave to leave a community");
+    const authority = controlWriteAuthority(community, folded, me, Permissions.KICK, "kick members");
+    if (me !== community.owner && !memberOutranks(folded.roster, me, target)) throw new Error("you can only kick members ranked below you");
+    const guest = guestbookGroups(bundle)[0];
+    if (!guest) throw new Error("no guestbook key is held for this community");
+    const rumor = buildRumor({ kind: 3309, pubkey: me, content: "", ms: Date.now(), tags: [["p", target], ...authority] });
+    const seal = await sealRumor(rumor, KIND_SEAL_ENCRYPTED, guest, { signEvent });
+    return { rumorId: rumor.id, wrap: wrapSeal(seal, guest), epoch: guest.epoch };
+  }
+  /* The `vac` a moderator's action cites (CORD-04 §5): [] for the owner, the Grant citation for
+   * staff holding `permission` (a Permissions key), and a throw for anyone else. Vector puts it on
+   * a kind-5 that removes SOMEBODY ELSE'S message; without it a delegated removal is unverifiable. */
+  function authorityCitation(bundle, controlWraps, pubkey, permission) {
+    const { community, folded } = control(bundle, controlWraps);
+    const bit = Permissions[permission];
+    if (bit === undefined) throw new Error("unknown permission " + permission);
+    return controlWriteAuthority(community, folded, String(pubkey || "").toLowerCase(), bit, "do that");
+  }
+  /* RENAME / DELETE A CHANNEL: a new edition of the channel entity (vsk 2), carrying every field the
+   * prior body had (unknown ones included — `custom`, `voice`), so a rename never strips another
+   * client's data. `deleted:true` is terminal (Vector). #general and the last live channel stay. */
+  async function createChannelEditWrap(bundle, controlWraps, channelId, changes, pubkey, signEvent) {
+    requireActiveMembership(bundle);
+    const me = String(pubkey || "").toLowerCase(), eid = String(channelId || "").toLowerCase();
+    const { community, groups, folded } = control(bundle, controlWraps);
+    const authority = controlWriteAuthority(community, folded, me, Permissions.MANAGE_CHANNELS, "edit channels");
+    const head = folded.heads.get(eid), prior = folded.headEditions.get(eid), current = folded.channels.get(eid);
+    if (!head || !prior || !current) throw new Error("that channel's history has not been synced");
+    if (current.deleted) throw new Error("that channel was deleted");
+    const body = { ...JSON.parse(prior.content) };
+    if (changes && Object.prototype.hasOwnProperty.call(changes, "name")) {
+      const name = String(changes.name || "").trim();
+      if (!name || utf8Len(name) > NAME_MAX_BYTES) throw new Error("channel name must be between 1 and 64 UTF-8 bytes");
+      body.name = name;
+    }
+    if (changes && changes.deleted) {
+      const live = [...folded.channels.values()].filter(c => !c.deleted);
+      if (live.length <= 1) throw new Error("a community keeps at least one channel");
+      body.deleted = true;
+    }
+    const tags = [[TAG_SUBKIND, VSK_CHANNEL], [TAG_ENTITY, eid], [TAG_EVERSION, (head.version + 1n).toString()], [TAG_EPREV, bytesToHex2(head.hash)], ...authority];
+    const rumor = buildRumor({ kind: KIND_CONTROL, content: JSON.stringify(body), pubkey: me, ms: Date.now(), tags });
+    const group = writableControlGroup(groups), seal = await sealRumor(rumor, KIND_SEAL_PLAINTEXT, group, { signEvent });
+    return { rumorId: rumor.id, wrap: wrapSeal(seal, group), channel: body };
+  }
+  /* TYPING (kind 23311, empty, in an EPHEMERAL 21059 wrap — relays forward and never store it). */
+  async function createTypingWrap(bundle, controlWraps, channelId, pubkey, signEvent) {
+    requireActiveMembership(bundle, channelId);
+    const { channels } = control(bundle, controlWraps), channel = channels.find(ch => ch.idHex === channelId);
+    if (!channel?.current) throw new Error("channel is not writable with this membership");
+    const ms = Date.now(), rumor = buildRumor({ kind: 23311, content: "", pubkey, ms, tags: channelBindingTags(channel.idHex, channel.current.epoch) });
+    const seal = await sealRumor(rumor, 20013, channel.current.group, { signEvent });
+    return { rumorId: rumor.id, wrap: wrapSeal(seal, channel.current.group, { ephemeral: true }), ms };
+  }
+  /* Who is typing, from ephemeral wraps: the members whose 23311 is under `windowMs` old. */
+  async function inspectTyping(bundle, controlWraps, channelId, wraps, windowMs = 8000) {
+    const { channels } = control(bundle, controlWraps), channel = channels.find(ch => ch.idHex === channelId);
+    if (!channel) return [];
+    const now = Date.now(), who = new Map();
+    for (const ev of await openChatBatch(wraps || [], channel)) {
+      if (ev.kind !== 23311 || !(now - ev.ms < windowMs) || ev.ms > now + 60000) continue;
+      who.set(ev.author, Math.max(who.get(ev.author) || 0, ev.ms));
+    }
+    return [...who.keys()];
+  }
+  function memberOutranks(roster, actor, target) {
+    const a = highestPosition(roster, actor), t = highestPosition(roster, target);
+    return a !== undefined && (t === undefined || a < t);
+  }
+  /* A SERVER ROLE (vsk 1, CORD-04 §3 — Vector's Role: {role_id, name, position, permissions as a
+   * DECIMAL STRING, scope, color}). `preset` is 'admin' (ADMIN_ALL, position 1) or 'moderator'
+   * (MODERATOR_ALL, position 2), the two Vector ships. The writer must outrank the position. */
+  async function createRoleWrap(bundle, controlWraps, preset, pubkey, signEvent) {
+    requireActiveMembership(bundle);
+    const me = String(pubkey || "").toLowerCase(), { community, groups, folded } = control(bundle, controlWraps);
+    const spec = preset === "admin" ? { name: "Admin", position: 1, permissions: ADMIN_ALL, color: 0 } : preset === "moderator" ? { name: "Moderator", position: 2, permissions: MODERATOR_ALL, color: 15158332 } : null;
+    if (!spec) throw new Error("unknown role preset");
+    const authority = controlWriteAuthority(community, folded, me, Permissions.MANAGE_ROLES, "create roles");
+    if (me !== community.owner && !outranks(folded.roster, me, community.owner, spec.position)) throw new Error("you can only create roles ranked below yours");
+    if (folded.roster.roles.length >= MAX_ROLES_PER_COMMUNITY) throw new Error("the community has reached its role limit");
+    const roleId = bytesToHex2(randomBytes(32));
+    const body = { role_id: roleId, name: spec.name, position: spec.position, permissions: spec.permissions.toString(), scope: { kind: "server" }, color: spec.color };
+    const rumor = buildRumor({ kind: KIND_CONTROL, content: JSON.stringify(body), pubkey: me, ms: Date.now(), tags: [[TAG_SUBKIND, VSK_ROLE], [TAG_ENTITY, roleId], [TAG_EVERSION, "1"], ...authority] });
+    const group = writableControlGroup(groups), wrap = wrapSeal(await sealRumor(rumor, KIND_SEAL_PLAINTEXT, group, { signEvent }), group);
+    if (!roleById(control(bundle, [...controlWraps, wrap]).folded.roster, roleId)) throw new Error("the new role failed authority validation");
+    return { wrap, rumorId: rumor.id, roleId, name: spec.name };
+  }
+  function dissolutionPubkey(bundle) { return dissolutionGroup(bundle).pk; }
   function dissolutionGroup(bundle) {
     const community=runtime(bundle);return groupKeyCached('concord/dissolved',community.id,ZERO32);
   }
@@ -27363,8 +27478,13 @@ Set the \`cycles\` parameter to \`"ref"\` to resolve cyclical schemas with defs.
     const root=hex32(bundle.community_root),group=base?groupKeyCached('concord/base-rekey-pseudonym',root,community.id,epoch):groupKeyCached('concord/rekey-pseudonym',root,hex32(scope),epoch);
     const key=options.key||bytesToHex2(randomBytes3(32)),controlRoot=base?(options.controlRoot||bytesToHex2(randomBytes3(32))):undefined,controlPk=base?groupKeyCached('concord/control-signer',hex32(controlRoot),community.id,epoch).pk:undefined;
     const rows=[];for(const recipient of recipients){hex32(recipient.pubkey);const blob=encodeRekeyBlob(scope,epoch,key,controlPk,base&&(recipient.pubkey===community.owner||rolesOf(folded.roster,recipient.pubkey).some(r=>(r.permissions & (Permissions.MANAGE_ROLES|Permissions.MANAGE_CHANNELS|Permissions.MANAGE_METADATA|Permissions.BAN|Permissions.CREATE_INVITE|(1n<<11n)))!==0n))?controlRoot:undefined,bundle.community_id);rows.push({locator:rekeyLocator(pubkey,recipient.pubkey,scope,epoch),wrapped:await encryptBytes(recipient.pubkey,blob)});}
-    const wraps=[],n=Math.ceil(rows.length/120);
-    for(let i=0;i<n;i++){const rumor=buildRumor({kind:3303,pubkey,content:JSON.stringify(rows.slice(i*120,(i+1)*120)),ms:Date.now(),tags:[...tags,['chunk',String(i+1),String(n)]]}),seal=await sealRumor(rumor,20013,group,{signEvent});wraps.push(wrapSeal(seal,group));}
+    /* 64 ROWS PER EVENT TO SEND; readers (ours, Vector's) accept up to 120. A 3303 is double-wrapped
+     * and strfry — what most Concord relays run — refuses an event over 64 KB. MEASURED on our
+     * encoding (tests/client/concord_vector_parity_runtime.mjs): ~825 bytes a row, so 120 rows was
+     * ~99 KB and even Vector's 80 is 66,045 bytes; 64 rows is ~53 KB. A rotation for a room past
+     * ~75 members used to be refused by the very relays that carry it. */
+    const REKEY_ROWS_PER_EVENT=64,wraps=[],n=Math.ceil(rows.length/REKEY_ROWS_PER_EVENT);
+    for(let i=0;i<n;i++){const rumor=buildRumor({kind:3303,pubkey,content:JSON.stringify(rows.slice(i*REKEY_ROWS_PER_EVENT,(i+1)*REKEY_ROWS_PER_EVENT)),ms:Date.now(),tags:[...tags,['chunk',String(i+1),String(n)]]}),seal=await sealRumor(rumor,20013,group,{signEvent});wraps.push(wrapSeal(seal,group));}
     return {wraps,key,epoch:epoch.toString(),...(base?{control_pk:controlPk,control_root:controlRoot}:{})};
   }
 
@@ -27377,12 +27497,17 @@ Set the \`cycles\` parameter to \`"ref"\` to resolve cyclical schemas with defs.
     requireActiveMembership(bundle);
     if (!/^[0-9a-f]{64}$/i.test(targetPubkey) || !/^[0-9a-f]{64}$/i.test(pubkey)) throw new Error("invalid member pubkey");
     const { community, groups, folded } = control(bundle, controlWraps);
-    if (pubkey.toLowerCase() !== community.owner.toLowerCase()) throw new Error("only the community owner can ban members");
+    /* DELEGATED, like Vector: a holder of BAN cites its Grant (`vac`, CORD-04 §5); only the owner
+     * is exempt. Outranking the target is checked here too, because the fold would silently ignore
+     * a ban it may not apply and the button would appear to work. */
+    const banAuthority = controlWriteAuthority(community, folded, pubkey.toLowerCase(), Permissions.BAN, "ban members");
     if (targetPubkey.toLowerCase() === community.owner.toLowerCase()) throw new Error("the community owner cannot be banned");
+    if (pubkey.toLowerCase() !== community.owner.toLowerCase() && !memberOutranks(folded.roster, pubkey.toLowerCase(), targetPubkey.toLowerCase()))
+      throw new Error("you can only ban members ranked below you");
     const entityId = banlistLocator(community.id), entityHex = bytesToHex2(entityId), head = folded.heads.get(entityHex);
     const version2 = head ? head.version + 1n : 1n, prevHash = head ? head.hash : void 0;
     const banned = [...new Set([...folded.banned, targetPubkey.toLowerCase()])].sort();
-    const tags = [[TAG_SUBKIND, VSK_BANLIST], [TAG_ENTITY, entityHex], [TAG_EVERSION, version2.toString()]];
+    const tags = [[TAG_SUBKIND, VSK_BANLIST], [TAG_ENTITY, entityHex], [TAG_EVERSION, version2.toString()], ...banAuthority];
     if (prevHash) tags.push([TAG_EPREV, bytesToHex2(prevHash)]);
     const rumor = buildRumor({ kind: KIND_CONTROL, content: JSON.stringify(banned), pubkey, ms: Date.now(), tags });
     const group = writableControlGroup(groups), seal = await sealRumor(rumor, KIND_SEAL_PLAINTEXT, group, { signEvent });
@@ -27422,7 +27547,16 @@ Set the \`cycles\` parameter to \`"ref"\` to resolve cyclical schemas with defs.
     if(utf8Len(description)>DESCRIPTION_MAX_BYTES)throw new Error("community description is too long");
     const body = { ...priorBody, name, description, relays: priorBody.relays ?? community.relays };
     if (metadata && Object.prototype.hasOwnProperty.call(metadata, "message_expiration")) body.message_expiration = messageExpirationSeconds(metadata.message_expiration);
-    if (metadata && metadata.icon) body.picture = String(metadata.icon).slice(0, 2048);
+    /* `icon` is CORD-02's encrypted ImageRef (what Armada and Vector display); `picture` is the
+     * older PosterChan plain URL / emoji. They are exclusive: a stale `picture` would outrank a new
+     * encrypted icon in our own fold, and a stale `icon` would keep showing in Vector. */
+    if (metadata && isImagePointer(metadata.iconRef)) {
+      const r = metadata.iconRef;
+      if (!/^https:\/\//i.test(r.url) || !/^[0-9a-f]{64}$/i.test(r.key) || !/^[0-9a-f]{32}$/i.test(r.nonce) || !/^[0-9a-f]{64}$/i.test(r.hash)) throw new Error("invalid encrypted icon");
+      body.icon = { url: r.url, key: r.key.toLowerCase(), nonce: r.nonce.toLowerCase(), hash: r.hash.toLowerCase(), ...(r.ext ? { ext: String(r.ext).slice(0, 8) } : {}) };
+      delete body.picture;
+    } else if (metadata && metadata.icon) { body.picture = String(metadata.icon).slice(0, 2048); delete body.icon; }
+    else if (metadata && Object.prototype.hasOwnProperty.call(metadata, "icon") && !metadata.icon) { delete body.picture; delete body.icon; }
     const tags = [[TAG_SUBKIND, VSK_METADATA], [TAG_ENTITY, entityHex], [TAG_EVERSION, version2.toString()], ...authority];
     if (prevHash) tags.push([TAG_EPREV, bytesToHex2(prevHash)]);
     const rumor = buildRumor({ kind: KIND_CONTROL, content: JSON.stringify(body), pubkey, ms: Date.now(), tags });
