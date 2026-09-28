@@ -15,7 +15,6 @@ import android.os.Bundle;
 import android.os.Handler;
 import android.os.Looper;
 import android.provider.Telephony;
-import android.provider.ContactsContract;
 import android.provider.OpenableColumns;
 import android.text.Editable;
 import android.text.TextWatcher;
@@ -981,14 +980,20 @@ public class ThreadActivity extends PcActivity {
         }
     }
 
+    /** Add this number to POSTERCHAN's Contacts, not the phone's. The platform editor
+     * (ACTION_INSERT) only offers the accounts that phone's Contacts app treats as storage, and
+     * PosterChan is not one of them -- so the contact landed in Google/the SIM, outside the encrypted
+     * address book that follows the account, with no way to pick otherwise. The app's own editor
+     * opens prefilled instead (phoneshell.js `contact-add:`, contacts.js addPhone), and the phone
+     * book still gets the card through the native contact sync when that is on. */
     private void addContact() {
-        try {
-            Intent add = new Intent(Intent.ACTION_INSERT, ContactsContract.Contacts.CONTENT_URI)
-                    .putExtra(ContactsContract.Intents.Insert.PHONE, address);
-            startActivity(add);
-        } catch (Throwable t) {
-            say(getString(R.string.sms_contact_no_app));
-        }
+        // The same hand-off the Phone app's contact rows use (DialerActivity.openPosterContact).
+        if (address == null || address.trim().isEmpty()) return;
+        place.poster.app.home.LaunchView.request("contact-add:" + Uri.encode(address.trim()), System.currentTimeMillis());
+        Intent i = new Intent(this, MainActivity.class);
+        i.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_SINGLE_TOP);
+        try { startActivity(i); }
+        catch (Throwable t) { say(getString(R.string.home_cannot_open)); }
     }
 
     private void threadMenu() {

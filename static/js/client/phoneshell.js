@@ -66,6 +66,13 @@
         try{ if(/^[0-9a-f]{64}$/i.test(id)) PC.openThread(id); }catch(_){}
       } else if(v === '__music'){
         try{ if(typeof PC.openMusic === 'function') PC.openMusic(); }catch(_){}
+      } else if(v.indexOf('contact-add:') === 0){
+        /* Texts → "Add contact": PosterChan's own new-contact editor, prefilled with the number
+         * (an existing card holding it opens instead). Parked like `contact:` below. */
+        try{ window.__PC_CONTACT_ADD_PHONE = decodeURIComponent(v.slice(12)); }catch(_){
+          window.__PC_CONTACT_ADD_PHONE = v.slice(12);
+        }
+        try{ PC.switchView('contacts'); }catch(_){}
       } else if(v.indexOf('contact:') === 0){
         /* contacts.js may still be loading when the native dialer hands us this destination.
          * Park the number on window; PCContacts.render consumes it after its data is ready. */
