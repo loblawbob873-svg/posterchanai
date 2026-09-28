@@ -10405,7 +10405,6 @@
 
   function enter(){
     if(on) return;
-    _watchSheets();
     /* A WINDOW IS NOT A DESKTOP, AND THIS IS THE ONE PLACE THAT CANNOT BE ROUTED AROUND.
      *
      * A PosterChan window (oswin.js) is a same-origin child, so it reads the SAME remembered
@@ -10439,6 +10438,7 @@
       return;
     }
     on = true;
+    _watchSheets();        // only a desktop that really entered raises itself for sheets
     /* The composer opens as its own window while the desktop is up — see _composeInWindow. */
     try{ window.__PC_COMPOSE_HOST = _composeInWindow; }catch(_){ }
     _deskLayoutSize={w:Math.round(vwL()),h:Math.round(vhL())};

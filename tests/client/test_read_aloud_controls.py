@@ -50,10 +50,18 @@ class ReadAloudControls(unittest.TestCase):
         # at the top of the function pushed the code it checks out of the window and the test
         # failed for a change that did not touch narration. Strip the comments first.
         import re as _re
-        _raw = self.app[self.app.index("function switchView(v, quiet)"):][:4000]
+        _at = self.app.index("function switchView(v, quiet)")
+        _end = self.app.find("\n  function ", _at + 10)
+        _raw = self.app[_at:_end if _end > 0 else None]     # the whole function, however long
         sv = _re.sub(r"/\*.*?\*/", "", _raw, flags=_re.S)
-        sv = _re.sub(r"(?m)^\s*//.*$", "", sv)[:600]   # whole-line // comments too, same reason
-        self.assertIn("stopNarration", sv, "leaving the screen leaves it reading")
+        sv = _re.sub(r"(?m)^\s*//.*$", "", sv)   # whole-line // comments too, same reason
+        # …AND NO WINDOW AT ALL. A 600-character window broke a second time when window-opening
+        # branches (post, profile) were added at the top. The rule is an ORDER: narration stops
+        # before switchView changes the screen, i.e. before its first `VIEW=` assignment.
+        stop = sv.find("stopNarration")
+        change = _re.search(r"\bVIEW\s*=(?!=)", sv)
+        self.assertNotEqual(stop, -1, "leaving the screen leaves it reading")
+        self.assertTrue(change and stop < change.start(), "narration is stopped only after the screen changed")
 
     def test_the_chip_is_fixed_to_the_viewport(self):
         """It has to outlive the post scrolling away — that is the case it exists for — so it cannot
