@@ -40,7 +40,7 @@
             </div>`;
     }
 
-    let rows = [], loading = false;
+    let rows = [], loading = false, complete = true;
 
     function draw() {
         const list = document.getElementById('ids_list'), sum = document.getElementById('ids_summary');
@@ -52,6 +52,13 @@
             ? (q ? `${shown.length} of ${rows.length} identities match`
                  : `${rows.length} identities` + (unverified ? ` · ${unverified} not published in their profile` : ''))
             : 'No identities granted yet.';
+        const prune = document.getElementById('ids_prune');
+        if (prune) {
+            // Only offered when every profile was read: an unread profile LOOKS unverified.
+            prune.hidden = !(unverified && complete);
+            prune.textContent = `Remove all ${unverified} not in profile`;
+            prune.disabled = false;
+        }
         list.innerHTML = shown.slice(0, 300).map(rowHtml).join('')
             + (shown.length > 300 ? `<div class="blk-more">${shown.length - 300} more — search to narrow it down</div>` : '');
     }
@@ -66,6 +73,7 @@
             if (!r.ok) throw new Error('HTTP ' + r.status);
             const j = await r.json();
             rows = j.identities || [];
+            complete = j.names_complete !== false;
             draw();
             if (!j.names_complete && sum) sum.textContent += ' (some profiles could not be read from the relay)';
         } catch (e) {
@@ -105,8 +113,46 @@
         }
     }
 
+    // The names a bulk remove may take: exactly the "not in profile" rows on screen right now. The
+    // server removes only those that STILL fail its own check (nip05_registry.remove_unverified).
+    function unverifiedNames(list) { return (list || []).filter(r => !r.verified).map(r => r.name); }
+
+    async function prune(btn) {
+        const names = unverifiedNames(rows);
+        if (!names.length) return;
+        const sample = names.slice(0, 8).join(', ') + (names.length > 8 ? `, and ${names.length - 8} more` : '');
+        const ok = (typeof pcConfirm === 'function')
+            ? await pcConfirm(`Remove ${names.length} identit${names.length === 1 ? 'y' : 'ies'} whose profile does not publish the address? `
+                + `Their owners lose the address (and any access it grants): ${sample}.`)
+            : true;
+        if (!ok) return;
+        btn.disabled = true;
+        btn.textContent = 'Removing…';
+        try {
+            const r = await (window.csrfFetch || fetch)('/api/admin/relay/identities/remove-unverified', {
+                method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({names})});
+            const j = await r.json().catch(() => ({}));
+            if (!r.ok) throw new Error(j.detail || ('HTTP ' + r.status));
+            const ta = document.getElementById('nostr_relay_nip05_names');
+            if (ta && typeof j.value === 'string') {
+                ta.value = j.value;
+                if (typeof loadedValues !== 'undefined') loadedValues.set('nostr_relay_nip05_names', ta.value);
+            }
+            await load();
+            const sum = document.getElementById('ids_summary');
+            if (sum) sum.textContent = `Removed ${j.removed || 0}. ` + sum.textContent;
+        } catch (e) {
+            btn.disabled = false;
+            btn.textContent = 'Remove all not in profile';
+            const msg = 'Could not remove: ' + e.message;
+            if (window.pcAlert) window.pcAlert(msg);
+            else { const sum = document.getElementById('ids_summary'); if (sum) sum.textContent = msg; }
+        }
+    }
+
     if (typeof document !== 'undefined') {
         document.addEventListener('click', e => {
+            if (e.target && e.target.id === 'ids_prune') { prune(e.target); return; }
             const b = e.target.closest && e.target.closest('.ids-remove');
             if (b) { remove(b); return; }
             if (e.target.closest && e.target.closest('[data-tab="relay"]')) load();
@@ -114,5 +160,5 @@
         document.addEventListener('input', e => { if (e.target && e.target.id === 'ids_search') draw(); });
         if (typeof location !== 'undefined' && location.hash === '#tab-relay') document.addEventListener('DOMContentLoaded', load);
     }
-    if (typeof module !== 'undefined') module.exports = { matches, sortRows, rowHtml };
+    if (typeof module !== 'undefined') module.exports = { matches, sortRows, rowHtml, unverifiedNames };
 })();

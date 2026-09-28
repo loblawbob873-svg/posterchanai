@@ -432,7 +432,10 @@
             <label for="ids_search">Identities</label>
             <div id="ids_panel" class="blk-panel">
                 <input type="search" id="ids_search" placeholder="Search by name, address, profile or npub…" autocomplete="off">
-                <div id="ids_summary" class="blk-summary">Open this tab to load the list.</div>
+                <div class="ids-tools">
+                    <div id="ids_summary" class="blk-summary">Open this tab to load the list.</div>
+                    <button type="button" id="ids_prune" class="btn-secondary btn-small" hidden>Remove all not in profile</button>
+                </div>
                 <div id="ids_list" class="blk-list"></div>
             </div>
             <details class="blk-raw">

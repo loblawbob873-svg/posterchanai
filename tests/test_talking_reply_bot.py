@@ -120,17 +120,18 @@ def test_the_bot_endpoint_renders_only_with_that_bots_own_assets(monkeypatch):
         assert c.post("/api/bots/talk", json={"bot": "alice", "text": "hi"}).status_code == 401
 
 
-def test_each_reply_picks_one_of_up_to_three_faces_with_its_own_mouth(monkeypatch):
-    shas = ["1" * 64, "2" * 64, "3" * 64]
-    cfg = {"alice": {"talk_faces": _faces(*shas, "4" * 64), "talk_voice_sha": "v" * 64}}
+def test_each_reply_picks_one_of_up_to_ten_faces_with_its_own_mouth(monkeypatch):
+    shas = [str(i) * 64 for i in range(10)]
+    cfg = {"alice": {"talk_faces": _faces(*shas, "a" * 64), "talk_voice_sha": "v" * 64}}
     rendered = []
     with _client(monkeypatch, cfg, rendered) as c:
         for _ in range(60):
             c.post("/api/bots/talk", json={"bot": "alice", "text": "hi"}, headers={"X-PC-Talk-Token": tb.token("alice")})
     used = {r[0] for r in rendered}
-    assert used == set(shas), f"expected all three faces over 60 replies and never a 4th, got {used}"
+    assert used == set(shas), f"expected all ten faces over 60 replies and never an 11th, got {used}"
     for face, _v, mouth, _t in rendered:
-        assert mouth["x"] == pytest.approx(0.1 * (shas.index(face) + 1)), "a face was drawn with another face's mouth"
+        want = min(1.0, 0.1 * (shas.index(face) + 1))
+        assert mouth["x"] == pytest.approx(want), "a face was drawn with another face's mouth"
 
 
 def test_faces_come_in_shuffled_rounds_never_twice_in_a_row():
@@ -480,3 +481,88 @@ def test_the_hourly_budget_survives_a_restart(talk_only, monkeypatch, tmp_path):
     monkeypatch.setattr(again, "_RR_STARTS_FILE", str(tmp_path / "starts.json"))
     monkeypatch.setattr(again, "_RR_PER_HOUR", 2)
     assert not again._rr_budget_allows(), "a restart handed out a fresh hourly budget"
+
+
+def test_the_admin_form_offers_ten_faces_like_the_server():
+    """The form's limit and the server's must be the same number, or the form refuses a face the
+    server would take (or offers one it silently drops at render time)."""
+    import re
+    root = os.path.dirname(BOTS)
+    js = open(os.path.join(root, "static/js/admin-bots.js")).read()
+    html = open(os.path.join(root, "templates/admin/tabs/bots.html")).read()
+    assert int(re.search(r"const TALK_MAX_FACES = (\d+)", js).group(1)) == tb.MAX_FACES == 10
+    assert re.search(r'id="bot_talk_face_file"[^>]*\bmultiple\b', html), "several faces must be pickable at once"
+    assert "up to 10 pictures" in html
+
+
+# ---- a random reply is in the bot's own personality --------------------------------------------------
+
+_TONE_WORDS = ("warm", "friendly", "kind", "polite", "nice", "positive", "cheerful", "helpful")
+
+
+def _run_random_reply(listener, monkeypatch, text="Rates just went up again, great.", name="dana"):
+    asked = []
+    note = {"id": "n" * 64, "text": text, "user": {"pubkey": "a" * 64, "username": name},
+            "_event": {"created_at": int(listener.time.time())}}
+    monkeypatch.setattr(listener, "_RR_ENABLED", True)
+    monkeypatch.setattr(listener, "_RR_PROB", 1.0)
+    monkeypatch.setattr(listener, "_rr_in_quiet", lambda: False)
+    monkeypatch.setattr(listener, "_rr_budget_allows", lambda: True)
+    monkeypatch.setattr(listener, "_muted_us", lambda pk, own: False)
+    monkeypatch.setattr(listener, "_rr_next_scan", [0.0])
+    monkeypatch.setattr(listener._nk, "_PUBKEY", "0" * 64)
+    monkeypatch.setattr(listener._nk, "get_timeline", lambda **kw: [note])
+    monkeypatch.setattr(listener._nk, "resolve_user", lambda pk: {"nip05": "dana@x.example", "username": name})
+    monkeypatch.setattr(listener._nk, "verify_nip05", lambda pk, n: True)
+    monkeypatch.setattr(listener, "generate_reply", lambda content, **kw: asked.append((content, kw)) or "sure")
+    monkeypatch.setattr(listener, "_send_spoken", lambda send, t: None)
+    listener.process_random_replies()
+    return asked
+
+
+def test_a_random_reply_leaves_the_tone_to_the_personality(listener, monkeypatch):
+    """Mentions stayed in character and random replies did not: the random reply's user turn said
+    "Reply briefly, WARMLY ...", and a small model obeys an adjective in the user turn over the
+    Personality prompt in the system turn. The user turn carries the post and the length -- never
+    a tone."""
+    asked = _run_random_reply(listener, monkeypatch)
+    assert len(asked) == 1, "the stubbed stranger's post was not answered at all"
+    content, kw = asked[0]
+    low = content.lower()
+    assert "rates just went up again" in low, "the post itself must reach the model"
+    assert "dana" in content, "the model should know who it is answering"
+    for w in _TONE_WORDS:
+        assert w not in low, f"the user turn dictates a tone ({w!r}) that overrides the Personality prompt"
+    assert "own voice" in low and "personality" in low
+    assert kw.get("custom_system_prompt") is None, "the system prompt must stay the bot's Personality prompt"
+
+
+def test_the_system_prompt_of_a_random_reply_is_the_personality(listener, monkeypatch):
+    """End to end through ai.client: the request that leaves the bot has the Personality prompt as its
+    system turn and no tone word anywhere the bot added."""
+    import importlib as _il
+    monkeypatch.setenv("PROMPT", "You are Grumpus, a cranky old sailor who hates everything. Swear a lot.")
+    monkeypatch.setenv("OPENAI_ENDPOINT", "http://127.0.0.1:9/v1/chat/completions")
+    for m in ("config", "ai.client"):
+        monkeypatch.delitem(sys.modules, m, raising=False)   # restored at teardown
+    client = _il.import_module("ai.client")
+    sent = {}
+
+    class _R:
+        status_code = 200
+
+        def raise_for_status(self):
+            pass
+
+        def json(self):
+            return {"choices": [{"message": {"content": "Bah. Rates. Figures."}}]}
+    monkeypatch.setattr(client.requests, "post", lambda url, headers=None, data=None, timeout=0: sent.setdefault("p", json.loads(data)) and _R())
+    monkeypatch.setattr(client, "_acquire_ai_slot", lambda: None)
+    monkeypatch.setattr(client, "_release_ai_slot", lambda: None)
+    content = listener._talk_prompt(listener._random_reply_prompt("dana", "Rates just went up again."))
+    assert client.generate_reply(content) == "Bah. Rates. Figures."
+    msgs = sent["p"]["messages"]
+    assert msgs[0]["role"] == "system" and msgs[0]["content"].startswith("You are Grumpus")
+    user = msgs[-1]["content"].lower()
+    for w in _TONE_WORDS:
+        assert w not in user, f"tone word {w!r} in the user turn"

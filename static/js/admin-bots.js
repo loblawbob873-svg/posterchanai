@@ -696,9 +696,9 @@ async function statsRunNow() {
 // --- Talking replies (app/services/talkbot_service.py) ---------------------------------------------
 // Face + voice upload to this node's Blossom (owned by the bot's key, never swept); their hashes and
 // the mouth placement live in hidden form fields, so Save persists them with everything else.
-// Up to 3 faces, each {sha, mouth}: the list lives in #bot_f_talk_faces (JSON) and ONE is selected for
+// Up to 10 faces, each {sha, mouth}: the list lives in #bot_f_talk_faces (JSON) and ONE is selected for
 // placing its mouth. Each reply picks a face at random (app/routers/bot_talk.py).
-const TALK_MAX_FACES = 3;
+const TALK_MAX_FACES = 10;  // talkbot_service.MAX_FACES
 let _talkSel = 0;
 function _talkFaces() {
     try { const a = JSON.parse(_val('bot_f_talk_faces') || '[]'); if (Array.isArray(a)) return a.filter(f => f && f.sha); } catch (_) {}
@@ -772,15 +772,29 @@ document.addEventListener('change', async e => {
     try {
         if (st) st.textContent = '⏳ uploading…';
         if (t.id === 'bot_talk_face_file') {
+            // Several pictures may be picked at once; each is uploaded in turn and its own mouth
+            // detected. Past the limit the rest are skipped and the status line says how many.
             const faces = _talkFaces();
-            if (faces.length >= TALK_MAX_FACES) throw new Error('3 faces at most — remove one first');
-            const d = await _talkUpload('face', file, st);
-            const m = d.mouth || {};
-            faces.push({ sha: d.sha, mouth: { x: m.x, y: m.y, w: m.w, angle: m.angle || 0, anime: !!m.anime } });
-            _talkSetFaces(faces); _talkSel = faces.length - 1;
-            _talkPaintFaces(); t.value = '';
-            if (st) st.textContent = (m.found ? `✓ face ${faces.length} added — mouth found; drag to adjust`
-                                              : `✓ face ${faces.length} added — drag the marker onto the mouth`);
+            const room = TALK_MAX_FACES - faces.length;
+            if (room <= 0) throw new Error(`${TALK_MAX_FACES} faces at most — remove one first`);
+            const picked = Array.from(t.files), take = picked.slice(0, room);
+            let found = 0;
+            for (let i = 0; i < take.length; i++) {
+                if (st && take.length > 1) st.textContent = `⏳ uploading ${i + 1} of ${take.length}…`;
+                const d = await _talkUpload('face', take[i], st);
+                const m = d.mouth || {};
+                if (m.found) found++;
+                faces.push({ sha: d.sha, mouth: { x: m.x, y: m.y, w: m.w, angle: m.angle || 0, anime: !!m.anime } });
+                _talkSetFaces(faces); _talkSel = faces.length - 1;
+                _talkPaintFaces();
+            }
+            t.value = '';
+            const skipped = picked.length - take.length;
+            if (st) st.textContent = (take.length === 1
+                ? (found ? `✓ face ${faces.length} added — mouth found; drag to adjust`
+                         : `✓ face ${faces.length} added — drag the marker onto the mouth`)
+                : `✓ ${take.length} faces added — click each to check its mouth`)
+                + (skipped ? ` (${skipped} skipped: ${TALK_MAX_FACES} faces at most)` : '');
         } else {
             const d = await _talkUpload('voice', file, st);
             _setVal('bot_f_talk_voice_sha', d.sha);

@@ -71,7 +71,7 @@ def clean_mouth(m) -> dict | None:
     return out
 
 
-MAX_FACES = 3
+MAX_FACES = 10
 
 
 def faces_of(cfg: dict) -> list:

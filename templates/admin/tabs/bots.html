@@ -216,9 +216,9 @@
                     <input type="hidden" id="bot_f_talk_faces">
                     <input type="hidden" id="bot_f_talk_voice_sha">
                     <div class="form-group">
-                        <label>Faces <span class="bots-dim">(up to 3 pictures with a visible mouth — each reply picks one at random. Click a face to place ITS mouth: drag the marker onto it)</span></label>
+                        <label>Faces <span class="bots-dim">(up to 10 pictures with a visible mouth — pick several at once; each reply uses the next in a shuffled round. Click a face to place ITS mouth: drag the marker onto it)</span></label>
                         <div class="bot-talk-faces" id="bot_talk_faces"></div>
-                        <input type="file" id="bot_talk_face_file" accept="image/*">
+                        <input type="file" id="bot_talk_face_file" accept="image/*" multiple>
                         <div class="bot-talk-stage" id="bot_talk_stage" hidden>
                             <img id="bot_talk_face_img" alt="The talking bot's face">
                             <div class="bot-talk-mouth" id="bot_talk_mouth" title="Drag onto the mouth"></div>

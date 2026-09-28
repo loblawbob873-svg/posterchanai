@@ -403,6 +403,78 @@ def relay_identity_remove(data: RelayIdentityRemoveReq, admin: User = Depends(ge
     return r
 
 
+class RelayIdentitiesPruneReq(BaseModel):
+    names: list[str]     # the rows the admin was SHOWN as "not in profile"
+
+
+@router.post("/relay/identities/remove-unverified")
+async def relay_identities_remove_unverified(data: RelayIdentitiesPruneReq, request: Request,
+                                             db: Session = Depends(get_db),
+                                             admin: User = Depends(get_admin_user)):
+    """Revoke every identity whose owner's profile does not publish it -- the "Remove all not in
+    profile" button. Only names that were shown to the admin AND still fail the check now are removed,
+    and nothing at all when a profile could not be read (see nip05_registry.remove_unverified)."""
+    from app.routers.client import _nip05_domain
+    from app.services import nip05_registry
+    r = await nip05_registry.remove_unverified(_nip05_domain(request, db), data.names)
+    if not r.get("ok"):
+        raise HTTPException(status_code=409 if r.get("retry") else 400, detail=r.get("error") or "could not remove")
+    if r.get("removed"):
+        from app.services import settings_store
+        try:
+            r["durable"] = await settings_store.write_through(db, {nip05_registry.KEY: r["value"]}) > 0
+        except Exception as e:
+            logger.warning(f"[Admin] identity prune write-through failed: {e}")
+            r["durable"] = False
+    return r
+
+
+class RelayListEditReq(BaseModel):
+    key: str
+    add: str = ""
+    remove: str = ""
+
+
+def _relay_list_key(key: str) -> str:
+    from app.services import relay_lists, settings_store
+    if key not in relay_lists.LISTS:
+        raise HTTPException(status_code=404, detail="not a relay list")
+    if not settings_store.is_hydrated():
+        # An unloaded read is "", and an edit of "" would write one entry over the whole list.
+        raise HTTPException(status_code=503, detail="settings are still loading — try again in a moment")
+    return key
+
+
+@router.get("/relay/list")
+async def relay_list(key: str, admin: User = Depends(get_admin_user)):
+    """One list setting on Admin → Relay as rows (with profiles for the key lists)."""
+    from app.services import relay_lists, settings_store
+    key = _relay_list_key(key)
+    return await relay_lists.rows(key, settings_store.get(key, "") or "")
+
+
+@router.post("/relay/list")
+def relay_list_edit(data: RelayListEditReq, db: Session = Depends(get_db), admin: User = Depends(get_admin_user)):
+    """Add or remove ONE entry of a relay list setting. The edit applies to the value the server
+    holds NOW, goes through update_settings (so the same live reloads as Save fire) and is written
+    through to the relay before this answers."""
+    import asyncio as _asyncio
+    from app.services import relay_lists, settings_store
+    key = _relay_list_key(data.key)
+    new, err = relay_lists.edit(settings_store.get(key, "") or "", relay_lists.LISTS[key],
+                                add=data.add or "", remove=data.remove or "")
+    if err:
+        raise HTTPException(status_code=400, detail=err)
+    update_settings(SettingsUpdate(settings={key: new}), db=db, admin=admin)
+    value = settings_store.get(key, "") or ""
+    durable = False
+    try:
+        durable = _asyncio.run(settings_store.write_through(db, {key: value})) > 0
+    except Exception as e:
+        logger.warning(f"[Admin] relay list write-through failed for {key}: {e}")
+    return {"ok": True, "key": key, "value": value, "durable": durable}
+
+
 @router.post("/models/{kind}/download")
 def models_download(kind: str, admin: User = Depends(get_admin_user)):
     """Start an on-demand model download (kind = chat | image | music) in the background. Models are

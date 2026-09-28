@@ -281,6 +281,8 @@ document.getElementById('settingsForm')?.addEventListener('submit', async (e) =>
         if (response.ok) {
             // What was saved is now the baseline, so saving again sends nothing twice.
             for (const [k, v] of Object.entries(settings)) loadedValues.set(k, v);
+            // Lists drawn from the server (admin-relay-lists.js) redraw from what was just saved.
+            document.dispatchEvent(new CustomEvent('pc-admin-saved', { detail: { keys: Object.keys(settings) } }));
             pcAlert('Settings saved!');
         } else {
             pcAlert('Failed to save settings');

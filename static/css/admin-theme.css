@@ -217,3 +217,17 @@ legend{ color: var(--accent); font-weight:700; padding:0 6px; }
 .ids-badge{ display:inline-block; margin-left:6px; padding:0 6px; border-radius:9px; font-size:.75em; vertical-align:1px; }
 .ids-ok{ background: rgba(46,204,113,.18); color:#2ecc71; }
 .ids-no{ background: rgba(231,76,60,.15); color:#e74c3c; }
+/* Admin → Relay list settings (admin-relay-lists.js) */
+.rl-add{ display:flex; gap:6px; align-items:center; }
+.rl-add .rl-add-input{ flex:1 1 auto; min-width:0; box-sizing:border-box; }
+.rl-add .rl-add-btn{ flex:0 0 auto; }
+.rl-val{ white-space:nowrap; }
+.rl-msg{ font-size:.85em; color: var(--text-secondary); min-height:0; }
+.rl-msg:empty{ display:none; }
+.rl-msg.rl-err{ color:#e74c3c; }
+.ids-tools{ display:flex; flex-wrap:wrap; gap:6px; align-items:center; }
+.blk-row .btn-small{ flex:0 0 auto; }
+@media (max-width: 600px){
+  .blk-row{ gap:8px; padding:6px; }
+  .blk-list{ max-height:50vh; }
+}

@@ -542,8 +542,23 @@ def _dispatch(note, prompt_text, own, thread_history, reply=None, sender_key=Non
         _send_spoken(reply, reply_text)
 
 
+def _random_reply_prompt(username, text):
+    """The user turn for a reply the bot starts ON ITS OWN, to a post that never tagged it.
+
+    It carries the post and the SHAPE of the answer (short, no hashtags) and nothing about TONE.
+    It used to say "Reply briefly, warmly and on-topic ... to this stranger's post", and an adjective
+    in the user turn is an instruction the model obeys over the system prompt: every random reply
+    came out as the same generic, friendly assistant whatever the Personality prompt said, while a
+    mention -- whose user turn is only what the person wrote -- stayed in character. Who the bot is
+    and how it talks belongs to the Personality prompt alone."""
+    who = (username or "").strip() or "Someone"
+    return (f"{who} posted this (they did not tag you; you are joining in on your own):\n\n"
+            f"{(text or '')[:1500]}\n\n"
+            "(Answer them in your own voice and personality, 1-2 sentences, no hashtags.)")
+
+
 def process_random_replies():
-    """Occasionally start a friendly reply to a NIP-05-verified stranger on the firehose timeline.
+    """Occasionally start a reply, in the bot's own personality, to a NIP-05-verified stranger on the firehose timeline.
     Order is deliberately cheap→expensive: random gate → (only then) profile + NIP-05 verify → start
     budget → LLM. Bounded by _RR_PER_HOUR new threads/hour; obeys quiet hours; each started thread is
     capped at _RR_MAX_THREAD bot replies (enforced in process_mentions). No-op unless enabled."""
@@ -591,9 +606,8 @@ def process_random_replies():
         if not _rr_budget_allows():
             break                          # per-hour start budget spent → stop scanning this poll
         try:
-            reply = generate_reply(_talk_prompt(
-                "Reply briefly, warmly and on-topic (1-2 sentences, no hashtags) to this stranger's "
-                f"post: {text[:1500]}"), thread_history=None, ping=False)
+            reply = generate_reply(_talk_prompt(_random_reply_prompt(meta.get("username"), text)),
+                                   thread_history=None, ping=False)
             if reply:
                 _send_spoken(lambda t, **m: send_reply(note, t, **m), reply)
                 _rr_note_author(pk)
