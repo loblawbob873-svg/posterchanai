@@ -383,6 +383,19 @@ def load_image(image_bytes: bytes):
 # The whole operation.
 # ---------------------------------------------------------------------------------------------
 
+def _classic_fill_crop(rgb: np.ndarray, chole: np.ndarray, method: str) -> tuple[np.ndarray, str]:
+    """A classical fill of the crop, worked at a bounded size — the cost of both classical fillers
+    grows with the crop."""
+    from PIL import Image
+    ch, cw = chole.shape
+    k = min(1.0, CLASSIC_EDGE / max(ch, cw))
+    sw, sh = max(2, int(round(cw * k))), max(2, int(round(ch * k)))
+    s_rgb = _resize(rgb, sw, sh)
+    s_hole = _resize((chole * 255).astype(np.uint8), sw, sh, Image.BILINEAR) > 0
+    s_filled, used = _fill_classic(s_rgb, s_hole, allow_opencv=(method != "diffusion"))
+    return _resize(s_filled, cw, ch), used
+
+
 def inpaint(rgba: np.ndarray, hole: np.ndarray, *, method: str = "auto") -> tuple[np.ndarray, str]:
     """Fill `hole` in an HxWx4 uint8 picture. Returns (new picture, filler used).
 
@@ -429,15 +442,26 @@ def inpaint(rgba: np.ndarray, hole: np.ndarray, *, method: str = "auto") -> tupl
             used = "lama"
         elif method == "lama":
             raise RuntimeError("the inpainting model is not available on this node")
+    if filled is not None and method == "auto":
+        # THE MODEL MUST NOT PUT BACK WHAT WAS BRUSHED OUT. LaMa continues structure it sees crossing
+        # the hole — the right thing for a wall or a horizon, and exactly wrong for "remove this black
+        # line": brush the middle of a line and it redraws the line through the hole (measured: a third
+        # of the brushed pixels came back dark; reported as "trying to remove black lines or shapes and
+        # it makes it worse and black" / "it does not remove the selected stuff"). A fill that is
+        # CLOSER to the removed pixels than the plain surroundings-only fill has re-created them, so
+        # the plain fill is used. Real object removal (a person, a sign) is untouched: the model's
+        # fill there looks nothing like the object.
+        plain, plain_used = _classic_fill_crop(rgb, chole, method)
+        user = hole[cy0:cy1, cx0:cx1]
+        orig = rgb[user].astype(np.float32)
+        d_model = float(np.abs(filled[user].astype(np.float32) - orig).mean())
+        d_plain = float(np.abs(plain[user].astype(np.float32) - orig).mean())
+        if d_model < 0.6 * d_plain:
+            logger.info("[magic-eraser] the model re-created the brushed content (%.1f vs %.1f) — using %s",
+                        d_model, d_plain, plain_used)
+            filled, used = plain, plain_used
     if filled is None:
-        # Work at a bounded size — cost of both classical fillers grows with the crop.
-        k = min(1.0, CLASSIC_EDGE / max(ch, cw))
-        sw, sh = max(2, int(round(cw * k))), max(2, int(round(ch * k)))
-        from PIL import Image
-        s_rgb = _resize(rgb, sw, sh)
-        s_hole = _resize((chole * 255).astype(np.uint8), sw, sh, Image.BILINEAR) > 0
-        s_filled, used = _fill_classic(s_rgb, s_hole, allow_opencv=(method != "diffusion"))
-        filled = _resize(s_filled, cw, ch)
+        filled, used = _classic_fill_crop(rgb, chole, method)
 
     # Alpha inside the hole: continue the surrounding transparency (a cut-out stays a cut-out).
     if (alpha < 255).any():
