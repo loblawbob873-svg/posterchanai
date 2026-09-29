@@ -1528,6 +1528,9 @@
    * was never signed or never reached a socket: "none of my replies are being sent from the desktop",
    * while new posts (the inline timeline composer, in the page) went out fine. os.js waits on
    * `publishesSettled()` before it closes that window. */
+  // Said instead of the bare word "timeout" when no relay answered in time. Nobody refused it, and
+  // measured, it had almost always been stored -- so this must not read as a failure to be retried.
+  const _UNCONFIRMED_TOAST = 'not confirmed yet — the relay hasn’t answered; it may already be there';
   async function publish(kind, content, tags, opts){
     _publishInflight++;
     try{ return await _publishNow(kind, content, tags, opts); }
@@ -1637,7 +1640,20 @@
       }
       try{ Store.removeEvent(ev.id); }catch(_){} invalidateCounts();
       // Callers that show their OWN specific failure message pass {quiet:true} so we don't double-toast.
-      if(!(opts && opts.quiet)) toast(r.msg || 'couldn’t reach the relay — try again in a moment');
+      // An UNCONFIRMED publish is not a failed one (relay.js: the timer ran out, nobody refused) and
+      // must not say "timeout" as if it were -- that word is what made people press again.
+      if(!(opts && opts.quiet)) toast((r.unconfirmed || r.msg==='timeout') ? _UNCONFIRMED_TOAST : (r.msg || 'couldn’t reach the relay — try again in a moment'));
+    }
+    /* ...and when the relay's answer does arrive, the rollback above is undone: the event IS stored,
+     * so leaving it out of the local cache would be the divergence the rollback exists to prevent,
+     * the other way round. Queued events need nothing here -- relay.js hands the late OK to the
+     * Outbox itself. A deferLocal publish is destructive and its caller keeps its own receipt. */
+    if (!r.ok && r.unconfirmed && r.late && !(opts && opts.deferLocal) && !(window.Outbox && Outbox.has && Outbox.has(ev.id))){
+      r.late.then(ok=>{
+        if(!ok || !ME || ME.pubkey!==postingAuthor) return;
+        try{ Store.saveEvent(ev); invalidateCounts(); applySobLive(ev); }catch(_){}
+        if(!(opts && opts.quiet)) toast('✓ the relay confirmed it — it was sent');
+      }, ()=>{});
     }
     if(r.ok && opts && opts.deferLocal && ME && ME.pubkey===postingAuthor){ Store.saveEvent(ev); invalidateCounts(); }
     if(r.ok && kind===3 && opts && opts._confirmedFollowBaseline){
@@ -4764,6 +4780,7 @@
    * somebody the client itself showed as online, which hid the fault and blamed their network. */
   function _queuedToast(msg){
     if(msg === 'offline') return 'saved — this will send when you’re back online';
+    if(msg === 'timeout') return 'not confirmed yet — kept, and trying again shortly (it won’t post twice)';
     const why = String(msg || '').trim();
     return 'the relay didn’t take it' + (why && why !== 'timeout' ? ' (' + why.slice(0, 80) + ')' : '')
          + ' — saved, trying again shortly';
@@ -20118,6 +20135,9 @@
     openStream:(e)=>openStream(e),
     // Git → New issue, reachable for the test that proves a retried publish re-sends the same event.
     newRepoIssue:(repo)=>newRepoIssue(repo),
+    // A repo's page (issues, Close/Resolve), reachable for the test that a slow relay never turns a
+    // stored status into an error.
+    openRepo:(repo)=>openRepo(repo),
     // "Choose one of my images" — the Go Live cover picker, reachable for reuse and for its tests.
     pickDriveImage:(onPick)=>_pickBlossomImage(onPick),
     // oswin.js: a post handed to an already-open Meme Builder / Effects window (see POST_TOOLS).

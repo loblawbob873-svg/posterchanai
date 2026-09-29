@@ -303,7 +303,7 @@ window.PCDiscoverFactory = function(dep){
     if(image) tags.push(['image',image]);
     mentionTags(body).forEach(t=>{ if(!tags.some(x=>x[0]==='p'&&x[1]===t[1])) tags.push(t); });
     $('#ae-status') && ($('#ae-status').textContent='publishing…');
-    try{ const r=await publish(30023, body, tags); if(r && r.ok===false){ toast('relay: '+(r.msg||'rejected')); if($('#ae-status'))$('#ae-status').textContent=''; } else { _deletePublishedDrafts(slug, title); toast('article published'); switchView('articles'); } }
+    try{ const r=await publish(30023, body, tags); if(r && r.ok===false){ /* publish() already said "not confirmed yet" for silence; a second toast reading "relay: timeout" is the failure it is not */ if(!(r.unconfirmed||r.msg==='timeout')) toast('relay: '+(r.msg||'rejected')); if($('#ae-status'))$('#ae-status').textContent=''; } else { _deletePublishedDrafts(slug, title); toast('article published'); switchView('articles'); } }
     catch(e){ toast('publish failed: '+e.message); }
   }
 

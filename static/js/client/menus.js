@@ -306,7 +306,7 @@ window.PCMenusFactory = function(dep){
     let ev=Store.get(id); if(!ev){ ev=await fetchEvent(id); if(ev) Store.saveEvent(ev); }
     if(!ev || !ev.sig){ toast('post not loaded'); return; }
     toast('📡 rebroadcasting…');
-    try{ const r=await Relay.publish(ev); toast(r&&r.ok ? '📡 rebroadcast to relays' : ('relay: '+((r&&r.msg)||'rejected'))); }
+    try{ const r=await Relay.publish(ev); toast(r&&r.ok ? '📡 rebroadcast to relays' : (r&&(r.unconfirmed||r.msg==='timeout')) ? 'not confirmed yet — no relay has answered so far' : ('relay: '+((r&&r.msg)||'rejected'))); }
     catch(_){ toast('rebroadcast failed'); }
   }
   async function openPostMenu(id, pk, art, anchorBtn){

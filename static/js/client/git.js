@@ -471,7 +471,7 @@ window.PCGitFactory = function(dep){
     if(!priv && Array.isArray(j.announce_tags_30617) && j.announce_tags_30617.length){
       st.textContent='announcing…';
       try{ const r=await publish(30617,'',j.announce_tags_30617);
-        if(r && r.ok===false){ st.textContent='created ✓ but announce was rejected: '+(r.msg||''); return; } }
+        if(r && r.ok===false){ st.textContent=(r.unconfirmed||r.msg==='timeout') ? 'created ✓ — the announcement is not confirmed yet (the relay hasn’t answered)' : 'created ✓ but announce was rejected: '+(r.msg||''); return; } }
       catch(e){ st.textContent='created ✓ but announce failed: '+((e&&e.message)||e); return; }
       ev={ kind:30617, pubkey:S.ME.pubkey, created_at:Math.floor(Date.now()/1000), tags:j.announce_tags_30617, content:'', id:'' };
     }
@@ -549,7 +549,7 @@ window.PCGitFactory = function(dep){
           if(editing) existing.tags.forEach(t=>{ if(Array.isArray(t)&&t.length&&!_REPO_OWN_TAGS.has(t[0])) tags.push(t.slice()); });
           st.textContent=editing?'saving…':'publishing…';
           try{ const r=await publish(30617,'',tags);
-            if(r && r.ok===false){ st.textContent='relay: '+(r.msg||'rejected'); return; }
+            if(r && r.ok===false){ st.textContent=(r.unconfirmed||r.msg==='timeout') ? 'Not confirmed yet — the relay hasn’t answered; the change may already be saved.' : 'relay: '+(r.msg||'rejected'); return; }
             closeModal();
             if(editing){
               toast('repo details saved');
@@ -986,16 +986,83 @@ window.PCGitFactory = function(dep){
     const me = S.ME && S.ME.pubkey; if(!me || S.GUEST) return false;
     return issue.pubkey === me || (people || []).includes(me);
   }
+  // The relays a repo's announcement names (NIP-34 `relays`) -- where ngit, gitworkshop and every
+  // other git client look for its issues and statuses.
+  function _repoRelays(repo){
+    const out=[];
+    ((repo&&repo.tags)||[]).filter(t=>t[0]==='relays').forEach(t=>t.slice(1).forEach(u=>{
+      u=String(u||'').trim(); if(/^wss?:\/\/[^\s/?#]+/i.test(u) && !out.includes(u)) out.push(u); }));
+    return out.slice(0,4);
+  }
+  /* PUBLISH ONE COLLABORATION EVENT (issue, status) AND SAY WHAT ACTUALLY HAPPENED.
+   *
+   * Three outcomes, never two. STORED: a relay in the pool accepted it, OR one of the repo's own
+   * relays did -- the second is sent in parallel and in the background, so a slow or unreachable
+   * repo relay never delays or fails a write the pool already took. REFUSED: a relay said no, with
+   * its reason. UNCONFIRMED: nobody answered in time -- NOT a failure, because measured it had almost
+   * always been stored (the OK was just late), and the answer is still being listened for (`late`).
+   *
+   * ONE SIGNED EVENT PER SUBMISSION. The event is kept under `key` until something confirms it, and
+   * a retry re-sends THAT event: a relay stores one copy of an id, so pressing again can never file a
+   * second issue. Signing a fresh event per press is what put the same bug report on the repo four
+   * times in 51 seconds. The receipt is dropped by EVIDENCE (a confirmation), never by a timer. */
+  const _collabHeld = new Map();   // submission key -> the signed event
+  const _collabDone = new Set();   // ids already confirmed (bounded), so a success is said once
+  async function _publishCollab(repo, kind, content, tags, key, onLate){
+    // The account is part of the key: a receipt signed by one account is never re-sent by another.
+    if(key) key = ((S.ME && S.ME.pubkey) || '') + '|' + key;
+    let ev = key ? _collabHeld.get(key) : null, extra = null, r;
+    const fanout = e => {
+      const urls = _repoRelays(repo);
+      if(!urls.length || !window.Relay || !Relay.publishTo) return null;
+      try{ return Promise.resolve(Relay.publishTo(urls, e, { timeout:8000, max:4 })).catch(()=>0); }
+      catch(_){ return null; }
+    };
+    if(ev){
+      extra = fanout(ev);
+      r = await Relay.publish(ev);
+    }else{
+      // quiet: the caller says what happened in its own words; the generic toast would repeat it.
+      r = await publish(kind, content, tags, { quiet:true, onSigned:e=>{ ev=e; if(key) _collabHeld.set(key, e); extra=fanout(e); } });
+    }
+    if(!ev) return r || { ok:false, msg:'not signed' };
+    // Returns whether THIS is the first confirmation of the event: a press that re-sent it and was
+    // answered has already told the person, and the earlier press's late answer must not say it twice.
+    const stored = () => { const first = !_collabDone.has(ev.id); _collabDone.add(ev.id);
+                           if(_collabDone.size > 200) _collabDone.delete(_collabDone.values().next().value);
+                           if(key && _collabHeld.get(key)===ev) _collabHeld.delete(key); try{ Store.saveEvent(ev); }catch(_){} return first; };
+    if(r && r.ok){ stored(); return { ...r, ev }; }
+    // The repo relays were asked in parallel from the moment of signing, so they have usually
+    // answered by now. One that is still thinking gets a short grace and then becomes a LATE answer,
+    // like the pool's -- a slow repo relay must never add its whole timeout to the person's wait.
+    const onRepoRelay = extra ? await Promise.race([extra, new Promise(res => setTimeout(() => res(-1), 1500))]) : 0;
+    if(onRepoRelay > 0){ stored(); return { ok:true, ev, msg:'stored on the repository’s relay' }; }
+    let lateSaid = false;
+    const lateOk = ok => { if(!ok || lateSaid) return; lateSaid = true;
+                           if(stored() && typeof onLate==='function'){ try{ onLate(ev); }catch(_){} } };
+    if(onRepoRelay === -1) extra.then(n => lateOk(n > 0), ()=>{});
+    if(r && r.unconfirmed && r.late) r.late.then(lateOk, ()=>{});
+    // "timeout" with no flag is the same silence reported by an older relay.js (or a stub): unknown.
+    const unknown = !r || r.unconfirmed || r.msg === 'timeout';
+    return { ...(r || { ok:false, msg:'timeout' }), ...(unknown ? { unconfirmed:true } : {}), ev };
+  }
   // Publish a status. `a` is optional per spec but recommended — it lets a client find every status
-  // for a repo without first knowing the issue ids.
-  async function _setIssueStatus(repo, issue, kind, note){
+  // for a repo without first knowing the issue ids. Keyed on (issue, kind): pressing Close again
+  // after an unconfirmed Close re-sends the same status rather than signing another.
+  async function _setIssueStatus(repo, issue, kind, note, onLate){
     const tags = [['e', issue.id, S.CFG.relay_url || '', 'root'], ['k', String(issue.kind || 1621)]];
     const addr = _repoAddr(repo); if (addr) tags.push(['a', addr]);
     const seen = new Set([S.ME && S.ME.pubkey]);
     for (const pk of [issue.pubkey, ..._repoPeople(repo)]) {
       if (pk && !seen.has(pk)) { seen.add(pk); tags.push(['p', pk]); }
     }
-    return await publish(kind, note || '', tags);
+    // A held status of ANOTHER kind for this issue is superseded by this press: re-sending an old
+    // unconfirmed Close after a newer Reopen would bring back a status the person has moved past.
+    for (const k of [..._collabHeld.keys()]) {
+      const m = k.split('|')[1] || '';
+      if (m.startsWith('st:'+issue.id+':') && !m.startsWith('st:'+issue.id+':'+kind+':')) _collabHeld.delete(k);
+    }
+    return await _publishCollab(repo, kind, note || '', tags, 'st:'+issue.id+':'+kind+':'+(note||''), onLate);
   }
 
   const _collabFilter = { '#rv-issues':'open', '#rv-patches':'open' };   // per-panel Open/Closed/All
@@ -1029,13 +1096,21 @@ window.PCGitFactory = function(dep){
     // Close / Reopen, gated on the spec's authority rule.
     $$('.cf-act',box).forEach(b=> b.onclick=async ev=>{
       ev.stopPropagation();
+      if(b.disabled) return;                       // one status per press, however impatient the tap
       const issue=evs.find(x=>x.id===b.dataset.id); if(!issue) return;
-      const k=+b.dataset.kind; b.disabled=true; b.textContent='…';
-      try{ const r=await _setIssueStatus(repo||_rv&&_rv.repo, issue, k, b.dataset.note||'');
-        if(r && r.ok===false){ toast('relay: '+(r.msg||'rejected')); b.disabled=false; }
-        else { toast(k===1632?'issue closed':k===1631?'marked resolved':'issue reopened');
-               _loadRepoCollab(feed, sel, kind, addr, emptyMsg, repo); }
-      }catch(err){ toast('failed: '+((err&&err.message)||err)); b.disabled=false; }
+      const k=+b.dataset.kind, label=b.innerHTML; b.disabled=true; b.textContent='…';
+      const done=k===1632?'issue closed':k===1631?'marked resolved':'issue reopened';
+      const refresh=()=>{ if(S.VIEW==='repo' && box.isConnected) _loadRepoCollab(feed, sel, kind, addr, emptyMsg, repo); };
+      const giveBack=()=>{ if(b.isConnected){ b.innerHTML=label; b.disabled=false; } };
+      try{ const r=await _setIssueStatus(repo||_rv&&_rv.repo, issue, k, b.dataset.note||'',
+                                        ()=>{ toast(done); refresh(); });
+        if(r && r.ok){ toast(done); refresh(); }
+        else if(r && r.unconfirmed){
+          toast('Not confirmed yet — the relay hasn’t answered. It may already be done; pressing again re-sends the same status.');
+          giveBack();
+        }
+        else { toast('relay: '+((r&&r.msg)||'rejected')); giveBack(); }
+      }catch(err){ toast('failed: '+((err&&err.message)||err)); giveBack(); }
     });
     const cid = sel==='#rv-issues'?'#rv-c-issues':sel==='#rv-patches'?'#rv-c-patches':'';
     if(cid){ const c=$(cid,feed); if(c) c.textContent = counts.open?String(counts.open):''; }
@@ -1112,6 +1187,7 @@ window.PCGitFactory = function(dep){
           // mid-publish. On a phone that also means no bottom nav (body.modal-open hides it), i.e. an app
           // you have to kill. Inside the try it becomes a line of red text you can read and report.
           const pub=$('#ri-pub',root);
+          if(pub && pub.disabled) return;             // a press while one is in flight is the same press
           // ONE ISSUE PER FORM, HOWEVER MANY PRESSES. An issue whose publish was not confirmed may
           // still have landed -- measured: four copies of one report in 51 s, each a press after a
           // "timeout". So the event signed for this subject+body is kept, and a press with the same
@@ -1131,29 +1207,30 @@ window.PCGitFactory = function(dep){
             imetaTagsFor(body).forEach(t=>tags.push(t));   // NIP-92 media metadata, same as a post
             st.textContent='publishing…';
             if(pub) pub.disabled=true;                  // one issue per press, not one per impatient tap
-            const sameText=JSON.stringify([subj, body]);
-            let r;
-            if(root._signedIssue && root._signedIssue.text===sameText){
-              r=await Relay.publish(root._signedIssue.ev);
-              if(r && r.ok){ try{ Store.saveEvent(root._signedIssue.ev); }catch(_){ } }
-            }else{
-              // quiet: this form says what happened in its own words; the generic toast would repeat
-              // it as a bare "timeout" underneath.
-              r=await publish(1621, body, tags, {quiet:true, onSigned:ev=>{ root._signedIssue={ev, text:sameText}; }});
-            }
+            // The submission key is the repo + the text: the same subject and body re-send the event
+            // already signed for them (see _publishCollab), even from a form closed and reopened.
+            const sameText=JSON.stringify([addr, subj, body]);
+            let finished=false;
+            const published=()=>{
+              if(finished) return; finished=true;
+              toast('issue published');
+              // A late confirmation may land after the person closed the form (or opened another
+              // dialog): close only THIS one.
+              if(root.isConnected!==false) closeModal();
+              // AFTER the modal is gone, and in its own guard: openRepo re-renders the whole view, and a
+              // throw in there used to take out the success path too — the issue was published but the UI
+              // looked broken, which is indistinguishable from a failed publish.
+              try{ if(S.VIEW==='repo') openRepo(repo); }
+              catch(err2){ toast('published — reopen the repo to see it'); }
+            };
+            const r=await _publishCollab(repo, 1621, body, tags, 'issue:'+sameText, ()=>{ st.textContent=''; published(); });
             if(r && r.ok===false){
-              st.textContent = r.msg==='timeout'
-                ? 'No relay confirmed it yet — it may still arrive. Publishing again re-sends this same issue; it won’t make a copy.'
+              st.textContent = r.unconfirmed
+                ? 'Not confirmed yet — the relay hasn’t answered, and it may already be there. This closes by itself when the relay confirms it; publishing again re-sends this same issue, it won’t make a copy.'
                 : 'relay: '+(r.msg||'rejected');
               return;
             }
-            toast('issue published');
-            closeModal();
-            // AFTER the modal is gone, and in its own guard: openRepo re-renders the whole view, and a
-            // throw in there used to take out the success path too — the issue was published but the UI
-            // looked broken, which is indistinguishable from a failed publish.
-            try{ if(S.VIEW==='repo') openRepo(repo); }
-            catch(err2){ toast('published — reopen the repo to see it'); }
+            published();
           }catch(err){
             st.textContent='failed: '+((err&&err.message)||err);
           }finally{

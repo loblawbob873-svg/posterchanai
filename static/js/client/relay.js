@@ -172,6 +172,7 @@
     _conns: new Map(),        // url -> Conn
     _subs: new Map(),         // subId -> {filters, onEvent, onEose, live, seen:Set, eosed:Set, sent:Set}
     _okWaiters: new Map(),    // eventId -> { settle(fn) }
+    LATE_MS: 45000,           // how long an UNCONFIRMED publish keeps listening for its answer
     _countWaiters: new Map(), // countId -> resolve(n)  (NIP-45 COUNT)
     _negWaiters: new Map(),   // negId -> { onMsg(hex), onErr(reason) }  (NIP-77 negentropy)
     _verify: false,           // true when connected to user relays (untrusted -> verify sigs)
@@ -412,6 +413,11 @@
       if(conn && this._conns.get(conn.url)===conn)for(const w of this._okWaiters.values()){
         if(w.authTried)w.authTried.delete(conn.url);
         if(w.recoverUrls && w.recoverUrls.delete(conn.url))conn._send(['EVENT',w.event]);
+        // An UNCONFIRMED publish (see publish(): the timer ran out with no relay answering) is
+        // still listening. A socket that comes back is the likeliest place its answer will come
+        // from, so it is asked again -- the same signed event, which a relay that already stored it
+        // simply acknowledges.
+        else if(w.late && w.event)conn._send(['EVENT',w.event]);
       }
       if (!this._ready){ this._ready = true; if (this.onReady) try { this.onReady(); } catch(e){ console.warn(e); } }
       else if (this.onReconnect){ try { this.onReconnect(); } catch(e){ console.warn(e); } }   // reconnect: re-hydrate one-shot data
@@ -867,11 +873,48 @@
       return new Promise((res)=>{
         let settled = false;
         let confirmT = null;
+        // A retry of the SAME signed event replaces an earlier, still-unconfirmed waiter for it.
+        // Whatever this attempt learns is also that attempt's answer.
+        const prev = this._okWaiters.get(event.id);
         const w = { event, settle: (r)=>{ if(!settled){ settled = true; clearTimeout(t); clearTimeout(confirmT);
-                                               this._okWaiters.delete(event.id); res(r); } } };
-        // The reason, when there was one: a refused publish must not be reported as silence.
-        const t = setTimeout(()=>{ if(!settled){ settled = true; this._okWaiters.delete(event.id);
-                                                res({ ok:false, msg: w.why || 'timeout' }); } }, timeout);
+                                               this._okWaiters.delete(event.id); res(r);
+                                               if(prev && prev.late && r && r.ok){ try{ prev.settle(r); }catch(_){} } } } };
+        /* THE TIMER RUNNING OUT IS NOT AN ANSWER.
+         *
+         * A refusal is an answer, and says so (`w.why`). Silence is not: measured on the git issues
+         * this was written for, every "timeout" was an event the relay had STORED -- the OK was
+         * simply later than the eight seconds (a phone on a slow link, an OK queued behind the
+         * subscription backlog on the same socket). Reporting that as a failure made people press
+         * again, and each press of a freshly-signed form filed another copy: four identical issues
+         * in 51 seconds, and a Close that said "timeout" twice while the issue closed.
+         *
+         * So silence resolves as UNCONFIRMED -- still `ok:false`, because several callers gate a
+         * second, destructive step on `ok` and an unknown outcome must never unlock it -- and the
+         * waiter stays registered for LATE_MS. A late OK, our own event echoed back, or a read-back
+         * by id settles `late` to true; an explicit refusal or the deadline settles it false. The
+         * caller can then say "not confirmed yet" rather than "failed", and turn it into success
+         * the moment the relay's answer does arrive. */
+        const t = setTimeout(()=>{
+          if(settled) return;
+          settled = true; clearTimeout(confirmT);
+          if(w.why || !w.sent){ this._okWaiters.delete(event.id); res({ ok:false, msg: w.why || 'timeout' }); return; }
+          let lateDone = false, lateRes = null, lateT = null;
+          const late = new Promise(r => { lateRes = r; });
+          w.late = true;
+          w.settle = (r)=>{
+            if(lateDone) return; lateDone = true; clearTimeout(lateT);
+            if(this._okWaiters.get(event.id) === w) this._okWaiters.delete(event.id);
+            const ok = !!(r && r.ok);
+            if(ok){ try{ if(window.Outbox && Outbox.has(event.id)){ if(Outbox.acknowledgeDelivery)Outbox.acknowledgeDelivery(event.id); else Outbox.remove(event.id); } }catch(_){} }
+            if(prev && prev.late && ok){ try{ prev.settle(r); }catch(_){} }
+            lateRes(ok);
+          };
+          lateT = setTimeout(()=>w.settle({ ok:false, msg:'timeout' }), Relay.LATE_MS);
+          // Ask for it by id once more: `_onMessage` treats our own signed event coming back from
+          // any relay as delivery, so the query needs no handler of its own.
+          try{ this.query([{ids:[event.id], limit:1}], Math.min(8000, Relay.LATE_MS)).catch(()=>{}); }catch(_){}
+          res({ ok:false, msg:'timeout', unconfirmed:true, late });
+        }, timeout);
         this._okWaiters.set(event.id, w);
         // How many relays were actually written to, so "every one of them refused" is answerable.
         const deliverySockets=[...this._conns.values()].filter(c=>c.ws&&c.ws.readyState===1)
@@ -1007,7 +1050,7 @@
       if(authScope&&(![1059,21059].includes(event.kind)||event.pubkey!==authScope.pubkey||!authScope.current()))return finishResults([]);
       if(_fediPrivate(event)) return finishResults([]);
       if(this.socialRoute && await this.socialRoute(event,true)) return finishResults([]);
-      const targets = [...new Set((urls||[]).filter(u=>u&&!_isBlockedRelay(u)))]
+      const targets = [...new Set((urls||[]).map(_relayUrl).filter(u=>u&&!_isBlockedRelay(u)))]
         .filter(u => includeManaged || !this._conns.has(u)).slice(0, max);
       if (!targets.length) return finishResults([]);
       return Promise.all(targets.map(u => new Promise(resolve => {
