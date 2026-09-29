@@ -2,8 +2,11 @@
  * computer and tablet is the same conversation, because the session lives on the node.
  *
  * NOT ON PHONES. A phone already runs Telegram; a second live client there only doubles every
- * notification. `isPhone()` is Android's own tablet line — smallest screen side under 600 CSS px — so
- * a tablet (APK or browser) gets the full client and a phone gets a sentence saying why not.
+ * notification. `isPhone()` is a short screen side under 480 CSS px — Android's "large" screen class,
+ * which no phone reaches (the biggest are ~430) — so a tablet (APK or browser) gets the full client and
+ * a phone gets a sentence saying why not. The line was 600 (Android's sw600dp resource bucket) and hid
+ * Telegram on real tablets: an 8" 800x1280 tablet at 240dpi is 533dp across ("i don't see telegram on
+ * android tablet").
  *
  * NOTIFICATIONS without the view open: once the app is up (desktop page only — a popped-out window
  * must not notify a second time) a background socket listens and raises an OS notification per new
@@ -14,8 +17,9 @@
   const PC = () => window.__PC || {};
   const esc = s => String(s == null ? '' : s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 
+  const PHONE_MAX_SHORT_SIDE = 480;
   function isPhone(){
-    try{ return Math.min(screen.width || 9999, screen.height || 9999) < 600; }catch(_){ return false; }
+    try{ return Math.min(screen.width || 9999, screen.height || 9999) < PHONE_MAX_SHORT_SIDE; }catch(_){ return false; }
   }
   const st = { status:null, dialogs:[], open:null, msgs:new Map(), filter:'', ws:null, wsTimer:0, reply:null,
                loadingOlder:false, done:new Set(), pending:[], busy:false };
