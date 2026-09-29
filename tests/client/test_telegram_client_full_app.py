@@ -205,3 +205,33 @@ def test_the_accent_buttons_are_visible_in_every_theme():
         await every_theme(".tg-send")                             # the chat's Send
 
     asyncio.run(desktop.with_browser("online", "", check, FAKE))
+
+
+@pytest.mark.skipif(not Path("/opt/google/chrome/chrome").exists(), reason="Chrome required")
+def test_on_posterchanos_it_opens_as_a_column_and_fits_its_window():
+    """Reported: "on posterchanOS, the window opens big and the Telegram UI does not fit well". It took
+    the reading-column default, and its one-pane layout was a VIEWPORT query — on a wide monitor it
+    never saw its window get narrow, so the chat list and the chat stayed side by side and the chat was
+    squeezed to a sliver."""
+    async def check(b):
+        await b.call("Emulation.setDeviceMetricsOverride", dict(width=2560, height=1440, deviceScaleFactor=1, mobile=False))
+        await desktop.login(b)
+        await b.until("!!window.PCOS && PCOS.isOn() && !!document.querySelector('#os-desk')")
+        await b.js("document.getElementById('osfr')?.remove();document.documentElement.classList.remove('osfr-on')")
+        opened = await b.js("(()=>{const a=PCOS.__place(0,'tg'), r=PCOS.__place(0,'global');return {tg:a.w, reading:r.w}})()")
+        assert opened["tg"] <= 1080 and opened["tg"] < opened["reading"], f"Telegram opens as a reading column: {opened}"
+        await b.js("__tg.state='ready'; __PC.switchView('tg')")
+        await b.until("!!document.querySelector('.osw .tg-shell') && document.querySelectorAll('.osw .tg-dialog').length===2")
+        await b.js("document.querySelector('.tg-app').closest('.osw').style.width='560px'")
+        await asyncio.sleep(.2)
+        vis = "(s=>{const e=document.querySelector('.osw '+s);return !!e&&e.getBoundingClientRect().width>0&&getComputedStyle(e).display!=='none'})"
+        assert await b.js(f"{vis}('.tg-side')") and not await b.js(f"{vis}('.tg-chat')"), \
+            "a narrow window still shows the list and the chat side by side"
+        await b.js("document.querySelector('.osw .tg-dialog[data-chat=\"42\"]').click()")
+        await b.until(f"{vis}('.tg-chat')")
+        assert not await b.js(f"{vis}('.tg-side')"), "the open chat does not get the window to itself"
+        await b.js("document.querySelector('.tg-app').closest('.osw').style.width='1100px'")
+        await asyncio.sleep(.2)
+        assert await b.js(f"{vis}('.tg-side')") and await b.js(f"{vis}('.tg-chat')"), "a wide window lost its two panes"
+
+    asyncio.run(desktop.with_browser("online", "", check, FAKE))

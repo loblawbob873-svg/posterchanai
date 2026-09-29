@@ -4512,6 +4512,12 @@
     const directSend=$('#cc-direct-send');if(directSend)directSend.onclick=()=>showDirectInviteSender(current);
     const go=$('#cc-join-go'); if(go) go.onclick=async()=>{ const raw=String($('#cc-invite-url').value||'').trim(),v=inviteParts(raw); if(!v){ p.toast('that is not a Concord invite link'); return; } go.disabled=true; try{ p.toast('fetching and decrypting community…'); const room=await hydrateInvite(p,raw); pendingInvite={url:raw,room}; render(); }catch(e){ go.disabled=false; p.toast('could not read that invite: '+(e&&e.message||e)); } };
     const acceptInvite=async(raw,room,direct=false)=>{ if(room.cord?.bundle&&window.PosterCordReader?.validateInviteBundle)window.PosterCordReader.validateInviteBundle(room.cord.bundle,{forJoin:true});const a=saved(),i=a.findIndex(x=>sameRoom(x,room)); if(i<0)a.push(room);else a[i]=direct?mergeDirectInviteRoom(a[i],room):mergeRoom(a[i],room); save(a); state.community=a.findIndex(x=>sameRoom(x,room)); state.channel='general'; render(); await persistArmadaMembership(p,room);
+      /* ANNOUNCE THE JOIN. Only the Discover list published the guestbook Join (CORD-02 §5), so
+       * somebody who joined through an invite link or a direct invite — the ordinary way into a
+       * Vector community — arrived silently: Vector draws "X has joined" from that kind-3306 and from
+       * nothing else ("I joined vector room fine but users say they seen no join notification").
+       * Best effort, like the Discover path: a missed Join must never fail the join itself. */
+      void publishGuestbook(p,saved()[state.community]||room,'join');
       /* Joining is already the user's request to enter this room.  Waiting for a later channel click
        * left the placeholder #general on screen with no id, icon or history, so a successful Armada
        * invite looked like an empty broken community until somebody switched away and back. */

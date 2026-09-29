@@ -143,6 +143,7 @@ window.PosterCordReader={
   inspectChat:async(_bundle,_controls,channel)=>({messages:[{id:'joined-message-'+channel,pubkey:'b'.repeat(64),text:'joined history '+channel,at:12,kind:9,tags:[]}],reactions:[],reactionIds:[]}),
   createMetadataWrap:async()=>({wrap:{kind:1059}}),
   createInviteRegistryWrap:async()=>({wrap:{kind:1059}}),
+  createGuestbookWrap:async(bundle,verb,me)=>{(calls.guestbook=calls.guestbook||[]).push({community:bundle&&bundle.community_id,verb,me});return {wrap:{kind:1059,pubkey:'5'.repeat(64)}};},
   createChatWrap:async(_bundle,_wraps,_channel,text,_author,_sign,tags,kind)=>{calls.lastChat={text,tags,kind};return {rumorId:'f'.repeat(64),wrap:{kind:1059},ms:1234};},
 };
 globalThis.document = {
@@ -846,6 +847,11 @@ if(!feed.innerHTML.includes('joined history'))
 if([...data.entries()].some(([key,value])=>key.startsWith('pc.concord.test.') && value.includes('joined history')))
   throw new Error('remote decrypted history leaked into localStorage');
 if(!calls.toasts.some(x=>x==='community joined')) throw new Error('hydrated join never completed');
+/* "I joined vector room fine but users say they seen no join notification": Vector shows "X has
+   joined" only from the guestbook Join, and the invite path never published one. */
+await new Promise(r=>setTimeout(r,0));
+if(!(calls.guestbook||[]).some(g=>g.verb==='join'&&g.community===JOIN_BUNDLE.community_id))
+  throw new Error('accepting an invite published no guestbook Join — Vector members see no "has joined": '+JSON.stringify(calls.guestbook||[]));
 
 // Concord hands the recipient and its private-Lightning callback to Social's shared tip UI. The
 // callback must still publish an encrypted kind-9735 Armada receipt after that UI chooses an amount.

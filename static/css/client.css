@@ -11435,7 +11435,7 @@ html.os-idle #os-root *{animation:none!important;transition:none!important}
 }
 
 /* ── Telegram client (client/telegram.js) — PosterChan's theme tokens, cyberpunk treatment ─────────── */
-.tg-app{--tg-hot:#ff2b6d;height:100%;min-height:0;display:flex;flex-direction:column;box-sizing:border-box;
+.tg-app{container:tgapp/inline-size;--tg-hot:#ff2b6d;height:100%;min-height:0;display:flex;flex-direction:column;box-sizing:border-box;
   font-family:inherit;color:var(--text)}
 .tg-boot{margin:auto;color:var(--accent);letter-spacing:.3em;font:600 12px var(--font-mono,ui-monospace,monospace);
   text-shadow:0 0 10px rgba(var(--accent-rgb),.7)}
@@ -11531,8 +11531,11 @@ video.tg-round{width:220px;height:220px;object-fit:cover;border-radius:50%}
 .tg-cam-v{width:100%;max-height:60vh;border-radius:10px;background:#000;border:1px solid rgba(var(--accent-rgb),.5)}
 .tg-cam-acts{display:flex;gap:8px;flex-wrap:wrap}
 .tg-live{border-color:var(--tg-hot)!important;color:var(--tg-hot);box-shadow:0 0 14px rgba(255,43,109,.5)}
-/* Tablet portrait and narrow windows: one pane at a time, with a back button. */
-@media (max-width:860px){
+/* Tablet portrait and narrow windows: one pane at a time, with a back button. A CONTAINER query on
+   the app, not a media query: on PosterChanOS the app sits in a window on a wide monitor, and a
+   viewport query never saw that window get narrow — the list and the chat stayed side by side and
+   the chat was squeezed to a sliver ("the Telegram UI does not fit well"). */
+@container tgapp (max-width:860px){
   .tg-shell{grid-template-columns:1fr}
   .tg-shell .tg-chat{display:none}
   .tg-shell.tg-chat-open .tg-side{display:none}

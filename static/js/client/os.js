@@ -1884,7 +1884,7 @@
            'sync', 'terminal'],
     // Columns: a list beside a pane. Width past a point is empty space.
     column: ['messages', 'mail', 'notifications', 'notes', 'drafts', 'bookmarks', 'vault', 'contacts',
-             'budget', 'news', 'articles'],
+             'budget', 'news', 'articles', 'tg', 'texts'],
     // Boards. A square-ish window, because the board is square.
     square: ['chess', 'ttt', 'hangman', 'connect4', 'blackjack', 'holdem'],
     // Tools whose whole face is a keypad: a phone-shaped window. At the reading-column default a
