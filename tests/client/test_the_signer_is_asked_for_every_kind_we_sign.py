@@ -59,6 +59,10 @@ def _signed() -> set[int]:
             r"\b(?:publish|sign|signEvent|signTemplate)\(\s*\{[^{}]*?\bkind\s*:\s*(\d{1,5})\b", src)}
         for m in re.findall(r"\bsealRumor\(\s*\w+\s*,\s*(\d{1,5}|KIND_SEAL_\w+)\b", src):
             out.add(int(m) if m.isdigit() else consts[m])
+        # A fourth spelling: git.js signs issues and their Close/Resolve statuses through
+        # `_publishCollab(repo, <kind>, …)` (one signed event per submission, re-sent on retry, so a
+        # "timeout" can no longer mint a duplicate issue). The kind is its second argument.
+        out |= {int(m) for m in re.findall(r"\b_publishCollab\(\s*\w+\s*,\s*(\d{1,5})\b", src)}
     return out
 
 
