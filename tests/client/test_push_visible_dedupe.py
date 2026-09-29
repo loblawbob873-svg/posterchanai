@@ -17,8 +17,8 @@ def test_visible_client_is_the_single_notification_producer_for_every_push_kind(
 
 
 def test_live_relay_event_is_deduped_by_event_id_before_it_announces():
-    app = (ROOT / "static/js/client/app.js").read_text(encoding="utf-8")
-    watch = app[app.index("function watchNotifications"):
+    app = (ROOT / "static/js/client/notifs.js").read_text(encoding="utf-8")   # moved out of app.js
+    watch = app[app.index("async function watchNotifications"):
                 app.index("function notifPing")]
     assert "if(Store.saveEvent(ev))" in watch
     assert watch.index("if(Store.saveEvent(ev))") < watch.index("notifPing(ev)")

@@ -88,7 +88,7 @@ class VideoLazyMount(unittest.TestCase):
         """The live subscriptions must coalesce their redraws, not rebuild the view per event."""
         # Match the subscription's purpose, allowing additional filter options such as quotes.
         for kinds in (r"3\]", r"1,6,7,9735"):
-            marker = re.search(r"Relay\.subscribe\(\[\{\s*'#p':\[ME\.pubkey\],[^}]*?kinds:\[" + kinds, self.src)
+            marker = re.search(r"Relay\.subscribe\(\[\{\s*'#p':\[(?:S\.)?ME\.pubkey\],[^}]*?kinds:\[" + kinds, self.src)
             self.assertIsNotNone(marker, f"notification subscription moved: {kinds}")
             block = _block(self.src, marker.end())
             self.assertIn("renderNotificationsSoon()", block)

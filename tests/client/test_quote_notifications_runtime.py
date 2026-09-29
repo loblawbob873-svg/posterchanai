@@ -2,7 +2,7 @@
 import json
 from pathlib import Path
 import subprocess
-from tests.client_source import client_source
+from tests.client_source import client_source, state_shim
 
 ROOT = Path(__file__).resolve().parents[2]
 
@@ -17,6 +17,8 @@ def test_quote_only_event_survives_the_list_and_opens_its_own_post():
         # notifHtml is followed by the DM state app.js keeps (the DM code itself is in dms.js).
         segment('  function notifHtml(', '  /* Declared HERE, outside dms.js'),
     ])
+    # _quotesMe/notifList/notifPing live in notifs.js, where app.js's live ME/LOGO read as S.ME/S.LOGO.
+    code = state_shim(code) + '\n' + code
     harness = r'''
 const assert=require('node:assert/strict');
 const quote=QUOTE,ME={pubkey:quote.tags[0][3]},LOGO='logo';
@@ -49,5 +51,6 @@ events=[{...quote,tags:[['p',ME.pubkey]]}];assert.equal(notifList().length,1);
     # Both initial subscription and older-page queries opt in; other relays retain their #p filter.
     watch=segment('  async function watchNotifications(', '  function _quotesMe(')
     older=segment('  function renderNotifications(', '  function notifGrouped(')
-    assert "'#p':[ME.pubkey], _include_quotes:true" in watch
+    # (watchNotifications moved to notifs.js, where the live ME reads as S.ME; the view stays in app.js.)
+    assert "'#p':[S.ME.pubkey], _include_quotes:true" in watch
     assert "'#p':[ME.pubkey], _include_quotes:true" in older

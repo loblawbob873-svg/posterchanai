@@ -2,10 +2,13 @@ import re
 
 from pathlib import Path
 
+from tests.client_source import app_source_with
+
 
 ROOT = Path(__file__).resolve().parents[1]
 PUSH = (ROOT / "mobile/android/app/src/main/java/place/poster/app/push/PushEventService.java").read_text()
-APP = (ROOT / "static/js/client/app.js").read_text(errors="replace")
+# notifPing moved out of app.js into notifs.js (its own <script> tag, built at boot).
+APP = app_source_with("notifs.js")
 
 
 def test_direct_push_is_not_dropped_just_because_the_app_is_visible():

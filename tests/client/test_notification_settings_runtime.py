@@ -6,11 +6,12 @@ ROOT=Path(__file__).resolve().parents[2]
 
 
 def _client(tmp_path):
-    """blossom.js (the notification preferences, split out of app.js), then app.js, as one file for
-    the harness to slice. Inside the module app.js's live `ME` reads as `_S.ME`; the harnesses stand
-    in for that with `c._S=c`, so it reads the same context property the unmoved code would."""
+    """blossom.js (the notification preferences) and notifs.js (notifPing), both split out of app.js,
+    then app.js, as one file for the harness to slice. Inside those modules app.js's live bindings read
+    as `_S.ME` / `S.LOGO`; the harnesses stand in for that with `c._S=c` / `c.S=c`, so they read the
+    same context property the unmoved code would."""
     path=tmp_path/'client.js'
-    path.write_text(app_source_with('blossom.js'),encoding='utf-8')
+    path.write_text(app_source_with('blossom.js','notifs.js'),encoding='utf-8')
     return str(path)
 
 
@@ -85,7 +86,7 @@ const c={notificationAllowed:k=>!disabled.has(k),notificationSound(){},window:{p
  _tipNote:()=>null,zapSender:e=>e.pubkey,isMutedAuthor:()=>false,profOf:()=>({name:'sender'}),
  fmtSats:String,zapAmount:()=>1,reactDisp:()=>'+',_quotesMe:e=>!!e.quote,isReply:e=>!!e.reply,
  emojiName:(pk,n)=>n,enc:String,_notifCtxId:()=>'',notifToast:(...args)=>toasts.push(args),openThread(){},switchView(){}};
-vm.createContext(c);vm.runInContext(type+notify.slice(0,end)+ping,c);
+c.S=c;vm.createContext(c);vm.runInContext(type+notify.slice(0,end)+ping,c);
 for(const [kind,key,extra] of [[7,'likes',{}],[6,'reposts',{}],[9735,'zaps',{}],[1111,'replies',{}],[1,'quotes',{quote:true}],[1,'mentions',{}]]){
  disabled.add(key);const before=native.length,nt=toasts.length;c.notifPing({kind,pubkey:'peer',id:'id',...extra});assert.equal(native.length,before,key);assert.equal(toasts.length,nt,key);
  disabled.delete(key);c.notifPing({kind,pubkey:'peer',id:'id',...extra});assert.equal(native.length,before+1,key+' enabled');
