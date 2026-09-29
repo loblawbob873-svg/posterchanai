@@ -46,7 +46,21 @@ window.PCNotifViewFactory = function(dep){
    * opening Notifications kept whatever offset the previous view had left — you arrived mid-list.
    * One-shot (mirrors _dmScrollTop): the LIVE re-renders that fire as relay events arrive must NOT
    * yank you back to the top while you're reading. */
-  function _notifFreshEntry(){ _notifShown = 25; _notifScrollTop = true; }
+  function _notifFreshEntry(){ _notifShown = 25; _notifScrollTop = true; _notifOpened = true; }
+  /* READ MEANS SOMEBODY LOOKED. The list re-renders on EVERY arrival, and each render used to mark
+   * everything read. On PosterChanOS a Notifications view is often open where nobody is looking — its
+   * own window in the background, a monitor's surface whose last view it was — and since read state
+   * is shared across monitors and windows (`pc_notif_seen`), that view swallowed every new
+   * notification for the whole desktop: "on laptop the bell illuminated, not on desktop anymore".
+   * Opening the view reads (the person asked for it); a RE-render reads only while the page is
+   * visible and focused; and coming back to it reads what arrived meanwhile. */
+  let _notifOpened = false;
+  function _readingNow(){
+    try{ return document.visibilityState !== 'hidden' && (typeof document.hasFocus !== 'function' || document.hasFocus()); }
+    catch(_){ return true; }
+  }
+  function _markIfRead(){ if(_notifOpened || _readingNow()){ _notifOpened = false; markNotifsRead(); } }
+  try{ window.addEventListener('focus', () => { if(S.VIEW === 'notifications' && _readingNow()) markNotifsRead(); }); }catch(_){ }
   // Mark everything up to now as seen and drop the unread badge on all three surfaces (sidebar bell,
   // mobile bar, rail heading). Shared by the full Notifications view and the rail so
   // the two can't disagree about what "read" means.
@@ -120,7 +134,7 @@ window.PCNotifViewFactory = function(dep){
     // and blanked when a view is entered, so the tab strip's presence is what proves our rows are
     // still there; without that check the guard would skip the first render after coming back.
     const sig = _notifSigOf(list, upd);
-    if(sig === _notifSig && feed.querySelector('.notif-tabs')){ markNotifsRead(); return; }
+    if(sig === _notifSig && feed.querySelector('.notif-tabs')){ _markIfRead(); return; }
     _notifSig = sig;
     const loadedMore=all.length>_notifShown;
     const relayMore=_notifFilter==='zaps' && !_notifZapDone;
@@ -135,7 +149,7 @@ window.PCNotifViewFactory = function(dep){
     { const un=$('#upd-notif',feed); if(un && !S._updApplying) un.onclick=applyUpdate; }
     $$('.ntab',feed).forEach(b=> b.onclick=()=>{ _notifFilter=b.dataset.nf; _notifShown=25; renderNotifications(); });
     list.forEach(e=>{ if(e.type==='reminder')return; if(e.type==='group') e.events.forEach(x=>needProfile(x.pubkey)); else needProfile(e.kind===9735?(zapSender(e)||e.pubkey):e.pubkey); });
-    markNotifsRead();
+    _markIfRead();
     // row opens the post; avatar opens the sender's profile (stop the row handler firing too). EXCLUDE the
     // updater row (.upd-notif) — it keeps its own applyUpdate handler and has no post/profile to open.
     /* THE ROW MUST STOP THE EVENT. #feed carries a DELEGATED `[data-open]` handler and a row has

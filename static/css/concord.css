@@ -337,3 +337,12 @@ body.anim-off .cc-server.unread:not(.active){animation:none!important}
 .cc-sized,.cc-attachment-open[data-cc-sized]{display:block!important;width:var(--cc-w)!important;max-width:100%!important;aspect-ratio:var(--cc-ar)!important;height:auto!important;box-sizing:border-box!important}
 .cc-attachment-open[data-cc-sized] img{width:100%!important;height:100%!important;max-height:none!important;object-fit:contain!important}
 span.cc-attachment-wait.cc-sized{display:grid!important;place-items:center!important;border-radius:10px!important;background:rgba(255,255,255,.04)!important}
+/* A THREAD'S "← Back · Thread" BAR IS A HEADER, NOT A COLUMN. .cc-messages is a flex ROW (it bottom-
+   aligns the list), so the bar became a narrow column beside the messages — in the middle of the
+   screen on a desktop, and on a phone it squeezed the whole thread into a strip ("replying to a post
+   has a big bug, weird thread button with a back button appears, messes up the display"). */
+body.concord-view .cc-messages:has(>.cc-thread-bar){flex-direction:column!important}
+body.concord-view .cc-messages>.cc-thread-bar{flex:0 0 auto!important;width:100%!important;box-sizing:border-box!important;position:sticky!important;top:0!important;z-index:5!important;display:flex!important;align-items:center!important;gap:10px!important;margin:0 0 12px!important;padding:8px 10px!important;border-radius:10px!important;background:var(--cc-main,#15171d)!important;border:1px solid rgba(255,255,255,.08)!important}
+body.concord-view .cc-messages>.cc-thread-bar button{display:inline-flex!important;align-items:center!important;gap:4px!important;white-space:nowrap!important;padding:4px 10px!important;border-radius:8px!important;border:1px solid rgba(255,255,255,.14)!important;background:transparent!important;color:inherit!important;cursor:pointer!important}
+body.concord-view .cc-messages>.cc-thread-bar span{min-width:0!important;overflow:hidden!important;text-overflow:ellipsis!important;white-space:nowrap!important}
+body.concord-view .cc-messages:has(>.cc-thread-bar)>.cc-message-list{width:100%!important;flex:1 0 auto!important}

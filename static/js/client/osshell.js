@@ -16,7 +16,29 @@
   const WM = () => root.pcWM || null;
   const NET = () => root.pcNet || null;
   const POWER = () => root.pcPower || null;
-  const AUDIO = () => root.pcAudio || null;
+  /* ONE MACHINE, ONE MIXER — whichever monitor you touch it on. Every monitor is its own page with its
+   * own copy of the audio state, re-read only on a compositor event or the 30s timer, so muting on one
+   * screen left the other saying "unmuted" ("Audio mixer is not in sync with other monitor"). Every
+   * change made through this bridge now says so in shared storage, and every page re-reads the real
+   * state from the system when it hears it (see watch). Wrapped once here rather than at each of the
+   * ten call sites, so a control added later cannot forget to. */
+  const AUDIO_CHANGED = 'pc_audio_changed';
+  let _audioWrapped = null, _audioRaw = null;
+  const AUDIO = () => {
+    const raw = root.pcAudio || null;
+    if(!raw) return null;
+    if(raw === _audioRaw && _audioWrapped) return _audioWrapped;
+    _audioRaw = raw;
+    _audioWrapped = new Proxy(raw, { get(t, k){
+      const v = t[k];
+      if(typeof v !== 'function') return v;
+      if(!/^set/.test(String(k))) return v.bind(t);
+      return (...args) => Promise.resolve(v.apply(t, args)).then(r => {
+        try{ root.localStorage.setItem(AUDIO_CHANGED, String(Date.now()) + ':' + Math.random().toString(36).slice(2, 8)); }catch(_){ }
+        return r; });
+    } });
+    return _audioWrapped;
+  };
   const OS = () => root.pcOS || null;
 
   /* IS POSTERCHAN THE DESKTOP ON THIS MACHINE? ABSENT UNTIL PROVEN PRESENT.
@@ -1751,10 +1773,13 @@
       off = WM().onEvent(ev=>{if(callbackMode&&ev&&ev.name==='window')return;tick();});
     }catch(_){}
     const t = setInterval(tick, 30000);                // battery and signal have no events
-    return () => { try{ off(); }catch(_){} clearInterval(t); };
+    // Another monitor changed the volume or a mute: re-read the machine, don't trust our copy.
+    const onStore = e => { if(e && e.key === AUDIO_CHANGED) tick(); };
+    try{ root.addEventListener('storage', onStore); }catch(_){ }
+    return () => { try{ off(); }catch(_){} clearInterval(t); try{ root.removeEventListener('storage', onStore); }catch(_){ } };
   }
 
-  const API = { available, detect, APPS, taskbarRows, existingWindow, launch, panelState, panelSummary,
+  const API = { audio: AUDIO, available, detect, APPS, taskbarRows, existingWindow, launch, panelState, panelSummary,
                 profileMenu, machineApps, mergedApps, allApps, wifiIcon, volIcon, batterySvg,
                 ensureAccount, provisioned, identity, activateAccount, logoutSession,
                 panelHTML, quickHTML, taskbarHTML, launcherHTML, render, watch,

@@ -567,13 +567,25 @@ window.PCDmsFactory = function(dep){
         }
         if(!held) return false;
         // What is already out there? Never replace more than we hold.
-        let have = 0;
+        let have = 0, oldSha = '';
         try{
           const evs = await Relay.query([{ authors:[S.ME.pubkey], kinds:[30078], '#d':[this.SHARE_D], limit:1 }]);
           const ev = (evs || []).sort((a, b) => b.created_at - a.created_at)[0];
-          if(ev){ const p = JSON.parse(ev.content || '{}'); have = Number(p && p.n) || 0; }
+          if(ev){ const p = JSON.parse(ev.content || '{}'); have = Number(p && p.n) || 0;
+                  oldSha = /^[0-9a-f]{64}$/i.test(String(p && p.sha || '')) ? String(p.sha).toLowerCase() : ''; }
         }catch(_){ return false; }          // could not ask → do not write
-        if(held < have) return false;
+        /* ONLY WHEN THERE IS SOMETHING NEW, AND NOT FROM EVERY WINDOW. This used to push whenever it
+         * held at least as much as was published — i.e. also when NOTHING had changed — and every
+         * push is a fresh encryption (new IV) of the whole cache: a brand-new ~1.5MB blob, uploaded
+         * `keep` and never let go of. The five-minute limit lived on the page, and on PosterChanOS
+         * every app window is a page. Measured on one account: ~400 copies, 730MB, in two days.
+         * Now: strictly more than is published, and at most every 30 minutes across ALL of this
+         * browser's windows unless a lot has arrived. */
+        if(held <= have) return false;
+        const stampKey = 'pc_dmcache_push_' + String(S.ME.pubkey).slice(0, 16);
+        let last = 0; try{ last = Number(localStorage.getItem(stampKey)) || 0; }catch(_){ }
+        if(Date.now() - last < 1800000 && held - have < 50) return false;
+        try{ localStorage.setItem(stampKey, String(Date.now())); }catch(_){ }
         const iv = new Uint8Array(12); crypto.getRandomValues(iv);
         const ct = new Uint8Array(await crypto.subtle.encrypt({ name:'AES-GCM', iv }, key,
                                     new TextEncoder().encode(JSON.stringify(map))));
@@ -585,6 +597,14 @@ window.PCDmsFactory = function(dep){
         await publish(30078, JSON.stringify({ sha, n: held, at: Math.floor(Date.now()/1000) }),
                       [['d', this.SHARE_D]], { quiet:true });
         this._pushedAt = Date.now();
+        /* LET GO OF THE COPY THIS ONE REPLACES. It is a CACHE — every message in it is still a gift
+         * wrap on the relays — so a device that was mid-read of the old copy loses nothing but a
+         * faster first load (pullShared answers 0 and the history is decrypted as before). Only
+         * after the new pointer is published, and only this account's reference: the bytes go
+         * with their last owner. */
+        if(oldSha && oldSha !== String(sha).toLowerCase()){
+          try{ const P = window.__PC; if(P && P.deleteBlobQuiet) await P.deleteBlobQuiet(oldSha); }catch(_){ }
+        }
         return true;
       }catch(_){ return false; }
     },

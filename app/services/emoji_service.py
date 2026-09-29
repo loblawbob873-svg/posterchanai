@@ -48,7 +48,7 @@ EMOJI_MAX_PX = 128
 _SC_RE = re.compile(r"^[A-Za-z0-9_+\-]+$")
 _SC_BAD = re.compile(r"[^A-Za-z0-9_+\-]+")
 
-_cache: Dict[str, object] = {"sig": None, "at": 0.0, "entries": [], "by_key": {}}
+_cache: Dict[str, object] = {"sig": None, "at": 0.0, "entries": [], "by_key": {}, "by_sc": {}}
 _SIG_TTL = 5.0                      # don't re-stat the pack dirs more than this often
 
 
@@ -77,17 +77,20 @@ def _pack_dirs(root: str) -> List[str]:
 
 
 def _signature(root: str) -> Optional[Tuple]:
-    """Cheap staleness key: the emoji dir's mtime plus each pack dir's. Adding, renaming or deleting
-    a file changes its directory's mtime, which is exactly when the index must be rebuilt."""
+    """Cheap staleness key: the mtime of the emoji dir and of EVERY directory under it (a pack's
+    sub-folders included — packs copied from Akkoma nest). Adding, renaming or deleting a file changes
+    its directory's mtime, which is exactly when the index must be rebuilt; a rewritten pack.json is
+    an os.replace, which changes its directory's mtime too."""
     if not root or not os.path.isdir(root):
         return None
     try:
-        sig = [os.stat(root).st_mtime_ns]
-        for p in _pack_dirs(root):
+        sig = []
+        for d, subs, _files in os.walk(root):
+            subs[:] = sorted(x for x in subs if not x.startswith("."))
             try:
-                sig.append(os.stat(os.path.join(root, p)).st_mtime_ns)
+                sig.append((d, os.stat(d).st_mtime_ns))
             except OSError:
-                sig.append(0)
+                sig.append((d, 0))
         return (root, tuple(sig))
     except OSError:
         return None
@@ -118,9 +121,46 @@ def _write_pack_json(pack_dir: str, doc: dict) -> None:
     os.replace(tmp, _pack_json_path(pack_dir))
 
 
+def _loose_files(pack_dir: str, recurse: bool) -> List[Tuple[str, str]]:
+    """Every image under a pack folder, shortcode = file name. Sub-folders only when `recurse` (the
+    root "pack" is the emoji dir itself, whose sub-folders are packs of their own)."""
+    out: List[Tuple[str, str]] = []
+    walker = os.walk(pack_dir) if recurse else [(pack_dir, [], sorted(os.listdir(pack_dir)) if os.path.isdir(pack_dir) else [])]
+    for d, subs, files in walker:
+        subs[:] = sorted(x for x in subs if not x.startswith("."))
+        for name in sorted(files):
+            path = os.path.join(d, name)
+            if name.startswith(".") or not os.path.isfile(path) or os.path.splitext(name)[1].lower() not in IMAGE_EXTS:
+                continue
+            out.append((os.path.splitext(name)[0], path))
+    return out
+
+
 def _scan_pack(root: str, pack: str) -> List[Tuple[str, str]]:
-    """[(shortcode, absolute path)] for one pack, pack.json first (see module docstring)."""
+    """[(shortcode, absolute path)] for one pack: its pack.json entries first (they carry the chosen
+    shortcodes), then EVERY other image in the folder and its sub-folders.
+
+    A pack.json used to be the whole truth for its pack, so anything copied in beside it — Akkoma
+    packs arrive as folders, and people add files by hand — was invisible to the picker and to the
+    AI suggester: 94 of 3,404 DRC images on poster.place, measured. A listed file keeps its listed
+    shortcode; an unlisted one is named after its file."""
     pack_dir = root if pack == ROOT_PACK else os.path.join(root, pack)
+    try:
+        out = _scan_listed(pack_dir)
+    except OSError:
+        out = []
+    listed = {os.path.normpath(p) for _sc, p in out}
+    try:
+        for sc, path in _loose_files(pack_dir, recurse=pack != ROOT_PACK):
+            if os.path.normpath(path) not in listed:
+                out.append((sc, path))
+    except OSError:
+        pass
+    return out
+
+
+def _scan_listed(pack_dir: str) -> List[Tuple[str, str]]:
+    """The pack.json half of _scan_pack."""
     out: List[Tuple[str, str]] = []
     doc = read_pack_json(pack_dir)
     if doc is not None:
@@ -135,16 +175,6 @@ def _scan_pack(root: str, pack: str) -> List[Tuple[str, str]]:
             if not path.startswith(os.path.abspath(pack_dir) + os.sep) or not os.path.isfile(path):
                 continue
             out.append((sc, path))
-        return out
-    try:
-        names = sorted(os.listdir(pack_dir))
-    except OSError:
-        return out
-    for name in names:
-        path = os.path.join(pack_dir, name)
-        if not os.path.isfile(path) or os.path.splitext(name)[1].lower() not in IMAGE_EXTS:
-            continue
-        out.append((os.path.splitext(name)[0], path))
     return out
 
 
@@ -172,7 +202,8 @@ def index(force: bool = False) -> List[dict]:
                                 "ext": os.path.splitext(path)[1].lower()})
     entries.sort(key=lambda e: (e["pack"], e["shortcode"].lower()))
     _cache.update({"sig": sig, "at": now, "entries": entries,
-                   "by_key": {(e["pack"], e["shortcode"]): e for e in entries}})
+                   "by_key": {(e["pack"], e["shortcode"]): e for e in entries},
+                   "by_sc": {e["shortcode"]: e for e in entries}})
     return entries
 
 
@@ -228,6 +259,15 @@ def lookup(pack: str, shortcode: str) -> Optional[dict]:
     a request can never name a path of its own."""
     index()
     return _cache["by_key"].get((pack, shortcode))                  # type: ignore[union-attr]
+
+
+def lookup_moved(shortcode: str) -> Optional[dict]:
+    """The entry for a shortcode in WHATEVER pack holds it now. Published notes carry the emoji URL
+    (pack included) forever, so splitting or renaming a pack would otherwise 404 every note that used
+    one of its emoji — 358 notes pointed at DRC_emojo when it was split into themed packs.
+    Shortcodes are unique across the whole index (see index()), so this is unambiguous."""
+    index()
+    return _cache["by_sc"].get(shortcode)                          # type: ignore[union-attr]
 
 
 def packs() -> List[dict]:

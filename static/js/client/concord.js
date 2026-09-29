@@ -3572,6 +3572,119 @@
     const task=(pending.get(key)||Promise.resolve()).then(run,run);pending.set(key,task);
     try{await task;}finally{if(pending.get(key)===task)pending.delete(key);}
   }
+  /* THE OTHER COMMUNITIES, TOO. Only the channel on screen was ever fetched live, so a community you
+   * were not looking at could not know it had new posts: the rail's unread glow and the Communities
+   * badge are computed from messages this device HOLDS, and nothing fetched those ("on desktop, I
+   * didn't see any way to know if a community has new posts"). A slow sweep asks each other joined
+   * room's channels for what arrived since the newest message held — one room at a time, at most once
+   * a minute per room (the same minInterval as the live tick), through the SAME merge the live tick
+   * uses, so a message found here is exactly the message the channel will show when opened. */
+  /* PUSHED, NOT POLLED. Every other joined room's channels are SUBSCRIBED — the same kind of
+   * subscription the open channel has — so a new post in any community reaches this device the
+   * moment a relay has it and lights that community's icon. ("90s? seems too long": a sweep that
+   * visits one room at a time is only the catch-up for what arrived while this device was away.)
+   * One subscription per room, keyed on the account and the exact set of channels and relays, so it
+   * is re-armed only when membership changes. An event is filed by its AUTHOR: every channel has its
+   * own stream keys, and those keys are what the filter asked for. */
+  let roomsLive=new Map();
+  function startRoomsLive(p){
+    try{
+      const R=window.Relay,reader=window.PosterCordReader;
+      if(!p||!R||!R.subscribeFrom||!reader)return;
+      const owner=deliveryOwner(p),want=new Map();
+      for(const room of saved()){
+        const bundle=room&&room.cord&&room.cord.bundle;
+        if(!bundle||bundle.dissolved||bundle.removed||room.protocol==='nip29')continue;
+        const channels=channelsOf(room).filter(c=>c&&c.streamPubkeys&&c.streamPubkeys.length);
+        if(!channels.length)continue;
+        const relays=roomRelays(bundle),key=[owner,roomIdentity(room),relays.join(','),channels.map(c=>c.id+':'+c.streamPubkeys.join('.')).join('|')].join('\n');
+        want.set(roomIdentity(room),{key,room,bundle,channels,relays});
+      }
+      for(const [id,sub] of roomsLive){ const w=want.get(id); if(!w||w.key!==sub.key){ try{ sub.close(); }catch(_){ } roomsLive.delete(id); } }
+      for(const [id,w] of want){
+        if(roomsLive.has(id))continue;
+        const byAuthor=new Map();
+        for(const c of w.channels)for(const pk of c.streamPubkeys)byAuthor.set(String(pk).toLowerCase(),c);
+        const buffers=new Map();
+        const flush=async(channel)=>{
+          const wraps=buffers.get(channel.id)||[];buffers.delete(channel.id);if(!wraps.length)return;
+          const room=saved().find(r=>roomIdentity(r)===id);if(!room||deliveryOwner(p)!==owner)return;
+          const loadKey=room.communityId||room.naddr;
+          let controls=roomControls.get(loadKey);
+          if(!controls){ try{ controls=await cachedEnvelopes(envelopeCacheKey(loadKey,'control')); }catch(_){ controls=null; } }
+          if(!controls||!controls.length)return;
+          try{ await cacheEnvelopes(envelopeCacheKey(loadKey,channel.id),wraps); }catch(_){ }
+          await absorbChatWraps(p,reader,room.cord.bundle,controls,room,channel,wraps,channelStoreId(room,channel.name)).catch(()=>{});
+          try{ paintUnreadBadge(); }catch(_){ }
+          if(document.body.classList.contains('concord-view'))preserveChatScroll(()=>backgroundRender());
+        };
+        const onEvent=ev=>{
+          if(!ev||Number(ev.kind)!==1059)return;
+          const channel=byAuthor.get(String(ev.pubkey||'').toLowerCase());if(!channel)return;
+          const list=buffers.get(channel.id)||[];list.push(ev);buffers.set(channel.id,list);
+          if(list.length===1)setTimeout(()=>{ void flush(channel); },500);
+        };
+        const authors=[...byAuthor.keys()],since=Math.floor(Date.now()/1000)-60,filters=[{kinds:[1059],authors,since}];
+        try{
+          const plane=reader.createPlaneAuth&&cordPlaneContext(p,w.bundle,roomControls.get(w.room.communityId||w.room.naddr)||[],w.room);
+          const close=plane?cordPlaneSubscribe(p,R,w.relays,filters,{onEvent,timeout:0,live:true},plane):R.subscribeFrom(w.relays,filters,{onEvent,timeout:0,live:true});
+          roomsLive.set(id,{key:w.key,close:()=>{ try{ close(); }catch(_){ } }});
+        }catch(e){ console.warn('Concord room subscription failed',e); }
+      }
+    }catch(_){ }
+  }
+  let memberQuery='',memberFocus=null;
+  function applyMemberSearch(){
+    const q=String(memberQuery||'').trim().toLowerCase(), terms=q.split(/\s+/).filter(Boolean);
+    document.querySelectorAll('.cc-members-scroll, .cc-member-list').forEach(list=>{
+      let shown=0;
+      list.querySelectorAll('.cc-member').forEach(row=>{ const hit=!terms.length||terms.every(t=>(row.dataset.q||'').includes(t)); row.classList.toggle('hidden',!hit); if(hit)shown++; });
+      let none=list.querySelector('.cc-member-none');
+      if(terms.length&&!shown){ if(!none){ none=document.createElement('div'); none.className='cc-empty-side cc-member-none'; list.appendChild(none); } none.textContent='No member matches “'+memberQuery.trim()+'”.'; }
+      else if(none)none.remove();
+    });
+  }
+  let sweepBusy=false,sweepAt=0,sweepNext=0;
+  async function sweepOtherRooms(p){
+    if(sweepBusy||Date.now()-sweepAt<SWEEP_MS)return;
+    sweepBusy=true;sweepAt=Date.now();
+    try{
+      const reader=window.PosterCordReader,rooms=saved();if(!reader||!rooms.length)return;
+      const owner=deliveryOwner(p);
+      for(let k=0;k<rooms.length;k++){
+        const i=(sweepNext+k)%rooms.length,room=rooms[i],bundle=room&&room.cord&&room.cord.bundle;
+        if(!bundle||bundle.dissolved||room.protocol==='nip29')continue;
+        const loadKey=room.communityId||room.naddr;
+        let controlWraps=roomControls.get(loadKey);
+        if(!controlWraps){ try{ controlWraps=await cachedEnvelopes(envelopeCacheKey(loadKey,'control')); }catch(_){ controlWraps=null; } }
+        if(!controlWraps||!controlWraps.length)continue;
+        const relays=roomRelays(bundle),identity=roomIdentity(room);
+        for(const channel of channelsOf(room).slice(0,SWEEP_CHANNELS)){
+          if(!channel||!channel.streamPubkeys||!channel.streamPubkeys.length)continue;
+          if(i===state.community&&channel.name===(state.channel||'general'))continue;   // the live tick owns that one
+          if(deliveryOwner(p)!==owner)return;
+          const storeId=channelStoreId(room,channel.name),prior=testMessages(storeId),
+            newest=prior.reduce((n,m)=>Math.max(n,Number(m.at)||0),0),
+            since=newest?Math.max(0,Math.floor((newest-60000)/1000)):Math.floor(Date.now()/1000)-7*86400;
+          const wraps=await cordQuery(p,relays,[{kinds:[1059],authors:channel.streamPubkeys,since,limit:100}],
+            {timeout:6000,max:8,plane:cordPlaneContext(p,bundle,controlWraps,room),signal:ownRoomReads(identity),
+             purpose:'concord room sweep '+loadKey+' '+channel.id,minInterval:60000}).catch(()=>[]);
+          if(!wraps||!wraps.length)continue;
+          try{ await cacheEnvelopes(envelopeCacheKey(loadKey,channel.id),wraps); }catch(_){ }
+          await absorbChatWraps(p,reader,bundle,controlWraps,room,channel,wraps,storeId).catch(()=>{});
+        }
+        sweepNext=(i+1)%rooms.length;
+        break;                                    // one room per sweep: the next sweep takes the next room
+      }
+      try{ paintUnreadBadge(); }catch(_){ }
+      if(document.body.classList.contains('concord-view'))preserveChatScroll(()=>backgroundRender());
+    }catch(_){ }finally{ sweepBusy=false; }
+  }
+  const SWEEP_MS=20000, SWEEP_CHANNELS=6;
+  /* Before Communities has ever been opened in this page the live timer is not running, and the
+   * sidebar's Communities badge would still know nothing. The sweep runs on its own then — only for a
+   * signed-in account, and never alongside the live timer, which calls it itself. */
+  if(typeof setInterval==='function')setInterval(()=>{ try{ const p=PC(); if(!liveTimer&&p&&p.viewer&&p.viewer()&&p.viewer().pubkey&&saved().length){ startRoomsLive(p); sweepOtherRooms(p); } }catch(_){ } },SWEEP_MS);
   async function refreshActiveChannel(p){
     const foreground=document.body.classList.contains('concord-view'),parked=window.PCOS&&PCOS.isOn&&PCOS.isOn()&&PCOS.parkedSlot&&PCOS.parkedSlot('concord');
     if(liveBusy||state.community==null||(!foreground&&!parked))return; liveBusy=true;
@@ -3875,7 +3988,7 @@
     }catch(e){console.warn('Concord metadata sync failed',e);}finally{metadataBusy=false;}
   }
   function stopLiveSync(){ stopRekeyLive(); if(liveTimer)clearTimeout(liveTimer); liveTimer=null; stopChatLive(); }
-  function startLiveSync(p){ if(liveTimer||!document.body.classList.contains)return; liveTimer=setInterval(()=>{refreshRoomMetadata(p);refreshActiveChannel(p);let changed=false;for(const [id,rows] of remoteMessages){const clean=uniqueMessages(rows);if(clean.length!==rows.length||clean.some((m,i)=>m!==rows[i])){remoteMessages.set(id,clean);changed=true;}}if(changed&&document.body.classList.contains('concord-view'))preserveChatScroll(()=>backgroundRender());if(window.PosterCordReader?.sweepExpiredChat)window.PosterCordReader.sweepExpiredChat();for(const [id,d] of deliveries)if(messageExpired(d.made))deliveries.delete(id);if(window.PCConcordCache?.sweepExpired)window.PCConcordCache.sweepExpired().catch(()=>{});},4000); }
+  function startLiveSync(p){ if(liveTimer||!document.body.classList.contains)return; liveTimer=setInterval(()=>{refreshRoomMetadata(p);refreshActiveChannel(p);startRoomsLive(p);sweepOtherRooms(p);let changed=false;for(const [id,rows] of remoteMessages){const clean=uniqueMessages(rows);if(clean.length!==rows.length||clean.some((m,i)=>m!==rows[i])){remoteMessages.set(id,clean);changed=true;}}if(changed&&document.body.classList.contains('concord-view'))preserveChatScroll(()=>backgroundRender());if(window.PosterCordReader?.sweepExpiredChat)window.PosterCordReader.sweepExpiredChat();for(const [id,d] of deliveries)if(messageExpired(d.made))deliveries.delete(id);if(window.PCConcordCache?.sweepExpired)window.PCConcordCache.sweepExpired().catch(()=>{});},4000); }
   /* ONE SIGNED LISTING PER ROOM PER ACCOUNT, RE-SENT — NEVER RE-SIGNED.
    *
    * The Discover listing is a public kind-1 `${name}\n\n${url}` with the same two `t` tags every
@@ -4128,7 +4241,7 @@
         && current.moderators.indexOf(viewer.pubkey)>=0),
       memberPks=current?roomParticipants(current,viewer.pubkey).filter(pk=>!banned.has(pk)):[];
     let membersHidden=localStorage.getItem('pc.concord.members.hidden')==='1';
-    const memberRows=memberPks.map(pk=>{const pr=p.profOf?p.profOf(pk):{},name=pk===viewer.pubkey?me:(pr.display_name||pr.name||pk.slice(0,12)+'…');return `<button class="cc-member" data-cc-member="${p.enc(pk)}" aria-label="${p.enc(name)} — ${pk===ownerPk?'Owner':'Member'}"><img src="${p.enc(pr.picture||p.LOGO||'')}" alt=""><span><b>${p.enc(name)}</b><small>${pk===ownerPk?'Owner':'Member'}</small></span></button>`;}).join('');
+    const memberRows=memberPks.map(pk=>{const pr=p.profOf?p.profOf(pk):{},name=pk===viewer.pubkey?me:(pr.display_name||pr.name||pk.slice(0,12)+'…');const q=[name,pr.name,pr.display_name,pr.nip05,pk].filter(Boolean).join(' ').toLowerCase();return `<button class="cc-member" data-cc-member="${p.enc(pk)}" data-q="${p.enc(q)}" aria-label="${p.enc(name)} — ${pk===ownerPk?'Owner':'Member'}"><img src="${p.enc(pr.picture||p.LOGO||'')}" alt=""><span><b>${p.enc(name)}</b><small>${pk===ownerPk?'Owner':'Member'}</small></span></button>`;}).join('');
     notifyMentions(p,current,messages,viewer,me,state.channel||'general');
     const oldCommunityRail=feed.querySelector&&feed.querySelector('.cc-communities');
     /* A RE-RENDER MUST NOT CLOSE A SHEET SOMEBODY IS USING. Every sheet is rebuilt `hidden`, and a
@@ -4160,7 +4273,9 @@
     let openSheets=[],focusedId='';
     try{ openSheets=[...feed.querySelectorAll('.cc-join:not(.hidden)[id]')].map(d=>({id:d.id,
       fields:[...d.querySelectorAll('input[id],textarea[id]')].map(f=>[f.id,f.value])}));
-      focusedId=document.activeElement&&feed.contains(document.activeElement)?document.activeElement.id:''; }catch(_){ }
+      focusedId=document.activeElement&&feed.contains(document.activeElement)?document.activeElement.id:'';
+      { const ae=document.activeElement; memberFocus=ae&&ae.classList&&ae.classList.contains('cc-member-search')&&feed.contains(ae)
+          ?{dlg:!!ae.closest('#cc-members-dialog'),at:ae.selectionStart}:null; } }catch(_){ }
     feed.innerHTML=`<div class="cc-app${mobileChatOpen||state.community==null?' show-chat':''}${mobileDrawerOpen?' drawer-open':''}${state.community==null?' home-view':''}">
       <button class="cc-drawer-backdrop" id="cc-drawer-backdrop" aria-label="Close rooms and channels"></button>
       <aside class="cc-communities"><button class="cc-brand" id="cc-home" title="Your rooms" aria-label="Your rooms"><span aria-hidden="true">🕊</span></button><button class="cc-server cc-discovery-button" id="cc-discovery" title="Discover public communities" aria-label="Discover public communities">◎</button>${rooms.map((r,i)=>`<button class="cc-server${state.community===i?' active':''}${isUnread(r)?' unread':''}" data-cc-server="${i}" title="${p.enc(roomName(r,i))}">${roomIcon(p,r,i)}</button>`).join('')}<button class="cc-server cc-add" id="cc-add" title="Create or join a community" aria-label="Create or join a community">+</button></aside>
@@ -4195,8 +4310,15 @@
     /* The tab bar is gone: Communities is its own view, reached from the sidebar. */
     if(current){
       const conversation=p.$('.cc-conversation');
-      if(conversation&&conversation.insertAdjacentHTML)conversation.insertAdjacentHTML('afterend',`<aside class="cc-members-pane${membersHidden?' hidden':''}" aria-label="Community members"><header title="People known from verified membership records and loaded messages"><b>Known members</b><span>${memberPks.length}</span></header><div class="cc-members-scroll">${memberRows||'<div class="cc-empty-side">No members have appeared yet.</div>'}</div></aside>`);
-      feed.insertAdjacentHTML('beforeend',`<div class="cc-join hidden" id="cc-members-dialog"><div class="cc-join-card"><h2>Known members <span class="muted">${memberPks.length}</span></h2><p class="cc-member-help">People known from verified membership records and loaded messages. This is not a complete roster. Tap a member to view their profile. Right-click or hold for more options.</p><div class="cc-member-list">${memberRows}</div><div class="cc-join-actions"><button class="btn btn-ghost" id="cc-members-close">Close</button><button class="btn btn-neon" id="cc-members-invite">Invite people</button></div></div></div><div class="cc-join hidden" id="cc-settings-dialog"><div class="cc-join-card"><h2>Community settings</h2><label class="cc-label" for="cc-description-value">Description</label><textarea class="input cc-settings-description" id="cc-description-value" maxlength="1000" rows="3" placeholder="What is this community about?">${p.enc(current.description||'')}</textarea><label class="cc-label" for="cc-settings-icon">Icon</label><input class="input" id="cc-settings-icon" maxlength="2048" value="${p.enc(current.icon||'')}" placeholder="🌌 or https://…/icon.png"><button type="button" class="btn btn-ghost cc-icon-pick" data-cc-icon-pick="cc-settings-icon">Upload image…</button>${timerSettingsHtml(p,current)}<label class="cc-label" for="cc-channel-visibility">#${p.enc(state.channel||'general')} visibility</label><select class="input cc-visibility-select" id="cc-channel-visibility" disabled><option value="public"${channelPrivate?'':' selected'}>Public — all community members</option><option value="private"${channelPrivate?' selected':''}>Private — invited members only</option></select>${current&&current.cord&&current.cord.bundle&&!current.local&&!current.cord.bundle.dissolved&&current.cord.bundle.owner===(p.viewer?p.viewer().pubkey:'')?'<button type="button" class="btn btn-ghost danger cc-dissolve" id="cc-dissolve">Dissolve community…</button>':''}<div class="cc-join-actions"><button class="btn btn-ghost" id="cc-settings-cancel">Cancel</button><button class="btn btn-neon" id="cc-settings-save">Save changes</button></div></div></div>`);
+      if(conversation&&conversation.insertAdjacentHTML)conversation.insertAdjacentHTML('afterend',`<aside class="cc-members-pane${membersHidden?' hidden':''}" aria-label="Community members"><header title="People known from verified membership records and loaded messages"><b>Known members</b><span>${memberPks.length}</span></header>${memberPks.length>8?`<input class="input cc-member-search" type="search" autocomplete="off" placeholder="Search members" aria-label="Search members" value="${p.enc(memberQuery)}">`:''}<div class="cc-members-scroll">${memberRows||'<div class="cc-empty-side">No members have appeared yet.</div>'}</div></aside>`);
+      feed.insertAdjacentHTML('beforeend',`<div class="cc-join hidden" id="cc-members-dialog"><div class="cc-join-card"><h2>Known members <span class="muted">${memberPks.length}</span></h2><p class="cc-member-help">People known from verified membership records and loaded messages. This is not a complete roster. Tap a member to view their profile. Right-click or hold for more options.</p>${memberPks.length>8?`<input class="input cc-member-search" type="search" autocomplete="off" placeholder="Search members" aria-label="Search members" value="${p.enc(memberQuery)}">`:''}<div class="cc-member-list">${memberRows}</div><div class="cc-join-actions"><button class="btn btn-ghost" id="cc-members-close">Close</button><button class="btn btn-neon" id="cc-members-invite">Invite people</button></div></div></div><div class="cc-join hidden" id="cc-settings-dialog"><div class="cc-join-card"><h2>Community settings</h2><label class="cc-label" for="cc-description-value">Description</label><textarea class="input cc-settings-description" id="cc-description-value" maxlength="1000" rows="3" placeholder="What is this community about?">${p.enc(current.description||'')}</textarea><label class="cc-label" for="cc-settings-icon">Icon</label><input class="input" id="cc-settings-icon" maxlength="2048" value="${p.enc(current.icon||'')}" placeholder="🌌 or https://…/icon.png"><button type="button" class="btn btn-ghost cc-icon-pick" data-cc-icon-pick="cc-settings-icon">Upload image…</button>${timerSettingsHtml(p,current)}<label class="cc-label" for="cc-channel-visibility">#${p.enc(state.channel||'general')} visibility</label><select class="input cc-visibility-select" id="cc-channel-visibility" disabled><option value="public"${channelPrivate?'':' selected'}>Public — all community members</option><option value="private"${channelPrivate?' selected':''}>Private — invited members only</option></select>${current&&current.cord&&current.cord.bundle&&!current.local&&!current.cord.bundle.dissolved&&current.cord.bundle.owner===(p.viewer?p.viewer().pubkey:'')?'<button type="button" class="btn btn-ghost danger cc-dissolve" id="cc-dissolve">Dissolve community…</button>':''}<div class="cc-join-actions"><button class="btn btn-ghost" id="cc-settings-cancel">Cancel</button><button class="btn btn-neon" id="cc-settings-save">Save changes</button></div></div></div>`);
+      /* SEARCH THE KNOWN MEMBERS ("will be useful for large rooms"). By name, NIP-05 or key. The query
+       * is the module's, so the repaint every arriving message causes keeps it and the filtered list;
+       * the box that had focus gets it back (render() re-creates it). */
+      applyMemberSearch();
+      if(memberFocus){ const f=p.$(memberFocus.dlg?'#cc-members-dialog .cc-member-search':'.cc-members-pane .cc-member-search');
+        if(f){ f.focus({preventScroll:true}); try{ f.setSelectionRange(memberFocus.at,memberFocus.at); }catch(_){ } } }
+      p.$$('.cc-member-search').forEach(inp=>inp.oninput=()=>{ memberQuery=inp.value; p.$$('.cc-member-search').forEach(o=>{ if(o!==inp)o.value=inp.value; }); applyMemberSearch(); });
       const settingsActions=p.$('#cc-settings-dialog .cc-join-actions');
       if(settingsActions&&settingsActions.insertAdjacentHTML)settingsActions.insertAdjacentHTML('afterbegin','<button class="btn btn-ghost danger" id="cc-leave-community">Leave community</button>');
       if(settingsActions&&current.cord?.bundle?.owner===p.viewer?.().pubkey&&p.sendCordDirectInvite)settingsActions.insertAdjacentHTML('afterbegin','<button class="btn btn-ghost" id="cc-private-channel">New private channel</button>');

@@ -402,12 +402,14 @@ async def client_emoji_file(pack: str, name: str, t: int = 0):
     ever resolved THROUGH the index (never joined onto the request), so a crafted pack/name can't
     escape the emoji directory. Immutable + CORS: other Nostr clients fetch these cross-origin."""
     shortcode = os.path.splitext(name)[0]
-    entry = emoji_service.lookup(pack, shortcode)
+    # A note's URL outlives its pack's layout: an emoji whose pack was split or renamed is found by
+    # shortcode wherever it lives now (see emoji_service.lookup_moved).
+    entry = emoji_service.lookup(pack, shortcode) or emoji_service.lookup_moved(shortcode)
     if not entry:
         raise HTTPException(status_code=404, detail="no such emoji")
     path, media = entry["path"], None
     if t:
-        thumb = emoji_service.thumbnail(pack, shortcode)
+        thumb = emoji_service.thumbnail(entry["pack"], shortcode)
         if thumb:
             path, media = thumb, "image/webp"
     if not media:
@@ -1396,6 +1398,37 @@ def _emoji_rank(words: list[str], limit: int) -> list[dict]:
     return out
 
 
+def _emoji_candidates(words: list[str], limit: int, per_word: int = 4) -> list[dict]:
+    """A WIDE pool across the WHOLE pack for the model to choose from: up to `per_word` emoji for
+    every keyword (best match first), not just the single best one. `_emoji_rank` answers "which one
+    emoji means this word"; this answers "which emoji could be in the running", so a 3,400-emoji
+    catalogue is actually searched rather than reduced to one guess per word."""
+    uniq = list(dict.fromkeys(w for w in words if w))
+    stems = {w: w[:5] for w in uniq if len(w) >= 5}
+    hits: dict = {}                              # word -> [(score, entry)]
+    for e in emoji_service.index():
+        sc = e["shortcode"].lower()
+        toks = set(t for t in re.split(r"[^a-z0-9]+", sc) if t)
+        for w in uniq:
+            if w in toks:
+                score = 10 + len(w)
+            elif len(w) >= 4 and any(len(t) >= 4 and (t.startswith(w) or w.startswith(t)) for t in toks):
+                score = 4 + len(w) // 2
+            elif w in stems and any(len(t) >= 5 and t[:5] == stems[w] for t in toks):
+                score = 3 + len(w) // 2
+            else:
+                continue
+            hits.setdefault(w, []).append((score, -len(sc), e))
+    out, seen = [], set()
+    for w in uniq:                               # keyword order = priority
+        for _s, _l, e in sorted(hits.get(w, []), key=lambda x: (x[0], x[1]), reverse=True)[:per_word]:
+            if e["shortcode"] not in seen:
+                seen.add(e["shortcode"]); out.append(e)
+        if len(out) >= limit:
+            break
+    return out[:limit]
+
+
 @router.post("/emoji-suggest")
 async def suggest_emoji(request: Request, db: Session = Depends(get_db)):
     """Suggest up to 5 INSTANCE custom emoji for a draft post — the composer's AI → Suggest emoji.
@@ -1451,6 +1484,43 @@ async def suggest_emoji(request: Request, db: Session = Depends(get_db)):
         logger.warning("[client] emoji-suggest LLM unavailable, using post words only: %s", e)
 
     base = _emoji_base(request)
+    # THE MODEL CHOOSES FROM THE WHOLE PACK'S CANDIDATES. The keywords above pull every plausible emoji
+    # out of the full catalogue (several per keyword, reactions first), and the model — which has read
+    # the post — picks the ones that fit. The names still never all go to the prompt: 3,400 of them is
+    # far more than a small local model can take per keystroke. Anything it answers that is not in the
+    # pool is ignored, and a model that is down or answers nothing falls back to the ranked mix below.
+    chosen: list[dict] = []
+    pool = _emoji_candidates(reaction + subject + _EMOJI_GENERIC, 80)
+    if len(pool) > want and (reaction or subject):
+        try:
+            from app.services.inference_factory import get_inference_service
+            by = {e["shortcode"].lower(): e for e in pool}
+            svc = get_inference_service(db)
+            res = await svc.chat_completion(
+                [{"role": "system", "content": (
+                    f"Pick the {want} custom emoji that would make the funniest, most fitting reactions to "
+                    "the post. Answer with ONLY their names from the list, comma-separated, best first.")},
+                 {"role": "user", "content": "POST:\n" + text[:800] + "\n\nEMOJI: " + ", ".join(e["shortcode"] for e in pool)}],
+                max_tokens=80, temperature=0.6)
+            ans = (res.get("choices") or [{}])[0].get("message", {}).get("content", "") or ""
+            for tok in re.split(r"[\s,;:]+", ans.lower()):
+                e = by.get(tok.strip(" .`'\""))
+                if e and e not in chosen:
+                    chosen.append(e)
+                if len(chosen) >= want:
+                    break
+        except Exception as e:
+            logger.info("[client] emoji-suggest pick step skipped: %s", e)
+    if chosen:                                    # its picks lead; the ranked matches fill the rest
+        seen = {e["shortcode"] for e in chosen}
+        for e in _emoji_rank(reaction + subject + _EMOJI_GENERIC, want * 2):
+            if len(chosen) >= want:
+                break
+            if e["shortcode"] not in seen:
+                seen.add(e["shortcode"]); chosen.append(e)
+        return JSONResponse({"emojis": [{"s": e["shortcode"],
+                                         "u": f"{base}/{e['pack']}/{e['shortcode']}{e['ext']}"}
+                                        for e in chosen[:want]]})
     # MIX the two: a couple of on-topic emoji so the answer is about this post, the rest reactions so
     # it is funny. Taking one ranked list meant a parroting model drowned the post out completely.
     half = max(1, want // 2)
