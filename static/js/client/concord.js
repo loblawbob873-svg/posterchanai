@@ -4115,6 +4115,19 @@
        Communities appeared, shut itself a second later when public communities came in, and took
        the pasted invite with it. Open sheets, what is typed in them and the focus are carried over;
        a sheet closed on purpose (Cancel, a finished join) was hidden before this ran and stays shut. */
+    /* THE REBUILT MESSAGE LIST STARTS AT THE TOP OF THE ROOM'S HISTORY. Every repaint below replaces
+       `.cc-messages` wholesale — four times for one sent message (optimistic row, signing, sent, the
+       echo) and once per message received — and the new scroller is born at scrollTop 0. The
+       position was only put back a frame later (scrollChatBottom / preserveChatScroll run in rAF),
+       which leaves a window in which the room is showing its OLDEST messages: invisible in a
+       headless browser, which always runs that rAF before painting, and the most plausible source of
+       "when I send message or message is received, chat room location jumps" on the desktop, where
+       the frame is composited by a GPU process shared with every other window. The position is now
+       written in the same task as the rebuild, so no frame can ever see the top of the history; the
+       rAF passes still run afterwards and refine it (anchors, late images). */
+    let keepScroll=null;
+    try{ const ob=feed.querySelector('.cc-messages'); if(ob)keepScroll={key:scrollKey(),top:ob.scrollTop,
+      atBottom:ob.scrollHeight-ob.clientHeight-ob.scrollTop<=2}; }catch(_){ }
     let openSheets=[],focusedId='';
     try{ openSheets=[...feed.querySelectorAll('.cc-join:not(.hidden)[id]')].map(d=>({id:d.id,
       fields:[...d.querySelectorAll('input[id],textarea[id]')].map(f=>[f.id,f.value])}));
@@ -4131,6 +4144,11 @@
         <div class="cc-reply${replyTarget?'':' hidden'}" id="cc-reply">${replyTarget?`<span>Replying to <b>${p.enc(replyTarget.by||'member')}</b>: ${p.enc(String(replyTarget.text||'').slice(0,90))}</span><button id="cc-reply-cancel" aria-label="Cancel reply">×</button>`:''}</div><div class="cc-typing" id="cc-typing" aria-live="polite"></div><div class="cc-compose"><button class="cc-compose-btn" id="cc-attach" title="Attach file"><svg class="ic"><use href="#i-paperclip"></use></svg></button><input type="file" id="cc-file" multiple hidden><textarea id="cc-input" data-cc-draft-key="${p.enc(draftKey)}" rows="1" placeholder="${channelReadOnly?'History only: current channel access is unavailable':'Message #'+p.enc(state.channel||'general')}" ${state.community==null||channelReadOnly?'disabled':''}>${p.enc(draft&&draft.value||'')}</textarea><button class="cc-compose-btn" id="cc-emoji" title="Emoji"><svg class="ic"><use href="#i-smile"></use></svg></button><button class="btn btn-neon" id="cc-send" ${state.community==null||channelReadOnly?'disabled':''}>Send</button></div>
       </main></div><div class="cc-join${pendingInvite?'':' hidden'}" id="cc-join"><div class="cc-join-card"><div class="concord-mark">C</div><h2>Join or create a community</h2><p class="muted">Paste an Armada or other CORD-05 invite. Its # secret stays in this browser.</p><input class="input" id="cc-invite-url" inputmode="url" autocomplete="off" autocapitalize="none" spellcheck="false" placeholder="https://…/invite/naddr1…#…" value="${p.enc((pendingInvite&&pendingInvite.url)||'')}"><div class="cc-join-actions${pendingInvite?' hidden':''}"><button class="btn btn-ghost" id="cc-join-cancel">Cancel</button><button class="btn btn-neon" id="cc-join-go">Preview invite</button></div>${pendingInvite?'':'<div class="cc-join-alt"><span>or start your own</span><button type="button" class="btn btn-ghost" id="cc-join-create">Create a community</button></div>'}${pendingInvite?invitePreviewHtml(p,pendingInvite):''}</div></div><div class="cc-join hidden" id="cc-create-dialog"><div class="cc-join-card"><div class="concord-mark">C</div><h2>Create a public community</h2><p class="muted">Publishes an Armada-compatible CORD community and public #general channel to your relays.</p><label class="cc-label" for="cc-community-name">Community name</label><input class="input" id="cc-community-name" maxlength="64" autocomplete="off" placeholder="My community"><label class="cc-label" for="cc-community-icon">Icon <span class="muted">(emoji or image URL)</span></label><input class="input" id="cc-community-icon" maxlength="2048" autocomplete="off" placeholder="🚀 or https://…/icon.png"><button type="button" class="btn btn-ghost cc-icon-pick" data-cc-icon-pick="cc-community-icon">Upload image…</button><div class="cc-join-actions"><button class="btn btn-ghost" id="cc-create-cancel">Cancel</button><button class="btn btn-neon" id="cc-create-go">Create on relays</button></div></div></div><div class="cc-join hidden" id="cc-icon-dialog"><div class="cc-join-card"><div class="concord-mark">C</div><h2>Community icon</h2><p class="muted">Use an emoji or a direct HTTP(S) image URL. Leave blank to restore the initials.</p><label class="cc-label" for="cc-icon-value">Icon</label><input class="input" id="cc-icon-value" maxlength="2048" autocomplete="off" placeholder="🌌 or https://…/icon.png"><button type="button" class="btn btn-ghost cc-icon-pick" data-cc-icon-pick="cc-icon-value">Upload image…</button><div class="cc-join-actions"><button class="btn btn-ghost" id="cc-icon-cancel">Cancel</button><button class="btn btn-neon" id="cc-icon-save">Save icon</button></div></div></div>`;
     retainCommunityRail(oldCommunityRail,feed.querySelector&&feed.querySelector('.cc-communities'));
+    try{
+      if(keepScroll&&keepScroll.key===scrollKey()){ const nb=feed.querySelector('.cc-messages');
+        if(nb){ const st=readScroll(keepScroll.key);
+          setProgrammaticScroll(nb,st.pinned!==false||keepScroll.atBottom?nb.scrollHeight:keepScroll.top); } }
+    }catch(_){ }
     try{
       const byId=id=>feed.querySelector('[id="'+String(id).replace(/["\\]/g,'')+'"]');
       openSheets.forEach(({id,fields})=>{ const d=byId(id); if(!d)return; d.classList.remove('hidden');
