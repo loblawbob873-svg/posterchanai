@@ -764,6 +764,28 @@ window.PCGitFactory = function(dep){
     _rvTok={url, pending};
     return pending;
   }
+  /* A README's RELATIVE images (mdToHtml leaves them as `img.md-rel[data-rel]`). A forge README came
+   * from a URL, so a path resolves against it the way the forge's own page resolves it. A repo hosted
+   * HERE is read through the raw route — which is pinned to text/plain + nosniff so repo content can
+   * never execute on this origin — so the bytes are fetched and shown as a blob of the image type the
+   * file extension names; an <img> cannot run anything whatever the bytes are. */
+  const _IMG_TYPES={png:'image/png',jpg:'image/jpeg',jpeg:'image/jpeg',gif:'image/gif',webp:'image/webp',avif:'image/avif',svg:'image/svg+xml',bmp:'image/bmp'};
+  function _rvReadmeImages(box, source){
+    const imgs=[...box.querySelectorAll('img.md-rel[data-rel]')].slice(0,40);
+    if(!imgs.length) return;
+    const fromForge=/^https?:\/\//i.test(String(source||'')) ? String(source) : '';
+    imgs.forEach(async im=>{
+      const rel=im.dataset.rel||'';
+      try{
+        if(fromForge){ const u=new URL(rel, fromForge); if(/^https?:$/.test(u.protocol)) im.src=u.href; return; }
+        if(!_rv || !_rv.cloneUrl) return;
+        const type=_IMG_TYPES[(rel.split('.').pop()||'').toLowerCase()]; if(!type) return;
+        const r=await _rvFetch(_rvUrl('raw',{path:rel})); if(!r.ok) return;
+        const buf=await r.arrayBuffer(); if(!buf.byteLength || buf.byteLength>12*1024*1024 || !im.isConnected) return;
+        im.src=URL.createObjectURL(new Blob([buf],{type}));
+      }catch(_){ }
+    });
+  }
   async function _rvFetch(u){
     const a=await _rvReadAuth();
     return fetch(u, a ? {headers:{'X-Git-Auth':a}} : undefined);
@@ -945,6 +967,7 @@ window.PCGitFactory = function(dep){
         const j=await r.json();
         if(S.VIEW!=='repo') return;
         if(j && j.ok && j.markdown){ box.innerHTML=mdToHtml(j.markdown);
+          _rvReadmeImages(box, j.source);
           box.querySelectorAll('img').forEach(im=> im.onclick=()=>openLightbox(im.currentSrc||im.src)); }
         else if(_rv && _rv.cloneUrl){
           // Self-hosted repo with no README — usually a freshly-created EMPTY repo. Show the first-commit

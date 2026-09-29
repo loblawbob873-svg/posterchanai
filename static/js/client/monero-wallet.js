@@ -715,8 +715,16 @@
    * addressed to the wrong audience — a user opening "Monero Wallet" wants THEIR wallet, and this
    * node keeps one for them. */
   function meWalletHtml(s){
-    const locked = amount(s.balance) > 0 && !(amount(s.unlocked_balance) > 0);
-    const mins = Math.max(1, Number(s.blocks_to_unlock) || 0) * 2;
+    /* PART OF A BALANCE CAN BE CONFIRMING, AND THAT NEEDS SAYING TOO. This only ever spoke when
+     * NOTHING was spendable, so a wallet with 0.59 of its 0.85 XMR still confirming read "Available
+     * 0.25 · 0.85 total" with no word on why or for how long: "why is so much of my balance always
+     * locked???? that last transaction was half an hour ago". Measured, it was a payment RECEIVED
+     * sixteen blocks earlier — Monero holds received coins (and every payment's change) for 10
+     * confirmations, and blocks come at random, so 10 can take well past 20 minutes. */
+    const confirming = Math.max(0, amount(s.balance) - amount(s.unlocked_balance));
+    const locked = confirming > 0;
+    const blocks = Math.max(1, Number(s.blocks_to_unlock) || 0);
+    const mins = blocks * 2;
     return '<div class="mw-wrap"><header class="mw-head"><span class="mw-logo">\u0271</span>'
       + '<div><h2>Monero Wallet</h2><span class="mw-net">' + esc(String(s.network || '').toUpperCase())
       + '</span></div><button class="btn btn-ghost small" id="mw-refresh">Refresh</button></header>'
@@ -726,7 +734,11 @@
       + '<section class="mw-balance"><span>Available balance</span><strong>'
       + esc(xmr(s.unlocked_balance, false)) + ' <small>XMR</small></strong>'
       + '<span class="muted small">' + esc(xmr(s.balance, false)) + ' XMR total'
-      + (locked ? ' \u00b7 unlocks in about ' + esc(String(mins)) + ' min' : '') + '</span></section>'
+      + (locked ? ' \u00b7 ' + esc(xmr(confirming, false)) + ' XMR confirming, unlocks in about ' + esc(String(mins)) + ' min' : '') + '</span>'
+      + (locked ? '<span class="muted small mw-confirming">Monero spends a payment only after 10 confirmations — about 20 minutes, '
+          + 'sometimes longer, since blocks arrive at random. That applies to money you receive and to the change '
+          + 'from each payment you send. ' + esc(String(blocks)) + ' block' + (blocks === 1 ? '' : 's') + ' to go.</span>' : '')
+      + '</section>'
       + '<div class="mw-actions"><button class="btn btn-neon" id="mw-me-send">Send</button>'
       + '<button class="btn btn-cyan" id="mw-me-receive">Receive</button>'
       + '<button class="btn" id="mw-me-withdraw">Withdraw</button></div>'

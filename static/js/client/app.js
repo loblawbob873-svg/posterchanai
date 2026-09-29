@@ -8277,6 +8277,11 @@
   // exactly 64 hex and nothing else, not a general scheme opening. It is inert everywhere else in
   // the app — no browser fetches `pcres:`, and only the Notes view ever resolves one — so a hostile
   // nostr note containing it renders a broken image rather than anything reaching the network.
+  /* A repo-relative path (static/mascot/x.png, ./docs/a.webp) — never a scheme, never `//host`,
+   * never a climb out with `..`. */
+  function _mdRelPath(p){ p=String(p||'').trim().replace(/^\.\//,'');
+    if(!p || /^[a-z][a-z0-9+.-]*:/i.test(p) || p.startsWith('/') || p.split('/').includes('..')) return '';
+    return /^[\w.\-~%/@+]+$/.test(p) ? p.slice(0,300) : ''; }
   function _mdUrl(u){ u=(u||'').trim();
     if(/^pcres:[0-9a-f]{64}$/i.test(u)) return u;
     return /^(https?:\/\/|\/)/i.test(u) ? u : ''; }
@@ -8290,7 +8295,21 @@
     // Escaped inline HTML from the source markdown (GitHub-style READMEs use <div align=center>, <img>,
     // <br>, <picture>…): render a SAFE subset rather than show the escaped tag as literal text.
     s=s.replace(/&lt;br\s*\/?&gt;/gi,'<br>');
-    s=s.replace(/&lt;img\b(?:(?!&gt;)[\s\S])*?&gt;/gi,(m)=>{ const sm=m.match(/src=&quot;([\s\S]*?)&quot;/i); const u=sm?_mdUrl(sm[1].replace(/&amp;/g,'&')):''; return u?`<img src="${u}" loading="lazy">`:''; });
+    /* <img> and <a>, REBUILT, never passed through: only src/href (through _mdUrl — http(s), our own
+     * path, a pcres: id), alt and a numeric width survive; every handler, style and other attribute is
+     * gone because nothing here copies it. A README's <a href="…"><img …></a> rows showed up as literal
+     * tag text ("it's showing HTML instead of rendering it") because <a> was never handled, and its
+     * RELATIVE images (static/…png) were dropped: they are kept as `md-rel` for a caller that knows the
+     * repo to resolve (git.js), and are simply absent everywhere else. */
+    s=s.replace(/&lt;img\b(?:(?!&gt;)[\s\S])*?&gt;/gi,(m)=>{
+      const at=k=>{ const r=m.match(new RegExp('\\s'+k+'=&quot;([\\s\\S]*?)&quot;','i')); return r?r[1].replace(/&amp;/g,'&'):''; };
+      const src=at('src'), u=_mdUrl(src), alt=enc(at('alt').replace(/&[a-z]+;/g,'')).slice(0,300), w=at('width');
+      const size=/^\d{1,4}%$/.test(w)?` style="width:${w}"`:/^\d{1,4}(px)?$/.test(w)?` style="width:${parseInt(w,10)}px"`:'';
+      if(u) return `<img src="${u}" alt="${alt}"${size} loading="lazy">`;
+      const rel=_mdRelPath(src); return rel?`<img class="md-rel" data-rel="${enc(rel)}" alt="${alt}"${size} loading="lazy">`:''; });
+    s=s.replace(/&lt;a\b(?:(?!&gt;)[\s\S])*?&gt;/gi,(m)=>{ const h=m.match(/\shref=&quot;([\s\S]*?)&quot;/i); const u=h?_mdUrl(h[1].replace(/&amp;/g,'&')):'';
+      return u?`<a href="${u}" target="_blank" rel="noopener">`:'<a>'; });
+    s=s.replace(/&lt;\/a\s*&gt;/gi,'</a>');
     s=s.replace(/&lt;\/?(?:div|center|p|span|picture|source|summary|details|small|sub|sup|nobr|font|h[1-6]|table|thead|tbody|tr|td|th|ul|ol|li)\b(?:(?!&gt;)[\s\S])*?&gt;/gi,'');
     // Linked image  [![alt](img)](link)  → the <img> wrapped in the link (badge rows). Do BEFORE the
     // plain image/link rules so the nested form isn't mangled.
@@ -13713,8 +13732,8 @@
          : (partial ? '' : '<div class="empty">No replies yet.</div>');
     feed.innerHTML=html; hydrate(feed);
     _bindThreadBack(feed, id);   // the same binder the early paint used — see _paintThreadHead
-    if(isIssue){ const h=$('#issue-status-host',feed); if(h) Promise.resolve().then(()=>_git().mountIssueStatus(h, root)).catch(()=>{}); }
     { const rb=$('#thread-retry',feed); if(rb) rb.onclick=()=>renderThread(id, hints); }
+    if(isIssue){ const h=$('#issue-status-host',feed); if(h) Promise.resolve().then(()=>_git().mountIssueStatus(h, root)).catch(()=>{}); }
     // Reveal + flash the clicked post (when it isn't the root).
     if(id!==root.id){ const el=feed.querySelector(`.thread-node[data-tid="${CSS.escape(id)}"]`);
       if(el) _revealThreadNode(feed, el, id); }

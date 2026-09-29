@@ -1175,8 +1175,9 @@ class RelayServer:
                 self._send(conn, ["OK", msg[1].get("id", ""), False, why])
             # A socket this young has not had the chance to answer the challenge yet; closing it here
             # would end every member's Amethyst session before it could sign in.
-            young = time.time() - float(getattr(conn, "_pcai_opened", 0) or 0) < self.AUTH_GRACE
-            if not young and self._note_refused(getattr(conn, "_pcai_ip", "") or ""):
+            if time.time() - float(getattr(conn, "_pcai_opened", 0) or 0) < self.AUTH_GRACE:
+                return
+            if self._note_refused(getattr(conn, "_pcai_ip", "") or ""):
                 # It has proved it is not a signer, so there is nothing left to hold the socket for.
                 # The NOTICE above is given a moment to leave first — a silent close reads as a
                 # broken relay, and this is the one line that tells somebody what to do about it.
