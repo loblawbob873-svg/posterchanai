@@ -1,10 +1,11 @@
 from pathlib import Path
+from tests.client_source import app_source_with
 
 
 ROOT = Path(__file__).resolve().parents[1]
 MAIN = (ROOT / "desktop/main.js").read_text(encoding="utf-8")
 PRELOAD = (ROOT / "desktop/preload.js").read_text(encoding="utf-8")
-APP = (ROOT / "static/js/client/app.js").read_text(encoding="utf-8", errors="ignore")
+APP = app_source_with("dms.js")   # _dmNotify lives in dms.js (split out of app.js)
 CONCORD = (ROOT / "static/js/client/concord.js").read_text(encoding="utf-8")
 
 

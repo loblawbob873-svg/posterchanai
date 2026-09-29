@@ -12,10 +12,12 @@ import subprocess
 from pathlib import Path
 
 import pytest
-from tests.client_source import client_source
+from tests.client_source import client_source, state_shim
 
 SRC = client_source()
 FN = SRC[SRC.index("  function _dmNotify("):SRC.index("  // Index DMs WITHOUT decrypting")]
+# _dmNotify lives in dms.js, where app.js's live LOGO reads as S.LOGO: the shim reads the stub below.
+FN += "\n" + state_shim(FN)
 
 RUN = r"""
 const out = [];

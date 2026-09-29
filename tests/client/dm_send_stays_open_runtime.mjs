@@ -36,6 +36,7 @@ const context={
   dmInboxRelays:async()=>{calls.inbox++;return {relays:[],answered:true};}, toast:()=>{},
   setTimeout, Promise,
 };
+installStateGlobals(context);   // sendDm lives in dms.js, where app.js's live lets read as S.<name>
 vm.runInNewContext(source.slice(start,end)+'\nthis.run=sendDm;',context,{filename:'app-sendDm.js'});
 await context.run('a'.repeat(64),'stay here');
 await Promise.resolve();

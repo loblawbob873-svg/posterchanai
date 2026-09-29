@@ -26,9 +26,10 @@ import subprocess
 from pathlib import Path
 
 import pytest
+from tests.client_source import app_source_with
 
 ROOT = Path(__file__).resolve().parents[2]
-APP_JS = (ROOT / "static/js/client/app.js").read_text(encoding="utf-8")
+APP_JS = app_source_with("dms.js")   # the DM code lives in dms.js (split out of app.js)
 RUNTIME = ROOT / "tests/client/dm_retry_runtime.mjs"
 NODE = shutil.which("node")
 
@@ -44,7 +45,7 @@ def test_a_failed_unwrap_is_retried_and_a_good_one_is_not_repeated():
 
 def test_the_live_subscription_does_not_gate_the_unwrap_on_the_store():
     """THE BUG, in one line. The Store's dedup is about having seen the event, not having read it."""
-    sub = APP_JS[APP_JS.index("Relay.subscribe([{ kinds:[1059], '#p':[ME.pubkey] }]"):]
+    sub = APP_JS[APP_JS.index("Relay.subscribe([{ kinds:[1059], '#p':[S.ME.pubkey] }]"):]   # dms.js reads ME as S.ME
     sub = sub[:sub.index("onEose")]
     assert "if(!Store.saveEvent(ev)) return;" not in sub, (
         "the live DM subscription skips the unwrap for any wrap the Store already holds — which "

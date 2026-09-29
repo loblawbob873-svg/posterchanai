@@ -4,9 +4,10 @@ from pathlib import Path
 import subprocess
 import pytest
 from tests.client.test_tip_tell_on_dismiss import _fn
+from tests.client_source import app_source_with, state_shim
 
 ROOT = Path(__file__).resolve().parents[2]
-APP = (ROOT / 'static/js/client/app.js').read_text()
+APP = app_source_with('dms.js')   # the Concord direct-invite transport lives in dms.js
 SEND = _fn(APP, 'sendCordDirectInvite', 'async function sendCordDirectInvite(')
 INGEST = _fn(APP, '_ingestCordDirectWrap', 'async function _ingestCordDirectWrap(')
 INBOX = _fn(APP, '_startCordDirectInbox', 'async function _startCordDirectInbox(')
@@ -41,6 +42,7 @@ def test_indexed_inbox_is_bounded_and_independent_of_general_dm_sync():
 let active=true,subscribed=[],ingested=[],closes=0;
 const context={pubkey:'a'.repeat(64),isCurrent:()=>active},cordDirectContext=()=>context;
 let _cordDirectClose=null,_cordDirectOwner='';
+''' + state_shim(INBOX) + '''
 const _ingestCordDirectWrap=async(event,live)=>ingested.push({event,live});
 const dmInboxRelays=async()=>({relays:['wss://recipient.invalid']});
 const Relay={subscribe:(filters,handlers)=>{subscribed.push({filters,handlers});return 'pool-sub';},close:id=>{assert.equal(id,'pool-sub');closes++;},subscribeFrom:(relays,filters,handlers)=>{subscribed.push({relays,filters,handlers});return()=>closes++;}};
@@ -65,6 +67,7 @@ let strict=0,unwrapped=0,_dmTotal=0,_dmDone=0;const _wrapTried=new Set(),_dmTick
 const signer={nip17unwrap:async()=>{unwrapped++;return{kind:3313,content:'untrusted'};}};
 const DmCache={get:async()=>null,put:()=>{throw Error('invite entered plaintext DM cache');}};
 const _ingestCordDirectWrap=async()=>{strict++;if(!valid)throw Error('invalid signature');return true;};
+''' + state_shim(ingest_wrap) + '''
 ''' + ingest_wrap + '''
 (async()=>{const ev={id:'a'.repeat(64),tags:indexed?[['k','3313']]:[]};
 if(indexed&&!valid)await assert.rejects(()=>ingestWrap(ev,false));

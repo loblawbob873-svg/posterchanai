@@ -33,7 +33,7 @@ import tempfile
 import threading
 import unittest
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
-from tests.client_source import client_source
+from tests.client_source import client_source, state_shim
 
 REPO = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 APP = os.path.join(REPO, "static", "js", "client", "app.js")
@@ -50,7 +50,10 @@ def _module():
         elif src[j] == "}":
             depth -= 1
             if started and depth == 0:
-                return src[i:j + 1] + ";"
+                # DmCache lives in dms.js, where app.js's live lets (ME, signer) read as S.<name>:
+                # the shim's getters read the page's own `let ME` / `const signer` below.
+                mod = src[i:j + 1] + ";"
+                return mod + "\n" + state_shim(mod)
         j += 1
     raise AssertionError("could not bound DmCache")
 

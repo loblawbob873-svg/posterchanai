@@ -45,6 +45,7 @@ function run({ ingestReturns }){
     _notePublishedWraps(){}, _capPlugin(){ return null; },
     dmInboxRelays: async () => ({relays:[],answered:true}), toast(){}, Date, Math, String, setTimeout, Promise,
   };
+  installStateGlobals(context);   // sendDm lives in dms.js, where app.js's live lets read as S.<name>
   vm.runInNewContext(extract('function _dmEcho(pk, text, id){') + '\n'
                    + extract('async function sendDm(pk, text){') + '\nthis.send=sendDm;',
                    context, {filename:'app-dm.js'});

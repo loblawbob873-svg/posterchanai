@@ -35,6 +35,7 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
+from tests.client_source import app_source_with
 
 ROOT = Path(__file__).resolve().parents[1]
 JAVA = ROOT / "mobile/android/app/src/main/java/place/poster/app"
@@ -186,7 +187,7 @@ class TheRendererHonoursBoth(unittest.TestCase):
 
 
 class TheClientSharesTheIdentity(unittest.TestCase):
-    app = (ROOT / "static/js/client/app.js").read_text()
+    app = app_source_with("dms.js")   # _dmNotify lives in dms.js (split out of app.js)
 
     def test_the_dm_notification_is_typed(self):
         """The native side records the client's DM by type/tag; an untyped one records nothing."""

@@ -12,6 +12,7 @@ ROOT = Path(__file__).resolve().parents[1]
 @pytest.mark.parametrize("script", ["static/js/client/app.js", "static/js/client/calls.js",
                                     "static/js/client/keys.js",
                                     "static/js/client/musiclib.js",
+                                    "static/js/client/dms.js",
                                     "static/js/client/os.js"])
 def test_primary_client_controllers_parse(script):
     result = subprocess.run(

@@ -72,7 +72,8 @@ def test_successful_dm_send_does_not_remount_messages():
 def test_send_repairs_mobile_thread_chrome_without_resurrecting_a_closed_thread():
     helper = APP[APP.index("function _keepDmOpen(pk){"):]
     helper = helper[:helper.index("\n  }") + 4]
-    assert "VIEW!=='messages' || dmActive!==pk" in helper
+    # dms.js reads app.js's live VIEW/dmActive as S.VIEW/S.dmActive.
+    assert "S.VIEW!=='messages' || S.dmActive!==pk" in helper
     assert "classList.add('has-active')" in helper
     assert "renderDmThread(pk)" in helper
 

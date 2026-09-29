@@ -33,9 +33,10 @@ import subprocess
 from pathlib import Path
 
 import pytest
+from tests.client_source import app_source_with
 
 ROOT = Path(__file__).resolve().parents[2]
-APP = (ROOT / "static/js/client/app.js").read_text(encoding="utf-8")
+APP = app_source_with("dms.js")   # the DM code lives in dms.js (split out of app.js)
 NODE = shutil.which("node")
 
 

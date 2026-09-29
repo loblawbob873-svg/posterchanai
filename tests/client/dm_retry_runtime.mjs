@@ -11,10 +11,11 @@
  * This drives the SHIPPED ingestWrap: fail the unwrap once, deliver the same wrap again, and assert
  * the message arrives — and that a wrap which succeeded is never decrypted twice.
  */
-import fs from 'node:fs';
 import vm from 'node:vm';
+import { clientSourceAt, installStateGlobals } from './client_source.mjs';
 
-const source = fs.readFileSync(process.argv[2] || new URL('../../static/js/client/app.js', import.meta.url), 'utf8');
+// ingestWrap lives in dms.js (split out of app.js): read every split module beside that app.js, too.
+const source = clientSourceAt(process.argv[2] || new URL('../../static/js/client/app.js', import.meta.url));
 function extract(decl){
   const start = source.indexOf(decl);
   if(start < 0) throw new Error('missing: ' + decl);
@@ -49,6 +50,7 @@ function harness({ failFirst, selfNote=false }){
     VIEW:'home', dmActive:'',
     Date, Math, String, Object, Array, JSON, Promise, setTimeout, Number, Boolean,
   };
+  installStateGlobals(ctx);   // app.js's live lets read as S.<name> inside dms.js
   vm.runInNewContext(extract('function isMutedAuthor(pk){') + '\n' + extract('async function ingestWrap(ev, live){') + '\nthis.ingest=ingestWrap;',
                      ctx, {filename:'app-ingest.js'});
   return { ctx, dmPeers, calls };

@@ -24,9 +24,10 @@ from __future__ import annotations
 
 import re
 from pathlib import Path
+from tests.client_source import app_source_with
 
 ROOT = Path(__file__).resolve().parents[1]
-APP = (ROOT / "static/js/client/app.js").read_text(encoding="utf-8")
+APP = app_source_with("dms.js")   # sendDm lives in dms.js (split out of app.js)
 ROUTER = (ROOT / "app/routers/push.py").read_text(encoding="utf-8")
 WATCHER = (ROOT / "app/services/nostr_push_service.py").read_text(encoding="utf-8")
 MODELS = (ROOT / "app/models.py").read_text(encoding="utf-8")
@@ -72,7 +73,8 @@ def test_the_record_expires():
 
 
 def test_the_client_tells_the_account_as_well_as_the_device():
-    send = APP[APP.index("notePublished"):]
+    # Anchored on sendDm: dms.js's dependency list names _notePublishedWraps before any code does.
+    send = APP[APP.index("notePublished", APP.index("async function sendDm(")):]
     send = send[:send.index("Store.saveEvent")]
     assert "_notePublishedWraps" in send, (
         "the client tells only the device that sent the message, so every OTHER device of the same "

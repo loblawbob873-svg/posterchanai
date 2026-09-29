@@ -1,7 +1,9 @@
 import fs from 'node:fs';
 import vm from 'node:vm';
 import assert from 'node:assert/strict';
-const src=fs.readFileSync(process.argv[2] || new URL('../../static/js/client/app.js',import.meta.url),'utf8');
+import { clientSourceAt, installStateGlobals } from './client_source.mjs';
+// The DM history queue lives in dms.js (split out of app.js): read every split module beside that app.js.
+const src=clientSourceAt(process.argv[2] || new URL('../../static/js/client/app.js',import.meta.url));
 const shipped=src.slice(src.indexOf('  let _dmWatching='),src.indexOf('  // Unwrap a NIP-17 gift wrap'));
 function setup({pull=async()=>0,query=async()=>[],ingest,mode="local",clock=Date,ready=true,cached=new Set()}={}){
   const subs=[],received=[],tried=new Set(),timers=[],timeouts=[];
@@ -19,6 +21,7 @@ function setup({pull=async()=>0,query=async()=>[],ingest,mode="local",clock=Date
     ingestDM:()=>false,ingestWrap:ingest|| (async(ev,live)=>{received.push({ev,live});tried.add(ev.id);}),
     bumpDm(){},_dmNotify(){},_scheduleDmRefresh(){},renderMessages(){},recountDmUnread(){}
   });
+  installStateGlobals(ctx);   // app.js's live lets read as S.<name> inside dms.js
   vm.runInContext(shipped+';globalThis.api={ensureDMs,_queueDmHistory};',ctx);
   return {ctx,subs,received,timers,timeouts,...ctx.api};
 }

@@ -18,6 +18,7 @@ import subprocess
 import shutil
 
 import pytest
+from tests.client_source import app_source_with
 
 ROOT = Path(__file__).resolve().parents[1]
 JAVA = ROOT / "mobile/android/app/src/main/java/place/poster/app/push"
@@ -25,7 +26,7 @@ NOTIFIED = (JAVA / "ClientNotified.java").read_text(encoding="utf-8")
 DELIVER = (JAVA / "PushEventService.java").read_text(encoding="utf-8")
 PLUGIN = (JAVA / "PushPlugin.java").read_text(encoding="utf-8")
 SERVER = (ROOT / "app/services/nostr_push_service.py").read_text(encoding="utf-8")
-APP = (ROOT / "static/js/client/app.js").read_text(encoding="utf-8")
+APP = app_source_with("dms.js")   # sendDm lives in dms.js (split out of app.js)
 
 HARNESS = r"""
 import place.poster.app.push.ClientNotified;

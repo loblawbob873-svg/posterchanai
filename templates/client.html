@@ -476,6 +476,11 @@
      split out of app.js. Loaded BEFORE app.js, which builds it while it boots: the player and the
      Android car/Bluetooth resume path call into it synchronously and must not wait on a load. -->
 <script src="/static/js/client/musiclib.js?v={{ ver }}"></script>
+<!-- DMs (NIP-17 gift wraps + NIP-04), the unread badge and DM notifications, Concord direct invites
+     and the kind-10050 inbox list, split out of app.js. Loaded BEFORE app.js, which builds it while it
+     boots: incoming DMs are subscribed at login and a push / the Android launcher lands on Messages at
+     boot, so none of it may wait on a load. -->
+<script src="/static/js/client/dms.js?v={{ ver }}"></script>
 <script src="/static/js/client/app.js?v={{ ver }}"></script>
 <script src="/static/js/client/instance-welcome.js?v={{ ver }}"></script>
 <script src="/static/js/client/media-center-ui.js?v={{ ver }}"></script>

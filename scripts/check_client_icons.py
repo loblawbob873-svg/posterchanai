@@ -36,6 +36,7 @@ SOURCES = [ROOT / "static/js/client/app.js",
            ROOT / "static/js/client/calls.js",   # the call UI, split out of app.js
            ROOT / "static/js/client/keys.js",    # keyboard shortcuts/help, split out of app.js
            ROOT / "static/js/client/musiclib.js",  # music library + DM attachment menus, split out of app.js
+           ROOT / "static/js/client/dms.js",     # DMs (receive/send/notify/inbox list), split out of app.js
            ROOT / "static/js/client/meme.js",
            ROOT / "templates/client.html"]
 

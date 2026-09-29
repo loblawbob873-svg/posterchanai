@@ -86,7 +86,10 @@ class DmAttachPaths(unittest.TestCase):
         self.assertIn("const encHere = () => !!(opts && opts.enc) && dmEncOn();", self.src)
         # Call sites only — skip the definition. `[^)]*` cannot cross the ')' in $('#dm-atts'), which
         # is why the first version of this matched nothing and passed vacuously.
-        calls = [c for c in re.findall(r"wireImgAttach\((.+?)\);", self.src) if not c.startswith("inp, strip")]
+        # (and app.js's one-line forwarder, `function wireImgAttach(){ return _lzRun(…) }`, since
+        # dms.js split out of app.js — it is a definition, not a composer.)
+        calls = [c for c in re.findall(r"wireImgAttach\((.+?)\);", self.src)
+                 if not c.startswith(("inp, strip", ")"))]
         self.assertEqual(len(calls), 2, f"expected the two DM composers, got {calls!r}")
         for call in calls:
             self.assertIn("enc:true", call, f"this composer would not encrypt a pasted image: {call!r}")

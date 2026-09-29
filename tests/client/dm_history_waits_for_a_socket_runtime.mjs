@@ -25,8 +25,9 @@
 import fs from 'node:fs';import vm from 'node:vm';import assert from 'node:assert/strict';
 import { clientSource, clientSourceAt, installStateGlobals } from './client_source.mjs';
 
-const code = fs.readFileSync(process.env.PC_APP_SOURCE
-  || new URL('../../static/js/client/app.js', import.meta.url), 'utf8');
+// ensureDMs lives in dms.js (split out of app.js): read every split module beside that app.js, too.
+const code = clientSourceAt(process.env.PC_APP_SOURCE
+  || new URL('../../static/js/client/app.js', import.meta.url));
 
 function fn(header){
   const i = code.indexOf(header);

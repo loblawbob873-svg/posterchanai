@@ -27,6 +27,7 @@ def document():
     panel = panel[:panel.rfind('<label class="fld"')].replace('class="us-pane"', 'class="us-pane active"') + '</div>'
     timeline = app[app.index('  function _drawTimeline(preserveScroll){'):app.index('  // ---------- infinite scroll-back ----------')]
     rows = app[app.index('  function _renderDmPeerRows('):app.index('  function renderMessages(){')]
+    # recountDmUnread moved to dms.js, where it writes app.js's _dmUnread as S._dmUnread (shimmed below).
     recount = app[app.index('  function recountDmUnread()'):app.index('  function _dmNotify(')]
     css = (ROOT / 'static/css/client.css').read_text()
     vendor = (ROOT / 'static/vendor/nostr/nostr.bundle.js').read_text()
@@ -86,7 +87,7 @@ _renderDmPeerRows();
 document.querySelector('#feed-note').dataset.pk=pub(2);
 const originalInput=document.querySelector('#dm-in'), originalAttachment=document.querySelector('#dm-atts');
 originalInput.value='Keep this unsent draft';originalInput.setSelectionRange(2,7);
-''' .replace('PANEL', panel) + state_shims(controls) + controls + r'''
+''' .replace('PANEL', panel) + state_shims(controls + recount) + controls + r'''
 _syncAutoMutes().catch(()=>{});
 window.booted=true;
 '''

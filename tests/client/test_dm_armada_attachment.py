@@ -1,9 +1,10 @@
 """Armada NIP-17 encrypted file metadata decrypts and verifies in Chromium."""
 from pathlib import Path
 import json, subprocess, tempfile
+from tests.client_source import app_source_with
 
 ROOT=Path(__file__).resolve().parents[2]
-APP=(ROOT/'static/js/client/app.js').read_text()
+APP=app_source_with('dms.js')   # dms.js holds the DM code now (split out of app.js)
 
 def fn(name):
     start=APP.index('function '+name+'('); brace=APP.index('{',start); depth=0

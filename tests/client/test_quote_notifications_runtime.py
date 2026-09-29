@@ -14,7 +14,8 @@ def test_quote_only_event_survives_the_list_and_opens_its_own_post():
     code = '\n'.join([
         segment('  function _quotesMe(', '  // `html` is trusted'),
         segment('  function notifList(', '  // Follows DO light'),
-        segment('  function notifHtml(', '  // ---------- DMs:'),
+        # notifHtml is followed by the DM state app.js keeps (the DM code itself is in dms.js).
+        segment('  function notifHtml(', '  /* Declared HERE, outside dms.js'),
     ])
     harness = r'''
 const assert=require('node:assert/strict');

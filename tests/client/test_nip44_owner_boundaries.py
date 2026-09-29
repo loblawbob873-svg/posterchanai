@@ -1,8 +1,9 @@
 from pathlib import Path
+from tests.client_source import app_source_with
 
 
 ROOT=Path(__file__).resolve().parents[2]
-APP=(ROOT/'static/js/client/app.js').read_text()
+APP=app_source_with('dms.js')   # DmCache lives in dms.js (split out of app.js)
 
 
 def test_nip07_owner_boundary_reports_operation_and_utf8_size_without_unhandled_rejection():

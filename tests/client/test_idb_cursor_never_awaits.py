@@ -24,6 +24,7 @@ transaction has closed. That is the standard shape and it costs nothing here.
 """
 import re
 from pathlib import Path
+from tests.client_source import app_source_with
 
 ROOT = Path(__file__).resolve().parents[2]
 CLIENT = ROOT / "static" / "js" / "client"
@@ -55,7 +56,7 @@ def test_no_idb_callback_is_async():
 def test_the_cursor_walk_that_broke_collects_before_it_decrypts():
     """The specific one, pinned by shape rather than by line: the walk pushes raw records and the
     decrypt happens after the promise resolves."""
-    src = _strip((CLIENT / "app.js").read_text(encoding="utf-8"))
+    src = _strip(app_source_with("dms.js"))   # DmCache lives in dms.js (split out of app.js)
     i = src.index("async pushShared(){")
     body = src[i: i + 3000]
     walk = body[body.index("openCursor()"): body.index("q.onerror")]
