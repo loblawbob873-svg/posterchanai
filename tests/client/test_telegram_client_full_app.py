@@ -166,3 +166,30 @@ def test_a_phone_does_not_get_it():
         assert await b.js("__tgSockets.length") == 0, "a phone opened a Telegram socket"
 
     asyncio.run(desktop.with_browser("online", "", check, extra_init=FAKE.replace("state:'none'", "state:'ready'")))
+
+
+BUTTON = r"""(()=>{const b=document.querySelector('.tg-primary'); if(!b) return null;
+  const cs=getComputedStyle(b), rgb=s=>(s.match(/[\d.]+/g)||[]).map(Number);
+  const [r,g,bl,a=1]=rgb(cs.backgroundColor), [fr,fg,fb]=rgb(cs.color);
+  const L=(x,y,z)=>{const f=v=>{v/=255;return v<=.03928?v/12.92:((v+.055)/1.055)**2.4};return .2126*f(x)+.7152*f(y)+.0722*f(z)};
+  const l1=L(r,g,bl), l2=L(fr,fg,fb);
+  return {bg:cs.backgroundColor, fg:cs.color, alpha:a, contrast:(Math.max(l1,l2)+.05)/(Math.min(l1,l2)+.05)}})()"""
+
+
+@pytest.mark.skipif(not Path("/opt/google/chrome/chrome").exists(), reason="Chrome required")
+def test_the_sign_in_button_is_a_visible_button_in_every_theme():
+    """Reported: "the telegram button is all black". Every .tg-* accent was `var(--accent)`, which no
+    theme defined, so "Send code" was a transparent box of near-black text on a dark panel."""
+    async def check(b):
+        await _open(b)
+        await b.until("!!document.querySelector('.tg-primary')")
+        themes = await b.js("[''].concat([...new Set([...document.styleSheets].flatMap(s=>{try{return [...s.cssRules]}catch(_){return []}})"
+                            ".map(r=>(r.selectorText||'').match(/^:root\\[data-theme=\"([\\w-]+)\"\\]$/)).filter(Boolean).map(m=>m[1]))])")
+        assert len(themes) > 3, themes
+        for t in themes:
+            await b.js(f"document.documentElement.setAttribute('data-theme', {json.dumps(t)}) || (!{json.dumps(t)} && document.documentElement.removeAttribute('data-theme'))")
+            got = await b.js(BUTTON)
+            assert got["alpha"] > .9, f"theme {t or 'default'}: the button has no background ({got})"
+            assert got["contrast"] >= 3, f"theme {t or 'default'}: its label is unreadable ({got})"
+
+    asyncio.run(desktop.with_browser("online", "", check, FAKE))
