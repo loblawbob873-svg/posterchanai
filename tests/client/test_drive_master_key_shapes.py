@@ -5,6 +5,8 @@ import re
 import subprocess
 import textwrap
 
+from tests.client_source import app_source_with
+
 
 ROOT = Path(__file__).resolve().parents[2]
 APP = ROOT / "static/js/client/app.js"
@@ -27,7 +29,9 @@ def _fn(src, name):
 
 
 def test_master_decrypt_accepts_every_lossless_bridge_shape():
-    src = APP.read_text(encoding="utf-8")
+    # musiclib.js FIRST: app.js keeps a same-named forwarder (`function _b64u8(){…}`) for each moved
+    # function, and the first match must be the real definition.
+    src = app_source_with("musiclib.js")
     helpers = "\n".join(_fn(src, name) for name in
                         ("_b64u8", "_masterKeyInput", "_masterCryptoKey",
                          "_masterEncrypt", "_masterDecrypt"))

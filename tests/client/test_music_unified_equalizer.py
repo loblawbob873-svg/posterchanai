@@ -1,7 +1,7 @@
 from pathlib import Path
 import json
 import subprocess
-from tests.client_source import client_source
+from tests.client_source import client_source, state_shim
 
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -131,7 +131,8 @@ def test_refresh_preserves_the_selected_playlist_runtime():
                 break
     assert end
     fn = APP[start:end]
-    script = "let _musicPl='road';const _plTracks=id=>[{sha:id+'-fresh'}];\n" + fn + r"""
+    # musiclib.js reads app.js's live `_musicPl` as S._musicPl — state_shim binds S to the stub below.
+    script = "let _musicPl='road';const _plTracks=id=>[{sha:id+'-fresh'}];\n" + state_shim(fn) + "\n" + fn + r"""
 const old=[{sha:'stale'}];
 const selected=_musicRefreshedSet(old);
 _musicPl=null;

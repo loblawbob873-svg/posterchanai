@@ -472,6 +472,10 @@
      because app.js builds it synchronously while it boots: its top-level code IS the global keydown
      listeners, which must be live from the first keystroke and registered in their original order. -->
 <script src="/static/js/client/keys.js?v={{ ver }}"></script>
+<!-- The encrypted Music library (trackUrl, musicTracks, MusicOffline) and encrypted DM attachments,
+     split out of app.js. Loaded BEFORE app.js, which builds it while it boots: the player and the
+     Android car/Bluetooth resume path call into it synchronously and must not wait on a load. -->
+<script src="/static/js/client/musiclib.js?v={{ ver }}"></script>
 <script src="/static/js/client/app.js?v={{ ver }}"></script>
 <script src="/static/js/client/instance-welcome.js?v={{ ver }}"></script>
 <script src="/static/js/client/media-center-ui.js?v={{ ver }}"></script>

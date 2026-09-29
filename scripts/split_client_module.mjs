@@ -20,6 +20,10 @@
  *   * a reference outside to a NON-function binding declared inside it is REFUSED: a variable cannot
  *     be forwarded by a function stub, and moving it silently would be the bug this tool exists to
  *     prevent. Move that declaration out of the range, or leave the block where it is.
+ *   * `--proxy A,B` is the one exception, for a `const` OBJECT (MusicPlayer, FilesIdx, MusicOffline):
+ *     app.js keeps the name, bound to `_lzProxy(_xMod, 'A')`, which forwards every read, write and
+ *     method call to the real object in the module — only for a module that SHIPS WITH THE PAGE (its
+ *     own <script> tag), because a property read cannot wait for a load.
  *
  * Nothing is written without --write. The block's text is copied BYTE-FOR-BYTE apart from the
  * identifier rewrites, so a reviewer can diff the module against the removed lines.
@@ -78,6 +82,7 @@ const straddle = TOP.filter(s => (s.loc.start.line < fromLine && s.loc.end.line 
 if (straddle.length) { console.error('a statement straddles a marker at line ' + straddle[0].loc.start.line); process.exit(1); }
 const B0 = lineStart(fromLine), B1 = lineStart(toLine);    // whole lines, comments included
 const inBlock = n => n.start >= B0 && n.end <= B1;
+const PROXY = new Set(String(args.proxy && args.proxy !== true ? args.proxy : '').split(',').filter(Boolean));
 
 // ---- scopes ---------------------------------------------------------------------------------------
 class Scope { constructor(parent, fn) { this.parent = parent; this.fn = fn; this.decls = new Map(); } }
@@ -176,7 +181,7 @@ for (const w of pendingWrites) { const s = lookup(w.scope, w.id.name); if (s) wr
 if(process.env.PC_SPLIT_TIMING) console.error('scope', Date.now()-T0);
 // ---- classify ---------------------------------------------------------------------------------------
 const topDeclInBlock = name => { const d = TOPSCOPE.decls.get(name); return d && inBlock(d.node); };
-const live = new Set(), plain = new Set(), writtenInBlock = new Set(), exported = new Set(), refused = new Map();
+const live = new Set(), plain = new Set(), writtenInBlock = new Set(), exported = new Set(), proxied = new Set(), refused = new Map();
 const rewrites = [];                                // {start,end,text}
 for (const r of refs) {
   const name = r.node.name, s = lookup(r.scope, name);
@@ -192,6 +197,7 @@ for (const r of refs) {
     } else plain.add(name);
   } else if (!here && declHere) {
     if (decl.kind === 'function') exported.add(name);
+    else if (decl.kind === 'const' && PROXY.has(name)) proxied.add(name);
     else (refused.get(name) || refused.set(name, []).get(name)).push(r.node.loc.start.line);
   }
 }
@@ -199,14 +205,14 @@ for (const w of pendingWrites) if (inBlock(w.id) && lookup(w.scope, w.id.name) =
 for (const n of writtenInBlock) if (plain.has(n)) { plain.delete(n); live.add(n); }
 
 const report = { from: fromLine, to: toLine - 1, statements: block.length, lines: src.slice(B0, B1).split('\n').length - 1,
-  deps: [...plain].sort(), live: [...live].sort(), liveWritten: [...writtenInBlock].sort(), entryPoints: [...exported].sort(),
+  deps: [...plain].sort(), live: [...live].sort(), liveWritten: [...writtenInBlock].sort(), entryPoints: [...exported].sort(), proxied: [...proxied].sort(),
   refused: Object.fromEntries([...refused].map(([k, v]) => [k, v.slice(0, 5)])) };
 if (refused.size) { console.error(JSON.stringify(report, null, 1)); console.error('\nREFUSED: variables declared in the block are used outside it (see `refused`).'); process.exit(3); }
 
 // ---- emit -------------------------------------------------------------------------------------------
 let body = src.slice(B0, B1);
 for (const w of rewrites.sort((a, b) => b.start - a.start)) body = body.slice(0, w.start - B0) + w.text + body.slice(w.end - B0);
-const depList = [...plain].sort(), liveList = [...live].sort(), exp = [...exported].sort(), stem = args.stem;
+const depList = [...plain].sort(), liveList = [...live].sort(), exp = [...exported, ...proxied].sort(), stem = args.stem;
 const wrapList = (xs, ind) => { const out = []; let line = ind; for (const x of xs) { if (line.length + x.length + 2 > 100) { out.push(line.trimEnd()); line = ind; } line += x + ', '; } if (line.trim()) out.push(line.trimEnd()); return out.join('\n'); };
 const moduleText = `/* ${args.file} — split out of app.js by scripts/split_client_module.mjs.
  *
@@ -238,7 +244,8 @@ ${wrapList(depList, '    ')}
   }; }
   function _${stem}Mod(){ return _lzGet('${args.file}', '${args.factory}', _${stem}Deps); }
   function _${stem}Load(){ return _lzLoad('${args.file}', '${args.factory}', _${stem}Deps); }
-${exp.map(n => `  function ${n}(){ return _lzRun(_${stem}Mod, _${stem}Load, '${n}', arguments); }`).join('\n')}
+${[...exported].sort().map(n => `  function ${n}(){ return _lzRun(_${stem}Mod, _${stem}Load, '${n}', arguments); }`).join('\n')}
+${[...proxied].sort().map(n => `  const ${n} = _lzProxy(_${stem}Mod, '${n}');   // the module's own object, reached through a Proxy`).join('\n')}
 `;
 console.log(JSON.stringify(report, null, 1));
 if (args.write) {

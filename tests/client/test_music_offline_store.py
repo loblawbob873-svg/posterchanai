@@ -32,6 +32,8 @@ import threading
 import unittest
 import urllib.request
 
+from tests.client_source import app_source_with
+
 REPO = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 APP = os.path.join(REPO, "static", "js", "client", "app.js")
 
@@ -52,8 +54,7 @@ def _fn(src, name, opener):
 
 
 def _harness():
-    with open(APP) as fh:
-        src = fh.read()
+    src = app_source_with("musiclib.js")   # MusicOffline moved to musiclib.js
     # The trailing SEMICOLON matters: the extractor stops at the closing brace, and the page's next
     # line is an IIFE — `const X = {…}\n(async()=>{})()` parses as CALLING the object, which fails
     # with "{…} is not a function" and an empty page rather than anything that names the cause.

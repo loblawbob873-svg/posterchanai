@@ -26,6 +26,8 @@ import subprocess
 import tempfile
 import unittest
 
+from tests.client_source import app_source_with
+
 REPO = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 APP = os.path.join(REPO, "static", "js", "client", "app.js")
 NODE = shutil.which("node")
@@ -49,7 +51,7 @@ def _fn(src, name, opener):
 
 
 def _harness():
-    src = open(APP).read()
+    src = app_source_with("musiclib.js")   # the encryption code moved to musiclib.js
     parts = [
         "const enc = s => (s==null?'':String(s)).replace(/[&<>\"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','\"':'&quot;',\"'\":'&#39;'}[c]));",
         "const _ENC_MARK = '#pcenc1=';",

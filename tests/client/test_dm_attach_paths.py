@@ -134,7 +134,8 @@ class DmAttachPaths(unittest.TestCase):
 
     def test_one_definition_of_whether_the_lock_is_on(self):
         """Four call sites, one reader. Two spellings of "is it on" is how one of them drifts."""
-        self.assertIn("const dmEncOn = () => !!ClientSettings.get('dmEncryptAtts');", self.src)
+        # A function declaration since musiclib.js split out of app.js (app.js forwards it by name).
+        self.assertIn("function dmEncOn(){ return !!ClientSettings.get('dmEncryptAtts'); }", self.src)
         # nothing else may read the raw setting
         raw = re.findall(r"ClientSettings\.get\('dmEncryptAtts'\)", self.src)
         self.assertEqual(len(raw), 1, "read the setting through dmEncOn(), not directly")

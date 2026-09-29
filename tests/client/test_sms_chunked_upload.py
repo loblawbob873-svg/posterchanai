@@ -8,10 +8,11 @@ from pathlib import Path
 import pytest
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 from tests.client.test_encrypted_attachment import _fn, APP, NODE
+from tests.client_source import app_source_with
 
 @pytest.mark.parametrize("failure", ["", "second", "server_changed"])
 def test_real_shared_uploader_chunks_and_keeps_key_in_fragment(tmp_path, failure):
-    src = Path(APP).read_text()
+    src = app_source_with("musiclib.js")   # uploadSharedEnc & co. moved to musiclib.js
     functions = [_fn(src, name, opener) for name, opener in (
         ("_masterKeyInput", "function _masterKeyInput(mk){"),
         ("_masterCryptoKey", "async function _masterCryptoKey(mk, usage){"),

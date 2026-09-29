@@ -21,7 +21,7 @@ import subprocess
 from pathlib import Path
 
 import pytest
-from tests.client_source import client_source
+from tests.client_source import client_source, state_shim
 
 APP = Path(__file__).resolve().parent.parent / "static" / "js" / "client" / "app.js"
 
@@ -114,6 +114,7 @@ def test_a_deleted_track_is_not_treated_as_already_imported():
       }}) };
       let _blobHave = null;
       %s
+      %s
       const f = { name:'song.mp3', size:100 };
       const out = {};
       _blobHave = new Set(['aaa','bbb']);      out.blobPresent = _musicHasSrc(f);
@@ -121,7 +122,7 @@ def test_a_deleted_track_is_not_treated_as_already_imported():
       _blobHave = null;                        out.notFetchedYet = _musicHasSrc(f);
       _blobHave = new Set(['aaa']);            out.wrongFolderIgnored = _musicHasSrc({name:'song.mp3', size:999});
       console.log(JSON.stringify(out));
-    """ % fn
+    """ % (state_shim(fn), fn)   # musiclib.js reads app.js's live `_blobHave` as S._blobHave
     out = subprocess.run(["node", "-e", harness], capture_output=True, text=True, timeout=30)
     assert out.returncode == 0, out.stderr
     got = json.loads(out.stdout.strip())
