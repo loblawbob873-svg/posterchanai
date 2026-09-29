@@ -2,13 +2,17 @@
 from pathlib import Path
 import subprocess
 
+from tests.client_source import state_shim
+
 ROOT = Path(__file__).resolve().parents[2]
 
 
 def test_draft_retry_and_delivery_account_safety(tmp_path):
     app = (ROOT / 'static/js/client/app.js').read_text()
     helpers = app[app.index("  const _QD_KEY ="):app.index('  function _flushOutbox(){')]
-    send = app[app.index('  const _draftSending='):app.index('  // NIP-22 comment on a NIP-23 article.')]
+    # sendDraft/_sendDraft live in drafts.js (split out of app.js); the Outbox helpers stay in app.js.
+    mod = (ROOT / 'static/js/client/drafts.js').read_text()
+    send = mod[mod.index('  const _draftSending='):mod.rindex('\n  return {')]
     setup = r'''
 const assert=require('node:assert/strict');
 global.window=global;global.self=global;
@@ -69,15 +73,16 @@ function draft(id,text='original'){saved.set(key(id),{id,text});}
 }catch(e){console.error(e);process.exit(1)}})();
 '''
     script = tmp_path / 'drafts.cjs'
-    script.write_text(setup + (ROOT / 'static/js/client/outbox.js').read_text() + helpers + send + exercise)
+    script.write_text(setup + state_shim(send) + '\n' + (ROOT / 'static/js/client/outbox.js').read_text()
+                      + helpers + send + exercise)
     run = subprocess.run(['node', str(script)], capture_output=True, text=True, timeout=10)
     assert run.returncode == 0, run.stderr
     assert 'draft behavior passed' in run.stdout
 
 
 def test_draft_sync_and_pull_do_not_cross_accounts(tmp_path):
-    app = (ROOT / 'static/js/client/app.js').read_text()
-    drafts = app[app.index('  const Drafts = {'):app.index('  function bumpDraft()')]
+    mod = (ROOT / 'static/js/client/drafts.js').read_text()   # Drafts moved out of app.js
+    drafts = mod[mod.index('  const Drafts = {'):mod.index('  function bumpDraft()')]
     setup = r'''
 const assert=require('node:assert/strict');
 let ME={pubkey:'alice'},VIEW='drafts',timer,calls=[],proof;
@@ -106,7 +111,7 @@ let fetch=async(url,opts)=>{calls.push(JSON.parse(opts.body));return {json:async
 }catch(e){console.error(e);process.exit(1)}})();
 '''
     script = tmp_path / 'draft-sync.cjs'
-    script.write_text(setup + drafts + exercise)
+    script.write_text(setup + state_shim(drafts) + '\n' + drafts + exercise)
     result = subprocess.run(['node', str(script)], capture_output=True, text=True, timeout=10)
     assert result.returncode == 0, result.stderr
     assert 'sync owner preserved' in result.stdout

@@ -486,6 +486,10 @@
      boots: every render path and the composer's paste/drop upload ask it synchronously, and its
      top-level code (the media-fetch ceiling, the focus/online/storage listeners) runs at boot. -->
 <script src="/static/js/client/blossom.js?v={{ ver }}"></script>
+<!-- Drafts and scheduled posts (Drafts, Scheduled, the Drafts view, sending a draft), split out of
+     app.js. Loaded BEFORE app.js, which builds it while it boots: Drafts and Scheduled are objects the
+     composer, the offline outbox and the ☰ badge read synchronously, reached through a Proxy. -->
+<script src="/static/js/client/drafts.js?v={{ ver }}"></script>
 <script src="/static/js/client/app.js?v={{ ver }}"></script>
 <script src="/static/js/client/instance-welcome.js?v={{ ver }}"></script>
 <script src="/static/js/client/media-center-ui.js?v={{ ver }}"></script>

@@ -29,8 +29,11 @@ import subprocess
 import tempfile
 import unittest
 
+from tests.client_source import state_shim
+
 ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-APP = os.path.join(ROOT, "static", "js", "client", "app.js")
+# The Drafts object moved out of app.js into drafts.js (its own <script> tag, built at boot).
+APP = os.path.join(ROOT, "static", "js", "client", "drafts.js")
 
 
 def _sync_method():
@@ -64,7 +67,10 @@ const Drafts = { _t: null, _syncFailed: false, __SYNC__ };
 
 
 def _run(response_js):
-    js = PAGE.replace("__SYNC__", _sync_method()).replace("RESPONSE()", response_js)
+    sync = _sync_method()
+    # drafts.js reads app.js's live `ME` as S.ME; the page's own `let ME` stands behind that shim.
+    js = (PAGE.replace("const Drafts = {", state_shim(sync) + "\nconst Drafts = {")
+          .replace("__SYNC__", sync).replace("RESPONSE()", response_js))
     d = tempfile.mkdtemp(prefix="pc-draftsync-")
     try:
         p = os.path.join(d, "t.mjs")
