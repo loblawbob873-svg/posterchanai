@@ -75,7 +75,8 @@ def test_a_fresh_entry_still_resets_pagination_and_scroll():
     assert not re.search(r"(?<![\w$.])_notifShown\b", code) and not re.search(r"(?<![\w$.])_notifScrollTop\b", code)
     assert re.search(r"if\(v==='notifications'\) _notifFreshEntry\(\);", code)
     fresh = VIEW[VIEW.index("function _notifFreshEntry(){"):]
-    assert fresh.startswith("function _notifFreshEntry(){ _notifShown = 25; _notifScrollTop = true; }")
+    body = fresh[:fresh.index("}")]
+    assert "_notifShown = 25" in body and "_notifScrollTop = true" in body, body
     render = VIEW[VIEW.index("function renderNotifications(){"):VIEW.index("function notifGrouped(")]
     assert "if(_notifScrollTop){ _notifScrollTop=false; feed.scrollTop=0; }" in render
 

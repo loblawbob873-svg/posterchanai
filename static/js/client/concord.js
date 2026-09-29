@@ -3634,7 +3634,9 @@
     }catch(_){ }
   }
   let memberQuery='',memberFocus=null;
-  function applyMemberSearch(){
+  function applyMemberSearch(){ try{ applyMemberSearchNow(); }catch(_){ } }   // a search box must never cost a render
+  function applyMemberSearchNow(){
+    if(typeof document==='undefined'||typeof document.querySelectorAll!=='function')return;
     const q=String(memberQuery||'').trim().toLowerCase(), terms=q.split(/\s+/).filter(Boolean);
     document.querySelectorAll('.cc-members-scroll, .cc-member-list').forEach(list=>{
       let shown=0;
