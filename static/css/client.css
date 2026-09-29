@@ -2103,6 +2103,12 @@ body.embed .feed{max-width:680px;margin:0 auto;padding:14px;height:auto !importa
 .mc-search input{flex:1;min-width:0}.mc-folder>h3{padding:16px 18px 0;margin:0;font-size:15px;overflow-wrap:anywhere}
 .mc-tile .xdc-cover{aspect-ratio:4/3}.mc-tile[hidden],.mc-folder[hidden],.mc-search[hidden],.mc-playback[hidden]{display:none}
 .mc-tile:focus-within{border-color:var(--neon)}
+/* Delete is an ICON beside Play and Move: three words do not fit a two-up phone tile (~158px of
+   buttons), and a square trash button keeps Play the widest target. */
+.xdc-tacts .mc-delete{flex:0 0 auto;width:36px;padding:0;display:inline-flex;align-items:center;justify-content:center;color:var(--danger,#d61f4e)}
+.xdc-tacts .mc-delete .ic{width:16px;height:16px}
+.mc-tile[aria-busy=true]{opacity:.55}
+@media(max-width:600px){.mc-tile .xdc-tacts .btn{padding-inline:6px}}
 .mc-player-toolbar{display:flex;align-items:center;gap:10px;flex-wrap:wrap}
 /* The now-playing title is NOT in the toolbar any more: it sat there as one ellipsised line, so a
    long name was cut off, and letting it wrap moved the controls. It is its own line above the

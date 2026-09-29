@@ -639,6 +639,64 @@ async def move_items(library_id: str, body: MoveItems, user=Depends(get_media_ad
     return {"moved": moved, "errors": errors, "revision": scan_revision(library)}
 
 
+@router.delete("/{library_id}/items/{item_id}")
+async def delete_item(library_id: str, item_id: str, user=Depends(get_media_admin)):
+    """Delete a title FROM DISK and from the catalog (owner + admin only).
+
+    The client names the title by id; the path is the catalog's, and media.delete_item walks it from
+    the library root without following a link. On a frontend node this request never gets here: the
+    router-wide `proxy_request` forwards it, authenticated, to the node that holds the files, exactly
+    like a read -- a library the catalog says is remote is never deleted locally.
+
+    Same serialisation as Move: one change per library from catalog read to catalog save, and never
+    while it scans (a scan would commit a catalog built before the file went)."""
+    lock = _move_locks.setdefault(library_id, asyncio.Lock())
+    async with lock:
+        async with media.mutation_lock:
+            library = await library_for(library_id, media.identity(user), owner=True)
+            if _scans.get(library_id, {}).get("state") == "running":
+                raise HTTPException(409, "This library is scanning; delete titles once it finishes")
+            _moving.add(library_id)
+        try:
+            catalog = await media.catalog(library)
+            item = next((entry for entry in catalog if entry["id"] == item_id), None)
+            if item is None:
+                raise HTTPException(404, "That title is not in this library; it may already have been deleted")
+            try:
+                outcome = await asyncio.to_thread(media.delete_item, library, item)
+            except media.DeleteRefused as error:
+                raise HTTPException(409, str(error)) from error
+            except (ValueError, OSError) as error:
+                raise HTTPException(400, str(error)) from error
+            relative = item.get("path", "")
+            logging.getLogger(__name__).warning(
+                "[media-center] admin %s deleted %r from library %s (%s): %s, %d sidecar(s), %d cached segment(s)",
+                media.identity(user), relative, library.get("name", ""), library_id, outcome["status"],
+                len(outcome["sidecars"]), outcome["segments"])
+            for cache in (media.cover_bytes, media.cached_tracks, media.subtitle_bytes):
+                cache.cache_clear()
+            remaining = [entry for entry in catalog if entry["id"] != item_id]
+            try:
+                library = await persist_scan_catalog(library, remaining, library.get("skipped", 0),
+                                                     incomplete=bool(library.get("scan_incomplete")))
+            except Exception as error:
+                logging.getLogger(__name__).exception("Media Center delete: catalog save failed")
+                raise HTTPException(502, "The file was deleted, but the library could not be saved; Rescan to update it") from error
+        finally:
+            _moving.discard(library_id)
+    name = relative.rsplit("/", 1)[-1]
+    if outcome["status"] == "already_gone":
+        message = f"{name} was already removed from disk; it is gone from the library now."
+    else:
+        message = f"Deleted {name} from disk."
+        if outcome["sidecars"]:
+            message += f" Also removed {len(outcome['sidecars'])} subtitle/poster file(s) beside it."
+    if outcome["sidecar_errors"]:
+        message += " " + " ".join(outcome["sidecar_errors"])
+    return {"deleted": item_id, "status": outcome["status"], "message": message,
+            "sidecars": outcome["sidecars"], "revision": scan_revision(library)}
+
+
 def sign_ticket(library, item_id, pubkey, expires):
     payload = f"media-center:{library['id']}:{item_id}:{pubkey}:{expires}"
     return hmac.new(bytes.fromhex(library["playback_secret"]), payload.encode(), hashlib.sha256).hexdigest()

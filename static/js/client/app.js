@@ -8370,7 +8370,7 @@
       get _aiToken(){ return _aiToken; },
     },
     $, _instanceBase, _setAiToken, attachUserAutocomplete, closeModal, copyValue, enc, ensureAiSession,
-    loadHls, modal, toast,
+    loadHls, modal, toast, uiConfirm,
   }; }
   function _mediaCenterMod(){ return _lzGet('mediacenter.js', 'PCMediaCenterFactory', _mediaCenterDeps); }
   function _mediaCenterLoad(){ return _lzLoad('mediacenter.js', 'PCMediaCenterFactory', _mediaCenterDeps); }

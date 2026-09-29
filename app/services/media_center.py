@@ -4,6 +4,7 @@ Catalog/ACL documents are NIP-44 encrypted NIP-78 events, using the operator
 storage key. Sharing is mediated by this server, not public relay publication.
 """
 import asyncio
+import errno
 import hashlib
 import json
 import logging
@@ -11,6 +12,7 @@ import math
 import os
 import re
 import shutil
+import stat as _stat
 import subprocess
 import tempfile
 import time
@@ -773,6 +775,157 @@ def move_items(library, items, item_ids, destination, create=False):
     errors += [{"id": item_id, "name": "", "error": "Not in this library"} for item_id in missing]
     result.sort(key=lambda item: (natural(item["folder"]), natural(item["path"])))
     return result, moved, errors
+
+
+class DeleteRefused(ValueError):
+    """A delete that was not carried out, with the sentence that says why."""
+
+
+def _delete_error(error, name):
+    code = getattr(error, "errno", None)
+    if code in (errno.EACCES, errno.EPERM):
+        return (f"The media server is not allowed to delete {name} (permission denied). "
+                "Give the PosterChan service write access to that folder on the media server.")
+    if code == errno.EROFS:
+        return f"{name} is on a read-only filesystem, so it was not deleted."
+    if code == errno.EBUSY:
+        return f"{name} is in use by another program, so it was not deleted. Try again shortly."
+    return f"Could not delete {name}: {getattr(error, 'strerror', None) or error}."
+
+
+def _segment_cache_dir():
+    cache = Path(os.environ.get("POSTERCHANAI_MEDIA_CACHE", "/tmp/posterchan-media-center")).resolve()
+    if Path("/tmp") not in cache.parents:
+        raise ValueError("Media Center transcode cache must be a directory under /tmp")
+    return cache
+
+
+def forget_cached_segments(library, item, path):
+    """Drop every transcoded segment this node cached for a title, for every rung, its default track
+    and each alternative audio / rendered-subtitle track it lists. Returns how many were removed.
+
+    The cache key is the SOURCE PATH plus the catalog entry (see segment_cache_location), so it can be
+    recomputed after the source is gone -- nothing else would ever ask for these segments again, and
+    they would sit in the cache until the size budget pushed them out."""
+    try:
+        cache = _segment_cache_dir()
+    except ValueError:
+        return 0
+    if not cache.is_dir():
+        return 0
+    variants = [item]
+    for track in item.get("tracks") or []:
+        if track.get("type") == "audio":
+            variants.append({**item, "_audio_stream": track["index"]})
+        elif track.get("type") == "subtitle" and not track.get("text"):
+            variants.append({**item, "_subtitle_stream": track["index"]})
+    count = max(0, math.ceil(float(item.get("duration") or 0) / SEGMENT))
+    removed = 0
+    import fcntl
+    with (cache / ".cache-lock").open("a") as cache_lock:
+        fcntl.flock(cache_lock, fcntl.LOCK_EX)
+        for variant in variants:
+            for profile in PROFILES:
+                for number in range(count):
+                    key = hashlib.sha256(json.dumps([str(path), variant, profile, number, library["encoder"], ENCODING],
+                                                    sort_keys=True).encode()).hexdigest()
+                    try:
+                        (cache / (key + ".ts")).unlink()
+                        removed += 1
+                    except FileNotFoundError:
+                        pass
+    return removed
+
+
+def delete_item(library, item):
+    """Delete ONE title's file (and its own sidecars) FROM DISK. Never a folder, never a link.
+
+    The client sends an item id; the path comes only from this library's catalog, and is walked from
+    the library's root one directory at a time with O_NOFOLLOW file descriptors, so neither a `..`,
+    an absolute path, nor a symlink swapped in since the scan can point the unlink anywhere else --
+    the unlink itself is made relative to the directory descriptor that was checked.
+
+    Returns {"status": "deleted"|"already_gone", "sidecars": [...], "sidecar_errors": [...],
+    "segments": n}. Raises DeleteRefused with a sentence when nothing was deleted."""
+    root = safe_root(library["folder"])
+    raw = str(item.get("path") or "")
+    relative = Path(raw)
+    if not raw or relative.is_absolute() or ".." in relative.parts or not relative.parts:
+        raise DeleteRefused("This title's path is not inside its library, so nothing was deleted.")
+    leaf = relative.parts[-1]
+    if ignored_folder(root, (root / relative).parent):
+        raise DeleteRefused("This title is in a folder excluded from Media Center (.ignore); nothing was deleted.")
+    gone = {"status": "already_gone", "sidecars": [], "sidecar_errors": [], "segments": 0}
+    flags = os.O_RDONLY | os.O_DIRECTORY | getattr(os, "O_CLOEXEC", 0)
+    fd = os.open(root, flags)
+    try:
+        for part in relative.parts[:-1]:
+            try:
+                inner = os.open(part, flags | os.O_NOFOLLOW, dir_fd=fd)
+            except FileNotFoundError:
+                gone["segments"] = forget_cached_segments(library, item, root / relative)
+                return gone
+            except OSError as error:
+                if error.errno in (errno.ELOOP, errno.ENOTDIR):
+                    raise DeleteRefused(f"{part} is a linked folder, not part of this library; nothing was deleted.") from error
+                raise DeleteRefused(_delete_error(error, leaf)) from error
+            os.close(fd)
+            fd = inner
+        try:
+            info = os.stat(leaf, dir_fd=fd, follow_symlinks=False)
+        except FileNotFoundError:
+            gone["segments"] = forget_cached_segments(library, item, root / relative)
+            return gone
+        if _stat.S_ISLNK(info.st_mode):
+            raise DeleteRefused(f"{leaf} is a symbolic link, not a media file in this library; nothing was deleted.")
+        if _stat.S_ISDIR(info.st_mode):
+            raise DeleteRefused(f"{leaf} is a folder. Media Center deletes single titles, never folders.")
+        if not _stat.S_ISREG(info.st_mode):
+            raise DeleteRefused(f"{leaf} is not a regular file; nothing was deleted.")
+        stem = Path(leaf).stem
+        names = os.listdir(fd)
+        # STRICTER THAN MOVE, because a wrong guess here is a lost file, not a misplaced one. The
+        # tags must be lowercase (`en`, `forced` -- never the `Two` of `Film.Two.en.srt`), and a
+        # sidecar belongs to the LONGEST title stem it matches: beside `Film.one.mkv`,
+        # `Film.one.srt` is that title's even though `.one` looks like a language tag to `Film`.
+        others = [Path(n).stem for n in names
+                  if n != leaf and Path(n).suffix.lower() in EXTENSIONS and len(Path(n).stem) > len(stem)]
+        sidecars = []
+        for name in names:
+            tail = name[len(stem):]
+            tags = tail[:tail.rfind(".")]
+            if (name != leaf and name.startswith(stem) and _SIDECAR_TAIL.match(tail) and tags == tags.lower()
+                    and not any(name.startswith(other + ".") for other in others)):
+                try:
+                    if _stat.S_ISREG(os.stat(name, dir_fd=fd, follow_symlinks=False).st_mode):
+                        sidecars.append(name)
+                except OSError:
+                    pass
+        try:
+            os.unlink(leaf, dir_fd=fd)
+        except FileNotFoundError:
+            pass                                     # someone else removed it first: the outcome we wanted
+        except OSError as error:
+            raise DeleteRefused(_delete_error(error, leaf)) from error
+        # MEASURED, not assumed: the name must be gone from the directory we unlinked it in.
+        try:
+            os.stat(leaf, dir_fd=fd, follow_symlinks=False)
+            raise DeleteRefused(f"{leaf} is still on disk after deleting it; nothing was removed from the library.")
+        except FileNotFoundError:
+            pass
+        removed, failed = [], []
+        for name in sorted(sidecars):
+            try:
+                os.unlink(name, dir_fd=fd)
+                removed.append(name)
+            except FileNotFoundError:
+                pass
+            except OSError as error:
+                failed.append(_delete_error(error, name))
+    finally:
+        os.close(fd)
+    return {"status": "deleted", "sidecars": removed, "sidecar_errors": failed,
+            "segments": forget_cached_segments(library, item, root / relative)}
 
 
 _progress_lock = asyncio.Lock()

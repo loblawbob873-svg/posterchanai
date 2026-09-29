@@ -12,7 +12,7 @@ window.PCMediaCenterFactory = function(dep){
   const S = dep.state;   // live app.js bindings: S.CFG, S.VIEW, S._aiAuth, S._aiToken
   const {
     $, _instanceBase, _setAiToken, attachUserAutocomplete, closeModal, copyValue, enc, ensureAiSession,
-    loadHls, modal, toast,
+    loadHls, modal, toast, uiConfirm,
   } = dep;
 
   /* ORGANISE A LIBRARY: move a title into another folder of it (owner + admin only).
@@ -109,6 +109,28 @@ window.PCMediaCenterFactory = function(dep){
     };
   }
 
+
+  /* DELETE A TITLE FROM DISK (owner + admin only, the same `can_manage` that offers Move).
+   *
+   * The server deletes the FILE and its own subtitles/poster, and forgets the catalog entry; this
+   * sends only the title's id. The question is the app's own dialog, never window.confirm (it wedges
+   * the desktop app's focus), and it is owned by the desktop window when there is one. On success the
+   * card leaves the grid where it is -- no reload -- and a refusal shows the server's own sentence. */
+  async function _mcDeleteTitle(lib, item, card, button, api, owner, gone){
+    const name=item.name||'this title';
+    const yes=await uiConfirm('Delete “'+name+'” from the media server’s disk? Its subtitles and poster beside it are deleted too. This cannot be undone.',
+      {ok:'Delete', cancel:'Keep', danger:true, owner:owner||undefined});
+    if(!yes) return;
+    button.disabled=true; card.setAttribute('aria-busy','true');
+    try{
+      const r=await api('/'+lib.id+'/items/'+encodeURIComponent(item.id),'DELETE');
+      gone();
+      toast((r&&r.message)||('Deleted '+name));
+    }catch(e){
+      toast(e.message||'Could not delete it');
+      button.disabled=false; card.removeAttribute('aria-busy');
+    }
+  }
 
   let _mediaCenterLibraryTab=null;
   let _mediaCenterRenderGeneration=0;
@@ -589,11 +611,19 @@ window.PCMediaCenterFactory = function(dep){
             card.innerHTML=`<div class="xdc-cover xdc-cover-none"><svg class="ic" aria-hidden="true"><use href="#i-${item.video?'tv':'music'}"></use></svg></div>
               <div class="xdc-tmeta"><b title="${enc(item.name)}">${enc(item.name)}</b><span class="muted small">${item.video?'Video':'Audio'} · ${duration} min</span>
               <span class="muted small xdc-tfoot">${enc(item.folder==='.'?lib.name:item.folder)}</span></div>
-              <div class="xdc-tacts"><button class="btn btn-neon small mc-play">${item.video?'Play':'Listen'}</button>${lib.can_manage?'<button class="btn btn-ghost small mc-move" title="Move to another folder">Move</button>':''}</div>`;
+              <div class="xdc-tacts"><button class="btn btn-neon small mc-play">${item.video?'Play':'Listen'}</button>${lib.can_manage?'<button class="btn btn-ghost small mc-move" title="Move to another folder">Move</button><button class="btn btn-ghost small mc-delete" title="Delete from disk" aria-label="Delete from disk"><svg class="ic" aria-hidden="true"><use href="#i-trash"></use></svg></button>':''}</div>`;
             grid.append(card);_mediaCenterArtObserver.observe(card);
             card._mcItem=item;
             const move=card.querySelector('.mc-move');
             if(move)move.onclick=()=>_mcMoveDialog(lib,card._mcItem||item,list._mcItems||result.items,api,()=>{ if(!open.disabled)open.onclick(); });
+            const del=card.querySelector('.mc-delete');
+            if(del)del.onclick=()=>_mcDeleteTitle(lib,card._mcItem||item,card,del,api,feed.closest('.osw-body'),()=>{
+              list._mcItems=(list._mcItems||[]).filter(entry=>entry.id!==item.id);
+              const section=card.closest('.mc-folder');card.remove();
+              if(section&&!section.querySelector('.mc-tile'))section.remove();
+              lib.count=Math.max(0,(lib.count||0)-1);update();
+              if(!list.querySelector('.mc-tile'))list.textContent='No playable media found. Check the folder and FFmpeg installation.';
+            });
             const play=card.querySelector('.mc-play');
             card.querySelector('.xdc-cover').onclick=()=>play.click();
             play.onclick=()=>act(play,async()=>{
