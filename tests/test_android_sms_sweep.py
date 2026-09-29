@@ -120,6 +120,8 @@ class Drv {
     }
     public long mark() { return mark; }
     public void mark(long ms) { mark = ms; }
+    long now = -1;
+    public long now() { return now < 0 ? System.currentTimeMillis() : now; }
   }
 
   static SmsMsg text(String addr, long date, String body, boolean in) {
@@ -294,6 +296,38 @@ class Drv {
       SmsSweep.Report next=SmsSweep.run(w,25);
       out.put("I_skipped",first.skipped);out.put("I_later_published",next.published);
     }
+    /* ---- J: A PICTURE MESSAGE WHOSE PICTURE IS NOT STORED YET IS LEFT FOR THE NEXT PASS.
+     * "right before I sent her '535 Shaft Ave, sorry', there was a picture" — archived while its part
+     * list was still empty, it went up with no picture and the mark moved past it for ever. */
+    {
+      World w = new World();
+      w.now = 10_000_000L;
+      w.rows.add(text("+1555", 9_000_000L, "an older text", false));
+      SmsMsg sending = text("+1555", 9_990_000L, "", false); sending.mms = true;   // parts not written yet
+      w.rows.add(sending);
+      w.rows.add(text("+1555", 9_995_000L, "535 Shaft Ave, sorry", false));
+      SmsSweep.Report r = SmsSweep.run(w, 50);
+      SmsSweep.commit(w, r);
+      out.put("J_published", r.published);
+      out.put("J_settling", r.settling);
+      out.put("J_mark_before_picture", w.mark < 9_990_000L);
+      // The platform finishes storing the picture; the next pass archives it WITH the picture.
+      SmsPart p = new SmsPart(); p.id = 55; p.ct = "image/jpeg"; p.name = "IMG_55.jpg"; p.bytes = 2048;
+      sending.parts.add(p); w.store.bytes.put(55L, new byte[2048]);
+      SmsSweep.Report r2 = SmsSweep.run(w, 50);
+      SmsSweep.commit(w, r2);
+      out.put("J2_published", r2.published);
+      out.put("J2_attachments", r2.attachments);
+      out.put("J2_mms_rows", r2.mmsRows);
+      // An MMS that stays empty past the settle window is archived as it is, never stuck for ever.
+      World v = new World();
+      v.now = 100_000_000L;
+      SmsMsg empty = text("+1666", 1_000L, "", true); empty.mms = true;
+      v.rows.add(empty);
+      SmsSweep.Report r3 = SmsSweep.run(v, 50);
+      out.put("J3_published", r3.published);
+      out.put("J3_no_parts", r3.mmsNoParts);
+    }
     System.out.println(Json.write(out));
   }
 }
@@ -448,3 +482,15 @@ def test_native_history_preserves_the_phone_contact_label():
 def test_addressless_provider_page_does_not_hide_later_history():
     assert result()["I_skipped"] == 25
     assert result()["I_later_published"] == 1
+
+
+def test_a_picture_not_stored_yet_is_left_for_the_next_pass_not_archived_without_it():
+    r = result()
+    assert r["J_published"] == 1 and r["J_settling"] == 1, r
+    assert r["J_mark_before_picture"], "the mark moved past a picture message whose picture was not stored yet"
+    assert r["J2_published"] == 2 and r["J2_attachments"] == 1 and r["J2_mms_rows"] == 1, r
+
+
+def test_a_picture_message_that_never_gets_a_picture_is_not_stuck_for_ever():
+    r = result()
+    assert r["J3_published"] == 1 and r["J3_no_parts"] == 1, r

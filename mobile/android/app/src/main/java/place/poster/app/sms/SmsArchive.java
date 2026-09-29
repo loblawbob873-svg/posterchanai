@@ -178,6 +178,15 @@ public final class SmsArchive {
         };
 
         SmsSweep.Report rep = SmsSweep.run(io, maxRows <= 0 ? ROWS_PER_PASS : maxRows);
+        /* THE PHONE SAYS WHAT IT SAW. The desktop's only view into a handset's archive is the
+         * `pcai:sms-status:` record, and only the WebView sweep wrote one — so once this native
+         * sweep took over, the last report on the reporting account was weeks old and a missing
+         * picture could not be explained from anywhere but the phone. Counts only, sealed to self,
+         * on its own address and `l` tag so no reader mistakes it for a message. */
+        if (rep.rows > 0 || rep.settling > 0 || !rep.error.isEmpty()) {
+            try { rep.events.add(statusEvent(sec, me, pubHex, rep)); }
+            catch (Throwable t) { note(ctx, "archive status could not be sealed"); }
+        }
         rep.owner = pubHex; rep.revision = revision;
         synchronized (CHECKPOINT_LOCK) {
             if (!pubHex.equals(owner(ctx)) || revision != prefs(ctx).getLong("revision.v3:" + pubHex, 0L)) return null;
@@ -200,6 +209,35 @@ public final class SmsArchive {
         }
         record(ctx, rep);
         return rep;
+    }
+
+    static final String STATUS_D = "pcai:sms-status:native";
+    static final String STATUS_L = "pcai-sms-status";
+
+    static String statusJson(SmsSweep.Report rep, long nowMs) {
+        java.util.Map<String, Object> body = new java.util.LinkedHashMap<String, Object>();
+        body.put("v", 1L);
+        body.put("at", nowMs);
+        body.put("app", "native");
+        body.put("client", "native-sweep");
+        body.put("rowsRead", (long) rep.rows);
+        body.put("mmsRows", (long) rep.mmsRows);
+        body.put("mmsRowsWithParts", (long) (rep.mmsRows - rep.mmsNoParts));
+        body.put("published", (long) rep.published);
+        body.put("partsUploaded", (long) rep.attachments);
+        body.put("partsFailed", (long) rep.refused);
+        body.put("partError", rep.partError.length() > 200 ? rep.partError.substring(0, 200) : rep.partError);
+        body.put("archiveError", rep.error.length() > 200 ? rep.error.substring(0, 200) : rep.error);
+        body.put("settling", (long) rep.settling);
+        return place.poster.app.sync.Json.write(body);
+    }
+
+    private static JSONObject statusEvent(byte[] sec, byte[] me, String pubHex, SmsSweep.Report rep) throws Exception {
+        String ct = Crypt.nip44Encrypt(Crypt.conversationKey(sec, me), statusJson(rep, System.currentTimeMillis()), null);
+        List<List<String>> tags = new ArrayList<List<String>>();
+        List<String> d = new ArrayList<String>(); d.add("d"); d.add(STATUS_D); tags.add(d);
+        List<String> l = new ArrayList<String>(); l.add("l"); l.add(STATUS_L); tags.add(l);
+        return SmsOutbox.signed(sec, pubHex, System.currentTimeMillis() / 1000L, KIND, tags, ct);
     }
 
     private static SmsSweep.Report durableRestore(Context ctx, String owner, String raw) throws Exception {

@@ -67,6 +67,9 @@ public final class SmsSweep {
 
         default String contactName(String address) { return ""; }
 
+        /** The clock the settle window is measured against. A test sets it; a phone uses its own. */
+        default long now() { return System.currentTimeMillis(); }
+
         default long smsAtMark() { return -1L; }
         default long mmsAtMark() { return -1L; }
         long mark();
@@ -80,6 +83,10 @@ public final class SmsSweep {
         public int published;            // documents built (the caller sends them)
         public int attachments;          // attachments stored in the encrypted drive
         public int refused;              // attachments the provider would not hand over
+        public int mmsRows;              // picture messages read
+        public int mmsNoParts;           // …of which the provider listed NO attachment at all
+        public int settling;             // picture messages left for a later pass (see SETTLE_MS)
+        public String partError = "";    // the first attachment failure, verbatim
         public String owner = "";
         public long revision;
         public long smsAtMark = -1L, mmsAtMark = -1L;
@@ -90,6 +97,9 @@ public final class SmsSweep {
     }
 
     private SmsSweep() { }
+
+    /** How long an MMS with no parts is given to finish being stored before it is taken as final. */
+    public static final long SETTLE_MS = 10L * 60L * 1000L;
 
     /**
      * Read one window of history and turn it into signed archive events.
@@ -114,6 +124,22 @@ public final class SmsSweep {
         rep.more = rows.size() >= maxRows;
 
         for (SmsMsg m : rows) {
+            /* A PICTURE MESSAGE WHOSE PICTURE IS NOT THERE YET IS NOT FINISHED — LEAVE IT FOR LATER.
+             *
+             * Archived as it stands, it went up as a picture message with no picture, and the mark
+             * moved past it, so no later pass ever looked at it again: "right before I sent her
+             * '535 Shaft Ave, sorry' there was a picture", and every other device showed the text and
+             * nothing before it. An MMS row is written before all of its parts are (a message still
+             * sending, or one the platform is still storing), so a sweep that lands in that moment
+             * sees an empty part list that is only temporarily true. The pass stops BEFORE such a row
+             * — the mark stays behind it and the next pass reads it again — for as long as the
+             * message is still sending or younger than SETTLE_MS. After that an empty list is the
+             * truth (a picture the carrier never delivered) and it is archived like any other. */
+            if (m.mms && m.parts.isEmpty() && (m.pending() || io.now() - m.date < SETTLE_MS)) {
+                rep.settling++;
+                rep.more = true;
+                break;
+            }
             JSONObject ev;
             try {
                 ev = one(io, m, rep);
@@ -167,7 +193,7 @@ public final class SmsSweep {
         body.put("name", name == null ? "" : name);
         /* Carried rather than inferred from the attachment list: a picture message whose pictures
          * could not be read is still a picture message, and every reader counts on saying so. */
-        if (m.mms) body.put("mms", Boolean.TRUE);
+        if (m.mms) { body.put("mms", Boolean.TRUE); rep.mmsRows++; if (m.parts.isEmpty()) rep.mmsNoParts++; }
         if (m.failed()) body.put("failed", Boolean.TRUE);
         if (m.pending()) body.put("pending", Boolean.TRUE);
         if (m.error != null && !m.error.isEmpty()) body.put("error", m.error);
@@ -190,6 +216,7 @@ public final class SmsSweep {
                      * affected. */
                     err = why(t);
                     rep.refused++;
+                    if (rep.partError.isEmpty()) rep.partError = err;
                 }
                 Map<String, Object> a = new LinkedHashMap<String, Object>();
                 a.put("ct", p.ct == null ? "" : p.ct);
