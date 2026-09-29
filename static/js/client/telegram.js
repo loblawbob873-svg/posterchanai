@@ -358,7 +358,26 @@
     box.querySelectorAll('[data-reply]').forEach(b => b.onclick = () => { st.reply = byId.get(Number(b.dataset.reply)); paintReply();
       const ta = root.querySelector('.tg-text'); if(ta) ta.focus(); });
     box.querySelectorAll('a.tg-media').forEach(a => a.onclick = e => { const P = PC(); if(P.openLightbox){ e.preventDefault(); P.openLightbox(a.dataset.full); } });
-    if(toBottom || atBottom) box.scrollTop = box.scrollHeight;
+    if(toBottom || atBottom) pinBottom(box);
+  }
+  /* STAY ON THE NEWEST MESSAGE WHILE THE CHAT SETTLES. Scrolling once, at paint, is not enough: every
+   * photo and video is an element with no size until it loads, and each one that arrives later grows
+   * the list BELOW the reader — a chat whose recent messages carry pictures opened a screen or more
+   * above the newest one ("if you click on conversation, it does not bring you to latest"). So re-pin
+   * as each one lands, for a while. The moment the pane sits ABOVE where we last put it, somebody
+   * scrolled up to read, and we stop: growth below never moves scrollTop up, only a person does. */
+  let pinGen = 0;
+  function pinBottom(box){
+    const gen = ++pinGen, until = Date.now() + 10000;
+    let mine = box.scrollTop = box.scrollHeight; mine = box.scrollTop;
+    const again = () => {
+      if(gen !== pinGen || !box.isConnected || Date.now() > until) return;
+      if(box.scrollTop < mine - 4) { pinGen++; return; }        // the reader moved: leave them there
+      box.scrollTop = box.scrollHeight; mine = box.scrollTop;
+    };
+    box.querySelectorAll('img, video').forEach(el => {
+      el.addEventListener('load', again, { once:true }); el.addEventListener('loadedmetadata', again, { once:true }); });
+    requestAnimationFrame(() => { again(); requestAnimationFrame(again); });
   }
   /* REACTIONS. The chips are Telegram's own tally (count, and whether one is yours); tapping one
    * toggles yours. Telegram answers with the tally it now holds, which replaces ours — so a chat that

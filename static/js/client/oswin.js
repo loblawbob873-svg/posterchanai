@@ -169,6 +169,15 @@
                          __installer:'Install PosterChanOS', __golive:'Go Live' };
   // Renamed/merged views an older shell may still hand over (os.js LEGACY_VIEWS; app.js switchView maps it).
   const LEGACY_VIEWS = { __vms: 'vms' };
+  /* A window that was opened (or restored) with no label handed over used to title itself with the
+   * VIEW ID — "tg", "vms" — which is a route, not a name. The sidebar already names every view. */
+  function navLabel(view){
+    try{
+      const b=root.document.querySelector('.nav-item[data-view="'+String(view||'').replace(/["\\]/g,'')+'"]');
+      const t=b && (b.querySelector('span') || b).textContent.trim();
+      return t || '';
+    }catch(_){ return ''; }
+  }
 
   /* The tools a POST can be handed to from its menu. Opened from a window, they open in their OWN
    * window carrying the post's id -- painted into the window the post was in, they replaced the
@@ -261,7 +270,7 @@
     let win = null;
     try{ win = root.open(url, '_blank', features); }catch(_){ win = null; }
     if(!win) return null;
-    try{ win.__PC_WINDOW_LABEL__ = String(label || view || ''); }catch(_){ }
+    try{ win.__PC_WINDOW_LABEL__ = String(label || EXTRA_LABELS[view] || navLabel(view) || view || ''); }catch(_){ }
     return win;
   }
 
@@ -416,7 +425,7 @@
         +'<button data-action="min" title="Minimise" aria-label="Minimise">−</button>'
         +'<button data-action="max" title="Maximise" aria-label="Maximise">□</button>'
         +'<button data-action="close" title="Close" aria-label="Close">×</button></span>';
-      bar.querySelector('.pc-oswin-title').textContent=String(state.label||EXTRA_LABELS[state.view]||state.view||'PosterChan');
+      bar.querySelector('.pc-oswin-title').textContent=String(state.label||EXTRA_LABELS[state.view]||navLabel(state.view)||state.view||'PosterChan');
       (root.document.body||root.document.documentElement).prepend(bar);
       /* THE WINDOW'S BORDER, because nothing else on this surface draws one.
        *

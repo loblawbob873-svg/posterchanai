@@ -100,3 +100,26 @@ def test_the_prompt_window_does_what_each_choice_says(choice):
         assert not await b.js("localStorage.getItem('pc_shot_stage')"), "the staged capture was left in storage"
 
     asyncio.run(desktop.with_browser("online", "?pcpopup=shot", check, BRIDGES + STAGED))
+
+
+@pytest.mark.skipif(not Path("/opt/google/chrome/chrome").exists(), reason="Chrome required")
+def test_the_prompt_survives_the_page_finishing_its_boot():
+    """Reported: "screenshot still broken, pops up and disappears". The prompt window is the whole
+    client, signed in like every other window, and app.js runs PCOS.restore() AGAIN once the identity
+    is known — which re-ran renderShotPopup. The first run had already taken the staged capture out of
+    storage, so the second found nothing and closed the window: a flash, then gone."""
+    async def check(b):
+        await b.until("!!document.querySelector('.os-shot-popup .shot-prompt')")
+        await b.js("PCOS.restore()")                 # what boot does after the identity arrives
+        await desktop.login(b)                       # …and signing in does it once more
+        await b.js("PCOS.restore()")
+        await asyncio.sleep(.6)
+        state = await b.js("({closed:__closed, prompt:!!document.querySelector('.os-shot-popup .shot-prompt'),"
+                           " prev:!!document.querySelector('.shot-prompt .shot-prev')})")
+        assert state == {"closed": 0, "prompt": True, "prev": True}, ("the prompt window closed itself", state)
+        # And it still does its job afterwards.
+        await b.js("document.querySelector('[data-shot-act=\"save\"]').click()")
+        await asyncio.sleep(1.2)
+        assert ["take", {"staged": "/tmp/posterchan-shots-1000/s.png", "copy": False}] in await b.js("__shot")
+
+    asyncio.run(desktop.with_browser("online", "?pcpopup=shot", check, BRIDGES + STAGED))

@@ -2,7 +2,8 @@
 from pathlib import Path
 
 
-APP = (Path(__file__).resolve().parents[2] / "static/js/client/app.js").read_text()
+# The Notifications view moved out of app.js into notifview.js.
+APP = (Path(__file__).resolve().parents[2] / "static/js/client/notifview.js").read_text()
 
 
 def _notifications():

@@ -38,6 +38,7 @@ window.fetch = (u, o) => String(u).includes('/client/config')
 ROW = r"""(()=>{const t=[...document.querySelectorAll('.rv-tabs .rv-tab')];
   return {n:t.length, rows:new Set(t.map(x=>Math.round(x.getBoundingClientRect().top))).size,
           overflow:document.documentElement.scrollWidth>innerWidth+1,
+          icons:t.filter(x=>{const i=x.querySelector('svg.b-ic');const r=i&&i.getBoundingClientRect();return !!r&&r.width>=12&&getComputedStyle(i).display!=='none'}).length,
           labels:t.map(x=>x.textContent.trim().split(/\s+/)[0])}})()"""
 
 
@@ -53,5 +54,7 @@ def test_the_repo_tabs_are_one_row_on_a_phone(width):
         got = await b.js(ROW)
         assert got["rows"] == 1, f"the tabs wrapped onto {got['rows']} lines at {width}px: {got}"
         assert not got["overflow"], f"the tab row pushed the page sideways at {width}px"
+        # "on Git, the icons are missing for README files, etc." — they were hidden to make the row fit.
+        assert got["icons"] == got["n"], f"tab icons are hidden at {width}px: {got}"
 
     asyncio.run(desktop.with_browser("online", "?pcShell=1", check, HOSTED))

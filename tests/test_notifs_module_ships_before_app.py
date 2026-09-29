@@ -63,7 +63,7 @@ def test_app_js_builds_notifs_eagerly_where_the_block_used_to_run():
     # the Notifications view, the rail and window.__PC.
     assert (APP.index("let _notifEpoch = +(localStorage.getItem('pc_notif_epoch')||0);")
             < APP.index("function _notifsDeps(") < build.start()
-            < APP.index("// ---- In-app updater:") < APP.index("function renderNotifications(){")
+            < APP.index("// ---- In-app updater:") < APP.index("function renderNotifications(){ return _lzRun(")
             < APP.index("function loadNotifs(){") < APP.index("window.__PC = {"))
     assert NOTIFS.lstrip().startswith("/*") and "window.PCNotifsFactory = function(dep){" in NOTIFS
 
@@ -94,10 +94,14 @@ def test_every_entry_point_is_a_forwarder_the_module_returns():
         assert real in NOTIFS and real not in APP, real
 
 
-def test_the_view_and_the_rail_stay_in_app_js():
-    for fn in ("function renderNotifications(){", "function _notifMatch(e){", "function notifGrouped(list){",
-               "function markNotifsRead(){", "function loadNotifs(){", "function _onNewController(){"):
+def test_the_view_and_the_rail_are_not_in_notifs_js():
+    """The rail and the updater stay in app.js; the VIEW moved to notifview.js (its own module, see
+    test_notifview_module_ships_before_app.py) — neither belongs in the subscription module."""
+    for fn in ("function loadNotifs(){", "function _onNewController(){"):
         assert fn in APP and fn not in NOTIFS, fn
+    for fn in ("function renderNotifications(){", "function _notifMatch(e){", "function notifGrouped(list){",
+               "function markNotifsRead(){"):
+        assert fn not in NOTIFS, fn
 
 
 def test_the_ping_still_routes_to_the_post():

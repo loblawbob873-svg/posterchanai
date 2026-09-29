@@ -40,6 +40,7 @@ SOURCES = [ROOT / "static/js/client/app.js",
            ROOT / "static/js/client/blossom.js", # media server + notification/push prefs, split out of app.js
            ROOT / "static/js/client/drafts.js",  # drafts + scheduled posts, split out of app.js
            ROOT / "static/js/client/notifs.js",  # notification subscription/ping/unread count, split out of app.js
+           ROOT / "static/js/client/notifview.js",  # the Notifications view, split out of app.js
            ROOT / "static/js/client/meme.js",
            ROOT / "templates/client.html"]
 

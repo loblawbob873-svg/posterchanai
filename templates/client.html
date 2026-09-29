@@ -494,6 +494,10 @@
      count every badge paints from), split out of app.js. Loaded BEFORE app.js, which builds it while it
      boots: the subscription starts at login and the Android/desktop notification routes land here. -->
 <script src="/static/js/client/notifs.js?v={{ ver }}"></script>
+<!-- The Notifications VIEW (the list, its filter tabs, notifHtml, markNotifsRead), split out of app.js.
+     Loaded BEFORE app.js, which builds it while it boots: the toast and the right-column rail read its
+     answers synchronously. -->
+<script src="/static/js/client/notifview.js?v={{ ver }}"></script>
 <script src="/static/js/client/app.js?v={{ ver }}"></script>
 <script src="/static/js/client/instance-welcome.js?v={{ ver }}"></script>
 <script src="/static/js/client/media-center-ui.js?v={{ ver }}"></script>

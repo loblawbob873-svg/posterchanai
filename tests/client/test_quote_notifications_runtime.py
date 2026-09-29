@@ -14,8 +14,8 @@ def test_quote_only_event_survives_the_list_and_opens_its_own_post():
     code = '\n'.join([
         segment('  function _quotesMe(', '  // `html` is trusted'),
         segment('  function notifList(', '  // Follows DO light'),
-        # notifHtml is followed by the DM state app.js keeps (the DM code itself is in dms.js).
-        segment('  function notifHtml(', '  /* Declared HERE, outside dms.js'),
+        # notifHtml is the last function of notifview.js (the Notifications view, split out of app.js).
+        segment('  function notifHtml(', '\n  return {\n    _notifCtxHtml'),
     ])
     # _quotesMe/notifList/notifPing live in notifs.js, where app.js's live ME/LOGO read as S.ME/S.LOGO.
     code = state_shim(code) + '\n' + code
@@ -51,6 +51,6 @@ events=[{...quote,tags:[['p',ME.pubkey]]}];assert.equal(notifList().length,1);
     # Both initial subscription and older-page queries opt in; other relays retain their #p filter.
     watch=segment('  async function watchNotifications(', '  function _quotesMe(')
     older=segment('  function renderNotifications(', '  function notifGrouped(')
-    # (watchNotifications moved to notifs.js, where the live ME reads as S.ME; the view stays in app.js.)
+    # (watchNotifications moved to notifs.js and the view to notifview.js; both read the live ME as S.ME.)
     assert "'#p':[S.ME.pubkey], _include_quotes:true" in watch
-    assert "'#p':[ME.pubkey], _include_quotes:true" in older
+    assert "'#p':[S.ME.pubkey], _include_quotes:true" in older

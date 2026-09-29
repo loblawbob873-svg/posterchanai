@@ -1437,11 +1437,18 @@
   /* The prompt, drawn INSIDE its popup window (os.js restore() → kind 'shot'). Save and copy finish
    * here and say so before the window closes; "Select region" hands the capture back to the desktop,
    * because the picker has to run after this window is gone. */
+  /* READ ONCE, KEPT. This window is the whole client, signed in like any other, and app.js runs
+   * PCOS.restore() again once the identity arrives — which calls this again. The staged capture has
+   * already been taken out of storage by then, so a second READ found nothing and closed the window:
+   * the prompt flashed up and vanished ("screenshot still broken, pops up and disappears"). */
+  let _shotSt = null;
   function renderShotPopup(){
     const sh = root.pcShot, doc = root.document;
-    let st = null;
-    try{ st = JSON.parse(root.localStorage.getItem(SHOT_STAGE_KEY) || 'null'); root.localStorage.removeItem(SHOT_STAGE_KEY); }catch(_){ st = null; }
-    if(!st || !st.path || Date.now() - (Number(st.at) || 0) > 120000 || !sh){ try{ root.close(); }catch(_){ } return; }
+    if(_shotSt && doc.querySelector('.os-shot-popup .shot-prompt')) return;     // already on screen
+    let st = _shotSt;
+    if(!st){ try{ st = JSON.parse(root.localStorage.getItem(SHOT_STAGE_KEY) || 'null'); root.localStorage.removeItem(SHOT_STAGE_KEY); }catch(_){ st = null; } }
+    if(!st || !st.path || (!_shotSt && Date.now() - (Number(st.at) || 0) > 120000) || !sh){ try{ root.close(); }catch(_){ } return; }
+    _shotSt = st;
     doc.body.classList.add('os-popup-body', 'os-shot-popup');
     let host = doc.getElementById('os-popup-host');
     if(!host){ host = doc.createElement('div'); host.id = 'os-popup-host'; host.className = 'os-popup-host'; doc.body.appendChild(host); }

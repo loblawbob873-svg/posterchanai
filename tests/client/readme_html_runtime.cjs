@@ -23,6 +23,17 @@ ok('no <a> or <img> tag is shown as text', !/&lt;\/?(a|img)\b/i.test(out));
 ok('the links render', /<a href="https:\/\/poster\.place" target="_blank" rel="noopener">/.test(out));
 ok('relative images are kept for the repo to resolve', /<img class="md-rel" data-rel="static\/mascot\/mascot-happy-front-05\.png"/.test(out));
 ok('a width survives as a size', /data-rel="static\/mascot[^>]*style="width:200px"/.test(out));
+// The whole opening block, laid out the way GitHub shows it ("not displaying images like github, the
+// alignment … still showing html in readme: <b>Desktop</b>").
+const head=mdToHtml(readme.split('\n').slice(0,45).join('\n'));
+ok('no layout tag is shown as text', !/&lt;\/?(b|sub|div|table|tr|td|center|p)\b/i.test(head));
+ok('the block is centered', /<div style="text-align:center">/.test(head));
+ok('the screenshots sit in a two-column table', (head.match(/<td style="text-align:center;width:50%">/g)||[]).length===2 && /<table class="md-html-table">/.test(head));
+ok('the captions keep their bold', /<sub><b>Desktop<\/b> — PosterChanOS/.test(head));
+ok('a table is never wrapped in a paragraph', !/<p>\s*<table/.test(head) && !/<table[^>]*>(?:(?!<\/table>)[\s\S])*<br>\s*<tr/.test(head));
+ok('the heading inside the centered block still renders', /<h2>Poster-chan AI<\/h2>/.test(head));
+const whole=mdToHtml(readme);
+ok('nothing in the whole README shows an allowed tag as text', !/&lt;\/?(b|sub|sup|div|table|tr|td|th|center|details|summary|kbd)\b/i.test(whole));
 const evil=mdToHtml([
   '<a href="javascript:alert(1)">x</a>',
   '<img src="https://e.example/a.png" onerror="alert(1)" style="position:fixed">',
@@ -30,7 +41,13 @@ const evil=mdToHtml([
   '<img src="//evil.example/x.png">','<img src="../../etc/passwd">',
   '<script>alert(3)</script>','<iframe src="https://e.example"></iframe>',
   '<img src="https://e.example/b.png" alt="&quot;><script>alert(4)</script>">',
+  '<div align="center" onclick="alert(5)" style="position:fixed" class="x">c</div>',
+  '<td width="expression(alert(6))" align="javascript:x" colspan="999" onmouseover="alert(7)">t</td>',
+  '<details open ontoggle="alert(8)"><summary>s</summary>d</details>',
+  '<center><b onclick="alert(9)">z</b></center>',
 ].join('\n\n'));
+ok('a rebuilt tag keeps only align/width/span/open', /<div style="text-align:center">c<\/div>/.test(evil) && /<td>t<\/td>/.test(evil)
+   && /<details open>/.test(evil) && /<div style="text-align:center"><b>z<\/b><\/div>/.test(evil));
 ok('no javascript: link', !/href="javascript:/i.test(evil));
 ok('no event handler survives', !/\son[a-z]+=/i.test(evil));
 ok('no style from the source survives', !/position:fixed/.test(evil));

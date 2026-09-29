@@ -3399,10 +3399,12 @@ h3 svg.ic.h-ic{width:19px;height:19px;vertical-align:-3px;margin-inline-end:4px;
   overflow-x:auto;overflow-y:hidden;scrollbar-width:none;-webkit-overflow-scrolling:touch}
 .rv-tabs::-webkit-scrollbar{display:none}
 .rv-tabs .rv-tab{flex:none;white-space:nowrap;display:inline-flex;align-items:center;gap:6px}
+/* The icons STAY on a narrow screen ("on Git, the icons are missing for README files, etc." — they
+   were hidden here to make the row fit); the row is tightened instead and scrolls sideways past that. */
 @media (max-width:600px){
   .rv-tabs{gap:0}
-  .rv-tabs .rv-tab{padding:10px 9px;gap:4px}
-  .rv-tabs .rv-tab .b-ic{display:none}
+  .rv-tabs .rv-tab{padding:10px 8px;gap:4px;font-size:13px}
+  .rv-tabs .rv-tab .b-ic{width:15px;height:15px}
 }
 .rv-tab{background:none;border:none;border-bottom:2px solid transparent;color:var(--muted);cursor:pointer;font:inherit;
   font-weight:600;padding:10px 14px;margin-bottom:-1px;border-radius:8px 8px 0 0;transition:color .15s}
@@ -11447,6 +11449,12 @@ html.os-idle #os-root *{animation:none!important;transition:none!important}
 }
 
 /* ── Telegram client (client/telegram.js) — PosterChan's theme tokens, cyberpunk treatment ─────────── */
+/* IN ITS OWN OS WINDOW, TELEGRAM IS THE WHOLE WINDOW. The feed keeps 80-90px of bottom padding for
+   the phone's bottom nav and FAB, which a window has neither of, so the chat stopped a band short of
+   the window's bottom edge; and the page header repeated "Telegram" directly under the window's own
+   title bar ("telegram UI components don't fit properly in the OS window, waste of space"). */
+html.pc-oswin .feed:has(>.tg-app){padding:0!important}
+html.pc-oswin .main:has(>#feed>.tg-app)>.topbar{display:none}
 .tg-app{container:tgapp/inline-size;--tg-hot:#ff2b6d;height:100%;min-height:0;display:flex;flex-direction:column;box-sizing:border-box;
   font-family:inherit;color:var(--text)}
 .tg-boot{margin:auto;color:var(--accent);letter-spacing:.3em;font:600 12px var(--font-mono,ui-monospace,monospace);

@@ -16,6 +16,7 @@ ROOT = Path(__file__).resolve().parents[1]
                                     "static/js/client/blossom.js",
                                     "static/js/client/drafts.js",
                                     "static/js/client/notifs.js",
+                                    "static/js/client/notifview.js",
                                     "static/js/client/os.js"])
 def test_primary_client_controllers_parse(script):
     result = subprocess.run(
