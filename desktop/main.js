@@ -22,7 +22,21 @@ const electron = require('electron');
  * writes a minidump only once the crash reporter is started, which nothing did. Local only —
  * `uploadToServer:false` — the dump lands in <userData>/Crashpad/{pending,completed} and crash-report.txt
  * names it. Must run before `ready`, which is why it is at the top of the file. */
-try { electron.crashReporter.start({ uploadToServer: false, compress: true }); } catch (_) {}
+/* ONLY WHEN THE HANDLER CAN RUN. Starting the reporter makes Chromium SPAWN chrome_crashpad_handler,
+ * and a handler that cannot be exec'd is FATAL in the main process — measured on the 2026-09-29 ISO
+ * gate: the Gentoo package had installed it 0644, and the desktop never drew. Diagnostics must never
+ * cost the desktop, so a handler that is missing or not executable means no dumps, not no app. */
+function _crashHandlerRunnable() {
+  if (process.platform !== 'linux') return true;
+  try {
+    const fs = require('fs'), path = require('path');
+    fs.accessSync(path.join(path.dirname(process.execPath), 'chrome_crashpad_handler'), fs.constants.X_OK);
+    return true;
+  } catch (_) { return false; }
+}
+if (_crashHandlerRunnable()) {
+  try { electron.crashReporter.start({ uploadToServer: false, compress: true }); } catch (_) {}
+}
 // Only app/protocol/ipcMain are valid during Electron's pre-ready configuration phase. Most of the
 // other exports are native lazy getters; destructuring `screen`, powerMonitor, session or Tray while
 // this module loads can initialize platform backends before app.ready and SIGTRAP on a fast boot.

@@ -58,7 +58,9 @@ class TheOverlayPinsSomethingThatExists(unittest.TestCase):
         self.assertEqual(len(rows), 1, f"expected one DIST row, got {len(rows)}")
         parts = rows[0].split()
         self.assertEqual(parts[0], "DIST")
-        self.assertEqual(parts[1], f"posterchan-desktop-{self.pv}.tar.zst",
+        # ${P} — what SRC_URI's `-> ${P}.tar.zst` names — carries NO revision: a -rN ebuild (a packaging
+        # fix, same upstream archive) fetches and verifies the same file.
+        self.assertEqual(parts[1], f"posterchan-desktop-{re.sub(r'-r[0-9]+$', '', self.pv)}.tar.zst",
                          f"the Manifest names a different version from the ebuild ({self.pv}) — "
                          "portage then fetches one file and verifies another")
 

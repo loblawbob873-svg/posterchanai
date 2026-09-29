@@ -68,6 +68,11 @@ src_install() {
 	# extraResource, not the package's main binary, so without an explicit mode first-run reaches the
 	# Tor choice and fails with `spawn .../resources/tor/tor/tor EACCES`.
 	fperms 0755 /opt/posterchan/resources/tor/tor/tor
+	# Chromium's crash handler is SPAWNED at startup once the crash reporter is on (desktop/main.js
+	# crashReporter.start). doins leaves it 0644, and a handler that cannot be exec'd is a FATAL in the
+	# main process: "posix_spawn /opt/posterchan/chrome_crashpad_handler: Permission denied" — the
+	# desktop never draws, measured on the 2026-09-29 ISO gate. Executable like the binary itself.
+	[[ -e "${ED}/opt/posterchan/chrome_crashpad_handler" ]] && fperms 0755 /opt/posterchan/chrome_crashpad_handler
 	# Electron refuses to start unless its sandbox helper is setuid root, and no archive can carry
 	# that bit. The alternative is --no-sandbox, which turns the renderer sandbox off on a machine
 	# strangers log into.

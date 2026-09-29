@@ -40,7 +40,10 @@ def _current():
     names = [f for f in os.listdir(PKG) if f.endswith(".ebuild")]
     if len(names) != 1:
         sys.exit(f"FAIL  expected one ebuild, found {names}")
-    return names[0][len("posterchan-desktop-"):-len(".ebuild")], names[0]
+    # The UPSTREAM version, without a Gentoo -rN: a revision is a packaging fix of the same build
+    # (1.0.1739-r1 made chrome_crashpad_handler executable), so it is "current" for 1.0.1739, and a
+    # comparison that kept the suffix would rename it back — which portage reads as a downgrade.
+    return re.sub(r"-r[0-9]+$", "", names[0][len("posterchan-desktop-"):-len(".ebuild")]), names[0]
 
 
 def _head_sha():
