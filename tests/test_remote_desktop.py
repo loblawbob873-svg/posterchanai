@@ -5,9 +5,10 @@ import subprocess
 import textwrap
 
 import pytest
+from tests.client_source import app_source_with
 
 ROOT = Path(__file__).resolve().parents[1]
-APP = (ROOT / "static/js/client/app.js").read_text(encoding="utf-8")
+APP = app_source_with("calls.js")   # the call code lives in calls.js now
 OS = (ROOT / "static/js/client/os.js").read_text(encoding="utf-8")
 PHONE = (ROOT / "static/js/client/phoneshell.js").read_text(encoding="utf-8")
 SHELL = (ROOT / "static/js/client/osshell.js").read_text(encoding="utf-8")
@@ -90,13 +91,13 @@ def test_linux_screen_share_has_a_portal_registered_desktop_identity():
 
 
 def test_same_identity_is_allowed_only_for_remote_desktop_calls():
-    app = (ROOT / "static/js/client/app.js").read_text(encoding="utf-8")
+    app = app_source_with('calls.js')
     assert "const remoteDesktop = !!(opts && opts.remoteDesktop);" in app
-    assert "(peerHex===ME.pubkey && !remoteDesktop)" in app
+    assert "(peerHex===S.ME.pubkey && !remoteDesktop)" in app
 
 
 def test_remote_desktop_viewer_is_receive_only_and_never_requests_camera_or_mic():
-    app = (ROOT / "static/js/client/app.js").read_text(encoding="utf-8")
+    app = app_source_with('calls.js')
     start = app.index("async function _acceptCall(){")
     end = app.index("/* Missed calls", start)
     accept = app[start:end]
@@ -108,9 +109,9 @@ def test_remote_desktop_viewer_is_receive_only_and_never_requests_camera_or_mic(
 
 def test_same_identity_legacy_screen_invite_is_never_treated_as_camera_call():
     assert "const remoteDesktopInvite=!!msg.remoteDesktop" in APP
-    assert "_remoteDesktopArmed && from===ME.pubkey && msg.video" in APP
+    assert "_remoteDesktopArmed && from===S.ME.pubkey && msg.video" in APP
     assert "remoteDesktop:remoteDesktopInvite" in APP
-    assert "if(remoteDesktopInvite&&from===ME.pubkey)" in APP
+    assert "if(remoteDesktopInvite&&from===S.ME.pubkey)" in APP
 
 
 @pytest.mark.skipif(shutil.which("node") is None, reason="node not installed")
@@ -185,7 +186,7 @@ def test_transient_ice_failure_does_not_end_remote_control_session():
 def test_same_identity_remote_control_is_auto_granted_only_to_self():
     start = APP.index("function _rdWireControl(ch)")
     block = APP[start:APP.index("function _rdGrant(on)", start)]
-    assert "if(_call.peer===ME.pubkey){_rdGrant(true);return;}" in block
+    assert "if(_call.peer===S.ME.pubkey){_rdGrant(true);return;}" in block
     # A different verified identity must still go through the visible approval state.
     assert "_call.controlRequested=true;_callUI();return;" in block
 
@@ -193,7 +194,7 @@ def test_same_identity_remote_control_is_auto_granted_only_to_self():
 def test_same_identity_viewer_requests_control_automatically_on_channel_open():
     start = APP.index("function _rdWireControl(ch)")
     block = APP[start:APP.index("function _rdGrant(on)", start)]
-    assert "if(!_call.caller&&_call.peer===ME.pubkey)_rdSend({t:'request'});" in block
+    assert "if(!_call.caller&&_call.peer===S.ME.pubkey)_rdSend({t:'request'});" in block
 
 
 def test_remote_pointer_moves_without_requiring_a_pressed_button():

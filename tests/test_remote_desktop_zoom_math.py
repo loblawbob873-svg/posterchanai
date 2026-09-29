@@ -14,9 +14,10 @@ from pathlib import Path
 import subprocess
 
 import pytest
+from tests.client_source import app_source_with
 
 ROOT = Path(__file__).resolve().parents[1]
-APP = (ROOT / 'static/js/client/app.js').read_text(encoding='utf-8')
+APP = app_source_with('calls.js')   # the call code lives in calls.js now
 # The pure block, verbatim from the shipped viewer. `_rdStageBox` is where the DOM starts.
 MATHS = APP[APP.index('  const RD_ZOOM_TOP='):APP.index('  function _rdStageBox(')]
 SLIDER = APP[APP.index('  function _rdZoomSlider('):APP.index('  /* Ask the host for the resolution')]

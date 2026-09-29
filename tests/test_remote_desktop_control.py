@@ -4,10 +4,11 @@ import subprocess
 from pathlib import Path
 
 import pytest
+from tests.client_source import app_source_with
 
 
 ROOT = Path(__file__).resolve().parents[1]
-APP = (ROOT / "static/js/client/app.js").read_text()
+APP = app_source_with("calls.js")   # the call code lives in calls.js now
 
 
 def test_control_uses_a_private_ordered_webrtc_channel():
@@ -53,10 +54,10 @@ def test_same_identity_remote_desktop_auto_accepts_on_the_other_device_only():
     assert "const _CALL_DEVICE_ID=" in APP
     assert "Object.assign({},obj,{deviceId:_CALL_DEVICE_ID})" in APP
     assert "msg.deviceId===_CALL_DEVICE_ID)return" in APP
-    assert "if(remoteDesktopInvite&&from===ME.pubkey){_acceptCall().catch(()=>{});return;}" in APP
+    assert "if(remoteDesktopInvite&&from===S.ME.pubkey){_acceptCall().catch(()=>{});return;}" in APP
     # Consent is still required before the self-device auto-answer branch can be reached.
     assert APP.index("if(remoteDesktopInvite&&!_remoteDesktopArmed)return") < APP.index(
-        "if(remoteDesktopInvite&&from===ME.pubkey)")
+        "if(remoteDesktopInvite&&from===S.ME.pubkey)")
 
 
 def test_control_is_revocable_and_dies_with_the_call():

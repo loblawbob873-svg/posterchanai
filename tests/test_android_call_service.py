@@ -106,7 +106,15 @@ def test_hanging_up_from_the_notification_goes_back_to_javascript():
 def test_a_group_call_hangs_up_as_a_group_call():
     """`_hangup` on a room would send `bye` to a peer that is not there and leave the mesh up."""
     i = APPJS.index("a.action!=='hangup'")
-    assert "_roomLeave()" in APPJS[i:i + 200]
+    near = APPJS[i:i + 200]
+    if "_roomLeave()" not in near:
+        # app.js cannot see `_room` since the call code moved to calls.js, so the listener hands the
+        # decision to one function there — follow it, and hold THAT to the same rule.
+        assert "_hangupActiveCall()" in near, "the notification's Hang up no longer ends the call"
+        j = APPJS.index("function _hangupActiveCall(){")
+        near = APPJS[j:j + 200]
+        assert "if(_room)" in near
+    assert "_roomLeave()" in near
 
 
 def test_the_service_is_started_from_the_repaint_path_not_a_hand_picked_moment():

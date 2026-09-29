@@ -11,6 +11,7 @@ from contextlib import contextmanager
 import pytest
 from websockets.sync.client import connect
 from tests.client.test_desktop_offline_full_app import wait_browser_port, wait_browser_target
+from tests.client_source import app_source_with
 
 
 @contextmanager
@@ -60,7 +61,7 @@ ROOT = Path(__file__).resolve().parents[1]
 
 @pytest.mark.parametrize('remote_width,remote_height,dpr', [(3840,2160,1),(1920,1080,2),(1280,1024,1),(1080,1920,2)])
 def test_viewer_capture_scales_motion_and_releases_input(tmp_path,remote_width,remote_height,dpr):
-    app = (ROOT / 'static/js/client/app.js').read_text()
+    app = app_source_with('calls.js')
     code = app[app.index('  function _rdVideoPoint('):app.index('  // getUserMedia failures')]
     css = (ROOT / 'static/css/client.css').read_text()
     with browser_page(tmp_path) as page:
@@ -122,7 +123,7 @@ def test_viewer_capture_scales_motion_and_releases_input(tmp_path,remote_width,r
 
 
 def test_phone_touch_requires_grant_and_releases_on_cancel(tmp_path):
-    app = (ROOT / 'static/js/client/app.js').read_text()
+    app = app_source_with('calls.js')
     code = app[app.index('  function _rdVideoPoint('):app.index('  // getUserMedia failures')]
     with browser_page(tmp_path) as page:
         page.resize(390, 844)

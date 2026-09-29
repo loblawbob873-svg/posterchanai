@@ -27,6 +27,12 @@ import pytest
 from app.services.nostr_push_service import _rings
 
 _APP_JS = Path(__file__).resolve().parent.parent / "static" / "js" / "client" / "app.js"
+# The call code moved to calls.js; scan it together with app.js, i.e. the text app.js used to hold.
+_CALLS_JS = _APP_JS.with_name("calls.js")
+
+
+def _client_js():
+    return _CALLS_JS.read_text(encoding="utf-8") + "\n" + _APP_JS.read_text(encoding="utf-8")
 
 # Only these two ring. Everything else the call code sends must not — and the list of "everything
 # else" is DISCOVERED from app.js rather than typed here, because a hand-kept copy rots: this started
@@ -36,7 +42,7 @@ _RINGS = {"invite", "ginvite"}
 
 def _frames_sent():
     """Every `t:'...'` value app.js puts on the wire, straight from the source."""
-    src = _APP_JS.read_text(encoding="utf-8")
+    src = _client_js()
     found = {m for m in re.findall(r"t:\s*'([a-z]+)'", src) if m}
     assert _RINGS <= found, f"the ringing frames vanished from app.js: {_RINGS - found}"
     return found
@@ -44,7 +50,7 @@ def _frames_sent():
 
 def _client_tags(frames):
     """Run the shipped _callTags over `frames`, returning {frame: tags}."""
-    src = _APP_JS.read_text(encoding="utf-8")
+    src = _client_js()
     m = re.search(
         r"const _RING_FRAMES = new Set\(.*?\n  function _callTags\(peerHex, obj\)\{\n.*?\n  \}",
         src, re.S)

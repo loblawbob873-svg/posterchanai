@@ -9,7 +9,8 @@ ROOT = Path(__file__).resolve().parents[1]
 
 
 @pytest.mark.skipif(shutil.which("node") is None, reason="node is required for the desktop build")
-@pytest.mark.parametrize("script", ["static/js/client/app.js", "static/js/client/os.js"])
+@pytest.mark.parametrize("script", ["static/js/client/app.js", "static/js/client/calls.js",
+                                    "static/js/client/os.js"])
 def test_primary_client_controllers_parse(script):
     result = subprocess.run(
         ["node", "--check", str(ROOT / script)],

@@ -3,10 +3,11 @@ from pathlib import Path
 import subprocess
 
 import pytest
+from tests.client_source import app_source_with, state_shim
 
 
 ROOT = Path(__file__).resolve().parents[1]
-APP = (ROOT / 'static/js/client/app.js').read_text()
+APP = app_source_with('calls.js')   # the call code lives in calls.js now
 START = APP[APP.index('  async function startCall('):APP.index('  const _remoteDesktopResolved=')]
 
 
@@ -50,7 +51,7 @@ function replaceCall(){
   const replacement={id:'call-replacement',peer:'different-peer',local:{marker:'new-media'},pc:{marker:'new-pc'},state:'calling'};
   _call=replacement;return replacement;
 }
-''' + START + '''
+''' + state_shim(START) + START + '''
 (async()=>{
   const pending=startCall('viewer',{remoteDesktop:true});
   const original=_call;

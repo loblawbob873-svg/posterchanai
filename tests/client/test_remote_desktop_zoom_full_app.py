@@ -18,6 +18,7 @@ import asyncio
 
 import pytest
 from tests.client import test_desktop_offline_full_app as desktop
+from tests.client_source import app_source_with
 
 
 @pytest.fixture(scope='module', autouse=True)
@@ -343,7 +344,7 @@ def test_the_host_is_only_asked_for_the_resolution_this_window_can_show():
 def test_the_controls_and_the_keys_are_wired_and_belong_to_a_desktop_session_only():
     import pathlib
     root = pathlib.Path(__file__).resolve().parents[2]
-    app = (root / "static/js/client/app.js").read_text(encoding="utf-8")
+    app = app_source_with("calls.js")   # the call code lives in calls.js now
     # Ctrl/Cmd+wheel must be taken before the branch that forwards a scroll to the other machine.
     zoom_at = app.index("if(e.ctrlKey||e.metaKey){")
     remote_at = app.index("listen(video,'wheel',e=>{if(!active()||e.ctrlKey||e.metaKey)return;")

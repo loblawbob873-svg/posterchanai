@@ -4,9 +4,10 @@ import json
 import subprocess
 import pytest
 from tests.test_remote_desktop_alignment_runtime import browser_page
+from tests.client_source import app_source_with, state_shim
 
 ROOT=Path(__file__).resolve().parents[1]
-APP=(ROOT/'static/js/client/app.js').read_text()
+APP=app_source_with('calls.js')   # the call code lives in calls.js now
 
 
 def test_capture_requests_system_sound_and_never_viewer_microphone(tmp_path):
@@ -66,7 +67,7 @@ for(const n of ['_callWake','_callService','_ringtone','_dragSelfView','_placeSe
 window._rdEnsureHost=()=>document.body;window._callSvcName=()=> 'Laptop';
 window._rdSwitchScreen=()=>{};window.playCalls=[];window.blockAudio=true;
 HTMLMediaElement.prototype.play=function(){playCalls.push(this.muted);return blockAudio&&!this.muted?Promise.reject(new DOMException('autoplay','NotAllowedError')):Promise.resolve()};''')
-        page.evaluate(code+'\n_callUI();')
+        page.evaluate(state_shim(code)+code+'\n_callUI();')
         page.evaluate('new Promise(r=>setTimeout(r,20))')
         assert page.evaluate("document.querySelector('#call-sound').parentElement.textContent.includes('Enable sound')")
         assert page.evaluate("document.querySelector('#call-remote').muted")
@@ -106,7 +107,7 @@ window._callSend=async(peer,msg)=>{signals.push(msg.t);await receiver.setRemoteD
 await receiver.setLocalDescription(await receiver.createAnswer());await sender.setRemoteDescription(receiver.localDescription);for(const c of viewerIce)await sender.addIceCandidate(c);};''')
         if not initial_audio:
             page.evaluate('source.removeTrack(source.getAudioTracks()[0])')
-        page.evaluate(capture+start+switch+renegotiate+'\nctx.resume().then(()=>startCall("viewer",{remoteDesktop:true}));')
+        page.evaluate(state_shim(capture+start+switch+renegotiate)+capture+start+switch+renegotiate+'\nctx.resume().then(()=>startCall("viewer",{remoteDesktop:true}));')
         if not initial_audio:
             page.evaluate('''window.firstRemote=lastRemote;window.nextCapture=new MediaStream([source.getVideoTracks()[0].clone(),destination.stream.getAudioTracks()[0]]);
 navigator.mediaDevices.getDisplayMedia=async()=>nextCapture;_rdSwitchScreen();''')

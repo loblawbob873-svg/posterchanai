@@ -2,9 +2,10 @@
 from pathlib import Path
 import subprocess
 import pytest
+from tests.client_source import app_source_with
 
 ROOT = Path(__file__).resolve().parents[1]
-APP = (ROOT / 'static/js/client/app.js').read_text()
+APP = app_source_with('calls.js')   # the call code lives in calls.js now
 HELPERS = APP[APP.index('  async function _rdConfigureNative('):APP.index('  function _rdVideoPoint(')]
 
 @pytest.mark.parametrize('scenario', ['pending', 'cancel', 'replaced', 'ended', 'switch', 'switch_cancel', 'replace_failure', 'switch_ended', 'switch_picker_cancel', 'view_only'])

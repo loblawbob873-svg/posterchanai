@@ -47,6 +47,17 @@ def client_source() -> str:
     return "\n".join(parts)
 
 
+def app_source_with(*names: str) -> str:
+    """The named split modules, then app.js — the text app.js held before THOSE modules moved out.
+
+    For a test that scanned app.js as a whole (every frame it sends, every function it defines)
+    and must keep scanning exactly that code, no more: client_source() would also pull in every
+    other module's unrelated text. Modules first, for the reason client_source() gives."""
+    parts = [module_path(n).read_text(encoding="utf-8") for n in names]
+    parts.append(APP.read_text(encoding="utf-8"))
+    return "\n".join(parts)
+
+
 def state_shim(code: str, state: str = "S") -> str:
     """`const S = {…};` for a node harness that runs a function lifted out of a split module.
 

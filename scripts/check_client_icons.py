@@ -33,6 +33,7 @@ import sys
 ROOT = pathlib.Path(__file__).resolve().parent.parent
 SPRITE = ROOT / "static/js/client/sprite.js"
 SOURCES = [ROOT / "static/js/client/app.js",
+           ROOT / "static/js/client/calls.js",   # the call UI, split out of app.js
            ROOT / "static/js/client/meme.js",
            ROOT / "templates/client.html"]
 
