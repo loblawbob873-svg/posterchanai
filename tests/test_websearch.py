@@ -698,10 +698,24 @@ class ProxyFallbackTests(unittest.TestCase):
     def test_fallback_listener_connects_direct_when_every_circuit_is_down(self):
         p = self._proxy(True)
         sentinel = ("reader", "writer")
-        with mock.patch("asyncio.open_connection", new=mock.AsyncMock(return_value=sentinel)) as oc:
+        loop_dns = mock.AsyncMock(return_value=[(2, 1, 6, "", ("93.184.216.34", 443))])
+        with mock.patch("asyncio.open_connection", new=mock.AsyncMock(return_value=sentinel)) as oc, \
+             mock.patch("asyncio.base_events.BaseEventLoop.getaddrinfo", new=loop_dns):
             got = run(p._socks_connect("example.com", 443))
         self.assertEqual(got, sentinel)
-        oc.assert_awaited_once_with("example.com", 443)
+        # The direct leg dials the address it CHECKED (http_proxy_service._public_address).
+        oc.assert_awaited_once_with("93.184.216.34", 443)
+
+    def test_the_direct_leg_never_dials_a_private_address(self):
+        """ActivityPub sends URLs OTHER servers chose through this listener; its direct leg must not
+        become a request into this node's own network."""
+        p = self._proxy(True)
+        loop_dns = mock.AsyncMock(return_value=[(2, 1, 6, "", ("192.168.0.85", 443))])
+        with mock.patch("asyncio.open_connection", new=mock.AsyncMock()) as oc, \
+             mock.patch("asyncio.base_events.BaseEventLoop.getaddrinfo", new=loop_dns):
+            with self.assertRaises(Exception):
+                run(p._socks_connect("nas.example", 443))
+        oc.assert_not_awaited()
 
 
 class BotEnvTests(unittest.TestCase):

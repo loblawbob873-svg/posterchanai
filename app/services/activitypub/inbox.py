@@ -695,7 +695,90 @@ async def store_note(note: dict, author: str, *, need_gate: bool, depth: int = 0
         return f"relay refused: {msg}"
     await asyncio.to_thread(_record, uri, ev["id"], ev["pubkey"], puppet.get("acct", ""))
     await _reach_nostr_users(ev, puppet)
+    if reply_to and not parent_id:
+        await _queue_orphan(note, author, uri, reply_to)
     return "stored"
+
+
+ORPHAN_FIRST_RETRY = 600            # then x3 each time: 10 min, 30 min, 1.5 h, 4.5 h, 13.5 h, capped at a day
+ORPHAN_GIVE_UP = 7 * 86400          # a parent still unreachable after a week is not coming back
+ORPHAN_NOTE_MAX = 60000             # bytes of the note kept for the retry
+
+
+async def _queue_orphan(note: dict, author: str, uri: str, reply_to: str) -> None:
+    """Remember a reply stored without its parent, so relink_orphans can try the parent again."""
+    import json
+    try:
+        if len(json.dumps(note)) > ORPHAN_NOTE_MAX:
+            return
+        now = int(time.time())
+        await state.save_orphan(uri, {"uri": uri, "reply_to": reply_to, "author": author, "note": note,
+                                      "tries": 0, "first": now, "next": now + ORPHAN_FIRST_RETRY})
+    except Exception as e:           # the reply is stored either way; the retry is best effort
+        logger.info("[activitypub] orphan reply from %s not queued: %s", remote.host_of(uri), type(e).__name__)
+
+
+async def relink_orphans(limit: int = 20, now: int | None = None) -> dict:
+    """Try the parents of stored-but-orphaned replies again; re-thread every reply whose parent
+    arrives. The reply is REPLACED the way an edit is (`_edit`): the threaded copy is published and
+    recorded first, and only then is the orphaned copy deleted — a failure keeps the old one."""
+    from app.services.fedi_bridge_identity import delete_note
+    now = int(now if now is not None else time.time())
+    done = {"relinked": 0, "waiting": 0, "given_up": 0}
+    try:
+        queue = await state.orphans()
+    except Exception as e:           # "could not read the queue" is never "the queue is empty"
+        logger.info("[activitypub] orphan queue unreadable: %s", type(e).__name__)
+        return done
+    due = sorted((o for o in queue.values() if int(o.get("next") or 0) <= now), key=lambda o: o.get("next") or 0)
+    for o in due[:limit]:
+        uri, reply_to, author, note = o["uri"], o["reply_to"], o.get("author") or "", o["note"]
+        row = await asyncio.to_thread(_delivered, uri)
+        if not row:                  # the reply itself was deleted or pruned since
+            await state.drop_orphan(uri)
+            continue
+        parent_id, _pk = await _target(reply_to)
+        if not parent_id:
+            try:
+                pdoc = await asyncio.wait_for(remote.fetch_object(reply_to), timeout=20)
+                pauthor = convert.id_of(pdoc.get("attributedTo"))
+                if pdoc.get("type") in ("Note", "Article", "Question", "Page") and pauthor \
+                        and remote.host_of(pauthor) == remote.host_of(reply_to):
+                    await store_note(pdoc, pauthor, need_gate=False, depth=1)
+                    parent_id, _pk = await _target(reply_to)
+            except Exception as e:
+                logger.info("[activitypub] parent of orphan %s still not fetched: %s", remote.host_of(uri), type(e).__name__)
+        if not parent_id:
+            tries = int(o.get("tries") or 0) + 1
+            if now - int(o.get("first") or now) >= ORPHAN_GIVE_UP:
+                await state.drop_orphan(uri)
+                done["given_up"] += 1
+            else:
+                await state.save_orphan(uri, {**o, "tries": tries, "next": now + min(86400, ORPHAN_FIRST_RETRY * 3 ** tries)})
+                done["waiting"] += 1
+            continue
+        old = row.nostr_event_id
+        stored = await _event(old)
+        if stored and any(t[0] == "e" for t in stored.get("tags") or []):
+            await state.drop_orphan(uri)            # already threaded (e.g. re-delivered meanwhile)
+            continue
+        old_acct = row.author_acct or ""
+        await asyncio.to_thread(_forget, uri)
+        result = "not stored"
+        try:
+            result = await store_note(note, author, need_gate=False)
+        finally:
+            if result != "stored":
+                await asyncio.to_thread(_record, uri, old, row.nostr_pubkey or "", old_acct)
+        if result != "stored":
+            logger.info("[activitypub] orphan %s not re-threaded: %s", remote.host_of(uri), result)
+            continue
+        await delete_note(_port(), author, old, broadcast=config.broadcast())
+        await state.drop_orphan(uri)
+        done["relinked"] += 1
+    if any(done.values()):
+        logger.info("[activitypub] orphan replies: %(relinked)d re-threaded, %(waiting)d waiting, %(given_up)d given up", done)
+    return done
 
 
 MAX_MENTIONS = 20

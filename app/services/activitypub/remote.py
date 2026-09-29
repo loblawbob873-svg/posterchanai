@@ -71,11 +71,89 @@ class _PinnedTransport(httpx.AsyncHTTPTransport):
         return await super().handle_async_request(request)
 
 
+# Connection-phase failures only: nothing was sent, so trying again directly cannot double-deliver.
+_PROXY_FALLBACK_ERRORS = (httpx.ConnectError, httpx.ConnectTimeout, httpx.ProxyError, httpx.PoolTimeout)
+
+
+def _proxy_url() -> str:
+    """The node's DIRECT-FALLBACK proxy listener (Tor1 → Tor2 → direct, what Nostr traffic and the
+    bundled search already use), when federation is routed through it (`activitypub_via_proxy`, ON
+    unless turned off). Never the main Tor-only :8118 — torrents share that one."""
+    if not config.via_proxy():
+        return ""
+    try:
+        from app.services import settings_store
+        port = settings_store.get_int("proxy_fallback_port", 8119)
+    except Exception:
+        port = 8119
+    return f"http://127.0.0.1:{port}" if 0 < int(port) < 65536 else ""
+
+
+class _ProxyFirstTransport(httpx.AsyncBaseTransport):
+    """Federation leaves through the node's proxy — Tor1, then Tor2, then direct — the way Nostr does,
+    so a server that refuses one exit is still reached and our address is not handed to every
+    instance we talk to. The rules of `_PinnedTransport` still hold: a name that resolves to a private
+    address is refused BEFORE the proxy is asked (the proxy's own direct leg re-checks, pinned, so a
+    rebinding name cannot slip through it either); a LAN neighbour (`activitypub_lan_hosts`) goes
+    direct, because Tor cannot reach a LAN; and when the proxy is not running on this node the request
+    is made directly, exactly as before."""
+
+    def __init__(self, proxy_url: str):
+        self._direct = _PinnedTransport()
+        self._proxy = httpx.AsyncHTTPTransport(proxy=proxy_url, retries=0) if proxy_url else None
+
+    async def handle_async_request(self, request):
+        host = request.url.host
+        if self._proxy is None or config.lan_trusted(host):
+            return await self._direct.handle_async_request(request)
+        await _judge(host, request.url.port or 443)
+        # Tor builds a circuit before the tunnel opens, and the proxy tries a second daemon before
+        # going direct: the connect phase needs more than the 6s a direct dial gets.
+        t = dict(request.extensions.get("timeout") or {})
+        t["connect"] = max(float(t.get("connect") or 0), 25.0)
+        t["pool"] = max(float(t.get("pool") or 0), 25.0)
+        request.extensions = {**request.extensions, "timeout": t}
+        try:
+            return await self._proxy.handle_async_request(request)
+        except _PROXY_FALLBACK_ERRORS as e:
+            logger.info("[activitypub] %s via the proxy failed (%s); connecting directly", host, type(e).__name__)
+            return await self._direct.handle_async_request(request)
+
+    async def aclose(self):
+        try:
+            if self._proxy is not None:
+                await self._proxy.aclose()
+        finally:
+            await self._direct.aclose()
+
+
+async def _judge(host: str, port: int) -> None:
+    """Refuse a name that resolves to a private address (the check `_PinnedTransport` makes)."""
+    try:
+        infos = await asyncio.to_thread(socket.getaddrinfo, host, port, type=socket.SOCK_STREAM)
+    except OSError as e:
+        raise httpx.ConnectError(f"cannot resolve {host}") from e
+    ok = False
+    for info in infos:
+        try:
+            ip = ipaddress.ip_address(info[4][0])
+        except ValueError:
+            continue
+        if ip.is_private or ip.is_loopback or ip.is_link_local or ip.is_reserved or ip.is_multicast \
+                or ip.is_unspecified or not ip.is_global:
+            raise httpx.ConnectError(f"{host} resolves to a private address")
+        ok = True
+    if not ok:
+        raise httpx.ConnectError(f"cannot resolve {host}")
+
+
 def client(**kw) -> httpx.AsyncClient:
-    """The one HTTP client for talking to other servers: pinned to checked addresses, no redirects
-    followed on its own, and never the process's proxy settings."""
+    """The one HTTP client for talking to other servers: through the node's proxy when it runs
+    (Tor1 → Tor2 → direct), pinned to checked addresses, no redirects followed on its own, and never
+    the process's own proxy environment."""
     kw.setdefault("timeout", _TIMEOUT)
-    return httpx.AsyncClient(transport=_PinnedTransport(), follow_redirects=False, trust_env=False, **kw)
+    return httpx.AsyncClient(transport=_ProxyFirstTransport(_proxy_url()), follow_redirects=False,
+                             trust_env=False, **kw)
 
 
 def host_of(url: str) -> str:

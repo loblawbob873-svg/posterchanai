@@ -29,6 +29,11 @@ def enabled() -> bool:
     return _on_unless_off("activitypub_enabled")
 
 
+def via_proxy() -> bool:
+    """Federation goes out through the node's proxy (Tor1 → Tor2 → direct), like Nostr traffic."""
+    return _on_unless_off("activitypub_via_proxy")
+
+
 def everyone() -> bool:
     """Every Nostr user this relay knows is reachable as `npub1…@<domain>`, not only local users."""
     return _on_unless_off("activitypub_everyone")

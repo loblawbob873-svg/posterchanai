@@ -1779,6 +1779,13 @@ def test_a_connection_goes_to_the_address_that_was_checked(world, monkeypatch):
     async def go(url):
         async with remote.client() as c:
             return await c.get(url)
+    # Through the proxy (the default): a private name is refused before the proxy is asked, and the
+    # proxy's own direct leg pins what it checks (test_activitypub_orphans_and_proxy).
+    with pytest.raises(httpx.ConnectError, match="private"):
+        run(go("https://rebind.example/x"))
+    # Direct (the proxy switched off): the connection goes to the checked address.
+    world["settings"]["activitypub_via_proxy"] = "false"
+    seen.clear()
     with pytest.raises(httpx.ConnectError, match="private"):
         run(go("https://rebind.example/x"))
     assert run(go("https://fine.example/x")).status_code == 200

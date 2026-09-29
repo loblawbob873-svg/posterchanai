@@ -343,7 +343,29 @@ def ensure_profile():
     picture = (os.getenv("NOSTR_PROFILE_PICTURE", "") or "").strip()
     if not (name or nip05 or picture):
         return
-    meta = {"bot": True}
+    # MERGE WITH WHAT THE PROFILE ALREADY SAYS, NEVER REPLACE IT. This used to publish a profile
+    # built from these three variables alone, so every restart erased whatever else the account
+    # carried — a NIP-05 set in the profile editor, the about, the banner, the lightning address.
+    # A profile that could not be READ is not an empty one: nothing is published until one answers.
+    current = None
+    for attempt in range(8):
+        try:
+            got = _run(_svc.relay.query(_RELAYS, [{"authors": [_PUBKEY], "kinds": [0], "limit": 1}]))
+            if got is not None:
+                current = {}
+                if got:
+                    newest = max(got, key=lambda e: e.get("created_at", 0))
+                    parsed = _json.loads(newest.get("content") or "{}")
+                    current = parsed if isinstance(parsed, dict) else {}
+                break
+        except Exception as e:
+            print(f"[nostr] profile read failed (try {attempt + 1}): {e}", flush=True)
+        time.sleep(min(30, 2 ** attempt))
+    if current is None:
+        print("[nostr] profile NOT published: the existing profile could not be read", flush=True)
+        return
+    meta = dict(current)
+    meta["bot"] = True
     if name:
         meta["name"] = name
         meta["display_name"] = name
@@ -351,6 +373,9 @@ def ensure_profile():
         meta["nip05"] = nip05
     if picture:
         meta["picture"] = picture
+    if meta == current:
+        print(f"[nostr] profile already current ({name or nip05})", flush=True)
+        return
     for attempt in range(8):
         try:
             ev = _ev.build_event(_SECKEY, 0, _json.dumps(meta, separators=(",", ":")), tags=[])

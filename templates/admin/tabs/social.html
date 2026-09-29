@@ -31,6 +31,12 @@
             <small>Not only local users: anyone on Nostr this relay holds a profile for gets a readable handle (<code>@dana_4b56@<span class="ap-dom">your domain</span></code>). Fediverse people can follow, mention and reply to them — delivered to their own relays — and their replies, reactions and boosts of fediverse posts go out.</small>
         </div>
         <div class="form-group">
+            <label for="activitypub_via_proxy">
+                <input type="checkbox" id="activitypub_via_proxy" name="activitypub_via_proxy"> Federate through this node's proxy (Tor, then direct)
+            </label>
+            <small>Fetches and deliveries to other servers go out through Tor (both circuits), and only connect directly when neither answers — the same path Nostr traffic takes. Servers listed under "Fediverse servers on this network" always go direct.</small>
+        </div>
+        <div class="form-group">
             <label for="activitypub_dms">
                 <input type="checkbox" id="activitypub_dms" name="activitypub_dms"> Direct messages between the fediverse and Nostr
             </label>

@@ -316,6 +316,45 @@ def _all_nostr_bot_pubkeys() -> str:
     return res
 
 
+_PROFILE_OWNER_CACHE = {"ts": 0.0, "map": {}}
+
+
+def _profile_owner(bot_dict: dict) -> bool:
+    """Whether THIS bot publishes its key's kind-0. Several bots may share one key ("Nostr" answers
+    mentions, "lounge" sits in a Concord room, "nostr-image" posts pictures — one identity), and each
+    used to publish its OWN profile on every start: the last one up won. "lounge" has no NIP-05 in
+    its config, so every deploy replaced posterchan@poster.place with nothing — "keeps losing its
+    nip05". One owner per key: among the ENABLED bots holding it, the one whose config names a NIP-05,
+    then the one that names anything, then the first by name. The others publish no profile at all."""
+    nsec = (bot_dict.get("nostr_nsec") or "").strip()
+    if not nsec:
+        return True
+    now = time.time()
+    if now - _PROFILE_OWNER_CACHE["ts"] > 30:
+        owners = {}
+        try:
+            db = SessionLocal()
+            try:
+                rows = [bot_to_dict(b) for b in db.query(Bot).all() if b.enabled]
+            finally:
+                db.close()
+            by_key = {}
+            for d in rows:
+                k = (d.get("nostr_nsec") or "").strip()
+                if k:
+                    by_key.setdefault(k, []).append(d)
+            for k, ds in by_key.items():
+                ds.sort(key=lambda d: (not (d.get("nostr_profile_nip05") or "").strip(),
+                                       not any((d.get(f) or "").strip() for f in ("nostr_profile_name", "nostr_profile_picture")),
+                                       d.get("name") or ""))
+                owners[k] = ds[0].get("name")
+        except Exception:
+            owners = {}
+        _PROFILE_OWNER_CACHE.update(ts=now, map=owners)
+    owner = _PROFILE_OWNER_CACHE["map"].get(nsec)
+    return owner is None or owner == bot_dict.get("name")
+
+
 def _build_env(bot_dict: dict, base_env: dict) -> dict:
     """Port of botctl.build_env, reading from a merged bot dict instead of bots_config."""
     env = dict(base_env)
@@ -381,9 +420,10 @@ def _build_env(bot_dict: dict, base_env: dict) -> dict:
             setif("access_token", "PLEROMA_ACCESS_TOKEN")
         elif bot_dict.get("platform") == "nostr":
             setif("nostr_nsec", "NOSTR_NSEC")
-            setif("nostr_profile_name", "NOSTR_PROFILE_NAME")
-            setif("nostr_profile_nip05", "NOSTR_PROFILE_NIP05", _nip05_full)
-            setif("nostr_profile_picture", "NOSTR_PROFILE_PICTURE")
+            if _profile_owner(bot_dict):         # one profile per key -- see _profile_owner
+                setif("nostr_profile_name", "NOSTR_PROFILE_NAME")
+                setif("nostr_profile_nip05", "NOSTR_PROFILE_NIP05", _nip05_full)
+                setif("nostr_profile_picture", "NOSTR_PROFILE_PICTURE")
             _set_internal_blossom(env)
         setif("prompt", "IMAGE_POSTER_PROMPT")
         setif("text", "IMAGE_POSTER_TEXT")
@@ -416,9 +456,10 @@ def _build_env(bot_dict: dict, base_env: dict) -> dict:
             _peers = _all_nostr_bot_pubkeys()
             if _peers:
                 env["BOT_NOSTR_PUBKEYS"] = _peers
-            setif("nostr_profile_name", "NOSTR_PROFILE_NAME")
-            setif("nostr_profile_nip05", "NOSTR_PROFILE_NIP05", _nip05_full)
-            setif("nostr_profile_picture", "NOSTR_PROFILE_PICTURE")
+            if _profile_owner(bot_dict):         # one profile per key -- see _profile_owner
+                setif("nostr_profile_name", "NOSTR_PROFILE_NAME")
+                setif("nostr_profile_nip05", "NOSTR_PROFILE_NIP05", _nip05_full)
+                setif("nostr_profile_picture", "NOSTR_PROFILE_PICTURE")
             _set_internal_blossom(env)
             # Mention-poll cadence. With our self-hosted relay (point relays at ws://127.0.0.1:3052
             # — no CF round-trip, no public rate limit) the bot can poll fast for snappy replies.

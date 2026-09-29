@@ -882,8 +882,21 @@ window.PCCardsFactory = function(dep){
   // or a popular post that many people reply to, so its card repeated dozens of times ("duplicate replies").
   // The reply card itself opens the full thread on tap. Name the parent author from the cached parent, else
   // the reply's last p-tag; a not-yet-cached parent is fetched so a later redraw can name it.
+  /* A FEDIVERSE REPLY WHOSE PARENT NOTHING HERE HOLDS carries the parent only as an `r` URL (the
+   * inbox could not fetch it — the parent's server was down), and read as nothing it looked like a
+   * post out of nowhere: "i don't see the conversation". Say where the thread is and link to it
+   * until the server re-threads it (activitypub/inbox.relink_orphans). Only on an ActivityPub-origin
+   * event: an `r` on an ordinary note is just a link. */
+  function fediParentLink(ev){
+    const tags=ev.tags||[];
+    if(!tags.some(t=>t[0]==='proxy'&&t[2]==='activitypub'))return '';
+    const r=tags.find(t=>t[0]==='r'&&/^https:\/\/[^\s"'<>]+$/i.test(String(t[1]||'')));
+    return r?r[1]:'';
+  }
   function replyContextHtml(ev){
-    const pid=replyParentId(ev); if(!pid) return '';
+    const pid=replyParentId(ev);
+    if(!pid){ const url=fediParentLink(ev); if(!url) return ''; let host=''; try{host=new URL(url).host;}catch(_){ return ''; }
+      return `<div class="reply-ctx reply-ctx-remote"><a class="reply-ctx-lbl" href="${enc(url)}" target="_blank" rel="noopener noreferrer" title="The post this replies to is on ${enc(host)}, which has not answered yet">↩ reply to a post on ${enc(host)}</a></div>`; }
     const o=Store.get(pid);
     const parentTag=replyParentTag(ev),pk=(o&&o.pubkey)||(ev.kind===1111&&parentTag&&parentTag[3])||((ev.tags.filter(t=>t[0]==='p'&&t[1]).slice(-1)[0]||[])[1]);
     if(!o) needEvent(pid);

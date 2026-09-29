@@ -1279,6 +1279,16 @@ def start_activitypub_delivery() -> None:
     _scheduler.add_job(_polls, "interval", seconds=300, id="activitypub_poll_tallies",
                        max_instances=1, coalesce=True)
 
+    async def _orphans():
+        try:
+            if config.enabled():
+                from app.services.activitypub import inbox
+                await asyncio.wait_for(inbox.relink_orphans(), timeout=540)
+        except Exception as e:
+            logger.info("[activitypub] orphan replies failed: %s: %s", type(e).__name__, e)
+    _scheduler.add_job(_orphans, "interval", seconds=600, id="activitypub_orphan_replies",
+                       max_instances=1, coalesce=True)
+
     def _prune():
         from app.services.activitypub import ledger
         n = ledger.prune()

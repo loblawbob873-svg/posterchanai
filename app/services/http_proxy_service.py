@@ -26,6 +26,30 @@ def _socks_target(spec, host):
 logger = logging.getLogger(__name__)
 
 
+async def _public_address(host: str, port: int) -> str:
+    """The DIRECT leg's destination: resolved once, every answer judged, and the connection made to
+    the address that was judged. A Tor exit cannot reach a private address, but the direct fallback
+    can — and ActivityPub sends through this listener URLs that OTHER servers chose (a keyId, an
+    inReplyTo), so an unchecked direct leg is a request from this node into its own network, and a
+    name that resolves public-then-private (DNS rebinding) would pass any check made before it."""
+    import ipaddress
+    import socket
+    loop = asyncio.get_running_loop()
+    try:
+        infos = await loop.getaddrinfo(host, port, type=socket.SOCK_STREAM)
+    except OSError as e:
+        raise Exception(f"cannot resolve {host}") from e
+    for info in infos:
+        try:
+            ip = ipaddress.ip_address(info[4][0])
+        except ValueError:
+            continue
+        if ip.is_global and not (ip.is_private or ip.is_loopback or ip.is_link_local or ip.is_reserved
+                                 or ip.is_multicast or ip.is_unspecified):
+            return str(ip)
+    raise Exception(f"{host} resolves to no public address; not connecting directly")
+
+
 class HttpToSocksProxy:
     """
     HTTP proxy server that forwards all traffic through a SOCKS5 proxy.
@@ -342,7 +366,7 @@ class HttpToSocksProxy:
         if self.allow_direct:
             logger.warning(f"[PROXY] {host}:{port} — all Tor backends failed ({', '.join(tried)}: {last_err}); "
                            f"connecting DIRECT (fallback listener)")
-            rw = await asyncio.open_connection(host, port)
+            rw = await asyncio.open_connection(await _public_address(host, port), port)
             self._record("direct", True)
             return rw
         raise Exception(f"all Tor backends failed ({', '.join(tried)}): {last_err}")

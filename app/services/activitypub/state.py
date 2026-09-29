@@ -435,6 +435,30 @@ async def load_retries() -> dict:
             if isinstance(v, dict) and not v.get("done") and v.get("inbox") and v.get("activity")}
 
 
+# ------------------------------------------------------------------------------- orphan replies
+
+# A reply whose parent could not be fetched when it arrived (the parent's server was down, slow, or
+# answered with something that is not a note) was stored with only an `r` link to the parent, and
+# NOTHING asked again: the reply stayed outside its thread for ever, even after the server came back.
+# Mastodon and Pleroma retry parent fetches; one document per orphan (keyed by its URI) holds the note
+# itself — the CHILD's server may be the next one to go down — plus the retry schedule.
+_ORPHAN_PREFIX = "pcai:ap:orphan:"
+
+
+async def save_orphan(uri: str, entry: dict) -> None:
+    await _put(_ORPHAN_PREFIX + hashlib.sha256(uri.encode()).hexdigest()[:32], entry)
+
+
+async def drop_orphan(uri: str) -> None:
+    await _put(_ORPHAN_PREFIX + hashlib.sha256(uri.encode()).hexdigest()[:32], {"done": True})
+
+
+async def orphans() -> dict:
+    docs = await nostr_store.list_docs(_port(), _ORPHAN_PREFIX, seckey=_seckey(), strict=True, limit=5000)
+    return {k[len(_ORPHAN_PREFIX):]: v for k, v in docs.items()
+            if isinstance(v, dict) and not v.get("done") and v.get("uri") and v.get("reply_to") and isinstance(v.get("note"), dict)}
+
+
 # ------------------------------------------------------------------------------- deletion backlog
 
 # A LARGE deletion (Settings → "Delete all my posts" is one kind-5 per hundred events, and each one is
