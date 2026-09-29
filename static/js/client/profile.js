@@ -314,7 +314,7 @@ window.PCProfileFactory = function(dep){
     const npub=NT().nip19.npubEncode(pk);
     feed.innerHTML=_PROFILE_TOP+`<div class="prof"><div class="banner">${p.banner?`<img src="${enc(p.banner)}" onerror="this.remove()">`:''}</div>
       <div class="phead"><img class="pav" src="${enc(p.picture||S.LOGO)}" onerror="this.src='${S.LOGO}'">
-        <div class="prof-actions"><button class="btn btn-ghost small" id="prof-pay">Pay</button>${mine?`<button class="btn btn-cyan small" id="edit-prof">Edit</button><button class="btn btn-ghost small" id="open-settings"><span class="lbl">⚙ Settings</span><span class="ic">⚙</span></button><button class="btn btn-ghost small prof-menu-btn" id="prof-menu" title="more"><svg class="ic b-ic" aria-hidden="true"><use href="#i-menu"></use></svg></button>`:`
+        <div class="prof-actions"><button class="btn btn-ghost small" id="prof-pay"><svg class="ic b-ic" aria-hidden="true"><use href="#i-coin"></use></svg>Pay</button>${mine?`<button class="btn btn-cyan small" id="edit-prof" title="Edit your profile"><svg class="ic b-ic" aria-hidden="true"><use href="#i-pen"></use></svg>Edit</button><button class="btn btn-ghost small" id="open-settings" title="Settings" aria-label="Settings"><svg class="ic b-ic" aria-hidden="true"><use href="#i-gear"></use></svg><span class="lbl">Settings</span></button><button class="btn btn-ghost small prof-menu-btn" id="prof-menu" title="more"><svg class="ic b-ic" aria-hidden="true"><use href="#i-menu"></use></svg></button>`:`
           <button class="btn btn-ghost small" id="call-prof" title="voice/video call"><svg class="ic b-ic" aria-hidden="true"><use href="#i-phone"></use></svg>Call</button>
           <button class="btn btn-ghost small" id="zap-prof"><svg class="ic b-ic" aria-hidden="true"><use href="#i-zap"></use></svg>Zap</button>
           ${isXmrAddr(xmrOf(p))?`<button class="btn btn-ghost small" id="xmrtip-prof" title="tip Monero (XMR)">ɱ Tip</button>`:''}
@@ -322,7 +322,7 @@ window.PCProfileFactory = function(dep){
           <button class="btn btn-ghost small prof-menu-btn" id="prof-menu" title="more"><svg class="ic b-ic" aria-hidden="true"><use href="#i-menu"></use></svg></button>`}</div></div>
       <div class="pbody"><h2>${emojiName(pk,p.name||p.display_name||'anon')}<span class="vchk" id="prof-vchk"></span></h2>
         ${niceNip05(p.nip05)?`<div class="muted small">${enc(niceNip05(p.nip05))}</div>`:''}
-        <div class="npubrow"><code>${enc(npub.slice(0,24))}…</code><button class="mini icon-btn" id="copy-npub" title="Copy npub"><svg viewBox="0 0 16 16" width="15" height="15" fill="currentColor"><path d="M0 0h6v6H0zM2 2v2h2V2zM10 0h6v6h-6zM12 2v2h2V2zM0 10h6v6H0zM2 12v2h2v-2zM9 9h2v2H9zM13 9h3v2h-3zM9 13h2v3H9zM12 12h4v4h-2v-2h-2z"/></svg></button></div>
+        <div class="npubrow"><code>${enc(npub.slice(0,24))}…</code><button class="mini icon-btn" id="copy-npub" title="Copy npub" aria-label="Copy npub"><svg viewBox="0 0 16 16" width="15" height="15" fill="currentColor" aria-hidden="true"><path d="M5 1h8a2 2 0 012 2v8h-2V3H5zM1 5a2 2 0 012-2h7a2 2 0 012 2v9a2 2 0 01-2 2H3a2 2 0 01-2-2zm2 0v9h7V5z"/></svg></button><button class="mini icon-btn" id="prof-qr" title="Show QR code" aria-label="Show QR code"><svg viewBox="0 0 16 16" width="15" height="15" fill="currentColor" aria-hidden="true"><path d="M0 0h6v6H0zM2 2v2h2V2zM10 0h6v6h-6zM12 2v2h2V2zM0 10h6v6H0zM2 12v2h2v-2zM9 9h2v2H9zM13 9h3v2h-3zM9 13h2v3H9zM12 12h4v4h-2v-2h-2z"/></svg></button></div>
         ${p.lud16?`<button class="ln-addr" id="prof-ln" title="send a zap"><svg class="ic b-ic" aria-hidden="true"><use href="#i-zap"></use></svg>${enc(p.lud16)}</button>`:''}
         ${isXmrAddr(xmrOf(p))?`<button class="ln-addr xmr" id="prof-xmr" title="tip Monero (XMR)">ɱ ${enc(xmrOf(p).slice(0,10))}…${enc(xmrOf(p).slice(-6))}</button>`:''}
         ${isBchAddr(bchOf(p))?`<button class="ln-addr bch" id="prof-bch" title="tip Bitcoin Cash (BCH)"><svg class="ic b-ic" aria-hidden="true"><use href="#i-coin"></use></svg>${enc(bchOf(p).slice(0,14))}…${enc(bchOf(p).slice(-6))}</button>`:''}
@@ -444,6 +444,21 @@ window.PCProfileFactory = function(dep){
      * missing, and it is the single most reported casualty of everything above it. */
     _bind('Copy npub', () => { const cn=$('#copy-npub');
                                if(cn) cn.onclick=()=> copyValue(npub, 'npub copied', 'Their npub:'); });
+    /* THE QR BUTTON SHOWS A QR. It drew a QR glyph and only ever copied the npub ("the qr button don't
+     * show any qr code, only copy the npub"). The code encodes `nostr:<npub>` — what Amethyst, Damus,
+     * Primal and our own scanner open as a profile — drawn by the client's own encoder (qr.js), so it
+     * works with no server and over Tor. Copy stays one tap away, under the code. */
+    _bind('Show QR', () => { const qb=$('#prof-qr');
+      if(qb) qb.onclick=()=>{
+        let svg=''; try{ svg=(window.PCQR && PCQR.svg) ? PCQR.svg('nostr:'+npub, { size:240 }) : ''; }catch(_){ svg=''; }
+        const who=enc(p.display_name||p.name||'this profile');
+        modal(`<h3>${who}</h3><div class="prof-qr-code">${svg||'<div class="empty">Could not draw the QR code.</div>'}</div>
+          <code class="prof-qr-npub">${enc(npub)}</code>
+          <div class="row"><button class="btn btn-neon" id="prof-qr-copy">Copy npub</button><button class="btn btn-ghost" id="prof-qr-close">Close</button></div>`, root=>{
+          const c=root.querySelector('#prof-qr-copy'); if(c) c.onclick=()=>copyValue(npub, 'npub copied', 'Their npub:');
+          const x=root.querySelector('#prof-qr-close'); if(x) x.onclick=()=>{ try{ closeModal(); }catch(_){ } };
+        });
+      }; });
     try{
     $$('.prof-tab',feed).forEach(t=> t.onclick=async()=>{ $$('.prof-tab',feed).forEach(x=>x.classList.toggle('active',x===t)); const tab=t.dataset.tab; _prof.tab=tab; fillList(tab); hydrate(feed);
       if(tab==='streams') _wireProfStreamClicks();

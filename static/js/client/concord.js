@@ -5,7 +5,7 @@
   // cached client.css for one navigation. Concord owns a versioned sheet and loads it itself too.
   if(!document.querySelector('link[data-concord-css]')){
     const l=document.createElement('link'); l.rel='stylesheet'; l.dataset.concordCss='1';
-    l.href='/static/css/concord.css?v=21'; (document.head||document.documentElement).appendChild(l);
+    l.href='/static/css/concord.css?v=22'; (document.head||document.documentElement).appendChild(l);
   }
   const PC=()=>window.__PC;
   const concordScriptUrl=document.currentScript&&document.currentScript.src;
@@ -250,6 +250,23 @@
   let backgroundRenderPending=false,backgroundFocusHost=null;
   let activeMentionState={choices:[],index:0,recipients:new Map()};
   const attachmentCache=new Map(),attachmentLoads=new Map();
+  /* AN IMAGE'S BOX IS KNOWN BEFORE ITS PIXELS ARE. Every repaint rebuilds a room's messages, and an
+   * encrypted image used to come back as a one-line "Decrypting…" placeholder and grow to its real
+   * height a moment later — even when it was already decrypted — so a room sitting at the bottom
+   * shrank and re-grew on every message: "if a user or myself send message, the scroll bar goes up"
+   * (measured: the rebuilt room came back 2,527 px short). The size comes from the imeta `dim` Vector
+   * writes, else from the first time the image loaded here; a decrypted image is drawn at once. */
+  const attachmentDims=new Map();
+  function attachmentKey(file){ return file.url+'\0'+file.hash; }
+  function attachmentSize(file){ const d=attachmentDims.get(attachmentKey(file)); return d||(file.w&&file.h?{w:file.w,h:file.h}:null); }
+  /* The reserved box, as the stylesheet will lay it out: at most 560 wide and 480 tall (concord.css
+   * caps both), the image's own shape. Carried as variables on a `cc-sized` wrapper because the
+   * stylesheet forces `width:auto !important` on the image itself. */
+  function attachmentBoxStyle(file){ const d=attachmentSize(file); if(!d)return '';
+    const w=Math.max(1,Math.round(Math.min(d.w,560,480*d.w/d.h)));
+    return ` style="--cc-w:${w}px;--cc-ar:${d.w}/${d.h}"`; }
+  function attachmentImageHtml(p,file,got){ const url=p.enc(got.url),label=p.enc(got.name||'attachment'),box=attachmentBoxStyle(file);
+    return `<button class="cc-attachment-open" type="button"${box?' data-cc-sized':''} aria-label="Open ${label}"${box}><img src="${url}" alt="${label}"></button>`; }
   const scrollStates=new Map();
   let liveTimer=null,liveBusy=false,metadataBusy=false,metadataCursor=0;
   let liveWarned='';   // the last live-sync failure reported — see refreshActiveChannel
@@ -955,7 +972,9 @@
       if(alg!=='aes-gcm'||!/^https:\/\//i.test(f.url||''))continue;
       if(!/^[0-9a-f]{64}$/i.test(f['decryption-key']||'')||!/^[0-9a-f]{24,32}$/i.test(f['decryption-nonce']||'')||!/^[0-9a-f]{64}$/i.test(f.ox||''))continue;
       const mime=/^[\w.+-]+\/[\w.+-]+$/.test(f.m||'')?f.m.toLowerCase():'application/octet-stream';
-      out.push({url:f.url,key:f['decryption-key'],nonce:f['decryption-nonce'],hash:f.ox.toLowerCase(),mime,name:String(f.name||'attachment').slice(0,120)});
+      const dm=/^(\d{1,5})x(\d{1,5})$/.exec(String(f.dim||''));
+      out.push({url:f.url,key:f['decryption-key'],nonce:f['decryption-nonce'],hash:f.ox.toLowerCase(),mime,name:String(f.name||'attachment').slice(0,120),
+                w:dm?+dm[1]:0,h:dm?+dm[2]:0});
     }
     return out;
   }
@@ -1065,7 +1084,9 @@
     const body=text?`<p>${paintMentions(escaped,viewerHandles(viewer,''))}</p>${p.linkCardHtml?p.linkCardHtml(text):''}`:'';
     const poll=pollHtml(p,m);
     const publicMedia=publicFiles.map(f=>{const url=p.enc(f.url),label=p.enc(f.name||'attachment');if(f.mime.startsWith('image/'))return `<div class="cc-plain-attachment"><img src="${url}" alt="${label}" loading="lazy"></div>`;if(f.mime.startsWith('video/'))return `<div class="cc-plain-attachment cc-attachment-media"><video src="${url}" controls playsinline preload="metadata" title="Double-click to expand"></video></div>`;if(f.mime.startsWith('audio/'))return `<div class="cc-plain-attachment"><audio src="${url}" controls preload="metadata"></audio></div>`;return `<div class="cc-plain-attachment"><a href="${url}" download="${label}">Download ${label}</a></div>`;}).join('');
-    const media=files.map((f,i)=>`<div class="cc-encrypted-attachment" data-cc-attachment="${p.enc(messageId(m))}" data-cc-attachment-index="${i}"><span>🔒 Decrypting ${p.enc(f.name||f.mime)}…</span></div>`).join('');
+    const media=files.map((f,i)=>{ const got=f.mime.startsWith('image/')?attachmentCache.get(attachmentKey(f)):null, d=f.mime.startsWith('image/')?attachmentSize(f):null;
+      return `<div class="cc-encrypted-attachment" data-cc-attachment="${p.enc(messageId(m))}" data-cc-attachment-index="${i}"${got?' data-cc-ready="1"':''}>${got?attachmentImageHtml(p,f,got)
+        :`<span class="cc-attachment-wait${d?' cc-sized':''}"${attachmentBoxStyle(f)}>🔒 Decrypting ${p.enc(f.name||f.mime)}…</span>`}</div>`; }).join('');
     /* Paint the canonical room-aware card with the message. A deferred generic link card could
      * otherwise win the render race and replace Armada's explicit webxdc-topic. */
     const miniCard=canPlayMini?PCWebxdc.cardHtml(mini):'';
@@ -1114,7 +1135,7 @@
     const byId=new Map((messages||[]).map(m=>[messageId(m),m]));
     for(const host of document.querySelectorAll('.cc-encrypted-attachment[data-cc-attachment]')){
       const m=byId.get(host.dataset.ccAttachment),file=m&&encryptedAttachments(m)[Number(host.dataset.ccAttachmentIndex)||0];if(!file)continue;
-      try{const got=await decryptAttachment(file);if(!host.isConnected)continue;const p=PC(),url=p.enc(got.url),label=p.enc(got.name||'attachment');if(got.mime.startsWith('image/')){host.innerHTML=`<button class="cc-attachment-open" type="button" aria-label="Open ${label}"><img src="${url}" alt="${label}" loading="lazy"></button>`;const open=host.querySelector('.cc-attachment-open');if(open)open.onclick=e=>{e.preventDefault();e.stopPropagation();attachmentLightbox(p,host,got.url,null);};}else if(got.mime.startsWith('video/')){host.innerHTML=`<div class="cc-attachment-media"><video src="${url}" controls playsinline preload="metadata" title="Double-click to expand"></video><button class="cc-attachment-expand" type="button" aria-label="Open ${label}">↗</button></div>`;const openVideo=e=>{e.preventDefault();e.stopPropagation();attachmentLightbox(p,host,got.url,'video');};const video=host.querySelector('video');if(video)video.ondblclick=openVideo;const open=host.querySelector('.cc-attachment-expand');if(open)open.onclick=openVideo;}else if(got.mime.startsWith('audio/'))host.innerHTML=`<audio src="${url}" controls preload="metadata"></audio>`;else host.innerHTML=`<a href="${url}" download="${label}">Download ${label}</a>`;}catch(_){if(host.isConnected)host.innerHTML='<span class="cc-attachment-error">Could not decrypt attachment</span>';}
+      try{const got=await decryptAttachment(file);if(!host.isConnected)continue;const p=PC(),url=p.enc(got.url),label=p.enc(got.name||'attachment');if(got.mime.startsWith('image/')){if(host.dataset.ccReady!=='1')host.innerHTML=attachmentImageHtml(p,file,got);const img=host.querySelector('img');if(img&&!attachmentDims.has(attachmentKey(file))){const note=()=>{if(img.naturalWidth&&img.naturalHeight)attachmentDims.set(attachmentKey(file),{w:img.naturalWidth,h:img.naturalHeight});};if(img.complete)note();else img.addEventListener('load',note,{once:true});}const open=host.querySelector('.cc-attachment-open');if(open)open.onclick=e=>{e.preventDefault();e.stopPropagation();attachmentLightbox(p,host,got.url,null);};}else if(got.mime.startsWith('video/')){host.innerHTML=`<div class="cc-attachment-media"><video src="${url}" controls playsinline preload="metadata" title="Double-click to expand"></video><button class="cc-attachment-expand" type="button" aria-label="Open ${label}">↗</button></div>`;const openVideo=e=>{e.preventDefault();e.stopPropagation();attachmentLightbox(p,host,got.url,'video');};const video=host.querySelector('video');if(video)video.ondblclick=openVideo;const open=host.querySelector('.cc-attachment-expand');if(open)open.onclick=openVideo;}else if(got.mime.startsWith('audio/'))host.innerHTML=`<audio src="${url}" controls preload="metadata"></audio>`;else host.innerHTML=`<a href="${url}" download="${label}">Download ${label}</a>`;}catch(_){if(host.isConnected)host.innerHTML='<span class="cc-attachment-error">Could not decrypt attachment</span>';}
     }
   }
   function channelStarKey(room,name){ return `pc.concord.star.${room&&(room.communityId||room.naddr||room.url)||'unknown'}:${name||'general'}`; }
@@ -4128,6 +4149,14 @@
     let keepScroll=null;
     try{ const ob=feed.querySelector('.cc-messages'); if(ob)keepScroll={key:scrollKey(),top:ob.scrollTop,
       atBottom:ob.scrollHeight-ob.clientHeight-ob.scrollTop<=2}; }catch(_){ }
+    /* AN OPEN "…" MENU SURVIVES A REPAINT. Every message that arrived, and every channel refresh,
+       rebuilt the room and dropped `cc-actions-open` with it — the menu shut under the person using
+       it, and on a phone (no hover to hold the toolbar up) it vanished outright: "the concord post
+       ... menu keeps flashing". Which message's menu, and whether its button had the keyboard, are
+       carried across the rebuild like the sheets below. */
+    let openActions='',actionsFocused=false;
+    try{ const o=feed.querySelector('.cc-message.cc-actions-open[data-message-id]'); openActions=o?o.dataset.messageId:'';
+      actionsFocused=!!(openActions&&document.activeElement&&o.contains(document.activeElement)&&document.activeElement.matches&&document.activeElement.matches('[data-cc-actions]')); }catch(_){ }
     let openSheets=[],focusedId='';
     try{ openSheets=[...feed.querySelectorAll('.cc-join:not(.hidden)[id]')].map(d=>({id:d.id,
       fields:[...d.querySelectorAll('input[id],textarea[id]')].map(f=>[f.id,f.value])}));
@@ -4144,6 +4173,13 @@
         <div class="cc-reply${replyTarget?'':' hidden'}" id="cc-reply">${replyTarget?`<span>Replying to <b>${p.enc(replyTarget.by||'member')}</b>: ${p.enc(String(replyTarget.text||'').slice(0,90))}</span><button id="cc-reply-cancel" aria-label="Cancel reply">×</button>`:''}</div><div class="cc-typing" id="cc-typing" aria-live="polite"></div><div class="cc-compose"><button class="cc-compose-btn" id="cc-attach" title="Attach file"><svg class="ic"><use href="#i-paperclip"></use></svg></button><input type="file" id="cc-file" multiple hidden><textarea id="cc-input" data-cc-draft-key="${p.enc(draftKey)}" rows="1" placeholder="${channelReadOnly?'History only: current channel access is unavailable':'Message #'+p.enc(state.channel||'general')}" ${state.community==null||channelReadOnly?'disabled':''}>${p.enc(draft&&draft.value||'')}</textarea><button class="cc-compose-btn" id="cc-emoji" title="Emoji"><svg class="ic"><use href="#i-smile"></use></svg></button><button class="btn btn-neon" id="cc-send" ${state.community==null||channelReadOnly?'disabled':''}>Send</button></div>
       </main></div><div class="cc-join${pendingInvite?'':' hidden'}" id="cc-join"><div class="cc-join-card"><div class="concord-mark">C</div><h2>Join or create a community</h2><p class="muted">Paste an Armada or other CORD-05 invite. Its # secret stays in this browser.</p><input class="input" id="cc-invite-url" inputmode="url" autocomplete="off" autocapitalize="none" spellcheck="false" placeholder="https://…/invite/naddr1…#…" value="${p.enc((pendingInvite&&pendingInvite.url)||'')}"><div class="cc-join-actions${pendingInvite?' hidden':''}"><button class="btn btn-ghost" id="cc-join-cancel">Cancel</button><button class="btn btn-neon" id="cc-join-go">Preview invite</button></div>${pendingInvite?'':'<div class="cc-join-alt"><span>or start your own</span><button type="button" class="btn btn-ghost" id="cc-join-create">Create a community</button></div>'}${pendingInvite?invitePreviewHtml(p,pendingInvite):''}</div></div><div class="cc-join hidden" id="cc-create-dialog"><div class="cc-join-card"><div class="concord-mark">C</div><h2>Create a public community</h2><p class="muted">Publishes an Armada-compatible CORD community and public #general channel to your relays.</p><label class="cc-label" for="cc-community-name">Community name</label><input class="input" id="cc-community-name" maxlength="64" autocomplete="off" placeholder="My community"><label class="cc-label" for="cc-community-icon">Icon <span class="muted">(emoji or image URL)</span></label><input class="input" id="cc-community-icon" maxlength="2048" autocomplete="off" placeholder="🚀 or https://…/icon.png"><button type="button" class="btn btn-ghost cc-icon-pick" data-cc-icon-pick="cc-community-icon">Upload image…</button><div class="cc-join-actions"><button class="btn btn-ghost" id="cc-create-cancel">Cancel</button><button class="btn btn-neon" id="cc-create-go">Create on relays</button></div></div></div><div class="cc-join hidden" id="cc-icon-dialog"><div class="cc-join-card"><div class="concord-mark">C</div><h2>Community icon</h2><p class="muted">Use an emoji or a direct HTTP(S) image URL. Leave blank to restore the initials.</p><label class="cc-label" for="cc-icon-value">Icon</label><input class="input" id="cc-icon-value" maxlength="2048" autocomplete="off" placeholder="🌌 or https://…/icon.png"><button type="button" class="btn btn-ghost cc-icon-pick" data-cc-icon-pick="cc-icon-value">Upload image…</button><div class="cc-join-actions"><button class="btn btn-ghost" id="cc-icon-cancel">Cancel</button><button class="btn btn-neon" id="cc-icon-save">Save icon</button></div></div></div>`;
     retainCommunityRail(oldCommunityRail,feed.querySelector&&feed.querySelector('.cc-communities'));
+    try{
+      if(openActions){
+        const row=[...feed.querySelectorAll('.cc-message[data-message-id]')].find(r=>r.dataset.messageId===openActions);
+        if(row){ row.classList.add('cc-actions-open'); const t=row.querySelector('[data-cc-actions]');
+          if(t){ t.setAttribute('aria-expanded','true'); if(actionsFocused)t.focus({preventScroll:true}); } }
+      }
+    }catch(_){ }
     try{
       if(keepScroll&&keepScroll.key===scrollKey()){ const nb=feed.querySelector('.cc-messages');
         if(nb){ const st=readScroll(keepScroll.key);

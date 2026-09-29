@@ -35,7 +35,7 @@ window.PCGitFactory = function(dep){
     $, $$, NT, _ISSUES_REPO, _blossomDenied, _clearNav, _dedupAddr, _fmtBytes, _guestPrompt,
     _mdUrl, _navUrl, _serverOrigin, _webLink, closeModal, copyValue, decorateProfiles, enc,
     attachMentionAutocomplete, imetaTagsFor, mdToHtml, mediaParts, mentionTags, modal, needProfile, openLightbox, openMenuPopover,
-    openThread, profOf, publish, renderProfileView, requestBlossomAccess, sign, switchView,
+    openThread, profOf, publish, renderProfileView, renderThread, replyKindFor, replyTags, requestBlossomAccess, sign, switchView,
     timeAgo, toast, uiConfirm, uiPrompt, uploadBlob, saveBlobAs, isNativeApp,
   } = dep;
 
@@ -59,6 +59,7 @@ window.PCGitFactory = function(dep){
   // Falls back to 'all' when you're signed out or own none, otherwise the default view is empty.
   // Sticky for the session (not persisted), so switching to 'all' survives leaving and re-entering.
   let _repoScope='mine';
+  let _repoScopeChosen = false;   // a scope the person picked stays picked, even when it is empty
   /* ⭐ STARS — a NIP-51 bookmark set (kind 30003, d:'git-repos') of 30617 `a` coordinates, the
    * idiomatic Nostr list any list-aware client can read. Replaceable, so the two standing rules for
    * replaceable lists apply with no exceptions: NEVER write after a failed read (an empty read
@@ -316,14 +317,19 @@ window.PCGitFactory = function(dep){
     const repos=_dedupAddr(evs).sort((a,b)=>b.created_at-a.created_at);
     _repoEvents = new Map(repos.map(e=>[e.id,e]));
     const mine=repos.filter(_repoIsMine);
-    if(!mine.length) _repoScope='all';           // never open on an empty view
-    if(_repoScope==='starred' && (!_stars || !_stars.size)) _repoScope = mine.length?'mine':'all';
+    /* THE SCOPE BAR IS ALWAYS THERE for a signed-in person. It used to be drawn only when at least
+     * one of YOUR repos had loaded, so a slow or partial load (568 of 1,657 repos, the query for your
+     * own repos not back yet) took Mine, Starred AND All repos off the page — "I want the bar always
+     * showed". A scope with nothing in it now says so instead of the bar disappearing. Opening on an
+     * empty Mine is still avoided: that is a choice of default, not of what may be offered. */
+    if(!mine.length && _repoScope==='mine' && !_repoScopeChosen) _repoScope='all';
+    if(_repoScope==='starred' && (!_stars || !_stars.size) && !_repoScopeChosen) _repoScope = mine.length?'mine':'all';
     const scoped=()=>_repoScope==='mine'?mine:(_repoScope==='starred'?repos.filter(_starred):repos);
     const grid=r=>`<div class="repo-grid">${r.map(repoCard).join('')}</div>`;
     feed.innerHTML = `<div class="art-top repo-top">
         ${_gitHostBase()?`<button class="btn btn-neon small" id="repo-create"><svg class="ic b-ic" aria-hidden="true"><use href="#i-plus"></use></svg>Create repo</button>`:''}
         <button class="btn ${_gitHostBase()?'btn-ghost':'btn-neon'} small" id="repo-new"><svg class="ic b-ic" aria-hidden="true"><use href="#i-plus"></use></svg>Announce a repo</button>
-        ${mine.length?`<div class="repo-scope" role="tablist">
+        ${_me?`<div class="repo-scope" role="tablist">
           <button class="repo-sc${_repoScope==='mine'?' on':''}" data-scope="mine" role="tab">Mine</button>
           <button class="repo-sc${_repoScope==='starred'?' on':''}" data-scope="starred" role="tab">\u2b50 Starred</button>
           <button class="repo-sc${_repoScope==='all'?' on':''}" data-scope="all" role="tab">All repos</button>
@@ -362,13 +368,15 @@ window.PCGitFactory = function(dep){
       const hits=terms.length ? base.filter(e=>{ const h=_repoHaystack(e); return terms.every(t=>h.includes(t)); }) : base;
       $('#repo-results',feed).innerHTML = hits.length ? grid(hits)
         : (terms.length ? `<div class="empty">No repo matches “${enc(q.value)}”${_repoScope==='mine'?' in your repos — try “All repos”.':'.'}</div>`
+           : _repoScope==='mine' ? `<div class="empty">None of your repos have loaded${repos.length?' yet':''}. ${_gitHostBase()?'Create one ↑, or ':''}try “All repos”.</div>`
+           : _repoScope==='starred' ? `<div class="empty">No starred repos yet — tap ☆ on any repo to keep it here.</div>`
            : `<div class="empty">No git repos found on the relay yet (NIP-34 · kind 30617). ${_gitHostBase()?'Create one ↑':'Announce yours ↑'}</div>`);
       if(q) q.placeholder=`🔍 Search ${base.length} repo${base.length===1?'':'s'} — name, owner, description…`;
       wire();
     };
     paint();
     $$('.repo-sc',feed).forEach(b=> b.onclick=()=>{
-      _repoScope=b.dataset.scope;
+      _repoScope=b.dataset.scope; _repoScopeChosen=true;
       $$('.repo-sc',feed).forEach(x=>x.classList.toggle('on', x.dataset.scope===_repoScope));
       _kbSel=-1;                       // the card under the keyboard cursor is gone; don't keep its index
       paint();
@@ -967,6 +975,11 @@ window.PCGitFactory = function(dep){
   const _ST_META = {1630:['open','🟢 Open'], 1631:['resolved','✅ Resolved'],
                     1632:['closed','🔴 Closed'], 1633:['draft','⚪ Draft']};
   // Newest authoritative status per issue id. `authority` = issue author ∪ repo maintainers.
+  /* THE STATUS YOU JUST SET WINS A TIE. Statuses are ordered by created_at, which is in whole seconds:
+   * Close then Reopen inside one second produced two statuses with the same timestamp, and whichever
+   * the relay listed first won — an issue reopened here could keep reading "closed". The kind this
+   * device last set for an issue breaks exactly that tie and nothing else. */
+  const _recentStatus = new Map();
   function _statusMap(statusEvs, issues, people){
     const owner = new Set(people || []);
     const byIssue = new Map(issues.map(e => [e.id, e]));
@@ -978,7 +991,8 @@ window.PCGitFactory = function(dep){
       if (!issue) continue;
       if (st.pubkey !== issue.pubkey && !owner.has(st.pubkey)) continue;   // not authorised to set state
       const cur = best.get(target);
-      if (!cur || st.created_at > cur.created_at) best.set(target, st);
+      if (!cur || st.created_at > cur.created_at
+          || (st.created_at === cur.created_at && _recentStatus.get(target) === st.kind)) best.set(target, st);
     }
     return best;
   }
@@ -1062,7 +1076,9 @@ window.PCGitFactory = function(dep){
       const m = k.split('|')[1] || '';
       if (m.startsWith('st:'+issue.id+':') && !m.startsWith('st:'+issue.id+':'+kind+':')) _collabHeld.delete(k);
     }
-    return await _publishCollab(repo, kind, note || '', tags, 'st:'+issue.id+':'+kind+':'+(note||''), onLate);
+    const r = await _publishCollab(repo, kind, note || '', tags, 'st:'+issue.id+':'+kind+':'+(note||''), onLate);
+    if (r && (r.ok || r.unconfirmed)) _recentStatus.set(issue.id, kind);
+    return r;
   }
 
   const _collabFilter = { '#rv-issues':'open', '#rv-patches':'open' };   // per-panel Open/Closed/All
@@ -1678,5 +1694,71 @@ window.PCGitFactory = function(dep){
     await _loadRepoFiles(feed, _rv.path||'');
     if(!body.delete) _viewRepoFile(feed, body.path);
   }
-  return { repoCard, openRepo, renderRepos, newRepoIssue, _repoTag };
+  /* THE ISSUE'S OWN THREAD CAN CLOSE IT. Asked for: "Add an option to close/resolve issue in the last
+   * comment. And an option to close/resolve issue in the thread of issue." Status used to be settable
+   * only from the repo's issue LIST, so somebody reading an issue — where the decision is actually made
+   * — had to go back out to close it. This bar sits under the issue in its thread: the state, and for
+   * the people the spec lets set it (the issue's author, the repo's owner and maintainers — the SAME
+   * `_canSetStatus` rule as the list), Resolve / Close / Reopen, and a comment box whose buttons become
+   * "Comment & resolve" / "Comment & close" once something is typed. The comment is an ordinary NIP-22
+   * reply (what every git client renders), published FIRST; the status goes out only if it landed. */
+  async function mountIssueStatus(host, issue){
+    if(!host || !issue || (issue.kind!==1621 && issue.kind!==1617)) return;
+    const a=((issue.tags||[]).find(t=>t[0]==='a' && /^30617:/.test(t[1]||''))||[])[1]||'';
+    const [, rpk, rd]=a.split(':');
+    let repo=null;
+    if(rpk && rd){
+      const q=[{ kinds:[30617], authors:[rpk], '#d':[rd], limit:1 }];
+      try{ repo=(Store.query(q)||[]).sort((x,y)=>y.created_at-x.created_at)[0]||null; }catch(_){ repo=null; }
+      if(!repo){ try{ const got=await Relay.query(q); repo=(got||[]).sort((x,y)=>y.created_at-x.created_at)[0]||null;
+                      if(repo) Store.saveEvent(repo); }catch(_){ } }
+    }
+    let stEvs=[]; try{ stEvs=await Relay.query([{ kinds:_ST_KINDS, '#e':[issue.id], limit:50 }]); }catch(_){ }
+    if(!host.isConnected) return;
+    const people=_repoPeople(repo), m=_statusMap(stEvs, [issue], people).get(issue.id);
+    const state=m ? _ST_META[m.kind][0] : 'open', open=(state==='open'||state==='draft');
+    const may=_canSetStatus(issue, people);
+    const noun=issue.kind===1617 ? 'patch' : 'issue';
+    host.innerHTML=`<div class="issue-status" data-state="${state}">
+        <div class="issue-status-hd"><span class="collab-state st-${state}">${_ST_BADGE[state]||state}</span>
+          ${may ? '' : `<span class="muted small">Only the ${noun}'s author and the repo's maintainers can change its status.</span>`}</div>
+        ${may ? `<textarea class="input issue-comment" rows="2" maxlength="20000" placeholder="Leave a comment (optional)" aria-label="Comment"></textarea>
+        <div class="issue-acts">
+          <button type="button" class="btn btn-ghost small" data-is="comment" disabled>Comment</button>
+          ${open ? `<button type="button" class="btn btn-ghost small" data-is="1631"><svg class="ic b-ic" aria-hidden="true"><use href="#i-check"></use></svg><span>Resolve</span></button>
+                    <button type="button" class="btn small issue-close" data-is="1632"><svg class="ic b-ic" aria-hidden="true"><use href="#i-live"></use></svg><span>Close ${noun}</span></button>`
+                 : `<button type="button" class="btn small" data-is="1630"><svg class="ic b-ic" aria-hidden="true"><use href="#i-reply"></use></svg><span>Reopen ${noun}</span></button>`}
+        </div>` : ''}
+      </div>`;
+    if(!may) return;
+    const ta=host.querySelector('.issue-comment');
+    const label={ 1631:['Resolve','Comment & resolve'], 1632:['Close '+noun,'Comment & close'], 1630:['Reopen '+noun,'Comment & reopen'] };
+    const relabel=()=>{ const has=!!ta.value.trim();
+      host.querySelector('[data-is="comment"]').disabled=!has;
+      host.querySelectorAll('[data-is]:not([data-is="comment"])').forEach(b=>{ const l=label[b.dataset.is]; const s=b.querySelector('span'); if(l&&s) s.textContent=l[has?1:0]; }); };
+    ta.addEventListener('input', relabel);
+    let busy=false;
+    host.querySelectorAll('[data-is]').forEach(b=>b.onclick=async()=>{
+      if(busy) return; busy=true;
+      const buttons=[...host.querySelectorAll('[data-is]')]; buttons.forEach(x=>x.disabled=true);
+      const text=ta.value.trim(), k=b.dataset.is==='comment' ? 0 : +b.dataset.is;
+      const again=()=>{ busy=false; buttons.forEach(x=>x.disabled=false); relabel(); };
+      try{
+        if(text){
+          const r=await publish(replyKindFor(issue), text, replyTags(issue, issue.id, issue.pubkey));
+          if(!(r && r.ok)){ toast('Your comment was not posted — nothing was changed'); again(); return; }
+          ta.value='';
+        }
+        if(k){
+          const done=k===1632?noun+' closed':k===1631?'marked resolved':noun+' reopened';
+          const r=await _setIssueStatus(repo, issue, k, '', ()=>{ toast(done); renderThread(issue.id); });
+          if(r && r.ok) toast(text ? 'Commented and '+done : done);
+          else if(r && r.unconfirmed){ toast('Not confirmed yet — the relay hasn’t answered. It may already be done; pressing again re-sends the same status.'); again(); return; }
+          else { toast('relay: '+((r&&r.msg)||'rejected')); again(); return; }
+        }else toast('comment posted');
+        renderThread(issue.id);
+      }catch(err){ toast('failed: '+((err&&err.message)||err)); again(); }
+    });
+  }
+  return { repoCard, openRepo, renderRepos, newRepoIssue, _repoTag, mountIssueStatus };
 };

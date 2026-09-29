@@ -331,3 +331,9 @@ html.pc-oswin body.concord-view .sidebar{display:none!important}
   50%{box-shadow:0 0 0 2px rgba(var(--accent-rgb),.95),0 0 22px 6px rgba(var(--accent-rgb),.7)}}
 @media (prefers-reduced-motion:reduce){.cc-server.unread:not(.active){animation:none!important}}
 body.anim-off .cc-server.unread:not(.active){animation:none!important}
+
+/* A Communities image's box is reserved before its pixels arrive (concord.js attachmentBoxStyle), so
+   a repaint never shrinks the room and re-grows it — the scrollbar no longer jumps up on a message. */
+.cc-sized,.cc-attachment-open[data-cc-sized]{display:block!important;width:var(--cc-w)!important;max-width:100%!important;aspect-ratio:var(--cc-ar)!important;height:auto!important;box-sizing:border-box!important}
+.cc-attachment-open[data-cc-sized] img{width:100%!important;height:100%!important;max-height:none!important;object-fit:contain!important}
+span.cc-attachment-wait.cc-sized{display:grid!important;place-items:center!important;border-radius:10px!important;background:rgba(255,255,255,.04)!important}

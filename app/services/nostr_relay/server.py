@@ -598,6 +598,9 @@ class RelayServer:
     # How long a confined socket may hold a connection without doing any signer work.
     SIGNER_GRACE = 30.0
     _REFUSED_MAX = 4096
+    # How long a confined socket is given to answer the AUTH challenge before its content requests
+    # count as proof that it is not a signer and not a member (see `_dispatch`).
+    AUTH_GRACE = 15
 
     def _note_refused(self, ip: str) -> bool:
         """A confined socket just asked for something the filter refuses. Close it NOW?
@@ -678,7 +681,7 @@ class RelayServer:
             # stranger delivering a gift wrap is not swept mid-delivery.
             if getattr(conn, "_pcai_signer_only", False):
                 await asyncio.sleep(self.SIGNER_GRACE)
-                if not getattr(conn, "_pcai_signer_used", False):
+                if getattr(conn, "_pcai_signer_only", False) and not getattr(conn, "_pcai_signer_used", False):
                     # Said out loud rather than dropped, and the NOTICE is given a moment to leave.
                     self._send(conn, ["NOTICE", "this relay serves PosterChan clients; this "
                                                 "connection did no signer work and is being closed"])
@@ -985,6 +988,10 @@ class RelayServer:
         self._send(conn, ["AUTH", challenge])
         opened = time.time()
         try:
+            setattr(conn, "_pcai_opened", opened)
+        except Exception:
+            pass
+        try:
             async for raw in conn:
                 await self._dispatch(conn, raw)
         except Exception as e:
@@ -1153,10 +1160,23 @@ class RelayServer:
         if getattr(conn, "_pcai_signer_only", False) and not _restricted_traffic(typ, msg):
             # Said out loud rather than dropped: a signer that is refused must be able to report why,
             # and a silent drop is indistinguishable from a relay that is simply slow.
-            self._send(conn, ["NOTICE", "this relay serves PosterChan clients; another client may "
-                                        "deliver a DM here or carry a NIP-46 signing session, "
-                                        "nothing else"])
-            if self._note_refused(getattr(conn, "_pcai_ip", "") or ""):
+            self._send(conn, ["NOTICE", "this relay serves PosterChan clients and members of this "
+                                        "instance; another client may deliver a DM here, carry a "
+                                        "NIP-46 signing session, or sign in (NIP-42) as a member"])
+            # IN THE WORDS A CLIENT ACTS ON. "amethyst checks your relays. I get 0 events from it":
+            # a member reading their own instance's relay from Amethyst was refused like a stranger.
+            # NIP-42's `auth-required:` is what tells Amethyst (and Damus, Coracle…) to sign the
+            # challenge sent at connect and try again — and an AUTH as a member lifts the confinement
+            # (`_on_auth`). A stranger who authenticates is still a stranger.
+            why = "auth-required: this relay serves PosterChan clients and members of this instance"
+            if typ == "REQ" and len(msg) >= 2:
+                self._send(conn, ["CLOSED", msg[1], why])
+            elif typ == "EVENT" and len(msg) >= 2 and isinstance(msg[1], dict):
+                self._send(conn, ["OK", msg[1].get("id", ""), False, why])
+            # A socket this young has not had the chance to answer the challenge yet; closing it here
+            # would end every member's Amethyst session before it could sign in.
+            young = time.time() - float(getattr(conn, "_pcai_opened", 0) or 0) < self.AUTH_GRACE
+            if not young and self._note_refused(getattr(conn, "_pcai_ip", "") or ""):
                 # It has proved it is not a signer, so there is nothing left to hold the socket for.
                 # The NOTICE above is given a moment to leave first — a silent close reads as a
                 # broken relay, and this is the one line that tells somebody what to do about it.
@@ -1248,6 +1268,34 @@ class RelayServer:
                     str(ev["pubkey"])[:12])
         self._auth_pubkeys.setdefault(conn, set()).add(ev["pubkey"])
         self._send(conn, ["OK", eid, True, ""])
+        if getattr(conn, "_pcai_signer_only", False) and ev["pubkey"] in self._instance_members():
+            # A MEMBER, IN WHATEVER APP THEY LIKE. The switch keeps this relay from being a general
+            # relay for other people's clients; it was never meant to stop this instance's own people
+            # reading it from Amethyst. Proven by a signature over this socket's challenge.
+            setattr(conn, "_pcai_signer_only", False)
+            setattr(conn, "_pcai_member", ev["pubkey"])
+            logger.info("[nostr-relay] member %s… signed in from another client — full access",
+                        str(ev["pubkey"])[:12])
+            self._send(conn, ["NOTICE", "signed in as a member of this instance — full access"])
+
+    def _instance_members(self) -> set:
+        """Who this instance's people are: every name its NIP-05 registry granted, every account here
+        (the relay's preserve set), and the node's own keys. Deliberately NOT the web of trust — that
+        is everybody the operator follows, which is what the switch exists to keep out."""
+        cfg = self.cfg or {}
+        out = set()
+        try:
+            out.update(v for v in ((cfg.get("nip05") or {}).get("names") or {}).values() if v)
+        except Exception:
+            pass
+        try:
+            out.update(p for p in (cfg.get("preserve") or ()) if p)
+        except Exception:
+            pass
+        for k in ("node_pubkey", "operator_pubkey"):
+            if cfg.get(k):
+                out.add(cfg[k])
+        return out
 
     def _nip78_owner(self, conn, pubkey: str) -> bool:
         return pubkey in self._auth_pubkeys.get(conn, set())

@@ -8515,7 +8515,7 @@
       $, $$, NT, _ISSUES_REPO, _blossomDenied, _clearNav, _dedupAddr, _fmtBytes, _guestPrompt,
       _mdUrl, _navUrl, _serverOrigin, _webLink, closeModal, copyValue, decorateProfiles, enc,
       attachMentionAutocomplete, imetaTagsFor, mdToHtml, mediaParts, mentionTags, modal, needProfile, openLightbox, openMenuPopover,
-      openThread, profOf, publish, renderProfileView, requestBlossomAccess, sign, switchView,
+      openThread, profOf, publish, renderProfileView, renderThread, replyKindFor, replyTags, requestBlossomAccess, sign, switchView,
       timeAgo, toast, uiConfirm, uiPrompt, uploadBlob, saveBlobAs, isNativeApp: _isNativeApp,
     }));
   }
@@ -13704,12 +13704,16 @@
     let html = _THREAD_TOP;
     html+= missingParent ? `<div class="thread-node thread-missing"><div class="empty">↩ Replying to a post that couldn't be loaded from any connected relay.</div></div>` : '';
     html+=`<div class="thread-node${id===root.id?' thread-hl':''}" data-tid="${enc(root.id)}">${noteHtml(root)}</div>`;
+    // A git issue or patch: its status, and a way to close/resolve it from right here (git.js).
+    const isIssue = root.kind===1621 || root.kind===1617;
+    if(isIssue) html+=`<div class="issue-status-host" id="issue-status-host"></div>`;
     html+=`<div class="search-section-title">${partial ? `${nReplies} repl${nReplies===1?'y':'ies'} so far` : `${nReplies} repl${nReplies===1?'y':'ies'}`}</div>`;
     html+= partial ? `<div class="thread-partial empty">Some relays didn’t answer, so replies may be missing. <button class="btn btn-ghost small" id="thread-retry">Load again</button></div>` : '';
     html+= nReplies ? (kids.get(root.id)||[]).sort((a,b)=>a.created_at-b.created_at).map(c=>renderNode(c,1)).join('')
          : (partial ? '' : '<div class="empty">No replies yet.</div>');
     feed.innerHTML=html; hydrate(feed);
     _bindThreadBack(feed, id);   // the same binder the early paint used — see _paintThreadHead
+    if(isIssue){ const h=$('#issue-status-host',feed); if(h) Promise.resolve().then(()=>_git().mountIssueStatus(h, root)).catch(()=>{}); }
     { const rb=$('#thread-retry',feed); if(rb) rb.onclick=()=>renderThread(id, hints); }
     // Reveal + flash the clicked post (when it isn't the root).
     if(id!==root.id){ const el=feed.querySelector(`.thread-node[data-tid="${CSS.escape(id)}"]`);

@@ -2890,7 +2890,7 @@ body.embed .feed{max-width:680px;margin:0 auto;padding:14px;height:auto !importa
 /* :not(.prof-menu-btn) — this hides the icon so the LABELLED profile buttons show their full word on
    desktop, but the ☰ overflow button has no label: hiding its icon left an empty oval with nothing in
    it. An icon-only button must keep its icon whatever the row's label policy is. */
-.prof .prof-actions .btn:not(.prof-menu-btn) .ic{display:none}   /* Settings shows full label on desktop */
+.prof .prof-actions .btn .ic{flex:none}   /* icons show on every width now: Edit, Settings, Pay, Call, Zap, Tip */
 .prof h2{margin:0} .prof .about{color:var(--text);margin:8px 0;line-height:1.45;white-space:pre-wrap}
 .npubrow{display:flex;align-items:center;gap:8px;margin:8px 0}
 .npubrow code{color:var(--cyan);font-size:12px}
@@ -11623,3 +11623,18 @@ html.pc-golive-win #modal-root>.modal-bg:first-child:not(.modal-sub) .gl-actions
 .os-shot-popup .os-popup-host{position:fixed;inset:0;display:flex}
 .os-shot-popup .shot-prompt{flex:1;margin:0;box-sizing:border-box;overflow:auto}
 .shot-prompt.shot-done .shot-foot{color:var(--accent)}
+
+/* A git issue's status bar, under the issue in its thread (git.js mountIssueStatus). */
+.issue-status{margin:8px 0 14px;padding:12px;border:1px solid var(--line);border-radius:var(--r);background:var(--panel2);display:flex;flex-direction:column;gap:8px}
+.issue-status-hd{display:flex;align-items:center;gap:10px;flex-wrap:wrap}
+.issue-status .issue-comment{width:100%;box-sizing:border-box;resize:vertical;min-height:56px}
+.issue-acts{display:flex;gap:8px;flex-wrap:wrap;justify-content:flex-end}
+.issue-acts .btn{min-height:40px}
+.issue-acts .issue-close{border-color:#ff4d6d;color:#ff8aa1}
+@media (max-width:600px){.issue-acts .btn{flex:1 1 auto}}
+
+/* The profile's QR code (profile.js, "Show QR"). White quiet zone on every theme: a QR on a dark card
+   without one does not scan. */
+.prof-qr-code{display:flex;justify-content:center;margin:8px 0 12px}
+.prof-qr-code svg{width:min(240px,70vw);height:auto;background:#fff;padding:12px;border-radius:12px;box-sizing:content-box}
+.prof-qr-npub{display:block;word-break:break-all;font-size:12px;text-align:center;margin-bottom:12px;color:var(--muted)}
