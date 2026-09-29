@@ -27,7 +27,8 @@ def test_linux_system_audio_is_the_playback_monitor(tmp_path):
         _missing_runtime('Xvfb or Wayfire plus Xwayland required for isolated display')
     source = (ROOT / 'desktop/main.js').read_text()
     handler = source[source.index('function wirePermissions()'):source.index('// ---- screen-source picker')]
-    app_source = (ROOT / 'static/js/client/app.js').read_text()
+    # The screen-share capture lives in calls.js since calls moved out of app.js; read both.
+    app_source = (ROOT / 'static/js/client/app.js').read_text() + (ROOT / 'static/js/client/calls.js').read_text()
     capture_options = re.findall(r"getDisplayMedia\((\{video:\{cursor:'always'.*?systemAudio:'include'\})\)", app_source)
     assert len(capture_options) == 2 and capture_options[0] == capture_options[1]
     ready = tmp_path / 'analyser-ready'
