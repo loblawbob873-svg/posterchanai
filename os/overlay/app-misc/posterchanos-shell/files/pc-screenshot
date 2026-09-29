@@ -4,6 +4,21 @@
 set -eu
 
 mode="${1:-region}"
+# ASK THE DESKTOP FIRST. Wayfire grabs Print / Shift+Print / Ctrl+Shift+S before the app ever sees
+# them, so the desktop's own prompt (Save to Pictures / Save & copy / Select region, osshell.js
+# shotPrompt) was never shown: this script went straight to slurp+grim. Reported as "PosterChanOS
+# Screenshot -> prompt with a cyberpunk UI ... not done yet" / "i use ctrl shift s". The running shell
+# takes `pc:shot` / `pc:shot:region` over its action socket (os.js), exactly like the other helpers;
+# with no desktop to ask (a crash, a text console, a recovery session) it is the direct capture below,
+# as before. PC_SCREENSHOT_DIRECT=1 skips the prompt for scripts.
+if [ "${PC_SCREENSHOT_DIRECT:-}" != 1 ]; then
+	case "$mode" in region) act=pc:shot:region ;; screen) act=pc:shot ;; *) act= ;; esac
+	helper=$(command -v pc-wayfire-action 2>/dev/null || true)
+	[ -n "$helper" ] || helper=/usr/local/bin/pc-wayfire-action
+	if [ -n "$act" ] && [ -x "$helper" ] && "$helper" "$act" >/dev/null 2>&1; then
+		exit 0
+	fi
+fi
 lock="${XDG_RUNTIME_DIR:-/tmp}/posterchan-screenshot-${UID}.lock"
 # A held Print key must never stack region selectors. `slurp` owns the pointer until a selection or
 # Escape, so a second copy cannot help and is exactly how ten invisible selectors accumulated.

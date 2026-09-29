@@ -6333,7 +6333,7 @@
     $('#view-title').textContent = { home:'Home', texts:'Texts', global:'Nostrverse', trending:'Trending', notifications:'Notifications', messages:'Messages', concord:'Communities', mail:'Email ✉️', drafts:'Drafts', bookmarks:'Bookmarks', analytics:'My Analytics 📈', articles:'Articles', markets:'Markets 📈', streams:'Streams', calls:'Calls 📞', pics:'Pics', torrents:'Torrents 🧲', 'media-center':'Media Center', repos:'Git 🌱', repo:'Repo', news:'News 🗞️', websearch:'Web Search 🔎', vms:'Virtual Machines 🖥️', code:'PosterChan Code 💻', calendar:'Calendar 📅', contacts:'Contacts 👥', notes:'Notes 📝', sync:'Folder Sync 🔄', vault:'Passwords 🔑', wallet:'Monero Wallet ɱ', exodus:'Wallet 💼', budget:'Budget 💰',calculator:'Calculator',tg:'Telegram', stats:'Server Stats 📊', chess:'Chess ♟️', ttt:'Tic-Tac-Toe ⭕', hangman:'Hangman 🎯', connect4:'Connect Four 🔴', blackjack:'Blackjack 🃏', holdem:"Texas Hold'em 🃏", xdc:'Webxdc 🎮', meme:'Meme Builder 🎬', blossom:'Files', profile:'Profile', settings:'Settings', ai:'PosterChan AI', translate:'Live Translate 🌐', admin:'Admin', terminal:'Terminal', office:'PosterChan Office', signer:'Signer',
       /* The desktop's own screens are routed by an internal id; the heading is what a person reads,
        * and "__ossettings" is not a word (it was, on every System Settings window). */
-      __ossettings:'System Settings', __tasks:'Task Manager', __remote:'Remote Desktop',
+      __ossettings:'System Settings', __tasks:'Task Manager', __remote:'Remote Desktop', __golive:'Go Live',
       __installer:'Install PosterChanOS' }[v]||v;
     if(v==='blossom') $('#view-title').textContent='File Manager';
     if(v==='office') $('#view-title').textContent='PosterChan Office';

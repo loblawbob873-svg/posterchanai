@@ -1208,7 +1208,7 @@
      * server". Reported as "I tried to go Live on PosterChanOS nothing happened", which is what a
      * button that cannot work looks like from the outside. `standalone` is a predicate, not a
      * constant: an instance can be set while the app is running, and this list is rebuilt. */
-    { view: '__golive', label: 'Go Live', icon: '#i-live', act: () => PC().goLive && PC().goLive(),
+    { view: '__golive', label: 'Go Live', icon: '#i-live', act: () => openGoLive(),
       when: () => !!(me() && PC().goLive && !(PC().standalone && PC().standalone())) },
     /* A first-class launcher app, not a Settings footnote. It deliberately clicks the shared
      * report entry point: that path resolves the configured NIP-34 repo, enforces sign-in, and opens
@@ -2006,6 +2006,7 @@
     '__tasks':         { view: '__tasks',       label: 'Task Manager' },
     '__remote':        { view: '__remote',      label: 'Remote Desktop' },
     '__installer':     { view: '__installer',   label: 'Install PosterChanOS' },
+    '__golive':        { view: '__golive',      label: 'Go Live' },
   };
 
   /* …AND WHAT DRAWS IT. Declared HERE, beside the map it has to agree with, because
@@ -2022,6 +2023,7 @@
     '__tasks':      () => _paintExtraInFeed('feed-taskmgr', paintTaskManager),
     '__remote':     () => _paintExtraInFeed('feed-remote',  paintRemoteDesktop),
     '__installer':  () => _loadInstaller().then(() => _paintExtraInFeed('feed-installer', paintInstaller)),
+    '__golive':     () => _renderGoLiveWindow(),
   };
 
   /* Run one of the extracted painters against this window's own `#feed`.
@@ -2633,6 +2635,48 @@
      * rather than paint into nothing. */
     if(_openedReal){ _openedReal = false; return { poppedOut: true, view: view }; }
     return null;
+  }
+
+  /* GO LIVE IS A WINDOW OF ITS OWN. It was a sheet drawn on the DESKTOP SURFACE, and on a desk where
+   * apps are real compositor toplevels that surface is under every one of them: "Go Live ->
+   * PosterChanOS -> opening behind active window", still, after the shellFront stacking fix — which
+   * passed against the test compositor and not on a real desktop. System Settings learned the same
+   * thing (see EXTRA_WINDOWS): no stacking order fixes it, only being a real toplevel does. Without
+   * real windows (the web, an older shell) it is the sheet, exactly as before. */
+  function openGoLive(){
+    try{
+      if(_extraOpensAsWindow('__golive')){
+        const hint = _windowOpenHint('__golive') || {};
+        const w = PCOSWin.open('__golive', 'Go Live', { width: Math.min(hint.width || 640, 680), height: hint.height || 820 });
+        if(w) return w;
+      }
+    }catch(_){ }
+    return PC().goLive && PC().goLive();
+  }
+  /* The Go Live window: the setup sheet over a page of its own. It CLOSES ITSELF when the sheet
+   * closes without a broadcast (Cancel, Escape) — an empty window left behind would be the next bug —
+   * and stays when the person went live: a phone/screen broadcast lives in THIS page (its capture and
+   * its PeerConnection), and the OBS path moves the page on to the stream. */
+  function _renderGoLiveWindow(){
+    const feed = document.getElementById('feed');
+    if(feed) feed.innerHTML = '<div class="empty" id="pc-golive-wait">Setting up your stream…</div>';
+    const P = PC();
+    if(!P.goLive){ if(feed) feed.innerHTML = '<div class="empty">Go Live is not available on this server.</div>'; return; }
+    let seen = false, timer = null;
+    const mo = new MutationObserver(() => {
+      if(document.body.classList.contains('modal-open')){ seen = true; clearTimeout(timer); return; }
+      if(!seen) return;
+      clearTimeout(timer);
+      timer = setTimeout(() => {
+        if(document.body.classList.contains('modal-open')) return;          // the next step's sheet
+        if(document.getElementById('phone-live')) { mo.disconnect(); return; }   // live from here
+        if(!document.getElementById('pc-golive-wait')) { mo.disconnect(); return; } // moved on to the stream
+        mo.disconnect();
+        try{ window.close(); }catch(_){ }
+      }, 600);
+    });
+    mo.observe(document.body, { attributes: true, attributeFilter: ['class'] });
+    return Promise.resolve(P.goLive()).catch(() => {});
   }
 
   function openSystemSettings(){
