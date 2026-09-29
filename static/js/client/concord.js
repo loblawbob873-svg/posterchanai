@@ -3684,7 +3684,7 @@
   /* Before Communities has ever been opened in this page the live timer is not running, and the
    * sidebar's Communities badge would still know nothing. The sweep runs on its own then — only for a
    * signed-in account, and never alongside the live timer, which calls it itself. */
-  if(typeof setInterval==='function')setInterval(()=>{ try{ const p=PC(); if(!liveTimer&&p&&p.viewer&&p.viewer()&&p.viewer().pubkey&&saved().length){ startRoomsLive(p); sweepOtherRooms(p); } }catch(_){ } },SWEEP_MS);
+  if(typeof setInterval==='function'){ const sweepTimer=setInterval(()=>{ try{ const p=PC(); if(!liveTimer&&p&&p.viewer&&p.viewer()&&p.viewer().pubkey&&saved().length){ startRoomsLive(p); sweepOtherRooms(p); } }catch(_){ } },SWEEP_MS); try{ if(sweepTimer&&sweepTimer.unref)sweepTimer.unref(); }catch(_){ } }   // never keep a process alive
   async function refreshActiveChannel(p){
     const foreground=document.body.classList.contains('concord-view'),parked=window.PCOS&&PCOS.isOn&&PCOS.isOn()&&PCOS.parkedSlot&&PCOS.parkedSlot('concord');
     if(liveBusy||state.community==null||(!foreground&&!parked))return; liveBusy=true;
