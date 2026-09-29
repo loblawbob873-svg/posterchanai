@@ -2159,7 +2159,12 @@ window.PCFilesFactory = function(dep){
     toast('opening…');
     const bytes = await window.pcHost.read(path, 256 * 1024 * 1024);
     const blob = new Blob([bytes], { type });
-    if(!P || !P.open({ name:nm, mime:type || blob.type || '', blob }))
+    let hostMtime = 0;
+    const hostSave = /\.pdf$/i.test(nm) && pcHost.writeBytes ? async (b)=>{
+      const info=await pcHost.writeBytes(path, new Uint8Array(await b.arrayBuffer()), hostMtime||0);
+      if(info && info.mtime) hostMtime=info.mtime;
+    } : null;
+    if(!P || !P.open({ name:nm, mime:type || blob.type || '', blob, saveBack: hostSave }))
       throw new Error('nothing here can show that file');
     return true;
   }
@@ -2848,6 +2853,36 @@ window.PCFilesFactory = function(dep){
     if(!r.ok) throw new Error('file HTTP ' + r.status);
     return r.blob();
   }
+  /* WHERE AN EDITED FILE GOES BACK TO — the same writers Office uses (openOfficeFile /
+   * openSyncOfficeFile), so a PDF signed in Preview replaces the file it came from on every device
+   * rather than appearing beside it as a download. Null for anything else: the editor then offers
+   * "Save a copy" only. */
+  function _previewSaveBack(d, opts){
+    if(!/\.pdf$/i.test(String(d && d.name || '')) && !/application\/pdf/i.test(String(d && d.mime || ''))) return null;
+    if(opts && opts.sync && _S._syncRoot && (d.path || d.name)){
+      const key=_S._syncRoot, full=d.path||d.name;
+      return async (blob)=>{
+        if(!(window.PCSync && PCSync.edit && PCSync.edit.uploadMany)) throw new Error('this build cannot write to a synced folder');
+        const cut=full.lastIndexOf('/'), dir=cut<0?'':full.slice(0,cut);
+        const r=await PCSync.edit.uploadMany(key, dir, [fileFromBytes(await blob.arrayBuffer(), d.name||full.split('/').pop(), 'application/pdf')], { replace:true });
+        if(r && r.failed && r.failed.length) throw new Error('the folder refused the write');
+        try{ _syncManifests.delete(key); }catch(_){}
+        if(_S.VIEW==='blossom' && _S._syncRoot===key) renderBlossom();
+      };
+    }
+    if(!d.sha) return null;
+    return async (blob)=>{
+      const file=fileFromBytes(await blob.arrayBuffer(), d.name||'document.pdf', 'application/pdf');
+      const old=FilesIdx.meta(d.sha)||{}, folder=old.folder||FilesIdx.folderOf(d.sha)||'';
+      let newSha='';
+      if(d.enc==='1') newSha=await uploadEncFile(file,folder,null);
+      else { const url=await uploadBlob(file,{noCompress:true}); newSha=_shaFromUrl(url);
+        FilesIdx.setFile(newSha,{name:file.name,folder,mime:'application/pdf',size:file.size,ts:Math.floor(Date.now()/1000)}); }
+      if(newSha && newSha!==d.sha) FilesIdx.forget(d.sha);   // the old blob stays recoverable on Blossom
+      if(newSha) d.sha=newSha;
+      if(_S.VIEW==='blossom') renderBlossom();
+    };
+  }
   async function openPreviewFile(d, opts){
     try{
       toast(d.enc === '1' ? 'decrypting…' : 'opening…');
@@ -2857,7 +2892,7 @@ window.PCFilesFactory = function(dep){
        * and Files appears to open a black/nothing screen. Every source funnels through here. */
       const P = await _withModule('preview.js', 'PCPreview');
       if(!P || typeof P.open!=='function') throw new Error('the preview viewer did not load');
-      if(!P.open({ name: d.name || 'file', mime: d.mime || blob.type || '', blob }))
+      if(!P.open({ name: d.name || 'file', mime: d.mime || blob.type || '', blob, saveBack: _previewSaveBack(d, opts) }))
         toast('nothing here can show that file');
     }catch(err){ toast('could not open that: ' + ((err && err.message) || err)); }
   }

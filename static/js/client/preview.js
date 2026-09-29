@@ -70,6 +70,19 @@
     return kind === 'pdf' ? 'application/pdf' : '';
   }
 
+  var _pdfedit = null;
+  function loadPdfEdit() {
+    if (root.PCPdfEdit) return Promise.resolve(root.PCPdfEdit);
+    if (_pdfedit) return _pdfedit;
+    _pdfedit = new Promise(function (resolve, reject) {
+      var s = document.createElement('script');
+      s.src = '/static/js/client/pdfedit.js';
+      s.onload = function () { root.PCPdfEdit ? resolve(root.PCPdfEdit) : reject(new Error('the PDF editor did not start')); };
+      s.onerror = function () { _pdfedit = null; reject(new Error('the PDF editor could not be loaded')); };
+      document.head.appendChild(s);
+    });
+    return _pdfedit;
+  }
   var _pdfjs = null;
   function loadPdfJs() {
     if (root.pdfjsLib) return Promise.resolve(root.pdfjsLib);
@@ -342,6 +355,7 @@
       + '<span class="pv-acts">'
       + (kind === 'image' ? '<button class="btn btn-ghost small pv-zoom">Actual size</button>'
                             + '<button class="btn btn-ghost small pv-rot" title="Rotate" aria-label="Rotate">&#8635;</button>' : '')
+      + (kind === 'pdf' ? '<button class="btn btn-ghost small pv-edit" title="Fill in, mark up, sign or rearrange">Edit</button>' : '')
       + (kind === 'pdf' && nativeOpen() ? '<button class="btn btn-ghost small pv-open">Open in app</button>' : '')
       + (canPrint(kind) ? '<button class="btn btn-ghost small pv-print">Print</button>' : '')
       + (canShare(name, mime) ? '<button class="btn btn-ghost small pv-share">Share</button>' : '')
@@ -372,7 +386,7 @@
 
   /* Mount, wire, and hand back a `close`. The two hosts differ only in where this goes and how it is
    * taken away again - exactly the split the office editor uses. */
-  function mount(host, name, mime, size, kind, url, shut, blob) {
+  function mount(host, name, mime, size, kind, url, shut, blob, saveBack) {
     /* THE VIEWER IS A DOCUMENT SURFACE — see "DECORATION DOES NOT CROSS A DOCUMENT" in client.css.
        Marked HERE and not at the two host sites, because this is the one function both of them go
        through (a desktop window's slot and the full-screen sheet), and the class then lives and
@@ -428,6 +442,29 @@
       cleanup = function () { mediaDone(); try { av.pause(); av.removeAttribute('src'); av.load(); } catch (_) {} };
     } else if (kind === 'pdf') {
       cleanup = renderPdf(host, blob, name);
+      /* EDIT, IN PLACE. The editor takes over the body; closing it draws the viewer again — with the
+       * saved document when there is one, so what you see is what was written. `saveBack` is the
+       * caller's writer (the drive, a synced folder, a file on This Computer); without one the editor
+       * offers "Save a copy" only. See pdfedit.js. */
+      var eb = q('.pv-edit');
+      if (eb) eb.onclick = function () {
+        eb.disabled = true;
+        Promise.all([loadPdfJs(), loadPdfEdit(), blob.arrayBuffer()]).then(function (got) {
+          try { cleanup(); } catch (_) {}
+          var body = q('.pv-body'); if (!body) return;
+          body.classList.add('pv-editing');
+          var bar = q('.pv-acts'); if (bar) bar.classList.add('hidden');
+          var session = root.PCPdfEdit.edit(body, { name: name, bytes: new Uint8Array(got[2]), pdfjs: got[0], saveBack: saveBack });
+          return session.done.then(function (saved) {
+            if (bar) bar.classList.remove('hidden');
+            body.classList.remove('pv-editing');
+            if (saved) { blob = saved; try { URL.revokeObjectURL(url); } catch (_) {} url = URL.createObjectURL(saved); }
+            body.innerHTML = '<div class="pv-pdf-pages" role="document" aria-label="' + H(name) + '"><div class="spinner"></div></div>';
+            cleanup = renderPdf(host, blob, name);
+            eb.disabled = false;
+          });
+        }).catch(function (e) { eb.disabled = false; toast('could not open the PDF editor: ' + ((e && e.message) || e)); });
+      };
     }
 
     var dl = q('.pv-dl');
@@ -551,7 +588,7 @@
           };
           w.handoffCancel = function () { transferring = false; };
         }
-        mountCleanup = mount(host, name, mime, size, kind, url, shut, blob);
+        mountCleanup = mount(host, name, mime, size, kind, url, shut, blob, typeof file.saveBack === 'function' ? file.saveBack : null);
         _open = { key: key, close: shut, host: host };
         root.addEventListener('keydown', onKey, true);
         return true;
@@ -564,7 +601,7 @@
     sheet.className = 'pv-sheet pv-host';
     document.body.appendChild(sheet);
     shut = function () { try { sheet.remove(); } catch (_) {} done(); };
-    mountCleanup = mount(sheet, name, mime, size, kind, url, shut, blob);
+    mountCleanup = mount(sheet, name, mime, size, kind, url, shut, blob, typeof file.saveBack === 'function' ? file.saveBack : null);
     _open = { key: key, close: shut };
     root.addEventListener('keydown', onKey, true);
     return true;

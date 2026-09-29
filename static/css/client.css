@@ -11664,3 +11664,27 @@ html.pc-golive-win #modal-root>.modal-bg:first-child:not(.modal-sub) .gl-actions
 /* A README image the renderer could not place yet (a relative path — git.js resolves it). */
 img.md-rel:not([src]){display:none}
 .markdown img{max-width:100%;height:auto}
+
+/* ---- PDF EDIT (pdfedit.js, opened from Preview's Edit on a PDF) ---- */
+.pv-body.pv-editing{overflow:hidden;display:flex;flex-direction:column;padding:0}
+.pe-root{display:flex;flex-direction:column;height:100%;min-height:0;width:100%}
+.pe-bar{display:flex;flex-wrap:wrap;align-items:center;gap:6px;padding:8px 10px;border-bottom:1px solid var(--line);background:var(--panel,rgba(0,0,0,.2));position:sticky;top:0;z-index:3}
+.pe-bar .pe-tool.on{color:var(--accent);border-color:var(--accent);background:rgba(var(--accent-rgb),.12)}
+.pe-bar .pe-gap{flex:1 1 auto}
+.pe-color{width:34px;height:30px;padding:0;border:1px solid var(--line);border-radius:8px;background:transparent;cursor:pointer}
+.pe-fields{display:flex;flex-wrap:wrap;gap:8px 14px;align-items:center;padding:8px 12px;border-bottom:1px solid var(--line);font-size:13px}
+.pe-field{display:inline-flex;align-items:center;gap:6px}
+.pe-field .input{min-width:140px;padding:4px 8px}
+.pe-pages{flex:1 1 auto;min-height:0;overflow:auto;padding:12px;display:flex;flex-direction:column;align-items:center;gap:14px}
+.pe-cell{display:flex;flex-direction:column;align-items:center;gap:4px}
+.pe-page-tools{display:flex;align-items:center;gap:4px;font-size:12px;color:var(--muted)}
+.pe-page-tools .pe-page-no{margin-right:6px}
+.pe-page{position:relative;box-shadow:0 2px 14px rgba(0,0,0,.45);background:#fff;transition:transform .15s ease}
+.pe-canvas,.pe-overlay{position:absolute;inset:0;display:block}
+.pe-overlay{cursor:crosshair}
+.pe-textbox{position:absolute;z-index:2;min-width:120px;font:12px Helvetica,Arial,sans-serif;padding:2px 4px;border:1px dashed var(--accent);background:rgba(255,255,255,.9)}
+.pe-sign-sheet{position:absolute;inset:0;z-index:10;display:grid;place-items:center;background:rgba(0,0,0,.55)}
+.pe-sign-card{display:flex;flex-direction:column;gap:10px;padding:16px;border-radius:14px;background:var(--bg,#111);border:1px solid var(--line);max-width:min(640px,94vw)}
+.pe-sign-pad{width:min(600px,86vw);height:auto;aspect-ratio:600/220;background:#fff;border-radius:8px;touch-action:none}
+.pe-sign-acts{display:flex;justify-content:flex-end;gap:8px}
+@media (max-width:600px){.pe-bar{gap:4px;padding:6px}.pe-bar .btn{padding:6px 8px}}
