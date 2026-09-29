@@ -10,11 +10,12 @@ import httpx
 import pytest
 import websockets
 from tests.client.test_effects_full_app import Browser, Handler, INIT
+from tests.client_source import app_source_with
 
 # The shipped list, so the pane and the tests cannot disagree about what exists.
 TYPES=[m.group(1) for m in __import__('re').finditer(
     r"\['([a-z]+)','[^']+'\]",
-    (Path(__file__).resolve().parents[2]/'static/js/client/app.js').read_text(encoding='utf-8')
+    app_source_with('blossom.js')   # _NOTIFICATION_TYPES lives in blossom.js
         .split('const _NOTIFICATION_TYPES',1)[1].split('const _NOTIFICATION_SOUNDS',1)[0])]
 # Derived so a list that GROWS does not go red — but derived from the same source it checks, so it
 # cannot notice one that SHRINKS. This names the floor independently: a toggle may be added, and

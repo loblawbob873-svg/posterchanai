@@ -38,7 +38,7 @@ import subprocess
 import tempfile
 
 import pytest
-from tests.client_source import client_source
+from tests.client_source import client_source, state_shims
 
 ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 APP = os.path.join(ROOT, "static", "js", "client", "app.js")
@@ -103,10 +103,11 @@ globalThis.Relay = {
 
 def _prefs(script, answer):
     src = _src()
+    # Both live in blossom.js now, where app.js's live ME reads as _S.ME: the shim reads the global.
+    lifted = _lift("_readPrefs", src) + "\n" + _lift("saveClientPrefsNostr", src)
     return _run(PREFS_HARNESS
                 + "globalThis.answer = %s;\n" % json.dumps(answer)
-                + _lift("_readPrefs", src)
-                + "\n" + _lift("saveClientPrefsNostr", src)
+                + state_shims(lifted) + "\n" + lifted
                 + "\nlet _prefsSaveChain = Promise.resolve();\n"
                 + "const _notificationState=()=>({clock:0,values:{},dirty:{}}), _notificationStore=()=>{};\n"
                 + script)

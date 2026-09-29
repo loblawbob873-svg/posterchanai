@@ -7,7 +7,8 @@
 import fs from 'node:fs';import vm from 'node:vm';import assert from 'node:assert/strict';
 import { clientSource, clientSourceAt, installStateGlobals } from './client_source.mjs';
 
-const code=fs.readFileSync(process.env.PC_APP_SOURCE||new URL('../../static/js/client/app.js',import.meta.url),'utf8');
+// The push-preference layer lives in blossom.js (split out of app.js): read the modules beside that app.js too.
+const code=clientSourceAt(process.env.PC_APP_SOURCE||new URL('../../static/js/client/app.js',import.meta.url));
 const cut=(from,to)=>{const i=code.indexOf(from);assert(i>=0,'missing: '+from);
   const j=code.indexOf(to,i);assert(j>i,'missing: '+to);return code.slice(i,j);};
 

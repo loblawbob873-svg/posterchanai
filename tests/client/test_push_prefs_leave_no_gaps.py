@@ -25,9 +25,10 @@ import subprocess
 from pathlib import Path
 
 import pytest
+from tests.client_source import app_source_with
 
 ROOT = Path(__file__).resolve().parents[2]
-APP = (ROOT / "static/js/client/app.js").read_text(encoding="utf-8")
+APP = app_source_with("blossom.js")   # the push preferences live in blossom.js
 PREFS_PY = (ROOT / "app/services/push_prefs.py").read_text(encoding="utf-8")
 NODE = shutil.which("node")
 

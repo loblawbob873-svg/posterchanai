@@ -14,6 +14,7 @@ globalThis.CFG = { blossom_url: 'https://media.poster.place' };
 globalThis._serverOrigin = () => 'https://poster.place';
 globalThis._blossomBuiltin = () => ({ url: 'https://poster.place/blossom', proto: 'blossom' });
 
+installStateGlobals();   // detectProto lives in blossom.js, where CFG reads as _S.CFG
 const detectProto = new Function(`${shipped}; return detectProto;`)();
 const out = {};
 

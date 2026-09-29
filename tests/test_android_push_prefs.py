@@ -16,6 +16,7 @@ import shutil
 import subprocess
 
 import pytest
+from tests.client_source import app_source_with
 
 ROOT = Path(__file__).resolve().parents[1]
 PUSH = ROOT / "mobile/android/app/src/main/java/place/poster/app/push"
@@ -124,7 +125,7 @@ def test_the_phone_can_be_told_the_preferences_at_all():
     permanent no-op that reads as working."""
     assert "public void setPrefs(PluginCall call)" in PLUGIN
     assert "DirectPushStore.setTypePrefs(getContext()" in PLUGIN
-    app = (ROOT / "static/js/client/app.js").read_text()
+    app = app_source_with("blossom.js")   # the push preferences live in blossom.js
     assert "setPrefs({prefs:" in app, "the client never sends them to the phone"
     # It still happens on the server-mirror path too, so a device that registered without ever
     # touching a toggle is told as well.
@@ -142,7 +143,7 @@ def test_the_phones_copy_does_not_share_the_server_mirrors_failure_mode():
     failed open on every type — "getting push notifications for likes when I only have DMs
     selected". The write must be reachable from the toggle on its own.
     """
-    app = (ROOT / "static/js/client/app.js").read_text()
+    app = app_source_with("blossom.js")   # the push preferences live in blossom.js
     setter = app[app.index("  function setPushPreference("):app.index("  /* THE PHONE'S OWN COPY")]
     assert "_pushPrefsToDevice(" in setter, \
         "changing a preference does not write the phone's own copy"

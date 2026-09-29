@@ -20,6 +20,10 @@
  *   * a reference outside to a NON-function binding declared inside it is REFUSED: a variable cannot
  *     be forwarded by a function stub, and moving it silently would be the bug this tool exists to
  *     prevent. Move that declaration out of the range, or leave the block where it is.
+ *   * the live-state object is `S` — or `_S` when the block itself declares or uses an `S` of its own
+ *     (a local `const S=_capPlugin(…)` would otherwise SHADOW it, and any live read rewritten to
+ *     `S.<name>` inside that scope would silently read the wrong object). `--state NAME` forces a name;
+ *     tests/test_client_module_deps.py finds the name from `const <NAME> = dep.state` either way.
  *   * `--proxy A,B` is the one exception, for a `const` OBJECT (MusicPlayer, FilesIdx, MusicOffline):
  *     app.js keeps the name, bound to `_lzProxy(_xMod, 'A')`, which forwards every read, write and
  *     method call to the real object in the module — only for a module that SHIPS WITH THE PAGE (its
@@ -83,6 +87,15 @@ if (straddle.length) { console.error('a statement straddles a marker at line ' +
 const B0 = lineStart(fromLine), B1 = lineStart(toLine);    // whole lines, comments included
 const inBlock = n => n.start >= B0 && n.end <= B1;
 const PROXY = new Set(String(args.proxy && args.proxy !== true ? args.proxy : '').split(',').filter(Boolean));
+// Every identifier the block spells, declared or referenced, in any scope — to pick a state name that
+// nothing in the moved code can shadow.
+const blockIds = new Set();
+{ const walk = n => { if (!n || typeof n.type !== 'string') return; if (n.type === 'Identifier') blockIds.add(n.name);
+    for (const k of Object.keys(n)) { if (k === 'loc' || k === 'range') continue; const v = n[k];
+      if (Array.isArray(v)) v.forEach(walk); else if (v && typeof v.type === 'string') walk(v); } };
+  block.forEach(walk); }
+const SN = args.state && args.state !== true ? String(args.state) : (blockIds.has('S') ? '_S' : 'S');
+if (blockIds.has(SN)) { console.error(`the block already uses the name ${SN}; pass --state <an unused name>`); process.exit(1); }
 
 // ---- scopes ---------------------------------------------------------------------------------------
 class Scope { constructor(parent, fn) { this.parent = parent; this.fn = fn; this.decls = new Map(); } }
@@ -193,7 +206,7 @@ for (const r of refs) {
     const isLive = (decl.kind === 'let' || decl.kind === 'var') && writes.has(sId(TOPSCOPE) + ':' + name);
     if (isLive) {
       live.add(name);
-      rewrites.push({ start: r.node.start, end: r.node.end, text: r.shorthand ? name + ':S.' + name : 'S.' + name });
+      rewrites.push({ start: r.node.start, end: r.node.end, text: r.shorthand ? name + ':' + SN + '.' + name : SN + '.' + name });
     } else plain.add(name);
   } else if (!here && declHere) {
     if (decl.kind === 'function') exported.add(name);
@@ -204,7 +217,7 @@ for (const r of refs) {
 for (const w of pendingWrites) if (inBlock(w.id) && lookup(w.scope, w.id.name) === TOPSCOPE && !topDeclInBlock(w.id.name)) writtenInBlock.add(w.id.name);
 for (const n of writtenInBlock) if (plain.has(n)) { plain.delete(n); live.add(n); }
 
-const report = { from: fromLine, to: toLine - 1, statements: block.length, lines: src.slice(B0, B1).split('\n').length - 1,
+const report = { from: fromLine, to: toLine - 1, statements: block.length, lines: src.slice(B0, B1).split('\n').length - 1, state: SN,
   deps: [...plain].sort(), live: [...live].sort(), liveWritten: [...writtenInBlock].sort(), entryPoints: [...exported].sort(), proxied: [...proxied].sort(),
   refused: Object.fromEntries([...refused].map(([k, v]) => [k, v.slice(0, 5)])) };
 if (refused.size) { console.error(JSON.stringify(report, null, 1)); console.error('\nREFUSED: variables declared in the block are used outside it (see `refused`).'); process.exit(3); }
@@ -218,11 +231,12 @@ const moduleText = `/* ${args.file} — split out of app.js by scripts/split_cli
  *
  * Built on first use by app.js's lazy-module loader (\`_${stem}Mod\` / \`_${stem}Load\`). The code below is
  * app.js's own, moved byte-for-byte; its reads of app.js's live \`let\` bindings were rewritten to
- * \`S.<name>\` (getters/setters on \`dep.state\`) at exact identifier offsets, and everything else it uses
- * arrives through \`dep\`. tests/test_client_module_deps.py proves every name resolves.
+ * \`${SN}.<name>\` (getters/setters on \`dep.state\`) at exact identifier offsets, and everything else it uses
+ * arrives through \`dep\`. tests/test_client_module_deps.py proves every name resolves.${SN === 'S' ? '' : `
+ * The state object is \`${SN}\`, not \`S\`: the moved code declares an \`S\` of its own.`}
  */
 window.${args.factory} = function(dep){
-  const S = dep.state;   // live app.js bindings: ${liveList.map(n => 'S.' + n).join(', ') || '(none)'}
+  const ${SN} = dep.state;   // live app.js bindings: ${liveList.map(n => SN + '.' + n).join(', ') || '(none)'}
   const {
 ${wrapList(depList, '    ')}
   } = dep;

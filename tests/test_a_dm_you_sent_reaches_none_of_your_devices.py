@@ -27,7 +27,7 @@ from pathlib import Path
 from tests.client_source import app_source_with
 
 ROOT = Path(__file__).resolve().parents[1]
-APP = app_source_with("dms.js")   # sendDm lives in dms.js (split out of app.js)
+APP = app_source_with("dms.js", "blossom.js")   # sendDm lives in dms.js, _notePublishedWraps in blossom.js
 ROUTER = (ROOT / "app/routers/push.py").read_text(encoding="utf-8")
 WATCHER = (ROOT / "app/services/nostr_push_service.py").read_text(encoding="utf-8")
 MODELS = (ROOT / "app/models.py").read_text(encoding="utf-8")

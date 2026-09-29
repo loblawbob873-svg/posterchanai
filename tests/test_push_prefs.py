@@ -15,6 +15,7 @@ import json
 import pytest
 
 from app.services import push_prefs
+from tests.client_source import app_source_with
 
 
 # ---- classification: the toggle and the wording must not drift ----------------------------------
@@ -84,7 +85,7 @@ def test_the_vocabulary_matches_the_client_exactly():
     differently silences nothing, and no test on either side alone would see it."""
     from pathlib import Path
     import re
-    app = (Path(__file__).resolve().parents[1] / "static/js/client/app.js").read_text(encoding="utf-8")
+    app = app_source_with("blossom.js")   # _NOTIFICATION_TYPES lives in blossom.js
     block = app[app.index("const _NOTIFICATION_TYPES"):app.index("const _NOTIFICATION_SOUNDS")]
     client = set(re.findall(r"\['([a-z]+)',", block))
     assert client == set(push_prefs.PUSH_TYPES), (

@@ -481,6 +481,11 @@
      boots: incoming DMs are subscribed at login and a push / the Android launcher lands on Messages at
      boot, so none of it may wait on a load. -->
 <script src="/static/js/client/dms.js?v={{ ver }}"></script>
+<!-- The media server (mediaServer, uploadTarget, _serverOrigin, _absUrl), the synced client prefs and the
+     notification/push preferences, split out of app.js. Loaded BEFORE app.js, which builds it while it
+     boots: every render path and the composer's paste/drop upload ask it synchronously, and its
+     top-level code (the media-fetch ceiling, the focus/online/storage listeners) runs at boot. -->
+<script src="/static/js/client/blossom.js?v={{ ver }}"></script>
 <script src="/static/js/client/app.js?v={{ ver }}"></script>
 <script src="/static/js/client/instance-welcome.js?v={{ ver }}"></script>
 <script src="/static/js/client/media-center-ui.js?v={{ ver }}"></script>

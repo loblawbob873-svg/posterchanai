@@ -17,6 +17,7 @@ from sqlalchemy.pool import StaticPool
 from app.models import Base, PushFollowSeen, PushSubscription
 from app.services import nostr_push_service as nps
 from app.services import push_prefs
+from tests.client_source import app_source_with
 
 ME = "a" * 64
 OLD = "b" * 64          # already followed ME before any of this
@@ -88,7 +89,6 @@ def test_the_new_followers_toggle_silences_it_per_device(world):
 
 
 def test_follows_are_one_of_the_shared_toggle_names():
-    from pathlib import Path
     assert push_prefs.push_type({"kind": 3}) == "follows" and "follows" in push_prefs.PUSH_TYPES
-    client = (Path(__file__).resolve().parents[1] / "static/js/client/app.js").read_text()
+    client = app_source_with("blossom.js")   # _NOTIFICATION_TYPES lives in blossom.js
     assert "['follows','New followers']" in client

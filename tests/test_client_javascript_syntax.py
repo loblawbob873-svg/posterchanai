@@ -13,6 +13,7 @@ ROOT = Path(__file__).resolve().parents[1]
                                     "static/js/client/keys.js",
                                     "static/js/client/musiclib.js",
                                     "static/js/client/dms.js",
+                                    "static/js/client/blossom.js",
                                     "static/js/client/os.js"])
 def test_primary_client_controllers_parse(script):
     result = subprocess.run(

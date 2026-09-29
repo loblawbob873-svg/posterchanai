@@ -1,10 +1,20 @@
 """Execute shipped account notification persistence and delivery gates, with transport boundaries."""
 from pathlib import Path
 import subprocess
+from tests.client_source import app_source_with
 ROOT=Path(__file__).resolve().parents[2]
 
 
-def test_notification_preferences_account_reload_delayed_sync_and_multi_device():
+def _client(tmp_path):
+    """blossom.js (the notification preferences, split out of app.js), then app.js, as one file for
+    the harness to slice. Inside the module app.js's live `ME` reads as `_S.ME`; the harnesses stand
+    in for that with `c._S=c`, so it reads the same context property the unmoved code would."""
+    path=tmp_path/'client.js'
+    path.write_text(app_source_with('blossom.js'),encoding='utf-8')
+    return str(path)
+
+
+def test_notification_preferences_account_reload_delayed_sync_and_multi_device(tmp_path):
     script=r'''
 const fs=require('fs'),vm=require('vm'),assert=require('node:assert/strict');
 const source=fs.readFileSync(process.argv[1],'utf8');
@@ -19,7 +29,7 @@ function device(storage=new Map()){
   sign:async(kind,content,tags,created_at)=>{const event={kind,content,tags,created_at,pubkey:c.ME.pubkey};if(c.signature)await c.signature.promise;return event;},
   Relay:{publish:async event=>{c.publishes.push(event);if(c.accepted)server.set(event.pubkey,JSON.parse(event.content));return{ok:c.accepted};}},
   Store:{saveEvent:event=>c.events.push(event)}};
- vm.createContext(c);vm.runInContext(block+source.slice(source.indexOf('  function saveClientPrefsNostr(patch){'),source.indexOf('  async function restoreClientPrefsNostr')),c);c.publish=async(kind,content,tags,opts)=>c.Relay.publish(await c.sign(kind,content,tags,opts.createdAt));c.storage=storage;return c;
+ c._S=c;vm.createContext(c);vm.runInContext(block+source.slice(source.indexOf('  function saveClientPrefsNostr(patch){'),source.indexOf('  async function restoreClientPrefsNostr')),c);c.publish=async(kind,content,tags,opts)=>c.Relay.publish(await c.sign(kind,content,tags,opts.createdAt));c.storage=storage;return c;
 }
 (async()=>{
  const a=device();assert.equal(a.notificationPreference('email'),true);
@@ -57,11 +67,11 @@ function device(storage=new Map()){
  console.log('account, delayed hydration, reload, ACK, signer race, multi-device and sound validation passed');
 })().catch(e=>{console.error(e);process.exit(1)});
 '''
-    result=subprocess.run(['node','-e',script,str(ROOT/'static/js/client/app.js')],capture_output=True,text=True,timeout=20)
+    result=subprocess.run(['node','-e',script,_client(tmp_path)],capture_output=True,text=True,timeout=20)
     assert result.returncode==0,result.stderr
 
 
-def test_event_toggles_gate_actual_delivery_without_gating_other_events():
+def test_event_toggles_gate_actual_delivery_without_gating_other_events(tmp_path):
     script=r'''
 const fs=require('fs'),vm=require('vm'),assert=require('node:assert/strict');
 const source=fs.readFileSync(process.argv[1],'utf8');
@@ -86,7 +96,7 @@ for(const [key,opts] of [['email',{tag:'pc-mail',route:'mail'}],['dm',{tag:'pc-d
  disabled.delete(key);c.osNotify('title','body',opts);assert.equal(native.length,count+2,key+' on');assert.equal(native.at(-1).silent,true,'native sound follows app sound owner');
 }
 '''
-    result=subprocess.run(['node','-e',script,str(ROOT/'static/js/client/app.js')],capture_output=True,text=True,timeout=10)
+    result=subprocess.run(['node','-e',script,_client(tmp_path)],capture_output=True,text=True,timeout=10)
     assert result.returncode==0,result.stderr
 
 
@@ -107,7 +117,7 @@ assert.throws(()=>handler({denied:true,sender},{silent:true}));assert.equal(show
     assert result.returncode==0,result.stderr
 
 
-def test_notification_sound_mute_deduplication_and_audio_context_cleanup():
+def test_notification_sound_mute_deduplication_and_audio_context_cleanup(tmp_path):
     script=r'''
 const fs=require('fs'),vm=require('vm'),assert=require('node:assert/strict');
 const source=fs.readFileSync(process.argv[1],'utf8');
@@ -115,7 +125,7 @@ const block=source.slice(source.indexOf('  let _notificationLastSound='),source.
 let selected='chime',clock=10000;const contexts=[],timers=[];
 class Audio {constructor(){this.currentTime=0;this.state='running';this.frequencies=[];this.closed=false;contexts.push(this)}createGain(){return{connect(){},gain:{setValueAtTime(){},exponentialRampToValueAtTime(){}}}}createOscillator(){const o={type:'',frequency:{value:0},connect(){},start:()=>this.frequencies.push(o.frequency.value),stop(){}};return o}close(){this.closed=true}}
 const c={window:{AudioContext:Audio},Date:{now:()=>clock},notificationPreference:()=>selected,setTimeout:f=>timers.push(f)};
-vm.createContext(c);vm.runInContext(block,c);
+c._S=c;vm.createContext(c);vm.runInContext(block,c);
 c.notificationSound();c.notificationSound();assert.equal(contexts.length,1,'toast and OS notification chime once');
 assert.deepEqual(contexts[0].frequencies,[523.25,783.99]);timers.splice(0).forEach(f=>f());assert.equal(contexts[0].closed,true,'no persistent desktop idle inhibitor');
 selected='off';c.notificationSound(true);assert.equal(contexts.length,1,'silent preview creates no audio context');
@@ -123,5 +133,5 @@ selected='soft';c.notificationSound(true);assert.deepEqual(contexts.at(-1).frequ
 selected='bright';c.notificationSound(true);assert.deepEqual(contexts.at(-1).frequencies,[659.25,987.77]);
 c.window.Capacitor={};clock+=1000;const count=contexts.length;c.notificationSound();assert.equal(contexts.length,count,'no duplicate Android channel chime');
 '''
-    result=subprocess.run(['node','-e',script,str(ROOT/'static/js/client/app.js')],capture_output=True,text=True,timeout=10)
+    result=subprocess.run(['node','-e',script,_client(tmp_path)],capture_output=True,text=True,timeout=10)
     assert result.returncode==0,result.stderr
