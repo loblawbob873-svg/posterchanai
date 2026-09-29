@@ -11552,3 +11552,18 @@ video.tg-round{width:220px;height:220px;object-fit:cover;border-radius:50%}
 .tg-progress li::before{content:counter(s) " · "}
 .tg-progress li.on{border-color:var(--accent);color:var(--accent);box-shadow:0 0 10px rgba(var(--accent-rgb),.3)}
 .tg-restart{margin-top:6px}
+
+/* ===== The Go Live WINDOW on PosterChanOS (os.js _renderGoLiveWindow) =====
+   The setup sheet is the window's content, laid out like a native dialog window: edge to edge under
+   the title bar, no backdrop, no second card inside the frame, the heading left to the title bar, and
+   the Go Live / Cancel row pinned to the bottom as a footer so it is never scrolled out of reach.
+   Only the FIRST sheet — a picker opened over it (.modal-sub) is still a sheet. */
+html.pc-golive-win #modal-root>.modal-bg:first-child:not(.modal-sub){background:var(--bg);backdrop-filter:none;
+  padding:38px 0 0;place-items:stretch;overflow:hidden}
+html.pc-golive-win #modal-root>.modal-bg:first-child:not(.modal-sub)>.modal{width:100%;max-width:none;height:100%;
+  max-height:none;box-sizing:border-box;border:0;border-radius:0;box-shadow:none;background:transparent;
+  padding:16px 20px 0;overflow:auto;overscroll-behavior:contain}
+html.pc-golive-win #modal-root>.modal-bg:first-child:not(.modal-sub)>.modal>h3:first-child{display:none}
+html.pc-golive-win #modal-root>.modal-bg:first-child:not(.modal-sub) .gl-actions{position:sticky;bottom:0;z-index:2;
+  margin:14px -20px 0;padding:12px 20px;background:var(--bg2);border-top:1px solid var(--line);justify-content:flex-end}
+html.pc-golive-win #modal-root>.modal-bg:first-child:not(.modal-sub) .gl-actions .btn{flex:0 0 auto;min-width:0}

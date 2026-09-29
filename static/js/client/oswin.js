@@ -163,6 +163,10 @@
    * and a prefix would re-open exactly that door. A name is added here only once `PCOS.renderExtra`
    * can draw it in a page with no desktop behind it. */
   const EXTRA_VIEWS = ['__ossettings', '__tasks', '__remote', '__installer', '__golive'];
+  /* What a person reads in the title bar when the opener did not hand a label over (a restored or
+   * re-opened window): "__golive" is a route, not a name. */
+  const EXTRA_LABELS = { __ossettings:'System Settings', __tasks:'Task Manager', __remote:'Remote Desktop',
+                         __installer:'Install PosterChanOS', __golive:'Go Live' };
   // Renamed/merged views an older shell may still hand over (os.js LEGACY_VIEWS; app.js switchView maps it).
   const LEGACY_VIEWS = { __vms: 'vms' };
 
@@ -412,7 +416,7 @@
         +'<button data-action="min" title="Minimise" aria-label="Minimise">−</button>'
         +'<button data-action="max" title="Maximise" aria-label="Maximise">□</button>'
         +'<button data-action="close" title="Close" aria-label="Close">×</button></span>';
-      bar.querySelector('.pc-oswin-title').textContent=String(state.label||state.view||'PosterChan');
+      bar.querySelector('.pc-oswin-title').textContent=String(state.label||EXTRA_LABELS[state.view]||state.view||'PosterChan');
       (root.document.body||root.document.documentElement).prepend(bar);
       /* THE WINDOW'S BORDER, because nothing else on this surface draws one.
        *

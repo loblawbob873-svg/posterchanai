@@ -2658,6 +2658,10 @@
    * and stays when the person went live: a phone/screen broadcast lives in THIS page (its capture and
    * its PeerConnection), and the OBS path moves the page on to the stream. */
   function _renderGoLiveWindow(){
+    // The sheet IS this window's content (client.css `html.pc-golive-win`): drawn as a card floating
+    // inside a window frame, it read as a dialog stuck in an empty window ("looks ugly since it does
+    // not fit") with its Go Live button scrolled out of reach.
+    try{ document.documentElement.classList.add('pc-golive-win'); }catch(_){ }
     const feed = document.getElementById('feed');
     if(feed) feed.innerHTML = '<div class="empty" id="pc-golive-wait">Setting up your stream…</div>';
     const P = PC();

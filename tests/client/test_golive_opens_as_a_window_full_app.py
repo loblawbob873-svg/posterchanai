@@ -54,3 +54,34 @@ def test_the_go_live_window_shows_the_setup_and_closes_itself_on_cancel():
         await b.until("window.__closed>0")
 
     asyncio.run(desktop.with_browser("online", "", check, COMPOSITOR + INGEST + RECORD))
+
+
+NATIVE = r"""(()=>{const bg=document.querySelector('#modal-root>.modal-bg'), m=bg&&bg.querySelector('.modal');
+  const r=m.getBoundingClientRect(), cs=getComputedStyle(m), a=m.querySelector('.gl-actions').getBoundingClientRect();
+  const z=parseFloat(getComputedStyle(document.body).zoom)||1;
+  return {left:r.left*z, right:r.right*z, W:innerWidth, H:innerHeight, radius:parseFloat(cs.borderTopLeftRadius),
+          border:parseFloat(cs.borderTopWidth), actionsBottom:a.bottom*z, actionsTop:a.top*z,
+          heading:!!m.querySelector('h3') && getComputedStyle(m.querySelector('h3')).display!=='none',
+          title:(document.querySelector('#pc-oswin-chrome .pc-oswin-title')||{}).textContent||''}})()"""
+
+
+@pytest.mark.skipif(not Path("/opt/google/chrome/chrome").exists(), reason="Chrome required")
+def test_the_go_live_window_looks_like_a_window_not_a_card_inside_one():
+    """Reported: "Go Live is now a window and it looks ugly since it does not fit, redo it so it looks
+    native". The sheet drew as a rounded, bordered card inset in the window with its Go Live button
+    scrolled out of reach, under a title bar reading "__golive"."""
+    async def check(b):
+        await _ready(b)
+        await b.call('Emulation.setDeviceMetricsOverride', {'width': 640, 'height': 820, 'deviceScaleFactor': 1, 'mobile': False})
+        await b.js("location.href=location.pathname+'?pcwin=__golive'")
+        await b.until("!!document.querySelector('#gl-title')")
+        await asyncio.sleep(.4)
+        got = await b.js(NATIVE)
+        assert got["left"] <= 1 and got["right"] >= got["W"] - 1, f"the sheet is a card inset in the window: {got}"
+        assert got["radius"] == 0 and got["border"] == 0, f"a second frame drawn inside the window frame: {got}"
+        assert got["actionsBottom"] <= got["H"] + 1 and got["actionsTop"] < got["H"], \
+            f"Go Live / Close are scrolled out of the window: {got}"
+        assert not got["heading"], "the heading repeats the title bar"
+        assert got["title"] == "Go Live", f"title bar reads {got['title']!r}"
+
+    asyncio.run(desktop.with_browser("online", "", check, COMPOSITOR + INGEST + RECORD))
