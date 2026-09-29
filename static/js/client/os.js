@@ -10013,7 +10013,8 @@
       let n = 0;
       try{ n = (PC().mailUnread && PC().mailUnread()) || 0; }catch(_){ return; }
       if(mailSeen === null){ mailSeen = n; mailAck = n; return; }   // baseline, not an arrival
-      if(n > mailSeen) osToast(`✉ <b>${n - mailSeen} new email</b>`, '',
+      const owner = !(window.pcShell && window.pcShell.backgroundOwner === false);   // one monitor announces
+      if(n > mailSeen && owner) osToast(`✉ <b>${n - mailSeen} new email</b>`, '',
                                () => { try{ openApp('mail'); }catch(_){} }, 'email');
       if(n !== mailSeen){ mailSeen = n; drawBar(); }
     }, 20000);
@@ -10762,6 +10763,9 @@
               try{ val = decodeURIComponent(rest); }catch(_){ }
               try{
                 if(kind === 'view') openLauncherApp(val);
+                /* A capture asked for from a popup (the tray, the Print Screen prompt): taken HERE,
+                   because the popup that asked is closing. */
+                else if(kind === 'shot'){ if(window.PCOSShell && PCOSShell.takeShot) PCOSShell.takeShot(val === 'region' ? 'region' : 'screen'); }
                 else if(kind === 'app') launchMachineApp(val);
                 /* Put on / taken off the desktop from the start menu. Performed HERE, in the window
                    that has read the layout and holds the write gate: the menu is a popup that closes
@@ -11722,6 +11726,10 @@
            and those exist in this renderer exactly as they do in the desktop's. */
         else if(k === 'tray'){
           if(window.PCOSShell && PCOSShell.openTrayPopup) PCOSShell.openTrayPopup();
+        }
+        /* The Print Screen prompt: a window of its own so it is never under an application. */
+        else if(k === 'shot'){
+          if(window.PCOSShell && PCOSShell.renderShotPopup) PCOSShell.renderShotPopup();
         }
       }catch(e){
         /* A THROW HERE USED TO BE INVISIBLE AND USED TO LOOK LIKE THE CLIENT. Every branch above

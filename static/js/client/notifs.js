@@ -166,8 +166,17 @@ window.PCNotifsFactory = function(dep){
                                                onClick:()=>target?openThread(target):switchView('notifications') });
   }
   // `html` is trusted markup (callers build names via emojiName + enc their content) — do NOT re-escape it.
+  /* ONE DESKTOP ANNOUNCES. PosterChanOS runs one renderer per monitor (and every popped-out window is
+   * a document of its own), and each of them receives the same event — so every arrival used to pop a
+   * card AND play the chime once per monitor ("each monitor does things separately"). Only the primary
+   * desktop surface announces; the others still COUNT (the bell is painted from notifUnread, which the
+   * shared read marker keeps in step). Outside PosterChanOS there is one page and this is always true. */
+  function announcesArrivals(){
+    try{ return !(window.pcShell && window.pcShell.backgroundOwner === false); }catch(_){ return true; }
+  }
   function notifToast(html, pic, onClick, notificationType){
     if(!notificationAllowed(notificationType))return;
+    if(!announcesArrivals())return;
     notificationSound();
     // On the desktop these become Windows-style cards in the bottom-right corner instead (with the
     // arrival chime). Routed here rather than detected again in os.js: this function is already the

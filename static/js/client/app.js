@@ -291,6 +291,11 @@
     try{ _tlResume && _tlResume(); }catch(_){}
   }
   let CFG = {}, ME = null, FOLLOWS = new Set(), FOLLOWERS = new Set(), MUTED = new Set(), MUTED_WORDS = new Set(), MUTED_THREADS = new Set(), PINNED = new Set(), BOOKMARKS = new Set(), VIEW = 'home', IS_ADMIN = false, GUEST = false;
+  /* PRIVATE MUTES (NIP-51): the members of the kind-10000 list that live ENCRYPTED in its content, where
+   * Ditto (and others) keep them. They are applied like any mute but must never be republished as
+   * public `p` tags — that would announce to everyone whom this person muted. `_mutePrivateCount` is how
+   * many private entries the list's content held when it was last decrypted (null = never read). */
+  let MUTED_PRIVATE = new Set(), _mutePrivateCount = null, _mutePrivateOf = '';
 
   /* ---------- how this copy of the client is running ----------
    *
@@ -1189,6 +1194,14 @@
   // Cached notifications render before relay startup reaches watchNotifications(). Restore
   // their read marker immediately so offline reloads cannot make acknowledged rows unread.
   try{ seenNotif.last = +(localStorage.getItem('pc_notif_seen')||0); }catch(_){}
+  /* READ ON ONE MONITOR IS READ ON ALL. The marker is shared storage, but each PosterChanOS monitor is
+   * its own page holding its own copy — so opening the centre on one left every other bell lit. A
+   * `storage` event is exactly "another page on this origin changed it". */
+  try{ window.addEventListener('storage', e => {
+    if(e.key !== 'pc_notif_seen') return;
+    const v = +(e.newValue || 0);
+    if(v > seenNotif.last){ seenNotif.last = v; try{ bumpNotif(); }catch(_){} }
+  }); }catch(_){}
 
   // NIP-17 for signers whose SECRET KEY we never hold (nip07 extension / nip46 remote signer):
   // they do the two key-dependent steps via NIP-44 — sign the kind-13 seal + nip44-encrypt the
@@ -1547,7 +1560,11 @@
     // 10005 (joined public chats) is the same shape of hazard, just with `e` members instead of `p`.
     if(kind===3 || kind===10000 || kind===10005){
       const letter = kind===10005 ? 'e' : 'p';
-      const outP=(tags||[]).filter(t=>t[0]===letter&&t[1]).length;
+      let outP=(tags||[]).filter(t=>t[0]===letter&&t[1]).length;
+      /* PRIVATE entries count. A NIP-51 list can keep its members ENCRYPTED in `content` (Ditto does),
+       * so its public tags alone understate it: a Ditto user with 6 public mutes and a 19 KB private
+       * section was refused every mute here as "7 < 21" — the list was not shrinking at all. */
+      if(kind===10000 && opts && typeof opts.privateCount==='number') outP += opts.privateCount;
       const label = kind===3?'follows':kind===10000?'mute':'joined-channels';
       /* "WHAT WE KNOW" CANNOT BE ONLY localStorage, OR THE GUARD RATCHETS ITSELF OFF.
        *
@@ -1576,7 +1593,20 @@
                      .sort((a,b)=>b.created_at-a.created_at)[0];
         if(held){ const n=(held.tags||[]).filter(t=>t[0]===letter&&t[1]).length; if(n>known) known=n; }
       }catch(_){}
-      if(known>=8 && outP < Math.floor(known/2)){
+      /* NOTHING IS LOST relative to the newest list anyone has published: every member of it is still
+       * here and its private section rides along unchanged. The guard exists to stop a publish from a
+       * stale or empty base; one built ON the freshest list cannot be that, whatever an older count said. */
+      let onFreshest=false;
+      try{
+        const base=opts&&opts.base;
+        if(base && base.kind===kind && base.pubkey===(ME&&ME.pubkey) && content===base.content){
+          const out=new Set((tags||[]).filter(t=>t[0]===letter&&t[1]).map(t=>t[1]));
+          const newest=(Store.query([{authors:[ME.pubkey],kinds:[kind],limit:1}])||[]).sort((a,b)=>b.created_at-a.created_at)[0];
+          onFreshest = (!newest || newest.created_at<=base.created_at)
+                    && (base.tags||[]).every(t=>t[0]!==letter||!t[1]||out.has(t[1]));
+        }
+      }catch(_){ onFreshest=false; }
+      if(known>=8 && outP < Math.floor(known/2)) if(!onFreshest){
         /* A relay read can NEVER ask this question. Only a click path which explicitly declares a
          * user follow edit may offer the destructive override. This keeps a poisoned hydration,
          * background sync, or future accidental publish(3) call from laundering corruption into a
@@ -5097,7 +5127,28 @@
   // Reads still ADOPT the relay's list whenever it returns an event (a present-but-empty event is a real
   // clear-all, which we honour) — so cross-device removals propagate normally.
   function _persistMutes(){ const u=[...MUTED].filter(p=>p!==ME.pubkey);
-    ClientSettings.set('mutedUsers', u); ClientSettings.set('mutedWords', [...MUTED_WORDS]); ClientSettings.set('mutedThreads', [...MUTED_THREADS]); ClientSettings.set('mutedUsersCount', u.length); }
+    ClientSettings.set('mutedUsers', u); ClientSettings.set('mutedWords', [...MUTED_WORDS]); ClientSettings.set('mutedThreads', [...MUTED_THREADS]); ClientSettings.set('mutedUsersCount', u.length);
+    ClientSettings.set('mutedPrivate', [...MUTED_PRIVATE]); }
+  /* THE PRIVATE HALF OF A MUTE LIST, decrypted with the account's own key: NIP-44 first (what Ditto
+   * and current clients write), NIP-04 for older lists (`?iv=`). An array of tags, or null for "could
+   * not read it" — which is never "there is nothing private", so callers keep the content untouched. */
+  async function _readPrivateMutes(ev){
+    if(!ev || typeof ev.content!=='string' || !ev.content.trim()) return [];
+    if(!ME || !signer) return null;
+    const giveUp = ms => new Promise(r => setTimeout(() => r(null), ms));
+    const tryDec = async fn => { try{ const pt = await Promise.race([fn(), giveUp(20000)]);
+      const arr = pt ? JSON.parse(pt) : null; return Array.isArray(arr) ? arr.filter(t => Array.isArray(t) && t[0]) : null; }catch(_){ return null; } };
+    let tags = null;
+    if(!/\?iv=/.test(ev.content) && signer.nip44dec) tags = await tryDec(() => signer.nip44dec(ME.pubkey, ev.content));
+    if(!tags && signer.nip04dec) tags = await tryDec(() => signer.nip04dec(ME.pubkey, ev.content));
+    return tags;
+  }
+  /* What the shrink guard needs to know about a kind-10000 publish: how many PRIVATE entries ride along
+   * unchanged in `content`, and the freshest list it was built on. */
+  function _muteGuardOpts(cur, content){
+    const same = !!cur && content === cur.content;
+    return { privateCount: same && _mutePrivateOf === (cur && cur.id) ? (_mutePrivateCount || 0) : (content ? null : 0), base: same ? cur : null };
+  }
   let _followShrinkWarned=false;
   let _followShortReads = 0;   // short reads seen this session (see the guard below)   // one line per session, not one per refresh
   function _followSafetyMembers(){
@@ -5448,6 +5499,7 @@
     (ClientSettings.get('mutedUsers',[])||[]).forEach(p=>MUTED.add(p));
     (ClientSettings.get('mutedWords',[])||[]).forEach(w=>MUTED_WORDS.add(String(w).toLowerCase()));
     (ClientSettings.get('mutedThreads',[])||[]).forEach(e=>MUTED_THREADS.add(e));
+    (ClientSettings.get('mutedPrivate',[])||[]).forEach(p=>{ MUTED_PRIVATE.add(p); MUTED.add(p); });
     let ev=null; try{ const l=await Relay.query([{ authors:[ME.pubkey], kinds:[10000], limit:1 }]); ev=l.sort((a,b)=>b.created_at-a.created_at)[0]||null; }catch(_){}
     if(!ME || ME.pubkey!==owner || GUEST) return false;
     // Adopt the relay's list when it returned an event — a present-but-empty event is a real clear-all,
@@ -5456,6 +5508,18 @@
       MUTED = new Set(ev.tags.filter(t=>t[0]==='p'&&t[1]).map(t=>t[1]));
       MUTED_WORDS = new Set(ev.tags.filter(t=>t[0]==='word'&&t[1]).map(t=>t[1].toLowerCase()));
       MUTED_THREADS = new Set(ev.tags.filter(t=>t[0]==='e'&&t[1]).map(t=>t[1]));   // NIP-51 thread mutes
+      const priv = await _readPrivateMutes(ev);
+      if(!ME || ME.pubkey!==owner) return false;
+      if(priv){
+        MUTED_PRIVATE = new Set(priv.filter(t=>t[0]==='p'&&t[1]).map(t=>t[1]));
+        _mutePrivateCount = priv.length; _mutePrivateOf = ev.id;
+        MUTED_PRIVATE.forEach(p=>MUTED.add(p));
+        priv.filter(t=>t[0]==='word'&&t[1]).forEach(t=>MUTED_WORDS.add(String(t[1]).toLowerCase()));
+        priv.filter(t=>t[0]==='e'&&t[1]).forEach(t=>MUTED_THREADS.add(t[1]));
+      }else{
+        // Unreadable: the private members we knew stay applied, and stay private.
+        MUTED_PRIVATE.forEach(p=>MUTED.add(p));
+      }
       _persistMutes();
     }
     _syncAutoMutes().catch(()=>{});
@@ -5477,14 +5541,14 @@
     // Person-mutes: prefer the relay's current p-tags (respects unmutes done elsewhere); fall back to
     // in-memory MUTED only when the read timed out, so we never publish an empty base. Keep t/e mutes.
     const users = cur ? new Set(cur.tags.filter(t=>t[0]==='p'&&t[1]).map(t=>t[1]))
-                      : new Set([...MUTED].filter(p=>p!==ME.pubkey));
+                      : new Set([...MUTED].filter(p=>p!==ME.pubkey && !MUTED_PRIVATE.has(p)));
     // Rebuild thread mutes from memory when the relay returned nothing — an empty `other` would publish a
     // list with every muted conversation stripped out.
     const other = cur ? cur.tags.filter(t=>t[0]!=='p'&&t[0]!=='word') : [...MUTED_THREADS].map(e=>['e',e]);
     const tags = [...users].map(p=>['p',p]).concat(other, clean.map(w=>['word',w]));
-    const r = await publish(10000, cur?cur.content:'', tags);
+    const r = await publish(10000, cur?cur.content:'', tags, _muteGuardOpts(cur, cur?cur.content:''));
     if(!(r && r.ok)) return false;   // relay didn't store it → don't apply locally (publish() toasts the failure)
-    MUTED = users; MUTED_WORDS = new Set(clean); _persistMutes();
+    MUTED = new Set([...users, ...MUTED_PRIVATE]); MUTED_WORDS = new Set(clean); _persistMutes();
     return true;
   }
   // True if a note's text contains any muted word/phrase (substring, case-insensitive). Applied to
@@ -5558,9 +5622,9 @@
     const ids = cur ? new Set(cur.tags.filter(t=>t[0]==='e'&&t[1]).map(t=>t[1])) : new Set(MUTED_THREADS);
     have ? ids.delete(rootId) : ids.add(rootId);
     const other = cur ? cur.tags.filter(t=>t[0]!=='e')
-                      : [...MUTED].filter(p=>p!==ME.pubkey).map(p=>['p',p]).concat([...MUTED_WORDS].map(w=>['word',w]));
+                      : [...MUTED].filter(p=>p!==ME.pubkey && !MUTED_PRIVATE.has(p)).map(p=>['p',p]).concat([...MUTED_WORDS].map(w=>['word',w]));
     const tags = other.concat([...ids].map(e=>['e',e]));
-    const r = await publish(10000, cur?cur.content:'', tags);
+    const r = await publish(10000, cur?cur.content:'', tags, _muteGuardOpts(cur, cur?cur.content:''));
     if(!(r && r.ok)) return;   // relay didn't store it → don't fake it locally (publish() toasts the failure)
     MUTED_THREADS = ids; _persistMutes();
     toast(have?'conversation unmuted':'🔕 conversation muted');
@@ -5580,11 +5644,26 @@
     const fromRelay = cur ? cur.tags.filter(t=>t[0]==='p'&&t[1]).map(t=>t[1]) : [];
     const pset = new Set([...inmem, ...fromRelay]);
     if (add) pset.add(pk); else pset.delete(pk);
+    // A PRIVATE mute stays in the encrypted content: never copy one into the public tags.
+    if(kind===10000) MUTED_PRIVATE.forEach(p=>pset.delete(p));
     const nonP = cur ? cur.tags.filter(t=>t[0]!=='p')
                      : (kind===10000 ? [...MUTED_WORDS].map(w=>['word',w]).concat([...MUTED_THREADS].map(e=>['e',e])) : []);
+    let content = cur ? cur.content : '';
+    if(kind===10000 && !add && MUTED_PRIVATE.has(pk)){
+      // Unmuting somebody who was muted PRIVATELY: re-seal the private list without them.
+      const priv = await _readPrivateMutes(cur);
+      if(!priv || !signer || !signer.nip44enc){ toast('This person is muted privately and the private list could not be read here'); return false; }
+      const kept = priv.filter(t=>!(t[0]==='p'&&t[1]===pk));
+      content = kept.length ? await signer.nip44enc(ME.pubkey, JSON.stringify(kept)) : '';
+      _mutePrivateCount = kept.length; _mutePrivateOf = '';
+    }
     // Don't publish a self-follow p-tag (ME is kept in FOLLOWS only for the home-feed filter).
     const tags = nonP.concat([...pset].filter(p=>p!==ME.pubkey).map(p=>['p',p]));
-    const r = await publish(kind, cur?cur.content:'', tags, kind===3?{userFollowEdit:true}:undefined);
+    const opts = kind===3 ? {userFollowEdit:true}
+               : kind===10000 ? Object.assign(_muteGuardOpts(cur, content), content!==(cur&&cur.content) ? {privateCount:_mutePrivateCount||0} : {})
+               : undefined;
+    const r = await publish(kind, content, tags, opts);
+    if(r && r.ok && kind===10000 && !add) MUTED_PRIVATE.delete(pk);
     return !!(r && r.ok);   // callers apply the local change + toast ONLY on success (no ghost follow/mute)
   }
   // Follow many at once (e.g. "Follow all back") in a SINGLE kind-3 publish, merged onto the union of
@@ -12711,6 +12790,8 @@
   window.PCOpenNotificationRoute=openOsNotificationRoute;
   function osNotify(title, body, opts){
     if(!notificationAllowed(_notificationType(opts)))return null;
+    // One PosterChanOS monitor announces (see notifs.js announcesArrivals): no second chime, no second card.
+    try{ if(window.pcShell && window.pcShell.backgroundOwner === false) return null; }catch(_){}
     notificationSound();
     const clean = String(body||'').replace(/<[^>]+>/g,'')
                     .replace(_SHORTCODE_STRIP,'').replace(/\s+/g,' ').trim();

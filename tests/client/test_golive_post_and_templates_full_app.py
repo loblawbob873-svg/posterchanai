@@ -33,7 +33,7 @@ def bundle():
 FILL = """(()=>{const r=document;
   r.querySelector('#gl-title').value='Drawing anime';
   r.querySelector('#gl-summary').value='Sketching tonight';
-  r.querySelector('#gl-tags').value='anime art';
+  r.querySelector('#gl-tags').value='anime, art';
   r.querySelector('#gl-post').value='Come hang out: {title}\\nwatch here {link} #art';
 })()"""
 
@@ -78,7 +78,7 @@ def test_the_post_is_editable_and_a_template_is_saved_reused_and_published():
           s.dispatchEvent(new Event('change'));})()""")
         got = await b.js("""({t:document.querySelector('#gl-title').value, s:document.querySelector('#gl-summary').value,
                              g:document.querySelector('#gl-tags').value, p:document.querySelector('#gl-post').value})""")
-        assert got == {"t": "Drawing anime", "s": "Sketching tonight", "g": "anime art",
+        assert got == {"t": "Drawing anime", "s": "Sketching tonight", "g": "anime, art",
                        "p": "Come hang out: {title}\nwatch here {link} #art"}, got
 
         # --- go live: the edited post is what is published ------------------------------------------

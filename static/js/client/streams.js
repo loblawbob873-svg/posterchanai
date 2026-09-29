@@ -995,7 +995,7 @@ window.PCStreamsFactory = function(dep){
       const t=list.find(x=>x.name===sel.value);
       $('#gl-tpl-del',root).classList.toggle('hidden', !t);
       if(!t) return;
-      setv('#gl-title', t.title); setv('#gl-summary', t.summary); setv('#gl-tags', (t.tags||[]).join(' '));
+      setv('#gl-title', t.title); setv('#gl-summary', t.summary); setv('#gl-tags', (t.tags||[]).join(', '));
       setv('#gl-lang', t.lang||'');
       const cw=$('#gl-cw',root), cwr=$('#gl-cwr',root);
       if(cw){ cw.checked = t.cw!=null; if(cwr){ cwr.value=t.cw||''; cwr.classList.toggle('hidden', !cw.checked); } }
@@ -1167,9 +1167,13 @@ window.PCStreamsFactory = function(dep){
     ['it','Italiano'],['nl','Nederlands'],['pl','Polski'],['ru','Русский'],['uk','Українська'],['tr','Türkçe'],
     ['ar','العربية'],['hi','हिन्दी'],['id','Bahasa Indonesia'],['ja','日本語'],['ko','한국어'],['zh','中文']];
   function _liveLangName(c){ const f=_LIVE_LANGS.find(x=>x[0]===c); return f ? f[1] : String(c||'').toUpperCase(); }
+  /* COMMAS SEPARATE TAGS ("for Go Live, can you change it to commas instead of spaces"), so a tag can
+   * be typed as words: "retro games" is ONE tag, stored hashtag-style as `retrogames` (a NIP-53 `t` is a
+   * hashtag, and that is how every client searches it). A saved list (an array: a template, the stream
+   * being edited) is already one tag per item. */
   function _liveNormTags(raw){
-    const list=Array.isArray(raw) ? raw.join(' ') : String(raw||'');
-    return [...new Set(list.split(/[\s,]+/).map(t=>t.replace(/^#+/,'').toLowerCase()
+    const list=Array.isArray(raw) ? raw.map(String) : String(raw||'').split(',');
+    return [...new Set(list.map(t=>t.trim().replace(/^#+/,'').toLowerCase()
       .replace(/[^\p{L}\p{N}_-]/gu,'')).filter(t=>t && t.length<=32))].slice(0,10);
   }
   // `cw`: null = no warning; a string (possibly empty) = a warning, with that reason.
@@ -1197,8 +1201,8 @@ window.PCStreamsFactory = function(dep){
     d=_liveDetails(d);
     return `<label class="fld">Description <span class="muted small">— what the stream is about</span>
         <textarea class="input gl-summary" id="gl-summary" rows="3" maxlength="1000" placeholder="What’s on, a schedule, links…">${enc(d.summary)}</textarea></label>
-      <label class="fld">Tags <span class="muted small">— up to 10, separated by spaces</span>
-        <input class="input" id="gl-tags" maxlength="400" placeholder="anime gaming music" value="${enc(d.tags.join(' '))}"></label>
+      <label class="fld">Tags <span class="muted small">— up to 10, separated by commas</span>
+        <input class="input" id="gl-tags" maxlength="400" placeholder="anime, gaming, music" value="${enc(d.tags.join(', '))}"></label>
       <div class="gl-detrow">
         <label class="fld">Language<select class="input" id="gl-lang"><option value="">—</option>${
           _LIVE_LANGS.map(([c,n])=>`<option value="${c}"${c===d.lang?' selected':''}>${enc(n)}</option>`).join('')}</select></label>

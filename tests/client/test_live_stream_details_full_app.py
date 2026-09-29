@@ -53,7 +53,7 @@ def test_live_details_are_published_kept_and_shown():
         await b.js("""(()=>{const r=document;
           r.querySelector('#gl-title').value='Drawing anime';
           r.querySelector('#gl-summary').value='Sketching tonight — requests open';
-          r.querySelector('#gl-tags').value='#Anime, gaming  anime';
+          r.querySelector('#gl-tags').value='#Anime, gaming ,anime, retro games';
           r.querySelector('#gl-lang').value='pt';
           const cw=r.querySelector('#gl-cw'); cw.checked=true; cw.dispatchEvent(new Event('change'));
           r.querySelector('#gl-cwr').value='flashing lights';
@@ -65,7 +65,8 @@ def test_live_details_are_published_kept_and_shown():
         t = _tags(ev)
         assert ["title", "Drawing anime"] in t
         assert ["summary", "Sketching tonight — requests open"] in t, t
-        assert [x[1] for x in t if x[0] == "t"] == ["anime", "gaming"], "tags not normalised/deduped"
+        # "change it to commas instead of spaces": commas separate, a tag of two words is one tag.
+        assert [x[1] for x in t if x[0] == "t"] == ["anime", "gaming", "retrogames"], "tags not split on commas/normalised/deduped"
         assert ["L", "ISO-639-1"] in t and ["l", "pt", "ISO-639-1"] in t, t
         assert ["content-warning", "flashing lights"] in t, t
 
@@ -79,7 +80,9 @@ def test_live_details_are_published_kept_and_shown():
         await b.until("!!document.querySelector('#st-editdet')")
         await b.js("document.querySelector('#st-editdet').click()")
         await b.until("!!document.querySelector('#gl-det-save')")
-        await b.js("""document.querySelector('#gl-tags').value='anime drawing';
+        assert await b.js("document.querySelector('#gl-tags').value") == "anime, gaming, retrogames", \
+            "editing shows the saved tags with the separator the form asks for"
+        await b.js("""document.querySelector('#gl-tags').value='anime, drawing';
                       document.querySelector('#gl-det-save').click()""")
         await b.until("window.__posts.some(e=>e.tags.some(t=>t[0]==='t'&&t[1]==='drawing'))")
         posts = await b.js("window.__posts")
@@ -99,7 +102,7 @@ def test_live_details_are_published_kept_and_shown():
             tags:[...document.querySelectorAll('.st-tag')].map(x=>x.textContent),
             about:(document.querySelector('.stream-view .about')||{}).textContent||'',
             cw:!!document.querySelector('#st-cw'), veiled:!!document.querySelector('#st-video.st-veiled')})""")
-        assert "Português" in shown["lang"] and shown["tags"] == ["#anime", "#gaming"], shown
+        assert "Português" in shown["lang"] and shown["tags"] == ["#anime", "#gaming", "#retrogames"], shown
         assert "Sketching tonight" in shown["about"], shown
         assert shown["cw"] and shown["veiled"], "the content warning did not hold the player back"
         await b.js("document.querySelector('#st-cw-show').click()")

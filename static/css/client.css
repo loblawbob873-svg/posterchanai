@@ -11618,3 +11618,8 @@ html.pc-golive-win #modal-root>.modal-bg:first-child:not(.modal-sub) .gl-actions
 @media (prefers-reduced-motion:reduce){.tgc-ringing{animation:none}}
 @media (max-width:600px){.tgc-panel,.tgc-panel.tgc-has-video{left:8px;right:8px;bottom:calc(8px + env(safe-area-inset-bottom));width:auto}}
 .tg-callbtns{margin-left:auto;display:flex;gap:2px}
+
+/* The Print Screen prompt in its own popup window (osshell.js renderShotPopup): the window IS the card. */
+.os-shot-popup .os-popup-host{position:fixed;inset:0;display:flex}
+.os-shot-popup .shot-prompt{flex:1;margin:0;box-sizing:border-box;overflow:auto}
+.shot-prompt.shot-done .shot-foot{color:var(--accent)}

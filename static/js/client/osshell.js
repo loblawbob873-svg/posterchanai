@@ -1376,6 +1376,14 @@
   async function takeShot(mode){
     const sh = root.pcShot;
     if(!sh || typeof sh.take !== 'function'){ toast('screenshots are not available here'); return null; }
+    /* A POPUP CANNOT TAKE A SCREENSHOT OF ANYTHING BUT ITS OWN DEATH. The tray's "Choose an area…" and
+     * "Whole screen" run in the tray POPUP, and closePop() below closes that window (root.close()) —
+     * so the await after it never resumed and the capture was never started: "selecting region does
+     * nothing". The desktop takes it instead, through the same path as the keys. */
+    if(IN_POPUP && root.pcPopup && typeof root.pcPopup.act === 'function'){
+      try{ root.pcPopup.act('shot:' + (mode === 'region' ? 'region' : 'screen')); }catch(_){ }
+      return { handedOff: true };
+    }
     /* CHOOSING AN AREA IS THE DEFAULT NOW (Print picks a rectangle, Shift+Print takes the screen),
      * so this is the path a bare keypress takes — and it must not be the path that does nothing.
      * Region needs `slurp`, which is a separate package; without it the old code would have sent
@@ -1419,6 +1427,61 @@
    * a machine with no dialog to draw, falls back to taking the shot directly -- a key that does
    * nothing is the one outcome this feature must never have. */
   let _shotPromptBusy = false;
+  const SHOT_STAGE_KEY = 'pc_shot_stage';
+  /* Layout → viewport pixels, measured off the taskbar (see openTrayWindow for why it is measured). */
+  function _zoomK(){
+    try{ const b = root.document.getElementById('os-bar');
+         if(b && b.offsetWidth > 0){ const r = b.getBoundingClientRect(); if(r.width > 0) return r.width / b.offsetWidth; } }catch(_){ }
+    return 1;
+  }
+  /* The prompt, drawn INSIDE its popup window (os.js restore() → kind 'shot'). Save and copy finish
+   * here and say so before the window closes; "Select region" hands the capture back to the desktop,
+   * because the picker has to run after this window is gone. */
+  function renderShotPopup(){
+    const sh = root.pcShot, doc = root.document;
+    let st = null;
+    try{ st = JSON.parse(root.localStorage.getItem(SHOT_STAGE_KEY) || 'null'); root.localStorage.removeItem(SHOT_STAGE_KEY); }catch(_){ st = null; }
+    if(!st || !st.path || Date.now() - (Number(st.at) || 0) > 120000 || !sh){ try{ root.close(); }catch(_){ } return; }
+    doc.body.classList.add('os-popup-body', 'os-shot-popup');
+    let host = doc.getElementById('os-popup-host');
+    if(!host){ host = doc.createElement('div'); host.id = 'os-popup-host'; host.className = 'os-popup-host'; doc.body.appendChild(host); }
+    const esc = (x) => String(x == null ? '' : x).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+    host.innerHTML = `<div class="shot-prompt" role="dialog" aria-label="Screenshot">
+        <div class="shot-hd"><span class="shot-glyph" aria-hidden="true">◉</span><b>SCREEN CAPTURED</b><span class="shot-sub">choose what to keep</span></div>
+        ${st.preview ? `<img class="shot-prev" src="${esc(st.preview)}" alt="The screenshot">` : ''}
+        <div class="shot-acts">
+          <button class="shot-btn shot-save" data-shot-act="save"><b>Save to Pictures</b><kbd>Enter</kbd></button>
+          <button class="shot-btn" data-shot-act="copy"><b>Save &amp; copy</b><kbd>C</kbd></button>
+          ${st.region ? `<button class="shot-btn" data-shot-act="region"><b>Select region</b><kbd>R</kbd></button>` : ''}
+          <button class="shot-btn shot-cancel" data-shot-act="cancel"><b>Cancel</b><kbd>Esc</kbd></button>
+        </div>
+        <div class="shot-foot" role="status">~/Pictures/Screenshots${st.region ? '' : ' · selecting a region needs slurp'}</div>
+      </div>`;
+    let busy = false;
+    const foot = host.querySelector('.shot-foot');
+    const drop = () => { try{ const r = sh.discard(st.path); if(r && r.catch) r.catch(() => {}); }catch(_){ } };
+    const act = async (a) => {
+      if(busy) return; busy = true;
+      if(a === 'cancel'){ drop(); try{ root.close(); }catch(_){ } return; }
+      if(a === 'region'){ drop(); try{ root.pcPopup.act('shot:region'); }catch(_){ try{ root.close(); }catch(_){ } } return; }
+      let res = null;
+      try{ res = await sh.take({ staged: st.path, copy: a === 'copy' }); }catch(e){ res = { ok: false, why: String((e && e.message) || e) }; }
+      if(!res || !res.ok){ busy = false; if(foot) foot.textContent = (res && res.why) || 'the screenshot did not save'; return; }
+      const m = /Screenshots\/[^/]+$/.exec(String(res.path || ''));
+      if(foot) foot.textContent = '✓ Saved · ' + (m ? m[0] : res.path) + (res.copied ? ' · copied' : '');
+      host.querySelector('.shot-prompt').classList.add('shot-done');
+      setTimeout(() => { try{ root.close(); }catch(_){ } }, 900);
+    };
+    host.querySelectorAll('[data-shot-act]').forEach(b => b.onclick = () => act(b.dataset.shotAct));
+    doc.addEventListener('keydown', e => {
+      const k = e.key;
+      if(k === 'Escape'){ e.preventDefault(); act('cancel'); }
+      else if(k === 'Enter' && !(e.target && e.target.matches && e.target.matches('[data-shot-act]'))){ e.preventDefault(); act('save'); }
+      else if((k === 'r' || k === 'R') && st.region){ e.preventDefault(); act('region'); }
+      else if(k === 'c' || k === 'C'){ e.preventDefault(); act('copy'); }
+    }, true);
+    setTimeout(() => { const b = host.querySelector('.shot-save'); if(b) b.focus(); }, 0);
+  }
   async function shotPrompt(mode){
     const sh = root.pcShot, P = APP();
     if(!sh || typeof sh.stage !== 'function' || typeof P.modal !== 'function') return takeShot(mode);
@@ -1429,6 +1492,23 @@
     catch(e){ _shotPromptBusy = false; toast(String((e && e.message) || e)); return null; }
     if(!st || !st.ok){ _shotPromptBusy = false; toast((st && st.why) || 'the screenshot did not work'); return st; }
     const can = _shotCan || await shotAvailable().catch(() => null) || { region: false };
+    /* THE PROMPT IS A WINDOW OF ITS OWN. Drawn as a sheet on the desktop surface it sat under every
+     * application window ("screen capture menu is going behind active windows so it becomes
+     * useless"): the desktop surface is below every real toplevel and no stacking order changes that.
+     * A popup is an always-on-top compositor window — the start menu and the tray already live in
+     * one. The staged capture travels through shared storage (a preview is far over the popup
+     * argument limit); without the popup bridge the sheet below is still the prompt. */
+    if(!IN_POPUP && root.pcPopup && typeof root.pcPopup.open === 'function'){
+      try{ root.localStorage.setItem(SHOT_STAGE_KEY, JSON.stringify({ path: st.path, preview: st.preview || '',
+                                                                       region: !!can.region, at: Date.now() })); }catch(_){ }
+      const k = _zoomK(), w = Math.round(560 * k), h = Math.round((st.preview ? 540 : 300) * k);
+      const x = Math.max(0, Math.round(((root.innerWidth || 1280) - w) / 2)),
+            y = Math.max(0, Math.round(((root.innerHeight || 800) - h) / 2));
+      let opened = false;
+      try{ opened = (await root.pcPopup.open('shot', { x, y, width: w, height: h })) !== false; }catch(_){ opened = false; }
+      if(opened){ _shotPromptBusy = false; return { prompted: 'window' }; }
+      try{ root.localStorage.removeItem(SHOT_STAGE_KEY); }catch(_){ }
+    }
     const esc = (x) => String(x == null ? '' : x).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
     let settled = false;
     const done = () => { settled = true; _shotPromptBusy = false; try{ P.closeModal(); }catch(_){ } };
@@ -1671,7 +1751,7 @@
                 profileMenu, machineApps, mergedApps, allApps, wifiIcon, volIcon, batterySvg,
                 ensureAccount, provisioned, identity, activateAccount, logoutSession,
                 panelHTML, quickHTML, taskbarHTML, launcherHTML, render, watch,
-                takeShot, shotPrompt, shotAvailable, closePop, openControl, openTrayPopup, wifiReason,
+                takeShot, shotPrompt, renderShotPopup, shotAvailable, closePop, openControl, openTrayPopup, wifiReason,
                 setViewOpener, refresh, paintTray, bindApps, bindPanel,
                 summary: () => _sum, rows: () => _rows, readAt: () => _readAt };
   root.PCOSShell = API;

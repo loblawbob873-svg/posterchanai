@@ -49,7 +49,8 @@ function run(bin, args, opts) {
            * machine" is an instruction, where "Command failed" is a shrug. */
           if (err.code === 'ENOENT') return reject(Object.assign(new Error(bin + ' is not installed'),
                                                                  { missing: bin }));
-          return reject(new Error(String(stderr || err.message || err).trim().split('\n').pop()));
+          return reject(Object.assign(new Error(String(stderr || err.message || err).trim().split('\n').pop()),
+                                      { stderr: String(stderr || '').trim() }));
         }
         resolve(String(stdout || ''));
       });
@@ -108,7 +109,12 @@ async function capture(opts) {
     try { geometry = parseGeometry(await run(SLURP, [], { timeout: 120000 })); }
     catch (e) {
       if (e.missing) return { ok: false, why: 'selecting a region needs slurp (gui-apps/slurp), which is not installed' };
-      return { ok: false, cancelled: true, why: '' };
+      /* ONLY slurp's own "selection cancelled" is a change of mind. Every other failure (it could not
+       * reach the compositor, the output went away, it was killed) used to be read as Escape and
+       * swallowed, which on screen is a button that does nothing. */
+      const why = String((e && e.stderr) || '').trim().split('\n').pop();   // slurp's own words, never execFile's
+      if (!why || /cancel/i.test(why)) return { ok: false, cancelled: true, why: '' };
+      return { ok: false, why: 'could not select a region: ' + why };
     }
     if (!geometry) return { ok: false, cancelled: true, why: '' };
   } else if (mode === 'area') {
