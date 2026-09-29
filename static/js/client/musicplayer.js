@@ -156,9 +156,42 @@ window.PCMusicPlayerFactory = function(dep){
        * path is that nobody has opened a screen. Synchronous (localStorage), so it costs a read. */
       try{ FilesIdx.loadLocal(); }catch(_){}
       const last=this._lastTrack();
-      if(last && musicTracks(null).some(t=>t.sha===last.sha)){ this.play(last.sha,{force:true, at:last.pos||0}); return true; }
+      /* A SONG FROM A PLAYLIST SOMEBODY SHARED WITH YOU is not in your library, so the check below
+       * never found it and the resume played the first song of YOUR library instead — reported from
+       * a car: "music from the shared playlist would not play, it kept playing a song from my
+       * playlist instead". Bring the share back first (musicshare.js restore), then its queue. */
+      if(last && last.share && window.PCMusicShare && PCMusicShare.restore){ void this._resumeShared(last); return true; }
+      const own=new Set(musicTracks(null).map(t=>t.sha));
+      if(last && own.has(last.sha)){
+        // …and the QUEUE you were in (a playlist is not remembered by a reloaded page), not the library.
+        const q=(last.queue||[]).filter(s=>own.has(s));
+        if(q.includes(last.sha)) this.queue=q;
+        this.play(last.sha,{force:true, at:last.pos||0}); return true;
+      }
       const q=musicTracks(null);
       if(q.length){ this.play(q[0].sha,{force:true}); return true; }
+      return false;
+    },
+    async _resumeShared(last){
+      let order=null, err=null;
+      /* The shares are read with the account's key, which a page reloaded a moment ago may not have
+       * unlocked yet — a few tries, a couple of seconds apart, before calling the share gone. */
+      for(let i=0;i<4 && !order;i++){
+        try{ order=await PCMusicShare.restore(last.share); }catch(e){ err=e; }
+        if(!order && i<3) await new Promise(r=>setTimeout(r,2000));
+      }
+      if(order && order.includes(last.sha)){
+        const q=(last.queue||[]).filter(s=>order.includes(s));
+        this.queue=q.includes(last.sha)?q:order.slice();
+        await this.play(last.sha,{force:true, at:last.pos||0});
+        return true;
+      }
+      /* Never a different song in its place: the share was stopped, or could not be read. Kept songs
+       * are yours, so a kept copy still plays; anything else is said, not substituted. */
+      if(musicTracks(null).some(t=>t.sha===last.sha)){ await this.play(last.sha,{force:true, at:last.pos||0}); return true; }
+      const why=order?'that song is no longer in the shared playlist':(err&&err.message)||'the shared playlist could not be opened';
+      this._nativeBlocked(new Error(why));
+      try{ toast('could not resume the shared playlist: '+why); }catch(_){}
       return false;
     },
     /* Tell the SERVICE a play() was refused. The service is the half that outlives the page, and the
@@ -188,8 +221,14 @@ window.PCMusicPlayerFactory = function(dep){
       const now=Date.now();
       if(this.cur===this._lastSaveSha && now-(this._lastSaveAt||0)<5000) return;
       this._lastSaveSha=this.cur; this._lastSaveAt=now;
+      /* WHERE it came from, not only which song: a song from a shared playlist can only be found again
+       * through that share, and the queue is the playlist you were in — a reloaded page remembers
+       * neither. Bounded: a queue is a list of 64-character ids. */
+      let share='';
+      try{ share=(window.PCMusicShare && PCMusicShare.shareOf && PCMusicShare.shareOf(this.cur)) || ''; }catch(_){}
       try{ localStorage.setItem('pc_music_last', JSON.stringify({
-        sha:this.cur, pos:Math.floor((S._audioEl&&S._audioEl.currentTime)||0) })); }catch(_){}
+        sha:this.cur, pos:Math.floor((S._audioEl&&S._audioEl.currentTime)||0),
+        share, queue:(this.queue||[]).slice(0,400) })); }catch(_){}
     },
     /* "Start playing when a Bluetooth device connects" — per DEVICE (localStorage), not per account:
      * it is a fact about the phone that rides in the car, and the desktop that shares the account has

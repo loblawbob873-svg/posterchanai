@@ -380,6 +380,23 @@
   // ------------------------------------------------------------------------------------ player
 
   function register(share, tracks){ for(const t of tracks || []) _play.set(t.s, { item: t, share }); }
+  /* Which accepted share a playing song came from ('' for your own library) — what the player saves
+   * so a cold resume can find the song again. */
+  function shareOf(sha){ const p = _play.get(sha); return (p && p.share && p.share.key) || ''; }
+  /* A COLD RESUME OF A SHARED SONG. A shared track is playable only once its share has been opened in
+   * THIS page (register() above), and a page Android reloaded in the background has opened nothing —
+   * so a car's play button resumed "the last song" by looking in your OWN library, did not find the
+   * sharer's song there, and played the first song of your library instead. This re-reads the shares,
+   * registers the one named, and answers its play order (null: that share is gone, or unreadable). */
+  async function restore(key){
+    if(!_boot() || !key) return null;
+    if(!_in || !_in.get(key)) await loadIn();
+    const cur = _in && _in.get(key);
+    if(!cur) return null;
+    const tracks = await tracksOf(cur);
+    register(cur, tracks);
+    return tracks.map(t => t.s);
+  }
   function meta(sha){
     const p = _play.get(sha); if(!p) return null;
     return { name: p.item.n, mime: p.item.m, size: p.item.z, enc: true, shared: true, sharedBy: p.share.from };
@@ -940,7 +957,7 @@
     drainPending, pendingReleases: () => _pending(),
     resolveRecipients, inCount: () => pendingShares().length,
     // player
-    register, meta, plain,
+    register, meta, plain, shareOf, restore,
     // ui
     openShareDialog, renderIn, renderOut, onChange(fn){ _watchers.add(fn); return () => _watchers.delete(fn); },
     // pure, exported for tests
