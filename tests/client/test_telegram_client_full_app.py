@@ -16,7 +16,7 @@ from tests.client import test_desktop_offline_full_app as desktop
 FAKE = r"""
 window.__tg = { posts:[], files:[], state:'none', notes:[] };
 const __tgMsgs = [
-  {id:1, chat_id:42, out:false, date:1700000001, text:'hey there', sender:'Alice', sender_id:7, reply_to:0, media:null},
+  {id:1, chat_id:42, out:false, date:1700000001, text:'hey there', sender:'Alice', sender_id:7, reply_to:0, media:null, reactions:[{emoji:'👍', count:2, mine:false}]},
   {id:2, chat_id:42, out:false, date:1700000002, text:'', sender:'Alice', sender_id:7, reply_to:0, media:{kind:'photo', name:'', size:1234, mime:'image/jpeg'}},
   {id:3, chat_id:42, out:true, date:1700000003, text:'the doc', sender:'', sender_id:1, reply_to:1, media:{kind:'file', name:'notes.pdf', size:52000, mime:'application/pdf'}}];
 const __j = (o, s=200) => Promise.resolve(new Response(JSON.stringify(o), {status:s, headers:{'Content-Type':'application/json'}}));
@@ -35,6 +35,15 @@ window.fetch = function(url, opts){
     {id:77, title:'Night City Crew', kind:'group', unread:0, last:{text:'yo', date:1699999999, out:false}}]});
   if(path.startsWith('/messages/')) return __j({ok:true, messages: path.includes('before=') ? [] : __tgMsgs.slice()});
   if(path.startsWith('/read')) return __j({ok:true});
+  if(path.startsWith('/react')){ const b = JSON.parse(body); __tg.reacts = (__tg.reacts||[]).concat([b]);
+    if(b.emoji === '🚫') return __j({ok:false, error:'This chat does not allow that reaction.'}, 400);
+    const mine = (__tg.mine||{})[b.msg_id] === b.emoji; __tg.mine = Object.assign({}, __tg.mine, {[b.msg_id]: mine ? null : b.emoji});
+    const base = b.msg_id === 1 ? [{emoji:'👍', count:2, mine:false}] : [];
+    const now = __tg.mine[b.msg_id]; if(now){ const r = base.find(x => x.emoji === now); if(r){ r.count++; r.mine = true; } else base.push({emoji:now, count:1, mine:true}); }
+    return __j({ok:true, reactions:base}); }
+  if(path.startsWith('/search')) return __j({ok:true, results:[
+    {id:501, title:'Bob Stranger', kind:'user', known:false, username:'bobby', members:0},
+    {id:-1000000000777, title:'Bob Fans', kind:'group', known:false, username:'', members:40}]});
   if(path.startsWith('/send-file')){
     const fd = body, f = fd.get('file');
     __tg.files.push({chat:fd.get('chat_id'), name:f.name, size:f.size, caption:fd.get('caption'), mode:fd.get('mode')});
@@ -233,5 +242,54 @@ def test_on_posterchanos_it_opens_as_a_column_and_fits_its_window():
         await b.js("document.querySelector('.tg-app').closest('.osw').style.width='1100px'")
         await asyncio.sleep(.2)
         assert await b.js(f"{vis}('.tg-side')") and await b.js(f"{vis}('.tg-chat')"), "a wide window lost its two panes"
+
+    asyncio.run(desktop.with_browser("online", "", check, FAKE))
+
+
+REACTS = r"""(()=>[...document.querySelectorAll('.tg-msg[data-id="1"] .tg-react')].map(b=>({e:b.dataset.emoji,n:b.querySelector('small').textContent,mine:b.classList.contains('mine')})))()"""
+
+
+@pytest.mark.skipif(not Path("/opt/google/chrome/chrome").exists(), reason="Chrome required")
+def test_reactions_show_toggle_and_explain_a_refusal():
+    """Reported: "Telegram: missing emoji reacts"."""
+    async def check(b):
+        await _open(b)
+        await b.js("__tg.state='ready'; __PC.switchView('global'); __PC.switchView('tg')")
+        await b.until("document.querySelectorAll('.tg-dialog').length===2")
+        await b.js("document.querySelector('.tg-dialog[data-chat=\"42\"]').click()")
+        await b.until("!!document.querySelector('.tg-msg[data-id=\"1\"] .tg-react')")
+        assert await b.js(REACTS) == [{"e": "👍", "n": "2", "mine": False}]
+        await b.js("document.querySelector('.tg-msg[data-id=\"1\"] .tg-react').click()")
+        await b.until("!!document.querySelector('.tg-msg[data-id=\"1\"] .tg-react.mine')")
+        assert await b.js(REACTS) == [{"e": "👍", "n": "3", "mine": True}]
+        # The picker adds a new one.
+        await b.js("document.querySelector('.tg-msg[data-id=\"1\"] [data-react-pick]').click()")
+        await b.until("!!document.querySelector('.tg-react-pop')")
+        await b.js("[...document.querySelectorAll('.tg-react-pop [data-e]')].find(x=>x.dataset.e==='🔥').click()")
+        await b.until("__tg.reacts.length===2 && !!document.querySelector('.tg-msg[data-id=\"1\"] .tg-react.mine[data-emoji=\"🔥\"]')")
+        assert not await b.js("!!document.querySelector('.tg-react-pop')"), "the picker stayed open"
+        # A refusal puts the tally back and says why.
+        before = await b.js(REACTS)
+        await b.js("PCTelegram.react(1,'🚫')")
+        await asyncio.sleep(.3)
+        assert await b.js(REACTS) == before, "a refused reaction left a wrong count on screen"
+
+    asyncio.run(desktop.with_browser("online", "", check, FAKE))
+
+
+@pytest.mark.skipif(not Path("/opt/google/chrome/chrome").exists(), reason="Chrome required")
+def test_search_finds_people_and_rooms_on_telegram_and_opens_them():
+    """Reported: "Telegram: need user and room search" — the box only filtered chats already loaded."""
+    async def check(b):
+        await _open(b)
+        await b.js("__tg.state='ready'; __PC.switchView('global'); __PC.switchView('tg')")
+        await b.until("document.querySelectorAll('.tg-dialog').length===2")
+        await b.js("const s=document.querySelector('.tg-search');s.value='bob';s.dispatchEvent(new Event('input'))")
+        await b.until("document.querySelectorAll('.tg-found [data-found]').length===2")
+        text = await b.js("document.querySelector('.tg-found').textContent")
+        assert "Bob Stranger" in text and "@bobby" in text and "Bob Fans" in text and "40 members" in text, text
+        await b.js("document.querySelector('.tg-found [data-found=\"501\"]').click()")
+        await b.until("!!document.querySelector('.tg-ctitle') && document.querySelector('.tg-ctitle').textContent==='Bob Stranger'")
+        assert await b.js("document.querySelector('.tg-search').value") == "", "the search stayed filled after opening a result"
 
     asyncio.run(desktop.with_browser("online", "", check, FAKE))

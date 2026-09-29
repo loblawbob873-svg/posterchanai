@@ -90,6 +90,8 @@
     }
     if(ev.type === 'edited'){ const list = st.msgs.get(ev.message.chat_id), i = list ? list.findIndex(x => x.id === ev.message.id) : -1;
       if(i >= 0){ list[i] = ev.message; if(inView() && st.open === ev.message.chat_id) paintMessages(false); } return; }
+    if(ev.type === 'reactions'){ const list = st.msgs.get(ev.chat_id), m = list && list.find(x => x.id === ev.id);
+      if(m){ m.reactions = ev.reactions || []; if(inView() && st.open === ev.chat_id) paintMessages(false); } return; }
     if(ev.type === 'deleted'){ for(const [cid, list] of st.msgs){ const n = list.filter(x => !ev.ids.includes(x.id));
       if(n.length !== list.length){ st.msgs.set(cid, n); if(inView() && st.open === cid) paintMessages(false); } } }
   }
@@ -191,7 +193,7 @@
         <input class="tg-in tg-search" type="search" placeholder="Search chats" value="${esc(st.filter)}" aria-label="Search chats">
         <div class="tg-dialogs" role="list"><div class="tg-muted tg-pad">Loading chats…</div></div></aside>
       <section class="tg-chat" aria-live="polite"></section></div>`;
-    root.querySelector('.tg-search').oninput = e => { st.filter = e.target.value; paintDialogs(); };
+    root.querySelector('.tg-search').oninput = e => { st.filter = e.target.value; paintDialogs(); findOnTelegram(); };
     root.querySelector('[data-act="logout"]').onclick = async () => {
       const P = PC(); if(P.uiConfirm && !(await P.uiConfirm('Sign out of Telegram on every device?'))) return;
       await post('/api/tgc/logout'); st.status = null; st.dialogs = []; st.msgs.clear(); st.open = null; render(); };
@@ -214,7 +216,42 @@
           ${d.unread ? `<i class="tg-badge">${d.unread > 99 ? '99+' : d.unread}</i>` : ''}</span></span></button>`).join('')
       : '<div class="tg-muted tg-pad">No chats match.</div>';
     box.querySelectorAll('[data-chat]').forEach(b => b.onclick = () => openChat(Number(b.dataset.chat)));
+    paintFound(box);
     loadAvatars(box);
+  }
+  /* SEARCH TELEGRAM, not only the chats already loaded: people, groups and channels by name or
+   * @username, the ones you know first. Debounced, and an answer for an old query is dropped. */
+  let _findTimer = 0;
+  function findOnTelegram(){
+    clearTimeout(_findTimer);
+    const q = st.filter.trim(); if(q.length < 2){ st.found = null; return; }
+    _findTimer = setTimeout(async () => {
+      st.found = { q, busy:true, results:[] }; paintDialogs();
+      let results = [], error = '';
+      try{ results = (await api('/api/tgc/search?q=' + encodeURIComponent(q))).results || []; }catch(e){ error = e.message; }
+      if(st.filter.trim() !== q) return;
+      st.found = { q, busy:false, results, error }; if(inView()) paintDialogs();
+    }, 350);
+  }
+  function paintFound(box){
+    const f = st.found; if(!f || f.q !== st.filter.trim()) return;
+    const have = new Set(st.dialogs.map(d => d.id)), rows = (f.results || []).filter(r => !have.has(r.id));
+    const sec = document.createElement('div'); sec.className = 'tg-found';
+    sec.innerHTML = `<div class="tg-found-hd">On Telegram</div>` + (f.busy ? '<div class="tg-muted tg-pad">Searching…</div>'
+      : f.error ? `<div class="tg-err tg-pad">${esc(f.error)}</div>`
+      : rows.length ? rows.map(r => `<button class="tg-dialog" data-found="${r.id}" role="listitem">
+          <span class="tg-av" data-av="${r.id}"><b>${esc(initials(r.title))}</b></span>
+          <span class="tg-dmain"><span class="tg-drow"><b class="tg-dtitle">${r.kind === 'channel' ? '📢 ' : r.kind === 'group' ? '👥 ' : ''}${esc(r.title)}</b></span>
+            <span class="tg-drow"><span class="tg-dlast">${r.username ? '@' + esc(r.username) : ''}${r.members ? ' · ' + r.members + ' members' : ''}</span></span></span></button>`).join('')
+      : '<div class="tg-muted tg-pad">Nobody else by that name.</div>');
+    const none = box.querySelector(':scope > .tg-muted'); if(none && !box.querySelector('[data-chat]')) none.textContent = 'None of your chats match.';
+    box.appendChild(sec);
+    sec.querySelectorAll('[data-found]').forEach(b => b.onclick = () => {
+      const r = f.results.find(x => x.id === Number(b.dataset.found)); if(!r) return;
+      if(!st.dialogs.some(d => d.id === r.id)) st.dialogs.unshift({ id:r.id, title:r.title, kind:r.kind, unread:0, last:{ text:'', date:0 } });
+      st.filter = ''; st.found = null; const s = root.querySelector('.tg-search'); if(s) s.value = '';
+      openChat(r.id);
+    });
   }
   function loadAvatars(scope){
     scope.querySelectorAll('[data-av]:not([data-av-done])').forEach(el => {
@@ -303,13 +340,51 @@
         ${!m.out && m.sender ? `<b class="tg-from">${esc(m.sender)}</b>` : ''}
         ${r ? `<div class="tg-quote">${esc((r.text || '[attachment]').slice(0, 140))}</div>` : ''}
         ${mediaHtml(m)}${m.text ? `<div class="tg-body">${linkify(m.text)}</div>` : ''}
+        ${reactionsHtml(m)}
         <span class="tg-meta">${m.edited ? 'edited · ' : ''}${esc(new Date(m.date * 1000).toLocaleTimeString([], {hour:'2-digit', minute:'2-digit'}))}
+          <button class="tg-mini" data-react-pick="${m.id}" aria-label="React" title="React">☺</button>
           <button class="tg-mini" data-reply="${m.id}" aria-label="Reply">↩</button></span></div>`;
     }).join('') || '<div class="tg-muted tg-pad">No messages yet.</div>';
+    box.querySelectorAll('[data-react]').forEach(b => b.onclick = () => react(Number(b.dataset.react), b.dataset.emoji));
+    box.querySelectorAll('[data-react-pick]').forEach(b => b.onclick = e => { e.stopPropagation(); pickReaction(b, Number(b.dataset.reactPick)); });
     box.querySelectorAll('[data-reply]').forEach(b => b.onclick = () => { st.reply = byId.get(Number(b.dataset.reply)); paintReply();
       const ta = root.querySelector('.tg-text'); if(ta) ta.focus(); });
     box.querySelectorAll('a.tg-media').forEach(a => a.onclick = e => { const P = PC(); if(P.openLightbox){ e.preventDefault(); P.openLightbox(a.dataset.full); } });
     if(toBottom || atBottom) box.scrollTop = box.scrollHeight;
+  }
+  /* REACTIONS. The chips are Telegram's own tally (count, and whether one is yours); tapping one
+   * toggles yours. Telegram answers with the tally it now holds, which replaces ours — so a chat that
+   * refuses an emoji, or another device reacting at the same moment, can never leave a wrong count. */
+  const QUICK = ['👍', '❤️', '🔥', '😂', '😮', '😢', '🙏', '👎', '🎉', '🤔'];
+  function reactionsHtml(m){
+    const rs = m.reactions || []; if(!rs.length) return '';
+    return `<div class="tg-reacts">${rs.map(r => `<button class="tg-react${r.mine ? ' mine' : ''}" data-react="${m.id}" data-emoji="${esc(r.emoji)}"
+      aria-pressed="${r.mine ? 'true' : 'false'}" title="${r.mine ? 'Take back your ' : 'React with '}${esc(r.emoji)}">${esc(r.emoji)}<small>${r.count}</small></button>`).join('')}</div>`;
+  }
+  async function react(msgId, emoji){
+    const chat = st.open, list = st.msgs.get(chat), m = list && list.find(x => x.id === msgId); if(!m || !emoji) return;
+    const before = (m.reactions || []).map(r => Object.assign({}, r));
+    // Optimistic: the tap shows at once, and Telegram's answer replaces it.
+    const had = before.find(r => r.mine && r.emoji === emoji);
+    let next = before.map(r => r.mine ? Object.assign({}, r, { mine:false, count:r.count - 1 }) : r).filter(r => r.count > 0);
+    if(!had){ const r = next.find(x => x.emoji === emoji); if(r){ r.count++; r.mine = true; } else next.push({ emoji, count:1, mine:true }); }
+    m.reactions = next; if(st.open === chat) paintMessages(false);
+    try{ m.reactions = (await post('/api/tgc/react', { chat_id:chat, msg_id:msgId, emoji })).reactions || []; }
+    catch(e){ m.reactions = before; const P = PC(); if(P.toast) P.toast(e.message); }
+    if(st.open === chat) paintMessages(false);
+  }
+  function pickReaction(anchor, msgId){
+    const old = document.querySelector('.tg-react-pop'); if(old){ const same = old.dataset.msg === String(msgId); old.remove(); if(same) return; }
+    const pop = document.createElement('div'); pop.className = 'tg-react-pop'; pop.dataset.msg = String(msgId); pop.setAttribute('role', 'menu');
+    pop.innerHTML = QUICK.map(e => `<button role="menuitem" data-e="${esc(e)}" aria-label="React with ${esc(e)}">${esc(e)}</button>`).join('')
+      + (PC().openEmojiPopover ? '<button role="menuitem" data-more aria-label="More emoji">＋</button>' : '');
+    const msg = anchor.closest('.tg-msg'); (msg || anchor.parentNode).appendChild(pop);
+    const close = () => { pop.remove(); document.removeEventListener('click', away, true); };
+    const away = e => { if(!pop.contains(e.target)) close(); };
+    setTimeout(() => document.addEventListener('click', away, true), 0);
+    pop.querySelectorAll('[data-e]').forEach(b => b.onclick = () => { close(); react(msgId, b.dataset.e); });
+    const more = pop.querySelector('[data-more]');
+    if(more) more.onclick = () => { close(); PC().openEmojiPopover(anchor, (value, done) => { if(done) done(); react(msgId, value); }); };
   }
   function linkify(t){
     return esc(t).replace(/(https?:\/\/[^\s<]+)/g, u => `<a href="${u}" target="_blank" rel="noopener noreferrer">${u}</a>`).replace(/\n/g, '<br>');
@@ -405,7 +480,7 @@
     if(window.__PC_BOOTED) go(); else document.addEventListener('pc-app-ready', go, { once:true });
   }
 
-  const api_ = { render, isPhone, onEvent, _state:st };
+  const api_ = { render, isPhone, onEvent, _state:st, react };
   window.PCTelegram = api_;
   if(typeof module !== 'undefined') module.exports = api_;
 })();

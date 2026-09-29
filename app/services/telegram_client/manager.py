@@ -124,6 +124,19 @@ def media_of(msg) -> dict | None:
     return out
 
 
+def reactions_of(msg) -> list:
+    """A message's emoji reactions: [{emoji, count, mine}]. Custom-emoji and paid reactions carry no
+    emoji a browser can draw, so they are left out rather than shown as an empty chip."""
+    out = []
+    for rc in (getattr(getattr(msg, "reactions", None), "results", None) or []):
+        emoji = getattr(getattr(rc, "reaction", None), "emoticon", None)
+        if not emoji:
+            continue
+        out.append({"emoji": str(emoji), "count": int(getattr(rc, "count", 0) or 0),
+                    "mine": getattr(rc, "chosen_order", None) is not None})
+    return out
+
+
 def message_dict(msg, chat_id) -> dict:
     sender = getattr(msg, "sender", None)
     reply = getattr(msg, "reply_to", None)
@@ -133,7 +146,8 @@ def message_dict(msg, chat_id) -> dict:
             "text": getattr(msg, "message", None) or getattr(msg, "text", None) or "",
             "sender_id": int(getattr(msg, "sender_id", 0) or 0), "sender": _name(sender),
             "reply_to": int(getattr(reply, "reply_to_msg_id", 0) or 0) if reply else 0,
-            "media": media_of(msg), "edited": bool(getattr(msg, "edit_date", None))}
+            "media": media_of(msg), "edited": bool(getattr(msg, "edit_date", None)),
+            "reactions": reactions_of(msg)}
 
 
 class Manager:
@@ -294,9 +308,22 @@ class Manager:
             await self._emit(a, {"type": "deleted", "chat_id": int(getattr(ev, "chat_id", 0) or 0),
                                  "ids": [int(i) for i in (ev.deleted_ids or [])]})
 
+        async def on_reactions(update):
+            # Somebody reacted. In groups Telegram says so with this update alone, never an edit.
+            if type(update).__name__ != "UpdateMessageReactions":
+                return
+            try:
+                from telethon import utils
+                chat_id = int(utils.get_peer_id(update.peer))
+            except Exception:
+                return
+            await self._emit(a, {"type": "reactions", "chat_id": chat_id, "id": int(update.msg_id),
+                                 "reactions": reactions_of(update)})
+
         a.client.add_event_handler(on_new, events.NewMessage())
         a.client.add_event_handler(on_edit, events.MessageEdited())
         a.client.add_event_handler(on_delete, events.MessageDeleted())
+        a.client.add_event_handler(on_reactions, events.Raw())
 
     def subscribe(self, user_id: int) -> asyncio.Queue:
         q = asyncio.Queue(maxsize=500)
@@ -371,6 +398,64 @@ class Manager:
                               reply_to=int(reply_to) or None)
         return message_dict(m, chat_id)
 
+    async def react(self, db, user, chat_id: int, msg_id: int, emoji: str) -> list:
+        """Toggle YOUR reaction on one message and answer with its reactions as Telegram now has them.
+        Choosing the reaction you already gave takes it back; choosing another replaces it (an
+        ordinary account holds one reaction per message)."""
+        emoji = str(emoji or "").strip()
+        if not emoji or len(emoji) > 16 or any(ch.isascii() and ch.isalnum() for ch in emoji):
+            raise TGError("That is not an emoji.")
+        c = await self._ready(db, user)
+        try:
+            from telethon.tl.functions.messages import SendReactionRequest
+            from telethon.tl.types import ReactionEmoji
+            m = await c.get_messages(int(chat_id), ids=int(msg_id))
+            if m is None:
+                raise TGError("That message is gone.")
+            mine = {r["emoji"] for r in reactions_of(m) if r["mine"]}
+            want = [] if emoji in mine else [ReactionEmoji(emoticon=emoji)]
+            await c(SendReactionRequest(peer=int(chat_id), msg_id=int(msg_id), reaction=want))
+            m = await c.get_messages(int(chat_id), ids=int(msg_id))
+        except TGError:
+            raise
+        except Exception as e:
+            raise TGError(_why(e))
+        return reactions_of(m) if m is not None else []
+
+    async def search(self, db, user, q: str, limit: int = 20) -> list:
+        """People, groups and channels on Telegram — the ones you know first, then public ones."""
+        q = str(q or "").strip().lstrip("@")
+        if len(q) < 2:
+            return []
+        c = await self._ready(db, user)
+        try:
+            from telethon import utils
+            from telethon.tl.functions.contacts import SearchRequest
+            res = await c(SearchRequest(q=q[:64], limit=max(1, min(int(limit), 50))))
+        except Exception as e:
+            raise TGError(_why(e))
+        ents = {}
+        for e in list(getattr(res, "users", []) or []) + list(getattr(res, "chats", []) or []):
+            try:
+                ents[int(utils.get_peer_id(e))] = e
+            except Exception:
+                continue
+        out, seen = [], set()
+        for group, known in ((getattr(res, "my_results", []) or [], True), (getattr(res, "results", []) or [], False)):
+            for peer in group:
+                try:
+                    pid = int(utils.get_peer_id(peer))
+                except Exception:
+                    continue
+                e = ents.get(pid)
+                if e is None or pid in seen or getattr(e, "deleted", False):
+                    continue
+                seen.add(pid)
+                out.append({"id": pid, "title": _name(e), "kind": _kind(e), "known": known,
+                            "username": getattr(e, "username", "") or "",
+                            "members": int(getattr(e, "participants_count", 0) or 0)})
+        return out
+
     async def mark_read(self, db, user, chat_id: int, max_id: int = 0) -> None:
         c = await self._ready(db, user)
         await c.send_read_acknowledge(int(chat_id), max_id=int(max_id) or None)
@@ -427,6 +512,10 @@ def _why(e: Exception) -> str:
         "FloodWaitError": "Telegram asks you to wait before trying again ({} s).".format(getattr(e, "seconds", "?")),
         "PhoneNumberBannedError": "Telegram has banned that phone number.",
         "ApiIdInvalidError": "The server's Telegram API id/hash are not valid — ask the admin.",
+        "ReactionInvalidError": "This chat does not allow that reaction.",
+        "ReactionsTooManyError": "This message already has as many different reactions as it may.",
+        "ChatWriteForbiddenError": "You cannot react or write in this chat.",
+        "SearchQueryEmptyError": "Type something to search for.",
     }.get(n, "Telegram refused that: " + (str(e) or n))
 
 

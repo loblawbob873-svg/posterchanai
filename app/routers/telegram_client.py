@@ -167,6 +167,28 @@ async def send_file(chat_id: int = Form(...), caption: str = Form(""), mode: str
         return _err(e)
 
 
+class React(BaseModel):
+    chat_id: int
+    msg_id: int
+    emoji: str
+
+
+@router.post("/react")
+async def react(req: React, db: Session = Depends(get_db), user: User = Depends(member)):
+    try:
+        return {"ok": True, "reactions": await manager().react(db, user, req.chat_id, req.msg_id, req.emoji)}
+    except TGError as e:
+        return _err(e)
+
+
+@router.get("/search")
+async def search(q: str = "", db: Session = Depends(get_db), user: User = Depends(member)):
+    try:
+        return {"ok": True, "results": await manager().search(db, user, q)}
+    except TGError as e:
+        return _err(e)
+
+
 @router.post("/read")
 async def read(req: Read, db: Session = Depends(get_db), user: User = Depends(member)):
     try:

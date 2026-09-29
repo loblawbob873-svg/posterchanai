@@ -318,3 +318,16 @@ html.pc-oswin body.concord-view .sidebar{display:none!important}
 .cc-dissolve{display:block;width:100%;margin:12px 0 4px;color:#ff5c7a;border-color:rgba(255,92,122,.45)}
 .cc-banner{flex:0 0 auto;height:96px;overflow:hidden;border-bottom:1px solid var(--line)}
 .cc-banner img{display:block;width:100%;height:100%;object-fit:cover}
+
+/* NEW MESSAGES GLOW ON THE RAIL. The only signal was a 5px white tick at the icon's edge (8px dot on a
+   phone) — easy to miss on a rail of icons, which is what "some kind of a glow when a community you
+   are in gets new messages" asked for. The icon itself now carries a ring in the theme's accent and
+   a slow breathing glow; the tick stays as the shape cue for anybody who cannot tell colours apart.
+   Motion is dropped for reduced-motion users and while the app is backgrounded (body.anim-off), the
+   ring and glow are not. */
+.cc-server.unread:not(.active){box-shadow:0 0 0 2px rgba(var(--accent-rgb),.95),0 0 16px 3px rgba(var(--accent-rgb),.55)!important;
+  animation:ccUnreadGlow 2.6s ease-in-out infinite!important}
+@keyframes ccUnreadGlow{0%,100%{box-shadow:0 0 0 2px rgba(var(--accent-rgb),.95),0 0 10px 1px rgba(var(--accent-rgb),.4)}
+  50%{box-shadow:0 0 0 2px rgba(var(--accent-rgb),.95),0 0 22px 6px rgba(var(--accent-rgb),.7)}}
+@media (prefers-reduced-motion:reduce){.cc-server.unread:not(.active){animation:none!important}}
+body.anim-off .cc-server.unread:not(.active){animation:none!important}

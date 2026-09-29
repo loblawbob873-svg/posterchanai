@@ -429,3 +429,110 @@ def test_a_pasted_label_around_the_api_hash_is_not_an_invalid_hash():
     assert M.parse_api_credentials("1234567", h + "0") is None
     assert M.parse_api_credentials("", h) is None
     assert M.parse_api_credentials("abc", h) is None
+
+
+# ---- reactions and search ---------------------------------------------------------------------------
+# Asked for: "Telegram: missing emoji reacts" and "need user and room search".
+
+def _reactions(**tally):
+    """Telethon's own MessageReactions for {emoji: (count, mine)}."""
+    from telethon.tl.types import MessageReactions, ReactionCount, ReactionEmoji
+    return MessageReactions(results=[ReactionCount(reaction=ReactionEmoji(emoticon=e), count=n, chosen_order=(1 if mine else None))
+                                     for e, (n, mine) in tally.items()])
+
+
+def _react_world(world):
+    """The fake Telegram learns the two raw requests the manager sends: SendReaction and contacts.Search."""
+    mgr, tgs, store, made = world
+    login(mgr, U(1), tgs[1])
+    client, tg = made[-1], tgs[1]
+    tg.chats[42][0].reactions = _reactions(**{"👍": (2, False)})
+    tg.refuse = set()
+
+    async def call(req):
+        name = type(req).__name__
+        if name == "SendReactionRequest":
+            if any(r.emoticon in tg.refuse for r in req.reaction):
+                raise type("ReactionInvalidError", (Exception,), {})()
+            m = next(x for x in tg.chats[req.peer] if x.id == req.msg_id)
+            tally = {rc.reaction.emoticon: [rc.count, rc.chosen_order is not None] for rc in m.reactions.results}
+            for e, v in tally.items():                  # an ordinary account holds one reaction
+                if v[1]:
+                    v[0] -= 1
+                    v[1] = False
+            for r in req.reaction:
+                tally.setdefault(r.emoticon, [0, False])
+                tally[r.emoticon][0] += 1
+                tally[r.emoticon][1] = True
+            m.reactions = _reactions(**{e: (n, mine) for e, (n, mine) in tally.items() if n > 0})
+            tg.sent.append(("react", req.peer, req.msg_id, [r.emoticon for r in req.reaction]))
+            return None
+        if name == "SearchRequest":
+            from telethon.tl.types import Channel, PeerChannel, PeerUser, User
+            from telethon.tl.types.contacts import Found
+            friend = User(id=501, first_name="Bob", username="bobby", access_hash=1)
+            stranger = User(id=502, first_name="Bobbie", username="bobbie", access_hash=2)
+            group = Channel(id=777, title="Bob Fans", photo=None, date=None, access_hash=3, participants_count=40,
+                            megagroup=True)
+            return Found(my_results=[PeerUser(501)], results=[PeerUser(502), PeerChannel(777), PeerUser(501)],
+                         chats=[group], users=[friend, stranger])
+        raise AssertionError("unexpected request " + name)
+    client.__class__.__call__ = lambda self, req: call(req)
+    return mgr, tg
+
+
+def test_a_message_carries_its_reactions(world):
+    mgr, tg = _react_world(world)
+    first = run(mgr.messages(None, U(1), 42))[0]
+    assert first["reactions"] == [{"emoji": "👍", "count": 2, "mine": False}]
+
+
+def test_tapping_a_reaction_adds_yours_and_tapping_again_takes_it_back(world):
+    mgr, tg = _react_world(world)
+    after = run(mgr.react(None, U(1), 42, 1, "👍"))
+    assert after == [{"emoji": "👍", "count": 3, "mine": True}], after
+    after = run(mgr.react(None, U(1), 42, 1, "👍"))
+    assert after == [{"emoji": "👍", "count": 2, "mine": False}], "a second tap did not take the reaction back"
+    assert tg.sent[-1] == ("react", 42, 1, []), "taking a reaction back must send an EMPTY reaction list"
+
+
+def test_a_different_reaction_replaces_yours(world):
+    mgr, tg = _react_world(world)
+    run(mgr.react(None, U(1), 42, 1, "👍"))
+    after = {r["emoji"]: r for r in run(mgr.react(None, U(1), 42, 1, "🔥"))}
+    assert after["🔥"] == {"emoji": "🔥", "count": 1, "mine": True} and after["👍"]["mine"] is False
+
+
+def test_a_refused_reaction_is_a_sentence_and_nothing_else(world):
+    mgr, tg = _react_world(world)
+    tg.refuse.add("🔥")
+    with pytest.raises(M.TGError) as e:
+        run(mgr.react(None, U(1), 42, 1, "🔥"))
+    assert "allow" in str(e.value) or "ReactionInvalidError" in str(e.value)
+    with pytest.raises(M.TGError):
+        run(mgr.react(None, U(1), 42, 1, "hello"))     # words are not an emoji
+
+
+def test_search_finds_people_and_groups_you_know_first(world):
+    mgr, tg = _react_world(world)
+    found = run(mgr.search(None, U(1), "@bob"))
+    assert [f["title"] for f in found] == ["Bob", "Bobbie", "Bob Fans"], found
+    assert found[0]["known"] and not found[1]["known"], "your contacts are not listed first"
+    assert found[2]["kind"] == "group" and found[2]["members"] == 40 and found[2]["id"] == -1000000000777
+    assert run(mgr.search(None, U(1), "b")) == [], "one letter searched the whole of Telegram"
+
+
+def test_reactions_from_other_people_arrive_live(world):
+    mgr, tg = _react_world(world)
+    q = mgr.subscribe(1)
+    raw = world[3][-1].handlers[-1]
+    from telethon.tl.types import PeerUser, UpdateMessageReactions
+    run(raw(UpdateMessageReactions(peer=PeerUser(42), msg_id=1, reactions=_reactions(**{"❤️": (1, False)}))))
+    ev = q.get_nowait()
+    assert ev == {"type": "reactions", "chat_id": 42, "id": 1, "reactions": [{"emoji": "❤️", "count": 1, "mine": False}]}
+
+
+def test_the_router_has_react_and_search():
+    from app.routers import telegram_client as R
+    paths = {(r.path, tuple(sorted(r.methods or []))) for r in R.router.routes if hasattr(r, "methods")}
+    assert ("/api/tgc/react", ("POST",)) in paths and ("/api/tgc/search", ("GET",)) in paths, paths
