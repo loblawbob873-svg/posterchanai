@@ -631,8 +631,8 @@ would have handled it fine).
   (RTX 3060, CUDA) and the Arc (server1, A770 XPU) generate music in-process (measured on the Arc:
   load 6.9s, a 12s song in 14.3s, unload reclaims 100% of the 6.5GB).
 - **Android notifications: WHERE A TAP LANDS, HOW MANY CARDS THERE ARE, AND WHO IS FILTERED**
-  (`app/services/nostr_push_service.py` + `mobile/android/.../push/` + `_dmNotify`/`mirrorPushPrefs`
-  in `app.js`). Four reports, one payload, and every one of them silent.
+  (`app/services/nostr_push_service.py` + `mobile/android/.../push/` + `_dmNotify` in `dms.js`,
+  `mirrorPushPrefs` in `blossom.js` — both split out of `app.js`, loaded at boot). Four reports, one payload, and every one of them silent.
   **`view` IS THE TAP TARGET.** `PushEventService.deliver` derives its deep link from `eid`
   (→ `post:<id>`) or `view` (→ a screen) and falls back to `"notifications"`. A DM push had NEITHER —
   a gift wrap has no post to open — so **every DM notification this node ever sent opened
