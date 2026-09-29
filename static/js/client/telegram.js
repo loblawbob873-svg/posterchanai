@@ -72,6 +72,7 @@
   function wanted(){ return !isPhone() && st.status && st.status.state === 'ready'; }
 
   function onEvent(ev){
+    if(ev.type === 'call'){ try{ if(window.PCTgCall) window.PCTgCall.onEvent(ev); }catch(_){} return; }
     if(ev.type === 'state'){ const was = st.status && st.status.state; st.status = Object.assign({}, st.status || {}, ev);
       if(was !== ev.state && inView()) render(); return; }
     if(ev.type === 'message'){
@@ -267,7 +268,9 @@
     if(!st.open){ pane.innerHTML = '<div class="tg-empty"><div class="tg-glyph">◢◤</div><p>Pick a chat.</p></div>'; return; }
     const d = st.dialogs.find(x => x.id === st.open) || { title:'Chat', id:st.open, kind:'user' };
     pane.innerHTML = `<header class="tg-chat-hd"><button class="tg-icon tg-back" data-act="back" aria-label="Back to chats">‹</button>
-        <span class="tg-av" data-av="${d.id}"><b>${esc(initials(d.title))}</b></span><b class="tg-ctitle">${esc(d.title)}</b></header>
+        <span class="tg-av" data-av="${d.id}"><b>${esc(initials(d.title))}</b></span><b class="tg-ctitle">${esc(d.title)}</b>
+        ${canCall(d) ? `<span class="tg-callbtns"><button class="tg-icon" data-act="call" title="Voice call" aria-label="Voice call">📞</button>
+          <button class="tg-icon" data-act="vcall" title="Video call" aria-label="Video call">🎥</button></span>` : ''}</header>
       <div class="tg-msgs" tabindex="0"></div>
       <div class="tg-replybar" hidden></div>
       <div class="tg-pending" hidden></div>
@@ -279,6 +282,8 @@
         <input type="file" class="tg-file" multiple hidden></footer>`;
     loadAvatars(pane);
     pane.querySelector('[data-act="back"]').onclick = () => { st.open = null; paintDialogs(); paintChat(); };
+    pane.querySelectorAll('[data-act="call"],[data-act="vcall"]').forEach(b => b.onclick = () => {
+      if(window.PCTgCall) window.PCTgCall.start(d.id, d.title, b.dataset.act === 'vcall'); });
     const ta = pane.querySelector('.tg-text');
     ta.addEventListener('keydown', e => { if(e.key === 'Enter' && !e.shiftKey && !e.isComposing){ e.preventDefault(); send(); } });
     ta.addEventListener('input', () => { ta.style.height = 'auto'; ta.style.height = Math.min(160, ta.scrollHeight) + 'px'; });
@@ -292,6 +297,9 @@
     paintMessages(true); paintPending(); paintReply();
   }
 
+  /* Calls are 1:1 with a PERSON: Telegram has no call to a group, a channel or a bot here, and the
+   * node says whether its call engine is installed (status.calls). */
+  function canCall(d){ return !!(st.status && st.status.calls && window.PCTgCall && d && d.kind === 'user' && d.id > 0); }
   async function openChat(id){
     st.open = id; st.reply = null; st.pending = [];
     paintDialogs(); paintChat();

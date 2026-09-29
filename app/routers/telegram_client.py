@@ -276,3 +276,65 @@ async def events(ws: WebSocket):
         if q is not None and user is not None:
             manager().unsubscribe(user.id, q)
         db.close()
+
+
+# ---- voice and video calls --------------------------------------------------------------------------
+
+class CallReq(BaseModel):
+    action: str                     # start | accept | hangup | camera | state
+    peer: int = 0
+    video: bool = False
+
+
+@router.post("/call")
+async def call(req: CallReq, db: Session = Depends(get_db), user: User = Depends(member)):
+    try:
+        return {"ok": True, **await manager().call(db, user, req.action, req.peer, req.video)}
+    except TGError as e:
+        return _err(e)
+
+
+@router.websocket("/call-media")
+async def call_media(ws: WebSocket):
+    """A call's audio and video (app/services/telegram_client/calls.py has the wire format). The session
+    token arrives in the FIRST frame, as on /ws; after that the socket carries binary frames only."""
+    from app.auth import decode_token
+    await ws.accept()
+    db = SessionLocal()
+    hub = None
+    try:
+        try:
+            first = json.loads(await asyncio.wait_for(ws.receive_text(), timeout=15))
+        except Exception:
+            await ws.close(code=4401)
+            return
+        payload = decode_token(str(first.get("token") or "")) if isinstance(first, dict) else None
+        uid = payload.get("sub") if payload else None
+        user = db.query(User).filter(User.id == int(uid)).first() if str(uid or "").isdigit() else None
+        if user is None:
+            await ws.close(code=4401)
+            return
+        try:
+            await instance_membership.require_user(user)
+            hub = await manager().call_hub(db, user)
+        except Exception:
+            await ws.close(code=4403)
+            return
+        hub.sockets.add(ws)
+        await ws.send_text(json.dumps({"type": "call", "peer": hub.peer, "state": hub.state, "title": hub.title,
+                                       "video": hub.video, "remote_video": hub.remote_video}))
+        while True:
+            m = await ws.receive()
+            if m.get("type") == "websocket.disconnect":
+                return
+            data = m.get("bytes")
+            if data:
+                await hub.from_browser(data)
+    except (WebSocketDisconnect, asyncio.CancelledError):
+        pass
+    except Exception as e:
+        logger.info("[tgc] call media socket ended: %s", type(e).__name__)
+    finally:
+        if hub is not None:
+            hub.sockets.discard(ws)
+        db.close()

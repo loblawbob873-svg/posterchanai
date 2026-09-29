@@ -525,7 +525,7 @@ def test_search_finds_people_and_groups_you_know_first(world):
 def test_reactions_from_other_people_arrive_live(world):
     mgr, tg = _react_world(world)
     q = mgr.subscribe(1)
-    raw = world[3][-1].handlers[-1]
+    raw = next(h for h in world[3][-1].handlers if h.__name__ == "on_reactions")
     from telethon.tl.types import PeerUser, UpdateMessageReactions
     run(raw(UpdateMessageReactions(peer=PeerUser(42), msg_id=1, reactions=_reactions(**{"❤️": (1, False)}))))
     ev = q.get_nowait()

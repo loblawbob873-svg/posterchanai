@@ -293,3 +293,107 @@ def test_search_finds_people_and_rooms_on_telegram_and_opens_them():
         assert await b.js("document.querySelector('.tg-search').value") == "", "the search stayed filled after opening a result"
 
     asyncio.run(desktop.with_browser("online", "", check, FAKE))
+
+
+CALLS = r"""
+__tg.calls = [];
+const __f1 = window.fetch;
+window.fetch = function(url, opts){
+  const u = String(url);
+  if(u.includes('/api/tgc/status')) return __f1(url, opts).then(r => r.json()).then(j => new Response(JSON.stringify(Object.assign(j, {calls:true})), {status:200, headers:{'Content-Type':'application/json'}}));
+  if(u.includes('/api/tgc/call')){ const b = JSON.parse(opts.body); __tg.calls.push(b);
+    return Promise.resolve(new Response(JSON.stringify({ok:true, state: b.action === 'hangup' ? 'idle' : 'calling'}), {status:200, headers:{'Content-Type':'application/json'}})); }
+  return __f1(url, opts);
+};
+// A camera and a microphone that exist in a headless browser: a painted canvas and an oscillator.
+navigator.mediaDevices.getUserMedia = async (c) => {
+  window.__gum = (window.__gum || 0) + 1;
+  const out = new MediaStream();
+  if(c.audio){ const ac = new AudioContext(), o = ac.createOscillator(), d = ac.createMediaStreamDestination(); o.connect(d); o.start(); d.stream.getAudioTracks().forEach(t => out.addTrack(t)); }
+  if(c.video){ const cv = document.createElement('canvas'); cv.width = 640; cv.height = 360; const g = cv.getContext('2d');
+    setInterval(() => { g.fillStyle = '#' + Math.floor(Math.random()*0xffffff).toString(16).padStart(6,'0'); g.fillRect(0,0,640,360); }, 50);
+    cv.captureStream(15).getVideoTracks().forEach(t => out.addTrack(t)); }
+  return out;
+};
+window.__media = [];
+const __WS2 = window.WebSocket;
+window.WebSocket = function(url){ if(!String(url).includes('/api/tgc/call-media')) return new __WS2(url);
+  const s = { url, readyState:1, sent:[], bufferedAmount:0, send(x){ this.sent.push(typeof x === 'string' ? x : new Uint8Array(x.buffer ? x.buffer : x).slice()); }, close(){ this.readyState = 3; } };
+  window.__media.push(s); setTimeout(() => s.onopen && s.onopen(), 0); return s; };
+"""
+
+TINY_JPEG = "/9j/4AAQSkZJRgABAQEASABIAAD/2wBDAP//////////////////////////////////////////////////////////////////////////////////////wgALCAABAAEBAREA/8QAFBABAAAAAAAAAAAAAAAAAAAAAP/aAAgBAQABPxA="
+
+
+async def _click(b, sel):
+    import json as _j
+    at = await b.js(f"(()=>{{const e=document.querySelector({_j.dumps(sel)});const r=e.getBoundingClientRect();return [r.x+r.width/2,r.y+r.height/2]}})()")
+    for t in ("mousePressed", "mouseReleased"):
+        await b.call("Input.dispatchMouseEvent", dict(type=t, x=at[0], y=at[1], button="left", clickCount=1))
+
+
+@pytest.mark.skipif(not Path("/opt/google/chrome/chrome").exists(), reason="Chrome required")
+def test_a_voice_call_dials_streams_audio_shows_the_other_side_and_hangs_up():
+    """Asked for: "and voice and video call support" in the Telegram client."""
+    async def check(b):
+        await _open(b)
+        await b.js("__tg.state='ready'; __PC.switchView('global'); __PC.switchView('tg')")
+        await b.until("document.querySelectorAll('.tg-dialog').length===2")
+        await b.js("document.querySelector('.tg-dialog[data-chat=\"77\"]').click()")
+        await b.until("!!document.querySelector('.tg-ctitle')")
+        assert not await b.js("!!document.querySelector('[data-act=\"call\"]')"), "a GROUP offered a call"
+        await b.js("document.querySelector('.tg-back').click(); document.querySelector('.tg-dialog[data-chat=\"42\"]').click()")
+        await b.until("!!document.querySelector('[data-act=\"call\"]')")
+        await _click(b, '[data-act="call"]')
+        await b.until("__tg.calls.length===1 && !!document.querySelector('.tgc-panel')")
+        assert await b.js("__tg.calls[0]") == {"action": "start", "peer": 42, "video": False}
+        assert "Calling" in await b.js("document.querySelector('.tgc-status').textContent")
+        await b.until("__media.length===1 && __media[0].sent.length>0")
+        first = await b.js("__media[0].sent[0]")
+        assert isinstance(first, str) and '"token"' in first, "the media socket did not authenticate in its FIRST frame"
+        # The node says the other side answered.
+        await b.js("__tgSockets[0].onmessage({data:JSON.stringify({type:'call',peer:42,title:'Alice',state:'active',video:false,remote_video:false})})")
+        await b.until("__media[0].sent.filter(x=>typeof x!=='string'&&x[0]===1).length>=10")
+        sizes = await b.js("[...new Set(__media[0].sent.filter(x=>typeof x!=='string'&&x[0]===1).map(x=>x.length))]")
+        assert sizes == [961], f"microphone frames are not 10 ms of 48 kHz PCM16: {sizes}"
+        assert await b.js("/^0:0\\d$/.test(document.querySelector('.tgc-status').textContent)"), "no call timer"
+        # The other side's camera arrives.
+        await b.js(f"(()=>{{const j=Uint8Array.from(atob('{TINY_JPEG}'),c=>c.charCodeAt(0));const m=new Uint8Array(j.length+1);m[0]=0x12;m.set(j,1);__media[0].onmessage({{data:m.buffer}});}})()")
+        await b.until("!!document.querySelector('.tgc-remote') && document.querySelector('.tgc-remote').src.startsWith('blob:')")
+        await _click(b, '[data-tgc="hangup"]')
+        await b.until("__tg.calls.some(c=>c.action==='hangup')")
+        assert not await b.js("!!document.querySelector('.tgc-panel')"), "the call screen stayed up after hanging up"
+        assert await b.js("__media[0].readyState") == 3, "the media socket stayed open"
+
+    asyncio.run(desktop.with_browser("online", "", check, FAKE + CALLS))
+
+
+@pytest.mark.skipif(not Path("/opt/google/chrome/chrome").exists(), reason="Chrome required")
+def test_an_incoming_video_call_rings_and_can_be_answered_or_declined():
+    async def check(b):
+        await _open(b)
+        await b.js("__tg.state='ready'; __PC.switchView('global'); __PC.switchView('tg')")
+        await b.until("document.querySelectorAll('.tg-dialog').length===2 && __tgSockets.length>0")
+        ring = "__tgSockets[0].onmessage({data:JSON.stringify({type:'call',peer:42,title:'Alice',state:'ringing',video:false,remote_video:true})})"
+        await b.js(ring)
+        await b.until("!!document.querySelector('.tgc-panel.tgc-ringing')")
+        text = await b.js("document.querySelector('.tgc-panel').textContent")
+        assert "Alice" in text and "Incoming video call" in text, text
+        assert await b.js("!!document.querySelector('[data-tgc=\"accept-video\"]')"), "a video call offered no video answer"
+        await _click(b, '[data-tgc="accept-video"]')
+        await b.until("__tg.calls.some(c=>c.action==='accept')")
+        assert await b.js("__tg.calls.find(c=>c.action==='accept')") == {"action": "accept", "peer": 42, "video": True}
+        await b.js("__tgSockets[0].onmessage({data:JSON.stringify({type:'call',peer:42,title:'Alice',state:'active',video:true,remote_video:true})})")
+        await b.until("__media.length>0 && __media.at(-1).sent.some(x=>typeof x!=='string'&&x[0]===2)")
+        cam = await b.js("(()=>{const f=__media.at(-1).sent.find(x=>typeof x!=='string'&&x[0]===2);return [f[1],f[2]]})()")
+        assert cam == [0xFF, 0xD8], "camera frames are not JPEG"
+        await b.js("__tgSockets[0].onmessage({data:JSON.stringify({type:'call',peer:42,state:'idle',reason:'hung up'})})")
+        await b.until("!document.querySelector('.tgc-panel')")
+        # A second ring, declined.
+        await b.js(ring)
+        await b.until("!!document.querySelector('.tgc-panel.tgc-ringing')")
+        await _click(b, '[data-tgc="hangup"]')
+        await b.until("__tg.calls.some(c=>c.action==='hangup')")
+        assert not await b.js("!!document.querySelector('.tgc-panel')")
+
+    asyncio.run(desktop.with_browser("online", "", check, FAKE + CALLS))

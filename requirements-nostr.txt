@@ -118,3 +118,6 @@ psutil>=5.9
 # a Nostr-only node is a web-UI/desktop node like any other -- without it the Telegram app's sign-in
 # fails on import. `Manager.configured()` also reports "not set up" when the library is absent.
 telethon>=1.45,<2
+# Telegram voice/video calls (the Telegram client): Telegram's VoIP engine, bridged to the browser by
+# app/services/telegram_client/calls.py. ntgcalls is one manylinux wheel with WebRTC built in (glibc>=2.28).
+py-tgcalls>=3.0.0,<4

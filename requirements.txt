@@ -25,6 +25,9 @@ httpx>=0.28.0
 aiohttp>=3.14.3
 # Telegram client inside PosterChan (app/services/telegram_client): MTProto, pure Python.
 telethon>=1.45,<2
+# Telegram voice/video calls (the Telegram client): Telegram's VoIP engine, bridged to the browser by
+# app/services/telegram_client/calls.py. ntgcalls is one manylinux wheel with WebRTC built in (glibc>=2.28).
+py-tgcalls>=3.0.0,<4
 requests>=2.31.0
 beautifulsoup4>=4.12.0
 lxml>=5.0.0

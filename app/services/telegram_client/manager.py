@@ -70,6 +70,7 @@ class Account:
     me: dict = field(default_factory=dict)
     handlers_on: bool = False
     last_session: str = ""
+    calls: object = None             # calls.CallHub — voice/video calls, once the account is ready
 
 
 def _name(ent) -> str:
@@ -151,8 +152,9 @@ def message_dict(msg, chat_id) -> dict:
 
 
 class Manager:
-    def __init__(self, client_factory=default_client_factory, store=None, api=_api_config):
+    def __init__(self, client_factory=default_client_factory, store=None, api=_api_config, tgcalls_factory=None):
         self._factory = client_factory
+        self._tgcalls_factory = tgcalls_factory      # tests hand in a fake call engine
         self._api = api
         if store is None:
             from app.services.telegram_client import session_store as store
@@ -210,7 +212,8 @@ class Manager:
             # `admin` decides which instructions the screen shows: the steps to set it up, or who to ask.
             return {"configured": False, "state": "none", "admin": bool(getattr(user, "is_admin", False))}
         a = await self.resume(db, user)
-        return {"configured": True, "state": a.state, "me": a.me, "phone": a.phone if a.state != "ready" else ""}
+        return {"configured": True, "state": a.state, "me": a.me, "phone": a.phone if a.state != "ready" else "",
+                "calls": self.calls_available()}
 
     # ---- sign in ----------------------------------------------------------------------------------
     async def send_code(self, db, user, phone: str) -> dict:
@@ -292,6 +295,61 @@ class Manager:
             self._install_handlers(a)
             a.handlers_on = True
         await self._emit(a, {"type": "state", "state": "ready", "me": a.me})
+        # Calls must be listening BEFORE anyone presses Call, or an incoming call rings nowhere.
+        # Best effort: a node without the call engine still does everything else.
+        if self.calls_available() and (self._tgcalls_factory is not None or self._factory is default_client_factory):
+            asyncio.get_running_loop().create_task(self._start_calls(a))
+
+    # ---- voice and video calls ----------------------------------------------------------------------
+    def calls_available(self) -> bool:
+        from app.services.telegram_client import calls
+        return self._tgcalls_factory is not None or calls.available()
+
+    def _hub(self, a: Account):
+        if a.calls is None:
+            from app.services.telegram_client.calls import CallHub
+
+            async def emit(ev):
+                await self._emit(a, ev)
+            a.calls = CallHub(a.client, emit, tgcalls_factory=self._tgcalls_factory)
+            a.calls.watch_requests(a.client)
+        return a.calls
+
+    async def _start_calls(self, a: Account):
+        try:
+            await self._hub(a)._engine()
+        except Exception as e:
+            logger.warning("Telegram calls could not start for account %s: %s", a.user_id, type(e).__name__)
+
+    async def call_hub(self, db, user):
+        await self._ready(db, user)
+        if not self.calls_available():
+            raise TGError("Calls are not set up on this server yet — its call engine (py-tgcalls) is "
+                          "missing; an admin re-runs the installer.")
+        return self._hub(self.account(user.id))
+
+    async def call(self, db, user, action: str, peer: int = 0, video: bool = False) -> dict:
+        from app.services.telegram_client.calls import CallError
+        hub = await self.call_hub(db, user)
+        try:
+            if action == "start":
+                return await hub.start(int(peer), bool(video))
+            if action == "accept":
+                return await hub.accept(int(peer), bool(video))
+            if action == "hangup":
+                return await hub.hangup(int(peer) or None)
+            if action == "camera":
+                return await hub.camera(bool(video))
+            if action == "state":
+                return {"peer": hub.peer, "state": hub.state, "title": hub.title, "video": hub.video,
+                        "remote_video": hub.remote_video}
+        except CallError as e:
+            raise TGError(str(e))
+        except TGError:
+            raise
+        except Exception as e:
+            raise TGError(_why(e))
+        raise TGError("Unknown call action.")
 
     # ---- live events ------------------------------------------------------------------------------
     def _install_handlers(self, a: Account) -> None:

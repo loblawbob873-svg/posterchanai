@@ -121,6 +121,8 @@ const SHELL = [
   '/static/js/client/budget.js',
   '/static/js/client/calculator.js',
   '/static/js/client/telegram.js',
+  '/static/js/client/tgcall.js',
+  '/static/js/client/tgcall-worklet.js',
   '/static/js/client/livetemplates.js',
   '/static/js/client/joplin.js',
   '/static/js/client/zip.js',
