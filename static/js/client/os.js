@@ -1887,6 +1887,9 @@
              'budget', 'news', 'articles'],
     // Boards. A square-ish window, because the board is square.
     square: ['chess', 'ttt', 'hangman', 'connect4', 'blackjack', 'holdem'],
+    // Tools whose whole face is a keypad: a phone-shaped window. At the reading-column default a
+    // calculator opened two-thirds of a 4K screen wide — "a big window and a waste of space".
+    compact: ['calculator'],
     /* Games from a .xdc — a 3D viewport, not a workbench and not a board. They want the largest
      * 16:9 rectangle that fits: Half-Life in a column-shaped panel is letterboxed on two sides and
      * unplayable, which is exactly how another client's presentation of the same app was described
@@ -1933,6 +1936,8 @@
       w = Math.round(Math.min(maxW, maxH * 16 / 9));
       h = Math.round(w * 9 / 16);
       if(h > maxH){ h = Math.round(maxH); w = Math.round(h * 16 / 9); }
+    }else if(shape === 'compact'){
+      w = Math.min(480, aw); h = Math.min(720, ah);
     }else if(shape === 'square'){
       const side = Math.min(Math.round(aw * 0.62), Math.round(ah * 0.96), 900);
       w = side; h = side;

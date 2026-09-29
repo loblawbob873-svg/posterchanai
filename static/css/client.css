@@ -11402,6 +11402,17 @@ html.os-idle #os-root *{animation:none!important;transition:none!important}
   .calc-key{min-height:clamp(50px,9.5vh,64px)}
 }
 @media (prefers-reduced-motion:reduce){.calc-glitch{animation:none}.calc-key{transition:none}}
+/* AUTOSCALE WITH THE WINDOW, not with the screen: on PosterChanOS the calculator is its own window
+   and vw/vh are the MONITOR's, so the keypad kept one size in a window of any size. The app is a size
+   container and the keys, the display and the gaps follow its width. */
+.calc-app{container-type:inline-size}
+@container (min-width:1px){
+  .calc-key{min-height:clamp(44px,13cqi,84px);font-size:clamp(16px,5.2cqi,30px)}
+  .calc-sk{min-height:clamp(36px,9cqi,60px);font-size:clamp(12px,3.4cqi,20px)}
+  .calc-pad,.calc-sci{gap:clamp(6px,1.8cqi,12px)}
+  .calc-expr{font-size:clamp(22px,8cqi,46px)}
+  .calc-res{font-size:clamp(15px,4.6cqi,26px)}
+}
 
 /* ── Telegram client (client/telegram.js) — PosterChan's theme tokens, cyberpunk treatment ─────────── */
 .tg-app{--tg-hot:#ff2b6d;height:100%;min-height:0;display:flex;flex-direction:column;box-sizing:border-box;

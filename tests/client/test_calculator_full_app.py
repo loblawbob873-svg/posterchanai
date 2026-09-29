@@ -89,3 +89,30 @@ def test_on_the_desktop_it_is_a_window_and_keys_follow_focus():
             "a key typed at another window reached the calculator"
 
     asyncio.run(desktop.with_browser("online", "", check))
+
+
+@pytest.mark.skipif(not Path("/opt/google/chrome/chrome").exists(), reason="Chrome required")
+def test_on_the_desktop_it_opens_calculator_sized_and_scales_with_its_window():
+    """Reported from PosterChanOS: "calculator opens up in a big window and is a waste of space. maybe
+    autoscale the calc?" It took the reading-column default (two-thirds of the screen) and its keys
+    were one fixed size whatever the window."""
+    async def check(b):
+        await b.call("Emulation.setDeviceMetricsOverride", dict(width=2560, height=1440, deviceScaleFactor=1, mobile=False))
+        await desktop.login(b)
+        await b.until("!!window.PCOS && PCOS.isOn() && !!document.querySelector('#os-desk')")
+        await b.js("document.getElementById('osfr')?.remove();document.documentElement.classList.remove('osfr-on')")
+        await b.js("__PC.switchView('calculator')")
+        await b.until("!!document.querySelector('.osw .calc-app')")
+        size = await b.js("""(()=>{const r=document.querySelector('.calc-app').closest('.osw').getBoundingClientRect();
+          return {w:Math.round(r.width),h:Math.round(r.height)}})()""")
+        assert size["w"] <= 520, f"the calculator opened {size['w']}px wide on a 2560px desktop"
+        assert size["h"] <= 760, size
+        # The keypad follows its WINDOW: widen the window and the keys grow.
+        key = "document.querySelector('.calc-pad .calc-key').getBoundingClientRect().height"
+        small = await b.js(key)
+        await b.js("(()=>{const w=document.querySelector('.calc-app').closest('.osw');w.style.width='900px';})()")
+        await asyncio.sleep(.2)
+        large = await b.js(key)
+        assert large > small + 8, f"the keys did not scale with the window ({small}px → {large}px)"
+
+    asyncio.run(desktop.with_browser("online", "", check))
