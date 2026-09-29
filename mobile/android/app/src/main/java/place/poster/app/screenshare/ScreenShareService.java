@@ -25,6 +25,7 @@ import androidx.core.content.ContextCompat;
 
 import com.pedro.common.ConnectChecker;
 import com.pedro.encoder.input.sources.audio.MicrophoneSource;
+import com.pedro.encoder.input.sources.audio.MixAudioSource;
 import com.pedro.encoder.input.sources.video.NoVideoSource;
 import com.pedro.encoder.input.sources.video.ScreenSource;
 import com.pedro.library.rtmp.RtmpStream;
@@ -51,6 +52,7 @@ public class ScreenShareService extends Service implements ConnectChecker {
   public static final String EXTRA_RESULT_DATA = "resultData";
   public static final String EXTRA_URL = "url";
   public static final String EXTRA_MUTED = "muted";
+  public static final String EXTRA_SCREEN_MUTED = "screenMuted";
 
   private static final String TAG = "ScreenShare";
   private static final String CHANNEL_ID = "screen_share";
@@ -68,10 +70,13 @@ public class ScreenShareService extends Service implements ConnectChecker {
   public static volatile ScreenShareService INSTANCE;
 
   private RtmpStream stream;
+  // Exactly one of these is the live audio input: `mic` until the projection exists (and for good below
+  // Android 10), `mix` (mic + the phone's own playback) once it has been swapped in. See ScreenAudioPlan.
   private MicrophoneSource mic;
+  private MixAudioSource mix;
   private MediaProjection projection;
   private boolean prepared = false;
-  private boolean muted = false;
+  private final ScreenAudioPlan audio = new ScreenAudioPlan(false, false);
 
   private static final int FPS = 30;
   private static final int V_BITRATE = 4_000_000;
@@ -174,11 +179,15 @@ public class ScreenShareService extends Service implements ConnectChecker {
       // Registering a MediaProjection.Callback is mandatory on Android 14+ — createVirtualDisplay() throws
       // IllegalStateException without one.
       stream.changeVideoSource(new ScreenSource(getApplicationContext(), projection, projectionCallback, null));
-      // Apply the mute BEFORE going on air. Muting after startStream would put the mic live for the length of
-      // the round-trip — real audio from someone who already told us they were muted (they muted the camera
-      // stream, then switched to the screen).
-      setMuted(intent.getBooleanExtra(EXTRA_MUTED, false));
-      stream.startStream(url);
+      // The phone's own sound, as its own input — only possible now that the projection exists.
+      useScreenAudio();
+      // Apply BOTH mutes BEFORE going on air. Muting after startStream would put the mic (or the screen's sound)
+      // live for the length of the round-trip — real audio from someone who already told us they were muted
+      // (they muted the camera stream, then switched to the screen).
+      audio.setMicMuted(intent.getBooleanExtra(EXTRA_MUTED, false));
+      audio.setScreenMuted(intent.getBooleanExtra(EXTRA_SCREEN_MUTED, false));
+      applyAudio();
+      startOnAir(url);
       emit("starting", "");
     } catch (Exception e) {
       Log.e(TAG, "screen share failed to start", e);
@@ -221,16 +230,96 @@ public class ScreenShareService extends Service implements ConnectChecker {
     ServiceCompat.startForeground(this, NOTIF_ID, n, types);
   }
 
-  public boolean isStreaming() { return stream != null && stream.isStreaming(); }
-
-  /** Mute/unmute the voiceover mid-broadcast. The capture keeps running; the mic just stops being encoded. */
-  public void setMuted(boolean value) {
-    if (mic == null) return;
-    if (value) mic.mute(); else mic.unMute();
-    muted = value;
+  private boolean recordAudioGranted() {
+    return ContextCompat.checkSelfPermission(this, Manifest.permission.RECORD_AUDIO)
+        == PackageManager.PERMISSION_GRANTED;
   }
 
-  public boolean isMuted() { return muted; }
+  /**
+   * Swap the mic-only input for MixAudioSource: the microphone PLUS the phone's playback (AudioPlaybackCapture
+   * through our MediaProjection), each with its own volume, so the two can be muted independently.
+   *
+   * changeAudioSource() initialises the new source with the settings prepareAudio() gave the old one (44100 Hz,
+   * stereo, echo canceller + noise suppressor ON — the mic half is created with them, which is what stops it
+   * re-capturing the speaker now that the speaker's sound is ALSO sent digitally). Any failure leaves the mic
+   * source in place (the swap throws before the old source is released) and the share runs as it always did:
+   * voice only, screenAudio=false.
+   */
+  private void useScreenAudio() {
+    ScreenAudioPlan.Source want = ScreenAudioPlan.choose(Build.VERSION.SDK_INT, recordAudioGranted());
+    if (want == ScreenAudioPlan.Source.MIX && Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+      try {
+        MixAudioSource m = new MixAudioSource(projection, null, MediaRecorder.AudioSource.DEFAULT);
+        stream.changeAudioSource(m);
+        mix = m;
+        mic = null;
+        audio.useSource(ScreenAudioPlan.Source.MIX);
+        return;
+      } catch (Exception e) {
+        Log.w(TAG, "screen audio unavailable — streaming the microphone only", e);
+      }
+    }
+    audio.useSource(ScreenAudioPlan.Source.MIC);
+  }
+
+  /**
+   * startStream, with a floor: MixAudioSource only opens the PLAYBACK capture when the stream starts, so a
+   * device that refuses it fails HERE, not in useScreenAudio(). Losing the whole share over the phone's sound
+   * would be worse than what shipped before, so drop back to the microphone (mutes re-applied first — the
+   * pre-air rule holds on this path too) and go on air with that.
+   */
+  private void startOnAir(String url) {
+    try {
+      stream.startStream(url);
+    } catch (RuntimeException e) {
+      if (!audio.hasScreenAudio()) throw e;
+      Log.w(TAG, "screen audio failed to start — retrying with the microphone only", e);
+      try { stream.stopStream(); } catch (Exception ignored) {}
+      MicrophoneSource m = new MicrophoneSource(MediaRecorder.AudioSource.DEFAULT);
+      stream.changeAudioSource(m);
+      mic = m;
+      mix = null;
+      audio.useSource(ScreenAudioPlan.Source.MIC);
+      applyAudio();
+      stream.startStream(url);
+    }
+  }
+
+  /** Push ScreenAudioPlan's two states onto whichever source is live. Volume 0 = muted; never mute() the mix. */
+  private void applyAudio() {
+    MixAudioSource m = mix;
+    if (m != null) {
+      m.setMicrophoneVolume(audio.micVolume());
+      m.setInternalVolume(audio.screenVolume());
+      return;
+    }
+    MicrophoneSource s = mic;
+    if (s != null) { if (audio.micMuted()) s.mute(); else s.unMute(); }
+  }
+
+  public boolean isStreaming() { return stream != null && stream.isStreaming(); }
+
+  /**
+   * Mute/unmute the MICROPHONE mid-broadcast (the name predates screen audio and is kept for the plugin's
+   * setMuted). The capture keeps running; the mic just stops being heard. The screen's sound is untouched.
+   */
+  public void setMuted(boolean value) {
+    audio.setMicMuted(value);
+    applyAudio();
+  }
+
+  public boolean isMuted() { return audio.micMuted(); }
+
+  /** Mute/unmute the phone's own sound (the screen audio). The microphone is untouched. */
+  public void setScreenMuted(boolean value) {
+    audio.setScreenMuted(value);
+    applyAudio();
+  }
+
+  public boolean isScreenMuted() { return audio.screenMuted(); }
+
+  /** Whether the phone's playback is actually being sent — false below Android 10 or if capture was refused. */
+  public boolean hasScreenAudio() { return audio.hasScreenAudio(); }
 
   private void fail(String reason) {
     emit("error", reason);

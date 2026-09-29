@@ -120,6 +120,8 @@ public class ScreenSharePlugin extends Plugin {
     svc.putExtra(ScreenShareService.EXTRA_URL, url);
     // Start muted when the user already was: applying it afterwards would broadcast them first.
     svc.putExtra(ScreenShareService.EXTRA_MUTED, Boolean.TRUE.equals(call.getBoolean("muted", false)));
+    // Same rule for the screen's own sound: it is its own input now, muted independently of the mic.
+    svc.putExtra(ScreenShareService.EXTRA_SCREEN_MUTED, Boolean.TRUE.equals(call.getBoolean("screenMuted", false)));
     consentData = null;       // one MediaProjection per consent — never reuse it
     ContextCompat.startForegroundService(getContext(), svc);
     call.resolve();           // 'connected'/'error' follow asynchronously on the screenShareStatus listener
@@ -133,7 +135,7 @@ public class ScreenSharePlugin extends Plugin {
     call.resolve();
   }
 
-  /** Mute/unmute the mic without interrupting the screen capture. */
+  /** Mute/unmute the MICROPHONE without interrupting the screen capture. The screen's sound is untouched. */
   @PluginMethod
   public void setMuted(PluginCall call) {
     ScreenShareService svc = ScreenShareService.INSTANCE;
@@ -148,10 +150,44 @@ public class ScreenSharePlugin extends Plugin {
     call.resolve(ret);
   }
 
+  /**
+   * Mute/unmute the SCREEN AUDIO (the phone's own playback) without touching the mic. Resolves
+   * {muted, screenAudio}: screenAudio=false means this share carries no screen sound at all (Android 9, or
+   * the device refused playback capture), and the client hides the control rather than pretend.
+   */
+  @PluginMethod
+  public void setScreenMuted(PluginCall call) {
+    ScreenShareService svc = ScreenShareService.INSTANCE;
+    // Same rule as setMuted: no service = REJECT, never a success the user would read as "muted".
+    if (svc == null) { call.reject("the screen share isn't running"); return; }
+    boolean muted = Boolean.TRUE.equals(call.getBoolean("muted", false));
+    svc.setScreenMuted(muted);
+    JSObject ret = new JSObject();
+    ret.put("muted", svc.isScreenMuted());
+    ret.put("screenAudio", svc.hasScreenAudio());
+    call.resolve(ret);
+  }
+
+  /** The share's two audio inputs as the service actually has them. Rejects when nothing is running. */
+  @PluginMethod
+  public void audioState(PluginCall call) {
+    ScreenShareService svc = ScreenShareService.INSTANCE;
+    if (svc == null) { call.reject("the screen share isn't running"); return; }
+    call.resolve(audioOf(svc));
+  }
+
+  private static JSObject audioOf(ScreenShareService svc) {
+    JSObject ret = new JSObject();
+    ret.put("micMuted", svc.isMuted());
+    ret.put("screenAudio", svc.hasScreenAudio());
+    ret.put("screenMuted", svc.isScreenMuted());
+    return ret;
+  }
+
   @PluginMethod
   public void isStreaming(PluginCall call) {
     ScreenShareService svc = ScreenShareService.INSTANCE;
-    JSObject ret = new JSObject();
+    JSObject ret = svc != null ? audioOf(svc) : new JSObject();
     ret.put("value", svc != null && svc.isStreaming());
     call.resolve(ret);
   }

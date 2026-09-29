@@ -1439,7 +1439,7 @@ window.PCStreamsFactory = function(dep){
     el.innerHTML=`<div class="pl-badge">● LIVE</div><div class="pl-viewers" id="pl-viewers">👁 0</div>
       <video id="pl-vid" autoplay playsinline muted></video>
       <div class="pl-note" id="pl-note" hidden>🖥 Sharing your screen</div>
-      <div class="pl-actions"><button class="btn btn-ghost" id="pl-min"><svg class="ic b-ic" aria-hidden="true"><use href="#i-minimize"></use></svg>Minimize</button><button class="btn btn-ghost" id="pl-chat"><svg class="ic b-ic" aria-hidden="true"><use href="#i-chat"></use></svg>Chat</button><button class="btn btn-ghost" id="pl-mute"><svg class="ic b-ic" aria-hidden="true"><use href="#i-mic"></use></svg>Mute</button><button class="btn btn-ghost" id="pl-flip"><svg class="ic b-ic" aria-hidden="true"><use href="#i-refresh"></use></svg>Flip camera</button><button class="btn btn-ghost" id="pl-screen"><svg class="ic b-ic" aria-hidden="true"><use href="#i-tv"></use></svg>Share screen</button><button class="btn btn-neon" id="pl-stop"><svg class="ic b-ic" aria-hidden="true"><use href="#i-stop"></use></svg>Stop streaming</button></div>`;
+      <div class="pl-actions"><button class="btn btn-ghost" id="pl-min"><svg class="ic b-ic" aria-hidden="true"><use href="#i-minimize"></use></svg>Minimize</button><button class="btn btn-ghost" id="pl-chat"><svg class="ic b-ic" aria-hidden="true"><use href="#i-chat"></use></svg>Chat</button><button class="btn btn-ghost" id="pl-mute"><svg class="ic b-ic" aria-hidden="true"><use href="#i-mic"></use></svg>Mute</button><button class="btn btn-ghost" id="pl-screen-audio" hidden><svg class="ic b-ic" aria-hidden="true"><use href="#i-volume"></use></svg>Screen audio</button><button class="btn btn-ghost" id="pl-flip"><svg class="ic b-ic" aria-hidden="true"><use href="#i-refresh"></use></svg>Flip camera</button><button class="btn btn-ghost" id="pl-screen"><svg class="ic b-ic" aria-hidden="true"><use href="#i-tv"></use></svg>Share screen</button><button class="btn btn-neon" id="pl-stop"><svg class="ic b-ic" aria-hidden="true"><use href="#i-stop"></use></svg>Stop streaming</button></div>`;
     document.body.appendChild(el);
     _startViewerPoll();
     // A native screen share is captured OUTSIDE the WebView (MediaProjection), so there's no MediaStream to
@@ -1453,6 +1453,7 @@ window.PCStreamsFactory = function(dep){
     // service are untouched by this — the broadcast lives outside the DOM) and open the stream view.
     $('#pl-chat',el).onclick=e=>{ e.stopPropagation(); _setMiniLive(true); switchView('streams'); };
     $('#pl-mute',el).onclick=e=>{ e.stopPropagation(); _toggleMute(); };
+    $('#pl-screen-audio',el).onclick=e=>{ e.stopPropagation(); _toggleScreenAudio(); };
     // The button is ALWAYS shown: hiding it on a browser without getDisplayMedia (mobile Chrome/Firefox, iOS
     // Safari — none of them implement screen capture) just looks like the feature is missing/broken. Say why.
     $('#pl-screen',el).onclick=e=>{ e.stopPropagation();
@@ -1464,9 +1465,17 @@ window.PCStreamsFactory = function(dep){
     el.onclick=()=>{ if(el.classList.contains('pl-mini')) _setMiniLive(false); };   // tap the thumbnail to come back
     _syncOverlayButtons();
   }
-  // Mute the mic mid-broadcast, without interrupting the video. Two different mutes under one button: a camera
-  // stream's audio is a WebRTC track we can simply disable (the sender keeps running, it just sends silence),
-  // while a native screen share's mic is captured outside the WebView, so the plugin has to do it.
+  // Mute the MIC mid-broadcast, without interrupting the video — and without touching the screen's sound. Two
+  // different mechanisms under one button: a camera stream's audio is a WebRTC track we can simply disable (the
+  // sender keeps running, it just sends silence), while a native screen share's mic is captured outside the
+  // WebView, so the plugin has to do it.
+  //
+  // A native share on Android 10+ also sends the PHONE'S OWN SOUND as a separate input (ScreenAudioPlan.java).
+  // It used to be the mic's only input, so what viewers heard of a game was the speaker picked up by the mic
+  // and this one button silenced both ("the mute button mutes my mic AND the screen audio"). The screen's sound
+  // now has its own button, #pl-screen-audio (_toggleScreenAudio), and neither ever changes the other. The web
+  // screen share has no second input to control: it asks getDisplayMedia for audio:false and drops any display
+  // audio track a browser hands back anyway (_soleVideoTrack), so its only audio IS the mic.
   async function _toggleMute(){
     const ps=_phoneStream; if(!ps) return;
     const want=!ps.muted;
@@ -1479,8 +1488,55 @@ window.PCStreamsFactory = function(dep){
       if(!t){ toast('this stream has no mic'); return; }
       t.enabled=!want; ps.muted=want;
     }
-    const b=$('#pl-mute'); if(b) b.textContent=ps.muted?'🔇 Unmute':'🎤 Mute';
+    _paintAudioButtons();
     toast(ps.muted?'mic muted — viewers can’t hear you':'mic on');
+  }
+  // The screen's own sound (native share, Android 10+ only). Rejects — and says so — rather than guess: a mute
+  // that silently did nothing is how somebody broadcasts a sound they believe is off.
+  async function _toggleScreenAudio(){
+    const ps=_phoneStream; if(!ps || !ps.native || !ps.screenAudio) return;
+    const want=!ps.screenMuted;
+    const SS=_capPlugin('ScreenShare','setScreenMuted'); if(!SS){ toast('can’t mute the screen audio on this app version'); return; }
+    let r=null;
+    try{ r=await SS.setScreenMuted({ muted:want }); }
+    catch(_){ toast('couldn’t mute the screen audio'); return; }
+    if(_phoneStream!==ps) return;   // the stream ended while the call was in flight
+    if(r && r.screenAudio===false){ ps.screenAudio=false; _paintAudioButtons(); toast('this screen share carries no screen audio'); return; }
+    ps.screenMuted=!!(r && r.muted);
+    _paintAudioButtons();
+    toast(ps.screenMuted?'screen audio muted — viewers can’t hear your phone’s sound':'screen audio on');
+  }
+  // Read what the capture service ACTUALLY sends: screen audio exists only on Android 10+ and only if the
+  // device let playback be captured, so the button is shown on the service's answer, never on a guess. An
+  // older APK has no audioState — no answer means no button, i.e. exactly what that APK can do.
+  async function _readNativeAudio(ps){
+    const SS=_capPlugin('ScreenShare','audioState');
+    if(SS){
+      try{ const r=await SS.audioState();
+        if(_phoneStream!==ps) return;
+        ps.screenAudio=!!(r && r.screenAudio);
+        ps.screenMuted=!!(r && r.screenMuted);
+        if(r && typeof r.micMuted==='boolean') ps.muted=r.micMuted;
+      }catch(_){ if(_phoneStream===ps) ps.screenAudio=false; }
+    }
+    if(_phoneStream===ps) _paintAudioButtons();
+  }
+  // Both audio buttons, painted from the STREAM's state (never from the button's own text), so a re-rendered
+  // overlay — or one restored from the minimized thumbnail — always says what is actually on air.
+  function _paintAudioButtons(){
+    const ps=_phoneStream; if(!ps) return;
+    const b=$('#pl-mute');
+    if(b){ b.textContent=ps.muted?'🔇 Unmute':'🎤 Mute';
+      b.title=ps.muted?'Microphone muted':'Microphone on'; b.setAttribute('aria-label', 'Microphone: '+(ps.muted?'muted':'on')); }
+    const sa=$('#pl-screen-audio');
+    if(sa){
+      // Only a native screen share that really carries the phone's sound. A camera stream never has it.
+      const show=!!(ps.native && ps.source==='screen' && ps.screenAudio);
+      sa.hidden=!show;
+      if(show){ sa.textContent=ps.screenMuted?'🔈 Screen muted':'🔊 Screen audio';
+        sa.title=ps.screenMuted?'Screen audio muted':'Screen audio on';
+        sa.setAttribute('aria-label', 'Screen audio: '+(ps.screenMuted?'muted':'on')); }
+    }
   }
   // How many people are actually watching. MediaMTX counts the readers on the path; the app just asks. Also
   // written back to the kind-30311 as `current_participants` (the NIP-53 tag other clients read to show
@@ -1570,6 +1626,7 @@ window.PCStreamsFactory = function(dep){
       else { sb.hidden=false; sb.textContent=screen?'📷 Camera':'🖥 Share screen'; }
     }
     const note=$('#pl-note'); if(note) note.hidden=!ps.native;
+    _paintAudioButtons();
     const v=$('#pl-vid'); if(v){ v.hidden=!!ps.native;
       // Mirror ONLY the front (selfie) camera — a screen share (or the rear cam) must never be flipped.
       v.classList.toggle('rear', screen || ps.facing==='environment'); }
@@ -1830,6 +1887,7 @@ window.PCStreamsFactory = function(dep){
     try{ await connected; }
     catch(e){ _goingLive=false; if(_phoneStream===ps){ toast((e&&e.message)||'the screen stream didn’t connect'); _endLive(); } return; }
     if(_phoneStream!==ps){ _goingLive=false; return; }   // they hit Stop while it was connecting
+    await _readNativeAudio(ps);   // shows the screen-audio button when the share carries the phone's sound
     _goingLive=false;
     let _ev=null;
     try{ _ev=await _publishLive(info, title, cover); }catch(_){ toast('live — but couldn’t announce on Nostr yet'); }
@@ -1876,9 +1934,10 @@ window.PCStreamsFactory = function(dep){
     // audio track and starts unmuted, so muting it afterwards would put the user on air for the length of the
     // round-trip — real audio from someone who believes they're muted, which is the worst failure this feature
     // has. Passing it to start() means the service is already muted before it ever publishes a frame.
-    try{ await SS.start({ url:ps.info.rtmp_native_url, muted: !!ps.muted }); await connected; }
+    // screenMuted rides the same call for the same reason (the screen's sound is a separate input now).
+    try{ await SS.start({ url:ps.info.rtmp_native_url, muted: !!ps.muted, screenMuted: !!ps.screenMuted }); await connected; }
     catch(e){ if(_phoneStream===ps){ toast((e&&e.message)||'couldn’t start the screen stream'); _endLive(); } return release(false); }
-    { const b=$('#pl-mute'); if(b) b.textContent=ps.muted?'🔇 Unmute':'🎤 Mute'; }
+    await _readNativeAudio(ps);
     return release(true);
   }
   const _canScreenShare=()=>!!(navigator.mediaDevices && navigator.mediaDevices.getDisplayMedia) || !!_screenPlugin();
