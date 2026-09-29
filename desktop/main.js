@@ -16,6 +16,13 @@
  * routing off-site links to the real browser, the permission grants the client needs, and auto-update.
  */
 const electron = require('electron');
+/* KEEP A MINIDUMP OF EVERY CRASH, ON THIS MACHINE ONLY. A renderer that dies with SIGSEGV (exit 139)
+ * reports a reason and an exit code and nothing else: measured on a PosterChanOS desktop, one such
+ * crash took six windows down at once and left no way to say WHERE in Chromium it happened. Chromium
+ * writes a minidump only once the crash reporter is started, which nothing did. Local only —
+ * `uploadToServer:false` — the dump lands in <userData>/Crashpad/{pending,completed} and crash-report.txt
+ * names it. Must run before `ready`, which is why it is at the top of the file. */
+try { electron.crashReporter.start({ uploadToServer: false, compress: true }); } catch (_) {}
 // Only app/protocol/ipcMain are valid during Electron's pre-ready configuration phase. Most of the
 // other exports are native lazy getters; destructuring `screen`, powerMonitor, session or Tray while
 // this module loads can initialize platform backends before app.ready and SIGTRAP on a fast boot.

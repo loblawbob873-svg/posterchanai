@@ -22,13 +22,24 @@ class TGError(Exception):
     """A refusal a person can act on — its text is shown as-is."""
 
 
+def parse_api_credentials(raw_id, raw_hash):
+    """The api_id and api_hash as Telegram wants them, from what an admin PASTED.
+
+    my.telegram.org shows them as labelled rows ("App api_id: 1234567", "App api_hash: 0123…cdef"), and
+    copying the row copies the label: the stored hash measured 46 characters, the 32-hex hash plus its
+    label, so every sign-in was refused with "The server's Telegram API id/hash are not valid". The hash
+    is the 32-hex run in the value and the id is its run of digits; anything else is not configured."""
+    import re
+    id_m = re.search(r"(?<!\d)(\d{3,12})(?!\d)", str(raw_id or ""))
+    hash_m = re.search(r"(?<![0-9a-fA-F])([0-9a-fA-F]{32})(?![0-9a-fA-F])", str(raw_hash or ""))
+    if not id_m or not hash_m:
+        return None
+    return int(id_m.group(1)), hash_m.group(1).lower()
+
+
 def _api_config():
     from app.services import settings_store
-    api_id = str(settings_store.get("telegram_api_id", "") or "").strip()
-    api_hash = str(settings_store.get("telegram_api_hash", "") or "").strip()
-    if not api_id.isdigit() or not api_hash:
-        return None
-    return int(api_id), api_hash
+    return parse_api_credentials(settings_store.get("telegram_api_id", ""), settings_store.get("telegram_api_hash", ""))
 
 
 def telethon_available() -> bool:

@@ -415,3 +415,17 @@ def test_the_router_turns_refusals_into_sentences(api):
     c, R, who, tgs = api
     r = c.post("/api/tgc/send", json={"chat_id": 42, "text": "   "})
     assert r.status_code == 400 and r.json()["error"]
+
+
+def test_a_pasted_label_around_the_api_hash_is_not_an_invalid_hash():
+    """Reported: "The server's Telegram API id/hash are not valid — ask the admin." The stored hash was
+    46 characters — my.telegram.org's "App api_hash:" label copied along with the 32-hex value."""
+    h = "0123456789abcdef0123456789ABCDEF"
+    assert M.parse_api_credentials("1234567", h) == (1234567, h.lower())
+    assert M.parse_api_credentials("App api_id: 1234567", "App api_hash: " + h) == (1234567, h.lower())
+    assert M.parse_api_credentials(" 1234567\n", "api_hash:\t" + h + " ") == (1234567, h.lower())
+    # Not a hash / not an id: still "not configured", never a guess.
+    assert M.parse_api_credentials("1234567", h[:31]) is None
+    assert M.parse_api_credentials("1234567", h + "0") is None
+    assert M.parse_api_credentials("", h) is None
+    assert M.parse_api_credentials("abc", h) is None

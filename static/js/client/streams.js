@@ -23,7 +23,7 @@ window.PCStreamsFactory = function(dep){
     _isDeletedStream, _mediaErrMsg, _popKeys, _preferH264, _streamAddr, _streamFetch, _webLink,
     closeModal, copyValue, decorateProfiles, doTip, enc, ensureAiSession, isDesktop, linkify,
     loadHls, mediaServer, modal, needProfile, profOf, publish, renderProfileView,
-    requestStreamAccess, streamCard, streamHost, streamStatus, subModal, switchView, toast,
+    rawStreamStatus, requestStreamAccess, streamCard, streamHost, streamStatus, streamSuperseded, subModal, switchView, toast,
     uiConfirm,
   } = dep;
 
@@ -622,10 +622,17 @@ window.PCStreamsFactory = function(dep){
     const stale=startedAt && (Date.now()/1000 - startedAt) > 900;   // 15 min
     if(!(hls && !feedUp && stale)) return false;
     if(!await _serverAnswers(hls)) return false;   // our own network is the suspect — leave it alone
-    // Really over. Retire it so it stops claiming to be live everywhere, carrying `starts` and the
-    // rest through _liveBase so the ended event keeps the broadcast's own identity.
+    return _retireNow(mine);
+  }
+  // Really over. Retire it so it stops claiming to be live everywhere, carrying `starts` and the
+  // rest through _liveBase so the ended event keeps the broadcast's own identity.
+  async function _retireNow(mine){
+    const hls=(mine.tags.find(t=>t[0]==='streaming')||[])[1]||'';
     const sid0=(mine.tags.find(t=>t[0]==='d')||[])[1]||'';
-    _endedStreams.add(sid0); _endedStreams.add(_tokenOfD(sid0));
+    _endedStreams.add(sid0);
+    // The KEY too — unless a newer session is live on it right now: marking the key ended would end
+    // the broadcast in progress along with the stale one.
+    if(!(_liveStream && (_liveStream.token||_tokenOfD(_liveStream.d))===_tokenOfD(sid0))) _endedStreams.add(_tokenOfD(sid0));
     try{
       const s0={ token:_tokenOfD(sid0), d:sid0,
                  title:(mine.tags.find(t=>t[0]==='title')||[])[1]||'Live stream', hls,
@@ -657,8 +664,8 @@ window.PCStreamsFactory = function(dep){
    *
    * Never awaited, never fatal, once per session. */
   let _sweptStaleLive=false;
-  async function _sweepStaleOwnLive(){
-    if(_sweptStaleLive || S.GUEST || !S.ME || _liveStream) return;
+  async function _sweepStaleOwnLive(force){
+    if((_sweptStaleLive && !force) || S.GUEST || !S.ME) return;
     _sweptStaleLive=true;
     let evs=[];
     try{ evs=await Relay.query([{ kinds:[30311], authors:[S.ME.pubkey] }]); }catch(_){ }
@@ -675,19 +682,32 @@ window.PCStreamsFactory = function(dep){
       const prev=best.get(d);
       if(!prev || e.created_at>prev.created_at) best.set(d, e);
     });
+    // The newest session per stream key: any OLDER session of that key still saying `live` is over by
+    // construction (one key, one live session), so it is retired without probing a feed the newer
+    // session is using — that probe answered "up" and kept the old one ● LIVE for ever.
+    const newestByKey=new Map();
+    for(const e of best.values()){ const d=(e.tags.find(t=>t[0]==='d')||[])[1]||'', k=_tokenOfD(d), st=_startsOf(e);
+      const cur=newestByKey.get(k); if(!cur || st>cur.st) newestByKey.set(k,{st,d}); }
+    if(_liveStream){ const k=_liveStream.token||_tokenOfD(_liveStream.d), cur=newestByKey.get(k), st=parseInt(_liveStream.starts,10)||0;
+      if(!cur || st>=cur.st) newestByKey.set(k,{st,d:_liveStream.d}); }
     for(const e of best.values()){
-      if(_liveStream) return;                        // went live for real while the sweep ran
-      if(streamStatus(e)!=='live') continue;
+      if(rawStreamStatus(e)!=='live') continue;
       const d=(e.tags.find(t=>t[0]==='d')||[])[1]||'';
+      if(_liveStream && d===_liveStream.d) continue;   // the broadcast running right now
+      const newest=newestByKey.get(_tokenOfD(d));
+      if(newest && newest.d!==d && d!==_tokenOfD(d)){ try{ await _retireNow(e); }catch(_){ } continue; }
+      if(_liveStream) continue;                        // an unrelated key while live: leave it to the next sweep
       if(_endedStreams.has(d) || _endedStreams.has(_tokenOfD(d))) continue;
       try{ await _retireIfOver(e); }catch(_){ }
     }
   }
+  function _startsOf(e){ const d=(e.tags.find(t=>t[0]==='d')||[])[1]||'';
+    return parseInt((e.tags.find(t=>t[0]==='starts')||[])[1]||'',10)||parseInt(d.slice(_tokenOfD(d).length+1),10)||e.created_at; }
   // On (re)opening Streams, re-adopt our OWN still-live announcement so a reload doesn't strand it as
   // permanently LIVE (the End button reappears + the heartbeat resumes).
   async function _adoptOwnLive(streams){
     if(_liveStream || S.GUEST || !S.ME) return;
-    const mine=(streams||[]).find(e=>e.pubkey===S.ME.pubkey && streamStatus(e)==='live'
+    const mine=(streams||[]).find(e=>e.pubkey===S.ME.pubkey && rawStreamStatus(e)==='live' && !streamSuperseded(e)
                                      && !_endedStreams.has((e.tags.find(t=>t[0]==='d')||[])[1]));
     if(!mine) return;
     // ADOPT ONLY A STREAM THAT IS ACTUALLY STILL RUNNING. This used to adopt any 30311 of ours whose
@@ -1265,6 +1285,8 @@ window.PCStreamsFactory = function(dep){
    * full-screen self-view that has to be minimised first, the OBS path has no overlay at all (and
    * already navigated to the list on every platform, which is what mobile keeps doing). */
   function _afterGoLive(ev, fromOverlay){
+    // Going live makes every older session of this key over: end any that never got their `ended`.
+    setTimeout(()=>{ try{ const p=_sweepStaleOwnLive(true); if(p&&p.catch) p.catch(()=>{}); }catch(_){ } }, 3000);
     if(!isDesktop()){
       if(!fromOverlay) switchView('streams');
       return;

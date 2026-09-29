@@ -8430,7 +8430,38 @@
   const _repoTag     = (...a) => _git()._repoTag(...a);
 
   // ---------- live streams (NIP-53 Live Activities, kind 30311) ----------
-  function streamStatus(e){ return ((e.tags.find(t=>t[0]==='status')||[])[1]||'').toLowerCase(); }
+  function rawStreamStatus(e){ return ((e.tags.find(t=>t[0]==='status')||[])[1]||'').toLowerCase(); }
+  /* A LIVE ANNOUNCEMENT WITH A NEWER SESSION ON THE SAME STREAM KEY IS OVER. Every broadcast of one
+   * account goes out on ONE MediaMTX key, and each session is its own 30311 (`d` = `<key>-<starts>`),
+   * so a key can carry only one live session at a time. A session that went away without its `ended`
+   * (the app killed, the phone reloaded, a second Go Live) used to read ● LIVE for ever — reported
+   * with a screenshot of a profile's Streams tab: "some livestreams I started can be seen even after I
+   * ended it". Decided from events already held, no network: the display must not wait on a probe.
+   * The OWNER's retirement paths read rawStreamStatus, so they still find the stale one and end it on
+   * the relays for everyone. */
+  let _liveSupersedeCache={at:0,n:-1,map:null};
+  function _liveSessionsByKey(){
+    const all=Store.byKind(30311), now=Date.now();
+    if(_liveSupersedeCache.map && _liveSupersedeCache.n===all.length && now-_liveSupersedeCache.at<5000) return _liveSupersedeCache.map;
+    const map=new Map();
+    for(const x of all){
+      const d=(x.tags.find(t=>t[0]==='d')||[])[1]||'', key=d.replace(/-\d{9,}$/,'');
+      if(!key || key===d) continue;
+      const starts=parseInt((x.tags.find(t=>t[0]==='starts')||[])[1]||'',10)||parseInt(d.slice(key.length+1),10)||x.created_at;
+      const k=x.pubkey+'|'+key, cur=map.get(k);
+      if(!cur || starts>cur.starts) map.set(k,{starts,d});
+    }
+    _liveSupersedeCache={at:now,n:all.length,map};
+    return map;
+  }
+  function streamSuperseded(e){
+    const d=(e.tags.find(t=>t[0]==='d')||[])[1]||'', key=d.replace(/-\d{9,}$/,'');
+    if(!key || key===d) return false;
+    const starts=parseInt((e.tags.find(t=>t[0]==='starts')||[])[1]||'',10)||parseInt(d.slice(key.length+1),10)||e.created_at;
+    const newest=_liveSessionsByKey().get(e.pubkey+'|'+key);
+    return !!(newest && newest.d!==d && newest.starts>starts);
+  }
+  function streamStatus(e){ const s=rawStreamStatus(e); return s==='live' && streamSuperseded(e) ? 'ended' : s; }
   function streamHost(e){ const h=e.tags.find(t=>t[0]==='p'&&(t[3]||'').toLowerCase()==='host'); return (h&&h[1])||e.pubkey; }
   // Public live-streaming relays (zap.stream et al.) so Discover → Streams shows the WIDER Nostr network,
   // not just what our local WoT relay happens to hold.
@@ -8465,7 +8496,7 @@
     _isDeletedStream, _mediaErrMsg, _popKeys, _preferH264, _streamAddr, _streamFetch, _webLink,
     closeModal, copyValue, decorateProfiles, doTip, enc, ensureAiSession, isDesktop, linkify,
     loadHls, mediaServer, modal, needProfile, profOf, publish, renderProfileView,
-    requestStreamAccess, streamCard, streamHost, streamStatus, subModal, switchView, toast,
+    rawStreamStatus, requestStreamAccess, streamCard, streamHost, streamStatus, streamSuperseded, subModal, switchView, toast,
     uiConfirm,
   }; }
   function _streamsMod(){ return _lzGet('streams.js', 'PCStreamsFactory', _streamsDeps); }
