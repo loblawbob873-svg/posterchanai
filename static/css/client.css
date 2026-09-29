@@ -2381,7 +2381,11 @@ body.embed .feed{max-width:680px;margin:0 auto;padding:14px;height:auto !importa
 .cmp-modal > *{flex:0 0 auto}
 /* min-height:0 is what lets a flex item go below its content height at all; without it the column
    is exactly as tall as its contents and nothing above it shrinks. */
-.cmp-modal .cmp-ctx{display:flex;flex-direction:column;flex:0 3 auto;min-height:0}
+/* The box may shrink only as far as the card inside it can: with `min-height:0` a tall Preview
+   squeezed it to NOTHING while the card kept its 72px floor and spilled out underneath the
+   Write/Preview tabs ("that tab squish in Reply modal, happens sometimes"). `auto` is exactly the
+   label plus the card's own floor, so everything above that still gives way. */
+.cmp-modal .cmp-ctx{display:flex;flex-direction:column;flex:0 3 auto;min-height:auto}
 /* The floor is deliberately at the natural height of a ONE-LINE quote: a min-height binds in
    ordinary layout too, not only under shrink, so a taller one would pad every short quote out with
    dead space — the same complaint from the other direction (check_quote_modal.py asserts it). */

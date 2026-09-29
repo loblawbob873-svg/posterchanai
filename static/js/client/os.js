@@ -4701,8 +4701,10 @@
     }
     let changed = JSON.stringify(nativeTasks.map(r => [r.id,r.title,r.focused,r.stashed]))
                !== JSON.stringify(rows.map(r => [r.id,r.title,r.focused,r.stashed]));
+    const _wasFocused = new Set(nativeTasks.filter(r => r && r.focused).map(r => Number(r.id)));
     nativeTasks = rows;
     _sweepNativePreviews(rows);
+    _warmNativePreviews(rows, _wasFocused);
     const alive = new Set(rows.map(r => Number(r.id)));
     for(const id of [..._nativeDecorated]) if(!alive.has(id)) _nativeDecorated.delete(id);
     if(pcWM.decorate) for(const r of rows){
@@ -4952,6 +4954,34 @@
       const alive=new Set((rows||[]).map(r=>Number(r&&r.id)).filter(Number.isFinite));
       for(const id of [..._nativePreviewCache.keys()]) if(!alive.has(id)) _nativePreviewCache.delete(id);
     }catch(_){ }
+  }
+  /* PICTURES BEFORE THEY ARE ASKED FOR. A capture per card at the moment Alt+Tab opens is a wait
+   * the person watches, card by card ("preview generation was slow for all"). A window that has just
+   * lost focus was on screen a moment ago and is exactly the one Alt+Tab will want next, so it is
+   * captured then, in the background; windows never seen yet are filled in one at a time while the
+   * machine is idle. One capture in flight at a time — this must never compete with the app. */
+  let _warmBusy=false; const _warmQueue=[];
+  function _warmNativePreviews(rows, wasFocused){
+    try{
+      if(!pcWM.preview) return;
+      for(const r of rows||[]){
+        const id=Number(r&&r.id); if(!Number.isFinite(id)||r.stashed) continue;
+        const blurred=wasFocused&&wasFocused.has(id)&&!r.focused;
+        if((blurred||!_nativePreviewCache.has(id))&&!_warmQueue.includes(id)){ if(blurred)_warmQueue.unshift(id); else _warmQueue.push(id); }
+      }
+      _warmNext();
+    }catch(_){ }
+  }
+  function _warmNext(){
+    if(_warmBusy||!_warmQueue.length) return;
+    _warmBusy=true;
+    const idle=window.requestIdleCallback||(f=>setTimeout(f,300));
+    idle(()=>{
+      const id=_warmQueue.shift();
+      if(!nativeTasks.some(r=>Number(r&&r.id)===id)){ _warmBusy=false; _warmNext(); return; }
+      Promise.resolve(pcWM.preview(id)).then(d=>{ if(d)_nativePreviewCache.set(id,d); }).catch(()=>{})
+        .then(()=>{ _warmBusy=false; setTimeout(_warmNext,250); });
+    },{timeout:2000});
   }
   const _switchRows=()=>{
     const rows=[];

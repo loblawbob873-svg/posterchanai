@@ -297,14 +297,24 @@ window.PCGitFactory = function(dep){
      * from their own Git page with nothing to say so. Bound to this account, the relay answers
      * `auth-required` and relay.js signs once and asks again. */
     const _me=(!S.GUEST && S.ME && S.ME.pubkey) || '';
-    let evs=[];
+    /* A SOCKET THAT CAN ANSWER, AND NEVER FEWER REPOS THAN WE ALREADY HAD. Reported: "after I write
+     * some issues and press back, it can happen" — the Git page came back on an empty Starred with no
+     * search box, i.e. with (almost) no repos. Back re-enters this view straight away, and a REQ
+     * written to a CONNECTING socket is silently dropped (relay.js _send), so the listing answered
+     * empty and was painted as if it were the relay's whole answer. So: wait for a live socket, and
+     * merge what this device already holds (every announcement it has seen is in the Store), so a
+     * short answer can only ADD to the list, never replace it. */
+    try{ await Relay.ready(); }catch(_){}
+    let evs=[], reached=false;
     try{
       const [all, own]=await Promise.all([
         Relay.query([{ kinds:[30617], limit:5000 }]).catch(()=>[]),
         _me ? Relay.query([{ kinds:[30617], authors:[_me], limit:500 }], 10000).catch(()=>[]) : [],
       ]);
+      reached=!!((all && (all.length || all.complete)) || (own && own.length));
       evs=[...(all||[]), ...(own||[])];
     }catch(_){}
+    try{ evs=[...(Store.byKind(30617)||[]), ...evs]; }catch(_){}
     /* Stars are re-read on EVERY entry, not latched for the page: a star made in another app (the
      * ngit website) or on another device landed on the relay and this view kept answering from the
      * set it loaded at first open — "i starred a repo on ngit again and still does not appear".
@@ -369,10 +379,12 @@ window.PCGitFactory = function(dep){
       $('#repo-results',feed).innerHTML = hits.length ? grid(hits)
         : (terms.length ? `<div class="empty">No repo matches “${enc(q.value)}”${_repoScope==='mine'?' in your repos — try “All repos”.':'.'}</div>`
            : _repoScope==='mine' ? `<div class="empty">None of your repos have loaded${repos.length?' yet':''}. ${_gitHostBase()?'Create one ↑, or ':''}try “All repos”.</div>`
+           : (!reached && !repos.length) ? `<div class="empty">Could not reach the relays for the repo list. <button class="btn small" id="repo-retry">Try again</button></div>`
            : _repoScope==='starred' ? `<div class="empty">No starred repos yet — tap ☆ on any repo to keep it here.</div>`
            : `<div class="empty">No git repos found on the relay yet (NIP-34 · kind 30617). ${_gitHostBase()?'Create one ↑':'Announce yours ↑'}</div>`);
       if(q) q.placeholder=`🔍 Search ${base.length} repo${base.length===1?'':'s'} — name, owner, description…`;
       wire();
+      { const rt=$('#repo-retry'); if(rt) rt.onclick=()=>renderRepos(); }
     };
     paint();
     $$('.repo-sc',feed).forEach(b=> b.onclick=()=>{

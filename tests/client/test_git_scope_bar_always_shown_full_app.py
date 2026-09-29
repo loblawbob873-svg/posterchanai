@@ -51,3 +51,28 @@ def test_the_scope_bar_is_there_even_when_none_of_your_repos_loaded(width):
         await b.until("document.querySelectorAll('.repo-card').length>=6")
 
     asyncio.run(desktop.with_browser("online", "", check))
+
+
+@pytest.mark.skipif(not Path("/opt/google/chrome/chrome").exists(), reason="Chrome required")
+def test_coming_back_never_shows_fewer_repos_than_it_had():
+    """Reported: "after I write some issues and press back, it can happen" — Git came back on an
+    empty Starred with no search box. Back re-enters the list at once; an answer that came back short
+    (a REQ into a socket still connecting is dropped) was painted as the relay's whole answer. The
+    repos this device has already seen now stay, and a short answer can only add to them."""
+    async def check(b):
+        await b.call("Emulation.setDeviceMetricsOverride", dict(width=390, height=900, deviceScaleFactor=1, mobile=True))
+        await desktop.login(b)
+        await b.js("try{ if(window.PCOS && PCOS.isOn()) PCOS.exit(); }catch(_){}")
+        await b.js(SETUP)
+        await b.until("document.querySelectorAll('.repo-card').length>=6")
+        await b.js("document.querySelector('.repo-sc[data-scope=\"starred\"]').click()")
+        # Away (an issue, a repo), then Back — with the relay answering nothing this time.
+        await b.js("__PC.switchView('notifications')")
+        await b.js("window.__events=[]; __PC.switchView('repos')")
+        await asyncio.sleep(1.5)
+        await b.js("document.querySelector('.repo-sc[data-scope=\"all\"]').click()")
+        await asyncio.sleep(.3)
+        got = await b.js("({cards:document.querySelectorAll('.repo-card').length, search:!!document.querySelector('#repo-q')})")
+        assert got == {"cards": 6, "search": True}, ("coming back lost the repos it had", got)
+
+    asyncio.run(desktop.with_browser("online", "", check))

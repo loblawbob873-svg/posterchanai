@@ -2447,9 +2447,30 @@ ipcMain.handle('pc:wm:native-handoff-ack', (e, token, rect) => {
   return true;
 });
 ipcMain.handle('pc:wm:focus', (e, id) => { fsGuard(e); return wm().focus(Number(id)); });
+/* A PREVIEW IS A THUMBNAIL. view-shot hands back the window at full size — on a 4K output a
+ * ~2000x1500 PNG, several megabytes of base64 per card, pushed through IPC and decoded as a CSS
+ * background for a card 200px wide — so every Alt+Tab paid seconds for pictures it then shrank
+ * ("preview generation was slow for all"). Shrunk here, once, to what a card can show. */
+function previewThumb(dataUrl){
+  try{
+    const {nativeImage}=require('electron');
+    const img=nativeImage.createFromDataURL(String(dataUrl||''));
+    if(img.isEmpty())return '';
+    const sz=img.getSize(), w=Math.min(PREVIEW_THUMB_W, sz.width);
+    const small=sz.width>w?img.resize({width:w,quality:'good'}):img;
+    return 'data:image/jpeg;base64,'+small.toJPEG(78).toString('base64');
+  }catch(_){ return String(dataUrl||''); }
+}
+const PREVIEW_THUMB_W=560;
 ipcMain.handle('pc:wm:preview', async (e, id) => {
   fsGuard(e); id=Number(id); if(!Number.isFinite(id))return '';
-  const rows=scopedWindows(e,await wm().windows()),target=rows.find(row=>Number(row.id)===id);
+  /* ANY MONITOR'S WINDOW. Alt+Tab lists every monitor's windows (switch-rows-elsewhere), and a card
+   * for a window on the other screen asked this handler — which looked only among the ASKING
+   * surface's windows, found nothing and answered '' — so every row from the other monitor was a
+   * blank card ("alt+tab communities, social, git showed no preview … email showed no preview
+   * either"). A picture is not an action: nothing here moves or focuses the window. */
+  const all=await wm().windows(), every=Array.isArray(all)?all:[];
+  const rows=scopedWindows(e,every),target=rows.find(row=>Number(row.id)===id)||every.find(row=>Number(row&&row.id)===id);
   if(!target)return '';
   /* A PICTURE OF THE VIEW BEATS A PICTURE OF THE SCREEN, and on this compositor it is the only one
    * that works. Everything below photographs a screen RECTANGLE, so it has to refuse a window that
@@ -2461,18 +2482,18 @@ ipcMain.handle('pc:wm:preview', async (e, id) => {
    * to the grim path unchanged. */
   if(typeof wm().captureView==='function'){
     const shot=await wm().captureView(id).catch(()=>'');
-    if(shot)return shot;
+    if(shot)return previewThumb(shot);
   }
   if(target.stashed||target.visible===false||!target.rect)return '';
   /* grim captures screen pixels, not a con_id. Refuse if another native client intersects the
    * requested surface: an exact rectangle is not enough if it could contain somebody else's app.
    * The PosterChan shell is tiled behind the target and is the only safe overlap. */
   const shell=/^(?:posterchan(?:-desktop)?|place\.poster\.desktop)$/i;
-  const r=target.rect,overlap=rows.some(row=>Number(row.id)!==id&&!row.stashed&&row.visible!==false&&
+  const r=target.rect,overlap=every.some(row=>Number(row.id)!==id&&!row.stashed&&row.visible!==false&&
     !shell.test(String(row.app||''))&&row.rect&&r.x<row.rect.x+row.rect.width&&
     r.x+r.width>row.rect.x&&r.y<row.rect.y+row.rect.height&&r.y+r.height>row.rect.y);
   if(overlap)return '';
-  try{return await require('./native-preview.js').capture(r);}catch(_){return '';}
+  try{return previewThumb(await require('./native-preview.js').capture(r));}catch(_){return '';}
 });
 /* A POPUP THAT MUST APPEAR ABOVE APPLICATIONS HAS TO BE ITS OWN WINDOW.
  *

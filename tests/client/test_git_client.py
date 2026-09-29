@@ -379,7 +379,7 @@ class StarTests(unittest.TestCase):
         and the view kept answering from the set it loaded at first open. The first load may block;
         every later entry must refresh behind the cached paint and repaint on arrival."""
         at = self.git.index("async function renderRepos()")
-        seg = self.git[at:at + 2200]
+        seg = self.git[at:self.git.index("const repos=_dedupAddr(evs)", at)]
         self.assertIn("if(_stars===null) await _loadStars();", seg)
         self.assertIn("else _loadStars().then(", seg,
                       "a page that loaded stars once never sees a star made elsewhere")

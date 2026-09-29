@@ -3524,6 +3524,24 @@
       anchor, gap:anchor ? Number(anchor.offsetTop)-top : 0};
   }
 
+  /* A picture's src is set when its attachment is decrypted, but its HEIGHT only exists once the
+     browser has decoded it — after the restore above has already run. Each one that lands grows the
+     thread below a reader who was at the bottom, so re-pin as they arrive, and stop the moment the
+     reader has scrolled up (growth below never moves scrollTop up; only a person does). */
+  function pinWhileLoading(list){
+    if(!list) return;
+    let mine = list.scrollTop = list.scrollHeight; mine = list.scrollTop;
+    const until = Date.now() + 10000;
+    const again = () => {
+      if(!list.isConnected || Date.now() > until || list.scrollTop < mine - 4) return;
+      list.scrollTop = list.scrollHeight; mine = list.scrollTop;
+    };
+    list.querySelectorAll('img, video').forEach(el => {
+      if(el.tagName === 'IMG' && el.complete) return;
+      el.addEventListener('load', again, { once:true }); el.addEventListener('loadedmetadata', again, { once:true });
+    });
+  }
+
   function restoreHydratedScroll(list, before){
     if(!list || !before) return;
     if(before.bottom){ list.scrollTop=list.scrollHeight; return; }
@@ -4125,6 +4143,12 @@
       const oldKey = oldList.dataset.threadKey || '';
       if(oldKey) S.scroll[oldKey] = scrollState(oldList);
     }
+    /* OPENING A CONVERSATION LANDS ON ITS NEWEST MESSAGE ("does not scroll to latest"). The saved
+       offset exists so a REPAINT of the thread already on screen (a receipt, a focus sync, a contact
+       refresh) keeps the reader where they are — it is not a bookmark to reopen the conversation at
+       the place it was last left. So it applies only while this same thread is the one being shown;
+       arriving from the list, a notification or another thread starts at the bottom. */
+    if(!oldList || (oldList.dataset.threadKey || '') !== S.open) delete S.scroll[S.open];
     /* AND THE CARET, for the same reason as the scroll offset. The draft itself survives on S.draft
        now, but a repaint landing while somebody is mid-word still rebuilds the element under them:
        without this their cursor jumps to the end of what they were editing and the keyboard closes.
@@ -4516,6 +4540,7 @@
            own restoration/hydration pass, so stale work must not touch it. */
         if(!l || l !== list || !before) return;
         restoreHydratedScroll(l, before);
+        if(before.bottom) pinWhileLoading(l);
         S.scroll[t.key] = {top:l.scrollTop,
           bottom:l.scrollHeight-l.scrollTop-l.clientHeight<80};
       }, () => {});
