@@ -506,7 +506,7 @@ class PageRenderTests(unittest.TestCase):
 class KeyboardWiringTests(unittest.TestCase):
     """Web Search joins app.js's EXISTING card-cursor system rather than growing a second one.
 
-    Source-level on purpose: the keys live in app.js and the buttons in websearch.js, so a rename on
+    Source-level on purpose: the keys live in keys.js (split out of app.js) and the buttons in websearch.js, so a rename on
     either side breaks them silently — the key simply does nothing, which nobody notices until they
     try it. (The same shape as tests/test_effect_command_coverage.py.)
     """
@@ -514,7 +514,9 @@ class KeyboardWiringTests(unittest.TestCase):
     ROOT = _pl.Path(__file__).resolve().parents[1]
 
     def setUp(self):
-        self.app_js = (self.ROOT / "static/js/client/app.js").read_text(encoding="utf-8")
+        # The card-cursor keys moved out of app.js into keys.js; read the text app.js used to hold.
+        from tests.client_source import app_source_with
+        self.app_js = app_source_with("keys.js")
         self.ws_js = (self.ROOT / "static/js/client/websearch.js").read_text(encoding="utf-8")
 
     def test_results_are_rows_the_cursor_can_reach(self):

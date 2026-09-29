@@ -468,6 +468,10 @@
      builds it synchronously while it boots: an incoming call, the ringtone and answering from a
      notification or the Android call UI cannot wait for a lazy load. -->
 <script src="/static/js/client/calls.js?v={{ ver }}"></script>
+<!-- Keyboard shortcuts, vim movement and keyboard scrolling, split out of app.js. Loaded BEFORE app.js
+     because app.js builds it synchronously while it boots: its top-level code IS the global keydown
+     listeners, which must be live from the first keystroke and registered in their original order. -->
+<script src="/static/js/client/keys.js?v={{ ver }}"></script>
 <script src="/static/js/client/app.js?v={{ ver }}"></script>
 <script src="/static/js/client/instance-welcome.js?v={{ ver }}"></script>
 <script src="/static/js/client/media-center-ui.js?v={{ ver }}"></script>

@@ -7,8 +7,8 @@
  * bindings, which the parser rewrote to `S.<name>` (getters/setters on `dep.state`) at exact
  * identifier offsets.
  *
- * Stayed in app.js: _lbGroup (the feed's click handler gathers a post's media with it),
- * _isNativeApp and _blobToB64 (saving files uses them everywhere).
+ * Not here: _lbGroup (the feed's click handler gathers a post's media with it; it now lives in keys.js
+ * and app.js forwards it), _isNativeApp and _blobToB64 (saving files uses them everywhere).
  */
 window.PCLightboxFactory = function(dep){
   const S = dep.state;   // live app.js bindings: S.GUEST, S.ME, S._aiToken
