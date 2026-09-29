@@ -4999,12 +4999,41 @@
     for(const e of nat)rows.push(e);
     return rows;
   };
+  /* ONE LIST ACROSS EVERY MONITOR ("the app list should be unified across multiple monitors").
+   *
+   * Each output has its own renderer and its own windows, so this renderer can only ever SEE its
+   * own. The main process asks the others (`pcWM.switchRowsElsewhere`) and hands back every
+   * monitor's rows in screen order, with a placeholder for this one; the chooser draws the local
+   * rows at once — the keyboard must never wait on another renderer — and merges the rest in when
+   * they land, keeping the selection on the same window. A remote row is committed by its owner
+   * (`_focusSwitchRow` → `focusElsewhere`). Without the bridge (an older desktop build) the old
+   * hand-the-gesture-to-the-next-monitor path still runs. */
+  function _mergeSwitchRows(groups,local){
+    const out=[];let placed=false;
+    for(const g of (Array.isArray(groups)?groups:[])){
+      if(!g)continue;
+      if(g.self){ for(const e of local)out.push(e); placed=true; continue; }
+      for(const r of (Array.isArray(g.rows)?g.rows:[])){
+        if(!r||r.key==null)continue;
+        out.push({key:'x:'+g.output+':'+r.key,win:null,title:String(r.title||'Window'),native:r.native==null?null:Number(r.native),
+                  focused:false,where:String(g.label||g.output||''),
+                  row:{id:r.native,app:r.app||'',appId:r.app||'',title:r.title||''},
+                  remote:{output:String(g.output||''),key:String(r.key),icon:r.icon||''}});
+      }
+    }
+    if(!placed)for(const e of local)out.push(e);
+    return out;
+  }
+  const _rowsOf=s=>s&&s.elsewhere?_mergeSwitchRows(s.elsewhere,_switchRows()):_switchRows();
   /* Committing to a row focuses whoever owns that window. An internal frame is ours; a compositor
    * window is sway's, and a stashed (minimised) one has to be brought back before it can take the
    * keyboard — the same two steps its taskbar button performs, so a window reached through Alt+Tab
    * and one reached by clicking the taskbar end up in the same state rather than two. */
   function _focusSwitchRow(e){
     if(!e)return false;
+    /* A row from another monitor belongs to that monitor's desktop, which focuses it exactly as its
+     * own Alt+Tab would — a frame there is a DOM window this renderer cannot touch. */
+    if(e.remote){ try{ Promise.resolve(pcWM.focusElsewhere(e.remote.output,e.remote.key)).catch(()=>{}); }catch(_){} return true; }
     if(e.win){ if(wins.includes(e.win))focusWin(e.win,false); return true; }
     const r=e.row; if(!r||r.id==null)return false;
     const focusToken=_claimFocus();
@@ -5147,8 +5176,8 @@
       const label=document.createElement('div');label.className='os-alt-title';
       /* A native row's icon comes from the application's own .desktop entry, exactly as its
        * taskbar button's does — a generic grid tile beside "Firefox" is not a picture of Firefox. */
-      label.innerHTML=(w?iconSvg(w.icon||'i-grid'):appIcon(e.row))+
-        '<span>'+enc(e.title||'Window')+'</span>';
+      label.innerHTML=(w?iconSvg(w.icon||'i-grid'):e.remote&&e.remote.icon?iconSvg(e.remote.icon):appIcon(e.row))+
+        '<span>'+enc(e.title||'Window')+'</span>'+(e.where?'<small class="os-alt-where">'+enc(e.where)+'</small>':'');
       b.appendChild(label);
       if(i===s.index&&b.scrollIntoView)try{b.scrollIntoView({block:'nearest',inline:'nearest'});}catch(_){}
     });
@@ -5194,7 +5223,23 @@
       const atEnd=current>=0&&((step>0&&current===rows.length-1)||(step<0&&current===0));
       _altSwitch={rows,initial,index:current<0?(step>0?0:rows.length-1):
         entering?(step>0?0:rows.length-1):(current+step+rows.length)%rows.length,
-        el:null,timer:0,nativePreviews:new Map(),noHandoff:!!entering};
+        el:null,timer:0,nativePreviews:new Map(),noHandoff:!!entering,moves:entering?0:step};
+      if(pcWM.switchRowsElsewhere){
+        const gesture=_altSwitch;gesture.noHandoff=true;       // one list: nothing to hand over
+        Promise.resolve(pcWM.switchRowsElsewhere()).then(groups=>{
+          if(_altSwitch!==gesture||!Array.isArray(groups)||!groups.some(g=>g&&!g.self&&g.rows&&g.rows.length))return;
+          gesture.elsewhere=groups;
+          const merged=_rowsOf(gesture),sel=gesture.rows[gesture.index],
+                base=gesture.initial?merged.findIndex(e=>e.key===gesture.initial.key):-1;
+          gesture.rows=merged;
+          /* Re-derive the selection from the presses made so far, counted from the focused window,
+           * so a press that wrapped locally before the other monitors answered lands where it would
+           * have in the full list. */
+          gesture.index=base>=0?((base+gesture.moves)%merged.length+merged.length)%merged.length
+                              :Math.max(0,merged.findIndex(e=>sel&&e.key===sel.key));
+          _drawAltSwitch(gesture);
+        }).catch(()=>{});
+      }
       toggleStart(false);hideCtx();
       /* The switcher belongs to this output's shell. Bring that surface forward while selection is
          staged; native targets are focused only on commit, otherwise their opaque surface would
@@ -5207,8 +5252,11 @@
       /* Focus alone leaves the chooser underneath every floating application — see _altRaiseShell. */
       try{_altRaiseShell(true);}catch(_){}
       if(!entering&&atEnd)handoff(_altSwitch);
+    }else if(_altSwitch.elsewhere){
+      const all=_rowsOf(_altSwitch);_altSwitch.rows=all;_altSwitch.moves+=step;
+      _altSwitch.index=((_altSwitch.index+step)%all.length+all.length)%all.length;
     }else{
-      _altSwitch.rows=rows;
+      _altSwitch.rows=rows;_altSwitch.moves=(_altSwitch.moves||0)+step;
       const next=_altSwitch.index+step;
       _altSwitch.index=(next+rows.length)%rows.length;
       if(next<0||next>=rows.length)handoff(_altSwitch);
@@ -11923,7 +11971,11 @@
                   __canCycle: () => _switchRows().length > 0,
                   __switchRows: () => _switchRows().map(e => ({ key:e.key, title:e.title,
                                                                 native:e.native, focused:e.focused,
-                                                                kind:e.win ? 'frame' : 'native' })),
+                                                                kind:e.win ? 'frame' : 'native',
+                                                                icon:e.win ? (e.win.icon || '') : '',
+                                                                app:e.row ? String(e.row.appId || e.row.app_id || e.row.app || '') : '' })),
+                  /* Another monitor's Alt+Tab committed to one of OUR windows. */
+                  __focusSwitchKey: key => { const e = _switchRows().find(x => x.key === String(key)); return e ? _focusSwitchRow(e) : false; },
                   /* The layout arithmetic, exposed so tests/test_desktop_layout.py can run the
                    * SHIPPED code against a list of apps and a document. Everything it decides fails
                    * silently on screen — an app that stops appearing, a folder that swallows an icon

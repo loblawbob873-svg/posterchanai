@@ -2361,6 +2361,45 @@ ipcMain.handle('pc:wm:cycle-output', async (e, direction) => {
   return true;
 });
 
+/* ONE Alt+Tab LIST ACROSS EVERY MONITOR. Each output's desktop is its own renderer and can only see
+ * its own windows, so the one that owns the gesture asks here and gets every monitor's rows, in the
+ * same screen order the hand-off uses, with a placeholder where its own belong. A monitor that cannot
+ * answer in 400ms contributes nothing rather than holding up the chooser. `gatherSwitchRows` is pure
+ * so tests/test_alt_tab_unified.py can run it. */
+function orderedShellSurfaces(){
+  return [..._shellSurfaces.values()].filter(x=>x&&x.browser&&!x.browser.isDestroyed()&&x.assignment)
+    .sort((a,b)=>{const ar=a.assignment.rect||{},br=b.assignment.rect||{};return (Number(ar.y)||0)-(Number(br.y)||0)||(Number(ar.x)||0)-(Number(br.x)||0)||String(a.assignment.output||'').localeCompare(String(b.assignment.output||''));});
+}
+async function gatherSwitchRows(surfaces,selfOutput,ask){
+  const out=[];
+  for(const rec of surfaces){
+    const output=String(rec.assignment&&rec.assignment.output||'');
+    if(output===String(selfOutput||'')){ out.push({output,label:output,self:true,rows:[]}); continue; }
+    let rows=[];
+    try{ rows=await Promise.race([Promise.resolve(ask(rec)),new Promise(res=>setTimeout(()=>res([]),400))]); }catch(_){ rows=[]; }
+    out.push({output,label:output,self:false,rows:Array.isArray(rows)?rows.slice(0,64):[]});
+  }
+  return out;
+}
+function askSwitchRows(rec){
+  return rec.browser.webContents.executeJavaScript(
+    '(()=>{try{return (window.PCOS&&PCOS.__switchRows)?PCOS.__switchRows():[];}catch(_){return [];}})()',true);
+}
+ipcMain.handle('pc:wm:switch-rows-elsewhere', async (e) => {
+  fsGuard(e);
+  const scope=_shellScopes.get(e.sender.id); if(!scope||_shellSurfaces.size<2)return [];
+  return gatherSwitchRows(orderedShellSurfaces(),scope.output,askSwitchRows);
+});
+ipcMain.handle('pc:wm:focus-elsewhere', async (e, output, key) => {
+  fsGuard(e);
+  const rec=orderedShellSurfaces().find(x=>String(x.assignment.output||'')===String(output||''));
+  if(!rec)return false;
+  try{
+    const ok=await rec.browser.webContents.executeJavaScript(
+      '(()=>{try{return !!(window.PCOS&&PCOS.__focusSwitchKey&&PCOS.__focusSwitchKey('+JSON.stringify(String(key||''))+'));}catch(_){return false;}})()',true);
+    return !!ok;
+  }catch(_){ return false; }
+});
 /* The destination answers for itself. A renderer that cannot answer in time keeps the gesture where
  * it is rather than swallowing it: a busy monitor is a reason to wrap locally, never a reason for
  * Alt+Tab to do nothing at all. */

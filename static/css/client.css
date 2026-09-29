@@ -8405,6 +8405,8 @@ body.native.term-view .tty-bar{padding-top:env(safe-area-inset-top);height:calc(
   pointer-events:none!important}
 .os-alt-title{display:flex;align-items:center;gap:8px;margin-top:8px;min-width:0;color:#f4f7fb}
 .os-alt-title .ic{width:22px;height:22px;flex:none}.os-alt-title span{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+/* Which monitor a window from ANOTHER screen is on — the unified Alt+Tab list shows them all. */
+.os-alt-where{margin-left:auto;flex:none;padding:1px 6px;border-radius:6px;font-size:10px;letter-spacing:.04em;color:var(--muted);border:1px solid rgba(var(--accent-rgb),.3)}
 .osw.minimised{display:none}
 /* The start button's LAST resort. When the instance logo cannot be fetched and the bundled PNG is
    missing too, the button draws the sprite flower — sized to match the image it replaces, so the

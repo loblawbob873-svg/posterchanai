@@ -324,6 +324,9 @@ if (isOurPage) {
     preview: (id) => ipcRenderer.invoke('pc:wm:preview', Number(id)),
     focus: (id) => ipcRenderer.invoke('pc:wm:focus', Number(id)),
     cycleOutput: (direction) => ipcRenderer.invoke('pc:wm:cycle-output', String(direction||'')),
+    /* One Alt+Tab list across every monitor: the other outputs' rows, and committing to one of them. */
+    switchRowsElsewhere: () => ipcRenderer.invoke('pc:wm:switch-rows-elsewhere'),
+    focusElsewhere: (output, key) => ipcRenderer.invoke('pc:wm:focus-elsewhere', String(output||''), String(key||'')),
     close: (id) => ipcRenderer.invoke('pc:wm:close', Number(id)),
     place: (id, x, y, w, h) => ipcRenderer.invoke('pc:wm:place', Number(id), Number(x), Number(y),
                                                   Number(w), Number(h)),
