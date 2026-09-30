@@ -237,3 +237,40 @@ class WiringTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class ChoiceTests(unittest.TestCase):
+    """"give you a few choices in maybe a menu popup": the web ✨ asks for 3 different drafts, made in
+    ONE model call (the GPU is shared), parsed defensively, and `content` stays the first so the
+    Android conversation screen — which reads that field alone — is unchanged."""
+
+    def test_three_choices_from_one_model_call(self):
+        chat = _FakeChat("1. Yes! See you at 7\n2. Sounds great, what should I bring?\n3) Can we make it 7:30?")
+        code, out = _body(_run(T.TextsAiReplyReq(messages=_thread(4), count=3), chat, user=_User()))
+        self.assertEqual(code, 200)
+        self.assertEqual(out["choices"], ["Yes! See you at 7", "Sounds great, what should I bring?", "Can we make it 7:30?"])
+        self.assertEqual(out["content"], out["choices"][0])
+        self.assertEqual(len(chat.calls), 1, "one model call for all the choices")
+        self.assertIn("3 DIFFERENT", chat.calls[0][0]["content"])
+        self.assertIn("never invent facts", chat.calls[0][0]["content"])
+
+    def test_the_default_is_still_one_draft(self):
+        chat = _FakeChat("Yes, see you at 8!")
+        code, out = _body(_run(T.TextsAiReplyReq(messages=_thread(3)), chat, user=_User()))
+        self.assertEqual((code, out["content"], out["choices"]), (200, "Yes, see you at 8!", ["Yes, see you at 8!"]))
+        self.assertNotIn("DIFFERENT", chat.calls[0][0]["content"])
+
+    def test_a_model_that_ignored_the_format_still_gives_its_one_reply(self):
+        chat = _FakeChat("Sure, I'll be there")
+        code, out = _body(_run(T.TextsAiReplyReq(messages=_thread(3), count=3), chat, user=_User()))
+        self.assertEqual((code, out["choices"]), (200, ["Sure, I'll be there"]))
+
+    def test_labels_quotes_duplicates_and_extras_are_cleaned(self):
+        got = S.parse_choices('Here are some options:\n1. "Me: On my way"\n2. On my way\n- 3. Running late, sorry!\n'
+                              '4. Be there soon\n5. extra', 3)
+        self.assertEqual(got, ["On my way", "Running late, sorry!", "Be there soon"])
+
+    def test_the_count_is_bounded(self):
+        chat = _FakeChat("\n".join(f"{i}. option {i}" for i in range(1, 10)))
+        code, out = _body(_run(T.TextsAiReplyReq(messages=_thread(3), count=50), chat, user=_User()))
+        self.assertEqual(len(out["choices"]), S.MAX_CHOICES)

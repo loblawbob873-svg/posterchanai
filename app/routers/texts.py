@@ -36,6 +36,7 @@ class TextsMsg(BaseModel):
 class TextsAiReplyReq(BaseModel):
     messages: list[TextsMsg] = []
     probe: bool = False              # "would you answer me?" — no model call
+    count: int = 1                   # how many different drafts (web popup asks for 3; native, 1)
     pubkey: Optional[str] = None     # native: the key that signed `auth`
     auth: Optional[str] = None       # native: base64 kind-27235, content == AUTH_PURPOSE
 
@@ -68,7 +69,8 @@ async def texts_ai_reply(req: TextsAiReplyReq, db: Session = Depends(get_db),
                "AI access is not enabled for this account — request access and an admin will approve.")
         return JSONResponse({"ok": False, "error": why}, status_code=403)
     try:
-        draft = await svc.draft_reply(db, user, req.messages)
+        choices = await svc.draft_choices(db, user, req.messages, req.count)
     except svc.TextsAiError as e:
         return JSONResponse({"ok": False, "error": e.detail}, status_code=e.status)
-    return {"ok": True, "content": draft}
+    # `content` stays the first draft: the Android conversation screen reads that field alone.
+    return {"ok": True, "content": choices[0], "choices": choices}

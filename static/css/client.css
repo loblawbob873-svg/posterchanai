@@ -3785,6 +3785,9 @@ h3 svg.ic.h-ic{width:19px;height:19px;vertical-align:-3px;margin-inline-end:4px;
    off _placePop's real-pixel clamping — intrinsic size doesn't. Every scaled value reads the var
    DIRECTLY (no em chain off the container): with the property set on the popover, Chrome resolves
    the container but leaves an em-inheriting child at the unscaled size. */
+/* The APP'S FONT: popovers hang off <html> (see _placePop), not <body>, so they inherited nothing and
+   every menu in the app drew in the browser's default serif. */
+.menu-pop,.emoji-pop{font-family:'Inter','Segoe UI',system-ui,-apple-system,'Apple Color Emoji','Segoe UI Emoji','Noto Color Emoji',sans-serif}
 .menu-pop{position:fixed;z-index:360;display:flex;flex-direction:column;min-width:calc(178px * var(--pop-scale,1));max-width:92vw;padding:calc(6px * var(--pop-scale,1));max-height:min(70vh,440px);overflow-y:auto;
   background:var(--panel2);backdrop-filter:blur(14px);-webkit-backdrop-filter:blur(14px);border:1px solid var(--neon);border-radius:14px;
   box-shadow:0 0 0 1px rgba(var(--accent-rgb),.3),0 0 26px rgba(var(--accent-rgb),.3);animation:pop .14s ease-out}
@@ -3792,6 +3795,9 @@ h3 svg.ic.h-ic{width:19px;height:19px;vertical-align:-3px;margin-inline-end:4px;
 .menu-pop button,.menu-pop label{display:block;width:100%;text-align:start;background:transparent;border:none;color:var(--text);
   cursor:pointer;font-size:calc(15px * var(--pop-scale,1));padding:calc(12px * var(--pop-scale,1)) calc(14px * var(--pop-scale,1));border-radius:9px;transition:.12s;font-family:inherit;white-space:nowrap}
 .menu-pop button:hover,.menu-pop label:hover{background:rgba(var(--accent-rgb),.16);color:var(--cyan)}
+/* Texts ✨ choices are whole sentences: wrap them inside a readable width instead of one long line. */
+.menu-pop button.sms-ai-choice{white-space:normal;line-height:1.35;max-width:min(420px,86vw);overflow-wrap:anywhere}
+.menu-pop button.sms-ai-choice+button.sms-ai-choice{border-top:1px solid rgba(var(--accent-rgb),.14);border-radius:0 0 9px 9px}
 .menu-pop button.danger,.menu-pop label.danger{color:var(--danger)}
 .menu-pop button.danger:hover,.menu-pop label.danger:hover{background:rgba(255,77,109,.16);color:var(--danger)}
 

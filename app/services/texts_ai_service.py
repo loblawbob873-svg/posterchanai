@@ -102,6 +102,78 @@ def build_messages(context: list) -> list:
     ]
 
 
+MAX_CHOICES = 4
+
+
+def build_choice_messages(context: list, n: int) -> list:
+    """The same fenced conversation, asking for `n` DIFFERENT replies at once — one model call, not
+    n: the GPU is shared with image/music/video generation, and three calls would be three turns in
+    that queue. The same rules apply to every option (never invent plans, times or facts)."""
+    msgs = build_messages(context)
+    msgs[0] = {"role": "system", "content": (
+        "You draft text-message (SMS) replies for the user, who is \"Me\" in the conversation. "
+        f"Write {n} DIFFERENT short, casual texts the user could send next, in the user's voice, the way "
+        "people actually text: usually one or two sentences each. Make them genuinely different "
+        "(for example: a direct answer, a warmer or more playful one, and one that asks a question) — "
+        "not rewordings of each other. Rules for EVERY option: never repeat or continue the other "
+        "person's message; never invent facts, plans, times, places or promises that are not in the "
+        "conversation — when a real answer needs something only the user knows, keep it open-ended "
+        "or ask. Match the conversation's language and tone. Output ONLY the options, one per line, "
+        f"numbered 1. to {n}. — no quotes, no \"Me:\" labels, no commentary.")}
+    msgs[1] = {"role": "user", "content": msgs[1]["content"].rsplit("\n\nMy text:", 1)[0]
+               + f"\n\nMy {n} options:"}
+    return msgs
+
+
+_NUMBERED = re.compile(r"^\s*(?:[-*•]\s*)?(?:option\s*)?\(?(\d{1,2})[.):\]]\s*(.+?)\s*$", re.I)
+
+
+def parse_choices(out: str, n: int) -> list:
+    """Numbered lines → cleaned, distinct drafts (at most n). A model that ignored the format and
+    wrote ONE reply still yields that one reply, via clean_draft — never nothing when it said
+    something."""
+    found = []
+    for line in (out or "").splitlines():
+        m = _NUMBERED.match(line)
+        if not m:
+            continue
+        d = clean_draft(m.group(2))
+        if d and d.lower() not in {x.lower() for x in found}:
+            found.append(d)
+        if len(found) >= n:
+            break
+    if not found:
+        d = clean_draft(out)
+        if d:
+            found.append(d)
+    return found
+
+
+async def draft_choices(db, user, items, n: int = 3) -> list:
+    """Up to `n` different drafts in one model call. Raises TextsAiError like draft_reply."""
+    n = max(1, min(int(n or 1), MAX_CHOICES))
+    if n == 1:
+        return [await draft_reply(db, user, items)]
+    context = clean_context(items)
+    msgs = build_choice_messages(context, n)
+    from app.services.command_service import CommandService
+    cs = CommandService(db, user=user)
+    try:
+        cs.chat_service.temperature = 0.7          # options should differ; each is still reviewed
+    except Exception:
+        pass
+    try:
+        out = await cs.chat_service.chat(msgs) or ""
+    except Exception as e:
+        logger.warning("[texts-ai] model call failed (%d messages): %s", len(context), type(e).__name__)
+        raise TextsAiError(502, "The AI did not answer — try again in a moment.")
+    choices = parse_choices(out, n)
+    if not choices:
+        raise TextsAiError(502, "The AI did not come up with a reply — try again.")
+    logger.info("[texts-ai] drafted %d choices: %d context messages", len(choices), len(context))
+    return choices
+
+
 _LABEL = re.compile(r"^\s*(?:me|reply|my (?:text|reply))\s*:\s*", re.I)
 
 
@@ -114,6 +186,7 @@ def clean_draft(out: str) -> str:
         s = s[1:-1].strip()
     if len(s) >= 2 and s[0] == "“" and s[-1] == "”":
         s = s[1:-1].strip()
+    s = _LABEL.sub("", s).strip()      # a label INSIDE the quotes: '"Me: On my way"'
     # "Option 1: … Option 2: …" or a trailing "(Feel free to …)" — keep the first paragraph only
     # when the model produced several; a text is one message.
     parts = [p.strip() for p in re.split(r"\n\s*\n", s) if p.strip()]

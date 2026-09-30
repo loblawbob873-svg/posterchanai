@@ -225,7 +225,9 @@ def test_the_real_endpoint_accepts_what_the_phone_sent(wire):
     with mock.patch("app.services.command_service.CommandService", _CS), \
          mock.patch("app.services.nip05_access.is_member", member):
         out = asyncio.run(T.texts_ai_reply(T.TextsAiReplyReq(**q), db=None, session_user=None))
-    assert out == {"ok": True, "content": "On my way"}, getattr(out, "body", out)
+    # The phone reads `content` alone; `choices` is the web menu's (one draft here, so one choice).
+    assert out.get("ok") is True and out.get("content") == "On my way", getattr(out, "body", out)
+    assert out.get("choices", ["On my way"]) == ["On my way"], out
     assert "Them: Dinner at 7 tonight?\nTEXTS" in seen[0][-1]["content"]
 
 

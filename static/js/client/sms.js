@@ -4030,6 +4030,7 @@
    * composer on every incoming message, and a latch that lived in the render would let a second tap
    * start a second request the moment anything arrived. */
   const AI_CONTEXT = 10;
+  const AI_CHOICES = 3;
   let _aiReply = null, _aiReplyFor = '', _aiProbe = null, _aiProbeAt = 0;
   function aiReplyBlocked(){
     return !!window.PC_NOSTR_ONLY || !!(PC && PC.standalone && PC.standalone());
@@ -4103,11 +4104,33 @@
       let r = null, j = null;
       try{
         r = await PC.authFetch('/api/texts/ai-reply', { method:'POST',
-          headers:{'Content-Type':'application/json'}, body: JSON.stringify({messages}) });
+          headers:{'Content-Type':'application/json'}, body: JSON.stringify({messages, count: AI_CHOICES}) });
         try{ j = await r.json(); }catch(_){ }
       }catch(_){ PC.toast('Could not reach the server for a suggested reply.'); return; }
       if((ME().pubkey || '') !== owner) return;                // another account now owns this screen
-      const text = j && j.ok && typeof j.content === 'string' ? j.content.trim() : '';
+      /* A FEW CHOICES, IN A MENU ("give you a few choices in a menu popup"). The server returns up to
+         AI_CHOICES different drafts; with more than one the person picks, with one (an older server,
+         or a model that ignored the format) it goes straight in as before. Picking only ever fills
+         the composer — the same rule as the single draft: nothing here sends. */
+      const choices = (j && j.ok && Array.isArray(j.choices) ? j.choices : [])
+        .map(c => typeof c === 'string' ? c.trim() : '').filter(Boolean).slice(0, AI_CHOICES);
+      let text = j && j.ok && typeof j.content === 'string' ? j.content.trim() : '';
+      if(r.ok && choices.length > 1){
+        const btn = PC.$('#sms-ai');
+        const picked = btn && PC.openMenuPopover && S.open === threadKey ? await new Promise(resolve => {
+          let done = false;
+          const close = PC.openMenuPopover(btn, choices.map((c, i) => [String(i), c, 'sms-ai-choice']),
+                                           k => { done = true; resolve(choices[+k]); });
+          /* Dismissed (outside tap, Escape, scroll) resolves to nothing, so the busy state ends. */
+          const pop = document.querySelector('.menu-pop');
+          if(pop){ pop.setAttribute('aria-label', 'Suggested replies'); pop.classList.add('sms-ai-pop'); }
+          const watch = setInterval(() => { if(done) return clearInterval(watch);
+            if(!pop || !pop.isConnected){ clearInterval(watch); resolve(''); } }, 150);
+          void close;
+        }) : choices[0];
+        if(!picked) return;
+        text = picked;
+      }
       if(!r.ok || !text){
         if(r.status === 401 || r.status === 403){ _aiReply = false; _aiReplyFor = owner; }
         PC.toast((j && (j.error || j.detail)) || 'The AI could not draft a reply — try again.');
