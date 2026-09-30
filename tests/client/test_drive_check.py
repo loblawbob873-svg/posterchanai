@@ -249,7 +249,7 @@ class ReclaimTests(unittest.TestCase):
         """"Nothing to reclaim" printed over a null reference set hid 137 GB behind a signer blip —
         the admin-scan sin, repeated the same day it was fixed there. The third truth gets its own
         sentence and never a verdict about the bytes."""
-        at = self.src.index("const refs = await _syncRefIds();")
+        at = self.src.index("let refs = await _syncRefIds();")
         seg = self.src[at:at + 2200]
         self.assertIn("refs ? ", seg)
         self.assertIn("t be read just now", seg)
@@ -271,7 +271,7 @@ class ReclaimTests(unittest.TestCase):
         body = self.src[at:at + 1800]
         self.assertIn("return null", body)
         self.assertIn("S.docs.state(", body, "the reclaim no longer reads the record set strictly")
-        caller = self.src[self.src.index("const refs = await _syncRefIds();"):][:1600]
+        caller = self.src[self.src.index("let refs = await _syncRefIds();"):][:1600]
         self.assertIn("if(refs)", caller, "a null reference set still produces an offer")
 
     def test_fresh_blobs_are_never_offered(self):
@@ -288,7 +288,7 @@ class ReclaimTests(unittest.TestCase):
         """The index container matches the reclaim set PERFECTLY — keep-flagged, named by no ledger,
         hidden from the grid — and deleting it deletes the drive's spine. Every index sha the
         session has seen joins the protected set before the reclaim is computed."""
-        at = self.src.index("const refs = await _syncRefIds();")
+        at = self.src.index("let refs = await _syncRefIds();")
         seg = self.src[at:at + 1200]
         self.assertIn("_indexShas", seg)
         self.assertIn("_lastIndexSha", seg)
@@ -311,3 +311,53 @@ class ReclaimTests(unittest.TestCase):
         do = h.index("deleteBlobQuiet")
         self.assertLess(ask, do)
         self.assertIn("belong ", h)
+
+
+# ---- the live DM cache is not an orphan ---------------------------------------------------------------
+
+import json as _json
+import shutil as _shutil
+import subprocess as _subprocess
+
+_DM_RUN = r"""
+const src=require('fs').readFileSync(0,'utf8');
+const at=src.indexOf('async function _dmCacheRef(');
+let i=src.indexOf('{',at),d=0; for(;i<src.length;i++){ if(src[i]==='{')d++; else if(src[i]==='}'&&--d===0)break; }
+const fn=src.slice(at,i+1);
+const SHA='ab'.repeat(32);
+const run=async(answer)=>{
+  const Relay={ query: async()=>{ if(answer==='throw') throw new Error('socket'); return answer; } };
+  const _S={ ME:{ pubkey:'f'.repeat(64) } };
+  const f=new Function('Relay','_S', fn+'; return _dmCacheRef;')(Relay,_S);
+  return await f(); };
+const withFlag=(arr,complete)=>{ Object.defineProperty(arr,'complete',{value:complete}); return arr; };
+(async()=>{ process.stdout.write(JSON.stringify({
+  found: await run([{created_at:1, content:JSON.stringify({sha:SHA.toUpperCase(), n:5})}]),
+  none: await run(withFlag([], true)),
+  unasked: await run(withFlag([], false)),
+  threw: await run('throw') })); })();
+"""
+
+
+@unittest.skipUnless(_shutil.which("node"), "needs node")
+class DmCacheIsNotAnOrphan(unittest.TestCase):
+    """The decrypted-DM cache lives in one keep-flagged blob that no drive index or synced folder names
+    — exactly the reclaim set. A re-upload loop left hundreds of SUPERSEDED copies that the reclaim
+    should clear, but the live one must never be among them."""
+
+    def test_the_pointer_is_read_and_could_not_ask_is_not_nothing(self):
+        r = _subprocess.run(["node", "-e", _DM_RUN], input=client_source(), capture_output=True, text=True, timeout=60)
+        self.assertEqual(r.returncode, 0, r.stderr[-2000:])
+        got = _json.loads(r.stdout)
+        self.assertEqual(got["found"], "ab" * 32)
+        self.assertEqual(got["none"], "", "no cache is a real answer: nothing to protect")
+        self.assertIsNone(got["unasked"], "relays that never answered read as 'no cache' — the live one would be offered")
+        self.assertIsNone(got["threw"])
+
+    def test_the_drive_check_protects_it_before_computing_the_reclaim(self):
+        src = client_source()
+        at = src.index("let refs = await _syncRefIds();")
+        seg = src[at:at + 1600]
+        self.assertIn("_dmCacheRef()", seg)
+        self.assertIn("if(dm === null) refs = null", seg, "an unreadable pointer must kill the offer")
+        self.assertLess(seg.index("_dmCacheRef()"), seg.index("_reclaimableBlobs(list, named, refs)"))

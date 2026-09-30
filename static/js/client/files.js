@@ -696,6 +696,23 @@ window.PCFilesFactory = function(dep){
     }catch(_){ return null; }
   }
 
+  /* THE LIVE DM CACHE IS IN NO INDEX AND IS KEEP-FLAGGED — i.e. it matches the reclaim set exactly.
+   * Messages → the decrypted-DM cache publishes it as a blob named by one pointer doc,
+   * `pcai:dmcache` {sha}. Every SUPERSEDED copy is genuinely reclaimable (a re-upload loop left
+   * hundreds), but the current one is what makes Messages open fast on a new device, so it joins the
+   * protected set. Answers the sha, '' when there is no cache, and null when the relays could not
+   * be asked — which, like an unreadable folder, means no reclaim offer at all. */
+  async function _dmCacheRef(){
+    try{
+      const me = _S.ME && _S.ME.pubkey; if(!me) return null;
+      const evs = await Relay.query([{ authors:[me], kinds:[30078], '#d':['pcai:dmcache'], limit:1 }]);
+      const ev = (evs || []).slice().sort((a, b) => b.created_at - a.created_at)[0];
+      if(!ev) return (evs && evs.complete === false) ? null : '';
+      const sha = String((JSON.parse(ev.content || '{}') || {}).sha || '').toLowerCase();
+      return /^[0-9a-f]{64}$/.test(sha) ? sha : '';
+    }catch(_){ return null; }
+  }
+
   async function _blobPresent(sha){
     try{
       // The same cache-buster as _blobAlreadyStored, for the same reason: a proxy that caches an
@@ -819,7 +836,8 @@ window.PCFilesFactory = function(dep){
           r.innerHTML = lines.join('');
           return;
         }
-        const refs = await _syncRefIds();
+        let refs = await _syncRefIds();
+        if(refs){ const dm = await _dmCacheRef(); if(dm === null) refs = null; else if(dm) refs.add(dm); }
         /* THE INDEX'S OWN CONTAINER IS LOAD-BEARING AND INVISIBLE. The drive index lives in an
          * encrypted blob (`indexSha`) that is keep-flagged, named by no ledger, and deliberately
          * hidden from the grid — i.e. it matches the reclaim set PERFECTLY, and offering it means
