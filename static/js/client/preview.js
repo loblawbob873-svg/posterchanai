@@ -562,7 +562,15 @@
       if (!transferring) try { URL.revokeObjectURL(url); } catch (_) {}
       root.removeEventListener('keydown', onKey, true);
     };
-    var onKey = function (e) { if (e.key === 'Escape') { e.stopPropagation(); shut(); } };
+    /* NOT WHILE A PDF IS BEING EDITED. This listens in the CAPTURE phase, so it ran before anything
+     * inside the editor: Esc meant to cancel a text note or the signature dialog closed the whole
+     * sheet and discarded every unsaved edit, without a word. The editor owns Escape while it is open
+     * (it cancels the innermost thing), and leaving the editor is its own Cancel, which asks. */
+    var onKey = function (e) {
+      if (e.key !== 'Escape') return;
+      if (document.querySelector('.pv-host .pv-editing, .pv-editing .pe-root')) return;
+      e.stopPropagation(); shut();
+    };
 
     /* ON THE WINDOWED DESKTOP IT IS A WINDOW, through the same openDoc the office editor and the
      * webxdc mini apps use, so it minimises, maximises and moves between monitors like everything

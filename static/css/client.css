@@ -11799,4 +11799,31 @@ img.md-rel:not([src]){display:none}
 .pe-sign-card{display:flex;flex-direction:column;gap:10px;padding:16px;border-radius:14px;background:var(--bg,#111);border:1px solid var(--line);max-width:min(640px,94vw)}
 .pe-sign-pad{width:min(600px,86vw);height:auto;aspect-ratio:600/220;background:#fff;border-radius:8px;touch-action:none}
 .pe-sign-acts{display:flex;justify-content:flex-end;gap:8px}
+.pe-sign-tabs{display:flex;gap:6px}
+.pe-sign-tab.on{border-color:var(--accent);color:var(--accent);background:rgba(var(--accent-rgb),.12)}
+.pe-sign-type{display:flex;flex-direction:column;gap:8px}
+.pe-sign-type[hidden]{display:none}
+.pe-sign-pad.typed{cursor:default}
+.pe-sign-styles{display:grid;grid-template-columns:repeat(auto-fit,minmax(120px,1fr));gap:6px}
+.pe-sign-style{min-height:44px;padding:4px 10px;border:1px solid var(--line);border-radius:10px;background:#fff;color:#111;
+  font-size:24px;line-height:1.1;cursor:pointer;overflow:hidden;white-space:nowrap;text-overflow:ellipsis}
+.pe-sign-style.on{border-color:var(--accent);box-shadow:0 0 0 2px rgba(var(--accent-rgb),.6)}
+.pe-sign-inks{display:flex;gap:10px;align-items:center}
+.pe-sign-ink{width:30px;height:30px;border-radius:999px;border:2px solid var(--line);cursor:pointer;padding:0}
+.pe-sign-ink.on{border-color:var(--accent);box-shadow:0 0 0 2px rgba(var(--accent-rgb),.6)}
 @media (max-width:600px){.pe-bar{gap:4px;padding:6px}.pe-bar .btn{padding:6px 8px}}
+/* Where the signature goes: the signature itself, what a tap does, and how to change it. */
+.pe-hint{display:flex;flex-wrap:wrap;align-items:center;gap:8px 12px;padding:6px 12px;border-bottom:1px solid var(--line);
+  background:rgba(var(--accent-rgb),.08);font-size:13px}
+.pe-hint[hidden]{display:none}
+.pe-hint-sig{height:36px;max-width:160px;object-fit:contain;background:#fff;border-radius:6px;padding:2px 6px}
+.pe-hint-say{flex:1 1 180px}
+/* Preview: the saved document in place of the editable pages; the edit tools step aside. */
+.pe-preview{flex:1 1 auto;min-height:0;display:flex;flex-direction:column}
+.pe-preview[hidden]{display:none}
+.pe-preview-bar{display:flex;flex-wrap:wrap;align-items:center;gap:8px 12px;padding:8px 12px;border-bottom:1px solid var(--line)}
+.pe-preview-bar .btn{margin-left:auto}
+.pe-preview-pages{flex:1 1 auto;min-height:0;overflow:auto;padding:12px;display:flex;flex-direction:column;align-items:center;gap:14px}
+.pe-preview-page{display:block;box-shadow:0 2px 14px rgba(0,0,0,.45);background:#fff}
+.pe-root.pe-previewing .pe-pages,.pe-root.pe-previewing .pe-fields,.pe-root.pe-previewing .pe-hint,
+.pe-root.pe-previewing .pe-tool,.pe-root.pe-previewing .pe-color,.pe-root.pe-previewing .pe-undo,.pe-root.pe-previewing .pe-preview-btn{display:none}
