@@ -244,6 +244,44 @@ class ImportGuardTests(unittest.TestCase):
         self.assertGreater(CS._SCAN_LIMIT, 5000)
 
 
+class RoutesNeverAnswerEmptyForAFailedRead(unittest.TestCase):
+    """'why is my phone showing 0 calendar events': during a deploy the relay was not listening for
+    ~30s and `GET /api/calendar/calendars` answered 200 with no calendars, which the phone drew (and
+    saved) as an empty calendar. A read that could not ask is a 503, exactly like contacts.py."""
+
+    def _run(self, route, raises, **kw):
+        import asyncio
+        from unittest import mock
+        from fastapi import HTTPException
+        from app.routers import calendar as R
+        seen = {}
+
+        async def fake(db, user, *a, **k):
+            seen.update(k)
+            if raises:
+                raise TimeoutError("relay not listening")
+            return [{"id": "main"}]
+        with mock.patch.object(R, "_require_enabled", lambda: None), \
+             mock.patch.object(R.caldav_store, "list_calendars", fake), \
+             mock.patch.object(R.caldav_store, "get_items", fake):
+            try:
+                return asyncio.run(getattr(R, route)(db=None, current_user=object(), **kw)), seen
+            except HTTPException as e:
+                return e.status_code, seen
+
+    def test_the_calendar_list_is_read_strictly_and_a_failure_is_a_503(self):
+        out, seen = self._run("list_calendars", False)
+        self.assertEqual(out, {"calendars": [{"id": "main"}]})
+        self.assertIs(seen.get("strict"), True)
+        self.assertEqual(self._run("list_calendars", True)[0], 503)
+
+    def test_a_calendars_events_are_read_strictly_and_a_failure_is_a_503(self):
+        out, seen = self._run("list_items", False, cal="main")
+        self.assertEqual(out, {"items": [{"id": "main"}]})
+        self.assertIs(seen.get("strict"), True)
+        self.assertEqual(self._run("list_items", True, cal="main")[0], 503)
+
+
 class ConfigTests(unittest.TestCase):
     def test_nothing_configures_radicales_own_listener(self):
         """[server] configures a listener that never runs (we are mounted as WSGI), and `hosts: ""`

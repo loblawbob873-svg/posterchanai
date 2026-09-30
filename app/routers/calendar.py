@@ -115,10 +115,28 @@ async def clear_password(current_user: User = Depends(get_current_user), db: Ses
     return {"ok": True}
 
 
+def _unreachable(what: str, e: Exception) -> HTTPException:
+    """A relay we could not ask is a 503, never an empty 200 -- contacts.py's rule, here too.
+
+    "why is my phone showing 0 calendar events": a deploy restarts the relay, and for the ~30s it is
+    not listening `list_docs` answers {} -- which this route returned as `{"calendars": []}`, 200 OK.
+    The client drew a calendar with no events (and cached it), for a person with 724 of them. A 503
+    keeps the client on what it already holds, and it says the copy is not fresh.
+    """
+    logger.warning("[caldav] %s unreadable: %s", what, type(e).__name__)
+    return HTTPException(status_code=503, detail="Could not reach your calendars just now — try again.")
+
+
 @router.get("/calendars")
 async def list_calendars(current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
     _require_enabled()
-    return {"calendars": await caldav_store.list_calendars(db, current_user)}
+    try:
+        cals = await caldav_store.list_calendars(db, current_user, strict=True)
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise _unreachable("calendar list", e)
+    return {"calendars": cals}
 
 
 class CalendarIn(BaseModel):
@@ -270,7 +288,13 @@ async def list_items(cal: str = Query(...), current_user: User = Depends(get_cur
     """Raw items for one calendar. Parsing into a month grid is the client's job — it already has to
     do that for the events it renders, and doing it twice is how two views disagree."""
     _require_enabled()
-    return {"items": await caldav_store.get_items(db, current_user, cal)}
+    try:
+        items = await caldav_store.get_items(db, current_user, cal, strict=True)
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise _unreachable(f"calendar {cal!r}", e)
+    return {"items": items}
 
 
 class ItemIn(BaseModel):

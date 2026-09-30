@@ -617,16 +617,20 @@
         if(stale()) return;
         const cals = r.calendars || [];
         const items = {};
+        /* A calendar whose events could not be read keeps the events this device already has for it
+         * -- "could not ask" is never "it is empty", or one slow read blanks a calendar here AND in
+         * the saved copy. The copy is then marked as not fresh. */
+        let partial = 0;
         for(const c of cals){
           try{ items[c.id] = (await api('/api/calendar/items?cal=' + encodeURIComponent(c.id))).items || []; }
-          catch(_){ items[c.id] = []; }
+          catch(_){ items[c.id] = S.items[c.id] || []; partial++; }
           if(stale()) return;
         }
         S.cals = cals;
         if(!S.cal || !S.cals.some(c => c.id === S.cal)) S.cal = (S.cals[0] || {}).id || '';
         S.items = items;
         S.rev++;                        // invalidates the occurrence index
-        S.cached = false;
+        S.cached = partial > 0;
         CalCache.save(S.cals, items);   // fire and forget: a cache write must not slow a load down
       }catch(e){
         if(stale()) return;
@@ -634,6 +638,7 @@
         S.enabled = /off on this node/i.test((e && e.message) || '') ? false : S.enabled;
         // A failure WITH a cache behind it is not a failure worth a red box: the month you are
         // looking at is real, it is just not fresh. Say which, and let it be read.
+        if(S.cals.length) S.cached = true;        // the "offline copy" pill, beside the note
         if(S.enabled !== false) S.error = S.cals.length
           ? 'showing your saved calendar — could not reach the server'
           : ((e && e.message) || 'could not load your calendars');
@@ -737,8 +742,13 @@
       if(!inView()) return;
       const feed = $('#feed'); if(!feed) return;
       if(S.loading && !S.ready){ feed.innerHTML = '<div class="cal-wrap"><div class="spinner"></div></div>'; return; }
-      if(S.enabled === false || S.error){ feed.innerHTML = `<div class="cal-wrap">${offScreen()}</div>`; return; }
-      feed.innerHTML = `<div class="cal-wrap">${head()}${emptyHint()}${grid()}${dayPanel()}</div>`;
+      /* AN ERROR ONLY REPLACES THE CALENDAR WHEN THERE IS NO CALENDAR TO SHOW. With calendars in
+       * hand (this session's, or the saved copy) the grid is drawn and the error is a line above it:
+       * "showing your saved calendar" in a red box that hid the calendar was a message about a
+       * picture nobody could see. */
+      if(S.enabled === false || (S.error && !S.cals.length)){ feed.innerHTML = `<div class="cal-wrap">${offScreen()}</div>`; return; }
+      const note = S.error ? `<div class="cal-stale muted small" role="status">${enc(S.error)}</div>` : '';
+      feed.innerHTML = `<div class="cal-wrap">${head()}${note}${emptyHint()}${grid()}${dayPanel()}</div>`;
       wire(feed);
       const s = scroller();
       if(s) requestAnimationFrame(()=>{ try{ s.scrollTop = S.scroll || 0; }catch(_){} });
