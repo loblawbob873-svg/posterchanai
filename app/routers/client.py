@@ -4327,14 +4327,23 @@ async def ai_files(data: AiFileReq, db: Session = Depends(get_db)):
     port = int(_setting(db, "nostr_relay_port", "3052"))
     np = nostr_service.npub_of(pk)
     out = []
-    for d, ref in (await store.list_docs(port, store.NS_UPLOAD, seckey=sk)).items():
+    # Read COMPLETELY or not at all: this listing's `orphans` is what the Prune button offers to
+    # delete, so a short read would offer to delete files that are still in use.
+    try:
+        uploads = await store.list_all_docs(port, store.NS_UPLOAD, seckey=sk)
+        msgs = await store.list_all_docs(port, store.NS_MSG, seckey=sk)
+    except Exception as e:
+        logger.warning("[client] ai-files unreadable: %s", type(e).__name__)
+        return JSONResponse({"ok": False, "error": "Could not reach your files just now — try again."},
+                            status_code=503)
+    for d, ref in uploads.items():
         if isinstance(ref, dict) and ref.get("sha256"):
             conv = d[len(store.NS_UPLOAD):].split(":")[0]
             name = ref.get("name") or "file"
             ext = name.rsplit(".", 1)[-1] if "." in name else "bin"
             out.append({"url": f"/client/file/{np}/{conv}/enc_{ref['sha256']}.{ext}",
                         "name": name, "mime": ref.get("mime") or "", "sha": ref["sha256"], "kind": "upload"})
-    for d, rec in (await store.list_docs(port, store.NS_MSG, seckey=sk)).items():
+    for d, rec in msgs.items():
         if not isinstance(rec, dict):
             continue
         conv = d[len(store.NS_MSG):].split(":")[0]
@@ -4409,10 +4418,21 @@ async def ai_files_prune(data: AiFileReq, db: Session = Depends(get_db)):
     sk = store.user_storage_seckey(db, user)
     port = int(_setting(db, "nostr_relay_port", "3052"))
     keep: set = set()
-    for ref in (await store.list_docs(port, store.NS_UPLOAD, seckey=sk)).values():
+    # THE KEEP-SET MUST BE COMPLETE OR NOTHING IS DELETED. Read loosely, an unreachable relay answered
+    # {} for both namespaces -- no blob referenced, so EVERY private upload and generated image was
+    # deleted -- and a chat history past list_docs' 5000 lost the images of its older messages.
+    try:
+        uploads = await store.list_all_docs(port, store.NS_UPLOAD, seckey=sk)
+        msgs = await store.list_all_docs(port, store.NS_MSG, seckey=sk)
+    except Exception as e:
+        logger.warning("[client] ai-files prune refused, references unreadable: %s", type(e).__name__)
+        return JSONResponse({"ok": False, "deleted": 0, "bytes": 0,
+                             "error": "Could not read which files are still in use — nothing was deleted."},
+                            status_code=503)
+    for ref in uploads.values():
         if isinstance(ref, dict) and ref.get("sha256"):
             keep.add(ref["sha256"])
-    for rec in (await store.list_docs(port, store.NS_MSG, seckey=sk)).values():
+    for rec in msgs.values():
         if not isinstance(rec, dict):
             continue
         keep |= set(re.findall(r'enc_([0-9a-f]{64})', rec.get("image_path") or ""))
@@ -4574,16 +4594,27 @@ async def ai_file_delete(data: AiFileReq, db: Session = Depends(get_db)):
     if not _verify_self_auth(data.auth, pk):
         return JSONResponse({"ok": False, "error": "ownership proof required"}, status_code=403)
     from app.services import artifact_store
-    await artifact_store.delete_blob(db, data.sha)
-    # Drop the listing reference so the file actually disappears from the Files view.
+    # The references are read FIRST and completely: deleting the bytes and then failing to find the
+    # reference leaves a card that 404s for ever -- the "I deleted it and it still shows" bug.
     user = db.query(User).filter(User.nostr_npub == nostr_service.npub_of(pk)).first()
+    uploads, msgs = {}, {}
     if user:
         sk = store.user_storage_seckey(db, user)
         port = int(_setting(db, "nostr_relay_port", "3052"))
-        for d, ref in (await store.list_docs(port, store.NS_UPLOAD, seckey=sk)).items():
+        try:
+            uploads = await store.list_all_docs(port, store.NS_UPLOAD, seckey=sk)
+            msgs = await store.list_all_docs(port, store.NS_MSG, seckey=sk)
+        except Exception as e:
+            logger.warning("[client] ai-file delete refused, references unreadable: %s", type(e).__name__)
+            return JSONResponse({"ok": False, "error": "Could not reach your files just now — nothing was deleted."},
+                                status_code=503)
+    await artifact_store.delete_blob(db, data.sha)
+    # Drop the listing reference so the file actually disappears from the Files view.
+    if user:
+        for d, ref in uploads.items():
             if isinstance(ref, dict) and ref.get("sha256") == data.sha:
                 await store.delete_doc(port, sk, d)
-        for d, rec in (await store.list_docs(port, store.NS_MSG, seckey=sk)).items():
+        for d, rec in msgs.items():
             if isinstance(rec, dict) and data.sha in (rec.get("image_path") or ""):
                 rec = {k: v for k, v in rec.items() if k != "image_path"}
                 await store.put_doc(port, sk, d, rec)

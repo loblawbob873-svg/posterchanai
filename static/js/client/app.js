@@ -11711,7 +11711,7 @@
         const r=await fetch('/client/ai-files-prune',{method:'POST',headers:{'Content-Type':'application/json'},
           body:JSON.stringify({pubkey:ME.pubkey,auth:btoa(JSON.stringify(auth))})}).then(r=>r.json());
         if(r&&r.ok) toast(`freed ${_fmtBytes(r.bytes||0)} (${r.deleted||0} file${r.deleted===1?'':'s'})`);
-        else toast('clean-up failed');
+        else toast((r&&r.error)||'clean-up failed');
       }catch(_){ toast('clean-up failed'); }
       renderBlossom();
     };
@@ -11721,7 +11721,7 @@
     try{ const auth=await sign(27235,'ai-file-delete',[['p',ME.pubkey]]);
       const r=await fetch('/client/ai-file-delete',{method:'POST',headers:{'Content-Type':'application/json'},
         body:JSON.stringify({pubkey:ME.pubkey,sha,auth:btoa(JSON.stringify(auth))})}).then(r=>r.json());
-      if(r&&r.ok){ toast('deleted'); renderBlossom(); } else toast('delete failed');
+      if(r&&r.ok){ toast('deleted'); renderBlossom(); } else toast((r&&r.error)||'delete failed');
     }catch(_){ toast('delete failed'); }
   }
   /* Delete one blob and forget it in the index — no confirm, no redraw. delBlob() below is the

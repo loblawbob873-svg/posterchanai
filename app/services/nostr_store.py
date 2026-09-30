@@ -378,6 +378,34 @@ async def list_docs(port: int, prefix: str, *, seckey: bytes | None = None, pubk
     return {d: _decode(ev.get("content", ""), seckey, encrypt) for d, ev in best.items()}
 
 
+class IncompleteRead(RuntimeError):
+    """The namespace could not be read to its end -- never to be treated as "that is all of it"."""
+
+
+async def list_all_docs(port: int, prefix: str, *, seckey: bytes | None = None,
+                        pubkey: str | None = None, kind: int = APP_KIND, page: int = 1000) -> dict:
+    """EVERY document under `prefix`, or an exception -- never a short answer.
+
+    For callers that DECIDE something from what is absent (a blob no document references is deleted):
+    a plain `list_docs` answers {} for an unreachable relay and stops at `limit` for a big namespace,
+    and both read as "nothing references it". Strict, and paged by (created_at, id) until a page
+    comes back short; a cursor that fails to advance raises rather than looping or stopping early.
+    """
+    out: dict = {}
+    cursor = None
+    while True:
+        docs = await list_docs(port, prefix, seckey=seckey, pubkey=pubkey, kind=kind, strict=True,
+                               limit=page, with_meta="cursor", cursor=cursor)
+        for d, (value, _stamp, _eid) in docs.items():
+            out.setdefault(d, value)
+        if len(docs) < page:
+            return out
+        nxt = min((stamp, eid) for _v, stamp, eid in docs.values())
+        if cursor is not None and nxt >= cursor:
+            raise IncompleteRead(f"{prefix} could not be read to its end")
+        cursor = nxt
+
+
 async def list_dtags(port: int, prefix: str, *, seckey: bytes | None = None,
                      pubkey: str | None = None, kind: int = APP_KIND,
                      limit: int = 5000, until: int | None = None,
