@@ -42,7 +42,7 @@ function wakeCompositor() {
 function run(bin, args, opts) {
   const o = opts || {};
   return new Promise((resolve, reject) => {
-    execFile(bin, args, { timeout: o.timeout || 15000, maxBuffer: 4 * 1024 * 1024 },
+    const child = execFile(bin, args, { timeout: o.timeout || 15000, maxBuffer: 4 * 1024 * 1024 },
       (err, stdout, stderr) => {
         if (err) {
           /* ENOENT is the one failure worth naming differently: "grim is not installed on this
@@ -54,6 +54,11 @@ function run(bin, args, opts) {
         }
         resolve(String(stdout || ''));
       });
+    /* CLOSE STDIN. slurp, given a stdin that is not a terminal, first reads a list of predefined
+     * boxes from it — and execFile hands every child an open pipe, so the region picker sat reading
+     * a pipe nobody would close, never connected to the compositor, and drew nothing: "Select" did
+     * nothing, and each press left another slurp waiting. None of these tools take input on stdin. */
+    try { if (child && child.stdin) child.stdin.end(); } catch (_) { }
   });
 }
 
