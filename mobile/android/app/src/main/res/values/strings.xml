@@ -174,6 +174,7 @@
     <string name="tel_vm_none">This SIM has no voicemail number</string>
     <string name="tel_vm_call">Call voicemail</string>
     <string name="tel_view_contact">Open contact</string>
+    <string name="tel_add_contact">Add to contacts</string>
     <string name="tel_no_contacts_permission">PosterChan has not been allowed to read your contacts yet.</string>
     <string name="tel_missed">Missed</string>
     <string name="tel_delete_entry">Remove from recents</string>

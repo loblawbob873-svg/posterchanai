@@ -101,6 +101,18 @@ public class DialerActivity extends PcActivity {
     }
 
     /** Open this person in PosterChan's Contacts screen, not in a second platform contacts UI. */
+    /** Add this number to POSTERCHAN's Contacts, prefilled -- the same hand-off as Texts' Add contact
+     * (ThreadActivity.addContact): the app's own editor, not the platform's, whose account list does
+     * not include the encrypted address book that follows the account. */
+    private void addPosterContact(String number) {
+        if (number == null || number.trim().isEmpty()) return;
+        LaunchView.request("contact-add:" + Uri.encode(number.trim()), System.currentTimeMillis());
+        Intent i = new Intent(this, MainActivity.class);
+        i.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_SINGLE_TOP);
+        try { startActivity(i); }
+        catch (Throwable t) { say(getString(R.string.home_cannot_open)); }
+    }
+
     private void openPosterContact(Row r) {
         if (r == null || r.number == null || r.number.trim().isEmpty()) return;
         LaunchView.request("contact:" + Uri.encode(r.number.trim()), System.currentTimeMillis());
@@ -616,12 +628,18 @@ public class DialerActivity extends PcActivity {
     private void rowMenu(final Row r) {
         if (r == null) return;
         final List<String> labels = new ArrayList<String>();
-        final List<Integer> acts = new ArrayList<Integer>();
-        labels.add(getString(R.string.tel_call)); acts.add(0);
-        labels.add(getString(R.string.tel_text_number)); acts.add(1);
-        labels.add(getString(R.string.tel_copy_number)); acts.add(2);
-        if (r.contactId >= 0) { labels.add(getString(R.string.tel_view_contact)); acts.add(3); }
-        if (r.entry != null) { labels.add(getString(R.string.tel_delete_entry)); acts.add(4); }
+        // WHAT the menu offers is RowMenu's decision (pure, tested); this only draws it.
+        final List<Integer> acts = RowMenu.actions(r.contactId >= 0, r.entry != null, r.number);
+        for (int a : acts) {
+            switch (a) {
+                case RowMenu.CALL: labels.add(getString(R.string.tel_call)); break;
+                case RowMenu.TEXT: labels.add(getString(R.string.tel_text_number)); break;
+                case RowMenu.COPY: labels.add(getString(R.string.tel_copy_number)); break;
+                case RowMenu.VIEW_CONTACT: labels.add(getString(R.string.tel_view_contact)); break;
+                case RowMenu.ADD_CONTACT: labels.add(getString(R.string.tel_add_contact)); break;
+                default: labels.add(getString(R.string.tel_delete_entry)); break;
+            }
+        }
         try {
             new AlertDialog.Builder(this).setTitle(r.label)
                 .setItems(labels.toArray(new CharSequence[0]),
@@ -645,6 +663,9 @@ public class DialerActivity extends PcActivity {
                                 case 4:
                                     CallLogStore.delete(DialerActivity.this, r.entry.id);
                                     reload();
+                                    break;
+                                case RowMenu.ADD_CONTACT:
+                                    addPosterContact(r.number);
                                     break;
                             }
                         }
