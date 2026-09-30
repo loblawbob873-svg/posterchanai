@@ -185,7 +185,7 @@ def test_the_worker_refreshes_them_so_a_phone_sees_new_events():
 
 def test_a_user_whose_calendar_list_will_not_load_is_skipped_not_pruned():
     src = (ROOT / "app" / "services" / "caldav_subscribe.py").read_text(encoding="utf-8")
-    i = src.index("            try:\n                cals = await caldav_store.list_calendars(db, user)")
+    i = src.index("            try:\n                cals = await caldav_store.list_calendars(db, user, strict=True)")
     assert "continue" in src[i:i + 700]
 
 

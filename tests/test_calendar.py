@@ -282,6 +282,47 @@ class RoutesNeverAnswerEmptyForAFailedRead(unittest.TestCase):
         self.assertEqual(self._run("list_items", True, cal="main")[0], 503)
 
 
+class BackupsAndActionsRefuseAFailedRead(unittest.TestCase):
+    """An EXPORT is a backup: an empty .ics/.vcf for a relay that could not answer looks exactly like a
+    good one until the day it is needed. Unsubscribe and Refresh said "No such calendar" instead."""
+
+    def _call(self, module, route, raises, **kw):
+        import asyncio
+        from unittest import mock
+        from fastapi import HTTPException
+        mod = __import__(f"app.routers.{module}", fromlist=["x"])
+        seen = []
+
+        async def fake(db, user, *a, **k):
+            seen.append(k.get("strict"))
+            if raises:
+                raise TimeoutError("relay not listening")
+            return []
+        with mock.patch.object(mod, "_require_enabled", lambda: None), \
+             mock.patch.object(mod.caldav_store, "list_calendars", fake), \
+             mock.patch.object(mod.caldav_store, "list_addressbooks", fake), \
+             mock.patch.object(mod.caldav_store, "get_items", fake):
+            try:
+                asyncio.run(getattr(mod, route)(db=None, current_user=object(), **kw))
+                return 200, seen
+            except HTTPException as e:
+                return e.status_code, seen
+
+    def test_exports_and_subscription_actions_are_503_when_the_relay_cannot_answer(self):
+        for module, route, kw in (("calendar", "export_ics", {"cal": "main"}),
+                                  ("contacts", "export_vcf", {"book": "contacts"}),
+                                  ("calendar", "unsubscribe", {"cal": "main"}),
+                                  ("calendar", "refresh_subscriptions", {"cal": ""})):
+            code, seen = self._call(module, route, True, **kw)
+            self.assertEqual(code, 503, route)
+            self.assertTrue(seen and all(s is True for s in seen), (route, seen))
+
+    def test_the_subscription_refresh_reads_strictly_so_its_guards_can_fire(self):
+        src = (ROOT / "app/services/caldav_subscribe.py").read_text()
+        self.assertIn("get_items(db, user, cal_id, strict=True)", src)
+        self.assertIn("list_calendars(db, user, strict=True)", src)
+
+
 class ConfigTests(unittest.TestCase):
     def test_nothing_configures_radicales_own_listener(self):
         """[server] configures a listener that never runs (we are mounted as WSGI), and `hosts: ""`

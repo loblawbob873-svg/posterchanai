@@ -235,7 +235,10 @@ async def refresh_subscriptions(cal: str = Query(""), current_user: User = Depen
     running no worker.
     """
     _require_enabled()
-    cals = await caldav_store.list_calendars(db, current_user)
+    try:
+        cals = await caldav_store.list_calendars(db, current_user, strict=True)
+    except Exception as e:
+        raise _unreachable("calendar list", e)
     out = []
     for c in cals:
         sub = caldav_subscribe.subscription_of(c)
@@ -262,7 +265,10 @@ async def unsubscribe(cal: str = Query(...), current_user: User = Depends(get_cu
     separate button that already exists and says what it does.
     """
     _require_enabled()
-    cals = {c.get("id"): c for c in await caldav_store.list_calendars(db, current_user)}
+    try:
+        cals = {c.get("id"): c for c in await caldav_store.list_calendars(db, current_user, strict=True)}
+    except Exception as e:
+        raise _unreachable("calendar list", e)
     meta = cals.get(cal)
     if not meta:
         raise HTTPException(status_code=404, detail="No such calendar.")
@@ -392,8 +398,16 @@ async def export_ics(cal: str = Query(...), current_user: User = Depends(get_cur
     a migration.
     """
     _require_enabled()
-    items = await caldav_store.get_items(db, current_user, cal)
-    cals = {c.get("id"): c for c in await caldav_store.list_calendars(db, current_user)}
+    # An export is somebody's BACKUP: an empty file for a relay that could not answer looks exactly
+    # like a good one until the day it is needed.
+    try:
+        items = await caldav_store.get_items(db, current_user, cal, strict=True)
+    except Exception as e:
+        raise _unreachable(f"calendar {cal!r}", e)
+    try:
+        cals = {c.get("id"): c for c in await caldav_store.list_calendars(db, current_user, strict=True)}
+    except Exception as e:
+        raise _unreachable("calendar list", e)
     name = (cals.get(cal) or {}).get("displayname") or cal
     body = caldav_store.wrap_ics([i.get("ics", "") for i in items], name)
     return PlainTextResponse(body, media_type="text/calendar; charset=utf-8", headers={

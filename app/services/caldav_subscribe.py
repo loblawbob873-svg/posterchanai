@@ -187,7 +187,7 @@ async def refresh(db, user, cal_id: str, meta: dict) -> dict:
     # wipe in a different costume, and it would empty somebody's calendar.
     have, prunable = {}, True
     try:
-        for it in await caldav_store.get_items(db, user, cal_id):
+        for it in await caldav_store.get_items(db, user, cal_id, strict=True):
             uid = it.get("uid") or ""
             if uid:
                 have[uid] = it
@@ -332,7 +332,7 @@ async def _tick() -> None:
             if uid is not None and (now - _QUIET.get(uid, 0)) < _QUIET_EVERY:
                 continue
             try:
-                cals = await caldav_store.list_calendars(db, user)
+                cals = await caldav_store.list_calendars(db, user, strict=True)
             except Exception:
                 # An unreadable calendar list is a relay blip, not "this user has no calendars" —
                 # and the difference matters because refresh() PRUNES. Skip the user this tick.

@@ -179,8 +179,12 @@ async def export_vcf(book: str = Query(...), current_user: User = Depends(get_cu
                      db: Session = Depends(get_db)):
     """One addressbook as a standard .vcf — what every phone and mail client imports."""
     _require_enabled()
-    items = await caldav_store.get_items(db, current_user, book)
-    books = {c.get("id"): c for c in await caldav_store.list_addressbooks(db, current_user)}
+    # An export is somebody's BACKUP -- see calendar.py's export.
+    try:
+        items = await caldav_store.get_items(db, current_user, book, strict=True)
+        books = {c.get("id"): c for c in await caldav_store.list_addressbooks(db, current_user, strict=True)}
+    except Exception as e:
+        raise _unreachable(f"addressbook {book!r}", e)
     name = (books.get(book) or {}).get("displayname") or book
     body = caldav_store.wrap_vcards([i.get("ics", "") for i in items])
     return PlainTextResponse(body, media_type="text/vcard; charset=utf-8", headers={
