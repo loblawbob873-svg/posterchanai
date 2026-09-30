@@ -883,3 +883,51 @@ class AChunkSizeIsNotAFileSize(unittest.TestCase):
         asks = [c for c in res["calls"] if c[0] == "attachment"]
         self.assertEqual(len(asks), 1,
                          "a build that answered with bytes was asked all over again: %r" % (asks,))
+
+
+@unittest.skipIf(shutil.which("node") is None, "node not installed")
+class ARecentPictureArchivedWithoutItsPictureIsRepaired(unittest.TestCase):
+    """"i am missing pictures from 1-2 days ago that did not sync".
+
+    Until the Sep 29 APK, a picture message whose picture was not stored yet was archived BARE and
+    the mark moved past it. The phone's state after that: migration latched complete, the mark at
+    now, and a picture-less copy on the relay. Every pass read forward from the mark, the re-audit
+    never ran again and the refused-part retry only reaches recorded refusals -- so the picture sat
+    on the phone for ever. The first pass of a session now re-reads the last week."""
+
+    DAY = 86400000
+
+    def _state(self):
+        r = msg(1, addr="+15550100", body="", incoming=True)
+        r["date"] = NOW - 2 * self.DAY
+        r["mms"] = True
+        r["parts"] = [{"id": 900, "ct": "image/jpeg", "name": "p.jpg", "bytes": 2048}]
+        hollow, uploads = blob_ev("pcai:sms:000000000000000000000001-noparts",
+                                  {"address": "+15550100", "body": "", "date": NOW - 2 * self.DAY,
+                                   "incoming": True, "mms": True})
+        storage = {"pc_sms_hwm_me": str(NOW), "pc_sms_hwm_me_oldest_first_v1": "1",
+                   "pc_sms_hwm_me_blossom_v10": "1", "pc_sms_hwm_me_blossom_rewound_v6": "1"}
+        return dict(isPhone=True, rows=[r], combinedDropsParts=True, parts={"900": {"data": "eA=="}},
+                    relay=[hollow], uploads=uploads, storage=storage)
+
+    def test_the_picture_is_uploaded_and_the_bare_copy_retired(self):
+        res = run(steps=["load", "mirror", "settle"], **self._state())
+        self.assertTrue([c for c in calls_of(res, "uploadEncFile") if c[2] == "MMS"],
+                        "the picture was never uploaded: %r" % (res["calls"],))
+        self.assertEqual(res["relay"], ["pcai:sms:000000000000000000000001"],
+                         "the complete message is not on the relay, or the bare copy survived: %r" % (res["relay"],))
+        th = res["threads"][0]
+        self.assertEqual((th["n"], th["parts"]), (1, [1]), "one message, with its picture: %r" % (th,))
+        self.assertTrue(th["partShas"][0][0], "the message carries no picture address: %r" % (th,))
+
+    def test_only_the_first_pass_of_a_session_reads_the_week(self):
+        res = run(steps=["load", "mirror", "mirror", "settle"], **self._state())
+        since = [c[1] for c in calls_of(res, "list")]
+        self.assertEqual(len(since), 2, since)
+        self.assertLess(since[0], NOW - 6 * self.DAY, "the first pass did not go back a week: %r" % (since,))
+        self.assertGreater(since[1], NOW - self.DAY, "every pass re-reads the week: %r" % (since,))
+
+    def test_the_mark_does_not_move_backwards(self):
+        res = run(steps=["load", "mirror", "settle"], **self._state())
+        self.assertIn("hwm", res)
+        self.assertGreaterEqual(res["hwm"], NOW, "reading the week moved the mark back: %r" % (res["hwm"],))

@@ -1712,6 +1712,8 @@
    * The high-water mark is a TIMESTAMP, not a row id, and that is the load-bearing choice: a row id
    * is local to one handset, so a restored backup renumbers every message and would republish the
    * entire history. The mark only ever moves FORWARD and only once a batch has actually landed. */
+  const REPAIR_DAYS = 7;
+  let _recentAuditFor = '';
   async function mirror(opts){
     // One retry budget per sweep — see _mayRetryRefused.
     _resetRefusedRetryBudget();
@@ -1758,7 +1760,20 @@
     if(!since) since = Date.now() - FIRST_RUN_DAYS * 86400000;
     // MMS dates have one-second precision. Overlap the last second and deduplicate by document so
     // two messages filed in that second cannot be skipped by the strict provider predicate.
-    const querySince = Math.max(0, since - 1000);
+    let querySince = Math.max(0, since - 1000);
+    /* ONCE PER SESSION, THE LAST WEEK AGAIN -- the repair for pictures archived WITHOUT their picture.
+     *
+     * "i am missing pictures from 1-2 days ago that did not sync". Until the Sep 29 APK, a picture
+     * message whose picture was not stored yet (still downloading, still sending) was archived bare
+     * and the mark moved past it. Every later pass reads FORWARD from the mark, the full re-audit
+     * stops once its latch is set, and the refused-part retry below only reaches messages that
+     * recorded a refusal -- a bare one recorded nothing. So the picture sat on the phone and nothing
+     * was ever going to look at it again. The first pass of each session re-reads the last
+     * REPAIR_DAYS: complete messages are free skips (needsArchiveUpgrade), a bare picture message
+     * gets its parts read and published, and publishOne retires the text-only twin once the real
+     * one has landed. The mark cannot move backwards -- `top` starts at `since` and only rises. */
+    const auditRecent = !(opts && opts.fullMigration) && _recentAuditFor !== (ME().pubkey || '');
+    if(auditRecent) querySince = Math.min(querySince, Math.max(0, Date.now() - REPAIR_DAYS * 86400000));
     let rows = [], migrationRemaining = 0;
     if(opts && opts.fullMigration){
       /* loadFromPhone has already read the complete provider into S. Use THAT set, not a `since`
@@ -1786,6 +1801,8 @@
     }else{
       try{ rows = ((await P.list({ since: querySince, limit: (opts && opts.limit) || 400 })) || {}).messages || []; }
       catch(_){ return { published:0, skipped:'could not read the phone' }; }
+      // Only a week that was actually READ counts as audited: a busy provider retries next pass.
+      if(auditRecent) _recentAuditFor = ME().pubkey || '';
       rows = await withMmsParts(rows, querySince, (opts && opts.limit) || 400);
       /* AND A FEW OF THE ONES THAT WERE REFUSED, WHICH THIS QUERY CAN NEVER REACH.
        *
