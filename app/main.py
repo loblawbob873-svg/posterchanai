@@ -32,6 +32,7 @@ from app.routers import sharelink as sharelink_router   # /f/<sha> — a shared 
 from app.routers import admin_emoji
 from app.routers import git as git_router
 from app.routers import texts as texts_router   # /api/texts/* (Texts ✨ suggested reply)
+from app.routers import chat_assist as chat_assist_router   # /api/chat-assist (Telegram/DM ✨)
 from app.routers.telegram import router as telegram_router
 from app.routers.social_login import router as social_login_router
 from app.routers.nostr import router as nostr_router
@@ -275,6 +276,7 @@ except Exception as _card_err:
     logging.getLogger(__name__).warning("[carddav] contacts API not mounted: %s", _card_err)
 app.include_router(mail.router)
 app.include_router(texts_router.router)  # /api/texts/ai-reply (web session or a signed native request)
+app.include_router(chat_assist_router.router)  # /api/chat-assist: reply / summarize / links
 app.include_router(torrent.router)
 app.include_router(rss.router)
 app.include_router(markets.router)

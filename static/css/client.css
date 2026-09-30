@@ -3796,6 +3796,19 @@ h3 svg.ic.h-ic{width:19px;height:19px;vertical-align:-3px;margin-inline-end:4px;
   cursor:pointer;font-size:calc(15px * var(--pop-scale,1));padding:calc(12px * var(--pop-scale,1)) calc(14px * var(--pop-scale,1));border-radius:9px;transition:.12s;font-family:inherit;white-space:nowrap}
 .menu-pop button:hover,.menu-pop label:hover{background:rgba(var(--accent-rgb),.16);color:var(--cyan)}
 /* Texts ✨ choices are whole sentences: wrap them inside a readable width instead of one long line. */
+/* ✨ in Telegram and DMs (chatassist.js): the menu's drafts wrap like the Texts ✨ ones, and results
+   are read in a sheet -- short lines, links that wrap, never wider than a phone. */
+.menu-pop .ca-choice{white-space:normal;text-align:left;line-height:1.35;max-width:min(420px,86vw)}
+.ca-sheet{display:flex;flex-direction:column;gap:10px;max-width:min(560px,92vw);min-width:min(320px,86vw)}
+.ca-title{font-weight:700;font-size:1.05rem}
+.ca-body{max-height:min(60vh,520px);overflow-y:auto;overflow-wrap:anywhere;display:flex;flex-direction:column;gap:6px}
+.ca-line{margin:0;line-height:1.45}
+.ca-item{display:flex;flex-direction:column;gap:4px;padding:8px 0;border-bottom:1px solid var(--line)}
+.ca-item:last-child{border-bottom:0}
+.ca-link{font-weight:600;color:var(--accent);overflow-wrap:anywhere}
+.ca-err{margin:0;color:var(--danger,#f66)}
+.ca-actions{display:flex;justify-content:flex-end;gap:8px}
+.tg-ai[aria-busy="true"],.dm-ai[aria-busy="true"]{opacity:.55;cursor:progress}
 .menu-pop button.sms-ai-choice{white-space:normal;line-height:1.35;max-width:min(420px,86vw);overflow-wrap:anywhere}
 .menu-pop button.sms-ai-choice+button.sms-ai-choice{border-top:1px solid rgba(var(--accent-rgb),.14);border-radius:0 0 9px 9px}
 .menu-pop button.danger,.menu-pop label.danger{color:var(--danger)}

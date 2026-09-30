@@ -246,6 +246,7 @@ window.PCDmThreadFactory = function(dep){
           <button class="mini" id="dm-attach" title="attach"><svg class="ic b-ic" aria-hidden="true"><use href="#i-paperclip"></use></svg></button>
           <button class="mini" id="dm-files" title="your Files"><svg class="ic x-ic" aria-hidden="true"><use href="#i-folder"></use></svg></button>
           ${S.CFG.gif_enabled?`<button class="mini" id="dm-gif" title="GIF"><svg class="ic b-ic" aria-hidden="true"><use href="#i-film"></use></svg></button>`:''}
+          <button class="mini dm-ai" id="dm-ai" title="AI: reply, summarize, links" aria-label="AI: reply, summarize, links"${window.PCChatAssist && window.PCChatAssist.shown() ? '' : ' hidden'}>✨</button>
           <input type="file" id="dm-file" multiple hidden>
           <textarea class="input dm-in" id="dm-in" rows="1" placeholder="Message…">${enc(_dmDrafts.get(pk)||'')}</textarea>
           <span class="dm-sendstate" id="dm-sendstate" role="status" aria-live="polite"></span>
@@ -270,6 +271,20 @@ window.PCDmThreadFactory = function(dep){
     { const mb=$('#dm-mute'); if(mb) mb.onclick=async()=>{ const wasMuted=isMutedAuthor(pk); await toggleMute(pk);
         if(!wasMuted && isMutedAuthor(pk)){ S.dmActive=null; const dl=$('#dm-list'); if(dl) dl.classList.remove('has-active'); } }; }
     const inp=$('#dm-in');
+    /* ✨ -- Generate reply / Summarize chat / Summarize YouTube & links (chatassist.js, shared with
+       Telegram). Only DECRYPTED messages go, and only when the person asks; a draft only ever fills
+       this composer, never sends. Hidden until the server's AI probe says yes. */
+    { const ai=$('#dm-ai');
+      if(ai && window.PCChatAssist){
+        window.PCChatAssist.probe(()=>{ const b=$('#dm-ai'); if(b) b.hidden=!window.PCChatAssist.shown(); });
+        ai.onclick=()=>window.PCChatAssist.open(ai, {
+          medium:'dm', key:()=>'dm:'+S.dmActive,
+          messages:()=>(dmPeers.get(pk)||[]).filter(m=>!_dmHidden().has(m.id) && m.text)
+            .map(m=>({ me:!!m.mine, text:String(m.text).slice(0,1000) })),
+          current:()=>{ const t=$('#dm-in'); return t ? t.value : ''; },
+          fill:text=>{ const t=$('#dm-in'); if(!t || S.dmActive!==pk) return;
+            t.value=text; t.dispatchEvent(new Event('input',{bubbles:true})); t.focus(); } });
+      } }
     // Paste-to-attach + removable preview strip (📎 Attach / 🌸 Files / 🎬 GIF also feed it via 'input').
     const _syncAtts = wireImgAttach(inp, $('#dm-atts'), {enc:true});
     decorateEncAtts($('#dm-msgs'));   // first paint of this thread

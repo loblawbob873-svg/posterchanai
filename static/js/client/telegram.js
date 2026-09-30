@@ -285,6 +285,18 @@
     });
   }
 
+  function aiShown(){ return !!(window.PCChatAssist && window.PCChatAssist.shown()); }
+  /* What ✨ reads: this chat's messages, oldest first, as {me, text, who}. A picture or a voice
+     message with no caption is still something somebody SAID, so it is named rather than dropped. */
+  function aiMessages(chat){
+    const MEDIA = { photo:'[a photo]', video:'[a video]', voice:'[a voice message]', video_note:'[a video message]',
+                    sticker:'[a sticker]', document:'[a file]', audio:'[an audio file]' };
+    return (st.msgs.get(chat) || []).slice().sort((a, b) => (a.date || 0) - (b.date || 0) || (a.id || 0) - (b.id || 0))
+      .map(m => ({ me: !!m.out, who: m.out ? '' : String(m.sender || ''),
+                   text: String(m.text || (m.media ? (MEDIA[m.media.kind] || '[an attachment]') : '')).slice(0, 1000) }))
+      .filter(m => m.text);
+  }
+
   function paintChat(){
     const pane = root.querySelector('.tg-chat'); if(!pane) return;
     root.querySelector('.tg-shell').classList.toggle('tg-chat-open', !!st.open);
@@ -301,6 +313,7 @@
         <button class="tg-icon" data-act="attach" title="Attach files" aria-label="Attach files">📎</button>
         <button class="tg-icon" data-act="camera" title="Camera: photo or video" aria-label="Camera">📷</button>
         <textarea class="tg-in tg-text" rows="1" placeholder="Message" aria-label="Message"></textarea>
+        <button class="tg-icon tg-ai" data-act="ai" title="AI: reply, summarize, links" aria-label="AI: reply, summarize, links"${aiShown() ? '' : ' hidden'}>✨</button>
         <button class="tg-btn tg-primary tg-send" data-act="send" aria-label="Send">➤</button>
         <input type="file" class="tg-file" multiple hidden></footer>`;
     loadAvatars(pane);
@@ -311,6 +324,18 @@
     ta.addEventListener('keydown', e => { if(e.key === 'Enter' && !e.shiftKey && !e.isComposing){ e.preventDefault(); send(); } });
     ta.addEventListener('input', () => { ta.style.height = 'auto'; ta.style.height = Math.min(160, ta.scrollHeight) + 'px'; });
     pane.querySelector('[data-act="send"]').onclick = send;
+    /* ✨ -- Generate reply / Summarize chat / Summarize YouTube & links (chatassist.js, shared with
+       DMs). Hidden until the server's AI probe says yes; a draft only ever fills this composer. */
+    { const ai = pane.querySelector('[data-act="ai"]'), chat = d.id;
+      if(ai && window.PCChatAssist){
+        window.PCChatAssist.probe(() => { const b = root.querySelector('[data-act="ai"]'); if(b) b.hidden = !aiShown(); });
+        ai.onclick = () => window.PCChatAssist.open(ai, {
+          medium:'telegram', key:() => 'tg:' + st.open,
+          messages:() => aiMessages(chat),
+          current:() => { const t = root.querySelector('.tg-text'); return t ? t.value : ''; },
+          fill:text => { const t = root.querySelector('.tg-text'); if(!t || st.open !== chat) return;
+            t.value = text; t.dispatchEvent(new Event('input', {bubbles:true})); t.focus(); } });
+      } }
     const file = pane.querySelector('.tg-file');
     pane.querySelector('[data-act="attach"]').onclick = () => file.click();
     file.onchange = () => { for(const f of file.files) st.pending.push({ file:f, name:f.name }); file.value = ''; paintPending(); };

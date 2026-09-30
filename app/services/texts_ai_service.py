@@ -77,7 +77,10 @@ def clean_context(items) -> list:
     return out[-MAX_CONTEXT:]
 
 
-def build_messages(context: list) -> list:
+SMS = "text-message (SMS)"
+
+
+def build_messages(context: list, medium: str = SMS) -> list:
     """The chat messages for the model. The conversation is FENCED as quoted material and the ask
     comes last, next to an explicit cue — Mail learned that the local model, recency-biased,
     otherwise CONTINUES the quoted text instead of answering it."""
@@ -90,7 +93,7 @@ def build_messages(context: list) -> list:
            "Write my reply to their last message.")
     return [
         {"role": "system", "content": (
-            "You draft text-message (SMS) replies for the user, who is \"Me\" in the conversation. "
+            f"You draft {medium} replies for the user, who is \"Me\" in the conversation. "
             "Write ONE short, casual text in the user's voice, the way people actually text: usually "
             "one or two sentences. Rules: never repeat or continue the other person's message; "
             "never invent facts, plans, times, places or promises that are not in the "
@@ -105,13 +108,13 @@ def build_messages(context: list) -> list:
 MAX_CHOICES = 4
 
 
-def build_choice_messages(context: list, n: int) -> list:
+def build_choice_messages(context: list, n: int, medium: str = SMS) -> list:
     """The same fenced conversation, asking for `n` DIFFERENT replies at once — one model call, not
     n: the GPU is shared with image/music/video generation, and three calls would be three turns in
     that queue. The same rules apply to every option (never invent plans, times or facts)."""
-    msgs = build_messages(context)
+    msgs = build_messages(context, medium)
     msgs[0] = {"role": "system", "content": (
-        "You draft text-message (SMS) replies for the user, who is \"Me\" in the conversation. "
+        f"You draft {medium} replies for the user, who is \"Me\" in the conversation. "
         f"Write {n} DIFFERENT short, casual texts the user could send next, in the user's voice, the way "
         "people actually text: usually one or two sentences each. Make them genuinely different "
         "(for example: a direct answer, a warmer or more playful one, and one that asks a question) — "
@@ -149,13 +152,13 @@ def parse_choices(out: str, n: int) -> list:
     return found
 
 
-async def draft_choices(db, user, items, n: int = 3) -> list:
+async def draft_choices(db, user, items, n: int = 3, medium: str = SMS) -> list:
     """Up to `n` different drafts in one model call. Raises TextsAiError like draft_reply."""
     n = max(1, min(int(n or 1), MAX_CHOICES))
     if n == 1:
-        return [await draft_reply(db, user, items)]
+        return [await draft_reply(db, user, items, medium)]
     context = clean_context(items)
-    msgs = build_choice_messages(context, n)
+    msgs = build_choice_messages(context, n, medium)
     from app.services.command_service import CommandService
     cs = CommandService(db, user=user)
     try:
@@ -195,11 +198,11 @@ def clean_draft(out: str) -> str:
     return s[:MAX_REPLY_CHARS].strip()
 
 
-async def draft_reply(db, user, items) -> str:
+async def draft_reply(db, user, items, medium: str = SMS) -> str:
     """Build the prompt from the bounded tail of the thread, ask the node's own model, return the
     cleaned draft. Raises TextsAiError with a readable sentence on every failure."""
     context = clean_context(items)
-    msgs = build_messages(context)
+    msgs = build_messages(context, medium)
     from app.services.command_service import CommandService
     cs = CommandService(db, user=user)
     # Task temperature, like Mail: a drafting tool, not a muse.
