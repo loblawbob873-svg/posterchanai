@@ -498,6 +498,9 @@
      Loaded BEFORE app.js, which builds it while it boots: the toast and the right-column rail read its
      answers synchronously. -->
 <script src="/static/js/client/notifview.js?v={{ ver }}"></script>
+<!-- The right-column rail (Topics + the Notifications list), split out of app.js. Loaded BEFORE app.js,
+     which builds it while it boots: notifs.js asks it synchronously on every arriving notification. -->
+<script src="/static/js/client/rail.js?v={{ ver }}"></script>
 <script src="/static/js/client/app.js?v={{ ver }}"></script>
 <script src="/static/js/client/instance-welcome.js?v={{ ver }}"></script>
 <script src="/static/js/client/media-center-ui.js?v={{ ver }}"></script>

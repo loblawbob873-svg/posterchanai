@@ -98,7 +98,7 @@ def test_the_view_and_the_rail_are_not_in_notifs_js():
     """The rail and the updater stay in app.js; the VIEW moved to notifview.js (its own module, see
     test_notifview_module_ships_before_app.py) — neither belongs in the subscription module."""
     for fn in ("function loadNotifs(){", "function _onNewController(){"):
-        assert fn in APP and fn not in NOTIFS, fn
+        assert fn not in NOTIFS, fn
     for fn in ("function renderNotifications(){", "function _notifMatch(e){", "function notifGrouped(list){",
                "function markNotifsRead(){"):
         assert fn not in NOTIFS, fn

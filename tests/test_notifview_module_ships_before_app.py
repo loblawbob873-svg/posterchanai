@@ -64,8 +64,10 @@ def test_the_view_moved_and_every_entry_point_is_forwarded():
     for real in ("function renderNotifications(){", "function _notifMatch(e){", "function notifGrouped(list){",
                  "function markNotifsRead(){", "function notifHtml(e){"):
         assert real in VIEW and real not in _no_stubs(APP), real
-    for stays in ("function loadNotifs(){", "function _onNewController(){", "function applyUpdate(){"):
-        assert stays in APP and stays not in VIEW, stays
+    for stays in ("function _onNewController(){", "function applyUpdate(){"):
+        assert stays in _no_stubs(APP) and stays not in VIEW, stays
+    # The rail (loadNotifs) is its own module now — see test_rail_module_ships_before_app.py.
+    assert "function loadNotifs(){" not in VIEW
 
 
 def test_a_fresh_entry_still_resets_pagination_and_scroll():
