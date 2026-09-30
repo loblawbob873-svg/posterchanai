@@ -123,3 +123,29 @@ def test_the_prompt_survives_the_page_finishing_its_boot():
         assert ["take", {"staged": "/tmp/posterchan-shots-1000/s.png", "copy": False}] in await b.js("__shot")
 
     asyncio.run(desktop.with_browser("online", "?pcpopup=shot", check, BRIDGES + STAGED))
+
+
+@pytest.mark.skipif(not Path("/opt/google/chrome/chrome").exists(), reason="Chrome required")
+def test_the_prompt_window_has_a_visible_neon_frame():
+    """"The screen capture window should have a border and look cyberpunk and cool." As its own window
+    the prompt filled it edge to edge with no frame at all. Measured, not asserted from the source:
+    a visible accent border on all four sides, the corner brackets drawn, and the controls inside it."""
+    got = {}
+
+    async def check(b):
+        await b.until("!!document.querySelector('.os-shot-popup .shot-prompt')")
+        got.update(await b.js("""(()=>{const p=document.querySelector('.shot-prompt'),cs=getComputedStyle(p),
+          after=getComputedStyle(p,'::after'),r=p.getBoundingClientRect(),acts=p.querySelector('.shot-acts').getBoundingClientRect();
+          const sides=['Top','Right','Bottom','Left'].map(s=>({w:parseFloat(cs['border'+s+'Width']),c:cs['border'+s+'Color']}));
+          return {sides,accent:getComputedStyle(document.documentElement).getPropertyValue('--accent-rgb').trim(),
+            brackets:after.content!=='none'&&(after.backgroundImage.match(/linear-gradient/g)||[]).length,
+            inside:acts.left>=r.left&&acts.right<=r.right&&acts.bottom<=r.bottom,glow:cs.boxShadow}})()"""))
+
+    asyncio.run(desktop.with_browser("online", "?pcpopup=shot", check, BRIDGES + STAGED))
+    for s in got["sides"]:
+        assert s["w"] >= 1 and s["c"] not in ("rgba(0, 0, 0, 0)", "transparent"), got
+    rgb = ", ".join(x.strip() for x in got["accent"].split(","))
+    assert rgb and rgb in got["sides"][0]["c"], ("the frame is not the theme's accent", got)
+    assert got["brackets"] >= 8, got
+    assert got["inside"], got
+    assert got["glow"] and got["glow"] != "none", got
