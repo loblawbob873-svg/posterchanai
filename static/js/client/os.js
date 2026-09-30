@@ -8713,10 +8713,52 @@
       + b('settings', 'i-gear', 'Settings')
       + (machine ? b('power', 'i-power', 'Power') : '')
       + (machine ? '' : b('full', full ? 'i-minimize' : 'i-expand', full ? 'Leave full screen (F11)' : 'Full screen (F11)', 'os-full'))
-      + (machine ? '' : b('classic', 'i-layout', 'Classic layout -- leave the desktop', 'os-exit'))
+      /* CLASSIC IS OFFERED ON THE MACHINE TOO ("webui shows the classic mode button but OS does
+         not"). It was taken off on 2026-09-25 because leaving the desktop leaves no taskbar; the way
+         back is the instance logo in the classic layout, and the round trip is what the test drives. */
+      + b('classic', 'i-layout', 'Classic layout -- leave the desktop', 'os-exit')
       + b('logout', 'i-logout', 'Log out')
       + `</div>`;
   }
+  /* NOTHING THE START MENU OPENS MAY BE DRAWN ON THIS SURFACE. On PosterChanOS this page is the
+   * desktop, and it sits UNDER every application window -- so a menu, popover or dialog painted here
+   * opens and nobody can see it: the power panel, the account switcher and Log out's "are you sure"
+   * were each reported that way ("hiding behind active windows"). Each is its own window instead,
+   * exactly like Start, the notification centre and the tray flyout already are.
+   * tests/client/test_start_footer_never_draws_under_windows_full_app.py presses every footer
+   * button and fails if one leaves anything drawn on the desktop surface. */
+  const _footWindows = () => on && !popupKind() && _popupWindows() && typeof pcPopup.open === 'function';
+  function _popupRectNear(el, w, h){
+    let rect = null; try{ rect = el ? el.getBoundingClientRect() : null; }catch(_){ }
+    const wD = popupPx(w), hD = popupPx(h);
+    const x = Math.max(0, Math.round(rect ? rect.left : 10));
+    const y = Math.max(0, taskbarTopPx() - hD - 8);
+    return { x, y, width: wD, height: hD };
+  }
+  let _askPending = null;
+  /* A yes/no question from the desktop, asked in a small window of its own. Anything that ends the
+     window without an answer (Escape, a click elsewhere, it being closed) is "no". */
+  function askInWindow(text, opts){
+    const o = opts || {};
+    if(!_footWindows()) return PC().uiConfirm ? PC().uiConfirm(text, o) : Promise.resolve(false);
+    if(_askPending) _askPending(false);
+    return new Promise(resolve => {
+      _askPending = (v) => { _askPending = null; resolve(!!v); };
+      const w = 380, h = 170, wD = popupPx(w), hD = popupPx(h);
+      const x = Math.max(0, Math.round((window.innerWidth * (wD / w) - wD) / 2));
+      const y = Math.max(0, Math.round((taskbarTopPx() - hD) / 2));
+      const arg = JSON.stringify({ text: String(text || ''), ok: o.ok || 'OK', cancel: o.cancel || 'Cancel', danger: !!o.danger });
+      Promise.resolve(pcPopup.open('ask', { x, y, width: wD, height: hD }, arg))
+        .then(opened => { if(opened === false && _askPending) _askPending(false); })
+        .catch(() => { if(_askPending) _askPending(false); });
+    });
+  }
+  function _accountsPopup(){
+    let n = 1; try{ n = (PC().accountList ? PC().accountList() : []).length || 1; }catch(_){ }
+    const h = Math.min(520, 84 + n * 58 + 3 * 44);
+    try{ pcPopup.open('accounts', _popupRectNear(document.getElementById('os-start'), 320, h)); }catch(_){ }
+  }
+
   /* Performed on the DESKTOP: from the popup's `pc:act:` message, or directly in the in-page menu.
      `anchor` is what a flyout opens against -- the Start button, since the menu is gone by then. */
   async function footAct(kind){
@@ -8725,16 +8767,18 @@
       if(window.pcDisplays && pcDisplays.status) openSystemSettings();
       else openLauncherApp('settings');
     }else if(kind === 'power'){
-      if(window.PCOSShell && PCOSShell.openControl) await PCOSShell.openControl('power', startBtn());
+      /* Above the windows (the tray flyout's own window), never a popover on the desktop surface. */
+      if(window.PCOSShell && PCOSShell.openTrayPanel) await PCOSShell.openTrayPanel('power', startBtn());
+      else if(window.PCOSShell && PCOSShell.openControl) await PCOSShell.openControl('power', startBtn());
     }else if(kind === 'full') toggleFull();
     else if(kind === 'classic') exit();
     else if(kind === 'accounts'){
-      if(PC().accountMenu) PC().accountMenu(startBtn()); else if(PC().openProfile) PC().openProfile();
+      if(_footWindows() && PC().accountAct) _accountsPopup();
+      else if(PC().accountMenu) PC().accountMenu(startBtn()); else if(PC().openProfile) PC().openProfile();
     }else if(kind === 'logout'){
       /* On PosterChanOS "log out" ends the SESSION (back to the sign-in screen) -- the same call the
          account menu makes; in a browser it signs this device out of the client. */
-      const ask = PC().uiConfirm;
-      if(ask && !(await ask('Log out?', { ok: 'Log out' }))) return;
+      if(!(await askInWindow('Log out?', { ok: 'Log out', danger: true }))) return;
       if(window.PCOSShell && PCOSShell.logoutSession && window.pcShell) await PCOSShell.logoutSession();
       else if(PC().logout) PC().logout();
     }
@@ -10773,6 +10817,7 @@
             else if(p.indexOf('pc:popup-closed:') === 0){
               const kind = p.slice('pc:popup-closed:'.length);
               if(kind === 'start') startOpen = false;
+              else if(kind === 'ask'){ if(_askPending) _askPending(false); }
               else if(kind === 'noti') notiOpen = false;
               else if(kind === 'net') netOpen = false;
               drawBar();
@@ -10793,6 +10838,8 @@
               try{ val = decodeURIComponent(rest); }catch(_){ }
               try{
                 if(kind === 'view') openLauncherApp(val);
+                else if(kind === 'ask'){ if(_askPending) _askPending(val === 'ok'); }
+                else if(kind === 'acct'){ if(PC().accountAct) PC().accountAct(val); }
                 /* A capture asked for from a popup (the tray, the Print Screen prompt): taken HERE,
                    because the popup that asked is closing. */
                 else if(kind === 'shot'){ if(window.PCOSShell && PCOSShell.takeShot) PCOSShell.takeShot(val === 'region' ? 'region' : 'screen'); }
@@ -11605,6 +11652,48 @@
    *
    * So the client's DOM stays where it is and CSS hides it (.os-popup-body > *), which costs
    * nothing and keeps every binding pointing at something real. */
+  function _popupArg(){
+    try{ return JSON.parse(new URLSearchParams(location.search).get('pcarg') || '{}') || {}; }catch(_){ return {}; }
+  }
+  /* A QUESTION IN A WINDOW OF ITS OWN -- see askInWindow. Enter answers yes, Escape no. */
+  function renderAskPopup(){
+    const host = popupHost();
+    try{ document.body.classList.add('os-popup-ask'); }catch(_){ }
+    _menuInPopup = true;
+    const a = _popupArg();
+    host.innerHTML = `<div class="os-ask" role="alertdialog" aria-label="${enc(a.text || 'Are you sure?')}">
+        <p class="os-ask-text">${enc(a.text || 'Are you sure?')}</p>
+        <div class="os-ask-acts"><button class="os-ask-btn" data-ask="cancel">${enc(a.cancel || 'Cancel')}</button>
+          <button class="os-ask-btn os-ask-ok${a.danger ? ' danger' : ''}" data-ask="ok">${enc(a.ok || 'OK')}</button></div></div>`;
+    host.querySelectorAll('[data-ask]').forEach(b => b.onclick = () => _menuAct('ask', b.dataset.ask));
+    document.addEventListener('keydown', e => {
+      if(e.key === 'Escape'){ e.preventDefault(); _menuAct('ask', 'cancel'); }
+      else if(e.key === 'Enter'){ e.preventDefault(); _menuAct('ask', 'ok'); }
+    });
+    try{ host.querySelector('[data-ask="ok"]').focus(); }catch(_){ }
+  }
+  /* THE ACCOUNT SWITCHER IN A WINDOW OF ITS OWN. It only PICKS: the switch happens in the desktop's
+     page (pc:act:acct:<pubkey|add|manage|profile>), because that is the session that changes. */
+  function renderAccountsPopup(){
+    const host = popupHost();
+    try{ document.body.classList.add('os-popup-accounts'); }catch(_){ }
+    _menuInPopup = true;
+    let list = []; try{ list = PC().accountList ? PC().accountList() : []; }catch(_){ list = []; }
+    const label = a => enc(a.name || (a.npub ? a.npub.slice(0, 14) + '…' : String(a.pubkey || '').slice(0, 12) + '…'));
+    const me = list.find(a => a.current);
+    host.innerHTML = `<div class="os-accts" role="menu" aria-label="Accounts">`
+      + list.map(a => `<button class="acct-p${a.current ? ' on' : ''}" role="menuitem" data-acct="${enc(a.pubkey)}">
+          <img src="${enc(a.picture || '/static/icon-192.png')}" alt=""><span>${label(a)}${a.mode !== 'local' ? `<i class="acct-m">${enc(a.mode)}</i>` : ''}</span>
+          ${a.current ? '<b class="acct-cur">●</b>' : ''}</button>`).join('')
+      + '<div class="acct-sep"></div>'
+      + (me ? '<button class="acct-p acct-plain" role="menuitem" data-acct="profile">My profile</button>' : '')
+      + '<button class="acct-p acct-plain" role="menuitem" data-acct="add">＋ Add an account</button>'
+      + (list.length > 1 ? '<button class="acct-p acct-plain" role="menuitem" data-acct="manage">Manage accounts…</button>' : '')
+      + '</div>';
+    host.querySelectorAll('[data-acct]').forEach(b => b.onclick = () => _menuAct('acct', b.dataset.acct));
+    document.addEventListener('keydown', e => { if(e.key === 'Escape'){ e.preventDefault(); try{ window.close(); }catch(_){ } } });
+  }
+
   function popupHost(){
     document.body.classList.add('os-popup-body');
     let host = document.getElementById && document.getElementById('os-popup-host');
@@ -11752,6 +11841,8 @@
         else if(k === 'net') renderNetPopup();
         else if(k === 'compose') renderComposePopup();
         else if(k === 'bugreport') renderBugReportPopup();
+        else if(k === 'ask') renderAskPopup();
+        else if(k === 'accounts') renderAccountsPopup();
         /* The tray draws itself — it is osshell.js's panel, built from the machine's own bridges,
            and those exist in this renderer exactly as they do in the desktop's. */
         else if(k === 'tray'){

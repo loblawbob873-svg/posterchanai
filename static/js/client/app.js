@@ -5049,6 +5049,26 @@
     return pop;
   }
 
+  /* THE ACCOUNT MENU'S CHOICES, CALLABLE WITHOUT THE MENU. On PosterChanOS the list is drawn in a
+     popup WINDOW (so it is never under an application) and the choice is performed here, in the
+     desktop's page, whose session is the one that changes. Same four outcomes as the menu. */
+  function accountList(){
+    const me = (!GUEST && ME && ME.pubkey) || '';
+    let list = []; try{ list = Session.accounts(); }catch(_){ list = []; }
+    return list.map(a => ({ pubkey: a.pubkey, name: a.name || '', npub: a.npub || '', picture: a.picture || '',
+                            mode: (a.sess && a.sess.mode) || 'local', current: a.pubkey === me }));
+  }
+  function accountAct(what){
+    const me = (!GUEST && ME && ME.pubkey) || '';
+    if(what === 'profile') return me ? renderProfileView(me) : null;
+    if(what === 'add')     return _accountAdd();
+    if(what === 'manage')  return _accountModal();
+    if(what && what === me) return renderProfileView(me);
+    let list = []; try{ list = Session.accounts(); }catch(_){ list = []; }
+    const a = list.find(z => z.pubkey === what);
+    return a ? _accountSwitch(a) : null;
+  }
+
   // Leaving an account = clearing the LIVE session only. The remembered list lives under its own
   // key, so the account you are stepping away from is still there to come back to.
   function _accountAdd(){
@@ -14369,6 +14389,7 @@
      * view, not closed. */
     stopMusic: () => { try{ MusicPlayer.close(); MusicPlayer.cur=null; MusicPlayer.queue=[]; }catch(_){} },
     accountMenu,                                              // → the desktop's tray avatar
+    accountList, accountAct,                                  // → PosterChanOS's account popup window
     /* OS-level notification permission, asked from a real click. Deliberately separate from Web
      * Push: push needs a configured VAPID key and a server, and this needs neither — it is what
      * makes a reminder raise a system notification while the app is open behind another window,

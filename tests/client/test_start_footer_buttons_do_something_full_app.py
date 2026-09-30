@@ -111,4 +111,6 @@ def test_the_os_start_menu_offers_no_button_that_cannot_work_there():
 
     asyncio.run(desktop.with_browser('online', '?pcpopup=start', check, MACHINE))
     assert 'power' in got['kinds'] and 'settings' in got['kinds'] and 'logout' in got['kinds'], got
-    assert 'full' not in got['kinds'] and 'classic' not in got['kinds'], got
+    # Classic IS offered again (asked for: "webui shows the classic mode button but OS does not");
+    # the way back is proven by test_start_footer_never_draws_under_windows_full_app.py.
+    assert 'full' not in got['kinds'] and 'classic' in got['kinds'], got

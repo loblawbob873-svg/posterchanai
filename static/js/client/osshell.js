@@ -1200,7 +1200,34 @@
     const can = await shotAvailable();
     const d = openPop(anchor, quickHTML(_sum, { shot: can }), { align: 'end', cls: 'os-pop-quick' });
     wireQuick(d);
+    /* OPENED FOR A SUB-PANEL (Start → Power): go there the way pressing its tile does. The request
+       is one-shot and short-lived, so a flyout opened later from the tray is the ordinary one. */
+    if(IN_POPUP){
+      let want = null;
+      try{ want = JSON.parse(root.localStorage.getItem(TRAY_PANEL_KEY) || 'null'); root.localStorage.removeItem(TRAY_PANEL_KEY); }catch(_){ }
+      if(want && want.kind && Date.now() - (Number(want.at) || 0) < 10000){
+        const tile = d && d.querySelector && d.querySelector('[data-os="' + String(want.kind).replace(/[^a-z]/g, '') + '"]');
+        if(tile) try{ tile.click(); }catch(_){ }
+      }
+    }
     return d;
+  }
+
+  /* START → POWER WAS DRAWN UNDER THE WINDOWS. openControl() paints a popover in THIS page, and on
+   * PosterChanOS this page is the desktop surface, which sits beneath every real window — so the
+   * power menu opened and nobody could see it ("the power button menu did come up after all but was
+   * hidden behind active windows"). The tray already solved exactly this by being its own window;
+   * the Start menu now asks for that window, opened on the requested panel, at the tray where the
+   * same panel lives. Anywhere without popup windows (web, Android) it is the old popover. */
+  const TRAY_PANEL_KEY = 'pc_tray_open_panel';
+  async function openTrayPanel(kind, anchor){
+    if(!IN_POPUP && root.pcPopup && typeof root.pcPopup.toggle === 'function'){
+      try{ root.localStorage.setItem(TRAY_PANEL_KEY, JSON.stringify({ kind: String(kind), at: Date.now() })); }catch(_){ }
+      const chip = (root.document && root.document.querySelector && root.document.querySelector('#os-shell [data-os="quick"]')) || anchor;
+      openTrayWindow(chip);
+      return true;
+    }
+    return openControl(kind, anchor);
   }
 
   /* System Settings reuses the exact controls from Quick Settings. Keeping one implementation is
@@ -1795,6 +1822,7 @@
                 takeShot, shotPrompt, renderShotPopup, shotAvailable, closePop, openControl, openTrayPopup, wifiReason,
                 setViewOpener, refresh, paintTray, bindApps, bindPanel,
                 summary: () => _sum, rows: () => _rows, readAt: () => _readAt };
+  API.openTrayPanel = openTrayPanel;
   root.PCOSShell = API;
   if(typeof module !== 'undefined' && module.exports) module.exports = API;
 })(typeof globalThis !== 'undefined' ? globalThis : this);

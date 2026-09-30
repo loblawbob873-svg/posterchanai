@@ -55,9 +55,14 @@ def test_the_flyout_is_handed_to_the_compositor():
 def test_one_interception_covers_every_sub_panel():
     """If this ever becomes five branches, someone has misread the design: network/tor/power/mixer
     are sub-panels of the quick flyout and inherit its surface."""
-    assert SHELL.count("openTrayWindow(") == 2, (
+    # 2 = the definition + the quick chip's interception. openTrayPanel (Start → Power) is the one
+    # other caller, and it opens that SAME flyout window and navigates within it -- which is this
+    # rule's point, not an exception to it: no sub-panel becomes a window of its own.
+    assert SHELL.count("openTrayWindow(") == 3, (
         "the tray now opens more than one window — the sub-panels are meant to replace the "
         "flyout's body, not to become windows of their own")
+    panel = _fn("  async function openTrayPanel(kind, anchor){", SHELL)
+    assert panel.count("openTrayWindow(") == 1 and "TRAY_PANEL_KEY" in panel
 
 
 def test_the_in_page_flyout_survives_where_there_is_no_bridge():
