@@ -839,6 +839,34 @@ def test_an_import_answer_cannot_rewrite_somebody_elses_identity(world):
     assert not s.query(FediPuppet).filter(FediPuppet.actor_uri.like("%evil.example%")).all()
 
 
+
+def test_an_import_from_pleroma_or_akkoma_resolves_accounts_with_no_uri(world, monkeypatch):
+    """"0 followed, 0 of 161 there", importing from shitpost.cloud. Pleroma and Akkoma's Mastodon API
+    sends NO `uri` -- the actor id is in `url` -- and the importer read `uri` alone, so every account
+    was dropped before a single request was made. Where `url` is only an HTML profile (Mastodon's
+    `/@name`), the account's own WebFinger finds the actor. Either way the identity is still read
+    from the document its own server returns."""
+    from app.services.activitypub import importer
+    world["actors"]["https://pleroma.example/users/user3"] = _actor_doc(3, "pleroma.example")
+    world["actors"]["https://mastodon.example/users/user4"] = _actor_doc(4)
+    asked = []
+
+    async def webfinger(handle):
+        asked.append(handle)
+        if handle == "user4@mastodon.example":
+            return "https://mastodon.example/users/user4"
+        raise remote.FetchError("unknown")
+    monkeypatch.setattr(remote, "webfinger", webfinger)
+    pleroma_style = {"id": "3", "acct": "user3", "fqn": "user3@pleroma.example", "username": "user3",
+                     "url": "https://pleroma.example/users/user3"}
+    profile_only = {"id": "4", "acct": "user4@mastodon.example", "username": "user4",
+                    "url": "https://mastodon.example/@user4"}
+    s = world["Session"]()
+    people = run(importer.puppets_for(s, [pleroma_style, profile_only], "https://pleroma.example"))
+    assert sorted(p["acct"] for p in people) == ["user3@pleroma.example", "user4@mastodon.example"], people
+    assert "user3@pleroma.example" not in asked, "an account whose url IS its actor needs no WebFinger"
+
+
 # ============================================================================ 11. out of the box, and the blocklist
 
 def test_everything_is_on_out_of_the_box(world):
@@ -3380,3 +3408,25 @@ def test_nodeinfo_names_its_schema_and_documents_vary_on_accept(client):
     assert 'profile="http://nodeinfo.diaspora.software/ns/schema/2.1#"' in r.headers["content-type"]
     a = client.get("/ap/users/alice", headers={"Accept": "application/activity+json"})
     assert "accept" in a.headers.get("vary", "").lower()
+
+
+def test_a_slow_import_keeps_what_resolved_inside_its_budget(world, monkeypatch):
+    """Cloudflare ends a request at 100s. An account whose server never answers must not hold the
+    whole import past that: the ones that resolved are kept, the slow one is left out."""
+    from app.services.activitypub import importer
+    world["actors"]["https://mastodon.example/users/user1"] = _actor_doc(1)
+    real = remote.actor
+
+    async def slow_or_real(uri, **kw):
+        if "slow.example" in uri:
+            await asyncio.sleep(30)
+        return await real(uri, **kw)
+    monkeypatch.setattr(remote, "actor", slow_or_real)
+    monkeypatch.setattr(importer, "IMPORT_BUDGET_S", 0.5)
+    s = world["Session"]()
+    import time as _t
+    t = _t.monotonic()
+    people = run(importer.puppets_for(s, [_pleroma_account(1), {"id": "2", "uri": "https://slow.example/users/x",
+                                                               "acct": "x@slow.example"}], "https://pleroma.example"))
+    assert _t.monotonic() - t < 5, "the import waited on a server that never answers"
+    assert [p["acct"] for p in people] == ["user1@mastodon.example"], people

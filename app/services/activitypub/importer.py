@@ -124,6 +124,9 @@ async def _pages(base: str, account_id: str, token: str | None) -> list[dict]:
     return out[:MAX_ACCOUNTS]
 
 
+IMPORT_BUDGET_S = 80    # under Cloudflare's 100s request limit, with room for the relay write after
+
+
 async def puppets_for(db, accounts: list, instance_url: str) -> list[dict]:
     """[{pubkey, acct}] for each account -- skipping our own users and blocked instances.
 
@@ -138,22 +141,67 @@ async def puppets_for(db, accounts: list, instance_url: str) -> list[dict]:
     from app.services.activitypub import convert, remote
     from app.services.fedi_bridge_identity import ensure_puppet
     port = settings_store._port()
-    uris = []
-    for a in accounts:
-        uri = str(a.get("uri") or "").strip() if isinstance(a, dict) else ""
-        host = urlparse(uri).hostname or ""
-        if uri.startswith("https://") and host and not config.is_own_host(host) \
-                and not config.host_blocked(host) and uri not in uris:
-            uris.append(uri)
-    slots = asyncio.Semaphore(8)
+    home = urlparse(instance_url or "").hostname or ""
 
-    async def resolve(uri):
+    def usable(url):
+        host = urlparse(url).hostname or ""
+        return url.startswith("https://") and host and not config.is_own_host(host) and not config.host_blocked(host)
+
+    def addresses(a):
+        """Where this account's actor may be asked for, best first. Mastodon sends `uri` (the actor
+        id). PLEROMA AND AKKOMA SEND NO `uri` AT ALL -- their actor id is in `url` -- and reading `uri`
+        alone dropped every account from such a server before a single request was made ("0 of 161
+        there", importing from shitpost.cloud). On Mastodon `url` is the HTML profile, which
+        remote.actor rightly refuses (the document is not the actor asked for), so the last resort is
+        the account's own WebFinger. Every address is still only an address: the identity always
+        comes from the document its own server returns."""
+        if not isinstance(a, dict):
+            return []
+        out = []
+        for key in ("uri", "url"):
+            v = str(a.get(key) or "").strip()
+            if usable(v) and v not in out:
+                out.append(v)
+        acct = str(a.get("fqn") or a.get("acct") or "").strip().lstrip("@")
+        if acct and "@" not in acct and home:
+            acct = f"{acct}@{home}"                     # a local account's acct carries no host
+        host = acct.partition("@")[2]
+        if acct.count("@") == 1 and host and not config.is_own_host(host) and not config.host_blocked(host):
+            out.append("acct:" + acct)
+        return out
+    wanted, keys = [], set()
+    for a in accounts:
+        adr = addresses(a)
+        if adr and adr[0] not in keys:
+            keys.add(adr[0])
+            wanted.append(adr)
+    slots = asyncio.Semaphore(16)
+
+    async def resolve(adr):
         async with slots:
-            try:
-                return await asyncio.wait_for(remote.actor(uri), timeout=20)
-            except Exception:
-                return None
-    docs = await asyncio.gather(*(resolve(u) for u in uris))
+            for where in adr:
+                try:
+                    uri = await asyncio.wait_for(remote.webfinger(where[5:]), timeout=15) \
+                        if where.startswith("acct:") else where
+                    if not usable(uri):
+                        continue
+                    return await asyncio.wait_for(remote.actor(uri), timeout=20)
+                except Exception:
+                    continue
+            return None
+    # ONE BUDGET FOR THE WHOLE LIST. poster.place sits behind Cloudflare, which ends any request at
+    # 100s (a 524 with nothing imported), and resolving a real 70-account list took 66s at 8 at a
+    # time. Whatever resolved inside the budget is imported; the rest is simply not in this answer
+    # (the page says "N of M there"), and running the import again picks them up.
+    tasks = [asyncio.ensure_future(resolve(a)) for a in wanted]
+    if tasks:
+        await asyncio.wait(tasks, timeout=IMPORT_BUDGET_S)
+    docs = []
+    for t in tasks:
+        if t.done() and not t.cancelled() and t.exception() is None:
+            docs.append(t.result())
+        else:
+            t.cancel()
     out, seen = [], set()
     for doc in docs:
         if not doc:
