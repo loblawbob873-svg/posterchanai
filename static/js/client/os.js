@@ -2561,6 +2561,18 @@
     const all=[...root.querySelectorAll('textarea,[contenteditable="true"],[contenteditable=""]')].filter(ok);
     return all.length?all[all.length-1]:null;
   }
+  /* The ONE command in an answer, for "Type in terminal": the first fenced block, else the first
+   * `inline` code, minus a leading "$ ". Nothing when that is several lines, long, or carries a
+   * control character -- a multi-line script is Copy's job, never a keystroke stream. */
+  function _aiCommand(answer){
+    const a=String(answer||''), fence=/```[\w+-]*\n([\s\S]*?)```/.exec(a);
+    let cmd=fence?fence[1]:null;
+    if(cmd==null){ const m=/`([^`\n]{2,400})`/.exec(a); cmd=m?m[1]:null; }
+    if(cmd==null) return '';
+    cmd=cmd.replace(/^\s*\$\s+/,'').trim();
+    if(!cmd || cmd.length>400 || /[\x00-\x1f\x7f]/.test(cmd)) return '';
+    return cmd;
+  }
   const _aiBusy=new WeakSet();
   /* ONE question at a time per panel; the answer comes with the three things the person may do with
    * it -- Copy, Save to Notes, Insert into this window's box -- each a click, none automatic. Insert
@@ -2585,10 +2597,13 @@
     if(w.aiPanel!==panel) return;                       // closed while it was thinking
     if(error){ box.className='osw-ai-answer error'; box.innerHTML=`<p>${enc(error)}</p>`; return; }
     box.className='osw-ai-answer';
+    const isTerm=/terminal|console|shell/i.test(((contexts[0]||{}).view||'')+' '+((contexts[0]||{}).title||''));
+    const command=isTerm && window.PCTerm && window.PCTerm.typeIn ? _aiCommand(answer) : '';
     box.innerHTML=`<div class="osw-ai-text">${enc(answer)}</div><div class="osw-ai-do">
       <button class="btn btn-ghost small" data-ai-copy>Copy</button>
       <button class="btn btn-ghost small" data-ai-note>Save to Notes</button>
       ${composer?'<button class="btn btn-ghost small" data-ai-insert>Insert</button>':''}
+      ${command?'<button class="btn btn-ghost small" data-ai-type>Type in terminal</button>':''}
       <button class="btn btn-ghost small" data-ai-more>Continue in AI</button></div>`;
     box.querySelector('[data-ai-copy]').onclick=()=>{ try{ PC().copyValue(answer); }catch(_){ } };
     box.querySelector('[data-ai-more]').onclick=handoff;
@@ -2601,6 +2616,12 @@
                                             body:answer,tags:['window-ai']});
         b.textContent='✓ In Notes'; PC().toast(r&&r.queued?'Saved to Notes — will sync when you are back online':'Saved to Notes');
       }catch(err){ b.disabled=false; PC().toast('Could not save to Notes'); }
+    };
+    const typ=box.querySelector('[data-ai-type]');
+    if(typ) typ.onclick=()=>{
+      if(!window.PCTerm || !window.PCTerm.typeIn(command)){ PC().toast('The terminal is not connected'); return; }
+      closeWindowAI(w);
+      PC().toast('Typed at the prompt — press Enter to run it');
     };
     const ins=box.querySelector('[data-ai-insert]');
     if(ins) ins.onclick=async()=>{

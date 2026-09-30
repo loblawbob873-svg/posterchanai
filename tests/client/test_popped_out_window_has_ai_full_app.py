@@ -150,3 +150,36 @@ def test_a_refusal_is_said_in_the_panel():
         assert "not enabled" in await b.js("document.querySelector('.osw-ai-answer').textContent")
         assert await b.js("__asked.length") == 0
     asyncio.run(desktop.with_browser("online", "?pcwin=global", check))
+
+
+@pytest.mark.skipif(not Path("/opt/google/chrome/chrome").exists(), reason="Chrome required")
+def test_a_terminal_window_offers_to_type_the_command_and_never_runs_it():
+    """Only a terminal window offers it, only with one command in the answer, and it closes the
+    panel having TYPED (the terminal's typeIn), never run, that command."""
+    async def check(b):
+        await desktop.login(b)
+        await b.until("!!(window.PCOSWin && PCOSWin.isWindow())")
+        await b.js("document.getElementById('pc-oswin-chrome') || PCOSWin.adopt({view:'global', label:'Social'})")
+        await b.until("!!document.querySelector('#pc-oswin-chrome [data-action=\"ai\"]')")
+        await b.js(STUB)
+        await b.js("window.__typed=[]; window.PCTerm=Object.assign(window.PCTerm||{}, {typeIn:t=>{ __typed.push(t); return true; }});"
+                   "__reply={status:200, body:{ok:true, answer:'Install the header:\\n```bash\\nsudo apt install libfoo-dev\\n```'}};")
+        # A Social window: the same answer offers no terminal action.
+        await b.js("document.querySelector('#pc-oswin-chrome [data-action=\"ai\"]').click()")
+        await b.until("!!document.querySelector('.osw-ai-panel')")
+        await b.js("document.querySelector('.osw-ai-panel [data-ai-action=\"0\"]').click()")
+        await b.until("!!document.querySelector('.osw-ai-text')")
+        assert await b.js("!document.querySelector('[data-ai-type]')"), "only a terminal window types commands"
+        await b.js("document.querySelector('[data-ai-dismiss]').click()")
+        # The same page as a Terminal window.
+        await b.js("PCOSWin.viewOf=()=>'terminal'")
+        await b.js("document.querySelector('#pc-oswin-chrome [data-action=\"ai\"]').click()")
+        await b.until("!!document.querySelector('.osw-ai-panel')")
+        assert "Explain output" in await b.js("document.querySelector('.osw-ai-actions').textContent")
+        await b.js("document.querySelector('.osw-ai-panel [data-ai-action=\"0\"]').click()")
+        await b.until("!!document.querySelector('[data-ai-type]')")
+        await b.js("document.querySelector('[data-ai-type]').click()")
+        await b.until("__typed.length===1")
+        assert await b.js("__typed[0]") == "sudo apt install libfoo-dev"
+        assert await b.js("!document.querySelector('.osw-ai-panel')")
+    asyncio.run(desktop.with_browser("online", "?pcwin=global", check))

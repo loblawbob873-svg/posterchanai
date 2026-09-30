@@ -1712,7 +1712,22 @@
       return true;
     }
 
-    window.PCTerm = { render, unmount, isOpen: () => !!mounted, connected: () => connected,
+    /* TYPE A COMMAND AT THE PROMPT, NEVER RUN IT (the window ✨ panel's "Type in terminal"). One
+     * line of printable text only: a newline or carriage return IS Enter, and ESC and the other
+     * control characters can drive the shell or the line editor, so anything carrying one is refused
+     * whole rather than cleaned -- a command that had to be edited to be safe is not the command the
+     * person read. xterm's paste() then applies bracketed paste when the shell asked for it. */
+    function typeable(text){
+      const t = String(text == null ? '' : text);
+      return !!t && t.length <= 400 && !/[\x00-\x1f\x7f]/.test(t);
+    }
+    function typeIn(text){
+      if(!term || !mounted || !connected || !typeable(text)) return false;
+      try{ term.paste(String(text)); }catch(_){ return false; }
+      try{ term.focus(); }catch(_){ }
+      return true;
+    }
+    window.PCTerm = { render, unmount, isOpen: () => !!mounted, connected: () => connected, typeIn, _typeable: typeable,
                       openLocal, sessionId: () => sid, adoptSession, handoffState, acceptHandoff,
                       _barUp: () => { _barDrag = false; } };
   }
