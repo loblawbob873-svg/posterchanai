@@ -188,7 +188,11 @@ app.whenReady().then(async()=>{
             env['DISPLAY']=':'+display
             env['GDK_BACKEND']='x11'
             native=_native_popen([str(electron),'--no-sandbox','--disable-gpu','--ozone-platform=x11',str(entry)],env=env,stdout=subprocess.PIPE,stderr=subprocess.PIPE,text=True)
-            try:stdout,stderr=native.communicate(timeout=25)
+            # THE SAME LESSON AS THE COMPOSITOR ABOVE, for Electron itself: alone this run finishes in
+            # ~1s; inside the full gate it printed ELECTRON_VERSION (it had started) and then ran past a
+            # 25s limit with ~100 browser checks beside it -- deploy 16 aborted on it, and it passed in
+            # 1.23s alone straight after. 90s reports a hang, not the machine's load.
+            try:stdout,stderr=native.communicate(timeout=90)
             except subprocess.TimeoutExpired as error:
                 raise AssertionError((error.stdout or b'').decode(errors='replace')+'\n'+(error.stderr or b'').decode(errors='replace')) from error
             (tmp_path/'electron.log').write_text(stdout+'\n'+stderr)
