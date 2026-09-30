@@ -851,11 +851,18 @@ function installContextMenu(created) {
       }
       items.push({ type: 'separator' });
     }
+    /* BOUND TO THIS WINDOW, NOT ROLES. A `role` item has no handler of its own: Electron applies it
+       to `BrowserWindow.getFocusedWindow()` at the moment of the click. On Wayland the menu is its own
+       popup surface, and on PosterChanOS an app window is often not the one Electron counts as
+       focused — so Cut/Copy/Paste/Select All went to nothing, silently ("none of the buttons work",
+       "I selected Select and can't select"). Electron ignores `click` on an item that has a role, so
+       the roles are gone and each item names the webContents the menu was opened on. */
     const canEdit = params.isEditable;
-    items.push({ role: 'cut', enabled: canEdit && params.editFlags.canCut });
-    items.push({ role: 'copy', enabled: params.editFlags.canCopy });
-    items.push({ role: 'paste', enabled: canEdit && params.editFlags.canPaste });
-    if (canEdit) items.push({ role: 'selectAll' });
+    const wc = created.webContents;
+    items.push({ label: 'Cut', accelerator: 'CmdOrCtrl+X', enabled: canEdit && params.editFlags.canCut, click: () => wc.cut() });
+    items.push({ label: 'Copy', accelerator: 'CmdOrCtrl+C', enabled: params.editFlags.canCopy, click: () => wc.copy() });
+    items.push({ label: 'Paste', accelerator: 'CmdOrCtrl+V', enabled: canEdit && params.editFlags.canPaste, click: () => wc.paste() });
+    if (canEdit) items.push({ label: 'Select All', accelerator: 'CmdOrCtrl+A', click: () => wc.selectAll() });
     /* NEVER POP AN ALL-DEAD MENU. On Wayland this is a real window appearing on screen, so a menu
        in which nothing can be clicked is indistinguishable from a bug — which is how the missing
        image case was reported. If every item is disabled, show nothing at all. */
