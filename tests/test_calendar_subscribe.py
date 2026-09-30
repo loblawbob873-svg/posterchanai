@@ -204,7 +204,7 @@ def test_a_subscribed_calendar_refuses_to_be_edited():
     """A mirror does not merely LOSE an edit on the next refresh — it saves it first, so it looks like
     it worked, and the event disappears hours later with nothing to explain it."""
     js = (ROOT / "static" / "js" / "client" / "calendar.js").read_text(encoding="utf-8")
-    i = js.index("function editEvent(ev)")
+    i = js.index("function editEvent(ev")
     body = js[i:i + 1400]
     assert "subOf(sc)" in body, "the editor opens on a calendar that follows a feed"
     assert "return;" in body[body.index("subOf(sc)"):]

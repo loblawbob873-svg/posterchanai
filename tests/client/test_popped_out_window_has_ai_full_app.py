@@ -105,7 +105,7 @@ def test_a_suggestion_is_answered_in_the_panel_with_actions_the_person_approves(
         assert got["req"]["action"] == "window" and got["req"]["windows"][0]["kind"] == "PosterChan app", got
         assert got["req"]["instruction"], got
         assert got["fits"], got
-        assert got["btns"] == ["Copy", "Save to Notes", "Insert", "Continue in AI"], got
+        assert got["btns"] == ["Copy", "Save to Notes", "Insert", "Add to Calendar", "Continue in AI"], got
         assert await b.js("__PC.VIEW") == view0, "asking repainted the window"
         assert await b.js("document.getElementById('t-box').value") == "", "nothing is put anywhere unasked"
 
@@ -182,4 +182,52 @@ def test_a_terminal_window_offers_to_type_the_command_and_never_runs_it():
         await b.until("__typed.length===1")
         assert await b.js("__typed[0]") == "sudo apt install libfoo-dev"
         assert await b.js("!document.querySelector('.osw-ai-panel')")
+    asyncio.run(desktop.with_browser("online", "?pcwin=global", check))
+
+
+CAL_STUB = r"""(()=>{
+const inner=window.fetch;
+window.__calReq=[]; window.__calWrites=[];
+window.fetch=(url,opts)=>{ const u=String(url);
+  if(u.includes('/api/calendar/') && opts && opts.method && opts.method!=='GET') __calWrites.push(opts.method+' '+u);
+  if(u.includes('/api/chat-assist') && opts && String(opts.body).includes('window_event')){
+    __calReq.push(JSON.parse(opts.body));
+    return Promise.resolve(new Response(JSON.stringify({ok:true,event:{title:'Dentist',date:'2026-10-02',start:'14:30',end:'15:00',allDay:false,location:'Main St',notes:''}}),{status:200,headers:{'Content-Type':'application/json'}}));
+  }
+  const j=o=>Promise.resolve(new Response(JSON.stringify(o),{status:200,headers:{'Content-Type':'application/json'}}));
+  if(u.includes('/api/calendar/config')) return j({enabled:true});
+  if(u.includes('/api/calendar/calendars')) return j({calendars:[{id:'personal',displayname:'Personal'}]});
+  if(u.includes('/api/calendar/items')) return j({items:[]});
+  return inner(url,opts); };
+})()"""
+
+
+@pytest.mark.skipif(not Path("/opt/google/chrome/chrome").exists(), reason="Chrome required")
+@pytest.mark.parametrize("width,height", [(1100, 760), (420, 700)])
+def test_add_to_calendar_opens_the_calendars_own_form_filled_in_and_saves_nothing(width, height):
+    async def check(b):
+        await _open(b, width, height)
+        await b.js(CAL_STUB)
+        await b.js("document.querySelector('.osw-ai-panel [data-ai-action=\"0\"]').click()")
+        await b.until("!!document.querySelector('[data-ai-cal]')")
+        await b.js("document.querySelector('[data-ai-cal]').click()")
+        await b.until("!!document.getElementById('cev-title')")
+        form = await b.js("""(()=>{const v=id=>document.getElementById(id).value;
+          const r=document.getElementById('cev-title').closest('.modal, .modal-box, [role=dialog]') || document.getElementById('cev-title');
+          const b=r.getBoundingClientRect();
+          return {title:v('cev-title'),date:v('cev-date'),start:v('cev-start'),end:v('cev-end'),loc:v('cev-loc'),
+                  cal:v('cev-cal'), allday:document.getElementById('cev-allday').checked,
+                  fits:b.left>=0&&b.right<=innerWidth+1, del:!!document.getElementById('cev-del')}})()""")
+        assert form == {"title": "Dentist", "date": "2026-10-02", "start": "14:30", "end": "15:00", "loc": "Main St",
+                        "cal": "personal", "allday": False, "fits": True, "del": False}, form
+        req = await b.js("__calReq[0]")
+        assert req["today"] and req["answer"].startswith("- First point") and req["windows"][0]["title"], req
+        assert await b.js("!document.querySelector('.osw-ai-panel')")
+        await asyncio.sleep(.4)
+        assert await b.js("__calWrites") == [], "nothing is saved until the person presses Save"
+        # Save in the form is the person's approval: exactly one write, of this event.
+        await b.js("document.getElementById('cev-title').value='Dentist cleaning'")
+        await b.js("[...document.querySelectorAll('button')].find(x=>/^\\s*Save\\s*$/.test(x.textContent)).click()")
+        await b.until("__calWrites.length>=1")
+        assert await b.js("__calWrites.length") == 1 and "/api/calendar/items" in await b.js("__calWrites[0]")
     asyncio.run(desktop.with_browser("online", "?pcwin=global", check))

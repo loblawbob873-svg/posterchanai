@@ -174,3 +174,36 @@ def test_window_needs_a_question_and_the_gate_still_applies():
     chat = _Chat(["should not be called"])
     code, _, _ = _run({"action": "window", "windows": [{"title": "Notes"}], "instruction": "Summarize"}, chat, allowed=False)
     assert code == 403 and chat.calls == []
+
+
+# ---- "Add to Calendar": the model proposes, the server validates -------------------------------------
+
+@pytest.mark.parametrize("reply,want", [
+    ('{"title":"Dentist","date":"2026-10-02","start":"14:30","end":"15:00","allDay":false,"location":"Main St","notes":"bring card"}',
+     {"title": "Dentist", "date": "2026-10-02", "start": "14:30", "end": "15:00", "allDay": False, "location": "Main St", "notes": "bring card"}),
+    ('Sure! Here it is: {"title":"Rent due","date":"2026-10-01","start":"","end":""} hope that helps',
+     {"title": "Rent due", "date": "2026-10-01", "start": "", "end": "", "allDay": True, "location": "", "notes": ""}),
+    ('{"title":"Call","date":"2026-10-02","start":"25:00","end":"26:00"}',          # an impossible time is dropped
+     {"title": "Call", "date": "2026-10-02", "start": "", "end": "", "allDay": True, "location": "", "notes": ""}),
+    ('{"title":"Call","date":"2026-10-02","start":"15:00","end":"14:00"}',          # an end before the start is dropped
+     {"title": "Call", "date": "2026-10-02", "start": "15:00", "end": "", "allDay": False, "location": "", "notes": ""}),
+    ('{"none": true}', None),
+    ('{"title":"Lunch","date":"next friday"}', None),                                # not a date
+    ('{"title":"","date":"2026-10-02"}', None),                                      # no title
+    ('I could not find anything.', None),
+])
+def test_an_extracted_event_is_validated_field_by_field(reply, want):
+    assert svc.parse_event(reply) == want
+
+
+def test_window_event_passes_today_and_the_answer_and_says_when_there_is_none():
+    chat = _Chat(['{"title":"Dentist","date":"2026-10-01","start":"09:00","end":"09:30"}'])
+    code, data, _ = _run({"action": "window_event", "today": "2026-09-30",
+                          "windows": [{"title": "Mail", "text": "See you tomorrow at 9 for your cleaning"}],
+                          "answer": "- Dentist tomorrow at 9"}, chat)
+    assert code == 200 and data["event"]["date"] == "2026-10-01" and data["event"]["start"] == "09:00"
+    user = chat.calls[0][1]["content"]
+    assert user.startswith("Today is 2026-09-30.") and "cleaning" in user and "Dentist tomorrow" in user
+    assert "never invent a time or a place" in chat.calls[0][0]["content"]
+    code, data, _ = _run({"action": "window_event", "windows": [{"title": "Mail", "text": "hello"}]}, _Chat(['{"none":true}']))
+    assert code == 422 and "No event" in data["error"]

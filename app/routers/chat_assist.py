@@ -40,6 +40,8 @@ class AssistReq(BaseModel):
     probe: bool = False           # "would you answer me?" -- no model call
     windows: list[WindowCtx] = [] # action=window: what the ✨ panel collected
     instruction: str = ""         # action=window: what the person asked
+    answer: str = ""              # action=window_event: the answer an event is looked for in, too
+    today: str = ""               # action=window_event: the person's local date, for "tomorrow"
 
 
 @router.post("")
@@ -65,6 +67,9 @@ async def chat_assist(req: AssistReq, db: Session = Depends(get_db),
             return {"ok": True, "content": choices[0], "choices": choices}
         if action == "summarize":
             return {"ok": True, "summary": await svc.summarize(db, user, items, medium)}
+        if action == "window_event":
+            return {"ok": True, "event": await svc.window_event(
+                db, user, [w.model_dump() for w in req.windows], req.answer, req.today)}
         if action == "window":
             return {"ok": True, "answer": await svc.ask_window(
                 db, user, [w.model_dump() for w in req.windows], req.instruction)}

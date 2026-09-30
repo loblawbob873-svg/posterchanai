@@ -26,7 +26,7 @@ from app.services.texts_ai_service import TextsAiError as AssistError
 logger = logging.getLogger(__name__)
 
 MEDIA = {"telegram": "Telegram chat message", "dm": "direct message (DM)"}
-ACTIONS = ("reply", "summarize", "links", "window")
+ACTIONS = ("reply", "summarize", "links", "window", "window_event")
 
 # A summary may read further back than a reply needs, but a whole year of a group chat never goes to
 # the model: the newest SUMMARY_MSGS messages, each clipped, and a total ceiling on top.
@@ -203,3 +203,65 @@ async def ask_window(db, user, windows, instruction: str) -> str:
     logger.info("[chat-assist] window answer: %d windows, %d chars in -> %d chars",
                 len(context), sum(len(c[3]) for c in context), len(out))
     return out[:6000]
+
+
+# ---- "Add to Calendar" from the window ✨ answer -------------------------------------------------------
+# The model only PROPOSES: one event, as JSON, which the client opens in the Calendar's own New-event
+# form for the person to correct and save (or cancel). Everything is validated here, so a malformed
+# or invented field arrives as an empty one rather than as a wrong date on somebody's calendar.
+_DATE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
+_TIME = re.compile(r"^([01]\d|2[0-3]):[0-5]\d$")
+
+
+def build_event_messages(context: list, answer: str, today: str) -> list:
+    if not context and not answer:
+        raise AssistError(400, "There is nothing to find an event in.")
+    today = today if _DATE.match(str(today or "")) else ""
+    parts = [f"Window \"{t}\" ({k}), {lab}:\n<<<WINDOW\n{x or '(no text)'}\nWINDOW" for t, k, lab, x in context]
+    if answer:
+        parts.append("An earlier AI answer about it:\n<<<ANSWER\n" + str(answer)[:4000] + "\nANSWER")
+    return [
+        {"role": "system", "content": (
+            "Find the ONE calendar event (an appointment, meeting, deadline, reservation) described in the "
+            "text. Reply with ONLY a JSON object: {\"title\": short name, \"date\": \"YYYY-MM-DD\", "
+            "\"start\": \"HH:MM\" 24-hour or \"\", \"end\": \"HH:MM\" or \"\", \"allDay\": true/false, "
+            "\"location\": \"\" or the place, \"notes\": one short line}. Resolve relative dates "
+            "(\"tomorrow\", \"next Friday\") against today's date. Use only what the text says -- never "
+            "invent a time or a place. If there is no event with a date, reply {\"none\": true}.")},
+        {"role": "user", "content": (f"Today is {today}.\n\n" if today else "") + "\n\n".join(parts)},
+    ]
+
+
+def parse_event(text: str):
+    """The model's reply -> a clean event dict, or None when it found none (or said nothing usable)."""
+    import json
+    m = re.search(r"\{.*\}", str(text or ""), re.S)
+    if not m:
+        return None
+    try:
+        raw = json.loads(m.group(0))
+    except Exception:
+        return None
+    if not isinstance(raw, dict) or raw.get("none"):
+        return None
+    clean = lambda v, n: re.sub(r"\s+", " ", str(v or "")).strip()[:n]
+    date = clean(raw.get("date"), 10)
+    title = clean(raw.get("title"), 120)
+    if not _DATE.match(date) or not title:
+        return None
+    start, end = clean(raw.get("start"), 5), clean(raw.get("end"), 5)
+    start = start if _TIME.match(start) else ""
+    end = end if (start and _TIME.match(end) and end > start) else ""
+    return {"title": title, "date": date, "start": start, "end": end,
+            "allDay": not start, "location": clean(raw.get("location"), 200),
+            "notes": clean(raw.get("notes"), 500)}
+
+
+async def window_event(db, user, windows, answer: str, today: str):
+    context = window_context(windows)
+    out = await _chat(db, user, build_event_messages(context, answer, today), 0.1)
+    ev = parse_event(out)
+    if ev is None:
+        raise AssistError(422, "No event with a date was found there.")
+    logger.info("[chat-assist] window event: %d windows -> event found", len(context))
+    return ev

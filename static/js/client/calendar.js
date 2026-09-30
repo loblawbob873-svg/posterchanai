@@ -831,9 +831,9 @@
           };
         });
     }
-    function editEvent(ev){
+    function editEvent(ev, draft){
       const isNew = !ev;
-      const key = (ev && ev.key) || S.sel || todayKey();
+      const key = (ev && ev.key) || (draft && draft.date) || S.sel || todayKey();
       const cal = (ev && ev.cal) || newEventCalendar();
       const mine = owner();
       if(!cal){ makeCalendar(); return; }          // no calendar yet — make one first
@@ -848,7 +848,8 @@
           if(other) S.cal = other.id;
           return;
         } }
-      const e = ev || { title:'', date:key, start:'09:00', end:'10:00', allDay:false, location:'', notes:'' };
+      const e = ev || Object.assign({ title:'', date:key, start:'09:00', end:'10:00', allDay:false, location:'', notes:'' },
+                                    draft || {});
       const dateVal = e.key || e.date || key;
       const original = !isNew && (S.items[cal] || []).find(r => r.uid===e.uid);
 
@@ -1288,7 +1289,18 @@
       if(age >= (maxAgeH == null ? 6 : maxAgeH)) await load();   // load() pushes again at its end
     }
 
-    window.PCCalendar = { render, reload: load, widgetTick };
+    /* A NEW EVENT, FILLED IN BY SOMEBODY ELSE (the window ✨ panel's "Add to Calendar"), opened in the
+     * ordinary New-event form: nothing is saved until the person presses Save there. Loads the
+     * calendars first when this session has not -- the form needs them to offer somewhere to save. */
+    async function draft(d){
+      if(!owner()){ toast('Sign in to use the calendar'); return false; }
+      if(!S.ready || S.owner !== owner()) await load();
+      if(S.enabled === false){ toast('The calendar is not turned on on this server'); return false; }
+      editEvent(null, d || {});
+      return true;
+    }
+
+    window.PCCalendar = { render, reload: load, widgetTick, draft };
   }
   init();
 })();

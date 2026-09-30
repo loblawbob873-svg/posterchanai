@@ -2604,6 +2604,7 @@
       <button class="btn btn-ghost small" data-ai-note>Save to Notes</button>
       ${composer?'<button class="btn btn-ghost small" data-ai-insert>Insert</button>':''}
       ${command?'<button class="btn btn-ghost small" data-ai-type>Type in terminal</button>':''}
+      ${window.PCCalendar && window.PCCalendar.draft?'<button class="btn btn-ghost small" data-ai-cal>Add to Calendar</button>':''}
       <button class="btn btn-ghost small" data-ai-more>Continue in AI</button></div>`;
     box.querySelector('[data-ai-copy]').onclick=()=>{ try{ PC().copyValue(answer); }catch(_){ } };
     box.querySelector('[data-ai-more]').onclick=handoff;
@@ -2616,6 +2617,26 @@
                                             body:answer,tags:['window-ai']});
         b.textContent='✓ In Notes'; PC().toast(r&&r.queued?'Saved to Notes — will sync when you are back online':'Saved to Notes');
       }catch(err){ b.disabled=false; PC().toast('Could not save to Notes'); }
+    };
+    const cal=box.querySelector('[data-ai-cal]');
+    if(cal) cal.onclick=async()=>{
+      if(cal.disabled) return;
+      cal.disabled=true; const was=cal.textContent; cal.textContent='Looking for an event…';
+      let ev=null, why='';
+      try{
+        const P=PC(), d=new Date(), p2=n=>String(n).padStart(2,'0');
+        const today=d.getFullYear()+'-'+p2(d.getMonth()+1)+'-'+p2(d.getDate());
+        const opts={method:'POST',headers:{'Content-Type':'application/json'},
+                    body:JSON.stringify({action:'window_event',windows:contexts,answer,today})};
+        const r=await (P.authFetch?P.authFetch('/api/chat-assist',opts):fetch('/api/chat-assist',{...opts,credentials:'include'}));
+        let j={}; try{ j=await r.json()||{}; }catch(_){ }
+        if(r.ok && j.ok && j.event) ev=j.event; else why=j.error||'Could not find an event';
+      }catch(_){ why='Could not reach the AI'; }
+      cal.disabled=false; cal.textContent=was;
+      if(!ev){ PC().toast(why); return; }
+      if(w.aiPanel===panel) closeWindowAI(w);
+      // The Calendar's own New-event form, filled in: the person corrects it and saves, or cancels.
+      try{ await window.PCCalendar.draft(ev); }catch(_){ PC().toast('Could not open the calendar'); }
     };
     const typ=box.querySelector('[data-ai-type]');
     if(typ) typ.onclick=()=>{
