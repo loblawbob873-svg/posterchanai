@@ -92,14 +92,43 @@ window.PCAiFactory = function(dep){
   function _aiRememberConv(id){ try{ ClientSettings.set(_AI_CONV_KEY, id||0); }catch(_){ } }
   function _aiLastConv(){ try{ return +(ClientSettings.get(_AI_CONV_KEY,0)||0)||0; }catch(_){ return 0; } }
   let _aiWindowDraft='';
+  /* THE REQUEST TRAVELS BETWEEN WINDOWS. On PosterChanOS AI Chat is a window of its OWN -- a
+   * separate page -- and a window's ✨ hands its request to the DESKTOP's page, which opened AI Chat
+   * and then waited for `#ai-input` in ITSELF, where it never is. The request was dropped with
+   * nothing said: "the AI Chat window opens but nothing happens". Every PosterChan window shares one
+   * origin, so the draft goes through shared storage: AI Chat takes it as it draws, or, already open,
+   * when the storage event arrives. One-shot and short-lived, so a stale request never reappears.
+   * Still only the COMPOSER: the person reviews and sends it themselves. */
+  const _AI_HANDOFF_KEY='pc_ai_window_draft', _AI_HANDOFF_MS=60000;
+  /* HELD IN MEMORY TOO, because a window draws AI Chat more than once: once at boot (before the
+     session is back) and again once it is. Taken into the first composer alone, the request was
+     wiped by the second -- measured, the handoff consumed at 281ms and the chat box empty after. A
+     later draw refills an EMPTY composer until the request is sent, typed over or a minute old. */
+  let _aiHandoff=null;
+  function _takeWindowDraft(ta){
+    if(!ta) return false;
+    let d=null; try{ d=JSON.parse(localStorage.getItem(_AI_HANDOFF_KEY)||'null'); }catch(_){ d=null; }
+    if(d){ try{ localStorage.removeItem(_AI_HANDOFF_KEY); }catch(_){ } }
+    if(d && d.text && Date.now()-(Number(d.at)||0) < _AI_HANDOFF_MS) _aiHandoff={ text:String(d.text), at:Number(d.at)||Date.now() };
+    if(!_aiHandoff || !(Date.now()-_aiHandoff.at < _AI_HANDOFF_MS)){ _aiHandoff=null; return false; }
+    if(ta.value && ta.value!==_aiHandoff.text){ _aiHandoff=null; return false; }      // they typed their own
+    ta.value=_aiHandoff.text; ta.dispatchEvent(new Event('input'));
+    try{ ta.focus(); }catch(_){ }
+    ta.addEventListener('keydown', ()=>{ _aiHandoff=null; }, { once:true });          // theirs from here on
+    return true;
+  }
+  try{ window.addEventListener('storage', e=>{ if(e && e.key===_AI_HANDOFF_KEY && e.newValue){ const ta=$('#ai-input'); if(ta) _takeWindowDraft(ta); } }); }catch(_){ }
   function askWindowContext(ctx,instruction,opts){
     ctx=ctx||{}; instruction=String(instruction||'').trim(); if(!instruction)return false;
     const windows=Array.isArray(ctx.windows)&&ctx.windows.length?ctx.windows:[ctx];
     const blocks=windows.map((x,i)=>{const excerpt=String(x.selection||x.text||'').trim();return 'Window '+(i+1)+':\n- Title: '+String(x.title||'Window')+'\n- App: '+String(x.view||x.kind||'unknown')+
       (excerpt?'\n- '+(x.selection?'Selected content':'Visible content')+':\n'+excerpt:'\n- No page contents were shared; use only the app name and title.');});
     _aiWindowDraft=((opts&&opts.agent)?'node agent local ':'')+instruction+'\n\nWindow context (user explicitly shared):\n'+blocks.join('\n\n');
+    try{ localStorage.setItem(_AI_HANDOFF_KEY, JSON.stringify({text:_aiWindowDraft, at:Date.now()})); }catch(_){ }
     switchView('ai');
-    let tries=0; const place=()=>{const ta=$('#ai-input');if(ta){ta.value=_aiWindowDraft;_aiWindowDraft='';ta.dispatchEvent(new Event('input'));ta.focus();return;}if(++tries<30)setTimeout(place,50);};
+    // Same page (the web, a desktop with no separate windows): place it here, and take the handoff
+    // back so a later AI window does not fill itself with it too.
+    let tries=0; const place=()=>{const ta=$('#ai-input');if(ta){ if(!_takeWindowDraft(ta)){ ta.value=_aiWindowDraft; ta.dispatchEvent(new Event('input')); ta.focus(); } _aiWindowDraft='';return;}if(++tries<30)setTimeout(place,50);};
     setTimeout(place,0); return true;
   }
   function _cookie(name){ const m=document.cookie.match(new RegExp('(?:^|; )'+name+'=([^;]*)')); return m?decodeURIComponent(m[1]):''; }
@@ -413,6 +442,7 @@ window.PCAiFactory = function(dep){
     { const tb=$('#ai-tts'); if(tb) tb.onclick=aiToggleTTS; _aiTtsBtn(); }
     $('#ai-send').onclick=aiSend;
     const ta=$('#ai-input');
+    _takeWindowDraft(ta);                  // a ✨ request from another window, waiting for this one
     ta.addEventListener('keydown',e=>{ if(e.key==='Enter' && !e.shiftKey){ e.preventDefault(); aiSend(); } });
     // ↑/↓ walk back through what you have already sent, as a shell or any other chat box does. Re-running a
     // long `geni …` prompt with one word changed is the single most common thing to want here, and it was
@@ -2407,6 +2437,7 @@ window.PCAiFactory = function(dep){
     $$('.fx-act',bar).forEach(b=>{ const a=acts[+b.dataset.i]; b.onclick=()=>_aiMediaAction(a[1], a[2]); });   // wire directly (attach bar is outside the #ai-msgs delegation)
   }
   function aiSend(){
+    _aiHandoff=null;
     const ta=$('#ai-input'); if(!ta) return; const text=ta.value.trim();
     if(!text && !_ai.attach.length) return;
     // `help` used to answer with 109 commands as one 8,900-character wall of markdown, which reads as
