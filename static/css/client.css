@@ -11530,6 +11530,8 @@ html.pc-oswin .main:has(>#feed>.tg-app)>.topbar{display:none}
 .tg-body{white-space:normal;line-height:1.4}
 .tg-body a{color:var(--accent)}
 .tg-meta{display:flex;justify-content:flex-end;align-items:center;gap:4px;font-size:10px;color:var(--muted);margin-top:3px}
+.tg-tick{letter-spacing:-2px;font-size:11px;line-height:1;color:var(--muted)}
+.tg-tick.read{color:var(--accent);font-weight:700}
 .tg-msg{position:relative}
 .tg-reacts{display:flex;flex-wrap:wrap;gap:4px;margin-top:5px}
 .tg-react{display:inline-flex;align-items:center;gap:4px;min-height:28px;padding:1px 8px;border-radius:14px;cursor:pointer;

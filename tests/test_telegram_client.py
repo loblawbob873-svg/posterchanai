@@ -536,3 +536,86 @@ def test_the_router_has_react_and_search():
     from app.routers import telegram_client as R
     paths = {(r.path, tuple(sorted(r.methods or []))) for r in R.router.routes if hasattr(r, "methods")}
     assert ("/api/tgc/react", ("POST",)) in paths and ("/api/tgc/search", ("GET",)) in paths, paths
+
+
+# ---- read receipts: ✓ sent, ✓✓ read, and a read on the phone clears the count here ----------------------
+
+def _handler(world, name):
+    return next(h for h in world[3][-1].handlers if h.__name__ == name)
+
+
+def test_chats_say_how_far_each_side_has_read(world, monkeypatch):
+    """The ✓✓ line is Telegram's own `read_outbox_max_id`; the chat list must carry it, with the id of
+    the last message so the list can put a tick on YOUR last message."""
+    mgr, tgs, _, made = world
+    login(mgr, U(1), tgs[1])
+
+    class Raw:
+        read_outbox_max_id, read_inbox_max_id = 3, 2
+
+    async def dialogs(self, limit=100):
+        d = _Dialog(42, _User(42, "Alice"), 1, self.tg.chats[42][-1])
+        d.dialog = Raw()
+        yield d
+    monkeypatch.setattr(FakeClient, "iter_dialogs", dialogs)
+    (d,) = run(mgr.dialogs(None, U(1)))
+    assert d["read_out"] == 3 and d["read_in"] == 2 and d["last"]["id"] == 3, d
+
+
+def test_one_chat_reports_its_read_line_and_unknown_is_zero(world, monkeypatch):
+    mgr, tgs, _, made = world
+    login(mgr, U(1), tgs[1])
+    from telethon.tl.types import Dialog, PeerUser, PeerNotifySettings, InputPeerUser
+    from telethon.tl.types.messages import PeerDialogs
+
+    async def ent(self, x):
+        return InputPeerUser(user_id=int(x), access_hash=1)
+
+    async def call(self, req):
+        assert type(req).__name__ == "GetPeerDialogsRequest"
+        return PeerDialogs(dialogs=[Dialog(peer=PeerUser(42), top_message=3, read_inbox_max_id=3, read_outbox_max_id=2,
+                                           unread_count=0, unread_mentions_count=0, unread_reactions_count=0, unread_poll_votes_count=0,
+                                           notify_settings=PeerNotifySettings())],
+                           messages=[], chats=[], users=[], state=None)
+    monkeypatch.setattr(FakeClient, "get_input_entity", ent, raising=False)
+    monkeypatch.setattr(FakeClient, "__call__", call, raising=False)
+    assert run(mgr.read_out(None, U(1), 42)) == 2
+
+    async def broken(self, req):
+        raise RuntimeError("flood wait")
+    monkeypatch.setattr(FakeClient, "__call__", broken, raising=False)
+    assert run(mgr.read_out(None, U(1), 42)) == 0, "could not ask must draw one tick, never claim read"
+
+
+def test_read_updates_arrive_live(world):
+    """They read yours → an outbox event (✓✓). You read theirs ON THE PHONE → an inbox event carrying
+    Telegram's own still-unread count, so the badge here drops to it."""
+    mgr, tgs, _, _ = world
+    login(mgr, U(1), tgs[1])
+    q = mgr.subscribe(1)
+    h = _handler(world, "on_read")
+    from telethon.tl.types import (PeerUser, UpdateReadChannelInbox, UpdateReadChannelOutbox,
+                                   UpdateReadHistoryInbox, UpdateReadHistoryOutbox)
+    run(h(UpdateReadHistoryOutbox(peer=PeerUser(42), max_id=3, pts=1, pts_count=1)))
+    assert q.get_nowait() == {"type": "read", "chat_id": 42, "max_id": 3, "outbox": True}
+    run(h(UpdateReadHistoryInbox(peer=PeerUser(42), max_id=5, still_unread_count=0, pts=2, pts_count=1)))
+    assert q.get_nowait() == {"type": "read", "chat_id": 42, "max_id": 5, "outbox": False, "unread": 0}
+    run(h(UpdateReadChannelInbox(channel_id=777, max_id=9, still_unread_count=4, pts=3)))
+    assert q.get_nowait() == {"type": "read", "chat_id": -1000000000777, "max_id": 9, "outbox": False, "unread": 4}
+    run(h(UpdateReadChannelOutbox(channel_id=777, max_id=8)))
+    assert q.get_nowait()["outbox"] is True
+    # A forum topic's read carries the TOPIC's count, not the chat's -- it must not overwrite the badge.
+    run(h(UpdateReadHistoryInbox(peer=PeerUser(42), max_id=6, still_unread_count=0, pts=4, pts_count=1, top_msg_id=2)))
+    assert q.empty()
+
+
+def test_the_first_page_of_a_chat_carries_the_read_line(api, monkeypatch):
+    c, R, who, tgs = api
+    mgr = R.manager()
+
+    async def read_out(db, user, chat_id):
+        return 2
+    monkeypatch.setattr(mgr, "read_out", read_out)
+    r = c.get("/api/tgc/messages/42").json()
+    assert r["ok"] and r["read_out"] == 2 and [m["id"] for m in r["messages"]] == [1, 2, 3], r
+    assert c.get("/api/tgc/messages/42?before=3").json()["read_out"] == 0, "older pages need not ask again"

@@ -378,10 +378,36 @@ class Manager:
             await self._emit(a, {"type": "reactions", "chat_id": chat_id, "id": int(update.msg_id),
                                  "reactions": reactions_of(update)})
 
+        async def on_read(update):
+            """READ SOMEWHERE ELSE, OR READ BY THEM. Telegram sends one of four updates: your messages
+            were read by the other side (outbox → ✓✓), or you read theirs on another device, e.g. the
+            phone (inbox → the unread count here must drop to what Telegram says is still unread,
+            not stay at whatever this window last counted). Groups/channels use the channel variants."""
+            name = type(update).__name__
+            if name not in ("UpdateReadHistoryInbox", "UpdateReadHistoryOutbox",
+                            "UpdateReadChannelInbox", "UpdateReadChannelOutbox"):
+                return
+            try:
+                from telethon import utils
+                from telethon.tl.types import PeerChannel
+                peer = update.peer if "History" in name else PeerChannel(update.channel_id)
+                chat_id = int(utils.get_peer_id(peer))
+            except Exception:
+                return
+            ev = {"type": "read", "chat_id": chat_id, "max_id": int(getattr(update, "max_id", 0) or 0),
+                  "outbox": name.endswith("Outbox")}
+            if not ev["outbox"]:
+                # A forum TOPIC read carries that topic's count, not the chat's -- leave the chat's alone.
+                if getattr(update, "top_msg_id", None):
+                    return
+                ev["unread"] = int(getattr(update, "still_unread_count", 0) or 0)
+            await self._emit(a, ev)
+
         a.client.add_event_handler(on_new, events.NewMessage())
         a.client.add_event_handler(on_edit, events.MessageEdited())
         a.client.add_event_handler(on_delete, events.MessageDeleted())
         a.client.add_event_handler(on_reactions, events.Raw())
+        a.client.add_event_handler(on_read, events.Raw())
 
     def subscribe(self, user_id: int) -> asyncio.Queue:
         q = asyncio.Queue(maxsize=500)
@@ -412,12 +438,18 @@ class Manager:
         out = []
         async for d in c.iter_dialogs(limit=max(1, min(int(limit), 500))):
             last = getattr(d, "message", None)
+            raw = getattr(d, "dialog", None)
             out.append({"id": int(d.id), "title": _name(d.entity) or getattr(d, "name", ""),
                         "kind": _kind(d.entity), "unread": int(getattr(d, "unread_count", 0) or 0),
+                        # How far the OTHER side has read what you sent (✓✓ up to here), and how far
+                        # you have read theirs. 0 = unknown, which the client draws as a single ✓.
+                        "read_out": int(getattr(raw, "read_outbox_max_id", 0) or 0),
+                        "read_in": int(getattr(raw, "read_inbox_max_id", 0) or 0),
                         "pinned": bool(getattr(d, "pinned", False)),
                         "muted": bool(getattr(getattr(d, "dialog", None), "notify_settings", None)
                                       and getattr(d.dialog.notify_settings, "mute_until", None)),
-                        "last": {"text": (getattr(last, "message", "") or "")[:200] if last else "",
+                        "last": {"id": int(getattr(last, "id", 0) or 0) if last else 0,
+                                 "text": (getattr(last, "message", "") or "")[:200] if last else "",
                                  "date": int(last.date.timestamp()) if last and getattr(last, "date", None) else 0,
                                  "out": bool(getattr(last, "out", False)) if last else False,
                                  "media": (media_of(last) or {}).get("kind") if last else None}})
@@ -513,6 +545,21 @@ class Manager:
                             "username": getattr(e, "username", "") or "",
                             "members": int(getattr(e, "participants_count", 0) or 0)})
         return out
+
+    async def read_out(self, db, user, chat_id: int) -> int:
+        """How far the other side has read this chat's outgoing messages. 0 when Telegram could not be
+        asked -- which draws a single ✓, never a ✓✓ nobody confirmed."""
+        c = await self._ready(db, user)
+        try:
+            from telethon.tl.functions.messages import GetPeerDialogsRequest
+            from telethon.tl.types import InputDialogPeer
+            peer = await c.get_input_entity(int(chat_id))
+            got = await c(GetPeerDialogsRequest(peers=[InputDialogPeer(peer=peer)]))
+            d = (getattr(got, "dialogs", None) or [None])[0]
+            return int(getattr(d, "read_outbox_max_id", 0) or 0)
+        except Exception as e:
+            logger.debug("[tgc] read_out %s: %s", chat_id, _why(e))
+            return 0
 
     async def mark_read(self, db, user, chat_id: int, max_id: int = 0) -> None:
         c = await self._ready(db, user)

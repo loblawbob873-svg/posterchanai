@@ -397,3 +397,48 @@ def test_an_incoming_video_call_rings_and_can_be_answered_or_declined():
         assert not await b.js("!!document.querySelector('.tgc-panel')")
 
     asyncio.run(desktop.with_browser("online", "", check, FAKE + CALLS))
+
+
+@pytest.mark.skipif(not Path("/opt/google/chrome/chrome").exists(), reason="Chrome required")
+def test_sent_and_read_ticks_and_a_read_on_the_phone_clears_the_badge():
+    """"missing delivered and read checkmarks, and if I read a message on my phone it should be marked
+    read on PosterChan". Your messages carry ✓ once Telegram has them and ✓✓ once the other side read
+    them — in the chat AND on the chat list — and a read somewhere else (Telegram's inbox update) takes
+    the chat's badge to what Telegram says is still unread."""
+    fake = (FAKE.replace("state:'none'", "state:'ready'")
+                .replace("last:{text:'the doc', date:1700000003, out:true}", "last:{id:3, text:'the doc', date:1700000003, out:true}")
+                .replace("unread:0, last:{text:'yo'", "unread:5, last:{text:'yo'"))
+
+    async def ticks(b):
+        return await b.js("""({msg:[...document.querySelectorAll('.tg-msg.out')].map(m=>{const t=m.querySelector('.tg-tick');
+              return t?(t.classList.contains('read')?'read':'sent')+':'+t.textContent:'none'}),
+            row:(()=>{const t=document.querySelector('.tg-dialog[data-chat="42"] .tg-tick');return t?(t.classList.contains('read')?'read':'sent'):'none'})(),
+            badge77:(document.querySelector('.tg-dialog[data-chat="77"] .tg-badge')||{}).textContent||''})""")
+
+    async def check(b):
+        await _open(b)
+        await b.until("document.querySelectorAll('.tg-dialog').length===2")
+        assert (await ticks(b))["row"] == "sent", "your last message on the chat list has no tick"
+        await b.js("document.querySelector('.tg-dialog[data-chat=\"42\"]').click()")
+        await b.until("document.querySelectorAll('.tg-msg').length===3")
+        got = await ticks(b)
+        assert got["msg"] == ["sent:✓"] and got["badge77"] == "5", got
+        # A message you send gets its tick too.
+        await b.js("(()=>{const t=document.querySelector('.tg-text');t.value='hello';"
+                   "t.dispatchEvent(new KeyboardEvent('keydown',{key:'Enter',bubbles:true}))})()")
+        await b.until("document.querySelectorAll('.tg-msg.out').length===2")
+        assert (await ticks(b))["msg"] == ["sent:✓", "sent:✓"]
+        # Alice reads up to 3: that one turns ✓✓, the newer one (200) stays ✓.
+        await b.until("__tgSockets.length>=1")
+        await b.js("__tgSockets[__tgSockets.length-1].onmessage({data:JSON.stringify({type:'read',chat_id:42,max_id:3,outbox:true})})")
+        got = await ticks(b)
+        assert got["msg"] == ["read:✓✓", "sent:✓"], got
+        # Then everything: the chat list follows your newest message.
+        await b.js("__tgSockets[__tgSockets.length-1].onmessage({data:JSON.stringify({type:'read',chat_id:42,max_id:200,outbox:true})})")
+        got = await ticks(b)
+        assert got["msg"] == ["read:✓✓", "read:✓✓"] and got["row"] == "read", got
+        # You read Night City Crew on the phone: Telegram says 0 still unread.
+        await b.js("__tgSockets[__tgSockets.length-1].onmessage({data:JSON.stringify({type:'read',chat_id:77,max_id:50,outbox:false,unread:0})})")
+        assert (await ticks(b))["badge77"] == "", "reading on the phone left the badge here"
+
+    asyncio.run(desktop.with_browser("online", "", check, extra_init=fake))

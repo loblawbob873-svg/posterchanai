@@ -22,7 +22,8 @@
     try{ return Math.min(screen.width || 9999, screen.height || 9999) < PHONE_MAX_SHORT_SIDE; }catch(_){ return false; }
   }
   const st = { status:null, dialogs:[], open:null, msgs:new Map(), filter:'', ws:null, wsTimer:0, reply:null,
-               loadingOlder:false, done:new Set(), pending:[], busy:false };
+               loadingOlder:false, done:new Set(), pending:[], busy:false,
+               readOut:new Map() };   // chat → highest outgoing id the other side has read (✓✓ up to here)
   let root = null;
 
   async function api(path, opts){
@@ -79,11 +80,11 @@
       const m = ev.message, list = st.msgs.get(m.chat_id);
       if(list && !list.some(x => x.id === m.id)) list.push(m);
       const d = st.dialogs.find(x => x.id === m.chat_id);
-      if(d){ d.last = { text:(m.text || '').slice(0, 200), date:m.date, out:m.out, media:m.media && m.media.kind };
+      if(d){ d.last = { id:m.id, text:(m.text || '').slice(0, 200), date:m.date, out:m.out, media:m.media && m.media.kind };
              if(!m.out && st.open !== m.chat_id) d.unread = (d.unread || 0) + 1;
              st.dialogs = [d, ...st.dialogs.filter(x => x !== d)]; }
       else st.dialogs.unshift({ id:m.chat_id, title:(ev.chat && ev.chat.title) || m.sender, kind:'user', unread:m.out ? 0 : 1,
-                                last:{ text:m.text, date:m.date, out:m.out } });
+                                last:{ id:m.id, text:m.text, date:m.date, out:m.out } });
       const looking = inView() && st.open === m.chat_id && document.hasFocus && document.hasFocus();
       if(!m.out && !looking) notify(m, ev.chat);
       if(inView()){ paintDialogs(); if(st.open === m.chat_id){ paintMessages(true); markRead(); } }
@@ -93,6 +94,14 @@
       if(i >= 0){ list[i] = ev.message; if(inView() && st.open === ev.message.chat_id) paintMessages(false); } return; }
     if(ev.type === 'reactions'){ const list = st.msgs.get(ev.chat_id), m = list && list.find(x => x.id === ev.id);
       if(m){ m.reactions = ev.reactions || []; if(inView() && st.open === ev.chat_id) paintMessages(false); } return; }
+    if(ev.type === 'read'){
+      const d = st.dialogs.find(x => x.id === ev.chat_id);
+      if(ev.outbox){ noteReadOut(ev.chat_id, ev.max_id || 0); }
+      // Read on another device (the phone): Telegram says how many are STILL unread — take its number.
+      else if(d && typeof ev.unread === 'number'){ d.unread = st.open === ev.chat_id && inView() ? 0 : ev.unread; }
+      if(inView()){ paintDialogs(); if(ev.outbox && st.open === ev.chat_id) paintMessages(false); }
+      return;
+    }
     if(ev.type === 'deleted'){ for(const [cid, list] of st.msgs){ const n = list.filter(x => !ev.ids.includes(x.id));
       if(n.length !== list.length){ st.msgs.set(cid, n); if(inView() && st.open === cid) paintMessages(false); } } }
   }
@@ -108,6 +117,20 @@
     try{ if(P.switchView) P.switchView('tg'); }catch(_){}
   }
   const inView = () => { try{ return PC().VIEW === 'tg' && root && root.isConnected; }catch(_){ return false; } };
+  /* ✓ SENT, ✓✓ READ — the two states Telegram itself shows. A message is only here once Telegram
+   * accepted it (send() adds it from the server's answer), so one tick is true the moment it draws;
+   * two need Telegram to have said the other side read up to it. Unknown stays one tick. */
+  function readOutOf(chatId){
+    const d = st.dialogs.find(x => x.id === chatId);
+    return Math.max(st.readOut.get(chatId) || 0, (d && d.read_out) || 0);
+  }
+  function tick(chatId, id){
+    const read = !!id && id <= readOutOf(chatId);
+    return `<span class="tg-tick${read ? ' read' : ''}" title="${read ? 'Read' : 'Sent'}" aria-label="${read ? 'Read' : 'Sent'}">${read ? '✓✓' : '✓'}</span>`;
+  }
+  function noteReadOut(chatId, maxId){
+    if(maxId > (st.readOut.get(chatId) || 0)) st.readOut.set(chatId, maxId);
+  }
 
   // ---- views ----------------------------------------------------------------------------------------
   async function render(){
@@ -212,7 +235,7 @@
     box.innerHTML = rows.length ? rows.map(d => `<button class="tg-dialog${d.id === st.open ? ' on' : ''}" data-chat="${d.id}" role="listitem">
         <span class="tg-av" data-av="${d.id}"><b>${esc(initials(d.title))}</b></span>
         <span class="tg-dmain"><span class="tg-drow"><b class="tg-dtitle">${d.kind === 'channel' ? '📢 ' : d.kind === 'group' ? '👥 ' : ''}${esc(d.title)}</b>
-          <small>${esc(when(d.last && d.last.date))}</small></span>
+          <small>${d.last && d.last.out ? tick(d.id, d.last.id) + ' ' : ''}${esc(when(d.last && d.last.date))}</small></span>
           <span class="tg-drow"><span class="tg-dlast">${d.last && d.last.out ? 'You: ' : ''}${esc((d.last && d.last.text) || (d.last && d.last.media ? '[' + d.last.media + ']' : ''))}</span>
           ${d.unread ? `<i class="tg-badge">${d.unread > 99 ? '99+' : d.unread}</i>` : ''}</span></span></button>`).join('')
       : '<div class="tg-muted tg-pad">No chats match.</div>';
@@ -304,7 +327,7 @@
     st.open = id; st.reply = null; st.pending = [];
     paintDialogs(); paintChat();
     if(!st.msgs.has(id)){
-      try{ st.msgs.set(id, (await api('/api/tgc/messages/' + id + '?limit=50')).messages || []); }
+      try{ const r = await api('/api/tgc/messages/' + id + '?limit=50'); st.msgs.set(id, r.messages || []); noteReadOut(id, r.read_out || 0); }
       catch(e){ const l = root.querySelector('.tg-msgs'); if(l) l.innerHTML = `<div class="tg-err tg-pad">${esc(e.message)}</div>`; return; }
       if(st.open !== id) return;
       paintMessages(true);
@@ -349,7 +372,7 @@
         ${r ? `<div class="tg-quote">${esc((r.text || '[attachment]').slice(0, 140))}</div>` : ''}
         ${mediaHtml(m)}${m.text ? `<div class="tg-body">${linkify(m.text)}</div>` : ''}
         ${reactionsHtml(m)}
-        <span class="tg-meta">${m.edited ? 'edited · ' : ''}${esc(new Date(m.date * 1000).toLocaleTimeString([], {hour:'2-digit', minute:'2-digit'}))}
+        <span class="tg-meta">${m.edited ? 'edited · ' : ''}${esc(new Date(m.date * 1000).toLocaleTimeString([], {hour:'2-digit', minute:'2-digit'}))}${m.out ? tick(m.chat_id, m.id) : ''}
           <button class="tg-mini" data-react-pick="${m.id}" aria-label="React" title="React">☺</button>
           <button class="tg-mini" data-reply="${m.id}" aria-label="Reply">↩</button></span></div>`;
     }).join('') || '<div class="tg-muted tg-pad">No messages yet.</div>';
@@ -451,6 +474,8 @@
   function addMine(m){
     if(!m) return; const list = st.msgs.get(m.chat_id) || []; if(!list.some(x => x.id === m.id)) list.push(m);
     st.msgs.set(m.chat_id, list); if(st.open === m.chat_id) paintMessages(true);
+    const d = st.dialogs.find(x => x.id === m.chat_id);
+    if(d){ d.last = { id:m.id, text:(m.text || '').slice(0, 200), date:m.date, out:true, media:m.media && m.media.kind }; paintDialogs(); }
   }
 
   // ---- camera: a photo, or a video message ------------------------------------------------------------

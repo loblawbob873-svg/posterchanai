@@ -139,7 +139,10 @@ async def dialogs(limit: int = 100, db: Session = Depends(get_db), user: User = 
 async def messages(chat_id: int, before: int = 0, limit: int = 50,
                    db: Session = Depends(get_db), user: User = Depends(member)):
     try:
-        return {"ok": True, "messages": await manager().messages(db, user, chat_id, before, limit)}
+        msgs = await manager().messages(db, user, chat_id, before, limit)
+        # The first page also says how far the other side has read (the ✓✓ line); older pages need not.
+        read_out = 0 if before else await manager().read_out(db, user, chat_id)
+        return {"ok": True, "messages": msgs, "read_out": read_out}
     except TGError as e:
         return _err(e)
 
