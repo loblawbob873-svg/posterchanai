@@ -27,7 +27,9 @@ def test_desktop_linux_runs_required_real_ipc_gate_before_build():
     assert "PYTEST_DISABLE_PLUGIN_AUTOLOAD: '1'" in gate
     assert 'continue-on-error' not in gate
     assert 'set -euo pipefail' in gate
-    assert 'xvfb libgtk-3-0t64' in gate
+    install = workflow[workflow.index('      - name: Install desktop regression packages'):start]
+    assert "if: matrix.name == 'linux'" in install and 'xvfb libgtk-3-0t64' in install
+    assert 'apt-get' not in gate, "the package install is back inside the tests' own time limit"
     assert 'scripts/deploy_regression_gate.py' in gate
     assert 'scripts/deploy-regression-requirements.txt' in gate
     assert 'tests/test_native_window_reload_electron.py' in (ROOT/'scripts/deploy_regression_gate.py').read_text()
@@ -77,3 +79,44 @@ chmod +x "$3/bin/pip" "$3/bin/python"
     assert (tmp_path/'pytest-ran').exists() == (installer_status==0)
     assert "timeout --kill-after=5s 120s node desktop/node_modules/electron/install.js" in run
     assert "node-version: '22'" in workflow
+
+
+def _install_step():
+    workflow = (ROOT/'.github/workflows/desktop.yml').read_text()
+    step = workflow.split('      - name: Install desktop regression packages', 1)[1].split('      - name: ', 1)[0]
+    import textwrap
+    return step, textwrap.dedent(step.split('        run: |\n', 1)[1])
+
+
+@pytest.mark.parametrize('failures,expect_ok', [(0, True), (2, True), (3, False)])
+def test_a_stalled_mirror_is_retried_and_never_charged_to_the_tests(tmp_path, failures, expect_ok):
+    """Twice on 2026-09-30 one apt connection stalled and the desktop build failed with no test run.
+    RUN the shipped install step against an apt-get that fails `failures` times: it must retry, pass
+    apt its download timeouts, and fail loudly only when every attempt failed."""
+    import os
+    import subprocess
+    step, run = _install_step()
+    assert 'timeout-minutes:' in step
+    bindir = tmp_path/'bin'; bindir.mkdir()
+    counter = tmp_path/'count'
+    (bindir/'sudo').write_text('#!/bin/sh\nexec "$@"\n'); (bindir/'sudo').chmod(0o755)
+    (bindir/'sleep').write_text('#!/bin/sh\nexit 0\n'); (bindir/'sleep').chmod(0o755)
+    (bindir/'apt-get').write_text(f"""#!/bin/sh
+echo "$@" >> {tmp_path}/args
+case "$*" in *" install "*|*" update "*) ;; esac
+case "$*" in *install*)
+  n=$(cat {counter} 2>/dev/null || echo 0); n=$((n+1)); echo $n > {counter}
+  [ $n -gt {failures} ] || exit 100 ;;
+esac
+exit 0
+""")
+    (bindir/'apt-get').chmod(0o755)
+    res = subprocess.run(['bash', '-c', run], cwd=tmp_path, capture_output=True, text=True, timeout=20,
+                         env={**os.environ, 'PATH': str(bindir) + os.pathsep + os.environ['PATH']})
+    assert (res.returncode == 0) == expect_ok, res.stdout + res.stderr
+    args = (tmp_path/'args').read_text()
+    assert 'Acquire::http::Timeout=30' in args and 'Acquire::Retries=5' in args, args
+    installs = [l for l in args.splitlines() if ' install -y ' in l]
+    assert len(installs) == min(failures + 1, 3), args
+    if not expect_ok:
+        assert 'no test ran' in res.stdout, res.stdout

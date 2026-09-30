@@ -226,6 +226,31 @@ jobs:
 
       # A real sendSync assignment sends the reply immediately. A plain JS event stub
       # cannot detect a premature null reply that turns an app reload into a desktop.
+      # ITS OWN STEP, WITH RETRIES AND DOWNLOAD TIMEOUTS. This used to be the first thing the 15-minute
+      # test step did, with apt's defaults: no per-connection timeout and no retry. Twice in a row
+      # (2026-09-30) one connection to the Azure Ubuntu mirror stalled mid-download (openjdk, then
+      # mesa), the step spent all 15 minutes waiting on it, and the desktop build failed without a
+      # single test having run -- indistinguishable, from the run list, from a real regression. A stalled
+      # connection is now dropped after 30s and retried, the whole install is tried three times, and
+      # none of it is charged to the tests' own time limit.
+      - name: Install desktop regression packages
+        if: matrix.name == 'linux'
+        timeout-minutes: 12
+        shell: bash
+        run: |
+          set -euo pipefail
+          APT_OPTS=(-o Acquire::Retries=5 -o Acquire::http::Timeout=30 -o Acquire::https::Timeout=30)
+          for attempt in 1 2 3; do
+            if sudo apt-get "${APT_OPTS[@]}" update -qq \
+               && sudo apt-get "${APT_OPTS[@]}" install -y --no-install-recommends xvfb libgtk-3-0t64 libnss3 libgbm1 libasound2t64 python3-venv default-jdk-headless squashfs-tools pulseaudio pulseaudio-utils; then
+              exit 0
+            fi
+            echo "apt attempt $attempt failed -- retrying in $((attempt * 20))s"
+            sleep $((attempt * 20))
+          done
+          echo "::error::the desktop regression packages could not be installed (mirror unreachable) -- no test ran"
+          exit 1
+
       - name: Verify required desktop regressions
         if: matrix.name == 'linux'
         timeout-minutes: 15
@@ -238,8 +263,6 @@ jobs:
           # Electron 44 downloads its binary lazily; npm ci installs only the package.
           timeout --kill-after=5s 120s node desktop/node_modules/electron/install.js
           test -x desktop/node_modules/electron/dist/electron
-          sudo apt-get update -qq
-          sudo apt-get install -y --no-install-recommends xvfb libgtk-3-0t64 libnss3 libgbm1 libasound2t64 python3-venv default-jdk-headless squashfs-tools pulseaudio pulseaudio-utils
           python3 -m venv "$RUNNER_TEMP/native-ipc-venv"
           "$RUNNER_TEMP/native-ipc-venv/bin/pip" install -r scripts/deploy-regression-requirements.txt
           test -x /opt/google/chrome/chrome
