@@ -2727,6 +2727,7 @@
         <div class="mb-fs-pick" id="fs-pick">
           ${others.map(o => `<button class="mb-fs-thumb" data-src="${enc(o.src)}" title="${enc(o.name || 'layer')}"><img src="${enc(o.src)}" alt=""></button>`).join('')}
           <label class="btn btn-ghost small mb-fs-upload">Pick a photo…<input type="file" id="fs-file" accept="image/*" hidden></label>
+          ${PC.blossomPicker ? '<button type="button" class="btn btn-ghost small" id="fs-drive">📁 Files</button>' : ''}
         </div>
         <div class="mb-fs-stage mb-fs-srcstage" id="fs-srcstage" hidden><img id="fs-srcimg" alt=""><div class="mb-fs-boxes" id="fs-srcboxes"></div></div>
       </div>
@@ -2793,6 +2794,23 @@
       say('Uploading the photo…');
       try{ await useSource(await uploadBlob(f)); }catch(err){ toast('upload failed: ' + ((err && err.message) || err)); paint(); }
     };
+    /* 📁 FILES ("face swap should support blossom files too"). The swap renders server-side, so an
+     * ENCRYPTED drive picture is decrypted here and a usable copy uploaded -- the same path Meme
+     * Builder's own "add from Files" takes for encrypted media -- and a plain one is used as it is. */
+    { const drive = $('fs-drive');
+      if(drive) drive.onclick = () => PC.blossomPicker(null, async ({ url, type, sha, enc, name }) => {
+        if(type && !/^image\//i.test(type)){ toast('pick a picture — that is ' + type); return; }
+        if(enc && sha){
+          say('Decrypting ' + (name || 'the picture') + '…');
+          try{
+            const local = await PC.encFileUrl(sha);
+            if(!local) throw new Error('it could not be decrypted on this device');
+            const blob = await (await fetch(local)).blob();
+            url = await uploadBlob(new File([blob], name || 'face.jpg', { type: type || blob.type || 'image/jpeg' }));
+          }catch(err){ toast('could not use that picture — ' + ((err && err.message) || err)); paint(); return; }
+        }
+        await useSource(url);
+      }, { title: '📁 Take a face from Files' }); }
     $('fs-cancel').onclick = () => { st.gone = true; PC.closeModal(); };
     $('fs-go').onclick = async () => {
       if(st.busy) return;

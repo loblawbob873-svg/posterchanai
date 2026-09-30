@@ -56,7 +56,7 @@ addEventListener('error', e => window.__errs.push(String(e.message)));
 window.__PC = {
   isView(v){ return v === 'meme'; },
   toast(m){ window.__toasts.push(String(m)); },
-  async uploadBlob(){ return 'https://example.invalid/x.png'; },
+  async uploadBlob(f){ window.__uploaded = (window.__uploaded||[]).concat([f && f.type]); return '/static/icon-512.png?uploaded=1'; },
   async selfProof(){ return 'proof'; },
   async uiConfirm(){ return false; }, async uiPrompt(){ return null; },
   modal(html, onMount){
@@ -66,7 +66,11 @@ window.__PC = {
     const box = bg.querySelector('.modal'); if (onMount) onMount(box);
   },
   closeModal(){ document.getElementById('modal-root').innerHTML = ''; },
-  blossomPicker(){}, openGenStudio(){}, openVoiceStudio(){},
+  // 📁 Files: the picker answers with whatever __drivePick holds; an encrypted pick is decrypted
+  // through encFileUrl and re-uploaded (uploadBlob), which is recorded.
+  blossomPicker(ta, onPick){ window.__driveOpened = (window.__driveOpened||0) + 1; setTimeout(() => onPick(window.__drivePick), 30); },
+  async encFileUrl(sha){ window.__decrypted = sha; return '/static/icon-512.png'; },
+  openGenStudio(){}, openVoiceStudio(){},
   openEmojiPopover(){ return ''; }, instEmojiUrl(){ return ''; },
   mediaServer:'', eTags(){ return []; }, profOf(){ return {}; },
   get ME(){ return {pubkey:'0'.repeat(64)}; }, get CFG(){ return {}; }, get VIEW(){ return 'meme'; },
@@ -179,7 +183,28 @@ PROBE = r"""(async () => {
   goP.click();
   await until(() => window.__bodies.filter(b => b[0] === 'swap').length === 2);
   const pasteBody = (window.__bodies.filter(b => b[0] === 'swap')[1] || [])[1] || {};
-  return {btnOk: bb.w > 0 && bb.h >= (%MINH%) && bb.l >= -1 && bb.r <= vw + 1, btnBox:[bb.l, bb.t, bb.w, bb.h, vw],
+  // 📁 Files as the source: a plain drive picture is used as it is; an encrypted one is decrypted and
+  // a copy uploaded, and THAT is what the swap reads.
+  const faceUrls = () => window.__bodies.filter(b => b[0] === 'faces').map(b => b[1].url);
+  // The paste above closes its dialog when its answer lands; opening before that lets the late close
+  // take the new dialog with it.
+  await until(() => !document.querySelector('.mb-fs-modal'));
+  document.getElementById('mb-faceswap').click();
+  await until(() => document.querySelectorAll('#fs-boxes .mb-fs-face').length === 3);
+  document.querySelector('[data-fsmode="paste"]').click(); await sleep(50);
+  const driveBtn = !!document.getElementById('fs-drive');
+  window.__drivePick = {url:'/static/icon-512.png?plain=1', type:'image/png', sha:'', enc:false, name:'plain.png'};
+  document.getElementById('fs-drive') && document.getElementById('fs-drive').click();
+  await until(() => faceUrls().includes('/static/icon-512.png?plain=1'));
+  const plainUsed = faceUrls().includes('/static/icon-512.png?plain=1');
+  window.__afterPlain = {drive: !!document.getElementById('fs-drive'), dialogs: document.querySelectorAll('.mb-fs-modal').length, modalRoot: document.getElementById('modal-root').children.length};
+  window.__drivePick = {url:'/blossom/ciphertext', type:'image/jpeg', sha:'e'.repeat(64), enc:true, name:'secret.jpg'};
+  document.getElementById('fs-drive') && document.getElementById('fs-drive').click();
+  await until(() => faceUrls().includes('/static/icon-512.png?uploaded=1'));
+  const encUsed = faceUrls().includes('/static/icon-512.png?uploaded=1') && !faceUrls().includes('/blossom/ciphertext');
+  const encDecrypted = window.__decrypted === 'e'.repeat(64), encUploadedType = (window.__uploaded || []).slice(-1)[0];
+  const driveOpened = window.__driveOpened || 0, faceUrlsSeen = faceUrls(), afterPlain = window.__afterPlain;
+  return {afterPlain, driveOpened, faceUrlsSeen, driveBtn, plainUsed, encUsed, encDecrypted, encUploadedType, btnOk: bb.w > 0 && bb.h >= (%MINH%) && bb.l >= -1 && bb.r <= vw + 1, btnBox:[bb.l, bb.t, bb.w, bb.h, vw],
           onPic, sourceInSwap, say0, goOn0, goOn1, say2, pressed, layout, before, swapBody, swapped,
           sourceShown, thumbs, goPaste0, pasteSay, pasteLayout, pasteBody, pasteState, errs: window.__errs, toasts: window.__toasts.slice(-2)};
 })()"""
@@ -289,6 +314,13 @@ async def drive(url):
                 if (pb.get("mode"), pb.get("source"), pb.get("source_face"), pb.get("targets"), pb.get("url")) != \
                         ("paste", "/static/icon-512.png", 0, [1, 2], SWAPPED):
                     P("paste-broken", f"paste sent {pb!r} (state before Swap: {res['pasteState']})")
+                if not res["driveBtn"]:
+                    P("paste-broken", "no 📁 Files source in Use another face")
+                if not res["plainUsed"]:
+                    P("paste-broken", "a drive picture was not used as the face's source")
+                if not (res["encUsed"] and res["encDecrypted"] and res.get("encUploadedType") == "image/jpeg"):
+                    P("paste-broken", f"an encrypted drive picture was not decrypted and re-uploaded before use "
+                      f"(used={res['encUsed']} decrypted={res['encDecrypted']} uploaded={res.get('encUploadedType')!r} opened={res.get('driveOpened')} after={res.get('afterPlain')} urls={res.get('faceUrlsSeen')})")
                 if res["errs"]:
                     P("apply-broken", f"page errors: {res['errs']}")
                 print(f"{lbl}: swap={res['swapBody'].get('a')}+{res['swapBody'].get('b')} "

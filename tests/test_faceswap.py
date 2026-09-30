@@ -267,3 +267,64 @@ def test_bad_auth_is_refused(api):
         r = api["post"](path, {"pubkey": pk, "auth": other, "url": "https://media.example/blossom/p.jpg"})
         assert r.status_code == 401
     assert api["fetched"] == [] and api["saved"] == []
+
+
+# ---- a puppet, a cartoon, a drawing ------------------------------------------------------------------
+# "face swap did not actually swap": pasted onto a Muppet, the face covered under half of the puppet's
+# face and was turned purple. Measured on that picture: the landmarks spanned 46% of the detected face
+# box (a real face spans ~78%), and the colour match took the puppet's purple as "skin".
+
+def _fake_face(box, span_frac, score=0.62):
+    """A detected face whose inner landmarks span `span_frac` of its box (106 points), detected with
+    `score` confidence -- 0.62 is what the Muppet measured."""
+    x1, y1, x2, y2 = box
+    bw, bh = x2 - x1, y2 - y1
+    rng = np.random.default_rng(3)
+    pts = np.zeros((106, 2), np.float32)
+    cx, cy = x1 + bw / 2, y1 + bh * 0.55
+    pts[:33] = [(x1 + bw * t, y1 + bh * 0.9) for t in np.linspace(0.1, 0.9, 33)]           # jaw
+    inner = rng.uniform(-0.5, 0.5, (73, 2)) * [bw * span_frac, bh * span_frac] + [cx, cy]
+    inner[0] = [cx - bw * span_frac / 2, cy]; inner[1] = [cx + bw * span_frac / 2, cy]     # exact span
+    inner[2] = [cx, cy - bh * span_frac / 2]; inner[3] = [cx, cy + bh * span_frac / 2]
+    pts[33:] = inner
+    return {"box": box, "pts": pts, "score": score}
+
+
+def test_every_real_face_in_the_photo_is_trusted_as_a_real_face(faces):
+    """Including the two heads turned sideways, whose landmarks are as narrow as the Muppet's."""
+    img, F = faces
+    assert not [i for i, f in enumerate(F) if fs._stylised(f)], "a real face was treated as a puppet"
+    # Both signals are needed: bunched landmarks on a CONFIDENT detection are a real face...
+    assert not fs._stylised(_fake_face((100, 80, 300, 320), 0.46, score=0.88))
+    # ...and an unsure detection whose landmarks fill the face is one too.
+    assert not fs._stylised(_fake_face((100, 80, 300, 320), 0.75, score=0.62))
+    assert fs._stylised(_fake_face((100, 80, 300, 320), 0.46, score=0.62))
+
+
+def test_a_puppet_face_gets_the_swap_over_its_whole_face(photo, faces):
+    """The swapped area must cover most of a stylised face's box, not the patch its bunched landmarks
+    make -- the first version covered 46%x44% of it."""
+    img, F = faces
+    target = np.full((400, 400, 3), (160, 60, 170), np.uint8)             # a purple face-ish block
+    puppet = _fake_face((100, 80, 300, 320), 0.46)
+    out = fs._put(img, F[0], target, puppet)
+    changed = np.abs(out.astype(int) - target.astype(int)).sum(axis=2) > 30
+    ys, xs = np.nonzero(changed)
+    assert xs.max() - xs.min() > 0.6 * 200 and ys.max() - ys.min() > 0.55 * 240, \
+        ("the swap covered only a patch of the puppet's face", xs.min(), xs.max(), ys.min(), ys.max())
+
+
+def test_a_person_on_a_purple_puppet_is_not_turned_purple(faces):
+    """Brightness follows the target; colour follows it only where the target is skin."""
+    img, F = faces
+    target = np.full((400, 400, 3), (170, 60, 150), np.uint8)             # BGR purple
+    puppet = _fake_face((100, 80, 300, 320), 0.46)
+    out = fs._put(img, F[0], target, puppet)
+    lab = cv2.cvtColor(out, cv2.COLOR_BGR2LAB).reshape(-1, 3).astype(float)
+    tlab = cv2.cvtColor(target, cv2.COLOR_BGR2LAB).reshape(-1, 3).astype(float)
+    changed = np.abs(out.astype(int) - target.astype(int)).sum(axis=2).reshape(-1) > 30
+    face_b, puppet_b = lab[changed, 2].mean(), tlab[0, 2]
+    assert face_b > puppet_b + 12, ("the pasted face took the puppet's purple", face_b, puppet_b)
+    assert fs._skin_like(cv2.cvtColor(img[int(F[0]['box'][1]):int(F[0]['box'][3]), int(F[0]['box'][0]):int(F[0]['box'][2])],
+                                      cv2.COLOR_BGR2LAB).reshape(-1, 3).mean(0))
+    assert not fs._skin_like(tlab[0])

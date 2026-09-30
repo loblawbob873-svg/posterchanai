@@ -82,7 +82,8 @@ def _faces(bgr) -> list:
         x1, y1, x2, y2 = [float(v) for v in f.bbox]
         if min(x2 - x1, y2 - y1) < MIN_FACE_PX:
             continue
-        out.append({"box": (x1, y1, x2, y2), "pts": np.asarray(lmk, dtype=np.float32)})
+        out.append({"box": (x1, y1, x2, y2), "pts": np.asarray(lmk, dtype=np.float32),
+                    "score": float(getattr(f, "det_score", 1.0) or 1.0)})
     out.sort(key=lambda f: (f["box"][0] + f["box"][2]) / 2)
     return out[:MAX_FACES]
 
@@ -137,11 +138,45 @@ def _face_mask(shape, pts, feather):
     return cv2.GaussianBlur(mask, (k * 2 + 1, k * 2 + 1), 0)
 
 
+# A PUPPET, CARTOON OR DRAWING still DETECTS, but the landmark model (trained on photographs) bunches its
+# points into a patch -- on a Muppet they covered 46% x 45% of the face box ("face swap did not
+# actually swap": the face went onto under half of the puppet's face). Neither span alone separates
+# that from a real face: a real head turned sideways measured 46% wide too. Two signals must agree:
+#   * the landmarks cover little of the box: area < 0.30 (real faces 0.25-0.52, the Muppet 0.21), and
+#   * the detector is unsure it is a face: score < 0.75 (8 real faces 0.785-0.92, the Muppet 0.62).
+# A turned real head has the first and not the second, and keeps its landmarks.
+_STYLISED_AREA = 0.30
+_STYLISED_SCORE = 0.75
+
+
+def _stylised(face) -> bool:
+    import numpy as np
+    x1, y1, x2, y2 = face["box"]
+    bw, bh = float(x2 - x1), float(y2 - y1)
+    if bw <= 0 or bh <= 0:
+        return False
+    inner = face["pts"][_INNER]
+    area = (float(np.ptp(inner[:, 0])) / bw) * (float(np.ptp(inner[:, 1])) / bh)
+    return area < _STYLISED_AREA and float(face.get("score", 1.0)) < _STYLISED_SCORE
+
+
+def _skin_like(lab_mean) -> bool:
+    """Is this average colour a HUMAN skin tone (OpenCV 8-bit LAB, 128 = neutral)? Measured skin
+    across tones sits at a~135-165, b~130-175; a purple puppet, a blue monster, a green alien do not."""
+    _, a, b = lab_mean
+    return 128 <= a <= 172 and 125 <= b <= 185
+
+
 def _correct_colour(dst, warped, region):
-    """Match the warped face's colour to the target's skin: per-channel mean and spread in LAB,
-    measured over the face region ONLY. A spatial ratio of blurred pictures (the first attempt here)
-    pulled in whatever surrounds the face -- hair, a hand, playing cards -- and painted it onto the
-    skin as glowing blobs beside the nose."""
+    """Match the warped face's colour to the target's: per-channel mean and spread in LAB, measured
+    over the face region ONLY. A spatial ratio of blurred pictures (the first attempt here) pulled in
+    whatever surrounds the face -- hair, a hand, playing cards -- and painted it onto the skin as
+    glowing blobs beside the nose.
+
+    COLOUR ONLY WHERE THE TARGET IS SKIN. Brightness is always matched (that is what makes the face sit
+    in the target's light). The two colour channels are matched fully only when the target's face is a
+    human skin tone; on a purple puppet they move a quarter of the way, or the pasted person turns
+    purple and disappears into the puppet -- which is what "did not actually swap" looked like."""
     import cv2
     import numpy as np
     m = region > 0.5
@@ -149,12 +184,17 @@ def _correct_colour(dst, warped, region):
         return warped.astype(np.float64)
     a = cv2.cvtColor(warped, cv2.COLOR_BGR2LAB).astype(np.float64)
     b = cv2.cvtColor(dst, cv2.COLOR_BGR2LAB).astype(np.float64)
+    target_mean = [b[..., c][m].mean() for c in range(3)]
+    chroma = 1.0 if _skin_like(target_mean) else 0.25
     for c in range(3):
         am, asd = a[..., c][m].mean(), a[..., c][m].std() + 1e-6
-        bm, bsd = b[..., c][m].mean(), b[..., c][m].std() + 1e-6
-        # The spread is only nudged (never more than 1.5x either way): the source keeps its own
-        # contrast, so its features stay legible on a flat-lit target.
-        a[..., c] = (a[..., c] - am) * float(np.clip(bsd / asd, 0.67, 1.5)) + bm
+        bm, bsd = target_mean[c], b[..., c][m].std() + 1e-6
+        if c == 0:
+            # The spread is only nudged (never more than 1.5x either way): the source keeps its own
+            # contrast, so its features stay legible on a flat-lit target.
+            a[..., c] = (a[..., c] - am) * float(np.clip(bsd / asd, 0.67, 1.5)) + bm
+        else:
+            a[..., c] = a[..., c] + (bm - am) * chroma
     return cv2.cvtColor(np.clip(a, 0, 255).astype(np.uint8), cv2.COLOR_LAB2BGR).astype(np.float64)
 
 
@@ -163,16 +203,24 @@ def _put(src_img, src_face, dst_img, dst_face):
     import cv2
     import numpy as np
     s_in, d_in = src_face["pts"][_INNER], dst_face["pts"][_INNER]
+    stylised = _stylised(dst_face)
+    if stylised:
+        # The target's landmarks are not where its face is: place the source face by the target's
+        # BOX instead -- its inner points mapped from the source box into the target box, so it takes
+        # the face's whole extent at a real face's proportions.
+        sx1, sy1, sx2, sy2 = src_face["box"]
+        dx1, dy1, dx2, dy2 = dst_face["box"]
+        rel = (s_in - np.array([sx1, sy1])) / np.array([max(1.0, sx2 - sx1), max(1.0, sy2 - sy1)])
+        d_in = rel * np.array([dx2 - dx1, dy2 - dy1]) + np.array([dx1, dy1])
     m = _align(s_in, d_in)
     h, w = dst_img.shape[:2]
     warped = cv2.warpAffine(src_img, m, (w, h), flags=cv2.INTER_LINEAR, borderMode=cv2.BORDER_REFLECT)
-    # Size of the face on the target, for the feather and the colour blur: the eye-to-eye span.
+    # Size of the face on the target, for the feather: the eye-to-eye span.
     span = float(np.ptp(d_in[:, 0])) or 40.0
-    target_mask = _face_mask(dst_img.shape, d_in, span * 0.06)
     # Where the SOURCE face actually lands (never blend the source picture's background in).
-    src_mask = cv2.warpAffine(_face_mask(src_img.shape, s_in, span * 0.06),
-                              m, (w, h))
-    mask = np.minimum(target_mask, np.maximum(src_mask, 0))[..., None]
+    src_mask = np.maximum(cv2.warpAffine(_face_mask(src_img.shape, s_in, span * 0.06), m, (w, h)), 0)
+    # On a stylised target its own landmarks are the unreliable part, so the source's outline decides.
+    mask = (src_mask if stylised else np.minimum(_face_mask(dst_img.shape, d_in, span * 0.06), src_mask))[..., None]
     corrected = _correct_colour(dst_img, warped, mask[..., 0])
     out = dst_img.astype(np.float64) * (1 - mask) + corrected * mask
     return np.clip(out, 0, 255).astype(np.uint8)
