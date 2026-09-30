@@ -24,12 +24,22 @@ class AssistMsg(BaseModel):
     who: str = ""                 # a group chat's speaker, for the summary only
 
 
+class WindowCtx(BaseModel):
+    title: str = ""
+    view: str = ""
+    kind: str = ""
+    selection: str = ""
+    text: str = ""
+
+
 class AssistReq(BaseModel):
-    action: str = "reply"         # reply | summarize | links
+    action: str = "reply"         # reply | summarize | links | window
     medium: str = "dm"            # telegram | dm
     messages: list[AssistMsg] = []
     count: int = 3
     probe: bool = False           # "would you answer me?" -- no model call
+    windows: list[WindowCtx] = [] # action=window: what the ✨ panel collected
+    instruction: str = ""         # action=window: what the person asked
 
 
 @router.post("")
@@ -55,6 +65,9 @@ async def chat_assist(req: AssistReq, db: Session = Depends(get_db),
             return {"ok": True, "content": choices[0], "choices": choices}
         if action == "summarize":
             return {"ok": True, "summary": await svc.summarize(db, user, items, medium)}
+        if action == "window":
+            return {"ok": True, "answer": await svc.ask_window(
+                db, user, [w.model_dump() for w in req.windows], req.instruction)}
         return {"ok": True, "links": await svc.summarize_links(db, user, items)}
     except svc.AssistError as e:
         return JSONResponse({"ok": False, "error": e.detail}, status_code=e.status)

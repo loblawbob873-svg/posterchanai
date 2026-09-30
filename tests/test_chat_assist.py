@@ -141,3 +141,36 @@ def test_nothing_anybody_wrote_is_logged(caplog):
     for action in ("reply", "summarize", "links"):
         _run({"action": action, "messages": items}, _Chat(["1. " + SECRET, SECRET]), pages=pages)
     assert SECRET not in caplog.text and "4471" not in caplog.text
+
+
+# ---- ✨ on a desktop window: the answer comes back to the panel --------------------------------------
+
+def test_window_answers_from_the_selection_first_and_names_every_window():
+    chat = _Chat(["- The build failed on a missing header"])
+    wins = [{"title": "Terminal", "view": "terminal", "kind": "PosterChan app",
+             "selection": "fatal error: foo.h: No such file", "text": "IGNORED visible text"},
+            {"title": "Firefox", "kind": "native app", "text": ""}]
+    code, data, _ = _run({"action": "window", "windows": wins, "instruction": "Explain output"}, chat)
+    assert code == 200 and data["answer"] == "- The build failed on a missing header"
+    assert len(chat.calls) == 1
+    system, user = chat.calls[0][0]["content"], chat.calls[0][1]["content"]
+    assert "ONLY the window content" in system and "never claim it was done" in system
+    assert "fatal error: foo.h" in user and "IGNORED" not in user, "a selection wins over the whole window"
+    assert '"Firefox" (native app)' in user and "only the window's name is known" in user
+    assert user.rstrip().endswith("Request: Explain output")
+
+
+def test_window_context_is_bounded():
+    wins = [{"title": f"W{i}", "text": "x" * 9000} for i in range(6)]
+    ctx = svc.window_context(wins)
+    assert len(ctx) == svc.WINDOW_MAX
+    assert all(len(c[3]) <= svc.WINDOW_EACH for c in ctx)
+    assert sum(len(c[3]) for c in ctx) <= svc.WINDOW_TOTAL
+
+
+def test_window_needs_a_question_and_the_gate_still_applies():
+    code, data, _ = _run({"action": "window", "windows": [{"title": "Notes", "text": "hi"}], "instruction": "  "}, _Chat([]))
+    assert code == 400 and "Ask something" in data["error"]
+    chat = _Chat(["should not be called"])
+    code, _, _ = _run({"action": "window", "windows": [{"title": "Notes"}], "instruction": "Summarize"}, chat, allowed=False)
+    assert code == 403 and chat.calls == []

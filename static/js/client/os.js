@@ -2550,6 +2550,70 @@
     toggleWindowAI(_pageWin, button, event);
     if(_pageWin.aiPanel) _pageWin.aiPanel.classList.add('pc-oswin-ai');
   }
+  /* The window's own text box, if it has one: the one the person was typing in, else the last visible
+   * one (a chat's composer sits at the bottom). Native apps have none we may touch. */
+  function _aiComposer(w){
+    if(!w || w.native!=null) return null;
+    const root=w.body||w.el, ok=e=>e&&root.contains(e)&&!e.closest('.osw-ai-panel')&&!e.disabled&&!e.readOnly&&
+      (e.tagName==='TEXTAREA'||(e.tagName==='INPUT'&&/^(text|search|)$/i.test(e.type||''))||e.isContentEditable)&&e.getClientRects().length>0;
+    const a=document.activeElement;
+    if(ok(a)) return a;
+    const all=[...root.querySelectorAll('textarea,[contenteditable="true"],[contenteditable=""]')].filter(ok);
+    return all.length?all[all.length-1]:null;
+  }
+  const _aiBusy=new WeakSet();
+  /* ONE question at a time per panel; the answer comes with the three things the person may do with
+   * it -- Copy, Save to Notes, Insert into this window's box -- each a click, none automatic. Insert
+   * never sends, and asks before replacing something already typed. */
+  async function _aiAnswer(w,panel,contexts,instruction,composer,handoff){
+    if(_aiBusy.has(panel)) return;
+    const box=panel.querySelector('.osw-ai-answer'); if(!box) return;
+    _aiBusy.add(panel); box.hidden=false; box.className='osw-ai-answer loading';
+    box.innerHTML='<span class="spinner"></span> Thinking…';
+    let answer='', error='';
+    try{
+      const P=PC();
+      try{ if(P.ensureAiSession) await P.ensureAiSession(); }catch(_){ }
+      const body=JSON.stringify({action:'window',windows:contexts,instruction});
+      const opts={method:'POST',headers:{'Content-Type':'application/json'},body};
+      const r=await (P.authFetch?P.authFetch('/api/chat-assist',opts):fetch('/api/chat-assist',{...opts,credentials:'include'}));
+      let j={}; try{ j=await r.json()||{}; }catch(_){ }
+      if(r.ok && j.ok && j.answer) answer=String(j.answer);
+      else error=j.error||(r.status===401?'Sign in to PosterChan to use AI.':'The AI did not answer — try again.');
+    }catch(_){ error='Could not reach the AI — check your connection.'; }
+    finally{ _aiBusy.delete(panel); }
+    if(w.aiPanel!==panel) return;                       // closed while it was thinking
+    if(error){ box.className='osw-ai-answer error'; box.innerHTML=`<p>${enc(error)}</p>`; return; }
+    box.className='osw-ai-answer';
+    box.innerHTML=`<div class="osw-ai-text">${enc(answer)}</div><div class="osw-ai-do">
+      <button class="btn btn-ghost small" data-ai-copy>Copy</button>
+      <button class="btn btn-ghost small" data-ai-note>Save to Notes</button>
+      ${composer?'<button class="btn btn-ghost small" data-ai-insert>Insert</button>':''}
+      <button class="btn btn-ghost small" data-ai-more>Continue in AI</button></div>`;
+    box.querySelector('[data-ai-copy]').onclick=()=>{ try{ PC().copyValue(answer); }catch(_){ } };
+    box.querySelector('[data-ai-more]').onclick=handoff;
+    box.querySelector('[data-ai-note]').onclick=async e=>{
+      const b=e.currentTarget;
+      if(!window.PCNotes||!window.PCNotes.save){ PC().toast('Notes is not available here'); return; }
+      b.disabled=true;
+      try{
+        const r=await window.PCNotes.save({title:'✨ '+(contexts[0]&&contexts[0].title||'Window')+' — '+instruction.slice(0,60),
+                                            body:answer,tags:['window-ai']});
+        b.textContent='✓ In Notes'; PC().toast(r&&r.queued?'Saved to Notes — will sync when you are back online':'Saved to Notes');
+      }catch(err){ b.disabled=false; PC().toast('Could not save to Notes'); }
+    };
+    const ins=box.querySelector('[data-ai-insert]');
+    if(ins) ins.onclick=async()=>{
+      if(!composer.isConnected){ PC().toast('That text box is gone'); return; }
+      const had=composer.isContentEditable?composer.textContent:composer.value;
+      if(String(had||'').trim() && !(await PC().uiConfirm('Replace what is already typed there?',{ok:'Replace'}))) return;
+      if(composer.isContentEditable) composer.textContent=answer; else composer.value=answer;
+      composer.dispatchEvent(new Event('input',{bubbles:true}));
+      closeWindowAI(w);
+      try{ composer.focus(); }catch(_){ }
+      PC().toast('Inserted — nothing was sent');
+    };
+  }
   function toggleWindowAI(w,button,event){
     if(event&&event.shiftKey){
       if(_aiContextWins.has(w)){_aiContextWins.delete(w);w.el.classList.remove('ai-context');PC().toast('Window removed from AI context');}
@@ -2560,6 +2624,8 @@
     wins.forEach(closeWindowAI);
     w.el.classList.remove('ai-alert');
     const related=[..._aiContextWins].filter(x=>wins.includes(x)&&x!==w), contexts=[w,...related].map(windowAIContext);
+    // Where an "Insert" would go: remembered NOW, before the panel's own box takes the focus.
+    const composer=_aiComposer(w);
     const ctx=contexts[0], panel=document.createElement('div'); panel.className='osw-ai-panel';w.aiPanel=panel;
     const suggestions=windowAISuggestions(w,ctx);
     const agentCapable=/terminal|console|shell|file|drive|folder/i.test(ctx.title+' '+ctx.view);
@@ -2569,18 +2635,25 @@
       <label>Ask about this window<textarea rows="2" placeholder="What would you like PosterChan AI to do?"></textarea></label>
       ${agentCapable?'<label class="osw-ai-agent"><input type="checkbox" data-ai-agent> Use the system agent to run commands or change files</label>':''}
       ${w.native==null?`<label class="osw-ai-agent"><input type="checkbox" data-ai-watch ${w.aiWatch?'checked':''}> Watch this window and glow when its contents change</label>`:''}
-      <footer><span>Review before sending · no automatic changes</span><button class="btn btn-neon" data-ai-ask>Open in AI</button></footer>`;
+      <div class="osw-ai-answer" hidden aria-live="polite"></div>
+      <footer><span>Review before sending · no automatic changes</span><button class="btn btn-ghost small" data-ai-open>Open in AI</button><button class="btn btn-neon" data-ai-ask>Ask</button></footer>`;
     w.el.appendChild(panel);
     const launch=instruction=>{instruction=String(instruction||'').trim();if(!instruction)return;const agent=!!(panel.querySelector('[data-ai-agent]')||{}).checked;closeWindowAI(w);try{_aiTarget().askWindowContext({windows:contexts},instruction,{agent});}catch(_){try{PC().toast('AI is unavailable');}catch(__){}}};
+    /* ANSWERED HERE, not on another screen -- unless the system agent is asked for, which runs
+     * commands and belongs in the AI screen where its every step is shown. */
+    const ask=instruction=>{instruction=String(instruction||'').trim();if(!instruction)return;
+      if((panel.querySelector('[data-ai-agent]')||{}).checked) return launch(instruction);
+      _aiAnswer(w,panel,contexts,instruction,composer,()=>launch(instruction));};
     panel.querySelector('[data-ai-dismiss]').onclick=()=>closeWindowAI(w);
     const clear=panel.querySelector('[data-ai-clear]');if(clear)clear.onclick=()=>{_aiContextWins.forEach(x=>x.el.classList.remove('ai-context'));_aiContextWins.clear();closeWindowAI(w);toggleWindowAI(w,button);};
-    panel.querySelectorAll('[data-ai-action]').forEach(b=>b.onclick=()=>launch(suggestions[+b.dataset.aiAction][1]));
-    const ta=panel.querySelector('textarea');panel.querySelector('[data-ai-ask]').onclick=()=>launch(ta.value);
+    panel.querySelectorAll('[data-ai-action]').forEach(b=>b.onclick=()=>ask(suggestions[+b.dataset.aiAction][1]));
+    const ta=panel.querySelector('textarea');panel.querySelector('[data-ai-ask]').onclick=()=>ask(ta.value);
+    panel.querySelector('[data-ai-open]').onclick=()=>launch(ta.value.trim()||suggestions[0][1]);
     const watch=panel.querySelector('[data-ai-watch]');if(watch)watch.onchange=()=>{
       if(w.aiWatch){w.aiWatch.disconnect();w.aiWatch=null;w.el.classList.remove('ai-watching','ai-alert');PC().toast('Stopped watching '+w.title);}
       if(watch.checked){let timer=0;w.aiWatch=new MutationObserver(records=>{const meaningful=records.some(r=>!(r.type==='childList'&&r.target===w.body&&[...r.addedNodes,...r.removedNodes].every(n=>n===realFeed)));if(!meaningful)return;clearTimeout(timer);timer=setTimeout(()=>{if(!wins.includes(w))return;w.el.classList.add('ai-alert');try{PC().toast('✨ '+w.title+' changed');}catch(_){}},700);});w.aiWatch.observe(w.body,{subtree:true,childList:true,characterData:true});w.el.classList.add('ai-watching');PC().toast('Watching '+w.title);}
     };
-    ta.onkeydown=e=>{if((e.ctrlKey||e.metaKey)&&e.key==='Enter'){e.preventDefault();launch(ta.value);}};
+    ta.onkeydown=e=>{if((e.ctrlKey||e.metaKey)&&e.key==='Enter'){e.preventDefault();ask(ta.value);}};
     setTimeout(()=>ta.focus(),0);
   }
 

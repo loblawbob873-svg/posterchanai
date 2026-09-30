@@ -26,7 +26,7 @@ from app.services.texts_ai_service import TextsAiError as AssistError
 logger = logging.getLogger(__name__)
 
 MEDIA = {"telegram": "Telegram chat message", "dm": "direct message (DM)"}
-ACTIONS = ("reply", "summarize", "links")
+ACTIONS = ("reply", "summarize", "links", "window")
 
 # A summary may read further back than a reply needs, but a whole year of a group chat never goes to
 # the model: the newest SUMMARY_MSGS messages, each clipped, and a total ceiling on top.
@@ -144,3 +144,62 @@ async def summarize_links(db, user, items) -> list:
         results.append({"url": url, "title": title, "summary": summary[:2000]})
     logger.info("[chat-assist] summarized %d link(s)", len(results))
     return results
+
+
+# ---- ✨ on a desktop window: answer IN the panel ------------------------------------------------------
+# The window-manager ✨ (os.js toggleWindowAI) used to hand every question to the AI chat screen, which
+# took the person away from the window they were asking about. It now answers in place; the context
+# is what the panel already collects (a selection wins over the visible text, a native app is its
+# title only) and nothing but the answer comes back -- the client offers Copy / Save to Notes /
+# Insert, each one a thing the person clicks.
+WINDOW_MAX = 4
+WINDOW_EACH = 4000
+WINDOW_TOTAL = 12000
+INSTRUCTION_MAX = 1000
+
+
+def window_context(windows) -> list:
+    """[(title, kind, label, text)] -- at most WINDOW_MAX windows, each clipped, within the total."""
+    out, total = [], 0
+    for w in list(windows or [])[:WINDOW_MAX]:
+        if not isinstance(w, dict):
+            continue
+        title = re.sub(r"\s+", " ", str(w.get("title") or "Window")).strip()[:160] or "Window"
+        kind = "native app" if str(w.get("kind") or "") == "native app" else "PosterChan app"
+        sel = re.sub(r"\s+", " ", str(w.get("selection") or "")).strip()
+        text = sel or re.sub(r"\s+", " ", str(w.get("text") or "")).strip()
+        text = text[:max(0, min(WINDOW_EACH, WINDOW_TOTAL - total))]
+        total += len(text)
+        out.append((title, kind, "selected text" if sel else "visible text", text))
+    return out
+
+
+def build_window_messages(context: list, instruction: str) -> list:
+    instruction = re.sub(r"\s+", " ", str(instruction or "")).strip()[:INSTRUCTION_MAX]
+    if not instruction:
+        raise AssistError(400, "Ask something about the window first.")
+    if not context:
+        raise AssistError(400, "There is no window to ask about.")
+    parts = []
+    for i, (title, kind, label, text) in enumerate(context, 1):
+        body = text if text else "(no text available -- only the window's name is known)"
+        parts.append(f"Window {i}: \"{title}\" ({kind}), {label}:\n<<<WINDOW\n{body}\nWINDOW")
+    return [
+        {"role": "system", "content": (
+            "You help the user with what is on their screen. Answer their request using ONLY the window "
+            "content provided; if it does not contain what is needed, say so plainly instead of guessing. "
+            "You cannot click, send, save or run anything: if they ask for a reply, a message or a "
+            "command, write it out for them to use -- never claim it was done. Be concise; use short "
+            "bullets starting with \"- \" for lists. Match the language of the content.")},
+        {"role": "user", "content": "\n\n".join(parts) + "\n\nRequest: " + instruction},
+    ]
+
+
+async def ask_window(db, user, windows, instruction: str) -> str:
+    context = window_context(windows)
+    out = await _chat(db, user, build_window_messages(context, instruction), 0.3)
+    if not out:
+        raise AssistError(502, "The AI did not come up with an answer — try again.")
+    logger.info("[chat-assist] window answer: %d windows, %d chars in -> %d chars",
+                len(context), sum(len(c[3]) for c in context), len(out))
+    return out[:6000]
