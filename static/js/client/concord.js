@@ -4243,7 +4243,7 @@
         && current.moderators.indexOf(viewer.pubkey)>=0),
       memberPks=current?roomParticipants(current,viewer.pubkey).filter(pk=>!banned.has(pk)):[];
     let membersHidden=localStorage.getItem('pc.concord.members.hidden')==='1';
-    const memberRows=memberPks.map(pk=>{const pr=p.profOf?p.profOf(pk):{},name=pk===viewer.pubkey?me:(pr.display_name||pr.name||pk.slice(0,12)+'…');const q=[name,pr.name,pr.display_name,pr.nip05,pk].filter(Boolean).join(' ').toLowerCase();return `<button class="cc-member" data-cc-member="${p.enc(pk)}" data-q="${p.enc(q)}" aria-label="${p.enc(name)} — ${pk===ownerPk?'Owner':'Member'}"><img src="${p.enc(pr.picture||p.LOGO||'')}" alt=""><span><b>${p.enc(name)}</b><small>${pk===ownerPk?'Owner':'Member'}</small></span></button>`;}).join('');
+    const memberRows=memberPks.map(pk=>{const pr=p.profOf?p.profOf(pk):{},name=pk===viewer.pubkey?me:(pr.display_name||pr.name||pk.slice(0,12)+'…');let npub='';try{npub=window.NostrTools.nip19.npubEncode(pk);}catch(_){}/* the form people copy and paste -- the hex alone found nobody from an npub */const q=[name,pr.name,pr.display_name,pr.nip05,npub,pk].filter(Boolean).join(' ').toLowerCase();return `<button class="cc-member" data-cc-member="${p.enc(pk)}" data-q="${p.enc(q)}" aria-label="${p.enc(name)} — ${pk===ownerPk?'Owner':'Member'}"><img src="${p.enc(pr.picture||p.LOGO||'')}" alt=""><span><b>${p.enc(name)}</b><small>${pk===ownerPk?'Owner':'Member'}</small></span></button>`;}).join('');
     notifyMentions(p,current,messages,viewer,me,state.channel||'general');
     const oldCommunityRail=feed.querySelector&&feed.querySelector('.cc-communities');
     /* A RE-RENDER MUST NOT CLOSE A SHEET SOMEBODY IS USING. Every sheet is rebuilt `hidden`, and a
@@ -4317,6 +4317,16 @@
       /* SEARCH THE KNOWN MEMBERS ("will be useful for large rooms"). By name, NIP-05 or key. The query
        * is the module's, so the repaint every arriving message causes keeps it and the filtered list;
        * the box that had focus gets it back (render() re-creates it). */
+      /* THE SHEETS BUILT HERE WERE NEVER REOPENED. The restore above runs before this block appends
+       * the Known members dialog, room settings and the rest, so an open one came back HIDDEN on
+       * every repaint: on a phone, tap into a channel and then Members, and the dialog shut 0.1s
+       * later when the channel's messages arrived ("Known Members is not working"). Reopen any
+       * that were open now that they exist; the restore above stays for the ones it already found. */
+      try{
+        const byIdLate=id=>feed.querySelector('[id="'+String(id).replace(/["\\]/g,'')+'"]');
+        openSheets.forEach(({id,fields})=>{ const d=byIdLate(id); if(!d||!d.classList.contains('hidden'))return; d.classList.remove('hidden');
+          fields.forEach(([fid,v])=>{ const f=byIdLate(fid); if(f&&v)f.value=v; }); });
+      }catch(_){ }
       applyMemberSearch();
       if(memberFocus){ const f=p.$(memberFocus.dlg?'#cc-members-dialog .cc-member-search':'.cc-members-pane .cc-member-search');
         if(f){ f.focus({preventScroll:true}); try{ f.setSelectionRange(memberFocus.at,memberFocus.at); }catch(_){ } } }
@@ -4676,7 +4686,7 @@
       const values={name:room.name,description:String($('#cc-description-value').value||'').trim(),icon:normalizeIcon($('#cc-settings-icon').value)};
       if(timerSelect?.dataset.edited==='1')values.message_expiration=Number(timerSelect.value);
       settingsSave.disabled=true;
-      try{const result=await saveCommunitySettings(p,room,values);render();p.toast(result.noticesFailed?'Settings saved; '+result.noticesFailed+' channel notices could not be delivered':'community profile updated');}
+      try{const result=await saveCommunitySettings(p,room,values);/* Saved: close the sheet ITSELF. It used to rely on render() shutting every sheet built after the open-sheet restore -- the bug that also shut Known members mid-use. */{const dlg=$('#cc-settings-dialog');if(dlg)dlg.classList.add('hidden');}render();p.toast(result.noticesFailed?'Settings saved; '+result.noticesFailed+' channel notices could not be delivered':'community profile updated');}
       catch(error){settingsSave.disabled=false;p.toast('community settings could not be saved: '+(error?.message||error));}
     };
     bindRefoundingControl(p,$);
