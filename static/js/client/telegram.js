@@ -314,6 +314,26 @@
     const file = pane.querySelector('.tg-file');
     pane.querySelector('[data-act="attach"]').onclick = () => file.click();
     file.onchange = () => { for(const f of file.files) st.pending.push({ file:f, name:f.name }); file.value = ''; paintPending(); };
+    /* PASTE A PICTURE, DROP A FILE ("paste image into message from clipboard"). The same pending
+       strip the 📎 button fills, sent the same way. Text on the clipboard is left to the textarea,
+       so an ordinary paste still pastes text. A pasted screenshot arrives named "image.png" every
+       time, so it gets a name of its own. */
+    const takeFiles = list => {
+      const got = [...(list || [])].filter(f => f && f.size >= 0);
+      got.forEach((f, i) => { const generic = !f.name || /^image\.(png|jpe?g|gif|webp)$/i.test(f.name);
+        const ext = ((f.type || '').split('/')[1] || 'png').replace('jpeg', 'jpg');
+        st.pending.push({ file:f, name: generic ? 'pasted-' + Date.now() + (i ? '-' + i : '') + '.' + ext : f.name }); });
+      if(got.length) paintPending();
+      return got.length;
+    };
+    ta.addEventListener('paste', e => {
+      const cd = e.clipboardData; if(!cd) return;
+      const files = [...(cd.files || [])];
+      if(!files.length) for(const it of (cd.items || [])) if(it.kind === 'file'){ const f = it.getAsFile(); if(f) files.push(f); }
+      if(files.length){ e.preventDefault(); takeFiles(files); }
+    });
+    pane.addEventListener('dragover', e => { if(e.dataTransfer && [...(e.dataTransfer.types || [])].includes('Files')) e.preventDefault(); });
+    pane.addEventListener('drop', e => { if(e.dataTransfer && e.dataTransfer.files && e.dataTransfer.files.length){ e.preventDefault(); takeFiles(e.dataTransfer.files); ta.focus(); } });
     pane.querySelector('[data-act="camera"]').onclick = openCamera;
     const list = pane.querySelector('.tg-msgs');
     list.addEventListener('scroll', () => { if(list.scrollTop < 60) loadOlder(); });
@@ -374,10 +394,15 @@
         ${reactionsHtml(m)}
         <span class="tg-meta">${m.edited ? 'edited · ' : ''}${esc(new Date(m.date * 1000).toLocaleTimeString([], {hour:'2-digit', minute:'2-digit'}))}${m.out ? tick(m.chat_id, m.id) : ''}
           <button class="tg-mini" data-react-pick="${m.id}" aria-label="React" title="React">☺</button>
+          ${m.text ? `<button class="tg-mini" data-copy="${m.id}" aria-label="Copy" title="Copy">⧉</button>` : ''}
           <button class="tg-mini" data-reply="${m.id}" aria-label="Reply">↩</button></span></div>`;
     }).join('') || '<div class="tg-muted tg-pad">No messages yet.</div>';
     box.querySelectorAll('[data-react]').forEach(b => b.onclick = () => react(Number(b.dataset.react), b.dataset.emoji));
     box.querySelectorAll('[data-react-pick]').forEach(b => b.onclick = e => { e.stopPropagation(); pickReaction(b, Number(b.dataset.reactPick)); });
+    /* Copy through the app's own helper: navigator.clipboard alone works in a browser and in neither
+       shell (the APK's WebView and the desktop's app:// both refuse it). */
+    box.querySelectorAll('[data-copy]').forEach(b => b.onclick = () => { const m = byId.get(Number(b.dataset.copy)); const P = PC();
+      if(m && m.text){ if(P.copyValue) P.copyValue(m.text, 'Copied'); else { try{ navigator.clipboard.writeText(m.text); }catch(_){ } } } });
     box.querySelectorAll('[data-reply]').forEach(b => b.onclick = () => { st.reply = byId.get(Number(b.dataset.reply)); paintReply();
       const ta = root.querySelector('.tg-text'); if(ta) ta.focus(); });
     box.querySelectorAll('a.tg-media').forEach(a => a.onclick = e => { const P = PC(); if(P.openLightbox){ e.preventDefault(); P.openLightbox(a.dataset.full); } });

@@ -442,3 +442,48 @@ def test_sent_and_read_ticks_and_a_read_on_the_phone_clears_the_badge():
         assert (await ticks(b))["badge77"] == "", "reading on the phone left the badge here"
 
     asyncio.run(desktop.with_browser("online", "", check, extra_init=fake))
+
+
+@pytest.mark.skipif(not Path("/opt/google/chrome/chrome").exists(), reason="Chrome required")
+@pytest.mark.parametrize("width", [1280, 820])
+def test_paste_a_picture_drop_a_file_and_copy_a_message(width):
+    """"Telegram needs copy and paste support" / "paste image into message from clipboard". A picture
+    on the clipboard becomes an attachment and is sent as one; text on the clipboard is left to the
+    text box; a dropped file attaches the same way; Copy puts a message's text through copyValue (the
+    helper that works in the APK and the desktop, where navigator.clipboard is refused)."""
+    got = {}
+
+    async def check(b):
+        await b.call("Emulation.setDeviceMetricsOverride", {"width": width, "height": 900, "deviceScaleFactor": 1, "mobile": False})
+        await _open(b)
+        await b.until("document.querySelectorAll('.tg-dialog').length===2")
+        await b.js("document.querySelector('.tg-dialog[data-chat=\"42\"]').click()")
+        await b.until("document.querySelectorAll('.tg-msg').length===3")
+        # Paste a screenshot.
+        await b.js("""(()=>{const dt=new DataTransfer();dt.items.add(new File([new Uint8Array([137,80,78,71,1,2,3])],'image.png',{type:'image/png'}));
+          const t=document.querySelector('.tg-text');t.focus();t.dispatchEvent(new ClipboardEvent('paste',{clipboardData:dt,bubbles:true,cancelable:true}));})()""")
+        got['chips_after_image'] = await b.js("[...document.querySelectorAll('.tg-pending .tg-chip')].map(c=>c.textContent.trim().split(' ')[0])")
+        # Paste text: no chip, nothing prevented.
+        got['text_prevented'] = await b.js("""(()=>{const dt=new DataTransfer();dt.setData('text/plain','hello there');
+          const ev=new ClipboardEvent('paste',{clipboardData:dt,bubbles:true,cancelable:true});document.querySelector('.tg-text').dispatchEvent(ev);return ev.defaultPrevented;})()""")
+        got['chips_after_text'] = await b.js("document.querySelectorAll('.tg-pending .tg-chip').length")
+        # Drop a file on the chat.
+        await b.js("""(()=>{const dt=new DataTransfer();dt.items.add(new File(['%PDF-1.4'],'notes.pdf',{type:'application/pdf'}));
+          const pane=document.querySelector('.tg-chat');pane.dispatchEvent(new DragEvent('drop',{dataTransfer:dt,bubbles:true,cancelable:true}));})()""")
+        got['chips_after_drop'] = await b.js("[...document.querySelectorAll('.tg-pending .tg-chip')].map(c=>c.textContent.trim().split(' ')[0])")
+        await b.js("document.querySelector('.tg-text').value='two attachments';document.querySelector('.tg-send').click()")
+        await b.until("__tg.files.length===2")
+        got['sent'] = await b.js("__tg.files.map(f=>({name:f.name,size:f.size,caption:f.caption}))")
+        # Copy a message's text.
+        await b.js("window.__copied=[];__PC.copyValue=(t,m)=>{__copied.push(t);return Promise.resolve(true)}")
+        await b.js("[...document.querySelectorAll('.tg-msg')].find(m=>m.textContent.includes('hey there')).querySelector('[data-copy]').click()")
+        got['copied'] = await b.js("__copied")
+        got['copy_on_media_only'] = await b.js("[...document.querySelectorAll('.tg-msg')].filter(m=>!m.querySelector('.tg-body')).some(m=>!!m.querySelector('[data-copy]'))")
+    asyncio.run(desktop.with_browser("online", "", check, extra_init=FAKE.replace("state:'none'", "state:'ready'")))
+    assert len(got['chips_after_image']) == 1 and got['chips_after_image'][0].startswith('pasted-') and got['chips_after_image'][0].endswith('.png'), got
+    assert got['text_prevented'] is False and got['chips_after_text'] == 1, ('a text paste was taken over', got)
+    assert got['chips_after_drop'][-1] == 'notes.pdf', got
+    assert [s['size'] for s in got['sent']] == [7, 8] and got['sent'][0]['name'].startswith('pasted-'), got
+    assert got['sent'][-1]['caption'] == 'two attachments', got
+    assert got['copied'] == ['hey there'], got
+    assert not got['copy_on_media_only'], 'a Copy button on a message with no text'
