@@ -1669,6 +1669,7 @@ html.pc-oswin .main:not(:has(.pc-navbar))>.topbar::after{content:"";display:bloc
 /* "3 waiting to sync" / "offline copy" — a fact about the data, next to the month it belongs to. */
 .cal-pending{font-size:11px;letter-spacing:.04em;color:var(--amber,#ffcf2b);border:1px solid rgba(255,207,43,.35);
   border-radius:999px;padding:2px 8px;margin-inline-start:10px;white-space:nowrap;align-self:center}
+.mail-stale{margin:6px 8px;padding:6px 10px;border:1px solid var(--line);border-radius:8px}
 .cal-stale{margin:0 0 8px;padding:6px 10px;border:1px solid var(--line);border-radius:8px}
 .cal-pending.cached{color:var(--muted);border-color:var(--line)}
 .cal-sub-tag{font-size:11px;letter-spacing:.06em;text-transform:uppercase;color:var(--neon);

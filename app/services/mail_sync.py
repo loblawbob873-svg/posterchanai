@@ -223,7 +223,13 @@ async def _sync_folder(db: Session, user, seckey: bytes, owner_pk: str, account,
         return 0
     if not uids:
         return 0
-    have = await mail_store.have_uids(seckey, account.email, folder)
+    try:
+        have = await mail_store.have_uids(seckey, account.email, folder)
+    except Exception as e:
+        # Cannot tell what is already stored: store nothing this pass rather than everything.
+        logger.warning("[mail-sync] %s/%s: stored mail unreadable, skipping this pass: %s",
+                       account.email, folder, type(e).__name__)
+        return 0
     new = [u for u in uids if str(u) not in have]
     if not new:
         return 0

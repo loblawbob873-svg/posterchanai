@@ -441,19 +441,22 @@ async def mail_messages(account: str = "", folder: str = "INBOX", until: int = 0
                         names.append(real)
                 except Exception:
                     pass
-            got, nx = [], []
+            got, nx, ok = [], [], 0
             for name in names:
                 try:
                     page, nxt = await mail_store.list_page(sk, acc.email, name, until=until or None)
                     got += page
+                    ok += 1
                     if nxt:
                         nx.append(nxt)
                 except Exception as e:
                     logger.warning("[mail] unified view: %s/%s unreadable: %s", acc.email, name, e)
+            if names and not ok:
+                raise RuntimeError(f"{acc.email}: no folder readable")
             return got, nx
 
         accounts = get_user_mail_accounts(current_user.id, db) or []
-        msgs, nexts = [], []
+        msgs, nexts, answered = [], [], 0
         # One slow or broken account must not empty the other's inbox — the unified view is the one
         # place where a single failure can look like "all my mail is gone".
         for result in await _asyncio.gather(*[_one_account(a) for a in accounts],
@@ -462,8 +465,13 @@ async def mail_messages(account: str = "", folder: str = "INBOX", until: int = 0
                 logger.warning("[mail] unified view: one account failed: %s", result)
                 continue
             got, nx = result
+            answered += 1
             msgs += got
             nexts += nx
+        # EVERY account unreadable is not "no mail" -- it is the relay not answering (a restart), and
+        # an empty 200 would draw an empty inbox. One account failing still shows the others.
+        if accounts and not answered:
+            raise HTTPException(status_code=503, detail="Could not reach your mail just now — try again.")
         seen, uniq = set(), []
         for m in sorted(msgs, key=lambda m: m.get("ts", 0), reverse=True):
             k = (m.get("account"), m.get("folder"), m.get("uid"))
@@ -478,7 +486,11 @@ async def mail_messages(account: str = "", folder: str = "INBOX", until: int = 0
     acc = _resolve_account(db, current_user, account)
     if not acc:
         return {"messages": [], "account": None}
-    msgs, nxt = await mail_store.list_page(sk, acc.email, folder, until=until or None)
+    try:
+        msgs, nxt = await mail_store.list_page(sk, acc.email, folder, until=until or None)
+    except Exception as e:
+        logger.warning("[mail] %s/%s unreadable: %s", acc.email, folder, type(e).__name__)
+        raise HTTPException(status_code=503, detail="Could not reach your mail just now — try again.")
     return {"messages": [_summary(m) for m in msgs], "account": acc.email, "next_until": nxt}
 
 

@@ -717,9 +717,15 @@ window.PCMailFactory = function(dep){
         if(query)this.convSent=[];
       }catch(_){
         if(seq!==this._listSeq || root!==this.root || account!==this.acct || folder!==this.folder || query!==this.q) return;
-        this.msgs=[]; this._next=0;
-        this._listError=query?'Could not search email. Try again.':'Could not load email. Try again.';
+        /* A REFRESH THAT FAILED KEEPS THE MAIL ON SCREEN. The list is only replaced when THIS folder's
+         * refresh fails with the same folder's messages already shown (an outage, a relay restart);
+         * blanking it to "Could not load email" made a reachable-a-second-ago inbox look empty. */
+        const same = !query && this._shownFor === account+'\u0001'+folder && this.msgs.length;
+        if(!same){ this.msgs=[]; this._next=0; }
+        this._listError=query?'Could not search email. Try again.'
+          :(same?'Showing the mail already loaded — could not reach the server.':'Could not load email. Try again.');
       }
+      if(!query && !this._listError) this._shownFor = account+'\u0001'+folder;
       this.drawList();
       this.loadConvSent(seq);
     },
@@ -826,6 +832,7 @@ window.PCMailFactory = function(dep){
       const box=$('#mail-items', this.root); if(!box) return;
       this.sel=this.sel||new Set();
       if(!this.msgs.length){ box.innerHTML='<div class="empty">'+(this._listError||(this.q?'No matches across your accounts.':'No messages.'))+'</div>'; this.updateBulk(); return; }
+      const staleNote = this._listError ? '<div class="mail-stale muted small" role="status">'+this._listError+'</div>' : '';
       // Unified mode uses the logical name and has no per-account folderLabels map. Treat it as
       // Sent too, or its rows show the sender (yourself) instead of the useful "To:" recipient.
       const isSent=!this.q&&(this.folder==='Sent'||this.folderLabels[this.folder]==='📤 Sent'), unified=this.acct==='__all'||!!this.q;
@@ -834,7 +841,7 @@ window.PCMailFactory = function(dep){
          is to consolidate". The row shows the NEWEST message and a count; the checkbox selects the
          whole conversation, because deleting half of one is not something anybody means to do. */
       const convs = this._conversations();
-      box.innerHTML=convs.map(c=>{ const m=c.head, keys=c.all.map(x=>this._key(x)), key=keys[0];
+      box.innerHTML=staleNote+convs.map(c=>{ const m=c.head, keys=c.all.map(x=>this._key(x)), key=keys[0];
         const cur = (this.msgs.indexOf(c.all[0]) === this.cursor) ? ' cursor' : '';
         const openInThis = c.all.concat(c.mine || []).some(x => String(x.uid) === String(this.openUid) && (x.account||this.acct)===(this.openAccount||this.acct) && (x.folder||this.folder)===(this.openFolder||this.folder));
         const n = c.count || c.all.length;

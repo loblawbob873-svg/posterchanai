@@ -409,7 +409,7 @@ async def list_all_docs(port: int, prefix: str, *, seckey: bytes | None = None,
 async def list_dtags(port: int, prefix: str, *, seckey: bytes | None = None,
                      pubkey: str | None = None, kind: int = APP_KIND,
                      limit: int = 5000, until: int | None = None,
-                     with_meta: bool = False) -> set | tuple:
+                     with_meta: bool = False, strict: bool = False) -> set | tuple:
     """Just the d-tags under `prefix` — NO content decryption.
 
     For existence/UID checks where the key is encoded in the d-tag itself (mailbox dedup), so a sync
@@ -431,7 +431,9 @@ async def list_dtags(port: int, prefix: str, *, seckey: bytes | None = None,
         flt["#d~"] = [prefix]      # see list_docs: ask for the namespace, not the whole key
     if until:
         flt["until"] = int(until)
-    evs = await _ws_query(port, [flt], auth_seckey=seckey)
+    # `strict` for the same reason as list_docs: a dedup that reads "unreachable" as "I hold nothing"
+    # treats every message as new.
+    evs = await _ws_query(port, [flt], strict=strict, auth_seckey=seckey)
     out = set()
     oldest = None
     for ev in evs:

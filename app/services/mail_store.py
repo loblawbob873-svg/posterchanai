@@ -115,8 +115,10 @@ async def list_page(seckey: bytes, account_email: str | None = None, folder: str
       older message in the folder behind it.
     """
     want = _SCAN_LIMIT if limit == 0 else int(limit or _PAGE)
+    # STRICT: "the relay could not answer" must not come back as an empty folder.
     docs = await nostr_store.list_docs(_port(), _prefix(account_email, folder), seckey=seckey,
-                                       encrypt=True, limit=want, until=until, with_meta=True)
+                                       encrypt=True, limit=want, until=until, with_meta=True,
+                                       strict=True)
     raw = len(docs)
     pairs = [(v, ts) for (v, ts) in docs.values() if isinstance(v, dict)]
     msgs = [v for v, _ in pairs]
@@ -193,9 +195,13 @@ async def have_uids(seckey: bytes, account_email: str, folder: str) -> set:
     out, until, guard = set(), None, 0
     while guard < 200:                       # 200 pages x 5000 = a million documents; a real bound
         guard += 1
+        # STRICT: an unreachable relay (every deploy restarts it for ~30s) answered an EMPTY set, which
+        # the sync read as "every message in this folder is new" -- re-fetching and re-writing the
+        # whole mailbox -- and the new-mail notifier as the whole inbox arriving at once. Both callers
+        # already treat a raise as "cannot tell"; they were simply never given one.
         dtags, nxt, seen = await nostr_store.list_dtags(_port(), prefix, seckey=seckey,
                                                         limit=_SCAN_LIMIT, until=until,
-                                                        with_meta=True)
+                                                        with_meta=True, strict=True)
         out |= {d[len(prefix):] for d in dtags if len(d) > len(prefix)}
         if not nxt or not seen:
             break
