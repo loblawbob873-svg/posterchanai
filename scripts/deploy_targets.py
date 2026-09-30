@@ -266,6 +266,104 @@ def _inert(path: str) -> bool:
             or path.endswith(_INERT_SUFFIXES))
 
 
+# ---- MEASURED OWNERS for a Python module the table above does not name -------------------------
+# "Unmapped => everything" was the right default while the table was the only knowledge available, and
+# it is why nearly every deploy restarted the relay: a module the table has not caught up with (a
+# new service, a helper) meant all eight units -- ~30s of every Nostr client disconnected, during
+# which a loose read made the phone's calendar show 0 events. The owners of a module are knowable:
+# the units whose PROCESS can import it. This walks every import from each unit's entry point --
+# including imports inside functions, and any string literal naming an `app.` module (importlib,
+# the worker's job table, the role runner's service table) -- so it is a SUPERSET of what a process
+# actually loads, never less. The hand table still wins where it names a path (those entries record
+# runtime measurements and deliberate choices, e.g. SHELL); this only replaces the blanket fallback.
+# A module no unit can reach is still "everything".
+# run.py is every role unit's ExecStart (run-*.sh --role X). SearXNG starts from searxng_native, not
+# run.py, but is rooted there too: tests/test_deploy_targets.py pins run.py as "shared, restart
+# everything", and a SearXNG restart costs only in-flight searches.
+_ROOTS = {
+    APP: ("run.py", "app/main.py"),
+    RELAY: ("run.py", "relay_main.py"),
+    WORKER: ("run.py", "app/worker.py"),
+    MEDIA: ("run.py", "app/role_runner.py", "app/services/stream_service.py", "app/services/turn_service.py"),
+    TOR: ("run.py", "app/role_runner.py", "app/services/tor_service.py"),
+    PROXY: ("run.py", "app/role_runner.py", "app/services/http_proxy_service.py"),
+    GIT: ("run.py", "app/role_runner.py", "app/services/git_http_service.py", "git_host_main.py"),
+    SEARXNG: ("run.py", "app/services/searxng_native.py"),
+}
+_REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+_closures = None
+
+
+def _module_file(mod: str):
+    base = os.path.join(_REPO, *mod.split("."))
+    if os.path.isfile(base + ".py"):
+        return os.path.relpath(base + ".py", _REPO)
+    init = os.path.join(base, "__init__.py")
+    return os.path.relpath(init, _REPO) if os.path.isfile(init) else None
+
+
+def _imports_of(rel: str) -> set:
+    import ast
+    import re as _re
+    try:
+        with open(os.path.join(_REPO, rel), encoding="utf-8") as f:
+            tree = ast.parse(f.read())
+    except Exception:
+        return set()
+    me = rel[:-3].replace(os.sep, ".")
+    pkg = me[:-9] if me.endswith(".__init__") else me.rpartition(".")[0]
+    out = set()
+
+    def add(dotted):
+        parts = dotted.split(".") if dotted else []
+        for i in range(1, len(parts) + 1):
+            f = _module_file(".".join(parts[:i]))
+            if f:
+                out.add(f)
+    for n in ast.walk(tree):
+        if isinstance(n, ast.Import):
+            for a in n.names:
+                add(a.name)
+        elif isinstance(n, ast.ImportFrom):
+            base = n.module or ""
+            if n.level:
+                b = pkg.split(".") if pkg else []
+                b = b[:len(b) - (n.level - 1)] if n.level > 1 else b
+                base = ".".join(b + ([base] if base else []))
+            add(base)
+            for a in n.names:
+                add(f"{base}.{a.name}" if base else a.name)
+        elif isinstance(n, ast.Constant) and isinstance(n.value, str) \
+                and _re.fullmatch(r"app(\.\w+)+", n.value):
+            add(n.value)
+    return out
+
+
+def _measured_closures() -> dict:
+    global _closures
+    if _closures is None:
+        cache, _closures = {}, {}
+        for unit, roots in _ROOTS.items():
+            seen, stack = set(), [r for r in roots if os.path.isfile(os.path.join(_REPO, r))]
+            while stack:
+                f = stack.pop()
+                if f in seen:
+                    continue
+                seen.add(f)
+                if f not in cache:
+                    cache[f] = _imports_of(f)
+                stack.extend(cache[f] - seen)
+            _closures[unit] = seen
+    return _closures
+
+
+def measured_owners(path: str) -> set:
+    """The units whose process can import `path` (empty when none can, or it is not Python)."""
+    if not path.endswith(".py") or not os.path.isfile(os.path.join(_REPO, path)):
+        return set()
+    return {u for u, files in _measured_closures().items() if path in files}
+
+
 def units_for(paths) -> list:
     """The units to restart for `paths`. Empty when nothing needs one."""
     live = [p for p in paths if p and not _inert(p)]
@@ -281,8 +379,10 @@ def units_for(paths) -> list:
                     owner = (len(prefix), unit)
         if owner:
             units.update(owner[1])
+        elif measured_owners(p):
+            units.update(measured_owners(p))
         else:
-            shared = True       # unmapped => could affect anything => everything restarts
+            shared = True       # nothing can say who imports it => everything restarts
     if shared:
         return list(ALL)
     # A role-only change still leaves the app process untouched, which is the whole win.
