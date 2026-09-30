@@ -1,18 +1,21 @@
 """Execute the shipped native registration using a bundled asset origin and real instance routing."""
 from pathlib import Path
+
+from tests.client_source import app_source_with
 import subprocess
 
 ROOT = Path(__file__).resolve().parents[2]
 
 
 def test_bundled_registration_uses_the_instance_and_rejects_cross_origin_socket():
-    source = (ROOT / 'static/js/client/app.js').read_text()
+    source = app_source_with('push.js')   # push code lives in push.js
     code = source[source.index('  function _directPushSocketUrl('):source.index('  async function _registerPushSub(')]
     harness = r'''
 const assert=require('node:assert/strict');
 const location={href:'https://localhost/index.html'};
 let base='https://poster.example',path='/api/push/direct/ws';
 const _instanceBase=()=>base,ME={pubkey:'owner'},toast=()=>{};
+const S={get ME(){return ME;},GUEST:false};   // push.js reads app.js's live bindings through S
 const _directPushAuth=async()=>({sig:'proof'});
 const requests=[], registrations=[], mirrored=[];
 /* Stubbed rather than sliced in — but ASSERTED below, so the gap becomes coverage. A phone that has

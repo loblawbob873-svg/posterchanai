@@ -7,7 +7,10 @@ import subprocess
 import pytest
 
 ROOT = Path(__file__).resolve().parents[2]
-APP = Path(os.environ.get('PC_PUSH_TEST_APP', ROOT / 'static/js/client/app.js')).read_text()
+from tests.client_source import app_source_with
+# The push code moved to push.js (split out of app.js); PC_PUSH_TEST_APP still points at one file.
+APP = (Path(os.environ['PC_PUSH_TEST_APP']).read_text() if os.environ.get('PC_PUSH_TEST_APP')
+       else app_source_with('push.js'))
 
 
 def run(case):
@@ -19,6 +22,7 @@ const assert=require('node:assert/strict');
 const scenario=CASE, messages=[], requests=[],timers=new Map();let next=0,aborted=false,signCalls=0,repairs=0;
 const never=()=>new Promise(()=>{}),setTimeout=(fn,ms)=>{timers.set(++next,fn);return next;},clearTimeout=id=>timers.delete(id);
 let GUEST=scenario==='guest',ME={pubkey:'a'.repeat(64)};
+const S={get GUEST(){return GUEST;},get ME(){return ME;}};   // push.js reads app.js's live bindings through S
 const toast=s=>messages.push(s),Notification={permission:scenario==='denied'?'denied':'granted'};
 const P={getEndpoint:()=>{if(scenario==='endpoint_switch')ME.pubkey='b'.repeat(64);return scenario==='native_hang'?never():Promise.resolve({deviceId:'phone-device-12345678',endpoint:'pcdirect:phone',needsRegistration:scenario==='repair'&&repairs===0,notificationsEnabled:scenario!=='muted',connected:scenario!=='disconnected',error:'connection failed'});}};
 const _enablePushNative=async()=>{repairs++;};

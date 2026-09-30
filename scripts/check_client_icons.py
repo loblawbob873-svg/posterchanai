@@ -43,6 +43,7 @@ SOURCES = [ROOT / "static/js/client/app.js",
            ROOT / "static/js/client/notifview.js",  # the Notifications view, split out of app.js
            ROOT / "static/js/client/rail.js",  # the right-column rail, split out of app.js
            ROOT / "static/js/client/linkcards.js",  # link preview + webxdc cards, split out of app.js
+           ROOT / "static/js/client/push.js",  # Web Push + stay connected, split out of app.js
            ROOT / "static/js/client/pdfedit.js",  # the PDF editor opened from Preview
            ROOT / "static/js/client/meme.js",
            ROOT / "templates/client.html"]

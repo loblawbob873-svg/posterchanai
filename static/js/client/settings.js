@@ -1301,8 +1301,12 @@ window.PCSettingsFactory = function(dep){
   }
   async function usLoadKeys(){
     const wrap=$('#us-key-list'); if(!wrap) return;
-    let keys=[]; try{ keys=await fetch('/api/auth/api-keys').then(r=>r.json()); }catch(_){}
-    wrap.innerHTML=(keys||[]).map(k=>`<div class="us-key"><div><b>${enc(k.name||'Default')}</b> <span class="muted small">${k.is_active?'active':'disabled'}</span></div>
+    let keys=null; try{ keys=await fetch('/api/auth/api-keys').then(r=>r.json()); }catch(_){}
+    /* An error answer is an OBJECT ({detail:…}, e.g. a Nostr-only login with no instance session), and
+     * `.map` on it threw into an unhandled rejection — the "action failed" toast on opening Settings.
+     * Could-not-read is said as such; "No keys yet" would be a claim about keys nobody listed. */
+    if(!Array.isArray(keys)){ wrap.innerHTML='<div class="muted small">Could not load your API keys.</div>'; return; }
+    wrap.innerHTML=keys.map(k=>`<div class="us-key"><div><b>${enc(k.name||'Default')}</b> <span class="muted small">${k.is_active?'active':'disabled'}</span></div>
       <div><button class="mini" data-tog="${k.id}">${k.is_active?'Disable':'Enable'}</button><button class="mini" data-del="${k.id}" style="color:var(--danger)">Delete</button></div></div>`).join('')||'<div class="muted small">No keys yet.</div>';
     $$('[data-tog]',wrap).forEach(b=> b.onclick=async()=>{ await fetch('/api/auth/api-keys/'+b.dataset.tog+'/toggle',{method:'PUT'}); usLoadKeys(); });
     $$('[data-del]',wrap).forEach(b=> b.onclick=async()=>{ if(!await uiConfirm('Delete this API key?'))return; await fetch('/api/auth/api-keys/'+b.dataset.del,{method:'DELETE'}); usLoadKeys(); });

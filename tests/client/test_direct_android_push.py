@@ -1,9 +1,11 @@
 """Regression coverage for PosterChan's first-party Android notification transport."""
 from pathlib import Path
 
+from tests.client_source import app_source_with
+
 
 ROOT = Path(__file__).resolve().parents[2]
-APP = (ROOT / "static/js/client/app.js").read_text(errors="replace")
+APP = app_source_with("push.js")   # push code lives in push.js (split out of app.js)
 GRADLE = (ROOT / "mobile/android/app/build.gradle").read_text(errors="replace")
 MANIFEST = (ROOT / "mobile/android/app/src/main/AndroidManifest.xml").read_text(errors="replace")
 
