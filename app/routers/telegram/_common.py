@@ -301,6 +301,7 @@ _FX_CHARACTERS = [
     ("🫵 Carl", "carl"), ("😮 Soyjak", "soyjack"),
     ("🪕 Uncle Ruckus", "ruckus"), ("🤷 Shrug", "shrug"),
     ("👉 Pointing (anime)", "theraped"), ("🧓 Would (old man)", "would"),
+    ("🪵 Woodchipper", "woodchipper"),
     ("🙈 Looking away", "lookingaway"), ("🏫 Nothing ever happens", "nothingeverhappens"),
     ("🙅 I don't think I will", "nodontthinkiwill"),
 ]

@@ -253,7 +253,7 @@ _ALPHA_CHARACTERS = [
     # of its own renders as "🧍 🧍 Carl". (The older entries below double up with a DIFFERENT emoji,
     # which at least reads as decoration rather than a bug.)
     ("carl", "Carl"), ("soyjack", "😮 Soyjaks pointing"), ("lookingaway", "🙈 Looking away (turns to camera)"),
-    ("would", "Would (old man)"), ("theraped", "Pointing (anime)"),
+    ("would", "Would (old man)"), ("theraped", "Pointing (anime)"), ("woodchipper", "Woodchipper (Get in!)"),
     ("jerry", "🎤 Jerry (stand-up)"), ("nothingeverhappens", "🏫 Nothing ever happens"),
     ("nodontthinkiwill", "🙅 No, I don't think I will"), ("ruckus", "Uncle Ruckus"),
 ]

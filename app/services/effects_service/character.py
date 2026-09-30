@@ -279,6 +279,12 @@ def add_would(data: bytes, caption: str = "WOULD") -> bytes:
     return _add_pointing_meme(data, "would", caption, fallback="theraped")
 
 
+def add_woodchipper(data: bytes, caption: str = "Get in!") -> bytes:
+    """`woodchipper` — a woodchipper stands bottom-centre under the image and says "Get in!". The same
+    pointing-meme renderer and speech bubble as `would`; the art is assets/characters/woodchipper.png."""
+    return _add_pointing_meme(data, "woodchipper", caption, fallback="would")
+
+
 def add_shrug(data: bytes, caption: str = "Whaddya gonna do?") -> bytes:
     """`shrug` — resigned rabbi, palms up, saying "Whaddya gonna do?". Same character+dialogue renderer;
     the shrug.png pose gestures on its own. Returns the STILL JPEG frame; the
@@ -755,6 +761,10 @@ def nothingeverhappens_attachments(attachments):
 
 def would_attachments(attachments):
     return _pointing_attachments(attachments, "would", "Would", add_would)
+
+
+def woodchipper_attachments(attachments):
+    return _pointing_attachments(attachments, "woodchipper", "Woodchipper", add_woodchipper)
 
 
 def carl_attachments(attachments):

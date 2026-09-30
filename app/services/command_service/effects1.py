@@ -729,6 +729,21 @@ class _Effects1Mixin:
             return {"type": "text", "content": summary}
         return {"type": "files", "content": summary, "files": outputs}
 
+    async def _woodchipper_command(self, attachments: Optional[list]) -> dict:
+        """A woodchipper under an attached image saying "Get in!": `woodchipper`."""
+        from app.services.media_service import is_image
+
+        if not attachments or not any(is_image(fn, ct) for fn, _, ct in attachments):
+            return {"type": "text", "content": "Attach an image, then send `woodchipper`."}
+
+        import asyncio
+        from app.services.effects_service import woodchipper_attachments
+
+        outputs, summary = await asyncio.to_thread(woodchipper_attachments, attachments)
+        if not outputs:
+            return {"type": "text", "content": summary}
+        return {"type": "files", "content": summary, "files": outputs}
+
     async def _reaction_command(self, attachments: Optional[list], name: str, fn) -> dict:
         """Shared body for the caption-less reaction overlays (`carl`/`soyjack`/`anyways`): the cutout
         stands bottom-centre over the attached image. One implementation so they can't drift."""

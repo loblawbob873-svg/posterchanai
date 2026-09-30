@@ -611,6 +611,8 @@ _CHARACTERS = {
     "unclerukus": "ruckus.png",
     # `would` — the old man of the pointing-up meme. Same drop-in rule as theraped.
     "would": "would.png", "oldman": "would.png", "jiisan": "would.png",
+    # `woodchipper` — the machine stands bottom-centre and says "Get in!" (a transparent cut-out).
+    "woodchipper": "woodchipper.png", "chipper": "woodchipper.png",
     "shrug": "shrug.png", "rabbi": "shrug.png", "whaddya": "shrug.png",
     # Reaction overlays (see _add_reaction_overlay): cutouts with no background and no caption —
     # the pose IS the joke, so they stand bottom-centre over the image and say nothing.
@@ -628,7 +630,7 @@ _CHARACTERS = {
     "lookingaway": "lookingaway_b.png", "lookaway": "lookingaway_b.png",
     "anyways": "anyways.png", "anyway": "anyways.png", "puppet": "anyways.png", "monkey": "anyways.png",
 }
-CHARACTER_NAMES = ["theraped", "would", "shrug", "carl", "soyjack", "lookingaway", "jerry",
+CHARACTER_NAMES = ["theraped", "would", "woodchipper", "shrug", "carl", "soyjack", "lookingaway", "jerry",
                    "nothingeverhappens", "nodontthinkiwill", "ruckus"]
 _CHARS_DIR_CANDIDATES = [
     os.path.join(_REPO_ROOT, "assets", "characters"),

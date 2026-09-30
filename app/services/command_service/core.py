@@ -57,6 +57,7 @@ class CommandService(_BillMixin, _SearchMixin, _GenMixin, _MediaMixin, _Torrents
         "nodontthinkiwill": "Old Steve Rogers declines your image: nodontthinkiwill [text]",
         "ruckus": "Uncle Ruckus stands over an attached image to his own theme → 8s MP4: ruckus",
         "would": "Old man points up at an attached image saying WOULD: would",
+        "woodchipper": "A woodchipper under an attached image saying \"Get in!\": woodchipper",
         "shrug": "Rabbi shrugs at an attached image: \"Whaddya gonna do?\": shrug",
         "carl": "Carl stands over an attached image, unimpressed: carl",
         "soyjack": "Two soyjaks point and yell at an attached image: soyjack",
@@ -232,7 +233,7 @@ class CommandService(_BillMixin, _SearchMixin, _GenMixin, _MediaMixin, _Torrents
         "lookaway": "lookingaway",
     }
     MOTION_EFFECTS = {
-        "collage", "meme", "theraped", "nothingeverhappens", "nodontthinkiwill", "ruckus", "would", "shrug", "carl", "soyjack", "lookingaway", "dildo", "poo", "cum", "blood", "bullethole", "fire", "nakedman", "gay", "hag", "goon",
+        "collage", "meme", "theraped", "nothingeverhappens", "nodontthinkiwill", "ruckus", "would", "woodchipper", "shrug", "carl", "soyjack", "lookingaway", "dildo", "poo", "cum", "blood", "bullethole", "fire", "nakedman", "gay", "hag", "goon",
         "blacked", "kosher", "blue", "barked", "hava", "indian", "yakety", "yamete",
         "curb", "depressing", "fahh", "helpme", "gong", "fbi", "redeem",
         "gigity", "beavis", "heat", "smell", "hood", "akbar", "retard", "whoabuddy", "diarrhea", "seth", "robocop", "titan", "terminator", "reze", "vibe", "rebecca", "makima", "gura",
@@ -747,6 +748,8 @@ class CommandService(_BillMixin, _SearchMixin, _GenMixin, _MediaMixin, _Torrents
             return await self._ruckus_command(attachments, arg)
         elif command == "would":
             return await self._would_command(attachments)
+        elif command == "woodchipper":
+            return await self._woodchipper_command(attachments)
         elif command == "shrug":
             return await self._shrug_command(attachments)
         elif command == "carl":
