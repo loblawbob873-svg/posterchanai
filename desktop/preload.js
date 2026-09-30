@@ -386,6 +386,7 @@ if (isOurPage) {
                                                  Number(w),Number(h)),
     fullscreen: (id, on) => ipcRenderer.invoke('pc:wm:fullscreen', Number(id), !!on),
     snap: (id, zone) => ipcRenderer.invoke('pc:wm:snap', Number(id), String(zone||'')),
+    arrange: (layout) => ipcRenderer.invoke('pc:wm:arrange', String(layout||'')),
     decorate: (id, hosted) => ipcRenderer.invoke('pc:wm:decorate', Number(id), !!hosted),
     /* An ARGV ARRAY, never a command string — a string would have to reach a shell to be useful,
      * and then a file name with a space in it is an injection. */

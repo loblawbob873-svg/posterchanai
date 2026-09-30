@@ -437,6 +437,31 @@ class WayfireWM{
     const above=Math.max(0,Math.min(256,Number(row.above)||0));
     const below=Math.max(0,Math.min(256,Number(row.below)||0));
     return this.place(id,x,y+above,w,Math.max(1,hh-above-below));}
+  /* ARRANGE EVERY WINDOW ON ONE MONITOR ("grid everything on a desktop or split"). `where` is a
+   * global point on that monitor, or 'focused' for the one holding the focused window (the keys).
+   * Only application windows move: the desktop's own surfaces and popups (titles "PosterChan Desktop"
+   * / "PosterChan Popup"), minimised and fullscreen windows are left alone. Most recently used first,
+   * so the window you were in lands top-left. Same title-bar allowance as snap(). */
+  async arrange(layout,where){const {tileRects,LAYOUTS}=require('./tile.js');if(!LAYOUTS.includes(String(layout)))return {ok:false,why:'unknown layout'};
+    const [outs,rows]=await Promise.all([this.outputs(),this.windows()]);if(!outs.length)return {ok:false,why:'no display'};
+    const inside=(o,px,py)=>px>=o.rect.x&&px<o.rect.x+o.rect.width&&py>=o.rect.y&&py<o.rect.y+o.rect.height;
+    let o=null;
+    if(where&&typeof where==='object'&&Number.isFinite(Number(where.x)))o=outs.find(v=>inside(v,Number(where.x),Number(where.y)));
+    if(!o&&where==='focused'){const f=rows.filter(r=>r.focused)[0]||rows.slice().sort((a,b)=>b.focusTime-a.focusTime)[0];
+      if(f)o=outs.find(v=>inside(v,f.rect.x+f.rect.width/2,f.rect.y+f.rect.height/2));
+      if(!o){try{const name=await this.focusedOutputName();o=outs.find(v=>v.name===name);}catch(_){}}}
+    o=o||outs[0];
+    const ours=r=>/^(posterchan(-desktop)?|place\.poster\.desktop)$/i.test(r.app||'');
+    const apps=rows.filter(r=>!r.stashed&&!r.fullscreen&&r.rect.width>0&&r.rect.height>0
+        &&inside(o,r.rect.x+r.rect.width/2,r.rect.y+r.rect.height/2)
+        &&!(ours(r)&&!/^PosterChan Window\b/.test(r.title))&&!/^PosterChan (Desktop|Popup)\b/.test(r.title))
+      .sort((a,b)=>b.focusTime-a.focusTime);
+    const wa=o.work,area=wa?{x:wa.x,y:wa.y,w:wa.w,h:wa.h}:{x:o.rect.x,y:o.rect.y,w:o.rect.width,h:Math.max(1,o.rect.height-72)};
+    const rects=tileRects(String(layout),apps.length,area);
+    for(let i=0;i<apps.length;i++){const r=apps[i],t=rects[i];
+      const above=Math.max(0,Math.min(256,Number(r.above)||0)),below=Math.max(0,Math.min(256,Number(r.below)||0));
+      await this.place(r.id,t.x,t.y+above,t.w,Math.max(1,t.h-above-below));}
+    return {ok:true,layout:String(layout),output:o.name,count:apps.length};}
   move(id,x,y){const key=Number(id);let state=this.moves.get(key);const at={x:Math.round(x),y:Math.round(y)};if(state){state.next=at;return state.promise;}state={next:at,promise:null};state.promise=(async()=>{while(state.next){const p=state.next;state.next=null;const row=(await this.windows()).find(v=>v.id===key);if(row)await this.place(key,p.x,p.y,row.rect.width,row.rect.height);}})().finally(()=>{if(this.moves.get(key)===state)this.moves.delete(key);});this.moves.set(key,state);return state.promise;}
   finishMove(id){const s=this.moves.get(Number(id));if(!s)return Promise.resolve();s.next=null;return s.promise||Promise.resolve();}
   applyChrome(){return Promise.resolve(true);} // PosterChanUI owns both macOS and Windows chrome.

@@ -11677,6 +11677,25 @@ html.pc-golive-win #modal-root>.modal-bg:first-child:not(.modal-sub) .gl-actions
   border-image:linear-gradient(90deg,rgba(var(--accent-rgb),.9),rgba(255,43,109,.7),transparent) 1}
 /* Log out's question and the account switcher, each a window of its own on PosterChanOS. */
 .os-popup-body.os-popup-ask,.os-popup-body.os-popup-accounts{background:var(--bg,#07080d)}
+/* Arrange: the taskbar button and its picker window. */
+.os-arrange{display:inline-flex;align-items:center;justify-content:center;width:36px;height:36px;margin-inline-end:4px;border:0;border-radius:8px;
+  background:transparent;color:var(--text);cursor:pointer}
+.os-arrange:hover,.os-arrange:focus-visible{outline:none;background:rgba(var(--accent-rgb),.16);color:var(--accent)}
+.os-arrange .ic{width:20px;height:20px}
+.os-popup-body.os-popup-arrange{background:var(--bg,#07080d)}
+.os-popup-arrange #os-popup-host{position:fixed;inset:0;display:flex}
+.os-arrange-pop{flex:1;display:flex;flex-direction:column;gap:12px;padding:14px;box-sizing:border-box;border:1px solid rgba(var(--accent-rgb),.9);border-radius:10px;
+  background:radial-gradient(120% 80% at 0 0,rgba(var(--accent-rgb),.14),transparent 60%),linear-gradient(160deg,var(--panel2,#141824),var(--bg,#07080d));
+  box-shadow:inset 0 0 0 1px rgba(var(--accent-rgb),.22),inset 0 0 30px rgba(var(--accent-rgb),.18)}
+.os-arrange-hd{font:700 12px var(--font-mono,ui-monospace,monospace);letter-spacing:.2em;color:var(--accent);text-shadow:0 0 10px rgba(var(--accent-rgb),.6)}
+.os-arrange-opts{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:8px}
+.os-arrange-opts button{display:flex;flex-direction:column;align-items:center;gap:6px;padding:10px 6px;border-radius:10px;cursor:pointer;
+  border:1px solid rgba(var(--accent-rgb),.35);background:rgba(var(--accent-rgb),.06);color:var(--text);font:inherit}
+.os-arrange-opts button:hover,.os-arrange-opts button:focus-visible{outline:none;border-color:var(--accent);background:rgba(var(--accent-rgb),.16)}
+.os-arrange-opts b{font-size:11.5px;white-space:nowrap}.os-arrange-opts small{font:9px var(--font-mono,ui-monospace,monospace);color:var(--muted);white-space:nowrap}
+.os-lay{display:grid;gap:3px;width:64px;height:44px}
+.os-lay .os-lay-cell{display:block;min-width:0;min-height:0;border:1.5px solid var(--accent);border-radius:3px;background:rgba(var(--accent-rgb),.22);box-shadow:0 0 6px rgba(var(--accent-rgb),.35)}
+.os-lay-grid{grid-template:1fr 1fr/1fr 1fr}.os-lay-side{grid-template-columns:1fr 1fr}.os-lay-stack{grid-template-rows:1fr 1fr}
 .os-popup-ask #os-popup-host,.os-popup-accounts #os-popup-host{position:fixed;inset:0;display:flex}
 .os-ask,.os-accts{flex:1;margin:0;box-sizing:border-box;border:1px solid rgba(var(--accent-rgb),.9);border-radius:10px;
   background:radial-gradient(120% 80% at 0 0,rgba(var(--accent-rgb),.14),transparent 60%),linear-gradient(160deg,var(--panel2,#141824),var(--bg,#07080d));

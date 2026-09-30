@@ -9231,6 +9231,8 @@
                   data-id="${w.id}" data-kind="native"${tint(w.appId || w.title)} title="${enc(w.title)}">
             ${appIcon(w)}<span>${enc(w.title)}</span></button>`).join('')}</div>
        <div class="os-tray">
+         ${window.pcWM && typeof pcWM.arrange === 'function' && _popupWindows()
+           ? `<button class="os-arrange" id="os-arrange" title="Arrange windows (Super+G)" aria-label="Arrange windows"><svg class="ic" aria-hidden="true"><use href="#i-grid"></use></svg></button>` : ''}
          <div class="os-sys" id="os-shell"></div>
          <button class="os-net net-${netNow.level}${netOpen ? ' on' : ''}" id="os-net"
                  title="${enc(NET_LABEL[netNow.level] + ' — ' + netSummary(netNow))}"
@@ -9299,6 +9301,10 @@
     { const bb = $('#os-bell', bar); if(bb) bb.onclick = (e) => { e.stopPropagation(); toggleNoti(); }; }
     { const cb = $('#os-clock', bar); if(cb) cb.onclick = (e) => { e.stopPropagation(); toggleNoti(); }; }
     { const nb = $('#os-net', bar); if(nb) nb.onclick = (e) => { e.stopPropagation(); toggleNet(); }; }
+    /* ARRANGE: a small picker in a window of its own (never a menu on this surface, which sits under
+       the windows it would arrange). The choice comes back as pc:act:arrange:<layout>. */
+    { const ab = $('#os-arrange', bar); if(ab) ab.onclick = (e) => { e.stopPropagation();
+        try{ pcPopup.open('arrange', _popupRectNear(ab, 320, 172)); }catch(_){ } }; }
     $$('.os-task', bar).forEach(b => b.onclick = async () => {
       if(b.dataset.kind === 'pin-view'){ openLauncherApp(b.dataset.pin.slice(5)); return; }
       if(b.dataset.kind === 'pin-app'){
@@ -10839,6 +10845,7 @@
               try{
                 if(kind === 'view') openLauncherApp(val);
                 else if(kind === 'ask'){ if(_askPending) _askPending(val === 'ok'); }
+                else if(kind === 'arrange'){ try{ if(window.pcWM && pcWM.arrange) Promise.resolve(pcWM.arrange(val)).then(r => { if(r && r.ok === false && r.why) PC().toast(r.why); }).catch(()=>{}); }catch(_){ } }
                 else if(kind === 'acct'){ if(PC().accountAct) PC().accountAct(val); }
                 /* A capture asked for from a popup (the tray, the Print Screen prompt): taken HERE,
                    because the popup that asked is closing. */
@@ -11674,6 +11681,21 @@
   }
   /* THE ACCOUNT SWITCHER IN A WINDOW OF ITS OWN. It only PICKS: the switch happens in the desktop's
      page (pc:act:acct:<pubkey|add|manage|profile>), because that is the session that changes. */
+  /* THE ARRANGE PICKER: three layouts, each drawn as what it will do. */
+  function renderArrangePopup(){
+    const host = popupHost();
+    try{ document.body.classList.add('os-popup-arrange'); }catch(_){ }
+    _menuInPopup = true;
+    const cell = n => '<span class="os-lay-cell"></span>'.repeat(n);
+    host.innerHTML = `<div class="os-arrange-pop" role="menu" aria-label="Arrange windows"><b class="os-arrange-hd">ARRANGE WINDOWS</b>
+        <div class="os-arrange-opts">
+          <button role="menuitem" data-arrange="grid"><span class="os-lay os-lay-grid">${cell(4)}</span><b>Grid</b><small>Super+G</small></button>
+          <button role="menuitem" data-arrange="side-by-side"><span class="os-lay os-lay-side">${cell(2)}</span><b>Side by side</b><small>Super+Shift+G</small></button>
+          <button role="menuitem" data-arrange="stacked"><span class="os-lay os-lay-stack">${cell(2)}</span><b>Top &amp; bottom</b><small>Super+Alt+G</small></button>
+        </div></div>`;
+    host.querySelectorAll('[data-arrange]').forEach(b => b.onclick = () => _menuAct('arrange', b.dataset.arrange));
+    document.addEventListener('keydown', e => { if(e.key === 'Escape'){ e.preventDefault(); try{ window.close(); }catch(_){ } } });
+  }
   function renderAccountsPopup(){
     const host = popupHost();
     try{ document.body.classList.add('os-popup-accounts'); }catch(_){ }
@@ -11843,6 +11865,7 @@
         else if(k === 'bugreport') renderBugReportPopup();
         else if(k === 'ask') renderAskPopup();
         else if(k === 'accounts') renderAccountsPopup();
+        else if(k === 'arrange') renderArrangePopup();
         /* The tray draws itself — it is osshell.js's panel, built from the machine's own bridges,
            and those exist in this renderer exactly as they do in the desktop's. */
         else if(k === 'tray'){

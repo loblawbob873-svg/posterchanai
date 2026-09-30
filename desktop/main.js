@@ -2157,6 +2157,11 @@ async function wireShellRecovery(){
          * forwarding handler, so the tick died here in the main process. This subscription is
          * always installed for shell recovery; it is therefore the authoritative keyboard path. */
         if(ev.payload==='pc:update-installed') requestSafeShellRestart('compositor-tick');
+        /* Super+G and friends: arranged HERE, once, on the monitor holding the focused window --
+           forwarding to every shell surface would have each monitor arrange on the same key. */
+        else if(/^pc:arrange:(grid|side-by-side|stacked)$/.test(String(ev.payload||''))){
+          const w = wm(); if(w && typeof w.arrange === 'function') w.arrange(String(ev.payload).slice(11), 'focused').catch(()=>{});
+        }
         else forwardShellTick(ev).catch(()=>{});
         return;
       }
@@ -2884,6 +2889,15 @@ ipcMain.handle('pc:wm:workarea', (e, area) => {
   publishWorkAreaFile(area);
   const w = wm();
   return w && typeof w.setWorkArea === 'function' ? w.setWorkArea(area) : false;
+});
+/* ARRANGE: the taskbar's button asks for ITS OWN monitor -- the centre of the shell surface that
+ * sent it -- so two monitors never arrange each other. */
+ipcMain.handle('pc:wm:arrange', async (e, layout) => {
+  fsGuard(e);
+  const w = wm(); if(!w || typeof w.arrange !== 'function') return { ok:false, why:'this window manager cannot arrange' };
+  const scope = _shellScopes.get(e.sender.id), r = scope && scope.rect;
+  const where = r ? { x:(Number(r.x)||0)+(Number(r.width)||0)/2, y:(Number(r.y)||0)+(Number(r.height)||0)/2 } : 'focused';
+  return w.arrange(String(layout||''), where);
 });
 ipcMain.handle('pc:wm:move', (e, id, x, y) => {
   fsGuard(e); return wm().move(Number(id), Number(x), Number(y));
