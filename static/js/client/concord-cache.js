@@ -14,7 +14,7 @@
   function done(tx){return new Promise((resolve,reject)=>{tx.oncomplete=()=>resolve();tx.onabort=tx.onerror=()=>reject(tx.error||new Error('IndexedDB transaction failed'));});}
   function open(){
     if(dbPromise)return dbPromise;
-    dbPromise=new Promise((resolve,reject)=>{const q=indexedDB.open(DB,VERSION);q.onupgradeneeded=()=>{const db=q.result,s=db.objectStoreNames.contains(STORE)?q.transaction.objectStore(STORE):db.createObjectStore(STORE,{keyPath:'key'});if(!s.indexNames.contains('stream'))s.createIndex('stream','stream',{unique:false});if(!s.indexNames.contains('streamCreated'))s.createIndex('streamCreated',['stream','created'],{unique:false});if(!db.objectStoreNames.contains(ICONS))db.createObjectStore(ICONS,{keyPath:'key'});const pending=db.objectStoreNames.contains(DELIVERIES)?q.transaction.objectStore(DELIVERIES):db.createObjectStore(DELIVERIES,{keyPath:'key'});if(!s.indexNames.contains('expires'))s.createIndex('expires','expires',{unique:false});if(!pending.indexNames.contains('expires'))pending.createIndex('expires','expires',{unique:false});};q.onsuccess=()=>{q.result.onversionchange=()=>{q.result.close();dbPromise=null;};resolve(q.result);};q.onerror=()=>reject(q.error||new Error('Concord cache unavailable'));/* A VERSIONED DATABASE THAT ANOTHER TAB HOLDS OPEN AT AN OLDER VERSION BLOCKS FOR EVER, and
+    dbPromise=new Promise((resolve,reject)=>{const q=indexedDB.open(DB,VERSION);q.onupgradeneeded=()=>{const db=q.result,s=db.objectStoreNames.contains(STORE)?q.transaction.objectStore(STORE):db.createObjectStore(STORE,{keyPath:'key'});if(!s.indexNames.contains('stream'))s.createIndex('stream','stream',{unique:false});if(!s.indexNames.contains('streamCreated'))s.createIndex('streamCreated',['stream','created'],{unique:false});if(!db.objectStoreNames.contains(ICONS))db.createObjectStore(ICONS,{keyPath:'key'});const pending=db.objectStoreNames.contains(DELIVERIES)?q.transaction.objectStore(DELIVERIES):db.createObjectStore(DELIVERIES,{keyPath:'key'});if(!s.indexNames.contains('expires'))s.createIndex('expires','expires',{unique:false});if(!pending.indexNames.contains('expires'))pending.createIndex('expires','expires',{unique:false});};q.onsuccess=()=>{const db=q.result;db.onversionchange=()=>{db.close();if(dbPromise&&dbPromise.__db===db)dbPromise=null;};db.onclose=()=>{if(dbPromise&&dbPromise.__db===db)dbPromise=null;};if(dbPromise)dbPromise.__db=db;resolve(db);};q.onerror=()=>reject(q.error||new Error('Concord cache unavailable'));/* A VERSIONED DATABASE THAT ANOTHER TAB HOLDS OPEN AT AN OLDER VERSION BLOCKS FOR EVER, and
    with no handler this promise simply never settles: every icon read and every envelope read
    awaits it until the page is closed, with nothing thrown and nothing logged. A second window
    — or the desktop shell and a browser tab on the same profile — is enough. Rejecting turns
@@ -111,5 +111,16 @@
     const pendingKeys=pendingRows.filter(row=>{try{return JSON.parse(row.stream)[0]===prefix;}catch(_){return false;}}).map(row=>row.key);
     if(pendingKeys.length){const clear=db.transaction(DELIVERIES,'readwrite'),cleared=done(clear);for(const key of pendingKeys)clear.objectStore(DELIVERIES).delete(key);await cleared;}
     return true;}
-  root.PCConcordCache={DB,STORE,ICONS,DELIVERIES,MAX_PENDING,MAX_PENDING_BYTES,getDeliveries,putDelivery,completeDelivery,MAX_PER_STREAM,MAX_EVENT_BYTES,MAX_TOTAL_BYTES,MAX_ICON_BYTES,expireEvents,sweepExpired,put,get,page,drop,putIcon,getIcon,allIcons,dropIcon,dropRoom,_reset(){dbPromise=null;}};
+  /* A CLOSED CONNECTION IS REOPENED, NOT REUSED FOR EVER. This held one IDBDatabase for the life of
+   * the page and dropped it only on a version change, so anything else that closes it -- an app
+   * update restarting underneath the page, cleared site data, the browser reclaiming it -- left EVERY
+   * later call throwing "The database connection is closing" until a reload. Sending is one of those
+   * calls (the wrap is saved as a pending delivery before it goes out, and without that store
+   * Concord refuses to send), reported from Communities exactly so. `onclose` covers the abnormal
+   * close; a connection closed explicitly fires nothing, so an operation that meets one reopens and
+   * runs ONCE more. Every operation below is a whole transaction (or several, each idempotent), so
+   * running it again after a failure that happened before any of it committed changes nothing. */
+  function stale(e){return !!e&&(e.name==='InvalidStateError'||/connection is clos|database.*closed/i.test(String(e.message||'')));}
+  function healing(fn){return async function(){try{return await fn.apply(this,arguments);}catch(e){if(!stale(e))throw e;dbPromise=null;return fn.apply(this,arguments);}};}
+  root.PCConcordCache={DB,STORE,ICONS,DELIVERIES,MAX_PENDING,MAX_PENDING_BYTES,getDeliveries:healing(getDeliveries),putDelivery:healing(putDelivery),completeDelivery:healing(completeDelivery),MAX_PER_STREAM,MAX_EVENT_BYTES,MAX_TOTAL_BYTES,MAX_ICON_BYTES,expireEvents:healing(expireEvents),sweepExpired:healing(sweepExpired),put:healing(put),get:healing(get),page:healing(page),drop:healing(drop),putIcon:healing(putIcon),getIcon:healing(getIcon),allIcons:healing(allIcons),dropIcon:healing(dropIcon),dropRoom:healing(dropRoom),_reset(){dbPromise=null;}};
 })(typeof window==='undefined'?globalThis:window);

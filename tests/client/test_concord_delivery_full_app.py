@@ -68,3 +68,46 @@ const originalWorkerPost=Worker.prototype.postMessage;
 Worker.prototype.postMessage=function(message,...rest){if(message?.op==='sign'&&message.args?.event?.kind===20013)__concordSigns++;return originalWorkerPost.call(this,message,...rest);};
 '''
     asyncio.run(desktop.with_browser('online','',check,extra))
+
+
+@pytest.mark.skipif(not Path('/opt/google/chrome/chrome').exists(),reason='Chrome required')
+def test_concord_sends_after_its_database_connection_was_closed():
+    """"Failed to execute 'transaction' on 'IDBDatabase': The database connection is closing" --
+    Communities, trying to send. The encrypted wrap is saved as a pending delivery before it goes out,
+    and the cache reused one connection for ever; once something closed it (an app update under the
+    page, cleared site data), every send failed until a reload. Here every Concord connection is
+    closed before Send is pressed, and the message must still go out and show its check."""
+    async def check(b):
+        await desktop.login(b)
+        await b.js(r'''(()=>{
+          const room={name:'Delivery fixture',communityId:'c'.repeat(64),naddr:'fixture-community',
+            channels:[{id:'fixture-general',name:'general'}],cord:{bundle:{relays:['wss://fixture.invalid']},hydrated:true}};
+          localStorage.setItem('pc.concord.invites',JSON.stringify([room]));localStorage.setItem('pc.concord.active','0');
+          window.PosterCordReader={inspectControl:()=>({controlPubkeys:[],channels:[{id:'fixture-general',name:'general',streamPubkeys:[]}]}),
+          inspectChat:async()=>({messages:[],reactions:[],reactionIds:[]}),
+          createChatWrap:async(_bundle,_wraps,_channel,text,owner,sign,tags,kind)=>{
+            const sealed=await sign({kind:20013,created_at:Math.floor(Date.now()/1000),content:'encrypted-fixture',tags:[]});
+            return{rumorId:sealed.id,wrap:{...sealed,kind:1059},ms:Date.now()};
+          }};
+          __PC.switchMessagesTab('concord');
+        })()''')
+        await b.until("!!document.querySelector('#cc-input')")
+        # Make sure the cache HAS a connection (a pending-delivery read opens it), then close it.
+        await b.js("PCConcordCache.getDeliveries('warm-up')")
+        await b.until("__concordConns.length>0")
+        await b.js("__concordConns.forEach(db=>db.close());__publishOK=true;window.__errs=[];"
+                   "addEventListener('unhandledrejection',e=>__errs.push(String(e.reason&&e.reason.message||e.reason)))")
+        await b.js("document.querySelector('#cc-input').value='sent after the connection closed';"
+                   "document.querySelector('#cc-input').dispatchEvent(new Event('input',{bubbles:true}));document.querySelector('#cc-send').click()")
+        await b.until("!!document.querySelector('.cc-delivery-confirmed') || !!document.querySelector('[data-cc-retry-delivery]')")
+        page_text = await b.js("document.body.innerText")
+        assert 'connection is closing' not in page_text, 'the closed connection surfaced on screen'
+        assert await b.js("!!document.querySelector('.cc-delivery-confirmed')"), 'the message was not delivered'
+        assert not [e for e in await b.js('__errs') if 'closing' in e], await b.js('__errs')
+    extra=r'''
+localStorage.setItem('pc_nostr_settings',JSON.stringify({...JSON.parse(localStorage.getItem('pc_nostr_settings')||'{}'),osMode:false}));
+window.__concordSigns=0;window.__concordConns=[];
+{const o=IDBFactory.prototype.open;IDBFactory.prototype.open=function(name){const q=o.apply(this,arguments);
+  if(String(name).startsWith('posterchan-concord'))q.addEventListener('success',()=>__concordConns.push(q.result));return q;};}
+'''
+    asyncio.run(desktop.with_browser('online','',check,extra))
