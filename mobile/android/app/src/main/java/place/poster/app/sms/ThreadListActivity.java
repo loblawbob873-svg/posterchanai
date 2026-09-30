@@ -47,7 +47,9 @@ public class ThreadListActivity extends PcActivity {
 
     private ListView list;
     private EditText search;
-    private TextView empty, notice, title;
+    private TextView empty, notice, title, archivedRow;
+    /** Showing the Archived view rather than the conversation list. */
+    private boolean archivedView = false;
     private Threads adapter;
     private final Handler main = new Handler(Looper.getMainLooper());
     private ContentObserver watcher;
@@ -62,6 +64,10 @@ public class ThreadListActivity extends PcActivity {
         empty = (TextView) findViewById(R.id.pc_sms_empty);
         notice = (TextView) findViewById(R.id.pc_sms_notice);
         title = (TextView) findViewById(R.id.pc_sms_title);
+        archivedRow = (TextView) findViewById(R.id.pc_sms_archived);
+        archivedRow.setOnClickListener(new View.OnClickListener() {
+            @Override public void onClick(View v) { archivedView = !archivedView; draw(); }
+        });
 
         adapter = new Threads();
         list.setAdapter(adapter);
@@ -79,7 +85,7 @@ public class ThreadListActivity extends PcActivity {
             @Override public boolean onItemLongClick(AdapterView<?> p, View v, int i, long id) {
                 final SmsStore.Thread t = adapter.at(i);
                 if (t == null) return true;
-                confirmDeleteThread(t);
+                threadMenu(t);
                 return true;
             }
         });
@@ -326,8 +332,19 @@ public class ThreadListActivity extends PcActivity {
          * message is newer than the archive and brings the conversation straight back. A search
          * still finds them -- archived is filed, not gone. */
         ArchivedThreads archived = SmsArchived.load(this);
+        int archivedCount = 0;
+        for (SmsStore.Thread t : all) if (archived.hidden(t.address, t.date)) archivedCount++;
+        // Nothing left in the Archived view (the last one was unarchived, or a new text brought it
+        // back): return to the list rather than leave somebody looking at an empty page.
+        if (archivedView && archivedCount == 0) archivedView = false;
+        title.setText(archivedView ? R.string.sms_archived_title : R.string.sms_title);
+        archivedRow.setVisibility(archivedView || archivedCount > 0 ? View.VISIBLE : View.GONE);
+        archivedRow.setText(archivedView ? getString(R.string.sms_all_conversations)
+                                         : getString(R.string.sms_archived_n, archivedCount));
+        archivedRow.setTextColor(pal.accent);
+        archivedRow.setBackground(Skin.panel(this, pal));
         for (SmsStore.Thread t : all) {
-            if (q.isEmpty() && archived.hidden(t.address, t.date)) continue;
+            if (!archived.listed(t.address, t.date, archivedView, !q.isEmpty())) continue;
             if (q.isEmpty()
                     || t.label.toLowerCase(Locale.ROOT).contains(q)
                     || t.address.toLowerCase(Locale.ROOT).contains(q)
@@ -445,6 +462,54 @@ public class ThreadListActivity extends PcActivity {
                 .setNegativeButton(android.R.string.cancel, null)
                 .show();
         } catch (Throwable ignored) { }
+    }
+
+    /** Long press: Archive (or Unarchive) first -- it loses nothing -- then Delete. See ThreadMenu. */
+    private void threadMenu(final SmsStore.Thread t) {
+        final boolean isArchived = SmsArchived.load(this).hidden(t.address, t.date);
+        final int[] acts = ThreadMenu.actions(isArchived);
+        String[] labels = new String[acts.length];
+        for (int i = 0; i < acts.length; i++) {
+            labels[i] = getString(acts[i] == ThreadMenu.ARCHIVE ? R.string.sms_archive
+                    : acts[i] == ThreadMenu.UNARCHIVE ? R.string.sms_unarchive : R.string.sms_delete);
+        }
+        try {
+            new AlertDialog.Builder(this)
+                .setTitle(PhoneBook.label(this, t.address))
+                .setItems(labels, new android.content.DialogInterface.OnClickListener() {
+                    @Override public void onClick(android.content.DialogInterface d, int w) {
+                        if (w < 0 || w >= acts.length) return;
+                        if (acts[w] == ThreadMenu.DELETE) confirmDeleteThread(t);
+                        else archive(t, acts[w] == ThreadMenu.ARCHIVE);
+                    }
+                })
+                .show();
+        } catch (Throwable ignored) { }
+    }
+
+    /** Signing reads the Keystore and encrypts, so it runs off the main thread; the list redraws after. */
+    private void archive(final SmsStore.Thread t, final boolean on) {
+        new Thread(new Runnable() {
+            @Override public void run() {
+                final int r = SmsArchived.set(ThreadListActivity.this, t.address, t.date, on);
+                main.post(new Runnable() {
+                    @Override public void run() {
+                        say(getString(r == SmsArchived.NO_KEY ? R.string.sms_archive_no_key
+                                : r == SmsArchived.FAILED ? R.string.sms_archive_failed
+                                : r == SmsArchived.QUEUED ? R.string.sms_archive_queued
+                                : on ? R.string.sms_archived_done : R.string.sms_unarchived_done));
+                        draw();
+                    }
+                });
+            }
+        }, "pc-sms-archive").start();
+    }
+
+    @Override
+    public void onBackPressed() {
+        // Back from the Archived view is back to the conversations, not out of Texts.
+        if (archivedView) { archivedView = false; draw(); return; }
+        super.onBackPressed();
     }
 
     private void confirmDeleteThread(final SmsStore.Thread t) {

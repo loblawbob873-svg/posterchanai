@@ -81,6 +81,23 @@
         android:textSize="13sp"
         android:visibility="gone" />
 
+    <!-- ARCHIVED (N) / ← All conversations: the way into and out of the Archived view. Shown only
+         while there is something archived (or while inside that view). -->
+    <TextView
+        android:id="@+id/pc_sms_archived"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_marginLeft="12dp"
+        android:layout_marginRight="12dp"
+        android:layout_marginBottom="6dp"
+        android:paddingLeft="12dp"
+        android:paddingRight="12dp"
+        android:paddingTop="10dp"
+        android:paddingBottom="10dp"
+        android:textSize="14sp"
+        android:textStyle="bold"
+        android:visibility="gone" />
+
     <ListView
         android:id="@+id/pc_sms_threads"
         android:layout_width="match_parent"

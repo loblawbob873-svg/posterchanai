@@ -2927,9 +2927,20 @@
     S.archived.set(d, on ? { k:t.key, upto, _at:at } : { k:'', upto:0, _at:at });
     return true;
   }
+  /* SAY SO AT ONCE. Nothing changes on screen until a relay has accepted the record (see
+   * setArchived), and on a slow connection that is seconds of a tap doing nothing visible -- reported
+   * as "i tried to archive that one then nothing happened", and then it was gone. One pending archive
+   * per conversation: a second tap while the first is still out is the same request, not another. */
+  const archiving = new Set();
   async function toggleArchive(t){
+    if(!t || archiving.has(t.key)) return;
     const on = !isArchived(t);
-    if(!await setArchived(t, on)){
+    archiving.add(t.key);
+    PC.toast(on ? 'Archiving…' : 'Unarchiving…');
+    let ok = false;
+    try{ ok = await setArchived(t, on); }
+    finally{ archiving.delete(t.key); }
+    if(!ok){
       PC.toast(on ? 'could not archive -- nothing was changed' : 'could not unarchive -- nothing was changed');
       return;
     }

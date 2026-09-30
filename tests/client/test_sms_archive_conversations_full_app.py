@@ -191,3 +191,23 @@ def test_a_refused_publish_changes_nothing_and_search_still_finds_archived():
         await b.js("const q=document.querySelector('#sms-q');q.value='dentist';q.dispatchEvent(new Event('input'))")
         await b.until("document.querySelectorAll('.sms-thread').length===1 && document.querySelector('.sms-thread').textContent.includes('see you then')")
     asyncio.run(desktop.with_browser('online', '', check, PLAIN))
+
+
+@pytest.mark.skipif(not Path('/opt/google/chrome/chrome').exists(), reason='Chrome required')
+def test_a_slow_relay_says_archiving_at_once_and_a_second_tap_sends_nothing_more():
+    """'i tried to archive that one then nothing happened' -- then it was gone: the record was waiting
+    on a slow relay, and the screen said nothing until it answered."""
+    async def check(b):
+        await _list(b, False)
+        await b.js("window.release=null;const fast=__PC.publish;"
+                   "__PC.publish=(...a)=>new Promise(r=>{window.release=()=>fast(...a).then(r);})")
+        for _ in range(2):
+            await _open_row_menu(b, False, 'see you then')
+            await b.js("document.querySelector('.menu-pop button[data-m]').click()")
+            await b.until("toasts.some(t=>/^Archiving/.test(t))")
+        assert await b.js("document.querySelectorAll('.sms-thread').length") == 2, \
+            'nothing is hidden before the relay accepts it'
+        await b.js("release()")
+        await b.until("document.querySelectorAll('.sms-thread').length===1")
+        assert await b.js("published.length") == 1, 'the second tap was the same request, not another'
+    asyncio.run(desktop.with_browser('online', '', check, PLAIN))

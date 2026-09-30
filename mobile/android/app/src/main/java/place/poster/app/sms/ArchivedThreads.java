@@ -35,6 +35,47 @@ public final class ArchivedThreads {
         return true;
     }
 
+    /** When the newest record for a document was written (seconds), 0 when there is none. */
+    public synchronized long at(String doc) {
+        Rec r = byDoc.get(doc);
+        return r == null ? 0L : r.at;
+    }
+
+    /**
+     * The created_at for a new record: now, but never at or before the record it replaces. Two taps
+     * inside one second (archive, then unarchive) would otherwise carry the SAME timestamp, and
+     * newest-wins here and at the relay (lowest id breaks the tie) would keep whichever one happens
+     * to sort first -- a coin toss about the person's own last action.
+     */
+    public long nextAt(String doc, long nowSec) {
+        return Math.max(nowSec, at(doc) + 1);
+    }
+
+    /**
+     * The record's address, the same one sms.js `setArchived` writes: sha256(owner + "\n" + key),
+     * 24 hex characters. It has to be byte-identical, or archiving on the phone and unarchiving on
+     * the laptop are two different records and newest-wins cannot see that one replaced the other.
+     */
+    public static String docFor(String ownerHex, String conversationKey) {
+        try {
+            byte[] h = java.security.MessageDigest.getInstance("SHA-256")
+                    .digest((ownerHex + "\n" + conversationKey).getBytes("UTF-8"));
+            StringBuilder b = new StringBuilder("pcai:smsarc:");
+            for (int i = 0; i < 12; i++) b.append(String.format(java.util.Locale.ROOT, "%02x", h[i] & 0xff));
+            return b.toString();
+        } catch (Exception e) { return ""; }
+    }
+
+    /**
+     * Is this conversation a row on the screen being shown? The main list leaves archived ones out
+     * and the Archived view shows ONLY them; a search looks through both, since archived is filed,
+     * not gone.
+     */
+    public boolean listed(String address, long newestDate, boolean archivedView, boolean searching) {
+        if (searching) return true;
+        return hidden(address, newestDate) == archivedView;
+    }
+
     public synchronized long upto(String conversationKey) {
         long best = 0L;
         for (Rec r : byDoc.values()) if (r.key.equals(conversationKey) && r.upto > best) best = r.upto;

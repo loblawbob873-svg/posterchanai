@@ -194,6 +194,13 @@ public class SignerRelayService extends Service {
         if (wanted(ctx)) kick(ctx, ACTION_SMS_ARCHIVE);
     }
 
+    /** Send the Texts archive records queued by SmsArchived.set. False when the service is off. */
+    public static boolean sendArchived(Context ctx) {
+        if (!wanted(ctx)) return false;
+        kick(ctx, ACTION_SMS_ARCHIVE);
+        return true;
+    }
+
     @Override
     public IBinder onBind(Intent intent) { return null; }
 
@@ -650,6 +657,7 @@ public class SignerRelayService extends Service {
         if (m.length() >= 3 && "OK".equals(m.optString(0, ""))) {
             // Strict boolean: strings such as "false" are not successful relay receipts.
             acceptSmsHistoryAck(m.optString(1, ""), Boolean.TRUE.equals(m.opt(2)));
+            if (Boolean.TRUE.equals(m.opt(2))) SmsArchived.accepted(this, m.optString(1, ""));
             return;
         }
         if (m.length() >= 2 && "AUTH".equals(m.optString(0, ""))) {
@@ -793,6 +801,7 @@ public class SignerRelayService extends Service {
     /** Publish receiver-captured texts on the signer's already-connected relays, with no WebView. */
     private void publishSmsArchive() {
         if (socks.isEmpty()) return;                 // onOpen calls us again once a relay exists
+        sendArchiveRecords();
         final String[] row = smsArchive.poll();
         final String deletedDoc = row == null ? smsArchiveDeletes.poll() : null;
         if (row == null && deletedDoc == null) return;
@@ -817,6 +826,20 @@ public class SignerRelayService extends Service {
                 publishSmsArchive();
             });
         });
+    }
+
+    /**
+     * Conversations archived or unarchived on this phone's native Texts list. Sent on every connect,
+     * AUTH and kick until a relay answers OK -- see SmsArchived.set. Resending is harmless: it is the
+     * same signed event, and a relay that already has it just says OK again.
+     */
+    private void sendArchiveRecords() {
+        for (JSONObject ev : SmsArchived.unsent(this)) {
+            String wire = new JSONArray().put("EVENT").put(ev).toString();
+            for (WebSocket ws : socks.values()) {
+                try { if (ws != null) ws.send(wire); } catch (Throwable ignored) { }
+            }
+        }
     }
 
     /** One durable, owner-bound archive batch at a time. Socket enqueue never advances history. */

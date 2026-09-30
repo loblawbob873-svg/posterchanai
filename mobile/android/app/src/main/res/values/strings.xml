@@ -134,6 +134,17 @@
     <string name="sms_mms_pending">Picture message — not downloaded</string>
     <string name="sms_no_content">(no content)</string>
     <string name="sms_deleted_here">Deleted from this phone</string>
+    <string name="sms_archive">Archive</string>
+    <string name="sms_unarchive">Unarchive</string>
+    <string name="sms_delete">Delete</string>
+    <string name="sms_archived_n">Archived (%1$d)</string>
+    <string name="sms_archived_title">Archived</string>
+    <string name="sms_all_conversations">Back to all conversations</string>
+    <string name="sms_archived_done">Archived on every device — a new message brings it back</string>
+    <string name="sms_unarchived_done">Unarchived</string>
+    <string name="sms_archive_queued">Done on this phone — it reaches your other devices once background sync is on</string>
+    <string name="sms_archive_no_key">This phone signs with another app, so it cannot archive — archive it from the Texts screen in the PosterChan app</string>
+    <string name="sms_archive_failed">Could not archive — nothing was changed</string>
     <string name="sms_deleted_both">Deleted here and from your archive</string>
     <string name="sms_call_no_dialer">Nothing on this phone can place a call</string>
     <string name="sms_contact_no_app">Nothing on this phone can add a contact</string>
