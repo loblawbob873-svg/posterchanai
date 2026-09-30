@@ -170,6 +170,20 @@
     }
   }
 
-  window.PCChatAssist = { probe, shown, open, isBusy: k => busy.has(k),
+  /* ✨ ON THE LINK ITSELF ("we need sparkle on links and youtube links ... to summarize"): the links in
+     ONE message, summarized in the same sheet as the menu's "Summarize YouTube & links". Busy per
+     message, so a second tap while it reads does not start a second read. */
+  async function summarizeLinks(text, medium){
+    const key = 'links:' + medium + ':' + String(text || '').slice(0, 200);
+    if(busy.has(key)) return;
+    busy.add(key);
+    try{ await links({ medium, messages: () => [{ me:false, text: String(text || '').slice(0, 4000) }] }); }
+    catch(e){ const p = PC(); if(p.toast) p.toast((e && e.message) || 'The AI did not answer — try again in a moment.'); }
+    finally{ busy.delete(key); }
+  }
+  const hasLink = text => URL_RE.test(String(text || ''));
+  const isVideo = text => /https?:\/\/(?:www\.|m\.)?(?:youtube\.com|youtu\.be)\//i.test(String(text || ''));
+
+  window.PCChatAssist = { probe, shown, open, summarizeLinks, hasLink, isVideo, isBusy: k => busy.has(k),
                           _reset(){ _allowed = null; _for = ''; _probe = null; _probeAt = 0; busy.clear(); } };
 })();

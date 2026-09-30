@@ -203,3 +203,52 @@ def test_dm_sparkle(phone):
         assert e['l'] >= -0.5 and e['r'] <= got['row']['vw'] + 0.5, ('the composer row overflows', e)
     ids = [e['id'] for e in got['row']['r']]
     assert 'dm-ai' in ids and ids.index('dm-ai') < ids.index('dm-in'), ids
+
+
+TG_ARTICLE = "__tgMsgs.push({id:5, chat_id:42, out:true, date:1700000005, text:'read this https://example.com/story', sender:'', sender_id:1, reply_to:0, media:null});"
+
+
+@pytest.mark.skipif(not Path('/opt/google/chrome/chrome').exists(), reason='Chrome required')
+@pytest.mark.parametrize('width', [1280, 820])
+def test_telegram_link_messages_carry_their_own_sparkle(width):
+    """"we need sparkle on links and youtube links ... to summarize". Each message with a link gets
+    ✨ Summarize video / link under it; a tap summarizes THAT message's links only."""
+    got = {}
+
+    async def check(b):
+        await b.call("Emulation.setDeviceMetricsOverride", {"width": width, "height": 900, "deviceScaleFactor": 1, "mobile": False})
+        await _open_tg(b)
+        await b.until("document.querySelectorAll('.tg-dialog').length===2")
+        await b.js("document.querySelector('.tg-dialog[data-chat=\"42\"]').click()")
+        await b.until("document.querySelectorAll('.tg-msg').length===5 && document.querySelectorAll('.tg-sum').length===2")
+        got['chips'] = await b.js("[...document.querySelectorAll('.tg-msg')].map(m=>[m.dataset.id,(m.querySelector('.tg-sum')||{}).textContent||null])")
+        got['fits'] = await b.js("[...document.querySelectorAll('.tg-sum')].every(c=>{const r=c.getBoundingClientRect(),m=c.closest('.tg-msg').getBoundingClientRect();return r.width>0&&r.right<=m.right+1&&r.left>=m.left-1})")
+        await b.js("document.querySelector('.tg-msg[data-id=\"4\"] .tg-sum').click()")
+        await b.until("!!document.querySelector('.ca-sheet .ca-item')")
+        got['call'] = await b.js("__assist.calls[0]")
+        got['sheet'] = await b.js("document.querySelector('.ca-sheet').textContent")
+    extra = FAKE.replace("state:'none'", "state:'ready'") + TG_LINK + TG_ARTICLE + ASSIST
+    asyncio.run(desktop.with_browser("online", "", check, extra_init=extra))
+    chips = dict((i, t) for i, t in got['chips'])
+    assert chips['4'].strip() == '✨ Summarize video' and chips['5'].strip() == '✨ Summarize link', got['chips']
+    assert chips['1'] is None and chips['3'] is None, "a message with no link got a sparkle"
+    assert got['fits'], "a sparkle spills out of its message"
+    assert got['call']['action'] == 'links' and got['call']['medium'] == 'telegram'
+    assert got['call']['messages'] == [{'me': False, 'text': 'watch https://youtu.be/abc'}], got['call']
+    assert 'The video explains the plan.' in got['sheet']
+
+
+@pytest.mark.skipif(not Path('/opt/google/chrome/chrome').exists(), reason='Chrome required')
+def test_no_link_sparkles_without_ai():
+    got = {}
+
+    async def check(b):
+        await _open_tg(b)
+        await b.until("document.querySelectorAll('.tg-dialog').length===2")
+        await b.js("document.querySelector('.tg-dialog[data-chat=\"42\"]').click()")
+        await b.until("document.querySelectorAll('.tg-msg').length===4")
+        await asyncio.sleep(.8)
+        got['chips'] = await b.js("document.querySelectorAll('.tg-sum').length")
+    extra = FAKE.replace("state:'none'", "state:'ready'") + TG_LINK + ASSIST + "__assist.allowed=false;"
+    asyncio.run(desktop.with_browser("online", "", check, extra_init=extra))
+    assert got['chips'] == 0

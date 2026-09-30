@@ -328,7 +328,8 @@
        DMs). Hidden until the server's AI probe says yes; a draft only ever fills this composer. */
     { const ai = pane.querySelector('[data-act="ai"]'), chat = d.id;
       if(ai && window.PCChatAssist){
-        window.PCChatAssist.probe(() => { const b = root.querySelector('[data-act="ai"]'); if(b) b.hidden = !aiShown(); });
+        window.PCChatAssist.probe(() => { const b = root.querySelector('[data-act="ai"]'); if(b) b.hidden = !aiShown();
+          if(aiShown()) paintMessages(false); });
         ai.onclick = () => window.PCChatAssist.open(ai, {
           medium:'telegram', key:() => 'tg:' + st.open,
           messages:() => aiMessages(chat),
@@ -416,6 +417,7 @@
         ${!m.out && m.sender ? `<b class="tg-from">${esc(m.sender)}</b>` : ''}
         ${r ? `<div class="tg-quote">${esc((r.text || '[attachment]').slice(0, 140))}</div>` : ''}
         ${mediaHtml(m)}${m.text ? `<div class="tg-body">${linkify(m.text)}</div>` : ''}
+        ${m.text && aiShown() && window.PCChatAssist.hasLink(m.text) ? `<button class="tg-sum" data-sum="${m.id}" title="Summarize with AI">✨ Summarize ${window.PCChatAssist.isVideo(m.text) ? 'video' : 'link'}</button>` : ''}
         ${reactionsHtml(m)}
         <span class="tg-meta">${m.edited ? 'edited · ' : ''}${esc(new Date(m.date * 1000).toLocaleTimeString([], {hour:'2-digit', minute:'2-digit'}))}${m.out ? tick(m.chat_id, m.id) : ''}
           <button class="tg-mini" data-react-pick="${m.id}" aria-label="React" title="React">☺</button>
@@ -428,6 +430,9 @@
        shell (the APK's WebView and the desktop's app:// both refuse it). */
     box.querySelectorAll('[data-copy]').forEach(b => b.onclick = () => { const m = byId.get(Number(b.dataset.copy)); const P = PC();
       if(m && m.text){ if(P.copyValue) P.copyValue(m.text, 'Copied'); else { try{ navigator.clipboard.writeText(m.text); }catch(_){ } } } });
+    // ✨ on a message with a link: summarize THAT message's links (chatassist.js).
+    box.querySelectorAll('[data-sum]').forEach(b => b.onclick = () => { const m = byId.get(Number(b.dataset.sum));
+      if(m && m.text && window.PCChatAssist) window.PCChatAssist.summarizeLinks(m.text, 'telegram'); });
     box.querySelectorAll('[data-reply]').forEach(b => b.onclick = () => { st.reply = byId.get(Number(b.dataset.reply)); paintReply();
       const ta = root.querySelector('.tg-text'); if(ta) ta.focus(); });
     box.querySelectorAll('a.tg-media').forEach(a => a.onclick = e => { const P = PC(); if(P.openLightbox){ e.preventDefault(); P.openLightbox(a.dataset.full); } });

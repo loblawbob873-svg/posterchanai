@@ -3798,6 +3798,10 @@ h3 svg.ic.h-ic{width:19px;height:19px;vertical-align:-3px;margin-inline-end:4px;
 /* Texts ✨ choices are whole sentences: wrap them inside a readable width instead of one long line. */
 /* ✨ in Telegram and DMs (chatassist.js): the menu's drafts wrap like the Texts ✨ ones, and results
    are read in a sheet -- short lines, links that wrap, never wider than a phone. */
+/* ✨ on a Telegram message with a link: small, under the text, never wider than the bubble. */
+.tg-sum{display:inline-flex;align-items:center;gap:4px;margin:4px 0 0;padding:3px 10px;border-radius:999px;font-size:12px;
+  border:1px solid rgba(var(--accent-rgb),.45);background:rgba(var(--accent-rgb),.10);color:var(--text);cursor:pointer;max-width:100%}
+.tg-sum:hover{border-color:var(--accent);background:rgba(var(--accent-rgb),.18)}
 .menu-pop .ca-choice{white-space:normal;text-align:left;line-height:1.35;max-width:min(420px,86vw)}
 .ca-sheet{display:flex;flex-direction:column;gap:10px;max-width:min(560px,92vw);min-width:min(320px,86vw)}
 .ca-title{font-weight:700;font-size:1.05rem}
