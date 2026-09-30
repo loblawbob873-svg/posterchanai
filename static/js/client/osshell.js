@@ -24,19 +24,28 @@
    * ten call sites, so a control added later cannot forget to. */
   const AUDIO_CHANGED = 'pc_audio_changed';
   let _audioWrapped = null, _audioRaw = null;
+  /* A PLAIN OBJECT, NEVER A PROXY OVER THE BRIDGE. `pcAudio` comes through Electron's contextBridge,
+   * which hands the page a FROZEN object: every property is read-only and non-configurable, and a
+   * Proxy `get` trap must then return the property's ACTUAL value — a bound copy breaks the
+   * invariant and throws "'get' on proxy: property 'status' is a read-only and non-configurable
+   * data property". That happened on EVERY read, so panelState() threw, the tray never got a
+   * summary, and the whole Quick Settings button (sound, Wi-Fi, power) vanished — and with it the
+   * start menu's power button, which opens the same panel. Measured on the real desktop; the test
+   * fixture was a plain object, which is why nothing here saw it. */
   const AUDIO = () => {
     const raw = root.pcAudio || null;
     if(!raw) return null;
     if(raw === _audioRaw && _audioWrapped) return _audioWrapped;
     _audioRaw = raw;
-    _audioWrapped = new Proxy(raw, { get(t, k){
-      const v = t[k];
-      if(typeof v !== 'function') return v;
-      if(!/^set/.test(String(k))) return v.bind(t);
-      return (...args) => Promise.resolve(v.apply(t, args)).then(r => {
-        try{ root.localStorage.setItem(AUDIO_CHANGED, String(Date.now()) + ':' + Math.random().toString(36).slice(2, 8)); }catch(_){ }
-        return r; });
-    } });
+    const said = () => { try{ root.localStorage.setItem(AUDIO_CHANGED, String(Date.now()) + ':' + Math.random().toString(36).slice(2, 8)); }catch(_){ } };
+    const wrapped = {};
+    for(const k of Object.keys(raw)){
+      const v = raw[k];
+      wrapped[k] = typeof v !== 'function' ? v
+        : !/^set/.test(k) ? (...args) => v.apply(raw, args)
+        : (...args) => Promise.resolve(v.apply(raw, args)).then(r => { said(); return r; });
+    }
+    _audioWrapped = wrapped;
     return _audioWrapped;
   };
   const OS = () => root.pcOS || null;

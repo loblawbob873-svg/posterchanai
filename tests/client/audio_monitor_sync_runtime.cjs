@@ -18,11 +18,13 @@ function page(){
       removeItem:k=>store.delete(k),
     },
     pcWM:{ windows:async()=>[], subscribe:async()=>true, onEvent:()=>()=>{} },
-    pcAudio:{
+    /* FROZEN, like the object Electron's contextBridge exposes. A plain object here is how a Proxy
+       over the real bridge passed this test and then threw on every read in the app. */
+    pcAudio:Object.freeze({
       status:async()=>{ machine.statusReads++; return {output:{percent:machine.percent,muted:machine.muted}}; },
       setMuted:async(m)=>{ machine.muted=!!m; return {ok:true}; },
       setVolume:async(n)=>{ machine.percent=n; return {ok:true}; },
-    },
+    }),
     pcNet:{ status:async()=>({online:true,kind:'wired'}) },
     pcPower:{ status:async()=>({battery:{present:false}}) },
     setInterval:()=>0, clearInterval:()=>{}, setTimeout, document:{},
@@ -41,6 +43,9 @@ function ok(n,v){ if(!v){ console.error('FAIL '+n); process.exit(1);} console.lo
   const A=page(), a=load(A); const B=page(), b=load(B);
   await a.watch(()=>{});
   await b.watch(()=>{});
+  // The tray's own read: with a frozen bridge this threw before anything else could happen.
+  const s0=a.panelSummary(await a.panelState());
+  ok('the tray reads the frozen audio bridge', s0.volume && s0.volume.known!==false && s0.volume.percent===40);
   const readsBefore=machine.statusReads;
   // Mute on monitor A, through the same bridge its mixer uses.
   if(typeof a.audio!=='function'){ console.error('FAIL the tray exposes no audio bridge'); process.exit(1); }
