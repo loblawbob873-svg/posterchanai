@@ -1648,6 +1648,7 @@
         ${(l.type!=='image' && l.fxPose) ? `<button class="btn btn-cyan small full" id="mb-talk" title="Make this character say a line in one of your cloned voices. It is animated from the character's own artwork, so the pose stays exactly as it is."><svg class="ic b-ic" aria-hidden="true"><use href="#i-mic"></use></svg>Make it talk</button>` : ''}
         ${l.type==='image' ? `<button class="btn btn-cyan small full" id="mb-nobg" title="Cut the subject out of this photo and drop the background, so the layers underneath show through. Same cut-out the removebackground command does. Undo with ↺ below."><svg class="ic b-ic" aria-hidden="true"><use href="#i-wand"></use></svg>Remove the background</button>
         <button class="btn btn-cyan small full" id="mb-talk" title="The face in this picture says a line in one of your cloned voices, with its mouth animated to the speech. Becomes a video layer; undo with ↺ below."><svg class="ic b-ic" aria-hidden="true"><use href="#i-mic"></use></svg>Make it talk</button>` : ''}
+        ${l.type==='image' ? `<button class="btn btn-cyan small full" id="mb-faceswap" title="Swap two faces in this picture, or put a face from another picture on it. Undo with ↺ below."><svg class="ic b-ic" aria-hidden="true"><use href="#i-swap"></use></svg>Face swap</button>` : ''}
         ${l.type==='image' ? `<button class="btn btn-cyan small full" id="mb-magic" title="Brush over something you want GONE — a person, a sign, a stray cable — and it is filled in to match what is around it. Unlike Erase parts, nothing turns see-through. Undo with ↺ below."><svg class="ic b-ic" aria-hidden="true"><use href="#i-ai"></use></svg>Magic Eraser</button>` : ''}
         <button class="btn btn-cyan small full" id="mb-erase" title="Rub parts of this layer out with your finger or the mouse. What you erase turns see-through, so the layers underneath show through it."><svg class="ic b-ic" aria-hidden="true"><use href="#i-broom"></use></svg>Erase parts${l.mask?' (erased)':''}</button>
         ${l.mask ? `<button class="btn btn-cyan small full" id="mb-erase-clear" title="Put every erased part of this layer back"><svg class="ic b-ic" aria-hidden="true"><use href="#i-restore"></use></svg>Undo the erase</button>` : ''}
@@ -2701,6 +2702,131 @@
   // a keep-mask that starts opaque and is rubbed AWAY, it paints a fill-mask that starts EMPTY (white =
   // "fill this in"). Apply sends it once to /client/meme/magic-erase and the layer's picture is REPLACED
   // by the filled result — nothing is stored on the layer, so there is no mask to keep in step later.
+  /* 🔄 FACE SWAP ("If you can add a face swapping feature that would be cool, make sure UI good on mobile
+   * and desktop"). Two ways, one dialog:
+   *   Swap two faces     -- tap two numbered faces in this picture; they trade places.
+   *   Use another face   -- take a face from another picture (one already in the project, or a photo
+   *                         you pick) and put it on the faces you tap here (all of them by default).
+   * Faces are found server-side (/client/meme/faces: normalised boxes, numbered left to right) and drawn
+   * as tap targets over the picture at whatever size the dialog shows it, so it works the same on a
+   * phone and a desktop. The render (/client/meme/faceswap) REPLACES the layer's picture with the
+   * same bookkeeping as Magic Eraser, so ↺ Undo the effect on this layer puts the original back. */
+  function faceSwap(l){
+    if(!l || l.type !== 'image') return;
+    const others = (P.layers || []).filter(x => x.id !== l.id && x.type === 'image' && x.src);
+    let dlg = null;
+    PC.modal(`<h3>🔄 Face swap</h3>
+      <div class="mb-fs-tabs" role="tablist">
+        <button class="btn small on" data-fsmode="swap" role="tab">Swap two faces</button>
+        <button class="btn small" data-fsmode="paste" role="tab">Use another face</button>
+      </div>
+      <div class="muted small mb-fs-say" id="fs-say">Finding the faces…</div>
+      <div class="mb-fs-stage" id="fs-stage"><img id="fs-img" src="${enc(l.src)}" alt=""><div class="mb-fs-boxes" id="fs-boxes"></div></div>
+      <div class="mb-fs-source" id="fs-source" hidden>
+        <div class="muted small">Take the face from:</div>
+        <div class="mb-fs-pick" id="fs-pick">
+          ${others.map(o => `<button class="mb-fs-thumb" data-src="${enc(o.src)}" title="${enc(o.name || 'layer')}"><img src="${enc(o.src)}" alt=""></button>`).join('')}
+          <label class="btn btn-ghost small mb-fs-upload">Pick a photo…<input type="file" id="fs-file" accept="image/*" hidden></label>
+        </div>
+        <div class="mb-fs-stage mb-fs-srcstage" id="fs-srcstage" hidden><img id="fs-srcimg" alt=""><div class="mb-fs-boxes" id="fs-srcboxes"></div></div>
+      </div>
+      <div class="mb-frow" style="margin-top:12px">
+        <button class="btn btn-ghost small" id="fs-cancel">Cancel</button>
+        <button class="btn btn-neon small" id="fs-go" disabled>Swap faces</button>
+      </div>`, box => { if(box){ box.classList.add('mb-fs-modal'); dlg = box; } });
+    const $ = id => document.getElementById(id);
+    const live = () => P.layers.find(x => x.id === l.id) || l;
+    const st = { mode:'swap', faces:[], picked:[], src:'', srcFaces:[], srcFace:0, targets:new Set(), busy:false, gone:false };
+    const say = t => { const e = $('fs-say'); if(e) e.textContent = t; };
+    async function faces(url){
+      const auth = await selfProof();
+      const r = await fetch('/client/meme/faces', { method:'POST', headers:{'Content-Type':'application/json'},
+        body: JSON.stringify({ pubkey: ME.pubkey, auth, url }) });
+      const j = await r.json().catch(() => ({}));
+      if(!r.ok) throw new Error(j.detail || j.error || ('HTTP ' + r.status));
+      return j.faces || [];
+    }
+    // Numbered tap targets, positioned in % so they stay on the faces at any size.
+    function drawBoxes(el, list, isOn, onTap){
+      el.innerHTML = list.map((f, i) => `<button class="mb-fs-face${isOn(i) ? ' on' : ''}" data-i="${i}"
+          style="left:${f.x * 100}%;top:${f.y * 100}%;width:${f.w * 100}%;height:${f.h * 100}%"
+          aria-label="Face ${i + 1}" aria-pressed="${isOn(i)}"><span>${i + 1}</span></button>`).join('');
+      el.querySelectorAll('.mb-fs-face').forEach(b => b.onclick = e => { e.preventDefault(); onTap(+b.dataset.i); });
+    }
+    function paint(){
+      if(st.gone) return;
+      document.querySelectorAll('[data-fsmode]').forEach(b => b.classList.toggle('on', b.dataset.fsmode === st.mode));
+      // Two pictures on one phone screen: the dialog shrinks them so Swap stays reachable (CSS).
+      if(dlg) dlg.classList.toggle('fs-paste', st.mode === 'paste');
+      $('fs-source').hidden = st.mode !== 'paste';
+      const go = $('fs-go');
+      if(st.mode === 'swap'){
+        drawBoxes($('fs-boxes'), st.faces, i => st.picked.includes(i), i => {
+          st.picked = st.picked.includes(i) ? st.picked.filter(x => x !== i) : st.picked.concat([i]).slice(-2); paint(); });
+        say(st.faces.length < 2 ? (st.faces.length ? 'Only one face was found — use another face instead.' : 'No faces were found in this picture.')
+          : st.picked.length === 2 ? `Faces ${st.picked[0] + 1} and ${st.picked[1] + 1} will trade places.` : 'Tap two faces to swap.');
+        go.disabled = st.busy || st.picked.length !== 2;
+      }else{
+        drawBoxes($('fs-boxes'), st.faces, i => st.targets.has(i), i => { st.targets.has(i) ? st.targets.delete(i) : st.targets.add(i); paint(); });
+        $('fs-srcstage').hidden = !st.src;
+        if(st.src) drawBoxes($('fs-srcboxes'), st.srcFaces, i => i === st.srcFace, i => { st.srcFace = i; paint(); });
+        document.querySelectorAll('.mb-fs-thumb').forEach(b => b.classList.toggle('on', b.dataset.src === st.src));
+        say(!st.faces.length ? 'No faces were found in this picture.'
+          : !st.src ? 'Pick the picture the face comes from.'
+          : !st.srcFaces.length ? 'No face was found in that picture — pick another.'
+          : `Face ${st.srcFace + 1} goes on ${st.targets.size === st.faces.length ? 'every face' : st.targets.size + ' face' + (st.targets.size === 1 ? '' : 's')} here — tap to choose.`);
+        go.disabled = st.busy || !st.faces.length || !st.src || !st.srcFaces.length || !st.targets.size;
+      }
+      go.textContent = st.busy ? 'Working…' : 'Swap faces';
+    }
+    async function useSource(url){
+      st.src = url; st.srcFaces = []; st.srcFace = 0;
+      $('fs-srcimg').src = url; say('Finding the face…'); paint();
+      try{ st.srcFaces = await faces(url); }catch(err){ st.srcFaces = []; toast('could not read that picture: ' + ((err && err.message) || err)); }
+      if(st.src === url) paint();
+    }
+    document.querySelectorAll('[data-fsmode]').forEach(b => b.onclick = () => { st.mode = b.dataset.fsmode; paint(); });
+    document.querySelectorAll('.mb-fs-thumb').forEach(b => b.onclick = () => useSource(b.dataset.src));
+    $('fs-file').onchange = async e => {
+      const f = e.target.files && e.target.files[0]; e.target.value = '';
+      if(!f) return;
+      say('Uploading the photo…');
+      try{ await useSource(await uploadBlob(f)); }catch(err){ toast('upload failed: ' + ((err && err.message) || err)); paint(); }
+    };
+    $('fs-cancel').onclick = () => { st.gone = true; PC.closeModal(); };
+    $('fs-go').onclick = async () => {
+      if(st.busy) return;
+      if(_fxBusy){ toast('still working on the last one — hang on'); return; }
+      st.busy = true; _fxBusy = true; paint();
+      try{
+        const auth = await selfProof();
+        const body = st.mode === 'swap'
+          ? { pubkey: ME.pubkey, auth, url: live().src, mode:'swap', a: st.picked[0], b: st.picked[1] }
+          : { pubkey: ME.pubkey, auth, url: live().src, mode:'paste', source: st.src, source_face: st.srcFace,
+              targets: st.targets.size === st.faces.length ? null : [...st.targets].sort((a, b) => a - b) };
+        const r = await fetch('/client/meme/faceswap', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(body) });
+        const j = await r.json().catch(() => ({}));
+        if(!r.ok || !j.url) throw new Error(j.detail || j.error || ('HTTP ' + r.status));
+        if(st.gone) return;
+        const cur = live();
+        snap();
+        if(!cur.origSrc){ cur.origSrc = cur.src; cur.origType = cur.type; cur.origName = cur.name || ''; cur.origDur = +cur.dur || 0; }
+        cur.src = j.url; cur.type = 'image';          // same size as before, so an erase mask still lines up
+        save(); render();
+        st.gone = true; PC.closeModal();
+        toast('🔄 faces swapped — ↺ undo puts the original back');
+      }catch(err){
+        if(!st.gone){ say('That did not work: ' + ((err && err.message) || err)); toast('face swap failed: ' + ((err && err.message) || err)); }
+      }finally{ st.busy = false; _fxBusy = false; if(!st.gone) paint(); }
+    };
+    faces(l.src).then(list => {
+      st.faces = list;
+      st.picked = list.length >= 2 ? [0, 1] : [];
+      st.targets = new Set(list.map((_, i) => i));
+      paint();
+    }, err => { say('Could not look for faces: ' + ((err && err.message) || err)); });
+  }
+
   function eraseParts(l, magic){
     magic = !!magic && l.type === 'image';
     const isVid = l.type === 'video';
@@ -4130,6 +4256,8 @@
     // ✨ Magic Eraser — the same brush, the opposite result: the brushed region is FILLED IN from its
     // surroundings server-side and becomes the layer's new picture (so ↺ Undo the effect puts it back).
     on('mb-magic','click',()=>eraseParts(l, true));
+    // 🔄 Face swap — replaces the layer's picture, like Magic Eraser (so ↺ Undo the effect puts it back).
+    on('mb-faceswap','click',()=>faceSwap(l));
     on('mb-erase-clear','click',()=>{
       if(!l.mask) return;
       snap(); l.mask=''; save(); render(); toast('erase undone — the whole layer is back');

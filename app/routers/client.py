@@ -2382,6 +2382,116 @@ async def meme_magic_erase(data: MemeMagicEraseReq, request: Request, db: Sessio
                          "method": method, "model": model})
 
 
+class MemeFacesReq(BaseModel):
+    pubkey: str
+    auth: str                    # base64 signed kind-27235 by this pubkey — same self-proof as /meme/face
+    url: str                     # an IMAGE on the user's own drive (a layer's source, or an uploaded photo)
+
+
+# Where the faces are, for the face-swap picker's numbered boxes. CPU detection (~1-2s), and like
+# /meme/face it runs while the person is still choosing, so it takes no render slot. Normalised
+# coordinates, numbered left to right -- the same numbering /meme/faceswap takes.
+@router.post("/meme/faces")
+async def meme_faces(data: MemeFacesReq, request: Request, db: Session = Depends(get_db)):
+    from app.services import faceswap_service
+
+    pk = nostr_service.to_pubkey_hex(data.pubkey or "")
+    if not pk or not _verify_self_auth(data.auth, pk):
+        raise HTTPException(status_code=401, detail="bad auth")
+    from app.services.instance_membership import require_pubkey
+    await require_pubkey(pk)
+    img, _ct = await _fetch_media_guarded(data.url, _own_media_hosts(db))
+    if not img:
+        raise HTTPException(status_code=400, detail="empty image")
+    if len(img) > 80 * 1024 * 1024:
+        raise HTTPException(status_code=400, detail="image too large (80 MB limit)")
+    try:
+        return JSONResponse(await asyncio.to_thread(faceswap_service.detect, img))
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+class MemeFaceSwapReq(BaseModel):
+    pubkey: str
+    auth: str
+    url: str                     # the layer's picture — the one that changes
+    mode: str = "swap"           # "swap": two faces in this picture trade places; "paste": another face goes on
+    a: int = 0                   # swap: the two faces (left-to-right numbering from /meme/faces)
+    b: int = 1
+    source: str = ""             # paste: the picture the face comes FROM (the user's own drive)
+    source_face: int = 0         # paste: which face in it
+    targets: list[int] | None = None   # paste: which faces here get it (None = every face)
+
+
+# 🔄 Face swap on an image layer (app/services/faceswap_service.py). CPU only — no GPUResourceLock —
+# but a render, so it takes the render slot, the per-user cooldown and the fleet overflow exactly like
+# /meme/magic-erase, and the result REPLACES the layer's picture (the client keeps the original for ↺).
+@router.post("/meme/faceswap")
+async def meme_faceswap(data: MemeFaceSwapReq, request: Request, db: Session = Depends(get_db)):
+    from app.services import blossom_service, faceswap_service
+
+    pk = nostr_service.to_pubkey_hex(data.pubkey or "")
+    if not pk or not _verify_self_auth(data.auth, pk):
+        raise HTTPException(status_code=401, detail="bad auth")
+    await _require_member_unless_fleet_forward(request, pk)
+    _fwded = bool(request is not None and request.headers.get("x-pcai-meme-fwd"))
+    if not _fwded and not blossom_service.is_enabled(db):
+        raise HTTPException(status_code=503, detail="media storage (Blossom) is disabled on this node")
+    mode = (data.mode or "").lower()
+    if mode not in ("swap", "paste"):
+        raise HTTPException(status_code=400, detail="unknown face swap mode")
+    if mode == "paste" and not (data.source or "").strip():
+        raise HTTPException(status_code=400, detail="pick the picture to take the face from")
+    targets = None if data.targets is None else [int(t) for t in data.targets][:12]
+
+    _now = time.monotonic()
+    if _now - _effect_cooldown.get(pk, 0.0) < _EFFECT_COOLDOWN_S:
+        raise HTTPException(status_code=429, detail="one at a time — give the last render a moment")
+    _effect_cooldown[pk] = _now
+
+    _fwd = await _meme_lb_forward(request, "faceswap",
+                                  {"pubkey": data.pubkey, "auth": data.auth, "url": data.url,
+                                   "mode": mode, "a": data.a, "b": data.b, "source": data.source,
+                                   "source_face": data.source_face, "targets": targets},
+                                  db=db)
+    if _fwd is not None:
+        return _fwd
+
+    own = _own_media_hosts(db)
+    img, _ct = await _fetch_media_guarded(data.url, own)
+    if not img:
+        raise HTTPException(status_code=400, detail="empty image")
+    if len(img) > 80 * 1024 * 1024:
+        raise HTTPException(status_code=400, detail="image too large (80 MB limit)")
+    src = None
+    if mode == "paste":
+        src, _ = await _fetch_media_guarded(data.source, own)
+        if not src:
+            raise HTTPException(status_code=400, detail="empty image to take the face from")
+        if len(src) > 80 * 1024 * 1024:
+            raise HTTPException(status_code=400, detail="image too large (80 MB limit)")
+
+    async with _meme_slot():
+        try:
+            if mode == "swap":
+                png = await asyncio.to_thread(faceswap_service.swap, img, int(data.a), int(data.b))
+            else:
+                png = await asyncio.to_thread(faceswap_service.paste, img, src, int(data.source_face), targets)
+        except ValueError as e:
+            # Every ValueError is about the PICTURES (no face, one face, too big) — a sentence.
+            raise HTTPException(status_code=400, detail=str(e))
+        except Exception as e:
+            logger.warning("[meme] faceswap failed for %s: %s", pk[:12], e)
+            raise HTTPException(status_code=500, detail="face swap failed")
+
+    if _fwded:
+        return Response(content=png, media_type="image/png", headers={
+            "x-pcai-effect-name": "faceswap", "x-pcai-effect-dur": "0"})
+    desc = await blossom_service.save_blob(db, pk, png, "image/png")
+    url = f"{_blossom_url(request, db)}/{desc['sha256']}.png"
+    return JSONResponse({"ok": True, "url": url, "effect": "faceswap", "is_video": False})
+
+
 @router.get("/proxy-image")
 async def client_proxy_image(url: str = Query(...)):
     """Same-origin image proxy for the Nostr web client (e.g. the Effects studio grabbing a post's
@@ -5934,7 +6044,7 @@ async def _meme_adopt_peer_blob(db: Session, peer: str, payload: dict) -> bool:
 # ffmpeg but not a blob store — the node holding the user's request owns the storage (see
 # _meme_store_peer_media). A subpath missing from here is not a silent no-op: the LB hands the raw
 # bytes straight back to the browser, which is expecting {url,...}, so the edit never lands.
-_MEME_RAW_MEDIA_SUBPATHS = ("effect", "apply-effect", "talk", "magic-erase")
+_MEME_RAW_MEDIA_SUBPATHS = ("effect", "apply-effect", "talk", "magic-erase", "faceswap")
 
 
 async def _meme_store_peer_media(request: "Request", db: Session, body: dict, subpath: str, r):

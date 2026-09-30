@@ -6221,6 +6221,31 @@ svg.mb-e{margin-inline-end:0}
    in register if the browser scales one onto the other. */
 .mb-er-wrap>canvas{position:absolute;inset:0;width:100%;height:100%;pointer-events:none}
 .mb-er-tools{display:flex;gap:8px;flex-wrap:wrap;margin:10px 0 4px}
+/* 🔄 Face swap (meme.js faceSwap): numbered tap targets over the picture, positioned in % so they
+   sit on the faces at any size -- the same dialog on a phone and a desktop. */
+.mb-fs-tabs{display:flex;gap:6px;margin:4px 0 8px}
+.mb-fs-tabs .btn.on{border-color:var(--accent);color:var(--accent);background:rgba(var(--accent-rgb),.12)}
+.mb-fs-say{margin:4px 0 8px;min-height:1.2em}
+.mb-fs-stage{position:relative;display:block;width:fit-content;max-width:100%;margin:0 auto;line-height:0}
+.mb-fs-stage>img{display:block;max-width:100%;max-height:44vh;width:auto;height:auto;border-radius:8px}
+.mb-fs-srcstage>img{max-height:28vh}
+/* "Use another face" shows TWO pictures; on a short (phone) screen both shrink so Swap stays on it. */
+.mb-fs-modal.fs-paste .mb-fs-stage>img{max-height:26vh}
+.mb-fs-modal.fs-paste .mb-fs-srcstage>img{max-height:16vh}
+.mb-fs-boxes{position:absolute;inset:0}
+.mb-fs-face{position:absolute;min-width:28px;min-height:28px;border:2px solid rgba(255,255,255,.85);border-radius:10px;
+  background:rgba(0,0,0,.08);box-shadow:0 0 0 1px rgba(0,0,0,.5);padding:0;cursor:pointer;transform:translate(0,0)}
+.mb-fs-face span{position:absolute;top:-11px;left:-11px;width:22px;height:22px;border-radius:999px;display:flex;
+  align-items:center;justify-content:center;font:700 12px/1 inherit;background:#000;color:#fff;border:1px solid #fff}
+.mb-fs-face.on{border-color:var(--accent);background:rgba(var(--accent-rgb),.18);box-shadow:0 0 12px rgba(var(--accent-rgb),.8)}
+.mb-fs-face.on span{background:var(--accent);color:#000}
+.mb-fs-source{margin-top:10px;display:flex;flex-direction:column;gap:6px}
+/* `display` above would otherwise override the hidden ATTRIBUTE: the source section showed in swap mode. */
+.mb-fs-source[hidden],.mb-fs-stage[hidden]{display:none}
+.mb-fs-pick{display:flex;gap:8px;flex-wrap:wrap;align-items:center}
+.mb-fs-thumb{width:56px;height:56px;padding:0;border:2px solid var(--line);border-radius:10px;overflow:hidden;background:none;cursor:pointer}
+.mb-fs-thumb.on{border-color:var(--accent)}
+.mb-fs-thumb img{width:100%;height:100%;object-fit:cover;display:block}
 .mb-er-tools .btn{flex:1 1 auto;min-width:96px}
 .mb-frow{display:flex;gap:8px}
 /* The flip toggles are the only mb- buttons with an ON state, and there was no .btn.on rule to
