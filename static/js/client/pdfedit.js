@@ -477,7 +477,11 @@
         var d = await L.PDFDocument.load(original.slice(), { ignoreEncryption: true });
         var fields = d.getForm().getFields();
         if (!fields.length) return;
-        box.innerHTML = '<b>Form</b>' + fields.map(function (f, i) {
+        /* A BIG FORM MUST NOT TAKE THE PAGES' ROOM. The strip had no height limit, and a real 9-page
+         * form measured 3,919px tall on a laptop: the pages box was pushed ~4,000px down, off the
+         * window, and squeezed to 24px -- "on laptop i still can't scroll down for edits". The list
+         * now scrolls inside a bounded strip (CSS), and Hide gives the pages the whole window. */
+        var fieldHtml = fields.map(function (f, i) {
           var n = f.getName(), t = kindOf(L, f);
           if (t === 'PDFCheckBox') return '<label class="pe-field"><input type="checkbox" data-f="' + H(n) + '"' + (f.isChecked() ? ' checked' : '') + '> ' + H(n) + '</label>';
           if (t === 'PDFDropdown' || t === 'PDFOptionList') {
@@ -487,6 +491,15 @@
           if (t === 'PDFTextField') return '<label class="pe-field">' + H(n) + '<input class="input" data-f="' + H(n) + '" value="' + H(f.getText() || '') + '"></label>';
           return '';
         }).join('');
+        box.innerHTML = '<div class="pe-fields-head"><b>Form</b><span class="muted small">' + fields.length + ' field' + (fields.length === 1 ? '' : 's') + '</span>'
+          + '<button type="button" class="btn btn-ghost small pe-fields-toggle" aria-expanded="true">Hide form</button></div>'
+          + '<div class="pe-fields-list">' + fieldHtml + '</div>';
+        var toggle = box.querySelector('.pe-fields-toggle');
+        toggle.onclick = function () {
+          var shut = box.classList.toggle('pe-fields-shut');
+          toggle.textContent = shut ? 'Show form' : 'Hide form';
+          toggle.setAttribute('aria-expanded', shut ? 'false' : 'true');
+        };
         box.classList.remove('hidden');
         box.querySelectorAll('[data-f]').forEach(function (inp) {
           var set = function () { state.fields[inp.dataset.f] = inp.type === 'checkbox' ? inp.checked : inp.value; state.dirty = true; };
