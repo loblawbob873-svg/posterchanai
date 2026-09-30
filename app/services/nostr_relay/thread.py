@@ -915,19 +915,19 @@ async def _main(cfg: dict) -> None:
             return
         if not verify_event(ev):
             return   # invalid sig — NOT marked (deterministic re-reject is cheap; never store)
-        if int(ev.get("kind", 1)) == 1:
-            content = ev.get("content", "")
-            if not content.strip():
-                return   # EMPTY note — spam/noise, nothing to render; don't store or fan out (matches _on_event)
-            if (_bl and blocked_language(content, _bl)) or (_bw and blocked_word(content, _bw)):
-                return
-            # JSON-BLOB SPAM — the same kind-1 rule as the write gate (server._on_event) and the sync
-            # sweep (ingest._content_blocked). It was MISSING here, and the firehose is how nearly all
-            # of the public feed arrives: measured on server1, 26 `{"id":"p…","n":…,"ty":"p"}` notes
-            # from one stranger's "presence" bot were stored origin='wot' with the toggle ON, while the
-            # two paths that did check it never saw them.
-            if cfg.get("block_json", True) and is_json_content(content):
-                return
+        if int(ev.get("kind", 1)) == 1 and not str(ev.get("content", "")).strip():
+            return   # EMPTY note — spam/noise, nothing to render; don't store or fan out (matches _on_event)
+        # THE SYNC SWEEP'S RULE, NOT A COPY OF IT: language (kind 1), JSON-blob spam (kind 1) and
+        # BLOCKED WORDS ON EVERY KIND (bar ciphertext / the app's own datastore / protocol kinds).
+        # This path kept its own `kind == 1` copy after the other two were fixed, and the firehose is
+        # how nearly all of the public feed arrives: "i have https://otherstuff.ai blocked as a word
+        # but the posts keep coming in" -- the list held it, and kind-6 REPOSTS embedding
+        # `https://otherstuff.ai/word5/` were stored origin='wot' because a repost is not kind 1.
+        # (The JSON rule was once missing here the same way: 26 presence-bot notes stored with the
+        # toggle ON.) One function means the three ingestion paths cannot drift apart again.
+        from .ingest import _content_blocked
+        if _content_blocked(ev, _bl, _bw, cfg.get("block_json", True)):
+            return
         if await store.add_event(ev, origin="wot"):
             _fh_mark(eid)   # mark seen ONLY after a successful store (so a transient fail can retry)
             server.subs.fanout(ev, server._send, server._can_serve_event)
