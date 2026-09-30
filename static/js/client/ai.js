@@ -641,8 +641,17 @@ window.PCAiFactory = function(dep){
     _ai.convId=id; _aiRememberConv(id); _ai.streamEl=null; _ai.streamBuf=""; _ai.decks={};   // decks re-hydrate from [[FC]] markers on render — drop the old set so it can't leak across opens
     const sel=$('#ai-conv'); if(sel && sel.value!=String(id)) sel.value=String(id);
     const box=$('#ai-msgs'); if(box) box.innerHTML='<div class="spinner"></div>';
-    let conv=null; try{ conv=await fetch('/api/conversations/'+id).then(r=>r.json()); }catch(_){}
+    let conv=null, failed=false;
+    try{ const r=await fetch('/api/conversations/'+id); failed=!r.ok && r.status!==404; conv=await r.json(); }catch(_){ failed=true; }
     if(S.VIEW!=='ai' || _ai.convId!==id) return;
+    /* A LOAD THAT FAILED IS NOT AN EMPTY CHAT. It drew the new-chat welcome over an existing
+     * conversation whenever the server could not reach its history (a relay restart). */
+    if(box && failed){
+      box.innerHTML=`<div class="empty ai-load-failed">Could not load this chat — the server could not be reached.
+        <button class="btn btn-ghost small" id="ai-load-retry">Try again</button></div>`;
+      const again=$('#ai-load-retry'); if(again) again.onclick=()=>aiOpenConversation(id);
+      return;
+    }
     if(box){ box.innerHTML='';
       const msgs = (conv && conv.messages) || [];
       if(!msgs.length){ box.innerHTML = _aiWelcomeHtml(); _aiRevealNodeCard(); }   // fresh chat → friendly splash with starter commands

@@ -42,10 +42,11 @@ async def add_message(db, user, conv_id: int, role: str, content: str, ts: float
     return await store.put_doc(_port(db), sk, d, rec)
 
 
-async def get_messages(db, user, conv_id: int) -> list:
-    """All messages for a conversation, oldest first, as [{role, content, ts}]."""
+async def get_messages(db, user, conv_id: int, *, strict: bool = False) -> list:
+    """All messages for a conversation, oldest first, as [{role, content, ts}]. `strict` raises when
+    the relay cannot answer instead of returning an empty transcript."""
     sk = user_storage_seckey(db, user)
-    docs = await store.list_docs(_port(db), f"{store.NS_MSG}{conv_id}:", seckey=sk)
+    docs = await store.list_docs(_port(db), f"{store.NS_MSG}{conv_id}:", seckey=sk, strict=strict)
     msgs = [v for v in docs.values() if isinstance(v, dict) and "role" in v]
     msgs.sort(key=lambda m: m.get("ts", 0))
     return msgs

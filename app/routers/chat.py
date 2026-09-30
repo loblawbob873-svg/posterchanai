@@ -422,7 +422,13 @@ async def get_conversation(
     # Phase 2: when the relay backs chats, load the (decrypted) message events instead of SQLite rows.
     try:
         if chat_store.enabled(db):
-            rel = await chat_store.get_messages(db, current_user, conversation_id)
+            # STRICT: an unreachable relay (a deploy restarts it) answered an empty transcript, and the
+            # AI screen opened the conversation as a brand-new chat.
+            try:
+                rel = await chat_store.get_messages(db, current_user, conversation_id, strict=True)
+            except Exception as e:
+                logger.warning("[CHAT] history unreadable for conv %s: %s", conversation_id, type(e).__name__)
+                raise HTTPException(status_code=503, detail="Could not reach your chat history just now — try again.")
             # The transcript is written to the relay SYNCHRONOUSLY now (chat_history.append is awaited),
             # so it can no longer lag behind a SQL copy — the old count-comparison fallback to plaintext
             # `messages` rows is gone along with the rows themselves.
@@ -434,6 +440,8 @@ async def get_conversation(
                 return {"id": conversation.id, "title": conversation.title,
                         "created_at": conversation.created_at, "updated_at": conversation.updated_at,
                         "messages": msgs}
+    except HTTPException:
+        raise                            # "could not read" must reach the client, not become []
     except Exception as e:
         logger.warning("[CHAT] relay history load failed, falling back to DB: %s", e)
     # DB path: map each message's stored image_path to a served URL too (so the in-client AI
