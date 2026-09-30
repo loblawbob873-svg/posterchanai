@@ -64,7 +64,14 @@ def test_the_import_button_asks_for_the_error():
     src = (ROOT / "static/js/client/settings.js").read_text()
     call = src[src.index("#us-plr-import'"):]
     call = call[:call.index("b.disabled=false")]
-    assert "followMany(pks" in call and "throwOnFail:true" in call.replace(" ", "")
+    # Both imports (a typed account and a follows file) finish in ONE shared step, so neither can
+    # lose the error on its own.
+    assert "_followImported(r, said)" in call
+    shared = src[src.index("const _followImported="):]
+    shared = shared[:shared.index("};") + 2]
+    assert "followMany(pks" in shared and "throwOnFail:true" in shared.replace(" ", "")
+    upload = src[src.index("#us-fedi-import-file'"):]
+    assert "_followImported(r, said)" in upload[:upload.index("}; }")]
 
 
 def test_people_only_this_page_thinks_it_follows_are_still_published():

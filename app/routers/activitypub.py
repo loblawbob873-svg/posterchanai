@@ -575,6 +575,23 @@ async def import_following(request: Request, user=Depends(get_current_user)):
     except Exception:
         body = {}
     handle = str((body or {}).get("account") or "").strip() if isinstance(body, dict) else ""
+    listed = _addresses((body or {}).get("accounts")) if isinstance(body, dict) else None
+    if listed is not None:
+        # A LIST FROM A FILE (a Mastodon/Pleroma `following_accounts.csv`, or this node's own
+        # export). Every entry is only an address: puppets_for fetches each actor from its own server
+        # and takes the identity from there, exactly as for a list read off a public account.
+        logger.info("[activitypub] import-following: file, %d address(es)", len(listed))
+        if not listed:
+            raise HTTPException(400, "That file lists no fediverse accounts (name@server)")
+        now = time.monotonic()
+        if user.id in _importing or now - _imported.get(user.id, -1e9) < 60:
+            raise HTTPException(429, "An import is already running or just ran -- wait a minute and try again")
+        _importing.add(user.id)
+        try:
+            return await _import_list(listed)
+        finally:
+            _importing.discard(user.id)
+            _imported[user.id] = time.monotonic()
     # What arrived, never who: the host only (a public server name), so a report of "it said X"
     # can be matched to what the browser actually sent.
     logger.info("[activitypub] import-following: %s",
@@ -596,6 +613,78 @@ async def import_following(request: Request, user=Depends(get_current_user)):
 
 _importing: set = set()
 _imported: dict = {}
+
+# One address as a follow file writes it: `name@server`, a leading @ allowed. Nothing else is an
+# account -- a header, a URL or a stray note in the file is skipped rather than sent anywhere.
+_ADDRESS = re.compile(r"^@?([A-Za-z0-9_.\-]{1,64})@([A-Za-z0-9.\-]{1,253}\.[A-Za-z]{2,63})$")
+_MAX_LISTED = 5000
+
+
+def _addresses(raw) -> list | None:
+    """The accounts a file named, cleaned and deduplicated; None when no list was sent at all."""
+    if raw is None:
+        return None
+    if not isinstance(raw, list):
+        raise HTTPException(400, "accounts must be a list of name@server")
+    out, seen = [], set()
+    for a in raw[: _MAX_LISTED * 2]:
+        m = _ADDRESS.match(str(a or "").strip())
+        if not m:
+            continue
+        acct = f"{m.group(1)}@{m.group(2).lower()}"
+        if acct.lower() not in seen:
+            seen.add(acct.lower())
+            out.append(acct)
+    return out[:_MAX_LISTED]
+
+
+async def _import_list(accts: list) -> dict:
+    from app.database import SessionLocal
+    from app.services.activitypub import importer
+    db = SessionLocal()
+    try:
+        people = await importer.puppets_for(db, [{"acct": a} for a in accts], "")
+    finally:
+        db.close()
+    return {"following": len(accts), "people": people}
+
+
+@router.post("/api/activitypub/export-following")
+async def export_following(request: Request, user=Depends(get_current_user)):
+    """Which of these followed pubkeys are fediverse accounts, and their addresses -- the member's
+    follow list as a file any fediverse server (or this one) can import. Body: {"pubkeys": [hex]}.
+
+    The list comes from the CLIENT because it is the member's own signed kind-3; the server only
+    knows which keys are puppets and whose. Read-only: nothing is fetched and nothing is minted."""
+    try:
+        body = await request.json()
+    except Exception:
+        body = {}
+    raw = (body or {}).get("pubkeys") if isinstance(body, dict) else None
+    if not isinstance(raw, list):
+        raise HTTPException(400, "pubkeys must be a list")
+    pks = []
+    for pk in raw[:20000]:
+        pk = str(pk or "").strip().lower()
+        if re.fullmatch(r"[0-9a-f]{64}", pk) and pk not in pks:
+            pks.append(pk)
+    from app.database import SessionLocal
+    from app.models import FediPuppet
+    db = SessionLocal()
+    try:
+        found = {}
+        for i in range(0, len(pks), 500):
+            for row in db.query(FediPuppet).filter(FediPuppet.pubkey_hex.in_(pks[i:i + 500])).all():
+                acct = str(row.acct or "").lstrip("@")
+                if _ADDRESS.match(acct) and row.pubkey_hex not in found:
+                    found[row.pubkey_hex] = {"pubkey": row.pubkey_hex, "acct": acct, "actor": row.actor_uri}
+    finally:
+        db.close()
+    # In the order the member's list has them, so the file reads like their follow list.
+    accounts = [found[pk] for pk in pks if pk in found]
+    logger.info("[activitypub] export-following: %d of %d followed key(s) are fediverse accounts",
+                len(accounts), len(pks))
+    return {"following": len(pks), "accounts": accounts}
 
 
 async def _import(handle: str) -> dict:

@@ -4635,7 +4635,7 @@
                        for one more: on every device that is not the phone this IS the only copy —
                        the system message store that is authoritative on the handset does not exist
                        on a laptop. A relay change without this leaves the archive behind. */
-                    /^pcai:sms:/, /^pcai:smsout:/];
+                    /^pcai:sms:/, /^pcai:smsout:/, /^pcai:smsarc:/];
   let _carrying = false;
 
   function _isCarryDoc(ev){
@@ -12834,6 +12834,7 @@
       get _autoMuteEpoch(){ return _autoMuteEpoch; }, set _autoMuteEpoch(v){ _autoMuteEpoch = v; },
       get _autoMuteLoading(){ return _autoMuteLoading; }, set _autoMuteLoading(v){ _autoMuteLoading = v; },
       get _autoMuteMessage(){ return _autoMuteMessage; }, set _autoMuteMessage(v){ _autoMuteMessage = v; },
+      get FOLLOWS(){ return FOLLOWS; },
       get _blossomOK(){ return _blossomOK; },
       get _livePending(){ return _livePending; },
       get _nip65Confirmed(){ return _nip65Confirmed; },
@@ -12855,7 +12856,7 @@
     followMany, logout, modal, normalizeRelay, openQrScanner, publish, qrImg, renderMessages, renderView,
     restoreMediaServer, saveClientPrefsNostr, saveMutedWords, sign, siteDefaultTheme,
     stashPrivateBeforeRelayChange, stopNarration, switchView, timeAgo, toast, uiConfirm, uiPrompt,
-    userRelays,
+    userRelays, saveBlobAs,
   }; }
   function _settingsMod(){ return _lzGet('settings.js', 'PCSettingsFactory', _settingsDeps); }
   function _settingsLoad(){ return _lzLoad('settings.js', 'PCSettingsFactory', _settingsDeps); }

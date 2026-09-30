@@ -322,7 +322,12 @@ public class ThreadListActivity extends PcActivity {
     private void draw() {
         String q = search.getText().toString().trim().toLowerCase(Locale.ROOT);
         List<SmsStore.Thread> rows = new ArrayList<SmsStore.Thread>();
+        /* ARCHIVED CONVERSATIONS are left out of the list, exactly as on every other device; a new
+         * message is newer than the archive and brings the conversation straight back. A search
+         * still finds them -- archived is filed, not gone. */
+        ArchivedThreads archived = SmsArchived.load(this);
         for (SmsStore.Thread t : all) {
+            if (q.isEmpty() && archived.hidden(t.address, t.date)) continue;
             if (q.isEmpty()
                     || t.label.toLowerCase(Locale.ROOT).contains(q)
                     || t.address.toLowerCase(Locale.ROOT).contains(q)

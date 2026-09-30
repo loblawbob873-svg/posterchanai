@@ -30,7 +30,7 @@ window.PCSettingsFactory = function(dep){
     followMany, logout, modal, normalizeRelay, openQrScanner, publish, qrImg, renderMessages, renderView,
     restoreMediaServer, saveClientPrefsNostr, saveMutedWords, sign, siteDefaultTheme,
     stashPrivateBeforeRelayChange, stopNarration, switchView, timeAgo, toast, uiConfirm, uiPrompt,
-    userRelays,
+    userRelays, saveBlobAs,
   } = dep;
 
   /* The apps this device signs for — visible, and revocable one at a time.
@@ -587,6 +587,12 @@ window.PCSettingsFactory = function(dep){
           <div class="us-conn"><div class="set-title small">Bring your follows over</div>
             <div class="us-plr-import"><input class="input" id="us-plr-import-acct" autocomplete="off" spellcheck="false" placeholder="you@your.old.server" aria-label="Fediverse account to import follows from"><button class="btn btn-ghost small" id="us-plr-import">Follow everyone it follows</button><span class="muted small" id="us-plr-import-said" role="status"></span></div>
             <div class="muted small">Type an old fediverse account (Pleroma, Akkoma, Mastodon, GoToSocial) and follow everyone it follows from here. Needs a public follow list — no login. When this node's fediverse server is on, your @name here follows them too.</div>
+            <div class="us-plr-import us-fedi-file">
+              <label class="btn btn-ghost small" id="us-fedi-import-file-btn">Import a follows file<input type="file" id="us-fedi-import-file" accept=".csv,text/csv,text/plain" hidden></label>
+              <button class="btn btn-ghost small" id="us-fedi-export">Export my fediverse follows</button>
+              <span class="muted small" id="us-fedi-file-said" role="status"></span>
+            </div>
+            <div class="muted small">The export is a <code>following_accounts.csv</code> in the format Mastodon, Pleroma, Akkoma and GoToSocial import — and so does this page, from theirs or from here.</div>
           </div>
         </div>
         <div class="us-pane" data-pane="keys">
@@ -1079,6 +1085,53 @@ window.PCSettingsFactory = function(dep){
     /* IMPORT WHO AN OLD FEDIVERSE ACCOUNT FOLLOWS. The server reads its public list and gives each
      * account its puppet identity; the contact list is signed HERE, by you, through followMany -- one
      * merged kind-3 publish (union of the relay's copy and memory), never a rebuild from the list alone. */
+    /* ONE WAY IN FOR BOTH IMPORTS: the server answers {following, people}, and the follow list is
+     * signed here by followMany -- the same merged kind-3 publish, never a rebuild from the list. */
+    const _followImported=async(r, said)=>{
+      const j=await r.json().catch(()=>({}));
+      if(!r.ok) throw new Error(typeof j.detail==='string' ? j.detail : ('HTTP '+r.status));
+      const pks=(j.people||[]).map(p=>p.pubkey).filter(Boolean);
+      if(said) said.textContent=' Adding '+pks.length+'…';
+      const added=pks.length ? await followMany(pks, { throwOnFail:true }) : 0;
+      const msg='Following '+added+' more ('+(pks.length-added)+' you already followed, of '+(j.following||0)+' there)';
+      if(said) said.textContent=' ✓ '+msg; toast(msg);
+    };
+    { const f=$('#us-fedi-import-file'); if(f) f.onchange=async()=>{
+        const said=(f.closest('.us-plr-import')||document).querySelector('#us-fedi-file-said');
+        const file=f.files && f.files[0]; f.value='';
+        if(!file) return;
+        try{
+          const accounts=_followFileAccounts(await file.text());
+          if(!accounts.length) throw new Error('That file lists no fediverse accounts (name@server)');
+          if(said) said.textContent=' Finding '+accounts.length+' account'+(accounts.length===1?'':'s')+'…';
+          try{ await ensureAiSession(); }catch(_){}
+          const r=await fetch('/api/activitypub/import-following',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({accounts})});
+          await _followImported(r, said);
+        }catch(e){ if(said) said.textContent=' '+((e&&e.message)||e); toast('Import failed: '+((e&&e.message)||e)); }
+    }; }
+    { const b=$('#us-fedi-export'); if(b) b.onclick=async()=>{
+        const said=(b.closest('.us-plr-import')||document).querySelector('#us-fedi-file-said');
+        b.disabled=true; if(said) said.textContent=' Reading who you follow…';
+        try{
+          /* The relay's copy of the follow list is the signed one; this page's FOLLOWS can hold a
+           * follow that never landed. Both are asked and merged, never one instead of the other. */
+          let pks=[...(S.FOLLOWS||[])];
+          try{
+            const evs=await window.Relay.query([{authors:[S.ME.pubkey],kinds:[3],limit:1}]);
+            const cur=(evs||[]).sort((a,b)=>b.created_at-a.created_at)[0];
+            if(cur) pks=[...new Set([...cur.tags.filter(t=>t[0]==='p'&&t[1]).map(t=>t[1]), ...pks])];
+          }catch(_){}
+          try{ await ensureAiSession(); }catch(_){}
+          const r=await fetch('/api/activitypub/export-following',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({pubkeys:pks})});
+          const j=await r.json().catch(()=>({}));
+          if(!r.ok) throw new Error(typeof j.detail==='string' ? j.detail : ('HTTP '+r.status));
+          const accts=(j.accounts||[]).map(a=>a.acct).filter(Boolean);
+          if(!accts.length){ if(said) said.textContent=' You follow no fediverse accounts yet — nothing to export.'; return; }
+          await saveBlobAs(new Blob([_followFileCsv(accts)],{type:'text/csv'}), 'following_accounts.csv');
+          if(said) said.textContent=' ✓ Exported '+accts.length+' fediverse account'+(accts.length===1?'':'s');
+        }catch(e){ if(said) said.textContent=' '+((e&&e.message)||e); toast('Export failed: '+((e&&e.message)||e)); }
+        finally{ b.disabled=false; }
+    }; }
     { const b=$('#us-plr-import'); if(b) b.onclick=async()=>{
         // The box and the result line are read from the BUTTON's own row, never by a page-wide id:
         // Settings can be on the page twice (a desktop window over the modal), and $('#id') found the
@@ -1091,16 +1144,10 @@ window.PCSettingsFactory = function(dep){
           try{ await ensureAiSession(); }catch(_){}
           const acct=((row.querySelector('#us-plr-import-acct')||{}).value||'').trim();
           const r=await fetch('/api/activitypub/import-following',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(acct?{account:acct}:{})});
-          const j=await r.json().catch(()=>({}));
-          if(!r.ok) throw new Error(typeof j.detail==='string' ? j.detail : ('HTTP '+r.status));
-          const pks=(j.people||[]).map(p=>p.pubkey).filter(Boolean);
-          if(said) said.textContent=' Adding '+pks.length+'…';
-          // throwOnFail: a follow list the relay did not take must say so. It used to come back as
-          // "0 added", which the line below turned into "N you already followed" -- a success message
+          // throwOnFail (in _followImported): a follow list the relay did not take must say so. It
+          // used to come back as "0 added", read as "N you already followed" -- a success message
           // over an import that had changed nothing.
-          const added=pks.length ? await followMany(pks, { throwOnFail:true }) : 0;
-          const msg='Following '+added+' more ('+(pks.length-added)+' you already followed, of '+(j.following||0)+' there)';
-          if(said) said.textContent=' ✓ '+msg; toast(msg);
+          await _followImported(r, said);
         }catch(e){ if(said) said.textContent=' '+((e&&e.message)||e); toast('Import failed: '+((e&&e.message)||e)); }
         b.disabled=false;
     }; }
@@ -1310,6 +1357,24 @@ window.PCSettingsFactory = function(dep){
       <div><button class="mini" data-tog="${k.id}">${k.is_active?'Disable':'Enable'}</button><button class="mini" data-del="${k.id}" style="color:var(--danger)">Delete</button></div></div>`).join('')||'<div class="muted small">No keys yet.</div>';
     $$('[data-tog]',wrap).forEach(b=> b.onclick=async()=>{ await fetch('/api/auth/api-keys/'+b.dataset.tog+'/toggle',{method:'PUT'}); usLoadKeys(); });
     $$('[data-del]',wrap).forEach(b=> b.onclick=async()=>{ if(!await uiConfirm('Delete this API key?'))return; await fetch('/api/auth/api-keys/'+b.dataset.del,{method:'DELETE'}); usLoadKeys(); });
+  }
+  /* A FOLLOWS FILE, both ways. Mastodon's `following_accounts.csv` is the format every fediverse
+   * server imports: a header row, then one account per line with its boost/notify flags. Read
+   * liberally -- Mastodon's own export, Pleroma's one-column list, a pasted list with @s -- and only
+   * `name@server` is an account; everything else in the file is skipped, never sent anywhere. */
+  function _followFileAccounts(text){
+    const out=[], seen=new Set();
+    for(const line of String(text||'').split(/\r?\n/)){
+      let first=line.split(',')[0].trim().replace(/^"|"$/g,'').trim().replace(/^@/,'');
+      if(!/^[A-Za-z0-9_.\-]{1,64}@[A-Za-z0-9.\-]+\.[A-Za-z]{2,63}$/.test(first)) continue;
+      const k=first.toLowerCase();
+      if(!seen.has(k)){ seen.add(k); out.push(first); }
+    }
+    return out;
+  }
+  function _followFileCsv(accts){
+    return 'Account address,Show boosts,Notify on new posts,Languages\n'
+      + accts.map(a=>String(a).replace(/^@/,'')+',true,false,').join('\n') + '\n';
   }
   function niceImport(){ const p=Store.profile(S.ME.pubkey)||{}; return p.nip05?String(p.nip05).replace(/^_@/,''):''; }
   function drawRelayRows(){

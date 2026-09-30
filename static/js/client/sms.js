@@ -28,6 +28,13 @@
   const L_TAG = 'pcai-sms';
   const D_MSG = 'pcai:sms:';
   const D_OUT = 'pcai:smsout:';
+  /* ARCHIVED CONVERSATIONS -- one record per conversation, so two devices archiving two different
+   * threads can never overwrite each other (a single "archived list" document would be a
+   * read-modify-write of every archive on every tap). NIP-44 to the user's own key: the address is
+   * a hash, and the phone number lives only inside the ciphertext. The record says "hidden up to the
+   * newest message it had" (`upto`), NOT "hidden": a message dated after that brings the
+   * conversation back on every device, with nothing to publish. Unarchive is an empty record. */
+  const D_ARC = 'pcai:smsarc:';
   /* How far back a phone publishes on its very first sync. A phone with ten years of texts would
    * otherwise spend an afternoon on it and fill the relay in one go; the person can ask for more. */
   const FIRST_RUN_DAYS = 30;
@@ -212,6 +219,8 @@
   let PC = null;
   const S = {
     msgs: new Map(),     // docId -> {address, body, date, incoming, id, gone}
+    archived: new Map(), // D_ARC doc -> {k, upto, _at}; see archivedUpto()
+    showArchived: false, // the list is showing the archived conversations
     threads: [],         // built from msgs
     open: '',            // the address whose conversation is on screen
     q: '',
@@ -308,7 +317,7 @@
     return (events || []).filter(ev => {
       const tags = Array.isArray(ev && ev.tags) ? ev.tags : [];
       const d = String(((tags.find(t => Array.isArray(t) && t[0] === 'd')) || [])[1] || '');
-      return d.startsWith(D_MSG) || d.startsWith(D_OUT);
+      return d.startsWith(D_MSG) || d.startsWith(D_OUT) || d.startsWith(D_ARC);
     });
   }
 
@@ -807,6 +816,18 @@
         }catch(_){}
         continue;
       }
+      if(d.startsWith(D_ARC)){
+        const had = S.archived.get(d);
+        if(had && had._at >= ev.created_at) continue;
+        let rec = null;
+        if(ev.content){
+          try{ rec = JSON.parse(await PC.nip44dec(owner, ev.content)); }catch(_){ continue; }
+          if(!currentAccount()) return;
+        }
+        S.archived.set(d, rec && rec.k ? { k:String(rec.k), upto:Number(rec.upto)||0, _at:ev.created_at }
+                                       : { k:'', upto:0, _at:ev.created_at });
+        continue;
+      }
       if(!d.startsWith(D_MSG)) continue;
       const badKey = archiveVersion(ev, d);
       if(_badArchive.has(badKey)) continue;
@@ -1173,6 +1194,7 @@
         // Account changes retire decrypted history, draft text/files, previews and any pending
         // notification recipient. An old decrypt may finish later but cannot commit this epoch.
         S.msgs.clear(); S.threads = []; S.open = ''; S.q = '';
+        S.archived.clear(); S.showArchived = false;
         for(const draft of Object.values(S.draft)) if(draft.previewUrl) URL.revokeObjectURL(draft.previewUrl);
         S.draft = Object.create(null); S.scroll = Object.create(null); S.sending = new Set(); S.aiBusy = new Set();
         S.ready = false; S.loading = false; S.localRead = false; S.lastRead = null;
@@ -2853,6 +2875,53 @@
    * direct-published to the user's own relay and replicate nowhere. The handset's copy goes through
    * the provider, and only this device can do that, and only if this device IS the handset. Removing
    * one without the other means the next mirror publishes it straight back. */
+  function archivedUpto(k){
+    let upto = 0;
+    for(const r of S.archived.values()) if(r.k === k && r.upto > upto) upto = r.upto;
+    return upto;
+  }
+  /* Hidden only while nothing newer than the archived moment exists. `t.date` is the newest
+   * message's own date, so a text that arrives later -- on any device, mirrored from the phone
+   * hours after the archive was made -- is newer and the conversation is back in the list. */
+  function isArchived(t){
+    const upto = archivedUpto(t.key);
+    return !!upto && (t.date || 0) <= upto;
+  }
+  async function setArchived(t, on){
+    const owner = ME().pubkey || '';
+    if(!owner || !t || !t.key) return false;
+    const d = D_ARC + (await sha256hex(owner + '\n' + t.key)).slice(0, 24);
+    const upto = on ? Math.max(1, Number(t.date) || 0) : 0;
+    let ct = '';
+    if(on){
+      try{ ct = await PC.nip44enc(owner, JSON.stringify({ k:t.key, upto, at:Date.now() })); }
+      catch(_){ return false; }
+    }
+    let r = null;
+    /* Two index tags: L_TAG so every Texts reader already holding the archive gets it with no new
+     * query, and its own so the phone's relay service can ask for just these (SmsArchived.filter). */
+    try{ r = await PC.publish(KIND, ct, [['d', d], ['l', L_TAG], ['l', 'pcai-smsarc']], {quiet:true, noQueue:true}); }
+    catch(_){ r = null; }
+    if(owner !== (ME().pubkey || '')) return false;
+    /* Nothing changes on screen until the record is out: an archive that only this device believes
+     * in is exactly the inconsistency across devices this exists to remove. */
+    if(!r || !r.ok) return false;
+    const at = Number(r.ev && r.ev.created_at) || now();
+    S.archived.set(d, on ? { k:t.key, upto, _at:at } : { k:'', upto:0, _at:at });
+    return true;
+  }
+  async function toggleArchive(t){
+    const on = !isArchived(t);
+    if(!await setArchived(t, on)){
+      PC.toast(on ? 'could not archive -- nothing was changed' : 'could not unarchive -- nothing was changed');
+      return;
+    }
+    if(on && S.open === t.key) S.open = '';
+    if(!on && S.showArchived && !S.threads.some(isArchived)) S.showArchived = false;
+    PC.toast(on ? 'Archived on all your devices -- a new message brings it back' : 'Moved back to your conversations');
+    paint();
+  }
+
   async function remove(docs){
     docs = (docs || []).filter(Boolean);
     if(!docs.length) return { archive:0, phone:0 };
@@ -3599,7 +3668,13 @@
       oldSearch.dataset.owner === String(ME().pubkey || '');
     const searchSelection = focusedSearch ? [oldSearch.selectionStart, oldSearch.selectionEnd, oldSearch.selectionDirection] : null;
 
+    /* A SEARCH LOOKS EVERYWHERE -- an archived conversation is filed, not lost, and "where is that
+     * text from the landlord" must still find it. Otherwise the list is either the conversations
+     * or the archive, never both. */
+    const archivedCount = S.threads.filter(isArchived).length;
+    if(S.showArchived && !archivedCount) S.showArchived = false;
     const rows = S.threads.filter(t => {
+      if(!S.q && isArchived(t) !== S.showArchived) return false;
       if(!S.q) return true;
       const q = S.q.toLowerCase();
       return String(t.address||'').toLowerCase().includes(q)
@@ -3647,11 +3722,13 @@
           <button class="btn small" id="sms-deep2">Bring in older messages</button>
           <span class="muted small" id="sms-deep-note" style="margin-left:8px"></span>
         </div>
+        ${S.showArchived && !S.q ? `<div class="sms-arc-head"><button class="btn small" id="sms-arc-back">${ICO('arrow-left','b-ic')}</button>
+          <span>Archived conversations</span></div>` : ''}
         <div class="sms-threads">${rows.map(t => {
           const last = t.msgs[t.msgs.length-1] || {};
           const who = whoIs(last.name, t.address);
-          return `<button class="sms-thread" data-k="${enc(t.key)}">
-            <div class="sms-av">${enc(initials(who))}</div>
+          return `<button class="sms-thread${isArchived(t) ? ' sms-archived' : ''}" data-k="${enc(t.key)}">
+            ${avatarHtml(t.address, who, enc)}
             <div class="sms-body">
               <div class="sms-row1"><span class="sms-who">${enc(who)}</span>
                 <span class="sms-when muted">${enc(when(last.date))}</span></div>
@@ -3684,6 +3761,7 @@
                    + 'Open Android\u2019s Default apps</button></div>' : '')
              + '</div>')}
         </div>
+        ${!S.showArchived && !S.q && archivedCount ? `<button class="btn small sms-arc-open" id="sms-arc-open">${ICO('folder','b-ic')}Archived (${archivedCount})</button>` : ''}
       </div>`;
 
     /* Bound whether or not the bar is visible right now — `noteWhere` reveals it asynchronously,
@@ -3775,8 +3853,29 @@
       }
       paint();
     };
+    { const o = PC.$('#sms-arc-open'); if(o) o.onclick = () => { S.showArchived = true; paint(); }; }
+    { const o = PC.$('#sms-arc-back'); if(o) o.onclick = () => { S.showArchived = false; paint(); }; }
     feed.querySelectorAll('.sms-thread').forEach(b => {
-      b.onclick = () => { S.open = b.dataset.k; paint(); };
+      let hold = 0, sx = 0, sy = 0, held = false;
+      const stop = () => { if(hold){ clearTimeout(hold); hold = 0; } };
+      /* Right-click on a desktop, a long press on a phone: the row's menu. Moving the finger
+       * cancels the press, so scrolling the list never opens it. */
+      const menu = () => {
+        const t = S.threads.find(x => x.key === b.dataset.k);
+        if(!t || !PC.openMenuPopover) return;
+        const arc = isArchived(t);
+        PC.openMenuPopover(b, [['archive', arc ? 'Unarchive' : 'Archive conversation', 'sms-arc-item']],
+          v => { if(v === 'archive') toggleArchive(t); });
+      };
+      b.onclick = () => { if(held){ held = false; return; } S.open = b.dataset.k; paint(); };
+      b.oncontextmenu = e => { e.preventDefault(); menu(); };
+      b.onpointerdown = e => {
+        if(e.pointerType === 'mouse') return;
+        sx = e.clientX; sy = e.clientY; held = false; stop();
+        hold = setTimeout(() => { hold = 0; held = true; menu(); }, 550);
+      };
+      b.onpointermove = e => { if(hold && (Math.abs(e.clientX-sx) > 10 || Math.abs(e.clientY-sy) > 10)) stop(); };
+      b.onpointerup = stop; b.onpointercancel = stop; b.onpointerleave = stop;
     });
     noteWhere();
   }
@@ -4194,11 +4293,13 @@
       <div class="sms-wrap">
         <div class="sms-head">
           <button class="btn small" id="sms-back">${ICO('arrow-left','b-ic')}</button>
+          ${photoOf(t.address) ? avatarHtml(t.address, who, enc).replace('sms-av ', 'sms-av sms-av-head ') : ''}
           <div class="sms-title"><span>${enc(who)}</span>${who!==t.address?`<small>${enc(t.address)}</small>`:''}</div>
           <div class="sms-contact-actions">
             ${savedContact?'':`<button class="btn small" id="sms-add-contact" aria-label="Add ${enc(t.address)} to contacts">Add contact</button>`}
             <button class="btn small" id="sms-call" aria-label="Call ${enc(who)}">Call</button>
             <button class="btn small" id="sms-copy-number" aria-label="Copy phone number">Copy</button>
+            <button class="btn small" id="sms-archive-thread" aria-label="${isArchived(t) ? 'Unarchive' : 'Archive'} this conversation" title="${isArchived(t) ? 'Unarchive' : 'Archive'}">${ICO('folder','b-ic')}<span class="sms-arc-lbl">${isArchived(t) ? 'Unarchive' : 'Archive'}</span></button>
           </div>
         </div>
         ${historyNotice()}
@@ -4256,6 +4357,7 @@
         </div>
       </div>`;
     PC.$('#sms-back').onclick = () => { S.open = ''; paint(); };
+    { const a = PC.$('#sms-archive-thread'); if(a) a.onclick = async () => { a.disabled = true; await toggleArchive(t); a.disabled = false; }; }
     const addContact=PC.$('#sms-add-contact');if(addContact)addContact.onclick=()=>{
       window.__PC_CONTACT_ADD_PHONE=String(t.address||'');
       PC.switchView('contacts');
@@ -4578,6 +4680,20 @@
       S.threads.unshift({ key:S.open, address:to, msgs:[], date:0, unread:0 });
     }
     paint();
+  }
+
+  /* THE CONTACT'S OWN PICTURE, where Contacts has one -- initials only when it does not. Contacts
+   * showed the photos while this screen drew two letters over every one of the same people. */
+  function photoOf(address){
+    try{
+      const c = window.PCContacts;
+      return (c && c.photoFor) ? String(c.photoFor(address) || '') : '';
+    }catch(_){ return ''; }
+  }
+  function avatarHtml(address, who, enc){
+    const ph = photoOf(address);
+    return ph ? `<div class="sms-av sms-av-photo"><img src="${enc(ph)}" alt="" loading="lazy" decoding="async"></div>`
+              : `<div class="sms-av">${enc(initials(who))}</div>`;
   }
 
   function initials(label){

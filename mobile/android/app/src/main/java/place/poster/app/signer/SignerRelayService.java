@@ -34,6 +34,7 @@ import okhttp3.WebSocketListener;
 import place.poster.app.MainActivity;
 import place.poster.app.R;
 import place.poster.app.sms.SmsArchive;
+import place.poster.app.sms.SmsArchived;
 import place.poster.app.sms.SmsOutbox;
 import place.poster.app.sms.SmsSweep;
 import place.poster.app.RunningNote;
@@ -479,7 +480,7 @@ public class SignerRelayService extends Service {
                      * redialled and watched for staleness by everything below. */
                     try {
                         s.send(new JSONArray().put("REQ").put(smsSubId)
-                                .put(SmsOutbox.filter(me)).toString());
+                                .put(SmsOutbox.filter(me)).put(SmsArchived.filter(me)).toString());
                     } catch (Throwable ignored2) { }
                     flushSmsReceipts(s);
                 } catch (Throwable ignored) { }
@@ -602,6 +603,12 @@ public class SignerRelayService extends Service {
      * sent text cannot be recalled. */
     private void smsOutbox(String url, JSONObject ev) {
         if (ev == null) return;
+        /* ARCHIVED CONVERSATIONS ride the same subscription: the Texts screen on any device files a
+         * conversation away, and the native list here has to agree with it. */
+        if (SmsArchived.docOf(ev).startsWith(SmsArchived.D_ARC)) {
+            pool().execute(() -> SmsArchived.absorb(SignerRelayService.this, ev));
+            return;
+        }
         if (!SmsOutbox.isRequest(ev)) return;
         pool().execute(() -> {
             JSONObject done = SmsOutbox.perform(SignerRelayService.this, ev);
@@ -661,7 +668,7 @@ public class SignerRelayService extends Service {
                         System.currentTimeMillis() / 1000L, 22242, tags, "");
                 socket.send(new JSONArray().put("AUTH").put(auth).toString());
                 socket.send(new JSONArray().put("REQ").put(smsSubId)
-                        .put(SmsOutbox.filter(pubHex)).toString());
+                        .put(SmsOutbox.filter(pubHex)).put(SmsArchived.filter(pubHex)).toString());
                 publishSmsArchive();
                 sweepSmsHistory();
             } catch (Throwable t) { lastError = "relay AUTH failed"; }

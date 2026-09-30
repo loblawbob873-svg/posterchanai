@@ -1288,7 +1288,7 @@
      * Built from whatever this device already has — the cache counts. Somebody who has never opened
      * Contacts in this session still has their address book in localStorage, and a name is worth
      * showing from it; nothing here writes, so a stale index costs a stale label and nothing else. */
-    let _telIdx = null, _telSig = '';
+    let _telIdx = null, _telPhotos = new Map(), _telSig = '';
     function _numKey(addr){
       const digits = String(addr || '').replace(/[^0-9]/g, '');
       if(!digits) return String(addr || '').replace(/[^0-9+]/g, '');
@@ -1297,7 +1297,7 @@
     function _buildTelIndex(){
       const sig = S.book + '|' + S.rev + '|' + Object.keys(S.cards || {}).length;
       if(_telIdx && _telSig === sig) return _telIdx;
-      const idx = new Map();
+      const idx = new Map(), photos = new Map();
       for(const book of Object.keys(S.cards || {})){
         for(const rec of (S.cards[book] || [])){
           let c = null;
@@ -1306,11 +1306,17 @@
           if(!nm) continue;
           for(const t of (c.tels || [])){
             const k = _numKey(t && t.value);
-            if(k && !idx.has(k)) idx.set(k, nm);   // first card wins, so a repaint is stable
+            if(k && !idx.has(k)){
+              idx.set(k, nm);                       // first card wins, so a repaint is stable
+              /* ITS PHOTO TRAVELS WITH THE NAME -- the same card, so a person's picture and label
+               * can never come from two different contacts. Only what an <img> can show safely. */
+              const ph = String((c && c.photo) || '');
+              if(/^data:image\//i.test(ph) || /^https:\/\//i.test(ph)) photos.set(k, ph);
+            }
           }
         }
       }
-      _telIdx = idx; _telSig = sig;
+      _telIdx = idx; _telPhotos = photos; _telSig = sig;
       return idx;
     }
 
@@ -1335,6 +1341,14 @@
           if(namesCheckedAt === null || Date.now() - namesCheckedAt >= 30000) _loadNames();
           const k = _numKey(number);
           return (k && _buildTelIndex().get(k)) || '';
+        }catch(_){ return ''; }
+      },
+      /** The contact's picture for a phone number (a data:image or https URL), or ''. Same card,
+       *  same lookup, same cache as nameFor -- Texts draws it where it drew initials. */
+      photoFor(number){
+        try{
+          if(!window.PCContacts.nameFor(number)) return '';
+          return _telPhotos.get(_numKey(number)) || '';
         }catch(_){ return ''; }
       },
       render(){

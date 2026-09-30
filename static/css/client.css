@@ -10086,6 +10086,12 @@ html.osfr-on body > .app, html.osfr-on #os-root{ visibility:hidden; }
 .sms-title small{font-size:.72rem;font-weight:400;color:var(--muted);overflow:hidden;text-overflow:ellipsis}
 .sms-contact-actions{display:flex;gap:6px;flex:none}
 @media(max-width:420px){.sms-contact-actions .btn{padding-inline:8px}}
+/* Archive: the phone header is already four controls wide, so the icon carries it there. */
+@media(max-width:520px){.sms-arc-lbl{display:none}}
+.sms-arc-open{align-self:center;margin:10px auto 4px}
+.sms-arc-head{display:flex;gap:10px;align-items:center;font-weight:700;margin:8px 0}
+.sms-thread.sms-archived{opacity:.8}
+.sms-arc-item{font-size:.92rem}
 .sms-threads{flex:1;min-height:0;overflow-y:auto;display:flex;flex-direction:column;gap:8px}
 .sms-thread{display:flex;gap:12px;align-items:center;width:100%;text-align:left;
   padding:12px;border:1px solid var(--line);border-radius:var(--r);background:var(--panel);
@@ -10097,6 +10103,9 @@ html.osfr-on body > .app, html.osfr-on #os-root{ visibility:hidden; }
   justify-content:center;font-weight:700;font-size:.8rem;color:#fff;
   background:linear-gradient(135deg,rgba(var(--accent-rgb),.85),rgba(var(--accent2-rgb),.85))}
 .sms-body{flex:1;min-width:0}
+.sms-av-photo{background:var(--panel2,var(--panel));overflow:hidden;padding:0}
+.sms-av-photo img{width:100%;height:100%;object-fit:cover;display:block}
+.sms-av-head{width:34px;height:34px}
 .sms-row1{display:flex;gap:8px;align-items:baseline}
 .sms-who{flex:1;min-width:0;font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .sms-when{flex:none;font-size:.72rem}
