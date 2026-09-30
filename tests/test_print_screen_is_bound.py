@@ -23,6 +23,8 @@ from tests.wayfire_config import bindings, runs
 ROOT = Path(__file__).resolve().parents[1]
 OS_JS = ROOT / "static" / "js" / "client" / "os.js"
 SHELL = ROOT / "static" / "js" / "client" / "osshell.js"
+# Compositor ticks that must act ONCE (not once per monitor) are answered in the main process.
+MAIN = ROOT / "desktop" / "main.js"
 
 
 class ThePrintKeyIsBound(unittest.TestCase):
@@ -62,7 +64,7 @@ class TheShellAnswersTheTicksTheConfigSends(unittest.TestCase):
 
     def test_every_tick_the_config_sends_is_handled(self):
         """A binding whose tick nothing listens for is a key that does nothing — which is the bug."""
-        shell = SHELL.read_text()
+        shell = SHELL.read_text() + MAIN.read_text()
         for chord, command in bindings().items():
             if "pc-wayfire-action" not in command:
                 continue

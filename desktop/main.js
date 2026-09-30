@@ -2149,6 +2149,8 @@ async function wireShellRecovery(){
       if(Array.from(_shellSurfaces.values()).some(record=>record&&Number(record.conId)===Number(row.id)))
         scheduleDisplayReconcile();
     });
+    /* The compositor keys that arrange windows (wayfire.ini: Super+G, Super+Shift+G, Super+Alt+G). */
+    const ARRANGE_TICKS = ['pc:arrange:grid', 'pc:arrange:side-by-side', 'pc:arrange:stacked'];
     wm().on('tick', (ev) => {
       if(!ev || ev.first) return;
       if(ev.payload !== 'pc:restart'){
@@ -2159,7 +2161,7 @@ async function wireShellRecovery(){
         if(ev.payload==='pc:update-installed') requestSafeShellRestart('compositor-tick');
         /* Super+G and friends: arranged HERE, once, on the monitor holding the focused window --
            forwarding to every shell surface would have each monitor arrange on the same key. */
-        else if(/^pc:arrange:(grid|side-by-side|stacked)$/.test(String(ev.payload||''))){
+        else if(ARRANGE_TICKS.includes(String(ev.payload||''))){
           const w = wm(); if(w && typeof w.arrange === 'function') w.arrange(String(ev.payload).slice(11), 'focused').catch(()=>{});
         }
         else forwardShellTick(ev).catch(()=>{});
