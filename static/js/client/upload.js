@@ -754,7 +754,10 @@ window.PCUploadFactory = function(dep){
         <span class="bp-density" aria-label="Thumbnail size"><button type="button" class="mini active" data-bp-size="small" aria-pressed="true" title="Small thumbnails">S</button><button type="button" class="mini" data-bp-size="medium" aria-pressed="false" title="Medium thumbnails">M</button></span>
         <button type="button" class="mini bp-close" aria-label="Cancel file selection">×</button></div>
       <div class="bp-explorer"><nav id="bp-folders" class="bp-folders" aria-label="Blossom folders"></nav>
-        <div id="bp-grid" class="files-grid"><div class="spinner"></div></div></div></div>`;
+        <div id="bp-grid" class="files-grid"><div class="spinner"></div></div></div>
+      <div class="bp-multi-bar" hidden><span class="bp-multi-count" role="status"></span>
+        <button type="button" class="btn btn-ghost small bp-multi-clear">Clear</button>
+        <button type="button" class="btn btn-neon small bp-multi-go" disabled>Attach</button></div></div>`;
     // This sheet is hand-rolled rather than built by modal()/subModal(), so it used to get NONE of what
     // they provide: no Escape, no focus trap, and body.modal-open was never set (so `/` and the other
     // global keys still fired at the view behind it). One close path now does all of it.
@@ -764,6 +767,40 @@ window.PCUploadFactory = function(dep){
     $('#modal-root').appendChild(bg);
     document.body.classList.add('modal-open');
     bg.querySelector('.bp-close').onclick=close;
+    /* SEVERAL AT ONCE, for a post or a reply ("Posts and Replies: should be able to add multiple
+     * files at once"). A composer calls this with its textarea and no callback, and there a tap now
+     * TOGGLES a file (numbered in the order picked) and "Attach N" puts them all in, in that order.
+     * Every caller with a callback -- Texts, Mail, Albums, Music, Meme Builder, Concord -- takes ONE
+     * file and keeps the single-tap behaviour it was written for. */
+    const multi = opts.multi !== undefined ? !!opts.multi : (!!ta && !onPick);
+    const picked = [];                        // [{url, ext}] in the order they were tapped
+    const mbar = bg.querySelector('.bp-multi-bar');
+    const syncMulti=()=>{
+      if(!multi) return;
+      mbar.hidden = false;
+      mbar.querySelector('.bp-multi-count').textContent = picked.length
+        ? picked.length+' selected' : 'Tap files to select them';
+      const go=mbar.querySelector('.bp-multi-go');
+      go.disabled = !picked.length; go.textContent = picked.length > 1 ? 'Attach '+picked.length : 'Attach';
+      bg.querySelectorAll('#bp-grid [data-url]').forEach(el=>{
+        const i=picked.findIndex(p=>p.url===el.dataset.url);
+        el.classList.toggle('bp-picked', i>=0); el.setAttribute('aria-pressed', i>=0?'true':'false');
+        el.dataset.pickNo = i>=0 ? String(i+1) : '';
+      });
+    };
+    if(multi){
+      mbar.querySelector('.bp-multi-clear').onclick=()=>{ picked.length=0; syncMulti(); };
+      mbar.querySelector('.bp-multi-go').onclick=()=>{
+        if(!picked.length) return;
+        close();
+        for(const p of picked){
+          const _need = p.ext && !/\.[a-z0-9]{1,8}$/i.test(p.url.split('?')[0]);
+          ta.value+=(ta.value?'\n':'')+p.url+(_need?('.'+p.ext):'');
+        }
+        ta.dispatchEvent(new Event('input',{bubbles:true}));
+        toast(picked.length===1 ? 'attached' : 'attached '+picked.length+' files');
+      };
+    }
     const closeOrDrawer=()=>{ const explorer=bg.querySelector('.bp-explorer');
       if(explorer&&explorer.classList.contains('bp-locations-on')){ explorer.classList.remove('bp-locations-on'); const b=bg.querySelector('.bp-locations'); if(b)b.setAttribute('aria-expanded','false'); return; }
       close(); };
@@ -935,6 +972,7 @@ window.PCUploadFactory = function(dep){
               ? enc(_bpListFailed)+' <button type="button" class="mini bp-retry">Retry</button>'
               : (cur?'Nothing in this folder.':enc(opts.empty||'No files yet — upload some in the Files tab.'))}</div>`;
         _bindThumbFallback(grid);   // same markup as the Files grid, so the same fallback
+        syncMulti();                // a folder change redraws the grid; the picks survive it
         grid.querySelectorAll('[data-url]').forEach(el=> el.onclick=()=>{
           const type=el.dataset.type||'';
           // MIME parameters describe the representation, not a different file type. Exact lookup
@@ -948,6 +986,11 @@ window.PCUploadFactory = function(dep){
            * decrypt from and a flag telling it that it must. Callers that did not opt in never see
            * an encrypted blob, so these two fields change nothing for them. */
           const sha=el.dataset.sha||''; const isEnc=!!((FilesIdx.meta(sha)||{}).enc);
+          if(multi){
+            const i=picked.findIndex(p=>p.url===url);
+            if(i>=0) picked.splice(i,1); else picked.push({url, ext});
+            syncMulti(); return;
+          }
           close();
           /* A CALLBACK THAT THREW USED TO BE INDISTINGUISHABLE FROM A FILE NOBODY PICKED.
            * `catch(_){}` swallowed everything, so a caller whose insert failed left the picker

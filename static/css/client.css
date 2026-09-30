@@ -5686,6 +5686,16 @@ html.pc-oswin .main{ height:100% }
 .bp-explorer>.files-grid>.file-card{min-width:0;min-height:96px;align-self:start}
 .bp-explorer>.files-grid>.file-card>img,
 .bp-explorer>.files-grid>.file-card>video{display:block;width:100%;height:96px;min-height:96px;object-fit:cover}
+/* Several files at once (a post or reply's 📁 Files): picked cards are numbered in pick order, and
+   the Attach bar stays at the bottom of the sheet, on screen on a phone. */
+.bp-multi-bar{display:flex;align-items:center;gap:8px;padding:10px 12px;border-top:1px solid var(--line);
+  position:sticky;bottom:0;background:var(--panel,var(--bg));z-index:2}
+.bp-multi-bar[hidden]{display:none}
+.bp-multi-count{flex:1 1 auto;font-size:13px;color:var(--muted)}
+.bp-pick-card{position:relative}
+.bp-pick-card.bp-picked{outline:2px solid var(--accent);outline-offset:-2px;background:rgba(var(--accent-rgb),.12)}
+.bp-pick-card.bp-picked::after{content:attr(data-pick-no);position:absolute;top:6px;right:6px;min-width:22px;height:22px;
+  padding:0 6px;border-radius:999px;background:var(--accent);color:#000;font:700 12px/22px inherit;text-align:center}
 .bp-explorer .bp-pick-card{display:flex;flex-direction:column;width:100%;padding:0;color:var(--text);
   font:inherit;text-align:start;cursor:pointer}
 .bp-explorer .bp-pick-preview{display:block;width:100%;height:96px;flex:0 0 96px}
