@@ -18,6 +18,7 @@ from ai import generate_reply
 from tts import generate_speech_with_retries, generate_narration_video
 from pleroma import post_to_fediverse as pleroma_post_to_fediverse, post_image_to_fediverse as pleroma_post_image_to_fediverse
 import engagement
+from block_wording import COMMENTARY_ONLY, commentary
 
 # Cache for bot avatar URL
 _bot_avatar_cache = {}
@@ -262,6 +263,9 @@ def save_last_block_id(block_id):
                 pass
 
 
+MAX_LINES = 10
+
+
 def blocks(print_only=False):
     """Announce Block activities recorded since the last one announced.
 
@@ -287,7 +291,7 @@ def blocks(print_only=False):
         "WHERE data->>'type' = 'Block' AND inserted_at > %s ORDER BY inserted_at ASC LIMIT 50;",
         (cursor,),
     )
-    matches = []
+    matches, names = [], []
     newest = cursor
     for row in data_rows:
         inserted_at = row[2]
@@ -316,35 +320,30 @@ def blocks(print_only=False):
         logging.debug(f"Extracted blocker_domain: {blocker_domain}")
         logging.debug(f"Extracted blocked_domain: {blocked_domain}")
 
-        profile = actor_url  # profile URL from object key
-        # Format: "BLOCKER: @user blocked @user2"
-        matches.append(
-            f"BLOCKER: @{blocker}@{blocker_domain} blocked @{blocked}@{blocked_domain}. Profile is available at: {profile}"
-        )
+        # One headline line per block, written HERE and never by the model (block_wording.py): the
+        # names are the database's, spelled so Pleroma links them. No "BLOCKER:" label -- that was
+        # the prompt's scaffolding, and it reached every post the model's version was refused for.
+        line = f"@{blocker}@{blocker_domain} blocked @{blocked}@{blocked_domain}"
+        if line not in matches:                     # the same block twice in one poll is one line
+            matches.append(line)
+            names += [blocker, blocked]
     if matches:
-        msg = "\n".join(matches)
+        shown = matches[:MAX_LINES]
+        # Blank lines between: Pleroma's Markdown folds single newlines into one run-on line.
+        msg = "\n\n".join(shown)
+        if len(matches) > MAX_LINES:
+            msg += f"\n\n…and {len(matches) - MAX_LINES} more"
         if OPENAI_ENDPOINT and OPENAI_ENDPOINT.startswith(("http://", "https://")):
-            print("OpenAI configured. Trying to generate reply.")
             try:
-                original_msg = msg  # Save original for validation
-                prompt = BLOCK_PROMPT.format(block_details=msg) + " /no_think"
-                ai_msg = generate_reply(prompt)
-                if ai_msg and "None" not in ai_msg:
-                    ai_msg = ai_msg.replace("/no_think", "").strip()
-                    # Validate the AI message preserves correct usernames and domains
-                    if validate_block_message(ai_msg, original_msg):
-                        msg = ai_msg
-                        msg = re.sub(r'\bBLOCKEE:\s*', '', msg)  # Never show "BLOCKEE:" in the post
-                        logging.info("AI message passed validation")
-                    else:
-                        logging.warning("AI message failed validation, using original message")
-                        print("AI message failed validation (incorrect usernames/domains or language mixing), using original message")
-                else:
-                    print("OpenAI returned invalid response, using original message")
+                # Commentary ONLY, under the headline -- never a rewrite of it. It used to replace the
+                # whole post, checked only for the first two handles, and posted an invented story.
+                ai_msg = (generate_reply(BLOCK_PROMPT.format(block_details="\n".join(shown))
+                                         + COMMENTARY_ONLY + " /no_think") or "").replace("/no_think", "").strip()
+                extra = commentary(ai_msg, names=names)
+                if extra:
+                    msg = msg + "\n\n" + extra
             except Exception as e:
-                print(f"Error generating OpenAI response: {e}, using original message")
-        else:
-            print("OpenAI not configured, using original message")
+                logging.warning(f"AI block commentary failed, posting the headline alone: {e}")
         if not msg or "None" in msg:
             print("Error, msg is null.")
         else:

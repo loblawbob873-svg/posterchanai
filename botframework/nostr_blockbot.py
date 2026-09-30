@@ -111,32 +111,8 @@ def _line(b: dict) -> str:
     return f"{_who(b, 'blocker')} muted {_who(b, 'blocked')} (on Nostr)"
 
 
-# What the model is asked for, on top of the operator's prompt: commentary, no names. The headline
-# already names everyone -- correctly and as tags -- and a model that "helps" by repeating a name
-# invents one: "@@liminal", "@npub1", "@mastodon@social.dev" all reached a real post.
-_COMMENTARY_ONLY = (" IMPORTANT: the post already begins with the line(s) above saying who did what; they "
-                    "are added separately. Write ONLY the commentary that goes underneath them, at most "
-                    "three sentences. Do NOT write any usernames, @handles, npubs, nostr: links or "
-                    "domains, and do not repeat the line(s) above.")
-_NAMEISH = re.compile(r"@[\w.-]|\bnpub1|\bnprofile1|nostr:|https?://|\b[\w-]+\.(?:com|org|net|social|place|io|dev)\b", re.I)
-
-
-def commentary(ai_msg: str, mutes: bool = False) -> str:
-    """The model's text if it is usable as commentary under the headline, else "". Unusable: it names
-    anyone (a name can only be wrong there -- the right ones are already above), repeats a headline,
-    calls a mute a block, or drifts into another script (a known failure of the smaller models)."""
-    text = re.sub(r"\b(?:BLOCKER|BLOCKEE|MUTER|MUTEE):\s*", "", (ai_msg or "")).strip()
-    if not text or text == "None":
-        return ""
-    if _NAMEISH.search(text):
-        logging.warning("AI block commentary named someone; posting the headline alone")
-        return ""
-    if mutes and re.search(r"\bblock(?:ed|s)?\b", text, re.I) and not re.search(r"\bmute", text, re.I):
-        logging.warning("AI block commentary called a mute a block; posting the headline alone")
-        return ""
-    if re.search(r"[一-鿿぀-ゟ゠-ヿ가-힯]", text):
-        return ""
-    return text
+# The commentary rules are shared with the Pleroma block bot (block_wording.py) so the two cannot drift.
+from block_wording import COMMENTARY_ONLY as _COMMENTARY_ONLY, commentary  # noqa: E402
 
 
 def validate_block_message(ai_msg: str, handles: list, mutes: bool = False) -> bool:  # kept for scalps-style callers
@@ -187,7 +163,8 @@ def blocks(print_only=False):
                                  f"{b.get('blocked_handle')}" for b in shown)
             ai_msg = (generate_reply(BLOCK_PROMPT.format(block_details=readable) + _COMMENTARY_ONLY + " /no_think")
                       or "").replace("/no_think", "").strip()
-            extra = commentary(ai_msg, mutes=any(b.get("via") != "fediverse" for b in shown))
+            extra = commentary(ai_msg, mutes=any(b.get("via") != "fediverse" for b in shown),
+                               names=[b.get(k) for b in shown for k in ("blocker_handle", "blocked_handle")])
             if extra:
                 msg = msg + "\n\n" + extra
         except Exception as e:

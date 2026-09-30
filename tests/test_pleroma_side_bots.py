@@ -425,3 +425,54 @@ def test_a_database_outage_announces_nothing_and_keeps_the_snapshot(unfollows, m
     ub.conn = None
     ub.pleroma_unfollows()
     assert posted == [], "recovering from the outage announced unfollows that never happened"
+
+
+# ---- what the post SAYS ("Blockbot is adding that BLOCKER: nonsense still") -----------------------
+
+NONSENSE = ("@StarProphet@fsebugoutzone.org blocked @bob@poa.st\nBLOCKER: @Starprophet@annihilation.social blocked "
+            "@bob@poa.st\nBLOCKER: @StarProphet@merovingian.club blocked @bob@poa.st\nThis is not a joke. These are "
+            "coordinated blocks from multiple platforms. The vampire brigade has been systematically silenced across "
+            "the dark web. Alice and Judge Dread were at the center of this operation.")
+
+
+def _with_ai(bb, monkeypatch, reply):
+    monkeypatch.setattr(bb, "OPENAI_ENDPOINT", "http://ai.invalid")
+    monkeypatch.setattr(bb, "generate_reply", lambda prompt: reply)
+
+
+def test_the_post_is_plain_headlines_with_no_scaffolding(blockbot):
+    bb, posted, block = blockbot
+    bb.blocks()
+    block(A, B)
+    bb.blocks()
+    assert posted == ["@alice@detroitriotcity.com blocked @bob@poa.st"], posted
+
+
+def test_the_model_cannot_rewrite_the_post_or_invent_a_story(blockbot, monkeypatch):
+    """The exact shape posted on 2026-09-30: repeated BLOCKER lines and a made-up conspiracy. The
+    headline stays the database's, and commentary that names anybody is dropped."""
+    bb, posted, block = blockbot
+    bb.blocks()
+    block(A, B)
+    _with_ai(bb, monkeypatch, NONSENSE)
+    bb.blocks()
+    assert posted == ["@alice@detroitriotcity.com blocked @bob@poa.st"], posted
+    assert "BLOCKER" not in posted[0] and "vampire" not in posted[0].lower()
+
+
+def test_clean_commentary_goes_under_the_headline(blockbot, monkeypatch):
+    bb, posted, block = blockbot
+    bb.blocks()
+    block(A, B)
+    _with_ai(bb, monkeypatch, "Another bridge burned. The timeline got a little quieter.")
+    bb.blocks()
+    assert posted == ["@alice@detroitriotcity.com blocked @bob@poa.st\n\n"
+                      "Another bridge burned. The timeline got a little quieter."], posted
+
+
+def test_commentary_naming_anyone_in_the_batch_is_dropped_even_without_an_at():
+    sys.path.insert(0, BOTS)
+    import block_wording as w
+    assert w.commentary("Starprophet strikes again.", names=["StarProphet"]) == ""
+    assert w.commentary("BLOCKER: someone blocked someone. BLOCKER: someone blocked someone.") == ""
+    assert w.commentary("Justice, served cold.", names=["StarProphet"]) == "Justice, served cold."
