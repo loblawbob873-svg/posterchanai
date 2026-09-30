@@ -55,8 +55,22 @@ window.PCNotifViewFactory = function(dep){
    * Opening the view reads (the person asked for it); a RE-render reads only while the page is
    * visible and focused; and coming back to it reads what arrived meanwhile. */
   let _notifOpened = false;
+  /* ...AND THE VIEW HAS TO BE ON SCREEN. Visible-and-focused was not enough on PosterChanOS: a
+   * monitor's desktop SURFACE is always "visible" and holds focus whenever the taskbar or the desktop
+   * was the last thing clicked, and its last view can be Notifications -- rendered into its feed and
+   * shown nowhere, because the desktop draws icons and apps live in their own windows. Measured on
+   * the reporting desktop: surface view `notifications`, `ownsFeedView('notifications')` false, and
+   * the shared read mark moved 86 seconds earlier. Every arrival while the taskbar had focus was read
+   * by nobody ("not seeing notification bell illuminated on desktop but i hear notifications").
+   * ownsFeedView answers exactly "is this view on screen, in the focused window"; off the desktop it
+   * is always true, so a browser or a native app window is unaffected. */
+  function _onScreen(){
+    try{ return !(window.PCOS && PCOS.isOn && PCOS.isOn() && PCOS.ownsFeedView) || !!PCOS.ownsFeedView('notifications'); }
+    catch(_){ return true; }
+  }
   function _readingNow(){
-    try{ return document.visibilityState !== 'hidden' && (typeof document.hasFocus !== 'function' || document.hasFocus()); }
+    try{ return document.visibilityState !== 'hidden' && (typeof document.hasFocus !== 'function' || document.hasFocus())
+                && _onScreen(); }
     catch(_){ return true; }
   }
   function _markIfRead(){ if(_notifOpened || _readingNow()){ _notifOpened = false; markNotifsRead(); } }
