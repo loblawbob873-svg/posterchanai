@@ -168,14 +168,30 @@ window.PCMenusFactory = function(dep){
       // Hand focus back where it came from, so opening a menu mid-sentence does not cost you the caret.
       // Only when the popover still owns it — an item's action may have moved focus deliberately.
       const mine = pop.contains(document.activeElement) || document.activeElement===document.body;
-      _detachKeys(); pop.remove(); document.querySelectorAll('.pop-backdrop').forEach(b=>b.remove()); document.removeEventListener('click',onDoc,true); const f=$('#feed'); if(f) f.removeEventListener('scroll',close); document.removeEventListener('scroll',onScroll,true); window.removeEventListener('resize',close);
+      _detachKeys(); pop.remove(); document.querySelectorAll('.pop-backdrop').forEach(b=>b.remove()); document.removeEventListener('click',onDoc,true); const f=$('#feed'); if(f) f.removeEventListener('scroll',onFeedScroll); document.removeEventListener('scroll',onScroll,true); window.removeEventListener('resize',close);
+      ['wheel','touchmove','pointerdown'].forEach(t=>document.removeEventListener(t,_mark,{capture:true})); document.removeEventListener('keydown',_markKey,true);
       if(mine && _prevFocus && _prevFocus.isConnected){ try{ _prevFocus.focus({preventScroll:true}); }catch(_){ } }
     };
     openEmojiPopover.closeActive=close;
-    const onScroll=e=>{ if(!pop.contains(e.target)) close(); };
+    /* ONLY A SCROLL THE PERSON MADE CLOSES IT. "the emoji picker disappeared quickly" -- measured on
+       the desktop: Concord's busy room re-sets its chat list's scroll on every refresh (it keeps you
+       pinned to the newest message), each of those is a `scroll` event, and this closed the reaction
+       picker ~100ms after it opened, every time. A scroll event cannot say who caused it, so the
+       person's own input is watched instead: a wheel, a touch drag, a scrolling key or a press on
+       a scrollbar within the last moment makes the next scroll theirs. The app scrolling itself
+       does not. */
+    let _userAt=0;
+    const _mark=e=>{ if(!pop.contains(e.target)) _userAt=Date.now(); };
+    const _SCROLL_KEYS=new Set(['PageUp','PageDown','Home','End','ArrowUp','ArrowDown',' ']);
+    const _markKey=e=>{ if(_SCROLL_KEYS.has(e.key) && !pop.contains(e.target)) _userAt=Date.now(); };
+    ['wheel','touchmove','pointerdown'].forEach(t=>document.addEventListener(t,_mark,{capture:true,passive:true}));
+    document.addEventListener('keydown',_markKey,true);
+    const _byPerson=()=>Date.now()-_userAt<600;
+    const onScroll=e=>{ if(!pop.contains(e.target) && _byPerson()) close(); };
+    const onFeedScroll=()=>{ if(_byPerson()) close(); };
     if(opts.anchored){ document.addEventListener('scroll',onScroll,true); window.addEventListener('resize',close); }
     const onDoc=e=>{ if(!pop.contains(e.target) && !(anchorBtn && anchorBtn.contains(e.target))) close(); };
-    armTimer=setTimeout(()=>{ if(closed)return;document.addEventListener('click',onDoc,true); const f=$('#feed'); if(f) f.addEventListener('scroll',close,{once:true}); },0);
+    armTimer=setTimeout(()=>{ if(closed)return;document.addEventListener('click',onDoc,true); const f=$('#feed'); if(f) f.addEventListener('scroll',onFeedScroll); },0);
     // mousedown + preventDefault keeps the textarea focused so insert-at-cursor works. Buttons arrive
     // in chunks, so wiring is per-button and idempotent rather than one pass over the grid.
     function _wire(){
