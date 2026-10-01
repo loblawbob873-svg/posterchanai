@@ -11,7 +11,8 @@ from .test_notes_new_draft_runtime import CHROME, ROOT
 
 @pytest.mark.skipif(not Path(CHROME).exists(), reason='Chrome is not installed')
 def test_new_post_keeps_top_and_preserves_scrolled_reading_position():
-    source = (ROOT/'static/js/client/app.js').read_text()
+    from tests.client_source import client_source
+    source = client_source()
     code = source[source.index('  function _tlNotes(feed){'):source.index('  function _putAnchor(')]
     exercise = '''
 const feed=document.getElementById('feed'), notes=document.getElementById('tl-notes');

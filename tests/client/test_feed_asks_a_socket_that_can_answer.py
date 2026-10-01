@@ -66,7 +66,8 @@ def _decomment(src):
 class TheFeedWaitsForASocketThatCanAnswer(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
-        cls.app = _read(APP)
+        from tests.client_source import client_source
+        cls.app = client_source()
         cls.tl = _decomment(_fn(cls.app, "function renderTimeline("))
         cls.relay = _read(RELAY)
 

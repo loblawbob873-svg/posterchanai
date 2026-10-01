@@ -7,7 +7,7 @@ from html import unescape
 from pathlib import Path
 
 import pytest
-from tests.client_source import client_source
+from tests.client_source import client_source, state_shims
 
 ROOT = Path(__file__).resolve().parents[2]
 CHROME = shutil.which('google-chrome-stable') or shutil.which('chromium')
@@ -38,6 +38,7 @@ def test_guest_signup_obeys_registration(tmp_path, enabled, solo, visible):
 const CFG={{registration_enabled:{json.dumps(enabled)}}}, _standalone=()=>{json.dumps(solo)};
 const enc=String, LOGO='data:image/gif;base64,R0lGODlhAQABAIAAAP///wAAACH5BAEAAAAALAAAAAABAAEAAAICRAEAOw==', SOURCE_URL='';
 {helper}
+{state_shims(guest)}
 {guest}
 document.querySelector('#guest').innerHTML=_guestCardHtml();
 document.querySelector('#result').textContent=JSON.stringify({{signup:!!document.querySelector('#guest-signup'),login:!!document.querySelector('#guest-login2')}});

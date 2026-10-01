@@ -6,6 +6,7 @@ from pathlib import Path
 
 import pytest
 from tests.client.test_emoji_pack_tabs_layout import chrome
+from tests.client_source import state_shims
 
 ROOT = Path(__file__).resolve().parents[2]
 
@@ -17,9 +18,14 @@ def _page(initial_view):
     mutes = app[app.index('  async function fetchMutes('):app.index('  // Replace the `word` tags')]
     reconnect = app[app.index('    const _isTyping = ()=>{'):app.index('    connectRelays();', app.index('    const _isTyping = ()=>{'))]
     lists = app[app.index('  async function fetchPins('):app.index('  async function _editEList(')] + app[app.index('  async function fetchBookmarks('):app.index('  async function toggleBookmark(')]
-    anchors = app[app.index('  function _tlNotes('):app.index('  /* Restore a history entry by POST,') ]
-    timeline = app[app.index('  function renderTimeline('):app.index('  // Batched live updates:')]
-    draw = app[app.index('  function _drawTimeline(preserveScroll){'):app.index('  // ---------- infinite scroll-back ----------')]
+    # The timeline moved to timeline.js (built at boot from app.js); its reads of app.js's live
+    # bindings are spelled S.VIEW, S._tl, ... -- the `shim` script below maps them onto this page's lets.
+    tl = (ROOT / 'static/js/client/timeline.js').read_text()
+    anchors = tl[tl.index('  function _tlNotes('):tl.index('  /* Restore a history entry by POST,')]
+    timeline = tl[tl.index('  function renderTimeline('):tl.index('  // Batched live updates:')]
+    draw_at = tl.index('  function _drawTimeline(preserveScroll){')
+    draw = tl[draw_at:tl.index('\n  return {', draw_at)]
+    shim = state_shims(anchors + draw + timeline)
     vendor = (ROOT / 'static/vendor/nostr/nostr.bundle.js').read_text()
     relay = (ROOT / 'static/js/client/relay.js').read_text()
     script = r'''
@@ -124,7 +130,7 @@ window.runCase=async name=>{
 '''
     return ('<!doctype html><script>window.fixtureErrors=[];window.onerror=m=>fixtureErrors.push(String(m));</script><style>#feed{height:240px;overflow:auto}.note{height:120px}</style>'
             '<main id="feed"><textarea id="tl-cmp-ta"></textarea><div id="tl-notes"></div></main>'
-            + ''.join('<script>'+part+'</script>' for part in [vendor,script,relay,follows,mutes,lists,anchors,draw,timeline,reconnect,checks]))
+            + ''.join('<script>'+part+'</script>' for part in [vendor,script,relay,follows,mutes,lists,shim,anchors,draw,timeline,reconnect,checks]))
 
 
 @pytest.mark.parametrize('initial_view',['home','global'])

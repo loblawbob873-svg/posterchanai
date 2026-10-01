@@ -14,6 +14,7 @@ ROOT = Path(__file__).resolve().parents[1]
                                     "static/js/client/musiclib.js",
                                     "static/js/client/dms.js",
                                     "static/js/client/blossom.js",
+                                    "static/js/client/timeline.js",
                                     "static/js/client/drafts.js",
                                     "static/js/client/notifs.js",
                                     "static/js/client/notifview.js",

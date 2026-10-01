@@ -7,7 +7,8 @@ ROOT = Path(__file__).resolve().parents[2]
 
 def test_first_settings_open_is_isolated_before_bridge_completion_and_late_social_redraw():
     source=(ROOT/'static/js/client/os.js').read_text()
-    app=(ROOT/'static/js/client/app.js').read_text()
+    from tests.client_source import client_source, state_shims
+    app=client_source()
     opening=source[source.index('  let _openedReal = false;'):source.index("  let _osSettingsPage=")]
     renderer=source[source.index('  async function renderSystemSettings(){'):source.index('  function openTaskManager')]
     start=app.index('  function _drawTimeline(preserveScroll){')
@@ -28,7 +29,7 @@ function openApp(view,label,icon,render,noFeed){
 }
 const $=()=>host,_tlFilter=()=>()=>true,isMutedView=()=>false;
 const Store={feed:()=>{queries++;throw Error('timeline queried Settings feed')}};
-''' + opening + renderer + timeline + '''
+''' + opening + renderer + state_shims(timeline) + '\n' + timeline + '''
 const w=openSystemSettings();
 assert(w.isolated && w.rerun,'Settings flags absent after opening');
 assert.equal(host.innerHTML,'<div class="spinner"></div>','Settings bridge did not stay pending');

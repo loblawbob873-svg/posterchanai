@@ -3,7 +3,8 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
 OS = (ROOT / "static/js/client/os.js").read_text()
-APP = (ROOT / "static/js/client/app.js").read_text()
+from tests.client_source import client_source
+APP = client_source()
 
 
 def test_public_browser_does_not_default_to_desktop_mode():

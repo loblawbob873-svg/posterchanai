@@ -2,7 +2,8 @@ from pathlib import Path
 
 
 ROOT = Path(__file__).resolve().parents[2]
-APP = (ROOT / "static/js/client/app.js").read_text(errors="replace")
+from tests.client_source import client_source
+APP = client_source()
 CSS = (ROOT / "static/css/client.css").read_text()
 
 

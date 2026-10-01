@@ -25,7 +25,10 @@ def document():
     end = app.index('Blur sensitive / NSFW posts', start)
     panel = app[start:end]
     panel = panel[:panel.rfind('<label class="fld"')].replace('class="us-pane"', 'class="us-pane active"') + '</div>'
-    timeline = app[app.index('  function _drawTimeline(preserveScroll){'):app.index('  // ---------- infinite scroll-back ----------')]
+    # _drawTimeline moved to timeline.js, where it is the last function before the factory's `return {`.
+    tl = (ROOT / 'static/js/client/timeline.js').read_text()
+    draw_at = tl.index('  function _drawTimeline(preserveScroll){')
+    timeline = tl[draw_at:tl.index('\n  return {', draw_at)]
     rows = app[app.index('  function _renderDmPeerRows('):app.index('  function renderMessages(){')]
     # recountDmUnread moved to dms.js, where it writes app.js's _dmUnread as S._dmUnread (shimmed below).
     recount = app[app.index('  function recountDmUnread()'):app.index('  function _dmNotify(')]
@@ -87,7 +90,7 @@ _renderDmPeerRows();
 document.querySelector('#feed-note').dataset.pk=pub(2);
 const originalInput=document.querySelector('#dm-in'), originalAttachment=document.querySelector('#dm-atts');
 originalInput.value='Keep this unsent draft';originalInput.setSelectionRange(2,7);
-''' .replace('PANEL', panel) + state_shims(controls + recount) + controls + r'''
+''' .replace('PANEL', panel) + state_shims(controls + recount + timeline) + controls + r'''
 _syncAutoMutes().catch(()=>{});
 window.booted=true;
 '''

@@ -258,7 +258,7 @@ class RepaintingTheCurrentTimelineKeepsThePlace(unittest.TestCase):
     def test_a_repaint_of_the_current_timeline_captures_the_offset_itself(self):
         i = self.src.index("function renderTimeline(view, reset){")
         blk = self.src[i:i + 2200]
-        self.assertIn("if(VIEW === view && !forceTop){", blk,
+        self.assertIn("if(S.VIEW === view && !forceTop){", blk,   # S.: timeline.js reads app.js's VIEW
                       "renderTimeline cannot tell a repaint of the current feed from an arrival")
         self.assertIn("_tlScrollMemo[view] = at", blk)
 

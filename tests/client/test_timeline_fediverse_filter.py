@@ -31,6 +31,7 @@ const vm=require('node:vm'), assert=require('node:assert/strict');
 const prefs=new Map([['hideFediBridge',true]]);          // an old saved preference: must be ignored
 const ctx={FOLLOWS:new Set(['native','followed-puppet']), ClientSettings:{get:(k,d)=>prefs.has(k)?prefs.get(k):d},
   isReply:e=>!!e.reply};
+ctx.S={get FOLLOWS(){return ctx.FOLLOWS;}};   // timeline.js reads app.js's FOLLOWS as S.FOLLOWS
 vm.createContext(ctx); vm.runInContext(''' + json.dumps(FILTER) + r''' + ';this._tlFilter=_tlFilter;', ctx);
 const stranger={pubkey:'other-puppet',tags:[['proxy','https://fedi.test/1','activitypub']]};
 const followed={pubkey:'followed-puppet',tags:[['fedibridge','x']]};

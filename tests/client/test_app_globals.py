@@ -240,7 +240,7 @@ class TestParkedTimelineKeepsLivePosts(unittest.TestCase):
         # FALSE whenever the focused window is the OTHER timeline — so with Home in front and
         # Nostrverse parked beside it, the global sub's events were never buffered at all and that
         # window stayed frozen for as long as both were open.
-        self.assertIn("(VIEW===view || _parkedSlot(view))", src)
+        self.assertIn("(S.VIEW===view || _parkedSlot(view))", src)   # S.: the timeline lives in timeline.js
 
     def test_parked_means_alive_but_not_current(self):
         src = client_source()
