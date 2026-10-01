@@ -37,7 +37,7 @@ def _lift(name: str) -> str:
     that reaches that branch noticed — the others never call it. A lift by first occurrence is a
     trap in a 36,000-line file."""
     sig = {"_key": "    _key(m){", "_convKey": "    _convKey(m){",
-           "_conversations": "    _conversations(){"}[name]
+           "_conversations": "    _conversations(){", "_isReplyish": "    _isReplyish(m){"}[name]
     start = APP.index(sig)
     depth, i = 0, APP.index("{", start)
     for j in range(i, len(APP)):
@@ -57,12 +57,13 @@ def group(msgs: list) -> list:
         %s,
         %s,
         %s,
+        %s,
         msgs: %s,
       };
       process.stdout.write(JSON.stringify(Mail._conversations().map(c => ({
         key:c.key, n:c.all.length, head:c.head.uid, unread:!!c.unread,
         uids:c.all.map(m=>m.uid) }))));
-    """ % (_lift("_key"), _lift("_convKey"), _lift("_conversations"), json.dumps(msgs))
+    """ % (_lift("_key"), _lift("_convKey"), _lift("_isReplyish"), _lift("_conversations"), json.dumps(msgs))
     done = subprocess.run(["node", "-e", program], capture_output=True, text=True, timeout=60)
     assert done.returncode == 0, done.stderr[-800:]
     return json.loads(done.stdout)

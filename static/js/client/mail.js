@@ -802,19 +802,42 @@ window.PCMailFactory = function(dep){
     },
     /* One entry per conversation, newest first, each carrying the messages it stands for.
      * `this.msgs` is already newest-first, so first-seen order IS newest-first. */
+    /* A REPLY, by the only evidence the list carries: its header, or a "Re:"/"Fwd:" subject. */
+    _isReplyish(m){
+      return !!(m && (m.in_reply_to || /^\s*(?:re|fwd|fw)\s*:/i.test(String(m.subject || ''))));
+    },
+    /* One entry per conversation, newest first, each carrying the messages it stands for.
+     * `this.msgs` is already newest-first, so first-seen order IS newest-first.
+     *
+     * A NEW EMAIL STARTS A NEW CONVERSATION, even with a subject that has been used before.
+     * Grouping by subject alone put every "Payroll" since 2022 under today's "Payroll" -- in the
+     * list and in the opened thread ("emails from Nov 2025 should not be shown"). Walking newest ->
+     * oldest, a message that is NOT a reply is where its conversation began, so it closes the row;
+     * anything older with that subject is a different conversation. The server's /thread already
+     * applies this rule (nothing older than the root); the client now agrees with it. */
     _conversations(){
-      const out = [], byKey = new Map();
+      const out = [], open = new Map(), rowsByKey = new Map();
       for(const m of (this.msgs || [])){
         const k = this._convKey(m);
-        const seen = byKey.get(k);
-        if(seen){ seen.all.push(m); if(!m.read) seen.unread = true; continue; }
-        const row = { key:k, head:m, all:[m], mine:[], unread:!m.read };
-        byKey.set(k, row); out.push(row);
+        let row = open.get(k);
+        if(row){ row.all.push(m); if(!m.read) row.unread = true; }
+        else{
+          row = { key:k, head:m, all:[m], mine:[], unread:!m.read, since:0 };
+          open.set(k, row); out.push(row);
+          if(!rowsByKey.has(k)) rowsByKey.set(k, []);
+          rowsByKey.get(k).push(row);
+        }
+        row.since = m.ts || 0;                                  // oldest message so far
+        if(!this._isReplyish(m)) open.delete(k);                // its beginning: nothing older joins
       }
       /* Your replies join a conversation that is ALREADY here; they never start a row of their own.
-         A message you sent that nobody answered belongs in Sent, not in the Inbox. */
+         A message you sent that nobody answered belongs in Sent, not in the Inbox. Of several rows
+         with one subject, a reply joins the newest one that had begun by then (a day's slack for
+         clocks), so this week's answer does not land in 2025's "Payroll". */
       for(const m of (this.convSent || [])){
-        const row = byKey.get(this._convKey(m));
+        const rows = rowsByKey.get(this._convKey(m)) || [];
+        const ts = m.ts || 0;
+        const row = rows.find(r => !ts || !r.since || r.since - 86400 <= ts);
         if(row) row.mine.push(m);
       }
       for(const row of out){
@@ -934,11 +957,15 @@ window.PCMailFactory = function(dep){
        *
        * It states nothing it has not checked: with nothing cached this is the seed alone and the
        * "Loading…" line, exactly as before. */
-      const _seedKey = this._convKey(msg);
+      /* The conversation the LIST drew this message in -- the same rows, so a new "Payroll" opens
+         with its own replies and not with every "Payroll" since 2022 (see _conversations). */
+      const _seedK = this._key(msg);
+      const _row = this._conversations().find(r => r.all.some(x => this._key(x) === _seedK)
+                                                   || r.mine.some(x => this._key(x) === _seedK));
       const _local = [];
-      for(const x of (this.msgs || []).concat(this.convSent || [])){
-        if(this._key(x) === this._key(msg)) continue;              // the seed is added below
-        if(this._convKey(x) === _seedKey) _local.push(x);
+      for(const x of _row ? _row.all.concat(_row.mine) : []){
+        if(this._key(x) === _seedK) continue;                      // the seed is added below
+        _local.push(x);
       }
       _local.push(msg);
       _local.sort((a, b) => (a.ts || 0) - (b.ts || 0));

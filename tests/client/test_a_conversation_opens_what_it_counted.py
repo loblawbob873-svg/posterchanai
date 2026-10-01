@@ -51,16 +51,18 @@ const M = {
   %s,
   %s,
   %s,
+  %s,
 };
 const rows = M._conversations();
-// What the reader collects for a row, the way openMsg does it.
+// What the reader collects for a row, the way openMsg does it: the row the list drew it in.
 const out = rows.map(c => {
   const seed = c.all[0] || c.head;
-  const seedKey = M._convKey(seed);
+  const seedK = M._key(seed);
+  const row = M._conversations().find(r => r.all.some(x => M._key(x) === seedK) || r.mine.some(x => M._key(x) === seedK));
   const local = [];
-  for (const x of (M.msgs || []).concat(M.convSent || [])) {
-    if (M._key(x) === M._key(seed)) continue;
-    if (M._convKey(x) === seedKey) local.push(x);
+  for (const x of row ? row.all.concat(row.mine) : []) {
+    if (M._key(x) === seedK) continue;
+    local.push(x);
   }
   local.push(seed);
   return { badge: c.count || c.all.length, opens: local.length,
@@ -68,7 +70,7 @@ const out = rows.map(c => {
 });
 console.log(JSON.stringify(out));
 """ % (json.dumps(msgs), json.dumps(conv_sent),
-       key, _method("_convKey"), _method("_conversations"))
+       key, _method("_convKey"), _method("_isReplyish"), _method("_conversations"))
     p = subprocess.run(["node", "-e", js], capture_output=True, text=True, timeout=60)
     if p.returncode != 0:
         raise AssertionError("node failed: " + (p.stderr or "")[:600])
