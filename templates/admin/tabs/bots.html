@@ -280,9 +280,9 @@
                 <div class="bot-features">
                     <label><input type="checkbox" id="bot_ft_reply" onchange="onBotFormChange()"> Reply to mentions</label>
                     <label title="Answer when mentioned inside an encrypted Concord community. Paste the room's invite link above; the bot joins it, watches the channels it can see, and replies in-room to messages that mention it. It never speaks unprompted."><input type="checkbox" id="bot_ft_concord" onchange="onBotFormChange()"> Concord community</label>
-                    <label><input type="checkbox" id="bot_ft_welcome" onchange="onBotFormChange()"> Welcome new users</label>
+                    <label title="Nostr: welcomes each person newly granted a name on this instance (name@your-domain), tagging them. Pleroma: new local accounts."><input type="checkbox" id="bot_ft_welcome" onchange="onBotFormChange()"> Welcome new users</label>
                     <label><input type="checkbox" id="bot_ft_block" onchange="onBotFormChange()"> Block bot</label>
-                    <label><input type="checkbox" id="bot_ft_report" onchange="onBotFormChange()"> Report bot</label>
+                    <label title="Nostr: announces NIP-56 reports filed by or about this instance's members. Pleroma: the instance's open reports."><input type="checkbox" id="bot_ft_report" onchange="onBotFormChange()"> Report bot</label>
                     <label><input type="checkbox" id="bot_ft_hashtag" onchange="onBotFormChange()"> Hashtag bot</label>
                     <label><input type="checkbox" id="bot_ft_unfollow" onchange="onBotFormChange()"> Unfollow bot</label>
                     <label title="Fulfil Nostr NIP-90 job requests (kind 5xxx) from the network using this node's AI: text generation, summarization, and image generation (kind 5100 → image uploaded to Blossom)"><input type="checkbox" id="bot_ft_dvm" onchange="onBotFormChange()"> Data Vending Machine</label>

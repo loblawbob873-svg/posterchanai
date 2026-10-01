@@ -160,17 +160,18 @@ function onBotFormChange() {
     show('bot_grp_features', !isImage);
 
     // Per-PLATFORM feature applicability — hide (and uncheck, so it's never saved) any feature the
-    // selected platform can't run. Pleroma-only features need the Pleroma DB or admin token
-    // (welcome / report / unfollow); Nostr-only are the NIP-90 DVM + the Nostr game referees.
-    // Both: reply, hashtag and BLOCK -- a Nostr bot's block bot reads this node (fediverse Blocks
-    // at its ActivityPub server, public Nostr mute lists) instead of the Pleroma DB.
+    // selected platform can't run. Pleroma-only: unfollow (it needs the Pleroma DB); Nostr-only are
+    // the NIP-90 DVM + the Nostr game referees. Both: reply, hashtag, BLOCK, WELCOME and REPORT -- on
+    // Nostr those read this node instead of the Pleroma DB (nostr_blockbot / nostr_welcomebot /
+    // nostr_reportbot: this instance's NIP-05 members only). Hiding welcome/report here is what made
+    // the Nostr report bot unreachable: "i don't see report bot in the edit bots".
     const isFedi = platform === 'pleroma';
     const showFeat = (f, on) => {
         const c = _g('bot_ft_' + f); if (!c) return;
         const lbl = c.closest('label'); if (lbl) lbl.style.display = on ? '' : 'none';
         if (!on && c.checked) c.checked = false;
     };
-    ['welcome', 'report', 'unfollow'].forEach(f => showFeat(f, isFedi));
+    ['unfollow'].forEach(f => showFeat(f, isFedi));
     ['dvm', 'concord', 'chess', 'ttt', 'hangman', 'connect4', 'blackjack', 'holdem', 'stats'].forEach(f => showFeat(f, isNostr));
     // Nostr Stats: show the Preview/Post block only when its feature is ticked (Nostr-only).
     show('bot_grp_stats', isNostr && ck('bot_ft_stats'));
