@@ -114,9 +114,14 @@
         if (typeof loadedValues !== 'undefined') loadedValues.set(key, ta.value);
     }
 
+    /* A LOAD ASKED FOR WHILE ONE IS RUNNING RUNS AGAIN AFTER IT -- it used to be dropped. After a Remove the
+     * list reloads; if a load was already in flight (the tab's own, or the previous click's), that reload
+     * was skipped and the in-flight one answered with the list from BEFORE the removal. The row stayed on
+     * screen although the server had removed it ("tried to remove ditto.pub": three 200s, row still there). */
     async function load(key) {
         const st = state[key];
-        if (!st || st.loading) return;
+        if (!st) return;
+        if (st.loading) { st.again = true; return; }
         st.loading = true;
         const sum = document.querySelector(`.rl-panel[data-key="${key}"] .rl-summary`);
         if (sum && !st.rows.length) sum.textContent = 'Loading…';
@@ -130,7 +135,10 @@
             draw(key);
         } catch (e) {
             if (sum) sum.textContent = 'Could not load the list: ' + e.message;
-        } finally { st.loading = false; }
+        } finally {
+            st.loading = false;
+            if (st.again) { st.again = false; load(key); }
+        }
     }
     /* A SERVER OLDER THAN THIS PAGE has no list endpoint (the page is served from a checkout that can
      * be ahead of the running backend -- server1 reloads templates on save, router.lan pulls /static

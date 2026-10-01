@@ -54,7 +54,11 @@ window.fetch=async(url,opt)=>{
   const u=new URL(url,location.href), body=opt&&opt.body?JSON.parse(opt.body):null;
   const ok=j=>({ok:true,status:200,json:async()=>j});
   if(u.pathname==='/api/admin/relay/list'&&__OLD__) return {ok:false,status:404,json:async()=>({detail:'Not Found'})};
-  if(u.pathname==='/api/admin/relay/list'&&!body) return ok({key:u.searchParams.get('key'),items:rowsOf(u.searchParams.get('key')),names_complete:true});
+  // A READ answers with the list AS IT WAS when the request started, after window.__getDelay ms -- a
+  // real read takes time, and a reload begun before a Remove carries the old list back.
+  if(u.pathname==='/api/admin/relay/list'&&!body){ const k=u.searchParams.get('key'), items=rowsOf(k);
+    if(window.__getDelay) await new Promise(r=>setTimeout(r,window.__getDelay));
+    return ok({key:k,items,names_complete:true}); }
   if(u.pathname==='/api/admin/relay/list'){ window.__posts.push(body);
     let lines=DB[body.key].split('\n').filter(Boolean);
     if(body.remove) lines=lines.filter(l=>l.toLowerCase()!==body.remove.toLowerCase());
@@ -115,6 +119,16 @@ const row=[...up.querySelectorAll('.rl-row')].find(x=>x.dataset.value.includes('
 row.querySelector('.rl-remove').click(); await sleep(200);
 out.removed={posted:JSON.stringify(window.__posts.at(-1)), text:document.getElementById('nostr_relay_upstream_relays').value,
   baseline:loadedValues.get('nostr_relay_upstream_relays'), drawn:[...up.querySelectorAll('.rl-row')].length};
+// "tried to remove ditto.pub": Remove while a reload is IN FLIGHT. The in-flight read carries the list from
+// before the removal; the reload the removal asks for must still happen, or the row stays on screen.
+{ const bp=document.querySelector('.rl-panel[data-key="nostr_relay_blocked_relays"]');
+  window.__getDelay=300;
+  document.querySelector('[data-tab="relay"]').click();            // starts a load of every list
+  await sleep(20);
+  const r=[...bp.querySelectorAll('.rl-row')].find(x=>x.dataset.value==='mostr.pub');
+  if(r) r.querySelector('.rl-remove').click();
+  await sleep(1200); window.__getDelay=0;
+  out.race={had:!!r, drawn:[...bp.querySelectorAll('.rl-row')].map(x=>x.dataset.value)}; }
 // Identities: bulk remove of "not in profile".
 const pr=document.getElementById('ids_prune');
 out.prune={shown:vis(pr), onScreen:vis(pr)&&onScreen(pr), label:pr.textContent};
@@ -217,6 +231,9 @@ async def run():
                 rm = out["removed"]
                 if "very-long" in rm["text"] or rm["baseline"] != rm["text"] or rm["drawn"] != 1:
                     fails.append((where, "remove did not land", rm))
+                rc = out["race"]
+                if not rc["had"] or "mostr.pub" in rc["drawn"]:
+                    fails.append((where, "a Remove during a reload left the removed row on screen", rc))
                 p = out["prune"]
                 if not (p["shown"] and p["onScreen"] and "2" in p["label"]):
                     fails.append((where, "prune button", p))
