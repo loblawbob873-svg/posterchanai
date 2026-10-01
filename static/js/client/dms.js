@@ -11,7 +11,7 @@
 window.PCDmsFactory = function(dep){
   const S = dep.state;   // live app.js bindings: S.CFG, S.GUEST, S.LOGO, S.ME, S.NO_IMAGES, S.VIEW, S._cordDirectOwner, S._dmDone, S._dmLoaded, S._dmTotal, S._dmUnread, S.dmActive, S.signer
   const {
-    $, $$, DISCOVERY_RELAYS, Nip46, _blossomDenied, _capPlugin, _notePublishedWraps,
+    $, $$, DISCOVERY_RELAYS, bumpNotif, Nip46, _blossomDenied, _capPlugin, _notePublishedWraps,
     _scheduleDmRefresh, _shaFromUrl, _withModule, _wrapTried, defaultRelays, dmEncOn, dmPeers,
     emojiName, enc, isMutedAuthor, mediaServer, needProfile, normalizeRelay, notifToast,
     notificationAllowed, osNotify, profOf, publish, refToPk, renderDmThread, renderMessages,
@@ -995,7 +995,10 @@ window.PCDmsFactory = function(dep){
       _keepDmOpen(pk);
     }
   }
-  function bumpDm(){ $$('#dm-badge,#dm-badge-m').forEach(b=>{ if(S._dmUnread){ b.textContent=S._dmUnread>99?'99+':S._dmUnread; b.classList.remove('hidden'); } else b.classList.add('hidden'); }); }
+  function bumpDm(){ $$('#dm-badge,#dm-badge-m').forEach(b=>{ if(S._dmUnread){ b.textContent=S._dmUnread>99?'99+':S._dmUnread; b.classList.remove('hidden'); } else b.classList.add('hidden'); });
+    // The BELL counts unread DMs too ("i see no notification bell when DM's come in"), so it repaints
+    // whenever this count moves -- an arrival, or reading them in Messages.
+    try{ if(bumpNotif) bumpNotif(); }catch(_){ } }
   // Startup count of what's unread. Notes to SELF count here for the same reason they do in
   // ingestWrap — that's how the server delivers notifications — and this is the path that catches one
   // that arrived while the app was CLOSED, which is the whole point of notifying at all.

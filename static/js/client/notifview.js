@@ -7,7 +7,7 @@
  * arrives through `dep`. tests/test_client_module_deps.py proves every name resolves.
  */
 window.PCNotifViewFactory = function(dep){
-  const S = dep.state;   // live app.js bindings: S.LOGO, S.ME, S.VIEW, S._apkUpdate, S._desktopUpdate, S._newBuild, S._notifEpoch, S._updApplying, S._updBadge
+  const S = dep.state;   // live app.js bindings: S.LOGO, S.ME, S.VIEW, S._apkUpdate, S._desktopUpdate, S._newBuild, S._notifEpoch, S._updApplying, S._updBadge, S._dmUnread
   const {
     $, $$, NT, _SHORTCODE_STRIP, _notifTs, _quoteHit, _quotesMe, _repoTag, _tipNote, applyEmojis, applyUpdate,
     emojiName, enc, fmtSats, hydrateReminderNotifications, isReply, needEvent, needProfile,
@@ -86,6 +86,15 @@ window.PCNotifViewFactory = function(dep){
     // Notifications app in a window has to empty the bell, not only the badge inside that window.
     try{ if(window.PCOS && PCOS.notifChanged) PCOS.notifChanged(); }catch(_){}
   }
+  // UNREAD DIRECT MESSAGES, as one row that opens Messages ("i see no notification bell when DM's come in").
+  // The bell counts them (notifs.js notifUnread), so the screen behind the bell must show them; a row per DM
+  // would need the decrypted messages, which live in the Messages view, and would print their senders on a
+  // screen that a shoulder-surfer reads -- the count is enough to say "you have mail".
+  function _dmNotifHtml(){
+    const n = Number(S._dmUnread) || 0;
+    if(n <= 0) return '';
+    return `<div class="notif mention dm-notif" data-route="messages"><span class="ic">✉</span><div><div class="notif-hd"><b>${n} unread message${n===1?'':'s'}</b> — open Messages</div></div></div>`;
+  }
   // The updater row, shared by the Notifications VIEW and the right-column rail — the same prompt in both
   // places, so a desktop reader who lives on the timeline is not told to go and find it. Distinct ids
   // because both can be on screen at once (the rail is visible while viewing Notifications).
@@ -143,7 +152,7 @@ window.PCNotifViewFactory = function(dep){
     const list=all.slice(0, _notifShown);
     const tabs=`<div class="notif-tabs">${_NOTIF_TABS.map(([k,l])=>`<button class="ntab${k===_notifFilter?' on':''}" data-nf="${k}">${enc(l)}</button>`).join('')}</div>`;
     // In-app updater: pinned above the list when a new build is ready to install.
-    const upd = _updNotifHtml('upd-notif');
+    const upd = _updNotifHtml('upd-notif') + _dmNotifHtml();
     // Nothing visible changed AND the list is still on screen → leave the DOM alone. #feed is shared
     // and blanked when a view is entered, so the tab strip's presence is what proves our rows are
     // still there; without that check the guard would skip the first render after coming back.

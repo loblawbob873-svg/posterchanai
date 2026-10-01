@@ -10749,6 +10749,7 @@
       get VIEW(){ return VIEW; },
       get _aiToken(){ return _aiToken; },
       get _apkUpdate(){ return _apkUpdate; },
+      get _dmUnread(){ try{ return _dmUnread; }catch(_){ return 0; } },   // read before its `let` runs → 0, never a TDZ throw
       get _newBuild(){ return _newBuild; },
       get _notifEpoch(){ return _notifEpoch; },
     },
@@ -10895,6 +10896,7 @@
       get LOGO(){ return LOGO; },
       get ME(){ return ME; },
       get VIEW(){ return VIEW; },
+      get _dmUnread(){ try{ return _dmUnread; }catch(_){ return 0; } },   // read before its `let` runs → 0, never a TDZ throw
       get _apkUpdate(){ return _apkUpdate; },
       get _desktopUpdate(){ return _desktopUpdate; },
       get _newBuild(){ return _newBuild; },
@@ -10995,7 +10997,7 @@
       get dmActive(){ return dmActive; },
       get signer(){ return signer; },
     },
-    $, $$, DISCOVERY_RELAYS, Nip46, _blossomDenied, _capPlugin, _notePublishedWraps,
+    $, $$, DISCOVERY_RELAYS, bumpNotif, Nip46, _blossomDenied, _capPlugin, _notePublishedWraps,
     _scheduleDmRefresh, _shaFromUrl, _withModule, _wrapTried, defaultRelays, dmEncOn, dmPeers,
     emojiName, enc, isMutedAuthor, mediaServer, needProfile, normalizeRelay, notifToast,
     notificationAllowed, osNotify, profOf, publish, refToPk, renderDmThread, renderMessages,

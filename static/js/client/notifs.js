@@ -329,7 +329,11 @@ window.PCNotifsFactory = function(dep){
     // (_newBuild || _apkUpdate) — NOT the separate _updBadge, which cleared on view and left the badge
     // showing +1 with no matching row in the rail ("a number with no notification"). Now they can't disagree:
     // the badge shows the update iff the row is there, and it clears when you actually apply the update.
-    }).length + ((S._newBuild||S._apkUpdate)?1:0); }
+    }).length + ((S._newBuild||S._apkUpdate)?1:0)
+      // Unread DMs light the bell as well: a message is a notification to the person it is for. The
+      // Notifications screen shows them as one row that opens Messages (notifview _dmNotifHtml), so the
+      // bell never counts something the screen behind it cannot show.
+      + (Number(S._dmUnread)||0); }
   function bumpNotif(){ const n=notifUnread();
     // The rail's Notifications heading is painted from the SAME count as the sidebar bell and the mobile bar —
     // one computation, three surfaces, so they can't disagree about whether something is unread.
