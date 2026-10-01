@@ -73,3 +73,34 @@ def test_a_browser_keeps_copy_and_save():
         titles = await b.js(BAR)
         assert titles[:2] == ["Copy image  (C)", "Save image  (S)"], titles
     asyncio.run(desktop.with_browser("online", "", check, ""))
+
+
+@pytest.mark.skipif(not Path("/opt/google/chrome/chrome").exists(), reason="Chrome required")
+def test_on_a_phone_the_buttons_say_what_they_do_and_saving_is_seen():
+    """"android users see nothing when saving" / "we need a save to device feature for android when
+    opening images": the Save button was there, but as a bare ⤓ whose name lived in a hover tooltip a
+    phone never shows -- and the "Saved to …" message it printed was drawn BEHIND the image (.lightbox is
+    z-index 100000, toasts were 500). Each button must carry a visible name, and after Save the
+    confirmation must be the thing on top where it is drawn."""
+    async def check(b):
+        await b.call("Emulation.setDeviceMetricsOverride", {"width": 390, "height": 844, "deviceScaleFactor": 2, "mobile": True})
+        await _open(b, native=True)
+        labels = await b.js("""[...document.querySelectorAll('.lightbox .lb-btn')].filter(x=>x.style.display!=='none')
+          .map(x=>{const l=x.querySelector('.lb-lbl');const r=x.getBoundingClientRect();
+            return {name:l&&getComputedStyle(l).display!=='none'?l.textContent:'',fits:r.right<=innerWidth+1&&r.left>=-1}})""")
+        assert [l["name"] for l in labels] == ["Share", "Save", "Files", "Close"], labels
+        assert all(l["fits"] for l in labels), labels
+        await b.js("[...document.querySelectorAll('.lightbox .lb-btn')].find(x=>x.title.startsWith('Save')).click()")
+        await b.until("__saved.length===1")
+        await b.until("[...document.querySelectorAll('#toast-root .toast')].some(t=>/Saved to/.test(t.textContent))")
+        # #toast-root is pointer-events:none (a message must not eat taps), and elementFromPoint looks
+        # straight through that -- so hit-test with it switched on for the measurement only.
+        on_top = await b.js("""(()=>{const root=document.querySelector('#toast-root');const t=[...root.querySelectorAll('.toast')].find(t=>/Saved to/.test(t.textContent));
+          root.style.pointerEvents='auto';t.style.pointerEvents='auto';
+          const r=t.getBoundingClientRect();const hit=document.elementFromPoint(r.left+r.width/2,r.top+r.height/2);
+          root.style.pointerEvents='';t.style.pointerEvents='';
+          const bar=document.querySelector('.lightbox .lb-bar').getBoundingClientRect();
+          return {hit:hit&&(hit.className||hit.tagName),mine:!!hit&&(hit===t||t.contains(hit)),clearOfBar:r.bottom<=bar.top+1}})()""")
+        assert on_top["mine"], ("the save confirmation is hidden behind the image", on_top)
+        assert on_top["clearOfBar"], ("the save confirmation covers the viewer's buttons", on_top, await b.js("(()=>{const r=document.querySelector('.lightbox .lb-bar').getBoundingClientRect();const t=document.querySelector('#toast-root').getBoundingClientRect();return {bar:[r.top,r.bottom],toast:[t.top,t.bottom],ih:innerHeight}})()"))
+    asyncio.run(desktop.with_browser("online", "", check, ""))

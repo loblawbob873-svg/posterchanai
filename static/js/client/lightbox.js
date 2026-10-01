@@ -86,7 +86,10 @@ window.PCLightboxFactory = function(dep){
 
     // Always-tappable toolbar — a full-screen image leaves NO backdrop to tap, so mobile couldn't close it.
     const bar=document.createElement('div'); bar.className='lb-bar';
-    const mkBtn=(label,title,fn)=>{ const b=document.createElement('button'); b.className='lb-btn'; b.type='button'; b.textContent=label; b.title=title; b.setAttribute('aria-label',title); b.onclick=(e)=>{ e.stopPropagation(); fn(); }; return b; };
+    // `name` is shown under the glyph on touch screens (CSS .lb-lbl), where the title tooltip never appears.
+    const mkBtn=(label,title,fn,name)=>{ const b=document.createElement('button'); b.className='lb-btn'; b.type='button'; b.textContent=label;
+      if(name){ const l=document.createElement('span'); l.className='lb-lbl'; l.textContent=name; b.appendChild(l); }
+      b.title=title; b.setAttribute('aria-label',title); b.onclick=(e)=>{ e.stopPropagation(); fn(); }; return b; };
     // Read items[idx] at CLICK time, not now — the toolbar outlives each individual slide.
     /* ON ANDROID THE FIRST TWO BUTTONS WERE ONE ACTION ("first two buttons share, do the same action").
        Copy has to be the share sheet there (a WebView cannot put an image on the clipboard), and Save
@@ -94,9 +97,9 @@ window.PCLightboxFactory = function(dep){
        what it does -- Share -- and Save writes into the phone's gallery (MediaSave). Where the gallery
        cannot be written (Android 9 and older) Save would be a second Share, so it is not shown. */
     const NATIVE=_isNativeApp();
-    const copyB=NATIVE ? mkBtn('⤴','Share  (C)', ()=>_lbCopyImg(items[idx].src))
-                       : mkBtn('⧉','Copy image  (C)', ()=>_lbCopyImg(items[idx].src));
-    const saveB=mkBtn('⤓', NATIVE ? 'Save to gallery  (S)' : 'Save image  (S)', ()=>_lbSaveMedia(items[idx].src));
+    const copyB=NATIVE ? mkBtn('⤴','Share  (C)', ()=>_lbCopyImg(items[idx].src), 'Share')
+                       : mkBtn('⧉','Copy image  (C)', ()=>_lbCopyImg(items[idx].src), 'Copy');
+    const saveB=mkBtn('⤓', NATIVE ? 'Save to gallery  (S)' : 'Save image  (S)', ()=>_lbSaveMedia(items[idx].src), 'Save');
     let _gallery = NATIVE ? null : true;      // null = not asked yet; false = this phone cannot
     if(NATIVE) _lbGalleryAvailable().then(ok => { _gallery = ok; render && render(); });
     // Keep a copy on YOUR Blossom. Media in a feed lives on whatever host the author used and can vanish;
@@ -105,8 +108,8 @@ window.PCLightboxFactory = function(dep){
     // A MONOCHROME florette (U+2740), not the 🌸 emoji: the emoji keeps its own pink and clashes with the
     // button's neon-gradient fill, where every other lb-btn is a clean white glyph. ︎ forces text (not
     // emoji) presentation so it stays white on every platform.
-    const blossomB=mkBtn('📁','Save to Files  (B)', ()=>_lbToBlossom(items[idx].src));
-    bar.appendChild(copyB); bar.appendChild(saveB); bar.appendChild(blossomB); bar.appendChild(mkBtn('✕','Close  (Esc)', close));
+    const blossomB=mkBtn('📁','Save to Files  (B)', ()=>_lbToBlossom(items[idx].src), 'Files');
+    bar.appendChild(copyB); bar.appendChild(saveB); bar.appendChild(blossomB); bar.appendChild(mkBtn('✕','Close  (Esc)', close, 'Close'));
     bg.appendChild(bar);
     // Tab stays on the toolbar instead of walking the page behind the image, and the buttons are then
     // reachable without knowing the letters. `close` is passed so it removes THIS overlay — the lightbox

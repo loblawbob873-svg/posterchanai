@@ -3073,7 +3073,9 @@ body.embed .feed{max-width:680px;margin:0 auto;padding:14px;height:auto !importa
 .ingest-banner{margin:10px 0;padding:12px 14px;border:1px solid var(--danger,#e0245e);border-radius:12px;background:rgba(224,36,94,.12);display:flex;flex-direction:column;gap:8px}
 .ingest-banner .ib-row{display:flex;gap:8px;flex-wrap:wrap;align-items:center}
 .ingest-banner .ib-row .input{flex:1;min-width:160px}
-#toast-root{position:fixed;bottom:20px;inset-inline-start:50%;transform:translateX(-50%);z-index:500;display:flex;flex-direction:column;gap:8px;pointer-events:none}
+/* ABOVE the image viewer (.lightbox is z-index 100000): every "saved" / "could not save" it showed was drawn
+   BEHIND the picture, so on a phone saving an image looked like nothing happened ("android users see nothing"). */
+#toast-root{position:fixed;bottom:20px;inset-inline-start:50%;transform:translateX(-50%);z-index:100050;display:flex;flex-direction:column;gap:8px;pointer-events:none}
 .toast{background:var(--panel2);border:1px solid var(--neon);border-radius:11px;padding:12px 18px;font-size:17px;box-shadow:var(--glow);animation:fade .2s}
 /* Ctrl+F find bar (Electron desktop shell only) — a small floating bar, top-right. */
 .find-bar{position:fixed;top:10px;inset-inline-end:14px;z-index:9000;display:flex;align-items:center;gap:4px;background:var(--panel2);border:1px solid var(--neon);border-radius:10px;padding:6px 6px;box-shadow:var(--glow)}
@@ -11965,3 +11967,14 @@ img.md-rel:not([src]){display:none}
 .pe-root.pe-previewing .pe-tool,.pe-root.pe-previewing .pe-color,.pe-root.pe-previewing .pe-undo,.pe-root.pe-previewing .pe-preview-btn{display:none}
 /* Notes: a file dragged over the body says it will be attached there. */
 .nt-body.nt-drop{outline:2px dashed var(--neon);outline-offset:-4px;background:rgba(var(--accent-rgb),.06)}
+
+/* The viewer's buttons are glyphs (⤴ ⤓ 📁 ✕) whose names lived only in a hover tooltip -- a phone has no hover,
+   so nobody could tell which one saves ("we need a save to device feature for android when opening images",
+   about a Save button that was already there). Touch screens get the name under the glyph. */
+.lb-btn .lb-lbl{display:none}
+@media (hover:none),(max-width:820px){
+  .lb-btn .lb-lbl{display:block;font-size:11px;line-height:1.1;margin-top:2px;font-weight:600;letter-spacing:.02em}
+  .lb-bar .lb-btn{width:auto;min-width:58px;height:auto;min-height:48px;padding:6px 8px;border-radius:14px;flex-direction:column}
+}
+/* With the image viewer open, its toolbar owns the bottom of the screen: messages sit above it. */
+:root:has(> .lightbox) #toast-root{bottom:calc(140px + env(safe-area-inset-bottom))}   /* the viewer mounts on <html>, not <body> */
