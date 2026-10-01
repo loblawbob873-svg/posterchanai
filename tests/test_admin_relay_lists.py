@@ -200,3 +200,67 @@ def test_bulk_remove_endpoint_persists_and_reports(registry, monkeypatch):
         asyncio.run(admin.relay_identities_remove_unverified(
             admin.RelayIdentitiesPruneReq(names=["alice"]), request=None, db=None, admin=None))
     assert e.value.status_code == 409
+
+
+# ---- EVERY list: two spellings of one entry are ONE entry --------------------------------------------
+# "remove button dont work for RELAY URLS in admin" -- the upstream list held `wss://nostr.mom/` AND
+# `wss://nostr.mom`. Two rows; Remove took one, the other was redrawn, and the entry never went away.
+# "you need to test all the listing fields against regressions": every list kind, through the real route.
+NPUB_A = nostr_service.npub_of(PKA)
+SPELLINGS = {
+    # key: (stored value with two spellings of ONE entry + one other entry, the other entry,
+    #       what the row shows for the doubled one, a third spelling to remove it by)
+    "nostr_relay_upstream_relays": ("wss://nostr.mom/\nwss://other.example\nwss://nostr.mom", "wss://other.example", "WSS://Nostr.mom"),
+    "nostr_relay_private_relays": ("wss://mirror.example\nwss://keep.example\nWSS://MIRROR.EXAMPLE/", "wss://keep.example", "wss://mirror.example/"),
+    "nostr_relay_nip05_relays": ("wss://relay.poster.place/\nwss://keep.example\nwss://relay.poster.place", "wss://keep.example", "wss://RELAY.poster.place"),
+    "nostr_relay_blocked_relays": ("mostr.pub\nkeep.example\nMOSTR.PUB", "keep.example", "Mostr.Pub"),
+    "nostr_relay_posterchan_origins": ("https://poster.place\nhttps://keep.example\nhttps://POSTER.place/", "https://keep.example", "https://poster.place/"),
+    "nostr_relay_wot_seeds": (f"{NPUB_A}\n{PKB}\n{PKA}", PKB, PKA.upper() if False else NPUB_A),
+    "nostr_dvm_peers": (f"{NPUB_A} wss://peer.example\n{PKB} wss://keep.example\n{PKA} wss://peer.example/", f"{PKB} wss://keep.example", f"{PKA} WSS://peer.example"),
+    "nostr_relay_blocked_words": ("Free Crypto\nkeep me\nfree crypto", "keep me", "FREE CRYPTO"),
+}
+
+
+def test_every_list_is_covered_here():
+    assert set(SPELLINGS) == set(relay_lists.LISTS), "a list field was added without a regression case here"
+
+
+@pytest.mark.parametrize("key", sorted(SPELLINGS))
+def test_two_spellings_are_one_row_and_remove_takes_every_spelling(store, key):
+    vals, written, _ = store
+    stored, other, third = SPELLINGS[key]
+    vals[key] = stored
+    shown = asyncio.run(relay_lists.rows(key, vals[key])) if relay_lists.LISTS[key] not in ("pubkey", "peer") else None
+    items = relay_lists.entries(relay_lists.LISTS[key], stored)
+    assert len(items) == 2, (key, "two spellings of one entry are drawn as two rows", items)
+    if shown is not None:
+        assert len(shown["items"]) == 2, shown
+    # Remove by the first row's own value (what the button sends): EVERY spelling goes, the other stays.
+    r = _edit(key=key, remove=items[0])
+    left = relay_lists.entries(relay_lists.LISTS[key], r["value"])
+    assert left == [other], (key, "a spelling of the removed entry survived, so it was drawn again", left)
+    assert vals[key] == r["value"] and written, "the removal was not applied and persisted"
+
+
+@pytest.mark.parametrize("key", sorted(SPELLINGS))
+def test_a_new_spelling_of_a_listed_entry_is_already_in_the_list(store, key):
+    vals, written, _ = store
+    stored, other, third = SPELLINGS[key]
+    vals[key] = other
+    before = dict(vals)
+    with pytest.raises(HTTPException) as e:
+        _edit(key=key, add=other.upper() if relay_lists.LISTS[key] not in ("pubkey", "peer") else other)
+    assert e.value.status_code == 400 and "already" in str(e.value.detail), e.value.detail
+    assert vals == before and not written
+
+
+@pytest.mark.parametrize("key", sorted(SPELLINGS))
+def test_removing_by_another_spelling_works_and_an_absent_entry_is_refused(store, key):
+    vals, written, _ = store
+    stored, other, third = SPELLINGS[key]
+    vals[key] = stored
+    r = _edit(key=key, remove=third)
+    assert relay_lists.entries(relay_lists.LISTS[key], r["value"]) == [other], (key, r["value"])
+    with pytest.raises(HTTPException) as e:
+        _edit(key=key, remove=third)
+    assert e.value.status_code == 400

@@ -31,6 +31,29 @@ LISTS = {
 MAX_ENTRY = 500
 
 
+def same(kind: str, entry: str) -> str:
+    """What an entry MEANS, for comparing two entries -- never what is stored or shown.
+
+    Two spellings of one thing are one entry. The upstream list held `wss://nostr.mom/` AND
+    `wss://nostr.mom`; they were two rows, so Remove took one, the other was redrawn, and the button
+    looked broken ("remove button dont work for RELAY URLS in admin"). The same shape exists in every
+    list: a key as npub and as hex, a domain or origin in two cases, a trailing dot or slash."""
+    e = " ".join(str(entry or "").split()) if kind != "word" else str(entry or "").strip()
+    if kind == "word":
+        return e.lower()
+    if kind == "pubkey":
+        return _pk(e) or e.lower()
+    if kind == "peer":
+        toks = e.split()
+        if not toks:
+            return ""
+        relay = toks[1].lower().rstrip("/") if len(toks) > 1 else ""
+        return (_pk(toks[0]) or toks[0].lower()) + " " + relay
+    if kind == "domain":
+        return re.sub(r"^[a-z]+://", "", e, flags=re.I).split("/")[0].strip(".").lower()
+    return e.lower().rstrip("/")            # relay, origin
+
+
 def entries(kind: str, raw: str) -> list:
     """The entries of a stored value, split the way the relay itself reads it (thread.py): a word or
     phrase is a whole LINE; a peer is a line or comma-separated card; everything else is a token
@@ -44,8 +67,9 @@ def entries(kind: str, raw: str) -> list:
         parts = raw.replace(",", " ").split()
     out, seen = [], set()
     for p in parts:
-        if p and p.lower() not in seen:
-            seen.add(p.lower())
+        k = same(kind, p) if p else ""
+        if p and k not in seen:
+            seen.add(k)
             out.append(p)
     return out
 
@@ -94,18 +118,29 @@ def validate(kind: str, entry: str):
 def edit(raw: str, kind: str, add: str = "", remove: str = ""):
     """(new value, error) after adding and/or removing ONE entry. Removal matches case-insensitively
     on the whole entry. The value is rewritten one entry per line."""
-    cur = entries(kind, raw)
+    # EVERY stored spelling, not the de-duplicated view: a remove must take all of them, or the one
+    # left behind is drawn again and the entry "comes back".
+    raw_parts = str(raw or "").replace("\r\n", "\n")
+    if kind == "word":
+        stored = [ln.strip() for ln in raw_parts.split("\n") if ln.strip()]
+    elif kind == "peer":
+        stored = [" ".join(ln.split()) for ln in raw_parts.replace(",", "\n").split("\n") if ln.strip()]
+    else:
+        stored = raw_parts.replace(",", " ").split()
     if remove:
-        want = (" ".join(remove.split()) if kind != "word" else remove.strip()).lower()
-        kept = [e for e in cur if e.lower() != want]
-        if len(kept) == len(cur):
+        want = same(kind, remove)
+        kept = [e for e in stored if same(kind, e) != want]
+        if len(kept) == len(stored):
             return None, "not in the list (it may have changed — reload)"
-        cur = kept
+        stored = kept
+    cur = entries(kind, "\n".join(stored))
     if add:
         clean, err = validate(kind, add)
         if err:
             return None, err
-        if clean.lower() in {e.lower() for e in cur}:
+        if kind == "relay":
+            clean = clean.rstrip("/")
+        if same(kind, clean) in {same(kind, e) for e in cur}:
             return None, "already in the list"
         cur.append(clean)
     return "\n".join(cur), None
