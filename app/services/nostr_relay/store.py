@@ -24,7 +24,8 @@ from concurrent.futures import ThreadPoolExecutor
 import psycopg2
 import psycopg2.extras
 
-from app.services.nostr.quotes import quote_pubkeys
+from app.services.nostr.quotes import (quote_pubkeys, quoted_ids_without_author,
+                                        remember_quote_authors)
 
 logger = logging.getLogger(__name__)
 
@@ -408,6 +409,21 @@ class RelayStore:
             ON CONFLICT DO NOTHING""")
         conn.execute("INSERT INTO relay_kv (key,value) VALUES ('quote_author_index_v1','1') "
                      "ON CONFLICT DO NOTHING")
+        # v2: quotes whose q tag names no author (NIP-18 makes it optional) — the author of a quoted
+        # event this relay holds is read off that event, whose id commits to its pubkey.
+        if conn.execute("SELECT value FROM relay_kv WHERE key='quote_author_index_v2'").fetchone():
+            return
+        conn.execute("""INSERT INTO event_tags (event_id, tag, value)
+            SELECT DISTINCT e.id, '_quote_author', qe.pubkey
+            FROM events e
+            CROSS JOIN LATERAL jsonb_array_elements(e.tags::jsonb) AS q(value)
+            JOIN events qe ON qe.id = q.value->>1
+            WHERE e.kind=1 AND e.id IN (SELECT event_id FROM event_tags WHERE tag='q')
+              AND q.value->>0='q' AND q.value->>1 ~ '^[0-9a-f]{64}$'
+              AND COALESCE(q.value->>3, '') !~ '^[0-9a-f]{64}$'
+            ON CONFLICT DO NOTHING""")
+        conn.execute("INSERT INTO relay_kv (key,value) VALUES ('quote_author_index_v2','1') "
+                     "ON CONFLICT DO NOTHING")
 
     def close(self) -> None:
         self._write_exec.shutdown(wait=True)
@@ -591,9 +607,25 @@ class RelayStore:
                         "INSERT INTO event_tags (event_id, tag, value) VALUES (?,?,?) "
                         "ON CONFLICT DO NOTHING",
                         (eid, t[0], str(t[1])))
-            for recipient in quote_pubkeys(ev):
+            resolved = {}
+            for qid in quoted_ids_without_author(ev):
+                qrow = conn.execute("SELECT pubkey FROM events WHERE id=?", (qid,)).fetchone()
+                if qrow:
+                    resolved[qid] = qrow["pubkey"]
+            if resolved:
+                remember_quote_authors(eid, resolved.values())   # the live fan-out reads it next
+            for recipient in quote_pubkeys(ev, resolved):
                 conn.execute("INSERT INTO event_tags (event_id, tag, value) VALUES (?,?,?) "
                              "ON CONFLICT DO NOTHING", (eid, "_quote_author", recipient))
+            if kind == 1:
+                # The other order: a quote that arrived BEFORE the post it quotes. Index it now.
+                for qr in conn.execute(
+                        "SELECT t.event_id, e.tags FROM event_tags t JOIN events e ON e.id=t.event_id "
+                        "WHERE t.tag='q' AND t.value=? AND e.kind=1", (eid,)).fetchall():
+                    qtags = qr["tags"] if isinstance(qr["tags"], list) else json.loads(qr["tags"] or "[]")
+                    if eid in quoted_ids_without_author({"kind": 1, "tags": qtags}):
+                        conn.execute("INSERT INTO event_tags (event_id, tag, value) VALUES (?,?,?) "
+                                     "ON CONFLICT DO NOTHING", (qr["event_id"], "_quote_author", pubkey))
             # NIP-09: a kind-5 deletion removes the author's own events. `e` = by event id;
             # `a` = addressable (kind:pubkey:dtag) — used for article drafts (30024), articles
             # (30023), communities (34550), etc. Only the author's own, not-newer events go.

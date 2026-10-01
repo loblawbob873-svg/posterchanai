@@ -16,7 +16,7 @@ from app.services import push_service
 from app.services import push_prefs, settings_store
 from app.services.direct_push_service import subscription_dict
 from app.services.nostr import relay
-from app.services.nostr.quotes import quote_pubkeys
+from app.services.nostr.quotes import quote_pubkeys, quoted_ids_without_author
 
 logger = logging.getLogger(__name__)
 
@@ -68,7 +68,7 @@ async def _name_for(pk: str) -> str:
     return name
 
 
-def _title(ev: dict, name: str, recipient: str = "") -> str:
+def _title(ev: dict, name: str, recipient: str = "", quoted: set | None = None) -> str:
     k = ev.get("kind")
     who = name or "Someone"
     if k == 9735:
@@ -84,9 +84,22 @@ def _title(ev: dict, name: str, recipient: str = "") -> str:
         return f"{who} commented on your post"
     if k == 42:
         return f"{who} mentioned you in a chat"
-    if recipient and recipient in quote_pubkeys(ev):
+    if recipient and recipient in (quote_pubkeys(ev) if quoted is None else quoted):
         return f"{who} quoted your post"
     return f"{who} mentioned you"            # kind 1 (reply / mention)
+
+
+async def _quoted_authors(evs: list) -> dict:
+    """{quoted event id: its author} for q tags that name no author. Unknown ids are simply absent —
+    such a quote still reaches anybody it p-tags, it just cannot be called a quote of them."""
+    ids = list(dict.fromkeys(i for ev in evs for i in quoted_ids_without_author(ev)))
+    if not ids:
+        return {}
+    try:
+        found = await relay.query(_local_relay(), [{"ids": ids[:500]}], timeout=8)
+    except Exception:
+        return {}
+    return {e["id"]: e.get("pubkey", "") for e in found or [] if e.get("id") in ids}
 
 
 def _root_channel(ev: dict) -> str:
@@ -295,6 +308,9 @@ async def _poll():
 
         evs = await relay.query(_local_relay(), [{"kinds": _KINDS, "#p": list(by_pk.keys()), "_include_quotes": True, "since": since},
                                                  {"kinds": [3], "#p": list(by_pk.keys()), "since": since}], timeout=8)
+        # NIP-18's q tag need not name the quoted author; who wrote a quoted post is read off the
+        # post itself (its id commits to its pubkey), so one lookup covers every such quote.
+        authors = await _quoted_authors([ev for ev in evs if ev.get("id") not in _seen])
         for ev in evs:
             eid = ev.get("id")
             if not eid or eid in _seen:
@@ -302,7 +318,8 @@ async def _poll():
             _seen.add(eid)
             author = ev.get("pubkey", "")
             ptags = [t[1] for t in (ev.get("tags") or []) if len(t) >= 2 and t[0] == "p"]
-            recips = [pk for pk in set(ptags) | quote_pubkeys(ev) if pk in by_pk and pk != author]   # not your own event
+            quoted = quote_pubkeys(ev, authors)
+            recips = [pk for pk in set(ptags) | quoted if pk in by_pk and pk != author]   # not your own event
             if ev.get("kind") == 3:
                 # A FOLLOW: only for a follower this watcher has never seen follow them.
                 recips = [pk for pk in recips if await _is_new_follower(pk, author)]
@@ -314,8 +331,8 @@ async def _poll():
                 # WHICH KIND OF NOTIFICATION THIS IS, decided the same way _title words it. The
                 # in-app gate only ever governed alerts the OPEN client raised for itself, so a
                 # closed phone buzzed for every like, repost and zap whatever the toggles said.
-                ntype = push_prefs.push_type(ev, pk)
-                payload = {"title": "PosterChan", "body": _title(ev, name, pk), "eid": eid,
+                ntype = push_prefs.push_type(ev, pk, quoted)
+                payload = {"title": "PosterChan", "body": _title(ev, name, pk, quoted), "eid": eid,
                            "author": author, "type": ntype}
                 if ev.get("kind") == 3:
                     # There is no post to open: a tap lands on Notifications, where the follow is listed.

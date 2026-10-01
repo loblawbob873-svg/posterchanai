@@ -10761,6 +10761,7 @@
   function _notifsMod(){ return _lzGet('notifs.js', 'PCNotifsFactory', _notifsDeps); }
   function _notifsLoad(){ return _lzLoad('notifs.js', 'PCNotifsFactory', _notifsDeps); }
   function _notifTs(){ return _lzRun(_notifsMod, _notifsLoad, '_notifTs', arguments); }
+  function _quoteHit(){ return _lzRun(_notifsMod, _notifsLoad, '_quoteHit', arguments); }
   function _quotesMe(){ return _lzRun(_notifsMod, _notifsLoad, '_quotesMe', arguments); }
   function _rememberReminder(){ return _lzRun(_notifsMod, _notifsLoad, '_rememberReminder', arguments); }
   function _reminderOwner(){ return _lzRun(_notifsMod, _notifsLoad, '_reminderOwner', arguments); }
@@ -10901,7 +10902,7 @@
       get _updApplying(){ return _updApplying; },
       get _updBadge(){ return _updBadge; }, set _updBadge(v){ _updBadge = v; },
     },
-    $, $$, NT, _SHORTCODE_STRIP, _notifTs, _quotesMe, _repoTag, _tipNote, applyEmojis, applyUpdate,
+    $, $$, NT, _SHORTCODE_STRIP, _notifTs, _quoteHit, _quotesMe, _repoTag, _tipNote, applyEmojis, applyUpdate,
     emojiName, enc, fmtSats, hydrateReminderNotifications, isReply, needEvent, needProfile,
     notifList, openOsNotificationRoute, openThread, profOf, quotedDiv, reactDisp,
     renderProfileView, replyParentId, seenNotif, timeAgo, zapAmount, zapSender,

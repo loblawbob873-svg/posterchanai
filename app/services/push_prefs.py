@@ -27,7 +27,7 @@ PUSH_TYPES = ("email", "dm", "likes", "replies", "quotes", "mentions", "reposts"
               "zaps", "concord", "channels", "sms", "reminders", "follows")
 
 
-def push_type(ev: dict, recipient: str = "") -> str:
+def push_type(ev: dict, recipient: str = "", quoted: set | None = None) -> str:
     """Classify an event the way `_title` describes it, so the toggle and the wording cannot drift.
 
     Returns "" for anything with no matching toggle, which `allows` then treats as always-send —
@@ -55,7 +55,7 @@ def push_type(ev: dict, recipient: str = "") -> str:
         # A quote is a mention of you inside somebody's own post, and _title says so first.
         try:
             from app.services.nostr_push_service import quote_pubkeys
-            if recipient and recipient in quote_pubkeys(ev):
+            if recipient and recipient in (quote_pubkeys(ev) if quoted is None else quoted):
                 return "quotes"
         except Exception:
             pass

@@ -106,7 +106,7 @@ window.PCNotifsFactory = function(dep){
       // never resurfaces; only a pubkey we've NEVER recorded, arriving after THIS sub's own EOSE, badges as
       // a new follow. Its own _followReady (not the mentions sub's EOSE) is the backlog→live boundary.
       Relay.subscribe([{ '#p':[S.ME.pubkey], kinds:[3], limit:150 }], {
-        onEvent: ev => { if(ev.pubkey===S.ME.pubkey) return; if(Store.saveEvent(ev)){ needProfile(ev.pubkey);
+        onEvent: ev => { if(ev.pubkey===S.ME.pubkey) return; _quoteHit(ev); if(Store.saveEvent(ev)){ needProfile(ev.pubkey);
           FOLLOWERS.add(ev.pubkey);
           const firstTime = !_followSeen[ev.pubkey];
           // "Never recorded" only means "genuinely new" if the seed actually populated _followSeen. When
@@ -125,15 +125,33 @@ window.PCNotifsFactory = function(dep){
     // Sub A — mentions/reposts/reactions/zaps/reports/chat/comments. Subscribed IMMEDIATELY, never gated on
     // the follower seed, so live mentions/zaps aren't delayed by the seed's laggy-link retry.
     Relay.subscribe([{ '#p':[S.ME.pubkey], _include_quotes:true, kinds:[1,6,7,9735,1984,1111,1621,1617], limit:150 }], {   // 42=chat, 1111=community comments, 1621/1617=NIP-34 issue/patch on your repo
-      onEvent: ev => { if(ev.pubkey===S.ME.pubkey) return; if(Store.saveEvent(ev)){ invalidateCounts(); applySobLive(ev); needProfile(ev.kind===9735?(zapSender(ev)||ev.pubkey):ev.pubkey);
+      onEvent: ev => { if(ev.pubkey===S.ME.pubkey) return; _quoteHit(ev); if(Store.saveEvent(ev)){ invalidateCounts(); applySobLive(ev); needProfile(ev.kind===9735?(zapSender(ev)||ev.pubkey):ev.pubkey);
         if(ev.created_at>seenNotif.last){ bumpNotif(); if(_notifReady) notifPing(ev); }
         renderNotificationsSoon(); } },
       onEose: ()=>{ _notifReady=true; if(S.VIEW==='notifications') renderNotificationsSoon(); else bumpNotif(); }   // show unseen count on load; ping LIVE ones
     });
   }
+  // NIP-18's q tag may leave the quoted author out (`["q", id]`), and such a quote of your post used to
+  // read as "mentioned you" — or, with no p tag either, as nothing at all. The author of the quoted post
+  // is read off that post when we hold it (its id commits to its pubkey); otherwise our relay already
+  // answered the question: `_include_quotes` delivered it under YOUR #p without a p tag naming you, which
+  // only a resolved quote author does (`_quoteHit`).
+  const _quoteHits=new Set();
+  function _quoteHit(ev){
+    if(!ev || ev.kind!==1 || !S.ME) return;
+    if((ev.tags||[]).some(t=>Array.isArray(t) && t[0]==='p' && t[1]===S.ME.pubkey)) return;
+    if((ev.tags||[]).some(t=>Array.isArray(t) && t[0]==='q' && typeof t[1]==='string' && !/^[0-9a-f]{64}$/.test(t[3]||''))){
+      _quoteHits.add(ev.id); if(_quoteHits.size>2000) _quoteHits.delete(_quoteHits.values().next().value);
+    }
+  }
   function _quotesMe(ev){
-    return ev.kind===1 && (ev.tags||[]).some(t=>Array.isArray(t) && t[0]==='q'
-      && typeof t[1]==='string' && /^[0-9a-f]{64}$/.test(t[1]) && t[3]===S.ME.pubkey);
+    if(ev.kind!==1 || !S.ME) return false;
+    if(_quoteHits.has(ev.id)) return true;
+    return (ev.tags||[]).some(t=>{
+      if(!Array.isArray(t) || t[0]!=='q' || typeof t[1]!=='string' || !/^[0-9a-f]{64}$/.test(t[1])) return false;
+      const named=/^[0-9a-f]{64}$/.test(t[3]||'') ? t[3] : (Store.get(t[1])||{}).pubkey;
+      return named===S.ME.pubkey;
+    });
   }
   function _notifForMe(ev){
     return (ev.tags||[]).some(t=>Array.isArray(t) && t[0]==='p' && t[1]===S.ME.pubkey) || _quotesMe(ev);
@@ -326,7 +344,7 @@ window.PCNotifsFactory = function(dep){
     if(_notifReady && _rightbarShown()) loadNotifsSoon(); }
 
   return {
-    _notifTs, _quotesMe, _rememberReminder, _reminderOwner, _remindersChanged, bumpNotif,
+    _notifTs, _quoteHit, _quotesMe, _rememberReminder, _reminderOwner, _remindersChanged, bumpNotif,
     hydrateReminderNotifications, notifList, notifToast, notifUnread, watchNotifications,
   };
 };

@@ -9,7 +9,7 @@
 window.PCNotifViewFactory = function(dep){
   const S = dep.state;   // live app.js bindings: S.LOGO, S.ME, S.VIEW, S._apkUpdate, S._desktopUpdate, S._newBuild, S._notifEpoch, S._updApplying, S._updBadge
   const {
-    $, $$, NT, _SHORTCODE_STRIP, _notifTs, _quotesMe, _repoTag, _tipNote, applyEmojis, applyUpdate,
+    $, $$, NT, _SHORTCODE_STRIP, _notifTs, _quoteHit, _quotesMe, _repoTag, _tipNote, applyEmojis, applyUpdate,
     emojiName, enc, fmtSats, hydrateReminderNotifications, isReply, needEvent, needProfile,
     notifList, openOsNotificationRoute, openThread, profOf, quotedDiv, reactDisp,
     renderProfileView, replyParentId, seenNotif, timeAgo, zapAmount, zapSender,
@@ -201,7 +201,7 @@ window.PCNotifViewFactory = function(dep){
         const oldest=all[all.length-1].created_at;
         try{
           const older=await Relay.query([{ '#p':[S.ME.pubkey], _include_quotes:true, kinds:[1,6,7,9735,1111,1621,1617], until: oldest-1, limit:100 }]);
-          older.forEach(e=>{ if(e.pubkey!==S.ME.pubkey) Store.saveEvent(e); });
+          older.forEach(e=>{ if(e.pubkey!==S.ME.pubkey){ _quoteHit(e); Store.saveEvent(e); } });
         }catch(_){}
       }
       renderNotifications();
