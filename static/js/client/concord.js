@@ -3607,6 +3607,16 @@
    * is re-armed only when membership changes. An event is filed by its AUTHOR: every channel has its
    * own stream keys, and those keys are what the filter asked for. */
   let roomsLive=new Map();
+  /* A ROOM WHOSE PLANE KEY THIS MEMBERSHIP DOES NOT HOLD IS REFUSED ONCE PER MEMBERSHIP STATE, NOT
+   * EVERY TICK. startRoomsLive runs on every 4 s live tick and only remembered SUCCESSES, so a room it
+   * could not subscribe to was rebuilt from scratch on every tick for the life of the page -- the
+   * control fold, the key search and a console.warn carrying the Error each time. Measured on a
+   * PosterChanOS desktop: 18,502 of the last 20,000 log lines were that one warning, two rooms twice
+   * every few seconds for nine hours, in a renderer that had grown to 4-7 GB and stopped responding.
+   * The failure is keyed on the SAME key a subscription is (owner, relays, channels and their stream
+   * keys), so a membership that changes -- a rekey, a new grant -- is tried again at once; otherwise
+   * it is retried at most every ROOM_LIVE_RETRY_MS. */
+  const roomsLiveFailed=new Map(), ROOM_LIVE_RETRY_MS=600000;
   function startRoomsLive(p){
     try{
       const R=window.Relay,reader=window.PosterCordReader;
@@ -3621,8 +3631,11 @@
         want.set(roomIdentity(room),{key,room,bundle,channels,relays});
       }
       for(const [id,sub] of roomsLive){ const w=want.get(id); if(!w||w.key!==sub.key){ try{ sub.close(); }catch(_){ } roomsLive.delete(id); } }
+      for(const id of [...roomsLiveFailed.keys()])if(!want.has(id))roomsLiveFailed.delete(id);
       for(const [id,w] of want){
         if(roomsLive.has(id))continue;
+        const failed=roomsLiveFailed.get(id);
+        if(failed&&failed.key===w.key&&Date.now()-failed.at<ROOM_LIVE_RETRY_MS)continue;
         const byAuthor=new Map();
         for(const c of w.channels)for(const pk of c.streamPubkeys)byAuthor.set(String(pk).toLowerCase(),c);
         const buffers=new Map();
@@ -3649,7 +3662,11 @@
           const plane=reader.createPlaneAuth&&cordPlaneContext(p,w.bundle,roomControls.get(w.room.communityId||w.room.naddr)||[],w.room);
           const close=plane?cordPlaneSubscribe(p,R,w.relays,filters,{onEvent,timeout:0,live:true},plane):R.subscribeFrom(w.relays,filters,{onEvent,timeout:0,live:true});
           roomsLive.set(id,{key:w.key,close:()=>{ try{ close(); }catch(_){ } }});
-        }catch(e){ console.warn('Concord room subscription failed',e); }
+          roomsLiveFailed.delete(id);
+        }catch(e){
+          if(!failed||failed.key!==w.key)console.warn('Concord room subscription failed',String(e&&e.message||e));
+          roomsLiveFailed.set(id,{key:w.key,at:Date.now()});
+        }
       }
     }catch(_){ }
   }
@@ -5171,6 +5188,7 @@
      reader keeps their place. */
   window.PCConcord.__testLiveRepaint=()=>whenHandLeaves(()=>preserveChatScroll(()=>backgroundRender()));
   window.PCConcord.__testEnterChatBottom=()=>enterChatBottom(true);
+  window.PCConcord.__testStartRoomsLive=p=>startRoomsLive(p);
   if(window.__pcConcordHandoff){
     try{acceptHandoff(window.__pcConcordHandoff);}finally{delete window.__pcConcordHandoff;}
   }
