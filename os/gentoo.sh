@@ -176,7 +176,7 @@ PC_MESA_REQUIRED_CARDS="virgl nouveau"
 #
 #PACKAGE CONFIGURATION
 BASE_PACKAGES="sys-boot/efibootmgr net-print/cups-filters net-misc/networkmanager net-wireless/bluez net-fs/sshfs app-shells/starship dev-util/sh sys-boot/plymouth sys-power/acpid app-arch/zip dev-python/virtualenv sys-apps/flatpak sys-power/powertop app-shells/bash-completion sys-power/cpupower sys-power/upower media-libs/gexiv2 media-plugins/gst-plugins-pulse mail-mta/postfix app-admin/sysstat sys-apps/smartmontools net-fs/nfs-utils net-firewall/nftables dev-python/pip sys-fs/inotify-tools net-analyzer/nmap app-misc/screen app-portage/gentoolkit sys-fs/dosfstools app-admin/sudo sys-apps/systemd sys-apps/util-linux sys-apps/hwdata app-eselect/eselect-repository dev-vcs/git sys-block/parted sys-process/btop net-vpn/wireguard-tools app-editors/neovim app-misc/fastfetch sys-fs/btrfs-progs net-print/cups sys-firmware/seabios-bin sys-firmware/edk2-bin app-emulation/libvirt app-emulation/qemu app-emulation/virt-viewer app-emulation/spice-vdagent app-crypt/swtpm"
-SPECIAL_PACKAGE_USE=("kde-apps/kio-extras samba mtp" "app-db/postgresql icu lz4 nls pam readline server ssl system zlib zstd uuid" "dev-build/meson test test-full" "dev-qt/qtwebengine bindist" "media-sound/sox -opus" "media-video/vlc -opus -theora -vpx" "media-video/ffmpeg webp libass libplacebo" "dev-qt/qtpositioning geoclue" "media-libs/libvpx postproc" "dev-python/pillow webp" "gui-libs/gtk colord sysprof" "media-libs/freetype harfbuzz" "dev-lang/php gmp sodium sysvipc calendar bcmath exif bzip2 intl ctype curl fileinfo filter gd iconv ssl posix session simplexml xmlreader xmlwriter zip zlib postgres png opcache jit cli fpm zip pdo" "net-im/synapse postgres" "net-p2p/qbittorrent webui" "app-crypt/certbot certbot-nginx" "acct-user/git gitea" "app-admin/vaultwarden web postgres" "media-gfx/imagemagick -postscript" "media-gfx/imagemagick -postscript dev-libs/jemalloc statsv" "media-libs/libsdl2 -pipewire vulkan opengl" "media-video/obs-studio pipewire wayland" "media-video/pipewire sound-server bluetooth" "x11-libs/libXrandr abi_x86_32" "mail-mta/postfix sasl" "app-emulation/qemu spice usbredir pipewire virgl usb" "app-emulation/libvirt qemu virt-network" "app-emulation/virt-viewer spice")
+SPECIAL_PACKAGE_USE=("kde-apps/kio-extras samba mtp" "app-db/postgresql icu lz4 nls pam readline server ssl system zlib zstd uuid" "dev-build/meson test test-full" "dev-qt/qtwebengine bindist" "media-sound/sox -opus" "media-video/vlc -opus -theora -vpx" "media-video/ffmpeg webp libass libplacebo" "dev-qt/qtpositioning geoclue" "media-libs/libvpx postproc" "dev-python/pillow webp" "gui-libs/gtk colord sysprof" "media-libs/freetype harfbuzz" "dev-lang/php gmp sodium sysvipc calendar bcmath exif bzip2 intl ctype curl fileinfo filter gd iconv ssl posix session simplexml xmlreader xmlwriter zip zlib postgres png opcache jit cli fpm zip pdo" "net-im/synapse postgres" "net-p2p/qbittorrent webui" "app-crypt/certbot certbot-nginx" "acct-user/git gitea" "app-admin/vaultwarden web postgres" "media-gfx/imagemagick -postscript" "media-gfx/imagemagick -postscript dev-libs/jemalloc statsv" "media-libs/libsdl2 -pipewire vulkan opengl" "media-video/obs-studio pipewire wayland" "media-video/pipewire sound-server bluetooth" "x11-libs/libXrandr abi_x86_32" "media-libs/libavif -svt-av1" "mail-mta/postfix sasl" "app-emulation/qemu spice usbredir pipewire virgl usb" "app-emulation/libvirt qemu virt-network" "app-emulation/virt-viewer spice")
 # THE SAME ENCODERS THE APP ACTUALLY INVOKES, or this desktop can play media and not make any.
 # Measured from the source rather than guessed: `libx264` (127 call sites), `h264_vaapi` (66),
 # `h264_nvenc` (57), `h264_amf` (10), `libvpx`/`libvpx-vp9` (the alpha WebM path), `libmp3lame`,
@@ -767,6 +767,22 @@ skippedABI32Packages() {
 			       /abi_x86_32/ {if (atom != "") {print atom; atom=""}}' | sort -u
 }
 
+# When resolution FAILS, Portage may name the exact USE change it needs ("The following USE changes
+# are necessary to proceed"). Accept that proposal only when EVERY change in it is abi_x86_32 -- the
+# 32-bit (Steam) rebuild this policy exists for; libpcre2-10.49 arrived without the flag glib[abi_x86_32]
+# requires and `updateOS` stopped on it. Any other proposed flag prints REFUSE and nothing is written.
+proposedABI32Changes() {
+	awk '/The following USE changes are necessary to proceed/ {s=1; next}
+	     !s {next}
+	     /^Use --autounmask/ {exit}
+	     /^[<>=~]*[a-z0-9][a-z0-9-]*\/[A-Za-z0-9._+-]+/ {
+	       atom=$1; sub(/^[<>=~]+/, "", atom); sub(/:.*/, "", atom)
+	       if (atom ~ /-[0-9]/) sub(/-[0-9][^\/]*$/, "", atom)
+	       for (i = 2; i <= NF; i++) if ($i != "abi_x86_32") { print "REFUSE"; next }
+	       if (NF >= 2) print atom
+	     }' | sort -u
+}
+
 # Refresh only the dependency settings this installer owns. Old images need these before
 # world resolution too; rerunning unmaskPackages would overwrite unrelated operator policy.
 refreshUpdateDependencyPolicy() {
@@ -799,10 +815,13 @@ refreshUpdateDependencyPolicy() {
 	# reached that machine -- updateOS never rewrote it. Without it QEMU has no usb-host
 	# device and a VM cannot be given a USB stick ("QEMU has no USB passthrough").
 	# `-uDN @world` rebuilds QEMU once when the flag first appears.
+	# libavif-1.3.0 (stable) caps `<media-libs/svt-av1-4` while ffmpeg is on svt-av1 4, so the global
+	# `svt-av1` flag made every update a slot conflict (2026-09-30). libavif still encodes AVIF with aom.
 	if printf '%s\n' \
 		'gui-libs/wlroots:0.19 x11-backend vulkan' \
 		'net-libs/gnutls pkcs11 tools' \
-		'app-emulation/qemu usb usbredir' >"$policy_tmp" \
+		'app-emulation/qemu usb usbredir' \
+		'media-libs/libavif -svt-av1' >"$policy_tmp" \
 		&& chmod 0644 "$policy_tmp" \
 		&& mv -f -- "$policy_tmp" "$policy_path/posterchan-update-deps"; then
 		return 0
@@ -827,10 +846,14 @@ prepareUpdateDependencies() {
 		fi
 		cat -- "$diagnostic"
 		if [ "$status" -ne 0 ]; then
-			rm -f -- "$diagnostic"
-			return "$status"
+			skipped=$(proposedABI32Changes <"$diagnostic")
+			if [ -z "$skipped" ] || printf '%s\n' "$skipped" | grep -qx REFUSE || [ "$attempt" -eq 3 ]; then
+				rm -f -- "$diagnostic"
+				return "$status"
+			fi
+		else
+			skipped=$(skippedABI32Packages <"$diagnostic")
 		fi
-		skipped=$(skippedABI32Packages <"$diagnostic")
 		if [ -z "$skipped" ]; then
 			rm -f -- "$diagnostic"
 			return 0

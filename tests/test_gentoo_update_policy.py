@@ -8,7 +8,8 @@ import pytest
 SOURCE = (Path(__file__).resolve().parents[1] / 'os/gentoo.sh').read_text()
 POLICY = ('gui-libs/wlroots:0.19 x11-backend vulkan\n'
           'net-libs/gnutls pkcs11 tools\n'
-          'app-emulation/qemu usb usbredir\n')
+          'app-emulation/qemu usb usbredir\n'
+          'media-libs/libavif -svt-av1\n')
 
 
 def functions(base):
@@ -218,3 +219,43 @@ def test_an_installed_machines_update_turns_usb_passthrough_on(tmp_path):
     lines = (tmp_path / 'package.use/posterchan-update-deps').read_text().splitlines()
     qemu = [line.split() for line in lines if line.startswith('app-emulation/qemu ')]
     assert qemu and 'usb' in qemu[0][1:], lines
+
+
+REAL_PROPOSAL = (Path(__file__).resolve().parent / 'fixtures/portage_abi32_use_proposal_20260930.txt').read_text()
+
+
+def test_an_abi_only_use_proposal_is_applied_and_the_update_proceeds(tmp_path):
+    """Captured on the ISO build VM, 2026-09-30: libpcre2-10.49 arrived without the abi_x86_32 that
+    glib[abi_x86_32] (Steam) needs, and `emerge -puDN @world` FAILED, naming the one change it needed.
+    The updater only knew the skipped-update warning, so updateOS stopped on every machine."""
+    path = tmp_path / 'package.use'
+    path.mkdir()
+    abi = path / 'posterchan-update-abi'
+    result = prepare(tmp_path, '''
+if ! grep -qx 'dev-libs/libpcre2 abi_x86_32' ''' + shlex.quote(str(abi)) + ''' 2>/dev/null; then
+  printf '%s' ''' + shlex.quote(REAL_PROPOSAL) + '''; return 1
+fi
+return 0
+''')
+    assert result.returncode == 0, result.stderr
+    assert abi.read_text() == 'dev-libs/libpcre2 abi_x86_32\n'
+    assert (tmp_path / 'calls').read_text().splitlines() == ['-puDN @world'] * 2
+
+
+def test_a_proposal_with_any_other_flag_is_never_applied(tmp_path):
+    other = REAL_PROPOSAL.replace('>=dev-libs/libpcre2-10.49 abi_x86_32', '>=dev-libs/libpcre2-10.49 abi_x86_32 static-libs')
+    assert other != REAL_PROPOSAL
+    result = prepare(tmp_path, "printf '%s' " + shlex.quote(other) + '; return 1')
+    assert result.returncode == 1
+    assert (tmp_path / 'calls').read_text().splitlines() == ['-puDN @world']
+    assert not (tmp_path / 'package.use/posterchan-update-abi').exists()
+
+
+def test_the_update_policy_keeps_libavif_off_the_svt_av1_cap(tmp_path):
+    """The same capture's other half: libavif-1.3.0 wants <svt-av1-4 and ffmpeg is on 4 -- a slot conflict
+    on every update while the global svt-av1 flag reaches libavif."""
+    assert 'svt-av1' in REAL_PROPOSAL and 'slot conflict' in REAL_PROPOSAL
+    result = run(tmp_path, 'refreshUpdateDependencyPolicy')
+    assert result.returncode == 0, result.stderr
+    lines = (tmp_path / 'package.use/posterchan-update-deps').read_text().splitlines()
+    assert 'media-libs/libavif -svt-av1' in lines, lines
