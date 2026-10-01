@@ -818,32 +818,40 @@ window.PCDmsFactory = function(dep){
   // LAZILY — the first time the user actually uses DMs (opens Messages / sends a DM), NOT on login: a
   // silent login-time write surprised users ("why did it change my relay list just for logging in?").
   //
-  // MERGE, never replace: we only ADD our inbox relay(s) to whatever kind-10050 already exists (possibly
-  // set by another client pointing at the user's OWN relays). We must never shrink a non-empty list down
-  // to just ours — that would hijack the user's DM delivery to this node and drop their other inboxes
-  // (the replaceable-list clobber bug). Idempotent: if our relays are already listed, publish nothing.
+  /* A DM RELAY LIST SOMEBODY ALREADY HAS IS NEVER EDITED. THIS ONLY EVER CREATES A FIRST ONE.
+   *
+   * "npub14w4q… is saying we changed his DM relays" -- and we had. His list (0xchat, keychat, nostr21,
+   * signed 2026-05-29 by another client) lived on his own relays; this function read the existing list
+   * from OUR pool alone, which never held it, "merged" our relay into nothing and published a list
+   * naming ONLY wss://poster.place/relay -- then pushed it to the indexers, so every client that
+   * delivers NIP-17 DMs by the book sent his DMs to a relay he never chose. A replaceable list is the
+   * user's whole decision; one empty read is not evidence there is no decision.
+   *
+   * So: look on our pool, the indexers AND the user's own relays (their kind-10002 + the relays set
+   * here). ANY list found, from any client, is left exactly as it is -- even adding our relay to it
+   * is a change nobody asked for. A first list is published only when that search FOUND NOTHING and at
+   * least two relays actually ANSWERED; "could not ask" leaves it for a later session. */
   let _dmInboxEnsured = false;
   async function ensureDmInboxList(){
     if(_dmInboxEnsured || S.GUEST) return; _dmInboxEnsured = true;   // once per session, on first DM use
     try{
       const want = myInboxRelays(); if(!want.length) return;
-      const evs = await Relay.query([{ authors:[S.ME.pubkey], kinds:[10050], limit:1 }]);
-      const cur = evs.length ? evs.sort((a,b)=>b.created_at-a.created_at)[0] : null;
-      const have = cur ? [...new Set(cur.tags.filter(t=>t[0]==='relay'&&t[1]).map(t=>normalizeRelay(t[1])).filter(Boolean))] : [];
-      if(want.every(u=>have.includes(u))) return;   // our relays already present → don't republish
-      const merged = [...new Set([...have, ...want])];   // union: add ours, keep theirs
-      const made = await publish(10050, '', merged.map(u=>['relay', u]));
-      /* AND PUT IT WHERE THE PEOPLE WHO NEED IT ACTUALLY LOOK.
-       *
-       * `publish` reaches our own pool. Every other client resolves a DM inbox from the relay-list
-       * INDEXERS — the same set we read theirs from, below — so a list that only ever lands on our
-       * relay is a list nobody who wants to message us can find. Measured on this account: the
-       * kind-10050 was on damus/nos/primal by incidental sync and absent from kindpag.es, which had
-       * our kind-10002; clients that (correctly) refuse to deliver a NIP-17 DM to a non-inbox relay
-       * therefore answered "no inbox" about somebody who has one.
-       *
-       * Backgrounded and best-effort: this is a convenience for strangers, never a condition of
-       * publishing, and a dead indexer must not fail the write that already succeeded. */
+      const me = S.ME.pubkey;
+      const mine = evs => (evs||[]).filter(e=>e && e.pubkey===me && (e.kind===10050 || e.kind===10002));
+      const local = mine(await Relay.query([{ authors:[me], kinds:[10050,10002], limit:2 }]));
+      if(local.some(e=>e.kind===10050)) return;                         // they already have one: hands off
+      const own = local.filter(e=>e.kind===10002).flatMap(e=>e.tags.filter(t=>t[0]==='r'&&t[1]).map(t=>t[1]));
+      const ask = [...new Set([...DISCOVERY_RELAYS, ...own, ...want].map(u=>normalizeRelay(u)).filter(Boolean))];
+      const report = {};
+      let ext = mine(await Relay.queryFrom(ask, [{ authors:[me], kinds:[10050], limit:1 }],
+        {purpose:'own dm inbox check', report, allowBlocked:true, max:ask.length}));
+      if(ext.length){ try{ const v=await Relay.worker.call('verifyBatch',{events:ext});
+        const ok=new Set(v.filter(r=>r.valid).map(r=>r.id)); ext=ext.filter(e=>ok.has(e.id)); }catch(_){ } }
+      if(ext.some(e=>e.kind===10050)) return;                           // found elsewhere: hands off
+      if((report.ok||[]).length < 2){ _dmInboxEnsured = false; return; } // nobody answered: not evidence
+      const made = await publish(10050, '', want.map(u=>['relay', u]));
+      /* AND PUT IT WHERE THE PEOPLE WHO NEED IT ACTUALLY LOOK. `publish` reaches our own pool; every
+       * other client resolves a DM inbox from the relay-list INDEXERS. Backgrounded and best-effort. */
       if(made && made.ev) Relay.publishTo(DISCOVERY_RELAYS, made.ev, {max:DISCOVERY_RELAYS.length})
         .catch(()=>{});
     }catch(_){ _dmInboxEnsured = false; }   // let a later DM-use retry after a transient failure
