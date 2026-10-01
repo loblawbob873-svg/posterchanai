@@ -299,28 +299,61 @@ window.PCMailFactory = function(dep){
       // somebody else's.
       if(!M.root || !M.root.isConnected) return;
       if(document.body.classList.contains('modal-open')) return;
+      if(document.querySelector('.uiconfirm-bg')) return;    // the confirm owns the keyboard while it is up
       const t = e.target;
       if(t && (t.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(t.tagName || ''))) return;
       const open = !!(M.root && M.root.querySelector('.mail-read.has-open')) || !!M.openUid;
       const k = e.key;
+      /* The cursor moves one ROW -- one conversation -- at a time. It used to step through
+         M.msgs, i.e. individual messages, so inside a thread it pointed at a message no row stands
+         for and the highlight vanished (and Space/Delete would have acted on nothing visible). */
+      const convs = () => (M._conversations ? M._conversations() : []);
+      const rowAt = () => { const cur = (M.msgs || [])[M.cursor];
+        return cur ? convs().findIndex(c => c.all.includes(cur)) : -1; };
       const go = (n) => {
-        const rows = M.msgs || [];
-        if(!rows.length) return;
-        M.cursor = Math.max(0, Math.min(rows.length - 1, (M.cursor == null ? -1 : M.cursor) + n));
+        const cs = convs();
+        if(!cs.length) return;
+        const at = rowAt();
+        const from = at < 0 ? (n > 0 ? -1 : cs.length) : at;      // nothing under the cursor yet: ↓ starts at the top
+        const to = Math.max(0, Math.min(cs.length - 1, from + n));
+        M.cursor = M.msgs.indexOf(cs[to].all[0]);
         M.drawList();
         const el = M.root && M.root.querySelector('.mail-item.cursor');
         if(el) el.scrollIntoView({ block: 'nearest' });
       };
+      // The keys of the conversation under the cursor -- what its checkbox would tick.
+      const rowKeys = () => { const c = convs()[rowAt()]; return c ? c.all.map(x => M._key(x)) : []; };
       const act = (name) => {
         const m = (M.msgs || [])[M.cursor];
         if(!m) return;
         M.action(name, m, m.folder || M.folder, m.account || M.acct);
       };
       switch(k){
+        case ' ': {
+          // Space ticks the row under the cursor; on a focused button or link it stays a click.
+          if(t && /^(BUTTON|A)$/.test(t.tagName || '')) return;
+          e.preventDefault();
+          const keys = rowKeys();
+          if(!keys.length) return;
+          const on = !keys.every(x => M.sel.has(x));
+          keys.forEach(x => on ? M.sel.add(x) : M.sel.delete(x));
+          M.drawList();
+          return;
+        }
+        case 'Delete': case 'Backspace': {
+          // Delete: everything ticked, or -- with nothing ticked -- the conversation under the cursor.
+          e.preventDefault();
+          if(M.sel && M.sel.size){ M.bulk('delete'); return; }
+          const keys = rowKeys();
+          if(!keys.length) return;
+          keys.forEach(x => M.sel.add(x));
+          M.bulk('delete').then(done => { if(!done){ keys.forEach(x => M.sel.delete(x)); M.drawList(); } });
+          return;
+        }
         case 'j': case 'ArrowDown':  e.preventDefault(); go(+1); return;
         case 'k': case 'ArrowUp':    e.preventDefault(); go(-1); return;
-        case 'g': _mailG = (_mailG === 'g') ? (M.cursor = 0, M.drawList(), null) : 'g'; return;
-        case 'G': e.preventDefault(); M.cursor = Math.max(0, (M.msgs||[]).length - 1); M.drawList(); return;
+        case 'g': _mailG = (_mailG === 'g') ? (go(-1e9), null) : 'g'; return;
+        case 'G': e.preventDefault(); go(1e9); return;
         case 'Enter': case 'o': {
           const m = (M.msgs || [])[M.cursor];
           if(m){ e.preventDefault(); M.open(m.uid, m.folder || M.folder, m.account); }
@@ -357,7 +390,8 @@ window.PCMailFactory = function(dep){
   let _mailG = null;
 
   function _mailKeysHelp(){
-    const rows = [['j / k', 'next / previous message'], ['Enter or o', 'open'],
+    const rows = [['↓ ↑ or j / k', 'next / previous conversation'], ['Space', 'select / unselect it'],
+                  ['Delete', 'delete the selected (or this) conversation'], ['Enter or o', 'open'],
                   ['Esc or q', 'back to the list'], ['gg / G', 'first / last'],
                   ['c', 'compose'], ['r / a / f', 'reply / reply all / forward'],
                   ['u', 'mark unread'], ['e', 'archive'], ['#', 'delete'],
@@ -910,9 +944,9 @@ window.PCMailFactory = function(dep){
       act.querySelectorAll('[data-bulk]').forEach(b=> b.onclick=()=>this.bulk(b.dataset.bulk));
     },
     async bulk(action){
-      if(!this.sel || !this.sel.size) return;
+      if(!this.sel || !this.sel.size) return false;
       if(action==='delete' && !await uiConfirm('Delete '+this.sel.size+' message(s)?',
-                                                { ok:'Delete', danger:true })) return;
+                                                { ok:'Delete', danger:true })) return false;
       const keys=[...this.sel]; this.sel.clear(); this.updateBulk();
       const path = action==='read' ? '/mark-read' : '/'+action;
       for(const k of keys){ const i=k.indexOf('|'), j=k.indexOf('|', i+1);
@@ -921,6 +955,7 @@ window.PCMailFactory = function(dep){
         try{ await this.api(path,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)}); }catch(_){}
       }
       toast(action==='read'?'marked read':(action==='delete'?'deleted':'archived')); this.loadList();
+      return true;
     },
     async open(uid, folder, account){
       /* `__all` WHEN NO ACCOUNT IS SELECTED, never the string "null".
