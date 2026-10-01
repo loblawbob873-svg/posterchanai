@@ -27,8 +27,9 @@ import pytest
 psycopg2 = pytest.importorskip("psycopg2")
 
 from app.services.nostr_relay.store import RelayStore, _PRUNE_CHUNK  # noqa: E402
+from tests import scratch_postgres
 
-DSN = "host=127.0.0.1 port=5432 dbname=posterchan_relay user=posterchan"
+DSN = scratch_postgres.dsn()   # a test Postgres -- see tests/scratch_postgres.py
 DAY = 86400
 
 

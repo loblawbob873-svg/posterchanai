@@ -27,8 +27,9 @@ ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 BOTS = os.path.join(ROOT, "botframework")
 sys.path.insert(0, BOTS)
 import akkoma_db  # noqa: E402
+from tests import scratch_postgres
 
-DSN = dict(host="127.0.0.1", port=5432, dbname="posterchan_relay", user="posterchan")
+DSN = scratch_postgres.params()   # a test Postgres -- see tests/scratch_postgres.py
 
 
 @pytest.fixture

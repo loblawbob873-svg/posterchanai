@@ -28,8 +28,9 @@ import psycopg2
 from app.services import git_host_service as ghs
 from app.services.nostr import bip340, nostr_service
 from app.services.nostr.event import build_event
+from tests import scratch_postgres
 
-DSN = "host=127.0.0.1 port=5432 dbname=posterchan_relay user=posterchan"
+DSN = scratch_postgres.dsn()   # a test Postgres -- see tests/scratch_postgres.py
 _results = []
 _inserted_ids = []
 

@@ -26,6 +26,7 @@ import pytest
 from app.services import paid_retention_service as prs
 from app.services.nostr import bip340
 from app.services.nostr.event import build_event
+from tests import scratch_postgres
 
 DAY = 86400
 
@@ -217,7 +218,7 @@ psycopg2 = pytest.importorskip("psycopg2")
 
 from app.services.nostr_relay.store import RelayStore            # noqa: E402
 
-DSN = "host=127.0.0.1 port=5432 dbname=posterchan_relay user=posterchan"
+DSN = scratch_postgres.dsn()   # a test Postgres -- see tests/scratch_postgres.py
 
 
 def _admin():

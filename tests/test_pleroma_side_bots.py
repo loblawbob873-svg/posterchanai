@@ -17,10 +17,11 @@ import uuid
 
 import pytest
 import requests
+from tests import scratch_postgres
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 BOTS = os.path.join(ROOT, "botframework")
-DSN = dict(host="127.0.0.1", port=5432, dbname="posterchan_relay", user="posterchan")
+DSN = scratch_postgres.params()   # a test Postgres -- see tests/scratch_postgres.py
 
 
 def _fresh(monkeypatch, name, **env):
