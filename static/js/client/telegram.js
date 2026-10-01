@@ -18,8 +18,23 @@
   const esc = s => String(s == null ? '' : s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 
   const PHONE_MAX_SHORT_SIDE = 480;
+  /* THE APK KNOWS; THE SCREEN ONLY HINTS. A Samsung tablet with One UI's Screen zoom raised reports a
+   * short side of ~420-450 CSS px and was taken for a phone ("telegram is missing from tablet"). The APK
+   * answers from the device's own configuration (HomeScreen.formFactor: can it place a call?), which
+   * no zoom, rotation or split screen moves. The size rule stays for browsers and APKs too old to say. */
+  let form = '';   // 'phone' | 'tablet' once the APK has answered
   function isPhone(){
+    if(form) return form === 'phone';
     try{ return Math.min(screen.width || 9999, screen.height || 9999) < PHONE_MAX_SHORT_SIDE; }catch(_){ return false; }
+  }
+  async function askForm(){
+    try{
+      const P = PC(), h = P.capPlugin && P.capPlugin('HomeScreen', 'formFactor');
+      if(!h || !h.formFactor) return false;
+      const r = await h.formFactor();
+      if(r && (r.form === 'phone' || r.form === 'tablet')){ form = r.form; return true; }
+    }catch(_){}
+    return false;
   }
   const st = { status:null, dialogs:[], open:null, msgs:new Map(), filter:'', ws:null, wsTimer:0, reply:null,
                loadingOlder:false, done:new Set(), pending:[], busy:false,
@@ -583,11 +598,19 @@
     // Re-checked on resize: a desktop window dragged down to phone size, or a phone rotated, is
     // answered by the SAME rule rather than whatever it was when the page loaded.
     try{ window.addEventListener('resize', gate); }catch(_){}
-    const go = () => setTimeout(background, 4000);
+    const go = () => {
+      askForm().then(told => {
+        if(!told) return;
+        gate();
+        // The view may already be on screen with the size rule's answer: draw it again with this one.
+        try{ if(document.querySelector('#feed .tg-app')) render(); }catch(_){}
+      });
+      setTimeout(background, 4000);
+    };
     if(window.__PC_BOOTED) go(); else document.addEventListener('pc-app-ready', go, { once:true });
   }
 
-  const api_ = { render, isPhone, onEvent, _state:st, react };
+  const api_ = { render, isPhone, onEvent, _state:st, react, _askForm:askForm, _setForm:f => { form = f; } };
   window.PCTelegram = api_;
   if(typeof module !== 'undefined') module.exports = api_;
 })();

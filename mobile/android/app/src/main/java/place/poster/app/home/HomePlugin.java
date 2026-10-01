@@ -65,6 +65,23 @@ public class HomePlugin extends Plugin {
 
     public static void announceLaunchView() { announceLaunchView(""); }
 
+    /** Phone or tablet, from the device's own configuration -- see FormFactor. */
+    @PluginMethod
+    public void formFactor(PluginCall call) {
+        boolean voice = true;
+        try {
+            android.telephony.TelephonyManager tm = (android.telephony.TelephonyManager)
+                    getContext().getSystemService(android.content.Context.TELEPHONY_SERVICE);
+            voice = tm != null && tm.isVoiceCapable();
+        } catch (Throwable ignored) { }
+        JSObject o = new JSObject();
+        o.put("form", FormFactor.classify(voice));
+        o.put("voiceCapable", voice);
+        try { o.put("swDp", getContext().getResources().getConfiguration().smallestScreenWidthDp); }
+        catch (Throwable ignored) { }
+        call.resolve(o);
+    }
+
     @PluginMethod
     public void status(PluginCall call) {
         JSObject o = new JSObject();
