@@ -75,7 +75,7 @@ setTimeout(bye,60000);
 def test_covered_output_uses_fresh_owned_png_without_focus_or_minimize(responder,monkeypatch):
     pid,image,runtime=responder;health=health_module();monkeypatch.setenv('XDG_RUNTIME_DIR',str(runtime))
     calls=[]
-    def request(method,data=None):
+    def request(method,data=None,timeout=2):
         calls.append(method)
         assert method=='list-methods', 'health must not manipulate windows'
         return {'methods':[]}
@@ -108,7 +108,7 @@ def test_stale_and_wrong_surface_captures_cannot_prove_health(responder,monkeypa
 
 def test_existing_viewshot_is_used_without_hotloading_or_renderer_files(tmp_path):
     health=health_module();image=tmp_path/'view.png';_png(image);calls=[]
-    def request(method,data=None):
+    def request(method,data=None,timeout=2):
         calls.append(method)
         if method=='list-methods':return {'methods':['view-shot/capture']}
         assert method=='view-shot/capture'
@@ -183,3 +183,41 @@ def test_the_helper_cannot_outlive_the_run_that_started_it():
         "the child's stdin is not a pipe, so it can never see EOF when this process dies")
     fixture = src[src.index("def responder("):src.index("def test_", src.index("def responder("))]
     assert "finally:" in fixture, "a test that raises would leave its child running"
+
+
+def test_a_full_size_view_shot_is_waited_for_not_timed_out(tmp_path):
+    """THE OCCLUSION FALLBACK TIMED OUT ON A 4K MONITOR AND THE LAUNCHER KILLED A HEALTHY DESKTOP.
+
+    `view-shot/capture` encodes the WHOLE view to PNG before Wayfire answers. Measured on a 3840x2560
+    output: 3.07 s per view. Every IPC call shared one 2 s socket timeout, so the call raised, the
+    fallback read as "no marker", and a shell restart with Firefox maximised over one monitor failed
+    the gate on every retry -- "PosterChan shell failed the Wayfire surface/GPU health gate", no
+    desktop. This drives the probe's REAL `request()` against a socket that answers as slowly as the
+    real compositor did."""
+    import socket,threading,time
+    health=health_module();image=tmp_path/'view.png';_png(image)
+    path=str(tmp_path/'wayfire.sock');server=socket.socket(socket.AF_UNIX,socket.SOCK_STREAM)
+    server.bind(path);server.listen(4);stop=threading.Event()
+    def serve():
+        server.settimeout(0.2)
+        while not stop.is_set():
+            try:conn,_=server.accept()
+            except OSError:continue
+            with conn:
+                size=struct.unpack('<I',conn.recv(4))[0];body=b''
+                while len(body)<size:body+=conn.recv(size-len(body))
+                msg=json.loads(body)
+                if msg['method']=='list-methods':reply={'methods':['view-shot/capture']}
+                else:
+                    time.sleep(3.1)   # the measured encode time of a 3840x2560 view
+                    Path(msg['data']['file']).write_bytes(image.read_bytes());reply={'result':'ok'}
+                raw=json.dumps(reply).encode();conn.sendall(struct.pack('<I',len(raw))+raw)
+    worker=threading.Thread(target=serve,daemon=True);worker.start()
+    try:
+        health.SOCKET=path
+        target=tmp_path/'result.png'
+        assert health.owned_capture({'id':23,'pid':os.getpid()},str(target)),\
+            'a view-shot that takes as long as a real 4K capture must be waited for'
+        assert health.has_marker(target)
+    finally:
+        stop.set();worker.join(2);server.close()

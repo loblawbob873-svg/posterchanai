@@ -22,10 +22,17 @@ SECONDARY_MARKER = ((75, 92, 255), (255, 92, 53), (155, 219, 77), (246, 213, 92)
 MARKER = PRIMARY_MARKER
 
 
-def request(method, data=None):
+# A VIEW-SHOT IS A FULL PNG ENCODE BEFORE WAYFIRE ANSWERS: 3.07 s for one 3840x2560 view, measured.
+# Under the 2 s every other call uses it ALWAYS timed out on a 4K monitor, so the occlusion fallback
+# below never worked there and a shell restart with a window maximised over one output failed the gate
+# and took the desktop down.
+VIEW_SHOT_TIMEOUT = float(os.environ.get("PC_VIEW_SHOT_TIMEOUT", "20"))
+
+
+def request(method, data=None, timeout=2):
     body = json.dumps({"method": method, "data": data or {}}, separators=(",", ":")).encode()
     with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as client:
-        client.settimeout(2)
+        client.settimeout(timeout)
         client.connect(SOCKET)
         client.sendall(struct.pack("<I", len(body)) + body)
         raw = b""
@@ -199,7 +206,8 @@ def owned_capture(shell, target):
         methods = []
     if "view-shot/capture" in methods:
         try:
-            request("view-shot/capture", {"view-id": int(shell["id"]), "file": target})
+            request("view-shot/capture", {"view-id": int(shell["id"]), "file": target},
+                    timeout=VIEW_SHOT_TIMEOUT)
             return os.path.isfile(target)
         except Exception:
             return False
