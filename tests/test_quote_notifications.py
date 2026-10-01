@@ -159,7 +159,9 @@ def test_backfill_v2_indexes_existing_bare_quotes(store_factory):
         assert await store.add_event(post) and await store.add_event(q)
         conn = store._conn()
         conn.execute("DELETE FROM event_tags WHERE tag='_quote_author'")
-        conn.execute("DELETE FROM relay_kv WHERE key LIKE 'quote_author_index_%'")
+        # The state every LIVE database is in: v1 already ran, v2 never has.
+        conn.execute("DELETE FROM relay_kv WHERE key='quote_author_index_v2'")
+        conn.execute("INSERT INTO relay_kv (key,value) VALUES ('quote_author_index_v1','1') ON CONFLICT DO NOTHING")
         assert await store.query([flt]) == []
         store._index_existing_quotes(conn)
         store._index_existing_quotes(conn)

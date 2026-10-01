@@ -397,9 +397,9 @@ class RelayStore:
     def _index_existing_quotes(conn):
         # Derived index only: signed events and standard #p/#q semantics stay intact.
         # Start from the existing q index so startup does not parse every stored event.
-        if conn.execute("SELECT value FROM relay_kv WHERE key='quote_author_index_v1'").fetchone():
-            return
-        conn.execute("""INSERT INTO event_tags (event_id, tag, value)
+        # Each version is its own one-time pass: a database that already ran v1 must still run v2.
+        if not conn.execute("SELECT value FROM relay_kv WHERE key='quote_author_index_v1'").fetchone():
+            conn.execute("""INSERT INTO event_tags (event_id, tag, value)
             SELECT DISTINCT e.id, '_quote_author', q.value->>3
             FROM events e
             CROSS JOIN LATERAL jsonb_array_elements(e.tags::jsonb) AS q(value)
@@ -407,8 +407,8 @@ class RelayStore:
               AND q.value->>0='q' AND q.value->>1 ~ '^[0-9a-f]{64}$'
               AND q.value->>3 ~ '^[0-9a-f]{64}$'
             ON CONFLICT DO NOTHING""")
-        conn.execute("INSERT INTO relay_kv (key,value) VALUES ('quote_author_index_v1','1') "
-                     "ON CONFLICT DO NOTHING")
+            conn.execute("INSERT INTO relay_kv (key,value) VALUES ('quote_author_index_v1','1') "
+                         "ON CONFLICT DO NOTHING")
         # v2: quotes whose q tag names no author (NIP-18 makes it optional) — the author of a quoted
         # event this relay holds is read off that event, whose id commits to its pubkey.
         if conn.execute("SELECT value FROM relay_kv WHERE key='quote_author_index_v2'").fetchone():
