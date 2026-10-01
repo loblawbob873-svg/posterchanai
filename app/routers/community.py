@@ -80,3 +80,15 @@ async def block_leaderboard(min: int = 1, _auth: bool = Depends(get_bot_auth)):
 @router.get("/activity")
 async def activity(top: int = 5, _auth: bool = Depends(get_bot_auth)):
     return await _read(community_stats.activity(top))
+
+
+@router.get("/reports")
+async def reports(since: int = 0, _auth: bool = Depends(get_bot_auth)):
+    return {"reports": await _read(community_stats.reports(since))}
+
+
+@router.get("/members")
+async def members(_auth: bool = Depends(get_bot_auth)):
+    async def roll():
+        return community_stats.member_list()
+    return {"members": await _read(roll())}

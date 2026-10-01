@@ -183,6 +183,12 @@ The bots are managed from **Admin → Bots** (`templates/admin/tabs/bots.html` +
   never "no new blocks" — read as empty it rewrites the seen-set and the next good read
   re-announces everything; the FIRST look announces nothing for the same reason.
   `tests/test_community_bots.py` runs `main.py` itself (`--help` + the Nostr dispatch).
+  `--report`/`--welcome` dispatch the same way, to `nostr_reportbot.py` (NIP-56 kind-1984 reports
+  filed BY or ABOUT a member, `/api/community/reports`) and `nostr_welcomebot.py` (a name newly on
+  the NIP-05 roll, `/api/community/members`, which flags our own bots so a new bot is never
+  welcomed). Instance members only, by design. Both: first look announces nothing, "could not ask"
+  writes nothing, and the welcome bot treats an EMPTY roll and a jump of >10 names (an import) as
+  no newcomers.
 - **Master kill-switch:** `bots_manager_enabled` (default **off**). The manager runs NO bots
   until it's on — so deploying the merged code is safe while the legacy `posterchan.service`
   still owns the bots. **Cutover per node:** retire `posterchan.service` (stop+disable), then flip

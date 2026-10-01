@@ -253,3 +253,160 @@ def test_one_server_cannot_top_the_leaderboard_by_itself(world):
     world["fedi"].append({"member": BOB, "actor": "https://a.example/u/1", "acct": "a@a.example", "at": 1})
     board = {r["handle"]: r["count"] for r in run(cs.leaderboard())}
     assert board == {"@alice@poster.place": cs.PER_SERVER, "@bob@poster.place": 1}
+
+
+# ── The Nostr report bot and welcome bot ("make reportbot work for nostr but only for the instance
+#    users ie poster.place" / "if you can get welcome bot too") ─────────────────────────────────────
+
+def test_reports_are_only_the_ones_involving_our_members(world):
+    from app.services import community_stats as cs
+    note = "ab" * 32
+    world["relay"] += [
+        _ev(30, STRANGER, 1984, [["p", ALICE, "spam"], ["e", note, "spam"]], "bot spam", created=100),  # about ours
+        _ev(31, BOB, 1984, [["p", CAROL_PUPPET, "impersonation"]], "  not   the real carol ", created=200),  # by ours
+        _ev(32, STRANGER, 1984, [["p", "e5" * 32, "spam"]], "elsewhere", created=300),          # none of ours
+        _ev(33, ALICE, 1984, [["p", ALICE, "other"]], "self", created=400),                     # self-report
+        _ev(34, STRANGER, 1984, [["e", note, "spam"]], "no account named", created=500),         # not NIP-56
+        _ev(35, STRANGER, 1984, [["p", BOB, "made-up-type"]], "", created=600),
+    ]
+    got = run(cs.reports())
+    assert [r["id"] for r in got] == [f"{30:064x}", f"{31:064x}", f"{35:064x}"]
+    a, b, c = got
+    assert (a["reported_handle"], a["type"], a["reason"]) == ("@alice@poster.place", "spam", "bot spam")
+    assert a["note_ref"].startswith("nostr:note1") and a["reporter_ref"].startswith("nostr:npub1")
+    assert (b["reporter_handle"], b["reported_handle"]) == ("@bob@poster.place", "@carol@m.example")
+    assert b["reason"] == "not the real carol", "whitespace is collapsed for a one-line headline"
+    assert c["type"] == "other", "a type outside NIP-56's list is not repeated as fact"
+    assert [r["id"] for r in run(cs.reports(since=250))] == [f"{35:064x}"]
+
+
+def test_the_member_roll_marks_our_own_bots(world, monkeypatch):
+    from app.services import community_stats as cs
+    monkeypatch.setattr(cs, "bot_pubkeys", lambda: {BOB})
+    roll = {m["pubkey"]: m for m in cs.member_list()}
+    assert set(roll) == {ALICE, BOB}
+    assert roll[BOB]["bot"] and not roll[ALICE]["bot"]
+    assert roll[ALICE]["handle"] == "@alice@poster.place" and roll[ALICE]["ref"].startswith("nostr:npub1")
+
+
+def _botmod(monkeypatch, tmp_path, name):
+    here = os.path.join(os.path.dirname(__file__), "..", "botframework")
+    monkeypatch.syspath_prepend(here)
+    for m in (name, "community_api"):
+        sys.modules.pop(m, None)
+    mod = __import__(name)
+    monkeypatch.setattr(mod, "_state_path", lambda: str(tmp_path / f"{name}.json"))
+    monkeypatch.setattr(mod, "_ai_on", lambda: False)
+    posted = []
+    monkeypatch.setattr(mod, "_post", lambda text, *a, **k: posted.append(text))
+    return mod, posted
+
+
+def _report(i, reporter="nostr:npub1rep", reported="nostr:npub1bob", **kw):
+    return {"id": f"r{i}", "at": i, "type": "spam", "reason": "", "note_ref": "",
+            "reporter_ref": reporter, "reported_ref": reported,
+            "reporter_handle": "@x@else.where", "reported_handle": "@bob@poster.place", **kw}
+
+
+def test_the_report_bot_announces_each_report_once_and_never_on_its_first_look(monkeypatch, tmp_path):
+    bot, posted = _botmod(monkeypatch, tmp_path, "nostr_reportbot")
+    rows = [_report(1)]
+    monkeypatch.setattr(bot.community_api, "get", lambda path, **k: {"reports": list(rows)})
+    bot.reports()
+    assert posted == [], "the first look announced every report of the last week"
+    rows.append(_report(2, reason="stolen art", note_ref="nostr:note1xyz"))
+    bot.reports()
+    assert len(posted) == 1
+    assert "🚨 nostr:npub1rep reported nostr:npub1bob for spam" in posted[0], posted[0]
+    assert '"stolen art"' in posted[0] and "nostr:note1xyz" in posted[0]
+    bot.reports()
+    assert len(posted) == 1, "a report was announced twice"
+
+
+def test_the_report_bot_never_reads_could_not_ask_as_no_reports(monkeypatch, tmp_path):
+    bot, posted = _botmod(monkeypatch, tmp_path, "nostr_reportbot")
+
+    def down(path, **k):
+        raise bot.community_api.Unavailable("relay down")
+    monkeypatch.setattr(bot.community_api, "get", down)
+    bot.reports()
+    assert posted == [] and not os.path.exists(bot._state_path())
+
+
+def test_the_report_bot_skips_reports_involving_a_listed_bot(monkeypatch, tmp_path):
+    bot, posted = _botmod(monkeypatch, tmp_path, "nostr_reportbot")
+    monkeypatch.setattr(bot, "BOT_BLACKLIST", ["reportbot"])
+    rows = []
+    monkeypatch.setattr(bot.community_api, "get", lambda path, **k: {"reports": list(rows)})
+    bot.reports()
+    rows.append(_report(3, reporter_handle="@reportbot@poster.place"))
+    bot.reports()
+    assert posted == []
+
+
+def _member(pk, name, **kw):
+    return {"pubkey": pk, "handle": f"@{name}@poster.place", "ref": f"nostr:npub1{name}", "bot": False, **kw}
+
+
+def test_the_welcome_bot_greets_a_new_member_by_tag_and_nobody_else(monkeypatch, tmp_path):
+    bot, posted = _botmod(monkeypatch, tmp_path, "nostr_welcomebot")
+    monkeypatch.setattr(bot, "WELCOME_MESSAGE", "Welcome to {instance_name}")
+    roll = [_member(ALICE, "alice")]
+    monkeypatch.setattr(bot.community_api, "get", lambda path, **k: {"members": list(roll)})
+    bot.welcome()
+    assert posted == [], "the first look welcomed every existing member"
+    roll += [_member(BOB, "bob"), _member(STRANGER, "newbot", bot=True)]
+    bot.welcome()
+    assert posted == ["nostr:npub1bob Welcome to poster.place"], posted
+    bot.welcome()
+    assert len(posted) == 1, "a member was welcomed twice"
+
+
+def test_the_welcome_bot_changes_nothing_on_an_empty_or_unreadable_roll(monkeypatch, tmp_path):
+    bot, posted = _botmod(monkeypatch, tmp_path, "nostr_welcomebot")
+    roll = [_member(ALICE, "alice")]
+    monkeypatch.setattr(bot.community_api, "get", lambda path, **k: {"members": list(roll)})
+    bot.welcome()
+    roll.clear()
+    bot.welcome()                              # reads empty for a moment...
+    roll.append(_member(ALICE, "alice"))
+    bot.welcome()                              # ...and back: alice is not a newcomer
+    assert posted == []
+
+    def down(path, **k):
+        raise bot.community_api.Unavailable("app down")
+    monkeypatch.setattr(bot.community_api, "get", down)
+    bot.welcome()
+    assert posted == []
+
+
+def test_a_bulk_jump_in_the_roll_is_an_import_not_newcomers(monkeypatch, tmp_path):
+    bot, posted = _botmod(monkeypatch, tmp_path, "nostr_welcomebot")
+    roll = [_member(ALICE, "alice")]
+    monkeypatch.setattr(bot.community_api, "get", lambda path, **k: {"members": list(roll)})
+    bot.welcome()
+    roll += [_member(f"{i:064x}", f"m{i}") for i in range(bot.BULK + 1)]
+    bot.welcome()
+    assert posted == []
+    roll.append(_member(BOB, "bob"))
+    bot.welcome()
+    assert len(posted) == 1 and "nostr:npub1bob" in posted[0], "the import's names were not remembered"
+
+
+def test_an_ai_welcome_tags_the_member_in_place_of_their_address(monkeypatch, tmp_path):
+    bot, _ = _botmod(monkeypatch, tmp_path, "nostr_welcomebot")
+    monkeypatch.setattr(bot, "_ai_on", lambda: True)
+    monkeypatch.setattr(bot, "WELCOME_PROMPT", "Welcome @{username} to {instance_name}")
+    m = _member(BOB, "bob")
+    monkeypatch.setattr(bot, "generate_reply", lambda p: "Hey @bob@poster.place, glad you made it here!")
+    assert bot.message(m) == "Hey nostr:npub1bob, glad you made it here!"
+    monkeypatch.setattr(bot, "generate_reply", lambda p: "Glad you made it, friend, enjoy the place!")
+    assert bot.message(m) == "nostr:npub1bob Glad you made it, friend, enjoy the place!"
+
+
+@pytest.mark.parametrize("flag", ["--report-print", "--welcome-print"])
+def test_a_nostr_report_and_welcome_bot_take_the_nostr_path(flag):
+    r = _run_bot(flag, env={"NOSTR_NSEC": "11" * 32, "POSTERCHANAI_API_ENDPOINT": "http://127.0.0.1:9"})
+    out = r.stdout + r.stderr
+    assert "psycopg" not in out and "PLEROMA" not in out and "Database configuration" not in out, out[-2000:]
+    assert "could not read" in out.lower(), out[-2000:]

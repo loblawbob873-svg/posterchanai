@@ -519,35 +519,57 @@ def main():
             print("\n\nShutting down...")
             return
     elif args.welcome:
-        from welcomebot import background, waitToStart, init_db
-        from config import PLEROMA_ENDPOINT
-        init_db()
-        waitToStart()
+        from config import PLEROMA_ENDPOINT, NOSTR_NSEC
         if PLEROMA_ENDPOINT:
+            from welcomebot import background, waitToStart, init_db
+            init_db()
+            waitToStart()
             print("Starting Pleroma welcome bot daemon...")
             background()
-        else:
-            print("ERROR: PLEROMA_ENDPOINT is not configured")
-            return
-    elif args.welcome_print:
-        from welcomebot import welcome_pleroma, init_db
-        init_db()
-        welcome_pleroma(print_only=True)
-    elif args.report:
-        from reportbot import background, waitToStart, init_db
-        from config import PLEROMA_ENDPOINT
-        init_db()
-        waitToStart()
-        if PLEROMA_ENDPOINT:
-            print("Starting Pleroma report bot daemon...")
+        elif NOSTR_NSEC:
+            # A Nostr bot welcomes the people this node grants a NIP-05 name -- nostr_welcomebot.py.
+            from nostr_welcomebot import background, waitToStart
+            waitToStart()
+            print("Starting Nostr welcome bot daemon...")
             background()
         else:
-            print("ERROR: PLEROMA_ENDPOINT is not configured")
+            print("ERROR: the welcome bot needs PLEROMA_ENDPOINT or NOSTR_NSEC")
+            return
+    elif args.welcome_print:
+        from config import PLEROMA_ENDPOINT
+        if PLEROMA_ENDPOINT:
+            from welcomebot import welcome_pleroma, init_db
+            init_db()
+            welcome_pleroma(print_only=True)
+        else:
+            from nostr_welcomebot import welcome
+            welcome(print_only=True)
+    elif args.report:
+        from config import PLEROMA_ENDPOINT, NOSTR_NSEC
+        if PLEROMA_ENDPOINT:
+            from reportbot import background, waitToStart, init_db
+            init_db()
+            waitToStart()
+            print("Starting Pleroma report bot daemon...")
+            background()
+        elif NOSTR_NSEC:
+            # A Nostr bot announces NIP-56 reports involving this instance's members -- nostr_reportbot.py.
+            from nostr_reportbot import background, waitToStart
+            waitToStart()
+            print("Starting Nostr report bot daemon...")
+            background()
+        else:
+            print("ERROR: the report bot needs PLEROMA_ENDPOINT or NOSTR_NSEC")
             return
     elif args.report_print:
-        from reportbot import report_pleroma, init_db
-        init_db()
-        report_pleroma(print_only=True)
+        from config import PLEROMA_ENDPOINT
+        if PLEROMA_ENDPOINT:
+            from reportbot import report_pleroma, init_db
+            init_db()
+            report_pleroma(print_only=True)
+        else:
+            from nostr_reportbot import reports
+            reports(print_only=True)
     elif args.hashtagbot:
         from hashtagbot import background, waitToStart, get_config
         get_config()

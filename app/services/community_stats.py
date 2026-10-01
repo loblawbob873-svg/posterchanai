@@ -325,3 +325,88 @@ async def activity(top: int = 5) -> dict:
                        "url": f"{base}/{note}" if base else f"nostr:{note}"})
     ranked.sort(key=lambda r: -r["score"])
     return {"dau": len(dau), "mau": len(mau), "members": len(pks), "top_posts": ranked[:max(1, int(top))]}
+
+
+# ---- reports and newcomers (the Nostr report bot and welcome bot) --------------------------------
+
+def bot_pubkeys() -> set:
+    """Every managed bot's own key. A Nostr bot mints itself a NIP-05 name here, so without this the
+    welcome bot would greet each new bot as a new member."""
+    out = set()
+    try:
+        import json as _json
+        from app.database import SessionLocal
+        from app.models import Bot
+        from app.services.nostr import nostr_service
+        db = SessionLocal()
+        try:
+            rows = db.query(Bot.config).all()
+        finally:
+            db.close()
+        for (cfg,) in rows:
+            try:
+                nsec = str(_json.loads(cfg or "{}").get("nostr_nsec") or "").strip()
+                if nsec:
+                    out.add(nostr_service.derive_pubkey(nostr_service.decode_seckey(nsec)))
+            except Exception:
+                continue
+    except Exception:
+        pass
+    return out
+
+
+def member_list() -> list:
+    """[{pubkey, handle, ref, bot}] -- the members this node granted a name to (the welcome bot's
+    roll). Raises when the registry cannot be read: an empty roll is never "nobody is here"."""
+    known = members()
+    bots = bot_pubkeys()
+    return [{"pubkey": pk, "handle": h, "ref": _ref(pk), "bot": pk in bots} for pk, h in sorted(known.items())]
+
+
+_REPORT_TYPES = {"nudity", "malware", "profanity", "illegal", "spam", "impersonation", "other"}
+
+
+def _report_fields(ev: dict) -> dict | None:
+    """NIP-56: the reported account is the `p` tag; a post, when there is one, the `e` tag; the type is
+    the 3rd element of either. Anything else is not a report this bot can describe truthfully."""
+    tags = [t for t in ev.get("tags") or [] if isinstance(t, list) and len(t) >= 2 and isinstance(t[1], str)]
+    p = next((t for t in tags if t[0] == "p" and len(t[1]) == 64), None)
+    if not p:
+        return None
+    e = next((t for t in tags if t[0] == "e" and len(t[1]) == 64), None)
+    kind = next((str(t[2]).lower() for t in ([e] if e else []) + [p] if len(t) > 2 and t[2]), "")
+    return {"reported": p[1], "note": e[1] if e else "",
+            "type": kind if kind in _REPORT_TYPES else "other"}
+
+
+async def reports(since: int = 0) -> list:
+    """[{id, at, reporter, reported, note, note_ref, type, reason, *_handle, *_ref}] -- NIP-56 reports
+    (kind 1984) involving THIS node's members only: filed by one of ours, or about one of ours.
+    Somebody on another server reporting somebody else is none of this instance's business."""
+    known = members()
+    pks = sorted(known)
+    if not pks:
+        return []
+    window = {"since": int(since)} if since else {}
+    evs = await _query([{"kinds": [1984], "authors": pks, "limit": 500, **window}])
+    evs += await _query([{"kinds": [1984], "#p": pks, "limit": 500, **window}])
+    out, seen = [], set()
+    for ev in sorted(evs, key=lambda e: (e.get("created_at", 0), e.get("id", ""))):
+        if ev.get("id") in seen or ev.get("kind") != 1984:
+            continue
+        seen.add(ev.get("id"))
+        f = _report_fields(ev)
+        reporter = ev.get("pubkey") or ""
+        if not f or f["reported"] == reporter:
+            continue
+        if reporter not in known and f["reported"] not in known:
+            continue
+        reason = " ".join((ev.get("content") or "").split())
+        note = f["note"]
+        out.append({"id": ev["id"], "at": int(ev.get("created_at") or 0),
+                    "reporter": reporter, "reported": f["reported"], "type": f["type"],
+                    "reason": reason[:280] + ("…" if len(reason) > 280 else ""),
+                    "note": note, "note_ref": ("nostr:" + bech32.encode("note", bytes.fromhex(note))) if note else "",
+                    "reporter_handle": handle(reporter, known), "reported_handle": handle(f["reported"], known),
+                    "reporter_ref": _ref(reporter), "reported_ref": _ref(f["reported"])})
+    return out
