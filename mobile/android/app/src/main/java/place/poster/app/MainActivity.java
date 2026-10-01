@@ -125,6 +125,14 @@ public class MainActivity extends BridgeActivity {
     public void onResume() {
         super.onResume();
         try { place.poster.app.sms.AppVisible.set(true); } catch (Throwable ignored) { }
+        SystemBars.apply(this);
+    }
+
+    /** Android drops immersive mode after a dialog, a permission prompt or a trip to another app. */
+    @Override
+    public void onWindowFocusChanged(boolean hasFocus) {
+        super.onWindowFocusChanged(hasFocus);
+        if (hasFocus) SystemBars.apply(this);
     }
 
     @Override

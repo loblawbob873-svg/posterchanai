@@ -606,7 +606,12 @@ window.PCSettingsFactory = function(dep){
              The wiring below is keyed on these ids and did not move. -->
         <!-- The phone shell (launcher / messages / dialer). Rendered by phoneshell.js, which is
              where the roles and their refusals are understood; this is only the pane it lives in. -->
-        ${window.Capacitor ? '<div class="us-pane" data-pane="phone"><div id="phone-shell"></div></div>' : ''}
+        ${window.Capacitor ? `<div class="us-pane" data-pane="phone">
+          <div id="us-bars-row">
+            <label class="fld" style="flex-direction:row;justify-content:space-between;align-items:center">Hide system bars<label class="switch"><input type="checkbox" id="set-hide-bars"><span class="slider"></span></label></label>
+            <div class="muted small">Full screen: hides the status bar and the navigation bar — on a Samsung tablet, the taskbar too. Swipe in from the edge to show them for a moment. Saved on this device.</div>
+          </div>
+          <div id="phone-shell"></div></div>` : ''}
         <div class="us-pane" data-pane="tor">
           ${_hasNativeTor() ? `<div class="fld" id="us-ntor-row"><svg class="ic fld-ico" aria-hidden="true"><use href="#i-shield"></use></svg>Tor
             <label class="fld" style="flex-direction:row;justify-content:space-between;align-items:center;margin:6px 0 0">Route everything through Tor<label class="switch"><input type="checkbox" id="us-ntor-on"><span class="slider"></span></label></label>
@@ -1016,6 +1021,22 @@ window.PCSettingsFactory = function(dep){
           O.isInstalled().then(r=>paint(!!(r&&r.installed))).catch(()=>paint(false));
           if(sb) sb.onclick=()=>{ O.start().then(r=>toast(r&&r.requested?'asked Orbot to start':'could not reach Orbot')).catch(()=>toast('could not reach Orbot')); };
           if(ob) ob.onclick=()=>{ O.openApp().catch(()=>{}); };
+        }
+      } }
+    // Hide the system bars (APK only). The choice lives on the PHONE (SystemBars, SharedPreferences) so it
+    // applies before the page loads; an APK too old to have the call loses the row instead of showing a
+    // switch that does nothing.
+    { const row=$('#us-bars-row'), sw=$('#set-hide-bars');
+      const B=_capPlugin('HomeScreen','setSystemBarsHidden');
+      if(row && sw){
+        if(!B){ row.remove(); }
+        else{
+          if(B.systemBars) B.systemBars().then(r=>{ sw.checked=!!(r&&r.hidden); }).catch(()=>{});
+          sw.onchange=()=>{ const want=sw.checked; sw.disabled=true;
+            B.setSystemBarsHidden({hidden:want})
+              .then(r=>{ sw.checked=!!(r&&r.hidden); toast(sw.checked?'system bars hidden — swipe from the edge to show them':'system bars shown'); })
+              .catch(()=>{ sw.checked=!want; toast('could not change the system bars'); })
+              .finally(()=>{ sw.disabled=false; }); };
         }
       } }
     // Hide-DM-preview toggle: persist per-device and re-render Messages so it applies immediately.

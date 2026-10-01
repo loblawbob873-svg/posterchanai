@@ -65,6 +65,30 @@ public class HomePlugin extends Plugin {
 
     public static void announceLaunchView() { announceLaunchView(""); }
 
+    /** Settings -> Phone -> "Hide system bars": store the choice for this device and apply it now. */
+    @PluginMethod
+    public void setSystemBarsHidden(PluginCall call) {
+        final boolean hidden = Boolean.TRUE.equals(call.getBoolean("hidden", false));
+        try {
+            place.poster.app.SystemBars.setWanted(getContext(), hidden);
+        } catch (Throwable t) {
+            call.reject("could not save the setting");
+            return;
+        }
+        final android.app.Activity a = getActivity();
+        if (a != null) a.runOnUiThread(() -> place.poster.app.SystemBars.apply(a));
+        JSObject o = new JSObject();
+        o.put("hidden", hidden);
+        call.resolve(o);
+    }
+
+    @PluginMethod
+    public void systemBars(PluginCall call) {
+        JSObject o = new JSObject();
+        o.put("hidden", place.poster.app.SystemBars.wanted(getContext()));
+        call.resolve(o);
+    }
+
     /** Phone or tablet, from the device's own configuration -- see FormFactor. */
     @PluginMethod
     public void formFactor(PluginCall call) {
