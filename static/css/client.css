@@ -2210,6 +2210,12 @@ body.embed .feed{max-width:680px;margin:0 auto;padding:14px;height:auto !importa
 .cmp-parent:hover,.cmp-parent:focus-visible{border-color:var(--neon);background:rgba(var(--accent-rgb),.06);outline:none}
 /* profile Replies tab: show the parent post as "↩ replying to" context above each reply */
 .reply-pair{border-bottom:1px solid var(--line)}
+/* OFFSCREEN CARDS COST NOTHING. Without this every live insert at the top of a 150-400 card feed made the
+   browser re-style and re-lay-out every card, almost all of them off screen -- measured on the real
+   Global at phone speed (6x CPU): 8.5 of the first 10 s blocked on opening, 5.7 of 10 s while posts
+   arrived. `auto` in contain-intrinsic-size remembers each card's real height once it has been drawn,
+   so the scrollbar and scroll restoration see true sizes, not the 420px guess. */
+#tl-notes>.note,#tl-notes>.reply-pair{content-visibility:auto;contain-intrinsic-size:auto 420px}
 .reply-pair>.note{border-bottom:none}
 .reply-ctx{padding:14px 20px 0 20px}
 .reply-ctx-lbl{display:inline-block;font-size:12px;letter-spacing:.6px;text-transform:uppercase;font-weight:700;

@@ -6012,8 +6012,13 @@
   function _decorName(nm){ const pk=nm.dataset.prof; if(!pk) return; const p=Store.profile(pk); if(!p) return;
     const name=p.name||p.display_name||niceNip05(p.nip05); if(!name) return;   // nip05 fallback so a name-less peer isn't stuck on the raw npub
     const em=(Store.profileEmojis&&Store.profileEmojis(pk));
-    if(em && /:[a-zA-Z0-9_+\-]+(?:@[a-zA-Z0-9.\-]+)?:/.test(name)) nm.innerHTML=emojiName(pk,name);
-    else nm.textContent=name;
+    if(em && /:[a-zA-Z0-9_+\-]+(?:@[a-zA-Z0-9.\-]+)?:/.test(name)){
+      // Compared on what was rendered FROM, not on innerHTML: the parser normalises markup, so a string
+      // compare would differ every time and rewrite every bridged name on every pass.
+      const key=name+'\u0000'+(em.size!=null?em.size:Object.keys(em).length);
+      if(nm.dataset.dn!==key){ nm.innerHTML=emojiName(pk,name); nm.dataset.dn=key; }
+    }
+    else if(nm.textContent!==name){ nm.textContent=name; delete nm.dataset.dn; }
   }
   /* Add the Monero / Bitcoin Cash marks to an already-drawn card once its author's profile lands.
      Only ever ADDS: a per-note `monero_address` tag already won at render and must not be replaced
@@ -6046,6 +6051,15 @@
       }
     }catch(_){ /* one card must never cost the whole decorate pass */ }
   }
+  /* WRITE ONLY WHAT CHANGED. This pass runs over EVERY card on every profile batch and every live
+     prepend, and assigning an identical value is still a DOM change: `textContent` swaps the text node
+     and `src` re-runs the image's update steps, so each pass invalidated layout across the whole feed.
+     Measured on the real Global at phone speed (6x CPU): it was the largest script cost while posts
+     arrived ("posterchan still slow" on an Oukitel WP55 Pro, "slightly better with autoload off").
+     `data-pic` remembers what WE last assigned, so an avatar whose picture is broken (onerror swaps in
+     the logo) is retried once, not on every pass. */
+  function _setPic(img, url){ if(!img || !url || img.dataset.pic===url) return; img.dataset.pic=url; if(img.getAttribute('src')!==url) img.src=url; }
+  function _setText(el, t){ if(el && t && el.textContent!==t) el.textContent=t; }
   function decorateProfiles(){
     /* THE TIP AFFORDANCE IS RESOLVED AT RENDER, AND A CARD IS DRAWN ONCE.
        `actsRow` falls back to the AUTHOR'S kind-0, so on a cold session the note is painted before
@@ -6060,20 +6074,20 @@
       const p=Store.profile(n.dataset.pk);
       _tipMarks(n, p||{});
       if(!p) return;
-      const a=n.querySelector('.av'); if(p.picture && a) a.src=p.picture;
-      const h=n.querySelector('.handle'); const nip=niceNip05(p.nip05); if(h && nip) h.textContent=nip;
+      _setPic(n.querySelector('.av'), p.picture);
+      _setText(n.querySelector('.handle'), niceNip05(p.nip05));
       // blue check is profile-only (saves a NIP-05 resolution per timeline author)
     });
     // DM list rows + open-thread header: fill the avatar once the peer's kind-0 arrives. The NAME is a
     // `.name[data-prof]` (see renderMessages / renderDmThread) so the emoji-aware pass below renders it —
     // do NOT set it via textContent here, which would strip custom :shortcode: emoji from the name.
     $$('.dm-peer[data-peer]').forEach(n=>{ const p=Store.profile(n.dataset.peer); if(p){
-      const a=n.querySelector('.dmav'); if(p.picture && a) a.src=p.picture;
+      _setPic(n.querySelector('.dmav'), p.picture);
     }});
     // embedded/quoted notes — fill avatar + name + nip05 once the referenced author's profile loads
     $$('.quoted .name[data-prof]').forEach(nm=>{ const pk=nm.dataset.prof; const p=Store.profile(pk); if(p){
-      const q=nm.closest('.quoted'); const a=q&&q.querySelector('.qav'); if(p.picture && a) a.src=p.picture;
-      const h=q&&q.querySelector('.handle'); const nip=niceNip05(p.nip05); if(h && nip) h.textContent=nip;
+      const q=nm.closest('.quoted'); _setPic(q&&q.querySelector('.qav'), p.picture);
+      _setText(q&&q.querySelector('.handle'), niceNip05(p.nip05));
       // blue check is profile-only (saves a NIP-05 resolution per timeline author)
     }});
     // ONE pass fills every author-name span WITH custom emoji — feed notes, quoted/reply context, poll
