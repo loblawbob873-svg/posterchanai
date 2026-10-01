@@ -33,13 +33,13 @@ class CoreAppsOpenReliably(unittest.TestCase):
         self.assertIn("n % 12 === 0", refresh)
 
     def test_background_focus_cannot_resize_the_terminal_pty(self):
-        fit = self.term[self.term.index("function _fit()"):]
+        fit = self.term[self.term.index("function _fit("):]
         fit = fit[:fit.index("function _send(")]
         guard = "frame && !frame.classList.contains('focused')"
         self.assertIn(guard, fit)
-        self.assertLess(fit.index(guard), fit.index("fit.fit()"))
+        self.assertLess(fit.index(guard), fit.index("_fitGrid()"))
         self.assertIn("_fitPixels===px && _sentSize", fit)
-        self.assertLess(fit.index("_fitPixels===px"), fit.index("fit.fit()"))
+        self.assertLess(fit.index("_fitPixels===px"), fit.index("_fitGrid()"))
 
     def test_terminal_focus_preserves_live_dom_and_scrollback(self):
         os_js = (ROOT / "static/js/client/os.js").read_text(encoding="utf-8")
