@@ -4169,8 +4169,8 @@
    * sends: the person reads it, edits it and presses Send themselves, exactly as with a draft they
    * typed.
    *
-   * WHAT LEAVES THE DEVICE IS THE TAIL OF THE CONVERSATION AND NOTHING ELSE: at most AI_CONTEXT
-   * messages, each labelled me/them. No number, no contact name, no dates.
+   * WHAT LEAVES THE DEVICE IS THEIR LAST MESSAGE AND NOTHING ELSE: one {me:false, text}. No number, no
+   * contact name, no dates, and no earlier messages -- the reply is to that message (see aiContext).
    *
    * SHOWN ONLY WHERE IT CAN WORK. Hidden on a Nostr-only node and in a bundle with no instance (the
    * same two conditions that hide every other server-backed surface), and hidden until the server
@@ -4181,7 +4181,6 @@
    * BUSY IS KEYED ON THE CONVERSATION and held on module state, like S.sending: paint() rebuilds the
    * composer on every incoming message, and a latch that lived in the render would let a second tap
    * start a second request the moment anything arrived. */
-  const AI_CONTEXT = 10;
   const AI_CHOICES = 3;
   let _aiReply = null, _aiReplyFor = '', _aiProbe = null, _aiProbeAt = 0;
   function aiReplyBlocked(){
@@ -4239,7 +4238,12 @@
       }
       if(text) out.push({ me: !m.incoming, text: text.slice(0, 1000) });
     }
-    return out.slice(-AI_CONTEXT);
+    /* THE REPLY IS TO THEIR LAST MESSAGE, AND ONLY THAT ("make sure ai for text message only generates a
+       reply from the last message"). With the conversation as context the local model answered whatever it
+       fixed on -- an old question, or my own last text. Nothing they have not sent can be answered, so
+       with no message from them there is nothing to send. */
+    for(let i = out.length - 1; i >= 0; i--) if(!out[i].me) return [out[i]];
+    return [];
   }
   async function aiSuggest(threadKey){
     S.aiBusy = S.aiBusy || new Set();
@@ -4247,7 +4251,7 @@
     const t = S.threads.find(x => x.key === threadKey);
     if(!t) return;
     const messages = aiContext(t);
-    if(!messages.length){ PC.toast('There is no message to reply to yet.'); return; }
+    if(!messages.length){ PC.toast('There is no message from them to reply to yet.'); return; }
     const owner = ME().pubkey || '';
     S.aiBusy.add(threadKey); paintAiButton();
     try{

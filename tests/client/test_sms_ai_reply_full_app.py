@@ -87,14 +87,13 @@ def test_sparkle_fills_the_composer_with_a_draft_and_never_sends(phone):
         inp = next(r for r in m['row'] if r['id'] == 'sms-in')
         assert inp['w'] >= 90, inp                                    # the text box is still usable
 
-        # Tap: one request, the bounded tail with who said what, the last message last.
+        # Tap: one request carrying THEIR last message and nothing earlier ("only generates a reply
+        # from the last message").
         await b.js("document.querySelector('#sms-ai').click()")
         await b.until("aiCalls.length===1")
         req = (await b.js("aiCalls[0]"))
         msgs = req['messages']
-        assert len(msgs) == 10, msgs
-        assert msgs[-1] == {'me': False, 'text': 'Dinner at 7 tonight?'}, msgs[-1]
-        assert msgs[0]['text'] == 'earlier message 4', msgs[0]
+        assert msgs == [{'me': False, 'text': 'Dinner at 7 tonight?'}], msgs
         # No number, no name: the thread tail and how many drafts to offer (the ✨ menu shows 3).
         assert set(req) == {'messages', 'count'} and req['count'] == 3, req
         assert all(set(x) == {'me', 'text'} for x in msgs)
@@ -146,11 +145,22 @@ def test_sparkle_is_hidden_without_ai_access_and_failures_say_so():
     asyncio.run(desktop.with_browser('online', '', check, extra))
 
 
-def test_the_context_builder_is_bounded_and_carries_no_identity():
-    """Source-level floor for the builder the browser test exercises: the window is 10 and a
-    message is reduced to {me, text} — nothing else from the row can reach the request."""
+def test_the_context_builder_sends_their_last_message_and_no_identity():
+    """Runs the shipped aiContext under node: their latest message only -- also when MY text is newest,
+    and nothing at all when they have sent nothing -- reduced to {me, text}."""
+    import json, shutil, subprocess
+    if not shutil.which('node'):
+        pytest.skip('node not installed')
     src = (Path(__file__).resolve().parents[2] / 'static/js/client/sms.js').read_text()
-    body = src[src.index('function aiContext('):src.index('async function aiSuggest(')]
-    assert "out.push({ me: !m.incoming, text: text.slice(0, 1000) })" in body
-    assert 'const AI_CONTEXT = 10;' in src
-    assert 'return out.slice(-AI_CONTEXT);' in body
+    body = src[src.index('  function aiContext('):src.index('  async function aiSuggest(')]
+    js = ("const reactionsFor=()=>({consumed:new Set()}), mmsWithoutMedia=()=>false;\n" + body + r"""
+const T=(rows)=>aiContext({msgs:rows.map(([inc,b],i)=>({doc:'d'+i,incoming:inc,body:b,parts:[]}))});
+console.log(JSON.stringify({
+  theirs: T([[true,'old question?'],[false,'answered'],[true,'Dinner at 7 tonight?']]),
+  mineNewest: T([[true,'Dinner at 7 tonight?'],[false,'let me check']]),
+  onlyMine: T([[false,'hello?']]),
+}));""")
+    out = json.loads(subprocess.run(['node', '-e', js], capture_output=True, text=True, timeout=30).stdout)
+    assert out['theirs'] == [{'me': False, 'text': 'Dinner at 7 tonight?'}], out
+    assert out['mineNewest'] == [{'me': False, 'text': 'Dinner at 7 tonight?'}], out
+    assert out['onlyMine'] == [], out

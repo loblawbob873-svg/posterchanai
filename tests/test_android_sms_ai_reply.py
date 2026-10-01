@@ -90,6 +90,12 @@ DRIVER = r"""
 
     java.util.Map<String,Object> r = new java.util.LinkedHashMap<String,Object>();
     r.put("context", ctx);
+    java.util.List<SmsMsg> rows2 = new java.util.ArrayList<SmsMsg>(rows);
+    SmsMsg mine = new SmsMsg(); mine.type = 2; mine.body = "let me check"; rows2.add(mine);
+    r.put("context_mine_newest", SmsAiReply.context(rows2));
+    java.util.List<SmsMsg> rows3 = new java.util.ArrayList<SmsMsg>();
+    SmsMsg only = new SmsMsg(); only.type = 2; only.body = "hello?"; rows3.add(only);
+    r.put("context_only_mine", SmsAiReply.context(rows3));
     SmsAiReply.Result probe = SmsAiReply.call(base, sec, null);
     r.put("probe_allowed", probe.allowed); r.put("probe_ok", probe.ok);
     SmsAiReply.Result ok = SmsAiReply.call(base + "/", sec, ctx);
@@ -155,15 +161,14 @@ def wire():
         return json.loads(r.stdout.strip())
 
 
-def test_the_context_is_the_bounded_tail_as_me_and_them(wire):
-    ctx = wire["results"]["context"]
-    assert len(ctx) == 10, ctx
-    assert ctx[-1] == {"me": False, "text": "Dinner at 7 tonight?"}
-    assert ctx[-2] == {"me": False, "text": "[a picture]"}, "a captionless picture is a turn, named"
-    assert all(set(x) == {"me", "text"} for x in ctx)
-    assert all(x["text"].strip() for x in ctx), "a blank row became an empty turn"
-    assert ctx[0]["text"] == "earlier message 6", "whitespace is collapsed, oldest dropped first"
-    assert ctx[1] == {"me": True, "text": "earlier message 7"}, "a sent row is `me`"
+def test_the_context_is_their_last_message_only(wire):
+    """ "make sure ai for text message only generates a reply from the last message": one {me:false}
+    -- their latest -- and nothing earlier, so the model cannot answer an old question instead."""
+    r = wire["results"]
+    assert r["context"] == [{"me": False, "text": "Dinner at 7 tonight?"}], r["context"]
+    assert r["context_mine_newest"] == [{"me": False, "text": "Dinner at 7 tonight?"}], \
+        "my own newest text is not what the reply answers"
+    assert r["context_only_mine"] == [], "with nothing from them there is nothing to reply to"
 
 
 def test_every_answer_becomes_what_the_screen_needs(wire):

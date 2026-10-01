@@ -27,8 +27,8 @@ import place.poster.app.sync.Json;
  * /client/files-index and /client/sync-manifest accept from SyncNet; the server checks it with its
  * own verify_self_auth and then asks the AI gate (nip05_access) about that key.
  *
- * WHAT LEAVES THE PHONE IS THE TAIL OF THE CONVERSATION AND NOTHING ELSE — at most
- * {@link #MAX_CONTEXT} messages as {me, text}. No number, no contact name, no dates.
+ * WHAT LEAVES THE PHONE IS THEIR LAST MESSAGE AND NOTHING ELSE — one {me:false, text}. No number, no
+ * contact name, no dates, no earlier messages (the same rule as sms.js aiContext).
  *
  * Android-free (no android.* import), so tests/test_android_sms_ai_reply.py compiles and RUNS it
  * with javac against a real HTTP server and feeds what it sent to the real endpoint.
@@ -38,8 +38,6 @@ public final class SmsAiReply {
 
     public static final String PATH = "/api/texts/ai-reply";
     public static final String PURPOSE = "texts-ai-reply";
-    /** The last message plus up to nine before it — the web client's AI_CONTEXT. */
-    public static final int MAX_CONTEXT = 10;
     public static final int MAX_CHARS_EACH = 1000;
     public static final int TIMEOUT_MS = 90000;    // the model may have to load after an idle spell
 
@@ -76,8 +74,16 @@ public final class SmsAiReply {
             row.put("text", text);
             out.add(row);
         }
-        int from = Math.max(0, out.size() - MAX_CONTEXT);
-        return new ArrayList<Map<String, Object>>(out.subList(from, out.size()));
+        // THEIR LAST MESSAGE, AND ONLY THAT ("make sure ai for text message only generates a reply from the
+        // last message") -- the same rule as sms.js aiContext. Nothing from them = nothing to answer.
+        for (int i = out.size() - 1; i >= 0; i--) {
+            if (!Boolean.TRUE.equals(out.get(i).get("me"))) {
+                List<Map<String, Object>> one = new ArrayList<Map<String, Object>>();
+                one.add(out.get(i));
+                return one;
+            }
+        }
+        return new ArrayList<Map<String, Object>>();
     }
 
     /** The request body. `context` null = a probe ("may this account use AI?"). */
