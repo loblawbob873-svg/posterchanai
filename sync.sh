@@ -147,7 +147,23 @@ fi
 # which (wss://poster.place/git) IS the hosting node's relay — the one pre-receive reads.
 # Needs git-remote-nostr on PATH; it is installed in /usr/local/bin on every node so this works from
 # a non-interactive ssh and from sudo, not just from an interactive login shell.
-if ! git push origin master; then
+#
+# RETRIED, because the push is the LAST step of a ~40-minute gate and the only one that crosses the
+# internet: one dropped TLS read mid-upload ("SSL error: syscall failure: Resource temporarily
+# unavailable", 2026-10-01) threw away a fully green gate. Re-pushing the same commit is idempotent --
+# if the first attempt landed, the next one is "Everything up-to-date" and exits 0.
+push_production() {
+    local n
+    for n in 1 2 3 4; do
+        git push origin master && return 0
+        if [ "$n" -lt 4 ]; then
+            echo "[sync] production push attempt $n failed; retrying in $((n * ${PC_PUSH_RETRY_SLEEP:-15}))s"
+            sleep $((n * ${PC_PUSH_RETRY_SLEEP:-15}))
+        fi
+    done
+    return 1
+}
+if ! push_production; then
     echo "[sync] ABORT: production push failed; mirrors and nodes were not updated"
     exit 1
 fi

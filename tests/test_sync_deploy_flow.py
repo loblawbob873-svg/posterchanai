@@ -377,3 +377,30 @@ def test_the_overlay_bump_runs_before_the_gate_fingerprints_the_source():
         "the overlay bump runs after the regression gate fingerprints the source, so a new desktop "
         "release mid-deploy makes --verify abort about changes sync.sh made itself")
     assert gate < verify, "the receipt must be written before it is verified"
+
+
+import pytest  # noqa: E402
+
+
+def _push_function() -> str:
+    src = open(SYNC).read()
+    start = src.index("push_production() {")
+    return src[start:src.index("\n}\n", start) + 3]
+
+
+@pytest.mark.parametrize("fails,ok", [(0, True), (1, True), (3, True), (4, False)])
+def test_a_dropped_push_is_retried_not_the_whole_gate(tmp_path, fails, ok):
+    """One TLS hiccup on the final push used to abort a fully green 40-minute deploy. RUNS the shipped
+    function against a `git` that fails `fails` times first."""
+    import subprocess
+    script = f"""
+count=0
+git() {{ count=$((count+1)); echo "git $*" >> {tmp_path}/calls; [ "$count" -gt {fails} ]; }}
+sleep() {{ :; }}
+{_push_function()}
+push_production
+"""
+    r = subprocess.run(["bash", "-c", script], capture_output=True, text=True, timeout=30)
+    assert (r.returncode == 0) is ok, r.stdout + r.stderr
+    calls = (tmp_path / "calls").read_text().splitlines()
+    assert calls == ["git push origin master"] * min(fails + 1, 4), calls
