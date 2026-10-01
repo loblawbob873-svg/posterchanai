@@ -50,12 +50,11 @@ def relay(monkeypatch):
     mail_store._SNAPS.clear()
 
 
-NOW = int(time.time())
-
-
 def at(n):
-    """A write time: old mail sits well in the past, anything written 'later' is after the walk began."""
-    return NOW - 100000 + n if n < 10000 else NOW + (n - 10000)
+    """A write time, taken when the write happens: old mail sits well in the past, anything written
+    'later' is after the walk began. (A module-level 'now' went stale in a 12-minute suite run.)"""
+    now = int(time.time())
+    return now - 100000 + n if n < 10000 else now + (n - 10000)
 
 
 def msg(uid, ts, folder="INBOX", subject="s"):

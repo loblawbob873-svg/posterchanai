@@ -4888,7 +4888,7 @@ html.pc-oswin .main{ height:100% }
 .mail-bulk-act .btn{flex:1 1 auto;min-width:0;justify-content:center}
 .mail-bulk-n{color:var(--cyan);font-weight:600}
 /* mail conversation thread + Blossom attach picker */
-.mail-thread{display:flex;flex-direction:column;flex:1;min-height:0;padding:14px 18px 24px;gap:8px;background:color-mix(in srgb,var(--bg) 82%,var(--panel))}
+.mail-thread{display:flex;flex-direction:column;flex:1 0 auto;padding:14px 18px 24px;gap:8px;background:color-mix(in srgb,var(--bg) 82%,var(--panel))}
 /* A CONVERSATION SCROLLS; IT DOES NOT SQUASH.
    `.mail-thread` is a flex column, so its messages are flex items and shrink to fit by
    default. In a six-message thread that squeezed each collapsed message from its 58px header
@@ -4926,10 +4926,14 @@ html.pc-oswin .main{ height:100% }
 .mail-msg.open .mm-chevron{transform:rotate(180deg)}
 .mail-msg-body{display:none}
 .mail-msg.open>.mail-msg-body{display:block}
+/* .mail-thread is flex:1 0 auto above (grow, never shrink) on a wide screen: shrunk inside the scrolling pane its
+   24px bottom padding stopped counting and the Reply / Forward row ended ON the window's bottom edge, where the frame
+   clipped it ("Reply and Forward buttons at the bottom of an email message on OS cut off on bottom"). A phone keeps
+   flex:1;min-height:0 below -- there the thread scrolls and the row is sticky. */
 .mail-thread-reply{display:flex;gap:8px;padding:10px 2px 0}
 .mail-thread-reply .btn{min-height:42px;gap:8px}
 @media(max-width:820px){
-  .mail-thread{padding:9px 8px calc(24px + env(safe-area-inset-bottom));gap:8px}
+  .mail-thread{flex:1;min-height:0;padding:9px 8px calc(24px + env(safe-area-inset-bottom));gap:8px}
   .mail-msg{border-radius:11px}
   .mail-msg-hd{padding:10px 10px;min-height:62px}.mm-who{flex:1}.mm-preview{display:none}
   .mm-avatar{width:38px;height:38px;flex-basis:38px}.mm-date{align-self:flex-start;margin-top:4px}
