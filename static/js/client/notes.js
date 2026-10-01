@@ -954,6 +954,7 @@
       render();
     };
     $('.nt-attach', host).onclick = () => attach(n, host);
+    wireAttachInput(n, host);
     renderRes(n, host);
     // An offloaded body is fetched on OPEN, never during the list load — pulling every large note's
     // blob just to render a list of titles would be the same mistake as reading the whole .jex.
@@ -1222,28 +1223,83 @@
     });
   }
 
-  async function attach(n, host){
-    const inp = document.createElement('input');
-    inp.type='file';
-    inp.onchange = async () => {
-      const f = inp.files && inp.files[0]; if(!f) return;
-      const state = $('.nt-state', host);
+  /* ATTACH = THE 📎 BUTTON, A PASTE, OR A DROP ("notes add ability to paste image or whatever in the note
+   * as attachment"). One path for all three: each file is encrypted to the user's Notes folder, recorded
+   * on the note, and referenced in the body -- at the cursor for a paste or drop (where the person is
+   * writing), at the end for the button. Several files go one after another, each saved as it lands, so
+   * an interrupted batch keeps what it finished. */
+  async function attachFiles(n, host, files, atCursor){
+    files = [...(files || [])].filter(f => f && typeof f.size === 'number');
+    if(!files.length) return 0;
+    const state = $('.nt-state', host), body = $('.nt-body', host);
+    let done = 0;
+    for(const f of files){
       try{
-        state.textContent = 'encrypting…';
+        state.textContent = files.length > 1 ? `encrypting ${done + 1}/${files.length}…` : 'encrypting…';
         await _ensureNotesFolder();
+        const name = f.name || ((/^image\//.test(f.type) ? 'pasted-image' : 'pasted-file') + '-' + Date.now()
+                                 + (/^image\/(\w+)/.exec(f.type) ? '.' + /^image\/(\w+)/.exec(f.type)[1] : ''));
         const sha = await PC.uploadEncFile(f, 'Notes');
         n.res = n.res || [];
-        n.res.push({ sha, name:f.name, mime:f.type||'application/octet-stream', size:f.size });
-        const body = $('.nt-body', host);
-        const ref = /^image\//.test(f.type) ? `\n![${f.name}](pcres:${sha})\n` : `\n[${f.name}](pcres:${sha})\n`;
-        body.value = body.value + ref;
+        n.res.push({ sha, name, mime:f.type||'application/octet-stream', size:f.size });
+        const ref = /^image\//.test(f.type) ? `![${name}](pcres:${sha})` : `[${name}](pcres:${sha})`;
+        if(atCursor && typeof body.selectionStart === 'number'){
+          const a = body.selectionStart, b = body.selectionEnd, v = body.value;
+          // On a line of its own, without blank lines: a break before it only mid-line, one after it
+          // only when text follows on the same line.
+          const pre = a > 0 && v[a - 1] !== '\n' ? '\n' : '', post = b < v.length && v[b] !== '\n' ? '\n' : '';
+          body.value = v.slice(0, a) + pre + ref + post + v.slice(b);
+          const at = a + pre.length + ref.length + post.length;
+          try{ body.setSelectionRange(at, at); }catch(_){ }
+        } else {
+          body.value = body.value + `\n${ref}\n`;
+        }
         n.body = body.value;
         await save(n, 'note');
-        state.textContent = 'saved';
+        done++;
         renderRes(n, host);
-      }catch(e){ toast('attach failed: '+(e.message||'error')); state.textContent=''; }
-    };
+      }catch(e){ toast('attach failed: ' + (e.message || 'error')); break; }
+    }
+    state.textContent = done ? 'saved' : '';
+    return done;
+  }
+  async function attach(n, host){
+    const inp = document.createElement('input');
+    inp.type = 'file'; inp.multiple = true;
+    inp.onchange = () => attachFiles(n, host, inp.files, false);
     inp.click();
+  }
+  /* A paste with FILES in it (a screenshot, a copied image, a file from a file manager) becomes
+   * attachments; a paste of plain text is left entirely alone. */
+  function wireAttachInput(n, host){
+    const body = $('.nt-body', host); if(!body) return;
+    // The editor can reuse this box for another note: the handlers read the note it shows NOW.
+    body._ntNote = n; body._ntHost = host;
+    if(body._ntAttach) return;
+    body._ntAttach = true;
+    const filesOf = (dt) => {
+      if(!dt) return [];
+      const fromFiles = [...(dt.files || [])];
+      if(fromFiles.length) return fromFiles;
+      return [...(dt.items || [])].filter(it => it.kind === 'file').map(it => it.getAsFile()).filter(Boolean);
+    };
+    body.addEventListener('paste', (e) => {
+      const files = filesOf(e.clipboardData);
+      if(!files.length) return;
+      e.preventDefault();
+      attachFiles(body._ntNote, body._ntHost, files, true);
+    });
+    body.addEventListener('dragover', (e) => {
+      if(e.dataTransfer && [...(e.dataTransfer.types || [])].includes('Files')){ e.preventDefault(); body.classList.add('nt-drop'); }
+    });
+    body.addEventListener('dragleave', () => body.classList.remove('nt-drop'));
+    body.addEventListener('drop', (e) => {
+      body.classList.remove('nt-drop');
+      const files = filesOf(e.dataTransfer);
+      if(!files.length) return;
+      e.preventDefault();
+      attachFiles(body._ntNote, body._ntHost, files, true);
+    });
   }
 
   /* A file written straight to disk, in one piece, on a browser with no save dialog.

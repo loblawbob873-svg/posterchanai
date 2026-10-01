@@ -11963,3 +11963,5 @@ img.md-rel:not([src]){display:none}
 .pe-preview-page{display:block;box-shadow:0 2px 14px rgba(0,0,0,.45);background:#fff}
 .pe-root.pe-previewing .pe-pages,.pe-root.pe-previewing .pe-fields,.pe-root.pe-previewing .pe-hint,
 .pe-root.pe-previewing .pe-tool,.pe-root.pe-previewing .pe-color,.pe-root.pe-previewing .pe-undo,.pe-root.pe-previewing .pe-preview-btn{display:none}
+/* Notes: a file dragged over the body says it will be attached there. */
+.nt-body.nt-drop{outline:2px dashed var(--neon);outline-offset:-4px;background:rgba(var(--accent-rgb),.06)}
