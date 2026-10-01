@@ -163,11 +163,8 @@ jobs:
           # config.ini was changed to 1536 MB. QEMU twice vanished silently after that mixed restore.
           key: avd-gles-swangle-1536-v3-${{ github.event.inputs.api_level || '34' }}
 
-      - name: Preserve emulator child exit evidence
-        run: |
-          mv "$ANDROID_HOME/emulator/emulator" "$ANDROID_HOME/emulator/emulator.pc-real"
-          cp scripts/android_emulator_supervisor.sh "$ANDROID_HOME/emulator/emulator"
-          chmod +x "$ANDROID_HOME/emulator/emulator"
+      # The exit-evidence supervisor is installed by the PRE-LAUNCH HOOK, after the action installs the
+      # emulator: a step here was overwritten by that install as soon as a newer emulator existed.
 
       # The action can continue after a failed prelaunch hook. Repeat the same preflight in
       # each mandatory verdict command so a guard failure cannot become a green device status.
@@ -184,7 +181,9 @@ jobs:
           arch: x86_64
           ram-size: 1536M
           force-avd-creation: false
-          pre-emulator-launch-script: bash scripts/android_emulator_preflight.sh
+          # The build the preflight demands, pinned: "install latest" silently changed emulators.
+          emulator-build: 15917651
+          pre-emulator-launch-script: bash scripts/android_emulator_install_supervisor.sh && bash scripts/android_emulator_preflight.sh
           emulator-options: -no-snapshot -wipe-data -no-window -gpu swangle -feature -Vulkan -noaudio -no-boot-anim -camera-back none -stdouterr-file /tmp/pc-emulator-console.txt
           disable-animations: true
           script: |
@@ -224,7 +223,9 @@ jobs:
           # cold boot, independent of the emulator revision setup-android installed today.
           # Linux emulator supports direct stdout/stderr capture but requires an existing file.
           # Keep QEMU's final message even after the action's background-shell pipe is closed.
-          pre-emulator-launch-script: bash scripts/android_emulator_preflight.sh
+          # The build the preflight demands, pinned: "install latest" silently changed emulators.
+          emulator-build: 15917651
+          pre-emulator-launch-script: bash scripts/android_emulator_install_supervisor.sh && bash scripts/android_emulator_preflight.sh
           emulator-options: -no-snapshot -wipe-data -no-window -gpu swangle -feature -Vulkan -noaudio -no-boot-anim -camera-back none -stdouterr-file /tmp/pc-emulator-console.txt
           disable-animations: true
           # Separate fresh boot: no test state or dead transport inherited from instrumentation.

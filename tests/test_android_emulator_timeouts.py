@@ -184,7 +184,7 @@ def test_emulator_crashpad_evidence_is_uploaded_for_host_process_failures():
 
 
 def test_emulator_console_survives_background_shell_and_action_teardown():
-    assert WORKFLOW.count('pre-emulator-launch-script: bash scripts/android_emulator_preflight.sh') == 2
+    assert WORKFLOW.count('pre-emulator-launch-script: bash scripts/android_emulator_install_supervisor.sh && bash scripts/android_emulator_preflight.sh') == 2
     assert 'touch "${PC_EMULATOR_CONSOLE:-/tmp/pc-emulator-console.txt}"' in (ROOT/'scripts/android_emulator_preflight.sh').read_text()
     options = [line for line in WORKFLOW.splitlines() if 'emulator-options:' in line]
     assert len(options) == 2
@@ -196,7 +196,9 @@ def test_emulator_console_survives_background_shell_and_action_teardown():
     ("Android emulator version 37.1.11.0 (build_id 15917651) (CL:N/A)", True, False),
     ("Android emulator version 37.2.0.0 (build_id 99999999) (CL:N/A)", False, False),
     ("", False, False),
-    ("Android emulator version 37.1.11.0 (build_id 15917651) (CL:N/A)", False, True),
+    # The action's emulator install REPLACED the wrapper (a newer emulator was released): the hook
+    # puts it back before the preflight, so the boot still runs behind the supervisor.
+    ("Android emulator version 37.1.11.0 (build_id 15917651) (CL:N/A)", True, True),
 ])
 def test_actual_prelaunch_guards_renderer_experiment_build(tmp_path,version,accepted,tampered):
     """Execute both workflow prelaunch scripts; emulator drift must fail before a boot."""
@@ -230,3 +232,36 @@ def test_failed_prelaunch_cannot_turn_into_successful_device_verdict(tmp_path):
         assert result.returncode!=0
         status=tmp_path/('instrumented-status' if i==0 else 'device-status')
         assert status.exists() and status.read_text().strip()!='0'
+
+
+def test_the_emulator_build_is_pinned_and_the_wrapper_is_installed_after_the_actions_install():
+    """2026-10-01: every APK build stopped. The action ran "Installing latest emulator", a newer emulator
+    had been released, the install overwrote the supervisor an EARLIER step had put in place, and the
+    preflight (rightly) refused. The build is pinned to the one the preflight demands, and the wrapper
+    goes in from the pre-launch hook, which runs after that install."""
+    import yaml
+    flow = yaml.safe_load(WORKFLOW)
+    steps = flow['jobs']['emulator']['steps']
+    boots = [s for s in steps if s.get('uses', '').startswith('reactivecircus/android-emulator-runner@')]
+    assert len(boots) == 2
+    for b in boots:
+        assert str(b['with'].get('emulator-build')) == '15917651', b['with']
+        assert b['with']['pre-emulator-launch-script'].startswith('bash scripts/android_emulator_install_supervisor.sh && ')
+    assert not any('android_emulator_supervisor.sh' in str(s.get('run', '')) for s in steps), \
+        "a step before the action installs the wrapper -- the action's emulator install overwrites it"
+
+
+def test_the_hook_heals_a_wrapper_the_install_replaced_and_refuses_a_missing_emulator(tmp_path):
+    sdk = tmp_path / 'sdk'; (sdk / 'emulator').mkdir(parents=True)
+    script = 'bash scripts/android_emulator_install_supervisor.sh'
+    r = subprocess.run(['bash', '-c', script], cwd=ROOT, env={**os.environ, 'ANDROID_HOME': str(sdk)},
+                       capture_output=True, text=True, timeout=5)
+    assert r.returncode != 0, 'no emulator at all must not pass as installed'
+    real = sdk / 'emulator/emulator'; real.write_text('#!/bin/sh\necho real\n'); real.chmod(0o755)
+    for _ in range(2):                                   # idempotent
+        r = subprocess.run(['bash', '-c', script], cwd=ROOT, env={**os.environ, 'ANDROID_HOME': str(sdk)},
+                           capture_output=True, text=True, timeout=5)
+        assert r.returncode == 0, r.stderr
+    assert real.read_bytes() == (ROOT / 'scripts/android_emulator_supervisor.sh').read_bytes()
+    assert (sdk / 'emulator/emulator.pc-real').read_text() == '#!/bin/sh\necho real\n', \
+        'a second run replaced the real emulator with the wrapper'
