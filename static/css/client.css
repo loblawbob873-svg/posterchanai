@@ -5861,6 +5861,18 @@ html.pc-oswin .main{ height:100% }
   .dm-thread .topbar .mini{min-height:38px;padding-inline-start:12px;padding-inline-end:12px}
 }
 
+/* ON A PHONE THE BOX GETS ITS OWN LINE ("message field in dms is so small, no space to type"). One row
+   held 📎 📁 GIF ✨, the box, the send-status label and Send -- all fixed widths, so every tool added came
+   straight out of the box, which ended up ~100px on a 360px phone. The tools (and the status, at the
+   end of their line) go above; the box shares its line only with Send. */
+@media (max-width:600px){
+  .dm-row{flex-wrap:wrap;row-gap:6px}
+  .dm-row .mini{order:0}
+  .dm-row .dm-sendstate{order:1;margin-inline-start:auto;align-self:center;max-width:none}
+  .dm-compose .input.dm-in{order:2;flex:1 1 calc(100% - 56px)}
+  .dm-row .dm-sendbtn{order:3}
+}
+
 /* an encrypted attachment before (and if) it decrypts */
 .encatt{display:inline-block;max-width:100%}
 .encatt.done{display:block}
@@ -5888,6 +5900,9 @@ html.pc-oswin .main{ height:100% }
 .dm-rb-who{font-size:11px;color:var(--neon);letter-spacing:.03em}
 .dm-rb-txt{font-size:15px;color:var(--muted);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .dm-replybar .mini{flex:0 0 auto;width:36px;height:36px}
+/* `display:flex` above outranks the `hidden` attribute -- with no reply pending, an empty banner sat over
+   every composer, eating height on the screen that has the least of it. */
+.dm-replybar[hidden]{display:none}
 
 /* a quoted line inside a bubble (what a reply looks like on arrival, in any client) */
 .bubble .b-quote{display:block;border-inline-start:2px solid var(--line);padding-inline-start:8px;margin-bottom:6px;

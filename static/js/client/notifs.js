@@ -49,7 +49,10 @@ window.PCNotifsFactory = function(dep){
     return _followSeen[e.pubkey] || Math.min(e.created_at, S._notifEpoch);
   }
   async function watchNotifications(){
-    seenNotif.last = +(localStorage.getItem('pc_notif_seen')||0);
+    /* FORWARD ONLY. Another monitor's read can arrive (a `storage` event, app.js) before this runs, and
+     * re-reading storage here then put the marker BACK -- that monitor's bell relit for what it had
+     * already read. A read marker never moves backwards. */
+    seenNotif.last = Math.max(seenNotif.last || 0, +(localStorage.getItem('pc_notif_seen')||0));
     // Seed the known-follower set from the FULL current follower list BEFORE going live. kind-3 is the
     // follower's whole contact list, republished on every edit — so without a comprehensive seed, a
     // fresh client / cleared storage / a follower beyond the live sub's 150-cap re-pings as a "new
