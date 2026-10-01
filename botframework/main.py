@@ -459,23 +459,12 @@ def main():
         from autopost import autopost
         print("Starting Auto-post preview (no posting)...")
         autopost(print_only=True)
-    elif args.blockbot:
-        from config import PLEROMA_ENDPOINT, NOSTR_NSEC
-        if PLEROMA_ENDPOINT:
-            from blockbot import background, waitToStart
-            waitToStart()
-            print("Starting Pleroma blockbot daemon...")
-            background()
-        elif NOSTR_NSEC:
-            # A Nostr bot: blocks come from this node (fediverse Blocks at its ActivityPub server,
-            # public Nostr mute lists), and it posts as its own account -- see nostr_blockbot.py.
-            from nostr_blockbot import background, waitToStart
-            waitToStart()
-            print("Starting the Nostr block bot daemon...")
-            background()
-        else:
-            print("ERROR: the block bot needs a Pleroma account or a Nostr key")
-            return
+    elif has_daemon:
+        # EVERY daemon mode the bot was given, not the first one. This was an elif chain, so a bot
+        # saved as --blockbot --hashtagbot --welcome --report ran the block bot and nothing else --
+        # the hashtag bot on the main Nostr bot had never posted, and the welcome and report bots
+        # were switched on and silent. Found by enabling them and reading the log.
+        _run_daemons(args)
     elif args.blocks or args.blocks_print or args.scalps or args.scalps_print or args.fba:
         from config import PLEROMA_ENDPOINT
         if PLEROMA_ENDPOINT:
@@ -518,23 +507,6 @@ def main():
         except KeyboardInterrupt:
             print("\n\nShutting down...")
             return
-    elif args.welcome:
-        from config import PLEROMA_ENDPOINT, NOSTR_NSEC
-        if PLEROMA_ENDPOINT:
-            from welcomebot import background, waitToStart, init_db
-            init_db()
-            waitToStart()
-            print("Starting Pleroma welcome bot daemon...")
-            background()
-        elif NOSTR_NSEC:
-            # A Nostr bot welcomes the people this node grants a NIP-05 name -- nostr_welcomebot.py.
-            from nostr_welcomebot import background, waitToStart
-            waitToStart()
-            print("Starting Nostr welcome bot daemon...")
-            background()
-        else:
-            print("ERROR: the welcome bot needs PLEROMA_ENDPOINT or NOSTR_NSEC")
-            return
     elif args.welcome_print:
         from config import PLEROMA_ENDPOINT
         if PLEROMA_ENDPOINT:
@@ -544,23 +516,6 @@ def main():
         else:
             from nostr_welcomebot import welcome
             welcome(print_only=True)
-    elif args.report:
-        from config import PLEROMA_ENDPOINT, NOSTR_NSEC
-        if PLEROMA_ENDPOINT:
-            from reportbot import background, waitToStart, init_db
-            init_db()
-            waitToStart()
-            print("Starting Pleroma report bot daemon...")
-            background()
-        elif NOSTR_NSEC:
-            # A Nostr bot announces NIP-56 reports involving this instance's members -- nostr_reportbot.py.
-            from nostr_reportbot import background, waitToStart
-            waitToStart()
-            print("Starting Nostr report bot daemon...")
-            background()
-        else:
-            print("ERROR: the report bot needs PLEROMA_ENDPOINT or NOSTR_NSEC")
-            return
     elif args.report_print:
         from config import PLEROMA_ENDPOINT
         if PLEROMA_ENDPOINT:
@@ -570,27 +525,10 @@ def main():
         else:
             from nostr_reportbot import reports
             reports(print_only=True)
-    elif args.hashtagbot:
-        from hashtagbot import background, waitToStart, get_config
-        get_config()
-        waitToStart()
-        print("Starting Hashtag bot daemon (posts at 6am and 6pm)...")
-        background()
     elif args.hashtagbot_print:
         from hashtagbot import post_trending_hashtags, get_config
         get_config()
         post_trending_hashtags(print_only=True)
-    elif args.unfollowbot:
-        from unfollowbot import background, waitToStart, init_db
-        from config import PLEROMA_ENDPOINT
-        init_db()
-        waitToStart()
-        if PLEROMA_ENDPOINT:
-            print("Starting Pleroma unfollowbot daemon...")
-            background()
-        else:
-            print("ERROR: PLEROMA_ENDPOINT is not configured")
-            return
     elif args.unfollows:
         from unfollowbot import pleroma_unfollows, init_db
         init_db()
@@ -599,6 +537,85 @@ def main():
         from unfollowbot import pleroma_unfollows, init_db
         init_db()
         pleroma_unfollows(print_only=True)
+
+
+def _daemon_plan(args) -> list:
+    """[(label, start)] for every daemon mode set on `args`, IMPORTED HERE on the main thread (see the
+    import rule in main()); the threads only call into modules that are already loaded."""
+    from config import PLEROMA_ENDPOINT, NOSTR_NSEC
+    plan = []
+
+    def add(label, mod, init=None):
+        def start():
+            if init:
+                init()
+            mod.waitToStart()
+            print(f"Starting {label} daemon...", flush=True)
+            mod.background()
+        plan.append((label, start))
+
+    if args.blockbot:
+        if PLEROMA_ENDPOINT:
+            import blockbot
+            add("Pleroma blockbot", blockbot)
+        elif NOSTR_NSEC:
+            # Blocks come from this node (fediverse Blocks + public Nostr mute lists) -- nostr_blockbot.py.
+            import nostr_blockbot
+            add("the Nostr block bot", nostr_blockbot)
+        else:
+            print("ERROR: the block bot needs a Pleroma account or a Nostr key")
+    if args.welcome:
+        if PLEROMA_ENDPOINT:
+            import welcomebot
+            add("Pleroma welcome bot", welcomebot, welcomebot.init_db)
+        elif NOSTR_NSEC:
+            # Welcomes the people this node grants a NIP-05 name -- nostr_welcomebot.py.
+            import nostr_welcomebot
+            add("Nostr welcome bot", nostr_welcomebot)
+        else:
+            print("ERROR: the welcome bot needs PLEROMA_ENDPOINT or NOSTR_NSEC")
+    if args.report:
+        if PLEROMA_ENDPOINT:
+            import reportbot
+            add("Pleroma report bot", reportbot, reportbot.init_db)
+        elif NOSTR_NSEC:
+            # NIP-56 reports involving this instance's members -- nostr_reportbot.py.
+            import nostr_reportbot
+            add("Nostr report bot", nostr_reportbot)
+        else:
+            print("ERROR: the report bot needs PLEROMA_ENDPOINT or NOSTR_NSEC")
+    if args.hashtagbot:
+        import hashtagbot
+        add("Hashtag bot (posts at 6am and 6pm)", hashtagbot, hashtagbot.get_config)
+    if args.unfollowbot:
+        if PLEROMA_ENDPOINT:
+            import unfollowbot
+            add("Pleroma unfollowbot", unfollowbot, unfollowbot.init_db)
+        else:
+            print("ERROR: PLEROMA_ENDPOINT is not configured")
+    return plan
+
+
+def _run_daemons(args) -> None:
+    """Run every daemon mode at once, one thread each, and hold the process open while any lives."""
+    plan = _daemon_plan(args)
+    if not plan:
+        return
+    started = []
+    for label, start in plan:
+        def guarded(label=label, start=start):
+            try:
+                start()
+            except Exception as e:                     # one daemon dying must not take the others
+                print(f"[ERROR] {label} stopped: {type(e).__name__}: {e}", flush=True)
+        t = threading.Thread(target=guarded, name=label, daemon=True)
+        t.start()
+        started.append(t)
+    try:
+        while any(t.is_alive() for t in started):
+            time.sleep(5)
+    except KeyboardInterrupt:
+        print("\nShutting down...")
 
 if __name__ == "__main__":
     main()

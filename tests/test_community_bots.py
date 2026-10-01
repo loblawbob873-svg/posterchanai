@@ -410,3 +410,67 @@ def test_a_nostr_report_and_welcome_bot_take_the_nostr_path(flag):
     out = r.stdout + r.stderr
     assert "psycopg" not in out and "PLEROMA" not in out and "Database configuration" not in out, out[-2000:]
     assert "could not read" in out.lower(), out[-2000:]
+
+
+def test_a_bot_with_several_daemon_modes_runs_every_one_of_them(monkeypatch):
+    """main.py ran its daemon modes through an elif chain, so `--blockbot --hashtagbot --welcome
+    --report` started the block bot and NOTHING ELSE -- found by switching the welcome and report bots
+    on and reading the log ("Starting the Nostr block bot daemon..." and no other line). Runs the
+    shipped main() with stand-in daemon modules and asserts every one of them was started."""
+    import threading
+    import types
+    here = os.path.join(os.path.dirname(__file__), "..", "botframework")
+    monkeypatch.syspath_prepend(here)
+    monkeypatch.setenv("NOSTR_NSEC", "11" * 32)
+    monkeypatch.delenv("PLEROMA_ENDPOINT", raising=False)
+    for m in ("main", "config"):
+        sys.modules.pop(m, None)
+    ran, lock = [], threading.Lock()
+
+    def fake(name, **extra):
+        mod = types.ModuleType(name)
+        mod.waitToStart = lambda: None
+
+        def background():
+            with lock:
+                ran.append(name)
+        mod.background = background
+        for k, v in extra.items():
+            setattr(mod, k, v)
+        monkeypatch.setitem(sys.modules, name, mod)
+    for n in ("nostr_blockbot", "nostr_welcomebot", "nostr_reportbot"):
+        fake(n)
+    fake("hashtagbot", get_config=lambda: None)
+    fake("nostr", ensure_profile=lambda: None, ensure_server_list=lambda: None)
+    import main
+    monkeypatch.setattr(sys, "argv", ["main.py", "--blockbot", "--hashtagbot", "--welcome", "--report"])
+    main.main()
+    assert sorted(ran) == ["hashtagbot", "nostr_blockbot", "nostr_reportbot", "nostr_welcomebot"], ran
+
+
+def test_one_daemon_dying_does_not_take_the_others(monkeypatch):
+    import types
+    here = os.path.join(os.path.dirname(__file__), "..", "botframework")
+    monkeypatch.syspath_prepend(here)
+    monkeypatch.setenv("NOSTR_NSEC", "11" * 32)
+    monkeypatch.delenv("PLEROMA_ENDPOINT", raising=False)
+    for m in ("main", "config"):
+        sys.modules.pop(m, None)
+    ran = []
+    for n in ("nostr_welcomebot", "nostr_reportbot"):
+        mod = types.ModuleType(n)
+        mod.waitToStart = lambda: None
+        if n == "nostr_welcomebot":
+            def boom():
+                raise RuntimeError("relay down")
+            mod.background = boom
+        else:
+            mod.background = lambda n=n: ran.append(n)
+        monkeypatch.setitem(sys.modules, n, mod)
+    nk = types.ModuleType("nostr")
+    nk.ensure_profile = nk.ensure_server_list = lambda: None
+    monkeypatch.setitem(sys.modules, "nostr", nk)
+    import main
+    monkeypatch.setattr(sys, "argv", ["main.py", "--welcome", "--report"])
+    main.main()
+    assert ran == ["nostr_reportbot"]
