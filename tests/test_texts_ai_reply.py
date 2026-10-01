@@ -274,3 +274,28 @@ class ChoiceTests(unittest.TestCase):
         chat = _FakeChat("\n".join(f"{i}. option {i}" for i in range(1, 10)))
         code, out = _body(_run(T.TextsAiReplyReq(messages=_thread(3), count=50), chat, user=_User()))
         self.assertEqual(len(out["choices"]), S.MAX_CHOICES)
+
+
+# ---- "give you a few choices for generate a reply based on the last message they sent" ----------------
+def test_choices_answer_their_latest_message_by_name():
+    from app.services.texts_ai_service import build_choice_messages
+    ask = build_choice_messages([(False, "hi"), (False, "want pizza tonight?")], 3)[1]["content"]
+    assert 'replies to their latest message: "want pizza tonight?"' in ask, ask
+    assert ask.rstrip().endswith("My 3 options:")
+
+
+def test_choices_still_answer_them_when_my_message_is_newest():
+    """When MY message was newest the ask used to be 'a follow-up to my last message', so the options
+    answered me rather than them."""
+    from app.services.texts_ai_service import build_choice_messages
+    ask = build_choice_messages([(False, "are you coming saturday?"), (True, "let me check")], 3)[1]["content"]
+    tail = ask.split("TEXTS\n\n", 1)[1]
+    assert 'their latest message: "are you coming saturday?"' in tail, tail
+    assert '"let me check"' in tail and "do not repeat" in tail, tail
+    assert "follow-up to my last message" not in tail, tail
+
+
+def test_choices_keep_the_conversation_fenced():
+    from app.services.texts_ai_service import build_choice_messages
+    ask = build_choice_messages([(False, "x"), (True, "y")], 3)[1]["content"]
+    assert ask.count("<<<TEXTS") == 1 and ask.count("\nTEXTS\n") == 1, ask

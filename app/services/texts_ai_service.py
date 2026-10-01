@@ -123,8 +123,22 @@ def build_choice_messages(context: list, n: int, medium: str = SMS) -> list:
         "conversation — when a real answer needs something only the user knows, keep it open-ended "
         "or ask. Match the conversation's language and tone. Output ONLY the options, one per line, "
         f"numbered 1. to {n}. — no quotes, no \"Me:\" labels, no commentary.")}
-    msgs[1] = {"role": "user", "content": msgs[1]["content"].rsplit("\n\nMy text:", 1)[0]
-               + f"\n\nMy {n} options:"}
+    # ANCHORED ON THEIR LATEST MESSAGE ("give you a few choices for generate a reply based on the last
+    # message they sent"). The quoted conversation alone left the local model free to answer whatever
+    # it fixed on -- and when MY message was newest the ask was "a follow-up to my last message", so the
+    # options answered me. The choices now always answer their latest message, quoted, and are told
+    # what I have already sent after it so they do not repeat it.
+    body = msgs[1]["content"].rsplit("\n\n", 2)[0]          # the fenced conversation, without the old ask
+    theirs = [i for i, (mine, _t) in enumerate(context) if not mine]
+    if theirs:
+        last = theirs[-1]
+        ask = f"Write {n} different replies to their latest message: \"{context[last][1]}\""
+        after = [t for mine, t in context[last + 1:] if mine]
+        if after:
+            ask += " — I have already sent after it: " + " / ".join(f"\"{t}\"" for t in after) + ", so do not repeat that."
+    else:
+        ask = f"Write {n} different next texts for me in this conversation."
+    msgs[1] = {"role": "user", "content": body + "\n\n" + ask + f"\n\nMy {n} options:"}
     return msgs
 
 
