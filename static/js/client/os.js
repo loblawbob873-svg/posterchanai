@@ -10964,7 +10964,11 @@
                 else if(kind === 'acct'){ if(PC().accountAct) PC().accountAct(val); }
                 /* A capture asked for from a popup (the tray, the Print Screen prompt): taken HERE,
                    because the popup that asked is closing. */
-                else if(kind === 'shot'){ if(window.PCOSShell && PCOSShell.takeShot) PCOSShell.takeShot(val === 'region' ? 'region' : 'screen'); }
+                else if(kind === 'shot'){
+                  const d = /^delay-(\d+)$/.exec(val);
+                  if(d){ if(window.PCOSShell && PCOSShell.delayedShot) PCOSShell.delayedShot(Number(d[1])); }
+                  else if(window.PCOSShell && PCOSShell.takeShot) PCOSShell.takeShot(val === 'region' ? 'region' : 'screen');
+                }
                 else if(kind === 'app') launchMachineApp(val);
                 /* Put on / taken off the desktop from the start menu. Performed HERE, in the window
                    that has read the layout and holds the write gate: the menu is a popup that closes

@@ -149,3 +149,79 @@ def test_the_prompt_window_has_a_visible_neon_frame():
     assert got["brackets"] >= 8, got
     assert got["inside"], got
     assert got["glow"] and got["glow"] != "none", got
+
+
+# ---- "add option for a timed delay before the capture so user has time to prep … Make entire screen
+#      capture window much larger in size" ------------------------------------------------------------
+
+@pytest.mark.skipif(not Path("/opt/google/chrome/chrome").exists(), reason="Chrome required")
+def test_the_prompt_window_takes_most_of_the_screen():
+    async def check(b):
+        await desktop.login(b)
+        await b.until("!!window.PCOS && PCOS.isOn() && !!window.PCOSShell")
+        await b.js("document.getElementById('osfr')?.remove();document.documentElement.classList.remove('osfr-on')")
+        await b.js("document.dispatchEvent(new KeyboardEvent('keydown',{key:'PrintScreen',keyCode:44,bubbles:true,cancelable:true}))")
+        await b.until("__opened.length>0")
+        kind, rect = await b.js("__opened[0]")
+        vw, vh = await b.js("[innerWidth, innerHeight]")
+        assert kind == "shot" and rect["width"] >= 0.8 * vw and rect["height"] >= 0.8 * vh, (rect, vw, vh)
+        assert rect["x"] >= 0 and rect["y"] >= 0 and rect["x"] + rect["width"] <= vw + 1, rect
+
+    asyncio.run(desktop.with_browser("online", "", check, COMPOSITOR + BRIDGES))
+
+
+@pytest.mark.skipif(not Path("/opt/google/chrome/chrome").exists(), reason="Chrome required")
+def test_in_the_big_window_the_preview_fills_it_and_a_delay_hands_off_to_the_desktop():
+    async def check(b):
+        await b.call("Emulation.setDeviceMetricsOverride", {"width": 1180, "height": 760, "deviceScaleFactor": 1, "mobile": False})
+        await b.until("!!document.querySelector('.os-shot-popup .shot-prompt')")
+        lay = await b.js("""(()=>{const p=document.querySelector('.shot-prev').getBoundingClientRect(),
+            d=[...document.querySelectorAll('[data-shot-delay]')].map(b=>b.dataset.shotDelay),
+            acts=document.querySelector('.shot-acts').getBoundingClientRect();
+            return {prevH:p.height, d, actsInside:acts.bottom<=innerHeight}})()""")
+        assert lay["d"] == ["3", "5", "10"], lay
+        assert lay["prevH"] >= 0.5 * 760 and lay["actsInside"], ("the preview does not fill the window", lay)
+        await b.js("document.querySelector('[data-shot-delay=\"5\"]').click()")
+        await asyncio.sleep(.6)
+        shot, acts = await b.js("[__shot, __acts]")
+        assert ["discard", "/tmp/posterchan-shots-1000/s.png"] in shot and "shot:delay-5" in acts, (shot, acts)
+        assert not any(x[0] == "take" for x in shot), "a timed retake saved the old capture"
+
+    asyncio.run(desktop.with_browser("online", "?pcpopup=shot", check, BRIDGES + STAGED))
+
+
+@pytest.mark.skipif(not Path("/opt/google/chrome/chrome").exists(), reason="Chrome required")
+def test_the_desktop_counts_down_on_the_taskbar_and_the_countdown_is_not_in_the_picture():
+    """The countdown is a taskbar chip (a window would take the keyboard from what is being set up);
+    it is gone BEFORE the capture is staged, and the new capture opens in the prompt."""
+    async def check(b):
+        await desktop.login(b)
+        await b.until("!!window.PCOS && PCOS.isOn() && !!window.__wm && !!__wm.emit && !!document.getElementById('os-bar')")
+        await b.js("{const st=pcShot.stage;pcShot.stage=async()=>{__shot.push(['chip-at-capture', !!document.getElementById('os-shot-count')]);return st();};}")
+        await b.js("window.__chips=[];new MutationObserver(()=>{const c=document.getElementById('os-shot-count');"
+                   "const t=c?c.textContent:'';if(t&&__chips[__chips.length-1]!==t)__chips.push(t);})"
+                   ".observe(document.body,{subtree:true,childList:true,characterData:true})")
+        await b.js("__wm.emit({name:'tick',change:'run',payload:'pc:act:shot:delay-3'})")
+        await b.until("__chips.includes('◉ 2')")
+        assert not await b.js("__shot.some(x=>x[0]==='stage')"), "it captured before the countdown ended"
+        await b.until("__opened.some(o=>o[0]==='shot')")
+        assert await b.js("__chips") == ["◉ 3", "◉ 2", "◉ 1"], await b.js("__chips")
+        assert await b.js("__shot.find(x=>x[0]==='chip-at-capture')[1]") is False, "the countdown chip was in the picture"
+        assert not await b.js("!!document.getElementById('os-shot-count')")
+
+    asyncio.run(desktop.with_browser("online", "", check, COMPOSITOR + BRIDGES))
+
+
+@pytest.mark.skipif(not Path("/opt/google/chrome/chrome").exists(), reason="Chrome required")
+def test_clicking_the_countdown_cancels_it():
+    async def check(b):
+        await desktop.login(b)
+        await b.until("!!window.PCOS && PCOS.isOn() && !!window.PCOSShell && !!document.getElementById('os-bar')")
+        await b.js("PCOSShell.delayedShot(3)")
+        await b.until("!!document.getElementById('os-shot-count')")
+        await b.js("document.getElementById('os-shot-count').click()")
+        await asyncio.sleep(3.6)
+        assert not await b.js("__shot.some(x=>x[0]==='stage')"), "a cancelled countdown still took the screenshot"
+        assert not await b.js("!!document.getElementById('os-shot-count')")
+
+    asyncio.run(desktop.with_browser("online", "", check, COMPOSITOR + BRIDGES))

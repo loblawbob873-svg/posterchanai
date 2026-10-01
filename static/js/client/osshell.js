@@ -1486,6 +1486,59 @@
    * nothing is the one outcome this feature must never have. */
   let _shotPromptBusy = false;
   const SHOT_STAGE_KEY = 'pc_shot_stage';
+  /* A TIMED CAPTURE ("add option for a timed delay before the capture so user has time to prep"). */
+  const SHOT_DELAYS = [3, 5, 10];
+  const SHOT_DELAY_ROW = `<div class="shot-delay" role="group" aria-label="Retake after a delay">
+        <span class="shot-delay-lbl">Retake after</span>
+        ${SHOT_DELAYS.map(n => `<button class="shot-delay-btn" data-shot-delay="${n}">${n} s</button>`).join('')}
+      </div>`;
+  /* THE COUNTDOWN IS A CHIP ON THE TASKBAR, never a window: a window would take the keyboard from
+   * the application being set up (and close the very menu somebody wants in the picture). It is
+   * removed, and two frames are let through, BEFORE the capture -- the chip is never in the shot.
+   * Clicking it cancels. The taskbar can be redrawn mid-countdown, so it is put back every tick. */
+  let _shotCount = null;
+  function _shotChip(n){
+    const doc = root.document, bar = doc.getElementById('os-bar');
+    let chip = doc.getElementById('os-shot-count');
+    if(n == null){ if(chip) chip.remove(); return null; }
+    const host = bar && (bar.querySelector('.os-tray') || bar);
+    if(!host) return null;
+    if(!chip || chip.parentElement !== host){
+      if(chip) chip.remove();
+      chip = doc.createElement('button');
+      chip.id = 'os-shot-count'; chip.className = 'os-shot-count';
+      chip.onclick = (e) => { e.stopPropagation(); cancelDelayedShot(); toast('Timed screenshot cancelled'); };
+      host.insertBefore(chip, host.firstChild);
+    }
+    chip.textContent = '◉ ' + n;
+    chip.title = 'Screenshot in ' + n + ' s — click to cancel';
+    chip.setAttribute('aria-label', chip.title);
+    return chip;
+  }
+  function cancelDelayedShot(){
+    if(_shotCount){ clearInterval(_shotCount.t); _shotCount = null; }
+    _shotChip(null);
+  }
+  function delayedShot(sec){
+    sec = Math.max(1, Math.min(60, Math.round(Number(sec) || 5)));
+    cancelDelayedShot();
+    closePop();
+    /* Counted against a DEADLINE and re-asserted every 200ms: closing the flyout redraws the taskbar,
+       which took the chip with it -- the "3" never showed and the countdown appeared to start at 2. */
+    const c = _shotCount = { end: Date.now() + sec * 1000 };
+    const tick = async () => {
+      if(_shotCount !== c) return;
+      const left = Math.ceil((c.end - Date.now()) / 1000);
+      if(left > 0){ _shotChip(left); return; }
+      clearInterval(c.t); _shotCount = null;
+      _shotChip(null);
+      await new Promise(r => requestAnimationFrame(() => requestAnimationFrame(() => setTimeout(r, 60))));
+      try{ await shotPrompt('screen'); }catch(_){ }
+    };
+    c.t = setInterval(tick, 200);
+    setTimeout(tick, 0);
+    return { delayed: sec };
+  }
   /* Layout → viewport pixels, measured off the taskbar (see openTrayWindow for why it is measured). */
   function _zoomK(){
     try{ const b = root.document.getElementById('os-bar');
@@ -1513,13 +1566,14 @@
     const esc = (x) => String(x == null ? '' : x).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
     host.innerHTML = `<div class="shot-prompt" role="dialog" aria-label="Screenshot">
         <div class="shot-hd"><span class="shot-glyph" aria-hidden="true">◉</span><b>SCREEN CAPTURED</b><span class="shot-sub">choose what to keep</span></div>
-        ${st.preview ? `<img class="shot-prev" src="${esc(st.preview)}" alt="The screenshot">` : ''}
+        ${st.preview ? `<div class="shot-prev-box"><img class="shot-prev" src="${esc(st.preview)}" alt="The screenshot"></div>` : ''}
         <div class="shot-acts">
           <button class="shot-btn shot-save" data-shot-act="save"><b>Save to Pictures</b><kbd>Enter</kbd></button>
           <button class="shot-btn" data-shot-act="copy"><b>Save &amp; copy</b><kbd>C</kbd></button>
           ${st.region ? `<button class="shot-btn" data-shot-act="region"><b>Select region</b><kbd>R</kbd></button>` : ''}
           <button class="shot-btn shot-cancel" data-shot-act="cancel"><b>Cancel</b><kbd>Esc</kbd></button>
         </div>
+        ${SHOT_DELAY_ROW}
         <div class="shot-foot" role="status">~/Pictures/Screenshots${st.region ? '' : ' · selecting a region needs slurp'}</div>
       </div>`;
     let busy = false;
@@ -1529,6 +1583,9 @@
       if(busy) return; busy = true;
       if(a === 'cancel'){ drop(); try{ root.close(); }catch(_){ } return; }
       if(a === 'region'){ drop(); try{ root.pcPopup.act('shot:region'); }catch(_){ try{ root.close(); }catch(_){ } } return; }
+      /* A TIMED RETAKE is taken by the DESKTOP, which outlives this window: the countdown and the
+         capture cannot run in a window that has to be gone before the picture is taken. */
+      if(/^delay-\d+$/.test(a)){ drop(); try{ root.pcPopup.act('shot:' + a); }catch(_){ try{ root.close(); }catch(_){ } } return; }
       let res = null;
       try{ res = await sh.take({ staged: st.path, copy: a === 'copy' }); }catch(e){ res = { ok: false, why: String((e && e.message) || e) }; }
       if(!res || !res.ok){ busy = false; if(foot) foot.textContent = (res && res.why) || 'the screenshot did not save'; return; }
@@ -1538,6 +1595,7 @@
       setTimeout(() => { try{ root.close(); }catch(_){ } }, 900);
     };
     host.querySelectorAll('[data-shot-act]').forEach(b => b.onclick = () => act(b.dataset.shotAct));
+    host.querySelectorAll('[data-shot-delay]').forEach(b => b.onclick = () => act('delay-' + b.dataset.shotDelay));
     doc.addEventListener('keydown', e => {
       const k = e.key;
       if(k === 'Escape'){ e.preventDefault(); act('cancel'); }
@@ -1566,7 +1624,11 @@
     if(!IN_POPUP && root.pcPopup && typeof root.pcPopup.open === 'function'){
       try{ root.localStorage.setItem(SHOT_STAGE_KEY, JSON.stringify({ path: st.path, preview: st.preview || '',
                                                                        region: !!can.region, at: Date.now() })); }catch(_){ }
-      const k = _zoomK(), w = Math.round(560 * k), h = Math.round((st.preview ? 540 : 300) * k);
+      /* MUCH LARGER ("Make entire screen capture window much larger"): most of the screen, so the
+         preview is big enough to judge before saving. Fractions of the viewport need no zoom factor;
+         the fixed minimum does. */
+      const k = _zoomK(), vw = root.innerWidth || 1280, vh = root.innerHeight || 800;
+      const w = Math.round(Math.max(560 * k, vw * 0.82)), h = Math.round(Math.max((st.preview ? 540 : 300) * k, vh * (st.preview ? 0.86 : 0.4)));
       const x = Math.max(0, Math.round(((root.innerWidth || 1280) - w) / 2)),
             y = Math.max(0, Math.round(((root.innerHeight || 800) - h) / 2));
       let opened = false;
@@ -1581,13 +1643,14 @@
     return new Promise(resolve => {
       P.modal(`<div class="shot-prompt" role="dialog" aria-label="Screenshot">
         <div class="shot-hd"><span class="shot-glyph" aria-hidden="true">◉</span><b>SCREEN CAPTURED</b><span class="shot-sub">choose what to keep</span></div>
-        ${st.preview ? `<img class="shot-prev" src="${esc(st.preview)}" alt="The screenshot">` : ''}
+        ${st.preview ? `<div class="shot-prev-box"><img class="shot-prev" src="${esc(st.preview)}" alt="The screenshot"></div>` : ''}
         <div class="shot-acts">
           <button class="shot-btn shot-save" data-shot-act="save"><b>Save to Pictures</b><kbd>Enter</kbd></button>
           <button class="shot-btn" data-shot-act="copy"><b>Save &amp; copy</b><kbd>C</kbd></button>
           ${can.region ? `<button class="shot-btn" data-shot-act="region"><b>Select region</b><kbd>R</kbd></button>` : ''}
           <button class="shot-btn shot-cancel" data-shot-act="cancel"><b>Cancel</b><kbd>Esc</kbd></button>
         </div>
+        ${SHOT_DELAY_ROW}
         <div class="shot-foot">~/Pictures/Screenshots${can.region ? '' : ' · selecting a region needs slurp'}</div>
       </div>`, box => {
         box.classList.add('shot-modal');
@@ -1595,6 +1658,7 @@
           if(settled) return;
           if(a === 'cancel'){ drop(); done(); resolve({ cancelled: true }); return; }
           if(a === 'region'){ drop(); done(); await new Promise(r => setTimeout(r, 180)); resolve(await takeShot('region')); return; }
+          if(/^delay-\d+$/.test(a)){ drop(); done(); delayedShot(Number(a.slice(6))); resolve({ delayed: Number(a.slice(6)) }); return; }
           done();
           let res = null;
           try{ res = await sh.take({ staged: st.path, copy: a === 'copy' }); }
@@ -1605,6 +1669,7 @@
           resolve(res);
         };
         box.querySelectorAll('[data-shot-act]').forEach(b => b.onclick = () => act(b.dataset.shotAct));
+        box.querySelectorAll('[data-shot-delay]').forEach(b => b.onclick = () => act('delay-' + b.dataset.shotDelay));
         box.addEventListener('keydown', e => {
           const k = e.key;
           if(k === 'Escape'){ e.preventDefault(); e.stopPropagation(); act('cancel'); }
@@ -1633,10 +1698,19 @@
       <div class="os-pop-b os-pop-acts">
         ${can.region ? `<button class="os-pop-row" data-shot="region">Choose an area…</button>` : ''}
         <button class="os-pop-row" data-shot="screen">Whole screen</button>
+        <button class="os-pop-row" data-shot-in="5">Whole screen in 5 s</button>
+        <button class="os-pop-row" data-shot-in="10">Whole screen in 10 s</button>
       </div>${can.region ? ''
         : `<div class="os-pop-none">Choosing an area needs slurp (gui-apps/slurp), which is not installed.</div>`}`;
     bindPanel(d);
     d.querySelectorAll('[data-shot]').forEach(b => b.onclick = () => takeShot(b.dataset.shot));
+    /* In the tray POPUP the countdown must run in the desktop (this window closes) -- same hand-off
+       as takeShot's. */
+    d.querySelectorAll('[data-shot-in]').forEach(b => b.onclick = () => {
+      if(IN_POPUP && root.pcPopup && typeof root.pcPopup.act === 'function'){
+        try{ root.pcPopup.act('shot:delay-' + b.dataset.shotIn); }catch(_){ } return; }
+      delayedShot(Number(b.dataset.shotIn));
+    });
   }
 
   /** Was this control pressed inside the open flyout, rather than being a taskbar chip of its own? */
@@ -1819,7 +1893,7 @@
                 profileMenu, machineApps, mergedApps, allApps, wifiIcon, volIcon, batterySvg,
                 ensureAccount, provisioned, identity, activateAccount, logoutSession,
                 panelHTML, quickHTML, taskbarHTML, launcherHTML, render, watch,
-                takeShot, shotPrompt, renderShotPopup, shotAvailable, closePop, openControl, openTrayPopup, wifiReason,
+                takeShot, shotPrompt, renderShotPopup, shotAvailable, delayedShot, cancelDelayedShot, closePop, openControl, openTrayPopup, wifiReason,
                 setViewOpener, refresh, paintTray, bindApps, bindPanel,
                 summary: () => _sum, rows: () => _rows, readAt: () => _readAt };
   API.openTrayPanel = openTrayPanel;

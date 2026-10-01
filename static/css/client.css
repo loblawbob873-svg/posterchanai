@@ -11450,7 +11450,9 @@ html.os-idle #os-root *{animation:none!important;transition:none!important}
 .shot-prev{display:block;width:100%;max-height:40vh;object-fit:contain;border-radius:8px;
   border:1px solid rgba(var(--accent-rgb),.4);background:#000;box-shadow:inset 0 0 20px #000}
 .shot-acts{display:grid;grid-template-columns:repeat(auto-fit,minmax(118px,1fr));gap:8px}
-.shot-btn{position:relative;display:flex;flex-direction:column;align-items:flex-start;gap:4px;min-height:52px;padding:9px 11px;
+/* 62px, not 52: the desktop's display zoom (0.72 at 1440px) renders 52 as 37 -- under the 44px tap
+   target. The narrower prompt only passed because its labels wrapped onto two lines. */
+.shot-btn{position:relative;display:flex;flex-direction:column;align-items:flex-start;gap:4px;min-height:62px;padding:9px 11px;
   border:1px solid rgba(var(--accent-rgb),.38);border-radius:8px;background:rgba(var(--accent-rgb),.07);color:var(--text);
   font:inherit;text-align:left;cursor:pointer;clip-path:polygon(0 0,calc(100% - 10px) 0,100% 10px,100% 100%,0 100%);
   transition:background .12s,box-shadow .12s,border-color .12s}
@@ -11462,6 +11464,24 @@ html.os-idle #os-root *{animation:none!important;transition:none!important}
 .shot-btn.shot-save b{color:var(--accent)}
 .shot-btn.shot-cancel{border-color:rgba(255,43,109,.45);background:rgba(255,43,109,.06)}
 .shot-foot{font:11px var(--font-mono,ui-monospace,monospace);color:var(--muted);letter-spacing:.06em}
+/* Retake after a delay (osshell.js SHOT_DELAY_ROW) and the taskbar countdown chip (delayedShot). */
+.shot-delay{display:flex;align-items:center;gap:8px;flex-wrap:wrap;font:600 11px var(--font-mono,ui-monospace,monospace);
+  letter-spacing:.14em;text-transform:uppercase;color:var(--muted)}
+.shot-delay-btn{min-width:56px;padding:7px 12px;border:1px solid rgba(var(--accent-rgb),.38);border-radius:999px;
+  background:rgba(var(--accent-rgb),.06);color:var(--text);font:600 12px var(--font-mono,ui-monospace,monospace);cursor:pointer;
+  transition:background .12s,border-color .12s,box-shadow .12s}
+.shot-delay-btn:hover,.shot-delay-btn:focus-visible{outline:none;border-color:var(--accent);background:rgba(var(--accent-rgb),.18);
+  box-shadow:0 0 12px rgba(var(--accent-rgb),.35)}
+.shot-prev-box{display:flex;min-height:0;flex:1 1 auto}
+/* Only the preview gives up room when the window is short: the title, the choices, the delay row and
+   the footer never shrink below their size (the choices are tap targets). */
+.shot-prompt>:not(.shot-prev-box){flex-shrink:0}
+.os-shot-count{display:inline-flex;align-items:center;gap:4px;height:26px;padding:0 10px;margin-right:6px;border-radius:999px;
+  border:1px solid #ff2b6d;background:rgba(255,43,109,.14);color:#ff8fb0;font:700 12px var(--font-mono,ui-monospace,monospace);
+  letter-spacing:.06em;cursor:pointer;box-shadow:0 0 12px rgba(255,43,109,.45);animation:shotPulse 1s ease-in-out infinite}
+@media (prefers-reduced-motion:reduce){.os-shot-count{animation:none}}
+.shot-modal{width:min(1100px,92vw)!important;max-width:none!important}
+.shot-modal .shot-prev{max-height:52vh}
 @media (prefers-reduced-motion:reduce){.shot-glyph{animation:none}}
 
 /* ── Calculator (client/calculator.js) — neon terminal, driven by the theme accent ───────────────── */
@@ -11724,6 +11744,16 @@ html.pc-golive-win #modal-root>.modal-bg:first-child:not(.modal-sub) .gl-actions
 /* The Print Screen prompt in its own popup window (osshell.js renderShotPopup): the window IS the card. */
 .os-shot-popup .os-popup-host{position:fixed;inset:0;display:flex}
 .os-shot-popup .shot-prompt{flex:1;margin:0;box-sizing:border-box;overflow:auto}
+/* The prompt window fills most of the screen now; the preview takes whatever the controls leave. */
+.os-shot-popup .shot-prompt{gap:14px;padding:18px 22px 14px;min-height:0;height:100%;overflow:hidden}
+/* The picture takes exactly the room the controls leave: the box is sized by the column (flex-basis 0)
+   and the image is fitted INSIDE it, so a big capture can never make the column taller than the
+   window and push the title off the top (measured: 803px of prompt in a 760px window). */
+.os-shot-popup .shot-prev-box{flex:1 1 0;min-height:0;position:relative}
+.os-shot-popup .shot-prev{position:absolute;inset:0;width:100%;height:100%;max-height:none}
+.os-shot-popup .shot-hd b{font-size:18px}
+.os-shot-popup .shot-btn{min-height:64px}
+.os-shot-popup .shot-btn b{font-size:15px}
 /* THE PROMPT IS A WINDOW OF ITS OWN, AND A WINDOW WITH NO EDGE READS AS A PAINT GLITCH ("the screen
    capture window should have a border and look cyberpunk"). A neon frame in the theme's accent, an
    inner glow, corner brackets (accent above, the capture's own magenta below) and a rule under the
