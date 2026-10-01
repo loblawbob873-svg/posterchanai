@@ -14,7 +14,7 @@ stylesheets and the shipped admin-identities.js / admin-relay-lists.js, against 
   * Identities offers "Remove all N not in profile", posts exactly the unverified names, and is
     NOT offered when a profile could not be read (an unread profile looks unverified).
 """
-import asyncio, json, os, shutil, subprocess, sys, tempfile, threading, urllib.request, http.server
+import asyncio, json, os, re, shutil, subprocess, sys, tempfile, threading, urllib.request, http.server
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 CDP_PORT = int(os.environ.get("PC_CHECK_PORT") or 9531)
@@ -112,6 +112,7 @@ if(!ev.defaultPrevented) document.getElementById('settingsForm').requestSubmit()
 await sleep(200);
 const ta=document.getElementById('nostr_relay_blocked_words');
 out.added={posted:JSON.stringify(window.__posts.at(-1)), submits:window.__submits, text:ta.value,
+  said:wp.querySelector('.rl-msg').textContent,
   baseline:loadedValues.get('nostr_relay_blocked_words'), drawn:[...wp.querySelectorAll('.rl-row')].map(x=>x.dataset.value), cleared:wi.value};
 // Remove the long upstream relay.
 const up=document.querySelector('.rl-panel[data-key="nostr_relay_upstream_relays"]');
@@ -228,6 +229,8 @@ async def run():
                 if a["text"] != "spammy phrase here\nbuy now\nfree crypto" or a["baseline"] != a["text"] \
                         or "free crypto" not in a["drawn"] or a["cleared"]:
                     fails.append((where, "add did not land", a))
+                if not re.search(r"Saved.*free crypto added", a.get("said") or ""):
+                    fails.append((where, "an Add saved but said nothing, so Save then reads as 'nothing to save'", a.get("said")))
                 rm = out["removed"]
                 if "very-long" in rm["text"] or rm["baseline"] != rm["text"] or rm["drawn"] != 1:
                     fails.append((where, "remove did not land", rm))

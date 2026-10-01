@@ -162,7 +162,13 @@
             const j = await r.json().catch(() => ({}));
             if (!r.ok) throw new Error(j.detail || ('HTTP ' + r.status));
             adopt(key, j.value);
-            msg(key, j.durable === false ? 'Applied — but the relay has not confirmed it yet; it retries in the background.' : '');
+            /* SAY IT SAVED. An Add or Remove is saved the moment it is clicked -- and it said nothing, so people
+             * then pressed the page's Save button and were told "no changes to be saved", which reads as if
+             * the entry had been lost ("i added ditto.pub ... clicked save, said no changes to be saved"). */
+            const what = body.add ? `${body.add} added` : `${body.remove} removed`;
+            msg(key, j.durable === false
+                ? `✓ ${what} — applied; the relay has not confirmed it yet and it retries in the background.`
+                : `✓ Saved — ${what}. No need to press Save.`);
             await load(key);
             return true;
         } catch (e) {
