@@ -325,3 +325,20 @@ def test_a_hung_test_is_named_not_just_a_timed_out_shard(source_gate, tmp_path):
                                    [['tests/test_hangs.py']], {}, short)
     assert not ok
     assert 'test_stuck_forever' in message, message
+
+
+def test_the_required_suite_budget_has_room_and_the_ci_step_outlives_it():
+    """The required list only grows (every new check joins it). At 600s the green Linux runs took
+    ~570s and the next commits' tests pushed it over: killed at 97% with no test named. The CI step's
+    own limit must also exceed the gate's, or GitHub kills the step before the gate reports."""
+    import re
+    from pathlib import Path
+    root = Path(__file__).resolve().parents[1]
+    gate = (root / 'scripts/deploy_regression_gate.py').read_text()
+    budget = int(re.search(r"PC_REQUIRED_TIMEOUT'\) or (\d+)\)", gate).group(1))
+    assert budget >= 1200, budget
+    wf = (root / '.github/workflows/desktop.yml').read_text()
+    step = wf[wf.index('name: Verify required desktop regressions'):][:200]
+    minutes = int(re.search(r'timeout-minutes:\s*(\d+)', step).group(1))
+    # pip install + Electron download precede the run; leave them at least 5 minutes.
+    assert minutes * 60 >= budget + 300, (minutes, budget)

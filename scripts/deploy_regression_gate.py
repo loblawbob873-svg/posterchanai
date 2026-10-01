@@ -179,7 +179,16 @@ def verify_receipt(path, root=ROOT):
 # The 780-case gate passed locally in 210s, but GitHub completed 768 cases
 # before the former 360s suite deadline. Budget for the full cold-runner suite;
 # individual browser/network tests retain their own shorter deadlines.
-def _run_required_tests(command, root, env, log, timeout=600):
+# 600s held until the list reached ~980 cases: green runs took ~570s on the Linux runner, and the
+# next commits' tests pushed it over, killed at 97% with no test named (2026-10-01). The list only
+# grows -- every new check joins it -- so the budget is sized for growth and overridable.
+# .github/workflows/desktop.yml's step limit must stay ABOVE this, or GitHub kills the step before
+# the gate can say what ran long; tests/test_deploy_regression_gate.py checks that.
+REQUIRED_TIMEOUT_S = int(os.environ.get('PC_REQUIRED_TIMEOUT') or 1200)
+
+
+def _run_required_tests(command, root, env, log, timeout=None):
+    timeout = timeout or REQUIRED_TIMEOUT_S
     # Share the suite runner's owned process-group cleanup and file capture. Pipes
     # can stay open in orphaned browsers after pytest exits or is interrupted.
     captured = runpy.run_path(str(Path(__file__).with_name('checkall.py')))['_captured']

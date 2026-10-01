@@ -253,7 +253,7 @@ jobs:
 
       - name: Verify required desktop regressions
         if: matrix.name == 'linux'
-        timeout-minutes: 15
+        timeout-minutes: 30
         shell: bash
         env:
           PC_REQUIRE_NATIVE_IPC_TEST: '1'
