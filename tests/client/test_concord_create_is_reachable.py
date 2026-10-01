@@ -39,7 +39,7 @@ def _empty_state_pane():
 
 def _always_painted():
     """The chrome painted in every state: the rail and the sheets after the conversation."""
-    body = CONCORD[CONCORD.index('feed.innerHTML=`<div class="cc-app'):]
+    body = CONCORD[CONCORD.index('const _html=`<div class="cc-app'):]
     rail = body[body.index('<aside class="cc-communities">'):body.index('</aside>')]
     sheets = body[body.index('</main></div>'):body.index('\n    retainCommunityRail')]
     return rail + sheets
