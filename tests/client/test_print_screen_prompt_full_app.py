@@ -36,7 +36,7 @@ async def _press(b):
     await b.until("!!document.querySelector('.shot-prompt')")
 
 
-KEYS = {"Enter": (13, "Enter", "\r"), "Escape": (27, "Escape", ""), "r": (82, "KeyR", "r")}
+KEYS = {"Enter": (13, "Enter", "\r"), "Escape": (27, "Escape", ""), "r": (82, "KeyR", "r"), "f": (70, "KeyF", "f")}
 
 
 async def _key(b, k):
@@ -63,7 +63,8 @@ def test_print_screen_prompts_and_each_choice_does_what_it_says():
                 tappable:btns.every(x=>{const r=x.getBoundingClientRect();return r.width>=44&&r.height>=44&&r.right<=innerWidth}),
                 preview:!!document.querySelector('.shot-prev'), focus:document.activeElement&&document.activeElement.dataset.shotAct}})()""")
             assert got["first"] == ["stage", False], "the picture must be taken BEFORE the prompt is drawn"
-            assert got["acts"] == ["save", "copy", "region", "cancel"], got
+            # "Full screen" is the delayed-capture partner of "Select region" (the delay runs BEFORE either).
+            assert got["acts"] == ["save", "copy", "region", "screen", "cancel"], got
             assert got["fits"] and got["tappable"] and got["preview"], (width, got)
             assert got["focus"] == "save", "Enter must save"
             await _key(b, "Escape")
@@ -84,6 +85,14 @@ def test_print_screen_prompts_and_each_choice_does_what_it_says():
         await asyncio.sleep(.6)
         calls = await b.js("__shot.slice(1)")
         assert calls[0][0] == "discard" and calls[1] == ["take", {"mode": "region"}], calls
+
+        # Full screen (F) likewise throws the staged shot away and captures the whole screen afresh --
+        # with no delay set, straight away.
+        await _press(b)
+        await _key(b, "f")
+        await asyncio.sleep(.6)
+        calls = await b.js("__shot.slice(1)")
+        assert calls[0][0] == "discard" and calls[1] == ["take", {"mode": "screen"}], calls
 
         # Save & copy.
         await _press(b)
