@@ -5567,8 +5567,60 @@
     return '';
   }
 
+  /* WINDOW TILING, IN THE PAGE ("make sure new tiling features works in webui"). The same arithmetic as
+   * desktop/tile.js, which arranges compositor windows on PosterChanOS -- that file is a Node module the
+   * browser cannot load, so it is copied here verbatim and tests/client/test_web_window_tiling_full_app.py
+   * runs BOTH over every layout and count and requires identical answers. A tiled window is a SNAP
+   * whose zone is `tile:<layout>:<index>:<count>`, so a viewport resize re-tiles it, dragging it out
+   * restores its floating size, and the desktop's saved state carries it -- all through snapTo/unsnap. */
+  const TILE_LAYOUTS = ['grid', 'side-by-side', 'stacked'];
+  function _tileSplit(start, total, parts){
+    const out = [];
+    for(let i = 0; i < parts; i++){
+      const a = start + Math.round(total * i / parts), b = start + Math.round(total * (i + 1) / parts);
+      out.push([a, b - a]);
+    }
+    return out;
+  }
+  function tileRects(layout, count, work){
+    const n = Math.max(0, Math.min(64, Math.floor(Number(count) || 0)));
+    const x = Math.round(Number(work && work.x) || 0), y = Math.round(Number(work && work.y) || 0);
+    const w = Math.max(1, Math.round(Number(work && (work.width ?? work.w)) || 1));
+    const h = Math.max(1, Math.round(Number(work && (work.height ?? work.h)) || 1));
+    if(!n || !TILE_LAYOUTS.includes(layout)) return [];
+    if(layout === 'side-by-side') return _tileSplit(x, w, n).map(([cx, cw]) => ({ x: cx, y, w: cw, h }));
+    if(layout === 'stacked') return _tileSplit(y, h, n).map(([cy, ch]) => ({ x, y: cy, w, h: ch }));
+    if(n === 1) return [{ x, y, w, h }];
+    if(n === 2) return _tileSplit(x, w, 2).map(([cx, cw]) => ({ x: cx, y, w: cw, h }));
+    if(n === 3){
+      const [[lx, lw], [rx, rw]] = _tileSplit(x, w, 2), rows = _tileSplit(y, h, 2);
+      return [{ x: lx, y, w: lw, h }, ...rows.map(([ry, rh]) => ({ x: rx, y: ry, w: rw, h: rh }))];
+    }
+    const cols = Math.ceil(Math.sqrt(n)), rowsN = Math.ceil(n / cols), rows = _tileSplit(y, h, rowsN), out = [];
+    for(let r = 0; r < rowsN; r++){
+      const inRow = r === rowsN - 1 ? n - cols * (rowsN - 1) : cols;
+      for(const [cx, cw] of _tileSplit(x, w, inRow)) out.push({ x: cx, y: rows[r][0], w: cw, h: rows[r][1] });
+    }
+    return out;
+  }
+  function _tileZone(z){
+    const m = /^tile:([a-z-]+):(\d+):(\d+)$/.exec(String(z || ''));
+    if(!m) return null;
+    const work = snapWorkArea();
+    return tileRects(m[1], Number(m[3]), { x: 0, y: 0, width: work.width, height: work.height })[Number(m[2])] || null;
+  }
+  /* Arrange every open window on this desktop, most recently used first (the front window gets the
+     big tile). Minimised windows are left where they are. */
+  function arrangeInPage(layout){
+    if(!TILE_LAYOUTS.includes(layout)) return { ok: false, why: 'unknown layout' };
+    const list = wins.filter(w => !w.min && w.el && w.el.isConnected).sort((a, b) => _zOf(b) - _zOf(a));
+    if(!list.length){ try{ PC().toast('No windows to arrange'); }catch(_){ } return { ok: false, why: 'no windows' }; }
+    list.forEach((w, i) => snapTo(w, `tile:${layout}:${i}:${list.length}`, { focus: false }));
+    return { ok: true, layout, count: list.length };
+  }
+
   function rectOf(z){
-    const r = zones()[z];
+    const r = zones()[z] || _tileZone(z);
     return r && { left: (r.x + SNAP) + 'px', top: (r.y + SNAP) + 'px',
                   width: (r.w - SNAP * 2) + 'px', height: (r.h - SNAP * 2) + 'px' };
   }
@@ -9346,7 +9398,7 @@
                   data-id="${w.id}" data-kind="native"${tint(w.appId || w.title)} title="${enc(w.title)}">
             ${appIcon(w)}<span>${enc(w.title)}</span></button>`).join('')}</div>
        <div class="os-tray">
-         ${window.pcWM && typeof pcWM.arrange === 'function' && _popupWindows()
+         ${(window.pcWM && typeof pcWM.arrange === 'function' && _popupWindows()) || !_popupWindows()
            ? `<button class="os-arrange" id="os-arrange" title="Arrange windows (Super+G)" aria-label="Arrange windows"><svg class="ic" aria-hidden="true"><use href="#i-grid"></use></svg></button>` : ''}
          <div class="os-sys" id="os-shell"></div>
          <button class="os-net net-${netNow.level}${netOpen ? ' on' : ''}" id="os-net"
@@ -9419,6 +9471,12 @@
     /* ARRANGE: a small picker in a window of its own (never a menu on this surface, which sits under
        the windows it would arrange). The choice comes back as pc:act:arrange:<layout>. */
     { const ab = $('#os-arrange', bar); if(ab) ab.onclick = (e) => { e.stopPropagation();
+        /* In a browser the windows are in THIS page, so a menu here can sit above them. */
+        if(!_popupWindows()){
+          try{ PC().openMenuPopover(ab, [['grid', 'Grid'], ['side-by-side', 'Side by side'], ['stacked', 'Stacked']],
+                                    k => arrangeInPage(k)); }catch(_){ }
+          return;
+        }
         try{ pcPopup.open('arrange', _popupRectNear(ab, 320, 172)); }catch(_){ } }; }
     $$('.os-task', bar).forEach(b => b.onclick = async () => {
       if(b.dataset.kind === 'pin-view'){ openLauncherApp(b.dataset.pin.slice(5)); return; }
@@ -12078,6 +12136,20 @@
     _bareSuper(false);
   }, true);
 
+  /* ARRANGE BY KEY, in the page: Super+G grid, Super+Shift+G side by side, Super+Alt+G stacked -- the
+     same keys PosterChanOS binds in the compositor (where this page never sees them). A browser often
+     keeps Super for itself, so Ctrl+Alt+G (grid) and Ctrl+Alt+Shift+G (side by side) work too; stacked
+     is in the taskbar menu. Never inside a text box. */
+  document.addEventListener('keydown', (e) => {
+    if(!on || _popupWindows() || (e.key !== 'g' && e.key !== 'G')) return;
+    const sup = e.metaKey && !e.ctrlKey, alt = e.ctrlKey && e.altKey && !e.metaKey;
+    if(!sup && !alt) return;
+    const t = e.target;
+    if(t && (t.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(t.tagName || ''))) return;
+    e.preventDefault();
+    arrangeInPage(e.shiftKey ? 'side-by-side' : (sup && e.altKey) ? 'stacked' : 'grid');
+  });
+
   // Win+Arrow. Meta, not Ctrl: Ctrl+Arrow is caret navigation inside every text box on this desktop.
   document.addEventListener('keydown', (e) => {
     if(!on || !e.metaKey || e.altKey || e.ctrlKey) return;
@@ -12205,7 +12277,7 @@
     return true;
   }
 
-  window.PCOS = { enter, exit, suspend, toggle, restore, refresh, renderExtra,
+  window.PCOS = { enter, exit, suspend, toggle, restore, refresh, renderExtra, arrangeInPage, tileRects,
                   // A popped-out Search window runs the same search in its own page (oswin/app.js).
                   searchHere: q => { if(String(q||'').trim()) _runDesktopSearch(String(q).trim()); },
                   metrics, applyUiScale, setUiScale, uiScaleEffective,
