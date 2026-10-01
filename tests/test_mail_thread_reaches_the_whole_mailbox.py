@@ -182,7 +182,7 @@ def _install_fake_relay(monkeypatch, docs):
     on top of it, so the truncation this reproduces is the real one, not a mocked one."""
     calls = {"n": 0}
 
-    async def fake_list_page(sk, account=None, folder=None, limit=None, until=None):
+    async def fake_list_page(sk, account=None, folder=None, limit=None, until=None, since=None):
         calls["n"] += 1
         want = CAP if limit in (0, None) else min(int(limit), CAP)
         pool = [d for d in docs if (account is None or d["account"] == account)
@@ -216,8 +216,10 @@ def _install_route_stubs(monkeypatch, docs):
 @pytest.fixture(autouse=True)
 def _clear_scan_cache():
     mail_router._THREAD_SCAN.clear()
+    mail_store._SNAPS.clear()
     yield
     mail_router._THREAD_SCAN.clear()
+    mail_store._SNAPS.clear()
 
 
 # ──────────────────────────────────────────────────────────────────────────────────────────────

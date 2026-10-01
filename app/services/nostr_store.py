@@ -245,12 +245,49 @@ async def _ws_query(port: int, filters: list, timeout: float = 6.0, *, strict: b
     return out
 
 
+# ---- decrypted-content cache ----
+# "mail is super slow": opening a conversation and EVERY search walk the whole mailbox -- measured
+# 18,736 documents, ~12 s per walk, the second walk no faster than the first -- because each document is
+# NIP-44-decrypted again on every read. A ciphertext never changes meaning, so its plaintext is cached,
+# keyed on (the key, the CIPHERTEXT): an edited document is a different ciphertext and can never be
+# served stale, and a deleted one simply stops being asked for. The PLAINTEXT is cached and parsed
+# afresh per read, so no caller can mutate another caller's object. Bounded by count and bytes. Nothing
+# becomes readable that was not: these are documents this process already decrypts with the key it holds.
+import hashlib as _hashlib
+import threading as _threading
+from collections import OrderedDict as _OrderedDict
+
+_PLAIN_CACHE: "_OrderedDict[bytes, str]" = _OrderedDict()
+_PLAIN_BYTES = [0]
+_PLAIN_MAX_ENTRIES = 60000
+_PLAIN_MAX_BYTES = 256 * 1024 * 1024
+_PLAIN_LOCK = _threading.Lock()
+
+
+def _decrypt_cached(seckey: bytes, content: str) -> str:
+    key = _hashlib.sha256(bytes(seckey) + b"\x00" + content.encode("utf-8", "surrogatepass")).digest()
+    with _PLAIN_LOCK:
+        hit = _PLAIN_CACHE.get(key)
+        if hit is not None:
+            _PLAIN_CACHE.move_to_end(key)
+            return hit
+    plain = nip44.decrypt_self(seckey, content)
+    with _PLAIN_LOCK:
+        if key not in _PLAIN_CACHE:
+            _PLAIN_CACHE[key] = plain
+            _PLAIN_BYTES[0] += len(plain)
+            while _PLAIN_CACHE and (len(_PLAIN_CACHE) > _PLAIN_MAX_ENTRIES or _PLAIN_BYTES[0] > _PLAIN_MAX_BYTES):
+                _k, old = _PLAIN_CACHE.popitem(last=False)
+                _PLAIN_BYTES[0] -= len(old)
+    return plain
+
+
 def _decode(content: str, seckey: bytes | None, encrypt: bool):
     """Decrypt (if needed) + JSON-parse a doc's content; fall back to the raw string."""
     raw = content
     if encrypt and seckey is not None and content:
         try:
-            raw = nip44.decrypt_self(seckey, content)
+            raw = _decrypt_cached(seckey, content)
         except Exception:
             return None
     try:

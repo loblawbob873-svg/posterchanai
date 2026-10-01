@@ -11978,3 +11978,5 @@ img.md-rel:not([src]){display:none}
 }
 /* With the image viewer open, its toolbar owns the bottom of the screen: messages sit above it. */
 :root:has(> .lightbox) #toast-root{bottom:calc(140px + env(safe-area-inset-bottom))}   /* the viewer mounts on <html>, not <body> */
+
+.mail-searching{display:flex;align-items:center;gap:10px;padding:16px}.mail-search-note{padding:6px 12px}

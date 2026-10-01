@@ -740,6 +740,11 @@ window.PCMailFactory = function(dep){
       // loadList, and blanking to a spinner each time made the whole list flash and jump twice
       // before settling. A refresh over an existing list swaps the rows in place instead.
       if(!this.msgs.length) box.innerHTML='<div class="spinner"></div>';
+      /* SAY IT IS SEARCHING, AND WHERE. A search reads every account and every folder, and while it
+       * ran the list went on showing the folder you were in -- so a slow search looked like a search
+       * of that folder that had found nothing new ("email search should search every mailbox and
+       * folder if you are in All Inboxes. It don't work like that now"; it always did, slowly). */
+      if(query) box.innerHTML='<div class="mail-searching muted" role="status"><div class="spinner"></div>Searching every account and folder…</div>';
       try{
         const r = query
           ? await this.api('/search?q='+encodeURIComponent(query))
@@ -889,7 +894,9 @@ window.PCMailFactory = function(dep){
       const box=$('#mail-items', this.root); if(!box) return;
       this.sel=this.sel||new Set();
       if(!this.msgs.length){ box.innerHTML='<div class="empty">'+(this._listError||(this.q?'No matches across your accounts.':'No messages.'))+'</div>'; this.updateBulk(); return; }
-      const staleNote = this._listError ? '<div class="mail-stale muted small" role="status">'+this._listError+'</div>' : '';
+      const staleNote = (this._listError ? '<div class="mail-stale muted small" role="status">'+this._listError+'</div>' : '')
+        + (this.q && !this._listError ? '<div class="mail-search-note muted small" role="status">'
+            + this.msgs.length + ' match' + (this.msgs.length===1?'':'es') + ' in every account and folder</div>' : '');
       // Unified mode uses the logical name and has no per-account folderLabels map. Treat it as
       // Sent too, or its rows show the sender (yourself) instead of the useful "To:" recipient.
       const isSent=!this.q&&(this.folder==='Sent'||this.folderLabels[this.folder]==='📤 Sent'), unified=this.acct==='__all'||!!this.q;

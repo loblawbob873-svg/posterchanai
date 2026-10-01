@@ -96,7 +96,7 @@ async def list_messages(seckey: bytes, account_email: str | None = None, folder:
 
 
 async def list_page(seckey: bytes, account_email: str | None = None, folder: str | None = None,
-                    limit: int | None = None, until: int | None = None) -> tuple:
+                    limit: int | None = None, until: int | None = None, since: int | None = None) -> tuple:
     """One page of messages plus the cursor for the NEXT one: (messages, next_until).
 
     Paging is by the relay's `until` (event created_at, newest first), not by the message date — a
@@ -117,8 +117,8 @@ async def list_page(seckey: bytes, account_email: str | None = None, folder: str
     want = _SCAN_LIMIT if limit == 0 else int(limit or _PAGE)
     # STRICT: "the relay could not answer" must not come back as an empty folder.
     docs = await nostr_store.list_docs(_port(), _prefix(account_email, folder), seckey=seckey,
-                                       encrypt=True, limit=want, until=until, with_meta=True,
-                                       strict=True)
+                                       encrypt=True, limit=want, until=until, since=since,
+                                       with_meta=True, strict=True)
     raw = len(docs)
     pairs = [(v, ts) for (v, ts) in docs.values() if isinstance(v, dict)]
     msgs = [v for v, _ in pairs]
@@ -149,7 +149,10 @@ async def set_flags(seckey: bytes, account_email: str, folder: str, uid: str, **
 async def delete_message(seckey: bytes, account_email: str, folder: str, uid: str) -> bool:
     """Remove the message doc from the mailbox (NIP-09 kind-5). The IMAP-side delete is mail_service's
     job; this drops it from the Nostr mailbox so the GUI reflects it."""
-    return await nostr_store.delete_doc(_port(), seckey, _d(account_email, folder, uid))
+    ok = await nostr_store.delete_doc(_port(), seckey, _d(account_email, folder, uid))
+    # A remembered walk cannot learn of a deletion from a `since` read -- forget it here.
+    _snap_forget(seckey, account_email, folder, uid)
+    return ok
 
 
 async def list_all_messages(seckey: bytes, account_email: str | None = None,
@@ -166,19 +169,81 @@ async def list_all_messages(seckey: bytes, account_email: str | None = None,
     the thread". Nothing logged, because a read that hits the cap looks exactly like a read that
     found everything.
 
-    Same walk `have_uids` already does for the sync's dedup, and for the same reason."""
-    out, until, guard = [], None, 0
+    Same walk `have_uids` already does for the sync's dedup, and for the same reason.
+
+    REMEMBERED, then only the CHANGES are read ("mail is super slow"). Every conversation opened and
+    every search walked the whole mailbox -- measured 18,736 documents, ~11 s, of which 10 s was the
+    relay read itself -- and the next walk read all of it again. Now the walk is kept per (key, account,
+    folder) and a later call asks the relay only for documents written since the last read began
+    (`since`, with an overlap for same-second writes and skew); a document edited or moved is a newer write and arrives that way. The one
+    thing `since` cannot see is a DELETION, and every mailbox deletion goes through `delete_message`
+    below, which drops it from these snapshots. A full re-walk still happens every `_FULL_EVERY`
+    seconds, so a write from anywhere else converges anyway."""
+    key = (_snap_owner(seckey), account_email or "*", folder or "*")
+    now = _time.monotonic()
+    started = int(_time.time())
+    snap = _SNAPS.get(key)
+    if snap and now - snap["full_at"] < _FULL_EVERY:
+        page, _nxt = await list_page(seckey, account_email, folder, limit=_SCAN_LIMIT,
+                                     since=max(0, snap["since"] - _SINCE_OVERLAP))
+        if len(page) < _SCAN_LIMIT:          # a burst bigger than a page: walk it all instead
+            _snap_merge(snap, page)
+            snap["since"] = started
+            return _snap_list(snap)
+    fresh = {"msgs": {}, "since": started, "full_at": now}
+    until, guard = None, 0
     while guard < max(1, max_pages):
         guard += 1
         page, nxt = await list_page(seckey, account_email, folder, limit=_SCAN_LIMIT, until=until)
-        out.extend(page)
+        _snap_merge(fresh, page)
         if not nxt or not page:
             break
         until = nxt if until != nxt else nxt - 1     # never hand back the same cursor
     else:
         logger.warning("[mail] list_all_messages stopped at the %d-page guard — a very large "
                        "mailbox may still be threading against a partial view", max_pages)
-    return out
+    _SNAPS[key] = fresh
+    while len(_SNAPS) > _SNAP_MAX:
+        _SNAPS.pop(next(iter(_SNAPS)))
+    return _snap_list(fresh)
+
+
+# ---- the remembered mailbox walks (see list_all_messages) ----
+import hashlib as _hashlib
+import time as _time
+
+_SNAPS: dict = {}
+_SNAP_MAX = 32
+_FULL_EVERY = 900.0          # seconds between full re-walks
+_SINCE_OVERLAP = 120         # seconds re-read on each incremental call (same-second writes, clock skew)
+
+
+def _snap_owner(seckey: bytes) -> bytes:
+    return _hashlib.sha256(b"pc-mail-snap\x00" + bytes(seckey)).digest()
+
+
+def _snap_key(m: dict) -> tuple:
+    return (str(m.get("account") or ""), str(m.get("folder") or ""), str(m.get("uid") or ""))
+
+
+def _snap_merge(snap: dict, page: list) -> None:
+    """Newest write wins: a page from a later read replaces what an earlier one held."""
+    for m in page:
+        if isinstance(m, dict):
+            snap["msgs"][_snap_key(m)] = m
+
+
+def _snap_list(snap: dict) -> list:
+    """Fresh dicts, newest first: callers rehydrate bodies into what they get back."""
+    rows = sorted(snap["msgs"].values(), key=lambda m: m.get("ts", 0), reverse=True)
+    return [dict(m) for m in rows]
+
+
+def _snap_forget(seckey: bytes, account_email: str, folder: str, uid: str) -> None:
+    owner = _snap_owner(seckey)
+    for (o, _a, _f), snap in list(_SNAPS.items()):
+        if o == owner:
+            snap["msgs"].pop((str(account_email or ""), str(folder or ""), str(uid or "")), None)
 
 
 async def have_uids(seckey: bytes, account_email: str, folder: str) -> set:
