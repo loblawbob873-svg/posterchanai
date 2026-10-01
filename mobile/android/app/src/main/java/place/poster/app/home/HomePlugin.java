@@ -89,6 +89,77 @@ public class HomePlugin extends Plugin {
         call.resolve(o);
     }
 
+    /**
+     * Settings -> Phone -> "Screen report": what THIS phone says about its bars and where the page sits.
+     *
+     * "Many things are cut off at the top" was fixed twice by measurement and both times the measurement
+     * was right on the emulator and wrong on the phone (a Galaxy S25 on One UI 8; a 1080x2412 phone in a
+     * bug report): the page sits partly under the status bar, by an amount no fixture produces. This
+     * returns the raw numbers -- every inset the window reports, in both spellings, the window and the
+     * WebView ON SCREEN, the margin applied, and the platform's own status_bar_height -- so the next fix is
+     * made from that phone's facts. Platform APIs only: the local compile check has no AndroidX.
+     */
+    @PluginMethod
+    public void screenReport(PluginCall call) {
+        final android.app.Activity a = getActivity();
+        if (a == null) { call.reject("no activity"); return; }
+        a.runOnUiThread(() -> {
+            JSObject o = new JSObject();
+            try {
+                android.util.DisplayMetrics dm = a.getResources().getDisplayMetrics();
+                o.put("model", android.os.Build.MANUFACTURER + " " + android.os.Build.MODEL);
+                o.put("sdk", android.os.Build.VERSION.SDK_INT);
+                o.put("density", dm.density);
+                o.put("screen", dm.widthPixels + "x" + dm.heightPixels);
+                int sbRes = a.getResources().getIdentifier("status_bar_height", "dimen", "android");
+                o.put("statusBarHeightRes", sbRes > 0 ? a.getResources().getDimensionPixelSize(sbRes) : -1);
+                android.view.View decor = a.getWindow().getDecorView();
+                int[] d = new int[2];
+                decor.getLocationOnScreen(d);
+                o.put("windowTopOnScreen", d[1]);
+                o.put("windowHeight", decor.getHeight());
+                android.view.View wv = getBridge().getWebView();
+                int[] w = new int[2];
+                wv.getLocationOnScreen(w);
+                int[] wi = new int[2];
+                wv.getLocationInWindow(wi);
+                o.put("pageTopOnScreen", w[1]);
+                o.put("pageTopInWindow", wi[1]);
+                o.put("pageBottomOnScreen", w[1] + wv.getHeight());
+                android.view.ViewGroup.LayoutParams lp = wv.getLayoutParams();
+                if (lp instanceof android.view.ViewGroup.MarginLayoutParams) {
+                    android.view.ViewGroup.MarginLayoutParams m = (android.view.ViewGroup.MarginLayoutParams) lp;
+                    o.put("pageMargins", m.leftMargin + "," + m.topMargin + "," + m.rightMargin + "," + m.bottomMargin);
+                }
+                o.put("cutoutMode", a.getWindow().getAttributes().layoutInDisplayCutoutMode);
+                android.view.WindowInsets in = decor.getRootWindowInsets();
+                if (in != null) {
+                    o.put("legacyTop", in.getSystemWindowInsetTop());
+                    o.put("legacyBottom", in.getSystemWindowInsetBottom());
+                    o.put("stableTop", in.getStableInsetTop());
+                    if (android.os.Build.VERSION.SDK_INT >= 30) {
+                        o.put("statusTop", in.getInsets(android.view.WindowInsets.Type.statusBars()).top);
+                        o.put("statusTopIgnoringVisibility",
+                                in.getInsetsIgnoringVisibility(android.view.WindowInsets.Type.statusBars()).top);
+                        o.put("statusVisible", in.isVisible(android.view.WindowInsets.Type.statusBars()));
+                        o.put("navBottom", in.getInsets(android.view.WindowInsets.Type.navigationBars()).bottom);
+                        o.put("cutoutTop", in.getInsets(android.view.WindowInsets.Type.displayCutout()).top);
+                        o.put("imeBottom", in.getInsets(android.view.WindowInsets.Type.ime()).bottom);
+                    }
+                } else {
+                    o.put("insets", "none");
+                }
+                // The one number that matters: how much of the page is under the status bar right now.
+                Object st = o.has("statusTopIgnoringVisibility") ? o.get("statusTopIgnoringVisibility")
+                          : o.has("stableTop") ? o.get("stableTop") : 0;
+                o.put("overlapTop", Math.max(0, d[1] + ((Number) st).intValue() - w[1]));
+            } catch (Throwable t) {
+                o.put("error", String.valueOf(t));
+            }
+            call.resolve(o);
+        });
+    }
+
     /** Phone or tablet, from the device's own configuration -- see FormFactor. */
     @PluginMethod
     public void formFactor(PluginCall call) {

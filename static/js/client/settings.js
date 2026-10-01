@@ -611,6 +611,11 @@ window.PCSettingsFactory = function(dep){
             <label class="fld" style="flex-direction:row;justify-content:space-between;align-items:center">Hide system bars<label class="switch"><input type="checkbox" id="set-hide-bars"><span class="slider"></span></label></label>
             <div class="muted small">Full screen: hides the status bar and the navigation bar — on a Samsung tablet, the taskbar too. Swipe in from the edge to show them for a moment. Saved on this device.</div>
           </div>
+          <div id="us-screen-row" class="fld" style="margin-top:10px">Screen report
+            <div class="muted small" id="us-screen-sum">Measuring…</div>
+            <div class="set-actions" style="margin-top:6px"><button class="btn btn-ghost small" id="us-screen-copy">Copy screen report</button></div>
+            <div class="muted small">If the top of the app is cut off by the status bar, copy this and send it — it is what this phone reports about its bars and where the page sits.</div>
+          </div>
           <div id="phone-shell"></div></div>` : ''}
         <div class="us-pane" data-pane="tor">
           ${_hasNativeTor() ? `<div class="fld" id="us-ntor-row"><svg class="ic fld-ico" aria-hidden="true"><use href="#i-shield"></use></svg>Tor
@@ -1037,6 +1042,26 @@ window.PCSettingsFactory = function(dep){
               .then(r=>{ sw.checked=!!(r&&r.hidden); toast(sw.checked?'system bars hidden — swipe from the edge to show them':'system bars shown'); })
               .catch(()=>{ sw.checked=!want; toast('could not change the system bars'); })
               .finally(()=>{ sw.disabled=false; }); };
+        }
+      } }
+    // Screen report (APK only): this phone's own numbers for its bars and where the page sits, to copy
+    // into a bug report. "Cut off at the top" was fixed twice from measurements no fixture reproduced;
+    // the third fix is made from the phone that has it. An older APK without the call loses the row.
+    { const row=$('#us-screen-row'), sum=$('#us-screen-sum'), cp=$('#us-screen-copy');
+      const H=_capPlugin('HomeScreen','screenReport');
+      if(row){
+        if(!H){ row.remove(); }
+        else{
+          let rep=null;
+          const read=()=>H.screenReport().then(r=>{ rep=Object.assign({}, r||{}, {
+                cssTop:getComputedStyle(document.documentElement).getPropertyValue('padding-top')||'',
+                innerHeight:innerHeight, vvTop:Math.round((window.visualViewport||{}).offsetTop||0),
+                scrollTop:(document.scrollingElement||{}).scrollTop||0});
+              if(sum) sum.textContent = rep.error ? ('could not measure: '+rep.error)
+                : (rep.model+' · Android API '+rep.sdk+' · status bar '+(rep.statusTopIgnoringVisibility!=null?rep.statusTopIgnoringVisibility:rep.stableTop)+'px · page starts at '+rep.pageTopOnScreen+'px · '+(rep.overlapTop>0?('⚠ '+rep.overlapTop+'px under the status bar'):'clear of the status bar'));
+            }).catch(e=>{ if(sum) sum.textContent='could not measure: '+((e&&e.message)||e); });
+          read();
+          if(cp) cp.onclick=()=>read().then(()=>{ if(rep) copyValue(JSON.stringify(rep), 'screen report copied'); });
         }
       } }
     // Hide-DM-preview toggle: persist per-device and re-render Messages so it applies immediately.

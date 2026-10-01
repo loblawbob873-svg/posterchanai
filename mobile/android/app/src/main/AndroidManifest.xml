@@ -21,11 +21,15 @@
         android:usesCleartextTraffic="true"
         android:theme="@style/AppTheme">
 
+        <!-- adjustResize, like every other screen here: unset, Android chose to PAN the whole window up
+             to keep a focused field above the keyboard, which slid the top of the page (the Terminal's
+             tabs, the header) under the status bar ("the terminal top gets cut off"). -->
         <activity
             android:configChanges="orientation|keyboardHidden|keyboard|screenSize|locale|smallestScreenSize|screenLayout|uiMode"
             android:name=".MainActivity"
             android:label="@string/title_activity_main"
             android:theme="@style/AppTheme.NoActionBarLaunch"
+            android:windowSoftInputMode="adjustResize"
             android:launchMode="singleTask"
             android:exported="true">
 

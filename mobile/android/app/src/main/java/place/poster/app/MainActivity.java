@@ -358,10 +358,11 @@ public class MainActivity extends BridgeActivity {
             android.view.View win = v.getRootView();
             int[] at = new int[2];
             v.getLocationInWindow(at);
+            int ime = root.getInsets(androidx.core.view.WindowInsetsCompat.Type.ime()).bottom;
             int[] want = SystemBarClearance.margins(at[0], at[1], at[0] + v.getWidth(), at[1] + v.getHeight(),
                     new int[] {lp.leftMargin, lp.topMargin, lp.rightMargin, lp.bottomMargin},
                     win.getWidth(), win.getHeight(),
-                    new int[] {bars.left, bars.top, bars.right, bars.bottom});
+                    SystemBarClearance.withKeyboard(new int[] {bars.left, bars.top, bars.right, bars.bottom}, ime));
             if (lp.leftMargin != want[0] || lp.topMargin != want[1]
                     || lp.rightMargin != want[2] || lp.bottomMargin != want[3]) {
                 lp.setMargins(want[0], want[1], want[2], want[3]);

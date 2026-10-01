@@ -68,3 +68,55 @@ def test_main_activity_measures_on_layout_not_only_when_handed_insets():
     assert "SystemBarClearance.margins(" in body
     assert "addOnLayoutChangeListener" in body, "only an insets event re-checks -- the S25 never sends one"
     assert "getRootWindowInsets" in body
+
+
+KEYBOARD = r"""
+package place.poster.app;
+public class KeyboardMain {
+  public static void main(String[] a) {
+    int[] bars = {0, 110, 0, 63};
+    // An edge-to-edge window (One UI 8) with the keyboard up: the view is the whole window.
+    int[] e2e = SystemBarClearance.margins(0, 0, 1080, 2340, new int[]{0,0,0,0}, 1080, 2340,
+        SystemBarClearance.withKeyboard(bars, 900));
+    // The system already resized the window for the keyboard: the view ends above it already.
+    int[] resized = SystemBarClearance.margins(0, 110, 1080, 1440, new int[]{0,0,0,0}, 1080, 2340,
+        SystemBarClearance.withKeyboard(bars, 900));
+    // Keyboard gone again: back to just the bars.
+    int[] gone = SystemBarClearance.margins(0, 110, 1080, 1440, new int[]{0,110,0,900}, 1080, 2340,
+        SystemBarClearance.withKeyboard(bars, 0));
+    System.out.println("[" + java.util.Arrays.toString(e2e) + "," + java.util.Arrays.toString(resized)
+        + "," + java.util.Arrays.toString(gone) + "]");
+  }
+}
+"""
+
+
+@pytest.mark.skipif(not HAVE_JDK, reason="javac/java not installed")
+def test_the_page_also_stays_clear_of_the_keyboard_without_ever_leaving_the_top():
+    """"the terminal top gets cut off, where you see the terminal tabs": the keyboard is a bar the page
+    must stay ABOVE -- by shrinking, never by sliding up under the clock."""
+    with tempfile.TemporaryDirectory() as d:
+        main = Path(d) / "KeyboardMain.java"
+        main.write_text(KEYBOARD)
+        c = subprocess.run(["javac", "-d", d, str(PKG / "SystemBarClearance.java"), str(main)],
+                           capture_output=True, text=True)
+        assert c.returncode == 0, c.stderr
+        r = subprocess.run(["java", "-cp", d, "place.poster.app.KeyboardMain"], capture_output=True, text=True)
+        assert r.returncode == 0, r.stderr
+        assert json.loads(r.stdout) == [
+            [0, 110, 0, 900],   # edge-to-edge: below the clock AND above the keyboard
+            [0, 0, 0, 0],       # the system already resized: nothing to add
+            [0, 110, 0, 63],    # keyboard closed: the bottom margin shrinks back to the nav bar
+        ]
+
+
+def test_the_main_screen_resizes_for_the_keyboard_instead_of_panning():
+    """Unset, Android may PAN the window for a focused field -- the whole page slides up under the
+    status bar. Every other activity here already says adjustResize; the main one must too."""
+    import xml.etree.ElementTree as ET
+    ns = "{http://schemas.android.com/apk/res/android}"
+    root = ET.parse(ROOT / "mobile/android/app/src/main/AndroidManifest.xml").getroot()
+    main = [a for a in root.iter("activity") if a.get(ns + "name") == ".MainActivity"]
+    assert len(main) == 1
+    assert (main[0].get(ns + "windowSoftInputMode") or "").startswith("adjustResize"), \
+        "MainActivity leaves the keyboard mode to Android, which pans the page under the status bar"

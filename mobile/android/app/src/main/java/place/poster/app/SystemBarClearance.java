@@ -24,6 +24,18 @@ final class SystemBarClearance {
      * @param bars                  the system bars + cutout {left, top, right, bottom}
      * @return the margins that put the view's edges clear of every bar
      */
+    /**
+     * The bars plus the KEYBOARD, which the page must also stay clear of. Where Android resizes the
+     * window for the keyboard the view already ends above it and this adds nothing; where it does not
+     * (an edge-to-edge window, which One UI 8 draws regardless of the opt-out) the keyboard would
+     * otherwise cover the bottom of the page -- and the only other thing the system can do about a
+     * focused field it cannot see is PAN the whole window up, which is what put the Terminal's tab bar
+     * under the clock ("the terminal top gets cut off, where you see the terminal tabs").
+     */
+    static int[] withKeyboard(int[] bars, int imeBottom) {
+        return new int[] {bars[0], bars[1], bars[2], Math.max(bars[3], Math.max(0, imeBottom))};
+    }
+
     static int[] margins(int left, int top, int right, int bottom, int[] margins,
                          int winW, int winH, int[] bars) {
         // Where the view would sit with none of our margins -- so a margin already applied is not
