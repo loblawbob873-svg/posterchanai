@@ -30,7 +30,7 @@ def test_texts_repaint_and_desktop_parking_use_the_same_scroll_contract():
 
 
 def test_stale_attachment_hydration_cannot_move_a_repainted_conversation():
-    hydration = SMS.split("hydrateAtt(feed, t.msgs).then(() => {", 1)[1].split(
+    hydration = SMS.split("hydrateAtt(feed, _vis).then(() => {", 1)[1].split(
         "}, () => {});", 1
     )[0]
     guard = "if(!l || l !== list || !before) return"

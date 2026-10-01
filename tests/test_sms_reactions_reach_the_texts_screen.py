@@ -52,7 +52,7 @@ class TheModuleReachesTheScreen(unittest.TestCase):
         """`grp`/`cont` is computed from the PREVIOUS bubble, so a consumed row left in the list
         would break the run-of-messages spacing around every tapback while drawing nothing."""
         self.assertIn("_shown", SMS_JS)
-        self.assertIn("const prev = _shown[i-1];", SMS_JS)
+        self.assertIn("const prev = _shown[_start + i - 1];", SMS_JS)
 
     def test_the_chip_styles_are_scoped_to_texts(self):
         """`.bubble` is the DM's. Adding `position` to it would move every absolutely positioned

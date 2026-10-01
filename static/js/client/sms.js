@@ -245,6 +245,12 @@
        offset. `bottom` is intent: new content may keep a person at latest only when they were
        already there. */
     scroll: Object.create(null),
+    /* PAGINATION: thread key -> the `doc` of the OLDEST message drawn. A conversation opens on its
+       newest PAGE_FIRST messages; scrolling to the top (or "Show older") reaches back PAGE_MORE at a
+       time. Keyed by the first DOC rather than a count so a message arriving while somebody reads
+       further up does not slide what they are reading off the top of the page. */
+    firstShown: Object.create(null),
+    olderAnchor: null,
     /* THE COMPOSER BELONGS TO THE CONVERSATION -- not to the render, and not to the module.
      *
      * This was one File (`attach`) and a text box with no state at all, and each half was wrong in
@@ -3524,6 +3530,11 @@
    * at a time. The address cache in `encPartData` is what makes a restart cheap — the second pass
    * over a drawn conversation does no fetching and no decrypting at all. */
   const HYDRATE_LANES = 4;
+  /* "Text Performance is very slow. Should we paginate it at the latest 20 messages?" A thread was
+   * drawn WHOLE -- every bubble of a conversation years long -- and redrawn whole on every receipt,
+   * focus change and incoming message; and every picture placeholder in it was fetched and
+   * decrypted. The newest 20, then 40 more per step back. */
+  const PAGE_FIRST = 20, PAGE_MORE = 40;
   async function hydrateAtt(root, msgs){
     const els = Array.from(root.querySelectorAll('.sms-att'))
                      .filter(el => !el.dataset || el.dataset.done !== '1');
@@ -4283,6 +4294,34 @@
     }
   }
 
+  /* Where this paint starts in the drawn list: at the remembered first message, or the newest
+     PAGE_FIRST when there is none (or it is gone -- deleted, or tapback-consumed). */
+  function pageStart(t, shown){
+    const doc = S.firstShown[t.key];
+    let at = doc ? shown.findIndex(m => String(m.doc || '') === doc) : -1;
+    if(at < 0){
+      at = Math.max(0, shown.length - PAGE_FIRST);
+      if(shown[at]) S.firstShown[t.key] = String(shown[at].doc || '');
+    }
+    return at;
+  }
+  let _olderBusy = false;
+  function showOlder(t, list){
+    /* A scroll event queued for a list the last paint already replaced must not reach back again:
+       a fling fires several, and each one landing on the detached list loaded another 40. */
+    if(_olderBusy || !list || !list.isConnected) return;
+    const rx = reactionsFor(t);
+    const shown = t.msgs.filter(m => !rx.consumed.has(String(m.doc || '')));
+    const start = pageStart(t, shown);
+    if(start <= 0) return;
+    _olderBusy = true;
+    const top = list.querySelector('.bubble[data-doc]');
+    S.olderAnchor = top ? { key: t.key, doc: top.dataset.doc, gap: top.offsetTop - list.scrollTop } : null;
+    const next = shown[Math.max(0, start - PAGE_MORE)];
+    if(next) S.firstShown[t.key] = String(next.doc || '');
+    try{ paint(); } finally { _olderBusy = false; }
+  }
+
   function paintThread(feed, enc){
     /* A focus change, attachment draft, receipt, contact refresh, or relay event can repaint the
        whole thread. Capture the OLD element before replacing it. Its data key is authoritative:
@@ -4298,7 +4337,10 @@
        refresh) keeps the reader where they are — it is not a bookmark to reopen the conversation at
        the place it was last left. So it applies only while this same thread is the one being shown;
        arriving from the list, a notification or another thread starts at the bottom. */
-    if(!oldList || (oldList.dataset.threadKey || '') !== S.open) delete S.scroll[S.open];
+    if(!oldList || (oldList.dataset.threadKey || '') !== S.open){
+      delete S.scroll[S.open];
+      delete S.firstShown[S.open];      // arriving at a conversation starts at its newest page
+    }
     /* AND THE CARET, for the same reason as the scroll offset. The draft itself survives on S.draft
        now, but a repaint landing while somebody is mid-word still rebuilds the element under them:
        without this their cursor jumps to the end of what they were editing and the keyboard closes.
@@ -4317,6 +4359,7 @@
     let savedContact = false;
     try{ savedContact = !!(window.PCContacts && PCContacts.nameFor && PCContacts.nameFor(t.address)); }
     catch(_){ }
+    let _vis = [], _older = 0;          // the messages this paint draws, and how many are above them
     feed.innerHTML = `
       <div class="sms-wrap">
         <div class="sms-head">
@@ -4338,7 +4381,13 @@
              `grp`/`cont` is computed from the PREVIOUS bubble, so leaving them in would break the
              run-of-messages spacing around every tapback even while they drew nothing. */
           const _shown = t.msgs.filter(m => !_rx.consumed.has(String(m.doc || '')));
-          return _shown.map((m, i) => {
+          const _start = pageStart(t, _shown);
+          _vis = _shown.slice(_start);
+          _older = _start;
+          return (_start > 0
+              ? `<button class="btn small sms-older" id="sms-older">Show older messages (${_start})</button>`
+              : '')
+            + _vis.map((m, i) => {
           /* THE SAME BUBBLE AS A DM, not a second one that looks nearly like it.
            *
            * Texts had its own parallel set of classes -- sms-msg/sms-bub/sms-meta -- built to the
@@ -4350,7 +4399,7 @@
            * `.bubble .in/.out` and `.grp`/`.cont` are the DM's own, so Texts inherits its shape,
            * its spacing and any later change to either for free. What stays sms-specific is the
            * part DMs do not have: MMS attachments inside the bubble. */
-          const prev = _shown[i-1];
+          const prev = _shown[_start + i - 1];      // grouping looks past the page edge
           const grp = !prev || !!prev.incoming !== !!m.incoming ? ' grp' : ' cont';
           const atts = (m.parts||[]).map((p, j) => attHtml(p, enc, i, j)).join('')
             || (mmsWithoutMedia(m)
@@ -4672,19 +4721,34 @@
     const list = feed.querySelector('.sms-msgs');
     const saved = S.scroll[t.key];
     putScroll(list, saved);
+    /* Reaching back keeps the message that was at the top exactly where it was on screen: the
+       older page is drawn ABOVE it, so without this the reader is thrown 40 messages back. */
+    const anc = S.olderAnchor;
+    if(list && anc && anc.key === t.key){
+      S.olderAnchor = null;
+      const el = list.querySelector('.bubble[data-doc="' + (window.CSS && CSS.escape ? CSS.escape(anc.doc) : anc.doc) + '"]');
+      if(el) list.scrollTop = Math.max(0, el.offsetTop - anc.gap);
+      S.scroll[t.key] = scrollState(list);
+    }
+    const older = () => showOlder(t, list);
+    { const b = feed.querySelector('#sms-older'); if(b) b.onclick = older; }
     if(list) list.onscroll = () => {
       /* Reparenting during desktop window parking fires synthetic scroll events. The OS restores
          the exact offset itself; do not replace that saved intent with the transient zero. */
       if(list.dataset.osParking === '1') return;
       S.scroll[t.key] = scrollState(list);
+      if(_older > 0 && list.isConnected && list.scrollTop < 80) older();
     };
     /* THE PICTURES ARRIVE AFTER THE DRAW, and each one that lands pushes everything below it
        down. A thread opens at its newest message (the line above), so re-pinning as they land is
        what keeps it there instead of drifting backwards through the conversation as the photos
        above resolve. Guarded on there BEING attachments, so an ordinary text thread does no work. */
-    if(t.msgs.some(m => (m.parts || []).length)){
+    if(_vis.some(m => (m.parts || []).length)){
       const before = hydrationScrollState(list);
-      hydrateAtt(feed, t.msgs).then(() => {
+      /* The DRAWN messages, which is what each placeholder's `data-m` indexes. Handing it `t.msgs`
+         drew a picture from the wrong message -- or never loaded it -- after any tapback, because
+         those are removed from the drawn list and the indexes shift. */
+      hydrateAtt(feed, _vis).then(() => {
         const l = feed.querySelector('.sms-msgs');
         /* Hydration belongs to THIS rendered element, not merely this thread key. A focus sync can
            repaint the same conversation while an encrypted photo is loading; a user can also open
