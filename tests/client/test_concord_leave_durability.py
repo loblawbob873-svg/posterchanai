@@ -102,3 +102,10 @@ def test_leaving_is_never_gated_on_a_native_dialog():
     assert "window.confirm(" not in handler
     assert "await p.uiConfirm('Leave '" in handler
     assert handler.index("await leaveArmadaMembership(p,room)") < handler.index("const latest=saved()")
+
+
+def test_a_room_or_entry_without_a_32_byte_id_never_blocks_leaving():
+    """"could not leave concord community just now, something about a 32 bit key": a room known only
+    by its naddr, and one malformed entry in the stored membership list, each made Leave throw --
+    the second also made every membership read throw, hiding every joined community."""
+    _runtime("concord_leave_bad_key_runtime.mjs", "concord leave bad key runtime ok")

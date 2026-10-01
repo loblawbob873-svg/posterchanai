@@ -95,7 +95,12 @@ window.__PC={$, $$, enc, niceNip05:s=>s, isView:v=>v==='concord', LOGO:'',
  relayQueryFrom:async(_r,f)=>relayQuery(f),
  verifyRelayEvents:async e=>e,
  relaySubscribe:()=>'sub1', relayClose:()=>{}, relayUrls:()=>[],
- signTemplate:async x=>x, linkify:s=>enc(s), linkCardHtml:()=>'', hydrateLinkCards:()=>{},
+ /* A SIGNED EVENT HAS AN ID, A PUBKEY AND A SIGNATURE. `x=>x` returned none of them, so a second
+    device discarded every vault document it read and the "tombstone keeps a fresh device out"
+    step passed by reading NOTHING -- while the re-join step could only fail. */
+ signTemplate:async x=>{seq++;localStorage.setItem('__pc_fake_seq',String(seq));
+   return {...x,pubkey:OWNER,created_at:x.created_at||Math.floor(Date.now()/1000),id:seq.toString(16).padStart(64,'0'),sig:'f'.repeat(128)};},
+ linkify:s=>enc(s), linkCardHtml:()=>'', hydrateLinkCards:()=>{},
  osNotify:()=>{}, askOsNotify:async()=>'granted', copyValue:()=>{}, startGroupCall:()=>{},
  uploadBlob:async()=>'', openEmojiPopover:()=>{}, insertAt:()=>{}, blossomPicker:null, modal:null};
 
@@ -247,6 +252,9 @@ async def drive(url):
             if not await boot(ws, url, "!!window.__ready && !!document.querySelector('.cc-app')"):
                 problems.append(f"{label} the second device never rendered")
                 continue
+            seen = await evaluate(ws, "PCConcord.membershipEvents(window.__PC,'a'.repeat(64),{external:false}).then(e=>e.length)")
+            if not seen:
+                problems.append(f"{label} the fresh device read NO membership documents -- every step below would pass vacuously")
             await evaluate(ws, "PCConcord.syncArmadaMemberships(window.__PC,window.__PC.viewer())")
             await asyncio.sleep(.2)
             if await evaluate(ws, "window.__rooms().length"):
@@ -269,8 +277,9 @@ async def drive(url):
               const fresh={url:'https://armada.buzz/invite/naddr1soapboxcheck#s3cr3t',
                 naddr:'naddr1soapboxcheck',communityId:'c'.repeat(64),name:'Soapbox',description:'',
                 channels:[{name:'general',private:false}],local:false,
-                cord:{bundle:{owner:'a'.repeat(64),community_root:'d'.repeat(64),
-                  channels:[{id:'gen',name:'general'}],relays:['wss://relay.test']}}};
+                cord:{bundle:{community_id:'c'.repeat(64),owner:'a'.repeat(64),owner_salt:'2'.repeat(64),root_epoch:0,
+                  community_root:'d'.repeat(64),
+                  channels:[{id:'e'.repeat(64),key:'f'.repeat(64),epoch:0,name:'general'}],relays:['wss://relay.test']}}};
               localStorage.setItem('pc.concord.invites',JSON.stringify([fresh]));
               const ok=await PCConcord.persistArmadaMembership(window.__PC,fresh);
               return {ok,left:PCConcord.leftCommunities('a'.repeat(64)).length};})()""")
@@ -289,6 +298,37 @@ async def drive(url):
                 await asyncio.sleep(.05)
             if not await evaluate(ws, "window.__rooms().length"):
                 problems.append(f"{label} a deliberate re-join was swallowed by the old tombstone")
+
+            # --- 4. A room with NO 32-byte community id (never opened, or NIP-29) leaves cleanly. --
+            # "could not leave concord community just now, something about a 32 bit key": the Leave
+            # button threw 'membership contains an invalid 32-byte key' for such a room.
+            await evaluate(ws, r"""(()=>{window.__toasts=[];
+              localStorage.setItem('pc.concord.invites',JSON.stringify([{url:'',naddr:'naddr1neveropened',
+                communityId:'naddr1neveropened',name:'Monero',description:'',channels:[{name:'general',private:false}],local:false}]));
+              localStorage.setItem('pc.concord.active','0');})()""")
+            if not await boot(ws, url, "!!window.__ready && !!document.querySelector('.cc-app')"):
+                problems.append(f"{label} the bare-room device never rendered")
+                continue
+            before = await evaluate(ws, "RELAY.length")
+            control = await evaluate(ws, r"""(()=>{for(const id of ['#cc-leave-room','#cc-leave-shortcut']){const b=document.querySelector(id);
+              if(b&&b.getBoundingClientRect().width>0&&getComputedStyle(b).display!=='none'){b.click();return id;}}return '';})()""")
+            if not control:
+                problems.append(f"{label} no reachable leave control for a room with no community id")
+                continue
+            # ONLY this room: the account's re-joined Soapbox (section 3) legitimately syncs back in.
+            still = "window.__rooms().filter(r=>r.naddr==='naddr1neveropened').length"
+            for _ in range(120):
+                if not await evaluate(ws, still):
+                    break
+                await asyncio.sleep(.05)
+            bare = await evaluate(ws, "({rooms:" + still + ",toasts:window.__toasts||[],published:RELAY.length})")
+            if any("could not leave" in t for t in bare["toasts"]):
+                problems.append(f"{label} leaving a room with no community id failed: {bare['toasts']}")
+            if bare["rooms"]:
+                problems.append(f"{label} a room with no community id survived Leave: {bare['toasts']}")
+            if bare["published"] != before:
+                problems.append(f"{label} leaving a room with no community id published "
+                                f"{bare['published'] - before} event(s) for a membership that cannot exist")
     return problems
 
 

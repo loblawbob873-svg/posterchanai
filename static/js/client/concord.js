@@ -2629,6 +2629,11 @@
     for(let i=0;i<Math.min(x.length,y.length);i++)if(x[i]!==y[i])return x[i]-y[i];
     return x.length-y.length;
   }
+  /* The 32-byte community id in wire form, or '' when `value` is not one. A room that has never had
+   * its Concord bundle opened -- or a NIP-29 group -- is known by its naddr/identity string, which is
+   * not a 32-byte key; asking cordListB64 about it threw "membership contains an invalid 32-byte key"
+   * and Leave stopped dead ("could not leave concord community ... something about a 32 bit key"). */
+  function cordListIdOrEmpty(value){try{return value?cordListB64(value):'';}catch(_){return '';}}
   function cordListB64(value){
     const hex=cordListHex(value);
     if(!/^[0-9a-f]{64}$/i.test(hex))throw new Error('membership contains an invalid 32-byte key');
@@ -2667,10 +2672,13 @@
       for(const e of doc.entries||[]){
         if(!e||!(e.current||e.seed))continue;
         // Migrate the old invite-address vault key to the actual community commitment.
-        const cid=cordListB64(/^[0-9a-f]{64}$/i.test(cordListHex(e.community_id))?e.community_id:(e.current||e.seed).community_id);
+        // A row with no usable 32-byte id is skipped, never thrown on: one such row used to make the
+        // WHOLE merge throw, so no community in the list could be read, joined or left.
+        const cid=cordListIdOrEmpty(/^[0-9a-f]{64}$/i.test(cordListHex(e.community_id))?e.community_id:(e.current||e.seed).community_id);
+        if(!cid){ try{console.warn('Concord membership: skipped an entry with no 32-byte community id');}catch(_){} continue; }
         entries.set(cid,cordMergeEntry(entries.get(cid),{...e,community_id:cid}));
       }
-      for(const t of doc.tombstones||[]){const cid=cordListB64(t.community_id),old=tombs.get(cid);tombs.set(cid,{...cordMergeOpaque(old,t),community_id:cid,removed_at:cordIntegerMax(old?.removed_at||0,t.removed_at||0)});}
+      for(const t of doc.tombstones||[]){const cid=cordListIdOrEmpty(t.community_id);if(!cid)continue;const old=tombs.get(cid);tombs.set(cid,{...cordMergeOpaque(old,t),community_id:cid,removed_at:cordIntegerMax(old?.removed_at||0,t.removed_at||0)});}
     }
     for(const [cid,e]of entries)if(cordU64(e.added_at||0)<=cordU64(tombs.get(cid)?.removed_at||0))entries.delete(cid);
     return {...extras,entries:[...entries.values()].sort((a,b)=>(a.community_id<b.community_id?-1:a.community_id>b.community_id?1:0)),tombstones:[...tombs.values()].sort((a,b)=>(a.community_id<b.community_id?-1:a.community_id>b.community_id?1:0))};
@@ -2703,7 +2711,9 @@
       const live=()=>{if(p.viewer?.().pubkey!==owner)throw new Error('account changed during membership update');};live();
       const state=await cordMembershipState(p,owner);live();
       const before=state.merged,desired=change(before),changed=new Set(desired.changed),all=cordMergeLists([desired.list]);
-      const indexOf=cid=>{for(const [index,row]of state.fragments)if([...(row.doc.entries||[]),...(row.doc.tombstones||[])].some(e=>cordListB64(e.community_id)===cid))return index;return 0;};
+      // cordListIdOrEmpty, not cordListB64: ONE malformed entry anywhere in the stored list used to throw
+      // here and block every join and leave for the account.
+      const indexOf=cid=>{for(const [index,row]of state.fragments)if([...(row.doc.entries||[]),...(row.doc.tombstones||[])].some(e=>cordListIdOrEmpty(e.community_id)===cid))return index;return 0;};
       const touched=new Set([...changed].map(indexOf)),docs=new Map();
       if(!state.fragments.size)touched.add(0);
       for(const index of touched){
@@ -2720,7 +2730,7 @@
       // Migration adds legacy-only memberships only with a complete list. Unknown fragment
       // fields move intact to zero; partial targeted writes preserve their own source fields.
       if(state.complete){
-        const known=new Set([...state.fragments.values()].flatMap(row=>[...(row.doc.entries||[]),...(row.doc.tombstones||[])].map(e=>cordListB64(e.community_id))));
+        const known=new Set([...state.fragments.values()].flatMap(row=>[...(row.doc.entries||[]),...(row.doc.tombstones||[])].map(e=>cordListIdOrEmpty(e.community_id)||String(e.community_id||''))));
         const extraEntries=all.entries.filter(e=>!known.has(e.community_id)&&!changed.has(e.community_id)),extraTombs=all.tombstones.filter(e=>!known.has(e.community_id)&&!changed.has(e.community_id));
         if(extraEntries.length||extraTombs.length){const zero=docs.get(0)||cordMergeLists([state.fragments.get(0)?.doc||{entries:[],tombstones:[]}]);zero.entries.push(...extraEntries);zero.tombstones.push(...extraTombs);docs.set(0,zero);}
       }
@@ -2804,7 +2814,8 @@
     await cordWriteMembership(p,list=>{
       const now=Date.now(),changed=[];
       for(const room of wanted){
-        const bundle=room.cord&&room.cord.bundle||{},cid=cordListB64(bundle.community_id||room.communityId);
+        const bundle=room.cord&&room.cord.bundle||{},cid=cordListIdOrEmpty(bundle.community_id)||cordListIdOrEmpty(room.communityId);
+        if(!cid)continue;          // no 32-byte id: nothing the vault can key this room on
         const held=window.PosterCordReader?.withChannelHistory?window.PosterCordReader.withChannelHistory(bundle,roomControls.get(room.communityId||room.naddr)||[]):bundle;
         const current={...held,name:room.name};
         const prior=list.entries.find(e=>e.community_id===cid),removed=cordU64(list.tombstones.find(t=>t.community_id===cid)?.removed_at||0);
@@ -2832,11 +2843,15 @@
     const cid=roomIdentity(room);
     if(!room||!cid)return true;
     if(!viewer.pubkey||!p.nip44enc||!p.nip44dec)throw new Error('sign in before leaving this community');
+    // The vault keys a membership on the 32-byte community id. A room with none (never opened, or a
+    // NIP-29 group) cannot have a vault entry to tombstone -- leaving it is this device's ledger alone.
+    // Decided BEFORE the guestbook says "leave", so a leave that is going to fail tells nobody.
+    const wireId=cordListIdOrEmpty(room.cord?.bundle?.community_id)||cordListIdOrEmpty(room.communityId)||cordListIdOrEmpty(cid);
+    const removedAt=Date.now(),leftRef=String(room.url||''),leftNaddr=String(room.naddr||'');
+    if(!wireId){ rememberLeftCommunity(viewer.pubkey,room,removedAt); return true; }
     // CORD-02 §5: say so on the guestbook first -- after the keys are gone it cannot be wrapped.
     await publishGuestbook(p,room,'leave');
-    const removedAt=Date.now(),leftRef=String(room.url||''),leftNaddr=String(room.naddr||'');
     await cordWriteMembership(p,list=>{
-      const wireId=cordListB64(room.cord?.bundle?.community_id||room.communityId||cid);
       const entries=new Map(list.entries.map(e=>[e.community_id,e])),tombs=new Map(list.tombstones.map(t=>[t.community_id,t]));
       const latest=cordIntegerMax(removedAt,entries.get(wireId)?.added_at||0,tombs.get(wireId)?.removed_at||0);
       entries.delete(wireId);
