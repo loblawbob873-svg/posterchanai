@@ -171,23 +171,84 @@ def test_the_prompt_window_takes_most_of_the_screen():
 
 
 @pytest.mark.skipif(not Path("/opt/google/chrome/chrome").exists(), reason="Chrome required")
-def test_in_the_big_window_the_preview_fills_it_and_a_delay_hands_off_to_the_desktop():
+def test_in_the_big_window_the_preview_fills_it_and_there_is_no_retake_timer():
+    """The delay belongs BEFORE the capture, in the chooser -- not as a retake after it ("the timer was
+    supposed to be a timer after you choose what you want to do. you fucked it all up")."""
     async def check(b):
         await b.call("Emulation.setDeviceMetricsOverride", {"width": 1180, "height": 760, "deviceScaleFactor": 1, "mobile": False})
         await b.until("!!document.querySelector('.os-shot-popup .shot-prompt')")
         lay = await b.js("""(()=>{const p=document.querySelector('.shot-prev').getBoundingClientRect(),
-            d=[...document.querySelectorAll('[data-shot-delay]')].map(b=>b.dataset.shotDelay),
             acts=document.querySelector('.shot-acts').getBoundingClientRect();
-            return {prevH:p.height, d, actsInside:acts.bottom<=innerHeight}})()""")
-        assert lay["d"] == ["3", "5", "10"], lay
+            return {prevH:p.height, retake:document.querySelectorAll('[data-shot-delay], .shot-delay').length,
+                    actsInside:acts.bottom<=innerHeight}})()""")
+        assert lay["retake"] == 0, ("the prompt still offers a timed retake", lay)
         assert lay["prevH"] >= 0.5 * 760 and lay["actsInside"], ("the preview does not fill the window", lay)
-        await b.js("document.querySelector('[data-shot-delay=\"5\"]').click()")
-        await asyncio.sleep(.6)
-        shot, acts = await b.js("[__shot, __acts]")
-        assert ["discard", "/tmp/posterchan-shots-1000/s.png"] in shot and "shot:delay-5" in acts, (shot, acts)
-        assert not any(x[0] == "take" for x in shot), "a timed retake saved the old capture"
 
     asyncio.run(desktop.with_browser("online", "?pcpopup=shot", check, BRIDGES + STAGED))
+
+
+@pytest.mark.skipif(not Path("/opt/google/chrome/chrome").exists(), reason="Chrome required")
+def test_in_the_capture_window_the_delay_comes_before_the_action_you_choose():
+    """ "the timer was supposed to be a timer after you choose what you want to do ... like a 5s delay
+    before the screenshot action happens (full, rectangle, etc)": pick the delay, then Select region or
+    Full screen -- the window hands BOTH to the desktop, which counts down and then does that action."""
+    got = {}
+
+    async def check(b):
+        await b.until("!!document.querySelector('.os-shot-popup .shot-prompt')")
+        got["opts"] = await b.js("[...document.querySelectorAll('[data-shot-wait]')].map(x=>x.textContent.trim())")
+        got["acts_on_screen"] = await b.js("[...document.querySelectorAll('[data-shot-act]')].map(x=>x.dataset.shotAct)")
+        await b.js("document.querySelector('[data-shot-wait=\"5\"]').click()")
+        got["on"] = await b.js("[...document.querySelectorAll('[data-shot-wait].on')].map(x=>x.dataset.shotWait)")
+        got["kept"] = await b.js("localStorage.getItem('pc_shot_delay')")
+        await b.js("document.querySelector('[data-shot-act=\"screen\"]').click()")
+        await asyncio.sleep(.5)
+        got["acts"] = await b.js("__acts"); got["shot"] = await b.js("__shot")
+
+    asyncio.run(desktop.with_browser("online", "?pcpopup=shot", check, BRIDGES + STAGED))
+    assert got["opts"] == ["None", "3 s", "5 s", "10 s"], got
+    assert got["acts_on_screen"] == ["save", "copy", "region", "screen", "cancel"], got
+    assert got["on"] == ["5"] and got["kept"] == "5", got
+    assert got["acts"] == ["shot:delay-5-screen"], ("the window must hand the delay AND the action to the desktop", got)
+    assert ["discard", "/tmp/posterchan-shots-1000/s.png"] in got["shot"], got
+    assert not any(x[0] == "take" for x in got["shot"]), "it saved the old capture instead of taking a new one"
+
+
+@pytest.mark.skipif(not Path("/opt/google/chrome/chrome").exists(), reason="Chrome required")
+def test_with_no_delay_select_region_happens_at_once():
+    got = {}
+
+    async def check(b):
+        await b.js("localStorage.setItem('pc_shot_delay','0')")
+        await b.until("!!document.querySelector('.os-shot-popup .shot-prompt')")
+        assert await b.js("document.querySelector('[data-shot-wait].on').dataset.shotWait") == "0"
+        await b.js("document.querySelector('[data-shot-act=\"region\"]').click()")
+        await asyncio.sleep(.5)
+        got["acts"] = await b.js("__acts")
+
+    asyncio.run(desktop.with_browser("online", "?pcpopup=shot", check, BRIDGES + STAGED))
+    assert got["acts"] == ["shot:region"], got
+
+
+@pytest.mark.skipif(not Path("/opt/google/chrome/chrome").exists(), reason="Chrome required")
+def test_after_the_countdown_the_desktop_runs_the_action_that_was_chosen():
+    """An AREA chosen with a delay: the countdown runs on the taskbar, nothing is captured until it ends,
+    and THEN the area picker runs (pcShot.take with region) -- not a whole-screen grab."""
+    async def check(b):
+        await desktop.login(b)
+        await b.until("!!window.PCOS && PCOS.isOn() && !!window.__wm && !!__wm.emit && !!document.getElementById('os-bar')")
+        await b.js("window.__chips=[];new MutationObserver(()=>{const c=document.getElementById('os-shot-count');"
+                   "const t=c?c.textContent:'';if(t&&__chips[__chips.length-1]!==t)__chips.push(t);})"
+                   ".observe(document.body,{subtree:true,childList:true,characterData:true})")
+        await b.js("__wm.emit({name:'tick',change:'run',payload:'pc:act:shot:delay-3-region'})")
+        await b.until("__chips.includes('◉ 2')")
+        assert not await b.js("__shot.some(x=>x[0]==='take'||x[0]==='stage')"), "it captured before the countdown ended"
+        await b.until("__shot.some(x=>x[0]==='take'||x[0]==='stage')", )
+        first = await b.js("__shot.find(x=>x[0]==='take'||x[0]==='stage')")
+        assert first[0] == "take" and first[1].get("mode") == "region", ("the area picker should run, not a full grab", first)
+        assert await b.js("__chips") == ["◉ 3", "◉ 2", "◉ 1"], await b.js("__chips")
+
+    asyncio.run(desktop.with_browser("online", "", check, COMPOSITOR + BRIDGES))
 
 
 @pytest.mark.skipif(not Path("/opt/google/chrome/chrome").exists(), reason="Chrome required")

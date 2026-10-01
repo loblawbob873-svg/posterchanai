@@ -11536,6 +11536,16 @@ html.os-idle #os-root *{animation:none!important;transition:none!important}
   transition:background .12s,border-color .12s,box-shadow .12s}
 .shot-delay-btn:hover,.shot-delay-btn:focus-visible{outline:none;border-color:var(--accent);background:rgba(var(--accent-rgb),.18);
   box-shadow:0 0 12px rgba(var(--accent-rgb),.35)}
+/* The Screenshot flyout's DELAY, chosen before the mode ("a 5s delay before the screenshot action
+   happens"). A segmented row; the chosen one is lit, so the delay that will apply is never a guess. */
+.shot-delay-pick{display:flex;align-items:center;gap:6px;flex-wrap:wrap;padding:10px 14px 4px;
+  font:600 11px var(--font-mono,ui-monospace,monospace);letter-spacing:.14em;text-transform:uppercase;color:var(--muted)}
+.shot-delay-pick .shot-delay-lbl{margin-right:4px}
+.shot-delay-pick .shot-delay-hint{margin-left:6px;letter-spacing:.04em;text-transform:none;font-weight:500;color:var(--muted)}
+.shot-prompt .shot-delay-pick{padding:12px 2px 2px}
+.shot-delay-pick .shot-delay-btn{min-width:48px;padding:6px 10px;letter-spacing:.04em;text-transform:none;font-size:12px}
+.shot-delay-btn.on{color:#04121a;border-color:transparent;background:linear-gradient(135deg,var(--neon),var(--neon2));
+  box-shadow:0 0 12px rgba(var(--accent-rgb),.45)}
 .shot-prev-box{display:flex;min-height:0;flex:1 1 auto}
 /* Only the preview gives up room when the window is short: the title, the choices, the delay row and
    the footer never shrink below their size (the choices are tap targets). */

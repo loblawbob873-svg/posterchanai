@@ -1488,10 +1488,10 @@
   const SHOT_STAGE_KEY = 'pc_shot_stage';
   /* A TIMED CAPTURE ("add option for a timed delay before the capture so user has time to prep"). */
   const SHOT_DELAYS = [3, 5, 10];
-  const SHOT_DELAY_ROW = `<div class="shot-delay" role="group" aria-label="Retake after a delay">
-        <span class="shot-delay-lbl">Retake after</span>
-        ${SHOT_DELAYS.map(n => `<button class="shot-delay-btn" data-shot-delay="${n}">${n} s</button>`).join('')}
-      </div>`;
+  /* Remembered between uses, per device: somebody who needs a menu in the shot needs it every time. */
+  const SHOT_DELAY_KEY = 'pc_shot_delay';
+  function shotDelay(){ try{ const n = Number(root.localStorage.getItem(SHOT_DELAY_KEY)); return SHOT_DELAYS.includes(n) ? n : 0; }catch(_){ return 0; } }
+  function setShotDelay(n){ try{ root.localStorage.setItem(SHOT_DELAY_KEY, String(SHOT_DELAYS.includes(n) ? n : 0)); }catch(_){ } }
   /* THE COUNTDOWN IS A CHIP ON THE TASKBAR, never a window: a window would take the keyboard from
    * the application being set up (and close the very menu somebody wants in the picture). It is
    * removed, and two frames are let through, BEFORE the capture -- the chip is never in the shot.
@@ -1519,8 +1519,12 @@
     if(_shotCount){ clearInterval(_shotCount.t); _shotCount = null; }
     _shotChip(null);
   }
-  function delayedShot(sec){
+  /* THE DELAY COMES FIRST, THEN WHAT YOU CHOSE ("the timer was supposed to be a timer after you choose
+   * what you want to do ... like a 5s delay before the screenshot action happens (full, rectangle, etc)").
+   * `mode` is the action picked in the chooser: at zero the area picker opens, or the screen is taken. */
+  function delayedShot(sec, mode){
     sec = Math.max(1, Math.min(60, Math.round(Number(sec) || 5)));
+    mode = mode === 'region' ? 'region' : 'screen';
     cancelDelayedShot();
     closePop();
     /* Counted against a DEADLINE and re-asserted every 200ms: closing the flyout redraws the taskbar,
@@ -1533,11 +1537,11 @@
       clearInterval(c.t); _shotCount = null;
       _shotChip(null);
       await new Promise(r => requestAnimationFrame(() => requestAnimationFrame(() => setTimeout(r, 60))));
-      try{ await shotPrompt('screen'); }catch(_){ }
+      try{ if(mode === 'region') await takeShot('region'); else await shotPrompt('screen'); }catch(_){ }
     };
     c.t = setInterval(tick, 200);
     setTimeout(tick, 0);
-    return { delayed: sec };
+    return { delayed: sec, mode };
   }
   /* Layout → viewport pixels, measured off the taskbar (see openTrayWindow for why it is measured). */
   function _zoomK(){
@@ -1553,6 +1557,27 @@
    * already been taken out of storage by then, so a second READ found nothing and closed the window:
    * the prompt flashed up and vanished ("screenshot still broken, pops up and disappears"). */
   let _shotSt = null;
+  /* THE DELAY IN THE SCREEN CAPTURE WINDOW comes before the ACTION you then choose ("the timer was
+   * supposed to be a timer after you choose what you want to do ... like a 5s delay before the screenshot
+   * action happens (full, rectangle, etc)"). Pick None / 3 / 5 / 10 s, then Select region or Full screen:
+   * the countdown runs on the taskbar and THEN the area picker opens or the screen is taken. Save and
+   * copy act on the capture already here, at once. Remembered per device. */
+  function _shotDelayRow(){
+    const cur = shotDelay();
+    return `<div class="shot-delay-pick" role="radiogroup" aria-label="Delay before Select region or Full screen">
+        <span class="shot-delay-lbl">Delay</span>
+        ${[0].concat(SHOT_DELAYS).map(n => `<button class="shot-delay-btn${n === cur ? ' on' : ''}" role="radio"
+           aria-checked="${n === cur}" data-shot-wait="${n}">${n ? n + ' s' : 'None'}</button>`).join('')}
+        <span class="shot-delay-hint">then Select region or Full screen</span>
+      </div>`;
+  }
+  function _bindShotWait(el){
+    el.querySelectorAll('[data-shot-wait]').forEach(b => b.onclick = (e) => {
+      e.stopPropagation();
+      setShotDelay(Number(b.dataset.shotWait));
+      el.querySelectorAll('[data-shot-wait]').forEach(x => { const on = x === b; x.classList.toggle('on', on); x.setAttribute('aria-checked', String(on)); });
+    });
+  }
   function renderShotPopup(){
     const sh = root.pcShot, doc = root.document;
     if(_shotSt && doc.querySelector('.os-shot-popup .shot-prompt')) return;     // already on screen
@@ -1567,13 +1592,15 @@
     host.innerHTML = `<div class="shot-prompt" role="dialog" aria-label="Screenshot">
         <div class="shot-hd"><span class="shot-glyph" aria-hidden="true">◉</span><b>SCREEN CAPTURED</b><span class="shot-sub">choose what to keep</span></div>
         ${st.preview ? `<div class="shot-prev-box"><img class="shot-prev" src="${esc(st.preview)}" alt="The screenshot"></div>` : ''}
+        ${_shotDelayRow()}
         <div class="shot-acts">
           <button class="shot-btn shot-save" data-shot-act="save"><b>Save to Pictures</b><kbd>Enter</kbd></button>
           <button class="shot-btn" data-shot-act="copy"><b>Save &amp; copy</b><kbd>C</kbd></button>
           ${st.region ? `<button class="shot-btn" data-shot-act="region"><b>Select region</b><kbd>R</kbd></button>` : ''}
+          <button class="shot-btn" data-shot-act="screen"><b>Full screen</b><kbd>F</kbd></button>
           <button class="shot-btn shot-cancel" data-shot-act="cancel"><b>Cancel</b><kbd>Esc</kbd></button>
         </div>
-        ${SHOT_DELAY_ROW}
+        
         <div class="shot-foot" role="status">~/Pictures/Screenshots${st.region ? '' : ' · selecting a region needs slurp'}</div>
       </div>`;
     let busy = false;
@@ -1582,10 +1609,14 @@
     const act = async (a) => {
       if(busy) return; busy = true;
       if(a === 'cancel'){ drop(); try{ root.close(); }catch(_){ } return; }
-      if(a === 'region'){ drop(); try{ root.pcPopup.act('shot:region'); }catch(_){ try{ root.close(); }catch(_){ } } return; }
-      /* A TIMED RETAKE is taken by the DESKTOP, which outlives this window: the countdown and the
-         capture cannot run in a window that has to be gone before the picture is taken. */
-      if(/^delay-\d+$/.test(a)){ drop(); try{ root.pcPopup.act('shot:' + a); }catch(_){ try{ root.close(); }catch(_){ } } return; }
+      /* Select region / Full screen, after the chosen delay. The DESKTOP runs both the countdown and the
+         capture: it outlives this window, which has to be gone before the picture is taken. */
+      if(a === 'region' || a === 'screen'){
+        const sec = shotDelay();
+        drop();
+        try{ root.pcPopup.act('shot:' + (sec ? 'delay-' + sec + '-' + a : a)); }catch(_){ try{ root.close(); }catch(_){ } }
+        return;
+      }
       let res = null;
       try{ res = await sh.take({ staged: st.path, copy: a === 'copy' }); }catch(e){ res = { ok: false, why: String((e && e.message) || e) }; }
       if(!res || !res.ok){ busy = false; if(foot) foot.textContent = (res && res.why) || 'the screenshot did not save'; return; }
@@ -1595,10 +1626,11 @@
       setTimeout(() => { try{ root.close(); }catch(_){ } }, 900);
     };
     host.querySelectorAll('[data-shot-act]').forEach(b => b.onclick = () => act(b.dataset.shotAct));
-    host.querySelectorAll('[data-shot-delay]').forEach(b => b.onclick = () => act('delay-' + b.dataset.shotDelay));
+    _bindShotWait(host);
     doc.addEventListener('keydown', e => {
       const k = e.key;
       if(k === 'Escape'){ e.preventDefault(); act('cancel'); }
+      else if(k === 'f' || k === 'F'){ e.preventDefault(); act('screen'); }
       else if(k === 'Enter' && !(e.target && e.target.matches && e.target.matches('[data-shot-act]'))){ e.preventDefault(); act('save'); }
       else if((k === 'r' || k === 'R') && st.region){ e.preventDefault(); act('region'); }
       else if(k === 'c' || k === 'C'){ e.preventDefault(); act('copy'); }
@@ -1644,21 +1676,27 @@
       P.modal(`<div class="shot-prompt" role="dialog" aria-label="Screenshot">
         <div class="shot-hd"><span class="shot-glyph" aria-hidden="true">◉</span><b>SCREEN CAPTURED</b><span class="shot-sub">choose what to keep</span></div>
         ${st.preview ? `<div class="shot-prev-box"><img class="shot-prev" src="${esc(st.preview)}" alt="The screenshot"></div>` : ''}
+        ${_shotDelayRow()}
         <div class="shot-acts">
           <button class="shot-btn shot-save" data-shot-act="save"><b>Save to Pictures</b><kbd>Enter</kbd></button>
           <button class="shot-btn" data-shot-act="copy"><b>Save &amp; copy</b><kbd>C</kbd></button>
           ${can.region ? `<button class="shot-btn" data-shot-act="region"><b>Select region</b><kbd>R</kbd></button>` : ''}
+          <button class="shot-btn" data-shot-act="screen"><b>Full screen</b><kbd>F</kbd></button>
           <button class="shot-btn shot-cancel" data-shot-act="cancel"><b>Cancel</b><kbd>Esc</kbd></button>
         </div>
-        ${SHOT_DELAY_ROW}
+        
         <div class="shot-foot">~/Pictures/Screenshots${can.region ? '' : ' · selecting a region needs slurp'}</div>
       </div>`, box => {
         box.classList.add('shot-modal');
         const act = async (a) => {
           if(settled) return;
           if(a === 'cancel'){ drop(); done(); resolve({ cancelled: true }); return; }
-          if(a === 'region'){ drop(); done(); await new Promise(r => setTimeout(r, 180)); resolve(await takeShot('region')); return; }
-          if(/^delay-\d+$/.test(a)){ drop(); done(); delayedShot(Number(a.slice(6))); resolve({ delayed: Number(a.slice(6)) }); return; }
+          if(a === 'region' || a === 'screen'){
+            const sec = shotDelay();
+            drop(); done();
+            if(sec){ resolve(delayedShot(sec, a)); return; }
+            await new Promise(r => setTimeout(r, 180)); resolve(await takeShot(a)); return;
+          }
           done();
           let res = null;
           try{ res = await sh.take({ staged: st.path, copy: a === 'copy' }); }
@@ -1669,10 +1707,11 @@
           resolve(res);
         };
         box.querySelectorAll('[data-shot-act]').forEach(b => b.onclick = () => act(b.dataset.shotAct));
-        box.querySelectorAll('[data-shot-delay]').forEach(b => b.onclick = () => act('delay-' + b.dataset.shotDelay));
+        _bindShotWait(box);
         box.addEventListener('keydown', e => {
           const k = e.key;
           if(k === 'Escape'){ e.preventDefault(); e.stopPropagation(); act('cancel'); }
+          else if(k === 'f' || k === 'F'){ e.preventDefault(); act('screen'); }
           else if(k === 'Enter' && !(e.target && e.target.matches && e.target.matches('[data-shot-act]'))){ e.preventDefault(); act('save'); }
           else if((k === 'r' || k === 'R') && can.region){ e.preventDefault(); act('region'); }
           else if(k === 'c' || k === 'C'){ e.preventDefault(); act('copy'); }
@@ -1686,31 +1725,43 @@
     });
   }
 
-  /* The screenshot tile OFFERS THE MODES rather than assuming one — but it offers them in the order
+  /* Start the action picked in the chooser: now, or after the chosen delay. In the tray POPUP the
+     countdown must run in the desktop (this window closes) -- the same hand-off as takeShot's. */
+  function shotFromChooser(mode){
+    const sec = shotDelay();
+    if(!sec) return takeShot(mode);
+    if(IN_POPUP && root.pcPopup && typeof root.pcPopup.act === 'function'){
+      try{ root.pcPopup.act('shot:delay-' + sec + '-' + mode); }catch(_){ } return;
+    }
+    return delayedShot(sec, mode);
+  }
+  /* The screenshot tile OFFERS THE MODES rather than assuming one -- but it offers them in the order
    * the keyboard does. Print picks a rectangle and Shift+Print takes the screen, so "Choose an
    * area" leads here too; a menu whose first row is the one the key does NOT do teaches the wrong
-   * thing about the key. */
+   * thing about the key. The DELAY is chosen first and applies to whichever mode is pressed. */
   function shotPanel(){
     const d = _pop; if(!d) return;
     const can = _shotCan || { ok: true, region: false };
+    const cur = shotDelay();
     d.innerHTML = `<div class="os-pop-h"><button class="os-pop-back" data-os="quickback"
         aria-label="Back">${ICO('chevron-left')}</button>Screenshot</div>
+      <div class="shot-delay-pick" role="radiogroup" aria-label="Delay before the screenshot">
+        <span class="shot-delay-lbl">Delay</span>
+        ${[0].concat(SHOT_DELAYS).map(n => `<button class="shot-delay-btn${n === cur ? ' on' : ''}" role="radio"
+           aria-checked="${n === cur}" data-shot-wait="${n}">${n ? n + ' s' : 'None'}</button>`).join('')}
+      </div>
       <div class="os-pop-b os-pop-acts">
         ${can.region ? `<button class="os-pop-row" data-shot="region">Choose an area…</button>` : ''}
         <button class="os-pop-row" data-shot="screen">Whole screen</button>
-        <button class="os-pop-row" data-shot-in="5">Whole screen in 5 s</button>
-        <button class="os-pop-row" data-shot-in="10">Whole screen in 10 s</button>
       </div>${can.region ? ''
         : `<div class="os-pop-none">Choosing an area needs slurp (gui-apps/slurp), which is not installed.</div>`}`;
     bindPanel(d);
-    d.querySelectorAll('[data-shot]').forEach(b => b.onclick = () => takeShot(b.dataset.shot));
-    /* In the tray POPUP the countdown must run in the desktop (this window closes) -- same hand-off
-       as takeShot's. */
-    d.querySelectorAll('[data-shot-in]').forEach(b => b.onclick = () => {
-      if(IN_POPUP && root.pcPopup && typeof root.pcPopup.act === 'function'){
-        try{ root.pcPopup.act('shot:delay-' + b.dataset.shotIn); }catch(_){ } return; }
-      delayedShot(Number(b.dataset.shotIn));
+    d.querySelectorAll('[data-shot-wait]').forEach(b => b.onclick = (e) => {
+      e.stopPropagation();
+      setShotDelay(Number(b.dataset.shotWait));
+      d.querySelectorAll('[data-shot-wait]').forEach(x => { const on = x === b; x.classList.toggle('on', on); x.setAttribute('aria-checked', String(on)); });
     });
+    d.querySelectorAll('[data-shot]').forEach(b => b.onclick = () => shotFromChooser(b.dataset.shot));
   }
 
   /** Was this control pressed inside the open flyout, rather than being a taskbar chip of its own? */
