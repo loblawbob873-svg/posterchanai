@@ -88,8 +88,17 @@ window.PCLightboxFactory = function(dep){
     const bar=document.createElement('div'); bar.className='lb-bar';
     const mkBtn=(label,title,fn)=>{ const b=document.createElement('button'); b.className='lb-btn'; b.type='button'; b.textContent=label; b.title=title; b.setAttribute('aria-label',title); b.onclick=(e)=>{ e.stopPropagation(); fn(); }; return b; };
     // Read items[idx] at CLICK time, not now — the toolbar outlives each individual slide.
-    const copyB=mkBtn('⧉','Copy image  (C)', ()=>_lbCopyImg(items[idx].src));
-    const saveB=mkBtn('⤓','Save image  (S)', ()=>_lbSaveMedia(items[idx].src));
+    /* ON ANDROID THE FIRST TWO BUTTONS WERE ONE ACTION ("first two buttons share, do the same action").
+       Copy has to be the share sheet there (a WebView cannot put an image on the clipboard), and Save
+       went through saveBlobAs, which on the APK is ALSO the share sheet. So the first button now says
+       what it does -- Share -- and Save writes into the phone's gallery (MediaSave). Where the gallery
+       cannot be written (Android 9 and older) Save would be a second Share, so it is not shown. */
+    const NATIVE=_isNativeApp();
+    const copyB=NATIVE ? mkBtn('⤴','Share  (C)', ()=>_lbCopyImg(items[idx].src))
+                       : mkBtn('⧉','Copy image  (C)', ()=>_lbCopyImg(items[idx].src));
+    const saveB=mkBtn('⤓', NATIVE ? 'Save to gallery  (S)' : 'Save image  (S)', ()=>_lbSaveMedia(items[idx].src));
+    let _gallery = NATIVE ? null : true;      // null = not asked yet; false = this phone cannot
+    if(NATIVE) _lbGalleryAvailable().then(ok => { _gallery = ok; render && render(); });
     // Keep a copy on YOUR Blossom. Media in a feed lives on whatever host the author used and can vanish;
     // this re-hosts it under your own storage and hands back the link. Offered for video/audio too — the
     // blob path is identical and "save that clip" is the same wish as "save that image".
@@ -117,7 +126,8 @@ window.PCLightboxFactory = function(dep){
       // Keep the media a DIRECT child of .lightbox — the zoom/centring CSS is written against that shape.
       if(cur) bg.replaceChild(el, cur); else bg.insertBefore(el, bg.firstChild);
       cur=el; bg.classList.remove('lb-zoom');   // a fresh slide starts fitted, not stuck at the last one's zoom
-      copyB.style.display=saveB.style.display=isImg?'':'none';
+      copyB.style.display=isImg?'':'none';
+      saveB.style.display=isImg && _gallery!==false && !(NATIVE && _gallery===null)?'':'none';
       if(count) count.textContent=(idx+1)+' / '+items.length;
       if(prev) prev.disabled = idx<=0;
       if(next) next.disabled = idx>=items.length-1;
@@ -329,7 +339,26 @@ window.PCLightboxFactory = function(dep){
   // fallback for third-party hosts, same naming. It used to take the URL's last path segment
   // verbatim, which for a Blossom link is a bare sha256 — that's why saving a video off the timeline
   // produced an extensionless file nothing could open.
-  function _lbSaveMedia(src){ return saveMedia(src); }
+  function _mediaSave(){ try{ const P=window.Capacitor&&Capacitor.Plugins; return (P&&P.MediaSave)||null; }catch(_){ return null; } }
+  let _galleryOk = null;
+  async function _lbGalleryAvailable(){
+    if(_galleryOk !== null) return _galleryOk;
+    const M=_mediaSave();
+    if(!M || typeof M.available !== 'function') return (_galleryOk = false);
+    try{ _galleryOk = !!((await M.available()) || {}).ok; }catch(_){ _galleryOk = false; }
+    return _galleryOk;
+  }
+  async function _lbSaveMedia(src){
+    if(!_isNativeApp()) return saveMedia(src);
+    const M=_mediaSave();
+    if(!M || !(await _lbGalleryAvailable())) return saveMedia(src);     // an older APK: the old path
+    try{
+      const { blob, disp } = await fetchMediaBlob(src);
+      const name = fileNameFor(src, blob, '', disp, await sniffExt(blob)) || 'PosterChan';
+      const r = await M.save({ data: await _blobToB64(blob), name, mime: blob.type || '' });
+      toast(r && r.ok ? 'Saved to ' + String(r.where || 'your gallery').replace(/\/[^/]*$/, '') : 'could not save');
+    }catch(e){ toast('could not save: ' + ((e && e.message) || 'error')); }
+  }
   function _blobToPng(blob){ return new Promise((res,rej)=>{ const img=new Image(); const u=URL.createObjectURL(blob);
     img.onload=()=>{ try{ const c=document.createElement('canvas'); c.width=img.naturalWidth; c.height=img.naturalHeight; c.getContext('2d').drawImage(img,0,0); c.toBlob(b=>{ URL.revokeObjectURL(u); b?res(b):rej(new Error('toBlob')); }, 'image/png'); }catch(e){ URL.revokeObjectURL(u); rej(e); } };
     img.onerror=()=>{ URL.revokeObjectURL(u); rej(new Error('img load')); }; img.src=u; }); }

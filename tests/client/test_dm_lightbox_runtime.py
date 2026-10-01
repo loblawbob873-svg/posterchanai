@@ -26,7 +26,7 @@ def test_encrypted_dm_image_click_opens_visible_decoded_lightbox():
     bind_dm = extract_function("bindDmMediaActions")
     png = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVQIHWP4z8DwHwAFgAI/ScLZVwAAAABJRU5ErkJggg=="
     html = f'''<!doctype html><style>{CSS}</style><div id="dm-msgs"><img id="dm" src="data:image/png;base64,{png}"></div><pre id="out"></pre><script>
-    const _trapFocus=()=>{{}},_lbZoom=()=>{{}},_lbCopyImg=()=>{{}},_lbSaveMedia=()=>{{}},_lbToBlossom=()=>{{}};
+    const _trapFocus=()=>{{}},_lbZoom=()=>{{}},_lbCopyImg=()=>{{}},_lbSaveMedia=()=>{{}},_lbToBlossom=()=>{{}},_isNativeApp=()=>false,_lbGalleryAvailable=async()=>false;
     {open_box}
     {bind_dm}
     bindDmMediaActions();
