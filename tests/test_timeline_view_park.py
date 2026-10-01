@@ -29,10 +29,10 @@ import subprocess
 
 import pytest
 from pathlib import Path
-from tests.client_source import client_source
+from tests.client_source import client_source, client_source_as_app
 
 ROOT = Path(__file__).resolve().parents[1]
-APP = client_source()
+APP = client_source_as_app()
 
 def _fn_source():
     """The shipped functions plus the one constant they read, sliced out for the node runs below."""

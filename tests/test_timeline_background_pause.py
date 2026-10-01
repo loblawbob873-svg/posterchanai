@@ -23,7 +23,8 @@ import re
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
-APPJS = (ROOT / "static" / "js" / "client" / "app.js").read_text(encoding="utf-8")
+from tests.client_source import client_source_as_app
+APPJS = client_source_as_app()
 
 
 def test_a_backgrounded_phone_drops_the_timeline():

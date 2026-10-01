@@ -2,7 +2,8 @@
 from pathlib import Path
 
 
-APPJS = (Path(__file__).resolve().parents[1] / "static/js/client/app.js").read_text(encoding="utf-8")
+from tests.client_source import client_source_as_app
+APPJS = client_source_as_app()
 
 
 def _resume_body():

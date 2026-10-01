@@ -22,7 +22,8 @@ import re
 import subprocess
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-APP_JS = open(os.path.join(ROOT, "static", "js", "client", "app.js"), encoding="utf-8").read()
+from tests.client_source import client_source_as_app
+APP_JS = client_source_as_app()
 OS_JS = open(os.path.join(ROOT, "static", "js", "client", "os.js"), encoding="utf-8").read()
 CSS = open(os.path.join(ROOT, "static", "css", "client.css"), encoding="utf-8").read()
 

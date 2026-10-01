@@ -47,6 +47,18 @@ def client_source() -> str:
     return "\n".join(parts)
 
 
+def client_source_as_app() -> str:
+    """client_source() with each split module's `S.<name>` reads written back as `<name>` -- the text
+    app.js held before the code moved. For a test that pins how a rule is SPELLED in the timeline
+    (`if(VIEW!==view)`, `const wasPaused=_tlPaused`) or lifts it into node next to plain stubs: the
+    rule is the same, only the module boundary added the `S.`. Never for a test about the boundary."""
+    out = []
+    for name in split_modules():
+        out.append(re.sub(r"(?<![\w$.])S\.(?=[A-Za-z_$])", "", module_path(name).read_text(encoding="utf-8")))
+    out.append(APP.read_text(encoding="utf-8"))
+    return "\n".join(out)
+
+
 def app_source_with(*names: str) -> str:
     """The named split modules, then app.js — the text app.js held before THOSE modules moved out.
 

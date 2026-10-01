@@ -396,7 +396,8 @@ class DoubleHomeRuns(unittest.TestCase):
     def test_native_pair_routes_to_one_shot_feed_top_and_client_clears_scroll_memory(self):
         home = (HOME / "HomeActivity.java").read_text()
         phone = (ROOT / "static/js/client/phoneshell.js").read_text()
-        app = (ROOT / "static/js/client/app.js").read_text()
+        from tests.client_source import client_source_as_app
+        app = client_source_as_app()
         self.assertIn('openApp("__feed_top")', home)
         checks = (ROOT / "scripts/android_device_checks.sh").read_text()
         self.assertIn("double HOME took the native feed-top path", checks)
@@ -447,7 +448,8 @@ class DoubleHomeRuns(unittest.TestCase):
                                 "a focused fast second HOME must commit the pending first press")
 
     def test_feed_top_reloads_the_active_timeline_before_scrolling(self):
-        app = (ROOT / "static/js/client/app.js").read_text()
+        from tests.client_source import client_source_as_app
+        app = client_source_as_app()
         start = app.index("function timelineTop(view)")
         end = app.index("function setMobileNav", start)
         body = app[start:end]
@@ -490,7 +492,8 @@ class DoubleHomeRuns(unittest.TestCase):
                          "onNewIntent lands directly and then its parked copy lands a second time")
 
     def test_home_top_cancels_an_older_scroll_restore_and_holds_past_its_retry_window(self):
-        app = (ROOT / "static/js/client/app.js").read_text()
+        from tests.client_source import client_source_as_app
+        app = client_source_as_app()
         top = method(strip_comments(app), "function timelineTop")
         restore = method(strip_comments(app), "function _putScroll")
         self.assertIn("++_scrollRestoreGen", top)
