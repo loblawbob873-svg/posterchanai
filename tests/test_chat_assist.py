@@ -207,3 +207,70 @@ def test_window_event_passes_today_and_the_answer_and_says_when_there_is_none():
     assert "never invent a time or a place" in chat.calls[0][0]["content"]
     code, data, _ = _run({"action": "window_event", "windows": [{"title": "Mail", "text": "hello"}]}, _Chat(['{"none":true}']))
     assert code == 422 and "No event" in data["error"]
+
+
+# ---- ✨ INTERACTIVE: tasks and steps the panel turns into buttons --------------------------------------
+# "we need interactive Agentic features with buttons, not loading up AI Chat" / "Extract Tasks need to be
+# functional and actually useful". The model only PROPOSES; everything is validated before the panel
+# sees it, so a malformed step is no step rather than a wrong command in somebody's terminal.
+
+STEPS_REPLY = json.dumps({
+    "answer": "- Two invoices are due\n- One reply is owed",
+    "tasks": [{"text": "Pay the Comcast invoice", "due": "2026-10-03", "who": "Dana"},
+              {"text": "Reply to Sam about payroll", "due": "next friday", "who": ""},
+              {"text": "", "due": "2026-10-04"}, "not a dict"],
+    "steps": [{"do": "command", "label": "Show disk use", "text": "df -h"},
+              {"do": "command", "label": "Two lines", "text": "rm -rf /tmp/x\nreboot"},
+              {"do": "insert", "label": "Insert reply", "text": "Thanks Sam, on it."},
+              {"do": "open", "label": "Open Calendar", "text": "Calendar"},
+              {"do": "open", "label": "Open evil", "text": "javascript:alert(1)"},
+              {"do": "launch-missiles", "label": "x", "text": "y"},
+              {"do": "search", "label": "Look it up", "text": "comcast invoice due date"}]})
+
+
+def test_window_steps_validates_every_task_and_step():
+    code, data, _ = _run({"action": "window_steps", "windows": [{"title": "Mail", "text": "invoices"}],
+                          "instruction": "Extract tasks", "today": "2026-10-01"}, _Chat([STEPS_REPLY]))
+    assert code == 200 and data["ok"] is True
+    assert data["answer"].startswith("- Two invoices are due")
+    assert data["tasks"] == [{"text": "Pay the Comcast invoice", "due": "2026-10-03", "who": "Dana"},
+                             {"text": "Reply to Sam about payroll", "due": "", "who": ""}], \
+        "an unparseable date is dropped, an empty task and a non-dict are discarded"
+    kinds = [(s["do"], s["text"]) for s in data["steps"]]
+    assert ("command", "df -h") not in kinds, "commands are only proposed when the panel allows them"
+    assert ("insert", "Thanks Sam, on it.") in kinds and ("open", "calendar") in kinds
+    assert all(k != "launch-missiles" for k, _ in kinds) and ("open", "javascript:alert(1)") not in kinds
+    assert len(data["steps"]) <= svc.STEP_MAX
+
+
+def test_commands_only_for_a_terminal_and_only_one_safe_line():
+    code, data, _ = _run({"action": "window_steps", "windows": [{"title": "Terminal", "view": "terminal", "text": "$ "}],
+                          "instruction": "Plan a fix", "commands": True}, _Chat([STEPS_REPLY]))
+    cmds = [s["text"] for s in data["steps"] if s["do"] == "command"]
+    assert cmds == ["df -h"], "a multi-line command is never offered as a button"
+
+
+def test_the_prompt_offers_commands_only_when_allowed_and_carries_the_panels_memory():
+    chat = _Chat([STEPS_REPLY])
+    _run({"action": "window_steps", "windows": [{"title": "Terminal", "text": "out"}], "instruction": "Continue",
+          "commands": True, "today": "2026-10-01",
+          "history": [{"q": "Plan a fix", "a": "Check the disk", "did": ["ran `df -h`"]}]}, chat)
+    system, user = chat.calls[0][0]["content"], chat.calls[0][1]["content"]
+    assert '"command"' in system and "never claim anything was done" in system
+    assert "Today is 2026-10-01." in user and "Earlier request: Plan a fix" in user and "ran `df -h`" in user
+    assert "The window AS IT IS NOW" in user
+    chat2 = _Chat([STEPS_REPLY])
+    _run({"action": "window_steps", "windows": [{"title": "Mail", "text": "x"}], "instruction": "Summarize"}, chat2)
+    assert '"command"' not in chat2.calls[0][0]["content"]
+
+
+def test_a_reply_that_is_not_json_is_still_an_answer_and_its_bullets_become_tasks():
+    plain = "Here is what needs doing:\n- Call the bank\n- Send the W-2 forms\n2) Book the venue"
+    code, data, _ = _run({"action": "window_steps", "windows": [{"title": "Mail", "text": "x"}],
+                          "instruction": "Extract tasks"}, _Chat([plain]))
+    assert data["answer"].startswith("Here is what needs doing")
+    assert [t["text"] for t in data["tasks"]] == ["Call the bank", "Send the W-2 forms", "Book the venue"]
+    assert data["steps"] == []
+    code, data, _ = _run({"action": "window_steps", "windows": [{"title": "Mail", "text": "x"}],
+                          "instruction": "Summarize"}, _Chat([plain]))
+    assert data["tasks"] == [], "bullets become tasks only when tasks were asked for"

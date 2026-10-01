@@ -33,23 +33,27 @@ def test_native_apps_are_metadata_only_not_silently_screen_scraped():
     assert "App name only · private by default" in OS
 
 
-def test_actions_open_a_reviewable_ai_draft_instead_of_auto_sending_or_mutating():
-    assert "Review before sending · no automatic changes" in OS
-    assert "_aiTarget().askWindowContext({windows:contexts},instruction,{agent})" in OS
-    assert "function askWindowContext(ctx,instruction,opts)" in APP
-    assert "switchView('ai')" in APP
-    assert "ta.value=_aiWindowDraft" in APP
-    scope = APP[APP.index("function askWindowContext(ctx,instruction,opts)"):
-                APP.index("function _cookie", APP.index("function askWindowContext(ctx,instruction,opts)"))]
-    assert "aiSend()" not in scope
+def test_actions_are_buttons_in_the_panel_and_never_load_ai_chat():
+    """ "we need interactive Agentic features with buttons, not loading up AI Chat": every request is
+    answered in the panel (window_steps), every proposal is a button, and nothing calls the AI Chat
+    handoff any more."""
+    assert "Nothing runs until you press its button" in OS
+    assert "action:'window_steps'" in OS
+    toggle = OS[OS.index("function toggleWindowAI("):OS.index("function openDoc(")]
+    assert "askWindowContext" not in toggle and "_aiTarget()" not in toggle, "the panel hands off to AI Chat again"
+    assert "data-ai-open" not in OS and "Continue in AI" not in OS
+    steps = OS[OS.index("async function _aiSteps("):OS.index("function toggleWindowAI(")]
+    for wired in ("data-run", "data-type", "data-go", "data-ai-continue", "data-ai-tasks-note", "data-task-cal"):
+        assert wired in steps, wired
 
 
-def test_terminal_and_file_windows_can_opt_into_the_existing_system_agent():
-    assert "Use the system agent to run commands or change files" in OS
-    assert "data-ai-agent" in OS
-    assert "askWindowContext({windows:contexts},instruction,{agent})" in OS
-    assert "(opts&&opts.agent)?'node agent local ':''" in APP
-
+def test_only_a_terminal_is_offered_commands_and_running_one_is_a_click():
+    assert "Suggest commands I can run here with one click" in OS and "data-ai-cmds" in OS
+    assert "const isTerm=/terminal|console|shell/i.test(ctx.title+' '+ctx.view);" in OS
+    assert "${isTerm?'<label class=\"osw-ai-agent\"><input type=\"checkbox\" data-ai-cmds checked>" in OS
+    steps = OS[OS.index("async function _aiSteps("):OS.index("function toggleWindowAI(")]
+    assert "const cmds=!!(isTerm &&" in steps and "commands:cmds" in steps
+    assert "window.PCTerm.run(st.text)" in steps
 
 def test_suggestions_are_tailored_to_common_window_kinds():
     for kind in ("terminal|console|shell", "firefox|browser|web", "telegram|message|chat|mail",

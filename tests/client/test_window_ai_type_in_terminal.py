@@ -63,4 +63,7 @@ def test_the_terminal_refuses_anything_that_could_press_enter():
     body = _fn(TERM, "typeIn")
     assert "typeable(text)" in body and "term.paste(" in body
     assert "\\r" not in body and "_send(" not in body, "typing never presses Enter or writes to the PTY directly"
-    assert "typeIn, _typeable: typeable" in TERM
+    assert "typeIn, run, _typeable: typeable" in TERM
+    run = _fn(TERM, "run")
+    # ▶ Run is the person's click standing in for Enter: the SAME one-line guard first, then one CR.
+    assert run.index("if(!typeIn(text)) return false;") < run.index("_send({ t: 'in', d: '\\r' })"), run

@@ -33,7 +33,7 @@ class WindowCtx(BaseModel):
 
 
 class AssistReq(BaseModel):
-    action: str = "reply"         # reply | summarize | links | window
+    action: str = "reply"         # reply | summarize | links | window | window_event | window_steps
     medium: str = "dm"            # telegram | dm
     messages: list[AssistMsg] = []
     count: int = 3
@@ -41,7 +41,9 @@ class AssistReq(BaseModel):
     windows: list[WindowCtx] = [] # action=window: what the ✨ panel collected
     instruction: str = ""         # action=window: what the person asked
     answer: str = ""              # action=window_event: the answer an event is looked for in, too
-    today: str = ""               # action=window_event: the person's local date, for "tomorrow"
+    today: str = ""               # action=window_event / window_steps: the person's local date, for "tomorrow"
+    history: list[dict] = []      # action=window_steps: this panel's earlier requests, answers and done steps
+    commands: bool = False        # action=window_steps: the window is a terminal the person may run commands in
 
 
 @router.post("")
@@ -70,6 +72,10 @@ async def chat_assist(req: AssistReq, db: Session = Depends(get_db),
         if action == "window_event":
             return {"ok": True, "event": await svc.window_event(
                 db, user, [w.model_dump() for w in req.windows], req.answer, req.today)}
+        if action == "window_steps":
+            return {"ok": True, **(await svc.window_steps(
+                db, user, [w.model_dump() for w in req.windows], req.instruction, req.history,
+                req.commands, req.today))}
         if action == "window":
             return {"ok": True, "answer": await svc.ask_window(
                 db, user, [w.model_dump() for w in req.windows], req.instruction)}

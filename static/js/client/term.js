@@ -1774,7 +1774,16 @@
       try{ term.focus(); }catch(_){ }
       return true;
     }
-    window.PCTerm = { render, unmount, isOpen: () => !!mounted, connected: () => connected, typeIn, _typeable: typeable,
+    /* RUN = TYPE + ENTER, for the window ✨ panel's ▶ Run button -- the person pressing it IS the
+     * Enter. The same guard as typeIn (one line, no control characters, <=400), then a carriage return
+     * through the same channel a key press uses. */
+    function run(text){
+      if(!typeIn(text)) return false;
+      try{ _histTyped('\r'); }catch(_){ }
+      _send({ t: 'in', d: '\r' });
+      return true;
+    }
+    window.PCTerm = { render, unmount, isOpen: () => !!mounted, connected: () => connected, typeIn, run, _typeable: typeable,
                       openLocal, sessionId: () => sid, adoptSession, handoffState, acceptHandoff,
                       _barUp: () => { _barDrag = false; } };
   }

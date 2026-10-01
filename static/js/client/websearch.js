@@ -585,6 +585,14 @@
 
     window.PCWebSearch = {
       render,
+      /* Run a search from elsewhere (the window ✨ panel's "Search the web" step). */
+      search(q){
+        q = String(q || '').trim().slice(0, 300);
+        if(!q) return false;
+        S.q = q;
+        runSearch(false);
+        return true;
+      },
       handoffState(){
         return { q:S.q, category:S.category, time:S.time, key:S.key, results:S.results,
           answers:S.answers, suggestions:S.suggestions, error:S.error, page:S.page, more:S.more,

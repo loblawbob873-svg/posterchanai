@@ -1,17 +1,14 @@
-"""A popped-out PosterChan window has the same ✨ AI panel as the web desktop's windows.
+"""A window's ✨ is an INTERACTIVE panel: answers, tasks and steps you run with buttons -- never AI Chat.
 
-Reported: "AI Features built into the posterchan windows on the webui are missing on PosterChanOS."
-On the web desktop every window's title bar has ✨ (os.js toggleWindowAI: suggestions for what the
-window shows, ask about it, watch it). On PosterChanOS each app is its own toplevel and draws
-oswin.js's title bar, which had only − □ ×.
+Reported: "ai actions from window sparkle, opens up ai chat but nothing happens", then "we need interactive
+Agentic features with buttons, not loading up AI Chat", "Extract Tasks need to be functional and actually
+useful" and "the text it does display is not really readable, need to be cyberpunk and nice".
 
-Runs the real bundled client as a popped-out Social window and asserts: ✨ is in the title bar and
-on screen; it opens the same panel, fitted to the window; "Open in AI" hands the window's context to
-the DESKTOP (which opens the AI window) and leaves this window's view alone.
-
-A suggestion or "Ask" is ANSWERED IN THE PANEL (task: "Window AI: inline answers + approved per-app
-actions"): the answer comes with Copy, Save to Notes, Insert into this window's text box (never sent,
-and asks before replacing what is typed) and Continue in AI -- each a click, none automatic.
+Runs the real bundled client as a popped-out Social window (and the same page as a Terminal). The model's
+reply is stubbed at /api/chat-assist; everything else is the shipped panel: the request is window_steps;
+the answer is formatted (lists, not raw "- " text) and readable; tasks are a checklist that saves to Notes
+and puts a dated task in the Calendar's own form; each step is a button and nothing happens until it is
+pressed; ↻ Continue re-asks with what was done; and nothing ever hands off to the AI Chat screen.
 """
 import asyncio
 from pathlib import Path
@@ -26,59 +23,38 @@ def bundle():
     yield from desktop.bundle.__wrapped__()
 
 
-@pytest.mark.skipif(not Path("/opt/google/chrome/chrome").exists(), reason="Chrome required")
-@pytest.mark.parametrize("width,height", [(1100, 760), (420, 700)])
-def test_the_sparkle_opens_the_ai_panel_and_hands_off_to_the_desktop(width, height):
-    async def check(b):
-        await desktop.login(b)
-        await b.call("Emulation.setDeviceMetricsOverride", {"width": width, "height": height, "deviceScaleFactor": 1, "mobile": False})
-        await b.until("!!(window.PCOSWin && PCOSWin.isWindow())")
-        # The chrome is installed by adopt() on a real toplevel; the fixture has no compositor.
-        await b.js("document.getElementById('pc-oswin-chrome') || PCOSWin.adopt({view:'global', label:'Social'})")
-        await b.until("!!document.querySelector('#pc-oswin-chrome [data-action=\"ai\"]')")
-        vis = await b.js("""(()=>{const r=document.querySelector('#pc-oswin-chrome [data-action="ai"]').getBoundingClientRect();
-                           return r.width>=16&&r.height>=16&&r.right<=innerWidth&&r.left>=0})()""")
-        assert vis, "✨ is not visible in the window's title bar"
-        await b.js("""window.__asked=[]; PCOSWin.desktop=()=>({ __PC:{ askWindowContext:(ctx,ins,opt)=>{ __asked.push({ctx,ins,opt}); } } });""")
-        view0 = await b.js("__PC.VIEW")
-        await b.js("document.querySelector('#pc-oswin-chrome [data-action=\"ai\"]').click()")
-        await b.until("!!document.querySelector('.osw-ai-panel')")
-        fit = await b.js("""(()=>{const p=document.querySelector('.osw-ai-panel').getBoundingClientRect();
-          return {fits:p.left>=0&&p.right<=innerWidth+1&&p.top>=38, actions:document.querySelectorAll('.osw-ai-panel [data-ai-action]').length,
-                  title:(document.querySelector('.osw-ai-panel header b')||{}).textContent||''}})()""")
-        assert fit["fits"] and fit["actions"] == 3, fit
-        assert "Social" in fit["title"], fit
-        await b.js("document.querySelector('.osw-ai-panel [data-ai-open]').click()")
-        await asyncio.sleep(.3)
-        asked = await b.js("__asked")
-        assert len(asked) == 1 and asked[0]["ctx"]["windows"][0]["kind"] == "PosterChan app", asked
-        assert await b.js("__PC.VIEW") == view0, "asking about the window repainted it"
-        assert await b.js("!document.querySelector('.osw-ai-panel')"), "the panel stayed open after launching"
-
-    asyncio.run(desktop.with_browser("online", "?pcwin=global", check))
-
+REPLY = {"ok": True, "answer": "Here is what this window needs:\n- First point\n- Second point with `code`",
+         "tasks": [{"text": "Pay the Comcast invoice", "due": "2026-10-03", "who": "Dana"},
+                   {"text": "Reply to Sam", "due": "", "who": ""}],
+         "steps": [{"do": "insert", "label": "Insert a reply", "text": "Thanks Sam, on it."},
+                   {"do": "note", "label": "Keep the summary", "text": "Two invoices due"},
+                   {"do": "open", "label": "Open Calendar", "text": "calendar"}]}
 
 STUB = r"""(()=>{
-window.__req=[]; window.__reply={status:200, body:{ok:true, answer:'- First point\n- Second point'}};
+window.__req=[]; window.__reply={status:200, body:%s};
 const realFetch=window.fetch;
-window.fetch=(url,opts)=>{ if(String(url).includes('/api/chat-assist')){ __req.push(JSON.parse(opts.body));
+window.fetch=(url,opts)=>{ if(String(url).includes('/api/chat-assist') && !String(opts.body).includes('window_event')){ __req.push(JSON.parse(opts.body));
     return new Promise(r=>setTimeout(()=>r(new Response(JSON.stringify(__reply.body),{status:__reply.status,headers:{'Content-Type':'application/json'}})),250)); }
   return realFetch(url,opts); };
 window.__asked=[]; PCOSWin.desktop=()=>({ __PC:{ askWindowContext:(ctx,ins,opt)=>{ __asked.push({ctx,ins,opt}); } } });
+window.__aiView=0; {const sv=__PC.switchView; __PC.switchView=v=>{ if(v==='ai') __aiView++; return sv(v); };}
 window.__copied=[]; __PC.copyValue=v=>{ __copied.push(v); return Promise.resolve(true); };
 window.__notes=[]; window.PCNotes=Object.assign(window.PCNotes||{}, {save:async n=>{ __notes.push(n); return {ok:true}; }});
+window.__realDraft=window.PCCalendar&&window.PCCalendar.draft; window.__drafts=[]; window.PCCalendar=Object.assign(window.PCCalendar||{}, {draft:async e=>{ __drafts.push(e); }});
 window.__confirm=false; __PC.uiConfirm=async()=>__confirm;
 const f=document.getElementById('feed'); const t=document.createElement('textarea'); t.id='t-box'; t.style.cssText='display:block;width:200px;height:40px';
 f.appendChild(t); t.focus();
 })()
-"""
+""" % __import__("json").dumps(REPLY)
+
+NEVER_AI = "({asked:__asked.length, aiView:__aiView, view:__PC.VIEW})"
 
 
-async def _open(b, width, height):
+async def _open(b, width, height, view="global", label="Social"):
     await desktop.login(b)
     await b.call("Emulation.setDeviceMetricsOverride", {"width": width, "height": height, "deviceScaleFactor": 1, "mobile": width < 600})
     await b.until("!!(window.PCOSWin && PCOSWin.isWindow())")
-    await b.js("document.getElementById('pc-oswin-chrome') || PCOSWin.adopt({view:'global', label:'Social'})")
+    await b.js("document.getElementById('pc-oswin-chrome') || PCOSWin.adopt({view:'%s', label:'%s'})" % (view, label))
     await b.until("!!document.querySelector('#pc-oswin-chrome [data-action=\"ai\"]')")
     await b.js(STUB)
     await b.js("document.querySelector('#pc-oswin-chrome [data-action=\"ai\"]').click()")
@@ -87,55 +63,80 @@ async def _open(b, width, height):
 
 @pytest.mark.skipif(not Path("/opt/google/chrome/chrome").exists(), reason="Chrome required")
 @pytest.mark.parametrize("width,height", [(1100, 760), (420, 700)])
-def test_a_suggestion_is_answered_in_the_panel_with_actions_the_person_approves(width, height):
+def test_the_sparkle_opens_the_panel_and_never_hands_off_to_ai_chat(width, height):
     async def check(b):
         await _open(b, width, height)
+        fit = await b.js("""(()=>{const p=document.querySelector('.osw-ai-panel').getBoundingClientRect();
+          return {fits:p.left>=0&&p.right<=innerWidth+1&&p.top>=38, actions:document.querySelectorAll('.osw-ai-panel [data-ai-action]').length,
+                  title:(document.querySelector('.osw-ai-panel header b')||{}).textContent||'',
+                  open:!!document.querySelector('[data-ai-open]')}})()""")
+        assert fit["fits"] and fit["actions"] == 3 and "Social" in fit["title"], fit
+        assert fit["open"] is False, "'Open in AI' is back"
         view0 = await b.js("__PC.VIEW")
         await b.js("document.querySelector('.osw-ai-panel [data-ai-action=\"0\"]').click()")
-        await b.until("!!document.querySelector('.osw-ai-answer.loading')")
-        # A second tap while it thinks is the same question, not another request.
+        await b.until("!!document.querySelector('.osw-ai-text')")
+        req = await b.js("__req[0]")
+        assert req["action"] == "window_steps" and req["windows"][0]["kind"] == "PosterChan app" and req["commands"] is False, req
+        assert await b.js(NEVER_AI) == {"asked": 0, "aiView": 0, "view": view0}
+
+    asyncio.run(desktop.with_browser("online", "?pcwin=global", check))
+
+
+@pytest.mark.skipif(not Path("/opt/google/chrome/chrome").exists(), reason="Chrome required")
+@pytest.mark.parametrize("width,height", [(1100, 760), (420, 700)])
+def test_the_answer_is_readable_tasks_are_a_working_checklist_and_steps_are_buttons(width, height):
+    async def check(b):
+        await _open(b, width, height)
         await b.js("document.querySelector('.osw-ai-panel [data-ai-action=\"0\"]').click()")
         await b.until("!!document.querySelector('.osw-ai-text')")
-        got = await b.js("""(()=>{const a=document.querySelector('.osw-ai-answer'), r=a.getBoundingClientRect();
-          return {text:document.querySelector('.osw-ai-text').textContent, reqs:__req.length, asked:__asked.length,
-                  req:__req[0], fits:r.left>=0&&r.right<=innerWidth+1,
-                  btns:[...a.querySelectorAll('.osw-ai-do button')].map(b=>b.textContent.trim())}})()""")
-        assert got["text"] == "- First point\n- Second point", got
-        assert got["reqs"] == 1 and got["asked"] == 0, "answered here, once, without leaving for the AI screen"
-        assert got["req"]["action"] == "window" and got["req"]["windows"][0]["kind"] == "PosterChan app", got
-        assert got["req"]["instruction"], got
-        assert got["fits"], got
-        assert got["btns"] == ["Copy", "Save to Notes", "Insert", "Add to Calendar", "Continue in AI"], got
-        assert await b.js("__PC.VIEW") == view0, "asking repainted the window"
-        assert await b.js("document.getElementById('t-box').value") == "", "nothing is put anywhere unasked"
+        got = await b.js(r"""(()=>{const a=document.querySelector('.osw-ai-answer'), t=document.querySelector('.osw-ai-text');
+          const p=t.querySelector('li'), cs=getComputedStyle(p), bg=getComputedStyle(a);
+          const rgb=s=>(s.match(/\d+(\.\d+)?/g)||[]).slice(0,3).map(Number);
+          const lum=c=>{const v=c.map(x=>{x/=255;return x<=.03928?x/12.92:Math.pow((x+.055)/1.055,2.4)});return .2126*v[0]+.7152*v[1]+.0722*v[2]};
+          // The card's background is a gradient over a dark panel: measure against the darkest it gets.
+          const fg=lum(rgb(cs.color)), back=0.0;
+          const r=a.getBoundingClientRect();
+          return {lis:[...t.querySelectorAll('li')].map(x=>x.textContent), raw:t.textContent.includes('- First'), code:!!t.querySelector('code'),
+                  size:parseFloat(cs.fontSize), contrast:(fg+.05)/(back+.05), fits:r.left>=0&&r.right<=innerWidth+1,
+                  tasks:[...a.querySelectorAll('.osw-ai-tasks li')].map(li=>li.querySelector('label span').textContent),
+                  chips:[...a.querySelectorAll('.osw-ai-chips i')].map(i=>i.textContent),
+                  steps:[...a.querySelectorAll('.osw-ai-step')].map(s=>s.querySelector('.osw-ai-step-h b').textContent)}})()""")
+        assert got["lis"] == ["First point", "Second point with code"] and got["raw"] is False and got["code"], got
+        assert got["size"] >= 14 and got["contrast"] >= 7 and got["fits"], got
+        assert got["tasks"] == ["Pay the Comcast invoice", "Reply to Sam"] and got["chips"] == ["2026-10-03", "Dana"], got
+        assert got["steps"] == ["Insert a reply", "Keep the summary", "Open Calendar"], got
+        assert await b.js("document.getElementById('t-box').value") == "" and await b.js("__notes.length") == 0, \
+            "nothing happens until a button is pressed"
 
-        await b.js("document.querySelector('[data-ai-copy]').click()")
-        await b.until("__copied.length===1")
-        assert await b.js("__copied[0]") == "- First point\n- Second point"
-        await b.js("document.querySelector('[data-ai-note]').click()")
+        await b.js("document.querySelector('[data-ai-tasks-note]').click()")
         await b.until("__notes.length===1")
         note = await b.js("__notes[0]")
-        assert note["body"] == "- First point\n- Second point" and "Social" in note["title"], note
+        assert note["body"] == "- [ ] Pay the Comcast invoice (due 2026-10-03) — Dana\n- [ ] Reply to Sam" and "Social" in note["title"], note
 
-        # Insert: asks before replacing what is typed, and a No changes nothing.
+        # Insert asks before replacing what is typed; Yes puts the step's text in, never sent.
         await b.js("document.getElementById('t-box').value='my own words'")
-        await b.js("document.querySelector('[data-ai-insert]').click()")
+        await b.js("document.querySelector('.osw-ai-step[data-do=\"insert\"] [data-go]').click()")
         await asyncio.sleep(.3)
         assert await b.js("document.getElementById('t-box').value") == "my own words"
-        await b.js("__confirm=true; document.querySelector('[data-ai-insert]').click()")
-        await b.until("document.getElementById('t-box').value.startsWith('- First')")
-        assert await b.js("!document.querySelector('.osw-ai-panel')"), "the panel closes after inserting"
-        assert await b.js("__asked.length") == 0, "insert never sends anything anywhere"
+        await b.js("__confirm=true; document.querySelector('.osw-ai-step[data-do=\"insert\"] [data-go]').click()")
+        await b.until("document.getElementById('t-box').value==='Thanks Sam, on it.'")
+        assert await b.js("document.querySelector('.osw-ai-step[data-do=\"insert\"]').classList.contains('done')")
 
-        # Continue in AI is the hand-off, on request.
-        await b.js("document.querySelector('#pc-oswin-chrome [data-action=\"ai\"]').click()")
-        await b.until("!!document.querySelector('.osw-ai-panel')")
-        await b.js("document.querySelector('.osw-ai-panel textarea').value='What is this?'; document.querySelector('[data-ai-ask]').click()")
-        await b.until("!!document.querySelector('[data-ai-more]')")
-        assert await b.js("__req[1].instruction") == "What is this?"
-        await b.js("document.querySelector('[data-ai-more]').click()")
-        await b.until("__asked.length===1")
-        assert await b.js("__asked[0].ins") == "What is this?"
+        # ↻ Continue re-reads the window and carries what was done.
+        await b.js("document.querySelector('[data-ai-continue]').click()")
+        await b.until("__req.length===2")
+        nxt = await b.js("__req[1]")
+        assert nxt["instruction"].startswith("Continue") and nxt["history"][0]["did"] == ["saved the task list to Notes", "Insert a reply"], nxt
+        await b.until("!!document.querySelector('[data-task-cal]')")
+
+        # A dated task goes into the Calendar's own form, filled in -- no AI round trip, nothing saved.
+        n = await b.js("__req.length")
+        await b.js("document.querySelector('[data-task-cal]').click()")
+        await b.until("__drafts.length===1")
+        assert await b.js("__drafts[0]") == {"title": "Pay the Comcast invoice", "date": "2026-10-03", "start": "", "end": "",
+                                              "allDay": True, "location": "", "notes": "Who: Dana"}
+        assert await b.js("__req.length") == n
+        assert await b.js(NEVER_AI + ".asked") == 0 and await b.js("__aiView") == 0
 
     asyncio.run(desktop.with_browser("online", "?pcwin=global", check))
 
@@ -153,35 +154,31 @@ def test_a_refusal_is_said_in_the_panel():
 
 
 @pytest.mark.skipif(not Path("/opt/google/chrome/chrome").exists(), reason="Chrome required")
-def test_a_terminal_window_offers_to_type_the_command_and_never_runs_it():
-    """Only a terminal window offers it, only with one command in the answer, and it closes the
-    panel having TYPED (the terminal's typeIn), never run, that command."""
+def test_a_terminal_offers_run_and_type_buttons_and_other_windows_never_ask_for_commands():
     async def check(b):
-        await desktop.login(b)
-        await b.until("!!(window.PCOSWin && PCOSWin.isWindow())")
-        await b.js("document.getElementById('pc-oswin-chrome') || PCOSWin.adopt({view:'global', label:'Social'})")
-        await b.until("!!document.querySelector('#pc-oswin-chrome [data-action=\"ai\"]')")
-        await b.js(STUB)
-        await b.js("window.__typed=[]; window.PCTerm=Object.assign(window.PCTerm||{}, {typeIn:t=>{ __typed.push(t); return true; }});"
-                   "__reply={status:200, body:{ok:true, answer:'Install the header:\\n```bash\\nsudo apt install libfoo-dev\\n```'}};")
-        # A Social window: the same answer offers no terminal action.
-        await b.js("document.querySelector('#pc-oswin-chrome [data-action=\"ai\"]').click()")
-        await b.until("!!document.querySelector('.osw-ai-panel')")
+        await _open(b, 1100, 760)
+        await b.js("window.__ran=[];window.__typed=[];window.PCTerm=Object.assign(window.PCTerm||{}, {connected:()=>true,"
+                   "typeIn:t=>{ __typed.push(t); return true; }, run:t=>{ __ran.push(t); return true; }});"
+                   "__reply={status:200, body:{ok:true, answer:'The disk is full.', tasks:[], "
+                   "steps:[{do:'command',label:'Show disk use',text:'df -h'}]}};")
         await b.js("document.querySelector('.osw-ai-panel [data-ai-action=\"0\"]').click()")
-        await b.until("!!document.querySelector('.osw-ai-text')")
-        assert await b.js("!document.querySelector('[data-ai-type]')"), "only a terminal window types commands"
+        await b.until("__req.length===1")
+        assert await b.js("__req[0].commands") is False, "a Social window must not be offered commands"
         await b.js("document.querySelector('[data-ai-dismiss]').click()")
-        # The same page as a Terminal window.
         await b.js("PCOSWin.viewOf=()=>'terminal'")
         await b.js("document.querySelector('#pc-oswin-chrome [data-action=\"ai\"]').click()")
         await b.until("!!document.querySelector('.osw-ai-panel')")
         assert "Explain output" in await b.js("document.querySelector('.osw-ai-actions').textContent")
+        assert await b.js("document.querySelector('[data-ai-cmds]').checked") is True
         await b.js("document.querySelector('.osw-ai-panel [data-ai-action=\"0\"]').click()")
-        await b.until("!!document.querySelector('[data-ai-type]')")
-        await b.js("document.querySelector('[data-ai-type]').click()")
-        await b.until("__typed.length===1")
-        assert await b.js("__typed[0]") == "sudo apt install libfoo-dev"
-        assert await b.js("!document.querySelector('.osw-ai-panel')")
+        await b.until("!!document.querySelector('.osw-ai-step [data-run]')")
+        assert await b.js("__req[1].commands") is True
+        assert await b.js("document.querySelector('.osw-ai-step pre code').textContent") == "df -h"
+        assert await b.js("__ran.length") == 0, "nothing runs on its own"
+        await b.js("document.querySelector('.osw-ai-step [data-run]').click()")
+        await b.until("__ran.length===1")
+        assert await b.js("__ran[0]") == "df -h" and await b.js("document.querySelector('.osw-ai-step').classList.contains('done')")
+        assert await b.js(NEVER_AI + ".aiView") == 0
     asyncio.run(desktop.with_browser("online", "?pcwin=global", check))
 
 
@@ -201,16 +198,18 @@ window.fetch=(url,opts)=>{ const u=String(url);
   return inner(url,opts); };
 })()"""
 
-
 @pytest.mark.skipif(not Path("/opt/google/chrome/chrome").exists(), reason="Chrome required")
 @pytest.mark.parametrize("width,height", [(1100, 760), (420, 700)])
-def test_add_to_calendar_opens_the_calendars_own_form_filled_in_and_saves_nothing(width, height):
+def test_a_calendar_step_opens_the_calendars_own_form_filled_in_and_saves_nothing(width, height):
     async def check(b):
         await _open(b, width, height)
+        await b.js("window.PCCalendar.draft=window.__realDraft")      # the REAL Calendar form this time
         await b.js(CAL_STUB)
+        await b.js("__reply={status:200, body:{ok:true, answer:'You have a dentist appointment.', tasks:[], "
+                   "steps:[{do:'calendar',label:'Add the appointment',text:'Dentist on Main St, Oct 2 at 2:30pm'}]}};")
         await b.js("document.querySelector('.osw-ai-panel [data-ai-action=\"0\"]').click()")
-        await b.until("!!document.querySelector('[data-ai-cal]')")
-        await b.js("document.querySelector('[data-ai-cal]').click()")
+        await b.until("!!document.querySelector('.osw-ai-step[data-do=\"calendar\"] [data-go]')")
+        await b.js("document.querySelector('.osw-ai-step[data-do=\"calendar\"] [data-go]').click()")
         await b.until("!!document.getElementById('cev-title')")
         form = await b.js("""(()=>{const v=id=>document.getElementById(id).value;
           const r=document.getElementById('cev-title').closest('.modal, .modal-box, [role=dialog]') || document.getElementById('cev-title');
@@ -221,11 +220,10 @@ def test_add_to_calendar_opens_the_calendars_own_form_filled_in_and_saves_nothin
         assert form == {"title": "Dentist", "date": "2026-10-02", "start": "14:30", "end": "15:00", "loc": "Main St",
                         "cal": "personal", "allday": False, "fits": True, "del": False}, form
         req = await b.js("__calReq[0]")
-        assert req["today"] and req["answer"].startswith("- First point") and req["windows"][0]["title"], req
-        assert await b.js("!document.querySelector('.osw-ai-panel')")
+        assert req["today"] and req["answer"] == "Dentist on Main St, Oct 2 at 2:30pm" and req["windows"][0]["title"], req
+        assert await b.js("!document.querySelector('.osw-ai-panel')"), "the panel would cover the form"
         await asyncio.sleep(.4)
         assert await b.js("__calWrites") == [], "nothing is saved until the person presses Save"
-        # Save in the form is the person's approval: exactly one write, of this event.
         await b.js("document.getElementById('cev-title').value='Dentist cleaning'")
         await b.js("[...document.querySelectorAll('button')].find(x=>/^\\s*Save\\s*$/.test(x.textContent)).click()")
         await b.until("__calWrites.length>=1")

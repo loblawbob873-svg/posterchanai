@@ -2574,87 +2574,148 @@
     return cmd;
   }
   const _aiBusy=new WeakSet();
-  /* ONE question at a time per panel; the answer comes with the three things the person may do with
-   * it -- Copy, Save to Notes, Insert into this window's box -- each a click, none automatic. Insert
-   * never sends, and asks before replacing something already typed. */
-  async function _aiAnswer(w,panel,contexts,instruction,composer,handoff){
+  /* READABLE ANSWERS ("the text it does display is not really readable"). The model writes plain
+   * sentences, "- " bullets, `code` and **bold**; this turns exactly those into markup, AFTER escaping,
+   * so nothing the model says can become live HTML. */
+  function _aiFormat(text){
+    const inline=t=>enc(t).replace(/`([^`\n]{1,200})`/g,'<code>$1</code>').replace(/\*\*([^*\n]{1,200})\*\*/g,'<b>$1</b>');
+    const out=[]; let list=null;
+    for(const raw of String(text||'').split('\n')){
+      const line=raw.trim(), b=/^(?:[-*•]|\d+[.)])\s+(.+)$/.exec(line);
+      if(b){ if(!list){ list=[]; out.push(list); } list.push(b[1]); continue; }
+      list=null;
+      if(line) out.push(line);
+    }
+    return out.map(x=>Array.isArray(x)?'<ul>'+x.map(li=>'<li>'+inline(li)+'</li>').join('')+'</ul>':'<p>'+inline(x)+'</p>').join('');
+  }
+  function _aiToday(){ const d=new Date(),p=n=>String(n).padStart(2,'0'); return d.getFullYear()+'-'+p(d.getMonth()+1)+'-'+p(d.getDate()); }
+  async function _aiPost(body){
+    const P=PC();
+    try{ if(P.ensureAiSession) await P.ensureAiSession(); }catch(_){ }
+    const opts={method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)};
+    const r=await (P.authFetch?P.authFetch('/api/chat-assist',opts):fetch('/api/chat-assist',{...opts,credentials:'include'}));
+    let j={}; try{ j=await r.json()||{}; }catch(_){ }
+    if(r.ok && j.ok) return j;
+    throw new Error(j.error||(r.status===401?'Sign in to PosterChan to use AI.':'The AI did not answer — try again.'));
+  }
+  async function _aiInsert(composer,text){
+    if(!composer || !composer.isConnected){ PC().toast('That text box is gone'); return false; }
+    const had=composer.isContentEditable?composer.textContent:composer.value;
+    if(String(had||'').trim() && !(await PC().uiConfirm('Replace what is already typed there?',{ok:'Replace'}))) return false;
+    if(composer.isContentEditable) composer.textContent=text; else composer.value=text;
+    composer.dispatchEvent(new Event('input',{bubbles:true}));
+    try{ composer.focus(); }catch(_){ }
+    PC().toast('Inserted — nothing was sent');
+    return true;
+  }
+  async function _aiSaveNote(title,body){
+    if(!window.PCNotes||!window.PCNotes.save){ PC().toast('Notes is not available here'); return false; }
+    try{ const r=await window.PCNotes.save({title,body,tags:['window-ai']});
+         PC().toast(r&&r.queued?'Saved to Notes — will sync when you are back online':'Saved to Notes'); return true; }
+    catch(_){ PC().toast('Could not save to Notes'); return false; }
+  }
+  async function _aiCalendar(ev){
+    if(!window.PCCalendar||!window.PCCalendar.draft){ PC().toast('Calendar is not available here'); return false; }
+    try{ await window.PCCalendar.draft(ev); return true; }catch(_){ PC().toast('Could not open the calendar'); return false; }
+  }
+  function _aiOpen(view){
+    try{ PC().switchView(view); return true; }catch(_){ PC().toast('Could not open it'); return false; }
+  }
+  function _aiSearch(q){
+    if(!_aiOpen('websearch')) return false;
+    let tries=0; const go=()=>{ if(window.PCWebSearch&&window.PCWebSearch.search&&document.getElementById('ws-q')){ window.PCWebSearch.search(q); return; }
+      if(++tries<50) setTimeout(go,100); else PC().toast('Web Search did not open'); };
+    setTimeout(go,0); return true;
+  }
+  /* The app's own SVG icons, not Unicode glyphs: a glyph the font lacks draws as an empty box. */
+  const _STEP_ICON={command:'i-terminal',insert:'i-pen',note:'i-note',calendar:'i-calendar',open:'i-expand',search:'i-search'};
+  const _stepIcon=k=>`<svg class="ic" aria-hidden="true"><use href="#${_STEP_ICON[k]||'i-next'}"></use></svg>`;
+  /* ONE REQUEST AT A TIME PER PANEL. The answer arrives with what the model PROPOSES -- tasks and
+   * steps -- each a button; nothing runs, sends, saves or opens until the person presses it. "Continue"
+   * re-reads the window (a terminal's new output, a page that changed) and asks for what comes next,
+   * carrying what was asked and what was done in this panel. Never hands off to the AI Chat screen. */
+  async function _aiSteps(w,panel,contexts,instruction,composer,turns,isTerm){
     if(_aiBusy.has(panel)) return;
     const box=panel.querySelector('.osw-ai-answer'); if(!box) return;
+    const cmds=!!(isTerm && (panel.querySelector('[data-ai-cmds]')||{}).checked);
     _aiBusy.add(panel); box.hidden=false; box.className='osw-ai-answer loading';
     box.innerHTML='<span class="spinner"></span> Thinking…';
-    let answer='', error='';
-    try{
-      const P=PC();
-      try{ if(P.ensureAiSession) await P.ensureAiSession(); }catch(_){ }
-      const body=JSON.stringify({action:'window',windows:contexts,instruction});
-      const opts={method:'POST',headers:{'Content-Type':'application/json'},body};
-      const r=await (P.authFetch?P.authFetch('/api/chat-assist',opts):fetch('/api/chat-assist',{...opts,credentials:'include'}));
-      let j={}; try{ j=await r.json()||{}; }catch(_){ }
-      if(r.ok && j.ok && j.answer) answer=String(j.answer);
-      else error=j.error||(r.status===401?'Sign in to PosterChan to use AI.':'The AI did not answer — try again.');
-    }catch(_){ error='Could not reach the AI — check your connection.'; }
+    let res=null, error='';
+    try{ res=await _aiPost({action:'window_steps',windows:contexts,instruction,history:turns.slice(-4),commands:cmds,today:_aiToday()}); }
+    catch(e){ error=(e&&e.message)||'Could not reach the AI — check your connection.'; }
     finally{ _aiBusy.delete(panel); }
     if(w.aiPanel!==panel) return;                       // closed while it was thinking
     if(error){ box.className='osw-ai-answer error'; box.innerHTML=`<p>${enc(error)}</p>`; return; }
+    const answer=String(res.answer||''), tasks=Array.isArray(res.tasks)?res.tasks:[], steps=Array.isArray(res.steps)?res.steps:[];
+    const turn={q:instruction,a:answer.slice(0,800),did:[]}; turns.push(turn);
+    const term=isTerm && window.PCTerm && window.PCTerm.connected && window.PCTerm.connected();
     box.className='osw-ai-answer';
-    const isTerm=/terminal|console|shell/i.test(((contexts[0]||{}).view||'')+' '+((contexts[0]||{}).title||''));
-    const command=isTerm && window.PCTerm && window.PCTerm.typeIn ? _aiCommand(answer) : '';
-    box.innerHTML=`<div class="osw-ai-text">${enc(answer)}</div><div class="osw-ai-do">
-      <button class="btn btn-ghost small" data-ai-copy>Copy</button>
-      <button class="btn btn-ghost small" data-ai-note>Save to Notes</button>
-      ${composer?'<button class="btn btn-ghost small" data-ai-insert>Insert</button>':''}
-      ${command?'<button class="btn btn-ghost small" data-ai-type>Type in terminal</button>':''}
-      ${window.PCCalendar && window.PCCalendar.draft?'<button class="btn btn-ghost small" data-ai-cal>Add to Calendar</button>':''}
-      <button class="btn btn-ghost small" data-ai-more>Continue in AI</button></div>`;
+    box.innerHTML=
+      (answer?`<div class="osw-ai-text">${_aiFormat(answer)}</div>`:'')+
+      (tasks.length?`<div class="osw-ai-tasks"><div class="osw-ai-tasks-h"><b>${tasks.length} task${tasks.length>1?'s':''}</b>
+          <span><button class="btn btn-ghost small" data-ai-tasks-note>Save checklist to Notes</button><button class="btn btn-ghost small" data-ai-tasks-copy>Copy</button></span></div>
+        <ul>${tasks.map((t,i)=>`<li data-task="${i}"><label><input type="checkbox"><span>${enc(t.text)}</span></label>
+          <span class="osw-ai-chips">${t.due?`<i class="due">${enc(t.due)}</i>`:''}${t.who?`<i class="who">${enc(t.who)}</i>`:''}
+          ${t.due?`<button class="btn btn-ghost small" data-task-cal="${i}" title="Add to Calendar">📅 Add</button>`:''}</span></li>`).join('')}</ul></div>`:'')+
+      (steps.length?`<div class="osw-ai-steps">${steps.map((st,i)=>`<div class="osw-ai-step" data-step="${i}" data-do="${enc(st.do)}">
+          <div class="osw-ai-step-h"><span class="ic">${_stepIcon(st.do)}</span><b>${enc(st.label)}</b><span class="ok" hidden>✓ done</span></div>
+          ${st.do==='command'?`<pre><code>${enc(st.text)}</code></pre>`:st.do==='open'?'':`<div class="osw-ai-step-t">${enc(String(st.text).slice(0,280))}${String(st.text).length>280?'…':''}</div>`}
+          <div class="osw-ai-step-b">${
+            st.do==='command'?(term?`<button class="btn btn-neon small" data-run>▶ Run</button><button class="btn btn-ghost small" data-type>Type it</button>`:'<span class="muted small">Open this window’s terminal session to run it</span><button class="btn btn-ghost small" data-copy>Copy</button>'):
+            st.do==='insert'?(composer?'<button class="btn btn-neon small" data-go>Insert into this window</button>':'<button class="btn btn-ghost small" data-copy>Copy</button>'):
+            `<button class="btn btn-neon small" data-go>${enc(({note:'Save to Notes',calendar:'Add to Calendar',open:'Open',search:'Search the web'})[st.do]||st.label)}</button>`}</div></div>`).join('')}</div>`:'')+
+      `<div class="osw-ai-do"><button class="btn btn-ghost small" data-ai-copy>Copy answer</button>
+        <button class="btn btn-ghost small" data-ai-continue title="Read the window again and suggest what comes next"><svg class="ic" aria-hidden="true"><use href="#i-next"></use></svg> Continue</button></div>`;
+    const done=(el,label)=>{ el.classList.add('done'); const ok=el.querySelector('.ok'); if(ok) ok.hidden=false; turn.did.push(label); };
     box.querySelector('[data-ai-copy]').onclick=()=>{ try{ PC().copyValue(answer); }catch(_){ } };
-    box.querySelector('[data-ai-more]').onclick=handoff;
-    box.querySelector('[data-ai-note]').onclick=async e=>{
-      const b=e.currentTarget;
-      if(!window.PCNotes||!window.PCNotes.save){ PC().toast('Notes is not available here'); return; }
-      b.disabled=true;
-      try{
-        const r=await window.PCNotes.save({title:'✨ '+(contexts[0]&&contexts[0].title||'Window')+' — '+instruction.slice(0,60),
-                                            body:answer,tags:['window-ai']});
-        b.textContent='✓ In Notes'; PC().toast(r&&r.queued?'Saved to Notes — will sync when you are back online':'Saved to Notes');
-      }catch(err){ b.disabled=false; PC().toast('Could not save to Notes'); }
+    box.querySelector('[data-ai-continue]').onclick=()=>{
+      const fresh=[w,..._aiContextWins].filter((x,k,a)=>wins.includes(x)&&a.indexOf(x)===k).map(windowAIContext);
+      _aiSteps(w,panel,fresh,'Continue: look at the window as it is now, check what the steps I took did, and propose what comes next.',composer,turns,isTerm);
     };
-    const cal=box.querySelector('[data-ai-cal]');
-    if(cal) cal.onclick=async()=>{
-      if(cal.disabled) return;
-      cal.disabled=true; const was=cal.textContent; cal.textContent='Looking for an event…';
-      let ev=null, why='';
-      try{
-        const P=PC(), d=new Date(), p2=n=>String(n).padStart(2,'0');
-        const today=d.getFullYear()+'-'+p2(d.getMonth()+1)+'-'+p2(d.getDate());
-        const opts={method:'POST',headers:{'Content-Type':'application/json'},
-                    body:JSON.stringify({action:'window_event',windows:contexts,answer,today})};
-        const r=await (P.authFetch?P.authFetch('/api/chat-assist',opts):fetch('/api/chat-assist',{...opts,credentials:'include'}));
-        let j={}; try{ j=await r.json()||{}; }catch(_){ }
-        if(r.ok && j.ok && j.event) ev=j.event; else why=j.error||'Could not find an event';
-      }catch(_){ why='Could not reach the AI'; }
-      cal.disabled=false; cal.textContent=was;
-      if(!ev){ PC().toast(why); return; }
-      if(w.aiPanel===panel) closeWindowAI(w);
-      // The Calendar's own New-event form, filled in: the person corrects it and saves, or cancels.
-      try{ await window.PCCalendar.draft(ev); }catch(_){ PC().toast('Could not open the calendar'); }
-    };
-    const typ=box.querySelector('[data-ai-type]');
-    if(typ) typ.onclick=()=>{
-      if(!window.PCTerm || !window.PCTerm.typeIn(command)){ PC().toast('The terminal is not connected'); return; }
-      closeWindowAI(w);
-      PC().toast('Typed at the prompt — press Enter to run it');
-    };
-    const ins=box.querySelector('[data-ai-insert]');
-    if(ins) ins.onclick=async()=>{
-      if(!composer.isConnected){ PC().toast('That text box is gone'); return; }
-      const had=composer.isContentEditable?composer.textContent:composer.value;
-      if(String(had||'').trim() && !(await PC().uiConfirm('Replace what is already typed there?',{ok:'Replace'}))) return;
-      if(composer.isContentEditable) composer.textContent=answer; else composer.value=answer;
-      composer.dispatchEvent(new Event('input',{bubbles:true}));
-      closeWindowAI(w);
-      try{ composer.focus(); }catch(_){ }
-      PC().toast('Inserted — nothing was sent');
-    };
+    const taskLine=t=>t.text+(t.due?' (due '+t.due+')':'')+(t.who?' — '+t.who:'');
+    const tn=box.querySelector('[data-ai-tasks-note]');
+    if(tn) tn.onclick=async()=>{ tn.disabled=true;
+      const ok=await _aiSaveNote('✅ Tasks — '+((contexts[0]||{}).title||'Window'), tasks.map(t=>'- [ ] '+taskLine(t)).join('\n'));
+      if(ok){ tn.textContent='✓ In Notes'; turn.did.push('saved the task list to Notes'); } else tn.disabled=false; };
+    const tc=box.querySelector('[data-ai-tasks-copy]');
+    if(tc) tc.onclick=()=>{ try{ PC().copyValue(tasks.map(t=>'- '+taskLine(t)).join('\n')); }catch(_){ } };
+    box.querySelectorAll('[data-task-cal]').forEach(b=>b.onclick=async()=>{
+      const t=tasks[+b.dataset.taskCal]; if(!t) return;
+      if(await _aiCalendar({title:t.text,date:t.due,start:'',end:'',allDay:true,location:'',notes:t.who?('Who: '+t.who):''})){
+        b.textContent='✓ Added'; b.disabled=true; turn.did.push('added "'+t.text+'" to the calendar'); closeWindowAI(w); }
+    });
+    box.querySelectorAll('.osw-ai-step').forEach(card=>{
+      const st=steps[+card.dataset.step]; if(!st) return;
+      const run=card.querySelector('[data-run]'), typ=card.querySelector('[data-type]'), go=card.querySelector('[data-go]'), cp=card.querySelector('[data-copy]');
+      if(cp) cp.onclick=()=>{ try{ PC().copyValue(st.text); }catch(_){ } };
+      if(run) run.onclick=()=>{
+        if(!window.PCTerm || !window.PCTerm.run || !window.PCTerm.run(st.text)){ PC().toast('The terminal is not connected'); return; }
+        done(card,'ran `'+st.text+'`'); PC().toast('Running — press ↻ Continue when it finishes');
+      };
+      if(typ) typ.onclick=()=>{
+        if(!window.PCTerm || !window.PCTerm.typeIn(st.text)){ PC().toast('The terminal is not connected'); return; }
+        done(card,'typed `'+st.text+'` at the prompt'); PC().toast('Typed at the prompt — press Enter to run it');
+      };
+      if(go) go.onclick=async()=>{
+        go.disabled=true; let ok=false;
+        if(st.do==='insert') ok=await _aiInsert(composer,st.text);
+        else if(st.do==='note') ok=await _aiSaveNote('✨ '+((contexts[0]||{}).title||'Window')+' — '+st.label,st.text);
+        else if(st.do==='open') ok=_aiOpen(st.text);
+        else if(st.do==='search') ok=_aiSearch(st.text);
+        else if(st.do==='calendar'){
+          go.textContent='Looking for the event…';
+          try{ const j=await _aiPost({action:'window_event',windows:contexts,answer:st.text,today:_aiToday()});
+               ok=!!j.event && await _aiCalendar(j.event); if(!j.event) PC().toast('No event with a date in that'); }
+          catch(e){ PC().toast((e&&e.message)||'Could not reach the AI'); }
+          go.textContent='Add to Calendar';
+        }
+        go.disabled=false;
+        if(ok) done(card,st.label);
+        // These take the person somewhere else (a form, another screen): the panel steps aside, or in a
+        // popped-out window it would sit on top of the Calendar's own form.
+        if(ok && (st.do==='calendar'||st.do==='open'||st.do==='search')) closeWindowAI(w);
+      };
+    });
   }
   function toggleWindowAI(w,button,event){
     if(event&&event.shiftKey){
@@ -2670,27 +2731,25 @@
     const composer=_aiComposer(w);
     const ctx=contexts[0], panel=document.createElement('div'); panel.className='osw-ai-panel';w.aiPanel=panel;
     const suggestions=windowAISuggestions(w,ctx);
-    const agentCapable=/terminal|console|shell|file|drive|folder/i.test(ctx.title+' '+ctx.view);
-    panel.innerHTML=`<header><span>✨</span><div><b>AI for ${enc(ctx.title)}</b><small>${ctx.selection?'Using your selection':ctx.kind==='native app'?'App name only · private by default':'Using visible window text'}</small></div><button data-ai-dismiss aria-label="Close">✕</button></header>
+    const isTerm=/terminal|console|shell/i.test(ctx.title+' '+ctx.view);
+    panel.innerHTML=`<header><span>✨</span><div><b>AI for ${enc(ctx.title)}</b><small>${ctx.selection?'Using your selection':ctx.kind==='native app'?'App name only · private by default':'Using visible window text'}</small></div><button data-ai-dismiss aria-label="Close"><svg class="ic" aria-hidden="true"><use href="#i-close"></use></svg></button></header>
       ${related.length?`<div class="osw-ai-context"><b>${contexts.length} connected windows</b><span>${contexts.map(x=>enc(x.title)).join(' → ')}</span><button data-ai-clear>Clear</button></div>`:'<div class="osw-ai-tip">Shift-click ✨ to collect windows, or drag one sparkle onto another.</div>'}
       <div class="osw-ai-actions">${suggestions.map((x,i)=>`<button data-ai-action="${i}"><b>${enc(x[0])}</b><span>${enc(x[1])}</span></button>`).join('')}</div>
       <label>Ask about this window<textarea rows="2" placeholder="What would you like PosterChan AI to do?"></textarea></label>
-      ${agentCapable?'<label class="osw-ai-agent"><input type="checkbox" data-ai-agent> Use the system agent to run commands or change files</label>':''}
+      ${isTerm?'<label class="osw-ai-agent"><input type="checkbox" data-ai-cmds checked> Suggest commands I can run here with one click</label>':''}
       ${w.native==null?`<label class="osw-ai-agent"><input type="checkbox" data-ai-watch ${w.aiWatch?'checked':''}> Watch this window and glow when its contents change</label>`:''}
       <div class="osw-ai-answer" hidden aria-live="polite"></div>
-      <footer><span>Review before sending · no automatic changes</span><button class="btn btn-ghost small" data-ai-open>Open in AI</button><button class="btn btn-neon" data-ai-ask>Ask</button></footer>`;
+      <footer><span>Nothing runs until you press its button</span><button class="btn btn-neon" data-ai-ask>Ask</button></footer>`;
     w.el.appendChild(panel);
-    const launch=instruction=>{instruction=String(instruction||'').trim();if(!instruction)return;const agent=!!(panel.querySelector('[data-ai-agent]')||{}).checked;closeWindowAI(w);try{_aiTarget().askWindowContext({windows:contexts},instruction,{agent});}catch(_){try{PC().toast('AI is unavailable');}catch(__){}}};
-    /* ANSWERED HERE, not on another screen -- unless the system agent is asked for, which runs
-     * commands and belongs in the AI screen where its every step is shown. */
+    /* ANSWERED HERE, WITH BUTTONS -- never by loading the AI Chat screen ("we need interactive Agentic
+     * features with buttons, not loading up AI Chat"). `turns` is this panel's memory for ↻ Continue. */
+    const turns=[];
     const ask=instruction=>{instruction=String(instruction||'').trim();if(!instruction)return;
-      if((panel.querySelector('[data-ai-agent]')||{}).checked) return launch(instruction);
-      _aiAnswer(w,panel,contexts,instruction,composer,()=>launch(instruction));};
+      _aiSteps(w,panel,contexts,instruction,composer,turns,isTerm);};
     panel.querySelector('[data-ai-dismiss]').onclick=()=>closeWindowAI(w);
     const clear=panel.querySelector('[data-ai-clear]');if(clear)clear.onclick=()=>{_aiContextWins.forEach(x=>x.el.classList.remove('ai-context'));_aiContextWins.clear();closeWindowAI(w);toggleWindowAI(w,button);};
     panel.querySelectorAll('[data-ai-action]').forEach(b=>b.onclick=()=>ask(suggestions[+b.dataset.aiAction][1]));
     const ta=panel.querySelector('textarea');panel.querySelector('[data-ai-ask]').onclick=()=>ask(ta.value);
-    panel.querySelector('[data-ai-open]').onclick=()=>launch(ta.value.trim()||suggestions[0][1]);
     const watch=panel.querySelector('[data-ai-watch]');if(watch)watch.onchange=()=>{
       if(w.aiWatch){w.aiWatch.disconnect();w.aiWatch=null;w.el.classList.remove('ai-watching','ai-alert');PC().toast('Stopped watching '+w.title);}
       if(watch.checked){let timer=0;w.aiWatch=new MutationObserver(records=>{const meaningful=records.some(r=>!(r.type==='childList'&&r.target===w.body&&[...r.addedNodes,...r.removedNodes].every(n=>n===realFeed)));if(!meaningful)return;clearTimeout(timer);timer=setTimeout(()=>{if(!wins.includes(w))return;w.el.classList.add('ai-alert');try{PC().toast('✨ '+w.title+' changed');}catch(_){}},700);});w.aiWatch.observe(w.body,{subtree:true,childList:true,characterData:true});w.el.classList.add('ai-watching');PC().toast('Watching '+w.title);}

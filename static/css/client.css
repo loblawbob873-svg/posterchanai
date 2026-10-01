@@ -8571,6 +8571,45 @@ body.native:not(.desktop).term-view .tty-bar{padding-top:env(safe-area-inset-top
 .osw.ai-context{box-shadow:0 0 0 2px rgba(var(--accent-rgb),.58),0 18px 50px rgba(0,0,0,.55)}.osw.ai-watching .osw-ai::after{content:'';position:absolute;width:5px;height:5px;margin:8px 0 0 -3px;border-radius:50%;background:var(--accent)}.osw.ai-alert .osw-ai{animation:os-ai-pulse 1.15s ease-in-out infinite}@keyframes os-ai-pulse{50%{background:rgba(var(--accent-rgb),.28);text-shadow:0 0 16px var(--accent);transform:scale(1.12)}}
 .osw-ai-panel{position:absolute;z-index:12;inset-inline-end:8px;top:40px;width:min(390px,calc(100% - 16px));padding:12px;border:1px solid rgba(var(--accent-rgb),.42);border-radius:14px;background:color-mix(in srgb,var(--panel2) 94%,transparent);box-shadow:0 20px 55px #000b,0 0 26px rgba(var(--accent-rgb),.12);backdrop-filter:blur(18px);color:var(--text)}
 .osw-ai-answer{margin-top:10px;padding:10px;border:1px solid rgba(var(--accent-rgb),.28);border-radius:10px;background:color-mix(in srgb,var(--panel) 80%,transparent);font-size:13px}.osw-ai-answer.loading{display:flex;align-items:center;gap:8px;color:var(--muted)}.osw-ai-answer.error{color:var(--danger,#f66)}.osw-ai-answer p{margin:0}.osw-ai-text{white-space:pre-wrap;overflow-wrap:anywhere;max-height:min(38vh,320px);overflow:auto;line-height:1.45}.osw-ai-do{display:flex;flex-wrap:wrap;gap:6px;margin-top:8px}.osw-ai-panel footer{flex-wrap:wrap}.osw-ai-panel footer>span{flex:1 1 140px}
+/* THE ✨ PANEL'S ANSWER, READABLE ("the text it does display is not really readable, need to be cyberpunk
+   and nice"). Real paragraphs and lists (os.js _aiFormat), 14px at 1.6 on a dark glass card, neon only
+   where it carries meaning: the bullets, code, the task chips and the one primary button per step. */
+.osw-ai-panel{width:min(460px,calc(100% - 16px))}
+.osw-ai-answer{font-size:14px;line-height:1.6;color:var(--text);background:linear-gradient(180deg,rgba(var(--accent-rgb),.06),transparent 40%),color-mix(in srgb,var(--panel) 92%,#000);box-shadow:inset 0 0 0 1px rgba(var(--accent-rgb),.12),0 0 18px rgba(var(--accent-rgb),.08)}
+.osw-ai-answer .osw-ai-text{white-space:normal;max-height:min(42vh,360px);padding-right:4px}
+.osw-ai-text p{margin:0 0 8px}
+.osw-ai-text ul{margin:4px 0 10px;padding:0;list-style:none}
+.osw-ai-text li{position:relative;padding:3px 0 3px 18px}
+.osw-ai-text li::before{content:'';position:absolute;left:4px;top:.75em;width:6px;height:6px;border-radius:2px;background:var(--neon);box-shadow:0 0 6px var(--neon)}
+.osw-ai-text code,.osw-ai-step pre{font-family:var(--mono,ui-monospace,monospace);font-size:12.5px;color:var(--neon);background:rgba(0,0,0,.45);border:1px solid rgba(var(--accent-rgb),.25);border-radius:6px}
+.osw-ai-text code{padding:1px 5px}
+.osw-ai-text b{color:var(--neon2)}
+.osw-ai-tasks{margin-top:12px;padding:10px;border:1px solid rgba(var(--accent-rgb),.3);border-radius:10px;background:rgba(0,0,0,.25)}
+.osw-ai-tasks-h{display:flex;align-items:center;justify-content:space-between;gap:8px;flex-wrap:wrap;margin-bottom:6px}
+.osw-ai-tasks-h b{color:var(--neon);letter-spacing:.06em;text-transform:uppercase;font-size:12px}
+.osw-ai-tasks-h span{display:flex;gap:6px}
+.osw-ai-tasks ul{margin:0;padding:0;list-style:none}
+.osw-ai-tasks li{display:flex;align-items:flex-start;justify-content:space-between;gap:8px;padding:7px 2px;border-top:1px solid rgba(var(--accent-rgb),.12)}
+.osw-ai-tasks li:first-child{border-top:0}
+.osw-ai-tasks label{display:flex;gap:8px;align-items:flex-start;flex:1 1 auto;min-width:0;font-weight:500;cursor:pointer}
+.osw-ai-tasks input{margin-top:4px;accent-color:var(--neon)}
+.osw-ai-tasks input:checked+span{text-decoration:line-through;color:var(--muted)}
+.osw-ai-chips{display:flex;gap:4px;align-items:center;flex-wrap:wrap;justify-content:flex-end}
+.osw-ai-chips i{font-style:normal;font-size:11px;padding:2px 7px;border-radius:999px;white-space:nowrap}
+.osw-ai-chips .due{color:var(--neon);border:1px solid rgba(var(--accent-rgb),.5);background:rgba(var(--accent-rgb),.1)}
+.osw-ai-chips .who{color:var(--neon2);border:1px solid color-mix(in srgb,var(--neon2) 50%,transparent)}
+.osw-ai-steps{display:grid;gap:8px;margin-top:12px}
+.osw-ai-step{padding:9px 10px;border:1px solid rgba(var(--accent-rgb),.28);border-left:3px solid var(--neon);border-radius:9px;background:rgba(0,0,0,.28);transition:border-color .15s,opacity .15s}
+.osw-ai-step-h{display:flex;align-items:center;gap:8px}
+.osw-ai-step-h .ic{display:inline-grid;place-items:center;width:22px;height:22px;border-radius:6px;color:#04121a;background:var(--neon);font-size:12px}
+.osw-ai-step-h .ic svg{width:14px;height:14px}
+.osw-ai-panel [data-ai-dismiss] svg{width:14px;height:14px}
+.osw-ai-step-h .ok{margin-left:auto;color:var(--neon);font-size:12px}
+.osw-ai-step pre{margin:8px 0 0;padding:7px 9px;overflow-x:auto;white-space:pre}
+.osw-ai-step-t{margin-top:6px;color:var(--muted);font-size:13px;overflow-wrap:anywhere}
+.osw-ai-step-b{display:flex;gap:6px;flex-wrap:wrap;align-items:center;margin-top:8px}
+.osw-ai-step.done{border-left-color:var(--muted);opacity:.75}
+.osw-ai-step.done .ic{background:var(--muted)}
 .osw-ai-panel.pc-oswin-ai{position:fixed;top:44px;z-index:2147483000;max-height:calc(100vh - 56px);overflow:auto}
 .osw-ai-panel header{display:flex;align-items:center;gap:10px}.osw-ai-panel header>span{display:grid;place-items:center;width:34px;height:34px;border-radius:10px;background:rgba(var(--accent-rgb),.16);font-size:17px}.osw-ai-panel header>div{display:flex;flex:1;min-width:0;flex-direction:column}.osw-ai-panel header b{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.osw-ai-panel header small,.osw-ai-panel footer>span{color:var(--muted);font-size:11px}.osw-ai-panel header>button{border:0;background:none;color:var(--muted);cursor:pointer;font-size:15px}
 .osw-ai-actions{display:grid;gap:6px;margin:12px 0}.osw-ai-actions>button{display:flex;flex-direction:column;gap:2px;padding:8px 10px;border:1px solid var(--line);border-radius:9px;background:rgba(255,255,255,.035);color:var(--text);text-align:left;cursor:pointer}.osw-ai-actions>button:hover{border-color:rgba(var(--accent-rgb),.55);background:rgba(var(--accent-rgb),.10)}.osw-ai-actions span{color:var(--muted);font-size:11px}

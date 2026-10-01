@@ -26,7 +26,7 @@ from app.services.texts_ai_service import TextsAiError as AssistError
 logger = logging.getLogger(__name__)
 
 MEDIA = {"telegram": "Telegram chat message", "dm": "direct message (DM)"}
-ACTIONS = ("reply", "summarize", "links", "window", "window_event")
+ACTIONS = ("reply", "summarize", "links", "window", "window_event", "window_steps")
 
 # A summary may read further back than a reply needs, but a whole year of a group chat never goes to
 # the model: the newest SUMMARY_MSGS messages, each clipped, and a total ceiling on top.
@@ -203,6 +203,149 @@ async def ask_window(db, user, windows, instruction: str) -> str:
     logger.info("[chat-assist] window answer: %d windows, %d chars in -> %d chars",
                 len(context), sum(len(c[3]) for c in context), len(out))
     return out[:6000]
+
+
+# ---- The window ✨ panel, INTERACTIVE: an answer, a task list and steps the person runs with buttons ----
+# "we need interactive Agentic features with buttons, not loading up AI Chat" / "Extract Tasks need to be
+# functional and actually useful". The model PROPOSES; the panel turns each proposal into a button, and
+# nothing happens until the person presses it. Everything is validated here, so a malformed or invented
+# step arrives as no step rather than as a wrong command in somebody's terminal.
+STEP_KINDS = ("command", "insert", "note", "calendar", "open", "search")
+STEP_MAX = 4
+TASK_MAX = 20
+OPEN_VIEWS = {"notes": "Notes", "calendar": "Calendar", "files": "Files", "terminal": "Terminal",
+              "mail": "Email", "websearch": "Web Search", "texts": "Texts", "contacts": "Contacts",
+              "messages": "Messages", "tg": "Telegram"}
+HISTORY_MAX = 4
+
+
+def build_steps_messages(context: list, instruction: str, history=None, commands: bool = False,
+                         today: str = "") -> list:
+    base = build_window_messages(context, instruction)          # validates + fences the windows
+    today = today if _DATE.match(str(today or "")) else ""
+    kinds = ["\"insert\": text to put into the window's own text box (a reply, a rewrite)",
+             "\"note\": text worth keeping, saved to the user's Notes",
+             "\"calendar\": one event with a date, added to the Calendar after the user checks it",
+             "\"open\": open an app -- text is one of " + ", ".join(OPEN_VIEWS),
+             "\"search\": a web search -- text is the query"]
+    if commands:
+        kinds.insert(0, "\"command\": ONE shell command for this terminal, one line; prefer read-only "
+                        "commands that show what is going on; never anything destructive unless asked")
+    system = (
+        "You are PosterChan's on-screen assistant. You act ONLY through buttons the user presses, so you "
+        "never claim anything was done. Reply with ONE JSON object and nothing else:\n"
+        "{\"answer\": short, clear text -- plain sentences and \"- \" bullets, \n"
+        " \"tasks\": [{\"text\": one concrete action starting with a verb, \"due\": \"YYYY-MM-DD\" or \"\", "
+        "\"who\": the person responsible if named, else \"\"}],\n"
+        " \"steps\": [{\"do\": kind, \"label\": 2-5 word button text, \"text\": the content}]}\n"
+        "Step kinds: " + "; ".join(kinds) + ".\n"
+        f"At most {STEP_MAX} steps, only ones that genuinely help with the request; [] when none do. "
+        "Fill \"tasks\" when the request is about tasks, action items, follow-ups or deadlines -- every real "
+        "commitment, decision to act or deadline in the content, one per item, nothing invented; otherwise []. "
+        "Resolve relative dates (\"Friday\", \"tomorrow\") against today's date. Use ONLY the window content; "
+        "if it does not contain what is needed, say so in \"answer\". Match the content's language.")
+    hist = []
+    for h in list(history or [])[-HISTORY_MAX:]:
+        if not isinstance(h, dict):
+            continue
+        q = re.sub(r"\s+", " ", str(h.get("q") or "")).strip()[:300]
+        a = re.sub(r"\s+", " ", str(h.get("a") or "")).strip()[:800]
+        did = [re.sub(r"\s+", " ", str(x)).strip()[:120] for x in (h.get("did") or [])][:8]
+        if q:
+            hist.append(f"- Earlier request: {q}\n  Your answer: {a or '(none)'}"
+                        + (f"\n  The user then did: {'; '.join(did)}" if did else ""))
+    user = base[1]["content"]
+    if hist:
+        user = "Earlier in this panel:\n" + "\n".join(hist) + "\n\nThe window AS IT IS NOW:\n\n" + user
+    if today:
+        user = f"Today is {today}.\n\n" + user
+    return [{"role": "system", "content": system}, {"role": "user", "content": user}]
+
+
+def _clean(v, n):
+    return re.sub(r"\s+", " ", str(v or "")).strip()[:n]
+
+
+def parse_steps(text: str, commands: bool = False, want_tasks: bool = False) -> dict:
+    """The model's reply -> {answer, tasks, steps}, every field validated. A reply that is not JSON is
+    still an answer (local models ignore formats), and its "- " lines become tasks when tasks were asked."""
+    import json
+    raw = None
+    m = re.search(r"\{.*\}", str(text or ""), re.S)
+    if m:
+        try:
+            raw = json.loads(m.group(0))
+        except Exception:
+            raw = None
+    if not isinstance(raw, dict):
+        answer = str(text or "").strip()[:4000]
+        tasks = []
+        if want_tasks:
+            for line in answer.splitlines():
+                bullet = re.match(r"^\s*(?:[-*•]|\d+[.)])\s+(.+)$", line)
+                if bullet and bullet.group(1).strip():
+                    tasks.append({"text": _clean(bullet.group(1), 200), "due": "", "who": ""})
+        return {"answer": answer, "tasks": tasks[:TASK_MAX], "steps": []}
+    answer = str(raw.get("answer") or "").strip()[:4000]
+    tasks = []
+    for t in raw.get("tasks") or []:
+        if not isinstance(t, dict):
+            continue
+        txt = _clean(t.get("text"), 200)
+        if not txt:
+            continue
+        due = _clean(t.get("due"), 10)
+        tasks.append({"text": txt, "due": due if _DATE.match(due) else "", "who": _clean(t.get("who"), 60)})
+        if len(tasks) >= TASK_MAX:
+            break
+    steps = []
+    for st in raw.get("steps") or []:
+        if not isinstance(st, dict):
+            continue
+        kind = _clean(st.get("do"), 20).lower()
+        if kind not in STEP_KINDS or (kind == "command" and not commands):
+            continue
+        txt = str(st.get("text") or "").strip()
+        if kind == "command":
+            txt = txt.replace("\r", "").strip()
+            if txt.startswith("$ "):
+                txt = txt[2:]
+            if not txt or "\n" in txt or len(txt) > 400 or re.search(r"[\x00-\x1f\x7f]", txt):
+                continue
+        elif kind == "open":
+            txt = _clean(txt, 30).lower()
+            if txt not in OPEN_VIEWS:
+                continue
+        elif kind == "search":
+            txt = _clean(txt, 200)
+        else:
+            txt = txt[:2000]
+        if not txt:
+            continue
+        default = {"command": "Run command", "insert": "Insert", "note": "Save to Notes",
+                   "calendar": "Add to Calendar", "open": "Open " + OPEN_VIEWS.get(txt, ""),
+                   "search": "Search the web"}[kind]
+        steps.append({"do": kind, "label": _clean(st.get("label"), 50) or default, "text": txt})
+        if len(steps) >= STEP_MAX:
+            break
+    if not answer and not tasks and not steps:
+        answer = str(text or "").strip()[:4000]
+    return {"answer": answer, "tasks": tasks, "steps": steps}
+
+
+_TASKY = re.compile(r"\b(task|tasks|to-?do|action items?|follow[- ]?ups?|deadlines?|commitments?)\b", re.I)
+
+
+async def window_steps(db, user, windows, instruction: str, history=None, commands: bool = False,
+                       today: str = "") -> dict:
+    context = window_context(windows)
+    out = await _chat(db, user, build_steps_messages(context, instruction, history, commands, today), 0.2)
+    if not out:
+        raise AssistError(502, "The AI did not come up with an answer — try again.")
+    res = parse_steps(out, commands, bool(_TASKY.search(str(instruction or ""))))
+    logger.info("[chat-assist] window steps: %d windows -> %d tasks, %d steps",
+                len(context), len(res["tasks"]), len(res["steps"]))
+    return res
 
 
 # ---- "Add to Calendar" from the window ✨ answer -------------------------------------------------------
