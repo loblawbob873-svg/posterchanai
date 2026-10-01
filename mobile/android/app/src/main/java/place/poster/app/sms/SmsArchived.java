@@ -97,7 +97,7 @@ public final class SmsArchived {
             if (sec == null) return NO_KEY;
             byte[] me = Nostr.pubkey(sec);
             String meHex = Nostr.hex(me);
-            String key = SmsKeys.matchKey(address);
+            String key = SmsKeys.convKey(address);
             if (key.isEmpty()) return FAILED;
             String doc = ArchivedThreads.docFor(meHex, key);
             if (doc.isEmpty()) return FAILED;

@@ -167,7 +167,7 @@ public final class SmsStore {
     /** Which conversation a message belongs to. See fold. */
     private static String groupKey(SmsMsg m) {
         if (m.people > 1) return "t:" + m.threadId;
-        String k = m.address == null ? "" : SmsKeys.matchKey(m.address);
+        String k = m.address == null ? "" : SmsKeys.convKey(m.address);
         // No usable number (a provider that filed none) can only be identified by its thread id.
         return k.isEmpty() ? "t:" + m.threadId : "p:" + k;
     }

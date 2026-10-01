@@ -72,6 +72,29 @@ public final class SmsKeys {
         return d.length() < 7 ? d : d.substring(d.length() - 7);
     }
 
+    /**
+     * THE CONVERSATION a sender belongs to: {@link #matchKey}, except for a sender with no digits.
+     *
+     * matchKey reduces "AIS", "Google", "MyBank" to "", so every alphanumeric sender was one keyless
+     * conversation that could not be archived or deleted ("AIS messages that can never be archived
+     * or deleted"). They get "a:" + the name, lower-cased, without spaces and - _ . ( ).
+     * matchKey itself does not change: it is message identity (docId, outboxId), and changing it
+     * would re-address every archived message from such a sender as a duplicate.
+     * sms.js convKey() is this rule in JavaScript; tests/test_android_sms.py runs both.
+     */
+    public static String convKey(String raw) {
+        String k = matchKey(raw);
+        if (!k.isEmpty() || raw == null) return k;
+        StringBuilder b = new StringBuilder();
+        for (int i = 0; i < raw.length(); i++) {
+            char c = raw.charAt(i);
+            if (c == ' ' || c == '\t' || c == '-' || c == '_' || c == '.' || c == '(' || c == ')') continue;
+            b.append(c);
+        }
+        String s = b.toString().toLowerCase(java.util.Locale.ROOT);
+        return s.isEmpty() ? "" : "a:" + s;
+    }
+
     private static String digits(String s) {
         StringBuilder b = new StringBuilder();
         for (int i = 0; i < s.length(); i++) {

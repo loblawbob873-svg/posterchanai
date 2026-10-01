@@ -84,7 +84,7 @@ public final class ArchivedThreads {
 
     /** Hidden while nothing newer than the archived moment exists in that conversation. */
     public boolean hidden(String address, long newestDate) {
-        long u = upto(SmsKeys.matchKey(address));
+        long u = upto(SmsKeys.convKey(address));
         return u > 0 && newestDate <= u;
     }
 

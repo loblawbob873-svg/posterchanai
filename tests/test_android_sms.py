@@ -78,6 +78,7 @@ public class SmsHarness {
              + " " + SmsKeys.segments("你好"));
 
     say("outbox", SmsKeys.outboxId("+1 555 010 4477", "on my way", 1700000000000L));
+    say("conv", SmsKeys.convKey("AIS") + "|" + SmsKeys.convKey("Google Pay") + "|" + SmsKeys.convKey("My-Bank (Alerts)") + "|" + SmsKeys.convKey("+1 (555) 010-4477") + "|" + SmsKeys.convKey("22000") + "|" + SmsKeys.convKey("") + "|" + SmsKeys.convKey("AIS1175"));
     say("is-sms-doc", SmsKeys.isSmsDoc("pcai:sms:abc") + " " + SmsKeys.isSmsDoc("pcai:note:abc"));
   }
 }
@@ -106,6 +107,7 @@ require(process.argv[2]);
     key_full: S._key('+1 (555) 010-4477'),
     key_other: S._key('5550104477'),
     key_short: S._key('22000'),
+    conv: ['AIS','Google Pay','My-Bank (Alerts)','+1 (555) 010-4477','22000','','AIS1175'].map(S._convKey).join('|'),
   };
   console.log(JSON.stringify(out));
 })();
@@ -176,6 +178,18 @@ class SmsRules(unittest.TestCase):
         self.assertEqual(self.out["doc-second"], "false", "a second apart is not the same message")
         self.assertTrue(re.fullmatch(r"pcai:sms:[0-9a-f]{24}", self.out["doc-shape"]),
                         self.out["doc-shape"])
+
+    def test_a_sender_with_no_digits_is_its_own_conversation(self):
+        """ "there is AIS messages that can never be archived or deleted": matchKey reduces "AIS" to
+        "", so every alphanumeric sender was ONE keyless conversation. convKey names them; numbers and
+        short codes keep matchKey's answer, and matchKey itself (message identity) is unchanged."""
+        self.assertEqual(self.out["conv"],
+                         "a:ais|a:googlepay|a:mybankalerts|0104477|22000||1175")
+
+    @unittest.skipIf(not NODE, "no node on this node")
+    def test_the_javascript_names_a_conversation_exactly_as_the_phone_does(self):
+        js = _run_node()
+        self.assertEqual(js["conv"], self.out["conv"])
 
     @unittest.skipIf(not NODE, "no node on this node")
     def test_the_javascript_files_a_message_at_the_same_address(self):

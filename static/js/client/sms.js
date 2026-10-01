@@ -930,11 +930,25 @@
     return digits.length < 7 ? digits : digits.slice(-7);
   }
 
+  /* THE CONVERSATION a sender belongs to -- `key()`, except for a sender with no digits at all.
+     `key()` reduces "AIS", "Google", "MyBank" to "", so every alphanumeric sender folded into ONE
+     keyless thread that could not be archived (setArchived refuses an empty key: "could not archive")
+     or deleted ("AIS messages that can never be archived or deleted"). They get `a:<name>` here.
+     `key()` itself is NOT changed: it is message identity (docIdFor, outboxId) and SmsKeys.matchKey's
+     twin, and changing it would re-address every archived message from such a sender as a duplicate.
+     SmsKeys.convKey is this rule in Java; tests/test_android_sms.py runs the two against each other. */
+  function convKey(addr){
+    const k = key(addr);
+    if(k) return k;
+    const s = String(addr||'').replace(/[ \t\-_.()]/g, '').toLowerCase();
+    return s ? 'a:' + s : '';
+  }
+
   function rebuild(){
     const by = new Map();
     for(const m of S.msgs.values()){
       if(m.gone) continue;                      // a tombstone — see absorb()
-      const k = key(m.address);
+      const k = convKey(m.address);
       let t = by.get(k);
       if(!t){ t = { key:k, address:m.address, msgs:[], date:0, unread:0 }; by.set(k, t); }
       t.msgs.push(m);
@@ -1290,7 +1304,7 @@
       if(!await claimNotification(owner, d)) return;
       if(PC.notificationAllowed && !PC.notificationAllowed('sms')) return;
       if(document.hidden !== true && document.visibilityState !== 'hidden'
-          && (!document.hasFocus || document.hasFocus()) && textsOnScreen() && S.open === key(m.address)) return;
+          && (!document.hasFocus || document.hasFocus()) && textsOnScreen() && S.open === convKey(m.address)) return;
       if(await isPhone() || owner !== ME().pubkey) return;
       const who = whoIs(m.name, m.address) || 'a message';
       const preview = String(m.body || (m.parts && m.parts.length ? 'Picture message' : 'New text message')).slice(0, 140);
@@ -4767,7 +4781,7 @@
   async function composeNew(){
     const to = await PC.uiPrompt('Phone number');
     if(!to) return;
-    S.open = key(to);
+    S.open = convKey(to);
     if(!S.threads.some(t => t.key === S.open)){
       S.threads.unshift({ key:S.open, address:to, msgs:[], date:0, unread:0 });
     }
@@ -4830,7 +4844,7 @@
     const contactLanding=String(window.__PC_SMS_OPEN_ADDRESS||'').trim();
     if(contactLanding){
       delete window.__PC_SMS_OPEN_ADDRESS;
-      S.open=key(contactLanding);
+      S.open=convKey(contactLanding);
       if(!S.threads.some(t=>t.key===S.open))
         S.threads.unshift({key:S.open,address:contactLanding,msgs:[],date:0,unread:0});
       paint();
@@ -5051,7 +5065,7 @@
   }
 
   window.PCSms = { openNotification, render, mirror, importAll, loadFromPhone, emptyWhy, ensureRead, phoneState,
-                   openBlossom: address => { const to=String(address||'').trim();if(!to)return;S.open=key(to);if(!S.threads.some(t=>t.key===S.open))S.threads.unshift({key:S.open,address:to,msgs:[],date:0,unread:0});blossomLaunch=true;paint(); },
+                   openBlossom: address => { const to=String(address||'').trim();if(!to)return;S.open=convKey(to);if(!S.threads.some(t=>t.key===S.open))S.threads.unshift({key:S.open,address:to,msgs:[],date:0,unread:0});blossomLaunch=true;paint(); },
                    // Clear the archive's latches and walk the whole phone again -- see rescan().
                    rescan, resetArchiveMarkers,
                    // The oversized-attachment fallback — see sendAsLink.
@@ -5067,7 +5081,7 @@
                    // Contacts can finish after Texts has already painted on a desktop. Rebuild the
                    // thread labels from the same messages; no relay or phone read is necessary.
                    refreshNames: () => { rebuild(); if(textsOnScreen()) paint(); },
-                   _state: () => S, _key: key, _outboxId: outboxId, _docId: docIdFor,
+                   _state: () => S, _key: key, _convKey: convKey, _outboxId: outboxId, _docId: docIdFor,
                    // ✨ suggested reply: the bounded context builder and the probe's state, for
                    // tests/client/test_sms_ai_reply_full_app.py.
                    _aiContext: aiContext,
