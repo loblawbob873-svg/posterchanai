@@ -53,6 +53,16 @@ def _filter_admits(rooms):
     return json.loads(subprocess.run(["node", "-e", js], capture_output=True, text=True, check=True).stdout)
 
 
+def _key_sources(body, var):
+    """What `var` (a vault key) is derived from, in order: the arguments of each cordListIdOrEmpty(...)
+    in its assignment. A room with no 32-byte id yields '' and is handled without a vault write
+    ("could not leave concord community ... 32 bit key"), so the key is a chain of safe conversions."""
+    m = re.search(r"(?:const )?%s=((?:cordListIdOrEmpty\([^)]*\)\|\|)*cordListIdOrEmpty\([^)]*\));" % var, body)
+    if not m:
+        return []
+    return [_key_expr(a) for a in re.findall(r"cordListIdOrEmpty\(([^)]*)\)", m.group(1))]
+
+
 def _key_expr(src):
     """The expression a membership vault key is derived from, spelled one way."""
     return src.replace("room.cord?.bundle?.", "bundle.").replace("room.cord&&room.cord.bundle.", "bundle.")
@@ -72,7 +82,7 @@ class TestTheVaultKeyIsTheRoomsIdentity(unittest.TestCase):
         self.assertEqual(_filter_admits([{"url": "https://x/invite/a#k",
                                           "cord": {"bundle": {"community_id": "ab" * 32}}}]), [True])
         self.assertIn("community_id:cid", body)
-        self.assertRegex(body, r"cid=cordListB64\(bundle\.community_id\|\|room\.communityId\)",
+        self.assertEqual(_key_sources(body, "cid"), ["bundle.community_id", "room.communityId"],
                          "the entry must be keyed on the community commitment the bundle carries")
 
     def test_it_still_needs_an_invite_url(self):
@@ -94,14 +104,13 @@ class TestTheVaultKeyIsTheRoomsIdentity(unittest.TestCase):
         self.assertIn("const cid=roomIdentity(room);", body)
         self.assertNotIn("if(!room||!room.communityId)return true;", body,
                          "leaving such a room used to succeed silently, writing no tombstone")
-        m = re.search(r"const (\w+)=cordListB64\(([^;]*?)\);", body)
-        self.assertTrue(m, "leave no longer derives a wire key")
-        var, leave_key = m.group(1), _key_expr(m.group(2))
-        self.assertIn("tombs.set(%s," % var, body)
-        self.assertIn("entries.delete(%s)" % var, body)
+        leave_key = _key_sources(body, "wireId")
+        self.assertTrue(leave_key, "leave no longer derives a wire key")
+        self.assertIn("tombs.set(wireId,", body)
+        self.assertIn("entries.delete(wireId)", body)
         persist = _fn("  async function persistArmadaMemberships(p,rooms){")
-        join_key = _key_expr(re.search(r"cid=cordListB64\(([^;]*?)\);", persist).group(1))
-        self.assertTrue(leave_key.startswith(join_key),
+        join_key = _key_sources(persist, "cid")
+        self.assertEqual(leave_key[:len(join_key)], join_key,
                         "leave keys its tombstone on %r but join keys the entry on %r -- a left room "
                         "comes straight back from the vault" % (leave_key, join_key))
 
