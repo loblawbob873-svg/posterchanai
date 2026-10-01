@@ -672,8 +672,55 @@
       return true;
     }
 
-    let _fitT = null, _sentSize = '', _fitPixels = '';
-    function _fit(){
+    let _fitT = null, _sentSize = '', _fitPixels = '', _bgFitT = null;
+    /* A RESIZE WHILE UNFOCUSED IS STILL A RESIZE ("sometimes the current line gets cut off with the
+     * window"). _fit ignores an unfocused frame, because a focus change briefly reports a TEMPORARY
+     * size while the feed is parked -- but a window tiled, snapped or resized while another window
+     * has focus then kept its old, taller grid, and the prompt line sat below the window's edge until
+     * somebody clicked it. So an ignored measurement is re-taken twice, a quarter-second apart: a size
+     * that HOLDS is a real resize and is fitted; a transient that reverts never is. */
+    function _bgFit(){
+      if(_bgFitT) clearTimeout(_bgFitT);
+      const read = () => { const b = $('#tty-screen'); if(!b || !b.isConnected) return '';
+        const r = b.getBoundingClientRect(); return r.width < 2 || r.height < 2 ? '' : Math.round(r.width*10)+'x'+Math.round(r.height*10); };
+      _bgFitT = setTimeout(() => {
+        const first = read();
+        _bgFitT = setTimeout(() => {
+          _bgFitT = null;
+          const second = read();
+          if(first && first === second && first !== _fitPixels) _fit(true);
+        }, 250);
+      }, 300);
+    }
+    /* THE BOX'S PADDING IS NOT ROOM FOR A ROW ("sometimes the current line gets cut off with the
+     * window"). FitAddon sizes the grid from its parent's COMPUTED height and subtracts only the
+     * terminal element's own padding -- but this client is `*{box-sizing:border-box}`, so that
+     * height INCLUDES #tty-screen's padding. Whenever the box landed within those few pixels of a
+     * row boundary it proposed one row more than fits, and the prompt line -- always the last one --
+     * sat below the window's edge. Which heights do that depends on the window, hence "sometimes".
+     * Same proposal, minus the parent's padding and border. */
+    function _fitGrid(){
+      const p = fit.proposeDimensions();
+      if(!p || isNaN(p.cols) || isNaN(p.rows)) return;
+      let { cols, rows } = p;
+      try{
+        const parent = term.element.parentElement, cs = getComputedStyle(parent);
+        if(cs.boxSizing === 'border-box'){
+          const n = v => parseFloat(cs.getPropertyValue(v)) || 0;
+          const es = getComputedStyle(term.element), en = v => parseFloat(es.getPropertyValue(v)) || 0;
+          const cell = term._core._renderService.dimensions.css.cell;
+          const sb = term.options.scrollback === 0 ? 0 : (term._core.viewport.scrollBarWidth || 0);
+          const h = n('height') - n('padding-top') - n('padding-bottom') - n('border-top-width') - n('border-bottom-width') - en('padding-top') - en('padding-bottom');
+          const w = n('width') - n('padding-left') - n('padding-right') - n('border-left-width') - n('border-right-width') - en('padding-left') - en('padding-right') - sb;
+          if(cell.height > 0) rows = Math.max(1, Math.floor(h / cell.height));
+          if(cell.width > 0) cols = Math.max(2, Math.floor(w / cell.width));
+        }
+      }catch(_){}
+      if(term.rows === rows && term.cols === cols) return;
+      try{ term._core._renderService.clear(); }catch(_){}
+      term.resize(cols, rows);
+    }
+    function _fit(force){
       if(_fitT) clearTimeout(_fitT);
       // Coalesced: an on-screen keyboard opening fires a burst of resizes, and each one is a reflow
       // of the whole grid plus a frame on the wire.
@@ -694,7 +741,7 @@
          * changing the box, so ignoring background measurements loses no real resize. */
         try{
           const frame = box && box.closest && box.closest('.osw');
-          if(frame && !frame.classList.contains('focused')) return;
+          if(frame && !frame.classList.contains('focused') && !force){ _bgFit(); return; }
         }catch(_){}
         /* Reattaching the live Terminal DOM after a focus change fires ResizeObserver even when its
          * box is exactly the same size. FitAddon can round a cell differently during that frame,
@@ -721,7 +768,7 @@
          * fitted: otherwise the next stable callback sees the same rectangle, returns above, and
          * leaves the xterm grid/PTY at the pre-switch dimensions until somebody drags the window. */
         let fitOk=!fit;
-        try{ if(fit){ fit.fit(); fitOk=true; } }catch(_){}
+        try{ if(fit){ _fitGrid(); fitOk=true; } }catch(_){}
         if(followThisFit)_pinBottomAfterLayout();
         else _keepRowsAboveBottom(keepAbove);
         /* A ZERO-SIZED BOX IS NOT A SIZE. In desktop mode the Terminal's window is PARKED when

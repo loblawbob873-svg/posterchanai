@@ -7649,7 +7649,11 @@ body.os-on .osw-body > .feed::-webkit-scrollbar-thumb:hover{background:var(--mut
 /* No page heading over the terminal: the bar above names every tab, and the title row cost ~60px of
    shell in every window. `term-view` is set by app.js while the Terminal is the view. */
 body.term-view .topbar,html.pc-oswin body.term-view .topbar{display:none}
-body.native.term-view .tty-bar{padding-top:env(safe-area-inset-top);height:calc(40px + env(safe-area-inset-top))}
+/* The PHONE's status bar only. The desktop build is `native` too (desktop/build-www.sh adds 'native','desktop'),
+   and `term-view` is on only while the Terminal is the FOCUSED view -- so on a desktop this made the bar 40px
+   focused and 34px not, the screen under it changed height with every focus change, and the grid fitted for
+   one state cut the prompt line off in the other ("sometimes the current line gets cut off with the window"). */
+body.native:not(.desktop).term-view .tty-bar{padding-top:env(safe-area-inset-top);height:calc(40px + env(safe-area-inset-top))}
 
 /* ---- desktop widgets -------------------------------------------------------------------------
    Panels that sit ON the desktop. They are ABOVE the wallpaper and BELOW the windows (.osw carries an

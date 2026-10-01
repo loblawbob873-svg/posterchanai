@@ -110,10 +110,10 @@ def test_large_replay_stays_pinned_until_chromium_finishes_layout():
 
 
 def test_resize_keeps_a_live_terminal_at_the_prompt_without_fighting_scrollback():
-    fit = TERM[TERM.index("function _fit()"):
-               TERM.index("/* ONE WAY OUT", TERM.index("function _fit()"))]
+    fit = TERM[TERM.index("function _fit("):
+               TERM.index("/* ONE WAY OUT", TERM.index("function _fit("))]
     assert "const followThisFit=followBottom" in fit
-    assert fit.index("if(followThisFit)scrollingByUs=true") < fit.index("if(fit){ fit.fit(); fitOk=true; }")
+    assert fit.index("if(followThisFit)scrollingByUs=true") < fit.index("if(fit){ _fitGrid(); fitOk=true; }")
     assert "if(followThisFit)_pinBottomAfterLayout()" in fit
 
 
@@ -142,8 +142,8 @@ def test_reconnect_preserves_scrollback_but_initial_attach_opens_at_current_outp
 def test_resize_guards_measure_the_live_terminal_element_not_an_out_of_scope_local():
     """The mount function's `const box` is not visible in sibling `_fit`; caught ReferenceErrors
     used to turn every focus/geometry guard into a silent no-op."""
-    fit = TERM[TERM.index("function _fit()"):
-               TERM.index("/* ONE WAY OUT", TERM.index("function _fit()"))]
+    fit = TERM[TERM.index("function _fit("):
+               TERM.index("/* ONE WAY OUT", TERM.index("function _fit("))]
     resolve = "const box = $('#tty-screen')"
     assert resolve in fit
     assert fit.index(resolve) < fit.index("box.closest")
@@ -153,10 +153,10 @@ def test_resize_guards_measure_the_live_terminal_element_not_an_out_of_scope_loc
 
 def test_focus_return_retries_a_fit_that_ran_before_xterms_viewport_was_ready():
     """The same ResizeObserver rectangle must not be deduplicated after FitAddon threw once."""
-    fit = TERM[TERM.index("function _fit()"):
-               TERM.index("/* ONE WAY OUT", TERM.index("function _fit()"))]
+    fit = TERM[TERM.index("function _fit("):
+               TERM.index("/* ONE WAY OUT", TERM.index("function _fit("))]
     assert "let fitOk=!fit" in fit
-    assert "if(fit){ fit.fit(); fitOk=true; }" in fit
+    assert "if(fit){ _fitGrid(); fitOk=true; }" in fit
     assert "if(px&&fitOk)_fitPixels=px" in fit
     assert "if(px)_fitPixels=px" not in fit
 

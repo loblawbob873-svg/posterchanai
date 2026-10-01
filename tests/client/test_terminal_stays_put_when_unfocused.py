@@ -25,7 +25,7 @@ def _guard():
     src = TERM.read_text(encoding="utf-8")
     m = re.search(
         r"const frame = box && box\.closest && box\.closest\('\.osw'\);\s*\n"
-        r"\s*if\(frame && !frame\.classList\.contains\('focused'\)\) return;",
+        r"\s*if\(frame && !frame\.classList\.contains\('focused'\) && !force\)\{ _bgFit\(\); return; \}",
         src)
     assert m, "the unfocused-window guard is gone from term.js _fit()"
     return m.group(0)
@@ -35,9 +35,9 @@ def _run(focused):
     # A bare `return` in the guard exits this wrapper early → we never reach 'PROCEEDED'.
     js = (
         "const __out = process.stdout;\n"
-        "(function(box){\n" + _guard() + "\n  __out.write('PROCEEDED');\n})("
+        "(function(box, force, _bgFit){\n" + _guard() + "\n  __out.write('PROCEEDED');\n})("
         "{ closest:(s)=> s==='.osw' ? { classList:{ contains:(c)=> c==='focused' && "
-        + ("true" if focused else "false") + " } } : null });\n")
+        + ("true" if focused else "false") + " } } : null }, undefined, ()=>{});\n")
     r = subprocess.run([NODE, "-e", js], capture_output=True, text=True, timeout=30)
     assert r.returncode == 0, r.stderr[-500:]
     return r.stdout
@@ -59,7 +59,7 @@ def test_the_guard_runs_before_the_pty_is_resized():
     """Order matters: the focus check must precede fit.fit() and the size send, or the SIGWINCH is
     already on the wire before we decide not to send it."""
     src = TERM.read_text(encoding="utf-8")
-    fit_body = src[src.index("function _fit()"):src.index("function _send(")]
-    guard = fit_body.index("!frame.classList.contains('focused')) return")
-    assert guard < fit_body.index("fit.fit()"), "the focus guard runs after FitAddon reflows the grid"
+    fit_body = src[src.index("function _fit("):src.index("function _send(")]
+    guard = fit_body.index("!frame.classList.contains('focused') && !force){ _bgFit(); return; }")
+    assert guard < fit_body.index("_fitGrid()"), "the focus guard runs after FitAddon reflows the grid"
     assert guard < fit_body.index("_send({ t: 'size'"), "the focus guard runs after the PTY resize is sent"
