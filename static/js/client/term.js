@@ -640,6 +640,29 @@
         });
       }catch(_){}
 
+      /* HIGHLIGHT STILL SELECTS WHEN A PROGRAM HAS THE MOUSE. screen, tmux, vim and Claude Code turn on
+       * mouse reporting, and from then on xterm hands every click and drag to the PROGRAM -- selecting
+       * text needed Shift held, which nothing on screen says ("terminal won't let me copy by highlight
+       * when claude is in screen session"). So a plain left press is turned into the selecting one
+       * (xterm's own force-selection: Shift, or Option on a Mac); the wheel, right and middle buttons
+       * still go to the program, and ALT+click sends a click through to a program that wants it. */
+      try{
+        const _mac = /Mac/i.test(navigator.platform || '');
+        if(_mac) term.options.macOptionClickForcesSelection = true;
+        box.addEventListener('mousedown', (e) => {
+          if(e.__pcForced || e.button !== 0 || e.shiftKey || e.altKey || e.ctrlKey || e.metaKey) return;
+          let mode = 'none';
+          try{ mode = term.modes.mouseTrackingMode; }catch(_){}
+          if(!mode || mode === 'none') return;
+          e.stopImmediatePropagation(); e.preventDefault();
+          const forced = new MouseEvent('mousedown', { bubbles: true, cancelable: true, composed: true, view: window,
+            detail: e.detail, screenX: e.screenX, screenY: e.screenY, clientX: e.clientX, clientY: e.clientY,
+            button: 0, buttons: e.buttons, shiftKey: !_mac, altKey: _mac });
+          forced.__pcForced = true;
+          e.target.dispatchEvent(forced);
+        }, true);
+      }catch(_){}
+
       /* Wait for highlight-to-copy before reading. Pass only text to xterm, which owns
        * bracketed paste; a bridge object must never become shell input. */
       try{
