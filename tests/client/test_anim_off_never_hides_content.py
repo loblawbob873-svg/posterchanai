@@ -55,6 +55,8 @@ def _read(path):
 APP = client_source()
 
 
+# Cards that ARRIVED LIVE (`pc-rise`, set by _prependLive): since the timeline-jank fix those are the only
+# cards with an entry animation, so they are the ones a frozen animation could strand at opacity 0.
 # The feed as feedNoteHtml builds it: a reply is a .reply-pair wrapping the label AND the card, and a
 # top-level post is a bare card. Both halves matter — the label is what stays visible and makes the
 # screen read as "REPLYING TO with no posts" rather than as a blank page.
@@ -67,8 +69,8 @@ PAGE = """<!doctype html><meta charset="utf-8">
 document.getElementById('tl-notes').innerHTML =
    '<div class="reply-pair" data-key="a"><div class="reply-ctx">'
  + '<span class="reply-ctx-lbl">\\u21a9 replying to <span class="name">alice</span></span></div>'
- + '<article class="note" data-id="a"><div class="body">a reply body</div></article></div>'
- + '<article class="note" data-id="b"><div class="body">an ordinary top-level post</div></article>';
+ + '<article class="note pc-rise" data-id="a"><div class="body">a reply body</div></article></div>'
+ + '<article class="note pc-rise" data-id="b"><div class="body">an ordinary top-level post</div></article>';
 /* Read on a TIMER, not on requestAnimationFrame: headless-with-dump-dom never presents a frame, so
    the rAF callback does not run and the report comes back empty — a page that reports nothing would
    fail every assertion here for a reason that has nothing to do with the stylesheet. The delay is

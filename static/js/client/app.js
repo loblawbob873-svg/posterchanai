@@ -7347,7 +7347,7 @@
     for(const ev of evs){ if(isMutedView(ev))continue; if(_liveFn&&!_liveFn(ev))continue;
       const dispId = _noteKey(ev);
       if(feed.querySelector('.note[data-id="'+dispId+'"]')) continue;   // don't double-insert
-      const node=_noteNode(ev); if(node) frag.appendChild(node); }
+      const node=_noteNode(ev); if(node){ node.classList.add('pc-rise'); frag.appendChild(node); } }
     if(!frag.childElementCount) return;
     const atTop=feed.scrollTop<100, beforeH=feed.scrollHeight;
     box.insertBefore(frag, box.firstChild);
