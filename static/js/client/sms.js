@@ -944,6 +944,32 @@
     return s ? 'a:' + s : '';
   }
 
+  /* A PICTURE SENT FROM THIS COMPUTER IS SHOWN ONCE, even though the phone sends a DIFFERENT FILE.
+   *
+   * "it sent the picture twice when on posterchanOS" / "phone shows the image sent once, desktop
+   * shows twice" / "it says sending". The "sending" bubble is filed under an id that includes the
+   * attachment's type/name/size (image.png, 28,227 bytes, as pasted). The phone fits a picture to
+   * the carrier's MMS limit before sending (MmsImageFit), so the provider row it archives is a
+   * different file (image.jpg, 20,587 bytes) -> a different id -> nothing ever replaced the
+   * placeholder, and every re-encoded picture sent from a computer stayed "sending" beside the
+   * real one for ever. A pending picture send gives way to the first sent picture to the same
+   * conversation from just before its ask time (the phone's clock rounds to the second) up to
+   * six hours after it; each sent picture settles at most one placeholder. Display only: the
+   * receipt is untouched, so a send that really is still pending keeps its bubble. */
+  function settlePictureSends(msgs){
+    const pic = m => (m.parts || []).some(p => /^(image|video)\//i.test(String(p.ct || '')));
+    const waiting = msgs.filter(m => m.pending && m.outbox && !m.incoming && pic(m));
+    if(!waiting.length) return msgs;
+    const sent = msgs.filter(m => !m.pending && !m.failed && !m.incoming && !m.outbox && pic(m));
+    const claimed = new Set(), hide = new Set();
+    for(const w of waiting){
+      const at = Number(w.date) || 0;
+      const hit = sent.find(m => !claimed.has(m) && Number(m.date) >= at - 120000 && Number(m.date) <= at + 6*3600000);
+      if(hit){ claimed.add(hit); hide.add(w); }
+    }
+    return hide.size ? msgs.filter(m => !hide.has(m)) : msgs;
+  }
+
   function rebuild(){
     const by = new Map();
     for(const m of S.msgs.values()){
@@ -954,7 +980,7 @@
       t.msgs.push(m);
       if(m.date > t.date){ t.date = m.date; t.address = m.address; }
     }
-    for(const t of by.values()) t.msgs.sort((a,b) => (a.date||0) - (b.date||0));
+    for(const t of by.values()){ t.msgs.sort((a,b) => (a.date||0) - (b.date||0)); t.msgs = settlePictureSends(t.msgs); }
     // Contacts/notifications may select a recipient whose archive has not reached this device.
     // Keep that empty composer through subsequent catch-up rebuilds until its first row arrives.
     const emptySelection = S.threads.find(t => t.key === S.open && !t.msgs.length);
