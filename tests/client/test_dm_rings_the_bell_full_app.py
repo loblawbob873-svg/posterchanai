@@ -48,3 +48,26 @@ def test_unread_dms_light_the_bell_and_notifications_leads_to_them(width):
         assert not any(int(t or 0) >= 2 for t in await b.js(BELL)), await b.js(BELL)
         assert not await b.js('__errors'), await b.js('__errors')
     asyncio.run(desktop.with_browser('online', '', check, RELAY))
+
+
+OS_BELL = "(()=>{const d=document.querySelector('#os-bell .os-dot');return d?d.textContent:''})()"
+
+
+@pytest.mark.skipif(not Path('/opt/google/chrome/chrome').exists(), reason='Chrome required')
+def test_the_desktop_taskbar_bell_lights_for_dms_that_arrive_while_you_are_there():
+    """"Bell indicator still dark on laptop/desktop while notifications sound" -- the PosterChanOS
+    taskbar draws its own bell. DMs arrive AFTER sign-in, in desktop mode, the way the sound plays."""
+    async def check(b):
+        await b.call('Emulation.setDeviceMetricsOverride', dict(width=1440, height=900, deviceScaleFactor=1, mobile=False))
+        await b.until("document.body.classList.contains('guest')")
+        await desktop.login(b)
+        await b.js('PCOS.enter()')
+        await b.until("!!document.querySelector('#os-bell')")
+        assert await b.js(OS_BELL) == '', 'the taskbar bell was lit before anything arrived'
+        await b.js(SEED + "('new',2)")                       # two DMs arrive while the desktop is up
+        await b.until("__PC.dmStats && __PC.dmStats().done>=2")
+        await b.until(OS_BELL + "!==''")
+        assert int(await b.js(OS_BELL)) >= 2, await b.js(OS_BELL)
+        assert '2 new' in (await b.js("document.querySelector('#os-bell').title")), await b.js("document.querySelector('#os-bell').title")
+        assert not await b.js('__errors'), await b.js('__errors')
+    asyncio.run(desktop.with_browser('online', '', check, RELAY))
