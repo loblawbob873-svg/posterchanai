@@ -875,7 +875,7 @@
     const here = (status && status.name) || '';
     body.innerHTML = (list.length
       ? list.map(n => `<button class="os-pop-row${n.ssid === here ? ' on' : ''}" data-ssid="${H(n.ssid)}"
-             data-sec="${n.secure ? '1' : ''}">
+             data-sec="${n.secure ? '1' : ''}"${n.saved ? ' data-saved="1"' : ''}>
            <span class="os-pop-nm">${H(n.ssid)}</span>
            <span class="os-pop-sig">${n.secure ? '🔒 ' : ''}${H(n.signal)}%</span></button>`).join('')
       : `<div class="os-pop-none">Nothing in range.</div>`);
@@ -884,34 +884,45 @@
      * the finished Wi-Fi panel jumps toward the top-left on a scaled desktop. */
     (root.requestAnimationFrame || ((fn) => setTimeout(fn, 0)))(
       () => { if(_pop===d) positionPop(d,_popAnchor,_popOpts); });
-    body.querySelectorAll('[data-ssid]').forEach(b => b.onclick = async () => {
-      const ssid = b.dataset.ssid;
-      let pw = '';
-      if(b.dataset.sec && ssid !== here){
-        closePop();
-        const app = APP();
-        if(!app.uiPrompt){
-          /* NEVER window.prompt: it does not exist in a WebView and it wedges Electron. With no
-           * prompt to ask through, say so — a join that silently does nothing is what this was. */
-          toast('cannot ask for a password on this build');
-          return;
-        }
-        try{ pw = await app.uiPrompt('Password for ' + ssid, { password: true, ok: 'Join' }); }
-        catch(_){ pw = null; }
-        if(pw === null) return;
-      }
-      toast('joining ' + ssid + '…');
-      /* A RETURN IS A SUCCESS AND A THROW IS THE FAILURE — net.connect answers {ssid, reused} and
-       * rejects with what nmcli said. This read `r.ok`, which the bridge has never set, so EVERY
-       * successful join reported "could not join" and then the machine connected a second later.
-       * Reported as "says could not join then connects": one wrong word about a working feature,
-       * which is worse than a broken one, because it teaches people not to trust the screen. */
+    /* JOINING HAPPENS IN THIS PANEL, and nothing closes it first. On PosterChanOS this panel is its
+     * own native popup window, and closing the popover there CLOSES THE WINDOW (`closePop` ->
+     * root.close()). The join used to close it and THEN ask for the password -- an await in a page
+     * that was being torn down, so the prompt never appeared and nothing was joined: "I can never
+     * change wifi points. i choose the one I want to change it to and nothing happens". The password
+     * is asked for right here, and a SAVED network is not asked at all: its secret is already stored
+     * and `connect` reuses it (`connection up`). */
+    const join = async (ssid, pw) => {
+      body.innerHTML = `<div class="os-pop-none">Joining ${H(ssid)}…</div>`;
       try{
         const r = await net.connect(ssid, pw);
         toast((r && r.reused ? 'reconnected to ' : 'joined ') + ssid);
-      }catch(e){ toast(wifiReason(e, ssid)); }
-      closePop();
-      refresh();
+        closePop();
+        refresh();
+      }catch(e){
+        // The reason stays ON SCREEN too: a toast in a popup window that is about to close is gone.
+        const why = wifiReason(e, ssid);
+        toast(why);
+        body.innerHTML = `<div class="os-pop-none">${H(why)}</div>`;
+      }
+    };
+    body.querySelectorAll('[data-ssid]').forEach(b => b.onclick = async () => {
+      const ssid = b.dataset.ssid;
+      /* A RETURN IS A SUCCESS AND A THROW IS THE FAILURE -- net.connect answers {ssid, reused} and
+       * rejects with what nmcli said ("says could not join then connects" was reading `r.ok`). */
+      if(!b.dataset.sec || b.dataset.saved || ssid === here) return join(ssid, '');
+      body.innerHTML = `<div class="os-pop-pwf"><div class="os-pop-pwl">Password for ${H(ssid)}</div>
+        <input class="input os-pop-pw" data-pw="1" type="password" autocomplete="off" aria-label="Password for ${H(ssid)}">
+        <div class="os-pop-pwb"><button class="btn btn-ghost small" data-pwcancel="1">Cancel</button>
+        <button class="btn btn-neon small" data-pwjoin="1">Join</button></div></div>`;
+      const input = body.querySelector('[data-pw]');
+      const go = () => { const pw = String((input && input.value) || ''); if(pw) join(ssid, pw); };
+      const ok = body.querySelector('[data-pwjoin]'), no = body.querySelector('[data-pwcancel]');
+      if(ok) ok.onclick = go;
+      if(no) no.onclick = () => netPop(anchor);
+      if(input){
+        input.onkeydown = (e) => { if(e && e.key === 'Enter') go(); };
+        try{ input.focus(); }catch(_){}
+      }
     });
   }
 

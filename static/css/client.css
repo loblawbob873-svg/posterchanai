@@ -9985,6 +9985,7 @@ body.popout-chat .scm-input{ flex:0 0 auto !important; }
 .os-pop-nm{ overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
 .os-pop-sig{ color:var(--muted,#7a8699); font-size:12px; flex:none; }
 .os-pop-none{ padding:10px; color:var(--muted,#7a8699); }
+.os-pop-pwf{display:flex;flex-direction:column;gap:8px;padding:10px}.os-pop-pwl{font-size:13px;color:var(--text)}.os-pop-pw{width:100%;box-sizing:border-box}.os-pop-pwb{display:flex;justify-content:flex-end;gap:8px}
 .os-pop-b .os-pop-range{ flex:1; min-width:0; }
 /* Only the tiny one-control volume/brightness popup puts its DIRECT slider and value on one row.
    The full Volume Mixer also contains sliders, but they are nested inside Devices and Apps

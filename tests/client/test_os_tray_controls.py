@@ -41,7 +41,8 @@ function el(tag){
         k.value = attr(raw, 'value') || '';
         k.textContent = '';
         for(const d of ['app','win','os','ssid','sec','act','prof','mute','kind',
-                        'qs','val','sink','mix','mixvol','device','mastervol','mastermute','masterval','shot','p','d']){
+                        'qs','val','sink','mix','mixvol','device','mastervol','mastermute','masterval','shot','p','d',
+                        'saved','pw','pwjoin','pwcancel']){
           const a = attr(raw, 'data-' + d);
           if(a !== null) k.dataset[d] = a;
         }
@@ -237,21 +238,58 @@ class Tray(unittest.TestCase):
         self.assertEqual(out["ssids"], ["home", "cafe"])
         self.assertEqual(out["joined"][0], "cafe")
 
-    def test_a_secured_network_is_asked_for_its_password(self):
-        out = self.run_js(self.WM, self.OPEN_QUICK + """
+    NET_PANEL = """
           const chip = pop.querySelectorAll('[data-os]').find(b => b.dataset.os === 'net');
           await chip.onclick({stopPropagation(){}});
           await new Promise(r => setTimeout(r, 80));
-          const rows = globalThis.__lastPop.querySelector('.os-pop-b').querySelectorAll('[data-ssid]');
-          // 'home' is the one we are already on; joining it again would not ask. Use the other
-          // secured entry by flipping the flag the markup carries.
-          const cafe = rows.find(r => r.dataset.ssid === 'cafe');
-          cafe.dataset.sec = '1';
-          await cafe.onclick();
+          const body = () => globalThis.__lastPop.querySelector('.os-pop-b');
+          const row = (id) => body().querySelectorAll('[data-ssid]').find(r => r.dataset.ssid === id);
+    """
+    SAVED_WM = WM.replace("{ssid: 'cafe', signal: 40, secure: false}",
+                          "{ssid: 'cafe', signal: 40, secure: false}, {ssid: 'office', signal: 60, secure: true, saved: true},"
+                          " {ssid: 'library', signal: 30, secure: true}")
+    # THE NATIVE POPUP: on PosterChanOS this panel is its own window, and closing the popover closes it.
+    # Set BEFORE osshell.js loads (it decides IN_POPUP once), by riding the bridges object.
+    WIN_WM = SAVED_WM.replace("{ pcWM:", "{ location: {search: '?pcpopup=net'}, close: () => { globalThis.__closed = true; }, pcWM:", 1)
+
+    def test_a_secured_network_is_asked_for_its_password_in_the_panel(self):
+        """'I can never change wifi points. i choose the one I want to change it to and nothing
+        happens': the join closed the popup WINDOW and then awaited a prompt in it."""
+        out = self.run_js(self.WIN_WM, self.OPEN_QUICK + self.NET_PANEL + """
+          out.inPopup = !!(globalThis.location && globalThis.location.search);
+          await row('library').onclick();
+          await new Promise(r => setTimeout(r, 40));
+          out.closedBeforeAsking = !!globalThis.__closed;
+          const input = body().querySelector('[data-pw]');
+          out.asked = !!input;
+          if(input){ input.value = 'hunter2'; await body().querySelector('[data-pwjoin]').onclick(); }
           await new Promise(r => setTimeout(r, 40));
           out.joined = globalThis.__joined || null;
         """)
-        self.assertEqual(out["joined"], ["cafe", "hunter2"])
+        self.assertIsNone(out.get("threw"), out.get("threw"))
+        self.assertFalse(out["closedBeforeAsking"], "the popup window was closed before the password was asked for")
+        self.assertTrue(out["asked"], "no password field")
+        self.assertEqual(out["joined"], ["library", "hunter2"])
+
+    def test_a_saved_network_joins_without_asking(self):
+        out = self.run_js(self.WIN_WM, self.OPEN_QUICK + self.NET_PANEL + """
+          await row('office').onclick();
+          await new Promise(r => setTimeout(r, 40));
+          out.asked = !!body().querySelector('[data-pw]');
+          out.joined = globalThis.__joined || null;
+        """)
+        self.assertFalse(out["asked"], "asked for a password the machine already has")
+        self.assertEqual(out["joined"], ["office", ""])
+
+    def test_a_failed_join_says_why_in_the_panel(self):
+        failing = self.WIN_WM.replace("connect: async (s, p) => { globalThis.__joined = [s, p]; return {ok: true}; }",
+                                        "connect: async (s, p) => { throw new Error('Insufficient privileges'); }")
+        out = self.run_js(failing, self.OPEN_QUICK + self.NET_PANEL + """
+          await row('office').onclick();
+          await new Promise(r => setTimeout(r, 40));
+          out.panel = body()._html;
+        """)
+        self.assertIn("Insufficient privileges", out["panel"])
 
     def test_mute_is_a_button_beside_the_slider(self):
         """Mute and level are separate facts — a UI that infers "muted" from "volume is 0" cannot

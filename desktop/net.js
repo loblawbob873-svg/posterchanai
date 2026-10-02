@@ -40,6 +40,22 @@ function fields(line){
 
 function run(args, opts){ return exec(NMCLI, args, opts); }
 
+/* A CHANGE TO THE NETWORK GOES THROUGH `sudo -n nmcli`, as the bridges below always have. Measured on
+ * both PosterChanOS machines: `nmcli general permissions` answers `auth` for network-control and
+ * settings.modify.system, and the shell has no polkit agent to answer it -- so a plain `nmcli` join of
+ * a new network (which saves a profile) is refused with "Insufficient privileges", and choosing another
+ * network did nothing ("I can never change wifi points"). The account holds the NOPASSWD grant Printers
+ * and Displays use; where it does not (a LiveUSB, another distro), sudo refuses at once and the plain
+ * call is tried, so this can never be worse than before. A refusal BY NMCLI is never retried. */
+const SUDO_REFUSED = /a password is required|not in the sudoers|may not run sudo|no tty present|sudo: .*command not found|ENOENT/i;
+async function control(args, opts){
+  try{ return await exec(SUDO, ['-n', NMCLI].concat(args), opts); }
+  catch(e){
+    if(!SUDO_REFUSED.test(String((e && e.message) || '')) && e.code !== 'ENOENT') throw e;
+    return run(args, opts);
+  }
+}
+
 function exec(cmd, args, opts){
   const o = opts || {};
   return new Promise((resolve, reject) => {
@@ -111,6 +127,10 @@ async function wifi(rescan){
   /* Coerced. `active` is always set here by construction, so this is not a live bug — but the same
    * comparator written against rows that lack the field returns NaN, which sorts as "no opinion",
    * and the network you are CONNECTED TO ends up somewhere in the middle of the list. */
+  /* SAVED networks are marked, so the panel joins them without asking for a password it already has. */
+  let known = new Set();
+  try{ known = new Set((await saved()).filter(c => /wireless|wifi/.test(c.type)).map(c => c.name)); }catch(_){}
+  for(const row of best.values()) row.saved = known.has(row.ssid);
   return [...best.values()].sort((a, b) =>
     ((b.active ? 1 : 0) - (a.active ? 1 : 0)) || ((b.signal || 0) - (a.signal || 0)));
 }
@@ -127,7 +147,7 @@ async function saved(){
 async function connect(ssid, password){
   const known = (await saved()).some(c => c.name === ssid);
   if(known && !password){
-    await run(['connection', 'up', 'id', ssid], { timeout: 60000 });
+    await control(['connection', 'up', 'id', ssid], { timeout: 60000 });
     return { ssid, reused: true };
   }
   /* A PASSWORD MEANS "JOIN FRESH", SO A STALE PROFILE MUST GO FIRST.
@@ -143,7 +163,7 @@ async function connect(ssid, password){
    * Only when a password was given (an unattended `connection up` reuse is handled above) and only
    * when one actually exists; a delete of a missing profile is a harmless nonzero we swallow. */
   if(password && known){
-    try{ await run(['connection', 'delete', 'id', ssid], { timeout: 20000 }); }catch(_){}
+    try{ await control(['connection', 'delete', 'id', ssid], { timeout: 20000 }); }catch(_){}
   }
   /* `--ask` is a GLOBAL nmcli option and must precede the object. Appending it after the SSID
    * makes nmcli parse it as an argument to `device wifi connect` and reject every secured network
@@ -151,17 +171,17 @@ async function connect(ssid, password){
   const args = password
     ? ['--ask', 'device', 'wifi', 'connect', ssid]
     : ['device', 'wifi', 'connect', ssid];
-  await run(args, { timeout: 60000, stdin: password ? password + '\n' : undefined });
+  await control(args, { timeout: 60000, stdin: password ? password + '\n' : undefined });
   return { ssid, reused: false };
 }
 
-async function disconnect(device){ await run(['device', 'disconnect', device]); return { device }; }
+async function disconnect(device){ await control(['device', 'disconnect', device]); return { device }; }
 
 /** Forget a network entirely — the saved profile AND its stored secret. */
-async function forget(ssid){ await run(['connection', 'delete', 'id', ssid]); return { ssid }; }
+async function forget(ssid){ await control(['connection', 'delete', 'id', ssid]); return { ssid }; }
 
 async function radio(on){
-  await run(['radio', 'wifi', on === false ? 'off' : 'on']);
+  await control(['radio', 'wifi', on === false ? 'off' : 'on']);
   return { wifi: on !== false };
 }
 

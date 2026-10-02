@@ -57,6 +57,17 @@ exit 0
 """
 
 
+# A stub sudo: records that it was used, then runs the command (dropping -n) -- or, with
+# PC_SUDO_REFUSE set, refuses the way a machine with no grant does.
+SUDO_STUB = r"""#!/bin/sh
+[ "$1" = -n ] || { echo "sudo called without -n" >&2; exit 9; }
+shift
+if [ -n "$PC_SUDO_REFUSE" ]; then echo "sudo: a password is required" >&2; exit 1; fi
+printf 'SUDO %s\n' "$*" >> "$PC_NMCLI_LOG"
+exec "$@"
+"""
+
+
 @unittest.skipIf(not NODE, "no node on this node")
 class NmcliClient(unittest.TestCase):
     def setUp(self):
@@ -65,6 +76,11 @@ class NmcliClient(unittest.TestCase):
         with open(self.bin, "w") as fh:
             fh.write(STUB)
         os.chmod(self.bin, os.stat(self.bin).st_mode | stat.S_IEXEC)
+        self.sudo = os.path.join(self.dir, "sudo")
+        with open(self.sudo, "w") as fh:
+            fh.write(SUDO_STUB)
+        os.chmod(self.sudo, os.stat(self.sudo).st_mode | stat.S_IEXEC)
+        self.refuse = ""
         self.log = os.path.join(self.dir, "argv.log")
         self.stdin = os.path.join(self.dir, "stdin.log")
 
@@ -75,7 +91,8 @@ class NmcliClient(unittest.TestCase):
         js = "const N = require(%s);\n(async () => { const out = {};\ntry { %s }\n" \
              "catch(e){ out.threw = String(e.message || e); }\n" \
              "process.stdout.write(JSON.stringify(out)); })();" % (json.dumps(NET), script)
-        env = dict(os.environ, PC_NMCLI=self.bin, PC_NMCLI_LOG=self.log, PC_NMCLI_STDIN=self.stdin)
+        env = dict(os.environ, PC_NMCLI=self.bin, PC_NMCLI_LOG=self.log, PC_NMCLI_STDIN=self.stdin,
+                   PC_SUDO=self.sudo, PC_SUDO_REFUSE=self.refuse)
         r = subprocess.run([NODE, "-e", js], capture_output=True, text=True, timeout=60, env=env)
         self.assertEqual(r.returncode, 0, r.stderr[-1500:])
         return json.loads(r.stdout)
@@ -190,3 +207,38 @@ class NmcliClient(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+@unittest.skipIf(not NODE, "no node on this node")
+class JoiningNeedsTheGrant(NmcliClient):
+    """'I can never change wifi points. i choose the one I want to change it to and nothing happens.'
+    Measured on both PosterChanOS machines: plain nmcli is refused ("Insufficient privileges") for
+    anything that saves or activates a connection, because nothing answers polkit's `auth`."""
+
+    def test_a_join_goes_through_sudo_n(self):
+        out = self.run_js("out.c = await N.connect('Neighbour', 'hunter2');")
+        self.assertNotIn("threw", out, out)
+        self.assertIn("SUDO " + self.bin + " --ask device wifi connect Neighbour", self._argv())
+        self.assertNotIn("hunter2", self._argv(), "the password reached argv")
+
+    def test_a_saved_network_is_brought_up_through_sudo_n(self):
+        self.run_js("out.c = await N.connect('Cafe: Free');")
+        self.assertIn("SUDO " + self.bin + " connection up id Cafe: Free", self._argv())
+
+    def test_without_a_grant_the_plain_call_still_runs(self):
+        self.refuse = "1"
+        out = self.run_js("out.c = await N.connect('Neighbour', 'hunter2');")
+        self.assertNotIn("threw", out, out)
+        self.assertNotIn("SUDO", self._argv())
+        self.assertIn("--ask device wifi connect Neighbour", self._argv())
+
+    def test_a_refusal_by_nmcli_is_not_retried(self):
+        out = self.run_js("out.c = await N.connect('BadPassword', 'nope');")
+        self.assertIn("psk", out.get("threw", ""))
+        runs = [l for l in self._argv().splitlines() if l == "--ask device wifi connect BadPassword"]
+        self.assertEqual(len(runs), 1, self._argv())
+
+    def test_saved_networks_are_marked(self):
+        out = self.run_js("out.w = await N.wifi(false);")
+        saved = {r["ssid"]: r["saved"] for r in out["w"]}
+        self.assertEqual(saved, {"Cafe: Free": True, "Neighbour": False, "OpenGuest": False})
