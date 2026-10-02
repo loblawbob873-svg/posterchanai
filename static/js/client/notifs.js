@@ -333,7 +333,22 @@ window.PCNotifsFactory = function(dep){
       // Unread DMs light the bell as well: a message is a notification to the person it is for. The
       // Notifications screen shows them as one row that opens Messages (notifview _dmNotifHtml), so the
       // bell never counts something the screen behind it cannot show.
-      + (Number(S._dmUnread)||0); }
+      + (Number(S._dmUnread)||0)
+      // …and Concord mentions not yet read (concord.js's ledger -- see _concordMentions).
+      + _concordMentions().reduce((n,r)=>n+r.n,0); }
+  /* CONCORD MENTIONS, read straight from the ledger concord.js keeps in localStorage, so the bell is
+   * right on a page that never loaded Communities ("i got tagged twice in a concord room today but
+   * never got notification"). One entry per room+channel; it leaves when that channel is read. */
+  function _concordMentions(){
+    let l; try{ l=JSON.parse(localStorage.getItem('pc.concord.mentions.v1')||'{}'); }catch(_){ l={}; }
+    if(!l||typeof l!=='object'||Array.isArray(l)) return [];
+    return Object.values(l).filter(r=>r&&Array.isArray(r.ids)&&r.ids.length&&r.room)
+      .map(r=>({room:String(r.room),name:String(r.name||''),channel:String(r.channel||'general'),
+                n:r.ids.length,at:Number(r.at)||0,last:String(r.last||r.ids[r.ids.length-1]||'')}))
+      .sort((a,b)=>b.at-a.at);
+  }
+  // Read in another window (another monitor, a popped-out Communities) is read here too.
+  try{ window.addEventListener('storage', e => { if(e.key==='pc.concord.mentions.v1') try{ bumpNotif(); }catch(_){} }); }catch(_){}
   function bumpNotif(){ const n=notifUnread();
     // The rail's Notifications heading is painted from the SAME count as the sidebar bell and the mobile bar —
     // one computation, three surfaces, so they can't disagree about whether something is unread.
@@ -348,7 +363,7 @@ window.PCNotifsFactory = function(dep){
     if(_notifReady && _rightbarShown()) loadNotifsSoon(); }
 
   return {
-    _notifTs, _quoteHit, _quotesMe, _rememberReminder, _reminderOwner, _remindersChanged, bumpNotif,
+    _concordMentions, _notifTs, _quoteHit, _quotesMe, _rememberReminder, _reminderOwner, _remindersChanged, bumpNotif,
     hydrateReminderNotifications, notifList, notifToast, notifUnread, watchNotifications,
   };
 };

@@ -9,7 +9,7 @@
 window.PCNotifViewFactory = function(dep){
   const S = dep.state;   // live app.js bindings: S.LOGO, S.ME, S.VIEW, S._apkUpdate, S._desktopUpdate, S._newBuild, S._notifEpoch, S._updApplying, S._updBadge, S._dmUnread
   const {
-    $, $$, NT, _SHORTCODE_STRIP, _notifTs, _quoteHit, _quotesMe, _repoTag, _tipNote, applyEmojis, applyUpdate,
+    $, $$, NT, _SHORTCODE_STRIP, _concordMentions, _notifTs, _quoteHit, _quotesMe, _repoTag, _tipNote, applyEmojis, applyUpdate,
     emojiName, enc, fmtSats, hydrateReminderNotifications, isReply, needEvent, needProfile,
     notifList, openOsNotificationRoute, openThread, profOf, quotedDiv, reactDisp,
     renderProfileView, replyParentId, seenNotif, timeAgo, zapAmount, zapSender,
@@ -95,6 +95,18 @@ window.PCNotifViewFactory = function(dep){
     if(n <= 0) return '';
     return `<div class="notif mention dm-notif" data-route="messages"><span class="ic">✉</span><div><div class="notif-hd"><b>${n} unread message${n===1?'':'s'}</b> — open Messages</div></div></div>`;
   }
+  // CONCORD MENTIONS, one row per room+channel ("i got tagged twice in a concord room today but never got
+  // notification"). The bell counts them (notifs.js _concordMentions); the row opens that channel on the
+  // newest mention, and the entry clears when the channel is on screen. Names only -- never the message.
+  function _concordNotifHtml(){
+    let rows = [];
+    try{ rows = (typeof _concordMentions === 'function' ? _concordMentions() : []) || []; }catch(_){ rows = []; }
+    return rows.map(r => {
+      const route = 'concord:' + encodeURIComponent(r.room) + ':' + encodeURIComponent(r.channel) + ':' + encodeURIComponent(r.last);
+      const where = (r.name ? enc(r.name) + ' · ' : '') + '#' + enc(r.channel);
+      return `<div class="notif mention cc-mention-notif" data-route="${enc(route)}"><span class="ic">@</span><div><div class="notif-hd"><b>${r.n} mention${r.n===1?'':'s'}</b> in ${where} — open Communities</div></div></div>`;
+    }).join('');
+  }
   // The updater row, shared by the Notifications VIEW and the right-column rail — the same prompt in both
   // places, so a desktop reader who lives on the timeline is not told to go and find it. Distinct ids
   // because both can be on screen at once (the rail is visible while viewing Notifications).
@@ -152,7 +164,7 @@ window.PCNotifViewFactory = function(dep){
     const list=all.slice(0, _notifShown);
     const tabs=`<div class="notif-tabs">${_NOTIF_TABS.map(([k,l])=>`<button class="ntab${k===_notifFilter?' on':''}" data-nf="${k}">${enc(l)}</button>`).join('')}</div>`;
     // In-app updater: pinned above the list when a new build is ready to install.
-    const upd = _updNotifHtml('upd-notif') + _dmNotifHtml();
+    const upd = _updNotifHtml('upd-notif') + _dmNotifHtml() + _concordNotifHtml();
     // Nothing visible changed AND the list is still on screen → leave the DOM alone. #feed is shared
     // and blanked when a view is entered, so the tab strip's presence is what proves our rows are
     // still there; without that check the guard would skip the first render after coming back.

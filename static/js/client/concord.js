@@ -1743,6 +1743,44 @@
       pre+'<span class="cc-mention'+(mine.has(String(name).toLowerCase())?' cc-mention-me':'')+'">@'+name+'</span>');
   }
   function mentionSeenKey(room,channel){ return 'pc.concord.seen.'+roomIdentity(room)+':'+(channel||'general'); }
+  /* A MENTION IS KEPT UNTIL IT IS READ, NOT ANNOUNCED ONCE AND FORGOTTEN.
+   *
+   * "i got tagged twice in a concord room today but never got notification" -- tagged while no
+   * PosterChan was running anywhere, then nothing on login. A Concord message is encrypted to the
+   * room's keys, so the server cannot see a mention to push it; the only signal was a one-shot OS
+   * notification from a RUNNING client, and none at all on a device's first read of a channel. The
+   * ledger is what the bell counts and what Notifications lists ("2 mentions in Lounge Chat · #general"),
+   * shared by every window of this app through localStorage, and an entry leaves only when that channel
+   * is actually on screen. notifs.js reads the same key without loading this module. */
+  const MENTION_LEDGER='pc.concord.mentions.v1', MENTION_LOOKBACK_MS=7*86400000;
+  function mentionLedger(){ try{ const v=JSON.parse(localStorage.getItem(MENTION_LEDGER)||'{}'); return v&&typeof v==='object'&&!Array.isArray(v)?v:{}; }catch(_){ return {}; } }
+  function saveMentionLedger(l){
+    try{ localStorage.setItem(MENTION_LEDGER,JSON.stringify(l)); }catch(_){ }
+    try{ const pc=PC(); if(pc&&pc.bumpNotif)pc.bumpNotif(); }catch(_){ }
+  }
+  function mentionLedgerKey(room,channel){ return roomIdentity(room)+'\n'+(channel||'general'); }
+  function viewingChannel(room,channel){
+    try{
+      if(typeof document==='undefined'||!document.body||!document.body.classList.contains('concord-view'))return false;
+      if(document.visibilityState&&document.visibilityState!=='visible')return false;
+      const open=saved()[state.community];
+      return !!open&&roomIdentity(open)===roomIdentity(room)&&(state.channel||'general')===(channel||'general');
+    }catch(_){ return false; }
+  }
+  function recordMention(room,channel,m){
+    const l=mentionLedger(),key=mentionLedgerKey(room,channel),id=messageId(m);
+    const row=l[key]||{room:roomIdentity(room),name:'',channel:channel||'general',ids:[],at:0,last:''};
+    if((row.ids||[]).includes(id))return false;
+    row.ids=[...(row.ids||[]),id].slice(-50);
+    row.name=String(room.name||row.name||'').slice(0,80);
+    if((Number(m.at)||0)>=row.at){ row.at=Number(m.at)||0; row.last=id; }
+    l[key]=row; saveMentionLedger(l); return true;
+  }
+  function clearMentions(room,channel){
+    const l=mentionLedger(),key=mentionLedgerKey(room,channel);
+    if(l[key]){ delete l[key]; saveMentionLedger(l); }
+  }
+  function mentionsUnread(){ return Object.values(mentionLedger()).reduce((n,r)=>n+((r&&r.ids)||[]).length,0); }
   function notifyMentions(p,room,messages,viewer,me,channel=state.channel||'general'){
     if(!room||!roomIdentity(room)||!messages.length||!viewer.pubkey)return;
     const key=mentionSeenKey(room,channel), newest=Math.max(...messages.map(m=>Number(m.at)||0));
@@ -1751,11 +1789,15 @@
      * permanently suppress an older (but newly fetched) #support mention. */
     let seen=Number(localStorage.getItem(key)||0);
     if(!seen&&channel==='general'&&room.naddr)seen=Number(localStorage.getItem('pc.concord.seen.'+room.naddr)||0);
-    if(!seen){ localStorage.setItem(key,String(newest)); return; } // opening history must not alert
+    /* A device's FIRST read of a channel still raises no OS notification (opening history must not
+     * alert) -- but a mention from the last week goes into the ledger, which is exactly the case of
+     * being tagged while nothing was running. */
+    const first=!seen, floor=first?Date.now()-MENTION_LOOKBACK_MS:seen, looking=viewingChannel(room,channel);
     for(const m of messages){
-      const body=String(m.text||'');
-      const mentioned=messageMentionsViewer(m,viewer,me);
-      if((Number(m.at)||0)>seen&&mentioned&&p.osNotify) p.osNotify(`Mention in #${channel}`,`${m.by||'Someone'}: ${mentionNames(body,p.profOf)}`,{tag:'concord-mention-'+roomIdentity(room)+':'+channel+':'+messageId(m),route:notificationRoute(room,channel,m)});
+      const at=Number(m.at)||0;
+      if(at<=floor||!messageMentionsViewer(m,viewer,me))continue;
+      if(!looking)recordMention(room,channel,m);
+      if(!first&&p.osNotify) p.osNotify(`Mention in #${channel}`,`${m.by||'Someone'}: ${mentionNames(String(m.text||''),p.profOf)}`,{tag:'concord-mention-'+roomIdentity(room)+':'+channel+':'+messageId(m),route:notificationRoute(room,channel,m)});
     }
     if(newest>seen)localStorage.setItem(key,String(newest));
   }
@@ -4287,6 +4329,7 @@
     let membersHidden=localStorage.getItem('pc.concord.members.hidden')==='1';
     const memberRows=memberPks.map(pk=>{const pr=p.profOf?p.profOf(pk):{},name=pk===viewer.pubkey?me:(pr.display_name||pr.name||pk.slice(0,12)+'…');let npub='';try{npub=window.NostrTools.nip19.npubEncode(pk);}catch(_){}/* the form people copy and paste -- the hex alone found nobody from an npub */const q=[name,pr.name,pr.display_name,pr.nip05,npub,pk].filter(Boolean).join(' ').toLowerCase();return `<button class="cc-member" data-cc-member="${p.enc(pk)}" data-q="${p.enc(q)}" aria-label="${p.enc(name)} — ${pk===ownerPk?'Owner':'Member'}"><img src="${p.enc(pr.picture||p.LOGO||'')}" alt=""><span><b>${p.enc(name)}</b><small>${pk===ownerPk?'Owner':'Member'}</small></span></button>`;}).join('');
     notifyMentions(p,current,messages,viewer,me,state.channel||'general');
+    if(current&&viewingChannel(current,state.channel||'general'))clearMentions(current,state.channel||'general');   // on screen = read
     const oldCommunityRail=feed.querySelector&&feed.querySelector('.cc-communities');
     /* A RE-RENDER MUST NOT CLOSE A SHEET SOMEBODY IS USING. Every sheet is rebuilt `hidden`, and a
        render arrives whenever the relays answer — so "Join with invite", opened the moment
@@ -5193,6 +5236,9 @@
   window.PCConcord.__testLiveRepaint=()=>whenHandLeaves(()=>preserveChatScroll(()=>backgroundRender()));
   window.PCConcord.__testEnterChatBottom=()=>enterChatBottom(true);
   window.PCConcord.__testStartRoomsLive=p=>startRoomsLive(p);
+  window.PCConcord.mentionsUnread=()=>mentionsUnread();
+  window.PCConcord.__testNotifyMentions=(p,room,msgs,viewer,me,ch)=>notifyMentions(p,room,msgs,viewer,me,ch);
+  window.PCConcord.__testClearMentions=(room,ch)=>clearMentions(room,ch);
   if(window.__pcConcordHandoff){
     try{acceptHandoff(window.__pcConcordHandoff);}finally{delete window.__pcConcordHandoff;}
   }
