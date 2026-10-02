@@ -1,0 +1,192 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>PosterChanOS — download</title>
+<meta name="description" content="PosterChanOS: a Gentoo desktop whose desktop is PosterChan. Sign in with your Nostr key. Free ISO download.">
+<meta property="og:title" content="PosterChanOS">
+<meta property="og:description" content="A Linux distro built on Nostr. Your desktop is your account. Free ISO download.">
+<meta property="og:image" content="https://iso.poster.place/site/posterchan-os.webp">
+<meta property="og:url" content="https://iso.poster.place/">
+<meta name="twitter:card" content="summary_large_image">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Orbitron:wght@700;900&family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;600&display=swap">
+<style>
+/* One screen that answers "what is it" and "get it", then the case for it. Dark only: the OS's own look. */
+:root{
+  --bg:#0b0b14; --bg2:#13132a; --panel:rgba(18,18,34,.78); --fg:#eef2ff; --muted:#a5adcb; --line:rgba(34,211,238,.22);
+  --a:#22d3ee; --b:#34d399; --pink:#f472b6;
+  --display:'Orbitron','Eurostile',system-ui,sans-serif; --body:'Inter',system-ui,-apple-system,'Segoe UI',Roboto,sans-serif;
+  --mono:'JetBrains Mono',ui-monospace,Menlo,Consolas,monospace;
+  color-scheme:dark;
+}
+*{box-sizing:border-box}
+html{-webkit-text-size-adjust:100%}
+body{margin:0;background:var(--bg);color:var(--fg);font:16px/1.6 var(--body);
+  background-image:radial-gradient(900px 600px at 85% 0%,rgba(34,211,238,.16),transparent 60%),
+                   radial-gradient(800px 500px at 0% 35%,rgba(52,211,153,.10),transparent 60%);
+  padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}
+.wrap{max-width:1160px;margin:0 auto;padding-inline:20px}
+a{color:var(--a)}
+:focus-visible{outline:2px solid var(--a);outline-offset:3px;border-radius:6px}
+h1,h2{font-family:var(--display);margin:0;text-wrap:balance;letter-spacing:.01em}
+.k{font:700 13px var(--display);letter-spacing:.2em;color:var(--a);text-transform:uppercase}
+
+.top{display:flex;align-items:center;justify-content:space-between;gap:12px;padding-block:20px}
+.brand{font:900 16px var(--display);letter-spacing:.1em;display:flex;align-items:center;gap:10px}
+.brand i{width:26px;height:26px;border-radius:50%;background:conic-gradient(from 200deg,var(--a),var(--b),var(--a));box-shadow:0 0 16px rgba(34,211,238,.5)}
+.top a.s{color:var(--muted);text-decoration:none;font-size:14px}
+
+.hero{display:grid;grid-template-columns:1.05fr .95fr;gap:36px;align-items:center;padding-block:24px 48px}
+.hero h1{font-size:clamp(44px,7.4vw,92px);font-weight:900;line-height:.95}
+.hero h1 span{display:block;background:linear-gradient(90deg,var(--a),var(--b));-webkit-background-clip:text;background-clip:text;color:transparent}
+.lede{font-size:clamp(17px,2vw,21px);color:var(--muted);max-width:56ch;margin:18px 0 26px}
+.get{display:grid;gap:12px;padding:20px;border-radius:16px;background:var(--panel);border:1px solid var(--line);max-width:560px}
+.btn{display:inline-flex;justify-content:center;align-items:center;gap:10px;padding:16px 22px;border-radius:12px;font:700 18px var(--body);
+  text-decoration:none;color:#06121a;background:linear-gradient(135deg,var(--a),var(--b));box-shadow:0 10px 30px rgba(34,211,238,.25)}
+.btn:hover{filter:brightness(1.07)}
+.btn svg{width:20px;height:20px}
+.facts{display:flex;flex-wrap:wrap;gap:6px 16px;font:13px var(--mono);color:var(--muted)}
+.facts b{color:var(--fg);font-weight:600}
+.sum{display:flex;gap:8px;align-items:center;min-width:0}
+.sum code{font:12px var(--mono);color:var(--muted);background:var(--bg2);border:1px solid var(--line);border-radius:8px;padding:7px 9px;
+  overflow-x:auto;white-space:nowrap;min-width:0;flex:1}
+.copy{font:600 12px var(--body);padding:7px 10px;border-radius:8px;border:1px solid var(--line);background:var(--bg2);color:var(--fg);cursor:pointer}
+.poster{width:100%;height:auto;max-width:520px;justify-self:center;border-radius:18px;border:1px solid var(--line);
+  box-shadow:0 30px 80px rgba(0,0,0,.55),0 0 50px rgba(34,211,238,.18)}
+
+section.band{padding-block:56px;border-top:1px solid var(--line)}
+.head{display:grid;gap:10px;max-width:70ch;margin-bottom:28px}
+.head h2{font-size:clamp(26px,3.4vw,40px);font-weight:900}
+.head p{margin:0;color:var(--muted)}
+.shot{width:100%;height:auto;border-radius:16px;border:1px solid var(--line);box-shadow:0 24px 70px rgba(0,0,0,.5)}
+.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,260px),1fr));gap:14px}
+.card{padding:18px 18px 16px;border-radius:14px;background:var(--panel);border:1px solid var(--line);display:grid;gap:4px;align-content:start;min-width:0}
+.card h3{margin:0;font:700 17px/1.3 var(--body)}
+.card h3 b{color:var(--a)}
+.card p{margin:0;color:var(--muted);font-size:15px}
+.steps{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,230px),1fr));gap:14px;padding:0;margin:0;list-style:none;counter-reset:s}
+.steps li{padding:18px;border-radius:14px;background:var(--panel);border:1px solid var(--line);counter-increment:s;display:grid;gap:4px;min-width:0}
+.steps li::before{content:counter(s);font:900 22px var(--display);color:var(--a)}
+.steps h3{margin:0;font:700 17px var(--body)}
+.steps p{margin:0;color:var(--muted);font-size:15px}
+.steps code{font:13px var(--mono);background:var(--bg2);border-radius:6px;padding:1px 6px;word-break:break-all}
+.cmd{display:flex;gap:8px;align-items:center;margin-top:16px;min-width:0}
+.cmd code{flex:1;min-width:0;overflow-x:auto;white-space:nowrap;font:13px var(--mono);background:var(--bg2);border:1px solid var(--line);border-radius:8px;padding:9px 10px}
+footer{border-top:1px solid var(--line);padding-block:28px 40px;color:var(--muted);font-size:14px;display:flex;flex-wrap:wrap;gap:12px 24px;justify-content:space-between}
+
+@media (max-width:860px){
+  .hero{grid-template-columns:1fr}
+  .poster{max-width:440px}
+}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header class="top">
+    <div class="brand"><i aria-hidden="true"></i>POSTERCHANOS</div>
+    <a class="s" href="https://poster.place">poster.place →</a>
+  </header>
+
+  <main>
+  <section class="hero" aria-labelledby="h">
+    <div>
+      <div class="k">A Linux distro built on Nostr</div>
+      <h1 id="h">POSTER<span>CHANOS</span></h1>
+      <p class="lede">A Gentoo desktop whose desktop is PosterChan. Sign in with your Nostr key and your apps, files and layout are there, encrypted so only you can read them.</p>
+      <div class="get" id="get">
+        <a class="btn" id="dl" href="/posterchanos.iso" download>
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3v12"/><path d="m7 10 5 5 5-5"/><path d="M5 21h14"/></svg>
+          Download PosterChanOS
+        </a>
+        <div class="facts"><span><b id="size">4.4 GB</b> ISO</span><span>x86-64</span><span>live USB + installer</span><span id="date"></span></div>
+        <div class="sum"><code id="sha" title="SHA-256">SHA-256: loading…</code><button class="copy" id="copy" type="button">Copy</button></div>
+      </div>
+    </div>
+    <img class="poster" src="/site/posterchan-os.webp" width="1080" height="1350"
+         alt="PosterChanOS: your desktop is your account, every app a real window, AI in every title bar, Telegram, a Jellyfin media center, virtual machines, an office suite, Notes, Steam, encrypted drive and folder sync, Quick Settings and Tor, Gentoo and Wayfire with full-disk encryption.">
+  </section>
+
+  <section class="band" aria-labelledby="h-desk">
+    <div class="head">
+      <div class="k">The desktop</div>
+      <h2 id="h-desk">Every app is a real window.</h2>
+      <p>Snap them, Alt+Tab between them, spread them over several monitors. Firefox, Steam and your other programs sit in the same taskbar.</p>
+    </div>
+    <img class="shot" src="/site/posterchanos-desktop.webp" width="2560" height="1529" loading="lazy" alt="The PosterChanOS desktop with app icons, an open window and the taskbar.">
+  </section>
+
+  <section class="band" aria-labelledby="h-f">
+    <div class="head">
+      <div class="k">What's in it</div>
+      <h2 id="h-f">Everything you use, signed in once.</h2>
+    </div>
+    <div class="grid">
+      <div class="card"><h3>Your desktop <b>is</b> your account</h3><p>Apps, files and layout follow your Nostr key to any machine.</p></div>
+      <div class="card"><h3><b>AI</b> in every title bar</h3><p>Ask it to do something and it fills, clicks and scrolls the window for you, on your own node. It asks before anything you can't take back.</p></div>
+      <div class="card"><h3><b>Telegram</b> built in</h3><p>A full Telegram client; the session lives on your node.</p></div>
+      <div class="card"><h3><b>Jellyfin</b> media center</h3><p>Movies and shows with subtitles and watch progress.</p></div>
+      <div class="card"><h3><b>Virtual machine</b> manager</h3><p>Create, run and open consoles, managed over Nostr.</p></div>
+      <div class="card"><h3>A full <b>office suite</b></h3><p>Edit Word, Excel and PowerPoint files.</p></div>
+      <div class="card"><h3><b>Notes</b> over Nostr</h3><p>An encrypted notebook on every device. Imports from Joplin.</p></div>
+      <div class="card"><h3><b>Steam</b> in the box</h3><p>Games launch from the start menu, and the pointer stays inside a fullscreen game.</p></div>
+      <div class="card"><h3>Encrypted drive &amp; <b>folder sync</b></h3><p>Your files on Blossom, synced between all your devices.</p></div>
+      <div class="card"><h3><b>Quick Settings</b> &amp; <b>Tor</b></h3><p>Wi-Fi, Bluetooth, per-app volume, brightness, screenshots, and Tor with the exit country you pick.</p></div>
+      <div class="card"><h3><b>Startup apps</b></h3><p>Choose the programs that start when you log in.</p></div>
+      <div class="card"><h3>Gentoo + <b>Wayfire</b></h3><p>Intel, AMD and NVIDIA, with LUKS full-disk encryption from the installer.</p></div>
+    </div>
+  </section>
+
+  <section class="band" aria-labelledby="h-i">
+    <div class="head">
+      <div class="k">Install or upgrade</div>
+      <h2 id="h-i">From a USB stick to your desktop.</h2>
+      <p>The same image installs fresh or upgrades an existing install. An upgrade keeps everyone's home folder and files.</p>
+    </div>
+    <ol class="steps">
+      <li><h3>Download</h3><p>Get the ISO above and check its SHA-256.</p></li>
+      <li><h3>Write it to a USB stick</h3><p>Any image writer works: balenaEtcher, Rufus (DD mode) or <code>dd</code>.</p></li>
+      <li><h3>Boot it</h3><p>Try the live desktop first, or go straight to the installer.</p></li>
+      <li><h3>Install or upgrade</h3><p>Pick “Install PosterChanOS”, or “Upgrade an installed PosterChanOS” to keep your files.</p></li>
+    </ol>
+    <div class="cmd"><code id="ddcmd">sudo dd if=posterchanos.iso of=/dev/sdX bs=4M status=progress oflag=sync</code><button class="copy" id="copy-dd" type="button">Copy</button></div>
+    <p style="color:var(--muted);font-size:14px;margin:8px 0 0">Replace <code style="font:13px var(--mono)">/dev/sdX</code> with your USB stick. Everything on it is erased.</p>
+  </section>
+  </main>
+
+  <footer>
+    <span>PosterChanOS · free and open source</span>
+    <span><a href="https://poster.place">poster.place</a> · <a href="https://github.com/loblawbob873-svg/posterchanai">GitHub</a> · <a href="/posterchanos.iso">posterchanos.iso</a></span>
+  </footer>
+</div>
+<script>
+(function(){
+  function fmtBytes(n){ return n>=1e9 ? (n/1e9).toFixed(1)+' GB' : Math.round(n/1e6)+' MB'; }
+  // The real size and date, read from the file itself, so this page never goes stale between releases.
+  fetch('/posterchanos.iso',{method:'HEAD',cache:'no-store'}).then(function(r){
+    if(!r.ok) return;                       // no answer is not "0 MB"
+    var len=+r.headers.get('content-length'), lm=r.headers.get('last-modified');
+    if(len>1e8) document.getElementById('size').textContent=fmtBytes(len);
+    if(lm){ var d=new Date(lm); if(!isNaN(d)) document.getElementById('date').textContent='released '+d.toISOString().slice(0,10); }
+  }).catch(function(){});
+  var sha=document.getElementById('sha');
+  fetch('/posterchanos.iso.sha256',{cache:'no-store'}).then(function(r){ return r.ok?r.text():''; }).then(function(t){
+    var h=(String(t).match(/[0-9a-f]{64}/)||[])[0];
+    sha.textContent=h ? h : 'SHA-256 file: /posterchanos.iso.sha256';
+  }).catch(function(){ sha.textContent='SHA-256 file: /posterchanos.iso.sha256'; });
+  function wire(btn,el){
+    btn.addEventListener('click',function(){
+      var t=el.textContent.trim();
+      var ok=function(){ btn.textContent='Copied'; setTimeout(function(){ btn.textContent='Copy'; },1500); };
+      var sel=function(){ try{ var r=document.createRange(); r.selectNodeContents(el); var s=getSelection(); s.removeAllRanges(); s.addRange(r); }catch(_){} };
+      try{ navigator.clipboard.writeText(t).then(ok,sel); }catch(_){ sel(); }
+    });
+  }
+  wire(document.getElementById('copy'),sha);
+  wire(document.getElementById('copy-dd'),document.getElementById('ddcmd'));
+})();
+</script>
+</body>
+</html>
