@@ -589,6 +589,9 @@ def main():
                     help="install, sign two identities in and write files, UPGRADE from the ISO "
                          "(gentoo.sh upgrade-live), then require the files to be there, owned by and "
                          "readable as their account")
+    ap.add_argument("--from-iso", default=os.environ.get("PC_LIVECD_FROM_ISO", ""),
+                    help="with --upgrade: make the FIRST install from this (older) ISO, so the upgrade "
+                         "goes from what people actually have installed to the new one")
     ap.add_argument("--keep-disk", action="store_true",
                     help="leave the installed qcow2 behind for check_livecd_vm.py --disk")
     args = ap.parse_args()
@@ -724,11 +727,18 @@ def _upgrade_round(args, evidence):
         disk.unlink()
     subprocess.run(["qemu-img", "create", "-q", "-f", "qcow2", str(disk), args.size], check=True)
     state = {}
+    # THE OLD INSTALL IS WHAT PEOPLE HAVE. Upgrading from an install made by the SAME image proves the
+    # mechanism; upgrading from one made by the previous published ISO -- whose installer, accounts and
+    # files are the ones on real machines -- proves the upgrade. --from-iso names that older image.
+    old_iso = args.from_iso or args.iso
+    if args.from_iso and not Path(args.from_iso).is_file():
+        print(f"SKIP  --from-iso {args.from_iso} is not a file")
+        return 2
     with tempfile.TemporaryDirectory(prefix="pc-upgrade-sock-") as td:
-        rc = install(args.iso, disk, td, evidence, args.timeout, args.memory, args.cpus, args.usb)
+        rc = install(old_iso, disk, td, evidence, args.timeout, args.memory, args.cpus, args.usb)
         if rc:
             return rc
-        print(f"OK  installed fresh from {Path(args.iso).name}")
+        print(f"OK  installed fresh from {Path(old_iso).name}" + (" (the OLDER image)" if args.from_iso else ""))
         rc = boot_installed(disk, td, Path(evidence, "OVMF_VARS.fd"), evidence, args.boot_timeout,
                             args.memory, args.cpus, stage=_before_upgrade(state, evidence))
         if rc:
@@ -737,7 +747,7 @@ def _upgrade_round(args, evidence):
         rc = install(args.iso, disk, td, evidence, args.timeout, args.memory, args.cpus, args.usb, upgrade=True)
         if rc:
             return rc
-        print("OK  upgraded from the ISO with `gentoo.sh upgrade-live` (no erase, the existing password)")
+        print(f"OK  upgraded with {Path(args.iso).name}'s `gentoo.sh upgrade-live` (no erase, the existing password)")
         rc = boot_installed(disk, td, Path(evidence, "OVMF_VARS.fd"), evidence, args.boot_timeout,
                             args.memory, args.cpus, stage=_after_upgrade(state, evidence))
         if rc:

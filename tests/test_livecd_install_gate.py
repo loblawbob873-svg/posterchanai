@@ -416,3 +416,13 @@ def test_no_upgrade_marker_can_match_its_own_echo():
     stages = src[src.index("def _before_upgrade("):src.index("def _upgrade_round(")]
     for literal in ("echo WROTE-OK", "echo SYNCED", "echo ACCT=kept"):
         assert literal not in stages, literal
+
+
+def test_the_upgrade_can_start_from_an_older_published_iso():
+    """'should test upgrading from a live ISO to a new iso, have user data in old install': the first
+    install comes from --from-iso (the previous release), the upgrade from the new image."""
+    src = Path(MOD.__file__).read_text()
+    rnd = src[src.index("def _upgrade_round("):src.index("def _one_round(")]
+    assert "old_iso = args.from_iso or args.iso" in rnd
+    first, second = rnd.index("install(old_iso"), rnd.index("upgrade=True")
+    assert first < second and "install(args.iso" in rnd[second - 200:second], "the upgrade must use the NEW image"
