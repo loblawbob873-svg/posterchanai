@@ -58,13 +58,22 @@
 
   /* The one question each step answers before Next is allowed. Returned as a sentence, because a
    * greyed-out button with no reason is a question the person has to answer by guessing. */
+  /* The disks an UPGRADE can go onto: an earlier PosterChanOS layout (EFI + LUKS) that is selectable. */
+  function upgradeable(disks){ return (disks || []).filter(d => d && d.selectable && d.posterchanLayout); }
+
   function blocker(step, s){
     s = s || {};
-    if(step === 'welcome') return s.info && !s.info.available ? 'This is not a PosterChanOS live session.' : '';
+    if(step === 'welcome'){
+      if(s.info && !s.info.available) return 'This is not a PosterChanOS live session.';
+      if(s.goal === 'upgrade' && s.disks && !upgradeable(s.disks).length)
+        return 'No installed PosterChanOS was found on this computer to upgrade.';
+      return '';
+    }
     if(step === 'disk'){
       const d = (s.disks || []).find(x => x.name === s.disk);
       if(!d) return 'Choose the disk to install PosterChanOS on.';
       if(!d.selectable) return d.why || 'That disk cannot be used.';
+      if(s.goal === 'upgrade' && !d.posterchanLayout) return 'That disk has no PosterChanOS install to upgrade.';
       if(s.mode === 'resume' && !d.posterchanLayout) return 'There is nothing on that disk to resume.';
       return '';
     }
@@ -121,7 +130,7 @@
   /* Module state, so closing the window and opening it again keeps the choices — and, more to the
    * point, so a running install is found again rather than offered a second time. The password is
    * the exception: it is dropped the moment it has been handed to the installer. */
-  const S = { step: 'welcome', info: null, disks: null, disksErr: '', disk: '', size: null, mode: 'fresh',
+  const S = { step: 'welcome', goal: 'install', info: null, disks: null, disksErr: '', disk: '', size: null, mode: 'fresh',
               password: '', password2: '', rootName: 'gentoo', typed: '', status: null, showLog: false,
               busy: false, error: '' };
 
@@ -189,19 +198,50 @@
         { ok: !!info.efi, warn: !info.efi, text: info.efi ? 'Started in UEFI mode'
           : 'Started in legacy BIOS mode — PosterChanOS installs a UEFI boot loader, so restart and pick the UEFI entry for this USB in your firmware’s boot menu first' },
       ];
-      frame('Install PosterChanOS', 'Put the system you are using right now onto this computer’s disk.',
-        `<div class="pci-hero">
-           <div class="pci-hero-mark">${ic('i-drive')}</div>
-           <ul class="pci-points">
+      /* INSTALL OR UPGRADE -- the first question, because the two do opposite things to a disk.
+       * Upgrade is resume onto an earlier PosterChanOS: the system is replaced, /home is kept. It is
+       * offered only when this computer HAS one, which is why the disks are looked at here. */
+      const up = upgradeable(S.disks);
+      const looking = S.disks === null;
+      const upgrade = S.goal === 'upgrade';
+      const card = (goal, title, lines, off, why) => `<label class="pci-goal${S.goal === goal ? ' on' : ''}${off ? ' off' : ''}">
+          <input type="radio" name="pci-goal" value="${goal}" ${S.goal === goal ? 'checked' : ''} ${off ? 'disabled' : ''}>
+          <b>${title}</b>${lines.map(l => `<small>${l}</small>`).join('')}${why ? `<small class="pci-goal-why">${H(why)}</small>` : ''}</label>`;
+      frame(upgrade ? 'Upgrade PosterChanOS' : 'Install PosterChanOS',
+        upgrade ? 'Replace the installed system with this version and keep your files.'
+                : 'Put the system you are using right now onto this computer’s disk.',
+        `<div class="pci-goals">
+           ${card('install', `${ic('i-drive')} Install PosterChanOS`,
+             ['A clean install. The disk you choose is <b>erased</b>.'], false, '')}
+           ${card('upgrade', `${ic('i-refresh')} Upgrade an installed PosterChanOS`,
+             ['Keeps <b>/home</b> — your files and settings — plus virtual machines and containers.',
+              'Sign in with the same Nostr key afterwards and your account comes back with its files.'],
+             !looking && !up.length, looking ? 'Looking for an installed PosterChanOS…'
+               : !up.length ? 'No installed PosterChanOS was found on this computer.'
+               : up.length === 1 ? 'Found on ' + diskTitle(up[0]) + ' (/dev/' + up[0].name + ').' : '')}
+         </div>
+         <div class="pci-hero">
+           <div class="pci-hero-mark">${ic(upgrade ? 'i-refresh' : 'i-drive')}</div>
+           <ul class="pci-points">${upgrade ? `
+             <li>${ic('i-check')}<span>The system on the disk is replaced with the one you are using now.</span></li>
+             <li>${ic('i-lock')}<span>The disk stays <b>encrypted</b>; you unlock it with the password it already has. Nothing is reformatted.</span></li>
+             <li>${ic('i-key')}<span>/home, virtual machines, containers and snapshots are not touched.</span></li>` : `
              <li>${ic('i-check')}<span>Everything you see in this live session is copied onto the disk you choose.</span></li>
              <li>${ic('i-lock')}<span>The disk is <b>encrypted</b> (LUKS) and formatted with <b>btrfs</b>, with snapshots.</span></li>
              <li>${ic('i-key')}<span>You sign in with your Nostr key when it first starts. The first person to sign in becomes its administrator.</span></li>
-             <li>${ic('i-warn')}<span>The chosen disk is <b>erased</b>. Anything else on it — another operating system, your files — is gone.</span></li>
+             <li>${ic('i-warn')}<span>The chosen disk is <b>erased</b>. Anything else on it — another operating system, your files — is gone.</span></li>`}
            </ul>
          </div>
          <div class="pci-checks">${checks.map(c => `<div class="pci-check ${c.ok ? 'ok' : c.warn ? 'warn' : 'bad'}">
            ${ic(c.ok ? 'i-check' : 'i-warn')}<span>${H(c.text)}</span></div>`).join('')}</div>`,
-        `<button class="btn btn-neon" data-next>Get started</button>`);
+        `<button class="btn btn-neon" data-next>${upgrade ? 'Choose what to upgrade' : 'Get started'}</button>`);
+      el.querySelectorAll('input[name="pci-goal"]').forEach(r => r.onchange = () => {
+        S.goal = r.value; S.mode = r.value === 'upgrade' ? 'resume' : 'fresh';
+        S.typed = ''; S.password = ''; S.password2 = '';
+        if(r.value === 'upgrade'){ const u = upgradeable(S.disks); if(!(cur() && cur().posterchanLayout)) S.disk = u.length === 1 ? u[0].name : ''; }
+        drawWelcome();
+      });
+      if(looking) loadDisks().then(() => { if(!dead && S.step === 'welcome') drawWelcome(); });
       bindNav();
     }
 
@@ -215,7 +255,12 @@
         const pick = (S.disks || []).filter(x => x.selectable && !x.small);
         S.disk = pick.length === 1 ? pick[0].name : (d && d.selectable ? d.name : '');
       }
-      if(!(cur() && cur().posterchanLayout)) S.mode = 'fresh';
+      if(S.goal === 'upgrade'){
+        /* AN UPGRADE NEVER ERASES: it is resume onto the disk that already has PosterChanOS. */
+        const up = upgradeable(S.disks);
+        if(!(cur() && cur().posterchanLayout)) S.disk = up.length === 1 ? up[0].name : '';
+        S.mode = 'resume';
+      }else if(!(cur() && cur().posterchanLayout)) S.mode = 'fresh';
       S.size = cur() ? cur().size : null;
     }
     function drawDisk(){
@@ -223,8 +268,8 @@
       const rows = !list ? `<div class="pci-loading"><div class="spinner"></div><span>Looking for disks…</span></div>`
         : !list.length ? `<div class="pci-note bad">${ic('i-warn')}<span>${S.disksErr ? H('Could not list the disks: ' + S.disksErr)
             : 'No disk was found. If this computer has an NVMe drive, its controller may be in RAID/RST mode and need a firmware setting changed.'}</span></div>`
-        : list.map(d => `<label class="pci-disk${d.selectable ? '' : ' off'}${S.disk === d.name ? ' on' : ''}">
-            <input type="radio" name="pci-disk" value="${H(d.name)}" ${S.disk === d.name ? 'checked' : ''} ${d.selectable ? '' : 'disabled'}>
+        : list.map(d => { const can = d.selectable && (S.goal !== 'upgrade' || d.posterchanLayout); return `<label class="pci-disk${can ? '' : ' off'}${S.disk === d.name ? ' on' : ''}">
+            <input type="radio" name="pci-disk" value="${H(d.name)}" ${S.disk === d.name ? 'checked' : ''} ${can ? '' : 'disabled'}>
             <span class="pci-disk-ic">${ic('i-drive')}</span>
             <span class="pci-disk-main">
               <b>${H(diskTitle(d))}</b>
@@ -236,21 +281,25 @@
               ${d.selectable && d.small ? `<span class="pci-disk-why">Smaller than 8 GB — PosterChanOS may not fit.</span>` : ''}
               ${d.selectable && d.posterchanLayout ? `<span class="pci-disk-tag">An earlier PosterChanOS install</span>` : ''}
             </span>
+            ${S.goal === 'upgrade' && d.selectable && !d.posterchanLayout ? `<span class="pci-disk-why">No PosterChanOS install on this disk.</span>` : ''}
             <span class="pci-size">${H(fmtBytes(d.size))}</span>
-          </label>`).join('');
+          </label>`; }).join('');
       const d = cur();
-      const resume = d && d.selectable && d.posterchanLayout ? `<div class="pci-modes">
+      const resume = S.goal !== 'upgrade' && d && d.selectable && d.posterchanLayout ? `<div class="pci-modes">
           <label class="${S.mode === 'fresh' ? 'on' : ''}"><input type="radio" name="pci-mode" value="fresh" ${S.mode === 'fresh' ? 'checked' : ''}>
             <b>Erase and install</b><small>A clean start. Everything on this disk is erased.</small></label>
           <label class="${S.mode === 'resume' ? 'on' : ''}"><input type="radio" name="pci-mode" value="resume" ${S.mode === 'resume' ? 'checked' : ''}>
             <b>Reinstall onto the existing encryption</b><small>For finishing an install that stopped part-way. Needs the password it was made with.</small></label>
         </div>` : '';
-      frame('Where should PosterChanOS go?', 'Choose a whole disk. The drive this live system is running from is not offered.',
+      frame(S.goal === 'upgrade' ? 'Which PosterChanOS should be upgraded?' : 'Where should PosterChanOS go?',
+        S.goal === 'upgrade' ? 'Choose the disk it is installed on. Nothing on it is erased.'
+                             : 'Choose a whole disk. The drive this live system is running from is not offered.',
         `<div class="pci-toolbar"><button class="btn btn-ghost small" data-refresh>${ic('i-refresh')} Rescan</button></div>
          <div class="pci-disks">${rows}</div>${resume}`, nextFoot());
       el.querySelectorAll('input[name="pci-disk"]').forEach(r => r.onchange = () => {
         S.disk = r.value; S.typed = ''; S.size = cur() ? cur().size : null;
-        if(!(cur() && cur().posterchanLayout)) S.mode = 'fresh';
+        if(S.goal === 'upgrade') S.mode = 'resume';
+        else if(!(cur() && cur().posterchanLayout)) S.mode = 'fresh';
         drawDisk();
       });
       el.querySelectorAll('input[name="pci-mode"]').forEach(r => r.onchange = () => { S.mode = r.value; S.password2 = ''; drawDisk(); });
@@ -314,14 +363,17 @@
       const resume = S.mode === 'resume';
       const rows = [
         ['Disk', `${diskTitle(d)} — /dev/${d.name} (${fmtBytes(d.size)})`],
-        ['What happens', resume ? 'The existing encrypted layout is opened and PosterChanOS is written into it'
+        ['What happens', S.goal === 'upgrade' ? 'The installed system is replaced with this version. /home — your files and settings — virtual machines, containers and snapshots are kept'
+          : resume ? 'The existing encrypted layout is opened and PosterChanOS is written into it'
           : d.parts && d.parts.length ? `All ${d.parts.length} partition${d.parts.length === 1 ? '' : 's'} on it are erased` : 'The empty disk is partitioned'],
         ['Layout', resume ? 'Kept as it is' : '2 GB EFI system partition + the rest encrypted'],
         ['Encryption', 'LUKS, unlocked automatically at startup; your password is the recovery key'],
         ['Filesystem', `btrfs — system in @${S.rootName}, with @home and snapshots`],
         ['Boot loader', 'systemd-boot (UEFI), registered with the firmware'],
       ];
-      frame('Ready to install', resume ? 'Check the details, then install.' : 'Check the details. Nothing has been changed yet.',
+      frame(S.goal === 'upgrade' ? 'Ready to upgrade' : 'Ready to install',
+        S.goal === 'upgrade' ? 'Check the details, then upgrade. Sign in with the same Nostr key afterwards.'
+          : resume ? 'Check the details, then install.' : 'Check the details. Nothing has been changed yet.',
         `<dl class="pci-sum">${rows.map(r => `<dt>${H(r[0])}</dt><dd>${H(r[1])}</dd>`).join('')}</dl>
          ${resume ? '' : `<div class="pci-danger">
            <div class="pci-danger-h">${ic('i-warn')}<b>This erases /dev/${H(d.name)}</b></div>
@@ -330,7 +382,7 @@
            <input class="input" data-typed spellcheck="false" autocomplete="off" placeholder="${H(d.name)}" value="${H(S.typed)}">
          </div>`}
          ${S.error ? `<div class="pci-note bad">${ic('i-warn')}<span>${H(S.error)}</span></div>` : ''}`,
-        nextFoot(resume ? 'Install' : 'Erase and install', !resume));
+        nextFoot(S.goal === 'upgrade' ? 'Upgrade' : resume ? 'Install' : 'Erase and install', !resume));
       const t = el.querySelector('[data-typed]');
       if(t){ t.oninput = () => { S.typed = t.value; refreshNext(); }; setTimeout(() => { try{ t.focus(); }catch(_){} }, 30); }
       bindNav(start);
@@ -367,8 +419,9 @@
       const v = view(st);
       const pct = Math.max(0, Math.min(100, Math.round((st.progress && st.progress.percent) || (v === 'done' ? 100 : 0))));
       const phases = phaseStates(st);
-      const label = v === 'done' ? 'PosterChanOS is installed'
-        : v === 'failed' ? 'The install did not finish'
+      const upg = S.goal === 'upgrade';
+      const label = v === 'done' ? (upg ? 'PosterChanOS is upgraded' : 'PosterChanOS is installed')
+        : v === 'failed' ? (upg ? 'The upgrade did not finish' : 'The install did not finish')
         : (st.progress && st.progress.label) || st.message || 'Starting…';
       const copied = st.progress && st.progress.stage === 'copy' && st.progress.copied != null
         ? ` — ${st.progress.copied}% of the files` : '';
@@ -389,7 +442,8 @@
         : v === 'failed'
         ? `<button class="btn btn-ghost" data-retry-disk>Choose another disk</button><button class="btn btn-neon" data-retry>Try again</button>`
         : `<span class="pci-hint">You can close this window — the install keeps going.</span>`;
-      frame(v === 'done' ? 'Installed' : v === 'failed' ? 'Install failed' : 'Installing PosterChanOS', disk,
+      frame(v === 'done' ? (upg ? 'Upgraded' : 'Installed') : v === 'failed' ? (upg ? 'Upgrade failed' : 'Install failed')
+        : (upg ? 'Upgrading PosterChanOS' : 'Installing PosterChanOS'), disk,
         `<div class="pci-progress ${v}">
            <div class="pci-bar"><i style="width:${pct}%"></i></div>
            <div class="pci-bar-row"><span data-label>${H(label + copied)}</span><span><b>${pct}%</b> · ${clock}</span></div>
@@ -472,5 +526,5 @@
     return () => { dead = true; clearTimeout(timer); };
   }
 
-  root.PCInstaller = { paint, _pure: { STEPS, PHASES, fmtBytes, busLabel, diskTitle, blocker, phaseStates, view, tailLines } };
+  root.PCInstaller = { paint, _pure: { STEPS, PHASES, fmtBytes, busLabel, diskTitle, blocker, upgradeable, phaseStates, view, tailLines } };
 })(typeof window !== 'undefined' ? window : globalThis);

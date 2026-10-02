@@ -126,3 +126,33 @@ def test_no_native_dialog_in_the_installer():
     src = re.sub(r"/\*.*?\*/", "", UI.read_text(), flags=re.S)      # comments may name them
     assert not re.search(r"(?<![\w.])(confirm|alert|prompt)\s*\(", src.replace("uiConfirm(", "")), \
         "a native dialog wedges the Electron renderer's focus — use PC().uiConfirm"
+
+
+# ---- "maybe add a upgrade your installed OS option in main menu?" -- Upgrade = resume, never erase.
+
+def test_upgrade_is_refused_where_there_is_nothing_to_upgrade():
+    none = "[{name:'nvme0n1',selectable:true,why:'',posterchanLayout:false}]"
+    assert "No installed PosterChanOS" in pure(f"P.blocker('welcome',{{goal:'upgrade',disks:{none}}})")
+    assert pure(f"P.blocker('welcome',{{goal:'upgrade',disks:{DISKS}}})") == ""
+    # Still looking (disks not listed yet) is not a refusal -- the card says it is looking.
+    assert pure("P.blocker('welcome',{goal:'upgrade',disks:null})") == ""
+
+
+def test_upgrade_offers_only_disks_that_hold_posterchanos():
+    assert pure(f"P.upgradeable({DISKS}).map(d=>d.name)") == ["vdb"]
+    assert "no PosterChanOS install" in pure(f"P.blocker('disk',{{goal:'upgrade',mode:'resume',disks:{DISKS},disk:'nvme0n1'}})")
+    assert pure(f"P.blocker('disk',{{goal:'upgrade',mode:'resume',disks:{DISKS},disk:'vdb'}})") == ""
+
+
+def test_an_upgrade_never_asks_to_erase():
+    # The erase confirmation (type the disk's name) is for fresh installs only: an upgrade erases nothing.
+    assert pure(f"P.blocker('summary',{{goal:'upgrade',mode:'resume',disks:{DISKS},disk:'vdb',typed:''}})") == ""
+
+
+def test_the_upgrade_runs_the_script_in_resume_mode():
+    src = UI.read_text(encoding="utf-8")
+    # Choosing Upgrade sets resume, and the start call hands the MODE to the bridge (PC_INSTALL_MODE).
+    assert re.search(r"S\.goal = r\.value; S\.mode = r\.value === 'upgrade' \? 'resume' : 'fresh'", src)
+    assert "mode: S.mode" in src
+    bridge = (ROOT / "desktop/installer.js").read_text(encoding="utf-8")
+    assert "'PC_INSTALL_MODE=' + mode" in bridge

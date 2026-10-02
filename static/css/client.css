@@ -10458,6 +10458,18 @@ svg.ic.pci-ic{width:18px;height:18px;flex:none;stroke-width:1.9}
 .pci-disk-why{font-size:12px;color:var(--amber)}
 .pci-disk-tag{font-size:12px;color:var(--neon)}
 .pci-size{font-size:18px;font-weight:700;white-space:nowrap}
+/* Install vs Upgrade -- the welcome screen's first question. Same card look as the disk step's modes. */
+.pci-goals{display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:14px}
+.pci-goal{display:grid;grid-template-columns:auto 1fr;column-gap:10px;row-gap:4px;padding:14px 16px;border-radius:12px;
+  border:1px solid var(--line);background:rgba(255,255,255,.02);cursor:pointer}
+.pci-goal.on{border-color:var(--neon);background:rgba(var(--accent-rgb),.08)}
+.pci-goal.off{opacity:.55;cursor:not-allowed}
+.pci-goal > input{grid-row:span 4;accent-color:var(--neon);margin-top:3px}
+.pci-goal > b,.pci-goal > small{grid-column:2}
+.pci-goal > b{display:flex;align-items:center;gap:6px}
+.pci-goal small{color:var(--muted);font-size:12px;line-height:1.45}
+.pci-goal .pci-goal-why{color:var(--text);opacity:.8}
+@media(max-width:700px){ .pci-goals{grid-template-columns:1fr} }
 .pci-modes{display:grid;grid-template-columns:1fr 1fr;gap:10px}
 .pci-modes label{display:grid;grid-template-columns:auto 1fr;column-gap:10px;row-gap:3px;padding:12px 14px;border-radius:12px;
   border:1px solid var(--line);background:var(--panel);cursor:pointer}

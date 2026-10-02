@@ -95,6 +95,9 @@ window.__disks = [
   { name:'sdb', path:'/dev/sdb', size:2000*GIB, model:'Seagate Barracuda', tran:'sata', removable:false,
     small:false, mounted:false, selectable:true, why:'', posterchanLayout:false, parts:[] },
 ];
+/* ?upgrade=1 -- this computer already has PosterChanOS on sdb (an EFI + LUKS layout). */
+if (Q.get('upgrade') === '1') { window.__disks[2].posterchanLayout = true;
+  window.__disks[2].parts = [{name:'sdb1', size:2*GIB, fstype:'vfat', label:'EFI'}, {name:'sdb2', size:1998*GIB, fstype:'crypto_LUKS', label:''}]; }
 /* The bridge, as preload.js exposes it. `status` walks a script: whatever the check sets in
    __statusQueue is handed out one per poll, the last one repeating. */
 window.__started = null;
@@ -224,6 +227,43 @@ SUMMARY = "(async () => {" + HELPERS + r"""
   type($('[data-typed]'), 'nvme0n1');
   out.installTyped = !next().disabled;
   out.summaryOverflow = overflow();
+  return out;
+})()"""
+
+UPGRADE_NONE = "(async () => {" + HELPERS + r"""
+  await until(() => $('input[name="pci-goal"][value="upgrade"]') && !/Looking/.test(($('.pci-goal.off') || {}).textContent || 'x'), 3000);
+  const card = $('input[name="pci-goal"][value="upgrade"]');
+  out.upgradeDisabled = !!(card && card.disabled);
+  out.upgradeWhy = ((card && card.closest('.pci-goal')) || {}).textContent || '';
+  return out;
+})()"""
+
+UPGRADE = "(async () => {" + HELPERS + r"""
+  await until(() => { const c = $('input[name="pci-goal"][value="upgrade"]'); return c && !c.disabled; }, 3000);
+  const card = $('input[name="pci-goal"][value="upgrade"]');
+  card.click(); card.dispatchEvent(new Event('change', { bubbles:true })); await sleep(80);
+  out.welcomeTitle = title();
+  out.welcomeSaysKept = /keeps|kept|not touched/i.test(($('.pci-body') || {}).textContent || '');
+  next().click(); await until(() => $('.pci-disk'), 3000);
+  out.diskTitle = title();
+  out.otherDiskDisabled = !!$('input[name="pci-disk"][value="nvme0n1"][disabled]');
+  out.picked = ($('input[name="pci-disk"]:checked') || {}).value || '';
+  out.noEraseChoice = !$('input[name="pci-mode"]');
+  out.diskOverflow = overflow();
+  next().click(); await until(() => $('[data-pw]'), 2000);
+  out.securityTitle = title();
+  out.noRepeat = !$('[data-pw2]');
+  type($('[data-pw]'), 'the disk password');
+  next().click(); await until(() => $('.pci-sum'), 2000);
+  out.summaryTitle = title();
+  out.summaryText = ($('.pci-sum') || {}).textContent || '';
+  out.noTyped = !$('[data-typed]');
+  out.buttonLabel = (next() || {}).textContent || '';
+  out.summaryOverflow = overflow();
+  window.__confirms = [];
+  next().click(); await until(() => window.__started, 3000);
+  out.started = window.__started;
+  out.dangerConfirms = (window.__confirms || []).filter(c => c.o && c.o.danger).length;
   return out;
 })()"""
 
@@ -415,6 +455,34 @@ async def drive(base, shots):
             if out.get("failOverflow"):
                 bad("overflow", f"failed screen: {out['failOverflow']}")
             await shot("7-failed")
+
+            # ---- "Upgrade an installed PosterChanOS": refused with nothing to upgrade, then the walk
+            await load("?live=1")
+            out = await js(DRIVE) or {}
+            none = await js(UPGRADE_NONE) or {}
+            if not none.get("upgradeDisabled") or "No installed PosterChanOS" not in (none.get("upgradeWhy") or ""):
+                bad("upgrade-offered-for-nothing", f"disabled={none.get('upgradeDisabled')} why={none.get('upgradeWhy')!r}")
+            await load("?live=1&upgrade=1")
+            out = await js(DRIVE) or {}
+            up = await js(UPGRADE) or {}
+            await shot("8-upgrade")
+            if up.get("welcomeTitle") != "Upgrade PosterChanOS" or not up.get("welcomeSaysKept"):
+                bad("upgrade-welcome", f"title={up.get('welcomeTitle')!r} saysKept={up.get('welcomeSaysKept')}")
+            if not up.get("otherDiskDisabled") or up.get("picked") != "sdb" or not up.get("noEraseChoice"):
+                bad("upgrade-disk", f"otherDisabled={up.get('otherDiskDisabled')} picked={up.get('picked')!r} "
+                                    f"noErase={up.get('noEraseChoice')}")
+            if up.get("securityTitle") != "Unlock the existing install" or not up.get("noRepeat"):
+                bad("upgrade-password", f"title={up.get('securityTitle')!r} repeatField={not up.get('noRepeat')}")
+            if (up.get("summaryTitle") != "Ready to upgrade" or not up.get("noTyped")
+                    or "/home" not in (up.get("summaryText") or "") or up.get("buttonLabel", "").strip() != "Upgrade"):
+                bad("upgrade-summary", f"title={up.get('summaryTitle')!r} typedField={not up.get('noTyped')} "
+                                       f"button={up.get('buttonLabel')!r}")
+            st = up.get("started") or {}
+            if st.get("mode") != "resume" or st.get("disk") != "sdb" or up.get("dangerConfirms"):
+                bad("upgrade-erases", f"start()={st} dangerConfirms={up.get('dangerConfirms')}")
+            for k in ("diskOverflow", "summaryOverflow"):
+                if up.get(k):
+                    bad("overflow", f"upgrade {k}: {up[k]}")
     finally:
         proc.terminate()
         try:
@@ -428,7 +496,8 @@ async def drive(base, shots):
             print(f"FAIL  {code}: {msg}")
         return 1
     print("OK  installer: icon (live only, first) → welcome → disk → password → typed confirmation → "
-          "progress → restart; reopen shows the running job; a failure shows its log")
+          "progress → restart; reopen shows the running job; a failure shows its log; Upgrade keeps the "
+          "disk (resume, no erase) and is refused where there is nothing to upgrade")
     return 0
 
 
