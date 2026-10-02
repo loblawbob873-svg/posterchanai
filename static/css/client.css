@@ -2397,7 +2397,12 @@ body.embed .feed{max-width:680px;margin:0 auto;padding:14px;height:auto !importa
    squeezed it to NOTHING while the card kept its 72px floor and spilled out underneath the
    Write/Preview tabs ("that tab squish in Reply modal, happens sometimes"). `auto` is exactly the
    label plus the card's own floor, so everything above that still gives way. */
-.cmp-modal .cmp-ctx{display:flex;flex-direction:column;flex:0 3 auto;min-height:auto}
+/* …and `auto` was wrong in the OTHER direction: for a box holding a scrolling card it resolves to the
+   card's whole capped height (230px + label), so on a short screen (a phone sideways, 740x380) the
+   quote never gave way and the TEXTAREA was squeezed to 64px with Post off the bottom. The quote may
+   shrink now; it clips inside its own box rather than spilling over the tabs, and the Preview pane
+   no longer overpowers it because it is sized like the textarea (below), not by its content. */
+.cmp-modal .cmp-ctx{display:flex;flex-direction:column;flex:0 3 auto;min-height:0;overflow:hidden}
 /* The floor is deliberately at the natural height of a ONE-LINE quote: a min-height binds in
    ordinary layout too, not only under shrink, so a taller one would pad every short quote out with
    dead space — the same complaint from the other direction (check_quote_modal.py asserts it). */
@@ -2405,7 +2410,7 @@ body.embed .feed{max-width:680px;margin:0 auto;padding:14px;height:auto !importa
 /* `height`, not a flex-basis LENGTH: same 220px preferred size, but the resize grip still works —
    a basis length wins over the inline height a drag writes, and silently freezes it. */
 .modal.cmp-modal #cmp{flex:1 1 auto;height:220px;min-height:96px}
-.modal.cmp-modal #cmp-preview{flex:1 1 auto;min-height:96px;overflow:auto}
+.modal.cmp-modal #cmp-preview{flex:1 1 auto;height:220px;min-height:96px;overflow:auto}
 /* A phone in LANDSCAPE, or a short desktop window, has less height than those floors add up to.
    Tighten the fixed chrome rather than let the sheet start scrolling off the bottom again. */
 @media (max-height:600px){
@@ -2413,7 +2418,7 @@ body.embed .feed{max-width:680px;margin:0 auto;padding:14px;height:auto !importa
   .cmp-modal .cmp-ctx{margin-bottom:6px}
   .cmp-modal .cmp-ctx .quoted{min-height:44px;padding:6px 10px}
   .modal.cmp-modal #cmp{height:120px;min-height:64px}
-  .modal.cmp-modal #cmp-preview{min-height:64px}
+  .modal.cmp-modal #cmp-preview{height:120px;min-height:64px}
   .cmp-modal .cmp-tools{margin-bottom:4px}
   .cmp-modal .cmp-tools .cmp-ico{width:38px;height:38px;font-size:20px}
   .cmp-modal .cmp-actions{margin-top:6px}
