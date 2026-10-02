@@ -50,7 +50,7 @@ def _tier_block() -> str:
 
 def test_a_4k_class_panel_gets_a_tier_that_scales_up():
     block = _tier_block()
-    m = re.search(r"zoom\s*:\s*var\(\s*--ui-scale\s*,\s*([0-9.]+)\s*\)", block)
+    m = re.search(r"zoom\s*:\s*var\(\s*--ui-scale\s*,\s*(?:var\(\s*--screen-scale\s*,\s*)?([0-9.]+)\s*\)?\s*\)", block)
     assert m, "the 4K tier does not set `zoom` from var(--ui-scale, N): %r" % block
     assert float(m.group(1)) > 1, (
         "the 4K tier's default zoom is %s — it is meant to scale the app UP" % m.group(1))
@@ -62,9 +62,9 @@ def test_zoom_zf_and_the_app_height_are_the_same_number_in_that_tier():
     `--zf` exists purely to undo the zoom for viewport-unit containers, and `.app` is the container
     whose top went off screen on Windows when they disagreed."""
     block = _tier_block()
-    zoom = re.search(r"zoom\s*:\s*var\(\s*--ui-scale\s*,\s*([0-9.]+)\s*\)", block)
-    zf = re.search(r"--zf\s*:\s*var\(\s*--ui-scale\s*,\s*([0-9.]+)\s*\)", block)
-    app = re.search(r"\.app\{\s*height:calc\(100dvh / var\(\s*--ui-scale\s*,\s*([0-9.]+)\s*\)\)\s*\}",
+    zoom = re.search(r"zoom\s*:\s*var\(\s*--ui-scale\s*,\s*(?:var\(\s*--screen-scale\s*,\s*)?([0-9.]+)\s*\)?\s*\)", block)
+    zf = re.search(r"--zf\s*:\s*var\(\s*--ui-scale\s*,\s*(?:var\(\s*--screen-scale\s*,\s*)?([0-9.]+)\s*\)?\s*\)", block)
+    app = re.search(r"\.app\{\s*height:calc\(100dvh / var\(\s*--ui-scale\s*,\s*(?:var\(\s*--screen-scale\s*,\s*)?([0-9.]+)\s*\)?\s*\)\)\s*\}",
                     block.replace("\n", "").replace("  ", ""))
     assert zf, "the 4K tier sets zoom and no --zf: %r" % block
     assert app, "the 4K tier sets zoom and does not pair `.app{height:calc(100dvh / …)}`: %r" % block
@@ -105,14 +105,23 @@ def test_every_tier_that_is_user_overridable_reads_one_variable():
     The value is read three times per tier (zoom, --zf, .app height) and by every tier that is
     meant to be adjustable; a second variable name anywhere means a screen that matches two rules
     is drawn at one scale and measured at another."""
-    tiers = re.findall(r"body\{[^}]*zoom[^}]*\}", CODE)
+    # A popped-out window's rule (html.pc-oswin) is not a tier: it takes the DESKTOP's computed scale,
+    # which oswin.js writes into --ui-scale, so it reads that one name on purpose.
+    tiers = re.findall(r"(?<!pc-oswin )body\{[^}]*zoom[^}]*\}", CODE)
     assert tiers, "the zoom tiers moved — re-read this test"
     names = set()
     for t in tiers:
         names |= set(re.findall(r"var\(\s*(--[a-z0-9-]+)", t))
-    assert names <= {"--ui-scale"}, (
-        "a zoom tier reads a variable other than --ui-scale, so a stored scale moves some rules "
-        "and not others: %s" % sorted(names))
+    # Two names now, in ONE order: the user's stored scale first, then the monitor's tier
+    # (templates/client.html), then the number. A tier that read them the other way round, or read
+    # only one, would let a stored scale move some rules and not others.
+    assert names <= {"--ui-scale", "--screen-scale"}, (
+        "a zoom tier reads a variable other than --ui-scale/--screen-scale: %s" % sorted(names))
+    for t in tiers:
+        for decl in re.findall(r"(?:zoom|--zf)\s*:\s*([^;}]+)", t):
+            if "var(" in decl:
+                assert decl.replace(" ", "").startswith("var(--ui-scale,var(--screen-scale,"), (
+                    "a tier does not read the user's scale first, then the monitor's: %r" % decl)
     assert "--ui-scale" in names, "no zoom tier is user-overridable at all"
 
 
@@ -121,9 +130,10 @@ def test_nothing_below_the_tier_changed_shape():
     for q, z in (("(min-width:821px) and (max-width:1920px)", ".77"),
                  ("(min-width:821px) and (max-width:1600px)", ".72"),
                  ("(min-width:821px) and (max-width:1366px)", ".67")):
+        v = "var(--ui-scale,var(--screen-scale,%s))" % z
         assert ("@media %s{ body{ zoom:%s; --zf:%s } .app{ height:calc(100dvh / %s) } "
-                ".main{ height:100%% } }" % (q, z, z, z)) in CODE, \
-            "the %s shrink tier moved" % q
+                ".main{ height:100%% } }" % (q, v, v, v)) in CODE, \
+            "the %s shrink tier moved (its fallback must stay %s)" % (q, z)
 
 
 # ---- the client's own control -------------------------------------------------------------------
@@ -209,7 +219,7 @@ def test_the_control_and_the_stylesheet_agree_on_which_screens_are_big():
     q = re.search(r"UI_SCALE_BIG = '([^']+)'", OS_JS).group(1)
     assert "@media " + q in CODE, (
         "os.js decides a screen is 4K-class with %r and the stylesheet uses a different query" % q)
-    default = float(re.search(r"zoom\s*:\s*var\(\s*--ui-scale\s*,\s*([0-9.]+)\s*\)",
+    default = float(re.search(r"zoom\s*:\s*var\(\s*--ui-scale\s*,\s*(?:var\(\s*--screen-scale\s*,\s*)?([0-9.]+)\s*\)?\s*\)",
                               _tier_block()).group(1))
     js_default = float(re.search(r"matchMedia\(UI_SCALE_BIG\)\.matches\) return ([0-9.]+)",
                                  OS_JS).group(1))

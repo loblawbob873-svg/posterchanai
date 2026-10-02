@@ -37,8 +37,9 @@ class ZoomAndZfAgree(unittest.TestCase):
     # because the rule simply would not be seen. The FALLBACK is the number being compared: it is
     # what applies when nothing is stored, and `--ui-scale` is one value read by both declarations,
     # so a stored override can never make them disagree.
-    _ZOOM = r"(?<![-\w])zoom\s*:\s*(?:var\(\s*--ui-scale\s*,\s*([0-9.]+)\s*\)|([0-9.]+))"
-    _ZF = r"--zf\s*:\s*(?:var\(\s*--ui-scale\s*,\s*([0-9.]+)\s*\)|([0-9.]+))"
+    # A third form since the scale follows the MONITOR: zoom:var(--ui-scale,var(--screen-scale,.77)).
+    _ZOOM = r"(?<![-\w])zoom\s*:\s*(?:var\(\s*--ui-scale\s*,\s*(?:var\(\s*--screen-scale\s*,\s*)?([0-9.]+)\s*\)?\s*\)|([0-9.]+))"
+    _ZF = r"--zf\s*:\s*(?:var\(\s*--ui-scale\s*,\s*(?:var\(\s*--screen-scale\s*,\s*)?([0-9.]+)\s*\)?\s*\)|([0-9.]+))"
 
     @staticmethod
     def _num(m):
