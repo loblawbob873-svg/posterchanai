@@ -140,8 +140,9 @@ class ThePromotionHasAPathThatNoEventIsNeededFor(unittest.TestCase):
         """Every bounded sweep was scheduled FROM a window event, so a lost event cancelled the
         feature outright and nothing else could notice."""
         self.assertIn("function armNativeGameSweep(ms){", MAIN)
-        launch = MAIN[MAIN.index("ipcMain.handle('pc:wm:launch'"):]
-        launch = launch[:launch.index("/* EVERY APP INSTALLED ON THIS MACHINE")]
+        # The launcher is launchCommand: the start menu's IPC and startup apps both run it.
+        launch = MAIN[MAIN.index("async function launchCommand(argv, opts)"):]
+        launch = launch[:launch.index("ipcMain.handle('pc:wm:launch'")]
         self.assertIn("armNativeGameSweep(120000)", launch,
                       "a game launch no longer arms the promotion sweep")
         self.assertIn("opts.game||opts.gamescope", launch.replace(" ", ""))

@@ -44,10 +44,20 @@ AI = r"""(()=>{ window.__aiCalls=[]; window.__confirms=[];
     return new Response(JSON.stringify({ok:true,answer:'Doing it.',tasks:[],steps}),{status:200}); }; })()"""
 
 
+async def _quiet_feed(b):
+    """The form goes into a screen that does not repaint. On the live timeline a refresh can replace
+    #feed between two steps -- the agent then rightly stops ("not on screen any more"), which made
+    these tests a coin toss under load."""
+    await b.js("__PC.switchView('calculator')")
+    await b.until("!!document.querySelector('#feed') && document.querySelector('#feed').children.length>0 && !document.querySelector('#feed .spinner')")
+    await asyncio.sleep(.5)
+
+
 async def _open(b, pre=""):
     await b.call('Emulation.setDeviceMetricsOverride', dict(width=1280, height=900, deviceScaleFactor=1, mobile=False))
     await desktop.login(b)
     await b.js("try{ if(window.PCOS && PCOS.isOn()) PCOS.exit(); }catch(_){}")
+    await _quiet_feed(b)
     await b.js(FORM)
     await b.js(AI)
     if pre:
@@ -126,6 +136,7 @@ def test_the_ai_searches_scrolls_shows_its_target_and_can_undo():
         await b.call('Emulation.setDeviceMetricsOverride', dict(width=1280, height=900, deviceScaleFactor=1, mobile=False))
         await desktop.login(b)
         await b.js("try{ if(window.PCOS && PCOS.isOn()) PCOS.exit(); }catch(_){}")
+        await _quiet_feed(b)
         await b.js(FORM2)
         await b.js(AI2)
         await b.js("(()=>{const btn=document.createElement('button');document.body.appendChild(btn);PCOS.pageWindowAI(btn,{});})()")

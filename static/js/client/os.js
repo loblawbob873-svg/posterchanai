@@ -2708,12 +2708,14 @@
   /* "Do all" waits for the window to STOP CHANGING after each step -- a fixed pause was either too long
    * or too short (a search that answers in 2 s was read back half-drawn). Bounded either way. */
   function _aiSettle(w,quiet,max){
-    const root=w.body||w.el; quiet=quiet||300; max=max||3000;
+    const root=w.body||w.el; quiet=quiet||250; max=max||1500;
     return new Promise(res=>{
       let t=0; const end=setTimeout(done,max);
       const mo=new MutationObserver(()=>{ clearTimeout(t); t=setTimeout(done,quiet); });
       function done(){ clearTimeout(t); clearTimeout(end); try{ mo.disconnect(); }catch(_){ } res(); }
-      try{ mo.observe(root,{subtree:true,childList:true,characterData:true,attributes:true}); }catch(_){ }
+      /* CONTENT, not attributes: a live window (a timeline, a clock, an animation) flips classes and
+       * styles all the time, and counting those made every step wait out the whole limit. */
+      try{ mo.observe(root,{subtree:true,childList:true,characterData:true}); }catch(_){ }
       t=setTimeout(done,quiet);
     });
   }
