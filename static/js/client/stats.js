@@ -247,7 +247,9 @@
       direct:   ['📮 Posted here',        'Published straight to this relay by its own clients'],
       wot:      ['🌐 Synced from the network', 'Pulled in from upstream relays for the web of trust'],
       ancestor: ['🧵 Thread ancestors',   'Parent notes fetched so replies are not orphaned'],
-      bridge:   ['🔗 Fediverse mirror',   'Posts mirrored from the fediverse under puppet keys'],
+      // The key stays `bridge` (the server's origin name); the label says what they ARE: posts that reached
+      // this server's native ActivityPub inbox, kept as Nostr events under each person's own derived key.
+      bridge:   ['🔗 Fediverse posts',    'Posts from the fediverse, stored as Nostr events under each person’s own key'],
     };
 
     /* One outbound queue (the upstream broadcaster, and the private mirror when configured).
