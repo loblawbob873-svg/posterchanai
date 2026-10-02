@@ -157,6 +157,81 @@ def coverage(expected: str, heard: str) -> float:
     return sum(1 for w in want if w in got) / len(want)
 
 
+def ending_heard(expected: str, heard: str) -> bool:
+    """Were the line's LAST words said? The voice model's usual failure on a longer line is to stop
+    early -- fever's reply at 14:04 was 82% of its words, i.e. above MIN_COVERAGE, with the end
+    missing, and it was posted cut off at the start of a sentence. An overall share cannot see that."""
+    want, got = _words(expected), set(_words(heard))
+    tail = [w for w in want[-4:] if len(w) > 2] or want[-1:]
+    if not tail:
+        return True
+    # The LAST content word must be there, and most of the ones just before it.
+    return tail[-1] in got and sum(1 for w in tail if w in got) >= len(tail) - 1
+
+
+# A sentence per voice call. Chatterbox says a short line whole and drops the ends of long ones, so a
+# reply is spoken in pieces and the pieces joined: each piece is short enough to come out complete.
+CHUNK_WORDS = 22
+
+
+def chunks(line: str, limit: int = CHUNK_WORDS) -> list:
+    """`line` split at sentence ends into pieces of at most `limit` words; a sentence longer than that
+    is split at a comma, else at the limit. A fragment of one or two words joins its neighbour."""
+    sents = [x.strip() for x in re.split(r"(?<=[.!?])\s+", (line or "").strip()) if x.strip()]
+    pieces = []
+    for sent in sents:
+        words = sent.split()
+        while len(words) > limit:
+            head = " ".join(words[:limit])
+            cut = head.rfind(", ")
+            n = len(head[:cut].split()) if cut > len(head) // 3 else limit
+            pieces.append(" ".join(words[:n]).rstrip(","))
+            words = words[n:]
+        if words:
+            pieces.append(" ".join(words))
+    out = []
+    for piece in pieces:
+        if out and (len(piece.split()) <= 2 or len(out[-1].split()) <= 2) and \
+                len(out[-1].split()) + len(piece.split()) <= limit:
+            out[-1] = out[-1] + " " + piece
+        else:
+            out.append(piece)
+    return out
+
+
+def join_wavs(wavs: list, gap: float = 0.22) -> bytes:
+    """One WAV from several, with a short breath between them. Every piece is converted to 24 kHz mono
+    first: pieces can come from different nodes, and frames of two rates cannot simply be appended."""
+    if len(wavs) == 1:
+        return wavs[0]
+    import subprocess
+    import wave
+    from app.services import media_service
+    tmp = tempfile.mkdtemp(prefix="talkbot_")
+    try:
+        frames = []
+        for i, w in enumerate(wavs):
+            src, dst = os.path.join(tmp, f"{i}.wav"), os.path.join(tmp, f"{i}n.wav")
+            with open(src, "wb") as f:
+                f.write(w)
+            r = subprocess.run([media_service.resolve_ffmpeg(), "-v", "error", "-y", "-i", src, "-ac", "1",
+                                "-ar", "24000", "-sample_fmt", "s16", dst], capture_output=True, timeout=60)
+            if r.returncode != 0:
+                raise RuntimeError("could not join the spoken pieces")
+            with wave.open(dst) as wf:
+                frames.append(wf.readframes(wf.getnframes()))
+        silence = b"\x00\x00" * int(24000 * gap)
+        out = io.BytesIO()
+        with wave.open(out, "wb") as wf:
+            wf.setnchannels(1)
+            wf.setsampwidth(2)
+            wf.setframerate(24000)
+            wf.writeframes(silence.join(frames))
+        return out.getvalue()
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+
+
 def max_seconds(line: str) -> float:
     return 4.0 + 0.7 * len(_words(line))
 
@@ -204,16 +279,17 @@ async def speak_checked(db, line: str, voice: bytes, ref_path: str):
         secs = wav_seconds(wav)
         heard = await asyncio.to_thread(hear, wav)
         cov = 1.0 if heard is None else coverage(line, heard)
-        good = cov >= MIN_COVERAGE and secs <= max_seconds(line)
-        report.append({"take": take, "coverage": round(cov, 2), "secs": round(secs, 1), "where": where})
-        logger.info("[talkbot] take %d: %.0f%% of the words, %.1fs (limit %.1fs) on %s",
-                    take, cov * 100, secs, max_seconds(line), where)
-        score = (good, cov, -abs(secs - max_seconds(line) / 2))
+        ends = True if heard is None else ending_heard(line, heard)
+        good = cov >= MIN_COVERAGE and ends and secs <= max_seconds(line)
+        report.append({"take": take, "coverage": round(cov, 2), "ending": ends, "secs": round(secs, 1), "where": where})
+        logger.info("[talkbot] take %d: %.0f%% of the words, ending %s, %.1fs (limit %.1fs) on %s",
+                    take, cov * 100, "said" if ends else "MISSING", secs, max_seconds(line), where)
+        score = (good, ends, cov, -abs(secs - max_seconds(line) / 2))
         if best is None or score > best[0]:
             best = (score, wav, where)
         if good:
             break
-    if best is None or best[0][1] < 0.5:
+    if best is None or best[0][2] < 0.5:
         raise RuntimeError("the voice model could not say the line")
     return best[1], best[2], report
 
@@ -293,7 +369,11 @@ async def render(db, face_sha: str, voice_sha: str, mouth, text: str, max_words:
         ref_path = os.path.join(tmp, "ref.wav")
         with open(ref_path, "wb") as f:
             f.write(voice)
-        wav, where, _report = await speak_checked(db, line, voice, ref_path)
+        pieces = []
+        for piece in chunks(line):
+            w, where, _report = await speak_checked(db, piece, voice, ref_path)
+            pieces.append(w)
+        wav = await asyncio.to_thread(join_wavs, pieces)
         path = os.path.join(tmp, "line.wav")
         with open(path, "wb") as f:
             f.write(wav)

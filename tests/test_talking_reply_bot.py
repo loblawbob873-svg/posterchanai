@@ -599,3 +599,53 @@ def test_the_backstop_does_not_cut_an_answer_it_asked_for():
     from app.services import talkbot_service as tb
     sixty = " ".join(["word"] * 59) + " end."
     assert tb.clean_text(sixty).endswith("end."), "a 60-word reply was cut mid-sentence"
+
+
+def test_a_take_that_stops_before_the_end_is_made_again(monkeypatch):
+    """'AI make it talk replies for fever bot stopped at the beginning of a sentence': a take that
+    said 82% of the words -- everything but the ending -- passed MIN_COVERAGE and was posted."""
+    line = "Look who showed up again with the same tired takes about money and the moon, friend."
+    cut = "look who showed up again with the same tired takes about money and"
+    assert tb.coverage(line, cut) >= tb.MIN_COVERAGE, "the scenario must be one the share alone accepts"
+    n = _takes(monkeypatch, {b"take1": cut, b"take2": line})
+    wav, where, report = run(tb.speak_checked(None, line, b"v", "/ref"))
+    assert wav == b"take2" and n["i"] == 2, "a take missing its ending was posted"
+    assert report[0]["ending"] is False and report[1]["ending"] is True
+
+
+def test_a_long_reply_is_spoken_a_sentence_at_a_time():
+    line = ("Look who finally showed up, the guy who thinks sats grow on trees and the moon is made of cheese. "
+            "Nah. I am not buying it, not today, not ever, and you can tell your friends I said so because I mean it.")
+    pieces = tb.chunks(line)
+    assert len(pieces) >= 2 and all(len(p.split()) <= tb.CHUNK_WORDS for p in pieces), pieces
+    assert " ".join(pieces).split() == line.split(), "splitting lost or reordered words"
+    assert tb.chunks("Short and sweet.") == ["Short and sweet."]
+
+
+@pytest.mark.skipif(not HAVE_FFMPEG, reason="needs ffmpeg")
+def test_every_piece_of_a_long_reply_reaches_the_clip(monkeypatch, tmp_path):
+    """The real render: each sentence is its own voice call and the clip holds all of them."""
+    face, voice = _face_png(), _wav(tmp_path)
+    blobs = {"f" * 64: face, "v" * 64: voice}
+    said = []
+
+    async def read_blob(db, sha):
+        return blobs[sha]
+
+    async def generate_voice(db, text, reference, reference_path=None):
+        said.append(text)
+        return _wav(tmp_path, 2), "local"
+    from app.services import voice_factory
+    monkeypatch.setattr(tb, "_read_blob", read_blob)
+    monkeypatch.setattr(voice_factory, "generate_voice", generate_voice)
+    monkeypatch.setattr(tb, "hear", lambda wav: None)
+    monkeypatch.setattr(tb, "tidy_silence", lambda wav: wav)
+    line = ("Look who finally showed up, the guy who thinks sats grow on trees and the moon is made of cheese. "
+            "I am not buying it, not today, not ever, and you can tell your friends I said so because I mean it.")
+    clip = run(tb.render(None, "f" * 64, "v" * 64, {"x": 0.5, "y": 0.67, "w": 0.2}, line))
+    assert len(said) >= 2 and " ".join(said).split() == line.split(), said
+    out = tmp_path / "clip.mp4"
+    out.write_bytes(clip)
+    dur = float(subprocess.run(["ffprobe", "-v", "error", "-show_entries", "format=duration", "-of", "csv=p=0",
+                                str(out)], capture_output=True, text=True).stdout.strip())
+    assert dur >= 2 * len(said) - 0.5, f"the clip is {dur:.1f}s for {len(said)} two-second pieces"
