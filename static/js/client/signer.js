@@ -797,7 +797,7 @@ window.PCSignerFactory = function(dep){
        * The cost is a longer pairing URI and therefore a denser QR (384 → 777 encoded characters).
        * That is the right trade: a QR that pairs quickly and then refuses half the app is worse than
        * one that takes a moment longer to scan. */
-      const kinds=[0,1,3,4,5,6,7,13,1018,1059,1068,1111,1311,1621,2003,9734,10000,10002,10003,
+      const kinds=[0,1,3,4,5,6,7,13,1018,1059,1068,1111,1311,1621,2003,9734,10000,10002,10003,10009,
                    10050,10063,10096,10133,13303,20013,20014,22242,24242,27235,30003,30023,30024,
                    30078,30311,30388,30617,30618,31923,33302];
       const perms=['get_public_key','nip04_encrypt','nip04_decrypt','nip44_encrypt','nip44_decrypt']
