@@ -126,6 +126,7 @@ public class MainActivity extends BridgeActivity {
         super.onResume();
         try { place.poster.app.sms.AppVisible.set(true); } catch (Throwable ignored) { }
         SystemBars.apply(this);
+        recheckSystemBars();
     }
 
     /** Android drops immersive mode after a dialog, a permission prompt or a trip to another app. */
@@ -133,6 +134,26 @@ public class MainActivity extends BridgeActivity {
     public void onWindowFocusChanged(boolean hasFocus) {
         super.onWindowFocusChanged(hasFocus);
         if (hasFocus) SystemBars.apply(this);
+        if (hasFocus) recheckSystemBars();
+    }
+
+    /* THE TOP CLEARANCE IS RE-MEASURED EVERY TIME THE APP COMES BACK, NOT ONLY WHEN THE WEBVIEW HEARS ABOUT IT.
+     * "Ouch man, it go back! ... when I close the app and enter again, it go back to normal": the clearance
+     * is decided by measuring the root insets, and it was re-decided only when insets reached the WebView or
+     * its own layout changed. One measurement taken while the status bar was momentarily hidden -- coming
+     * back from the full-screen photo picker, a permission prompt, another app -- set the top margin to 0,
+     * and nothing about the WebView changed after that, so nothing measured it again until a restart. Now a
+     * resume or a regained focus re-measures at once and again after the bars have settled. */
+    static volatile int barChecks = 0;   // read by the device test: a resume must re-measure
+    private int barTypes = 0;
+    private void recheckSystemBars() {
+        try {
+            final android.view.View wv = getBridge() == null ? null : getBridge().getWebView();
+            if (wv == null || barTypes == 0) return;
+            wv.post(() -> clearSystemBars(wv, barTypes));
+            wv.postDelayed(() -> clearSystemBars(wv, barTypes), 400);
+            wv.postDelayed(() -> clearSystemBars(wv, barTypes), 1200);
+        } catch (Throwable ignored) { }
     }
 
     @Override
@@ -329,6 +350,7 @@ public class MainActivity extends BridgeActivity {
             final android.view.View wv = getBridge().getWebView();
             final int types = androidx.core.view.WindowInsetsCompat.Type.systemBars()
                     | androidx.core.view.WindowInsetsCompat.Type.displayCutout();
+            barTypes = types;
             // The bars still arrive here where they arrive at all -- consumed, so the page does not
             // also pad for them -- but the margin is decided by MEASURING (SystemBarClearance), because
             // on some devices (Galaxy S25, One UI 8) the page is drawn under the status bar while this
@@ -349,6 +371,7 @@ public class MainActivity extends BridgeActivity {
 
     /** Move the WebView clear of whatever system bar overlaps it NOW, measured in window coordinates. */
     private void clearSystemBars(android.view.View v, int types) {
+        barChecks++;
         try {
             androidx.core.view.WindowInsetsCompat root = androidx.core.view.ViewCompat.getRootWindowInsets(v);
             android.view.ViewGroup.LayoutParams raw = v.getLayoutParams();
