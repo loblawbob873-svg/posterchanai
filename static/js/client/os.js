@@ -2669,7 +2669,10 @@
     const done=(el,label)=>{ el.classList.add('done'); const ok=el.querySelector('.ok'); if(ok) ok.hidden=false; turn.did.push(label); };
     box.querySelector('[data-ai-copy]').onclick=()=>{ try{ PC().copyValue(answer); }catch(_){ } };
     box.querySelector('[data-ai-continue]').onclick=()=>{
-      const fresh=[w,..._aiContextWins].filter((x,k,a)=>wins.includes(x)&&a.indexOf(x)===k).map(windowAIContext);
+      /* THE WINDOW ITSELF IS ALWAYS IN, whether or not it is one of this page's desktop windows. A
+       * popped-out window (every app on PosterChanOS) is not in `wins`, so filtering it with the
+       * connected ones sent NO window and Continue always failed: "There is no window to ask about". */
+      const fresh=[w,..._aiContextWins].filter((x,k,a)=>a.indexOf(x)===k&&(x===w||wins.includes(x))).map(windowAIContext);
       _aiSteps(w,panel,fresh,'Continue: look at the window as it is now, check what the steps I took did, and propose what comes next.',composer,turns,isTerm);
     };
     const taskLine=t=>t.text+(t.due?' (due '+t.due+')':'')+(t.who?' — '+t.who:'');
