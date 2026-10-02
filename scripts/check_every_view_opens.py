@@ -95,14 +95,26 @@ async def run(simulate=None):
                                  "--user-data-dir=" + profile, "about:blank"],
                                 stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
         try:
+            # Chrome 153 writes DevToolsActivePort only for --remote-debugging-port=0. Given a FIXED port
+            # (PC_CHECK_PORT, which checkall always sets) it listens and writes nothing -- so this check
+            # SKIPPED on every suite run and the screen-by-screen gate verified nothing. Ask the port.
+            port = None
             for _ in range(150):
                 if Path(profile, "DevToolsActivePort").exists():
+                    port = Path(profile, "DevToolsActivePort").read_text().splitlines()[0]
                     break
+                if CDP_PORT:
+                    try:
+                        async with httpx.AsyncClient(timeout=1) as h:
+                            if (await h.get(f"http://127.0.0.1:{CDP_PORT}/json/version")).status_code == 200:
+                                port = str(CDP_PORT)
+                                break
+                    except Exception:
+                        pass
                 await asyncio.sleep(.1)
-            else:
+            if not port:
                 print("SKIP chrome never published its DevTools port")
                 raise SystemExit(2)
-            port = Path(profile, "DevToolsActivePort").read_text().splitlines()[0]
             async with httpx.AsyncClient() as h:
                 pages = (await h.get(f"http://127.0.0.1:{port}/json")).json()
             url = next(p for p in pages if p.get("type") == "page")["webSocketDebuggerUrl"]
