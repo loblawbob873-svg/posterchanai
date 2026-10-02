@@ -58,20 +58,27 @@ class Bridge(unittest.TestCase):
                 missing.append(name)
         self.assertEqual(missing, [], f"handlers that do not check the sender: {missing}")
 
+    def _launcher(self):
+        """The ONE launcher (launchCommand), which both the start menu's IPC and startup apps call."""
+        i = self.main.index("async function launchCommand(argv, opts)")
+        return self.main[i:self.main.index("ipcMain.handle('pc:wm:launch'", i)]
+
+    def test_the_start_menu_launches_through_the_one_launcher(self):
+        i = self.main.index("ipcMain.handle('pc:wm:launch'")
+        self.assertIn("fsGuard(e); return launchCommand(argv, opts);", self.main[i:i + 160])
+
     def test_candidate_paths_are_resolved_against_the_filesystem(self):
         """Only this side can look. Gentoo installs firefox as /usr/bin/firefox-bin, not
         /usr/bin/firefox — a launcher in the page cannot know that, and a hardcoded path that does
         not exist starts nothing, silently, which is indistinguishable from a broken launcher."""
-        i = self.main.index("'pc:wm:launch'")
-        body = self.main[i:i + 1400]
+        body = self._launcher()
         self.assertIn("accessSync", body, "candidates are not checked for existence")
         self.assertIn("not installed", body, "a program that is absent is not reported as absent")
 
     def test_launch_takes_an_argv_array_not_a_command_string(self):
         """A string would have to reach a shell to be useful, and then a file name with a space in
         it is an injection."""
-        i = self.main.index("'pc:wm:launch'")
-        body = self.main[i:i + 700]
+        body = self._launcher()
         self.assertIn("Array.isArray", body, "a command string would be handed to a shell")
         self.assertNotIn("exec(", body)
         self.assertNotIn("shell: true", body)
@@ -97,13 +104,11 @@ class Bridge(unittest.TestCase):
         self.assertNotIn("exec(", helper)
 
     def test_a_launch_that_never_appears_is_not_reported_as_launched(self):
-        i = self.main.index("'pc:wm:launch'")
-        body = self.main[i:self.main.index("ipcMain.handle('pc:apps:list'", i)]
+        body = self._launcher()
         self.assertIn("waitForWindow", body)
 
     def test_running_firefox_private_window_is_matched_by_new_surface_identity(self):
-        i = self.main.index("'pc:wm:launch'")
-        body = self.main[i:self.main.index("ipcMain.handle('pc:apps:list'", i)]
+        body = self._launcher()
         self.assertIn("firefoxBefore", body)
         self.assertIn("waitForNewWindow(firefoxBefore", body)
         self.assertIn("/firefox/i.test(String(w.app||''))", body)
