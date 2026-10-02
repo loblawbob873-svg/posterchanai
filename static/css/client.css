@@ -8615,6 +8615,7 @@ body.native:not(.desktop).term-view .tty-bar{padding-top:env(safe-area-inset-top
 .osw-ai-chips .who{color:var(--neon2);border:1px solid color-mix(in srgb,var(--neon2) 50%,transparent)}
 .osw-ai-steps{display:grid;gap:8px;margin-top:12px}
 .osw-ai-auto{display:flex;flex-wrap:wrap;align-items:center;gap:8px 12px;margin-top:12px}.osw-ai-auto label{display:flex;align-items:center;gap:6px;font-size:12px;color:var(--muted)}
+.ai-target{outline:2px solid var(--neon)!important;outline-offset:2px;box-shadow:0 0 0 4px rgba(var(--accent-rgb),.25)!important;transition:outline-color .15s}
 .osw-ai-step{padding:9px 10px;border:1px solid rgba(var(--accent-rgb),.28);border-left:3px solid var(--neon);border-radius:9px;background:rgba(0,0,0,.28);transition:border-color .15s,opacity .15s}
 .osw-ai-step-h{display:flex;align-items:center;gap:8px}
 .osw-ai-step-h .ic{display:inline-grid;place-items:center;width:22px;height:22px;border-radius:6px;color:#04121a;background:var(--neon);font-size:12px}

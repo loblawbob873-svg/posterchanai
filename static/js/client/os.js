@@ -2635,6 +2635,26 @@
   const _AI_CTL_MAX=80;
   // A label's OWN words: one wrapped around a list would otherwise read "Colour RedBlue".
   const _aiLabelText=l=>{ const c=l.cloneNode(true); c.querySelectorAll('select,textarea,input,button').forEach(x=>x.remove()); return c.textContent; };
+  /* The heading a control sits under -- what tells "Save" in Profile from "Save" in Relays. */
+  /* The heading a control sits under -- what tells "Save" in Profile from "Save" in Relays. The NEAREST
+   * one ABOVE it: a section with two headings has two parts, and the first heading is not everyone's. */
+  const _AI_HEAD='h1,h2,h3,h4,legend,.os-set-cardhead b';
+  function _aiNear(el,root){
+    try{
+      let branch=el;
+      for(let n=el.parentElement; n; branch=n, n=n.parentElement){
+        let pick=null;
+        for(const c of n.children){
+          if(c===branch) break;
+          if(c.matches(_AI_HEAD)) pick=c;
+          else if(c.matches('header')){ const h=c.querySelector(_AI_HEAD); if(h) pick=h; }
+        }
+        if(pick){ const t=String(pick.textContent||'').replace(/\s+/g,' ').trim(); if(t) return t.slice(0,40); }
+        if(n===root) break;
+      }
+    }catch(_){ }
+    return '';
+  }
   function _aiControls(w){
     const map=new Map(), list=[];
     if(!w || w.native!=null) return {list,map};
@@ -2667,19 +2687,60 @@
       else if(role==='checkbox'||role==='radio') value=(el.checked||el.getAttribute('aria-checked')==='true')?'on':'off';
       const ref=list.length+1;
       map.set(ref,el);
-      list.push({ref,role,label,value:String(value||'').replace(/\s+/g,' ').trim().slice(0,80)});
+      list.push({ref,role,label,value:String(value||'').replace(/\s+/g,' ').trim().slice(0,80),near:_aiNear(el,root)});
     }
     return {list,map};
   }
   /* What may not happen without a person saying yes, EVERY time: anything that leaves the machine,
    * destroys something, spends money or ends a session. Read off the control's own label. */
   const _AI_RISKY=/\b(send|post|publish|reply|repost|boost|zap|pay|buy|purchase|transfer|tip|delete|remove|erase|wipe|trash|discard|clear|reset|block|mute|report|unfollow|sign ?out|log ?out|leave|uninstall|shut ?down|restart|format|submit|confirm)\b/i;
-  async function _aiAct(st,map){
+  /* The largest thing in the window that actually scrolls -- the window body itself is often fixed and
+   * a list inside it is what holds the rows. */
+  function _aiScroller(w){
+    const root=w.body||w.el; let best=null, most=0;
+    for(const n of [root,...root.querySelectorAll('*')]){
+      if(n.closest && n.closest('.osw-ai-panel')) continue;
+      const extra=n.scrollHeight-n.clientHeight;
+      if(extra>40 && n.clientHeight>80){ const st=getComputedStyle(n).overflowY; if((st==='auto'||st==='scroll'||n===document.scrollingElement) && extra>most){ most=extra; best=n; } }
+    }
+    return best;
+  }
+  /* "Do all" waits for the window to STOP CHANGING after each step -- a fixed pause was either too long
+   * or too short (a search that answers in 2 s was read back half-drawn). Bounded either way. */
+  function _aiSettle(w,quiet,max){
+    const root=w.body||w.el; quiet=quiet||300; max=max||3000;
+    return new Promise(res=>{
+      let t=0; const end=setTimeout(done,max);
+      const mo=new MutationObserver(()=>{ clearTimeout(t); t=setTimeout(done,quiet); });
+      function done(){ clearTimeout(t); clearTimeout(end); try{ mo.disconnect(); }catch(_){ } res(); }
+      try{ mo.observe(root,{subtree:true,childList:true,characterData:true,attributes:true}); }catch(_){ }
+      t=setTimeout(done,quiet);
+    });
+  }
+  function _aiFlash(el,on){ try{ if(el) el.classList.toggle('ai-target',!!on); }catch(_){ } }
+  async function _aiAct(st,map,w,undo){
+    if(st.do==='scroll'){
+      const sc=w&&_aiScroller(w); if(!sc){ PC().toast('Nothing in this window scrolls'); return false; }
+      sc.scrollBy({top:(st.text==='up'?-1:1)*Math.round(sc.clientHeight*0.8),behavior:'auto'}); return true;
+    }
     const el=map.get(st.ref);
     if(!el || !el.isConnected){ PC().toast('“'+st.target+'” is not on screen any more — press Continue'); return false; }
     if(st.do==='click' && _AI_RISKY.test(st.target) &&
        !(await PC().uiConfirm('Let AI press “'+st.target+'”?',{ok:'Press it'}))) return false;
+    // Enter SUBMITS -- in a composer that is "send". Only a search/filter box goes without asking.
+    if(st.do==='press' && st.text==='Enter' && !/search|find|filter|query|url|address/i.test(st.target+' '+(el.type||'')) &&
+       !(await PC().uiConfirm('Let AI press Enter in “'+st.target+'”?',{ok:'Press Enter'}))) return false;
     try{ el.scrollIntoView({block:'nearest'}); }catch(_){ }
+    _aiFlash(el,true); setTimeout(()=>_aiFlash(el,false),700);
+    if(undo && (st.do==='fill'||st.do==='choose'||st.do==='toggle'))
+      undo.push({el,editable:!!el.isContentEditable,value:el.isContentEditable?el.textContent:el.value,checked:!!el.checked,label:st.target});
+    if(st.do==='press'){
+      try{ el.focus(); }catch(_){ }
+      for(const type of ['keydown','keypress','keyup'])
+        el.dispatchEvent(new KeyboardEvent(type,{key:st.text,code:st.text,bubbles:true,cancelable:true}));
+      if(st.text==='Enter' && el.form && typeof el.form.requestSubmit==='function' && el.tagName==='INPUT'){ try{ el.form.requestSubmit(); }catch(_){ } }
+      return true;
+    }
     if(st.do==='click'){ el.click(); return true; }
     if(st.do==='fill'){
       try{ el.focus(); }catch(_){ }
@@ -2706,9 +2767,23 @@
     }
     return false;
   }
-  const _AI_ACTS=new Set(['click','fill','choose','toggle']), _AI_KEEP_GOING_MAX=5;
+  const _AI_ACTS=new Set(['click','fill','choose','toggle','press','scroll']), _AI_KEEP_GOING_MAX=5;
+  /* Put back what AI changed in fields, lists and checkboxes, newest first. A click cannot be taken back
+   * (it may have saved, sent or navigated) and the button says so rather than pretending. */
+  function _aiUndo(stack){
+    let n=0;
+    while(stack.length){
+      const u=stack.pop(), el=u.el; if(!el || !el.isConnected) continue;
+      if(u.editable) el.textContent=u.value;
+      else if(el.type==='checkbox'||el.type==='radio'){ if(!!el.checked!==u.checked) el.click(); }
+      else{ const proto=el.tagName==='TEXTAREA'?HTMLTextAreaElement.prototype:el.tagName==='SELECT'?HTMLSelectElement.prototype:HTMLInputElement.prototype;
+            const d=Object.getOwnPropertyDescriptor(proto,'value'); d&&d.set?d.set.call(el,u.value):(el.value=u.value); }
+      el.dispatchEvent(new Event('input',{bubbles:true})); el.dispatchEvent(new Event('change',{bubbles:true})); n++;
+    }
+    return n;
+  }
   /* The app's own SVG icons, not Unicode glyphs: a glyph the font lacks draws as an empty box. */
-  const _STEP_ICON={click:'i-next',fill:'i-pen',choose:'i-next',toggle:'i-check',command:'i-terminal',insert:'i-pen',note:'i-note',calendar:'i-calendar',open:'i-expand',search:'i-search'};
+  const _STEP_ICON={click:'i-next',fill:'i-pen',choose:'i-next',toggle:'i-check',press:'i-next',scroll:'i-menu',command:'i-terminal',insert:'i-pen',note:'i-note',calendar:'i-calendar',open:'i-expand',search:'i-search'};
   const _stepIcon=k=>`<svg class="ic" aria-hidden="true"><use href="#${_STEP_ICON[k]||'i-next'}"></use></svg>`;
   /* ONE REQUEST AT A TIME PER PANEL. The answer arrives with what the model PROPOSES -- tasks and
    * steps -- each a button; nothing runs, sends, saves or opens until the person presses it. "Continue"
@@ -2728,7 +2803,8 @@
     if(w.aiPanel!==panel) return;                       // closed while it was thinking
     if(error){ box.className='osw-ai-answer error'; box.innerHTML=`<p>${enc(error)}</p>`; return; }
     const answer=String(res.answer||''), tasks=Array.isArray(res.tasks)?res.tasks:[];
-    const steps=(Array.isArray(res.steps)?res.steps:[]).filter(st=>!_AI_ACTS.has(st.do)||ctl.map.has(st.ref));
+    const steps=(Array.isArray(res.steps)?res.steps:[]).filter(st=>!_AI_ACTS.has(st.do)||st.do==='scroll'||ctl.map.has(st.ref));
+    const undo=panel._aiUndoStack||(panel._aiUndoStack=[]);
     const acts=steps.filter(st=>_AI_ACTS.has(st.do));
     const turn={q:instruction,a:answer.slice(0,800),did:[]}; turns.push(turn);
     const term=isTerm && window.PCTerm && window.PCTerm.connected && window.PCTerm.connected();
@@ -2741,10 +2817,11 @@
           <span class="osw-ai-chips">${t.due?`<i class="due">${enc(t.due)}</i>`:''}${t.who?`<i class="who">${enc(t.who)}</i>`:''}
           ${t.due?`<button class="btn btn-ghost small" data-task-cal="${i}" title="Add to Calendar">📅 Add</button>`:''}</span></li>`).join('')}</ul></div>`:'')+
       (acts.length?`<div class="osw-ai-auto"><button class="btn btn-neon small" data-ai-all>Do all ${acts.length} step${acts.length>1?'s':''}</button>
-        <label><input type="checkbox" data-ai-keep ${panel._aiKeep?'checked':''}> Keep going until it is done</label></div>`:'')+
+        <label><input type="checkbox" data-ai-keep ${panel._aiKeep?'checked':''}> Keep going until it is done</label>
+        <button class="btn btn-ghost small" data-ai-undo ${undo.length?'':'hidden'} title="Puts back fields, lists and checkboxes. Presses cannot be taken back.">Undo changes</button></div>`:'')+
       (steps.length?`<div class="osw-ai-steps">${steps.map((st,i)=>`<div class="osw-ai-step" data-step="${i}" data-do="${enc(st.do)}">
           <div class="osw-ai-step-h"><span class="ic">${_stepIcon(st.do)}</span><b>${enc(st.label)}</b><span class="ok" hidden>✓ done</span></div>
-          ${_AI_ACTS.has(st.do)?(st.do==='fill'||st.do==='choose'?`<div class="osw-ai-step-t">${enc(String(st.text).slice(0,280))}</div>`:''):st.do==='command'?`<pre><code>${enc(st.text)}</code></pre>`:st.do==='open'?'':`<div class="osw-ai-step-t">${enc(String(st.text).slice(0,280))}${String(st.text).length>280?'…':''}</div>`}
+          ${_AI_ACTS.has(st.do)?(st.do==='fill'||st.do==='choose'||st.do==='press'?`<div class="osw-ai-step-t">${enc(String(st.text).slice(0,280))}</div>`:''):st.do==='command'?`<pre><code>${enc(st.text)}</code></pre>`:st.do==='open'?'':`<div class="osw-ai-step-t">${enc(String(st.text).slice(0,280))}${String(st.text).length>280?'…':''}</div>`}
           <div class="osw-ai-step-b">${
             _AI_ACTS.has(st.do)?'<button class="btn btn-neon small" data-act>Do it</button>':
             st.do==='command'?(term?`<button class="btn btn-neon small" data-run>▶ Run</button><button class="btn btn-ghost small" data-type>Type it</button>`:'<span class="muted small">Open this window’s terminal session to run it</span><button class="btn btn-ghost small" data-copy>Copy</button>'):
@@ -2776,12 +2853,22 @@
     });
     const doStep=async(card,st)=>{
       if(card.classList.contains('done')) return true;
-      const ok=await _aiAct(st,ctl.map);
-      if(ok) done(card,st.do==='fill'?'filled “'+st.target+'” with "'+String(st.text).slice(0,60)+'"':
+      const ok=await _aiAct(st,ctl.map,w,undo);
+      const ub=box.querySelector('[data-ai-undo]'); if(ub) ub.hidden=!undo.length;
+      if(ok) done(card,st.do==='scroll'?'scrolled '+st.text:st.do==='press'?'pressed '+st.text+' in “'+st.target+'”':st.do==='fill'?'filled “'+st.target+'” with "'+String(st.text).slice(0,60)+'"':
                          st.do==='choose'?'chose "'+st.text+'" in “'+st.target+'”':
                          st.do==='toggle'?(st.on?'ticked':'unticked')+' “'+st.target+'”':'pressed “'+st.target+'”');
       return ok;
     };
+    const ub=box.querySelector('[data-ai-undo]');
+    if(ub) ub.onclick=()=>{ const n=_aiUndo(undo); ub.hidden=true; turn.did.push('undid '+n+' change'+(n===1?'':'s'));
+      PC().toast(n?'Put back '+n+' change'+(n===1?'':'s'):'Nothing to put back'); };
+    /* WHAT A STEP WILL TOUCH, SHOWN BEFORE IT IS PRESSED: hovering or focusing a step outlines its control. */
+    box.querySelectorAll('.osw-ai-step').forEach(card=>{
+      const st=steps[+card.dataset.step]; const el=st&&st.ref?ctl.map.get(st.ref):null; if(!el) return;
+      card.addEventListener('mouseenter',()=>_aiFlash(el,true)); card.addEventListener('mouseleave',()=>_aiFlash(el,false));
+      card.addEventListener('focusin',()=>_aiFlash(el,true)); card.addEventListener('focusout',()=>_aiFlash(el,false));
+    });
     const keep=box.querySelector('[data-ai-keep]');
     if(keep) keep.onchange=()=>{ panel._aiKeep=keep.checked; };
     const all=box.querySelector('[data-ai-all]');
@@ -2791,7 +2878,7 @@
         const st=steps[+card.dataset.step];
         if(!st || !_AI_ACTS.has(st.do)) continue;
         if(!(await doStep(card,st))){ ok=false; break; }
-        await new Promise(r=>setTimeout(r,350));          // let the window react before the next step
+        await _aiSettle(w);                                // let the window finish reacting before the next step
       }
       all.disabled=false;
       if(w.aiPanel!==panel) return;

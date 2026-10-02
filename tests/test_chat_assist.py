@@ -313,3 +313,27 @@ def test_without_controls_no_action_step_is_offered_or_accepted():
                           "instruction": "do it"}, chat)
     assert '"click"' not in chat.calls[0][0]["content"]
     assert data["steps"] == [], "a click on a control nobody listed was accepted"
+
+
+def test_the_ai_can_scroll_and_press_keys_and_sees_each_controls_section():
+    """'when done, improve agent features for posterchan windows': a list that is longer than the window
+    is reached by scrolling, a search box is submitted with Enter, and two controls with the same label
+    are told apart by the section they sit in."""
+    controls = [{"ref": 1, "role": "textbox", "label": "Search", "value": "", "near": "Find people"},
+                {"ref": 2, "role": "button", "label": "Save", "near": "Profile"},
+                {"ref": 3, "role": "button", "label": "Save", "near": "Relays"}]
+    reply = json.dumps({"answer": "ok", "steps": [
+        {"do": "fill", "ref": 1, "text": "alice"},
+        {"do": "press", "ref": 1, "text": "enter"},
+        {"do": "press", "ref": 1, "text": "Delete"},
+        {"do": "scroll", "text": "down"},
+        {"do": "scroll", "text": "sideways"},
+        {"do": "press", "ref": 9, "text": "Enter"}]})
+    chat = _Chat([reply])
+    code, data, _ = _run({"action": "window_steps", "windows": [{"title": "Social", "text": "x"}],
+                          "instruction": "find alice", "controls": controls}, chat)
+    system, user = chat.calls[0][0]["content"], chat.calls[0][1]["content"]
+    assert '"press"' in system and '"scroll"' in system
+    assert '[2] button "Save" (in "Profile")' in user and '[3] button "Save" (in "Relays")' in user
+    got = [(s["do"], s["ref"], s["text"]) for s in data["steps"]]
+    assert got == [("fill", 1, "alice"), ("press", 1, "Enter"), ("scroll", 0, "down")], got

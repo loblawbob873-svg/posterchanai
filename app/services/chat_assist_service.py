@@ -214,7 +214,9 @@ STEP_KINDS = ("command", "insert", "note", "calendar", "open", "search")
 # OPERATING THE WINDOW ITSELF ("need way to interact with the current window and do stuff"): the client
 # sends the window's visible controls, numbered; a step names one of THOSE numbers and nothing else, so
 # the model can only press what is really on screen. The client asks before anything that sends/deletes.
-ACT_KINDS = ("click", "fill", "choose", "toggle")
+ACT_KINDS = ("click", "fill", "choose", "toggle", "press", "scroll")
+# Keys a "press" may send. Navigation and submit only -- nothing that edits text by itself.
+PRESS_KEYS = ("Enter", "Escape", "Tab", "ArrowDown", "ArrowUp")
 CONTROL_MAX = 80
 STEP_MAX = 4
 ACT_STEP_MAX = 8
@@ -226,7 +228,8 @@ HISTORY_MAX = 4
 
 
 def clean_controls(controls) -> list:
-    """The window's controls as the client numbered them -> [(ref, role, label, value)], validated."""
+    """The window's controls as the client numbered them -> [(ref, role, label, value, near)], validated.
+    `near` is the heading the control sits under, which is what tells two "Save" buttons apart."""
     out = []
     for c in list(controls or [])[:CONTROL_MAX]:
         if not isinstance(c, dict):
@@ -239,7 +242,7 @@ def clean_controls(controls) -> list:
         label = _clean(c.get("label"), 80)
         if ref <= 0 or not role or not label:
             continue
-        out.append((ref, role, label, _clean(c.get("value"), 80)))
+        out.append((ref, role, label, _clean(c.get("value"), 80), _clean(c.get("near"), 40)))
     return out
 
 
@@ -257,7 +260,11 @@ def build_steps_messages(context: list, instruction: str, history=None, commands
         kinds = ["\"click\": press control number \"ref\" (a button, link, tab)",
                  "\"fill\": type \"text\" into text box number \"ref\" (replaces what is there)",
                  "\"choose\": pick the option labelled \"text\" in list number \"ref\"",
-                 "\"toggle\": set checkbox number \"ref\" to \"on\": true or false"] + kinds
+                 "\"toggle\": set checkbox number \"ref\" to \"on\": true or false",
+                 "\"press\": press a key on control number \"ref\" -- text is one of " + ", ".join(PRESS_KEYS)
+                 + " (Enter submits a search box or form, Escape closes a menu or dialog)",
+                 "\"scroll\": scroll the window to see more -- text is \"down\" or \"up\"; after it, the user "
+                 "presses Continue and you see what came into view"] + kinds
     if commands:
         kinds.insert(0, "\"command\": ONE shell command for this terminal, one line; prefer read-only "
                         "commands that show what is going on; never anything destructive unless asked")
@@ -291,8 +298,9 @@ def build_steps_messages(context: list, instruction: str, history=None, commands
                         + (f"\n  The user then did: {'; '.join(did)}" if did else ""))
     user = base[1]["content"]
     if ctl:
-        user += ("\n\nControls in window 1 you can operate (number, kind, label, current value):\n"
-                 + "\n".join(f"[{r}] {role} \"{lab}\"" + (f" = \"{val}\"" if val else "") for r, role, lab, val in ctl))
+        user += ("\n\nControls in window 1 you can operate (number, kind, label, current value, the section it is in):\n"
+                 + "\n".join(f"[{r}] {role} \"{lab}\"" + (f" = \"{val}\"" if val else "")
+                              + (f" (in \"{near}\")" if near else "") for r, role, lab, val, near in ctl))
     if hist:
         user = "Earlier in this panel:\n" + "\n".join(hist) + "\n\nThe window AS IT IS NOW:\n\n" + user
     if today:
@@ -337,11 +345,19 @@ def parse_steps(text: str, commands: bool = False, want_tasks: bool = False, con
         if len(tasks) >= TASK_MAX:
             break
     steps = []
-    refs = {r: (role, lab) for r, role, lab, _ in clean_controls(controls)}
+    refs = {r: (role, lab) for r, role, lab, _v, _n in clean_controls(controls)}
     for st in raw.get("steps") or []:
         if not isinstance(st, dict):
             continue
         kind = _clean(st.get("do"), 20).lower()
+        if kind == "scroll" and refs:
+            way = str(st.get("text") or "").strip().lower()
+            if way in ("down", "up"):
+                steps.append({"do": "scroll", "ref": 0, "target": "", "label": _clean(st.get("label"), 50)
+                              or f"Scroll {way}", "text": way, "on": False})
+            if len(steps) >= ACT_STEP_MAX:
+                break
+            continue
         if kind in ACT_KINDS:
             # Only a control the client actually listed -- a number the model made up is dropped.
             try:
@@ -354,10 +370,14 @@ def parse_steps(text: str, commands: bool = False, want_tasks: bool = False, con
             txt = str(st.get("text") or "").strip()[:2000]
             if kind in ("fill", "choose") and not txt:
                 continue
+            if kind == "press":
+                txt = next((k for k in PRESS_KEYS if k.lower() == txt.lower()), "")
+                if not txt:
+                    continue
             on = st.get("on")
             on = bool(on) if isinstance(on, bool) else str(on).strip().lower() in ("1", "true", "yes", "on")
             default = {"click": f"Press “{lab}”", "fill": f"Fill “{lab}”", "choose": f"Choose in “{lab}”",
-                       "toggle": f"{'Tick' if on else 'Untick'} “{lab}”"}[kind]
+                       "toggle": f"{'Tick' if on else 'Untick'} “{lab}”", "press": f"Press {txt} in “{lab}”"}[kind]
             steps.append({"do": kind, "ref": ref, "target": lab, "label": _clean(st.get("label"), 50) or default,
                           "text": txt, "on": on})
             if len(steps) >= ACT_STEP_MAX:

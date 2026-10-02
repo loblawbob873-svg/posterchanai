@@ -96,3 +96,60 @@ def test_keep_going_reads_the_window_again_and_continues():
             "Continue did not re-read the window's controls as they are now"
         assert await b.js("window.__saved") == "Groceries"
     asyncio.run(desktop.with_browser('online', '', check))
+
+
+FORM2 = r"""(()=>{ const f=document.getElementById('feed'); const d=document.createElement('section'); d.id='t-form2';
+  d.innerHTML=`<h3>Find people</h3><input id="t-q" type="search" aria-label="Search people">
+    <h3>Post</h3><textarea id="t-body" aria-label="Message"></textarea>
+    <div id="t-list" style="height:120px;overflow:auto">${Array.from({length:60},(_,i)=>`<div style="height:30px">row ${i}</div>`).join('')}</div>`;
+  f.prepend(d); window.__searched=null; window.__sentBody=false;
+  d.querySelector('#t-q').addEventListener('keydown',e=>{ if(e.key==='Enter') window.__searched=e.target.value; });
+  d.querySelector('#t-body').addEventListener('keydown',e=>{ if(e.key==='Enter') window.__sentBody=true; }); })()"""
+
+AI2 = r"""(()=>{ window.__aiCalls=[]; window.__confirms=[];
+  const P=window.__PC; P.ensureAiSession=async()=>{};
+  P.uiConfirm=async(msg)=>{ window.__confirms.push(msg); return false; };
+  const real=P.authFetch; P.authFetch=async(url,opts)=>{ if(!String(url).includes('/api/chat-assist')) return real(url,opts);
+    const body=JSON.parse(opts.body||'{}'); window.__aiCalls.push(body);
+    const ref=l=>((body.controls||[]).find(c=>c.label===l)||{}).ref;
+    const steps=[{do:'fill',ref:ref('Search people'),target:'Search people',label:'Type the name',text:'alice',on:false},
+                 {do:'press',ref:ref('Search people'),target:'Search people',label:'Search',text:'Enter',on:false},
+                 {do:'scroll',ref:0,target:'',label:'Scroll down',text:'down',on:false},
+                 {do:'fill',ref:ref('Message'),target:'Message',label:'Write',text:'hello',on:false},
+                 {do:'press',ref:ref('Message'),target:'Message',label:'Send it',text:'Enter',on:false}];
+    return new Response(JSON.stringify({ok:true,answer:'Doing it.',tasks:[],steps}),{status:200}); }; })()"""
+
+
+@pytest.mark.skipif(not Path('/opt/google/chrome/chrome').exists(), reason='Chrome required')
+def test_the_ai_searches_scrolls_shows_its_target_and_can_undo():
+    async def check(b):
+        await b.call('Emulation.setDeviceMetricsOverride', dict(width=1280, height=900, deviceScaleFactor=1, mobile=False))
+        await desktop.login(b)
+        await b.js("try{ if(window.PCOS && PCOS.isOn()) PCOS.exit(); }catch(_){}")
+        await b.js(FORM2)
+        await b.js(AI2)
+        await b.js("(()=>{const btn=document.createElement('button');document.body.appendChild(btn);PCOS.pageWindowAI(btn,{});})()")
+        await b.until("!!document.querySelector('.osw-ai-panel textarea')")
+        await b.js("(()=>{const p=document.querySelector('.osw-ai-panel');p.querySelector('textarea').value='find alice';p.querySelector('[data-ai-ask]').click();})()")
+        await b.until("!!document.querySelector('.osw-ai-panel [data-ai-all]')")
+        sent = await b.js("JSON.stringify(window.__aiCalls[0].controls)")
+        assert '"near":"Find people"' in sent and '"near":"Post"' in sent, sent[:600]
+        # Hovering a step outlines the control it will touch.
+        await b.js("document.querySelector('.osw-ai-panel .osw-ai-step').dispatchEvent(new MouseEvent('mouseenter'))")
+        assert await b.js("document.getElementById('t-q').classList.contains('ai-target')"), "no outline on the step's target"
+        await b.js("document.querySelector('.osw-ai-panel .osw-ai-step').dispatchEvent(new MouseEvent('mouseleave'))")
+        await b.js("document.querySelector('.osw-ai-panel [data-ai-all]').click()")
+        await b.until("window.__confirms.length>0")
+        await asyncio.sleep(.4)
+        st = await b.js("({q:window.__searched,top:document.getElementById('t-list').scrollTop,body:document.getElementById('t-body').value,"
+                        "sent:window.__sentBody,conf:window.__confirms,undoShown:!document.querySelector('.osw-ai-panel [data-ai-undo]').hidden})")
+        assert st["q"] == "alice", "Enter in a search box did not submit it"
+        assert st["top"] > 0, "scroll did not move the list"
+        assert st["body"] == "hello" and st["sent"] is False, "Enter in a message box was pressed without asking"
+        assert len(st["conf"]) == 1 and "Enter" in st["conf"][0], st["conf"]
+        assert st["undoShown"], "no Undo after AI changed fields"
+        await b.js("document.querySelector('.osw-ai-panel [data-ai-undo]').click()")
+        await asyncio.sleep(.2)
+        assert await b.js("[document.getElementById('t-q').value, document.getElementById('t-body').value]") == ["", ""], \
+            "Undo did not put the fields back"
+    asyncio.run(desktop.with_browser('online', '', check))
