@@ -1462,3 +1462,28 @@ def test_stopping_encodings_of_a_revived_session_is_not_a_500(api):
     assert c.post('/jellyfin/Sessions/Playing/Progress', headers=h, json=body).status_code == 204
     response = c.delete('/jellyfin/Videos/ActiveEncodings', headers=h, params={'PlaySessionId': play_id})
     assert response.status_code == 204
+
+
+def test_roku_3_2_4_song_favorites_and_artist_song_count(api):
+    """Reviewed against Jellyfin Roku 3.2.4 (scripts/check_jellyfin_upstream.py): the audio mini-player
+    gained a Favorite button that toggles by the id the song was LISTED under (a per-session alias
+    here), and the artist page counts songs with /Items?ArtistIds=…&IncludeItemTypes=Audio&Limit=0.
+    We serve no artists, so that count must be 0 -- not every song in the library."""
+    c = api.client
+    song = {'id': '9' * 32, 'name': 'A Song', 'folder': 'Album', 'path': 'secret/song.mp3',
+            'duration': 30, 'video': False, 'tracks': []}
+    api.catalog['page:movies'].append(song)
+    api.catalog['library:' + api.library['id']]['count'] = 3
+    login = connect(api)
+    h = headers(login)
+    listed = c.get('/jellyfin/Items', headers=h, params={'Recursive': 'true', 'IncludeItemTypes': 'Audio'}).json()
+    assert listed['TotalRecordCount'] == 1, listed
+    alias = listed['Items'][0]['Id']
+    fav = c.post('/jellyfin/Users/' + login['User']['Id'] + '/FavoriteItems/' + alias, headers=h)
+    assert fav.status_code == 200 and fav.json()['IsFavorite'], fav.text
+    again = c.get('/jellyfin/Items', headers=h, params={'Recursive': 'true', 'IncludeItemTypes': 'Audio'}).json()
+    assert again['Items'][0]['UserData']['IsFavorite'], again['Items'][0]['UserData']
+    count = c.get('/jellyfin/Items', headers=h, params={'ArtistIds': 'f' * 32, 'IncludeItemTypes': 'Audio',
+                                                        'Recursive': 'true', 'EnableTotalRecordCount': 'true',
+                                                        'Limit': '0'}).json()
+    assert count['TotalRecordCount'] == 0 and count['Items'] == [], count

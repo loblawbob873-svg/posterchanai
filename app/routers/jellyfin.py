@@ -791,6 +791,15 @@ async def browse(request: Request, auth=Depends(authenticate), db=Depends(get_db
     result.sort(key=lambda entry: (not entry['IsFolder'], media.natural(entry['Name'])))
     if types:
         result = [item for item in result if item['Type'] in types]
+    # Artist filters (Roku 3.2.4 counts an artist's songs with ArtistIds + Limit=0). Matched against the
+    # item's own ArtistItems -- empty here, since this server models no artists -- so the answer is 0
+    # songs, never "every song in the library" from a filter that was silently ignored.
+    artists = set()
+    for key in ('ArtistIds', 'AlbumArtistIds', 'ContributingArtistIds'):
+        artists |= set(query(request, key, '').replace('-', '').lower().split(',')) - {''}
+    if artists:
+        result = [item for item in result
+                  if {str(a.get('Id', '')).replace('-', '').lower() for a in item.get('ArtistItems') or []} & artists]
     if favorites:
         result = [item for item in result if item.get('UserData', {}).get('IsFavorite')]
     if 'isplayed' in filters:
