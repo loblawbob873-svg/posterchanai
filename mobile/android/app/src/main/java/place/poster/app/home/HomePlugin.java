@@ -169,9 +169,20 @@ public class HomePlugin extends Plugin {
                     getContext().getSystemService(android.content.Context.TELEPHONY_SERVICE);
             voice = tm != null && tm.isVoiceCapable();
         } catch (Throwable ignored) { }
+        double inches = 0;
+        try {
+            android.util.DisplayMetrics dm = new android.util.DisplayMetrics();
+            android.view.WindowManager wm = (android.view.WindowManager)
+                    getContext().getSystemService(android.content.Context.WINDOW_SERVICE);
+            if (wm != null) {
+                wm.getDefaultDisplay().getRealMetrics(dm);
+                inches = FormFactor.inches(dm.widthPixels, dm.heightPixels, dm.xdpi, dm.ydpi);
+            }
+        } catch (Throwable ignored) { }
         JSObject o = new JSObject();
-        o.put("form", FormFactor.classify(voice));
+        o.put("form", FormFactor.classify(voice, inches));
         o.put("voiceCapable", voice);
+        o.put("inches", String.format(java.util.Locale.ROOT, "%.1f", inches));
         try { o.put("swDp", getContext().getResources().getConfiguration().smallestScreenWidthDp); }
         catch (Throwable ignored) { }
         call.resolve(o);

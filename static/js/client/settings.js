@@ -574,6 +574,10 @@ window.PCSettingsFactory = function(dep){
           <button class="btn btn-ghost small" id="us-mail-add"><svg class="ic b-ic" aria-hidden="true"><use href="#i-plus"></use></svg>Add email account</button>
         </div>
         <div class="us-pane" data-pane="telegram">
+          <div id="us-tg-here-row" class="fld" style="margin-bottom:10px">
+            <label class="fld" style="flex-direction:row;justify-content:space-between;align-items:center;margin:0">Always show Telegram on this device<label class="switch"><input type="checkbox" id="us-tg-here"><span class="slider"></span></label></label>
+            <div class="muted small" id="us-tg-here-note">The Telegram client is shown on computers and tablets and hidden on phones. Turn this on to use it here whatever this device is taken for.</div>
+          </div>
           <div class="${s.telegram_chat_id?'us-ok':'muted small'}" id="us-tg-status">${s.telegram_chat_id?('<svg class="ic st-ico ok" aria-hidden="true"><use href="#i-check"></use></svg> Linked (chat '+enc(String(s.telegram_chat_id))+')'):'<svg class="ic st-ico warn" aria-hidden="true"><use href="#i-warn"></use></svg> Not linked — generate a key below and send it to your bot.'}</div>
           <div class="set-actions">
             <button class="btn btn-ghost small" id="us-tg-key">Generate link key</button>
@@ -1117,6 +1121,12 @@ window.PCSettingsFactory = function(dep){
     usLoadKeys();   // populate API Keys immediately (not only on tab click)
     $('#us-mail-add').onclick=()=>{ _usMail.push({email:'',imap_server:'',imap_port:993,smtp_server:'',smtp_port:587,password:''}); usRenderMail(); };
     // Telegram link key
+    /* "I need telegram to be available on android tablets": the per-device answer, kept on this device. */
+    { const here=$('#us-tg-here'), T=window.PCTelegram;
+      if(here && T && T.setHere){ here.checked=!!(T.chosenHere&&T.chosenHere());
+        const note=$('#us-tg-here-note');
+        if(note && !here.checked && !T.isPhone()) note.textContent='Telegram is already shown on this device.';
+        here.onchange=()=>{ const shown=T.setHere(here.checked); toast(shown?'Telegram is in your menu on this device':'Telegram follows the automatic rule on this device'); }; } }
     { const k=$('#us-tg-key'); if(k) k.onclick=async()=>{ const box=$('#us-tg-keybox'); box.textContent='generating…';
         try{ const d=await fetch('/api/telegram/generate-key',{method:'POST'}).then(r=>r.json());
           if(!d.key){ box.textContent='failed: '+enc(d.detail||''); return; }

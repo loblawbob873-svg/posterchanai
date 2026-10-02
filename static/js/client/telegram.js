@@ -23,7 +23,12 @@
    * answers from the device's own configuration (HomeScreen.formFactor: can it place a call?), which
    * no zoom, rotation or split screen moves. The size rule stays for browsers and APKs too old to say. */
   let form = '';   // 'phone' | 'tablet' once the APK has answered
+  /* THE PERSON HAS THE LAST WORD. Whatever a rule decides, "Use Telegram on this device" on the phone
+   * screen turns it on HERE (this device's storage, not the account: a phone and a tablet differ). */
+  const HERE_KEY = 'pc.tg.onThisDevice';
+  const chosenHere = () => { try{ return localStorage.getItem(HERE_KEY) === '1'; }catch(_){ return false; } };
   function isPhone(){
+    if(chosenHere()) return false;
     if(form) return form === 'phone';
     try{ return Math.min(screen.width || 9999, screen.height || 9999) < PHONE_MAX_SHORT_SIDE; }catch(_){ return false; }
   }
@@ -154,7 +159,15 @@
     if(isPhone()){
       feed.innerHTML = `<div class="tg-app tg-empty"><div class="tg-card"><h3>Telegram lives on your phone</h3>
         <p>This client is for computers and tablets. On a phone, the Telegram app you already have keeps your
-        notifications single and your account in one place.</p></div></div>`;
+        notifications single and your account in one place.</p>
+        <p class="muted small">Is this a tablet, or do you want it here anyway?</p>
+        <button class="btn btn-neon" data-tg-here>Use Telegram on this device</button></div></div>`;
+      const here = feed.querySelector('[data-tg-here]');
+      if(here) here.onclick = () => {
+        try{ localStorage.setItem(HERE_KEY, '1'); }catch(_){}
+        try{ document.documentElement.classList.remove('pc-no-tg'); }catch(_){}
+        render(); setTimeout(background, 0);
+      };
       return;
     }
     feed.innerHTML = '<div class="tg-app"><div class="tg-boot">CONNECTING…</div></div>';
@@ -610,7 +623,14 @@
     if(window.__PC_BOOTED) go(); else document.addEventListener('pc-app-ready', go, { once:true });
   }
 
-  const api_ = { render, isPhone, onEvent, _state:st, react, _askForm:askForm, _setForm:f => { form = f; } };
+  /* The switch in Settings → Telegram: on = this device always gets the client, off = back to the rule. */
+  function setHere(on){
+    try{ if(on) localStorage.setItem(HERE_KEY, '1'); else localStorage.removeItem(HERE_KEY); }catch(_){}
+    try{ document.documentElement.classList.toggle('pc-no-tg', isPhone()); }catch(_){}
+    if(!isPhone()) setTimeout(background, 0);
+    return !isPhone();
+  }
+  const api_ = { render, isPhone, onEvent, setHere, chosenHere, _state:st, react, _askForm:askForm, _setForm:f => { form = f; } };
   window.PCTelegram = api_;
   if(typeof module !== 'undefined') module.exports = api_;
 })();

@@ -78,7 +78,10 @@ def test_without_an_answer_the_size_rule_still_applies():
     assert got["small"]["hidden"] is True and got["small"]["notice"] is True, got
 
 
-def test_the_phone_rule_is_whether_the_device_can_place_a_call():
+def test_the_phone_rule_is_the_physical_screen_with_the_voice_radio_as_tiebreak():
+    """It used to be the voice radio alone, which called an LTE Samsung Galaxy Tab a phone ("I need
+    telegram to be available on android tablets"). Size decides; the radio settles the 6.5-7.5" band
+    and an unknown size. The per-device table is test_telegram_shows_on_tablets.py."""
     import shutil, subprocess, tempfile, os
     javac, java = shutil.which("javac"), shutil.which("java")
     if not javac or not java:
@@ -88,11 +91,13 @@ def test_the_phone_rule_is_whether_the_device_can_place_a_call():
         pkg = Path(tmp) / "place/poster/app/home"; pkg.mkdir(parents=True)
         (pkg / "FormFactor.java").write_text(src.read_text())
         (Path(tmp) / "H.java").write_text("public class H{public static void main(String[] a){"
-            "System.out.println(place.poster.app.home.FormFactor.classify(true)+\" \"+place.poster.app.home.FormFactor.classify(false));}}")
+            "System.out.println(place.poster.app.home.FormFactor.classify(true)+\" \"+place.poster.app.home.FormFactor.classify(false)"
+            "+\" \"+place.poster.app.home.FormFactor.classify(true, 11.0));}}")
         r = subprocess.run([javac, "-d", tmp, str(pkg / "FormFactor.java"), str(Path(tmp) / "H.java")], capture_output=True, text=True)
         assert r.returncode == 0, r.stderr
         r = subprocess.run([java, "-cp", tmp, "H"], capture_output=True, text=True)
-    assert r.stdout.split() == ["phone", "tablet"], r.stdout
+    assert r.stdout.split() == ["phone", "tablet", "tablet"], r.stdout
     plugin = (src.parent / "HomePlugin.java").read_text()
-    method = plugin[plugin.index("public void formFactor("):][:900]
-    assert "isVoiceCapable()" in method and "FormFactor.classify(voice)" in method
+    start = plugin.index("public void formFactor(")
+    method = plugin[start:plugin.index("call.resolve(o);", start)]
+    assert "isVoiceCapable()" in method and "getRealMetrics" in method and "FormFactor.classify(voice, inches)" in method
