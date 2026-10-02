@@ -2210,6 +2210,33 @@
     return nip29MembershipTags(all);
   }
   async function nip29RelayQuery(p,relay,filters,timeout=8000,signal=null){if(!p.relayQueryFrom||!p.verifyRelayEvents)throw new Error('verified listed relay queries are unavailable');const events=await p.relayQueryFrom([relay],filters,{timeout,max:1,exact:true,signal,purpose:'concord nip29 room',allowBlocked:true,failureCooldown:1800000})||[];return await p.verifyRelayEvents(events);}
+  /* LEAVING A NIP-29 GROUP TAKES IT OFF THE ACCOUNT'S kind-10009, or every other device (and this one,
+   * on a fresh browser) re-adds it from that list. Edits the NEWEST list it can read and removes only
+   * this group's tag -- public and, when it decrypts, private; content it cannot decrypt is carried
+   * through byte for byte. No list read means nothing is written: an empty read rewritten would drop
+   * every other group (the replaceable-document wipe). */
+  async function forgetNip29Group(p,viewer,room){
+    if(!p.signTemplate||!p.relayPublishTo||!room||!room.groupId)return false;
+    const filters=[{kinds:[10009],authors:[viewer.pubkey],limit:8}];
+    let cached=[];try{cached=window.Store&&window.Store.query?window.Store.query(filters)||[]:[];}catch(_){}
+    const pool=p.relayQuery?await Promise.resolve(p.relayQuery(filters,8000)).catch(()=>[]):[];
+    const far=p.relayQueryFrom?await Promise.resolve(p.relayQueryFrom(CORD_RELAYS,filters,{timeout:8000,max:12,exact:true,purpose:'concord nip29 leave'})).catch(()=>[]):[];
+    const all=[...new Map([...(cached||[]),...(pool||[]),...(far||[])].filter(e=>e&&e.id).map(e=>[e.id,e])).values()];
+    const events=p.verifyRelayEvents?await p.verifyRelayEvents(all):[];
+    const event=(events||[]).filter(e=>e.kind===10009&&e.pubkey===viewer.pubkey).sort((a,b)=>Number(b.created_at)-Number(a.created_at)||String(a.id).localeCompare(String(b.id)))[0];
+    if(!event)return false;
+    const relay=normalizeRelay(room.relay),hit=t=>Array.isArray(t)&&t[0]==='group'&&String(t[1]||'').trim()===room.groupId&&normalizeRelay(t[2])===relay;
+    const tags=(event.tags||[]).filter(t=>!hit(t));
+    let content=String(event.content||''),changed=tags.length!==(event.tags||[]).length;
+    if(content.trim()&&!/\?iv=/.test(content)&&p.nip44dec&&p.nip44enc){
+      try{const priv=JSON.parse(await p.nip44dec(viewer.pubkey,content));
+        if(Array.isArray(priv)&&priv.some(hit)){content=await p.nip44enc(viewer.pubkey,JSON.stringify(priv.filter(t=>!hit(t))));changed=true;}}catch(_){}
+    }
+    if(!changed)return true;
+    const now=Math.max(Math.floor(Date.now()/1000),Number(event.created_at)+1);
+    const ev=await p.signTemplate({kind:10009,created_at:now,tags,content});
+    return !!(await p.relayPublishTo([...new Set([...(p.relayUrls?.()||[]),...CORD_RELAYS])],ev));
+  }
   async function nip29Metadata(p,relay,groupIds=[],signal=null){
     const filter={kinds:[39000],limit:200};if(groupIds.length)filter['#d']=groupIds;
     const events=await nip29RelayQuery(p,relay,[filter],8000,signal),newest=new Map(),requested=new Set(groupIds);
@@ -2221,7 +2248,7 @@
     const signal=discoveryAbortController&&discoveryAbortController.signal;
     try{const membership=await nip29Memberships(p,viewer,signal,allowActive);if((signal&&signal.aborted)||(state.community!=null&&!allowActive))return;const byRelay=new Map();for(const g of membership.groups){if(!byRelay.has(g.relay))byRelay.set(g.relay,[]);byRelay.get(g.relay).push(g);}
       const found=[];for(const [relay,listed] of byRelay){if(state.community!=null&&!allowActive)return;let metas=[];try{metas=await nip29Metadata(p,relay,listed.map(g=>g.id),signal);}catch(_){}if(state.community!=null&&!allowActive)return;const metaById=new Map(metas.map(m=>[m.id,m]));for(const g of listed){const meta=metaById.get(g.id)||g;found.push({...meta,id:g.id,relay,name:g.name||meta.name||g.id});}}recovered=found.length>0;
-      if(found.length){const rooms=saved();let changed=false;for(const g of found){const identity='nip29:'+g.relay+'#'+g.id,i=rooms.findIndex(r=>roomIdentity(r)===identity),room={protocol:'nip29',communityId:identity,naddr:identity,groupId:g.id,relay:g.relay,name:g.name||g.id,description:g.description||'',icon:g.icon||'',channels:[{name:'general',id:g.id,private:false}],local:false};if(i<0){rooms.push(room);changed=true;}else if(rooms[i].protocol==='nip29'&&JSON.stringify(rooms[i])!==JSON.stringify({...rooms[i],...room})){rooms[i]={...rooms[i],...room};changed=true;}}if(changed){save(rooms);backgroundRender();}}
+      if(found.length){const rooms=saved();let changed=false;for(const g of found){const identity='nip29:'+g.relay+'#'+g.id;/* A group LEFT on this device stays left even while the account's kind-10009 still lists it ("it goes away in communities, then comes back"): this pass runs every 60-120s. */if(wasLocallyLeft(viewer.pubkey,{communityId:identity,naddr:identity}))continue;const i=rooms.findIndex(r=>roomIdentity(r)===identity),room={protocol:'nip29',communityId:identity,naddr:identity,groupId:g.id,relay:g.relay,name:g.name||g.id,description:g.description||'',icon:g.icon||'',channels:[{name:'general',id:g.id,private:false}],local:false};if(i<0){rooms.push(room);changed=true;}else if(rooms[i].protocol==='nip29'&&JSON.stringify(rooms[i])!==JSON.stringify({...rooms[i],...room})){rooms[i]={...rooms[i],...room};changed=true;}}if(changed){save(rooms);backgroundRender();}}
     }catch(e){console.warn('NIP-29 membership sync failed',e);}finally{nip29Busy=false;clearTimeout(nip29RetryTimer);if(state.community==null)nip29RetryTimer=setTimeout(()=>syncNip29Memberships(p,p.viewer?p.viewer():viewer),recovered?60000:120000);}
   }
   function foldNip29History(events,p,groupId){const scoped=events.filter(e=>(e.tags||[]).some(t=>t[0]==='h'&&t[1]===groupId)).sort((a,b)=>Number(a.created_at)-Number(b.created_at)),deletions=[],deleted=new Set(),byId=new Map(),reactions=[];for(const e of scoped){if(e.kind===5){deletions.push(e);continue;}if(e.kind===7){reactions.push(e);continue;}if(![9,10,11,12,1111].includes(e.kind))continue;const pr=p.profOf?p.profOf(e.pubkey):{};byId.set(e.id,{id:e.id,pubkey:e.pubkey,by:pr.display_name||pr.name||e.pubkey.slice(0,12)+'…',text:e.content,at:Number(e.created_at)*1000,kind:e.kind,tags:e.tags||[],reactions:{},reactionIds:{},remote:true});}const reactionById=new Map(reactions.map(e=>[e.id,e]));for(const deletion of deletions)for(const t of deletion.tags||[])if(t[0]==='e'){const target=byId.get(t[1])||reactionById.get(t[1]);if(target&&target.pubkey===deletion.pubkey)deleted.add(t[1]);}for(const id of deleted)byId.delete(id);for(const e of reactions){if(deleted.has(e.id))continue;const target=((e.tags||[]).find(t=>t[0]==='e')||[])[1],m=byId.get(target);if(!m)continue;const emoji=e.content==='+'?'👍':e.content||'👍';(m.reactions[emoji]||(m.reactions[emoji]=[])).push(e.pubkey);(m.reactionIds[emoji]||(m.reactionIds[emoji]={}))[e.pubkey]=e.id;}for(const m of byId.values())if(m.kind===1111){const target=byId.get(((m.tags||[]).find(t=>t[0]==='e')||[])[1]);if(target)m.reply={id:target.id,by:target.by,text:target.text};}return [...byId.values()].sort((a,b)=>a.at-b.at);}
@@ -2890,7 +2917,11 @@
     // Decided BEFORE the guestbook says "leave", so a leave that is going to fail tells nobody.
     const wireId=cordListIdOrEmpty(room.cord?.bundle?.community_id)||cordListIdOrEmpty(room.communityId)||cordListIdOrEmpty(cid);
     const removedAt=Date.now(),leftRef=String(room.url||''),leftNaddr=String(room.naddr||'');
-    if(!wireId){ rememberLeftCommunity(viewer.pubkey,room,removedAt); return true; }
+    if(!wireId){
+      rememberLeftCommunity(viewer.pubkey,room,removedAt);
+      if(room.protocol==='nip29') try{ await forgetNip29Group(p,viewer,room); }catch(_){ /* the ledger above still keeps it off this device */ }
+      return true;
+    }
     // CORD-02 §5: say so on the guestbook first -- after the keys are gone it cannot be wrapped.
     await publishGuestbook(p,room,'leave');
     await cordWriteMembership(p,list=>{

@@ -109,3 +109,9 @@ def test_a_room_or_entry_without_a_32_byte_id_never_blocks_leaving():
     by its naddr, and one malformed entry in the stored membership list, each made Leave throw --
     the second also made every membership read throw, hiding every joined community."""
     _runtime("concord_leave_bad_key_runtime.mjs", "concord leave bad key runtime ok")
+
+
+def test_a_left_nip29_group_stays_left():
+    """'I just left a community, it goes away in communities, then comes back': the NIP-29 membership
+    pass (every 60-120 s) re-added every group the account's kind-10009 still listed."""
+    _runtime("concord_nip29_leave_runtime.mjs", "concord nip29 leave runtime ok")

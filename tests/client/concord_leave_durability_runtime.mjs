@@ -152,4 +152,22 @@ rooms = JSON.parse(d.localStorage.getItem('pc.concord.invites') || '[]');
 if (!rooms.some(r => r.communityId === COMMUNITY))
   fail('a deliberate re-join was swallowed by the old tombstone');
 
+/* ---- "it goes away in communities, then comes back": the SAME device, right after Leave, reads a
+ * relay that has not received the tombstone yet (it answers with the old join only). */
+{
+  relay.splice(0, relay.length);
+  const e = boot();
+  e.localStorage.setItem('pc.concord.invites', JSON.stringify([room]));
+  if (!(await e.PC.persistArmadaMembership(api(), room))) fail('stale scenario: could not join');
+  const stale = relay.slice();
+  await e.PC.leaveArmadaMembership(api(), room);
+  e.localStorage.setItem('pc.concord.invites',
+    JSON.stringify(e.PC.removeCommunityByIdentity(JSON.parse(e.localStorage.getItem('pc.concord.invites')), COMMUNITY).rooms));
+  relay.splice(0, relay.length, ...stale);
+  await e.PC.syncArmadaMemberships(api(), { pubkey: OWNER });
+  e.PC.recoverOwnedInvite(api(), { ...announcement });
+  if (JSON.parse(e.localStorage.getItem('pc.concord.invites') || '[]').length)
+    fail('a relay that had not seen the leave yet put the community straight back');
+}
+
 console.log('concord leave durability runtime ok');
