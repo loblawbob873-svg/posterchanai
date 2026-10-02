@@ -9,7 +9,7 @@
  * arrives through `dep`. tests/test_client_module_deps.py proves every name resolves.
  */
 window.PCNotifsFactory = function(dep){
-  const S = dep.state;   // live app.js bindings: S.GUEST, S.LOGO, S.ME, S.VIEW, S._aiToken, S._apkUpdate, S._newBuild, S._notifEpoch
+  const S = dep.state;   // live app.js bindings: S.GUEST, S.LOGO, S.ME, S.VIEW, S._aiToken, S._apkUpdate, S._newBuild, S._notifEpoch, S._updBadge
   const {
     $, $$, FOLLOWERS, _fetchTimeout, _instanceBase, _notifCtxId, _notifRouteViaDesktop,
     _rightbarShown, _standalone, _tipNote, applySobLive, emojiName, enc, ensureAiSession, fmtSats,
@@ -329,7 +329,11 @@ window.PCNotifsFactory = function(dep){
     // (_newBuild || _apkUpdate) — NOT the separate _updBadge, which cleared on view and left the badge
     // showing +1 with no matching row in the rail ("a number with no notification"). Now they can't disagree:
     // the badge shows the update iff the row is there, and it clears when you actually apply the update.
-    }).length + ((S._newBuild||S._apkUpdate)?1:0)
+    // …and only until Notifications has been OPENED (`_updBadge`, cleared by markNotifsRead): a desktop
+    // whose bundle is older than the server keeps that row until the app is updated, so counting the ROW
+    // pinned the bell at 1 however often it was clicked ("notification bell stuck at 1 despite clicking on
+    // it many times"). The row stays in the list; it just stops being unread once seen, like any other.
+    }).length + ((S._newBuild||S._apkUpdate)&&S._updBadge?1:0)
       // Unread DMs light the bell as well: a message is a notification to the person it is for. The
       // Notifications screen shows them as one row that opens Messages (notifview _dmNotifHtml), so the
       // bell never counts something the screen behind it cannot show.

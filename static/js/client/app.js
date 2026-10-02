@@ -10755,6 +10755,7 @@
       get _apkUpdate(){ return _apkUpdate; },
       get _dmUnread(){ try{ return _dmUnread; }catch(_){ return 0; } },   // read before its `let` runs → 0, never a TDZ throw
       get _newBuild(){ return _newBuild; },
+      get _updBadge(){ return _updBadge; },
       get _notifEpoch(){ return _notifEpoch; },
     },
     $, $$, FOLLOWERS, _fetchTimeout, _instanceBase, _notifCtxId, _notifRouteViaDesktop,
