@@ -566,3 +566,36 @@ def test_the_system_prompt_of_a_random_reply_is_the_personality(listener, monkey
     user = msgs[-1]["content"].lower()
     for w in _TONE_WORDS:
         assert w not in user, f"tone word {w!r} in the user turn"
+
+
+def _listener_with(monkeypatch, words):
+    monkeypatch.syspath_prepend(BOTS)
+    monkeypatch.setenv("NOSTR_NSEC", "11" * 32)
+    monkeypatch.setenv("NOSTR_TALK", "1")
+    if words is None:
+        monkeypatch.delenv("NOSTR_TALK_MAX_WORDS", raising=False)
+    else:
+        monkeypatch.setenv("NOSTR_TALK_MAX_WORDS", str(words))
+    sys.modules.pop("nostrListener", None)
+    return importlib.import_module("nostrListener")
+
+
+def test_a_real_limit_asks_for_a_real_answer_not_one_quip(monkeypatch):
+    """'the reply talking bot replies are usually 3-6 seconds, and just feels too short, never really
+    good'. The fever bot was set to 25 words and still got 3-6 s clips: 'ONE short sentence' was obeyed
+    literally. A limit worth a reply asks for a few natural sentences of about that length."""
+    p = _listener_with(monkeypatch, 25)._talk_prompt("what do you think of the fed?")
+    assert "ONE short sentence" not in p
+    assert "two to four" in p and "about 25 words" in p and "never more than 25" in p
+
+
+def test_the_default_is_a_reply_not_a_quip(monkeypatch):
+    mod = _listener_with(monkeypatch, None)
+    assert mod._TALK_MAX_WORDS == 40
+    assert "about 40 words" in mod._talk_prompt("hi")
+
+
+def test_the_backstop_does_not_cut_an_answer_it_asked_for():
+    from app.services import talkbot_service as tb
+    sixty = " ".join(["word"] * 59) + " end."
+    assert tb.clean_text(sixty).endswith("end."), "a 60-word reply was cut mid-sentence"

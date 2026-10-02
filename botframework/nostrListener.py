@@ -186,10 +186,12 @@ _TALK_TOKEN = (os.getenv("NOSTR_TALK_TOKEN", "") or "").strip()
 # Talking ONLY: never a text reply. A render that fails is skipped rather than answered in text, and
 # the command features (search, images, media tools, narration) are off -- every answer is the face.
 _TALK_ONLY = _TALK_ON and (os.getenv("NOSTR_TALK_ONLY", "") or "").strip() in ("1", "true", "yes", "on")
+# 40, not 15: "the reply talking bot replies are usually 3-6 seconds, and just feels too short, never
+# really good". A 15-word line is a 4-second clip; 40 words is ~15 s of speech -- an actual answer.
 try:
-    _TALK_MAX_WORDS = max(3, min(60, int(os.getenv("NOSTR_TALK_MAX_WORDS", "15") or 15)))
+    _TALK_MAX_WORDS = max(3, min(80, int(os.getenv("NOSTR_TALK_MAX_WORDS", "40") or 40)))
 except ValueError:
-    _TALK_MAX_WORDS = 15
+    _TALK_MAX_WORDS = 40
 
 
 def _talk_prompt(prompt: str) -> str:
@@ -198,8 +200,13 @@ def _talk_prompt(prompt: str) -> str:
         return prompt
     # Do NOT say it will be a video or a talking picture: told that, models narrate it ("Here's a
     # talking head of Jonny Fever:") instead of answering in character (fever, 2026-09-26 19:11).
-    return (f"{prompt}\n\n(Reply in character with ONE short sentence of at most {_TALK_MAX_WORDS} words. "
-            f"Plain words only: no links, hashtags, emojis, lists, quotation marks or stage directions.)")
+    plain = "Plain words only: no links, hashtags, emojis, lists, quotation marks or stage directions."
+    if _TALK_MAX_WORDS < 12:
+        return f"{prompt}\n\n(Reply in character with ONE short sentence of at most {_TALK_MAX_WORDS} words. {plain})"
+    # "ONE short sentence" was obeyed literally even with a 25-word limit (the fever bot): every answer
+    # came back as a 3-6 second quip. Ask for a natural reply of about the length allowed instead.
+    return (f"{prompt}\n\n(Reply in character the way you would actually say it out loud: two to four "
+            f"natural sentences, about {_TALK_MAX_WORDS} words, never more than {_TALK_MAX_WORDS}. {plain})")
 
 
 # Only a preamble that INTRODUCES something (a line break or an opening quote follows the colon):

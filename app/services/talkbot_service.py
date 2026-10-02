@@ -30,9 +30,10 @@ logger = logging.getLogger(__name__)
 
 MAX_FACE_BYTES = 12 * 1024 * 1024
 MAX_VOICE_BYTES = 40 * 1024 * 1024
-# A reply is SHORT: speech costs ~10x realtime on the GPU, and the render queue is shared with every
-# Meme Builder user. The bot is asked for a few words; this is the backstop if the model rambles.
-MAX_CHARS = 220
+# Speech costs ~10x realtime on the GPU and the render queue is shared with every Meme Builder user, so
+# the bot is asked for a bounded reply (NOSTR_TALK_MAX_WORDS, default 40, at most 80). This is only the
+# backstop if the model rambles -- sized for 80 words, since 220 chars cut a 40-word answer mid-sentence.
+MAX_CHARS = 600
 
 
 def token(bot_name: str) -> str:
