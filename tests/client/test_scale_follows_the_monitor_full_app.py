@@ -83,3 +83,24 @@ def test_one_monitor_one_size_whatever_the_window():
     assert m["phone"]["zoom"] == 1, ("the phone layout changed", m)
     for name, r in m.items():
         assert abs(r["app"] - r["vh"]) <= 1, (f"{name}: the page is {r['app']}px in a {r['vh']}px window", m)
+
+
+def test_the_head_script_leaks_no_globals():
+    """Its top-level `var`s once became page globals, and the next classic script declaring
+    `let h`/`const s` threw "Identifier has already been declared" -- 14 browser tests caught it."""
+    import json as _json
+    import re as _re
+    html = (Path(__file__).resolve().parents[2] / "templates/client.html").read_text()
+    script = next(m.group(1) for m in _re.finditer(r"<script>(.*?)</script>", html, _re.S) if "--screen-scale" in m.group(1))
+    js = ("const vm=require('vm');const ctx={screen:{width:1920,height:1080},innerWidth:960,innerHeight:900,devicePixelRatio:1,"
+          "document:{documentElement:{style:{setProperty(k,v){ctx.set=[k,v];}}}}};ctx.window=ctx;vm.createContext(ctx);"
+          "vm.runInContext(" + _json.dumps(script) + ",ctx);"
+          "const leaked=['s','w','h','r','m','z','sc'].filter(k=>Object.prototype.hasOwnProperty.call(ctx,k));"
+          "process.stdout.write(JSON.stringify({set:ctx.set,leaked}));")
+    out = subprocess.run(["node", "-e", js], capture_output=True, text=True)
+    assert out.returncode == 0, out.stderr[-600:]
+    got = _json.loads(out.stdout)
+    # A browser keeps a global `var` and a later top-level `let` of the same name apart only by
+    # throwing; node's sandbox does not throw, so what is checked is the cause: no globals at all.
+    assert got["leaked"] == [], "the head script leaked page globals: %s" % got["leaked"]
+    assert got["set"] == ["--screen-scale", "0.77"], got

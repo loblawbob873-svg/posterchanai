@@ -22,9 +22,13 @@
          Cached locally on every theme change/settings load; the Nostr-stored value re-syncs on login. -->
     <!-- The desktop size tier from the MONITOR, before first paint (client.css "THE SCALE COMES FROM THE
          MONITOR"). Mirrors the CSS tiers exactly; a resize never changes `screen`, so neither does the size. -->
-    <script>try{var s=screen,w=s.width||0,h=s.height||0,r=window.devicePixelRatio||1,m=window.matchMedia&&matchMedia('(hover:hover) and (pointer:fine)').matches,z;
+    <!-- A FUNCTION, so nothing leaks: top-level `var`s here are page globals, and a later top-level
+         `let h`/`const s` in any classic script then throws "Identifier has already been declared".
+         The larger of screen and window, because a window cannot be wider than its monitor -- a
+         smaller `screen` is an emulated/headless one (800x600) and must not shrink the page. -->
+    <script>(function(){try{var sc=screen,w=Math.max(sc.width||0,innerWidth||0),h=Math.max(sc.height||0,innerHeight||0),r=window.devicePixelRatio||1,m=!!(window.matchMedia&&matchMedia('(hover:hover) and (pointer:fine)').matches),z;
       if(w>=3500&&h>=1800)z=1.25;else if(w>1920)z=1;else if(w>=1400&&r>=1.2&&m)z=1;else if(w>1600)z=.77;else if(w>1366)z=.72;else z=.67;
-      if(w)document.documentElement.style.setProperty('--screen-scale',String(z));}catch(e){}</script>
+      if(w)document.documentElement.style.setProperty('--screen-scale',String(z));}catch(e){}})();</script>
     <script>try{var d='{{ default_theme|default("cyberpunk") }}';var t=localStorage.getItem('pc_theme')||d;if(t!=='cyberpunk')document.documentElement.setAttribute('data-theme',t);}catch(e){}</script>
     <!-- Avatars/media: send no Referer (many image CDNs 403 a cross-origin referrer). The http:// →
          https:// upgrade is the Content-Security-Policy RESPONSE HEADER (render_client_shell), never a
