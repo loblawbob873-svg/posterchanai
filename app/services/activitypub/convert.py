@@ -27,7 +27,9 @@ _URL_RE = re.compile(r"https?://[^\s<>\"']+")
 # it showed as an npub on the fediverse": the bare npub went out as 63 characters of text. A bare one
 # must stand on its own -- never inside a URL, a path or a word -- and be long enough to be real.
 _NOSTR_REF_RE = re.compile(r"(?:nostr:|(?<![\w/:@#.=?&%-]))((?:npub1|nprofile1|note1|nevent1|naddr1)[023456789acdefghjklmnpqrstuvwxyz]{50,})", re.I)
-_HASHTAG_RE = re.compile(r"(?<![\w/#&])#([A-Za-z0-9_]{1,64})\b")
+# A hashtag needs at least one letter or underscore, as on Mastodon: "Nostr's #1 'Bad Actor'" in a
+# profile was federated as a link to /tags/1, and "#2" in "item #2" would be a tag too.
+_HASHTAG_RE = re.compile(r"(?<![\w/#&])#((?=[A-Za-z0-9_]*[A-Za-z_])[A-Za-z0-9_]{1,64})\b")
 _IMAGE_EXT = re.compile(r"\.(?:jpe?g|png|gif|webp|avif)(?:[?#]|$)", re.I)
 _VIDEO_EXT = re.compile(r"\.(?:mp4|webm|mov|m4v)(?:[?#]|$)", re.I)
 _AUDIO_EXT = re.compile(r"\.(?:mp3|ogg|oga|opus|m4a|wav|flac)(?:[?#]|$)", re.I)

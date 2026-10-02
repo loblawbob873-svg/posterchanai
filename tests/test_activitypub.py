@@ -3430,3 +3430,55 @@ def test_a_slow_import_keeps_what_resolved_inside_its_budget(world, monkeypatch)
                                                                "acct": "x@slow.example"}], "https://pleroma.example"))
     assert _t.monotonic() - t < 5, "the import waited on a server that never answers"
     assert [p["acct"] for p in people] == ["user1@mastodon.example"], people
+
+
+def test_a_profile_edit_reaches_every_follower_with_the_new_name_and_picture(world, monkeypatch):
+    """'make sure that profile updates federate'. The plan step was tested (kind 0 -> Update); this
+    drives the WHOLE pass: the relay hands the delivery tick a member's new kind 0, and the follower's
+    inbox must receive an Update whose actor document carries the NEW name, picture and banner -- not
+    the copy the actor had before the edit."""
+    from app.services import nostr_store
+    _with_follower(world)
+    old = member_post(json.dumps({"name": "Alice Old", "picture": "https://img.example/old.png"}), kind=0,
+                      created=1_700_000_001)
+    new = member_post(json.dumps({"name": "Alice New", "about": "now with a banner",
+                                  "picture": "https://img.example/new.png", "banner": "https://img.example/b.jpg"}),
+                      kind=0, created=1_700_000_100)
+    world["relay"][old["id"]] = old
+
+    async def ws_query(port, filters, strict=False, **kw):
+        out = []
+        for f in filters:
+            hit = [e for e in world["relay"].values()
+                   if (not f.get("kinds") or e["kind"] in f["kinds"])
+                   and (not f.get("authors") or e["pubkey"] in f["authors"])
+                   and (not f.get("ids") or e["id"] in f["ids"])
+                   and e["created_at"] >= f.get("since", 0) and e["created_at"] <= f.get("until", 1 << 62)]
+            out += sorted(hit, key=lambda e: -e["created_at"])[: f.get("limit", 500)]
+        return out
+    monkeypatch.setattr(nostr_store, "_ws_query", ws_query)
+    world["docs"]["pcai:ap:cursor"] = {"since": 1_700_000_050}
+    world["relay"][new["id"]] = new                      # the edit lands
+    run(outbox.tick())
+    updates = [s for s in world["sent"] if s["activity"]["type"] == "Update"]
+    assert updates, ("a profile edit was never sent to the fediverse", [s["activity"]["type"] for s in world["sent"]])
+    # Every Update sent carries the CURRENT actor (an older kind 0 re-read by the trailing window
+    # describes the same person, so it must not send the old name back out).
+    assert {u["inbox"] for u in updates} == {"https://mastodon.example/inbox"}
+    assert all(u["activity"]["object"]["name"] == "Alice New" for u in updates)
+    person = updates[-1]["activity"]["object"]
+    assert person["type"] in ("Person", "Service") and person["id"] == f"{BASE}/ap/users/alice"
+    assert person["name"] == "Alice New", person.get("name")
+    assert (person.get("icon") or {}).get("url") == "https://img.example/new.png", person.get("icon")
+    assert (person.get("image") or {}).get("url") == "https://img.example/b.jpg", person.get("image")
+
+
+def test_a_number_after_a_hash_is_not_a_hashtag():
+    """A federated bio read "Nostr's #1 'Bad Actor'" with #1 linked to /tags/1. Mastodon requires a
+    letter in a hashtag; so do we -- while real tags, mixed tags and underscores still link."""
+    html_ = convert.content_html({"content": "Nostr's #1 fan, item #2, #nostr and #web3 and #_x", "tags": []}, BASE) \
+        if hasattr(convert, "content_html") else convert._escape_with_tags("Nostr's #1 fan, item #2, #nostr and #web3 and #_x", BASE)
+    assert "/tags/1" not in html_ and "/tags/2" not in html_, html_
+    for t in ("nostr", "web3", "_x"):
+        assert f"/tags/{t}" in html_, (t, html_)
+    assert convert.hashtags({"content": "#1 #2 #nostr", "tags": []}) == ["nostr"]
