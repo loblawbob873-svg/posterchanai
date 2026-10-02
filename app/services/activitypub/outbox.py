@@ -90,7 +90,7 @@ async def resolve_pubkey(pubkey: str) -> dict:
             # the text must be exactly that: Akkoma/Pleroma recognise a mention link by comparing it to
             # the account's `url`, and our actor id (…/ap/users/…) is not it -- so every mention of one
             # of ours opened poster.place in a new tab instead of the profile inside Akkoma.
-            return {"href": href, "url": f"{config.base_url()}/users/{await actors.ap_handle(pubkey)}",
+            return {"href": href, "url": f"{config.base_url()}/@{await actors.ap_handle(pubkey)}",
                     "name": f"@{shown}@{config.domain()}"}
     row = _puppet_row(pubkey)
     # A blocked ACCOUNT (a `user@host` line, or its puppet npub on the relay blocklist) is as out of

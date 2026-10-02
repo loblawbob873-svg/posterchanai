@@ -1948,6 +1948,10 @@
     if(!p) return _entityFromQuery();
     const seg = p.split('/');
     if(/^users$/i.test(seg[0]) && seg[1]) return { kind:'user', q: seg[1] };
+    /* `/@<name>` -- the fediverse's form of the same address (and what an ActivityPub profile links
+     * to). Resolved like /users/<name>; `@name@this.domain` is accepted, the domain dropped server-side
+     * only when it IS this instance. */
+    if(/^@[^@\s]+(@[^@\s]+)?$/.test(seg[0]) && seg.length === 1) return { kind:'user', q: seg[0].slice(1) };
     /* `/r/<owner>/<repo-id>` — the READABLE address of a git repo, and the one people actually paste
      * to each other. The owner segment is whatever a human can type: an npub, a hex pubkey, or a
      * NIP-05 name this node granted (resolved server-side by the same rule). We only ever GENERATE

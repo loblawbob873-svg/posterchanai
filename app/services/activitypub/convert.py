@@ -429,7 +429,8 @@ def person(*, base: str, name: str, profile: dict, public_key_pem: str, username
         "preferredUsername": username or name,
         "name": (profile.get("display_name") or profile.get("name") or name)[:100],
         "summary": text_to_html(profile.get("about") or "", base=base, mentions={}),
-        "url": f"{base}/users/{name}",
+        # The readable address a fediverse "view profile" lands on (main.py /@{name}; /users/ still works).
+        "url": f"{base}/@{name}",
         "inbox": f"{actor}/inbox", "outbox": f"{actor}/outbox",
         "followers": f"{actor}/followers", "following": f"{actor}/following",
         "endpoints": {"sharedInbox": f"{base}/ap/inbox"},

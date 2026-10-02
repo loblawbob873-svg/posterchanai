@@ -1677,6 +1677,48 @@ async def git_repo_page(owner: str, repo: str, request: Request):
     return await render_client_shell(request, None, meta=meta)
 
 
+async def _profile_page(name: str, request: Request, path_prefix: str):
+    """The client shell for one person, with a REAL link preview when the name resolves. See
+    app/services/profile_share.py. An ActivityPub request is sent on to the actor, as /users/ does."""
+    accept = (request.headers.get("accept") or "").lower()
+    if "activity+json" in accept or "ld+json" in accept:
+        from fastapi.responses import RedirectResponse
+        from urllib.parse import quote
+        return RedirectResponse(f"/ap/users/{quote(name, safe='')}", status_code=301)
+    from app.routers.client import render_client_shell
+    meta = None
+    try:
+        from app.services import git_share, profile_share, settings_store
+        who = git_share.resolve_owner(name)
+        if who:
+            port = int(settings_store.get("nostr_relay_port", "3052") or 3052)
+            card = await profile_share.profile_card(port, who)
+            if card is not None:
+                # x-forwarded-*, not base_url: behind the proxy the upstream is plain http, and an
+                # og:url on the wrong scheme is a canonical link a crawler drops (see git_repo_page).
+                fwd_host = request.headers.get("x-forwarded-host") or request.headers.get("host") or ""
+                fwd_proto = request.headers.get("x-forwarded-proto") or request.url.scheme or "https"
+                base = (f"{fwd_proto}://{fwd_host}".rstrip("/") if fwd_host
+                        else str(request.base_url).rstrip("/"))
+                handle = name.split("@")[0] if "@" in name else name
+                meta = profile_share.og_meta(card, handle, base + path_prefix + name,
+                                             fallback_image=base + "/static/posterchan-relay.png")
+    except Exception as e:
+        logging.getLogger(__name__).warning("[profile] preview failed for %r: %s", name, e)
+    return await render_client_shell(request, None, meta=meta)
+
+
+@app.get("/@{name}", response_class=HTMLResponse)
+async def profile_at_page(name: str, request: Request):
+    """`poster.place/@<name>` -- the fediverse's own address form for a person ("any way for local
+    users to resolve their profile page like the fediverse does it?"). Registered BEFORE the
+    single-segment `/{entity}` catch-all, which would otherwise 404 it. Nothing else here starts with
+    `@`, so this can never shadow a page or be shadowed by a future one."""
+    if not name or len(name) > 128 or "/" in name:
+        raise StarletteHTTPException(status_code=404)
+    return await _profile_page(name, request, "/@")
+
+
 @app.get("/{entity}", response_class=HTMLResponse)
 async def nostr_entity_page(entity: str, request: Request):
     """Serve the Nostr client for /<npub|nprofile|note|nevent|naddr>."""
@@ -1693,10 +1735,4 @@ async def nostr_user_page(name: str, request: Request):
     It is ALSO the address the retired Pleroma used as each account's ActivityPub id, and fediverse
     servers that met it then still ask it for the actor. Answered with this HTML page, they could no
     longer read the account at all; an ActivityPub request is sent on to the actor instead."""
-    accept = (request.headers.get("accept") or "").lower()
-    if "activity+json" in accept or "ld+json" in accept:
-        from fastapi.responses import RedirectResponse
-        from urllib.parse import quote
-        return RedirectResponse(f"/ap/users/{quote(name, safe='')}", status_code=301)
-    from app.routers.client import client_app
-    return await client_app(request)
+    return await _profile_page(name, request, "/users/")
