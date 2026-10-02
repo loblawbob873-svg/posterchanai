@@ -620,6 +620,11 @@ window.PCSettingsFactory = function(dep){
             <div class="set-actions" style="margin-top:6px"><button class="btn btn-ghost small" id="us-screen-copy">Copy screen report</button></div>
             <div class="muted small">If the top of the app is cut off by the status bar, copy this and send it — it is what this phone reports about its bars and where the page sits.</div>
           </div>
+          <div id="us-scroll-row" class="fld" style="margin-top:10px">Scroll report
+            <div class="muted small" id="us-scroll-sum">Scroll the timeline until it fights you, then come back here.</div>
+            <div class="set-actions" style="margin-top:6px"><button class="btn btn-ghost small" id="us-scroll-copy">Copy scroll report</button></div>
+            <div class="muted small">If the timeline jumps or resists while you scroll, copy this and send it. It records what moved the page while your finger was on it: no post text, only positions and sizes.</div>
+          </div>
           <div id="phone-shell"></div></div>` : ''}
         <div class="us-pane" data-pane="tor">
           ${_hasNativeTor() ? `<div class="fld" id="us-ntor-row"><svg class="ic fld-ico" aria-hidden="true"><use href="#i-shield"></use></svg>Tor
@@ -1067,6 +1072,13 @@ window.PCSettingsFactory = function(dep){
           read();
           if(cp) cp.onclick=()=>read().then(()=>{ if(rep) copyValue(JSON.stringify(rep), 'screen report copied'); });
         }
+      } }
+    { const cp=$('#us-scroll-copy'), sum=$('#us-scroll-sum');
+      if(cp && window.PCScrollReport){
+        const r=window.PCScrollReport();
+        if(sum && (r.writes.length||r.resizes.length||r.shifts.length||r.jumps.length))
+          sum.textContent=`Recorded: ${r.jumps.length} jump${r.jumps.length===1?'':'s'} back up, ${r.resizes.length} card resize${r.resizes.length===1?'':'s'} above you, ${r.writes.length} scroll change${r.writes.length===1?'':'s'} by the app.`;
+        cp.onclick=()=>copyValue(JSON.stringify(window.PCScrollReport()), 'scroll report copied');
       } }
     // Hide-DM-preview toggle: persist per-device and re-render Messages so it applies immediately.
     { const hd=$('#set-hide-dm-prev'); if(hd) hd.onchange=()=>{

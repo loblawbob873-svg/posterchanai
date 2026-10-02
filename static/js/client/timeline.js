@@ -1214,3 +1214,86 @@ window.PCTimelineFactory = function(dep){
     renderTimeline,
   };
 };
+
+/* SCROLL REPORT — "scrolling down the timeline it keeps fighting and moving up", on an Android phone AND
+ * tablet; "scrolling fast shows it easier", "scrolling slow has resistance". Every desktop reproduction
+ * (touch emulation, live posts, reconnects, paging, slow images) scrolled cleanly, so this records what
+ * the DEVICE does and Settings → Phone → "Copy scroll report" hands it over. Three things can move a
+ * timeline under a finger, and each is logged with its cause:
+ *   - CODE writing #feed.scrollTop / scrollTo / scrollBy (with the calling functions);
+ *   - a card ABOVE the reading position changing height (the timeline turns scroll anchoring off, so
+ *     nothing compensates) — with what changed: an image finishing, or a card laid out for the first
+ *     time (content-visibility:auto measures cards as 420px until drawn);
+ *   - the browser's own layout-shift entries.
+ * Only recorded while a finger is down or within 1.5 s of lifting it, into small ring buffers: nothing
+ * is sent anywhere, and the report holds no post text — keys and pixel numbers only. */
+(function(){
+  'use strict';
+  if(typeof window === 'undefined' || window.PCScrollReport) return;
+  const MAX = 60, rec = { writes:[], resizes:[], shifts:[], jumps:[] };
+  let touching = false, lastTouch = 0, lastY = null, dir = 0, feed = null, ro = null, mo = null;
+  const live = () => touching || (Date.now() - lastTouch) < 1500;
+  const push = (list, row) => { list.push(Object.assign({ t: Date.now() }, row)); if(list.length > MAX) list.shift(); };
+  const callers = () => String((new Error()).stack || '').split('\n').slice(3, 7)
+      .map(l => (l.match(/at\s+([\w$.<>]+)/) || [])[1] || (l.match(/^([\w$.<>]+)@/) || [])[1] || '?').join(' < ');
+  function hookWrites(el){
+    const d = Object.getOwnPropertyDescriptor(Element.prototype, 'scrollTop');
+    if(!d || !d.set) return;
+    try{
+      Object.defineProperty(el, 'scrollTop', { configurable:true,
+        get(){ return d.get.call(this); },
+        set(v){ if(live()) push(rec.writes, { from: Math.round(d.get.call(this)), to: Math.round(v), by: callers() }); d.set.call(this, v); } });
+      for(const fn of ['scrollTo', 'scrollBy']){
+        const orig = el[fn];
+        el[fn] = function(...a){ if(live()) push(rec.writes, { fn, args: JSON.stringify(a).slice(0, 60), by: callers() }); return orig.apply(this, a); };
+      }
+    }catch(_){ }
+  }
+  const heights = new WeakMap();
+  function watchCards(){
+    const box = feed && feed.querySelector('#tl-notes');
+    if(!box || !window.ResizeObserver) return;
+    if(!ro) ro = new ResizeObserver(entries => {
+      if(!live()) return;
+      const top = feed.getBoundingClientRect().top;
+      for(const e of entries){
+        const el = e.target, bb = e.borderBoxSize && (e.borderBoxSize[0] || e.borderBoxSize);
+        const h = Math.round(bb && bb.blockSize != null ? bb.blockSize : el.offsetHeight), was = heights.get(el);   // the WHOLE box: padding and borders move the page too
+        heights.set(el, h);
+        if(was == null || was === h) continue;
+        const r = el.getBoundingClientRect();
+        if(r.bottom > top + 1) continue;                      // only cards ABOVE the reading position move it
+        const imgs = [...el.querySelectorAll('img')].filter(i => !i.classList.contains('emoji-inline'));
+        push(rec.resizes, { key: String(el.dataset.key || '').slice(0, 10), from: was, to: h, delta: h - was,
+          imgs: imgs.length, imgsDone: imgs.filter(i => i.complete).length,
+          cv: getComputedStyle(el).contentVisibility || '' });
+      }
+    });
+    for(const el of box.children) if(!heights.has(el)){ heights.set(el, null); ro.observe(el, { box:'border-box' }); }
+    if(!mo){ mo = new MutationObserver(() => watchCards()); mo.observe(box, { childList:true }); }
+  }
+  function attach(){
+    const f = document.getElementById('feed');
+    if(!f || f === feed) return;
+    feed = f; hookWrites(f);
+    let last = f.scrollTop;
+    f.addEventListener('touchstart', e => { touching = true; lastY = e.touches[0] ? e.touches[0].clientY : null; watchCards(); }, { passive:true });
+    f.addEventListener('touchmove', e => { const y = e.touches[0] ? e.touches[0].clientY : null;
+      if(y != null && lastY != null && Math.abs(y - lastY) > 2) dir = y < lastY ? 1 : -1;   // 1 = finger up = scrolling DOWN
+      lastY = y; lastTouch = Date.now(); }, { passive:true });
+    f.addEventListener('touchend', () => { touching = false; lastTouch = Date.now(); }, { passive:true });
+    f.addEventListener('scroll', () => { const now = f.scrollTop, d = now - last; last = now;
+      if(live() && dir === 1 && d < -40) push(rec.jumps, { from: Math.round(now - d), to: Math.round(now), delta: Math.round(d) }); }, { passive:true });
+  }
+  try{ new window.PerformanceObserver(list => { if(!live()) return;
+      for(const e of list.getEntries()) push(rec.shifts, { value: +e.value.toFixed(4),
+        nodes: (e.sources || []).slice(0, 3).map(s => { const n = s.node; const k = n && n.closest && n.closest('[data-key]');
+          return (k ? 'card ' + String(k.dataset.key).slice(0, 10) : (n && (n.id || n.className || n.nodeName)) || '?') + ' ' +
+            Math.round(s.previousRect.top) + '→' + Math.round(s.currentRect.top); }) }); })
+    .observe({ type:'layout-shift', buffered:false }); }catch(_){ }
+  document.addEventListener('touchstart', attach, { capture:true, passive:true });
+  window.PCScrollReport = () => ({ v: 1, ua: navigator.userAgent, w: innerWidth, h: innerHeight, dpr: devicePixelRatio,
+    zoom: getComputedStyle(document.body).zoom || '', desktop: document.body.classList.contains('os-on'),
+    cards: feed && feed.querySelector('#tl-notes') ? feed.querySelector('#tl-notes').children.length : 0,
+    writes: rec.writes, resizes: rec.resizes, shifts: rec.shifts, jumps: rec.jumps });
+})();
