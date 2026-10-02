@@ -104,7 +104,9 @@ window.PCMusicFactory = function(dep){
             try{ _musicAppNow(); if(window.PCOS && PCOS.musicChanged) PCOS.musicChanged(); }catch(_){} },
           // Accepting a share selects it, so the answer lands on the playlist itself rather than on
           // a chip that may be scrolled off the end of the bar.
-          open: key => { S._musicPl = key; paint(); } });
+          open: key => { S._musicPl = key; paint(); },
+          // A removed share is gone from the bar: back to the whole library, with the bar redrawn.
+          closed: () => { S._musicPl = null; paint(); } });
         _musicAppNow();
         return;
       }

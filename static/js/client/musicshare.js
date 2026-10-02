@@ -121,8 +121,14 @@
     if(!/^https?:\/\/[^\s"'<>]+$/i.test(srv)) srv = '';
     return { v: 1, id: String(obj.id || ''), name: String(obj.name || 'Shared music').slice(0, 120),
              from: String(obj.from || ''), srv: srv.replace(/\/+$/, ''), created: Number(obj.created) || 0,
-             updated: Number(obj.updated) || 0, tracks, tl };
+             updated: Number(obj.updated) || 0, tracks, tl,
+             src: /^[A-Za-z0-9_-]{1,64}$/.test(String(obj.src || '')) ? String(obj.src) : '' };
   }
+  /* WHICH SHARES ARE "THE SAME PLAYLIST". A share made from a playlist names it (`src`) and follows it.
+   * One made before that existed has only its name -- and re-sharing such a playlist is exactly how one
+   * person ended up with "two Matthew playlists" from their son. So: the playlist id when there is one,
+   * else the name, per sharer. */
+  const sameKey = b => b ? (b.src ? 'src:' + b.src : 'name:' + String(b.name || '').trim().toLowerCase()) : '';
   const trackCount = b => (b && (b.tl ? b.tl.n : b.tracks.length)) || 0;
 
   /* ACCEPTING A SHARE — the recipient's own decision, kept on the ACCOUNT rather than the device.
@@ -239,8 +245,22 @@
   /* The three groups every screen here is built from. A share that was accepted and then STOPPED by
    * its sharer simply stops appearing — `inShares()` no longer lists it — and the stale key in the
    * decisions is harmless, which is why nothing prunes it on a read that may have failed. */
-  const acceptedShares = () => { const a = accepted(); return inShares().filter(s => a.has(s.key)); };
-  const pendingShares  = () => { const a = accepted(), r = rejected(); return inShares().filter(s => !a.has(s.key) && !r.has(s.key)); };
+  /* A share that was folded together with older copies of itself (see loadIn) is ACCEPTED if any copy
+   * was: the answer was given to the playlist, not to one document id of it. Removed when its newest
+   * copy was rejected -- which is what "Remove" writes, for every copy. */
+  const keysOf = s => [s.key].concat(s.aliases || []);
+  const isAccepted = (s, a) => !rejected().has(s.key) && keysOf(s).some(k => (a || accepted()).has(k));
+  const acceptedShares = () => { const a = accepted(); return inShares().filter(s => isAccepted(s, a)); };
+  const pendingShares  = () => { const a = accepted(), r = rejected(); return inShares().filter(s => !keysOf(s).some(k => a.has(k)) && !r.has(s.key)); };
+  /* Take a share off MY list, every copy of it. It does not touch the sharer's document (only they can)
+   * -- it is the same "no" Reject gives an offer, so the next refresh does not bring it back. */
+  function dismiss(key){
+    const sh = _in && _in.get(key); if(!sh) return false;
+    const at = Math.floor(Date.now() / 1000), d = { ...decisions() };
+    for(const k of keysOf(sh)) d[k] = { yes: false, at };
+    _dec = _cleanDec(d); _saveLocalDec(_dec); _saveDecisions(); _changed();
+    return true;
+  }
 
   /* The recipient's library record for an added track. `keyenc` is the v1 per-file key shape the
    * drive already reads ({k, iv}, NIP-44 to self), so the player needs no new branch — and the key
@@ -342,7 +362,22 @@
       if(!body) continue;
       inb.set(key, { key, from: ev.pubkey, at: ev.created_at, body });
     }
-    _in = inb; _inOk = complete;
+    /* ONE PLAYLIST, ONE ENTRY. Copies of the same playlist from the same person fold into the NEWEST,
+     * which carries their contents; the older keys ride along as aliases so an answer given to any of
+     * them still stands ("he reshared playlist with me, now I see two Matthew playlists"). */
+    const groups = new Map();
+    for(const sh of inb.values()){
+      const g = sh.from + '|' + sameKey(sh.body);
+      if(!groups.has(g)) groups.set(g, []);
+      groups.get(g).push(sh);
+    }
+    const folded = new Map();
+    for(const list of groups.values()){
+      list.sort((a, b) => ((b.body.updated || b.at) - (a.body.updated || a.at)) || (b.at - a.at));
+      const top = Object.assign({}, list[0], { aliases: list.slice(1).map(x => x.key) });
+      folded.set(top.key, top);
+    }
+    _in = folded; _inOk = complete;
     _changed();
     return inShares();
   }
@@ -485,8 +520,17 @@
       if(!items.length) return { ok:false, error:'none of the songs could be prepared', prepFailed: failed };
       items.sort((a, b) => a._o - b._o); items.forEach(x => delete x._o);
       const at = now();
-      const body = { v:1, id: _id(), name: String((opts && opts.name) || 'Shared music').slice(0, 120),
-                     from: ME().pubkey, srv: _absSrv(), created: at, updated: at, tracks: items };
+      const name = String((opts && opts.name) || 'Shared music').slice(0, 120);
+      const src = /^[A-Za-z0-9_-]{1,64}$/.test(String((opts && opts.source) || '')) ? String(opts.source) : '';
+      /* SHARING A PLAYLIST AGAIN UPDATES THE SHARE IT ALREADY HAS -- same id, so every recipient's
+       * copy is REPLACED rather than joined by a second one, and everyone already on it gets the new
+       * songs too. Only on a complete read of my shares: a partial one cannot say there is none. */
+      const prior = src && _outOk ? _sameShare(src, name) : null;
+      const id = prior ? prior.id : _id();
+      if(prior) for(const [pk, r] of prior.to) if(!r.dead && !to.includes(pk)) to.push(pk);
+      const body = { v:1, id, name, from: ME().pubkey, srv: _absSrv(),
+                     created: (prior && prior.body && prior.body.created) || at, updated: at, tracks: items };
+      if(src) body.src = src;
       if(JSON.stringify(body).length > BODY_MAX){
         const lk = crypto.getRandomValues(new Uint8Array(32)), liv = crypto.getRandomValues(new Uint8Array(12));
         const lct = await seal(lk, liv, new TextEncoder().encode(JSON.stringify(items)));
@@ -500,12 +544,67 @@
       for(const pk of to){ (await _publishTo(body, pk) ? sent : bad).push(pk); }
       if(sent.length){
         if(!_out) _out = new Map();
-        const toMap = new Map(sent.map(pk => [pk, { at, dead:false }]));
+        const was = _out.get(body.id), toMap = new Map(was ? was.to : []);
+        for(const pk of sent) toMap.set(pk, { at, dead:false });
         _out.set(body.id, { id: body.id, body: cleanBody(body, ME().pubkey), to: toMap });
+        _sigSet(body.id, _sig(name, opts.tracks));
         _changed();
       }
-      return { ok: !bad.length && !failed, id: body.id, sent, failed: bad, prepFailed: failed, count: items.length };
+      return { ok: !bad.length && !failed, id: body.id, sent, failed: bad, prepFailed: failed, count: items.length,
+               updated: !!prior };
     });
+  }
+
+  /* My live share of playlist `src` -- or, for a share made before shares named their playlist, the
+   * newest live one with the same name. */
+  function _sameShare(src, name){
+    const live = outShares().filter(s => s.body);
+    return live.find(s => s.body.src === src)
+        || live.find(s => !s.body.src && String(s.body.name || '').trim().toLowerCase() === String(name || '').trim().toLowerCase())
+        || null;
+  }
+  /* What a share last carried, per device: the name and the library songs in order. A playlist edit
+   * that changes neither publishes nothing. */
+  const _sig = (name, tracks) => String(name || '') + '|' + (tracks || []).map(t => t && t.sha).join(',');
+  const _sigKey = id => 'pc.musicshare.sig.' + ((ME() && ME().pubkey) || '').slice(0, 16) + '.' + id;
+  const _sigGet = id => { try{ return localStorage.getItem(_sigKey(id)) || ''; }catch(_){ return ''; } };
+  const _sigSet = (id, v) => { try{ localStorage.setItem(_sigKey(id), v); }catch(_){} };
+
+  /* A SHARED PLAYLIST FOLLOWS THE PLAYLIST. "son added songs to his shared playlist with me. songs
+   * never showed on my phone": a share was a snapshot of the songs at the moment Share was pressed, and
+   * nothing ever looked at the playlist again. When a playlist I share changes, the share is sent
+   * again -- same id, same people -- so their copy is replaced in place. `getPlaylist(id)` answers
+   * {name, tracks:[{sha,name,mime,size,ext}]} or null. Needs a complete read of my shares. */
+  async function syncPlaylists(getPlaylist, ids){
+    if(!_boot() || !ME()) return [];
+    try{ await loadOut(); }catch(_){ return []; }
+    if(!_outOk) return [];
+    const done = [], seen = new Set();
+    // Per PLAYLIST, not per share: two old copies of one playlist resolve to the same share to update.
+    const pids = [];
+    for(const sh of outShares()){
+      if(!sh.body) continue;
+      let pid = sh.body.src;
+      if(!pid && ids) pid = (ids().find(x => String(x.name || '').trim().toLowerCase() === String(sh.body.name || '').trim().toLowerCase()) || {}).id || '';
+      if(pid && !pids.includes(pid)) pids.push(pid);
+    }
+    for(const pid of pids){
+      const pl = getPlaylist(pid);
+      if(!pl || !pl.tracks || !pl.tracks.length) continue;     // a playlist that is gone or empty is never pushed as empty
+      const sh = _sameShare(pid, pl.name);
+      if(!sh || seen.has(sh.id)) continue;
+      seen.add(sh.id);
+      const sig = _sig(pl.name, pl.tracks), last = _sigGet(sh.id);
+      const names = sh.body.tl ? null : sh.body.tracks.map(t => t.n).join('|');
+      const same = last ? last === sig
+        : (sh.body.src === pid && sh.body.name === pl.name && names === pl.tracks.map(t => String(t.name || 'track').slice(0, 200)).join('|'));
+      if(same){ if(!last) _sigSet(sh.id, sig); continue; }
+      const to = [...sh.to.entries()].filter(([, r]) => !r.dead).map(([pk]) => pk);
+      if(!to.length) continue;
+      const r = await share({ name: pl.name, tracks: pl.tracks, to, source: pid });
+      done.push({ id: sh.id, ok: !!(r && r.sent && r.sent.length), count: r && r.count, sameId: r && r.id === sh.id });
+    }
+    return done;
   }
 
   /* More people on an EXISTING share: new documents only, each written whole from the body this
@@ -729,13 +828,14 @@
         if(!pks.length){ prog.textContent = 'Pick at least one person.'; return; }
         go.disabled = true;
         root.classList.add('modal-sticky');     // a backdrop tap must not orphan a share mid-upload
-        const r = await share({ name: root.querySelector('#msh-name').value.trim() || 'Shared music', tracks, to: pks },
+        const r = await share({ name: root.querySelector('#msh-name').value.trim() || 'Shared music', tracks, to: pks,
+                                source: (opts && opts.source) || '' },
                               s => { prog.textContent = s.total ? `Preparing ${s.done} / ${s.total}…` : ''; });
         go.disabled = false;
         root.classList.remove('modal-sticky');
         if(!r.sent || !r.sent.length){ prog.textContent = 'Not shared — ' + (r.error || 'the relays did not accept it') + '.'; return; }
         if(root.isConnected) PC.closeModal();
-        toast(`shared ${r.count} song${r.count === 1 ? '' : 's'} with ${r.sent.length} ${r.sent.length === 1 ? 'person' : 'people'}`
+        toast(`${r.updated ? 'updated the share —' : 'shared'} ${r.count} song${r.count === 1 ? '' : 's'} with ${r.sent.length} ${r.sent.length === 1 ? 'person' : 'people'}`
               + (r.failed.length ? ` — ${r.failed.length} could not be reached` : '')
               + (r.prepFailed ? ` — ${r.prepFailed} song${r.prepFailed === 1 ? '' : 's'} could not be prepared` : ''));
         if(opts && opts.after) try{ opts.after(); }catch(_){}
@@ -830,6 +930,7 @@
           <button class="btn btn-neon small" id="msh-shuffle"${tracks.length ? '' : ' disabled'}>${icon('shuffle')}Shuffle</button>
           <button class="btn btn-ghost small" id="msh-refresh">${icon('refresh')}Refresh</button>
           <button class="btn btn-ghost small" id="msh-addall"${missing ? '' : ' disabled'}>${icon('plus')}${missing ? `Keep ${missing}` : 'Kept'}</button>
+          <button class="btn btn-ghost small danger" id="msh-dismiss" title="Take this playlist off your list">${icon('trash')}Remove</button>
         </div>
         <span class="music-count muted small">${tracks.length} song${tracks.length === 1 ? '' : 's'} · from ${E(who(cur.from))}</span>
         <span class="msh-note muted small">These play from ${E(who(cur.from))}’s copy while it is shared. Keep a song and it stays yours even if the share is stopped.</span>
@@ -837,6 +938,18 @@
     el.onclick = async ev => {
       const b = ev.target.closest && ev.target.closest('button'); if(!b || !el.contains(b)) return;
       if(b.id === 'msh-refresh'){ b.disabled = true; await loadIn(); if(el.isConnected) renderShared(key, el, ctx); return; }
+      /* "no way for me to remove a dupe share": a share is the sharer's document, but whether it is on
+       * MY list is my answer -- the same one Reject gives, for every copy of it. Songs already kept stay. */
+      if(b.id === 'msh-dismiss'){
+        const name = (cur.body && cur.body.name) || 'this playlist';
+        const ok = PC.uiConfirm ? await PC.uiConfirm(`Remove “${name}” from your playlists? Songs you kept stay in your library.`, { ok:'Remove', danger:true }) : true;
+        if(!ok) return;
+        dismiss(key);
+        toast(`removed “${name}”`);
+        if(ctx.closed) try{ ctx.closed(key); }catch(_){}
+        else if(el.isConnected) renderIn(el, ctx);
+        return;
+      }
       if(b.id === 'msh-shuffle'){
         const M = PC.MusicPlayer, pick = order[Math.floor(Math.random() * order.length)];
         if(!order.length) return;
@@ -936,7 +1049,7 @@
    * A share's chip id is its key (`<from>:<id>`), which is why `isView` has to recognise those too:
    * the bar hands the id back to renderView, and an accepted share draws its own tracks. */
   const V_IN = '__shared_in', V_OUT = '__shared_out';
-  const isShare = id => !!id && !!_in && _in.has(id) && accepted().has(id);
+  const isShare = id => !!id && !!_in && _in.has(id) && isAccepted(_in.get(id));
   const isView = id => id === V_IN || id === V_OUT || isShare(id);
   function barHTML(cur, real){
     const waiting = pendingShares().length;
@@ -951,7 +1064,7 @@
   window.PCMusicShare = {
     isView, isShare, barHTML, renderView, renderShared,
     // acceptance
-    decide, acceptedShares, pendingShares, loadDecisions, decisions,
+    decide, dismiss, acceptedShares, pendingShares, loadDecisions, decisions, syncPlaylists,
     // data
     loadIn, loadOut, inShares, outShares, tracksOf, share, addRecipients, revoke, addToLibrary, refIds,
     drainPending, pendingReleases: () => _pending(),

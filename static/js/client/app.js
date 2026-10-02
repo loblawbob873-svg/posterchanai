@@ -10052,6 +10052,7 @@
   // musicshare.js loads on demand (it broke the boot budget); same ?v= as app.js; SW precaches it.
   let _musicShareP = null;
   function _musicShareLoad(){
+    _musicShareFollow();
     if(window.PCMusicShare) return Promise.resolve(window.PCMusicShare);
     if(!_musicShareP){
       const me = document.querySelector('script[src*="/static/js/client/app.js"]'), src = me && me.getAttribute('src') || '';
@@ -10060,6 +10061,32 @@
         .catch(e => { _musicShareP = null; throw e; });
     }
     return _musicShareP;
+  }
+  /* A SHARED PLAYLIST FOLLOWS ITS PLAYLIST ("son added songs to his shared playlist with me. songs never
+   * showed on my phone"). Any playlist change, a few seconds later, re-sends the shares made from it
+   * (musicshare.js syncPlaylists: same id, same people, only when something changed). A playlist this
+   * device cannot fully play is NOT synced from here -- sent from a device missing songs, the share
+   * would shrink; a device that has them all will send it. Registered once. */
+  let _mshFollowing = false, _mshTimer = 0;
+  function _musicSharePlaylist(id){
+    const pl = PL() && PL().get(id); if(!pl) return null;
+    const have = _plTracks(id);
+    if(!pl.tracks.length || have.length !== pl.tracks.length || have.some(t=>t.missing)) return null;
+    return { name: pl.name, tracks: have.map(t=>({ sha:t.sha, name:t.m.name||'track', mime:t.m.mime||'audio/mpeg',
+                                                    size:t.m.size||0, ext:_musicExt(t.m) })) };
+  }
+  async function _musicShareSync(){
+    if(!ME || !ME.pubkey) return [];
+    const MS = await _musicShareLoad().catch(()=>null);
+    if(!MS || !MS.syncPlaylists) return [];
+    try{
+      return await MS.syncPlaylists(_musicSharePlaylist, () => (PL() && PL().all ? PL().all() : []).map(p=>({ id:p.id, name:p.name })));
+    }catch(_){ return []; }
+  }
+  function _musicShareFollow(){
+    if(_mshFollowing || !window.PCPlaylists || !PCPlaylists.onChange) return;
+    _mshFollowing = true;
+    PCPlaylists.onChange(() => { clearTimeout(_mshTimer); _mshTimer = setTimeout(_musicShareSync, 5000); });
   }
   // Share what is on screen: the playlist in order, or the (searched) library; missing tracks skipped.
   async function _musicShareCurrent(){
@@ -10070,6 +10097,7 @@
     const tracks = set.filter(t=>!t.missing).map(t=>({ sha:t.sha, name:t.m.name||'track', mime:t.m.mime||'audio/mpeg',
                                                       size:t.m.size||0, ext:_musicExt(t.m) }));
     PCMusicShare.openShareDialog({ name: pl ? pl.name : (needle ? 'Music: '+_musicQ.trim() : 'My music'), tracks,
+                                   source: pl ? _musicPl : '',
                                    after: ()=>{ try{ _musicPlRepaint(); }catch(_){} } });
   }
   // Repaint the Music app if it happens to be on screen — the modal above can be opened from the

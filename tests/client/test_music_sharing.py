@@ -63,6 +63,9 @@ SCENARIOS = [
     "a big share's sealed song list and its songs are all released",
     "sharing again after stopping works and plays",
     "a copy shared again before the retry is not released",
+    "songs added to a shared playlist reach the recipient in the same playlist",
+    "sharing the same playlist again updates it instead of adding a second one",
+    "two old copies of one playlist show as one, and can be removed",
 ]
 
 
@@ -324,3 +327,37 @@ def test_a_foreign_decisions_document_cannot_shadow_the_owners():
       out.keys=Object.keys(a.MS.decisions());
     """)
     assert got["keys"] == ["c" * 64 + ":trip"], got
+
+
+def _lift(src, sig):
+    at = src.index(sig)
+    i, depth = src.index("{", at), 0
+    for k in range(i, len(src)):
+        depth += src[k] == "{"
+        depth -= src[k] == "}"
+        if depth == 0:
+            return src[at:k + 1]
+
+
+def test_a_playlist_this_device_cannot_fully_play_is_never_synced_from_here():
+    """The sync re-sends a shared playlist when it changes. Sent from a device that is missing some
+    of its songs, the share would SHRINK on every recipient -- so such a device sends nothing."""
+    app = open(os.path.join(ROOT, "static/js/client/app.js"), encoding="utf-8").read()
+    fn = _lift(app, "function _musicSharePlaylist(id)")
+    js = ("const PLS={a:{name:'Matthew',tracks:['s1','s2']},b:{name:'Half',tracks:['s1','s3']}};"
+          "const PL=()=>({get:id=>PLS[id]});"
+          "const LIB={s1:{sha:'s1',m:{name:'One',mime:'audio/mpeg',size:1}},s2:{sha:'s2',m:{name:'Two'}}};"
+          "const _plTracks=id=>PLS[id].tracks.map(s=>LIB[s]).filter(Boolean);const _musicExt=()=>'mp3';\n"
+          + fn + "\nprocess.stdout.write(JSON.stringify({a:_musicSharePlaylist('a'),b:_musicSharePlaylist('b'),c:_musicSharePlaylist('zz')}));")
+    out = json.loads(subprocess.run(["node", "-e", js], capture_output=True, text=True, check=True).stdout)
+    assert [t["sha"] for t in out["a"]["tracks"]] == ["s1", "s2"] and out["a"]["name"] == "Matthew"
+    assert out["b"] is None, "a playlist with a song this device lacks was offered for syncing"
+    assert out["c"] is None
+
+
+def test_playlist_edits_reach_the_share_sync():
+    app = open(os.path.join(ROOT, "static/js/client/app.js"), encoding="utf-8").read()
+    assert "_musicShareFollow();" in _lift(app, "function _musicShareLoad()"), "nothing registers the playlist watcher"
+    follow = _lift(app, "function _musicShareFollow()")
+    assert "PCPlaylists.onChange(" in follow and "_musicShareSync" in follow
+    assert "source: pl ? _musicPl : ''" in app, "Share does not say which playlist it came from"

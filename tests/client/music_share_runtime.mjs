@@ -127,7 +127,7 @@ function shippedDriveDecrypt(p){
 const wav = (n, seed) => { const u = new Uint8Array(n); for(let i = 0; i < n; i++) u[i] = (i * 31 + seed) & 255; return u; };
 const eq = (a, b) => a.length === b.length && a.every((x, i) => x === b[i]);
 const out = {};
-async function run(name, fn){ try{ const d = await fn(); out[name] = { ok: d === true || (d && d.ok !== false && !d.fail), detail: d }; }
+async function run(name, fn){ try{ const d = await fn(); out[name] = { ok: d === true || !!(d && !d.fail && d.ok), detail: d }; }   // ok must be TRUE: `undefined` from an && chain used to count as a pass
                               catch(e){ out[name] = { ok: false, detail: String(e && e.stack || e) }; } }
 
 await run('derived key is per track, deterministic, and not the master key', async () => {
@@ -384,6 +384,60 @@ await run('a copy shared again before the retry is not released', async () => {
   const dIn = await D.S.loadIn(); const dt = await D.S.tracksOf(dIn[0]); D.S.register(dIn[0], dt);
   let plays = false; try{ plays = eq(await D.S.plain(dt[0].s), wav(700, 15)); }catch(_){ plays = false; }
   return { ok: plays && A.S.pendingReleases().length === 0, plays, pending: A.S.pendingReleases() };
+});
+
+/* "son added songs to his shared playlist with me. songs never showed on my phone. he reshared
+ * playlist with me, now I see two Matthew playlists" -- and "no way for me to remove a dupe share". */
+const _tr = (P, sha) => ({ sha, name: P.lib.get(sha).m.name, mime: 'audio/wav', size: P.lib.get(sha).plain.length, ext: 'wav' });
+
+await run('songs added to a shared playlist reach the recipient in the same playlist', async () => {
+  const net = makeNet(); const A = person(net, 'A'), B = person(net, 'B');
+  const s1 = await A.addTrack(wav(600, 21), 'First'), s2 = await A.addTrack(wav(700, 22), 'Second');
+  let pl = { name: 'Matthew', tracks: [_tr(A, s1)] };
+  const r = await A.S.share({ name: pl.name, tracks: pl.tracks, to: [B.pk], source: 'plM' });
+  const in1 = await B.S.loadIn(); B.S.decide(in1[0].key, true);
+  // A adds a song to the playlist; the app's playlist watcher runs the sync.
+  pl = { name: 'Matthew', tracks: [_tr(A, s1), _tr(A, s2)] };
+  const synced = await A.S.syncPlaylists(id => id === 'plM' ? pl : null, () => [{ id: 'plM', name: 'Matthew' }]);
+  const in2 = await B.S.loadIn();
+  const acc = B.S.acceptedShares();
+  const bt = acc.length ? await B.S.tracksOf(acc[0]) : [];
+  // Nothing changed -> nothing is sent again.
+  const before = net.published.length;
+  const again = await A.S.syncPlaylists(id => id === 'plM' ? pl : null, () => [{ id: 'plM', name: 'Matthew' }]);
+  return { ok: r.ok && synced.length === 1 && synced[0].sameId && in2.length === 1 && acc.length === 1
+             && acc[0].key === in1[0].key && bt.map(t => t.n).join(',') === 'First,Second'
+             && again.length === 0 && net.published.length === before,
+           synced, n: in2.length, acc: acc.length, names: bt.map(t => t.n), again, sentAgain: net.published.length - before };
+});
+
+await run('sharing the same playlist again updates it instead of adding a second one', async () => {
+  const net = makeNet(); const A = person(net, 'A'), B = person(net, 'B');
+  const s1 = await A.addTrack(wav(500, 31), 'Uno'), s2 = await A.addTrack(wav(520, 32), 'Dos');
+  const r1 = await A.S.share({ name: 'Matthew', tracks: [_tr(A, s1)], to: [B.pk], source: 'plM' });
+  await A.S.loadOut();
+  const r2 = await A.S.share({ name: 'Matthew', tracks: [_tr(A, s1), _tr(A, s2)], to: [B.pk], source: 'plM' });
+  const ins = await B.S.loadIn();
+  const bt = await B.S.tracksOf(ins[0]);
+  return { ok: r2.updated && r1.id === r2.id && ins.length === 1 && bt.length === 2, r1: r1.id, r2: r2.id, updated: r2.updated, n: ins.length };
+});
+
+await run('two old copies of one playlist show as one, and can be removed', async () => {
+  const net = makeNet(); const A = person(net, 'A'), B = person(net, 'B');
+  const s1 = await A.addTrack(wav(400, 41), 'Old'), s2 = await A.addTrack(wav(410, 42), 'New');
+  // What already happened: two separate shares with the same name, made before shares named a playlist.
+  const r1 = await A.S.share({ name: 'Matthew', tracks: [_tr(A, s1)], to: [B.pk] });
+  const in1 = await B.S.loadIn(); B.S.decide(in1[0].key, true);
+  const r2 = await A.S.share({ name: 'Matthew', tracks: [_tr(A, s1), _tr(A, s2)], to: [B.pk] });
+  const ins = await B.S.loadIn();
+  const acc = B.S.acceptedShares(), pend = B.S.pendingShares();
+  const bt = acc.length ? await B.S.tracksOf(acc[0]) : [];
+  // B removes it: gone from the list, and a refresh does not bring it back.
+  const dismissed = acc.length ? B.S.dismiss(acc[0].key) : false;
+  await B.S.loadIn();
+  return { ok: r1.id !== r2.id && ins.length === 1 && acc.length === 1 && pend.length === 0 && bt.length === 2
+             && dismissed && B.S.acceptedShares().length === 0 && B.S.pendingShares().length === 0,
+           n: ins.length, acc: acc.length, pend: pend.length, songs: bt.length, after: B.S.acceptedShares().length };
 });
 
 process.stdout.write(JSON.stringify(out));
