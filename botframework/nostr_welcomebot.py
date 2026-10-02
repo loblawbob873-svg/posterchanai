@@ -82,6 +82,19 @@ def newcomers(roll: list, seen: set, had_memory: bool) -> tuple:
     return fresh, remember
 
 
+# WHAT THE MODEL MAY SAY ABOUT THE PLACE. Told only "welcome X to poster.place", the model guessed what
+# the site is from its NAME and wrote a confident brochure for a gallery of Polish poster art ("All
+# originals, guaranteed authentic") -- every word invented, posted publicly under the instance's own
+# bot. So it is told what it IS, and that it knows nothing else; and a long reply (where invented
+# detail lives) falls back to the plain welcome rather than going out.
+FACTS = ("Facts, and the ONLY things you know about {instance_name}: it is a self-hosted Nostr community "
+         "(a PosterChan server). The new member's address there is @{username}, which works as their "
+         "Nostr name (NIP-05). Nothing else about {instance_name} -- its topic, content, features, "
+         "history or users -- is known to you: do not describe the site, do not list features, do not "
+         "invent anything about it. Write the welcome itself, under {max_words} words.")
+MAX_WORDS = 70
+
+
 def message(m: dict, instance: str = "") -> str:
     """The welcome, tagging the newcomer. The model writes it with their readable address, which is
     then swapped for the tagging reference; a reply that loses the address gets it put in front.
@@ -92,12 +105,16 @@ def message(m: dict, instance: str = "") -> str:
     if not _ai_on():
         return plain
     try:
-        ai = (generate_reply(WELCOME_PROMPT.format(username=handle.lstrip("@"), instance_name=instance)
+        fill = dict(username=handle.lstrip("@"), instance_name=instance, max_words=MAX_WORDS)
+        ai = (generate_reply(WELCOME_PROMPT.format(**fill) + "\n\n" + FACTS.format(**fill)
                              + " /no_think") or "").replace("/no_think", "").strip()
     except Exception as e:
         logging.warning(f"[WELCOMEBOT] AI wording failed, using the plain welcome: {e}")
         return plain
     if not ai or ai == "None" or len(ai) < 10 or _CJK.search(ai):
+        return plain
+    if len(ai.split()) > MAX_WORDS + 20:
+        logging.info(f"[WELCOMEBOT] AI welcome ran to {len(ai.split())} words, using the plain welcome")
         return plain
     bare = handle.lstrip("@")
     for spelling in (handle, "@" + bare.split("@")[0], bare):

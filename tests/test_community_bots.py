@@ -404,6 +404,24 @@ def test_an_ai_welcome_tags_the_member_in_place_of_their_address(monkeypatch, tm
     assert bot.message(m) == "nostr:npub1bob Glad you made it, friend, enjoy the place!"
 
 
+def test_the_welcome_model_is_told_what_the_instance_is_and_that_it_knows_nothing_else(monkeypatch, tmp_path):
+    """'the welcome is really hallucinating': told only 'welcome bob to poster.place', the model wrote a
+    brochure for a Polish poster-art gallery. The prompt must carry the facts and forbid inventing,
+    even under an operator's own WELCOME_PROMPT -- and a long brochure must not be posted."""
+    bot, _ = _botmod(monkeypatch, tmp_path, "nostr_welcomebot")
+    monkeypatch.setattr(bot, "_ai_on", lambda: True)
+    monkeypatch.setattr(bot, "WELCOME_PROMPT", "Welcome the new user @{username} to {instance_name}. Use hashtags.")
+    monkeypatch.setattr(bot, "WELCOME_MESSAGE", "Welcome to {instance_name}")
+    seen = []
+    monkeypatch.setattr(bot, "generate_reply", lambda p: seen.append(p) or "Welcome aboard @bob@poster.place, you are free here.")
+    assert bot.message(_member(BOB, "bob")) == "Welcome aboard nostr:npub1bob, you are free here."
+    prompt = seen[0]
+    assert "Nostr community" in prompt and "do not describe the site" in prompt and "invent" in prompt
+    brochure = ("WELCOME TO POSTER.PL! This platform is a digital gallery of Polish poster art. " * 12)
+    monkeypatch.setattr(bot, "generate_reply", lambda p: brochure)
+    assert bot.message(_member(BOB, "bob")) == "nostr:npub1bob Welcome to poster.place"
+
+
 @pytest.mark.parametrize("flag", ["--report-print", "--welcome-print"])
 def test_a_nostr_report_and_welcome_bot_take_the_nostr_path(flag):
     r = _run_bot(flag, env={"NOSTR_NSEC": "11" * 32, "POSTERCHANAI_API_ENDPOINT": "http://127.0.0.1:9"})
