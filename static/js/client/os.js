@@ -2665,7 +2665,7 @@
             st.do==='insert'?(composer?'<button class="btn btn-neon small" data-go>Insert into this window</button>':'<button class="btn btn-ghost small" data-copy>Copy</button>'):
             `<button class="btn btn-neon small" data-go>${enc(({note:'Save to Notes',calendar:'Add to Calendar',open:'Open',search:'Search the web'})[st.do]||st.label)}</button>`}</div></div>`).join('')}</div>`:'')+
       `<div class="osw-ai-do"><button class="btn btn-ghost small" data-ai-copy>Copy answer</button>
-        <button class="btn btn-ghost small" data-ai-continue title="Read the window again and suggest what comes next"><svg class="ic" aria-hidden="true"><use href="#i-next"></use></svg> Continue</button></div>`;
+        <button class="btn btn-ghost small" data-ai-continue title="Read the window again and suggest what comes next"><svg class="ic b-ic" aria-hidden="true"><use href="#i-next"></use></svg>Continue</button></div>`;
     const done=(el,label)=>{ el.classList.add('done'); const ok=el.querySelector('.ok'); if(ok) ok.hidden=false; turn.did.push(label); };
     box.querySelector('[data-ai-copy]').onclick=()=>{ try{ PC().copyValue(answer); }catch(_){ } };
     box.querySelector('[data-ai-continue]').onclick=()=>{
