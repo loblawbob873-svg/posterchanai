@@ -587,6 +587,31 @@
        * live-output pin even when that pin currently owns the onScroll guard. */
       box.addEventListener('wheel', ev => { if(_scrollsAway('wheel',ev.deltaY)) _stopFollowing(); }, {passive:true});
       box.addEventListener('touchmove', ev => { if(_scrollsAway('touchmove')) _stopFollowing(); }, {passive:true});
+      /* A SWIPE SCROLLS A FULL-SCREEN PROGRAM TOO ("android term has no scrolling?"). In a plain shell
+       * the touch scrolls xterm's own scrollback natively. In the ALTERNATE screen -- tmux, screen,
+       * less, man, an editor, htop -- there is no scrollback to move, and xterm turns no touch into
+       * anything, so a swipe did nothing at all. A mouse wheel there is reported to the program (a
+       * wheel event in mouse mode, up/down arrows otherwise), so the swipe is handed to xterm AS
+       * WHEEL EVENTS, one per line of finger travel. Finger down = earlier lines = wheel up. */
+      let _swipeY = null, _swipeAcc = 0;
+      const _altScreen = () => { try{ return term.buffer.active.type === 'alternate'; }catch(_){ return false; } };
+      box.addEventListener('touchstart', ev => {
+        _swipeY = (ev.touches.length === 1 && _altScreen()) ? ev.touches[0].clientY : null; _swipeAcc = 0;
+      }, {passive:true});
+      box.addEventListener('touchmove', ev => {
+        if(_swipeY == null || ev.touches.length !== 1) return;
+        const y = ev.touches[0].clientY, screen = box.querySelector('.xterm-screen') || box;
+        _swipeAcc += y - _swipeY; _swipeY = y;
+        const line = Math.max(8, (screen.getBoundingClientRect().height || 0) / Math.max(1, term.rows || 24));
+        while(Math.abs(_swipeAcc) >= line){
+          const down = _swipeAcc > 0; _swipeAcc += down ? -line : line;
+          const r = screen.getBoundingClientRect();
+          screen.dispatchEvent(new WheelEvent('wheel', { deltaY: down ? -line : line, deltaMode: 0, bubbles: true,
+            cancelable: true, clientX: r.left + r.width / 2, clientY: r.top + r.height / 2 }));
+        }
+        if(ev.cancelable) ev.preventDefault();          // the swipe is the program's, not the page's
+      }, {passive:false});
+      box.addEventListener('touchend', () => { _swipeY = null; }, {passive:true});
       box.addEventListener('pointerdown', ev => {
         const t = ev.target;
         if(t && t.classList && t.classList.contains('xterm-viewport')) _barDrag = true;
