@@ -3343,7 +3343,11 @@
     if(window.PCConcordCache?.expireEvents && opened.expirations?.length)
       try{await window.PCConcordCache.expireEvents(envelopeCacheKey(room.communityId||room.naddr,channel.id),opened.expirations);}catch(e){console.warn('Concord expiry sweep failed',e);}
     const ids=new Set((wraps||[]).map(w=>w.id)),rumors=new Set((opened.messages||[]).map(m=>m.id));
-    for(const d of deliveries.values())if(d.owner===deliveryOwner(p)&&d.roomId===roomIdentity(room)&&d.channelId===channel.id&&ids.has(d.made.wrap.id)&&rumors.has(d.made.rumorId)){
+    /* ONCE. A sent message stays in `deliveries` until it expires, and every read of the room -- the
+     * 4 s tick, every live wrap -- sees its echo again. Re-acknowledging it each time re-saved it and
+     * repainted the WHOLE message list every couple of seconds: "communities is flashing now on
+     * desktop", with the renderer's DOM node count climbing by ~370k a minute. */
+    for(const d of deliveries.values())if(d.status!=='sent'&&d.owner===deliveryOwner(p)&&d.roomId===roomIdentity(room)&&d.channelId===channel.id&&ids.has(d.made.wrap.id)&&rumors.has(d.made.rumorId)){
       await persistDelivery(d,true);paintDelivery(d,'sent');
     }
     return opened;
