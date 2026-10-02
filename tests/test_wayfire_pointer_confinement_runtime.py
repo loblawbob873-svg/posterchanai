@@ -18,6 +18,7 @@ under test is the plugin's answer, not wlr_cursor.
 import json
 import os
 from pathlib import Path
+import shlex
 import shutil
 import socket
 import struct
@@ -444,7 +445,24 @@ def test_a_missing_metadata_file_does_not_take_the_whole_desktop_down(tmp_path):
         env.pop(key, None)
     log = tmp_path / 'compositor.log'
     with log.open('w') as stream:
-        proc = subprocess.Popen(['wayfire', '-c', str(config)], env=env, stdout=stream, stderr=stream)
+        # Wayfire reads its BUILT-IN metadata directory as well as WAYFIRE_PLUGIN_XML_PATH, so on a
+        # host that has our package installed (server1 got it 2026-10-01) the "missing" file was
+        # found there and this test failed for a reason that had nothing to do with the code. Run it
+        # in a private mount namespace with the system directories covered by our copy.
+        cmd = ['wayfire', '-c', str(config)]
+        hidden = [d for d in ('/usr/share/wayfire/metadata', '/usr/local/share/wayfire/metadata')
+                  if (Path(d) / 'posterchan-shell.xml').exists()]
+        if hidden:
+            if not shutil.which('unshare') or subprocess.run(
+                    ['unshare', '-rm', 'true'], capture_output=True).returncode:
+                pytest.skip('this host has posterchan-shell.xml installed and cannot hide it (no user namespaces)')
+            binds = ' && '.join(f'mount --bind {shlex.quote(str(meta))} {shlex.quote(d)}' for d in hidden)
+            # Mount as root in a user namespace, then run wayfire as an ordinary uid in a nested one:
+            # wayfire refuses to start as root ("Unable to drop root").
+            uid, gid = str(os.getuid() or 1000), str(os.getgid() or 1000)
+            cmd = ['unshare', '-rm', 'sh', '-c',
+                   binds + f' && exec unshare -U --map-user={uid} --map-group={gid} "$@"', 'sh'] + cmd
+        proc = subprocess.Popen(cmd, env=env, stdout=stream, stderr=stream)
         try:
             deadline = time.monotonic() + 15
             while True:
