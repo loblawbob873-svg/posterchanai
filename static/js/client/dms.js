@@ -1010,6 +1010,18 @@ window.PCDmsFactory = function(dep){
   // Startup count of what's unread. Notes to SELF count here for the same reason they do in
   // ingestWrap — that's how the server delivers notifications — and this is the path that catches one
   // that arrived while the app was CLOSED, which is the whole point of notifying at all.
+  /* READ ON ONE MONITOR IS READ ON ALL -- for DMs too. "monitor 1 has 0 notifications, monitor 2 has
+   * 8": each PosterChanOS monitor is its own page, `dmSeen` lives in shared storage, and the count was
+   * only ever recomputed when a DM ARRIVED -- so reading your messages on one monitor left every other
+   * bell counting them. pc_notif_seen has had this listener since notifications went per-monitor; DMs
+   * joined the bell later and never got theirs. A `storage` event fires only in the OTHER pages. */
+  try{ window.addEventListener('storage', e => {
+    if(e.key !== 'pc_nostr_settings') return;
+    let was = 0, now = 0;
+    try{ was = (JSON.parse(e.oldValue || '{}') || {}).dmSeen || 0; }catch(_){}
+    try{ now = (JSON.parse(e.newValue || '{}') || {}).dmSeen || 0; }catch(_){}
+    if(was !== now) try{ recountDmUnread(); }catch(_){}
+  }); }catch(_){}
   function recountDmUnread(){ const seen=ClientSettings.get('dmSeen',0); let n=0;
     for(const [pk,arr] of dmPeers){ if(isMutedAuthor(pk)) continue;
       const selfThread = pk===S.ME.pubkey;

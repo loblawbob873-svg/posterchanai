@@ -71,3 +71,25 @@ def test_the_desktop_taskbar_bell_lights_for_dms_that_arrive_while_you_are_there
         assert '2 new' in (await b.js("document.querySelector('#os-bell').title")), await b.js("document.querySelector('#os-bell').title")
         assert not await b.js('__errors'), await b.js('__errors')
     asyncio.run(desktop.with_browser('online', '', check, RELAY))
+
+
+@pytest.mark.skipif(not Path('/opt/google/chrome/chrome').exists(), reason='Chrome required')
+def test_reading_dms_on_one_monitor_clears_the_bell_on_the_other():
+    """"monitor 1 has 0 notifications, monitor 2 has 8 notifications even after clicking bell". Each
+    monitor is its own page; reading messages on one moves the shared `dmSeen`, and the OTHER page
+    hears it as a `storage` event -- replayed here exactly as the browser delivers it."""
+    async def check(b):
+        await b.call('Emulation.setDeviceMetricsOverride', dict(width=1440, height=900, deviceScaleFactor=1, mobile=False))
+        await b.until("document.body.classList.contains('guest')")
+        await b.js(SEED + "('new',2)")
+        await desktop.login(b)
+        await b.js('PCOS.enter()')
+        await b.until("__PC.dmStats && __PC.dmStats().done>=2")
+        await b.until(OS_BELL + "!==''")
+        # The other monitor opens Messages: it writes dmSeen, and this page gets the storage event.
+        await b.js("""(()=>{const k='pc_nostr_settings',old=localStorage.getItem(k)||'{}',o=JSON.parse(old);
+          o.dmSeen=Math.floor(Date.now()/1000)+60;const nv=JSON.stringify(o);localStorage.setItem(k,nv);
+          window.dispatchEvent(new StorageEvent('storage',{key:k,oldValue:old,newValue:nv,storageArea:localStorage}));})()""")
+        await b.until(OS_BELL + "===''")
+        assert await b.js(BELL) == [], await b.js(BELL)
+    asyncio.run(desktop.with_browser('online', '', check, RELAY))
