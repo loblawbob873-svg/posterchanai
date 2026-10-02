@@ -424,7 +424,12 @@ if [ -n "$HOLDER" ]; then
   # HomeDoublePress deliberately accepts a 2-second delivery gap for slow physical launchers.
   # Sleeping exactly 2 seconds sits on that inclusive boundary; scheduler jitter made the next
   # single HOME complete the prior pair and open MainActivity just before the Back assertion.
-  sleep 3
+  # 3 s WAS NOT ENOUGH EITHER: a press is timed when the app PROCESSES it, and the launcher shares its
+  # main thread with the feed the double press just opened. Measured: that thread stalls ~0.7 s
+  # (passing run, 2026-10-02 19:23) to ~0.97 s (failing run, 22:19, "Skipped 58 frames") right as
+  # this HOME arrives, so presses 3.17 s apart were stamped 1.7 s apart and paired. The Back check
+  # below is about Back, not about double-press timing, so it waits well clear of the window.
+  sleep 5
 
   # PRESSING HOME WHILE ALREADY HOME, and BACK. Both are swallowed by a launcher; a launcher that
   # finishes on back leaves the phone showing whatever is behind it, which on a fresh boot is

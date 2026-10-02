@@ -34,8 +34,12 @@ def test_back_gate_clears_the_full_double_home_window_first():
     block = SCRIPT.split('ok "double HOME took the native feed-top path"', 1)[1].split(
         'say "what the home screen costs"', 1)[0]
     assert "HomeDoublePress deliberately accepts a 2-second delivery gap" in block
-    assert block.index("sleep 3") < block.index("to_home\n  adb shell input keyevent KEYCODE_BACK")
-    assert "to_home\n  adb shell input keyevent KEYCODE_BACK" in block
+    back = block.index("to_home\n  adb shell input keyevent KEYCODE_BACK")
+    # The wait right before Back must clear the 2 s pairing window PLUS the main-thread stall that
+    # follows the double press (measured up to ~1 s), or a stray pair opens the feed before Back.
+    import re
+    waits = [int(m.group(1)) for m in re.finditer(r"^\s*sleep (\d+)\s*$", block[:back], re.M)]
+    assert waits and waits[-1] >= 5, f"the wait before the Back check is {waits[-1:]} s; it must be >= 5"
 
 
 def test_music_device_test_requires_our_launcher_and_restores_prior_state():
