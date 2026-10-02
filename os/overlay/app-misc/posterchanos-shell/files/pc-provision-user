@@ -52,9 +52,33 @@ if id -u "$USERNAME" >/dev/null 2>&1; then
   EXISTING_HOME=$(getent passwd "$USERNAME" | cut -d: -f6)
   [ "$EXISTING_HOME" = "$HOME_DIR" ] || die "$USERNAME exists with home $EXISTING_HOME — refusing"
 else
+  # AN UPGRADE KEEPS /home AND REPLACES /etc/passwd. "Upgrade an installed PosterChanOS" copies the new
+  # system over the old one with /home excluded, so this person's files are still in $HOME_DIR -- but
+  # the account that owned them is gone, and a fresh `useradd` takes the next free uid. If that is not
+  # the uid the files carry, every file in their home belongs to nobody. The folder is named for a
+  # hash of THIS key, so what is in it is theirs: take its uid/gid back when they are free.
+  ADOPT=()
+  if [ -d "$HOME_DIR" ]; then
+    OLD_UID=$(stat -c %u "$HOME_DIR" 2>/dev/null || echo "")
+    OLD_GID=$(stat -c %g "$HOME_DIR" 2>/dev/null || echo "")
+    if [ -n "$OLD_UID" ] && [ "$OLD_UID" -ge 1000 ] 2>/dev/null && ! getent passwd "$OLD_UID" >/dev/null 2>&1; then
+      ADOPT=(-u "$OLD_UID")
+      if [ -n "$OLD_GID" ] && ! getent group "$OLD_GID" >/dev/null 2>&1; then
+        groupadd -g "$OLD_GID" "$USERNAME" >/dev/null 2>&1 && ADOPT+=(-g "$OLD_GID")
+      fi
+    fi
+  fi
   useradd --create-home --home-dir "$HOME_DIR" --shell /bin/bash \
-          --comment "PosterChan ${NPUB}" "$USERNAME" \
+          --comment "PosterChan ${NPUB}" "${ADOPT[@]}" "$USERNAME" \
     || die "could not create $USERNAME"
+fi
+
+# …AND IF THE uid COULD NOT BE TAKEN BACK (another account holds it now), or a machine was upgraded
+# before this existed, the home's contents are handed to the account they belong to. Checked on the
+# folder itself, so an ordinary login pays one stat and does nothing.
+ACCOUNT_UID=$(id -u "$USERNAME" 2>/dev/null || echo "")
+if [ -d "$HOME_DIR" ] && [ -n "$ACCOUNT_UID" ] && [ "$(stat -c %u "$HOME_DIR" 2>/dev/null)" != "$ACCOUNT_UID" ]; then
+  chown -R "$USERNAME:$USERNAME" "$HOME_DIR"
 fi
 
 # THE HOME IS 0700, and it is set every time rather than only at creation. `useradd` honours

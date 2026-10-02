@@ -31,13 +31,24 @@ NPUB_B = "npub19q5ezl4qrhy4dt5cnfvsxpxc7qzqmkakqzp0ka2qy2j0nspq3fmqgxmzpr"
 STUBS = {
     "runuser": '#!/bin/sh\nshift 3\nexec "$@"\n',
     # Records its argv, and pretends the account now exists by appending to a fake passwd.
-    "useradd": '#!/bin/sh\necho "useradd $*" >> "$PC_LOG"\n'
-               'for a in "$@"; do last="$a"; done\n'
-               'echo "$last:x:1500:1500::$PC_HOME_ROOT/$last:/bin/bash" >> "$PC_PASSWD"\n'
+    # Honours -u like the real one: the account gets the uid it was asked for, else 1500.
+    "useradd": '#!/bin/sh\necho "useradd $*" >> "$PC_LOG"\nuid=1500\nprev=\n'
+               'for a in "$@"; do [ "$prev" = "-u" ] && uid="$a"; prev="$a"; last="$a"; done\n'
+               'echo "$last:x:$uid:$uid::$PC_HOME_ROOT/$last:/bin/bash" >> "$PC_PASSWD"\n'
                'mkdir -p "$PC_HOME_ROOT/$last"\nexit 0\n',
     "id": '#!/bin/sh\nif [ "$1" = "-u" ]; then\n'
-          '  grep -q "^$2:" "$PC_PASSWD" 2>/dev/null || exit 1\n  echo 1500\n  exit 0\nfi\nexit 1\n',
-    "getent": '#!/bin/sh\nif [ "$1" = "passwd" ]; then grep "^$2:" "$PC_PASSWD" 2>/dev/null; '
+          '  line=$(grep "^$2:" "$PC_PASSWD" 2>/dev/null) || exit 1\n'
+          '  echo "$line" | cut -d: -f3\n  exit 0\nfi\nexit 1\n',
+    # The home folder's owner. PC_HOME_UID is what an upgraded disk's /home carries; otherwise the
+    # owner is whatever account the passwd says owns it (a home this run just made).
+    "stat": '#!/bin/sh\nd=$3\nu=$(basename "$d")\nif [ -n "$PC_HOME_UID" ]; then echo "$PC_HOME_UID"; '
+            'else grep "^$u:" "$PC_PASSWD" 2>/dev/null | cut -d: -f3 | grep . || echo 0; fi\n',
+    "groupadd": '#!/bin/sh\necho "groupadd $*" >> "$PC_LOG"\nexit 0\n',
+    # By name or by NUMBER, as the real one answers: a uid/gid lookup is what decides whether an
+    # upgraded home's owner is free to take back. PC_TAKEN_IDS lists numbers some OTHER account holds.
+    "getent": '#!/bin/sh\ncase "$2" in *[!0-9]*) ;; *) case " $PC_TAKEN_IDS " in *" $2 "*) echo "other:x:$2:"; exit 0;; esac; '
+              'if [ "$1" = passwd ]; then awk -F: -v u="$2" \'$3==u{print;f=1}END{exit !f}\' "$PC_PASSWD" 2>/dev/null; exit; fi; exit 2;; esac\n'
+              'if [ "$1" = "passwd" ]; then grep "^$2:" "$PC_PASSWD" 2>/dev/null; '
               'else echo "$2:x:100:"; fi\n',
     "gpasswd": '#!/bin/sh\necho "gpasswd $*" >> "$PC_LOG"\nexit 0\n',
     "chown": '#!/bin/sh\necho "chown $*" >> "$PC_LOG"\nexit 0\n',
@@ -64,11 +75,13 @@ class Provision(unittest.TestCase):
     def tearDown(self):
         shutil.rmtree(self.dir, ignore_errors=True)
 
-    def run_it(self, npub):
+    def run_it(self, npub, **extra):
         env = dict(os.environ, PATH=self.bin + os.pathsep + os.environ["PATH"],
                    PC_LOG=self.log, PC_PASSWD=self.passwd, PC_HOME_ROOT=self.homes,
                    PC_STATE_ROOT=os.path.join(self.dir, "state"),
                    PC_SUDOERS_ROOT=os.path.join(self.dir, "sudoers"))
+        env.pop("PC_HOME_UID", None); env.pop("PC_TAKEN_IDS", None)
+        env.update(extra)
         return subprocess.run(["bash", SCRIPT, npub], capture_output=True, text=True,
                               timeout=60, env=env)
 
@@ -168,3 +181,33 @@ class Provision(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+@unittest.skipIf(not os.path.exists(SCRIPT), "no provisioner here")
+class UpgradedHome(Provision):
+    """"Upgrade an installed PosterChanOS" keeps /home and replaces /etc/passwd: the person's files are
+    on disk under a uid that no account has any more. Signing in again must give those files back to
+    them -- by taking the uid back, or by handing the files over -- never leave them owned by nobody."""
+
+    def _upgraded_home(self, npub):
+        import hashlib
+        name = "pc-" + hashlib.sha256(npub.encode()).hexdigest()[:16]
+        os.makedirs(os.path.join(self.homes, name, "Documents"))
+        return name
+
+    def test_the_old_uid_is_taken_back_when_it_is_free(self):
+        self._upgraded_home(NPUB_A)
+        r = self.run_it(NPUB_A, PC_HOME_UID="1001")
+        self.assertEqual(r.returncode, 0, r.stderr[-500:])
+        log = open(self.log).read()
+        self.assertIn("-u 1001", log, "the account was made under a NEW uid; the upgraded home is owned by nobody")
+        self.assertIn("groupadd -g 1001", log)
+        self.assertNotIn("chown -R", log, "the uid matched -- nothing needed handing over")
+
+    def test_when_the_old_uid_is_taken_the_files_are_handed_over(self):
+        self._upgraded_home(NPUB_A)
+        r = self.run_it(NPUB_A, PC_HOME_UID="1001", PC_TAKEN_IDS="1001")
+        self.assertEqual(r.returncode, 0, r.stderr[-500:])
+        log = open(self.log).read()
+        self.assertNotIn("-u 1001", log, "took a uid another account holds -- that hands THEM these files")
+        self.assertIn("chown -R", log, "the files stayed under a uid that now belongs to somebody else")
