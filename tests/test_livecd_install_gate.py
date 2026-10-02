@@ -369,7 +369,50 @@ def test_the_root_shell_is_a_second_serial_port_that_only_the_server_stage_adds(
     assert " ".join(MOD.qemu_args("/d", None, "/s", None, None, 1, 1)).count("-serial") == 1
     src = Path(MOD.__file__).read_text()
     boot = src[src.index("def boot_installed("):]
-    assert 'extra="systemd.debug_shell=ttyS1" if server else ""' in boot, \
+    assert 'shell = bool(server or stage)' in src and 'extra="systemd.debug_shell=ttyS1" if shell else ""' in boot, \
         "the debug shell must be added for the server stage only, and on ttyS1 (ttyS0 is the boot evidence)"
     helper = src[src.index("def _make_installed_boot_audible("):src.index("def server_stage(")]
     assert ".iso" not in helper, "the root shell is being added to the ISO, not to the test's disk copy"
+
+
+# ---- --upgrade: the user's files survive an upgrade AND belong to their account afterwards
+
+def _after(owner, now="1002", read=None):
+    b = MOD._account(MOD.UPGRADE_NPUBS[1])
+    rules = [(r"echo ROOT-", "ROOT-0"), (r"is-system-running", "running\nBOOT-STATE"),
+             (r"echo ACCT=", "ACCT=gone"), (r"pc-provision-user", "PROV-RC=0"),
+             (r"echo NOW=", f"NOW={now} OWNER={owner} READ={read or MOD.SENTINEL}")]
+    con = _FakeConsole(rules)
+    rc = MOD._after_upgrade({"uid_b": "1002"}, "/tmp/ev")(con)
+    return rc, con, b
+
+
+def test_the_upgrade_passes_only_when_the_file_is_kept_and_its_owner_is_the_account():
+    rc, con, b = _after("1002")
+    assert rc == 0
+    # B signs in FIRST after the upgrade -- the order that would hand B A's old uid without adoption.
+    provs = [l for l in con.sent if "pc-provision-user" in l]
+    assert MOD.UPGRADE_NPUBS[1] in provs[0] and MOD.UPGRADE_NPUBS[0] in provs[1]
+
+
+def test_a_kept_file_owned_by_another_uid_fails():
+    rc, _, _ = _after("1001", now="1002")
+    assert rc == 1
+
+
+def test_a_lost_file_fails():
+    rc, _, _ = _after("missing")
+    assert rc == 1
+
+
+def test_an_unreadable_file_fails():
+    rc, _, _ = _after("1002", read="unreadable")
+    assert rc == 1
+
+
+def test_no_upgrade_marker_can_match_its_own_echo():
+    # A tty echoes every command; a marker spelled literally in the command matches before it runs.
+    src = Path(MOD.__file__).read_text()
+    stages = src[src.index("def _before_upgrade("):src.index("def _upgrade_round(")]
+    for literal in ("echo WROTE-OK", "echo SYNCED", "echo ACCT=kept"):
+        assert literal not in stages, literal

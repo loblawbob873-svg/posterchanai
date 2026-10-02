@@ -167,7 +167,7 @@ def qemu_args(disk, iso, serial_path, code, vars_copy, memory, cpus, usb=False, 
     return args
 
 
-def install(iso, disk, serial_dir, evidence, timeout, memory, cpus, usb=False):
+def install(iso, disk, serial_dir, evidence, timeout, memory, cpus, usb=False, upgrade=False):
     code, vars_src = ovmf()
     if not code:
         print("SKIP  no OVMF firmware on this host; a BIOS guest would not test the bootloader")
@@ -226,8 +226,14 @@ def install(iso, disk, serial_dir, evidence, timeout, memory, cpus, usb=False):
             return 1
         # Exercise the interactive password confirmation with a disposable VM-only credential.
         # PIPESTATUS[1] is the installer; [0] only reports whether printf wrote the answers.
-        con.send("printf 'y\\npc-vm-test-only\\npc-vm-test-only\\n\\n\\n\\n\\n\\n' | sudo gentoo.sh install-live "
-                 "2>&1 | tee /tmp/pc-install-test.log; echo INSTALL-EXIT-${PIPESTATUS[1]}")
+        if upgrade:
+            # "Upgrade an installed PosterChanOS": resume onto the existing layout -- no erase question,
+            # the EXISTING password once, and the copy leaves /home alone.
+            con.send("printf 'pc-vm-test-only\\n\\n\\n\\n\\n\\n\\n' | sudo gentoo.sh upgrade-live "
+                     "2>&1 | tee /tmp/pc-install-test.log; echo INSTALL-EXIT-${PIPESTATUS[1]}")
+        else:
+            con.send("printf 'y\\npc-vm-test-only\\npc-vm-test-only\\n\\n\\n\\n\\n\\n' | sudo gentoo.sh install-live "
+                     "2>&1 | tee /tmp/pc-install-test.log; echo INSTALL-EXIT-${PIPESTATUS[1]}")
         done = con.expect(r"INSTALL-EXIT-(\d+)", timeout)
         if done is None:
             print(f"FAIL  the installer did not finish within {timeout}s — console transcript in "
@@ -442,7 +448,7 @@ def _posts_flow(ask, evidence, *, clock, sleep, poll, timeout=900):
 
 
 def boot_installed(disk, serial_dir, vars_copy, evidence, timeout, memory, cpus, *, server=False,
-                   server_timeout=5400):
+                   server_timeout=5400, stage=None):
     """Boot the INSTALLED disk with no ISO and require it to reach a running system.
 
     THIS FUNCTION IS WHY THIS FILE EXISTS AND IT WAS NEVER WRITTEN. The module docstring has always
@@ -479,14 +485,15 @@ def boot_installed(disk, serial_dir, vars_copy, evidence, timeout, memory, cpus,
     # the test gets root the way a test may: systemd's own debug shell, on a SECOND serial port that
     # exists only in this VM, added to the TEST COPY of the boot entry. ttyS0 and its login prompt --
     # the boot evidence above -- are untouched, and so is everything the ISO ships.
-    shell_sock = Path(serial_dir, "root-shell.sock") if server else None
-    added = _make_installed_boot_audible(disk, evidence, extra="systemd.debug_shell=ttyS1" if server else "")
+    shell = bool(server or stage)
+    shell_sock = Path(serial_dir, "root-shell.sock") if shell else None
+    added = _make_installed_boot_audible(disk, evidence, extra="systemd.debug_shell=ttyS1" if shell else "")
     if added:
         print(f"OK  boot entry made audible for the test ({added})")
     sock = Path(serial_dir, "boot-console.sock")
     log = open(Path(evidence, "boot-console.log"), "w", encoding="utf-8")
     # iso=None leaves out every medium drive, so the only bootable thing is the installed disk.
-    proc = subprocess.Popen(qemu_args(disk, None, sock, code, vars_copy, memory, cpus, net=server,
+    proc = subprocess.Popen(qemu_args(disk, None, sock, code, vars_copy, memory, cpus, net=bool(server),
                                       shell_path=shell_sock),
                             stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, text=True)
     try:
@@ -529,13 +536,15 @@ def boot_installed(disk, serial_dir, vars_copy, evidence, timeout, memory, cpus,
                 return 1
             if re.search(good, con.buf):
                 print("OK  the installed disk booted with no ISO attached")
-                if server:
+                if shell:
                     try:
-                        shell = Serial(shell_sock, open(Path(evidence, "root-shell.log"), "w", encoding="utf-8"))
+                        root = Serial(shell_sock, open(Path(evidence, "root-shell.log"), "a", encoding="utf-8"))
                     except OSError as exc:
                         print(f"FAIL  could not attach to the test's root shell on ttyS1 ({exc})")
                         return 1
-                    return server_stage(shell, server_timeout, evidence)
+                    if stage:
+                        return stage(root)
+                    return server_stage(root, server_timeout, evidence)
                 return 0
             if proc.poll() is not None:
                 print("FAIL  the installed system's VM exited without booting. Transcript in "
@@ -576,6 +585,10 @@ def main():
     ap.add_argument("--rounds", type=int, default=1,
                     help="repeat the whole run from a BLANK disk this many times (a server pass is "
                          "only believed after a second fresh install)")
+    ap.add_argument("--upgrade", action="store_true",
+                    help="install, sign two identities in and write files, UPGRADE from the ISO "
+                         "(gentoo.sh upgrade-live), then require the files to be there, owned by and "
+                         "readable as their account")
     ap.add_argument("--keep-disk", action="store_true",
                     help="leave the installed qcow2 behind for check_livecd_vm.py --disk")
     args = ap.parse_args()
@@ -594,9 +607,143 @@ def main():
         evidence = base_evidence if args.rounds <= 1 else Path(base_evidence, f"round-{round_no}")
         if args.rounds > 1:
             print(f"=== round {round_no} of {args.rounds}: a blank disk")
-        rc = _one_round(args, evidence)
+        rc = _upgrade_round(args, evidence) if args.upgrade else _one_round(args, evidence)
         if rc:
             return rc
+    return 0
+
+
+# ---------------------------------------------------------------- the upgrade round
+#
+# "Say I installed posterchanOS on a machine. If I use a newer ISO, is there a way to do the install and
+# upgrade without losing my user data". Upgrade = resume onto the existing layout with /home excluded
+# from the copy -- and /etc/passwd REPLACED by the image's. So the accounts are re-created at sign-in,
+# and the question that decides whether anybody's files survive in a usable state is whether the
+# re-created account owns them. Two identities are signed in, A then B, before the upgrade; after it
+# B signs in FIRST, so a provisioner that took "the next free uid" would hand B A's old uid and leave
+# B's files owned by nobody -- the exact failure this proves absent.
+UPGRADE_NPUBS = ("npub1fdtthaqujtjcd6yfy7kt0zpkadyl9vvypq00s5nztnmche74d0tqv6uwwr",
+                 "npub19q5ezl4qrhy4dt5cnfvsxpxc7qzqmkakqzp0ka2qy2j0nspq3fmqgxmzpr")
+SENTINEL = "PC-UPGRADE-SENTINEL-7f3a"
+
+
+def _account(npub):
+    import hashlib
+    return "pc-" + hashlib.sha256(npub.encode()).hexdigest()[:16]
+
+
+def _asker(con):
+    def ask(cmd, pattern, wait):
+        mark = len(con.buf)
+        con.send(cmd)
+        if con.expect(pattern, wait, mark) is None:
+            return None
+        return re.findall(pattern, con.buf[mark:])[-1]
+    return ask
+
+
+def _wait_root(ask, evidence, clock=time.monotonic, sleep=time.sleep):
+    deadline = clock() + 300
+    while clock() < deadline:
+        if ask("echo ROOT-$(id -u)", r"ROOT-(\d+)", 10) == "0":
+            ask("systemctl is-system-running --wait; echo BOOT-STATE", r"(\w+)\s*\r?\nBOOT-STATE", 600)
+            return True
+        sleep(5)
+    print(f"FAIL  the test's root shell never answered as root; transcript in {evidence}/root-shell.log")
+    return False
+
+
+def _before_upgrade(state, evidence):
+    a, b = (_account(n) for n in UPGRADE_NPUBS)
+
+    def stage(con):
+        ask = _asker(con)
+        if not _wait_root(ask, evidence):
+            return 1
+        for npub in UPGRADE_NPUBS:                         # A first, then B: B gets the HIGHER uid
+            rc = ask(f"pc-provision-user {npub} >/dev/null 2>&1; echo PROV-RC=$?", r"PROV-RC=(\d+)", 120)
+            if rc != "0":
+                print(f"FAIL  signing in {npub[:12]}… could not make its account (exit {rc})")
+                return 1
+        uid = ask(f"echo UIDB=$(id -u {b})", r"UIDB=(\d+)", 30)
+        wrote = ask(f"runuser -u {b} -- sh -c 'mkdir -p ~/Documents && echo {SENTINEL} > ~/Documents/keep.txt' "
+                    f"&& sync; echo WROTE-$?", r"WROTE-(\d+)", 60)
+        if not uid or wrote != "0":
+            print("FAIL  could not write the user's file before the upgrade")
+            return 1
+        state["uid_b"] = uid
+        print(f"OK  two identities signed in ({a}, {b}); {b} (uid {uid}) wrote ~/Documents/keep.txt")
+        ask("sync; echo SYNC-$?", r"SYNC-(\d+)", 60)
+        return 0
+    return stage
+
+
+def _after_upgrade(state, evidence):
+    a, b = (_account(n) for n in UPGRADE_NPUBS)
+
+    def stage(con):
+        ask = _asker(con)
+        if not _wait_root(ask, evidence):
+            return 1
+        gone = ask(f"echo ACCT=$(getent passwd {b} >/dev/null && echo kept || echo gone)", r"ACCT=(\w+)", 30)
+        print(f"OK  after the upgrade {b}'s account was {gone} (an upgrade replaces /etc/passwd)")
+        # B signs in FIRST -- see the comment above UPGRADE_NPUBS.
+        rc = ask(f"pc-provision-user {UPGRADE_NPUBS[1]} >/dev/null 2>&1; echo PROV-RC=$?", r"PROV-RC=(\d+)", 120)
+        if rc != "0":
+            print(f"FAIL  signing {b} in again after the upgrade failed (exit {rc})")
+            return 1
+        got = ask(f"echo NOW=$(id -u {b}) OWNER=$(stat -c %u /home/{b}/Documents/keep.txt 2>/dev/null || echo missing) "
+                  f"READ=$(runuser -u {b} -- cat /home/{b}/Documents/keep.txt 2>/dev/null || echo unreadable)",
+                  r"NOW=(\d+) OWNER=(\w+) READ=(\S+)", 60)
+        if not got:
+            print("FAIL  could not inspect the user's file after the upgrade")
+            return 1
+        now, owner, read = got
+        if owner == "missing":
+            print(f"FAIL  the upgrade LOST {b}'s file (/home/{b}/Documents/keep.txt is gone)")
+            return 1
+        if owner != now or read != SENTINEL:
+            print(f"FAIL  {b}'s file survived but is not theirs: file uid {owner}, account uid {now}, "
+                  f"reads as {read!r}")
+            return 1
+        print(f"OK  the upgrade kept {b}'s file, owned by and readable as {b} "
+              f"(uid {now}; it was {state.get('uid_b')} before)")
+        rc = ask(f"pc-provision-user {UPGRADE_NPUBS[0]} >/dev/null 2>&1; echo PROV-RC=$?", r"PROV-RC=(\d+)", 120)
+        if rc != "0":
+            print(f"FAIL  {a} could not sign in after {b} took its place back (exit {rc})")
+            return 1
+        print(f"OK  {a} signs in afterwards too")
+        return 0
+    return stage
+
+
+def _upgrade_round(args, evidence):
+    evidence.mkdir(parents=True, exist_ok=True)
+    disk = Path(args.disk or Path(evidence, "installed.qcow2"))
+    if disk.exists():
+        disk.unlink()
+    subprocess.run(["qemu-img", "create", "-q", "-f", "qcow2", str(disk), args.size], check=True)
+    state = {}
+    with tempfile.TemporaryDirectory(prefix="pc-upgrade-sock-") as td:
+        rc = install(args.iso, disk, td, evidence, args.timeout, args.memory, args.cpus, args.usb)
+        if rc:
+            return rc
+        print(f"OK  installed fresh from {Path(args.iso).name}")
+        rc = boot_installed(disk, td, Path(evidence, "OVMF_VARS.fd"), evidence, args.boot_timeout,
+                            args.memory, args.cpus, stage=_before_upgrade(state, evidence))
+        if rc:
+            return rc
+    with tempfile.TemporaryDirectory(prefix="pc-upgrade-sock-") as td:
+        rc = install(args.iso, disk, td, evidence, args.timeout, args.memory, args.cpus, args.usb, upgrade=True)
+        if rc:
+            return rc
+        print("OK  upgraded from the ISO with `gentoo.sh upgrade-live` (no erase, the existing password)")
+        rc = boot_installed(disk, td, Path(evidence, "OVMF_VARS.fd"), evidence, args.boot_timeout,
+                            args.memory, args.cpus, stage=_after_upgrade(state, evidence))
+        if rc:
+            return rc
+    if not args.keep_disk and not args.disk:
+        disk.unlink(missing_ok=True)
     return 0
 
 
