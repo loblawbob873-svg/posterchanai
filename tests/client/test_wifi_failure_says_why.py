@@ -65,9 +65,14 @@ def test_every_refusal_is_said_in_words_without_the_electron_envelope():
 
 def test_the_join_uses_it_and_the_bridge_logs_nmcli_s_reason():
     src = MOD.read_text(encoding="utf-8")
-    join = src[src.index("const r = await net.connect(ssid, pw);"):]
-    join = join[:join.index("closePop();")]
-    assert "toast(wifiReason(e, ssid))" in join
+    # The join's FAILURE path says why, in words: through wifiReason, to a toast and (since the native
+    # popup may be gone a moment later) on the panel itself. The behaviour is driven in
+    # test_os_tray_controls.py::test_a_failed_join_says_why_in_the_panel.
+    start = src.index("const join = async (ssid, pw) => {")
+    join = src[start:src.index("};", src.index("catch(e){", start)) + 2]
+    assert "net.connect(ssid, pw)" in join
+    failure = join[join.index("catch(e){"):]
+    assert "wifiReason(e, ssid)" in failure and "toast(why)" in failure
     net = NET.read_text(encoding="utf-8")
     assert "console.warn('[net] nmcli '" in net
     assert "o.stdin" in net, "the password must still travel on stdin, never in the logged arguments"
