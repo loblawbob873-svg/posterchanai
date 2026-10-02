@@ -189,3 +189,22 @@ def test_the_terminal_install_prints_exactly_what_it_did(tmp_path):
     out, _ = run(live_install_script(tmp_path, b), tmp_path, stdin="y\n")
     assert "PREPARED /dev/vdb" in out
     assert "::pc-install::" not in out
+
+
+def test_an_upgrade_onto_a_disk_without_posterchanos_erases_nothing_and_asks_nothing(tmp_path):
+    """'Upgrade an installed PosterChanOS' is resume. On a disk with no earlier layout it used to fall
+    through to the ERASE question -- the wrong question for somebody who chose to keep their files. Even
+    with the GUI's erase confirmation set, it must stop before any disk is touched."""
+    b = stub_bin(tmp_path, DISKS)
+    out, _ = run(live_install_script(tmp_path, b, "export PC_INSTALL_DISK=vdb PC_INSTALL_MODE=resume PC_ASSUME_YES=1"),
+                 tmp_path, stdin="y\n")
+    assert "no PosterChanOS install on /dev/vdb to upgrade" in out, out
+    assert "RC=1" in out
+    assert "PREPARED" not in out and "Erase /dev/vdb" not in out and "PASSWORD-READ" not in out, out
+
+
+def test_the_text_menu_and_the_command_line_offer_the_upgrade():
+    menu = function("menu")
+    assert "Upgrade an installed PosterChanOS" in menu
+    assert re.search(r"\$choice = \[uU\] \]\]; then\s+clear\s+PC_INSTALL_MODE=resume liveISOinstall", menu)
+    assert re.search(r'"\$1" = "upgrade-live" \]; then.*?PC_INSTALL_MODE=resume liveISOinstall', GENTOO, re.S)

@@ -1862,6 +1862,14 @@ liveISOinstall() {
 		fi
 		mode="${mode:-f}"
 	fi
+	# AN UPGRADE NEVER ERASES. Asked for resume (the graphical installer's "Upgrade an installed
+	# PosterChanOS", or `gentoo.sh upgrade-live`) on a disk that holds no PosterChanOS, this used to fall
+	# through to the ERASE prompt: still a question, but the wrong one for somebody who chose to keep
+	# their files. Stop instead, before anything is written.
+	if [ "$layout_ok" -eq 0 ] && [ "${PC_INSTALL_MODE:-}" = resume ]; then
+		echo -e "${COLOR_YELLOW}There is no PosterChanOS install on /dev/$HARD_DISK to upgrade. Nothing was written.${COLOR_RESET}"
+		return 1
+	fi
 	if [ "$layout_ok" -eq 0 ] || [[ "$mode" = [fF]* ]]; then
 		echo -e "${COLOR_YELLOW}This will erase every file on /dev/$HARD_DISK.${COLOR_RESET}"
 		# PC_ASSUME_YES is the scripted "yes", exactly as it is for init-disk: the graphical installer
@@ -5299,6 +5307,7 @@ menu() {
 	echo
 	echo -e "\033[1;33m[6] ▶ Backup/Restore Live OS\033[0m"
 	echo -e "\033[1;36m[9] ▶ Install this Live image to a disk\033[0m"
+	echo -e "\033[1;32m[U] ▶ Upgrade an installed PosterChanOS (keeps /home and your files)\033[0m"
 	echo -e "\033[1;32m[7] ▶ Backup OS to Build Server\033[0m"
 	echo -e "\033[1;36m[8] ▶ Tools and Tweaks\033[0m"
 	echo
@@ -5348,6 +5357,11 @@ menu() {
 	elif [[ $choice = 9 ]]; then
 		clear
 		liveISOinstall
+		read -p "Press enter key to Continue"
+		menu
+	elif [[ $choice = [uU] ]]; then
+		clear
+		PC_INSTALL_MODE=resume liveISOinstall
 		read -p "Press enter key to Continue"
 		menu
 	elif [[ $choice = 7 ]]; then
@@ -6032,6 +6046,11 @@ elif [ "$1" = "fstab" ]; then
 	setDevices
 	TARGET=/
 	fstab
+elif [ "$1" = "upgrade-live" ]; then
+	# Upgrade an installed PosterChanOS from this live medium: the same install, onto the existing
+	# encrypted layout, with /home (and VMs, containers, snapshots) excluded from the copy.
+	PC_INSTALL_MODE=resume liveISOinstall
+	exit $?
 elif [ "$1" = "install-live" ]; then
 	liveISOinstall
 elif [ "$1" = "livecd" ]; then
