@@ -9316,7 +9316,10 @@ html.os-on #upload-badge.upbadge{z-index:333}
   .osw-b{width:calc(46px / var(--zf, 1));height:calc(44px / var(--zf, 1));
          font-size:calc(15px / var(--zf, 1))}
   .osw-grip{width:calc(30px / var(--zf, 1));height:calc(30px / var(--zf, 1))}
-  .os-task{height:calc(42px / var(--zf, 1));padding:0 calc(13px / var(--zf, 1))}
+  /* A window button is a fixed-width ICON box, so it grows as a SQUARE. Side padding on a 40px box
+     left a 14px track for a 20px icon, which overflowed to one side ("taskbar icons are not centered
+     on tablet"). */
+  .os-task{flex-basis:calc(42px / var(--zf, 1));width:calc(42px / var(--zf, 1));height:calc(42px / var(--zf, 1));padding:0}
   .os-start{width:calc(42px / var(--zf, 1));height:calc(42px / var(--zf, 1))}
   .os-app{min-height:calc(46px / var(--zf, 1))}
   .os-exit{height:calc(40px / var(--zf, 1))}
