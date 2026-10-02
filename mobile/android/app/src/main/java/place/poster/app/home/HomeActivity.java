@@ -127,6 +127,17 @@ public class HomeActivity extends Activity implements DeskView.Host {
     public void onWindowFocusChanged(boolean hasFocus) {
         super.onWindowFocusChanged(hasFocus);
         homeWindowFocused = hasFocus;
+        // "Hide system bars" is a choice for the DEVICE, and the launcher is the screen it is most
+        // looked at on: applied only in MainActivity, the home screen kept both bars ("i chose hide
+        // system bars but i still see both"). Android drops immersive mode on any dialog or app
+        // switch, so it is re-applied whenever this window gets focus back, as MainActivity does.
+        if (hasFocus) place.poster.app.SystemBars.apply(this);
+    }
+
+    @Override
+    protected void onResume() {
+        super.onResume();
+        place.poster.app.SystemBars.apply(this);
     }
 
     private List<AppShelf.Entry> installed = new ArrayList<AppShelf.Entry>();

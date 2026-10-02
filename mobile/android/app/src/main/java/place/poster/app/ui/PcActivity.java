@@ -40,6 +40,22 @@ public abstract class PcActivity extends Activity {
         if (changed) onThemeChanged();
     }
 
+    /* "Hide system bars" is a DEVICE choice, so every native screen honours it -- Texts, the dialer and
+     * the call screen as well as the app and the launcher; MainActivity alone did, so leaving the app
+     * brought both bars back. Re-applied on resume and on regaining focus, because Android drops
+     * immersive mode after any dialog or app switch. */
+    @Override
+    protected void onResume() {
+        super.onResume();
+        place.poster.app.SystemBars.apply(this);
+    }
+
+    @Override
+    public void onWindowFocusChanged(boolean hasFocus) {
+        super.onWindowFocusChanged(hasFocus);
+        if (hasFocus) place.poster.app.SystemBars.apply(this);
+    }
+
     /** Repaint everything the palette touches. Called when the theme changed while we were away. */
     protected void onThemeChanged() { }
 
