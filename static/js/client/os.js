@@ -3112,6 +3112,47 @@
     { id:'voice', name:'Voice cloning', about:'The voice model (about 6 GB) downloads on first use.', needs:'ai' },
   ];
   const _SERVER_PREV_INSTANCE = 'pc_server_prev_instance';
+  function _wireStartupApps(card){
+    const listEl=card.querySelector('[data-startup-list]'), statEl=card.querySelector('[data-startup-status]');
+    const say=t=>{ if(statEl) statEl.textContent=t||''; };
+    const act=async(fn, done)=>{ try{ const r=await fn(); if(done) say(done); await refresh(); return r; }
+      catch(e){ say(String((e&&e.message)||e).replace(/^Error invoking remote method '[^']+': (Error: )?/,'')); } };
+    async function refresh(){
+      let rows=null;
+      try{ rows=await pcAutostart.list(); }catch(_){ rows=null; }
+      if(rows===null){ listEl.innerHTML='<div class="empty">The startup list could not be read.</div>'; return; }
+      listEl.innerHTML=rows.length ? rows.map(r=>`<div class="os-startup-row" data-startup-id="${enc(r.id)}">
+          <span class="os-startup-nm"><b>${enc(r.name)}</b><small>${enc(r.exec)}</small></span>
+          <label class="switch" title="${r.enabled?'Starts at login':'Off'}"><input type="checkbox" data-startup-on ${r.enabled?'checked':''} aria-label="Start ${enc(r.name)} at login"><span class="slider"></span></label>
+          <button class="btn btn-ghost small" data-startup-run>Run now</button>
+          <button class="btn btn-ghost small danger" data-startup-remove>Remove</button></div>`).join('')
+        : '<div class="empty">Nothing starts by itself yet. Add an app or a command below.</div>';
+      listEl.querySelectorAll('.os-startup-row').forEach(row=>{
+        const id=row.dataset.startupId, name=(row.querySelector('b')||{}).textContent||id;
+        const on=row.querySelector('[data-startup-on]');
+        if(on) on.onchange=()=>act(()=>pcAutostart.set(id,on.checked), on.checked?name+' will start at login':name+' will not start at login');
+        const run=row.querySelector('[data-startup-run]');
+        if(run) run.onclick=async()=>{ run.disabled=true; const r=await act(()=>pcAutostart.run(id));
+          say(r&&r.ok?'started '+name:(r&&r.why)?name+' did not start: '+r.why:''); run.disabled=false; };
+        const rm=row.querySelector('[data-startup-remove]');
+        if(rm) rm.onclick=async()=>{ if(!(await PC().uiConfirm('Stop starting '+name+' at login and remove it from this list?',{ok:'Remove',danger:true}))) return;
+          act(()=>pcAutostart.remove(id), 'removed '+name); };
+      });
+    }
+    const sel=card.querySelector('[data-startup-app]');
+    if(sel && window.pcApps && pcApps.list) pcApps.list().then(r=>{
+      const apps=(r&&r.apps)||[];
+      sel.insertAdjacentHTML('beforeend', apps.map(a=>`<option value="${enc(a.id)}">${enc(a.name)}</option>`).join(''));
+    }).catch(()=>{});
+    const addApp=card.querySelector('[data-startup-add-app]');
+    if(addApp) addApp.onclick=()=>{ if(!sel||!sel.value){ say('choose an app first'); return; }
+      const label=sel.options[sel.selectedIndex].textContent; act(()=>pcAutostart.addApp(sel.value), label+' will start at login'); };
+    const addCmd=card.querySelector('[data-startup-add-cmd]');
+    if(addCmd) addCmd.onclick=()=>{ const ex=card.querySelector('[data-startup-exec]'), nm=card.querySelector('[data-startup-name]'), tm=card.querySelector('[data-startup-term]');
+      const exec=String((ex&&ex.value)||'').trim(); if(!exec){ say('type the command to run'); return; }
+      act(()=>pcAutostart.add({name:(nm&&nm.value)||'',exec,terminal:!!(tm&&tm.checked)}), 'added').then(()=>{ if(ex) ex.value=''; if(nm) nm.value=''; }); };
+    refresh();
+  }
   function _wireServerSettings(host, card){
     const aiCard=host.querySelector('[data-pcserver-ai]');
     const q=sel=>card.querySelector(sel)||(aiCard&&aiCard.querySelector(sel));
@@ -3355,6 +3396,7 @@
         <button data-page="appearance" class="${_osSettingsPage==='appearance'?'on':''}">${iconSvg('i-palette')} Appearance</button>
         <button data-page="sound" class="${_osSettingsPage==='sound'?'on':''}">${iconSvg('i-volume')} Sound</button>
         ${window.pcPrinters?`<button data-page="printers" class="${_osSettingsPage==='printers'?'on':''}">${iconSvg('i-note')} Printers</button>`:''}
+        ${window.pcAutostart?`<button data-page="startup" class="${_osSettingsPage==='startup'?'on':''}">${iconSvg('i-zap')} Startup apps</button>`:''}
         <button data-page="network" class="${_osSettingsPage==='network'?'on':''}">${iconSvg('i-wifi')} Network</button>
         <button data-page="bluetooth" class="${_osSettingsPage==='bluetooth'?'on':''}">${iconSvg('i-bluetooth')} Bluetooth</button>
         <button data-page="power" class="${_osSettingsPage==='power'?'on':''}">${iconSvg('i-power')} Power &amp; brightness</button>
@@ -3368,7 +3410,7 @@
       </aside><main class="os-set-main"><label class="os-set-mobile-nav"><span>Settings category</span><select data-settings-mobile aria-label="Settings category">
         <option value="page:displays" ${_osSettingsPage==='displays'?'selected':''}>Displays</option>
         <option value="page:appearance" ${_osSettingsPage==='appearance'?'selected':''}>Appearance</option>
-        <option value="page:sound" ${_osSettingsPage==='sound'?'selected':''}>Sound</option>${window.pcPrinters?`<option value="page:printers" ${_osSettingsPage==='printers'?'selected':''}>Printers</option>`:''}<option value="page:network" ${_osSettingsPage==='network'?'selected':''}>Network</option><option value="page:bluetooth" ${_osSettingsPage==='bluetooth'?'selected':''}>Bluetooth</option>
+        <option value="page:sound" ${_osSettingsPage==='sound'?'selected':''}>Sound</option>${window.pcPrinters?`<option value="page:printers" ${_osSettingsPage==='printers'?'selected':''}>Printers</option>`:''}${window.pcAutostart?`<option value="page:startup" ${_osSettingsPage==='startup'?'selected':''}>Startup apps</option>`:''}<option value="page:network" ${_osSettingsPage==='network'?'selected':''}>Network</option><option value="page:bluetooth" ${_osSettingsPage==='bluetooth'?'selected':''}>Bluetooth</option>
         <option value="page:power" ${_osSettingsPage==='power'?'selected':''}>Power &amp; brightness</option>
         <option value="page:search" ${_osSettingsPage==='search'?'selected':''}>Search</option>
         <option value="page:datetime" ${_osSettingsPage==='datetime'?'selected':''}>Date &amp; Time</option>
@@ -3395,6 +3437,12 @@
         <section data-settings-page="${key}" ${_osSettingsPage===key?'':'hidden'}><header class="os-set-pagehead"><div>${iconSvg(ic)}</div><span><h2>${title}</h2><p>${desc}</p></span></header>
           <section class="os-set-card"><div class="os-set-cardhead"><b>${title} controls</b><span>Controls open beside this Settings window and return here when closed.</span></div>
           ${window.PCOSShell&&PCOSShell.openControl?`<button class="btn primary os-set-open-control" data-open-control="${key}">${action}</button>`:`<div class="empty">${title} controls are unavailable on this device.</div>`}</section>${key==='network'?bridgeCardHtml():''}</section>`).join('')}
+        ${window.pcAutostart?`<section data-settings-page="startup" ${_osSettingsPage==='startup'?'':'hidden'}><header class="os-set-pagehead"><div>${iconSvg('i-zap')}</div><span><h2>Startup apps</h2><p>Programs that start by themselves when you log in.</p></span></header>
+          <div class="os-set-card" data-startup><div class="os-set-cardhead"><b>Start when I log in</b><span>Saved in ~/.config/autostart, the standard place — so a "start at login" box ticked inside an app shows up here too.</span></div>
+            <div data-startup-list class="os-startup-list"><div class="empty">Loading…</div></div>
+            <div class="os-set-actions os-startup-add"><select class="input" data-startup-app aria-label="An installed app"><option value="">Add an installed app…</option></select><button class="btn primary" data-startup-add-app>Add</button></div>
+            <div class="os-set-actions os-startup-add"><input class="input" data-startup-name placeholder="Name (optional)" aria-label="Name"><input class="input" data-startup-exec placeholder="Command, e.g. syncthing --no-browser" aria-label="Command"><label class="os-startup-term"><input type="checkbox" data-startup-term> In a terminal</label><button class="btn" data-startup-add-cmd>Add command</button></div>
+            <div class="muted" data-startup-status></div></div></section>`:''}
         <section data-settings-page="printers" ${_osSettingsPage==='printers'?'':'hidden'}><header class="os-set-pagehead"><div>${iconSvg('i-note')}</div><span><h2>Printers</h2><p>Add a printer and print a test page.</p></span></header>${window.pcPrinters?`<div class="os-set-card" data-printers><div class="os-set-cardhead"><b>Printers on this computer</b><span>CUPS's own pages ask for a Unix password and a PosterChan identity account has none, so printers are managed here — using the administrator rights this account already holds.</span></div>
           <div data-printer-list class="os-printer-list"><div class="empty">Loading…</div></div>
           <div class="os-set-actions"><button class="btn" data-printer-refresh>Refresh</button><button class="btn primary" data-printer-find>Find printers</button><span class="muted" data-printer-status></span></div>
@@ -3606,6 +3654,11 @@
       const awake=host.querySelector('[data-keep-awake]'); if(awake)awake.onchange=async()=>{
         awake.disabled=true;try{await pcPower.setKeepAwake(awake.checked);const s=awake.parentElement.querySelector('span');if(s)s.textContent=awake.checked?'On':'Off';PC().toast(awake.checked?'Computer will stay awake':'Normal sleep behavior restored');}catch(e){awake.checked=!awake.checked;PC().toast(String(e&&e.message||e));}finally{awake.disabled=false;}
       };
+      /* STARTUP APPS ("Users need a way to be able to define startup programs for posterchanOS"). The
+       * list is the user's ~/.config/autostart (desktop/autostart.js); the shell starts the enabled ones
+       * once per login. Every change re-reads the directory, so what is drawn is what is on disk. */
+      const stp=host.querySelector('[data-startup]');
+      if(stp && window.pcAutostart) _wireStartupApps(stp);
       /* PRINTERS. Everything here goes through pcPrinters, which runs the CUPS command-line tools
        * under the NOPASSWD sudo grant this account already has — there is no password to ask for,
        * which is the whole point: CUPS's own web UI authenticates a Unix account through PAM, and a

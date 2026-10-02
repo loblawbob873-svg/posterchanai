@@ -691,6 +691,16 @@ if (isOurPage) {
     },
   });
 
+  contextBridge.exposeInMainWorld('pcAutostart', {
+    list: () => ipcRenderer.invoke('pc:autostart:list'),
+    add: (spec) => ipcRenderer.invoke('pc:autostart:add', spec && typeof spec === 'object'
+      ? { name: String(spec.name || ''), exec: String(spec.exec || ''), terminal: !!spec.terminal } : {}),
+    addApp: (id) => ipcRenderer.invoke('pc:autostart:add-app', String(id || '')),
+    set: (id, on) => ipcRenderer.invoke('pc:autostart:set', String(id || ''), !!on),
+    remove: (id) => ipcRenderer.invoke('pc:autostart:remove', String(id || '')),
+    run: (id) => ipcRenderer.invoke('pc:autostart:run', String(id || '')),
+  });
+
   contextBridge.exposeInMainWorld('pcApps', {
     list: () => ipcRenderer.invoke('pc:apps:list'),
   });

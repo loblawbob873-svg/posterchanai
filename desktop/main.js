@@ -3325,8 +3325,9 @@ ipcMain.handle('pc:liveusb:pick-dir', async (e) => {
 });
 /* Launch takes an ARGV ARRAY, never a command string. A string would have to be handed to a shell
  * to be useful, and then a file name with a space in it is an injection. */
-ipcMain.handle('pc:wm:launch', async (e, argv, opts) => {
-  fsGuard(e);
+/* THE ONE LAUNCHER: the start menu's click and a startup app go through the same function, so a
+ * program started at login gets every repair a click gets (the inherited DISPLAY, Firefox, Telegram). */
+async function launchCommand(argv, opts) {
   /* CANDIDATES ARE RESOLVED HERE, because only this side can look at the filesystem. A launcher in
    * the page cannot know that Gentoo installs firefox as /usr/bin/firefox-bin and not
    * /usr/bin/firefox — and a hardcoded path that does not exist starts nothing, silently, which is
@@ -3463,7 +3464,8 @@ ipcMain.handle('pc:wm:launch', async (e, argv, opts) => {
   ]);
   if (settled.why) return { pid: null, window: null, why: settled.why };
   return { pid: started.pid, window: settled.window };
-});
+}
+ipcMain.handle('pc:wm:launch', async (e, argv, opts) => { fsGuard(e); return launchCommand(argv, opts); });
 /* EVERY APP INSTALLED ON THIS MACHINE, for the start menu — "should be able to manage/open any
  * game/app under PosterChan Desktop".
  *
@@ -3483,6 +3485,27 @@ function terminalPrefix() {
     try { fs.accessSync(t[0], fs.constants.X_OK); return t; } catch (_) {}
   }
   return null;
+}
+
+/* STARTUP APPS (autostart.js): the user's ~/.config/autostart, listed and edited from System Settings. */
+const autostart = require('./autostart.js');
+ipcMain.handle('pc:autostart:list', (e) => { fsGuard(e); return autostart.list(); });
+ipcMain.handle('pc:autostart:add', (e, spec) => { fsGuard(e); return autostart.add(spec && typeof spec === 'object' ? {
+  name: String(spec.name || ''), exec: String(spec.exec || ''), terminal: !!spec.terminal } : {}); });
+ipcMain.handle('pc:autostart:add-app', (e, id) => { fsGuard(e); return autostart.addApp(String(id || '')); });
+ipcMain.handle('pc:autostart:set', (e, id, on) => { fsGuard(e); return autostart.setEnabled(String(id || ''), !!on); });
+ipcMain.handle('pc:autostart:remove', (e, id) => { fsGuard(e); return autostart.remove(String(id || '')); });
+ipcMain.handle('pc:autostart:run', async (e, id) => {
+  fsGuard(e);
+  const item = autostart.toRun().find((x) => x.id === String(id || ''));
+  if (!item) return { ok: false, why: 'it is switched off or not installed' };
+  const r = await launchAutostart(item.argv, item);
+  return r && r.why ? { ok: false, why: r.why } : { ok: true };
+});
+/* A Terminal=true entry runs inside the first terminal this machine has, as the start menu does. */
+function launchAutostart(argv, item) {
+  const term = item && item.terminal ? terminalPrefix() : null;
+  return launchCommand(term ? term.concat(argv) : argv, {});
 }
 
 ipcMain.handle('pc:apps:list', (e) => {
@@ -4359,6 +4382,8 @@ if (!app.requestSingleInstanceLock()) { app.quit(); } else {
     // hiding the only desktop surface leaves a healthy Sway session as a permanent black screen.
     startHidden = !SHELL_MODE && background.launchedHidden();
     createWindow();
+    /* Startup apps, once per login, after the desktop has had a moment to come up (and Xwayland with it). */
+    if(SHELL_MODE) setTimeout(() => { autostart.runOnce(launchAutostart).catch(() => {}); }, 6000);
     /* Upgrade old saved layouts before creating the per-output shell relationship. A small gap in
      * outputs.conf is a real pointer wall; leaving it until somebody happens to open Displays keeps
      * the broken drag/gaming geometry after an otherwise successful OS update. */
