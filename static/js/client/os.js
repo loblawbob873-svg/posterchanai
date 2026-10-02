@@ -2512,7 +2512,7 @@
     if(/telegram|message|chat|mail/.test(key)) return [['Catch me up','Summarize the conversation and unresolved questions.'],['Draft reply','Draft a concise reply, but do not send it.'],['Extract tasks','Extract commitments, dates, and follow-ups.']];
     if(/file|drive|folder/.test(key)) return [['Organize','Suggest a useful organization plan for these files.'],['Find patterns','Describe meaningful groups, duplicates, or naming problems.'],['Next action','Recommend the most useful next action for this window.']];
     if(/settings/.test(key)) return [['Optimize','Recommend settings for a fast, quiet, privacy-conscious computer.'],['Explain options','Explain the visible settings and their tradeoffs.'],['Check setup','Review the visible configuration for likely omissions.']];
-    return [['Summarize','Summarize what is visible in this window.'],['What can I do?','Suggest three useful things AI can help accomplish in this window.'],['Extract tasks','Extract decisions and next actions from this window.']];
+    return [['Summarize','Summarize what is visible in this window.'],['Do it for me','Look at what this window is for and do the most useful next thing in it for me, step by step, with its own buttons and fields.'],['Extract tasks','Extract decisions and next actions from this window.']];
   }
   function closeWindowAI(w){ const p=w&&w.aiPanel;if(p){p.remove();w.aiPanel=null;} }
   /* WHERE "Open in AI" GOES. In a popped-out window (PosterChanOS: Social, Notes, Files… are each
@@ -2627,8 +2627,88 @@
       if(++tries<50) setTimeout(go,100); else PC().toast('Web Search did not open'); };
     setTimeout(go,0); return true;
   }
+  /* OPERATING THE WINDOW ("need way to interact with the current window and do stuff"). Every request
+   * sends the window's VISIBLE controls, numbered, and remembers which element each number is -- so a
+   * step can only ever name something that was really on screen when the model was asked, and it acts
+   * on that exact element (never a selector the model wrote). Password fields are never listed, and a
+   * text box's value is sent only up to 80 characters. */
+  const _AI_CTL_MAX=80;
+  // A label's OWN words: one wrapped around a list would otherwise read "Colour RedBlue".
+  const _aiLabelText=l=>{ const c=l.cloneNode(true); c.querySelectorAll('select,textarea,input,button').forEach(x=>x.remove()); return c.textContent; };
+  function _aiControls(w){
+    const map=new Map(), list=[];
+    if(!w || w.native!=null) return {list,map};
+    const root=w.body||w.el;
+    const sel='button,a[href],input,textarea,select,[role="button"],[role="tab"],[role="link"],[role="checkbox"],[role="switch"],[contenteditable="true"],[contenteditable=""]';
+    for(const el of root.querySelectorAll(sel)){
+      if(list.length>=_AI_CTL_MAX) break;
+      if(el.closest('.osw-ai-panel') || el.disabled || el.closest('[aria-hidden="true"]')) continue;
+      if(!el.getClientRects().length) continue;
+      const tag=el.tagName, type=String(el.type||'').toLowerCase();
+      if(tag==='INPUT' && /^(password|hidden|file)$/.test(type)) continue;
+      let role;
+      if(tag==='SELECT') role='list';
+      else if(tag==='INPUT' && /^(checkbox|radio)$/.test(type)) role=type;
+      else if(tag==='INPUT' && /^(button|submit|reset|image)$/.test(type)) role='button';
+      else if(tag==='TEXTAREA' || tag==='INPUT' || el.isContentEditable) role='textbox';
+      else if(/^(checkbox|switch)$/.test(el.getAttribute('role')||'')) role='checkbox';
+      else if(tag==='A' || el.getAttribute('role')==='link') role='link';
+      else role=el.getAttribute('role')==='tab'?'tab':'button';
+      let label=el.getAttribute('aria-label')||'';
+      if(!label && el.id){ try{ const l=root.querySelector('label[for="'+CSS.escape(el.id)+'"]'); if(l) label=_aiLabelText(l); }catch(_){ } }
+      if(!label){ const l=el.closest('label'); if(l && role!=='button') label=_aiLabelText(l); }
+      if(!label && role!=='textbox' && role!=='list') label=el.innerText||el.value||'';
+      if(!label) label=el.getAttribute('placeholder')||el.getAttribute('title')||el.getAttribute('name')||'';
+      label=String(label).replace(/\s+/g,' ').trim().slice(0,80);
+      if(!label) continue;
+      let value='';
+      if(role==='textbox') value=el.isContentEditable?el.textContent:el.value;
+      else if(role==='list') value=(el.selectedOptions&&el.selectedOptions[0]||{}).textContent||'';
+      else if(role==='checkbox'||role==='radio') value=(el.checked||el.getAttribute('aria-checked')==='true')?'on':'off';
+      const ref=list.length+1;
+      map.set(ref,el);
+      list.push({ref,role,label,value:String(value||'').replace(/\s+/g,' ').trim().slice(0,80)});
+    }
+    return {list,map};
+  }
+  /* What may not happen without a person saying yes, EVERY time: anything that leaves the machine,
+   * destroys something, spends money or ends a session. Read off the control's own label. */
+  const _AI_RISKY=/\b(send|post|publish|reply|repost|boost|zap|pay|buy|purchase|transfer|tip|delete|remove|erase|wipe|trash|discard|clear|reset|block|mute|report|unfollow|sign ?out|log ?out|leave|uninstall|shut ?down|restart|format|submit|confirm)\b/i;
+  async function _aiAct(st,map){
+    const el=map.get(st.ref);
+    if(!el || !el.isConnected){ PC().toast('“'+st.target+'” is not on screen any more — press Continue'); return false; }
+    if(st.do==='click' && _AI_RISKY.test(st.target) &&
+       !(await PC().uiConfirm('Let AI press “'+st.target+'”?',{ok:'Press it'}))) return false;
+    try{ el.scrollIntoView({block:'nearest'}); }catch(_){ }
+    if(st.do==='click'){ el.click(); return true; }
+    if(st.do==='fill'){
+      try{ el.focus(); }catch(_){ }
+      if(el.isContentEditable) el.textContent=st.text;
+      else{
+        const proto=el.tagName==='TEXTAREA'?HTMLTextAreaElement.prototype:HTMLInputElement.prototype;
+        const set=Object.getOwnPropertyDescriptor(proto,'value'); set&&set.set?set.set.call(el,st.text):(el.value=st.text);
+      }
+      el.dispatchEvent(new Event('input',{bubbles:true})); el.dispatchEvent(new Event('change',{bubbles:true}));
+      return true;
+    }
+    if(st.do==='choose'){
+      const want=String(st.text).trim().toLowerCase();
+      const opt=[...(el.options||[])].find(o=>o.textContent.trim().toLowerCase()===want||String(o.value).toLowerCase()===want)
+             ||[...(el.options||[])].find(o=>o.textContent.trim().toLowerCase().includes(want));
+      if(!opt){ PC().toast('“'+st.target+'” has no option “'+st.text+'”'); return false; }
+      el.value=opt.value; el.dispatchEvent(new Event('input',{bubbles:true})); el.dispatchEvent(new Event('change',{bubbles:true}));
+      return true;
+    }
+    if(st.do==='toggle'){
+      const now=el.type==='checkbox'||el.type==='radio'?!!el.checked:el.getAttribute('aria-checked')==='true';
+      if(now!==!!st.on) el.click();
+      return true;
+    }
+    return false;
+  }
+  const _AI_ACTS=new Set(['click','fill','choose','toggle']), _AI_KEEP_GOING_MAX=5;
   /* The app's own SVG icons, not Unicode glyphs: a glyph the font lacks draws as an empty box. */
-  const _STEP_ICON={command:'i-terminal',insert:'i-pen',note:'i-note',calendar:'i-calendar',open:'i-expand',search:'i-search'};
+  const _STEP_ICON={click:'i-next',fill:'i-pen',choose:'i-next',toggle:'i-check',command:'i-terminal',insert:'i-pen',note:'i-note',calendar:'i-calendar',open:'i-expand',search:'i-search'};
   const _stepIcon=k=>`<svg class="ic" aria-hidden="true"><use href="#${_STEP_ICON[k]||'i-next'}"></use></svg>`;
   /* ONE REQUEST AT A TIME PER PANEL. The answer arrives with what the model PROPOSES -- tasks and
    * steps -- each a button; nothing runs, sends, saves or opens until the person presses it. "Continue"
@@ -2641,12 +2721,15 @@
     _aiBusy.add(panel); box.hidden=false; box.className='osw-ai-answer loading';
     box.innerHTML='<span class="spinner"></span> Thinking…';
     let res=null, error='';
-    try{ res=await _aiPost({action:'window_steps',windows:contexts,instruction,history:turns.slice(-4),commands:cmds,today:_aiToday()}); }
+    const ctl=_aiControls(w);                 // read NOW: the numbers below mean what is on screen now
+    try{ res=await _aiPost({action:'window_steps',windows:contexts,instruction,history:turns.slice(-4),commands:cmds,today:_aiToday(),controls:ctl.list}); }
     catch(e){ error=(e&&e.message)||'Could not reach the AI — check your connection.'; }
     finally{ _aiBusy.delete(panel); }
     if(w.aiPanel!==panel) return;                       // closed while it was thinking
     if(error){ box.className='osw-ai-answer error'; box.innerHTML=`<p>${enc(error)}</p>`; return; }
-    const answer=String(res.answer||''), tasks=Array.isArray(res.tasks)?res.tasks:[], steps=Array.isArray(res.steps)?res.steps:[];
+    const answer=String(res.answer||''), tasks=Array.isArray(res.tasks)?res.tasks:[];
+    const steps=(Array.isArray(res.steps)?res.steps:[]).filter(st=>!_AI_ACTS.has(st.do)||ctl.map.has(st.ref));
+    const acts=steps.filter(st=>_AI_ACTS.has(st.do));
     const turn={q:instruction,a:answer.slice(0,800),did:[]}; turns.push(turn);
     const term=isTerm && window.PCTerm && window.PCTerm.connected && window.PCTerm.connected();
     box.className='osw-ai-answer';
@@ -2657,10 +2740,13 @@
         <ul>${tasks.map((t,i)=>`<li data-task="${i}"><label><input type="checkbox"><span>${enc(t.text)}</span></label>
           <span class="osw-ai-chips">${t.due?`<i class="due">${enc(t.due)}</i>`:''}${t.who?`<i class="who">${enc(t.who)}</i>`:''}
           ${t.due?`<button class="btn btn-ghost small" data-task-cal="${i}" title="Add to Calendar">📅 Add</button>`:''}</span></li>`).join('')}</ul></div>`:'')+
+      (acts.length?`<div class="osw-ai-auto"><button class="btn btn-neon small" data-ai-all>Do all ${acts.length} step${acts.length>1?'s':''}</button>
+        <label><input type="checkbox" data-ai-keep ${panel._aiKeep?'checked':''}> Keep going until it is done</label></div>`:'')+
       (steps.length?`<div class="osw-ai-steps">${steps.map((st,i)=>`<div class="osw-ai-step" data-step="${i}" data-do="${enc(st.do)}">
           <div class="osw-ai-step-h"><span class="ic">${_stepIcon(st.do)}</span><b>${enc(st.label)}</b><span class="ok" hidden>✓ done</span></div>
-          ${st.do==='command'?`<pre><code>${enc(st.text)}</code></pre>`:st.do==='open'?'':`<div class="osw-ai-step-t">${enc(String(st.text).slice(0,280))}${String(st.text).length>280?'…':''}</div>`}
+          ${_AI_ACTS.has(st.do)?(st.do==='fill'||st.do==='choose'?`<div class="osw-ai-step-t">${enc(String(st.text).slice(0,280))}</div>`:''):st.do==='command'?`<pre><code>${enc(st.text)}</code></pre>`:st.do==='open'?'':`<div class="osw-ai-step-t">${enc(String(st.text).slice(0,280))}${String(st.text).length>280?'…':''}</div>`}
           <div class="osw-ai-step-b">${
+            _AI_ACTS.has(st.do)?'<button class="btn btn-neon small" data-act>Do it</button>':
             st.do==='command'?(term?`<button class="btn btn-neon small" data-run>▶ Run</button><button class="btn btn-ghost small" data-type>Type it</button>`:'<span class="muted small">Open this window’s terminal session to run it</span><button class="btn btn-ghost small" data-copy>Copy</button>'):
             st.do==='insert'?(composer?'<button class="btn btn-neon small" data-go>Insert into this window</button>':'<button class="btn btn-ghost small" data-copy>Copy</button>'):
             `<button class="btn btn-neon small" data-go>${enc(({note:'Save to Notes',calendar:'Add to Calendar',open:'Open',search:'Search the web'})[st.do]||st.label)}</button>`}</div></div>`).join('')}</div>`:'')+
@@ -2668,7 +2754,8 @@
         <button class="btn btn-ghost small" data-ai-continue title="Read the window again and suggest what comes next"><svg class="ic b-ic" aria-hidden="true"><use href="#i-next"></use></svg>Continue</button></div>`;
     const done=(el,label)=>{ el.classList.add('done'); const ok=el.querySelector('.ok'); if(ok) ok.hidden=false; turn.did.push(label); };
     box.querySelector('[data-ai-copy]').onclick=()=>{ try{ PC().copyValue(answer); }catch(_){ } };
-    box.querySelector('[data-ai-continue]').onclick=()=>{
+    const cont=box.querySelector('[data-ai-continue]');
+    cont.onclick=()=>{
       /* THE WINDOW ITSELF IS ALWAYS IN, whether or not it is one of this page's desktop windows. A
        * popped-out window (every app on PosterChanOS) is not in `wins`, so filtering it with the
        * connected ones sent NO window and Continue always failed: "There is no window to ask about". */
@@ -2687,8 +2774,35 @@
       if(await _aiCalendar({title:t.text,date:t.due,start:'',end:'',allDay:true,location:'',notes:t.who?('Who: '+t.who):''})){
         b.textContent='✓ Added'; b.disabled=true; turn.did.push('added "'+t.text+'" to the calendar'); closeWindowAI(w); }
     });
+    const doStep=async(card,st)=>{
+      if(card.classList.contains('done')) return true;
+      const ok=await _aiAct(st,ctl.map);
+      if(ok) done(card,st.do==='fill'?'filled “'+st.target+'” with "'+String(st.text).slice(0,60)+'"':
+                         st.do==='choose'?'chose "'+st.text+'" in “'+st.target+'”':
+                         st.do==='toggle'?(st.on?'ticked':'unticked')+' “'+st.target+'”':'pressed “'+st.target+'”');
+      return ok;
+    };
+    const keep=box.querySelector('[data-ai-keep]');
+    if(keep) keep.onchange=()=>{ panel._aiKeep=keep.checked; };
+    const all=box.querySelector('[data-ai-all]');
+    if(all) all.onclick=async()=>{
+      all.disabled=true; let ok=true;
+      for(const card of box.querySelectorAll('.osw-ai-step')){
+        const st=steps[+card.dataset.step];
+        if(!st || !_AI_ACTS.has(st.do)) continue;
+        if(!(await doStep(card,st))){ ok=false; break; }
+        await new Promise(r=>setTimeout(r,350));          // let the window react before the next step
+      }
+      all.disabled=false;
+      if(w.aiPanel!==panel) return;
+      // "Keep going": look again and do the next part, a bounded number of rounds; a refusal stops it.
+      if(ok && panel._aiKeep && (panel._aiRounds=(panel._aiRounds||0)+1)<=_AI_KEEP_GOING_MAX) cont.click();
+      else if(ok && panel._aiKeep) PC().toast('Stopped after '+_AI_KEEP_GOING_MAX+' rounds — press Continue to go on');
+    };
     box.querySelectorAll('.osw-ai-step').forEach(card=>{
       const st=steps[+card.dataset.step]; if(!st) return;
+      const act=card.querySelector('[data-act]');
+      if(act) act.onclick=async()=>{ act.disabled=true; await doStep(card,st); act.disabled=false; };
       const run=card.querySelector('[data-run]'), typ=card.querySelector('[data-type]'), go=card.querySelector('[data-go]'), cp=card.querySelector('[data-copy]');
       if(cp) cp.onclick=()=>{ try{ PC().copyValue(st.text); }catch(_){ } };
       if(run) run.onclick=()=>{
@@ -2738,7 +2852,7 @@
     panel.innerHTML=`<header><span>✨</span><div><b>AI for ${enc(ctx.title)}</b><small>${ctx.selection?'Using your selection':ctx.kind==='native app'?'App name only · private by default':'Using visible window text'}</small></div><button data-ai-dismiss aria-label="Close"><svg class="ic" aria-hidden="true"><use href="#i-close"></use></svg></button></header>
       ${related.length?`<div class="osw-ai-context"><b>${contexts.length} connected windows</b><span>${contexts.map(x=>enc(x.title)).join(' → ')}</span><button data-ai-clear>Clear</button></div>`:'<div class="osw-ai-tip">Shift-click ✨ to collect windows, or drag one sparkle onto another.</div>'}
       <div class="osw-ai-actions">${suggestions.map((x,i)=>`<button data-ai-action="${i}"><b>${enc(x[0])}</b><span>${enc(x[1])}</span></button>`).join('')}</div>
-      <label>Ask about this window<textarea rows="2" placeholder="What would you like PosterChan AI to do?"></textarea></label>
+      <label>Ask about this window<textarea rows="2" placeholder="${w.native==null?'Tell it what to do here — “fill this in and save it”':'What would you like PosterChan AI to do?'}"></textarea></label>
       ${isTerm?'<label class="osw-ai-agent"><input type="checkbox" data-ai-cmds checked> Suggest commands I can run here with one click</label>':''}
       ${w.native==null?`<label class="osw-ai-agent"><input type="checkbox" data-ai-watch ${w.aiWatch?'checked':''}> Watch this window and glow when its contents change</label>`:''}
       <div class="osw-ai-answer" hidden aria-live="polite"></div>
@@ -2747,7 +2861,7 @@
     /* ANSWERED HERE, WITH BUTTONS -- never by loading the AI Chat screen ("we need interactive Agentic
      * features with buttons, not loading up AI Chat"). `turns` is this panel's memory for ↻ Continue. */
     const turns=[];
-    const ask=instruction=>{instruction=String(instruction||'').trim();if(!instruction)return;
+    const ask=instruction=>{instruction=String(instruction||'').trim();if(!instruction)return;panel._aiRounds=0;
       _aiSteps(w,panel,contexts,instruction,composer,turns,isTerm);};
     panel.querySelector('[data-ai-dismiss]').onclick=()=>closeWindowAI(w);
     const clear=panel.querySelector('[data-ai-clear]');if(clear)clear.onclick=()=>{_aiContextWins.forEach(x=>x.el.classList.remove('ai-context'));_aiContextWins.clear();closeWindowAI(w);toggleWindowAI(w,button);};

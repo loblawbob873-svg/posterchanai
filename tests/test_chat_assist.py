@@ -274,3 +274,42 @@ def test_a_reply_that_is_not_json_is_still_an_answer_and_its_bullets_become_task
     code, data, _ = _run({"action": "window_steps", "windows": [{"title": "Mail", "text": "x"}],
                           "instruction": "Summarize"}, _Chat([plain]))
     assert data["tasks"] == [], "bullets become tasks only when tasks were asked for"
+
+
+CONTROLS = [{"ref": 1, "role": "textbox", "label": "Title", "value": ""},
+            {"ref": 2, "role": "list", "label": "Colour", "value": "Red"},
+            {"ref": 3, "role": "checkbox", "label": "Pin it", "value": "off"},
+            {"ref": 4, "role": "button", "label": "Save", "value": ""},
+            {"ref": "x", "role": "button", "label": "Broken"}, "not a dict"]
+ACT_REPLY = json.dumps({"answer": "Filling it in.", "steps": [
+    {"do": "fill", "ref": 1, "text": "Groceries"},
+    {"do": "choose", "ref": 2, "text": "Blue"},
+    {"do": "toggle", "ref": 3, "on": True},
+    {"do": "click", "ref": 4, "label": "Save it"},
+    {"do": "click", "ref": 99, "label": "A button the model made up"},
+    {"do": "fill", "ref": 1, "text": ""},
+    {"do": "click", "ref": "4; drop table"}]})
+
+
+def test_the_window_can_be_operated_through_the_controls_it_sent():
+    """'need way to interact with the current window and do stuff': the prompt lists the window's
+    controls by number, and a step may name only a number that was sent."""
+    chat = _Chat([ACT_REPLY])
+    code, data, _ = _run({"action": "window_steps", "windows": [{"title": "Notes", "text": "x"}],
+                          "instruction": "make a groceries note", "controls": CONTROLS}, chat)
+    assert code == 200
+    system, user = chat.calls[0][0]["content"], chat.calls[0][1]["content"]
+    assert '"click"' in system and '"fill"' in system and "Use ONLY the numbered controls" in system
+    assert '[1] textbox "Title"' in user and '[2] list "Colour" = "Red"' in user and "Broken" not in user
+    got = [(s["do"], s["ref"], s["target"], s["text"], s["on"]) for s in data["steps"]]
+    assert got == [("fill", 1, "Title", "Groceries", False), ("choose", 2, "Colour", "Blue", False),
+                   ("toggle", 3, "Pin it", "", True), ("click", 4, "Save", "", False)], got
+    assert data["steps"][3]["label"] == "Save it"
+
+
+def test_without_controls_no_action_step_is_offered_or_accepted():
+    chat = _Chat([ACT_REPLY])
+    code, data, _ = _run({"action": "window_steps", "windows": [{"title": "Notes", "text": "x"}],
+                          "instruction": "do it"}, chat)
+    assert '"click"' not in chat.calls[0][0]["content"]
+    assert data["steps"] == [], "a click on a control nobody listed was accepted"

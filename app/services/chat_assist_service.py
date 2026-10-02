@@ -211,7 +211,13 @@ async def ask_window(db, user, windows, instruction: str) -> str:
 # nothing happens until the person presses it. Everything is validated here, so a malformed or invented
 # step arrives as no step rather than as a wrong command in somebody's terminal.
 STEP_KINDS = ("command", "insert", "note", "calendar", "open", "search")
+# OPERATING THE WINDOW ITSELF ("need way to interact with the current window and do stuff"): the client
+# sends the window's visible controls, numbered; a step names one of THOSE numbers and nothing else, so
+# the model can only press what is really on screen. The client asks before anything that sends/deletes.
+ACT_KINDS = ("click", "fill", "choose", "toggle")
+CONTROL_MAX = 80
 STEP_MAX = 4
+ACT_STEP_MAX = 8
 TASK_MAX = 20
 OPEN_VIEWS = {"notes": "Notes", "calendar": "Calendar", "files": "Files", "terminal": "Terminal",
               "mail": "Email", "websearch": "Web Search", "texts": "Texts", "contacts": "Contacts",
@@ -219,15 +225,39 @@ OPEN_VIEWS = {"notes": "Notes", "calendar": "Calendar", "files": "Files", "termi
 HISTORY_MAX = 4
 
 
+def clean_controls(controls) -> list:
+    """The window's controls as the client numbered them -> [(ref, role, label, value)], validated."""
+    out = []
+    for c in list(controls or [])[:CONTROL_MAX]:
+        if not isinstance(c, dict):
+            continue
+        try:
+            ref = int(c.get("ref"))
+        except (TypeError, ValueError):
+            continue
+        role = _clean(c.get("role"), 20).lower()
+        label = _clean(c.get("label"), 80)
+        if ref <= 0 or not role or not label:
+            continue
+        out.append((ref, role, label, _clean(c.get("value"), 80)))
+    return out
+
+
 def build_steps_messages(context: list, instruction: str, history=None, commands: bool = False,
-                         today: str = "") -> list:
+                         today: str = "", controls=None) -> list:
     base = build_window_messages(context, instruction)          # validates + fences the windows
     today = today if _DATE.match(str(today or "")) else ""
+    ctl = clean_controls(controls)
     kinds = ["\"insert\": text to put into the window's own text box (a reply, a rewrite)",
              "\"note\": text worth keeping, saved to the user's Notes",
              "\"calendar\": one event with a date, added to the Calendar after the user checks it",
              "\"open\": open an app -- text is one of " + ", ".join(OPEN_VIEWS),
              "\"search\": a web search -- text is the query"]
+    if ctl:
+        kinds = ["\"click\": press control number \"ref\" (a button, link, tab)",
+                 "\"fill\": type \"text\" into text box number \"ref\" (replaces what is there)",
+                 "\"choose\": pick the option labelled \"text\" in list number \"ref\"",
+                 "\"toggle\": set checkbox number \"ref\" to \"on\": true or false"] + kinds
     if commands:
         kinds.insert(0, "\"command\": ONE shell command for this terminal, one line; prefer read-only "
                         "commands that show what is going on; never anything destructive unless asked")
@@ -237,9 +267,14 @@ def build_steps_messages(context: list, instruction: str, history=None, commands
         "{\"answer\": short, clear text -- plain sentences and \"- \" bullets, \n"
         " \"tasks\": [{\"text\": one concrete action starting with a verb, \"due\": \"YYYY-MM-DD\" or \"\", "
         "\"who\": the person responsible if named, else \"\"}],\n"
-        " \"steps\": [{\"do\": kind, \"label\": 2-5 word button text, \"text\": the content}]}\n"
+        " \"steps\": [{\"do\": kind, \"label\": 2-5 word button text, \"text\": the content"
+        + (", \"ref\": control number, \"on\": true/false" if ctl else "") + "}]}\n"
         "Step kinds: " + "; ".join(kinds) + ".\n"
-        f"At most {STEP_MAX} steps, only ones that genuinely help with the request; [] when none do. "
+        + ("When the user asks you to DO something in this window, do it with its controls: the steps, in "
+           "order, that a person would take (fill the fields, then press the button). Use ONLY the numbered "
+           "controls listed; never invent one. If a step needs something you cannot know, ask in \"answer\" "
+           "instead of guessing. " if ctl else "")
+        + f"At most {ACT_STEP_MAX if ctl else STEP_MAX} steps, only ones that genuinely help with the request; [] when none do. "
         "Fill \"tasks\" when the request is about tasks, action items, follow-ups or deadlines -- every real "
         "commitment, decision to act or deadline in the content, one per item, nothing invented; otherwise []. "
         "Resolve relative dates (\"Friday\", \"tomorrow\") against today's date. Use ONLY the window content; "
@@ -255,6 +290,9 @@ def build_steps_messages(context: list, instruction: str, history=None, commands
             hist.append(f"- Earlier request: {q}\n  Your answer: {a or '(none)'}"
                         + (f"\n  The user then did: {'; '.join(did)}" if did else ""))
     user = base[1]["content"]
+    if ctl:
+        user += ("\n\nControls in window 1 you can operate (number, kind, label, current value):\n"
+                 + "\n".join(f"[{r}] {role} \"{lab}\"" + (f" = \"{val}\"" if val else "") for r, role, lab, val in ctl))
     if hist:
         user = "Earlier in this panel:\n" + "\n".join(hist) + "\n\nThe window AS IT IS NOW:\n\n" + user
     if today:
@@ -266,7 +304,7 @@ def _clean(v, n):
     return re.sub(r"\s+", " ", str(v or "")).strip()[:n]
 
 
-def parse_steps(text: str, commands: bool = False, want_tasks: bool = False) -> dict:
+def parse_steps(text: str, commands: bool = False, want_tasks: bool = False, controls=None) -> dict:
     """The model's reply -> {answer, tasks, steps}, every field validated. A reply that is not JSON is
     still an answer (local models ignore formats), and its "- " lines become tasks when tasks were asked."""
     import json
@@ -299,10 +337,32 @@ def parse_steps(text: str, commands: bool = False, want_tasks: bool = False) -> 
         if len(tasks) >= TASK_MAX:
             break
     steps = []
+    refs = {r: (role, lab) for r, role, lab, _ in clean_controls(controls)}
     for st in raw.get("steps") or []:
         if not isinstance(st, dict):
             continue
         kind = _clean(st.get("do"), 20).lower()
+        if kind in ACT_KINDS:
+            # Only a control the client actually listed -- a number the model made up is dropped.
+            try:
+                ref = int(st.get("ref"))
+            except (TypeError, ValueError):
+                continue
+            if ref not in refs:
+                continue
+            role, lab = refs[ref]
+            txt = str(st.get("text") or "").strip()[:2000]
+            if kind in ("fill", "choose") and not txt:
+                continue
+            on = st.get("on")
+            on = bool(on) if isinstance(on, bool) else str(on).strip().lower() in ("1", "true", "yes", "on")
+            default = {"click": f"Press “{lab}”", "fill": f"Fill “{lab}”", "choose": f"Choose in “{lab}”",
+                       "toggle": f"{'Tick' if on else 'Untick'} “{lab}”"}[kind]
+            steps.append({"do": kind, "ref": ref, "target": lab, "label": _clean(st.get("label"), 50) or default,
+                          "text": txt, "on": on})
+            if len(steps) >= ACT_STEP_MAX:
+                break
+            continue
         if kind not in STEP_KINDS or (kind == "command" and not commands):
             continue
         txt = str(st.get("text") or "").strip()
@@ -326,7 +386,7 @@ def parse_steps(text: str, commands: bool = False, want_tasks: bool = False) -> 
                    "calendar": "Add to Calendar", "open": "Open " + OPEN_VIEWS.get(txt, ""),
                    "search": "Search the web"}[kind]
         steps.append({"do": kind, "label": _clean(st.get("label"), 50) or default, "text": txt})
-        if len(steps) >= STEP_MAX:
+        if len(steps) >= (ACT_STEP_MAX if refs else STEP_MAX):
             break
     if not answer and not tasks and not steps:
         answer = str(text or "").strip()[:4000]
@@ -337,12 +397,12 @@ _TASKY = re.compile(r"\b(task|tasks|to-?do|action items?|follow[- ]?ups?|deadlin
 
 
 async def window_steps(db, user, windows, instruction: str, history=None, commands: bool = False,
-                       today: str = "") -> dict:
+                       today: str = "", controls=None) -> dict:
     context = window_context(windows)
-    out = await _chat(db, user, build_steps_messages(context, instruction, history, commands, today), 0.2)
+    out = await _chat(db, user, build_steps_messages(context, instruction, history, commands, today, controls), 0.2)
     if not out:
         raise AssistError(502, "The AI did not come up with an answer — try again.")
-    res = parse_steps(out, commands, bool(_TASKY.search(str(instruction or ""))))
+    res = parse_steps(out, commands, bool(_TASKY.search(str(instruction or ""))), controls)
     logger.info("[chat-assist] window steps: %d windows -> %d tasks, %d steps",
                 len(context), len(res["tasks"]), len(res["steps"]))
     return res

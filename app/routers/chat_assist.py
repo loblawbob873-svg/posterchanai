@@ -44,6 +44,7 @@ class AssistReq(BaseModel):
     today: str = ""               # action=window_event / window_steps: the person's local date, for "tomorrow"
     history: list[dict] = []      # action=window_steps: this panel's earlier requests, answers and done steps
     commands: bool = False        # action=window_steps: the window is a terminal the person may run commands in
+    controls: list = []           # action=window_steps: the target window's visible controls, numbered by the client
 
 
 @router.post("")
@@ -75,7 +76,7 @@ async def chat_assist(req: AssistReq, db: Session = Depends(get_db),
         if action == "window_steps":
             return {"ok": True, **(await svc.window_steps(
                 db, user, [w.model_dump() for w in req.windows], req.instruction, req.history,
-                req.commands, req.today))}
+                req.commands, req.today, req.controls))}
         if action == "window":
             return {"ok": True, "answer": await svc.ask_window(
                 db, user, [w.model_dump() for w in req.windows], req.instruction)}
