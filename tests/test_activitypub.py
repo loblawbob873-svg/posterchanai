@@ -3458,14 +3458,19 @@ def test_a_profile_edit_reaches_every_follower_with_the_new_name_and_picture(wor
         return out
     monkeypatch.setattr(nostr_store, "_ws_query", ws_query)
     world["docs"]["pcai:ap:cursor"] = {"since": 1_700_000_050}
+    # Something read the profile just BEFORE the edit (a remote server fetching the actor does exactly
+    # this) -- the 5-minute profile cache now holds the old one.
+    assert json.loads(run(actors.profile_event(ALICE))["content"])["name"] == "Alice Old"
     world["relay"][new["id"]] = new                      # the edit lands
     run(outbox.tick())
     updates = [s for s in world["sent"] if s["activity"]["type"] == "Update"]
     assert updates, ("a profile edit was never sent to the fediverse", [s["activity"]["type"] for s in world["sent"]])
-    # Every Update sent carries the CURRENT actor (an older kind 0 re-read by the trailing window
-    # describes the same person, so it must not send the old name back out).
+    # ONE Update, carrying the CURRENT actor: an older kind 0 re-read by the trailing window is
+    # superseded and sends nothing, and the cache read before the edit is not what goes out.
+    assert len(updates) == 1, [u["activity"]["object"].get("name") for u in updates]
     assert {u["inbox"] for u in updates} == {"https://mastodon.example/inbox"}
-    assert all(u["activity"]["object"]["name"] == "Alice New" for u in updates)
+    assert all(u["activity"]["object"]["name"] == "Alice New" for u in updates), \
+        [u["activity"]["object"].get("name") for u in updates]
     person = updates[-1]["activity"]["object"]
     assert person["type"] in ("Person", "Service") and person["id"] == f"{BASE}/ap/users/alice"
     assert person["name"] == "Alice New", person.get("name")

@@ -420,6 +420,15 @@ async def plan(ev: dict, member: str) -> list:
                 out += [(i, act) for i in sorted(set(fol) | extra)]
 
     elif kind == 0:
+        # THE PROFILE THAT GOES OUT IS READ NOW, NOT FROM THE 5-MINUTE CACHE. Anything that read the
+        # profile shortly before the edit -- a remote server fetching the actor does exactly that --
+        # left the OLD one cached, and the Update built from it carried the old name and picture to
+        # every follower ("make sure that profile updates federate"). And an older kind 0 that the
+        # trailing window re-reads is superseded: it sends nothing.
+        actors._profile_cache.pop(member, None)
+        current = await actors.profile_event(member, strict=True)
+        if current and current.get("id") != ev.get("id") and int(current.get("created_at") or 0) >= int(ev.get("created_at") or 0):
+            return []
         doc = await actors.person(member)
         act = {"@context": convert.AS_CONTEXT, "id": convert.activity_url(base, ev["id"], "update"),
                "type": "Update", "actor": me, "to": [config.PUBLIC], "cc": [followers_url], "object": doc}
