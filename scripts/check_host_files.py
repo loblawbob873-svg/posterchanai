@@ -118,6 +118,18 @@ window.__ui = {
   bindCols: () => {},
   query: () => window.__query || '',
   toast: (m) => (window.__toasts = window.__toasts || []).push(m),
+  /* The app passes menus.js openMenuPopover(anchor, items, onPick). Same contract, drawn plainly:
+     the dotfile switch moved into the ⋯ menu (3f18fbae2) and this check kept clicking a button that
+     no longer existed -- red for eight days with nothing blocking a deploy. */
+  menu: (anchor, items, onPick) => {
+    document.querySelectorAll('.stub-menu').forEach(m => m.remove());
+    const pop = document.createElement('div'); pop.className = 'stub-menu';
+    for (const [key, label] of items) {
+      const b = document.createElement('button'); b.dataset.k = key; b.textContent = label;
+      b.onclick = () => { pop.remove(); onPick(key); }; pop.appendChild(b);
+    }
+    document.body.appendChild(pop);
+  },
   prompt: async (msg, o) => { window.__prompted.push(msg); return window.__promptWith; },
   confirm: async (msg) => { window.__confirmed.push(msg); return window.__confirmWith !== false; },
 };
@@ -149,11 +161,17 @@ DRIVE = r"""(async () => {
   if (out.listing.includes('.bashrc'))
     bad('dotfiles-stuck', 'a dotfile is shown before the switch was touched');
 
-  pane.querySelector('.hf-hidden').click(); await sleep(200);
+  const dotfiles = async () => {
+    pane.querySelector('.hf-more').click(); await sleep(50);
+    const item = document.querySelector('.stub-menu [data-k="dotfiles"]');
+    if (!item) { bad('dotfiles-gone', 'the ⋯ menu has no dotfile switch'); return; }
+    item.click(); await sleep(200);
+  };
+  await dotfiles();
   out.withDots = rows();
   if (!out.withDots.includes('.bashrc'))
     bad('dotfiles-stuck', 'the dotfile switch changed nothing: ' + JSON.stringify(out.withDots));
-  pane.querySelector('.hf-hidden').click(); await sleep(200);
+  await dotfiles();
 
   /* ── the path is a row of buttons ──────────────────────────────────────────────────────────── */
   out.crumbs = [...pane.querySelectorAll('.fx-crumb')].map(b => b.textContent.trim());
@@ -190,10 +208,18 @@ DRIVE = r"""(async () => {
   /* ── delete asks, and says it can be undone ────────────────────────────────────────────────── */
   const ev = (el, o) => el.dispatchEvent(new MouseEvent('click', Object.assign({ bubbles: true }, o)));
   ev(row('a-note.txt'), { ctrlKey: true }); await sleep(220);
-  const del = pane.querySelector('.hf-del');
-  if (!del) { bad('delete-unasked', 'selecting something offers no delete'); return out; }
+  /* Delete is "Move to trash" in the selection's Actions ▾ menu (the same list right-click shows). */
+  const trash = async () => {
+    const acts = pane.querySelector('.hf-acts');
+    if (!acts) return false;
+    acts.click(); await sleep(60);
+    const item = document.querySelector('.stub-menu [data-k="trash"]');
+    if (!item) return false;
+    item.click(); await sleep(300);
+    return true;
+  };
   window.__confirmWith = false;
-  del.click(); await sleep(220);
+  if (!(await trash())) { bad('delete-unasked', 'selecting something offers no Move to trash'); return out; }
   out.asked = (window.__confirmed[0] || '');
   if (!out.asked) bad('delete-unasked', 'delete did not ask first');
   else if (!/trash|bin/i.test(out.asked) || !/put .* back|restore/i.test(out.asked))
@@ -201,7 +227,7 @@ DRIVE = r"""(async () => {
   if (window.__trashed.length)
     bad('delete-unasked', 'a refused confirmation still deleted something');
   window.__confirmWith = true;
-  pane.querySelector('.hf-del').click(); await sleep(350);
+  await trash();
   out.trashed = window.__trashed.slice();
   if (!out.trashed.includes('/home/u/a-note.txt'))
     bad('delete-unasked', 'a confirmed delete deleted nothing');
