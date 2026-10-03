@@ -101,4 +101,19 @@ fi
 
 # No shell exists to receive the recovery tick. The full launcher owns stale-lock cleanup,
 # environment recovery, retries, serialization and proof that a replacement surface mapped.
+#
+# RUN OVER SSH, THE DESKTOP MUST NOT BELONG TO THE SSH SESSION. `exec` makes the launcher -- and the
+# desktop it starts -- children of whatever ran this script. From the key binding or the desktop's own
+# "Restart to update" that is the session, which is right. From ssh (`update-posterchan` then a restart,
+# done on the test machines) it parented the new desktop to the ssh connection: the desktop died with
+# the connection and the command never returned (2026-10-02, both machines). There, start it in a session
+# of its own with nothing inherited, and return. PC_SHELL_DETACH=1 forces it; =0 forbids it.
+detach=${PC_SHELL_DETACH:-}
+if [ -z "$detach" ]; then
+	[ -n "${SSH_CONNECTION:-}${SSH_CLIENT:-}${SSH_TTY:-}" ] && detach=1 || detach=0
+fi
+if [ "$detach" = 1 ] && command -v setsid >/dev/null 2>&1; then
+	setsid -f "$PC_SHELL_START" </dev/null >/dev/null 2>&1
+	exit 0
+fi
 exec "$PC_SHELL_START"
