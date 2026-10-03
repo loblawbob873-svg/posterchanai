@@ -3604,6 +3604,38 @@ const hostfs = () => (_hostfs || (_hostfs = require('./hostfs.js')));
 
 ipcMain.handle('pc:host:list', (e, dir) => { fsGuard(e); return hostfs().list(String(dir || '')); });
 ipcMain.handle('pc:host:roots', (e) => { fsGuard(e); return hostfs().roots(); });
+/* REMOVABLE DRIVES (drives.js): list, mount, unmount, eject -- for Files' "This computer". Only
+ * removable devices from drives.list() are ever acted on. A stick plugged in is mounted on its own
+ * (PosterChanOS only) and every window is told so Files can show it. */
+const drives = require('./drives.js').createDrives();
+ipcMain.handle('pc:drives:list', (e) => { fsGuard(e); watchDrives(); return drives.list(); });
+ipcMain.handle('pc:drives:mount', async (e, dev) => { fsGuard(e); const r = await drives.mount(String(dev || '')); tellDrives(); return r; });
+ipcMain.handle('pc:drives:unmount', async (e, dev) => { fsGuard(e); const r = await drives.unmount(String(dev || '')); tellDrives(); return r; });
+ipcMain.handle('pc:drives:eject', async (e, dev) => { fsGuard(e); const r = await drives.eject(String(dev || '')); tellDrives(); return r; });
+function tellDrives() {
+  for (const w of BrowserWindow.getAllWindows()) { try { if (!w.isDestroyed()) w.webContents.send('pc:drives:changed'); } catch (_) { } }
+}
+let _drivesTimer = null, _drivesSeen = null, _drivesSig = '';
+/* A plain 3-second lsblk poll, not a udev monitor child: a long-lived child inherits this process's
+ * file descriptors (Chromium's are not CLOEXEC -- see wl-copy in CLAUDE.md), a short one does not. */
+function watchDrives() {
+  if (_drivesTimer || !SHELL_MODE) return;
+  const tick = async () => {
+    let now = [];
+    try { now = await drives.list(); } catch (_) { return; }
+    const devs = new Set(now.map(d => d.dev));
+    if (_drivesSeen) {
+      for (const d of now) {
+        if (!_drivesSeen.has(d.dev) && !d.mountpoint) { try { await drives.mount(d.dev); } catch (_) { } }
+      }
+    }
+    _drivesSeen = devs;
+    const sig = JSON.stringify((await drives.list()).map(d => [d.dev, d.mountpoint]));
+    if (sig !== _drivesSig) { _drivesSig = sig; tellDrives(); }
+  };
+  tick();
+  _drivesTimer = setInterval(tick, 3000);
+}
 ipcMain.handle('pc:host:notify', (e, options) => {
   fsGuard(e);
   // PosterChanOS owns its notification centre; avoid activating a second D-Bus popup daemon.
@@ -4387,6 +4419,7 @@ if (!app.requestSingleInstanceLock()) { app.quit(); } else {
   app.on('second-instance', () => showWindow());
   app.whenReady().then(async () => {
     wireReadyElectronModules();
+    try { watchDrives(); } catch (_) {}     // removable drives: mount a stick when it is plugged in
     wirePowerMonitor();
     // Re-apply the saved power profile: the governor/platform_profile is kernel runtime state that
     // resets to the boot default every reboot, so a chosen "power saver"/"performance" silently

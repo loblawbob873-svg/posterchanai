@@ -12040,3 +12040,8 @@ img.md-rel:not([src]){display:none}
   border:1px solid var(--line,rgba(255,255,255,.15));opacity:0;transition:opacity .2s;pointer-events:none}
 .os-buddy-say.on{opacity:1}
 @media(prefers-reduced-motion:reduce){ .os-buddy.hop{animation:none} }
+
+/* Removable drives under My Computer (files.js): the drive chip and its eject button on one row. */
+.fx-drive-row{display:flex;align-items:center;gap:4px}
+.fx-drive-row .fx-drive{flex:1 1 auto;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.fx-drive-eject{padding:2px 8px;line-height:1}

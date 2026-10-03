@@ -174,6 +174,7 @@ class PosterChanOSProfile(unittest.TestCase):
         "script": "base:sys-apps/util-linux",      # the local terminal's PTY
         "stty": "base:sys-apps/util-linux",        # resize that PTY without injecting input
         "lsblk": "base:sys-apps/util-linux",       # enumerate removable LiveUSB targets safely
+        "udisksctl": "sys-fs/udisks",              # desktop/drives.js: mount / eject USB drives as the user
         "virsh": "base:app-emulation/libvirt",
         "qemu-img": "base:app-emulation/qemu",
         "bluetoothctl": "base:net-wireless/bluez",

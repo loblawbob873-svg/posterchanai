@@ -40,6 +40,8 @@ RDEPEND="
 	sys-apps/xdg-desktop-portal
 	gui-libs/xdg-desktop-portal-wlr
 	sys-boot/plymouth
+	sys-fs/udisks:2
+	sys-fs/exfatprogs
 	monero? ( net-p2p/monero-wallet-rpc-bin )
 "
 
@@ -87,6 +89,9 @@ src_install() {
 	# but an already-installed machine must gain them through update-posterchan too.
 	insinto /etc/sudoers.d
 	newins "${FILESDIR}/posterchan-provision.sudoers" posterchan-provision
+	# Removable drives: the session user mounts/ejects USB sticks without a password (desktop/drives.js).
+	insinto /etc/polkit-1/rules.d
+	doins "${FILESDIR}/50-posterchan-removable-drives.rules"
 	newins "${FILESDIR}/posterchan-session-switch.sudoers" posterchan-session-switch
 	fperms 0440 /etc/sudoers.d/posterchan-provision
 	fperms 0440 /etc/sudoers.d/posterchan-session-switch

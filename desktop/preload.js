@@ -446,6 +446,20 @@ if (isOurPage) {
     },
   });
 
+  /* Removable drives (drives.js): Files' "This computer" lists, mounts and ejects USB drives. */
+  contextBridge.exposeInMainWorld('pcDrives', {
+    list: () => ipcRenderer.invoke('pc:drives:list'),
+    mount: (dev) => ipcRenderer.invoke('pc:drives:mount', String(dev || '')),
+    unmount: (dev) => ipcRenderer.invoke('pc:drives:unmount', String(dev || '')),
+    eject: (dev) => ipcRenderer.invoke('pc:drives:eject', String(dev || '')),
+    onChange: (cb) => {
+      if (typeof cb !== 'function') return () => {};
+      const h = () => { try { cb(); } catch (_) { } };
+      ipcRenderer.on('pc:drives:changed', h);
+      return () => ipcRenderer.removeListener('pc:drives:changed', h);
+    },
+  });
+
   contextBridge.exposeInMainWorld('pcRemoteControl', {
     configure: info => ipcRenderer.invoke('pc:remote:configure', info && typeof info==='object' ? info : {}),
     input: event => ipcRenderer.invoke('pc:remote:input', event && typeof event==='object' ? event : {}),

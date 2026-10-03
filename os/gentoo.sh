@@ -288,7 +288,7 @@ media-video/obs-studio \
 sec-keys/openpgp-keys-gentoo-release dev-vcs/git \
 x11-drivers/nvidia-drivers \
 net-vpn/tor gui-apps/swayidle \
-dev-db/postgresql"
+dev-db/postgresql sys-fs/udisks sys-fs/exfatprogs"
 # dev-db/postgresql IS THE BUNDLED SERVER'S DATABASE, INSTALLED AND NEVER STARTED. app-misc/posterchan-server
 # (pulled in by posterchanos-shell) carries the server's code and is OFF until System Settings → PosterChan
 # Server → Enable, where /usr/local/bin/pc-server initialises this cluster (peer auth, not initdb's trust)

@@ -1192,6 +1192,48 @@ window.PCFilesFactory = function(dep){
       + `${_standalone()?'':`<button class="fx-tree-head${_S._filesTab==='ai'?' active':''}" data-files-mode="ai"><svg class="ic b-ic" aria-hidden="true"><use href="#i-ai"></use></svg><b>AI Chat files</b></button>`}`
       + `${_S.IS_ADMIN?`<button class="fx-tree-head${_S._filesTab==='admin'?' active':''}" data-files-mode="admin"><svg class="ic b-ic" aria-hidden="true"><use href="#i-shield"></use></svg><b>Storage admin</b></button>`:''}</div>`;
   }
+  /* REMOVABLE DRIVES under My Computer ("files can see/mount/read/write removeable drives like USB").
+   * The desktop's drives bridge (desktop/drives.js, udisks) lists USB sticks and mounts them as this
+   * user, so once open they read and write like any folder. A stick plugged in is mounted by the
+   * desktop on its own and announced (onChange); this list follows it. Absent outside PosterChanOS. */
+  let _fxDrives = null, _fxDrivesAsked = 0, _fxDrivesWired = false;
+  function _fxDriveSize(b){ const n = Number(b) || 0; return n >= 1e12 ? (n/1e12).toFixed(1)+' TB' : n >= 1e9 ? (n/1e9).toFixed(1)+' GB' : n >= 1e6 ? Math.round(n/1e6)+' MB' : ''; }
+  function _fxDrivesRefresh(force){
+    if(!window.pcDrives || !pcDrives.list) return;
+    if(!_fxDrivesWired && pcDrives.onChange){ _fxDrivesWired = true; pcDrives.onChange(() => _fxDrivesRefresh(true)); }
+    if(!force && Date.now() - _fxDrivesAsked < 2000) return;
+    _fxDrivesAsked = Date.now();
+    pcDrives.list().then(list => {
+      const before = JSON.stringify(_fxDrives || []);
+      _fxDrives = Array.isArray(list) ? list : [];
+      if(JSON.stringify(_fxDrives) !== before && _S.VIEW === 'blossom') renderBlossom();
+    }).catch(() => {});
+  }
+  async function _fxOpenDrive(dev){
+    const d = (_fxDrives || []).find(x => x.dev === dev);
+    if(!d) return;
+    let path = d.mountpoint;
+    if(!path){
+      try{ path = (await pcDrives.mount(dev)).path; }
+      catch(e){ toast('Could not open ' + d.label + ': ' + String((e && e.message) || e).replace(/^Error invoking remote method '[^']+': (Error: )?/, '')); return; }
+    }
+    const H2 = _hostFs(); if(!H2) return;
+    _fxRemember();
+    _S._syncRoot=''; _S._syncPath=''; _S._filesFolder=null; _S._hostOn=true; _S._filesTab='computer'; _S._fxMobileSource='computer';
+    H2.enter(path);
+    _fxDrivesRefresh(true);
+    renderBlossom();
+  }
+  async function _fxEjectDrive(dev){
+    const d = (_fxDrives || []).find(x => x.dev === dev);
+    if(!d) return;
+    try{ await pcDrives.eject(dev); }
+    catch(e){ toast(String((e && e.message) || e).replace(/^Error invoking remote method '[^']+': (Error: )?/, '')); return; }
+    const H2 = _hostFs(), here = H2 && H2.at();
+    if(here && d.mountpoint && (here === d.mountpoint || here.startsWith(d.mountpoint + '/'))) _openHostFiles(true);
+    toast(d.label + ' can be removed safely');
+    _fxDrivesRefresh(true);
+  }
   /* "This computer", beside the drive's folders and the synced ones — one tree, three sources,
    * which is the whole reason they share a screen instead of having three. */
   function _fxHostHTML(){
@@ -1200,7 +1242,13 @@ window.PCFilesFactory = function(dep){
      * own. An invented one has no stylesheet behind it, so the heading renders as unstyled body
      * text in a sidebar where every other heading is a small cyan caption: it looks like a bug in
      * the theme rather than a section nobody wrote CSS for. */
-    return `<section class="fx-tree-node"><button class="fx-tree-head${_S._hostOn?' active':''}${_S._fxMobileSource==='computer'?' mobile-on':''}" data-fxtoggle="computer" aria-expanded="${_fxComputerOpen?'true':'false'}"><span class="chev">${_fxComputerOpen?'▾':'▸'}</span><svg class="ic b-ic" aria-hidden="true"><use href="#i-monitor"></use></svg><b>My Computer</b></button><div class="fx-tree-children${_fxComputerOpen?'':' hidden'}" data-fxtree="computer"><button class="folder-chip${_S._hostOn ? ' active' : ''}" data-host="1" title="Browse this machine's own files"><svg class="ic b-ic" aria-hidden="true"><use href="#i-folder"></use></svg>Home</button></div></section>`;
+    _fxDrivesRefresh();
+    const here = (_S._hostOn && _hostFs() && _hostFs().at()) || '';
+    const drives = (_fxDrives || []).map(d => {
+      const on = !!(d.mountpoint && here && (here === d.mountpoint || here.startsWith(d.mountpoint + '/')));
+      return `<span class="fx-drive-row"><button class="folder-chip fx-drive${on ? ' active' : ''}" data-drive="${enc(d.dev)}" title="${enc(d.label)} — ${enc(d.fstype)}${d.mountpoint ? '' : ', not mounted yet'}"><svg class="ic b-ic" aria-hidden="true"><use href="#i-drive"></use></svg>${enc(d.label)}<span class="muted small"> ${enc(_fxDriveSize(d.size))}</span></button>${d.mountpoint ? `<button class="btn btn-ghost small fx-drive-eject" data-drive-eject="${enc(d.dev)}" title="Eject ${enc(d.label)} safely" aria-label="Eject ${enc(d.label)}">⏏</button>` : ''}</span>`;
+    }).join('');
+    return `<section class="fx-tree-node"><button class="fx-tree-head${_S._hostOn?' active':''}${_S._fxMobileSource==='computer'?' mobile-on':''}" data-fxtoggle="computer" aria-expanded="${_fxComputerOpen?'true':'false'}"><span class="chev">${_fxComputerOpen?'▾':'▸'}</span><svg class="ic b-ic" aria-hidden="true"><use href="#i-monitor"></use></svg><b>My Computer</b></button><div class="fx-tree-children${_fxComputerOpen?'':' hidden'}" data-fxtree="computer"><button class="folder-chip${_S._hostOn && !drives.includes(' active"') ? ' active' : ''}" data-host="1" title="Browse this machine's own files"><svg class="ic b-ic" aria-hidden="true"><use href="#i-folder"></use></svg>Home</button>${drives}</div></section>`;
   }
   /* \u267b DELETED ON EVERY DEVICE — the account-wide undo, beside the per-device trash. Entries
    * the record marks deleted BUT whose address was retained (executors keep sha/chunks on
@@ -1368,6 +1416,8 @@ window.PCFilesFactory = function(dep){
     $$('.folder-chip[data-folder]', r).forEach(b=> b.onclick=()=>_fxOpenFolder(b.dataset.folder));
     $$('.folder-chip[data-synckey]', r).forEach(b=> b.onclick=()=>_fxOpenSynced(b.dataset.synckey));
     $$('.folder-chip[data-host]', r).forEach(b=> b.onclick=()=>_openHostFiles(true));
+    $$('[data-drive]', r).forEach(b=> b.onclick=()=>_fxOpenDrive(b.dataset.drive));
+    $$('[data-drive-eject]', r).forEach(b=> b.onclick=(ev)=>{ ev.stopPropagation(); _fxEjectDrive(b.dataset.driveEject); });
     /* The trash's own bindings live with the LISTING now that it is a folder, not here beside the
      * chips — a set of handlers left behind for markup that no longer renders is how a dead control
      * survives a redesign and quietly does nothing. */

@@ -1,0 +1,15 @@
+// PosterChanOS: the person at the machine may mount, unmount, power off and eject REMOVABLE drives
+// (USB sticks, SD cards, external disks) without a password, so Files can open a stick that was just
+// plugged in. Internal disks are a different udisks action (filesystem-mount-system) and still need
+// an administrator. Installed by app-misc/posterchanos-shell; see desktop/drives.js.
+polkit.addRule(function(action, subject) {
+    var removable = [
+        "org.freedesktop.udisks2.filesystem-mount",
+        "org.freedesktop.udisks2.filesystem-unmount-others",
+        "org.freedesktop.udisks2.eject-media",
+        "org.freedesktop.udisks2.power-off-drive"
+    ];
+    if (removable.indexOf(action.id) >= 0 && ((subject.local && subject.active) || subject.isInGroup("wheel"))) {
+        return polkit.Result.YES;
+    }
+});
