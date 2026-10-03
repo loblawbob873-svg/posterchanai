@@ -174,6 +174,12 @@ def test_on_posterchanos_her_own_window_draws_her_and_the_desktop_keeps_her_stat
         await b.js("PCOSWin.enabled=()=>true;PCBuddy.refresh();true")
         await b.until("__native.shows.length>0")
         res["drawn_in_page"] = await b.js("!!document.querySelector('.os-buddy')")
+        # While the desktop is still its 500x540 startup size she is NOT placed (she came up 3.8x too wide).
+        n0 = await b.js("__native.shows.length")
+        await b.js("window.__iw=Object.getOwnPropertyDescriptor(window,'innerWidth');window.__ih=Object.getOwnPropertyDescriptor(window,'innerHeight');Object.defineProperty(window,'innerWidth',{configurable:true,get:()=>500});Object.defineProperty(window,'innerHeight',{configurable:true,get:()=>540});PCBuddy.refresh();true")
+        await asyncio.sleep(.4)
+        res["startup_shows"] = (await b.js("__native.shows.length")) - n0
+        await b.js("Object.defineProperty(window,'innerWidth',__iw);Object.defineProperty(window,'innerHeight',__ih);true")
         # The page changing size (the surface going full screen after boot) re-places her window.
         before = await b.js("__native.shows.length")
         await b.call("Emulation.setDeviceMetricsOverride", {"width": 1700, "height": 950, "deviceScaleFactor": 1, "mobile": False})
@@ -201,6 +207,7 @@ def test_on_posterchanos_her_own_window_draws_her_and_the_desktop_keeps_her_stat
     asyncio.run(desktop.with_browser("online", "", check, NATIVE_INIT))
     assert res["drawn_in_page"] is False, "drawn on the desktop surface, which every app window covers"
     assert res["reshown"] and res["reshown"]["bw"] > 100, ("a resized desktop did not re-place her window", res.get("reshown"))
+    assert res["startup_shows"] == 0, ("she was placed against the 500x540 startup surface", res["startup_shows"])
     s, d = res["show"], res["desk"]
     assert s["bw"] > 100 and s["bh"] > s["bw"], ("her window has no size", s)
     assert d["l"] <= s["vx"] <= d["l"] + d["w"] and s["vy"] <= d["t"] + d["h"], ("her window is off the desk", s, d)

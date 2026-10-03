@@ -36,7 +36,8 @@ class FakeWin {
   show(){ calls.push(['SHOW-ACTIVE']); }
   focus(){ calls.push(['FOCUS-ELECTRON']); }
   getBounds(){ return { width: this.o.width, height: this.o.height }; }
-  setSize(w, h){ calls.push(['size', w, h]); }
+  // As Electron on Wayland: a non-resizable window keeps its first size whatever is asked later.
+  setSize(w, h){ if (this.o.resizable === false) return; this.o.width = w; this.o.height = h; calls.push(['size', w, h]); }
   isDestroyed(){ return this.dead; }
   destroy(){ this.dead = true; calls.push(['destroy']); }
 }
@@ -51,6 +52,10 @@ const host = createBuddyHost({ BrowserWindow: FakeWin, wm: () => wmApi, scopeOf:
   out.opts = { frame: made.o.frame, transparent: made.o.transparent, focusable: made.o.focusable, skipTaskbar: made.o.skipTaskbar,
                title: made.o.title, sandbox: made.o.webPreferences.sandbox, preload: made.o.webPreferences.preload, page: made.page };
   out.calls1 = calls.splice(0);
+  // A later show with a SMALLER box (the desktop reached its real size) must actually resize her.
+  await host.show(owner, { vx: 1500, vy: 900, bw: 87, bh: 142, vw: 1920, vh: 1280 });
+  out.resized = { w: made.o.width, h: made.o.height };
+  calls.splice(0);
   // Her window is activated (a click): focus goes back to the window that had it -- the terminal.
   rows.find(r => r.title === TITLE).focusTime = 99;
   made.ev.focus();
@@ -159,3 +164,10 @@ def test_a_click_on_her_never_keeps_the_keyboard():
     """'fix the focus issue too': clicking her made her window the focused one, so typing went nowhere."""
     r = _run()
     assert r["focusBack"] == [["FOCUS", 9]], ("focus did not go back to the window that had it", r["focusBack"])
+
+
+def test_a_later_smaller_size_really_resizes_her_window():
+    """Measured: created while the desktop was 500x540 she stayed 668x568 for good (min = max size),
+    off the right edge and unable to reach it. A later show must shrink the window itself."""
+    r = _run()
+    assert r["resized"] == {"w": 87, "h": 142}, ("her window kept its first size", r["resized"])

@@ -100,6 +100,10 @@
   /* PosterChanOS: ask for her window at the spot she would stand on the desk, in viewport px. */
   function nativeShow(p){
     if(!desk) return;
+    /* NOT WHILE THE DESKTOP IS STILL ITS STARTUP SIZE. The surface starts at its 500x540 minimum before it
+     * is made full screen; sized against that she came up 3.8x too wide. Wait: the resize to the real
+     * screen places her (see the resize listener below). */
+    if((window.innerWidth || 0) < 640 || (window.innerHeight || 0) < 480) return;
     const at = spot(p, BOX_W, BOX_H);
     if(!at) return;
     const z = zf(), dr = desk.getBoundingClientRect();

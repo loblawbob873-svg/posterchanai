@@ -69,7 +69,11 @@ function createBuddyHost(deps){
   async function open(box, w){
     win = createWindow({
       show: false, frame: false, transparent: true, backgroundColor: '#00000000', hasShadow: false,
-      resizable: false, skipTaskbar: true, focusable: false, alwaysOnTop: true, title: TITLE,
+      /* RESIZABLE, though nobody drags her edges: on Wayland a non-resizable window's min and max size
+       * are pinned to its FIRST size, and every later setSize/placement is ignored. Measured on the
+       * laptop: created while the desktop surface was still 500x540 she came up 668x568 (min = max =
+       * 668x568) and stayed that size -- off the right edge, unable to reach it, the drag stopping short. */
+      resizable: true, skipTaskbar: true, focusable: false, alwaysOnTop: true, title: TITLE,
       width: box.w, height: box.h,
       webPreferences: { contextIsolation: true, nodeIntegration: false, sandbox: true, preload: preloadPath },
     });
