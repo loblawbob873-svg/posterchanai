@@ -475,4 +475,41 @@ await run('stop receiving from one person hides what they shared and will share;
            before, after: after.length, later: later.length, stopped: stopped.length, undone: undone.length };
 });
 
+await run('the receiver stops getting one playlist: it leaves, and later changes do not bring it back', async () => {
+  const net = makeNet(); const A = person(net, 'A'), B = person(net, 'B');
+  const s1 = await A.addTrack(wav(400, 71), 'One'), s2 = await A.addTrack(wav(410, 72), 'Two');
+  let pl = { name: 'Weekly', tracks: [_tr(A, s1)] };
+  await A.S.share({ name: 'Weekly', tracks: pl.tracks, to: [B.pk], source: 'plW' });
+  const in1 = await B.S.loadIn(); B.S.decide(in1[0].key, true);
+  const had = B.S.acceptedShares().length;
+  B.S.dismiss(in1[0].key);                                   // "Stop getting this playlist"
+  pl = { name: 'Weekly', tracks: [_tr(A, s1), _tr(A, s2)] };
+  await A.S.syncPlaylists(id => id === 'plW' ? pl : null, () => [{ id: 'plW', name: 'Weekly' }]);   // the sharer keeps editing
+  await B.S.loadIn();
+  return { ok: had === 1 && B.S.acceptedShares().length === 0 && B.S.pendingShares().length === 0,
+           had, acc: B.S.acceptedShares().length, pend: B.S.pendingShares().length };
+});
+
+await run('the sharer stops sharing: later edits to the playlist reach nobody, or not the person removed', async () => {
+  const net = makeNet(); const A = person(net, 'A'), B = person(net, 'B'), C = person(net, 'C');
+  const s1 = await A.addTrack(wav(400, 81), 'One'), s2 = await A.addTrack(wav(410, 82), 'Two'), s3 = await A.addTrack(wav(420, 83), 'Three');
+  let pl = { name: 'Mix', tracks: [_tr(A, s1)] };
+  const r = await A.S.share({ name: 'Mix', tracks: pl.tracks, to: [B.pk, C.pk], source: 'plX' });
+  for(const P of [B, C]){ const i = await P.S.loadIn(); P.S.decide(i[0].key, true); }
+  // Stop sharing with C only, then edit: B gets the change, C gets nothing.
+  await A.S.revoke(r.id, [C.pk]);
+  pl = { name: 'Mix', tracks: [_tr(A, s1), _tr(A, s2)] };
+  await A.S.syncPlaylists(id => id === 'plX' ? pl : null, () => [{ id: 'plX', name: 'Mix' }]);
+  await B.S.loadIn(); await C.S.loadIn();
+  const bSongs = B.S.acceptedShares().length ? (await B.S.tracksOf(B.S.acceptedShares()[0])).length : 0;
+  const cSees = C.S.acceptedShares().length + C.S.pendingShares().length;
+  // Stop sharing with everyone, then edit again: nothing is sent and B no longer has it.
+  await A.S.revoke(r.id);
+  pl = { name: 'Mix', tracks: [_tr(A, s1), _tr(A, s2), _tr(A, s3)] };
+  const sent = await A.S.syncPlaylists(id => id === 'plX' ? pl : null, () => [{ id: 'plX', name: 'Mix' }]);
+  await B.S.loadIn();
+  return { ok: bSongs === 2 && cSees === 0 && sent.length === 0 && B.S.acceptedShares().length === 0,
+           bSongs, cSees, resent: sent.length, bAfter: B.S.acceptedShares().length };
+});
+
 process.stdout.write(JSON.stringify(out));

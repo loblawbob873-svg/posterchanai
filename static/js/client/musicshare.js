@@ -910,12 +910,27 @@
         : `<div class="empty">${have.length
               ? 'Nothing new. Accepted shares are in the playlist bar.'
               : `Nothing has been shared with you yet${_inOk ? '' : ' — or the relays did not answer; try Refresh'}.`}</div>`)
+      + (have.length ? `<div class="msh-getting"><div class="muted small"><b>Playlists you are getting</b></div>`
+          + have.map(s => `<div class="msh-card msh-have" data-key="${E(s.key)}"><b>${E(s.body.name)}</b>
+              <span class="muted small">from ${E(who(s.from))} · ${trackCount(s.body)} song${trackCount(s.body) === 1 ? '' : 's'}</span>
+              <div class="msh-offer-act"><button class="btn btn-ghost small danger msh-stopget" data-key="${E(s.key)}">Stop getting this playlist</button></div></div>`).join('')
+          + `</div>` : '')
       + (stoppedSenders().length ? `<div class="msh-stopped muted small"><b>Stopped receiving from</b>`
           + stoppedSenders().map(pk => ` <span class="msh-stopped-who">${E(who(pk))} <button class="btn btn-ghost small msh-unstop" data-from="${E(pk)}">Undo</button></span>`).join('')
           + `</div>` : '');
     el.onclick = async ev => {
       const b = ev.target.closest && ev.target.closest('button'); if(!b || !el.contains(b)) return;
       if(b.id === 'msh-refresh'){ b.disabled = true; await loadIn(); if(el.isConnected) _paintIn(el, ctx); return; }
+      if(b.classList.contains('msh-stopget')){
+        const sh = _in && _in.get(b.dataset.key); if(!sh) return;
+        const name = (sh.body && sh.body.name) || 'this playlist';
+        const ok = PC.uiConfirm ? await PC.uiConfirm(`Stop getting “${name}”? It leaves your playlists and later changes to it are not shown to you. Songs you kept stay in your library.`, { ok:'Stop getting it', danger:true }) : true;
+        if(!ok) return;
+        dismiss(b.dataset.key);
+        toast(`you will not get “${name}” any more`);
+        if(el.isConnected) _paintIn(el, ctx);
+        return;
+      }
       if(b.classList.contains('msh-stop') || b.classList.contains('msh-unstop')){
         const pk = b.dataset.from, stop = b.classList.contains('msh-stop');
         if(stop){ const ok = PC.uiConfirm ? await PC.uiConfirm(`Stop receiving shared playlists from ${who(pk)}? What they shared disappears from your list; songs you kept stay. You can undo this here.`, { ok:'Stop receiving', danger:true }) : true; if(!ok) return; }
@@ -964,7 +979,7 @@
           <button class="btn btn-neon small" id="msh-shuffle"${tracks.length ? '' : ' disabled'}>${icon('shuffle')}Shuffle</button>
           <button class="btn btn-ghost small" id="msh-refresh">${icon('refresh')}Refresh</button>
           <button class="btn btn-ghost small" id="msh-addall"${missing ? '' : ' disabled'}>${icon('plus')}${missing ? `Keep ${missing}` : 'Kept'}</button>
-          <button class="btn btn-ghost small danger" id="msh-dismiss" title="Take this playlist off your list">${icon('trash')}Remove</button>
+          <button class="btn btn-ghost small danger" id="msh-dismiss" title="Stop receiving this playlist and its future changes; songs you kept stay yours">${icon('trash')}Stop getting this playlist</button>
           <button class="btn btn-ghost small danger" id="msh-stopfrom" title="Hide everything ${E(who(cur.from))} shares with you, now and later">Stop receiving from ${E(who(cur.from))}</button>
         </div>
         <span class="music-count muted small">${tracks.length} song${tracks.length === 1 ? '' : 's'} · from ${E(who(cur.from))}</span>
@@ -986,10 +1001,10 @@
       }
       if(b.id === 'msh-dismiss'){
         const name = (cur.body && cur.body.name) || 'this playlist';
-        const ok = PC.uiConfirm ? await PC.uiConfirm(`Remove “${name}” from your playlists? Songs you kept stay in your library.`, { ok:'Remove', danger:true }) : true;
+        const ok = PC.uiConfirm ? await PC.uiConfirm(`Stop getting “${name}”? It leaves your playlists and later changes to it are not shown to you. Songs you kept stay in your library.`, { ok:'Stop getting it', danger:true }) : true;
         if(!ok) return;
         dismiss(key);
-        toast(`removed “${name}”`);
+        toast(`you will not get “${name}” any more`);
         if(ctx.closed) try{ ctx.closed(key); }catch(_){}
         else if(el.isConnected) renderIn(el, ctx);
         return;
