@@ -83,6 +83,16 @@ async def _run(page, hash=""):
                 res["hide"] = await b.js("__log")
                 await b.js("__log.length=0;document.querySelector('#menu [data-a=switch]').click();true")
                 res["switch"] = await b.js("__log")
+                # The host switches dancer by loading the same file with another #fragment: the page
+                # must actually become the other one (a fragment change alone reloads nothing).
+                other = "#posterchan" if hash == "#axolotl" else "#axolotl"
+                await b.js(f"location.hash={json.dumps(other)};true")
+                for _ in range(50):
+                    src = await b.js("(document.getElementById('im')||{}).getAttribute&&document.getElementById('im').getAttribute('src')||''")
+                    if (("/mascot/axolotl/" in src) if other == "#axolotl" else ("/mascot/dance/" in src)):
+                        break
+                    await asyncio.sleep(.1)
+                res["after_switch_src"] = src
         finally:
             proc.kill()
     return res
@@ -104,6 +114,9 @@ def test_her_window_page_dances_reacts_drags_and_hides():
     # "there is no switch to posterchan": her own window's menu offers the other dancer.
     assert axo["switch_label"] == "Switch to PosterChan" and axo["switch"] == [["menu", "switch"]], axo
     assert res["switch_label"] == "Switch to Axolotl", res
+    # "can't change axolotl to posterchan": switching on an OPEN page draws the other dancer.
+    assert "/mascot/dance/" in axo["after_switch_src"], ("the open page kept the old dancer", axo["after_switch_src"])
+    assert "/mascot/axolotl/" in res["after_switch_src"], ("the open page kept the old dancer", res["after_switch_src"])
     assert res["loaded"] > 0, "her frame did not load from file:// (the page's CSP or the path)"
     assert 3 <= res["pace"] <= 6, ("not the chosen pace (900ms a frame)", res["pace"])
     assert res["said"], "a click did nothing"

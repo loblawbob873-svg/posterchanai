@@ -97,6 +97,11 @@
   me.addEventListener('pointerup', end);
   me.addEventListener('pointercancel', end);
   window.__buddy = { frame: function(){ return frame; }, who: WHO };
+  /* SWITCHING DANCER CHANGES ONLY THE ADDRESS'S #fragment, AND A FRAGMENT DOES NOT RELOAD A PAGE. The
+     host loads this file again with #axolotl / #posterchan; the browser treats that as a jump within the
+     same page, so WHO (read once, above) never changed and she kept dancing as the old one ("i updated
+     laptop but can't change axolotl to posterchan"). Reload when it changes. */
+  window.addEventListener('hashchange', function(){ location.reload(); });
 })();
 </script>
 </body>
