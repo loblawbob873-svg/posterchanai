@@ -1022,6 +1022,15 @@ window.PCDmsFactory = function(dep){
     try{ now = (JSON.parse(e.newValue || '{}') || {}).dmSeen || 0; }catch(_){}
     if(was !== now) try{ recountDmUnread(); }catch(_){}
   }); }catch(_){}
+  /* Unread DMs that arrived AFTER `since` (seconds). The bell counts these, not every unread DM: opening
+     Notifications has to empty the bell ("still says 13" -- "i opened messages and it cleared": the 13
+     were DMs, which only Messages marked read). The Messages badge keeps the full count. */
+  function dmUnreadSince(since){ const seen=Math.max(Number(ClientSettings.get('dmSeen',0))||0, Number(since)||0); let n=0;
+    for(const [pk,arr] of dmPeers){ if(isMutedAuthor(pk)) continue;
+      const selfThread = pk===S.ME.pubkey;
+      for(const m of arr){ if((!m.mine || selfThread) && (m.t||0)>seen) n++; } }
+    return n; }
+  try{ window.PCdmUnreadSince = dmUnreadSince; }catch(_){}
   function recountDmUnread(){ const seen=ClientSettings.get('dmSeen',0); let n=0;
     for(const [pk,arr] of dmPeers){ if(isMutedAuthor(pk)) continue;
       const selfThread = pk===S.ME.pubkey;

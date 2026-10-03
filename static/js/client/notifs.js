@@ -353,7 +353,9 @@ window.PCNotifsFactory = function(dep){
       // Unread DMs light the bell as well: a message is a notification to the person it is for. The
       // Notifications screen shows them as one row that opens Messages (notifview _dmNotifHtml), so the
       // bell never counts something the screen behind it cannot show.
-      + (Number(S._dmUnread)||0)
+      // …but only those since Notifications was last opened: opening it empties the bell, DMs included,
+      // while Messages keeps its own count until they are read (dms.js dmUnreadSince).
+      + (typeof window.PCdmUnreadSince === 'function' ? window.PCdmUnreadSince(seenNotif.last) : (Number(S._dmUnread)||0))
       // …and Concord mentions not yet read (concord.js's ledger -- see _concordMentions).
       + _concordMentions().reduce((n,r)=>n+r.n,0); }
   /* CONCORD MENTIONS, read straight from the ledger concord.js keeps in localStorage, so the bell is
