@@ -4656,9 +4656,26 @@ async def drafts_sync(data: DraftsReq, db: Session = Depends(get_db)):
     if not _verify_self_auth(data.auth, pk):
         return JSONResponse({"ok": False, "error": "ownership proof required"}, status_code=403)
     user = db.query(User).filter(User.nostr_npub == nostr_service.npub_of(pk)).first()
-    if not user:
-        return JSONResponse({"ok": True, "drafts": []})
-    sk = store.user_storage_seckey(db, user)
+    if user:
+        sk = store.user_storage_seckey(db, user)
+    else:
+        # A NOSTR-ONLY ACCOUNT. This answered {"ok": true} to a SAVE and stored nothing, so the client
+        # reported drafts as synced that existed on one device only (backlog #71). A MEMBER -- a NIP-05
+        # name this node granted and that their signed profile publishes, the predicate every other
+        # member surface uses -- gets the same server-held storage key an account has, by npub. Anyone
+        # else is told plainly that the server keeps nothing for them; the client then says the drafts
+        # are safe on this device only.
+        from app.services import nip05_access
+        try:
+            member = await nip05_access.is_member(pk)
+        except Exception:
+            member = False
+        if not member:
+            if data.drafts is not None:
+                return JSONResponse({"ok": False, "local_only": True,
+                                     "error": "drafts are kept on this device only (no account or NIP-05 name here)"})
+            return JSONResponse({"ok": True, "drafts": []})
+        sk = store.npub_storage_seckey(nostr_service.npub_of(pk))
     port = int(_setting(db, "nostr_relay_port", "3052"))
     if data.drafts is not None:
         # MERGE with the stored doc — never blind-overwrite. The doc is ONE replaceable kind-30078

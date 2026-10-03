@@ -77,6 +77,13 @@ window.PCDraftsFactory = function(dep){
           const res=await fetch('/client/drafts',{method:'POST',headers:{'Content-Type':'application/json'},
             body:JSON.stringify({pubkey:owner,auth:auth,drafts:a})});
           let body=null; try{ body=await res.json(); }catch(_){ body=null; }
+          /* NOTHING IS KEPT ON THE SERVER FOR THIS ACCOUNT (Nostr-only, not a member here): not a failure
+             to retry, and not "may come back" -- say once that drafts live on this device only. */
+          if(body && body.local_only){
+            if(!this._localOnlySaid){ this._localOnlySaid=true;
+              try{ toast('Drafts are kept on this device only — they sync between devices with an account or a NIP-05 name on this server.'); }catch(_){ } }
+            return;
+          }
           landed = !!(res && res.ok && (!body || body.ok !== false));
         }catch(_){ landed=false; }
         if(landed){ this._syncFailed=false; return; }

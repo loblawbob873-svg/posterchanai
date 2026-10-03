@@ -93,6 +93,28 @@ _last_op_reload = 0.0
 _RELOAD_DEBOUNCE = 20.0
 
 
+def npub_storage_seckey(npub: str) -> bytes:
+    """The storage key of a person with NO account row here -- a member signed in with only their Nostr
+    key. Same keyfile, keyed by npub, as an account's (step 1 of user_storage_seckey), created on first
+    use and announced to the relay as a writer the same way. Callers decide who may have one."""
+    from app.services import keystore
+    sk = keystore.get_storage_seckey(npub)
+    if sk:
+        return sk
+    sk = os.urandom(32)
+    keystore.set_storage_seckey(npub, sk)
+    import time as _t
+    global _last_op_reload
+    if _t.time() - _last_op_reload > _RELOAD_DEBOUNCE:
+        _last_op_reload = _t.time()
+        try:
+            from app.services.nostr_relay.thread import trigger_block_reload
+            trigger_block_reload()
+        except Exception as e:
+            logger.debug("[nostr-store] operator reload after key provision failed: %s", e)
+    return sk
+
+
 # ---- local-relay WebSocket I/O (mirrors client.py's proven signup-follow path) ----
 # The pooled socket is PER EVENT LOOP, and that is not a detail.
 #
