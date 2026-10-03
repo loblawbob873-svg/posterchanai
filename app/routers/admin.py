@@ -723,7 +723,8 @@ _VMHOST_DURABLE = _vmhost_durable_keys()
 # background write still in flight when the reload runs re-reads the OLD list and the block silently
 # never applies (see relay_blocklist.set_blocked). Written durably, before the reload.
 _BLOCK_DURABLE = frozenset({"nostr_relay_blocked_pubkeys", "nostr_relay_blocked_words",
-                            "nostr_relay_blocked_langs", "nostr_relay_blocked_relays"})
+                            "nostr_relay_blocked_langs", "nostr_relay_blocked_relays",
+                            "fedi_bridge_blocked_domains"})
 
 
 @router.put("/settings")
@@ -804,6 +805,18 @@ def update_settings(
 
         # If the relay blocklist/filters were edited in the UI, push them to the running relay
         # immediately (otherwise the change wouldn't apply until restart / daily refresh).
+        # Blocking a fediverse instance or account takes its already-stored posts back out of the relay,
+        # not only future ones ("i blocked baraag.net but posts are still in posterchan").
+        if "fedi_bridge_blocked_domains" in changed_keys:
+            try:
+                from app.services import fedi_blocklist
+                from app.services.nostr_relay.thread import trigger_delete_author
+                pks = fedi_blocklist.blocked_puppet_pubkeys(db, settings_store.get("fedi_bridge_blocked_domains", "") or "")
+                if pks:
+                    trigger_delete_author(pks)
+                    logger.info(f"[Admin] instance block: removing stored posts of {len(pks)} fediverse account(s)")
+            except Exception as e:
+                logger.warning(f"[Admin] instance block purge failed: {e}")
         if any(k in data.settings for k in ("nostr_relay_blocked_pubkeys", "nostr_relay_blocked_words", "nostr_relay_blocked_langs", "nostr_relay_blocked_relays", "nostr_relay_block_bridged", "nostr_relay_block_json_posts")):
             try:
                 from app.services.nostr_relay.thread import trigger_block_reload

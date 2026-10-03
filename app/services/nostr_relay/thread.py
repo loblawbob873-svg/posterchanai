@@ -982,7 +982,8 @@ async def _main(cfg: dict) -> None:
         by_bridge = (await _apply_blocked_relays(store, gate, fresh["blocked_relays"]) or 0) if fresh["blocked_relays"] else 0
         # Bridged-post purge (NIP-48 proxy tag) — preserve-aware (local users / direct-published spared).
         by_proxy = (await store.delete_by_proxy() or 0) if fresh.get("block_bridged") else 0
-        total = by_pk + by_word + by_lang + by_bridge + by_proxy
+        by_inst = (await store.delete_pubkeys(_blocked_instance_puppets(), spare_preserved=False) or 0)
+        total = by_pk + by_word + by_lang + by_bridge + by_proxy + by_inst
         if total:
             logger.info("[nostr-relay] block-purge breakdown: total=%d (pubkeys=%d words=%d langs=%d bridge=%d proxy=%d) — local/direct-published notes preserved (word/lang purges DO cover WoT members, matching ingest)",
                         total, by_pk, by_word, by_lang, by_bridge, by_proxy)
@@ -1966,6 +1967,21 @@ async def _mark_blocked_relays(store, gate, domains) -> list:
     ident_pks = [p for p in (ident or []) if p not in ops]
     gate.add_bridged_identity(ident_pks)
     return list(set(weak_pks) | set(ident_pks))
+
+
+def _blocked_instance_puppets() -> list:
+    """Puppets of fediverse instances/accounts blocked in Admin -> Social (fedi_bridge_blocked_domains):
+    an admin's explicit decision, so "Purge now" removes their stored posts too."""
+    from app.database import SessionLocal
+    from app.services import fedi_blocklist, settings_store
+    db = SessionLocal()
+    try:
+        return fedi_blocklist.blocked_puppet_pubkeys(db, settings_store.get("fedi_bridge_blocked_domains", "") or "")
+    except Exception as e:
+        logger.warning("[nostr-relay] blocked-instance puppets unreadable: %s", e)
+        return []
+    finally:
+        db.close()
 
 
 async def _apply_blocked_relays(store, gate, domains) -> int:
