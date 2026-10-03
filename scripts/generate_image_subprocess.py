@@ -234,6 +234,15 @@ def main():
         if not negative_prompt:
             negative_prompt = "bad quality, blurry, distorted, ugly, deformed, low resolution"
 
+        # Pose guidance (app/services/image_pose.py -- the SAME helper the in-process path uses).
+        extra = {}
+        if config.get("pose_image"):
+            sys.path.insert(0, os.getcwd())
+            from app.services import image_pose
+            pose = image_pose.decode_pose(config["pose_image"], width, height)
+            pipe = image_pose.wrap_with_pose(pipe, dtype, device, offload=_low_vram and device != "cpu")
+            extra = {"image": pose, "controlnet_conditioning_scale": image_pose.clamp_scale(config.get("pose_scale"))}
+
         # Generate
         result = pipe(
             prompt=prompt,
@@ -243,6 +252,7 @@ def main():
             num_inference_steps=steps,
             guidance_scale=cfg,
             generator=generator,
+            **extra,
         )
 
         # Validate result contains images

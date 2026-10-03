@@ -325,6 +325,11 @@ class DiffusersService:
                 logger.warning(f"image_gpu_device is set to 'xpu' but XPU is not available, falling back to auto-detection")
                 self._device = detect_device()
 
+    @property
+    def supports_pose(self) -> bool:
+        """Pose guidance (image_pose.py) exists for SDXL checkpoints only."""
+        return self.model_type == "sdxl"
+
     def _is_anime_prompt(self, prompt: str) -> bool:
         """Check if prompt is for anime-style image"""
         anime_keywords = [
@@ -645,6 +650,8 @@ class DiffusersService:
         steps: int = None,
         cfg: float = None,
         seed: int = None,
+        pose_image: str = None,
+        pose_scale: float = None,
     ) -> Optional[bytes]:
         """Synchronous image generation"""
         # Truncate prompt to avoid token limit errors
@@ -668,8 +675,20 @@ class DiffusersService:
         if seed is None or seed < 0:
             seed = random.randint(0, 2**32 - 1)
 
+        posed = None
         try:
             import torch
+            pipe = self._pipe
+            extra = {}
+            if pose_image:
+                from app.services import image_pose
+                if not self.supports_pose:
+                    logger.warning("Pose requested on a non-SDXL model; declining")
+                    return None
+                pose = image_pose.decode_pose(pose_image, width, height)
+                posed = image_pose.wrap_with_pose(self._pipe, self._pipe.dtype, self._device, offload=is_rocm())
+                pipe = posed
+                extra = {"image": pose, "controlnet_conditioning_scale": image_pose.clamp_scale(pose_scale)}
 
             # model_cpu_offload (ROCm) needs CPU generator
             gen_device = "cpu" if is_rocm() else self._device
@@ -701,7 +720,7 @@ class DiffusersService:
                 if not negative_prompt:
                     negative_prompt = self.default_negative
 
-                result = self._pipe(
+                result = pipe(
                     prompt=prompt,
                     negative_prompt=negative_prompt,
                     width=width,
@@ -709,6 +728,7 @@ class DiffusersService:
                     num_inference_steps=steps,
                     guidance_scale=cfg,
                     generator=generator,
+                    **extra,      # a blank-image retry below reuses the posed pipe and its pose
                 )
 
                 # Validate result contains images
@@ -774,13 +794,19 @@ class DiffusersService:
                     torch.cuda.empty_cache()
                 return None
 
-            logger.info(f"Generation complete: {len(img_bytes)} bytes")
+            logger.info(f"Generation complete: {len(img_bytes)} bytes{' (posed)' if pose_image else ''}")
 
             # Update last used timestamp for idle timeout
             self._last_used = time.time()
 
             # Cleanup to free VRAM
             del result
+            if posed is not None:
+                try:
+                    del posed.controlnet
+                except Exception:
+                    pass
+                posed = None
             gc.collect()
             # Clean up GPU memory for all device types
             if hasattr(torch, "xpu") and torch.xpu.is_available():
@@ -814,6 +840,8 @@ class DiffusersService:
         steps: int = None,
         cfg: float = None,
         seed: int = None,
+        pose_image: str = None,
+        pose_scale: float = None,
     ) -> Optional[str]:
         """
         Generate image using subprocess for guaranteed VRAM release.
@@ -846,6 +874,12 @@ class DiffusersService:
             "device": self._device,
             "attention_slicing": self._attention_slicing,
         }
+        if pose_image:
+            if not self.supports_pose:
+                logger.warning("Pose requested on a non-SDXL model; declining")
+                return None
+            config["pose_image"] = pose_image
+            config["pose_scale"] = pose_scale
 
         _repo = os.path.dirname(os.path.dirname(os.path.dirname(__file__)))
         script_path = os.path.join(_repo, "scripts", "generate_image_subprocess.py")
@@ -941,7 +975,8 @@ class DiffusersService:
     async def generate_image(self, prompt: str, negative_prompt: str = "",
                             width: int = None, height: int = None,
                             steps: int = None, cfg: float = None,
-                            seed: int = None) -> Optional[str]:
+                            seed: int = None, pose_image: str = None,
+                            pose_scale: float = None) -> Optional[str]:
         """
         Generate image from prompt.
         Returns base64 encoded image or None.
@@ -961,13 +996,15 @@ class DiffusersService:
                 logger.info("Using subprocess mode for image generation")
                 return await loop.run_in_executor(
                     _executor,
-                    lambda: self._generate_subprocess(prompt, negative_prompt, width, height, steps, cfg, seed)
+                    lambda: self._generate_subprocess(prompt, negative_prompt, width, height, steps, cfg, seed,
+                                                      pose_image, pose_scale)
                 )
 
             # Standard in-process generation
             img_bytes = await loop.run_in_executor(
                 _executor,
-                lambda: self._generate_sync(prompt, negative_prompt, width, height, steps, cfg, seed)
+                lambda: self._generate_sync(prompt, negative_prompt, width, height, steps, cfg, seed,
+                                            pose_image, pose_scale)
             )
 
             # Always unload model after generation to release VRAM

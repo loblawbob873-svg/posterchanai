@@ -80,7 +80,7 @@ def get_image_load_balancer(db: Session) -> Optional[ImageLoadBalancer]:
 
 
 async def _generate_image_local(db: Session, settings: dict, prompt: str, negative_prompt: str,
-                                width, height, steps, cfg) -> Optional[str]:
+                                width, height, steps, cfg, **guide) -> Optional[str]:
     """Generate on THIS node's GPU under the shared GPU lock + VRAM swap. Returns base64 or None."""
     # Determine CPU vs GPU mode for the lock WITHOUT initializing a GPU here: this is the parent
     # process that forks the image subprocess, and a GPU (CUDA/XPU) context initialized in the
@@ -92,14 +92,19 @@ async def _generate_image_local(db: Session, settings: dict, prompt: str, negati
             prepare_vram_for_image(db)
             backend = get_image_backend(db)
             logger.info(f"[IMAGE] local backend generating ({len(prompt or '')} chars)")
+            guide = {k: v for k, v in guide.items() if v is not None}
+            if guide.get("pose_image") and not getattr(backend, "supports_pose", False):
+                # Answering a pose request with an unposed image would look like success.
+                logger.warning("[IMAGE] this node's image backend cannot apply a pose; declining")
+                return None
             return await backend.generate_image(
                 prompt=prompt, negative_prompt=negative_prompt,
-                width=width, height=height, steps=steps, cfg=cfg,
+                width=width, height=height, steps=steps, cfg=cfg, **guide,
             )
 
 
 async def _generate_image_on_node(node_url: str, timeout: float, prompt: str, negative_prompt: str,
-                                  width, height, steps, cfg) -> Optional[str]:
+                                  width, height, steps, cfg, **guide) -> Optional[str]:
     """Forward to another posterchanai node's /api/generate-image (server-to-server). That node runs
     its OWN local path (local_only: GPU lock + VRAM swap). Returns base64, or None to try the next."""
     import httpx
@@ -112,6 +117,7 @@ async def _generate_image_on_node(node_url: str, timeout: float, prompt: str, ne
         payload["steps"] = steps
     if cfg is not None:
         payload["cfg"] = cfg
+    payload.update({k: v for k, v in guide.items() if v is not None})
     headers = lb_auth.headers()
     async with httpx.AsyncClient(timeout=timeout) as client:
         r = await client.post(f"{node_url}/api/generate-image", json=payload, headers=headers)
@@ -121,6 +127,10 @@ async def _generate_image_on_node(node_url: str, timeout: float, prompt: str, ne
     data = r.json()
     if data.get("error"):
         logger.warning(f"[IMAGE] node {node_url} error: {data['error']}")
+        return None
+    if guide.get("pose_image") and data.get("pose") is not True:
+        # An older node ignores the pose and still returns a picture -- of the wrong pose.
+        logger.warning(f"[IMAGE] node {node_url} did not apply the pose; trying next")
         return None
     return data.get("image")
 
@@ -135,6 +145,9 @@ async def generate_image_with_load_balancing(
     cfg: Optional[float] = None,
     local_only: bool = False,
     dvm_offload: bool = True,
+    seed: Optional[int] = None,
+    pose_image: Optional[str] = None,
+    pose_scale: Optional[float] = None,
 ) -> Optional[str]:
     """
     Generate an image with node→node load balancing. Round-robins across [remote nodes…, local] so
@@ -163,7 +176,9 @@ async def generate_image_with_load_balancing(
     # but DON'T add Nostr providers — that would re-dispatch the job back out over Nostr and loop.
     from app.services import nostr_dvm
     from app.services.load_balancer import parse_server_urls
-    prov = {} if (local_only or not dvm_offload) else {p["pubkey"]: p["relay"] for p in nostr_dvm.providers(settings)}
+    # A pose request never goes to a Nostr provider: that protocol carries no pose image.
+    prov = {} if (local_only or not dvm_offload or pose_image) else {p["pubkey"]: p["relay"] for p in nostr_dvm.providers(settings)}
+    guide = {"seed": seed, "pose_image": pose_image, "pose_scale": pose_scale}
     remote = [] if local_only else parse_server_urls(server_urls, exclude_self=True)
 
     candidates = ([_LOCAL] if allow_local else []) + list(prov) + remote
@@ -185,7 +200,7 @@ async def generate_image_with_load_balancing(
     for cand in candidates:
         try:
             if cand == _LOCAL:
-                result = await _generate_image_local(db, settings, prompt, negative_prompt, width, height, steps, cfg)
+                result = await _generate_image_local(db, settings, prompt, negative_prompt, width, height, steps, cfg, **guide)
             elif cand in prov:
                 logger.info(f"[IMAGE] offloading to provider {cand[:12]} over Nostr")
                 r = await nostr_dvm.run_remote("image", {
@@ -195,7 +210,7 @@ async def generate_image_with_load_balancing(
                 result = r.get("image") if r else None
             else:
                 logger.info(f"[IMAGE] forwarding to remote node {cand}")
-                result = await _generate_image_on_node(cand, timeout, prompt, negative_prompt, width, height, steps, cfg)
+                result = await _generate_image_on_node(cand, timeout, prompt, negative_prompt, width, height, steps, cfg, **guide)
             if result:
                 logger.info(f"[IMAGE] SUCCESS from {cand} ({len(result)} chars)")
                 return result

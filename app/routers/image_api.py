@@ -98,11 +98,19 @@ class ImageGenRequest(BaseModel):
     height: Optional[int] = None
     steps: Optional[int] = None
     cfg: Optional[float] = None
+    # OPTIONAL POSE GUIDANCE. A seed makes a run repeatable; a pose image (an OpenPose skeleton, base64
+    # PNG) holds the body to that pose through ControlNet. Without them this is exactly the old request.
+    seed: Optional[int] = None
+    pose_image: Optional[str] = None
+    pose_scale: Optional[float] = None
 
 
 class ImageResponse(BaseModel):
     image: Optional[str] = None  # base64 encoded result
     error: Optional[str] = None
+    # True when the pose image was APPLIED. A node that cannot do it must not answer with a plain
+    # image as if it had: the balancer treats a pose request answered without this as a failure.
+    pose: Optional[bool] = None
 
 
 @router.post("/generate-image", response_model=ImageResponse)
@@ -138,12 +146,15 @@ async def generate_image(
             height=request.height,
             steps=request.steps,
             cfg=request.cfg,
-            local_only=is_load_balanced
+            local_only=is_load_balanced,
+            seed=request.seed,
+            pose_image=request.pose_image,
+            pose_scale=request.pose_scale,
         )
 
         if result:
             logger.info(f"[IMAGE-API] Image generated successfully")
-            return ImageResponse(image=result)
+            return ImageResponse(image=result, pose=True if request.pose_image else None)
         else:
             logger.error(f"[IMAGE-API] Image generation failed (no result)")
             # Check if it's a load balancing issue
