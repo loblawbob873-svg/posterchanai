@@ -136,7 +136,7 @@ def test_every_route_into_the_timeline_consults_the_limits():
     assert "_spam.check(ev)" in inspect.getsource(thread), "the live firehose skips it"
     assert inspect.getsource(ingest).count("server.spam.check(ev)") >= 2, "the sync or backfill skips it"
     src = inspect.getsource(RelayServer._on_event)
-    assert "self.spam.check(ev)" in src and "is_puppet_event(ev)" in src
+    assert "_spam.check(ev)" in src and "is_puppet_event" in src
 
 
 def test_a_client_publishing_here_is_told_rate_limited():

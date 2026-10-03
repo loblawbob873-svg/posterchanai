@@ -1452,12 +1452,15 @@ class RelayServer:
             return
         # New-post limits (spamguard.py). A fediverse post (a bridge puppet) is checked even though the
         # bridge is one of our LAN machines; the app's own other LAN traffic is not.
-        if self.spam.applies(ev) and (self.gate.is_puppet_event(ev)
-                                      or not self._is_internal(self._conn_ips.get(conn, "?"))):
-            _limited = self.spam.check(ev)
-            if _limited:
-                self._refuse(conn, eid, ev, _limited)
-                return
+        _spam = getattr(self, "spam", None)
+        if _spam is not None and _spam.applies(ev):
+            _puppet_check = getattr(self.gate, "is_puppet_event", None)
+            if (_puppet_check is not None and _puppet_check(ev)) \
+                    or not self._is_internal(getattr(self, "_conn_ips", {}).get(conn, "?")):
+                _limited = _spam.check(ev)
+                if _limited:
+                    self._refuse(conn, eid, ev, _limited)
+                    return
         # Reject EMPTY text notes (kind-1 with blank/whitespace-only content) — pure spam/noise with
         # nothing to render. Other kinds legitimately have empty content (kind-3 follows, kind-6 reposts,
         # kind-7 reactions, kind-5 deletes), so this is scoped to kind 1 only.
