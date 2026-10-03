@@ -2339,7 +2339,8 @@ ipcMain.handle('pc:wm:available', (e) => { fsGuard(e); return wm().available(); 
 /* The desktop PosterChan, over every window (buddy-host.js). Her own page's drag/drop/menu are
  * accepted only from her own window, which the host checks; the show/hide come from a shell page. */
 const buddyHost = require('./buddy-host.js').createBuddyHost({
-  BrowserWindow, wm, scopeOf: id => _shellScopes.get(id),
+  createWindow: opts => new BrowserWindow(opts),   // BrowserWindow is only assigned once Electron is ready
+  wm, scopeOf: id => _shellScopes.get(id),
   pagePath: path.join(__dirname, 'buddy.html'), preloadPath: path.join(__dirname, 'buddy-preload.js'),
 });
 ipcMain.handle('pc:buddy:show', (e, want) => {

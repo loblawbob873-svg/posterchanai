@@ -113,3 +113,30 @@ def test_the_chosen_dancer_is_drawn_and_a_switch_reloads_her_same_window():
     assert r["sameWindow"], "switching dancer opened a second window"
     assert r["loads"] == ["axolotl", "posterchan"], r
     assert r["bad"] == "posterchan", "a junk dancer id must fall back, not reach her page's address"
+
+
+def test_main_wires_her_host_to_the_window_class_electron_assigns_later():
+    """On the real machine every show() threw 'BrowserWindow is not a constructor': main.js assigns
+    BrowserWindow once Electron is ready, AFTER the host is created. Runs main.js's own wiring with that
+    ordering."""
+    main = (ROOT / "desktop/main.js").read_text()
+    wiring = main[main.index("const buddyHost = require('./buddy-host.js')"):main.index("ipcMain.handle('pc:buddy:show'")]
+    script = """
+      const path = require('path'); const __dirname = %s;
+      let BrowserWindow;                                    // assigned later, as in main.js
+      const _shellScopes = new Map([[7, { output: 'A' }]]);
+      const made = [];
+      const wm = () => ({ outputs: async () => [{ name: 'A', rect: { x: 0, y: 0, width: 100, height: 100 } }],
+                          windows: async () => made.length ? [{ id: 1, title: 'PosterChan Buddy', rect: { width: 10 } }] : [],
+                          place: async () => {}, alwaysOnTop: async () => {}, sticky: async () => {} });
+      %s
+      BrowserWindow = class { constructor(o){ made.push(o.title); this.webContents = {}; }
+        on(){} async loadFile(){} showInactive(){} getBounds(){ return { width: 10 }; } setSize(){}
+        isDestroyed(){ return false; } };
+      buddyHost.show({ id: 7, isDestroyed: () => false, send(){} }, { vx: 1, vy: 1, bw: 10, bh: 10, vw: 100, vh: 100 })
+        .then(ok => console.log(JSON.stringify({ ok, made })), e => { console.log(JSON.stringify({ error: String(e) })); });
+    """ % (json.dumps(str(ROOT / "desktop")), wiring)
+    r = subprocess.run(["node", "-e", script], capture_output=True, text=True, timeout=30, cwd=ROOT / "desktop")
+    assert r.returncode == 0, r.stderr
+    out = json.loads(r.stdout)
+    assert out.get("ok") is True and out.get("made") == ["PosterChan Buddy"], out

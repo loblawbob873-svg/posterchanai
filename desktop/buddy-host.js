@@ -19,7 +19,12 @@
 const TITLE = 'PosterChan Buddy';
 
 function createBuddyHost(deps){
-  const { BrowserWindow, wm, scopeOf, pagePath, preloadPath } = deps;
+  const { wm, scopeOf, pagePath, preloadPath } = deps;
+  /* A FACTORY, NOT THE CLASS. main.js only gets Electron's BrowserWindow once the app is ready, after
+   * this host is created -- a class captured here was `undefined` for good, and every show() on the
+   * real machine threw "BrowserWindow is not a constructor" while every test (which passed a class in)
+   * passed. `createWindow` is called at show() time. */
+  const createWindow = deps.createWindow || (o => new deps.BrowserWindow(o));
   const sleep = deps.sleep || (ms => new Promise(r => setTimeout(r, ms)));
   let win = null, owner = null, id = null, at = null, out = null, k = 1, opening = null, who = 'posterchan';
   const WHO = /^[a-z]{1,20}$/;   // a dancer's id, passed to her page as #who (validated there too)
@@ -45,7 +50,7 @@ function createBuddyHost(deps){
     return null;
   }
   async function open(box, w){
-    win = new BrowserWindow({
+    win = createWindow({
       show: false, frame: false, transparent: true, backgroundColor: '#00000000', hasShadow: false,
       resizable: false, skipTaskbar: true, focusable: false, alwaysOnTop: true, title: TITLE,
       width: box.w, height: box.h,
