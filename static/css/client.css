@@ -2194,12 +2194,17 @@ body.embed .feed{max-width:680px;margin:0 auto;padding:14px;height:auto !importa
 .cmp-parent:hover,.cmp-parent:focus-visible{border-color:var(--neon);background:rgba(var(--accent-rgb),.06);outline:none}
 /* profile Replies tab: show the parent post as "↩ replying to" context above each reply */
 .reply-pair{border-bottom:1px solid var(--line)}
-/* OFFSCREEN CARDS COST NOTHING. Without this every live insert at the top of a 150-400 card feed made the
-   browser re-style and re-lay-out every card, almost all of them off screen -- measured on the real
-   Global at phone speed (6x CPU): 8.5 of the first 10 s blocked on opening, 5.7 of 10 s while posts
-   arrived. `auto` in contain-intrinsic-size remembers each card's real height once it has been drawn,
-   so the scrollbar and scroll restoration see true sizes, not the 420px guess. */
-#tl-notes>.note,#tl-notes>.reply-pair{content-visibility:auto;contain-intrinsic-size:auto 420px}
+/* OFFSCREEN CARDS COST NOTHING -- ON A PHONE ONLY. Without this every live insert at the top of a 150-400 card
+   feed made the browser re-style and re-lay-out every card, almost all of them off screen. Measured on the
+   real Global at 412px with the CPU slowed 6x, first 10 s of opening: 0.8-1.1 s blocked with it, 2.4-2.9 s
+   without (2026-10-02). `auto` in contain-intrinsic-size remembers each card's real height once drawn.
+   NOT on the desktop layout: there, on the PosterChanOS laptop, it made pictures and videos TRIPLE, blur
+   together and flash while scrolling ("images are triplicating on the timeline and blurrying together and
+   flashing"). A compositor fault -- no screenshot showed it, the DOM never moved -- and switching this rule
+   off in the live window fixed it ("working great"). Both halves are tested:
+   test_timeline_offscreen_cards_cost_nothing_full_app.py (phone) and
+   test_timeline_cards_are_always_drawn_full_app.py (laptop, desktop, tablet). */
+@media(max-width:820px){ #tl-notes>.note,#tl-notes>.reply-pair{content-visibility:auto;contain-intrinsic-size:auto 420px} }
 .reply-pair>.note{border-bottom:none}
 .reply-ctx{padding:14px 20px 0 20px}
 .reply-ctx-lbl{display:inline-block;font-size:12px;letter-spacing:.6px;text-transform:uppercase;font-weight:700;
