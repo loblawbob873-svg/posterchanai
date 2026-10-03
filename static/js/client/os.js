@@ -1838,7 +1838,13 @@
                   PC().switchView ? PC().switchView(v) : null; }catch(err){ /* a view that refuses is not fatal */ }
       }finally{ repainting--; }
     }
-    restoreScroll(w);   // …and land back where this window was, once its content exists
+    /* …and land back where this window was, once its content exists -- but ONLY when the feed has
+     * just come back to it. A window that already held the live feed is already where the reader IS;
+     * replaying the offset saved when it was last parked dragged the timeline back to that spot on
+     * EVERY touch, because every pointerdown on a window runs focusWin: "tablet desktop mode: social
+     * scrolling ... it keeps fighting and moving up", "open a post, click back, try to scroll. it
+     * keeps bringing you back to the same timeline position". */
+    if(!keptLiveFeed) restoreScroll(w);
   }
 
   let iconSpan = 318;               // width the icon grid actually took; windows open clear of it
