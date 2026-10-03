@@ -6,9 +6,13 @@
  * fringes, crops and anatomy, and aligned so the feet share a baseline and the torso a centre line -- the
  * limbs move, the body does not jitter.
  *
- * LIVES ON THE DESKTOP, NEVER OVER WORK. Mounted by os.js inside #os-desk, above the wallpaper and the
- * icons, below widgets and windows; never inside an app window (os.js never draws a desktop there) and
- * only on the monitor that owns the background. Dropped somewhere that covers icons, she steps aside.
+ * OVER EVERY WINDOW ("posterchan should be going over windows right? should never be hidden unless you
+ * kill it"). On the web desktop she is mounted in #os-desk above the in-page windows (client.css: over
+ * the window band, under the start menu, flyouts and menus). On PosterChanOS the apps are real
+ * compositor windows the desktop surface sits UNDER, so there she is drawn by a small window of her own
+ * that the compositor keeps always on top (desktop/buddy-host.js + buddy.html); this file still decides
+ * whether she is on and where. Only on the monitor that owns the background; dropped somewhere that
+ * covers icons, she steps aside.
  *
  * EASY TO TURN OFF ("make sure users can disable the dancing posterchan somehow sometimes they may hate
  * it"): right-click / long-press -> Hide PosterChan; the desktop's own menu offers her back; Settings ->
@@ -21,10 +25,13 @@
   'use strict';
   /* 900ms a frame (~1.1 moves a second, chosen side by side against the old pace), and a little quicker after a click: at 340ms she read as frantic
    * ("posterchan is moving too fast"). tests/client/test_desktop_buddy_full_app.py measures the pace. */
+  const BOX_W = 174, BOX_H = 240, BUBBLE = 44;   // her box (client.css .os-buddy); room above it for a line
   const FRAMES = 8, STEP_MS = 900, HAPPY_MS = 550, KEY = 'desktopBuddy';
   const SRC = i => '/static/mascot/dance/dance-' + i + '.webp';
   const LINES = ['hi!', '♪ ♫', 'dance with me!', 'PosterChan!', 'hehe', 'nostr!', '✨'];
-  let el = null, desk = null, opts = {}, timer = 0, frame = 1, loaded = false, drag = null, pressT = 0;
+  let el = null, desk = null, opts = {}, timer = 0, frame = 1, loaded = false, drag = null, pressT = 0, nativeUp = false, wired = false;
+  /* PosterChanOS with real app windows: her own always-on-top window draws her. */
+  const native = () => { try{ return !!(window.pcBuddy && window.PCOSWin && PCOSWin.enabled()); }catch(_){ return false; } };
 
   const CS = () => window.ClientSettings;
   const clamp = (v, d) => { const n = Number(v); return Number.isFinite(n) ? Math.min(1, Math.max(0, n)) : d; };
@@ -58,8 +65,16 @@
   function zf(){ try{ return parseFloat(getComputedStyle(document.body).zoom) || 1; }catch(_){ return 1; } }
   function place(p){
     if(!el || !desk) return;
-    const dw = desk.clientWidth, dh = desk.clientHeight, w = el.offsetWidth, h = el.offsetHeight;
-    if(!dw || !dh || !w) return;
+    const at = spot(p, el.offsetWidth, el.offsetHeight);
+    if(!at) return;
+    el.style.left = at.left + 'px';
+    el.style.top = at.top + 'px';
+  }
+  /* Where she stands for preference p, in desk layout px, for a box of w x h. */
+  function spot(p, w, h){
+    if(!desk) return null;
+    const dw = desk.clientWidth, dh = desk.clientHeight;
+    if(!dw || !dh || !w) return null;
     let left = Math.round((dw - w) * p.x), top = Math.round((dh - h) * p.y);
     // Never on the icons: step sideways until her box is clear (or stay put if the desk is full).
     const z = zf(), dr = desk.getBoundingClientRect();
@@ -72,8 +87,40 @@
         if(left - d >= 0 && !hits(left - d, top)){ left -= d; break; }
       }
     }
-    el.style.left = Math.max(0, Math.min(dw - w, left)) + 'px';
-    el.style.top = Math.max(0, Math.min(dh - h, top)) + 'px';
+    return { left: Math.max(0, Math.min(dw - w, left)), top: Math.max(0, Math.min(dh - h, top)) };
+  }
+  /* PosterChanOS: ask for her window at the spot she would stand on the desk, in viewport px. */
+  function nativeShow(p){
+    if(!desk) return;
+    const at = spot(p, BOX_W, BOX_H);
+    if(!at) return;
+    const z = zf(), dr = desk.getBoundingClientRect();
+    wire();
+    nativeUp = true;
+    try{ Promise.resolve(window.pcBuddy.show({ vx: dr.left + at.left * z, vy: dr.top + (at.top - BUBBLE) * z,
+                                               bw: BOX_W * z, bh: (BOX_H + BUBBLE) * z })).catch(() => {}); }catch(_){ }
+  }
+  function nativeHide(){
+    if(!nativeUp) return;
+    nativeUp = false;
+    try{ Promise.resolve(window.pcBuddy.hide()).catch(() => {}); }catch(_){ }
+  }
+  /* Her window reports a drag's end (to be saved) and her own "Hide PosterChan". */
+  function wire(){
+    if(wired || !window.pcBuddy || !window.pcBuddy.onEvent) return;
+    wired = true;
+    window.pcBuddy.onEvent(ev => {
+      if(!ev || !desk) return;
+      if(ev.type === 'hide'){ nativeUp = false; hide(); return; }
+      if(ev.type !== 'moved') return;
+      const z = zf(), dr = desk.getBoundingClientRect();
+      const dw = desk.clientWidth - BOX_W, dh = desk.clientHeight - BOX_H;
+      const left = (Number(ev.vx) - dr.left) / z, top = (Number(ev.vy) - dr.top) / z + BUBBLE;
+      const p = pref();
+      if(dw > 0 && Number.isFinite(left)) p.x = clamp(left / dw, .86);
+      if(dh > 0 && Number.isFinite(top)) p.y = clamp(top / dh, 1);
+      setPref(p);
+    });
   }
   function say(text){
     if(!el) return;
@@ -145,6 +192,11 @@
     desk = deskEl || desk; opts = o || opts;
     const p = pref();
     if(!p.on || !desk){ unmount(); return; }
+    if(native()){
+      if(el){ stop(); el.remove(); el = null; }
+      nativeShow(p);
+      return;
+    }
     preload();
     if(!el || !el.isConnected || el.parentNode !== desk){ if(el) el.remove(); desk.appendChild(build()); }
     // Wait for a laid-out size before placing (the first frame may not have decoded yet).
@@ -152,7 +204,7 @@
     const im = el.querySelector('img');
     if(im.complete && im.naturalWidth) go(); else im.addEventListener('load', go, { once: true });
   }
-  function unmount(){ stop(); if(el){ el.remove(); el = null; } }
+  function unmount(){ stop(); if(el){ el.remove(); el = null; } nativeHide(); }
   function hide(){
     const p = pref(); p.on = false; setPref(p); unmount();
     try{ const pc = window.__PC; pc && pc.toast && pc.toast('PosterChan hidden. Right-click the desktop (or Settings, Timeline) to bring her back.'); }catch(_){ }

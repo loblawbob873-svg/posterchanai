@@ -434,6 +434,18 @@ if (isOurPage) {
     setPointerConfine: on => ipcRenderer.invoke('pc:display:pointer-confine-set', !!on),
   });
 
+  /* The desktop PosterChan's own always-on-top window (buddy-host.js). The desktop says where she
+   * goes in its own viewport pixels; her drag and her "Hide" come back as events to be saved. */
+  contextBridge.exposeInMainWorld('pcBuddy', {
+    show: (want) => ipcRenderer.invoke('pc:buddy:show', Object.assign({}, want || {}, {
+      vw: window.innerWidth, vh: window.innerHeight })),
+    hide: () => ipcRenderer.invoke('pc:buddy:hide'),
+    onEvent: (cb) => {
+      if(typeof cb !== 'function') return;
+      ipcRenderer.on('pc:buddy:event', (_e, ev) => { try{ cb(ev); }catch(_){ } });
+    },
+  });
+
   contextBridge.exposeInMainWorld('pcRemoteControl', {
     configure: info => ipcRenderer.invoke('pc:remote:configure', info && typeof info==='object' ? info : {}),
     input: event => ipcRenderer.invoke('pc:remote:input', event && typeof event==='object' ? event : {}),

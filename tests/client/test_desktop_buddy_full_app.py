@@ -60,6 +60,16 @@ def test_the_desktop_posterchan_dances_moves_hides_and_comes_back():
             return {{inDesk: bd.parentNode.id==='os-desk', z: +getComputedStyle(bd).zIndex,
                      onIcon: [...document.querySelectorAll('.os-icon')].some(i=>over(me,R(i))),
                      onBar: over(me,R('#os-bar'))}}}})()""")
+        # OVER WINDOWS ("posterchan should be going over windows right? should never be hidden unless
+        # you kill it"): open an app and put its window right on top of her.
+        await b.js("PCOS.routeView('notes');true")
+        await b.until("!!document.querySelector('.osw')")
+        res["over"] = await b.js(f"""(()=>{{const R={RECT};const me=R('.os-buddy'),w=document.querySelector('.osw');
+            w.style.left=(me.l-40)+'px';w.style.top=(me.t-40)+'px';w.style.width=(me.w+80)+'px';w.style.height=(me.h+80)+'px';
+            const hit=document.elementFromPoint(me.l+me.w/2,me.t+me.h/2);
+            return {{onTop:!!(hit&&hit.closest('.os-buddy')), covered:!!(hit&&hit.closest('.osw'))}}}})()""")
+        await b.js("(()=>{const w=document.querySelector('.osw .osw-close, .osw [data-act=close]');if(w)w.click();})();true")
+        await asyncio.sleep(.3)
         # Click: she reacts.
         r = await b.js(f"{RECT}('.os-buddy')")
         cx, cy = r["l"] + r["w"] / 2, r["t"] + r["h"] / 2
@@ -107,7 +117,8 @@ def test_the_desktop_posterchan_dances_moves_hides_and_comes_back():
     assert res["animates"], "she does not dance: the frame never changes"
     assert 3 <= res["pace"] <= 7, ("4s should be ~5-6 moves -- fewer is frozen, more is frantic", res["pace"])
     p = res["place"]
-    assert p["inDesk"] and 0 < p["z"] < 10, ("not on the desktop layer, below windows", p)
+    assert p["inDesk"] and 200 < p["z"] < 320, ("not over the windows (10-200) and under the menus (320+)", p)
+    assert res["over"] == {"onTop": True, "covered": False}, ("a window covered her", res["over"])
     assert not p["onIcon"] and not p["onBar"], ("she covers an icon or the taskbar", p)
     assert res["reacts"], "clicking her does nothing"
     dx, dy = res["moved"]
@@ -120,3 +131,54 @@ def test_the_desktop_posterchan_dances_moves_hides_and_comes_back():
     assert res["frames_fetched_while_hidden"] == 0, "hidden, and her frames were still downloaded"
     assert res["show"] is True and res["back"], ("the desktop menu does not offer her back", res["show"])
     assert res["switch_off"]
+
+
+NATIVE_INIT = r'''
+window.__publishOK = true;
+window.__buddySaves = [];
+window.__native = { shows: [], hides: 0, cb: null };
+window.pcBuddy = { show: w => { __native.shows.push(w); return Promise.resolve(true); },
+                   hide: () => { __native.hides++; return Promise.resolve(true); },
+                   onEvent: cb => { __native.cb = cb; } };
+'''
+
+
+@pytest.mark.skipif(not Path("/opt/google/chrome/chrome").exists(), reason="Chrome required")
+def test_on_posterchanos_her_own_window_draws_her_and_the_desktop_keeps_her_state():
+    """PosterChanOS app windows are compositor toplevels over the desktop surface: she must be handed
+    to her own always-on-top window (desktop/buddy-host.js), never drawn under them."""
+    res = {}
+
+    async def check(b):
+        await desktop.login(b)
+        await b.until("document.body.classList.contains('os-on') && !!document.querySelector('#os-desk')")
+        await b.js("(()=>{const pc=window.__PC,s=pc.saveDesktopBuddy;pc.saveDesktopBuddy=v=>{__buddySaves.push(JSON.parse(JSON.stringify(v)));return s&&s(v)}})()")
+        # Real app windows on this machine (what PosterChanOS reports), then the desktop redraws her.
+        await b.js("PCOSWin.enabled=()=>true;PCBuddy.refresh();true")
+        await b.until("__native.shows.length>0")
+        res["drawn_in_page"] = await b.js("!!document.querySelector('.os-buddy')")
+        res["show"] = await b.js("__native.shows.slice(-1)[0]")
+        res["desk"] = await b.js("(()=>{const r=document.querySelector('#os-desk').getBoundingClientRect();return {l:r.left,t:r.top,w:r.width,h:r.height}})()")
+        # Her window was dragged to the desk's top-left area: the desktop saves where she landed.
+        await b.js("__native.cb({type:'moved', vx:" + "document.querySelector('#os-desk').getBoundingClientRect().left+20" + ", vy:document.querySelector('#os-desk').getBoundingClientRect().top+10});true")
+        res["saved"] = await b.js("__buddySaves.slice(-1)[0]||null")
+        # Her own "Hide PosterChan".
+        await b.js("__native.cb({type:'hide'});true")
+        await asyncio.sleep(.2)
+        res["hidden"] = await b.js("({on:PCBuddy.isOn(), saved:(__buddySaves.slice(-1)[0]||{}).on, hides:__native.hides})")
+        # Back from the desktop's menu, then off from the desktop side (Settings): her window closes.
+        await b.js("__native.shows.length=0;PCBuddy.show();true")
+        await b.until("__native.shows.length>0")
+        await b.js("PCBuddy.hide();true")
+        res["desk_hide"] = await b.js("({on:PCBuddy.isOn(), hides:__native.hides})")
+
+    asyncio.run(desktop.with_browser("online", "", check, NATIVE_INIT))
+    assert res["drawn_in_page"] is False, "drawn on the desktop surface, which every app window covers"
+    s, d = res["show"], res["desk"]
+    assert s["bw"] > 100 and s["bh"] > s["bw"], ("her window has no size", s)
+    assert d["l"] <= s["vx"] <= d["l"] + d["w"] and s["vy"] <= d["t"] + d["h"], ("her window is off the desk", s, d)
+    assert res["saved"] and res["saved"]["on"] is True and res["saved"]["x"] < 0.1 and res["saved"]["y"] < 0.1, \
+        ("a drag of her window was not saved", res["saved"])
+    # Her own Hide already closed her window in the host; the desktop only records it.
+    assert res["hidden"] == {"on": False, "saved": False, "hides": 0}, ("her Hide did not stick", res["hidden"])
+    assert res["desk_hide"] == {"on": False, "hides": 1}, ("hiding from the desktop left her window up", res["desk_hide"])

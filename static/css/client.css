@@ -12020,7 +12020,8 @@ img.md-rel:not([src]){display:none}
 .mail-searching{display:flex;align-items:center;gap:10px;padding:16px}.mail-search-note{padding:6px 12px}
 
 /* PosterChan on the desktop (buddy.js). Above wallpaper + icons, below widgets (6) and windows (10+). */
-.os-buddy{position:absolute;z-index:5;width:174px;height:240px;cursor:grab;touch-action:none;user-select:none;
+/* Over every in-page window (os.js keeps windows in z 10-200), under the start menu (320+) and menus. */
+.os-buddy{position:absolute;z-index:300;width:174px;height:240px;cursor:grab;touch-action:none;user-select:none;
   -webkit-user-select:none;filter:drop-shadow(0 6px 10px rgba(0,0,0,.35))}
 .os-buddy.dragging{cursor:grabbing}
 .os-buddy img{width:100%;height:100%;object-fit:contain;pointer-events:none;-webkit-user-drag:none;display:block}

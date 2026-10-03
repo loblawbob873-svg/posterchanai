@@ -405,6 +405,10 @@ class WM {
    * several are hidden — so both are addressed by con_id, never by the bare command. */
   hide(id){ return this.command('[con_id=' + Number(id) + '] move scratchpad'); }
   show(id){ return this.command('[con_id=' + Number(id) + '] scratchpad show'); }
+  /* sway draws floating windows above tiled ones already and has no separate always-on-top; sticky
+   * keeps a floating window on every workspace. */
+  alwaysOnTop(){ return Promise.resolve(); }
+  sticky(id,on){ return this.command('[con_id=' + Number(id) + '] sticky ' + (on === false ? 'disable' : 'enable')); }
   /* Restore in ONE compositor transaction. `scratchpad show` on its own briefly gives some clients
    * scratchpad geometry; terminals receive that resize and redraw as a tiny rectangle before the
    * later place() expands them. One chained criterion preserves the hosted body rectangle. */

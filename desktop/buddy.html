@@ -1,0 +1,90 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; img-src 'self'; style-src 'unsafe-inline'; script-src 'unsafe-inline'">
+<title>PosterChan Buddy</title>
+<!-- The desktop PosterChan on PosterChanOS, in a window of her own that the compositor keeps above
+     every other window (see buddy-host.js). Same frames and the same pace as the web desktop's
+     static/js/client/buddy.js; this page only dances, reacts and is dragged. -->
+<style>
+  html,body{margin:0;height:100%;background:transparent;overflow:hidden;user-select:none;-webkit-user-select:none}
+  #me{position:absolute;left:0;right:0;bottom:0;top:44px;cursor:grab;touch-action:none}
+  #me.dragging{cursor:grabbing}
+  #me img{width:100%;height:100%;object-fit:contain;pointer-events:none;-webkit-user-drag:none;display:block}
+  #me.hop{animation:hop .45s cubic-bezier(.3,1.6,.5,1)}
+  @keyframes hop{0%,100%{transform:translateY(0)}40%{transform:translateY(-14%)}}
+  #say{position:absolute;left:50%;top:6px;transform:translateX(-50%);white-space:nowrap;padding:5px 10px;border-radius:12px;
+       background:#12121c;color:#fff;font:600 13px system-ui,sans-serif;border:1px solid #ff8a3d;opacity:0;transition:opacity .2s;pointer-events:none}
+  #say.on{opacity:1}
+  #menu{position:absolute;left:8px;right:8px;top:50px;display:none;flex-direction:column;gap:4px;padding:6px;border-radius:10px;
+        background:#12121cee;border:1px solid #2b2b3d;font:13px system-ui,sans-serif}
+  #menu.on{display:flex}
+  #menu button{all:unset;padding:7px 9px;border-radius:7px;color:#eee;cursor:pointer}
+  #menu button:hover{background:#2a2a3c}
+  @media(prefers-reduced-motion:reduce){#me.hop{animation:none}}
+</style>
+</head>
+<body>
+<div id="say"></div>
+<div id="me" role="img" aria-label="PosterChan dancing. Drag to move her; right-click to hide her."><img id="im" alt="" src="www/static/mascot/dance/dance-1.webp"></div>
+<div id="menu" role="menu"><button data-a="dance" role="menuitem">Dance!</button><button data-a="hide" role="menuitem">Hide PosterChan</button></div>
+<script>
+(function(){
+  'use strict';
+  var FRAMES = 8, STEP_MS = 900, HAPPY_MS = 550;
+  var LINES = ['hi!', '♪ ♫', 'dance with me!', 'PosterChan!', 'hehe', 'nostr!', '✨'];
+  var me = document.getElementById('me'), im = document.getElementById('im'), say = document.getElementById('say'), menu = document.getElementById('menu');
+  var frame = 1, happyUntil = 0, drag = null, sayT = 0;
+  var bridge = window.pcBuddyWin || { drag: function(){}, drop: function(){}, menu: function(){} };
+  var reduced = function(){ try{ return matchMedia('(prefers-reduced-motion: reduce)').matches; }catch(_){ return false; } };
+  function show(i){ frame = i; im.src = 'www/static/mascot/dance/dance-' + i + '.webp'; }
+  function tick(){
+    if(!drag && !reduced()) show(frame % FRAMES + 1);
+    setTimeout(tick, Date.now() < happyUntil ? HAPPY_MS : STEP_MS);
+  }
+  setTimeout(tick, STEP_MS);
+  function cheer(){
+    me.classList.remove('hop'); void me.offsetWidth; me.classList.add('hop');
+    say.textContent = LINES[Math.floor(Math.random() * LINES.length)]; say.classList.add('on');
+    clearTimeout(sayT); sayT = setTimeout(function(){ say.classList.remove('on'); }, 1600);
+    happyUntil = Date.now() + 2400;
+    if(reduced()) show(frame % FRAMES + 1);
+  }
+  me.addEventListener('pointerenter', function(){ if(!drag && Date.now() >= happyUntil) show(2); });
+  me.addEventListener('contextmenu', function(ev){ ev.preventDefault(); menu.classList.add('on'); });
+  menu.addEventListener('click', function(ev){
+    var b = ev.target.closest('button'); if(!b) return;
+    menu.classList.remove('on');
+    if(b.dataset.a === 'hide') bridge.menu('hide'); else cheer();
+  });
+  document.addEventListener('pointerdown', function(ev){ if(!menu.contains(ev.target)) menu.classList.remove('on'); }, true);
+  me.addEventListener('pointerdown', function(ev){
+    if(ev.button !== 0) return;
+    // Wayland never tells a page where its window is, so movementX/Y is measured against a window that
+    // is itself moving and each step half-cancels the last. Instead: keep the point she was grabbed by
+    // under the pointer -- the offset from it is exactly how far the window must move.
+    drag = { id: ev.pointerId, moved: 0, gx: ev.clientX, gy: ev.clientY };
+    try{ me.setPointerCapture(ev.pointerId); }catch(_){ }
+  });
+  me.addEventListener('pointermove', function(ev){
+    if(!drag || ev.pointerId !== drag.id) return;
+    var dx = ev.clientX - drag.gx, dy = ev.clientY - drag.gy;
+    if(!dx && !dy) return;
+    drag.moved = Math.max(drag.moved, Math.abs(dx) + Math.abs(dy));
+    if(drag.moved < 4) return;
+    me.classList.add('dragging');
+    bridge.drag(dx, dy);
+  });
+  function end(ev){
+    if(!drag || (ev && ev.pointerId !== drag.id)) return;
+    var moved = drag.moved >= 4; drag = null; me.classList.remove('dragging');
+    if(moved) bridge.drop(); else cheer();
+  }
+  me.addEventListener('pointerup', end);
+  me.addEventListener('pointercancel', end);
+  window.__buddy = { frame: function(){ return frame; } };
+})();
+</script>
+</body>
+</html>

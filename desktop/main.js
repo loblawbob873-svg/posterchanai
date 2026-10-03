@@ -2336,6 +2336,23 @@ function displays(){
 }
 
 ipcMain.handle('pc:wm:available', (e) => { fsGuard(e); return wm().available(); });
+/* The desktop PosterChan, over every window (buddy-host.js). Her own page's drag/drop/menu are
+ * accepted only from her own window, which the host checks; the show/hide come from a shell page. */
+const buddyHost = require('./buddy-host.js').createBuddyHost({
+  BrowserWindow, wm, scopeOf: id => _shellScopes.get(id),
+  pagePath: path.join(__dirname, 'buddy.html'), preloadPath: path.join(__dirname, 'buddy-preload.js'),
+});
+ipcMain.handle('pc:buddy:show', (e, want) => {
+  fsGuard(e);
+  if(!SHELL_MODE) return false;
+  const id = e.sender.id;
+  if(!e.sender.__pcBuddyWatched){ e.sender.__pcBuddyWatched = true; e.sender.once('destroyed', () => buddyHost.ownerGone(id)); }
+  return buddyHost.show(e.sender, want);
+});
+ipcMain.handle('pc:buddy:hide', (e) => { fsGuard(e); return buddyHost.hide(); });
+ipcMain.on('pc:buddy:drag', (e, dx, dy) => buddyHost.drag(e.sender, dx, dy));
+ipcMain.on('pc:buddy:drop', (e) => buddyHost.drop(e.sender));
+ipcMain.on('pc:buddy:menu', (e, action) => buddyHost.menu(e.sender, action));
 ipcMain.on('pc:win:has', (e, view) => {
   try { fsGuard(e); e.returnValue = hasPcAppWindow(view); } catch (_) { e.returnValue = false; }
 });

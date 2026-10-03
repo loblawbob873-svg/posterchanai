@@ -409,6 +409,9 @@ class WayfireWM{
   floating(id,on){return this._viewConfig(id,null,{'tiled-edges':on===false?15:0});}
   hide(id){return this._send('wm-actions/set-minimized',{'view_id':Number(id),state:true});}
   show(id){return this._send('wm-actions/set-minimized',{'view_id':Number(id),state:false});}
+  /* A window that stays over every other one and on every workspace: the desktop PosterChan. */
+  alwaysOnTop(id,on){return this._send('wm-actions/set-always-on-top',{'view_id':Number(id),state:on!==false});}
+  sticky(id,on){return this._send('wm-actions/set-sticky',{'view_id':Number(id),state:on!==false});}
   async _viewConfig(id,rect,extra){const data=Object.assign({id:Number(id)},extra||{});if(rect)data.geometry={x:Math.round(rect.x),y:Math.round(rect.y),width:Math.round(rect.w),height:Math.round(rect.h)};return this._send('window-rules/configure-view',data);}
   async place(id,x,y,w,h){
     let at={x,y,w,h},extra={};
