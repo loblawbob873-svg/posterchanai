@@ -111,3 +111,44 @@ def test_without_windows_an_article_has_an_address_and_back_returns_to_the_timel
     assert got['path'].endswith('/' + got['naddr']), 'the article pushed no address of its own: %r' % got
     assert not got['back']['articlesList'], 'Back went to the Articles list instead of where the reader was: %r' % got
     assert got['back']['card'], 'Back did not return to the timeline holding the post: %r' % got
+
+
+# PosterChanOS: every app is its own window (`?pcwin=`), PCOS is off inside it, and only the desktop
+# (a live same-origin `window.opener`) opens windows -- so what is recorded is the request reaching it.
+OS_DESKTOP = ("window.__asked=[];window.__saved=[];Object.defineProperty(window,'opener',{configurable:true,value:{closed:false,"
+              "__PC:{openThread:id=>__asked.push(id)},Store:{saveEvent:e=>__saved.push(e.kind)},"
+              "PCOSWin:{enabled:()=>true,routable:()=>true,open:()=>({})}}});true")
+OS_SEED = r'''(()=>{
+  const author=new Uint8Array(32).fill(7);
+  const art=NostrTools.finalizeEvent({kind:30023,created_at:Math.floor(Date.now()/1000)-60,content:'# Body\n\nThe article body.',
+    tags:[['d','agent-zero-handbook'],['title','agent_zero Handbook'],['summary','A test article']]},author);
+  window.__events=[art]; window.__art={id:art.id};
+  return true;})()'''
+
+
+@pytest.mark.skipif(not Path('/opt/google/chrome/chrome').exists(), reason='Chrome required')
+def test_on_posterchanos_an_article_in_the_social_window_asks_the_desktop_for_its_own_window():
+    """'clicking on articles on the global timeline is not opening in new window on desktop/OS' --
+    measured on the real shell: the Social window painted the article over its own timeline."""
+    got = {}
+
+    async def check(b):
+        await desktop.login(b)
+        await b.until("document.documentElement.classList.contains('pc-oswin') && !!window.__PC")
+        await b.js(OS_DESKTOP)
+        await b.js(OS_SEED)
+        await b.js("__PC.switchView('global');true")
+        await b.until("!!document.querySelector('#feed .article-card')")
+        await b.js("document.querySelector('#feed .article-card .art-title').click();true")
+        await asyncio.sleep(.8)
+        got['asked'] = await b.js("__asked")
+        got['saved'] = await b.js("__saved")
+        got['id'] = await b.js("__art.id")
+        got['social'] = await b.js("({view:__PC.VIEW, article:!!document.querySelector('#feed .article-view'),"
+                                   "card:!!document.querySelector('#feed .article-card')})")
+
+    asyncio.run(desktop.with_browser('online', '?pcwin=global', check, ''))
+    assert got['asked'] == [got['id']], 'the desktop was not asked to open the article: %r' % got
+    assert 30023 in got['saved'], 'the desktop was not handed the article (its window would say "Post"): %r' % got
+    assert got['social'] == {'view': 'global', 'article': False, 'card': True}, \
+        'the article painted over the Social window: %r' % got

@@ -78,12 +78,29 @@ window.PCDiscoverFactory = function(dep){
    * had come from). On the desktop it now goes through openThread, which gives it a window of its
    * own (`doc:post:<id>`) exactly as a post gets; renderThread hands a long-form event back here
    * with `inPlace`. Everywhere it gets a real address (its naddr), so Back and a reload both work. */
+  function _articleWindow(e){
+    try{
+      const W=window.PCOSWin;
+      if(!(W && W.isWindow()) || W.viewOf()==='doc:post:'+e.id) return false;
+      const desk=W.desktop();
+      if(!desk || !desk.PCOSWin || !desk.PCOSWin.enabled() || !(desk.__PC && desk.__PC.openThread)) return false;
+      try{ desk.Store && desk.Store.saveEvent(e); }catch(_){}   // so the desktop titles the window "Article"
+      desk.__PC.openThread(e.id);
+      return true;
+    }catch(_){ return false; }
+  }
   function openArticle(e, opts){
     const inPlace = !!(opts && opts.inPlace);
     if(!inPlace && !S._routing && window.PCOS && PCOS.isOn() && e && e.id){
       try{ Store.saveEvent(e); }catch(_){}
       return openThread(e.id);
     }
+    /* ON POSTERCHANOS EVERY APP IS ITS OWN WINDOW, AND `PCOS.isOn()` IS FALSE INSIDE ONE -- so the rule
+     * above never fired there and an article clicked in the Social window painted over the timeline
+     * ("clicking on articles on the global timeline is not opening in new window on desktop/OS"). A
+     * window does not open windows; the DESKTOP does, so hand it the article exactly as the desktop's
+     * own click would. With no desktop to ask (it closed), paint here as before. */
+    if(!inPlace && !S._routing && e && e.id && _articleWindow(e)) return;
     /* The address goes in BEFORE the view changes: _navUrl stamps the entry being LEFT with the
      * current view, so setting 'article' first labelled the timeline's own entry "article" and Back
      * popped straight back into the article. Arriving through the post window (inPlace), openThread
