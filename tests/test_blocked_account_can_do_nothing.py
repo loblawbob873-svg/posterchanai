@@ -113,3 +113,34 @@ def test_the_relay_refuses_a_blocked_accounts_sign_in():
     src = (__import__("pathlib").Path(__file__).resolve().parents[1] / "app/services/nostr_relay/server.py").read_text()
     ok_at = src.index('logger.info("[nostr-relay] AUTH ok for')
     assert "self.gate.is_blocked(" in src[ok_at - 400:ok_at], "a blocked key still gets an authenticated relay socket"
+
+
+def test_a_blocked_key_registers_no_push_device(blocked):
+    from app.routers import push
+    def proof(sk, pk):
+        ev = nostr_event.build_event(sk, 27235, "posterchan-direct:register:dev-0123456789abcdef", tags=[])
+        return base64.urlsafe_b64encode(json.dumps(ev).encode()).decode()
+    assert push._direct_auth(proof(SK, PK), PK, "register", "dev-0123456789abcdef") is False
+    osk = (0x0DD).to_bytes(32, "big")
+    assert push._direct_auth(proof(osk, OTHER), OTHER, "register", "dev-0123456789abcdef") is True
+
+
+def test_the_telegram_bot_ignores_a_blocked_linked_account(blocked):
+    from app.routers.telegram import webhook
+    upd = {"message": {"chat": {"id": 42}, "text": "hi"}}
+    assert webhook._from_blocked_account(upd, _DB(SimpleNamespace(nostr_npub=PK))) is True
+    assert webhook._from_blocked_account(upd, _DB(SimpleNamespace(nostr_npub=OTHER))) is False
+    cb = {"callback_query": {"message": {"chat": {"id": 42}}}}
+    assert webhook._from_blocked_account(cb, _DB(SimpleNamespace(nostr_npub=PK))) is True
+
+
+def test_a_blocked_key_is_a_stranger_to_the_vm_host(blocked):
+    from app.services.vmhost import service as vs
+    host = vs.VmHostService.__new__(vs.VmHostService)
+    host.cfg = SimpleNamespace(allowed_pubkeys={PK, OTHER})
+    host._assign = {}
+    host.migrator = None
+    async def admins(): return set()
+    host.admin_pubkeys = admins
+    assert asyncio.run(host.role_of(PK)) is None
+    assert asyncio.run(host.role_of(OTHER)) == "user"

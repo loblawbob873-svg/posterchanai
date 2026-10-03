@@ -38,6 +38,9 @@ def _direct_auth(auth_b64: str, pubkey: str, action: str, device_id: str) -> boo
         raw = (auth_b64 or "").encode("ascii")
         raw += b"=" * (-len(raw) % 4)
         ev = json.loads(base64.urlsafe_b64decode(raw))
+        from app.services import relay_blocklist
+        if relay_blocklist.is_blocked(pubkey):
+            return False         # a blocked account registers no device and gets no notifications
         return (nostr_event.verify_event(ev)
                 and ev.get("pubkey") == pubkey
                 and abs(int(ev.get("created_at", 0)) - int(time.time())) <= 300

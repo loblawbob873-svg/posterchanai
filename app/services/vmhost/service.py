@@ -280,6 +280,12 @@ class VmHostService(HardwareOps, DeviceOps, IsoOps, AccessOps, SessionOps):
         pk = (pubkey or "").lower()
         if not _HEX64.match(pk):
             return None
+        try:
+            from app.services import relay_blocklist
+            if relay_blocklist.is_blocked(pk):
+                return None      # blocked on this node's relay: a stranger to its VMs, so no reply at all
+        except Exception:
+            pass
         if pk in await self.admin_pubkeys():
             return "admin"
         if pk in self.cfg.allowed_pubkeys:
