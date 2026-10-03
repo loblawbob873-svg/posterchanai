@@ -19,7 +19,9 @@
  */
 (function(){
   'use strict';
-  const FRAMES = 8, STEP_MS = 340, KEY = 'desktopBuddy';
+  /* 700ms a frame (~1.4 moves a second), and a little quicker after a click: at 340ms she read as frantic
+   * ("posterchan is moving too fast"). tests/client/test_desktop_buddy_full_app.py measures the pace. */
+  const FRAMES = 8, STEP_MS = 700, HAPPY_MS = 450, KEY = 'desktopBuddy';
   const SRC = i => '/static/mascot/dance/dance-' + i + '.webp';
   const LINES = ['hi!', '♪ ♫', 'dance with me!', 'PosterChan!', 'hehe', 'nostr!', '✨'];
   let el = null, desk = null, opts = {}, timer = 0, frame = 1, loaded = false, drag = null, pressT = 0;
@@ -47,7 +49,7 @@
     timer = 0;
     if(!el || !el.isConnected) return;
     if(!idle() && !reduced() && !drag) show(frame % FRAMES + 1);
-    timer = setTimeout(tick, el.classList.contains('happy') ? STEP_MS / 2 : STEP_MS);
+    timer = setTimeout(tick, el.classList.contains('happy') ? HAPPY_MS : STEP_MS);
   }
   function start(){ if(!timer && !reduced()) timer = setTimeout(tick, STEP_MS); }
   function stop(){ if(timer){ clearTimeout(timer); timer = 0; } }

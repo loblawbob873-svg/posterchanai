@@ -50,8 +50,10 @@ def test_the_desktop_posterchan_dances_moves_hides_and_comes_back():
         await b.until("(()=>{const i=document.querySelector('#os-desk .os-buddy img');return !!i&&i.complete&&i.naturalWidth>0})()")
         # Dances: the frame changes on its own.
         f0 = await b.js("PCBuddy._frame()")
-        await asyncio.sleep(1.2)
+        await asyncio.sleep(1.6)
         res["animates"] = (await b.js("PCBuddy._frame()")) != f0
+        # Her pace ("posterchan is moving too fast"): count frame changes over 4 seconds, idle.
+        res["pace"] = await b.js("new Promise(ok=>{let n=0,last=PCBuddy._frame();const t=setInterval(()=>{const f=PCBuddy._frame();if(f!==last){n++;last=f}},40);setTimeout(()=>{clearInterval(t);ok(n)},4000)})")
         # Where she is: on the desk, below windows, off the icons and the taskbar.
         res["place"] = await b.js(f"""(()=>{{const R={RECT};const bd=document.querySelector('.os-buddy');const me=R(bd);
             const over=(a,c)=>a&&c&&a.l<c.r-4&&a.r>c.l+4&&a.t<c.b-4&&a.b>c.t+4;
@@ -103,6 +105,7 @@ def test_the_desktop_posterchan_dances_moves_hides_and_comes_back():
 
     asyncio.run(desktop.with_browser("online", "", check, INIT))
     assert res["animates"], "she does not dance: the frame never changes"
+    assert 3 <= res["pace"] <= 7, ("4s should be ~5-6 moves -- fewer is frozen, more is frantic", res["pace"])
     p = res["place"]
     assert p["inDesk"] and 0 < p["z"] < 10, ("not on the desktop layer, below windows", p)
     assert not p["onIcon"] and not p["onBar"], ("she covers an icon or the taskbar", p)
