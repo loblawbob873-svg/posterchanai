@@ -59,6 +59,7 @@ async def _run(page, hash=""):
                 res["loaded"] = await b.js("document.getElementById('im').naturalWidth")
                 res["src"] = await b.js("document.getElementById('im').getAttribute('src')")
                 res["hide_label"] = await b.js("document.querySelector('#menu [data-a=hide]').textContent")
+                res["switch_label"] = await b.js("document.querySelector('#menu [data-a=switch]').textContent")
                 res["pace"] = await b.js("new Promise(ok=>{let n=0,last=__buddy.frame();const t=setInterval(()=>{const f=__buddy.frame();if(f!==last){n++;last=f}},40);setTimeout(()=>{clearInterval(t);ok(n)},4000)})")
                 # Click (no movement): she reacts with a line.
                 await _mouse(b, "mousePressed", 87, 160); await _mouse(b, "mouseReleased", 87, 160, buttons=0)
@@ -80,6 +81,8 @@ async def _run(page, hash=""):
                 res["menu"] = await b.js("document.getElementById('menu').classList.contains('on')")
                 await b.js("document.querySelector('#menu [data-a=hide]').click();true")
                 res["hide"] = await b.js("__log")
+                await b.js("__log.length=0;document.querySelector('#menu [data-a=switch]').click();true")
+                res["switch"] = await b.js("__log")
         finally:
             proc.kill()
     return res
@@ -98,6 +101,9 @@ def test_her_window_page_dances_reacts_drags_and_hides():
     assert "/mascot/dance/" in res["src"] and res["hide_label"] == "Hide PosterChan", res
     assert axo["loaded"] > 0 and "/mascot/axolotl/" in axo["src"], ("the axolotl did not load in her window", axo)
     assert axo["hide_label"] == "Hide Axolotl" and 3 <= axo["pace"] <= 6, axo
+    # "there is no switch to posterchan": her own window's menu offers the other dancer.
+    assert axo["switch_label"] == "Switch to PosterChan" and axo["switch"] == [["menu", "switch"]], axo
+    assert res["switch_label"] == "Switch to Axolotl", res
     assert res["loaded"] > 0, "her frame did not load from file:// (the page's CSP or the path)"
     assert 3 <= res["pace"] <= 6, ("not the chosen pace (900ms a frame)", res["pace"])
     assert res["said"], "a click did nothing"

@@ -54,6 +54,10 @@ const host = createBuddyHost({ BrowserWindow: FakeWin, wm: () => wmApi, scopeOf:
   out.dragCalls = calls.splice(0);
   host.drop(made.webContents);
   out.sent = owner.sent.splice(0);
+  out.switchStranger = host.menu(stranger, 'switch');
+  out.switched = host.menu(made.webContents, 'switch');
+  out.sentSwitch = owner.sent.splice(0);
+  out.openAfterSwitch = host._state().open;
   out.hideStranger = host.menu(stranger, 'hide');
   out.hide = host.menu(made.webContents, 'hide');
   out.sent2 = owner.sent.splice(0);
@@ -103,6 +107,8 @@ def test_only_her_own_window_can_move_or_hide_her_and_the_spot_goes_back_to_be_s
     assert r["drag"] is True and r["dragCalls"] == [["move", 42, 6860, 1790]], r["dragCalls"]
     assert r["sent"] == [["pc:buddy:event", {"type": "moved", "vx": 1510, "vy": 895}]], r["sent"]
     assert r["hide"] is True and r["sent2"] == [["pc:buddy:event", {"type": "hide"}]], r
+    assert r["switchStranger"] is False and r["switched"] is True and r["openAfterSwitch"] is True, r
+    assert r["sentSwitch"] == [["pc:buddy:event", {"type": "switch"}]], r
     assert ["destroy"] in r["afterHide"], r["afterHide"]
     assert ["destroy"] in r["ownerGone"], "she outlived the desktop that owns her: %r" % r["ownerGone"]
 

@@ -174,11 +174,20 @@ def test_on_posterchanos_her_own_window_draws_her_and_the_desktop_keeps_her_stat
         await b.js("PCOSWin.enabled=()=>true;PCBuddy.refresh();true")
         await b.until("__native.shows.length>0")
         res["drawn_in_page"] = await b.js("!!document.querySelector('.os-buddy')")
+        # The page changing size (the surface going full screen after boot) re-places her window.
+        before = await b.js("__native.shows.length")
+        await b.call("Emulation.setDeviceMetricsOverride", {"width": 1700, "height": 950, "deviceScaleFactor": 1, "mobile": False})
+        await b.until(f"__native.shows.length>{before}")
+        res["reshown"] = await b.js("__native.shows.slice(-1)[0]")
         res["show"] = await b.js("__native.shows.slice(-1)[0]")
         res["desk"] = await b.js("(()=>{const r=document.querySelector('#os-desk').getBoundingClientRect();return {l:r.left,t:r.top,w:r.width,h:r.height}})()")
         # Her window was dragged to the desk's top-left area: the desktop saves where she landed.
         await b.js("__native.cb({type:'moved', vx:" + "document.querySelector('#os-desk').getBoundingClientRect().left+20" + ", vy:document.querySelector('#os-desk').getBoundingClientRect().top+10});true")
         res["saved"] = await b.js("__buddySaves.slice(-1)[0]||null")
+        # Her own window's "Switch to Axolotl": the desktop switches and saves it.
+        await b.js("__native.cb({type:'switch'});true")
+        await b.until("PCBuddy.who()==='axolotl'")
+        res["switched"] = await b.js("({who:PCBuddy.who(), saved:(__buddySaves.slice(-1)[0]||{}).who, shownAs:(__native.shows.slice(-1)[0]||{}).who})")
         # Her own "Hide PosterChan".
         await b.js("__native.cb({type:'hide'});true")
         await asyncio.sleep(.2)
@@ -191,11 +200,13 @@ def test_on_posterchanos_her_own_window_draws_her_and_the_desktop_keeps_her_stat
 
     asyncio.run(desktop.with_browser("online", "", check, NATIVE_INIT))
     assert res["drawn_in_page"] is False, "drawn on the desktop surface, which every app window covers"
+    assert res["reshown"] and res["reshown"]["bw"] > 100, ("a resized desktop did not re-place her window", res.get("reshown"))
     s, d = res["show"], res["desk"]
     assert s["bw"] > 100 and s["bh"] > s["bw"], ("her window has no size", s)
     assert d["l"] <= s["vx"] <= d["l"] + d["w"] and s["vy"] <= d["t"] + d["h"], ("her window is off the desk", s, d)
     assert res["saved"] and res["saved"]["on"] is True and res["saved"]["x"] < 0.1 and res["saved"]["y"] < 0.1, \
         ("a drag of her window was not saved", res["saved"])
+    assert res["switched"] == {"who": "axolotl", "saved": "axolotl", "shownAs": "axolotl"}, ("her window's Switch did not switch", res["switched"])
     # Her own Hide already closed her window in the host; the desktop only records it.
     assert res["hidden"] == {"on": False, "saved": False, "hides": 0}, ("her Hide did not stick", res["hidden"])
     assert res["desk_hide"] == {"on": False, "hides": 1}, ("hiding from the desktop left her window up", res["desk_hide"])

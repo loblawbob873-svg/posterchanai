@@ -17,7 +17,7 @@
   #say{position:absolute;left:50%;top:6px;transform:translateX(-50%);white-space:nowrap;padding:5px 10px;border-radius:12px;
        background:#12121c;color:#fff;font:600 13px system-ui,sans-serif;border:1px solid #ff8a3d;opacity:0;transition:opacity .2s;pointer-events:none}
   #say.on{opacity:1}
-  #menu{position:absolute;left:8px;right:8px;top:50px;display:none;flex-direction:column;gap:4px;padding:6px;border-radius:10px;
+  #menu{position:absolute;left:4px;right:4px;top:50px;display:none;flex-direction:column;gap:4px;padding:6px;border-radius:10px;
         background:#12121cee;border:1px solid #2b2b3d;font:13px system-ui,sans-serif}
   #menu.on{display:flex}
   #menu button{all:unset;padding:7px 9px;border-radius:7px;color:#eee;cursor:pointer}
@@ -28,7 +28,7 @@
 <body>
 <div id="say"></div>
 <div id="me" role="img"><img id="im" alt=""></div>
-<div id="menu" role="menu"><button data-a="dance" role="menuitem">Dance!</button><button data-a="hide" role="menuitem">Hide</button></div>
+<div id="menu" role="menu"><button data-a="dance" role="menuitem">Dance!</button><button data-a="switch" role="menuitem">Switch</button><button data-a="hide" role="menuitem">Hide</button></div>
 <script>
 (function(){
   'use strict';
@@ -47,6 +47,9 @@
   show(1);
   me.setAttribute('aria-label', ME.name + ' dancing. Drag to move; right-click to hide.');
   menu.querySelector('[data-a=hide]').textContent = 'Hide ' + ME.name;
+  // The other dancer, as in the web desktop's menu. The desktop does the switch and saves it.
+  var OTHER = WHO === 'axolotl' ? 'posterchan' : 'axolotl';
+  menu.querySelector('[data-a=switch]').textContent = 'Switch to ' + CHARS[OTHER].name;
   function tick(){
     if(!drag && !reduced()) show(frame % FRAMES + 1);
     setTimeout(tick, Date.now() < happyUntil ? HAPPY_MS : STEP_MS);
@@ -64,7 +67,9 @@
   menu.addEventListener('click', function(ev){
     var b = ev.target.closest('button'); if(!b) return;
     menu.classList.remove('on');
-    if(b.dataset.a === 'hide') bridge.menu('hide'); else cheer();
+    if(b.dataset.a === 'hide') bridge.menu('hide');
+    else if(b.dataset.a === 'switch') bridge.menu('switch');
+    else cheer();
   });
   document.addEventListener('pointerdown', function(ev){ if(!menu.contains(ev.target)) menu.classList.remove('on'); }, true);
   me.addEventListener('pointerdown', function(ev){

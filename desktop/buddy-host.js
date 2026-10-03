@@ -126,6 +126,8 @@ function createBuddyHost(deps){
   function menu(sender, action){
     if(!fromHer(sender)) return false;
     if(String(action) === 'hide'){ tell({ type: 'hide' }); hide(); return true; }
+    // The desktop owns who dances: it saves the choice and shows her again as the other one.
+    if(String(action) === 'switch'){ tell({ type: 'switch' }); return true; }
     return false;
   }
   /* The owner is gone (its renderer reloaded or closed): she goes with it, and comes back when it

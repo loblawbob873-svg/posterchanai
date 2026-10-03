@@ -120,6 +120,7 @@
     window.pcBuddy.onEvent(ev => {
       if(!ev || !desk) return;
       if(ev.type === 'hide'){ nativeUp = false; hide(); return; }
+      if(ev.type === 'switch'){ choose(who() === 'axolotl' ? 'posterchan' : 'axolotl'); return; }
       if(ev.type !== 'moved') return;
       const z = zf(), dr = desk.getBoundingClientRect();
       const dw = desk.clientWidth - BOX_W, dh = desk.clientHeight - BOX_H;
@@ -233,6 +234,17 @@
   function refresh(){ if(desk) mount(desk, opts); }
 
   document.addEventListener('visibilitychange', () => { if(el && !document.hidden) start(); });
+  /* HER WINDOW IS SIZED FROM THIS PAGE, SO A PAGE THAT CHANGES SIZE MOVES HER. Measured on the laptop:
+   * the desktop surface starts at about 500x540 before it is made full screen, and she was sized and
+   * placed in that instant -- four times too big (668x568 instead of 174x284), and on the 4K desk off the
+   * edge of the monitor, where she could not be dragged to the edge because her box was the problem.
+   * Re-place on every resize (a monitor change, the surface going full screen, the UI scale). */
+  let resizeT = 0;
+  window.addEventListener('resize', () => {
+    if(!nativeUp) return;
+    clearTimeout(resizeT);
+    resizeT = setTimeout(() => { const p = pref(); if(p.on && nativeUp) nativeShow(p); }, 150);
+  });
   window.PCBuddy = { mount, unmount, hide, show: reveal, refresh, choose, isOn: () => pref().on, who,
                     name: () => CHARS[who()].name, choices: () => Object.keys(CHARS).map(k => ({ id: k, name: CHARS[k].name })),
                     _frame: () => frame };
