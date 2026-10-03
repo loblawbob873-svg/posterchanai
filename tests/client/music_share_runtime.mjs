@@ -457,4 +457,22 @@ await run('an old copy and a new copy of one playlist show as one (APK 2450 stil
            n: ins.length, acc: acc.length, songs: bt.length, withOther: ins2.length };
 });
 
+await run('stop receiving from one person hides what they shared and will share; undo brings it back', async () => {
+  const net = makeNet(); const A = person(net, 'A'), B = person(net, 'B'), C = person(net, 'C');
+  const sa = await A.addTrack(wav(400, 61), 'A song'), sc = await C.addTrack(wav(410, 62), 'C song');
+  await A.S.share({ name: 'From A', tracks: [_tr(A, sa)], to: [B.pk], source: 'plA' });
+  await C.S.share({ name: 'From C', tracks: [_tr(C, sc)], to: [B.pk], source: 'plC' });
+  const before = (await B.S.loadIn()).length;
+  B.S.stopFrom(A.pk);
+  const after = await B.S.loadIn();
+  await A.S.share({ name: 'Another from A', tracks: [_tr(A, sa)], to: [B.pk], source: 'plA2' });
+  const later = await B.S.loadIn();
+  const stopped = B.S.stoppedSenders();
+  B.S.stopFrom(A.pk, false);
+  const undone = await B.S.loadIn();
+  return { ok: before === 2 && after.length === 1 && after[0].from === C.pk && later.length === 1
+             && stopped.length === 1 && stopped[0] === A.pk.toLowerCase() && undone.length === 3,
+           before, after: after.length, later: later.length, stopped: stopped.length, undone: undone.length };
+});
+
 process.stdout.write(JSON.stringify(out));

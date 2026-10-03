@@ -398,7 +398,15 @@
 
   const outShares = () => _out ? [..._out.values()].filter(s => [...s.to.values()].some(r => !r.dead))
                                    .sort((a, b) => ((b.body && b.body.updated) || 0) - ((a.body && a.body.updated) || 0)) : [];
-  const inShares = () => _in ? [..._in.values()].sort((a, b) => b.at - a.at) : [];
+  /* STOP RECEIVING FROM SOMEBODY ("there is no way to stop receiving shared playlists"). A sender block is
+   * one more answer in the same synced decisions document -- key `from:<pubkey>`, newest-wins like every
+   * other answer, so stopping on one device and undoing on another resolve correctly. It hides what they
+   * already shared AND what they share later; their documents are theirs and are not touched. */
+  const SENDER = pk => 'from:' + String(pk || '').toLowerCase();
+  const isStopped = pk => rejected().has(SENDER(pk));
+  function stopFrom(pk, yes = true){ if(/^[0-9a-f]{64}$/i.test(String(pk || ''))) decide(SENDER(pk), !yes); }
+  const stoppedSenders = () => Object.entries(decisions()).filter(([k, v]) => k.startsWith('from:') && !v.yes).map(([k]) => k.slice(5));
+  const inShares = () => _in ? [..._in.values()].filter(s => !isStopped(s.from)).sort((a, b) => b.at - a.at) : [];
 
   /* The tracks of a share. A big one keeps its list in a sealed blob so the document stays under
    * NIP-44's ceiling; that blob is fetched on demand and validated item by item. */
@@ -897,13 +905,25 @@
             <div class="msh-offer-act">
               <button class="btn btn-neon small msh-yes" data-key="${E(s.key)}">Accept</button>
               <button class="btn btn-ghost small msh-no" data-key="${E(s.key)}">Reject</button>
+              <button class="btn btn-ghost small danger msh-stop" data-from="${E(s.from)}" title="Hide everything ${E(who(s.from))} shares with you, now and later">Stop receiving from ${E(who(s.from))}</button>
             </div></div>`).join('')
         : `<div class="empty">${have.length
               ? 'Nothing new. Accepted shares are in the playlist bar.'
-              : `Nothing has been shared with you yet${_inOk ? '' : ' — or the relays did not answer; try Refresh'}.`}</div>`);
+              : `Nothing has been shared with you yet${_inOk ? '' : ' — or the relays did not answer; try Refresh'}.`}</div>`)
+      + (stoppedSenders().length ? `<div class="msh-stopped muted small"><b>Stopped receiving from</b>`
+          + stoppedSenders().map(pk => ` <span class="msh-stopped-who">${E(who(pk))} <button class="btn btn-ghost small msh-unstop" data-from="${E(pk)}">Undo</button></span>`).join('')
+          + `</div>` : '');
     el.onclick = async ev => {
       const b = ev.target.closest && ev.target.closest('button'); if(!b || !el.contains(b)) return;
       if(b.id === 'msh-refresh'){ b.disabled = true; await loadIn(); if(el.isConnected) _paintIn(el, ctx); return; }
+      if(b.classList.contains('msh-stop') || b.classList.contains('msh-unstop')){
+        const pk = b.dataset.from, stop = b.classList.contains('msh-stop');
+        if(stop){ const ok = PC.uiConfirm ? await PC.uiConfirm(`Stop receiving shared playlists from ${who(pk)}? What they shared disappears from your list; songs you kept stay. You can undo this here.`, { ok:'Stop receiving', danger:true }) : true; if(!ok) return; }
+        stopFrom(pk, stop);
+        toast(stop ? `you will not receive shares from ${who(pk)}` : `receiving shares from ${who(pk)} again`);
+        if(el.isConnected) _paintIn(el, ctx);
+        return;
+      }
       const yes = b.classList.contains('msh-yes'), no = b.classList.contains('msh-no');
       if(!yes && !no) return;
       const sh = _in && _in.get(b.dataset.key); if(!sh) return;
@@ -945,6 +965,7 @@
           <button class="btn btn-ghost small" id="msh-refresh">${icon('refresh')}Refresh</button>
           <button class="btn btn-ghost small" id="msh-addall"${missing ? '' : ' disabled'}>${icon('plus')}${missing ? `Keep ${missing}` : 'Kept'}</button>
           <button class="btn btn-ghost small danger" id="msh-dismiss" title="Take this playlist off your list">${icon('trash')}Remove</button>
+          <button class="btn btn-ghost small danger" id="msh-stopfrom" title="Hide everything ${E(who(cur.from))} shares with you, now and later">Stop receiving from ${E(who(cur.from))}</button>
         </div>
         <span class="music-count muted small">${tracks.length} song${tracks.length === 1 ? '' : 's'} · from ${E(who(cur.from))}</span>
         <span class="msh-note muted small">These play from ${E(who(cur.from))}’s copy while it is shared. Keep a song and it stays yours even if the share is stopped.</span>
@@ -954,6 +975,15 @@
       if(b.id === 'msh-refresh'){ b.disabled = true; await loadIn(); if(el.isConnected) renderShared(key, el, ctx); return; }
       /* "no way for me to remove a dupe share": a share is the sharer's document, but whether it is on
        * MY list is my answer -- the same one Reject gives, for every copy of it. Songs already kept stay. */
+      if(b.id === 'msh-stopfrom'){
+        const ok = PC.uiConfirm ? await PC.uiConfirm(`Stop receiving shared playlists from ${who(cur.from)}? What they shared disappears from your list; songs you kept stay. Undo it under Shared with me.`, { ok:'Stop receiving', danger:true }) : true;
+        if(!ok) return;
+        stopFrom(cur.from, true);
+        toast(`you will not receive shares from ${who(cur.from)}`);
+        if(ctx.closed) try{ ctx.closed(key); }catch(_){}
+        else if(el.isConnected) renderIn(el, ctx);
+        return;
+      }
       if(b.id === 'msh-dismiss'){
         const name = (cur.body && cur.body.name) || 'this playlist';
         const ok = PC.uiConfirm ? await PC.uiConfirm(`Remove “${name}” from your playlists? Songs you kept stay in your library.`, { ok:'Remove', danger:true }) : true;
@@ -1079,6 +1109,7 @@
     isView, isShare, barHTML, renderView, renderShared,
     // acceptance
     decide, dismiss, acceptedShares, pendingShares, loadDecisions, decisions, syncPlaylists,
+    stopFrom, isStopped, stoppedSenders,
     // data
     loadIn, loadOut, inShares, outShares, tracksOf, share, addRecipients, revoke, addToLibrary, refIds,
     drainPending, pendingReleases: () => _pending(),
