@@ -280,7 +280,11 @@ def build_steps_messages(context: list, instruction: str, history=None, commands
         + ("When the user asks you to DO something in this window, do it with its controls: the steps, in "
            "order, that a person would take (fill the fields, then press the button). Use ONLY the numbered "
            "controls listed; never invent one. If a step needs something you cannot know, ask in \"answer\" "
-           "instead of guessing. " if ctl else "")
+           "instead of guessing. Anything you would TELL the user to click or type goes in \"steps\" -- never only in "
+           "\"answer\". Example: {\"answer\": \"Searching your notes for bugs.\", \"tasks\": [], \"steps\": "
+           "[{\"do\": \"fill\", \"ref\": 2, \"text\": \"bugs\", \"label\": \"Search bugs\"}, "
+           "{\"do\": \"press\", \"ref\": 2, \"text\": \"Enter\", \"label\": \"Run search\"}]}. Never fill in a "
+           "placeholder such as [your title]; if you do not know the text, ask. " if ctl else "")
         + f"At most {ACT_STEP_MAX if ctl else STEP_MAX} steps, only ones that genuinely help with the request; [] when none do. "
         "Fill \"tasks\" when the request is about tasks, action items, follow-ups or deadlines -- every real "
         "commitment, decision to act or deadline in the content, one per item, nothing invented; otherwise []. "
@@ -312,19 +316,67 @@ def _clean(v, n):
     return re.sub(r"\s+", " ", str(v or "")).strip()[:n]
 
 
+def _json_object(text: str):
+    """The model's JSON object, repaired where a small local model leaves it ALMOST valid.
+
+    "Do it for me is completely useless": measured with the node's own model, a reply proposing two
+    correct steps (fill the search box, press New note) ended without its final "}" -- json.loads
+    refused it, every step was thrown away and the panel showed the raw JSON as the answer. So: strip
+    code fences, cut from the first "{", close what is still open (outside strings), drop trailing
+    commas, and parse that. Anything still unparseable is None."""
+    import json
+    t = str(text or "")
+    t = re.sub(r"^\s*```(?:json)?\s*|\s*```\s*$", "", t.strip(), flags=re.I)
+    i = t.find("{")
+    if i < 0:
+        return None
+    t = t[i:]
+    try:
+        obj, _end = json.JSONDecoder().raw_decode(t)
+        return obj if isinstance(obj, dict) else None
+    except Exception:
+        pass
+    stack, in_str, esc = [], False, False
+    for ch in t:
+        if in_str:
+            if esc:
+                esc = False
+            elif ch == "\\":
+                esc = True
+            elif ch == '"':
+                in_str = False
+            continue
+        if ch == '"':
+            in_str = True
+        elif ch in "{[":
+            stack.append("}" if ch == "{" else "]")
+        elif ch in "}]" and stack:
+            stack.pop()
+    fixed = t + ('"' if in_str else "") + "".join(reversed(stack))
+    fixed = re.sub(r",\s*([}\]])", r"\1", fixed)
+    try:
+        obj = json.loads(fixed)
+        return obj if isinstance(obj, dict) else None
+    except Exception:
+        return None
+
+
+# What small models write instead of the step kind asked for -> the kind they meant.
+_KIND_ALIASES = {"type": "fill", "enter": "fill", "input": "fill", "write": "fill", "set": "fill",
+                 "select": "choose", "pick": "choose", "check": "toggle", "tick": "toggle",
+                 "uncheck": "toggle", "tap": "click", "open_link": "click", "follow": "click"}
+
+
 def parse_steps(text: str, commands: bool = False, want_tasks: bool = False, controls=None) -> dict:
     """The model's reply -> {answer, tasks, steps}, every field validated. A reply that is not JSON is
     still an answer (local models ignore formats), and its "- " lines become tasks when tasks were asked."""
-    import json
-    raw = None
-    m = re.search(r"\{.*\}", str(text or ""), re.S)
-    if m:
-        try:
-            raw = json.loads(m.group(0))
-        except Exception:
-            raw = None
+    raw = _json_object(text)
     if not isinstance(raw, dict):
         answer = str(text or "").strip()[:4000]
+        # A reply that LOOKS like the JSON we asked for but cannot be read is not an answer to show:
+        # a wall of braces reads as the feature being broken. Say so in words.
+        if answer.lstrip().startswith(("{", "```")):
+            answer = "The AI's reply could not be read — press the button again."
         tasks = []
         if want_tasks:
             for line in answer.splitlines():
@@ -350,6 +402,21 @@ def parse_steps(text: str, commands: bool = False, want_tasks: bool = False, con
         if not isinstance(st, dict):
             continue
         kind = _clean(st.get("do"), 20).lower()
+        kind = _KIND_ALIASES.get(kind, kind)
+        if refs and kind in ("click", "press"):
+            try:
+                _r = int(st.get("ref"))
+            except (TypeError, ValueError):
+                _r = None
+            _txt = str(st.get("text") or "").strip()
+            # "click" on a text box WITH text is typing into it; "press" naming the control itself is a
+            # click. The model means the obvious thing; read it that way. A press of a key that is not
+            # allowed (Delete, …) is still dropped below.
+            if kind == "click" and _r in refs and refs[_r][0] in ("textbox", "textarea", "search", "input") and _txt:
+                kind = "fill"
+            elif (kind == "press" and _r in refs
+                  and (not _txt or _txt.lower() == refs[_r][1].lower())):
+                kind = "click"      # "press New note" on the New note button; any other key stays refused
         if kind == "scroll" and refs:
             way = str(st.get("text") or "").strip().lower()
             if way in ("down", "up"):
@@ -369,6 +436,9 @@ def parse_steps(text: str, commands: bool = False, want_tasks: bool = False, con
             role, lab = refs[ref]
             txt = str(st.get("text") or "").strip()[:2000]
             if kind in ("fill", "choose") and not txt:
+                continue
+            # "[Your note title here]" is the model not knowing what to type, not something to type.
+            if kind == "fill" and re.fullmatch(r"\s*[\[<{(].*[\]>})]\s*|.*\byour\b.*\bhere\b.*", txt, re.I | re.S):
                 continue
             if kind == "press":
                 txt = next((k for k in PRESS_KEYS if k.lower() == txt.lower()), "")

@@ -337,3 +337,55 @@ def test_the_ai_can_scroll_and_press_keys_and_sees_each_controls_section():
     assert '[2] button "Save" (in "Profile")' in user and '[3] button "Save" (in "Relays")' in user
     got = [(s["do"], s["ref"], s["text"]) for s in data["steps"]]
     assert got == [("fill", 1, "alice"), ("press", 1, "Enter"), ("scroll", 0, "down")], got
+
+
+# "Do it for me is completely useless": the node's own model, asked to act on a Notes window, replied
+# with two right steps and NO final "}". The strict parse threw them away and the panel showed raw JSON.
+_REAL_REPLY = ('{"answer": "I\'ll help you navigate this Notes window. The most useful next step is to search '
+               'for existing bug notes or start a new one.\\n- Search \'Bugs\' in the All notes section", '
+               '"tasks": [{"text": "Search for \'Bugs\' in All notes", "due": "", "who": ""}], '
+               '"steps": [{"do": "click", "label": "Search your notes...", "text": "Bugs", "ref": 2, "on": false}, '
+               '{"do": "click", "label": "New note", "ref": 1, "on": true}]')
+_NOTES_CONTROLS = [{"ref": 1, "role": "button", "label": "New note"},
+                   {"ref": 2, "role": "textbox", "label": "Search your notes..."},
+                   {"ref": 3, "role": "button", "label": "Import"}]
+
+
+def test_a_reply_missing_its_last_brace_still_gives_its_steps():
+    from app.services.chat_assist_service import parse_steps
+    res = parse_steps(_REAL_REPLY, controls=_NOTES_CONTROLS)
+    assert [(s["do"], s["ref"], s["text"]) for s in res["steps"]] == [("fill", 2, "Bugs"), ("click", 1, "")], res
+    assert res["answer"].startswith("I'll help you") and "{" not in res["answer"], res["answer"]
+
+
+def test_near_miss_replies_are_read_the_way_the_model_meant_them():
+    from app.services.chat_assist_service import parse_steps
+    fenced = '```json\n{"answer":"ok","steps":[{"do":"type","ref":2,"text":"bugs"},{"do":"press","ref":1,"text":"New note"},]}\n```'
+    res = parse_steps(fenced, controls=_NOTES_CONTROLS)
+    assert [(s["do"], s["ref"]) for s in res["steps"]] == [("fill", 2), ("click", 1)], res
+    # A real key press stays a key press.
+    res = parse_steps('{"answer":"","steps":[{"do":"press","ref":2,"text":"Enter"}]}', controls=_NOTES_CONTROLS)
+    assert res["steps"][0]["do"] == "press" and res["steps"][0]["text"] == "Enter", res
+    # A made-up control is still refused.
+    assert parse_steps('{"answer":"x","steps":[{"do":"click","ref":99}]}', controls=_NOTES_CONTROLS)["steps"] == []
+
+
+def test_an_unreadable_json_reply_is_never_shown_as_the_answer():
+    from app.services.chat_assist_service import parse_steps
+    res = parse_steps('{"answer": "half", "steps": [{"do": "click", "ref": ', controls=_NOTES_CONTROLS)
+    assert "{" not in res["answer"] and res["steps"] in ([], res["steps"]), res
+
+
+def test_a_placeholder_is_never_typed_into_a_field():
+    """Measured from the node's model: 'fill' with "[Your note title here]" -- typing that helps nobody."""
+    from app.services.chat_assist_service import parse_steps
+    res = parse_steps('{"answer":"ok","steps":[{"do":"click","ref":1},{"do":"fill","ref":2,"text":"[Your note title here]"},'
+                      '{"do":"fill","ref":2,"text":"<search term>"},{"do":"fill","ref":2,"text":"groceries"}]}',
+                      controls=_NOTES_CONTROLS)
+    assert [(s["do"], s["text"]) for s in res["steps"]] == [("click", ""), ("fill", "groceries")], res
+
+
+def test_the_prompt_tells_the_model_to_put_actions_in_steps():
+    from app.services.chat_assist_service import build_steps_messages, window_context
+    system = build_steps_messages(window_context([{"title": "Notes", "text": "x"}]), "do it", controls=_NOTES_CONTROLS)[0]["content"]
+    assert "goes in \"steps\"" in system and "placeholder" in system
