@@ -367,16 +367,16 @@ async def relay_blocked(db: Session = Depends(get_db), admin: User = Depends(get
 
 
 @router.post("/relay/unblock")
-def relay_unblock(data: RelayUnblockReq, db: Session = Depends(get_db), admin: User = Depends(get_admin_user)):
+async def relay_unblock(data: RelayUnblockReq, db: Session = Depends(get_db), admin: User = Depends(get_admin_user)):
     """Take one account off the relay's blocklist and apply it live -- the list's Unblock button."""
     from app.services import relay_blocklist
     from app.services.nostr import nostr_service
     target = nostr_service.to_pubkey_hex((data.target or "").strip())
     if not target:
         raise HTTPException(status_code=400, detail="not an npub or hex pubkey")
-    r = relay_blocklist.set_blocked(db, target, False)
+    r = await relay_blocklist.set_blocked(db, target, False)
     if not r.get("ok"):
-        raise HTTPException(status_code=400, detail=r.get("error") or "could not unblock")
+        raise HTTPException(status_code=r.get("status", 400), detail=r.get("error") or "could not unblock")
     return r
 
 
@@ -719,6 +719,11 @@ def _vmhost_durable_keys():
 
 
 _VMHOST_DURABLE = _vmhost_durable_keys()
+# The relay's block filters: the relay re-reads them from its own event store on reload-blocks, so a
+# background write still in flight when the reload runs re-reads the OLD list and the block silently
+# never applies (see relay_blocklist.set_blocked). Written durably, before the reload.
+_BLOCK_DURABLE = frozenset({"nostr_relay_blocked_pubkeys", "nostr_relay_blocked_words",
+                            "nostr_relay_blocked_langs", "nostr_relay_blocked_relays"})
 
 
 @router.put("/settings")
@@ -746,10 +751,11 @@ def update_settings(
             # (number/bool) settings an empty string would break SettingsResponse parsing on the next
             # GET, and "" there just means "leave as-is" from a partial UI update, so skip it.
             if settings_store.get(key, "") != value and (value != "" or key in text_keys):
-                if key in _VMHOST_DURABLE and key not in _vmhost_prev:
+                if (key in _VMHOST_DURABLE or key in _BLOCK_DURABLE) and key not in _vmhost_prev:
                     _vmhost_prev[key] = settings_store.get(key, None)
                 settings_store.put(key, value, write_relay=not (key.startswith("monero_wallet_")
-                                                                or key in _VMHOST_DURABLE))
+                                                                or key in _VMHOST_DURABLE
+                                                                or key in _BLOCK_DURABLE))
                 changed_keys.add(key)
             if key in cache_keys:
                 cache_settings_changed = True
@@ -773,6 +779,14 @@ def update_settings(
                 for _k, _prev in _vmhost_prev.items():
                     settings_store.restore_cached(_k, _prev)
                 raise HTTPException(status_code=503, detail="Could not durably save VM hosting access settings")
+        _block_changes = {k: settings_store.get(k, "") for k in changed_keys if k in _BLOCK_DURABLE}
+        if _block_changes:
+            import asyncio as _asyncio
+            if _asyncio.run(settings_store.write_through(db, _block_changes)) != len(_block_changes):
+                for _k in _block_changes:
+                    if _k in _vmhost_prev:
+                        settings_store.restore_cached(_k, _vmhost_prev[_k])
+                raise HTTPException(status_code=503, detail="Could not save the relay block lists -- nothing changed, try again")
         logger.info(f"[Admin] Saved {len(changed_keys)} changed setting(s)")
 
         # Relay TASK-TOPOLOGY keys force a full subprocess restart (see the restart block below).

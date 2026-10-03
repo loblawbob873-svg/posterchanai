@@ -1411,6 +1411,15 @@ class RelayServer:
         if not verify_event(ev):
             self._refuse(conn, eid, ev, "invalid: bad id or signature")
             return
+        # A BLOCKED AUTHOR IS REFUSED FOR EVERY KIND, before any per-kind branch. The block used to be
+        # enforced only by `is_member` at the WoT gate, and the branches that accept from ANY author by
+        # design (git issues/patches/PRs/comments on a repo announced here, zap receipts, VM requests,
+        # calls, webxdc) never reach that gate -- so a blocked account opened a git issue against this
+        # node's own repository six minutes after it was blocked (2026-10-02). Gift wraps are signed by a
+        # throwaway key, so a blocked person's NIP-17 DM cannot be recognised here; the client hides those.
+        if self.gate.is_blocked(ev.get("pubkey", "")):
+            self._refuse(conn, eid, ev, "blocked: author blocked")
+            return
         kind = int(ev.get("kind", 1))
         # NIP-42 authentication events are protocol messages, never publishable events. In
         # particular they MUST NOT reach subscriptions (where they disclose a live challenge).

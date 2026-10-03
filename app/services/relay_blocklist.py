@@ -31,9 +31,18 @@ def blocked_hex() -> list:
     return out
 
 
-def set_blocked(db, target_hex: str, blocked: bool) -> dict:
+async def set_blocked(db, target_hex: str, blocked: bool) -> dict:
     """Add or remove one key, store the list as npubs and re-apply it on the running relay.
-    {"ok", "blocked", "count"} or {"ok": False, "error"}."""
+    {"ok", "blocked", "count"} or {"ok": False, "error", "status"}.
+
+    THE LIST IS WRITTEN TO THE RELAY BEFORE THE RELAY IS TOLD TO RELOAD IT, AND A WRITE THAT DID NOT
+    LAND IS AN ERROR. This used to be `settings_store.put` (a background writer that retries) followed at
+    once by `trigger_block_reload()`. The relay process reads the list from its own event store, so the
+    reload raced the write: on 2026-10-02 the reload ran at 18:00:45, re-read the OLD 489-key list, and
+    the write (which had timed out twice) landed at 18:01:04 with nothing to reload it. The admin was
+    told "blocked", the npub was in Admin -> Relay, and the relay kept accepting that author's posts,
+    DMs, games and a git issue for as long as it ran.
+    """
     target = (target_hex or "").lower()
     if blocked:
         # Never the node's own operator/bot keys: that rejects the operator's signup-follow events and
@@ -52,7 +61,20 @@ def set_blocked(db, target_hex: str, blocked: bool) -> dict:
             out.append(nostr_service.npub_of(h))
         except Exception:
             out.append(h)
-    settings_store.put(KEY, "\n".join(out))
+    value = "\n".join(out)
+    previous = settings_store.get(KEY, None)
+    settings_store.put(KEY, value, write_relay=False)
+    try:
+        wrote = await settings_store.write_through(db, {KEY: value})
+    except Exception as e:
+        logger.warning("[relay-blocklist] durable write failed: %s", e)
+        wrote = 0
+    if not wrote:
+        # The cache must not claim a list the relay never stored, or the UI shows the block and the
+        # next restart (which hydrates from the relay) quietly drops it.
+        settings_store.restore_cached(KEY, previous)
+        return {"ok": False, "status": 503,
+                "error": "the relay did not save the block list -- nothing changed, try again"}
     try:
         from app.services.nostr_relay.thread import trigger_block_reload
         trigger_block_reload()

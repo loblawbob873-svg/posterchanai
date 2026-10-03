@@ -3888,9 +3888,9 @@ async def block_pubkey(data: BlockReq, db: Session = Depends(get_db)):
     if not _verify_admin_auth(db, data.auth, target, "unblock" if data.remove else "block"):
         return JSONResponse({"ok": False, "error": "admin signature required (or stale request)"}, status_code=403)
     from app.services import relay_blocklist
-    r = relay_blocklist.set_blocked(db, target, not data.remove)
+    r = await relay_blocklist.set_blocked(db, target, not data.remove)
     if not r.get("ok"):
-        return JSONResponse(r, status_code=400)
+        return JSONResponse({k: v for k, v in r.items() if k != "status"}, status_code=r.get("status", 400))
     return JSONResponse(r)
 
 

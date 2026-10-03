@@ -34,6 +34,7 @@ class Store:
 class Gate:
     def is_member(self, _pubkey): return True
     def is_operator(self, _pubkey): return False
+    def is_blocked(self, _pubkey): return False
     def is_puppet_event(self, _event): return False
 
 

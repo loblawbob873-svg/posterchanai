@@ -30,6 +30,11 @@ def store(monkeypatch):
     vals = {relay_blocklist.KEY: "\n".join([nostr_service.npub_of(OTHER), nostr_service.npub_of(NSFW)])}
     monkeypatch.setattr(settings_store, "get", lambda k, d=None: vals.get(k, d))
     monkeypatch.setattr(settings_store, "put", lambda k, v, **kw: vals.__setitem__(k, v))
+
+    async def write_through(db, changes):
+        vals.update(changes)
+        return len(changes)
+    monkeypatch.setattr(settings_store, "write_through", write_through)
     reloads = []
     import app.services.nostr_relay.thread as thread
     monkeypatch.setattr(thread, "trigger_block_reload", lambda: reloads.append(1) or {})
@@ -41,14 +46,14 @@ def store(monkeypatch):
 def test_unblocking_takes_exactly_that_key_off_and_applies_it_live(store):
     vals, reloads = store
     assert relay_blocklist.blocked_hex() == [OTHER, NSFW]
-    assert relay_blocklist.set_blocked(None, NSFW, False) == {"ok": True, "blocked": False, "count": 1}
+    assert asyncio.run(relay_blocklist.set_blocked(None, NSFW, False)) == {"ok": True, "blocked": False, "count": 1}
     assert relay_blocklist.blocked_hex() == [OTHER]
     assert vals[relay_blocklist.KEY] == nostr_service.npub_of(OTHER)       # stored as npubs, readable
     assert reloads, "the running relay was never told"
 
 
 def test_the_nodes_own_key_is_never_blocked(store):
-    assert relay_blocklist.set_blocked(None, ADMIN_PK, True)["ok"] is False
+    assert asyncio.run(relay_blocklist.set_blocked(None, ADMIN_PK, True))["ok"] is False
     assert ADMIN_PK not in relay_blocklist.blocked_hex()
 
 
@@ -97,7 +102,7 @@ def test_the_admin_list_shows_names_and_keeps_an_account_with_no_profile(store, 
     out = asyncio.run(admin.relay_blocked(db=None, admin=None))
     assert [(a["pubkey"], a["name"]) for a in out["accounts"]] == [(OTHER, ""), (NSFW, "NSFW")]
     assert out["accounts"][1]["npub"].startswith("npub1yj2a20djf")
-    admin.relay_unblock(admin.RelayUnblockReq(target=nostr_service.npub_of(NSFW)), db=None, admin=None)
+    asyncio.run(admin.relay_unblock(admin.RelayUnblockReq(target=nostr_service.npub_of(NSFW)), db=None, admin=None))
     assert relay_blocklist.blocked_hex() == [OTHER]
 
 
