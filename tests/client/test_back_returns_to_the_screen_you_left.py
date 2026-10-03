@@ -194,7 +194,8 @@ class OnTheDesktopBackClosesTheWindow(unittest.TestCase):
 
     def test_the_desktop_can_close_a_document_window(self):
         self.assertIn("function closeDoc(key){", self.os)
-        self.assertRegex(self.os, r"isOn: \(\) => on, openDoc, focusDoc, closeDoc",
+        # The export object, wherever its members sit: a new member in front of closeDoc is no bug.
+        self.assertRegex(self.os, r"isOn: \(\) => on,[^}]*\bcloseDoc\b",
                          "closeDoc is defined but not on window.PCOS — the same shape as the "
                          "`PC._fmtBytes is not a function` trap")
 
