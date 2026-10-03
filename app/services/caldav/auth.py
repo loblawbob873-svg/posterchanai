@@ -70,6 +70,9 @@ class Auth(BaseAuth):
             if not verify_password(password, row.value):
                 logger.info("[caldav] bad password for %s", login)
                 return ""
+            from app.services import relay_blocklist
+            if relay_blocklist.is_user_blocked(user):
+                return ""        # blocked on the relay: no calendar or address book either
             return user.username
         except Exception as e:
             logger.warning("[caldav] login error for %s: %s", login, e)

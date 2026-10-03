@@ -71,10 +71,19 @@ def verify_self_auth(auth_b64: str, pubkey_hex: str, purpose: str | None = None)
         ev = json.loads(base64.b64decode(auth_b64))
     except Exception:
         return False
-    return (isinstance(ev, dict) and ev.get("kind") == 27235
-            and (purpose is None or ev.get("content") == purpose)
-            and verify_event(ev) and ev.get("pubkey") == pubkey_hex
-            and abs(int(ev.get("created_at", 0)) - int(time.time())) <= 300)
+    ok = (isinstance(ev, dict) and ev.get("kind") == 27235
+          and (purpose is None or ev.get("content") == purpose)
+          and verify_event(ev) and ev.get("pubkey") == pubkey_hex
+          and abs(int(ev.get("created_at", 0)) - int(time.time())) <= 300)
+    if not ok:
+        return False
+    # A key on the relay's block list proves nothing here: every signed request this app serves (files,
+    # sync, drafts, media tools, push, NIP-05 claims, login) asks this function.
+    try:
+        from app.services import relay_blocklist
+        return not relay_blocklist.is_blocked(pubkey_hex)
+    except Exception:
+        return True
 
 
 def comment_tags(parent: dict) -> list:

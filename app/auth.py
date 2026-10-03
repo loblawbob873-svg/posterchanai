@@ -72,6 +72,16 @@ def decode_token(token: str) -> Optional[dict]:
         return None
 
 
+def _refuse_blocked(user):
+    """A web account whose linked Nostr key is on the relay's block list can do nothing here -- an
+    existing login and an API key included ("we need to make sure that blocked users can't do anything
+    on the platform despite having a nip05 in their profile")."""
+    from app.services import relay_blocklist
+    if relay_blocklist.is_user_blocked(user):
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="This account is blocked on this server")
+    return user
+
+
 def get_current_user(
     request: Request,
     credentials: HTTPAuthorizationCredentials = Depends(security),
@@ -147,7 +157,7 @@ def get_current_user(
                         pass  # Ignore rollback errors
                     logger.warning(f"Failed to update API key last_used_at: {e}")
                 
-                return user
+                return _refuse_blocked(user)
         
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
@@ -184,7 +194,7 @@ def get_current_user(
             detail="User not found"
         )
 
-    return user
+    return _refuse_blocked(user)
 
 
 def get_current_user_optional(
@@ -307,4 +317,6 @@ async def get_user_from_websocket(websocket: WebSocket, db: Session) -> Optional
     except (ValueError, TypeError):
         return None
 
-    return db.query(User).filter(User.id == user_id_int).first()
+    user = db.query(User).filter(User.id == user_id_int).first()
+    from app.services import relay_blocklist
+    return None if relay_blocklist.is_user_blocked(user) else user

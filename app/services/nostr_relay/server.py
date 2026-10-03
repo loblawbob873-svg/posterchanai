@@ -1265,6 +1265,10 @@ class RelayServer:
         # client's writes were being refused for want of auth, the relay logged the refusal and
         # nothing else, so there was no way to tell "the client never tried" from "the client tried
         # and we rejected it" — two completely different bugs that look identical from here.
+        if self.gate.is_blocked(ev.get("pubkey", "")):
+            # Signed in as a blocked account: no authenticated socket, no member reads.
+            self._send(conn, ["OK", eid, False, "blocked: author blocked"])
+            return
         logger.info("[nostr-relay] AUTH ok for %s… (this socket may now write its NIP-78 docs)",
                     str(ev["pubkey"])[:12])
         self._auth_pubkeys.setdefault(conn, set()).add(ev["pubkey"])

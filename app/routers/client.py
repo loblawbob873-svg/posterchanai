@@ -3714,6 +3714,9 @@ async def follow_and_admit(db: Session, new_pk: str) -> tuple[bool, str]:
     AND nostr-login (so login-with-existing-key users are admitted too). Returns (ok, message)."""
     if not new_pk:
         return False, "invalid pubkey"
+    from app.services import relay_blocklist
+    if relay_blocklist.is_blocked(new_pk):
+        return False, "this account is blocked on this server"
     # Admit to the WoT now (this is what actually unblocks their posts + DMs-to-them on the relay),
     # regardless of how fast the kind-3 follow propagates upstream.
     try:

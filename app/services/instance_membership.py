@@ -220,6 +220,10 @@ class MembershipChecker:
         aliases = sorted(name for name, owner in names.items() if owner.lower() == pk)
         base = {'pubkey': pk, 'qualified': False, 'address': '', 'domain': domain,
                 'profile_address': '', 'reason': 'unregistered'}
+        # Blocked on the relay = not a member, whatever the registry or their profile says.
+        from app.services import relay_blocklist
+        if relay_blocklist.is_blocked(pk):
+            return {**base, 'reason': 'blocked'}
         if not aliases:
             return base
         if not domain:

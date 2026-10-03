@@ -31,6 +31,38 @@ def blocked_hex() -> list:
     return out
 
 
+_cache: tuple = ("\0", frozenset())
+
+
+def blocked_set() -> frozenset:
+    """The list as a set of lowercase hex, re-parsed only when the stored text changes -- this is asked
+    on every authenticated request, and decoding ~500 npubs each time would cost more than the request."""
+    global _cache
+    raw = settings_store.get(KEY, "") or ""
+    if raw != _cache[0]:
+        _cache = (raw, frozenset(blocked_hex()))
+    return _cache[1]
+
+
+def is_blocked(pubkey) -> bool:
+    """Is this account on the relay's block list? Takes hex or an npub. The ONE question every gate on
+    the platform asks ("we need to make sure that blocked users can't do anything on the platform
+    despite having a nip05 in their profile"). A list that cannot be read answers False -- what the gate
+    did before this check existed -- rather than locking every account out."""
+    if not pubkey:
+        return False
+    try:
+        pk = nostr_service.to_pubkey_hex(str(pubkey).strip()) or ""
+        return bool(pk) and pk.lower() in blocked_set()
+    except Exception:
+        return False
+
+
+def is_user_blocked(user) -> bool:
+    """A web account is blocked when the Nostr key it is linked to is."""
+    return bool(user) and is_blocked(getattr(user, "nostr_npub", None) or "")
+
+
 async def set_blocked(db, target_hex: str, blocked: bool) -> dict:
     """Add or remove one key, store the list as npubs and re-apply it on the running relay.
     {"ok", "blocked", "count"} or {"ok": False, "error", "status"}.

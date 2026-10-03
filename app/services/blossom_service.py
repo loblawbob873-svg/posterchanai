@@ -395,7 +395,10 @@ def is_pubkey_allowed(db: Session, pubkey_hex: str) -> bool:
     """A pubkey may upload/delete iff: it's one of the node's own operator keys (linked users +
     bots, so the bots can post effect media), OR it's in the `blossom_whitelist` setting (admin
     allowlist — no AI account needed), OR it's the Nostr key linked by a web user who is an admin
-    or has the `can_blossom` privilege."""
+    or has the `can_blossom` privilege. A key on the relay's block list may do none of it."""
+    from app.services import relay_blocklist
+    if relay_blocklist.is_blocked(pubkey_hex):
+        return False
     if pubkey_hex in _operator_pubkeys(db) or pubkey_hex in _whitelist_pubkeys(db):
         return True
     # Shared-cluster peers (DVM) upload their media job-results (image/music/video) to the shared
@@ -432,6 +435,9 @@ async def is_pubkey_allowed_async(db: Session, pubkey_hex: str) -> bool:
     """
     if is_pubkey_allowed(db, pubkey_hex):
         return True
+    from app.services import relay_blocklist
+    if relay_blocklist.is_blocked(pubkey_hex):
+        return False
     from app.services import nip05_access
     return await nip05_access.is_member(pubkey_hex)
 
