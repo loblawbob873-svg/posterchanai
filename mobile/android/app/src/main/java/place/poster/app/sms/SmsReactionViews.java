@@ -2,9 +2,14 @@ package place.poster.app.sms;
 
 import android.app.AlertDialog;
 import android.content.Context;
+import android.graphics.drawable.GradientDrawable;
+import android.view.Gravity;
 import android.view.View;
+import android.view.ViewGroup;
 import android.widget.Button;
 import android.widget.LinearLayout;
+import android.widget.PopupWindow;
+import android.widget.TextView;
 import java.util.*;
 import place.poster.app.R;
 import place.poster.app.ui.PcTheme;
@@ -37,6 +42,94 @@ final class SmsReactionViews {
                     if (which < KINDS.length) action.send(KINDS[which], false);
                     else if (own != null) action.send(own.kind, true);
                 }).create();
+    }
+
+    /* THE PHONE-STYLE BAR ("text messages need that reaction thing that Android and iphone do when
+     * long-pressing on the message"). Long-press a message and the six reactions sit in a row right
+     * over it -- your current one highlighted, tap it again to take it back -- with ⋯ for the rest of
+     * the message menu. Same sends as the picker above (the guarded handler in ThreadActivity). */
+    static LinearLayout barView(Context context, SmsReactionThread history, SmsMsg target,
+                                PcTheme.Palette palette, Action action, Runnable more, Runnable done) {
+        if (history == null || !history.canReact(target)) return null;
+        final SmsReactions.Chip own = history.own(target);
+        final LinearLayout row = new LinearLayout(context);
+        row.setOrientation(LinearLayout.HORIZONTAL);
+        row.setGravity(Gravity.CENTER_VERTICAL);
+        int pad = Skin.dp(context, 6);
+        row.setPadding(pad, pad, pad, pad);
+        GradientDrawable bg = new GradientDrawable();
+        bg.setColor(Skin.opaque(palette.panel, palette.bg));
+        bg.setStroke(Math.max(1, Skin.dp(context, 1)), palette.line);
+        bg.setCornerRadius(Skin.dp(context, 999));
+        row.setBackground(bg);
+        row.setElevation(Skin.dp(context, 8));
+        // One choice consumes the bar even if two taps were already queued.
+        final boolean[] chosen = {false};
+        int size = Skin.dp(context, 44);
+        for (int i = 0; i < KINDS.length; i++) {
+            final String kind = KINDS[i];
+            SmsReactions.Parsed p = SmsReactions.parse(SmsReactions.format(kind, false, target.body));
+            TextView b = new TextView(context);
+            b.setText(p.emoji);
+            b.setTextSize(24);
+            b.setGravity(Gravity.CENTER);
+            b.setContentDescription(context.getString(LABELS[i]));
+            final boolean mine = own != null && kind.equals(own.kind);
+            if (mine) {
+                GradientDrawable on = new GradientDrawable();
+                on.setColor(Skin.alpha(palette.accent, 0.28));
+                on.setCornerRadius(Skin.dp(context, 999));
+                b.setBackground(on);
+                b.setSelected(true);
+            }
+            b.setOnClickListener(v -> {
+                if (chosen[0]) return;
+                chosen[0] = true;
+                if (done != null) done.run();
+                action.send(kind, mine);
+            });
+            row.addView(b, new LinearLayout.LayoutParams(size, size));
+        }
+        if (more != null) {
+            TextView dots = new TextView(context);
+            dots.setText("⋯");
+            dots.setTextSize(22);
+            dots.setTextColor(palette.text);
+            dots.setGravity(Gravity.CENTER);
+            dots.setContentDescription(context.getString(R.string.sms_more_actions));
+            dots.setOnClickListener(v -> {
+                if (chosen[0]) return;
+                chosen[0] = true;
+                if (done != null) done.run();
+                more.run();
+            });
+            row.addView(dots, new LinearLayout.LayoutParams(size, size));
+        }
+        return row;
+    }
+
+    /** Show the bar over `anchor` (under it when there is no room above). Null when not reactable. */
+    static PopupWindow bar(View anchor, SmsReactionThread history, SmsMsg target, PcTheme.Palette palette,
+                           Action action, Runnable more) {
+        final PopupWindow[] pw = {null};
+        LinearLayout row = barView(anchor.getContext(), history, target, palette, action, more,
+                () -> { if (pw[0] != null) pw[0].dismiss(); });
+        if (row == null) return null;
+        row.measure(View.MeasureSpec.UNSPECIFIED, View.MeasureSpec.UNSPECIFIED);
+        PopupWindow popup = new PopupWindow(row, ViewGroup.LayoutParams.WRAP_CONTENT,
+                ViewGroup.LayoutParams.WRAP_CONTENT, true);
+        popup.setOutsideTouchable(true);
+        popup.setElevation(Skin.dp(anchor.getContext(), 8));
+        pw[0] = popup;
+        int[] at = new int[2];
+        anchor.getLocationOnScreen(at);
+        int h = row.getMeasuredHeight(), w = row.getMeasuredWidth(), gap = Skin.dp(anchor.getContext(), 4);
+        int screen = anchor.getResources().getDisplayMetrics().widthPixels;
+        int x = Math.max(gap, Math.min(at[0] + (anchor.getWidth() - w) / 2, screen - w - gap));
+        int y = at[1] - h - gap;
+        if (y < Skin.dp(anchor.getContext(), 24)) y = at[1] + anchor.getHeight() + gap;
+        popup.showAtLocation(anchor, Gravity.TOP | Gravity.START, x, y);
+        return popup;
     }
 
     static void bind(LinearLayout host, SmsReactionThread history, SmsMsg target,

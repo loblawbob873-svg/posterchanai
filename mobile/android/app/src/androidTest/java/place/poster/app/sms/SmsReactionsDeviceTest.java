@@ -82,4 +82,37 @@ public class SmsReactionsDeviceTest {
             assertNull(SmsReactionViews.picker(c,history(original,row(3,original.body,1)),original,(k,r)->fail()));
         });
     }
+    /** "that reaction thing that Android and iphone do when long-pressing on the message": the bar. */
+    @Test public void longPressBarSixReactionsYoursHighlightedTapToTakeBackAndMore() {
+        InstrumentationRegistry.getInstrumentation().runOnMainSync(() -> {
+            Context c=context();SmsMsg original=row(1,"Received text",1);
+            List<String> sent=new ArrayList<>();int[] more={0},done={0};
+            LinearLayout bar=SmsReactionViews.barView(c,history(original),original,PcTheme.of("dark"),
+                    (kind,remove) -> sent.add(SmsReactions.format(kind,remove,original.body)),
+                    () -> more[0]++, () -> done[0]++);
+            assertNotNull(bar);
+            assertEquals(7,bar.getChildCount());
+            for(int i=0;i<6;i++) assertFalse(bar.getChildAt(i).isSelected());
+            bar.getChildAt(0).performClick();bar.getChildAt(0).performClick();
+            assertEquals(1,sent.size());assertEquals(1,done[0]);
+            SmsReactions.Parsed p=SmsReactions.parse(sent.get(0));
+            assertEquals("heart",p.kind);assertEquals("add",p.operation);
+            // Already liked: the like is highlighted and tapping it takes it back.
+            SmsMsg liked=row(2,"Liked “Received text”",2);
+            sent.clear();
+            LinearLayout again=SmsReactionViews.barView(c,history(original,liked),original,PcTheme.of("dark"),
+                    (kind,remove) -> sent.add(SmsReactions.format(kind,remove,original.body)), () -> more[0]++, null);
+            assertTrue(again.getChildAt(1).isSelected());
+            again.getChildAt(1).performClick();
+            assertEquals("remove",SmsReactions.parse(sent.get(0)).operation);
+            assertEquals("like",SmsReactions.parse(sent.get(0)).kind);
+            // ⋯ is the rest of the message menu.
+            LinearLayout third=SmsReactionViews.barView(c,history(original),original,PcTheme.of("dark"),
+                    (kind,remove) -> fail(), () -> more[0]++, null);
+            third.getChildAt(6).performClick();
+            assertEquals(1,more[0]);
+            // Nothing to react to (a reaction row itself): no bar, the menu opens instead.
+            assertNull(SmsReactionViews.barView(c,history(original,liked),liked,PcTheme.of("dark"),(k,r)->fail(),null,null));
+        });
+    }
 }

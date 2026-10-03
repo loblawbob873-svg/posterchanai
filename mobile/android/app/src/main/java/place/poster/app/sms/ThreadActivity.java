@@ -150,7 +150,7 @@ public class ThreadActivity extends PcActivity {
         list.setAdapter(adapter);
         list.setOnItemLongClickListener(new AdapterView.OnItemLongClickListener() {
             @Override public boolean onItemLongClick(AdapterView<?> p, View v, int i, long id) {
-                messageMenu(adapter.at(i));
+                longPress(v, adapter.at(i));
                 return true;
             }
         });
@@ -1163,12 +1163,29 @@ public class ThreadActivity extends PcActivity {
         }, "pc-sms-reaction").start();
     }
 
-    private void messageMenu(final SmsMsg m) {
+    /* Long-press: the reaction bar over the message, as phones do, with ⋯ for the rest of the menu.
+     * A message that cannot be reacted to (a failed send, a group, a reaction itself) goes straight
+     * to the menu as before. */
+    private void longPress(View row, final SmsMsg m) {
+        if (m == null) return;
+        try { row.performHapticFeedback(android.view.HapticFeedbackConstants.LONG_PRESS); } catch (Throwable ignored) { }
+        View bubble = row.findViewById(R.id.pc_b_wrap);
+        android.widget.PopupWindow shown = null;
+        try {
+            shown = SmsReactionViews.bar(bubble != null ? bubble : row, adapter.history, m, pal,
+                    (kind, remove) -> sendReaction(m, kind, remove), () -> messageMenu(m, false));
+        } catch (Throwable ignored) { }
+        if (shown == null) messageMenu(m);
+    }
+
+    private void messageMenu(final SmsMsg m) { messageMenu(m, true); }
+
+    private void messageMenu(final SmsMsg m, final boolean offerReact) {
         if (m == null) return;
         try {
             // OUTBOX includes both in-flight and delivery-unknown submissions. Replaying
             // either can send the same picture again even when the bubble still says Sending.
-            final boolean react = adapter.history != null && adapter.history.canReact(m);
+            final boolean react = offerReact && adapter.history != null && adapter.history.canReact(m);
             final boolean retry = retryableMms(m);
             final CharSequence[] actions = retry
                     ? new CharSequence[]{ getString(R.string.sms_retry_send),
