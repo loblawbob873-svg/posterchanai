@@ -811,7 +811,9 @@ control('cc-drawer-backdrop').click();
 if(feed.innerHTML.includes('drawer-open'))
   throw new Error('mobile channel drawer backdrop did not close it');
 data.set('pc.concord.seen.'+(rooms[0].communityId||rooms[0].naddr)+':general','1');
-messageData.set('pc.concord.test.'+rooms[0].naddr,JSON.stringify([{by:'Other User',pubkey:'b'.repeat(64),text:'hey @tester',at:2}]));
+/* A mention NEWER than anything read: the account's read mark (pcai:concord-read) already covers every
+   message the earlier renders put on screen, so a mention dated before those is read, not new. */
+messageData.set('pc.concord.test.'+rooms[0].naddr,JSON.stringify([{by:'Other User',pubkey:'b'.repeat(64),text:'hey @tester',at:Date.now()+3600e3}]));
 PCConcord.render();
 if(calls.mentions.length!==1 || !calls.mentions[0].title.includes('#general') ||
    !calls.mentions[0].opts.route.startsWith('concord:'+encodeURIComponent(rooms[0].communityId||rooms[0].naddr)+':general:'))

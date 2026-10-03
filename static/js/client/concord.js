@@ -1780,6 +1780,98 @@
     const l=mentionLedger(),key=mentionLedgerKey(room,channel);
     if(l[key]){ delete l[key]; saveMentionLedger(l); }
   }
+  /* READ FOLLOWS THE ACCOUNT ("old concord notifications appear as new notifications when you load
+   * concord on a different device"). The ledger and the per-channel cursor are localStorage, i.e. one
+   * browser profile -- and a device's FIRST read of a channel deliberately puts the last week's
+   * mentions in the ledger (the "tagged while nothing was running" case). So a mention read on the
+   * phone came back as new on the laptop, the desktop app and the APK, one by one.
+   *
+   * Where each channel was read up to now lives in ONE kind-30078 doc, `d=pcai:concord-read`,
+   * NIP-44-sealed to the user's own key: { "<room>\n<channel>": <ms> }. A mention at or before that
+   * mark is not new on any device. The replaceable-doc rules: nothing is written until a relay has
+   * ANSWERED a read (else a slow pool publishes {} over every mark), and each save re-reads and keeps
+   * the LATER mark per channel, so two devices reading different channels cannot erase each other.
+   * Every failure resolves to the old per-device behaviour -- a mention shown twice, never one lost. */
+  const READ_D='pcai:concord-read', READ_CAP=500;
+  const readDoc={owner:'',answered:false,marks:{},loading:null,saving:null,dirty:false};
+  function readMark(room,channel){ return Number(readDoc.marks[mentionLedgerKey(room,channel)])||0; }
+  function mergeMarks(into,from){
+    let changed=false;
+    for(const [k,v] of Object.entries(from||{})){
+      const n=Number(v);
+      if(typeof k!=='string'||!k.includes('\n')||!Number.isFinite(n)||n<=0)continue;
+      if(n>(Number(into[k])||0)){ into[k]=n; changed=true; }
+    }
+    return changed;
+  }
+  function trimMarks(m){
+    const rows=Object.entries(m).sort((a,b)=>b[1]-a[1]).slice(0,READ_CAP);
+    return Object.fromEntries(rows);
+  }
+  /* The mentions this account has already read elsewhere leave the ledger (and so the bell). */
+  function pruneReadMentions(){
+    const l=mentionLedger();let changed=false;
+    for(const [key,row] of Object.entries(l)){
+      const mark=Number(readDoc.marks[key])||0;
+      if(mark&&row&&(Number(row.at)||0)<=mark){ delete l[key]; changed=true; }
+    }
+    if(changed)saveMentionLedger(l);
+  }
+  /* {answered, marks} from the relays, or null when nobody could be asked. */
+  async function fetchReadDoc(p,owner){
+    if(!p.relayQuery||!p.nip44dec)return null;
+    let evs=null;
+    try{ evs=await p.relayQuery([{authors:[owner],kinds:[30078],'#d':[READ_D],limit:1}],8000); }catch(_){ evs=null; }
+    let cached=[];try{cached=window.Store&&window.Store.query?window.Store.query([{authors:[owner],kinds:[30078],'#d':[READ_D]}])||[]:[];}catch(_){}
+    const all=[...(Array.isArray(evs)?evs:[]),...cached].filter(e=>e&&e.pubkey===owner&&typeof e.content==='string');
+    // "Nothing came back" counts as an answer only when the relays SAID so; a timeout is not "no doc".
+    if(!all.length&&(!Array.isArray(evs)||evs.complete===false))return null;
+    const ev=all.sort((a,b)=>b.created_at-a.created_at)[0];
+    if(!ev)return {marks:{}};
+    try{
+      const doc=JSON.parse(await p.nip44dec(owner,ev.content)||'null');
+      return {marks:doc&&typeof doc.marks==='object'&&!Array.isArray(doc.marks)?doc.marks:{}};
+    }catch(_){ return null; }   // could not read it: never treat as empty, never overwrite it
+  }
+  function loadReadDoc(p){
+    const owner=p&&p.viewer&&p.viewer().pubkey;
+    if(!owner)return Promise.resolve(readDoc);
+    if(readDoc.owner!==owner){ Object.assign(readDoc,{owner,answered:false,marks:{},loading:null,saving:null,dirty:false}); }
+    if(readDoc.answered)return Promise.resolve(readDoc);
+    if(readDoc.loading)return readDoc.loading;
+    readDoc.loading=(async()=>{
+      const got=await fetchReadDoc(p,owner);
+      if(readDoc.owner!==owner)return readDoc;              // the account changed while we were reading
+      if(got){ mergeMarks(readDoc.marks,got.marks); readDoc.answered=true; pruneReadMentions(); if(readDoc.dirty)saveReadDoc(p); }
+      return readDoc;
+    })().finally(()=>{ readDoc.loading=null; });
+    return readDoc.loading;
+  }
+  function saveReadDoc(p){
+    const owner=readDoc.owner;
+    if(!owner||!readDoc.answered||!p.nip44enc||!p.signTemplate||!p.relayPublish){ return; }
+    if(readDoc.saving){ readDoc.dirty=true; return; }
+    readDoc.dirty=false;
+    readDoc.saving=(async()=>{
+      await new Promise(r=>setTimeout(r,1500));            // a channel read in bursts is one write
+      const fresh=await fetchReadDoc(p,owner);
+      if(!fresh||readDoc.owner!==owner){ readDoc.dirty=true; return; }   // could not re-read: write nothing
+      mergeMarks(readDoc.marks,fresh.marks);
+      readDoc.marks=trimMarks(readDoc.marks);
+      const content=await p.nip44enc(owner,JSON.stringify({v:1,marks:readDoc.marks}));
+      const ev=await p.signTemplate({kind:30078,created_at:Math.floor(Date.now()/1000),content,tags:[['d',READ_D]],pubkey:owner});
+      await p.relayPublish(ev);
+    })().catch(()=>{ readDoc.dirty=true; }).finally(()=>{ readDoc.saving=null; if(readDoc.dirty&&readDoc.answered)setTimeout(()=>saveReadDoc(p),5000); });
+  }
+  /* This channel is on screen up to `at`: read here, and so read everywhere. */
+  function noteChannelRead(p,room,channel,at){
+    const n=Number(at)||0;if(!room||!n)return;
+    loadReadDoc(p);
+    const key=mentionLedgerKey(room,channel);
+    if(n<=(Number(readDoc.marks[key])||0))return;
+    readDoc.marks[key]=n;
+    if(readDoc.answered)saveReadDoc(p); else readDoc.dirty=true;
+  }
   function mentionsUnread(){ return Object.values(mentionLedger()).reduce((n,r)=>n+((r&&r.ids)||[]).length,0); }
   function notifyMentions(p,room,messages,viewer,me,channel=state.channel||'general'){
     if(!room||!roomIdentity(room)||!messages.length||!viewer.pubkey)return;
@@ -1792,7 +1884,10 @@
     /* A device's FIRST read of a channel still raises no OS notification (opening history must not
      * alert) -- but a mention from the last week goes into the ledger, which is exactly the case of
      * being tagged while nothing was running. */
-    const first=!seen, floor=first?Date.now()-MENTION_LOOKBACK_MS:seen, looking=viewingChannel(room,channel);
+    // …unless this account read the channel past that point on another device (READ_D above). The doc
+    // may still be on its way: when it lands, pruneReadMentions takes back what it covers.
+    loadReadDoc(p);
+    const first=!seen, floor=Math.max(first?Date.now()-MENTION_LOOKBACK_MS:seen, readMark(room,channel)), looking=viewingChannel(room,channel);
     for(const m of messages){
       const at=Number(m.at)||0;
       if(at<=floor||!messageMentionsViewer(m,viewer,me))continue;
@@ -4360,7 +4455,10 @@
     let membersHidden=localStorage.getItem('pc.concord.members.hidden')==='1';
     const memberRows=memberPks.map(pk=>{const pr=p.profOf?p.profOf(pk):{},name=pk===viewer.pubkey?me:(pr.display_name||pr.name||pk.slice(0,12)+'…');let npub='';try{npub=window.NostrTools.nip19.npubEncode(pk);}catch(_){}/* the form people copy and paste -- the hex alone found nobody from an npub */const q=[name,pr.name,pr.display_name,pr.nip05,npub,pk].filter(Boolean).join(' ').toLowerCase();return `<button class="cc-member" data-cc-member="${p.enc(pk)}" data-q="${p.enc(q)}" aria-label="${p.enc(name)} — ${pk===ownerPk?'Owner':'Member'}"><img src="${p.enc(pr.picture||p.LOGO||'')}" alt=""><span><b>${p.enc(name)}</b><small>${pk===ownerPk?'Owner':'Member'}</small></span></button>`;}).join('');
     notifyMentions(p,current,messages,viewer,me,state.channel||'general');
-    if(current&&viewingChannel(current,state.channel||'general'))clearMentions(current,state.channel||'general');   // on screen = read
+    if(current&&viewingChannel(current,state.channel||'general')){
+      clearMentions(current,state.channel||'general');   // on screen = read
+      noteChannelRead(p,current,state.channel||'general',Math.max(0,...messages.map(m=>Number(m.at)||0)));
+    }
     const oldCommunityRail=feed.querySelector&&feed.querySelector('.cc-communities');
     /* A RE-RENDER MUST NOT CLOSE A SHEET SOMEBODY IS USING. Every sheet is rebuilt `hidden`, and a
        render arrives whenever the relays answer — so "Join with invite", opened the moment
@@ -5270,6 +5368,8 @@
   window.PCConcord.mentionsUnread=()=>mentionsUnread();
   window.PCConcord.__testNotifyMentions=(p,room,msgs,viewer,me,ch)=>notifyMentions(p,room,msgs,viewer,me,ch);
   window.PCConcord.__testClearMentions=(room,ch)=>clearMentions(room,ch);
+  window.PCConcord.__testNoteChannelRead=(p,room,ch,at)=>noteChannelRead(p,room,ch,at);
+  window.PCConcord.__testReadDoc=p=>loadReadDoc(p).then(()=>({answered:readDoc.answered,marks:{...readDoc.marks},saving:readDoc.saving}));
   if(window.__pcConcordHandoff){
     try{acceptHandoff(window.__pcConcordHandoff);}finally{delete window.__pcConcordHandoff;}
   }

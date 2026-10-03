@@ -4630,6 +4630,8 @@
                        indistinguishable from never having turned it on — the exact shape of "why is
                        it disabled again?". */
                     /^pcai:automute$/,
+                    /* Concord read positions: left behind, old mentions come back as new. */
+                    /^pcai:concord-read$/,
                     /* Go Live templates: left behind they read as never saved. */
                     /^pcai:livetemplates$/,
                     /* …and the shared playlists you accepted, for the same reason: left on the old

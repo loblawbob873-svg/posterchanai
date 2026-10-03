@@ -156,6 +156,9 @@
          t[1].startsWith('pcai:files-index') ||
          t[1].startsWith('pcai:playlist') || t[1] === 'pcai:budget' ||
          t[1] === 'pcai:desktop' || t[1] === 'pcai:automute' || t[1] === 'pcai:agent-tasks' ||
+         /* Where each Concord channel was last read, account-wide (concord.js READ_D). Evicted, a second
+            device reads every mention from the last week as new again. */
+         t[1] === 'pcai:concord-read' ||
          /* Go Live templates (client/livetemplates.js). Evicted, the menu reads as "you never saved any". */
          t[1] === 'pcai:livetemplates' ||
          /* Which shared playlists you accepted. Evicted by a firehose it reads as "you have decided
