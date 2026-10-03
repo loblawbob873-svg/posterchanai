@@ -253,6 +253,9 @@ window.PCBlossomFactory = function(dep){
       return value;
     }catch(_){ return {}; }
   }
+  /* The panel's Hide button is in the page shell (client.html), which runs before any module; it hands
+     the change to us so it is saved to the account like the Settings switch. */
+  try{ if(window.PCRightPanel) PCRightPanel.onchange = shown => { _prefTouched.add('rightPanel'); saveClientPrefsNostr({ rightPanel: !!shown }); }; }catch(_){}
   let _prefsSaveChain = Promise.resolve();
   function saveClientPrefsNostr(patch){
     if(!_S.ME || !_S.ME.pubkey) return Promise.resolve();
@@ -311,6 +314,14 @@ window.PCBlossomFactory = function(dep){
          && pr.readAloudHold!==ClientSettings.get('readAloudHold', true)){
         ClientSettings.set('readAloudHold', pr.readAloudHold);
         if(!pr.readAloudHold) stopNarration();
+      }
+      /* The right panel follows the ACCOUNT ("make it sync to the account"): hidden on one machine is
+         hidden on all of them. Stored as `rightPanel` = shown. The per-app hiding is separate and
+         untouched -- this only ever chooses between "where it belongs" and "nowhere". */
+      if(!_prefTouched.has('rightPanel') && typeof pr.rightPanel==='boolean' && window.PCRightPanel
+         && pr.rightPanel===PCRightPanel.hidden()){
+        PCRightPanel.set(!pr.rightPanel);
+        try{ const sw=$('#set-right-panel'); if(sw) sw.checked=pr.rightPanel; }catch(_){}
       }
       // Re-render on restore: `fn` is captured when a timeline draws, so adopting the synced value
       // without redrawing would leave the feed showing whatever the previous setting produced.

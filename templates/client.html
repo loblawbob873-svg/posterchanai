@@ -433,7 +433,7 @@
    sidebar button is getting in the way and users are saying it does not work right" / "no more
    annoying tab button"). Now the panel carries an ordinary Hide button in its own corner, which leaves
    with it, and Settings -> Timeline -> "Right panel" brings it back. Same key, so a panel someone
-   already hid stays hidden. Runs before first paint, so a hidden panel never flashes. */
+   already hid stays hidden; the choice also syncs to the account (blossom.js `rightPanel`). Runs before first paint, so a hidden panel never flashes. */
 (function(){
   function apply(c){ document.body.classList.toggle('rb-collapsed', !!c); }
   function set(c){ try{ localStorage.setItem('rbCollapsed', c?'1':'0'); }catch(e){} apply(c); }
@@ -441,7 +441,7 @@
   apply(c);
   window.PCRightPanel={ hidden:function(){ return document.body.classList.contains('rb-collapsed'); }, set:set };
   var b=document.getElementById('rb-toggle');
-  if(b) b.onclick=function(){ set(true); try{ window.__PC && __PC.toast && __PC.toast('Panel hidden -- Settings, Timeline, Right panel brings it back'); }catch(e){} };
+  if(b) b.onclick=function(){ set(true); try{ window.PCRightPanel.onchange && PCRightPanel.onchange(false); }catch(e){} try{ window.__PC && __PC.toast && __PC.toast('Panel hidden -- Settings, Timeline, Right panel brings it back'); }catch(e){} };
 })();
 </script>
 
