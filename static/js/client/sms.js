@@ -4166,6 +4166,8 @@
            received, and treating one as such hides the message it quotes. */
         eligible: !!m.incoming || (!m.pending && !m.failed),
         group: false,
+        // A picture or video: what "Liked a photo" from another phone can be about.
+        media: (m.parts || []).some(p => /^(image|video|audio)\//i.test(String(p.ct || ''))),
       })).filter(r => r.id && Number.isSafeInteger(r.date) && r.date >= 0);
       const p = R.project(rows, true);
       return { chips: p.chipsByTarget || Object.create(null),
@@ -4685,33 +4687,54 @@
      * story, and it shows up on the other phone as a real reaction rather than a line of prose.
      * Tapping the emoji you already sent sends the "Removed …" form, which is how every messages
      * app spells taking one back. */
-    feed.querySelectorAll('[data-sms-react]').forEach(btn => {
-      btn.onclick = e => {
-        e.stopPropagation();
+    /* THE REACTION BAR, opened by the ☺ button and by long-pressing / right-clicking the message
+     * ("that reaction thing that Android and iphone do when long-pressing on the message"). With
+     * `actions`, the message's own menu (Copy, Delete) sits under the message, as on a phone. */
+    const reactBar = (anchor, m, actions) => {
         const R = window.PCSmsReactions;
-        const m = S.msgs.get(btn.dataset.smsReact);
-        if(!R || !R.format || !m || !m.body) return;
         const thread = S.threads.find(x => x.key === S.open);
-        const mine = ((reactionsFor(thread).chips[String(m.doc||'')]) || [])
-          .find(c => c.actor === 'me');
+        const canReact = !!(R && R.format && m && m.body && thread);
+        document.querySelectorAll('.sms-react-pick,.sms-msg-actions').forEach(el => el.remove());
+        if(!canReact && !actions) return;
+        const mine = canReact ? ((reactionsFor(thread).chips[String(m.doc||'')]) || [])
+          .find(c => c.actor === 'me') : null;
         /* A FIXED ROW OF SIX, not the app's emoji picker. The fallback protocol has words for
            exactly these reactions and nothing else: offering the full picker would let somebody
            choose 🦆, which can only be sent as a bare emoji — an ordinary message on the other
            phone, not a reaction. (`openEmojiPopover` takes `anchored`/`unicodeOnly` and no way to
            restrict the set, so misusing it would have meant rejecting most of what it offered.) */
-        document.querySelectorAll('.sms-react-pick').forEach(el => el.remove());
-        const pop = document.createElement('div');
-        pop.className = 'sms-react-pick';
-        pop.innerHTML = (R.forms || []).map(f =>
-          `<button data-kind="${f.kind}" title="${f.kind}"${
-            mine && mine.kind === f.kind ? ' class="on" aria-pressed="true"' : ''}>${f.emoji}</button>`).join('');
-        document.body.appendChild(pop);
-        const r = btn.getBoundingClientRect();
-        pop.style.left = Math.max(4, Math.min(r.left, window.innerWidth - pop.offsetWidth - 4)) + 'px';
-        pop.style.top = Math.max(4, r.top - pop.offsetHeight - 6) + 'px';
-        const shut = () => { pop.remove(); document.removeEventListener('pointerdown', away, true); };
-        const away = ev => { if(!pop.contains(ev.target) && ev.target !== btn) shut(); };
+        const r = anchor.getBoundingClientRect();
+        let pop = null, acts = null;
+        if(canReact){
+          pop = document.createElement('div');
+          pop.className = 'sms-react-pick';
+          pop.setAttribute('role', 'toolbar');
+          pop.setAttribute('aria-label', 'React to this message');
+          pop.innerHTML = (R.forms || []).map(f =>
+            `<button data-kind="${f.kind}" title="${f.kind}" aria-label="${f.kind}"${
+              mine && mine.kind === f.kind ? ' class="on" aria-pressed="true"' : ''}>${f.emoji}</button>`).join('');
+          document.body.appendChild(pop);
+          pop.style.left = Math.max(4, Math.min(r.left + (r.width - pop.offsetWidth) / 2, window.innerWidth - pop.offsetWidth - 4)) + 'px';
+          const above = r.top - pop.offsetHeight - 6;
+          pop.style.top = (above >= 4 ? above : r.bottom + 6) + 'px';
+        }
+        if(actions && actions.length){
+          acts = document.createElement('div');
+          acts.className = 'sms-msg-actions';
+          acts.setAttribute('role', 'menu');
+          acts.innerHTML = actions.map((a, i) => `<button role="menuitem" data-i="${i}"${a.danger ? ' class="danger"' : ''}>${enc(a.label)}</button>`).join('');
+          document.body.appendChild(acts);
+          acts.style.left = Math.max(4, Math.min(r.left, window.innerWidth - acts.offsetWidth - 4)) + 'px';
+          const below = r.bottom + 6 + (pop && parseFloat(pop.style.top) > r.top ? pop.offsetHeight + 6 : 0);
+          acts.style.top = Math.min(below, window.innerHeight - acts.offsetHeight - 4) + 'px';
+        }
+        const shut = () => { if(pop) pop.remove(); if(acts) acts.remove(); document.removeEventListener('pointerdown', away, true); document.removeEventListener('keydown', esc, true); };
+        const away = ev => { if(!(pop && pop.contains(ev.target)) && !(acts && acts.contains(ev.target)) && ev.target !== anchor) shut(); };
+        const esc = ev => { if(ev.key === 'Escape') shut(); };
         document.addEventListener('pointerdown', away, true);
+        document.addEventListener('keydown', esc, true);
+        if(acts) acts.querySelectorAll('button').forEach(b => b.onclick = () => { shut(); actions[Number(b.dataset.i)].run(); });
+        if(!pop) return;
         pop.querySelectorAll('button').forEach(b => b.onclick = async () => {
           shut();
           const kind = b.dataset.kind;
@@ -4722,6 +4745,12 @@
             paint();
           }catch(err){ PC.toast('reaction not sent: ' + (err && err.message || err)); }
         });
+    };
+    feed.querySelectorAll('[data-sms-react]').forEach(btn => {
+      btn.onclick = e => {
+        e.stopPropagation();
+        const m = S.msgs.get(btn.dataset.smsReact);
+        if(m) reactBar(btn, m, null);
       };
     });
     /* `.bubble[data-doc]`, because the bubble IS a DM bubble now and `data-doc` is what makes it a
@@ -4742,9 +4771,21 @@
         else PC.toast(r.phone ? 'deleted here and from your archive' : 'deleted from your archive');
         paint();
       };
+      /* LONG-PRESS / RIGHT-CLICK IS THE PHONE'S MESSAGE MENU: reactions over the message, Copy and
+         Delete under it. It used to go straight to "Delete this message?" -- the one thing a long-press
+         on a phone never does first. */
+      const openMenu = () => {
+        stopHold();
+        const m = S.msgs.get(el.dataset.doc) || {};
+        const actions = [];
+        if(m.body) actions.push({ label: 'Copy text', run: () => PC.copyValue ? PC.copyValue(String(m.body), 'copied') : null });
+        actions.push({ label: 'Delete', danger: true, run: removeMessage });
+        try{ if(navigator.vibrate) navigator.vibrate(10); }catch(_){}
+        reactBar(el, m, actions);
+      };
       el.oncontextmenu = e => {
         if(e.target.closest('button,a,input')) return;
-        e.preventDefault(); removeMessage();
+        e.preventDefault(); openMenu();
       };
       /* A HOLD IS THE MOBILE MESSAGE MENU. Pointer events cover touch and pen without also
          installing touch handlers that fire twice on Android. Cancel as soon as the finger moves:
@@ -4753,7 +4794,7 @@
         if(e.target.closest('button,a,input'))return;
         if(e.pointerType==='mouse')return;
         startX=e.clientX;startY=e.clientY;stopHold();
-        hold=setTimeout(()=>{hold=0;removeMessage();},550);
+        hold=setTimeout(()=>{hold=0;openMenu();},450);
       };
       el.onpointermove=e=>{
         if(hold&&(Math.abs(e.clientX-startX)>10||Math.abs(e.clientY-startY)>10))stopHold();

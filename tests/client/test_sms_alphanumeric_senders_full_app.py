@@ -100,6 +100,9 @@ def test_a_message_from_an_alphanumeric_sender_deletes():
         await b.until("document.querySelectorAll('.bubble[data-doc]').length===2")
         await b.js("__PC.uiConfirm=async()=>true")
         await b.js("document.querySelector('.bubble[data-doc=\"ais-1\"]').dispatchEvent(new MouseEvent('contextmenu',{bubbles:true,cancelable:true}))")
+        # Right-click opens the message menu (reactions + Copy + Delete); Delete is in it.
+        await b.until("!!document.querySelector('.sms-msg-actions')")
+        await b.js("[...document.querySelectorAll('.sms-msg-actions button')].find(x=>x.textContent.trim()==='Delete').click()")
         await asyncio.sleep(1.2)
         got['left'] = await b.js("[...document.querySelectorAll('.bubble[data-doc]')].map(x=>x.dataset.doc)")
         got['gone'] = await b.js("!!(PCSms._state().msgs.get('ais-1')||{gone:true}).gone")

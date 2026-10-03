@@ -17,7 +17,8 @@ for(const v of vectors.projection){
  const result=api.project(v.rows,v.historyComplete);
  assert.equal(JSON.stringify(v.rows),original,'mutated '+v.name);
  assert.deepEqual([...result.consumedIds].sort(),[...v.consumedIds].sort(),v.name);
- const chips=Object.values(result.chipsByTarget).flat().map(c=>[c.target,c.actor,c.kind,c.sourceId]);
+ const withEmoji=v.chips.some(c=>c.length===5);
+ const chips=Object.values(result.chipsByTarget).flat().map(c=>withEmoji?[c.target,c.actor,c.kind,c.sourceId,c.emoji]:[c.target,c.actor,c.kind,c.sourceId]);
  assert.deepEqual(chips.sort(),[...v.chips].sort(),v.name);
 }
 console.log(vectors.parse.length+vectors.projection.length+' vectors passed');
@@ -41,11 +42,13 @@ def test_java_sms_reaction_vectors(tmp_path):
         statements.append('{List<SmsReactions.Message> rows=new ArrayList<>();')
         for m in v['rows']:
             args=[q(m[k]) for k in ['id','thread','actor','body']]+[str(m['date'])+'L']+[str(m[k]).lower() for k in ['incoming','eligible','group']]
+            if 'media' in m:args.append(str(m['media']).lower())
             statements.append('rows.add(new SmsReactions.Message('+','.join(args)+'));')
         statements.append('SmsReactions.Projection p=SmsReactions.project(rows,'+str(v['historyComplete']).lower()+');')
         expected=','.join(q(x) for x in v['consumedIds'])
         statements.append('check(p.consumedIds.equals(new HashSet<String>(Arrays.asList('+expected+'))),'+q(v['name']+' consumed')+');')
-        statements.append('Set<List<String>> chips=new HashSet<>();for(List<SmsReactions.Chip> cs:p.chipsByTarget.values())for(SmsReactions.Chip c:cs)chips.add(Arrays.asList(c.target,c.actor,c.kind,c.sourceId));')
+        withEmoji=any(len(c)==5 for c in v['chips'])
+        statements.append('Set<List<String>> chips=new HashSet<>();for(List<SmsReactions.Chip> cs:p.chipsByTarget.values())for(SmsReactions.Chip c:cs)chips.add(Arrays.asList(c.target,c.actor,c.kind,c.sourceId'+(',c.emoji' if withEmoji else '')+'));')
         expected=','.join('Arrays.asList('+','.join(q(x) for x in chip)+')' for chip in v['chips'])
         statements.append('check(chips.equals(new HashSet<List<String>>(Arrays.asList('+expected+'))),'+q(v['name']+' chips')+');}')
     harness='import java.util.*;import place.poster.app.sms.SmsReactions;public class Probe {static void check(boolean b,String m){if(!b)throw new AssertionError(m);}public static void main(String[]a){'+''.join(statements)+'}}'

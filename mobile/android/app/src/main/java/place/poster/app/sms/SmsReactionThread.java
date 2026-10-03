@@ -20,12 +20,14 @@ final class SmsReactionThread {
         boolean safe = historyComplete && thread > 0 && singleNumber(address);
         List<SmsReactions.Message> messages = new ArrayList<>();
         for (SmsMsg m : rows) {
-            // MMS address tables may be incomplete. Never infer a private conversation from one.
-            if (m.threadId != thread || !singleNumber(m.address) || m.mms || m.people != 1
+            // Still one other person, by number and by the MMS participant count. A picture message no
+            // longer switches reactions off for the whole conversation: other phones react to pictures
+            // ("Liked a photo"), and a thread with one photo in it used to show none of its reactions.
+            if (m.threadId != thread || !singleNumber(m.address) || m.people != 1
                     || !peer.equals(SmsKeys.normalize(m.address))) safe = false;
             messages.add(new SmsReactions.Message(id(m), Long.toString(m.threadId),
-                    m.incoming() ? peer : "self", m.body, m.date, m.incoming(),
-                    !m.mms && m.parts.isEmpty() && (m.type == 1 || m.type == 2), false));
+                    m.incoming() ? peer : "self", m.body == null ? "" : m.body, m.date, m.incoming(),
+                    m.type == 1 || m.type == 2, false, !m.parts.isEmpty()));
         }
         complete = safe;
         projection = SmsReactions.project(messages, safe);

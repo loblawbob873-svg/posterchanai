@@ -118,7 +118,10 @@ def test_messages_delete_from_long_press_without_an_inline_button():
     assert 'class="sms-cancel-pending"' not in JS
     assert ".sms-cancel-pending{" not in CSS
     assert "el.onpointerdown=e=>" in JS
-    assert "setTimeout(()=>{hold=0;removeMessage();},550)" in JS
+    # The hold opens the message menu (reactions + Copy + Delete), whose Delete is removeMessage;
+    # tests/client/test_sms_long_press_reactions_full_app.py drives it in the real app.
+    assert "setTimeout(()=>{hold=0;openMenu();},450)" in JS
+    assert "label: 'Delete', danger: true, run: removeMessage" in JS
     assert "el.onpointermove=e=>" in JS
     assert "Math.abs(e.clientX-startX)>10" in JS
     assert "el.onpointercancel=stopHold" in JS

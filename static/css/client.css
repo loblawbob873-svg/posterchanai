@@ -10295,6 +10295,13 @@ html.osfr-on body > .app, html.osfr-on #os-root{ visibility:hidden; }
 .sms-react-pick button{border:0;background:none;cursor:pointer;font-size:17px;line-height:1;
   padding:4px;border-radius:999px}
 .sms-react-pick button:hover,.sms-react-pick button.on{background:var(--bg2,#26262c)}
+/* The message menu under a long-pressed message (Copy, Delete), as on a phone. */
+.sms-msg-actions{position:fixed;z-index:60;display:flex;flex-direction:column;min-width:160px;padding:4px;border-radius:12px;
+  background:var(--panel,#16161c);border:1px solid var(--line,#2b2b35);box-shadow:0 8px 24px rgba(0,0,0,.35)}
+.sms-msg-actions button{border:0;background:none;color:var(--text,#eee);text-align:left;padding:10px 12px;border-radius:8px;
+  font:inherit;cursor:pointer}
+.sms-msg-actions button:hover{background:var(--bg2,#26262c)}
+.sms-msg-actions button.danger{color:var(--danger,#ff5c6c)}
 /* PICTURE MESSAGES. The bubble's `white-space:pre-wrap` is for TEXT, and it puts a phantom line
    between stacked attachments (the newlines in the template) — so the caption gets its own element
    and the bubble's padding shrinks to a frame once there is a picture in it. */

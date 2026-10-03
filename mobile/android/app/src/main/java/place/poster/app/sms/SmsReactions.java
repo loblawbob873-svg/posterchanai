@@ -23,32 +23,59 @@ public final class SmsReactions {
         throw new IllegalArgumentException("Unknown reaction kind");
     }
     public static final class Parsed {
-        public final String kind, emoji, operation, text;
-        Parsed(String[] form, String op, String text) {
-            kind=form[0]; emoji=form[1]; operation=op; this.text=text;
+        /** `about` is the picture noun ("a photo") for a reaction that quotes nothing, else null. */
+        public final String kind, emoji, operation, text, about;
+        Parsed(String kind, String emoji, String op, String text, String about) {
+            this.kind=kind; this.emoji=emoji; operation=op; this.text=text; this.about=about;
         }
+    }
+    /* What other phones send: picture reactions ("Liked a photo") and any-emoji ones ("Reacted 🔥 to
+     * “…”" / "Removed 🔥 from “…”"). Mirrors sms-reactions.js; tests/fixtures/sms_reactions.json runs both. */
+    private static final List<String> MEDIA = Arrays.asList("an image","a photo","a picture","a video","a movie",
+            "an attachment","an audio message","a sticker","a GIF","a gif","a contact","a location");
+    private static final java.util.regex.Pattern REACTED =
+            java.util.regex.Pattern.compile("^Reacted (\\S{1,16}) to ([\\s\\S]+)$");
+    private static final java.util.regex.Pattern REMOVED =
+            java.util.regex.Pattern.compile("^Removed (\\S{1,16}) from ([\\s\\S]+)$");
+    private static String quoted(String q) {
+        if (q.length() < 3) return null;
+        char first=q.charAt(0), close=first=='“'?'”':first=='"'?'"':0;
+        if (close==0 || q.charAt(q.length()-1)!=close) return null;
+        return q.substring(1,q.length()-1);
     }
     public static Parsed parse(String body) {
         if(body==null) return null;
         for(String[] form:FORMS) for(int i=2;i<4;i++) {
             String prefix=form[i]+" "; if(!body.startsWith(prefix)) continue;
-            String q=body.substring(prefix.length()); if(q.length()<3) continue;
-            char first=q.charAt(0), close=first=='“'?'”':first=='"'?'"':0;
-            if(close==0 || q.charAt(q.length()-1)!=close) continue;
-            return new Parsed(form,i==2?"add":"remove",q.substring(1,q.length()-1));
+            String rest=body.substring(prefix.length()), text=quoted(rest), op=i==2?"add":"remove";
+            if(text!=null) return new Parsed(form[0],form[1],op,text,null);
+            if(MEDIA.contains(rest)) return new Parsed(form[0],form[1],op,"",rest);
         }
+        java.util.regex.Matcher m=REACTED.matcher(body);
+        String op="add";
+        if(!m.matches()){ m=REMOVED.matcher(body); op="remove"; if(!m.matches()) return null; }
+        String emoji=m.group(1), rest=m.group(2);
+        if(emoji.matches(".*[A-Za-z0-9].*")) return null;
+        String text=quoted(rest);
+        if(text!=null) return new Parsed("emoji",emoji,op,text,null);
+        if(MEDIA.contains(rest)) return new Parsed("emoji",emoji,op,"",rest);
         return null;
     }
     public static final class Message {
         public final String id, thread, actor, body;
         public final long date;
-        public final boolean incoming, eligible, group;
+        public final boolean incoming, eligible, group, media;
         public Message(String id,String thread,String actor,String body,long date,
                        boolean incoming,boolean eligible,boolean group) {
-            this.id=id;this.thread=thread;this.actor=actor;this.body=body;this.date=date;
-            this.incoming=incoming;this.eligible=eligible;this.group=group;
+            this(id,thread,actor,body,date,incoming,eligible,group,false);
         }
-        private List<Object> fields(){return Arrays.asList(id,thread,actor,body,date,incoming,eligible,group);}
+        /** `media`: the row carries a picture/video -- what a "Liked a photo" reaction can be about. */
+        public Message(String id,String thread,String actor,String body,long date,
+                       boolean incoming,boolean eligible,boolean group,boolean media) {
+            this.id=id;this.thread=thread;this.actor=actor;this.body=body;this.date=date;
+            this.incoming=incoming;this.eligible=eligible;this.group=group;this.media=media;
+        }
+        private List<Object> fields(){return Arrays.asList(id,thread,actor,body,date,incoming,eligible,group,media);}
     }
     public static final class Chip {
         public final String target, actor, kind, emoji, sourceId;
@@ -85,7 +112,14 @@ public final class SmsReactions {
         for(Message row:messages){
             Parsed parsed=parse(row.body);if(parsed==null)continue;
             Message target=null;int count=0;
-            for(Message m:messages)if(!m.id.equals(row.id)&&m.thread.equals(row.thread)
+            if(parsed.about!=null){
+                // A picture reaction quotes nothing: the latest picture the other side sent before it.
+                long latest=-1;
+                for(Message m:messages)if(!m.id.equals(row.id)&&m.thread.equals(row.thread)&&m.incoming!=row.incoming
+                        &&m.date<row.date&&m.media&&parse(m.body)==null){
+                    if(m.date>latest){latest=m.date;target=m;count=1;}else if(m.date==latest)count++;
+                }
+            }else for(Message m:messages)if(!m.id.equals(row.id)&&m.thread.equals(row.thread)
                     &&m.incoming!=row.incoming&&m.date<row.date&&m.body.equals(parsed.text)&&parse(m.body)==null){
                 target=m;count++;
             }
@@ -99,7 +133,7 @@ public final class SmsReactions {
             if(ties.get(op.timeKey())>1)continue;
             List<String> key=op.key();Chip previous=active.get(key);
             if(op.parsed.operation.equals("remove")){
-                if(previous==null||!previous.kind.equals(op.parsed.kind))continue;
+                if(previous==null||!previous.kind.equals(op.parsed.kind)||!previous.emoji.equals(op.parsed.emoji))continue;
                 active.remove(key);
             }else active.put(key,new Chip(op));
             result.consumedIds.add(op.row.id);

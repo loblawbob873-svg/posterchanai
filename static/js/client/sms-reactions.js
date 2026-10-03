@@ -12,16 +12,34 @@
     ['emphasize','‼️','Emphasized','Removed an emphasis from'],
     ['question','❓','Questioned','Removed a question mark from']
   ];
+  /* WHAT OTHER PHONES SEND ("we need to make sure we support their reactions too"). Besides the six
+   * classic tapbacks about a quoted message, a phone reacts to a PICTURE without quoting anything
+   * ("Liked a photo", "Laughed at an image" -- Google Messages and iPhone), and iOS 18 / Google Messages
+   * react with ANY emoji ("Reacted 🔥 to “…”", taken back with "Removed 🔥 from “…”"). Those are read
+   * too; a picture reaction attaches to the latest picture the other side sent before it. */
+  const MEDIA=['an image','a photo','a picture','a video','a movie','an attachment','an audio message',
+               'a sticker','a GIF','a gif','a contact','a location'];
+  function quotedText(rest){
+    const first=rest[0], close=first==='“'?'”':first==='"'?'"':'';
+    if(!close || rest.length<3 || !rest.endsWith(close)) return null;
+    return rest.slice(1,-1);
+  }
   function parse(body){
     if(typeof body!=='string') return null;
     for(const [kind,emoji,add,remove] of forms){
       for(const [prefix,operation] of [[add,'add'],[remove,'remove']]){
         if(!body.startsWith(prefix+' ')) continue;
-        const quoted=body.slice(prefix.length+1), first=quoted[0];
-        const close=first==='“'?'”':first==='"'?'"':'';
-        if(!close || quoted.length<3 || !quoted.endsWith(close)) continue;
-        return {kind,emoji,operation,text:quoted.slice(1,-1)};
+        const rest=body.slice(prefix.length+1), text=quotedText(rest);
+        if(text!==null) return {kind,emoji,operation,text};
+        if(MEDIA.includes(rest)) return {kind,emoji,operation,text:'',about:rest};
       }
+    }
+    // Any emoji. The emoji is one short token with no letters or digits ("Reacted happily to" is prose).
+    const any=/^Reacted (\S{1,16}) to ([\s\S]+)$/.exec(body) || /^Removed (\S{1,16}) from ([\s\S]+)$/.exec(body);
+    if(any && !/[A-Za-z0-9]/.test(any[1])){
+      const operation=body.startsWith('Reacted ')?'add':'remove', text=quotedText(any[2]);
+      if(text!==null) return {kind:'emoji',emoji:any[1],operation,text};
+      if(MEDIA.includes(any[2])) return {kind:'emoji',emoji:any[1],operation,text:'',about:any[2]};
     }
     return null;
   }
@@ -31,7 +49,7 @@
     const unique=new Map(), conflicts=new Set();
     for(const row of rows){
       if(!row || typeof row.id!=='string' || !row.id) continue;
-      const fields=[row.id,row.thread,row.actor,row.body,row.date,row.incoming,row.eligible,row.group];
+      const fields=[row.id,row.thread,row.actor,row.body,row.date,row.incoming,row.eligible,row.group,row.media===true];
       const prior=unique.get(row.id);
       if(prior && JSON.stringify(prior.fields)!==JSON.stringify(fields)) conflicts.add(row.id);
       else if(!prior) unique.set(row.id,{row,fields});
@@ -45,7 +63,14 @@
     const operations=[];
     for(const row of messages){
       const parsed=parse(row.body); if(!parsed) continue;
-      const targets=messages.filter(m=>m.id!==row.id && m.thread===row.thread
+      let targets;
+      if(parsed.about!==undefined){
+        // A picture reaction quotes nothing: it is about the latest picture the other side sent before it.
+        const pics=messages.filter(m=>m.id!==row.id && m.thread===row.thread && m.incoming!==row.incoming
+          && m.date<row.date && m.media===true && !parse(m.body));
+        const latest=pics.reduce((a,m)=>Math.max(a,m.date),-1);
+        targets=pics.filter(m=>m.date===latest);
+      }else targets=messages.filter(m=>m.id!==row.id && m.thread===row.thread
         && m.incoming!==row.incoming && m.date<row.date && m.body===parsed.text && !parse(m.body));
       if(targets.length===1) operations.push({row,parsed,target:targets[0].id});
     }
@@ -59,7 +84,7 @@
       const k=key(o); if(ties.get(JSON.stringify([k,o.row.date]))>1) continue;
       const previous=active.get(k);
       if(o.parsed.operation==='remove'){
-        if(!previous || previous.kind!==o.parsed.kind) continue;
+        if(!previous || previous.kind!==o.parsed.kind || previous.emoji!==o.parsed.emoji) continue;
         active.delete(k);
       }else active.set(k,{target:o.target,actor:o.row.actor,kind:o.parsed.kind,emoji:o.parsed.emoji,sourceId:o.row.id});
       consumedIds.push(o.row.id);

@@ -39,7 +39,9 @@ public class Probe {
   SmsMsg alien=row(3,"other",1);alien.threadId=10;check(!history(target,alien).complete,"strict thread");
   alien.threadId=9;alien.address="+445551234567";check(!history(target,alien).complete,"no suffix phone matching");
   alien.address=target.address;alien.people=2;check(!history(target,alien).complete,"group");
-  alien.people=1;alien.mms=true;check(!history(target,alien).complete,"media identity uncertain");
+  // A one-to-one PICTURE message keeps reactions on: other phones react to pictures ("Liked a photo"),
+  // and one photo used to switch every reaction in the conversation off. Group is still refused above.
+  alien.people=1;alien.mms=true;check(history(target,alien).complete,"a 1:1 picture message keeps reactions");
   SmsMsg group=row(8,"text",1);group.address="+15551234567;+15557654321";
   check(!new SmsReactionThread(Arrays.asList(group),true,9,group.address).complete,"recipient list is not one number");
   SmsMsg own=row(1,"sent",2), incoming=row(2,"Liked “sent”",1);
@@ -60,7 +62,9 @@ public class Probe {
 def test_actual_native_reaction_send_handler_rechecks_and_does_not_repeat(tmp_path):
     base=ROOT/'mobile/android/app/src/main/java/place/poster/app/sms'
     source=(base/'ThreadActivity.java').read_text()
-    method=source[source.index('    private void sendReaction('):source.index('    private void messageMenu(')]
+    start=source.index('    private void sendReaction(')
+    # Up to the NEXT method, whatever it is -- not a named neighbour that moves when a method is added.
+    method=source[start:source.index('\n    private ', start+10)+1]
     harness=r'''
 package place.poster.app.sms;
 import java.util.*;import java.util.concurrent.*;
