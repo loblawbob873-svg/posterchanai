@@ -566,6 +566,8 @@ window.PCSettingsFactory = function(dep){
           <div class="muted small">Celebratory animations on notes: confetti on congrats, a sunrise on <code>gm</code>, and drifting tears on 😭 reactions. Off by default. Syncs across your devices.</div>
           <label class="fld" style="flex-direction:row;justify-content:space-between;align-items:center">Hold a post to read it aloud<label class="switch"><input type="checkbox" id="set-read-aloud" ${ClientSettings.get('readAloudHold',true)?'checked':''}><span class="slider"></span></label></label>
           <div class="muted small">Press and hold any post and it is narrated. Turn it off if you hold posts by accident. While one is playing a <b>Stop reading</b> button sits at the bottom of the screen, and scrolling the post out of view stops it too.</div>
+          <label class="fld" style="flex-direction:row;justify-content:space-between;align-items:center">Right panel<label class="switch"><input type="checkbox" id="set-right-panel" ${(window.PCRightPanel && PCRightPanel.hidden()) ? '' : 'checked'}><span class="slider"></span></label></label>
+          <div class="muted small">Topics, notifications and the app links beside the timeline on a wide screen. Its <b>Hide</b> button turns this off; this brings it back. Saved on this device.</div>
         </div>
         <div class="us-pane" data-pane="sidebar">${_navHideHtml()}</div>
         <div class="us-pane" data-pane="mail">
@@ -895,6 +897,10 @@ window.PCSettingsFactory = function(dep){
         toast(hr.checked?'replies hidden in timelines':'replies shown in timelines');
         // `fn` is captured when a timeline renders, so the change only takes effect on a re-render.
         if(S.VIEW==='home'||S.VIEW==='global') renderView(true);
+      }; }
+    { const rp=$('#set-right-panel'); if(rp) rp.onchange=()=>{
+        try{ window.PCRightPanel && PCRightPanel.set(!rp.checked); }catch(_){}
+        toast(rp.checked?'right panel shown on wide screens':'right panel hidden');
       }; }
     { const ra=$('#set-read-aloud'); if(ra) ra.onchange=()=>{
         const on = ra.checked;

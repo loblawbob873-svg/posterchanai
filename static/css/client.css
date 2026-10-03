@@ -105,7 +105,7 @@
   --feed-max:920px;
   /* The capped width of the whole shell = the three tracks + both column gaps + .app's own padding
      (300 + 20 + 920 + 20 + 340 + 64). Kept in lockstep with --feed-max: change one and the middle
-     column stops landing on the other. .rb-toggle's fixed offsets are derived from this number.
+     column stops landing on the other.
      NOTE these are CSS px, and the client applies body{zoom} by viewport width, so the cap engages
      EARLIER than the raw number suggests — at 1280 device px the layout viewport is ~1910 CSS px.
      760px measured a 49-character line once zoom was accounted for, which is under the comfortable
@@ -804,7 +804,7 @@ body.native .sidebar{padding-top:calc(18px + env(safe-area-inset-top));padding-b
 /* Inset the whole app from the screen edges (ditto-style) so the panels float in space instead of running
    edge-to-edge, plus a gap between the columns. Safe because *{box-sizing:border-box} — the padding comes
    out of the 1fr middle column, not out of the viewport. Dropped to 0 on mobile, where every px counts. */
-.app{display:grid;grid-template-columns:300px 1fr;height:100vh;column-gap:20px;padding:0 32px;position:relative}   /* positioned: .rb-toggle is offset from THIS box, not the viewport */
+.app{display:grid;grid-template-columns:300px 1fr;height:100vh;column-gap:20px;padding:0 32px;position:relative}
 /* No box: .glass outlines all four sides, which boxed the rail in. Just ONE vertical rule on the inner
    edge — the divider between the rail and the feed. Its twin is .rightbar's border-left, so the shell
    reads as three columns of one surface separated by hairlines, not as three floating panels. */
@@ -1006,30 +1006,14 @@ html.os-on .cal-bar,html.os-on .ct-bar{background-attachment:scroll}
   /* Mirrors .sidebar exactly: same --rail surface, same single hairline on the edge that faces the feed. */
   .rightbar{display:flex;flex-direction:column;gap:16px;padding:18px 16px;overflow-y:auto;min-height:0;
     border:0;border-inline-start:1px solid var(--line);background:var(--rail)}
-  /* Collapse toggle — a neon arrow tab on the panel's left edge (vertically centered). Persisted in
-     localStorage. Only present where the right column exists (>=1180px). */
-  .rb-toggle{display:flex;align-items:center;justify-content:center;position:absolute;z-index:25;
-    /* Anchored to the RAIL's left edge, which is no longer the viewport's edge: .app is capped at
-       --app-max and centred, so past that width the cluster pulls away from the right of the screen.
-       Below --app-max the app is full width and this resolves to the old rail(340) + padding(32).
-       Above it the gutter is (100vw - 1664)/2, and 100vw - gutter - (1664 - 32 - 340) reduces to
-       is the rail (340px) plus .app's own outer padding (32px), measured from .app's box — so it
-       lands on the panel edge whatever the app's width or offset, with no viewport arithmetic. */
-    top:50%;inset-inline-end:calc(340px + 32px);transform:translateY(-50%);width:20px;height:74px;cursor:pointer;padding:0;
-    font-size:13px;line-height:1;color:var(--cyan);font-family:inherit;
-    /* Opaque var(--bg), not var(--rail): the rail is transparent now and the feed scrolls past behind
-       this tab, so it needs its own fill — the canvas colour, so it still reads as part of the rail.
-       (It used to hardcode a near-black base: a dark tab stuck to a white panel on every light theme.) */
-    background:linear-gradient(135deg,rgba(var(--accent-rgb),.16),rgba(var(--accent2-rgb),.12)),var(--bg);
-    border:1px solid var(--line);border-inline-end:none;border-radius:9px 0 0 9px;
-    box-shadow:-3px 0 16px rgba(var(--accent-rgb),.18),inset 1px 0 0 rgba(var(--accent-rgb),.3);
-    transition:inset-inline-end .2s ease, background .15s, color .15s, box-shadow .15s}
-  /* var(--text), not #fff: the hover base is now the themed rail, and white-on-white hid the arrow. */
-  .rb-toggle:hover{color:var(--text);background:linear-gradient(135deg,rgba(var(--accent-rgb),.32),rgba(var(--accent2-rgb),.22)),var(--bg);
-    box-shadow:-3px 0 22px rgba(var(--accent-rgb),.5),inset 1px 0 0 rgba(var(--accent-rgb),.6)}
+  /* Hide button: an ordinary small button in the panel's own top corner, in the flow -- never over the
+     timeline, never moving. (It was a floating arrow tab on the panel edge; see client.html.) */
+  .rb-toggle{display:inline-flex;align-items:center;gap:4px;align-self:flex-end;margin:-6px -4px -8px 0;
+    padding:6px 10px;min-height:40px;border-radius:8px;border:1px solid transparent;background:none;cursor:pointer;
+    color:var(--muted);font:inherit;font-size:13px}
+  .rb-toggle:hover,.rb-toggle:focus-visible{color:var(--text);border-color:var(--line);background:var(--rail)}
   body.rb-collapsed .app{grid-template-columns:300px minmax(0,1fr)}   /* drop the 3rd column → main widens */
   body.rb-collapsed .rightbar{display:none}
-  body.rb-collapsed .rb-toggle{inset-inline-end:32px}   /* tab slides to the app's edge (= its outer padding) */
   /* Per-VIEW hide. app.js allowlists the timeline-shaped views (RB_SHOW_VIEWS) and sets .rb-off on
      everything else — AI chat, News, Markets, Stats, Torrents, Streams, chat rooms, Files,
      Settings, the games… all of which would rather have the width than a rail of unrelated posts.
