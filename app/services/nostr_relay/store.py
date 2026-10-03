@@ -728,17 +728,20 @@ class RelayStore:
         """Insert an event (already verified + WoT-gated by the caller). Returns stored?"""
         return await self._w(self._add_event_sync, ev, origin)
 
-    def _delete_pubkeys_sync(self, pubkeys: list) -> int:
+    def _delete_pubkeys_sync(self, pubkeys: list, spare_preserved: bool = True) -> int:
         if not pubkeys:
             return 0
         conn = self._conn()
         removed = 0
         for pk in pubkeys:
-            # NEVER purge a registered user's events — even if they're flagged as a bridge (e.g. they
-            # cross-post from the fediverse so a synced post carries a proxy/relay hint to a blocked
-            # bridge) or explicitly blocklisted. Their history (incl. synced posts) is their data;
-            # block/bridge handling only gates NEW writes, it must not delete first-party accounts.
-            if pk in self.preserve_pubkeys:
+            # A HEURISTIC never purges a registered user's events: an account flagged as a bridge (it
+            # cross-posts from the fediverse, so a synced post carries a proxy/relay hint to a blocked
+            # bridge) is a first-party member who did nothing wrong. An ADMIN naming the account --
+            # the blocklist, "delete this author" -- is not a heuristic, and is the one case where the
+            # history goes: "we need to make sure that blocked users can't do anything on the platform
+            # despite having a nip05 in their profile". Sparing them there meant a blocked member's
+            # git issue, posts and lists stayed served after "Purge now" (2026-10-02).
+            if spare_preserved and pk in self.preserve_pubkeys:
                 continue
             conn.execute("DELETE FROM event_tags WHERE event_id IN "
                          "(SELECT id FROM events WHERE pubkey=?)", (pk,))
@@ -747,9 +750,10 @@ class RelayStore:
         conn.commit()
         return removed
 
-    async def delete_pubkeys(self, pubkeys: list) -> int:
-        """Purge all events authored by these pubkeys (e.g. when an author is blocklisted)."""
-        return await self._w(self._delete_pubkeys_sync, list(pubkeys))
+    async def delete_pubkeys(self, pubkeys: list, spare_preserved: bool = True) -> int:
+        """Purge all events authored by these pubkeys. `spare_preserved=False` only for an admin's
+        explicit decision (the blocklist, delete-author); see _delete_pubkeys_sync."""
+        return await self._w(self._delete_pubkeys_sync, list(pubkeys), spare_preserved)
 
     def _delete_by_words_sync(self, words: list) -> int:
         """Purge stored events whose content contains any blocked word — THE SAME MATCH the live

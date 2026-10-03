@@ -975,7 +975,8 @@ async def _main(cfg: dict) -> None:
         # got purged, reappearing only until the next purge. Union-only so a partial re-collect can't
         # SHRINK preserve and delete a registered user's local-first notes.
         await _refresh_preserve(store)
-        by_pk = (await store.delete_pubkeys(fresh["blocked_pubkeys"]) or 0) if fresh["blocked_pubkeys"] else 0
+        by_pk = (await store.delete_pubkeys(fresh["blocked_pubkeys"], spare_preserved=False) or 0) \
+            if fresh["blocked_pubkeys"] else 0
         by_word = (await store.delete_by_words(fresh["blocked_words"]) or 0) if fresh["blocked_words"] else 0
         by_lang = (await store.delete_by_langs(fresh["blocked_langs"]) or 0) if fresh["blocked_langs"] else 0
         by_bridge = (await _apply_blocked_relays(store, gate, fresh["blocked_relays"]) or 0) if fresh["blocked_relays"] else 0
@@ -1301,7 +1302,7 @@ async def _main(cfg: dict) -> None:
                         logger.info("[nostr-relay] control: added %d member(s) to WoT now", len(pks))
                     elif cmd.get("cmd") == "delete-author" and cmd.get("pubkeys"):
                         pks = [p for p in cmd["pubkeys"] if p]
-                        asyncio.create_task(_safe(store.delete_pubkeys(pks)))  # purge their events
+                        asyncio.create_task(_safe(store.delete_pubkeys(pks, spare_preserved=False)))  # an admin named them
                         logger.info("[nostr-relay] control: purged events for %d author(s)", len(pks))
                     elif cmd.get("cmd") == "reload-blocks":
                         # Admin/web-UI edited the blocklist (Admin → Relay, or the web client's
