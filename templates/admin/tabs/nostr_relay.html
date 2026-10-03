@@ -510,12 +510,6 @@
             <small>Deletes old <strong>notes/reactions/reposts/comments</strong> past this age. Set <code>0</code> to disable age-based cleanup.</small>
         </div>
         <div class="form-group">
-            <label for="nostr_relay_rate_per_min">Anti-spam: events a minute per author (10× that an hour)</label>
-            <input type="number" id="nostr_relay_rate_per_min" name="nostr_relay_rate_per_min" placeholder="120" min="0">
-            <small class="muted">Refused with "rate-limited" past this. Busiest real author here: 31 in a minute. 0 = off. Our own machines and app data / DMs are never limited.</small>
-            <label for="nostr_relay_dup_per_hour">Anti-spam: the same post per author per hour</label>
-            <input type="number" id="nostr_relay_dup_per_hour" name="nostr_relay_dup_per_hour" placeholder="20" min="0">
-            <small class="muted">Copies of one note past this are refused. 0 = off.</small>
             <label for="nostr_relay_max_events">Max feed events (hard count cap)</label>
             <input type="number" id="nostr_relay_max_events" name="nostr_relay_max_events" placeholder="0">
             <small>Trims the <strong>oldest</strong> feed events once the total exceeds this count (preserved events don't count). <code>0</code> = unlimited (the age cleaner above is then the only cleanup).</small>

@@ -453,10 +453,6 @@ def _read_config() -> dict:
             # on a normal domain and its proxy URL points at the original instance, never the bridge.
             "block_bridged": gb("nostr_relay_block_bridged", False),
             "posterchan_clients_only": gb("nostr_relay_posterchan_clients_only", False),
-            # Anti-spam (server._rate_limited): per-author events a minute (x10 an hour) and identical
-            # posts an hour, for events published directly here. 0 = off.
-            "rate_per_min": gi("nostr_relay_rate_per_min", 120),
-            "dup_per_hour": gi("nostr_relay_dup_per_hour", 20),
             "posterchan_origins": (g("nostr_relay_posterchan_origins", "") or
                 ("https://" + g("nostr_relay_nip05_domain", "poster.place").strip().lstrip("@") +
                  " https://localhost capacitor://localhost app://posterchan")).replace(",", " ").split(),
