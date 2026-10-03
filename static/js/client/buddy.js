@@ -19,9 +19,9 @@
  */
 (function(){
   'use strict';
-  /* 700ms a frame (~1.4 moves a second), and a little quicker after a click: at 340ms she read as frantic
+  /* 900ms a frame (~1.1 moves a second, chosen side by side against the old pace), and a little quicker after a click: at 340ms she read as frantic
    * ("posterchan is moving too fast"). tests/client/test_desktop_buddy_full_app.py measures the pace. */
-  const FRAMES = 8, STEP_MS = 700, HAPPY_MS = 450, KEY = 'desktopBuddy';
+  const FRAMES = 8, STEP_MS = 900, HAPPY_MS = 550, KEY = 'desktopBuddy';
   const SRC = i => '/static/mascot/dance/dance-' + i + '.webp';
   const LINES = ['hi!', '♪ ♫', 'dance with me!', 'PosterChan!', 'hehe', 'nostr!', '✨'];
   let el = null, desk = null, opts = {}, timer = 0, frame = 1, loaded = false, drag = null, pressT = 0;
