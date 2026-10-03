@@ -60,6 +60,11 @@ async def run():
                     const vis=e=>!!e&&e.getClientRects().length>0&&getComputedStyle(e).display!=='none';
                     return {{toggle:vis(t)?{R}(t):null, panel:vis(rb)?{R}(rb):null, feed:{R}(f), pos:t?getComputedStyle(t).position:null}};}})()""")
                 res = {"open": st}
+                # The shell's structure: the app container ends right after the panel. Moving the button
+                # once deleted its closing tag, which pulled the bottom nav and sheets INTO the app grid
+                # (caught only by a Telegram window measuring 823 of 1100px).
+                res["structure"] = await b.js("""(()=>{const app=document.querySelector('.app'),rb=document.querySelector('.rightbar');
+                    return {last: app && app.lastElementChild===rb, inside: [...app.querySelectorAll('.mobilenav,#modal-root,#toast-root')].map(e=>e.className||e.id)};})()""")
                 # Hide, from the button in the panel.
                 tb = st["toggle"]
                 for t in ("mousePressed", "mouseReleased"):
@@ -125,6 +130,7 @@ async def run():
 @pytest.mark.skipif(not Path("/opt/google/chrome/chrome").exists(), reason="Chrome required")
 def test_the_right_panel_hides_from_inside_and_comes_back_from_settings():
     res = asyncio.run(run())
+    assert res["structure"]["last"] and not res["structure"]["inside"], ("the app container swallowed the rest of the page", res["structure"])
     o = res["open"]
     assert o["panel"] and o["toggle"], res
     p, t, f = o["panel"], o["toggle"], o["feed"]

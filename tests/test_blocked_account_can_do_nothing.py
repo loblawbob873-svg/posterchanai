@@ -109,10 +109,8 @@ def test_logging_in_again_does_not_readmit_a_blocked_key(blocked, monkeypatch):
     assert ok is False and PK not in added
 
 
-def test_the_relay_refuses_a_blocked_accounts_sign_in():
-    src = (__import__("pathlib").Path(__file__).resolve().parents[1] / "app/services/nostr_relay/server.py").read_text()
-    ok_at = src.index('logger.info("[nostr-relay] AUTH ok for')
-    assert "self.gate.is_blocked(" in src[ok_at - 400:ok_at], "a blocked key still gets an authenticated relay socket"
+# The relay's sign-in is tested by behaviour in tests/test_a_member_can_read_from_any_client.py
+# (test_a_blocked_member_who_signs_in_gets_nothing).
 
 
 def test_a_blocked_key_registers_no_push_device(blocked):

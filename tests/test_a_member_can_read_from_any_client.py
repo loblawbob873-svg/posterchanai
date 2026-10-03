@@ -31,8 +31,9 @@ class _Conn:
         self.closed = (code, reason)
 
 
-def _server(member_pk):
+def _server(member_pk, blocked=()):
     srv = S.RelayServer.__new__(S.RelayServer)
+    srv.gate = type("Gate", (), {"is_blocked": staticmethod(lambda pk: pk in blocked)})()
     srv.cfg = {"posterchan_clients_only": True, "max_message_size": 262144,
                "nip05": {"names": {"alice": member_pk}}, "preserve": []}
     srv._refused_at = {}
@@ -86,6 +87,16 @@ class AMemberCanReadFromAnyClient(unittest.TestCase):
         _run(srv, conn, ["REQ", "feed", {"kinds": [1], "limit": 20}])
         self.assertEqual(srv.served, ["feed"], "a signed-in member still got nothing")
         self.assertIsNone(conn.closed)
+
+    def test_a_blocked_member_who_signs_in_gets_nothing(self):
+        """"we need to make sure that blocked users can't do anything on the platform despite having a
+        nip05 in their profile": a member's name is still in the registry here, the key is blocked."""
+        srv, conn = _server(self.member_pk, blocked={self.member_pk}), _Conn()
+        _auth(srv, conn, MEMBER_SK)
+        self.assertEqual([m for m in srv.sent if m[0] == "OK"][-1][2], False, "a blocked key's AUTH was accepted")
+        self.assertTrue(conn._pcai_signer_only, "a blocked member's AUTH lifted the confinement")
+        _run(srv, conn, ["REQ", "feed", {"kinds": [1], "limit": 20}])
+        self.assertEqual(srv.served, [], "a blocked member read the relay by signing in")
 
     def test_a_stranger_who_signs_in_is_still_a_stranger(self):
         srv, conn = _server(self.member_pk), _Conn()
