@@ -541,16 +541,36 @@ window.PCCardsFactory = function(dep){
   // `ev`, when given, is the note the text came from: its NIP-92 imeta tags carry each attachment's real
   // dimensions, so seeding them HERE — before any _media() call below — is what lets the very first paint
   // reserve the true box instead of a guess. Callers that only want `.text` can keep omitting it.
+  /* What the note SAYS each attachment is (NIP-92 `imeta … m <mime>`). Object storage often serves media
+   * from a URL with no extension (a fediverse post: ".../mediaheaven/<hash>.C117AB17-3C90-…", declared
+   * `m image/jpeg`), and judging by the extension alone drew those as bare links ("images from this
+   * fediverse server is not showing , just link"). Only image/ and video/ count; anything else, or no
+   * imeta, falls back to the extension rules below. */
+  function _imetaKinds(ev){
+    const out=new Map();
+    for(const t of ((ev&&ev.tags)||[])){
+      if(!t || t[0]!=='imeta') continue;
+      let u='', m='';
+      for(const part of t.slice(1)){ const s=String(part||''); if(s.startsWith('url ')) u=s.slice(4).trim(); else if(s.startsWith('m ')) m=s.slice(2).trim().toLowerCase(); }
+      if(u && /^(image|video)\//.test(m)) out.set(u, m.startsWith('video/') ? 'video' : 'image');
+    }
+    return out;
+  }
   function mediaParts(raw, ev){
     if(ev) MediaDims.seed(ev);
+    const kinds=_imetaKinds(ev);
     const media=[];
     // Media is LIFTED OUT of the text and rendered as its own row, so whatever text remains would always
     // sit above it — a card post ("<image>\n\n<link>") showed its link ABOVE the picture. When the content
     // LEADS with media, that ordering is backwards: honour the author's order and put the row first.
     const _lead=(raw||'').trim().match(/^(https?:\/\/[^\s<]+)/);
-    const mediaFirst=!!(_lead && _isMediaUrl(_lead[1].replace(/[)\].,!?]+$/,'')));
+    const _leadU=_lead && _lead[1].replace(/[)\].,!?]+$/,'');
+    const mediaFirst=!!(_lead && (_isMediaUrl(_leadU) || kinds.has(_leadU)));
     const text=(raw||'').replace(/(https?:\/\/[^\s<]+)/g,(url)=>{
       const u=url.replace(/[)\].,!?]+$/,''); const tail=url.slice(u.length); const E=enc(u);
+      const said=kinds.get(u);
+      if(said==='video'){ media.push(_media(E,'video')); return tail; }
+      if(said==='image'){ media.push(_media(E)); return tail; }
       if(/\.(jpe?g|png|gif|webp|avif)(\?|#|$)/i.test(u)){ media.push(_media(E)); return tail; }
       if(/\.(mp4|webm|mov|m4v)(\?|#|$)/i.test(u)){ media.push(_media(E,'video')); return tail; }
       if(/\/[0-9a-f]{64}(\?|#|$)/i.test(u)){ media.push(_media(E, null, null, BLOBF)); return tail; }
