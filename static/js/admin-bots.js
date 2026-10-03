@@ -714,14 +714,23 @@ function _talkMouth() {
 function _talkSetMouth(m) {
     const c = v => Math.min(1, Math.max(0, +v || 0));
     const faces = _talkFaces(); if (!faces[_talkSel]) return;
-    faces[_talkSel].mouth = { x: c(m.x), y: c(m.y), w: Math.min(0.4, Math.max(0.02, +m.w || 0.12)), angle: +m.angle || 0, anime: !!m.anime };
+    faces[_talkSel].mouth = { x: c(m.x), y: c(m.y), w: Math.min(0.4, Math.max(0.02, +m.w || 0.12)),
+                              angle: Math.min(45, Math.max(-45, +m.angle || 0)), anime: !!m.anime };
     _talkSetFaces(faces);
     _talkPaintMouth();
 }
 function _talkPaintMouth() {
     const mk = _g('bot_talk_mouth'), m = _talkMouth();
-    if (mk) { mk.style.left = (m.x * 100) + '%'; mk.style.top = (m.y * 100) + '%'; mk.style.width = (m.w * 100) + '%'; }
+    const ang = Math.round(+m.angle || 0);
+    if (mk) {
+        mk.style.left = (m.x * 100) + '%'; mk.style.top = (m.y * 100) + '%'; mk.style.width = (m.w * 100) + '%';
+        // The marker PREVIEWS the tilt with the renderer's sign (talk.py rotates its patches by -angle onto
+        // the frame = this clockwise-positive screen rotation), exactly as the Meme Builder's pin does.
+        mk.style.transform = `translate(-50%, -50%) rotate(${ang}deg)`;
+    }
     const w = _g('bot_talk_mouth_w'); if (w) w.value = Math.round(m.w * 100);
+    const a = _g('bot_talk_mouth_a'); if (a) a.value = ang;
+    const ad = _g('bot_talk_mouth_adeg'); if (ad) ad.textContent = (ang > 0 ? '+' : '') + ang + '°';
     _setChk('bot_talk_mouth_anime', m.anime);
 }
 function _talkPaintFaces() {
@@ -767,6 +776,7 @@ document.addEventListener('change', async e => {
     if (t.id === 'bot_f_talk_enabled') { _talkPaint(); return; }
     if (t.id === 'bot_talk_mouth_w') { const m = _talkMouth(); m.w = (+t.value || 12) / 100; _talkSetMouth(m); return; }
     if (t.id === 'bot_talk_mouth_anime') { const m = _talkMouth(); m.anime = t.checked; _talkSetMouth(m); return; }
+    if (t.id === 'bot_talk_mouth_a') { const m = _talkMouth(); m.angle = +t.value || 0; _talkSetMouth(m); return; }
     const st = _g(t.id === 'bot_talk_voice_file' ? 'bot_talk_voice_state' : 'bot_talk_preview_state');
     const file = t.files && t.files[0];
     if (!file || (t.id !== 'bot_talk_face_file' && t.id !== 'bot_talk_voice_file')) return;
@@ -803,6 +813,12 @@ document.addEventListener('change', async e => {
             const vs = _g('bot_talk_voice_state'); if (vs) vs.textContent = `✓ voice set (${d.seconds}s)`;
         }
     } catch (err) { if (st) st.textContent = '❌ ' + ((err && err.message) || err); t.value = ''; }
+});
+// Width and tilt follow the slider WHILE it moves; `change` only fires on release.
+document.addEventListener('input', e => {
+    const t = e.target; if (!t) return;
+    if (t.id === 'bot_talk_mouth_a') { const m = _talkMouth(); m.angle = +t.value || 0; _talkSetMouth(m); }
+    else if (t.id === 'bot_talk_mouth_w') { const m = _talkMouth(); m.w = (+t.value || 12) / 100; _talkSetMouth(m); }
 });
 // Drag the mouth marker — pointer events, so it works with a finger as well as a mouse.
 document.addEventListener('pointerdown', e => {

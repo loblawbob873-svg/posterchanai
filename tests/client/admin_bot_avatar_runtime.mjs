@@ -36,7 +36,7 @@ function world({ id = '', nsec = '', uploadOk = true } = {}) {
     calls.push({ url, method: opt.method || 'GET', body });
     if (url.endsWith('/talk/face')) {
       const n = calls.filter(c => c.url.endsWith('/talk/face')).length;
-      return { ok: true, json: async () => ({ sha: String(n).repeat(64), mouth: { found: true, x: 0.1 * n, y: 0.6, w: 0.1 } }) };
+      return { ok: true, json: async () => ({ sha: String(n).repeat(64), mouth: { found: true, x: 0.1 * n, y: 0.6, w: 0.1, angle: n === 1 ? 12 : 0 } }) };
     }
     if (url.endsWith('/upload-avatar')) {
       return uploadOk ? { ok: true, json: async () => ({ url: 'https://poster.place/blossom/abc.png' }) }
@@ -71,7 +71,8 @@ function world({ id = '', nsec = '', uploadOk = true } = {}) {
   };
   document.addEventListener = (type, fn) => (handlers[type] = handlers[type] || []).push(fn);
   document.removeEventListener = () => {};
-  return { el, calls, api: ctx.__api, pick, addFace, click, drag };
+  const slide = (id, v, type = 'input') => { el(id).value = String(v); (handlers[type] || []).forEach(h => h({ target: el(id) })); };
+  return { el, calls, api: ctx.__api, pick, addFace, click, drag, slide };
 }
 const settle = () => new Promise(r => setTimeout(r, 20));
 const uploads = c => c.filter(x => x.url.endsWith('/upload-avatar'));
@@ -131,6 +132,24 @@ const saves = c => c.filter(x => /\/api\/admin\/bots(\/\d+)?$/.test(x.url) && x.
   await w.api.saveBot(); await settle();
   const saved = JSON.parse(saves(w.calls)[0].body.config.talk_faces || '[]');
   check(saved.length === 2 && saved[0].mouth.x === f[0].mouth.x, 'Save did not persist the faces and their mouths');
+}
+
+{ // "for talking bots, we need mouth tilt like meme builder": a tilt per face, previewed on the marker
+  const w = world({ id: '27' });
+  const faces = () => JSON.parse(w.el('bot_f_talk_faces').value || '[]');
+  w.addFace(); await settle(); w.addFace(); await settle();
+  w.click({ 'data-talk-face': '0' });
+  check(w.el('bot_talk_mouth_a').value == 12, 'the detected tilt did not reach the slider: ' + w.el('bot_talk_mouth_a').value);
+  check(w.el('bot_talk_mouth_adeg').textContent === '+12°', 'the tilt label is wrong: ' + w.el('bot_talk_mouth_adeg').textContent);
+  w.slide('bot_talk_mouth_a', -20);                     // moving the slider, not only releasing it
+  check(faces()[0].mouth.angle === -20, 'the tilt slider did not set face 1\'s tilt: ' + faces()[0].mouth.angle);
+  check(/rotate\(-20deg\)/.test(w.el('bot_talk_mouth').style.transform || ''), 'the marker does not preview the tilt: ' + w.el('bot_talk_mouth').style.transform);
+  check(faces()[1].mouth.angle === 0, 'tilting face 1 tilted face 2');
+  w.slide('bot_talk_mouth_a', 90, 'change');
+  check(faces()[0].mouth.angle === 45, 'the tilt was not clamped to the renderer\'s range: ' + faces()[0].mouth.angle);
+  await w.api.saveBot(); await settle();
+  const saved = JSON.parse(saves(w.calls)[0].body.config.talk_faces || '[]');
+  check(saved[0].mouth.angle === 45 && saved[1].mouth.angle === 0, 'Save did not keep each face\'s tilt');
 }
 
 if (failures.length) { console.error(failures.map(f => '✗ ' + f).join('\n')); process.exit(1); }

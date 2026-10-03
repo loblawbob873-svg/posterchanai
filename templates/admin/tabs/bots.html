@@ -226,6 +226,10 @@
                         <div class="bot-talk-row" id="bot_talk_mouth_row" hidden>
                             <label for="bot_talk_mouth_w">Mouth width</label>
                             <input type="range" id="bot_talk_mouth_w" min="2" max="40" step="1" value="12">
+                            <!-- Tilt, as in the Meme Builder: a head that is not upright opens its mouth along its own
+                                 axis, not straight down the screen. The marker rotates to preview it. -->
+                            <label for="bot_talk_mouth_a">Tilt <b id="bot_talk_mouth_adeg" class="bots-dim">0°</b></label>
+                            <input type="range" id="bot_talk_mouth_a" min="-45" max="45" step="1" value="0">
                             <label><input type="checkbox" id="bot_talk_mouth_anime"> Drawing / anime <span class="bots-dim">(redraws the mouth instead of moving the jaw)</span></label>
                         </div>
                     </div>
