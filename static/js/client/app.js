@@ -13048,6 +13048,8 @@
   // Shared surface for separate game modules (chess.js, future tic-tac-toe, …) so per-game UI lives
   // in its own file without bloating this core. Live getters for the mutable ME/CFG/VIEW.
   window.__PC = {
+    // buddy.js: the desktop PosterChan's on/off and spot follow the account (pcai:client-prefs).
+    saveDesktopBuddy: v => { try{ _prefTouched.add('desktopBuddy'); }catch(_){} return saveClientPrefsNostr({ desktopBuddy: v }); },
     // os.js: the desktop's compose window must not close while its reply is still being sent.
     publishesSettled,
     // The one themed sheet. osshell.js draws Print Screen's prompt with it, so the desktop comes in

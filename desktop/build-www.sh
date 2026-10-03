@@ -58,6 +58,8 @@ cp "$SRC"/static/js/client/sw.js      www/sw.js
 # app has existed: both are loaded on DEMAND, so nothing breaks until someone opens that one screen.
 # Copying the directory means adding a vendored library cannot forget the app again.
 cp -r "$SRC"/static/vendor            www/static/
+# The desktop PosterChan's dance frames (buddy.js asks for /static/mascot/dance/dance-N.webp).
+mkdir -p www/static/mascot && cp -r "$SRC"/static/mascot/dance www/static/mascot/
 # Every image the client can reference by URL, not just PNGs. `client.css` asks for
 # /static/os-wallpaper.webp, which no glob here matched, so the bundled apps lost the desktop-mode
 # wallpaper while the website kept it — the same shape as the missing fonts above, and invisible for

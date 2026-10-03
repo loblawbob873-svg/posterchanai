@@ -12018,3 +12018,16 @@ img.md-rel:not([src]){display:none}
 :root:has(> .lightbox) #toast-root{bottom:calc(140px + env(safe-area-inset-bottom))}   /* the viewer mounts on <html>, not <body> */
 
 .mail-searching{display:flex;align-items:center;gap:10px;padding:16px}.mail-search-note{padding:6px 12px}
+
+/* PosterChan on the desktop (buddy.js). Above wallpaper + icons, below widgets (6) and windows (10+). */
+.os-buddy{position:absolute;z-index:5;width:174px;height:240px;cursor:grab;touch-action:none;user-select:none;
+  -webkit-user-select:none;filter:drop-shadow(0 6px 10px rgba(0,0,0,.35))}
+.os-buddy.dragging{cursor:grabbing}
+.os-buddy img{width:100%;height:100%;object-fit:contain;pointer-events:none;-webkit-user-drag:none;display:block}
+.os-buddy.hop{animation:buddyHop .45s cubic-bezier(.3,1.6,.5,1)}
+@keyframes buddyHop{0%{transform:translateY(0)}40%{transform:translateY(-26px)}100%{transform:translateY(0)}}
+.os-buddy-say{position:absolute;left:50%;top:-6px;transform:translate(-50%,-100%);white-space:nowrap;
+  padding:4px 10px;border-radius:12px;background:var(--surface,#1f1f2e);color:var(--text,#fff);font-size:13px;
+  border:1px solid var(--line,rgba(255,255,255,.15));opacity:0;transition:opacity .2s;pointer-events:none}
+.os-buddy-say.on{opacity:1}
+@media(prefers-reduced-motion:reduce){ .os-buddy.hop{animation:none} }

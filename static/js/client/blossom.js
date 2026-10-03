@@ -323,6 +323,11 @@ window.PCBlossomFactory = function(dep){
         window.PCRightPanel.set(!pr.rightPanel);
         try{ const sw=$('#set-right-panel'); if(sw) sw.checked=pr.rightPanel; }catch(_){}
       }
+      if(!_prefTouched.has('desktopBuddy') && pr.desktopBuddy && typeof pr.desktopBuddy === 'object'){
+        ClientSettings.set('desktopBuddy', pr.desktopBuddy);
+        try{ window.PCBuddy && window.PCBuddy.refresh(); }catch(_){}
+        try{ const sw=$('#set-desktop-buddy'); if(sw) sw.checked = pr.desktopBuddy.on !== false; }catch(_){}
+      }
       // Re-render on restore: `fn` is captured when a timeline draws, so adopting the synced value
       // without redrawing would leave the feed showing whatever the previous setting produced.
       if(!_prefTouched.has('hideReplies') && typeof pr.hideReplies==='boolean'

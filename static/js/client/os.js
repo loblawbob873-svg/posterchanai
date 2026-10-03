@@ -6766,6 +6766,9 @@
     applyWallpaper(lay.bg);
     drawWidgets();
     wireIcons(grid, null);
+    // PosterChan dancing on the desktop (buddy.js) -- on the monitor that owns the background only.
+    try{ if(window.PCBuddy && !(window.pcShell && pcShell.backgroundOwner === false))
+      PCBuddy.mount(desk, { menu: (x, y, rows) => showCtx(x, y, rows) }); }catch(_){}
     /* The desktop's own menu is bound to the DESK, not to the icon grid: the grid is only as big as
      * the icons in it, and "right-click the empty wallpaper" is where anyone would look for it.
      * Everything with a menu of its own — an icon, a folder window, the menu itself — is left alone,
@@ -9106,6 +9109,8 @@
     if(Object.keys(lay.pos || {}).length)
       rows.push({ label: 'Line the icons up', run: () => lineUp() });
     rows.push({ label: 'Add a widget…', run: () => widgetPicker() });
+    // Hiding her is one right-click; this is the way back.
+    try{ if(window.PCBuddy && !PCBuddy.isOn()) rows.push({ label: 'Show PosterChan', run: () => PCBuddy.show() }); }catch(_){}
     // Only where there are programs to start: a browser opening the same account has none.
     try{ if(window.PCOSShell && PCOSShell.available() && PCOSShell.allApps)
       rows.push({ label: 'Add a program…', run: () => programPicker() }); }catch(_){}
@@ -11721,6 +11726,7 @@
     if(!on) return;
     on = false;
     _publishShellFront();   // this surface is an application again — see _publishShellFront
+    try{ window.PCBuddy && PCBuddy.unmount(); }catch(_){}
     try{ delete window.__PC_COMPOSE_HOST; }catch(_){ window.__PC_COMPOSE_HOST = null; }
     _deskLayoutSize=null;
     _keyboardViewport=false;

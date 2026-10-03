@@ -113,6 +113,7 @@ const SHELL = [
   '/static/js/client/sms-reactions.js',
   '/static/js/client/sms.js',
   '/static/js/client/os.js',
+  '/static/js/client/buddy.js',
   '/static/js/client/stats.js',
   '/static/js/client/user-analytics.js',
   '/static/js/client/git.js',
