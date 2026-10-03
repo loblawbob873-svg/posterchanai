@@ -3207,7 +3207,49 @@
     { id:'voice', name:'Voice cloning', about:'The voice model (about 6 GB) downloads on first use.', needs:'ai' },
   ];
   const _SERVER_PREV_INSTANCE = 'pc_server_prev_instance';
+  /* POSTERCHAN APPS AT LOGIN ("System Settings -> Startup Apps, no posterchan apps listed"). The list
+   * above is ~/.config/autostart, i.e. installed programs; PosterChan's own apps live in this client and
+   * were never offered. They are a synced preference (`startupApps`, a list of views, in pcai:client-prefs)
+   * and the desktop opens them itself once the account's preferences have arrived. */
+  function _startupViews(){
+    try{ const v=window.ClientSettings && ClientSettings.get('startupApps', []); return Array.isArray(v) ? v.filter(x=>typeof x==='string') : []; }catch(_){ return []; }
+  }
+  function _wireStartupPcApps(card){
+    const host=card.querySelector('[data-startup-pc-list]'); if(!host) return;
+    const draw=()=>{
+      const on=new Set(_startupViews());
+      host.innerHTML=apps().filter(a=>!a.off).map(a=>`<label class="os-startup-pc"><span class="os-startup-nm"><b>${enc(a.label)}</b></span>
+        <span class="switch"><input type="checkbox" data-startup-view="${enc(a.view)}" ${on.has(a.view)?'checked':''} aria-label="Open ${enc(a.label)} when I log in"><span class="slider"></span></span></label>`).join('');
+      host.querySelectorAll('[data-startup-view]').forEach(cb=>cb.onchange=()=>{
+        const set=new Set(_startupViews());
+        if(cb.checked) set.add(cb.dataset.startupView); else set.delete(cb.dataset.startupView);
+        const list=[...set];
+        try{ ClientSettings.set('startupApps', list); }catch(_){}
+        try{ PC().saveStartupApps && PC().saveStartupApps(list); }catch(_){}
+      });
+    };
+    draw();
+  }
+  let _startupRan=false;
+  /* Once per desktop session, on PosterChanOS only (real app windows), and only on the monitor that owns
+   * the background -- two screens must not each open every app. */
+  function runStartupApps(){
+    if(_startupRan) return 0;
+    // Only the desktop itself: never a popup page or an app window (they load this same client).
+    try{ const q=new URLSearchParams(location.search); if(q.get('pcpopup') || q.get('pcwin')) return 0; }catch(_){}
+    if(document.documentElement.classList.contains('pc-oswin')) return 0;
+    if(!(window.PCOSWin && PCOSWin.enabled && PCOSWin.enabled())) return 0;
+    if(window.pcShell && pcShell.backgroundOwner === false) return 0;
+    _startupRan=true;
+    const known=new Set(apps().filter(a=>!a.off).map(a=>a.view));
+    const want=_startupViews().filter(v=>known.has(v));
+    want.forEach((v,i)=>setTimeout(()=>{ try{ routeView(v); }catch(_){} }, 400 + i*700));
+    return want.length;
+  }
+  // Fallback when the account's preferences never arrive (offline): use what this machine holds.
+  setTimeout(()=>{ try{ runStartupApps(); }catch(_){} }, 15000);
   function _wireStartupApps(card){
+    try{ _wireStartupPcApps(card.closest('section') || card); }catch(_){}
     const listEl=card.querySelector('[data-startup-list]'), statEl=card.querySelector('[data-startup-status]');
     const say=t=>{ if(statEl) statEl.textContent=t||''; };
     const act=async(fn, done)=>{ try{ const r=await fn(); if(done) say(done); await refresh(); return r; }
@@ -3537,7 +3579,9 @@
             <div data-startup-list class="os-startup-list"><div class="empty">Loading…</div></div>
             <div class="os-set-actions os-startup-add"><select class="input" data-startup-app aria-label="An installed app"><option value="">Add an installed app…</option></select><button class="btn primary" data-startup-add-app>Add</button></div>
             <div class="os-set-actions os-startup-add"><input class="input" data-startup-name placeholder="Name (optional)" aria-label="Name"><input class="input" data-startup-exec placeholder="Command, e.g. syncthing --no-browser" aria-label="Command"><label class="os-startup-term"><input type="checkbox" data-startup-term> In a terminal</label><button class="btn" data-startup-add-cmd>Add command</button></div>
-            <div class="muted" data-startup-status></div></div></section>`:''}
+            <div class="muted" data-startup-status></div></div>
+          <div class="os-set-card" data-startup-pc><div class="os-set-cardhead"><b>PosterChan apps</b><span>Opened in their own windows when you log in. Saved with your account, so every machine you sign into does the same.</span></div>
+            <div data-startup-pc-list class="os-startup-list"></div></div></section>`:''}
         <section data-settings-page="printers" ${_osSettingsPage==='printers'?'':'hidden'}><header class="os-set-pagehead"><div>${iconSvg('i-note')}</div><span><h2>Printers</h2><p>Add a printer and print a test page.</p></span></header>${window.pcPrinters?`<div class="os-set-card" data-printers><div class="os-set-cardhead"><b>Printers on this computer</b><span>CUPS's own pages ask for a Unix password and a PosterChan identity account has none, so printers are managed here — using the administrator rights this account already holds.</span></div>
           <div data-printer-list class="os-printer-list"><div class="empty">Loading…</div></div>
           <div class="os-set-actions"><button class="btn" data-printer-refresh>Refresh</button><button class="btn primary" data-printer-find>Find printers</button><span class="muted" data-printer-status></span></div>
@@ -12616,7 +12660,7 @@
                    * agree with a cold one: boot already restored the desktop before this runs. */
                   mobileLanding: () => { if(!on && !popupKind() && !_authGateUp() && wantsDesktop()) enter(); },
                   wantsDesktop,
-                  isOn: () => on, openDoc, focusDoc, closeDoc, frontSnapshot, frontRestore, askDesktop, captureReturnTarget, windowOpenHint: _windowOpenHint, routeView, routeApp, snapTo, documentWindow,
+                  isOn: () => on, runStartupApps, openDoc, focusDoc, closeDoc, frontSnapshot, frontRestore, askDesktop, captureReturnTarget, windowOpenHint: _windowOpenHint, routeView, routeApp, snapTo, documentWindow,
                   openSystemSettings, osToast, pageWindowAI,
                   // app.js calls this when the player's state changes — the Now-playing widget has
                   // nothing to subscribe to, and polling an element we could be told about is the

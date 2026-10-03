@@ -76,3 +76,43 @@ def test_startup_apps_can_be_added_switched_run_and_removed():
         assert not await b.js('__errors'), await b.js('__errors')
 
     asyncio.run(desktop.with_browser('online', '', check, FIXTURE))
+
+
+PC_FIXTURE = FIXTURE + r'''
+window.__startupSaves=[];window.__opened=[];
+'''
+
+
+@pytest.mark.skipif(not Path('/opt/google/chrome/chrome').exists(), reason='Chrome required')
+def test_posterchan_apps_can_be_chosen_to_open_at_login_and_follow_the_account():
+    """'System Settings -> Startup Apps, no posterchan apps listed? wtf': PosterChan's own apps are offered,
+    saved in the synced preferences, and the desktop opens them -- once -- at login."""
+    got = {}
+
+    async def check(b):
+        await desktop.login(b)
+        await b.until("!!document.body && document.body.classList.contains('os-on') && !!document.querySelector('#os-bar')")
+        await b.js("document.getElementById('osfr')?.remove();document.documentElement.classList.remove('osfr-on')")
+        await b.js("(()=>{const pc=window.__PC,s=pc.saveStartupApps;pc.saveStartupApps=v=>{__startupSaves.push(v.slice());return s&&s(v)}})()")
+        await b.js("PCOS.openSystemSettings()")
+        await b.until("!!document.querySelector('.os-set-nav [data-page=\"startup\"]')")
+        await b.js("document.querySelector('.os-set-nav [data-page=\"startup\"]').click()")
+        page = "document.querySelector('[data-settings-page=\"startup\"]:not([hidden])')"
+        await b.until(f"!!{page} && {page}.querySelectorAll('[data-startup-view]').length>3")
+        got['offered'] = await b.js(f"[...{page}.querySelectorAll('[data-startup-view]')].map(x=>x.dataset.startupView)")
+        for v in ('messages', 'notes'):
+            await b.js(f"(()=>{{const c={page}.querySelector('[data-startup-view=\"{v}\"]');c.checked=true;c.dispatchEvent(new Event('change'))}})()")
+        got['saved'] = await b.js("__startupSaves.slice(-1)[0]")
+        got['local'] = await b.js("ClientSettings.get('startupApps',[])")
+        # At login on PosterChanOS (real app windows): the desktop opens them, once.
+        await b.js("PCOSWin.enabled=()=>true;PCOSWin.open=(v)=>{__opened.push(v);return {}};true")
+        got['count'] = await b.js("PCOS.runStartupApps()")
+        await asyncio.sleep(2.4)
+        got['opened'] = await b.js("__opened.slice()")
+        got['again'] = await b.js("PCOS.runStartupApps()")
+
+    asyncio.run(desktop.with_browser('online', '', check, PC_FIXTURE))
+    assert {'messages', 'notes', 'global'} <= set(got['offered']), ("PosterChan apps not offered", got['offered'])
+    assert got['saved'] == ['messages', 'notes'] and got['local'] == ['messages', 'notes'], got
+    assert got['count'] == 2 and sorted(got['opened']) == ['messages', 'notes'], ("not opened at login", got)
+    assert got['again'] == 0, "a second call opened them again"

@@ -323,6 +323,9 @@ window.PCBlossomFactory = function(dep){
         window.PCRightPanel.set(!pr.rightPanel);
         try{ const sw=$('#set-right-panel'); if(sw) sw.checked=pr.rightPanel; }catch(_){}
       }
+      // PosterChan apps opened at login (os.js runStartupApps): adopt the account's list, then open them.
+      if(!_prefTouched.has('startupApps') && Array.isArray(pr.startupApps)) ClientSettings.set('startupApps', pr.startupApps);
+      try{ window.PCOS && PCOS.runStartupApps && PCOS.runStartupApps(); }catch(_){}
       if(!_prefTouched.has('desktopBuddy') && pr.desktopBuddy && typeof pr.desktopBuddy === 'object'){
         ClientSettings.set('desktopBuddy', pr.desktopBuddy);
         try{ window.PCBuddy && window.PCBuddy.refresh(); }catch(_){}
