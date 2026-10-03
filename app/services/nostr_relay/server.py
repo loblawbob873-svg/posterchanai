@@ -554,66 +554,25 @@ class RelayServer:
         # enumerated in the no-name nostr.json dump (there can be tens of thousands).
         self._bridge_nip05: dict = {}
         self._bridge_pubkeys: set = set()   # puppet pubkeys (values of _bridge_nip05) — DM inbox set
-        # Anti-spam (see _rate_limited): pubkey -> [minute tokens, hour tokens, last refill time], and
-        # (pubkey, content hash) -> recent timestamps of the same post.
-        self._rate: dict = {}
-        self._dups: dict = {}
-
-    # High-volume by design, never rate-limited: app data, gift-wrapped DMs/Concord, NIP-46 signer traffic.
-    _RATE_EXEMPT_KINDS = frozenset({78, 30078, 1059, 24133, 22242})
+        # One spam guard for direct writes, the firehose and the fediverse (spamguard.py).
+        from .spamguard import SpamGuard
+        self.spam = SpamGuard(config)
 
     def _rate_limited(self, conn, ev, kind) -> str:
-        """PREVENTION, set well above how people actually post ("we need to come up with some relay
-        anti-spam features/protections ... this is about prevention"). Measured over a week on this relay:
-        the busiest minute any one author published DIRECTLY here was 31 events, and the most times the
-        same note was repeated in an hour was 7. Defaults are 120 a minute (with 10x that an hour) and 20
-        identical posts an hour -- about four times either. Over the line the event is refused with the
-        NIP-01 'rate-limited:' prefix, so a client shows a real error instead of losing it silently. Our
-        own machines (the app, bots, the bridge, node agents -- LAN peers) are never limited, nor are the
-        kinds that are high-volume by design. 0 turns either limit off (Admin -> Nostr Relay)."""
-        if kind in self._RATE_EXEMPT_KINDS or self._is_internal(self._conn_ips.get(conn, "?")):
+        """Spam guard (spamguard.py): timeline posts only. A fediverse post (one of our bridge's puppets)
+        is judged by its own timestamps even though the bridge is one of our LAN machines; any other
+        LAN peer (the app, bots, node agents) is ours and never limited; everyone else is counted by
+        arrival. '' = allowed."""
+        if not self.spam.applies(ev):
             return ""
-        pk = str(ev.get("pubkey", ""))
-        now = time.time()
         try:
-            per_min = int(self.cfg.get("rate_per_min", 120) or 0)
-        except (TypeError, ValueError):
-            per_min = 120
-        try:
-            dup_max = int(self.cfg.get("dup_per_hour", 20) or 0)
-        except (TypeError, ValueError):
-            dup_max = 20
-        if per_min > 0:
-            per_hour = per_min * 10
-            b = self._rate.get(pk)
-            if b is None:
-                b = [float(per_min), float(per_hour), now]
-            else:
-                dt = max(0.0, now - b[2])
-                b = [min(per_min, b[0] + dt * per_min / 60.0), min(per_hour, b[1] + dt * per_hour / 3600.0), now]
-            if b[0] < 1 or b[1] < 1:
-                self._rate[pk] = b
-                return f"rate-limited: slow down, more than {per_min} a minute or {per_hour} an hour"
-            b[0] -= 1
-            b[1] -= 1
-            self._rate[pk] = b
-            if len(self._rate) > 50000:          # bounded: forget authors whose buckets have refilled
-                for k in [k for k, v in self._rate.items() if now - v[2] > 3600][:25000]:
-                    self._rate.pop(k, None)
-        content = str(ev.get("content") or "")
-        if dup_max > 0 and kind in (1, 1111) and len(content.strip()) >= 20:
-            import hashlib
-            key = (pk, hashlib.sha256(content.strip().encode("utf-8", "replace")).hexdigest()[:24])
-            seen = [t for t in self._dups.get(key, ()) if now - t < 3600]
-            if len(seen) >= dup_max:
-                self._dups[key] = seen
-                return f"rate-limited: the same post more than {dup_max} times an hour"
-            seen.append(now)
-            self._dups[key] = seen
-            if len(self._dups) > 50000:
-                for k in [k for k, v in self._dups.items() if not v or now - v[-1] > 3600][:25000]:
-                    self._dups.pop(k, None)
-        return ""
+            if self.gate.is_puppet_event(ev):
+                return self.spam.check_timestamps(ev)
+        except Exception:
+            pass
+        if self._is_internal(self._conn_ips.get(conn, "?")):
+            return ""
+        return self.spam.check_arrival(ev)
 
     def _refuse(self, conn, eid, ev, why) -> None:
         """Answer OK-false AND say so in the log. Every refusal used to be silent server-side —
