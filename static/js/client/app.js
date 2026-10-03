@@ -11972,6 +11972,21 @@
     // function carries, and the entry point here is not that function (see menus.js).
     { const _m=_menusMod(); if(_m && _m.openEmojiPopover.closeActive) _m.openEmojiPopover.closeActive(); }
     const hints=(relays||[]).filter(u=>/^wss?:\/\//i.test(u));
+    /* ON POSTERCHANOS EVERY APP IS ITS OWN WINDOW and PCOS is off inside it, so the rule below never
+     * fired there: a post clicked in Social replaced the timeline in Social's own window (measured on
+     * the real shell). A window does not open windows -- hand the post to the DESKTOP, which opens it
+     * exactly as its own click would. Inside a post window a click stays a step within that
+     * conversation, so one thread does not become a window per reply. */
+    if(!_routing && _inWin() && !/^doc:post:/.test(PCOSWin.viewOf())){
+      try{
+        const desk=PCOSWin.desktop();
+        if(desk && desk.PCOSWin && desk.PCOSWin.enabled() && desk.PCOS && desk.PCOS.isOn() && desk.__PC && desk.__PC.openThread){
+          const have=Store.get(id); if(have){ try{ desk.Store && desk.Store.saveEvent(have); }catch(_){} }
+          desk.__PC.openThread(id, hints);
+          return;
+        }
+      }catch(_){}
+    }
     // PosterChan OS: a post opens in its own window rather than replacing the timeline behind it.
     // The window's render callback re-enters here with the guard set, so the navigation and the
     // thread render below happen exactly once — inside the new window, which now holds the feed.

@@ -117,7 +117,7 @@ def test_without_windows_an_article_has_an_address_and_back_returns_to_the_timel
 # (a live same-origin `window.opener`) opens windows -- so what is recorded is the request reaching it.
 OS_DESKTOP = ("window.__asked=[];window.__saved=[];Object.defineProperty(window,'opener',{configurable:true,value:{closed:false,"
               "__PC:{openThread:id=>__asked.push(id)},Store:{saveEvent:e=>__saved.push(e.kind)},"
-              "PCOSWin:{enabled:()=>true,routable:()=>true,open:()=>({})}}});true")
+              "PCOS:{isOn:()=>true},PCOSWin:{enabled:()=>true,routable:()=>true,open:()=>({})}}});true")
 OS_SEED = r'''(()=>{
   const author=new Uint8Array(32).fill(7);
   const art=NostrTools.finalizeEvent({kind:30023,created_at:Math.floor(Date.now()/1000)-60,content:'# Body\n\nThe article body.',
@@ -152,3 +152,58 @@ def test_on_posterchanos_an_article_in_the_social_window_asks_the_desktop_for_it
     assert 30023 in got['saved'], 'the desktop was not handed the article (its window would say "Post"): %r' % got
     assert got['social'] == {'view': 'global', 'article': False, 'card': True}, \
         'the article painted over the Social window: %r' % got
+
+
+POST_SEED = r'''(()=>{
+  const a=new Uint8Array(32).fill(7), b=new Uint8Array(32).fill(8);
+  const now=Math.floor(Date.now()/1000);
+  const root=NostrTools.finalizeEvent({kind:1,created_at:now-60,content:'the root post',tags:[]},a);
+  const reply=NostrTools.finalizeEvent({kind:1,created_at:now-30,content:'a reply to it',tags:[['e',root.id,'','root'],['p',root.pubkey]]},b);
+  window.__events=[root,reply]; window.__ids={root:root.id,reply:reply.id};
+  return true;})()'''
+
+
+@pytest.mark.skipif(not Path('/opt/google/chrome/chrome').exists(), reason='Chrome required')
+def test_on_posterchanos_a_post_in_the_social_window_asks_the_desktop_for_its_own_window():
+    """'regular posts do the same -- want posts to open in their own window too?' -> 'yes'."""
+    got = {}
+
+    async def check(b):
+        await desktop.login(b)
+        await b.until("document.documentElement.classList.contains('pc-oswin') && !!window.__PC")
+        await b.js(OS_DESKTOP)
+        await b.js(POST_SEED)
+        await b.js("__PC.switchView('global');true")
+        await b.until("!!document.querySelector('#feed .note[data-id=\"'+__ids.root+'\"] .txt')")
+        await b.js("document.querySelector('#feed .note[data-id=\"'+__ids.root+'\"] .txt').click();true")
+        await asyncio.sleep(.8)
+        got['asked'] = await b.js("__asked")
+        got['ids'] = await b.js("__ids")
+        got['social'] = await b.js("({view:__PC.VIEW, cards:document.querySelectorAll('#feed .note').length})")
+
+    asyncio.run(desktop.with_browser('online', '?pcwin=global', check, ''))
+    assert got['asked'] == [got['ids']['root']], 'the desktop was not asked to open the post: %r' % got
+    assert got['social']['view'] == 'global' and got['social']['cards'] >= 2, \
+        'the post replaced the Social timeline: %r' % got
+
+
+@pytest.mark.skipif(not Path('/opt/google/chrome/chrome').exists(), reason='Chrome required')
+def test_inside_a_post_window_a_reply_stays_in_that_window():
+    """One conversation must not become one window per reply."""
+    got = {}
+
+    async def check(b):
+        await desktop.login(b)
+        await b.until("!!window.__PC")
+        await b.js(OS_DESKTOP)
+        await b.js(POST_SEED)
+        await b.js("__PC.openThread(__ids.root);true")
+        await b.until("!!document.querySelector('#feed .thread-node .note[data-id=\"'+__ids.reply+'\"]')")
+        await b.js("window.__asked.length=0;document.querySelector('#feed .note[data-id=\"'+__ids.reply+'\"] .txt').click();true")
+        await asyncio.sleep(.8)
+        got['asked'] = await b.js("__asked")
+        got['view'] = await b.js("__PC.VIEW")
+
+    asyncio.run(desktop.with_browser('online', '?pcwin=doc:post:' + 'ab' * 32, check, ''))
+    assert got['asked'] == [], 'a reply inside a post window opened yet another window: %r' % got
+    assert got['view'] == 'thread', got

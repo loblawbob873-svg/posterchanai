@@ -83,7 +83,7 @@ window.PCDiscoverFactory = function(dep){
       const W=window.PCOSWin;
       if(!(W && W.isWindow()) || W.viewOf()==='doc:post:'+e.id) return false;
       const desk=W.desktop();
-      if(!desk || !desk.PCOSWin || !desk.PCOSWin.enabled() || !(desk.__PC && desk.__PC.openThread)) return false;
+      if(!desk || !desk.PCOSWin || !desk.PCOSWin.enabled() || !(desk.PCOS && desk.PCOS.isOn()) || !(desk.__PC && desk.__PC.openThread)) return false;
       try{ desk.Store && desk.Store.saveEvent(e); }catch(_){}   // so the desktop titles the window "Article"
       desk.__PC.openThread(e.id);
       return true;
