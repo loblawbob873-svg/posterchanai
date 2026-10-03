@@ -396,3 +396,50 @@ def test_the_route_uses_the_fleet_membership_gate():
     src = inspect.getsource(C.meme_magic_erase)
     assert "_require_member_unless_fleet_forward(request, pk)" in src
     assert '_meme_lb_forward(request, "magic-erase"' in src
+
+
+# "magic eraser needs some improvement": erasing words from a screenshot of a post left smeared,
+# ghostly letter shapes -- the fillers continued the neighbouring letters into the hole.
+def _card_with_text():
+    from PIL import Image, ImageDraw
+    img = Image.new("RGBA", (600, 213), (21, 32, 43, 255))
+    d = ImageDraw.Draw(img)
+    for i, y in enumerate((40, 80, 120)):
+        d.text((20, y), "my dad is like that: If they stop eating out all the time then they can afford it " * 2,
+               fill=(231, 233, 234, 255))
+    return np.asarray(img).copy()
+
+
+def test_erasing_words_on_a_flat_card_leaves_exactly_the_card_colour():
+    from app.services import inpaint_service as ip
+    im = _card_with_text()
+    hole = np.zeros(im.shape[:2], bool)
+    hole[76:94, 200:330] = True                     # some words in the middle line
+    out, used = ip.inpaint(im, hole)
+    assert used == "flat", used
+    reg = out[76:94, 200:330, :3].astype(int)
+    assert np.abs(reg - np.array([21, 32, 43])).max() == 0, "ghost letters left in the erased words"
+
+
+def test_a_gradient_is_not_mistaken_for_a_flat_colour():
+    from app.services import inpaint_service as ip
+    h, w = 200, 300
+    g = np.zeros((h, w, 4), np.uint8)
+    g[..., 0] = np.linspace(40, 220, w, dtype=np.uint8)[None, :]
+    g[..., 2] = np.linspace(200, 60, h, dtype=np.uint8)[:, None]
+    g[..., 3] = 255
+    hole = np.zeros((h, w), bool)
+    hole[80:120, 120:180] = True
+    out, used = ip.inpaint(g, hole)
+    assert used != "flat", "a sky gradient was filled with one flat colour"
+
+
+def test_the_flat_fill_never_touches_pixels_away_from_the_hole():
+    from app.services import inpaint_service as ip
+    im = _card_with_text()
+    hole = np.zeros(im.shape[:2], bool)
+    hole[76:94, 200:330] = True
+    out, _ = ip.inpaint(im, hole)
+    far = np.ones(hole.shape, bool)
+    far[60:110, 180:350] = False
+    assert (out[far] == im[far]).all()

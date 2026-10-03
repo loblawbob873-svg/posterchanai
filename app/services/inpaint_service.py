@@ -396,6 +396,29 @@ def _classic_fill_crop(rgb: np.ndarray, chole: np.ndarray, method: str) -> tuple
     return _resize(s_filled, cw, ch), used
 
 
+def _flat_background(rgb: np.ndarray, hole: np.ndarray, ring_px: int):
+    """The one colour the hole sits on, when it sits on one -- else None.
+
+    "magic eraser needs some improvement": erasing words from a screenshot of a post left smeared,
+    ghostly letter shapes in the gap. Next to text, every filler continues what it sees at the hole's
+    edge -- the neighbouring letters -- into it (measured: OpenCV streaked white into the dark card, up
+    to 142 levels off the background). A UI background, a slide, a card is ONE exact colour: when most
+    of the band around the hole is that colour (text glyphs are the minority), the right fill is that
+    colour, exactly. A real gradient or photo varies across the band and keeps the normal fillers."""
+    ring = _dilate(hole, ring_px) & ~hole
+    px = rgb[ring].astype(np.int16)
+    if len(px) < 32:
+        return None
+    med = np.median(px, axis=0)
+    close = np.all(np.abs(px - med) <= 6, axis=1)
+    if close.mean() < 0.6:
+        return None
+    flat = px[close]
+    if float(flat.std(axis=0).max()) > 2.5:          # a gradient, not a flat colour
+        return None
+    return np.round(flat.mean(axis=0)).astype(np.uint8)
+
+
 def inpaint(rgba: np.ndarray, hole: np.ndarray, *, method: str = "auto") -> tuple[np.ndarray, str]:
     """Fill `hole` in an HxWx4 uint8 picture. Returns (new picture, filler used).
 
@@ -432,7 +455,13 @@ def inpaint(rgba: np.ndarray, hole: np.ndarray, *, method: str = "auto") -> tupl
 
     used = ""
     filled = None
-    if method in ("auto", "lama"):
+    if method == "auto":
+        flat = _flat_background(rgb, chole, max(4, grow * 2))
+        if flat is not None:
+            filled = rgb.copy()
+            filled[chole] = flat
+            used = "flat"
+    if filled is None and method in ("auto", "lama"):
         try:
             filled = _fill_lama(rgb, chole)
         except Exception as e:
@@ -442,7 +471,7 @@ def inpaint(rgba: np.ndarray, hole: np.ndarray, *, method: str = "auto") -> tupl
             used = "lama"
         elif method == "lama":
             raise RuntimeError("the inpainting model is not available on this node")
-    if filled is not None and method == "auto":
+    if filled is not None and method == "auto" and used == "lama":
         # THE MODEL MUST NOT PUT BACK WHAT WAS BRUSHED OUT. LaMa continues structure it sees crossing
         # the hole — the right thing for a wall or a horizon, and exactly wrong for "remove this black
         # line": brush the middle of a line and it redraws the line through the hole (measured: a third
