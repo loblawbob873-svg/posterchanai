@@ -244,10 +244,12 @@ def main():
                                              offload=(_low_vram and device != "cpu") or image_pose.needs_offload(device))
             extra = {"image": pose, "controlnet_conditioning_scale": image_pose.clamp_scale(config.get("pose_scale"))}
 
-        # Generate
+        # Generate. The whole prompt reaches the model (app/services/long_prompt.py, shared with the
+        # in-process path): over 75 tokens it is encoded in chunks instead of cut at 77.
+        sys.path.insert(0, os.getcwd())
+        from app.services import long_prompt
         result = pipe(
-            prompt=prompt,
-            negative_prompt=negative_prompt,
+            **long_prompt.prompt_kwargs(pipe, prompt, negative_prompt),
             width=width,
             height=height,
             num_inference_steps=steps,

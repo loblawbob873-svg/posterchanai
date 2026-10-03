@@ -627,20 +627,6 @@ class DiffusersService:
             "backend": "native",
         }
 
-    def _truncate_prompt(self, prompt: str, max_tokens: int = 75) -> str:
-        """Truncate prompt to avoid token limit errors (SDXL limit is 77)"""
-        # Rough estimate: ~4 chars per token on average
-        max_chars = max_tokens * 4
-        if len(prompt) > max_chars:
-            # Truncate at last comma before limit to keep tags intact
-            truncated = prompt[:max_chars]
-            last_comma = truncated.rfind(',')
-            if last_comma > max_chars * 0.7:  # Keep at least 70% of content
-                truncated = truncated[:last_comma]
-            logger.warning(f"Prompt truncated from {len(prompt)} to {len(truncated)} chars")
-            return truncated
-        return prompt
-
     def _generate_sync(
         self,
         prompt: str,
@@ -654,8 +640,7 @@ class DiffusersService:
         pose_scale: float = None,
     ) -> Optional[bytes]:
         """Synchronous image generation"""
-        # Truncate prompt to avoid token limit errors
-        prompt = self._truncate_prompt(prompt)
+        # NOT truncated any more: a long prompt is encoded in full (app/services/long_prompt.py).
 
         # Select model based on prompt (anime vs default)
         target_model = self._get_model_for_prompt(prompt)
@@ -721,9 +706,11 @@ class DiffusersService:
                 if not negative_prompt:
                     negative_prompt = self.default_negative
 
+                # Every word reaches the model: over 75 tokens it is encoded in chunks (long_prompt.py)
+                # instead of being cut at 300 characters and again at 77 tokens.
+                from app.services import long_prompt
                 result = pipe(
-                    prompt=prompt,
-                    negative_prompt=negative_prompt,
+                    **long_prompt.prompt_kwargs(pipe, prompt, negative_prompt),
                     width=width,
                     height=height,
                     num_inference_steps=steps,
@@ -865,7 +852,7 @@ class DiffusersService:
         config = {
             "model_path": target_model,
             "model_type": self.model_type,
-            "prompt": self._truncate_prompt(prompt),
+            "prompt": prompt,                   # full length -- long_prompt.py encodes it there too
             "negative_prompt": negative_prompt or "bad quality, blurry, distorted, ugly, deformed, low resolution",
             "width": width,
             "height": height,
