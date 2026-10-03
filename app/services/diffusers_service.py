@@ -686,7 +686,8 @@ class DiffusersService:
                     logger.warning("Pose requested on a non-SDXL model; declining")
                     return None
                 pose = image_pose.decode_pose(pose_image, width, height)
-                posed = image_pose.wrap_with_pose(self._pipe, self._pipe.dtype, self._device, offload=is_rocm())
+                posed = image_pose.wrap_with_pose(self._pipe, self._pipe.dtype, self._device,
+                                                  offload=is_rocm() or image_pose.needs_offload(self._device))
                 pipe = posed
                 extra = {"image": pose, "controlnet_conditioning_scale": image_pose.clamp_scale(pose_scale)}
 

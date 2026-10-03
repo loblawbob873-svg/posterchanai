@@ -240,7 +240,8 @@ def main():
             sys.path.insert(0, os.getcwd())
             from app.services import image_pose
             pose = image_pose.decode_pose(config["pose_image"], width, height)
-            pipe = image_pose.wrap_with_pose(pipe, dtype, device, offload=_low_vram and device != "cpu")
+            pipe = image_pose.wrap_with_pose(pipe, dtype, device,
+                                             offload=(_low_vram and device != "cpu") or image_pose.needs_offload(device))
             extra = {"image": pose, "controlnet_conditioning_scale": image_pose.clamp_scale(config.get("pose_scale"))}
 
         # Generate

@@ -76,7 +76,28 @@ def wrap_with_pose(pipe, dtype, device: str, configured: str | None = None, offl
         posed.enable_model_cpu_offload()
     elif device != "cpu":
         posed.controlnet.to(device)
+    try:
+        posed.enable_vae_tiling()        # the full-size decode is the other big allocation
+    except Exception:
+        pass
     return posed
+
+
+SMALL_GPU_BYTES = 14 * 1024 ** 3
+
+
+def needs_offload(device: str) -> bool:
+    """Page the posed pipeline through the CPU on a small CUDA card. SDXL + this ControlNet at 832x1216
+    ran a 12 GB RTX 3060 out of memory ("Tried to allocate 832.00 MiB ... 734.88 MiB is free") while the
+    16 GB Arc did it in 35-70 s. Offload costs speed, never correctness; the generator unloads the model
+    after every image, so the paging hooks never outlive the request."""
+    if device != "cuda":
+        return False
+    try:
+        import torch
+        return torch.cuda.get_device_properties(0).total_memory < SMALL_GPU_BYTES
+    except Exception:
+        return False
 
 
 def clamp_scale(v) -> float:

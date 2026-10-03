@@ -145,3 +145,39 @@ def test_a_pose_that_is_not_an_image_is_refused():
     with pytest.raises(ValueError):
         image_pose.decode_pose(base64.b64encode(b"not a png").decode(), 64, 64)
     assert image_pose.clamp_scale(9) == 2.0 and image_pose.clamp_scale("x") == 1.0
+
+
+def test_a_small_cuda_card_pages_the_posed_model_through_the_cpu(monkeypatch):
+    """A 12 GB RTX 3060 ran out of memory on the first posed frame; the 16 GB Arc did not."""
+    import torch
+    monkeypatch.setattr(torch.cuda, "get_device_properties", lambda i: types.SimpleNamespace(total_memory=12 * 1024 ** 3))
+    assert image_pose.needs_offload("cuda") is True
+    monkeypatch.setattr(torch.cuda, "get_device_properties", lambda i: types.SimpleNamespace(total_memory=24 * 1024 ** 3))
+    assert image_pose.needs_offload("cuda") is False
+    assert image_pose.needs_offload("xpu") is False and image_pose.needs_offload("cpu") is False
+
+
+def test_the_generator_asks_for_offload_on_a_small_card(monkeypatch):
+    from app.services import diffusers_service as ds
+    asked = {}
+
+    class Pipe:
+        dtype = "bf16"
+        def __call__(self, **kw):
+            return types.SimpleNamespace(images=[Image.effect_noise((64, 96), 60).convert("RGB")])
+
+    def wrap(pipe, dtype, device, configured=None, offload=False):
+        asked["offload"] = offload
+        return pipe
+    svc = ds.DiffusersService.__new__(ds.DiffusersService)
+    svc.model_type, svc._device, svc._pipe = "sdxl", "cuda", Pipe()
+    svc.default_width, svc.default_height, svc.default_steps, svc.default_cfg = 64, 96, 2, 5.0
+    svc.default_negative, svc._last_used, svc.anime_model_path, svc.model_path, svc._model_path = "", 0, "", "m", "m"
+    monkeypatch.setattr(svc, "_ensure_model_loaded", lambda m=None: None)
+    monkeypatch.setattr(image_pose, "wrap_with_pose", wrap)
+    monkeypatch.setattr(image_pose, "needs_offload", lambda d: d == "cuda")
+    monkeypatch.setattr(ds, "is_rocm", lambda: False)
+    import torch
+    monkeypatch.setattr(torch, "Generator", lambda device=None: types.SimpleNamespace(manual_seed=lambda s: None))
+    svc._generate_sync("dancing", width=64, height=96, pose_image=_png(10, 10))
+    assert asked.get("offload") is True, "a small CUDA card was not asked to offload the posed model"
