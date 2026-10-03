@@ -710,6 +710,8 @@ class SettingsResponse(BaseModel):
     nostr_relay_backup_datastore: Optional[bool] = True  # broadcast the encrypted pcai: config docs (settings/accounts/bots) to upstream relays for disaster recovery (ON by default — Nostr-based DR)
     nostr_relay_firehose_enabled: Optional[bool] = None  # live firehose sync (real-time)
     nostr_relay_posterchan_clients_only: Optional[bool] = False
+    nostr_relay_posts_per_min: Optional[int] = 10   # new posts a minute per author, every route; 0 = off
+    nostr_relay_same_per_hour: Optional[int] = 3    # the same post per author per hour; 0 = off
     nostr_relay_posterchan_origins: Optional[str] = ""
     nostr_relay_bind: Optional[str] = None
     nostr_relay_port: Optional[int] = None

@@ -453,6 +453,9 @@ def _read_config() -> dict:
             # on a normal domain and its proxy URL points at the original instance, never the bridge.
             "block_bridged": gb("nostr_relay_block_bridged", False),
             "posterchan_clients_only": gb("nostr_relay_posterchan_clients_only", False),
+            # New-post limits (spamguard.py), every route into the timeline. 0 = off.
+            "posts_per_min": gi("nostr_relay_posts_per_min", 10),
+            "same_per_hour": gi("nostr_relay_same_per_hour", 3),
             "posterchan_origins": (g("nostr_relay_posterchan_origins", "") or
                 ("https://" + g("nostr_relay_nip05_domain", "poster.place").strip().lstrip("@") +
                  " https://localhost capacitor://localhost app://posterchan")).replace(",", " ").split(),
@@ -927,6 +930,10 @@ async def _main(cfg: dict) -> None:
         # toggle ON.) One function means the three ingestion paths cannot drift apart again.
         from .ingest import _content_blocked
         if _content_blocked(ev, _bl, _bw, cfg.get("block_json", True)):
+            return
+        _spam = getattr(server, "spam", None)          # new-post limits (spamguard.py)
+        if _spam is not None and _spam.check(ev):
+            _fh_mark(eid)   # decided: not stored, do not ask again
             return
         if await store.add_event(ev, origin="wot"):
             _fh_mark(eid)   # mark seen ONLY after a successful store (so a transient fail can retry)

@@ -554,6 +554,9 @@ class RelayServer:
         # enumerated in the no-name nostr.json dump (there can be tens of thousands).
         self._bridge_nip05: dict = {}
         self._bridge_pubkeys: set = set()   # puppet pubkeys (values of _bridge_nip05) — DM inbox set
+        # New-post limits (spamguard.py): posts per minute and the same text over and over.
+        from .spamguard import SpamGuard
+        self.spam = SpamGuard(config)
 
     def _refuse(self, conn, eid, ev, why) -> None:
         """Answer OK-false AND say so in the log. Every refusal used to be silent server-side —
@@ -1447,6 +1450,14 @@ class RelayServer:
         if _retired:
             self._refuse(conn, eid, ev, _retired)
             return
+        # New-post limits (spamguard.py). A fediverse post (a bridge puppet) is checked even though the
+        # bridge is one of our LAN machines; the app's own other LAN traffic is not.
+        if self.spam.applies(ev) and (self.gate.is_puppet_event(ev)
+                                      or not self._is_internal(self._conn_ips.get(conn, "?"))):
+            _limited = self.spam.check(ev)
+            if _limited:
+                self._refuse(conn, eid, ev, _limited)
+                return
         # Reject EMPTY text notes (kind-1 with blank/whitespace-only content) — pure spam/noise with
         # nothing to render. Other kinds legitimately have empty content (kind-3 follows, kind-6 reposts,
         # kind-7 reactions, kind-5 deletes), so this is scoped to kind 1 only.

@@ -149,6 +149,8 @@ async def sync_tick(store, gate, server, upstream, cfg) -> int:
             # about what "blocked" means — which is how a repost of blocked content got in.
             if _content_blocked(ev, blocked, blocked_words, block_json):
                 continue
+            if getattr(server, "spam", None) is not None and server.spam.check(ev):   # new-post limits
+                continue
             to_store.append(ev)
         if to_store:
             await store.add_events_bulk(to_store, origin="wot")
@@ -212,6 +214,8 @@ async def _backfill_filter(store, server, upstream, base_filter: dict, *, direct
             if not _is_evid(ev.get("id")) or not verify_event(ev):
                 continue
             if await store.has_event(ev["id"]):
+                continue
+            if getattr(server, "spam", None) is not None and server.spam.check(ev):   # new-post limits
                 continue
             if await store.add_event(ev, origin="wot"):
                 stored += 1
