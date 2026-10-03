@@ -70,6 +70,23 @@ async def run():
                     return {{panel:vis(rb), toggle:vis(t), stored:localStorage.getItem('rbCollapsed'),
                       floating:[...document.querySelectorAll('body *')].filter(e=>/rb-|right/.test(String(e.className))&&vis(e)&&['fixed','absolute'].includes(getComputedStyle(e).position)).length,
                       feedW:document.getElementById('feed').getBoundingClientRect().width}};}})()""")
+                async def reload_and_read():
+                    await b.call("Page.reload", {"ignoreCache": False})
+                    await b.until('!!window.__PC && !!window.NostrTools && document.readyState==="complete"')
+                    await b.until('!!__PC.me()')
+                    await b.js("__PC.switchView('global')")
+                    await b.until("window.__feedCards() >= 4")
+                    await asyncio.sleep(.8)
+                    panel = await b.js("document.querySelector('.rightbar').getClientRects().length>0")
+                    await b.js("__PC.switchView('settings')")
+                    await b.until("!!document.querySelector('.us-tab[data-tab=\"timeline\"]')")
+                    await b.js("document.querySelector('.us-tab[data-tab=\"timeline\"]').click()")
+                    await b.until("!!document.getElementById('set-right-panel')")
+                    sw = await b.js("document.getElementById('set-right-panel').checked")
+                    await b.js("__PC.switchView('global')")
+                    await asyncio.sleep(.5)
+                    return {"panel": panel, "switch": sw}
+                res["after_hide_reload"] = await reload_and_read()
                 # EVERY app, with the panel ON: where an app hides the panel to get the width ("so they have
                 # more space"), its control must go too. The old tab stayed on 42 of them, doing nothing.
                 await b.js("PCRightPanel.set(false)")
@@ -97,6 +114,7 @@ async def run():
                 await b.js("__PC.switchView('global')")
                 await asyncio.sleep(.8)
                 res["back"] = await b.js("(()=>{const rb=document.querySelector('.rightbar');return rb.getClientRects().length>0 && localStorage.getItem('rbCollapsed')==='0';})()")
+                res["after_show_reload"] = await reload_and_read()
                 return res
         finally:
             p.terminate()
@@ -124,3 +142,7 @@ def test_the_right_panel_hides_from_inside_and_comes_back_from_settings():
     assert res["dms"] is False, "a panel control shows on Messages with the panel hidden"
     assert res["switch_was"] is False, "Settings does not know the panel is hidden"
     assert res["back"], "Settings -> Timeline -> Right panel did not bring it back"
+    assert res["after_hide_reload"] == {"panel": False, "switch": False}, (
+        "after a reload the hidden panel came back, or Settings does not show it as off", res["after_hide_reload"])
+    assert res["after_show_reload"] == {"panel": True, "switch": True}, (
+        "after a reload the panel turned on in Settings is gone again", res["after_show_reload"])
