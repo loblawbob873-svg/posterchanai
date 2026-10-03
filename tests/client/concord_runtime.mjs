@@ -582,6 +582,8 @@ const pastedImage={name:'clipboard.png',type:'image/png',size:900,arrayBuffer:as
 let wasPrevented=firePaste({items:[{kind:'file',type:'image/png',getAsFile:()=>pastedImage}],files:[]});
 /* The upload is sealed first (AES-GCM in WebCrypto), which is more than one tick. */
 const settle=async box=>{for(let i=0;i<100&&!box.value;i++)await new Promise(resolve=>setTimeout(resolve,5));};
+// The composer is REPLACED on every repaint below, so wait on whichever one is live each time.
+const settleLive=async()=>{for(let i=0;i<400&&!control('cc-input').value;i++)await new Promise(resolve=>setTimeout(resolve,5));};
 await settle(input);
 if(!wasPrevented() || !/^https:\/\/files\.example\/sealed-\d+$/.test(input.value)) throw new Error('clipboard image paste failed');
 
@@ -620,10 +622,20 @@ document.activeElement=null;
 wasPrevented=firePaste({items:[{kind:'file',type:'image/png',getAsFile:()=>pastedImage}],files:[]});
 await new Promise(resolve=>setTimeout(resolve,0));
 if(!wasPrevented()) throw new Error('a paste nothing else claimed did not reach the room');
+/* WAIT FOR THE UPLOAD TO LAND, then clear it. One tick only proved the paste was TAKEN; the encrypted
+   upload finishes later and inserts its link into whatever composer is live THEN -- on a loaded CI
+   runner that was the delivery scenario's, which then read "unknown delivery restored blind resend
+   draft" about a link nobody had sent (reproduced: 4 of 24 concurrent runs). */
+await settleLive();
+if(!/^https:\/\/files\.example\/sealed-\d+$/.test(control('cc-input').value)) throw new Error('unclaimed paste never reached the composer: '+control('cc-input').value);
+control('cc-input').value='';
 document.activeElement={id:'body',tagName:'BODY',isContentEditable:false};
 wasPrevented=firePaste({items:[{kind:'file',type:'image/png',getAsFile:()=>pastedImage}],files:[]});
 await new Promise(resolve=>setTimeout(resolve,0));
 if(!wasPrevented()) throw new Error('a paste with the body focused did not reach the room');
+await settleLive();
+if(!/^https:\/\/files\.example\/sealed-\d+$/.test(control('cc-input').value)) throw new Error('body-focused paste never reached the composer: '+control('cc-input').value);
+control('cc-input').value='';
 document.activeElement=control('cc-input');
 control('cc-members').click();
 if(!control('cc-members-dialog').classList.removed.includes('hidden')) throw new Error('members control failed');
