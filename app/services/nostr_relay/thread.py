@@ -453,12 +453,10 @@ def _read_config() -> dict:
             # on a normal domain and its proxy URL points at the original instance, never the bridge.
             "block_bridged": gb("nostr_relay_block_bridged", False),
             "posterchan_clients_only": gb("nostr_relay_posterchan_clients_only", False),
-            # Spam guard (spamguard.py): per-author TIMELINE posts a minute / an hour and identical posts an
-            # hour -- direct writes, the firehose and the fediverse alike. 0 = off.
-            "rate_per_min": gi("nostr_relay_rate_per_min", 60),
-            "rate_per_hour": gi("nostr_relay_rate_per_hour", 400),
-            "dup_per_hour": gi("nostr_relay_dup_per_hour", 3),
-            "dup_authors_per_hour": gi("nostr_relay_dup_authors_per_hour", 5),
+            # Anti-spam (server._rate_limited): per-author events a minute (x10 an hour) and identical
+            # posts an hour, for events published directly here. 0 = off.
+            "rate_per_min": gi("nostr_relay_rate_per_min", 120),
+            "dup_per_hour": gi("nostr_relay_dup_per_hour", 20),
             "posterchan_origins": (g("nostr_relay_posterchan_origins", "") or
                 ("https://" + g("nostr_relay_nip05_domain", "poster.place").strip().lstrip("@") +
                  " https://localhost capacitor://localhost app://posterchan")).replace(",", " ").split(),
@@ -933,11 +931,6 @@ async def _main(cfg: dict) -> None:
         # toggle ON.) One function means the three ingestion paths cannot drift apart again.
         from .ingest import _content_blocked
         if _content_blocked(ev, _bl, _bw, cfg.get("block_json", True)):
-            return
-        # Spam guard (spamguard.py): an author hammering the timeline -- by their own timestamps -- is dropped.
-        _spam = getattr(server, "spam", None)
-        if _spam is not None and _spam.check_timestamps(ev):
-            _fh_mark(eid)   # decided: do not ask again
             return
         if await store.add_event(ev, origin="wot"):
             _fh_mark(eid)   # mark seen ONLY after a successful store (so a transient fail can retry)

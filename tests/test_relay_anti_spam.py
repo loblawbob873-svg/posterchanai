@@ -1,109 +1,93 @@
-"""The relay's spam guard: spam, not volume, on every route into the Social timeline.
+"""Relay anti-spam: per-author rate and duplicate limits, set well above how people really post.
 
-"i want to avoid spammers hammering the social timeline of fedi and nostr" / "those users did nothing
-wrong, i want to prevent actual spam". Measured over two weeks here: the busiest real accounts posted 41
-timeline posts in a minute and 92 in an hour; every author repeating one post more than 3 times an hour
-was spam (a donation scam x13, zap-begging x10); the most accounts behind one identical text was 5.
+"we need to come up with some relay anti-spam features/protections ... this is about prevention".
+Measured over a week on this relay: the busiest minute any author published directly here was 31
+events, the most repeats of one note in an hour 7. Defaults are 120/min (1200/h) and 20 identical/h.
 """
+import asyncio
 from unittest import mock
 
+from app.services.nostr.event import build_event
 from app.services.nostr_relay import server as srvmod
 from app.services.nostr_relay.server import RelayServer
-from app.services.nostr_relay.spamguard import SpamGuard
+
+ALICE = bytes.fromhex("a1" * 32)
 
 
 class Gate:
-    puppets = set()
     def is_member(self, _pk): return True
     def is_operator(self, _pk): return False
-    def is_puppet_event(self, ev): return ev.get("pubkey") in self.puppets
+    def is_puppet_event(self, _ev): return False
     def is_blocked(self, _pk): return False
 
 
 def _server(**cfg):
     srv = RelayServer(object(), Gate(), {"wot_enabled": False, **cfg})
-    srv._conn_ips["you"] = "8.8.4.4"
-    srv._conn_ips["lan"] = "192.168.0.85"
+    srv.sent = []
+    srv._send = lambda conn, obj: srv.sent.append((conn, obj))
     return srv
 
 
-def _ev(kind=1, content=None, pk="a1", ts=1_000_000):
-    return {"kind": kind, "pubkey": pk * 32, "created_at": ts, "id": "x", "tags": [],
-            "content": content if content is not None else f"an ordinary post at {ts}"}
+def _ev(kind=7, content="+", sk=ALICE):
+    return {"kind": kind, "pubkey": "a1" * 32, "content": content, "id": "x", "tags": []}
 
 
-def _arrivals(srv, conn, evs, step=1.0):
+def _limits(srv, conn, evs, start=1000.0, step=0.0):
     out = []
     with mock.patch.object(srvmod.time, "time") as t:
         for i, e in enumerate(evs):
-            t.return_value = 1000.0 + i * step
+            t.return_value = start + i * step
             out.append(srv._rate_limited(conn, e, e["kind"]))
     return out
 
 
-def test_a_busy_real_poster_is_never_touched():
-    """92 timeline posts an hour, 41 in one minute: the busiest real accounts here."""
-    g = SpamGuard({})
-    hour = [_ev(ts=1_000_000 + i * 39) for i in range(92)]
-    burst = [_ev(pk="b2", ts=2_000_000 + i) for i in range(41)]
-    assert all(g.check_timestamps(e) == "" for e in hour + burst)
+def test_a_burst_past_the_minute_limit_is_refused_and_it_refills():
     srv = _server()
-    assert set(_arrivals(srv, "you", [_ev(ts=i) for i in range(41)], step=1.4)) == {""}
+    srv._conn_ips["c"] = "8.8.4.4"
+    res = _limits(srv, "c", [_ev() for _ in range(121)])
+    assert res[:120] == [""] * 120, "a normal burst was refused"
+    assert res[120].startswith("rate-limited:"), res[120]
+    # Thirty seconds later half a minute's worth is back.
+    later = _limits(srv, "c", [_ev() for _ in range(61)], start=1030.0)
+    assert later[:59].count("") == 59 and later[-1].startswith("rate-limited:"), later[-3:]
 
 
-def test_one_author_pasting_the_same_post_is_stopped():
-    g = SpamGuard({})
-    scam = "Peace be upon you, my brothers and sisters, may God bless you all. Please help my family."
-    res = [g.check_timestamps(_ev(content=scam, ts=1_000_000 + i * 60)) for i in range(13)]
-    assert res[:3] == ["", "", ""] and all(r.startswith("rate-limited:") for r in res[3:]), res[:5]
-    assert g.check_timestamps(_ev(content="gm", ts=1_000_100)) == "", "a short greeting is not spam"
-
-
-def test_a_bot_farm_posting_one_text_is_stopped_after_five_accounts():
-    g = SpamGuard({})
-    text = "Claim your free airdrop now at totally-legit-site dot example, limited time only!!!"
-    res = [g.check_timestamps(_ev(content=text, pk=f"{i:02x}", ts=1_000_000 + i)) for i in range(20)]
-    assert res[:5] == [""] * 5 and all(r.startswith("rate-limited:") for r in res[5:]), res[:7]
-
-
-def test_a_machine_gun_flood_is_stopped():
-    g = SpamGuard({})
-    res = [g.check_timestamps(_ev(ts=1_000_000, content=f"flood post number {i} with its own words")) for i in range(70)]  # 70 in one minute
-    assert res[:60].count("") == 60 and res[60].startswith("rate-limited:")
-
-
-def test_only_timeline_posts_count():
-    g = SpamGuard({"dup_per_hour": 1, "rate_per_min": 1})
-    for kind in (7, 4, 1059, 30078, 3, 0, 10000):
-        assert all(g.check_timestamps(_ev(kind=kind, content="same text same text same text")) == "" for _ in range(10))
-
-
-def test_fediverse_posts_are_judged_even_though_our_bridge_is_on_the_lan():
-    srv = _server()
-    srv.gate.puppets = {"c3" * 32}
-    scam = "Buy followers now, cheapest prices, DM me for details and discounts!!!"
-    res = _arrivals(srv, "lan", [_ev(content=scam, pk="c3", ts=1_000_000 + i) for i in range(5)])
-    assert res[:3] == ["", "", ""] and res[3].startswith("rate-limited:"), res
-    # Our own app on the LAN (not a puppet) is never limited.
-    assert set(_arrivals(srv, "lan", [_ev(content=scam, pk="d4") for _ in range(10)])) == {""}
-
-
-def test_direct_writes_are_counted_by_arrival_so_backdating_does_not_help():
+def test_our_own_machines_and_high_volume_kinds_are_never_limited():
     srv = _server(rate_per_min=5)
-    evs = [_ev(ts=1_000_000 - i * 3600) for i in range(6)]    # stamped an hour apart, all sent now
-    res = _arrivals(srv, "you", evs, step=0.0)
-    assert res[:5] == [""] * 5 and res[5].startswith("rate-limited:"), res
+    srv._conn_ips["lan"] = "192.168.0.85"
+    assert set(_limits(srv, "lan", [_ev() for _ in range(50)])) == {""}
+    srv._conn_ips["c"] = "8.8.4.4"
+    assert set(_limits(srv, "c", [_ev(kind=1059) for _ in range(50)] + [_ev(kind=30078) for _ in range(50)])) == {""}
 
 
-def test_zero_turns_every_check_off():
-    g = SpamGuard({"rate_per_min": 0, "rate_per_hour": 0, "dup_per_hour": 0, "dup_authors_per_hour": 0})
-    text = "x" * 60
-    assert all(g.check_timestamps(_ev(content=text, pk=f"{i % 50:02x}")) == "" for i in range(500))
+def test_the_same_post_flooded_is_refused_but_different_posts_are_not():
+    srv = _server(rate_per_min=0)
+    srv._conn_ips["c"] = "8.8.4.4"
+    same = "buy my coin now at the best price ever!!"
+    res = _limits(srv, "c", [_ev(kind=1, content=same) for _ in range(21)])
+    assert res[:20] == [""] * 20 and res[20].startswith("rate-limited:"), res[-2:]
+    diff = _limits(srv, "c", [_ev(kind=1, content=f"note number {i} with enough text") for i in range(40)])
+    assert set(diff) == {""}
+    short = _limits(srv, "c", [_ev(kind=1, content="gm") for _ in range(40)])
+    assert set(short) == {""}, "a short greeting repeated is not spam"
 
 
-def test_the_firehose_and_the_sync_consult_the_guard():
-    import inspect
-    from app.services.nostr_relay import ingest, thread
-    assert "_spam.check_timestamps(ev)" in inspect.getsource(thread)
-    src = inspect.getsource(ingest)
-    assert src.count("server.spam.check_timestamps(ev)") >= 2, "the sync or the backfill skips the guard"
+def test_zero_turns_each_limit_off():
+    srv = _server(rate_per_min=0, dup_per_hour=0)
+    srv._conn_ips["c"] = "8.8.4.4"
+    assert set(_limits(srv, "c", [_ev(kind=1, content="x" * 40) for _ in range(500)])) == {""}
+
+
+def test_the_client_is_told_rate_limited_through_the_real_event_path():
+    srv = _server(rate_per_min=2)
+    srv._conn_ips["c"] = "8.8.4.4"
+    events = [build_event(ALICE, 7, "+", [["e", "b" * 64]]) for _ in range(3)]
+    async def run():
+        srv._store_and_fanout = None
+        for e in events[:2]:
+            srv._rate_limited("c", e, 7)                      # spend the two tokens
+        await srv._on_event("c", events[2])
+    with mock.patch.object(srvmod.time, "time", return_value=float(events[2]["created_at"])):
+        asyncio.new_event_loop().run_until_complete(run())
+    oks = [m for _c, m in srv.sent if isinstance(m, list) and m and m[0] == "OK"]
+    assert oks and oks[-1][2] is False and oks[-1][3].startswith("rate-limited:"), srv.sent
