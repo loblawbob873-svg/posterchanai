@@ -182,6 +182,11 @@ window.PCLinkCardsFactory = function(dep){
   document.addEventListener('click', e=>{
     if(e.defaultPrevented || e.button || e.metaKey || e.ctrlKey || e.shiftKey || e.altKey || !e.target.closest) return;
     const a=e.target.closest('a[href]'); if(!a) return;
+    /* An IN-PAGE link is never a link to an entity. Names, hashtags and quote links are `href="#"` with
+       their own handlers; resolved against an address bar that holds an open post (`/nevent1…`), `#` IS
+       that post, so this swallowed every tap on a name inside a post and re-opened the same post ("I
+       can't click any usernames in the post on tablet"). */
+    const raw=String(a.getAttribute('href')||'').trim(); if(!raw || raw.charAt(0)==='#') return;
     if(!a.closest('.note,.article-view,.dm-bubble,.quoted,.av-comments,.ac-item,.markdown')) return;
     if(!_ownEntityOf(a.href)) return;
     e.preventDefault(); e.stopPropagation();
