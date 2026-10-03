@@ -21,7 +21,8 @@ const TITLE = 'PosterChan Buddy';
 function createBuddyHost(deps){
   const { BrowserWindow, wm, scopeOf, pagePath, preloadPath } = deps;
   const sleep = deps.sleep || (ms => new Promise(r => setTimeout(r, ms)));
-  let win = null, owner = null, id = null, at = null, out = null, k = 1, opening = null;
+  let win = null, owner = null, id = null, at = null, out = null, k = 1, opening = null, who = 'posterchan';
+  const WHO = /^[a-z]{1,20}$/;   // a dancer's id, passed to her page as #who (validated there too)
 
   const alive = () => !!(win && !win.isDestroyed());
   const tell = ev => { try{ if(owner && !owner.isDestroyed()) owner.send('pc:buddy:event', ev); }catch(_){ } };
@@ -43,7 +44,7 @@ function createBuddyHost(deps){
     }
     return null;
   }
-  async function open(box){
+  async function open(box, w){
     win = new BrowserWindow({
       show: false, frame: false, transparent: true, backgroundColor: '#00000000', hasShadow: false,
       resizable: false, skipTaskbar: true, focusable: false, alwaysOnTop: true, title: TITLE,
@@ -53,7 +54,8 @@ function createBuddyHost(deps){
     const mine = win;
     win.on('page-title-updated', e => e.preventDefault());   // the title is how the compositor finds her
     win.on('closed', () => { if(win === mine){ win = null; id = null; at = null; } });
-    await win.loadFile(pagePath);
+    who = w;
+    await win.loadFile(pagePath, { hash: w });
     if(!alive() || win !== mine) return false;
     win.showInactive();
     const row = await findRow();
@@ -80,9 +82,14 @@ function createBuddyHost(deps){
     box.x = Math.round(rect.x + Math.min(Math.max(0, n(w.vx, 0) * sx), rect.width - box.w));
     box.y = Math.round(rect.y + Math.min(Math.max(0, n(w.vy, 0) * sy), rect.height - box.h));
     out = { rect, sx, sy };
+    const nextWho = WHO.test(String(w.who || '')) ? String(w.who) : 'posterchan';
     if(!alive()){
-      if(!opening) opening = open(box).finally(() => { opening = null; });
+      if(!opening) opening = open(box, nextWho).finally(() => { opening = null; });
       if(!(await opening)) return false;
+    }else if(nextWho !== who){
+      // Switched dancer: same window, same spot, her page reloaded for the other one.
+      who = nextWho;
+      try{ await win.loadFile(pagePath, { hash: nextWho }); }catch(_){ }
     }
     if(id == null) return false;
     try{ win.setSize(Math.max(1, Math.round(box.w / k)), Math.max(1, Math.round(box.h / k))); }catch(_){ }
@@ -120,7 +127,7 @@ function createBuddyHost(deps){
    * mounts her again. */
   function ownerGone(contentsId){ if(owner && owner.id === contentsId){ owner = null; hide(); } }
 
-  return { show, hide, drag, drop, menu, ownerGone, TITLE, _state: () => ({ id, at, k, open: alive() }) };
+  return { show, hide, drag, drop, menu, ownerGone, TITLE, _state: () => ({ id, at, k, open: alive(), who }) };
 }
 
 module.exports = { createBuddyHost, TITLE };

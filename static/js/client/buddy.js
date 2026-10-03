@@ -27,8 +27,15 @@
    * ("posterchan is moving too fast"). tests/client/test_desktop_buddy_full_app.py measures the pace. */
   const BOX_W = 174, BOX_H = 240, BUBBLE = 44;   // her box (client.css .os-buddy); room above it for a line
   const FRAMES = 8, STEP_MS = 900, HAPPY_MS = 550, KEY = 'desktopBuddy';
-  const SRC = i => '/static/mascot/dance/dance-' + i + '.webp';
-  const LINES = ['hi!', '♪ ♫', 'dance with me!', 'PosterChan!', 'hehe', 'nostr!', '✨'];
+  /* WHO DANCES ("make an alternative to posterchan that users can choose, a dancing axolotl. posterchan is
+   * default of course"). Same 8 moves, same box and baseline; each has her own frames and lines. The
+   * choice is `who` in the same synced preference, so it follows the account. */
+  const CHARS = {
+    posterchan: { name: 'PosterChan', dir: 'dance', lines: ['hi!', '♪ ♫', 'dance with me!', 'PosterChan!', 'hehe', 'nostr!', '✨'] },
+    axolotl:    { name: 'Axolotl', dir: 'axolotl', lines: ['blub!', '♪ ♫', 'wanna dance?', 'axolotl!', 'hehe', 'splish!', '✨'] },
+  };
+  const who = () => pref().who;
+  const SRC = (i, w) => '/static/mascot/' + CHARS[w || who()].dir + '/dance-' + i + '.webp';
   let el = null, desk = null, opts = {}, timer = 0, frame = 1, loaded = false, drag = null, pressT = 0, nativeUp = false, wired = false;
   /* PosterChanOS with real app windows: her own always-on-top window draws her. */
   const native = () => { try{ return !!(window.pcBuddy && window.PCOSWin && PCOSWin.enabled()); }catch(_){ return false; } };
@@ -38,7 +45,7 @@
   function pref(){
     let v = null; try{ v = CS() && CS().get(KEY, null); }catch(_){ v = null; }
     v = (v && typeof v === 'object') ? v : {};
-    return { on: v.on !== false, x: clamp(v.x, 0.86), y: clamp(v.y, 1) };
+    return { on: v.on !== false, x: clamp(v.x, 0.86), y: clamp(v.y, 1), who: CHARS[v.who] ? v.who : 'posterchan' };
   }
   function setPref(v){
     try{ CS() && CS().set(KEY, v); }catch(_){ }
@@ -48,8 +55,9 @@
   const idle = () => document.hidden || document.documentElement.classList.contains('os-idle');
 
   function preload(){
-    if(loaded) return; loaded = true;
-    for(let i = 1; i <= FRAMES; i++){ const im = new Image(); im.decoding = 'async'; im.src = SRC(i); }
+    const w = who();
+    if(loaded === w) return; loaded = w;     // only the chosen one's frames are ever fetched
+    for(let i = 1; i <= FRAMES; i++){ const im = new Image(); im.decoding = 'async'; im.src = SRC(i, w); }
   }
   function show(i){ frame = i; const im = el && el.querySelector('img'); if(im && im.getAttribute('src') !== SRC(i)) im.setAttribute('src', SRC(i)); }
   function tick(){
@@ -98,7 +106,7 @@
     wire();
     nativeUp = true;
     try{ Promise.resolve(window.pcBuddy.show({ vx: dr.left + at.left * z, vy: dr.top + (at.top - BUBBLE) * z,
-                                               bw: BOX_W * z, bh: (BOX_H + BUBBLE) * z })).catch(() => {}); }catch(_){ }
+                                               bw: BOX_W * z, bh: (BOX_H + BUBBLE) * z, who: p.who })).catch(() => {}); }catch(_){ }
   }
   function nativeHide(){
     if(!nativeUp) return;
@@ -132,21 +140,26 @@
   function cheer(){
     if(!el) return;
     el.classList.remove('hop'); void el.offsetWidth; el.classList.add('hop', 'happy');
-    say(LINES[Math.floor(Math.random() * LINES.length)]);
+    const lines = CHARS[who()].lines;
+    say(lines[Math.floor(Math.random() * lines.length)]);
     clearTimeout(el._happy); el._happy = setTimeout(() => el && el.classList.remove('happy'), 2400);
     if(reduced()) show(frame % FRAMES + 1);
   }
   function menu(x, y){
-    const rows = [{ label: 'Hide PosterChan', run: hide }, { label: 'Dance!', run: cheer }];
+    const other = who() === 'axolotl' ? 'posterchan' : 'axolotl';
+    const rows = [{ label: 'Hide ' + CHARS[who()].name, run: hide }, { label: 'Dance!', run: cheer },
+                  { label: 'Switch to ' + CHARS[other].name, run: () => choose(other) }];
     if(opts.menu) opts.menu(x, y, rows);
   }
 
   function build(){
+    const me = CHARS[who()];
     el = document.createElement('div');
     el.className = 'os-buddy';
+    el.dataset.who = who();
     el.setAttribute('role', 'img');
-    el.setAttribute('aria-label', 'PosterChan dancing. Drag to move her; right-click or long-press to hide her.');
-    el.title = 'PosterChan — click me, drag me, right-click to hide';
+    el.setAttribute('aria-label', me.name + ' dancing. Drag to move; right-click or long-press to hide or switch.');
+    el.title = me.name + ' — click me, drag me, right-click to hide or switch';
     const im = document.createElement('img'); im.alt = ''; im.draggable = false; im.src = SRC(frame);
     el.appendChild(im);
     el.addEventListener('pointerenter', () => { if(!drag && !el.classList.contains('happy')) show(2); });
@@ -198,7 +211,7 @@
       return;
     }
     preload();
-    if(!el || !el.isConnected || el.parentNode !== desk){ if(el) el.remove(); desk.appendChild(build()); }
+    if(!el || !el.isConnected || el.parentNode !== desk || el.dataset.who !== p.who){ if(el) el.remove(); frame = 1; desk.appendChild(build()); }
     // Wait for a laid-out size before placing (the first frame may not have decoded yet).
     const go = () => { place(p); start(); };
     const im = el.querySelector('img');
@@ -207,12 +220,20 @@
   function unmount(){ stop(); if(el){ el.remove(); el = null; } nativeHide(); }
   function hide(){
     const p = pref(); p.on = false; setPref(p); unmount();
-    try{ const pc = window.__PC; pc && pc.toast && pc.toast('PosterChan hidden. Right-click the desktop (or Settings, Timeline) to bring her back.'); }catch(_){ }
+    try{ const pc = window.__PC; pc && pc.toast && pc.toast(CHARS[p.who].name + ' hidden. Right-click the desktop (or Settings, Timeline) to bring her back.'); }catch(_){ }
+  }
+  /* Switch who dances; she keeps her spot. */
+  function choose(w){
+    if(!CHARS[w]) return;
+    const p = pref(); p.who = w; p.on = true; setPref(p);
+    if(desk) mount(desk, opts);
   }
   function reveal(){ const p = pref(); p.on = true; setPref(p); mount(desk, opts); }
   /* A synced preference arrived or Settings changed it: re-read and re-apply. */
   function refresh(){ if(desk) mount(desk, opts); }
 
   document.addEventListener('visibilitychange', () => { if(el && !document.hidden) start(); });
-  window.PCBuddy = { mount, unmount, hide, show: reveal, refresh, isOn: () => pref().on, _frame: () => frame };
+  window.PCBuddy = { mount, unmount, hide, show: reveal, refresh, choose, isOn: () => pref().on, who,
+                    name: () => CHARS[who()].name, choices: () => Object.keys(CHARS).map(k => ({ id: k, name: CHARS[k].name })),
+                    _frame: () => frame };
 })();

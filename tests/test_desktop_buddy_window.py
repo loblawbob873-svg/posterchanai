@@ -29,7 +29,7 @@ let made = null;
 class FakeWin {
   constructor(o){ made = this; this.o = o; this.dead = false; this.webContents = { id: 99 }; this.ev = {}; }
   on(n, f){ this.ev[n] = f; }
-  async loadFile(p){ this.page = p; }
+  async loadFile(p, o){ this.page = p; (this.loads = this.loads || []).push((o && o.hash) || ''); }
   showInactive(){ calls.push(['showInactive']); rows.push({ id: 42, title: TITLE, rect: { x: 0, y: 0, width: this.o.width * 2, height: this.o.height * 2 } }); }
   show(){ calls.push(['SHOW-ACTIVE']); }
   focus(){ calls.push(['FOCUS-ELECTRON']); }
@@ -62,6 +62,12 @@ const host = createBuddyHost({ BrowserWindow: FakeWin, wm: () => wmApi, scopeOf:
   calls.splice(0);
   host.ownerGone(7);
   out.ownerGone = calls.splice(0);
+  // Who dances: the page is told, and a switch reloads her SAME window for the other one.
+  await host.show(owner, { vx: 0, vy: 0, bw: 174, bh: 284, vw: 1920, vh: 1280, who: 'axolotl' });
+  const first = made;
+  await host.show(owner, { vx: 0, vy: 0, bw: 174, bh: 284, vw: 1920, vh: 1280, who: 'posterchan' });
+  out.who = { loads: made.loads, sameWindow: made === first,
+              bad: (await host.show(owner, { vx: 0, vy: 0, bw: 174, bh: 284, vw: 1920, vh: 1280, who: '../x' }), made.loads.slice(-1)[0]) };
   console.log(JSON.stringify(out));
 })().catch(e => { console.error(e); process.exit(1); });
 """
@@ -99,3 +105,11 @@ def test_only_her_own_window_can_move_or_hide_her_and_the_spot_goes_back_to_be_s
     assert r["hide"] is True and r["sent2"] == [["pc:buddy:event", {"type": "hide"}]], r
     assert ["destroy"] in r["afterHide"], r["afterHide"]
     assert ["destroy"] in r["ownerGone"], "she outlived the desktop that owns her: %r" % r["ownerGone"]
+
+
+def test_the_chosen_dancer_is_drawn_and_a_switch_reloads_her_same_window():
+    """'make an alternative to posterchan that users can choose, a dancing axolotl'."""
+    r = _run()["who"]
+    assert r["sameWindow"], "switching dancer opened a second window"
+    assert r["loads"] == ["axolotl", "posterchan"], r
+    assert r["bad"] == "posterchan", "a junk dancer id must fall back, not reach her page's address"

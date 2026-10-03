@@ -327,6 +327,7 @@ window.PCBlossomFactory = function(dep){
         ClientSettings.set('desktopBuddy', pr.desktopBuddy);
         try{ window.PCBuddy && window.PCBuddy.refresh(); }catch(_){}
         try{ const sw=$('#set-desktop-buddy'); if(sw) sw.checked = pr.desktopBuddy.on !== false; }catch(_){}
+        try{ const sel=$('#set-desktop-buddy-who'); if(sel && pr.desktopBuddy.who) sel.value = pr.desktopBuddy.who; }catch(_){}
       }
       // Re-render on restore: `fn` is captured when a timeline draws, so adopting the synced value
       // without redrawing would leave the feed showing whatever the previous setting produced.

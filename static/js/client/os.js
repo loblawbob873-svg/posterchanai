@@ -9110,7 +9110,7 @@
       rows.push({ label: 'Line the icons up', run: () => lineUp() });
     rows.push({ label: 'Add a widget…', run: () => widgetPicker() });
     // Hiding her is one right-click; this is the way back.
-    try{ if(window.PCBuddy && !PCBuddy.isOn()) rows.push({ label: 'Show PosterChan', run: () => PCBuddy.show() }); }catch(_){}
+    try{ if(window.PCBuddy && !PCBuddy.isOn()) rows.push({ label: 'Show ' + (PCBuddy.name ? PCBuddy.name() : 'PosterChan'), run: () => PCBuddy.show() }); }catch(_){}
     // Only where there are programs to start: a browser opening the same account has none.
     try{ if(window.PCOSShell && PCOSShell.available() && PCOSShell.allApps)
       rows.push({ label: 'Add a program…', run: () => programPicker() }); }catch(_){}

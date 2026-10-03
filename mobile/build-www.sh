@@ -50,8 +50,8 @@ cp "$SRC"/static/js/client/sw.js      www/sw.js
 # Flashcards) were silently missing from the APK for as long as it has existed: both load ON DEMAND, so
 # nothing breaks until someone opens that one screen. Copying the directory can't forget the next one.
 cp -r "$SRC"/static/vendor            www/static/
-# The desktop PosterChan's dance frames (buddy.js asks for /static/mascot/dance/dance-N.webp).
-mkdir -p www/static/mascot && cp -r "$SRC"/static/mascot/dance www/static/mascot/
+# The desktop dancers' frames (buddy.js asks for /static/mascot/<dance|axolotl>/dance-N.webp).
+mkdir -p www/static/mascot && cp -r "$SRC"/static/mascot/dance "$SRC"/static/mascot/axolotl www/static/mascot/
 # Every image the client can reference by URL, not just PNGs. `client.css` asks for
 # /static/os-wallpaper.webp, which no glob here matched, so the bundled apps lost the desktop-mode
 # wallpaper while the website kept it — the same shape as the missing fonts above, and invisible for

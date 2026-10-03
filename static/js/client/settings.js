@@ -567,7 +567,8 @@ window.PCSettingsFactory = function(dep){
           <label class="fld" style="flex-direction:row;justify-content:space-between;align-items:center">Hold a post to read it aloud<label class="switch"><input type="checkbox" id="set-read-aloud" ${ClientSettings.get('readAloudHold',true)?'checked':''}><span class="slider"></span></label></label>
           <div class="muted small">Press and hold any post and it is narrated. Turn it off if you hold posts by accident. While one is playing a <b>Stop reading</b> button sits at the bottom of the screen, and scrolling the post out of view stops it too.</div>
           <label class="fld" style="flex-direction:row;justify-content:space-between;align-items:center">Dancing PosterChan on the desktop<label class="switch"><input type="checkbox" id="set-desktop-buddy" ${(window.PCBuddy && !window.PCBuddy.isOn()) ? '' : 'checked'}><span class="slider"></span></label></label>
-          <div class="muted small">In desktop mode she dances on the wallpaper: click her, drag her anywhere. Right-click her to hide her. Syncs across your devices.</div>
+          <label class="fld" style="flex-direction:row;justify-content:space-between;align-items:center">Who dances<select id="set-desktop-buddy-who" style="max-width:12em">${(window.PCBuddy && window.PCBuddy.choices ? window.PCBuddy.choices() : [{id:'posterchan',name:'PosterChan'}]).map(c=>`<option value="${c.id}" ${(window.PCBuddy && window.PCBuddy.who ? window.PCBuddy.who() : 'posterchan')===c.id?'selected':''}>${c.name}</option>`).join('')}</select></label>
+          <div class="muted small">In desktop mode she dances over your windows: click her, drag her anywhere. Right-click her to hide her or switch dancer. Syncs across your devices.</div>
           <label class="fld" style="flex-direction:row;justify-content:space-between;align-items:center">Right panel<label class="switch"><input type="checkbox" id="set-right-panel" ${(window.PCRightPanel && window.PCRightPanel.hidden()) ? '' : 'checked'}><span class="slider"></span></label></label>
           <div class="muted small">Topics, notifications and the app links beside the timeline on a wide screen. Its <b>Hide</b> button turns this off; this brings it back. Syncs across your devices.</div>
         </div>
@@ -903,6 +904,11 @@ window.PCSettingsFactory = function(dep){
     { const db=$('#set-desktop-buddy'); if(db) db.onchange=()=>{
         try{ if(window.PCBuddy){ db.checked ? window.PCBuddy.show() : window.PCBuddy.hide(); }
              else { const v=Object.assign({}, ClientSettings.get('desktopBuddy', {}) || {}, { on: db.checked });
+                    ClientSettings.set('desktopBuddy', v); _prefTouched.add('desktopBuddy'); saveClientPrefsNostr({ desktopBuddy: v }); } }catch(_){}
+      }; }
+    { const dw=$('#set-desktop-buddy-who'); if(dw) dw.onchange=()=>{
+        try{ if(window.PCBuddy && window.PCBuddy.choose){ window.PCBuddy.choose(dw.value); const sw=$('#set-desktop-buddy'); if(sw) sw.checked=true; }
+             else { const v=Object.assign({}, ClientSettings.get('desktopBuddy', {}) || {}, { who: dw.value });
                     ClientSettings.set('desktopBuddy', v); _prefTouched.add('desktopBuddy'); saveClientPrefsNostr({ desktopBuddy: v }); } }catch(_){}
       }; }
     { const rp=$('#set-right-panel'); if(rp) rp.onchange=()=>{

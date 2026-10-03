@@ -30,7 +30,7 @@ async def _mouse(b, kind, x, y, button="left", buttons=1):
                                               "buttons": buttons, "clickCount": 1})
 
 
-async def _run(page):
+async def _run(page, hash=""):
     res = {}
     with tempfile.TemporaryDirectory(prefix="pc-buddy-page-") as profile:
         port = int(os.environ.get("PC_CHECK_PORT", "0"))
@@ -51,12 +51,14 @@ async def _run(page):
                 await b.call("Page.enable")
                 await b.call("Emulation.setDeviceMetricsOverride", {"width": 174, "height": 284, "deviceScaleFactor": 1, "mobile": False})
                 await b.call("Page.addScriptToEvaluateOnNewDocument", {"source": BRIDGE})
-                await b.call("Page.navigate", {"url": page.as_uri()})
+                await b.call("Page.navigate", {"url": page.as_uri() + hash})
                 for _ in range(100):
                     if await b.js("!!window.__buddy && document.getElementById('im').complete"):
                         break
                     await asyncio.sleep(.1)
                 res["loaded"] = await b.js("document.getElementById('im').naturalWidth")
+                res["src"] = await b.js("document.getElementById('im').getAttribute('src')")
+                res["hide_label"] = await b.js("document.querySelector('#menu [data-a=hide]').textContent")
                 res["pace"] = await b.js("new Promise(ok=>{let n=0,last=__buddy.frame();const t=setInterval(()=>{const f=__buddy.frame();if(f!==last){n++;last=f}},40);setTimeout(()=>{clearInterval(t);ok(n)},4000)})")
                 # Click (no movement): she reacts with a line.
                 await _mouse(b, "mousePressed", 87, 160); await _mouse(b, "mouseReleased", 87, 160, buttons=0)
@@ -90,7 +92,12 @@ def test_her_window_page_dances_reacts_drags_and_hides():
         shutil.copy(ROOT / "desktop/buddy.html", Path(d, "buddy.html"))
         Path(d, "www/static/mascot").mkdir(parents=True)
         shutil.copytree(ROOT / "static/mascot/dance", Path(d, "www/static/mascot/dance"))
+        shutil.copytree(ROOT / "static/mascot/axolotl", Path(d, "www/static/mascot/axolotl"))
         res = asyncio.run(_run(Path(d, "buddy.html")))
+        axo = asyncio.run(_run(Path(d, "buddy.html"), "#axolotl"))
+    assert "/mascot/dance/" in res["src"] and res["hide_label"] == "Hide PosterChan", res
+    assert axo["loaded"] > 0 and "/mascot/axolotl/" in axo["src"], ("the axolotl did not load in her window", axo)
+    assert axo["hide_label"] == "Hide Axolotl" and 3 <= axo["pace"] <= 6, axo
     assert res["loaded"] > 0, "her frame did not load from file:// (the page's CSP or the path)"
     assert 3 <= res["pace"] <= 6, ("not the chosen pace (900ms a frame)", res["pace"])
     assert res["said"], "a click did nothing"

@@ -27,18 +27,26 @@
 </head>
 <body>
 <div id="say"></div>
-<div id="me" role="img" aria-label="PosterChan dancing. Drag to move her; right-click to hide her."><img id="im" alt="" src="www/static/mascot/dance/dance-1.webp"></div>
-<div id="menu" role="menu"><button data-a="dance" role="menuitem">Dance!</button><button data-a="hide" role="menuitem">Hide PosterChan</button></div>
+<div id="me" role="img"><img id="im" alt=""></div>
+<div id="menu" role="menu"><button data-a="dance" role="menuitem">Dance!</button><button data-a="hide" role="menuitem">Hide</button></div>
 <script>
 (function(){
   'use strict';
   var FRAMES = 8, STEP_MS = 900, HAPPY_MS = 550;
-  var LINES = ['hi!', '♪ ♫', 'dance with me!', 'PosterChan!', 'hehe', 'nostr!', '✨'];
+  // Who dances comes in the address (#axolotl); the desktop owns the choice. Same table as buddy.js.
+  var CHARS = {
+    posterchan: { name: 'PosterChan', dir: 'dance', lines: ['hi!', '♪ ♫', 'dance with me!', 'PosterChan!', 'hehe', 'nostr!', '✨'] },
+    axolotl: { name: 'Axolotl', dir: 'axolotl', lines: ['blub!', '♪ ♫', 'wanna dance?', 'axolotl!', 'hehe', 'splish!', '✨'] }
+  };
+  var WHO = CHARS[location.hash.slice(1)] ? location.hash.slice(1) : 'posterchan', ME = CHARS[WHO], LINES = ME.lines;
   var me = document.getElementById('me'), im = document.getElementById('im'), say = document.getElementById('say'), menu = document.getElementById('menu');
   var frame = 1, happyUntil = 0, drag = null, sayT = 0;
   var bridge = window.pcBuddyWin || { drag: function(){}, drop: function(){}, menu: function(){} };
   var reduced = function(){ try{ return matchMedia('(prefers-reduced-motion: reduce)').matches; }catch(_){ return false; } };
-  function show(i){ frame = i; im.src = 'www/static/mascot/dance/dance-' + i + '.webp'; }
+  function show(i){ frame = i; im.src = 'www/static/mascot/' + ME.dir + '/dance-' + i + '.webp'; }
+  show(1);
+  me.setAttribute('aria-label', ME.name + ' dancing. Drag to move; right-click to hide.');
+  menu.querySelector('[data-a=hide]').textContent = 'Hide ' + ME.name;
   function tick(){
     if(!drag && !reduced()) show(frame % FRAMES + 1);
     setTimeout(tick, Date.now() < happyUntil ? HAPPY_MS : STEP_MS);
@@ -83,7 +91,7 @@
   }
   me.addEventListener('pointerup', end);
   me.addEventListener('pointercancel', end);
-  window.__buddy = { frame: function(){ return frame; } };
+  window.__buddy = { frame: function(){ return frame; }, who: WHO };
 })();
 </script>
 </body>

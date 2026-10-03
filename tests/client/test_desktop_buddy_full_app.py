@@ -93,6 +93,20 @@ def test_the_desktop_posterchan_dances_moves_hides_and_comes_back():
         await asyncio.sleep(.6)
         r3 = await b.js(f"{RECT}('.os-buddy')")
         res["kept"] = (round(r3["l"] - r2["l"]), round(r3["t"] - r2["t"]))
+        # Switch dancer from her own menu: the axolotl takes her place and the choice is saved.
+        await b.js("window.__buddySaves=[];(()=>{const pc=window.__PC,s=pc.saveDesktopBuddy;pc.saveDesktopBuddy=v=>{__buddySaves.push(JSON.parse(JSON.stringify(v)));return s&&s(v)}})()")
+        res["switch"] = await _menu_pick(b, "document.querySelector('.os-buddy')", "Switch to Axolotl")
+        await b.until("(()=>{const i=document.querySelector('#os-desk .os-buddy img');return !!i&&/\\/mascot\\/axolotl\\//.test(i.src)&&i.complete&&i.naturalWidth>0})()")
+        res["axo_saved"] = await b.js("(__buddySaves.slice(-1)[0]||{}).who")
+        await b.call("Page.reload", {})
+        await b.until("!!window.__PC && document.readyState==='complete'")
+        await b.until("document.body.classList.contains('os-on') && !!document.querySelector('#os-desk .os-buddy img')")
+        res["axo_after_reload"] = await b.js("/\\/mascot\\/axolotl\\//.test(document.querySelector('#os-desk .os-buddy img').src)")
+        res["axo_menu"] = await b.js("(()=>{const t=document.querySelector('.os-buddy');const r=t.getBoundingClientRect();t.dispatchEvent(new MouseEvent('contextmenu',{bubbles:true,cancelable:true,clientX:r.left+5,clientY:r.top+5}));const rows=[...document.querySelectorAll('.os-ctx .os-ctx-b')].map(x=>x.textContent.trim());document.body.click();return rows})()")
+        # Back to PosterChan the other way, from Settings' choice.
+        await b.js("PCBuddy.choose('posterchan');true")
+        await b.until("/\\/mascot\\/dance\\//.test((document.querySelector('#os-desk .os-buddy img')||{}).src||'')")
+        await b.js("window.__buddySaves=[];(()=>{const pc=window.__PC,s=pc.saveDesktopBuddy;pc.saveDesktopBuddy=v=>{__buddySaves.push(JSON.parse(JSON.stringify(v)));return s&&s(v)}})()")
         # Hide from her own menu.
         await b.js("window.__buddySaves=[];(()=>{const pc=window.__PC,s=pc.saveDesktopBuddy;pc.saveDesktopBuddy=v=>{__buddySaves.push(v);return s&&s(v)}})()")
         res["hide"] = await _menu_pick(b, "document.querySelector('.os-buddy')", "Hide PosterChan")
@@ -125,6 +139,9 @@ def test_the_desktop_posterchan_dances_moves_hides_and_comes_back():
     assert dx > 150 and dy > 60, ("dragging did not move her", res["moved"])
     assert res["saved"] and res["saved"]["on"] is True and 0 <= res["saved"]["x"] < 0.86, ("the new spot was not saved", res["saved"])
     assert abs(res["kept"][0]) <= 3 and abs(res["kept"][1]) <= 3, ("after a reload she was not where she was left", res["kept"])
+    assert res["switch"] is True, ("her menu has no Switch to Axolotl", res["switch"])
+    assert res["axo_saved"] == "axolotl" and res["axo_after_reload"], ("the axolotl choice did not stick", res)
+    assert "Hide Axolotl" in res["axo_menu"] and "Switch to PosterChan" in res["axo_menu"], res["axo_menu"]
     assert res["hide"] is True, ("her menu has no Hide PosterChan", res["hide"])
     assert res["hidden"], "Hide did not remove her (or did not save it)"
     assert res["hidden_after_reload"], "hidden, then a reload brought her back"
