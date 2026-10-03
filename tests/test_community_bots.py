@@ -115,6 +115,9 @@ def test_activity_counts_members_and_ranks_their_posts(world):
     assert a["dau"] == 2 and a["mau"] == 2 and a["members"] == 2
     assert [p["text"] for p in a["top_posts"]] == ["hot take", "quiet"]
     assert a["top_posts"][0]["reposts"] == 1 and a["top_posts"][0]["handle"] == "@alice@poster.place"
+    from app.services.nostr import nostr_service
+    assert a["top_posts"][0]["ref"] == "nostr:" + nostr_service.npub_of(ALICE), \
+        "the top-posts bot needs each author as a tag it can post, not only a printed name"
 
 
 def test_the_ledger_is_pruned_on_the_relays_retention_window(world):
@@ -492,3 +495,35 @@ def test_one_daemon_dying_does_not_take_the_others(monkeypatch):
     monkeypatch.setattr(sys, "argv", ["main.py", "--welcome", "--report"])
     main.main()
     assert ran == ["nostr_reportbot"]
+
+
+def test_the_top_posts_post_tags_names_and_links_posts_plainly(blockbot, monkeypatch):
+    """"see latest post summary, did not display right, names and links not clickable, bad markdown" --
+    the model rewrote the whole list: `@mranderson` (opens nothing), `[View post](url)` (printed as raw
+    brackets by Nostr clients) and an emoji reduced to its invisible joiners. The list is built in Python
+    now and the model only writes one sentence before and after it."""
+    import nostr_engagement as eng
+    from app.services.nostr import nostr_service
+    ref = "nostr:" + nostr_service.npub_of(ALICE)
+    rows = [{"id": "aa" * 32, "handle": "@alice@poster.place", "ref": ref, "score": 19, "reactions": 9,
+             "reposts": 3, "replies": 2, "text": "Didn't I tell you\nabout this", "url": "https://poster.place/note1abc"}]
+    posted = []
+    monkeypatch.setattr(eng, "_post", lambda text, *a, **k: posted.append(text))
+    monkeypatch.setattr(eng.community_api, "get", lambda path, **k: {"top_posts": list(rows)})
+    monkeypatch.setattr(eng, "_ai_on", lambda: True)
+    # What the model actually sent on 2026-10-02, as both the intro and the outro.
+    bad = ("Hey anon! Ready for your daily dose of internet gold? Let's dive in! \u200d\ufe0f\n\n #1: @mranderson - 19 pts\n"
+           " [View post](https://poster.place/note1abc)")
+    monkeypatch.setattr(eng, "generate_reply", lambda prompt: bad)
+    eng.daily_top_posts()
+    msg = posted[0]
+    assert ref in msg, "the author is not a tag a client can open"
+    assert "[View post]" not in msg and "](" not in msg, "markdown link in a Nostr post"
+    assert "https://poster.place/note1abc" in msg, "the post's link is missing"
+    assert "@mranderson" not in msg, "the model's rewrite of the list reached the post"
+    assert "\u200d" not in msg and "\ufe0f" not in msg
+    # A clean sentence from the model IS used, and its stray joiners are dropped.
+    monkeypatch.setattr(eng, "generate_reply", lambda prompt: "Today was a good one! \u200d\ufe0f")
+    eng.daily_top_posts()
+    assert "Today was a good one!" in posted[1] and "\u200d" not in posted[1]
+    assert posted[1].index("Today was a good one!") < posted[1].index(ref)

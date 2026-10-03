@@ -320,7 +320,8 @@ async def activity(top: int = 5) -> dict:
         if total <= 0:
             continue
         note = bech32.encode("note", bytes.fromhex(p["id"]))
-        ranked.append({"id": p["id"], "handle": known.get(p["pubkey"], ""), "score": total, **s,
+        ranked.append({"id": p["id"], "handle": known.get(p["pubkey"], ""), "ref": _ref(p["pubkey"]),
+                       "score": total, **s,
                        "text": (p.get("content") or "")[:280],
                        "url": f"{base}/{note}" if base else f"nostr:{note}"})
     ranked.sort(key=lambda r: -r["score"])

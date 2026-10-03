@@ -8,6 +8,7 @@ delivers to its fediverse followers too.
 """
 import datetime
 import logging
+import re
 import sys
 
 import pytz
@@ -33,11 +34,44 @@ def _today() -> str:
     return datetime.datetime.now(tz).strftime("%Y-%m-%d")
 
 
-def _is_ai_top_posts_response_complete(ai_msg, num_posts):
-    """Use the AI version only if it kept a link for every post (a truncated answer is intro only)."""
-    if not ai_msg or "None" in ai_msg or num_posts <= 0:
-        return False
-    return ai_msg.count("[View post]") >= num_posts
+# Emoji the model wrote can reach the post as their invisible joiners only (a zero-width joiner or a
+# variation selector with the picture gone), which renders as a stray box: "Let's dive in! ‍️".
+_ORPHAN_JOINERS = re.compile(r"(?:(?<=\s)|^)[\u200d\ufe0e\ufe0f]+|[\u200d\ufe0e\ufe0f]+(?=\s|$)")
+
+
+def _ai_line(prompt: str, limit: int = 240) -> str:
+    """One short line of the model's commentary, or "". Never a list, a link, a name or markup: those are
+    built below, in Python, because the model rewrote them -- `@name` instead of a tag that a client can
+    open, and `[View post](url)`, which Nostr clients print as raw brackets."""
+    try:
+        text = (generate_reply(prompt + " /no_think") or "").replace("/no_think", "")
+    except Exception as e:
+        logging.warning(f"[ENGAGEMENT] AI wording failed: {e}")
+        return ""
+    text = _ORPHAN_JOINERS.sub("", " ".join(text.split())).strip().strip('"')
+    if not text or "None" in text or len(text) > limit or any(c in text for c in "[]()#*`@") or "http" in text:
+        return ""
+    return text
+
+
+def _top_posts_message(rows, today, intro="", outro=""):
+    """The post, built here and never by the model. Each name is the author's `nostr:npub` reference
+    (clients render the person's name, open their profile on a tap and notify them; the bot's poster
+    adds the `p` tag) and each link a plain URL, which every client linkifies -- and which this app opens
+    in-app."""
+    parts = [f"Top Posts of the Day - {today}"]
+    if intro:
+        parts.append(intro)
+    for i, r in enumerate(rows, 1):
+        preview = " ".join((r.get("text") or "").split())
+        preview = (preview[:100] + "...") if len(preview) > 100 else (preview or "[No text content]")
+        who = r.get("ref") or r.get("handle") or "someone"
+        medal = {1: "🏆 ", 2: "🥈 ", 3: "🥉 "}.get(i, "")
+        parts.append(f"{medal}{i}. {who} - {r['score']} pts ({r['reactions']} reactions, {r['reposts']} reposts, "
+                     f"{r['replies']} replies)\n{preview}\n{r['url']}")
+    if outro:
+        parts.append(outro)
+    return "\n\n".join(parts)
 
 
 def daily_top_posts(print_only=False):
@@ -52,45 +86,14 @@ def daily_top_posts(print_only=False):
         if print_only:
             print(f"Top Posts of the Day - {today}\n\nNo engagement today.")
         return
-    lines = []
-    for i, r in enumerate(rows, 1):
-        preview = (r.get("text") or "").strip().replace("\n", " ")
-        preview = (preview[:100] + "...") if len(preview) > 100 else (preview or "[No text content]")
-        lines.append(f"{i}. {r['handle']} - {r['score']} pts ({r['reactions']} reactions, {r['reposts']} reposts, "
-                     f"{r['replies']} replies)\n   {preview}\n   🔗 [View post]({r['url']})")
-    final = f"Top Posts of the Day - {today}\n\n" + "\n\n".join(lines)
+    intro = outro = ""
     if _ai_on():
-        try:
-            prompt = f"""Generate an entertaining daily social media report highlighting the top posts.
-
-Posts are ranked by engagement: reactions + (reposts x 2) + (replies x 2)
-
-Requirements:
-- Write ONLY in English.
-- Create a fun introduction (1-2 sentences)
-- Present ALL {len(rows)} posts with rankings and scores
-- Add BRIEF witty commentary (keep each post's description short)
-- Use emojis (🏆 for top, 🔥 for high engagement)
-- End with brief encouragement (1 sentence)
-- Keep the tone positive and fun
-- Don't change the names
-
-IMPORTANT:
-- Keep all engagement numbers visible
-- Keep the ranking order
-- Include every post
-- MUST include each post's link as [View post](url), with the exact URL
-- KEEP IT CONCISE - under 2500 characters
-
-Data:
-{final}
-
-/no_think"""
-            ai_msg = generate_reply(prompt)
-            if _is_ai_top_posts_response_complete(ai_msg, len(rows)):
-                final = ai_msg
-        except Exception as e:
-            logging.warning(f"[ENGAGEMENT] AI wording failed, using the plain list: {e}")
+        summary = "; ".join(f"{(r.get('text') or '')[:80]} ({r['score']} pts)" for r in rows)
+        intro = _ai_line("Write ONE fun, upbeat sentence in English introducing today's most popular community "
+                         "posts. No names, no links, no hashtags, no markdown. Today's posts: " + summary)
+        outro = _ai_line("Write ONE short, upbeat closing sentence in English inviting people to reply and keep "
+                         "posting. No names, no links, no hashtags, no markdown.")
+    final = _top_posts_message(rows, today, intro, outro)
     print(final)
     if not print_only:
         _post(final)
