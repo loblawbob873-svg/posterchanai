@@ -49,6 +49,23 @@ function createBuddyHost(deps){
     }
     return null;
   }
+  /* SHE NEVER KEEPS THE KEYBOARD ("fix the focus issue too"). `focusable: false` is not honoured on
+   * Wayland, so a click on her made the compositor activate her window and the person's typing went
+   * nowhere until they clicked back. Whenever her window is focused, focus goes straight back to the
+   * window that had it before (the compositor's own last-focused order). Everything she does -- click,
+   * drag, her menu -- works by pointer, which focus does not affect. */
+  let giving = false;
+  async function giveBackFocus(){
+    if(giving || id == null) return;
+    giving = true;
+    try{
+      const rows = (await wm().windows()).filter(r => r && Number(r.id) !== id && !r.stashed
+                                                   && String(r.title || '') !== TITLE);
+      rows.sort((a, b) => (Number(b.focusTime) || 0) - (Number(a.focusTime) || 0));
+      if(rows[0]) await wm().focus(Number(rows[0].id));
+    }catch(_){ }
+    finally{ giving = false; }
+  }
   async function open(box, w){
     win = createWindow({
       show: false, frame: false, transparent: true, backgroundColor: '#00000000', hasShadow: false,
@@ -59,6 +76,7 @@ function createBuddyHost(deps){
     const mine = win;
     win.on('page-title-updated', e => e.preventDefault());   // the title is how the compositor finds her
     win.on('closed', () => { if(win === mine){ win = null; id = null; at = null; } });
+    win.on('focus', () => { if(win === mine) giveBackFocus(); });
     who = w;
     await win.loadFile(pagePath, { hash: w });
     if(!alive() || win !== mine) return false;
@@ -134,7 +152,7 @@ function createBuddyHost(deps){
    * mounts her again. */
   function ownerGone(contentsId){ if(owner && owner.id === contentsId){ owner = null; hide(); } }
 
-  return { show, hide, drag, drop, menu, ownerGone, TITLE, _state: () => ({ id, at, k, open: alive(), who }) };
+  return { show, hide, drag, drop, menu, ownerGone, giveBackFocus, TITLE, _state: () => ({ id, at, k, open: alive(), who }) };
 }
 
 module.exports = { createBuddyHost, TITLE };

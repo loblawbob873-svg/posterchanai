@@ -14,7 +14,9 @@ ROOT = Path(__file__).resolve().parents[1]
 SCRIPT = r"""
 const { createBuddyHost, TITLE } = require(%(host)s);
 const calls = [];
-const rows = [{ id: 1, title: 'PosterChan Desktop', rect: { x: 0, y: 0, width: 3840, height: 2560 } }];
+const rows = [{ id: 1, title: 'PosterChan Desktop', rect: { x: 0, y: 0, width: 3840, height: 2560 }, focusTime: 5 },
+              { id: 9, title: 'PosterChan Window — terminal', rect: { x: 0, y: 0, width: 800, height: 600 }, focusTime: 40 },
+              { id: 12, title: 'Firefox', rect: { x: 0, y: 0, width: 800, height: 600 }, focusTime: 20 }];
 const wmApi = {
   outputs: async () => [{ name: 'DP-1', rect: { x: 0, y: 0, width: 3840, height: 2560 } },
                         { name: 'DP-2', rect: { x: 3840, y: 0, width: 3840, height: 2560 } }],
@@ -49,6 +51,11 @@ const host = createBuddyHost({ BrowserWindow: FakeWin, wm: () => wmApi, scopeOf:
   out.opts = { frame: made.o.frame, transparent: made.o.transparent, focusable: made.o.focusable, skipTaskbar: made.o.skipTaskbar,
                title: made.o.title, sandbox: made.o.webPreferences.sandbox, preload: made.o.webPreferences.preload, page: made.page };
   out.calls1 = calls.splice(0);
+  // Her window is activated (a click): focus goes back to the window that had it -- the terminal.
+  rows.find(r => r.title === TITLE).focusTime = 99;
+  made.ev.focus();
+  await new Promise(r => setTimeout(r, 10));
+  out.focusBack = calls.splice(0);
   out.dragStranger = host.drag(stranger, 50, 0);
   out.drag = host.drag(made.webContents, 10, -5);
   out.dragCalls = calls.splice(0);
@@ -146,3 +153,9 @@ def test_main_wires_her_host_to_the_window_class_electron_assigns_later():
     assert r.returncode == 0, r.stderr
     out = json.loads(r.stdout)
     assert out.get("ok") is True and out.get("made") == ["PosterChan Buddy"], out
+
+
+def test_a_click_on_her_never_keeps_the_keyboard():
+    """'fix the focus issue too': clicking her made her window the focused one, so typing went nowhere."""
+    r = _run()
+    assert r["focusBack"] == [["FOCUS", 9]], ("focus did not go back to the window that had it", r["focusBack"])
