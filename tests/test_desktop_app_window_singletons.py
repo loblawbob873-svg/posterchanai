@@ -99,3 +99,48 @@ def test_a_renderer_can_ask_whether_an_app_already_has_its_window():
     assert json.loads(run.stdout) == [False, True, False, True, False, False, False]
     assert "ipcMain.on('pc:win:has'" in MAIN
     assert "hasAppWindow: (view) => ipcRenderer.sendSync('pc:win:has'" in (ROOT / "desktop/preload.js").read_text()
+
+
+def _raise_run(rows, title="PosterChan Window — terminal", shell=True):
+    policy = MAIN.split("const pcAppWindows = new Map();", 1)[1].split("/* Tray / background state.", 1)[0]
+    script = f"""
+      const pcAppWindows = new Map();
+      const setTimeout = () => 0;
+      const SHELL_MODE = {json.dumps(shell)};
+      const calls = [];
+      const ROWS = {json.dumps(rows)};
+      const wm = () => ({{ available: () => true, windows: async () => ROWS,
+                          show: async id => calls.push(['show', id]), focus: async id => calls.push(['focus', id]) }});
+      {policy}
+      // On Wayland these Electron calls change nothing -- which is the bug; they are recorded only.
+      const prior = {{ pending:false, isDestroyed:()=>false, isMinimized:()=>true, restore(){{}}, show(){{}}, focus(){{}},
+                       getTitle:()=>{json.dumps(title)} }};
+      pcAppWindows.set('terminal', prior);
+      const claimed = claimPcAppWindow('app://posterchan/index.html?pcwin=terminal');
+      setImmediate(() => setImmediate(() => setImmediate(() => console.log(JSON.stringify({{claimed, calls}})))));
+    """
+    out = subprocess.run(["node", "-e", script], capture_output=True, text=True, timeout=30)
+    assert out.returncode == 0, out.stderr
+    return json.loads(out.stdout)
+
+
+def test_an_open_app_on_the_other_monitor_is_brought_back_by_the_compositor():
+    """'if a posterchan app is open and you click on the app in the start menu or desktop, the user
+    sees nothing' -- the launch reached main, whose Electron restore/focus are no-ops on Wayland."""
+    rows = [{"id": 7, "title": "PosterChan Desktop", "stashed": False},
+            {"id": 15, "title": "PosterChan Window — terminal", "stashed": True},
+            {"id": 112, "title": "PosterChan Window — global", "stashed": False}]
+    r = _raise_run(rows)
+    assert r["claimed"] is True, r
+    assert r["calls"] == [["show", 15], ["focus", 15]], r
+    # Not minimised: focus only.
+    rows[1]["stashed"] = False
+    assert _raise_run(rows)["calls"] == [["focus", 15]]
+
+
+def test_the_compositor_is_never_asked_about_an_ambiguous_or_missing_window():
+    two = [{"id": 15, "title": "PosterChan Window — terminal"}, {"id": 16, "title": "PosterChan Window — terminal"}]
+    assert _raise_run(two)["calls"] == []
+    assert _raise_run([{"id": 3, "title": "Firefox"}])["calls"] == []
+    # Off PosterChanOS (Windows/macOS app) there is no compositor to ask; Electron's own calls stand.
+    assert _raise_run([{"id": 15, "title": "PosterChan Window — terminal"}], shell=False)["calls"] == []

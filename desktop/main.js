@@ -102,6 +102,30 @@ function hasPcAppWindow(view) {
   const prior = pcAppWindows.get(String(view || ''));
   return !!(prior && (prior.pending || !prior.isDestroyed()));
 }
+/* BRING AN APP'S EXISTING WINDOW BACK THROUGH THE COMPOSITOR, NOT THROUGH ELECTRON.
+ *
+ * "if a posterchan app is open and you click on the app in the start menu or desktop, the user sees
+ * nothing." A launcher only lands here when its own monitor's renderer could not see the window --
+ * it is on the OTHER monitor (each desktop renderer's window list is scoped to its output), or it
+ * was never seen on screen in that scope. Electron's restore()/show()/focus() then did nothing at
+ * all: a Wayland client has no request that un-minimises itself and cannot take focus without an
+ * activation token, so on PosterChanOS every one of them is a no-op. The compositor can do both;
+ * the window is found by its exact title (`PosterChan Window — <view>`, one per app). The Electron
+ * calls stay for Windows/macOS, where they work and there is no compositor to ask. */
+function raisePcAppWindow(prior) {
+  try { if (prior.isMinimized()) prior.restore(); prior.show(); prior.focus(); } catch (_) {}
+  if (!SHELL_MODE) return Promise.resolve(false);
+  let title = '';
+  try { title = String(prior.getTitle() || ''); } catch (_) { return Promise.resolve(false); }
+  return Promise.resolve().then(() => wm().available()).then(ok => ok ? wm().windows() : [])
+    .then(rows => {
+      const hits = (rows || []).filter(r => r && String(r.title || '') === title);
+      if (hits.length !== 1) return false;
+      const id = Number(hits[0].id);
+      return Promise.resolve(hits[0].stashed ? wm().show(id) : null)
+        .then(() => wm().focus(id)).then(() => true);
+    }).catch(() => false);
+}
 function claimPcAppWindow(raw) {
   const view = pcWindowView(raw);
   if (!view) return false;
@@ -109,7 +133,7 @@ function claimPcAppWindow(raw) {
   if (prior) {
     if (prior.pending) return true;
     if (!prior.isDestroyed()) {
-      try { if (prior.isMinimized()) prior.restore(); prior.show(); prior.focus(); } catch (_) {}
+      raisePcAppWindow(prior);
       return true;
     }
     pcAppWindows.delete(view);
