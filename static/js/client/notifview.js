@@ -80,6 +80,14 @@ window.PCNotifViewFactory = function(dep){
   // the two can't disagree about what "read" means.
   function markNotifsRead(){
     seenNotif.last = Math.floor(Date.now()/1000); localStorage.setItem('pc_notif_seen', seenNotif.last);
+    // …and whatever is dated AHEAD of that (a fast clock somewhere) by id, or it stays unread after being
+    // opened and relights the bell (notifs.js _aheadRead).
+    try{
+      const ahead = [];
+      for(const e of notifList()) if(e && e.id && _notifTs(e) > seenNotif.last){ ahead.push(e.id); if(ahead.length >= 500) break; }
+      seenNotif.ahead = new Set(ahead);
+      localStorage.setItem('pc_notif_seen_ahead', JSON.stringify(ahead));
+    }catch(_){}
     S._updBadge=false;   // clears the one-shot update badge too (no phantom permanent +1)
     $$('#notif-badge,#notif-badge-m,#rb-notif-badge').forEach(b=>b.classList.add('hidden'));
     // The desktop's tray bell reads the same unread count, so it clears here too — opening the

@@ -321,9 +321,25 @@ window.PCNotifsFactory = function(dep){
   // once the subtraction was 60-60 and the bell never lit again however much arrived. It lit on the first
   // login only because nothing had been opened yet. A count is not a read-marker — unread is a comparison
   // against seenNotif.last, and it is this function on every surface now.
+  /* NOTIFICATIONS DATED AHEAD OF THIS CLOCK ("bell says 3 after clicking on notifications"). Read means
+   * `ts <= seenNotif.last`, and opening the centre sets `last` to NOW -- so a mention whose created_at is
+   * later than this device's clock (a fast clock on the author's side, or on ours) stayed unread after it
+   * was opened and relit the bell on the next arrival, for as long as the skew lasted. A post cannot be
+   * marked read by time before its time comes, so the ones on screen when the centre was opened are
+   * remembered by id (markNotifsRead, notifview.js). The set is REPLACED on every open, so an id leaves
+   * it once its time has passed and the ordinary marker covers it. */
+  function _aheadRead(){
+    if(!seenNotif.ahead){
+      let a = [];
+      try{ a = JSON.parse(localStorage.getItem('pc_notif_seen_ahead') || '[]'); }catch(_){ a = []; }
+      seenNotif.ahead = new Set(Array.isArray(a) ? a.filter(x => typeof x === 'string') : []);
+    }
+    return seenNotif.ahead;
+  }
   function notifUnread(){ return notifList().filter(e=>{
       const ts=_notifTs(e);
       if(ts<=seenNotif.last) return false;
+      if(e.id && _aheadRead().has(e.id)) return false;
       return e.kind===3 ? ts>S._notifEpoch : true;
     // Count the update toward the badge from the SAME condition renderNotifications() draws the row from
     // (_newBuild || _apkUpdate) — NOT the separate _updBadge, which cleared on view and left the badge

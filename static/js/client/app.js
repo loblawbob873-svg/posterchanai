@@ -1198,6 +1198,8 @@
    * its own page holding its own copy — so opening the centre on one left every other bell lit. A
    * `storage` event is exactly "another page on this origin changed it". */
   try{ window.addEventListener('storage', e => {
+    // The ahead-of-the-clock ids read there are read here too (notifs.js _aheadRead).
+    if(e.key === 'pc_notif_seen_ahead'){ seenNotif.ahead = null; try{ bumpNotif(); }catch(_){} return; }
     if(e.key !== 'pc_notif_seen') return;
     const v = +(e.newValue || 0);
     if(v > seenNotif.last){ seenNotif.last = v; try{ bumpNotif(); }catch(_){} }
@@ -12426,7 +12428,7 @@
     });
     if(_newSob) observeCelebrations();   // a 😭 that arrived via the count fetch must start the sweep
   }
-  function timeAgo(ts){ const s=Math.floor(Date.now()/1000)-ts; if(s<60)return s+'s'; if(s<3600)return (s/60|0)+'m'; if(s<86400)return (s/3600|0)+'h'; return (s/86400|0)+'d'; }
+  function timeAgo(ts){ const s=Math.max(0,Math.floor(Date.now()/1000)-ts); if(s<60)return s+'s'; if(s<3600)return (s/60|0)+'m'; if(s<86400)return (s/3600|0)+'h'; return (s/86400|0)+'d'; }
   /* ---------- Link preview cards (OpenGraph) and webxdc cards: moved to static/js/client/linkcards.js ----------
    * Its own <script> tag, loaded BEFORE app.js and BUILT RIGHT HERE (`_linkcardsMod()` below), where the
    * block used to run: `linkCardHtml` returns markup synchronously in the middle of every note render,
