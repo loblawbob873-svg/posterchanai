@@ -371,6 +371,20 @@
       if(!groups.has(g)) groups.set(g, []);
       groups.get(g).push(sh);
     }
+    /* A copy made BEFORE shares named their playlist has no `src`, so it keys on its name; a copy of the
+     * SAME playlist made after keys on the playlist id -- two groups, two entries ("i did tell you we
+     * shared it twice"). A name-only group joins the group of an id-carrying share from the same person
+     * whose name matches. Only ever INTO an id group, and only when exactly one matches, so two
+     * different playlists that happen to share a name are never merged. */
+    const nameOf = b => String(b && b.name || '').trim().toLowerCase();
+    for(const [g, list] of [...groups]){
+      if(!g.includes('|name:')) continue;
+      const from = list[0].from, name = nameOf(list[0].body);
+      const homes = [...groups].filter(([k, l]) => k.startsWith(from + '|src:') && l.some(x => nameOf(x.body) === name));
+      if(homes.length !== 1) continue;
+      homes[0][1].push(...list);
+      groups.delete(g);
+    }
     const folded = new Map();
     for(const list of groups.values()){
       list.sort((a, b) => ((b.body.updated || b.at) - (a.body.updated || a.at)) || (b.at - a.at));

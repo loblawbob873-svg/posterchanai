@@ -440,4 +440,21 @@ await run('two old copies of one playlist show as one, and can be removed', asyn
            n: ins.length, acc: acc.length, pend: pend.length, songs: bt.length, after: B.S.acceptedShares().length };
 });
 
+await run('an old copy and a new copy of one playlist show as one (APK 2450 still showed two)', async () => {
+  const net = makeNet(); const A = person(net, 'A'), B = person(net, 'B');
+  const s1 = await A.addTrack(wav(400, 51), 'Old'), s2 = await A.addTrack(wav(410, 52), 'New');
+  // Shared once BEFORE shares named their playlist (no src), then again AFTER (src = the playlist id).
+  await A.S.share({ name: 'Matthew', tracks: [_tr(A, s1)], to: [B.pk] });
+  const in1 = await B.S.loadIn(); B.S.decide(in1[0].key, true);
+  await A.S.share({ name: 'Matthew', tracks: [_tr(A, s1), _tr(A, s2)], to: [B.pk], source: 'plM' });
+  const ins = await B.S.loadIn();
+  const acc = B.S.acceptedShares();
+  const bt = acc.length ? await B.S.tracksOf(acc[0]) : [];
+  // A DIFFERENT playlist of A's must not be swallowed by the fold.
+  await A.S.share({ name: 'Road trip', tracks: [_tr(A, s1)], to: [B.pk], source: 'plR' });
+  const ins2 = await B.S.loadIn();
+  return { ok: ins.length === 1 && acc.length === 1 && bt.length === 2 && ins2.length === 2,
+           n: ins.length, acc: acc.length, songs: bt.length, withOther: ins2.length };
+});
+
 process.stdout.write(JSON.stringify(out));
