@@ -1342,6 +1342,22 @@
    * a bare id — and `<use href="i-wot">` resolves to NOTHING and draws nothing, with no error. That
    * is why the start-menu stat icons and the Post/Profile/Search window-title icons were blank. Take
    * either form. */
+  /* A POST, PROFILE OR SEARCH WINDOW IS NOT AN APP, so the app lookup found nothing and it sat on the
+   * taskbar as the anonymous grid square ("make the icon better when opening a post/thread so it don't
+   * have that grid icon on taskbar"). Name and draw it by what it holds: a post (an article when the
+   * desktop's Store knows it is long-form), a profile, a search. */
+  function _docTaskIcon(view){
+    const v = String(view || '');
+    let m = /^doc:post:([0-9a-f]{64})$/i.exec(v);
+    if(m){
+      let art = false;
+      try{ const ev = window.Store && Store.get(m[1]); art = !!(ev && ev.kind === 30023); }catch(_){}
+      return art ? { icon: 'i-article', label: 'Article' } : { icon: 'i-note', label: 'Post' };
+    }
+    if(/^doc:prof:[0-9a-f]{64}$/i.test(v)) return { icon: 'i-user', label: 'Profile' };
+    if(v === 'doc:search') return { icon: 'i-search', label: 'Search' };
+    return null;
+  }
   const iconSvg = (href) => {
     const h = String(href || '').trim();
     const id = !h ? '#i-grid' : (h.charAt(0) === '#' ? h : '#' + h);
@@ -5181,6 +5197,7 @@
       if(!r || !r.own) continue;
       const a = apps().find(x => x.view === r.view);
       if(a){ r.icon = a.icon || r.icon; r.title = a.label || r.title; r.label = r.title; }
+      else{ const d = _docTaskIcon(r.view); if(d){ r.icon = d.icon; r.title = d.label; r.label = d.label; } }
     }
     let changed = JSON.stringify(nativeTasks.map(r => [r.id,r.title,r.focused,r.stashed]))
                !== JSON.stringify(rows.map(r => [r.id,r.title,r.focused,r.stashed]));
