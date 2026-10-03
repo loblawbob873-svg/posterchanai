@@ -3002,6 +3002,19 @@
    * left on one device and come straight back from the vault on the next -- the exact standoff the
    * tombstone/entry pair exists to settle. This used to return true for any room without a
    * community_id: a silent success that wrote no tombstone at all. */
+  async function leaveIdFor(p,owner,room){
+    const key=inviteKey(room),naddr=String(room.naddr||(inviteParts(room.url)||{}).naddr||'').toLowerCase();
+    if(!key&&!naddr)return '';
+    const state=await cordMembershipState(p,owner);
+    for(const e of (state.merged&&state.merged.entries)||[]){
+      const url=inviteRefUrl(e.invite_ref),id=cordListIdOrEmpty(e.community_id||(e.current||e.seed||{}).community_id);
+      if(!id||!url)continue;
+      const refNaddr=String((inviteParts(url)||{}).naddr||(String(e.invite_ref||'').match(/naddr1[0-9a-z]+/i)||[])[0]||'').toLowerCase();
+      if(url===String(room.url||'')||(key&&inviteKey({url})===key)||(naddr&&refNaddr===naddr))return id;
+    }
+    if(room.url){ const h=await hydrateInvite(p,room.url); return cordListIdOrEmpty(h&&h.cord&&h.cord.bundle&&h.cord.bundle.community_id); }
+    return '';
+  }
   async function leaveArmadaMembership(p,room){
     const viewer=p.viewer?p.viewer():{};
     const cid=roomIdentity(room);
@@ -3010,7 +3023,13 @@
     // The vault keys a membership on the 32-byte community id. A room with none (never opened, or a
     // NIP-29 group) cannot have a vault entry to tombstone -- leaving it is this device's ledger alone.
     // Decided BEFORE the guestbook says "leave", so a leave that is going to fail tells nobody.
-    const wireId=cordListIdOrEmpty(room.cord?.bundle?.community_id)||cordListIdOrEmpty(room.communityId)||cordListIdOrEmpty(cid);
+    let wireId=cordListIdOrEmpty(room.cord?.bundle?.community_id)||cordListIdOrEmpty(room.communityId)||cordListIdOrEmpty(cid);
+    /* A DEVICE THAT NEVER OPENED THE ROOM STILL HAS TO LEAVE IT FOR THE ACCOUNT ("the chinese room I left
+       came back on desktop"). The 32-byte id lives in the decrypted bundle, so a room known here only by
+       its invite has none -- and leaving it used to be remembered on THIS device alone, while the
+       account's vault kept the membership and every other device kept (or restored) the room. Find the
+       id: the vault entry joined with this same invite, else the invite's own bundle. */
+    if(!wireId&&room.protocol!=='nip29'){ try{ wireId=await leaveIdFor(p,viewer.pubkey,room); }catch(_){ wireId=''; } }
     const removedAt=Date.now(),leftRef=String(room.url||''),leftNaddr=String(room.naddr||'');
     if(!wireId){
       rememberLeftCommunity(viewer.pubkey,room,removedAt);
