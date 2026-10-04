@@ -217,3 +217,83 @@ def test_on_posterchanos_her_own_window_draws_her_and_the_desktop_keeps_her_stat
     # Her own Hide already closed her window in the host; the desktop only records it.
     assert res["hidden"] == {"on": False, "saved": False, "hides": 0}, ("her Hide did not stick", res["hidden"])
     assert res["desk_hide"] == {"on": False, "hides": 1}, ("hiding from the desktop left her window up", res["desk_hide"])
+
+
+@pytest.mark.skipif(not Path("/opt/google/chrome/chrome").exists(), reason="Chrome required")
+def test_she_is_resizable_and_her_size_and_monitor_persist():
+    """'you need to make the axolotl, posterchan resizeable and persistent'. Web desktop: her menu's
+    Bigger/Smaller and Ctrl+scroll change her real box, are saved with the account and survive a reload.
+    PosterChanOS: her window's Bigger/Smaller and the monitor she was dropped on are saved and sent back
+    with the next show, so a restart puts her on that monitor at that spot."""
+    res = {}
+
+    async def check(b):
+        await desktop.login(b)
+        await b.until("document.body.classList.contains('os-on') && !!document.querySelector('#os-desk')")
+        await b.js("(()=>{const pc=window.__PC,s=pc.saveDesktopBuddy;pc.saveDesktopBuddy=v=>{__buddySaves.push(JSON.parse(JSON.stringify(v)));return s&&s(v)}})()")
+        await b.until("(()=>{const i=document.querySelector('#os-desk .os-buddy img');return !!i&&i.complete&&i.naturalWidth>0})()")
+        w0 = await b.js("document.querySelector('.os-buddy').getBoundingClientRect().width")
+        res["bigger"] = await _menu_pick(b, "document.querySelector('.os-buddy')", "Bigger")
+        await asyncio.sleep(.3)
+        w1 = await b.js("document.querySelector('.os-buddy').getBoundingClientRect().width")
+        res["grew"] = w1 / w0
+        res["saved_size"] = await b.js("(__buddySaves.slice(-1)[0]||{}).size")
+        # Ctrl + scroll down on her: smaller.
+        await b.js("document.querySelector('.os-buddy').dispatchEvent(new WheelEvent('wheel',{deltaY:100,ctrlKey:true,bubbles:true,cancelable:true}));true")
+        await asyncio.sleep(.3)
+        res["after_wheel"] = await b.js("PCBuddy.size()")
+        await _menu_pick(b, "document.querySelector('.os-buddy')", "Bigger")
+        await _menu_pick(b, "document.querySelector('.os-buddy')", "Bigger")
+        await asyncio.sleep(.3)
+        res["size_before_reload"] = await b.js("PCBuddy.size()")
+        w2 = await b.js("document.querySelector('.os-buddy').getBoundingClientRect().width")
+        await b.call("Page.reload", {})
+        await asyncio.sleep(.5)
+        await b.until("document.body.classList.contains('os-on') && !!document.querySelector('#os-desk .os-buddy')")
+        await asyncio.sleep(.5)
+        res["size_after_reload"] = await b.js("PCBuddy.size()")
+        res["width_kept"] = (await b.js("document.querySelector('.os-buddy').getBoundingClientRect().width")) / w2
+
+    asyncio.run(desktop.with_browser("online", "", check, INIT))
+    assert res["bigger"] is True, ("her menu has no Bigger", res["bigger"])
+    assert 1.2 <= res["grew"] <= 1.3, ("Bigger did not make her box a quarter bigger", res["grew"])
+    assert res["saved_size"] == 1.25, ("her size was not saved with the account", res["saved_size"])
+    assert res["after_wheel"] == 1.0, ("Ctrl+scroll did not make her smaller", res["after_wheel"])
+    assert res["size_before_reload"] == 1.5 and res["size_after_reload"] == 1.5, ("her size did not survive a reload", res)
+    assert 0.97 <= res["width_kept"] <= 1.03, ("after a reload her box is not the size she was left at", res["width_kept"])
+
+
+@pytest.mark.skipif(not Path("/opt/google/chrome/chrome").exists(), reason="Chrome required")
+def test_on_posterchanos_her_size_and_the_monitor_she_was_left_on_are_saved_and_sent_back():
+    res = {}
+
+    async def check(b):
+        await desktop.login(b)
+        await b.until("document.body.classList.contains('os-on') && !!document.querySelector('#os-desk')")
+        await b.js("(()=>{const pc=window.__PC,s=pc.saveDesktopBuddy;pc.saveDesktopBuddy=v=>{__buddySaves.push(JSON.parse(JSON.stringify(v)));return s&&s(v)}})()")
+        await b.js("PCOSWin.enabled=()=>true;PCBuddy.refresh();true")
+        await b.until("__native.shows.length>0")
+        bw0 = await b.js("__native.shows.slice(-1)[0].bw")
+        # Her window's own "Bigger".
+        n = await b.js("__native.shows.length")
+        await b.js("__native.cb({type:'size', step:1});true")
+        await b.until(f"__native.shows.length>{n}")
+        res["bigger"] = (await b.js("__native.shows.slice(-1)[0].bw")) / bw0
+        res["saved_size"] = await b.js("(__buddySaves.slice(-1)[0]||{}).size")
+        # Dropped on the OTHER monitor: the monitor and her spot on it are saved...
+        await b.js("__native.cb({type:'moved', vx:5000, vy:300, out:'DP-1', fx:0.25, fy:0.75});true")
+        res["saved_spot"] = await b.js("(()=>{const s=__buddySaves.slice(-1)[0]||{};return {out:s.out,fx:s.fx,fy:s.fy}})()")
+        # ...and every later show (a restart, a resize) asks for that monitor and spot.
+        n = await b.js("__native.shows.length")
+        await b.call("Page.reload", {})
+        await asyncio.sleep(.5)
+        await b.until("document.body.classList.contains('os-on') && !!document.querySelector('#os-desk')")
+        await b.js("PCOSWin.enabled=()=>true;PCBuddy.refresh();true")
+        await b.until("__native.shows.length>0")
+        res["after_restart"] = await b.js("(()=>{const w=__native.shows.slice(-1)[0];return {out:w.out,fx:w.fx,fy:w.fy,size:PCBuddy.size()}})()")
+
+    asyncio.run(desktop.with_browser("online", "", check, NATIVE_INIT))
+    assert 1.2 <= res["bigger"] <= 1.3, ("her window's Bigger did not enlarge her", res["bigger"])
+    assert res["saved_size"] == 1.25, res
+    assert res["saved_spot"] == {"out": "DP-1", "fx": 0.25, "fy": 0.75}, ("the monitor she was left on was not saved", res["saved_spot"])
+    assert res["after_restart"] == {"out": "DP-1", "fx": 0.25, "fy": 0.75, "size": 1.25}, ("a restart forgot where she was left", res["after_restart"])

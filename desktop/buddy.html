@@ -17,10 +17,11 @@
   #say{position:absolute;left:50%;top:6px;transform:translateX(-50%);white-space:nowrap;padding:5px 10px;border-radius:12px;
        background:#12121c;color:#fff;font:600 13px system-ui,sans-serif;border:1px solid #ff8a3d;opacity:0;transition:opacity .2s;pointer-events:none}
   #say.on{opacity:1}
-  #menu{position:absolute;left:4px;right:4px;top:50px;display:none;flex-direction:column;gap:4px;padding:6px;border-radius:10px;
+  /* The whole window, scrolling: at her smallest size the window is ~160px tall and five items must still reach. */
+  #menu{position:absolute;left:2px;right:2px;top:2px;max-height:calc(100% - 4px);overflow:auto;display:none;flex-direction:column;gap:2px;padding:4px;border-radius:10px;
         background:#12121cee;border:1px solid #2b2b3d;font:13px system-ui,sans-serif}
   #menu.on{display:flex}
-  #menu button{all:unset;padding:7px 9px;border-radius:7px;color:#eee;cursor:pointer}
+  #menu button{all:unset;padding:6px 8px;border-radius:7px;color:#eee;cursor:pointer;white-space:nowrap}
   #menu button:hover{background:#2a2a3c}
   @media(prefers-reduced-motion:reduce){#me.hop{animation:none}}
 </style>
@@ -28,7 +29,7 @@
 <body>
 <div id="say"></div>
 <div id="me" role="img"><img id="im" alt=""></div>
-<div id="menu" role="menu"><button data-a="dance" role="menuitem">Dance!</button><button data-a="switch" role="menuitem">Switch</button><button data-a="hide" role="menuitem">Hide</button></div>
+<div id="menu" role="menu"><button data-a="dance" role="menuitem">Dance!</button><button data-a="switch" role="menuitem">Switch</button><button data-a="bigger" role="menuitem">Bigger</button><button data-a="smaller" role="menuitem">Smaller</button><button data-a="hide" role="menuitem">Hide</button></div>
 <script>
 (function(){
   'use strict';
@@ -63,13 +64,14 @@
     if(reduced()) show(frame % FRAMES + 1);
   }
   me.addEventListener('pointerenter', function(){ if(!drag && Date.now() >= happyUntil) show(2); });
-  me.addEventListener('contextmenu', function(ev){ ev.preventDefault(); menu.classList.add('on'); });
+  me.addEventListener('contextmenu', function(ev){ ev.preventDefault(); menu.classList.add('on'); bridge.menu('release'); });
   menu.addEventListener('click', function(ev){
     var b = ev.target.closest('button'); if(!b) return;
     menu.classList.remove('on');
     if(b.dataset.a === 'hide') bridge.menu('hide');
     else if(b.dataset.a === 'switch') bridge.menu('switch');
-    else cheer();
+    else if(b.dataset.a === 'bigger' || b.dataset.a === 'smaller') bridge.menu(b.dataset.a);
+    else { cheer(); bridge.menu('release'); }
   });
   document.addEventListener('pointerdown', function(ev){ if(!menu.contains(ev.target)) menu.classList.remove('on'); }, true);
   me.addEventListener('pointerdown', function(ev){
@@ -92,8 +94,15 @@
   function end(ev){
     if(!drag || (ev && ev.pointerId !== drag.id)) return;
     var moved = drag.moved >= 4; drag = null; me.classList.remove('dragging');
-    if(moved) bridge.drop(); else cheer();
+    if(moved) bridge.drop(); else { cheer(); bridge.menu('release'); }
   }
+  // Ctrl + scroll on her: bigger / smaller.
+  var wheelAt = 0;
+  me.addEventListener('wheel', function(ev){
+    if(!ev.ctrlKey) return; ev.preventDefault();
+    if(Date.now() - wheelAt < 180) return; wheelAt = Date.now();
+    bridge.menu(ev.deltaY < 0 ? 'bigger' : 'smaller');
+  }, { passive: false });
   me.addEventListener('pointerup', end);
   me.addEventListener('pointercancel', end);
   window.__buddy = { frame: function(){ return frame; }, who: WHO };

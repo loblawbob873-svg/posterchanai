@@ -41,12 +41,21 @@
   const native = () => { try{ return !!(window.pcBuddy && window.PCOSWin && PCOSWin.enabled()); }catch(_){ return false; } };
 
   const CS = () => window.ClientSettings;
-  const clamp = (v, d) => { const n = Number(v); return Number.isFinite(n) ? Math.min(1, Math.max(0, n)) : d; };
+  const clamp = (v, d) => { const n = Number(v); return (v !== null && v !== '' && Number.isFinite(n)) ? Math.min(1, Math.max(0, n)) : d; };
+  /* RESIZABLE AND PERSISTENT ("you need to make the axolotl, posterchan resizeable and persistent").
+   * `size` scales her box (50%..250%, in quarter steps); `out` + `fx`/`fy` are the MONITOR she was left on
+   * and her spot on it, so a restart puts her back exactly there -- even on another monitor than the one
+   * that owns the desktop. All of it is in the same synced preference, so it follows the account. */
+  const SIZE_MIN = 0.5, SIZE_MAX = 2.5;
+  const sizeOf = v => { const n = Number(v); return Number.isFinite(n) && n > 0 ? Math.min(SIZE_MAX, Math.max(SIZE_MIN, Math.round(n * 4) / 4)) : 1; };
   function pref(){
     let v = null; try{ v = CS() && CS().get(KEY, null); }catch(_){ v = null; }
     v = (v && typeof v === 'object') ? v : {};
-    return { on: v.on !== false, x: clamp(v.x, 0.86), y: clamp(v.y, 1), who: CHARS[v.who] ? v.who : 'posterchan' };
+    return { on: v.on !== false, x: clamp(v.x, 0.86), y: clamp(v.y, 1), who: CHARS[v.who] ? v.who : 'posterchan',
+             size: sizeOf(v.size), out: /^[A-Za-z0-9._-]{1,32}$/.test(String(v.out || '')) ? String(v.out) : '',
+             fx: clamp(v.fx, null), fy: clamp(v.fy, null) };
   }
+  const boxW = p => Math.round(BOX_W * p.size), boxH = p => Math.round(BOX_H * p.size);
   function setPref(v){
     try{ CS() && CS().set(KEY, v); }catch(_){ }
     try{ const pc = window.__PC; if(pc && pc.saveDesktopBuddy) pc.saveDesktopBuddy(v); }catch(_){ }
@@ -104,13 +113,14 @@
      * is made full screen; sized against that she came up 3.8x too wide. Wait: the resize to the real
      * screen places her (see the resize listener below). */
     if((window.innerWidth || 0) < 640 || (window.innerHeight || 0) < 480) return;
-    const at = spot(p, BOX_W, BOX_H);
+    const at = spot(p, boxW(p), boxH(p));
     if(!at) return;
     const z = zf(), dr = desk.getBoundingClientRect();
     wire();
     nativeUp = true;
     try{ Promise.resolve(window.pcBuddy.show({ vx: dr.left + at.left * z, vy: dr.top + (at.top - BUBBLE) * z,
-                                               bw: BOX_W * z, bh: (BOX_H + BUBBLE) * z, who: p.who })).catch(() => {}); }catch(_){ }
+                                               bw: boxW(p) * z, bh: (boxH(p) + BUBBLE) * z, who: p.who,
+                                               out: p.out, fx: p.fx, fy: p.fy })).catch(() => {}); }catch(_){ }
   }
   function nativeHide(){
     if(!nativeUp) return;
@@ -125,13 +135,16 @@
       if(!ev || !desk) return;
       if(ev.type === 'hide'){ nativeUp = false; hide(); return; }
       if(ev.type === 'switch'){ choose(who() === 'axolotl' ? 'posterchan' : 'axolotl'); return; }
+      if(ev.type === 'size'){ resize(Number(ev.step) || 0); return; }
       if(ev.type !== 'moved') return;
-      const z = zf(), dr = desk.getBoundingClientRect();
-      const dw = desk.clientWidth - BOX_W, dh = desk.clientHeight - BOX_H;
-      const left = (Number(ev.vx) - dr.left) / z, top = (Number(ev.vy) - dr.top) / z + BUBBLE;
       const p = pref();
+      const z = zf(), dr = desk.getBoundingClientRect();
+      const dw = desk.clientWidth - boxW(p), dh = desk.clientHeight - boxH(p);
+      const left = (Number(ev.vx) - dr.left) / z, top = (Number(ev.vy) - dr.top) / z + BUBBLE;
       if(dw > 0 && Number.isFinite(left)) p.x = clamp(left / dw, .86);
       if(dh > 0 && Number.isFinite(top)) p.y = clamp(top / dh, 1);
+      // The monitor she was left on, and her spot on it -- what puts her back there after a restart.
+      if(/^[A-Za-z0-9._-]{1,32}$/.test(String(ev.out || ''))){ p.out = String(ev.out); p.fx = clamp(ev.fx, null); p.fy = clamp(ev.fy, null); }
       setPref(p);
     });
   }
@@ -153,7 +166,8 @@
   function menu(x, y){
     const other = who() === 'axolotl' ? 'posterchan' : 'axolotl';
     const rows = [{ label: 'Hide ' + CHARS[who()].name, run: hide }, { label: 'Dance!', run: cheer },
-                  { label: 'Switch to ' + CHARS[other].name, run: () => choose(other) }];
+                  { label: 'Switch to ' + CHARS[other].name, run: () => choose(other) },
+                  { label: 'Bigger', run: () => resize(1) }, { label: 'Smaller', run: () => resize(-1) }];
     if(opts.menu) opts.menu(x, y, rows);
   }
 
@@ -169,6 +183,7 @@
     el.appendChild(im);
     el.addEventListener('pointerenter', () => { if(!drag && !el.classList.contains('happy')) show(2); });
     el.addEventListener('contextmenu', ev => { ev.preventDefault(); ev.stopPropagation(); menu(ev.clientX, ev.clientY); });
+    el.addEventListener('wheel', ev => { if(!ev.ctrlKey) return; ev.preventDefault(); resize(ev.deltaY < 0 ? 1 : -1); }, { passive: false });
     el.addEventListener('pointerdown', ev => {
       if(ev.button !== 0) return;
       ev.stopPropagation();
@@ -198,6 +213,7 @@
       p.x = dw > 0 ? (parseFloat(el.style.left) || 0) / dw : p.x;
       p.y = dh > 0 ? (parseFloat(el.style.top) || 0) / dh : p.y;
       p.x = clamp(p.x, .86); p.y = clamp(p.y, 1);
+      p.out = ''; p.fx = null; p.fy = null;          // the web desk is one surface: no monitor to remember
       setPref(p); place(p);
     };
     el.addEventListener('pointerup', end);
@@ -218,6 +234,7 @@
     preload();
     if(!el || !el.isConnected || el.parentNode !== desk || el.dataset.who !== p.who){ if(el) el.remove(); frame = 1; desk.appendChild(build()); }
     // Wait for a laid-out size before placing (the first frame may not have decoded yet).
+    el.style.width = boxW(p) + 'px'; el.style.height = boxH(p) + 'px';
     const go = () => { place(p); start(); };
     const im = el.querySelector('img');
     if(im.complete && im.naturalWidth) go(); else im.addEventListener('load', go, { once: true });
@@ -233,6 +250,15 @@
     const p = pref(); p.who = w; p.on = true; setPref(p);
     if(desk) mount(desk, opts);
   }
+  /* Bigger / Smaller: a quarter step, kept within 50%..250%, saved with the account. */
+  function resize(step){
+    if(!step) return;
+    const p = pref(), next = sizeOf(p.size + 0.25 * Math.sign(step));
+    if(next === p.size) return;
+    p.size = next; setPref(p);
+    if(desk) mount(desk, opts);
+  }
+  function setSize(v){ const p = pref(); p.size = sizeOf(v); setPref(p); if(desk) mount(desk, opts); }
   function reveal(){ const p = pref(); p.on = true; setPref(p); mount(desk, opts); }
   /* A synced preference arrived or Settings changed it: re-read and re-apply. */
   function refresh(){ if(desk) mount(desk, opts); }
@@ -250,6 +276,7 @@
     resizeT = setTimeout(() => { const p = pref(); if(p.on && nativeUp) nativeShow(p); }, 150);
   });
   window.PCBuddy = { mount, unmount, hide, show: reveal, refresh, choose, isOn: () => pref().on, who,
+                    resize, setSize, size: () => pref().size,
                     name: () => CHARS[who()].name, choices: () => Object.keys(CHARS).map(k => ({ id: k, name: CHARS[k].name })),
                     _frame: () => frame };
 })();

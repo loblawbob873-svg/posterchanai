@@ -331,6 +331,7 @@ window.PCBlossomFactory = function(dep){
         try{ window.PCBuddy && window.PCBuddy.refresh(); }catch(_){}
         try{ const sw=$('#set-desktop-buddy'); if(sw) sw.checked = pr.desktopBuddy.on !== false; }catch(_){}
         try{ const sel=$('#set-desktop-buddy-who'); if(sel && pr.desktopBuddy.who) sel.value = pr.desktopBuddy.who; }catch(_){}
+        try{ const sz=$('#set-desktop-buddy-size'); if(sz && pr.desktopBuddy.size) sz.value = String(pr.desktopBuddy.size); }catch(_){}
       }
       // Re-render on restore: `fn` is captured when a timeline draws, so adopting the synced value
       // without redrawing would leave the feed showing whatever the previous setting produced.

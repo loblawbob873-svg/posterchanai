@@ -26,18 +26,38 @@ function createBuddyHost(deps){
    * passed. `createWindow` is called at show() time. */
   const createWindow = deps.createWindow || (o => new deps.BrowserWindow(o));
   const sleep = deps.sleep || (ms => new Promise(r => setTimeout(r, ms)));
-  let win = null, owner = null, id = null, at = null, out = null, k = 1, opening = null, who = 'posterchan';
+  let win = null, owner = null, id = null, at = null, out = null, k = 1, opening = null, who = 'posterchan', rebuilt = false;
   const WHO = /^[a-z]{1,20}$/;   // a dancer's id, passed to her page as #who (validated there too)
 
   const alive = () => !!(win && !win.isDestroyed());
   const tell = ev => { try{ if(owner && !owner.isDestroyed()) owner.send('pc:buddy:event', ev); }catch(_){ } };
 
+  let rects = [];                  // every output's rectangle: she may be dragged onto any of them
+  let named = [];                  // the same, with each output's name: where she was left is SAVED by name
   async function outputOf(sender){
     const scope = scopeOf(sender.id);
     const outs = await wm().outputs();
+    named = outs.filter(x => x && x.rect && x.rect.width > 0 && x.rect.height > 0).map(x => ({ name: String(x.name || ''), rect: x.rect }));
+    rects = named.map(x => x.rect);
     const o = (scope && outs.find(x => x && x.name === scope.output)) || outs[0];
     return o && o.rect;
   }
+  /* The output a box belongs on: the one under its centre, else the nearest. Clamping to the OWNER's
+   * output stopped every drag at that monitor's edge ("when you drag it to the other monitor, it goes
+   * about 15% in"). */
+  function homeOf(b){
+    const cx = b.x + b.w / 2, cy = b.y + b.h / 2;
+    const list = rects.length ? rects : (out ? [out.rect] : []);
+    let best = null, bd = Infinity;
+    for(const r of list){
+      if(cx >= r.x && cx < r.x + r.width && cy >= r.y && cy < r.y + r.height) return r;
+      const dx = Math.max(r.x - cx, 0, cx - (r.x + r.width)), dy = Math.max(r.y - cy, 0, cy - (r.y + r.height));
+      if(dx * dx + dy * dy < bd){ bd = dx * dx + dy * dy; best = r; }
+    }
+    return best;
+  }
+  const keepIn = (b, r) => ({ x: Math.round(Math.min(Math.max(r.x, b.x), r.x + Math.max(0, r.width - b.w))),
+                              y: Math.round(Math.min(Math.max(r.y, b.y), r.y + Math.max(0, r.height - b.h))) });
   async function findRow(){
     for(let i = 0; i < 40; i++){
       if(!alive()) return null;
@@ -92,6 +112,9 @@ function createBuddyHost(deps){
     try{ const b = win.getBounds(); if(b.width > 0 && row.rect && row.rect.width > 0) k = row.rect.width / b.width; }catch(_){ }
     try{ await wm().alwaysOnTop(id, true); }catch(_){ }
     try{ await wm().sticky(id, true); }catch(_){ }
+    // Wayfire activates every window it maps, showInactive or not (measured: activated=True the moment
+    // she appeared). Whoever had the keyboard gets it straight back.
+    await giveBackFocus();
     return true;
   }
 
@@ -108,6 +131,15 @@ function createBuddyHost(deps){
     const box = { w: Math.max(40, Math.round(n(w.bw, 174) * sx)), h: Math.max(40, Math.round(n(w.bh, 284) * sy)) };
     box.x = Math.round(rect.x + Math.min(Math.max(0, n(w.vx, 0) * sx), rect.width - box.w));
     box.y = Math.round(rect.y + Math.min(Math.max(0, n(w.vy, 0) * sy), rect.height - box.h));
+    /* PERSISTENT: the monitor she was left on, by name, and her spot on it as fractions. A monitor that
+     * is not connected now leaves her on the desktop's own (the spot above). */
+    const saved = named.find(x => x.name && x.name === String(w.out || ''));
+    const fx = Number(w.fx), fy = Number(w.fy);
+    if(saved && w.fx != null && w.fy != null && Number.isFinite(fx) && Number.isFinite(fy)){
+      const r = saved.rect;
+      box.x = Math.round(r.x + Math.min(1, Math.max(0, fx)) * Math.max(0, r.width - box.w));
+      box.y = Math.round(r.y + Math.min(1, Math.max(0, fy)) * Math.max(0, r.height - box.h));
+    }
     out = { rect, sx, sy };
     const nextWho = WHO.test(String(w.who || '')) ? String(w.who) : 'posterchan';
     if(!alive()){
@@ -122,6 +154,23 @@ function createBuddyHost(deps){
     try{ win.setSize(Math.max(1, Math.round(box.w / k)), Math.max(1, Math.round(box.h / k))); }catch(_){ }
     try{ await wm().place(id, box.x, box.y, box.w, box.h); }catch(_){ return false; }
     at = box;
+    /* SHE IS AS BIG AS THE COMPOSITOR SAYS, NOT AS BIG AS ASKED. A window that refused the size (on
+     * Wayland a min size can stick at the first size) was clamped with the size asked for, so the
+     * rest of her hung off the edge: 668x568 at x=1786 on a 1920-wide laptop, 1337x1347 on a 4K
+     * desk. Measured, then: a window more than a quarter too big is rebuilt once at the right size,
+     * and the edges are kept with the size she really has. */
+    let real = null;
+    try{ const row = (await wm().windows()).find(x => Number(x.id) === id); real = row && row.rect; }catch(_){ }
+    if(real && real.width > 0 && real.height > 0){
+      const tooBig = real.width > box.w * 1.25 || real.height > box.h * 1.25;
+      if(tooBig && !rebuilt){ rebuilt = true; hide(); return show(sender, want); }
+      at = { x: box.x, y: box.y, w: real.width, h: real.height };
+      const fit = keepIn(at, homeOf(at) || rect);
+      if(fit.x !== at.x || fit.y !== at.y){
+        at.x = fit.x; at.y = fit.y;
+        try{ await wm().place(id, at.x, at.y, at.w, at.h); }catch(_){ }
+      }
+    }
     return true;
   }
   function hide(){
@@ -133,23 +182,33 @@ function createBuddyHost(deps){
   /* A drag step, in her page's CSS pixels. */
   function drag(sender, dx, dy){
     if(!fromHer(sender) || id == null || !at || !out) return false;
-    const r = out.rect;
-    at.x = Math.round(Math.min(Math.max(r.x, at.x + (Number(dx) || 0) * k), r.x + r.width - at.w));
-    at.y = Math.round(Math.min(Math.max(r.y, at.y + (Number(dy) || 0) * k), r.y + r.height - at.h));
+    const next = { x: at.x + (Number(dx) || 0) * k, y: at.y + (Number(dy) || 0) * k, w: at.w, h: at.h };
+    const fit = keepIn(next, homeOf(next) || out.rect);
+    at.x = fit.x; at.y = fit.y;
     try{ const m = wm().move ? wm().move(id, at.x, at.y) : wm().place(id, at.x, at.y, at.w, at.h); if(m && m.catch) m.catch(() => {}); }catch(_){ }
     return true;
   }
   /* The drag ended: hand the spot back to the owner, in ITS viewport pixels, to be saved. */
   function drop(sender){
     if(!fromHer(sender) || !at || !out) return false;
-    tell({ type: 'moved', vx: (at.x - out.rect.x) / out.sx, vy: (at.y - out.rect.y) / out.sy });
+    const r = homeOf(at) || out.rect, o = named.find(x => x.rect === r);
+    tell({ type: 'moved', vx: (at.x - out.rect.x) / out.sx, vy: (at.y - out.rect.y) / out.sy,
+           out: o ? o.name : '', fx: r.width > at.w ? (at.x - r.x) / (r.width - at.w) : 0,
+           fy: r.height > at.h ? (at.y - r.y) / (r.height - at.h) : 0 });
+    giveBackFocus();
     return true;
   }
   function menu(sender, action){
     if(!fromHer(sender)) return false;
     if(String(action) === 'hide'){ tell({ type: 'hide' }); hide(); return true; }
     // The desktop owns who dances: it saves the choice and shows her again as the other one.
-    if(String(action) === 'switch'){ tell({ type: 'switch' }); return true; }
+    if(String(action) === 'switch'){ tell({ type: 'switch' }); giveBackFocus(); return true; }
+    // Bigger / Smaller: the desktop owns her size too (saved with the account) and shows her again.
+    if(String(action) === 'bigger' || String(action) === 'smaller'){ tell({ type: 'size', step: action === 'bigger' ? 1 : -1 }); giveBackFocus(); return true; }
+    /* SHE NEVER KEEPS THE KEYBOARD. Electron's 'focus' event does not fire for her on Wayland, so the
+     * compositor left her activated after every click or drag (measured on the laptop: activated=True
+     * after a drag). Her page says when a press ends, and focus goes straight back. */
+    if(String(action) === 'release'){ giveBackFocus(); return true; }
     return false;
   }
   /* The owner is gone (its renderer reloaded or closed): she goes with it, and comes back when it
