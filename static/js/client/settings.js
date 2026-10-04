@@ -569,6 +569,7 @@ window.PCSettingsFactory = function(dep){
           <label class="fld" style="flex-direction:row;justify-content:space-between;align-items:center">Dancing PosterChan on the desktop<label class="switch"><input type="checkbox" id="set-desktop-buddy" ${(window.PCBuddy && !window.PCBuddy.isOn()) ? '' : 'checked'}><span class="slider"></span></label></label>
           <label class="fld" style="flex-direction:row;justify-content:space-between;align-items:center">Who dances<select id="set-desktop-buddy-who" style="max-width:12em">${(window.PCBuddy && window.PCBuddy.choices ? window.PCBuddy.choices() : [{id:'posterchan',name:'PosterChan'}]).map(c=>`<option value="${c.id}" ${(window.PCBuddy && window.PCBuddy.who ? window.PCBuddy.who() : 'posterchan')===c.id?'selected':''}>${c.name}</option>`).join('')}</select></label>
           <label class="fld" style="flex-direction:row;justify-content:space-between;align-items:center">Dancer size<select id="set-desktop-buddy-size" style="max-width:12em">${[0.5,0.75,1,1.25,1.5,1.75,2,2.5].map(v=>`<option value="${v}" ${(window.PCBuddy && window.PCBuddy.size ? window.PCBuddy.size() : 1)===v?'selected':''}>${Math.round(v*100)}%</option>`).join('')}</select></label>
+          <label class="fld" style="flex-direction:row;justify-content:space-between;align-items:center">Clicks pass through her<label class="switch"><input type="checkbox" id="set-desktop-buddy-through" ${(window.PCBuddy && window.PCBuddy.clickThrough && window.PCBuddy.clickThrough()) ? 'checked' : ''}><span class="slider"></span></label></label>
           <div class="muted small">In desktop mode she dances over your windows: click her, drag her anywhere — onto another monitor too, and she stays there. Right-click her to hide her, switch dancer or make her bigger or smaller (or Ctrl + scroll on her). Syncs across your devices.</div>
           <label class="fld" style="flex-direction:row;justify-content:space-between;align-items:center">Right panel<label class="switch"><input type="checkbox" id="set-right-panel" ${(window.PCRightPanel && window.PCRightPanel.hidden()) ? '' : 'checked'}><span class="slider"></span></label></label>
           <div class="muted small">Topics, notifications and the app links beside the timeline on a wide screen. Its <b>Hide</b> button turns this off; this brings it back. Syncs across your devices.</div>
@@ -910,6 +911,11 @@ window.PCSettingsFactory = function(dep){
     { const dw=$('#set-desktop-buddy-who'); if(dw) dw.onchange=()=>{
         try{ if(window.PCBuddy && window.PCBuddy.choose){ window.PCBuddy.choose(dw.value); const sw=$('#set-desktop-buddy'); if(sw) sw.checked=true; }
              else { const v=Object.assign({}, ClientSettings.get('desktopBuddy', {}) || {}, { who: dw.value });
+                    ClientSettings.set('desktopBuddy', v); _prefTouched.add('desktopBuddy'); saveClientPrefsNostr({ desktopBuddy: v }); } }catch(_){}
+      }; }
+    { const dt=$('#set-desktop-buddy-through'); if(dt) dt.onchange=()=>{
+        try{ if(window.PCBuddy && window.PCBuddy.setClickThrough) window.PCBuddy.setClickThrough(dt.checked);
+             else { const v=Object.assign({}, ClientSettings.get('desktopBuddy', {}) || {}, { clickThrough: dt.checked });
                     ClientSettings.set('desktopBuddy', v); _prefTouched.add('desktopBuddy'); saveClientPrefsNostr({ desktopBuddy: v }); } }catch(_){}
       }; }
     { const ds=$('#set-desktop-buddy-size'); if(ds) ds.onchange=()=>{

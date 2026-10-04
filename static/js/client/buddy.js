@@ -53,7 +53,7 @@
     v = (v && typeof v === 'object') ? v : {};
     return { on: v.on !== false, x: clamp(v.x, 0.86), y: clamp(v.y, 1), who: CHARS[v.who] ? v.who : 'posterchan',
              size: sizeOf(v.size), out: /^[A-Za-z0-9._-]{1,32}$/.test(String(v.out || '')) ? String(v.out) : '',
-             fx: clamp(v.fx, null), fy: clamp(v.fy, null) };
+             fx: clamp(v.fx, null), fy: clamp(v.fy, null), clickThrough: v.clickThrough === true };
   }
   const boxW = p => Math.round(BOX_W * p.size), boxH = p => Math.round(BOX_H * p.size);
   function setPref(v){
@@ -120,7 +120,7 @@
     nativeUp = true;
     try{ Promise.resolve(window.pcBuddy.show({ vx: dr.left + at.left * z, vy: dr.top + (at.top - BUBBLE) * z,
                                                bw: boxW(p) * z, bh: (boxH(p) + BUBBLE) * z, who: p.who,
-                                               out: p.out, fx: p.fx, fy: p.fy })).catch(() => {}); }catch(_){ }
+                                               out: p.out, fx: p.fx, fy: p.fy, clickThrough: p.clickThrough })).catch(() => {}); }catch(_){ }
   }
   function nativeHide(){
     if(!nativeUp) return;
@@ -136,6 +136,7 @@
       if(ev.type === 'hide'){ nativeUp = false; hide(); return; }
       if(ev.type === 'switch'){ choose(who() === 'axolotl' ? 'posterchan' : 'axolotl'); return; }
       if(ev.type === 'size'){ resize(Number(ev.step) || 0); return; }
+      if(ev.type === 'through'){ setClickThrough(true); return; }
       if(ev.type !== 'moved') return;
       const p = pref();
       const z = zf(), dr = desk.getBoundingClientRect();
@@ -167,7 +168,8 @@
     const other = who() === 'axolotl' ? 'posterchan' : 'axolotl';
     const rows = [{ label: 'Hide ' + CHARS[who()].name, run: hide }, { label: 'Dance!', run: cheer },
                   { label: 'Switch to ' + CHARS[other].name, run: () => choose(other) },
-                  { label: 'Bigger', run: () => resize(1) }, { label: 'Smaller', run: () => resize(-1) }];
+                  { label: 'Bigger', run: () => resize(1) }, { label: 'Smaller', run: () => resize(-1) },
+                  { label: 'Let clicks through ' + CHARS[who()].name, run: () => setClickThrough(true) }];
     if(opts.menu) opts.menu(x, y, rows);
   }
 
@@ -214,6 +216,7 @@
   }
   function hitTest(e){
     if(!el || drag || e.pointerType === 'touch') return;
+    if(pref().clickThrough){ el.style.pointerEvents = 'none'; return; }
     const on = opaqueAt(e.clientX, e.clientY);
     el.style.pointerEvents = on ? '' : 'none';
   }
@@ -282,6 +285,7 @@
     if(!el || !el.isConnected || el.parentNode !== desk || el.dataset.who !== p.who){ if(el) el.remove(); frame = 1; desk.appendChild(build()); }
     // Wait for a laid-out size before placing (the first frame may not have decoded yet).
     el.style.width = boxW(p) + 'px'; el.style.height = boxH(p) + 'px';
+    el.style.pointerEvents = p.clickThrough ? 'none' : '';
     const go = () => { place(p); start(); };
     const im = el.querySelector('img');
     if(im.complete && im.naturalWidth) go(); else im.addEventListener('load', go, { once: true });
@@ -305,6 +309,16 @@
     p.size = next; setPref(p);
     if(desk) mount(desk, opts);
   }
+  /* LET CLICKS THROUGH HER: she is decoration, every click reaches what is behind her. On PosterChanOS
+   * her own window cannot let only its empty parts through -- measured on Wayland: Electron's setShape
+   * changes what is drawn, not what is clicked, while setIgnoreMouseEvents passes every click -- so
+   * this is a switch. Her own menu cannot be reached while it is on; the desktop's right-click menu and
+   * Settings turn it back off. Synced with the account like her size. */
+  function setClickThrough(on){
+    const p = pref(); p.clickThrough = !!on; setPref(p);
+    if(desk) mount(desk, opts);
+    try{ const pc = window.__PC; if(on && pc && pc.toast) pc.toast(CHARS[p.who].name + ' lets clicks through now. Right-click the desktop (or Settings) to grab her again.'); }catch(_){ }
+  }
   function setSize(v){ const p = pref(); p.size = sizeOf(v); setPref(p); if(desk) mount(desk, opts); }
   function reveal(){ const p = pref(); p.on = true; setPref(p); mount(desk, opts); }
   /* A synced preference arrived or Settings changed it: re-read and re-apply. */
@@ -323,7 +337,7 @@
     resizeT = setTimeout(() => { const p = pref(); if(p.on && nativeUp) nativeShow(p); }, 150);
   });
   window.PCBuddy = { mount, unmount, hide, show: reveal, refresh, choose, isOn: () => pref().on, who,
-                    resize, setSize, size: () => pref().size,
+                    resize, setSize, size: () => pref().size, setClickThrough, clickThrough: () => pref().clickThrough,
                     name: () => CHARS[who()].name, choices: () => Object.keys(CHARS).map(k => ({ id: k, name: CHARS[k].name })),
                     _frame: () => frame };
 })();

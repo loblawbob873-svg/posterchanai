@@ -29,7 +29,7 @@
 <body>
 <div id="say"></div>
 <div id="me" role="img"><img id="im" alt=""></div>
-<div id="menu" role="menu"><button data-a="dance" role="menuitem">Dance!</button><button data-a="switch" role="menuitem">Switch</button><button data-a="bigger" role="menuitem">Bigger</button><button data-a="smaller" role="menuitem">Smaller</button><button data-a="hide" role="menuitem">Hide</button></div>
+<div id="menu" role="menu"><button data-a="dance" role="menuitem">Dance!</button><button data-a="switch" role="menuitem">Switch</button><button data-a="bigger" role="menuitem">Bigger</button><button data-a="smaller" role="menuitem">Smaller</button><button data-a="through" role="menuitem">Let clicks through</button><button data-a="hide" role="menuitem">Hide</button></div>
 <script>
 (function(){
   'use strict';
@@ -70,7 +70,7 @@
     menu.classList.remove('on');
     if(b.dataset.a === 'hide') bridge.menu('hide');
     else if(b.dataset.a === 'switch') bridge.menu('switch');
-    else if(b.dataset.a === 'bigger' || b.dataset.a === 'smaller') bridge.menu(b.dataset.a);
+    else if(b.dataset.a === 'bigger' || b.dataset.a === 'smaller' || b.dataset.a === 'through') bridge.menu(b.dataset.a);
     else { cheer(); bridge.menu('release'); }
   });
   document.addEventListener('pointerdown', function(ev){ if(!menu.contains(ev.target)) menu.classList.remove('on'); }, true);

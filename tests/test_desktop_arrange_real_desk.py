@@ -96,3 +96,25 @@ def test_a_real_title_bar_still_gets_its_room():
     d = _arrange({"x": 5760, "y": 1290}, extra=[ff], work={"x": 3840, "y": 0, "w": 3840, "h": 2488})
     f = next(w for w in d["out"] if w["title"] == "Firefox")
     assert f["g"]["y"] >= 23, ("the title bar was pushed off the top", f)
+
+
+def test_the_bridge_asks_the_compositor_to_let_a_window_pass_clicks_through():
+    """The dancer's "Let clicks through" on PosterChanOS: Electron cannot do it on Wayland (measured), so
+    the bridge asks the posterchan-shell plugin, and reports a plugin that is too old as false."""
+    script = r"""
+const { WayfireWM } = require(%s);
+const wm = new WayfireWM('/nonexistent'), sent = [];
+let answer = { result: 'ok' };
+wm._send = async (m, d) => { sent.push([m, d]); if(answer instanceof Error) throw answer; return answer; };
+(async () => {
+  const on = await wm.inputPassthrough(42, true), off = await wm.inputPassthrough('42', 0);
+  answer = new Error('No such method found!'); const old = await wm.inputPassthrough(42, true);
+  console.log(JSON.stringify({ sent, on, off, old }));
+})();
+""" % json.dumps(str(ROOT / "desktop/wm-wayfire.js"))
+    r = subprocess.run(["node", "-e", script], capture_output=True, text=True, timeout=30)
+    assert r.returncode == 0, r.stderr
+    d = json.loads(r.stdout)
+    assert d["sent"][0] == ["posterchan-shell/input-passthrough", {"id": 42, "on": True}], d
+    assert d["sent"][1] == ["posterchan-shell/input-passthrough", {"id": 42, "on": False}], d
+    assert d["on"] is True and d["off"] is True and d["old"] is False, d

@@ -26,7 +26,7 @@ function createBuddyHost(deps){
    * passed. `createWindow` is called at show() time. */
   const createWindow = deps.createWindow || (o => new deps.BrowserWindow(o));
   const sleep = deps.sleep || (ms => new Promise(r => setTimeout(r, ms)));
-  let win = null, owner = null, id = null, at = null, out = null, k = 1, opening = null, who = 'posterchan', rebuilt = false;
+  let win = null, owner = null, id = null, at = null, out = null, k = 1, opening = null, who = 'posterchan', rebuilt = false, passthroughOn = false;
   const WHO = /^[a-z]{1,20}$/;   // a dancer's id, passed to her page as #who (validated there too)
 
   const alive = () => !!(win && !win.isDestroyed());
@@ -99,7 +99,7 @@ function createBuddyHost(deps){
     });
     const mine = win;
     win.on('page-title-updated', e => e.preventDefault());   // the title is how the compositor finds her
-    win.on('closed', () => { if(win === mine){ win = null; id = null; at = null; } });
+    win.on('closed', () => { if(win === mine){ win = null; id = null; at = null; passthroughOn = false; } });
     win.on('focus', () => { if(win === mine) giveBackFocus(); });
     who = w;
     await win.loadFile(pagePath, { hash: w });
@@ -151,6 +151,13 @@ function createBuddyHost(deps){
       try{ await win.loadFile(pagePath, { hash: nextWho }); }catch(_){ }
     }
     if(id == null) return false;
+    // Let clicks through: Electron's own switch for the platforms that honour it, and on PosterChanOS the
+    // compositor, since Wayland ignores Electron's (measured on the laptop: only the compositor's works).
+    const through = w.clickThrough === true;
+    try{ win.setIgnoreMouseEvents(through); }catch(_){ }
+    if(through !== passthroughOn){
+      try{ const api = wm(); if(api && typeof api.inputPassthrough === 'function'){ const ok = await api.inputPassthrough(id, through); if(ok) passthroughOn = through; } }catch(_){ }
+    }
     try{ win.setSize(Math.max(1, Math.round(box.w / k)), Math.max(1, Math.round(box.h / k))); }catch(_){ }
     try{ await wm().place(id, box.x, box.y, box.w, box.h); }catch(_){ return false; }
     at = box;
@@ -174,7 +181,7 @@ function createBuddyHost(deps){
     return true;
   }
   function hide(){
-    const w = win; win = null; id = null; at = null;
+    const w = win; win = null; id = null; at = null; passthroughOn = false;
     try{ if(w && !w.isDestroyed()) w.destroy(); }catch(_){ }
     return true;
   }
@@ -209,6 +216,7 @@ function createBuddyHost(deps){
      * compositor left her activated after every click or drag (measured on the laptop: activated=True
      * after a drag). Her page says when a press ends, and focus goes straight back. */
     if(String(action) === 'release'){ giveBackFocus(); return true; }
+    if(String(action) === 'through'){ tell({ type: 'through' }); giveBackFocus(); return true; }
     return false;
   }
   /* The owner is gone (its renderer reloaded or closed): she goes with it, and comes back when it

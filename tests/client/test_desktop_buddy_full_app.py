@@ -335,3 +335,54 @@ def test_clicks_go_through_her_transparent_parts_and_not_through_her():
     asyncio.run(desktop.with_browser("online", "", check, INIT))
     assert res["corner"] == {"under": 1, "happy": False}, ("a click on the empty air around her did not reach what is behind her", res)
     assert res["body"] == {"under": 1, "happy": True}, ("a click on her body went through her", res)
+
+
+@pytest.mark.skipif(not Path("/opt/google/chrome/chrome").exists(), reason="Chrome required")
+def test_let_clicks_through_her_on_posterchanos_and_the_desktop_menu_takes_it_back():
+    res = {}
+
+    async def check(b):
+        await desktop.login(b)
+        await b.until("document.body.classList.contains('os-on') && !!document.querySelector('#os-desk')")
+        await b.js("(()=>{const pc=window.__PC,s=pc.saveDesktopBuddy;pc.saveDesktopBuddy=v=>{__buddySaves.push(JSON.parse(JSON.stringify(v)));return s&&s(v)}})()")
+        await b.js("PCOSWin.enabled=()=>true;PCBuddy.refresh();true")
+        await b.until("__native.shows.length>0")
+        n = await b.js("__native.shows.length")
+        await b.js("__native.cb({type:'through'});true")        # her own window's "Let clicks through"
+        await b.until(f"__native.shows.length>{n}")
+        res["on"] = await b.js("({saved:(__buddySaves.slice(-1)[0]||{}).clickThrough, shown:__native.shows.slice(-1)[0].clickThrough})")
+        # The desktop's right-click menu is the way back.
+        res["menu"] = await _menu_pick(b, "document.querySelector('#os-desk')", "Make PosterChan clickable again")
+        await asyncio.sleep(.3)
+        res["off"] = await b.js("({saved:(__buddySaves.slice(-1)[0]||{}).clickThrough, shown:__native.shows.slice(-1)[0].clickThrough, api:PCBuddy.clickThrough()})")
+
+    asyncio.run(desktop.with_browser("online", "", check, NATIVE_INIT))
+    assert res["on"] == {"saved": True, "shown": True}, res
+    assert res["menu"] is True, ("the desktop menu offers no way to grab her again", res["menu"])
+    assert res["off"] == {"saved": False, "shown": False, "api": False}, res
+
+
+@pytest.mark.skipif(not Path("/opt/google/chrome/chrome").exists(), reason="Chrome required")
+def test_let_clicks_through_her_on_the_web_desktop_passes_even_a_click_on_her_body():
+    res = {}
+
+    async def check(b):
+        await desktop.login(b)
+        await b.until("document.body.classList.contains('os-on') && !!document.querySelector('#os-desk')")
+        await b.until("(()=>{const i=document.querySelector('#os-desk .os-buddy img');return !!i&&i.complete&&i.naturalWidth>0})()")
+        res["menu"] = await _menu_pick(b, "document.querySelector('.os-buddy')", "Let clicks through PosterChan")
+        await asyncio.sleep(.4)
+        box = await b.js(f"{RECT}('.os-buddy')")
+        await b.js(f"""(()=>{{const d=document.querySelector('#os-desk'),z=parseFloat(getComputedStyle(document.body).zoom)||1,dr=d.getBoundingClientRect();
+            const t=document.createElement('button');t.id='under';window.__under=0;t.onclick=()=>window.__under++;
+            Object.assign(t.style,{{position:'absolute',zIndex:1,left:(({box['l']}-dr.left)/z)+'px',top:(({box['t']}-dr.top)/z)+'px',width:({box['w']}/z)+'px',height:({box['h']}/z)+'px'}});
+            d.appendChild(t);}})()""")
+        x, y = box["l"] + box["w"] / 2, box["t"] + box["h"] * 0.55
+        await _mouse(b, x, y, "mouseMoved", 0); await asyncio.sleep(.1)
+        await _mouse(b, x, y, "mousePressed"); await _mouse(b, x, y, "mouseReleased", 0)
+        await asyncio.sleep(.2)
+        res["under"] = await b.js("__under")
+
+    asyncio.run(desktop.with_browser("online", "", check, INIT))
+    assert res["menu"] is True, res
+    assert res["under"] == 1, "with clicks let through, a click on her body still did not reach what is behind her"

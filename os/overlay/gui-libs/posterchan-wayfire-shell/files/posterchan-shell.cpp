@@ -31,6 +31,7 @@
 #include <cmath>
 #include <memory>
 #include <string>
+#include <functional>
 
 /* ------------------------------------------------------------------ the frame around every window
  *
@@ -313,10 +314,56 @@ class manager_t
 };
 }
 
+/* ------------------------------------------------------------------ clicks that pass through a window
+ *
+ * "is it possible to make posterchan/axolotl so it don't interfere with clicking widgets/app elements
+ * behind it?" The desktop's dancer is a window of her own (always on top), and on Wayland the client
+ * cannot give that up: measured on the laptop, Electron accepts setShape and setIgnoreMouseEvents and a
+ * click on her still lands on her. Which surface a click hits is decided HERE, from the surface's input
+ * region -- so while passthrough is on for a view, its input region is kept EMPTY: emptied now, and again
+ * after every commit (wlroots only replaces the region when the client sends a new one, which Electron
+ * may do on a resize). Off makes the whole surface take clicks again -- NOT a saved copy: measured, the
+ * copy taken at "on" can already be empty (the client had tried to ignore the mouse itself), and restoring
+ * it left her unclickable for good. Nothing else about the window changes. */
+struct passthrough_t
+{
+    wlr_surface *surface = nullptr;
+    wl_listener commit{}, destroy{};
+    passthrough_t(wlr_surface *s) : surface(s)
+    {
+        commit.notify = [] (wl_listener *l, void*)
+        {
+            passthrough_t *self = wl_container_of(l, self, commit);
+            if (self->surface) pixman_region32_clear(&self->surface->input_region);
+        };
+        destroy.notify = [] (wl_listener *l, void*)
+        {
+            passthrough_t *self = wl_container_of(l, self, destroy);
+            wl_list_remove(&self->commit.link); wl_list_init(&self->commit.link);
+            wl_list_remove(&self->destroy.link); wl_list_init(&self->destroy.link);
+            self->surface = nullptr;          // the window closed: nothing left to restore
+        };
+        wl_signal_add(&s->events.commit, &commit);
+        wl_signal_add(&s->events.destroy, &destroy);
+        pixman_region32_clear(&s->input_region);
+    }
+    ~passthrough_t()
+    {
+        if (surface)
+        {
+            wl_list_remove(&commit.link);
+            wl_list_remove(&destroy.link);
+            pixman_region32_fini(&surface->input_region);
+            pixman_region32_init_rect(&surface->input_region, 0, 0, surface->current.width, surface->current.height);
+        }
+    }
+};
+
 class posterchan_shell_t : public wf::plugin_interface_t
 {
     static constexpr uint32_t owned = wf::VIEW_ALLOW_MOVE | wf::VIEW_ALLOW_RESIZE;
     std::map<uint32_t, uint32_t> saved;
+    std::map<uint32_t, std::unique_ptr<passthrough_t>> passthrough;
     pc_border::manager_t borders;
     wf::shared_data::ref_ptr_t<wf::ipc::method_repository_t> methods;
 
@@ -561,6 +608,27 @@ class posterchan_shell_t : public wf::plugin_interface_t
         {
             return pointer_confinement();
         });
+        methods->register_method("posterchan-shell/input-passthrough", [this] (wf::json_t data)
+        {
+            if (!data.has_member("id") || !(data["id"].is_int64() || data["id"].is_uint64()) ||
+                !data.has_member("on") || !data["on"].is_bool())
+                return wf::ipc::json_error("Expected {id, on}");
+            const uint32_t id = (uint32_t)data["id"].as_uint64();
+            const bool on = data["on"].as_bool();
+            if (!on)
+            {
+                passthrough.erase(id);
+                return wf::ipc::json_ok();
+            }
+            auto view = wf::ipc::find_view_by_id(id);
+            wlr_surface *surface = view ? view->get_wlr_surface() : nullptr;
+            if (!surface) return wf::ipc::json_error("No such view");
+            auto it = passthrough.find(id);
+            if (it == passthrough.end() || it->second->surface != surface)
+                passthrough[id] = std::make_unique<passthrough_t>(surface);
+            else pixman_region32_clear(&surface->input_region);
+            return wf::ipc::json_ok();
+        });
         wf::get_core().connect(&on_pointer_motion);
         borders.init();
     }
@@ -571,6 +639,8 @@ class posterchan_shell_t : public wf::plugin_interface_t
         methods->unregister_method("posterchan-shell/set-cursor");
         methods->unregister_method("posterchan-shell/pointer-confinement");
         methods->unregister_method("posterchan-shell/set-views");
+        methods->unregister_method("posterchan-shell/input-passthrough");
+        passthrough.clear();
         for (const auto& [id, actions] : saved) restore(id, actions);
         saved.clear();
     }

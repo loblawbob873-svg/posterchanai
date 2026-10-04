@@ -282,6 +282,7 @@ const wmApi = {
   place: async (id, x, y, w, h) => { calls.push(['place', id, x, y, w, h]); const r = rows.find(v => v.id === id); if(r) r.rect = { x, y, width: w, height: h }; },
   move: async (id, x, y) => calls.push(['move', id, x, y]),
   alwaysOnTop: async () => {}, sticky: async () => {}, focus: async id => calls.push(['FOCUS', id]),
+  inputPassthrough: async (id, on) => { calls.push(['passthrough', id, on]); return true; },
 };
 let made = null;
 class FakeWin {
@@ -290,6 +291,7 @@ class FakeWin {
   showInactive(){ rows.push({ id: 42, title: TITLE, rect: { x: 0, y: 0, width: this.o.width, height: this.o.height }, focusTime: 1 }); }
   getBounds(){ return { width: this.o.width, height: this.o.height }; }
   setSize(w, h){ this.o.width = w; this.o.height = h; } isDestroyed(){ return this.dead; } destroy(){ this.dead = true; }
+  setIgnoreMouseEvents(on){ calls.push(['ignore', on]); }
 }
 const owner = { id: 7, sent: [], isDestroyed: () => false, send(ch, ev){ this.sent.push(ev); } };
 const host = createBuddyHost({ BrowserWindow: FakeWin, wm: () => wmApi, scopeOf: () => ({ output: 'DP-2' }),
@@ -315,6 +317,12 @@ const host = createBuddyHost({ BrowserWindow: FakeWin, wm: () => wmApi, scopeOf:
   host.menu(made.webContents, 'release');
   await new Promise(r => setTimeout(r, 5));
   out.release = calls.splice(0);
+  // Let clicks through: the window ignores the mouse (measured on Wayland: the only way a click passes).
+  await host.show(owner, { vx: 10, vy: 10, bw: 174, bh: 284, vw: 3840, vh: 2560, clickThrough: true });
+  out.ignoreOn = calls.splice(0).filter(c => c[0] === 'ignore' || c[0] === 'passthrough');
+  await host.show(owner, { vx: 10, vy: 10, bw: 174, bh: 284, vw: 3840, vh: 2560 });
+  out.ignoreOff = calls.splice(0).filter(c => c[0] === 'ignore' || c[0] === 'passthrough');
+  owner.sent.splice(0); host.menu(made.webContents, 'through'); out.through = owner.sent.splice(0);
   console.log(JSON.stringify(out));
 })().catch(e => { console.error(e); process.exit(1); });
 """
@@ -348,3 +356,15 @@ def test_a_drop_names_the_monitor_and_spot_and_hands_the_keyboard_back():
 def test_bigger_and_smaller_go_to_the_desktop_that_saves_her_size():
     r = _persist()
     assert r["sizes"] == [{"type": "size", "step": 1}, {"type": "size", "step": -1}], r["sizes"]
+
+
+def test_let_clicks_through_makes_her_window_ignore_the_mouse_and_her_menu_says_so():
+    """'make posterchan/axolotl so it don't interfere with clicking widgets/app elements behind it'."""
+    r = _persist()
+    assert ["ignore", True] in r["ignoreOn"], r["ignoreOn"]
+    assert ["ignore", False] in r["ignoreOff"], r["ignoreOff"]
+    # On PosterChanOS only the compositor can let a click through (measured on Wayland): it is asked too,
+    # and asked to give her clicks back when the switch is turned off.
+    assert ["passthrough", 42, True] in r["ignoreOn"], r["ignoreOn"]
+    assert ["passthrough", 42, False] in r["ignoreOff"], r["ignoreOff"]
+    assert r["through"] == [{"type": "through"}], r["through"]
