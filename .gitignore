@@ -160,3 +160,6 @@ iso-out/
 
 # Agent scratch: probe scripts and logs written while investigating. Never shipped.
 scratchpad/
+
+# scripts/pregate.py holds this while it runs (one run per checkout).
+.pregate.lock

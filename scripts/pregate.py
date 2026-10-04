@@ -25,6 +25,7 @@ parallel shards (the gate's own shape) and prints one line per failure.
 from __future__ import annotations
 
 import argparse
+import fcntl
 import os
 import re
 import subprocess
@@ -135,6 +136,20 @@ def main() -> int:
     ap.add_argument("--list", action="store_true")
     ap.add_argument("--shards", type=int, default=3)
     a = ap.parse_args()
+    # ONE RUN AT A TIME PER CHECKOUT. Every run writes .pregate.<shard>.log; a second run started beside a
+    # first overwrote its logs, the first was then stopped as a duplicate, and a deploy went out on the
+    # strength of a run that never covered all of its commits (deploy 81 aborted in the gate). --list
+    # writes nothing and is always allowed.
+    if not a.list:
+        lock = open(ROOT / ".pregate.lock", "w")
+        try:
+            fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except BlockingIOError:
+            print("another pregate is already running in this checkout -- wait for it; its result is the one "
+                  "that counts (not starting a second run that would overwrite its logs)")
+            return 2
+        lock.write(str(os.getpid()))
+        lock.flush()
     changed = changed_files(a.base)
     if not changed:
         print("no changes against", a.base); return 0
