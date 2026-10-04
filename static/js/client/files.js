@@ -1199,11 +1199,11 @@ window.PCFilesFactory = function(dep){
   let _fxDrives = null, _fxDrivesAsked = 0, _fxDrivesWired = false;
   function _fxDriveSize(b){ const n = Number(b) || 0; return n >= 1e12 ? (n/1e12).toFixed(1)+' TB' : n >= 1e9 ? (n/1e9).toFixed(1)+' GB' : n >= 1e6 ? Math.round(n/1e6)+' MB' : ''; }
   function _fxDrivesRefresh(force){
-    if(!window.pcDrives || !pcDrives.list) return;
-    if(!_fxDrivesWired && pcDrives.onChange){ _fxDrivesWired = true; pcDrives.onChange(() => _fxDrivesRefresh(true)); }
+    if(!window.pcDrives || !window.pcDrives.list) return;
+    if(!_fxDrivesWired && window.pcDrives.onChange){ _fxDrivesWired = true; window.pcDrives.onChange(() => _fxDrivesRefresh(true)); }
     if(!force && Date.now() - _fxDrivesAsked < 2000) return;
     _fxDrivesAsked = Date.now();
-    pcDrives.list().then(list => {
+    window.pcDrives.list().then(list => {
       const before = JSON.stringify(_fxDrives || []);
       _fxDrives = Array.isArray(list) ? list : [];
       if(JSON.stringify(_fxDrives) !== before && _S.VIEW === 'blossom') renderBlossom();
@@ -1214,7 +1214,7 @@ window.PCFilesFactory = function(dep){
     if(!d) return;
     let path = d.mountpoint;
     if(!path){
-      try{ path = (await pcDrives.mount(dev)).path; }
+      try{ path = (await window.pcDrives.mount(dev)).path; }
       catch(e){ toast('Could not open ' + d.label + ': ' + String((e && e.message) || e).replace(/^Error invoking remote method '[^']+': (Error: )?/, '')); return; }
     }
     const H2 = _hostFs(); if(!H2) return;
@@ -1227,7 +1227,7 @@ window.PCFilesFactory = function(dep){
   async function _fxEjectDrive(dev){
     const d = (_fxDrives || []).find(x => x.dev === dev);
     if(!d) return;
-    try{ await pcDrives.eject(dev); }
+    try{ await window.pcDrives.eject(dev); }
     catch(e){ toast(String((e && e.message) || e).replace(/^Error invoking remote method '[^']+': (Error: )?/, '')); return; }
     const H2 = _hostFs(), here = H2 && H2.at();
     if(here && d.mountpoint && (here === d.mountpoint || here.startsWith(d.mountpoint + '/'))) _openHostFiles(true);
