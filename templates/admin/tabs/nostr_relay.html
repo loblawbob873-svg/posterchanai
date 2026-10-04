@@ -290,7 +290,7 @@
                                                         (rks.length?' ('+rks.sort(function(a,b){return a-b;})
                                                             .map(function(k){return 'kind '+k+': '+rk[k];}).join(', ')+')':'');
                                                     resolve('≈'+(v.total||0)+' note(s) would go — aged '+(v.aged||0)+
-                                                            ', expired '+(v.expired||0)+', bridge DMs '+(v.bridge_dm||0)+
+                                                            ', expired '+(v.expired||0)+', zaps of deleted posts '+(v.orphan_zaps||0)+', bridge DMs '+(v.bridge_dm||0)+
                                                             ', over cap '+(v.capped||0)+extra);
                                                 } else resolve('✓ removed '+(p.count==null?0:p.count)+' note(s)');
                                             }

@@ -269,6 +269,16 @@ _PRUNABLE_SQL = ("(kind IN (%s) AND NOT (kind = 1111 AND id IN "
                      ",".join(str(k) for k in _PRUNABLE_KINDS),
                      ",".join("'%s'" % k for k in _GIT_COMMENT_ROOT_KINDS)))
 
+# ORPHANED ZAP RECEIPTS. A zap receipt (9735) is never an age-prunable kind -- a post's zap total is read
+# from them -- but once the age prune has deleted the POST, its receipts count toward nothing anybody can
+# see here. Measured on poster.place 2026-10-04: 154,594 such receipts older than retention, 505 MB plus
+# 486k tag rows -- "the db is growing fast for only a few months". Only receipts that NAME a post (`e`) whose
+# post is gone: a profile zap (no `e`) is kept, and a receipt for a post still stored is kept at any age.
+_ORPHAN_ZAP_SQL = ("kind = 9735 AND origin != 'direct' AND created_at < ? "
+                   "AND EXISTS (SELECT 1 FROM event_tags t WHERE t.event_id = events.id AND t.tag = 'e') "
+                   "AND NOT EXISTS (SELECT 1 FROM event_tags t JOIN events p ON p.id = t.value "
+                   "WHERE t.event_id = events.id AND t.tag = 'e')")
+
 # Kinds a NIP-40 `expiration` tag must NEVER be able to delete. The expiration sweep is otherwise
 # unconditional (it ignores the kind allowlist AND the preserve clause, by design — an author's
 # explicit intent), which makes a single stray tag a silent data-loss vector for anything that is
@@ -1376,6 +1386,10 @@ class RelayStore:
             aged = _n(f"SELECT COUNT(*) AS c FROM events WHERE created_at < ? AND "
                       f"{_PRUNABLE_SQL} AND {preserve}{self._subscriber_exempt()}",
                       (now - self.retention_days * 86400,))
+        orphan_zaps = 0
+        if self.retention_days:
+            orphan_zaps = _n(f"SELECT COUNT(*) AS c FROM events WHERE {_ORPHAN_ZAP_SQL}",
+                             (now - self.retention_days * 86400,))
         bridge_dm = _n("SELECT COUNT(*) AS c FROM events WHERE origin = 'bridge' AND "
                        "kind IN (13, 1059) AND created_at < ?", (now - _BRIDGE_DM_TTL_DAYS * 86400,))
         capped = 0
@@ -1387,10 +1401,10 @@ class RelayStore:
         # Pay-to-stay (usually absent — the feature is off by default).
         tiered = {label: _n(f"SELECT COUNT(*) AS c FROM events WHERE {where}", params)
                   for label, where, params in self._tiered_rules(now)}
-        return {"expired": expired, "aged": aged, "bridge_dm": bridge_dm, "capped": capped,
+        return {"expired": expired, "aged": aged, "orphan_zaps": orphan_zaps, "bridge_dm": bridge_dm, "capped": capped,
                 "retired": retired, "retired_by_kind": retired_by_kind,
                 **tiered,
-                "total": expired + aged + bridge_dm + capped + retired + sum(tiered.values()),
+                "total": expired + aged + orphan_zaps + bridge_dm + capped + retired + sum(tiered.values()),
                 "retention_days": self.retention_days, "max_events": self.max_events,
                 "free_retention_days": self.free_retention_days,
                 "paid_retention_days": self.paid_retention_days,
@@ -1478,6 +1492,10 @@ class RelayStore:
             cutoff = int(time.time()) - self.retention_days * 86400
             ids = _delete(f"created_at < ? AND {_PRUNABLE_SQL} AND {preserve}"
                           f"{self._subscriber_exempt()}", (cutoff,))
+            gone += ids; removed += len(ids)
+            # ...and the zap receipts of posts that are no longer here (after the age rule, so the posts
+            # it just removed count as gone in the same pass).
+            ids = _delete(_ORPHAN_ZAP_SQL, (cutoff,))
             gone += ids; removed += len(ids)
         # NOT retention, and deliberately not folded into the setting above: puppet-addressed DM
         # gift-wraps/seals (origin='bridge', kinds 13/1059) are undeliverable junk anyone can generate,

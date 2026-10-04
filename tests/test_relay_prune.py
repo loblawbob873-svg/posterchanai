@@ -959,3 +959,61 @@ def test_the_store_refuses_a_retired_kind_on_every_origin(store_factory):
         assert await store.add_events_bulk(keep, origin="wot") == len(keep)
 
     _run(go)
+
+
+def test_a_member_with_two_nip05_names_is_preserved_from_the_registry_itself(store_factory, monkeypatch):
+    """'our prune logic should be updated to support dual nip05'. The preserve set is built from the NIP-05
+    registry (thread._collect_preserve_pubkeys), and every test above hands the store a set directly -- so
+    a member holding TWO names was never run through the code that reads the registry. Built for real here
+    (registry with one key under two names, the second alphabetically-first), then a real prune."""
+    from app.services import settings_store
+    from app.services.nostr_relay import thread
+    dual, stranger = "d" * 64, "e" * 64
+    monkeypatch.setattr(settings_store, "get", lambda k, d=None: f"zed {dual}\nalpha {dual}" if k == "nostr_relay_nip05_names" else d)
+    monkeypatch.setattr(thread, "_collect_operator_pubkeys", lambda db: [])
+    preserve = thread._collect_preserve_pubkeys(None)
+    assert preserve.count(dual) == 1, preserve
+
+    async def go(loop):
+        store = store_factory(loop, retention_days=30)
+        await store.add_events_bulk([_ev(i, age_days=365, pubkey=dual) for i in range(1, 21)])
+        await store.add_events_bulk([_ev(i, age_days=365, pubkey=stranger) for i in range(100, 120)])
+        store.set_preserve_pubkeys(preserve)
+        removed = await store.prune()
+        assert removed == 20 and await store.count() == 20, "the two-name member's history was pruned"
+
+    _run(go)
+
+
+def test_zap_receipts_of_posts_that_are_gone_are_cleaned_and_no_other(store_factory):
+    """'the db is growing fast ... are we really cleaning good enough?' Zap receipts are never age-pruned (a
+    post's zap total is read from them), so once the age prune deleted a post its receipts stayed for ever:
+    154,594 of them on poster.place, 505 MB. A receipt goes only when it NAMES a post that is gone."""
+    def zap(i, target=None, age=365):
+        ev = _ev(i, kind=9735, age_days=age, pubkey="c" * 64)
+        ev["tags"] = [["p", "a" * 64]] + ([["e", target]] if target else [])
+        return ev
+    keep_author = "b" * 64
+
+    async def go(loop):
+        store = store_factory(loop, retention_days=30)
+        old_post = _ev(1, age_days=365)                          # aged out THIS pass
+        kept_post = _ev(2, age_days=365, pubkey=keep_author)     # preserved author: stays
+        recent_post = _ev(3, age_days=1)
+        await store.add_events_bulk([old_post, kept_post, recent_post])
+        await store.add_events_bulk([
+            zap(100, old_post["id"]),                            # its post goes in the same pass -> goes
+            zap(101, "f" * 64),                                  # its post was gone long ago -> goes
+            zap(102, kept_post["id"]),                           # its post is still here -> stays
+            zap(103),                                            # a profile zap (no e) -> stays
+            zap(104, recent_post["id"], age=1),                  # recent -> stays
+        ])
+        store.set_preserve_pubkeys([keep_author])
+        preview = await store.prune_preview()
+        assert preview["orphan_zaps"] == 1, preview              # only 101 is orphaned before the pass
+        await store.prune()
+        left = {e["id"] for e in await store.query([{"kinds": [9735]}])}
+        assert left == {f"{i:064x}" for i in (102, 103, 104)}, sorted(x[-3:] for x in left)
+        assert await store.count() == 2 + 3                      # kept + recent post, three receipts
+
+    _run(go)
