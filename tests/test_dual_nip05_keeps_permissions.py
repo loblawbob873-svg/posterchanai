@@ -78,10 +78,10 @@ def world(monkeypatch):
 
     # What each person's own signed kind-0 publishes: dual shows their SECOND name, lapsed shows nothing.
     published = {"dual": "dual2@" + DOMAIN, "solo": "solo@" + DOMAIN, "lapsed": "someone@elsewhere.example"}
-    rows = {PK[n]: [build_event(SEC[n], 0, json.dumps({"nip05": a}), created_at=100)] for n, a in published.items()}
 
-    async def query(pk, port):
-        return rows.get(pk, [])
+    async def query(pk, port):                    # read at call time, so a test can change a profile
+        n = next((k for k, v in PK.items() if v == pk), None)
+        return [build_event(SEC[n], 0, json.dumps({"nip05": published[n]}), created_at=100)] if n else []
     checker = MembershipChecker(query=query, configuration=lambda: [vals[nip05_registry.KEY], DOMAIN, "", "3052"])
     monkeypatch.setattr(instance_membership, "status", checker.status)
     monkeypatch.setattr(instance_membership, "_configuration", lambda: [vals[nip05_registry.KEY], DOMAIN, "", "3052"])
@@ -89,6 +89,7 @@ def world(monkeypatch):
     async def profiles(pks):
         return {PK[n]: {"nip05": a} for n, a in published.items()}, True
     monkeypatch.setattr(relay_blocklist, "profiles", profiles)
+    vals["_published"] = published               # a test may change what a profile says
     yield db, vals
     db.close()
 
@@ -155,3 +156,21 @@ def test_the_permissions_modal_adds_and_removes_a_name_without_touching_access(w
     # ...and the reconcile afterwards still finds them a member (their profile shows dual2).
     run(relay_access_policy.run(db))
     assert all(perms(db, "dual")[0].values()) and not perms(db, "dual")[1]
+
+
+def test_a_member_revoked_over_letter_case_gets_everything_back_at_the_next_cleanup(world):
+    """DreadPirate, on poster.place: granted 'dreadpirate', profile 'DreadPirate@poster.place', and the
+    cleanup had taken AI, Blossom and streaming (access_revoked). The next run must find them a member and
+    restore every permission and their Blossom line -- not merely stop revoking."""
+    db, vals = world
+    vals["_published"]["solo"] = "SOLO@Poster.Place"
+    u = db.query(User).filter(User.username == "solo").one()
+    for f in FIELDS:
+        setattr(u, f, False)
+    u.access_revoked = True
+    db.commit()
+    vals["blossom_whitelist"] = "\n".join(nostr_service.npub_of(PK[n]) for n in ("dual", "lapsed"))
+    run(relay_access_policy.run(db))
+    granted, revoked = perms(db, "solo")
+    assert all(granted.values()) and not revoked, ("a member publishing their name in capitals stayed revoked", granted)
+    assert whitelisted(vals, "solo")
