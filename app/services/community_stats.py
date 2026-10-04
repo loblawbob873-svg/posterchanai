@@ -42,11 +42,14 @@ def bot_token() -> str:
 
 
 def members() -> dict:
-    """{pubkey: "@name@domain"} for every name this node granted (the NIP-05 registry)."""
+    """{pubkey: "@name@domain"} for every member this node granted a name (the NIP-05 registry).
+
+    A member may hold SEVERAL names; they are named here by the same one the fediverse knows them by
+    (actors._registry's by_pk), not by whichever name a dict happened to iterate last."""
     from app.services.activitypub import actors, config
     domain = config.domain()
-    by_name, _by_pk = actors._registry()
-    return {pk: (f"@{name}@{domain}" if domain else f"@{name}") for name, pk in by_name.items() if pk}
+    _by_name, by_pk = actors._registry()
+    return {pk: (f"@{name}@{domain}" if domain else f"@{name}") for pk, name in by_pk.items() if pk}
 
 
 def _npub(pk: str) -> str:

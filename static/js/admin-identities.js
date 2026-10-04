@@ -32,9 +32,10 @@
                             : '<span class="blk-pic blk-nopic"></span>'}
                 <div class="blk-who">
                     <div class="blk-name">${esc(r.address)}${r.verified
-                        ? '<span class="ids-badge ids-ok" title="Their profile publishes this address">✓ verified</span>'
+                        ? (r.via ? `<span class="ids-badge ids-ok" title="An extra name: their profile publishes ${esc(r.via)}, another address of theirs here">✓ verified via ${esc(r.via)}</span>`
+                                 : '<span class="ids-badge ids-ok" title="Their profile publishes this address">✓ verified</span>')
                         : `<span class="ids-badge ids-no" title="${esc(why)}">not in profile</span>`}</div>
-                    <div class="blk-id">${r.display ? esc(r.display) + ' · ' : '(no profile on this relay) · '}<code>${esc(String(r.npub).slice(0, 20))}…</code></div>
+                    <div class="blk-id">${r.display ? esc(r.display) + ' · ' : '(no profile on this relay) · '}<code>${esc(String(r.npub).slice(0, 20))}…</code>${(r.others || []).length ? ` · also ${(r.others || []).map(esc).join(', ')}` : ''}</div>
                 </div>
                 <button type="button" class="btn-secondary btn-small ids-remove">Remove</button>
             </div>`;

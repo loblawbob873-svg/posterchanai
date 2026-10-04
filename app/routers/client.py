@@ -6004,8 +6004,11 @@ class ClaimNip05(BaseModel):
 
 class AdminNip05Req(BaseModel):
     target: str          # npub/hex to grant/remove a NIP-05 name for
-    name: str = ""       # the local-part to grant (ignored when remove=True)
+    name: str = ""       # the local-part to grant; with remove=True, the ONE name to take away
     remove: bool = False
+    # SEVERAL NAMES PER PERSON: add=True grants `name` IN ADDITION to the target's existing names. Without
+    # it a grant REPLACES them, and remove without a name clears them all -- what older clients send.
+    add: bool = False
     auth: str            # base64 signed admin event (p-tags target), same proof as /block
 
 
@@ -6470,18 +6473,24 @@ async def admin_nip05_status(pubkey: str, request: Request, db: Session = Depend
         return JSONResponse({"ok": False, "error": "invalid pubkey"}, status_code=400)
     from app.services.nostr_relay.thread import _parse_nip05
     names, _ = _parse_nip05(settings_store.get("nostr_relay_nip05_names", "") or "", "")
-    cur = next((n for n, hx in names.items() if hx == h), None)
+    held = sorted(n for n, hx in names.items() if hx == h)
+    cur = held[0] if held else None
     domain = _nip05_domain(request, db)
     # `domain` always: the panel shows "<name>@<domain>" BEFORE a name is granted, and the only other
     # source it had was the page's own host -- `localhost` in the APK, `posterchan` in the desktop app.
-    return JSONResponse({"ok": True, "name": cur, "domain": domain, "nip05": (f"{cur}@{domain}" if cur else None)})
+    # `names`: EVERY name this key holds here (a person may have several); `name`/`nip05` stay the first,
+    # for clients written when there was only ever one.
+    return JSONResponse({"ok": True, "name": cur, "domain": domain, "nip05": (f"{cur}@{domain}" if cur else None),
+                         "names": held, "addresses": [f"{n}@{domain}" for n in held]})
 
 
 @router.post("/admin-nip05")
 async def admin_nip05(data: AdminNip05Req, request: Request, db: Session = Depends(get_db)):
     """Admin-only: grant or remove a NIP-05 name for a target pubkey in this node's Relay Settings
-    (`nostr_relay_nip05_names`). Gated by the same signed-admin proof as /block. Grant replaces any
-    existing name for the target; collisions with a DIFFERENT account are rejected."""
+    (`nostr_relay_nip05_names`). Gated by the same signed-admin proof as /block. A person may hold several
+    names: `add` grants one more, `remove` + `name` takes away that one. A plain grant replaces their names
+    and a plain remove clears them all (what clients written for one name send). Collisions with a
+    DIFFERENT account are rejected."""
     target = nostr_service.to_pubkey_hex(data.target)
     if not target:
         return JSONResponse({"ok": False, "error": "invalid target"}, status_code=400)
@@ -6501,7 +6510,8 @@ async def admin_nip05(data: AdminNip05Req, request: Request, db: Session = Depen
     # MINIMAL edit on the raw text: drop only the target's existing line(s), keep every other line
     # VERBATIM (comments, blanks, hand-curated formatting), then append the new grant — so one admin
     # action can't reformat or lose the rest of the list, and unchanged npubs aren't re-encoded.
-    kept, taken = [], set()
+    only = _sanitize_nip05_name(data.name).lower() if data.remove and (data.name or "").strip() else ""
+    kept, taken, mine, found_only = [], set(), set(), False
     for line in raw.split("\n"):
         s = line.strip()
         if not s or s.startswith("#"):
@@ -6509,11 +6519,26 @@ async def admin_nip05(data: AdminNip05Req, request: Request, db: Session = Depen
         toks = s.replace("=", " ").replace(",", " ").split()
         owner = nostr_service.to_pubkey_hex(toks[1].strip()) if len(toks) >= 2 else None
         if owner == target:
-            continue   # drop the target's existing grant (a grant replaces it; a remove clears it)
+            nm = toks[0].strip().lower()
+            # Drop the target's line: every one for a replace or a clear-all; only the named one for a
+            # single remove; none for an add (the person keeps the names they have).
+            if data.add or (only and nm != only):
+                kept.append(line); mine.add(nm)
+                continue
+            found_only = found_only or nm == only
+            continue
         kept.append(line)
         if len(toks) >= 2:
             taken.add(toks[0].strip().lower())
+    if only and not found_only:
+        return JSONResponse({"ok": False, "error": f"'{only}' is not one of their names"}, status_code=404)
     granted_name = None
+    if not data.remove and data.add and _sanitize_nip05_name(data.name).lower() in mine:
+        # Already theirs: nothing to write.
+        domain = _nip05_domain(request, db)
+        base = _sanitize_nip05_name(data.name)
+        return JSONResponse({"ok": True, "granted": True, "name": base, "nip05": f"{base}@{domain}",
+                             "names": sorted(mine), "existing": True})
     if not data.remove:
         base = _sanitize_nip05_name(data.name)
         if not base:
@@ -6535,14 +6560,15 @@ async def admin_nip05(data: AdminNip05Req, request: Request, db: Session = Depen
     if granted_name:
         from app.services.instance_welcome import notify_approval
         await notify_approval(db, target, f"{granted_name}@{domain}")
-    elif data.remove:
+    elif data.remove and not (only and mine):     # their LAST name went, not one of several
         from app.services.instance_welcome import application
         pending = application(db, target)
         if pending:
             pending.approved_address = ''
             db.commit()
+    names_now = sorted(mine | ({granted_name.lower()} if granted_name else set()))
     return JSONResponse({"ok": True, "granted": not data.remove, "name": granted_name,
-                         "nip05": (f"{granted_name}@{domain}" if granted_name else None)})
+                         "nip05": (f"{granted_name}@{domain}" if granted_name else None), "names": names_now})
 
 
 _DEEPLINK_ENTITY = re.compile(

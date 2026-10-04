@@ -28,6 +28,16 @@ async def rows(domain: str) -> dict:
     from app.services.nostr import nostr_service
     names = _names()
     found, names_ok = await relay_blocklist.profiles(sorted(set(names.values())))
+    # SEVERAL NAMES, ONE PROFILE. A key may hold more than one name here, and a kind-0 carries ONE
+    # `nip05` -- so judged per name, every extra name read "not in profile", and "Remove all not in
+    # profile" would revoke them all. A name verifies when its owner's profile publishes ANY address
+    # this node granted that key; `via` says which, when it is another name.
+    accepted_by_pk: dict = {}
+    for name, pk in names.items():
+        acc = accepted_by_pk.setdefault(pk, set())
+        acc.add(address(name, domain).lower())
+        if name == "_" and domain:
+            acc.add(domain.lower())             # the root identity may be published as just "domain"
     out = []
     for name, pk in sorted(names.items(), key=lambda kv: kv[0].lower()):
         p = found.get(pk) or {}
@@ -37,13 +47,14 @@ async def rows(domain: str) -> dict:
             npub = pk
         addr = address(name, domain)
         claimed = (p.get("nip05") or "").strip().lower()
-        accepted = {addr.lower()}
-        if name == "_" and domain:
-            accepted.add(domain.lower())            # the root identity may be published as just "domain"
+        own = {addr.lower()} | ({domain.lower()} if name == "_" and domain else set())
+        verified = claimed in accepted_by_pk.get(pk, set())
         out.append({"name": name, "address": addr, "pubkey": pk, "npub": npub,
                     "display": p.get("name", ""), "picture": p.get("picture", ""),
                     "profile_nip05": p.get("nip05", ""),
-                    "verified": claimed in accepted})
+                    "verified": verified,
+                    "via": (p.get("nip05", "") if verified and claimed not in own else ""),
+                    "others": sorted(n for n, k in names.items() if k == pk and n != name)})
     return {"identities": out, "names_complete": names_ok, "domain": domain}
 
 

@@ -12066,3 +12066,18 @@ img.md-rel:not([src]){display:none}
 .fx-drive-row{display:flex;align-items:center;gap:4px}
 .fx-drive-row .fx-drive{flex:1 1 auto;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .fx-drive-eject{padding:2px 8px;line-height:1}
+
+/* Admin → Additional permissions: every NIP-05 name a person holds here, each removable, plus "Add name".
+   Chips wrap (a phone fits one or two per row); the add row's input shrinks before the button does. */
+.perm-nip05-names{display:flex;flex-wrap:wrap;gap:6px;margin:2px 0 8px 26px}
+.perm-nip05-name{display:inline-flex;align-items:center;gap:4px;max-width:100%;padding:3px 4px 3px 9px;border:1px solid var(--line,#333);border-radius:999px;font-size:13px}
+.perm-nip05-name>span{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;min-width:0}
+.perm-nip05-x{border:0;background:none;color:var(--muted,#999);cursor:pointer;padding:2px 6px;border-radius:999px;font-size:12px}
+.perm-nip05-x:hover,.perm-nip05-x:focus-visible{color:var(--danger,#ff5d73);background:rgba(255,93,115,.12)}
+.perm-nip05-add{display:flex;align-items:center;gap:6px;margin:0 0 10px 26px}
+.perm-nip05-add .input{flex:1 1 auto;min-width:0;padding:6px 8px}
+.perm-nip05-add>button{flex:0 0 auto}
+/* Edit Profile: the addresses this node granted you, when there are several -- tap to publish that one. */
+.pf-nip05-mine{display:flex;flex-wrap:wrap;align-items:center;gap:6px;margin:-4px 0 10px}
+.pf-nip05-pick{border:1px solid var(--line,#333);background:none;color:inherit;border-radius:999px;padding:4px 10px;font-size:13px;cursor:pointer;max-width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.pf-nip05-pick.on{border-color:var(--neon,#a89aff);background:rgba(168,154,255,.14)}

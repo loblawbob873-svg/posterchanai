@@ -786,9 +786,10 @@ window.PCProfileFactory = function(dep){
     /* The domain is the NODE'S NIP-05 domain, as the server reports it. `location.host` is the shell's
      * own origin -- `localhost` in the APK, `posterchan` in the desktop app -- which is how this panel
      * came to offer "alice@localhost". The instance's host is only the fallback for an old server. */
-    let nipName='', nipDomain=((()=>{ try{ const b=window.__PC_API_BASE__; return b ? new URL(b).host : location.host; }catch(_){ return location.host; } })());
+    let nipName='', nipNames=[], nipDomain=((()=>{ try{ const b=window.__PC_API_BASE__; return b ? new URL(b).host : location.host; }catch(_){ return location.host; } })());
     try{ const r=await fetch('/client/admin-nip05?pubkey='+encodeURIComponent(pk)).then(r=>r.json());
-      if(r&&r.ok){ nipName=r.name||''; nipDomain=r.domain || (r.nip05 && r.nip05.split('@')[1]) || nipDomain; } }catch(_){}
+      if(r&&r.ok){ nipName=r.name||''; nipDomain=r.domain || (r.nip05 && r.nip05.split('@')[1]) || nipDomain;
+        nipNames=Array.isArray(r.names)?r.names.slice():(nipName?[nipName]:[]); } }catch(_){}
     const _pp=profOf(pk)||{};
     const defNip=((_pp.name||_pp.display_name||'')).toLowerCase().replace(/[^a-z0-9_.\-]/g,'').replace(/^[._\-]+|[._\-]+$/g,'').slice(0,30);
     const C=[['can_image','🖼️ Image'],['can_music','🎵 Music'],['can_video','🎬 Video'],['can_torrent','🧲 Torrents']];
@@ -799,10 +800,47 @@ window.PCProfileFactory = function(dep){
       ${row('data-cap="can_media"', !!caps.can_media, '📺 Media Center <span class="muted small">(browse and play shared libraries)</span>')}
       ${row('id="perm-stream"', streamOn, '🔴 Live streaming <span class="muted small">(Go Live)</span>')}
       <label class="fld" style="flex-direction:row;align-items:center;gap:8px"><input type="checkbox" id="perm-nip05" ${nipName?'checked':''}> 🪪 NIP-05 <span class="muted small">${enc((nipName||defNip||('user'+pk.slice(0,8)))+'@'+nipDomain)}</span></label>
+      <div class="perm-nip05-names" id="perm-nip05-names" ${nipNames.length?'':'hidden'}></div>
+      <div class="perm-nip05-add" id="perm-nip05-addrow" ${nipNames.length?'':'hidden'}><input class="input" id="perm-nip05-new" maxlength="30" placeholder="another name" autocomplete="off" autocapitalize="off" spellcheck="false"><span class="muted small">@${enc(nipDomain)}</span><button type="button" class="btn btn-ghost small" id="perm-nip05-addbtn">Add name</button></div>
       <hr style="border:none;border-top:1px solid var(--line,#333);margin:10px 0">
       <p class="muted small">AI features</p>
       ${C.map(([k,l])=>row('data-cap="'+k+'"', !!caps[k], l)).join('')}
       <button class="btn btn-neon full" id="caps-save">Save</button>`, root=>{
+      /* SEVERAL NAMES FOR ONE PERSON. Every name they hold here, each with its own ✕; "Add name" grants
+       * one more without touching the others. Both act at once (signed), and the list is redrawn from
+       * what the server says they hold now -- never from what this page assumed. */
+      const nipPost=async(body,action)=>{
+        const auth=await sign(27235,'nip05',[['action',action],['p',pk]]);
+        return fetch('/client/admin-nip05',{method:'POST',headers:{'Content-Type':'application/json'},
+          body:JSON.stringify({target:pk,...body,auth:btoa(JSON.stringify(auth))})}).then(r=>r.json());
+      };
+      const drawNames=()=>{
+        const box=$('#perm-nip05-names',root), add=$('#perm-nip05-addrow',root); if(!box) return;
+        box.hidden=!nipNames.length; if(add) add.hidden=!nipNames.length;
+        box.innerHTML=nipNames.map(n=>`<span class="perm-nip05-name"><span>${enc(n+'@'+nipDomain)}</span><button type="button" class="perm-nip05-x" data-nip05-rm="${enc(n)}" aria-label="Remove ${enc(n+'@'+nipDomain)}" title="Remove this name">✕</button></span>`).join('');
+        $$('[data-nip05-rm]',box).forEach(b=>b.onclick=async()=>{
+          b.disabled=true;
+          try{ const r=await nipPost({name:b.dataset.nip05Rm,remove:true},'revoke');
+            if(r&&r.ok){ nipNames=r.names||nipNames.filter(x=>x!==b.dataset.nip05Rm); nipName=nipNames[0]||'';
+              const cb=$('#perm-nip05',root); if(cb) cb.checked=!!nipNames.length; drawNames(); toast('name removed'); }
+            else { toast((r&&r.error)||'could not remove it'); b.disabled=false; } }
+          catch(_){ toast('could not remove it'); b.disabled=false; }
+        });
+      };
+      drawNames();
+      { const btn=$('#perm-nip05-addbtn',root), inp=$('#perm-nip05-new',root);
+        const go=async()=>{
+          const name=String(inp.value||'').trim().toLowerCase().replace(/[^a-z0-9_.\-]/g,'').replace(/^[._\-]+|[._\-]+$/g,'').slice(0,30);
+          if(!name){ toast('type a name first'); return; }
+          btn.disabled=true;
+          try{ const r=await nipPost({name,add:true},'grant');
+            if(r&&r.ok){ nipNames=r.names||[...nipNames,name]; nipName=nipNames[0]||''; inp.value=''; drawNames(); toast((r.nip05||name)+' added'); }
+            else toast((r&&r.error)||'could not add it'); }
+          catch(_){ toast('could not add it'); }
+          btn.disabled=false;
+        };
+        if(btn) btn.onclick=go;
+        if(inp) inp.onkeydown=e=>{ if(e.key==='Enter'){ e.preventDefault(); go(); } }; }
       $('#caps-save',root).onclick=async()=>{
         const wantAi=$('#perm-ai',root).checked, wantBl=$('#perm-blossom',root).checked;
         const wantStream=$('#perm-stream',root).checked;
@@ -826,7 +864,7 @@ window.PCProfileFactory = function(dep){
             const r=await fetch('/client/blossom-access',{method:'POST',headers:{'Content-Type':'application/json'},
               body:JSON.stringify({target:pk,grant:wantBl,auth:btoa(JSON.stringify(auth))})}).then(r=>r.json()); ok=ok&&r.ok;
           }
-          // NIP-05: simple toggle — grant their-own-name@domain when checked, remove when unchecked.
+          // NIP-05 checkbox: grant their-own-name@domain when ticked with none; unticked clears EVERY name.
           const wantNip=$('#perm-nip05',root).checked;
           if(wantNip && !nipName){
             const auth=await sign(27235,'nip05',[['action','grant'],['p',pk]]);
@@ -904,6 +942,7 @@ window.PCProfileFactory = function(dep){
       <div class="fld pf-music-editor"><span>Profile music</span><div id="pf-music-list">${_profileMusicFields(p).map(([label,url])=>`<div class="pf-music-row"><input class="input pf-music-title" aria-label="Track title" placeholder="Track title" value="${enc(String(label||'').replace(/^🎶\s*/,''))}"><input class="input pf-music-url" aria-label="Audio URL" placeholder="https://…/track.mp3" value="${enc(url)}"><button class="btn btn-ghost small pf-music-remove" type="button" aria-label="Remove track">Remove</button></div>`).join('')}</div>
         <div class="row pf-music-actions"><button class="btn btn-ghost small" id="pf-music-add" type="button">Add audio URL</button><button class="btn btn-ghost small" id="pf-music-up" type="button">Upload music</button><input type="file" id="pf-music-file" accept="audio/*,.mp3,.mpga,.m4a,.aac,.ogg,.opus,.wav,.flac" multiple hidden></div></div>
       <label class="fld">NIP-05 identifier<input class="input" id="pf-nip05" placeholder="name@domain" value="${enc(p.nip05||'')}"></label>
+      <div class="pf-nip05-mine" id="pf-nip05-mine" hidden></div>
       <label class="fld">⚡ Lightning address<input class="input" id="pf-lud16" placeholder="you@walletofsatoshi.com" value="${enc(p.lud16||'')}"></label>
       <label class="fld">ɱ Monero address<input class="input" id="pf-xmr" placeholder="4… or 8… (XMR — others can tip you)" value="${enc(xmrOf(p))}"></label>
       <label class="chk" style="display:flex;gap:8px;align-items:flex-start;margin:-4px 0 8px;font-size:13px"><input type="checkbox" id="pf-xmr-stamp" ${ClientSettings.get('xmrStampNotes',false)?'checked':''} style="margin-top:3px"><span class="muted">Attach my Monero address to every post so any client can tip me from a post (like Nosmero). <b>Less private</b> — it links all your posts to one address. Off = address only on your profile.</span></label>
@@ -921,9 +960,20 @@ window.PCProfileFactory = function(dep){
       // prefill the empty field with it: the verified handle is then one Save away instead of a
       // string the user would have to already know.
       { const n5=$('#pf-nip05',root);
-        if(n5 && !n5.value.trim()) fetch('/client/admin-nip05?pubkey='+encodeURIComponent(S.ME.pubkey))
-          .then(r=>r.json()).then(r=>{ if(r && r.ok && r.nip05 && !n5.value.trim()) n5.value=r.nip05; })
-          .catch(()=>{}); }
+        /* SEVERAL ADDRESSES HERE. A profile publishes ONE nip05, so when this node granted more than one,
+         * they are offered as choices under the field: tap one to make it the address the profile shows. */
+        if(n5) fetch('/client/admin-nip05?pubkey='+encodeURIComponent(S.ME.pubkey))
+          .then(r=>r.json()).then(r=>{
+            if(!(r && r.ok)) return;
+            if(r.nip05 && !n5.value.trim()) n5.value=r.nip05;
+            const mine=Array.isArray(r.addresses)?r.addresses:[], box=$('#pf-nip05-mine',root);
+            if(!box || mine.length<2) return;
+            const paint=()=>{ const cur=n5.value.trim().toLowerCase();
+              box.innerHTML='<span class="muted small">Your addresses here:</span>'+mine.map(a=>
+                `<button type="button" class="pf-nip05-pick${a.toLowerCase()===cur?' on':''}" data-nip05="${enc(a)}" aria-pressed="${a.toLowerCase()===cur}">${enc(a)}</button>`).join('');
+              $$('[data-nip05]',box).forEach(b=>b.onclick=()=>{ n5.value=b.dataset.nip05; paint(); }); };
+            box.hidden=false; paint(); n5.addEventListener('input',paint);
+          }).catch(()=>{}); }
       $('#pf-up',root).onclick=()=>$('#pf-file',root).click();
       $('#pf-file',root).onchange=async e=>{ const f=e.target.files[0]; if(!f)return; try{ const _u=await uploadBlob(f); $('#pf-pic',root).value=_u;
         // Index it into the Files list too — otherwise a profile pic uploaded here lands on Blossom but
