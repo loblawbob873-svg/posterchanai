@@ -10926,6 +10926,18 @@ html.pc-oswin .pv-sheet{top:38px}
   border-bottom:1px solid var(--cc-line,#2a2f3a)}
 .cc-thread-bar button{background:transparent;border:0;color:inherit;cursor:pointer;font-size:13px;padding:2px 6px}
 .cc-thread-bar b{font-size:13px}
+/* A reply that belongs to a thread, drawn in the channel: indented with an accent bar, its "in thread"
+   line opens the thread. Modest indent so a phone keeps its width. */
+.cc-message.cc-in-thread{margin-left:22px;border-left:2px solid var(--accent,#7aa2f7);padding-left:8px}
+.cc-message.cc-in-thread .cc-message-avatar{width:28px;height:28px}
+.cc-in-thread-tag{all:unset;color:var(--accent,#7aa2f7);font-weight:600;cursor:pointer}
+.cc-in-thread-tag:hover,.cc-in-thread-tag:focus-visible{text-decoration:underline}
+.cc-threads-bar{display:flex;align-items:center;justify-content:space-between;gap:10px;padding:6px 12px;font-size:12px;
+  border-bottom:1px solid var(--cc-line,#2a2f3a);flex:0 0 auto;width:100%;box-sizing:border-box}
+.cc-threads-bar span{opacity:.7}
+.cc-threads-bar button{background:transparent;color:inherit;cursor:pointer;font-size:12px;padding:3px 10px;
+  border:1px solid var(--cc-line,#2a2f3a);border-radius:10px}
+@media(max-width:640px){ .cc-message.cc-in-thread{margin-left:12px;padding-left:6px} }
 .cc-thread-bar span{opacity:.7;font-size:12px}
 
 /* A POLL, IN CONCORD'S OWN CHAT STYLE — not the timeline's poll card, which is a note with an

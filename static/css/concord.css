@@ -346,3 +346,7 @@ body.concord-view .cc-messages>.cc-thread-bar{flex:0 0 auto!important;width:100%
 body.concord-view .cc-messages>.cc-thread-bar button{display:inline-flex!important;align-items:center!important;gap:4px!important;white-space:nowrap!important;padding:4px 10px!important;border-radius:8px!important;border:1px solid rgba(255,255,255,.14)!important;background:transparent!important;color:inherit!important;cursor:pointer!important}
 body.concord-view .cc-messages>.cc-thread-bar span{min-width:0!important;overflow:hidden!important;text-overflow:ellipsis!important;white-space:nowrap!important}
 body.concord-view .cc-messages:has(>.cc-thread-bar)>.cc-message-list{width:100%!important;flex:1 0 auto!important}
+/* The channel's own threads bar ("N replies in M threads" + Hide/Show thread replies): a header too. */
+body.concord-view .cc-messages:has(>.cc-threads-bar){flex-direction:column!important}
+body.concord-view .cc-messages>.cc-threads-bar{flex:0 0 auto!important;width:100%!important;box-sizing:border-box!important;position:sticky!important;top:0!important;z-index:2!important;background:var(--cc-bg,var(--bg,#111))!important}
+body.concord-view .cc-messages:has(>.cc-threads-bar)>.cc-message-list{width:100%!important;flex:1 0 auto!important}

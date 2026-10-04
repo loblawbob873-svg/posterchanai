@@ -1468,6 +1468,35 @@
     for(const list of out.values()) list.sort((a, b) => Number(a.at) - Number(b.at));
     return out;
   }
+  /* THREAD REPLIES LOOK LIKE THREAD REPLIES, AND A BUSY ROOM CAN FOLD THEM AWAY ("I see no
+   * differentiation between thread replies and main chat replies (can be helpful to declutter busy
+   * rooms)" -- the Lounge's owner). On the wire there is no difference: CORD-03 has one kind of reply,
+   * a 1111 naming its parent, so the split is drawn here. In the channel a reply is marked as part of a
+   * thread (indented, an accent bar, an "in thread" line that opens it), and "Hide thread replies"
+   * leaves only the conversations' first messages, each with its "N replies" button. The choice is
+   * this device's, for every room. The index is built ONCE per message list -- it used to be rebuilt
+   * per message to count replies, which is quadratic in exactly the busy rooms this is for. */
+  const threadMemo = new WeakMap();
+  function threadInfo(messages){
+    const rows = messages || [];
+    let info = threadMemo.get(rows);
+    if(info) return info;
+    const index = threadIndex(rows), rootOf = new Map();
+    for(const [root, list] of index) for(const m of list) rootOf.set(messageId(m), root);
+    info = { index, rootOf };
+    try{ threadMemo.set(rows, info); }catch(_){ }
+    return info;
+  }
+  const HIDE_THREADS_KEY = 'pc.concord.hideThreadReplies';
+  function hideThreadReplies(){ try{ return localStorage.getItem(HIDE_THREADS_KEY) === '1'; }catch(_){ return false; } }
+  function setHideThreadReplies(on){ try{ localStorage.setItem(HIDE_THREADS_KEY, on ? '1' : '0'); }catch(_){ } }
+  /* The channel as drawn: every message, or -- folded -- only those that are not part of a thread. */
+  function channelRows(messages, hide){
+    const rows = messages || [];
+    if(!hide) return rows;
+    const { rootOf } = threadInfo(rows);
+    return rows.filter(m => !rootOf.has(messageId(m)));
+  }
   /* What the thread view shows: the root, then every descendant in time order. */
   function threadView(messages, rootId){
     const rows = messages || [], byId = new Map(rows.map(m => [messageId(m), m]));
@@ -4373,7 +4402,7 @@
       ||(Array.isArray(current&&current.moderators)
          && current.moderators.indexOf(viewer.pubkey)>=0);
     const joinedRooms=''; // Active communities use the server rail/channel navigator, not home-page cards.
-    return `${state.community==null?`<div class="cc-discover"><div class="concord-mark">C</div><h2>Find your community</h2><p>Join an Armada-compatible CORD-05 invite or create a public relay community.</p><div class="cc-primary-actions"><button class="btn btn-neon" id="cc-create">Create community</button><button class="btn btn-ghost" id="cc-welcome-join">Join with invite</button></div>${joinedRooms}<section class="cc-public"><div><h3>Public communities</h3><small>Public CORD invites discovered on Armada relays</small></div>${discovered.length?discovered.map((r,i)=>{const pr=p.profOf?p.profOf(r.source.pubkey):{};return `<button data-cc-discover="${i}" class="cc-public-room"><span class="cc-public-icon">${publicRoomIcon(p,r)}</span><span class="cc-public-copy"><b>${p.enc(r.name)}</b><small>${p.enc((r.description||'Public Concord community').slice(0,120))}</small><em>${p.enc(pr.name||pr.display_name||'Nostr community')}</em></span><strong>Join</strong></button>`;}).join(''):(discoveryLoaded?'<div class="cc-public-empty"><b>No public communities found</b><span>Publish or paste a public Armada/CORD invite to list it.</span></div>':'<div class="cc-public-empty"><b>Searching relays…</b><span>Looking for public Armada/CORD invite notes.</span></div>')}</section></div>`:(messages.length?`${state.thread?`<div class="cc-thread-bar"><button id="cc-thread-back" aria-label="Back to channel">\u2190 Back</button><b>Thread</b><span>${p.enc(String((messages.find(x=>messageId(x)===state.thread)||{}).by||''))}</span></div>`:''}<div class="cc-message-list">${(()=>{
+    return `${state.community==null?`<div class="cc-discover"><div class="concord-mark">C</div><h2>Find your community</h2><p>Join an Armada-compatible CORD-05 invite or create a public relay community.</p><div class="cc-primary-actions"><button class="btn btn-neon" id="cc-create">Create community</button><button class="btn btn-ghost" id="cc-welcome-join">Join with invite</button></div>${joinedRooms}<section class="cc-public"><div><h3>Public communities</h3><small>Public CORD invites discovered on Armada relays</small></div>${discovered.length?discovered.map((r,i)=>{const pr=p.profOf?p.profOf(r.source.pubkey):{};return `<button data-cc-discover="${i}" class="cc-public-room"><span class="cc-public-icon">${publicRoomIcon(p,r)}</span><span class="cc-public-copy"><b>${p.enc(r.name)}</b><small>${p.enc((r.description||'Public Concord community').slice(0,120))}</small><em>${p.enc(pr.name||pr.display_name||'Nostr community')}</em></span><strong>Join</strong></button>`;}).join(''):(discoveryLoaded?'<div class="cc-public-empty"><b>No public communities found</b><span>Publish or paste a public Armada/CORD invite to list it.</span></div>':'<div class="cc-public-empty"><b>Searching relays…</b><span>Looking for public Armada/CORD invite notes.</span></div>')}</section></div>`:(messages.length?`${state.thread?`<div class="cc-thread-bar"><button id="cc-thread-back" aria-label="Back to channel">\u2190 Back</button><b>Thread</b><span>${p.enc(String((messages.find(x=>messageId(x)===state.thread)||{}).by||''))}</span></div>`:(threadInfo(messages).rootOf.size?`<div class="cc-threads-bar"><span>${threadInfo(messages).rootOf.size} ${threadInfo(messages).rootOf.size===1?'reply':'replies'} in ${threadInfo(messages).index.size} ${threadInfo(messages).index.size===1?'thread':'threads'}</span><button id="cc-threads-toggle" aria-pressed="${hideThreadReplies()?'true':'false'}">${hideThreadReplies()?'Show thread replies':'Hide thread replies'}</button></div>`:'')}<div class="cc-message-list">${(()=>{
           /* A THREAD WHOSE ROOT IS NOT HERE MUST NOT EMPTY THE CHANNEL.
            *
            * `threadView` answers [] for a root it cannot find, and a repaint can easily happen with
@@ -4385,11 +4414,11 @@
            *
            * An empty thread view is treated as "no thread": fall back to the channel and drop the
            * filter, so the worst case is losing your place rather than losing the room. */
-          if(!state.thread) return messages;
+          if(!state.thread) return channelRows(messages,hideThreadReplies());
           const _t=threadView(messages,state.thread);
           if(!_t.length){ state.thread=null; return messages; }
           return _t;
-        })().map(m=>{const mp=p.profOf?p.profOf(m.pubkey):{},mid=messageId(m),_replies=(threadIndex(messages).get(mid)||[]).length,_canZap=!!(current&&current.cord&&!current.local&&m.pubkey&&m.pubkey!==viewer.pubkey&&p.payPrivateConcordZap);return `<article class="cc-message${messageMentionsViewer(m,viewer,me)?' cc-mentions-me':''}" data-message-id="${p.enc(mid)}"><img class="cc-message-avatar" src="${p.enc(mp.picture||p.LOGO||'')}" alt=""><div class="cc-message-body">${m.reply?`<div class="cc-message-reply"><b>@${p.enc(m.reply.by||'member')}</b> ${p.enc(String(m.reply.text||'').slice(0,100))}</div>`:''}<b>${p.enc(m.by)}</b><time>${new Date(m.at).toLocaleTimeString([],{hour:'2-digit',minute:'2-digit'})}</time>${(m.tags||[]).some(t=>t[0]==='edited')?'<span class="cc-edited" title="This message was edited">(edited)</span>':''}${messageContentHtml(p,m,current,state.channel)}${deliveryHtml(p,m)}<div class="cc-reactions">${reactionSummary(p,m)}${zapSummary(p,m)}</div><div class="cc-message-actions" role="toolbar" aria-label="Message actions"><button class="cc-action-trigger" data-cc-actions="${p.enc(mid)}" aria-expanded="false" title="Message actions">⋯</button><button data-cc-react="${p.enc(mid)}" title="Add reaction">☺</button>${_canZap?`<button data-cc-zap="${p.enc(mid)}" title="Private zap">⚡</button>`:''}<button data-cc-reply="${p.enc(mid)}" title="Reply">↩</button>${canEditMessage(m,viewer,current)?`<button data-cc-edit="${p.enc(mid)}" title="Edit message">✎</button>`:''}${canPinHere(current,state.channel,viewer)&&!m.pending&&!m.failed&&(m.kind===9||m.kind===1111)?`<button data-cc-pin="${p.enc(mid)}" title="${pinsOf(current,state.channel).some(x=>x.id===mid)?'Unpin message':'Pin message'}">${pinsOf(current,state.channel).some(x=>x.id===mid)?'📍':'📌'}</button>`:''}${_replies&&!state.thread?`<button class="cc-thread-open" data-cc-thread="${p.enc(mid)}" title="Open thread">${_replies} ${_replies===1?'reply':'replies'}</button>`:''}<button data-cc-delete="${p.enc(mid)}" class="cc-delete-action ${m.pubkey&&(m.pubkey===viewer.pubkey||(canModerate&&m.pubkey!==ownerPk))?'':'hidden'}" title="${m.pubkey===viewer.pubkey?'Delete message':'Remove this message'}">⌫</button></div></div></article>`;}).join('')}</div>`:emptyChannelHtml(p,current))}`;
+        })().map(m=>{const mp=p.profOf?p.profOf(m.pubkey):{},mid=messageId(m),_ti=threadInfo(messages),_replies=(_ti.index.get(mid)||[]).length,_root=state.thread?'':(_ti.rootOf.get(mid)||''),_canZap=!!(current&&current.cord&&!current.local&&m.pubkey&&m.pubkey!==viewer.pubkey&&p.payPrivateConcordZap);return `<article class="cc-message${messageMentionsViewer(m,viewer,me)?' cc-mentions-me':''}${_root?' cc-in-thread':''}" data-message-id="${p.enc(mid)}"><img class="cc-message-avatar" src="${p.enc(mp.picture||p.LOGO||'')}" alt=""><div class="cc-message-body">${m.reply?`<div class="cc-message-reply">${_root?`<button type="button" class="cc-in-thread-tag" data-cc-thread="${p.enc(_root)}" title="Open this thread">\u21b3 in thread</button> `:''}<b>@${p.enc(m.reply.by||'member')}</b> ${p.enc(String(m.reply.text||'').slice(0,100))}</div>`:''}<b>${p.enc(m.by)}</b><time>${new Date(m.at).toLocaleTimeString([],{hour:'2-digit',minute:'2-digit'})}</time>${(m.tags||[]).some(t=>t[0]==='edited')?'<span class="cc-edited" title="This message was edited">(edited)</span>':''}${messageContentHtml(p,m,current,state.channel)}${deliveryHtml(p,m)}<div class="cc-reactions">${reactionSummary(p,m)}${zapSummary(p,m)}</div><div class="cc-message-actions" role="toolbar" aria-label="Message actions"><button class="cc-action-trigger" data-cc-actions="${p.enc(mid)}" aria-expanded="false" title="Message actions">⋯</button><button data-cc-react="${p.enc(mid)}" title="Add reaction">☺</button>${_canZap?`<button data-cc-zap="${p.enc(mid)}" title="Private zap">⚡</button>`:''}<button data-cc-reply="${p.enc(mid)}" title="Reply">↩</button>${canEditMessage(m,viewer,current)?`<button data-cc-edit="${p.enc(mid)}" title="Edit message">✎</button>`:''}${canPinHere(current,state.channel,viewer)&&!m.pending&&!m.failed&&(m.kind===9||m.kind===1111)?`<button data-cc-pin="${p.enc(mid)}" title="${pinsOf(current,state.channel).some(x=>x.id===mid)?'Unpin message':'Pin message'}">${pinsOf(current,state.channel).some(x=>x.id===mid)?'📍':'📌'}</button>`:''}${_replies&&!state.thread?`<button class="cc-thread-open" data-cc-thread="${p.enc(mid)}" title="Open thread">${_replies} ${_replies===1?'reply':'replies'}</button>`:''}<button data-cc-delete="${p.enc(mid)}" class="cc-delete-action ${m.pubkey&&(m.pubkey===viewer.pubkey||(canModerate&&m.pubkey!==ownerPk))?'':'hidden'}" title="${m.pubkey===viewer.pubkey?'Delete message':'Remove this message'}">⌫</button></div></div></article>`;}).join('')}</div>`:emptyChannelHtml(p,current))}`;
   }
   let _ccLastHtml='',_ccLastRoot=null;   // what render() last drew, and its root -- see below
   function render(){
@@ -5161,7 +5190,9 @@
         preserveChatScroll(()=>render());
       }catch(e){ b.disabled=false; p.toast('vote was not sent: '+(e&&e.message||e)); }
     });
-    $$('[data-cc-thread]').forEach(b=>b.onclick=()=>{
+    $$('[data-cc-thread]').forEach(b=>b.onclick=ev=>{
+      // The "in thread" tag sits inside the quoted line, whose own click shows the original message.
+      try{ ev&&ev.stopPropagation(); }catch(_){}
       state.thread=b.dataset.ccThread;
       /* Replying inside a thread means replying to it, not to the channel — so the composer is
          pointed at the root the moment the thread opens. */
@@ -5170,6 +5201,7 @@
       render();
     });
     { const back=$('#cc-thread-back'); if(back)back.onclick=()=>{ state.thread=null; replyTarget=null; render(); }; }
+    { const tt=$('#cc-threads-toggle'); if(tt)tt.onclick=()=>{ setHideThreadReplies(!hideThreadReplies()); render(); }; }
     /* EDIT (kind 3302, CORD / Vector build_edit_rumor): `e` names your own message, the content is
      * the replacement, and custom-emoji tags ride along (publishCordMessage adds them). */
     $$('[data-cc-pin]').forEach(b=>b.onclick=async()=>{ closeMessageActions(); const room=saved()[state.community],name=state.channel; if(!room)return; b.disabled=true;
