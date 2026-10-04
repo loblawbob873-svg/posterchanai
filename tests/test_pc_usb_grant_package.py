@@ -75,3 +75,14 @@ def test_the_scanner_is_injected_from_the_vm_hosts_own_module():
     assert ('"$(dirname "$SRC")/../app/services/vmhost/usb.py" \\\n'
             '  "$TMP/app-misc/posterchanos-shell/files/pc_usb_scan.py"') in pub
     assert not (PKG / "files/pc_usb_scan.py").exists(), "a hand-kept second copy of the scanner would drift"
+
+
+def test_the_drive_rule_goes_to_polkit_and_every_sudoers_file_stays_in_sudoers_d(tmp_path):
+    """Removable drives (desktop/drives.js) need a polkit rule. Its `insinto` once landed in the middle
+    of the sudoers block, so the session-switch and USB-grant sudoers files were installed into
+    /etc/polkit-1/rules.d -- switching identity and the VM USB grant would both stop working."""
+    got = _run_src_install(tmp_path)
+    assert "/etc/polkit-1/rules.d/50-posterchan-removable-drives.rules" in got
+    for name in ("posterchan-provision", "posterchan-session-switch", "posterchan-usb-grant"):
+        assert "/etc/sudoers.d/" + name in got, name
+        assert "/etc/polkit-1/rules.d/" + name not in got, name

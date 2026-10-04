@@ -89,15 +89,16 @@ src_install() {
 	# but an already-installed machine must gain them through update-posterchan too.
 	insinto /etc/sudoers.d
 	newins "${FILESDIR}/posterchan-provision.sudoers" posterchan-provision
-	# Removable drives: the session user mounts/ejects USB sticks without a password (desktop/drives.js).
-	insinto /etc/polkit-1/rules.d
-	doins "${FILESDIR}/50-posterchan-removable-drives.rules"
 	newins "${FILESDIR}/posterchan-session-switch.sudoers" posterchan-session-switch
 	fperms 0440 /etc/sudoers.d/posterchan-provision
 	fperms 0440 /etc/sudoers.d/posterchan-session-switch
 	# ONE USB device for the caller's own VM; the helper checks every argument itself.
 	newins "${FILESDIR}/posterchan-usb-grant.sudoers" posterchan-usb-grant
 	fperms 0440 /etc/sudoers.d/posterchan-usb-grant
+	# Removable drives: the session user mounts/ejects USB sticks without a password (desktop/drives.js).
+	# AFTER the sudoers block: an insinto in the middle of it sent the next sudoers files here.
+	insinto /etc/polkit-1/rules.d
+	doins "${FILESDIR}/50-posterchan-removable-drives.rules"
 
 	# The session config. Portage owns /etc/wayfire.ini, so an `etc-update --automode -5` replaces a
 	# hand-edited one with ours. That is the intended behaviour for a shipped session — and it is
