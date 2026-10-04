@@ -357,9 +357,10 @@ def test_let_clicks_through_her_on_posterchanos_and_the_desktop_menu_takes_it_ba
         res["off"] = await b.js("({saved:(__buddySaves.slice(-1)[0]||{}).clickThrough, shown:__native.shows.slice(-1)[0].clickThrough, api:PCBuddy.clickThrough()})")
 
     asyncio.run(desktop.with_browser("online", "", check, NATIVE_INIT))
-    assert res["on"] == {"saved": True, "shown": True}, res
+    # Shown in her window, and kept on THIS device: never written into the account-synced preference.
+    assert res["on"] == {"shown": True}, res      # no "saved" key: not in the synced doc
     assert res["menu"] is True, ("the desktop menu offers no way to grab her again", res["menu"])
-    assert res["off"] == {"saved": False, "shown": False, "api": False}, res
+    assert res["off"] == {"shown": False, "api": False}, res
 
 
 @pytest.mark.skipif(not Path("/opt/google/chrome/chrome").exists(), reason="Chrome required")
@@ -386,3 +387,45 @@ def test_let_clicks_through_her_on_the_web_desktop_passes_even_a_click_on_her_bo
     asyncio.run(desktop.with_browser("online", "", check, INIT))
     assert res["menu"] is True, res
     assert res["under"] == 1, "with clicks let through, a click on her body still did not reach what is behind her"
+
+
+@pytest.mark.skipif(not Path("/opt/google/chrome/chrome").exists(), reason="Chrome required")
+def test_clicks_let_through_on_another_device_do_not_lock_her_on_the_web():
+    """'on webui, posterchan is not moveable, can't change to axolotl, and not resizeable'. "Let clicks
+    through" was set on PosterChanOS and rode the account-synced preference to the browser, where it made
+    her untouchable: no drag, and no menu to switch or resize her from. It is this device's now. Real
+    mouse input, arriving from outside her box the way a hand does."""
+    res = {}
+
+    async def check(b):
+        await desktop.login(b)
+        await b.until("document.body.classList.contains('os-on') && !!document.querySelector('#os-desk')")
+        await b.until("(()=>{const i=document.querySelector('#os-desk .os-buddy img');return !!i&&i.complete&&i.naturalWidth>0})()")
+        # What PosterChanOS synced: her preference with click-through on.
+        await b.js("ClientSettings.set('desktopBuddy',Object.assign({},ClientSettings.get('desktopBuddy',{})||{},{on:true,clickThrough:true}));PCBuddy.refresh();true")
+        await asyncio.sleep(.5)
+        res["api"] = await b.js("PCBuddy.clickThrough()")
+        r = await b.js(f"{RECT}('.os-buddy')")
+        cx, cy = r["l"] + r["w"] / 2, r["t"] + r["h"] * 0.55
+        for k in range(0, 13):                    # in from the left, across the empty air around her
+            await _mouse(b, r["l"] - 60 + (cx - r["l"] + 60) * k / 12, cy, "mouseMoved", 0)
+            await asyncio.sleep(.02)
+        await _mouse(b, cx, cy, "mousePressed")
+        for k in range(1, 11):
+            await b.call("Input.dispatchMouseEvent", {"type": "mouseMoved", "x": cx - 20 * k, "y": cy - 8 * k, "button": "left", "buttons": 1})
+            await asyncio.sleep(.02)
+        await _mouse(b, cx - 200, cy - 80, "mouseReleased", 0)
+        await asyncio.sleep(.3)
+        r2 = await b.js(f"{RECT}('.os-buddy')")
+        res["moved"] = round(r["l"] - r2["l"]) > 150
+        x, y = r2["l"] + r2["w"] / 2, r2["t"] + r2["h"] * 0.55
+        await _mouse(b, x, y, "mouseMoved", 0); await asyncio.sleep(.05)
+        await b.call("Input.dispatchMouseEvent", {"type": "mousePressed", "x": x, "y": y, "button": "right", "buttons": 2, "clickCount": 1})
+        await b.call("Input.dispatchMouseEvent", {"type": "mouseReleased", "x": x, "y": y, "button": "right", "buttons": 0, "clickCount": 1})
+        await asyncio.sleep(.3)
+        res["menu"] = await b.js("[...document.querySelectorAll('.os-ctx .os-ctx-b')].map(x=>x.textContent.trim())")
+
+    asyncio.run(desktop.with_browser("online", "", check, INIT))
+    assert res["api"] is False, ("a click-through set on another device applies here", res)
+    assert res["moved"], ("she could not be dragged", res)
+    assert "Switch to Axolotl" in res["menu"] and "Bigger" in res["menu"], ("her menu did not open", res)

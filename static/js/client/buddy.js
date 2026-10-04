@@ -53,10 +53,26 @@
     v = (v && typeof v === 'object') ? v : {};
     return { on: v.on !== false, x: clamp(v.x, 0.86), y: clamp(v.y, 1), who: CHARS[v.who] ? v.who : 'posterchan',
              size: sizeOf(v.size), out: /^[A-Za-z0-9._-]{1,32}$/.test(String(v.out || '')) ? String(v.out) : '',
-             fx: clamp(v.fx, null), fy: clamp(v.fy, null), clickThrough: v.clickThrough === true };
+             fx: clamp(v.fx, null), fy: clamp(v.fy, null), clickThrough: through(v) };
+  }
+  /* LET CLICKS THROUGH IS THIS DEVICE'S, NOT THE ACCOUNT'S ("on webui, posterchan is not moveable, can't
+   * change to axolotl, and not resizeable"). It used to ride the synced preference with her size, so
+   * turning it on for PosterChanOS -- where her window cannot pass only its empty parts -- made her
+   * untouchable in every browser too: no drag, and no menu to switch or resize her from. Whether she is
+   * in the way is a fact about one screen. A value synced from elsewhere is ignored, except once on
+   * PosterChanOS, where the switch was first set, so an existing choice there survives this move. */
+  const THROUGH_KEY = 'pc.buddy.clickThrough.v1';
+  function through(synced){
+    let v = null; try{ v = localStorage.getItem(THROUGH_KEY); }catch(_){ v = null; }
+    if(v === '1' || v === '0') return v === '1';
+    if(native() && synced.clickThrough === true){ try{ localStorage.setItem(THROUGH_KEY, '1'); }catch(_){ } return true; }
+    return false;
   }
   const boxW = p => Math.round(BOX_W * p.size), boxH = p => Math.round(BOX_H * p.size);
   function setPref(v){
+    v = Object.assign({}, v);
+    try{ localStorage.setItem(THROUGH_KEY, v.clickThrough ? '1' : '0'); }catch(_){ }
+    delete v.clickThrough;                         // never synced: see through()
     try{ CS() && CS().set(KEY, v); }catch(_){ }
     try{ const pc = window.__PC; if(pc && pc.saveDesktopBuddy) pc.saveDesktopBuddy(v); }catch(_){ }
   }
@@ -313,7 +329,7 @@
    * her own window cannot let only its empty parts through -- measured on Wayland: Electron's setShape
    * changes what is drawn, not what is clicked, while setIgnoreMouseEvents passes every click -- so
    * this is a switch. Her own menu cannot be reached while it is on; the desktop's right-click menu and
-   * Settings turn it back off. Synced with the account like her size. */
+   * Settings turn it back off. Kept on this device only -- see through(). */
   function setClickThrough(on){
     const p = pref(); p.clickThrough = !!on; setPref(p);
     if(desk) mount(desk, opts);

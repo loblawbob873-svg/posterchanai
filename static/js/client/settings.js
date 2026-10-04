@@ -914,9 +914,8 @@ window.PCSettingsFactory = function(dep){
                     ClientSettings.set('desktopBuddy', v); _prefTouched.add('desktopBuddy'); saveClientPrefsNostr({ desktopBuddy: v }); } }catch(_){}
       }; }
     { const dt=$('#set-desktop-buddy-through'); if(dt) dt.onchange=()=>{
-        try{ if(window.PCBuddy && window.PCBuddy.setClickThrough) window.PCBuddy.setClickThrough(dt.checked);
-             else { const v=Object.assign({}, ClientSettings.get('desktopBuddy', {}) || {}, { clickThrough: dt.checked });
-                    ClientSettings.set('desktopBuddy', v); _prefTouched.add('desktopBuddy'); saveClientPrefsNostr({ desktopBuddy: v }); } }catch(_){}
+        // This device only (buddy.js through()): never written into the synced desktopBuddy preference.
+        try{ if(window.PCBuddy && window.PCBuddy.setClickThrough) window.PCBuddy.setClickThrough(dt.checked); }catch(_){}
       }; }
     { const ds=$('#set-desktop-buddy-size'); if(ds) ds.onchange=()=>{
         try{ if(window.PCBuddy && window.PCBuddy.setSize) window.PCBuddy.setSize(Number(ds.value));
