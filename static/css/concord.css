@@ -349,3 +349,13 @@ body.concord-view .cc-messages>.cc-thread-bar{flex:0 0 auto!important;width:100%
 body.concord-view .cc-messages>.cc-thread-bar button{display:inline-flex!important;align-items:center!important;gap:4px!important;white-space:nowrap!important;padding:4px 10px!important;border-radius:8px!important;border:1px solid rgba(255,255,255,.14)!important;background:transparent!important;color:inherit!important;cursor:pointer!important}
 body.concord-view .cc-messages>.cc-thread-bar span{min-width:0!important;overflow:hidden!important;text-overflow:ellipsis!important;white-space:nowrap!important}
 body.concord-view .cc-messages:has(>.cc-thread-bar)>.cc-message-list{width:100%!important;flex:1 0 auto!important}
+
+/* Community folders in the rail (Armada's model): closed, a 2x2 of its communities' icons; open, a
+   tinted pill holding the folder glyph and its communities. */
+body.concord-view .cc-folder{display:flex!important;flex-direction:column!important;align-items:center!important;gap:6px!important;border-radius:16px!important}
+body.concord-view .cc-folder.open{background:rgba(122,162,247,.12)!important;padding:4px 0!important}
+body.concord-view .cc-folder-btn{position:relative!important;overflow:hidden!important}
+body.concord-view .cc-folder-grid{display:grid!important;grid-template-columns:1fr 1fr!important;gap:2px!important;width:100%!important;height:100%!important;padding:4px!important;box-sizing:border-box!important}
+body.concord-view .cc-folder-mini{display:flex!important;align-items:center!important;justify-content:center!important;overflow:hidden!important;border-radius:5px!important;font-size:9px!important;min-width:0!important;min-height:0!important}
+body.concord-view .cc-folder-mini img{width:100%!important;height:100%!important;object-fit:cover!important}
+body.concord-view .cc-folder-glyph{font-size:18px!important}

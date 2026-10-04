@@ -1439,8 +1439,142 @@
       old.delete(videoKey(v)); try{ v.replaceWith(prev); }catch(_){}
     }
   }
+  /* COMMUNITY FOLDERS, AS ARMADA HAS THEM ("add ability to put communities in groups like Armada does
+   * it"). Armada's model, verbatim (src/lib/railLayout.ts): an ordered list of nodes, each a single
+   * community {type:'item',key} or a named folder {type:'folder',id,name,keys}. A key is `c2:<community
+   * id>` (`c1:` for Concord V1, read as the same community) or a NIP-29 server's normalized relay URL.
+   * Kept in this account's own kind-30078 doc, d=pcai:concord-rail, NIP-44-sealed to itself; on the
+   * first visit with none, the folders made in Armada (its own `armada/metadata` settings doc) are read
+   * -- and never written: that doc holds every other Armada setting, and a write from here that missed
+   * one would wipe them (the replaceable-doc wipe). Whether a folder is open is this device's. */
+  const RAIL_D='pcai:concord-rail', RAIL_OPEN_KEY='pc.concord.railOpen';
+  function railKeyOf(r){
+    if(!r)return '';
+    if(r.protocol==='nip29')return String(r.relay||r.url||'').trim().toLowerCase().replace(/\/+$/,'');
+    const id=String(r.communityId||'').toLowerCase();
+    return /^[0-9a-f]{64}$/.test(id)?'c2:'+id:'n:'+String(r.naddr||r.url||r.name||'');
+  }
+  function sameRailKey(a,b){ const n=k=>String(k||'').replace(/^c1:/,'c2:').toLowerCase().replace(/\/+$/,''); return n(a)===n(b); }
+  function railNormalize(nodes){
+    const seen=new Set(),ids=new Set(),out=[];
+    for(const n of Array.isArray(nodes)?nodes:[]){
+      if(n&&n.type==='item'&&typeof n.key==='string'){ const k=n.key.replace(/^c1:/,'c2:'); if(seen.has(k))continue; seen.add(k); out.push({type:'item',key:n.key}); }
+      else if(n&&n.type==='folder'&&typeof n.id==='string'&&!ids.has(n.id)){
+        ids.add(n.id);
+        const keys=(Array.isArray(n.keys)?n.keys:[]).filter(k=>typeof k==='string'&&!seen.has(k.replace(/^c1:/,'c2:'))&&seen.add(k.replace(/^c1:/,'c2:')));
+        if(!keys.length)continue;
+        if(keys.length===1){ out.push({type:'item',key:keys[0]}); continue; }   // Armada: a one-item folder dissolves
+        out.push({type:'folder',id:n.id,name:String(n.name||'Folder').slice(0,40),keys});
+      }
+    }
+    return out;
+  }
+  function railWithout(nodes,key){
+    return nodes.map(n=>n.type==='folder'?{...n,keys:n.keys.filter(k=>!sameRailKey(k,key))}:n).filter(n=>!(n.type==='item'&&sameRailKey(n.key,key)));
+  }
+  /* One edit, applied to whatever layout it is given -- so a save re-applies it to the freshest copy. */
+  function railApply(nodes,op){
+    let out=railNormalize(nodes);
+    if(op.t==='into'){                                // a community into an existing or a new folder
+      const at=out.findIndex(n=>(n.type==='item'&&sameRailKey(n.key,op.key))||(n.type==='folder'&&n.keys.some(k=>sameRailKey(k,op.key))));
+      out=railWithout(out,op.key);
+      const f=out.find(n=>n.type==='folder'&&n.id===op.id);
+      if(f)f.keys.push(op.key);
+      else { const node={type:'folder',id:op.id,name:String(op.name||'Folder').slice(0,40),keys:[...(op.with?[op.with]:[]),op.key].filter((k,i,a)=>a.findIndex(x=>sameRailKey(x,k))===i)};
+        if(op.with)out=railWithout(out,op.with);
+        out.splice(Math.max(0,Math.min(at<0?out.length:at,out.length)),0,node); }
+    }else if(op.t==='out'){                           // out of its folder, right after it
+      const fi=out.findIndex(n=>n.type==='folder'&&n.keys.some(k=>sameRailKey(k,op.key)));
+      if(fi>=0){ out[fi]={...out[fi],keys:out[fi].keys.filter(k=>!sameRailKey(k,op.key))}; out.splice(fi+1,0,{type:'item',key:op.key}); }
+    }else if(op.t==='rename'){ out=out.map(n=>n.type==='folder'&&n.id===op.id?{...n,name:String(op.name||n.name).slice(0,40)}:n); }
+    else if(op.t==='ungroup'){ const fi=out.findIndex(n=>n.type==='folder'&&n.id===op.id); if(fi>=0)out.splice(fi,1,...out[fi].keys.map(key=>({type:'item',key}))); }
+    return railNormalize(out);
+  }
+  /* The rail as drawn: the layout's order and folders over the rooms this device has, every room the
+   * layout does not mention appended in its own order (a room joined later is never hidden). */
+  function railView(rooms,layout){
+    const idx=new Map(); (rooms||[]).forEach((r,i)=>{ const k=railKeyOf(r); if(k&&!idx.has(k.replace(/^c1:/,'c2:')))idx.set(k.replace(/^c1:/,'c2:'),i); });
+    const find=k=>idx.get(String(k||'').replace(/^c1:/,'c2:').toLowerCase().replace(/\/+$/,'')), used=new Set(), out=[];
+    for(const n of railNormalize(layout)){
+      if(n.type==='item'){ const i=find(n.key); if(i!=null&&!used.has(i)){ used.add(i); out.push({type:'item',i}); } }
+      else { const members=n.keys.map(find).filter(i=>i!=null&&!used.has(i)); members.forEach(i=>used.add(i));
+        if(members.length>=2)out.push({type:'folder',id:n.id,name:n.name,members}); else if(members.length===1)out.push({type:'item',i:members[0]}); }
+    }
+    (rooms||[]).forEach((_,i)=>{ if(!used.has(i))out.push({type:'item',i}); });
+    return out;
+  }
+  const railDoc={owner:'',answered:false,layout:[],fromArmada:false,loading:null,saving:null,ops:[]};
+  function railOpen(){ try{ return new Set(JSON.parse(localStorage.getItem(RAIL_OPEN_KEY)||'[]')); }catch(_){ return new Set(); } }
+  function setRailOpen(set){ try{ localStorage.setItem(RAIL_OPEN_KEY,JSON.stringify([...set].slice(0,64))); }catch(_){} }
+  async function fetchRailDoc(p,owner,d){
+    if(!p.relayQuery||!p.nip44dec)return null;
+    let evs=null;
+    try{ evs=await p.relayQuery([{authors:[owner],kinds:[30078],'#d':[d],limit:1}],8000); }catch(_){ evs=null; }
+    let cached=[];try{cached=window.Store&&window.Store.query?window.Store.query([{authors:[owner],kinds:[30078],'#d':[d]}])||[]:[];}catch(_){}
+    const all=[...(Array.isArray(evs)?evs:[]),...cached].filter(e=>e&&e.pubkey===owner&&typeof e.content==='string');
+    if(!all.length&&(!Array.isArray(evs)||evs.complete===false))return null;     // could not ask: never "no folders"
+    const ev=all.sort((a,b)=>b.created_at-a.created_at)[0];
+    if(!ev)return {layout:null};
+    try{ const doc=JSON.parse(await p.nip44dec(owner,ev.content)||'null');
+      const layout=d===RAIL_D?(doc&&doc.layout):(doc&&doc.railLayout);
+      return {layout:Array.isArray(layout)?layout:null}; }catch(_){ return null; }
+  }
+  function loadRail(p){
+    const owner=p&&p.viewer&&p.viewer().pubkey;
+    if(!owner)return Promise.resolve(railDoc);
+    if(railDoc.owner!==owner)Object.assign(railDoc,{owner,answered:false,layout:[],fromArmada:false,loading:null,saving:null,ops:[]});
+    if(railDoc.answered)return Promise.resolve(railDoc);
+    if(railDoc.loading)return railDoc.loading;
+    railDoc.loading=(async()=>{
+      const got=await fetchRailDoc(p,owner,RAIL_D);
+      if(railDoc.owner!==owner||!got)return railDoc;
+      railDoc.answered=true;
+      if(got.layout){ railDoc.layout=railNormalize(got.layout); }
+      else { const arm=await fetchRailDoc(p,owner,'armada/metadata').catch(()=>null);      // read-only, first visit only
+        if(railDoc.owner===owner&&arm&&arm.layout&&arm.layout.length){ railDoc.layout=railNormalize(arm.layout); railDoc.fromArmada=true; } }
+      for(const op of railDoc.ops)railDoc.layout=railApply(railDoc.layout,op);
+      backgroundRender();
+      if(railDoc.ops.length)saveRail(p);
+      return railDoc;
+    })().finally(()=>{ railDoc.loading=null; });
+    return railDoc.loading;
+  }
+  function saveRail(p){
+    const owner=railDoc.owner;
+    if(!owner||!railDoc.answered||!p.nip44enc||!p.signTemplate||!p.relayPublish)return;
+    if(railDoc.saving){ railDoc.again=true; return; }
+    const ops=railDoc.ops.slice();
+    railDoc.saving=(async()=>{
+      const fresh=await fetchRailDoc(p,owner,RAIL_D);
+      if(!fresh||railDoc.owner!==owner)throw new Error('could not re-read the folders');   // write nothing
+      let layout=fresh.layout?railNormalize(fresh.layout):railDoc.layout;   // first write: what is on screen (incl. an Armada import)
+      for(const op of ops)layout=railApply(layout,op);
+      const content=await p.nip44enc(owner,JSON.stringify({v:1,layout}));
+      const ev=await p.signTemplate({kind:30078,created_at:Math.floor(Date.now()/1000),content,tags:[['d',RAIL_D]],pubkey:owner});
+      const res=await p.relayPublish(ev);
+      if(res&&res.ok===false)throw new Error('not accepted');
+      railDoc.ops=railDoc.ops.slice(ops.length); railDoc.layout=layout; for(const op of railDoc.ops)railDoc.layout=railApply(railDoc.layout,op);
+    })().catch(()=>{ railDoc.again=true; }).finally(()=>{ railDoc.saving=null; if(railDoc.again&&railDoc.ops.length){ railDoc.again=false; setTimeout(()=>saveRail(p),4000); } });
+  }
+  function editRail(p,op){
+    railDoc.ops.push(op); railDoc.layout=railApply(railDoc.layout,op); render();
+    if(railDoc.answered)saveRail(p); else loadRail(p);
+  }
+  function railHtml(p,rooms){
+    const open=railOpen(), view=railView(rooms,railDoc.layout);
+    const btn=i=>{const r=rooms[i];return `<button class="cc-server${state.community===i?' active':''}${isUnread(r)?' unread':''}" data-cc-server="${i}" title="${p.enc(roomName(r,i))}">${roomIcon(p,r,i)}</button>`;};
+    return view.map(n=>{
+      if(n.type==='item')return btn(n.i);
+      const isOpen=open.has(n.id),unread=n.members.some(i=>isUnread(rooms[i])),active=n.members.includes(state.community);
+      const minis=n.members.slice(0,4).map(i=>`<span class="cc-folder-mini">${roomIcon(p,rooms[i],i)}</span>`).join('');
+      return `<div class="cc-folder${isOpen?' open':''}" data-cc-folder-box="${p.enc(n.id)}"><button class="cc-server cc-folder-btn${unread?' unread':''}${active&&!isOpen?' active':''}" data-cc-folder="${p.enc(n.id)}" title="${p.enc(n.name)}" aria-label="Folder ${p.enc(n.name)}" aria-expanded="${isOpen?'true':'false'}">${isOpen?'<span class="cc-folder-glyph" aria-hidden="true">📁</span>':`<span class="cc-folder-grid">${minis}</span>`}</button>${isOpen?n.members.map(btn).join(''):''}</div>`;
+    }).join('');
+  }
+  function railSig(rooms){ try{ return JSON.stringify([railView(rooms,railDoc.layout),[...railOpen()]]); }catch(_){ return ''; } }
   function retainCommunityRail(oldRail,newRail){
     if(!oldRail||!newRail)return;
+    // Folders: a different arrangement (or a folder opened) is a different rail, never the old one patched.
+    if((oldRail.dataset.ccSig||'')!==(newRail.dataset.ccSig||''))return;
     const oldServers=[...oldRail.querySelectorAll('[data-cc-server]')],newServers=[...newRail.querySelectorAll('[data-cc-server]')];
     if(oldServers.length!==newServers.length)return;
     for(let i=0;i<oldServers.length;i++)if(oldServers[i].dataset.ccServer!==newServers[i].dataset.ccServer)return;
@@ -4599,7 +4733,7 @@
           ?{dlg:!!ae.closest('#cc-members-dialog'),at:ae.selectionStart}:null; } }catch(_){ }
     const _html=`<div class="cc-app${mobileChatOpen||state.community==null?' show-chat':''}${mobileDrawerOpen?' drawer-open':''}${state.community==null?' home-view':''}">
       <button class="cc-drawer-backdrop" id="cc-drawer-backdrop" aria-label="Close rooms and channels"></button>
-      <aside class="cc-communities"><button class="cc-brand" id="cc-home" title="Your rooms" aria-label="Your rooms"><span aria-hidden="true">🕊</span></button><button class="cc-server cc-discovery-button" id="cc-discovery" title="Discover public communities" aria-label="Discover public communities">◎</button>${rooms.map((r,i)=>`<button class="cc-server${state.community===i?' active':''}${isUnread(r)?' unread':''}" data-cc-server="${i}" title="${p.enc(roomName(r,i))}">${roomIcon(p,r,i)}</button>`).join('')}<button class="cc-server cc-add" id="cc-add" title="Create or join a community" aria-label="Create or join a community">+</button></aside>
+      <aside class="cc-communities" data-cc-sig="${p.enc(railSig(rooms))}"><button class="cc-brand" id="cc-home" title="Your rooms" aria-label="Your rooms"><span aria-hidden="true">🕊</span></button><button class="cc-server cc-discovery-button" id="cc-discovery" title="Discover public communities" aria-label="Discover public communities">◎</button>${railHtml(p,rooms)}<button class="cc-server cc-add" id="cc-add" title="Create or join a community" aria-label="Create or join a community">+</button></aside>
       <aside class="cc-channels">${roomBannerUrl(current)?`<div class="cc-banner"><img src="${p.enc(roomBannerUrl(current))}" alt=""></div>`:''}<header><button class="cc-mobile-back" id="cc-back-communities" aria-label="Communities">‹</button><div><b>${state.community==null?'Concord':p.enc(roomName(current,state.community))}</b><small>${current&&current.local?'Local test community':'End-to-end encrypted'}</small></div>${current?'<button class="cc-head-btn" id="cc-edit-icon" title="Set community icon" aria-label="Set community icon"><svg class="ic"><use href="#i-image"></use></svg></button><button class="cc-head-btn danger" id="cc-leave-room" title="Leave community" aria-label="Leave community"><svg class="ic"><use href="#i-logout"></use></svg></button>':''}${canAddChannel(p,current)?'<button class="cc-head-btn" id="cc-add-channel" title="New channel" aria-label="New channel">+</button>':''}</header>
         <div class="cc-channel-list">${state.community==null?'<div class="cc-empty-side">Choose or join a community</div>':channelSectionsHtml(p,current,visibleChannels)}</div>
         <footer class="cc-identity"><span class="cc-status"></span><div><b>${p.enc(me)}</b><small>You</small></div><button class="cc-head-btn" id="cc-notify" title="Notification settings"><svg class="ic"><use href="#i-bell"></use></svg></button></footer>
@@ -5061,7 +5195,49 @@
       const panel=$('#cc-join'); if(panel)panel.classList.add('hidden');
       p.toast(inv?.directId?'Invitation declined':'invitation declined — the link still works if you change your mind'); };
 
-    $$('[data-cc-server]').forEach(b=>b.onclick=()=>{const i=+b.dataset.ccServer,inDrawer=mobileChatOpen&&mobileDrawerOpen;void activateJoinedRoom(p,i,inDrawer);});
+    $$('[data-cc-server]').forEach(b=>b.onclick=()=>{if(b._ccHeld){b._ccHeld=false;return;}const i=+b.dataset.ccServer,inDrawer=mobileChatOpen&&mobileDrawerOpen;void activateJoinedRoom(p,i,inDrawer);});
+    /* FOLDERS: a folder opens/closes on click; a community or a folder has its menu on right-click or a
+     * long press (a phone has no right button). Every edit goes through editRail, synced with the account. */
+    loadRail(p);
+    $$('[data-cc-folder]').forEach(b=>b.onclick=()=>{ if(b._ccHeld){ b._ccHeld=false; return; } const set=railOpen(),id=b.dataset.ccFolder; if(set.has(id))set.delete(id); else set.add(id); setRailOpen(set); render(); });
+    const railMenu=(b)=>{
+      if(!p.openMenuPopover)return;
+      const rooms=saved(),folderId=b.dataset.ccFolder;
+      if(folderId){
+        const f=railView(rooms,railDoc.layout).find(n=>n.type==='folder'&&n.id===folderId); if(!f)return;
+        p.openMenuPopover(b,[['rename','Rename folder'],['ungroup','Ungroup']],async a=>{
+          if(a==='ungroup'){ editRail(p,{t:'ungroup',id:folderId}); return; }
+          const name=p.uiPrompt?await p.uiPrompt('Folder name',{value:f.name,ok:'Rename'}):null;
+          if(name&&String(name).trim())editRail(p,{t:'rename',id:folderId,name:String(name).trim()});
+        });
+        return;
+      }
+      const i=+b.dataset.ccServer,room=rooms[i],key=railKeyOf(room); if(!key)return;
+      const view=railView(rooms,railDoc.layout),folders=view.filter(n=>n.type==='folder');
+      const mine=folders.find(n=>n.members.includes(i));
+      /* A folder is made from TWO communities, as in Armada (a one-community folder dissolves). */
+      const items=[];
+      for(const f of folders)if(f!==mine)items.push(['into:'+f.id,'Add to “'+f.name+'”']);
+      for(const n of view)if(n.type==='item'&&n.i!==i&&items.length<14)items.push(['with:'+n.i,'New folder with “'+roomName(rooms[n.i],n.i)+'”']);
+      if(mine)items.push(['out','Remove from “'+mine.name+'”']);
+      if(!items.length)return;
+      p.openMenuPopover(b,items,async a=>{
+        if(a==='out'){ editRail(p,{t:'out',key}); return; }
+        if(a.startsWith('into:')){ editRail(p,{t:'into',key,id:a.slice(5)}); return; }
+        const other=railKeyOf(rooms[+a.slice(5)]); if(!other)return;
+        const name=p.uiPrompt?await p.uiPrompt('Name the new folder',{value:'Folder',ok:'Create'}):'Folder';
+        if(name===null||name===undefined)return;
+        const id=Math.random().toString(36).slice(2,10)+Date.now().toString(36);
+        const set=railOpen(); set.add(id); setRailOpen(set);
+        editRail(p,{t:'into',key,with:other,id,name:String(name).trim()||'Folder'});
+      });
+    };
+    $$('[data-cc-server],[data-cc-folder]').forEach(b=>{
+      if(b.id==='cc-add'||b.id==='cc-discovery')return;
+      b.oncontextmenu=e=>{ e.preventDefault(); railMenu(b); };
+      let t=0; b.addEventListener('pointerdown',e=>{ if(e.pointerType==='mouse')return; clearTimeout(t); t=setTimeout(()=>{ b._ccHeld=true; railMenu(b); },550); });
+      ['pointerup','pointercancel','pointerleave'].forEach(ev=>b.addEventListener(ev,()=>clearTimeout(t)));
+    });
     $$('[data-cc-discover]').forEach(b=>b.onclick=async()=>{
       const v=discovered[+b.dataset.ccDiscover];if(!v)return;
       const a=saved();let i=a.findIndex(x=>sameRoom(x,v));if(i<0){a.push(v);i=a.length-1;}
