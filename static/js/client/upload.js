@@ -197,9 +197,17 @@ window.PCUploadFactory = function(dep){
   // ONE entry point for "prepare this file for upload", so THE BYTES WE HASH ARE THE BYTES WE SEND.
   // uploadBlob and _signUploadBatch must run the identical pass or the batch auth's `x` tags won't match
   // the uploaded blob, and every file falls back to its own signature — one Amber prompt per clip.
+  /* NO CAMERA METADATA LEAVES THE DEVICE ("make sure we remove exif data on all blossom uploads").
+   * compressImage only lost EXIF when it re-encoded (big photos); a small phone photo went out with its
+   * GPS. exifstrip.js strips losslessly (or redraws a rotated photo upright). */
+  async function stripImageMetadata(file){
+    try{ return (window.PCExifStrip && window.PCExifStrip.cleanFile) ? await window.PCExifStrip.cleanFile(file) : file; }
+    catch(_){ return file; }
+  }
   async function compressMedia(file){
     if(_preparedForUpload.has(file)) return file;
-    const out = _isVideoFile(file) ? await compressVideo(file) : await compressImage(file, {lossyPng:true});
+    const out = _isVideoFile(file) ? await compressVideo(file)
+              : await stripImageMetadata(await compressImage(file, {lossyPng:true}));
     try{ _preparedForUpload.add(out); }catch(_){}
     return out;
   }
@@ -330,6 +338,8 @@ window.PCUploadFactory = function(dep){
      * in the drive smaller, lossier, stripped of its capture date and under a DIFFERENT sha256 than
      * the original it claims to be a copy of — with nothing in the UI to say so. */
     if(!(opts && opts.noCompress)) file=await compressMedia(file);
+    // An archival copy keeps its pixels and size, but not where it was taken: the metadata goes either way.
+    else if(!(opts && opts.keepMetadata)) file=await stripImageMetadata(file);
     if(tgt.proto==='nip96') return await uploadNip96(file, server, opts);
     const hash=await hashFileHex(file);
     // Reuse the BATCH auth when this blob's hash is one it already commits to (BUD-01 allows many `x` tags,
@@ -1104,6 +1114,6 @@ window.PCUploadFactory = function(dep){
     blossomPicker, compressImage, compressVideo, copyUrl, downloadBlobFile, downloadName,
     extOfBlob, fetchMediaBlob, fileFromBytes, fileLabel, fileNameFor, gifPicker, imetaTagsFor,
     mimeForName, renderPics, requestBlossomAccess, requestStreamAccess, saveBlobAs, saveEncrypted,
-    saveMedia, sha256hex, sniffExt, thumbUrl, uploadBlob,
+    saveMedia, sha256hex, sniffExt, stripImageMetadata, thumbUrl, uploadBlob,
   };
 };

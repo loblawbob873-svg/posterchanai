@@ -167,6 +167,7 @@ const SHELL = [
   '/static/js/client/menus.js',
   '/static/js/client/compose.js',
   '/static/js/client/filesindex.js',
+  '/static/js/client/exifstrip.js',
   '/static/js/client/upload.js',
   '/static/js/client/musicplayer.js',
   '/static/js/client/cards.js',

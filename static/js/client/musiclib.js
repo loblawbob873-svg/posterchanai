@@ -66,6 +66,8 @@ window.PCMusicLibFactory = function(dep){
      because a DR mirror would hand our ciphertext to a third-party server for no benefit. */
   async function uploadSharedEnc(file, statEl, options){
     const setS = t => { if(statEl) statEl.textContent = t; };
+    // Encrypted FOR SOMEBODY ELSE to open (a DM attachment): they would read its GPS, so it goes first.
+    try{ if(window.PCExifStrip && window.PCExifStrip.cleanFile) file = await window.PCExifStrip.cleanFile(file); }catch(_){ }
     const key = crypto.getRandomValues(new Uint8Array(32));
     const chunkBytes = 4 * 1024 * 1024 - 28;
     const meta = { k:_b64u(key), m:file.type||'application/octet-stream', n:file.name||'' };
