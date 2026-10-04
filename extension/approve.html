@@ -5,23 +5,32 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <link rel="stylesheet" href="popup.css">
 <style>
-  body{ width:auto; min-height:0; padding:14px; }
-  h1{ font-size:15px; margin:0 0 4px; }
-  .origin{ font-family:ui-monospace,SFMono-Regular,Menlo,monospace; font-size:13px;
-           word-break:break-all; color:#8fd2ff; margin-bottom:10px; }
-  .what{ padding:10px 12px; border-radius:10px; border:1px solid rgba(140,200,255,.22);
-         background:rgba(255,255,255,.04); margin-bottom:10px; }
-  .kind{ font-weight:600; }
-  pre{ margin:8px 0 0; padding:8px; border-radius:8px; background:rgba(0,0,0,.28);
-       font-size:11.5px; white-space:pre-wrap; word-break:break-word; max-height:140px;
-       overflow:auto; }
-  .warn{ color:#ffbe5c; font-size:12px; margin-bottom:10px; }
-  label.remember{ display:flex; align-items:center; gap:7px; margin:10px 0; font-size:13px; }
+  /* The cyberpunk layer comes from popup.css; this is only what is particular to an approval. */
+  body{ width:auto; min-height:0; padding:16px; }
+  h1{ font-size:14px; margin:0 0 6px; font-family:var(--cp-mono); text-transform:uppercase; letter-spacing:.08em;
+      background:linear-gradient(90deg,var(--cp-cyan),var(--cp-pink)); -webkit-background-clip:text; background-clip:text; color:transparent; }
+  .origin{ font-family:var(--cp-mono); font-size:13px; word-break:break-all; color:var(--cp-cyan);
+           text-shadow:0 0 10px rgba(60,232,255,.35); margin-bottom:12px; }
+  .what{ position:relative; padding:10px 12px 10px 14px; border-radius:6px; border:1px solid var(--cp-line);
+         background:var(--cp-panel); margin-bottom:10px; }
+  .what::before{ content:""; position:absolute; left:0; top:8px; bottom:8px; width:2px; border-radius:2px;
+                 background:linear-gradient(var(--cp-cyan),var(--cp-pink)); }
+  .kind{ font-weight:600; color:#fff; }
+  pre{ margin:8px 0 0; padding:8px; border-radius:6px; background:rgba(0,0,0,.45); border:1px solid var(--cp-line);
+       font-family:var(--cp-mono); font-size:11.5px; color:var(--cp-green); white-space:pre-wrap; word-break:break-word;
+       max-height:140px; overflow:auto; }
+  .warn{ color:var(--cp-amber); font-size:12px; margin-bottom:10px; }
+  label.remember{ display:flex; align-items:center; gap:7px; margin:10px 0; font-size:13px; color:var(--cp-dim); }
   .row{ display:flex; gap:8px; }
-  .row button{ flex:1 1 0; min-height:42px; border-radius:9px; cursor:pointer; font:inherit;
-               border:1px solid rgba(140,200,255,.3); background:rgba(140,200,255,.1); color:inherit; }
-  #allow{ background:rgba(140,200,255,.3); font-weight:600; }
-  #deny{ color:#ff9db4; }
+  .row button{ flex:1 1 0; min-height:42px; border-radius:6px; cursor:pointer; font:inherit; font-family:var(--cp-mono);
+               text-transform:uppercase; letter-spacing:.08em; font-size:12.5px; color:var(--cp-text);
+               border:1px solid var(--cp-line); background:rgba(60,232,255,.06); transition:box-shadow .15s, border-color .15s; }
+  #allow{ border:1px solid transparent; font-weight:700; color:#fff;
+          background:linear-gradient(var(--cp-bg2),var(--cp-bg2)) padding-box, linear-gradient(90deg,var(--cp-cyan),var(--cp-pink)) border-box;
+          box-shadow:0 0 16px rgba(60,232,255,.2); }
+  #allow:hover{ box-shadow:var(--cp-glow), 0 0 22px rgba(255,92,240,.28); }
+  #deny{ color:var(--cp-red); border-color:rgba(255,77,125,.4); }
+  #deny:hover{ background:rgba(255,77,125,.1); box-shadow:0 0 12px rgba(255,77,125,.25); }
 </style>
 </head>
 <body>

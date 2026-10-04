@@ -188,3 +188,125 @@ body{ overflow-x:hidden; }
 }
 .bot button:hover{ background:rgba(255,255,255,.1); border-color:rgba(140,200,255,.22); }
 .bot #ver{ flex:1 0 100%; margin-bottom:2px; }
+
+/* ==== CYBERPUNK ====================================================================================
+ * "make the browser extensions more responsive and beautiful with a cyberpunk theme". The app's own
+ * palette (client.css: --neon #3ce8ff, --neon2 #ff5cf0, --green #00ff88, --amber, bg #0a0a0f), so the
+ * extension reads as the same product. A layer ON TOP of the rules above: every size, wrap and width
+ * there stays as it was (the popup's absolute width is load-bearing on Firefox -- see the top). No web
+ * fonts: an extension page loads nothing remote, so the type is the system stack plus ui-monospace.
+ * Motion is a glow on hover/focus only, and none at all under prefers-reduced-motion. */
+:root{
+  --cp-bg:#07070d; --cp-bg2:#0d0d18; --cp-panel:rgba(16,16,30,.86);
+  --cp-cyan:#3ce8ff; --cp-pink:#ff5cf0; --cp-green:#00ff88; --cp-amber:#ffcf2b; --cp-red:#ff4d7d;
+  --cp-text:#e8f7ff; --cp-dim:rgba(232,247,255,.62);
+  --cp-line:rgba(60,232,255,.22); --cp-line2:rgba(60,232,255,.5);
+  --cp-glow:0 0 0 1px rgba(60,232,255,.55), 0 0 14px rgba(60,232,255,.35);
+  --cp-glow2:0 0 0 1px rgba(255,92,240,.55), 0 0 14px rgba(255,92,240,.3);
+  --cp-mono:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;
+}
+body{
+  color:var(--cp-text);
+  background:
+    radial-gradient(120% 60% at 100% 0%, rgba(255,92,240,.12), transparent 60%),
+    radial-gradient(120% 60% at 0% 100%, rgba(60,232,255,.10), transparent 60%),
+    repeating-linear-gradient(0deg, rgba(60,232,255,.035) 0 1px, transparent 1px 22px),
+    repeating-linear-gradient(90deg, rgba(60,232,255,.035) 0 1px, transparent 1px 22px),
+    var(--cp-bg);
+}
+.muted{ opacity:1; color:var(--cp-dim); }
+::selection{ background:rgba(255,92,240,.35); color:#fff; }
+
+/* Header: the wordmark in the app's two neons, a status that reads like a terminal line. */
+.top{ background:rgba(7,7,13,.92); backdrop-filter:blur(6px); border-bottom:1px solid var(--cp-line);
+      box-shadow:0 1px 0 rgba(255,92,240,.18); }
+.top b{
+  font-family:var(--cp-mono); text-transform:uppercase; letter-spacing:.16em; font-size:13px;
+  background:linear-gradient(90deg, var(--cp-cyan), var(--cp-pink)); -webkit-background-clip:text;
+  background-clip:text; color:transparent; text-shadow:0 0 18px rgba(60,232,255,.25);
+}
+.top .muted{ font-family:var(--cp-mono); font-size:11px; color:var(--cp-green); text-align:right; }
+
+/* Screen switcher: angled chips; the current one lit cyan with a magenta underline. */
+.tab, .nav .tab{
+  border-radius:0; border:1px solid var(--cp-line); background:rgba(60,232,255,.05); color:var(--cp-dim);
+  clip-path:polygon(7px 0,100% 0,100% calc(100% - 7px),calc(100% - 7px) 100%,0 100%,0 7px);
+  font-family:var(--cp-mono); text-transform:uppercase; letter-spacing:.06em; font-size:11.5px;
+  transition:color .15s, background .15s, box-shadow .15s;
+}
+.nav .tab:hover{ background:rgba(60,232,255,.12); color:var(--cp-text); }
+.nav .tab.on{
+  color:#001218; background:linear-gradient(90deg, var(--cp-cyan), #8ff3ff); border-color:var(--cp-cyan);
+  font-weight:700; box-shadow:inset 0 -3px 0 var(--cp-pink);
+}
+
+/* Fields: dark wells that light up cyan when you are in them. */
+input[type="search"], textarea, .input{
+  background:rgba(0,0,0,.35); border:1px solid var(--cp-line); border-radius:6px; color:var(--cp-text);
+  transition:border-color .15s, box-shadow .15s;
+}
+input[type="search"]:focus, textarea:focus, .input:focus{ border-color:var(--cp-cyan); box-shadow:var(--cp-glow); background:rgba(0,0,0,.45); }
+input[type="search"]::placeholder, textarea::placeholder{ color:rgba(232,247,255,.35); }
+.fld{ font-family:var(--cp-mono); color:var(--cp-cyan); opacity:.85; }
+
+/* The one thing you came to press: a cyan→magenta edge that glows. */
+.primary, .row .primary{
+  border-radius:6px; border:1px solid transparent; color:#fff; font-family:var(--cp-mono);
+  text-transform:uppercase; letter-spacing:.08em; font-size:12.5px;
+  background:linear-gradient(var(--cp-bg2),var(--cp-bg2)) padding-box,
+             linear-gradient(90deg, var(--cp-cyan), var(--cp-pink)) border-box;
+  box-shadow:0 0 16px rgba(60,232,255,.18); transition:box-shadow .15s, transform .08s;
+}
+.primary:hover{ box-shadow:var(--cp-glow), 0 0 22px rgba(255,92,240,.28); }
+.primary:active{ transform:translateY(1px); }
+
+/* Everything else: quiet outlined buttons that brighten under the pointer. */
+.pane button:not(.primary):not(.mini), #gen-fill, #gen-again, .it-a button{
+  border-radius:6px; background:rgba(60,232,255,.06); border:1px solid var(--cp-line); color:var(--cp-text);
+  transition:border-color .15s, background .15s, box-shadow .15s;
+}
+.pane button:not(.primary):not(.mini):hover, #gen-fill:hover, #gen-again:hover, .it-a button:hover{
+  border-color:var(--cp-line2); background:rgba(60,232,255,.13); box-shadow:0 0 10px rgba(60,232,255,.18);
+}
+button:focus-visible, .tab:focus-visible, input:focus-visible, textarea:focus-visible{ outline:2px solid var(--cp-pink); outline-offset:2px; }
+.danger, #unpair{ color:var(--cp-red) !important; }
+.err{ color:var(--cp-red); }
+
+/* A login: a card with a neon edge that lights when you reach for it. */
+.item{
+  position:relative; border-radius:6px; border:1px solid var(--cp-line); background:var(--cp-panel);
+  padding-left:12px; transition:border-color .15s, box-shadow .15s;
+}
+.item::before{ content:""; position:absolute; left:0; top:6px; bottom:6px; width:2px; border-radius:2px;
+  background:linear-gradient(var(--cp-cyan), var(--cp-pink)); opacity:.55; }
+.item:hover{ border-color:var(--cp-line2); box-shadow:0 0 14px rgba(60,232,255,.14); }
+.item:hover::before{ opacity:1; }
+.it-t b{ color:#fff; }
+.it-a button{ font-family:var(--cp-mono); text-transform:uppercase; font-size:11px; letter-spacing:.05em; }
+.it-a button[data-a="fill"]{ border-color:rgba(60,232,255,.5); color:var(--cp-cyan); }
+.it-a button[data-a="totp"]{ border-color:rgba(255,92,240,.45); color:var(--cp-pink); }
+
+/* One-time codes and generated passwords: the terminal green/cyan readout they are. */
+.otp code{ color:var(--cp-green); text-shadow:0 0 10px rgba(0,255,136,.45); font-family:var(--cp-mono); }
+.otp .low{ color:var(--cp-amber); text-shadow:0 0 10px rgba(255,207,43,.4); }
+.genout code{ background:rgba(0,0,0,.45); border:1px solid var(--cp-line2); border-radius:6px;
+  color:var(--cp-cyan); text-shadow:0 0 8px rgba(60,232,255,.35); font-family:var(--cp-mono); }
+#gen-range{ accent-color:var(--cp-pink); }
+.opts input, .pane label.row input[type="checkbox"], label.remember input{ accent-color:var(--cp-cyan); }
+
+/* Footer: the occasional controls, dim until pointed at; the build number in mono. */
+.bot{ border-top:1px solid var(--cp-line); background:rgba(7,7,13,.88); }
+.bot button{ font-family:var(--cp-mono); font-size:11.5px; color:var(--cp-dim); border-radius:6px; }
+.bot button:hover{ color:var(--cp-text); border-color:var(--cp-line2); background:rgba(60,232,255,.08); }
+.bot #ver{ font-family:var(--cp-mono); color:rgba(232,247,255,.4); }
+
+/* Scrollbars that belong here (Firefox + Chromium). */
+*{ scrollbar-width:thin; scrollbar-color:rgba(60,232,255,.4) transparent; }
+::-webkit-scrollbar{ width:8px; height:8px; }
+::-webkit-scrollbar-thumb{ background:rgba(60,232,255,.35); border-radius:8px; }
+
+/* No entry animation on the rows: the list is redrawn on every keystroke in the search box, and a fade
+   that starts at opacity 0 would flicker the whole list while you type. */
+@media (prefers-reduced-motion: reduce){ *{ transition:none !important; } }
+#gen-again{ display:inline-flex; align-items:center; justify-content:center; color:var(--cp-cyan); }
+#gen-again svg{ display:block; }

@@ -86,6 +86,53 @@ function showVersion(){
  * dead zone until evaluation reaches it. It happens to survive today only because the assignment sits
  * after an await — one edit moving it earlier turns the whole popup into a ReferenceError. */
 let _mode = null, _bmOn = false, _bmCount = 0, _bmPending = 0;
+
+/* PAINT WHAT WE ALREADY KNOW, THEN ASK ("make the browser extension more responsive").
+ *
+ * Every byte of this popup came from the background, and the background is an event page (a service
+ * worker on Chrome) that is ASLEEP when the toolbar button is pressed: it has to evaluate the Nostr
+ * bundle, the vault core and the bookmark engine and read the whole vault from storage before it can
+ * answer -- three round trips later, the list draws. Until then the popup was a header and nothing.
+ *
+ * So the popup keeps a SNAPSHOT of what it last drew -- the counts and the rows exactly as the
+ * background sent them, which carry a title, a username, a host and whether a code exists, and never
+ * a password or a secret -- in session storage (memory only, gone when the browser closes), draws it
+ * the instant the popup opens, and replaces it when the live answer lands. Two rules keep it honest:
+ * the matches for a site are shown only on THAT site (a snapshot taken on github.com says nothing
+ * about this page), and an install that is not paired, or has just unpaired, has no snapshot at all. */
+const SNAP_KEY = 'pcpwSnap';
+let _live = false;                  // the background has answered: the snapshot must not paint over it
+const _snapStore = () => { try{ return (B.storage && B.storage.session) || null; }catch(_){ return null; } };
+const _snapRow = i => ({ id:i.id, title:i.title || '', username:i.username || '', host:i.host || '',
+                         _match:i._match, hasTotp: !!i.hasTotp });
+async function readSnap(){
+  const s = _snapStore(); if(!s) return null;
+  try{ const g = await s.get(SNAP_KEY); const v = g && g[SNAP_KEY]; return (v && v.v === 1) ? v : null; }
+  catch(_){ return null; }
+}
+function writeSnap(st){
+  const s = _snapStore(); if(!s) return;
+  try{ Promise.resolve(s.set({ [SNAP_KEY]: { v:1, paired:true, mode:st.mode || null, count:st.count || 0,
+    status:st.status || '', host: V.hostOf(tabUrl) || '', matches: matches.map(_snapRow),
+    all: everything.map(_snapRow) } })).catch(() => {}); }catch(_){ }
+}
+function dropSnap(){ const s = _snapStore(); if(!s) return; try{ Promise.resolve(s.remove(SNAP_KEY)).catch(() => {}); }catch(_){ } }
+async function paintSnapshot(){
+  const snap = await readSnap();
+  if(!snap || !snap.paired || _live) return;
+  try{ const tabs = await B.tabs.query({ active:true, currentWindow:true }); tabUrl = (tabs && tabs[0] && tabs[0].url) || ''; }catch(_){ }
+  if(_live) return;
+  const nav = $('#nav');
+  if(nav){ nav.classList.remove('hidden');
+    for(const b of nav.querySelectorAll('.tab')) b.classList.toggle('hidden', b.hasAttribute('data-unpaired')); }
+  vaultCount = snap.count || 0; _mode = snap.mode;
+  $('#status').textContent = `${snap.count} · updating…${snap.mode === 'ro' ? ' · read-only' : ''}`;
+  everything = Array.isArray(snap.all) ? snap.all : [];
+  const here = V.hostOf(tabUrl) || '';
+  show('pane-list');
+  if(here && here === snap.host){ matches = Array.isArray(snap.matches) ? snap.matches : []; render(); }
+  else { matches = []; $('#list').innerHTML = '<div class="muted pad">Checking this site…</div>'; }
+}
 let _confirmRemovals = false;      // armed by the "looks like a restore" prompt, OR by a pending delete
                                    // the engine remembered across a popup close (see paintBm)
 
@@ -97,6 +144,7 @@ async function boot(){
   const st = await send({ type:'state' });
   const nav = $('#nav');
   const paired = !!(st && st.paired);
+  if(st) _live = true;
   /* The nav stays UP when unpaired, minus the tabs that need a vault.
    *
    * Hiding the whole thing took the password GENERATOR down with it — it had always been reachable
@@ -115,6 +163,7 @@ async function boot(){
     // Don't yank the generator out from under someone — boot() also runs after a failed pair attempt.
     if($('#pane-gen').classList.contains('hidden')) show('pane-pair');
     $('#status').textContent = '';
+    if(st) dropSnap();              // not paired (or unpaired elsewhere): nothing of the vault may linger
     return;
   }
   vaultCount = st.count || 0;
@@ -124,6 +173,7 @@ async function boot(){
   _mode = st.mode; _bmOn = !!st.bmOn; _bmCount = st.bmCount || 0; _bmPending = st.bmPending || 0;
   show('pane-list');
   await paint();
+  writeSnap(st);
 }
 
 async function paint(){
@@ -380,6 +430,7 @@ $('#unpair').onclick = async () => {
     setTimeout(() => { _unpairArmed = false; $('#unpair').textContent = 'Unpair'; }, 5000);
     return;
   }
+  dropSnap();
   await send({ type:'unpair' });
   /* The post/notes record lives in `B.storage.local`, which unpair() clears. Nothing about posting is
    * kept in THIS page's localStorage any more — the draft store that used to be there survived
@@ -391,6 +442,7 @@ $('#unpair').onclick = async () => {
 
 bindGen();
 showVersion();
+paintSnapshot();
 boot();
 
 
