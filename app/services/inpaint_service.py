@@ -411,7 +411,9 @@ def _flat_background(rgb: np.ndarray, hole: np.ndarray, ring_px: int):
         return None
     med = np.median(px, axis=0)
     close = np.all(np.abs(px - med) <= 6, axis=1)
-    if close.mean() < 0.6:
+    # Measured: the user's erased post card had 95-97% of the band at the card colour; black/white
+    # stripes reach 51-64% (one stripe), and they are a pattern the model should continue.
+    if close.mean() < 0.85:
         return None
     flat = px[close]
     if float(flat.std(axis=0).max()) > 2.5:          # a gradient, not a flat colour

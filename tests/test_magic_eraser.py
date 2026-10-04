@@ -443,3 +443,17 @@ def test_the_flat_fill_never_touches_pixels_away_from_the_hole():
     far = np.ones(hole.shape, bool)
     far[60:110, 180:350] = False
     assert (out[far] == im[far]).all()
+
+
+def test_a_striped_background_is_not_mistaken_for_a_flat_one():
+    """The flat fill is for a card or a slide. Stripes put most of the band around a hole on ONE stripe
+    colour (51-64% measured), and once read as flat they lost the model's continuation of the pattern
+    (deploy 75's gate, with the model present). Runs without the model: it is the decision that matters."""
+    import numpy as np
+    from app.services import inpaint_service as S
+    y, x = np.mgrid[0:600, 0:600]
+    s = np.where((x // 16) % 2 == 0, 30, 220).astype(np.uint8)
+    rgb = np.stack([s, s, s], -1)
+    hole = np.zeros((600, 600), bool); hole[244:357, 244:357] = True
+    for ring in (4, 8, 12):
+        assert S._flat_background(rgb, hole, ring) is None, ring
