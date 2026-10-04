@@ -1,0 +1,281 @@
+{
+ "_note": "Wayfire 0.10.1 list-outputs/list-views from the two-monitor desk (192.168.0.102), 2026-10-03, after the user tried Arrange -> Grid",
+ "outputs": [
+  {
+   "id": 3,
+   "name": "DP-2",
+   "geometry": {
+    "x": 3840,
+    "y": 0,
+    "width": 3840,
+    "height": 2560
+   },
+   "workarea": {
+    "x": 0,
+    "y": 0,
+    "width": 3840,
+    "height": 2560
+   },
+   "wset-index": 2
+  },
+  {
+   "id": 1,
+   "name": "DP-1",
+   "geometry": {
+    "x": 0,
+    "y": 10,
+    "width": 3840,
+    "height": 2560
+   },
+   "workarea": {
+    "x": 0,
+    "y": 0,
+    "width": 3840,
+    "height": 2560
+   },
+   "wset-index": 1
+  }
+ ],
+ "views": [
+  {
+   "id": 50,
+   "app-id": "place.poster.desktop",
+   "title": "PosterChan Desktop",
+   "geometry": {
+    "x": 0,
+    "y": 0,
+    "width": 3840,
+    "height": 2560
+   },
+   "base-geometry": {
+    "x": 0,
+    "y": 0,
+    "width": 3840,
+    "height": 2560
+   },
+   "tiled-edges": 15,
+   "output-id": 1,
+   "output-name": "DP-1",
+   "mapped": true,
+   "role": "toplevel",
+   "minimized": false,
+   "fullscreen": false,
+   "activated": false,
+   "last-focus-timestamp": 126679793280025,
+   "layer": "workspace",
+   "type": "toplevel",
+   "sticky": false,
+   "wset-index": 1
+  },
+  {
+   "id": 52,
+   "app-id": "place.poster.desktop",
+   "title": "PosterChan Desktop",
+   "geometry": {
+    "x": 0,
+    "y": 0,
+    "width": 3840,
+    "height": 2560
+   },
+   "base-geometry": {
+    "x": 0,
+    "y": 0,
+    "width": 3840,
+    "height": 2560
+   },
+   "tiled-edges": 15,
+   "output-id": 3,
+   "output-name": "DP-2",
+   "mapped": true,
+   "role": "toplevel",
+   "minimized": false,
+   "fullscreen": false,
+   "activated": true,
+   "last-focus-timestamp": 126927454136249,
+   "layer": "workspace",
+   "type": "toplevel",
+   "sticky": false,
+   "wset-index": 2
+  },
+  {
+   "id": 54,
+   "app-id": "place.poster.desktop",
+   "title": "PosterChan Buddy",
+   "geometry": {
+    "x": 3432,
+    "y": 1854,
+    "width": 409,
+    "height": 632
+   },
+   "base-geometry": {
+    "x": 3432,
+    "y": 1854,
+    "width": 409,
+    "height": 632
+   },
+   "tiled-edges": 0,
+   "output-id": 1,
+   "output-name": "DP-1",
+   "mapped": true,
+   "role": "toplevel",
+   "minimized": false,
+   "fullscreen": false,
+   "activated": false,
+   "last-focus-timestamp": 126925576844746,
+   "layer": "workspace",
+   "type": "toplevel",
+   "sticky": true,
+   "wset-index": 1
+  },
+  {
+   "id": 56,
+   "app-id": "place.poster.desktop",
+   "title": "PosterChan Window \u2014 messages",
+   "geometry": {
+    "x": 0,
+    "y": 0,
+    "width": 1920,
+    "height": 1280
+   },
+   "base-geometry": {
+    "x": -10,
+    "y": -10,
+    "width": 1940,
+    "height": 1300
+   },
+   "tiled-edges": 5,
+   "output-id": 1,
+   "output-name": "DP-1",
+   "mapped": true,
+   "role": "toplevel",
+   "minimized": false,
+   "fullscreen": false,
+   "activated": false,
+   "last-focus-timestamp": 126684168852523,
+   "layer": "workspace",
+   "type": "toplevel",
+   "sticky": false,
+   "wset-index": 1
+  },
+  {
+   "id": 58,
+   "app-id": "place.poster.desktop",
+   "title": "PosterChan Window \u2014 mail",
+   "geometry": {
+    "x": 1920,
+    "y": 10,
+    "width": 1921,
+    "height": 1202
+   },
+   "base-geometry": {
+    "x": 1904,
+    "y": 0,
+    "width": 1953,
+    "height": 1244
+   },
+   "tiled-edges": 0,
+   "output-id": 1,
+   "output-name": "DP-1",
+   "mapped": true,
+   "role": "toplevel",
+   "minimized": false,
+   "fullscreen": false,
+   "activated": false,
+   "last-focus-timestamp": 126668419019215,
+   "layer": "workspace",
+   "type": "toplevel",
+   "sticky": false,
+   "wset-index": 1
+  },
+  {
+   "id": 60,
+   "app-id": "place.poster.desktop",
+   "title": "PosterChan Window \u2014 tg",
+   "geometry": {
+    "x": 1917,
+    "y": 1253,
+    "width": 1923,
+    "height": 1201
+   },
+   "base-geometry": {
+    "x": 1901,
+    "y": 1243,
+    "width": 1955,
+    "height": 1243
+   },
+   "tiled-edges": 0,
+   "output-id": 1,
+   "output-name": "DP-1",
+   "mapped": true,
+   "role": "toplevel",
+   "minimized": false,
+   "fullscreen": false,
+   "activated": false,
+   "last-focus-timestamp": 126641695710968,
+   "layer": "workspace",
+   "type": "toplevel",
+   "sticky": false,
+   "wset-index": 1
+  },
+  {
+   "id": 62,
+   "app-id": "place.poster.desktop",
+   "title": "PosterChan Window \u2014 concord",
+   "geometry": {
+    "x": 0,
+    "y": 1253,
+    "width": 1923,
+    "height": 1201
+   },
+   "base-geometry": {
+    "x": -16,
+    "y": 1243,
+    "width": 1955,
+    "height": 1243
+   },
+   "tiled-edges": 0,
+   "output-id": 1,
+   "output-name": "DP-1",
+   "mapped": true,
+   "role": "toplevel",
+   "minimized": false,
+   "fullscreen": false,
+   "activated": false,
+   "last-focus-timestamp": 126696823373538,
+   "layer": "workspace",
+   "type": "toplevel",
+   "sticky": false,
+   "wset-index": 1
+  },
+  {
+   "id": 65,
+   "app-id": "place.poster.desktop",
+   "title": "PosterChan Window \u2014 terminal",
+   "geometry": {
+    "x": 837,
+    "y": 253,
+    "width": 2753,
+    "height": 2143
+   },
+   "base-geometry": {
+    "x": 821,
+    "y": 243,
+    "width": 2785,
+    "height": 2185
+   },
+   "tiled-edges": 0,
+   "output-id": 3,
+   "output-name": "DP-2",
+   "mapped": true,
+   "role": "toplevel",
+   "minimized": false,
+   "fullscreen": false,
+   "activated": false,
+   "last-focus-timestamp": 126926406829334,
+   "layer": "workspace",
+   "type": "toplevel",
+   "sticky": false,
+   "wset-index": 2
+  }
+ ]
+}

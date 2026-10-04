@@ -52,8 +52,21 @@ function decorInsets(v){
   const total=Math.round((Number(b.height)||0)-(Number(g.height)||0));
   return {above:0,below:plausible(total)?total:0};
 }
+/* A DROP SHADOW IS NOT A FRAME. PosterChan's own windows are frameless and paint an invisible shadow
+ * margin around themselves (measured on the desk: 16 left, 16 right, 10 above, 32 below), and a window
+ * with a client-side shadow reports the same shape. Arrange used to reserve that margin as if it were a
+ * title bar: a 42px gap between the grid's rows, and the shadow's width never counted across, so the
+ * columns overlapped ("tiling grid on desktop is ass"). A server-side frame is a thin border (3px)
+ * with the title bar above; a shadow reaches well past both sides. */
+function invisibleMargin(v){
+  const g=v&&v.geometry||{},b=v&&(v['base-geometry']||v.base_geometry);
+  if(/^place\.poster\.desktop$/i.test(String(v&&(v['app-id']||v.app_id)||'')))return true;
+  if(!b)return false;
+  const left=(Number(g.x)||0)-(Number(b.x)||0),right=((Number(b.x)||0)+(Number(b.width)||0))-((Number(g.x)||0)+(Number(g.width)||0));
+  return Number.isFinite(left)&&Number.isFinite(right)&&left>=8&&right>=8&&left<=256&&right<=256;
+}
 function normalizeView(v){
-  const g=geometryOf(v),d=decorInsets(v);return {id:Number(v&&v.id),pid:Number(v&&v.pid)>0?Number(v.pid):0,
+  const g=geometryOf(v),d=invisibleMargin(v)?{above:0,below:0}:decorInsets(v);return {id:Number(v&&v.id),pid:Number(v&&v.pid)>0?Number(v.pid):0,
     app:String(v&&((v['app-id']||v.app_id||v.app)||'')),title:String(v&&v.title||''),
     workspace:String(v&&((v['wset-index']??v['output-id']??v.output_id)??'')),
     /* Kept alongside `workspace` because that field is a STRING the shell treats as opaque, while
@@ -462,6 +475,10 @@ class WayfireWM{
     const wa=o.work,area=wa?{x:wa.x,y:wa.y,w:wa.w,h:wa.h}:{x:o.rect.x,y:o.rect.y,w:o.rect.width,h:Math.max(1,o.rect.height-72)};
     const rects=tileRects(String(layout),apps.length,area);
     for(let i=0;i<apps.length;i++){const r=apps[i],t=rects[i];
+      /* A window Wayfire's own grid snapped (tiled-edges) keeps that slot whatever configure-view says:
+       * measured, Messages stayed in its top-left quarter while the other three moved. Release it
+       * first. Both spellings of the id: Wayfire checks for the field it reads and ignores the other. */
+      if(r.floating===false){try{await this._send('grid/restore',{view_id:r.id,'view-id':r.id});}catch(_){}}
       const above=Math.max(0,Math.min(256,Number(r.above)||0)),below=Math.max(0,Math.min(256,Number(r.below)||0));
       await this.place(r.id,t.x,t.y+above,t.w,Math.max(1,t.h-above-below));}
     return {ok:true,layout:String(layout),output:o.name,count:apps.length};}
