@@ -893,7 +893,11 @@ def test_video_playback_controls_are_not_replaced_by_the_lightbox_handler():
     assert "el.onclick=open" not in wire.split("if(el.tagName==='VIDEO')", 1)[1].split("else el.onclick=open", 1)[0]
     assert "if(video)video.ondblclick=openVideo" in encrypted
     assert "if(video)video.onclick=openVideo" not in encrypted
-    assert 'class="cc-attachment-expand"' in encrypted
+    # The player's markup (with its own expand button) lives in attachmentVideoHtml, which both the
+    # message template and the hydrator use -- so a repaint draws the same player.
+    video_html = CONCORD.split("function attachmentVideoHtml(", 1)[1].split("function attachmentImageHtml(", 1)[0]
+    assert 'class="cc-attachment-expand"' in video_html
+    assert "attachmentVideoHtml(p,file,got)" in encrypted
 
 
 def test_concord_brand_always_returns_to_discovery():

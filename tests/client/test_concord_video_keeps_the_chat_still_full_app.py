@@ -1,0 +1,98 @@
+"""Communities: an encrypted video does not keep moving the chat.
+
+Reported live in the Lounge: "video in room Lounge causes chat position to keep moving". The hydrator
+rebuilt every encrypted <video> after EVERY repaint, and a live room repaints constantly (messages,
+profiles, typing): each time the player collapsed to nothing, reloaded and grew back, shoving the
+chat around it. Driven in the shipped client with a REAL encrypted video (a tiny webm made with
+ffmpeg, sealed with AES-GCM exactly as Concord seals attachments): once shown and playing, ten repaints
+and a new message (a real rebuild) must leave the SAME <video> element in place and still playing, its
+box must never collapse, and the message below it must not move.
+"""
+import asyncio
+import base64
+import shutil
+import subprocess
+import tempfile
+from pathlib import Path
+
+import pytest
+
+from tests.client import test_desktop_offline_full_app as desktop
+from tests.client.test_concord_scroll_never_shows_the_top_full_app import SETUP
+
+
+@pytest.fixture(scope="module", autouse=True)
+def bundled_assets():
+    yield from desktop.bundle.__wrapped__()
+
+
+def _tiny_webm() -> bytes:
+    with tempfile.TemporaryDirectory() as d:
+        out = Path(d) / "v.webm"
+        subprocess.run(["ffmpeg", "-loglevel", "error", "-f", "lavfi", "-i", "testsrc=size=320x180:rate=10", "-t", "1",
+                        "-c:v", "libvpx", "-b:v", "50k", str(out)], check=True, timeout=60)
+        return out.read_bytes()
+
+
+SEAL = r"""(async()=>{
+  const plain=Uint8Array.from(atob(%r),c=>c.charCodeAt(0));
+  const hex=b=>[...new Uint8Array(b)].map(x=>x.toString(16).padStart(2,'0')).join('');
+  const kb=crypto.getRandomValues(new Uint8Array(32)), nonce=crypto.getRandomValues(new Uint8Array(16));
+  const key=await crypto.subtle.importKey('raw',kb,'AES-GCM',false,['encrypt']);
+  const cipher=new Uint8Array(await crypto.subtle.encrypt({name:'AES-GCM',iv:nonce},key,plain));
+  const ox=hex(await crypto.subtle.digest('SHA-256',plain)), url='https://blossom.fixture.invalid/'+ox;
+  window.__imeta=['imeta','url '+url,'m video/webm','encryption-algorithm aes-gcm','decryption-key '+hex(kb),'decryption-nonce '+hex(nonce),'ox '+ox,'name clip.webm'];
+  const real=window.fetch.bind(window);
+  window.fetch=(u,o)=>String(u&&u.url||u)===url?Promise.resolve(new Response(cipher,{status:200})):real(u,o);
+  return true;})()"""
+
+STATE = r"""(()=>{const v=document.querySelector('.cc-encrypted-attachment video'), host=v&&v.closest('.cc-encrypted-attachment');
+  const msg=host&&host.closest('.cc-message'), below=msg&&msg.nextElementSibling;
+  return {has:!!v, same:!!v&&v===window.__vid, h:host?Math.round(host.getBoundingClientRect().height):0,
+          below:below?Math.round(below.getBoundingClientRect().top-msg.getBoundingClientRect().top):null,
+          meta:!!v&&v.readyState>=1}})()"""
+
+
+@pytest.mark.skipif(not Path("/opt/google/chrome/chrome").exists() or not shutil.which("ffmpeg"), reason="Chrome + ffmpeg required")
+def test_an_encrypted_video_stays_put_while_the_room_repaints():
+    clip = base64.b64encode(_tiny_webm()).decode()
+    res = {}
+
+    async def check(b):
+        await b.call("Emulation.setDeviceMetricsOverride", dict(width=1280, height=850, deviceScaleFactor=1, mobile=False))
+        await desktop.login(b)
+        await b.js("try{ if(window.PCOS && PCOS.isOn()) PCOS.exit(); }catch(_){}")
+        await b.js(SEAL % clip)
+        await b.js(SETUP)
+        await b.js("(()=>{const c=document.querySelector('[data-cc-channel]');if(c&&!document.querySelector('.cc-app.show-chat .cc-message'))c.click();})()")
+        await b.until("document.querySelectorAll('.cc-message').length>=50")
+        await b.js("document.querySelector('.cc-encrypted-attachment')&&document.querySelector('.cc-encrypted-attachment').scrollIntoView({block:'center'});true")
+        await b.until("!!document.querySelector('.cc-encrypted-attachment video')")
+        await b.until("(()=>{const v=document.querySelector('.cc-encrypted-attachment video');return !!v&&v.readyState>=1})()")
+        await asyncio.sleep(.5)
+        for _ in range(3):                        # its size is now known; let the room settle
+            await b.js("PCConcord.render();true")
+            await asyncio.sleep(.15)
+        await b.js("window.__vid=document.querySelector('.cc-encrypted-attachment video');__vid.muted=true;__vid.loop=true;__vid.play().catch(()=>{});true")
+        await asyncio.sleep(.4)
+        first = await b.js(STATE)
+        seen = []
+        for _ in range(10):                       # what a live room does: repaint, again and again
+            await b.js("PCConcord.render();true")
+            await asyncio.sleep(.15)
+            seen.append(await b.js(STATE))
+        # A new message rebuilds the conversation for real -- the player must survive it, still playing.
+        await b.js("const i=document.getElementById('cc-input');i.value='a new message arrives';i.dispatchEvent(new Event('input'));document.getElementById('cc-send').click();true")
+        await b.until("[...document.querySelectorAll('.cc-message')].some(m=>/a new message arrives/.test(m.textContent))")
+        await asyncio.sleep(.3)
+        seen.append(await b.js(STATE))
+        res["playing"] = await b.js("!!window.__vid&&!__vid.paused&&__vid.isConnected")
+        res.update(first=first, seen=seen)
+
+    asyncio.run(desktop.with_browser("online", "", check))
+    first, seen = res["first"], res["seen"]
+    assert first["has"] and first["meta"] and first["h"] > 50, ("the video never showed", first)
+    assert all(s["same"] for s in seen), ("a repaint replaced the video player (it reloads and the chat jumps)", seen)
+    assert min(s["h"] for s in seen) >= first["h"] - 2, ("the video box collapsed during a repaint", first, seen)
+    assert len({s["below"] for s in seen}) == 1 and seen[0]["below"] == first["below"], ("the message below the video moved", first, seen)
+    assert res["playing"], "a new message stopped the video someone was watching"

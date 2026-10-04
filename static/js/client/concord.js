@@ -265,6 +265,14 @@
   function attachmentBoxStyle(file){ const d=attachmentSize(file); if(!d)return '';
     const w=Math.max(1,Math.round(Math.min(d.w,560,480*d.w/d.h)));
     return ` style="--cc-w:${w}px;--cc-ar:${d.w}/${d.h}"`; }
+  /* A DECRYPTED VIDEO IS DRAWN ONCE AND KEPT ("video in room Lounge causes chat position to keep
+   * moving"). The hydrator used to rebuild every encrypted <video> after EVERY repaint -- and a live room
+   * repaints constantly (messages, profiles, typing) -- so each time the player collapsed to nothing,
+   * reloaded and grew back, shoving the chat around it. Now, like an image: the message paints the
+   * player straight from the decrypted cache marked ready, the hydrator leaves a ready host alone, and
+   * the video's size, once known, reserves its box so nothing around it moves. */
+  function attachmentVideoHtml(p,file,got){ const url=p.enc(got.url),label=p.enc(got.name||'attachment'),box=attachmentBoxStyle(file);
+    return `<div class="cc-attachment-media"${box?' data-cc-sized':''}${box}><video src="${url}" controls playsinline preload="metadata" title="Double-click to expand"></video><button class="cc-attachment-expand" type="button" aria-label="Open ${label}">↗</button></div>`; }
   function attachmentImageHtml(p,file,got){ const url=p.enc(got.url),label=p.enc(got.name||'attachment'),box=attachmentBoxStyle(file);
     return `<button class="cc-attachment-open" type="button"${box?' data-cc-sized':''} aria-label="Open ${label}"${box}><img src="${url}" alt="${label}"></button>`; }
   const scrollStates=new Map();
@@ -1084,8 +1092,8 @@
     const body=text?`<p>${paintMentions(escaped,viewerHandles(viewer,''))}</p>${p.linkCardHtml?p.linkCardHtml(text):''}`:'';
     const poll=pollHtml(p,m);
     const publicMedia=publicFiles.map(f=>{const url=p.enc(f.url),label=p.enc(f.name||'attachment');if(f.mime.startsWith('image/'))return `<div class="cc-plain-attachment"><img src="${url}" alt="${label}" loading="lazy"></div>`;if(f.mime.startsWith('video/'))return `<div class="cc-plain-attachment cc-attachment-media"><video src="${url}" controls playsinline preload="metadata" title="Double-click to expand"></video></div>`;if(f.mime.startsWith('audio/'))return `<div class="cc-plain-attachment"><audio src="${url}" controls preload="metadata"></audio></div>`;return `<div class="cc-plain-attachment"><a href="${url}" download="${label}">Download ${label}</a></div>`;}).join('');
-    const media=files.map((f,i)=>{ const got=f.mime.startsWith('image/')?attachmentCache.get(attachmentKey(f)):null, d=f.mime.startsWith('image/')?attachmentSize(f):null;
-      return `<div class="cc-encrypted-attachment" data-cc-attachment="${p.enc(messageId(m))}" data-cc-attachment-index="${i}"${got?' data-cc-ready="1"':''}>${got?attachmentImageHtml(p,f,got)
+    const media=files.map((f,i)=>{ const vis=f.mime.startsWith('image/')||f.mime.startsWith('video/'),got=vis?attachmentCache.get(attachmentKey(f)):null, d=vis?attachmentSize(f):null;
+      return `<div class="cc-encrypted-attachment" data-cc-attachment="${p.enc(messageId(m))}" data-cc-attachment-index="${i}"${got?' data-cc-ready="1"':''}>${got?(f.mime.startsWith('video/')?attachmentVideoHtml(p,f,got):attachmentImageHtml(p,f,got))
         :`<span class="cc-attachment-wait${d?' cc-sized':''}"${attachmentBoxStyle(f)}>🔒 Decrypting ${p.enc(f.name||f.mime)}…</span>`}</div>`; }).join('');
     /* Paint the canonical room-aware card with the message. A deferred generic link card could
      * otherwise win the render race and replace Armada's explicit webxdc-topic. */
@@ -1135,7 +1143,7 @@
     const byId=new Map((messages||[]).map(m=>[messageId(m),m]));
     for(const host of document.querySelectorAll('.cc-encrypted-attachment[data-cc-attachment]')){
       const m=byId.get(host.dataset.ccAttachment),file=m&&encryptedAttachments(m)[Number(host.dataset.ccAttachmentIndex)||0];if(!file)continue;
-      try{const got=await decryptAttachment(file);if(!host.isConnected)continue;const p=PC(),url=p.enc(got.url),label=p.enc(got.name||'attachment');if(got.mime.startsWith('image/')){if(host.dataset.ccReady!=='1')host.innerHTML=attachmentImageHtml(p,file,got);const img=host.querySelector('img');if(img&&!attachmentDims.has(attachmentKey(file))){const note=()=>{if(img.naturalWidth&&img.naturalHeight)attachmentDims.set(attachmentKey(file),{w:img.naturalWidth,h:img.naturalHeight});};if(img.complete)note();else img.addEventListener('load',note,{once:true});}const open=host.querySelector('.cc-attachment-open');if(open)open.onclick=e=>{e.preventDefault();e.stopPropagation();attachmentLightbox(p,host,got.url,null);};}else if(got.mime.startsWith('video/')){host.innerHTML=`<div class="cc-attachment-media"><video src="${url}" controls playsinline preload="metadata" title="Double-click to expand"></video><button class="cc-attachment-expand" type="button" aria-label="Open ${label}">↗</button></div>`;const openVideo=e=>{e.preventDefault();e.stopPropagation();attachmentLightbox(p,host,got.url,'video');};const video=host.querySelector('video');if(video)video.ondblclick=openVideo;const open=host.querySelector('.cc-attachment-expand');if(open)open.onclick=openVideo;}else if(got.mime.startsWith('audio/'))host.innerHTML=`<audio src="${url}" controls preload="metadata"></audio>`;else host.innerHTML=`<a href="${url}" download="${label}">Download ${label}</a>`;}catch(_){if(host.isConnected)host.innerHTML='<span class="cc-attachment-error">Could not decrypt attachment</span>';}
+      try{const got=await decryptAttachment(file);if(!host.isConnected)continue;const p=PC(),url=p.enc(got.url),label=p.enc(got.name||'attachment');if(got.mime.startsWith('image/')){if(host.dataset.ccReady!=='1')host.innerHTML=attachmentImageHtml(p,file,got);const img=host.querySelector('img');if(img&&!attachmentDims.has(attachmentKey(file))){const note=()=>{if(img.naturalWidth&&img.naturalHeight)attachmentDims.set(attachmentKey(file),{w:img.naturalWidth,h:img.naturalHeight});};if(img.complete)note();else img.addEventListener('load',note,{once:true});}const open=host.querySelector('.cc-attachment-open');if(open)open.onclick=e=>{e.preventDefault();e.stopPropagation();attachmentLightbox(p,host,got.url,null);};}else if(got.mime.startsWith('video/')){if(host.dataset.ccReady!=='1'||!host.querySelector('video')){host.innerHTML=attachmentVideoHtml(p,file,got);host.dataset.ccReady='1';}const vid0=host.querySelector('video');if(vid0&&!attachmentDims.has(attachmentKey(file))){const note=()=>{if(vid0.videoWidth&&vid0.videoHeight)attachmentDims.set(attachmentKey(file),{w:vid0.videoWidth,h:vid0.videoHeight});};if(vid0.readyState>=1)note();else vid0.addEventListener('loadedmetadata',note,{once:true});}const openVideo=e=>{e.preventDefault();e.stopPropagation();attachmentLightbox(p,host,got.url,'video');};const video=host.querySelector('video');if(video)video.ondblclick=openVideo;const open=host.querySelector('.cc-attachment-expand');if(open)open.onclick=openVideo;}else if(got.mime.startsWith('audio/'))host.innerHTML=`<audio src="${url}" controls preload="metadata"></audio>`;else host.innerHTML=`<a href="${url}" download="${label}">Download ${label}</a>`;}catch(_){if(host.isConnected)host.innerHTML='<span class="cc-attachment-error">Could not decrypt attachment</span>';}
     }
   }
   function channelStarKey(room,name){ return `pc.concord.star.${room&&(room.communityId||room.naddr||room.url)||'unknown'}:${name||'general'}`; }
@@ -1418,6 +1426,19 @@
   /* render() replaces the workspace often (history, focus and room navigation). Replacing the
    * entire community rail also replaces every decoded <img>, producing a visible initials/image
    * flash on every click. Retain the old rail and patch only buttons whose actual icon changed. */
+  /* A REBUILD KEEPS THE VIDEO PLAYERS. A live room rebuilds the conversation whenever something real
+   * changes -- a new message, a reaction -- and a fresh <video> starts over: a clip someone was watching
+   * stopped and reloaded on every message ("video in room Lounge causes chat position to keep moving").
+   * The players on screen are carried into the new markup when they show the same file. */
+  function videoKey(v){ const host=v.closest('.cc-encrypted-attachment[data-cc-attachment]');
+    return (host?host.dataset.ccAttachment+':'+(host.dataset.ccAttachmentIndex||'0')+'|':'')+(v.getAttribute('src')||''); }
+  function keepVideos(old,feed){
+    if(!old||!old.size||!feed||!feed.querySelectorAll)return;
+    for(const v of feed.querySelectorAll('.cc-message video')){
+      const prev=old.get(videoKey(v)); if(!prev||prev===v)continue;
+      old.delete(videoKey(v)); try{ v.replaceWith(prev); }catch(_){}
+    }
+  }
   function retainCommunityRail(oldRail,newRail){
     if(!oldRail||!newRail)return;
     const oldServers=[...oldRail.querySelectorAll('[data-cc-server]')],newServers=[...newRail.querySelectorAll('[data-cc-server]')];
@@ -4599,8 +4620,10 @@
      * for it replaced the text box under their fingers. */
     const _key=_html.replace(/(<textarea id="cc-input"[^>]*>)[\s\S]*?(<\/textarea>)/,'$1$2');
     if(_key===_ccLastHtml&&_ccLastRoot&&_ccLastRoot.isConnected&&_ccLastRoot.parentNode===feed)return;
+    const oldVideos=new Map(); try{ for(const v of feed.querySelectorAll('.cc-message video'))oldVideos.set(videoKey(v),v); }catch(_){}
     feed.innerHTML=_html;_ccLastHtml=_key;_ccLastRoot=feed.firstElementChild;
     retainCommunityRail(oldCommunityRail,feed.querySelector&&feed.querySelector('.cc-communities'));
+    try{ keepVideos(oldVideos,feed); }catch(_){}
     try{
       if(openActions){
         const row=[...feed.querySelectorAll('.cc-message[data-message-id]')].find(r=>r.dataset.messageId===openActions);

@@ -336,6 +336,9 @@ body.anim-off .cc-server.unread:not(.active){animation:none!important}
    a repaint never shrinks the room and re-grows it — the scrollbar no longer jumps up on a message. */
 .cc-sized,.cc-attachment-open[data-cc-sized]{display:block!important;width:var(--cc-w)!important;max-width:100%!important;aspect-ratio:var(--cc-ar)!important;height:auto!important;box-sizing:border-box!important}
 .cc-attachment-open[data-cc-sized] img{width:100%!important;height:100%!important;max-height:none!important;object-fit:contain!important}
+/* A video whose size is known reserves its box: the chat around it does not move while it loads. */
+.cc-attachment-media[data-cc-sized]{display:block!important;width:var(--cc-w)!important;max-width:100%!important;aspect-ratio:var(--cc-ar)!important;height:auto!important;box-sizing:border-box!important}
+.cc-attachment-media[data-cc-sized] video{width:100%!important;height:100%!important;max-height:none!important;object-fit:contain!important}
 span.cc-attachment-wait.cc-sized{display:grid!important;place-items:center!important;border-radius:10px!important;background:rgba(255,255,255,.04)!important}
 /* A THREAD'S "← Back · Thread" BAR IS A HEADER, NOT A COLUMN. .cc-messages is a flex ROW (it bottom-
    aligns the list), so the bar became a narrow column beside the messages — in the middle of the
