@@ -277,7 +277,11 @@ class MembershipChecker:
     async def _check(self, key, aliases, base, cached, ticket, force):
         pk, config = key
         previous = self.watermarks.get(pk) or (cached[2] if cached else None)
-        expected = {name + '@' + base['domain'] for name in aliases}
+        # CASE-INSENSITIVE, like every NIP-05 client and like Admin -> Identities: a member who typed
+        # "JonnyFever@poster.place" for the name granted as "jonnyfever" was shown verified there and
+        # revoked by the cleanup here. Still only names granted to THIS key ("anyone with an approved
+        # instance NIP-05 in their profile should not have their perms dropped").
+        expected = {(name + '@' + base['domain']).lower() for name in aliases}
         started = asyncio.get_running_loop().time()
         try:
             local_failed = False
@@ -292,7 +296,7 @@ class MembershipChecker:
             local_mark = (newest['created_at'], newest['id']) if newest else None
             stale = previous and (not local_mark or local_mark[0] < previous[0] or
                                   (local_mark[0] == previous[0] and local_mark[1] > previous[1]))
-            if relays and (force or stale or _profile_address(newest) not in expected):
+            if relays and (force or stale or _profile_address(newest).lower() not in expected):
                 remaining = QUERY_TIMEOUT - (asyncio.get_running_loop().time() - started)
                 if remaining <= 0:
                     raise TimeoutError('Profile lookup deadline reached')
@@ -312,7 +316,7 @@ class MembershipChecker:
         if newest:
             address = _profile_address(newest)
             result.update(profile_address=address, reason='profile_mismatch')
-            if address in expected:
+            if address.lower() in expected:
                 result.update(qualified=True, address=address, reason='qualified')
         if (tuple(self.configuration()) != config or
                 self.pending.get(key, (None, None, None))[2] is not ticket):

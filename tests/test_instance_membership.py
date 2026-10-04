@@ -55,12 +55,22 @@ async def test_registered_matching_signed_profile_and_any_alias():
 
 
 @pytest.mark.anyio
-@pytest.mark.parametrize('address', ['alice@evil.test', 'bob@example.test', '', 'alice@example.test.evil', 'Alice@example.test'])
+@pytest.mark.parametrize('address', ['alice@evil.test', 'bob@example.test', '', 'alice@example.test.evil'])
 async def test_wrong_profile_never_grants(address):
     f = Fixture([profile(address)])
     with pytest.raises(HTTPException) as error:
         await f.checker.require_pubkey(PK)
     assert error.value.status_code == 403
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize('address', ['Alice@example.test', 'ALICE@Example.Test'])
+async def test_the_granted_name_in_any_case_is_still_the_granted_name(address):
+    """'anyone with an approved instance nip05 in their profile should not have their perms dropped'. NIP-05
+    names are case-insensitive to every client, and Admin -> Identities already said 'verified' for these --
+    while this check revoked them. Still only this key's own names: see test_unregistered_and_other_owner."""
+    f = Fixture([profile(address)])
+    assert (await f.checker.status(PK))['qualified']
 
 
 @pytest.mark.anyio
