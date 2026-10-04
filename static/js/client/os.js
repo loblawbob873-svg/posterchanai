@@ -2689,6 +2689,10 @@
         const t=String(item.innerText||item.textContent||'').replace(/\s+/g,' ').trim();
         if(t) return t.slice(0,90);
       }
+      /* A labelled form or dialog says what its controls are FOR: the composer's "Post" is (in "Write a
+       * post"), which is what tells it from the page's "New post" that only opens an empty box. */
+      const region=el.closest('form[aria-label],[role="form"][aria-label],[role="dialog"][aria-label]');
+      if(region && region!==root && root.contains(region)) return String(region.getAttribute('aria-label')).trim().slice(0,90);
     }catch(_){ }
     try{
       let branch=el;

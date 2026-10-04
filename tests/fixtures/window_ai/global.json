@@ -1,0 +1,186 @@
+{
+ "action": "window_steps",
+ "windows": [
+  {
+   "title": "Social",
+   "view": "global",
+   "kind": "PosterChan app",
+   "selection": "",
+   "text": "\u22ef Post Home Nostrverse Trending npub1mhwamhw\u2026 @1mhwamhw 20s Meeting with the relay operators moved to Friday 3pm. npub1hwamhwa\u2026 @1hwamhwa 50s Anyone know a good self-hosted calendar that syncs with my phone?"
+  }
+ ],
+ "instruction": "x",
+ "history": [],
+ "commands": false,
+ "today": "2026-10-04",
+ "controls": [
+  {
+   "ref": 1,
+   "role": "textbox",
+   "label": "How was your weekend?",
+   "value": "",
+   "near": "Write a post"
+  },
+  {
+   "ref": 2,
+   "role": "button",
+   "label": "Attach an image or file",
+   "value": "",
+   "near": "Write a post"
+  },
+  {
+   "ref": 3,
+   "role": "button",
+   "label": "Emoji / GIF",
+   "value": "",
+   "near": "Write a post"
+  },
+  {
+   "ref": 4,
+   "role": "button",
+   "label": "Poll",
+   "value": "",
+   "near": "Write a post"
+  },
+  {
+   "ref": 5,
+   "role": "button",
+   "label": "AI tools",
+   "value": "",
+   "near": "Write a post"
+  },
+  {
+   "ref": 6,
+   "role": "button",
+   "label": "\u22ef",
+   "value": "",
+   "near": "Write a post"
+  },
+  {
+   "ref": 7,
+   "role": "button",
+   "label": "Post",
+   "value": "",
+   "near": "Write a post"
+  },
+  {
+   "ref": 8,
+   "role": "tab",
+   "label": "Home",
+   "value": "",
+   "near": ""
+  },
+  {
+   "ref": 9,
+   "role": "tab",
+   "label": "Nostrverse",
+   "value": "",
+   "near": ""
+  },
+  {
+   "ref": 10,
+   "role": "tab",
+   "label": "Trending",
+   "value": "",
+   "near": ""
+  },
+  {
+   "ref": 11,
+   "role": "button",
+   "label": "Toggle media grid",
+   "value": "",
+   "near": ""
+  },
+  {
+   "ref": 12,
+   "role": "button",
+   "label": "reply",
+   "value": "",
+   "near": "npub1mhwamhw\u2026 @1mhwamhw 20s Meeting with the relay operators moved to Friday 3pm."
+  },
+  {
+   "ref": 13,
+   "role": "button",
+   "label": "repost",
+   "value": "",
+   "near": "npub1mhwamhw\u2026 @1mhwamhw 20s Meeting with the relay operators moved to Friday 3pm."
+  },
+  {
+   "ref": 14,
+   "role": "button",
+   "label": "quote post",
+   "value": "",
+   "near": "npub1mhwamhw\u2026 @1mhwamhw 20s Meeting with the relay operators moved to Friday 3pm."
+  },
+  {
+   "ref": 15,
+   "role": "button",
+   "label": "react",
+   "value": "",
+   "near": "npub1mhwamhw\u2026 @1mhwamhw 20s Meeting with the relay operators moved to Friday 3pm."
+  },
+  {
+   "ref": 16,
+   "role": "button",
+   "label": "tip \u2014 Lightning",
+   "value": "",
+   "near": "npub1mhwamhw\u2026 @1mhwamhw 20s Meeting with the relay operators moved to Friday 3pm."
+  },
+  {
+   "ref": 17,
+   "role": "button",
+   "label": "more",
+   "value": "",
+   "near": "npub1mhwamhw\u2026 @1mhwamhw 20s Meeting with the relay operators moved to Friday 3pm."
+  },
+  {
+   "ref": 18,
+   "role": "button",
+   "label": "reply",
+   "value": "",
+   "near": "npub1hwamhwa\u2026 @1hwamhwa 50s Anyone know a good self-hosted calendar that syncs with my pho"
+  },
+  {
+   "ref": 19,
+   "role": "button",
+   "label": "repost",
+   "value": "",
+   "near": "npub1hwamhwa\u2026 @1hwamhwa 50s Anyone know a good self-hosted calendar that syncs with my pho"
+  },
+  {
+   "ref": 20,
+   "role": "button",
+   "label": "quote post",
+   "value": "",
+   "near": "npub1hwamhwa\u2026 @1hwamhwa 50s Anyone know a good self-hosted calendar that syncs with my pho"
+  },
+  {
+   "ref": 21,
+   "role": "button",
+   "label": "react",
+   "value": "",
+   "near": "npub1hwamhwa\u2026 @1hwamhwa 50s Anyone know a good self-hosted calendar that syncs with my pho"
+  },
+  {
+   "ref": 22,
+   "role": "button",
+   "label": "tip \u2014 Lightning",
+   "value": "",
+   "near": "npub1hwamhwa\u2026 @1hwamhwa 50s Anyone know a good self-hosted calendar that syncs with my pho"
+  },
+  {
+   "ref": 23,
+   "role": "button",
+   "label": "more",
+   "value": "",
+   "near": "npub1hwamhwa\u2026 @1hwamhwa 50s Anyone know a good self-hosted calendar that syncs with my pho"
+  },
+  {
+   "ref": 24,
+   "role": "button",
+   "label": "New post",
+   "value": "",
+   "near": ""
+  }
+ ]
+}

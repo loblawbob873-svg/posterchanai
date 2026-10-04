@@ -770,7 +770,7 @@ window.PCTimelineFactory = function(dep){
   function _timelineHeaderHtml(){
     const canPost = !!(S.ME && !S.GUEST);
     const av=(Store.profile(S.ME&&S.ME.pubkey)||{}).picture||S.LOGO;
-    return (canPost?`<div class="tl-cmp" id="tl-cmp">
+    return (canPost?`<div class="tl-cmp" id="tl-cmp" role="form" aria-label="Write a post">
         <img class="tl-cmp-av" src="${enc(av)}" onerror="this.src='${S.LOGO}'" alt="">
         <div class="tl-cmp-body">
           <textarea class="tl-cmp-ta" id="tl-cmp-ta" rows="1" placeholder="How was your weekend?"></textarea>

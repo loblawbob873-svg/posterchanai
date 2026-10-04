@@ -285,7 +285,14 @@ def build_steps_messages(context: list, instruction: str, history=None, commands
            "\"answer\". Example: {\"answer\": \"Searching your notes for bugs.\", \"tasks\": [], \"steps\": "
            "[{\"do\": \"fill\", \"ref\": 2, \"text\": \"bugs\", \"label\": \"Search bugs\"}, "
            "{\"do\": \"press\", \"ref\": 2, \"text\": \"Enter\", \"label\": \"Run search\"}]}. Never fill in a "
-           "placeholder such as [your title]; if you do not know the text, ask. " if ctl else "")
+           "placeholder such as [your title]; if you do not know the text, ask. "
+           "Posting and replying are different: to POST something new, fill the main text box and press the "
+           "button that sends it (Post, Send, Save) -- not one that opens a new empty box. Only when the user "
+           "asks to REPLY to (or comment on, or quote) a particular post: ONE \"fill\" step on THAT post's own "
+           "Reply button, with the text -- the box it opens is filled for you; never type a reply into another "
+           "box. To FIND something, type it into the window's own search box when it has one. Text the user gives "
+           "in quotes is used exactly as written. Never propose deleting, removing or "
+           "clearing anything unless the user asked for exactly that. " if ctl else "")
         + f"At most {ACT_STEP_MAX if ctl else STEP_MAX} steps, only ones that genuinely help with the request; [] when none do. "
         "Fill \"tasks\" when the request is about tasks, action items, follow-ups or deadlines -- every real "
         "commitment, decision to act or deadline in the content, one per item, nothing invented; otherwise []. "
@@ -368,7 +375,8 @@ _KIND_ALIASES = {"type": "fill", "enter": "fill", "input": "fill", "write": "fil
                  "uncheck": "toggle", "tap": "click", "open_link": "click", "follow": "click"}
 
 
-def parse_steps(text: str, commands: bool = False, want_tasks: bool = False, controls=None) -> dict:
+def parse_steps(text: str, commands: bool = False, want_tasks: bool = False, controls=None,
+                instruction: str = "") -> dict:
     """The model's reply -> {answer, tasks, steps}, every field validated. A reply that is not JSON is
     still an answer (local models ignore formats), and its "- " lines become tasks when tasks were asked."""
     raw = _json_object(text)
@@ -479,9 +487,70 @@ def parse_steps(text: str, commands: bool = False, want_tasks: bool = False, con
         steps.append({"do": kind, "label": _clean(st.get("label"), 50) or default, "text": txt})
         if len(steps) >= (ACT_STEP_MAX if refs else STEP_MAX):
             break
+    steps = _repair_steps(steps, refs, instruction)
     if not answer and not tasks and not steps:
         answer = str(text or "").strip()[:4000]
     return {"answer": answer, "tasks": tasks, "steps": steps}
+
+
+# Measured with this node's own model (scripts/eval_window_ai.py), the two ways a correct plan came out
+# wrong, repaired here so they do not depend on a 9B model following an instruction:
+#  * REPLY, THEN TYPE SOMEWHERE ELSE. The box a Reply/Comment/Quote button opens does not exist yet, so
+#    the model types into a text box that does -- on a timeline, the NEW POST composer. Pressed as
+#    proposed, that publishes a post instead of replying. One fill on the opener is what it means, and
+#    the panel performs a fill on a button as "press it, then type into the box it opened".
+#  * DESTRUCTION NOBODY ASKED FOR. "clean this up a bit" in Notes proposed "Delete all notes & files".
+#    A step that deletes, removes, clears or empties is kept only when the request itself says so.
+_OPENS_A_BOX = re.compile(r"\b(reply|comment|quote|respond|answer|message|dm)\b", re.I)
+_TEXTBOX_ROLES = ("textbox", "textarea", "search", "input")
+# 'single', "double" or “curly” -- an apostrophe inside a word (I'll, don't) is not a quote.
+_QUOTED = re.compile(r"(?<![\w])'([^'\n]{1,500})'(?![\w])|\"([^\"\n]{1,500})\"|“([^”\n]{1,500})”")
+_DESTROYS = re.compile(r"\b(delete|remove|erase|wipe|trash|discard|clear|empty|reset|destroy|purge|unfollow|block|leave)\b", re.I)
+
+
+def _repair_steps(steps: list, refs: dict, instruction: str) -> list:
+    out = []
+    for st in steps:
+        prev = out[-1] if out else None
+        if (st.get("do") == "fill" and prev and prev.get("do") == "click"
+                and refs.get(st.get("ref"), ("",))[0] in _TEXTBOX_ROLES
+                and _OPENS_A_BOX.search(str(prev.get("target") or ""))
+                and refs.get(prev.get("ref"), ("",))[0] not in _TEXTBOX_ROLES):
+            out[-1] = dict(prev, do="fill", text=st["text"], label=prev.get("label") or st.get("label"))
+            continue
+        out.append(st)
+    # THE PERSON'S OWN WORDS. "post 'good morning nostr'" came back as "Good morning! How's everyone doing
+    # today?" -- a model rewriting what it was told to type. One quoted phrase and one thing to type it
+    # into: that is what goes in.
+    quoted = _QUOTED.findall(str(instruction or ""))
+    fills = [st for st in out if st.get("do") == "fill"]
+    if len(quoted) == 1 and len(fills) == 1:
+        q = next(x for x in quoted[0] if x).strip()
+        if q:
+            fills[0]["text"] = q[:2000]
+    # THE BUTTON THE STEP NAMES. A plan to post said {"do":"click","ref":24,"label":"Post"} -- and 24 was
+    # "New post", which opens an empty box and sends nothing. When a click's own label is EXACTLY the label
+    # of one control and not of its target, the model has said which button it meant.
+    by_label = {}
+    for r, (_role, lab) in refs.items():
+        by_label.setdefault(str(lab).strip().lower(), []).append(r)
+    for st in out:
+        said = str(st.get("label") or "").strip().lower()
+        if st.get("do") == "click" and said and said != str(st.get("target") or "").strip().lower():
+            hit = by_label.get(said) or []
+            if len(hit) == 1:
+                st.update(ref=hit[0], target=refs[hit[0]][1])
+    # THE TAB THEY NAMED. "show me what's trending" opened Nostrverse, beside a tab labelled Trending.
+    # When the request names exactly one tab by its label, a tab click goes to that tab.
+    low = str(instruction or "").lower()
+    named = [r for r, (role, lab) in refs.items()
+             if role == "tab" and lab and re.search(r"\b" + re.escape(lab.lower()) + r"\b", low)]
+    if len(named) == 1:
+        for st in out:
+            if st.get("do") == "click" and refs.get(st.get("ref"), ("",))[0] == "tab" and st["ref"] != named[0]:
+                st.update(ref=named[0], target=refs[named[0]][1])
+    asked_to_destroy = bool(_DESTROYS.search(str(instruction or "")))
+    return [st for st in out if asked_to_destroy or not _DESTROYS.search(str(st.get("target") or "") + " " + str(st.get("label") or ""))]
 
 
 _TASKY = re.compile(r"\b(task|tasks|to-?do|action items?|follow[- ]?ups?|deadlines?|commitments?)\b", re.I)
@@ -493,7 +562,7 @@ async def window_steps(db, user, windows, instruction: str, history=None, comman
     out = await _chat(db, user, build_steps_messages(context, instruction, history, commands, today, controls), 0.2)
     if not out:
         raise AssistError(502, "The AI did not come up with an answer — try again.")
-    res = parse_steps(out, commands, bool(_TASKY.search(str(instruction or ""))), controls)
+    res = parse_steps(out, commands, bool(_TASKY.search(str(instruction or ""))), controls, instruction)
     logger.info("[chat-assist] window steps: %d windows -> %d tasks, %d steps",
                 len(context), len(res["tasks"]), len(res["steps"]))
     return res

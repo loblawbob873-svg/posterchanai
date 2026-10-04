@@ -1,0 +1,32 @@
+{
+ "action": "window_steps",
+ "windows": [
+  {
+   "title": "Messages",
+   "view": "messages",
+   "kind": "PosterChan app",
+   "selection": "",
+   "text": "New No conversations yet. Select a conversation, or start one."
+  }
+ ],
+ "instruction": "x",
+ "history": [],
+ "commands": false,
+ "today": "2026-10-04",
+ "controls": [
+  {
+   "ref": 1,
+   "role": "textbox",
+   "label": "\ud83d\udd0d Search conversations",
+   "value": "",
+   "near": ""
+  },
+  {
+   "ref": 2,
+   "role": "button",
+   "label": "New",
+   "value": "",
+   "near": ""
+  }
+ ]
+}

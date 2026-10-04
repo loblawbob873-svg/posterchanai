@@ -1,0 +1,88 @@
+{
+ "action": "window_steps",
+ "windows": [
+  {
+   "title": "Notes",
+   "view": "notes",
+   "kind": "PosterChan app",
+   "selection": "",
+   "text": "Notes Your private notebook New note FOLDERS All notes 0 Unfiled 0 Import Backup Delete all notes & files All notes 0 Your notebook starts here Write your first note, or bring your notes in with Import. A little space for your ideas Capture a thought, keep a plan, or pick up where you left off. Write a note Encrypted \u00b7 Available offline after sync"
+  }
+ ],
+ "instruction": "x",
+ "history": [],
+ "commands": false,
+ "today": "2026-10-04",
+ "controls": [
+  {
+   "ref": 1,
+   "role": "button",
+   "label": "New note",
+   "value": "",
+   "near": ""
+  },
+  {
+   "ref": 2,
+   "role": "button",
+   "label": "New folder",
+   "value": "",
+   "near": ""
+  },
+  {
+   "ref": 3,
+   "role": "button",
+   "label": "All notes 0",
+   "value": "",
+   "near": ""
+  },
+  {
+   "ref": 4,
+   "role": "button",
+   "label": "Unfiled 0",
+   "value": "",
+   "near": ""
+  },
+  {
+   "ref": 5,
+   "role": "button",
+   "label": "Import",
+   "value": "",
+   "near": ""
+  },
+  {
+   "ref": 6,
+   "role": "button",
+   "label": "Backup",
+   "value": "",
+   "near": ""
+  },
+  {
+   "ref": 7,
+   "role": "button",
+   "label": "Delete all notes & files",
+   "value": "",
+   "near": ""
+  },
+  {
+   "ref": 8,
+   "role": "button",
+   "label": "New note",
+   "value": "",
+   "near": ""
+  },
+  {
+   "ref": 9,
+   "role": "textbox",
+   "label": "Search notes",
+   "value": "",
+   "near": ""
+  },
+  {
+   "ref": 10,
+   "role": "button",
+   "label": "Write a note",
+   "value": "",
+   "near": "A little space for your ideas"
+  }
+ ]
+}

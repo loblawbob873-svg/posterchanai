@@ -47,3 +47,8 @@ def test_the_request_carries_the_posts_that_loaded_after_the_panel_opened_and_wh
     nears = sorted(c["near"] for c in replies)
     assert any("relay operators" in n for n in nears) and any("self-hosted calendar" in n for n in nears), \
         ("each Reply must say which post it answers", nears)
+    # The composer's Post says it belongs to the composer; the page's "New post" (opens an empty box) does
+    # not -- measured, the model pressed "New post" to send what it had typed.
+    by = {c["label"]: c for c in res["req"]["controls"]}
+    assert by["Post"]["near"] == "Write a post" and by["How was your weekend?"]["near"] == "Write a post", by.get("Post")
+    assert by.get("New post", {}).get("near", "") == "", by.get("New post")

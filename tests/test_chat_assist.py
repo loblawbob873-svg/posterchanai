@@ -402,3 +402,64 @@ def test_each_post_s_reply_reaches_the_model_with_the_post_it_belongs_to():
     user = build_steps_messages(window_context([{"title": "Social", "text": "x"}]), "reply to carol", controls=ctl)[1]["content"]
     assert '[3] button "reply" (in "carol @carol 20s Meeting with the relay operators moved to Friday 3pm.")' in user
     assert "self-hosted calendar" in user
+
+
+# ---- Repairs measured against the node's own model (scripts/eval_window_ai.py); each fails without its rule.
+_FIX = os.path.join(os.path.dirname(__file__), "fixtures", "window_ai")
+
+
+def _fixture(name):
+    with open(os.path.join(_FIX, name + ".json")) as fh:
+        return json.load(fh)["controls"]
+
+
+def _steps(raw_steps, controls, instruction):
+    from app.services.chat_assist_service import parse_steps
+    return parse_steps(json.dumps({"answer": "ok", "tasks": [], "steps": raw_steps}), controls=controls,
+                       instruction=instruction)["steps"]
+
+
+def _ref(controls, label, near=""):
+    return next(c["ref"] for c in controls if c["label"].lower() == label.lower() and near in c.get("near", ""))
+
+
+def test_reply_then_type_elsewhere_becomes_one_fill_on_that_reply():
+    """Measured: {click carol's Reply, fill the NEW POST box} -- pressed as proposed, a post, not a reply."""
+    c = _fixture("global")
+    reply, box = _ref(c, "reply", "relay operators"), _ref(c, "How was your weekend?")
+    got = _steps([{"do": "click", "ref": reply, "label": "Open reply box"},
+                  {"do": "fill", "ref": box, "text": "I'll bring the numbers", "label": "Type reply"}],
+                 c, "reply to the post about the relay operators")
+    assert [(s["do"], s["ref"], s["text"]) for s in got] == [("fill", reply, "I'll bring the numbers")]
+
+
+def test_destruction_nobody_asked_for_is_dropped_and_asked_for_is_kept():
+    c = _fixture("notes")
+    wipe = _ref(c, "Delete all notes & files")
+    step = [{"do": "click", "ref": wipe, "label": "Clear everything"}]
+    assert _steps(step, c, "clean this up a bit") == []
+    assert [s["ref"] for s in _steps(step, c, "delete all my notes")] == [wipe]
+
+
+def test_the_quoted_words_are_what_gets_typed():
+    c = _fixture("global")
+    box = _ref(c, "How was your weekend?")
+    got = _steps([{"do": "fill", "ref": box, "text": "Good morning! How's everyone?", "label": "Write"}],
+                 c, "post 'good morning nostr'")
+    assert got[0]["text"] == "good morning nostr"
+    # An apostrophe in a word is not a quote.
+    got = _steps([{"do": "fill", "ref": box, "text": "see you there", "label": "Write"}], c, "say I'll be there")
+    assert got[0]["text"] == "see you there"
+
+
+def test_the_tab_the_request_names_wins():
+    c = _fixture("global")
+    got = _steps([{"do": "click", "ref": _ref(c, "Nostrverse"), "label": "Go to Nostrverse"}], c, "show me what's trending")
+    assert got[0]["ref"] == _ref(c, "Trending")
+
+
+def test_a_click_labelled_exactly_as_another_control_goes_to_that_control():
+    """Measured: {"do":"click","ref":<New post>,"label":"Post"} -- New post opens an empty box and sends nothing."""
+    c = _fixture("global")
+    got = _steps([{"do": "click", "ref": _ref(c, "New post"), "label": "Post"}], c, "post it")
+    assert got[0]["ref"] == _ref(c, "Post")
