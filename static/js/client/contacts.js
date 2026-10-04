@@ -335,7 +335,7 @@
         if(c) editCard(c);
       });
       $$('.ct-jump', root).forEach(b => b.onclick = ()=>{
-        const el = $('#ct-l-' + b.dataset.l, root);
+        const el = $('#ct-l-' + CSS.escape(b.dataset.l), root);   // '#' is a letter here, and '#ct-l-#' is not a selector
         if(el) el.scrollIntoView({ block:'start' });
       });
     }

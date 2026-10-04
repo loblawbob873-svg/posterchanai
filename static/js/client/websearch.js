@@ -426,7 +426,7 @@
       // an href="#…" inside a PWA rewrites the address bar for nothing.
       $$('.ws-cite', root).forEach(a => a.onclick = (e)=>{
         e.preventDefault();
-        const li = $('#ws-src-' + a.dataset.src, root);
+        const li = $('#ws-src-' + CSS.escape(a.dataset.src), root);
         if(li){ li.scrollIntoView({ block:'nearest', behavior:'smooth' }); li.classList.add('hit');
                 setTimeout(()=>li.classList.remove('hit'), 1200); }
       });

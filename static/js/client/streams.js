@@ -888,7 +888,7 @@ window.PCStreamsFactory = function(dep){
         cl.onclick=()=>{ ip.value=''; showPrev(); };
         pk.onclick=()=> _pickBlossomImage(url=>{ ip.value=url; showPrev(); }); }
       _liveTplWire(root, ()=>showPrev());
-      $$('[data-copy]',root).forEach(b=> b.onclick=()=> _copyFrom($('#'+b.dataset.copy,root)));
+      $$('[data-copy]',root).forEach(b=> b.onclick=()=> _copyFrom($('#'+CSS.escape(b.dataset.copy),root)));
       { const rc=$('#gl-record',root); if(rc) rc.onchange=()=>{ rc.disabled=true;
           _streamFetch('/api/streams/record',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({enabled:rc.checked})})
             // Keep `info` in step: _publishLive stamps it onto the stream so the end-of-stream message
