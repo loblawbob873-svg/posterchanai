@@ -23,7 +23,7 @@ from app.services.monero_wallet_service import WalletError, explorer_tx_base, xm
 
 router = APIRouter(tags=["monero-user-wallet"])
 async def get_member_wallet_user(user: User = Depends(auth.get_current_user)):
-    from app.services.instance_membership import require_user
+    from app.services.instance_membership import require_member_user as require_user  # members only, whatever the app switch says
     return await require_user(user)
 
 

@@ -62,4 +62,4 @@ async def apply(data: Proof, request: Request, db: Session = Depends(get_db)):
 
 @router.get('/access')
 async def access(refresh: bool = False, user=Depends(get_current_user)):
-    return await instance_membership.status(user.nostr_npub or '', force=refresh)
+    return await instance_membership.access(user.nostr_npub or '', force=refresh)

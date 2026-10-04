@@ -345,12 +345,56 @@ _checker = MembershipChecker()
 
 
 async def status(pubkey, *, force=False):
+    """Real membership: a name this node granted AND the signed profile publishing it."""
     return await _checker.status(pubkey, force=force)
 
 
+# THE ADMIN CAN OPEN THE APPS TO EVERY SIGNED-IN ACCOUNT ("make it a toggle that we can do in admin").
+# `apps_require_nip05` (Admin -> Nostr Relay), ON by default -- a blank row reads as ON, because a blank
+# switching the requirement off would open Mail, Files and the rest node-wide with nothing said. Off:
+# any signed-in Nostr account passes the APP gates below, except one the relay has blocked. It never
+# changes `status()`: real membership still decides the wallets (require_member_*), the NIP-05 grants
+# of AI/image/music/Blossom (nip05_access) and the name application on the welcome screen.
+def apps_require_nip05() -> bool:
+    if not settings_store.is_hydrated():
+        return True                      # settings not loaded: the strict answer, never the open one
+    v = str(settings_store.get('apps_require_nip05', '') or '').strip().lower()
+    return v not in ('false', '0', 'off', 'no')
+
+
+async def access(pubkey, *, force=False):
+    """What the app gates and the client's app list go by: membership, or -- with the requirement
+    switched off -- any signed-in account the relay has not blocked."""
+    if apps_require_nip05():
+        return await _checker.status(pubkey, force=force)
+    pk = nostr_service.to_pubkey_hex(pubkey or '')
+    if not pk:
+        raise HTTPException(403, 'A signed-in Nostr account is required')
+    pk = pk.lower()
+    base = {'pubkey': pk, 'qualified': False, 'address': '', 'domain': '', 'profile_address': '',
+            'reason': 'blocked'}
+    from app.services import relay_blocklist
+    if relay_blocklist.is_blocked(pk):
+        return base
+    return {**base, 'qualified': True, 'reason': 'open'}
+
+
 async def require_pubkey(pubkey):
-    return await _checker.require_pubkey(pubkey)
+    result = await access(pubkey)
+    if not result['qualified']:
+        raise HTTPException(403, 'Set your approved instance NIP-05 address in your profile to use this app')
+    return result
 
 
 async def require_user(user):
+    await require_pubkey(getattr(user, 'nostr_npub', '') or '')
+    return user
+
+
+async def require_member_pubkey(pubkey):
+    """Real membership whatever the switch says (the wallets)."""
+    return await _checker.require_pubkey(pubkey)
+
+
+async def require_member_user(user):
     return await _checker.require_user(user)

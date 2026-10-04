@@ -26,7 +26,7 @@ from app.services.monero_wallet_service import (
 # ask for it, and on a node that is NOT behind such a WAF it has always worked fine.
 router = APIRouter(tags=["monero-wallet"])
 async def get_member_wallet_owner(user: User = Depends(get_admin_user)):
-    from app.services.instance_membership import require_user
+    from app.services.instance_membership import require_member_user as require_user  # members only, whatever the app switch says
     return await require_user(user)
 
 

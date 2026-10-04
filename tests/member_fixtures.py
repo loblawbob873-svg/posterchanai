@@ -17,3 +17,6 @@ def allow_keys(monkeypatch, *keys):
         return value
     monkeypatch.setattr(instance_membership,'require_pubkey',pubkey)
     monkeypatch.setattr(instance_membership,'require_user',user)
+    # The wallets ask the strict variant (members only whatever Admin's app switch says).
+    monkeypatch.setattr(instance_membership,'require_member_pubkey',pubkey)
+    monkeypatch.setattr(instance_membership,'require_member_user',user)
