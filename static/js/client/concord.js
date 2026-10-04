@@ -1574,7 +1574,7 @@
   function retainCommunityRail(oldRail,newRail){
     if(!oldRail||!newRail)return;
     // Folders: a different arrangement (or a folder opened) is a different rail, never the old one patched.
-    if((oldRail.dataset.ccSig||'')!==(newRail.dataset.ccSig||''))return;
+    if(((oldRail.dataset||{}).ccSig||'')!==((newRail.dataset||{}).ccSig||''))return;
     const oldServers=[...oldRail.querySelectorAll('[data-cc-server]')],newServers=[...newRail.querySelectorAll('[data-cc-server]')];
     if(oldServers.length!==newServers.length)return;
     for(let i=0;i<oldServers.length;i++)if(oldServers[i].dataset.ccServer!==newServers[i].dataset.ccServer)return;
