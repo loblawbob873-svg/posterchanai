@@ -229,7 +229,8 @@ HISTORY_MAX = 4
 
 def clean_controls(controls) -> list:
     """The window's controls as the client numbered them -> [(ref, role, label, value, near)], validated.
-    `near` is the heading the control sits under, which is what tells two "Save" buttons apart."""
+    `near` is the heading the control sits under, or the start of the post/row it belongs to -- what tells
+    two "Save" buttons, or every post's "reply", apart."""
     out = []
     for c in list(controls or [])[:CONTROL_MAX]:
         if not isinstance(c, dict):
@@ -242,7 +243,7 @@ def clean_controls(controls) -> list:
         label = _clean(c.get("label"), 80)
         if ref <= 0 or not role or not label:
             continue
-        out.append((ref, role, label, _clean(c.get("value"), 80), _clean(c.get("near"), 40)))
+        out.append((ref, role, label, _clean(c.get("value"), 80), _clean(c.get("near"), 90)))
     return out
 
 

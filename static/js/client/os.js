@@ -2677,7 +2677,19 @@
   /* The heading a control sits under -- what tells "Save" in Profile from "Save" in Relays. The NEAREST
    * one ABOVE it: a section with two headings has two parts, and the first heading is not everyone's. */
   const _AI_HEAD='h1,h2,h3,h4,legend,.os-set-cardhead b';
+  /* WHICH ONE OF MANY ("reply to bob"). A timeline is a column of identical controls -- every post has
+   * its own "reply" -- and listed bare they were indistinguishable, so the model could only guess which
+   * post a reply went to. A control inside a repeated item (a post, a list row, a message) is described by
+   * the start of that item's own text: who wrote it and what it says. Headings answer the rest. */
+  const _AI_ITEM='article,li,tr,[role="listitem"],[role="article"],[role="row"],.note,.cc-message,.tg-msg';
   function _aiNear(el,root){
+    try{
+      const item=el.closest(_AI_ITEM);
+      if(item && item!==root && root.contains(item)){
+        const t=String(item.innerText||item.textContent||'').replace(/\s+/g,' ').trim();
+        if(t) return t.slice(0,90);
+      }
+    }catch(_){ }
     try{
       let branch=el;
       for(let n=el.parentElement; n; branch=n, n=n.parentElement){
@@ -3013,8 +3025,12 @@
     /* ANSWERED HERE, WITH BUTTONS -- never by loading the AI Chat screen ("we need interactive Agentic
      * features with buttons, not loading up AI Chat"). `turns` is this panel's memory for ↻ Continue. */
     const turns=[];
+    /* READ THE WINDOW WHEN ASKED, not when the panel opened: the controls already were, and the text was
+     * not -- so posts that loaded after ✨ was pressed had buttons the model could press and words it could
+     * not read ("No posts yet." beside two Reply buttons, measured). Same as Continue. */
     const ask=instruction=>{instruction=String(instruction||'').trim();if(!instruction)return;panel._aiRounds=0;
-      _aiSteps(w,panel,contexts,instruction,composer,turns,isTerm);};
+      const fresh=[w,..._aiContextWins].filter((x,k,a)=>a.indexOf(x)===k&&(x===w||wins.includes(x))).map(windowAIContext);
+      _aiSteps(w,panel,fresh,instruction,composer,turns,isTerm);};
     panel.querySelector('[data-ai-dismiss]').onclick=()=>closeWindowAI(w);
     const clear=panel.querySelector('[data-ai-clear]');if(clear)clear.onclick=()=>{_aiContextWins.forEach(x=>x.el.classList.remove('ai-context'));_aiContextWins.clear();closeWindowAI(w);toggleWindowAI(w,button);};
     panel.querySelectorAll('[data-ai-action]').forEach(b=>b.onclick=()=>ask(suggestions[+b.dataset.aiAction][1]));

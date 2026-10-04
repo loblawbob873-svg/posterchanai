@@ -389,3 +389,16 @@ def test_the_prompt_tells_the_model_to_put_actions_in_steps():
     from app.services.chat_assist_service import build_steps_messages, window_context
     system = build_steps_messages(window_context([{"title": "Notes", "text": "x"}]), "do it", controls=_NOTES_CONTROLS)[0]["content"]
     assert "goes in \"steps\"" in system and "placeholder" in system
+
+
+def test_each_post_s_reply_reaches_the_model_with_the_post_it_belongs_to():
+    """Every post has its own "reply"; the client describes each by the start of its post (up to 90
+    characters, so "who" AND "what" fit). Cut at 40 the two read the same, which is a guess again."""
+    from app.services.chat_assist_service import build_steps_messages, window_context
+    ctl = [{"ref": 3, "role": "button", "label": "reply",
+            "near": "carol @carol 20s Meeting with the relay operators moved to Friday 3pm."},
+           {"ref": 9, "role": "button", "label": "reply",
+            "near": "bob @bob 50s Anyone know a good self-hosted calendar that syncs with my phone?"}]
+    user = build_steps_messages(window_context([{"title": "Social", "text": "x"}]), "reply to carol", controls=ctl)[1]["content"]
+    assert '[3] button "reply" (in "carol @carol 20s Meeting with the relay operators moved to Friday 3pm.")' in user
+    assert "self-hosted calendar" in user
