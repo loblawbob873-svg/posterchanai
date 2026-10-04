@@ -10,9 +10,6 @@ box must never collapse, and the message below it must not move.
 """
 import asyncio
 import base64
-import shutil
-import subprocess
-import tempfile
 from pathlib import Path
 
 import pytest
@@ -27,11 +24,11 @@ def bundled_assets():
 
 
 def _tiny_webm() -> bytes:
-    with tempfile.TemporaryDirectory() as d:
-        out = Path(d) / "v.webm"
-        subprocess.run(["ffmpeg", "-loglevel", "error", "-f", "lavfi", "-i", "testsrc=size=320x180:rate=10", "-t", "1",
-                        "-c:v", "libvpx", "-b:v", "50k", str(out)], check=True, timeout=60)
-        return out.read_bytes()
+    # A one-second 320x180 VP8 clip, COMMITTED rather than made with ffmpeg at test time: the desktop CI
+    # host has no ffmpeg, and there a skip counts as a failure (required coverage), which blocked the
+    # deploy-79 desktop build. Regenerate with:
+    #   ffmpeg -f lavfi -i testsrc=size=320x180:rate=10 -t 1 -c:v libvpx -b:v 50k tests/fixtures/concord_clip.webm
+    return (Path(__file__).resolve().parents[1] / "fixtures" / "concord_clip.webm").read_bytes()
 
 
 SEAL = r"""(async()=>{
@@ -53,7 +50,7 @@ STATE = r"""(()=>{const v=document.querySelector('.cc-encrypted-attachment video
           meta:!!v&&v.readyState>=1}})()"""
 
 
-@pytest.mark.skipif(not Path("/opt/google/chrome/chrome").exists() or not shutil.which("ffmpeg"), reason="Chrome + ffmpeg required")
+@pytest.mark.skipif(not Path("/opt/google/chrome/chrome").exists(), reason="Chrome required")
 def test_an_encrypted_video_stays_put_while_the_room_repaints():
     clip = base64.b64encode(_tiny_webm()).decode()
     res = {}
