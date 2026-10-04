@@ -1,4 +1,4 @@
-// Admin → Relay: every LIST setting drawn like Identities / Blocked accounts (data-tab "relay").
+// Admin → Relay and Admin → Blossom: every LIST setting drawn like Identities / Blocked accounts.
 //
 // Origins, WoT seeds, GPU-sharing peers, blocked words, blocked bridge domains and the four relay URL
 // lists were bare textareas. Each is now a searchable list with an Add box and a Remove per row; key
@@ -22,6 +22,10 @@
         nostr_relay_nip05_relays: ['relay', 'relay', 'wss://relay.example'],
         nostr_relay_upstream_relays: ['relay', 'relay', 'wss://relay.example'],
         nostr_relay_private_relays: ['relay', 'relay', 'wss://your-other-node.example'],
+        // Admin → Blossom: the same list, Add box and Remove per row.
+        blossom_whitelist: ['pubkey', 'person', 'npub1… or 64-char hex'],
+        media_own_hosts: ['domain', 'host', 'media.example.com'],
+        blossom_mirror_servers: ['server', 'server', 'https://backup.example.com/blossom'],
     };
 
     // Pure, so they can be tested.
@@ -196,7 +200,7 @@
             }
             const ad = t.closest('.rl-add-btn');
             if (ad) { add(ad.closest('.rl-panel')); return; }
-            if (t.closest('[data-tab="relay"]')) loadAll();
+            if (t.closest('[data-tab="relay"],[data-tab="blossom"]')) loadAll();
         });
         // Enter in the Add box adds -- it must not submit the whole settings form.
         document.addEventListener('keydown', e => {
@@ -216,7 +220,7 @@
         });
         const boot = () => {
             Object.keys(LISTS).forEach(mount);
-            if (typeof location !== 'undefined' && location.hash === '#tab-relay') loadAll();
+            if (typeof location !== 'undefined' && (location.hash === '#tab-relay' || location.hash === '#tab-blossom')) loadAll();
         };
         if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', boot); else boot();
     }

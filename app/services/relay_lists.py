@@ -26,6 +26,12 @@ LISTS = {
     "nostr_relay_nip05_relays": "relay",
     "nostr_relay_upstream_relays": "relay",
     "nostr_relay_private_relays": "relay",
+    # Admin → Blossom ("fix blossom list textboxes to function like the way you improved the relays in
+    # admin"): who may upload (people -- shown with their name and picture), this node's own media hosts,
+    # and the servers each upload is mirrored to.
+    "blossom_whitelist": "pubkey",
+    "media_own_hosts": "domain",
+    "blossom_mirror_servers": "server",
 }
 
 MAX_ENTRY = 500
@@ -106,6 +112,9 @@ def validate(kind: str, entry: str):
         return e, None
     if kind == "relay":
         return (e, None) if re.match(r"^wss?://[^\s/]+", e, re.I) else (None, "a relay URL starts with wss:// (or ws://)")
+    if kind == "server":
+        # blossom_service reads only http(s) URLs out of this list and drops anything else silently.
+        return (e.rstrip("/"), None) if re.match(r"^https?://[^\s/]+", e, re.I) else (None, "a server URL starts with https:// (or http://)")
     if kind == "origin":
         m = re.match(r"^([a-z][a-z0-9+.-]*)://([^\s/]+)/?$", e, re.I)
         return (m.group(0).rstrip("/"), None) if m else (None, "an origin is scheme://host[:port], e.g. https://poster.place")
@@ -138,7 +147,7 @@ def edit(raw: str, kind: str, add: str = "", remove: str = ""):
         clean, err = validate(kind, add)
         if err:
             return None, err
-        if kind == "relay":
+        if kind in ("relay", "server"):
             clean = clean.rstrip("/")
         if same(kind, clean) in {same(kind, e) for e in cur}:
             return None, "already in the list"

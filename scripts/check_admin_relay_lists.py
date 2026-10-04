@@ -21,13 +21,16 @@ CDP_PORT = int(os.environ.get("PC_CHECK_PORT") or 9531)
 VIEWPORTS = ((360, 780, True), (1280, 900, False))
 KEYS = ["nostr_relay_posterchan_origins", "nostr_relay_wot_seeds", "nostr_dvm_peers",
         "nostr_relay_blocked_words", "nostr_relay_blocked_relays", "nostr_relay_nip05_relays",
-        "nostr_relay_upstream_relays", "nostr_relay_private_relays"]
+        "nostr_relay_upstream_relays", "nostr_relay_private_relays",
+        # Admin → Blossom ("fix blossom list textboxes to function like the way you improved the relays")
+        "blossom_whitelist", "media_own_hosts", "blossom_mirror_servers"]
 
 
 def page(names_complete, old_server=False):
     import jinja2
     env = jinja2.Environment(loader=jinja2.FileSystemLoader(os.path.join(ROOT, "templates")))
-    tab = env.get_template("admin/tabs/nostr_relay.html").render(cache_bust="1")
+    tab = env.get_template("admin/tabs/nostr_relay.html").render(cache_bust="1") \
+        + env.get_template("admin/tabs/blossom.html").render(cache_bust="1")
     stub = r"""
 <script>
 window.__errors=[]; addEventListener('error',e=>__errors.push(e.message));
@@ -43,8 +46,11 @@ const DB={
  nostr_relay_nip05_relays:'wss://nos.lol/',
  nostr_relay_upstream_relays:'wss://relay.damus.io\n'+LONG,
  nostr_relay_private_relays:'',
+ blossom_whitelist:PK,
+ media_own_hosts:'media.poster.place',
+ blossom_mirror_servers:'https://backup.example.com/blossom\n'+LONG.replace('wss://','https://'),
 };
-const rowsOf=k=>DB[k].split('\n').filter(Boolean).map(v=>(k==='nostr_relay_wot_seeds'||k==='nostr_dvm_peers')
+const rowsOf=k=>DB[k].split('\n').filter(Boolean).map(v=>(k==='nostr_relay_wot_seeds'||k==='nostr_dvm_peers'||k==='blossom_whitelist')
   ?{value:v,pubkey:'ab'.repeat(32),npub:PK,name:'Seed Person With A Rather Long Display Name',picture:'',nip05:'seed@poster.place',relay:v.split(' ')[1]||'',valid:true}
   :{value:v,valid:true});
 const IDS=[{name:'alice',address:'alice@poster.place',npub:'npub1a',verified:true,display:'Alice'},
@@ -78,11 +84,11 @@ window.csrfFetch=window.fetch; window.pcConfirm=async()=>true;
 <link rel="stylesheet" href="/static/css/style.css"><link rel="stylesheet" href="/static/css/modules/components.css">
 <link rel="stylesheet" href="/static/css/admin-tabs.css"><link rel="stylesheet" href="/static/css/admin-theme.css">
 </head><body class="admin-page">{stub}<div class="admin-container">
-<nav class="admin-tabs"><button type="button" class="tab-btn" data-tab="relay" id="relaytab">Relay</button></nav>
+<nav class="admin-tabs"><button type="button" class="tab-btn" data-tab="relay" id="relaytab">Relay</button><button type="button" class="tab-btn" data-tab="blossom" id="blossomtab">Blossom</button></nav>
 <form id="settingsForm" class="settings-form" novalidate onsubmit="event.preventDefault();window.__submits++">{tab}</form></div>
 {fill}
 <script src="/static/js/admin-identities.js"></script><script src="/static/js/admin-relay-lists.js"></script>
-<script>document.getElementById('tab-relay').classList.add('active');
+<script>document.getElementById('tab-relay').classList.add('active');document.getElementById('tab-blossom').classList.add('active');
 setTimeout(()=>{{document.getElementById('relaytab').click();setTimeout(()=>window.__ready=true,300)}},50);</script>
 </body></html>"""
 
@@ -135,6 +141,15 @@ const pr=document.getElementById('ids_prune');
 out.prune={shown:vis(pr), onScreen:vis(pr)&&onScreen(pr), label:pr.textContent};
 if(vis(pr)){pr.click(); await sleep(200); out.prune.posted=JSON.stringify(window.__posts.at(-1));
   out.prune.text=document.getElementById('nostr_relay_nip05_names').value;}
+// Admin → Blossom: a person added to the upload whitelist with Enter is saved to THAT list and drawn.
+{ const bp=document.querySelector('.rl-panel[data-key="blossom_whitelist"]'), bi=bp.querySelector('.rl-add-input');
+  const before=bp.querySelectorAll('.rl-row').length, subs=window.__submits;
+  bi.value='npub1'+'z'.repeat(58);
+  bi.dispatchEvent(new KeyboardEvent('keydown',{key:'Enter',bubbles:true,cancelable:true}));
+  await sleep(250);
+  out.blossom={posted:JSON.stringify(window.__posts.at(-1)), submits:window.__submits-subs,
+    rows:bp.querySelectorAll('.rl-row').length, before, text:document.getElementById('blossom_whitelist').value,
+    said:(bp.querySelector('.rl-msg')||{}).textContent||''}; }
 out.overflowAfter=document.documentElement.scrollWidth>innerWidth+1;
 return out;})()""" % json.dumps(KEYS)
 
@@ -237,6 +252,10 @@ async def run():
                 rc = out["race"]
                 if not rc["had"] or "mostr.pub" in rc["drawn"]:
                     fails.append((where, "a Remove during a reload left the removed row on screen", rc))
+                bl = out["blossom"]
+                if bl["submits"] or json.loads(bl["posted"] or "{}") != {"key": "blossom_whitelist", "add": "npub1" + "z" * 58} \
+                        or bl["rows"] != bl["before"] + 1 or ("npub1" + "z" * 58) not in bl["text"] or "Saved" not in bl["said"]:
+                    fails.append((where, "Blossom whitelist Add did not land", bl))
                 p = out["prune"]
                 if not (p["shown"] and p["onScreen"] and "2" in p["label"]):
                     fails.append((where, "prune button", p))

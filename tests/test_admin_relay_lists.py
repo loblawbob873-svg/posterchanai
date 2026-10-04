@@ -65,6 +65,7 @@ def test_entries_are_split_the_way_the_relay_reads_them():
     ("pubkey", "__NPUB__", "npub1nonsense"),
     ("peer", "__NPUB__ wss://p.example", "__NPUB__"),
     ("word", "buy now", ""),
+    ("server", "https://backup.example.com/blossom/", "wss://backup.example.com"),
 ])
 def test_a_new_entry_is_validated_for_its_list(kind, good, bad):
     npub = nostr_service.npub_of(PKA)
@@ -82,9 +83,9 @@ def test_the_page_and_the_server_list_the_same_settings():
                           str(ROOT / "static/js/admin-relay-lists.js")], capture_output=True, text=True, timeout=20)
     js = json.loads(out.stdout)
     assert {k: v[0] for k, v in js.items()} == relay_lists.LISTS
-    tab = (ROOT / "templates/admin/tabs/nostr_relay.html").read_text()
+    tabs = "".join(p.read_text() for p in (ROOT / "templates/admin/tabs").glob("*.html"))
     for k in relay_lists.LISTS:
-        assert re.search(rf'<textarea id="{k}" name="{k}"', tab), f"{k}: the text box Save sends must stay"
+        assert re.search(rf'<textarea id="{k}" name="{k}"', tabs), f"{k}: the text box Save sends must stay"
     assert "admin-relay-lists.js" in (ROOT / "templates/admin.html").read_text()
 
 
@@ -218,6 +219,9 @@ SPELLINGS = {
     "nostr_relay_wot_seeds": (f"{NPUB_A}\n{PKB}\n{PKA}", PKB, PKA.upper() if False else NPUB_A),
     "nostr_dvm_peers": (f"{NPUB_A} wss://peer.example\n{PKB} wss://keep.example\n{PKA} wss://peer.example/", f"{PKB} wss://keep.example", f"{PKA} WSS://peer.example"),
     "nostr_relay_blocked_words": ("Free Crypto\nkeep me\nfree crypto", "keep me", "FREE CRYPTO"),
+    "blossom_whitelist": (f"{NPUB_A}\n{PKB}\n{PKA}", PKB, NPUB_A),
+    "media_own_hosts": ("media.poster.place\nkeep.example\nMEDIA.POSTER.PLACE", "keep.example", "Media.Poster.Place"),
+    "blossom_mirror_servers": ("https://backup.example/blossom\nhttps://keep.example\nhttps://BACKUP.example/blossom/", "https://keep.example", "https://backup.example/blossom/"),
 }
 
 
@@ -264,3 +268,43 @@ def test_removing_by_another_spelling_works_and_an_absent_entry_is_refused(store
     with pytest.raises(HTTPException) as e:
         _edit(key=key, remove=third)
     assert e.value.status_code == 400
+
+
+# ---- Admin → Blossom: what the list writes is what the code that USES it reads --------------------------
+# "fix blossom list textboxes to function like the way you improved the relays in admin". A list that
+# draws nicely and writes a value its consumer splits differently would be worse than the text box.
+
+def test_a_person_added_to_the_blossom_whitelist_may_upload_and_removed_may_not(store, monkeypatch):
+    from app.services import blossom_service
+    vals, written, _ = store
+    vals["blossom_whitelist"] = ""
+    blossom_service._whitelist_cache.update(ts=0, val=None, set=frozenset())
+    r = _edit(key="blossom_whitelist", add=nostr_service.npub_of(PKB))
+    assert r["durable"] and written[-1] == {"blossom_whitelist": vals["blossom_whitelist"]}, r
+    assert PKB in blossom_service._whitelist_pubkeys(None), "added through the list, and still not allowed to upload"
+    _edit(key="blossom_whitelist", remove=PKB)               # removed by another spelling of the same key
+    assert PKB not in blossom_service._whitelist_pubkeys(None), "removed through the list, and still allowed to upload"
+
+
+def test_a_mirror_server_added_is_mirrored_to_and_a_bad_one_is_refused(store, monkeypatch):
+    from app.services import blossom_service
+    vals, _, _ = store
+    vals["blossom_mirror_servers"] = "https://one.example/blossom"
+    _edit(key="blossom_mirror_servers", add="https://two.example/blossom/")
+    monkeypatch.setattr(blossom_service.settings_store, "prefixed",
+                        lambda pre: {k: v for k, v in vals.items() if k.startswith(pre)})
+    got = blossom_service._cfg(None)["mirror_servers"]
+    assert got == ["https://one.example/blossom", "https://two.example/blossom"], got
+    with pytest.raises(HTTPException) as e:
+        _edit(key="blossom_mirror_servers", add="wss://not-a-blossom.example")
+    assert e.value.status_code == 400 and vals["blossom_mirror_servers"].count("\n") == 1
+
+
+def test_a_media_host_added_counts_as_this_nodes_own(store, monkeypatch):
+    from app.services import search_service
+    vals, _, _ = store
+    vals["media_own_hosts"] = ""
+    _edit(key="media_own_hosts", add="https://Media.Example.com/some/path")
+    assert vals["media_own_hosts"] == "media.example.com", vals["media_own_hosts"]
+    monkeypatch.setattr(search_service.settings_store, "get", lambda k, d=None: vals.get(k, d))
+    assert "media.example.com" in search_service.own_media_hosts(), "added through the list, and not treated as this node's own host"
