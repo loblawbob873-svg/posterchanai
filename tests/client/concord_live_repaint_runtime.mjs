@@ -8,6 +8,10 @@ import fs from 'node:fs';import vm from 'node:vm';import assert from 'node:asser
 
 const code=fs.readFileSync(process.env.PC_CONCORD_SOURCE||new URL('../../static/js/client/concord.js',import.meta.url),'utf8');
 const slice=code.slice(code.indexOf('  function backgroundRender(){'),code.indexOf('  function handoffState('));
+/* The pane painter patchMessageList hands its markup to (paintPane and the list/video helpers it uses),
+ * loaded from the shipped file too -- never stubbed, or this would test a painter that does not ship. */
+const painters=code.slice(code.indexOf("  const LIST_OPEN='"),code.indexOf('  /* COMMUNITY FOLDERS'));
+assert(painters.includes('function paintPane(')&&painters.includes('function keepVideos('),'re-point: the pane painter moved');
 
 /* One builder, two painters: render() and patchMessageList() must call the same one, or the two
  * paints can disagree about what a message looks like. */
@@ -58,7 +62,7 @@ const context={console,Map,Set,Promise,JSON,String,Number,Math,setTimeout,
     querySelector:sel=>sel==='#cc-input'?composer:(sel==='.cc-messages'?pane:null)}};
 context.window=context;
 vm.createContext(context);
-vm.runInContext('let backgroundRenderPending=false,backgroundFocusHost=null;\n'+slice,context);
+vm.runInContext('let backgroundRenderPending=false,backgroundFocusHost=null;\n'+painters+'\n'+slice,context);
 
 /* 1. Typing in the composer: the messages ARE painted, the full render is still deferred, and the
  *    textarea is the same element carrying the same text. */

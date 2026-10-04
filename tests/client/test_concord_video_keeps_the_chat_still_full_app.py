@@ -90,7 +90,9 @@ def test_an_encrypted_video_stays_put_while_the_room_repaints():
         # path (backgroundRender -> patchMessageList) repainted the message pane with innerHTML and never
         # carried the players over: every tick a new <video>, the loading circle, every few seconds
         # ("the concord video in Lounge room keeps glitching every few seconds, you see the circle reload").
-        await b.js("document.getElementById('cc-input').focus();true")
+        # From here the message node itself must survive: the live tick patches the list in place.
+        await b.js("window.__art=document.querySelector('.cc-encrypted-attachment video').closest('.cc-message');document.getElementById('cc-input').focus();true")
+        live_from = len(seen)
         for _ in range(4):
             await b.js("PCConcord.backgroundRender();true")
             await asyncio.sleep(.2)
@@ -98,15 +100,15 @@ def test_an_encrypted_video_stays_put_while_the_room_repaints():
         res["focused"] = await b.js("document.activeElement&&document.activeElement.id")
         res["playing"] = await b.js("!!window.__vid&&!__vid.paused&&__vid.isConnected")
         res["events"] = await b.js("__ev")
-        res.update(first=first, seen=seen)
+        res.update(first=first, seen=seen, live_from=live_from)
 
     asyncio.run(desktop.with_browser("online", "", check))
     first, seen = res["first"], res["seen"]
     assert res["focused"] == "cc-input", res["focused"]
     assert first["has"] and first["meta"] and first["h"] > 50, ("the video never showed", first)
     assert all(s["same"] for s in seen), ("a repaint replaced the video player (it reloads and the chat jumps)", seen)
-    # Not even detached and put back: a moved player can re-buffer. The message holding it stays the same node.
-    assert all(s["art"] for s in seen), ("a repaint detached the message holding the video", seen)
+    # A live tick does not even detach and put back: the message holding the player stays the same node.
+    assert all(s["art"] for s in seen[res["live_from"]:]), ("a live tick replaced the message holding the video", seen)
     assert min(s["h"] for s in seen) >= first["h"] - 2, ("the video box collapsed during a repaint", first, seen)
     assert len({s["below"] for s in seen}) == 1 and seen[0]["below"] == first["below"], ("the message below the video moved", first, seen)
     assert res["playing"], "a new message stopped the video someone was watching"

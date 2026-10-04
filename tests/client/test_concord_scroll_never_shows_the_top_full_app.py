@@ -1,7 +1,7 @@
 """Sending or receiving in a Communities room never shows the top of its history, not even for a frame.
 
 Reported from PosterChanOS: "Communities -> when I send message or message is received, chat room
-location jumps". Measured: every repaint rebuilds `.cc-messages`, four times for one sent message and
+location jumps". Measured: every repaint rebuilt `.cc-messages`, four times for one sent message and
 once per received one, and the rebuilt scroller was born at scrollTop 0 — the room's OLDEST messages —
 until a later animation frame put it back. This records the scroller in the microtask straight after
 each rebuild (a MutationObserver), which is before any frame can be drawn, and requires the reader to
@@ -46,10 +46,14 @@ SETUP = r"""(()=>{
   __PC.switchView('concord');
 })()"""
 
+# Every change to the room's DOM is sampled, in the microtask straight after it (before a frame can be
+# drawn) -- a rebuilt scroller AND a message list patched in place, which is how a new message arrives
+# now: the scroller is kept, so watching only for a NEW scroller would see nothing at all.
 WATCH = r"""(()=>{window.__seen=[];const feed=document.getElementById('feed');
-  const mo=new MutationObserver(()=>{const b=document.querySelector('.cc-messages');if(!b||b===window.__lastBox)return;window.__lastBox=b;
+  const mo=new MutationObserver(recs=>{const b=document.querySelector('.cc-messages');if(!b)return;
+    if(!recs.some(r=>r.target===b||b.contains(r.target)||[...r.addedNodes].some(n=>n===b||(n.contains&&n.contains(b)))))return;
     __seen.push({top:Math.round(b.scrollTop),fromBottom:Math.round(b.scrollHeight-b.clientHeight-b.scrollTop)});});
-  mo.observe(feed,{childList:true,subtree:true});window.__stopWatch=()=>mo.disconnect();window.__lastBox=document.querySelector('.cc-messages');})()"""
+  mo.observe(feed,{childList:true,subtree:true});window.__stopWatch=()=>mo.disconnect();})()"""
 
 
 @pytest.mark.skipif(not Path("/opt/google/chrome/chrome").exists(), reason="Chrome required")

@@ -401,7 +401,11 @@
     if(conversationIsVisible(narrow,mobileChatOpen,mobileDrawerOpen))markRead(current,state.channel||'general');
     /* NOT innerHTML: this runs on every live tick while somebody is in the composer, and a rebuilt pane is
      * a new <video> for every clip in it -- the loading circle, every few seconds. */
+    /* Where the reader was, written back IN THIS TASK, as render() does: the rAF restore below runs a
+     * frame later, and until then a reader at the bottom sat one new message above it. */
+    const was={top:scroller.scrollTop,atBottom:scroller.scrollHeight-scroller.clientHeight-scroller.scrollTop<=2};
     paintPane(scroller,messagesPaneHtml(p,messages,current,viewer,me));
+    try{ const st=readScroll(scrollKey()); setProgrammaticScroll(scroller,st.pinned!==false||was.atBottom?scroller.scrollHeight:was.top); }catch(_){ }
     if(p.hydrateLinkCards)p.hydrateLinkCards(scroller);
     wireRoomMedia(p);
     hydrateEncryptedAttachments(messages);
@@ -4668,7 +4672,7 @@
           return _t;
         })().map(m=>{const mp=p.profOf?p.profOf(m.pubkey):{},mid=messageId(m),_ti=threadInfo(messages),_replies=(_ti.index.get(mid)||[]).length,_flat=threadsInChat(),_root=state.thread||!_flat?'':(_ti.rootOf.get(mid)||''),_inline=!state.thread&&!_flat&&_ti.rootOf.has(mid),_canZap=!!(current&&current.cord&&!current.local&&m.pubkey&&m.pubkey!==viewer.pubkey&&p.payPrivateConcordZap);return `<article class="cc-message${messageMentionsViewer(m,viewer,me)?' cc-mentions-me':''}${_root?' cc-in-thread':''}${_inline?' cc-thread-inline':''}" data-message-id="${p.enc(mid)}"><img class="cc-message-avatar" src="${p.enc(mp.picture||p.LOGO||'')}" alt=""><div class="cc-message-body">${m.reply&&!(_inline&&replyParentId(m)===_ti.rootOf.get(mid))?`<div class="cc-message-reply">${_root?`<button type="button" class="cc-in-thread-tag" data-cc-thread="${p.enc(_root)}" title="Open this thread">\u21b3 in thread</button> `:''}<b>@${p.enc(m.reply.by||'member')}</b> ${p.enc(String(m.reply.text||'').slice(0,100))}</div>`:''}<b>${p.enc(m.by)}</b><time>${new Date(m.at).toLocaleTimeString([],{hour:'2-digit',minute:'2-digit'})}</time>${(m.tags||[]).some(t=>t[0]==='edited')?'<span class="cc-edited" title="This message was edited">(edited)</span>':''}${messageContentHtml(p,m,current,state.channel)}${deliveryHtml(p,m)}<div class="cc-reactions">${reactionSummary(p,m)}${zapSummary(p,m)}</div><div class="cc-message-actions" role="toolbar" aria-label="Message actions"><button class="cc-action-trigger" data-cc-actions="${p.enc(mid)}" aria-expanded="false" title="Message actions">⋯</button><button data-cc-react="${p.enc(mid)}" title="Add reaction">☺</button>${_canZap?`<button data-cc-zap="${p.enc(mid)}" title="Private zap">⚡</button>`:''}<button data-cc-reply="${p.enc(mid)}" title="Reply">↩</button>${canEditMessage(m,viewer,current)?`<button data-cc-edit="${p.enc(mid)}" title="Edit message">✎</button>`:''}${canPinHere(current,state.channel,viewer)&&!m.pending&&!m.failed&&(m.kind===9||m.kind===1111)?`<button data-cc-pin="${p.enc(mid)}" title="${pinsOf(current,state.channel).some(x=>x.id===mid)?'Unpin message':'Pin message'}">${pinsOf(current,state.channel).some(x=>x.id===mid)?'📍':'📌'}</button>`:''}${_replies&&!state.thread&&_flat?`<button class="cc-thread-open" data-cc-thread="${p.enc(mid)}" title="Open thread">${_replies} ${_replies===1?'reply':'replies'}</button>`:''}<button data-cc-delete="${p.enc(mid)}" class="cc-delete-action ${m.pubkey&&(m.pubkey===viewer.pubkey||(canModerate&&m.pubkey!==ownerPk))?'':'hidden'}" title="${m.pubkey===viewer.pubkey?'Delete message':'Remove this message'}">⌫</button></div></div></article>${_replies&&!state.thread&&!_flat?threadSummaryHtml(p,mid,_ti.index.get(mid)):''}`;}).join('')}<!--/cc-list--></div>`:emptyChannelHtml(p,current))}`;
   }
-  let _ccLastHtml='',_ccLastRoot=null,_ccLastRest=null;   // what render() last drew, and its root -- see below
+  let _ccLastHtml='',_ccLastRoot=null;   // what render() last drew, and its root -- see below
   function render(){
     // An explicit/user render supersedes any coalesced background paint. A focusout listener from
     // the old workspace may still fire, but it observes false and cannot paint twice.
@@ -4811,18 +4815,15 @@
      * for it replaced the text box under their fingers. */
     const _key=_html.replace(/(<textarea id="cc-input"[^>]*>)[\s\S]*?(<\/textarea>)/,'$1$2');
     if(_key===_ccLastHtml&&_ccLastRoot&&_ccLastRoot.isConnected&&_ccLastRoot.parentNode===feed)return;
-    const _split=splitList(_key), _oldList=feed.querySelector&&feed.querySelector('.cc-message-list');
-    if(_split&&_ccLastRest!==null&&_split.rest===_ccLastRest&&_oldList&&_ccLastRoot&&_ccLastRoot.isConnected&&_ccLastRoot.parentNode===feed){
-      (window.__ccDbg=window.__ccDbg||[]).push('P');patchList(_oldList,splitList(_html).inner);
-      _ccLastHtml=_key;
-    }else{
-      (window.__ccDbg=window.__ccDbg||[]).push('R'+(_split?(_ccLastRest===null?'n':(_split.rest===_ccLastRest?'s':'d')):'x'));const oldVideos=new Map(); try{ for(const v of feed.querySelectorAll('.cc-message video'))oldVideos.set(videoKey(v),v); }catch(_){}
-      feed.innerHTML=_html;_ccLastHtml=_key;_ccLastRoot=feed.firstElementChild;
-      retainCommunityRail(oldCommunityRail,feed.querySelector&&feed.querySelector('.cc-communities'));
-      try{ keepVideos(oldVideos,feed); }catch(_){}
-      try{ const nl=feed.querySelector('.cc-message-list'); if(nl)stampList(nl); }catch(_){}
-    }
-    _ccLastRest=_split?_split.rest:null;
+    /* A FULL REBUILD, deliberately: everything outside the message list is bound with listeners that a
+     * kept node would collect once per repaint (the composer's own input handlers among them). The
+     * players are carried across (keepVideos -- a synchronous move does not pause or reload one), and
+     * the list's rows are stamped so the next LIVE tick (patchMessageList) can keep every unchanged one. */
+    const oldVideos=new Map(); try{ for(const v of feed.querySelectorAll('.cc-message video'))oldVideos.set(videoKey(v),v); }catch(_){}
+    feed.innerHTML=_html;_ccLastHtml=_key;_ccLastRoot=feed.firstElementChild;
+    retainCommunityRail(oldCommunityRail,feed.querySelector&&feed.querySelector('.cc-communities'));
+    try{ keepVideos(oldVideos,feed); }catch(_){}
+    try{ const nl=feed.querySelector('.cc-message-list'); if(nl)stampList(nl); }catch(_){}
     try{
       if(openActions){
         const row=[...feed.querySelectorAll('.cc-message[data-message-id]')].find(r=>r.dataset.messageId===openActions);
