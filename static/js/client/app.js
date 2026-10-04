@@ -4632,6 +4632,8 @@
                     /^pcai:automute$/,
                     /* Concord read positions: left behind, old mentions come back as new. */
                     /^pcai:concord-read$/,
+                    /* Concord community folders: left behind, a second device has none. */
+                    /^pcai:concord-rail$/,
                     /* Go Live templates: left behind they read as never saved. */
                     /^pcai:livetemplates$/,
                     /* …and the shared playlists you accepted, for the same reason: left on the old

@@ -159,6 +159,8 @@
          /* Where each Concord channel was last read, account-wide (concord.js READ_D). Evicted, a second
             device reads every mention from the last week as new again. */
          t[1] === 'pcai:concord-read' ||
+         /* Community folders (concord.js RAIL_D). Evicted, the rail draws without them as if never made. */
+         t[1] === 'pcai:concord-rail' ||
          /* Go Live templates (client/livetemplates.js). Evicted, the menu reads as "you never saved any". */
          t[1] === 'pcai:livetemplates' ||
          /* Which shared playlists you accepted. Evicted by a firehose it reads as "you have decided
