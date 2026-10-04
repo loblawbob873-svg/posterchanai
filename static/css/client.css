@@ -10932,6 +10932,21 @@ html.pc-oswin .pv-sheet{top:38px}
 .cc-in-thread-tag{all:unset;color:var(--accent,#7aa2f7);font-weight:600;cursor:pointer}
 .cc-in-thread-tag:hover,.cc-in-thread-tag:focus-visible{text-decoration:underline}
 .cc-threads-toggle.on{color:var(--accent,#7aa2f7)}
+/* Replies collapsed under the message they answer: one compact summary row (faces, count, the last
+   reply), and when opened, the replies tucked in under it -- inset just enough to read as belonging. */
+.cc-thread-summary{display:flex;align-items:center;gap:8px;margin:-2px 0 6px 52px;font-size:12.5px;min-width:0}
+.cc-ts-toggle{all:unset;display:inline-flex;align-items:center;gap:6px;min-width:0;cursor:pointer;
+  padding:3px 8px;border-radius:8px;color:var(--accent,#7aa2f7)}
+.cc-ts-toggle:hover,.cc-ts-toggle:focus-visible{background:rgba(122,162,247,.10)}
+.cc-ts-faces{display:inline-flex}
+.cc-ts-face{width:18px;height:18px;border-radius:50%;object-fit:cover;margin-right:-5px;border:1px solid var(--bg,#111)}
+.cc-ts-faces+b{margin-left:6px}
+.cc-ts-last{color:var(--muted,#9aa3b2);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;min-width:0}
+.cc-ts-open{all:unset;cursor:pointer;font-size:12px;color:var(--muted,#9aa3b2);white-space:nowrap}
+.cc-ts-open:hover,.cc-ts-open:focus-visible{color:var(--accent,#7aa2f7);text-decoration:underline}
+.cc-message.cc-thread-inline{margin-left:36px;box-shadow:inset 2px 0 0 rgba(122,162,247,.45)}
+.cc-message.cc-thread-inline .cc-message-avatar{width:24px;height:24px}
+@media(max-width:640px){ .cc-thread-summary{margin-left:44px} .cc-message.cc-thread-inline{margin-left:20px} .cc-ts-open{display:none} }
 .cc-thread-bar span{opacity:.7;font-size:12px}
 
 /* A POLL, IN CONCORD'S OWN CHAT STYLE — not the timeline's poll card, which is a note with an
