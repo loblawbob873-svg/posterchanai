@@ -171,6 +171,53 @@
     if(opts.menu) opts.menu(x, y, rows);
   }
 
+  /* CLICKS GO THROUGH HER TRANSPARENT PARTS ("make posterchan/axolotl so it don't interfere with
+   * clicking widgets/app elements behind it"). Her box is a rectangle and most of it is empty air
+   * around a dancing figure; it used to swallow every click in it. Now each frame's alpha is read once
+   * (same-origin images, an offscreen canvas) and, as the mouse moves, the box only catches the pointer
+   * where she is actually drawn -- anywhere else it lets the press fall through to whatever is under her.
+   * The image is drawn with object-fit: contain, so a point maps through that letterboxing first. */
+  const alphaMaps = new Map();
+  function alphaMap(im){
+    const key = im.currentSrc || im.src;
+    if(alphaMaps.has(key)) return alphaMaps.get(key);
+    let map = null;
+    try{
+      const w = im.naturalWidth, h = im.naturalHeight, step = 4;
+      const c = document.createElement('canvas'); c.width = Math.ceil(w / step); c.height = Math.ceil(h / step);
+      const g = c.getContext('2d', { willReadFrequently: true }); g.drawImage(im, 0, 0, c.width, c.height);
+      map = { w, h, cw: c.width, ch: c.height, data: g.getImageData(0, 0, c.width, c.height).data };
+    }catch(_){ map = null; }
+    if(map) alphaMaps.set(key, map);
+    return map;
+  }
+  /* Is she drawn at this point of the viewport? Unknown (frame not decoded yet) answers yes, so her
+   * box never goes dead to a click before her picture has loaded. */
+  function opaqueAt(x, y){
+    const im = el && el.querySelector('img');
+    if(!im) return false;
+    const r = im.getBoundingClientRect();
+    if(x < r.left || x > r.right || y < r.top || y > r.bottom) return false;
+    if(!im.complete || !im.naturalWidth) return true;
+    const m = alphaMap(im); if(!m) return true;
+    const k = Math.min(r.width / m.w, r.height / m.h), dw = m.w * k, dh = m.h * k;
+    const ox = r.left + (r.width - dw) / 2, oy = r.top + (r.height - dh) / 2;
+    const u = (x - ox) / dw, v = (y - oy) / dh;
+    if(u < 0 || u > 1 || v < 0 || v > 1) return false;
+    const cx = Math.min(m.cw - 1, Math.floor(u * m.cw)), cy = Math.min(m.ch - 1, Math.floor(v * m.ch));
+    // A little slack around her outline: a pixel's neighbours count, so a thin arm is still grabbable.
+    for(let dy = -1; dy <= 1; dy++) for(let dx = -1; dx <= 1; dx++){
+      const px = cx + dx, py = cy + dy;
+      if(px >= 0 && py >= 0 && px < m.cw && py < m.ch && m.data[(py * m.cw + px) * 4 + 3] > 40) return true;
+    }
+    return false;
+  }
+  function hitTest(e){
+    if(!el || drag || e.pointerType === 'touch') return;
+    const on = opaqueAt(e.clientX, e.clientY);
+    el.style.pointerEvents = on ? '' : 'none';
+  }
+  document.addEventListener('pointermove', hitTest, { capture: true, passive: true });
   function build(){
     const me = CHARS[who()];
     el = document.createElement('div');
@@ -181,7 +228,7 @@
     el.title = me.name + ' — click me, drag me, right-click to hide or switch';
     const im = document.createElement('img'); im.alt = ''; im.draggable = false; im.src = SRC(frame);
     el.appendChild(im);
-    el.addEventListener('pointerenter', () => { if(!drag && !el.classList.contains('happy')) show(2); });
+    el.addEventListener('pointerenter', ev => { if(ev.pointerType !== 'touch' && !opaqueAt(ev.clientX, ev.clientY)){ el.style.pointerEvents = 'none'; return; } if(!drag && !el.classList.contains('happy')) show(2); });
     el.addEventListener('contextmenu', ev => { ev.preventDefault(); ev.stopPropagation(); menu(ev.clientX, ev.clientY); });
     el.addEventListener('wheel', ev => { if(!ev.ctrlKey) return; ev.preventDefault(); resize(ev.deltaY < 0 ? 1 : -1); }, { passive: false });
     el.addEventListener('pointerdown', ev => {

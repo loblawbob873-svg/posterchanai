@@ -297,3 +297,41 @@ def test_on_posterchanos_her_size_and_the_monitor_she_was_left_on_are_saved_and_
     assert res["saved_size"] == 1.25, res
     assert res["saved_spot"] == {"out": "DP-1", "fx": 0.25, "fy": 0.75}, ("the monitor she was left on was not saved", res["saved_spot"])
     assert res["after_restart"] == {"out": "DP-1", "fx": 0.25, "fy": 0.75, "size": 1.25}, ("a restart forgot where she was left", res["after_restart"])
+
+
+@pytest.mark.skipif(not Path("/opt/google/chrome/chrome").exists(), reason="Chrome required")
+def test_clicks_go_through_her_transparent_parts_and_not_through_her():
+    """'is it possible to make posterchan/axolotl so it don't interfere with clicking widgets/app elements
+    behind it?' Real mouse input: a button lies under her box. A click on the empty air in her box's
+    corner reaches the button; a click on her body reaches her (she reacts) and not the button."""
+    res = {}
+
+    async def check(b):
+        await desktop.login(b)
+        await b.until("document.body.classList.contains('os-on') && !!document.querySelector('#os-desk')")
+        await b.until("(()=>{const i=document.querySelector('#os-desk .os-buddy img');return !!i&&i.complete&&i.naturalWidth>0})()")
+        await asyncio.sleep(.5)
+        box = await b.js(f"{RECT}('.os-buddy')")
+        # A button under her whole box.
+        await b.js(f"""(()=>{{const d=document.querySelector('#os-desk'),z=parseFloat(getComputedStyle(document.body).zoom)||1,dr=d.getBoundingClientRect();
+            const t=document.createElement('button');t.id='under';t.textContent='under';window.__under=0;t.onclick=()=>window.__under++;
+            Object.assign(t.style,{{position:'absolute',zIndex:1,left:(({box['l']}-dr.left)/z)+'px',top:(({box['t']}-dr.top)/z)+'px',width:({box['w']}/z)+'px',height:({box['h']}/z)+'px'}});
+            d.appendChild(t);}})()""")
+        corner = (box["l"] + 4, box["t"] + 4)
+        body = (box["l"] + box["w"] / 2, box["t"] + box["h"] * 0.55)
+        for x, y in (corner,):
+            await _mouse(b, x, y, "mouseMoved", 0)
+            await asyncio.sleep(.1)
+            await _mouse(b, x, y, "mousePressed"); await _mouse(b, x, y, "mouseReleased", 0)
+        await asyncio.sleep(.2)
+        res["corner"] = await b.js("({under:__under, happy:document.querySelector('.os-buddy').classList.contains('happy')})")
+        x, y = body
+        await _mouse(b, x, y, "mouseMoved", 0)
+        await asyncio.sleep(.1)
+        await _mouse(b, x, y, "mousePressed"); await _mouse(b, x, y, "mouseReleased", 0)
+        await asyncio.sleep(.2)
+        res["body"] = await b.js("({under:__under, happy:document.querySelector('.os-buddy').classList.contains('happy')})")
+
+    asyncio.run(desktop.with_browser("online", "", check, INIT))
+    assert res["corner"] == {"under": 1, "happy": False}, ("a click on the empty air around her did not reach what is behind her", res)
+    assert res["body"] == {"under": 1, "happy": True}, ("a click on her body went through her", res)
