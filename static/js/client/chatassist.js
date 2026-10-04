@@ -88,8 +88,8 @@
           <button class="btn btn-neon small ca-close">Close</button></div></div>`, b => { box = b; });
     if(box){
       const c = box.querySelector('.ca-copy');
-      if(c) c.onclick = () => { if(p.copyValue) p.copyValue(box.dataset.copy || '', 'Copied'); };
-      box.dataset.copy = copyText || '';
+      if(c) c.onclick = () => { if(p.copyValue) p.copyValue(box.dataset.caCopy || '', 'Copied'); };
+      box.dataset.caCopy = copyText || '';
       box.querySelector('.ca-close').onclick = () => { if(p.closeModal) p.closeModal(); };
     }
     return box;
@@ -97,7 +97,7 @@
   function fillSheet(box, bodyHtml, copyText){
     if(!box || !box.isConnected) return;
     box.querySelector('.ca-body').innerHTML = bodyHtml;
-    box.dataset.copy = copyText || '';
+    box.dataset.caCopy = copyText || '';
     const c = box.querySelector('.ca-copy'); if(c) c.hidden = !copyText;
   }
   const bullets = text => String(text || '').split(/\n+/).map(l => l.trim()).filter(Boolean)

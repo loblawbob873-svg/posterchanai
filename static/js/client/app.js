@@ -2763,7 +2763,11 @@
     // Go Live server/key boxes; those are inputs and belong to _copyFrom, which reads .value.
     document.addEventListener('click', e=>{
       const c = e.target.closest('[data-copy]'); if(!c) return;
-      const el = $('#'+c.dataset.copy); if(!el) return;
+      /* AN ID, LOOKED UP AS AN ID -- never spliced into a selector. `data-copy` is also a Telegram
+       * message number ("#123" is not a valid selector) and anything else somebody put in it; as a
+       * selector each of those threw on EVERY click inside the element, Close included ("Summarize
+       * link -> failed to execute querySelector on 'Document'"). */
+      const el = document.getElementById(String(c.dataset.copy || '')); if(!el) return;
       if(el.tagName === 'INPUT' || el.tagName === 'TEXTAREA') return;   // handled by _copyFrom
       const txt = el.textContent || ''; if(!txt) return;                 // never "copy" emptiness
       try{ copyValue(txt, 'copied', 'Copy this:'); }
