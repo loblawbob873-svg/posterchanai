@@ -78,7 +78,9 @@ async def _drive(ws_url):
                     return remote.get("value")
 
         async def until(expression, what):
-            for _ in range(200):
+            # 20 s, not 4: a loaded pregate shard took longer than 4 s to boot the page ("Notes module did
+            # not boot"), and a wait only costs anything when something really is slow.
+            for _ in range(1000):
                 if await evaluate(expression):
                     return
                 await asyncio.sleep(.02)
