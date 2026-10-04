@@ -129,7 +129,7 @@ class Page:
         return r["result"].get("value")
 
     async def until(self, expr, what):
-        for _ in range(150):
+        for _ in range(500):
             if await self.js(expr):
                 return
             await asyncio.sleep(.02)

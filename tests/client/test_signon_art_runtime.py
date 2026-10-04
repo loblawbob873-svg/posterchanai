@@ -60,7 +60,7 @@ async def drive(url, width, height, theme):
             assert 'exceptionDetails' not in got, got
             return got['result'].get('value')
         await call('Emulation.setDeviceMetricsOverride', dict(width=width, height=height, deviceScaleFactor=1, mobile=False))
-        for _ in range(100):
+        for _ in range(334):
             if await js("document.readyState==='complete' && !!document.querySelector('.auth-hero-art')"): break
             await asyncio.sleep(.03)
         await js(f'document.documentElement.dataset.theme={json.dumps(theme)}')

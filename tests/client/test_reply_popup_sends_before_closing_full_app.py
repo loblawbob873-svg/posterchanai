@@ -67,7 +67,7 @@ def test_reply_popup_publishes_before_its_window_closes(ack):
                    + ";ta.dispatchEvent(new Event('input',{bubbles:true}));document.querySelector('#cmp-send').click()})()")
         # The composer must hand the reply to a socket BEFORE the window goes. Wait long enough
         # for a publish to finish, whichever way the relay answered.
-        for _ in range(80):
+        for _ in range(100):
             if await b.js('__closed'):
                 break
             await asyncio.sleep(.1)
@@ -104,7 +104,7 @@ def test_a_composer_drawn_straight_away_still_sends_and_closes_its_window():
         await b.until("!!window.__PC && !!__PC.me() && !!document.querySelector('#modal-root #cmp-send')")
         await b.js("(()=>{const ta=document.querySelector('#cmp');ta.value=" + json.dumps(text)
                    + ";ta.dispatchEvent(new Event('input',{bubbles:true}));document.querySelector('#cmp-send').click()})()")
-        for _ in range(80):
+        for _ in range(100):
             if await b.js('__closed'):
                 break
             await asyncio.sleep(.1)

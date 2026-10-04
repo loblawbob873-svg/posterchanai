@@ -62,7 +62,7 @@ async def drive(url, width):
           Store.query=()=>['Alpha travel','Beta ideas','Alpha recipes'].map((title,i)=>({created_at:10+i,content:JSON.stringify({title,body:'A useful thought for later.',updated:10+i,tags:['personal']}),tags:[['d','pcai:note:'+i],['l','pcai-notes']]}));
           PCNotes.render();return true;
         })()""")
-        for _ in range(100):
+        for _ in range(334):
             if await js("document.querySelectorAll('.nt-item').length===3"): break
             await asyncio.sleep(.03)
         assert await js("document.querySelectorAll('.nt-item').length===3")

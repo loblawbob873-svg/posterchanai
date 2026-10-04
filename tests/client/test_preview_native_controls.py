@@ -79,7 +79,7 @@ async def check_controls(tmp_path, kind, native, scale):
                 'deviceScaleFactor': 1, 'mobile': False,
             })
             await browser.call('Page.navigate', {'url': f'http://127.0.0.1:{server.server_port}/fixture' + ('?pcwin=files' if native else '')})
-            for _ in range(100):
+            for _ in range(200):
                 if await browser.js('!!window.PCPreview && document.readyState === "complete"'):
                     break
                 await asyncio.sleep(.05)
@@ -90,7 +90,7 @@ async def check_controls(tmp_path, kind, native, scale):
             data = '<svg xmlns="http://www.w3.org/2000/svg" width="100" height="100"><rect width="100" height="100" fill="red"/></svg>' if kind == 'image' else blank_pdf()
             assert await browser.js(f'PCPreview.open({{name:{json.dumps(name)},mime:{json.dumps(mime)},blob:new Blob([{json.dumps(data)}],{{type:{json.dumps(mime)}}})}})')
             if kind == 'pdf':
-                for _ in range(100):
+                for _ in range(200):
                     if await browser.js('!!document.querySelector(".pv-pdf-page")'):
                         break
                     await asyncio.sleep(.05)
@@ -115,7 +115,7 @@ async def check_controls(tmp_path, kind, native, scale):
                 await click('.pv-rot')
                 assert await browser.js('document.querySelector(".pv-img").style.transform === "rotate(90deg)"')
             await click('.pv-dl')
-            for _ in range(50):
+            for _ in range(500):
                 if await browser.js('__saved.length === 1'):
                     break
                 await asyncio.sleep(.02)

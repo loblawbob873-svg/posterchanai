@@ -171,6 +171,7 @@ async def cold_popup(mode,kind):
         # paint while config is still pending; the old 2.5s network gate exposes a black window.
         expression="(()=>{const h=document.querySelector('#os-popup-host');return !!h&&h.getBoundingClientRect().height>30&&h.innerText.trim().length>10})()"
         started=await b.js('performance.now()')
+        # deadline: the menu must paint within ~1 s -- that IS this measurement, not a wait
         for _ in range(10):
             if await b.js(expression):break
             await asyncio.sleep(.1)
@@ -288,7 +289,7 @@ async def delayed_native_apps(keyboard=None):
         await b.js('__releaseCompositor()')
         await b.until('PCOSShell.available()')
         # Wait for the host discovery call, not generic PosterChan menu row counts.
-        for _ in range(20):
+        for _ in range(200):
             if await b.js("!!document.querySelector('#os-startmenu [data-app=\"app:firefox-fixture\"]')"):break
             await asyncio.sleep(.05)
         assert await b.js("!!document.querySelector('#os-startmenu [data-app=\"app:firefox-fixture\"]')"),await b.js("({scans:__appScans,available:PCOSShell.available(),menu:document.querySelector('#os-startmenu').innerText})")

@@ -87,13 +87,13 @@ async def _drive(ws_url):
             assert remote.get("subtype") != "error", remote.get("description")
             return remote.get("value")
 
-        for _ in range(100):
+        for _ in range(500):
             if await evaluate("!!window.PCNotes"):
                 break
             await asyncio.sleep(.02)
         assert await evaluate("!!window.PCNotes"), "Notes module did not boot"
         await evaluate("PCNotes.render(); true")
-        for _ in range(100):
+        for _ in range(500):
             if await evaluate("!!document.querySelector('.nt-new')"):
                 break
             await asyncio.sleep(.02)

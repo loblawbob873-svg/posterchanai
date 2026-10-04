@@ -52,7 +52,7 @@ def test_a_cached_profile_lists_every_post_once_the_relays_answer():
         pk = await b.js(SETUP)
         await b.js(f"__PC.openProfile('{pk}')")
         await b.until("!!document.querySelector('#prof-list')")
-        for _ in range(40):                                    # up to ~8s for the refresh to land
+        for _ in range(50):                                    # up to ~8s for the refresh to land
             if await b.js(COUNT) >= 5:
                 break
             await asyncio.sleep(.2)

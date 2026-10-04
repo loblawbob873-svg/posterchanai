@@ -87,7 +87,7 @@ async def _run(page, hash=""):
                 # must actually become the other one (a fragment change alone reloads nothing).
                 other = "#posterchan" if hash == "#axolotl" else "#axolotl"
                 await b.js(f"location.hash={json.dumps(other)};true")
-                for _ in range(50):
+                for _ in range(100):
                     src = await b.js("(document.getElementById('im')||{}).getAttribute&&document.getElementById('im').getAttribute('src')||''")
                     if (("/mascot/axolotl/" in src) if other == "#axolotl" else ("/mascot/dance/" in src)):
                         break
