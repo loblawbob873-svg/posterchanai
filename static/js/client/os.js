@@ -3263,7 +3263,9 @@
     return want.length;
   }
   // Fallback when the account's preferences never arrive (offline): use what this machine holds.
-  setTimeout(()=>{ try{ runStartupApps(); }catch(_){} }, 15000);
+  // Only in the PosterChanOS shell, the one place startup apps can run: armed everywhere, it kept every
+  // page and every node test of this file alive for 15s doing nothing (a test run stalled on it).
+  if(window.pcShell) setTimeout(()=>{ try{ runStartupApps(); }catch(_){} }, 15000);
   function _wireStartupApps(card){
     try{ _wireStartupPcApps(card.closest('section') || card); }catch(_){}
     const listEl=card.querySelector('[data-startup-list]'), statEl=card.querySelector('[data-startup-status]');
