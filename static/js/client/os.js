@@ -2640,8 +2640,24 @@
     if(!window.PCCalendar||!window.PCCalendar.draft){ PC().toast('Calendar is not available here'); return false; }
     try{ await window.PCCalendar.draft(ev); return true; }catch(_){ PC().toast('Could not open the calendar'); return false; }
   }
+  /* OPEN AN APP FROM A STEP ("clicked 'Open Poster Chan bot status' and nothing happened"). In a popped-out
+   * window this repainted the window ITSELF -- and when the step named the app already showing (Telegram
+   * asked to open Telegram) that was no change at all, so the button did nothing visible. A window does not
+   * open windows: the desktop does, exactly as every other link out of a window. The app already here
+   * says so instead of silently succeeding. */
   function _aiOpen(view){
-    try{ PC().switchView(view); return true; }catch(_){ PC().toast('Could not open it'); return false; }
+    const P=PC();
+    try{
+      let label='';
+      try{ const n=document.querySelector('.nav-item[data-view="'+CSS.escape(view)+'"] span'); label=n?n.textContent.trim():''; }catch(_){ }
+      if(window.PCOSWin && PCOSWin.isWindow && PCOSWin.isWindow()){
+        if(PCOSWin.viewOf && PCOSWin.viewOf()===view){ P.toast((label||'It')+' is this window'); return true; }
+        const desk=PCOSWin.desktop && PCOSWin.desktop(), W=desk && desk.PCOSWin;
+        if(W && W.enabled && W.enabled() && W.routable && W.routable(view)){ W.open(view, label||view); return true; }
+      }
+      if(P.VIEW===view){ P.toast((label||'It')+' is already open'); return true; }
+      P.switchView(view); return true;
+    }catch(_){ P.toast('Could not open it'); return false; }
   }
   function _aiSearch(q){
     if(!_aiOpen('websearch')) return false;
@@ -2741,6 +2757,23 @@
       t=setTimeout(done,quiet);
     });
   }
+  /* A text box this can type into: a text-like <input>, a <textarea>, or editable content. */
+  function _aiTypable(el){
+    if(!el || !el.tagName) return false;
+    if(el.isContentEditable || el.tagName==='TEXTAREA') return true;
+    return el.tagName==='INPUT' && !/^(checkbox|radio|button|submit|reset|image|file|hidden|range|color)$/i.test(el.type||'');
+  }
+  /* Type as a person would be seen to: the value through the element's OWN setter (frameworks watch it),
+   * then input + change. The setter is looked up on the element's own prototype chain, never assumed. */
+  function _aiType(el,text){
+    try{ el.focus(); }catch(_){ }
+    if(el.isContentEditable) el.textContent=text;
+    else{
+      let d=null; for(let p=Object.getPrototypeOf(el); p && !d; p=Object.getPrototypeOf(p)) d=Object.getOwnPropertyDescriptor(p,'value');
+      if(d && d.set) d.set.call(el,text); else el.value=text;
+    }
+    el.dispatchEvent(new Event('input',{bubbles:true})); el.dispatchEvent(new Event('change',{bubbles:true}));
+  }
   function _aiFlash(el,on){ try{ if(el) el.classList.toggle('ai-target',!!on); }catch(_){ } }
   async function _aiAct(st,map,w,undo){
     if(st.do==='scroll'){
@@ -2766,16 +2799,23 @@
       return true;
     }
     if(st.do==='click'){ el.click(); return true; }
-    if(st.do==='fill'){
-      try{ el.focus(); }catch(_){ }
-      if(el.isContentEditable) el.textContent=st.text;
-      else{
-        const proto=el.tagName==='TEXTAREA'?HTMLTextAreaElement.prototype:HTMLInputElement.prototype;
-        const set=Object.getOwnPropertyDescriptor(proto,'value'); set&&set.set?set.set.call(el,st.text):(el.value=st.text);
-      }
-      el.dispatchEvent(new Event('input',{bubbles:true})); el.dispatchEvent(new Event('change',{bubbles:true}));
+    /* "FILL" WHAT IS NOT A TEXT BOX ("clicking reply ... action failed: illegal invocation"). The model
+     * fills the post's Reply BUTTON with the reply's text, and this called the <input> value setter on a
+     * <button> -- a TypeError. It means the obvious thing: a dropdown picks the option; a button or link
+     * is pressed, and the text goes into the box that opens (the reply composer). Nothing is sent. */
+    if(st.do==='fill' && el.tagName==='SELECT') return _aiAct(Object.assign({},st,{do:'choose'}),map,w,undo);
+    if(st.do==='fill' && !_aiTypable(el)){
+      el.click();
+      await _aiSettle(w,200,1500);
+      const box=_aiTypable(document.activeElement)&&!document.activeElement.closest('.osw-ai-panel')?document.activeElement
+               :([...document.querySelectorAll('#modal-root textarea,#modal-root [contenteditable="true"]')].filter(e=>e.getClientRects().length).pop()||_aiComposer(w));
+      if(!box){ PC().toast('Pressed “'+st.target+'” — there is no text box to type into'); return false; }
+      if(undo) undo.push({el:box,editable:!!box.isContentEditable,value:box.isContentEditable?box.textContent:box.value,checked:false,label:st.target});
+      _aiType(box,st.text);
+      PC().toast('Typed it in — nothing was sent');
       return true;
     }
+    if(st.do==='fill'){ _aiType(el,st.text); return true; }
     if(st.do==='choose'){
       const want=String(st.text).trim().toLowerCase();
       const opt=[...(el.options||[])].find(o=>o.textContent.trim().toLowerCase()===want||String(o.value).toLowerCase()===want)
@@ -2800,8 +2840,9 @@
       const u=stack.pop(), el=u.el; if(!el || !el.isConnected) continue;
       if(u.editable) el.textContent=u.value;
       else if(el.type==='checkbox'||el.type==='radio'){ if(!!el.checked!==u.checked) el.click(); }
-      else{ const proto=el.tagName==='TEXTAREA'?HTMLTextAreaElement.prototype:el.tagName==='SELECT'?HTMLSelectElement.prototype:HTMLInputElement.prototype;
-            const d=Object.getOwnPropertyDescriptor(proto,'value'); d&&d.set?d.set.call(el,u.value):(el.value=u.value); }
+      else if(el.tagName==='SELECT'){ el.value=u.value; }
+      else if(_aiTypable(el)){ _aiType(el,u.value); n++; continue; }
+      else continue;                       // a button a fill pressed: nothing of its own to put back
       el.dispatchEvent(new Event('input',{bubbles:true})); el.dispatchEvent(new Event('change',{bubbles:true})); n++;
     }
     return n;
