@@ -47,9 +47,13 @@ async def drive(url, width):
             assert 'exceptionDetails' not in result, result
             return result['result'].get('value')
         await call('Emulation.setDeviceMetricsOverride', dict(width=width, height=844, deviceScaleFactor=1, mobile=False))
-        for _ in range(100):
-            if await js('!!window.PCNotes'): break
-            await asyncio.sleep(.03)
+        # Wait for BOTH modules, and say so if they never come: under a loaded gate the 3 s this used to
+        # allow ran out silently and the next line died on 'Relay is not defined'.
+        for _ in range(400):
+            if await js('!!window.PCNotes && typeof Relay!=="undefined" && typeof Store!=="undefined"'): break
+            await asyncio.sleep(.05)
+        else:
+            raise AssertionError('Notes, Relay and Store never loaded')
         await js("""(()=>{
           const css=document.createElement('link');css.rel='stylesheet';css.href='/client.css';document.head.append(css);
           document.body.style.cssText='margin:0;background:#101019;color:#eee';
