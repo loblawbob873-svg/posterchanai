@@ -24,10 +24,10 @@ def bundled_assets():
 
 
 def _tiny_webm() -> bytes:
-    # A one-second 320x180 VP8 clip, COMMITTED rather than made with ffmpeg at test time: the desktop CI
+    # A ten-second 320x180 VP8 clip (long enough to never wrap during the test: a LOOP fires 'waiting' at 0:00, which is not a repaint), COMMITTED rather than made with ffmpeg at test time: the desktop CI
     # host has no ffmpeg, and there a skip counts as a failure (required coverage), which blocked the
     # deploy-79 desktop build. Regenerate with:
-    #   ffmpeg -f lavfi -i testsrc=size=320x180:rate=10 -t 1 -c:v libvpx -b:v 50k tests/fixtures/concord_clip.webm
+    #   ffmpeg -f lavfi -i testsrc=size=320x180:rate=10 -t 10 -c:v libvpx -b:v 30k tests/fixtures/concord_clip.webm
     return (Path(__file__).resolve().parents[1] / "fixtures" / "concord_clip.webm").read_bytes()
 
 
@@ -45,7 +45,7 @@ SEAL = r"""(async()=>{
 
 STATE = r"""(()=>{const v=document.querySelector('.cc-encrypted-attachment video'), host=v&&v.closest('.cc-encrypted-attachment');
   const msg=host&&host.closest('.cc-message'), below=msg&&msg.nextElementSibling;
-  return {has:!!v, same:!!v&&v===window.__vid, h:host?Math.round(host.getBoundingClientRect().height):0,
+  return {has:!!v, same:!!v&&v===window.__vid, art:!!msg&&msg===window.__art, h:host?Math.round(host.getBoundingClientRect().height):0,
           below:below?Math.round(below.getBoundingClientRect().top-msg.getBoundingClientRect().top):null,
           meta:!!v&&v.readyState>=1}})()"""
 
@@ -70,7 +70,10 @@ def test_an_encrypted_video_stays_put_while_the_room_repaints():
         for _ in range(3):                        # its size is now known; let the room settle
             await b.js("PCConcord.render();true")
             await asyncio.sleep(.15)
-        await b.js("window.__vid=document.querySelector('.cc-encrypted-attachment video');__vid.muted=true;__vid.loop=true;__vid.play().catch(()=>{});true")
+        await b.js("window.__vid=document.querySelector('.cc-encrypted-attachment video');window.__art=__vid.closest('.cc-message');__vid.muted=true;__vid.play().catch(()=>{});true")
+        await asyncio.sleep(.6)
+        # What the person sees as "the circle reloads": the player reloading, stalling or pausing.
+        await b.js("window.__ev=[];['loadstart','emptied','waiting','pause','abort'].forEach(t=>__vid.addEventListener(t,()=>__ev.push(t)));true")
         await asyncio.sleep(.4)
         first = await b.js(STATE)
         seen = []
@@ -83,13 +86,29 @@ def test_an_encrypted_video_stays_put_while_the_room_repaints():
         await b.until("[...document.querySelectorAll('.cc-message')].some(m=>/a new message arrives/.test(m.textContent))")
         await asyncio.sleep(.3)
         seen.append(await b.js(STATE))
+        # A LIVE TICK WHILE SOMEBODY IS IN THE COMPOSER -- the ordinary state right after sending. That
+        # path (backgroundRender -> patchMessageList) repainted the message pane with innerHTML and never
+        # carried the players over: every tick a new <video>, the loading circle, every few seconds
+        # ("the concord video in Lounge room keeps glitching every few seconds, you see the circle reload").
+        await b.js("document.getElementById('cc-input').focus();true")
+        for _ in range(4):
+            await b.js("PCConcord.backgroundRender();true")
+            await asyncio.sleep(.2)
+            seen.append(await b.js(STATE))
+        res["focused"] = await b.js("document.activeElement&&document.activeElement.id")
         res["playing"] = await b.js("!!window.__vid&&!__vid.paused&&__vid.isConnected")
+        res["events"] = await b.js("__ev")
         res.update(first=first, seen=seen)
 
     asyncio.run(desktop.with_browser("online", "", check))
     first, seen = res["first"], res["seen"]
+    assert res["focused"] == "cc-input", res["focused"]
     assert first["has"] and first["meta"] and first["h"] > 50, ("the video never showed", first)
     assert all(s["same"] for s in seen), ("a repaint replaced the video player (it reloads and the chat jumps)", seen)
+    # Not even detached and put back: a moved player can re-buffer. The message holding it stays the same node.
+    assert all(s["art"] for s in seen), ("a repaint detached the message holding the video", seen)
     assert min(s["h"] for s in seen) >= first["h"] - 2, ("the video box collapsed during a repaint", first, seen)
     assert len({s["below"] for s in seen}) == 1 and seen[0]["below"] == first["below"], ("the message below the video moved", first, seen)
     assert res["playing"], "a new message stopped the video someone was watching"
+    # 'the concord video in Lounge room keeps glitching every few seconds, you see the circle reload'
+    assert res["events"] == [], ("a repaint made the player reload, stall or pause (the loading circle)", res["events"])

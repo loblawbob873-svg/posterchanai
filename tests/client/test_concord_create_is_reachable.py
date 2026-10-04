@@ -41,7 +41,8 @@ def _always_painted():
     """The chrome painted in every state: the rail and the sheets after the conversation."""
     body = CONCORD[CONCORD.index('const _html=`<div class="cc-app'):]
     rail = body[body.index('<aside class="cc-communities"'):body.index('</aside>')]
-    sheets = body[body.index('</main></div>'):body.index('\n    retainCommunityRail')]
+    _end = re.search(r"\n\s+retainCommunityRail\(", body).start()     # wherever render() keeps the rail
+    sheets = body[body.index('</main></div>'):_end]
     return rail + sheets
 
 

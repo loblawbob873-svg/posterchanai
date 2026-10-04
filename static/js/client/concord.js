@@ -399,7 +399,9 @@
      * grows an unread mark, because the only thing that clears it is the paint being skipped. */
     const narrow=!!(window.matchMedia&&window.matchMedia('(max-width:820px)').matches);
     if(conversationIsVisible(narrow,mobileChatOpen,mobileDrawerOpen))markRead(current,state.channel||'general');
-    scroller.innerHTML=messagesPaneHtml(p,messages,current,viewer,me);
+    /* NOT innerHTML: this runs on every live tick while somebody is in the composer, and a rebuilt pane is
+     * a new <video> for every clip in it -- the loading circle, every few seconds. */
+    paintPane(scroller,messagesPaneHtml(p,messages,current,viewer,me));
     if(p.hydrateLinkCards)p.hydrateLinkCards(scroller);
     wireRoomMedia(p);
     hydrateEncryptedAttachments(messages);
@@ -1430,6 +1432,61 @@
    * changes -- a new message, a reaction -- and a fresh <video> starts over: a clip someone was watching
    * stopped and reloaded on every message ("video in room Lounge causes chat position to keep moving").
    * The players on screen are carried into the new markup when they show the same file. */
+  /* ONLY THE MESSAGES CHANGED: PATCH THE LIST, DON'T REBUILD THE ROOM ("the concord video in Lounge room
+   * keeps glitching every few seconds, you see the circle reload, plays fine though"). A new message used to
+   * rebuild the whole room; the player was carried over (keepVideos) but a moved <video> re-buffers --
+   * measured, 'waiting' fired on it -- which is the loading circle, every few seconds in a busy room. When
+   * everything outside the message list is the same, the list is patched in place: a message whose markup
+   * did not change keeps its very node (so its player is never detached), new ones are inserted around it,
+   * gone ones removed. Anything else changing still rebuilds, as before. */
+  const LIST_OPEN='<!--cc-list-->', LIST_CLOSE='<!--/cc-list-->';
+  function splitList(html){
+    const a=html.indexOf(LIST_OPEN), b=html.lastIndexOf(LIST_CLOSE);
+    if(a<0||b<a)return null;
+    return { rest: html.slice(0,a)+html.slice(b), inner: html.slice(a+LIST_OPEN.length,b) };
+  }
+  function listKey(el,i){
+    if(el.dataset&&el.dataset.messageId)return 'm:'+el.dataset.messageId;
+    const t=el.querySelector&&el.querySelector('[data-cc-thread-expand]');
+    return t?'s:'+t.dataset.ccThreadExpand:'i:'+i;
+  }
+  function stampList(list){ [...list.children].forEach(el=>{ el.__ccSrc=el.outerHTML; }); }
+  function patchList(list,inner){
+    const tpl=document.createElement('template'); tpl.innerHTML=inner;
+    const fresh=[...tpl.content.children], old=new Map();
+    [...list.children].forEach((el,i)=>old.set(listKey(el,i),el));
+    const keep=new Set(); let cursor=list.firstElementChild;
+    fresh.forEach((nu,i)=>{
+      const k=listKey(nu,i), prev=old.get(k), src=nu.outerHTML;
+      const node=(prev&&prev.__ccSrc===src&&!keep.has(prev))?prev:nu;
+      if(node===nu)node.__ccSrc=src;
+      keep.add(node);
+      if(node===cursor){ cursor=cursor.nextElementSibling; return; }
+      list.insertBefore(node,cursor);
+    });
+    /* A message that DID change (a reaction on the video's own message) is a new node -- its player is
+     * carried over from the old one, as a full rebuild does, rather than loaded again. */
+    const gone=[...list.children].filter(el=>!keep.has(el)), oldVideos=new Map();
+    gone.forEach(el=>{ try{ for(const v of el.querySelectorAll('video'))oldVideos.set(videoKey(v),v); }catch(_){} });
+    try{ keepVideos(oldVideos,list); }catch(_){}
+    gone.forEach(el=>{ if(el.parentNode===list)el.remove(); });
+  }
+  /* Repaint a pane holding the message list: patch the list when only it changed, else rebuild the pane
+   * and carry its players over. Returns nothing; the caller re-binds as it always did. */
+  function paintPane(box,html){
+    const sp=splitList(html), list=box.querySelector&&box.querySelector('.cc-message-list');
+    if(sp&&list&&list.parentNode===box){
+      /* Everything around the list the same? Compared as the browser serializes both, so no state to keep. */
+      const shape=root=>{ const l=root.querySelector('.cc-message-list');
+        return [...root.childNodes].map(n=>n===l?l.cloneNode(false).outerHTML:(n.outerHTML!=null?n.outerHTML:n.textContent)).join('\u0001'); };
+      const tpl=document.createElement('template'); tpl.innerHTML=sp.rest;
+      if(shape(tpl.content)===shape(box)){ patchList(list,sp.inner); return; }
+    }
+    const oldVideos=new Map(); try{ for(const v of box.querySelectorAll('.cc-message video'))oldVideos.set(videoKey(v),v); }catch(_){}
+    box.innerHTML=html;
+    try{ keepVideos(oldVideos,box); }catch(_){}
+    try{ const nl=box.querySelector('.cc-message-list'); if(nl)stampList(nl); }catch(_){}
+  }
   function videoKey(v){ const host=v.closest('.cc-encrypted-attachment[data-cc-attachment]');
     return (host?host.dataset.ccAttachment+':'+(host.dataset.ccAttachmentIndex||'0')+'|':'')+(v.getAttribute('src')||''); }
   function keepVideos(old,feed){
@@ -4593,7 +4650,7 @@
       ||(Array.isArray(current&&current.moderators)
          && current.moderators.indexOf(viewer.pubkey)>=0);
     const joinedRooms=''; // Active communities use the server rail/channel navigator, not home-page cards.
-    return `${state.community==null?`<div class="cc-discover"><div class="concord-mark">C</div><h2>Find your community</h2><p>Join an Armada-compatible CORD-05 invite or create a public relay community.</p><div class="cc-primary-actions"><button class="btn btn-neon" id="cc-create">Create community</button><button class="btn btn-ghost" id="cc-welcome-join">Join with invite</button></div>${joinedRooms}<section class="cc-public"><div><h3>Public communities</h3><small>Public CORD invites discovered on Armada relays</small></div>${discovered.length?discovered.map((r,i)=>{const pr=p.profOf?p.profOf(r.source.pubkey):{};return `<button data-cc-discover="${i}" class="cc-public-room"><span class="cc-public-icon">${publicRoomIcon(p,r)}</span><span class="cc-public-copy"><b>${p.enc(r.name)}</b><small>${p.enc((r.description||'Public Concord community').slice(0,120))}</small><em>${p.enc(pr.name||pr.display_name||'Nostr community')}</em></span><strong>Join</strong></button>`;}).join(''):(discoveryLoaded?'<div class="cc-public-empty"><b>No public communities found</b><span>Publish or paste a public Armada/CORD invite to list it.</span></div>':'<div class="cc-public-empty"><b>Searching relays…</b><span>Looking for public Armada/CORD invite notes.</span></div>')}</section></div>`:(messages.length?`${state.thread?`<div class="cc-thread-bar"><button id="cc-thread-back" aria-label="Back to channel">\u2190 Back</button><b>Thread</b><span>${p.enc(String((messages.find(x=>messageId(x)===state.thread)||{}).by||''))}</span></div>`:''}<div class="cc-message-list">${(()=>{
+    return `${state.community==null?`<div class="cc-discover"><div class="concord-mark">C</div><h2>Find your community</h2><p>Join an Armada-compatible CORD-05 invite or create a public relay community.</p><div class="cc-primary-actions"><button class="btn btn-neon" id="cc-create">Create community</button><button class="btn btn-ghost" id="cc-welcome-join">Join with invite</button></div>${joinedRooms}<section class="cc-public"><div><h3>Public communities</h3><small>Public CORD invites discovered on Armada relays</small></div>${discovered.length?discovered.map((r,i)=>{const pr=p.profOf?p.profOf(r.source.pubkey):{};return `<button data-cc-discover="${i}" class="cc-public-room"><span class="cc-public-icon">${publicRoomIcon(p,r)}</span><span class="cc-public-copy"><b>${p.enc(r.name)}</b><small>${p.enc((r.description||'Public Concord community').slice(0,120))}</small><em>${p.enc(pr.name||pr.display_name||'Nostr community')}</em></span><strong>Join</strong></button>`;}).join(''):(discoveryLoaded?'<div class="cc-public-empty"><b>No public communities found</b><span>Publish or paste a public Armada/CORD invite to list it.</span></div>':'<div class="cc-public-empty"><b>Searching relays…</b><span>Looking for public Armada/CORD invite notes.</span></div>')}</section></div>`:(messages.length?`${state.thread?`<div class="cc-thread-bar"><button id="cc-thread-back" aria-label="Back to channel">\u2190 Back</button><b>Thread</b><span>${p.enc(String((messages.find(x=>messageId(x)===state.thread)||{}).by||''))}</span></div>`:''}<div class="cc-message-list"><!--cc-list-->${(()=>{
           /* A THREAD WHOSE ROOT IS NOT HERE MUST NOT EMPTY THE CHANNEL.
            *
            * `threadView` answers [] for a root it cannot find, and a repaint can easily happen with
@@ -4609,9 +4666,9 @@
           const _t=threadView(messages,state.thread);
           if(!_t.length){ state.thread=null; return messages; }
           return _t;
-        })().map(m=>{const mp=p.profOf?p.profOf(m.pubkey):{},mid=messageId(m),_ti=threadInfo(messages),_replies=(_ti.index.get(mid)||[]).length,_flat=threadsInChat(),_root=state.thread||!_flat?'':(_ti.rootOf.get(mid)||''),_inline=!state.thread&&!_flat&&_ti.rootOf.has(mid),_canZap=!!(current&&current.cord&&!current.local&&m.pubkey&&m.pubkey!==viewer.pubkey&&p.payPrivateConcordZap);return `<article class="cc-message${messageMentionsViewer(m,viewer,me)?' cc-mentions-me':''}${_root?' cc-in-thread':''}${_inline?' cc-thread-inline':''}" data-message-id="${p.enc(mid)}"><img class="cc-message-avatar" src="${p.enc(mp.picture||p.LOGO||'')}" alt=""><div class="cc-message-body">${m.reply&&!(_inline&&replyParentId(m)===_ti.rootOf.get(mid))?`<div class="cc-message-reply">${_root?`<button type="button" class="cc-in-thread-tag" data-cc-thread="${p.enc(_root)}" title="Open this thread">\u21b3 in thread</button> `:''}<b>@${p.enc(m.reply.by||'member')}</b> ${p.enc(String(m.reply.text||'').slice(0,100))}</div>`:''}<b>${p.enc(m.by)}</b><time>${new Date(m.at).toLocaleTimeString([],{hour:'2-digit',minute:'2-digit'})}</time>${(m.tags||[]).some(t=>t[0]==='edited')?'<span class="cc-edited" title="This message was edited">(edited)</span>':''}${messageContentHtml(p,m,current,state.channel)}${deliveryHtml(p,m)}<div class="cc-reactions">${reactionSummary(p,m)}${zapSummary(p,m)}</div><div class="cc-message-actions" role="toolbar" aria-label="Message actions"><button class="cc-action-trigger" data-cc-actions="${p.enc(mid)}" aria-expanded="false" title="Message actions">⋯</button><button data-cc-react="${p.enc(mid)}" title="Add reaction">☺</button>${_canZap?`<button data-cc-zap="${p.enc(mid)}" title="Private zap">⚡</button>`:''}<button data-cc-reply="${p.enc(mid)}" title="Reply">↩</button>${canEditMessage(m,viewer,current)?`<button data-cc-edit="${p.enc(mid)}" title="Edit message">✎</button>`:''}${canPinHere(current,state.channel,viewer)&&!m.pending&&!m.failed&&(m.kind===9||m.kind===1111)?`<button data-cc-pin="${p.enc(mid)}" title="${pinsOf(current,state.channel).some(x=>x.id===mid)?'Unpin message':'Pin message'}">${pinsOf(current,state.channel).some(x=>x.id===mid)?'📍':'📌'}</button>`:''}${_replies&&!state.thread&&_flat?`<button class="cc-thread-open" data-cc-thread="${p.enc(mid)}" title="Open thread">${_replies} ${_replies===1?'reply':'replies'}</button>`:''}<button data-cc-delete="${p.enc(mid)}" class="cc-delete-action ${m.pubkey&&(m.pubkey===viewer.pubkey||(canModerate&&m.pubkey!==ownerPk))?'':'hidden'}" title="${m.pubkey===viewer.pubkey?'Delete message':'Remove this message'}">⌫</button></div></div></article>${_replies&&!state.thread&&!_flat?threadSummaryHtml(p,mid,_ti.index.get(mid)):''}`;}).join('')}</div>`:emptyChannelHtml(p,current))}`;
+        })().map(m=>{const mp=p.profOf?p.profOf(m.pubkey):{},mid=messageId(m),_ti=threadInfo(messages),_replies=(_ti.index.get(mid)||[]).length,_flat=threadsInChat(),_root=state.thread||!_flat?'':(_ti.rootOf.get(mid)||''),_inline=!state.thread&&!_flat&&_ti.rootOf.has(mid),_canZap=!!(current&&current.cord&&!current.local&&m.pubkey&&m.pubkey!==viewer.pubkey&&p.payPrivateConcordZap);return `<article class="cc-message${messageMentionsViewer(m,viewer,me)?' cc-mentions-me':''}${_root?' cc-in-thread':''}${_inline?' cc-thread-inline':''}" data-message-id="${p.enc(mid)}"><img class="cc-message-avatar" src="${p.enc(mp.picture||p.LOGO||'')}" alt=""><div class="cc-message-body">${m.reply&&!(_inline&&replyParentId(m)===_ti.rootOf.get(mid))?`<div class="cc-message-reply">${_root?`<button type="button" class="cc-in-thread-tag" data-cc-thread="${p.enc(_root)}" title="Open this thread">\u21b3 in thread</button> `:''}<b>@${p.enc(m.reply.by||'member')}</b> ${p.enc(String(m.reply.text||'').slice(0,100))}</div>`:''}<b>${p.enc(m.by)}</b><time>${new Date(m.at).toLocaleTimeString([],{hour:'2-digit',minute:'2-digit'})}</time>${(m.tags||[]).some(t=>t[0]==='edited')?'<span class="cc-edited" title="This message was edited">(edited)</span>':''}${messageContentHtml(p,m,current,state.channel)}${deliveryHtml(p,m)}<div class="cc-reactions">${reactionSummary(p,m)}${zapSummary(p,m)}</div><div class="cc-message-actions" role="toolbar" aria-label="Message actions"><button class="cc-action-trigger" data-cc-actions="${p.enc(mid)}" aria-expanded="false" title="Message actions">⋯</button><button data-cc-react="${p.enc(mid)}" title="Add reaction">☺</button>${_canZap?`<button data-cc-zap="${p.enc(mid)}" title="Private zap">⚡</button>`:''}<button data-cc-reply="${p.enc(mid)}" title="Reply">↩</button>${canEditMessage(m,viewer,current)?`<button data-cc-edit="${p.enc(mid)}" title="Edit message">✎</button>`:''}${canPinHere(current,state.channel,viewer)&&!m.pending&&!m.failed&&(m.kind===9||m.kind===1111)?`<button data-cc-pin="${p.enc(mid)}" title="${pinsOf(current,state.channel).some(x=>x.id===mid)?'Unpin message':'Pin message'}">${pinsOf(current,state.channel).some(x=>x.id===mid)?'📍':'📌'}</button>`:''}${_replies&&!state.thread&&_flat?`<button class="cc-thread-open" data-cc-thread="${p.enc(mid)}" title="Open thread">${_replies} ${_replies===1?'reply':'replies'}</button>`:''}<button data-cc-delete="${p.enc(mid)}" class="cc-delete-action ${m.pubkey&&(m.pubkey===viewer.pubkey||(canModerate&&m.pubkey!==ownerPk))?'':'hidden'}" title="${m.pubkey===viewer.pubkey?'Delete message':'Remove this message'}">⌫</button></div></div></article>${_replies&&!state.thread&&!_flat?threadSummaryHtml(p,mid,_ti.index.get(mid)):''}`;}).join('')}<!--/cc-list--></div>`:emptyChannelHtml(p,current))}`;
   }
-  let _ccLastHtml='',_ccLastRoot=null;   // what render() last drew, and its root -- see below
+  let _ccLastHtml='',_ccLastRoot=null,_ccLastRest=null;   // what render() last drew, and its root -- see below
   function render(){
     // An explicit/user render supersedes any coalesced background paint. A focusout listener from
     // the old workspace may still fire, but it observes false and cannot paint twice.
@@ -4754,10 +4811,18 @@
      * for it replaced the text box under their fingers. */
     const _key=_html.replace(/(<textarea id="cc-input"[^>]*>)[\s\S]*?(<\/textarea>)/,'$1$2');
     if(_key===_ccLastHtml&&_ccLastRoot&&_ccLastRoot.isConnected&&_ccLastRoot.parentNode===feed)return;
-    const oldVideos=new Map(); try{ for(const v of feed.querySelectorAll('.cc-message video'))oldVideos.set(videoKey(v),v); }catch(_){}
-    feed.innerHTML=_html;_ccLastHtml=_key;_ccLastRoot=feed.firstElementChild;
-    retainCommunityRail(oldCommunityRail,feed.querySelector&&feed.querySelector('.cc-communities'));
-    try{ keepVideos(oldVideos,feed); }catch(_){}
+    const _split=splitList(_key), _oldList=feed.querySelector&&feed.querySelector('.cc-message-list');
+    if(_split&&_ccLastRest!==null&&_split.rest===_ccLastRest&&_oldList&&_ccLastRoot&&_ccLastRoot.isConnected&&_ccLastRoot.parentNode===feed){
+      (window.__ccDbg=window.__ccDbg||[]).push('P');patchList(_oldList,splitList(_html).inner);
+      _ccLastHtml=_key;
+    }else{
+      (window.__ccDbg=window.__ccDbg||[]).push('R'+(_split?(_ccLastRest===null?'n':(_split.rest===_ccLastRest?'s':'d')):'x'));const oldVideos=new Map(); try{ for(const v of feed.querySelectorAll('.cc-message video'))oldVideos.set(videoKey(v),v); }catch(_){}
+      feed.innerHTML=_html;_ccLastHtml=_key;_ccLastRoot=feed.firstElementChild;
+      retainCommunityRail(oldCommunityRail,feed.querySelector&&feed.querySelector('.cc-communities'));
+      try{ keepVideos(oldVideos,feed); }catch(_){}
+      try{ const nl=feed.querySelector('.cc-message-list'); if(nl)stampList(nl); }catch(_){}
+    }
+    _ccLastRest=_split?_split.rest:null;
     try{
       if(openActions){
         const row=[...feed.querySelectorAll('.cc-message[data-message-id]')].find(r=>r.dataset.messageId===openActions);
@@ -5235,7 +5300,12 @@
     $$('[data-cc-server],[data-cc-folder]').forEach(b=>{
       if(b.id==='cc-add'||b.id==='cc-discovery')return;
       b.oncontextmenu=e=>{ e.preventDefault(); railMenu(b); };
-      let t=0; b.addEventListener('pointerdown',e=>{ if(e.pointerType==='mouse')return; clearTimeout(t); t=setTimeout(()=>{ b._ccHeld=true; railMenu(b); },550); });
+      /* Once per button: the rail is KEPT across repaints (retainCommunityRail), so listeners added on every
+       * render piled up and one long press opened the menu once per repaint since. railMenu is read at
+       * press time through the button, so the first binding stays current. */
+      b._ccRailMenu=()=>railMenu(b);
+      if(b._ccRailWired)return; b._ccRailWired=true;
+      let t=0; b.addEventListener('pointerdown',e=>{ if(e.pointerType==='mouse')return; clearTimeout(t); t=setTimeout(()=>{ b._ccHeld=true; b._ccRailMenu(); },550); });
       ['pointerup','pointercancel','pointerleave'].forEach(ev=>b.addEventListener(ev,()=>clearTimeout(t)));
     });
     $$('[data-cc-discover]').forEach(b=>b.onclick=async()=>{
