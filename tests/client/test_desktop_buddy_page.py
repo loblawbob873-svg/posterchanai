@@ -123,4 +123,5 @@ def test_her_window_page_dances_reacts_drags_and_hides():
     drags = [e for e in res["drag"] if e[0] == "drag"]
     assert drags and drags[-1] == ["drag", 50, 20], ("a drag must report the offset from the grab point", res["drag"])
     assert res["drag"][-1] == ["drop"], res["drag"]
-    assert res["menu"] and res["hide"] == [["menu", "hide"]], res
+    # Opening her menu hands the keyboard back ("release"); choosing Hide sends hide.
+    assert res["menu"] and [c for c in res["hide"] if c != ["menu", "release"]] == [["menu", "hide"]], res
