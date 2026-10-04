@@ -1537,7 +1537,15 @@ class RelayServer:
             # for typing/voice presence; it reaches _is_ephemeral below and is fanned out
             # without being stored. Since the envelopes are opaque, accept every correctly
             # signed, size-bounded wrap. Durable 1059 lifecycle is handled by NIP-40.
-            pass
+            # ...but not a FLOOD at one recipient (spamguard.check_gift): accepting every wrap
+            # from anyone made this the open door for "13k gift wraps a minute at one npub".
+            _spam = getattr(self, "spam", None)
+            if _spam is not None and kind == 1059 \
+                    and not self._is_internal(getattr(self, "_conn_ips", {}).get(conn, "?")):
+                _limited = _spam.check_gift(ev)
+                if _limited:
+                    self._refuse(conn, eid, ev, _limited)
+                    return
         elif kind == 9735:
             # NIP-57 zap receipt — authored by the zapper SERVICE (lnurl provider), not the zapper,
             # so the WoT gate can't apply to its author. Accept when it concerns (p-tags) a WoT

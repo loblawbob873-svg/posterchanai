@@ -18,15 +18,21 @@ Admin -> Nostr Relay; 0 turns a check off.
 from __future__ import annotations
 
 import hashlib
+import time
 
 _MAX_KEYS = 200_000
 
 
+GIFT_WINDOW = 600               # seconds: the gift-wrap budget is counted per recipient per 10 minutes
+
+
 class SpamGuard:
-    def __init__(self, cfg: dict):
+    def __init__(self, cfg: dict, clock=time.time):
         self.cfg = cfg
+        self.clock = clock
         self._minute: dict = {}   # (pubkey, created_at // 60) -> new posts counted
         self._same: dict = {}     # (pubkey, text hash, created_at // 3600) -> times said
+        self._gift: dict = {}     # (recipient, arrival // GIFT_WINDOW) -> gift wraps stored
 
     def _num(self, key, default):
         try:
@@ -67,4 +73,40 @@ class SpamGuard:
             if len(d) > _MAX_KEYS:
                 for k in list(d)[: _MAX_KEYS // 2]:
                     d.pop(k, None)
+        return ""
+
+    def check_gift(self, ev) -> str:
+        """A FLOOD OF GIFT WRAPS AT ONE PERSON (kind 1059). '' = store it; otherwise the reason it is refused.
+
+        "Someone is spamming kind 1059 gift-wrap events right now. About 13k per minute. And 96%+ of them
+        are all being directed at one npub" (2026-10-04). A gift wrap is signed by a throwaway key, so no
+        web-of-trust test can see its author; this relay accepts any wrap written to it (Concord's wraps
+        carry random cover tags) and pulls any wrap addressed to a member -- and one member here had
+        already been sent 32,262 of them. So the budget is per RECIPIENT, counted by ARRIVAL time: NIP-59
+        backdates created_at by up to two days, and counted by created_at a flood spreads thin enough to
+        pass. Concord's random cover tags never concentrate on one recipient, so rooms are unaffected.
+        The default (300 per 10 minutes, ~30/min) holds a busy inbox and a reconnect catch-up; a flood of
+        thousands a minute is cut off within seconds. 0 turns it off."""
+        try:
+            if int(ev.get("kind", -1)) != 1059:
+                return ""
+        except (TypeError, ValueError):
+            return ""
+        cap = self._num("gift_per_recipient", 300)
+        if cap <= 0:
+            return ""
+        slot = int(self.clock()) // GIFT_WINDOW
+        rcpts = {str(t[1]).lower() for t in (ev.get("tags") or [])
+                 if isinstance(t, (list, tuple)) and len(t) >= 2 and t[0] == "p" and t[1]}
+        keys = [(r, slot) for r in rcpts]
+        if any(self._gift.get(k, 0) >= cap for k in keys):
+            return f"rate-limited: more than {cap} gift wraps for one recipient in 10 minutes"
+        for k in keys:
+            self._gift[k] = self._gift.get(k, 0) + 1
+        if len(self._gift) > _MAX_KEYS:
+            for k in [k for k in self._gift if k[1] < slot]:
+                self._gift.pop(k, None)
+            if len(self._gift) > _MAX_KEYS:
+                for k in list(self._gift)[: _MAX_KEYS // 2]:
+                    self._gift.pop(k, None)
         return ""

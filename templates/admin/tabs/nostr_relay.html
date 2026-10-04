@@ -521,6 +521,9 @@
             <label for="nostr_relay_same_per_hour">The same post, per author per hour</label>
             <input type="number" id="nostr_relay_same_per_hour" name="nostr_relay_same_per_hour" placeholder="3" min="0">
             <small class="muted">Notes and replies from Nostr and the fediverse alike; past these an author's extra posts are not stored. People here post at most 5 a minute; above 10 are feed bots in bursts. Reactions, boosts, DMs are never counted. 0 = off.</small>
+            <label for="nostr_relay_gift_wraps_per_recipient">Gift wraps (private messages) per recipient, per 10 minutes</label>
+            <input type="number" id="nostr_relay_gift_wraps_per_recipient" name="nostr_relay_gift_wraps_per_recipient" placeholder="300" min="0">
+            <small class="muted">Stops a flood of encrypted gift wraps aimed at one person from filling the relay (one was seen at ~13,000 a minute). Counted by arrival, since gift wraps backdate themselves. 300 holds a busy inbox; Concord rooms are unaffected. 0 = off.</small>
             <label for="nostr_relay_max_events">Max feed events (hard count cap)</label>
             <input type="number" id="nostr_relay_max_events" name="nostr_relay_max_events" placeholder="0">
             <small>Trims the <strong>oldest</strong> feed events once the total exceeds this count (preserved events don't count). <code>0</code> = unlimited (the age cleaner above is then the only cleanup).</small>

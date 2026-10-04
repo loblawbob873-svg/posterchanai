@@ -456,6 +456,7 @@ def _read_config() -> dict:
             # New-post limits (spamguard.py), every route into the timeline. 0 = off.
             "posts_per_min": gi("nostr_relay_posts_per_min", 10),
             "same_per_hour": gi("nostr_relay_same_per_hour", 3),
+            "gift_per_recipient": gi("nostr_relay_gift_wraps_per_recipient", 300),
             "posterchan_origins": (g("nostr_relay_posterchan_origins", "") or
                 ("https://" + g("nostr_relay_nip05_domain", "poster.place").strip().lstrip("@") +
                  " https://localhost capacitor://localhost app://posterchan")).replace(",", " ").split(),
@@ -932,7 +933,7 @@ async def _main(cfg: dict) -> None:
         if _content_blocked(ev, _bl, _bw, cfg.get("block_json", True)):
             return
         _spam = getattr(server, "spam", None)          # new-post limits (spamguard.py)
-        if _spam is not None and _spam.check(ev):
+        if _spam is not None and (_spam.check(ev) or _spam.check_gift(ev)):
             _fh_mark(eid)   # decided: not stored, do not ask again
             return
         if await store.add_event(ev, origin="wot"):
