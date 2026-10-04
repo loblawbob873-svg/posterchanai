@@ -272,12 +272,51 @@ window.PCUploadFactory = function(dep){
       return prepped;                              // upload the SAME bytes we hashed
     }catch(_){ S._uploadBatchAuth=null; return null; }
   }
+  /* ENCRYPTED BYTES GO TO BLOSSOM SERVERS THAT STORE ANY BYTES -- NEVER TO NIP-96.
+   *
+   * A Concord room's attachment is AES-GCM ciphertext before it leaves the device. For somebody this
+   * node does not store files for, the only fallback was nostr.build (NIP-96), which accepts images
+   * and video and refuses opaque bytes -- so they could not post a picture in an encrypted room at all
+   * (reported for the Lounge's owner, three failed attempts, nothing in this node's log because the
+   * upload never came here). Vector, which Armada runs on, uses an ordered Blossom list for exactly
+   * this (crates/vector-core/src/blossom_servers.rs: "All verified to accept Vector's encrypted
+   * octet-stream uploads"), and so does this now: the person's own Blossom server or this node's when
+   * it allows them, their BUD-03 server list (kind 10063), then those defaults -- each tried in turn.
+   * The servers only ever see ciphertext. */
+  const CIPHERTEXT_SERVERS = ['https://blossom.ditto.pub', 'https://blossom.primal.net', 'https://blossom.data.haus'];
+  function _ciphertextServers(){
+    const out = [];
+    const add = u => { u = String(u || '').trim().replace(/\/+$/, ''); if(/^https:\/\//i.test(u) && !out.includes(u)) out.push(u); };
+    const t = uploadTarget();
+    if(t && t.proto === 'blossom') add(t.url);                      // their own server, or this node's when it allows them
+    /* This node when it stores files for them, even if they chose a server of their own. Measured on
+     * the report: his synced kind-10096 named blossom.band as NIP-96 (= nostr.build's media-only API),
+     * so his uploads never reached this node even after an admin whitelisted him. */
+    if(S._blossomOK === true) add(_blossomBuiltin().url);
+    try{
+      const me = S.ME && S.ME.pubkey;
+      const ev = me && window.Store && Store.query ? (Store.query({ kinds:[10063], authors:[me] }) || [])[0] : null;
+      for(const tag of (ev && ev.tags) || []) if(tag[0] === 'server') add(tag[1]);
+    }catch(_){ }
+    CIPHERTEXT_SERVERS.forEach(add);
+    return out;
+  }
+  async function _uploadCiphertext(file, opts){
+    if(S._blossomOK===null){ try{ await checkBlossomAccess(); }catch(_){} }
+    const tried = [];
+    for(const server of _ciphertextServers()){
+      try{ return await uploadBlob(file, Object.assign({}, opts, { ciphertext:false, _server:server, noCompress:true })); }
+      catch(e){ let host = server; try{ host = new URL(server).host; }catch(_){} tried.push(host + ': ' + String((e && e.message) || e).slice(0, 120)); }
+    }
+    throw new Error('no media server would store it (' + tried.join('; ') + ')');
+  }
   async function uploadBlob(file, opts){
+    if(opts && opts.ciphertext) return _uploadCiphertext(file, opts);
     // Resolve built-in Blossom permission before routing, so a brand-new user's FIRST upload (right
     // after login, before the async check resolves) still diverts to nostr.build instead of 403ing
     // the built-in server. Only matters when they haven't set their own server.
-    if(S._blossomOK===null && !ClientSettings.get('blossomEnabled')){ try{ await checkBlossomAccess(); }catch(_){} }
-    let tgt=uploadTarget();
+    if(!(opts && opts._server) && S._blossomOK===null && !ClientSettings.get('blossomEnabled')){ try{ await checkBlossomAccess(); }catch(_){} }
+    let tgt=(opts && opts._server) ? { url:opts._server, proto:'blossom' } : uploadTarget();
     // Private / no-mirror content (encrypted vault blobs) must NEVER land on the public nostr.build
     // auto-fallback — keep it on the built-in server even if that surfaces a permission error.
     if(opts&&opts.noMirror && tgt.proto==='nip96' && !ClientSettings.get('blossomEnabled')) tgt=_blossomBuiltin();
@@ -302,11 +341,14 @@ window.PCUploadFactory = function(dep){
     const auth=_batchEv
       || await sign(24242,'Upload blob',[['t','upload'],['x',hash],['expiration',String(Math.floor(Date.now()/1000)+3600)]]);
     const hdr={ 'Authorization':'Nostr '+btoa(JSON.stringify(auth)), 'Content-Type':file.type||'application/octet-stream' };
-    if(opts&&opts.noMirror) hdr['X-No-Mirror']='1';   // don't DR-mirror (e.g. encrypted music) to public backups
+    // A server the ciphertext path picked is somebody else's: a custom header is part of the CORS
+    // preflight, and a Blossom host with a fixed allow-list would refuse the whole upload over it.
+    const _foreign = !!(opts && opts._server) && server !== _blossomBuiltin().url;
+    if(opts&&opts.noMirror&&!_foreign) hdr['X-No-Mirror']='1';   // don't DR-mirror (e.g. encrypted music) to public backups
     // Encrypted-drive content (Notes attachments, music, the files index): exempt from the server's
     // age sweep forever. The server can't tell — the bytes are opaque ciphertext — so the uploader
     // that knows this is the only copy has to say so. Harmless on a server that predates the header.
-    if(opts&&opts.keep) hdr['X-Keep']='1';
+    if(opts&&opts.keep&&!_foreign) hdr['X-Keep']='1';
     // Tell the server the original filename. A blob is addressed by its hash and has no name of its
     // own, so without this a download off any other device/client saves as a bare sha256. Percent-
     // encoded because a header can only carry ASCII (a non-ASCII name would throw here).
