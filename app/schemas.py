@@ -443,8 +443,6 @@ class SettingsResponse(BaseModel):
     imap_password: str = ""
     imap_use_ssl: str = "true"
     imap_sent_folder: str = "Sent"
-    # News sources
-    news_sources: str = ""
     # Intelligent Intent Detection settings
     intent_detection_enabled: str = "true"  # Enable AI-powered intent detection for natural language actions (only triggers on action keywords)
     intent_confidence_threshold: str = "0.7"  # Minimum confidence to execute detected actions (0.0-1.0)
@@ -980,7 +978,6 @@ CLIENT_THEMES = ("cyberpunk", "cherryblossom", "professional", "win98", "winxp",
 class UserSettingsUpdate(BaseModel):
     notification_email: Optional[str] = None
     theme: Optional[str] = None  # one of CLIENT_THEMES; ignored if unknown
-    news_sources: Optional[str] = None  # Custom sources for the `news` command, one per line: url|name
     # Mail settings
     mail_accounts: Optional[List[dict]] = None  # List of {email, imap_server, imap_port, smtp_server, smtp_port, password}
     # Telegram settings — linking/unlinking managed via /api/telegram/*, not here
@@ -1000,7 +997,6 @@ class UserSettingsResponse(BaseModel):
     notification_email: Optional[str] = None
     avatar: Optional[str] = None
     theme: str = "cyberpunk"
-    news_sources: str = ""  # Custom sources for the `news` command, one per line: url|name
     # Mail settings
     mail_accounts: List[dict] = []  # List of mail accounts (passwords masked)
     # Telegram settings

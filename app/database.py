@@ -194,6 +194,7 @@ _DROPPED_COLUMNS = (
     # once that release is everywhere): users.pleroma_access_token, pleroma_notif_since,
     # fedi_bridge_enabled, fedi_bridge_dm_since, fedi_bridge_notif_since, fedi_crosspost_enabled,
     # fedi_only. pleroma_enabled/_instance_url/_acct stay: relay_access_policy still reads them.
+    # PENDING, for the release after the `news` command removal (2026-10-05): users.news_sources.
 )
 
 
@@ -658,8 +659,6 @@ When asked to write or modify code or files:
             "imap_password": "",
             "imap_use_ssl": "true",
             "imap_sent_folder": "Sent",
-            # News sources
-            "news_sources": "",
             # Built-in torrent client (libtorrent). FIRST-RUN default can be seeded
             # from env (the Docker image enables the torrent/proxy/Tor stack so it
             # works out of the box; the app starts Tor + the HTTP proxy itself).

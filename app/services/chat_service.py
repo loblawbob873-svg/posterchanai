@@ -42,8 +42,6 @@ AVAILABLE COMMANDS (can also be typed directly):
 
 EMAIL: mail, mail unread, mail send <to> <msg>, mail read/delete/archive <acct> <id>
 
-NEWS: news, dailynews
-
 SEARCH: search <query>, images <query>
 
 GENERATE: geni <prompt>

@@ -151,13 +151,6 @@ async function downloadModel(kind, btnId, statusId){
     setTimeout(poll, 800);
 }
 
-// Default news sources
-const DEFAULT_NEWS_SOURCES = `drudgereport.com|Drudge Report
-npr.org/sections/news|NPR
-nypost.com|NY Post
-foxnews.com|Fox News
-newsweek.com|Newsweek`;
-
 // Store loaded values to detect changes
 const loadedValues = new Map();
 
@@ -235,10 +228,6 @@ async function loadSettings() {
 
 // WebDAV sync client code removed
 
-// Reset news sources to defaults (Tools tab)
-document.getElementById('resetNewsSourcesBtn')?.addEventListener('click', () => {
-    document.getElementById('news_sources').value = DEFAULT_NEWS_SOURCES;
-});
 
 // SAVE SENDS WHAT YOU CHANGED -- never the whole form.
 //

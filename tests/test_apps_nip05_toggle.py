@@ -20,7 +20,7 @@ from app.services.nostr.event import build_event
 MEMBER_SECRET = bytes.fromhex('01'.zfill(64))
 MEMBER = build_event(MEMBER_SECRET, 0, json.dumps({'nip05': 'alice@example.test'}), created_at=100)['pubkey']
 STRANGER = build_event(bytes.fromhex('02'.zfill(64)), 0, '{}', created_at=100)['pubkey']
-APPS = ['/api/news/sources', '/api/mail/accounts', '/api/torrent/catalog', '/api/git/status',
+APPS = ['/api/mail/accounts', '/api/torrent/catalog', '/api/git/status',
         '/client/office/blank/text', '/api/media-center', '/api/websearch/search?q=hello']
 WALLET = '/api/test-user-wallet/balance'
 

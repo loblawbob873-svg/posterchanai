@@ -148,15 +148,6 @@ _HELP_SECTIONS = {
         "`translate hello world to Japanese`\n"
         "\\(reply to a message\\) `translate to French`"
     ),
-    "news": (
-        "📰 *News*\n\n"
-        "`news` — Latest headlines from all sources\n"
-        "`news <source>` — Headlines from a specific source\n\n"
-        "*Examples:*\n"
-        "`news`\n"
-        "`news bbc`\n"
-        "`news techcrunch`"
-    ),
     "geni": (
         "🎨 *Image Generation*\n\n"
         "`geni <prompt>`\n"
@@ -311,8 +302,6 @@ _TRANSLATE_LANGS = [
     "Russian", "Chinese", "Japanese",
     "Korean", "Arabic", "Thai",
 ]
-_news_post_cache: dict = {}
-_news_source_cache: dict = {}
 class TelegramWebhookUpdate(BaseModel):
     update_id: int
     message: Optional[dict] = None

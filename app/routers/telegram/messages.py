@@ -1,8 +1,8 @@
 """Auto-split from webhook.py: the message half of _handle_telegram_update."""
 from .messages_command import _msg_command
 from .messages_chat import _msg_chat
-from ._common import ChatService, CommandService, Conversation, Message, User, _CLIP_END_PROMPT, _CLIP_START_PROMPT, _EFFECT_CAPTION_PROMPT, _MEDIA_ACTION_TTL, _MEDIA_GROUP_CACHE, _MEME_PROMPT, _SOCIAL_CAPTION_PROMPT, _clip_pending, _effect_caption_pending, _effect_char_pending, _flashcard_decks_cache, _link_action_cache, _media_action_cache, _news_post_cache, _youtube_action_cache, asyncio, datetime, logger, re, telegram_service, time
-from .keyboards import _build_torrent_keyboard, _character_prompt_keyboard, _has_nostr, _help_main_keyboard, _media_action_keyboard, _news_menu_keyboard, _split_news_into_articles, _strip_cmd_links, _strip_hashtags, _torrent_nav_keyboard, re
+from ._common import ChatService, CommandService, Conversation, Message, User, _CLIP_END_PROMPT, _CLIP_START_PROMPT, _EFFECT_CAPTION_PROMPT, _MEDIA_ACTION_TTL, _MEDIA_GROUP_CACHE, _MEME_PROMPT, _SOCIAL_CAPTION_PROMPT, _clip_pending, _effect_caption_pending, _effect_char_pending, _flashcard_decks_cache, _link_action_cache, _media_action_cache, _youtube_action_cache, asyncio, datetime, logger, re, telegram_service, time
+from .keyboards import _build_torrent_keyboard, _character_prompt_keyboard, _has_nostr, _help_main_keyboard, _media_action_keyboard, _strip_cmd_links, _strip_hashtags, _torrent_nav_keyboard, re
 from .senders import User, _media_action_cache, _offer_social_post, _offer_ytdl_share, _offer_ytdl_video_actions, _send_active_torrents, _send_flashcard, _send_nyaa_results, _send_png_as_document, _send_screenshot, _send_torrent_results, _strip_cmd_links, _torrent_nav_keyboard, asyncio, datetime, logger, re, telegram_service, time
 
 # Telegram matches command words LITERALLY (it never calls parse_command), so it needs its own list —

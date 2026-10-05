@@ -141,8 +141,8 @@ TRANSLATION:
 "Translate email to German" -> translate email German
 
 NEWS:
-"Check the news" -> news
-"News about technology" -> news technology
+"Check the news" -> search latest news
+"News about technology" -> search technology news
 
 TORRENT:
 "Show torrents" -> torrents

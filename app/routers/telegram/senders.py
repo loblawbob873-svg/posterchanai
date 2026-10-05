@@ -1,6 +1,6 @@
 """Auto-split from the original telegram.py monolith. No behavior change."""
-from ._common import Optional, SessionLocal, User, _flashcard_decks_cache, _geni_image_cache, _media_action_cache, _news_source_cache, _nostr_post_cache, asyncio, datetime, logger, re, telegram_service, time
-from .keyboards import _flashcard_keyboard, _has_nostr, _news_source_keyboard, _strip_cmd_links, _torrent_nav_keyboard, _ytdl_video_keyboard
+from ._common import Optional, SessionLocal, User, _flashcard_decks_cache, _geni_image_cache, _media_action_cache, _nostr_post_cache, asyncio, datetime, logger, re, telegram_service, time
+from .keyboards import _flashcard_keyboard, _has_nostr, _strip_cmd_links, _torrent_nav_keyboard, _ytdl_video_keyboard
 
 
 async def _post_to_nostr(user, text: str, image_bytes: Optional[bytes] = None) -> None:
@@ -18,21 +18,6 @@ async def _post_to_nostr(user, text: str, image_bytes: Optional[bytes] = None) -
         mime, _ = detect_mime(image_bytes)
         media_list = [(image_bytes, mime)]
     await _ns.post_note(seckey, relays, text or "", media_list=media_list, media_cfg=media_cfg)
-
-async def _send_news_source_selector(chat_id: str, sources: list):
-    """Send news source selection menu."""
-    # Cache sources for callback handling
-    _news_source_cache[chat_id] = sources
-
-    source_list = "\n".join([f"• {s.get('name', 'Unknown')}" for s in sources[:8]])
-    text = f"📰 *Select a news source:*\n\n{source_list}"
-
-    await telegram_service.send_message(
-        chat_id,
-        text,
-        reply_markup=_news_source_keyboard(sources)
-    )
-
 
 async def _send_torrent_results(chat_id: str, category: str, user_id: int):
     """Send each torrent result as its own message with a download button beneath it."""
@@ -255,7 +240,7 @@ async def _offer_social_post(chat_id: str, post_text: str, user, telegram_svc, p
 
     Single source of truth for the per-chat image cache: callers that have an
     image to attach pass it as `image_bytes`; text-only callers (link summaries,
-    news, yt) leave it None, which CLEARS any stale image left over from an
+    yt) leave it None, which CLEARS any stale image left over from an
     earlier `geni`/photo share so it is never attached to an unrelated post.
     """
     if image_bytes is not None:

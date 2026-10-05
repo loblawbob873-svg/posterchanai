@@ -32,7 +32,6 @@ class CommandService(_BillMixin, _SearchMixin, _GenMixin, _MediaMixin, _Torrents
         "ytdl": "Download YouTube or X: ytdl <url> (MP3 default), ytdl mp3/video <url>. For video, add clip <start> <end> and/or compress, e.g. ytdl video <url> clip 0:10 0:30 compress",
         "torrents": "Torrent search: torrents <query>",
         "nyaa": "Anime torrents: nyaa <query>",
-        "dailynews": "Web news: dailynews <source>",
         "logs": "System health report (disk, SMART, RAID, services, swap, recent errors)",
         "mail": "Email: mail <to> [subject] <body>",
         "translate": "Translate: translate <text> to <lang>",
@@ -167,8 +166,13 @@ class CommandService(_BillMixin, _SearchMixin, _GenMixin, _MediaMixin, _Torrents
     # have sent `4chan` to the model, which would cheerfully talk about 4chan as though the browser
     # were still there. A retired command answers for itself.
     _4CHAN_GONE = "The 4chan browser has been removed."
+    # The `news`/`dailynews` digest and its "News sources" setting were removed (2026-10-05). The News
+    # APP (RSS reader) is unaffected -- that is where news lives now.
+    _NEWS_GONE = "📰 The news command was removed. Your feeds are in the **News** app (sidebar → News)."
     RETIRED_COMMANDS = {
         "4chan": _4CHAN_GONE,
+        "news": _NEWS_GONE,
+        "dailynews": _NEWS_GONE,
         "budget": _BUDGET_MOVED,
         "bills": _BUDGET_MOVED,
         "pay": _BUDGET_MOVED,
@@ -694,10 +698,6 @@ class CommandService(_BillMixin, _SearchMixin, _GenMixin, _MediaMixin, _Torrents
             return await self._torrents_command(arg)
         elif command == "nyaa":
             return await self._nyaa_command(arg)
-        elif command == "news":
-            return await self._news_command(arg)
-        elif command == "dailynews":
-            return await self._dailynews_command(arg)
         elif command == "logs":
             return await self._logs_command(arg, notify=node_notify)
         elif command == "mail":

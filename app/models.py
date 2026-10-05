@@ -17,8 +17,6 @@ class User(Base):
     avatar = Column(String(255), nullable=True)  # Path to avatar image
     theme = Column(String(40), default="cyberpunk")  # client UI theme slug (mirrored to Nostr per-user); matches the pre-login site default
 
-    # News sources for the on-demand `news` command (the scheduled daily-digest feature was removed).
-    news_sources = Column(Text, default="")  # Custom news sources, one per line: url|name
 
 
     # Storage quota (in bytes, 0 = unlimited)

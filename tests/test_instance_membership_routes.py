@@ -72,7 +72,7 @@ async def remove_address(state):
 
 
 @pytest.mark.anyio
-@pytest.mark.parametrize('path',['/api/news/sources','/api/mail/accounts','/api/torrent/catalog','/api/git/status','/client/office/blank/text','/api/media-center','/api/websearch/search?q=hello','/api/test-user-wallet/balance'])
+@pytest.mark.parametrize('path',['/api/mail/accounts','/api/torrent/catalog','/api/git/status','/client/office/blank/text','/api/media-center','/api/websearch/search?q=hello','/api/test-user-wallet/balance'])
 async def test_route_allows_matching_profile_and_rejects_latest_removed_address(setup,path):
     app,state,user=setup
     async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app),base_url='http://test') as client:

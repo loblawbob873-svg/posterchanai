@@ -1589,7 +1589,7 @@ async def client_commands():
 
     groups = [
         ("✨ Create", "geni musicgeni videogeni narrate poll"),
-        ("🔍 Find", "search images yt news dailynews files torrents nyaa"),
+        ("🔍 Find", "search images yt files torrents nyaa"),
         ("🖼 Files & media", "compress clip convert extractaudio circlecrop removebackground ocr collage ytdl screenshot"),
         ("📚 Learn", "flashcards translate"),
         ("💰 Money", "bill"),   # the budget itself is client-side + encrypted (Discover → Budget)

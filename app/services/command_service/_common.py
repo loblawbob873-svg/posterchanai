@@ -6,7 +6,6 @@ import threading
 from typing import TYPE_CHECKING, Callable, Optional, Tuple
 from datetime import datetime
 from sqlalchemy.orm import Session
-from app.routers.news import fetch_news_from_source, get_user_news_sources
 from app.services.chat_service import ChatService
 from app.services.proxy_image_cache import register as proxy_image_register
 from app.services.image_factory import generate_image_for_user

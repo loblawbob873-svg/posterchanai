@@ -44,7 +44,6 @@ ACCOUNT_FIELDS = (
 # tokens (telegram_key*), and per-node runtime cursors (*_notif_since) which must stay local.
 CONFIG_FIELDS = (
     "notification_email", "avatar", "theme",
-    "news_sources",
     "telegram_enabled", "telegram_chat_id", "telegram_notifications",
     "nostr_enabled", "nostr_relays", "nostr_media_service", "nostr_media_endpoint",
     "social_notif_enabled",

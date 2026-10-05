@@ -216,7 +216,7 @@ A companion **browser extension** (Firefox, and Chrome / Brave via MV3) makes yo
   screen with AI overviews and citations, Save to Notes, and a reader
   that opens the page *inside* the app. Your node can also be added as your browser's own search
   engine. See **[docs/WEBSEARCH.md](docs/WEBSEARCH.md)**
-- **News**: LLM news summaries from chat (`news` / `dailynews`), plus a full **RSS reader** in the web client (see [Nostr web client](#nostr-web-client))
+- **News**: a full **RSS reader** in the web client (see [Nostr web client](#nostr-web-client))
 - **Budget**: bills, monthly summary and spending plans in the web client (Discover → Budget), stored as a Nostr event **encrypted to your own key** — the server can't read it
 - **To-do**: quick personal task list from chat (`todo`)
 - **Torrents**: built-in torrent client plus **TorrentGalaxy** search and **nyaa.si** anime search (`torrents`, `nyaa`)

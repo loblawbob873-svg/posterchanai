@@ -1,5 +1,5 @@
 """Auto-split from the original command_service.py monolith (mixin pattern). No behavior change."""
-from ._common import datetime, fetch_news_from_source, get_user_news_sources, logger, proxy_image_register, re
+from ._common import datetime, logger, proxy_image_register, re
 from app.utils import lb_auth
 
 
@@ -184,87 +184,3 @@ class _SearchMixin:
         except Exception as e:
             logger.error(f"Error searching files locally: {e}", exc_info=True)
             return {"type": "text", "content": f"Error searching files: {str(e)}"}
-
-    async def _news_command(self, arg: str) -> dict:
-        """Get news from configured web sources"""
-        return await self._dailynews_command(arg)
-
-    def _add_copy_buttons_to_news(self, markdown: str) -> str:
-        """Add copy buttons to news article links in markdown."""
-        import re
-
-        # Match markdown links in bullet points: - [title](url)
-        # Add [Copy](cmd:tui-copy url) after each link
-        def add_copy_button(match):
-            title = match.group(1)
-            url = match.group(2)
-            # Return the link with a copy button
-            return f"- [{title}]({url}) [Copy](cmd:tui-copy {url})"
-
-        # Pattern: - [title](url)
-        pattern = r"- \[([^\]]+)\]\(([^)]+)\)"
-        result = re.sub(pattern, add_copy_button, markdown)
-
-        return result
-
-    async def _dailynews_command(self, arg: str) -> dict:
-        """Get news from configured web sources (CNN, NPR, etc.)"""
-        from datetime import datetime
-
-        if not self.user:
-            return {"type": "text", "content": "Please log in to use Daily News."}
-
-        try:
-            # Get news sources (user's custom sources or admin defaults)
-            all_sources = get_user_news_sources(self.user, self.db)
-
-            if not all_sources:
-                # Now that sources are per-user with no global fallback, this is the NORMAL state for a
-                # new account — so it has to read as a next step, not an error.
-                return {"type": "text", "content":
-                        "📰 You haven't added any news sources yet.\n\n"
-                        "Add RSS or site URLs in Settings → News sources (one per line, `url|name`), "
-                        "or tap ＋ in the News tab."}
-
-            # If arg provided, filter to matching source
-            if arg.strip():
-                arg_lower = arg.strip().lower()
-                sources = [s for s in all_sources if arg_lower in s["url"].lower() or arg_lower in s["name"].lower()]
-                if not sources:
-                    source_names = ", ".join(s["name"] for s in all_sources)
-                    return {"type": "text", "content": f"No news source matching '{arg.strip()}'. Available sources: {source_names}"}
-            else:
-                sources = all_sources
-
-            # Fetch news from sources concurrently with timeout
-            import asyncio
-
-            async def fetch_single_source(source):
-                try:
-                    # Add timeout per source to prevent hanging
-                    async with asyncio.timeout(45):  # 45 second timeout per source (fetch + AI summary)
-                        markdown = await fetch_news_from_source(source["url"], source["name"], self.db)
-                        return markdown
-                except asyncio.TimeoutError:
-                    logger.warning(f"Timeout fetching news from {source['name']}")
-                    return f"**{source['name']}:** ⚠️ Timeout fetching headlines (took too long)"
-                except Exception as e:
-                    logger.error(f"Error fetching news from {source['name']}: {e}")
-                    return f"**{source['name']}:** ❌ Error fetching headlines: {str(e)[:100]}"
-
-            results = await asyncio.gather(*[fetch_single_source(s) for s in sources], return_exceptions=True)
-            # Filter out any exception results
-            results = [r if not isinstance(r, Exception) else f"Error: {str(r)}" for r in results]
-
-            # Format response
-            today = datetime.now().strftime("%B %d, %Y %H:%M")
-            if len(sources) == 1:
-                content = f"## {sources[0]['name']} - {today}\n\n" + results[0] if results else "No headlines found."
-            else:
-                content = f"## Daily News - {today}\n\n" + "\n\n---\n\n".join(results)
-
-            return {"type": "text", "content": content}
-
-        except Exception as e:
-            logger.error(f"Daily news command error: {e}")
-            return {"type": "text", "content": f"Error fetching daily news: {str(e)}"}

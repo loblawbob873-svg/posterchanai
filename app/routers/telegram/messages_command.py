@@ -1,6 +1,6 @@
 """Auto-split from messages.py: _msg_command."""
-from ._common import Conversation, Message, User, _news_post_cache, asyncio, logger, re, telegram_service
-from .keyboards import _build_torrent_keyboard, _has_nostr, _help_main_keyboard, _news_menu_keyboard, _split_news_into_articles, _strip_cmd_links, _torrent_nav_keyboard, re
+from ._common import Conversation, Message, User, asyncio, logger, re, telegram_service
+from .keyboards import _build_torrent_keyboard, _has_nostr, _help_main_keyboard, _strip_cmd_links, _torrent_nav_keyboard, re
 from .senders import User, _offer_social_post, _offer_ytdl_video_actions, _send_active_torrents, _send_nyaa_results, _send_torrent_results, _strip_cmd_links, _torrent_nav_keyboard, asyncio, logger, re, telegram_service
 
 
@@ -244,51 +244,6 @@ async def _msg_command(_make_tg_node_notify, arg, attachments, chat_id, command,
                         user_id = user_obj.id if user_obj else 0
                         await _send_nyaa_results(chat_id, user_id)
                         return {"ok": True}
-                    elif command == "news":
-                        # If no argument provided, show the news menu
-                        if not arg.strip():
-                            await telegram_service.send_message(
-                                chat_id,
-                                "📰 *News Menu*\n\nChoose an option:",
-                                reply_markup=_news_menu_keyboard()
-                            )
-                            return {"ok": True}
-                        
-                        # Otherwise, fetch news from specific source
-                        result = await command_service.execute_command(command, arg)
-                        content = _strip_cmd_links(result.get("content", ""))
-
-                        has_social = _has_nostr(user_obj)
-
-                        articles = _split_news_into_articles(content)
-                        if articles:
-                            # Cache (title, url) pairs for the Post callbacks
-                            _news_post_cache[chat_id] = [(title, url) for (_, title, url, _) in articles]
-
-                            # Send header (date/source summary line) if present
-                            header_match = re.match(r'^(##[^\n]+)', content)
-                            if header_match:
-                                await telegram_service.send_message(chat_id, header_match.group(1))
-
-                            # Send each article as its own message
-                            for i, (_, title, url, msg_text) in enumerate(articles[:10], 1):
-                                # Build keyboard with Summarize and Post buttons (only if a social platform is configured)
-                                buttons = []
-                                if has_social:
-                                    buttons.append([
-                                        {"text": "📝 Summarize", "callback_data": f"news:summarize:{i}"},
-                                        {"text": "📣 Post", "callback_data": f"nk:post:{i}"}
-                                    ])
-                                else:
-                                    buttons.append([
-                                        {"text": "📝 Summarize", "callback_data": f"news:summarize:{i}"}
-                                    ])
-                                kbd = {"inline_keyboard": buttons}
-                                await telegram_service.send_message(chat_id, msg_text, reply_markup=kbd)
-                            return {"ok": True}
-
-                        # Fallback: no articles parsed — send raw content
-                        result["content"] = content
                     elif command == "share":
                         # Share command: take the user's text (+ optional attachment) and offer to post it
                         # to configured social platforms directly (no AI generation needed)

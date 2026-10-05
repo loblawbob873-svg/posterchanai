@@ -155,12 +155,17 @@ def test_files_index_rejects_conflicting_operations_before_loading_user():
 
 
 def test_remote_xml_entities_are_rejected(monkeypatch):
-    from app.routers import news, office
+    # The feed parser that reads UNTRUSTED XML is the News app's (rss_service) -- the `news` command's
+    # own parser went with the command (2026-10-05). An entity-carrying feed is refused, a plain one reads.
+    from app.routers import office
+    from app.services import rss_service
+    from defusedxml import EntitiesForbidden
     payload = b'<!DOCTYPE rss [<!ENTITY injected "EXPANDED">]><rss><channel><item><title>&injected;</title><link>https://example.test/</link></item></channel></rss>'
-    links, error = news._parse_rss_feed(payload, 'https://example.test')
-    assert links == [] and error and 'EntitiesForbidden' in error
+    with pytest.raises(EntitiesForbidden):
+        rss_service.parse_feed(payload, 'https://example.test')
     good = b'<rss><channel><item><title>News</title><link>https://example.test/</link></item></channel></rss>'
-    assert news._parse_rss_feed(good, 'https://example.test') == (['- [News](https://example.test/)'], None)
+    _title, items = rss_service.parse_feed(good, 'https://example.test')
+    assert [(i['title'], i['link']) for i in items] == [('News', 'https://example.test/')]
     async def discover(client):
         return SimpleNamespace(content=b'<!DOCTYPE wopi-discovery [<!ENTITY injected "EXPANDED">]><wopi-discovery>&injected;</wopi-discovery>')
     monkeypatch.setattr(office, '_discover', discover)

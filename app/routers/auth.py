@@ -638,7 +638,6 @@ def get_user_settings(current_user: User = Depends(get_current_user), db: Sessio
         notification_email=current_user.notification_email,
         avatar=avatar_url,
         theme=(getattr(current_user, "theme", None) or "cyberpunk"),
-        news_sources=current_user.news_sources or "",
         # Mail settings
         mail_accounts=mail_accounts,
         # Telegram settings
@@ -675,9 +674,6 @@ def update_user_settings(
             )
         current_user.notification_email = notification_email if notification_email else None
 
-    # News sources for the on-demand `news` command (the scheduled daily-digest feature was removed).
-    if settings.news_sources is not None:
-        current_user.news_sources = settings.news_sources
 
     # Client UI theme (mirrored to Nostr via users_store CONFIG_FIELDS). Validate against the
     # allowlist so an unknown slug can't be persisted; blank/unknown falls back to the default.

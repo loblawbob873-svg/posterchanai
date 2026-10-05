@@ -1,38 +1,6 @@
 """Auto-split from the original telegram.py monolith. No behavior change."""
 from ._common import Optional, _FC_LETTERS, _FX_CHARACTERS, _FX_MEMES, _FX_SOUNDS, _FX_THEMES, _POST_PROMPTS, _TRANSLATE_LANGS, re
 
-def _split_news_into_articles(content: str) -> list:
-    """Split news markdown into individual (source_name, title, url, message_text) tuples."""
-    results = []
-
-    # Split multiple sources on the --- divider
-    source_sections = re.split(r'\n\n---\n\n', content)
-
-    for section in source_sections:
-        # Extract source name from **Name:** line
-        source_match = re.search(r'\*\*([^*]+)\*\*', section)
-        source_name = source_match.group(1).rstrip(':').strip() if source_match else 'News'
-
-        # Each article starts with "- [title](url)" then optional indented summary lines
-        article_re = re.compile(
-            r'-\s+\[([^\]]+)\]\((https?://[^)]+)\)([\s\S]*?)(?=\n-\s+\[|\Z)',
-            re.MULTILINE,
-        )
-        for m in article_re.finditer(section):
-            title   = m.group(1).strip()
-            url     = m.group(2).strip()
-            summary = m.group(3).strip()
-
-            # Build the per-article Telegram message
-            msg = f"📰 *{source_name}*\n\n[{title}]({url})"
-            if summary:
-                msg += f"\n\n{summary}"
-
-            results.append((source_name, title, url, msg))
-
-    return results
-
-
 def _strip_cmd_links(text: str) -> str:
     """Remove [text](cmd:...) and [text](magnet:...) links that don't render in Telegram."""
     # Remove [text](cmd:...) — non-clickable in Telegram
@@ -185,46 +153,6 @@ def _torrents_menu_keyboard() -> dict:
     }
 
 
-def _news_menu_keyboard() -> dict:
-    """Return news main menu keyboard."""
-    return {
-        "inline_keyboard": [
-            [
-                {"text": "📰 All Sources", "callback_data": "news:all"},
-            ],
-            [
-                {"text": "🔍 Search by Source", "callback_data": "news:select"},
-            ],
-            [
-                {"text": "⚙️ Configure Sources", "callback_data": "news:config_hint"},
-            ],
-        ]
-    }
-
-
-def _news_source_keyboard(sources: list) -> dict:
-    """Build inline keyboard for news source selection."""
-    buttons = []
-
-    # "All Sources" button at the top
-    buttons.append([{"text": "📰 All Sources", "callback_data": "news:all"}])
-
-    # Individual source buttons (2 per row)
-    row = []
-    for i, source in enumerate(sources[:8], 1):  # Limit to 8 sources
-        source_name = source.get("name", f"Source {i}")
-        # Use short name for button
-        short_name = source_name[:15] + "..." if len(source_name) > 15 else source_name
-        row.append({"text": f"📄 {short_name}", "callback_data": f"news:source:{i}"})
-        if len(row) == 2:
-            buttons.append(row)
-            row = []
-    if row:
-        buttons.append(row)
-
-    return {"inline_keyboard": buttons}
-
-
 def _help_main_keyboard() -> dict:
     """Inline keyboard for the help main menu."""
     return {
@@ -246,7 +174,6 @@ def _help_main_keyboard() -> dict:
             ],
             [
                 {"text": "🌐 Translate",   "callback_data": "help:translate"},
-                {"text": "📰 News",        "callback_data": "news:menu"},
             ],
             [
                 {"text": "✉️ Email",       "callback_data": "help:mail"},

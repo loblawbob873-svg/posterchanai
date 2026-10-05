@@ -43,7 +43,7 @@ async def _cb_pin(update, db, chat_id, data, callback_query, callback_query_id):
                     await telegram_service.send_message(chat_id, "That pin is gone.")
                 else:
                     # Resolve the pin to a real command: a bare query → `search <query>`, a
-                    # command word (screenshot/geni/news/…) → that command verbatim. Then run it
+                    # command word (screenshot/geni/…) → that command verbatim. Then run it
                     # and deliver whatever it produces (text/image/video/files/…) generically.
                     _svc = CommandService(db, user=cb_user)
                     _cmd, _arg = _svc.parse_command(s.query)
