@@ -95,8 +95,14 @@ public final class FolderSyncScreenDeviceTest {
             assertTrue("Folder Sync crashed after its delayed paint/startup work: " + settled,
                     settled.contains("\\\"alive\\\":true") && settled.contains("\\\"view\\\":true")
                     && settled.contains("\\\"card\\\":true") && settled.contains("\\\"posts\\\":0"));
-            assertTrue("removing the profile address retained Folder Sync membership", eval(web,
-                    "(()=>{window.__fsMemberProfile={};return !PCInstanceAccess.allowed('sync');})()")
+            // Membership is the name this instance GRANTED, never what the profile says: a member who
+            // publishes an address of their own (or none) keeps Folder Sync. Another account does not.
+            assertTrue("editing the profile's NIP-05 dropped Folder Sync membership", eval(web,
+                    "(()=>{window.__fsMemberProfile={nip05:'me@elsewhere.example'};return PCInstanceAccess.allowed('sync');})()")
+                    .equals("true"));
+            assertTrue("another account inherited Folder Sync membership", eval(web,
+                    "(()=>{__PC.viewer=()=>({pubkey:'22'.repeat(32),profile:{},profileKnown:true});"
+                    + "return !PCInstanceAccess.allowed('sync');})()")
                     .equals("true"));
         } finally { scenario.close(); }
     }
