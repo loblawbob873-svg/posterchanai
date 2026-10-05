@@ -48,6 +48,7 @@ window.PCNotifsFactory = function(dep){
     if(e.kind!==3) return e.created_at;
     return _followSeen[e.pubkey] || Math.min(e.created_at, S._notifEpoch);
   }
+  const _notifSeenIds=new Set();
   async function watchNotifications(){
     /* FORWARD ONLY. Another monitor's read can arrive (a `storage` event, app.js) before this runs, and
      * re-reading storage here then put the marker BACK -- that monitor's bell relit for what it had
@@ -124,10 +125,21 @@ window.PCNotifsFactory = function(dep){
     })();
     // Sub A — mentions/reposts/reactions/zaps/reports/chat/comments. Subscribed IMMEDIATELY, never gated on
     // the follower seed, so live mentions/zaps aren't delayed by the seed's laggy-link retry.
+    /* ANNOUNCED ONCE PER EVENT BY THIS SUBSCRIPTION — not "the first thing to put it in the Store".
+     * "on desktop, I did not see a notification bell or notification for my last 2 notifications": a
+     * mention is also a kind-1 post, so the Home/Global subscription on the same socket receives it too,
+     * and our relay fans an event out to a connection's subscriptions in the order they were opened —
+     * the timeline's (opened at boot) BEFORE this one (opened after sign-in). The timeline stored it,
+     * saveEvent() here answered "already have it", and the bell and the pop-up were skipped. Whether
+     * this subscription has seen the id is the question; the Store is only where it is kept. */
+    _notifSeenIds.clear();
     Relay.subscribe([{ '#p':[S.ME.pubkey], _include_quotes:true, kinds:[1,6,7,9735,1984,1111,1621,1617], limit:150 }], {   // 42=chat, 1111=community comments, 1621/1617=NIP-34 issue/patch on your repo
-      onEvent: ev => { if(ev.pubkey===S.ME.pubkey) return; _quoteHit(ev); if(Store.saveEvent(ev)){ invalidateCounts(); applySobLive(ev); needProfile(ev.kind===9735?(zapSender(ev)||ev.pubkey):ev.pubkey);
+      onEvent: ev => { if(ev.pubkey===S.ME.pubkey) return; _quoteHit(ev);
+        if(Store.saveEvent(ev)){ invalidateCounts(); applySobLive(ev); needProfile(ev.kind===9735?(zapSender(ev)||ev.pubkey):ev.pubkey); }
+        if(!ev.id || _notifSeenIds.has(ev.id)) return;        // a second relay, or a reconnect's backlog
+        _notifSeenIds.add(ev.id); if(_notifSeenIds.size>5000) _notifSeenIds.delete(_notifSeenIds.values().next().value);
         if(ev.created_at>seenNotif.last){ bumpNotif(); if(_notifReady) notifPing(ev); }
-        renderNotificationsSoon(); } },
+        renderNotificationsSoon(); },
       onEose: ()=>{ _notifReady=true; if(S.VIEW==='notifications') renderNotificationsSoon(); else bumpNotif(); }   // show unseen count on load; ping LIVE ones
     });
   }
