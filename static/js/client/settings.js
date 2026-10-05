@@ -269,27 +269,9 @@ window.PCSettingsFactory = function(dep){
           <div class="muted small" id="set-del-notes-status"></div>
         </div>
       </section>
-      <section class="set-card">
-        <div class="set-head"><div><div class="set-title"><svg class="ic b-ic" aria-hidden="true"><use href="#i-bell"></use></svg>Notifications</div>
-          <div class="muted small">Calls, messages, mentions, replies, reactions and zaps — delivered even when the app is closed.</div></div></div>
-        <div class="set-body">
-          <button class="btn btn-neon small" id="set-push-toggle"><svg class="ic b-ic" aria-hidden="true"><use href="#i-bell"></use></svg>Enable push notifications</button>
-          <button class="btn small" id="set-push-test" style="margin-left:6px">Test</button>
-          <div class="muted small" id="set-push-status" style="margin-top:6px"></div>
-          <div id="set-stay-row" class="set-stay" hidden>
-            <label><input type="checkbox" id="set-stay"> Stay connected in the background</label>
-            <div class="muted small">Direct push normally reaches a closed PosterChan. This fallback
-              keeps the client connection open on devices where push is unavailable, with the
-              permanent notification Android requires, and starts again after a reboot.
-              <strong>It uses more battery</strong>, so leave it off when push is working.</div>
-          </div>
-        </div>
-      </section>
       <div id="user-settings"></div>
     </div>`;
 
-    _wirePushToggle();
-    _wireStayConnected();
     { const ab=$('#set-admin'); if(ab) ab.onclick=()=>switchView('admin'); }
     { const da=$('#set-del-account'); if(da) da.onclick=async()=>{
         if(!await uiConfirm('Permanently delete your account and all your AI chats + files on this server? This cannot be undone.')) return;
@@ -388,6 +370,37 @@ window.PCSettingsFactory = function(dep){
   // Pleroma OAuth, Nostr key) to their existing endpoints.
   let _usMail=[];
   let _userSettingsRender=0;
+  /* PUSH LIVES IN THE NOTIFICATIONS TAB ("User Settings: move Notifications part under Notifications
+   * Tab"). It was a card of its own above the tabs, apart from everything else about notifications.
+   * The tab is drawn later (after the account settings load), so the card is put there and wired then;
+   * and when those settings could not load at all it goes above the error instead -- turning push on,
+   * and its Test, must never depend on the server answering this one request. */
+  function _pushCardHtml(){
+    return `      <section class="set-card">
+        <div class="set-head"><div><div class="set-title"><svg class="ic b-ic" aria-hidden="true"><use href="#i-bell"></use></svg>Notifications</div>
+          <div class="muted small">Calls, messages, mentions, replies, reactions and zaps — delivered even when the app is closed.</div></div></div>
+        <div class="set-body">
+          <button class="btn btn-neon small" id="set-push-toggle"><svg class="ic b-ic" aria-hidden="true"><use href="#i-bell"></use></svg>Enable push notifications</button>
+          <button class="btn small" id="set-push-test" style="margin-left:6px">Test</button>
+          <div class="muted small" id="set-push-status" style="margin-top:6px"></div>
+          <div id="set-stay-row" class="set-stay" hidden>
+            <label><input type="checkbox" id="set-stay"> Stay connected in the background</label>
+            <div class="muted small">Direct push normally reaches a closed PosterChan. This fallback
+              keeps the client connection open on devices where push is unavailable, with the
+              permanent notification Android requires, and starts again after a reboot.
+              <strong>It uses more battery</strong>, so leave it off when push is working.</div>
+          </div>
+        </div>
+      </section>`;
+  }
+  function _placePushCard(host){
+    if(!host || $('#set-push-toggle')) return;
+    const pane = host.querySelector('.us-pane[data-pane="notifications"]');
+    if(pane) pane.insertAdjacentHTML('afterbegin', _pushCardHtml());
+    else host.insertAdjacentHTML('afterbegin', _pushCardHtml());
+    _wirePushToggle();
+    _wireStayConnected();
+  }
   async function renderUserSettings(){
     const host=$('#user-settings'); if(!host) return;
     const generation=++_userSettingsRender,owner=S.ME&&S.ME.pubkey;
@@ -453,6 +466,7 @@ window.PCSettingsFactory = function(dep){
         (authError&&authError.message)||'could not establish your app session')}</div>
         <button class="btn btn-ghost small" id="us-retry">Retry</button></div></section>`;
       const retry=$('#us-retry',host); if(retry) retry.onclick=renderUserSettings;
+      _placePushCard(host);
       return;
     }
     if(_solo) s={};                    // no server to hold account settings — the client-side ones still apply
@@ -460,7 +474,7 @@ window.PCSettingsFactory = function(dep){
     else if(_cachedS){ s=_cachedS; }   // network failed but we have last-good settings → show them, not an error
     if(!s || typeof s!=='object'){
       host.innerHTML='<section class="set-card"><div class="set-body"><div class="muted">Couldn’t load your settings.</div><button class="btn btn-ghost small" id="us-retry">Retry</button></div></section>';
-      const rt=$('#us-retry'); if(rt) rt.onclick=renderUserSettings; return;
+      const rt=$('#us-retry'); if(rt) rt.onclick=renderUserSettings; _placePushCard(host); return;
     }
     _usMail = Array.isArray(s.mail_accounts)? s.mail_accounts.slice() : [];
     // The ACCOUNT value seeds the select, not the localStorage cache. Preferring the cache made every
@@ -544,7 +558,6 @@ window.PCSettingsFactory = function(dep){
           </label>
           <div class="muted small">Which PosterChan server this app talks to for AI, media rendering and streams — your Nostr key and your posts never depend on it, they live on relays. Tap a quick-pick or type a domain, or paste a <code>.onion</code> address to connect over Tor. <b>Relays only</b> runs the app with no server at all: you keep Social, Messages, Notes, Passwords, Budget and the games, and the server-backed features are hidden until you name an instance again. Switching reloads the app.</div>
           ` : ''}
-          ${_standalone() ? '' : `<label class="fld">News sources <span class="muted small">(one per line: url|name) — used by the <code>news</code> command</span><textarea class="input" id="us-news-src" rows="4">${enc(s.news_sources||'')}</textarea></label>`}
         </div>
         ${_notificationPane(s)}
         <div class="us-pane" data-pane="timeline">
@@ -757,6 +770,7 @@ window.PCSettingsFactory = function(dep){
        the one screen whose whole job is to say what state the phone is in. */
     { const ps=$('#phone-shell',host); if(ps) _withPhoneShell(m => m.renderSettings(ps)); }
 
+    _placePushCard(host);
     $$('.us-tab',host).forEach(b=> b.onclick=()=>{
       $$('.us-tab',host).forEach(x=>x.classList.toggle('active',x===b));
       $$('.us-pane',host).forEach(p=>p.classList.toggle('active', p.dataset.pane===b.dataset.tab));
@@ -1282,7 +1296,7 @@ window.PCSettingsFactory = function(dep){
       // relay and media edits down with it: the Save button did nothing at all, silently.
       const _fv=(id)=>{ const el=$(id); return el ? String(el.value||'').trim() : ''; };
       const _fc=(id)=>{ const el=$(id); return el ? !!el.checked : false; };
-      const body={ notification_email:_fv('#us-email'), news_sources:($('#us-news-src')||{}).value||'',
+      const body={ notification_email:_fv('#us-email'), 
         telegram_notifications:_fv('#us-tg-notif'), ...($('#us-social-notif') ? {social_notif_enabled:_fc('#us-social-notif')} : {}),
         theme:($('#us-theme')&&$('#us-theme').value)||'cyberpunk',
         mail_accounts:usCollectMail() };
