@@ -73,19 +73,23 @@ def test_bundled_relay_cursor_contract_reaches_the_remainder_of_a_full_second():
     import time
     from pathlib import Path
     source=Path(__file__).resolve().parents[2]/'app/services/nostr_relay/store.py'
-    klass=next(n for n in ast.parse(source.read_text()).body if isinstance(n,ast.ClassDef) and n.name=='RelayStore')
+    tree=ast.parse(source.read_text())
+    klass=next(n for n in tree.body if isinstance(n,ast.ClassDef) and n.name=='RelayStore')
     klass.body=[n for n in klass.body if isinstance(n,ast.FunctionDef) and n.name in {'_query_sync','_query_one','_build_where'}]
+    # The row -> event mapping the read methods call (rows are served from the columns, not a raw copy).
+    helpers=[n for n in tree.body if (isinstance(n,ast.Assign) and any(getattr(t,'id','')=='EVENT_COLUMNS' for t in n.targets))
+             or (isinstance(n,ast.FunctionDef) and n.name=='event_from_row')]
     namespace={'json':json,'time':time,'_PgConn':sqlite3.Connection}
-    exec(compile(ast.fix_missing_locations(ast.Module(body=[klass],type_ignores=[])),str(source),'exec'),namespace)
+    exec(compile(ast.fix_missing_locations(ast.Module(body=[*helpers,klass],type_ignores=[])),str(source),'exec'),namespace)
     RelayStore=namespace['RelayStore']
     conn = sqlite3.connect(':memory:')
     conn.row_factory = sqlite3.Row
     conn.executescript('''CREATE TABLE events(id TEXT PRIMARY KEY, pubkey TEXT,
-        created_at INTEGER, kind INTEGER, expiration INTEGER, raw TEXT);''')
+        created_at INTEGER, kind INTEGER, expiration INTEGER, tags TEXT, content TEXT, sig TEXT);''')
     rows = [{'id':format(i, '064x'), 'pubkey':'me', 'kind':30078, 'created_at':100000}
             for i in range(6200)]
-    conn.executemany('INSERT INTO events VALUES (?, ?, ?, ?, NULL, ?)',
-                     [(e['id'], e['pubkey'], e['created_at'], e['kind'], json.dumps(e))
+    conn.executemany('INSERT INTO events VALUES (?, ?, ?, ?, NULL, ?, ?, ?)',
+                     [(e['id'], e['pubkey'], e['created_at'], e['kind'], '[]', '', 's')
                       for e in rows])
     store = RelayStore.__new__(RelayStore)
     store._conn = lambda: conn

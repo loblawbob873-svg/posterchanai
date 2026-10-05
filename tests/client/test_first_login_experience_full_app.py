@@ -45,7 +45,7 @@ window.WebSocket=FixtureSocket;
 window.__navOff=k=>{const b=document.querySelector('.sidebar .nav .nav-item[data-view="'+k+'"]');
   return b ? (b.classList.contains('nav-off') || !!(b.closest('.nav-group')&&b.closest('.nav-group').classList.contains('nav-off'))) : null;};
 '''
-INIT = full.INIT.split("class FixtureSocket")[0] + SOCKET
+INIT = full.INIT.replace(full.FIRST_RUN_DONE, "").split("class FixtureSocket")[0] + SOCKET
 
 
 async def run(mode, choose=None, width=1280):

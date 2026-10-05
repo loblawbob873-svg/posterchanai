@@ -49,10 +49,10 @@ class _Cur:
         # the walk must be seen to ask about one pubkey at a time.
         repo_id, _kind, pubkey = params
         self._conn.asked.append(pubkey)
-        self._rows = [(json.dumps(e),) for e in self._conn.events
+        self._rows = [(e["id"], e["pubkey"], e["created_at"], e["kind"], json.dumps(e["tags"]), e["content"], e["sig"]) for e in self._conn.events
                       if e["pubkey"] == pubkey
                       and any(t[:2] == ["d", repo_id] for t in e["tags"])]
-        self._rows.sort(key=lambda r: -json.loads(r[0])["created_at"])
+        self._rows.sort(key=lambda r: -r[2])
 
     def fetchall(self):
         return self._rows

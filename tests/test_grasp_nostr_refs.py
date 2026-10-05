@@ -136,7 +136,7 @@ class _Cur:
     def execute(self, sql, params=None):
         if "id = ANY" in sql:
             ids, kinds = params
-            self._rows = [(json.dumps(e),) for e in self._conn.events
+            self._rows = [(e["id"], e["pubkey"], e["created_at"], e["kind"], json.dumps(e["tags"]), e["content"], e["sig"]) for e in self._conn.events
                           if e["id"] in ids and e["kind"] in kinds]
         else:
             self._rows = []

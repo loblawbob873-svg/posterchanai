@@ -68,7 +68,7 @@ class _Cur:
             # Honour the SQL's own comparison: case-insensitive only when it says lower(...).
             ci = "lower(t.value) = lower(%s)" in sql
             same = (lambda a, b: a.lower() == b.lower()) if ci else (lambda a, b: a == b)
-            self._rows = [(json.dumps(e),) for e in self._conn.events if e["pubkey"] == pubkey
+            self._rows = [(e["id"], e["pubkey"], e["created_at"], e["kind"], json.dumps(e["tags"]), e["content"], e["sig"]) for e in self._conn.events if e["pubkey"] == pubkey
                           and any(t[0] == "d" and same(t[1], _repo) for t in e["tags"])]
         elif "FROM users" in sql:
             if self._conn.no_users_table:

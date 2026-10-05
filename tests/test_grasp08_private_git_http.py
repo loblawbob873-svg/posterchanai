@@ -67,7 +67,7 @@ class _Conn:
 
     def __init__(self, events):
         import json
-        self._rows = [(json.dumps(e),) for e in events]
+        self._rows = [(e["id"], e["pubkey"], e["created_at"], e["kind"], json.dumps(e["tags"]), e["content"], e["sig"]) for e in events]
         self.autocommit = False
 
     def cursor(self):

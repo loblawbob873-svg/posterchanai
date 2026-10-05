@@ -64,7 +64,7 @@ class _Cur:
             keep = [e for e in self._conn.events if e["kind"] == kind and e["pubkey"] == who]
         keep = [e for e in keep if any(t[:2] == ["d", repo_id] for t in e["tags"])]
         keep.sort(key=lambda e: -e["created_at"])
-        self._rows = [(json.dumps(e),) for e in keep]
+        self._rows = [(e["id"], e["pubkey"], e["created_at"], e["kind"], json.dumps(e["tags"]), e["content"], e["sig"]) for e in keep]
 
     def fetchall(self):
         return self._rows

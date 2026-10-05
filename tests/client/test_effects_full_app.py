@@ -74,7 +74,12 @@ class Handler(SimpleHTTPRequestHandler):
             if self.path=='/fixture.png':self.path='/static/icon-192.png'
             if self.path.startswith('/client/') and self.path.split('?')[0].endswith('.js'): self.path='/static/js/client/'+self.path.removeprefix('/client/')
             super().do_GET()
-INIT=r'''
+FIRST_RUN_DONE=r'''// Every fixture logs in a brand-new account, and a brand-new account is shown the first-login
+// 'Social or Full' choice over the app. Tests of other screens start as somebody who has chosen
+// (test_first_login_experience_full_app strips this line to test the choice itself).
+try{const s=JSON.parse(localStorage.getItem('pc_nostr_settings')||'{}');if(!('experience' in s)){s.experience='keep';localStorage.setItem('pc_nostr_settings',JSON.stringify(s));}}catch(_){}
+'''
+INIT=FIRST_RUN_DONE+r'''
 window.__errors=[];onerror=(m)=>__errors.push(m);
 window.__requests=[];window.__chatRequests=[];window.__sockets=[];window.__published=[];window.__publishOK=false;window.__nextConversation=41;
 const origFetch=window.fetch.bind(window);
