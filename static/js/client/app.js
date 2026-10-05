@@ -1001,6 +1001,11 @@
     return key;
   }
   function navHiddenSet(){
+    // Logged out: the simple social sidebar ("the logged out page should show the social simple
+    // features"). Computed, NEVER stored -- whoever signs in next must get their own sidebar, and a
+    // stored copy would also read as "this sidebar is already configured" and skip their first-login
+    // choice (_maybeExperienceSplash).
+    if(GUEST) return new Set(socialHiddenKeys());
     let raw = ClientSettings.get('navHidden', []);
     if(typeof raw === 'string'){ try{ raw = JSON.parse(raw); }catch(_){ raw = []; } }
     const out = new Set();
@@ -1047,6 +1052,103 @@
     _prefTouched.add('navHidden');     // a late restore must not undo what was just switched
     applyNavHidden();
     return saveClientPrefsNostr({ navHidden: list });
+  }
+  /* TWO WAYS TO START: Social or Full Experience ("if a user logs in for the first time, give them a
+   * nice splash page that lets them choose Social or Full Experience. The Social experience hides all
+   * the non-social features to keep it simple"). Social is nothing more than a sidebar preference --
+   * the same navHidden the Settings → Sidebar switches write -- so everything stays one switch away.
+   *
+   * SOCIAL_KEEP is the short list of what a social network IS; everything else on the sidebar goes,
+   * read off the sidebar itself so an app added later is hidden by Social without editing this list.
+   * NAV_LOCKED rows (Settings, Bookmarks, Files) can never be hidden anyway. A group holding a kept
+   * row stays and loses its other rows one by one. */
+  const SOCIAL_KEEP = new Set(['home', 'global', 'notifications', 'messages', 'concord', 'articles',
+                               'streams', 'calls', 'drafts', 'texts']);
+  function socialHiddenKeys(){
+    const rows = new Map();
+    document.querySelectorAll('.sidebar .nav .nav-item').forEach(btn => { const k = _navKey(btn); if(k && !rows.has(k)) rows.set(k, btn); });
+    const keeps = k => SOCIAL_KEEP.has(k) || NAV_LOCKED.has(k);
+    const out = [];
+    for(const [k, btn] of rows){
+      if(keeps(k)) continue;
+      if(k.indexOf('group:') === 0){
+        const g = btn.closest('.nav-group');
+        if(g && [...g.querySelectorAll('.nav-item.sub')].some(c => keeps(_navKey(c)))) continue;
+      }
+      out.push(k);
+    }
+    return out;
+  }
+  /* SHOWN ONCE TO EVERY ACCOUNT ("maybe every user should get that option once, may help existing
+   * users") -- decided on what the relays ANSWERED. `pr` is restoreClientPrefsNostr's read: {} when every
+   * relay agreed there is no document, null when nothing answered; "could not ask" never shows it. The
+   * choice is recorded in the synced prefs, so no other device asks again. An account that has already
+   * shaped its sidebar (synced OR on this device) gets a third answer, "Keep my sidebar as it is", since
+   * Social and Full both REPLACE what they arranged. */
+  function _sidebarConfigured(pr){
+    const has = v => Array.isArray(v) ? v.length > 0 : !!(v && typeof v === 'object' && Object.keys(v).length);
+    return has(pr.navHidden) || has(pr.navOrder) || has(pr.navGroupOf) || has(pr.navUserGroups)
+      || has(ClientSettings.get('navHidden', [])) || has(ClientSettings.get('navOrder', null))
+      || has(ClientSettings.get('navGroupOf', null)) || has(ClientSettings.get('navUserGroups', null));
+  }
+  function _maybeExperienceSplash(pr){
+    if(GUEST || !pr || typeof pr !== 'object') return false;
+    if(pr.experience || ClientSettings.get('experience', '')) return false;
+    try{ if(window.PCOS && PCOS.isOn && PCOS.isOn()) return false; }catch(_){}   // the desktop has its own first run
+    if(document.getElementById('pc-experience')) return false;
+    _showExperienceSplash(_sidebarConfigured(pr));
+    return true;
+  }
+  function _showExperienceSplash(configured){
+    const ov = document.createElement('div');
+    ov.id = 'pc-experience';
+    ov.className = 'pc-experience';
+    ov.setAttribute('role', 'dialog'); ov.setAttribute('aria-modal', 'true'); ov.setAttribute('aria-labelledby', 'pc-exp-title');
+    ov.innerHTML = `<div class="pc-exp-box">
+        <img class="pc-exp-logo" src="${enc(LOGO || '/static/favicon.png')}" alt="">
+        <h2 id="pc-exp-title">Welcome to PosterChan</h2>
+        <p class="muted">How would you like to start? You can change this any time in Settings → Sidebar.</p>
+        <div class="pc-exp-cards">
+          <button class="pc-exp-card" data-exp="social">
+            <svg class="ic" aria-hidden="true"><use href="#i-users"></use></svg>
+            <b>Social</b>
+            <span>Just the social network: your feed, notifications, messages, communities and streams. Simple and clean.</span>
+          </button>
+          <button class="pc-exp-card" data-exp="full">
+            <svg class="ic" aria-hidden="true"><use href="#i-grid"></use></svg>
+            <b>Full Experience</b>
+            <span>Everything PosterChan does: AI, email, notes, calendar, files, music, games, wallet and more.</span>
+          </button>
+        </div>
+        ${configured ? '<button class="btn btn-ghost pc-exp-keep" data-exp="keep">Keep my sidebar as it is</button>' : ''}
+      </div>`;
+    document.body.appendChild(ov);
+    document.body.classList.add('pc-exp-open');
+    ov.querySelectorAll('[data-exp]').forEach(b => b.onclick = () => chooseExperience(b.dataset.exp));
+    try{ ov.querySelector('[data-exp="social"]').focus(); }catch(_){}
+  }
+  function chooseExperience(kind){
+    kind = kind === 'social' || kind === 'keep' ? kind : 'full';
+    ClientSettings.set('experience', kind);          // this device never asks again, even if the save is late
+    _prefTouched.add('experience');
+    /* ONE save carrying both. Two (setNavHidden's, then this one) is a read-modify-write each, and when
+     * the second read reaches a relay that has not stored the first yet, it republishes the document
+     * WITHOUT the hidden list -- Social undone on every device. Full shows everything, so it clears the
+     * list in the same save; Keep records the answer and touches nothing else. */
+    const patch = { experience: kind };
+    if(kind !== 'keep'){
+      const list = kind === 'social' ? socialHiddenKeys().filter(k => !NAV_LOCKED.has(k)) : [];
+      ClientSettings.set('navHidden', list);
+      _prefTouched.add('navHidden');
+      applyNavHidden();
+      patch.navHidden = list;
+    }
+    saveClientPrefsNostr(patch);
+    const ov = document.getElementById('pc-experience'); if(ov) ov.remove();
+    document.body.classList.remove('pc-exp-open');
+    try{ applyMobileNav(); }catch(_){}
+    toast(kind === 'social' ? 'Simple and social. Everything else is in Settings → Sidebar.'
+        : kind === 'keep' ? 'Your sidebar stays as it is. Settings → Sidebar changes it any time.' : 'Everything is on.');
   }
   /* The phone's sheets are the same nav under another name, so they read the same set. Their `v`
    * values are the sheet's own literals for the three sub-sheets; everything else already matches. */
@@ -3608,7 +3710,7 @@
       if(GUEST || _hydrated) return; _hydrated = true;
       restoreMediaServer();   // restore the synced media server (kind-10063/10096) — must run AFTER the
                               // relay is connected (this fires on onReady), else the query returns nothing
-      restoreClientPrefsNostr();   // restore Nostr-synced client prefs (data-saver / tap-to-load images)
+      restoreClientPrefsNostr().then(pr => _maybeExperienceSplash(pr)).catch(()=>{});   // restore Nostr-synced client prefs, then -- on a definite answer -- the first-login choice
       seedRelaysFromNip65();  // the user's OWN published relay list joins this device's — additive, never a replacement
       setTimeout(()=>{ try{ Drafts.pull(); }catch(_){} }, 1200);   // local drafts already painted; sync off the critical path
       Promise.allSettled([fetchFollows(), fetchMutes(), fetchPins(), fetchBookmarks(), fetchMyProfile()])

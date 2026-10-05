@@ -426,6 +426,7 @@ window.PCBlossomFactory = function(dep){
         if(['home','global','notifications','messages','bookmarks','profile'].includes(_S.VIEW)){ try{ renderView(true); }catch(_){} }
       }
     }catch(_){}
+    return pr;      // what the relays ANSWERED ({} = agreed there is none); null/undefined above = could not ask
   }
   // Account-scoped alert preferences. Pending field edits survive reload and delayed relay replies.
   const _NOTIFICATION_TYPES = [['email','Email'],['dm','Direct messages'],['likes','Likes and reactions'],
