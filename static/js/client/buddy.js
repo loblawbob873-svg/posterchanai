@@ -123,6 +123,15 @@
     return { left: Math.max(0, Math.min(dw - w, left)), top: Math.max(0, Math.min(dh - h, top)) };
   }
   /* PosterChanOS: ask for her window at the spot she would stand on the desk, in viewport px. */
+  /* WHERE SHE IS ON SCREEN, in viewport px -- her own window's rectangle as last placed (PosterChanOS), or
+   * her element in the page. The desktop's right-click menu asks: with clicks passing through her, a
+   * right-click ON her reaches the desktop, and a menu opened at the pointer lands under her window. */
+  let _nativeBox = null;
+  function box(){
+    if(nativeUp && _nativeBox) return Object.assign({}, _nativeBox);
+    if(el && el.isConnected){ const r = el.getBoundingClientRect(); if(r.width > 0) return { left: r.left, top: r.top, width: r.width, height: r.height }; }
+    return null;
+  }
   function nativeShow(p){
     if(!desk) return;
     /* NOT WHILE THE DESKTOP IS STILL ITS STARTUP SIZE. The surface starts at its 500x540 minimum before it
@@ -134,13 +143,14 @@
     const z = zf(), dr = desk.getBoundingClientRect();
     wire();
     nativeUp = true;
+    _nativeBox = { left: dr.left + at.left * z, top: dr.top + (at.top - BUBBLE) * z, width: boxW(p) * z, height: (boxH(p) + BUBBLE) * z };
     try{ Promise.resolve(window.pcBuddy.show({ vx: dr.left + at.left * z, vy: dr.top + (at.top - BUBBLE) * z,
                                                bw: boxW(p) * z, bh: (boxH(p) + BUBBLE) * z, who: p.who,
                                                out: p.out, fx: p.fx, fy: p.fy, clickThrough: p.clickThrough })).catch(() => {}); }catch(_){ }
   }
   function nativeHide(){
     if(!nativeUp) return;
-    nativeUp = false;
+    nativeUp = false; _nativeBox = null;
     try{ Promise.resolve(window.pcBuddy.hide()).catch(() => {}); }catch(_){ }
   }
   /* Her window reports a drag's end (to be saved) and her own "Hide PosterChan". */
@@ -154,6 +164,8 @@
       if(ev.type === 'size'){ resize(Number(ev.step) || 0); return; }
       if(ev.type === 'through'){ setClickThrough(true); return; }
       if(ev.type !== 'moved') return;
+      if(_nativeBox && Number.isFinite(Number(ev.vx)) && Number.isFinite(Number(ev.vy)))
+        _nativeBox = Object.assign({}, _nativeBox, { left: Number(ev.vx), top: Number(ev.vy) });
       const p = pref();
       const z = zf(), dr = desk.getBoundingClientRect();
       const dw = desk.clientWidth - boxW(p), dh = desk.clientHeight - boxH(p);
@@ -353,7 +365,7 @@
     resizeT = setTimeout(() => { const p = pref(); if(p.on && nativeUp) nativeShow(p); }, 150);
   });
   window.PCBuddy = { mount, unmount, hide, show: reveal, refresh, choose, isOn: () => pref().on, who,
-                    resize, setSize, size: () => pref().size, setClickThrough, clickThrough: () => pref().clickThrough,
+                    resize, setSize, size: () => pref().size, setClickThrough, clickThrough: () => pref().clickThrough, box,
                     name: () => CHARS[who()].name, choices: () => Object.keys(CHARS).map(k => ({ id: k, name: CHARS[k].name })),
                     _frame: () => frame };
 })();

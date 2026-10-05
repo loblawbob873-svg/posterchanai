@@ -9253,6 +9253,23 @@
   function deskMenu(x, y){
     const lay = layout();
     const rows = [];
+    /* THE WAY BACK IS NEVER BEHIND HER. With "clicks pass through" on, a right-click ON PosterChan reaches
+     * the desktop, and a menu opened at the pointer sat under her always-on-top window -- holding the only
+     * row that turns the mode off ("right click on her to get menu, hides behind her"). A right-click that
+     * lands on her opens BESIDE her, and that row comes first: it is why you right-clicked her. */
+    let onHer = null;
+    try{
+      if(window.PCBuddy && PCBuddy.isOn() && PCBuddy.clickThrough && PCBuddy.clickThrough() && PCBuddy.box){
+        const hb = PCBuddy.box();
+        if(hb && x >= hb.left && x <= hb.left + hb.width && y >= hb.top && y <= hb.top + hb.height) onHer = hb;
+      }
+    }catch(_){ onHer = null; }
+    if(onHer){
+      rows.push({ label: 'Make ' + (PCBuddy.name ? PCBuddy.name() : 'PosterChan') + ' clickable again', run: () => PCBuddy.setClickThrough(false) });
+      rows.push({ sep: true });
+      const MENU_W = 300, GAP = 12;
+      x = onHer.left - GAP - MENU_W >= 0 ? onHer.left - GAP - MENU_W : onHer.left + onHer.width + GAP;
+    }
     for(const a of lay.hidden.slice(0, 12)) rows.push({ label: 'Show ' + a.label, run: () => showItem(a.view) });
     if(rows.length) rows.push({ sep: true });
     if(Object.keys(lay.pos || {}).length)
@@ -9260,7 +9277,7 @@
     rows.push({ label: 'Add a widget…', run: () => widgetPicker() });
     // Hiding her is one right-click; this is the way back.
     try{ if(window.PCBuddy && !PCBuddy.isOn()) rows.push({ label: 'Show ' + (PCBuddy.name ? PCBuddy.name() : 'PosterChan'), run: () => PCBuddy.show() }); }catch(_){}
-    try{ if(window.PCBuddy && PCBuddy.isOn() && PCBuddy.clickThrough && PCBuddy.clickThrough()) rows.push({ label: 'Make ' + (PCBuddy.name ? PCBuddy.name() : 'PosterChan') + ' clickable again', run: () => PCBuddy.setClickThrough(false) }); }catch(_){}
+    try{ if(!onHer && window.PCBuddy && PCBuddy.isOn() && PCBuddy.clickThrough && PCBuddy.clickThrough()) rows.push({ label: 'Make ' + (PCBuddy.name ? PCBuddy.name() : 'PosterChan') + ' clickable again', run: () => PCBuddy.setClickThrough(false) }); }catch(_){}
     // Only where there are programs to start: a browser opening the same account has none.
     try{ if(window.PCOSShell && PCOSShell.available() && PCOSShell.allApps)
       rows.push({ label: 'Add a program…', run: () => programPicker() }); }catch(_){}
