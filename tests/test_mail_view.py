@@ -47,7 +47,7 @@ class ViewTests(unittest.TestCase):
     def test_mail_is_a_view_the_router_knows(self):
         self.assertIn("if (VIEW==='mail') return renderMailView();", APP)
         self.assertIn("function renderMailView()", APP)
-        self.assertIn("mail:'Email ✉️'", APP, "the view has no title in the header map")
+        self.assertRegex(APP, r"mail:'Email[^']*'", "the view has no title in the header map")
 
     def test_it_gets_the_full_height_layout(self):
         """A mail client has its own scrolling panes; inside the timeline's scroll container it

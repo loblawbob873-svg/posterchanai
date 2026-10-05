@@ -518,7 +518,7 @@ window.PCMailFactory = function(dep){
                selection to act on (.mail-bulk:not(:has(.btn)) in client.css). NO BACKTICKS IN
                HERE: this comment lives inside a template literal, and one would close it and take
                the whole module out at parse time. -->
-          <div class="mail-list-top"><label class="mail-selall" title="Select all / none"><input type="checkbox" id="mail-selall"> Select</label><input class="input mail-search" id="mail-search" placeholder="Search all accounts…" aria-label="Search all email accounts" value="${enc(this.q)}"><button class="mini mail-folders-open" id="mail-folders-open" title="Browse folders" aria-label="Browse folders">${_mi('folder')}</button><button class="mini mail-refresh" id="mail-refresh" title="Refresh" aria-label="Refresh">${_mi('refresh')}</button></div>
+          <div class="mail-list-top"><label class="mail-selall" title="Select all / none"><input type="checkbox" id="mail-selall" aria-label="Select all"> Select</label><input class="input mail-search" id="mail-search" placeholder="Search all accounts…" aria-label="Search all email accounts" value="${enc(this.q)}"><button class="mini mail-folders-open" id="mail-folders-open" title="Browse folders" aria-label="Browse folders">${_mi('folder')}</button><button class="mini mail-refresh" id="mail-refresh" title="Refresh" aria-label="Refresh">${_mi('refresh')}</button></div>
           <div class="mail-bulk"><span class="mail-bulk-act" id="mail-bulk-act"></span></div>
           <div class="mail-items" id="mail-items"><div class="spinner"></div></div>
         </div>

@@ -2681,7 +2681,9 @@
    * its own "reply" -- and listed bare they were indistinguishable, so the model could only guess which
    * post a reply went to. A control inside a repeated item (a post, a list row, a message) is described by
    * the start of that item's own text: who wrote it and what it says. Headings answer the rest. */
-  const _AI_ITEM='article,li,tr,[role="listitem"],[role="article"],[role="row"],.note,.cc-message,.tg-msg';
+  // …plus anything the app KEYS as a row (data-key / data-uid): a hand list of classes was always one list
+  // behind -- Mail's rows were not on it, so its "Select" boxes all read the same.
+  const _AI_ITEM='article,li,tr,[role="listitem"],[role="article"],[role="row"],.note,.cc-message,.tg-msg,[data-key],[data-uid]';
   function _aiNear(el,root){
     try{
       const item=el.closest(_AI_ITEM);
@@ -2714,14 +2716,24 @@
     if(!w || w.native!=null) return {list,map};
     const root=w.body||w.el;
     const sel='button,a[href],input,textarea,select,[role="button"],[role="tab"],[role="link"],[role="checkbox"],[role="switch"],[contenteditable="true"],[contenteditable=""]';
-    for(const el of root.querySelectorAll(sel)){
+    /* A ROW THAT OPENS WHEN CLICKED IS A CONTROL TOO. Most lists here are made clickable in script
+     * (`row.onclick = …`), which no selector can see -- so an email in Mail was simply not in the list
+     * the AI chooses from, and "open the receipt email" had nothing to point at. Such an element (or one
+     * made focusable with tabindex="0") is an `item`, labelled by its own text, in page order. */
+    const items=new Set();
+    const isItem=el=>!el.matches(sel) && (typeof el.onclick==='function' || el.getAttribute('tabindex')==='0')
+      && !(el.parentElement && el.parentElement.closest(sel)) && ![...items].some(i=>i.contains(el));
+    for(const el of root.querySelectorAll(sel+',div,li,span,article,section,tr,td,img,p')){
       if(list.length>=_AI_CTL_MAX) break;
+      const item=!el.matches(sel);
+      if(item && !isItem(el)) continue;
       if(el.closest('.osw-ai-panel') || el.disabled || el.closest('[aria-hidden="true"]')) continue;
       if(!el.getClientRects().length) continue;
       const tag=el.tagName, type=String(el.type||'').toLowerCase();
       if(tag==='INPUT' && /^(password|hidden|file)$/.test(type)) continue;
       let role;
-      if(tag==='SELECT') role='list';
+      if(item) role='item';
+      else if(tag==='SELECT') role='list';
       else if(tag==='INPUT' && /^(checkbox|radio)$/.test(type)) role=type;
       else if(tag==='INPUT' && /^(button|submit|reset|image)$/.test(type)) role='button';
       else if(tag==='TEXTAREA' || tag==='INPUT' || el.isContentEditable) role='textbox';
@@ -2730,7 +2742,13 @@
       else role=el.getAttribute('role')==='tab'?'tab':'button';
       let label=el.getAttribute('aria-label')||'';
       if(!label && el.id){ try{ const l=root.querySelector('label[for="'+CSS.escape(el.id)+'"]'); if(l) label=_aiLabelText(l); }catch(_){ } }
-      if(!label){ const l=el.closest('label'); if(l && role!=='button') label=_aiLabelText(l); }
+      // The nearest label can be an empty wrapper (a switch: <label>Text<label class="switch"><input>…),
+      // so walk out to the first one that says something.
+      if(!label && role!=='button'){ for(let l=el.closest('label'); l && !label; l=l.parentElement && l.parentElement.closest('label')) label=_aiLabelText(l).replace(/\s+/g,' ').trim(); }
+      // A checkbox's VALUE is not its name -- every unlabelled one is "on". With no label it is the
+      // row's "Select", and its `near` says which row.
+      if(!label && (role==='checkbox'||role==='radio')) label=el.getAttribute('title')||'Select';
+      if(!label && role==='item') label=String(el.innerText||'').replace(/\s+/g,' ').trim();
       if(!label && role!=='textbox' && role!=='list') label=el.innerText||el.value||'';
       if(!label) label=el.getAttribute('placeholder')||el.getAttribute('title')||el.getAttribute('name')||'';
       label=String(label).replace(/\s+/g,' ').trim().slice(0,80);
@@ -2740,6 +2758,7 @@
       else if(role==='list') value=(el.selectedOptions&&el.selectedOptions[0]||{}).textContent||'';
       else if(role==='checkbox'||role==='radio') value=(el.checked||el.getAttribute('aria-checked')==='true')?'on':'off';
       const ref=list.length+1;
+      if(item) items.add(el);
       map.set(ref,el);
       list.push({ref,role,label,value:String(value||'').replace(/\s+/g,' ').trim().slice(0,80),near:_aiNear(el,root)});
     }

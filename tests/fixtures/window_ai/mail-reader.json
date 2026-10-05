@@ -1,0 +1,214 @@
+{
+ "action": "window_steps",
+ "windows": [
+  {
+   "title": "PosterChan · Nostr",
+   "view": "",
+   "kind": "PosterChan app",
+   "selection": "",
+   "text": "me@home.test Compose Inbox Sent Drafts More Select Dana <dana@x.test> Dec 31, 1969 Lunch on Friday? are you free Store <shop@x.test> Dec 31, 1969 Your receipt from the hardware store thanks for shopping Sender <s@x.test> Dec 31, 1969 Invoice pay me Invoice No other messages in this conversation S Sender <s@x.test> To: me@home.test Dec 31, 1969 invoice.pdf 1.2 KB Reply Forward"
+  }
+ ],
+ "instruction": "",
+ "history": [],
+ "commands": false,
+ "today": "2026-10-04",
+ "controls": [
+  {
+   "ref": 1,
+   "role": "list",
+   "label": "Account",
+   "value": "me@home.test",
+   "near": ""
+  },
+  {
+   "ref": 2,
+   "role": "button",
+   "label": "Compose",
+   "value": "",
+   "near": ""
+  },
+  {
+   "ref": 3,
+   "role": "button",
+   "label": "Inbox",
+   "value": "",
+   "near": ""
+  },
+  {
+   "ref": 4,
+   "role": "button",
+   "label": "Sent",
+   "value": "",
+   "near": ""
+  },
+  {
+   "ref": 5,
+   "role": "button",
+   "label": "Drafts",
+   "value": "",
+   "near": ""
+  },
+  {
+   "ref": 6,
+   "role": "button",
+   "label": "More",
+   "value": "",
+   "near": ""
+  },
+  {
+   "ref": 7,
+   "role": "checkbox",
+   "label": "Select",
+   "value": "off",
+   "near": ""
+  },
+  {
+   "ref": 8,
+   "role": "textbox",
+   "label": "Search all email accounts",
+   "value": "",
+   "near": ""
+  },
+  {
+   "ref": 9,
+   "role": "button",
+   "label": "Browse folders",
+   "value": "",
+   "near": ""
+  },
+  {
+   "ref": 10,
+   "role": "button",
+   "label": "Refresh",
+   "value": "",
+   "near": ""
+  },
+  {
+   "ref": 11,
+   "role": "checkbox",
+   "label": "Select",
+   "value": "off",
+   "near": "Dana <dana@x.test> Dec 31, 1969 Lunch on Friday? are you free"
+  },
+  {
+   "ref": 12,
+   "role": "item",
+   "label": "Dana <dana@x.test> Dec 31, 1969 Lunch on Friday? are you free",
+   "value": "",
+   "near": "Dana <dana@x.test> Dec 31, 1969 Lunch on Friday? are you free"
+  },
+  {
+   "ref": 13,
+   "role": "checkbox",
+   "label": "Select",
+   "value": "off",
+   "near": "Store <shop@x.test> Dec 31, 1969 Your receipt from the hardware store thanks for shopping"
+  },
+  {
+   "ref": 14,
+   "role": "item",
+   "label": "Store <shop@x.test> Dec 31, 1969 Your receipt from the hardware store thanks for",
+   "value": "",
+   "near": "Store <shop@x.test> Dec 31, 1969 Your receipt from the hardware store thanks for shopping"
+  },
+  {
+   "ref": 15,
+   "role": "checkbox",
+   "label": "Select",
+   "value": "off",
+   "near": "Sender <s@x.test> Dec 31, 1969 Invoice pay me"
+  },
+  {
+   "ref": 16,
+   "role": "item",
+   "label": "Sender <s@x.test> Dec 31, 1969 Invoice pay me",
+   "value": "",
+   "near": "Sender <s@x.test> Dec 31, 1969 Invoice pay me"
+  },
+  {
+   "ref": 17,
+   "role": "button",
+   "label": "Back",
+   "value": "",
+   "near": ""
+  },
+  {
+   "ref": 18,
+   "role": "button",
+   "label": "Reply",
+   "value": "",
+   "near": ""
+  },
+  {
+   "ref": 19,
+   "role": "button",
+   "label": "Reply all",
+   "value": "",
+   "near": ""
+  },
+  {
+   "ref": 20,
+   "role": "button",
+   "label": "Forward",
+   "value": "",
+   "near": ""
+  },
+  {
+   "ref": 21,
+   "role": "button",
+   "label": "AI tools",
+   "value": "",
+   "near": ""
+  },
+  {
+   "ref": 22,
+   "role": "button",
+   "label": "Mark unread",
+   "value": "",
+   "near": ""
+  },
+  {
+   "ref": 23,
+   "role": "button",
+   "label": "Move",
+   "value": "",
+   "near": ""
+  },
+  {
+   "ref": 24,
+   "role": "button",
+   "label": "Delete",
+   "value": "",
+   "near": ""
+  },
+  {
+   "ref": 25,
+   "role": "button",
+   "label": "S Sender <s@x.test> To: me@home.test Dec 31, 1969",
+   "value": "",
+   "near": ""
+  },
+  {
+   "ref": 26,
+   "role": "link",
+   "label": "invoice.pdf 1.2 KB",
+   "value": "",
+   "near": ""
+  },
+  {
+   "ref": 27,
+   "role": "button",
+   "label": "Reply",
+   "value": "",
+   "near": ""
+  },
+  {
+   "ref": 28,
+   "role": "button",
+   "label": "Forward",
+   "value": "",
+   "near": ""
+  }
+ ]
+}

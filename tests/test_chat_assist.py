@@ -463,3 +463,81 @@ def test_a_click_labelled_exactly_as_another_control_goes_to_that_control():
     c = _fixture("global")
     got = _steps([{"do": "click", "ref": _ref(c, "New post"), "label": "Post"}], c, "post it")
     assert got[0]["ref"] == _ref(c, "Post")
+
+
+# ---- Mail and Settings (fixtures captured 2026-10-04); each step below is a reply the node's model gave.
+def _item_ref(controls, word):
+    return next(c["ref"] for c in controls if c["role"] == "item" and word in c["label"].lower())
+
+
+def test_open_moves_a_ticked_select_box_to_its_row():
+    """'open the receipt email' -> the model ticked a row's Select box (0/3)."""
+    c = _fixture("mail")
+    box = _ref(c, "Select", "receipt")
+    got = _steps([{"do": "toggle", "ref": box, "on": True, "label": "Select receipt"}], c, "open the receipt email")
+    assert [(s["do"], s["ref"]) for s in got] == [("click", _item_ref(c, "receipt"))], got
+
+
+def test_select_turns_opening_a_row_into_ticking_it():
+    """'select the lunch email' -> the model opened the row (0/3)."""
+    c = _fixture("mail")
+    got = _steps([{"do": "click", "ref": _item_ref(c, "lunch"), "label": "Open Dana's email"}], c, "select the lunch email")
+    assert [(s["do"], s["ref"], s["on"]) for s in got] == [("toggle", _ref(c, "Select", "Lunch"), True)], got
+
+
+def test_the_row_they_named_wins():
+    """'open the receipt email' -> the model opened the INVOICE row beside one that says receipt."""
+    c = _fixture("mail")
+    got = _steps([{"do": "click", "ref": _item_ref(c, "invoice"), "label": "Open sender's email"}], c, "open the receipt email")
+    assert [s["ref"] for s in got] == [_item_ref(c, "receipt")], got
+
+
+def test_search_means_the_search_box():
+    """'search my email for invoices' -> the model opened the invoice email (0/3)."""
+    c = _fixture("mail")
+    got = _steps([{"do": "click", "ref": _item_ref(c, "invoice"), "label": "Open invoice"}], c, "search my email for invoices")
+    box = _ref(c, "Search all email accounts")
+    assert [(s["do"], s["ref"], s["text"]) for s in got] == [("fill", box, "invoices"), ("press", box, "Enter")], got
+
+
+def test_show_me_a_tab_clicks_it():
+    """'show my relay settings' -> nothing (0/3), or a click on the neighbouring 'poster.place'."""
+    c = _fixture("settings")
+    relays = _ref(c, "Relays")
+    assert [(s["do"], s["ref"]) for s in _steps([], c, "show my relay settings")] == [("click", relays)]
+    wrong = _ref(c, "poster.place")
+    assert [s["ref"] for s in _steps([{"do": "click", "ref": wrong, "label": "Current relay"}], c, "show my relay settings")] == [relays]
+
+
+def test_looking_types_nothing():
+    """'show my relay settings' -> a fill of the Instance box with a relay URL the model made up."""
+    c = _fixture("settings")
+    got = _steps([{"do": "fill", "ref": _ref(c, "Instance"), "text": "https://nostr-relay.example", "label": "Set new relay"}],
+                 c, "show my relay settings")
+    assert not [s for s in got if s["do"] == "fill"], got
+    # ...while a request that DOES write keeps its fill.
+    got = _steps([{"do": "fill", "ref": _ref(c, "Instance"), "text": "poster.place", "label": "Set instance"}],
+                 c, "set my instance to 'poster.place'")
+    assert [s["do"] for s in got] == ["fill"], got
+
+
+def test_enter_on_a_button_is_a_click():
+    """'post ...' -> {"do":"press","ref":<Post>,"text":"Enter"} pressed a key on a button."""
+    c = _fixture("global")
+    post = _ref(c, "Post")
+    got = _steps([{"do": "fill", "ref": _ref(c, "How was your weekend?"), "text": "good morning nostr"},
+                  {"do": "press", "ref": post, "text": "Enter", "label": "Post"}], c, "post 'good morning nostr'")
+    assert [(s["do"], s["ref"]) for s in got][-1] == ("click", post), got
+
+
+def test_a_broken_step_does_not_cost_the_tasks():
+    """'Extract decisions and next actions' (2/4): both tasks were right; one step was malformed JSON and
+    the whole reply -- tasks included -- was thrown away. This is the model's reply, cut where it was."""
+    from app.services.chat_assist_service import parse_steps
+    raw = ('{"answer": "Extracting decisions and next actions from the Social window.", "tasks": [{"text": '
+           '"Find a self-hosted calendar that syncs with phone", "due": "", "who": ""}, {"text": "Move relay '
+           'operator meeting to Friday 3pm", "due": "2026-10-08", "who": ""}], "steps": [{"do": "open", "label": '
+           '"Open post about calendar"}, "ref": 9, "on": true}, {"do": "click", "label": "View replies", "ref": 18, "on')
+    res = parse_steps(raw, want_tasks=True, controls=_fixture("global"), instruction="Extract decisions and next actions from this window.")
+    assert [t["text"] for t in res["tasks"]] == ["Find a self-hosted calendar that syncs with phone",
+                                                  "Move relay operator meeting to Friday 3pm"], res

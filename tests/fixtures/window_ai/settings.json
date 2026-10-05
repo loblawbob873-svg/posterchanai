@@ -1,0 +1,256 @@
+{
+ "action": "window_steps",
+ "windows": [
+  {
+   "title": "PosterChan · Nostr",
+   "view": "",
+   "kind": "PosterChan app",
+   "selection": "",
+   "text": "Account npub1rwzv24nmzfjypx2… · build 1791167460 Copy npub Show private key (nsec) ⤓ Sync my data to this relay Logout Delete all my posts Delete my account Pulls your posts back from other relays — and your notes, passwords, calendar and contacts from this server's private backup, if it has one. Notifications Calls, messages, mentions, replies, reactions and zaps — delivered even when the app is closed. 🔔 Enable push notifications Stay connected in the background Direct push normally reaches a closed PosterChan. This fallback keeps the client connection open on devices where push is unavailable, with the permanent notification Android requires, and starts again after a reboot. It uses more battery, so leave it off when push is working. User Settings Profile Timeline Notifications Sidebar Relays Media Cache Zaps Privacy Muted Mail Telegram Social API Keys THEME (APPLIES INSTANTLY; SAVED TO YOUR ACCOUNT) Cyberpunk Cherry Blossom Professional Windows 98 Windows XP Anime Girl 🌸 Soviet Gothic ☭ Dark 🌙 Monero ɱ Build unknown · this app LANGUAGE (ENGLISH IS THE DEFAULT; ARABIC SWITCHES THE LAYOUT RIGHT-TO-LEFT) English العربية 日本語 DATA SAVER Holds images & videos until you tap them, skips link previews, and loads lighter feed pages — turn it on when you're low on data. Syncs across your devices. SCREEN THE APP OPENS ON Social — the timeline (default) AI Notifications Web Search Terminal Virtual Machines Messages Communities Documents Contacts Calendar Email PosterChan Code Bookmarks My Analytics Calls Live Translate Notes Calculator Telegram Texts Passwords Monero Wallet Wallet Drafts Meme Builder Git Media Center News Markets Budget Articles Streams Torrents Server Stats Chess Tic-Tac-Toe Hangman Connect Four Blackjack Texas Hold'em Webxdc File Manager Folder Sync Signer Where the app starts. Social is the timeline (picked below); anything else — Notes, Messages, Calendar… — opens that screen first instead. Syncs across your devices; a device that doesn't have the chosen screen falls back to the timeline. VIM KEYS h j k l to move, gg / G for top and bottom. h and l also cross between the nav rail, the feed and notifications. While on, l is movement, so React is f — Alt+L always works either way. Syncs across your devices. INSTANCE fixture.invalid ✓ poster.place Connect Use relays only (no server) Which PosterChan server this app talks to for AI, media rendering and streams — your Nostr key and your posts never depend on it, they live on relays. Tap a quick-pick or type a domain, or paste a .onion address to connect over Tor. Relays only runs the app with no server at all: you keep Social, Messages, Notes, Passwords, Budget and the games, and the server-backed features are hidden until you name an instance again. Switching reloads the app. NEWS SOURCES (ONE PER LINE: URL|NAME) — USED BY THE NEWS COMMAND Save settings"
+  }
+ ],
+ "instruction": "",
+ "history": [],
+ "commands": false,
+ "today": "2026-10-04",
+ "controls": [
+  {
+   "ref": 1,
+   "role": "button",
+   "label": "Copy npub",
+   "value": "",
+   "near": ""
+  },
+  {
+   "ref": 2,
+   "role": "button",
+   "label": "Show private key (nsec)",
+   "value": "",
+   "near": ""
+  },
+  {
+   "ref": 3,
+   "role": "button",
+   "label": "⤓ Sync my data to this relay",
+   "value": "",
+   "near": ""
+  },
+  {
+   "ref": 4,
+   "role": "button",
+   "label": "Logout",
+   "value": "",
+   "near": ""
+  },
+  {
+   "ref": 5,
+   "role": "button",
+   "label": "Delete all my posts",
+   "value": "",
+   "near": ""
+  },
+  {
+   "ref": 6,
+   "role": "button",
+   "label": "Delete my account",
+   "value": "",
+   "near": ""
+  },
+  {
+   "ref": 7,
+   "role": "button",
+   "label": "🔔 Enable push notifications",
+   "value": "",
+   "near": ""
+  },
+  {
+   "ref": 8,
+   "role": "checkbox",
+   "label": "Stay connected in the background",
+   "value": "off",
+   "near": ""
+  },
+  {
+   "ref": 9,
+   "role": "button",
+   "label": "Profile",
+   "value": "",
+   "near": ""
+  },
+  {
+   "ref": 10,
+   "role": "button",
+   "label": "Timeline",
+   "value": "",
+   "near": ""
+  },
+  {
+   "ref": 11,
+   "role": "button",
+   "label": "Notifications",
+   "value": "",
+   "near": ""
+  },
+  {
+   "ref": 12,
+   "role": "button",
+   "label": "Sidebar",
+   "value": "",
+   "near": ""
+  },
+  {
+   "ref": 13,
+   "role": "button",
+   "label": "Relays",
+   "value": "",
+   "near": ""
+  },
+  {
+   "ref": 14,
+   "role": "button",
+   "label": "Media",
+   "value": "",
+   "near": ""
+  },
+  {
+   "ref": 15,
+   "role": "button",
+   "label": "Cache",
+   "value": "",
+   "near": ""
+  },
+  {
+   "ref": 16,
+   "role": "button",
+   "label": "Zaps",
+   "value": "",
+   "near": ""
+  },
+  {
+   "ref": 17,
+   "role": "button",
+   "label": "Privacy",
+   "value": "",
+   "near": ""
+  },
+  {
+   "ref": 18,
+   "role": "button",
+   "label": "Muted",
+   "value": "",
+   "near": ""
+  },
+  {
+   "ref": 19,
+   "role": "button",
+   "label": "Mail",
+   "value": "",
+   "near": ""
+  },
+  {
+   "ref": 20,
+   "role": "button",
+   "label": "Telegram",
+   "value": "",
+   "near": ""
+  },
+  {
+   "ref": 21,
+   "role": "button",
+   "label": "Social",
+   "value": "",
+   "near": ""
+  },
+  {
+   "ref": 22,
+   "role": "button",
+   "label": "API Keys",
+   "value": "",
+   "near": ""
+  },
+  {
+   "ref": 23,
+   "role": "list",
+   "label": "Theme (applies instantly; saved to your account)",
+   "value": "Cyberpunk",
+   "near": ""
+  },
+  {
+   "ref": 24,
+   "role": "list",
+   "label": "Language (English is the default; Arabic switches the layout right-to-left)",
+   "value": "English",
+   "near": ""
+  },
+  {
+   "ref": 25,
+   "role": "checkbox",
+   "label": "Data saver",
+   "value": "off",
+   "near": ""
+  },
+  {
+   "ref": 26,
+   "role": "list",
+   "label": "Screen the app opens on",
+   "value": "Social — the timeline (default)",
+   "near": ""
+  },
+  {
+   "ref": 27,
+   "role": "checkbox",
+   "label": "Vim keys",
+   "value": "off",
+   "near": ""
+  },
+  {
+   "ref": 28,
+   "role": "button",
+   "label": "fixture.invalid ✓",
+   "value": "",
+   "near": ""
+  },
+  {
+   "ref": 29,
+   "role": "button",
+   "label": "poster.place",
+   "value": "",
+   "near": ""
+  },
+  {
+   "ref": 30,
+   "role": "textbox",
+   "label": "Instance",
+   "value": "https://fixture.invalid",
+   "near": ""
+  },
+  {
+   "ref": 31,
+   "role": "button",
+   "label": "Connect",
+   "value": "",
+   "near": ""
+  },
+  {
+   "ref": 32,
+   "role": "button",
+   "label": "Use relays only (no server)",
+   "value": "",
+   "near": ""
+  },
+  {
+   "ref": 33,
+   "role": "textbox",
+   "label": "News sources (one per line: url|name) — used by the news command",
+   "value": "",
+   "near": ""
+  },
+  {
+   "ref": 34,
+   "role": "button",
+   "label": "Save settings",
+   "value": "",
+   "near": ""
+  }
+ ]
+}
