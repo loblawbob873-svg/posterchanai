@@ -128,18 +128,24 @@ def measure(viewport_w, container_w=None, viewport_h=900):
     <style>html,body{{margin:0;width:100%;height:100%}}{CSS}
     #host{{{width}height:{viewport_h - 40}px;overflow:auto;box-sizing:border-box}}</style>
     <div id="host">{markup()}</div>{PROBE}"""
+    # A LOADED GATE IS NOT A FAILURE. Under a full parallel gate the probe once had not written its result
+    # when Chrome dumped the DOM (an empty <pre>, read as a JSONDecodeError) -- the layout was never measured.
+    # So the budget is generous, and an EMPTY result is asked for again; a measured result is final.
     with tempfile.TemporaryDirectory() as td:
         page = Path(td) / "wallet.html"
         page.write_text(html)
-        done = subprocess.run([
-            CHROME, "--headless=new", "--no-sandbox", "--disable-gpu",
-            f"--window-size={viewport_w},{viewport_h}", "--force-device-scale-factor=1",
-            "--virtual-time-budget=1500", "--dump-dom", page.as_uri()],
-            capture_output=True, text=True, timeout=60)
-        assert done.returncode == 0, done.stderr[-1200:]
-        match = re.search(r'<pre id="out">(.*?)</pre>', done.stdout, re.S)
-        assert match, done.stdout[-1200:]
-        return json.loads(unescape(match.group(1)))
+        for attempt in range(3):
+            done = subprocess.run([
+                CHROME, "--headless=new", "--no-sandbox", "--disable-gpu",
+                f"--window-size={viewport_w},{viewport_h}", "--force-device-scale-factor=1",
+                "--virtual-time-budget=5000", "--dump-dom", page.as_uri()],
+                capture_output=True, text=True, timeout=90)
+            assert done.returncode == 0, done.stderr[-1200:]
+            match = re.search(r'<pre id="out">(.*?)</pre>', done.stdout, re.S)
+            assert match, done.stdout[-1200:]
+            if match.group(1).strip():
+                return json.loads(unescape(match.group(1)))
+        raise AssertionError("the layout probe never wrote its measurement (3 tries)")
 
 
 # --------------------------------------------------------------------------- the invariant
