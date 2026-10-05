@@ -36,7 +36,7 @@ ROOT = Path(__file__).resolve().parents[1]
 MAIN = Path(os.environ.get("PC_MAIN_CHECKOUT", str(Path.home() / "posterchanai")))
 # Assets some tests need that a worktree does not carry (gitignored, large). The gate runs in the
 # main checkout, where they exist -- so without them here, those tests skip locally and fail there.
-GATE_ASSETS = ["assets/lama_fp32.onnx"]
+GATE_ASSETS = ["assets/lama_fp32.onnx", "mobile/android/app/src/main/assets/public"]   # the model; the built APK web bundle
 COMMON = {"client", "store", "admin", "index", "utils", "style", "styles", "main", "server", "config", "common",
           "helpers", "service", "router", "models", "schemas", "settings", "database", "preload", "upload"}
 # A test that walks a directory: these words next to a path it names.
