@@ -86,6 +86,23 @@ class _PgConn:
         self._raw.autocommit = v
 
 
+# AN EVENT IS ITS SEVEN COLUMNS ("the db is growing fast" -- `raw`, a second JSON copy of every event,
+# was 3.99 GB of a 17 GB database: more than content and tags together). The columns rebuild the event
+# exactly: measured over 332,803 stored rows, all seven NIP-01 fields identical, the only difference a
+# few non-Nostr keys some clients attach (`_id`, `saved_at`), which no signature covers and nothing
+# should serve. NOTE: code older than this reads `raw` alone, so rolling back below it hides every
+# event stored after it.
+EVENT_COLUMNS = "e.id, e.pubkey, e.created_at, e.kind, e.tags, e.content, e.sig"
+
+
+def event_from_row(r) -> dict:
+    """A stored row (mapping or the EVENT_COLUMNS tuple) → the NIP-01 event."""
+    if not hasattr(r, "keys"):
+        r = dict(zip(("id", "pubkey", "created_at", "kind", "tags", "content", "sig"), r))
+    return {"id": r["id"], "pubkey": r["pubkey"], "created_at": int(r["created_at"]), "kind": int(r["kind"]),
+            "tags": json.loads(r["tags"]) if r["tags"] else [], "content": r["content"] or "", "sig": r["sig"]}
+
+
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS events (
     id          TEXT PRIMARY KEY,
@@ -95,7 +112,7 @@ CREATE TABLE IF NOT EXISTS events (
     content     TEXT NOT NULL,
     tags        TEXT NOT NULL,
     sig         TEXT NOT NULL,
-    raw         TEXT NOT NULL,
+    raw         TEXT,           -- retired: events are served from the columns (see event_from_row); dropped in a later release
     origin      TEXT NOT NULL DEFAULT 'wot',
     expiration  BIGINT
 );
@@ -400,6 +417,8 @@ class RelayStore:
         self._loop = loop
         conn = self._conn()
         conn.executescript(_SCHEMA)
+        # `raw` is no longer written (event_from_row): an existing table must accept NULL there.
+        conn.execute("ALTER TABLE events ALTER COLUMN raw DROP NOT NULL")
         self._index_existing_quotes(conn)
         conn.commit()
 
@@ -605,11 +624,11 @@ class RelayStore:
 
             conn.execute(
                 "INSERT INTO events "
-                "(id, pubkey, created_at, kind, content, tags, sig, raw, origin, expiration) "
-                "VALUES (?,?,?,?,?,?,?,?,?,?) ON CONFLICT (id) DO NOTHING",
+                "(id, pubkey, created_at, kind, content, tags, sig, origin, expiration) "
+                "VALUES (?,?,?,?,?,?,?,?,?) ON CONFLICT (id) DO NOTHING",
                 (eid, pubkey, created, kind, ev.get("content", ""),
                  json.dumps(tags, separators=(",", ":")), ev.get("sig", ""),
-                 json.dumps(ev, separators=(",", ":")), origin, expiration))
+                 origin, expiration))
             # Index single-letter tags only (NIP-01 queryable tags).
             for t in tags:
                 if len(t) >= 2 and isinstance(t[0], str) and len(t[0]) == 1:
@@ -1081,7 +1100,7 @@ class RelayStore:
         where, params = built
         limit = int(flt.get("limit") or 500)
         limit = max(1, min(limit, 5000))
-        sql = "SELECT e.raw FROM events e"
+        sql = "SELECT " + EVENT_COLUMNS + " FROM events e"
         if where:
             sql += " WHERE " + " AND ".join(where)
         sql += " ORDER BY e.created_at DESC, e.id DESC LIMIT ?"
@@ -1090,7 +1109,7 @@ class RelayStore:
         out = []
         for r in rows:
             try:
-                out.append(json.loads(r["raw"]))
+                out.append(event_from_row(r))
             except Exception:
                 continue
         return out

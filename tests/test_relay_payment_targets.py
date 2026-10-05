@@ -6,7 +6,7 @@ import sqlite3
 import pytest
 
 from app.services.nostr.event import build_event
-from app.services.nostr_relay.store import RelayStore
+from app.services.nostr_relay.store import RelayStore, event_from_row
 from app.services.nostr_relay.server import RelayServer, _broadcastable, _matches
 from tests.test_relay_prune import store_factory, _run
 
@@ -46,7 +46,7 @@ def test_new_targets_and_explicit_clear_replace_previous_lists(relay,origin):
     for event in (old,new,clear):assert store._insert_one(db,event,origin)
     assert not store._insert_one(db,old,origin)
     assert not store._insert_one(db,new,origin)
-    got=json.loads(db.execute('SELECT raw FROM events WHERE kind=10133').fetchone()[0])
+    got=event_from_row(db.execute('SELECT id,pubkey,created_at,kind,tags,content,sig FROM events WHERE kind=10133').fetchone())
     assert got==clear
 
 
@@ -57,8 +57,8 @@ def test_authors_are_independent_and_complete_payment_tags_are_retained(relay):
     assert db.execute('SELECT count(*) FROM events WHERE kind=10133').fetchone()[0]==2
     # NIP-01 indexes single-letter tags. NIP-A3 is discovered by author + kind;
     # the full multi-letter payto tags must survive the event's serialized body.
-    for result in db.execute('SELECT raw FROM events WHERE kind=10133'):
-        assert json.loads(result[0])['tags']==[['payto','monero','8'+'a'*94]]
+    for result in db.execute('SELECT id,pubkey,created_at,kind,tags,content,sig FROM events WHERE kind=10133'):
+        assert event_from_row(result)['tags']==[['payto','monero','8'+'a'*94]]
 
 
 def test_deleted_target_is_not_resurrected_by_backfill(relay):
@@ -89,8 +89,8 @@ def test_signed_publish_live_subscription_reload_and_forgery(relay):
         async def add_event(self,event,origin='direct'):
             return store._insert_one(db,event,origin)
         async def query(self,filters):
-            return [json.loads(r[0]) for r in db.execute('SELECT raw FROM events ORDER BY created_at DESC')
-                    if _matches(filters,json.loads(r[0]))]
+            return [event_from_row(r) for r in db.execute('SELECT id,pubkey,created_at,kind,tags,content,sig FROM events ORDER BY created_at DESC')
+                    if _matches(filters,event_from_row(r))]
     class Gate:
         def is_member(self,_):return True
         def is_operator(self,_):return False
@@ -111,7 +111,7 @@ def test_signed_publish_live_subscription_reload_and_forgery(relay):
         forged=json.loads(json.dumps(event));forged['tags'][0][2]='4'+'b'*94
         sent.clear();await server._on_event(publisher,forged)
         assert len(sent)==1 and sent[0][1][:3]==['OK',event['id'],False]
-        assert json.loads(db.execute('SELECT raw FROM events WHERE kind=10133').fetchone()[0])==event
+        assert event_from_row(db.execute('SELECT id,pubkey,created_at,kind,tags,content,sig FROM events WHERE kind=10133').fetchone())==event
     asyncio.run(run())
 
 

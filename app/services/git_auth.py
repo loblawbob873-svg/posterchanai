@@ -49,6 +49,19 @@ PR_KINDS = (1618, 1619)   # NIP-34 pull request / pull request update (ngit v3's
 _NOSTR_REF_RE = re.compile(r"^refs/nostr/([0-9a-f]{64})$")
 
 
+
+# Events are served from their columns -- the relay no longer stores a `raw` JSON copy (see
+# nostr_relay/store.py event_from_row, which this mirrors; kept here so the push hook imports nothing
+# of the relay). A row is (id, pubkey, created_at, kind, tags, content, sig).
+_COLS = "id, pubkey, created_at, kind, tags, content, sig"
+_ECOLS = "e.id, e.pubkey, e.created_at, e.kind, e.tags, e.content, e.sig"
+
+
+def _row_event(row) -> dict:
+    i, pk, ca, k, tags, content, sig = row
+    return {"id": i, "pubkey": pk, "created_at": int(ca), "kind": int(k),
+            "tags": json.loads(tags) if tags else [], "content": content or "", "sig": sig}
+
 def nostr_ref_event_id(ref: str):
     """The event id a `refs/nostr/<event-id>` ref names, or None if this is not such a ref."""
     m = _NOSTR_REF_RE.match(ref or "")
@@ -111,12 +124,12 @@ def load_event_by_id(conn, event_id: str):
     if not isinstance(event_id, str) or len(event_id) != 64:
         return None
     with conn.cursor() as cur:
-        cur.execute("SELECT raw FROM events WHERE id = %s LIMIT 1", (event_id,))
+        cur.execute("SELECT " + _COLS + " FROM events WHERE id = %s LIMIT 1", (event_id,))
         row = cur.fetchone()
     if not row:
         return None
     try:
-        ev = json.loads(row[0])
+        ev = _row_event(row)
     except (ValueError, TypeError):
         return None
     if not isinstance(ev, dict) or ev.get("id") != event_id or not verify_event(ev):
@@ -131,13 +144,13 @@ def load_pr_events_for_tips(conn, event_ids) -> dict:
     if not ids:
         return {}
     with conn.cursor() as cur:
-        cur.execute("SELECT raw FROM events WHERE id = ANY(%s) AND kind = ANY(%s)",
+        cur.execute("SELECT " + _COLS + " FROM events WHERE id = ANY(%s) AND kind = ANY(%s)",
                     (ids, list(PR_KINDS)))
         rows = cur.fetchall()
     out = {}
     for row in rows:
         try:
-            ev = json.loads(row[0])
+            ev = _row_event(row)
         except (ValueError, TypeError):
             continue
         if isinstance(ev, dict) and verify_event(ev):
@@ -523,7 +536,7 @@ def load_announcement(conn, pubkey_hex: str, repo_id: str):
     row, and the author is re-checked, so a poisoned `events` row cannot speak for anybody."""
     with conn.cursor() as cur:
         cur.execute(
-            "SELECT e.raw FROM events e "
+            "SELECT " + _ECOLS + " FROM events e "
             "JOIN event_tags t ON t.event_id = e.id AND t.tag = 'd' AND lower(t.value) = lower(%s) "
             "WHERE e.kind = %s AND e.pubkey = %s "
             "ORDER BY e.created_at DESC LIMIT 4",
@@ -531,7 +544,7 @@ def load_announcement(conn, pubkey_hex: str, repo_id: str):
         rows = cur.fetchall()
     for row in rows:
         try:
-            ev = json.loads(row[0])
+            ev = _row_event(row)
         except (ValueError, TypeError):
             continue
         if ev.get("pubkey") != pubkey_hex:     # belt-and-suspenders: the row must be this author's
@@ -645,7 +658,7 @@ def load_state_events(conn, owner_hex: str, repo_id: str, maintainers) -> list:
         return []
     with conn.cursor() as cur:
         cur.execute(
-            "SELECT e.raw FROM events e "
+            "SELECT " + _ECOLS + " FROM events e "
             "JOIN event_tags t ON t.event_id = e.id AND t.tag = 'd' AND lower(t.value) = lower(%s) "
             "WHERE e.kind = %s AND e.pubkey = ANY(%s) "
             "ORDER BY e.created_at DESC LIMIT 8",
@@ -654,7 +667,7 @@ def load_state_events(conn, owner_hex: str, repo_id: str, maintainers) -> list:
     out = []
     for row in rows:
         try:
-            out.append(json.loads(row[0]))
+            out.append(_row_event(row))
         except (ValueError, TypeError):
             continue
     return out
