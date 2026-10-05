@@ -12,6 +12,9 @@ from tests.overlay_paths import shell_ebuild, wayfire_ebuild, wayfire_version
 ROOT = Path(__file__).resolve().parents[1]
 PACKAGE = ROOT / 'os/overlay/gui-wm/wayfire'
 PATCH = 'wayfire-0.10.1-preserve-keyboard.patch'
+# A gaming keyboard reports Super and the letters from different interfaces: bindings read the modifiers
+# held on EVERY keyboard of the seat (measured on the desk, ASUS ROG Strix Scope II 96 in NKRO mode).
+MODS_PATCH = 'wayfire-0.10.1-seat-wide-modifiers.patch'
 # Existing Gentoo Manifest provenance, not generated from the overlay under test.
 INPUT_SHA512 = {
     'wayfire-0.10.0-fix-musl.patch': '19b5e01a218337ecff239a3543ef047a59fc2bfdd42404614144dece910eac7717d3c7b770ea71ec28dcb531a74c5173d87a3042745858c05861853fcc7d3faa',
@@ -24,8 +27,9 @@ INPUT_SHA512 = {
 def test_stable_revision_preserves_complete_upstream_ebuild():
     text = wayfire_ebuild().read_text()
     addition = '\t"${FILESDIR}"/${PN}-0.10.1-preserve-keyboard.patch\n'
-    assert text.count(addition) == 1
-    original = text.replace(addition, '')
+    mods = '\t"${FILESDIR}"/${PN}-0.10.1-seat-wide-modifiers.patch\n'
+    assert text.count(addition) == 1 and text.count(mods) == 1
+    original = text.replace(addition, '').replace(mods, '')
     assert hashlib.sha512(original.encode()).hexdigest() == '1aa29c17014043e9a19f9ef7fe1507664d139dae4b3bdd06e5269afebc9ab858683c2488e5ad722b8767235314ac56006f69e7a70b6f8977f5764c8162ec5c86'
     assert 'gui-wm' in (ROOT / 'os/overlay/profiles/categories').read_text().splitlines()
     # One ebuild, at whatever revision ships today. Pinning the NAME here is what made a
@@ -50,11 +54,12 @@ def test_upstream_support_inputs_unchanged(name, digest):
 
 def test_patch_reference_has_a_real_source_diff_and_no_leftover_placeholder():
     files = {p.name for p in (PACKAGE / 'files').iterdir()}
-    assert files == set(INPUT_SHA512) | {PATCH}
-    patch = (PACKAGE / 'files' / PATCH).read_text()
-    assert re.search(r'^--- a/.+\n\+\+\+ b/.+\n@@', patch, re.M)
-    assert 'placeholder' not in patch.lower()
-    assert '\n+' in patch and '\n-' in patch
+    assert files == set(INPUT_SHA512) | {PATCH, MODS_PATCH}
+    for name in (PATCH, MODS_PATCH):
+        patch = (PACKAGE / 'files' / name).read_text()
+        assert re.search(r'^--- a/.+\n\+\+\+ b/.+\n@@', patch, re.M), name
+        assert 'placeholder' not in patch.lower()
+        assert '\n+' in patch and '\n-' in patch
 
 
 def test_thin_manifest_pins_only_exact_release_archive():
@@ -77,5 +82,5 @@ def test_release_archive_hashes_and_both_patches_apply(tmp_path):
     with tarfile.open(archive) as tar:
         tar.extractall(tmp_path, filter='data')
     source = tmp_path / 'wayfire-0.10.1'
-    for name in [PATCH, 'wayfire-0.10.0-fix-musl.patch']:
+    for name in [PATCH, MODS_PATCH, 'wayfire-0.10.0-fix-musl.patch']:
         subprocess.run(['patch', '--batch', '--fuzz=0', '-p1', '-i', str(PACKAGE / 'files' / name)], cwd=source, check=True, capture_output=True)

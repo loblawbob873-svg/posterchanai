@@ -303,7 +303,9 @@ def test_source_and_packaged_launcher_do_not_drift():
 def test_super_opens_start_only_when_not_used_for_snap_drag_or_resize():
     config = (FILES / "wayfire.ini").read_text(encoding="utf-8")
     super_helper = (FILES / "pc-super").read_text(encoding="utf-8")
-    assert "release_binding_start = KEY_LEFTMETA" in config
+    from tests.wayfire_config import sections
+    command = sections()["command"]
+    assert command.get("binding_start") == "<super>" and "release_binding_start" not in command
     assert "command_start = /usr/local/bin/pc-super tap" in config
     for gesture in ("<super> KEY_LEFT", "<super> KEY_RIGHT", "<super> KEY_UP", "<super> KEY_DOWN"):
         assert gesture in config

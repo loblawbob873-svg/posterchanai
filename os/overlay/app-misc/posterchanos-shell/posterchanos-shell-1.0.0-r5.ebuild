@@ -23,7 +23,7 @@ RDEPEND="
 	>=app-misc/posterchan-desktop-1.0.1822
 	app-misc/posterchan-server
 	dev-vcs/ngit
-	>=gui-wm/wayfire-0.10.1-r2
+	>=gui-wm/wayfire-0.10.1-r3
 	>=gui-libs/posterchan-wayfire-shell-1.0.1-r7
 	gui-libs/wayfire-plugins-extra
 	gamescope? ( gui-wm/gamescope )

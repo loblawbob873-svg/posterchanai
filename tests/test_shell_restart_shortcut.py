@@ -163,20 +163,24 @@ def test_desktop_wrapper_preserves_the_shells_wayland_backend():
         assert 'export ELECTRON_OZONE_PLATFORM_HINT=auto' not in source
 
 
-def test_super_is_a_physical_key_release_not_a_bare_modifier_binding():
-    """Super opens Start on RELEASE, and only when it was not used as a modifier.
+def test_super_tap_is_a_modifier_binding_so_super_shortcuts_can_run():
+    """Super alone opens Start; Super+X runs X and does not.
 
-    Wayfire's `release_binding_start` fires whether or not the key modified something, exactly as
-    Sway's `--release` did -- which is why every Super+chord marks it consumed through `pc-super
-    used` before doing its own work, and why those chords are chained commands rather than pairs of
-    bindings on one chord (only one binding on a chord can win).
+    Wayfire's `<super>` modifier binding fires on release only when nothing else was pressed. Every
+    Super+chord still marks the modifier consumed through `pc-super used` (belt and braces for a
+    keyboard that reports Super and the letter from different interfaces), and those chords stay
+    chained commands rather than pairs of bindings on one chord (only one binding on a chord can win).
     """
     from tests.wayfire_config import sections
     command = sections()["command"]
-    assert command["release_binding_start"] == "KEY_LEFTMETA"
+    # Measured in a headless Wayfire 0.10.1: a release binding on KEY_LEFTMETA arms when Super goes
+    # down and the command plugin then refuses every other binding -- Super+G opened Start instead
+    # of tiling. `<super>` alone is the modifier binding: it fires on a tap and locks nothing.
+    assert "release_binding_start" not in command
+    assert command["binding_start"] == "<super>"
     assert command["command_start"] == "/usr/local/bin/pc-super tap"
     for chord, run in bindings().items():
-        if chord.startswith("<super>") and chord != "KEY_LEFTMETA":
+        if chord.startswith("<super>") and chord != "<super>":
             assert "pc-super used" in run, (chord, run)
             assert run != "/usr/local/bin/pc-super used", (chord, "marks the modifier and does nothing")
 

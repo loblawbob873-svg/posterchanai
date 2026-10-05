@@ -454,8 +454,11 @@ class PosterChanOSProfile(unittest.TestCase):
         """
         from tests.wayfire_config import sections
         command = sections()["command"]
-        self.assertEqual(command.get("release_binding_start"), "KEY_LEFTMETA",
-                         "Super is not bound on release, or not bound at all")
+        # A modifier binding (fires on a Super TAP), never a release binding: a release binding on
+        # Super locks out every other command binding while Super is held, so no Super+X ever ran.
+        self.assertNotIn("release_binding_start", command, "Super-release locks out every Super shortcut")
+        self.assertEqual(command.get("binding_start"), "<super>",
+                         "Super is not bound as a modifier tap, or not bound at all")
         self.assertIn("pc-super tap", command.get("command_start", ""))
         combos = [k for k in command if k.startswith("binding_super_used_")]
         self.assertTrue(combos, "no Super combo marks the modifier consumed")

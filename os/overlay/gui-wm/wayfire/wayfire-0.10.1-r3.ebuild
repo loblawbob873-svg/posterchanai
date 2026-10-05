@@ -70,6 +70,7 @@ BDEPEND="
 
 PATCHES=(
 	"${FILESDIR}"/${PN}-0.10.1-preserve-keyboard.patch
+	"${FILESDIR}"/${PN}-0.10.1-seat-wide-modifiers.patch
 	"${FILESDIR}"/${PN}-0.10.0-fix-musl.patch
 )
 

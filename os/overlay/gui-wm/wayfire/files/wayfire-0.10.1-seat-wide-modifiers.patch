@@ -1,0 +1,56 @@
+--- a/src/core/seat/keyboard.cpp	2026-10-05 11:55:52.393155084 -0600
++++ b/src/core/seat/keyboard.cpp	2026-10-05 11:55:52.406856015 -0600
+@@ -323,6 +323,23 @@
+     return true;
+ }
+ 
++/* ONE PHYSICAL KEYBOARD CAN BE SEVERAL INPUT DEVICES. A gaming keyboard in N-key rollover mode
++ * (measured: ASUS ROG Strix Scope II 96) reports Super on one interface and the letters and arrows
++ * on another, and wlroots keeps modifier state per device -- so Super+G arrived as a bare G and no
++ * <super> key binding could ever match, while Super+click (which reads the seat's keyboard) worked.
++ * Match key bindings against what is held on ANY keyboard of the seat, as Sway's keyboard grouping
++ * effectively does. */
++static uint32_t wf_seat_wide_modifiers(wf::keyboard_t *self)
++{
++    uint32_t mods = self->get_modifiers();
++    for (auto& kbd : wf::get_core_impl().seat->priv->keyboards)
++    {
++        mods |= kbd->get_modifiers();
++    }
++
++    return mods;
++}
++
+ bool wf::keyboard_t::handle_keyboard_key(uint32_t key, uint32_t state)
+ {
+     using namespace std::chrono;
+@@ -354,10 +371,19 @@
+         } else
+         {
+             mod_binding_key = 0;
++            /* A real key on another interface of the same keyboard is still a key pressed while the
++             * modifier was held: Super+G must not also count as a Super tap when Super is let go. */
++            if (!mod)
++            {
++                for (auto& kbd : seat->priv->keyboards)
++                {
++                    kbd->mod_binding_key = 0;
++                }
++            }
+         }
+ 
+         handled_in_plugin |= wf::get_core().bindings->handle_key(
+-            wf::keybinding_t{get_modifiers(), key}, mod_binding_key);
++            wf::keybinding_t{wf_seat_wide_modifiers(this), key}, mod_binding_key);
+     } else
+     {
+         if (mod_binding_key != 0)
+@@ -370,7 +396,7 @@
+             if ((timeout <= 0) || (time_elapsed < milliseconds(timeout)))
+             {
+                 wf::get_core().bindings->handle_key(
+-                    wf::keybinding_t{get_modifiers() | mod, 0}, mod_binding_key);
++                    wf::keybinding_t{wf_seat_wide_modifiers(this) | mod, 0}, mod_binding_key);
+             }
+         }
+ 
