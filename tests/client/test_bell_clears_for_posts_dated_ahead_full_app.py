@@ -23,6 +23,9 @@ def bundled_assets():
 @pytest.mark.skipif(not Path("/opt/google/chrome/chrome").exists(), reason="Chrome required")
 def test_a_mention_from_a_fast_clock_is_read_once_it_has_been_opened():
     async def check(b):
+        # The bundle's libraries load with the page; under a loaded test run the first expression could
+        # run before NostrTools existed (ReferenceError in the deploy-100 pregate, passing alone).
+        await b.until("!!window.NostrTools && !!NostrTools.finalizeEvent")
         await b.js("(()=>{const me=" + ME_PK + ";const r=_rel();"
                    "r.push(" + NOTE + "(7,'FROM A FAST CLOCK',-3600,[['p',me]]));"
                    "r.push(" + NOTE + "(8,'AN ORDINARY MENTION',60,[['p',me]]));"

@@ -31,6 +31,7 @@ BADGE = "[...document.querySelectorAll('#notif-badge,#notif-badge-m')].some(e=>!
 @pytest.mark.skipif(not Path("/opt/google/chrome/chrome").exists(), reason="Chrome required")
 def test_an_unwatched_notifications_view_does_not_swallow_new_arrivals():
     async def check(b):
+        await b.until("!!window.NostrTools && !!NostrTools.finalizeEvent")   # loads with the page; a loaded run raced it
         await b.js("(()=>{const me=" + ME_PK + ";const r=_rel();const mine=" + NOTE + "(1,'MY OWN POST',900);r.push(mine);"
                    "localStorage.setItem('__relayEvents',JSON.stringify(r));window.__mine=mine;})()")
         await desktop.login(b)
@@ -67,6 +68,7 @@ def test_the_desktop_surface_holding_focus_does_not_swallow_new_arrivals():
     desktop: ownsFeedView('notifications') false and the read mark moved 86 s earlier. Focused and
     visible, but NOT on screen: a new arrival must light the bell, not be read by nobody."""
     async def check(b):
+        await b.until("!!window.NostrTools && !!NostrTools.finalizeEvent")   # loads with the page; a loaded run raced it
         await b.js("(()=>{const me=" + ME_PK + ";const r=_rel();const mine=" + NOTE + "(1,'MY OWN POST',900);r.push(mine);"
                    "localStorage.setItem('__relayEvents',JSON.stringify(r));window.__mine=mine;})()")
         await desktop.login(b)
