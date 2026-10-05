@@ -587,12 +587,17 @@ async function saveBot() {
     const name = _val('bot_f_name');
     if (!name) { errEl.textContent = 'Name is required.'; return; }
     // A picture chosen but not uploaded yet goes up FIRST, so the URL it produces is what Save stores.
+    // A FAILED AVATAR DOES NOT BLOCK THE SAVE ("i could not even save the bot due to that upload
+    // error"): the picture is optional and the rest of the bot is not. The bot saves with its current
+    // picture, the warning says so, and the picked file stays pending so the next Save tries again.
+    let avatarWarning = '';
     if (_avatarPending()) {
         const idNow = _val('bot_f_id');
         const nsecNow = _g('bot_f_nostr_nsec') ? _g('bot_f_nostr_nsec').value.trim() : '';
         if ((idNow || nsecNow) && !(await uploadBotAvatar())) {
-            errEl.textContent = 'The avatar could not be uploaded — nothing was saved. See the message above.';
-            return;
+            const why = (_g('bot_provision_status') || {}).textContent || '';
+            avatarWarning = 'Saved, but the avatar could not be uploaded' + (why ? ' (' + why.replace(/^❌\s*/, '') + ')' : '') +
+                ' — press Save again to retry it.';
         }
     }
     const type = _val('bot_f_type');
@@ -640,6 +645,16 @@ async function saveBot() {
         if (!resp.ok) {
             const data = await resp.json().catch(() => ({}));
             throw new Error(data.detail || resp.statusText);
+        }
+        if (avatarWarning) {
+            // Saved -- but the picture is still pending, so the dialog stays open to say so and to let
+            // Save retry it. A bot that was just CREATED takes its new id, so that retry is an update
+            // and never a second bot.
+            const saved = await resp.json().catch(() => ({}));
+            if (!id && saved && saved.id != null) _setVal('bot_f_id', String(saved.id));
+            errEl.textContent = avatarWarning;
+            loadBots();
+            return;
         }
         closeBotModal();
         loadBots();

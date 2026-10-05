@@ -597,7 +597,12 @@
 .bot-modal-foot { border-bottom: none; border-top: 1px solid var(--border-color); justify-content: flex-end; }
 /* Normalise the footer buttons so Save / Cancel / Delete are the SAME size and aligned. `.btn-primary`
    carries `align-self: flex-start` for the settings-form column, which leaked in here and top-aligned Save
-   while the others stayed centered — making them look mismatched. Force one consistent box. */
+   while the others stayed centered — making them look mismatched. Force one consistent box.
+   `.admin-page` in front is LOAD-BEARING: admin-theme.css loads after this file and its
+   `.admin-page .btn-primary { align-self: flex-start }` has the same specificity as a two-class rule
+   here, so it won -- Save sat at the TOP of the row whenever the row was taller than a button (a
+   message beside them, or a phone where the row wraps): "Save Bot not aligned with other buttons". */
+.admin-page .bot-modal-foot .btn-primary, .admin-page .bot-modal-foot .btn-secondary,
 .bot-modal-foot .btn-primary, .bot-modal-foot .btn-secondary {
     align-self: center; margin: 0; padding: 10px 18px; font-size: 14px; line-height: 1.2;
     border-radius: 11px; min-height: 40px; display: inline-flex; align-items: center; justify-content: center;

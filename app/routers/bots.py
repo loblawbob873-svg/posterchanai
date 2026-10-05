@@ -309,14 +309,25 @@ async def concord_test_join(payload: ConcordTestPayload,
             "relays": session.relays}
 
 
+_AVATAR_MAX = 8 * 1024 * 1024
+
+
 @router.post("/upload-avatar")
-async def upload_bot_avatar(payload: AvatarPayload, db: Session = Depends(get_db),
+async def upload_bot_avatar(payload: AvatarPayload, request: Request, db: Session = Depends(get_db),
                             admin: User = Depends(get_admin_user)):
-    """Upload an avatar image to the built-in Blossom (signed by the bot's key) and return its public
-    URL, for the form's Avatar field. Works for a new bot (pass the minted `nsec`) or an existing one
-    (pass `bot_id` → its stored nsec)."""
+    """Store an avatar image in this node's Blossom, owned by the bot's key, and return its public URL
+    for the form's Avatar field. Works for a new bot (pass the minted `nsec`) or an existing one
+    (pass `bot_id` → its stored nsec).
+
+    STORED DIRECTLY, NOT UPLOADED OVER HTTP ("bots -> avatar could not be uploaded": `403 Forbidden`
+    from /blossom/upload). That route is the PUBLIC upload gate, and a bot still being created -- an
+    identity generated, not yet saved -- has no Bot row, so its key is no operator key and the gate
+    refused it every time. This endpoint is already admin-only, so the gate has nothing to add here.
+    `keep`: a profile picture must never be aged out by the blob TTL sweep."""
     import base64 as _b64
-    from app.services.nostr import media as _media
+    from app.services import blossom_service
+    from app.models import BlossomBlob
+    from app.routers.blossom import _base_url
     nsec = (payload.nsec or "").strip()
     if not nsec and payload.bot_id is not None:
         bot = db.query(Bot).filter(Bot.id == payload.bot_id).first()
@@ -335,15 +346,23 @@ async def upload_bot_avatar(payload: AvatarPayload, db: Session = Depends(get_db
         mime = "image/png"
         if raw.startswith("data:"):
             head, _, b64 = raw.partition(",")
-            if "image/" in head:
-                mime = head[head.index("image/"):].split(";")[0]
+            mime = (head[5:].split(";")[0] or "").strip().lower() or "image/png"   # what the data: URL SAYS it is
             raw = b64
         data = _b64.b64decode(raw)
-        endpoint = f"http://127.0.0.1:{os.getenv('POSTERCHANAI_PORT', '3051')}/blossom"
-        info = await _media.upload_blossom(endpoint, sk, data, mime)
-        if not info.get("url"):
-            raise RuntimeError("no url returned")
-        return {"url": info["url"]}
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=f"not a readable image: {e}")
+    if not mime.startswith("image/"):
+        raise HTTPException(status_code=400, detail="the avatar must be an image")
+    if not data or len(data) > _AVATAR_MAX:
+        raise HTTPException(status_code=413, detail=f"the image must be under {_AVATAR_MAX // (1024 * 1024)} MB")
+    try:
+        pub = nostr_service.derive_pubkey(sk)
+        pub = pub if isinstance(pub, str) else pub.hex()
+        await blossom_service.save_blob(db, pub, data, mime, keep=True, filename="avatar")
+        blob = db.query(BlossomBlob).filter(BlossomBlob.sha256 == blossom_service.compute_sha256(data)).first()
+        if not blob:
+            raise RuntimeError("stored, but the blob row is missing")
+        return {"url": blossom_service.descriptor(blob, _base_url(request, db))["url"]}
     except Exception as e:
         logger.warning("[upload-avatar] failed: %s", e)
         raise HTTPException(status_code=500, detail=f"upload failed: {e}")

@@ -19,6 +19,7 @@ const check = (ok, what) => { if (!ok) failures.push(what); };
 
 function world({ id = '', nsec = '', uploadOk = true } = {}) {
   const els = {}, handlers = {}, calls = [];
+  const state = { closed: 0 };
   const el = (idv) => els[idv] || (els[idv] = {
     id: idv, value: '', checked: false, textContent: '', innerHTML: '', dataset: {}, files: null,
     style: { display: '' }, hidden: false, classList: { contains: () => false, toggle() {}, add() {}, remove() {} },
@@ -42,12 +43,13 @@ function world({ id = '', nsec = '', uploadOk = true } = {}) {
       return uploadOk ? { ok: true, json: async () => ({ url: 'https://poster.place/blossom/abc.png' }) }
                       : { ok: false, statusText: 'nope', json: async () => ({ detail: 'blossom refused' }) };
     }
+    if (/\/api\/admin\/bots$/.test(url) && opt.method === 'POST') return { ok: true, json: async () => ({ id: 99, ...(body || {}) }) };
     return { ok: true, json: async () => ([]) };
   };
   class FileReader { readAsDataURL() { setTimeout(() => { this.result = 'data:image/png;base64,AAAA'; this.onload && this.onload(); }, 0); } }
   const ctx = { document, fetch, FileReader, console, setTimeout, setInterval: () => 0, clearInterval() {},
                 window: {}, localStorage: { getItem: () => null, setItem() {} }, URL, JSON, Promise,
-                pcConfirm: async () => true, csrfFetch: fetch, closeBotModal() {}, alert() {} };
+                pcConfirm: async () => true, csrfFetch: fetch, closeBotModal() { state.closed++; }, alert() {} };
   ctx.window = ctx;
   vm.runInNewContext(SRC + '\n;this.__api={saveBot, uploadBotAvatar};', ctx, { filename: 'admin-bots.js' });
   const pick = () => {
@@ -72,7 +74,7 @@ function world({ id = '', nsec = '', uploadOk = true } = {}) {
   document.addEventListener = (type, fn) => (handlers[type] = handlers[type] || []).push(fn);
   document.removeEventListener = () => {};
   const slide = (id, v, type = 'input') => { el(id).value = String(v); (handlers[type] || []).forEach(h => h({ target: el(id) })); };
-  return { el, calls, api: ctx.__api, pick, addFace, click, drag, slide };
+  return { el, calls, api: ctx.__api, pick, addFace, click, drag, slide, state };
 }
 const settle = () => new Promise(r => setTimeout(r, 20));
 const uploads = c => c.filter(x => x.url.endsWith('/upload-avatar'));
@@ -101,12 +103,28 @@ const saves = c => c.filter(x => /\/api\/admin\/bots(\/\d+)?$/.test(x.url) && x.
   check(saves(w.calls)[0].body.config.nostr_profile_picture === 'https://poster.place/blossom/abc.png',
         'the pending picture did not reach the saved config');
 }
-{ // an upload that fails does not save a bot that looks right and has no picture
+{ // A FAILED AVATAR DOES NOT BLOCK THE SAVE ("i could not even save the bot due to that upload error"):
+  // the bot saves with the picture it had, the dialog stays open saying why, and Save retries the picture.
   const w = world({ id: '27', uploadOk: false });
   w.pick(); await settle();
   await w.api.saveBot(); await settle();
-  check(saves(w.calls).length === 0, 'saved anyway after the avatar upload failed');
-  check(/avatar could not be uploaded/.test(w.el('botModalError').textContent), 'no message said why');
+  check(saves(w.calls).length === 1, 'the bot was not saved because its avatar failed');
+  check(!saves(w.calls)[0].body.config.nostr_profile_picture, 'a picture that never uploaded was saved as the avatar');
+  check(/Saved, but the avatar could not be uploaded/.test(w.el('botModalError').textContent) &&
+        /blossom refused/.test(w.el('botModalError').textContent), 'the message did not say it saved, or why the avatar failed');
+  check(w.state.closed === 0, 'the dialog closed over the warning');
+  const tried = uploads(w.calls).length;                // picking the file already tried once, Save once more
+  await w.api.saveBot(); await settle();
+  check(uploads(w.calls).length === tried + 1, 'the next Save did not retry the avatar');
+}
+{ // ...and a NEW bot saved that way takes its id, so the retry updates it instead of creating a second one
+  const w = world({ nsec: 'nsec1generated', uploadOk: false });
+  w.pick(); await settle();
+  await w.api.saveBot(); await settle();
+  check(saves(w.calls).length === 1 && saves(w.calls)[0].method === 'POST', 'the new bot was not created');
+  check(String(w.el('bot_f_id').value) === '99', 'the created bot did not take its id');
+  await w.api.saveBot(); await settle();
+  check(saves(w.calls)[1].method === 'PUT' && /\/api\/admin\/bots\/99$/.test(saves(w.calls)[1].url), 'the retry created a SECOND bot');
 }
 
 { // talking replies: at most 10 faces (talkbot_service.MAX_FACES); an 11th is refused, not uploaded
