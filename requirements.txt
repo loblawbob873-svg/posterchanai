@@ -62,6 +62,10 @@ python-docx>=1.1.0
 openpyxl>=3.1.0
 python-pptx>=1.0.0
 pytesseract>=0.3.10
+# Handwriting OCR fallback (app/services/document_service.py `_rapidocr_text`): Tesseract read NOTHING from
+# a marker-on-whiteboard photo, RapidOCR read every line. Runs on the onnxruntime + opencv already listed;
+# its PP-OCR models ship inside the wheel (no download at runtime). Only used when Tesseract finds no text.
+rapidocr_onnxruntime>=1.4.4
 # Image processing and thumbnail generation
 # Used for: Photo gallery, image thumbnails, file manager previews,
 #           image compression and image->PDF conversion (compress/convert commands),

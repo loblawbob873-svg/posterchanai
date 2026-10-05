@@ -13,6 +13,40 @@ except ImportError:
     pass  # pillow-heif not installed
 
 
+_rapid_engine = None
+
+
+def shutil_which_tesseract() -> bool:
+    """Whether a tesseract binary is on this machine (the tests' own question)."""
+    import shutil
+    return bool(shutil.which('tesseract'))
+
+
+def _rapidocr_text(image) -> Optional[str]:
+    """Read an image with RapidOCR (PP-OCR on onnxruntime) when it is installed; None when it is not.
+
+    THE FALLBACK FOR HANDWRITING, AND ONLY A FALLBACK. Tesseract is built for print: a whiteboard photo
+    -- "Today's Riddle - What is a witch's favorite school subject?" in marker, 2026-10-05 -- came back
+    EMPTY, so AI Chat told the person it could not see their image. RapidOCR read every line in ~2 s on
+    CPU. It is NOT the primary reader: its model is Chinese+English, and Tesseract's multi-language pass
+    is what the translate feature relies on for Thai/Arabic/Hindi. So it runs only when Tesseract finds
+    nothing (or is not installed, as on a node without the tesseract package)."""
+    global _rapid_engine
+    try:
+        if _rapid_engine is None:
+            from rapidocr_onnxruntime import RapidOCR
+            _rapid_engine = RapidOCR()
+        import numpy as np
+        result, _ = _rapid_engine(np.asarray(image.convert("RGB")))
+    except ImportError:
+        return None
+    except Exception as e:
+        logger.warning(f"RapidOCR error: {e}")
+        return None
+    lines = [str(text).strip() for _box, text, conf in (result or []) if str(text).strip() and float(conf) >= 0.5]
+    return "\n".join(lines) or None
+
+
 def extract_image_text(image_base64: str, max_chars: int = 50000) -> Optional[str]:
     """Extract text from an image using OCR (pytesseract)"""
     try:
@@ -29,21 +63,21 @@ def extract_image_text(image_base64: str, max_chars: int = 50000) -> Optional[st
             '/opt/homebrew/bin/tesseract',  # macOS Homebrew
             shutil.which('tesseract'),  # Check PATH
         ]
-        
+
         for path in common_paths:
             if path and os.path.exists(path) and os.access(path, os.X_OK):
                 tesseract_cmd = path
                 break
-        
-        if not tesseract_cmd:
-            logger.warning("Tesseract OCR not found - OCR will be unavailable. Install tesseract-ocr package.")
-            return None
-        
-        # Set tesseract path explicitly
-        pytesseract.pytesseract.tesseract_cmd = tesseract_cmd
 
         image_bytes = base64.b64decode(image_base64)
         image = Image.open(io.BytesIO(image_bytes))
+        if not tesseract_cmd:
+            logger.warning("Tesseract OCR not found - trying RapidOCR. Install tesseract-ocr for other scripts.")
+            text = _rapidocr_text(image)
+            return text[:max_chars] if text else None
+
+        # Set tesseract path explicitly
+        pytesseract.pytesseract.tesseract_cmd = tesseract_cmd
 
         # Handle EXIF orientation (phone photos are often rotated)
         try:
@@ -122,6 +156,8 @@ def extract_image_text(image_base64: str, max_chars: int = 50000) -> Optional[st
             except Exception:
                 pass  # Ignore cleanup errors
 
+        if not (text and text.strip()):
+            text = _rapidocr_text(image) or text
         if text and text.strip():
             result = text.strip()
             if len(result) > max_chars:
@@ -221,13 +257,13 @@ def extract_xlsx_text(xlsx_base64: str, max_chars: int = 50000) -> Optional[str]
         current_length = 0
         max_rows_per_sheet = 1000  # Limit rows per sheet to prevent huge extractions
         max_sheets = 10  # Limit number of sheets to process
-        
+
         sheets_processed = 0
         for sheet_name in wb.sheetnames[:max_sheets]:
             if sheets_processed >= max_sheets:
                 break
             sheets_processed += 1
-            
+
             sheet = wb[sheet_name]
             sheet_header = f"--- Sheet: {sheet_name} ---\n"
             # WRITTEN LAZILY, with the first row that actually has data.
@@ -246,7 +282,7 @@ def extract_xlsx_text(xlsx_base64: str, max_chars: int = 50000) -> Optional[str]
                 if rows_processed >= max_rows_per_sheet:
                     text_parts.append(f"[... {max_rows_per_sheet} rows shown, more rows in sheet ...]")
                     break
-                
+
                 # Only process rows with actual data
                 row_values = [str(cell) if cell is not None else "" for cell in row]
                 # Filter out empty cells
@@ -270,11 +306,11 @@ def extract_xlsx_text(xlsx_base64: str, max_chars: int = 50000) -> Optional[str]
                     text_parts.append(row_line)
                     current_length += len(row_line)
                     rows_processed += 1
-                
+
                 # Early exit if we've hit the limit
                 if current_length >= max_chars:
                     break
-            
+
             if current_length >= max_chars:
                 break
 
