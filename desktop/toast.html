@@ -1,0 +1,62 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; img-src https: data:; style-src 'unsafe-inline'; script-src 'unsafe-inline'">
+<title>PosterChan Notifications</title>
+<style>
+  html,body{margin:0;height:100%;background:transparent;overflow:hidden;font:13px system-ui,sans-serif;color:#eee}
+  #cards{position:absolute;left:0;right:0;bottom:0;display:flex;flex-direction:column;gap:10px;padding:10px}
+  .card{display:flex;align-items:center;gap:10px;min-height:64px;box-sizing:border-box;padding:10px 12px;border-radius:12px;cursor:pointer;
+        background:#12121cf2;border:1px solid #38d6ec66;box-shadow:0 6px 24px #0008;animation:in .18s ease-out}
+  .card:hover{border-color:#38d6ec}
+  .card img{width:32px;height:32px;border-radius:50%;object-fit:cover;flex:0 0 auto}
+  .card .txt{flex:1;min-width:0;overflow:hidden;display:-webkit-box;-webkit-line-clamp:3;-webkit-box-orient:vertical;line-height:1.35}
+  .card .x{all:unset;flex:0 0 auto;width:22px;height:22px;border-radius:6px;text-align:center;line-height:22px;color:#aaa}
+  .card .x:hover{background:#2a2a3c;color:#fff}
+  @keyframes in{from{transform:translateY(8px);opacity:0}to{transform:none;opacity:1}}
+  @media(prefers-reduced-motion:reduce){.card{animation:none}}
+</style>
+</head>
+<body>
+<div id="cards" role="log" aria-live="polite"></div>
+<script>
+(function(){
+  'use strict';
+  var box = document.getElementById('cards');
+  var bridge = window.pcToastWin || { onCards: function(){}, click: function(){}, dismiss: function(){} };
+  /* THE CARD TEXT IS REBUILT, NEVER INSERTED. It carries other people's names and messages; only these
+   * tags survive, with no attributes at all, so nothing in a notification can run here. */
+  var KEEP = { B:1, I:1, STRONG:1, EM:1, SPAN:1, BR:1 };
+  function clean(html){
+    var doc = new DOMParser().parseFromString('<div>' + String(html || '') + '</div>', 'text/html');
+    var out = document.createElement('div');
+    (function copy(from, to){
+      for(var n = from.firstChild; n; n = n.nextSibling){
+        if(n.nodeType === 3){ to.appendChild(document.createTextNode(n.nodeValue)); continue; }
+        if(n.nodeType !== 1) continue;
+        if(KEEP[n.tagName]){ var e = document.createElement(n.tagName.toLowerCase()); to.appendChild(e); copy(n, e); }
+        else copy(n, to);                          // drop the element, keep its text
+      }
+    })(doc.body.firstChild || doc.body, out);
+    return out;
+  }
+  function safePic(u){ u = String(u || ''); return /^https:\/\//i.test(u) || /^data:image\//i.test(u) ? u : ''; }
+  bridge.onCards(function(cards){
+    box.textContent = '';
+    cards.forEach(function(c){
+      var card = document.createElement('div'); card.className = 'card'; card.setAttribute('role', 'button');
+      var pic = safePic(c.pic);
+      if(pic){ var im = document.createElement('img'); im.alt = ''; im.src = pic; im.onerror = function(){ im.remove(); }; card.appendChild(im); }
+      var t = clean(c.html); t.className = 'txt'; card.appendChild(t);
+      var x = document.createElement('button'); x.className = 'x'; x.textContent = '×'; x.title = 'Dismiss';
+      x.addEventListener('click', function(ev){ ev.stopPropagation(); bridge.dismiss(c.id); });
+      card.appendChild(x);
+      card.addEventListener('click', function(){ bridge.click(c.id); });
+      box.appendChild(card);
+    });
+  });
+})();
+</script>
+</body>
+</html>

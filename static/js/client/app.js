@@ -11677,9 +11677,22 @@
     if(!notificationAllowed(_notificationType(opts)))return null;
     // One PosterChanOS monitor announces (see notifs.js announcesArrivals): no second chime, no second card.
     try{ if(window.pcShell && window.pcShell.backgroundOwner === false) return null; }catch(_){}
-    notificationSound();
     const clean = String(body||'').replace(/<[^>]+>/g,'')
                     .replace(_SHORTCODE_STRIP,'').replace(/\s+/g,' ').trim();
+    /* POSTERCHANOS: THE DESKTOP'S OWN CARD, NOT ELECTRON'S. Electron's Notification is libnotify talking
+     * to a freedesktop notification server, and this OS deliberately runs none (gentoo.sh) -- so
+     * Telegram, Texts and reminders raised nothing at all ("i am not seeing any notifications for
+     * telegram messages"). The desktop card is the surface Nostr notifications already use; osToast
+     * plays the chime and keeps where a click goes. */
+    try{
+      if(window.PCOS && PCOS.isOn && PCOS.isOn() && PCOS.osToast){
+        const route=(opts&&opts.route)||'notifications';
+        const go=(opts&&typeof opts.onClick==='function')?opts.onClick:()=>{ try{ openOsNotificationRoute(route); }catch(_){} };
+        PCOS.osToast('<b>'+enc(String(title||'PosterChan'))+'</b>'+(clean?'<br>'+enc(clean):''), (opts&&opts.icon)||'', go, _notificationType(opts));
+        return null;
+      }
+    }catch(_){}
+    notificationSound();
     /* Bundled desktop pages must not depend on Chromium's per-origin web-notification permission.
      * Electron owns a native notification API, including click-to-focus, so use the guarded preload
      * bridge before either the Android plugin or the browser fallback. */

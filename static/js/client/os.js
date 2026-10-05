@@ -10732,9 +10732,31 @@
     }catch(_){ /* no audio here — the toast still is the notification */ }
   }
 
+  /* ON POSTERCHANOS THE CARD IS ITS OWN WINDOW, OVER EVERY APPLICATION (desktop/toast-host.js). Drawn
+   * here it sat inside the desktop surface, which the compositor keeps UNDER every window -- "desktop
+   * missed another social notification": the card came and went behind whatever covered the corner.
+   * The click action stays here, keyed by the card's id, until the card is clicked or expires. */
+  const _toastActs = new Map();
+  let _toastSeq = 0, _toastWired = false;
+  function _nativeToast(html, pic, onClick){
+    try{
+      if(!window.pcToast || typeof pcToast.show !== 'function') return false;
+      if(!_toastWired && typeof pcToast.onClick === 'function'){
+        _toastWired = true;
+        pcToast.onClick(cid => { const go = _toastActs.get(cid); _toastActs.delete(cid);
+          if(go){ try{ go(); return; }catch(_){ } } toggleNoti(true); });
+      }
+      const cid = 't' + (++_toastSeq) + '-' + Date.now().toString(36);
+      _toastActs.set(cid, onClick || null);
+      if(_toastActs.size > 50) _toastActs.delete(_toastActs.keys().next().value);
+      Promise.resolve(pcToast.show({ id: cid, html: String(html || ''), pic: String(pic || '') })).catch(() => {});
+      return true;
+    }catch(_){ return false; }
+  }
   function osToast(html, pic, onClick, notificationType){
     if(!on || (PC().notificationAllowed && !PC().notificationAllowed(notificationType))) return;
     ding();
+    if(_nativeToast(html, pic, onClick)){ drawBar(); return; }
     if(!toastHost || !toastHost.isConnected){
       toastHost = document.createElement('div');
       toastHost.className = 'os-toasts';

@@ -436,6 +436,16 @@ if (isOurPage) {
 
   /* The desktop PosterChan's own always-on-top window (buddy-host.js). The desktop says where she
    * goes in its own viewport pixels; her drag and her "Hide" come back as events to be saved. */
+  /* Notification cards in their own always-on-top window (toast-host.js), because the desktop surface
+   * sits under every application and a card drawn on it is never seen. */
+  contextBridge.exposeInMainWorld('pcToast', {
+    show: (card) => ipcRenderer.invoke('pc:toast:show', card && typeof card === 'object' ? {
+      id: String(card.id || ''), html: String(card.html || ''), pic: String(card.pic || '') } : {}),
+    onClick: (cb) => {
+      if(typeof cb !== 'function') return;
+      ipcRenderer.on('pc:toast:clicked', (_e, id) => { try{ cb(String(id || '')); }catch(_){ } });
+    },
+  });
   contextBridge.exposeInMainWorld('pcBuddy', {
     show: (want) => ipcRenderer.invoke('pc:buddy:show', Object.assign({}, want || {}, {
       vw: window.innerWidth, vh: window.innerHeight })),

@@ -2354,6 +2354,21 @@ ipcMain.handle('pc:buddy:hide', (e) => { fsGuard(e); return buddyHost.hide(); })
 ipcMain.on('pc:buddy:drag', (e, dx, dy) => buddyHost.drag(e.sender, dx, dy));
 ipcMain.on('pc:buddy:drop', (e) => buddyHost.drop(e.sender));
 ipcMain.on('pc:buddy:menu', (e, action) => buddyHost.menu(e.sender, action));
+/* Notification cards over every window (toast-host.js): a shell page raises them, the card window says
+ * which one was clicked, and that goes back to the page that raised it. */
+const toastHost = require('./toast-host.js').createToastHost({
+  createWindow: opts => new BrowserWindow(opts),
+  wm, scopeOf: id => _shellScopes.get(id),
+  pagePath: path.join(__dirname, 'toast.html'), preloadPath: path.join(__dirname, 'toast-preload.js'),
+});
+ipcMain.handle('pc:toast:show', (e, card) => {
+  fsGuard(e);
+  if(!SHELL_MODE) return false;
+  const id = e.sender.id;
+  if(!e.sender.__pcToastWatched){ e.sender.__pcToastWatched = true; e.sender.once('destroyed', () => toastHost.ownerGone(id)); }
+  return toastHost.show(e.sender, card);
+});
+ipcMain.on('pc:toast:click', (e, cardId, dismissed) => toastHost.click(e.sender, cardId, !!dismissed));
 ipcMain.on('pc:win:has', (e, view) => {
   try { fsGuard(e); e.returnValue = hasPcAppWindow(view); } catch (_) { e.returnValue = false; }
 });
