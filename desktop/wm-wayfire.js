@@ -475,20 +475,43 @@ class WayfireWM{
       if(!o){try{const name=await this.focusedOutputName();o=outs.find(v=>v.name===name);}catch(_){}}}
     o=o||outs[0];
     const ours=r=>/^(posterchan(-desktop)?|place\.poster\.desktop)$/i.test(r.app||'');
-    const apps=rows.filter(r=>!r.stashed&&!r.fullscreen&&r.rect.width>0&&r.rect.height>0
+    /* A MINIMISED WINDOW IS ARRANGED TOO ("if a window is minimized, it won't grid"): it is one of the
+     * windows on this monitor, and Grid is how somebody asks to see all of them. It is shown first. */
+    const apps=rows.filter(r=>!r.fullscreen&&r.rect.width>0&&r.rect.height>0
         &&inside(o,r.rect.x+r.rect.width/2,r.rect.y+r.rect.height/2)
         &&!(ours(r)&&!/^PosterChan Window\b/.test(r.title))&&!/^PosterChan (Desktop|Popup)\b/.test(r.title))
       .sort((a,b)=>b.focusTime-a.focusTime);
     const wa=o.work,area=wa?{x:wa.x,y:wa.y,w:wa.w,h:wa.h}:{x:o.rect.x,y:o.rect.y,w:o.rect.width,h:Math.max(1,o.rect.height-72)};
-    const rects=tileRects(String(layout),apps.length,area);
+    const rects=tileRects(String(layout),apps.length,area),want=new Map();
     for(let i=0;i<apps.length;i++){const r=apps[i],t=rects[i];
+      if(r.stashed){try{await this.show(r.id);}catch(_){}}
       /* A window Wayfire's own grid snapped (tiled-edges) keeps that slot whatever configure-view says:
        * measured, Messages stayed in its top-left quarter while the other three moved. Release it
        * first. Both spellings of the id: Wayfire checks for the field it reads and ignores the other. */
       if(r.floating===false){try{await this._send('grid/restore',{view_id:r.id,'view-id':r.id});}catch(_){}}
       const above=Math.max(0,Math.min(256,Number(r.above)||0)),below=Math.max(0,Math.min(256,Number(r.below)||0));
-      await this.place(r.id,t.x,t.y+above,t.w,Math.max(1,t.h-above-below));}
-    return {ok:true,layout:String(layout),output:o.name,count:apps.length};}
+      const at={x:t.x,y:t.y+above,w:t.w,h:Math.max(1,t.h-above-below)};want.set(r.id,at);
+      await this.place(r.id,at.x,at.y,at.w,at.h);}
+    /* EVERY ARRANGED WINDOW IS RAISED, least recent first so the one you were in ends on top and focused.
+     * Placed is not visible: the desktop is a full-monitor surface in the same layer, and clicking the
+     * taskbar's Arrange raises it -- measured on the desk, a five-window grid placed every window exactly
+     * while the person at it saw "all the windows minimized". A raise is a focus, and every focus re-sinks
+     * the desktop (main.js sinkShellOnFocus). */
+    for(let i=apps.length-1;i>=0;i--){try{await this.focus(apps[i].id);}catch(_){}}
+    /* AND THEN CHECKED. Something else can still move a window in the moment after it lands -- measured,
+     * Concord went back to its old slot a quarter-second after a correct placement, leaving three tiles and
+     * a hole ("you have to tile twice for it to work"). Read the answer back and put back whatever moved;
+     * a few pixels is Electron rounding its own size, not a move. */
+    const off=(a,b)=>Math.abs(a.x-b.x)>8||Math.abs(a.y-b.y)>8||Math.abs(a.w-b.width)>8||Math.abs(a.h-b.height)>8;
+    let fixed=0;
+    for(let round=0;round<2;round++){
+      await new Promise(res=>setTimeout(res,this.arrangeSettleMs??350));
+      let now=[];try{now=await this.windows();}catch(_){break;}
+      const moved=now.filter(r=>want.has(r.id)&&off(want.get(r.id),r.rect));
+      if(!moved.length)break;
+      for(const r of moved){const at=want.get(r.id);fixed++;try{await this.place(r.id,at.x,at.y,at.w,at.h);}catch(_){}}
+    }
+    return {ok:true,layout:String(layout),output:o.name,count:apps.length,replaced:fixed};}
   move(id,x,y){const key=Number(id);let state=this.moves.get(key);const at={x:Math.round(x),y:Math.round(y)};if(state){state.next=at;return state.promise;}state={next:at,promise:null};state.promise=(async()=>{while(state.next){const p=state.next;state.next=null;const row=(await this.windows()).find(v=>v.id===key);if(row)await this.place(key,p.x,p.y,row.rect.width,row.rect.height);}})().finally(()=>{if(this.moves.get(key)===state)this.moves.delete(key);});this.moves.set(key,state);return state.promise;}
   finishMove(id){const s=this.moves.get(Number(id));if(!s)return Promise.resolve();s.next=null;return s.promise||Promise.resolve();}
   applyChrome(){return Promise.resolve(true);} // PosterChanUI owns both macOS and Windows chrome.

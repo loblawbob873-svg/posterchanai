@@ -79,7 +79,8 @@ def test_the_bridge_arranges_only_the_application_windows_on_that_monitor(tmp_pa
         {"id": 10, "app-id": "firefox", "title": "Firefox", "geometry": {"x": 100, "y": 100, "width": 800, "height": 600}, "mapped": True, "output-id": 1, "last-focus-timestamp": 30},
         {"id": 11, "app-id": "org.telegram.desktop", "title": "Telegram", "geometry": {"x": 300, "y": 200, "width": 700, "height": 500}, "mapped": True, "output-id": 1, "last-focus-timestamp": 50, "activated": True},
         {"id": 12, "app-id": "posterchan-desktop", "title": "PosterChan Window — mail", "geometry": {"x": 500, "y": 300, "width": 600, "height": 400}, "mapped": True, "output-id": 1, "last-focus-timestamp": 40},
-        # Left alone: a popup, a minimised window, a fullscreen game, and a window on monitor B.
+        # A minimised window IS arranged (shown first): "if a window is minimized, it won't grid".
+        # Left alone: a popup, a fullscreen game, and a window on monitor B.
         {"id": 20, "app-id": "posterchan-desktop", "title": "PosterChan Popup", "geometry": {"x": 10, "y": 700, "width": 300, "height": 200}, "mapped": True, "output-id": 1},
         {"id": 21, "app-id": "gimp", "title": "GIMP", "geometry": {"x": 200, "y": 200, "width": 500, "height": 500}, "mapped": True, "output-id": 1, "minimized": True},
         {"id": 22, "app-id": "game", "title": "Game", "geometry": {"x": 0, "y": 0, "width": 1920, "height": 1080}, "mapped": True, "output-id": 1, "fullscreen": True},
@@ -95,28 +96,32 @@ def test_the_bridge_arranges_only_the_application_windows_on_that_monitor(tmp_pa
       const views={json.dumps(views)}, outputs={json.dumps(outputs)};
       const server=net.createServer(c=>{{let b=Buffer.alloc(0);c.on('data',d=>{{b=Buffer.concat([b,d]);
         while(b.length>=4){{const n=b.readUInt32LE();if(b.length<4+n)return;const q=JSON.parse(b.subarray(4,4+n));b=b.subarray(4+n);calls.push(q);
+          if(q.method==='window-rules/configure-view'&&q.data.geometry){{const v=views.find(x=>x.id===q.data.id);if(v)v.geometry=Object.assign({{}},q.data.geometry);}}
+          if(q.method==='wm-actions/set-minimized'){{const v=views.find(x=>x.id===q.data.view_id);if(v)v.minimized=!!q.data.state;}}
           const r=q.method==='window-rules/list-views'?views:q.method==='window-rules/list-outputs'?outputs:{{result:'ok'}};c.write(frame(r));}}}});}});
       server.listen(sock,async()=>{{
         process.env.WAYFIRE_SOCKET=sock;
         const {{WayfireWM}}=require({json.dumps(str(ROOT / 'desktop/wm-wayfire.js'))});
-        const w=new WayfireWM();
+        const w=new WayfireWM();w.arrangeSettleMs=0;
         await w.setWorkArea({{x:0,y:0,w:1920,h:1040}});      // the taskbar takes the bottom 40px
         const res=await w.arrange('grid',{{x:960,y:540}});
         const placed=calls.filter(q=>q.method==='window-rules/configure-view').map(q=>({{id:q.data.id,g:q.data.geometry,out:q.data.output_id}}));
+        const shown=calls.filter(q=>q.method==='wm-actions/set-minimized'&&q.data.state===false).map(q=>q.data.view_id);
         const bad=await w.arrange('spiral',{{x:960,y:540}});
-        console.log(JSON.stringify({{res,placed,bad}}));
+        console.log(JSON.stringify({{res,placed,shown,bad}}));
         try{{w.sock.destroy();}}catch(_){{}} server.close();process.exit(0);
       }});
     """), encoding="utf-8")
     r = subprocess.run([NODE, str(script)], capture_output=True, text=True, timeout=30)
     assert r.returncode == 0, r.stderr[-2000:]
     got = json.loads(r.stdout)
-    assert got["res"] == {"ok": True, "layout": "grid", "output": "DP-1", "count": 3}, got
+    assert got["res"] == {"ok": True, "layout": "grid", "output": "DP-1", "count": 4, "replaced": 0}, got
     ids = [p["id"] for p in got["placed"]]
-    assert ids == [11, 12, 10], ("most recently used first, and only the three apps on this monitor", got["placed"])
+    assert ids == [11, 12, 10, 21], ("most recently used first, and only the four apps on this monitor", got["placed"])
+    assert got["shown"] == [21], ("the minimised window is shown before it is placed", got)
     g = {p["id"]: p["g"] for p in got["placed"]}
-    assert g[11] == {"x": 0, "y": 0, "width": 960, "height": 1040}, g          # one tall on the left
-    assert g[12]["x"] == 960 and g[10]["y"] + g[10]["height"] <= 1040, g        # nothing under the taskbar
+    assert g[11] == {"x": 0, "y": 0, "width": 960, "height": 520}, g            # most recent top-left
+    assert all(r["y"] + r["height"] <= 1040 for r in g.values()), g              # nothing under the taskbar
     assert got["bad"]["ok"] is False
 
 
