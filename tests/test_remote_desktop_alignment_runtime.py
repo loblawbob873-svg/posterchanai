@@ -44,6 +44,12 @@ def browser_page(tmp_path):
                     result=self.call('Runtime.evaluate',{'expression':code,'returnByValue':True,'awaitPromise':True,'userGesture':True})
                     assert 'exceptionDetails' not in result,result
                     return result['result'].get('value')
+                def wait(self,expr,seconds=10):
+                    # Pointer lock is granted and released ASYNCHRONOUSLY; read at once, a loaded gate
+                    # saw it before it landed (deploy 88: lock not yet held). Poll, then report truth.
+                    return self.evaluate('new Promise(ok=>{const t0=Date.now();(function f(){if(' + expr +
+                                         ')return ok(true);if(Date.now()-t0>' + str(int(seconds*1000)) +
+                                         ')return ok(false);setTimeout(f,25);})();})')
                 def resize(self,width,height,dpr=1):
                     self.call('Emulation.setDeviceMetricsOverride',{'width':width,'height':height,'deviceScaleFactor':dpr,'mobile':False})
                 def box(self,selector):
@@ -85,7 +91,7 @@ def test_viewer_capture_scales_motion_and_releases_input(tmp_path,remote_width,r
         click={'x':box['x']+box['width']/2,'y':box['y']+box['height']/2,'button':'left','clickCount':1}
         page.call('Input.dispatchMouseEvent',dict(click,type='mousePressed'))
         page.call('Input.dispatchMouseEvent',dict(click,type='mouseReleased'))
-        assert page.evaluate('document.pointerLockElement===document.getElementById("v")')
+        assert page.wait('document.pointerLockElement===document.getElementById("v")')
         page.evaluate('sent.length=0')
         page.evaluate('v.dispatchEvent(new MouseEvent("pointermove",{movementX:100,movementY:50,bubbles:true}))')
         point = page.evaluate('sent.at(-1)')
@@ -103,7 +109,7 @@ def test_viewer_capture_scales_motion_and_releases_input(tmp_path,remote_width,r
           document.dispatchEvent(new KeyboardEvent('keydown',{code:'ShiftLeft',bubbles:true}));
           window.dispatchEvent(new Event('blur'));
         }''')
-        assert page.evaluate('document.pointerLockElement===null')
+        assert page.wait('document.pointerLockElement===null')
         events = page.evaluate('sent')
         assert {'type':'key','code':42,'down':False} in events
         assert any(e['type']=='button' and e['button']==2 and not e['down'] for e in events)
