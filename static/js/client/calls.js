@@ -1602,36 +1602,61 @@ window.PCCallsFactory = function(dep){
   async function _roomSend(peerHex, obj){
     try{ const ct=await S.signer.nip44enc(peerHex, JSON.stringify(obj)); const ev=await sign(CALL_KIND, ct, _callTags(peerHex, obj)); _callPublish(ev); }catch(_){}
   }
-  function _roomPeer(hex){ let p=_room.peers.get(hex); if(!p){ p={pc:null,stream:null,pendingIce:[]}; _room.peers.set(hex,p); } return p; }
-  function _roomNewPc(hex, iceServers){
+  /* EVERY CONNECTION ATTEMPT HAS ITS OWN `sid`, and an answer or a candidate only ever lands on the
+   * attempt it was made for. A joiner re-offers to any peer whose connection is still unanswered
+   * (`rhere` → _roomOfferTo), because an offer that reached a still-ringing peer was dropped — but the
+   * same unanswered state also describes an offer that is merely IN FLIGHT. The late answer to the
+   * replaced attempt then arrived at the new one: its ICE credentials named a connection that no longer
+   * existed, the pair sat in `new` for ever, and the real answer was refused as out of order. Measured
+   * with three real browsers joining a room at once: 11 of 24 runs left two people unable to hear each
+   * other (tests/client/test_calls_end_to_end_full_app.py). A frame with no `sid` is an older client's
+   * and matches anything, which is exactly the old behaviour. */
+  function _sidOk(p, sid){ return !sid || !p.sid || sid===p.sid; }
+  function _roomPeer(hex){ let p=_room.peers.get(hex); if(!p){ p={pc:null,sid:'',stream:null,pendingIce:[]}; _room.peers.set(hex,p); } return p; }
+  function _roomNewPc(hex, iceServers, sid){
     const pc=new RTCPeerConnection({iceServers:iceServers||[], iceCandidatePoolSize:1});
-    pc.onicecandidate=e=>{ if(e.candidate && _room) _roomSend(hex,{v:1,room:_room.id,t:'rice',cand:e.candidate.toJSON()}); };
-    pc.ontrack=e=>{ if(!_room) return; _roomPeer(hex).stream=e.streams[0]; _roomUI(); };
-    pc.onconnectionstatechange=()=>{ if(!_room) return; const st=pc.connectionState; if(st==='failed'||st==='closed') _roomDropPeer(hex,false); };
+    pc.onicecandidate=e=>{ if(e.candidate && _room) _roomSend(hex,{v:1,room:_room.id,t:'rice',sid,cand:e.candidate.toJSON()}); };
+    pc.ontrack=e=>{ if(!_room) return; const p=_room.peers.get(hex); if(!p||p.pc!==pc) return; p.stream=e.streams[0]; _roomUI(); };
+    pc.onconnectionstatechange=()=>{ if(!_room) return; const p=_room.peers.get(hex); if(!p||p.pc!==pc) return;   // a replaced attempt closing is not the peer leaving
+      const st=pc.connectionState; if(st==='failed'||st==='closed') _roomDropPeer(hex,false); };
     return pc;
+  }
+  async function _roomDrainIce(p){
+    const keep=[];
+    for(const c of p.pendingIce){ if(!_sidOk(p, c.sid)){ keep.push(c); continue; } try{ await p.pc.addIceCandidate(c.cand); }catch(_){} }
+    p.pendingIce=keep;
   }
   async function _roomOfferTo(hex){
     if(!_room || !_room.local || hex===S.ME.pubkey) return;
     const p=_roomPeer(hex);
     if(p.pc && p.pc.currentRemoteDescription) return;   // already answered/connected — don't disturb
-    if(p.pc){ try{ p.pc.close(); }catch(_){} p.pc=null; p.pendingIce=[]; }   // half-open (offer dropped by a still-ringing peer) → redo
-    const ice=await _fetchIceServers(); if(!_room) return;
-    p.pc=_roomNewPc(hex, ice.iceServers);
+    const sid=_rid(); p.sid=sid;   // claimed BEFORE the await: a second rhere must not start a third attempt beside this one
+    if(p.pc){ try{ p.pc.close(); }catch(_){} p.pc=null; }   // half-open (offer dropped by a still-ringing peer) → redo
+    p.pendingIce=[];
+    const ice=await _fetchIceServers(); if(!_room || _room.peers.get(hex)!==p || p.sid!==sid) return;
+    p.pc=_roomNewPc(hex, ice.iceServers, sid);
     _room.local.getTracks().forEach(t=>p.pc.addTrack(t,_room.local));
     _preferH264(p.pc);   // mesh: one encode per peer, so software fallback hurts N times over
     try{ const o=await p.pc.createOffer(); if(!_room||_room.peers.get(hex)!==p) return; await p.pc.setLocalDescription(o);
-      await _roomSend(hex,{v:1,room:_room.id,t:'roffer',video:_room.video,sdp:p.pc.localDescription.sdp}); }
+      await _roomSend(hex,{v:1,room:_room.id,t:'roffer',sid,video:_room.video,sdp:p.pc.localDescription.sdp}); }
     catch(_){ _roomDropPeer(hex,false); }
   }
   async function _roomOnOffer(hex, msg){
     if(!_room || !_room.local) return;
     const p=_roomPeer(hex);
-    const ice=await _fetchIceServers(); if(!_room) return;
-    if(!p.pc){ p.pc=_roomNewPc(hex, ice.iceServers); _room.local.getTracks().forEach(t=>p.pc.addTrack(t,_room.local)); _preferH264(p.pc); }
-    try{ await p.pc.setRemoteDescription({type:'offer',sdp:msg.sdp});
-      for(const c of p.pendingIce){ try{ await p.pc.addIceCandidate(c); }catch(_){} } p.pendingIce=[];
-      const a=await p.pc.createAnswer(); await p.pc.setLocalDescription(a);
-      await _roomSend(hex,{v:1,room:_room.id,t:'ranswer',sdp:p.pc.localDescription.sdp});
+    // A NEW attempt from the offerer replaces whatever we were answering for it: it has abandoned that one.
+    if(p.pc && msg.sid && p.sid && msg.sid!==p.sid){ try{ p.pc.close(); }catch(_){} p.pc=null; p.stream=null; }
+    if(msg.sid) p.sid=msg.sid;
+    const sid=p.sid;
+    const ice=await _fetchIceServers(); if(!_room || _room.peers.get(hex)!==p || p.sid!==sid) return;
+    if(!p.pc){ p.pc=_roomNewPc(hex, ice.iceServers, sid); _room.local.getTracks().forEach(t=>p.pc.addTrack(t,_room.local)); _preferH264(p.pc); }
+    const pc=p.pc;
+    try{ await pc.setRemoteDescription({type:'offer',sdp:msg.sdp});
+      if(p.pc!==pc) return;
+      await _roomDrainIce(p);
+      const a=await pc.createAnswer(); await pc.setLocalDescription(a);
+      if(p.pc!==pc) return;
+      await _roomSend(hex,{v:1,room:_room.id,t:'ranswer',sid,sdp:pc.localDescription.sdp});
     }catch(_){ _roomDropPeer(hex,false); }
   }
   function _roomDropPeer(hex, notify){ if(!_room) return; const p=_room.peers.get(hex); if(!p) return;
@@ -1683,9 +1708,10 @@ window.PCCallsFactory = function(dep){
     if(Array.isArray(msg.members)) msg.members.forEach(h=>{ if(h) _room.members.add(h); });
     if(msg.t==='rhere'){ if(_room.local && from!==S.ME.pubkey && S.ME.pubkey<from) _roomOfferTo(from); return; }   // they joined → we offer if we're lower
     if(msg.t==='roffer'){ _roomOnOffer(from, msg); return; }
-    if(msg.t==='ranswer'){ const p=_room.peers.get(from); if(p && p.pc){ p.pc.setRemoteDescription({type:'answer',sdp:msg.sdp}).catch(()=>{});
-      for(const c of p.pendingIce){ try{ p.pc.addIceCandidate(c); }catch(_){} } p.pendingIce=[]; } return; }
-    if(msg.t==='rice'){ const p=_roomPeer(from); if(p.pc && p.pc.remoteDescription){ p.pc.addIceCandidate(msg.cand).catch(()=>{}); } else p.pendingIce.push(msg.cand); return; }
+    if(msg.t==='ranswer'){ const p=_room.peers.get(from); if(p && p.pc && _sidOk(p, msg.sid) && p.pc.signalingState==='have-local-offer'){ const pc=p.pc;
+      pc.setRemoteDescription({type:'answer',sdp:msg.sdp}).then(()=>{ if(p.pc===pc) return _roomDrainIce(p); }).catch(()=>{}); } return; }
+    if(msg.t==='rice'){ const p=_roomPeer(from); if(p.pc && p.pc.remoteDescription && _sidOk(p, msg.sid)){ p.pc.addIceCandidate(msg.cand).catch(()=>{}); }
+      else { p.pendingIce.push({sid:msg.sid||'', cand:msg.cand}); if(p.pendingIce.length>200) p.pendingIce.splice(0, p.pendingIce.length-200); } return; }   // early, or for an attempt whose offer has not arrived yet: it waits
     if(msg.t==='rbye'){ _roomDropPeer(from, false); return; }
   }
   function _roomUI(){
