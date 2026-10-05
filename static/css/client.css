@@ -4067,6 +4067,12 @@ a.hashtag:hover{text-shadow:0 0 8px rgba(var(--accent-rgb),.5)}
   .lt-tr{font-size:20px}
   /* lift the mic/foot above the fixed bottom nav (≈62px) + the notch */
   .lt-foot{padding-bottom:calc(14px + 62px + env(safe-area-inset-bottom))}
+  /* …and the Terminal: its last rows and its key bar were drawn UNDER the fixed bottom nav ("keep having
+     to reload terminal to see your newer replies, no scrolling" -- worst on long output, whose newest lines
+     land in exactly that strip, and xterm believing them on screen leaves nothing to scroll to). The wrap
+     gives the bar its room and the ResizeObserver refits the rows to what is left. Not where the nav is
+     not drawn: an embed, or a PosterChanOS window. */
+  html:not(.pc-oswin) body.term-view:not(.embed) .tty-wrap{padding-bottom:calc(62px + env(safe-area-inset-bottom))}
   .lt-status{bottom:calc(52px + env(safe-area-inset-bottom))}
 }
 
