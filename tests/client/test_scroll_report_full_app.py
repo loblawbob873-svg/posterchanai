@@ -72,6 +72,11 @@ async def run():
                     const c=[...document.querySelectorAll('#tl-notes>.note,#tl-notes>.reply-pair')].find(n=>n.getBoundingClientRect().bottom<top);
                     c.style.paddingBottom='250px';}})()""")
                 await asyncio.sleep(.4)
+                # ...and (3) the page is busy for 300 ms while the finger keeps moving -- "resistance".
+                await b.js("setTimeout(function busyPhone(){ const end=performance.now()+300; while(performance.now()<end); },0); true")
+                await asyncio.sleep(.03)
+                await b.call("Input.dispatchTouchEvent", dict(type="touchMove", touchPoints=[dict(x=200, y=530)]))
+                await asyncio.sleep(.3)
                 await b.call("Input.dispatchTouchEvent", dict(type="touchEnd", touchPoints=[]))
                 rep = await b.js("PCScrollReport()")
                 text = await b.js("JSON.stringify(PCScrollReport())")
@@ -93,6 +98,11 @@ def test_the_scroll_report_names_what_moved_the_timeline():
     assert any(r["delta"] >= 200 for r in rep["resizes"]), ("a card above the reader grew and was not recorded", rep["resizes"])
     assert any(j["delta"] <= -200 for j in rep["jumps"]), ("the jump back up was not recorded", rep["jumps"])
     assert "fixture timeline post" not in text, "the report carries post text"
+    # Resistance is TIME: the swipe, the move that waited for a busy page, the long task and the lost frames.
+    g = rep["gestures"][-1]
+    assert g["moves"] >= 4 and g["firstMove"] is not None and g["maxMove"] >= 150, ("the delayed move was not measured", rep["gestures"])
+    assert any(t["ms"] >= 250 for t in rep["tasks"]), ("the long task under the finger was not recorded", rep["tasks"])
+    assert any(f["ms"] >= 250 for f in rep["frames"]), ("the dropped frames were not recorded", rep["frames"])
 
 
 def test_settings_offers_the_copy_button():

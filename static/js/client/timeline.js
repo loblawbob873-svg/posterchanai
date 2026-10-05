@@ -1230,7 +1230,7 @@ window.PCTimelineFactory = function(dep){
 (function(){
   'use strict';
   if(typeof window === 'undefined' || window.PCScrollReport) return;
-  const MAX = 60, rec = { writes:[], resizes:[], shifts:[], jumps:[] };
+  const MAX = 60, rec = { writes:[], resizes:[], shifts:[], jumps:[], gestures:[], tasks:[], frames:[] };
   let touching = false, lastTouch = 0, lastY = null, dir = 0, feed = null, ro = null, mo = null;
   const live = () => touching || (Date.now() - lastTouch) < 1500;
   const push = (list, row) => { list.push(Object.assign({ t: Date.now() }, row)); if(list.length > MAX) list.shift(); };
@@ -1272,13 +1272,35 @@ window.PCTimelineFactory = function(dep){
     for(const el of box.children) if(!heights.has(el)){ heights.set(el, null); ro.observe(el, { box:'border-box' }); }
     if(!mo){ mo = new MutationObserver(() => watchCards()); mo.observe(box, { childList:true }); }
   }
+  /* "RESISTANCE" IS TIME, NOT DISTANCE. A swipe feels stiff when the page answers it late: how long a touch
+   * event waited before the page could run it (a busy main thread — and the timeline's own touchmove is
+   * not passive, so the FIRST move of a swipe cannot scroll until it has run), a long task while the finger
+   * is down, or a frame that took far longer than 16 ms. Recorded per swipe, in milliseconds. */
+  let gesture = null, raf = 0;
+  const wait = e => { const w = performance.now() - e.timeStamp; return w >= 0 && w < 60000 ? Math.round(w) : null; };
+  function frames(){
+    if(raf || !window.requestAnimationFrame) return;
+    let prev = 0;
+    const tick = now => {
+      if(prev && now - prev >= 50) push(rec.frames, { ms: Math.round(now - prev) });
+      prev = now;
+      raf = live() ? requestAnimationFrame(tick) : 0;
+    };
+    raf = requestAnimationFrame(tick);
+  }
+  try{ new window.PerformanceObserver(list => { if(!live()) return;
+      for(const e of list.getEntries()) push(rec.tasks, { ms: Math.round(e.duration) }); })
+    .observe({ type:'longtask', buffered:false }); }catch(_){ }
   function attach(){
     const f = document.getElementById('feed');
     if(!f || f === feed) return;
     feed = f; hookWrites(f);
     let last = f.scrollTop;
-    f.addEventListener('touchstart', e => { touching = true; lastY = e.touches[0] ? e.touches[0].clientY : null; watchCards(); }, { passive:true });
+    f.addEventListener('touchstart', e => { touching = true; lastY = e.touches[0] ? e.touches[0].clientY : null; watchCards();
+      push(rec.gestures, { start: wait(e), firstMove: null, maxMove: 0, moves: 0, blocking: null }); gesture = rec.gestures[rec.gestures.length - 1]; frames(); }, { passive:true });
     f.addEventListener('touchmove', e => { const y = e.touches[0] ? e.touches[0].clientY : null;
+      if(gesture){ const w = wait(e); gesture.moves++; if(gesture.firstMove == null){ gesture.firstMove = w; gesture.blocking = !!e.cancelable; }
+        if(w > gesture.maxMove) gesture.maxMove = w; }
       if(y != null && lastY != null && Math.abs(y - lastY) > 2) dir = y < lastY ? 1 : -1;   // 1 = finger up = scrolling DOWN
       lastY = y; lastTouch = Date.now(); }, { passive:true });
     f.addEventListener('touchend', () => { touching = false; lastTouch = Date.now(); }, { passive:true });
@@ -1292,8 +1314,9 @@ window.PCTimelineFactory = function(dep){
             Math.round(s.previousRect.top) + '→' + Math.round(s.currentRect.top); }) }); })
     .observe({ type:'layout-shift', buffered:false }); }catch(_){ }
   document.addEventListener('touchstart', attach, { capture:true, passive:true });
-  window.PCScrollReport = () => ({ v: 1, ua: navigator.userAgent, w: innerWidth, h: innerHeight, dpr: devicePixelRatio,
+  window.PCScrollReport = () => ({ v: 2, ua: navigator.userAgent, w: innerWidth, h: innerHeight, dpr: devicePixelRatio,
     zoom: getComputedStyle(document.body).zoom || '', desktop: document.body.classList.contains('os-on'),
     cards: feed && feed.querySelector('#tl-notes') ? feed.querySelector('#tl-notes').children.length : 0,
-    writes: rec.writes, resizes: rec.resizes, shifts: rec.shifts, jumps: rec.jumps });
+    writes: rec.writes, resizes: rec.resizes, shifts: rec.shifts, jumps: rec.jumps,
+    gestures: rec.gestures, tasks: rec.tasks, frames: rec.frames });
 })();
