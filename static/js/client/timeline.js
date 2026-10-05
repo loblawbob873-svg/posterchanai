@@ -479,6 +479,69 @@ window.PCTimelineFactory = function(dep){
   // composer and make the "cap at 200" scan (which walks direct children) match nothing at all.
   // Falls back to #feed for the views that render into it without a timeline header.
   function _tlNotes(feed){ return (feed && feed.querySelector('#tl-notes')) || feed; }
+  /* WHAT YOU ARE READING STAYS PUT WHEN SOMETHING ABOVE IT CHANGES SIZE.
+   * "i think image/video loading/link previews is making the timeline jumpy on mobile". A card keeps
+   * growing after it is drawn: a link preview fills in (~300px on a phone), an image's guessed box is
+   * corrected to its real shape, a quoted post or a poll arrives, a card drawn as content-visibility's
+   * 420px estimate is laid out for real as you scroll back up. #feed sets overflow-anchor:none --
+   * the browser's own anchoring double-corrected the live prepend, which keeps its place by hand
+   * (_prependLive) -- so nothing compensated, and every such change ABOVE the reader moved the post
+   * under their finger by its full height. Measured with slow images on a 390px phone: the content
+   * under a finger that was not moving jumped 39px when a card straddling the top edge got its image.
+   *
+   * This does the browser's job for SIZE CHANGES ONLY: a card that already had a size and changed
+   * it, positioned before the first card that starts on screen, moves scrollTop by exactly that
+   * amount, inside the ResizeObserver callback (after layout, before paint), so nothing visibly
+   * moves. Insertions are not resizes -- a card's first observation is ignored -- so the live prepend
+   * keeps its own correction and nothing is corrected twice. At the very top it stands aside, as the
+   * prepend does: there the feed is meant to flow. */
+  function _holdReadingPlace(feed, box){
+    if(!feed || !box || typeof ResizeObserver !== 'function') return;
+    const cur = feed._pcHold;
+    if(cur && cur.box === box) return;
+    if(cur){ try{ cur.ro.disconnect(); cur.mo.disconnect(); }catch(_){} }
+    const sizes = new WeakMap();
+    let anchor = null;                       // the first card whose top is on screen, last time we looked
+    const pick = () => {                     // cards stack top to bottom, so a binary search finds it
+      const kids = box.children, edge = feed.getBoundingClientRect().top;
+      let lo = 0, hi = kids.length - 1, found = null;
+      while(lo <= hi){
+        const mid = (lo + hi) >> 1;
+        if(kids[mid].getBoundingClientRect().top >= edge - 1){ found = kids[mid]; hi = mid - 1; } else lo = mid + 1;
+      }
+      anchor = found;
+    };
+    const ro = new ResizeObserver(entries => {
+      if(!box.isConnected || !feed.contains(box)) return;
+      if(!anchor || anchor.parentNode !== box) pick();
+      let shift = 0;
+      for(const e of entries){
+        const el = e.target, bb = e.borderBoxSize && (e.borderBoxSize[0] || e.borderBoxSize);
+        const h = bb && bb.blockSize != null ? bb.blockSize : el.offsetHeight;
+        const was = sizes.get(el); sizes.set(el, h);
+        if(was == null || was === h || el.parentNode !== box || !anchor || el === anchor) continue;
+        if(el.compareDocumentPosition(anchor) & Node.DOCUMENT_POSITION_FOLLOWING) shift += h - was;
+      }
+      if(shift && feed.scrollTop > 0) feed.scrollTop += shift;
+    });
+    const watch = () => { for(const el of box.children) if(!sizes.has(el)){ sizes.set(el, null); ro.observe(el, { box:'border-box' }); } };
+    const mo = new MutationObserver(recs => {
+      for(const r of recs) for(const n of r.removedNodes) if(n.nodeType === 1 && n.parentNode !== box){ try{ ro.unobserve(n); }catch(_){} sizes.delete(n); if(n === anchor) anchor = null; }
+      watch();
+    });
+    mo.observe(box, { childList:true });
+    watch();
+    feed._pcHold = { box, ro, mo, pick };
+    if(!feed._pcHoldScroll){                 // ONE listener per #feed, whichever list it holds now
+      feed._pcHoldScroll = true;
+      let queued = false;
+      feed.addEventListener('scroll', () => {
+        if(queued) return; queued = true;
+        requestAnimationFrame(() => { queued = false; const h = feed._pcHold; if(h && h.box.isConnected) h.pick(); });
+      }, { passive:true });
+    }
+    pick();
+  }
   /* A PIXEL IS NOT A PLACE IN A CHANGING FEED. Remember the first visible keyed card and its
    * distance from the viewport while reconciling; new cards inserted above it then cannot turn the
    * same scrollTop into a completely different post after resume/reconnect. */
@@ -1142,6 +1205,7 @@ window.PCTimelineFactory = function(dep){
       { const fb=$('#tl-fab',feed); if(fb) fb.onclick=()=>compose(); }
       notesEl=$('#tl-notes',feed);
     }
+    _holdReadingPlace(feed, notesEl);
     if(S._tlMedia){
       // Media grid: the SAME feed (your follows / the nostrverse), image posts only, as a picture
       // grid — reuses Pics' _firstImage + .pics-grid/.pic-card styling. Scroll-back grows it (events

@@ -46,7 +46,7 @@ const ClientSettings={get:()=>0}, bumpDm=()=>recounts++, bumpNotif=()=>notifBump
 const renderView=()=>{renderCalls++;document.querySelector('#dm-in')?.remove();};
 const enc=s=>String(s||''), profOf=()=>({name:'Peer'}), needProfile=()=>{}, niceNip05=()=>'', LOGO='', emojiName=(_pk,n)=>n, _dmWhen=()=>'', openDm=()=>{};
 const _tl={pages:0,eosed:true}, _FEED_MAX_CARDS=400, _tlMedia=false, _profObs=null;
-const _tlAnchor=()=>null, _restoreTlAnchor=()=>false, _tlFilter=()=>()=>true, _healGhostPairs=()=>{}, hydrate=()=>{};
+const _tlAnchor=()=>null, _restoreTlAnchor=()=>false, _tlFilter=()=>()=>true, _healGhostPairs=()=>{}, hydrate=()=>{}, _holdReadingPlace=()=>{};
 const Store={feed:fn=>[{id:'peer',pubkey:pub(2),created_at:2},{id:'other',pubkey:pub(4),created_at:1}].filter(fn)};
 const isMutedView=e=>isMutedAuthor(e.pubkey), _noteKey=e=>e.id;
 const _noteNode=e=>{const n=document.createElement('article');n.className='note';n.dataset.key=e.id;n.dataset.pk=e.pubkey;n.innerHTML='<video></video>';return n;};
