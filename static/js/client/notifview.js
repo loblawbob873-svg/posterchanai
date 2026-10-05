@@ -88,6 +88,14 @@ window.PCNotifViewFactory = function(dep){
       seenNotif.ahead = new Set(ahead);
       localStorage.setItem('pc_notif_seen_ahead', JSON.stringify(ahead));
     }catch(_){}
+    // …and the ids of everything listed right now: a relay re-sending one of these after a reconnect is
+    // not a late arrival, it is something you have already seen (notifs.js _arrivedUnread).
+    try{
+      const ids = [];
+      for(const e of notifList()){ if(e && e.id){ ids.push(e.id); if(ids.length >= 2000) break; } }
+      seenNotif.readIds = new Set(ids);
+      localStorage.setItem('pc_notif_read_ids', JSON.stringify(ids));
+    }catch(_){}
     S._updBadge=false;   // clears the one-shot update badge too (no phantom permanent +1)
     $$('#notif-badge,#notif-badge-m,#rb-notif-badge').forEach(b=>b.classList.add('hidden'));
     // The desktop's tray bell reads the same unread count, so it clears here too — opening the

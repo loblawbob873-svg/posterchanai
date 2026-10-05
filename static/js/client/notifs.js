@@ -49,6 +49,27 @@ window.PCNotifsFactory = function(dep){
     return _followSeen[e.pubkey] || Math.min(e.created_at, S._notifEpoch);
   }
   const _notifSeenIds=new Set();
+  /* A NOTIFICATION THAT ARRIVES AFTER YOU LOOKED IS UNREAD, WHATEVER ITS TIMESTAMP SAYS.
+   * "on desktop I seen new notifications without the bell changing": opening Notifications sets the read
+   * marker to NOW, and the bell and the pop-up were both gated on `created_at > marker` -- so a mention a
+   * relay passed on late, from a slow clock, or a reaction to an old post, counted as read the instant it
+   * landed, while the notification centre (a freshly started window) listed it as new. So a LIVE arrival
+   * this client had not seen is remembered with the time it came in, and that is what is compared to the
+   * marker. What must not ring again are the rows a relay re-sends after a reconnect: the ids that were
+   * in the list when you looked (`pc_notif_read_ids`, written by markNotifsRead) stay read. */
+  const _notifArrived=new Map();
+  const _LATE_WINDOW=3*86400;   // a "late" delivery is hours or days late, never older history
+  function _readIds(){
+    if(!seenNotif.readIds){
+      let a=[]; try{ a=JSON.parse(localStorage.getItem('pc_notif_read_ids')||'[]'); }catch(_){ a=[]; }
+      seenNotif.readIds=new Set(Array.isArray(a)?a.filter(x=>typeof x==='string'):[]);
+    }
+    return seenNotif.readIds;
+  }
+  function _arrivedUnread(e){
+    const at=e&&e.id&&_notifArrived.get(e.id);
+    return !!at && at>seenNotif.last && !_readIds().has(e.id);
+  }
   async function watchNotifications(){
     /* FORWARD ONLY. Another monitor's read can arrive (a `storage` event, app.js) before this runs, and
      * re-reading storage here then put the marker BACK -- that monitor's bell relit for what it had
@@ -138,7 +159,11 @@ window.PCNotifsFactory = function(dep){
         if(Store.saveEvent(ev)){ invalidateCounts(); applySobLive(ev); needProfile(ev.kind===9735?(zapSender(ev)||ev.pubkey):ev.pubkey); }
         if(!ev.id || _notifSeenIds.has(ev.id)) return;        // a second relay, or a reconnect's backlog
         _notifSeenIds.add(ev.id); if(_notifSeenIds.size>5000) _notifSeenIds.delete(_notifSeenIds.values().next().value);
-        if(ev.created_at>seenNotif.last){ bumpNotif(); if(_notifReady) notifPing(ev); }
+        const late=_notifReady && ev.created_at<=seenNotif.last && ev.created_at>seenNotif.last-_LATE_WINDOW
+                   && !_readIds().has(ev.id);
+        if(late){ _notifArrived.set(ev.id, Math.floor(Date.now()/1000)+1);
+                  if(_notifArrived.size>2000) _notifArrived.delete(_notifArrived.keys().next().value); }
+        if(ev.created_at>seenNotif.last || late){ bumpNotif(); if(_notifReady) notifPing(ev); }
         renderNotificationsSoon(); },
       onEose: ()=>{ _notifReady=true; if(S.VIEW==='notifications') renderNotificationsSoon(); else bumpNotif(); }   // show unseen count on load; ping LIVE ones
     });
@@ -350,7 +375,7 @@ window.PCNotifsFactory = function(dep){
   }
   function notifUnread(){ return notifList().filter(e=>{
       const ts=_notifTs(e);
-      if(ts<=seenNotif.last) return false;
+      if(ts<=seenNotif.last && !_arrivedUnread(e)) return false;
       if(e.id && _aheadRead().has(e.id)) return false;
       return e.kind===3 ? ts>S._notifEpoch : true;
     // Count the update toward the badge from the SAME condition renderNotifications() draws the row from

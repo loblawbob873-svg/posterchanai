@@ -1302,6 +1302,7 @@
   try{ window.addEventListener('storage', e => {
     // The ahead-of-the-clock ids read there are read here too (notifs.js _aheadRead).
     if(e.key === 'pc_notif_seen_ahead'){ seenNotif.ahead = null; try{ bumpNotif(); }catch(_){} return; }
+    if(e.key === 'pc_notif_read_ids'){ seenNotif.readIds = null; try{ bumpNotif(); }catch(_){} return; }
     if(e.key !== 'pc_notif_seen') return;
     const v = +(e.newValue || 0);
     if(v > seenNotif.last){ seenNotif.last = v; try{ bumpNotif(); }catch(_){} }
