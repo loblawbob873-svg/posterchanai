@@ -1,7 +1,7 @@
 """Auto-split from callbacks.py: content callback handlers. Bodies moved verbatim."""
 from ._common import ChatService, CommandService, User, _MEDIA_ACTION_TTL, _media_action_cache, _youtube_action_cache, logger, re, telegram_service, time
-from .keyboards import _build_torrent_keyboard, _has_nostr, _strip_cmd_links, _strip_hashtags, _torrents_menu_keyboard, re
-from .senders import User, _media_action_cache, _offer_social_post, _offer_ytdl_share, _offer_ytdl_video_actions, _send_active_torrents, _send_torrent_results, _strip_cmd_links, logger, re, telegram_service, time
+from .keyboards import _build_torrent_keyboard, _strip_cmd_links, _strip_hashtags, _torrents_menu_keyboard, re
+from .senders import User, _media_action_cache, _offer_social_post, _offer_ytdl_share, _offer_ytdl_video_actions, _send_active_torrents, _send_torrent_results, _strip_cmd_links, logger, telegram_service, time
 
 
 async def _cb_t(update, db, chat_id, data, callback_query, callback_query_id):

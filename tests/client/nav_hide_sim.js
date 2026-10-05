@@ -151,6 +151,10 @@ global.saveClientPrefsNostr = patch => { published.push(patch); return Promise.r
 const _prefTouched = new Set();
 global._prefTouched = _prefTouched;
 
+// Signed in: navHiddenSet answers from the stored list. Logged out it answers the computed social
+// sidebar instead -- that half is driven in the real client (test_first_login_experience_full_app).
+global.GUEST = false;
+
 global.enc = s => String(s == null ? '' : s)
   .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
 

@@ -1,7 +1,7 @@
 """Auto-split from messages.py: _msg_command."""
 from ._common import Conversation, Message, User, asyncio, logger, re, telegram_service
-from .keyboards import _build_torrent_keyboard, _has_nostr, _help_main_keyboard, _strip_cmd_links, _torrent_nav_keyboard, re
-from .senders import User, _offer_social_post, _offer_ytdl_video_actions, _send_active_torrents, _send_nyaa_results, _send_torrent_results, _strip_cmd_links, _torrent_nav_keyboard, asyncio, logger, re, telegram_service
+from .keyboards import _build_torrent_keyboard, _help_main_keyboard, _strip_cmd_links, _torrent_nav_keyboard, re
+from .senders import User, _offer_social_post, _offer_ytdl_video_actions, _send_active_torrents, _send_nyaa_results, _send_torrent_results, _strip_cmd_links, _torrent_nav_keyboard, asyncio, logger, telegram_service
 
 
 async def _msg_command(_make_tg_node_notify, arg, attachments, chat_id, command, command_service, db, has_images, reply_to, text, user_obj):
