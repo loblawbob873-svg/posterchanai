@@ -34,6 +34,13 @@ APP = client_source()
 ROUTER = (ROOT / "app/routers/mail.py").read_text(encoding="utf-8")
 
 
+def _icon_helper() -> str:
+    """The SHIPPED sprite-icon helper _msgBlock draws its paperclip with -- taken from the source, so the
+    harness cannot drift from it."""
+    line = next(l for l in APP.splitlines() if l.strip().startswith("const _mi = "))
+    return line.strip()
+
+
 def _block() -> str:
     start = APP.index("    _msgBlock(m, folder, acct, expanded){")
     depth, i, in_s = 0, APP.index("{", start), None
@@ -68,6 +75,7 @@ def test_a_summary_row_in_the_conversation_does_not_blank_the_reader():
       const _previewable = () => false;
       const _mailAttachmentUrl = () => 'https://x/att';
       const _mailDate = () => '10:31';
+      %s
       // Everything _msgBlock reaches for, and nothing else — a stub that does more than the real
       // thing would hide a missing dependency rather than reveal one.
       const M = { msgs: [], convSent: [],
@@ -81,7 +89,7 @@ def test_a_summary_row_in_the_conversation_does_not_blank_the_reader():
         catch (e) { out.push({uid:m.uid, error: String(e && e.message || e)}); }
       }
       console.log(JSON.stringify(out));
-    """ % _block()
+    """ % (_icon_helper(), _block())
     done = subprocess.run([NODE, "-e", program], capture_output=True, text=True, timeout=60)
     assert done.returncode == 0, done.stderr[-1500:]
     got = json.loads(done.stdout.strip())

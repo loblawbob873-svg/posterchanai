@@ -179,6 +179,14 @@ window.PCMailFactory = function(dep){
     return out;
   }
 
+  /* FLAT ICONS, NOT EMOJI ("Email -> change emoji to flat icons to match the rest of the ui, same for
+   * Reply, Compose"). Every button in Mail draws from the same sprite as the rest of the app, so it
+   * matches the theme and does not depend on an emoji font -- a platform without one (a minimal Gentoo
+   * install, a WebView) draws an emoji as nothing at all. Menus and pickers escape their labels, so
+   * those carry plain words: no emoji and no markup. Every name used here is defined in sprite.js. */
+  const _mi = n => `<svg class="ic b-ic" aria-hidden="true"><use href="#i-${n}"></use></svg>`;
+  // A folder label from an older server still starts with an emoji; the NAME is what follows it.
+  const _plainLabel = s => String(s || '').replace(/^(?:[\p{Extended_Pictographic}\u2190-\u2BFF\uFE0F\u200D]+\s*)+/u, '').trim();
   const _mailAddr = p => (p.name && !/[<>,]/.test(p.name)) ? `${p.name} <${p.email}>` : p.email;
 
   /* Type-ahead on To/Cc. A recipient field is where you already know who you mean, so opening a
@@ -240,8 +248,8 @@ window.PCMailFactory = function(dep){
   }
 
   async function _mailContactPicker(onPick){
-    const sheet=_sheet(`<h3>👤 Contacts</h3>
-      <input class="input" id="mc-q" placeholder="🔍 Search contacts…" autocomplete="off">
+    const sheet=_sheet(`<h3>${_mi('user')}Contacts</h3>
+      <input class="input" id="mc-q" placeholder="Search contacts…" autocomplete="off">
       <div id="mc-list" class="mc-list"><div class="spinner"></div></div>`);
     const $ = (sel, r) => (r || sheet.box).querySelector(sel);
     const $$ = (sel, r) => Array.from((r || sheet.box).querySelectorAll(sel));
@@ -288,7 +296,7 @@ window.PCMailFactory = function(dep){
         onPick({ name, type: type || 'application/octet-stream', b64: _abB64(await r.arrayBuffer()) });
         toast('attached');
       }catch(err){ toast('could not attach that file'); }
-    }, { title: '📁 Attach from Files' });
+    }, { title: 'Attach from Files' });
   }
   function _mailKeys(M){
     if(S._mailKeysOff) S._mailKeysOff();
@@ -459,7 +467,7 @@ window.PCMailFactory = function(dep){
        * window while it was in flight; a late 401/empty response must not paint Mail there. */
       if(!root.isConnected||this.root!==root||S.VIEW!=='mail'||root.closest('#feed')!==$('#feed'))return;
       if(authError){
-        root.innerHTML=`<div class="mail-empty"><div class="me-ico">⚠️</div><h3>Email couldn’t sign in</h3>
+        root.innerHTML=`<div class="mail-empty"><div class="me-ico">${_mi('warn')}</div><h3>Email couldn’t sign in</h3>
           <p class="muted">${enc((authError&&authError.message)||'could not establish your app session')}</p>
           <button class="btn btn-ghost" id="mail-auth-retry">Retry</button></div>`;
         const retry=$('#mail-auth-retry',root); if(retry) retry.onclick=()=>this.render(root);
@@ -471,7 +479,7 @@ window.PCMailFactory = function(dep){
          * Nostr key is only the lock, so there is no version of this that works without one — and
          * the person asking usually wants encrypted messaging WITHOUT email, which this app already
          * has under Messages. Say both here rather than leaving them to be guessed. */
-        root.innerHTML=`<div class="mail-empty"><div class="me-ico">📧</div><h3>Email</h3>
+        root.innerHTML=`<div class="mail-empty"><div class="me-ico">${_mi('mail')}</div><h3>Email</h3>
           <p class="muted">No mail accounts yet. Add your IMAP/SMTP account in <b>Settings → Mail</b>, then it syncs here as an encrypted Nostr mailbox.</p>
           <p class="muted small">\ud83d\udd10 <b>Nostr-encrypted email (nostr-mail)</b> also lives here: your email account carries the message, your Nostr key locks the body \u2014 so it needs the account. Just want encrypted messaging with other Nostr users, no email involved? That\u2019s <b>Messages</b>, already built in.</p>
           <div class="row" style="gap:8px;justify-content:center">
@@ -498,8 +506,8 @@ window.PCMailFactory = function(dep){
       const root=this.root; if(!root) return;
       root.innerHTML=`<div class="mail-wrap">
         <div class="mail-side">
-          <select class="input mail-acct" id="mail-acct" title="Account">${this.accounts.length>1?`<option value="__all"${this.acct==='__all'?' selected':''}>📥 All inboxes</option>`:''}${this.accounts.map(a=>`<option value="${enc(a.email)}"${a.email===this.acct?' selected':''}>${enc(a.email)}</option>`).join('')}</select>
-          <button class="btn btn-neon mail-compose" id="mail-compose">✏️ Compose</button>
+          <select class="input mail-acct" id="mail-acct" title="Account">${this.accounts.length>1?`<option value="__all"${this.acct==='__all'?' selected':''}>All inboxes</option>`:''}${this.accounts.map(a=>`<option value="${enc(a.email)}"${a.email===this.acct?' selected':''}>${enc(a.email)}</option>`).join('')}</select>
+          <button class="btn btn-neon mail-compose" id="mail-compose">${_mi('pen')}Compose</button>
           <div class="mail-folders"></div>
         </div>
         <div class="mail-list">
@@ -510,7 +518,7 @@ window.PCMailFactory = function(dep){
                selection to act on (.mail-bulk:not(:has(.btn)) in client.css). NO BACKTICKS IN
                HERE: this comment lives inside a template literal, and one would close it and take
                the whole module out at parse time. -->
-          <div class="mail-list-top"><label class="mail-selall" title="Select all / none"><input type="checkbox" id="mail-selall"> Select</label><input class="input mail-search" id="mail-search" placeholder="🔍 Search all accounts…" aria-label="Search all email accounts" value="${enc(this.q)}"><button class="mini mail-folders-open" id="mail-folders-open" title="Browse folders" aria-label="Browse folders">📂</button><button class="mini mail-refresh" id="mail-refresh" title="Refresh">🔄</button></div>
+          <div class="mail-list-top"><label class="mail-selall" title="Select all / none"><input type="checkbox" id="mail-selall"> Select</label><input class="input mail-search" id="mail-search" placeholder="Search all accounts…" aria-label="Search all email accounts" value="${enc(this.q)}"><button class="mini mail-folders-open" id="mail-folders-open" title="Browse folders" aria-label="Browse folders">${_mi('folder')}</button><button class="mini mail-refresh" id="mail-refresh" title="Refresh" aria-label="Refresh">${_mi('refresh')}</button></div>
           <div class="mail-bulk"><span class="mail-bulk-act" id="mail-bulk-act"></span></div>
           <div class="mail-items" id="mail-items"><div class="spinner"></div></div>
         </div>
@@ -548,8 +556,11 @@ window.PCMailFactory = function(dep){
         this.drawList(); }; }
       this.drawFolders(); this.loadList(); this.loadFolders();
     },
-    _folderLabel(f){ if(this.folderLabels && this.folderLabels[f]) return this.folderLabels[f];
-      const k={INBOX:'📥 Inbox',Sent:'📤 Sent',Drafts:'📝 Drafts',Trash:'🗑 Trash',Spam:'⚠️ Spam',Junk:'⚠️ Junk',Archive:'🗄 Archive'}; return k[f]||('📁 '+enc(String(f).split(/[./]/).pop()||f)); },
+    _folderName(f){ const l=this.folderLabels && this.folderLabels[f]; if(l && _plainLabel(l)) return _plainLabel(l);
+      const k={INBOX:'Inbox',Sent:'Sent',Drafts:'Drafts',Trash:'Trash',Spam:'Spam',Junk:'Junk',Archive:'Archive'}; return k[f]||(String(f).split(/[./]/).pop()||String(f)); },
+    _folderIcon(f){ const role = f==='INBOX' ? 'Inbox' : f==='Drafts' ? 'Drafts' : this._folderName(f);
+      return {Inbox:'mail',Sent:'send',Drafts:'draft',Trash:'trash',Spam:'warn',Junk:'warn',Archive:'download'}[role] || 'folder'; },
+    _folderLabel(f){ return _mi(this._folderIcon(f)) + enc(this._folderName(f)); },
     async loadFolders(){
       if(!this.root) return;
       if(this.acct==='__all'){
@@ -597,7 +608,7 @@ window.PCMailFactory = function(dep){
          silently omits an account. */
       const per=this._allFolders||{}, emails=Object.keys(per);
       if(!emails.length) return ['INBOX','Sent','Drafts'];
-      const roles=this._ROLE_FOLDERS.filter(r=> r==='INBOX' || emails.some(e=>(per[e]||[]).some(f=>f===r||this.folderLabels[f]===this._folderLabel(r))));
+      const roles=this._ROLE_FOLDERS.filter(r=> r==='INBOX' || emails.some(e=>(per[e]||[]).some(f=>f===r||(!!this.folderLabels[f] && _plainLabel(this.folderLabels[f])===this._folderName(r)))));
       const common=(per[emails[0]]||[]).filter(f=>!this._ROLE_FOLDERS.includes(f)
         && emails.every(e=>(per[e]||[]).includes(f)));
       return roles.concat(common);
@@ -611,10 +622,10 @@ window.PCMailFactory = function(dep){
       const shown=all.filter(f=>pinned.includes(f)||f===this.folder);
       const rest=all.filter(f=>!shown.includes(f));
       box.innerHTML=shown.map(f=>`<button class="mail-folder${f===this.folder?' on':''}" data-folder="${enc(f)}">${this._folderLabel(f)}</button>`).join('')
-        +(rest.length?`<button class="mail-folder mail-folder-more" id="mail-more" title="Other folders">📁 More ▾</button>`:'');
+        +(rest.length?`<button class="mail-folder mail-folder-more" id="mail-more" title="Other folders">${_mi('folder')}More ${_mi('chevron-down')}</button>`:'');
       box.querySelectorAll('.mail-folder[data-folder]').forEach(b=> b.onclick=()=>this.selectFolder(b.dataset.folder));
       const more=box.querySelector('#mail-more');
-      if(more) more.onclick=()=> openMenuPopover(more, rest.map(f=>[f,this._folderLabel(f)]), v=>this.selectFolder(v));
+      if(more) more.onclick=()=> openMenuPopover(more, rest.map(f=>[f,this._folderName(f)]), v=>this.selectFolder(v));
     },
     /* BROWSE EVERY FOLDER — the one thing the strip above cannot do.
      *
@@ -636,13 +647,13 @@ window.PCMailFactory = function(dep){
       const empty = `<div class="muted small" style="padding:10px 2px">
           This account's folder list hasn't been read yet — that is why only Inbox, Sent and Drafts
           are offered. Fetching it asks the mail server for the list.</div>`;
-      modal(`<h3>📂 Folders${this.acct && this.acct!=='__all' ? ' · '+enc(this.acct) : ''}</h3>
-        <input class="input" id="mail-fbrowse-q" placeholder="🔍 Filter folders…" autocomplete="off">
+      modal(`<h3>${_mi('folder')}Folders${this.acct && this.acct!=='__all' ? ' · '+enc(this.acct) : ''}</h3>
+        <input class="input" id="mail-fbrowse-q" placeholder="Filter folders…" autocomplete="off">
         <div id="mail-fbrowse-list" style="max-height:52vh;overflow:auto;display:flex;flex-direction:column;gap:4px;margin-top:8px">
           ${all.length ? all.map(rows).join('') : empty}
         </div>
         <div class="row" style="justify-content:space-between;margin-top:10px">
-          <button class="btn btn-ghost small" id="mail-fbrowse-reload">↻ Fetch folder list</button>
+          <button class="btn btn-ghost small" id="mail-fbrowse-reload">${_mi('refresh')}Fetch folder list</button>
           <button class="btn btn-ghost small" id="mail-fbrowse-close">Close</button>
         </div>`, box => {
         const list = box.querySelector('#mail-fbrowse-list');
@@ -690,7 +701,7 @@ window.PCMailFactory = function(dep){
     },
     refreshFolder(f){
       const mine=f, account=this.acct;
-      this.setBusy(`Fetching ${this._folderLabel(f).replace(/^\S+\s*/, '')} from the mail server…`);
+      this.setBusy(`Fetching ${this._folderName(f)} from the mail server…`);
       this.api('/sync-folder',{method:'POST',headers:{'Content-Type':'application/json'},
                                body:JSON.stringify({account,folder:f})})
         .then(()=>{ if(this.folder===mine && this.acct===account) this.loadList(); })
@@ -899,7 +910,7 @@ window.PCMailFactory = function(dep){
             + this.msgs.length + ' match' + (this.msgs.length===1?'':'es') + ' in every account and folder</div>' : '');
       // Unified mode uses the logical name and has no per-account folderLabels map. Treat it as
       // Sent too, or its rows show the sender (yourself) instead of the useful "To:" recipient.
-      const isSent=!this.q&&(this.folder==='Sent'||this.folderLabels[this.folder]==='📤 Sent'), unified=this.acct==='__all'||!!this.q;
+      const isSent=!this.q&&(this.folder==='Sent'||_plainLabel(this.folderLabels[this.folder]||'')==='Sent'), unified=this.acct==='__all'||!!this.q;
       /* ONE ROW PER CONVERSATION. The reader has grouped a thread for a while and the list did
          not, so a back-and-forth filled the screen with near-identical rows — "the point of threads
          is to consolidate". The row shows the NEWEST message and a count; the checkbox selects the
@@ -919,7 +930,7 @@ window.PCMailFactory = function(dep){
         <input type="checkbox" class="mi-chk"${keys.every(k=>this.sel.has(k))?' checked':''}>
         <div class="mi-content">
           <div class="mi-row"><span class="mi-from">${unified?`<span class="mi-acct">${enc(m.account||'')}</span> `:''}${mineHead?'<span class="mi-you">You:</span> ':''}${enc(((isSent||mineHead)?('To: '+(m.to||'')):(m.from||'')).slice(0,42))}${n>1?`<span class="mi-count" title="${n} messages in this conversation">${n}</span>`:''}</span><span class="mi-date">${enc(_mailDate(m.ts))}</span></div>
-          <div class="mi-subj">${c.all.concat(c.mine||[]).some(x=>x.attachments)?'📎 ':''}${enc(m.subject||'(no subject)')}</div>
+          <div class="mi-subj">${c.all.concat(c.mine||[]).some(x=>x.attachments)?_mi('paperclip'):''}${enc(m.subject||'(no subject)')}</div>
           <div class="mi-prev muted small">${enc(m.preview||'')}</div>
         </div></div>`; }).join('');
       if(this._next){
@@ -947,7 +958,7 @@ window.PCMailFactory = function(dep){
       // which is both a lie and (before the handler stopped reading it) the bug above.
       if(sa){ sa.checked = n>0; sa.indeterminate = n>0 && n!==this.msgs.length; }
       if(!act) return;
-      act.innerHTML = n ? `<span class="mail-bulk-n">${n} selected</span><button class="btn small" data-bulk="read">● Read</button><button class="btn small" data-bulk="archive">🗄 Archive</button><button class="btn btn-red small" data-bulk="delete">🗑 Delete</button>` : '';
+      act.innerHTML = n ? `<span class="mail-bulk-n">${n} selected</span><button class="btn small" data-bulk="read">${_mi('check')}Read</button><button class="btn small" data-bulk="archive">${_mi('download')}Archive</button><button class="btn btn-red small" data-bulk="delete">${_mi('trash')}Delete</button>` : '';
       act.querySelectorAll('[data-bulk]').forEach(b=> b.onclick=()=>this.bulk(b.dataset.bulk));
     },
     async bulk(action){
@@ -1115,7 +1126,7 @@ window.PCMailFactory = function(dep){
         const name=String(at.name||'attachment'), type=String(at.type||'application/octet-stream');
         const pv=_previewable(name,type);
         const url=_mailAttachmentUrl(m,folder,acct,i);
-        return `<a class="mail-att" data-mail-attachment="1" data-mail-url="${enc(url)}" href="${enc(url||'#')}" target="_blank" rel="noopener" data-name="${enc(name)}" data-mime="${enc(type)}"${pv?' data-mail-preview="1"':''}>📎 ${enc(name)} <span class="muted small">${_fmtBytes(at.size||0)}</span></a>`;
+        return `<a class="mail-att" data-mail-attachment="1" data-mail-url="${enc(url)}" href="${enc(url||'#')}" target="_blank" rel="noopener" data-name="${enc(name)}" data-mime="${enc(type)}"${pv?' data-mail-preview="1"':''}>${_mi('paperclip')}${enc(name)} <span class="muted small">${_fmtBytes(at.size||0)}</span></a>`;
       }).join('');
       /* Untrusted email HTML → sandboxed iframe (no scripts, no forms, no same-origin); else text.
        *
@@ -1145,7 +1156,7 @@ window.PCMailFactory = function(dep){
         <div class="mail-msg-hd" role="button" tabindex="0" aria-expanded="${expanded?'true':'false'}">
           <span class="mm-avatar" aria-hidden="true">${enc(initial.toUpperCase())}</span>
           <div class="mm-who"><b class="mm-sender" data-from="${enc(m.from_email||m.from||'')}" data-name="${enc(m.from||'')}" title="View sender">${enc(m.from||'')}</b><div class="muted small">To: ${enc((m.to||'').slice(0,90))}</div></div>
-          ${preview?`<span class="mm-preview muted">${enc(preview)}</span>`:''}<span class="muted small mm-date">${enc(_mailDate(m.ts))}</span><span class="mm-chevron" aria-hidden="true">⌄</span>
+          ${preview?`<span class="mm-preview muted">${enc(preview)}</span>`:''}<span class="muted small mm-date">${enc(_mailDate(m.ts))}</span><span class="mm-chevron" aria-hidden="true">${_mi('chevron-down')}</span>
         </div>
         <div class="mail-msg-body">${atts?`<div class="mail-atts">${atts}</div>`:''}<div class="mail-body">${body}</div></div>
       </div>`;
@@ -1193,7 +1204,7 @@ window.PCMailFactory = function(dep){
       const latest=thread[thread.length-1];
       // actions target the message the user actually OPENED (the seed), not just the newest in the thread
       const target=thread.find(m=>String(m.uid)===String(seedUid)) || latest;
-      pane.innerHTML=`<div class="mail-read-hd"><button class="mini mail-back" id="mail-back" title="Back">←</button>
+      pane.innerHTML=`<div class="mail-read-hd"><button class="mini mail-back" id="mail-back" title="Back" aria-label="Back">${_mi('arrow-left')}</button>
           <div class="mr-meta"><div class="mr-subj">${enc(latest.subject||'(no subject)')}</div>
             ${thread.length>1?`<div class="muted small">${thread.length} messages</div>`
               /* SILENCE IS BEING READ AS ABSENCE, and that is the whole of "still not showing my
@@ -1296,14 +1307,14 @@ window.PCMailFactory = function(dep){
           answer after a quiet spell loads the model \u2014 this can take up to a minute.</div></div>`);
       return {
         fail: (err) => { const h=$('#ma-hold'); if(h) h.innerHTML =
-          '\u26a0\ufe0f ' + enc((err && err.message) || String(err) || 'that didn\u2019t work'); },
+          _mi('warn') + enc((err && err.message) || String(err) || 'that didn\u2019t work'); },
         done: () => closeModal(),
       };
     },
     async aiSummarize(msg){
       const text = this._msgText(msg);
       if(!text){ toast('this message has no text to read'); return; }
-      const hold = this._aiHold('\ud83d\udcdd Summary', 'reading the email');
+      const hold = this._aiHold(_mi('note')+'Summary', 'reading the email');
       try{
         const d = await this._aiPost('/api/mail/ai', { mode:'summarize', text });
         hold.done();
@@ -1320,7 +1331,7 @@ window.PCMailFactory = function(dep){
       if(!String(instr).trim()){ toast('say how to reply'); return; }
       const text = this._msgText(msg);
       if(!text){ toast('this message has no text to read'); return; }
-      const hold = this._aiHold('\u21a9\ufe0f AI reply', 'drafting your reply');
+      const hold = this._aiHold(_mi('reply')+'AI reply', 'drafting your reply');
       try{
         /* The user's own name, from the To header's display name — the ONLY grounded source. An
          * ungrounded model signed a real reply "Best, Jordan": a person who does not exist. */
@@ -1336,7 +1347,7 @@ window.PCMailFactory = function(dep){
     async addToBills(msg){
       const text0 = this._msgText(msg);
       if(!text0){ toast('this message has no text to read'); return; }
-      const hold = this._aiHold('\ud83d\udcb8 Add to Budget', 'reading the bill');
+      const hold = this._aiHold(_mi('coin')+'Add to Budget', 'reading the bill');
       try{
         const text = text0;
         const fd = new FormData();
@@ -1370,8 +1381,8 @@ window.PCMailFactory = function(dep){
           ${rows.map(([k, v]) => `<div class="msc-row"><span class="muted small">${enc(k)}</span><b>${enc(v)}</b></div>`).join('')}
         </div>
         <div class="modal-actions">
-          ${addr ? '<button class="btn btn-cyan small" id="msc-write">✉ Write to them</button>' : ''}
-          ${addr ? '<button class="btn small" id="msc-find">🔎 Their messages</button>' : ''}
+          ${addr ? '<button class="btn btn-cyan small" id="msc-write">'+_mi('mail')+'Write to them</button>' : ''}
+          ${addr ? '<button class="btn small" id="msc-find">'+_mi('search')+'Their messages</button>' : ''}
           ${addr ? '<button class="btn small" id="msc-copy">Copy address</button>' : ''}
         </div>`, root => {
         const b = id => root.querySelector('#' + id);
@@ -1409,9 +1420,9 @@ window.PCMailFactory = function(dep){
          * desktop and mobile. Every entry ENDS IN THE USER'S HANDS: a summary is read, a reply
          * draft opens in the composer unsent, a bill parse opens Budget's editable review. */
         const pick = await _pickOne('\u2728 AI', [
-          { v:'sum',  l:'\ud83d\udcdd Summarize this email' },
-          { v:'reply', l:'\u21a9\ufe0f AI reply\u2026' },
-          { v:'bill', l:'\ud83d\udcb8 Add to Budget' },
+          { v:'sum',  l:'Summarize this email' },
+          { v:'reply', l:'AI reply\u2026' },
+          { v:'bill', l:'Add to Budget' },
         ]);
         if(pick==='sum') return this.aiSummarize(msg);
         if(pick==='reply') return this.aiReply(msg, folder, acct);
@@ -1430,10 +1441,10 @@ window.PCMailFactory = function(dep){
       if(act==='move'){
         let fs = { folders: [], labels: {} };
         try{ fs = await this.api('/folders?account=' + encodeURIComponent(acct)) || fs; }catch(_){}
-        const rows = [{ v:'__archive', l:'🗄 Archive' }].concat(
+        const rows = [{ v:'__archive', l:'Archive' }].concat(
           (fs.folders || [])
             .filter(f => f !== folder && f !== 'Drafts')     // where it already is, and the local one
-            .map(f => ({ v:f, l:(fs.labels || {})[f] || f })));
+            .map(f => ({ v:f, l:_plainLabel((fs.labels || {})[f]) || f })));
         const dest = await _pickOne('Move to…', rows);
         if(!dest) return;
         try{
@@ -1500,7 +1511,7 @@ window.PCMailFactory = function(dep){
        * longest and least likely to exist anywhere else. The ✕ beside Send is what keeps that
        * honest: a sheet that refuses the backdrop and shows no way out is a trap on a phone with no
        * hardware Back button. Escape and Back still close it. */
-      modal(`<div class="cm-head"><h3>✉️ ${titles[opts.mode]||'New message'}</h3><span class="spacer"></span>
+      modal(`<div class="cm-head"><h3>${_mi('mail')}${titles[opts.mode]||'New message'}</h3><span class="spacer"></span>
           <button class="modal-x" id="cm-close" title="Close" aria-label="Close">&#215;</button>
           <button class="btn btn-neon small" id="cm-send"><svg class="ic b-ic" aria-hidden="true"><use href="#i-send"></use></svg>Send</button></div>
         ${fromSel}
@@ -1508,13 +1519,13 @@ window.PCMailFactory = function(dep){
         <input class="input" id="cm-cc" placeholder="Cc (optional)" value="${enc(cc)}" autocomplete="off">
         <input class="input" id="cm-subj" placeholder="Subject" value="${enc(subj)}">
         <textarea class="input" id="cm-body" placeholder="Write your message…">${enc(body)}</textarea>
-        <div class="row cm-actions"><button class="btn btn-ghost small" id="cm-contacts">👤 Contacts</button><button class="btn btn-ghost small" id="cm-attach">📎 Attach</button><button class="btn btn-ghost small" id="cm-blossom">📁 Files</button><button class="btn btn-ghost small" id="cm-draft">💾 Save draft</button><button class="btn btn-ghost small" id="cm-nmail" title="Encrypt the body to a Nostr key (nostr-mail): the mail travels as ordinary email, unreadable to every server on the way">🔐 Encrypt</button><input type="file" id="cm-file" multiple hidden><span id="cm-atts" class="muted small cm-atts"></span></div>
+        <div class="row cm-actions"><button class="btn btn-ghost small" id="cm-contacts">${_mi('user')}Contacts</button><button class="btn btn-ghost small" id="cm-attach">${_mi('paperclip')}Attach</button><button class="btn btn-ghost small" id="cm-blossom">${_mi('folder')}Files</button><button class="btn btn-ghost small" id="cm-draft">${_mi('draft')}Save draft</button><button class="btn btn-ghost small" id="cm-nmail" title="Encrypt the body to a Nostr key (nostr-mail): the mail travels as ordinary email, unreadable to every server on the way">${_mi('lock')}Encrypt</button><input type="file" id="cm-file" multiple hidden><span id="cm-atts" class="muted small cm-atts"></span></div>
         <div class="fld hidden" id="cm-nmail-row"><label class="muted small">Recipient's Nostr key (npub)<input class="input" id="cm-nmail-pk" placeholder="npub1\u2026" autocomplete="off" style="font-size:16px"></label>
           <label class="bg-chk muted small"><input type="checkbox" id="cm-nmail-dm" checked> Also notify them by Nostr DM (sends the subject)</label>
           <div class="muted small">The body is NIP-44-encrypted to this key; the subject stays readable. The recipient opens it with nostr-mail or PosterChan.</div></div>`,
         box => box.classList.add('mail-compose-modal', 'modal-sticky'));
       { const x=$('#cm-close'); if(x) x.onclick=()=>closeModal(); }
-      const drawAtts=()=>{ const e=$('#cm-atts'); if(e) e.innerHTML=atts.map(a=>'📎 '+enc(a.name)).join('  '); };
+      const drawAtts=()=>{ const e=$('#cm-atts'); if(e) e.innerHTML=atts.map(a=>_mi('paperclip')+enc(a.name)).join('  '); };
       drawAtts();
       $('#cm-attach').onclick=()=>$('#cm-file').click();
       _attachRecipientAutocomplete($('#cm-to'));
@@ -1568,8 +1579,8 @@ window.PCMailFactory = function(dep){
         const btn=$('#cm-draft'); btn.disabled=true; btn.textContent='Saving…';
         try{ const r=await self.api('/draft',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({account:sendAcct(), draft:{...gather(), uid:draftUid}})});
           if(r.ok){ draftUid=r.uid; toast('draft saved'); closeModal(); if(self.folder==='Drafts') self.loadList(); }
-          else { toast('save failed'); btn.disabled=false; btn.textContent='💾 Save draft'; } }
-        catch(_){ toast('save failed'); btn.disabled=false; btn.textContent='💾 Save draft'; }
+          else { toast('save failed'); btn.disabled=false; btn.innerHTML=_mi('draft')+'Save draft'; } }
+        catch(_){ toast('save failed'); btn.disabled=false; btn.innerHTML=_mi('draft')+'Save draft'; }
       };
       { const nb=$('#cm-nmail'), nr=$('#cm-nmail-row');
         if(nb&&nr) nb.onclick=()=>{ nr.classList.toggle('hidden'); nb.classList.toggle('btn-cyan', !nr.classList.contains('hidden')); }; }
@@ -1603,7 +1614,7 @@ window.PCMailFactory = function(dep){
         const btn=$('#cm-send'); btn.disabled=true; btn.textContent='Sending…';
         const _nmailDm = payload._nmailDm; delete payload._nmailDm;   // client-side only — never sent to the server
         try{ const r=await self.api(path,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)});
-          if(r.ok){ toast('sent ✉️');
+          if(r.ok){ toast('Sent');
             if(_nmailDm){
               try{ sendDm(_nmailDm, '\ud83d\udce7\ud83d\udd10 I sent you an encrypted email'
                 + (payload.subject ? ': \u201c' + payload.subject + '\u201d' : '')
@@ -1616,15 +1627,15 @@ window.PCMailFactory = function(dep){
             // refreshed when you happened to be LOOKING at Sent — so a message you had just sent
             // was in Thunderbird and missing here, which reads as "it never sent".
             self.syncSent(sendAcct()); }
-          else { toast(r.error||'send failed'); btn.disabled=false; btn.textContent='Send ▶'; } }
-        catch(_){ toast('send failed'); btn.disabled=false; btn.textContent='Send ▶'; }
+          else { toast(r.error||'send failed'); btn.disabled=false; btn.innerHTML=_mi('send')+'Send'; } }
+        catch(_){ toast('send failed'); btn.disabled=false; btn.innerHTML=_mi('send')+'Send'; }
       };
     },
     async sync(manual){
       if(this._syncing) return; this._syncing=true; this._lastSync=Date.now();
       // A background poll has no UI to drive: `this.root` is null unless Messages is open, and every
       // element lookup below is already scoped to it.
-      const rb=$('#mail-refresh',this.root); if(rb){ rb.textContent='⏳'; rb.disabled=true; }
+      const rb=$('#mail-refresh',this.root); if(rb){ rb.innerHTML=_mi('clock'); rb.disabled=true; }
       try{ const r=await this.api('/sync',{method:'POST'});
         const total=Object.values(r.new||{}).reduce((a,b)=>a+(+b||0),0);
         if(total){ this.unread+=total;
@@ -1640,7 +1651,7 @@ window.PCMailFactory = function(dep){
                                      { tag:'pc-mail', icon:S.LOGO, route:'mail', onClick:()=>switchView('mail') }); }
         if(this.root && this.acct) this.loadList();
       }catch(_){ if(manual) toast('mail sync failed'); }
-      this._syncing=false; const rb2=$('#mail-refresh',this.root); if(rb2){ rb2.textContent='🔄'; rb2.disabled=false; }
+      this._syncing=false; const rb2=$('#mail-refresh',this.root); if(rb2){ rb2.innerHTML=_mi('refresh'); rb2.disabled=false; }
     },
     // "log in → fetch your mail": pull IMAP → mailbox on login (background), notify on new mail, and
     // surface the count on the Email tab badge — even before the user opens Messages.

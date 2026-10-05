@@ -45,7 +45,7 @@ class SentFolderFreshness(unittest.TestCase):
 
     def test_unified_sent_rows_show_the_recipient(self):
         block = APP[APP.index("    drawList(){"):APP.index("    updateBulk(){")]
-        self.assertIn("this.folder==='Sent'||this.folderLabels[this.folder]==='📤 Sent'", block)
+        self.assertIn("this.folder==='Sent'||_plainLabel(this.folderLabels[this.folder]||'')==='Sent'", block)
         self.assertIn("'To: '+(m.to||'')", block)
 
     def test_background_poll_is_prompt_and_visibility_uses_same_freshness_rule(self):

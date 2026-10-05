@@ -779,10 +779,11 @@ async def mail_folder_map_save(request: Request, db: Session = Depends(get_db),
 async def mail_folders(account: str = "", db: Session = Depends(get_db), current_user: User = Depends(get_instance_user)):
     """Account's REAL folders with friendly labels + special-use mapping (so 'Sent' points at the
     server's actual sent mailbox, e.g. INBOX.Sent / [Gmail]/Sent Mail). Returns ordered names + a
-    {name: label} map. 'Drafts' is the local compose-drafts folder, pinned separately."""
+    {name: label} map. 'Drafts' is the local compose-drafts folder, pinned separately. Labels are plain
+    words: the client draws each folder's icon from the sprite by its role (mail.js _folderIcon)."""
     acc = _resolve_account(db, current_user, account)
     if not acc:
-        return {"folders": ["INBOX", "Drafts"], "labels": {"INBOX": "📥 Inbox", "Drafts": "📝 Drafts"}}
+        return {"folders": ["INBOX", "Drafts"], "labels": {"INBOX": "Inbox", "Drafts": "Drafts"}}
     try:
         meta = await _asyncio.to_thread(_list_special_folders, current_user.id, db, acc.email)
     except Exception as e:
@@ -793,12 +794,12 @@ async def mail_folders(account: str = "", db: Session = Depends(get_db), current
     inbox = next((f for f in allf if f.upper() == "INBOX"), "INBOX")
 
     def label(n):
-        if n == sent: return "📤 Sent"
-        if n == trash: return "🗑 Trash"
-        if n == junk: return "⚠️ Spam"
-        if n == archive: return "🗄 Archive"
-        if n.upper() == "INBOX": return "📥 Inbox"
-        return "📁 " + (n.replace("INBOX.", "").replace("[Gmail]/", "").split("/")[-1] or n)
+        if n == sent: return "Sent"
+        if n == trash: return "Trash"
+        if n == junk: return "Spam"
+        if n == archive: return "Archive"
+        if n.upper() == "INBOX": return "Inbox"
+        return (n.replace("INBOX.", "").replace("[Gmail]/", "").split("/")[-1] or n)
 
     order = [inbox]
     if sent and sent != inbox:
@@ -807,7 +808,7 @@ async def mail_folders(account: str = "", db: Session = Depends(get_db), current
     for f in allf:
         if f not in order and f != inbox:
             order.append(f)
-    labels = {"Drafts": "📝 Drafts"}
+    labels = {"Drafts": "Drafts"}
     for f in order:
         if f != "Drafts":
             labels[f] = label(f)

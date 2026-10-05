@@ -4644,6 +4644,15 @@ html.pc-oswin .main{ height:100% }
 .mail-root{flex:1 1 auto;min-height:0;display:flex;overflow:hidden}
 .mail-loading,.mail-empty{flex:1;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:12px;text-align:center;padding:24px}
 .mail-empty .me-ico{font-size:42px}
+/* Mail's sprite icons outside a .btn (the folder rail, the toolbar's minis, headings, attachment chips):
+   the same icon-beside-label layout .btn:has(.b-ic) gives a button. */
+.mail-empty .me-ico svg.ic{width:42px;height:42px}
+.mail-folder:has(.b-ic){display:flex;align-items:center;gap:8px}
+.mail-wrap .mini:has(.b-ic){display:inline-flex;align-items:center;justify-content:center}
+.mail-wrap .mini svg.ic.b-ic{width:18px;height:18px}
+.mail-folder-more svg.ic.b-ic:last-child{width:.8em;height:.8em;opacity:.7}
+.mi-subj svg.ic.b-ic,.mail-att svg.ic.b-ic,.cm-atts svg.ic.b-ic{vertical-align:-2px;margin-inline-end:4px}
+h3 > svg.ic.b-ic:first-child{vertical-align:-3px;margin-inline-end:8px}
 .mail-empty p{max-width:430px}
 .mail-wrap{flex:1;display:grid;grid-template-columns:210px 330px 1fr;height:100%;min-height:0;width:100%}
 .mail-side{border-inline-end:1px solid var(--line);padding:12px 10px;display:flex;flex-direction:column;gap:10px;overflow-y:auto;background:var(--panel)}
@@ -4930,7 +4939,7 @@ html.pc-oswin .main{ height:100% }
 .mm-preview{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:12px}
 .mail-msg.open .mm-preview{display:none}
 .mm-date{flex:0 0 auto;white-space:nowrap}
-.mm-chevron{flex:0 0 auto;color:var(--muted);font-size:17px;transition:transform .15s ease}
+.mm-chevron{flex:0 0 auto;display:inline-flex;color:var(--muted);font-size:17px;transition:transform .15s ease}
 .mail-msg.open .mm-chevron{transform:rotate(180deg)}
 .mail-msg-body{display:none}
 .mail-msg.open>.mail-msg-body{display:block}

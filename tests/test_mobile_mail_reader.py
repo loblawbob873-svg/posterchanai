@@ -52,7 +52,10 @@ def test_mobile_reader_actions_are_compact_accessible_icons():
     # Compactness and labelling are asserted over the whole thread on purpose: an icon-only button
     # without an aria-label is unreachable by a screen reader wherever it is put.
     assert thread.count('icon-only') == 7
-    assert thread.count('aria-label=') == thread.count('icon-only')
+    # Per BUTTON, not by comparing totals: a label on any other button (the icon Back button has one)
+    # made the totals differ while every icon-only button was still labelled.
+    icon_only = [t for t in re.findall(r'<button[^>]*>', thread) if 'icon-only' in t]
+    assert icon_only and all('aria-label=' in t for t in icon_only), icon_only
 
 
 def test_packaged_mail_attachments_use_the_configured_instance():

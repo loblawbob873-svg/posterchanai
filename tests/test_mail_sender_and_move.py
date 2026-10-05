@@ -78,7 +78,7 @@ class MoveTests(unittest.TestCase):
         fn = APP[APP.index("      if(act==='move'){"):]
         fn = fn[:fn.index("\n      }")]
         self.assertIn("this.api('/folders?account='", fn)
-        self.assertIn("{ v:'__archive', l:'🗄 Archive' }", fn)
+        self.assertIn("{ v:'__archive', l:'Archive' }", fn)
         self.assertIn("f !== folder", fn, "it offers the folder the message is already in")
 
     def test_archive_keeps_its_own_endpoint(self):
