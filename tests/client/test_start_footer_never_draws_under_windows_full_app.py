@@ -48,7 +48,9 @@ def test_no_footer_button_draws_on_the_desktop_surface():
     # The buttons, read from the REAL start menu -- its own popup window, as on the machine.
     async def read_footer(b):
         await desktop.login(b)
-        await b.until("!!document.querySelector('.os-foot .os-foot-btn')")
+        # Both halves of the menu, not just the first: the chip paints a moment after the footer, and a
+        # loaded gate read it in between ("the start menu has no account chip" -- it had not drawn yet).
+        await b.until("!!document.querySelector('.os-foot .os-foot-btn') && !!document.querySelector('.os-acct, #os-acct, .os-me')")
         got['kinds'] = await b.js("[...document.querySelectorAll('.os-foot-btn')].map(x=>x.dataset.foot)")
         got['chip'] = await b.js("!!document.querySelector('.os-acct, #os-acct, .os-me')")
     asyncio.run(desktop.with_browser('online', '?pcpopup=start', read_footer, MACHINE + POPUPS))

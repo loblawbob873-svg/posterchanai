@@ -141,7 +141,7 @@ def main() -> int:
     # strength of a run that never covered all of its commits (deploy 81 aborted in the gate). --list
     # writes nothing and is always allowed.
     if not a.list:
-        lock = open(ROOT / ".pregate.lock", "w")
+        lock = open(os.environ.get("PREGATE_LOCK") or (ROOT / ".pregate.lock"), "w")
         try:
             fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
         except BlockingIOError:
