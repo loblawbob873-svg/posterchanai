@@ -167,40 +167,12 @@ def registry(monkeypatch, store):
     return vals, state
 
 
-def test_bulk_remove_takes_only_the_unverified_it_was_shown(registry):
-    vals, _ = registry
-    r = asyncio.run(nip05_registry.remove_unverified("poster.place", ["ghost", "liar", "alice"]))
-    assert r["ok"] and sorted(r["names"]) == ["ghost", "liar"], "a verified identity must never go"
-    assert vals[nip05_registry.KEY] == f"# comment\nalice {PKA}"
-
-
-def test_bulk_remove_leaves_a_name_that_was_not_on_screen(registry):
-    vals, state = registry
-    state["alice_ok"] = False                                    # alice broke her profile AFTER the page loaded
-    r = asyncio.run(nip05_registry.remove_unverified("poster.place", ["ghost"]))
-    assert r["names"] == ["ghost"] and "alice" in vals[nip05_registry.KEY] and "liar" in vals[nip05_registry.KEY]
-
-
-def test_bulk_remove_refuses_when_a_profile_could_not_be_read(registry):
-    """An unread profile looks exactly like one that does not publish the address."""
-    vals, state = registry
-    state["complete"] = False
-    before = vals[nip05_registry.KEY]
-    r = asyncio.run(nip05_registry.remove_unverified("poster.place", ["ghost", "liar"]))
-    assert not r["ok"] and r["retry"] and vals[nip05_registry.KEY] == before
-
-
-def test_bulk_remove_endpoint_persists_and_reports(registry, monkeypatch):
-    from app.routers import admin, client
-    monkeypatch.setattr(client, "_nip05_domain", lambda request, db: "poster.place")
-    r = asyncio.run(admin.relay_identities_remove_unverified(
-        admin.RelayIdentitiesPruneReq(names=["ghost", "liar"]), request=None, db=None, admin=None))
-    assert r["removed"] == 2 and r["durable"]
-    registry[1]["complete"] = False
-    with pytest.raises(HTTPException) as e:
-        asyncio.run(admin.relay_identities_remove_unverified(
-            admin.RelayIdentitiesPruneReq(names=["alice"]), request=None, db=None, admin=None))
-    assert e.value.status_code == 409
+def test_there_is_no_bulk_remove_of_names_a_profile_does_not_show(registry):
+    """A name here IS membership, whatever the profile publishes; a button that stripped every name a
+    profile did not show would take people's access for keeping an identity of their own."""
+    from app.routers import admin
+    assert not hasattr(nip05_registry, "remove_unverified")
+    assert not hasattr(admin, "relay_identities_remove_unverified")
 
 
 # ---- EVERY list: two spellings of one entry are ONE entry --------------------------------------------

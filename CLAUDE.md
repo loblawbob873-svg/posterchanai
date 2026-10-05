@@ -563,11 +563,21 @@ would have handled it fine).
   Measured on poster.place: of the **78** accounts holding a name this node granted AND publishing it,
   **15 were refused AI, image and music**, every one because they had no `User` row for the batch to
   grant anything to; Blossom was the only gate they passed, and only because the batch had written
-  them into the whitelist. Now every gate asks the same question — `is_member()` = the node's own
-  registry (`nostr_relay_nip05_names`) **AND** `instance_membership` confirming the signed kind-0
-  publishes that exact address — the same predicate `relay_access_policy` reconciles on and the same
-  one Mail/News/Git/Office/Files/Web Search already require, so a member is a member everywhere and
-  the gate cannot disagree with the reconcile.
+  them into the whitelist. Now every gate asks the same question — `instance_membership.status()` = a
+  name in the node's own registry (`nostr_relay_nip05_names`) and the key not relay-blocked — the
+  same predicate `relay_access_policy` reconciles on and the same one Mail/Git/Office/Files/Web
+  Search require, so a member is a member everywhere and the gate cannot disagree with the reconcile.
+  **THE PROFILE IS NOT READ AT ALL (2026-10-05), and the client shows BOTH addresses.** Membership
+  used to ALSO require the signed kind-0 to publish that exact address — and a kind-0 holds ONE
+  nip05, so anybody with an identity of their own (bob@nostrplebs.com) had to give it up to use an
+  app here ("the entire fucking point was to display both"). Now the profile publishes whatever the
+  person wants; the profile header (`_nip05LinesHtml`/`_paintHereAddresses` in profile.js) shows it
+  AND every address this node granted (the public `GET /client/admin-nip05`), Edit Profile lists the
+  granted ones under the free field, and the app gate/welcome/approval DM never ask anyone to change
+  their profile. Admin → Identities' ✓ is information only, and "Remove all not in profile" is gone
+  (it would have stripped those people's access). The client's stored verdict is keyed on the
+  account, never the profile, so editing your own NIP-05 never puts a "checking" panel in front of
+  an app. Revoking is what it always really was: remove the name, or block the key.
   **THE PROFILE CLAIM IS NOT PROOF AND READING IT AS PROOF IS A PRIVILEGE ESCALATION.** Anyone can
   write `nip05: alice@poster.place` into their own profile; the entitlement therefore comes from the
   server-side registry THIS NODE writes, and the profile is only ever the second half of the test.

@@ -44,7 +44,10 @@ async def status(data: Proof, request: Request, db: Session = Depends(get_db)):
         else:
             await service.notify_admins(db, row)
     membership = await instance_membership.status(pk, force=data.refresh)
-    return {**membership, 'eligible': not membership['qualified'], 'address': membership.get('address') or address,
+    # `eligible` = somebody the welcome can help: no name here yet. A granted name IS access now (the
+    # profile is never read), and a blocked key is not offered an application.
+    return {**membership, 'eligible': membership.get('reason') == 'unregistered',
+            'address': membership.get('address') or address,
             'pending': bool(row and not address),
             'site_name': settings_store.get('site_name', '') or 'this instance'}
 

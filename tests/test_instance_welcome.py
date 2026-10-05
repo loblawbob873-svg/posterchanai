@@ -31,10 +31,7 @@ def setup(monkeypatch):
     db.add(admin); db.commit()
     values = {'site_name': 'Example', 'nostr_relay_nip05_domain': 'example.test'}
     monkeypatch.setattr(settings_store, 'get', lambda key, default='': values.get(key, default))
-    async def profiles(pk, _port):
-        address=values.get('_profile_nip05','')
-        return [build_event(bytes.fromhex('21'*32),0,json.dumps({'nip05':address}),created_at=values.get('_profile_at',100))]
-    checker=instance_membership.MembershipChecker(query=profiles,configuration=lambda:(values.get('nostr_relay_nip05_names',''),'example.test','','3052'))
+    checker=instance_membership.MembershipChecker(configuration=lambda:(values.get('nostr_relay_nip05_names',''),'example.test',''))
     monkeypatch.setattr(instance_membership,'_checker',checker)
     sent = []
     async def send(to, text):
@@ -53,16 +50,27 @@ def call(app, path, body):
     return asyncio.run(run())
 
 
-def test_eligibility_requires_assigned_name_and_saved_profile(setup):
+def test_a_granted_name_is_access_with_no_profile_step(setup):
+    """The welcome is for somebody with no name here. Once one is granted they are a member at once --
+    nothing to save in a profile, which may go on showing an address of their own."""
     app, db, sent, values = setup
     body = proof('status')
     assert call(app, 'status', body).json()['eligible']
     values['nostr_relay_nip05_names'] = 'alice ' + body['pubkey']
-    assert call(app,'status',body).json()['eligible']
-    values['_profile_nip05']='alice@example.test';values['_profile_at']=101
-    result = call(app, 'status', {**body,'refresh':True}).json()
-    assert not result['eligible'] and result['address'] == 'alice@example.test'
+    result = call(app, 'status', body).json()
+    assert result['qualified'] and not result['eligible'] and result['address'] == 'alice@example.test'
     assert sent == []
+
+
+def test_a_blocked_key_is_not_offered_an_application(setup, monkeypatch):
+    from app.services import relay_blocklist
+    app, db, sent, values = setup
+    body = proof('status')
+    monkeypatch.setattr(relay_blocklist, 'is_blocked', lambda pk: pk == body['pubkey'])
+    response = call(app, 'status', body)
+    # Refused before the welcome logic runs at all (a blocked key's proof is not accepted), so it is
+    # never shown the dialog or offered an application.
+    assert response.status_code == 403 and 'eligible' not in response.json(), response.text
 
 
 def test_application_is_durable_idempotent_and_not_an_automatic_grant(setup):
@@ -103,7 +111,9 @@ def test_approval_dm_contains_address_and_setup_steps_and_is_not_duplicated(setu
     assert asyncio.run(service.notify_approval(db, pk, 'alice@example.test'))
     assert len(sent) == 2
     assert sent[-1][0] == pk
-    assert all(word in sent[-1][1] for word in ('approved', 'alice@example.test', 'Edit profile', 'save'))
+    assert all(word in sent[-1][1] for word in ('approved', 'alice@example.test', 'active now'))
+    # It must not send them to replace the NIP-05 they already publish.
+    assert 'Edit profile' not in sent[-1][1] and 'must save' not in sent[-1][1]
 
 
 def test_failed_approval_dm_can_be_retried_without_losing_approval(setup, monkeypatch):
@@ -187,11 +197,11 @@ def test_real_admin_grant_requires_admin_signature_and_sends_approval(setup, mon
     assert len(sent) == 2
 
 
-def test_profile_removal_restores_welcome_and_resaving_hides_it(setup):
+def test_only_removing_the_name_brings_the_welcome_back(setup):
     app,db,sent,values=setup
-    body=proof('status');values['nostr_relay_nip05_names']='alice '+body['pubkey']
-    for at,address,eligible in [(100,'alice@example.test',False),(101,'alice@other.test',True),(102,'alice@example.test',False)]:
-        values['_profile_nip05']=address;values['_profile_at']=at
+    body=proof('status')
+    for names,eligible in [('alice '+body['pubkey'],False),('',True),('alice '+body['pubkey'],False)]:
+        values['nostr_relay_nip05_names']=names
         data=call(app,'status',{**body,'refresh':True}).json()
         assert data['eligible'] is eligible,data
         assert data['pubkey']==body['pubkey']

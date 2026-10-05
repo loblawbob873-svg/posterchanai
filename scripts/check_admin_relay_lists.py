@@ -11,8 +11,8 @@ stylesheets and the shipped admin-identities.js / admin-relay-lists.js, against 
     the viewport and every Remove/Add button is on screen and tappable;
   * Enter in an Add box adds (POST) and does NOT submit the settings form; the text box and Save's
     baseline both become the server's new value; Remove does the same;
-  * Identities offers "Remove all N not in profile", posts exactly the unverified names, and is
-    NOT offered when a profile could not be read (an unread profile looks unverified).
+  * Identities offers NO "Remove all not in profile": a name here is membership whatever the profile
+    shows (people may keep an identity of their own), so that bulk action would take their access.
 """
 import asyncio, json, os, re, shutil, subprocess, sys, tempfile, threading, urllib.request, http.server
 
@@ -71,7 +71,6 @@ window.fetch=async(url,opt)=>{
     if(body.add) lines.push(body.add);
     DB[body.key]=lines.join('\n'); return ok({ok:true,value:DB[body.key],durable:true}); }
   if(u.pathname==='/api/admin/relay/identities') return ok({identities:IDS,names_complete:__NAMES_COMPLETE__});
-  if(u.pathname==='/api/admin/relay/identities/remove-unverified'){ window.__posts.push(body); return ok({ok:true,removed:body.names.length,value:'alice abc'}); }
   if(u.pathname==='/api/admin/relay/blocked') return ok({accounts:[],names_complete:true});
   return {ok:false,status:404,json:async()=>({})};
 };
@@ -136,11 +135,9 @@ out.removed={posted:JSON.stringify(window.__posts.at(-1)), text:document.getElem
   if(r) r.querySelector('.rl-remove').click();
   await sleep(1200); window.__getDelay=0;
   out.race={had:!!r, drawn:[...bp.querySelectorAll('.rl-row')].map(x=>x.dataset.value)}; }
-// Identities: bulk remove of "not in profile".
-const pr=document.getElementById('ids_prune');
-out.prune={shown:vis(pr), onScreen:vis(pr)&&onScreen(pr), label:pr.textContent};
-if(vis(pr)){pr.click(); await sleep(200); out.prune.posted=JSON.stringify(window.__posts.at(-1));
-  out.prune.text=document.getElementById('nostr_relay_nip05_names').value;}
+// Identities: there is no bulk remove of "not in profile" any more.
+out.prune={exists:!!document.getElementById('ids_prune'),
+           offered:/not in profile/i.test((document.getElementById('tab-relay')||document.body).innerText)};
 // Admin → Blossom: a person added to the upload whitelist with Enter is saved to THAT list and drawn.
 { const bp=document.querySelector('.rl-panel[data-key="blossom_whitelist"]'), bi=bp.querySelector('.rl-add-input');
   const before=bp.querySelectorAll('.rl-row').length, subs=window.__submits;
@@ -257,16 +254,8 @@ async def run():
                         or bl["rows"] != bl["before"] + 1 or ("npub1" + "z" * 58) not in bl["text"] or "Saved" not in bl["said"]:
                     fails.append((where, "Blossom whitelist Add did not land", bl))
                 p = out["prune"]
-                if not (p["shown"] and p["onScreen"] and "2" in p["label"]):
-                    fails.append((where, "prune button", p))
-                elif sorted(json.loads(p["posted"])["names"]) != ["ghost", "liar"] or p["text"] != "alice abc":
-                    fails.append((where, "prune posted", p))
-            # An unread profile must not be offered for bulk removal.
-            await load("/unread", 1280, 900, False)
-            z = await call("Runtime.evaluate", {"expression": "(()=>{const b=document.getElementById('ids_prune');return !!b&&!b.hidden})()",
-                                                "returnByValue": True})
-            if z.get("result", {}).get("value"):
-                fails.append(("unread", "bulk remove offered while profiles could not be read"))
+                if p["exists"] or p["offered"]:
+                    fails.append((where, "a bulk 'remove all not in profile' is still offered", p))
             # A backend older than the page (no list endpoint): the text box is open and editable,
             # and no "Could not load the list" is left standing over a closed box.
             await load("/old", 360, 780, True)

@@ -63,8 +63,9 @@ async def _plan(db, exempt_fediverse=True):
         # Accounts that linked a fediverse account under the retired bridge (legacy columns).
         keep.update(ns.to_pubkey_hex(u.nostr_npub) for u in users if u.nostr_npub and
                     (u.pleroma_acct or u.pleroma_enabled or u.pleroma_instance_url))
-    # Verify before any mutation: an unavailable profile source aborts the entire plan.
-    # Registry membership alone does not show that the user saved the address.
+    # Every registered key is asked the SAME question the app gates ask (instance_membership.status:
+    # a granted name and not blocked), before any mutation, so this reconcile and the gates cannot
+    # disagree. Any error aborts the entire plan.
     from app.services.instance_membership import status
     from fastapi import HTTPException
     slots = asyncio.Semaphore(8)
@@ -78,7 +79,7 @@ async def _plan(db, exempt_fediverse=True):
             results = await asyncio.gather(*(check(pk) for pk in sorted(registered)),
                                            return_exceptions=True)
     except TimeoutError:
-        raise HTTPException(503, 'Profile verification timed out; no permissions were changed')
+        raise HTTPException(503, 'Membership check timed out; no permissions were changed')
     for result in results:
         if isinstance(result, BaseException):
             raise result
@@ -215,7 +216,7 @@ REVOKE_FIELDS = ("can_ai", "can_blossom", "can_image", "can_music", "can_video",
 async def revoke_identities(db, pubkeys) -> dict:
     """Take away the access a NIP-05 identity carried, for keys whose identity was just REMOVED.
 
-    "Remove all not in profile" (and a single Remove) took the name off the registry, which ends the
+    Remove (Admin -> Identities) takes the name off the registry, which ends the
     NIP-05 entitlement (nip05_access) at once -- but a grant written onto the account (the can_*
     columns, the shared `blossom_whitelist`) outlived it until the access policy's next run, and that
     policy is OFF unless an operator turns it on. So removing somebody left them their AI, Blossom

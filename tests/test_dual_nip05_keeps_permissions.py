@@ -6,13 +6,15 @@ profile does not show -- and every path that takes access away must read that as
 "lapsed". The paths, each driven for real:
 
   reconcile   the 15-minute access policy (relay_access_policy.run) with the REAL membership checker
-              over a signed kind-0 -- the existing policy tests stub the checker out entirely
-  prune       Admin -> Identities -> "Remove all not in profile"
+              -- the existing policy tests stub the checker out entirely
   remove      Admin -> Identities -> Remove, of either name
   modal       Admin -> profile -> Permissions: add a name, take one away
 
 The profile publishes the SECOND name (`dual2`), not the alphabetically-first one the code treats as the
-person's primary -- the case a first-name-only comparison would get wrong.
+person's primary -- the case a first-name-only comparison would get wrong. And `own` holds two names
+here while publishing an address of their OWN elsewhere: still a member ("the entire point was to
+display both") -- membership is the name this node granted, never what the profile says. The rule
+still bites on `gone`, who holds no name here at all.
 """
 import asyncio
 import json
@@ -28,7 +30,7 @@ from app.services.instance_membership import MembershipChecker
 from app.services.nostr import nostr_service
 from app.services.nostr.event import build_event
 
-SEC = {n: bytes([i + 1]) * 32 for i, n in enumerate(("dual", "solo", "lapsed"))}
+SEC = {n: bytes([i + 1]) * 32 for i, n in enumerate(("dual", "solo", "own", "gone"))}
 PK = {n: build_event(s, 0, "{}")["pubkey"] for n, s in SEC.items()}
 FIELDS = relay_access_policy.GRANT_FIELDS
 DOMAIN = "poster.place"
@@ -54,7 +56,7 @@ def world(monkeypatch):
     vals = {
         "nostr_relay_nip05_domain": DOMAIN,
         nip05_registry.KEY: "\n".join([f"dual {PK['dual']}", f"dual2 {PK['dual']}", f"solo {PK['solo']}",
-                                       f"lapsed {PK['lapsed']}", f"lapsed2 {PK['lapsed']}"]),
+                                       f"own {PK['own']}", f"own2 {PK['own']}"]),
         "blossom_whitelist": "\n".join(nostr_service.npub_of(pk) for pk in PK.values()),
     }
     monkeypatch.setattr(settings_store, "get", lambda k, d=None: vals.get(k, d if d is not None else ""))
@@ -76,15 +78,13 @@ def world(monkeypatch):
     monkeypatch.setattr(thread, "trigger_nip05_reload", lambda: {})
     monkeypatch.setattr(relay_blocklist, "is_blocked", lambda pk: False)
 
-    # What each person's own signed kind-0 publishes: dual shows their SECOND name, lapsed shows nothing.
-    published = {"dual": "dual2@" + DOMAIN, "solo": "solo@" + DOMAIN, "lapsed": "someone@elsewhere.example"}
-
-    async def query(pk, port):                    # read at call time, so a test can change a profile
-        n = next((k for k, v in PK.items() if v == pk), None)
-        return [build_event(SEC[n], 0, json.dumps({"nip05": published[n]}), created_at=100)] if n else []
-    checker = MembershipChecker(query=query, configuration=lambda: [vals[nip05_registry.KEY], DOMAIN, "", "3052"])
+    # What each person's own signed kind-0 publishes: dual shows their SECOND name, own and gone show an
+    # address elsewhere. None of it decides anything any more -- which is what these tests prove.
+    published = {"dual": "dual2@" + DOMAIN, "solo": "solo@" + DOMAIN, "own": "someone@elsewhere.example",
+                 "gone": "gone@elsewhere.example"}
+    checker = MembershipChecker(configuration=lambda: [vals[nip05_registry.KEY], DOMAIN, ""])
     monkeypatch.setattr(instance_membership, "status", checker.status)
-    monkeypatch.setattr(instance_membership, "_configuration", lambda: [vals[nip05_registry.KEY], DOMAIN, "", "3052"])
+    monkeypatch.setattr(instance_membership, "_configuration", lambda: [vals[nip05_registry.KEY], DOMAIN, ""])
 
     async def profiles(pks):
         return {PK[n]: {"nip05": a} for n, a in published.items()}, True
@@ -111,19 +111,21 @@ def test_the_reconcile_keeps_a_member_who_publishes_their_second_name(world):
     assert all(granted.values()) and not revoked, ("a dual-name member lost access in the reconcile", granted)
     assert whitelisted(vals, "dual"), "a dual-name member was dropped from the Blossom whitelist"
     assert all(perms(db, "solo")[0].values())
-    # The rule still bites where it should: two names, neither published -> not a member.
-    granted, revoked = perms(db, "lapsed")
-    assert not granted["can_ai"] and revoked and not whitelisted(vals, "lapsed")
+    # Two names here, an address of their own in the profile: a member, both addresses kept.
+    granted, revoked = perms(db, "own")
+    assert all(granted.values()) and not revoked, ("publishing your own NIP-05 cost you access", granted)
+    assert whitelisted(vals, "own")
+    # The rule still bites where it should: no name here -> not a member.
+    granted, revoked = perms(db, "gone")
+    assert not granted["can_ai"] and revoked and not whitelisted(vals, "gone")
 
 
-def test_remove_all_not_in_profile_removes_no_name_of_a_member(world):
-    db, vals = world
+def test_there_is_no_remove_all_not_in_profile(world):
+    """The admin bulk action that stripped every name whose profile showed another address is gone with the
+    rule it enforced: run against `own` it would have taken both of their names, and their access."""
     from app.routers import admin
-    r = run(admin.relay_identities_remove_unverified(
-        admin.RelayIdentitiesPruneReq(names=["dual", "dual2", "lapsed", "lapsed2"]), request=None, db=db, admin=None))
-    assert sorted(r["names"]) == ["lapsed", "lapsed2"], r
-    assert "dual " in vals[nip05_registry.KEY] and "dual2 " in vals[nip05_registry.KEY]
-    assert all(perms(db, "dual")[0].values()) and whitelisted(vals, "dual")
+    assert not hasattr(admin, "relay_identities_remove_unverified")
+    assert not hasattr(nip05_registry, "remove_unverified")
 
 
 @pytest.mark.parametrize("which", ["dual", "dual2"])
@@ -169,7 +171,7 @@ def test_a_member_revoked_over_letter_case_gets_everything_back_at_the_next_clea
         setattr(u, f, False)
     u.access_revoked = True
     db.commit()
-    vals["blossom_whitelist"] = "\n".join(nostr_service.npub_of(PK[n]) for n in ("dual", "lapsed"))
+    vals["blossom_whitelist"] = "\n".join(nostr_service.npub_of(PK[n]) for n in ("dual", "own"))
     run(relay_access_policy.run(db))
     granted, revoked = perms(db, "solo")
     assert all(granted.values()) and not revoked, ("a member publishing their name in capitals stayed revoked", granted)

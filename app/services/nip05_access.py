@@ -99,26 +99,25 @@ def _remember(pubkey_hex: str) -> None:
 
 
 async def is_member(pubkey: str) -> bool:
-    """True iff this node granted the pubkey a NIP-05 name AND its signed kind-0 publishes that
-    exact address — the same predicate `relay_access_policy` reconciles on and the same one the
-    other member-only surfaces (Mail, News, Git, Office, Files, Web Search) already require, so a
-    member is a member everywhere.
+    """True iff this node granted the pubkey a NIP-05 name (and the relay has not blocked it) — the
+    same predicate `relay_access_policy` reconciles on and the one the other member-only surfaces
+    (Mail, Git, Office, Files, Web Search) require, so a member is a member everywhere. What the
+    profile's own nip05 says does not matter: a member keeps whatever identity they publish.
 
-    NEVER RAISES. `instance_membership.status` answers 503 for an unreachable relay, an unhydrated
-    settings cache or a busy check, and every one of those must degrade to the pre-existing
-    per-account flags rather than to a refusal.
+    NEVER RAISES. `instance_membership.status` answers 503 for an unhydrated settings cache or a
+    missing domain, and each must degrade to the pre-existing per-account flags rather than to a
+    refusal.
     """
     if not pubkey or not enabled():
         return False
     pk = nostr_service.to_pubkey_hex(pubkey) or ""
     if not is_granted(pk):
-        # Cheap sync pre-filter: the overwhelming majority of pubkeys hold no name here, and this
-        # keeps them off the relay round trip entirely.
+        # Cheap sync pre-filter: the overwhelming majority of pubkeys hold no name here.
         return False
     try:
         from app.services import instance_membership
         result = await instance_membership.status(pk)
-    except Exception as e:                       # 503s, cancelled relay reads, config churn
+    except Exception as e:                       # 503s, config churn
         logger.debug("[nip05-access] membership check unavailable for %s: %s", pk[:12], e)
         return False
     if result.get("qualified"):

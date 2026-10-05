@@ -36,7 +36,7 @@ from app.services.command_service.core import CommandService
 from app.services.nostr import nostr_service as ns
 
 MEMBER = "%064x" % 0xABC1          # granted a name here, and publishes it
-SILENT = "%064x" % 0xABC2          # granted a name here, has NOT published it
+SILENT = "%064x" % 0xABC2          # granted a name here; their profile shows an address of their own
 IMPOSTOR = "%064x" % 0xABC3        # never granted anything; profile CLAIMS a poster.place name
 
 REGISTRY = f"member {ns.npub_of(MEMBER)}\nsilent {SILENT}\n"
@@ -71,18 +71,15 @@ class Base_(unittest.TestCase):
         self.p_get.start()
         self.addCleanup(self.p_get.stop)
 
-        # Stand in for instance_membership: the node's own answer to "did they publish the exact
-        # address we granted them?". MEMBER did, SILENT did not, IMPOSTOR is not in the registry at
-        # all (so the real checker never even reaches a relay for them).
-        async def status(pubkey, force=False):
-            pk = (ns.to_pubkey_hex(pubkey) or "").lower()
-            return {"pubkey": pk, "qualified": pk == MEMBER,
-                    "address": "member@poster.place" if pk == MEMBER else "",
-                    "profile_address": "alice@poster.place" if pk == IMPOSTOR else "",
-                    "reason": "qualified" if pk == MEMBER else "profile_mismatch"}
-
-        from app.services import instance_membership
-        self.p_status = mock.patch.object(instance_membership, "status", status)
+        # The REAL membership checker over this test's registry: a name granted here is the whole
+        # rule. IMPOSTOR is not in the registry, whatever its profile claims.
+        from app.services import instance_membership, relay_blocklist
+        checker = instance_membership.MembershipChecker(
+            configuration=lambda: (self.settings.get("nostr_relay_nip05_names", ""), "poster.place", ""))
+        self.p_block = mock.patch.object(relay_blocklist, "is_blocked", lambda pk: False)
+        self.p_block.start()
+        self.addCleanup(self.p_block.stop)
+        self.p_status = mock.patch.object(instance_membership, "status", checker.status)
         self.p_status.start()
         self.addCleanup(self.p_status.stop)
 
@@ -152,11 +149,12 @@ class TestAProfileClaimIsNotAGrant(Base_):
         self.assertTrue(nip05_access.is_granted(SILENT))
         self.assertEqual(nip05_access.granted_pubkeys(), frozenset({MEMBER, SILENT}))
 
-    def test_a_granted_name_that_was_never_published_is_not_yet_a_member(self):
-        """Same predicate as relay_access_policy, so the gate and the reconcile cannot disagree."""
+    def test_a_granted_name_is_membership_whatever_the_profile_publishes(self):
+        """"the entire point was to display both": somebody who publishes an address of their own keeps
+        it AND is a member here. Same predicate as relay_access_policy, so the two cannot disagree."""
         self.assertTrue(nip05_access.is_granted(SILENT))
-        self.assertFalse(_run(nip05_access.is_member(SILENT)))
-        self.assertFalse(_run(blossom_service.is_pubkey_allowed_async(self.db, SILENT)))
+        self.assertTrue(_run(nip05_access.is_member(SILENT)))
+        self.assertTrue(_run(blossom_service.is_pubkey_allowed_async(self.db, SILENT)))
 
 
 class TestItCanOnlyEverGrant(Base_):

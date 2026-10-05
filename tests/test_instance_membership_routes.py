@@ -1,5 +1,7 @@
-"""Actual scoped HTTP routes keep their auth and enforce signed instance membership."""
-import asyncio
+"""Actual scoped HTTP routes keep their auth and enforce instance membership: a name this node granted.
+
+Revoking is taking the name away -- what the member's profile says decides nothing (they may publish an
+address of their own elsewhere and stay a member)."""
 import json
 import time
 from types import SimpleNamespace
@@ -13,8 +15,7 @@ from app.services import instance_membership as membership
 from app.services.nostr.event import build_event
 
 SECRET = bytes.fromhex('01'.zfill(64))
-SIGNED = build_event(SECRET, 0, json.dumps({'nip05':'alice@example.test'}), created_at=100)
-PK = SIGNED['pubkey']
+PK = build_event(SECRET, 0, '{}', created_at=100)['pubkey']
 
 
 @pytest.fixture
@@ -23,9 +24,8 @@ def anyio_backend(): return 'asyncio'
 
 @pytest.fixture
 def setup(monkeypatch):
-    state = {'rows':[SIGNED], 'clock':0}
-    async def query(pk, port): return state['rows']
-    checker = membership.MembershipChecker(query=query, configuration=lambda:(f'alice {PK}','example.test','','3052'), clock=lambda:state['clock'])
+    state = {'registry': f'alice {PK}'}
+    checker = membership.MembershipChecker(configuration=lambda:(state['registry'],'example.test',''))
     monkeypatch.setattr(membership, '_checker', checker)
     state['checker'] = checker
     user = SimpleNamespace(id=7, nostr_npub=PK, is_admin=False, can_media=True, can_torrent=True, news_sources='')
@@ -61,19 +61,14 @@ def setup(monkeypatch):
 
 
 async def remove_address(state):
-    """The member removes the address from their profile, and the remembered grant goes stale.
-
-    A remembered member is answered from memory and re-checked BEHIND the answer, so revocation
-    lands on the request after that re-check — never on a request that had to wait for a relay."""
-    state['rows'] = [build_event(SECRET, 0, '{}', created_at=101)]
-    state['clock'] = membership.GRANT_FRESH + 1
-    assert (await state['checker'].status(PK))['qualified'], 'a remembered grant must answer without waiting'
-    await asyncio.gather(*list(state['checker'].jobs))
+    """An admin takes the member's name away: the very next request is refused (no cache to go stale)."""
+    state['registry'] = ''
+    assert not (await state['checker'].status(PK))['qualified']
 
 
 @pytest.mark.anyio
 @pytest.mark.parametrize('path',['/api/mail/accounts','/api/torrent/catalog','/api/git/status','/client/office/blank/text','/api/media-center','/api/websearch/search?q=hello','/api/test-user-wallet/balance'])
-async def test_route_allows_matching_profile_and_rejects_latest_removed_address(setup,path):
+async def test_route_allows_a_granted_name_and_rejects_once_it_is_removed(setup,path):
     app,state,user=setup
     async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app),base_url='http://test') as client:
         response=await client.get(path)
@@ -102,11 +97,11 @@ async def test_office_capability_binds_owner_and_rechecks_membership(setup,monke
 
 
 @pytest.mark.anyio
-async def test_search_ticket_and_cached_page_recheck_profile(setup,monkeypatch):
+async def test_search_ticket_and_cached_page_recheck_membership(setup,monkeypatch):
     app,state,user=setup
     app.dependency_overrides[websearch._page_viewer] = lambda:user
     # A denied ticket/page must not reach fetch work at all.
-    state['rows']=[build_event(SECRET,0,'{}',created_at=101)]
+    state['registry']=''
     async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app),base_url='http://test') as client:
         assert (await client.post('/api/websearch/ticket')).status_code==403
         assert (await client.get('/api/websearch/page',params={'url':'https://example.test'})).status_code==403
@@ -114,7 +109,7 @@ async def test_search_ticket_and_cached_page_recheck_profile(setup,monkeypatch):
 
 
 @pytest.mark.anyio
-async def test_signed_sync_and_meme_requests_require_profile_and_valid_ownership(setup, monkeypatch):
+async def test_signed_sync_and_meme_requests_require_membership_and_valid_ownership(setup, monkeypatch):
     import base64
     from app.routers import client as client_router
     from app.services import blossom_service

@@ -15,7 +15,7 @@ def opened(chrome, welcome=False):
     setup=r'''
 const savedStorage=new Map();Object.defineProperty(window,'localStorage',{value:{getItem:k=>savedStorage.get(k)||null,setItem:(k,v)=>savedStorage.set(k,String(v)),removeItem:k=>savedStorage.delete(k)}});
 let account='a'.repeat(64), nip05='alice@example.test', qualified=true, calls=0, renders=[], held=false, replies=[], ticks=[];
-const info=()=>({pubkey:account,qualified,eligible:!qualified,pending:false,address:'alice@example.test',domain:'example.test',site_name:'Example',profile_address:nip05});
+const info=()=>({pubkey:account,qualified,eligible:!qualified,pending:false,address:'alice@example.test',domain:'example.test',site_name:'Example'});
 const response=()=>{calls++;const data=info();return held?new Promise(r=>replies.push(()=>r({ok:true,json:async()=>data}))):Promise.resolve({ok:true,json:async()=>data});};
 window.__PC_BOOTED=true;window.__PC_API_BASE__='https://example.test';
 window.__PC={viewer:()=>({pubkey:account,profile:{nip05}}),standalone:()=>false,ensureAiSession:async()=>{},
@@ -51,7 +51,7 @@ def test_all_requested_apps_block_until_verified_then_allow_without_repeat_signi
         assert chrome.evaluate('calls')==1
 
 
-def test_other_account_reply_and_profile_change_cannot_reuse_grant(chrome):
+def test_other_account_reply_cannot_reuse_grant_and_a_profile_edit_keeps_it(chrome):
     with opened(chrome):
         chrome.evaluate('held=true;void PCInstanceAccess.refresh()');settle(chrome)
         chrome.evaluate("account='b'.repeat(64);PCInstanceAccess.allowed('vault');replies.shift()()")
@@ -59,9 +59,11 @@ def test_other_account_reply_and_profile_change_cannot_reuse_grant(chrome):
         assert chrome.evaluate("PCInstanceAccess.allowed('vault')") is False
         chrome.evaluate('held=false;PCInstanceAccess.refresh(true)')
         assert chrome.evaluate("PCInstanceAccess.allowed('vault')") is True
+        # Publishing an address of your own changes nothing: membership is the name granted here.
         chrome.evaluate("nip05='someone@elsewhere.test'")
-        assert chrome.evaluate("PCInstanceAccess.allowed('vault')") is False
-        chrome.evaluate("PCInstanceAccess.accept({...info(),pubkey:'a'.repeat(64)},account)")
+        assert chrome.evaluate("PCInstanceAccess.allowed('vault')") is True
+        # A reply about ANOTHER account never grants this one.
+        chrome.evaluate("account='c'.repeat(64);PCInstanceAccess.accept({...info(),pubkey:'a'.repeat(64)},account)")
         assert chrome.evaluate("PCInstanceAccess.allowed('vault')") is False
 
 
@@ -69,7 +71,8 @@ def test_denied_or_unavailable_is_actionable_without_request_loop(chrome):
     with opened(chrome):
         chrome.evaluate("qualified=false;PCInstanceAccess.gate('notes')");settle(chrome)
         assert chrome.evaluate('calls')==1
-        assert chrome.evaluate("document.querySelector('#feed').textContent.includes('Edit profile')")
+        shown=chrome.evaluate("document.querySelector('#feed').textContent")
+        assert 'Apply for a name' in shown and 'Edit profile' not in shown, shown
         assert chrome.evaluate("PCInstanceAccess.allowed('notes')") is False
         chrome.evaluate("__PC.authFetch=async()=>{throw Error('offline')};document.querySelector('.ia-retry').click()")
         settle(chrome)
@@ -77,40 +80,31 @@ def test_denied_or_unavailable_is_actionable_without_request_loop(chrome):
         assert chrome.evaluate("PCInstanceAccess.allowed('notes')") is False
 
 
-def test_welcome_stays_hidden_for_member_and_returns_only_after_profile_change(chrome):
+def test_welcome_is_for_an_account_with_no_name_and_a_profile_edit_never_brings_it_back(chrome):
     with opened(chrome,welcome=True):
         assert chrome.evaluate("document.querySelector('dialog')===null")
         before=chrome.evaluate('calls')
-        chrome.evaluate('ticks.forEach(fn=>fn())');settle(chrome)
-        assert chrome.evaluate('calls')==before
-        chrome.evaluate("nip05='alice@elsewhere.test';qualified=false;ticks.forEach(fn=>fn())")
-        settle(chrome)
-        assert chrome.evaluate("!!document.querySelector('dialog[open]')")
-        chrome.evaluate("nip05='alice@example.test';qualified=true;ticks.forEach(fn=>fn())")
-        settle(chrome)
-        assert chrome.evaluate("document.querySelector('dialog')===null")
-        before=chrome.evaluate('calls')
-        chrome.evaluate('ticks.forEach(fn=>fn())');settle(chrome)
-        assert chrome.evaluate('calls')==before
+        chrome.evaluate("nip05='alice@elsewhere.test';ticks.forEach(fn=>fn())");settle(chrome)
+        assert chrome.evaluate('calls')==before, 'a profile edit re-asked the server'
+        assert chrome.evaluate("document.querySelector('dialog')===null"), 'a member was welcomed for keeping their own NIP-05'
         chrome.evaluate("account='b'.repeat(64);nip05='';qualified=false;ticks.forEach(fn=>fn())")
         settle(chrome)
         assert chrome.evaluate("!!document.querySelector('dialog[open]')")
+        shown=chrome.evaluate("document.querySelector('dialog').textContent")
+        assert 'Replace' not in shown and 'Edit profile' not in shown, shown
+        assert 'Keep the NIP-05 your profile shows' in shown, shown
 
 
-def test_profile_edit_forces_server_cache_refresh_and_retries_after_outage(chrome):
+def test_a_profile_edit_never_forces_a_server_recheck(chrome):
     with opened(chrome):
-        chrome.evaluate("window.urls=[];__PC.authFetch=async url=>{urls.push(url);return {ok:true,json:async()=>({...info(),qualified:!url.includes('refresh=1')})}};PCInstanceAccess.refresh()")
+        chrome.evaluate("window.urls=[];__PC.authFetch=async url=>{urls.push(url);return {ok:true,json:async()=>info()}};PCInstanceAccess.refresh()")
+        settle(chrome)
+        chrome.evaluate("nip05='elsewhere@example.org';PCInstanceAccess.refresh()");settle(chrome)
         assert chrome.evaluate("PCInstanceAccess.allowed('websearch')")
-        chrome.evaluate("nip05='elsewhere@example.org';PCInstanceAccess.refresh()")
-        assert chrome.evaluate("PCInstanceAccess.allowed('websearch')") is False
-        assert chrome.evaluate('urls')==['/api/instance-welcome/access','/api/instance-welcome/access?refresh=1']
-        chrome.evaluate("nip05='alice@example.test';__PC.authFetch=async()=>{throw Error('offline')};PCInstanceAccess.refresh()")
-        chrome.evaluate("__PC.authFetch=async url=>{urls.push(url);return {ok:true,json:async()=>info()}};PCInstanceAccess.refresh()")
-        assert chrome.evaluate('urls.at(-1)')=='/api/instance-welcome/access?refresh=1'
-        assert chrome.evaluate("PCInstanceAccess.allowed('websearch')")
+        assert chrome.evaluate('urls')==['/api/instance-welcome/access']
 
 
-def test_verified_local_apps_survive_offline_reload_but_not_profile_or_account_change(chrome):
+def test_verified_local_apps_survive_offline_reload_and_a_profile_edit_but_not_an_account_change(chrome):
     import json
     code=(ROOT/'static/js/client/instance-access.js').read_text()
     with opened(chrome):
@@ -121,9 +115,7 @@ def test_verified_local_apps_survive_offline_reload_but_not_profile_or_account_c
         assert chrome.evaluate("PCInstanceAccess.allowed('wallet') || PCInstanceAccess.allowed('websearch')") is False
         chrome.evaluate("PCInstanceAccess.require('vault')")
         chrome.evaluate("nip05='alice@elsewhere.test'")
-        assert chrome.evaluate("PCInstanceAccess.allowed('vault')") is False
-        chrome.evaluate("nip05='alice@example.test'")
-        assert chrome.evaluate("PCInstanceAccess.allowed('vault')") is False
+        assert chrome.evaluate("PCInstanceAccess.allowed('vault')") is True
         chrome.evaluate("account='b'.repeat(64)")
         assert chrome.evaluate("PCInstanceAccess.allowed('notes')") is False
 
@@ -144,7 +136,7 @@ def test_late_profile_hydration_preserves_verified_offline_membership(chrome):
         chrome.evaluate('PCInstanceAccess.refresh()')
         chrome.evaluate("window.profileReady=false;__PC.viewer=()=>({pubkey:account,profile:profileReady?{nip05}:{},profileKnown:profileReady});Object.defineProperty(navigator,'onLine',{value:false,configurable:true})")
         chrome.evaluate('eval('+json.dumps(code)+')')
-        assert chrome.evaluate("PCInstanceAccess.allowed('vault')") is False
+        assert chrome.evaluate("PCInstanceAccess.allowed('vault')") is True, 'a member waited on their own profile'
         chrome.evaluate('profileReady=true')
         assert chrome.evaluate("PCInstanceAccess.allowed('vault')") is True
 

@@ -32,9 +32,7 @@ def anyio_backend(): return 'asyncio'
 @pytest.fixture
 def setup(monkeypatch):
     state = {'switch': None, 'blocked': set(), 'who': STRANGER}
-    async def query(pk, port): return []
-    checker = membership.MembershipChecker(query=query, configuration=lambda: (f'alice {MEMBER}', 'example.test', '', '3052'),
-                                           clock=lambda: 0)
+    checker = membership.MembershipChecker(configuration=lambda: (f'alice {MEMBER}', 'example.test', ''))
     monkeypatch.setattr(membership, '_checker', checker)
     # ONE settings stub: media_center.settings_store IS membership.settings_store (the same module).
     monkeypatch.setattr(membership.settings_store, 'is_hydrated', lambda: True)

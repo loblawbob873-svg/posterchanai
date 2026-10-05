@@ -5,8 +5,8 @@ the user, surely you can improve this. There has to be a smarter something you c
 to quickly get where you need to be."
 
 `tests/client/test_the_app_gate_can_fix_itself.py` is the sibling of this file and covers the other
-half — that a gate which HAS an answer offers the one click that fixes it. This one covers when the
-gate is allowed to make that speech at all.
+half — that a gate which HAS an answer offers the next step (a name), never a profile edit. This one
+covers when the gate is allowed to make that speech at all.
 
 The screen had three situations and one body of text. `allowed()` is false for a member whose verdict
 has not arrived yet, and a verdict is unknown on every fresh load and after every profile change —
@@ -21,7 +21,7 @@ about what is shown and how often.
 from tests.client.test_emoji_pack_tabs_layout import chrome  # noqa: F401  (pytest fixture)
 from tests.client.test_instance_access_browser import opened, settle
 
-ESSAY = 'This app is available after your approved instance NIP-05 address is saved in your profile.'
+ESSAY = 'Apply for one — as soon as an admin approves it, every app here opens.'
 
 
 def text(chrome):
@@ -65,9 +65,8 @@ def test_a_refusal_explains_itself_once_not_once_per_app(chrome):
         again = text(chrome)
         assert 'Email' in again
         assert ESSAY not in again, 'every app still repeats the whole explanation'
-        assert chrome.evaluate("!!document.querySelector('.ia-use')"), 'the one-click fix went with the prose'
-        assert chrome.evaluate("!!document.querySelector('.ia-profile')")
-        assert 'alice@example.test' in again, 'the address it wants is no longer on screen'
+        assert chrome.evaluate("!!document.querySelector('.ia-apply')"), 'the next step went with the prose'
+        assert 'example.test' in again, 'which instance the name is on is no longer said'
 
 
 def test_the_explanation_returns_when_the_situation_changes(chrome):
@@ -75,18 +74,14 @@ def test_the_explanation_returns_when_the_situation_changes(chrome):
         chrome.evaluate("qualified=false;PCInstanceAccess.gate('notes')")
         settle(chrome)
         chrome.evaluate("PCInstanceAccess.gate('mail')")
-        chrome.evaluate("nip05='someone@elsewhere.test';PCInstanceAccess.gate('mail')")
+        chrome.evaluate("account='b'.repeat(64);PCInstanceAccess.gate('mail')")
         settle(chrome)
-        assert ESSAY in text(chrome), 'a changed profile is a new situation and must be explained again'
+        assert ESSAY in text(chrome), 'another account is a new situation and must be explained again'
 
 
-def test_learning_the_profile_does_not_force_an_uncached_server_check(chrome):
-    """`?refresh=1` makes the server drop its own answer and re-read the relays.
-
-    That is right after a profile edit and wrong on every boot — and a boot hit it, because the
-    profile merely ARRIVING flipped `profileKnown` and counted as a change. Every reload therefore
-    paid a full relay round trip with the gate on screen for its duration.
-    """
+def test_the_profile_never_forces_an_uncached_server_check(chrome):
+    """`?refresh=1` makes the server drop its own answer. Membership no longer reads the profile, so
+    neither the profile ARRIVING on boot nor an edit to it is a reason to pay for that."""
     with opened(chrome):
         chrome.evaluate("window.urls=[];window.profileReady=false;"
                         "__PC.viewer=()=>({pubkey:account,profile:profileReady?{nip05}:{},profileKnown:profileReady});"
@@ -94,12 +89,9 @@ def test_learning_the_profile_does_not_force_an_uncached_server_check(chrome):
         chrome.evaluate("PCInstanceAccess.allowed('notes')")
         chrome.evaluate("profileReady=true;PCInstanceAccess.gate('notes')")
         settle(chrome)
-        assert chrome.evaluate('urls') == ['/api/instance-welcome/access'], \
-            'the profile arriving still forces an uncached check on every boot'
         chrome.evaluate("nip05='someone@elsewhere.test';PCInstanceAccess.gate('notes')")
         settle(chrome)
-        assert chrome.evaluate('urls.at(-1)') == '/api/instance-welcome/access?refresh=1', \
-            'an address that really changed must still bypass the server cache'
+        assert chrome.evaluate('urls') == ['/api/instance-welcome/access'], chrome.evaluate('urls')
 
 
 def test_a_member_who_is_merely_offline_is_not_told_to_fix_their_profile(chrome):

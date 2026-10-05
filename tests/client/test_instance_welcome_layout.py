@@ -86,10 +86,14 @@ def test_entering_desktop_closes_an_already_open_splash(tmp_path):
     assert result['shown'] and result['closed'] and result['applies'] == 0, result
 
 
-def test_welcome_explains_profile_requirement_and_all_member_apps(tmp_path):
+def test_welcome_asks_for_a_name_never_a_profile_change_and_lists_all_member_apps(tmp_path):
+    """"Why can't users add their non-instance nip05": the welcome used to tell people to REPLACE their
+    NIP-05 with this instance's. A granted name is access now; their own address stays."""
     got = render(tmp_path)
     assert {'News','Meme Builder','Email','Documents','Folder Sync','Passwords','Torrents',
             'My Analytics','Media Center','Git','Texts','Notes','Monero Wallet','Wallet','Web Search'}.issubset(got['features'])
-    assert all(text in got['text'] for text in ['Edit profile','NIP-05 / verified address','Save your profile',
-                                               'community.example','approval alone does not activate'])
+    assert all(text in got['text'] for text in ['community.example', 'every app opens',
+                                               'Keep the NIP-05 your profile shows'])
+    for text in ('Edit profile', 'Replace', 'Save your profile', 'does not qualify'):
+        assert text not in got['text'], text
     assert 'poster.place' not in got['text']

@@ -7,8 +7,9 @@ nobody followed through: every `publish(0, JSON.stringify(meta), [])` in this cl
 EMPTY tag array, so somebody whose display name contains a custom emoji loses it from every client
 on the network the first time they change anything — silently, with no way to restore it from the UI.
 
-There were three such call sites: the profile editor, the quiet re-publish, and the "Use <address>"
-button in instance-access.js. All three now go through one rule.
+Every call site goes through one rule. (instance-access.js had one, a "Use <address>" button that
+overwrote the profile's nip05 with this instance's; it is gone -- membership no longer reads the
+profile, so there is nothing there to fix -- and that module must not grow a kind-0 publish again.)
 """
 import re
 import unittest
@@ -47,7 +48,7 @@ class Kind0KeepsEmoji(unittest.TestCase):
 
     def test_every_kind0_publish_carries_the_emoji_tags(self):
         sites = re.findall(r"publish\(\s*0\s*,[^;]{0,160}", self.app + self.ia)
-        self.assertGreaterEqual(len(sites), 3, "expected at least three kind-0 publish sites")
+        self.assertGreaterEqual(len(sites), 2, "expected the profile editor's and the quiet re-publish's kind-0 sites")
         for site in sites:
             self.assertIn("kind0Tags", site,
                           "a kind-0 publish does not carry the emoji tags: " + site[:110])
@@ -64,11 +65,14 @@ class Kind0KeepsEmoji(unittest.TestCase):
                       "the helper does not read the emoji map Store keeps off meta")
         self.assertIn("'emoji'", body, "the tags are not NIP-30 emoji tags")
 
-    def test_it_is_exported_for_the_separate_module(self):
-        """instance-access.js is its own module and can only see the shared surface."""
+    def test_it_is_exported_for_the_separate_modules(self):
+        """A separate module can only see the shared surface."""
         self.assertIn("kind0Tags:", self.app,
-                      "the helper is not on the shared surface, so instance-access.js cannot use it")
-        self.assertIn("p.kind0Tags", self.ia)
+                      "the helper is not on the shared surface, so a separate module cannot use it")
+
+    def test_the_app_gate_never_rewrites_the_profile(self):
+        """Keeping your own NIP-05 is the point: the gate must not publish a kind-0 at all."""
+        self.assertNotRegex(self.ia, r"publish\(\s*0\s*,", "the app gate publishes a profile again")
 
     def test_no_emoji_is_not_an_error(self):
         m = re.search(r"function _kind0Tags\(pk\)\{.*?\n  \}", self.app, re.S).group(0)

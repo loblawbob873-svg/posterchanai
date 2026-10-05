@@ -417,33 +417,6 @@ async def relay_identity_remove(data: RelayIdentityRemoveReq, db: Session = Depe
     return await _revoke_removed(db, r)
 
 
-class RelayIdentitiesPruneReq(BaseModel):
-    names: list[str]     # the rows the admin was SHOWN as "not in profile"
-
-
-@router.post("/relay/identities/remove-unverified")
-async def relay_identities_remove_unverified(data: RelayIdentitiesPruneReq, request: Request,
-                                             db: Session = Depends(get_db),
-                                             admin: User = Depends(get_admin_user)):
-    """Revoke every identity whose owner's profile does not publish it -- the "Remove all not in
-    profile" button. Only names that were shown to the admin AND still fail the check now are removed,
-    and nothing at all when a profile could not be read (see nip05_registry.remove_unverified)."""
-    from app.routers.client import _nip05_domain
-    from app.services import nip05_registry
-    r = await nip05_registry.remove_unverified(_nip05_domain(request, db), data.names)
-    if not r.get("ok"):
-        raise HTTPException(status_code=409 if r.get("retry") else 400, detail=r.get("error") or "could not remove")
-    if r.get("removed"):
-        from app.services import settings_store
-        try:
-            r["durable"] = await settings_store.write_through(db, {nip05_registry.KEY: r["value"]}) > 0
-        except Exception as e:
-            logger.warning(f"[Admin] identity prune write-through failed: {e}")
-            r["durable"] = False
-        r = await _revoke_removed(db, r)
-    return r
-
-
 class RelayListEditReq(BaseModel):
     key: str
     add: str = ""

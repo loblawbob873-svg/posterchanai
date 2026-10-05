@@ -95,3 +95,53 @@ def test_the_person_picks_which_of_their_addresses_the_profile_shows():
     asyncio.run(desktop.with_browser("online", "", check, INIT))
     assert res["field0"] == "alice@poster.place", res
     assert res["field1"] == "ally@poster.place" and res["on"] == ["ally@poster.place"], res
+
+
+SEE_BOTH = r"""(()=>{const sk=new Uint8Array(32).fill(5),pk=NostrTools.getPublicKey(sk);
+  Store.saveProfile(NostrTools.finalizeEvent({kind:0,created_at:Math.floor(Date.now()/1000),tags:[],
+    content:JSON.stringify({name:'Bob',nip05:'bob@nostrplebs.com'})},sk));
+  __nip.names[pk]=['bobby'];return pk;})()"""
+
+
+@pytest.mark.skipif(not Path("/opt/google/chrome/chrome").exists(), reason="Chrome required")
+@pytest.mark.parametrize("width", [1280, 390])
+def test_a_profile_shows_its_own_nip05_and_the_name_granted_here(width):
+    """"the entire point was to display both": somebody who publishes an identity of their own
+    (bob@nostrplebs.com) and holds a name here shows BOTH, once each, on their profile."""
+    res = {}
+
+    async def check(b):
+        await b.call("Emulation.setDeviceMetricsOverride", dict(width=width, height=850, deviceScaleFactor=1, mobile=width < 600))
+        await desktop.login(b)
+        await b.js("try{ if(window.PCOS && PCOS.isOn()) PCOS.exit(); }catch(_){}")
+        pk = await b.js(SEE_BOTH)
+        await b.js(f"__PC.openProfile({pk!r});true")
+        await b.until("document.querySelectorAll('#prof-nip05s .prof-nip05').length===2")
+        res["shown"] = await b.js("[...document.querySelectorAll('#prof-nip05s .prof-nip05')].map(x=>x.textContent)")
+        res["fits"] = await b.js("[...document.querySelectorAll('#prof-nip05s .prof-nip05')].every(x=>{const r=x.getBoundingClientRect();return r.width>0&&r.right<=innerWidth+1})")
+
+    asyncio.run(desktop.with_browser("online", "", check, INIT))
+    assert res["shown"] == ["bob@nostrplebs.com", "bobby@poster.place"], res
+    assert res["fits"], res
+
+
+@pytest.mark.skipif(not Path("/opt/google/chrome/chrome").exists(), reason="Chrome required")
+def test_edit_profile_keeps_your_own_nip05_and_lists_the_one_granted_here():
+    """With ONE name here (the case that used to show nothing), the editor says it is shown anyway and
+    leaves the field -- the person's own address -- exactly as it was."""
+    res = {}
+
+    async def check(b):
+        await desktop.login(b)
+        await b.js("try{ if(window.PCOS && PCOS.isOn()) PCOS.exit(); }catch(_){}")
+        await b.js("__nip.names[__PC.me().pubkey]=['alice'];true")
+        await b.js("__PC.editOwnProfile();true")
+        await b.until("!!document.getElementById('pf-nip05')")
+        await b.js("document.getElementById('pf-nip05').value='me@mydomain.example';true")
+        await b.until("document.querySelectorAll('#pf-nip05-mine [data-nip05]').length===1")
+        res["field"] = await b.js("document.getElementById('pf-nip05').value")
+        res["box"] = await b.js("document.getElementById('pf-nip05-mine').textContent")
+
+    asyncio.run(desktop.with_browser("online", "", check, INIT))
+    assert res["field"] == "me@mydomain.example", res
+    assert "Also shown on your profile" in res["box"] and "alice@poster.place" in res["box"], res

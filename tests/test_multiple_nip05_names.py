@@ -117,9 +117,6 @@ def test_an_extra_name_verifies_through_the_one_the_profile_publishes(monkeypatc
     assert rows["alice"]["verified"] and rows["alice"]["via"] == ""
     assert rows["ally"]["verified"] and rows["ally"]["via"] == "alice@poster.place", rows["ally"]
     assert rows["ally"]["others"] == ["alice"] and not rows["ghost"]["verified"]
-    # "Remove all not in profile" takes the stranger and leaves the extra name alone.
-    out = asyncio.run(nip05_registry.remove_unverified("poster.place", ["alice", "ally", "ghost"]))
-    assert out["names"] == ["ghost"] and "ally " in vals[nip05_registry.KEY], out
 
 
 def test_a_member_with_two_names_has_one_handle_everywhere(monkeypatch):

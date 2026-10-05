@@ -1,42 +1,22 @@
-"""App membership: an assigned instance name AND that exact signed profile address.
+"""App membership: a NIP-05 name this node granted to the key. That is the whole rule.
 
-No account-role exemption. Profiles are independently verified from the local relay
-and, when needed, bounded administrator-configured upstreams. Client relay URLs
-and unsigned profile claims never select an authorization source.
+THE PROFILE IS NOT CONSULTED. It used to be: a member also had to publish that exact address in their
+signed kind-0 -- and a kind-0 holds ONE nip05, so anybody with an identity of their own
+(bob@nostrplebs.com) had to give it up to use this node ("the entire point was to display both"). The
+registry is the authority -- written by this node, never by a profile, which anyone can fill in with
+anything -- so it alone decides, and the client shows the profile's address and this node's names side
+by side. That also took a relay round trip (and a 503 whenever a relay was slow) out of every app
+request. Revoking is what it always really was: an admin removes the name, or the relay blocks the key.
 """
 from __future__ import annotations
 
-import asyncio
-from collections import OrderedDict
-from contextlib import asynccontextmanager
-import json
-import re
-import secrets
-import time
 from urllib.parse import urlsplit
 
 from fastapi import HTTPException
 
 from app.services import settings_store
-from app.services.nostr import event, nostr_service
+from app.services.nostr import nostr_service
 from app.services.nostr_relay.thread import _parse_nip05
-
-KEY = re.compile(r'^[0-9a-f]{64}$')
-MAX_CACHE = 1024
-MAX_PENDING = 32
-QUERY_TIMEOUT = 4
-# A MEMBER IS REMEMBERED, NOT RE-PROVEN ON EVERY REQUEST. Every app route asks this question, and
-# answering it from the relays each time put a relay round trip (and a 503 whenever a relay was slow)
-# in front of Mail, Files, Git... for people this node had already verified — "ruins the user
-# experience". A verified grant is served straight from memory; once it is GRANT_FRESH old the next
-# request re-checks in the BACKGROUND without waiting on it, and while that re-check cannot reach a
-# relay the grant stands for up to GRANT_REMEMBER. What revokes access immediately is unchanged:
-# the node's own registry (a config change clears the cache) and an explicit forced refresh.
-GRANT_FRESH = 600
-GRANT_REMEMBER = 12 * 3600
-DENIAL_TTL = 5
-# A background re-check that could not reach a relay is not retried on the very next request.
-RECHECK_BACKOFF = 60
 
 
 def _configuration():
@@ -44,9 +24,7 @@ def _configuration():
         raise HTTPException(503, 'Instance membership settings are not loaded yet')
     return (settings_store.get('nostr_relay_nip05_names', '') or '',
             settings_store.get('nostr_relay_nip05_domain', '') or '',
-            settings_store.get('site_url', '') or '',
-            settings_store.get('nostr_relay_port', '3052') or '3052',
-            settings_store.get('nostr_relay_upstream_relays', '') or '')
+            settings_store.get('site_url', '') or '')
 
 
 def _domain(value):
@@ -67,160 +45,26 @@ def _address(value):
     return name + '@' + domain if name and domain else ''
 
 
-async def _read_profile(ws, pk):
-    sub = 'member-' + secrets.token_hex(6)
-    rows = []
-    await ws.send(json.dumps(['REQ', sub, {'kinds': [0], 'authors': [pk], 'limit': 32}]))
-    while True:
-        message = json.loads(await ws.recv())
-        if not isinstance(message, list) or len(message) < 2 or message[1] != sub:
-            continue
-        if message[0] == 'EOSE':
-            return rows
-        if message[0] == 'CLOSED':
-            raise RuntimeError('Profile subscription refused')
-        if message[0] == 'EVENT' and len(message) == 3:
-            rows.append(message[2])
-            if len(rows) > 32:
-                raise RuntimeError('Profile response exceeded limit')
-
-
-async def _query_profile(pk, port):
-    """CLOSED/timeout is unavailable, never evidence of a missing profile."""
-    import websockets
-    async with websockets.connect(f'ws://127.0.0.1:{int(port)}/relay',
-                                  open_timeout=QUERY_TIMEOUT, close_timeout=1,
-                                  max_size=262144, proxy=None) as ws:
-        return await _read_profile(ws, pk)
-
-
-async def _open_bounded_proxy(relay, base, timeout, kw):
-    """Close an HTTP CONNECT socket on cancellation, including a late proxy response.
-
-    websockets' HTTP proxy handshake leaves the transport open when its response future is
-    cancelled. python-socks already supplies the application's proxy transport and closes
-    its socket for CancelledError as well as ordinary connection failures.
-    """
-    import websockets
-    from python_socks.async_.asyncio import Proxy
-    target = urlsplit(relay)
-    sock = await Proxy.from_url(base['proxy']).connect(
-        dest_host=target.hostname, dest_port=target.port or (443 if target.scheme == 'wss' else 80),
-        timeout=timeout)
-    try:
-        return await websockets.connect(relay, sock=sock, proxy=None, open_timeout=timeout, **kw)
-    except BaseException:
-        sock.close()
-        raise
-
-
-@asynccontextmanager
-async def _connect_profile(uri, budget):
-    import websockets
-    timeout = min(1, budget / 3)
-    options = {'max_size':262144, 'close_timeout':1, 'user_agent_header':'PosterChan/Server'}
-    base = nostr_service.relay._conn_kw(uri, False)
-    if not str(base.get('proxy', '')).startswith('http://'):
-        async with nostr_service.relay._connect(uri, False, max_size=262144, close_timeout=1) as ws:
-            yield ws
-        return
-    try:
-        ws = await _open_bounded_proxy(uri, base, timeout, options)
-    except Exception:
-        # Same proxy-first/direct-fallback policy as the ordinary relay transport, bounded
-        # within this request's deadline instead of its default eight-second handshake.
-        ws = await websockets.connect(uri, proxy=None, open_timeout=timeout, **options)
-    try:
-        yield ws
-    finally:
-        await ws.close()
-
-
-async def _query_upstreams(pk, relays, budget):
-    async def one(uri):
-        # Admin-configured endpoints only; preserve the application's proxy transport.
-        async with _connect_profile(uri, budget) as ws:
-            return await _read_profile(ws, pk)
-    tasks = [asyncio.create_task(one(uri)) for uri in relays]
-    try:
-        done, _ = await asyncio.wait(tasks, timeout=budget)
-        complete = [task.result() for task in done if not task.cancelled() and task.exception() is None]
-    finally:
-        for task in tasks:
-            if not task.done(): task.cancel()
-        await asyncio.gather(*tasks, return_exceptions=True)
-
-    if not complete:
-        raise RuntimeError('Configured profile relays are unavailable')
-    return [row for rows in complete for row in rows]
-
-
-def _upstreams(config):
-    raw = config[4] if len(config) > 4 else ''
-    relays = []
-    for uri in nostr_service.relay.normalize_relays(raw):
-        parsed = urlsplit(uri)
-        if parsed.hostname and not parsed.username and not parsed.password and not parsed.fragment:
-            relays.append(uri)
-        if len(relays) == 3:
-            break
-    if raw.strip() and not relays:
-        raise ValueError('No valid configured profile relays')
-    return relays
-
-
-def _profile_address(row):
-    if not row:
-        return ''
-    try:
-        profile = json.loads(row['content'])
-    except (ValueError, TypeError):
-        return ''
-    return _address(profile.get('nip05')) if isinstance(profile, dict) else ''
-
-
-def _latest(rows, pk, wallclock):
-    if not isinstance(rows, list) or len(rows) > 128:
-        raise ValueError('Invalid profile response')
-    valid = []
-    for row in rows:
-        if (isinstance(row, dict) and row.get('pubkey') == pk and row.get('kind') == 0
-                and type(row.get('created_at')) is int and 0 <= row['created_at'] <= wallclock + 300
-                and isinstance(row.get('id'), str) and KEY.fullmatch(row['id'])
-                and isinstance(row.get('content'), str) and len(row['content']) <= 131072
-                and event.verify_event(row)):
-            valid.append(row)
-    return min(valid, key=lambda e: (-e['created_at'], e['id'])) if valid else None
+DENIED = 'This app is for members of this server -- ask its admin for a name here'
 
 
 class MembershipChecker:
-    def __init__(self, *, query=None, configuration=None, clock=None, wallclock=None, upstream_query=None):
-        self.query = query or _query_profile
-        self.upstream_query = upstream_query or _query_upstreams
+    def __init__(self, *, configuration=None):
         self.configuration = configuration or _configuration
-        self.clock = clock or time.monotonic
-        self.wallclock = wallclock or time.time
-        self.cache = OrderedDict()
-        self.watermarks = OrderedDict()
-        self.pending = {}
-        self.jobs = set()
-        self.config = None
 
     async def status(self, pubkey, *, force=False):
+        """`force` is accepted for callers that ask for a fresh answer; every answer is fresh now."""
         pk = nostr_service.to_pubkey_hex(pubkey or '')
         if not pk:
             raise HTTPException(403, 'A signed-in Nostr account is required')
         pk = pk.lower()
         config = tuple(self.configuration())
-        if config != self.config:
-            self.cache.clear()
-            self.config = config
         names, _ = _parse_nip05(config[0], '')
         domain = _domain(config[1]) or _domain(urlsplit(config[2]).hostname or '')
         aliases = sorted(name for name, owner in names.items() if owner.lower() == pk)
-        base = {'pubkey': pk, 'qualified': False, 'address': '', 'domain': domain,
-                'profile_address': '', 'reason': 'unregistered'}
-        # Blocked on the relay = not a member, whatever the registry or their profile says.
+        base = {'pubkey': pk, 'qualified': False, 'address': '', 'addresses': [], 'domain': domain,
+                'reason': 'unregistered'}
+        # Blocked on the relay = not a member, whatever the registry says.
         from app.services import relay_blocklist
         if relay_blocklist.is_blocked(pk):
             return {**base, 'reason': 'blocked'}
@@ -228,116 +72,13 @@ class MembershipChecker:
             return base
         if not domain:
             raise HTTPException(503, 'Instance NIP-05 domain is not configured')
-        base['address'] = aliases[0] + '@' + domain
-        key = (pk, config)
-        cached = self.cache.get(key)
-        pending = self.pending.get(key)
-        if force and cached:
-            self.cache[key] = (0, cached[1], cached[2], 0)
-        now = self.clock()
-        if not force and cached and cached[0] > now and not pending:
-            self.cache.move_to_end(key)
-            return dict(cached[1])
-        if not force and cached and cached[1]['qualified'] and cached[3] > now:
-            # Remembered member: answer now, re-check behind the answer.
-            self.cache.move_to_end(key)
-            if not pending and len(self.jobs) < MAX_PENDING:
-                self._start(key, aliases, base, cached, False)
-            return dict(cached[1])
-        if pending and (not force or pending[1]):
-            job = pending[0]
-        else:
-            if len(self.jobs) >= MAX_PENDING:
-                raise HTTPException(503, 'Instance membership check is busy')
-            job = self._start(key, aliases, base, cached, force)
-        # A disconnected caller must not cancel a check shared with other requests.
-        result = await asyncio.shield(job)
-        if tuple(self.configuration()) != config:
-            raise HTTPException(503, 'Instance membership configuration changed; retry')
-        return dict(result)
-
-    def _start(self, key, aliases, base, cached, force):
-        ticket = object()
-        job = asyncio.create_task(self._check(key, aliases, base, cached, ticket, force))
-        self.pending[key] = (job, bool(force), ticket)
-        self.jobs.add(job)
-        def finished(done):
-            self.jobs.discard(done)
-            if self.pending.get(key, (None,))[0] is done:
-                self.pending.pop(key, None)
-            if not done.cancelled() and done.exception() is not None and not force:
-                # Consumed above even when all waiting clients disconnected.
-                held = self.cache.get(key)
-                now = self.clock()
-                if held and held[1]['qualified'] and held[3] > now:
-                    self.cache[key] = (min(now + RECHECK_BACKOFF, held[3]), held[1], held[2], held[3])
-        job.add_done_callback(finished)
-        return job
-
-    async def _check(self, key, aliases, base, cached, ticket, force):
-        pk, config = key
-        previous = self.watermarks.get(pk) or (cached[2] if cached else None)
-        # CASE-INSENSITIVE, like every NIP-05 client and like Admin -> Identities: a member who typed
-        # "JonnyFever@poster.place" for the name granted as "jonnyfever" was shown verified there and
-        # revoked by the cleanup here. Still only names granted to THIS key ("anyone with an approved
-        # instance NIP-05 in their profile should not have their perms dropped").
-        expected = {(name + '@' + base['domain']).lower() for name in aliases}
-        started = asyncio.get_running_loop().time()
-        try:
-            local_failed = False
-            try:
-                rows = await asyncio.wait_for(self.query(pk, config[3]), QUERY_TIMEOUT)
-                newest = await asyncio.to_thread(_latest, rows, pk, self.wallclock())
-            except Exception:
-                local_failed, rows, newest = True, [], None
-            relays = _upstreams(config)
-            if local_failed and not relays:
-                raise RuntimeError('Local profile relay unavailable')
-            local_mark = (newest['created_at'], newest['id']) if newest else None
-            stale = previous and (not local_mark or local_mark[0] < previous[0] or
-                                  (local_mark[0] == previous[0] and local_mark[1] > previous[1]))
-            if relays and (force or stale or _profile_address(newest).lower() not in expected):
-                remaining = QUERY_TIMEOUT - (asyncio.get_running_loop().time() - started)
-                if remaining <= 0:
-                    raise TimeoutError('Profile lookup deadline reached')
-                external = await asyncio.wait_for(self.upstream_query(pk, relays, remaining), remaining + 1.25)
-                if not isinstance(external, list) or len(external) > 96:
-                    raise ValueError('Invalid upstream profile response')
-                newest = await asyncio.to_thread(_latest, rows + external, pk, self.wallclock())
-            if local_failed and not newest:
-                raise RuntimeError('No verified profile available during local relay outage')
-        except Exception as exc:
-            raise HTTPException(503, 'Instance profile verification is temporarily unavailable') from exc
-        watermark = (newest['created_at'], newest['id']) if newest else None
-        if previous and (not watermark or watermark[0] < previous[0] or
-                         (watermark[0] == previous[0] and watermark[1] > previous[1])):
-            raise HTTPException(503, 'Latest instance profile is temporarily unavailable')
-        result = dict(base, reason='profile_missing')
-        if newest:
-            address = _profile_address(newest)
-            result.update(profile_address=address, reason='profile_mismatch')
-            if address.lower() in expected:
-                result.update(qualified=True, address=address, reason='qualified')
-        if (tuple(self.configuration()) != config or
-                self.pending.get(key, (None, None, None))[2] is not ticket):
-            raise HTTPException(503, 'Instance membership check superseded; retry')
-        if watermark:
-            self.watermarks[pk] = watermark
-            self.watermarks.move_to_end(pk)
-            while len(self.watermarks) > MAX_CACHE:
-                self.watermarks.popitem(last=False)
-        now = self.clock()
-        self.cache[key] = (now + (GRANT_FRESH if result['qualified'] else DENIAL_TTL), result, watermark,
-                           now + GRANT_REMEMBER if result['qualified'] else 0)
-        self.cache.move_to_end(key)
-        while len(self.cache) > MAX_CACHE:
-            self.cache.popitem(last=False)
-        return result
+        addresses = [a + '@' + domain for a in aliases]
+        return {**base, 'qualified': True, 'address': addresses[0], 'addresses': addresses, 'reason': 'qualified'}
 
     async def require_pubkey(self, pubkey):
         result = await self.status(pubkey)
         if not result['qualified']:
-            raise HTTPException(403, 'Set your approved instance NIP-05 address in your profile to use this app')
+            raise HTTPException(403, DENIED)
         return result
 
     async def require_user(self, user):
@@ -349,7 +90,7 @@ _checker = MembershipChecker()
 
 
 async def status(pubkey, *, force=False):
-    """Real membership: a name this node granted AND the signed profile publishing it."""
+    """Real membership: a name this node granted to the key (and the key not blocked)."""
     return await _checker.status(pubkey, force=force)
 
 
@@ -375,8 +116,7 @@ async def access(pubkey, *, force=False):
     if not pk:
         raise HTTPException(403, 'A signed-in Nostr account is required')
     pk = pk.lower()
-    base = {'pubkey': pk, 'qualified': False, 'address': '', 'domain': '', 'profile_address': '',
-            'reason': 'blocked'}
+    base = {'pubkey': pk, 'qualified': False, 'address': '', 'addresses': [], 'domain': '', 'reason': 'blocked'}
     from app.services import relay_blocklist
     if relay_blocklist.is_blocked(pk):
         return base
@@ -386,7 +126,7 @@ async def access(pubkey, *, force=False):
 async def require_pubkey(pubkey):
     result = await access(pubkey)
     if not result['qualified']:
-        raise HTTPException(403, 'Set your approved instance NIP-05 address in your profile to use this app')
+        raise HTTPException(403, DENIED)
     return result
 
 

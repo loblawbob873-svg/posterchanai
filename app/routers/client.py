@@ -4661,8 +4661,8 @@ async def drafts_sync(data: DraftsReq, db: Session = Depends(get_db)):
     else:
         # A NOSTR-ONLY ACCOUNT. This answered {"ok": true} to a SAVE and stored nothing, so the client
         # reported drafts as synced that existed on one device only (backlog #71). A MEMBER -- a NIP-05
-        # name this node granted and that their signed profile publishes, the predicate every other
-        # member surface uses -- gets the same server-held storage key an account has, by npub. Anyone
+        # name this node granted (whatever their profile shows), the predicate every other member
+        # surface uses -- gets the same server-held storage key an account has, by npub. Anyone
         # else is told plainly that the server keeps nothing for them; the client then says the drafts
         # are safe on this device only.
         from app.services import nip05_access

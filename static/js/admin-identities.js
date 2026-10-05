@@ -4,7 +4,8 @@
 // their profile really publishes the address (a mixed-case "JonnyFever" did not verify in lowercase
 // clients and nothing showed it), or which line is a bot. This draws each identity with the owner's
 // picture and profile name from this relay, the address, and a ✓ when their own profile publishes it
-// exactly -- the same test that grants access to this node's features. Remove goes to the server
+// exactly. The ✓ is information only: the NAME is what grants access to this node's features, so a
+// person showing an address of their own elsewhere is still a member. Remove goes to the server
 // (one name off the registry, applied live), then the textarea -- still there under "Edit as text",
 // still what Save sends -- is rewritten AND taken as the new baseline, so the next Save cannot put it back.
 (function () {
@@ -51,15 +52,8 @@
         const unverified = rows.filter(r => !r.verified).length;
         sum.textContent = rows.length
             ? (q ? `${shown.length} of ${rows.length} identities match`
-                 : `${rows.length} identities` + (unverified ? ` · ${unverified} not published in their profile` : ''))
+                 : `${rows.length} identities` + (unverified ? ` · ${unverified} show another address in their profile (still members)` : ''))
             : 'No identities granted yet.';
-        const prune = document.getElementById('ids_prune');
-        if (prune) {
-            // Only offered when every profile was read: an unread profile LOOKS unverified.
-            prune.hidden = !(unverified && complete);
-            prune.textContent = `Remove all ${unverified} not in profile`;
-            prune.disabled = false;
-        }
         list.innerHTML = shown.slice(0, 300).map(rowHtml).join('')
             + (shown.length > 300 ? `<div class="blk-more">${shown.length - 300} more — search to narrow it down</div>` : '');
     }
@@ -123,47 +117,8 @@
             ? `Revoked permissions for ${r.accounts || 0} account(s)${r.whitelist ? `, ${r.whitelist} removed from the Blossom whitelist` : ''}.`
             : '';
     }
-    // The names a bulk remove may take: exactly the "not in profile" rows on screen right now. The
-    // server removes only those that STILL fail its own check (nip05_registry.remove_unverified).
-    function unverifiedNames(list) { return (list || []).filter(r => !r.verified).map(r => r.name); }
-
-    async function prune(btn) {
-        const names = unverifiedNames(rows);
-        if (!names.length) return;
-        const sample = names.slice(0, 8).join(', ') + (names.length > 8 ? `, and ${names.length - 8} more` : '');
-        const ok = (typeof pcConfirm === 'function')
-            ? await pcConfirm(`Remove ${names.length} identit${names.length === 1 ? 'y' : 'ies'} whose profile does not publish the address? `
-                + `Their owners lose the address AND their permissions on this node (AI, Blossom, image/music/video, torrents, Media Center, live streaming): ${sample}.`)
-            : true;
-        if (!ok) return;
-        btn.disabled = true;
-        btn.textContent = 'Removing…';
-        try {
-            const r = await (window.csrfFetch || fetch)('/api/admin/relay/identities/remove-unverified', {
-                method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({names})});
-            const j = await r.json().catch(() => ({}));
-            if (!r.ok) throw new Error(j.detail || ('HTTP ' + r.status));
-            const ta = document.getElementById('nostr_relay_nip05_names');
-            if (ta && typeof j.value === 'string') {
-                ta.value = j.value;
-                if (typeof loadedValues !== 'undefined') loadedValues.set('nostr_relay_nip05_names', ta.value);
-            }
-            await load();
-            const sum = document.getElementById('ids_summary');
-            if (sum) sum.textContent = `Removed ${j.removed || 0}. ${revokedText(j)} ` + sum.textContent;
-            if (j.revoke_error && window.pcAlert) window.pcAlert('The names were removed, but their permissions could not all be revoked: ' + j.revoke_error + ' — run it again.');
-        } catch (e) {
-            btn.disabled = false;
-            btn.textContent = 'Remove all not in profile';
-            const msg = 'Could not remove: ' + e.message;
-            if (window.pcAlert) window.pcAlert(msg);
-            else { const sum = document.getElementById('ids_summary'); if (sum) sum.textContent = msg; }
-        }
-    }
-
     if (typeof document !== 'undefined') {
         document.addEventListener('click', e => {
-            if (e.target && e.target.id === 'ids_prune') { prune(e.target); return; }
             const b = e.target.closest && e.target.closest('.ids-remove');
             if (b) { remove(b); return; }
             if (e.target.closest && e.target.closest('[data-tab="relay"]')) load();
@@ -171,5 +126,5 @@
         document.addEventListener('input', e => { if (e.target && e.target.id === 'ids_search') draw(); });
         if (typeof location !== 'undefined' && location.hash === '#tab-relay') document.addEventListener('DOMContentLoaded', load);
     }
-    if (typeof module !== 'undefined') module.exports = { matches, sortRows, rowHtml, unverifiedNames, revokedText };
+    if (typeof module !== 'undefined') module.exports = { matches, sortRows, rowHtml, revokedText };
 })();

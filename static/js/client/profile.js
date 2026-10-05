@@ -149,6 +149,7 @@ window.PCProfileFactory = function(dep){
     const bn=feed.querySelector('.prof .banner'); if(bn){ const want=p.banner?`<img src="${enc(p.banner)}" onerror="this.remove()">`:''; if(bn.innerHTML!==want) bn.innerHTML=want; }
     const h2=feed.querySelector('.prof .pbody h2'); if(h2){ const vchk=h2.querySelector('.vchk'); h2.innerHTML=emojiName(pk,p.name||p.display_name||'anon'); if(vchk) h2.appendChild(vchk); }
     const ab=feed.querySelector('.prof .about'); if(ab) ab.innerHTML=emojiHtml(pk, linkify(p.about||''));
+    const n5=feed.querySelector('#prof-nip05s'); if(n5 && n5.dataset.pk===pk) n5.innerHTML=_nip05LinesHtml(p.nip05, _hereAddrs.get(pk));
     /* THE TIP AFFORDANCES ARE PROFILE FACTS TOO, AND THIS PATCH DID NOT TOUCH THEM.
        Reported against a real profile: "he added a payment target for xmr but no way to zap him".
        His kind-0 carries `monero_address`, `xmr` AND `cryptocurrency_addresses.monero`, and the
@@ -193,6 +194,32 @@ window.PCProfileFactory = function(dep){
       if(ts>0) try{ localStorage.setItem(key,JSON.stringify({ts,checked:now})); }catch(_){}
       return ts;
     }catch(_){ return 0; }
+  }
+  /* BOTH ADDRESSES. A kind-0 carries ONE nip05, and somebody who already has an identity of their own
+   * (bob@nostrplebs.com) must not have to give it up to be a member here -- membership is the name this
+   * node GRANTED, read from its registry, never from the profile. So the header shows what the profile
+   * publishes AND every address this server granted the key, once each. The registry is a public read
+   * (it is nostr.json); with no instance, or none granted, the header is exactly what it always was. */
+  const _hereAddrs = new Map();   // pk -> addresses this node granted, as last read
+  function _nip05LinesHtml(own, here){
+    const seen = new Set(), out = [];
+    const add = (a, cls, title) => { const n = niceNip05(a); if(!n || seen.has(String(a).toLowerCase())) return;
+      seen.add(String(a).toLowerCase());
+      out.push(`<div class="muted small ${cls}"${title?` title="${enc(title)}"`:''}>${enc(n)}</div>`); };
+    add(own, 'prof-nip05');
+    for(const a of (Array.isArray(here) ? here : [])) add(a, 'prof-nip05 prof-nip05-here', 'Granted by this server');
+    return out.join('');
+  }
+  async function _paintHereAddresses(pk){
+    let here = [];
+    try{
+      const r = await fetch('/client/admin-nip05?pubkey=' + encodeURIComponent(pk)).then(r => r.json());
+      if(!(r && r.ok)) return;
+      here = Array.isArray(r.addresses) ? r.addresses : [];
+    }catch(_){ return; }   // no instance / unreachable: keep what is on screen, never blank it
+    _hereAddrs.set(pk, here);
+    const box = document.getElementById('prof-nip05s');
+    if(box && box.dataset.pk === pk) box.innerHTML = _nip05LinesHtml((Store.profile(pk) || {}).nip05, here);   // not a profile opened since
   }
   const _PROFILE_TOP = _navTopHtml('prof-back', 'Back to previous screen');
   function _bindProfileBack(feed, pk){
@@ -321,7 +348,7 @@ window.PCProfileFactory = function(dep){
           ${isBchAddr(bchOf(p))?`<button class="btn btn-ghost small" id="bchtip-prof" title="tip Bitcoin Cash (BCH)"><svg class="ic b-ic" aria-hidden="true"><use href="#i-coin"></use></svg>Tip</button>`:''}
           <button class="btn btn-ghost small prof-menu-btn" id="prof-menu" title="more"><svg class="ic b-ic" aria-hidden="true"><use href="#i-menu"></use></svg></button>`}</div></div>
       <div class="pbody"><h2>${emojiName(pk,p.name||p.display_name||'anon')}<span class="vchk" id="prof-vchk"></span></h2>
-        ${niceNip05(p.nip05)?`<div class="muted small">${enc(niceNip05(p.nip05))}</div>`:''}
+        <div class="prof-nip05s" id="prof-nip05s" data-pk="${enc(pk)}">${_nip05LinesHtml(p.nip05, _hereAddrs.get(pk))}</div>
         <div class="npubrow"><code>${enc(npub.slice(0,24))}…</code><button class="mini icon-btn" id="copy-npub" title="Copy npub" aria-label="Copy npub"><svg viewBox="0 0 16 16" width="15" height="15" fill="currentColor" aria-hidden="true"><path d="M5 1h8a2 2 0 012 2v8h-2V3H5zM1 5a2 2 0 012-2h7a2 2 0 012 2v9a2 2 0 01-2 2H3a2 2 0 01-2-2zm2 0v9h7V5z"/></svg></button><button class="mini icon-btn" id="prof-qr" title="Show QR code" aria-label="Show QR code"><svg viewBox="0 0 16 16" width="15" height="15" fill="currentColor" aria-hidden="true"><path d="M0 0h6v6H0zM2 2v2h2V2zM10 0h6v6h-6zM12 2v2h2V2zM0 10h6v6H0zM2 12v2h2v-2zM9 9h2v2H9zM13 9h3v2h-3zM9 13h2v3H9zM12 12h4v4h-2v-2h-2z"/></svg></button></div>
         ${p.lud16?`<button class="ln-addr" id="prof-ln" title="send a zap"><svg class="ic b-ic" aria-hidden="true"><use href="#i-zap"></use></svg>${enc(p.lud16)}</button>`:''}
         ${isXmrAddr(xmrOf(p))?`<button class="ln-addr xmr" id="prof-xmr" title="tip Monero (XMR)">ɱ ${enc(xmrOf(p).slice(0,10))}…${enc(xmrOf(p).slice(-6))}</button>`:''}
@@ -440,6 +467,7 @@ window.PCProfileFactory = function(dep){
      * `_bind` exists on this screen. */
     _bind('the profile music equaliser', () => _bindProfileMusic(feed));
     _bind('the verified badge', () => decorateVerified($('#prof-vchk'), pk, p.nip05));
+    _bind('the addresses granted here', () => _paintHereAddresses(pk));
     /* COPY NPUB IS BOUND EARLY AND ON ITS OWN. It is one line, it can only fail if the element is
      * missing, and it is the single most reported casualty of everything above it. */
     _bind('Copy npub', () => { const cn=$('#copy-npub');
@@ -941,7 +969,7 @@ window.PCProfileFactory = function(dep){
            existed but "Edit profile" appeared to contain nothing related to it. -->
       <div class="fld pf-music-editor"><span>Profile music</span><div id="pf-music-list">${_profileMusicFields(p).map(([label,url])=>`<div class="pf-music-row"><input class="input pf-music-title" aria-label="Track title" placeholder="Track title" value="${enc(String(label||'').replace(/^🎶\s*/,''))}"><input class="input pf-music-url" aria-label="Audio URL" placeholder="https://…/track.mp3" value="${enc(url)}"><button class="btn btn-ghost small pf-music-remove" type="button" aria-label="Remove track">Remove</button></div>`).join('')}</div>
         <div class="row pf-music-actions"><button class="btn btn-ghost small" id="pf-music-add" type="button">Add audio URL</button><button class="btn btn-ghost small" id="pf-music-up" type="button">Upload music</button><input type="file" id="pf-music-file" accept="audio/*,.mp3,.mpga,.m4a,.aac,.ogg,.opus,.wav,.flac" multiple hidden></div></div>
-      <label class="fld">NIP-05 identifier<input class="input" id="pf-nip05" placeholder="name@domain" value="${enc(p.nip05||'')}"></label>
+      <label class="fld">NIP-05 identifier <span class="muted small">(any domain — your own works)</span><input class="input" id="pf-nip05" placeholder="name@domain" value="${enc(p.nip05||'')}"></label>
       <div class="pf-nip05-mine" id="pf-nip05-mine" hidden></div>
       <label class="fld">⚡ Lightning address<input class="input" id="pf-lud16" placeholder="you@walletofsatoshi.com" value="${enc(p.lud16||'')}"></label>
       <label class="fld">ɱ Monero address<input class="input" id="pf-xmr" placeholder="4… or 8… (XMR — others can tip you)" value="${enc(xmrOf(p))}"></label>
@@ -960,16 +988,19 @@ window.PCProfileFactory = function(dep){
       // prefill the empty field with it: the verified handle is then one Save away instead of a
       // string the user would have to already know.
       { const n5=$('#pf-nip05',root);
-        /* SEVERAL ADDRESSES HERE. A profile publishes ONE nip05, so when this node granted more than one,
-         * they are offered as choices under the field: tap one to make it the address the profile shows. */
+        /* THE FIELD IS YOURS; THE ADDRESSES HERE ARE KEPT EITHER WAY. A profile publishes ONE nip05, and
+         * membership is the name this node granted -- not what the profile says -- so a person can publish
+         * their own bob@nostrplebs.com and still be alice@<this node>. Every granted address is listed under
+         * the field (and shown on the profile beside the field's), each one tap away from being the one
+         * published. */
         if(n5) fetch('/client/admin-nip05?pubkey='+encodeURIComponent(S.ME.pubkey))
           .then(r=>r.json()).then(r=>{
             if(!(r && r.ok)) return;
             if(r.nip05 && !n5.value.trim()) n5.value=r.nip05;
             const mine=Array.isArray(r.addresses)?r.addresses:[], box=$('#pf-nip05-mine',root);
-            if(!box || mine.length<2) return;
+            if(!box || !mine.length) return;
             const paint=()=>{ const cur=n5.value.trim().toLowerCase();
-              box.innerHTML='<span class="muted small">Your addresses here:</span>'+mine.map(a=>
+              box.innerHTML='<span class="muted small">Also shown on your profile, whatever you publish above:</span>'+mine.map(a=>
                 `<button type="button" class="pf-nip05-pick${a.toLowerCase()===cur?' on':''}" data-nip05="${enc(a)}" aria-pressed="${a.toLowerCase()===cur}">${enc(a)}</button>`).join('');
               $$('[data-nip05]',box).forEach(b=>b.onclick=()=>{ n5.value=b.dataset.nip05; paint(); }); };
             box.hidden=false; paint(); n5.addEventListener('input',paint);

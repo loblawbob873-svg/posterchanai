@@ -88,8 +88,8 @@ async def notify_approval(db, pubkey, address):
     if not claimed:
         return False
     text = (f'Your NIP-05 name has been approved: {address}\n\n'
-            'To activate access to this instance’s apps, you must save this exact address in your Nostr profile. Open Edit profile, paste this address '
-            'into the NIP-05 / verified address field, and save your profile.')
+            'Your access to this instance’s apps is active now. You do not need to change your profile: '
+            'keep the NIP-05 it shows if you have one of your own, and both addresses are shown on your profile here.')
     if await system_dm.send(pubkey, text):
         row.notified_address = address
         db.commit()
