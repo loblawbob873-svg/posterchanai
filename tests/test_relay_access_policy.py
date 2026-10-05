@@ -289,8 +289,11 @@ def test_unregistered_profile_claim_never_gets_grants(world, monkeypatch):
     assert not outsider.can_ai and not outsider.can_blossom and outsider.access_revoked
 
 
-@pytest.mark.parametrize('setting,value', [('nostr_relay_upstream_relays','wss://changed.test'),('nostr_relay_port','4052')])
-def test_profile_source_config_change_aborts_all_access_changes(world, monkeypatch, setting, value):
+# Membership is the registry + domain (the profile is no longer read), so THOSE are what may not change
+# under a running reconcile: a plan made against one name list must not be applied against another.
+@pytest.mark.parametrize('setting,value', [('nostr_relay_nip05_names', ''), ('nostr_relay_nip05_domain', 'changed.test'),
+                                           ('site_url', 'https://changed.test')])
+def test_membership_config_change_aborts_all_access_changes(world, monkeypatch, setting, value):
     from app.services import instance_membership
     from fastapi import HTTPException
     async def changed(*args, **kwargs):
