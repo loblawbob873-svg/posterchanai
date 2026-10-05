@@ -58,11 +58,23 @@ def gpu_busy() -> bool:
 
 
 def _try_acquire_file_lock(lock_file: str) -> Optional[int]:
-    """Try to acquire file lock without blocking. Returns fd if acquired, None otherwise."""
+    """Try to acquire file lock without blocking. Returns fd if acquired, None otherwise.
+
+    THE DIRECTORY IS RE-CREATED HERE, NOT ONLY AT IMPORT. systemd-tmpfiles-clean (`q /tmp ... 10d`)
+    deletes anything in /tmp untouched for ten days, and a lock file is opened and flocked but never
+    written -- so it aged out, the empty directory went with it, and from then until the next restart
+    every request "waited for file lock" on a file that could not be opened: measured on nas.lan
+    2026-10-05, the cleaner ran at 12:23 and an AI Chat message hung for minutes. The mtime is bumped on
+    every acquire so a lock in use never ages out at all."""
     try:
+        os.makedirs(os.path.dirname(lock_file), exist_ok=True)
         fd = os.open(lock_file, os.O_CREAT | os.O_RDWR)
         try:
             fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            try:
+                os.utime(fd)
+            except OSError:
+                pass
             return fd
         except BlockingIOError:
             os.close(fd)

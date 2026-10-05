@@ -103,7 +103,13 @@
   async function _bareSuper(fromSway){
     const now=Date.now(); if(now-_lastBareSuper<500)return;
     _lastBareSuper=now;
-    if(fromSway) await _raiseShell();
+    /* RAISE ONLY FOR THE IN-PAGE MENU. That menu lives inside the desktop and needs its keyboard; the
+     * Start POPUP is its own window and takes focus when it maps. Raising the desktop under an OPEN popup
+     * blurs it shut, so the toggle (decided in main by whether a popup exists) found none and opened a
+     * new one: "pressing super to open then super to close opened it again" -- Wayfire's event stream on
+     * the desk showed view-focused Desktop, view-unmapped Popup, view-mapped Popup, in that order. */
+    const usesPopup = !_menuInPopup && _popupWindows() && !!(window.pcPopup && pcPopup.toggle);
+    if(fromSway && !usesPopup) await _raiseShell();
     toggleStart();
     /* Electron can acknowledge the compositor focus before Chromium has installed its keyboard
      * focus. Keep the caret in Start through that hand-off. Without these two frame-sized retries,
