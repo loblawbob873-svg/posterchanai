@@ -275,6 +275,28 @@ window.PCPushFactory = function(dep){
     if(tb) tb.onclick=async()=>{ tb.disabled=true; try{ await testPush(); } finally { tb.disabled=false; } };
     let cur = await pushState();
     render(cur);
+    /* "ON" MUST MEAN CONNECTED ("I never got push notification for my last reminder on my phone" -- "of
+     * course I had push notifications on"). On Android `pushState()` is 'on' when the phone has EVER
+     * registered, and this line then promised calls/messages/reminders whatever the push service was
+     * doing -- measured on the server, that phone had not connected for two weeks. The service knows:
+     * getEndpoint() carries `connected` and its last error. A fresh start gets a few seconds to connect,
+     * then the screen says what is actually true, and Test (which re-registers) is the way back. */
+    const truth=async()=>{
+      const P=_pushPlugin(); if(!P || cur!=='on' || !st) return;
+      let ep=null;
+      for(let i=0;i<16;i++){
+        try{ ep=(await P.getEndpoint({expectedSocketUrl:_directPushSocketUrl()}))||{}; }catch(_){ return; }
+        if(ep.connected===true && !ep.needsRegistration && ep.notificationsEnabled!==false) return;
+        await new Promise(r=>setTimeout(r,500));
+        if(!st.isConnected) return;
+      }
+      const why = ep.needsRegistration ? 'it is registered to a different server address'
+        : ep.notificationsEnabled===false ? 'Android notifications are blocked for PosterChan (system settings)'
+        : (ep.error ? String(ep.error) : 'its notification connection is down');
+      st.textContent='⚠ Push is ON but this phone is NOT connected — '+why+'. Nothing will reach it until this is fixed: press Test to reconnect.';
+      st.classList.add('push-warn');
+    };
+    void truth();
     /* Ask for permission on the SYNCHRONOUS part of the click, before any await.
      *
      * This handler used to `await pushState()` first — which awaits serviceWorker.ready and

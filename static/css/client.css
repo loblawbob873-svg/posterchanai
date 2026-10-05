@@ -12081,3 +12081,6 @@ img.md-rel:not([src]){display:none}
 .pf-nip05-mine{display:flex;flex-wrap:wrap;align-items:center;gap:6px;margin:-4px 0 10px}
 .pf-nip05-pick{border:1px solid var(--line,#333);background:none;color:inherit;border-radius:999px;padding:4px 10px;font-size:13px;cursor:pointer;max-width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .pf-nip05-pick.on{border-color:var(--neon,#a89aff);background:rgba(168,154,255,.14)}
+
+/* Settings → Notifications: push says ON but the phone is not connected -- said loudly, not as fine print. */
+#set-push-status.push-warn{color:var(--amber,#ffcf2b);font-weight:600}
