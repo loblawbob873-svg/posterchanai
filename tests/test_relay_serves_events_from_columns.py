@@ -7,7 +7,9 @@ identical to `raw`; the only difference was a few non-Nostr keys some clients at
 `saved_at`), which no signature covers. Runs the relay's real insert and query code.
 """
 import json
+import re
 import sqlite3
+from pathlib import Path
 
 import pytest
 
@@ -21,7 +23,7 @@ def relay():
     conn = sqlite3.connect(":memory:")
     conn.row_factory = sqlite3.Row
     conn.executescript('''CREATE TABLE events(id TEXT PRIMARY KEY, pubkey TEXT, created_at INTEGER, kind INTEGER,
-      content TEXT, tags TEXT, sig TEXT, raw TEXT, origin TEXT, expiration INTEGER);
+      content TEXT, tags TEXT, sig TEXT, origin TEXT, expiration INTEGER);
       CREATE TABLE event_tags(event_id TEXT,tag TEXT,value TEXT,PRIMARY KEY(event_id,tag,value));''')
     yield RelayStore.__new__(RelayStore), conn
     conn.close()
@@ -35,7 +37,8 @@ def test_an_event_is_stored_without_a_second_copy_and_served_identical(relay):
     store, db = relay
     ev = _ev("emoji 🎉 and \"quotes\" and \\ backslashes", tags=[["t", "x"], ["imeta", "url https://a.test/x.png", "dim 1x2"]])
     assert store._insert_one(db, ev, "direct")
-    assert db.execute("SELECT raw FROM events").fetchone()[0] is None, "the event was written twice"
+    cols = [r[1] for r in db.execute("PRAGMA table_info(events)")]
+    assert "raw" not in cols and db.execute("SELECT count(*) FROM events").fetchone()[0] == 1
     got = store._query_one(db, {"ids": [ev["id"]]})
     assert got == [ev], got
     assert verify_event(got[0]), "the rebuilt event no longer verifies"
@@ -44,10 +47,9 @@ def test_an_event_is_stored_without_a_second_copy_and_served_identical(relay):
 def test_a_legacy_row_is_served_from_its_columns_without_the_extra_keys(relay):
     store, db = relay
     ev = _ev("legacy")
-    junk = dict(ev, _id="mongo", saved_at=5)                     # what some clients attached
-    db.execute("INSERT INTO events (id,pubkey,created_at,kind,content,tags,sig,raw,origin) VALUES (?,?,?,?,?,?,?,?,?)",
+    db.execute("INSERT INTO events (id,pubkey,created_at,kind,content,tags,sig,origin) VALUES (?,?,?,?,?,?,?,?)",
                (ev["id"], ev["pubkey"], ev["created_at"], ev["kind"], ev["content"], json.dumps(ev["tags"]), ev["sig"],
-                json.dumps(junk), "wot"))
+                "wot"))
     got = store._query_one(db, {"kinds": [1]})
     assert got == [ev] and "_id" not in got[0], got
 
@@ -77,3 +79,12 @@ def test_git_auth_reads_an_event_with_no_raw_copy(relay):
         def cursor(self): return _Cur()
 
     assert git_auth.load_event_by_id(_Conn(), ev["id"]) == ev
+
+
+def test_the_schema_no_longer_has_a_raw_copy_and_an_old_table_loses_it():
+    """The release after the relay stopped writing `raw` drops it (metadata only, no row rewrite)."""
+    from app.services.nostr_relay import store as relay_store
+    assert not re.search(r"^\s*raw\s", relay_store._SCHEMA, re.M), "a fresh relay would still create raw"
+    src = Path(relay_store.__file__).read_text()
+    opened = src[src.index("    def open(self, loop"):][:1200]
+    assert "DROP COLUMN IF EXISTS raw" in opened, "an existing relay keeps its 4 GB copy"

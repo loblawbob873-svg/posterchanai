@@ -806,11 +806,11 @@ def _plant(store, events, origin="direct"):
     conn.autocommit = True
     cur = conn.cursor()
     for ev in events:
-        cur.execute("INSERT INTO events (id, pubkey, created_at, kind, content, tags, sig, raw, "
-                    "origin, expiration) VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,NULL) "
+        cur.execute("INSERT INTO events (id, pubkey, created_at, kind, content, tags, sig, "
+                    "origin, expiration) VALUES (%s,%s,%s,%s,%s,%s,%s,%s,NULL) "
                     "ON CONFLICT (id) DO NOTHING",
                     (ev["id"], ev["pubkey"], ev["created_at"], ev["kind"], ev.get("content", ""),
-                     _json.dumps(ev.get("tags") or []), ev.get("sig", ""), _json.dumps(ev), origin))
+                     _json.dumps(ev.get("tags") or []), ev.get("sig", ""), origin))
     conn.close()
 
 

@@ -43,10 +43,10 @@ def check(name, cond):
 def _insert_event(conn, ev):
     with conn.cursor() as cur:
         cur.execute(
-            "INSERT INTO events (id,pubkey,created_at,kind,content,tags,sig,raw,origin) "
-            "VALUES (%s,%s,%s,%s,%s,%s,%s,%s,'direct') ON CONFLICT (id) DO NOTHING",
+            "INSERT INTO events (id,pubkey,created_at,kind,content,tags,sig,origin) "
+            "VALUES (%s,%s,%s,%s,%s,%s,%s,'direct') ON CONFLICT (id) DO NOTHING",
             (ev["id"], ev["pubkey"], ev["created_at"], ev["kind"], ev["content"],
-             json.dumps(ev["tags"]), ev["sig"], json.dumps(ev)))
+             json.dumps(ev["tags"]), ev["sig"]))
         for t in ev["tags"]:
             if len(t) >= 2 and isinstance(t[0], str) and len(t[0]) == 1:
                 cur.execute("INSERT INTO event_tags (event_id,tag,value) VALUES (%s,%s,%s) "

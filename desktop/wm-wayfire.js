@@ -509,7 +509,13 @@ class WayfireWM{
       let now=[];try{now=await this.windows();}catch(_){break;}
       const moved=now.filter(r=>want.has(r.id)&&off(want.get(r.id),r.rect));
       if(!moved.length)break;
-      for(const r of moved){const at=want.get(r.id);fixed++;try{await this.place(r.id,at.x,at.y,at.w,at.h);}catch(_){}}
+      for(const r of moved){const at=want.get(r.id);fixed++;
+        /* Said in the log, because what moves a window back is still unidentified: the rectangle it was
+         * pulled TO is the fingerprint (its old slot = a stale re-placement; a band-clamped height = the
+         * taskbar guard). shell.log is where the desk keeps it. */
+        console.warn('[arrange] window '+r.id+' "'+String(r.title||'').slice(0,40)+'" moved after placement to '
+          +JSON.stringify(r.rect)+' (wanted '+JSON.stringify(at)+'), round '+round+' -- re-placing');
+        try{await this.place(r.id,at.x,at.y,at.w,at.h);}catch(_){}}
     }
     return {ok:true,layout:String(layout),output:o.name,count:apps.length,replaced:fixed};}
   move(id,x,y){const key=Number(id);let state=this.moves.get(key);const at={x:Math.round(x),y:Math.round(y)};if(state){state.next=at;return state.promise;}state={next:at,promise:null};state.promise=(async()=>{while(state.next){const p=state.next;state.next=null;const row=(await this.windows()).find(v=>v.id===key);if(row)await this.place(key,p.x,p.y,row.rect.width,row.rect.height);}})().finally(()=>{if(this.moves.get(key)===state)this.moves.delete(key);});this.moves.set(key,state);return state.promise;}

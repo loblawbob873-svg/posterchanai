@@ -13,7 +13,6 @@ GIN `to_tsvector` index instead of SQLite's FTS5.
 """
 
 import os
-import re
 import json
 import time
 import asyncio
@@ -112,7 +111,6 @@ CREATE TABLE IF NOT EXISTS events (
     content     TEXT NOT NULL,
     tags        TEXT NOT NULL,
     sig         TEXT NOT NULL,
-    raw         TEXT,           -- retired: events are served from the columns (see event_from_row); dropped in a later release
     origin      TEXT NOT NULL DEFAULT 'wot',
     expiration  BIGINT
 );
@@ -417,8 +415,11 @@ class RelayStore:
         self._loop = loop
         conn = self._conn()
         conn.executescript(_SCHEMA)
-        # `raw` is no longer written (event_from_row): an existing table must accept NULL there.
-        conn.execute("ALTER TABLE events ALTER COLUMN raw DROP NOT NULL")
+        # `raw`, the second JSON copy of every event (3.99 GB of 17 on poster.place), is GONE: nothing has
+        # read or written it since deploy 98 (event_from_row serves the columns), and this is the release
+        # after. A metadata-only drop -- no row is rewritten; the space returns at the next VACUUM FULL /
+        # pg_repack. IF EXISTS keeps it idempotent and lets a fresh schema (which never had it) pass.
+        conn.execute("ALTER TABLE events DROP COLUMN IF EXISTS raw")
         self._index_existing_quotes(conn)
         conn.commit()
 
