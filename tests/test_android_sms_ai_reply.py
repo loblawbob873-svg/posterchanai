@@ -66,6 +66,7 @@ DRIVER = r"""
         if (path.startsWith("/deny")) { code = 403; out = "{\"ok\":false,\"error\":\"AI access is not enabled for this account.\"}"; }
         else if (path.startsWith("/boom")) { code = 502; out = "{\"ok\":false,\"error\":\"The AI did not answer — try again in a moment.\"}"; }
         else if (path.startsWith("/garbage")) { out = "<html>proxy error</html>"; }
+        else if (path.startsWith("/five")) out = "{\"ok\":true,\"content\":\"Yes! See you at 7\",\"choices\":[\"Yes! See you at 7\",\"Sounds good\",\" \",\"Sounds good\",\"Can we do 8?\",\"On my way\",\"Love that\",\"One too many\"]}";
         else if (probe) out = "{\"ok\":true,\"allowed\":true}";
         else out = "{\"ok\":true,\"content\":\"Yes! See you at 7\"}";
         byte[] b = out.getBytes("UTF-8");
@@ -99,7 +100,9 @@ DRIVER = r"""
     SmsAiReply.Result probe = SmsAiReply.call(base, sec, null);
     r.put("probe_allowed", probe.allowed); r.put("probe_ok", probe.ok);
     SmsAiReply.Result ok = SmsAiReply.call(base + "/", sec, ctx);
-    r.put("ok", ok.ok); r.put("text", ok.text);
+    r.put("ok", ok.ok); r.put("text", ok.text); r.put("old_server_choices", ok.choices);
+    SmsAiReply.Result five = SmsAiReply.call(base + "/five", sec, ctx);
+    r.put("five_ok", five.ok); r.put("five_text", five.text); r.put("five_choices", five.choices);
     SmsAiReply.Result deny = SmsAiReply.call(base + "/deny", sec, ctx);
     r.put("deny_refused", deny.refused); r.put("deny_error", deny.error);
     SmsAiReply.Result denyProbe = SmsAiReply.call(base + "/deny", sec, null);
@@ -175,6 +178,11 @@ def test_every_answer_becomes_what_the_screen_needs(wire):
     r = wire["results"]
     assert r["probe_ok"] is True and r["probe_allowed"] is True
     assert r["ok"] is True and r["text"] == "Yes! See you at 7"
+    # An older server sends only `content`: still one usable draft.
+    assert r["old_server_choices"] == ["Yes! See you at 7"]
+    # "a popup of like 5 replies to choose, not one": distinct, non-blank, at most five, first = text.
+    assert r["five_ok"] is True and r["five_text"] == "Yes! See you at 7"
+    assert r["five_choices"] == ["Yes! See you at 7", "Sounds good", "Can we do 8?", "On my way", "Love that"], r["five_choices"]
     assert r["deny_refused"] is True and "not enabled" in r["deny_error"]
     assert r["deny_probe_allowed"] is False
     assert r["boom_ok"] is False and r["boom_refused"] is False and "did not answer" in r["boom_error"]
@@ -195,12 +203,14 @@ def test_the_button_shows_only_on_a_yes_with_a_server_and_a_key(wire):
 def test_what_the_phone_sends_is_small_and_goes_to_one_path(wire):
     reqs = wire["requests"]
     # Neither the no-key nor the empty-context call touched the network.
-    assert len(reqs) == wire["results"]["requests_before_dead"] == 6
+    assert len(reqs) == wire["results"]["requests_before_dead"] == 7
     for q in reqs:
         assert q["path"].endswith("/api/texts/ai-reply") and "//api" not in q["path"], q["path"]
         assert q["ctype"] == "application/json"
         body = json.loads(q["body"])
-        assert set(body) in ({"probe", "pubkey", "auth"}, {"messages", "pubkey", "auth"}), body
+        assert set(body) in ({"probe", "pubkey", "auth"}, {"messages", "count", "pubkey", "auth"}), body
+        if "messages" in body:
+            assert body["count"] == 5, "the phone asks for five drafts to choose from"
         assert "15550100" not in q["body"], "the phone number left the phone"
 
 
@@ -218,7 +228,7 @@ def test_the_real_endpoint_accepts_what_the_phone_sent(wire):
 
         async def chat(self, msgs):
             seen.append(msgs)
-            return "On my way"
+            return "1. On my way\n2. Running late, 10 min\n3. Yes!\n4. Can we push to 8?\n5. See you there"
 
     class _CS:
         def __init__(self, db, user=None):
@@ -230,9 +240,10 @@ def test_the_real_endpoint_accepts_what_the_phone_sent(wire):
     with mock.patch("app.services.command_service.CommandService", _CS), \
          mock.patch("app.services.nip05_access.is_member", member):
         out = asyncio.run(T.texts_ai_reply(T.TextsAiReplyReq(**q), db=None, session_user=None))
-    # The phone reads `content` alone; `choices` is the web menu's (one draft here, so one choice).
+    # The phone asked for five: one model call, five distinct drafts, `content` = the first.
     assert out.get("ok") is True and out.get("content") == "On my way", getattr(out, "body", out)
-    assert out.get("choices", ["On my way"]) == ["On my way"], out
+    assert out.get("choices") == ["On my way", "Running late, 10 min", "Yes!", "Can we push to 8?", "See you there"], out
+    assert len(seen) == 1, "five drafts must come from ONE model call"
     assert "Them: Dinner at 7 tonight?\nTEXTS" in seen[0][-1]["content"]
 
 
@@ -277,8 +288,11 @@ def test_a_draft_goes_into_the_composer_and_never_onto_the_carrier():
         assert "send(" not in body.replace("suggestReply", ""), "the ✨ path can send"
         assert "SmsSender" not in body and "MmsSender" not in body
     assert "input.setText(text)" in fill and "MmsDraft.setText(this, address, text)" in fill
-    # Never overwrite what the person typed without asking.
-    assert "R.string.sms_ai_replace" in suggest
+    # Several drafts: a pick list; the pick only fills the composer, asking before it overwrites.
+    assert "R.string.sms_ai_pick" in suggest and ".setItems(" in suggest and "useDraft(" in suggest
+    use = _method(THREAD, "useDraft")
+    assert "R.string.sms_ai_replace" in use and "fillComposer(text)" in use
+    assert "send(" not in use and "SmsSender" not in use and "MmsSender" not in use
 
 
 def test_a_second_tap_while_busy_does_nothing_even_across_a_rebuild():

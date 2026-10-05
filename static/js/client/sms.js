@@ -4209,7 +4209,7 @@
    * BUSY IS KEYED ON THE CONVERSATION and held on module state, like S.sending: paint() rebuilds the
    * composer on every incoming message, and a latch that lived in the render would let a second tap
    * start a second request the moment anything arrived. */
-  const AI_CHOICES = 3;
+  const AI_CHOICES = 5;
   let _aiReply = null, _aiReplyFor = '', _aiProbe = null, _aiProbeAt = 0;
   function aiReplyBlocked(){
     return !!window.PC_NOSTR_ONLY || !!(PC && PC.standalone && PC.standalone());

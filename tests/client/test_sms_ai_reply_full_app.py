@@ -95,7 +95,7 @@ def test_sparkle_fills_the_composer_with_a_draft_and_never_sends(phone):
         msgs = req['messages']
         assert msgs == [{'me': False, 'text': 'Dinner at 7 tonight?'}], msgs
         # No number, no name: the thread tail and how many drafts to offer (the ✨ menu shows 3).
-        assert set(req) == {'messages', 'count'} and req['count'] == 3, req
+        assert set(req) == {'messages', 'count'} and req['count'] == 5, req   # five drafts to choose from
         assert all(set(x) == {'me', 'text'} for x in msgs)
 
         # Busy: disabled + aria-busy, a second tap and a repaint do not start another request.

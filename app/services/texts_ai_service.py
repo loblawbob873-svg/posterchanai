@@ -105,7 +105,7 @@ def build_messages(context: list, medium: str = SMS) -> list:
     ]
 
 
-MAX_CHOICES = 4
+MAX_CHOICES = 5
 
 
 def build_choice_messages(context: list, n: int, medium: str = SMS) -> list:

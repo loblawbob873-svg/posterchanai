@@ -477,18 +477,34 @@ public class ThreadActivity extends PcActivity {
                     }
                     return;
                 }
-                String typed = input.getText().toString().trim();
-                if (!typed.isEmpty() && !typed.equals(r.text)) {
+                if (r.choices.size() > 1) {
+                    // SEVERAL DRAFTS, ONE PICK ("a popup of like 5 replies to choose, not one"). Picking
+                    // one only puts it in the composer; nothing is sent from this list.
+                    final String[] items = r.choices.toArray(new String[0]);
                     new AlertDialog.Builder(ThreadActivity.this)
-                            .setMessage(R.string.sms_ai_replace)
-                            .setPositiveButton(R.string.sms_ai_replace_ok, (d, w) -> fillComposer(r.text))
+                            .setTitle(R.string.sms_ai_pick)
+                            .setItems(items, (d, w) -> useDraft(items[w]))
                             .setNegativeButton(android.R.string.cancel, null)
                             .show();
                     return;
                 }
-                fillComposer(r.text);
+                useDraft(r.text);
             });
         }, "pc-sms-ai-reply").start();
+    }
+
+    /** The chosen draft into the composer -- asking first when the person has already typed something. */
+    private void useDraft(String text) {
+        String typed = input.getText().toString().trim();
+        if (!typed.isEmpty() && !typed.equals(text)) {
+            new AlertDialog.Builder(ThreadActivity.this)
+                    .setMessage(R.string.sms_ai_replace)
+                    .setPositiveButton(R.string.sms_ai_replace_ok, (d, w) -> fillComposer(text))
+                    .setNegativeButton(android.R.string.cancel, null)
+                    .show();
+            return;
+        }
+        fillComposer(text);
     }
 
     /** Into the composer, never onto the carrier: the person reads it, edits it and sends it. */

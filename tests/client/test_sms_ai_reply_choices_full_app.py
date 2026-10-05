@@ -48,7 +48,7 @@ def test_sparkle_offers_choices_and_the_pick_fills_the_composer(phone):
         await b.js("document.querySelector('#sms-ai').click()")
         await b.until("!!document.querySelector('.menu-pop')")
         await asyncio.sleep(.4)            # a phone's menu is a bottom sheet that slides up for 0.2s
-        assert (await b.js("aiCalls[0]"))['count'] == 3
+        assert (await b.js("aiCalls[0]"))['count'] == 5      # "like 5 replies to choose"
         pop = await b.js(POP)
         assert pop['texts'] == CHOICES, pop
         assert pop['x'] >= 0 and pop['right'] <= pop['vw'] + 0.5 and pop['bottom'] <= pop['vh'] + 0.5, pop

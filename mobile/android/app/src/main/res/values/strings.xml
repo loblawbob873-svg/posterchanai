@@ -83,6 +83,7 @@
     <string name="sms_ai_ready">Suggested reply ready — edit it, then send</string>
     <string name="sms_ai_nothing">There is no message to reply to yet.</string>
     <string name="sms_ai_replace">Replace what you typed with the suggested reply?</string>
+    <string name="sms_ai_pick">Pick a reply</string>
     <string name="sms_ai_replace_ok">Replace</string>
     <string name="sms_emoji_title">Choose emoji</string>
     <string name="sms_attachment_ready">File attached</string>

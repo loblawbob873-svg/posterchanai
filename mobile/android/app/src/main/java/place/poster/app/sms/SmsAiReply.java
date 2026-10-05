@@ -40,12 +40,17 @@ public final class SmsAiReply {
     public static final String PURPOSE = "texts-ai-reply";
     public static final int MAX_CHARS_EACH = 1000;
     public static final int TIMEOUT_MS = 90000;    // the model may have to load after an idle spell
+    /** How many different drafts to offer ("a popup of like 5 replies to choose, not one"). The
+     *  server makes them in ONE model call and caps the number itself (texts_ai_service.MAX_CHOICES). */
+    public static final int CHOICES = 5;
 
     /** What the call came back with. `refused` = the server said this account may not (hide ✨). */
     public static final class Result {
         public boolean ok, refused;
         public Boolean allowed;           // probe only: null = could not ask
         public String text = "", error = "";
+        /** Every draft offered, first = `text`. One entry from an older server that sends only `content`. */
+        public List<String> choices = new ArrayList<String>();
     }
 
     // ------------------------------------------------------------------ pure: what is sent
@@ -90,7 +95,7 @@ public final class SmsAiReply {
     public static String body(List<Map<String, Object>> context, String pubkey, String auth) {
         Map<String, Object> b = new LinkedHashMap<String, Object>();
         if (context == null) b.put("probe", Boolean.TRUE);
-        else b.put("messages", context);
+        else { b.put("messages", context); b.put("count", CHOICES); }
         b.put("pubkey", pubkey);
         b.put("auth", auth);
         return Json.write(b);
@@ -124,10 +129,18 @@ public final class SmsAiReply {
             if (Boolean.FALSE.equals(r.allowed)) r.refused = true;
             return r;
         }
+        Object list = j.get("choices");
+        if (list instanceof List) {
+            for (Object o : (List<?>) list) {
+                String c = o instanceof String ? ((String) o).trim() : "";
+                if (!c.isEmpty() && !r.choices.contains(c) && r.choices.size() < CHOICES) r.choices.add(c);
+            }
+        }
         String t = Json.str(j.get("content"), "").trim();
-        if (t.isEmpty()) { r.error = "The AI did not come up with a reply — try again."; return r; }
+        if (r.choices.isEmpty() && !t.isEmpty()) r.choices.add(t);    // an older server: one draft
+        if (r.choices.isEmpty()) { r.error = "The AI did not come up with a reply — try again."; return r; }
         r.ok = true;
-        r.text = t;
+        r.text = r.choices.get(0);
         return r;
     }
 
