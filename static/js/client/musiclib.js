@@ -23,9 +23,6 @@ window.PCMusicLibFactory = function(dep){
   // ciphertext; only the owner's signer can unwrap it.
   function _u8b64(u8){ let s='',C=0x8000; for(let i=0;i<u8.length;i+=C) s+=String.fromCharCode.apply(null,u8.subarray(i,i+C)); return btoa(s); }
   function _b64u8(b){ const s=atob(b),u=new Uint8Array(s.length); for(let i=0;i<s.length;i++) u[i]=s.charCodeAt(i); return u; }
-  async function _aesEncrypt(plain){ const key=crypto.getRandomValues(new Uint8Array(32)),iv=crypto.getRandomValues(new Uint8Array(12));
-    const ck=await crypto.subtle.importKey('raw',key,'AES-GCM',false,['encrypt']);
-    const ct=new Uint8Array(await crypto.subtle.encrypt({name:'AES-GCM',iv},ck,plain)); return {ct,key,iv}; }
   async function _aesDecrypt(ct,key,iv){ const ck=await crypto.subtle.importKey('raw',key,'AES-GCM',false,['decrypt']);
     return new Uint8Array(await crypto.subtle.decrypt({name:'AES-GCM',iv},ck,ct)); }
   // SCALABLE encryption (Phase 2.5): ONE master key (wrapped once) + the IV prepended to the blob. For

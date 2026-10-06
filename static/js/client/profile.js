@@ -789,18 +789,6 @@ window.PCProfileFactory = function(dep){
       toast(r.ok ? ('purged '+(r.deleted||0)+' file(s) 🗑️') : ('purge failed: ' + (r.error||'')));
     } catch(e){ toast('purge failed'); }
   }
-  // admin: per-user feature permissions (image/music/video/torrent) from the profile menu — replaces
-  // the Admin → Users capability toggles.
-  // admin: toggle a single per-user capability (e.g. can_torrent) inline from the profile menu.
-  async function toggleCap(pk, cap, val){
-    if(!S.IS_ADMIN) return;
-    try{
-      const auth = await sign(27235, 'user-caps', [['p',pk]]);
-      const r = await fetch('/client/user-caps', { method:'POST', headers:{'Content-Type':'application/json'},
-        body: JSON.stringify({ target: pk, caps:{[cap]:val}, auth: btoa(JSON.stringify(auth)) }) }).then(r=>r.json());
-      toast(r.ok ? (val?'access granted':'access revoked') : ('failed: '+(r.error||'')));
-    }catch(e){ toast('change failed'); }
-  }
   // admin: one consolidated permissions panel for a user — AI access, Blossom uploads, and the
   // per-feature caps (image/music/video/torrent). Each maps to its own endpoint; on save we only
   // sign + call the ones that actually changed (fewer signer prompts).
@@ -914,27 +902,6 @@ window.PCProfileFactory = function(dep){
         }catch(_){ toast('save failed'); }
       };
     });
-  }
-  // admin: grant/revoke this account's AI access (the can_ai flag). Signed like doBlock.
-  async function toggleAiAccess(pk, grant){
-    if(!S.IS_ADMIN) return;
-    try{
-      const auth = await sign(27235, 'ai-access', [['action', grant?'grant':'revoke'],['p',pk]]);
-      const r = await fetch('/client/ai-access', { method:'POST', headers:{'Content-Type':'application/json'},
-        body: JSON.stringify({ target: pk, grant, auth: btoa(JSON.stringify(auth)) }) }).then(r=>r.json());
-      toast(r.ok ? (grant?'granted AI access 🤖':'revoked AI access') : ('failed: '+(r.error||'')));
-    }catch(e){ toast('AI access change failed'); }
-  }
-  // admin: grant/revoke this account's Blossom upload access (adds/removes its npub from the
-  // blossom_whitelist setting — Admin → Blossom). Signed like doBlock so the server checks admin.
-  async function toggleBlossomAccess(pk, grant){
-    if(!S.IS_ADMIN) return;
-    try{
-      const auth = await sign(27235, 'blossom', [['action', grant?'grant':'revoke'],['p',pk]]);
-      const r = await fetch('/client/blossom-access', { method:'POST', headers:{'Content-Type':'application/json'},
-        body: JSON.stringify({ target: pk, grant, auth: btoa(JSON.stringify(auth)) }) }).then(r=>r.json());
-      toast(r.ok ? (grant?'granted Blossom access 🌸':'revoked Blossom access') : ('failed: '+(r.error||'')));
-    }catch(e){ toast('blossom access change failed'); }
   }
   /* EDIT FROM THE NEWEST PROFILE THERE IS, NEVER FROM WHAT THE PAGE WAS PAINTED WITH.
    *

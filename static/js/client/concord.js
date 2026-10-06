@@ -939,7 +939,6 @@
       try{ const pk=window.NostrTools.nip19.decode(np).data,pr=profOf?profOf(pk)||{}:{}; return pre+'@'+(pr.display_name||pr.name||np.slice(0,12)+'…'); }catch(_){ return whole; }
     });
   }
-  function lastActivity(room){ return channelsOf(room).reduce((n,c)=>Math.max(n,...testMessages(channelStoreId(room,c.name)).map(x=>Number(x.at)||0)),0); }
   function channelReadKey(room,name){ return 'pc.concord.read.'+(room&&room.naddr||'')+':'+(name||'general'); }
   function seenAt(room,name){
     if(!room||!room.naddr)return 0;
@@ -1791,7 +1790,6 @@
   }
   async function deriveWebxdcUrlTopic(url,messageId){if(!window.PCWebxdc||!PCWebxdc.deriveUrlTopic)throw new Error('Webxdc topic support is unavailable');return PCWebxdc.deriveUrlTopic(url,messageId);}
   function mintWebxdcTopic(){if(!window.PCWebxdc||!PCWebxdc.mintTopic)throw new Error('Webxdc topic support is unavailable');return PCWebxdc.mintTopic();}
-  function webxdcHtml(m,room,channel){ const app=webxdcOf(m,room,channel); return app&&window.PCWebxdc&&PCWebxdc.cardHtml?PCWebxdc.cardHtml(app):''; }
   function hydrateWebxdcCards(room){if(!window.PCWebxdc||!PCWebxdc.cardHtml||!document.querySelectorAll)return;const epoch=++webxdcHydrationEpoch,byId=new Map(activeMessages(room).map(m=>[messageId(m),m])),rows=[...document.querySelectorAll('.cc-message[data-message-id]')];let at=0;const batch=()=>{if(epoch!==webxdcHydrationEpoch)return;const end=Math.min(rows.length,at+8);for(;at<end;at++){const el=rows[at],m=byId.get(el.dataset.messageId),app=m&&webxdcOf(m,room,state.channel),html=app&&PCWebxdc.cardHtml(app),body=el.querySelector('.cc-message-body'),old=body&&body.querySelector('.xdc-card');if(!html||!body)continue;let stale=!old;if(old){try{const prior=JSON.parse(old.dataset.xdc||'null');stale=!prior||prior.uuid!==app.uuid||prior.urlTopicMessageId!==app.urlTopicMessageId||prior.url!==app.url||JSON.stringify(prior.transport||null)!==JSON.stringify(app.transport||null);}catch(_){stale=true;}}if(stale){if(old)old.remove();body.insertAdjacentHTML('beforeend',html);}}if(at<rows.length)(window.requestAnimationFrame||setTimeout)(batch);};(window.requestAnimationFrame||setTimeout)(batch);}
   function hexBytes(s){ const h=String(s||''); if(!/^[0-9a-f]+$/i.test(h)||h.length%2)throw new Error('invalid encrypted image key'); return new Uint8Array(h.match(/../g).map(x=>parseInt(x,16))); }
   function bytesHex(a){ return [...new Uint8Array(a)].map(x=>x.toString(16).padStart(2,'0')).join(''); }

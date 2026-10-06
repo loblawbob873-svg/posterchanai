@@ -1469,7 +1469,6 @@
     NT, _capPlugin, _eventId, _instanceBase, _ncRelays, _renderSignerApps, toast, uiConfirm,
   }; }
   function _signerMod(){ return _lzGet('signer.js', 'PCSignerFactory', _signerDeps); }
-  function _signerLoad(){ return _lzLoad('signer.js', 'PCSignerFactory', _signerDeps); }
 
   const Nip55 = _lzProxy(_signerMod, 'Nip55');   // the module's own object, reached through a Proxy
   const Nip46 = _lzProxy(_signerMod, 'Nip46');   // the module's own object, reached through a Proxy
@@ -7217,7 +7216,6 @@
     _tl.loading=false;
   }
   let _redrawT=null;
-  function scheduleRedraw(){ if(_redrawT) return; _redrawT=setTimeout(()=>{ _redrawT=null; _drawTimeline(true); }, 350); }
   /* Is this a REPLY, or a quote that merely references another note?
    *
    * "any `e` tag means a reply" is wrong, and wrong in a way you can see: NIP-10 gives an e-tag a
@@ -7260,13 +7258,6 @@
       u=u.replace(/[)\].,!?]+$/,'');
       return /\.(jpe?g|png|gif|webp|avif|mp4|webm|mov|m4v)(\?|#|$)/i.test(u) || /\/[0-9a-f]{64}(\?|#|$)/i.test(u);
     }) || false;
-  }
-  function prependNote(ev, fn){
-    if (isMutedView(ev)) return;
-    if (fn && !fn(ev)) return;
-    const feed=$('#feed'); const sp=feed.querySelector('.spinner'); if(sp)sp.remove(); const em=feed.querySelector('.empty'); if(em)em.remove();
-    const node=_noteNode(ev);
-    if(node){ const box=_tlNotes(feed); box.insertBefore(node, box.firstChild); hydrate(node.parentElement); }
   }
 
   // ---------- bookmarks timeline ----------
@@ -10303,7 +10294,6 @@
     selfProof, toast, uiConfirm, uploadBlob,
   }; }
   function _filesIndexMod(){ return _lzGet('filesindex.js', 'PCFilesIndexFactory', _filesIndexDeps); }
-  function _filesIndexLoad(){ return _lzLoad('filesindex.js', 'PCFilesIndexFactory', _filesIndexDeps); }
 
   const FilesIdx = _lzProxy(_filesIndexMod, 'FilesIdx');   // the module's own object, reached through a Proxy
   function _shaFromUrl(url){ const m=String(url||'').match(/([0-9a-f]{64})/i); return m?m[1].toLowerCase():''; }
@@ -10661,7 +10651,6 @@
     musicTracks, renderMusicApp, toast, trackUrl,
   }; }
   function _musicPlayerMod(){ return _lzGet('musicplayer.js', 'PCMusicPlayerFactory', _musicPlayerDeps); }
-  function _musicPlayerLoad(){ return _lzLoad('musicplayer.js', 'PCMusicPlayerFactory', _musicPlayerDeps); }
 
   const MusicPlayer = _lzProxy(_musicPlayerMod, 'MusicPlayer');   // the module's own object, reached through a Proxy
   _musiclibMod();   // eager: musiclib.js is built here, at boot — see its entry points above

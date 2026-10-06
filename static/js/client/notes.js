@@ -540,12 +540,6 @@
     if(path === FOLDER_NONE || !path) return 'Unfiled';
     return path;
   }
-  // path -> the folder record that owns it (a synthesised parent has none)
-  function _folderByPath(){
-    const m = new Map();
-    if(_lib) for(const f of _lib.folders.values()) if(f.name) m.set(f.name, f);
-    return m;
-  }
   const _pathOf = n => { const f = _lib && _lib.folders.get(n.folder); return f ? f.name : ''; };
   // Notes in this path OR anything beneath it — picking "Family" must not hide "Family/Work".
   const _inPath = (n, path) => { const p = _pathOf(n); return p === path || p.startsWith(path + '/'); };

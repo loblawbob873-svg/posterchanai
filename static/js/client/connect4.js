@@ -113,7 +113,6 @@
       if(active){ try{ await move(g,'resign'); }catch(_){} }
       _hide(g._gid||g.root); _load();
     }
-    function _colFull(cells, c){ return !!cells[0*COLS+c]; }   // top cell of column filled = full
     function _boardHtml(cells){
       let h='<div class="c4-board">';
       for(let r=0;r<ROWS;r++) for(let c=0;c<COLS;c++){

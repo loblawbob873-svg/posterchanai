@@ -3062,29 +3062,6 @@ setTimeout(() => {
     }
 }, 500);
 
-// Global function for copying addresses
-function copyAddress(inputId) {
-    const input = document.getElementById(inputId);
-    if (!input || !input.value) {
-        alert('No address to copy');
-        return;
-    }
-    
-    input.select();
-    input.setSelectionRange(0, 99999); // For mobile devices
-    
-    try {
-        document.execCommand('copy');
-        alert('Address copied to clipboard!');
-    } catch (err) {
-        // Fallback: use Clipboard API
-        navigator.clipboard.writeText(input.value).then(() => {
-            alert('Address copied to clipboard!');
-        }).catch(() => {
-            alert('Failed to copy. Please select and copy manually.');
-        });
-    }
-}
 
 // Global function to open photo gallery - can be called directly from onclick
 window.openPhotoGallery = function() {

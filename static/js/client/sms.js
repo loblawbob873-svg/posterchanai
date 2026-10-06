@@ -343,7 +343,6 @@
    * per session, behind the first paint, by `legacySweep`. (Measured on the same deployment: all
    * 4,619 archive events carry `l=pcai-sms`, so the sweep is a repair path, not the ordinary one.) */
   function archiveFilters(){ return [FILTER(), BROAD_FILTER()]; }
-  function liveFilters(){ return [FILTER()]; }
   function archiveRows(events){
     const seen = new Set();
     return onlyTexts(events).filter(ev => {

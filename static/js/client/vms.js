@@ -1041,10 +1041,6 @@
     if(!r.ok){ toast(r.noAnswer ? 'No answer from the host' : (r.error.message || r.error.code)); return; }
     openIsos(pk);
   }
-  function httpBase(h){
-    if(h && /^https?:\/\//.test(h.https || '')) return h.https.replace(/\/+$/, '');
-    try{ const u = new URL(h.relay); return (u.protocol === 'ws:' ? 'http:' : 'https:') + '//' + u.host; }catch(_){ return ''; }
-  }
   async function isoUpload(pk, file){
     // ISOs go through BLOSSOM, not a per-host upload endpoint: the client uploads to the media store
     // it already uses (public, 5 GB blobs), and the host PULLS the blob from its OWN Blossom by sha256

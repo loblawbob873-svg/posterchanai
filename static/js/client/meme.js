@@ -466,12 +466,6 @@
       l.xout = (xf > 0 && i < list.length - 1) ? xf : 0;
     });
   }
-  // Where a clip dragged to `center` (seconds, its midpoint) belongs in the sequence of the OTHERS.
-  function dropIndex(others, center){
-    let idx=0, acc=0;
-    for(const o of others){ const w=+o.dur||0; if(center > acc + w/2) idx++; acc+=w; }
-    return Math.min(idx, others.length);
-  }
 
   // Rows read TOP-FIRST, like every editor: P.layers is draw order (last = on top), so the list is
   // reversed for display. Without this the row you saw at the top was actually the BOTTOM layer —

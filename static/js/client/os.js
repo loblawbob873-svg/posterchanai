@@ -723,7 +723,6 @@
    * one entry. apps() itself stays flat on purpose — routeView, openApp and the window bookkeeping
    * all key on real view names, and a folder is a presentation detail, not a place things live. So
    * switchView('chess') still opens a Chess window, from anywhere, folder or no folder. */
-  function launcherItems(){ return layout().items; }
 
   // ---- reading and writing the document ---------------------------------------------------------
 
@@ -4335,11 +4334,6 @@
    * handoff and launch paths read the same as before. */
   function shouldSelectMessagesTab(w, requested){
     return false;
-  }
-  function _retiredShouldSelectMessagesTab(w, requested){
-    if(!w || (requested!=='messages'&&requested!=='concord')) return false;
-    if(!sameAppWindow(String(w.view||''), requested)) return false;
-    return String(w.appView||w.view||'') !== requested;
   }
 
   // Return from a tool to the exact frame that launched it, preserving its parked DOM and route.
