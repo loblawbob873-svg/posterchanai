@@ -36,3 +36,46 @@ def test_deploy_uses_the_versioned_source_controlled_mirror_script():
     assert sync.count("./scripts/refresh_apk.sh") >= 3
     assert "sleep 240" in sync and "sleep 120" in sync
     assert "/home/verita84/posterchan-apk/refresh.sh" not in sync
+
+
+def _wait(tmp_path, answers, **env):
+    """Run the shipped scripts/wait_apk_build.sh with a stub `gh` answering `answers` in turn."""
+    import os
+    import subprocess
+    bin_ = tmp_path / "bin"
+    bin_.mkdir()
+    (tmp_path / "answers").write_text("\n".join(answers) + "\n")
+    (bin_ / "gh").write_text('#!/bin/bash\nf=%s\nline=$(head -1 "$f"); sed -i 1d "$f"; '
+                             'echo "$*" >> %s; printf "%%s\\n" "$line"\n'
+                             % (tmp_path / "answers", tmp_path / "calls"))
+    (bin_ / "gh").chmod(0o755)
+    e = dict(os.environ, PATH=f"{bin_}:{os.environ['PATH']}", PC_APK_POLL="0", PC_APK_NONE="3", PC_APK_LIMIT="6")
+    e.update(env)
+    r = subprocess.run(["bash", str(ROOT / "scripts/wait_apk_build.sh"), "abc123def"], env=e,
+                       capture_output=True, text=True, timeout=30)
+    calls = (tmp_path / "calls").read_text().splitlines() if (tmp_path / "calls").exists() else []
+    return r.returncode, r.stdout, calls
+
+
+def test_the_mirror_waits_for_this_commits_build_through_the_emulator_checks(tmp_path):
+    """Deploy 104: the APK waited ~40 min on the emulator checks, the fixed-delay refreshes all fetched the
+    PREVIOUS build, and /apk served 2469 while 2472 was published. It must wait for THIS commit's run."""
+    rc, out, calls = _wait(tmp_path, ["queued null", "in_progress null", "in_progress null", "completed success"])
+    assert rc == 0 and "built" in out, out
+    assert len(calls) == 4 and all("--commit abc123def" in c and "android.yml" in c for c in calls), calls
+
+
+def test_a_failed_build_is_never_mirrored(tmp_path):
+    rc, out, _ = _wait(tmp_path, ["in_progress null", "completed failure"])
+    assert rc == 1 and "failure" in out, out
+
+
+def test_a_deploy_with_no_android_build_does_not_wait_the_full_hour(tmp_path):
+    rc, out, calls = _wait(tmp_path, ["", "", "", "", ""])
+    assert rc == 0 and "no Android build" in out and len(calls) == 3, (out, calls)
+
+
+def test_sync_waits_for_the_build_before_the_first_refresh():
+    sync = (ROOT / "sync.sh").read_text()
+    block = sync[sync.index("./scripts/wait_apk_build.sh"):]
+    assert block.index("./scripts/wait_apk_build.sh") < block.index("./scripts/refresh_apk.sh")

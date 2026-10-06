@@ -213,8 +213,13 @@ git push origin master:main || echo "[sync] WARN: could not fast-forward the hos
 # that was just replaced. That exact race left /apk on 1.0.1850 after GitHub and Zapstore had 1.0.1854.
 # Refresh again at widening intervals. The mirror script is atomic, refuses downgrades, and is a no-op
 # when bytes already match, so every retry is safe while eventual CDN convergence repairs the endpoint.
+#
+# AND WAIT FOR THIS COMMIT'S BUILD FIRST. The APK workflow now waits for the emulator checks (20-45 min),
+# so refreshes on fixed delays all fetched the PREVIOUS build and /apk sat a release behind
+# (scripts/wait_apk_build.sh says why in full). The retries after it are the CDN convergence above.
+APK_SHA=$(git rev-parse HEAD)
 (
-  sleep 240
+  ./scripts/wait_apk_build.sh "$APK_SHA" || exit 0
   ./scripts/refresh_apk.sh || true
   sleep 120
   ./scripts/refresh_apk.sh || true
