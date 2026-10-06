@@ -61,7 +61,7 @@ window.PCProfileFactory = function(dep){
     if(_prof.loading || _prof.done || !_prof.pk || !_prof.oldest) return;
     _prof.loading=true; const pk=_prof.pk; const feed=$('#feed'); loadSentinel(feed);
     const until=_prof.oldest;
-    let evs=[]; try{ evs=await Relay.query([{ authors:[pk], kinds:[1,1068,6], until:until-1, limit:_PROF_PAGE }]); }catch(_){}
+    let evs=[]; try{ evs=await Relay.query([{ authors:[pk], kinds:[1,1111,1068,6], until:until-1, limit:_PROF_PAGE }]); }catch(_){}
     clearSentinel(feed);
     if(S.VIEW!=='profile' || _prof.pk!==pk){ _prof.loading=false; return; }
     let minTs=until;
@@ -355,7 +355,7 @@ window.PCProfileFactory = function(dep){
     const _loadNotes = async () => {
       let notes=[];
       for(let attempt=0; attempt<3; attempt++){
-        try{ notes=await Relay.query([{authors:[pk],kinds:[1,1068,6],limit:_PROF_PAGE}]); }catch(_){ notes=[]; }   // polls + reposts
+        try{ notes=await Relay.query([{authors:[pk],kinds:[1,1111,1068,6],limit:_PROF_PAGE}]); }catch(_){ notes=[]; }   // + NIP-22 comments (replies), polls, reposts
         if(S.VIEW!=='profile' || myGen!==_profGen) return false;   // navigated away / a newer profile opened
         /* AN ANSWER NO RELAY FINISHED IS NOT "NOTHING MORE", WHATEVER THE CACHE HOLDS. This broke out as
            soon as the cache had ANY note by this author -- so a profile the timeline had shown one post

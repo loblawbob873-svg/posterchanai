@@ -129,3 +129,48 @@ def test_the_posts_tab_of_a_reply_heavy_author_fills_itself():
     assert p["n"] >= 8, ("the Posts tab stayed nearly empty instead of paging on", got)
     assert p["maxGapHours"] <= 21, ("the Posts tab skipped posts the relay has", got)
     assert got["pages"] >= 1, got
+
+
+# THE GAP THE LIVE CHECK FOUND AFTER DEPLOY 116. On poster.place every kind-1 reply was on the profile and
+# 638 replies were not: they were kind 1111 (NIP-22 comments on kind-1 posts, `K 1`) -- most of what this
+# account replies with. The Replies tab already LISTED 1111 from the cache, but the profile never ASKED the
+# relay for it, so the tab showed whichever 1111s the timeline happened to leave behind: an "11 day gap".
+# This relay honours `kinds`, as a real one does.
+STUB_1111 = r"""(()=>{
+const PK='%s', now=Math.floor(Date.now()/1000), H=3600;
+const ev=i=>i%%20 ? {id:(''+i).padStart(64,'0'),kind:1111,pubkey:PK,created_at:now-i*H,content:'comment number '+i,
+    tags:[['E','f'.repeat(64)],['K','1'],['P','d'.repeat(64)],['e','f'.repeat(64)],['k','1'],['p','d'.repeat(64)]],sig:''}
+  : {id:(''+i).padStart(64,'0'),kind:1,pubkey:PK,created_at:now-i*H,content:'post number '+i,tags:[],sig:''};
+window.__relay=[]; for(let i=0;i<300;i++) __relay.push(ev(i));
+window.__asked=[];
+const real=Relay.query.bind(Relay);
+Relay.query=async(filters,...rest)=>{
+  const f=filters&&filters[0]||{};
+  if(f.authors&&f.authors[0]===PK && (f.kinds||[]).includes(1)){
+    __asked.push({kinds:f.kinds,until:f.until||null});
+    const out=__relay.filter(e=>f.kinds.includes(e.kind) && (!f.until||e.created_at<=f.until)).slice(0,f.limit||80);
+    out.complete=true; return out; }
+  return real(filters,...rest); };
+return true;})()""" % PK
+
+
+@pytest.mark.skipif(not Path("/opt/google/chrome/chrome").exists(), reason="Chrome required")
+def test_replies_made_as_nip22_comments_are_on_the_replies_tab():
+    got = {}
+
+    async def check(b):
+        await b.call("Emulation.setDeviceMetricsOverride", {"width": 1100, "height": 900, "deviceScaleFactor": 1, "mobile": False})
+        await desktop.login(b)
+        await b.js("try{ if(window.PCOS && PCOS.isOn()) PCOS.exit(); }catch(_){}")
+        await b.js(STUB_1111)
+        await b.js("__PC.openProfile('%s');true" % PK)
+        await b.until("!!document.querySelector('.prof-tab[data-tab=\"replies\"]')")
+        await asyncio.sleep(.8)
+        await b.js("document.querySelector('.prof-tab[data-tab=\"replies\"]').click();true")
+        await asyncio.sleep(.8)
+        got["replies"] = await b.js(GAPS)
+        got["asked"] = await b.js("__asked")
+
+    asyncio.run(desktop.with_browser("online", "", check))
+    assert any(1111 in a["kinds"] for a in got["asked"]), ("the profile never asked the relay for its NIP-22 comments", got["asked"])
+    assert got["replies"]["n"] >= 20 and got["replies"]["maxGapHours"] <= 2, ("the Replies tab skipped the comments", got)

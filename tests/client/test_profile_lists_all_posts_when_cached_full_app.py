@@ -30,7 +30,7 @@ SETUP = r'''(async()=>{const me=__PC.me(); window.__all=[];
   const q=Relay.query.bind(Relay); window.__noteQueries=0;
   Relay.query=async(f,...r)=>{
     const s=JSON.stringify(f);
-    if(s.includes('"authors":["'+me.pubkey+'"]') && s.includes('"kinds":[1,1068,6]')){
+    if(s.includes('"authors":["'+me.pubkey+'"]') && /"kinds":\[1,(1111,)?1068,6\]/.test(s)){
       __noteQueries++;
       const a = __noteQueries===1 ? [] : __all.slice();
       a.complete = __noteQueries!==1;                          // first: no relay finished
