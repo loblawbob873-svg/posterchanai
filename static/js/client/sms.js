@@ -4702,7 +4702,27 @@
            choose 🦆, which can only be sent as a bare emoji — an ordinary message on the other
            phone, not a reaction. (`openEmojiPopover` takes `anchored`/`unicodeOnly` and no way to
            restrict the set, so misusing it would have meant rejecting most of what it offered.) */
+        /* PLACED BY MEASURING WHERE IT LANDED, not by converting. The desktop scales the page with
+           body{zoom}, and how style.left relates to getBoundingClientRect() under zoom differs between
+           Chrome versions -- writing the anchor's rect straight into style.left opened this row far from
+           the message at PosterChanOS's zoom (off-screen: the hover ☺ "does nothing"), and dividing by the
+           zoom was right on one Chrome and 425px off on the next. So: put the element at 0,0, read where
+           that is ON SCREEN and how big it came out, and move it by the difference at the measured scale.
+           Everything is decided in on-screen pixels, the only space the anchor and the viewport share. */
         const r = anchor.getBoundingClientRect();
+        const vw = window.innerWidth, vh = window.innerHeight;
+        const place = (el, want) => {
+          // The SCALE OF A MOVE, measured: size and offset need not scale alike under zoom.
+          el.style.left = '100px'; el.style.top = '0px';
+          const moved = el.getBoundingClientRect().left;
+          el.style.left = '0px';
+          const at = el.getBoundingClientRect();
+          const k = (moved - at.left) / 100 > 0.05 ? (moved - at.left) / 100 : 1;
+          const p = want(at.width, at.height);
+          el.style.left = ((p.left - at.left) / k) + 'px';
+          el.style.top = ((p.top - at.top) / k) + 'px';
+          return p;
+        };
         let pop = null, acts = null;
         if(canReact){
           pop = document.createElement('div');
@@ -4713,9 +4733,11 @@
             `<button data-kind="${f.kind}" title="${f.kind}" aria-label="${f.kind}"${
               mine && mine.kind === f.kind ? ' class="on" aria-pressed="true"' : ''}>${f.emoji}</button>`).join('');
           document.body.appendChild(pop);
-          pop.style.left = Math.max(4, Math.min(r.left + (r.width - pop.offsetWidth) / 2, window.innerWidth - pop.offsetWidth - 4)) + 'px';
-          const above = r.top - pop.offsetHeight - 6;
-          pop.style.top = (above >= 4 ? above : r.bottom + 6) + 'px';
+          pop._at = place(pop, (w, h) => {
+            const above = r.top - h - 6;
+            return { left: Math.max(4, Math.min(r.left + (r.width - w) / 2, vw - w - 4)),
+                     top: above >= 4 ? above : r.bottom + 6, h };
+          });
         }
         if(actions && actions.length){
           acts = document.createElement('div');
@@ -4723,9 +4745,10 @@
           acts.setAttribute('role', 'menu');
           acts.innerHTML = actions.map((a, i) => `<button role="menuitem" data-i="${i}"${a.danger ? ' class="danger"' : ''}>${enc(a.label)}</button>`).join('');
           document.body.appendChild(acts);
-          acts.style.left = Math.max(4, Math.min(r.left, window.innerWidth - acts.offsetWidth - 4)) + 'px';
-          const below = r.bottom + 6 + (pop && parseFloat(pop.style.top) > r.top ? pop.offsetHeight + 6 : 0);
-          acts.style.top = Math.min(below, window.innerHeight - acts.offsetHeight - 4) + 'px';
+          place(acts, (w, h) => {
+            const below = r.bottom + 6 + (pop && pop._at && pop._at.top > r.top ? pop._at.h + 6 : 0);
+            return { left: Math.max(4, Math.min(r.left, vw - w - 4)), top: Math.min(below, vh - h - 4) };
+          });
         }
         const shut = () => { if(pop) pop.remove(); if(acts) acts.remove(); document.removeEventListener('pointerdown', away, true); document.removeEventListener('keydown', esc, true); };
         const away = ev => { if(!(pop && pop.contains(ev.target)) && !(acts && acts.contains(ev.target)) && ev.target !== anchor) shut(); };
