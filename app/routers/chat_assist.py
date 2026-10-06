@@ -45,6 +45,11 @@ class AssistReq(BaseModel):
     history: list[dict] = []      # action=window_steps: this panel's earlier requests, answers and done steps
     commands: bool = False        # action=window_steps: the window is a terminal the person may run commands in
     controls: list = []           # action=window_steps: the target window's visible controls, numbered by the client
+    recipe: str = ""              # action=window_recipe: summary | tasks | draft | tidy | checklist
+    text: str = ""                # action=window_recipe: the window's own text box (the note being tidied)
+    reply_ref: Optional[int] = None   # action=window_recipe: the window's own Reply control, when its box is closed
+    box_ref: Optional[int] = None     # action=window_recipe: the text box a tidied note replaces
+    box_label: str = ""
 
 
 @router.post("")
@@ -77,6 +82,10 @@ async def chat_assist(req: AssistReq, db: Session = Depends(get_db),
             return {"ok": True, **(await svc.window_steps(
                 db, user, [w.model_dump() for w in req.windows], req.instruction, req.history,
                 req.commands, req.today, req.controls))}
+        if action == "window_recipe":
+            return {"ok": True, **(await svc.window_recipe(
+                db, user, [w.model_dump() for w in req.windows], req.recipe, req.today, req.text,
+                req.instruction, req.reply_ref, req.box_ref, req.box_label))}
         if action == "window":
             return {"ok": True, "answer": await svc.ask_window(
                 db, user, [w.model_dump() for w in req.windows], req.instruction)}

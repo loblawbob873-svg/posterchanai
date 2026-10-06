@@ -2467,15 +2467,49 @@
     return {title:String(w.title||'Window').slice(0,160),view:String(w.appView||w.view||'').slice(0,160),
             kind:w.native!=null?'native app':'PosterChan app',selection:selection.slice(0,4000),text:visible};
   }
-  function windowAISuggestions(w,ctx){
+  /* THE BUTTONS: WHAT EACH ONE PRODUCES, NOT A PROMPT ("we need the actions to actually be useful").
+   * They used to be canned sentences sent through free-form step planning, and measured against the
+   * node's own model that was unsafe as well as weak: Email's "Draft reply" typed invented payment details
+   * into the account field, "Extract tasks" proposed sending a reply, Messages' "Draft reply" answered
+   * "What should I say?" with no conversation open. A `recipe` has one fixed outcome, decided on the server
+   * (chat_assist_service.RECIPES): the model writes only the text and the buttons around it are built from
+   * what is on screen -- a summary saves to Notes, a draft goes into THIS conversation's reply box, a tidied
+   * note replaces the note with Undo, to-dos get Add to Calendar. Offered only where they can work: Draft
+   * needs a reply box or a Reply button, Tidy needs a note with text in it. A `starter` puts a sentence in
+   * the ask box for the person to finish. Selection and terminal keep the free-form path (they answer). */
+  const _AI_CONVO=/message|telegram|\btg\b|texts?\b|sms|chat|concord|mail|email|inbox|dm\b/;
+  const _AI_FEED=/social|global|home|notification|trending|nostr|feed|timeline/;
+  function _aiReplyRef(ctl){
+    const hit=(ctl&&ctl.list||[]).find(c=>(c.role==='button'||c.role==='link')&&/^\s*(?:↩\s*)?reply\s*$/i.test(c.label));
+    return hit?hit.ref:null;
+  }
+  function windowAISuggestions(w,ctx,composer){
     const key=(ctx.title+' '+ctx.view).toLowerCase();
-    if(ctx.selection) return [['Explain selection','Explain the selected content clearly.'],['Summarize selection','Summarize the selected content into concise bullets.'],['Rewrite selection','Rewrite the selected content for clarity while preserving its meaning.']];
-    if(/terminal|console|shell/.test(key)) return [['Explain output','Explain the terminal output and identify the likely cause.'],['Plan a fix','Propose a safe, step-by-step fix for what this terminal window shows.'],['Make a script','Turn the visible terminal task into a reusable script.']];
-    if(/firefox|browser|web/.test(key)) return [['Summarize page','Summarize the current page and list its key claims.'],['Research this','Identify questions worth verifying and make a research plan.'],['Extract tasks','Extract decisions, deadlines, and action items from this page.']];
-    if(/telegram|message|chat|mail/.test(key)) return [['Catch me up','Summarize the conversation and unresolved questions.'],['Draft reply','Draft a concise reply, but do not send it.'],['Extract tasks','Extract commitments, dates, and follow-ups.']];
-    if(/file|drive|folder/.test(key)) return [['Organize','Suggest a useful organization plan for these files.'],['Find patterns','Describe meaningful groups, duplicates, or naming problems.'],['Next action','Recommend the most useful next action for this window.']];
-    if(/settings/.test(key)) return [['Optimize','Recommend settings for a fast, quiet, privacy-conscious computer.'],['Explain options','Explain the visible settings and their tradeoffs.'],['Check setup','Review the visible configuration for likely omissions.']];
-    return [['Summarize','Summarize what is visible in this window.'],['Do it for me','Look at what this window is for and do the most useful next thing in it for me, step by step, with its own buttons and fields.'],['Extract tasks','Extract decisions and next actions from this window.']];
+    if(ctx.selection) return [{label:'Explain selection',hint:'Explain the selected content clearly.'},
+      {label:'Summarize selection',hint:'Summarize the selected content into concise bullets.'},
+      {label:'Rewrite selection',hint:'Rewrite the selected content for clarity while preserving its meaning.'}];
+    if(/terminal|console|shell/.test(key)) return [{label:'Explain output',hint:'Explain the terminal output and identify the likely cause.'},
+      {label:'Plan a fix',hint:'Propose a safe, step-by-step fix for what this terminal window shows.'},
+      {label:'Make a script',hint:'Turn the visible terminal task into a reusable script.'}];
+    const todo={label:'To-dos & dates',hint:'Every task, request and deadline — with Add to Calendar',recipe:'tasks'};
+    if(_AI_CONVO.test(key)){
+      const canReply=!!composer || !!_aiReplyRef(_aiControls(w));
+      return [canReply?{label:'Draft a reply',hint:'Written from this conversation, put in the reply box — never sent',recipe:'draft'}:null,
+        {label:'Catch me up',hint:canReply?'What this conversation says and what it needs from you':'What is new here and what needs you',recipe:'summary'},
+        todo].filter(Boolean);
+    }
+    if(/notes?\b/.test(key)){
+      const text=composer?String(composer.isContentEditable?composer.textContent:composer.value).trim():'';
+      if(text) return [{label:'Tidy this note',hint:'Fix spelling, group and format it — every fact kept, with Undo',recipe:'tidy'},
+        {label:'Make it a checklist',hint:'Turn it into - [ ] items you can tick off, with Undo',recipe:'checklist'},
+        {label:'Summarize',hint:'The key points, saved to Notes if you want',recipe:'summary'},todo];
+      return [{label:'Summarize',hint:'What these notes are about',recipe:'summary'},todo];
+    }
+    if(_AI_FEED.test(key)) return [{label:'Catch me up',hint:'What people here are talking about, and anything asked of you',recipe:'summary'},
+      {label:'Events & to-dos',hint:'Meetings, deadlines and requests in these posts — with Add to Calendar',recipe:'tasks'},
+      {label:'Write a post…',hint:'Tell it what about — it fills in the post box for you to check',starter:'Write a post about '}];
+    return [{label:'Summarize',hint:'The key points of this window, saved to Notes if you want',recipe:'summary'},todo,
+      {label:'Help me with…',hint:'Say what you want done here — it uses this window\'s own buttons',starter:''}];
   }
   function closeWindowAI(w){ const p=w&&w.aiPanel;if(p){p.remove();w.aiPanel=null;} }
   /* WHERE "Open in AI" GOES. In a popped-out window (PosterChanOS: Social, Notes, Files… are each
@@ -2830,7 +2864,19 @@
    * steps -- each a button; nothing runs, sends, saves or opens until the person presses it. "Continue"
    * re-reads the window (a terminal's new output, a page that changed) and asks for what comes next,
    * carrying what was asked and what was done in this panel. Never hands off to the AI Chat screen. */
-  async function _aiSteps(w,panel,contexts,instruction,composer,turns,isTerm){
+  /* THE PART OF THE WINDOW A REPLY IS ABOUT. A mail window is the inbox list AND the open message, and
+   * given both the model answered the wrong email ("I'll forward the invoice to Dana"). Walk out from the
+   * reply box (or the Reply button) to the first container holding a real amount of text: that is the
+   * open conversation. Sent as the window's selection, which the server already reads first. */
+  function _aiFocusText(w,anchor){
+    const root=w&&(w.body||w.el); if(!root||!anchor||!root.contains(anchor)) return '';
+    for(let el=anchor.parentElement; el && el!==root; el=el.parentElement){
+      const t=String(el.innerText||'').replace(/\s+/g,' ').trim();
+      if(t.length>=240) return t.slice(0,4000);
+    }
+    return '';
+  }
+  async function _aiSteps(w,panel,contexts,instruction,composer,turns,isTerm,recipe){
     if(_aiBusy.has(panel)) return;
     const box=panel.querySelector('.osw-ai-answer'); if(!box) return;
     const cmds=!!(isTerm && (panel.querySelector('[data-ai-cmds]')||{}).checked);
@@ -2838,7 +2884,23 @@
     box.innerHTML='<span class="spinner"></span> Thinking…';
     let res=null, error='';
     const ctl=_aiControls(w);                 // read NOW: the numbers below mean what is on screen now
-    try{ res=await _aiPost({action:'window_steps',windows:contexts,instruction,history:turns.slice(-4),commands:cmds,today:_aiToday(),controls:ctl.list}); }
+    let body;
+    if(recipe&&recipe.recipe){
+      const box=composer&&composer.isConnected?composer:null;
+      const boxRef=box?([...ctl.map].find(([,el])=>el===box)||[])[0]||null:null;
+      const replyRef=boxRef?null:_aiReplyRef(ctl);
+      const anchor=box||(replyRef?ctl.map.get(replyRef):null);
+      const wins0=contexts.slice();
+      if(anchor && recipe.recipe!=='tidy' && recipe.recipe!=='checklist'){
+        const focus=_aiFocusText(w,anchor);
+        if(focus && wins0[0] && !wins0[0].selection) wins0[0]=Object.assign({},wins0[0],{selection:focus});
+      }
+      const label=boxRef?((ctl.list.find(c=>c.ref===boxRef)||{}).label||''):replyRef?((ctl.list.find(c=>c.ref===replyRef)||{}).label||'Reply'):'';
+      body={action:'window_recipe',recipe:recipe.recipe,windows:wins0,today:_aiToday(),
+            text:(recipe.recipe==='tidy'||recipe.recipe==='checklist')&&box?String(box.isContentEditable?box.textContent:box.value).slice(0,8000):'',
+            reply_ref:replyRef,box_ref:boxRef,box_label:label};
+    }else body={action:'window_steps',windows:contexts,instruction,history:turns.slice(-4),commands:cmds,today:_aiToday(),controls:ctl.list};
+    try{ res=await _aiPost(body); }
     catch(e){ error=(e&&e.message)||'Could not reach the AI — check your connection.'; }
     finally{ _aiBusy.delete(panel); }
     if(w.aiPanel!==panel) return;                       // closed while it was thinking
@@ -2975,11 +3037,11 @@
     // Where an "Insert" would go: remembered NOW, before the panel's own box takes the focus.
     const composer=_aiComposer(w);
     const ctx=contexts[0], panel=document.createElement('div'); panel.className='osw-ai-panel';w.aiPanel=panel;
-    const suggestions=windowAISuggestions(w,ctx);
+    const suggestions=windowAISuggestions(w,ctx,composer);
     const isTerm=/terminal|console|shell/i.test(ctx.title+' '+ctx.view);
     panel.innerHTML=`<header><span>✨</span><div><b>AI for ${enc(ctx.title)}</b><small>${ctx.selection?'Using your selection':ctx.kind==='native app'?'App name only · private by default':'Using visible window text'}</small></div><button data-ai-dismiss aria-label="Close"><svg class="ic" aria-hidden="true"><use href="#i-close"></use></svg></button></header>
       ${related.length?`<div class="osw-ai-context"><b>${contexts.length} connected windows</b><span>${contexts.map(x=>enc(x.title)).join(' → ')}</span><button data-ai-clear>Clear</button></div>`:'<div class="osw-ai-tip">Shift-click ✨ to collect windows, or drag one sparkle onto another.</div>'}
-      <div class="osw-ai-actions">${suggestions.map((x,i)=>`<button data-ai-action="${i}"><b>${enc(x[0])}</b><span>${enc(x[1])}</span></button>`).join('')}</div>
+      <div class="osw-ai-actions">${suggestions.map((x,i)=>`<button data-ai-action="${i}"${x.recipe?` data-recipe="${enc(x.recipe)}"`:''}${x.starter!=null?' data-starter':''}><b>${enc(x.label)}</b><span>${enc(x.hint)}</span></button>`).join('')}</div>
       <label>Ask about this window<textarea rows="2" placeholder="${w.native==null?'Tell it what to do here — “fill this in and save it”':'What would you like PosterChan AI to do?'}"></textarea></label>
       ${isTerm?'<label class="osw-ai-agent"><input type="checkbox" data-ai-cmds checked> Suggest commands I can run here with one click</label>':''}
       ${w.native==null?`<label class="osw-ai-agent"><input type="checkbox" data-ai-watch ${w.aiWatch?'checked':''}> Watch this window and glow when its contents change</label>`:''}
@@ -2989,6 +3051,7 @@
     /* ANSWERED HERE, WITH BUTTONS -- never by loading the AI Chat screen ("we need interactive Agentic
      * features with buttons, not loading up AI Chat"). `turns` is this panel's memory for ↻ Continue. */
     const turns=[];
+    const ta=panel.querySelector('textarea');
     /* READ THE WINDOW WHEN ASKED, not when the panel opened: the controls already were, and the text was
      * not -- so posts that loaded after ✨ was pressed had buttons the model could press and words it could
      * not read ("No posts yet." beside two Reply buttons, measured). Same as Continue. */
@@ -2997,8 +3060,15 @@
       _aiSteps(w,panel,fresh,instruction,composer,turns,isTerm);};
     panel.querySelector('[data-ai-dismiss]').onclick=()=>closeWindowAI(w);
     const clear=panel.querySelector('[data-ai-clear]');if(clear)clear.onclick=()=>{_aiContextWins.forEach(x=>x.el.classList.remove('ai-context'));_aiContextWins.clear();closeWindowAI(w);toggleWindowAI(w,button);};
-    panel.querySelectorAll('[data-ai-action]').forEach(b=>b.onclick=()=>ask(suggestions[+b.dataset.aiAction][1]));
-    const ta=panel.querySelector('textarea');panel.querySelector('[data-ai-ask]').onclick=()=>ask(ta.value);
+    panel.querySelectorAll('[data-ai-action]').forEach(b=>b.onclick=()=>{
+      const x=suggestions[+b.dataset.aiAction]; if(!x) return;
+      if(x.starter!=null){ ta.value=x.starter; ta.focus(); try{ ta.setSelectionRange(ta.value.length,ta.value.length); }catch(_){ } return; }
+      if(!x.recipe){ ask(x.hint); return; }
+      panel._aiRounds=0;
+      const fresh=[w,..._aiContextWins].filter((y,k,a)=>a.indexOf(y)===k&&(y===w||wins.includes(y))).map(windowAIContext);
+      _aiSteps(w,panel,fresh,x.label,composer,turns,isTerm,x);
+    });
+    panel.querySelector('[data-ai-ask]').onclick=()=>ask(ta.value);
     const watch=panel.querySelector('[data-ai-watch]');if(watch)watch.onchange=()=>{
       if(w.aiWatch){w.aiWatch.disconnect();w.aiWatch=null;w.el.classList.remove('ai-watching','ai-alert');PC().toast('Stopped watching '+w.title);}
       if(watch.checked){let timer=0;w.aiWatch=new MutationObserver(records=>{const meaningful=records.some(r=>!(r.type==='childList'&&r.target===w.body&&[...r.addedNodes,...r.removedNodes].every(n=>n===realFeed)));if(!meaningful)return;clearTimeout(timer);timer=setTimeout(()=>{if(!wins.includes(w))return;w.el.classList.add('ai-alert');try{PC().toast('✨ '+w.title+' changed');}catch(_){}},700);});w.aiWatch.observe(w.body,{subtree:true,childList:true,characterData:true});w.el.classList.add('ai-watching');PC().toast('Watching '+w.title);}

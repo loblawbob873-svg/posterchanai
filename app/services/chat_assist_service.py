@@ -26,7 +26,7 @@ from app.services.texts_ai_service import TextsAiError as AssistError
 logger = logging.getLogger(__name__)
 
 MEDIA = {"telegram": "Telegram chat message", "dm": "direct message (DM)"}
-ACTIONS = ("reply", "summarize", "links", "window", "window_event", "window_steps")
+ACTIONS = ("reply", "summarize", "links", "window", "window_event", "window_steps", "window_recipe")
 
 # A summary may read further back than a reply needs, but a whole year of a group chat never goes to
 # the model: the newest SUMMARY_MSGS messages, each clipped, and a total ceiling on top.
@@ -701,6 +701,155 @@ async def window_steps(db, user, windows, instruction: str, history=None, comman
     logger.info("[chat-assist] window steps: %d windows -> %d tasks, %d steps",
                 len(context), len(res["tasks"]), len(res["steps"]))
     return res
+
+
+# ---- the ✨ panel's own buttons: RECIPES, not plans ----------------------------------------------------
+# Measured against the node's own model (2026-10-06), the buttons were canned prompts sent through free-form
+# step planning, and what came back was not just weak but unsafe: Email's "Draft reply" typed invented
+# payment details ("Wire $45 to account ending in 8921") into the ACCOUNT field, "Extract tasks" proposed
+# SENDING a reply, Messages' "Draft reply" answered "What should I say?" with no conversation open, and
+# Notes' "Do it for me" searched for its own instruction. ("we need the actions to actually be useful")
+#
+# A recipe has ONE fixed outcome. The model writes only the TEXT -- plain prose, which a small model does
+# far more reliably than a JSON plan -- and the buttons around it are built here, from what the client
+# says is on screen, so they cannot wander: a summary can be saved to Notes, a draft goes into the reply
+# box (after pressing the window's own Reply when the box is not open yet), a tidied note replaces the
+# note with Undo, tasks get "Add to Calendar". Nothing a recipe produces can send, delete or navigate.
+RECIPES = ("summary", "tasks", "draft", "tidy", "checklist")
+RECIPE_TEXT_MAX = 8000
+_NO_INVENT = ("Use ONLY what the window shows. Never invent facts, amounts, account or card numbers, "
+              "addresses, phone numbers, dates, times, names or promises.")
+# Only a DRAFT may leave a gap for the person to fill; asked of a summary, the model printed "[placeholder]"
+# as if it were content (measured).
+_GAPS = " Where the user has to supply something you do not know, write a short [placeholder] in square brackets."
+_PREAMBLE = re.compile(r"^\s*(?:sure[,!.]?\s*)?(?:here(?:'s| is)[^:\n]{0,60}:|draft(?: reply)?:|reply:|"
+                       r"summary:|rewritten(?: note)?:|checklist:)\s*", re.I)
+
+
+def _windows_block(context: list) -> str:
+    if not context:
+        raise AssistError(400, "There is no window to ask about.")
+    parts = []
+    for i, (title, kind, label, text) in enumerate(context, 1):
+        body = text if text else "(no text available -- only the window's name is known)"
+        parts.append(f"Window {i}: \"{title}\" ({kind}), {label}:\n<<<WINDOW\n{body}\nWINDOW")
+    return "\n\n".join(parts)
+
+
+def build_recipe_messages(context: list, recipe: str, text: str = "", note: str = "") -> list:
+    """The messages for one recipe. `text` is the current value of the window's own text box (a note being
+    tidied); `note` is anything the person typed to steer it ("shorter", "in Spanish")."""
+    recipe = str(recipe or "")
+    if recipe not in RECIPES or recipe == "tasks":
+        raise AssistError(400, "Unknown action.")
+    text = str(text or "").strip()[:RECIPE_TEXT_MAX]
+    steer = re.sub(r"\s+", " ", str(note or "")).strip()[:INSTRUCTION_MAX]
+    lang = " Write in the language of the content."
+    if recipe == "summary":
+        system = ("Summarize what this window shows, for the person looking at it: the 3 to 7 points that "
+                  "matter most, each as a \"- \" bullet, saying who said or asked what. Lead with anything "
+                  "that needs them (a question to answer, a deadline, a request). No preamble, no closing line. "
+                  + _NO_INVENT + lang)
+    elif recipe == "draft":
+        system = ("Write the reply the user would send next in the conversation in this window: answer the "
+                  "latest message addressed to them, in a natural first-person voice, short (1-4 sentences "
+                  "unless the conversation needs more). Output ONLY the message text -- no greeting line "
+                  "about being an AI, no quotes, no explanation, no subject line. " + _NO_INVENT + _GAPS + lang)
+    else:
+        if not text:
+            raise AssistError(400, "There is no text in this window's box to work on.")
+        shape = ("as a checklist: one \"- [ ] \" line per thing to do, grouped under short headings when "
+                 "there are several topics" if recipe == "checklist" else
+                 "clean and well organised: fix spelling and grammar, put related lines together, use short "
+                 "headings and \"- \" bullets where they help")
+        system = ("Rewrite the user's note " + shape + ". Keep EVERY fact, number, link and name exactly; add "
+                  "nothing new and drop nothing that matters. Output ONLY the rewritten note." + lang)
+    user = _windows_block(context)
+    if text and recipe in ("tidy", "checklist"):
+        user = "The note to rewrite:\n<<<NOTE\n" + text + "\nNOTE\n\n(For context, the window it is in:)\n" + user
+    if steer:
+        user += "\n\nAlso: " + steer
+    return [{"role": "system", "content": system}, {"role": "user", "content": user}]
+
+
+def clean_recipe_text(out: str) -> str:
+    """The model's prose, without a 'Here is your draft:' preamble or wrapping quotes/fences."""
+    t = str(out or "").strip()
+    t = re.sub(r"^```[a-z]*\s*|\s*```$", "", t, flags=re.I).strip()
+    t = re.sub(r"<think>.*?</think>", "", t, flags=re.S | re.I).strip()
+    t = _PREAMBLE.sub("", t, count=1).strip()
+    if len(t) > 1 and t[0] == t[-1] and t[0] in "\"'“”":
+        t = t[1:-1].strip()
+    if t.startswith("“") and t.endswith("”"):
+        t = t[1:-1].strip()
+    return t[:RECIPE_TEXT_MAX]
+
+
+def build_tasks_messages(context: list, today: str = "") -> list:
+    """Tasks on their own prompt. Riding the step-planning one (controls, kinds, rules about Reply buttons)
+    found the projector and the invoice in one run and NOTHING in the next, same window (measured)."""
+    today = today if _DATE.match(str(today or "")) else ""
+    system = ("List what the person looking at this window has to DO: every task, request made of them, "
+              "follow-up, commitment and deadline in it -- one per item, nothing invented, nothing that is "
+              "merely news. Reply with ONLY a JSON object: {\"tasks\": [{\"text\": one concrete action "
+              "starting with a verb, \"due\": \"YYYY-MM-DD\" or \"\", \"who\": the person responsible if "
+              "named, else \"\"}]}; {\"tasks\": []} when there is nothing to do. Resolve relative dates "
+              "(\"Saturday\", \"tomorrow\") against today's date. " + _NO_INVENT)
+    return [{"role": "system", "content": system},
+            {"role": "user", "content": (f"Today is {today}.\n\n" if today else "") + _windows_block(context)}]
+
+
+_CHECK_LINE = re.compile(r"^(\s*)(?:[-*•]|\d+[.)])\s+(?!\[[ xX]\])")
+
+
+def as_checklist(text: str) -> str:
+    """Every list line a '- [ ] ' line, however the model bulleted it (it often wrote plain '- ')."""
+    return "\n".join(_CHECK_LINE.sub(r"\1- [ ] ", line) for line in str(text or "").split("\n"))
+
+
+def recipe_steps(recipe: str, body: str, reply_ref=None, box_ref=None, box_label: str = "") -> list:
+    """The buttons a recipe's result gets -- decided here, never by the model."""
+    if recipe == "summary":
+        return [{"do": "note", "label": "Save summary to Notes", "text": body}]
+    if recipe == "draft":
+        # ONE step. Into the reply box when it is open; else a "fill" on the window's own Reply control,
+        # which the client already turns into "press it, then type into the box it opens" -- never sent.
+        # With neither, the text is offered to copy.
+        ref = box_ref if isinstance(box_ref, int) and box_ref > 0 else reply_ref
+        if isinstance(ref, int) and ref > 0:
+            return [{"do": "fill", "ref": ref, "target": _clean(box_label, 80) or "Reply",
+                     "label": "Put it in the reply box", "text": body, "on": False}]
+        return [{"do": "insert", "label": "Put it in the reply box", "text": body}]
+    if recipe in ("tidy", "checklist") and isinstance(box_ref, int) and box_ref > 0:
+        return [{"do": "fill", "ref": box_ref, "target": _clean(box_label, 80) or "the note",
+                 "label": "Replace the note with this", "text": body, "on": False}]
+    return []
+
+
+async def window_recipe(db, user, windows, recipe: str, today: str = "", text: str = "", note: str = "",
+                        reply_ref=None, box_ref=None, box_label: str = "") -> dict:
+    recipe = str(recipe or "")
+    context = window_context(windows)
+    if recipe == "tasks":
+        out = await _chat(db, user, build_tasks_messages(context, today), 0.2)
+        if not out:
+            raise AssistError(502, "The AI did not come up with an answer — try again.")
+        res = parse_steps(out, False, True, None, "tasks")
+        tasks = res["tasks"]
+        answer = (f"{len(tasks)} thing{'s' if len(tasks) != 1 else ''} to do." if tasks
+                  else "Nothing to do in this window — no tasks, follow-ups or deadlines.")
+        logger.info("[chat-assist] window recipe tasks: %d windows -> %d tasks", len(context), len(tasks))
+        return {"answer": answer, "tasks": tasks, "steps": []}
+    out = await _chat(db, user, build_recipe_messages(context, recipe, text, note), 0.3)
+    body = clean_recipe_text(out)
+    if recipe == "checklist":
+        body = as_checklist(body)
+    if not body:
+        raise AssistError(502, "The AI did not come up with an answer — try again.")
+    logger.info("[chat-assist] window recipe %s: %d windows, %d chars in -> %d chars",
+                recipe, len(context), sum(len(c[3]) for c in context) + len(str(text or "")), len(body))
+    return {"answer": body, "tasks": [], "steps": recipe_steps(recipe, body, reply_ref, box_ref, box_label),
+            "recipe": recipe}
 
 
 # ---- "Add to Calendar" from the window ✨ answer -------------------------------------------------------

@@ -76,7 +76,9 @@ def test_the_sparkle_opens_the_panel_and_never_hands_off_to_ai_chat(width, heigh
         await b.js("document.querySelector('.osw-ai-panel [data-ai-action=\"0\"]').click()")
         await b.until("!!document.querySelector('.osw-ai-text')")
         req = await b.js("__req[0]")
-        assert req["action"] == "window_steps" and req["windows"][0]["kind"] == "PosterChan app" and req["commands"] is False, req
+        # The first button on a feed is a RECIPE now (a summary with a Save-to-Notes button built on the
+        # server), not a canned prompt through step planning -- see test_window_ai_recipes*.
+        assert req["action"] == "window_recipe" and req["recipe"] == "summary" and req["windows"][0]["kind"] == "PosterChan app", req
         assert await b.js(NEVER_AI) == {"asked": 0, "aiView": 0, "view": view0}
 
     asyncio.run(desktop.with_browser("online", "?pcwin=global", check))
@@ -163,7 +165,8 @@ def test_a_terminal_offers_run_and_type_buttons_and_other_windows_never_ask_for_
                    "steps:[{do:'command',label:'Show disk use',text:'df -h'}]}};")
         await b.js("document.querySelector('.osw-ai-panel [data-ai-action=\"0\"]').click()")
         await b.until("__req.length===1")
-        assert await b.js("__req[0].commands") is False, "a Social window must not be offered commands"
+        # A Social button is a recipe now, which carries no `commands` at all -- either way, never true.
+        assert await b.js("!!__req[0].commands") is False, "a Social window must not be offered commands"
         await b.js("document.querySelector('[data-ai-dismiss]').click()")
         await b.js("PCOSWin.viewOf=()=>'terminal'")
         await b.js("document.querySelector('#pc-oswin-chrome [data-action=\"ai\"]').click()")

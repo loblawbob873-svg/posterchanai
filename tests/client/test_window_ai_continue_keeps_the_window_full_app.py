@@ -40,7 +40,7 @@ def test_continue_in_a_popped_out_window_sends_that_window():
         await b.until("window.__aiCalls.length>=2")
         await asyncio.sleep(.3)
         calls = await b.js("window.__aiCalls.map(c=>({action:c.action,n:(c.windows||[]).length}))")
-        assert calls[0] == {"action": "window_steps", "n": 1}, calls
+        assert calls[0]["action"] in ("window_steps", "window_recipe") and calls[0]["n"] == 1, calls
         assert calls[1] == {"action": "window_steps", "n": 1}, f"Continue sent no window: {calls}"
         err = await b.js("(document.querySelector('.osw-ai-panel .osw-ai-answer.error')||{}).textContent||''")
         assert "no window" not in err, err
@@ -61,6 +61,11 @@ def test_every_panel_action_in_a_popped_out_window_reaches_the_ai_with_the_windo
         n = await b.js("document.querySelectorAll('.osw-ai-panel [data-ai-action]').length")
         assert n >= 3, f"only {n} suggestions"
         for i in range(n):
+            if await b.js(f"document.querySelectorAll('.osw-ai-panel [data-ai-action]')[{i}].hasAttribute('data-starter')"):
+                # A starter writes the beginning of a request into the ask box; it calls nothing.
+                await b.js(f"document.querySelectorAll('.osw-ai-panel [data-ai-action]')[{i}].click()")
+                assert await b.js("document.querySelector('.osw-ai-panel textarea')===document.activeElement")
+                continue
             before = await b.js("window.__aiCalls.length")
             await b.js(f"document.querySelectorAll('.osw-ai-panel [data-ai-action]')[{i}].click()")
             await b.until(f"window.__aiCalls.length>{before} && !!document.querySelector('.osw-ai-panel [data-ai-continue]')")
