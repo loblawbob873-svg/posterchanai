@@ -3487,3 +3487,33 @@ def test_a_number_after_a_hash_is_not_a_hashtag():
     for t in ("nostr", "web3", "_x"):
         assert f"/tags/{t}" in html_, (t, html_)
     assert convert.hashtags({"content": "#1 #2 #nostr", "tags": []}) == ["nostr"]
+
+
+def test_an_object_whose_mention_cannot_be_resolved_yet_is_503_not_500(client, world, monkeypatch):
+    """Measured on server1 right after a restart: a fediverse server fetched a post while the relay was
+    still starting; the post and its author read fine, but build_object's read of a MENTIONED person's
+    profile raised RelayUnavailable and the route answered 500 -- which the asking server takes as a
+    broken object. "Ask again shortly" is a 503."""
+    post = member_post("words")
+    world["relay"][post["id"]] = post
+
+    async def unavailable(ev, me):
+        raise actors.RelayUnavailable("the relay did not answer a profile read")
+    monkeypatch.setattr(outbox, "build_object", unavailable)
+    r = client.get(f"/ap/objects/{post['id']}", headers={"Accept": "application/activity+json"})
+    assert r.status_code == 503 and r.headers.get("retry-after"), r.status_code
+
+
+def test_pinned_posts_are_503_not_500_while_the_relay_cannot_answer(client, world, monkeypatch):
+    post = member_post("pinned")
+    world["relay"][post["id"]] = post
+
+    async def pins(pk):
+        return [post["id"]]
+
+    async def unavailable(ev, me):
+        raise actors.RelayUnavailable("the relay did not answer a profile read")
+    monkeypatch.setattr(actors, "featured_ids", pins)
+    monkeypatch.setattr(outbox, "build_object", unavailable)
+    r = client.get("/ap/users/alice/featured", headers={"Accept": "application/activity+json"})
+    assert r.status_code == 503 and r.headers.get("retry-after"), r.status_code

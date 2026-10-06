@@ -233,7 +233,10 @@ async def featured(name: str):
         ev = await ob._event(eid)
         if not ev or ev.get("pubkey") != pk:
             continue
-        obj, _ctx = await ob.build_object(ev, me)
+        try:
+            obj, _ctx = await ob.build_object(ev, me)
+        except _RELAY_DOWN:
+            return _relay_down()       # it resolves the people a post mentions: a strict read of its own
         if obj is not None:
             items.append(obj)
     return _ap({**_collection(f"{me}/featured", len(items)), "orderedItems": items})
@@ -338,7 +341,12 @@ async def note(event_id: str, request: Request):
     if _wants_html(request):
         return RedirectResponse(f"{config.base_url()}/{convert._nevent_or_note(event_id)}", status_code=302)
     me = await _url_of(ev["pubkey"])
-    doc, _ctx = await ob.build_object(ev, me)
+    try:
+        doc, _ctx = await ob.build_object(ev, me)
+    except _RELAY_DOWN:
+        # It resolves every person the post MENTIONS, each a strict profile read of its own. Unguarded,
+        # the relay starting up after a restart made this a 500 -- a broken object to the asking server.
+        return _relay_down()
     if doc is None:
         # A reply deep in a Nostr-only thread: it was never sent, and it is not served either.
         raise HTTPException(404, "Not Found")
