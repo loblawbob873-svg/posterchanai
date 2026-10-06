@@ -61,7 +61,7 @@ def xmr_of(profile: dict) -> str:
     """Run the SHIPPED xmrOf against a profile object."""
     program = (
         "const _XMR_RX=" + re.search(r"const _XMR_RX=(/[^;]+/);", APP).group(1) + ";\n"
-        + _fn("isXmrAddr") + "\n" + _fn("xmrOf") + "\n"
+        + _fn("isXmrAddr") + "\n" + _fn("_profileFields") + "\n" + _fn("xmrOf") + "\n"
         + f"process.stdout.write(String(xmrOf({json.dumps(profile)})));")
     done = subprocess.run(["node", "-e", program], capture_output=True, text=True, timeout=60)
     assert done.returncode == 0, done.stderr[-600:]

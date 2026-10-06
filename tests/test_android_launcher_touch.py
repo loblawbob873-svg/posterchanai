@@ -13,7 +13,9 @@ STUBS = {
 "android/graphics/Rect.java": "package android.graphics; public class Rect { int l,t,r,b; public void set(int l,int t,int r,int b){this.l=l;this.t=t;this.r=r;this.b=b;} public boolean contains(int x,int y){return x>=l&&x<r&&y>=t&&y<b;} }",
 "android/graphics/Paint.java": "package android.graphics; public class Paint { public static final int ANTI_ALIAS_FLAG=1; public enum Style {STROKE,FILL} public Paint(int f){} public void setStyle(Style s){} public void setStrokeWidth(float f){} public void setColor(int c){} }",
 "android/graphics/Canvas.java": "package android.graphics; public class Canvas { public void drawLine(float a,float b,float c,float d,Paint p){} public void drawRoundRect(float a,float b,float c,float d,float e,float f,Paint p){} public void drawCircle(float a,float b,float c,Paint p){} }",
-"android/view/MotionEvent.java": "package android.view; public class MotionEvent { public static final int ACTION_DOWN=0,ACTION_UP=1,ACTION_MOVE=2,ACTION_CANCEL=3; int a; float x,y; public MotionEvent(int a,float x,float y){this.a=a;this.x=x;this.y=y;} public int getActionMasked(){return a;} public float getX(){return x;} public float getY(){return y;} }",
+# DeskView forwards a tap on empty desk to the live wallpaper (COMMAND_TAP); here it reaches no one.
+"android/app/WallpaperManager.java": "package android.app; public class WallpaperManager { public static final String COMMAND_TAP=\"android.wallpaper.tap\"; public static WallpaperManager getInstance(android.content.Context c){return new WallpaperManager();} public void sendWallpaperCommand(Object t,String a,int x,int y,int z,Object b){} }",
+"android/view/MotionEvent.java": "package android.view; public class MotionEvent { public static final int ACTION_DOWN=0,ACTION_UP=1,ACTION_MOVE=2,ACTION_CANCEL=3; int a; float x,y; public MotionEvent(int a,float x,float y){this.a=a;this.x=x;this.y=y;} public int getActionMasked(){return a;} public float getX(){return x;} public float getY(){return y;} public float getRawX(){return x;} public float getRawY(){return y;} }",
 "android/view/ViewConfiguration.java": "package android.view; public class ViewConfiguration { public static ViewConfiguration get(android.content.Context c){return new ViewConfiguration();} public int getScaledTouchSlop(){return 8;} public int getScaledMinimumFlingVelocity(){return 50;} }",
 "android/view/VelocityTracker.java": "package android.view; public class VelocityTracker { public static VelocityTracker obtain(){return new VelocityTracker();} public void recycle(){} public void addMovement(MotionEvent e){} public void computeCurrentVelocity(int n){} public float getYVelocity(){return 0;} }",
 "android/view/HapticFeedbackConstants.java": "package android.view; public class HapticFeedbackConstants { public static final int LONG_PRESS=0; }",
@@ -24,7 +26,7 @@ STUBS = {
  public int getWidth(){return w;} public int getHeight(){return h;} public int getMeasuredWidth(){return w;} public int getMeasuredHeight(){return h;}
  public void measure(int w,int h){this.w=w;this.h=h;} public void layout(int l,int t,int r,int b){w=r-l;h=b-t;}
  public boolean postDelayed(Runnable r,long ms){timer=r;return true;} public boolean removeCallbacks(Runnable r){if(timer==r)timer=null;return true;}
- public boolean performHapticFeedback(int n){return true;} public boolean onTouchEvent(MotionEvent e){return false;}
+ public Object getWindowToken(){return null;} public boolean performHapticFeedback(int n){return true;} public boolean onTouchEvent(MotionEvent e){return false;}
  public static class MeasureSpec {public static final int EXACTLY=1; public static int getSize(int s){return s;} public static int makeMeasureSpec(int s,int m){return s;}}
  }""",
 "android/view/ViewGroup.java": """package android.view; public class ViewGroup extends View {

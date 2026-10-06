@@ -37,7 +37,7 @@ const Store={query:filters=>stored.filter(e=>e.pubkey===filters[0].authors[0]&&f
 const DISCOVERY_RELAYS=['wss://discovery.example'];
 const Relay={query:async()=>{const rows=remote.slice();Object.defineProperty(rows,'complete',{value:complete});return rows;},queryFrom:async()=>[],publish:async e=>{publishes.push(e);if(publishOK)remote=[e];return {ok:publishOK,msg:'Relay unavailable'};}};
 const sign=async(kind,content,tags,created_at=Math.floor(Date.now()/1000))=>{signCalls++;if(signMode==='reject')throw new Error('Signer refused');const event=NostrTools.finalizeEvent({kind,content,tags:signMode==='change'?[['payto','lightning','wrong@test.test']]:tags,created_at},key);if(holdSign)await new Promise(r=>releaseSign=r);return event;};
-let profile={name:'Alice'};const profOf=()=>profile,xmrOf=p=>p.monero_address||'',bchOf=()=>'',xmrForNote=()=>'';
+let profile={name:'Alice'};const profOf=()=>profile,xmrOf=p=>p.monero_address||'',bchOf=()=>'',ethOf=()=>'',xmrForNote=()=>'';
 const qrSrc=()=>'',copyValue=()=>{},toast=s=>toastMessage=s,uiConfirm=async()=>{confirmCalls++;return true;};
 const ClientSettings={get:(_k,d)=>d},xmrPresets=()=>[0.00001];
 window.PCMoneroWallet={tip:async opts=>{lastTip=opts;return true;}};
