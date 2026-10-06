@@ -180,14 +180,27 @@ async function disconnect(device){ await control(['device', 'disconnect', device
 /** Forget a network entirely — the saved profile AND its stored secret. */
 async function forget(ssid){ await control(['connection', 'delete', 'id', ssid]); return { ssid }; }
 
+/* THE WI-FI SWITCH ("there is no way to turn off wifi on posterchanOS"). Off is `nmcli radio wifi
+ * off` -- NetworkManager's own soft switch, which drops the connection and stops scanning -- through
+ * the same `sudo -n` route as a join, since it is a network-control change. The state is READ back
+ * rather than assumed from what was asked: a hardware kill switch or rfkill can hold it off, and a
+ * panel showing "on" over a radio that refused is the bug this exists to fix. */
+async function radioOn(){
+  const out = String(await run(['-t', 'radio', 'wifi'])).trim().toLowerCase();
+  if(out === 'enabled') return true;
+  if(out === 'disabled') return false;
+  throw new Error('nmcli did not say whether wifi is on: ' + out.slice(0, 60));
+}
 async function radio(on){
   await control(['radio', 'wifi', on === false ? 'off' : 'on']);
-  return { wifi: on !== false };
+  let now = on !== false;
+  try{ now = await radioOn(); }catch(_){}
+  return { wifi: now };
 }
 
 /** What the shell puts in the corner: are we on, over what, and how good is it. */
 async function status(){
-  const [devs, nets] = await Promise.all([devices(), wifi(false).catch(() => [])]);
+  const [devs, nets, on] = await Promise.all([devices(), wifi(false).catch(() => []), radioOn().catch(() => null)]);
   const online = devs.find(d => d.state === 'connected' && d.type !== 'loopback');
   const active = nets.find(n => n.active);
   return {
@@ -196,6 +209,8 @@ async function status(){
     name: online ? online.connection : '',
     signal: active ? active.signal : 0,
     devices: devs,
+    hasWifi: devs.some(d => d.type === 'wifi'),
+    wifiOn: on,                 // true / false / null = could not be read (never shown as either)
   };
 }
 
@@ -429,5 +444,5 @@ async function deleteBridge(name){
   return { ok: true, name, restored, warnings: errors };
 }
 
-module.exports = { available, devices, wifi, saved, connect, disconnect, forget, radio, status,
+module.exports = { available, devices, wifi, saved, connect, disconnect, forget, radio, radioOn, status,
                    monitor, fields, bridges, createBridge, deleteBridge, cleanSpec };

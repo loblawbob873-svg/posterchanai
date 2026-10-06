@@ -44,6 +44,10 @@ case "$*" in
     printf ' :Neighbour:52:WPA2:5240 MHz\n'
     printf ' :OpenGuest:30:--:2462 MHz\n'
     printf ' ::19:WPA2:2412 MHz\n' ;;
+  "-t radio wifi")
+    cat "$PC_RADIO" 2>/dev/null || echo enabled ;;
+  *"radio wifi off"*) echo disabled > "$PC_RADIO" ;;
+  *"radio wifi on"*) [ -n "$PC_RADIO_STUCK" ] || echo enabled > "$PC_RADIO" ;;
   *"connection show"*)
     printf 'Cafe\\: Free:802-11-wireless:wlan0\n'
     printf 'Wired:802-3-ethernet:--\n' ;;
@@ -92,7 +96,8 @@ class NmcliClient(unittest.TestCase):
              "catch(e){ out.threw = String(e.message || e); }\n" \
              "process.stdout.write(JSON.stringify(out)); })();" % (json.dumps(NET), script)
         env = dict(os.environ, PC_NMCLI=self.bin, PC_NMCLI_LOG=self.log, PC_NMCLI_STDIN=self.stdin,
-                   PC_SUDO=self.sudo, PC_SUDO_REFUSE=self.refuse)
+                   PC_SUDO=self.sudo, PC_SUDO_REFUSE=self.refuse,
+                   PC_RADIO=os.path.join(self.dir, "radio"), PC_RADIO_STUCK=getattr(self, "stuck", ""))
         r = subprocess.run([NODE, "-e", js], capture_output=True, text=True, timeout=60, env=env)
         self.assertEqual(r.returncode, 0, r.stderr[-1500:])
         return json.loads(r.stdout)
@@ -199,6 +204,22 @@ class NmcliClient(unittest.TestCase):
         self.assertEqual(s["name"], "Cafe: Free")
         self.assertEqual(s["signal"], 71)
         self.assertNotIn("lo", [d["device"] for d in s["devices"] if d["state"] == "connected"])
+
+    def test_wifi_can_be_switched_off_and_on_and_says_which(self):
+        """Reported: "there is no way to turn off wifi on posterchanOS"."""
+        out = self.run_js("out.a = (await N.status()).wifiOn; out.off = await N.radio(false);"
+                          "out.b = (await N.status()).wifiOn; out.on = await N.radio(true);"
+                          "out.c = (await N.status()).wifiOn; out.has = (await N.status()).hasWifi;")
+        self.assertEqual((out["a"], out["off"], out["b"], out["on"], out["c"], out["has"]),
+                         (True, {"wifi": False}, False, {"wifi": True}, True, True))
+        self.assertIn("SUDO " + self.bin + " radio wifi off", self._argv(),
+                      "the switch is a network-control change and must take the sudo route a join does")
+
+    def test_a_radio_that_will_not_come_on_is_reported_off(self):
+        """A hardware kill switch holds it off; the panel must not draw "on" because that was asked for."""
+        self.stuck = "1"
+        out = self.run_js("await N.radio(false); out.r = await N.radio(true);")
+        self.assertEqual(out["r"], {"wifi": False})
 
     def test_the_escape_helper_handles_a_backslash_too(self):
         out = self.run_js(r"out.f = N.fields('a\\\\b:c\\:d:e');")

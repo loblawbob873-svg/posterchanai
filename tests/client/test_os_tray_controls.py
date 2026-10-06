@@ -42,7 +42,7 @@ function el(tag){
         k.textContent = '';
         for(const d of ['app','win','os','ssid','sec','act','prof','mute','kind',
                         'qs','val','sink','mix','mixvol','device','mastervol','mastermute','masterval','shot','p','d',
-                        'saved','pw','pwjoin','pwcancel']){
+                        'saved','pw','pwjoin','pwcancel','radio']){
           const a = attr(raw, 'data-' + d);
           if(a !== null) k.dataset[d] = a;
         }
@@ -251,6 +251,58 @@ class Tray(unittest.TestCase):
     # THE NATIVE POPUP: on PosterChanOS this panel is its own window, and closing the popover closes it.
     # Set BEFORE osshell.js loads (it decides IN_POPUP once), by riding the bridges object.
     WIN_WM = SAVED_WM.replace("{ pcWM:", "{ location: {search: '?pcpopup=net'}, close: () => { globalThis.__closed = true; }, pcWM:", 1)
+
+    RADIO_WM = WM.replace(
+        "pcNet: { status: async () => ({online: true, kind: 'wifi', name: 'home', signal: 71}),",
+        "pcNet: { status: async () => (globalThis.__radio === false"
+        " ? {online: false, kind: '', name: '', signal: 0, hasWifi: true, wifiOn: false}"
+        " : {online: true, kind: 'wifi', name: 'home', signal: 71, hasWifi: true, wifiOn: true}),"
+        " radio: async (on) => { (globalThis.__radioCalls = globalThis.__radioCalls || []).push(on);"
+        " globalThis.__radio = on; return {wifi: on}; },", 1)
+
+    def test_wifi_can_be_turned_off_and_back_on_from_the_network_panel(self):
+        """Reported: "there is no way to turn off wifi on posterchanOS". The bridge had `radio()` all
+        along and nothing on screen ever called it."""
+        out = self.run_js(self.RADIO_WM, self.OPEN_QUICK + self.NET_PANEL + """
+          const sw = () => globalThis.__lastPop.querySelector('.os-pop-h').querySelectorAll('[data-radio]')[0];
+          out.hasSwitch = !!sw();
+          out.before = sw() && sw().className;
+          if(sw()) await sw().onclick({stopPropagation(){}});
+          await new Promise(r => setTimeout(r, 80));
+          out.afterOff = sw() && sw().className;
+          out.offBody = body()._html;
+          out.offRows = body().querySelectorAll('[data-ssid]').length;
+          globalThis.__scanned = false;
+          if(sw()) await sw().onclick({stopPropagation(){}});
+          await new Promise(r => setTimeout(r, 2700));
+          out.afterOn = sw() && sw().className;
+          out.calls = globalThis.__radioCalls || [];
+          out.rescanned = !!globalThis.__scanned;
+        """)
+        self.assertIsNone(out.get("threw"), out.get("threw"))
+        self.assertTrue(out["hasSwitch"], "the network panel has no Wi-Fi switch")
+        self.assertIn(" on", out["before"], "a radio that is on is drawn off")
+        self.assertEqual(out["calls"], [False, True], "the switch never asked the machine")
+        self.assertNotIn(" on", out["afterOff"])
+        self.assertIn("Wi-Fi is off", out["offBody"])
+        self.assertEqual(out["offRows"], 0, "networks were listed with the radio off")
+        self.assertIn(" on", out["afterOn"])
+        self.assertTrue(out["rescanned"], "turning Wi-Fi back on did not look for networks")
+
+    def test_the_quick_settings_tile_says_wifi_is_off(self):
+        out = self.run_js(self.RADIO_WM, "globalThis.__radio = false;" + self.OPEN_QUICK + """
+          const t = pop.querySelectorAll('[data-os]').find(b => b.dataset.os === 'net');
+          out.html = pop._html;
+        """)
+        self.assertIn("Wi-Fi off", out["html"])
+
+    def test_a_machine_without_wifi_gets_no_switch(self):
+        """A desktop on a cable: a switch that does nothing is worse than none."""
+        wm = self.RADIO_WM.replace("hasWifi: true, wifiOn: true", "hasWifi: false, wifiOn: false")
+        out = self.run_js(wm, self.OPEN_QUICK + self.NET_PANEL + """
+          out.n = globalThis.__lastPop.querySelector('.os-pop-h').querySelectorAll('[data-radio]').length;
+        """)
+        self.assertEqual(out["n"], 0)
 
     def test_a_secured_network_is_asked_for_its_password_in_the_panel(self):
         """'I can never change wifi points. i choose the one I want to change it to and nothing

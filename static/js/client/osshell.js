@@ -393,7 +393,8 @@
   function panelSummary(state){
     const s = state || {};
     const net = !s.net ? { text: 'network unknown', known: false, online: false, kind: '' }
-              : !s.net.online ? { text: 'offline', known: true, online: false, kind: s.net.kind || '' }
+              : !s.net.online ? { text: s.net.wifiOn === false ? 'Wi-Fi off' : 'offline', known: true, online: false,
+                                  kind: s.net.kind || '', wifiOff: s.net.wifiOn === false }
               : { text: s.net.name || s.net.kind || 'online', known: true, online: true,
                   kind: s.net.kind || '',
                   signal: s.net.kind === 'wifi' ? s.net.signal : null };
@@ -862,10 +863,41 @@
     const net = NET(); if(!net) return;
     const d = openPop(anchor, `<div class="os-pop-h">Network</div><div class="os-pop-b">Looking…</div>`);
     let list = [], status = null;
-    try{ list = await net.wifi(true); }catch(_){ list = null; }
     try{ status = await net.status(); }catch(_){ status = null; }
+    const radioOff = !!status && status.wifiOn === false;
+    /* A scan with the radio off is refused, which would read as "the network could not be read". */
+    if(!radioOff){ try{ list = await net.wifi(true); }catch(_){ list = null; } }
     if(!_pop || _pop !== d) return;
     const body = d.querySelector('.os-pop-b');
+    /* THE WI-FI SWITCH ("there is no way to turn off wifi on posterchanOS"). It sits in the panel's
+     * header so it is there whatever the body says -- an empty room, a refused scan, a join that
+     * failed -- and it shows the state NetworkManager reports, never the one last asked for. Only on
+     * a machine with a wifi adapter whose state could be read: a desktop on a cable gets no switch
+     * that does nothing. */
+    const head = d.querySelector('.os-pop-h');
+    if(head && status && status.hasWifi && typeof status.wifiOn === 'boolean' && typeof net.radio === 'function'){
+      head.innerHTML = `Network <button class="os-pop-radio${radioOff ? '' : ' on'}" role="switch"
+          aria-checked="${radioOff ? 'false' : 'true'}" data-radio="1" title="Turn Wi-Fi ${radioOff ? 'on' : 'off'}">
+          <span class="os-pop-radio-k" aria-hidden="true"></span>Wi-Fi ${radioOff ? 'off' : 'on'}</button>`;
+      const sw = head.querySelector('[data-radio]');
+      sw.onclick = async (e) => {
+        e.stopPropagation();
+        sw.disabled = true;
+        body.innerHTML = `<div class="os-pop-none">Turning Wi-Fi ${radioOff ? 'on' : 'off'}…</div>`;
+        let r = null;
+        try{ r = await net.radio(radioOff); }
+        catch(err){ toast('Wi-Fi could not be switched ' + (radioOff ? 'on' : 'off') + ': ' + String((err && err.message) || err)); }
+        if(r && radioOff && r.wifi === false) toast('Wi-Fi stayed off — check the hardware switch, Fn key or airplane mode');
+        refresh();
+        // A radio just switched on is "unavailable" for a moment and refuses the scan the list needs.
+        if(radioOff && r && r.wifi) await new Promise(res => setTimeout(res, 2500));
+        if(_pop === d) netPop(anchor);
+      };
+    }
+    if(radioOff){
+      body.innerHTML = `<div class="os-pop-none">Wi-Fi is off.</div>`;
+      return;
+    }
     if(list === null){
       /* Could not ask is not "no networks". A wifi list that is empty because NetworkManager is not
        * running looks exactly like a room with no wifi in it. */
