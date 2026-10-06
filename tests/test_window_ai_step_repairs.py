@@ -58,3 +58,14 @@ def test_no_keypad_no_expansion():
 def test_a_destructive_verb_is_never_pressed_for_you():
     got = _run("notes-editor", "delete this note", {"answer": "", "steps": [{"do": "fill", "ref": 10, "text": "x"}]})
     assert not any(g[1] == "Delete note" for g in got), got
+
+
+def test_an_invented_magnet_on_a_button_just_presses_the_button():
+    got = _run("torrents", "add a magnet link", {"answer": "", "steps": [{"do": "fill", "ref": 6, "text": "magnet:xt9:..."}]})
+    assert got == [("click", "Add torrent", "")], got
+
+
+def test_find_news_about_x_searches_in_news():
+    got = _run("websearch", "find news about bitcoin", {"answer": "", "steps": [
+        {"do": "fill", "ref": 1, "text": "bitcoin"}, {"do": "click", "ref": 2}]})
+    assert ("fill", "Search the web", "bitcoin") in got and ("click", "News", "") in got, got

@@ -523,6 +523,12 @@ def parse_steps(text: str, commands: bool = False, want_tasks: bool = False, con
             # "[Your note title here]" is the model not knowing what to type, not something to type.
             if kind == "fill" and re.fullmatch(r"\s*[\[<{(].*[\]>})]\s*|.*\byour\b.*\bhere\b.*", txt, re.I | re.S):
                 continue
+            # An ELIDED token is a made-up stand-in too: "magnet:xt9:...", "0x1234…". Put on a button it was
+            # the model pressing the button and inventing what goes in the box -- press it, type nothing.
+            if kind == "fill" and re.fullmatch(r"\S*(\.\.\.|…)\S*", txt):
+                if role in _TEXTBOX_ROLES:
+                    continue
+                kind, txt = "click", ""
             if kind == "press":
                 txt = next((k for k in PRESS_KEYS if k.lower() == txt.lower()), "")
                 if not txt:
@@ -688,6 +694,16 @@ def _repair_steps(steps: list, refs: dict, instruction: str, near: dict | None =
         if q:
             out = [{"do": "fill", "ref": boxes[0], "target": refs[boxes[0]][1], "label": "Search " + q[:30], "text": q[:200], "on": False},
                    {"do": "press", "ref": boxes[0], "target": refs[boxes[0]][1], "label": "Run search", "text": "Enter", "on": False}]
+    # THE KIND OF RESULT THEY NAMED. "find news about bitcoin" typed bitcoin and searched the WEB, beside a
+    # News button (0/3). A button named in the words BEFORE the query is the category to search in.
+    if m and len(boxes) == 1:
+        before = low[:m.start(1)]
+        cats = [r for r, (role, lab) in refs.items()
+                if role in ("tab", "button") and 2 < len(lab) <= 15 and not _RISKY_NAV.search(lab)
+                and re.sub(r"^[^\w]+", "", lab.lower()).strip() not in ("search", "find", "go")
+                and re.search(r"\b" + re.escape(re.sub(r"^[^\w]+", "", lab.lower()).strip()) + r"\b", before)]
+        if len(cats) == 1 and not any(st.get("ref") == cats[0] for st in out):
+            out.append(_click(cats[0]))
     # THE ROW THEY NAMED. "open the receipt email" opened the invoice email beside a row that says receipt
     # (1/3). A distinctive word of the request found in exactly ONE row decides which row a row-click is.
     words = [w for w in re.findall(r"[a-z0-9']{4,}", low) if w not in _COMMON_WORDS]

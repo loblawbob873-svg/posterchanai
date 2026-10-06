@@ -231,7 +231,7 @@ def _note_title(f, r):
 
 
 def _note_body(f, r):
-    if not _filled(r, ctl(f, "Write… (markdown)"), "milk"):
+    if not _filled(r, ctl(f, "Note text"), "milk"):
         return "did not write into the note: " + json.dumps(acts(r))[:200]
     if _filled(r, ctl(f, "Note title"), "milk") or _filled(r, ctl(f, "Search notes"), "milk"):
         return "typed the note into the wrong box"
