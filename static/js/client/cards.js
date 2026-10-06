@@ -1360,7 +1360,7 @@ window.PCCardsFactory = function(dep){
     _dimAttrs, _dimLearn, _healGhostPairs, _hold, _mcSync, _media, _reaskMissing, actsRow, addrDiv,
     applyEmojis, applySobLive, bindDmMediaActions, bindFeedActions, countsFor, emojiHtml, emojiName,
     feedNoteHtml, hydratePolls, invalidateCounts, mediaParts, myReaction, myReactionIds, needAddr,
-    needEvent, noteHtml, openNaddr, quotedDiv, reactDisp, replyParentId, repostWithWarning,
+    needEvent, noteHtml, openNaddr, quotedDiv, reactDisp, replyContextHtml, replyParentId, repostWithWarning,
     get MediaDims(){ return MediaDims; },
     get VideoMount(){ return VideoMount; },
     get InstEmoji(){ return InstEmoji; },

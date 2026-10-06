@@ -8193,6 +8193,7 @@
   function quotedDiv(){ return _lzRun(_cardsMod, _cardsLoad, 'quotedDiv', arguments); }
   function reactDisp(){ return _lzRun(_cardsMod, _cardsLoad, 'reactDisp', arguments); }
   function replyParentId(){ return _lzRun(_cardsMod, _cardsLoad, 'replyParentId', arguments); }
+  function replyContextHtml(){ return _lzRun(_cardsMod, _cardsLoad, 'replyContextHtml', arguments); }
   function repostWithWarning(){ return _lzRun(_cardsMod, _cardsLoad, 'repostWithWarning', arguments); }
   const MediaDims = _lzProxy(_cardsMod, 'MediaDims');   // the module's own object, reached through a Proxy
   const VideoMount = _lzProxy(_cardsMod, 'VideoMount');   // the module's own object, reached through a Proxy
@@ -12295,25 +12296,47 @@
       if(!fresh.length) break;
       frontier=fresh;
     }
+    /* FETCH THE PARENTS THE REPLY QUERY DID NOT RETURN. Replies are found by `#e` against posts already
+     * held, so a deep reply (which tags the root) arrives while its DIRECT parent may not -- a parent
+     * that did not tag the root, or sits on a relay that did not answer. That reply was then hung off
+     * the ROOT, i.e. drawn as answering the original post: "replies seem disjointed ... replying earlier
+     * when they are not", while opening the reply itself (which climbs its ancestors) showed it right.
+     * Ask for the missing parents by id, a few bounded rounds. */
+    for(let round=0; round<3; round++){
+      const missing=[...new Set([...merged.values()]
+        .map(r=>r.id===root.id ? null : replyParentId(r))
+        .filter(p=>p && !merged.has(p) && /^[0-9a-f]{64}$/i.test(p)))].slice(0, 100);
+      if(!missing.length) break;
+      const got=await Relay.query([{ ids:missing, limit:missing.length }]).catch(()=>[]);
+      if(VIEW!=='thread' || renderThread._tok!==id) return;
+      let added=0;
+      for(const x of (got||[])) if(x && x.id && !merged.has(x.id)){ merged.set(x.id, x); added++; }
+      if(!added) break;
+    }
     const all=[...merged.values()];
     all.forEach(r=>{ Store.saveEvent(r); needProfile(r.pubkey); });
     if(VIEW!=='thread') return;
     $('#view-title').textContent='Thread';
-    // group replies under their parent (NIP-10); orphans (parent not in the set) hang off the root
+    // group replies under their parent (NIP-10). A parent that still could not be loaded hangs its reply
+    // off the root -- but SAYS so (below), instead of presenting it as a reply to the original post.
     const ids=new Set(all.map(x=>x.id));
-    const kids=new Map();
+    const kids=new Map(), orphans=new Set();
     for(const r of all){
       if(r.id===root.id) continue;
       let pid=replyParentId(r);
-      if(!pid || !ids.has(pid)) pid=root.id;
+      if(!pid || !ids.has(pid)){ if(pid && pid!==root.id) orphans.add(r.id); pid=root.id; }
       (kids.get(pid) || kids.set(pid,[]).get(pid)).push(r);
     }
     const seen=new Set([root.id]);
+    const INDENT_CAP=5;
     const renderNode=(node,depth)=>{
       if(seen.has(node.id)) return ''; seen.add(node.id);   // guard against malformed reply cycles
       const hl = node.id===id ? ' thread-hl' : '';
-      const ind = depth>0 ? ` style="margin-left:${Math.min(depth,5)*14}px"` : '';
-      let h=`<div class="thread-node${hl}" data-tid="${enc(node.id)}"${ind}>${noteHtml(node)}</div>`;
+      const ind = depth>0 ? ` style="margin-left:${Math.min(depth,INDENT_CAP)*14}px"` : '';
+      // The indent stops at INDENT_CAP levels, so past it (and for a reply whose parent never loaded) the
+      // position alone no longer says whom it answers: name the parent, as the feed does.
+      const ctx = (orphans.has(node.id) || depth>INDENT_CAP) ? replyContextHtml(node) : '';
+      let h=`<div class="thread-node${hl}" data-tid="${enc(node.id)}"${ind}>${ctx}${noteHtml(node)}</div>`;
       for(const c of (kids.get(node.id)||[]).sort((a,b)=>a.created_at-b.created_at)) h+=renderNode(c, depth+1);
       return h;
     };
