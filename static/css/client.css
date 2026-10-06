@@ -10996,6 +10996,42 @@ html.pc-oswin #app,html.pc-oswin .main{height:100%!important;min-height:0!import
 .pc-oswin-buttons button{width:44px;border:0;border-radius:0;background:transparent;color:var(--text);font-size:17px;cursor:pointer}
 .pc-oswin-buttons button:hover{background:rgba(255,255,255,.12)}
 .pc-oswin-buttons [data-action="close"]:hover{background:#c42b1c;color:#fff}
+/* WINDOW TITLES WEAR THE THEME ("all the posterchan window titles are lowercase and ugly, make it look
+   cool and cyberpunk, adjust for other themes as well"). One rule for both kinds of window -- a
+   popped-out toplevel's bar and an in-page `.osw` -- so the two never drift. Every colour is a palette
+   token, so the dark themes (cyberpunk, dark, monero, sovietgothic) each get their OWN neon: Orbitron,
+   uppercase, tracked out, a neon-to-accent gradient with a soft glow and a lit bar in front. The light
+   themes keep the type but lose the glow (a halo on a pale bar is a smudge); Professional is plain;
+   Windows 98 and XP get the title bars those systems actually had. */
+.pc-oswin-title,.osw-title{font-family:'Orbitron',system-ui,sans-serif;font-size:11px;font-weight:700;
+  letter-spacing:.16em;text-transform:uppercase;line-height:1.5;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;
+  background:linear-gradient(90deg,var(--neon),var(--accent));-webkit-background-clip:text;background-clip:text;
+  color:transparent;-webkit-text-fill-color:transparent;filter:drop-shadow(0 0 5px rgba(var(--accent-rgb),.5))}
+.pc-oswin-title::before,.osw-title::before{content:'';display:inline-block;width:3px;height:1em;margin-inline-end:9px;
+  vertical-align:-.15em;border-radius:2px;background:var(--neon);box-shadow:0 0 6px var(--neon),0 0 12px rgba(var(--accent-rgb),.55)}
+.osw:not(.focused) .osw-title{filter:none;opacity:.72}
+:root[data-theme="cherryblossom"] .pc-oswin-title,:root[data-theme="cherryblossom"] .osw-title,
+:root[data-theme="animegirl"] .pc-oswin-title,:root[data-theme="animegirl"] .osw-title{filter:none;font-weight:800}
+:root[data-theme="cherryblossom"] .pc-oswin-title::before,:root[data-theme="cherryblossom"] .osw-title::before,
+:root[data-theme="animegirl"] .pc-oswin-title::before,:root[data-theme="animegirl"] .osw-title::before{box-shadow:none}
+:root[data-theme="professional"] .pc-oswin-title,:root[data-theme="professional"] .osw-title{font-family:inherit;
+  letter-spacing:.1em;font-size:11px;background:none;color:var(--text);-webkit-text-fill-color:currentColor;filter:none}
+:root[data-theme="professional"] .pc-oswin-title::before,:root[data-theme="professional"] .osw-title::before{box-shadow:none;background:var(--accent)}
+:root[data-theme="win98"] #pc-oswin-chrome,:root[data-theme="win98"] .osw.focused .osw-bar{background:linear-gradient(90deg,#000080,#1084d0);border-color:#000080}
+:root[data-theme="win98"] .osw:not(.focused) .osw-bar{background:linear-gradient(90deg,#808080,#b5b5b5);border-color:#808080}
+:root[data-theme="win98"] .pc-oswin-title,:root[data-theme="win98"] .osw-title{font-family:Tahoma,'MS Sans Serif',sans-serif;
+  font-size:12px;letter-spacing:0;text-transform:none;background:none;color:#fff;-webkit-text-fill-color:#fff;filter:none;opacity:1}
+:root[data-theme="win98"] .pc-oswin-title::before,:root[data-theme="win98"] .osw-title::before{display:none}
+:root[data-theme="win98"] #pc-oswin-chrome .pc-oswin-buttons button,:root[data-theme="win98"] .osw-bar .osw-b{color:#000;
+  background:#c0c0c0;border:2px outset #fff;border-radius:0;margin:6px 1px;width:26px;font-size:13px}
+:root[data-theme="winxp"] #pc-oswin-chrome,:root[data-theme="winxp"] .osw.focused .osw-bar{border-color:#0831d9;
+  background:linear-gradient(180deg,#0997ff 0%,#0053ee 9%,#0050ee 40%,#0066ff 88%,#005bff 95%,#003dd7 100%)}
+:root[data-theme="winxp"] .osw:not(.focused) .osw-bar{background:linear-gradient(180deg,#7a96df,#6f87d6 60%,#91a7e6)}
+:root[data-theme="winxp"] .pc-oswin-title,:root[data-theme="winxp"] .osw-title{font-family:'Trebuchet MS',Tahoma,sans-serif;
+  font-size:13px;letter-spacing:0;text-transform:none;background:none;color:#fff;-webkit-text-fill-color:#fff;
+  filter:drop-shadow(1px 1px 0 #0f1089);opacity:1}
+:root[data-theme="winxp"] .pc-oswin-title::before,:root[data-theme="winxp"] .osw-title::before{display:none}
+:root[data-theme="winxp"] #pc-oswin-chrome .pc-oswin-buttons button,:root[data-theme="winxp"] .osw-bar .osw-b{color:#fff}
 /* A window is ONE view: no sidebar to navigate with, no mobile nav bar, no desktop behind it. The
    window manager is how you get to the others now — that is the entire point of it being a real
    window. The view itself is byte-identical to the web, which is the promise this rewrite made. */

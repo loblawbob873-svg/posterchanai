@@ -171,6 +171,19 @@
   const LEGACY_VIEWS = { __vms: 'vms' };
   /* A window that was opened (or restored) with no label handed over used to title itself with the
    * VIEW ID — "tg", "vms" — which is a route, not a name. The sidebar already names every view. */
+  /* WHAT A WINDOW IS CALLED. The opener's label when it is a NAME -- os.js hands over `w.label || view`,
+   * so a window with no label of its own arrived "labelled" with its route, and every restored window
+   * read "messages", "mail", "tg" in its title bar ("all the posterchan window titles are lowercase and
+   * ugly"). A label equal to the view id is no label: the sidebar names the view; a route the sidebar
+   * does not list is spelled as words ("media-center" -> "Media Center") rather than shown raw. */
+  function prettyView(view){
+    return String(view||'').replace(/^_+/,'').split(/[-_:\s]+/).filter(Boolean)
+      .map(w=>w.charAt(0).toUpperCase()+w.slice(1)).join(' ');
+  }
+  function titleFor(view, label){
+    const v=String(view||''), l=String(label||'').trim();
+    return (l && l!==v ? l : '') || EXTRA_LABELS[v] || navLabel(v) || prettyView(v) || 'PosterChan';
+  }
   function navLabel(view){
     try{
       const b=root.document.querySelector('.nav-item[data-view="'+String(view||'').replace(/["\\]/g,'')+'"]');
@@ -270,7 +283,7 @@
     let win = null;
     try{ win = root.open(url, '_blank', features); }catch(_){ win = null; }
     if(!win) return null;
-    try{ win.__PC_WINDOW_LABEL__ = String(label || EXTRA_LABELS[view] || navLabel(view) || view || ''); }catch(_){ }
+    try{ win.__PC_WINDOW_LABEL__ = titleFor(view, label); }catch(_){ }
     return win;
   }
 
@@ -424,7 +437,16 @@
         +'<button data-action="min" title="Minimise" aria-label="Minimise">−</button>'
         +'<button data-action="max" title="Maximise" aria-label="Maximise">□</button>'
         +'<button data-action="close" title="Close" aria-label="Close">×</button></span>';
-      bar.querySelector('.pc-oswin-title').textContent=String(state.label||EXTRA_LABELS[state.view]||navLabel(state.view)||state.view||'PosterChan');
+      const title=bar.querySelector('.pc-oswin-title');
+      title.textContent=titleFor(state.view,state.label);
+      /* The sidebar this reads may not be parsed yet when a window boots fast; ask again once the page
+       * and the app are up, but never over a name the opener actually gave. */
+      if(!(state.label && state.label!==state.view)){
+        const again=()=>{ try{ const t=titleFor(state.view,''); if(t && title.isConnected) title.textContent=t; }catch(_){ } };
+        try{ root.document.addEventListener('DOMContentLoaded',again,{once:true}); }catch(_){ }
+        try{ root.document.addEventListener('pc-app-ready',again,{once:true}); }catch(_){ }
+        try{ root.setTimeout(again,1500); }catch(_){ }
+      }
       (root.document.body||root.document.documentElement).prepend(bar);
       /* THE WINDOW'S BORDER, because nothing else on this surface draws one.
        *
