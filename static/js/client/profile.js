@@ -935,7 +935,9 @@ window.PCProfileFactory = function(dep){
         for(const e of (evs || [])) if(e && e.pubkey === me) Store.saveProfile(e);
       }catch(_){ /* offline: the freshest cached copy below is still better than the painted one */ }
     }
-    const fresh = me ? Store.profile(me) : null;
+    // RAW: the editor republishes this, so it must hold the name as the owner wrote it, not as it is
+    // shown (Store.profile tames Zalgo names for display).
+    const fresh = me ? (Store.profileRaw ? Store.profileRaw(me) : Store.profile(me)) : null;
     return _openProfileEditor(fresh || p || {});
   }
   function _openProfileEditor(p){

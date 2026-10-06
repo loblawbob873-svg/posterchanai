@@ -318,6 +318,32 @@
   // Collapse replaceable (0/3/1xxxx) + addressable (3xxxx, keyed by `d` tag) events to the LATEST per
   // key — the cache stores every version by id, but a real relay only serves the newest. Input MUST be
   // newest-first, so the first occurrence per key is the one to keep.
+  /* The combining marks Zalgo text is made of (Combining Diacritical Marks and their supplements,
+   * extended, for symbols, half marks). Indic, Thai, Hebrew and Arabic vowel marks are other blocks and
+   * never match, and an ordinary accent is precomposed by NFC, so a real name is never touched. */
+  const _ZALGO_MARK = /[\u0300-\u036f\u1ab0-\u1aff\u1dc0-\u1dff\u20d0-\u20ff\ufe20-\ufe2f]/g;
+  const _ZALGO_RUN = /[\u0300-\u036f\u1ab0-\u1aff\u1dc0-\u1dff\u20d0-\u20ff\ufe20-\ufe2f]{3,}/;
+  function _tameName(v){
+    if(typeof v !== 'string' || !v) return v;
+    // Decomposed, so a mark NFC would have fused into a letter ("U" + hook → "Ủ") is seen and removed
+    // too; a real name decomposes to at most two marks per letter (Vietnamese "ễ") and is left alone.
+    let n = v; try{ n = v.normalize('NFD'); }catch(_){ return v; }
+    if(!_ZALGO_RUN.test(n)) return v;
+    const out = n.replace(_ZALGO_MARK, '');
+    try{ return out.normalize('NFC'); }catch(_){ return out; }
+  }
+  const _shownCache = new WeakMap();
+  function _shown(meta){
+    if(!meta || typeof meta !== 'object') return meta;
+    const hit = _shownCache.get(meta); if(hit) return hit;
+    let out = meta;
+    for(const k of ['name', 'display_name', 'displayName']){
+      const t = _tameName(meta[k]);
+      if(t !== meta[k]){ if(out === meta) out = Object.assign({}, meta); out[k] = t; }
+    }
+    _shownCache.set(meta, out);
+    return out;
+  }
   function _latestReplaceable(evsNewestFirst){
     const seen = new Set(); const out = [];
     for (const ev of evsNewestFirst){
@@ -590,11 +616,17 @@
         if (db) try { tx('profiles','readwrite').put(rec); } catch(_){}
       } catch(_){}
     },
-    profile(pk){ return (mem.profiles.get(pk)||{}).meta || null; },
+    /* WHAT A NAME LOOKS LIKE ON SCREEN — never what it is. A "Zalgo" display name buries every letter
+     * under 5-12 stacked combining marks ("the text in his name is not displaying correctly, some new
+     * font or something"): a smear across the card that no font can lay out and nobody can read. Every
+     * reader of a profile gets a copy with those runs removed (_tameName); the ONE reader that must
+     * see the real thing is the owner's own profile editor, which republishes it — profileRaw(). */
+    profile(pk){ return _shown((mem.profiles.get(pk)||{}).meta || null); },
+    profileRaw(pk){ return (mem.profiles.get(pk)||{}).meta || null; },
     profileEmojis(pk){ return (mem.profiles.get(pk)||{}).emojis || null; },   // NIP-30 name emoji (kept off meta)
     profileProxy(pk){ return (mem.profiles.get(pk)||{})._proxy || null; },     // NIP-48 AP actor URL of a bridged account
     haveProfile(pk){ return mem.profiles.has(pk); },
-    profileList(){ return [...mem.profiles.entries()].map(([pubkey,rec])=>({ pubkey, meta: rec.meta||{} })); },
+    profileList(){ return [...mem.profiles.entries()].map(([pubkey,rec])=>({ pubkey, meta: _shown(rec.meta||{}) })); },
     async setMeta(k,v){ if(db) try{ await pr(tx('meta','readwrite').put({k,v})); }catch(_){} },
     async getMeta(k){ if(!db) return null; try{ const r = await pr(tx('meta','readonly').get(k)); return r?r.v:null; }catch(_){ return null; } }
   };
