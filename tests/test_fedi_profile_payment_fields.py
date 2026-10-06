@@ -104,10 +104,7 @@ def _eth_of():
 
 
 def _run_eth(profile):
-    code = _eth_of() + "\nprocess.stdout.write(JSON.stringify(ethOf(%s)));" % json.dumps(profile)
-    r = subprocess.run(["node", "-e", code], capture_output=True, text=True, timeout=30)
-    assert r.returncode == 0, r.stderr
-    return json.loads(r.stdout)
+    return _client("ethOf", profile)
 
 
 def test_the_client_reads_the_key_the_bridge_writes():
@@ -179,3 +176,80 @@ def test_every_rail_from_one_profile():
     when several addresses share a profile."""
     k0, _ = _kind0(_actor([_pv("XMR", XMR), _pv("ETH", ETH), _pv("⚡", "me@getalby.com")]))
     assert (k0["monero_address"], k0["ethereum"], k0["lud16"]) == (XMR, ETH, "me@getalby.com")
+
+
+# ---- the second report: Ditto's kind-0 `fields`, and a wallet listed LAST ------------------------
+#
+# "I can see the payment targets on Ditto but not PosterChan, Amethyst, Primal or Dark Wisp" —
+# matty@nicecrew.digital (an Akkoma), mirrored by Mostr. Ditto/Mostr write the fediverse fields INTO
+# the kind-0 as `fields: [[name, value], …]`, a key only Ditto reads. Two things followed, both here:
+#   * his actor has NINE fields and `$eth` is the ninth — a cap of 8 dropped it without a word;
+#   * a native Nostr profile written by Ditto carries the same `fields` key, so the CLIENT has to read it.
+
+MATTY_XMR = "47SRd7h2xvkgNrF5yAfV2Qb2U6fQgmFeJMTpRd3L1ucJJosdjzHVs6R3SHDEnu3BqRRpaJBydFRQZePde3SR6QgiAJE47S6"
+MATTY_ETH = "0x05Da4bE0B0944c4e3Ab46aa24c7065ef84f137a9"
+MATTY_FIELDS = [["Matrix", "https://matrix.to/#/@matty:chat.nicecrew.digital"],
+                ["NiceCrewTV", "https://nicecrew.tv/a/matty/video-channels"],
+                ["Support Us", "https://gibs.nicecrew.digital"], ["OPSEC Guide", "https://nicecrew.digital/about/safety"],
+                ["Merchandise", "https://store.nicecrew.digital"], ["Anathema AI", "https://anathema.ai"],
+                ["$btc", "3DXRdg1r32KZkwp4EDgp9Q1PnzP49zQt1m"], ["$xmr", MATTY_XMR], ["$eth", MATTY_ETH]]
+
+
+def test_a_wallet_listed_ninth_is_not_dropped():
+    k0, _ = _kind0(_actor([_pv(n, v) for n, v in MATTY_FIELDS]))
+    assert k0["monero_address"] == MATTY_XMR
+    assert k0["ethereum"] == MATTY_ETH, "the ninth field was cut — Akkoma allows ten by default"
+
+
+def _client(fn_call, profile):
+    """Run the SHIPPED readers from app.js under node: the regex lifts the exact functions, so a
+    renamed or reordered reader fails here rather than passing on a private copy."""
+    if shutil.which("node") is None:
+        pytest.skip("no node")
+    src = open(os.path.join(ROOT, "static", "js", "client", "app.js"), encoding="utf-8").read()
+    parts = []
+    for rx in (r"  function _profileFields\(p\)\{.*?\n  \}\n", r"const _ETH_ADDR=.*?\n  function ethOf\(p\)\{.*?\n  \}\n",
+               r"  function isXmrAddr\(a\)\{[^\n]*\n", r"  const _XMR_RX=[^\n]*\n", r"  function xmrOf\(p\)\{.*?\n  \}\n",
+               # BCH: the whole contiguous block, from isBchAddr through bchOf, in its own order
+               r"  const _CA_CHARSET=.*?\n  function bchOf\(p\)\{.*?\n  \}\n"):
+        m = re.search(rx, src, re.S)
+        assert m, "app.js lost: " + rx[:40]
+        parts.append(m.group(0))
+    code = "\n".join(parts) + "\nprocess.stdout.write(JSON.stringify(%s(%s)));" % (fn_call, json.dumps(profile))
+    r = subprocess.run(["node", "-e", code], capture_output=True, text=True, timeout=30)
+    assert r.returncode == 0, r.stderr[-2000:]
+    return json.loads(r.stdout)
+
+
+DITTO_KIND0 = {"name": "Matty-kun", "about": "Christ is King", "fields": MATTY_FIELDS}
+
+
+def test_the_client_reads_monero_from_dittos_fields():
+    assert _client("xmrOf", DITTO_KIND0) == MATTY_XMR
+
+
+def test_the_client_reads_ethereum_from_a_labelled_ditto_field():
+    assert _client("ethOf", DITTO_KIND0) == MATTY_ETH
+
+
+def test_an_unlabelled_hex_field_is_not_an_ethereum_address():
+    """Only the person NAMING it Ethereum makes a `0x…` a payment target — the same shape is any
+    contract or account they merely listed."""
+    assert _client("ethOf", {"fields": [["Favourite contract", MATTY_ETH]]}) == ""
+
+
+def test_the_fields_key_is_untrusted_json():
+    for junk in (None, 7, "x", [None, 3, ["only-a-name"], [1, 2], {"a": 1}], [[None, MATTY_XMR]]):
+        _client("xmrOf", {"fields": junk})
+        _client("ethOf", {"fields": junk})
+        _client("bchOf", {"fields": junk})
+    # …and a nameless row still counts for a self-describing address
+    assert _client("xmrOf", {"fields": [[None, MATTY_XMR]]}) == MATTY_XMR
+
+
+def test_a_bitcoin_field_is_never_read_as_bitcoin_cash():
+    """His `$btc` is a legacy `3…` address, the SAME base58 shape a legacy BCH address has — BCH sent
+    to it is lost. A field is read for BCH only as a CashAddr (`q…`/`p…`), which is self-describing."""
+    assert _client("bchOf", DITTO_KIND0) == ""
+    cash = "qpm2qsznhks23z7629mms6s4cwef74vcwvy22gdx6a"
+    assert _client("bchOf", {"fields": [["BCH", cash]]}) == cash

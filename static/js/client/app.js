@@ -8131,8 +8131,22 @@
       }
     }
     for(const k in p){ const v=p[k]; if(typeof v==='string' && isXmrAddr(v)) return v.trim(); }
+    for(const [,v] of _profileFields(p)){ const m=v.match(_XMR_RX); if(m && isXmrAddr(m[0])) return m[0]; }
     for(const k of ['about','website']){ const v=p[k]; if(typeof v==='string'){ const m=v.match(_XMR_RX); if(m && isXmrAddr(m[0])) return m[0]; } }
     return '';
+  }
+  /* Ditto (and Mostr, which Ditto runs) put a profile's key/value FIELDS in the kind-0 itself, as
+   * `fields: [[name, value], …]` — the Mastodon fields a fediverse profile has, and where people
+   * list "$xmr" / "$eth". No other client reads the key, so those addresses were visible on Ditto
+   * and nowhere else (reported: "I can see the payment targets on Ditto but not PosterChan, Amethyst,
+   * Primal or Dark Wisp"). Off the network, so every element is checked before use. */
+  function _profileFields(p){
+    const f = p && Array.isArray(p.fields) ? p.fields : [];
+    const out = [];
+    for(const row of f.slice(0, 20)){
+      if(Array.isArray(row) && typeof row[1]==='string') out.push([typeof row[0]==='string' ? row[0] : '', row[1].trim()]);
+    }
+    return out;
   }
   /* Ethereum address from kind-0 metadata — DISPLAY AND HAND-OFF ONLY: it opens the pay sheet (address,
    * QR, `ethereum:` link to the person's own wallet) and never touches the built-in wallet.
@@ -8148,6 +8162,9 @@
     if(direct) return direct;
     const map=p.cryptocurrency_addresses;
     if(map && typeof map==='object') for(const k of ['ethereum','eth','ETH','Ethereum']){ const v=pick(map[k]); if(v) return v; }
+    // A Ditto field counts only when its LABEL says Ethereum AND its value is exactly an address — the
+    // person naming what it is, which a bare `0x…` in prose never does.
+    for(const [name,value] of _profileFields(p)) if(/\beth(ereum)?\b/i.test(name)){ const v=pick(value); if(v) return v; }
     return '';
   }
   // Monero tip address for a specific NOTE. Nosmero (and others) stamp the author's address on EACH note
@@ -8507,6 +8524,8 @@
     const direct = bchDirect(p);
     if(direct) return direct;
     for(const k in p){ const v=p[k]; if(typeof v==='string'){ const m=v.match(_BCH_CASHADDR); if(m && isBchAddr(m[0])) return strip(m[0]); } }
+    // Ditto's kind-0 `fields` (see _profileFields) — a CashAddr is self-describing, like Monero.
+    for(const [,v] of _profileFields(p)){ const m=v.match(_BCH_CASHADDR); if(m && isBchAddr(m[0])) return strip(m[0]); }
     return '';
   }
   // A kind-1 address-tip note (BCH `t:bchtip` / Monero `t:monerotip`) → the pieces for a proper

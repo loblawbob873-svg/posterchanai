@@ -136,7 +136,10 @@ def is_community_uri(uri: str) -> bool:
 # the bio only, so every one of those was dropped on the floor here, while momostr (which flattens the
 # fields into the bio) made the same person tippable on Primal. Fediverse people rarely have a
 # Lightning address, so for most of them a field address is the ONLY way anybody here can pay them.
-_MAX_FIELDS = 8
+# 20, not a guess at "most people": Akkoma/Pleroma default to TEN fields and an admin can raise it,
+# and a wallet is typically listed LAST. At 8 the real report this was written for
+# (matty@nicecrew.digital: 9 fields, `$eth` ninth) silently lost its Ethereum address.
+_MAX_FIELDS = 20
 _XMR_RE = re.compile(r"(?<![1-9A-HJ-NP-Za-km-z])[48][1-9A-HJ-NP-Za-km-z]{94}(?:[1-9A-HJ-NP-Za-km-z]{11})?(?![1-9A-HJ-NP-Za-km-z])")
 _ETH_RE = re.compile(r"(?<![0-9A-Za-z])0x[0-9a-fA-F]{40}(?![0-9A-Za-z])")
 # A Lightning ADDRESS is shaped exactly like an e-mail address, and a profile field saying
