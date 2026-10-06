@@ -184,6 +184,14 @@
             page, so it keeps working if the app itself does not. Your apps and PosterChan's screens
             sit side by side; long-press the wallpaper to choose which.</div>
 
+          <div class="set-row" style="margin-top:12px;display:flex;align-items:center;gap:10px;flex-wrap:wrap">
+            <div style="flex:1;min-width:12em"><strong>Cyberpunk live wallpaper</strong>
+              <div class="muted small">A neon city at sunset behind your home screen — a sliced sun, a
+                POSTERCHAN sign, a grid floor running toward you. Tap empty space for a pulse. It draws
+                only while you can see it.</div></div>
+            <button class="btn small" id="ps-wallpaper">${st.liveWallpaper ? 'In use \u00b7 change' : 'Set wallpaper'}</button>
+          </div>
+
           <label class="set-stay" style="margin-top:12px"><input type="checkbox" id="ps-sms"${st.isDefaultSms?' checked':''}>
             Messages (SMS &amp; MMS)</label>
           <div class="muted small" id="ps-sms-note">Texts stay in the phone's own message store, so
@@ -308,6 +316,15 @@
         } else { msg(''); const b = $('#ps-defaults'); if(b) b.hidden = true; }
       };
     }
+
+    /* Android's own preview opens; "Set wallpaper" there is Android's button — an app cannot apply a
+       LIVE wallpaper on somebody's behalf. Coming back re-draws this card (the visibilitychange hook
+       below), which is what turns the button into "In use". */
+    { const b = $('#ps-wallpaper'); if(b) b.onclick = () => {
+        const P = plug('setLiveWallpaper');
+        if(!P){ msg('Update the app to get the live wallpaper.'); return; }
+        P.setLiveWallpaper().catch(() => msg('This phone has no live wallpaper picker.'));
+      }; }
 
     { const b = $('#ps-defaults'); if(b) b.onclick = () => {
         const P = plug('openDefaultApps');

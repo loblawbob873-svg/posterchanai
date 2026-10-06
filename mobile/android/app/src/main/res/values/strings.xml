@@ -211,4 +211,8 @@
     <string name="sms_reaction_laugh">Laugh</string>
     <string name="sms_reaction_emphasize">Emphasize</string>
     <string name="sms_reaction_question">Question</string>
+    <string name="wallpaper_cyber_name">PosterChan Cyberpunk</string>
+    <string name="wallpaper_cyber_desc">A neon city at sunset: a sliced sun, a POSTERCHAN sign, a grid floor running toward you. Tap the home screen for a pulse. Draws only while you can see it.</string>
+    <string name="home_live_wallpaper">Cyberpunk live wallpaper</string>
+    <string name="home_no_live_wallpaper">This phone has no live wallpaper picker</string>
 </resources>

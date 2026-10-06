@@ -227,7 +227,21 @@ public class HomePlugin extends Plugin {
         parts.put("respondViaMessage", HomeRoles.hasRespondService(getContext()));
         o.put("smsParts", parts);
         o.put("dialerCapable", HomeRoles.canBeDialer(getContext()));
+        // The cyberpunk live wallpaper: whether it is the one on the home screen right now, so the
+        // settings card can say "In use" instead of offering a button that would change nothing.
+        o.put("liveWallpaper", place.poster.app.wallpaper.CyberWallpaper.isActive(getContext()));
         call.resolve(o);
+    }
+
+    /**
+     * Open Android's preview-and-apply screen on the PosterChan cyberpunk live wallpaper. Applying is
+     * Android's own button there — an app cannot set a LIVE wallpaper on the person's behalf, and
+     * should not. Rejects when the phone has neither the preview nor the picker, so the card can say so.
+     */
+    @PluginMethod
+    public void setLiveWallpaper(PluginCall call) {
+        if (place.poster.app.wallpaper.CyberWallpaper.open(getContext())) call.resolve();
+        else call.reject("this phone has no live wallpaper picker");
     }
 
     @PluginMethod

@@ -15,5 +15,8 @@ public abstract class Context {
   public String getPackageName() { return ""; }
   public android.content.pm.PackageManager getPackageManager() { return null; }
   public android.content.ComponentName startService(Intent i) { return null; }
+  public void startActivity(Intent i) { }
+  public Intent registerReceiver(BroadcastReceiver receiver, IntentFilter filter) { return null; }
+  public void unregisterReceiver(BroadcastReceiver receiver) { }
   public android.content.ComponentName startForegroundService(Intent i) { return null; }
 }

@@ -15,6 +15,7 @@ public class Intent {
   public Intent setAction(String action) { return this; }
   public String getAction() { return null; }
   public Intent addFlags(int flags) { return this; }
+  public Intent putExtra(String name, android.os.Parcelable value) { return this; }
   public android.net.Uri getData() { return null; }
   public Intent setFlags(int flags) { return this; }
 }

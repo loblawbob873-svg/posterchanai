@@ -1044,6 +1044,9 @@ public class HomeActivity extends Activity implements DeskView.Host {
         labels.add(getString(R.string.home_apps));
         labels.add(getString(R.string.home_unhide));
         labels.add(getString(R.string.home_wallpaper));
+        // Our own: opens Android's preview-and-apply screen ON it, so it is one tap from here rather than
+        // a hunt through the system picker for a name nobody knows to look for.
+        labels.add(getString(R.string.home_live_wallpaper));
         labels.add(getString(R.string.home_settings));
         // THE WAY BACK, with no dock slot spent on it. Always here, needs no stored state, and works
         // however the dock and the desktop have been arranged.
@@ -1055,8 +1058,13 @@ public class HomeActivity extends Activity implements DeskView.Host {
                     case 1: pickOurApps(); break;
                     case 2: showHidden(); break;
                     case 3: fire(new Intent(Intent.ACTION_SET_WALLPAPER)); break;
-                    case 4: openApp("settings"); break;
-                    case 5: fire(new Intent(Settings.ACTION_SETTINGS)); break;
+                    case 4:
+                        if (!place.poster.app.wallpaper.CyberWallpaper.open(HomeActivity.this)) {
+                            toast(getString(R.string.home_no_live_wallpaper));
+                        }
+                        break;
+                    case 5: openApp("settings"); break;
+                    case 6: fire(new Intent(Settings.ACTION_SETTINGS)); break;
                 }
             }
         });

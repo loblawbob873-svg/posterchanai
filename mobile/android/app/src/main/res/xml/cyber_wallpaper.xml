@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Shown in Android's wallpaper picker. The thumbnail is rendered from the SHIPPED scene by
+     tests/test_android_live_wallpaper.py, so the picker shows what the wallpaper actually draws. -->
+<wallpaper xmlns:android="http://schemas.android.com/apk/res/android"
+    android:description="@string/wallpaper_cyber_desc"
+    android:thumbnail="@drawable/wallpaper_cyber_thumb" />

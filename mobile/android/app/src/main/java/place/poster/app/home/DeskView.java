@@ -425,11 +425,22 @@ public class DeskView extends ViewGroup {
                     // tapped — otherwise leaving edit mode always launches something.
                     if (editing != null) { editing = null; invalidate(); return true; }
                     if (hit != null && host != null) host.onOpen(hit);
+                    // A tap on EMPTY desk belongs to the wallpaper. This is how every launcher reaches a
+                    // live wallpaper — the launcher's window sits on top and receives the touch, so
+                    // unless it forwards COMMAND_TAP the wallpaper never hears it.
+                    else if (hit == null) tapWallpaper(e);
                 }
                 return true;
             }
         }
         return super.onTouchEvent(e);
+    }
+
+    private void tapWallpaper(MotionEvent e) {
+        try {
+            android.app.WallpaperManager.getInstance(getContext()).sendWallpaperCommand(getWindowToken(),
+                    android.app.WallpaperManager.COMMAND_TAP, (int) e.getRawX(), (int) e.getRawY(), 0, null);
+        } catch (Throwable ignored) { /* no wallpaper, or none that listens: a tap is still just a tap */ }
     }
 
     private void releaseVel() {

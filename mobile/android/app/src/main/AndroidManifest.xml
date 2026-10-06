@@ -877,6 +877,22 @@
                 android:resource="@xml/contacts_structure" />
         </service>
 
+        <!-- The PosterChan cyberpunk LIVE WALLPAPER (wallpaper/CyberWallpaper). BIND_WALLPAPER is a
+             platform-held permission: only the system can bind it, so exported=true exposes nothing.
+             Set from the launcher's long-press menu or Phone shell settings, which open Android's own
+             preview-and-apply screen on it. -->
+        <service
+            android:name=".wallpaper.CyberWallpaper"
+            android:label="@string/wallpaper_cyber_name"
+            android:permission="android.permission.BIND_WALLPAPER"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="android.service.wallpaper.WallpaperService" />
+            </intent-filter>
+            <meta-data
+                android:name="android.service.wallpaper"
+                android:resource="@xml/cyber_wallpaper" />
+        </service>
     </application>
 
     <!-- NIP-55: which other apps we are allowed to SEE. Android 11+ hides the package list by default, so
@@ -1024,4 +1040,6 @@
     <uses-feature android:name="android.hardware.camera.autofocus" android:required="false" />
     <uses-feature android:name="android.hardware.microphone" android:required="false" />
     <uses-feature android:name="android.hardware.touchscreen" android:required="false" />
+    <!-- The live wallpaper is optional: a device without the feature still installs the app. -->
+    <uses-feature android:name="android.software.live_wallpaper" android:required="false" />
 </manifest>
