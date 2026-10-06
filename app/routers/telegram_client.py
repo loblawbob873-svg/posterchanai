@@ -227,6 +227,17 @@ async def avatar(peer_id: int, db: Session = Depends(get_db), user: User = Depen
                                                             "X-Content-Type-Options": "nosniff"})
 
 
+def _release(db):
+    """Close a websocket's setup session; never raise out of a handler's teardown (a connection Postgres
+    already dropped makes the close's rollback fail, and that failure is not the socket's business)."""
+    if db is not None:
+        try:
+            db.close()
+        except Exception as e:
+            logger.debug("[tgc] session close after a dropped connection: %s", type(e).__name__)
+    return None
+
+
 @router.websocket("/ws")
 async def events(ws: WebSocket):
     """Live messages. The session token arrives in the FIRST FRAME (never the URL, where it would be
@@ -255,6 +266,11 @@ async def events(ws: WebSocket):
             return
         st = await manager().status(db, user)
         q = manager().subscribe(user.id)
+        # THE SESSION IS FOR THE SETUP ONLY. This socket lives as long as the Telegram window is open,
+        # and holding the session that long held a pooled connection idle INSIDE a transaction: Postgres
+        # killed it at idle_in_transaction_session_timeout (60s), and the close below then raised out of
+        # the handler ("Exception in ASGI application", ~7 an hour) -- one pool slot per open window.
+        db = _release(db)
         await ws.send_text(json.dumps({"type": "state", **st}))
 
         async def pump():
@@ -278,7 +294,7 @@ async def events(ws: WebSocket):
     finally:
         if q is not None and user is not None:
             manager().unsubscribe(user.id, q)
-        db.close()
+        _release(db)
 
 
 # ---- voice and video calls --------------------------------------------------------------------------
@@ -323,6 +339,7 @@ async def call_media(ws: WebSocket):
         except Exception:
             await ws.close(code=4403)
             return
+        db = _release(db)                 # the call can last an hour; the session is for the setup only
         hub.sockets.add(ws)
         await ws.send_text(json.dumps({"type": "call", "peer": hub.peer, "state": hub.state, "title": hub.title,
                                        "video": hub.video, "remote_video": hub.remote_video}))
@@ -340,4 +357,4 @@ async def call_media(ws: WebSocket):
     finally:
         if hub is not None:
             hub.sockets.discard(ws)
-        db.close()
+        _release(db)

@@ -619,3 +619,45 @@ def test_the_first_page_of_a_chat_carries_the_read_line(api, monkeypatch):
     r = c.get("/api/tgc/messages/42").json()
     assert r["ok"] and r["read_out"] == 2 and [m["id"] for m in r["messages"]] == [1, 2, 3], r
     assert c.get("/api/tgc/messages/42?before=3").json()["read_out"] == 0, "older pages need not ask again"
+
+
+def test_the_live_socket_gives_its_database_session_back_after_setup(api, monkeypatch):
+    """The live-updates socket lives as long as the Telegram window is open. It held its setup session the
+    whole time: a pooled connection idle INSIDE a transaction, killed by Postgres at
+    idle_in_transaction_session_timeout (60s), whose close then raised out of the handler ("Exception in
+    ASGI application", 21 in three hours on server1). The session must be closed once setup is done, while
+    the socket is still open -- and a close that fails must not escape the handler."""
+    c, R, who, tgs = api
+    sessions = []
+
+    class _S:
+        def __init__(self):
+            self.closed = False
+            sessions.append(self)
+
+        def query(self, model):
+            sess = self
+
+            class _Q:
+                def filter(self, *a):
+                    return self
+
+                def first(self):
+                    assert not sess.closed, "the session was used after it was given back"
+                    return U(1)
+            return _Q()
+
+        def close(self):
+            self.closed = True
+            raise RuntimeError("server closed the connection unexpectedly")   # what a dropped one does
+    monkeypatch.setattr(R, "SessionLocal", _S)
+    import app.auth as auth
+    monkeypatch.setattr(auth, "decode_token", lambda t: {"sub": "1"})
+
+    async def ok(user):
+        return user
+    monkeypatch.setattr(R.instance_membership, "require_user", ok)
+    with c.websocket_connect("/api/tgc/ws") as ws:
+        ws.send_text(json.dumps({"token": "x"}))
+        assert ws.receive_json()["type"] == "state"
+        assert sessions and sessions[0].closed, "the socket kept its database session open after setup"
