@@ -14,7 +14,7 @@
 window.PCComposeFactory = function(dep){
   const _S = dep.state;   // live app.js bindings: _S.CFG, _S.LOGO, _S.VIEW
   const {
-    $, $$, CMP_BGS, Drafts, InstEmoji, Scheduled, _BG_WORDS, _aiEmojiSuggest, _aiFramedCard,
+    $, $$, CMP_BGS, Drafts, InstEmoji, Scheduled, _BG_WORDS, _aiEmojiSuggest, _aiFramedCard, _aiNewspaper,
     _appendQuoteNevent, _autoCleanOnPost, _bgCss, _blossomDenied, _captureCamera, _cardHook,
     _cleanLinksCmd, _dtLocal, _insertAt, _qDraftSet, _stickyNudge, _syncSendLabel,
     articleCommentTags, attachEmojiAutocomplete, attachMentionAutocomplete, blossomPicker,
@@ -95,7 +95,116 @@ window.PCComposeFactory = function(dep){
     ctx.globalAlpha=1; ctx.fillStyle=g; ctx.fillRect(0,0,W,H);
     ctx.restore();
   }
-  async function renderBgPost(text, bg, framed){
+  /* 📰 THE NEWSPAPER CLIPPING ("make it look like a newspaper clipping with the actual link below the
+   * post, similar to how we do the framed feature"). Same pipeline as every 🎨 card -- buildBgPost uploads
+   * it and puts the real link UNDER the post, makeCardPreview shows it before posting -- only the drawing
+   * differs: a torn, slightly tilted scrap of aged newsprint on a dark desk, the site's name as the
+   * masthead between rules, a dateline, a serif headline that sizes itself to fit, then the story in two
+   * justified columns with a drop cap. The first line of the draft is the headline; the rest is the story
+   * (🤖 AI → 📰 Newspaper clipping writes it in exactly that shape from a pasted link). Everything is
+   * seeded from the text, so the same draft always tears the same way -- the preview IS the post. */
+  const _NP_SERIF="Georgia,'Times New Roman','Liberation Serif','DejaVu Serif',serif";
+  function _npSeed(str){ let h=2166136261>>>0; for(let i=0;i<str.length;i++){ h^=str.charCodeAt(i); h=Math.imul(h,16777619)>>>0; }
+    return ()=>{ h^=h<<13; h>>>=0; h^=h>>>17; h^=h<<5; h>>>=0; return (h%100000)/100000; }; }
+  function _npWrap(ctx, text, width){
+    const out=[]; let line=[];
+    for(const w of String(text).split(/\s+/).filter(Boolean)){
+      const next=line.concat(w).join(' ');
+      if(line.length && ctx.measureText(next).width>width){ out.push(line); line=[w]; } else line.push(w);
+    }
+    if(line.length) out.push(line);
+    return out;
+  }
+  function _npJustify(ctx, words, x, y, width, last){
+    if(last || words.length<2){ ctx.fillText(words.join(' '), x, y); return; }
+    const total=words.reduce((n,w)=>n+ctx.measureText(w).width,0), gap=(width-total)/(words.length-1);
+    if(gap>width*0.18){ ctx.fillText(words.join(' '), x, y); return; }   // a near-empty line set ragged, not stretched
+    let cx=x; for(const w of words){ ctx.fillText(w, cx, y); cx+=ctx.measureText(w).width+gap; }
+  }
+  function _npSite(meta){
+    const host=String((meta&&meta.site)||'').replace(/^www\./i,'');
+    const name=host ? host.split('.').slice(0,-1).join(' ') || host : '';
+    return { host, name:(name||'The Daily Poster').replace(/[-_]+/g,' ').toUpperCase() };
+  }
+  async function _renderClipping(text, meta){
+    const W=1080, H=1080, cv=document.createElement('canvas'); cv.width=W; cv.height=H; const ctx=cv.getContext('2d');
+    const parts=String(text||'').trim().split(/\n\s*\n|\n/);
+    const headline=(parts.shift()||'').trim().replace(/^#+\s*/,'').replace(/^["“]|["”]$/g,'');
+    const story=parts.join(' ').replace(/\s+/g,' ').trim();
+    const rnd=_npSeed(headline+story), site=_npSite(meta);
+    // The desk.
+    const desk=ctx.createLinearGradient(0,0,W,H); desk.addColorStop(0,'#2b2622'); desk.addColorStop(1,'#151210');
+    ctx.fillStyle=desk; ctx.fillRect(0,0,W,H);
+    // The scrap: a torn rectangle, tilted a degree or so, with a soft shadow under it.
+    const M=58, tilt=(rnd()-0.5)*0.035;
+    ctx.save(); ctx.translate(W/2,H/2); ctx.rotate(tilt); ctx.translate(-W/2,-H/2);
+    const edge=[], step=18;
+    const jag=()=>(rnd()-0.5)*9;
+    for(let x=M;x<=W-M;x+=step) edge.push([x, M+jag()]);
+    for(let y=M;y<=H-M;y+=step) edge.push([W-M+jag(), y]);
+    for(let x=W-M;x>=M;x-=step) edge.push([x, H-M+jag()]);
+    for(let y=H-M;y>=M;y-=step) edge.push([M+jag(), y]);
+    const tear=()=>{ ctx.beginPath(); edge.forEach(([x,y],i)=>i?ctx.lineTo(x,y):ctx.moveTo(x,y)); ctx.closePath(); };
+    ctx.shadowColor='rgba(0,0,0,.55)'; ctx.shadowBlur=34; ctx.shadowOffsetY=14;
+    tear(); ctx.fillStyle='#efe6cf'; ctx.fill();
+    ctx.shadowColor='transparent'; ctx.shadowBlur=0; ctx.shadowOffsetY=0;
+    ctx.save(); tear(); ctx.clip();
+    // Age: yellowed toward the edges, and a little grain.
+    const age=ctx.createRadialGradient(W/2,H/2,W*0.25,W/2,H/2,W*0.72);
+    age.addColorStop(0,'rgba(255,250,235,0)'); age.addColorStop(1,'rgba(150,115,60,.28)');
+    ctx.fillStyle=age; ctx.fillRect(0,0,W,H);
+    for(let i=0;i<2600;i++){ ctx.fillStyle=`rgba(70,55,35,${0.03+rnd()*0.05})`; ctx.fillRect(M+rnd()*(W-2*M), M+rnd()*(H-2*M), 1.6, 1.6); }
+    const ink='#1c1915', L=M+44, R=W-M-44, CW=R-L;
+    ctx.fillStyle=ink; ctx.strokeStyle=ink; ctx.textBaseline='alphabetic';
+    // Masthead between a heavy rule and a double rule.
+    let y=M+46;
+    ctx.fillRect(L,y,CW,4); y+=14;
+    let ms=78; ctx.textAlign='center';
+    do{ ctx.font=`900 ${ms}px ${_NP_SERIF}`; ms-=2; }while(ctx.measureText(site.name).width>CW && ms>30);
+    y+=ms+2; ctx.fillText(site.name, W/2, y); y+=16;
+    ctx.fillRect(L,y,CW,2); y+=6; ctx.fillRect(L,y,CW,1); y+=26;
+    // Dateline.
+    ctx.font=`600 19px ${_NP_SERIF}`;
+    const d=new Date(), date=d.toLocaleDateString('en-US',{weekday:'long',year:'numeric',month:'long',day:'numeric'}).toUpperCase();
+    ctx.textAlign='left'; ctx.fillText('NO. '+(Math.floor((d-new Date(d.getFullYear(),0,0))/864e5)), L, y);
+    ctx.textAlign='center'; ctx.fillText(date, W/2, y);
+    ctx.textAlign='right'; ctx.fillText((site.host||'').toUpperCase(), R, y);
+    y+=14; ctx.fillRect(L,y,CW,1); y+=20;
+    // Headline: as large as it can be in at most three lines.
+    let hs=74, hl=[];
+    for(;hs>=36;hs-=2){ ctx.font=`800 ${hs}px ${_NP_SERIF}`; hl=_npWrap(ctx, headline||'Breaking', CW); if(hl.length<=3) break; }
+    ctx.textAlign='center';
+    for(const ws of hl.slice(0,3)){ y+=hs*1.06; ctx.fillText(ws.join(' '), W/2, y); }
+    y+=22; ctx.fillRect(L+CW*0.3,y,CW*0.4,1.5); y+=18;
+    // The story: two justified columns, a drop cap, ending in "Continued at …" when it does not fit.
+    const gutter=36, colW=(CW-gutter)/2, bs=26, lh=bs*1.32, bottom=H-M-64;
+    ctx.textAlign='left'; ctx.font=`400 ${bs}px ${_NP_SERIF}`;
+    const capLines=3, cap=story.charAt(0), rest=story.slice(1);
+    ctx.font=`800 ${Math.round(lh*capLines*0.92)}px ${_NP_SERIF}`; const capW=cap?ctx.measureText(cap).width+10:0;
+    ctx.font=`400 ${bs}px ${_NP_SERIF}`;
+    // Lay the words into lines column by column; the first lines of column one are narrower for the cap.
+    const words=rest.split(/\s+/).filter(Boolean); let wi=0, trimmed=false;
+    const cols=[{x:L,y0:y},{x:L+colW+gutter,y0:y}], rows=Math.max(1,Math.floor((bottom-y)/lh));
+    for(let c=0;c<2 && wi<words.length;c++){
+      for(let r=0;r<rows && wi<words.length;r++){
+        const narrow=(c===0 && r<capLines && cap), lx=cols[c].x+(narrow?capW:0), width=colW-(narrow?capW:0);
+        const line=[];
+        while(wi<words.length){ const next=line.concat(words[wi]).join(' ');
+          if(line.length && ctx.measureText(next).width>width) break; line.push(words[wi++]); }
+        const lastRow=(c===1 && r===rows-1);
+        if(lastRow && wi<words.length){ trimmed=true; while(line.length && ctx.measureText(line.join(' ')+' …').width>width) line.pop(); line.push('…'); }
+        _npJustify(ctx, line, lx, cols[c].y0+(r+1)*lh-6, width, wi>=words.length || lastRow);
+      }
+    }
+    if(cap){ ctx.font=`800 ${Math.round(lh*capLines*0.92)}px ${_NP_SERIF}`; ctx.fillText(cap, L, y+lh*capLines-10); }
+    ctx.fillRect(L+colW+gutter/2-0.5, y+6, 1, rows*lh-6);   // the column rule
+    ctx.font=`italic 600 20px ${_NP_SERIF}`; ctx.textAlign='right';
+    ctx.fillText(trimmed?('Continued at '+(site.host||'the link below')+' ↓'):('— '+(site.host||'PosterChan')), R, H-M-30);
+    ctx.restore(); ctx.restore();
+    return await new Promise(r=>cv.toBlob(r,'image/jpeg',0.9));
+  }
+  async function renderBgPost(text, bg, framed, meta){
+    if(bg && bg.fx==='newspaper') return _renderClipping(text, meta);
     const t=String(text||'');
     // Grow the canvas SIDEWAYS, never downwards. The feed caps an image at 300px TALL (.media-row img), so
     // a taller card is a SMALLER card: 4:5 shows at 240px wide and 2:3 at 200px, with the type scaled to
@@ -160,14 +269,18 @@ window.PCComposeFactory = function(dep){
   async function buildBgPost(text, bg, framed){
     const urls=(String(text||'').match(/https?:\/\/\S+/g)||[]).map(u=>u.replace(/[)\].,>'"]+$/,''));
     const words=_BG_WORDS(text);
-    const card=_cardHook(words);
-    const blob=await renderBgPost(card||' ', bg, framed);
+    // A clipping lays out the WHOLE story itself (two columns, "Continued at …" when it runs out); every
+    // other card takes the opening hook.
+    const paper=bg && bg.fx==='newspaper';
+    const card=paper ? words : _cardHook(words);
+    let site=''; try{ site=urls.length ? new URL(urls[0]).hostname : ''; }catch(_){ }
+    const blob=await renderBgPost(card||' ', bg, framed, {site});
     const url=await uploadBlob(new File([blob],'post.jpg',{type:'image/jpeg'}), {folder:'Posts'});
     // `trimmed` = the card could not hold every word. Callers surface it, so a long draft losing its tail
     // is never silent — for a link summary that is fine (the article link is right there), but it must
     // still be said out loud rather than discovered after posting.
     return { url, content: url + (urls.length ? '\n\n'+urls.join(' ') : ''),
-             trimmed: !!(words && words!==card) };
+             trimmed: !paper && !!(words && words!==card) };
   }
   // `open` ('poll' | 'ai' | 'react') auto-opens one of the composer's tools after the modal renders. The
   // timeline's inline composer uses it to surface Poll/AI as first-class buttons without reimplementing
@@ -419,10 +532,14 @@ window.PCComposeFactory = function(dep){
             if(strip && strip.classList.contains('hidden')){ strip.classList.remove('hidden'); if(b) b.classList.add('active'); } } });
         if(aiBtn) aiBtn.onclick=(e)=>{ e.stopPropagation();
           const items=[['enhance','✨ AI Enhancer'],['tags','# Hashtags'],['emoji','😀 Suggest emoji'],['translate','🌐 Translate']];
-          if($('#cmp-bg-strip',root)) items.push(['card', (_bgFramed?'🖼️ Framed card ✓':'🖼️ Framed card')]);
+          if($('#cmp-bg-strip',root)) items.push(['card', (_bgFramed?'🖼️ Framed card ✓':'🖼️ Framed card')], ['paper','📰 Newspaper clipping']);
           openMenuPopover(aiBtn, items, a=>{ if(a==='enhance') doEnhance(); else if(a==='tags') doTags();
             else if(a==='emoji') _aiEmojiSuggest(ta, m=>{ const s=$('#cmp-status',root); if(s) s.textContent=m; });
-            else if(a==='card') doCard(); else if(a==='translate') composeTranslate(ta, aiBtn); }); };
+            else if(a==='card') doCard(); else if(a==='translate') composeTranslate(ta, aiBtn);
+            else if(a==='paper') _aiNewspaper(ta, m=>{ const s=$('#cmp-status',root); if(s) s.textContent=m; }, { pick: ()=>{
+              const strip=$('#cmp-bg-strip',root), b=$('#cmp-bg-btn',root);
+              if(strip && strip.classList.contains('hidden')){ strip.classList.remove('hidden'); if(b) b.classList.add('active'); }
+              const sw=strip && [...strip.querySelectorAll('.cmp-swatch')].find(x=>x.title==='newspaper'); if(sw) sw.click(); } }); }); };
       }
       /* ⋯ overflow. The items CLICK the hidden buttons rather than re-implementing them: Sensitive
        * and Background are toggles whose `.on` class IS the composer's state (read by _cwState, by
@@ -502,6 +619,7 @@ window.PCComposeFactory = function(dep){
             : 'that is just a link — use 🤖 AI → 🖼️ Framed card to turn it into a card';
           CMP_BGS.forEach(bg=>{ const s=document.createElement('button'); s.type='button'; s.className='cmp-swatch'; s.title=bg.id; s.style.background=_bgCss(bg);
             if(bg.deco) s.textContent=bg.deco[0];   // show the holiday emoji so the swatch is recognisable
+            else if(bg.glyph) s.textContent=bg.glyph;
             // Refuse the pick and say why, as the Social strip does. Without this the modal let you arm a
             // background on a bare link and only complained at Post, after the card had already failed.
             s.onclick=()=>{ const why=_bgWhyNot(); if(why){ const st=$('#cmp-status',root); if(st) st.textContent=why; return; } select(bg,s); };
@@ -594,7 +712,7 @@ window.PCComposeFactory = function(dep){
             // from it on retry), and only report success / drop the draft when the relay actually stored it.
             _saveDraftNow(); closeModal();
             const r=await publish(1, url, btags);
-            if(r && r.ok){ _dropDraft(); toast(_bgFramed?'posted 🖼️':'posted 🎨'); }   // failure toast + kept draft handled by publish()
+            if(r && r.ok){ _dropDraft(); toast(_bgChoice&&_bgChoice.fx==='newspaper'?'posted 📰':_bgFramed?'posted 🖼️':'posted 🎨'); }   // failure toast + kept draft handled by publish()
             if(_S.VIEW==='home'||_S.VIEW==='global'||_S.VIEW==='drafts') renderView(true);
           }catch(err){ committed=false; const sb2=$('#cmp-send',root); if(sb2) sb2.disabled=false;
             if(typeof _blossomDenied==='function' && _blossomDenied(err)){ requestBlossomAccess(); $('#cmp-status',root).textContent='🔒 No upload access — requested it from the admin.'; }

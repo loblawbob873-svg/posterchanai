@@ -737,6 +737,27 @@ window.PCTimelineFactory = function(dep){
     if(!o.hasBg){ if(o.reveal) o.reveal(); setSt('🖼️ framed card on — now pick a background'); }
     else setSt('🖼️ framed card on');
   }
+  /* 📰 NEWSPAPER CLIPPING — the 🖼️ Framed card's sibling: paste a link, get a headline and a news-style
+   * story written from it (first line = headline, as the clipping renderer reads it), and the 📰 style
+   * picked, so Post renders the clipping with the real link under it. A draft that is already written is
+   * used as it is. Shared by both composers; `o.pick()` selects the 📰 swatch in the caller's strip. */
+  async function _aiNewspaper(ta, setSt, o){
+    const v=(ta.value||'').trim();
+    if(!v){ toast('paste a link, or write a headline and the story'); return; }
+    const m=v.match(/https?:\/\/\S+/);
+    const words=S._BG_WORDS(v);
+    if(m && (!words || (!words.includes('\n') && words.length < 200))){
+      setSt('writing the story…');
+      try{
+        const r=await fetch('/client/compose-from-url',{method:'POST',headers:{'Content-Type':'application/json'},
+          body:JSON.stringify({url:m[0], style:'newspaper'})}).then(r=>r.json());
+        if(!r || !r.text){ setSt('couldn’t read that link: '+((r&&r.error)||'no content')); return; }
+        ta.value=r.text; ta.dispatchEvent(new Event('input'));
+      }catch(_){ setSt('the story could not be written'); return; }
+    } else if(!words){ toast('paste a link, or write a headline and the story'); return; }
+    if(o && o.pick) o.pick();
+    setSt('📰 newspaper clipping — first line is the headline; the link posts under it');
+  }
   async function _aiHashtags(ta, setSt){
     const body=(ta.value||'').trim();
     const hasImage=/(?:!\[|https?:\/\/\S+\.(?:png|jpe?g|gif|webp)\b|\/blossom\/|media\.)/i.test(ta.value||'');
@@ -994,7 +1015,7 @@ window.PCTimelineFactory = function(dep){
         // The label carries the state: this is a toggle in a menu that closes on pick, so without the ✓
         // there is nothing anywhere telling you the next post will be framed.
         openMenuPopover(ab, [['enhance','✨ AI Enhancer'],['tags','# Hashtags'],['emoji','😀 Suggest emoji'],['translate','🌐 Translate'],
-                             ['card', (_tlBgFramed?'🖼️ Framed card ✓':'🖼️ Framed card')]], a=>{
+                             ['card', (_tlBgFramed?'🖼️ Framed card ✓':'🖼️ Framed card')], ['paper','📰 Newspaper clipping']], a=>{
           const setSt=m=>{ st.textContent=m; };
           if(a==='enhance') _aiEnhance(ta, setSt);
           else if(a==='tags') _aiHashtags(ta, setSt);
@@ -1002,6 +1023,9 @@ window.PCTimelineFactory = function(dep){
           else if(a==='card') _aiFramedCard(ta, setSt, {
             framed: _tlBgFramed, hasBg: !!_tlBg, set: v=>{ _tlBgFramed=v; _tlBgPreview(); },
             reveal: ()=>{ if(bgsRow && bgsRow.classList.contains('hidden')) toggleBg(); } });
+          else if(a==='paper') _aiNewspaper(ta, setSt, { pick: ()=>{
+            if(bgsRow && bgsRow.classList.contains('hidden')) toggleBg();
+            const sw=bgsRow && [...bgsRow.querySelectorAll('.cmp-swatch')].find(x=>x.title==='newspaper'); if(sw) sw.click(); } });
           else if(a==='translate') composeTranslate(ta, ab); }); }; }
     // 🎨 Background post — same swatches and renderer the modal uses (CMP_BGS/renderBgPost are
     // module-level), so the two composers can't drift. Short text only; picking one is exclusive.
@@ -1029,6 +1053,7 @@ window.PCTimelineFactory = function(dep){
         S.CMP_BGS.forEach(bg=>{ const s=document.createElement('button'); s.type='button'; s.className='cmp-swatch';
           s.title=bg.id; s.style.background=_bgCss(bg);
           if(bg.deco) s.textContent=bg.deco[0];   // holiday swatches are recognisable, as in the modal
+          else if(bg.glyph) s.textContent=bg.glyph;
           bgsRow.appendChild(s); marks.push(s);
           s.onclick=()=>{ const why=_bgWhyNot(); if(why){ st.textContent=why; return; } pick(s,bg); }; });
         // Keep the thumbnail in step with what you are typing (the modal already did this) — otherwise the
@@ -1271,7 +1296,7 @@ window.PCTimelineFactory = function(dep){
   }
 
   return {
-    _aiEmojiSuggest, _aiFramedCard, _applyMediaCacheBudget, _autoCleanOnPost, _bindTimelineHeader,
+    _aiEmojiSuggest, _aiFramedCard, _aiNewspaper, _applyMediaCacheBudget, _autoCleanOnPost, _bindTimelineHeader,
     _capFeedDom, _cleanLinksCmd, _drawTimeline, _fillMediaCacheStat, _fillMusicOfflineStat, _flim,
     _flushPending, _hidePill, _noteKey, _noteNode, _parkOffscreenTimelines, _putAnchor,
     _restoreTlAnchor, _timelineHeaderHtml, _tlAnchor, _tlNotes, _updateNewPostsPill, isSensitive,

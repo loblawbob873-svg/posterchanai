@@ -7027,6 +7027,7 @@
   function _timelineLoad(){ return _lzLoad('timeline.js', 'PCTimelineFactory', _timelineDeps); }
   function _aiEmojiSuggest(){ return _lzRun(_timelineMod, _timelineLoad, '_aiEmojiSuggest', arguments); }
   function _aiFramedCard(){ return _lzRun(_timelineMod, _timelineLoad, '_aiFramedCard', arguments); }
+  function _aiNewspaper(){ return _lzRun(_timelineMod, _timelineLoad, '_aiNewspaper', arguments); }
   function _applyMediaCacheBudget(){ return _lzRun(_timelineMod, _timelineLoad, '_applyMediaCacheBudget', arguments); }
   function _autoCleanOnPost(){ return _lzRun(_timelineMod, _timelineLoad, '_autoCleanOnPost', arguments); }
   function _bindTimelineHeader(){ return _lzRun(_timelineMod, _timelineLoad, '_bindTimelineHeader', arguments); }
@@ -9569,6 +9570,9 @@
     // on a terminal, this is a readout. textScale is what makes that a property of the swatch rather
     // than a second copy of the type block.
     {id:'mainvolume', colors:['#000000','#03080f','#000000'], fg:'#8ecbff', fx:'console', mono:true, glow:true, textScale:0.7},
+    // 📰 A newspaper clipping, not a colour: compose.js _renderClipping draws torn newsprint with a masthead,
+    // a headline and the story in two columns. `glyph` is what its swatch shows.
+    {id:'newspaper', colors:['#efe6cf','#d9cba6'], fg:'#1c1915', fx:'newspaper', glyph:'📰'},
     // Holiday themes — festive gradient + decorative emoji framed around the text.
     {id:'christmas',    colors:['#b71c1c','#1b5e20'],          deco:['🎄','❄️','🎁']},
     {id:'halloween',    colors:['#ff7518','#0d0d0d','#6a0dad'], deco:['🎃','👻','🦇']},
@@ -9593,7 +9597,7 @@
       get LOGO(){ return LOGO; },
       get VIEW(){ return VIEW; },
     },
-    $, $$, CMP_BGS, Drafts, InstEmoji, Scheduled, _BG_WORDS, _aiEmojiSuggest, _aiFramedCard,
+    $, $$, CMP_BGS, Drafts, InstEmoji, Scheduled, _BG_WORDS, _aiEmojiSuggest, _aiFramedCard, _aiNewspaper,
     _appendQuoteNevent, _autoCleanOnPost, _bgCss, _blossomDenied, _captureCamera, _cardHook,
     _cleanLinksCmd, _dtLocal, _insertAt, _qDraftSet, _stickyNudge, _syncSendLabel,
     articleCommentTags, attachEmojiAutocomplete, attachMentionAutocomplete, blossomPicker,
@@ -9646,13 +9650,14 @@
         while(want){
           const job=want; want=null;
           if(!job.bg){ host.classList.add('hidden'); host.innerHTML=''; continue; }
-          const words=_BG_WORDS(job.text), card=_cardHook(words);
-          const blob=await renderBgPost(card||' ', job.bg, job.framed);
+          const words=_BG_WORDS(job.text), paper=job.bg.fx==='newspaper', card=paper ? words : _cardHook(words);
+          let site=''; try{ const u=String(job.text||'').match(/https?:\/\/\S+/); site=u ? new URL(u[0]).hostname : ''; }catch(_){ }
+          const blob=await renderBgPost(card||' ', job.bg, job.framed, {site});
           if(objUrl) URL.revokeObjectURL(objUrl);
           objUrl=URL.createObjectURL(blob);
           host.classList.remove('hidden');
           host.innerHTML='<img class="cmp-cardprev-img" alt="card preview">'
-            + '<div class="muted small">'+(words && words!==card
+            + '<div class="muted small">'+(paper ? 'this is the clipping; the link posts under it' : words && words!==card
                 ? 'this is the card — the rest of your text won’t fit on it'
                 : 'this is the card; any link posts under it')+'</div>';
           host.querySelector('img').src=objUrl;

@@ -1213,6 +1213,9 @@ async def compose_from_url(request: Request, db: Session = Depends(get_db)):
     url = (body.get("url") or "").strip()
     if not url or not re.match(r"^https?://", url, re.I):
         return JSONResponse({"error": "no link"}, status_code=400)
+    # 📰 Newspaper clipping: the composer renders the FIRST LINE as the headline and the rest as the story
+    # in two columns, so this style asks for exactly that shape (compose.js _renderClipping).
+    newspaper = str(body.get("style") or "") == "newspaper"
     # fetch_url_content centralises page extraction + YouTube transcript handling, so a video link
     # is summarized from its captions (not the contentless watch page).
     try:
@@ -1229,8 +1232,16 @@ async def compose_from_url(request: Request, db: Session = Depends(get_db)):
     try:
         from app.services.inference_factory import get_inference_service
         svc = get_inference_service(db)
+        system = (
+            "You are a newspaper sub-editor. The user gives you the text (or video transcript) of a web "
+            "page. Write it up as a short newspaper story: the FIRST LINE is a headline of at most 12 "
+            "words in headline style (no quotes, no full stop, no hashtags); then a blank line; then the "
+            "story in 2-3 short paragraphs, inverted pyramid -- who, what, when, where first -- in plain "
+            "third-person news prose. Do NOT invent facts, quotes, names or numbers; do NOT include the "
+            "link or any URL; no emoji, no hashtags, no preamble. Output ONLY the headline and the story."
+        ) if newspaper else None
         res = await svc.chat_completion(
-            [{"role": "system", "content": (
+            [{"role": "system", "content": system or (
                 "You write engaging social-media posts. The user gives you the text (or video "
                 "transcript) of a web page. Write ONE detailed, natural-sounding post that summarizes "
                 "it for a general audience: open with a hook, cover the key points and specifics in a "
