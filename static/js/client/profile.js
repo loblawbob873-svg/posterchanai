@@ -25,6 +25,35 @@ window.PCProfileFactory = function(dep){
 
   // ---------- profile ----------
   let _prof = { pk:null, tab:'notes', oldest:0, loading:false, done:false, limit:40, fill:null };
+  /* THE PROFILE SHOWS WHAT IT HAS CONTIGUOUSLY, AND PAGES FROM THERE ("there is no way I have an 11 day
+   * reply gap"). `oldest` was the oldest post of this author anywhere in the local CACHE -- but opening a
+   * profile fetches only the newest page (80 events: about a day for somebody who replies a lot), while
+   * the cache also holds whatever the timeline happened to bring in weeks ago. So the list showed today,
+   * then jumped straight to those, and scroll-back asked the relay for posts older than THEM: the stretch
+   * in between was never fetched and never shown. Measured: 1502 replies on the relay, 20-100 every day,
+   * and an 11-day hole on the profile. Now `oldest` is the floor of what the relay actually returned: the
+   * lists show nothing older until scroll-back has fetched down to it, and scroll-back starts there. A
+   * page that comes back short means there is nothing older to fetch, and the floor is lifted. */
+  const _PROF_PAGE=80;
+  function _floorOf(evs, page){
+    if(!evs || !evs.length || evs.length < page) return 0;
+    return evs.reduce((m,e)=>Math.min(m, e.created_at), Infinity);
+  }
+  const _inWindow=e=>!_prof.oldest || e.created_at>=_prof.oldest;
+  /* A tab that came out SHORT pages on by itself. With the floor, the Posts tab of somebody who mostly
+   * replies can hold three posts after the first page where the cache used to pad it -- and a list too
+   * short to scroll can never reach the scroll-back trigger. A few automatic pages, then it waits. */
+  let _topUpN=0;
+  function _topUp(){
+    if(_topUpN>=5) return;
+    // Decided AFTER the current turn: a fill made by loadOlderProfile runs while that load still has
+    // `loading` set, and checking then stopped the top-up after a single page (measured: 2 pages, 7 posts).
+    setTimeout(()=>{
+      if(_prof.done || _prof.loading || !_prof.oldest || _topUpN>=5 || S.VIEW!=='profile') return;
+      const el=$('#prof-list'); if(!el || el.querySelectorAll('.note, article').length>=15) return;
+      _topUpN++; loadOlderProfile();
+    }, 0);
+  }
   let _profGen = 0;   // bumped per renderProfileView; async steps bail if superseded (opening B while A loads)
   // scroll-back for the active profile tab — pull older author notes, then re-fill the tab list
   // (notes/replies/media all derive from the author's kind-1 stream, so one fetch grows all three).
@@ -32,7 +61,7 @@ window.PCProfileFactory = function(dep){
     if(_prof.loading || _prof.done || !_prof.pk || !_prof.oldest) return;
     _prof.loading=true; const pk=_prof.pk; const feed=$('#feed'); loadSentinel(feed);
     const until=_prof.oldest;
-    let evs=[]; try{ evs=await Relay.query([{ authors:[pk], kinds:[1], until:until-1, limit:60 }]); }catch(_){}
+    let evs=[]; try{ evs=await Relay.query([{ authors:[pk], kinds:[1,1068,6], until:until-1, limit:_PROF_PAGE }]); }catch(_){}
     clearSentinel(feed);
     if(S.VIEW!=='profile' || _prof.pk!==pk){ _prof.loading=false; return; }
     let minTs=until;
@@ -46,7 +75,7 @@ window.PCProfileFactory = function(dep){
     _prof.limit += 60;
     if(_prof.limit >= _FEED_MAX_CARDS){ _prof.limit = _FEED_MAX_CARDS; _prof.done = true; }
     if(minTs<_prof.oldest) _prof.oldest=minTs;
-    if(!evs.length || minTs>=until) _prof.done=true;
+    if(!evs.length || minTs>=until || evs.length<_PROF_PAGE){ _prof.done=true; _prof.oldest=0; }   // reached the start: no floor
     if(_prof.fill){ _prof.fill(_prof.tab); hydrate(feed); }
     _prof.loading=false;
   }
@@ -264,6 +293,23 @@ window.PCProfileFactory = function(dep){
     // PosterChan OS: a profile opens in its OWN window, for the same reason a post does — opening
     // one from the timeline used to REPLACE the timeline, and with the sidebar hidden there was
     // then no way back to it. _routing is the back/forward button; see openThread.
+    /* …AND FROM A POPPED-OUT WINDOW TOO ("if you click on a username, have it open the profile in a new
+     * window instead of replacing your view"). On PosterChanOS every app is its own window and PCOS is off
+     * inside it, so the rule below never fired there: a name clicked in Social replaced the timeline in
+     * Social's own window. Hand it to the DESKTOP, exactly as openThread does with a post. The one window
+     * that renders a profile in place is that profile's own window (its first paint arrives here). */
+    if(pk && !S._routing && window.PCOSWin && PCOSWin.isWindow && PCOSWin.isWindow()
+       && String(PCOSWin.viewOf()||'').toLowerCase() !== ('doc:prof:'+pk).toLowerCase()){
+      try{
+        const desk=PCOSWin.desktop && PCOSWin.desktop();
+        if(desk && desk.PCOSWin && desk.PCOSWin.enabled() && desk.PCOS && desk.PCOS.isOn() && desk.__PC && desk.__PC.openProfile){
+          try{ const k0=Store.query([{kinds:[0],authors:[pk],limit:1}]);
+               if(k0 && k0[0] && desk.Store) desk.Store.saveEvent(k0[0]); }catch(_){}
+          desk.__PC.openProfile(pk);
+          return;
+        }
+      }catch(_){}
+    }
     if(window.PCOS && PCOS.isOn() && pk && !renderProfileView._osIn){
       if(S._routing){
         try{ PCOS.focusDoc && PCOS.focusDoc('prof:' + pk); }catch(_){}
@@ -304,10 +350,11 @@ window.PCProfileFactory = function(dep){
      * (Thailand→US) the first REQ can EOSE empty before the relay serves this author's notes → the
      * profile showed "0 posts" for an active account. Only when we got nothing AND have nothing
      * cached, so a genuinely-empty profile still resolves fast. */
+    let _fetched=null;
     const _loadNotes = async () => {
       let notes=[];
       for(let attempt=0; attempt<3; attempt++){
-        try{ notes=await Relay.query([{authors:[pk],kinds:[1,1068,6],limit:80}]); }catch(_){ notes=[]; }   // polls + reposts
+        try{ notes=await Relay.query([{authors:[pk],kinds:[1,1068,6],limit:_PROF_PAGE}]); }catch(_){ notes=[]; }   // polls + reposts
         if(S.VIEW!=='profile' || myGen!==_profGen) return false;   // navigated away / a newer profile opened
         /* AN ANSWER NO RELAY FINISHED IS NOT "NOTHING MORE", WHATEVER THE CACHE HOLDS. This broke out as
            soon as the cache had ANY note by this author -- so a profile the timeline had shown one post
@@ -319,6 +366,7 @@ window.PCProfileFactory = function(dep){
         await new Promise(r=>setTimeout(r, 450*(attempt+1)));
       }
       notes.forEach(n=>Store.saveEvent(n));
+      _fetched=notes;
       return S.VIEW==='profile' && myGen===_profGen;
     };
     if(!_cached){
@@ -375,9 +423,9 @@ window.PCProfileFactory = function(dep){
     let pinnedIds = new Set();
     const listFor=(tab)=>{
       const lim=_prof.limit;
-      if(tab==='replies'){ const r=Store.query([{authors:[pk],kinds:[1,1111]}]).filter(isReply).slice(0,lim);
+      if(tab==='replies'){ const r=Store.query([{authors:[pk],kinds:[1,1111]}]).filter(e=>isReply(e) && _inWindow(e)).slice(0,lim);
         return r.length ? r.map(feedNoteHtml).join('') : '<div class="empty">No replies yet.</div>'; }   // feedNoteHtml wraps a reply in the same reply-pair+context markup
-      if(tab==='media'){ const m=Store.feed(e=>e.pubkey===pk && hasMedia(e)).slice(0,lim);
+      if(tab==='media'){ const m=Store.feed(e=>e.pubkey===pk && hasMedia(e) && _inWindow(e)).slice(0,lim);
         if(!m.length) return '<div class="empty">No media yet.</div>';
         // gallery only — take each post's bare media tags (not the row/carousel wrapper) and grid them
         const items=m.map(e=>mediaParts(e.content).items.join('')).join('');
@@ -389,7 +437,7 @@ window.PCProfileFactory = function(dep){
         return a.length ? a.map(articleCard).join('') : `<div class="empty">${_prof.artLoaded?'No articles yet.':'Loading…'}</div>`; }
       if(tab==='streams'){ const s=_dedupAddr(Store.byKind(30311).filter(e=> (e.pubkey===pk || streamHost(e)===pk) && !_isDeletedStream(e))).slice(0,lim);   // NOT Store.feed() — that allowlists kinds 1/6/1068/30023/40, so it silently drops every 30311
         return s.length ? `<div class="stream-grid prof-streams">${s.map(streamCard).join('')}</div>` : `<div class="empty">${_prof.streamsLoaded?'No streams yet.':'Loading…'}</div>`; }
-      const n=Store.feed(e=>e.pubkey===pk && !isReply(e) && !pinnedIds.has(e.id)).slice(0,lim);
+      const n=Store.feed(e=>e.pubkey===pk && !isReply(e) && !pinnedIds.has(e.id) && _inWindow(e)).slice(0,lim);
       if(n.length) return pinnedHtml + n.map(e=>noteHtml(e)).join('');
       /* "No posts yet." is a claim, and for a reply-heavy author it is a FALSE one — their replies
        * are on your timeline right now. Say which of the two this is, and offer the tab that has
@@ -417,6 +465,7 @@ window.PCProfileFactory = function(dep){
         h=`<div class="empty">Couldn’t show this list — ${enc(String((e&&e.message)||e).slice(0,140))}</div>`;
       }
       if(h===_lastFill) return; _lastFill=h; el.innerHTML=h;
+      _topUp();
       /* The "See N replies" button the Posts tab offers a reply-only author. Bound HERE, inside
        * fillList, because the list is re-rendered on every relay round and a handler attached
        * anywhere else would be dropped by the next innerHTML. Drives the real tab so the button and
@@ -432,10 +481,12 @@ window.PCProfileFactory = function(dep){
     const _wireProfStreamClicks=()=>{ const el=$('#prof-list'); if(!el) return;
       el.querySelectorAll('.stream-card').forEach(c=>{ c.style.cursor='pointer';
         c.onclick=(ev)=>{ if(ev.target.closest('[data-prof]')) return; const s=Store.get(c.dataset.id); if(s) openStream(s); }; }); };
-    // pagination cursor: oldest author kind-1 we hold (drives loadOlderProfile via `until`)
-    const authorNotes=Store.feed(e=>e.pubkey===pk);
+    // Pagination cursor = the floor of what the relay returned (see _floorOf). A cache-first paint has not
+    // asked yet: no floor, everything cached shows, and the refresh below sets it.
+    _topUpN=0;
     _prof = { pk, tab:'notes', loading:false, done:false, limit:40, fill:fillList, following:[], followers:[],
-              oldest: authorNotes.length ? authorNotes[authorNotes.length-1].created_at : 0 };
+              oldest: _fetched ? _floorOf(_fetched, _PROF_PAGE) : 0 };
+    if(_fetched && _fetched.length < _PROF_PAGE && _fetched.complete !== false) _prof.done=true;
     fillList('notes');
     /* EVERYTHING FROM HERE TO THE BACKGROUND LOADS IS ONE STRAIGHT RUN OF BINDINGS, and a throw
      * anywhere in it silently truncates the page at that point: the header is already on screen and
@@ -488,7 +539,7 @@ window.PCProfileFactory = function(dep){
         });
       }; });
     try{
-    $$('.prof-tab',feed).forEach(t=> t.onclick=async()=>{ $$('.prof-tab',feed).forEach(x=>x.classList.toggle('active',x===t)); const tab=t.dataset.tab; _prof.tab=tab; fillList(tab); hydrate(feed);
+    $$('.prof-tab',feed).forEach(t=> t.onclick=async()=>{ $$('.prof-tab',feed).forEach(x=>x.classList.toggle('active',x===t)); const tab=t.dataset.tab; _prof.tab=tab; _topUpN=0; fillList(tab); hydrate(feed);
       if(tab==='streams') _wireProfStreamClicks();
       if(tab==='albums'){ try{ await mountAlbums($('#prof-albums', feed), pk); }catch(e){ const el=$('#prof-albums', feed); if(el) el.innerHTML=`<div class="empty">Couldn’t open albums — ${enc(String((e&&e.message)||e).slice(0,120))}</div>`; } }
       // Articles (kind-30023) aren't part of the initial note load — lazy-fetch them once on first open.
@@ -508,22 +559,11 @@ window.PCProfileFactory = function(dep){
        * filter here — exactly what the reply-heavy backfill below does for the opposite case. It
        * stops as soon as it has a screenful, so an account that replies constantly pays for one
        * page and a note-heavy one pays at most three. */
-      if(tab==='replies' && !_prof.repliesLoaded){ _prof.repliesLoaded=true;
-        const have=()=>Store.query([{authors:[pk],kinds:[1,1111]}]).filter(isReply).length;
-        let oldest=Math.min.apply(null,(Store.feed(e=>e.pubkey===pk).map(e=>e.created_at||0)
-                                        .filter(Boolean).concat([Math.floor(Date.now()/1000)])));
-        for(let page=0; page<3 && have()<_prof.limit; page++){
-          let older=[];
-          try{ older=await Relay.query([{authors:[pk],kinds:[1,1111],until:oldest-1,limit:200}])||[]; }
-          catch(_){ break; }
-          if(!older.length) break;
-          older.forEach(e=>Store.saveEvent(e));
-          const stamps=older.map(e=>e.created_at||0).filter(Boolean);
-          if(!stamps.length) break;
-          oldest=Math.min.apply(null,stamps);
-          if(S.VIEW!=='profile' || _prof.pk!==pk || _prof.tab!=='replies') return;   // they moved on
-        }
-        if(S.VIEW==='profile' && _prof.pk===pk && _prof.tab==='replies'){ fillList('replies'); hydrate(feed); } }
+      /* …and it pages through the SAME cursor as everything else. It used to page back by `until`
+       * from the oldest post in the local cache, which is exactly how the 11-day hole was made: the
+       * cache holds weeks-old posts from the timeline, so the pages it fetched sat behind a stretch
+       * nobody had asked for. The top-up pages from what was actually fetched (see _topUp). */
+      if(tab==='replies' && !_prof.repliesLoaded){ _prof.repliesLoaded=true; _topUpN=0; _topUp(); }
       // Streams (kind-30311) live + ended — lazy-fetch once (our relay + the wider stream network).
       if(tab==='streams' && !_prof.streamsLoaded){ _prof.streamsLoaded=true;
         try{ const s=await Relay.query([{authors:[pk],kinds:[30311],limit:60}]); for(const e of (s||[])) Store.saveEvent(e); }catch(_){}
@@ -533,39 +573,10 @@ window.PCProfileFactory = function(dep){
             for(const e of ext) Store.saveEvent(e); } }catch(_){}
         if(S.VIEW==='profile' && _prof.pk===pk && _prof.tab==='streams'){ fillList('streams'); hydrate(feed); _wireProfStreamClicks(); } }
     });
-    /* BACKFILL FOR A REPLY-HEAVY AUTHOR — AFTER the render, never before it.
-     *
-     * The Posts tab excludes replies (`!isReply`) while the timeline includes them, so an author
-     * whose recent 80 events are nearly all replies gets "No posts yet." about an account whose
-     * posts are filling your feed. Measured on one reported npub: 168 of its 200 most recent kind-1s
-     * are replies, with 32 top-level ones further back. Nostr filters cannot express "no e tag", so
-     * the only way to find them is to page BACK by `until`.
-     *
-     * THE FIRST CUT OF THIS PUT THE PAGING INSIDE _loadNotes, AND THAT WAS A REGRESSION: _loadNotes
-     * gates the whole render (`if(!await _loadNotes()) return;`), so two extra relay round trips ran
-     * BEFORE the list, the tabs, the ⋯ menu and Copy-npub were bound — delaying the profile and
-     * widening the window in which a navigation abandons the render half-built. That is the exact
-     * "no posts, dead hamburger, dead copy npub" triad it was supposed to help with.
-     *
-     * So it runs here instead: fire-and-forget, nothing awaits it, and it only repaints if it
-     * actually found something and the user is still on this profile. Same shape as the articles and
-     * streams lazy-loaders above. Bounded to two pages — a fill-in, not scroll-back. */
-    (async () => {
-      const top = () => Store.feed(e => e.pubkey === pk && !isReply(e)).length;
-      if(top()) return;                                   // the common case: nothing to do
-      let older = Store.feed(e => e.pubkey === pk);
-      for(let page = 0; page < 2 && older.length; page++){
-        const stamps = older.map(e => e.created_at || 0).filter(Boolean);
-        if(!stamps.length) return;
-        const oldest = Math.min.apply(null, stamps);
-        try{ older = await Relay.query([{ authors:[pk], kinds:[1,1068,6], until: oldest - 1, limit: 80 }]) || []; }
-        catch(_){ return; }
-        if(!older.length) return;
-        older.forEach(e => Store.saveEvent(e));
-        if(S.VIEW!=='profile' || _prof.pk!==pk || myGen!==_profGen) return;   // they moved on; drop it
-        if(top()){ if(_prof.tab === 'notes'){ fillList('notes'); hydrate(feed); } return; }
-      }
-    })();
+    /* A REPLY-HEAVY AUTHOR'S Posts tab used to be filled by its own backfill here, paging back from the
+     * oldest CACHED post -- the same cursor that opened the 11-day hole. The top-up (_topUp, called after
+     * every fill) now pages from what was actually fetched until the tab has a screenful, which covers
+     * this case without a second cursor. */
     { const pay=$('#prof-pay',feed); if(pay)pay.onclick=()=>showPaymentTargets(pk); }
     _loadPaymentTargets(pk).then(lightning=>{
       if(S.VIEW==='profile' && _prof.pk===pk && myGen===_profGen)
@@ -631,8 +642,8 @@ window.PCProfileFactory = function(dep){
       _patchProfileHeader(pk);
       if(!await _loadNotes()) return;
       if(_prof.pk!==pk) return;
-      const an=Store.feed(e=>e.pubkey===pk);
-      if(an.length) _prof.oldest=an[an.length-1].created_at;
+      _prof.oldest=_floorOf(_fetched, _PROF_PAGE);
+      _prof.done=!!(_fetched && _fetched.length < _PROF_PAGE && _fetched.complete !== false);
       fillList(_prof.tab); hydrate(feed);
       if(_prof.tab==='streams') _wireProfStreamClicks();
     })();
