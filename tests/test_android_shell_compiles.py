@@ -45,6 +45,7 @@ PACKAGES = [os.path.join(APP, p) for p in SHELL]
 NOT_SHELL = {
     "calendar", "call", "contacts", "gamepad", "music", "nip55", "push", "scan",
     "preview", "screenshare", "share", "signer", "sync", "tor", "vault",
+    "ringtone",     # a Capacitor plugin User Settings calls; its rules are javac-RUN by test_android_ringtone.py
 }
 
 # WHAT IS SHIMMED, AND WHY. HomeActivity reads the music service's now-playing state and presses its
