@@ -12328,17 +12328,26 @@
       (kids.get(pid) || kids.set(pid,[]).get(pid)).push(r);
     }
     const seen=new Set([root.id]);
+    /* A THREAD IS DRAWN AS A TREE, NOT A LIST OF MARGINS. Every reply used to be a flat sibling with its
+     * own left margin, so after a long sub-conversation nothing tied the next reply back to its parent --
+     * you compared indents by eye, and past five levels they stopped growing at all. Now each post's
+     * replies are INSIDE it, in a .thread-children branch whose guide line runs from the parent down
+     * through everything that answers it. Past INDENT_CAP the branch stops indenting (a phone runs out of
+     * width) and the post names whom it answers instead. */
     const INDENT_CAP=5;
+    let lastDrawn=root.id;
     const renderNode=(node,depth)=>{
       if(seen.has(node.id)) return ''; seen.add(node.id);   // guard against malformed reply cycles
       const hl = node.id===id ? ' thread-hl' : '';
-      const ind = depth>0 ? ` style="margin-left:${Math.min(depth,INDENT_CAP)*14}px"` : '';
-      // The indent stops at INDENT_CAP levels, so past it (and for a reply whose parent never loaded) the
-      // position alone no longer says whom it answers: name the parent, as the feed does.
-      const ctx = (orphans.has(node.id) || depth>INDENT_CAP) ? replyContextHtml(node) : '';
-      let h=`<div class="thread-node${hl}" data-tid="${enc(node.id)}"${ind}>${ctx}${noteHtml(node)}</div>`;
-      for(const c of (kids.get(node.id)||[]).sort((a,b)=>a.created_at-b.created_at)) h+=renderNode(c, depth+1);
-      return h;
+      // Name the parent whenever it is NOT the post drawn directly above this one -- a later sibling sits
+      // under the previous sibling's whole sub-conversation -- or when it never loaded, or past the cap.
+      const pid = replyParentId(node);
+      const ctx = (orphans.has(node.id) || depth>INDENT_CAP || (pid && pid!==lastDrawn)) ? replyContextHtml(node) : '';
+      lastDrawn = node.id;
+      let inner='';
+      for(const c of (kids.get(node.id)||[]).sort((a,b)=>a.created_at-b.created_at)) inner+=renderNode(c, depth+1);
+      const branch = inner ? `<div class="thread-children${depth>=INDENT_CAP?' thread-flat':''}">${inner}</div>` : '';
+      return `<div class="thread-node${hl}" data-tid="${enc(node.id)}" data-depth="${depth}">${ctx}${noteHtml(node)}${branch}</div>`;
     };
     const nReplies=all.length-1;
     /* An incomplete expansion must not present its count as the answer. It says what it knows and
@@ -12360,7 +12369,7 @@
     if(isIssue) html+=`<div class="issue-status-host" id="issue-status-host"></div>`;
     html+=`<div class="search-section-title">${partial ? `${nReplies} repl${nReplies===1?'y':'ies'} so far` : `${nReplies} repl${nReplies===1?'y':'ies'}`}</div>`;
     html+= partial ? `<div class="thread-partial empty">Some relays didn’t answer, so replies may be missing. <button class="btn btn-ghost small" id="thread-retry">Load again</button></div>` : '';
-    html+= nReplies ? (kids.get(root.id)||[]).sort((a,b)=>a.created_at-b.created_at).map(c=>renderNode(c,1)).join('')
+    html+= nReplies ? '<div class="thread-children thread-top-replies">'+(kids.get(root.id)||[]).sort((a,b)=>a.created_at-b.created_at).map(c=>renderNode(c,1)).join('')+'</div>'
          : (partial ? '' : '<div class="empty">No replies yet.</div>');
     feed.innerHTML=html; hydrate(feed);
     _bindThreadBack(feed, id);   // the same binder the early paint used — see _paintThreadHead

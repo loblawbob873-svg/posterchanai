@@ -2945,7 +2945,14 @@ body.embed .feed{max-width:680px;margin:0 auto;padding:14px;height:auto !importa
 /* Threaded conversation view: root post first, replies nested (indented) under their parent, with the
    post you clicked highlighted. A faint guide line on nested replies shows the indent depth. */
 .thread-node{position:relative}
-.thread-node[style]{border-inline-start:2px solid var(--line)}
+/* A thread's branches: each post's replies hang inside it under a guide line that runs from the parent
+   down through everything answering it (renderThread). Narrower on a phone so deep threads still fit;
+   past the indent cap a branch stops indenting and its posts name whom they answer instead. */
+.thread-children{margin-inline-start:12px;padding-inline-start:10px;border-inline-start:2px solid var(--line)}
+.thread-children:hover{border-inline-start-color:rgba(var(--accent-rgb),.55)}
+.thread-children.thread-top-replies{margin-inline-start:0;padding-inline-start:0;border-inline-start:0}
+.thread-children.thread-flat{margin-inline-start:0;padding-inline-start:0;border-inline-start:0}
+@media(max-width:640px){ .thread-children{margin-inline-start:6px;padding-inline-start:6px} }
 .thread-hl>.note{background:rgba(var(--accent-rgb),.07);box-shadow:0 0 0 2px var(--neon) inset;border-radius:12px}
 /* Opening a thread from a notification scrolls THIS node to the top of the feed; the margin leaves a
    sliver of the post above it visible, so you land on the reply with a hint of what it answers rather

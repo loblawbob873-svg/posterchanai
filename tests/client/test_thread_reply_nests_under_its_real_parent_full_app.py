@@ -23,6 +23,10 @@ MID = {"id": "2" * 64, "pubkey": B_PK, "kind": 1, "created_at": 1790000100, "sig
        "tags": [["e", ROOT["id"], "", "root"], ["p", A_PK]]}
 DEEP = {"id": "3" * 64, "pubkey": A_PK, "kind": 1, "created_at": 1790000200, "sig": "", "content": "answering the middle",
         "tags": [["e", ROOT["id"], "", "root"], ["e", MID["id"], "", "reply"], ["p", B_PK]]}
+# A second direct reply to the ROOT, posted later: it is drawn AFTER the MID->DEEP branch, so the post right
+# above it on screen is DEEP -- it must say whom it answers.
+LATER = {"id": "4" * 64, "pubkey": B_PK, "kind": 1, "created_at": 1790000300, "sig": "", "content": "back to the original",
+         "tags": [["e", ROOT["id"], "", "root"], ["p", A_PK]]}
 
 
 @pytest.fixture(scope="module", autouse=True)
@@ -36,21 +40,25 @@ def _open(parent_loadable):
     async def check(b):
         await desktop.login(b)
         await b.until("!!window.__PC && !!window.Relay")
-        stub = ("(()=>{const R=%s,M=%s,D=%s,loadable=%s;Store.saveEvent(R);"
+        stub = ("(()=>{const R=%s,M=%s,D=%s,L=%s,loadable=%s;Store.saveEvent(R);"
                 "Relay.query=async(filters)=>{const f=filters[0]||{};let out=[];"
-                "if(f['#e']) out=f['#e'].includes(R.id)?[D]:[];"          # the deep reply comes back, its parent does not
+                "if(f['#e']) out=f['#e'].includes(R.id)?[D,L]:[];"        # the deep reply comes back, its parent does not
                 "else if(f.ids) out=[R,M,D].filter(e=>f.ids.includes(e.id)&&(e.id!==M.id||loadable));"
                 "out.complete=true;return out;};return true;})()") % (
-            json.dumps(ROOT), json.dumps(MID), json.dumps(DEEP), "true" if parent_loadable else "false")
+            json.dumps(ROOT), json.dumps(MID), json.dumps(DEEP), json.dumps(LATER), "true" if parent_loadable else "false")
         await b.js(stub)
         await b.js(f"__PC.openThread('{ROOT['id']}');true")
         await b.until(f"!!document.querySelector('.thread-node[data-tid=\"{DEEP['id']}\"]')")
         await asyncio.sleep(.3)
         got.update(await b.js("""(()=>{const n=id=>document.querySelector('.thread-node[data-tid="'+id+'"]');
-            const m=e=>e?parseInt(e.style.marginLeft||'0',10):null;
+            const own=e=>!!(e&&[...e.children].some(c=>c.classList.contains('reply-ctx')));
             const order=[...document.querySelectorAll('.thread-node[data-tid]')].map(e=>e.dataset.tid);
-            return {mid:m(n('%s')), deep:m(n('%s')), order, label:!!n('%s').querySelector('.reply-ctx')};})()"""
-                              % (MID["id"], DEEP["id"], DEEP["id"])))
+            const M=n('%s'),D=n('%s'),L=n('%s');
+            return {mid:!!M, deepInsideMid:!!(M&&D&&M.contains(D)&&M!==D), order,
+                    label:own(D), midLabel:own(M), laterLabel:own(L),
+                    branchLine:!!(D&&D.parentElement.classList.contains('thread-children')
+                                 &&parseFloat(getComputedStyle(D.parentElement).borderInlineStartWidth)>0)};})()"""
+                              % (MID["id"], DEEP["id"], LATER["id"])))
 
     asyncio.run(desktop.with_browser("online", "", check, ""))
     return got
@@ -59,13 +67,16 @@ def _open(parent_loadable):
 @pytest.mark.skipif(not Path("/opt/google/chrome/chrome").exists(), reason="Chrome required")
 def test_a_deep_reply_nests_under_the_parent_it_answers():
     got = _open(parent_loadable=True)
-    assert got["mid"] is not None, ("the middle reply was never fetched", got)
-    assert got["order"].index(MID["id"]) < got["order"].index(DEEP["id"]), got
-    assert got["deep"] > got["mid"], ("the deep reply is drawn as answering the original post", got)
+    assert got["mid"], ("the middle reply was never fetched", got)
+    assert got["deepInsideMid"], ("the deep reply is drawn as answering the original post", got)
+    assert got["order"].index(MID["id"]) < got["order"].index(DEEP["id"]) < got["order"].index(LATER["id"]), got
+    assert got["branchLine"], ("no guide line ties the deep reply to its parent", got)
+    assert not got["midLabel"] and not got["label"], ("a reply directly under its parent repeats whom it answers", got)
+    assert got["laterLabel"], ("a reply drawn after another branch does not say whom it answers", got)
 
 
 @pytest.mark.skipif(not Path("/opt/google/chrome/chrome").exists(), reason="Chrome required")
 def test_a_reply_whose_parent_cannot_load_says_whom_it_answers():
     got = _open(parent_loadable=False)
-    assert got["mid"] is None
+    assert not got["mid"]
     assert got["label"], ("a reply to an unloaded post is presented as a reply to the original post", got)
