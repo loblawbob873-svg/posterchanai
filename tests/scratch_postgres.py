@@ -6,10 +6,16 @@ Postgres was switched off, so ~20 relay tests (the prune rules that keep calenda
 posts alive, the quote index, git state) quietly stopped running -- caught only because
 test_the_suite_can_actually_fail noticed a guard that no longer failed when broken.
 
-So: use the local server when one answers (CI, a dev box -- unchanged), otherwise start a PRIVATE
-throwaway cluster (initdb into a temp dir, trust auth, a free port, the same role/database names the
-tests expect) once per test process, and remove it at exit. A machine with no Postgres binaries at
-all falls back to the old address and the old skip, which test_the_suite_can_actually_fail reports.
+So: start a PRIVATE throwaway cluster (initdb into a temp dir, trust auth, its own socket, the same
+role/database names the tests expect) once per test process, and remove it at exit. A machine with no
+Postgres binaries gets an address nothing answers on, so those tests SKIP -- which
+test_the_suite_can_actually_fail reports.
+
+NEVER ADOPT A SERVER THAT HAPPENS TO ANSWER. This used to use 127.0.0.1:5432/posterchan_relay whenever
+something answered there -- and `posterchan_relay` is the PRODUCTION database's name on nas.lan, and
+server1 hosted its production Postgres locally until 2026-10-01. A `pcai_prune_test_…` schema was found
+inside a production database on 2026-10-05: a test run had written into it. A real server is used only
+when it is named explicitly with PC_TEST_PG_PORT (a dedicated test instance).
 """
 from __future__ import annotations
 
@@ -24,15 +30,6 @@ import tempfile
 ROLE, DB = "posterchan", "posterchan_relay"
 _DEFAULT = {"host": "127.0.0.1", "port": 5432, "dbname": DB, "user": ROLE}
 _cached: dict | None = None
-
-
-def _answers(params: dict) -> bool:
-    try:
-        import psycopg2
-        psycopg2.connect(connect_timeout=3, **params).close()
-        return True
-    except Exception:
-        return False
 
 
 def _bin(name: str) -> str | None:
@@ -96,10 +93,10 @@ def params() -> dict:
     if _cached is None:
         if os.environ.get("PC_TEST_PG_PORT"):
             _cached = {**_DEFAULT, "port": int(os.environ["PC_TEST_PG_PORT"])}
-        elif _answers(_DEFAULT):
-            _cached = dict(_DEFAULT)
         else:
-            _cached = _start_private() or dict(_DEFAULT)
+            # No binaries: a socket directory that does not exist, so a connect FAILS (and the test
+            # skips) rather than finding whatever production server listens on this machine.
+            _cached = _start_private() or {**_DEFAULT, "host": "/nonexistent/pc-test-postgres"}
     return dict(_cached)
 
 
