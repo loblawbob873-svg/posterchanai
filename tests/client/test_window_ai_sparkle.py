@@ -56,9 +56,14 @@ def test_only_a_terminal_is_offered_commands_and_running_one_is_a_click():
     assert "window.PCTerm.run(st.text)" in steps
 
 def test_suggestions_are_tailored_to_common_window_kinds():
-    for kind in ("terminal|console|shell", "firefox|browser|web", "telegram|message|chat|mail",
-                 "file|drive|folder", "settings"):
-        assert kind in OS
+    """Tailored by what the window IS: a terminal, a conversation (Messages/Telegram/Texts/Concord/Email),
+    a note, a feed -- each with its own recipes (tests/test_window_ai_recipes*.py run them)."""
+    assert "terminal|console|shell" in OS
+    for const in ("const _AI_CONVO=", "const _AI_FEED="):
+        assert const in OS, const
+    for label in ("Draft a reply", "Catch me up", "Tidy this note", "Make it a checklist", "Events & to-dos",
+                  "Write a post…", "To-dos & dates"):
+        assert label in OS, label
 
 
 def test_shift_click_and_drag_build_an_explicit_multi_window_context():
