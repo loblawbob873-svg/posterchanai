@@ -15,7 +15,7 @@ from config import (
     WELCOME_PROMPT, OPENAI_ENDPOINT, AUTO_NARRATE,
     PLEROMA_ACCESS_TOKEN
 )
-from pleroma import post_image_to_fediverse as pleroma_post_image
+from pleroma import post_image_to_fediverse as pleroma_post_image, post_to_fediverse as pleroma_post
 from ai import generate_reply
 from tts import generate_speech_with_retries, generate_narration_video
 import requests

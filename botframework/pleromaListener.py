@@ -23,13 +23,16 @@ from datetime import datetime, timedelta
 script_dir = os.path.dirname(os.path.abspath(__file__))
 if script_dir not in sys.path:
     sys.path.insert(0, script_dir)
+from config import PLEROMA_ENDPOINT
 from config import PLEROMA_ACCESS_TOKEN
 from config import PLEROMA_USERNAME
+from config import PROMPT
 from config import BOT_BLACKLIST
 from config import BAD_WORDS
 from config import TIMEZONE
 from config import AUTO_NARRATE
 from ai import generate_reply, is_ai_configured
+from image_backend import extract_prompt_from_image
 # Network ops can be routed through the app's shared pleroma_service (Phase 4 dedup) by
 # setting PLEROMA_USE_APP_SERVICE=true; default keeps the original standalone pleroma client.
 # The shim exposes the identical surface, so the rest of this module is unchanged either way.
@@ -56,10 +59,11 @@ get_thread_history = _pl.get_thread_history
 get_thread_images = _pl.get_thread_images
 download_image_from_url = _pl.download_image_from_url
 from posterchanai_api import process_media, capture_screenshot, fetch_ytdl_media, parse_ytdl_postaction
-from searxng import smart_search, summarize_search_results, search_and_download_images
+from searxng import search_web, smart_search, search_images, summarize_search_results, format_image_results, search_and_download_images
 from tts import generate_speech_with_retries, generate_narration_video
 from news import fetch_news_from_source
 from core.utils import strip_html, contains_bad_words, is_listed_bot, mentions_listed_bot
+from config import IMAGE_POSTER_FREQ
 from config import IMAGE_POSTER_PROMPT
 from config import IMAGE_POSTER_TEXT
 from config import IMAGE_POSTER_RANDOM_SCENES
@@ -68,6 +72,7 @@ import random
 
 # Unified codebase: image generation always goes through image_backend → the posterchanai
 # server (native diffusers — the one image backend).
+from image_backend import generate_image_bytes
 
 
 # Map a Mastodon/Pleroma media_attachment type to a mime prefix so the backend's

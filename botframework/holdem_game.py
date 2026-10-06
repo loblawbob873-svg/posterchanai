@@ -7,7 +7,7 @@ just translates Nostr DMs/replies into act() calls and renders the resulting sta
 State is a plain JSON-able dict (it lives in a kind-30078 doc). Chips are play-money.
 """
 
-from holdem_engine import new_deck, evaluate7, distribute_pot, hand_name
+from holdem_engine import new_deck, evaluate7, distribute_pot, card_str, hand_name
 
 START_STACK = 1000
 SMALL_BLIND = 5

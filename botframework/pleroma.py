@@ -1,5 +1,6 @@
 from config import PLEROMA_ENDPOINT
 from config import PLEROMA_ACCESS_TOKEN
+from config import PLEROMA_USERNAME
 from config import BLOCK_PHRASE
 import requests
 import json

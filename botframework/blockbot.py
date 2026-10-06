@@ -5,6 +5,7 @@ import re
 import time
 import datetime
 import pytz
+import json
 import requests
 import sys
 import psycopg2
@@ -12,7 +13,7 @@ import akkoma_db
 import logging
 import threading
 from urllib.parse import urlparse
-from config import SQL_USER, SQL_PASS, SQL_HOST, SQL_DATABASE, OPENAI_ENDPOINT, PLEROMA_ACCESS_TOKEN, PLEROMA_ENDPOINT, BLOCK_IMAGE, BLOCK_LIMIT, AUTO_NARRATE, BLOCK_PROMPT
+from config import SQL_USER, SQL_PASS, SQL_HOST, SQL_DATABASE, OPENAI_ENDPOINT, PLEROMA_ACCESS_TOKEN, PLEROMA_ENDPOINT, PLEROMA_USERNAME, BLOCK_IMAGE, BLOCK_LIMIT, AUTO_NARRATE, BLOCK_PROMPT
 from ai import generate_reply
 from tts import generate_speech_with_retries, generate_narration_video
 from pleroma import post_to_fediverse as pleroma_post_to_fediverse, post_image_to_fediverse as pleroma_post_image_to_fediverse
