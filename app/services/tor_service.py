@@ -410,26 +410,6 @@ HiddenServicePort {port} {target}
 
         logger.info("[TOR] Stopped")
 
-    def get_new_identity(self) -> bool:
-        """Request a new Tor circuit."""
-        try:
-            family = socket.AF_INET6 if isinstance(ipaddress.ip_address(self.listen_host), ipaddress.IPv6Address) else socket.AF_INET
-            sock = socket.socket(family, socket.SOCK_STREAM)
-            sock.settimeout(10)
-            try:
-                sock.connect((self.listen_host, self.control_port))
-                if self._authenticate(sock):
-                    sock.send(b'SIGNAL NEWNYM\r\n')
-                    response = sock.recv(1024)
-                    if b'250' in response:
-                        logger.info("[TOR] New identity")
-                        return True
-            finally:
-                sock.close()
-        except Exception as e:
-            logger.error(f"[TOR] New identity failed: {e}")
-        return False
-
     def is_running(self) -> bool:
         """Check if Tor is running."""
         return self._running and self._process is not None and self._process.poll() is None

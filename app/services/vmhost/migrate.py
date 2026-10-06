@@ -1794,11 +1794,6 @@ class Migrator:
             headers["Content-Range"] = f"bytes {start}-{end}/{size}"
         return StreamingResponse(body(), status_code=status, media_type="application/octet-stream", headers=headers)
 
-    # ================================================================== TARGET: peer ops (from the source)
-    def verify_authz(self, ev, source: str, vm_uuid: str) -> str:
-        """The admin's signed `vm.migrate.authorize` → the admin's pubkey, or MigrationError."""
-        return self.verify_authz_full(ev, source, vm_uuid)[0]
-
     def verify_authz_full(self, ev, source: str, vm_uuid: str) -> tuple:
         """(the admin's pubkey, the signed args) — or MigrationError."""
         bad = MigrationError("forbidden", "the migration request is not authorized by an admin of this host")

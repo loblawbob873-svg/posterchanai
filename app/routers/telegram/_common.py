@@ -302,25 +302,6 @@ _TRANSLATE_LANGS = [
     "Russian", "Chinese", "Japanese",
     "Korean", "Arabic", "Thai",
 ]
-class TelegramWebhookUpdate(BaseModel):
-    update_id: int
-    message: Optional[dict] = None
-    callback_query: Optional[dict] = None
-    edited_message: Optional[dict] = None
-    inline_query: Optional[dict] = None
-    chosen_inline_result: Optional[dict] = None
-class TelegramUpdate(BaseModel):
-    update_id: int
-    message: Optional[dict] = None
-    callback_query: Optional[dict] = None
-    edited_message: Optional[dict] = None
-    inline_query: Optional[dict] = None
-    chosen_inline_result: Optional[dict] = None
-    my_chat_member: Optional[dict] = None
-    chat_member: Optional[dict] = None
-    
-    class Config:
-        extra = "allow"
 class TelegramBotConfig(BaseModel):
     bot_token: Optional[str] = None
     webhook_url: Optional[str] = None

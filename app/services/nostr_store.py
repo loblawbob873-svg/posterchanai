@@ -199,22 +199,6 @@ async def _ws_publish(port: int, event: dict, timeout: float = 8.0,
     return False, "unreachable"
 
 
-async def close_pooled_connection() -> None:
-    """Close this loop's pooled socket. Optional tidiness for a caller that owns a short-lived loop;
-    without it the entry is simply pruned once that loop is closed."""
-    try:
-        loop = asyncio.get_running_loop()
-    except RuntimeError:
-        return
-    entry = _pub_pool.pop(id(loop), None)
-    _pub_locks.pop(id(loop), None)
-    if entry:
-        try:
-            await entry[1].close()
-        except Exception:
-            pass
-
-
 async def publish_event(port: int, event: dict, timeout: float = 8.0) -> tuple[bool, str]:
     """Broadcast an already-signed event to the local relay. Returns (accepted, message). Public
     entry point for callers that hold a fully-formed signed event (e.g. scheduled posts)."""

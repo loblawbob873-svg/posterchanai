@@ -1587,12 +1587,6 @@ def _write_wot_stamp(cfg) -> None:
         logger.debug("[nostr-relay] could not write WoT stamp: %s", e)
 
 
-def _wot_stale(cfg) -> bool:
-    """True if it's been >= the daily refresh interval since the last successful build, so a
-    restart should rebuild. Within the interval, a restart reuses the snapshot-warmed gate."""
-    return (time.time() - _read_wot_stamp(cfg)) >= cfg.get("wot_refresh_sec", 604800)
-
-
 # Coalesce + throttle full WoT rebuilds. Every signup/follow/bot-change drops a "refresh-wot" control
 # msg; without this, each one ran a full 37k-follow-graph crawl, so a burst ran several concurrent/
 # back-to-back crawls and pegged a core. Mutable dict (no `global` needed): one build at a time, and

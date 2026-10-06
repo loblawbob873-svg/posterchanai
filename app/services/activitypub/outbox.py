@@ -1309,12 +1309,3 @@ def start_activitypub_delivery() -> None:
     logger.info("[activitypub] delivery loop started (every %ss; off until activitypub_enabled)", _TICK_SECONDS)
 
 
-def stop_activitypub_delivery() -> None:
-    global _scheduler
-    if _scheduler is not None:
-        try:
-            _scheduler.shutdown(wait=False)
-        except Exception:
-            pass
-        _scheduler = None
-

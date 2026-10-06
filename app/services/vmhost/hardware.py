@@ -35,14 +35,6 @@ def _err(code, msg):
     return VmHostError(code, msg)
 
 
-def is_migrating(d) -> bool:
-    """True when the VM's metadata carries a migration tag. The ops below do NOT use this alone: they call
-    the service's `_migration_guard`, which also consults the migration journal (a migration in
-    planned/quiescing/exporting has no tag yet) and ignores a tag whose migration already finished."""
-    m = getattr(d, "meta", None)
-    return bool(m is not None and getattr(m, "migration", None))
-
-
 class HardwareOps:
     # ------------------------------------------------------------------------------ vm.update
     async def _op_vm_update(self, pk, role, args, progress):

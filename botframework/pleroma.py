@@ -367,27 +367,6 @@ def post_to_fediverse(status_text):
     except requests.exceptions.RequestException as e:
         print(f"Error posting to Mastodon: {e}")
         
-def direct_message_to_pleroma(status_text):
-    # Prevent sending any message that contains the BLOCK_PHRASE
-    if BLOCK_PHRASE and BLOCK_PHRASE in status_text:
-        print("Message contains blocked phrase; not sending to Pleroma.")
-        return
-
-    post_url = f"{PLEROMA_ENDPOINT.rstrip('/')}/api/v1/statuses"
-    data = {"status": status_text, "visibility": "direct", "content_type": "text/markdown"}
-    try:
-        response = requests.post(
-            post_url, headers=mastodon_headers, data=data, timeout=REQUEST_TIMEOUT
-        )
-        if response.status_code in (200, 202):
-            print("Successfully posted direct message to Pleroma.")
-        else:
-            print(f"Failed to post direct message to Pleroma: {response.status_code} {response.text[:200]}")
-    except requests.exceptions.Timeout:
-        print(f"Direct message timed out after {REQUEST_TIMEOUT}s")
-    except requests.exceptions.RequestException as e:
-        print(f"Error posting direct message: {e}")
-
 def _trusted_media_hosts():
     """Hostnames the bot trusts for media downloads (its own instance plus any
     configured TRUSTED_MEDIA_HOSTS), which may resolve to a private/LAN IP on a

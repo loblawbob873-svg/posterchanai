@@ -423,6 +423,3 @@ Provide clear, concise responses. Keep confirmations brief and professional."""
             yield f"Error: {str(e)}"
 
 
-def get_chat_service(db: Session) -> ChatService:
-    return ChatService(db)
-

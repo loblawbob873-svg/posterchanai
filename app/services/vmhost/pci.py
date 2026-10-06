@@ -224,13 +224,6 @@ def scan(sys_root: str = "/sys", mountinfo: str = "/proc/self/mountinfo", swaps:
     return out
 
 
-def group_members(sys_root: str, group: str) -> list:
-    try:
-        return sorted(os.listdir(os.path.join(sys_root, "kernel", "iommu_groups", group, "devices")))
-    except OSError:
-        return []
-
-
 def plan(dev: PciDevice, devices: list, groups: dict) -> dict:
     """What attaching `dev` takes: {attach: [PciDevice], blockers: [str], checks: [{id, ok, label, fix}]}.
     `groups`: {group number: [member addresses]}."""

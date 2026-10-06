@@ -608,12 +608,3 @@ def start_uptime_scheduler():
     logger.info("[uptime] scheduler started (base tick %ds)", _TICK)
 
 
-def stop_uptime_scheduler():
-    global uptime_scheduler
-    if uptime_scheduler is not None:
-        try:
-            uptime_scheduler.shutdown()
-        except Exception:
-            pass
-        uptime_scheduler = None
-        logger.info("[uptime] scheduler stopped")

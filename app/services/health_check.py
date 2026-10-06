@@ -404,6 +404,3 @@ def stop_health_check():
         logger.info("Health check stopped")
 
 
-def is_health_check_running() -> bool:
-    """Check if health check is running"""
-    return _health_check_task is not None and not _health_check_task.done()

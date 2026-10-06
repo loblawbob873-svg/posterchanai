@@ -250,29 +250,6 @@ def stop_git_http() -> None:
         _host.proc = None
 
 
-def restart_git_http() -> dict:
-    """Restart the git-host child. Currently has no callers — the Admin reconcile path goes through
-    stop_git_http()+start_git_http() — but it carries the SAME ownership guard as start_git_http and
-    restart_nostr_relay, so it cannot become the next instance of that bug the first time something
-    calls it. Without it, in a process that does not own the git host `_host.proc` is None, so the
-    stop below is a silent no-op and _spawn() puts a SECOND git host on the already-bound port as a
-    child of the web app."""
-    from app.role import owns as _owns, restart_owner_process
-    if not _owns("git"):
-        return restart_owner_process(_status_path(), "git")
-
-    global _shutdown
-    with _lock:
-        stop_git_http()
-        cfg = _read_config()
-        if not cfg["enabled"]:
-            return {"ok": False, "error": "git server disabled"}
-        _shutdown = False
-        _host.cfg = cfg
-        _spawn(cfg)
-    return {"ok": True, "restarted": True}
-
-
 def git_http_status() -> dict:
     """Liveness from the Popen handle, with a status-file fallback (pid alive + recent ts)."""
     import json

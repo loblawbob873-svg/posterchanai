@@ -492,29 +492,6 @@ class HttpToSocksProxy:
                     pass
 
 
-def start_http_proxy(
-    listen_host: str = "127.0.0.1",
-    listen_port: int = 8118,
-    socks_host: str = "127.0.0.1",
-    socks_port: int = 9052,
-) -> HttpToSocksProxy:
-    """Start the HTTP proxy and return the instance."""
-    proxy = HttpToSocksProxy.get_instance(
-        listen_host=listen_host,
-        listen_port=listen_port,
-        socks_host=socks_host,
-        socks_port=socks_port,
-    )
-    proxy.start()
-    return proxy
-
-
-def stop_http_proxy():
-    """Stop the HTTP proxy if running."""
-    if HttpToSocksProxy._instance:
-        HttpToSocksProxy._instance.stop()
-
-
 # --- standalone subprocess (own core) ---------------------------------------
 # All bot/social media uploads route through this proxy; in-process its asyncio loop
 # competed with the app's event loop and pegged a shared core under concurrent uploads.

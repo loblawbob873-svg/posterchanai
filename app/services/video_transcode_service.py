@@ -48,46 +48,6 @@ def get_transcoded_path(user_path: Path, video_path: Path) -> Path:
     return transcoded_dir / transcoded_filename
 
 
-def is_video_already_optimized(video_path: Path) -> bool:
-    """
-    Check if a video is already in an optimized format (H.264 MP4).
-    If so, transcoding may not be necessary.
-    """
-    try:
-        # Use ffprobe to check codec
-        result = subprocess.run(
-            ['ffprobe', '-v', 'error', '-select_streams', 'v:0',
-             '-show_entries', 'stream=codec_name', '-of', 'default=noprint_wrappers=1:nokey=1',
-             str(video_path)],
-            capture_output=True,
-            timeout=10,
-            text=True
-        )
-        
-        if result.returncode == 0:
-            codec = result.stdout.strip().lower()
-            # Check if it's H.264 and container is MP4
-            if codec == 'h264' and video_path.suffix.lower() == '.mp4':
-                # Check audio codec too
-                audio_result = subprocess.run(
-                    ['ffprobe', '-v', 'error', '-select_streams', 'a:0',
-                     '-show_entries', 'stream=codec_name', '-of', 'default=noprint_wrappers=1:nokey=1',
-                     str(video_path)],
-                    capture_output=True,
-                    timeout=10,
-                    text=True
-                )
-                if audio_result.returncode == 0:
-                    audio_codec = audio_result.stdout.strip().lower()
-                    if audio_codec in ['aac', 'mp3']:
-                        return True
-        
-        return False
-    except Exception as e:
-        logger.debug(f"Could not check if video is optimized: {e}")
-        return False
-
-
 def transcode_video(
     user_path: Path,
     video_path: Path,

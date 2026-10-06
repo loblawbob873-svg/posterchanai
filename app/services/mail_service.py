@@ -33,7 +33,7 @@ from typing import List, Optional, Tuple
 from sqlalchemy.orm import Session
 
 from app.models import UserSetting
-from app.services.crypto_service import decrypt_string, encrypt_string
+from app.services.crypto_service import decrypt_string
 
 logger = logging.getLogger(__name__)
 
@@ -99,32 +99,6 @@ def get_user_mail_accounts(user_id: int, db: Session) -> List[MailAccount]:
     except (json.JSONDecodeError, TypeError) as e:
         logger.error(f"Invalid mail_accounts JSON for user {user_id}: {e}")
         return []
-
-
-def save_user_mail_accounts(user_id: int, accounts: List[MailAccount], db: Session):
-    """Save user's mail accounts. Passwords are encrypted before storage."""
-    setting = db.query(UserSetting).filter(UserSetting.user_id == user_id, UserSetting.key == "mail_accounts").first()
-
-    accounts_data = [
-        {
-            "email": acc.email,
-            "password": encrypt_string(acc.password),  # Encrypt password
-            "imap_server": acc.imap_server,
-            "imap_port": acc.imap_port,
-            "smtp_server": acc.smtp_server,
-            "smtp_port": acc.smtp_port,
-            "use_ssl": acc.use_ssl,
-        }
-        for acc in accounts
-    ]
-
-    if setting:
-        setting.value = json.dumps(accounts_data)
-    else:
-        setting = UserSetting(user_id=user_id, key="mail_accounts", value=json.dumps(accounts_data))
-        db.add(setting)
-
-    db.commit()
 
 
 def sanitize_filename(filename: str) -> str:

@@ -485,12 +485,3 @@ def start_stats_bot_scheduler():
     logger.info("[stats-bot] scheduler started (every 6h at UTC hours %s)", hours)
 
 
-def stop_stats_bot_scheduler():
-    global stats_scheduler
-    if stats_scheduler is not None:
-        try:
-            stats_scheduler.shutdown()
-        except Exception:
-            pass
-        stats_scheduler = None
-        logger.info("[stats-bot] scheduler stopped")

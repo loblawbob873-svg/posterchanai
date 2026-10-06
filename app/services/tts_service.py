@@ -160,5 +160,3 @@ class TTSService:
             return []
 
 
-def get_tts_service(db: Session) -> TTSService:
-    return TTSService(db)

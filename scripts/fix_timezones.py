@@ -4,7 +4,7 @@ Fix CalDAV .ics files by adding missing VTIMEZONE components.
 """
 import sys
 from pathlib import Path
-from icalendar import Calendar, Timezone
+from icalendar import Calendar
 import pytz
 from datetime import datetime
 
@@ -26,23 +26,6 @@ def has_vtimezone(cal, tzid):
             if str(component.get('TZID', '')) == tzid:
                 return True
     return False
-
-def add_vtimezone(cal, tzid):
-    """Add VTIMEZONE component for the given timezone ID."""
-    try:
-        # Try to get the timezone from pytz
-        tz = pytz.timezone(tzid)
-        
-        # Create a VTIMEZONE component
-        vtimezone = Timezone()
-        vtimezone.add('TZID', tzid)
-        
-        # Add to calendar (insert after VCALENDAR properties but before VEVENT/VTODO)
-        cal.add_component(vtimezone)
-        return True
-    except Exception as e:
-        print(f"Warning: Could not create VTIMEZONE for {tzid}: {e}")
-        return False
 
 def fix_ics_file(ics_file, dry_run=False):
     """Fix a single .ics file by adding missing VTIMEZONE components."""

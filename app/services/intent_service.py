@@ -382,24 +382,3 @@ RESPOND WITH THE COMMAND ONLY!"""
         return False
 
 
-async def detect_and_execute(db: Session, user: "User", message: str, context: str = "") -> Optional[dict]:
-    """
-    Convenience function to detect intent and execute in one call.
-
-    Args:
-        db: Database session
-        user: Current user
-        message: User's message
-        context: Additional context (pasted content, etc.)
-
-    Returns:
-        Execution result or None if no action detected
-    """
-    service = IntentService(db, user)
-    intent = await service.detect_intent(message, context)
-
-    if intent:
-        logger.info(f"Detected intent: {intent.get('command', 'unknown')}")
-        return await service.execute_intent(intent)
-
-    return None

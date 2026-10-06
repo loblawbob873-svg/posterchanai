@@ -975,40 +975,6 @@ class LlamaService:
 
         return filtered
 
-    def _format_mistral_template(self, messages: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
-        """Format messages for Mistral-style models using llama-cpp-python's built-in handler."""
-        if not self._should_use_mistral_template():
-            return messages
-        
-        system_content = ""
-        filtered_messages = []
-        for msg in messages:
-            if msg.get("role") == "system":
-                system_content += msg.get("content", "") + "\n\n"
-            else:
-                filtered_messages.append(msg)
-        
-        if system_content:
-            system_content = system_content.strip()
-            if filtered_messages and filtered_messages[0].get("role") == "user":
-                first_user = filtered_messages[0]
-                first_user["content"] = system_content + first_user.get("content", "")
-            else:
-                filtered_messages.insert(0, {"role": "user", "content": system_content + " Respond helpfully."})
-        
-        if not filtered_messages:
-            return [{"role": "user", "content": "Hello"}]
-        
-        try:
-            from llama_cpp.llama_chat_format import get_chat_completion_handler
-            handler = get_chat_completion_handler("mistral")
-            
-            formatted = handler.format_messages(filtered_messages)
-            return [{"role": "user", "content": formatted}]
-        except Exception as e:
-            logger.warning(f"Mistral template handler failed: {e}, falling back to manual format")
-            return self._manual_format_mistral(messages)
-
     def _manual_format_mistral(self, messages: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
         """Manual formatting if handler fails."""
         formatted = []
@@ -1114,12 +1080,6 @@ class LlamaService:
                         "type": "inference_error"
                     }
                 }
-
-    def _sync_chat_completion(self, messages: List[Dict[str, Any]], **kwargs) -> Dict[str, Any]:
-        """Synchronous chat completion (runs in thread pool) - legacy, unloads after"""
-        result = self._sync_chat_completion_no_unload(messages, **kwargs)
-        self.unload_model()
-        return result
 
     async def chat_completion(
         self,

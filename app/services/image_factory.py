@@ -12,9 +12,7 @@ from sqlalchemy.orm import Session
 
 from app.services import settings_store
 from app.services.image_load_balancer import (
-    ImageLoadBalancer,
     NoHealthyImageServersError,
-    parse_image_server_urls,
     should_use_remote_image,
 )
 
@@ -60,23 +58,6 @@ def prepare_vram_for_image(db: Session):
     """Prepare VRAM for image generation (swap models if needed)"""
     from app.services.vram_manager import prepare_for_image
     prepare_for_image(db)
-
-
-def get_image_load_balancer(db: Session) -> Optional[ImageLoadBalancer]:
-    """
-    Get the image load balancer if configured.
-    Returns None if no remote servers are configured.
-    """
-    settings = settings_store.all_settings()
-    # Single unified load-balancing list (Site → Load Balancing) drives chat/image/music/video.
-    server_urls = settings.get("chat_server_urls", "")
-    servers = parse_image_server_urls(server_urls)
-
-    if servers:
-        timeout = int(settings.get("image_timeout", "300000")) / 1000
-        logger.debug(f"Image load balancer available with {len(servers)} server(s)")
-        return ImageLoadBalancer(servers, timeout=timeout)
-    return None
 
 
 async def _generate_image_local(db: Session, settings: dict, prompt: str, negative_prompt: str,
@@ -240,13 +221,6 @@ def reload_image_model(db: Session):
     from app.services.diffusers_service import reload_diffusers_model
     reload_diffusers_model(db)
     logger.info("Native image model reloaded")
-
-
-def unload_image_model(db: Session):
-    """Unload the native image model to free VRAM."""
-    from app.services.diffusers_service import get_diffusers_service
-    get_diffusers_service(db).unload_model()
-    logger.info("Native image model unloaded")
 
 
 async def generate_image_for_user(

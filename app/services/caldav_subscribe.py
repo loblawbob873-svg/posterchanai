@@ -380,12 +380,3 @@ def start_calendar_subscriptions_scheduler():
     logger.info("[calsub] scheduler started (scan every %ds)", _TICK)
 
 
-def stop_calendar_subscriptions_scheduler():
-    global _scheduler
-    if _scheduler is not None:
-        try:
-            _scheduler.shutdown()
-        except Exception:
-            pass
-        _scheduler = None
-        logger.info("[calsub] scheduler stopped")

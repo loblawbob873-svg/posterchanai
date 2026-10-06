@@ -457,10 +457,6 @@ class StorageService:
 
         return str(filepath)
 
-    def get_relative_path(self, full_path: str, username: str) -> str:
-        """Get relative path for API response (from upload_path)"""
-        return str(Path(full_path).relative_to(self.upload_path))
-
     def delete_conversation_files(self, username: str, conversation_id: int) -> bool:
         """Delete all files for a conversation"""
         try:

@@ -275,22 +275,6 @@ def format_torrent_results(results: list[TorrentResult], category: str, title: s
     return "\n".join(lines)
 
 
-async def get_torrents_formatted(db: Session, category: str = "movies", limit: int = 15) -> str:
-    """
-    Convenience function to get formatted torrent results.
-
-    Args:
-        db: Database session for reading settings
-        category: One of 'movies', 'tv', 'music', 'anime'
-        limit: Maximum number of results
-
-    Returns:
-        Formatted string for display
-    """
-    results = await scrape_torrents(db, category, limit)
-    return format_torrent_results(results, category)
-
-
 async def search_torrents(db: Session, query: str, limit: int = 15) -> list[TorrentResult]:
     """
     Search torrents on the configured torrent site.

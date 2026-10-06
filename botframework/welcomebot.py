@@ -281,34 +281,6 @@ def welcome_pleroma(print_only=False):
     cleanup_welcomed_users(WELCOMED_PLEROMA_FILE)
 
 
-def get_last_user_id():
-    """Get the last processed user ID from file"""
-    try:
-        if os.path.exists(LAST_USER_ID_FILE):
-            with open(LAST_USER_ID_FILE, 'r') as f:
-                return f.read().strip()
-    except Exception as e:
-        logging.error(f"Failed to read last user ID: {e}")
-    return None
-
-
-def save_last_user_id(user_id):
-    """Save the last processed user ID to file using atomic write"""
-    temp_file = LAST_USER_ID_FILE + ".tmp"
-    try:
-        with open(temp_file, 'w') as f:
-            f.write(user_id)
-        os.rename(temp_file, LAST_USER_ID_FILE)
-        logging.debug(f"Saved last user ID: {user_id}")
-    except Exception as e:
-        logging.error(f"Failed to save last user ID: {e}")
-        if os.path.exists(temp_file):
-            try:
-                os.remove(temp_file)
-            except OSError:
-                pass
-
-
 def waitToStart():
     """Sync to clock minute"""
     while True:

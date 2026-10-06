@@ -208,32 +208,6 @@ class TelegramService:
             logger.error(f"Failed to send Telegram photo: {e}")
             return {"ok": False, "error": str(e)}
     
-    async def send_document(self, chat_id: str, document_url: str, caption: str = None) -> dict:
-        """Send a document to a Telegram chat."""
-        if not self.bot_token:
-            logger.warning("Telegram bot token not configured")
-            return {"ok": False, "error": "Bot token not configured"}
-        
-        caption = _clamp_caption(caption)
-        url = f"{self.api_base}{self.bot_token}/sendDocument"
-        payload = {
-            "chat_id": chat_id,
-            "document": document_url,
-        }
-        if caption:
-            payload["caption"] = caption
-        
-        try:
-            async with httpx.AsyncClient(timeout=60.0) as client:
-                response = await client.post(url, json=payload)
-                result = response.json()
-                if not result.get("ok"):
-                    logger.error(f"Telegram API error: {result}")
-                return result
-        except Exception as e:
-            logger.error(f"Failed to send Telegram document: {e}")
-            return {"ok": False, "error": str(e)}
-    
     async def send_document_bytes(self, chat_id: str, file_bytes, filename: str, caption: str = None,
                                   content_type: str = "application/pdf") -> dict:
         """Send a document from raw bytes to a Telegram chat (multipart upload).
@@ -314,24 +288,6 @@ class TelegramService:
             logger.error(f"Failed to get Telegram bot info: {e}")
             return {"ok": False, "error": str(e)}
     
-    async def get_updates(self, limit: int = 100, offset: int = None) -> dict:
-        """Get bot updates."""
-        if not self.bot_token:
-            return {"ok": False, "error": "Bot token not configured"}
-        
-        url = f"{self.api_base}{self.bot_token}/getUpdates"
-        payload = {"limit": limit}
-        if offset:
-            payload["offset"] = offset
-        
-        try:
-            async with httpx.AsyncClient(timeout=30.0) as client:
-                response = await client.post(url, json=payload)
-                return response.json()
-        except Exception as e:
-            logger.error(f"Failed to get Telegram updates: {e}")
-            return {"ok": False, "error": str(e)}
-    
     async def answer_callback_query(self, callback_query_id: str, text: str = None, show_alert: bool = False) -> dict:
         """Answer a callback query from an inline button."""
         if not self.bot_token:
@@ -353,34 +309,6 @@ class TelegramService:
             logger.error(f"Failed to answer callback query: {e}")
             return {"ok": False, "error": str(e)}
     
-    async def edit_message_text(self, chat_id: str, message_id: int, text: str, parse_mode: str = "Markdown", reply_markup: dict = None) -> dict:
-        """Edit an existing message."""
-        if not self.bot_token:
-            return {"ok": False, "error": "Bot token not configured"}
-        
-        url = f"{self.api_base}{self.bot_token}/editMessageText"
-        payload = {
-            "chat_id": chat_id,
-            "message_id": message_id,
-            "text": text,
-            "parse_mode": parse_mode
-        }
-        if reply_markup:
-            payload["reply_markup"] = reply_markup
-        
-        try:
-            async with httpx.AsyncClient(timeout=30.0) as client:
-                response = await client.post(url, json=payload)
-                data = response.json()
-                # Editing a message to identical content is a no-op, not a failure —
-                # Telegram returns 400 "message is not modified". Treat it as success.
-                if not data.get("ok") and "not modified" in str(data.get("description", "")).lower():
-                    return {"ok": True, "not_modified": True}
-                return data
-        except Exception as e:
-            logger.error(f"Failed to edit message: {e}")
-            return {"ok": False, "error": str(e)}
-
     async def edit_message_media_photo(self, chat_id: str, message_id: int, photo_bytes: bytes,
                                        caption: str = None, reply_markup: dict = None,
                                        parse_mode: str = "") -> dict:

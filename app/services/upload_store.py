@@ -45,19 +45,6 @@ async def store_encrypted(db, user, conv_id: int, filename: str, data: bytes, mi
         return None
 
 
-async def read_decrypted(db, user, sha256: str) -> bytes | None:
-    """Fetch + decrypt a stored upload back to its original bytes (server-side, for AI use)."""
-    from app.models import BlossomBlob
-    sk = user_storage_seckey(db, user)
-    blob = db.query(BlossomBlob).filter(BlossomBlob.sha256 == sha256).first()
-    if not blob:
-        return None
-    ct = await blossom_service.read_full(db, blob)
-    if not ct:
-        return None
-    return blobcrypt.decrypt(sk, ct)
-
-
 def store_port(db=None) -> int:
     return settings_store.get_int("nostr_relay_port", 3052)
 

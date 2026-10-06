@@ -214,11 +214,3 @@ def start_mail_notify_scheduler() -> None:
                 mins, "ON" if enabled() else "off — flip mail_poll_enabled in Admin → Tools")
 
 
-def stop_mail_notify_scheduler() -> None:
-    global _scheduler
-    if _scheduler is not None:
-        try:
-            _scheduler.shutdown(wait=False)
-        except Exception:
-            pass
-        _scheduler = None

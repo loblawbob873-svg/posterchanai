@@ -10,52 +10,6 @@ from app.services.proxy_utils import afallback_transport
 logger = logging.getLogger(__name__)
 
 
-async def register_app(instance_url: str, redirect_uri: str, app_name: str = "PosterChanAI",
-                       scopes: str = "read write") -> dict:
-    """Register this app with the Pleroma/Mastodon instance.
-
-    Returns a dict containing at least ``client_id`` and ``client_secret``. `scopes` lets the bridge
-    request admin scopes (admin:read admin:write) so an admin's token can call the admin API.
-    """
-    url = instance_url.rstrip("/") + "/api/v1/apps"
-    payload = {
-        "client_name": app_name,
-        "redirect_uris": redirect_uri,
-        "scopes": scopes,
-        "website": instance_url,
-    }
-    async with httpx.AsyncClient(transport=afallback_transport(), timeout=15) as client:
-        resp = await client.post(url, data=payload)
-        resp.raise_for_status()
-        return resp.json()
-
-
-async def exchange_code(
-    instance_url: str,
-    client_id: str,
-    client_secret: str,
-    redirect_uri: str,
-    code: str,
-) -> str:
-    """Exchange an authorization code for an access token. Returns the token string."""
-    url = instance_url.rstrip("/") + "/oauth/token"
-    payload = {
-        "grant_type": "authorization_code",
-        "code": code,
-        "client_id": client_id,
-        "client_secret": client_secret,
-        "redirect_uri": redirect_uri,
-    }
-    async with httpx.AsyncClient(transport=afallback_transport(), timeout=15) as client:
-        resp = await client.post(url, data=payload)
-        resp.raise_for_status()
-        data = resp.json()
-    token = data.get("access_token")
-    if not token:
-        raise ValueError(f"No access_token in response: {data}")
-    return token
-
-
 async def password_grant(
     instance_url: str,
     username: str,
@@ -99,19 +53,6 @@ async def password_grant(
     if not token:
         raise ValueError(f"No access_token in response: {data}")
     return token
-
-
-def build_auth_url(instance_url: str, client_id: str, redirect_uri: str, scopes: str = "read write") -> str:
-    """Build the OAuth2 authorization URL to redirect the user to."""
-    base = instance_url.rstrip("/")
-    from urllib.parse import urlencode
-    params = urlencode({
-        "response_type": "code",
-        "client_id": client_id,
-        "redirect_uri": redirect_uri,
-        "scope": scopes,
-    })
-    return f"{base}/oauth/authorize?{params}"
 
 
 def _detect_mime(image_bytes: bytes) -> tuple[str, str]:
@@ -211,47 +152,6 @@ async def post_status(
         return resp.json()
 
 
-async def admin_create_user(instance_url: str, admin_token: str, nickname: str, email: str,
-                            password: str) -> dict:
-    """Create a user on a Pleroma instance via the admin API (no email confirmation needed).
-    Requires an ADMIN token. Returns {"ok": bool, "error": str|None}. Idempotent-ish: an
-    already-existing nickname is reported as ok so the caller can proceed to mint a token."""
-    url = instance_url.rstrip("/") + "/api/v1/pleroma/admin/users"
-    headers = {"Authorization": f"Bearer {admin_token}"}
-    body = {"users": [{"nickname": nickname, "email": email, "password": password}]}
-    async with httpx.AsyncClient(transport=afallback_transport(), timeout=20) as client:
-        resp = await client.post(url, json=body, headers=headers)
-    if resp.status_code in (200, 201):
-        return {"ok": True, "error": None, "created": True}
-    txt = resp.text or ""
-    # Pleroma returns the nickname already-taken as an error string; treat as ok (user exists) — but
-    # flag created=False. The caller MUST NOT then confirm/approve it: the nickname comes from the
-    # requester's own Nostr profile, so approving an account we didn't create let anyone force-approve
-    # and email-confirm somebody else's PENDING registration, defeating the instance's manual approval.
-    if "already" in txt.lower() or "taken" in txt.lower() or resp.status_code == 409:
-        return {"ok": True, "error": None, "created": False}
-    if resp.status_code in (401, 403) or "staff" in txt.lower():
-        return {"ok": False, "error": "the configured admin token is NOT a Pleroma admin/moderator "
-                                      "(staff) account. Set 'Admin Token' in Admin → Social → "
-                                      "Nostr ↔ Fediverse Bridge to a staff account's token."}
-    return {"ok": False, "error": f"HTTP {resp.status_code}: {txt[:200]}", "created": False}
-
-
-async def admin_confirm_approve(instance_url: str, admin_token: str, nickname: str) -> None:
-    """Best-effort: confirm the email + approve a just-created account so it can post immediately,
-    even on instances configured to require confirmation/approval. Ignores errors (often no-ops for
-    admin-created users)."""
-    base = instance_url.rstrip("/")
-    headers = {"Authorization": f"Bearer {admin_token}"}
-    async with httpx.AsyncClient(transport=afallback_transport(), timeout=15) as client:
-        for path in ("/api/v1/pleroma/admin/users/confirm_email",
-                     "/api/v1/pleroma/admin/users/approve"):
-            try:
-                await client.patch(base + path, json={"nicknames": [nickname]}, headers=headers)
-            except Exception:
-                pass
-
-
 async def update_credentials(instance_url: str, access_token: str, display_name: str | None = None,
                              note: str | None = None, avatar_bytes: bytes | None = None,
                              avatar_mime: str = "image/png") -> dict | None:
@@ -286,19 +186,6 @@ async def fetch_status(instance_url: str, access_token: str, status_id: str) -> 
         return data if isinstance(data, dict) else None
 
 
-async def status_deleted(instance_url: str, access_token: str, status_id: str) -> bool:
-    """True ONLY when the instance definitively says the status is gone (404/410). A transient error
-    (5xx / network) returns False so the bridge never deletes a mirror on a flaky fetch."""
-    url = instance_url.rstrip("/") + f"/api/v1/statuses/{status_id}"
-    headers = {"Authorization": f"Bearer {access_token}"}
-    try:
-        async with httpx.AsyncClient(transport=afallback_transport(), timeout=15) as client:
-            resp = await client.get(url, headers=headers)
-            return resp.status_code in (404, 410)
-    except Exception:
-        return False
-
-
 async def fetch_notifications(instance_url: str, access_token: str, since_id: str | None = None,
                               limit: int = 20, min_id: str | None = None) -> list[dict]:
     """Fetch recent notifications (raw Mastodon/Pleroma objects). `since_id` returns the NEWEST after
@@ -318,158 +205,6 @@ async def fetch_notifications(instance_url: str, access_token: str, since_id: st
         return data if isinstance(data, list) else []
 
 
-async def fetch_timeline(instance_url: str, access_token: str, timeline_type: str = "home",
-                         since_id: str | None = None, limit: int = 20, min_id: str | None = None,
-                         max_id: str | None = None) -> list[dict]:
-    """Fetch statuses from the home/public timeline (raw Mastodon/Pleroma statuses).
-    'global' → public; 'local' → public?local=true.
-
-    Pagination: `since_id` returns the *newest* statuses after the id (a gap forms if more than
-    `limit` exist — don't use it to drain a backlog). `min_id` returns the statuses *immediately*
-    after the id and paginates forward without gaps (advance min_id to the newest returned id).
-    `max_id` returns statuses *older* than the id — used to backfill recent history backward."""
-    base = instance_url.rstrip("/")
-    if timeline_type == "home":
-        url = f"{base}/api/v1/timelines/home"
-    else:
-        url = f"{base}/api/v1/timelines/public"
-    headers = {"Authorization": f"Bearer {access_token}"}
-    params: dict = {"limit": limit}
-    if timeline_type == "local":
-        params["local"] = "true"
-    if max_id:
-        params["max_id"] = max_id
-    if min_id:
-        params["min_id"] = min_id
-    elif since_id:
-        params["since_id"] = since_id
-    async with httpx.AsyncClient(transport=afallback_transport(), timeout=15) as client:
-        resp = await client.get(url, headers=headers, params=params)
-        resp.raise_for_status()
-        data = resp.json()
-        return data if isinstance(data, list) else []
-
-
-async def lookup_account(instance_url: str, access_token: str, acct: str) -> dict | None:
-    """Resolve an `acct` ("name" for a local user, "name@host" for a remote one) to its account
-    object on this instance. Used by the bridge's reconciliation pass to turn an author it has
-    already mirrored into the id that /accounts/:id/statuses needs. Returns None on 404/error."""
-    url = instance_url.rstrip("/") + "/api/v1/accounts/lookup"
-    headers = {"Authorization": f"Bearer {access_token}"}
-    async with httpx.AsyncClient(transport=afallback_transport(), timeout=15) as client:
-        resp = await client.get(url, headers=headers, params={"acct": acct})
-        if resp.status_code != 200:
-            return None
-        data = resp.json()
-        return data if isinstance(data, dict) and data.get("id") else None
-
-
-async def fetch_account_statuses(instance_url: str, access_token: str, account_id: str,
-                                 limit: int = 40, min_id: str | None = None,
-                                 max_id: str | None = None) -> list[dict]:
-    """An account's OWN posts, straight from its outbox.
-
-    This is the authoritative record for an author, unlike a timeline — which is a filtered view the
-    instance can legitimately omit posts from (and which the bridge's forward-only cursor then skips
-    past forever). `exclude_reblogs` because a boost carries no content of its own and _process drops
-    it anyway. Raises for status so the caller can distinguish a rate-limit from an empty account."""
-    url = instance_url.rstrip("/") + f"/api/v1/accounts/{account_id}/statuses"
-    headers = {"Authorization": f"Bearer {access_token}"}
-    params: dict = {"limit": limit, "exclude_reblogs": "true"}
-    if min_id:
-        params["min_id"] = min_id
-    if max_id:
-        params["max_id"] = max_id
-    async with httpx.AsyncClient(transport=afallback_transport(), timeout=15) as client:
-        resp = await client.get(url, headers=headers, params=params)
-        resp.raise_for_status()
-        data = resp.json()
-        return data if isinstance(data, list) else []
-
-
-async def fetch_direct(instance_url: str, access_token: str, since_id: str | None = None,
-                       limit: int = 20, min_id: str | None = None) -> list[dict]:
-    """Direct-message timeline (visibility=direct statuses). `since_id` returns the newest after the
-    id (gap-prone); `min_id` paginates forward without gaps (drain a backlog without dropping items).
-    Pleroma/Mastodon support /api/v1/timelines/direct."""
-    url = instance_url.rstrip("/") + "/api/v1/timelines/direct"
-    headers = {"Authorization": f"Bearer {access_token}"}
-    params: dict = {"limit": limit}
-    if min_id:
-        params["min_id"] = min_id
-    elif since_id:
-        params["since_id"] = since_id
-    async with httpx.AsyncClient(transport=afallback_transport(), timeout=15) as client:
-        resp = await client.get(url, headers=headers, params=params)
-        if resp.status_code != 200:
-            return []
-        data = resp.json()
-        return data if isinstance(data, list) else []
-
-
-async def fetch_context(instance_url: str, access_token: str, status_id: str) -> dict:
-    """Fetch a status's thread context ({"ancestors": [...], "descendants": [...]})."""
-    url = instance_url.rstrip("/") + f"/api/v1/statuses/{status_id}/context"
-    headers = {"Authorization": f"Bearer {access_token}"}
-    async with httpx.AsyncClient(transport=afallback_transport(), timeout=15) as client:
-        resp = await client.get(url, headers=headers)
-        resp.raise_for_status()
-        data = resp.json()
-        return data if isinstance(data, dict) else {}
-
-
-async def favourite_status(instance_url: str, access_token: str, status_id: str) -> dict:
-    """Favourite (like) a status."""
-    url = instance_url.rstrip("/") + f"/api/v1/statuses/{status_id}/favourite"
-    headers = {"Authorization": f"Bearer {access_token}"}
-    async with httpx.AsyncClient(transport=afallback_transport(), timeout=15) as client:
-        resp = await client.post(url, headers=headers)
-        resp.raise_for_status()
-        return resp.json()
-
-
-async def delete_status(instance_url: str, access_token: str, status_id: str) -> bool:
-    """Delete one of OUR OWN statuses. True if it's gone (404 counts — already deleted is the goal state)."""
-    url = instance_url.rstrip("/") + f"/api/v1/statuses/{status_id}"
-    headers = {"Authorization": f"Bearer {access_token}"}
-    async with httpx.AsyncClient(transport=afallback_transport(), timeout=15) as client:
-        resp = await client.delete(url, headers=headers)
-        if resp.status_code == 404:
-            return True
-        resp.raise_for_status()
-        return True
-
-
-async def reblog_status(instance_url: str, access_token: str, status_id: str) -> dict:
-    """Reblog (boost) a status."""
-    url = instance_url.rstrip("/") + f"/api/v1/statuses/{status_id}/reblog"
-    headers = {"Authorization": f"Bearer {access_token}"}
-    async with httpx.AsyncClient(transport=afallback_transport(), timeout=15) as client:
-        resp = await client.post(url, headers=headers)
-        resp.raise_for_status()
-        return resp.json()
-
-
-async def unfavourite_status(instance_url: str, access_token: str, status_id: str) -> dict:
-    """Undo a favourite. Idempotent server-side (un-liking what you never liked is a 200)."""
-    url = instance_url.rstrip("/") + f"/api/v1/statuses/{status_id}/unfavourite"
-    headers = {"Authorization": f"Bearer {access_token}"}
-    async with httpx.AsyncClient(transport=afallback_transport(), timeout=15) as client:
-        resp = await client.post(url, headers=headers)
-        resp.raise_for_status()
-        return resp.json()
-
-
-async def unreblog_status(instance_url: str, access_token: str, status_id: str) -> dict:
-    """Undo a reblog (boost). Idempotent server-side."""
-    url = instance_url.rstrip("/") + f"/api/v1/statuses/{status_id}/unreblog"
-    headers = {"Authorization": f"Bearer {access_token}"}
-    async with httpx.AsyncClient(transport=afallback_transport(), timeout=15) as client:
-        resp = await client.post(url, headers=headers)
-        resp.raise_for_status()
-        return resp.json()
-
-
 async def emoji_react(instance_url: str, access_token: str, status_id: str, emoji: str) -> dict:
     """Add an emoji reaction to a status (Pleroma extension; not on vanilla Mastodon).
     `emoji` is a unicode emoji or a `:shortcode:`. Raises on non-2xx (caller may fall back
@@ -478,17 +213,6 @@ async def emoji_react(instance_url: str, access_token: str, status_id: str, emoj
     headers = {"Authorization": f"Bearer {access_token}"}
     async with httpx.AsyncClient(transport=afallback_transport(), timeout=15) as client:
         resp = await client.put(url, headers=headers)
-        resp.raise_for_status()
-        return resp.json()
-
-
-async def emoji_unreact(instance_url: str, access_token: str, status_id: str, emoji: str) -> dict:
-    """Remove one of OUR emoji reactions from a status. Same endpoint as emoji_react, DELETE —
-    pass the emoji in the same form it was added with. Idempotent server-side."""
-    url = _reaction_url(instance_url, status_id, emoji)
-    headers = {"Authorization": f"Bearer {access_token}"}
-    async with httpx.AsyncClient(transport=afallback_transport(), timeout=15) as client:
-        resp = await client.delete(url, headers=headers)
         resp.raise_for_status()
         return resp.json()
 
@@ -514,32 +238,6 @@ async def resolve_status(instance_url: str, access_token: str, uri: str) -> dict
         data = resp.json()
     statuses = (data or {}).get("statuses") or []
     return statuses[0] if statuses else None
-
-
-async def resolve_account(instance_url: str, access_token: str, query: str) -> dict | None:
-    """Resolve a remote fediverse account (by AP actor URL or @user@host handle) to the local account
-    on this instance — federating it in if needed. Returns the account dict (has `id`) or None. Mirrors
-    resolve_status but for accounts."""
-    url = instance_url.rstrip("/") + "/api/v2/search"
-    headers = {"Authorization": f"Bearer {access_token}"}
-    params = {"q": query, "resolve": "true", "type": "accounts", "limit": 1}
-    async with httpx.AsyncClient(transport=afallback_transport(), timeout=20) as client:
-        resp = await client.get(url, headers=headers, params=params)
-        resp.raise_for_status()   # 401/403 (expired/insufficient token) propagate as HTTPStatusError
-        data = resp.json()
-    accounts = (data or {}).get("accounts") or []
-    return accounts[0] if accounts else None   # None = genuinely no match (200 + empty)
-
-
-async def follow_account(instance_url: str, access_token: str, account_id: str) -> dict:
-    """Follow a local/remote account by its account id. Returns the relationship dict; raises on
-    non-2xx (e.g. 403 when the token lacks the `follow` scope)."""
-    url = instance_url.rstrip("/") + f"/api/v1/accounts/{account_id}/follow"
-    headers = {"Authorization": f"Bearer {access_token}"}
-    async with httpx.AsyncClient(transport=afallback_transport(), timeout=15) as client:
-        resp = await client.post(url, headers=headers)
-        resp.raise_for_status()
-        return resp.json()
 
 
 def _link_next(link_header: str | None) -> str | None:
@@ -603,21 +301,6 @@ async def _fetch_account_list(instance_url: str, access_token: str, path: str, l
                 break
             params = {"limit": limit, "max_id": last}
     return out
-
-
-async def fetch_blocks(instance_url: str, access_token: str) -> list[dict]:
-    """Accounts this account has blocked (raw account objects)."""
-    return await _fetch_account_list(instance_url, access_token, "/api/v1/blocks")
-
-
-async def fetch_mutes(instance_url: str, access_token: str) -> list[dict]:
-    """Accounts this account has muted (raw account objects)."""
-    return await _fetch_account_list(instance_url, access_token, "/api/v1/mutes")
-
-
-async def fetch_followers(instance_url: str, access_token: str, account_id: str) -> list[dict]:
-    """Accounts that FOLLOW `account_id` (raw account objects, paginated + bounded)."""
-    return await _fetch_account_list(instance_url, access_token, f"/api/v1/accounts/{account_id}/followers")
 
 
 async def verify_credentials(instance_url: str, access_token: str) -> dict:

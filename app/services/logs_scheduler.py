@@ -974,11 +974,3 @@ def start_logs_scheduler():
     logger.info(f"Logs scheduler started - running at hours: {schedule}")
 
 
-def stop_logs_scheduler():
-    """Stop the logs scheduler."""
-    global logs_scheduler
-
-    if logs_scheduler is not None:
-        logs_scheduler.shutdown()
-        logs_scheduler = None
-        logger.info("Logs scheduler stopped")

@@ -180,10 +180,6 @@ def _get_vram_settings(db: Session) -> dict:
     }
 
 
-def get_current_mode() -> Optional[str]:
-    """Get current VRAM mode (which model is loaded)"""
-    return _current_mode
-
 def reset_vram_mode():
     """Reset VRAM mode (call when models are unloaded outside of VRAM manager)"""
     global _current_mode

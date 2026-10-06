@@ -51,9 +51,6 @@ class WotGate:
     def set_bridge_secret(self, secret) -> None:
         self._bridge_secret = secret or None
 
-    def set_bridged(self, bridged_hex) -> None:
-        self._bridged = set(bridged_hex or [])
-
     def add_bridged(self, pubkeys) -> None:
         # Never bridge-block a WoT member (the trust set: follows + operators). They may legitimately
         # cross-post from the fediverse, so a synced post can carry a proxy/relay hint to a blocked

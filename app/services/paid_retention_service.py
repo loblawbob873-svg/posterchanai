@@ -711,11 +711,3 @@ def start_paid_retention_scheduler():
     return paid_retention_scheduler
 
 
-def stop_paid_retention_scheduler():
-    global paid_retention_scheduler
-    if paid_retention_scheduler:
-        try:
-            paid_retention_scheduler.shutdown(wait=False)
-        except Exception:
-            pass
-        paid_retention_scheduler = None

@@ -598,12 +598,3 @@ def start_torrent_rss_scheduler():
     logger.info("[trss] scheduler started (poll every %ds)", secs)
 
 
-def stop_torrent_rss_scheduler():
-    global _scheduler
-    if _scheduler is not None:
-        try:
-            _scheduler.shutdown()
-        except Exception:
-            pass
-        _scheduler = None
-        logger.info("[trss] scheduler stopped")

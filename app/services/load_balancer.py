@@ -29,26 +29,6 @@ HEALTH_CHECK_INTERVAL = 30  # Re-check unhealthy servers after 30 seconds
 HEALTH_CHECK_TIMEOUT = 3.0  # Quick timeout for health checks
 
 
-async def check_server_health(server: str) -> bool:
-    """
-    Quick health check - verify server responds to /v1/models within timeout.
-    Returns True if healthy, False otherwise.
-    Server-to-server requests use load-balanced header authentication.
-    """
-    # Server-to-server requests use load-balanced header
-    headers = lb_auth.headers()
-    try:
-        async with httpx.AsyncClient(timeout=HEALTH_CHECK_TIMEOUT) as client:
-            response = await client.get(f"{server}/v1/models", headers=headers)
-            if response.status_code == 200:
-                return True
-            logger.warning(f"Health check failed for {server}: status {response.status_code}")
-            return False
-    except Exception as e:
-        logger.warning(f"Health check failed for {server}: {str(e)[:100]}")
-        return False
-
-
 async def get_healthy_server(servers: List[str]) -> Optional[str]:
     """
     Get next server using round-robin with health checking.
@@ -145,14 +125,6 @@ def is_self_url(url: str, current_port: int = 3051) -> bool:
     except Exception as e:
         logger.warning(f"Error checking if URL is self: {url}, error: {e}")
         return False
-
-
-async def should_use_remote(num_remote_servers: int) -> bool:
-    """
-    Always use remote/load-balanced path when servers configured.
-    The actual local vs remote decision happens in get_healthy_server.
-    """
-    return num_remote_servers > 0
 
 
 def sanitize_server_url(url: str) -> str:
@@ -298,14 +270,6 @@ def parse_server_urls(urls_string: str, exclude_self: bool = False, current_port
 class NoHealthyServersError(Exception):
     """Raised when no healthy remote servers are available"""
     pass
-
-
-def mark_server_unhealthy(server: str):
-    """Mark a server as unhealthy (call after a failed request)"""
-    global _server_health
-    # Use sync version for non-async contexts
-    _server_health[server] = (False, time.time())
-    logger.warning(f"Marked server unhealthy: {server}")
 
 
 async def mark_server_unhealthy_async(server: str):

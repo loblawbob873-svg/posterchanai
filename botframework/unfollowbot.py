@@ -176,43 +176,6 @@ def save_following_snapshot(snapshot, snapshot_file=FOLLOWING_SNAPSHOT_FILE):
                 pass
 
 
-def get_current_follows():
-    """Get all current following relationships from the instance database"""
-    instance_domain = "poster.place"
-
-    query = '''
-    SELECT
-        f.id,
-        follower.username AS follower_username,
-        COALESCE(follower.host, %s) AS follower_host,
-        followee.username AS followee_username,
-        COALESCE(followee.host, %s) AS followee_host,
-        COALESCE(follower.uri, 'https://' || %s || '/users/' || follower.username) AS follower_uri
-    FROM following f
-    JOIN "user" follower ON f."followerId" = follower.id
-    JOIN "user" followee ON f."followeeId" = followee.id
-    WHERE follower.host IS NOT NULL AND followee.host IS NULL;
-    '''
-
-    rows = run_psql(query, (instance_domain, instance_domain, instance_domain))
-
-    # Build a dict: key = "follower@host->followee@host", value = row data
-    follows = {}
-    for row in rows:
-        follow_id, follower_username, follower_host, followee_username, followee_host, follower_uri = row
-        key = f"{follower_username}@{follower_host}->{followee_username}@{followee_host}"
-        follows[key] = {
-            'id': follow_id,
-            'follower_username': follower_username,
-            'follower_host': follower_host,
-            'followee_username': followee_username,
-            'followee_host': followee_host,
-            'follower_uri': follower_uri
-        }
-
-    return follows
-
-
 def get_pleroma_current_follows():
     """Get all current following relationships from Pleroma database"""
     local_domain = urlparse(PLEROMA_ENDPOINT).netloc if PLEROMA_ENDPOINT else ""

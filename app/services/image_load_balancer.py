@@ -28,24 +28,6 @@ IMAGE_HEALTH_CHECK_INTERVAL = 60  # Re-check unhealthy servers after 60 seconds
 IMAGE_HEALTH_CHECK_TIMEOUT = 5.0  # Quick timeout for health checks
 
 
-async def check_image_server_health(server: str) -> bool:
-    """
-    Quick health check - verify server responds to /api/generate-image endpoint.
-    Returns True if healthy, False otherwise.
-    """
-    try:
-        async with httpx.AsyncClient(timeout=IMAGE_HEALTH_CHECK_TIMEOUT) as client:
-            # Just check if the endpoint exists (OPTIONS or quick GET)
-            response = await client.get(f"{server}/api/health")
-            if response.status_code in (200, 404, 405):  # 404/405 means endpoint exists but wrong method
-                return True
-            logger.warning(f"Image health check failed for {server}: status {response.status_code}")
-            return False
-    except Exception as e:
-        logger.warning(f"Image health check failed for {server}: {str(e)[:100]}")
-        return False
-
-
 async def get_healthy_image_server(servers: List[str]) -> Optional[str]:
     """
     Get next image server using simple round-robin (50/50 distribution).
@@ -95,19 +77,6 @@ async def should_use_remote_image(num_remote_servers: int) -> bool:
     if num_remote_servers > 0:
         return True
     return False
-
-
-async def _get_next_image_server(servers: List[str]) -> str:
-    """Get next image server using round-robin (async-safe) - legacy, use get_healthy_image_server instead"""
-    global _image_server_cycle, _image_server_list
-    async with _image_cycle_lock:
-        if _image_server_cycle is None or _image_server_list != servers:
-            _image_server_list = servers.copy()
-            _image_server_cycle = cycle(servers)
-            logger.info(f"Image load balancer initialized with {len(servers)} server(s): {servers}")
-        server = next(_image_server_cycle)
-        logger.info(f"Selected image server: {server}")
-        return server
 
 
 def sanitize_server_url(url: str) -> str:

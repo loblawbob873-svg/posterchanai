@@ -200,21 +200,6 @@ def cancel_reminder(db: Session, user: User, rid: int) -> bool:
     return True
 
 
-def snooze_reminder(db: Session, user: User, rid: int, minutes: int) -> Optional[Reminder]:
-    r = get_reminder(db, user, rid)
-    if not r:
-        return None
-    base = max(r.due_at, datetime.utcnow())
-    r.due_at = base + timedelta(minutes=minutes)
-    r.status = "pending"
-    r.delivered_at = None
-    db.commit()
-    db.refresh(r)
-    from app.services import record_store
-    record_store.mirror_reminder_blocking(db, user, r)
-    return r
-
-
 # --------------------------------------------------------------------------- formatting
 
 def humanize_due(due_at: datetime, now: Optional[datetime] = None, tz=None) -> str:

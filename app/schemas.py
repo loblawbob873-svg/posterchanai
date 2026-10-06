@@ -44,11 +44,6 @@ class Token(BaseModel):
     token_type: str = "bearer"
 
 
-# Chat schemas
-class MessageCreate(BaseModel):
-    content: str
-
-
 class MessageResponse(BaseModel):
     id: int
     role: str
@@ -76,12 +71,6 @@ class ConversationResponse(BaseModel):
 
 class ConversationWithMessages(ConversationResponse):
     messages: List[MessageResponse] = []
-
-
-# Settings schemas
-class SettingUpdate(BaseModel):
-    key: str
-    value: str
 
 
 class SettingsUpdate(BaseModel):
@@ -842,11 +831,6 @@ class TTSResponse(BaseModel):
 # Image generation schema
 class ImageGenRequest(BaseModel):
     prompt: str
-
-
-class ImageGenResponse(BaseModel):
-    image_url: Optional[str] = None
-    error: Optional[str] = None
 
 
 # OpenAI-compatible API schemas

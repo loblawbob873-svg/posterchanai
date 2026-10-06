@@ -692,34 +692,3 @@ def start_nostr_push_scheduler():
                 "+ live call-invite and DM push subscriptions", _POLL_SECS, _CHAN_POLL_SECS)
 
 
-def stop_nostr_push_scheduler():
-    global _sched, _call_stop, _call_task, _dm_stop, _dm_task
-    if _call_stop:
-        try:
-            _call_stop.set()
-        except Exception:
-            pass
-    if _call_task:
-        try:
-            _call_task.cancel()
-        except Exception:
-            pass
-    _call_task = None
-    if _dm_stop:
-        try:
-            _dm_stop.set()
-        except Exception:
-            pass
-    if _dm_task:
-        try:
-            _dm_task.cancel()
-        except Exception:
-            pass
-    _dm_task = None
-    _call_stop = _dm_stop = None      # release the Events; start_* mints fresh ones
-    if _sched:
-        try:
-            _sched.shutdown(wait=False)
-        except Exception:
-            pass
-        _sched = None
