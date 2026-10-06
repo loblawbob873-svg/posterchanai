@@ -533,9 +533,8 @@
 <!-- Torrents: RSS subscriptions + per-file selection. Self-attaching (it enhances the view app.js
      renders), so its only requirement is that it loads AFTER app.js. -->
 <script src="/static/js/client/torrents.js?v={{ ver }}"></script>
-<link rel="stylesheet" href="/static/vendor/xterm/xterm.css?v={{ ver }}">
-<script src="/static/vendor/xterm/xterm.js?v={{ ver }}"></script>
-<script src="/static/vendor/xterm/fit.js?v={{ ver }}"></script>
+<!-- xterm (the terminal emulator) is loaded by term.js the first time a terminal opens -- 289 kB
+     nobody else needs parsed on every visit. The service worker precaches it, so offline still works. -->
 <script src="/static/js/client/term.js?v={{ ver }}"></script>
 <script src="/static/js/client/code.js?v={{ ver }}"></script>
 <script src="/static/js/client/preview.js?v={{ ver }}"></script>

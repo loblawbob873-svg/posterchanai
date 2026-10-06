@@ -44,6 +44,33 @@
     const { $, $$, enc, toast, authFetch, publish } = PC;
 
     const XT = () => window.Terminal;              // xterm's global, once its <script> has run
+    /* XTERM LOADS ON FIRST USE, not with the page. It was three eager tags in the client shell (289 kB
+     * of xterm.js, its addon and its CSS) parsed on every visit by every visitor, for one screen most
+     * never open. Same files, same ?v= as this script -- so the service worker's precache answers them
+     * offline and the desktop/APK bundles serve them like any other static file. Resolves false (and is
+     * retried on the next open) if a file did not load; callers then say so instead of hanging. */
+    let _xtP = null;
+    function _loadXterm(){
+      if(XT()) return Promise.resolve(true);
+      if(_xtP) return _xtP;
+      const me = document.querySelector('script[src*="/static/js/client/term.js"]');
+      const src = (me && me.getAttribute('src')) || '/static/js/client/term.js';
+      const dir = src.split('?')[0].replace(/js\/client\/term\.js$/, 'vendor/xterm/');
+      const q = src.indexOf('?') >= 0 ? src.slice(src.indexOf('?')) : '';
+      const add = (tag, attrs) => new Promise((ok, bad) => {
+        const el = document.createElement(tag); Object.assign(el, attrs);
+        el.onload = () => ok(); el.onerror = () => bad(new Error((attrs.src || attrs.href) + ' did not load'));
+        document.head.appendChild(el);
+      });
+      if(!document.querySelector('link[href*="/vendor/xterm/xterm.css"]'))
+        add('link', {rel: 'stylesheet', href: dir + 'xterm.css' + q}).catch(() => {});
+      _xtP = add('script', {src: dir + 'xterm.js' + q})
+        .then(() => add('script', {src: dir + 'fit.js' + q}))
+        .then(() => !!XT())
+        .catch(() => false)
+        .then(ok => { if(!ok) _xtP = null; return ok; });
+      return _xtP;
+    }
     /* The desktop's local PTY, when PosterChan IS the desktop. Absent everywhere else, and then
      * every line that mentions it is unreachable rather than broken. */
     const LOCAL = () => window.pcTerm || null;
@@ -1071,6 +1098,7 @@
       if(isLocal(frame.host) || isLocalSid(frame.resume)) return _openLocal(frame);
       (async () => {
         try{ await PC.ensureAiSession(); }catch(_){}   // the socket's token
+        if(!term) await _loadXterm();
         if(opening !== openEpoch) return;
         if(!term && !_mountTerm()){ _state('the terminal could not start', 'err'); want = false; return; }
         if(!want || opening !== openEpoch) return;
@@ -1135,6 +1163,8 @@
         },
       };
       (async () => {
+        if(!term) await _loadXterm();
+        if(opening !== openEpoch) return;
         if(!term && !_mountTerm()){ _state('the terminal could not start', 'err'); want = false; return; }
         if(!want || opening !== openEpoch) return;
         _state(frame.resume ? 'reattaching…' : 'starting a shell…');
@@ -1725,7 +1755,7 @@
       }
       // xterm is a separate <script>; if it has not run yet the screen would be a blank box with no
       // explanation, which is the failure mode this app has been bitten by all week.
-      if(!XT()) _state('the terminal library did not load', 'err');
+      if(!XT() && !(await _loadXterm())) _state('the terminal library did not load', 'err');
     }
 
     function unmount(){
