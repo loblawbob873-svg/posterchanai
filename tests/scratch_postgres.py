@@ -76,6 +76,16 @@ def _start_private() -> dict | None:
         subprocess.run([pg_ctl, "-D", data, "-s", "-m", "immediate", "stop"], capture_output=True, timeout=60)
         shutil.rmtree(root, ignore_errors=True)
     atexit.register(_stop)
+    # ATEXIT DOES NOT RUN WHEN THE PROCESS IS KILLED -- and the gate kills a shard that times out. Measured
+    # on server1 2026-10-06: three clusters from a gate 24 hours earlier still running, plus one more and
+    # 19 abandoned /tmp/pct-* directories. A detached watchdog outlives whatever killed us: once this
+    # process is gone it stops the cluster and removes its directory.
+    subprocess.Popen(
+        ["sh", "-c", 'while kill -0 "$1" 2>/dev/null; do sleep 5; done; '
+                     '"$2" -D "$3" -s -m immediate stop >/dev/null 2>&1; rm -rf "$4"',
+         "pc-test-pg-watchdog", str(os.getpid()), pg_ctl, data, root],
+        stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+        start_new_session=True)
     # The private SOCKET, not TCP: on server1 a connection to 127.0.0.1 arrives as 192.168.0.2 and the
     # trust rules initdb writes do not match it. The socket lives in our own temp dir.
     params = {"host": sock, "port": port, "dbname": "postgres", "user": ROLE}

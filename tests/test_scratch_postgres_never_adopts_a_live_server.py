@@ -37,3 +37,33 @@ def test_a_named_test_server_is_still_honoured(monkeypatch):
     sp, _ = _fresh(monkeypatch)
     monkeypatch.setenv("PC_TEST_PG_PORT", "6543")
     assert sp.params()["port"] == 6543
+
+
+def test_a_killed_test_process_does_not_leave_its_postgres_running(tmp_path):
+    """atexit never runs on SIGKILL, and the gate kills a shard that times out: three clusters from a gate
+    24 hours earlier were found still running on server1. The watchdog must stop it and remove its dir."""
+    import os
+    import subprocess
+    import sys
+    import time
+    from pathlib import Path
+    import pytest
+    import tests.scratch_postgres as sp
+    if not (sp._bin("initdb") and sp._bin("pg_ctl")):
+        pytest.skip("no Postgres binaries on this machine")
+    root = Path(__file__).resolve().parents[1]
+    code = ("import os,signal,tests.scratch_postgres as sp\n"
+            "p=sp.params(); print(p['host'], flush=True)\n"
+            "os.kill(os.getpid(), signal.SIGKILL)\n")
+    env = dict(os.environ, PYTHONPATH=str(root))
+    env.pop("PC_TEST_PG_PORT", None)
+    r = subprocess.run([sys.executable, "-c", code], cwd=root, env=env, capture_output=True, text=True, timeout=180)
+    sock = r.stdout.strip()
+    assert sock.startswith("/"), (r.stdout, r.stderr[-500:])
+    cluster_root = Path(sock).parent
+    deadline = time.time() + 30
+    while time.time() < deadline and cluster_root.exists():
+        time.sleep(1)
+    assert not cluster_root.exists(), "the killed process's Postgres directory was left behind"
+    alive = subprocess.run(["pgrep", "-f", f"postgres -D {cluster_root}"], capture_output=True, text=True).stdout
+    assert not alive.strip(), f"its Postgres is still running: {alive}"
