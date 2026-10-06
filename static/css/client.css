@@ -8238,7 +8238,7 @@ body.native:not(.desktop).term-view .tty-bar{padding-top:env(safe-area-inset-top
   box-shadow:none!important;-webkit-backdrop-filter:none!important;backdrop-filter:none!important;
   transition:none!important}
 .os-root.os-fx-off .osw:not(.osw-document),.os-root.os-fx-off .osw-bar{background:var(--panel)}
-/* Low power covers nested app chrome, flyouts and the macOS menu material too.
+/* Low power covers nested app chrome and flyouts too.
    Keep content filters (for example hidden sensitive images) intact. */
 .os-root.os-fx-off,.os-root.os-fx-off *,.os-root.os-fx-off::before,.os-root.os-fx-off::after,
 .os-root.os-fx-off *::before,.os-root.os-fx-off *::after{
@@ -8246,229 +8246,6 @@ body.native:not(.desktop).term-view .tty-bar{padding-top:env(safe-area-inset-top
 .os-root.os-fx-off .os-noti,.os-root.os-fx-off::before{box-shadow:none!important}
 .os-root.os-fx-off .osw:not(.osw-document){background:linear-gradient(var(--panel),var(--panel)),var(--bg)}
 @media(prefers-reduced-motion:reduce){.os-root.os-fx .osw{transition:none}}
-/* Optional macOS desktop experience. It remains presentation-only (changing it never recreates an
-   app), but it is a DESKTOP layout, not three coloured buttons: a top menu material, floating Dock,
-   top-right status area, Launchpad-like Start panel, Finder-spaced icons and layered window chrome. */
-/* THE macOS CHROME FOLLOWS THE THEME; macOS IDENTITY DOES NOT.
-   This layout was written as a fixed dark glass — a #17202d desk, rgba(31,34,42,.72) surfaces and
-   white text — so choosing it threw the user's theme away: on the five LIGHT themes the whole
-   desktop turned dark grey and only the System Settings window stayed light. No contrast check ever
-   saw it, because white on dark scores beautifully; "wrong colours" and "unreadable" are different
-   questions and only the second one was being asked.
-   Every surface below now derives from the palette, and TEXT MOVES WITH ITS SURFACE — a light theme
-   that lightened the menu bar while `color:#fff` stayed would be worse than what it replaced.
-   What deliberately stays fixed is what makes it read as macOS: the traffic lights, the Dock tile
-   gradients, and the light System Settings window (that app is light on macOS in either mode). */
-.os-root.os-style-mac{--mac-menu-h:30px;--mac-dock-h:66px;--mac-glass:var(--panel2);
-  --mac-solid:var(--bg2);--mac-ink:var(--text);
-  --mac-line:color-mix(in srgb,var(--text) 18%,transparent);
-  --mac-hover:color-mix(in srgb,var(--text) 13%,transparent);
-  --mac-hover-2:color-mix(in srgb,var(--text) 18%,transparent);
-  /* A drop shadow for text sitting on glass. Hardcoded #0008 it was a black halo under the DARK
-     text of a light theme — the "muddy" half of the same bug. */
-  --mac-ink-sh:color-mix(in srgb,var(--bg) 55%,transparent);
-  font-family:-apple-system,BlinkMacSystemFont,"SF Pro Text",
-  "Helvetica Neue",sans-serif;background:var(--bg2)}
-.os-root.os-style-mac::before{content:'';position:absolute;z-index:305;inset:0 0 auto;height:var(--mac-menu-h);
-  border-bottom:1px solid var(--mac-line);background:var(--mac-glass);
-  -webkit-backdrop-filter:blur(24px) saturate(145%);backdrop-filter:blur(24px) saturate(145%);
-  box-shadow:0 1px 12px rgba(0,0,0,.22);pointer-events:none}
-.os-mac-menu{display:none}
-.os-root.os-style-mac .os-mac-menu{position:absolute;z-index:308;inset:0 min(430px,42vw) auto 7px;
-  height:var(--mac-menu-h);display:flex;align-items:center;gap:1px;overflow:visible;white-space:nowrap}
-.os-root.os-style-mac .os-mac-menu button{flex:0 0 auto;height:26px;padding:0 8px;border:0;border-radius:6px;
-  background:transparent;color:var(--mac-ink);font:500 12px/1 -apple-system,BlinkMacSystemFont,
-  "SF Pro Text","Helvetica Neue",sans-serif;cursor:pointer;text-shadow:0 1px 2px var(--mac-ink-sh)}
-.os-root.os-style-mac .os-mac-menu button:hover,.os-root.os-style-mac .os-mac-menu button:focus-visible{
-  background:var(--mac-hover-2);outline:0}.os-root.os-style-mac .os-mac-menu button:first-child{font-weight:600}
-.os-root.os-style-mac .os-mac-appmenu{position:relative;height:30px;color:var(--mac-ink)}
-.os-root.os-style-mac .os-mac-appmenu summary{height:26px;padding:0 8px;display:flex;align-items:center;gap:6px;
-  border-radius:6px;cursor:pointer;list-style:none;font-size:12px;text-shadow:0 1px 2px var(--mac-ink-sh)}
-.os-root.os-style-mac .os-mac-appmenu summary::-webkit-details-marker{display:none}
-.os-root.os-style-mac .os-mac-appmenu[open] summary,.os-root.os-style-mac .os-mac-appmenu summary:hover{background:var(--mac-hover-2)}
-.os-root.os-style-mac .os-mac-dropdown{position:absolute;z-index:360;top:28px;left:0;width:190px;padding:6px;
-  border:1px solid var(--mac-line);border-radius:8px;background:var(--mac-solid);box-shadow:0 15px 36px #0008}
-.os-root.os-style-mac .os-mac-dropdown button{display:block;width:100%;height:30px;text-align:left;padding:0 10px}
-/* Make the desk itself the usable rectangle. Widgets, free icons, window clamps and pointer hit tests
-   all measure this element, so margins reserve the menu/Dock in one place instead of merely painting
-   padding over a full-height coordinate system and clipping anything placed at its bottom edge. */
-.os-root.os-style-mac .os-desk{margin-top:var(--mac-menu-h);margin-bottom:calc(var(--mac-dock-h) + 18px)}
-.os-root.os-style-mac .os-icons{padding-top:12px;padding-bottom:6px}
-.os-root.os-style-mac .os-icon{border-radius:10px;
-  text-shadow:0 1px 3px var(--mac-ink-sh),0 2px 8px var(--mac-ink-sh)}
-/* macOS APP ARTWORK: a squircle tile, coloured by the app, with its glyph knocked out in white.
- *
- * The layout had a menu bar, a Dock and traffic lights, and then drew the SAME flat sprite glyphs
- * the PosterChan desktop uses — so it read as our desktop wearing a Mac hat, which is what "I don't
- * see macOS icons" meant.
- *
- * The hue comes from `--app-h`, stamped per button by os.js from the app's durable key (see
- * appHue). It is deliberately NOT theme-derived: macOS icons are saturated on light and dark alike,
- * for the same reason the traffic lights are fixed — colour is how you find an app, and an identity
- * that changes with the wallpaper is not one. Contrast is safe by construction: the glyph is white
- * on a 44-62% lightness fill, whatever the theme.
- *
- * 23% is the standard squircle approximation. A true superellipse needs a clip-path per size, and
- * at 56px the difference is under a pixel. */
-.os-root.os-style-mac .os-icon>.ic,
-.os-root.os-style-mac .os-startmenu .os-app>.ic{
-  box-sizing:border-box;width:56px;height:56px;padding:12px;border-radius:23%;
-  color:#fff;
-  background:linear-gradient(160deg,hsl(var(--app-h,212) 78% 62%),hsl(var(--app-h,212) 74% 44%));
-  box-shadow:0 3px 9px #0006,inset 0 1px 0 #ffffff44;
-  transition:transform .13s ease,box-shadow .13s ease}
-.os-root.os-style-mac .os-icon:hover>.ic{transform:scale(1.06);box-shadow:0 6px 16px #0007,inset 0 1px 0 #ffffff55}
-/* Real artwork from a .desktop file is a PICTURE, not a glyph: give it the same silhouette and
-   leave the pixels alone — a gradient behind an opaque PNG would only show as a border. */
-.os-root.os-style-mac .os-icon>.os-app-ic,
-.os-root.os-style-mac .os-startmenu .os-app>.os-app-ic{
-  width:56px;height:56px;border-radius:23%;object-fit:cover;box-shadow:0 3px 9px #0006}
-/* A FOLDER IS BLUE, on every desktop that has ever had folders. It is the one icon whose colour is
-   not the app's identity but its KIND, so it does not take a hue. */
-.os-root.os-style-mac .os-icon.is-folder>.ic,
-.os-root.os-style-mac .os-icon.is-folder>.os-folder{
-  background:linear-gradient(160deg,#7cc4ff,#2b7fd4);color:#fff}
-.os-root.os-style-mac .os-startmenu .os-app{gap:8px}
-.os-root.os-style-mac .os-startmenu .os-app>.ic{width:34px;height:34px;padding:8px;border-radius:24%}
-.os-root.os-style-mac .os-startmenu .os-app>.os-app-ic{width:34px;height:34px;border-radius:24%}
-.os-root.os-style-mac .os-icon:hover,.os-root.os-style-mac .os-icon.selected{
-  background:rgba(255,255,255,.15);box-shadow:inset 0 0 0 1px rgba(255,255,255,.13)}
-.os-root.os-style-mac .osw{border:1px solid var(--mac-line);border-radius:13px;
-  background:var(--mac-glass);box-shadow:0 26px 72px rgba(0,0,0,.48),0 2px 9px rgba(0,0,0,.34);
-  transition:box-shadow .15s ease,border-color .15s ease,filter .15s ease}
-.os-root.os-style-mac .osw:not(.focused){border-color:color-mix(in srgb,var(--text) 9%,transparent);filter:saturate(.84) brightness(.91);
-  box-shadow:0 13px 38px rgba(0,0,0,.34)}
-.os-root.os-style-mac .osw.focused{border-color:color-mix(in srgb,var(--text) 24%,transparent);
-  box-shadow:0 30px 86px rgba(0,0,0,.55),0 1px 0 rgba(255,255,255,.12) inset}
-.os-root.os-style-mac .osw-bar{height:37px;padding:0 10px;gap:8px;
-  background:linear-gradient(180deg,color-mix(in srgb,var(--text) 11%,var(--mac-solid)),var(--mac-solid));
-  border-bottom:1px solid var(--mac-line)}
-.os-root.os-style-mac .osw-btns{order:-1;gap:8px;margin-inline-end:2px}
-.os-root.os-style-mac .osw-b[data-w="min"],
-.os-root.os-style-mac .osw-b[data-w="max"],
-.os-root.os-style-mac .osw-b[data-w="close"]{width:14px;height:14px;border-radius:50%;font-size:0;
-  /* CENTRED, AND BIG ENOUGH TO READ. The dot carried `font-size:0` and each glyph set its own 10px
-     with no centring, so the x/-/+ landed off-centre in a 13px circle and were reported unreadable.
-     macOS draws these at roughly two thirds of the dot; 11px bold in 14px is that, and the flex box
-     is what actually puts them in the middle. */
-  display:flex;align-items:center;justify-content:center;line-height:1}
-.os-root.os-style-mac .osw-b[data-w="close"]{order:-3;background:#ff5f57}
-.os-root.os-style-mac .osw-b[data-w="min"]{order:-2;background:#febc2e}
-.os-root.os-style-mac .osw-b[data-w="max"]{order:-1;background:#28c840}
-.os-root.os-style-mac .osw-b[data-w="close"]:hover{background:#ff766f}
-.os-root.os-style-mac .osw-b[data-w="min"]:hover{background:#ffd05c}
-.os-root.os-style-mac .osw-b[data-w="max"]:hover{background:#50da65}
-.os-root.os-style-mac .osw-btns:hover .osw-b[data-w="close"]::after{content:'×';color:#68110d;font-size:11px;font-weight:700;line-height:1}
-.os-root.os-style-mac .osw-btns:hover .osw-b[data-w="min"]::after{content:'−';color:#765200;font-size:11px;font-weight:700;line-height:1}
-.os-root.os-style-mac .osw-btns:hover .osw-b[data-w="max"]::after{content:'+';color:#075d1b;font-size:11px;font-weight:700;line-height:1}
-.os-root.os-style-mac .osw-ai{width:27px;height:28px}
-.os-root.os-style-mac .osw-ico{display:none}
-.os-root.os-style-mac .osw-title{text-align:center;padding-inline-end:60px;color:var(--mac-ink);
-  font-size:12px;font-weight:600}
-.os-root.os-style-mac .osw-body{background:var(--mac-solid)}
-/* A DOCUMENT WINDOW IS STILL A WINDOW. `osw-document` (Preview, Office, Email) exists for a WINDOW
-   POLICY — neutral chrome, maximised on open — and had also been given a hard-coded light grey
-   titlebar here. That was invisible while every macOS surface was a fixed dark glass; now that the
-   chrome follows the palette, Email was the one window wearing somebody else's decoration, which is
-   exactly how it was reported. It keeps the class and the policy and inherits the same bar. */
-.os-root.os-style-mac .osw.osw-document,.os-root.os-style-mac .osw.osw-document.focused{
-  border-radius:13px;border-color:var(--mac-line);box-shadow:0 28px 78px rgba(0,0,0,.48)}
-/* The ordinary full-width bottom taskbar becomes a real floating Dock. The status controls remain
-   usable in the menu bar instead of wasting a second strip at the bottom. */
-.os-root.os-style-mac .os-bar{position:absolute;z-index:309;left:0;right:0;bottom:10px;margin-inline:auto;
-  width:max-content;max-width:calc(100% - 28px);height:58px;min-height:58px;padding:6px 8px;
-  border:1px solid var(--mac-line);border-radius:17px;background:var(--mac-solid);
-  box-shadow:0 14px 38px rgba(0,0,0,.46),inset 0 1px rgba(255,255,255,.12);
-  /* A filtered ancestor becomes the containing block for position:fixed descendants. The tray is
-     intentionally fixed in the top menu, but these filters trapped it inside the 58px Dock and
-     compressed Start, search, tasks, volume, network and clock into one overlapping strip. Keep
-     the Dock opaque enough for readability and leave fixed positioning rooted at the desktop. */
-  -webkit-backdrop-filter:none;backdrop-filter:none;
-  transform:none;overflow:visible}
-.os-root.os-style-mac .os-qbox{display:none}
-.os-root.os-style-mac .os-start{width:48px;height:48px;border-radius:12px;border:0;background:transparent}
-.os-root.os-style-mac .os-start img{width:38px;height:38px;border-radius:10px}
-.os-root.os-style-mac .os-tasks{flex:0 1 auto;min-width:0;max-width:min(68vw,900px);gap:6px;padding-inline-start:8px;
-  border-inline-start:1px solid rgba(255,255,255,.22)}
-.os-root.os-style-mac .os-task{position:relative;flex-basis:48px;width:48px;height:48px;border-radius:12px;
-  border:0;background:transparent;transition:transform .13s ease,background .13s ease}
-.os-root.os-style-mac .os-task:hover{background:var(--mac-hover);transform:translateY(-7px) scale(1.12)}
-.os-root.os-style-mac .os-task.on{background:var(--mac-hover);box-shadow:none}
-.os-root.os-style-mac .os-task.on::after{content:'';position:absolute;bottom:-4px;width:4px;height:4px;
-  border-radius:50%;background:#fff;box-shadow:0 0 5px #fff8}
-/* macOS mode gets an icon language of its own. Native applications keep their real desktop-file
-   artwork, clipped to the rounded-square mask used by the Dock. PosterChan's monochrome sprite
-   fallbacks become coloured squircle tiles rather than bare Windows-style line glyphs. */
-.os-root.os-style-mac .os-task>.os-app-ic{width:39px;height:39px;display:block;object-fit:cover;
-  border-radius:23%;box-shadow:0 2px 7px #0007,0 1px 0 rgba(255,255,255,.25) inset}
-/* THE SAME TILE AS THE DESKTOP AND THE START MENU, and coloured by the APP rather than by where it
-   happens to sit. This was `:nth-child(4n+2|3|4)` — a four-colour rainbow cycled by position, so
-   opening one window re-coloured every tile after it and the same app was blue, then purple, then
-   orange, on one desktop. `--app-h` is stamped per button from the app's durable key. */
-.os-root.os-style-mac .os-task>.ic{box-sizing:border-box;width:39px;height:39px;padding:8px;
-  border-radius:23%;color:#fff;
-  background:linear-gradient(160deg,hsl(var(--app-h,212) 78% 62%),hsl(var(--app-h,212) 74% 44%));
-  box-shadow:0 2px 7px #0007,0 1px 0 rgba(255,255,255,.28) inset}
-/* The top-right status area is menu-bar furniture: compact monochrome symbols, never Dock tiles. */
-.os-root.os-style-mac .os-tray .ic,.os-root.os-style-mac .os-tray-group svg{width:16px;height:16px;color:var(--mac-ink)}
-.os-root.os-style-mac .os-tray-group{height:26px;padding:0 6px;border:0;background:transparent;color:var(--mac-ink)}
-.os-root.os-style-mac .os-tray{position:fixed;z-index:307;inset:0 9px auto auto;height:var(--mac-menu-h);
-  gap:8px;color:var(--mac-ink)}.os-root.os-style-mac .os-tray button{height:26px;border-radius:6px;background:transparent}
-.os-root.os-style-mac .os-tray button:hover{background:var(--mac-hover)}
-/* THE MACHINE'S OWN TRAY IN THE MENU BAR. `#os-shell` is filled by osshell.js — wifi, battery,
-   volume, power — and it had NO macOS rules at all, so its chips kept taskbar sizing (a 48px bar)
-   inside a 30px menu bar and kept `color:var(--text)`, which on a light theme is dark text on the
-   dark glass of the menu bar. Reported as the wifi/power widget displaying weird and cut off.
-
-   Sized to the same 26px as the relay light and the bell beside it, so the row reads as one row —
-   which is the rule the chip styling already states for the PosterChan taskbar, applied to the bar
-   this style actually has. */
-.os-root.os-style-mac .os-sys{gap:2px;max-width:46vw;overflow:hidden}
-.os-root.os-style-mac .os-sys .os-chip{height:26px;display:inline-flex;align-items:center;
-  padding:0 6px;font-size:12px;line-height:1;color:var(--mac-ink);border-color:transparent;border-radius:6px;
-  background:transparent}
-.os-root.os-style-mac .os-sys .os-chip:hover{background:var(--mac-hover);border-color:transparent}
-/* A reading that could not be taken stays marked as unknown — dimmed against the menu bar rather
-   than against the taskbar's palette, or it reads as an ordinary value. */
-.os-root.os-style-mac .os-sys .os-chip.os-unknown{color:var(--muted)}
-.os-root.os-style-mac .os-sys .ic,.os-root.os-style-mac .os-sys svg{width:15px;height:15px;color:var(--mac-ink)}
-.os-root.os-style-mac .os-clock{align-items:flex-end;padding:0 6px}.os-root.os-style-mac .os-clock span{display:none}
-.os-root.os-style-mac .os-clock b{font-size:11px;color:var(--mac-ink)}
-.os-root.os-style-mac .os-startmenu{left:50%;bottom:82px;width:min(780px,calc(100vw - 30px));
-  height:min(920px,calc(100vh - 78px));max-height:calc(100vh - 78px);border:1px solid var(--mac-line);border-radius:22px;
-  background:var(--mac-glass);box-shadow:0 28px 85px rgba(0,0,0,.55);
-  -webkit-backdrop-filter:blur(30px) saturate(150%);backdrop-filter:blur(30px) saturate(150%);
-  transform:translate(-50%,0)}
-.os-root.os-style-mac .os-startmenu .os-app,.os-root.os-style-mac .os-startmenu button{border-radius:13px}
-.os-root.os-style-mac .os-context,.os-root.os-style-mac .os-notifications,.os-root.os-style-mac .os-netfly{
-  border-color:var(--mac-line);background:var(--mac-glass);
-  -webkit-backdrop-filter:blur(26px);backdrop-filter:blur(26px);box-shadow:0 22px 65px #0008}
-/* Settings belongs to the selected desktop experience too. Keep its content coherent with the
-   macOS window chrome instead of dropping a cyberpunk-black application inside a glass window. */
-.os-root.os-style-mac .os-settings{background:#e9e9eb;color:#202124}
-.os-root.os-style-mac .os-set-nav{background:rgba(238,238,241,.9);border-right-color:#c7c7ca;
-  box-shadow:none}.os-root.os-style-mac .os-set-nav button{color:#4b4c50}
-.os-root.os-style-mac .os-set-nav button.on,.os-root.os-style-mac .os-set-nav button:hover{
-  background:#0a84ff;color:#fff}
-.os-root.os-style-mac .os-set-main{background:linear-gradient(180deg,#f7f7f8,#e9e9eb)}
-.os-root.os-style-mac .os-set-pagehead>div{background:#0a84ff;color:#fff;box-shadow:0 3px 9px #0067c755}
-.os-root.os-style-mac .os-set-pagehead p,.os-root.os-style-mac .os-set-cardhead span,
-.os-root.os-style-mac .os-set-control>div>span,.os-root.os-style-mac .os-set-control output{color:#68696e}
-.os-root.os-style-mac .os-set-card,.os-root.os-style-mac .os-setting-row,
-.os-root.os-style-mac .os-liveusb{background:rgba(255,255,255,.82)!important;border-color:#c9c9cc;
-  box-shadow:0 1px 3px #0002}
-.os-root.os-style-mac .os-display-map{background:#d7d7da;border-color:#b6b6ba}
-.os-root.os-style-mac .os-display-controls,.os-root.os-style-mac .os-liveusb-grid>div{
-  background:#f7f7f8;border-color:#cdcdcf}
-.os-root.os-style-mac .os-set-control select,.os-root.os-style-mac .os-display-controls select,
-.os-root.os-style-mac .os-liveusb-grid select,.os-root.os-style-mac .os-path-pick input{
-  background:#fff;color:#202124;border-color:#b9b9bd}
-.os-root.os-style-mac .os-liveusb-status{background:#f4f4f5;color:#3a3b3e;border-color:#cacacd}
-.os-root.os-style-mac .os-about-grid{background:#ceced1}.os-root.os-style-mac .os-about-grid>div{background:#fff}
-.os-root.os-style-mac .empty{color:#68696e}
-@media(max-width:1180px){.os-root.os-style-mac .os-mac-menu{inset-inline-end:min(390px,46vw)}
-  .os-root.os-style-mac .os-mac-menu button{padding-inline:6px}.os-root.os-style-mac .os-tray{gap:4px}
-  .os-root.os-style-mac .os-task{flex-basis:43px;width:43px}}
 .osw.focused{border-color:rgba(var(--accent-rgb),.85);
   box-shadow:0 22px 64px rgba(0,0,0,.62)}
 
@@ -10601,9 +10378,6 @@ svg.ic.pci-ic{width:18px;height:18px;flex:none;stroke-width:1.9}
 .os-set-control{display:flex;align-items:center;justify-content:space-between;gap:18px;padding:14px 16px;border:1px solid var(--line)}.os-set-control>div{display:flex;flex-direction:column;gap:4px}.os-set-control>div>span,.os-set-control output{color:var(--muted);font-size:12px}.os-set-control>label{display:flex;align-items:center;gap:10px}.os-set-control input[type=range]{width:min(240px,28vw)}.os-set-control select{min-width:150px;padding:8px;background:#111722;color:var(--text);border:1px solid var(--line);border-radius:7px}.os-set-switch span{min-width:24px}.os-about-grid{display:grid;grid-template-columns:repeat(2,minmax(140px,1fr));gap:1px;padding:0;overflow:hidden;background:var(--line)}.os-about-grid>div{display:flex;flex-direction:column;gap:6px;padding:16px;background:var(--panel)}.os-about-grid span{color:var(--muted);font-size:12px}
 .os-set-widget-list{margin-top:12px}.os-set-widget-addhead{margin-top:22px}.os-set-widget-grid{display:grid;grid-template-columns:repeat(2,minmax(220px,1fr));gap:8px;margin-top:12px}.os-set-widget-grid .os-wgt-pick{width:100%;min-height:68px}.os-set-widget .danger{color:#ff8f9a}
 .os-user-account,.os-update-status{display:flex;align-items:center;gap:16px}.os-user-account>div:nth-child(2),.os-update-status>div:nth-child(2){display:flex;min-width:0;flex-direction:column;gap:6px}.os-user-account code{max-width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--muted)}.os-user-avatar{display:grid;place-items:center;flex:0 0 52px;height:52px;border-radius:50%;background:rgba(var(--accent-rgb),.16);color:var(--accent)}.os-user-avatar .ic{width:28px;height:28px}.os-update-status span{color:var(--muted);font-size:12px;line-height:1.45}.os-update-status .os-set-ready{flex:none}
-/* System Settings belongs to the selected desktop experience too; otherwise macOS chrome framed a
-   second, unrelated cyberpunk application. Keep these overrides scoped to this isolated document. */
-.os-root.os-style-mac .os-settings{background:#ececf0;color:#1d1d1f}.os-root.os-style-mac .os-set-nav{background:rgba(224,224,229,.92);border-right-color:#c6c6ca;box-shadow:none}.os-root.os-style-mac .os-set-nav button{color:#55555c}.os-root.os-style-mac .os-set-nav button.on,.os-root.os-style-mac .os-set-nav button:hover{background:#0a84ff;color:#fff}.os-root.os-style-mac .os-set-main{background:#f5f5f7}.os-root.os-style-mac .os-set-pagehead>div{background:#0a84ff;color:#fff}.os-root.os-style-mac .os-set-pagehead p,.os-root.os-style-mac .os-set-cardhead span,.os-root.os-style-mac .os-set-control>div>span,.os-root.os-style-mac .os-about-grid span,.os-root.os-style-mac .os-update-status span{color:#6e6e73}.os-root.os-style-mac .os-set-card,.os-root.os-style-mac .os-setting-row{background:#fff!important;border-color:#d2d2d7;box-shadow:0 1px 2px #0000000d}.os-root.os-style-mac .os-about-grid{background:#d2d2d7}.os-root.os-style-mac .os-about-grid>div{background:#fff}.os-root.os-style-mac .os-set-control select{background:#fff;color:#1d1d1f;border-color:#c7c7cc}.os-root.os-style-mac .os-display-controls{background:#fff;border-color:#d2d2d7}.os-root.os-style-mac .os-set-ready{background:#dff7e5;color:#167534}
 .os-liveusb{background:#11151d}
 .os-liveusb-head{display:flex;align-items:center;justify-content:space-between;gap:16px}.os-liveusb-head>div{display:flex;flex-direction:column;gap:4px}.os-liveusb-head span{color:var(--muted);font-size:12px}
 .os-liveusb-grid{display:grid;grid-template-columns:1fr 1fr;gap:14px;margin-top:16px}.os-liveusb-grid>div{display:flex;flex-direction:column;gap:12px;padding:14px;border:1px solid #2a303c;border-radius:10px;background:#0b0e14}.os-liveusb-grid h3{margin:0;font-size:15px}.os-liveusb-grid label{display:flex;flex-direction:column;gap:6px;color:var(--muted);font-size:12px}.os-liveusb-grid label:has(input[type=checkbox]){display:block}.os-liveusb-grid select{width:100%;padding:8px;background:#111722;color:var(--text);border:1px solid var(--line);border-radius:6px}.os-path-pick{display:flex;gap:8px}.os-path-pick input{flex:1;min-width:0}.os-liveusb .danger{border-color:#9b4050;color:#ff91a5}.os-liveusb-status{min-height:38px;max-height:120px;margin:14px 0 0;padding:10px;overflow:auto;white-space:pre-wrap;background:#080a0f;border:1px solid #252a35;border-radius:7px;color:#aab3c4}
@@ -11204,12 +10978,6 @@ html.pc-oswin #app,html.pc-oswin .main{height:100%!important;min-height:0!import
 .pc-oswin-buttons button{width:44px;border:0;border-radius:0;background:transparent;color:var(--text);font-size:17px;cursor:pointer}
 .pc-oswin-buttons button:hover{background:rgba(255,255,255,.12)}
 .pc-oswin-buttons [data-action="close"]:hover{background:#c42b1c;color:#fff}
-#pc-oswin-chrome.mac{flex-direction:row-reverse;justify-content:flex-end;gap:12px}
-#pc-oswin-chrome.mac .pc-oswin-buttons{gap:8px;align-self:auto}
-#pc-oswin-chrome.mac .pc-oswin-buttons button{width:14px;height:14px;border-radius:50%;font-size:0}
-#pc-oswin-chrome.mac [data-action="close"]{order:-3;background:#ff5f57}
-#pc-oswin-chrome.mac [data-action="min"]{order:-2;background:#febc2e}
-#pc-oswin-chrome.mac [data-action="max"]{order:-1;background:#28c840}
 /* A window is ONE view: no sidebar to navigate with, no mobile nav bar, no desktop behind it. The
    window manager is how you get to the others now — that is the entire point of it being a real
    window. The view itself is byte-identical to the web, which is the promise this rewrite made. */

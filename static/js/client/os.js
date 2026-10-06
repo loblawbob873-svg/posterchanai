@@ -54,7 +54,6 @@
   const MIN_WIDTH = 1024;          // below this the desktop is not offered at all
   const KEY = 'osMode';            // ClientSettings: remembered across sessions
   const FX_KEY = 'osCompositing';  // auto, full, or off/low-power; presentation only
-  const STYLE_KEY = 'osDesktopStyle'; // posterchan or optional mac; presentation only
   const TASKBAR = 48;
   const SNAP = 8;                  // edge gutter when tiling
 
@@ -215,22 +214,6 @@
     /* Motion costs a repaint per frame for as long as a window is focused, so it rides the
        EXPLICIT "Full" choice only — never `auto`, which is what most machines are on. */
     root.classList.toggle('os-fx-motion', mode === 'full');
-  }
-  function applyDesktopStyle(){
-    if(!root) return;
-    const was=root.classList.contains('os-style-mac');
-    const mac=settings().get(STYLE_KEY,'posterchan')==='mac';
-    root.classList.toggle('os-style-mac',mac);
-    placeDesktopTray();
-    /* Menu and Dock safe areas change the measured desk. Reflow existing objects after layout has
-     * committed; otherwise switching style leaves windows/widgets clamped to the previous height. */
-    if(was!==mac&&desk)requestAnimationFrame(()=>{
-      /* Reflow is geometry maintenance, not user activation. Focusing every snapped window here
-       * made the last window in `wins` steal focus whenever the Dock/menu metrics changed; native
-       * surfaces then fought the window the user was dragging. */
-      for(const w of wins){if(w.max||w.snap)snapTo(w,w.max?'max':w.snap,{focus:false});else keepFrameReachable(w);}
-      drawWidgets();try{nsync();}catch(_){}
-    });
   }
   const fits = () => window.innerWidth >= MIN_WIDTH;
   /* DESKTOP OR CLASSIC IS ONE QUESTION WITH ONE ANSWER. Reported on an Android tablet as "it gets
@@ -1295,53 +1278,6 @@
     if(u.slice(0, 5) === 'data:') return `<img class="os-app-ic" src="${enc(u)}" alt="" loading="lazy">`;
     return iconSvg((a && a.icon) || 'i-grid');
   }
-
-  /* A STABLE COLOUR PER APP, NEVER PER POSITION.
-   *
-   * The macOS Dock tinted its tiles with `:nth-child(4n+2|3|4)`, so an app was blue, then purple,
-   * then orange, depending only on what else happened to be open beside it. A macOS icon IS the
-   * app's identity — you find Mail by looking for the blue one — and an identity that changes when
-   * a neighbour opens is not one. The hue is derived from the app's own key instead, so it is the
-   * same on every device, survives reordering, and a feature added to the sidebar next year gets
-   * one for free with no table to maintain.
-   *
-   * FNV-1a, not a sum of char codes: 'notes' and 'stone' are the same sum, and anagram collisions
-   * across a 360-slot space are exactly what a launcher full of short names would produce. */
-  /* SPREAD, NOT SCATTERED. A hash taken mod 360 is uniform in the long run and CLUMPY in the small
-   * one, and a launcher is the small one: measured on the real desktop, seventeen of thirty-seven
-   * apps landed between 175 and 260 — one indistinguishable blue band — which reads as "the icons
-   * all look the same" even though every value was different. Neighbouring hues are not different
-   * colours to a person scanning a grid.
-   *
-   * The hash therefore picks a SLOT in a fixed ring of well-separated macOS-ish hues rather than a
-   * raw degree. Twelve of them, 30 apart, so any two apps are either the same colour or visibly
-   * different — never almost the same. Repeats are fine and correct: macOS has several blue apps
-   * too. Still a pure function of the key, so an app keeps its colour for ever. */
-  /* TWELVE, EXACTLY 30 APART. Hand-picking "nice" hues put pairs 8-14 degrees apart — the very mud
-     this ring exists to avoid, and the test caught it. An even ring is the only way to guarantee
-     that any two apps are either the same colour or visibly different. Twelve rather than eighteen
-     because 20 degrees is still too close to read apart at icon size. */
-  const APP_HUES = [211, 241, 271, 301, 331, 1, 31, 61, 91, 121, 151, 181];
-  function appHue(key){
-    const str = String(key || ''); let h = 2166136261 >>> 0;
-    for(let i = 0; i < str.length; i++){ h ^= str.charCodeAt(i); h = Math.imul(h, 16777619) >>> 0; }
-    /* An avalanche step before the slot is chosen. FNV's low bits carry the last character far too
-       directly, so `h % 18` over a launcher's worth of short names piled several apps onto one slot
-       purely because their names ended alike. Measured over the real view list, max-per-slot 8 -> 6
-       with the ring widened at the same time. */
-    /* `>>> 0` after EVERY xor, not just after the multiplies: `^` yields a SIGNED int32, so the last
-       one made h negative for half of all keys, `h % length` went negative, and the lookup returned
-       undefined — an icon with no colour at all. Caught because the test asserts the hue is an
-       integer in 0..359 rather than merely that it exists. */
-    h = (h ^ (h >>> 16)) >>> 0; h = Math.imul(h, 2246822507) >>> 0;
-    h = (h ^ (h >>> 13)) >>> 0; h = Math.imul(h, 3266489909) >>> 0;
-    h = (h ^ (h >>> 16)) >>> 0;
-    return APP_HUES[h % APP_HUES.length];
-  }
-  /* Stamped on the BUTTON, so the tile, its hover and its Dock reflection all read one value. The
-   * key must be the app's durable identity — never a window id (a new one on every reopen) and
-   * never a title (it carries the open document). */
-  const tint = (key) => ` data-tint="${enc(String(key || ''))}" style="--app-h:${appHue(key)}"`;
 
   /* The sidebar's own <use href> values carry the '#', but every hand-written call site here passes
    * a bare id — and `<use href="i-wot">` resolves to NOTHING and draws nothing, with no error. That
@@ -3668,7 +3604,6 @@
           <button class="btn primary" data-apply>Preview and apply</button><span class="muted" data-status></span></div>`:''}`:`${displayError?'':`<div class="empty">No displays were detected. Reconnect a display, then reopen Settings.</div>`}`}</section>
         ${pointerConfine.available?`<section class="os-setting-row os-set-control"><div><b>Keep the mouse in a fullscreen game</b><span>While a fullscreen window is in front, the pointer stays on its monitor instead of sliding onto the next one. Switch away from the window, or turn this off, to release it.</span></div><label class="os-set-switch"><input data-pointer-confine type="checkbox" ${pointerConfine.on?'checked':''} aria-label="Keep the mouse in a fullscreen game"><span>${pointerConfine.on?'On':'Off'}</span></label></section>`:''}</section>
         <section data-settings-page="appearance" ${_osSettingsPage==='appearance'?'':'hidden'}><header class="os-set-pagehead"><div>${iconSvg('i-palette')}</div><span><h2>Appearance</h2><p>Choose modern desktop depth or a flat low-power presentation.</p></span></header>
-        <section class="os-setting-row os-set-control"><div><b>Desktop experience</b><span>Choose PosterChan's desktop or a complete macOS-style layout with a menu bar, floating Dock, launcher and matching windows.</span></div><select data-desktop-style aria-label="Desktop experience"><option value="posterchan" ${settings().get(STYLE_KEY,'posterchan')!=='mac'?'selected':''}>PosterChan</option><option value="mac" ${settings().get(STYLE_KEY,'posterchan')==='mac'?'selected':''}>macOS-style</option></select></section>
         <section class="os-setting-row os-set-control"><div><b>Display scale</b><span>How large text and controls are drawn in PosterChan. A 4K-class monitor starts at 125% so it is readable at its native resolution &mdash; the screens themselves stay at 100%, which is what keeps games sharp and full speed.</span></div><select data-ui-scale aria-label="Display scale">${UI_SCALE_CHOICES.map(n=>`<option value="${n}" ${n===uiScaleEffective()?'selected':''}>${Math.round(n*100)}%</option>`).join('')}</select></section>
         <section class="os-setting-row os-set-control"><div><b>Window effects</b><span>Automatic uses low power on touch devices. Modern adds shadows, transparency and visual transitions.</span></div><select data-window-effects aria-label="Window effects"><option value="auto" ${desktopEffectsMode()==='auto'?'selected':''}>Automatic</option><option value="full" ${desktopEffectsMode()==='full'?'selected':''}>Modern</option><option value="off" ${desktopEffectsMode()==='off'?'selected':''}>Low power / off</option></select></section></section>
         ${[['sound','i-volume','Sound','Output, input, and application volume.','Open sound controls'],
@@ -3871,9 +3806,6 @@
       };
       const effects=host.querySelector('[data-window-effects]');if(effects)effects.onchange=()=>{
         settings().set(FX_KEY,['full','off'].includes(effects.value)?effects.value:'auto');applyDesktopEffects();
-      };
-      const desktopStyle=host.querySelector('[data-desktop-style]');if(desktopStyle)desktopStyle.onchange=()=>{
-        settings().set(STYLE_KEY,desktopStyle.value==='mac'?'mac':'posterchan');applyDesktopStyle();
       };
       /* The switch is ROLLED BACK when the compositor refuses it, and says why. A toggle that
          moves and then quietly does nothing is the shape this repo keeps rediscovering — and this
@@ -6841,7 +6773,7 @@
     `<button class="os-icon${a.folder ? ' is-folder' : ''}${a.native ? ' is-native' : ''}${
         a.missing ? ' is-missing' : ''}" data-view="${enc(a.view)}"${
         a.folder ? ` data-apps="${enc(a.folder.members.map(m => m.view).join(' '))}"` : ''
-      }${tint(a.view)} title="${enc(a.missing ? a.label + ' — not installed on this computer' : a.label)}">
+      } title="${enc(a.missing ? a.label + ' — not installed on this computer' : a.label)}">
        ${a.folder ? folderGlyph(a.folder) : a.native ? appIcon(a) : iconSvg(a.icon)}<span>${enc(a.label)}</span></button>`;
 
   /* Fit sparse saved coordinates to THIS usable desktop without rewriting the synced document.
@@ -8800,7 +8732,7 @@
       const rows = all.filter(a => NATIVE_RE.test(String(a.id || ''))
                                 && (!want || String(a.name || '').toLowerCase().includes(want)));
       listEl.innerHTML = rows.length
-        ? rows.map(a => `<button class="os-app" data-app="${enc(a.id)}"${tint(a.id)}
+        ? rows.map(a => `<button class="os-app" data-app="${enc(a.id)}"
               ${onDesk.has(a.id) ? ' disabled' : ''}>${appIcon(a)}<span>${enc(a.name)}${
               onDesk.has(a.id) ? ' <i class="muted">· on the desktop</i>' : ''}</span></button>`).join('')
         : `<div class="os-bg-empty"><p>${all.length ? 'Nothing matches.' : 'No programs found on this computer.'}</p></div>`;
@@ -9276,19 +9208,6 @@
     try{ if(window.PCOSShell && PCOSShell.available() && PCOSShell.allApps)
       rows.push({ label: 'Add a program…', run: () => programPicker() }); }catch(_){}
     rows.push({ label: 'Change background…', run: () => wallpaperPicker() });
-    /* THE DESKTOP STYLE SHIPPED AND COULD NOT BE TURNED ON FROM A BROWSER.
-     * Its only control is System Settings → Appearance, whose start-menu entry is gated on
-     * `window.pcDisplays` — an Electron preload bridge. So in the desktop app the macOS layout is
-     * reachable and in a browser it is not, which is indistinguishable from never having shipped:
-     * asked for repeatedly, present in the build, invisible to the person asking. The style is
-     * presentation (`STYLE_KEY`'s own comment says so), not hardware, so it also belongs on the
-     * personalization surface that exists everywhere. Both controls write the same key and call the
-     * same applier, so they cannot drift. */
-    rows.push({ label: settings().get(STYLE_KEY,'posterchan')==='mac'
-                  ? 'Use the PosterChan desktop' : 'Use the macOS-style desktop',
-                run: () => { const mac = settings().get(STYLE_KEY,'posterchan')==='mac';
-                             settings().set(STYLE_KEY, mac ? 'posterchan' : 'mac');
-                             applyDesktopStyle(); } });
     rows.push({ sep: true });
     rows.push({ label: 'Restore the default layout', run: async () => {
       const ask = PC().uiConfirm;
@@ -9461,32 +9380,6 @@
     return `<button class="os-acct" id="os-acct" title="Accounts">${pic}
               <span>${enc(name || 'My account')}</span>
               <i aria-hidden="true">⌃</i></button>`;
-  }
-
-  /* The macOS menu bar is real shell furniture, not words painted by a pseudo-element. Every item
-   * invokes an existing, already-guarded desktop action and remains reachable by keyboard. */
-  function wireMacMenu(){
-    const menu=$('#os-mac-menu',root);if(!menu)return;
-    const run=(name,fn)=>{const b=menu.querySelector('[data-mac-menu="'+name+'"]');if(b)b.onclick=e=>{
-      e.stopPropagation();try{fn();}catch(_){PC().toast&&PC().toast('that desktop action is unavailable');}
-    }};
-    run('settings',()=>{openLauncherApp('settings');const d=$('#os-mac-posterchan',root);if(d)d.open=false;});
-    run('system-settings',()=>{openSystemSettings();const d=$('#os-mac-posterchan',root);if(d)d.open=false;});
-    run('tasks',()=>openTaskManager());
-    run('view',()=>toggleFull());
-  }
-
-  /* In macOS mode the status area is top-bar furniture, not Dock content. Merely making a tray
-   * `position:fixed` is not enough: transformed/filtered ancestors create a new fixed containing
-   * block and flex still sizes the descendant as part of the Dock. Move the actual node between
-   * the shell root and taskbar so connectivity, machine controls and time cannot consume Dock
-   * width. Switching back restores the ordinary single taskbar structure. */
-  function placeDesktopTray(){
-    if(!root||!bar)return;
-    let tray=$('.os-tray',bar)||$('.os-tray',root);
-    if(!tray)return;
-    const host=root.classList.contains('os-style-mac')?root:bar;
-    if(tray.parentElement!==host)host.appendChild(tray);
   }
 
   /* DOES THE DESKTOP SURFACE NEED TO BE IN FRONT OF THE APPLICATIONS RIGHT NOW?
@@ -9827,10 +9720,6 @@
   function drawBar(){
     _publishShellFront();
     if(!bar || _deferBarDraw()) return;
-    /* A preceding macOS draw leaves its tray beside the Dock. The markup below creates the one new
-     * tray for this frame, so discard the old detached instance first instead of accumulating
-     * clocks and relay watchers across focus changes. */
-    $$('.os-tray',root).filter(x=>x.parentElement!==bar).forEach(x=>x.remove());
     // Remember whether the search box had the caret BEFORE the rebuild throws the element away —
     // or is ABOUT to have it, because this draw is happening inside the very click that would give
     // it the caret (see the pointerdown note above).
@@ -9848,13 +9737,13 @@
       if(kind === 'view'){
         if(openViews.has(legacyView(id))) return '';
         const a = apps().find(x => x.view === legacyView(id)); if(!a) return '';
-        return `<button class="os-task os-pinned" data-pin="${enc(key)}" data-kind="pin-view"${tint(a.view)}
+        return `<button class="os-task os-pinned" data-pin="${enc(key)}" data-kind="pin-view"
                  title="${enc(a.label)}">${iconSvg(a.icon)}<span>${enc(a.label)}</span></button>`;
       }
       if(kind === 'app'){
         if(openApps.has(id)) return '';
         const a = (_machineApps || []).find(x => x.id === id); if(!a) return '';
-        return `<button class="os-task os-pinned" data-pin="${enc(key)}" data-kind="pin-app"${tint(a.id)}
+        return `<button class="os-task os-pinned" data-pin="${enc(key)}" data-kind="pin-app"
                  title="${enc(a.name)}">${appIcon(a)}<span>${enc(a.name)}</span></button>`;
       }
       return '';
@@ -9873,7 +9762,7 @@
             marker is load-bearing: deleting it turns the guard red rather than silently blind. The
             dashes are -- and not em-dashes for the same reason: keep this plain. -->${pinHtml + wins.map(w =>
          `<button class="os-task${_webTaskActive(w) ? ' on' : ''}"
-                  data-id="${w.id}" data-kind="web"${tint(w.machineApp ? w.machineApp.id : w.view)} title="${enc(w.title)}">
+                  data-id="${w.id}" data-kind="web" title="${enc(w.title)}">
             ${w.machineApp ? appIcon(w.machineApp) : iconSvg(w.icon)}<span>${enc(w.title)}</span></button>`).join('')
          + nativeTasks.map(w =>
          /* NO PER-APP WINDOW CONTROLS ON THE TASKBAR. They were a stopgap: sway draws a title bar
@@ -9885,7 +9774,7 @@
             Super+Shift+arrows move -- so nothing is lost by taking these away. Real buttons belong
             on the window's own title bar, which needs either hosting or a client-drawn bar. */
          `<button class="os-task${w.focused && !w.stashed ? ' on' : ''}"
-                  data-id="${w.id}" data-kind="native"${tint(w.appId || w.title)} title="${enc(w.title)}">
+                  data-id="${w.id}" data-kind="native" title="${enc(w.title)}">
             ${appIcon(w)}<span>${enc(w.title)}</span></button>`).join('')}</div>
        <div class="os-tray">
          ${(window.pcWM && typeof pcWM.arrange === 'function' && _popupWindows()) || !_popupWindows()
@@ -10050,7 +9939,6 @@
       showCtx(e.clientX, e.clientY, actions, b);
     });
 
-    placeDesktopTray();
   }
 
   // ---- notification centre ---------------------------------------------------------------------
@@ -11013,7 +10901,7 @@
             .filter(a => !q || a.name.toLowerCase().includes(q.toLowerCase())
                             || String(a.comment || '').toLowerCase().includes(q.toLowerCase()));
           if(nat.length) natives = `<div class="os-applist-h">This computer</div>`
-            + nat.map(a => `<button class="os-app" data-app="${enc(a.id)}"${tint(a.id)}${
+            + nat.map(a => `<button class="os-app" data-app="${enc(a.id)}"${
                  a.comment ? ` title="${enc(a.comment)}"` : ''}>
                  ${appIcon(a)}<span>${enc(a.name)}</span></button>`).join('');
         }
@@ -11047,7 +10935,7 @@
 
       const nothing = !list.length && !natives && !drive && !local;
       results.innerHTML = nrow + (list.length
-        ? list.map(a => `<button class="os-app" data-view="${enc(a.view)}"${tint(a.view)}>
+        ? list.map(a => `<button class="os-app" data-view="${enc(a.view)}">
              ${iconSvg(a.icon)}<span>${enc(a.label)}</span></button>`).join('')
         : (q || !nothing ? '' : '<div class="muted small" style="padding:10px">Nothing matches that.</div>'))
         + natives + drive + local;
@@ -11353,16 +11241,8 @@
     root.id = 'os-root';
     root.className = 'os-root';
     applyDesktopEffects();
-    applyDesktopStyle();
-    root.innerHTML = `<nav class="os-mac-menu" id="os-mac-menu" aria-label="Desktop menu">
-      <details class="os-mac-appmenu" id="os-mac-posterchan"><summary aria-label="Open PosterChan menu">● <b>PosterChan</b></summary>
-        <div class="os-mac-dropdown" role="menu"><button role="menuitem" data-mac-menu="settings">Settings</button>
-          <button role="menuitem" data-mac-menu="system-settings">System Settings</button></div></details>
-      <button data-mac-menu="tasks">Task Manager</button>
-      <button data-mac-menu="view">Full Screen</button>
-    </nav><div class="os-desk" id="os-desk"></div><div class="os-bar" id="os-bar"></div>`;
+    root.innerHTML = `<div class="os-desk" id="os-desk"></div><div class="os-bar" id="os-bar"></div>`;
     document.body.appendChild(root);
-    wireMacMenu();
     /* Kept for old Sway configs during their first session after an upgrade. Current installs use
      * Alt+Return, which cannot produce a trailing bare-Super release. */
     let _suppressStartUntil = 0;

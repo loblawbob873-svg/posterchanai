@@ -81,8 +81,8 @@ PosterChan-owned shell, popup, start, tray, notification, profile, and framed
 application surfaces must be excluded from server-side decorations.  Ordinary
 native Firefox, Telegram, Steam-client, terminal, and LibreOffice windows must
 receive exactly one draggable/resizable compositor frame.  Fullscreen games
-must receive none.  The macOS-style and Windows-11-style PosterChan themes own
-their control order and chrome; compositor decoration settings must never
+must receive none.  The PosterChan desktop owns its control order and
+chrome; compositor decoration settings must never
 reorder or duplicate those controls.
 
 Shadows and animations must be compositor effects only around true native
@@ -95,15 +95,15 @@ second overlay.
 
 ## Acceptance matrix
 
-Run every row in both macOS-style and Windows-11-style themes, at scale 1.0,
+Run every row at scale 1.0,
 1.25/1.5, and 2.0, on one output and mixed-scale dual outputs:
 
 | Area | Required result |
 | --- | --- |
 | Session | fresh boot, recovery launch, shell update, and logout return a usable desktop with one shell per output |
 | Focus | clicking every PosterChan and native window focuses and raises exactly that toplevel; delayed compositor events cannot steal focus |
-| Chrome | exactly one title/control set; correct macOS/Windows button order; drag, resize, minimize, maximize, close, and back work |
-| Shell UI | taskbar/dock, Start, tray, notifications, connectivity, and snap preview never appear behind apps or flash at screen center |
+| Chrome | exactly one title/control set; correct button order; drag, resize, minimize, maximize, close, and back work |
+| Shell UI | taskbar, Start, tray, notifications, connectivity, and snap preview never appear behind apps or flash at screen center |
 | Launch | Firefox, Telegram, Terminal, Office, Steam, and generic desktop entries launch exactly once on the active output |
 | Gaming | Steam and Proton launch; Gamescope and direct fallback both work; fullscreen, pointer lock, controller, overlay, Alt-Tab, HDR/VRR where supported, and resolution changes work |
 | Outputs | hotplug, rotation, mixed scaling, moving windows, suspend/resume, and unplugging the focused output preserve ownership and usable geometry |

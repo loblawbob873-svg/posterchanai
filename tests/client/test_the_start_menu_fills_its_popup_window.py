@@ -18,9 +18,9 @@ and the bar it is anchored to, with a translucent skirt hanging beneath it.
 they moved into windows. The start menu was not, and nothing noticed because every existing check
 reads the numbers os.js sends to the compositor.
 
-WHY THIS TEST RESOLVES THE CASCADE INSTEAD OF GREPPING. The desktop rule and the mac skin's
-`.os-root.os-style-mac .os-startmenu` (which adds `left:50%` and a `translate(-50%,0)`) both set the
-same properties, so "the popup rule exists" is not the question -- "does it win" is. The order and
+WHY THIS TEST RESOLVES THE CASCADE INSTEAD OF GREPPING. The desktop rule and any more specific
+descendant rule can set the same properties, so "the popup rule exists" is not the question --
+"does it win" is. The order and
 specificity are computed here the way a browser computes them.
 """
 from pathlib import Path

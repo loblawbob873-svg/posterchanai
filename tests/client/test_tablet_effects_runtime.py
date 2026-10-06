@@ -11,10 +11,9 @@ from .test_notes_new_draft_runtime import CHROME, ROOT
 
 
 @pytest.mark.skipif(not Path(CHROME).exists(), reason='Chrome is not installed')
-@pytest.mark.parametrize('style', ['', 'os-style-mac'])
-def test_touch_low_power_removes_nested_blur_and_preserves_editor(style):
+def test_touch_low_power_removes_nested_blur_and_preserves_editor():
     source = (ROOT / 'static/js/client/os.js').read_text()
-    functions = source[source.index('function desktopEffectsMode()'):source.index('function applyDesktopStyle()')]
+    functions = source[source.index('function desktopEffectsMode()'):source.index('const fits = () =>')]
     css = (ROOT / 'static/css/client.css').as_uri()
     script = """
 const root=document.querySelector('.os-root'), FX_KEY='osCompositing';
@@ -41,7 +40,7 @@ window.addEventListener('load',()=>{
 });
 """
     html = f'''<!doctype html><link rel="stylesheet" href="{css}">
-    <div class="os-root {style}" style="width:1200px;height:800px">
+    <div class="os-root" style="width:1200px;height:800px">
       <section class="osw" style="left:30px;top:50px;width:500px;height:400px">
         <header class="osw-bar">Notes</header><div class="osw-body">
         <textarea>Tablet draft stays intact</textarea>

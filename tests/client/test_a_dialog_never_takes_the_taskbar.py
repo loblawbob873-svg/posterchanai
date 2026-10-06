@@ -11,10 +11,7 @@ reported. Pressing Escape closed the composer (it saved to drafts) and the machi
 
 No desktop behaves this way. An application's dialog is modal to its APPLICATION; the shell's own
 chrome stays reachable, because it is the only way to see what else is running and get back to it.
-This file's own stylesheet already agreed with that in one place and not the other: the macOS-style
-dock is `z-index:309`, above every modal, while the default taskbar sat below them.
-
-So the default taskbar joins it at 309 — above `.modal-bg` (100) and `.modal-bg.modal-sub` (200),
+So the taskbar sits at 309 — above `.modal-bg` (100) and `.modal-bg.modal-sub` (200),
 below the start menu and flyouts (340/360) which must open OVER it, and below `.uiconfirm-bg`
 (500), which is a real yes/no somebody has to answer and is allowed to block everything.
 
@@ -47,7 +44,6 @@ PAGE = """<!doctype html><meta name="viewport" content="width=device-width,initi
 <style>html,body{{margin:0;height:100%}}{css}</style>
 <div id="modal-root">{overlay}</div>
 <div class="os-root{style}" id="os-root">
-  <nav class="os-mac-menu" id="os-mac-menu"></nav>
   <div class="os-desk" id="os-desk"></div>
   <div class="os-bar" id="os-bar"><button id="os-start">Start</button></div>
 </div>
@@ -111,10 +107,3 @@ def test_a_real_confirm_is_still_allowed_to_block_everything():
     assert not got["inBar"], (
         f"the taskbar now sits above a confirmation dialog, so a destructive prompt can be walked "
         f"around instead of answered: {got}")
-
-
-def test_the_mac_dock_already_behaved_and_still_does():
-    """The precedent this change follows, kept honest: the macOS-style dock was always above
-    modals, which is why the default taskbar being below them read as an oversight rather than a
-    decision."""
-    assert hit_test(MODAL, style=" os-style-mac")["inBar"]

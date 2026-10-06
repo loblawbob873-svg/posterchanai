@@ -520,7 +520,7 @@ class WayfireWM{
     return {ok:true,layout:String(layout),output:o.name,count:apps.length,replaced:fixed};}
   move(id,x,y){const key=Number(id);let state=this.moves.get(key);const at={x:Math.round(x),y:Math.round(y)};if(state){state.next=at;return state.promise;}state={next:at,promise:null};state.promise=(async()=>{while(state.next){const p=state.next;state.next=null;const row=(await this.windows()).find(v=>v.id===key);if(row)await this.place(key,p.x,p.y,row.rect.width,row.rect.height);}})().finally(()=>{if(this.moves.get(key)===state)this.moves.delete(key);});this.moves.set(key,state);return state.promise;}
   finishMove(id){const s=this.moves.get(Number(id));if(!s)return Promise.resolve();s.next=null;return s.promise||Promise.resolve();}
-  applyChrome(){return Promise.resolve(true);} // PosterChanUI owns both macOS and Windows chrome.
+  applyChrome(){return Promise.resolve(true);} // PosterChanUI draws its own window chrome.
   _openActionSocket(){
     if(this.actionServer||process.platform!=='linux')return;
     const runtime=process.env.XDG_RUNTIME_DIR||(typeof process.getuid==='function'?'/run/user/'+process.getuid():'');

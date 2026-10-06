@@ -419,7 +419,6 @@
     try{
       if(root.document.getElementById('pc-oswin-chrome'))return;
       const bar=root.document.createElement('header');bar.id='pc-oswin-chrome';
-      bar.className=root.localStorage.getItem('osDesktopStyle')==='mac'?'mac':'';
       bar.innerHTML='<span class="pc-oswin-title"></span><span class="pc-oswin-buttons">'
         +'<button data-action="ai" class="pc-oswin-ai-btn" title="AI for this window (Shift-click: add to AI context)" aria-label="AI for this window">✨</button>'
         +'<button data-action="min" title="Minimise" aria-label="Minimise">−</button>'

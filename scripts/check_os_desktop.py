@@ -1552,32 +1552,17 @@ LAYOUT = r"""(async () => {
     await sleep(300);
     out.gridBack = !document.querySelector('.os-icons.os-free');
 
-    /* THE macOS LAYOUT MUST BE REACHABLE FROM THE DESKTOP ITSELF.
-     *
-     * It shipped months ago and was reported missing anyway, repeatedly. Its only control lived in
-     * System Settings, whose start-menu entry is gated on `window.pcDisplays` — an Electron preload
-     * bridge — so from a browser there was no way to reach it at all. A style that cannot be chosen
-     * is indistinguishable from a style that was never built, and no test noticed because every
-     * check that renders the mac style SETS the class itself instead of asking for it. */
-    const openDesk = async () => { document.querySelector('#os-desk').dispatchEvent(
+    /* macOS MODE WAS REMOVED (2026-10-06, "remove macos mode from the code"). The desktop's own
+     * right-click menu must not offer it, and an account that had it switched on must get the
+     * PosterChan desktop — its stored `osDesktopStyle: mac` is simply never read. */
+    const rows = [...(await (async () => { document.querySelector('#os-desk').dispatchEvent(
         new MouseEvent('contextmenu', { bubbles:true, cancelable:true,
                                         clientX: deskR.left + 40, clientY: deskR.bottom - 60 }));
-      await sleep(80);
-      return [...document.querySelectorAll('.os-ctx-b')]; };
-    const rootEl = document.querySelector('#os-root');
-    let rows = await openDesk();
-    const toMac = rows.find(b => /macOS-style desktop/i.test(b.textContent));
-    out.hasStyleRow = !!toMac;
-    if (toMac) {
-      toMac.click(); await sleep(260);
-      out.macApplied = rootEl.classList.contains('os-style-mac');
-      /* The row must now offer the way BACK. A one-way switch strands somebody who tried it. */
-      rows = await openDesk();
-      out.hasReturnRow = rows.some(b => /PosterChan desktop/i.test(b.textContent));
-      const back = rows.find(b => /PosterChan desktop/i.test(b.textContent));
-      if (back) { back.click(); await sleep(260); }
-      out.macCleared = !rootEl.classList.contains('os-style-mac');
-    }
+      await sleep(80); return document.querySelectorAll('.os-ctx-b'); })())];
+    out.hasStyleRow = rows.some(b => /macOS/i.test(b.textContent));
+    out.macApplied = document.querySelector('#os-root').classList.contains('os-style-mac')
+                  || !!document.querySelector('#os-mac-menu');
+    try{ document.dispatchEvent(new KeyboardEvent('keydown', { key:'Escape', bubbles:true })); }catch(_){}
   }
 
   /* 8. THE WIPE. Relay.query() has NO reject path: when nothing EOSEs it RESOLVES with [] marked
@@ -2381,21 +2366,10 @@ async def drive(url):
                         if not q.get("bgSaved"):
                             problems.append((label, "no-wallpaper",
                                              "the wallpaper was not saved, so it is gone on reload"))
-                    if not q.get("hasStyleRow"):
+                    if q.get("hasStyleRow") or q.get("macApplied"):
                         problems.append((label, "no-desktop-style",
-                                         "right-clicking the desktop does not offer the macOS-style "
-                                         "layout, so outside the Electron app (which alone exposes "
-                                         "pcDisplays, and with it System Settings) there is no way to "
-                                         "turn it on — the style ships and cannot be chosen"))
-                    else:
-                        if not q.get("macApplied"):
-                            problems.append((label, "no-desktop-style",
-                                             "choosing the macOS-style layout did not put os-style-mac "
-                                             "on #os-root, so the menu bar and Dock never appear"))
-                        if not q.get("hasReturnRow") or not q.get("macCleared"):
-                            problems.append((label, "no-desktop-style",
-                                             "the switch is one-way — row-back="
-                                             f"{q.get('hasReturnRow')} cleared={q.get('macCleared')}"))
+                                         "macOS mode was removed, but the desktop still offers or "
+                                         f"draws it — row={q.get('hasStyleRow')} drawn={q.get('macApplied')}"))
                     if not q.get("hasLineUpRow") or not q.get("gridBack"):
                         problems.append((label, "icon-not-placed",
                                          "'Line the icons up' is missing or does not restore the grid — "

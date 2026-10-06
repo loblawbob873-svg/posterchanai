@@ -17,7 +17,7 @@ def test_settings_icons_survive_every_desktop_and_mobile_category_change():
     setup = '''
 const _searchPrefsHtml=()=>'',_bindSearchPrefs=()=>{};
 const wins=[],enc=s=>String(s??''),PC=()=>({}),me=()=>null;
-const settings=()=>({get:(k,v)=>v}),STYLE_KEY='style',UI_SCALE_CHOICES=[1,1.25],uiScaleEffective=()=>1;
+const settings=()=>({get:(k,v)=>v}),UI_SCALE_CHOICES=[1,1.25],uiScaleEffective=()=>1;
 const desktopEffectsMode=()=> 'auto';let _osSettingsPage='appearance';
 const _settingsRead=async p=>({ok:true,value:await p});
 window.pcDisplays={status:async()=>[]};window.pcPower={status:async()=>({})};
