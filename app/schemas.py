@@ -597,6 +597,7 @@ class SettingsResponse(BaseModel):
     bt_download_dir: str = "/var/lib/posterchanai/torrents"
     storage_server_url: str = ""  # Remote storage server URL (empty = local)
     media_center_server_url: str = ""  # Per-node NAS proxy origin; empty serves local media
+    media_center_rescan_minutes: int = 60  # Rescan each library this often on the node holding the files; 0 = never
     # Shared secret proving a request really is another NODE, not a stranger who set the
     # X-Posterchanai-Load-Balanced header by hand (which was an auth bypass on every LB endpoint).
     # Set the SAME value on every node. Empty = the legacy header-only trust, kept so an existing

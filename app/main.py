@@ -645,6 +645,13 @@ async def startup():
                 logging.error(f"Error starting bot manager: {e}", exc_info=True)
 
             try:
+                # Rescan Media Center libraries on a timer (only does anything on the node that
+                # holds the files; see media_center.auto_rescan_pass).
+                media_center.start_auto_rescan()
+            except Exception as e:
+                logging.error(f"Error starting Media Center rescan: {e}", exc_info=True)
+
+            try:
                 # Start the reminders poller (`remind` command)
                 from app.services.reminder_service import start_reminder_scheduler
                 start_reminder_scheduler()
@@ -968,6 +975,11 @@ async def shutdown():
         try:
             from app.services.bot_manager_service import stop_bot_manager
             if _owns('bots'): stop_bot_manager()
+        except Exception:
+            pass
+
+        try:
+            media_center.stop_auto_rescan()
         except Exception:
             pass
 

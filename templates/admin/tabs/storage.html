@@ -25,6 +25,11 @@
             <small>Proxy Media Center scanning, libraries, artwork and streams to this server. Leave empty on the NAS to serve its local media. Set the same node-to-node shared secret on both servers. This address is saved only on this node; libraries and playback limits live on the NAS. Public streaming stays under <code>/api/media-center/</code>.</small>
         </div>
         <div class="form-group">
+            <label for="media_center_rescan_minutes">Rescan Media Center libraries every (minutes)</label>
+            <input type="number" id="media_center_rescan_minutes" name="media_center_rescan_minutes" min="0" max="10080" placeholder="60">
+            <small>New, moved and deleted files show up without pressing Rescan. Runs on the server that holds the files (the one with an empty Media Center Server URL), one library at a time, and only re-reads files that changed. 0 turns it off.</small>
+        </div>
+        <div class="form-group">
             <label for="ytdl_cookies_path">yt-dlp cookies path (optional)</label>
             <input type="text" id="ytdl_cookies_path" name="ytdl_cookies_path" placeholder="/path/to/cookies.txt">
             <small>Path to a Netscape-format cookies file exported from your browser. Use if YouTube returns 403 Forbidden (e.g. export with &quot;Get cookies.txt&quot; extension). Leave empty to try without cookies.</small>

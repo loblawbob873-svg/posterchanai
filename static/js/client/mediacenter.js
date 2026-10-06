@@ -42,17 +42,23 @@ window.PCMediaCenterFactory = function(dep){
     return kids;
   }
   const _mcMoveJoin=(dir,name)=>dir==='.'?name:dir+'/'+name;
-  async function _mcMoveDialog(lib, item, items, api, done){
+  async function _mcMoveDialog(lib, picked, items, api, done){
+    // One title (its own Move button) or a SELECTION (the select bar); always a list from here on.
+    picked=[].concat(picked).filter(Boolean);
+    if(!picked.length) return;
+    const item=picked[0], many=picked.length>1;
     // The library's REAL folders (an emptied one is still somewhere to put things); the folders
     // its titles are in are the fallback if the server cannot list them.
     let disk=[];
     try{ disk=((await api('/'+lib.id+'/move-targets'))||{}).folders||[]; }catch(_){}
     const kids=_mcMoveTree(_mcMoveFolders(items.concat(disk.map(f=>({folder:f})))));
-    const here=item.folder||'.';
+    // Where the titles are now: one folder, or null when the selection spans several.
+    const homes=new Set(picked.map(p=>p.folder||'.')), here=homes.size===1?[...homes][0]:null;
     const label=f=>f==='.'?lib.name:f.split('/').join(' › ');
     let root=null, cur='.';
-    modal(`<h3>Move “${enc(item.name)}”</h3>
-      <p class="muted small">Now in <b>${enc(label(here))}</b>. Open a folder, then choose Move here. Subtitles, poster and watch progress go with it.</p>
+    const now=here===null?`Now in <b>${homes.size} folders</b>.`:(many?`All in <b>${enc(label(here))}</b>.`:`Now in <b>${enc(label(here))}</b>.`);
+    modal(`<h3>${many?`Move ${picked.length} titles`:`Move “${enc(item.name)}”`}</h3>
+      <p class="muted small">${now} Open a folder, then choose Move here. Subtitles, poster and watch progress go with ${many?'them':'it'}.</p>
       <nav class="mc-mv-crumbs" id="mc-mv-crumbs" aria-label="Folder path"></nav>
       <input class="input" type="search" id="mc-mv-filter" placeholder="Filter these folders…" aria-label="Filter folders" hidden>
       <div class="mc-mv-list" id="mc-mv-list"></div>
@@ -69,7 +75,7 @@ window.PCMediaCenterFactory = function(dep){
       const t=target();
       go.disabled=t===here;
       go.textContent=nw.value.trim()?'Create and move':'Move here';
-      said.textContent=t===here?'It is already in this folder.':'';
+      said.textContent=t===here?(many?'They are already in this folder.':'It is already in this folder.'):'';
     };
     const open=dir=>{
       cur=dir; filter.value=''; nw.value='';
@@ -100,10 +106,12 @@ window.PCMediaCenterFactory = function(dep){
       if(folder===here) return;
       go.disabled=true; said.textContent='Moving…';
       try{
-        const r=await api('/'+lib.id+'/move','POST',{items:[item.id], folder, create});
-        if(r.errors && r.errors.length){ said.textContent=r.errors[0].error||'Could not move it'; go.disabled=false; return; }
+        const r=await api('/'+lib.id+'/move','POST',{items:picked.map(p=>p.id), folder, create});
+        const moved=(r.moved||[]).length, errs=r.errors||[];
+        if(errs.length && !moved){ said.textContent=errs[0].error||'Could not move it'; go.disabled=false; return; }
         closeModal();
-        toast('Moved to '+label(folder));
+        if(errs.length) toast(`Moved ${moved} of ${picked.length} to ${label(folder)} — ${errs.length} could not move: `+errs.slice(0,3).map(e=>(e.name||'a title')+' ('+e.error+')').join('; '));
+        else toast(many?`Moved ${moved} titles to ${label(folder)}`:'Moved to '+label(folder));
         done();
       }catch(e){ said.textContent=e.message||'Could not move it'; go.disabled=false; }
     };
@@ -130,6 +138,81 @@ window.PCMediaCenterFactory = function(dep){
       toast(e.message||'Could not delete it');
       button.disabled=false; card.removeAttribute('aria-busy');
     }
+  }
+
+  /* DELETE A SELECTION. One question for all of them, one request (`POST /{library}/delete`), and
+   * the cards that went leave the grid where they are. A title the server refused stays, and the
+   * toast names it -- "deleted 11 of 12" with no name is a person hunting through a grid. */
+  async function _mcDeleteMany(lib, picked, api, owner, gone){
+    const n=picked.length;
+    if(!n) return false;
+    const yes=await uiConfirm(`Delete ${n} title${n===1?'':'s'} from the media server’s disk? Their subtitles and posters beside them are deleted too. This cannot be undone.`,
+      {ok:`Delete ${n}`, cancel:'Keep', danger:true, owner:owner||undefined});
+    if(!yes) return false;
+    try{
+      const r=await api('/'+lib.id+'/delete','POST',{items:picked.map(p=>p.id)});
+      const deleted=r.deleted||[], errs=r.errors||[];
+      gone(deleted);
+      if(errs.length) toast(`Deleted ${deleted.length} of ${n} — not deleted: `+errs.slice(0,3).map(e=>(e.name||'a title')+' ('+e.error+')').join('; ')+(errs.length>3?` and ${errs.length-3} more`:''));
+      else toast(`Deleted ${deleted.length} title${deleted.length===1?'':'s'} from disk`);
+      return true;
+    }catch(e){ toast(e.message||'Could not delete them'); return false; }
+  }
+
+  /* SELECT ALL, NONE, OR A FEW ("allow selecting all, selecting none, selecting few, etc so you can
+   * better move/delete files"). Only on a library you manage. Select mode puts a checkbox on every
+   * tile and turns a tap on a tile into "pick it" instead of "play it"; Shift-click picks the run of
+   * titles between the last one picked and this one. "Select all" means what is ON SCREEN -- the
+   * folder being looked at, or the search results -- never titles you cannot see. The selection is
+   * kept by id, so it survives the grid being redrawn and moving between folders. */
+  function _mcSelection(list, bar, actions){
+    const st={on:false, picked:new Set(), anchor:null};
+    const tiles=()=>[...list.querySelectorAll('.mc-tile')];
+    const shown=()=>tiles().filter(c=>!c.hidden && !(c.closest('.mc-folder')||{}).hidden);
+    const chosen=()=>tiles().filter(c=>st.picked.has(c.dataset.item)).map(c=>c._mcItem).filter(Boolean);
+    const paint=()=>{
+      // Ids whose card is gone (deleted, or a rescan dropped them) are not "selected" any more.
+      const live=new Set(tiles().map(c=>c.dataset.item));
+      for(const id of [...st.picked]) if(!live.has(id)) st.picked.delete(id);
+      list.classList.toggle('mc-selecting',st.on);
+      for(const c of tiles()){
+        const on=st.on&&st.picked.has(c.dataset.item);
+        c.classList.toggle('mc-picked',on);
+        const box=c.querySelector('.mc-pick input'); if(box) box.checked=on;
+      }
+      const n=st.picked.size, none=n?'':' disabled';
+      bar.innerHTML=st.on
+        ?`<span class="mc-sel-count" role="status" aria-live="polite">${n} selected</span>`+
+         `<button type="button" class="btn btn-ghost small" data-sel="all">Select all</button>`+
+         `<button type="button" class="btn btn-ghost small" data-sel="none"${none}>Select none</button>`+
+         `<button type="button" class="btn btn-ghost small" data-sel="move"${none}>Move…</button>`+
+         `<button type="button" class="btn btn-ghost small mc-sel-delete" data-sel="delete"${none}><svg class="ic" aria-hidden="true"><use href="#i-trash"></use></svg> Delete…</button>`+
+         `<button type="button" class="btn btn-neon small" data-sel="done">Done</button>`
+        :`<button type="button" class="btn btn-ghost small" data-sel="start">Select</button>`;
+    };
+    const set=(card,on)=>{ if(on) st.picked.add(card.dataset.item); else st.picked.delete(card.dataset.item); };
+    const toggle=(card,range)=>{
+      const vis=shown(), at=vis.indexOf(card), from=st.anchor?vis.findIndex(c=>c.dataset.item===st.anchor):-1;
+      if(range && at>=0 && from>=0){
+        const on=!st.picked.has(card.dataset.item) || st.picked.has(st.anchor);
+        for(let i=Math.min(at,from);i<=Math.max(at,from);i++) set(vis[i],on);
+      }else set(card,!st.picked.has(card.dataset.item));
+      st.anchor=card.dataset.item;
+      paint();
+    };
+    const finish=()=>{ st.on=false; st.picked.clear(); st.anchor=null; paint(); };
+    bar.onclick=async e=>{
+      const b=e.target.closest('[data-sel]'); if(!b||b.disabled) return;
+      const what=b.dataset.sel;
+      if(what==='start'){ st.on=true; paint(); }
+      else if(what==='done') finish();
+      else if(what==='all'){ for(const c of shown()) st.picked.add(c.dataset.item); paint(); }
+      else if(what==='none'){ st.picked.clear(); st.anchor=null; paint(); }
+      else if(what==='move') actions.move(chosen(), finish);
+      else if(what==='delete'){ b.disabled=true; if(await actions.del(chosen())) finish(); else paint(); }
+    };
+    paint();
+    return { get on(){ return st.on; }, toggle, paint, finish, get size(){ return st.picked.size; } };
   }
 
   let _mediaCenterLibraryTab=null;
@@ -333,7 +416,7 @@ window.PCMediaCenterFactory = function(dep){
           <div class="mc-ctl-sel"><label><span>Quality</span><select id="mc-quality"><option value="auto">Best quality within limit</option>
             <option value="240p">240p · ~0.4 Mbps</option><option value="360p">360p · ~0.7 Mbps</option><option value="480p">480p · ~1 Mbps</option>
             <option value="720p">720p · ~2.6 Mbps</option><option value="1080p">1080p · ~5.6 Mbps</option></select></label><label><span>Audio</span><select id="mc-audio"><option value="-1">Default</option></select></label><label><span>Subtitles</span><select id="mc-subtitles"><option value="-1">Off</option></select></label></div></div>
-        </div><div class="mc-browse"><label class="mc-search" hidden>Search this library <input id="mc-search" type="search" class="input" placeholder="Find a title or folder…"></label></div><nav id="mc-folder-nav" aria-label="Media folders"></nav><div id="mc-items"></div></div></div>`;
+        </div><div class="mc-browse"><div class="mc-selbar" id="mc-selbar" role="toolbar" aria-label="Select titles" hidden></div><label class="mc-search" hidden>Search this library <input id="mc-search" type="search" class="input" placeholder="Find a title or folder…"></label></div><nav id="mc-folder-nav" aria-label="Media folders"></nav><div id="mc-items"></div></div></div>`;
       for(const tab of feed.querySelectorAll('[role=tab]')){
         tab.onclick=async()=>{_mediaCenterLibraryTab=tab.id==='mc-tab-shared'?'shared':'mine';await renderMediaCenter();document.getElementById(tab.id)?.focus({preventScroll:true});};
         tab.onkeydown=e=>{if(['ArrowLeft','ArrowRight','Home','End'].includes(e.key)){e.preventDefault();const next=e.key==='Home'?'mine':e.key==='End'?'shared':tab.id==='mc-tab-mine'?'shared':'mine';document.getElementById('mc-tab-'+next).click();}};
@@ -611,11 +694,19 @@ window.PCMediaCenterFactory = function(dep){
             card.innerHTML=`<div class="xdc-cover xdc-cover-none"><svg class="ic" aria-hidden="true"><use href="#i-${item.video?'tv':'music'}"></use></svg></div>
               <div class="xdc-tmeta"><b title="${enc(item.name)}">${enc(item.name)}</b><span class="muted small">${item.video?'Video':'Audio'} · ${duration} min</span>
               <span class="muted small xdc-tfoot">${enc(item.folder==='.'?lib.name:item.folder)}</span></div>
+              ${lib.can_manage?`<label class="mc-pick"><input type="checkbox" aria-label="Select ${enc(item.name)}"></label>`:''}
               <div class="xdc-tacts"><button class="btn btn-neon small mc-play">${item.video?'Play':'Listen'}</button>${lib.can_manage?'<button class="btn btn-ghost small mc-move" title="Move to another folder">Move</button><button class="btn btn-ghost small mc-delete" title="Delete from disk" aria-label="Delete from disk"><svg class="ic" aria-hidden="true"><use href="#i-trash"></use></svg></button>':''}</div>`;
             grid.append(card);_mediaCenterArtObserver.observe(card);
             card._mcItem=item;
             const move=card.querySelector('.mc-move');
-            if(move)move.onclick=()=>_mcMoveDialog(lib,card._mcItem||item,list._mcItems||result.items,api,()=>{ if(!open.disabled)open.onclick(); });
+            if(move)move.onclick=()=>_mcMoveDialog(lib,[card._mcItem||item],list._mcItems||result.items,api,()=>{ if(!open.disabled)open.onclick(); });
+            const pick=card.querySelector('.mc-pick input');
+            // No preventDefault: the box flips natively and toggle() paints the same answer; cancelling
+            // the click would make Chrome undo the box AFTER the paint, leaving it showing the opposite.
+            if(pick)pick.onclick=e=>{ e.stopPropagation(); if(list._mcSel&&list._mcSel.on) list._mcSel.toggle(card,e.shiftKey); };
+            // In select mode a tap anywhere on the tile picks it; it never starts playback.
+            card.addEventListener('click',e=>{ const sel=list._mcSel; if(!sel||!sel.on||e.target.closest('.mc-pick'))return;
+              e.preventDefault(); e.stopPropagation(); sel.toggle(card,e.shiftKey); },true);
             const del=card.querySelector('.mc-delete');
             if(del)del.onclick=()=>_mcDeleteTitle(lib,card._mcItem||item,card,del,api,feed.closest('.osw-body'),()=>{
               list._mcItems=(list._mcItems||[]).filter(entry=>entry.id!==item.id);
@@ -625,7 +716,7 @@ window.PCMediaCenterFactory = function(dep){
               if(!list.querySelector('.mc-tile'))list.textContent='No playable media found. Check the folder and FFmpeg installation.';
             });
             const play=card.querySelector('.mc-play');
-            card.querySelector('.xdc-cover').onclick=()=>play.click();
+            card.querySelector('.xdc-cover').onclick=()=>{ if(!(list._mcSel&&list._mcSel.on)) play.click(); };
             play.onclick=()=>act(play,async()=>{
               const resumeAt=await mediaResumePosition(item.name,item.progress?.position||0);if(resumeAt===null)return;
               await stopMediaCenter(false);const playGeneration=_mediaCenterPlayGeneration;
@@ -698,6 +789,26 @@ window.PCMediaCenterFactory = function(dep){
           }
           for(const section of sections.values())if(!section.querySelector('.mc-tile'))section.remove();
           search.oninput();
+          const selbar=$('#mc-selbar');
+          if(lib.can_manage&&result.items.length){
+            selbar.hidden=false;
+            const removeCards=ids=>{
+              const gone=new Set(ids);
+              list._mcItems=(list._mcItems||[]).filter(entry=>!gone.has(entry.id));
+              for(const id of gone){const card=list.querySelector('.mc-tile[data-item="'+CSS.escape(id)+'"]');if(!card)continue;
+                const section=card.closest('.mc-folder');card.remove();if(section&&!section.querySelector('.mc-tile'))section.remove();}
+              lib.count=Math.max(0,(lib.count||0)-gone.size);update();
+              if(!list.querySelector('.mc-tile'))list.textContent='No playable media found. Check the folder and FFmpeg installation.';
+            };
+            // A refresh of the SAME library keeps what was picked; another library starts empty.
+            if(!list._mcSel||list._mcSelLib!==lib.id){
+              list._mcSelLib=lib.id;
+              list._mcSel=_mcSelection(list,selbar,{
+                move:(picked,finish)=>_mcMoveDialog(lib,picked,list._mcItems||result.items,api,()=>{finish();if(!open.disabled)open.onclick();}),
+                del:picked=>_mcDeleteMany(lib,picked,api,feed.closest('.osw-body'),removeCards),
+              });
+            }else list._mcSel.paint();
+          }else{ selbar.hidden=true; selbar.replaceChildren(); list._mcSel=null; list._mcSelLib=null; }
           if(!result.items.length)list.textContent=result.scan?.state==='running'?'Looking for media… Titles will appear here as they are found. You can leave this page.':'No playable media found. Check the folder and FFmpeg installation.';
           if(lib.skipped)status.textContent=lib.skipped+' files could not be read during the last scan.';
         });libs.append(row);

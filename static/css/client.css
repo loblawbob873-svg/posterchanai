@@ -2108,6 +2108,24 @@ body.embed .feed{max-width:680px;margin:0 auto;padding:14px;height:auto !importa
 .xdc-tacts .mc-delete{flex:0 0 auto;width:36px;padding:0;display:inline-flex;align-items:center;justify-content:center;color:var(--danger,#d61f4e)}
 .xdc-tacts .mc-delete .ic{width:16px;height:16px}
 .mc-tile[aria-busy=true]{opacity:.55}
+/* SELECT MODE ("selecting all, none, a few"). The bar wraps on a phone; every control stays a 36px+
+   target. In select mode a tile's own buttons go away (a tap picks the tile, it never plays or
+   deletes it) and a checkbox sits on its cover; a picked tile is outlined so the choice reads at a
+   glance, not only from the box. */
+.mc-selbar{display:flex;flex-wrap:wrap;align-items:center;gap:8px;margin:0 0 10px}
+.mc-selbar[hidden]{display:none}
+.mc-selbar .btn{min-height:36px}
+.mc-sel-count{font-weight:700;color:var(--text);margin-inline-end:4px;min-width:6.5em}
+.mc-sel-delete{color:#ff8f9a}
+.mc-sel-delete .ic{width:15px;height:15px;vertical-align:-2px}
+.mc-tile{position:relative}
+.mc-pick{display:none;position:absolute;top:8px;inset-inline-start:8px;z-index:2;width:30px;height:30px;
+  align-items:center;justify-content:center;border-radius:8px;background:rgba(0,0,0,.55);cursor:pointer}
+.mc-pick input{width:18px;height:18px;margin:0;accent-color:var(--neon);cursor:pointer}
+.mc-selecting .mc-pick{display:flex}
+.mc-selecting .mc-tile{cursor:pointer;user-select:none}
+.mc-selecting .mc-tile .xdc-tacts{display:none}
+.mc-tile.mc-picked{border-color:var(--neon);box-shadow:0 0 0 2px var(--neon)}
 @media(max-width:600px){.mc-tile .xdc-tacts .btn{padding-inline:6px}}
 .mc-player-toolbar{display:flex;align-items:center;gap:10px;flex-wrap:wrap}
 /* The now-playing title is NOT in the toolbar any more: it sat there as one ellipsised line, so a

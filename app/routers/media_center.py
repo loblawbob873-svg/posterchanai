@@ -697,6 +697,150 @@ async def delete_item(library_id: str, item_id: str, user=Depends(get_media_admi
             "sidecars": outcome["sidecars"], "revision": scan_revision(library)}
 
 
+class DeleteItems(BaseModel):
+    items: list[str]
+
+
+@router.post("/{library_id}/delete")
+async def delete_items(library_id: str, body: DeleteItems, user=Depends(get_media_admin)):
+    """Delete SEVERAL titles from disk and the catalog in one request (owner + admin only).
+
+    The Media Center's multi-select sends its whole selection here rather than one DELETE per title:
+    each of those re-saves the catalog, so deleting forty titles was forty catalog writes, and a
+    failure part-way left the person counting what was gone. Same rules as the single delete --
+    ids only, paths from the catalog, `media.delete_item` per title -- and the same serialisation,
+    with ONE catalog save at the end. A title that cannot be deleted is reported by name and the
+    rest still go; a title already missing from disk is simply forgotten."""
+    ids = list(dict.fromkeys(body.items))
+    if not ids or len(ids) > 500:
+        raise HTTPException(400, "Choose between 1 and 500 titles to delete")
+    lock = _move_locks.setdefault(library_id, asyncio.Lock())
+    deleted, errors, sidecars = [], [], 0
+    async with lock:
+        async with media.mutation_lock:
+            library = await library_for(library_id, media.identity(user), owner=True)
+            if _scans.get(library_id, {}).get("state") == "running":
+                raise HTTPException(409, "This library is scanning; delete titles once it finishes")
+            _moving.add(library_id)
+        try:
+            catalog = await media.catalog(library)
+            by_id = {entry["id"]: entry for entry in catalog}
+            for item_id in ids:
+                item = by_id.get(item_id)
+                if item is None:
+                    errors.append({"id": item_id, "name": "", "error": "That title is not in this library; it may already have been deleted"})
+                    continue
+                try:
+                    outcome = await asyncio.to_thread(media.delete_item, library, item)
+                except (ValueError, OSError) as error:   # DeleteRefused is a ValueError
+                    errors.append({"id": item_id, "name": item.get("name", ""), "error": str(error)})
+                    continue
+                deleted.append(item_id)
+                sidecars += len(outcome["sidecars"])
+                logging.getLogger(__name__).warning(
+                    "[media-center] admin %s deleted %r from library %s (%s): %s, %d sidecar(s), %d cached segment(s)",
+                    media.identity(user), item.get("path", ""), library.get("name", ""), library_id, outcome["status"],
+                    len(outcome["sidecars"]), outcome["segments"])
+            if deleted:
+                for cache in (media.cover_bytes, media.cached_tracks, media.subtitle_bytes):
+                    cache.cache_clear()
+                gone = set(deleted)
+                try:
+                    library = await persist_scan_catalog(library, [e for e in catalog if e["id"] not in gone],
+                                                         library.get("skipped", 0),
+                                                         incomplete=bool(library.get("scan_incomplete")))
+                except Exception as error:
+                    logging.getLogger(__name__).exception("Media Center delete: catalog save failed")
+                    raise HTTPException(502, f"{len(deleted)} file(s) were deleted, but the library could not be saved; Rescan to update it") from error
+        finally:
+            _moving.discard(library_id)
+    return {"deleted": deleted, "errors": errors, "sidecars": sidecars, "revision": scan_revision(library)}
+
+
+# ---- hourly rescan ------------------------------------------------------------------------------
+#
+# A library only learned about new files when its owner pressed Rescan ("media center -> rescan
+# library hourly"). This loop runs on the node that HOLDS the files -- a frontend whose Media Center
+# Server URL points elsewhere has no libraries of its own and does nothing -- and rescans each
+# library once its last scan is `media_center_rescan_minutes` old (default 60, 0 = never). A scan is
+# incremental (an unchanged file is reused by path+size+mtime), so an hourly pass over a library
+# nobody touched costs a directory walk. One library at a time, never while a scan, move or delete
+# is running, and a library whose scan FAILS waits a full interval before the next attempt rather
+# than being retried every minute.
+_auto_attempted = {}     # library id -> when the loop last started a scan of it
+_auto_task = None
+
+
+def auto_rescan_minutes():
+    raw = str(settings_store.get("media_center_rescan_minutes", "") or "").strip()
+    try:
+        return max(0, int(raw)) if raw else 60
+    except ValueError:
+        return 60
+
+
+def libraries_due(libraries, now, minutes):
+    """The libraries whose last scan (or last attempt) is at least `minutes` old, oldest first."""
+    if minutes <= 0:
+        return []
+    due = []
+    for library in libraries:
+        last = max(int(library.get("scanned_at") or 0), int(_auto_attempted.get(library["id"], 0)))
+        if now - last >= minutes * 60:
+            due.append((last, library))
+    return [library for _last, library in sorted(due, key=lambda pair: pair[0])]
+
+
+async def auto_rescan_pass(now=None):
+    """Scan every due library, one after another. Returns the ids it scanned."""
+    minutes = auto_rescan_minutes()
+    if not minutes or (settings_store.get("media_center_server_url", "") or "").strip():
+        return []
+    try:
+        libraries = await media.libraries()
+    except Exception:
+        logging.getLogger(__name__).warning("Media Center hourly rescan: could not read the libraries; trying again later")
+        return []
+    scanned = []
+    for library in libraries_due(libraries, now if now is not None else time.time(), minutes):
+        async with media.mutation_lock:
+            if any(job.get("state") == "running" for job in _scans.values()) or library["id"] in _moving:
+                break
+            _scans[library["id"]] = {"state": "running", "count": 0}
+            _scan_previews[library["id"]] = {}
+        _auto_attempted[library["id"]] = int(now if now is not None else time.time())
+        logging.getLogger(__name__).info("[media-center] scheduled rescan of library %s (%s)",
+                                         library.get("name", ""), library["id"])
+        await run_scan(library)
+        scanned.append(library["id"])
+    return scanned
+
+
+async def _auto_rescan_loop():
+    await asyncio.sleep(300)     # let a restart settle before walking any disks
+    while True:
+        try:
+            await auto_rescan_pass()
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            logging.getLogger(__name__).exception("Media Center hourly rescan failed")
+        await asyncio.sleep(60)
+
+
+def start_auto_rescan():
+    global _auto_task
+    if _auto_task is None or _auto_task.done():
+        _auto_task = asyncio.get_running_loop().create_task(_auto_rescan_loop())
+
+
+def stop_auto_rescan():
+    global _auto_task
+    if _auto_task is not None:
+        _auto_task.cancel()
+        _auto_task = None
+
+
 def sign_ticket(library, item_id, pubkey, expires):
     payload = f"media-center:{library['id']}:{item_id}:{pubkey}:{expires}"
     return hmac.new(bytes.fromhex(library["playback_secret"]), payload.encode(), hashlib.sha256).hexdigest()
