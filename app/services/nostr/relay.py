@@ -30,6 +30,33 @@ def _proxy_kw() -> dict:
         return {}
 
 _CONNECT_TIMEOUT = 8
+
+
+def _guard_proxy_parser():
+    """websockets 17.1's HTTP-proxy handshake parses the proxy's reply from data_received, eof_received
+    AND connection_lost. When the proxy hangs up before answering, the first of those already failed the
+    response future and the next one fails it AGAIN -- `set_exception` on a done future raises
+    InvalidStateError inside an event-loop callback, which asyncio logs as a full traceback. Measured on
+    server1: ~720 of them in three hours, one per relay connect that fell back from Tor to direct, burying
+    every real error in the journal. Nothing was wrong except the second set: the connect had already
+    failed (and been retried direct). So: once the future is settled, a later parse is a no-op."""
+    try:
+        from websockets.asyncio.client import HTTPProxyConnection
+    except Exception:                       # another websockets version: nothing to guard
+        return
+    if getattr(HTTPProxyConnection.run_parser, "_pc_guarded", False):
+        return
+    original = HTTPProxyConnection.run_parser
+
+    def run_parser(self):
+        if self.response.done():
+            return
+        original(self)
+    run_parser._pc_guarded = True
+    HTTPProxyConnection.run_parser = run_parser
+
+
+_guard_proxy_parser()
 _DEFAULT_QUERY_TIMEOUT = 12
 _PUBLISH_TIMEOUT = 10
 # subscribe(live_only=True): how long to wait for EOSE before handing events on regardless. A relay
