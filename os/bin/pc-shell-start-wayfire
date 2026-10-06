@@ -177,6 +177,15 @@ asar=${PC_DESKTOP_ASAR:-/opt/posterchan/resources/app.asar}
 bundle_identity=$(stat -Lc '%d:%i:%s:%Y' "$asar" 2>/dev/null) || exit 1
 log="$HOME/.config/posterchan-desktop/shell.log"
 mkdir -p "${log%/*}"
+# >>> rotate-shell-log
+# THE LOG IS APPENDED TO FOR EVER, so it is rotated here, once per shell start: past 20 MiB it becomes
+# shell.log.1 (replacing the previous one) and a fresh file starts. Measured 2026-10-06 on the user's
+# desktop: 75 MB, back to 2026-09-10, ~85% one Concord warning an older build printed 65,000 times a day.
+# Bounded at ~40 MiB, and the most recent session's lines are always whole in one of the two files.
+if [ -f "$log" ] && [ "$(stat -c %s "$log" 2>/dev/null || echo 0)" -gt $((20 * 1024 * 1024)) ]; then
+	mv -f "$log" "$log.1" 2>/dev/null || :
+fi
+# <<< rotate-shell-log
 pid_tmp="$PC_WAYFIRE_SHELL_PID_FILE.tmp.$$"; shell_pid=''
 cleanup(){
 	rm -f "$PC_WAYFIRE_READY_FILE" "$PC_WAYFIRE_SHELL_PID_FILE" "$pid_tmp"
