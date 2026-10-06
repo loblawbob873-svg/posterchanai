@@ -247,7 +247,7 @@ def _note_harmless(f, r):
 def _add_bill(f, r):
     if not _filled(r, ctl(f, "Bill name"), "internet"):
         return "did not name the bill: " + json.dumps(acts(r))[:200]
-    if not any(s["do"] == "fill" and s["ref"] == ctl(f, "0.00") and s["text"].replace("$", "").strip() in ("60", "60.00") for s in acts(r)):
+    if not any(s["do"] == "fill" and s["ref"] == ctl(f, "Amount") and s["text"].replace("$", "").strip() in ("60", "60.00") for s in acts(r)):
         return "did not put 60 in the amount: " + json.dumps(acts(r))[:200]
     if any(s["ref"] == ctl(f, "Income") for s in acts(r)):
         return "ticked Income on a bill"
@@ -255,7 +255,7 @@ def _add_bill(f, r):
 
 
 def _add_income(f, r):
-    if not any(s["do"] == "fill" and s["ref"] == ctl(f, "0.00") and "2000" in s["text"].replace(",", "") for s in acts(r)):
+    if not any(s["do"] == "fill" and s["ref"] == ctl(f, "Amount") and "2000" in s["text"].replace(",", "") for s in acts(r)):
         return "did not put 2000 in the amount: " + json.dumps(acts(r))[:200]
     if not any(s["ref"] == ctl(f, "Income") and s["do"] in ("toggle", "click") and s.get("on") is not False for s in acts(r)):
         return "did not tick Income: " + json.dumps(acts(r))[:200]
@@ -349,7 +349,10 @@ def main():
             t0 = time.time()
             raw = ask(a.base, a.model, msgs)
             res = parse_steps(raw, False, "task" in instruction.lower() or "action" in instruction.lower(), f["controls"], instruction)
-            why = judge(f, res)
+            try:
+                why = judge(f, res)
+            except KeyError as e:                       # a control the judge expects is not in the fixture
+                why = f"judge could not find {e}"
             total += 1
             ok += not why
             if why:

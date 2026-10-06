@@ -69,3 +69,26 @@ def test_find_news_about_x_searches_in_news():
     got = _run("websearch", "find news about bitcoin", {"answer": "", "steps": [
         {"do": "fill", "ref": 1, "text": "bitcoin"}, {"do": "click", "ref": 2}]})
     assert ("fill", "Search the web", "bitcoin") in got and ("click", "News", "") in got, got
+
+
+def test_toggle_on_a_button_presses_it():
+    got = _run("mail-reader", "mark it as unread", {"answer": "", "steps": [{"do": "toggle", "ref": 22, "on": True}]})
+    assert got == [("click", "Mark unread", "")], got
+
+
+def test_an_invented_value_typed_onto_a_button_is_just_a_press():
+    got = _run("torrents", "add a magnet link", {"answer": "", "steps": [
+        {"do": "fill", "ref": 6, "text": "magnet:xt1-2026-10-06-torrent-name.torrent"}]})
+    assert got == [("click", "Add torrent", "")], got
+
+
+def test_a_fill_labelled_as_another_box_goes_to_that_box():
+    got = _run("notes-editor", "call this note Shopping list", {"answer": "", "steps": [
+        {"do": "fill", "ref": 15, "text": "Shopping list", "label": "Note title"}]})
+    assert got == [("fill", "Note title", "Shopping list")], got
+
+
+def test_pressing_reply_again_after_filling_it_is_dropped():
+    got = _run("mail-reader", "reply saying thanks, I'll pay it today", {"answer": "", "steps": [
+        {"do": "fill", "ref": 27, "text": "Thanks! I'll pay it today."}, {"do": "press", "ref": 27, "text": "Enter"}]})
+    assert got == [("fill", "Reply", "Thanks! I'll pay it today.")], got

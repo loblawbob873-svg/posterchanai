@@ -670,6 +670,35 @@ def _repair_steps(steps: list, refs: dict, instruction: str, near: dict | None =
             hit = by_label.get(said) or []
             if len(hit) == 1:
                 st.update(ref=hit[0], target=refs[hit[0]][1])
+    # MEASURED SHAPES ON BUTTONS (eval 2026-10-06), each read as the obvious thing:
+    #  * "toggle" on a BUTTON ("Mark unread") is pressing it;
+    #  * "fill" on a button that opens no box ("Add torrent" filled with an invented magnet) is pressing it
+    #    -- the text was made up; Reply/Comment keep their fill, which types into the box they open;
+    #  * a fill whose own label is exactly another TEXT BOX's label ("Note title", put on Note text) meant
+    #    that box;
+    #  * pressing a button again right after filling it ("Send reply" on the Reply just filled) is dropped:
+    #    the fill already pressed it, and a second press closes what it opened.
+    boxes_by_label = {}
+    for r, (role, lab) in refs.items():
+        if role in _TEXTBOX_ROLES:
+            boxes_by_label.setdefault(str(lab).strip().lower(), []).append(r)
+    kept = []
+    for st in out:
+        role = refs.get(st.get("ref"), ("",))[0]
+        if st.get("do") == "toggle" and role in ("button", "link", "tab"):
+            st.update(do="click", on=False)
+        elif st.get("do") == "fill" and role in ("button", "link", "tab") and not _OPENS_A_BOX.search(str(st.get("target") or "")):
+            st.update(do="click", text="")
+        elif st.get("do") == "fill" and role in _TEXTBOX_ROLES:
+            hit = boxes_by_label.get(str(st.get("label") or "").strip().lower()) or []
+            if len(hit) == 1 and hit[0] != st["ref"]:
+                st.update(ref=hit[0], target=refs[hit[0]][1])
+        prev = kept[-1] if kept else None
+        if (prev and prev.get("do") == "fill" and st.get("do") in ("click", "press") and st.get("ref") == prev.get("ref")
+                and refs.get(prev.get("ref"), ("",))[0] not in _TEXTBOX_ROLES):
+            continue
+        kept.append(st)
+    out = kept
     # THE TAB THEY NAMED. "show me what's trending" opened Nostrverse, beside a tab labelled Trending.
     # When the request names exactly one tab by its label, a tab click goes to that tab.
     low = str(instruction or "").lower()
