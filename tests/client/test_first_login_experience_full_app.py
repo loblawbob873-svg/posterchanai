@@ -22,7 +22,10 @@ import websockets
 from tests.client import test_effects_full_app as full
 
 SOCKET = r'''
-window.__published=[]; window.__prefsMode='none';   // none | configured | silent
+window.__published=[]; window.__prefsMode='none';   // none | configured | silent | oldsocial | migrated
+// An account that chose Social BEFORE 2026-10-06 (the old set hid the wallet and every game) and also
+// switched Communities off itself; and the same account once the migration has been recorded.
+window.__OLD_SOCIAL={experience:'social',navHidden:['mail','notes','wallet','group:games','chess','holdem','xdc','concord']};
 class FixtureSocket extends EventTarget{
  static OPEN=1;static CONNECTING=0;static CLOSING=2;static CLOSED=3;
  constructor(url){super();this.url=String(url);this.readyState=0;__sockets.push(this);setTimeout(()=>{this.readyState=1;this.fire('open',{});},8);}
@@ -35,6 +38,12 @@ class FixtureSocket extends EventTarget{
      const me=NostrTools.getPublicKey(new Uint8Array(32).fill(1));
      const ev=NostrTools.finalizeEvent({kind:30078,created_at:Math.floor(Date.now()/1000)-60,tags:[['d','pcai:client-prefs']],
        content:JSON.stringify({navHidden:['chess']})},new Uint8Array(32).fill(1));
+     this.fire('message',['EVENT',sub,ev]);
+   }
+   if(prefs && (__prefsMode==='oldsocial'||__prefsMode==='migrated')){
+     const doc=__prefsMode==='oldsocial'?__OLD_SOCIAL:{...__OLD_SOCIAL,navHidden:['mail','notes','texts','wallet'],experienceRev:2};
+     const ev=NostrTools.finalizeEvent({kind:30078,created_at:Math.floor(Date.now()/1000)-60,tags:[['d','pcai:client-prefs']],
+       content:JSON.stringify(doc)},new Uint8Array(32).fill(1));
      this.fire('message',['EVENT',sub,ev]);
    }
    setTimeout(()=>this.fire('message',['EOSE',sub]),12);}
@@ -86,13 +95,16 @@ async def run(mode, choose=None, width=1280):
                     return {w:innerWidth, n:c.length, right:Math.max(0,...c.map(r=>r.right)), left:Math.min(9999,...c.map(r=>r.left)),
                             stacked:c.length===2 && c[1].top>=c[0].bottom-1, scroll:document.documentElement.scrollWidth};})()""")
                 out["keep_offered"] = await b.js("!!document.querySelector('#pc-experience [data-exp=\"keep\"]')")
-                out["after_login"] = await b.js("({mail:__navOff('mail'), chess:__navOff('chess')})")
+                out["after_login"] = await b.js("""({mail:__navOff('mail'), chess:__navOff('chess'), holdem:__navOff('holdem'),
+                    xdc:__navOff('xdc'), wallet:__navOff('wallet'), texts:__navOff('texts'), concord:__navOff('concord'), notes:__navOff('notes'),
+                    prefs:__published.filter(e=>e.kind===30078&&(e.tags||[]).some(t=>t[0]==='d'&&t[1]==='pcai:client-prefs')).map(e=>JSON.parse(e.content))})""")
                 if choose and out["splash"]:
                     await b.js(f"document.querySelector('#pc-experience [data-exp=\"{choose}\"]').click(); true")
                     await b.until("__published.some(e=>e.kind===30078&&(e.tags||[]).some(t=>t[1]==='pcai:client-prefs')&&/experience/.test(e.content))")
                     out["chosen"] = await b.js("""({gone:!document.getElementById('pc-experience'),
                         mail:__navOff('mail'), notes:__navOff('notes'), notif:__navOff('notifications'), messages:__navOff('messages'),
                         settings:__navOff('settings'), concord:__navOff('concord'), chess:__navOff('chess'),
+                        wallet:__navOff('wallet'), texts:__navOff('texts'), xdc:__navOff('xdc'), holdem:__navOff('holdem'),
                         prefs:__published.filter(e=>e.kind===30078&&(e.tags||[]).some(t=>t[0]==='d'&&t[1]==='pcai:client-prefs')).map(e=>JSON.parse(e.content))})""")
                 return out
         finally:
@@ -124,6 +136,11 @@ def test_a_first_login_chooses_social_and_it_is_saved_to_the_account():
     c = o["chosen"]
     assert c["gone"] and c["mail"] is True and c["notes"] is True, ("Social did not hide the rest", c)
     assert c["notif"] is False and c["messages"] is False and c["concord"] is False and c["settings"] is False, c
+    # The owner's split (2026-10-06): "Monero wallet, Social, Games should be part of the Social features.
+    # Texts should be part of the Full Experience" -- every game in the group, not just the first.
+    assert c["wallet"] is False and c["chess"] is False and c["holdem"] is False and c["xdc"] is False, \
+        ("Social hid the wallet or a game", c)
+    assert c["texts"] is True, ("Social still shows Texts, a Full Experience app", c)
     assert o["keep_offered"] is False, ("a fresh account was offered to keep a sidebar it never shaped", o)
     # ONE document carrying both: two read-modify-writes let the second republish without the list.
     assert all("experience" in d and "navHidden" in d for d in c["prefs"]), ("a save carried only half the choice", c["prefs"])
@@ -165,3 +182,29 @@ def test_on_a_phone_the_cards_stack_and_fit():
     assert o["splash"] and l["n"] == 2 and l["stacked"], ("the choices do not stack on a phone", l)
     assert l["left"] >= 0 and l["right"] <= l["w"] and l["scroll"] <= l["w"], ("the splash runs off a phone screen", l)
     assert o["chosen"]["gone"], o
+
+
+@CHROME
+def test_an_account_that_chose_social_before_the_split_is_moved_once():
+    """The owner said yes to updating existing Social accounts: the wallet and Games join them, Texts
+    leaves, and a switch the person flipped themselves (Communities off) is left alone."""
+    o = asyncio.run(run("oldsocial"))
+    a = o["after_login"]
+    assert o["splash"] is False, ("an account that already chose was asked again", o)
+    assert a["wallet"] is False and a["chess"] is False and a["holdem"] is False and a["xdc"] is False, \
+        ("an old Social account still hides the wallet or a game", a)
+    assert a["texts"] is True, ("an old Social account still shows Texts", a)
+    assert a["mail"] is True and a["notes"] is True and a["concord"] is True, ("the migration undid the person's own choices", a)
+    assert len(a["prefs"]) == 1, ("the migration must be saved exactly once", a["prefs"])
+    saved = a["prefs"][0]
+    assert saved.get("experienceRev") == 2 and saved.get("experience") == "social", saved
+    assert "texts" in saved["navHidden"] and "wallet" not in saved["navHidden"] and "concord" in saved["navHidden"], saved
+
+
+@CHROME
+def test_an_account_already_moved_is_left_exactly_as_it_is():
+    """Once recorded, the person's later choices win: they hid the wallet again, and it stays hidden."""
+    o = asyncio.run(run("migrated"))
+    a = o["after_login"]
+    assert a["wallet"] is True and a["texts"] is True, a
+    assert a["prefs"] == [], ("an already-migrated account was written to again", a["prefs"])

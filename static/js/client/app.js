@@ -1062,12 +1062,18 @@
    * read off the sidebar itself so an app added later is hidden by Social without editing this list.
    * NAV_LOCKED rows (Settings, Bookmarks, Files) can never be hidden anyway. A group holding a kept
    * row stays and loses its other rows one by one. */
+  /* Social's set, as the owner drew it: the feed ("Social" is the `global` view), games and the Monero
+   * wallet belong to a social network; Texts (the phone's SMS) is a Full Experience app. A group in
+   * SOCIAL_KEEP_GROUPS stays WHOLE -- every row in it, including a game added to it later. */
   const SOCIAL_KEEP = new Set(['home', 'global', 'notifications', 'messages', 'concord', 'articles',
-                               'streams', 'calls', 'drafts', 'texts']);
+                               'streams', 'calls', 'drafts', 'wallet']);
+  const SOCIAL_KEEP_GROUPS = new Set(['group:games']);
   function socialHiddenKeys(){
     const rows = new Map();
     document.querySelectorAll('.sidebar .nav .nav-item').forEach(btn => { const k = _navKey(btn); if(k && !rows.has(k)) rows.set(k, btn); });
-    const keeps = k => SOCIAL_KEEP.has(k) || NAV_LOCKED.has(k);
+    const inKeptGroup = btn => { const g = btn && btn.closest('.nav-group'); const hd = g && g.querySelector('.nav-grouphd');
+                                 return !!(hd && SOCIAL_KEEP_GROUPS.has(_navKey(hd))); };
+    const keeps = k => SOCIAL_KEEP.has(k) || NAV_LOCKED.has(k) || SOCIAL_KEEP_GROUPS.has(k) || inKeptGroup(rows.get(k));
     const out = [];
     for(const [k, btn] of rows){
       if(keeps(k)) continue;
@@ -1091,6 +1097,32 @@
       || has(ClientSettings.get('navHidden', [])) || has(ClientSettings.get('navOrder', null))
       || has(ClientSettings.get('navGroupOf', null)) || has(ClientSettings.get('navUserGroups', null));
   }
+  /* SOCIAL GREW ON 2026-10-06: the Monero wallet and Games joined it, Texts moved to Full ("Monero
+   * wallet, Social, Games should be part of the Social features. Texts should be part of the Full
+   * Experience"). An account that chose Social before that carries a hidden list built from the OLD
+   * set, so it is moved ONCE: the wallet and the Games group come back, Texts goes, and every other
+   * switch the person set stays exactly as they left it. Decided only on a definite read (`pr` is null
+   * when nothing answered), and recorded as `experienceRev` in the same save -- once per account,
+   * not once per device. */
+  const EXPERIENCE_REV = 2;
+  function _migrateSocialSet(pr){
+    if(GUEST || !pr || typeof pr !== 'object' || pr.experience !== 'social') return false;
+    if(Number(pr.experienceRev || 0) >= EXPERIENCE_REV) return false;
+    const show = new Set(['wallet', 'group:games']);
+    document.querySelectorAll('.sidebar .nav .nav-group').forEach(g => {
+      const hd = g.querySelector('.nav-grouphd');
+      if(hd && _navKey(hd) === 'group:games') g.querySelectorAll('.nav-item').forEach(b => { const k = _navKey(b); if(k) show.add(k); });
+    });
+    const before = Array.isArray(pr.navHidden) ? pr.navHidden : [];
+    const list = before.filter(k => !show.has(k));
+    if(!list.includes('texts')) list.push('texts');
+    ClientSettings.set('navHidden', list);
+    _prefTouched.add('navHidden');
+    applyNavHidden();
+    try{ applyMobileNav(); }catch(_){}
+    saveClientPrefsNostr({ navHidden: list, experienceRev: EXPERIENCE_REV });
+    return true;
+  }
   function _maybeExperienceSplash(pr){
     if(GUEST || !pr || typeof pr !== 'object') return false;
     if(pr.experience || ClientSettings.get('experience', '')) return false;
@@ -1112,12 +1144,12 @@
           <button class="pc-exp-card" data-exp="social">
             <svg class="ic" aria-hidden="true"><use href="#i-users"></use></svg>
             <b>Social</b>
-            <span>Just the social network: your feed, notifications, messages, communities and streams. Simple and clean.</span>
+            <span>Just the social network: your feed, notifications, messages, communities, streams, games and your Monero wallet. Simple and clean.</span>
           </button>
           <button class="pc-exp-card" data-exp="full">
             <svg class="ic" aria-hidden="true"><use href="#i-grid"></use></svg>
             <b>Full Experience</b>
-            <span>Everything PosterChan does: AI, email, notes, calendar, files, music, games, wallet and more.</span>
+            <span>Everything PosterChan does: AI, email, texts, notes, calendar, files, music and more.</span>
           </button>
         </div>
         ${configured ? '<button class="btn btn-ghost pc-exp-keep" data-exp="keep">Keep my sidebar as it is</button>' : ''}
@@ -1135,7 +1167,7 @@
      * the second read reaches a relay that has not stored the first yet, it republishes the document
      * WITHOUT the hidden list -- Social undone on every device. Full shows everything, so it clears the
      * list in the same save; Keep records the answer and touches nothing else. */
-    const patch = { experience: kind };
+    const patch = { experience: kind, experienceRev: EXPERIENCE_REV };
     if(kind !== 'keep'){
       const list = kind === 'social' ? socialHiddenKeys().filter(k => !NAV_LOCKED.has(k)) : [];
       ClientSettings.set('navHidden', list);
@@ -3710,7 +3742,7 @@
       if(GUEST || _hydrated) return; _hydrated = true;
       restoreMediaServer();   // restore the synced media server (kind-10063/10096) — must run AFTER the
                               // relay is connected (this fires on onReady), else the query returns nothing
-      restoreClientPrefsNostr().then(pr => _maybeExperienceSplash(pr)).catch(()=>{});   // restore Nostr-synced client prefs, then -- on a definite answer -- the first-login choice
+      restoreClientPrefsNostr().then(pr => { _migrateSocialSet(pr); _maybeExperienceSplash(pr); }).catch(()=>{});   // restore Nostr-synced client prefs, then -- on a definite answer -- the first-login choice
       seedRelaysFromNip65();  // the user's OWN published relay list joins this device's — additive, never a replacement
       setTimeout(()=>{ try{ Drafts.pull(); }catch(_){} }, 1200);   // local drafts already painted; sync off the critical path
       Promise.allSettled([fetchFollows(), fetchMutes(), fetchPins(), fetchBookmarks(), fetchMyProfile()])
