@@ -1,0 +1,104 @@
+<!doctype html>
+<html><head><meta charset="utf-8"><title>PosterChan — Solution Brief</title>
+<style>
+@font-face{font-family:Orbitron;src:url(../../static/fonts/orbitron.woff2) format('woff2');font-weight:400 900}
+@font-face{font-family:Inter;src:url(../../static/fonts/inter.woff2) format('woff2');font-weight:100 900}
+*{box-sizing:border-box;margin:0;padding:0}
+html,body{width:1920px;height:1080px}
+body{font-family:Inter,system-ui,sans-serif;color:#e8ebff;overflow:hidden;position:relative;
+  background:radial-gradient(1200px 700px at 78% 18%,rgba(40,210,255,.10),transparent 60%),
+             radial-gradient(900px 600px at 15% 95%,rgba(160,110,255,.10),transparent 60%),#0d1020}
+body::before{content:'';position:absolute;inset:0;pointer-events:none;
+  background-image:linear-gradient(rgba(120,150,255,.05) 1px,transparent 1px),linear-gradient(90deg,rgba(120,150,255,.05) 1px,transparent 1px);
+  background-size:48px 48px}
+.wrap{position:relative;padding:54px 64px 0}
+.eyebrow{font-family:Orbitron;font-weight:600;letter-spacing:.32em;font-size:20px;color:#3fd8f5}
+.top{display:flex;align-items:flex-start;justify-content:space-between}
+.pill{font-family:Orbitron;font-size:17px;letter-spacing:.24em;color:#3fd8f5;border:2px solid rgba(63,216,245,.6);
+  border-radius:40px;padding:12px 26px;margin-top:4px}
+h1{font-family:Orbitron;font-weight:900;font-size:112px;line-height:.95;margin-top:16px;letter-spacing:.01em}
+h1 .a{color:#fff}h1 .b{background:linear-gradient(90deg,#3fd8f5,#9d7bff 55%,#2ee6c0);-webkit-background-clip:text;color:transparent}
+.pitch{font-size:30px;color:#b9c0e6;margin-top:16px;max-width:1150px;line-height:1.3}
+.pitch b{color:#fff;font-weight:700}
+.mascot{position:absolute;right:150px;top:26px;height:330px;filter:drop-shadow(0 0 40px rgba(63,216,245,.35))}
+.ring{position:absolute;right:70px;top:6px;width:360px;height:360px;border-radius:50%;border:2px solid rgba(63,216,245,.18);
+  box-shadow:0 0 120px rgba(63,216,245,.12) inset}
+.cols{position:absolute;left:64px;right:64px;top:378px;display:grid;grid-template-columns:repeat(3,1fr);gap:30px}
+.col{--c:#3fd8f5;background:linear-gradient(180deg,rgba(255,255,255,.055),rgba(255,255,255,.025));border:1px solid rgba(255,255,255,.10);
+  border-top:4px solid var(--c);border-radius:20px;padding:26px 28px 24px;display:flex;flex-direction:column;
+  box-shadow:0 20px 50px rgba(0,0,0,.35),0 -8px 40px -20px var(--c)}
+.col.server{--c:#9d7bff}.col.os{--c:#2ee6c0}
+.kind{font-family:Orbitron;font-weight:700;font-size:16px;letter-spacing:.3em;color:var(--c)}
+.col h2{font-family:Orbitron;font-weight:800;font-size:40px;margin-top:8px;color:#fff;letter-spacing:.01em}
+.lede{font-size:20px;color:#b9c0e6;margin-top:8px;line-height:1.35;min-height:54px}
+ul{list-style:none;margin-top:16px;display:flex;flex-direction:column;gap:11px}
+li{position:relative;padding-left:28px;font-size:19px;line-height:1.3;color:#dfe3ff}
+li::before{content:'';position:absolute;left:2px;top:7px;width:12px;height:12px;transform:rotate(45deg);
+  background:linear-gradient(135deg,#7fe8ff,var(--c));border-radius:2px;box-shadow:0 0 10px var(--c)}
+li b{color:#fff;font-weight:700}li em{font-style:normal;color:var(--c);font-weight:700}
+li span{display:block;color:#98a0c8;font-size:16px;margin-top:2px}
+.cta{margin-top:auto;padding-top:18px;border-top:1px solid rgba(255,255,255,.08);display:flex;align-items:baseline;gap:12px}
+.cta small{font-size:16px;color:#98a0c8;letter-spacing:.06em}
+.cta strong{font-family:Orbitron;font-weight:800;font-size:28px;color:var(--c)}
+.foot{position:absolute;left:0;right:0;bottom:0;height:86px;display:flex;align-items:center;justify-content:space-between;
+  padding:0 64px;border-top:2px solid rgba(63,216,245,.45);background:rgba(8,10,22,.85)}
+.flow{font-size:21px;color:#b9c0e6}.flow b{color:#fff}.flow i{font-style:normal;color:#3fd8f5;margin:0 10px}
+.gh{font-size:21px;color:#fff;font-weight:700}.gh small{display:block;font-weight:400;color:#98a0c8;font-size:16px;text-align:right}
+</style></head>
+<body>
+<div class="ring"></div>
+<img class="mascot" src="../../static/mascot/dance/dance-1.webp" alt="">
+<div class="wrap">
+  <div class="top"><div class="eyebrow">SOLUTION BRIEF</div></div>
+  <h1><span class="a">POSTER</span><span class="b">CHAN</span></h1>
+  <p class="pitch">One Nostr key. <b>Your social network, your server and your desktop</b> — on infrastructure you own, with no company in the middle.</p>
+</div>
+<div class="cols">
+  <section class="col client">
+    <div class="kind">CLIENT</div>
+    <h2>The App</h2>
+    <p class="lede">Social, files, passwords, calendar, calls and games. One app, your keys.</p>
+    <ul>
+      <li><b>Nostr <em>and</em> the fediverse, one timeline</b><span>you're @you@poster.place on Mastodon too</span></li>
+      <li><b>A full <em>Desktop</em> or <em>Classic</em> view</b><span>windows &amp; taskbar, or a familiar feed</span></li>
+      <li><b>Encrypted drive, folder sync &amp; passwords</b><span>Dropbox-style sync on Blossom — only you hold the key</span></li>
+      <li><b>Notes, Calendar &amp; Contacts</b><span>encrypted, and synced into your phone's own apps</span></li>
+      <li><b>Monero <em>&amp;</em> Lightning zaps, calls &amp; DMs</b><span>voice &amp; video over Nostr, end-to-end encrypted</span></li>
+      <li><b>Web, desktop &amp; Android</b><span>can even be your whole phone — launcher, SMS &amp; dialer</span></li>
+    </ul>
+    <div class="cta"><small>TRY IT</small><strong>poster.place</strong></div>
+  </section>
+  <section class="col server">
+    <div class="kind">SERVER</div>
+    <h2>Your Own Node</h2>
+    <p class="lede">One install gives your community a complete home on Nostr.</p>
+    <ul>
+      <li><b>Relay + Blossom + NIP-05 in one install</b><span>your relay, media server and name@yourdomain</span></li>
+      <li><b>Native <em>ActivityPub</em> server</b><span>every member is @name@yourdomain on the fediverse</span></li>
+      <li><b><em>Jellyfin-compatible</em> media server</b><span>movies &amp; shows on Roku, Fire TV &amp; Android</span></li>
+      <li><b>Git &amp; virtual machines over Nostr</b><span>a web forge and a Proxmox-style host, run by your key</span></li>
+      <li><b>Local AI on your own GPUs</b><span>chat, images, music &amp; video, load-balanced across nodes</span></li>
+      <li><b>Office suite &amp; live streaming</b><span>Word/Excel/PowerPoint in the browser; go live from OBS</span></li>
+    </ul>
+    <div class="cta"><small>SELF-HOST</small><strong>Docker · install.sh</strong></div>
+  </section>
+  <section class="col os">
+    <div class="kind">OPERATING SYSTEM</div>
+    <h2>PosterChanOS</h2>
+    <p class="lede">A Gentoo desktop whose desktop IS PosterChan. Sign in with your key and it's yours.</p>
+    <ul>
+      <li><b>Your desktop <em>is</em> your account</b><span>apps, files &amp; layout follow your key to any machine</span></li>
+      <li><b>Every app a real <em>window</em></b><span>snap, Alt+Tab, multi-monitor — Firefox &amp; Steam beside them</span></li>
+      <li><b><em>AI</em> in every title bar</b><span>summaries, drafts &amp; to-dos, on your own node</span></li>
+      <li><b>Telegram, media center &amp; VMs built in</b><span>plus an office suite and Notes over Nostr</span></li>
+      <li><b>Quick Settings &amp; <em>Tor</em></b><span>Wi-Fi, Bluetooth, per-app volume, Tor in one tap</span></li>
+      <li><b>Gentoo + Wayfire, fully encrypted</b><span>Intel, AMD &amp; NVIDIA, with LUKS full-disk encryption</span></li>
+    </ul>
+    <div class="cta"><small>DOWNLOAD</small><strong>iso.poster.place</strong></div>
+  </section>
+</div>
+<div class="foot">
+  <div class="flow"><b>One key</b><i>→</i>the <b>Client</b> anywhere<i>·</i>a <b>Server</b> for your community<i>·</i>the <b>OS</b> on your desk</div>
+  <div class="gh"><small>Free &amp; open source on GitHub</small>github.com/loblawbob873-svg/posterchanai</div>
+</div>
+</body></html>
