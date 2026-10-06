@@ -29,6 +29,20 @@ from typing import Any
 
 import httpx
 
+_TLS = None
+
+
+def _tls_context():
+    """ONE TLS context for every wallet RPC. httpx builds a fresh one (verify=True loads the whole
+    system CA store) for each AsyncClient, and rpc() makes a client per call -- measured with py-spy on
+    server1's worker 2026-10-06: ssl.create_default_context was 48% of the worker's CPU, nearly all of it
+    from the per-user wallet maintenance loop. Same verification, built once."""
+    global _TLS
+    if _TLS is None:
+        import ssl
+        _TLS = ssl.create_default_context()
+    return _TLS
+
 from app.services.monero_wallet_service import (
     WalletBusy, WalletError, WalletUnsure, atomic_to_xmr, normalize_amounts, validate_address,
 )
@@ -147,7 +161,7 @@ class UserWallets:
             async with httpx.AsyncClient(
                 auth=httpx.DigestAuth(self.user, self.password),
                 timeout=httpx.Timeout(budget, connect=min(2.0, budget)),
-                follow_redirects=False, trust_env=False,
+                follow_redirects=False, trust_env=False, verify=_tls_context(),
             ) as client:
                 response = await client.post(self.url, json=payload)
                 response.raise_for_status()
