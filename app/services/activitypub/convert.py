@@ -517,8 +517,8 @@ def note_content(note: dict, *, local_actors: dict) -> tuple[str, list]:
     """(text, tags) for an incoming Note: HTML flattened to text, attachments appended as links,
     mentions of OUR members turned into `p` tags (so they are notified), hashtags into `t` tags,
     and a content warning into NIP-36."""
-    from app.services.fedi_normalize import _strip_html
-    text = _strip_html(str(note.get("content") or ""))
+    from app.services.fedi_normalize import _strip_html, html_to_text
+    text = html_to_text(str(note.get("content") or ""))
     kind = note.get("type")
     title = _strip_html(str(note.get("name") or "")).strip()[:300] if kind in ("Article", "Page") else ""
     if title and not text.startswith(title):
