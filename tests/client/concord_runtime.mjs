@@ -651,14 +651,23 @@ await control('cc-call').onclick();
 if(!openedConcordCall||!openedConcordCall.current()||typeof openedConcordCall.material!=='function'
    ||typeof openedConcordCall.presence!=='function'||calls.group!==groupCallsBefore)
   throw new Error('Concord call control did not open the current encrypted channel');
+// ENTER SENDS (2026-10-06, the owner: "make enter sent message instead of ctrl+enter"); Ctrl+Enter and
+// Shift+Enter add a line break and send nothing; Enter inside an IME composition never sends.
 control('cc-input').value='hello concord';
+control('cc-input').setSelectionRange(13,13);          // the caret where a person typing leaves it
 let prevented=false;
-control('cc-input').onkeydown({key:'Enter',ctrlKey:false,metaKey:false,preventDefault(){prevented=true;}});
-if(prevented || data.has('pc.concord.test.'+rooms[0].naddr)) throw new Error('plain Enter sent a message');
-await control('cc-input').onkeydown({key:'Enter',ctrlKey:true,metaKey:false,preventDefault(){prevented=true;}});
+control('cc-input').onkeydown({key:'Enter',ctrlKey:true,metaKey:false,preventDefault(){prevented=true;}});
+if(!prevented || data.has('pc.concord.test.'+rooms[0].naddr) || !control('cc-input').value.endsWith('\n'))
+  throw new Error('Ctrl+Enter sent the message or added no line break');
+control('cc-input').value='hello concord';
+prevented=false;
+control('cc-input').onkeydown({key:'Enter',shiftKey:true,ctrlKey:false,metaKey:false,preventDefault(){prevented=true;}});
+control('cc-input').onkeydown({key:'Enter',isComposing:true,ctrlKey:false,metaKey:false,preventDefault(){prevented=true;}});
+if(prevented || data.has('pc.concord.test.'+rooms[0].naddr)) throw new Error('Shift+Enter or an IME Enter sent a message');
+await control('cc-input').onkeydown({key:'Enter',ctrlKey:false,metaKey:false,preventDefault(){prevented=true;}});
 const messages=JSON.parse(messageData.get('pc.concord.test.'+rooms[0].naddr));
 if(!prevented || messages.length!==1 || messages[0].text!=='hello concord' || messages[0].by!=='Test User')
-  throw new Error('Ctrl+Enter send flow failed');
+  throw new Error('Enter send flow failed');
 
 // The relay can echo a rumor before publish() resolves.  Reproduce that ordering exactly: keep the
 // optimistic continuation waiting, insert the permanent relay row, then let it rename its pending
@@ -667,7 +676,7 @@ let releaseRace;
 PosterCordReader.createChatWrap=()=>new Promise(resolve=>{releaseRace=()=>resolve({
   rumorId:'e'.repeat(64),wrap:{kind:1059},ms:2345});});
 control('cc-input').value='race once';
-const racing=control('cc-input').onkeydown({key:'Enter',ctrlKey:true,metaKey:false,preventDefault(){}});
+const racing=control('cc-input').onkeydown({key:'Enter',ctrlKey:false,metaKey:false,preventDefault(){}});
 await new Promise(resolve=>setTimeout(resolve,0));
 const raceKey='pc.concord.test.'+rooms[0].naddr;
 const whilePending=JSON.parse(messageData.get(raceKey));
@@ -793,7 +802,7 @@ afterIntentionalFocus.focus();
 afterIntentionalFocus.setSelectionRange(afterIntentionalFocus.value.length,afterIntentionalFocus.value.length);
 await afterIntentionalFocus.onkeydown({key:'Tab',ctrlKey:false,metaKey:false,preventDefault(){}});
 const publishesBeforeReply=calls.publishTargets.length;
-await afterIntentionalFocus.onkeydown({key:'Enter',ctrlKey:true,metaKey:false,preventDefault(){}});
+await afterIntentionalFocus.onkeydown({key:'Enter',ctrlKey:false,metaKey:false,preventDefault(){}});
 if(calls.lastChat?.kind!==1111 || !calls.lastChat.tags.some(t=>t[0]==='e'&&t[1]===permanentId) ||
    !calls.lastChat.tags.some(t=>t[0]==='p'&&t[1]==='b'.repeat(64)) ||
    !calls.lastChat.tags.some(t=>t[0]==='imeta'&&t.some(x=>String(x).includes(draftUrl))) ||
