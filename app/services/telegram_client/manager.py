@@ -71,6 +71,8 @@ class Account:
     handlers_on: bool = False
     last_session: str = ""
     calls: object = None             # calls.CallHub — voice/video calls, once the account is ready
+    reaction_set: tuple = ()         # (when read, [emoji]) — the reactions Telegram has at all
+    chat_reactions: dict = field(default_factory=dict)   # chat → (when read, [emoji]) it allows
 
 
 def _name(ent) -> str:
@@ -136,6 +138,14 @@ def reactions_of(msg) -> list:
         out.append({"emoji": str(emoji), "count": int(getattr(rc, "count", 0) or 0),
                     "mine": getattr(rc, "chosen_order", None) is not None})
     return out
+
+
+REACTIONS_TTL = 600                  # s — a chat's allowed reactions change when an admin edits them
+
+
+def _same_emoji(a: str, b: str) -> bool:
+    """One emoji whichever way it was typed: Telegram's heart is ❤ and every keyboard sends ❤️ (U+FE0F)."""
+    return str(a).replace("\ufe0f", "") == str(b).replace("\ufe0f", "")
 
 
 def message_dict(msg, chat_id) -> dict:
@@ -288,7 +298,8 @@ class Manager:
     async def _on_ready(self, db, user, a: Account) -> None:
         try:
             me = await a.client.get_me()
-            a.me = {"id": int(getattr(me, "id", 0) or 0), "name": _name(me), "username": getattr(me, "username", "") or ""}
+            a.me = {"id": int(getattr(me, "id", 0) or 0), "name": _name(me), "username": getattr(me, "username", "") or "",
+                    "premium": bool(getattr(me, "premium", False))}
         except Exception:
             a.me = {}
         if not a.handlers_on:
@@ -488,6 +499,62 @@ class Manager:
                               reply_to=int(reply_to) or None)
         return message_dict(m, chat_id)
 
+    async def _all_reactions(self, a: Account) -> list:
+        """Every emoji Telegram accepts as a reaction from THIS account, in Telegram's order. It is a
+        fixed list, not "any emoji" — 😂 and 😮 are not on it, and its heart is ❤ with no variation
+        selector — and some entries are Premium-only."""
+        when, got = a.reaction_set or (0, [])
+        if got and time.time() - when < REACTIONS_TTL:
+            return got
+        from telethon.tl.functions.messages import GetAvailableReactionsRequest
+        res = await a.client(GetAvailableReactionsRequest(hash=0))
+        premium = bool((a.me or {}).get("premium"))
+        got = [str(r.reaction) for r in (getattr(res, "reactions", None) or [])
+               if getattr(r, "reaction", None) and not getattr(r, "inactive", False)
+               and (premium or not getattr(r, "premium", False))]
+        if got:
+            a.reaction_set = (time.time(), got)
+        return got
+
+    async def allowed_reactions(self, db, user, chat_id: int) -> list:
+        """The reactions THIS chat takes: a private chat takes all of them; a group or channel admin
+        may narrow that to a few, or turn reactions off (an empty list). Raises TGError when Telegram
+        cannot be asked — the caller decides what an unknown answer means."""
+        c = await self._ready(db, user)
+        a = self.account(user.id)
+        chat_id = int(chat_id)
+        when, got = a.chat_reactions.get(chat_id, (0, None))
+        if got is not None and time.time() - when < REACTIONS_TTL:
+            return got
+        try:
+            every = await self._all_reactions(a)
+            rule = None
+            if chat_id < 0:
+                from telethon.tl.functions.channels import GetFullChannelRequest
+                from telethon.tl.functions.messages import GetFullChatRequest
+                ent = await c.get_input_entity(chat_id)
+                if type(ent).__name__ == "InputPeerChat":
+                    full = await c(GetFullChatRequest(chat_id=ent.chat_id))
+                else:
+                    full = await c(GetFullChannelRequest(channel=ent))
+                rule = getattr(getattr(full, "full_chat", None), "available_reactions", None)
+        except TGError:
+            raise
+        except Exception as e:
+            raise TGError(_why(e))
+        kind = type(rule).__name__
+        if kind == "ChatReactionsNone":
+            got = []
+        elif kind == "ChatReactionsSome":
+            some = [str(getattr(r, "emoticon", "") or "") for r in (getattr(rule, "reactions", None) or [])]
+            got = [e for e in some if e and (e in every or not every)]
+        elif every:                             # a person, ChatReactionsAll, or no rule given
+            got = list(every)
+        else:                                   # never "no reactions" on the strength of an empty read
+            raise TGError("Telegram did not say which reactions it takes.")
+        a.chat_reactions[chat_id] = (time.time(), got)
+        return got
+
     async def react(self, db, user, chat_id: int, msg_id: int, emoji: str) -> list:
         """Toggle YOUR reaction on one message and answer with its reactions as Telegram now has them.
         Choosing the reaction you already gave takes it back; choosing another replaces it (an
@@ -497,13 +564,25 @@ class Manager:
             raise TGError("That is not an emoji.")
         c = await self._ready(db, user)
         try:
+            allowed = await self.allowed_reactions(db, user, chat_id)
+        except TGError:
+            allowed = None                      # could not ask: let Telegram be the judge
+        try:
             from telethon.tl.functions.messages import SendReactionRequest
             from telethon.tl.types import ReactionEmoji
             m = await c.get_messages(int(chat_id), ids=int(msg_id))
             if m is None:
                 raise TGError("That message is gone.")
             mine = {r["emoji"] for r in reactions_of(m) if r["mine"]}
-            want = [] if emoji in mine else [ReactionEmoji(emoticon=emoji)]
+            took_back = next((e for e in mine if _same_emoji(e, emoji)), None)
+            if took_back is None and allowed is not None:
+                # Telegram names the refusal REACTION_INVALID and nothing more; say which, before asking.
+                hit = next((e for e in allowed if _same_emoji(e, emoji)), None)
+                if hit is None:
+                    raise TGError("This chat does not allow reactions." if not allowed else
+                                  "Telegram does not take {} as a reaction here.".format(emoji))
+                emoji = hit                     # Telegram's own spelling (❤, not ❤️)
+            want = [] if took_back is not None else [ReactionEmoji(emoticon=emoji)]
             await c(SendReactionRequest(peer=int(chat_id), msg_id=int(msg_id), reaction=want))
             m = await c.get_messages(int(chat_id), ids=int(msg_id))
         except TGError:

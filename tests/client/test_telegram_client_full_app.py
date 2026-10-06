@@ -35,6 +35,9 @@ window.fetch = function(url, opts){
     {id:77, title:'Night City Crew', kind:'group', unread:0, last:{text:'yo', date:1699999999, out:false}}]});
   if(path.startsWith('/messages/')) return __j({ok:true, messages: path.includes('before=') ? [] : __tgMsgs.slice()});
   if(path.startsWith('/read')) return __j({ok:true});
+  if(path.startsWith('/reactions')){ __tg.lists = (__tg.lists||0) + 1;    // before '/react', which it starts with
+    return __j({ok:true, emoji: path.includes('chat_id=77') ? [] :
+      ['👍','👎','❤','🔥','🤣','🎉','🙏','😢','😱','🤔','🤯','👏','🥰','💯']}); }
   if(path.startsWith('/react')){ const b = JSON.parse(body); __tg.reacts = (__tg.reacts||[]).concat([b]);
     if(b.emoji === '🚫') return __j({ok:false, error:'This chat does not allow that reaction.'}, 400);
     const mine = (__tg.mine||{})[b.msg_id] === b.emoji; __tg.mine = Object.assign({}, __tg.mine, {[b.msg_id]: mine ? null : b.emoji});
@@ -273,6 +276,46 @@ def test_reactions_show_toggle_and_explain_a_refusal():
         await b.js("PCTelegram.react(1,'🚫')")
         await asyncio.sleep(.3)
         assert await b.js(REACTS) == before, "a refused reaction left a wrong count on screen"
+
+    asyncio.run(desktop.with_browser("online", "", check, FAKE))
+
+
+PICKER = r"""(()=>[...document.querySelectorAll('.tg-react-pop [data-e]')].map(b=>b.dataset.e))()"""
+
+
+@pytest.mark.skipif(not Path("/opt/google/chrome/chrome").exists(), reason="Chrome required")
+def test_the_picker_offers_only_what_the_chat_takes():
+    """Reported: "Telegram emoji react: does not allow this reaction" — the row offered 😂/😮/❤️ and ＋
+    opened every emoji; Telegram takes its own list, and a group can switch reactions off."""
+    async def check(b):
+        await _open(b)
+        await b.js("__tg.state='ready'; __PC.switchView('global'); __PC.switchView('tg')")
+        await b.until("document.querySelectorAll('.tg-dialog').length===2")
+        await b.js("document.querySelector('.tg-dialog[data-chat=\"42\"]').click()")
+        await b.until("!!document.querySelector('.tg-msg[data-id=\"1\"] [data-react-pick]')")
+        await b.js("document.querySelector('.tg-msg[data-id=\"1\"] [data-react-pick]').click()")
+        await b.until("!!document.querySelector('.tg-react-pop [data-e]')")
+        allowed = ['👍', '👎', '❤', '🔥', '🤣', '🎉', '🙏', '😢', '😱', '🤔', '🤯', '👏', '🥰', '💯']
+        row = await b.js(PICKER)
+        assert row and set(row) <= set(allowed), f"the picker offered a reaction Telegram refuses: {row}"
+        assert "❤" in row and len(row) == 10, row
+        assert await b.js("document.querySelector('.tg-react-pop [data-e=\"❤\"]').textContent") == "❤️", \
+            "the heart is drawn as a text glyph"
+        # ＋ opens the rest of THIS chat's list, not the general emoji picker.
+        await b.js("document.querySelector('.tg-react-pop [data-more]').click()")
+        await b.until("document.querySelectorAll('.tg-react-pop [data-e]').length===14")
+        assert sorted(await b.js(PICKER)) == sorted(allowed)
+        await b.js("[...document.querySelectorAll('.tg-react-pop [data-e]')].find(x=>x.dataset.e==='💯').click()")
+        await b.until("(__tg.reacts||[]).some(r=>r.emoji==='💯')")
+        assert await b.js("__tg.lists") == 1, "the chat's list was fetched again for the second pick"
+        # A group with reactions switched off says so and opens nothing.
+        await b.js("__PC.toast=(m)=>{window.__toast=m}")
+        await b.js("document.querySelector('.tg-dialog[data-chat=\"77\"]').click()")
+        await b.until("!!document.querySelector('.tg-msg[data-id=\"1\"] [data-react-pick]') && document.querySelector('.tg-ctitle').textContent==='Night City Crew'")
+        await b.js("document.querySelector('.tg-msg[data-id=\"1\"] [data-react-pick]').click()")
+        await b.until("!!window.__toast")
+        assert "does not allow reactions" in await b.js("window.__toast")
+        assert not await b.js("!!document.querySelector('.tg-react-pop')")
 
     asyncio.run(desktop.with_browser("online", "", check, FAKE))
 

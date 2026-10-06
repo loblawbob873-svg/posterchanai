@@ -441,16 +441,51 @@ def _reactions(**tally):
                                      for e, (n, mine) in tally.items()])
 
 
+def _available():
+    """Telegram's answer to messages.getAvailableReactions, in Telethon's own types — the real list's
+    shape: ❤ with no variation selector, a retired (inactive) entry and a Premium-only one."""
+    from telethon.tl.types import AvailableReaction, Document
+    from telethon.tl.types.messages import AvailableReactions
+    doc = Document(id=1, access_hash=1, file_reference=b"", date=None, mime_type="image/webp", size=1, dc_id=1, attributes=[])
+    def r(e, **kw):
+        return AvailableReaction(reaction=e, title=e, static_icon=doc, appear_animation=doc, select_animation=doc,
+                                 activate_animation=doc, effect_animation=doc, **kw)
+    return AvailableReactions(hash=1, reactions=[r("👍"), r("👎"), r("❤"), r("🔥"), r("🤣"), r("🎉"),
+                                                 r("🥱", inactive=True), r("🐳", premium=True)])
+
+
 def _react_world(world):
     """The fake Telegram learns the two raw requests the manager sends: SendReaction and contacts.Search."""
     mgr, tgs, store, made = world
     login(mgr, U(1), tgs[1])
     client, tg = made[-1], tgs[1]
     tg.chats[42][0].reactions = _reactions(**{"👍": (2, False)})
+    tg.chats[-1000000000777] = [_Msg(1, "group")]
+    tg.chats[-555] = [_Msg(1, "small group")]
+    tg.chats[-1000000000777][0].reactions = _reactions()
+    tg.chats[-555][0].reactions = _reactions()
     tg.refuse = set()
+    tg.asked = []
+    tg.list_down = False
+    from telethon.tl.types import ChatReactionsAll
+    tg.chat_rule = {-1000000000777: ChatReactionsAll(), -555: ChatReactionsAll()}
+
+    async def get_input_entity(chat):
+        from telethon.tl.types import InputPeerChannel, InputPeerChat
+        return InputPeerChat(chat_id=555) if chat == -555 else InputPeerChannel(channel_id=777, access_hash=3)
+    client.get_input_entity = get_input_entity
 
     async def call(req):
         name = type(req).__name__
+        tg.asked.append(name)
+        if name == "GetAvailableReactionsRequest":
+            if tg.list_down:
+                raise ConnectionError("network")
+            return _available()
+        if name in ("GetFullChannelRequest", "GetFullChatRequest"):
+            from types import SimpleNamespace
+            key = -555 if name == "GetFullChatRequest" else -1000000000777
+            return SimpleNamespace(full_chat=SimpleNamespace(available_reactions=tg.chat_rule[key]))
         if name == "SendReactionRequest":
             if any(r.emoticon in tg.refuse for r in req.reaction):
                 raise type("ReactionInvalidError", (Exception,), {})()
@@ -511,6 +546,83 @@ def test_a_refused_reaction_is_a_sentence_and_nothing_else(world):
     assert "allow" in str(e.value) or "ReactionInvalidError" in str(e.value)
     with pytest.raises(M.TGError):
         run(mgr.react(None, U(1), 42, 1, "hello"))     # words are not an emoji
+
+
+# ---- which reactions Telegram takes -----------------------------------------------------------------
+# Reported: "Telegram emoji react: does not allow this reaction". The picker offered 😂, 😮 and ❤️ (with
+# U+FE0F) and ＋ opened every emoji there is; Telegram takes its own fixed list, per chat.
+
+def test_a_private_chat_offers_telegrams_list_and_nothing_else(world):
+    mgr, tg = _react_world(world)
+    assert run(mgr.allowed_reactions(None, U(1), 42)) == ["👍", "👎", "❤", "🔥", "🤣", "🎉"], (
+        "a retired reaction, or a Premium-only one on an ordinary account, was offered")
+    mgr.account(1).me["premium"] = True
+    mgr.account(1).reaction_set = ()
+    assert "🐳" in run(mgr.allowed_reactions(None, U(1), 99)), "a Premium account was not offered its reactions"
+
+
+def test_a_group_admin_narrows_the_list_or_turns_it_off(world):
+    from telethon.tl.types import ChatReactionsNone, ChatReactionsSome, ReactionEmoji
+    mgr, tg = _react_world(world)
+    tg.chat_rule[-1000000000777] = ChatReactionsSome(reactions=[ReactionEmoji(emoticon="🔥"), ReactionEmoji(emoticon="👍")])
+    tg.chat_rule[-555] = ChatReactionsNone()
+    assert run(mgr.allowed_reactions(None, U(1), -1000000000777)) == ["🔥", "👍"]
+    assert "GetFullChannelRequest" in tg.asked
+    assert run(mgr.allowed_reactions(None, U(1), -555)) == [], "a chat with reactions off offered some"
+    assert "GetFullChatRequest" in tg.asked, "a small (non-channel) group was asked the channel's way"
+    with pytest.raises(M.TGError) as e:
+        run(mgr.react(None, U(1), -555, 1, "👍"))
+    assert "does not allow reactions" in str(e.value)
+    with pytest.raises(M.TGError) as e:
+        run(mgr.react(None, U(1), -1000000000777, 1, "❤"))
+    assert "❤" in str(e.value)
+    assert not [x for x in tg.sent if x[0] == "react"], "a reaction the chat refuses was still sent"
+
+
+def test_a_keyboard_heart_reaches_telegram_as_its_own_heart(world):
+    mgr, tg = _react_world(world)
+    after = run(mgr.react(None, U(1), 42, 1, "❤️"))
+    assert tg.sent[-1] == ("react", 42, 1, ["❤"]), "❤️ (U+FE0F) went out as-is — Telegram calls that REACTION_INVALID"
+    assert {"emoji": "❤", "count": 1, "mine": True} in after
+    run(mgr.react(None, U(1), 42, 1, "❤️"))
+    assert tg.sent[-1] == ("react", 42, 1, []), "tapping the heart again did not take it back"
+
+
+def test_an_emoji_telegram_does_not_have_is_refused_by_name_before_asking(world):
+    mgr, tg = _react_world(world)
+    with pytest.raises(M.TGError) as e:
+        run(mgr.react(None, U(1), 42, 1, "😂"))
+    assert "😂" in str(e.value) and "not take" in str(e.value)
+    assert not [x for x in tg.sent if x[0] == "react"]
+
+
+def test_your_reaction_can_always_be_taken_back(world):
+    """A chat that narrowed its list after you reacted must not trap your old reaction on the message."""
+    from telethon.tl.types import ChatReactionsNone
+    mgr, tg = _react_world(world)
+    tg.chats[-1000000000777][0].reactions = _reactions(**{"🎉": (1, True)})
+    tg.chat_rule[-1000000000777] = ChatReactionsNone()
+    assert run(mgr.react(None, U(1), -1000000000777, 1, "🎉")) == []
+    assert tg.sent[-1] == ("react", -1000000000777, 1, [])
+
+
+def test_the_list_is_read_once_and_an_unreadable_list_never_reads_as_none(world):
+    mgr, tg = _react_world(world)
+    run(mgr.allowed_reactions(None, U(1), 42))
+    run(mgr.allowed_reactions(None, U(1), 42))
+    assert tg.asked.count("GetAvailableReactionsRequest") == 1, "Telegram was asked again inside the cache window"
+    mgr.account(1).reaction_set, mgr.account(1).chat_reactions = (), {}
+    tg.list_down = True
+    with pytest.raises(M.TGError):
+        run(mgr.allowed_reactions(None, U(1), 42))
+    run(mgr.react(None, U(1), 42, 1, "🔥"))      # could not ask: Telegram judges, the reaction still goes
+    assert tg.sent[-1] == ("react", 42, 1, ["🔥"])
+
+
+def test_the_router_answers_the_reaction_list():
+    from app.routers.telegram_client import router
+    assert ("/api/tgc/reactions", ("GET",)) in {(r.path, tuple(sorted(r.methods or []))) for r in router.routes
+                                               if hasattr(r, "methods")}
 
 
 def test_search_finds_people_and_groups_you_know_first(world):

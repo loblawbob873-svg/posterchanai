@@ -184,6 +184,15 @@ async def react(req: React, db: Session = Depends(get_db), user: User = Depends(
         return _err(e)
 
 
+@router.get("/reactions")
+async def reactions(chat_id: int, db: Session = Depends(get_db), user: User = Depends(member)):
+    """The reactions this chat takes — what the picker offers, so it never offers one Telegram refuses."""
+    try:
+        return {"ok": True, "emoji": await manager().allowed_reactions(db, user, chat_id)}
+    except TGError as e:
+        return _err(e)
+
+
 @router.get("/search")
 async def search(q: str = "", db: Session = Depends(get_db), user: User = Depends(member)):
     try:

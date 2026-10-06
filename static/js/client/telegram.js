@@ -43,7 +43,8 @@
   }
   const st = { status:null, dialogs:[], open:null, msgs:new Map(), filter:'', ws:null, wsTimer:0, reply:null,
                loadingOlder:false, done:new Set(), pending:[], busy:false,
-               readOut:new Map() };   // chat → highest outgoing id the other side has read (✓✓ up to here)
+               readOut:new Map(),     // chat → highest outgoing id the other side has read (✓✓ up to here)
+               allowed:new Map() };   // chat → the reactions Telegram takes there (/api/tgc/reactions)
   let root = null;
 
   async function api(path, opts){
@@ -488,11 +489,31 @@
   /* REACTIONS. The chips are Telegram's own tally (count, and whether one is yours); tapping one
    * toggles yours. Telegram answers with the tally it now holds, which replaces ours — so a chat that
    * refuses an emoji, or another device reacting at the same moment, can never leave a wrong count. */
-  const QUICK = ['👍', '❤️', '🔥', '😂', '😮', '😢', '🙏', '👎', '🎉', '🤔'];
+  /* TELEGRAM TAKES ITS OWN LIST, NOT "ANY EMOJI" ("Telegram emoji react: does not allow this reaction").
+   * 😂 and 😮 were in this row and are not reactions on Telegram at all, its heart is ❤ with no variation
+   * selector, and a group admin can narrow the list further or switch reactions off. So the picker offers
+   * what /api/tgc/reactions says THIS chat takes, and ＋ opens the rest of that list — never the general
+   * emoji picker, nine in ten of whose emoji Telegram refuses. QUICK is only the order we prefer, and the
+   * row we fall back to when Telegram could not be asked (every entry is on Telegram's standard list). */
+  const QUICK = ['👍', '❤', '🔥', '🤣', '😱', '😢', '🙏', '👎', '🎉', '🤔'];
+  const bare = e => String(e).replace(/\uFE0F/g, '');
+  const shown = e => e === '❤' ? '❤️' : e;           // draw the heart as an emoji, not a text glyph
+  async function allowedFor(chat){
+    if(st.allowed.has(chat)) return st.allowed.get(chat);
+    try{ const r = await api('/api/tgc/reactions?chat_id=' + encodeURIComponent(chat)); const l = Array.isArray(r.emoji) ? r.emoji : null;
+      if(l) st.allowed.set(chat, l); return l; }
+    catch(_){ return null; }                           // unknown: offer QUICK and let Telegram judge
+  }
+  function quickFrom(list){
+    if(!list) return QUICK.slice();
+    const pick = QUICK.map(q => list.find(e => bare(e) === bare(q))).filter(Boolean);
+    for(const e of list){ if(pick.length >= QUICK.length) break; if(!pick.includes(e)) pick.push(e); }
+    return pick;
+  }
   function reactionsHtml(m){
     const rs = m.reactions || []; if(!rs.length) return '';
     return `<div class="tg-reacts">${rs.map(r => `<button class="tg-react${r.mine ? ' mine' : ''}" data-react="${m.id}" data-emoji="${esc(r.emoji)}"
-      aria-pressed="${r.mine ? 'true' : 'false'}" title="${r.mine ? 'Take back your ' : 'React with '}${esc(r.emoji)}">${esc(r.emoji)}<small>${r.count}</small></button>`).join('')}</div>`;
+      aria-pressed="${r.mine ? 'true' : 'false'}" title="${r.mine ? 'Take back your ' : 'React with '}${esc(shown(r.emoji))}">${esc(shown(r.emoji))}<small>${r.count}</small></button>`).join('')}</div>`;
   }
   async function react(msgId, emoji){
     const chat = st.open, list = st.msgs.get(chat), m = list && list.find(x => x.id === msgId); if(!m || !emoji) return;
@@ -503,31 +524,41 @@
     if(!had){ const r = next.find(x => x.emoji === emoji); if(r){ r.count++; r.mine = true; } else next.push({ emoji, count:1, mine:true }); }
     m.reactions = next; if(st.open === chat) paintMessages(false);
     try{ m.reactions = (await post('/api/tgc/react', { chat_id:chat, msg_id:msgId, emoji })).reactions || []; }
-    catch(e){ m.reactions = before; const P = PC(); if(P.toast) P.toast(e.message); }
+    catch(e){ m.reactions = before; st.allowed.delete(chat); const P = PC(); if(P.toast) P.toast(e.message); }   // ask again next time
     if(st.open === chat) paintMessages(false);
   }
-  function pickReaction(anchor, msgId){
+  async function pickReaction(anchor, msgId){
     const old = document.querySelector('.tg-react-pop'); if(old){ const same = old.dataset.msg === String(msgId); old.remove(); if(same) return; }
+    const chat = st.open, list = await allowedFor(chat);
+    if(st.open !== chat) return;
+    if(list && !list.length){ const P = PC(); if(P.toast) P.toast('This chat does not allow reactions.'); return; }
     const pop = document.createElement('div'); pop.className = 'tg-react-pop'; pop.dataset.msg = String(msgId); pop.setAttribute('role', 'menu');
-    pop.innerHTML = QUICK.map(e => `<button role="menuitem" data-e="${esc(e)}" aria-label="React with ${esc(e)}">${esc(e)}</button>`).join('')
-      + (PC().openEmojiPopover ? '<button role="menuitem" data-more aria-label="More emoji">＋</button>' : '');
+    const buttons = es => es.map(e => `<button role="menuitem" data-e="${esc(e)}" aria-label="React with ${esc(shown(e))}">${esc(shown(e))}</button>`).join('');
+    const quick = quickFrom(list), more = list ? list.length > quick.length : !!PC().openEmojiPopover;
+    pop.innerHTML = buttons(quick) + (more ? '<button role="menuitem" data-more aria-label="More reactions">＋</button>' : '');
     const msg = anchor.closest('.tg-msg'); (msg || anchor.parentNode).appendChild(pop);
     /* ABOVE THE MESSAGE WHEN IT FITS, BELOW WHEN IT DOES NOT ("the emoji reaction popup ... in the top left
      * of the window"). It always opened above, so on a message near the top of the chat -- the first one
      * you see on opening -- it went off the top of the visible area, clipped under the title bar (measured:
      * y = -5 in its own window). The limit is the scrolling list's top edge, not the page's. */
-    try{
+    const place = () => { try{
+      pop.classList.remove('below');
       let clip = msg && msg.parentElement;
       while(clip && clip !== document.body){ const o = getComputedStyle(clip).overflowY; if(o === 'auto' || o === 'scroll') break; clip = clip.parentElement; }
       const top = Math.max(0, clip && clip !== document.body ? clip.getBoundingClientRect().top : 0);
       if(pop.getBoundingClientRect().top < top + 4) pop.classList.add('below');
-    }catch(_){ }
+    }catch(_){ } };
+    place();
     const close = () => { pop.remove(); document.removeEventListener('click', away, true); };
     const away = e => { if(!pop.contains(e.target)) close(); };
     setTimeout(() => document.addEventListener('click', away, true), 0);
-    pop.querySelectorAll('[data-e]').forEach(b => b.onclick = () => { close(); react(msgId, b.dataset.e); });
-    const more = pop.querySelector('[data-more]');
-    if(more) more.onclick = () => { close(); PC().openEmojiPopover(anchor, (value, done) => { if(done) done(); react(msgId, value); }); };
+    const bind = () => pop.querySelectorAll('[data-e]').forEach(b => b.onclick = () => { close(); react(msgId, b.dataset.e); });
+    bind();
+    const plus = pop.querySelector('[data-more]');
+    if(plus) plus.onclick = e => {
+      if(list){ e.stopPropagation(); pop.classList.add('all'); pop.innerHTML = buttons(list); bind(); place(); return; }
+      close(); PC().openEmojiPopover(anchor, (value, done) => { if(done) done(); react(msgId, value); });
+    };
   }
   function linkify(t){
     return esc(t).replace(/(https?:\/\/[^\s<]+)/g, u => `<a href="${u}" target="_blank" rel="noopener noreferrer">${u}</a>`).replace(/\n/g, '<br>');
