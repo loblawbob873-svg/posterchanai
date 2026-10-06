@@ -66,7 +66,17 @@ function createToastHost(deps){
     win.on('focus', () => { if(win === mine) giveBackFocus(); });
     await win.loadFile(pagePath);
     if(!alive() || win !== mine) return false;
+    return adopt(mine);
+  }
+  /* EVERY SHOW IS A NEW COMPOSITOR WINDOW. Hiding unmaps the window, and showing it again maps a NEW
+   * Wayfire view with a NEW id -- so the id from the first card named nothing by the second, the move to
+   * the corner went to a view that no longer existed (and failed quietly), and every card after the first
+   * appeared wherever Wayfire puts a freshly mapped window: the middle of the screen ("toast notifications
+   * are in the center of my screen"). Look the view up again, and re-apply on-top and every-workspace,
+   * after every show. */
+  async function adopt(mine){
     win.showInactive();
+    id = null;
     const row = await findRow();
     if(!row || win !== mine) return false;
     id = Number(row.id);
@@ -77,8 +87,8 @@ function createToastHost(deps){
     return true;
   }
   async function ensure(){
-    if(alive() && id != null){ if(win.isVisible && !win.isVisible()){ win.showInactive(); await giveBackFocus(); } return true; }
-    if(!opening) opening = open().finally(() => { opening = null; });
+    if(alive() && id != null && !(win.isVisible && !win.isVisible())) return true;
+    if(!opening) opening = (alive() ? adopt(win) : open()).finally(() => { opening = null; });
     return opening;
   }
   /* Bottom-right of the monitor the raising desktop is on, ABOVE the taskbar: the work area the desktop

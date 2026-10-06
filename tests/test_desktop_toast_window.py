@@ -26,15 +26,18 @@ const wmApi = {
   sticky: async (id, on) => calls.push(['sticky', id, on]),
   focus: async id => calls.push(['FOCUS', id]),
 };
-let made = null, clock = 1000;
+let made = null, clock = 1000, nextView = 50;
 const timers = [];
 class FakeWin {
   constructor(o){ made = this; this.o = o; this.dead = false; this.visible = false; this.webContents = { id: 77, sent: [], send(ch, v){ this.sent.push([ch, v]); } }; this.ev = {}; }
   on(n, f){ this.ev[n] = f; }
   async loadFile(p){ this.page = p; }
-  showInactive(){ this.visible = true; calls.push(['showInactive']); if(!rows.some(r => r.id === 50)) rows.push({ id: 50, title: TITLE, rect: { x: 0, y: 0, width: this.o.width * 2, height: this.o.height * 2 } }); }
+  // LIKE WAYFIRE: hiding a window UNMAPS it, and showing it again maps a NEW view with a NEW id. The fake
+  // used to keep id 50 for ever -- it agreed with the bug, so every card after the first could be placed
+  // on a view that no longer existed and the test still passed.
+  showInactive(){ if(this.visible) return; this.visible = true; calls.push(['showInactive']); rows.push({ id: nextView++, title: TITLE, rect: { x: 0, y: 0, width: this.o.width * 2, height: this.o.height * 2 } }); }
   show(){ calls.push(['SHOW-ACTIVE']); }
-  hide(){ this.visible = false; calls.push(['hide']); }
+  hide(){ this.visible = false; calls.push(['hide']); for(let i = rows.length - 1; i >= 0; i--) if(rows[i].title === TITLE) rows.splice(i, 1); }
   isVisible(){ return this.visible; }
   getBounds(){ return { width: this.o.width, height: this.o.height }; }
   setSize(w, h){ this.o.width = w; this.o.height = h; }
@@ -68,6 +71,10 @@ const host = createToastHost({ BrowserWindow: FakeWin, wm: () => wmApi, scopeOf:
   for(const [, f] of timers.splice(0)) f();
   await new Promise(r => setTimeout(r, 5));
   out.afterExpiry = { calls: calls.splice(0), state: host._state() };
+  // The NEXT notification maps the window again -- as a new view -- and must still go to the corner,
+  // on top, on every workspace. "toast notifications are in the center of my screen".
+  await host.show(owner, { id: 'd', html: 'fourth' });
+  out.reshown = { calls: calls.splice(0), view: rows.filter(r => r.title === TITLE).map(r => r.id) };
   console.log(JSON.stringify(out));
 })().catch(e => { console.error(e); process.exit(1); });
 """
@@ -111,3 +118,17 @@ def test_a_click_goes_back_to_the_page_that_raised_it_and_only_from_the_card_win
 def test_a_card_expires_and_the_window_hides():
     d = _run()
     assert d["afterExpiry"]["state"]["cards"] == [] and ["hide"] in d["afterExpiry"]["calls"], d["afterExpiry"]
+
+
+def test_the_next_card_after_the_window_hid_still_goes_to_the_corner():
+    """Wayfire maps a hidden window back as a NEW view. Placing the old id moved nothing, and a freshly
+    mapped window sits wherever Wayfire puts it: the middle of the screen."""
+    d = _run()
+    calls, view = d["reshown"]["calls"], d["reshown"]["view"]
+    assert len(view) == 1 and view[0] != 50, ("the fake did not re-map the window as a new view", view)
+    new = view[0]
+    places = [c for c in calls if c[0] == "place"]
+    assert places and all(c[1] == new for c in places), ("placed a view that no longer exists", calls)
+    _, _, x, y, w, h = places[-1]
+    assert x + w > 3840 * 2 - 100 and y + h > 2484 - 100, ("not in the bottom-right corner", places[-1])
+    assert ["top", new, True] in calls and ["sticky", new, True] in calls, ("the new view is not kept on top", calls)
