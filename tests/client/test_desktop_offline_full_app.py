@@ -69,8 +69,16 @@ def bundle():
         BUNDLE_ROOT=None
 
 
-async def wait_browser_port(proc, port_file, log, timeout=30):
+# A cold Chrome on a shared GitHub runner is slow, not broken: deploy 102's Linux desktop job failed one
+# full-app test with "Chrome startup failed (exit=None, timeout=30s)" -- Chrome still running, 19s in
+# before it had even logged its D-Bus warning -- and passed unchanged on the re-run. Locally 30s stays the
+# bound, so a Chrome that really hangs is still caught quickly where the gate runs.
+_CHROME_START = 90 if os.environ.get('CI') else 30
+
+
+async def wait_browser_port(proc, port_file, log, timeout=None):
     """Bound cold Chrome startup separately from app behavior and retain its diagnostics."""
+    timeout = _CHROME_START if timeout is None else timeout
     deadline=asyncio.get_running_loop().time()+timeout
     while proc.poll() is None:
         try:
