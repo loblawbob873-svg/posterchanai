@@ -23,7 +23,7 @@ from app.services.nostr.event import verify_event
 from app.services import git_acceptance
 from app.services.vmhost import kinds as _vmhost_kinds
 from .langfilter import blocked_language, blocked_word, is_json_content, _NEVER_WORD_FILTERED
-from .bridges import reveals_blocked_bridge, author_on_blocked_bridge, is_bridged_post
+from .bridges import reveals_blocked_bridge, author_on_blocked_bridge, is_bridged_post, is_social_mirror
 from .store import retired_kind_reason as _retired_kind_reason
 from app.services.nostr.quotes import quote_pubkeys
 
@@ -1546,6 +1546,14 @@ class RelayServer:
         if self.cfg.get("block_bridged") and is_bridged_post(ev) and not _is_puppet \
                 and not self.gate.is_operator(ev.get("pubkey", "")):
             self._refuse(conn, eid, ev, "blocked: bridged (proxy) content not accepted")
+            return
+        # …and a fediverse/Bluesky MIRROR ACCOUNT, whatever the kind (comments, reactions, relay
+        # lists). The store refuses it too (store.admit) — this is here so the client is TOLD, rather
+        # than getting an OK for an event that was quietly not stored.
+        if self.cfg.get("block_bridged") and not _is_puppet and is_social_mirror(ev) \
+                and not self.gate.is_operator(ev.get("pubkey", "")):
+            self.gate.mark_bridged_identity(ev.get("pubkey", ""))
+            self._refuse(conn, eid, ev, "blocked: bridged (fediverse/Bluesky mirror) account not accepted")
             return
         # WoT publishing gate — skippable. When wot_enabled is off (e.g. a processing node whose
         # relay is internal/localhost-bound and shouldn't run the trust graph), every author is

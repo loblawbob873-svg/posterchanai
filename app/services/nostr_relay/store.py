@@ -734,6 +734,9 @@ class RelayStore:
         return stored
 
     async def add_events_bulk(self, events: list, origin: str = "wot") -> int:
+        events = [ev for ev in (events or []) if self._admitted(ev)]
+        if not events:
+            return 0
         return await self._w(self._add_events_bulk_sync, events, origin)
 
     def _filter_existing_sync(self, ids: list) -> set:
@@ -758,8 +761,27 @@ class RelayStore:
         conn.execute("DELETE FROM events WHERE id=?", (eid,))
         conn.execute("DELETE FROM event_tags WHERE event_id=?", (eid,))
 
+    # THE ONE DOOR. Six paths store events (the WebSocket, the firehose, the member sync, the
+    # backfill, the thread-ancestor fetch, the metadata lookup), each with its OWN copy of the
+    # admission rules, and they had drifted: the ancestor fetch and two syncs never checked the
+    # bridge rules at all, which is how 53k bridged events got in. The relay installs its policy here
+    # (thread.py `_admit`), so a door added next year inherits it instead of re-learning it. A hook
+    # that RAISES admits — this is a filter, and a bug in it must not stop the relay storing anything.
+    admit = None
+
+    def _admitted(self, ev: dict) -> bool:
+        if self.admit is None:
+            return True
+        try:
+            return bool(self.admit(ev))
+        except Exception as e:
+            logger.debug("[nostr-relay] admit hook failed (admitting): %s", e)
+            return True
+
     async def add_event(self, ev: dict, origin: str = "wot") -> bool:
         """Insert an event (already verified + WoT-gated by the caller). Returns stored?"""
+        if not self._admitted(ev):
+            return False
         return await self._w(self._add_event_sync, ev, origin)
 
     def _delete_pubkeys_sync(self, pubkeys: list, spare_preserved: bool = True) -> int:
@@ -936,6 +958,33 @@ class RelayStore:
             if r["pubkey"] and author_on_blocked_bridge(ev, domains):
                 out.add(r["pubkey"])
         return out
+
+    def _social_mirror_pubkeys_sync(self) -> set:
+        """Authors of stored fediverse/Bluesky MIRROR events (bridges.is_social_mirror), minus anybody
+        who has ever published one of OUR OWN puppet events (the `fedibridge` anchor) or anything we
+        stored as origin='bridge'. The caller still spares operators and the preserve set."""
+        from .bridges import is_social_mirror
+        conn = self._conn()
+        out: set = set()
+        ours: set = set()
+        for r in conn.execute("SELECT pubkey, tags, origin FROM events WHERE tags LIKE '%\"proxy\"%'"):
+            pk = r["pubkey"]
+            if not pk:
+                continue
+            raw = r["tags"] or "[]"
+            if r["origin"] == "bridge" or '"fedibridge"' in raw:
+                ours.add(pk)
+                continue
+            try:
+                tags = json.loads(raw)
+            except Exception:
+                continue
+            if is_social_mirror({"tags": tags}):
+                out.add(pk)
+        return out - ours
+
+    async def social_mirror_pubkeys(self) -> set:
+        return await self._w(self._social_mirror_pubkeys_sync)
 
     async def bridge_identity_pubkeys(self, domains) -> set:
         return await self._w(self._bridge_identity_pubkeys_sync, set(domains))

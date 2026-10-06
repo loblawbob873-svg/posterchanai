@@ -28,7 +28,7 @@ from .store import RelayStore, _RETIRED_KINDS
 from .wot import WotGate
 from .server import RelayServer, _git_comment_root
 from .bridges import (relay_domain as _bridge_domain, reveals_blocked_bridge,
-                      author_on_blocked_bridge, is_bridged_post)
+                      author_on_blocked_bridge, is_bridged_post, is_social_mirror)
 from app.services.vmhost import kinds as _vmhost_kinds
 from .langfilter import screen_blocked_words, is_json_content
 
@@ -775,6 +775,8 @@ async def _main(cfg: dict) -> None:
     # "Purge now" button only (cmd: purge-blocks).
     if cfg["blocked_relays"]:
         await _mark_blocked_relays(store, gate, cfg["blocked_relays"])
+    if cfg.get("block_bridged"):
+        await _safe(_mark_social_mirrors(store, gate))
     from .outbox import Outbox
     outbox = Outbox(cfg["upstream"], min_interval=cfg["outbox_min_interval"],
                     maxsize=cfg["outbox_max_queue"], direct=cfg["direct"],
@@ -802,6 +804,7 @@ async def _main(cfg: dict) -> None:
     server = RelayServer(store, gate, cfg, outbox_cb=outbox.enqueue,
                          private_cb=(private.enqueue if private else None))
     await server.warm_bridge_nip05()   # load persisted fediverse-puppet NIP-05 names before serving
+    store.admit = lambda ev: _admit(ev, gate, cfg)   # the bridge rules, at the one door every path uses
     _relay.store, _relay.gate, _relay.server, _relay.outbox = store, gate, server, outbox
     _relay.private_outbox = private
     _relay.stop_event = asyncio.Event()
@@ -1003,6 +1006,10 @@ async def _main(cfg: dict) -> None:
         by_bridge = (await _apply_blocked_relays(store, gate, fresh["blocked_relays"]) or 0) if fresh["blocked_relays"] else 0
         # Bridged-post purge (NIP-48 proxy tag) — preserve-aware (local users / direct-published spared).
         by_proxy = (await store.delete_by_proxy() or 0) if fresh.get("block_bridged") else 0
+        # …and every MIRROR ACCOUNT whole, not just its notes: comments (kind 1111 — 46k of the 53k),
+        # reactions, videos, relay lists. Spares operators and the preserve set, like every purge here.
+        if fresh.get("block_bridged"):
+            by_proxy += (await _apply_social_mirrors(store, gate) or 0)
         by_inst = (await store.delete_pubkeys(_blocked_instance_puppets(), spare_preserved=False) or 0)
         total = by_pk + by_word + by_lang + by_bridge + by_proxy + by_inst
         if total:
@@ -1354,6 +1361,8 @@ async def _main(cfg: dict) -> None:
                             # Re-mark bridged accounts in the live gate (load_from_store doesn't keep them).
                             if cfg["blocked_relays"]:
                                 asyncio.create_task(_safe(_mark_blocked_relays(store, gate, cfg["blocked_relays"])))
+                            if cfg["block_bridged"]:
+                                asyncio.create_task(_safe(_mark_social_mirrors(store, gate)))
                             logger.info("[nostr-relay] control: reloaded %d blocked, %d bridge, %d operator key(s)",
                                         len(cfg["blocked_pubkeys"]), len(cfg["blocked_relays"]), len(cfg["operator"]))
                         except Exception as e:
@@ -1982,6 +1991,60 @@ async def _mark_blocked_relays(store, gate, domains) -> list:
     ident_pks = [p for p in (ident or []) if p not in ops]
     gate.add_bridged_identity(ident_pks)
     return list(set(weak_pks) | set(ident_pks))
+
+
+def _admit(ev: dict, gate, cfg: dict) -> bool:
+    """The relay's admission rule for bridge content, installed as `store.admit` — the ONE door all
+    six storing paths go through. Two questions:
+
+      * is the author an account already marked as a bridge mirror (by its nip05, its relay list or
+        its proxy tags)? Then nothing it signs is stored, whatever path carried it;
+      * with "block bridged posts" on, is THIS event signed by a fediverse/Bluesky bridge (a `proxy`
+        tag, protocol activitypub|atproto)? Then the account is a mirror: mark it, refuse it.
+
+    Never our own puppets (validated cryptographically by the gate) and never an operator or
+    registered user — the same exemptions every bridge rule here has always had."""
+    pk = ev.get("pubkey", "") or ""
+    if gate.is_bridged(pk):
+        return gate.is_puppet_event(ev)
+    if cfg.get("block_bridged") and is_social_mirror(ev):
+        if gate.is_operator(pk) or gate.is_puppet_event(ev):
+            return True
+        gate.mark_bridged_identity(pk)
+        return False
+    return True
+
+
+async def _mark_social_mirrors(store, gate) -> list:
+    """Mark every stored fediverse/Bluesky MIRROR account in the gate (bridges.is_social_mirror), so
+    nothing more it signs is accepted. In-memory like the other bridge marks: runs at start, on a live
+    reload, and before a purge. Spares operators (mark_bridged_identity does) and the preserve set."""
+    try:
+        pks = await store.social_mirror_pubkeys()
+    except Exception as e:
+        logger.warning("[nostr-relay] mirror scan failed: %s", e)
+        return []
+    ops = gate.operators()
+    keep = set(getattr(store, "preserve_pubkeys", ()) or ())
+    pks = [p for p in pks if p not in ops and p not in keep]
+    gate.add_bridged_identity(pks)
+    if pks:
+        logger.info("[nostr-relay] %d fediverse/Bluesky mirror account(s) marked as bridged", len(pks))
+    return pks
+
+
+async def _apply_social_mirrors(store, gate) -> int:
+    """Mark the mirror accounts AND purge what they authored — the nightly / manual block-purge half."""
+    pks = await _mark_social_mirrors(store, gate)
+    if not pks:
+        return 0
+    try:
+        removed = await store.delete_pubkeys(list(pks))
+    except Exception as e:
+        logger.warning("[nostr-relay] mirror purge failed: %s", e)
+        return 0
+    logger.info("[nostr-relay] mirror purge: %d account(s), removed %d event(s)", len(pks), removed)
+    return removed
 
 
 def _blocked_instance_puppets() -> list:

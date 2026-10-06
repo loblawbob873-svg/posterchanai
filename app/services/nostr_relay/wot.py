@@ -76,6 +76,9 @@ class WotGate:
     def operators(self) -> frozenset:
         return self._operator
 
+    def is_bridged(self, pubkey: str) -> bool:
+        return bool(pubkey) and pubkey in self._bridged
+
     def is_blocked(self, pubkey: str) -> bool:
         return bool(pubkey) and (pubkey in self._blocked or pubkey in self._bridged)
 

@@ -60,6 +60,33 @@ def has_proxy_tag(ev: dict) -> bool:
     return False
 
 
+# THE PROTOCOLS THAT MEAN "THIS ACCOUNT IS A FEDIVERSE OR BLUESKY PERSON MIRRORED IN BY A BRIDGE".
+# NIP-48's third element names what the `proxy` tag points INTO. Only these two are social bridges;
+# the others seen on this relay are not, and must not be caught by this rule: torrent indexers put the
+# source URL there (nyaa / piratebay, 16k events feeding the Torrents view), and rss / web / x.com /
+# github are single-purpose feed mirrors.
+SOCIAL_BRIDGE_PROTOCOLS = frozenset({"activitypub", "atproto"})
+
+
+def is_social_mirror(ev: dict) -> bool:
+    """The event was signed by a BRIDGE on behalf of a fediverse/Bluesky account (NIP-48 `proxy`
+    tag, protocol activitypub|atproto) — i.e. its author is a mirror account, whatever its kind.
+
+    This is the signal the domain blocklist could not see. Classifying by the BRIDGE's domain needs
+    the account's kind-0 (`nip05: graf@poa-st.mostr.pub`), and a bridge account's profile mostly
+    never reaches this relay — measured 2026-10-06: 53,212 stored mirror events from 4,468 accounts,
+    and 18 of their profiles. The `proxy` tag is on every event the bridge signs, and it points at
+    the ORIGIN server (poa.st), never at the bridge, which is why the host match never fired.
+
+    Our OWN fediverse puppets carry the same tag; callers must exempt them (gate.is_puppet_event),
+    and operators/registered users, exactly as the other bridge rules do."""
+    for t in ev.get("tags") or []:
+        if (isinstance(t, (list, tuple)) and len(t) >= 3 and t[0] == "proxy" and t[1]
+                and str(t[2]).strip().lower() in SOCIAL_BRIDGE_PROTOCOLS):
+            return True
+    return False
+
+
 # PUBLIC timeline kinds the "block bridged posts" filter is allowed to touch: notes + reposts only.
 # Crucially NOT kind 4 / 1059 (DMs) — a fediverse user DMing through a bridge sends a proxy-tagged
 # kind-4, and blocking/purging those silently eats incoming DMs. Also spares reactions/profiles/etc.
