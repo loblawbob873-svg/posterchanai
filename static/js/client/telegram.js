@@ -512,6 +512,16 @@
     pop.innerHTML = QUICK.map(e => `<button role="menuitem" data-e="${esc(e)}" aria-label="React with ${esc(e)}">${esc(e)}</button>`).join('')
       + (PC().openEmojiPopover ? '<button role="menuitem" data-more aria-label="More emoji">＋</button>' : '');
     const msg = anchor.closest('.tg-msg'); (msg || anchor.parentNode).appendChild(pop);
+    /* ABOVE THE MESSAGE WHEN IT FITS, BELOW WHEN IT DOES NOT ("the emoji reaction popup ... in the top left
+     * of the window"). It always opened above, so on a message near the top of the chat -- the first one
+     * you see on opening -- it went off the top of the visible area, clipped under the title bar (measured:
+     * y = -5 in its own window). The limit is the scrolling list's top edge, not the page's. */
+    try{
+      let clip = msg && msg.parentElement;
+      while(clip && clip !== document.body){ const o = getComputedStyle(clip).overflowY; if(o === 'auto' || o === 'scroll') break; clip = clip.parentElement; }
+      const top = Math.max(0, clip && clip !== document.body ? clip.getBoundingClientRect().top : 0);
+      if(pop.getBoundingClientRect().top < top + 4) pop.classList.add('below');
+    }catch(_){ }
     const close = () => { pop.remove(); document.removeEventListener('click', away, true); };
     const away = e => { if(!pop.contains(e.target)) close(); };
     setTimeout(() => document.addEventListener('click', away, true), 0);

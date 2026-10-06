@@ -11627,6 +11627,7 @@ html.pc-oswin .main:has(>#feed>.tg-app)>.topbar{display:none}
 .tg-react-pop{position:absolute;z-index:5;right:6px;bottom:calc(100% - 4px);display:flex;flex-wrap:wrap;gap:2px;max-width:min(300px,90vw);padding:5px;
   border:1px solid rgba(var(--accent-rgb),.45);border-radius:12px;background:var(--panel2);box-shadow:0 8px 28px rgba(0,0,0,.45)}
 .tg-msg:not(.out) .tg-react-pop{right:auto;left:6px}
+.tg-react-pop.below{bottom:auto;top:calc(100% - 4px)}   /* no room above: open under the message (telegram.js pickReaction) */
 .tg-react-pop button{width:36px;height:36px;border:0;border-radius:8px;background:transparent;font-size:20px;cursor:pointer;color:var(--text)}
 .tg-react-pop button:hover,.tg-react-pop button:focus-visible{background:rgba(var(--accent-rgb),.18)}
 .tg-found{margin-top:6px;border-top:1px solid rgba(var(--accent-rgb),.18)}
