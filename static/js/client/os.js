@@ -10908,6 +10908,19 @@
     };
     tick();
   }
+  /* WHAT OPENED IT: A FINGER OR A KEY. Focusing the search box is what makes Super-then-type work, and on
+   * a touch screen the very same focus pulls up the on-screen keyboard over half the menu, every time it
+   * opens ("keyboard should not appear every time i click on the start menu", Android tablet). So the box
+   * is focused only when the last input was a key or a mouse; after a touch or a pen the MENU takes focus
+   * instead (a focused non-field raises no keyboard), and a hardware key typed into it still reaches the
+   * box through the keydown catch below. Captured on window so no handler can stop it first. */
+  let _lastInput = 'key';
+  try{
+    window.addEventListener('pointerdown', (e) => { _lastInput = e.pointerType === 'mouse' ? 'mouse' : 'touch'; }, true);
+    window.addEventListener('keydown', () => { _lastInput = 'key'; }, true);
+  }catch(_){ }
+  const _touchOpened = () => _lastInput === 'touch';
+
   function toggleStart(force){
     /* Every handler in the menu below ends with `toggleStart(false)`. In the window that means the
        window — stated once here rather than at ~15 call sites. */
@@ -10995,7 +11008,9 @@
      * to the newly focused field itself, which keeps composition and dead keys working. */
     const q0 = $('#os-q', menu);
     if(q0){
-      try{ q0.focus({ preventScroll: true }); }catch(_){ try{ q0.focus(); }catch(__){} }
+      const first = _touchOpened() ? menu : q0;
+      if(first === menu) menu.tabIndex = -1;
+      try{ first.focus({ preventScroll: true }); }catch(_){ try{ first.focus(); }catch(__){} }
       menu.addEventListener('keydown', (e) => {
         if(e.ctrlKey || e.altKey || e.metaKey) return;
         if(e.key && e.key.length === 1 && document.activeElement !== q0){
