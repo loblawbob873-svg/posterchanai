@@ -7,7 +7,6 @@ from datetime import datetime, timedelta
 from sqlalchemy import func
 from fastapi import APIRouter, Depends, HTTPException, status, Response, UploadFile, File, Request
 from starlette.requests import Request as StarletteRequest
-from fastapi.responses import FileResponse
 from sqlalchemy.orm import Session
 from sqlalchemy.exc import SQLAlchemyError, IntegrityError, OperationalError
 from pydantic import BaseModel

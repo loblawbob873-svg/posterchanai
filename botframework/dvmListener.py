@@ -11,7 +11,6 @@ NIP-90 refs: request kinds 5000–5999, results 6000–6999, feedback 7000. We r
 job's `i` (input) tags, falling back to the event content.
 """
 import os
-import json
 import time
 
 import nostr as _nk

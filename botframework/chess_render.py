@@ -11,7 +11,7 @@ Public API:
 import io
 
 import chess
-from PIL import Image, ImageDraw, ImageFont, ImageFilter
+from PIL import Image, ImageDraw, ImageFilter
 
 # ---- cyberpunk palette ----
 BG = (11, 1, 24, 255)            # near-black violet (matches the client theme)

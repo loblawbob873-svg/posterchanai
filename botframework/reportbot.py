@@ -3,7 +3,6 @@
 import os
 import time
 import datetime
-import json
 import pytz
 import psycopg2
 import akkoma_db

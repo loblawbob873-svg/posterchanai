@@ -69,15 +69,7 @@ from app.utils import lb_auth
 from app.models import User
 from app.services import settings_store
 from app.utils.auth_utils import query_api_key_with_retry, get_user_from_api_key
-from app.schemas import (
-    ChatCompletionRequest,
-    ChatCompletionResponse,
-    ChatCompletionChoice,
-    ChatCompletionUsage,
-    ChatMessage,
-    ModelInfo,
-    ModelsResponse,
-)
+from app.schemas import ChatCompletionRequest, ModelInfo, ModelsResponse
 from app.services.inference_factory import get_inference_service
 from app.services.text_utils import strip_thinking_tags
 

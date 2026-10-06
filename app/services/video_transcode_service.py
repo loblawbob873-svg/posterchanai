@@ -7,7 +7,6 @@ import logging
 import subprocess
 from pathlib import Path
 from typing import Optional, Tuple
-import hashlib
 import time
 
 logger = logging.getLogger(__name__)

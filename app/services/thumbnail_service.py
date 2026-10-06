@@ -5,7 +5,7 @@ Stores thumbnails in .thumbnails folder within user directories.
 import logging
 import subprocess
 from pathlib import Path
-from typing import Optional, List, Tuple, Callable
+from typing import Optional, Tuple, Callable
 from PIL import Image
 import hashlib
 from concurrent.futures import ThreadPoolExecutor, as_completed

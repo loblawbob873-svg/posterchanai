@@ -28,7 +28,6 @@ import secrets
 from app.models import User
 from app.services import nostr_store as store
 from app.services import settings_store as _ss  # reuse operator-key / port / enabled helpers
-from app.services.nostr import nostr_service
 
 logger = logging.getLogger(__name__)
 

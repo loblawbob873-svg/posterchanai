@@ -5,7 +5,6 @@ With health checking to avoid sending requests to unhealthy/slow servers.
 import asyncio
 from app.utils import lb_auth
 import httpx
-import json
 import logging
 import time
 from itertools import cycle

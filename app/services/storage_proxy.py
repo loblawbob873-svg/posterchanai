@@ -4,7 +4,6 @@ Similar to torrent proxy, but for file storage operations.
 """
 import logging
 from app.utils import lb_auth
-import re
 import httpx
 from fastapi import HTTPException
 from fastapi.responses import Response, StreamingResponse

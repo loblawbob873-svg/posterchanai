@@ -18,9 +18,8 @@ import random
 import asyncio
 import logging
 
-import websockets
 
-from app.services.nostr.relay import _connect, _CONNECT_TIMEOUT
+from app.services.nostr.relay import _connect
 
 logger = logging.getLogger(__name__)
 

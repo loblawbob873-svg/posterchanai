@@ -9,8 +9,6 @@ Provides:
 - Delete messages
 """
 
-import asyncio
-import base64
 import email
 import imaplib
 import time

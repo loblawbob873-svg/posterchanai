@@ -10,7 +10,7 @@ import asyncio
 import json
 import re
 import logging
-from typing import List, Optional, Dict, Any
+from typing import Optional, Dict, Any
 
 from fastapi import APIRouter, Depends, HTTPException, status, Request
 from sqlalchemy.orm import Session

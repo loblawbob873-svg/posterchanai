@@ -1,11 +1,7 @@
 #!/usr/bin/env python3
 
-import os
-import time
 import datetime
 import pytz
-import re
-import psycopg2
 import akkoma_db
 import logging
 import signal

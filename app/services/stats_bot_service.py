@@ -14,7 +14,6 @@ command; `preview_only=True` forces the Telegram preview regardless of the confi
 import os
 import io
 import json
-import base64
 import logging
 import asyncio
 from datetime import datetime, timezone, timedelta

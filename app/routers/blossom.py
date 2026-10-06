@@ -13,7 +13,7 @@ import logging
 import re
 from urllib.parse import quote, unquote
 
-from fastapi import APIRouter, Depends, Request, Response, HTTPException
+from fastapi import APIRouter, Depends, Request, Response
 from fastapi.responses import StreamingResponse, JSONResponse
 from sqlalchemy.orm import Session
 

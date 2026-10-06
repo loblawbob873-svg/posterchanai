@@ -25,7 +25,7 @@ true if anyone edits the wrapper: no untrusted text may reach the command line u
 """
 import base64
 import json
-from typing import Any, Awaitable, Callable, Optional
+from typing import Any, Awaitable, Callable
 
 # Reject a write whose payload would make a command line the kernel refuses to exec.
 #

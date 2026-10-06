@@ -11,7 +11,7 @@ import akkoma_db
 import logging
 import threading
 from urllib.parse import urlparse
-from config import SQL_USER, SQL_PASS, SQL_HOST, SQL_DATABASE, OPENAI_ENDPOINT, PLEROMA_ACCESS_TOKEN, PLEROMA_ENDPOINT, PLEROMA_USERNAME, UNFOLLOW_IMAGE, AUTO_NARRATE
+from config import SQL_USER, SQL_PASS, SQL_HOST, SQL_DATABASE, OPENAI_ENDPOINT, PLEROMA_ACCESS_TOKEN, PLEROMA_ENDPOINT, UNFOLLOW_IMAGE, AUTO_NARRATE
 from tts import generate_speech_with_retries, generate_narration_video
 try:
     from config import UNFOLLOW_SILENT_MODE
@@ -21,7 +21,7 @@ except ImportError:
 UNFOLLOW_SILENT_MODE = os.getenv("UNFOLLOW_SILENT_MODE", "").lower() in ("true", "1", "yes") or UNFOLLOW_SILENT_MODE
 
 from ai import generate_reply
-from pleroma import post_to_fediverse as pleroma_post_to_fediverse, post_image_to_fediverse as pleroma_post_image_to_fediverse
+from pleroma import post_image_to_fediverse as pleroma_post_image_to_fediverse
 import requests
 
 # Cache for bot avatar URL

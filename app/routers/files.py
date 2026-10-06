@@ -5,14 +5,12 @@ All blocking I/O operations are run in thread pools to prevent blocking.
 """
 from fastapi import APIRouter, Depends, HTTPException, Query, UploadFile, File, Form, Request
 from fastapi.responses import FileResponse, JSONResponse
-import json
 from sqlalchemy.orm import Session
 from pathlib import Path
 from typing import List, Optional, Tuple
 from collections import OrderedDict
 from pydantic import BaseModel
 from datetime import datetime, timedelta
-import os
 import base64
 from PIL import Image
 import io

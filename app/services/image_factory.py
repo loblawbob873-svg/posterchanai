@@ -11,10 +11,6 @@ from typing import Optional, Protocol, runtime_checkable, TYPE_CHECKING
 from sqlalchemy.orm import Session
 
 from app.services import settings_store
-from app.services.image_load_balancer import (
-    NoHealthyImageServersError,
-    should_use_remote_image,
-)
 
 if TYPE_CHECKING:
     from app.models import User

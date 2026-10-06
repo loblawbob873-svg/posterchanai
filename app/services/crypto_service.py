@@ -3,7 +3,6 @@ Encryption service for sensitive data at rest.
 Uses Fernet symmetric encryption from cryptography library.
 """
 import os
-import base64
 import logging
 from pathlib import Path
 from typing import Optional

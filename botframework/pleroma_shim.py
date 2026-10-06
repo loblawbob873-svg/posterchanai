@@ -27,12 +27,7 @@ from app.services import pleroma_service as _svc  # noqa: E402
 
 from config import PLEROMA_ENDPOINT as _RAW_ENDPOINT, PLEROMA_ACCESS_TOKEN, BLOCK_PHRASE  # noqa: E402
 # Reuse the pure / non-Pleroma-API helpers unchanged — no need to re-implement or risk drift.
-from pleroma import (  # noqa: E402
-    get_last_20_seconds_notifications,   # pure: filters a notifications list by time window
-    build_mention_prefix,                # pure: formats the @mention prefix
-    get_status_images,                   # pure: pulls image urls out of a status object
-    download_image_from_url,             # generic HTTP GET + SSRF guard (not a Pleroma API call)
-)
+from pleroma import build_mention_prefix, get_status_images, download_image_from_url
 
 # Match pleroma.py's endpoint normalization (add scheme if missing).
 ENDPOINT = _RAW_ENDPOINT

@@ -19,7 +19,7 @@ logger = logging.getLogger(__name__)
 from app.database import get_db, SessionLocal
 from app.models import User, Conversation, Message
 from app.services import settings_store
-from app.schemas import ConversationCreate, ConversationResponse, ConversationWithMessages, MessageResponse
+from app.schemas import ConversationCreate, ConversationResponse, ConversationWithMessages
 from app.auth import get_current_user, get_user_from_websocket, get_ai_user
 from app.services import chat_store, chat_history, artifact_store   # Phase 2: relay chat mirror + encrypted artifacts
 from app.services.chat_service import ChatService

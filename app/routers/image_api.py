@@ -5,7 +5,7 @@ Supports both JWT auth and API key auth for external services.
 Sequential processing: Only one image is generated at a time to prevent GPU overload.
 """
 import logging
-from fastapi import APIRouter, Depends, HTTPException, Header, Request
+from fastapi import APIRouter, Depends, Header, Request
 
 # Configure logging with handler for stdout
 logger = logging.getLogger("image_api")

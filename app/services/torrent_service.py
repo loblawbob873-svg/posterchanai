@@ -5,7 +5,6 @@ Torrent site URL is configurable via admin settings.
 import httpx
 import logging
 import re
-from typing import Optional
 from bs4 import BeautifulSoup
 from dataclasses import dataclass
 from sqlalchemy.orm import Session

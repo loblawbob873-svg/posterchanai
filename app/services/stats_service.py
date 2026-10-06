@@ -31,7 +31,6 @@ itself as a kind-30078 doc rather than a new SQL table (this codebase stores new
 relay events).
 """
 import asyncio
-import json
 import logging
 import time
 

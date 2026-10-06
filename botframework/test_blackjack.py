@@ -4,7 +4,7 @@ Run: `venv-unified/bin/python botframework/test_blackjack.py`. Exits non-zero on
 Covers hand valuation, 3:2/1:1/push/lose payouts, a full round, persistent next_round (carry stacks,
 drop busted/left), leave, and a fuzz of many rounds (always-legal, terminating, no negative stacks).
 """
-import os, sys, secrets
+import os, sys
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import blackjack_game as bj
 

@@ -10,10 +10,7 @@ action taken is legal, every hand terminates, and chips are conserved throughout
 import os, sys, secrets
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
-from holdem_engine import (
-    evaluate7, distribute_pot, card_str,
-    HIGH, PAIR, TWO_PAIR, TRIPS, STRAIGHT, FLUSH, FULL_HOUSE, QUADS, STRAIGHT_FLUSH,
-)
+from holdem_engine import evaluate7, distribute_pot, HIGH, PAIR, TWO_PAIR, TRIPS, STRAIGHT, FLUSH, FULL_HOUSE, QUADS, STRAIGHT_FLUSH
 import holdem_game as hg
 
 RANKS = "23456789TJQKA"
