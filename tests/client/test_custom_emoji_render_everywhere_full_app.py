@@ -82,9 +82,15 @@ def test_a_mentioned_name_gets_its_emoji_when_they_arrive_after_it():
         # The same kind-0 arrives again WITH its tags (the refetch emojiName asks for), and decorate runs.
         tagged = dict(bare, tags=DUCK_TAGS)
         await b.js("Store.saveProfile(" + json.dumps(tagged) + ");__PC.decorateProfiles();true")
-        await asyncio.sleep(.3)
-        got['after'] = await b.js("[...document.querySelectorAll('a.mention')].find(a=>a.textContent.includes('Big Duck')||a.querySelector('img'))"
-                                  "?.querySelectorAll('img.emoji-inline').length")
+        # WAIT FOR THE PATCH, never a fixed 0.3s: under the parallel gate the redecorate took longer and
+        # this read the old mention -- a flake in two pregates in a row that passed every time alone.
+        probe = ("[...document.querySelectorAll('a.mention')].find(a=>a.textContent.includes('Big Duck')||a.querySelector('img'))"
+                 "?.querySelectorAll('img.emoji-inline').length")
+        for _ in range(100):
+            got['after'] = await b.js(probe)
+            if got['after'] == 2:
+                break
+            await asyncio.sleep(.1)
 
     asyncio.run(desktop.with_browser('online', '', check, ''))
     assert got['before'] == 0, got
