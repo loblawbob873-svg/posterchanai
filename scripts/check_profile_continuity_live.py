@@ -55,10 +55,10 @@ async def _relay_between(relay, pk, since, until):
             if len(got) < 500:
                 break
             cursor = min(e["created_at"] for e in got) - 1
-    return [e for e in out if any(t and t[0] == "e" for t in e.get("tags", []))]
+    return out
 
 
-async def _profile_replies(ws_url, page):
+async def _profile_replies(ws_url, page, pk_hex):
     import websockets
     async with websockets.connect(ws_url, max_size=None) as ws:
         n = 0
@@ -87,13 +87,19 @@ async def _profile_replies(ws_url, page):
         else:
             return None
         await asyncio.sleep(2)
-        await js("document.querySelector('.prof-tab[data-tab=\"replies\"]').click()")
-        await asyncio.sleep(2)
-        for _ in range(SCROLLS):
-            await js("(()=>{const f=document.getElementById('feed');f.scrollTop=f.scrollHeight;f.dispatchEvent(new Event('scroll'));})()")
-            await asyncio.sleep(2.5)
-        return await js("""[...document.querySelectorAll('#prof-list .note, #prof-list article')]
-            .map(n=>{const e=window.Store&&Store.get(n.dataset.id);return e?{id:e.id,t:e.created_at}:null}).filter(Boolean)""")
+        # BOTH TABS. A quote post carries an `e` tag (marker "mention") and is a POST, not a reply; the
+        # first version asked only the Replies tab and reported four correctly-filed quote posts as gaps.
+        shown = {}
+        for tab in ("notes", "replies"):
+            await js("(document.querySelector('.prof-tab[data-tab=\"%s\"]')||{click(){}}).click()" % tab)
+            await asyncio.sleep(2)
+            for _ in range(SCROLLS):
+                await js("(()=>{const f=document.getElementById('feed');f.scrollTop=f.scrollHeight;f.dispatchEvent(new Event('scroll'));})()")
+                await asyncio.sleep(2.5)
+            got = await js("""[...document.querySelectorAll('#prof-list .note, #prof-list article')]
+                .map(n=>{const e=window.Store&&Store.get(n.dataset.id);return e&&e.pubkey===%s?{id:e.id,t:e.created_at}:null}).filter(Boolean)""" % json.dumps(pk_hex))
+            shown[tab] = got or []
+        return shown
 
 
 def main():
@@ -119,24 +125,36 @@ def main():
         print("SKIP: Chrome did not expose a debugging endpoint")
         return 2
     try:
-        shown = asyncio.run(_profile_replies(ws_url, f"{url}/{npub_of(pk)}"))
+        tabs = asyncio.run(_profile_replies(ws_url, f"{url}/{npub_of(pk)}", pk))
     finally:
         proc.terminate()
-    if shown is None:
+    if tabs is None:
         print("SKIP: the profile did not open (the page may need a login)")
         return 2
-    if len(shown) < 10:
+    # The span is judged per tab: each tab must be continuous over what IT covers, and together they must
+    # hold every note the relay has in the span the replies cover (the Posts tab of a reply-heavy author
+    # covers far less time).
+    shown = tabs["notes"] + tabs["replies"]
+    if len(tabs["replies"]) < 10:
         print(f"SKIP: only {len(shown)} replies on screen — not enough to judge continuity")
         return 2
-    ts = sorted({s["t"] for s in shown}, reverse=True)
+    ts = sorted({s["t"] for s in tabs["replies"]}, reverse=True)
     shown_ids = {s["id"] for s in shown}
     try:
         on_relay = asyncio.run(_relay_between(relay, pk, ts[-1], ts[0]))
     except Exception as e:
         print(f"SKIP: could not read the relay {relay} ({type(e).__name__})")
         return 2
-    skipped = [e for e in on_relay if e["id"] not in shown_ids and ts[-1] < e["created_at"] < ts[0]]
-    print(f"{who}: {len(shown)} replies on the profile, {_day(ts[-1])} .. {_day(ts[0])}; "
+    note_ts = [s["t"] for s in tabs["notes"]]
+    floor = max(ts[-1], min(note_ts) if note_ts else ts[-1])     # where BOTH tabs have reached
+    def _is_reply(e):
+        if e["kind"] == 1111:
+            return True
+        es = [t for t in e.get("tags", []) if t and t[0] == "e"]
+        return any(len(t) > 3 and t[3] in ("root", "reply") for t in es) or any(len(t) <= 3 or not t[3] for t in es)
+    skipped = [e for e in on_relay if e["id"] not in shown_ids and ts[-1] < e["created_at"] < ts[0]
+               and (_is_reply(e) or e["created_at"] > floor)]
+    print(f"{who}: {len(tabs['replies'])} replies + {len(tabs['notes'])} posts on the profile, {_day(ts[-1])} .. {_day(ts[0])}; "
           f"{len(on_relay)} on {relay} in that span; {len(skipped)} skipped")
     if skipped:
         days = sorted({_day(e["created_at"])[:10] for e in skipped})
