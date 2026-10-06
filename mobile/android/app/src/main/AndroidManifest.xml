@@ -960,6 +960,9 @@
          this app is not on Play (Zapstore + GitHub Releases, `assembleRelease`, no .aab), so that
          constraint does not apply here. See SignerPlugin.openBatterySettings. -->
     <uses-permission android:name="android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS" />
+    <!-- User Settings → Ringtone → "Set as phone ringtone": RingtoneManager.setActualDefaultRingtoneUri needs it,
+         and Android grants it only from its own "Modify system settings" screen, which the plugin opens. -->
+    <uses-permission android:name="android.permission.WRITE_SETTINGS" tools:ignore="ProtectedPermissions" />
     <uses-permission android:name="android.permission.RECORD_AUDIO" />
     <uses-permission android:name="android.permission.MODIFY_AUDIO_SETTINGS" />
     <!-- Voice/video calls: keep the CPU/mic alive so a call survives the screen turning off / brief backgrounding. -->

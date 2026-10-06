@@ -11951,3 +11951,9 @@ img.md-rel:not([src]){display:none}
 .pc-exp-card span{color:var(--muted);font-size:14px;line-height:1.45}
 .pc-exp-keep{margin-top:16px}
 @media(max-width:560px){ .pc-exp-cards{grid-template-columns:1fr} .pc-exp-box{padding:22px 16px} .pc-exp-card{padding:18px 14px} }
+/* User Settings → Ringtone (settings.js _ringtonePane) */
+.rt-card{display:flex;align-items:center;gap:14px;padding:14px 16px;border:1px solid var(--line);border-radius:14px;
+  background:linear-gradient(135deg,rgba(var(--accent-rgb),.10),transparent 60%),var(--panel2)}
+.rt-card>div:nth-child(2){flex:1;min-width:0}
+.rt-art{width:48px;height:48px;flex:0 0 48px;display:grid;place-items:center;border-radius:12px;font-size:24px;
+  background:linear-gradient(135deg,var(--neon),var(--accent));box-shadow:0 0 18px rgba(var(--accent-rgb),.45)}

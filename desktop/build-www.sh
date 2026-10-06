@@ -60,6 +60,8 @@ cp "$SRC"/static/js/client/sw.js      www/sw.js
 cp -r "$SRC"/static/vendor            www/static/
 # The desktop dancers' frames (buddy.js asks for /static/mascot/<dance|axolotl>/dance-N.webp).
 mkdir -p www/static/mascot && cp -r "$SRC"/static/mascot/dance "$SRC"/static/mascot/axolotl www/static/mascot/
+# The ringtone (User Settings → Ringtone plays it, sets it as the phone's ringtone, and rings calls with it).
+mkdir -p www/static/sounds && cp "$SRC"/static/sounds/* www/static/sounds/
 # Every image the client can reference by URL, not just PNGs. `client.css` asks for
 # /static/os-wallpaper.webp, which no glob here matched, so the bundled apps lost the desktop-mode
 # wallpaper while the website kept it — the same shape as the missing fonts above, and invisible for

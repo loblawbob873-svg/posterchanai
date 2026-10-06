@@ -401,6 +401,52 @@ window.PCSettingsFactory = function(dep){
     _wirePushToggle();
     _wireStayConnected();
   }
+  /* 🎵 RINGTONE ("make it easy somehow for the android launcher users to set that" / "maybe User Settings ->
+   * Ring Tone"). The PosterChan cyberpunk ringtone (static/sounds, made by scripts/make_ringtone.py): play it,
+   * ring PosterChan calls with it (calls.js reads `callRingtone`), and on the Android app ONE tap makes it the
+   * phone's ringtone (RingtonePlugin: saved under Ringtones/ so the system picker lists it too, then set as
+   * the default -- Android asks once for "Modify system settings", and the tab says so instead of failing).
+   * Everywhere else the files are offered to download, with the iPhone .m4r beside them. */
+  const RINGTONE='/static/sounds/posterchan-cyberpunk';
+  function _ringtonePlugin(){ try{ const P=window.Capacitor&&Capacitor.Plugins; return (P&&P.Ringtone)||null; }catch(_){ return null; } }
+  function _ringtonePane(host){
+    const body=$('.set-body',host); if(!body || $('[data-pane="ringtone"]',body)) return;
+    const plug=_ringtonePlugin(), on=ClientSettings.get('callRingtone', true)!==false;
+    body.insertAdjacentHTML('beforeend', `<div class="us-pane" data-pane="ringtone">
+      <div class="rt-card"><div class="rt-art">📞</div><div><b>PosterChan Cyberpunk</b>
+        <div class="muted small">16 seconds of synthwave with a 「リンリン！」 — loops while it rings.</div></div>
+        <button type="button" class="btn btn-cyan small" id="rt-play">▶ Play</button></div>
+      <label class="fld" style="flex-direction:row;align-items:center;gap:10px;margin-top:14px">
+        <input type="checkbox" id="rt-calls" ${on?'checked':''}> Ring PosterChan calls with it <span class="muted small">(off = the plain beep)</span></label>
+      ${plug ? `<div style="margin-top:16px"><button type="button" class="btn btn-neon" id="rt-set">📱 Set as phone ringtone</button>
+          <div class="muted small" id="rt-said" role="status" style="margin-top:8px">Your phone's own calls will ring with it. It is also added to Android's ringtone list.</div></div>`
+        : `<div class="muted small" style="margin-top:16px">Download it for your phone:
+            <a href="${RINGTONE}.ogg" download="posterchan-cyberpunk.ogg">Android (.ogg)</a> ·
+            <a href="${RINGTONE}.m4r" download="posterchan-cyberpunk.m4r">iPhone (.m4r)</a> ·
+            <a href="${RINGTONE}.mp3" download="posterchan-cyberpunk.mp3">MP3</a></div>`}
+    </div>`);
+    let audio=null;
+    const play=$('#rt-play',host);
+    play.onclick=()=>{
+      if(audio && !audio.paused){ audio.pause(); audio.currentTime=0; play.textContent='▶ Play'; return; }
+      audio=audio||new Audio(RINGTONE+'.ogg'); audio.loop=false; audio.onended=()=>{ play.textContent='▶ Play'; };
+      audio.play().then(()=>{ play.textContent='■ Stop'; }).catch(()=>toast('could not play the ringtone'));
+    };
+    $('#rt-calls',host).onchange=e=>{ ClientSettings.set('callRingtone', !!e.target.checked); toast(e.target.checked?'calls ring with the PosterChan ringtone':'calls use the plain beep'); };
+    const set=$('#rt-set',host);
+    if(set) set.onclick=async()=>{
+      const said=$('#rt-said',host); set.disabled=true; said.textContent='Setting it…';
+      try{
+        const blob=await (await fetch(RINGTONE+'.ogg')).blob();
+        const data=await new Promise((ok,no)=>{ const r=new FileReader(); r.onload=()=>ok(String(r.result).split(',')[1]||''); r.onerror=no; r.readAsDataURL(blob); });
+        const r=await plug.install({data, mime:'audio/ogg', name:'posterchan-cyberpunk', title:'PosterChan Cyberpunk', setDefault:true});
+        said.textContent = r.outcome==='set' ? '✓ It is your phone\'s ringtone now.'
+          : r.outcome==='needs-permission' ? 'One more step: Android just opened “Modify system settings” — allow PosterChan there, come back, and tap Set again.'
+          : '✓ Saved to your ringtones — pick it in Android\'s Sound settings.';
+      }catch(e){ said.textContent='Could not set it: '+((e&&e.message)||e); }
+      set.disabled=false;
+    };
+  }
   async function renderUserSettings(){
     const host=$('#user-settings'); if(!host) return;
     const generation=++_userSettingsRender,owner=S.ME&&S.ME.pubkey;
@@ -500,7 +546,7 @@ window.PCSettingsFactory = function(dep){
     const _phoneTab = window.Capacitor ? [['phone','Phone']] : [];
     // 🧭 Sidebar is its OWN tab, not a block in Profile: it is ~35 switches, which inside a pane of
     // unrelated settings is a wall you scroll past rather than a thing you go to.
-    const tabs=[['profile','Profile'],['timeline','Timeline'],['notifications','Notifications'],['sidebar','Sidebar'],['relays','Relays'],..._phoneTab,..._torTab,['media','Media'],['cache','Cache'],['zaps','Zaps'],['privacy','Privacy'],['muted','Muted'],['mail','Mail'],['telegram','Telegram'],['social','Social'],['keys','API Keys']]
+    const tabs=[['profile','Profile'],['timeline','Timeline'],['notifications','Notifications'],['ringtone','Ringtone'],['sidebar','Sidebar'],['relays','Relays'],..._phoneTab,..._torTab,['media','Media'],['cache','Cache'],['zaps','Zaps'],['privacy','Privacy'],['muted','Muted'],['mail','Mail'],['telegram','Telegram'],['social','Social'],['keys','API Keys']]
       .filter(t => !(_standalone() && INSTANCE_SETTINGS_TABS.has(t[0])));
     // Standalone has no built-in relay for the switch to fall back TO, so "use my own relays" is not a
     // choice there — the list IS the relay config, always on. The switch is hidden and forced checked
@@ -771,6 +817,7 @@ window.PCSettingsFactory = function(dep){
     { const ps=$('#phone-shell',host); if(ps) _withPhoneShell(m => m.renderSettings(ps)); }
 
     _placePushCard(host);
+    _ringtonePane(host);
     $$('.us-tab',host).forEach(b=> b.onclick=()=>{
       $$('.us-tab',host).forEach(x=>x.classList.toggle('active',x===b));
       $$('.us-pane',host).forEach(p=>p.classList.toggle('active', p.dataset.pane===b.dataset.tab));

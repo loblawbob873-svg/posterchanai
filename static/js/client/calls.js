@@ -1237,13 +1237,21 @@ window.PCCallsFactory = function(dep){
   function _ringtone(on){
     try{
       if(on){
+        /* The PosterChan ringtone (User Settings → Ringtone), unless switched off there. Falls back to the
+           beep when the browser will not start audio on its own (autoplay rules) or the file is missing. */
+        if(!_ringOsc && ClientSettings.get('callRingtone', true)!==false){
+          const a=new Audio('/static/sounds/posterchan-cyberpunk.ogg'); a.loop=true; _ringOsc={audio:a};
+          a.play().catch(()=>{ if(_ringOsc && _ringOsc.audio===a){ _ringOsc=null; _ringtone(true); } });
+          try{ navigator.vibrate && navigator.vibrate([400,200,400]); }catch(_){}
+          return;
+        }
         if(!_ringOsc){ const AC=window.AudioContext||window.webkitAudioContext; if(!AC) return; const ctx=new AC();
           const beep=()=>{ try{ const o=ctx.createOscillator(), g=ctx.createGain(); o.frequency.value=480; o.connect(g); g.connect(ctx.destination);
             g.gain.setValueAtTime(0.0001,ctx.currentTime); g.gain.exponentialRampToValueAtTime(0.14,ctx.currentTime+0.05); g.gain.exponentialRampToValueAtTime(0.0001,ctx.currentTime+0.5);
             o.start(); o.stop(ctx.currentTime+0.55); }catch(_){} };
           beep(); _ringOsc={ctx, iv:setInterval(beep,1400)}; }
         try{ navigator.vibrate && navigator.vibrate([400,200,400]); }catch(_){}
-      } else { if(_ringOsc){ clearInterval(_ringOsc.iv); try{ _ringOsc.ctx.close(); }catch(_){} _ringOsc=null; } try{ navigator.vibrate && navigator.vibrate(0); }catch(_){} }
+      } else { if(_ringOsc){ if(_ringOsc.audio){ try{ _ringOsc.audio.pause(); }catch(_){} } else { clearInterval(_ringOsc.iv); try{ _ringOsc.ctx.close(); }catch(_){} } _ringOsc=null; } try{ navigator.vibrate && navigator.vibrate(0); }catch(_){} }
     }catch(_){}
   }
   function _callStatus(){ if(!_call) return '';
