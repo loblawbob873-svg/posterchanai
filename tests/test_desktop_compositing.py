@@ -53,7 +53,7 @@ def test_dragging_temporarily_disables_full_window_blur_and_transitions():
 
 def test_automatic_effects_follow_input_capability_and_preserve_explicit_choices():
     start = JS.index("function desktopEffectsMode()")
-    end = JS.index("function applyDesktopStyle()", start)
+    end = JS.index("const fits = () =>", start)   # applyDesktopStyle went with macOS mode
     script = """
 const assert = require('node:assert/strict');
 const FX_KEY = 'osCompositing';

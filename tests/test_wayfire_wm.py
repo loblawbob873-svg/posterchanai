@@ -92,7 +92,7 @@ def test_wayfire_backend_is_theme_neutral_and_sway_is_rollback_default():
     src = (ROOT / "desktop/wm-wayfire.js").read_text()
     factory = (ROOT / "desktop/wm.js").read_text()
     assert "applyChrome(){return Promise.resolve(true);}" in src
-    assert "macOS and Windows chrome" in src
+    assert "PosterChanUI draws its own window chrome" in src   # macOS mode is gone (2026-10-06)
     assert "process.env.WAYFIRE_SOCKET" in factory
     assert "POSTERCHAN_WM_FORCE_SWAY" in factory
     assert "return new SwayWM(sockPath)" in factory

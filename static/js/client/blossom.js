@@ -323,6 +323,9 @@ window.PCBlossomFactory = function(dep){
         window.PCRightPanel.set(!pr.rightPanel);
         try{ const sw=$('#set-right-panel'); if(sw) sw.checked=pr.rightPanel; }catch(_){}
       }
+      // Which revision of the Social set this account was moved to (app.js _migrateSocialSet). The migration
+      // itself decides from `pr`; keeping the number here too lets this device know it without a re-read.
+      if(typeof pr.experienceRev==='number') ClientSettings.set('experienceRev', pr.experienceRev);
       // PosterChan apps opened at login (os.js runStartupApps): adopt the account's list, then open them.
       if(!_prefTouched.has('startupApps') && Array.isArray(pr.startupApps)) ClientSettings.set('startupApps', pr.startupApps);
       try{ window.PCOS && PCOS.runStartupApps && PCOS.runStartupApps(); }catch(_){}

@@ -58,7 +58,10 @@ ACCENT = 150
 def _installChrome():
     """The shipped popped-out-window chrome, sliced out of oswin.js rather than retyped."""
     start = OSWIN.index('  function installFrame(){')
-    return OSWIN[start:OSWIN.index('  const API = {', start)]
+    # …plus what it NAMES the window with (titleFor and the label tables it reads), which installChrome
+    # now calls for every window: sliced without them, the title throws and no frame is ever installed.
+    names = OSWIN[OSWIN.index('  const EXTRA_VIEWS'):OSWIN.index('  /* The tools a POST can be handed')]
+    return names + OSWIN[start:OSWIN.index('  const API = {', start)]
 
 
 def _shot(browser):
