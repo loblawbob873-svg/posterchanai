@@ -15,6 +15,7 @@ reposts and replies. Everything is read-only; nothing here writes.
 """
 from __future__ import annotations
 
+import functools
 import time
 from urllib.parse import urlparse
 
@@ -52,19 +53,48 @@ def members() -> dict:
     return {pk: (f"@{name}@{domain}" if domain else f"@{name}") for pk, name in by_pk.items() if pk}
 
 
+@functools.lru_cache(maxsize=65536)
 def _npub(pk: str) -> str:
+    # Cached: /api/community/blocks named the same few hundred keys ~5,000 times per call.
     try:
         return bech32.encode("npub", bytes.fromhex(pk))
     except Exception:
         return pk
 
 
-def handle(pk: str, known: dict | None = None) -> str:
+def _puppet_accts(pks) -> dict:
+    """{pubkey: "@user@host"} for every fediverse puppet among `pks`, in ONE query. handle() asked the
+    database once per account -- 1,786 queries per /api/community/blocks call, on the event loop, every
+    minute (measured 2026-10-06: 2.4 s of a 2.4 s call)."""
+    pks = [p for p in set(pks) if p]
+    if not pks:
+        return {}
+    try:
+        from app.database import SessionLocal
+        from app.models import FediPuppet
+        db = SessionLocal()
+        try:
+            out = {}
+            for i in range(0, len(pks), 1000):
+                rows = db.query(FediPuppet.pubkey_hex, FediPuppet.acct).filter(
+                    FediPuppet.pubkey_hex.in_(pks[i:i + 1000])).all()
+                out.update({pk: "@" + acct.lstrip("@") for pk, acct in rows if pk and acct})
+            return out
+        finally:
+            db.close()
+    except Exception:
+        return {}
+
+
+def handle(pk: str, known: dict | None = None, puppets: dict | None = None) -> str:
     """How to NAME an account in a post: a member's address, a fediverse account's `@user@host`
-    (its puppet), else a `nostr:npub…` reference every Nostr client renders as a profile link."""
+    (its puppet), else a `nostr:npub…` reference every Nostr client renders as a profile link.
+    `puppets` (from _puppet_accts) answers the puppet half without a query per call."""
     known = members() if known is None else known
     if pk in known:
         return known[pk]
+    if puppets is not None:
+        return puppets.get(pk) or "nostr:" + _npub(pk)
     try:
         from app.database import SessionLocal
         from app.models import FediPuppet
@@ -219,19 +249,26 @@ def _ref(pk: str) -> str:
     return "nostr:" + _npub(pk)
 
 
-def _puppet_of(actor: str) -> str:
-    """The Nostr key a fediverse account is mirrored under, or "" when it has none yet."""
+def _puppets_of_actors(actors_) -> dict:
+    """{actor_uri: puppet pubkey} for many fediverse accounts in ONE query (see _puppet_accts)."""
+    uris = [u for u in set(actors_) if u]
+    if not uris:
+        return {}
     try:
         from app.database import SessionLocal
         from app.models import FediPuppet
         db = SessionLocal()
         try:
-            row = db.query(FediPuppet).filter(FediPuppet.actor_uri == actor).first()
-            return (row.pubkey_hex or "") if row else ""
+            out = {}
+            for i in range(0, len(uris), 1000):
+                rows = db.query(FediPuppet.actor_uri, FediPuppet.pubkey_hex).filter(
+                    FediPuppet.actor_uri.in_(uris[i:i + 1000])).all()
+                out.update({uri: pk for uri, pk in rows if uri and pk})
+            return out
         finally:
             db.close()
     except Exception:
-        return ""
+        return {}
 
 
 async def blocks() -> list:
@@ -240,11 +277,13 @@ async def blocks() -> list:
     from app.services.activitypub import actors, state
     known = members()
     out = []
-    for b in await state.blocks():
+    fedi = await state.blocks()
+    puppet_of = _puppets_of_actors([b["actor"] for b in fedi])   # one query, not one per block
+    for b in fedi:
         # The member is keyed by pubkey; the blocker is a fediverse actor, named by its @user@host.
         member = b["member"]
         local = actors.handle(member)
-        puppet = _puppet_of(b["actor"])
+        puppet = puppet_of.get(b["actor"], "")
         out.append({"blocker": b["actor"], "blocked": member, "at": b["at"], "via": "fediverse",
                     "blocker_handle": ("@" + b["acct"]) if b.get("acct") else b["actor"],
                     # A member with no name here used to print as a bare "@" -- which a model then
@@ -252,9 +291,11 @@ async def blocks() -> list:
                     "blocked_handle": known.get(member) or (("@" + local) if local else _ref(member)),
                     "blocker_ref": _ref(puppet) if puppet else (("@" + b["acct"]) if b.get("acct") else b["actor"]),
                     "blocked_ref": _ref(member)})
-    for r in await mute_relations(known):
-        r["blocker_handle"] = handle(r["blocker"], known)
-        r["blocked_handle"] = handle(r["blocked"], known)
+    mutes = await mute_relations(known)
+    puppets = _puppet_accts([pk for r in mutes for pk in (r["blocker"], r["blocked"]) if pk not in known])
+    for r in mutes:
+        r["blocker_handle"] = handle(r["blocker"], known, puppets)
+        r["blocked_handle"] = handle(r["blocked"], known, puppets)
         r["blocker_ref"] = _ref(r["blocker"])
         r["blocked_ref"] = _ref(r["blocked"])
         out.append(r)

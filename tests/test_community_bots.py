@@ -527,3 +527,35 @@ def test_the_top_posts_post_tags_names_and_links_posts_plainly(blockbot, monkeyp
     eng.daily_top_posts()
     assert "Today was a good one!" in posted[1] and "\u200d" not in posted[1]
     assert posted[1].index("Today was a good one!") < posted[1].index(ref)
+
+
+def test_blocks_ask_the_database_a_fixed_number_of_times_however_many_rows(world, monkeypatch):
+    """/api/community/blocks named every account with its own query -- 1,786 of them per call on
+    poster.place (2.4 s on the event loop, polled ~once a minute by the block bot). The puppet lookups are
+    batched now: the number of sessions must not grow with the rows, and every name must still resolve."""
+    import app.database
+    from app.services import community_stats as cs
+    s = world["Session"]()
+    puppets = [f"{i:02x}" * 32 for i in range(20, 50)]
+    for i, pk in enumerate(puppets):
+        s.add(FediPuppet(actor_uri=f"https://m.example/users/u{i}", acct=f"u{i}@m.example", pubkey_hex=pk,
+                         nip05_name=f"u{i}"))
+    s.commit()
+    for i, pk in enumerate(puppets):                                   # 30 puppets each mute alice
+        world["relay"].append(_ev(100 + i, pk, 10000, [["p", ALICE]], created=500 + i))
+        world["fedi"].append({"member": BOB, "actor": f"https://m.example/users/u{i}",   # and block bob
+                              "acct": f"u{i}@m.example", "at": 50 + i})
+    opened = []
+    real = app.database.SessionLocal
+
+    def counting():
+        opened.append(1)
+        return real()
+    monkeypatch.setattr(app.database, "SessionLocal", counting)
+    rows = run(cs.blocks())
+    assert len(opened) <= 3, f"{len(opened)} database sessions for {len(rows)} rows"
+    named = {(b["via"], b["blocker_handle"], b["blocked_handle"]) for b in rows}
+    for i in range(30):
+        assert ("nostr", f"@u{i}@m.example", "@alice@poster.place") in named
+        assert ("fediverse", f"@u{i}@m.example", "@bob@poster.place") in named
+    assert all(b["blocker_ref"].startswith("nostr:npub1") for b in rows if b["via"] == "fediverse")
