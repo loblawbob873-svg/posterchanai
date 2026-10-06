@@ -256,23 +256,60 @@ def _event_expiration(ev: dict):
     return None
 
 
-def _match_one(flt: dict, ev: dict) -> bool:
+def _compile_filter(flt: dict) -> dict:
+    """A live subscription's filter, prepared ONCE for fan-out: ids/authors as sets (a follow feed's
+    `authors` holds hundreds of keys, and every stored event was checked against it by a linear list
+    scan, once per open subscription), kinds as a set of ints and tag values as sets of strings --
+    both used to be rebuilt for every event. Same answers as the raw filter; anything that will not
+    compile (an unhashable or non-numeric value) is left as it came, and _match_one handles both."""
+    if not isinstance(flt, dict):
+        return flt
+    out = dict(flt)
+    for key, vals in flt.items():
+        if not isinstance(vals, (list, tuple)):
+            continue
+        try:
+            if key in ("ids", "authors"):
+                out[key] = frozenset(vals)
+            elif key == "kinds":
+                out[key] = frozenset(int(k) for k in vals)
+            elif isinstance(key, str) and key.startswith("#") and len(key) == 2:
+                out[key] = frozenset(str(v) for v in vals)
+        except (TypeError, ValueError):
+            out[key] = vals
+    return out
+
+
+def _event_tags(ev: dict, name: str, cache: dict | None) -> set:
+    """The values of one tag letter on an event -- computed once per event when a cache is given,
+    instead of once per subscription filter that asks for it."""
+    if cache is not None and name in cache:
+        return cache[name]
+    have = {str(t[1]) for t in ev.get("tags", []) if len(t) >= 2 and t[0] == name}
+    if cache is not None:
+        cache[name] = have
+    return have
+
+
+def _match_one(flt: dict, ev: dict, _tags: dict | None = None) -> bool:
     if "ids" in flt and ev["id"] not in flt["ids"]:
         return False
     if "authors" in flt and ev["pubkey"] not in flt["authors"]:
         return False
-    if "kinds" in flt and int(ev["kind"]) not in {int(k) for k in flt["kinds"]}:
-        return False
+    if "kinds" in flt:
+        kinds = flt["kinds"]
+        if int(ev["kind"]) not in (kinds if isinstance(kinds, frozenset) else {int(k) for k in kinds}):
+            return False
     if flt.get("since") is not None and int(ev["created_at"]) < int(flt["since"]):
         return False
     if flt.get("until") is not None and int(ev["created_at"]) > int(flt["until"]):
         return False
     for key, vals in flt.items():
         if isinstance(key, str) and key.startswith("#") and len(key) == 2 and vals:
-            want = {str(v) for v in vals}
-            have = {str(t[1]) for t in ev.get("tags", []) if len(t) >= 2 and t[0] == key[1]}
+            want = vals if isinstance(vals, frozenset) else {str(v) for v in vals}
+            have = _event_tags(ev, key[1], _tags)
             if key == "#p" and flt.get("_include_quotes") is True:
-                have |= quote_pubkeys(ev)
+                have = have | quote_pubkeys(ev)
             if not (want & have):
                 return False
     if flt.get("search"):
@@ -282,8 +319,8 @@ def _match_one(flt: dict, ev: dict) -> bool:
     return True
 
 
-def _matches(filters: list, ev: dict) -> bool:
-    return any(_match_one(f or {}, ev) for f in (filters or []))
+def _matches(filters: list, ev: dict, _tags: dict | None = None) -> bool:
+    return any(_match_one(f or {}, ev, _tags) for f in (filters or []))
 
 
 class SubscriptionManager:
@@ -294,7 +331,7 @@ class SubscriptionManager:
         self._subs: dict = {}
 
     def add(self, conn, sub_id: str, filters: list) -> None:
-        self._subs.setdefault(conn, {})[sub_id] = filters
+        self._subs.setdefault(conn, {})[sub_id] = [_compile_filter(f) for f in (filters or [])]
 
     def remove(self, conn, sub_id: str) -> None:
         if conn in self._subs:
@@ -327,11 +364,12 @@ class SubscriptionManager:
         A default that means "no gate" gets taken by whoever adds the next call site, and the leak
         it opens is silent. So there is no default: a caller with nothing to check passes
         `lambda conn, ev: True` and says so out loud."""
+        tags: dict = {}                    # this event's tag values, shared by every filter below
         for conn, subs in list(self._subs.items()):
             if not allow(conn, ev):
                 continue
             for sub_id, filters in list(subs.items()):
-                if _matches(filters, ev):
+                if _matches(filters, ev, tags):
                     send(conn, ["EVENT", sub_id, ev])
 
 

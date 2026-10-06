@@ -697,6 +697,18 @@ async def _refresh_subscribers(store) -> None:
                     f"{store.paid_retention_days}d" if store.paid_retention_days else "forever")
 
 
+def _relay_deflate():
+    """Per-message deflate exactly as websockets enables it by default (12-bit windows, memLevel 5)
+    but at zlib LEVEL 3 instead of 6. Compression was the relay's single largest CPU cost (19% of
+    samples, py-spy on server1 2026-10-06), paid once per outgoing message per connection. Measured on
+    2,000 real events from this relay with these exact settings: level 6 took 54.6 ms and kept 46.7% of
+    the bytes, level 3 took 38.1 ms and kept 48.4% -- 30% less CPU for ~3.6% more on the wire.
+    (Level 1 bought nothing further.)"""
+    from websockets.extensions.permessage_deflate import ServerPerMessageDeflateFactory
+    return ServerPerMessageDeflateFactory(server_max_window_bits=12, client_max_window_bits=12,
+                                          compress_settings={"memLevel": 5, "level": 3})
+
+
 async def _refresh_preserve(store) -> None:
     """UNION the current operators (registered users/bots/keys) + persisted PINNED authors (explicitly
     backfilled histories, in relay kv) into the store's preserve set, right before a prune/purge.
@@ -819,6 +831,7 @@ async def _main(cfg: dict) -> None:
         # auto-pong; a 30s timeout dropped those still-alive connections (feed "stops after ~2-3 min").
         # App-level _keepalive NOTICEs keep the socket genuinely live; pings still reap a truly-dead conn.
         ping_interval=30, ping_timeout=120, max_queue=64,
+        extensions=[_relay_deflate()],
     )
     logger.info("[nostr-relay] listening on ws://%s:%d/relay (operator=%d, seeds=%d)",
                 cfg["bind"], cfg["port"], len(cfg["operator"]), len(cfg["seeds"]))
