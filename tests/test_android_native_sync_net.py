@@ -196,12 +196,18 @@ def test_a_refused_shrink_arrives_as_something_the_caller_can_answer(wire):
     assert wire["results"]["collapse"] == "old=900 new=3 shrink=897"
 
 
-def test_the_stub_matches_what_the_endpoint_really_answers():
-    """The test above is only worth anything while its stub is honest, and the shape it got wrong is
-    exactly the one that mattered: `collapse` is a BOOLEAN and old/new are TOP-LEVEL."""
-    src = open(os.path.join(ROOT, "app", "routers", "client.py"), encoding="utf-8").read()
-    i = src.index('"error": "refused: " + drop, "collapse": True')
-    assert '"old": _files_index_count(prev), "new": _files_index_count(data.manifest)' in src[i:i + 300]
+def test_the_real_sync_manifest_endpoint_is_retired_and_says_so():
+    """The collapse shape above was answered by the per-device-document implementation, which the
+    folder-sync rewrite retired: the live /client/sync-manifest answers 410 with a sentence telling an
+    old build to update (and that old implementation, kept "inert" and never routed, was removed as dead
+    code on 2026-10-06). So what this stub must stay honest about is no longer a counts shape the server
+    cannot produce -- it is that the server REFUSES, loudly, rather than syncing into a namespace no
+    current device reads."""
+    import asyncio
+    from app.routers import client
+    resp = asyncio.run(client.sync_manifest(client.SyncManifestReq.model_construct(), db=None))
+    body = json.loads(resp.body)
+    assert resp.status_code == 410 and body["ok"] is False and "update the app" in body["error"], body
 
 
 def test_the_upload_is_marked_keep_and_no_mirror(wire):
