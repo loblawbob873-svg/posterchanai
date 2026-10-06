@@ -281,6 +281,33 @@ def _conn_kw(relay: str, direct: bool) -> dict:
     return {} if direct else _proxy_kw()
 
 
+# RELAYS THAT REFUSE TOR, REMEMBERED. Measured on server1: wss://asia.vectorapp.io/nostr was tried through
+# the Tor proxy 174 times in an hour, timed out after the full 8s every time, and connected DIRECT straight
+# after; relay.damus.io answers Tor exits with HTTP 503. Each of those was 8s of a federation task waiting
+# on an attempt already known to fail. A relay whose proxied connect failed and whose direct retry then
+# SUCCEEDED goes direct for _TOR_REFUSED_TTL -- which is exactly where the fallback took it 8s later anyway,
+# so nothing goes direct that did not already. A relay that fails both ways is the breaker's business.
+_TOR_REFUSED_TTL = 6 * 3600
+_TOR_REFUSED_MAX = 512
+_tor_refused: dict = {}
+
+
+def _tor_refuses(relay: str) -> bool:
+    until = _tor_refused.get(relay)
+    if until is None:
+        return False
+    if until <= time.time():
+        _tor_refused.pop(relay, None)
+        return False
+    return True
+
+
+def _note_tor_refused(relay: str) -> None:
+    if len(_tor_refused) >= _TOR_REFUSED_MAX and relay not in _tor_refused:
+        _tor_refused.pop(min(_tor_refused, key=_tor_refused.get), None)   # the one expiring soonest
+    _tor_refused[relay] = time.time() + _TOR_REFUSED_TTL
+
+
 @contextlib.asynccontextmanager
 async def _connect(relay: str, direct: bool, **kw):
     """Open a relay websocket with PROXY-FIRST, FALL-BACK-TO-DIRECT resilience: try the configured
@@ -291,6 +318,8 @@ async def _connect(relay: str, direct: bool, **kw):
     # Identify PosterChan server traffic even when a peer is reached through a public proxy.
     kw.setdefault("user_agent_header", "PosterChan/Server")
     base = _conn_kw(relay, direct)
+    if base.get("proxy") and _tor_refuses(relay):
+        base = {"proxy": None}
     try:
         try:
             ws = await websockets.connect(relay, open_timeout=_CONNECT_TIMEOUT, **base, **kw)
@@ -298,7 +327,9 @@ async def _connect(relay: str, direct: bool, **kw):
             if base.get("proxy"):
                 logger.warning("[nostr] proxy connect to %s failed (%s) — retrying direct", relay, e)
                 ws = await websockets.connect(relay, open_timeout=_CONNECT_TIMEOUT, proxy=None, **kw)
-                logger.info("[nostr] %s connected DIRECT (Tor proxy unavailable)", relay)
+                _note_tor_refused(relay)
+                logger.info("[nostr] %s connected DIRECT (refuses Tor; direct for %dh)", relay,
+                            _TOR_REFUSED_TTL // 3600)
             else:
                 raise
     except Exception as e:
