@@ -48,7 +48,7 @@ def _lift(name):
 
 
 def xmr_of(profile):
-    body = _lift("xmrOf") + _lift("isXmrAddr")
+    body = _lift("_profileFields") + _lift("xmrOf") + _lift("isXmrAddr")
     # The regex constant only if the lifted text did not already bring it — isXmrAddr sits beside it,
     # so a naive prepend redeclares a const and node refuses the whole file.
     pre = ""

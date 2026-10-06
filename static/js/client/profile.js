@@ -298,10 +298,11 @@ window.PCProfileFactory = function(dep){
      * inside it, so the rule below never fired there: a name clicked in Social replaced the timeline in
      * Social's own window. Hand it to the DESKTOP, exactly as openThread does with a post. The one window
      * that renders a profile in place is that profile's own window (its first paint arrives here). */
-    if(pk && !S._routing && window.PCOSWin && PCOSWin.isWindow && PCOSWin.isWindow()
-       && String(PCOSWin.viewOf()||'').toLowerCase() !== ('doc:prof:'+pk).toLowerCase()){
+    const OW=window.PCOSWin;
+    if(pk && !S._routing && OW && OW.isWindow && OW.isWindow()
+       && String(OW.viewOf()||'').toLowerCase() !== ('doc:prof:'+pk).toLowerCase()){
       try{
-        const desk=PCOSWin.desktop && PCOSWin.desktop();
+        const desk=OW.desktop && OW.desktop();
         if(desk && desk.PCOSWin && desk.PCOSWin.enabled() && desk.PCOS && desk.PCOS.isOn() && desk.__PC && desk.__PC.openProfile){
           try{ const k0=Store.query([{kinds:[0],authors:[pk],limit:1}]);
                if(k0 && k0[0] && desk.Store) desk.Store.saveEvent(k0[0]); }catch(_){}
