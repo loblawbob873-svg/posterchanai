@@ -420,6 +420,10 @@ class RelayStore:
         # after. A metadata-only drop -- no row is rewritten; the space returns at the next VACUUM FULL /
         # pg_repack. IF EXISTS keeps it idempotent and lets a fresh schema (which never had it) pass.
         conn.execute("ALTER TABLE events DROP COLUMN IF EXISTS raw")
+        # `fedi_only_events` belonged to the retired Pleroma bridge's fedi-only client mode (removed
+        # 2026-09-23). Nothing has read or written it since; poster.place still held 32 rows from
+        # 2026-09-05..12 and nas.lan an empty table. Dropped once, idempotently, on every node.
+        conn.execute("DROP TABLE IF EXISTS fedi_only_events")
         self._index_existing_quotes(conn)
         conn.commit()
 
