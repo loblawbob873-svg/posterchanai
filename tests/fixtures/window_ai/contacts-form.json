@@ -1,0 +1,32 @@
+{
+ "action": "window_steps",
+ "windows": [
+  {
+   "title": "Contacts",
+   "view": "contacts",
+   "kind": "PosterChan app",
+   "selection": "",
+   "text": "Contact 0 contacts No addressbook yet Make one, or import a .vcf from your phone or your old server. New addressbook Import .vcf"
+  }
+ ],
+ "instruction": "x",
+ "history": [],
+ "commands": false,
+ "today": "2026-10-06",
+ "controls": [
+  {
+   "ref": 1,
+   "role": "textbox",
+   "label": "Name",
+   "value": "Contacts",
+   "near": "New addressbook"
+  },
+  {
+   "ref": 2,
+   "role": "button",
+   "label": "Create",
+   "value": "",
+   "near": "New addressbook"
+  }
+ ]
+}

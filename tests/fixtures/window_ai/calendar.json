@@ -1,0 +1,17 @@
+{
+ "action": "window_steps",
+ "windows": [
+  {
+   "title": "Calendar",
+   "view": "calendar",
+   "kind": "PosterChan app",
+   "selection": "",
+   "text": "The calendar server is off on this node An admin turns it on in Admin → Tools → Calendar server. It runs inside this app — there is nothing to install — and your calendars are stored as encrypted Nostr events."
+  }
+ ],
+ "instruction": "x",
+ "history": [],
+ "commands": false,
+ "today": "2026-10-06",
+ "controls": []
+}

@@ -870,7 +870,7 @@
         <input class="input nt-tagin" placeholder="tags, comma separated" value="${enc((n.tags||[]).join(', '))}">
         <button class="btn nt-attach" title="Attach a file (encrypted)">📎</button>
       </div>
-      <textarea class="nt-body${readFirst?' hidden':''}" placeholder="Write…  (markdown)">${enc(n.body||'')}</textarea>
+      <textarea class="nt-body${readFirst?' hidden':''}" aria-label="Note text" placeholder="Write…  (markdown)">${enc(n.body||'')}</textarea>
       <div class="nt-render markdown${readFirst?'':' hidden'}"></div>
       <div class="nt-res"></div>`;
 

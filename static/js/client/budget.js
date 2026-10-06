@@ -439,8 +439,8 @@
           ${(out.map(billRow).join('') + planItemRows()) || '<div class="muted small bg-empty">No bills yet — add one below.</div>'}
         </div>
         <div class="bg-add">
-          <input class="input" id="bg-n" placeholder="Bill name" autocomplete="off">
-          <input class="input bg-amtin" id="bg-a" placeholder="0.00" inputmode="decimal" autocomplete="off">
+          <input class="input" id="bg-n" aria-label="Bill name" placeholder="Bill name" autocomplete="off">
+          <input class="input bg-amtin" id="bg-a" aria-label="Amount" placeholder="0.00" inputmode="decimal" autocomplete="off">
           <label class="bg-chk"><input type="checkbox" id="bg-inc"> Income</label>
           <label class="bg-chk"><input type="checkbox" id="bg-once"> One-time</label>
           <button class="btn btn-cyan" id="bg-save">Add</button>

@@ -1,0 +1,32 @@
+{
+ "action": "window_steps",
+ "windows": [
+  {
+   "title": "Budget",
+   "view": "budget",
+   "kind": "PosterChan app",
+   "selection": "",
+   "text": "OCTOBER 2026 Reset month Income $0.00 Bills due $0.00 Paid $0.00 Remaining $0.00 Bills Plans 👁 EXPENSES No bills yet — add one below. Income One-time Add ✨ Add Bill with AI 🔒 Encrypted to your key and stored as a Nostr event — only you can read it. Import"
+  }
+ ],
+ "instruction": "x",
+ "history": [],
+ "commands": false,
+ "today": "2026-10-06",
+ "controls": [
+  {
+   "ref": 1,
+   "role": "button",
+   "label": "📷 Take a photo",
+   "value": "",
+   "near": "✨ Add Bill with AI"
+  },
+  {
+   "ref": 2,
+   "role": "button",
+   "label": "🖼 Choose a file",
+   "value": "",
+   "near": "✨ Add Bill with AI"
+  }
+ ]
+}

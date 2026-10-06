@@ -1,0 +1,102 @@
+{
+ "action": "window_steps",
+ "windows": [
+  {
+   "title": "Budget",
+   "view": "budget",
+   "kind": "PosterChan app",
+   "selection": "",
+   "text": "OCTOBER 2026 Reset month Income $0.00 Bills due $0.00 Paid $0.00 Remaining $0.00 Bills Plans 👁 EXPENSES No bills yet — add one below. Income One-time Add ✨ Add Bill with AI 🔒 Encrypted to your key and stored as a Nostr event — only you can read it. Import"
+  }
+ ],
+ "instruction": "x",
+ "history": [],
+ "commands": false,
+ "today": "2026-10-06",
+ "controls": [
+  {
+   "ref": 1,
+   "role": "button",
+   "label": "Reset month",
+   "value": "",
+   "near": ""
+  },
+  {
+   "ref": 2,
+   "role": "button",
+   "label": "Bills",
+   "value": "",
+   "near": ""
+  },
+  {
+   "ref": 3,
+   "role": "button",
+   "label": "Plans",
+   "value": "",
+   "near": ""
+  },
+  {
+   "ref": 4,
+   "role": "button",
+   "label": "👁",
+   "value": "",
+   "near": ""
+  },
+  {
+   "ref": 5,
+   "role": "item",
+   "label": "EXPENSES No bills yet — add one below.",
+   "value": "",
+   "near": ""
+  },
+  {
+   "ref": 6,
+   "role": "textbox",
+   "label": "Bill name",
+   "value": "",
+   "near": ""
+  },
+  {
+   "ref": 7,
+   "role": "textbox",
+   "label": "Amount",
+   "value": "",
+   "near": ""
+  },
+  {
+   "ref": 8,
+   "role": "checkbox",
+   "label": "Income",
+   "value": "off",
+   "near": ""
+  },
+  {
+   "ref": 9,
+   "role": "checkbox",
+   "label": "One-time",
+   "value": "off",
+   "near": ""
+  },
+  {
+   "ref": 10,
+   "role": "button",
+   "label": "Add",
+   "value": "",
+   "near": ""
+  },
+  {
+   "ref": 11,
+   "role": "button",
+   "label": "✨ Add Bill with AI",
+   "value": "",
+   "near": ""
+  },
+  {
+   "ref": 12,
+   "role": "button",
+   "label": "Import",
+   "value": "",
+   "near": ""
+  }
+ ]
+}

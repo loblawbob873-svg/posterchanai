@@ -294,7 +294,9 @@ def build_steps_messages(context: list, instruction: str, history=None, commands
            "in a list (an email, a message, a file): click it to OPEN it. A checkbox labelled \"Select\" only ticks "
            "the row it is in, for acting on several at once -- it never opens anything. To SHOW or GO TO a part "
            "of the window that sits behind a tab, folder or section button, click that control; do not describe "
-           "what is on screen instead. Text the user gives "
+           "what is on screen instead. To ADD something (a contact, an event, a bill) whose form is not among the "
+           "controls, click the button that opens it (+ Contact, + Event, New ...) as the LAST step: its fields "
+           "are shown to you next and you fill them then. Text the user gives "
            "in quotes is used exactly as written. Never propose deleting, removing or "
            "clearing anything unless the user asked for exactly that. " if ctl else "")
         + f"At most {ACT_STEP_MAX if ctl else STEP_MAX} steps, only ones that genuinely help with the request; [] when none do. "
@@ -460,12 +462,30 @@ def parse_steps(text: str, commands: bool = False, want_tasks: bool = False, con
         if len(tasks) >= TASK_MAX:
             break
     steps = []
+    keyed = None
     refs = {r: (role, lab) for r, role, lab, _v, _n in clean_controls(controls)}
     for st in raw.get("steps") or []:
         if not isinstance(st, dict):
             continue
         kind = _clean(st.get("do"), 20).lower()
         kind = _KIND_ALIASES.get(kind, kind)
+        if refs and kind == "open" and str(st.get("ref") or "").strip().isdigit() and int(st.get("ref")) in refs:
+            kind = "click"          # {"do":"open","ref":1} -- the model opening a tab, not an app (measured)
+        if refs and kind in ("press", "fill"):
+            # A KEYPAD (Calculator). "fill [Backspace] with 12" and "press ×" are the model typing on keys;
+            # every character that is the label of a one-character button becomes a press of that button.
+            _t = str(st.get("text") or "").strip().replace("*", "×").replace("x", "×").replace("/", "÷").replace("-", "−")
+            _keys = {lab: r for r, (role, lab) in refs.items() if role == "button" and len(lab) == 1}
+            try:
+                _rr = int(st.get("ref"))
+            except (TypeError, ValueError):
+                _rr = None
+            if (len(_keys) >= 10 and _t and _rr in refs and refs[_rr][0] not in _TEXTBOX_ROLES
+                    and all(ch in _keys for ch in _t.replace(" ", ""))):
+                keyed = _keys
+                for ch in _t.replace(" ", ""):
+                    steps.append({"do": "click", "ref": _keys[ch], "target": ch, "label": "Press " + ch, "text": "", "on": False})
+                continue
         if refs and kind in ("click", "press"):
             try:
                 _r = int(st.get("ref"))
@@ -541,6 +561,9 @@ def parse_steps(text: str, commands: bool = False, want_tasks: bool = False, con
         steps.append({"do": kind, "label": _clean(st.get("label"), 50) or default, "text": txt})
         if len(steps) >= (ACT_STEP_MAX if refs else STEP_MAX):
             break
+    if keyed and "=" in keyed and steps and steps[-1].get("target") != "=":
+        steps.append({"do": "click", "ref": keyed["="], "target": "=", "label": "Press =", "text": "", "on": False})
+    steps = steps[:ACT_STEP_MAX * 3] if keyed else steps
     steps = _repair_steps(steps, refs, instruction, {r: n for r, _ro, _l, _v, n in clean_controls(controls)})
     if not answer and not tasks and not steps:
         answer = str(text or "").strip()[:4000]
@@ -624,11 +647,17 @@ def _repair_steps(steps: list, refs: dict, instruction: str, near: dict | None =
     by_label = {}
     for r, (_role, lab) in refs.items():
         by_label.setdefault(str(lab).strip().lower(), []).append(r)
-    for st in out:
+    for i, st in enumerate(out):
         said = str(st.get("label") or "").strip().lower()
         # Enter on a BUTTON is a click (measured: {"do":"press","ref":24 "New post","text":"Enter","label":"Post"}).
         enter_on_button = (st.get("do") == "press" and str(st.get("text") or "").lower() == "enter"
                            and refs.get(st.get("ref"), ("",))[0] not in _TEXTBOX_ROLES)
+        prev = out[i - 1] if i else None
+        if enter_on_button and prev and prev.get("do") == "fill" and refs.get(prev.get("ref"), ("",))[0] in _TEXTBOX_ROLES:
+            # ...except straight after typing: "fill Search contacts 'bob', press Enter on [2]" meant the
+            # box it just typed in, and [2] was "+ Contact" (measured: the search became a new contact).
+            st.update(ref=prev["ref"], target=prev.get("target"))
+            continue
         if enter_on_button:
             st.update(do="click", text="")
         if st.get("do") == "click" and said and said != str(st.get("target") or "").strip().lower():
@@ -645,7 +674,7 @@ def _repair_steps(steps: list, refs: dict, instruction: str, near: dict | None =
             if st.get("do") == "click" and refs.get(st.get("ref"), ("",))[0] == "tab" and st["ref"] != named[0]:
                 st.update(ref=named[0], target=refs[named[0]][1])
     def _says(lab):
-        w = lab.lower().strip()
+        w = re.sub(r"^[^\w]+", "", lab.lower()).strip()      # "⬇ Downloads" is named "downloads"
         forms = {w, w[:-1] if w.endswith("s") and len(w) > 3 else w}
         return any(f and re.search(r"\b" + re.escape(f) + r"\b", low) for f in forms)
     def _click(r):
@@ -684,6 +713,15 @@ def _repair_steps(steps: list, refs: dict, instruction: str, near: dict | None =
                  if role in ("tab", "button", "link") and lab and len(lab) <= 30 and not _RISKY_NAV.search(lab) and _says(lab)]
         if len(named) == 1 and not any(st.get("ref") == named[0] for st in out):
             out = [_click(named[0])]
+    # THE BUTTON THE REQUEST IS NAMED AFTER. "add my paycheck of 2000 as income" filled the name, the amount
+    # and ticked Income -- and never pressed Add (0/3); "post 'good morning'" typed and stopped. When the
+    # request starts with the verb that exactly ONE button is labelled, and the plan typed something
+    # for it, the plan ends by pressing it. Never a destructive verb (that stays the person's own press).
+    verb = re.match(r"\s*(?:please\s+)?(add|post|send|save|create)\b", low)
+    if verb and any(st.get("do") == "fill" for st in out):
+        same = [r for r, (role, lab) in refs.items() if role == "button" and lab.strip().lower() == verb.group(1)]
+        if len(same) == 1 and not any(st.get("ref") == same[0] and st.get("do") in ("click", "press") for st in out):
+            out.append(_click(same[0]))
     asked_to_destroy = bool(_DESTROYS.search(str(instruction or "")))
     return [st for st in out if asked_to_destroy or not _DESTROYS.search(str(st.get("target") or "") + " " + str(st.get("label") or ""))]
 
@@ -715,7 +753,7 @@ async def window_steps(db, user, windows, instruction: str, history=None, comman
 # says is on screen, so they cannot wander: a summary can be saved to Notes, a draft goes into the reply
 # box (after pressing the window's own Reply when the box is not open yet), a tidied note replaces the
 # note with Undo, tasks get "Add to Calendar". Nothing a recipe produces can send, delete or navigate.
-RECIPES = ("summary", "tasks", "draft", "tidy", "checklist")
+RECIPES = ("summary", "tasks", "draft", "tidy", "checklist", "explain")
 RECIPE_TEXT_MAX = 8000
 _NO_INVENT = ("Use ONLY what the window shows. Never invent facts, amounts, account or card numbers, "
               "addresses, phone numbers, dates, times, names or promises.")
@@ -745,6 +783,17 @@ def build_recipe_messages(context: list, recipe: str, text: str = "", note: str 
     text = str(text or "").strip()[:RECIPE_TEXT_MAX]
     steer = re.sub(r"\s+", " ", str(note or "")).strip()[:INSTRUCTION_MAX]
     lang = " Write in the language of the content."
+    if recipe == "explain":
+        # A FIXED QUESTION about this window, chosen by the button ("What's coming up", "Suggest my next
+        # move", "Explain these numbers"); the button's text arrives as `note`. Same rules as a summary.
+        if not steer:
+            raise AssistError(400, "Ask something about the window first.")
+        system = ("Answer the question below for the person looking at this window, from what it shows: "
+                  "short, plain sentences and \"- \" bullets, the most useful thing first. If the window does "
+                  "not show enough to answer, say exactly what is missing instead of guessing. "
+                  + _NO_INVENT + lang)
+        user = _windows_block(context) + "\n\nQuestion: " + steer
+        return [{"role": "system", "content": system}, {"role": "user", "content": user}]
     if recipe == "summary":
         system = ("Summarize what this window shows, for the person looking at it: the 3 to 7 points that "
                   "matter most, each as a \"- \" bullet, saying who said or asked what. Lead with anything "
@@ -811,6 +860,8 @@ def recipe_steps(recipe: str, body: str, reply_ref=None, box_ref=None, box_label
     """The buttons a recipe's result gets -- decided here, never by the model."""
     if recipe == "summary":
         return [{"do": "note", "label": "Save summary to Notes", "text": body}]
+    if recipe == "explain":
+        return [{"do": "note", "label": "Save to Notes", "text": body}]
     if recipe == "draft":
         # ONE step. Into the reply box when it is open; else a "fill" on the window's own Reply control,
         # which the client already turns into "press it, then type into the box it opens" -- never sent.

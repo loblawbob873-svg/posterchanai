@@ -1,0 +1,186 @@
+{
+ "action": "window_steps",
+ "windows": [
+  {
+   "title": "Calculator",
+   "view": "calculator",
+   "kind": "PosterChan app",
+   "selection": "",
+   "text": "CALC//01 DEG SCI COPY 0 AC ⌫ ( ) ÷ 7 8 9 × 4 5 6 − 1 2 3 + ± 0 . = TAPE CLEAR NO HISTORY"
+  }
+ ],
+ "instruction": "x",
+ "history": [],
+ "commands": false,
+ "today": "2026-10-06",
+ "controls": [
+  {
+   "ref": 1,
+   "role": "button",
+   "label": "DEG",
+   "value": "",
+   "near": ""
+  },
+  {
+   "ref": 2,
+   "role": "button",
+   "label": "SCI",
+   "value": "",
+   "near": ""
+  },
+  {
+   "ref": 3,
+   "role": "button",
+   "label": "COPY",
+   "value": "",
+   "near": ""
+  },
+  {
+   "ref": 4,
+   "role": "button",
+   "label": "Clear",
+   "value": "",
+   "near": ""
+  },
+  {
+   "ref": 5,
+   "role": "button",
+   "label": "Backspace",
+   "value": "",
+   "near": ""
+  },
+  {
+   "ref": 6,
+   "role": "button",
+   "label": "( )",
+   "value": "",
+   "near": ""
+  },
+  {
+   "ref": 7,
+   "role": "button",
+   "label": "÷",
+   "value": "",
+   "near": ""
+  },
+  {
+   "ref": 8,
+   "role": "button",
+   "label": "7",
+   "value": "",
+   "near": ""
+  },
+  {
+   "ref": 9,
+   "role": "button",
+   "label": "8",
+   "value": "",
+   "near": ""
+  },
+  {
+   "ref": 10,
+   "role": "button",
+   "label": "9",
+   "value": "",
+   "near": ""
+  },
+  {
+   "ref": 11,
+   "role": "button",
+   "label": "×",
+   "value": "",
+   "near": ""
+  },
+  {
+   "ref": 12,
+   "role": "button",
+   "label": "4",
+   "value": "",
+   "near": ""
+  },
+  {
+   "ref": 13,
+   "role": "button",
+   "label": "5",
+   "value": "",
+   "near": ""
+  },
+  {
+   "ref": 14,
+   "role": "button",
+   "label": "6",
+   "value": "",
+   "near": ""
+  },
+  {
+   "ref": 15,
+   "role": "button",
+   "label": "−",
+   "value": "",
+   "near": ""
+  },
+  {
+   "ref": 16,
+   "role": "button",
+   "label": "1",
+   "value": "",
+   "near": ""
+  },
+  {
+   "ref": 17,
+   "role": "button",
+   "label": "2",
+   "value": "",
+   "near": ""
+  },
+  {
+   "ref": 18,
+   "role": "button",
+   "label": "3",
+   "value": "",
+   "near": ""
+  },
+  {
+   "ref": 19,
+   "role": "button",
+   "label": "+",
+   "value": "",
+   "near": ""
+  },
+  {
+   "ref": 20,
+   "role": "button",
+   "label": "±",
+   "value": "",
+   "near": ""
+  },
+  {
+   "ref": 21,
+   "role": "button",
+   "label": "0",
+   "value": "",
+   "near": ""
+  },
+  {
+   "ref": 22,
+   "role": "button",
+   "label": ".",
+   "value": "",
+   "near": ""
+  },
+  {
+   "ref": 23,
+   "role": "button",
+   "label": "=",
+   "value": "",
+   "near": ""
+  },
+  {
+   "ref": 24,
+   "role": "button",
+   "label": "CLEAR",
+   "value": "",
+   "near": ""
+  }
+ ]
+}

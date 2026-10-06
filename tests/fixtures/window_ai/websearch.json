@@ -1,0 +1,88 @@
+{
+ "action": "window_steps",
+ "windows": [
+  {
+   "title": "Web Search",
+   "view": "websearch",
+   "kind": "PosterChan app",
+   "selection": "",
+   "text": "Search Web News Images Videos Science Tech Files Any time Past day Past week Past month Past year Search the web from here — then save what you find to Notes, share it, or have the AI read it for you."
+  }
+ ],
+ "instruction": "x",
+ "history": [],
+ "commands": false,
+ "today": "2026-10-06",
+ "controls": [
+  {
+   "ref": 1,
+   "role": "textbox",
+   "label": "Search the web",
+   "value": "",
+   "near": ""
+  },
+  {
+   "ref": 2,
+   "role": "button",
+   "label": "Search",
+   "value": "",
+   "near": ""
+  },
+  {
+   "ref": 3,
+   "role": "button",
+   "label": "Web",
+   "value": "",
+   "near": ""
+  },
+  {
+   "ref": 4,
+   "role": "button",
+   "label": "News",
+   "value": "",
+   "near": ""
+  },
+  {
+   "ref": 5,
+   "role": "button",
+   "label": "Images",
+   "value": "",
+   "near": ""
+  },
+  {
+   "ref": 6,
+   "role": "button",
+   "label": "Videos",
+   "value": "",
+   "near": ""
+  },
+  {
+   "ref": 7,
+   "role": "button",
+   "label": "Science",
+   "value": "",
+   "near": ""
+  },
+  {
+   "ref": 8,
+   "role": "button",
+   "label": "Tech",
+   "value": "",
+   "near": ""
+  },
+  {
+   "ref": 9,
+   "role": "button",
+   "label": "Files",
+   "value": "",
+   "near": ""
+  },
+  {
+   "ref": 10,
+   "role": "list",
+   "label": "Time range",
+   "value": "Any time",
+   "near": ""
+  }
+ ]
+}

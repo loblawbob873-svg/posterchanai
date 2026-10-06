@@ -96,3 +96,12 @@ def test_the_route_knows_the_action():
     from app.routers.chat_assist import AssistReq
     r = AssistReq(action="window_recipe", recipe="draft", reply_ref=3, box_ref=None, text="x")
     assert r.recipe == "draft" and r.reply_ref == 3
+
+
+def test_explain_answers_the_buttons_fixed_question_and_can_be_saved(monkeypatch):
+    res, msgs = _run(monkeypatch, "- Dentist Tuesday 3pm\n- Rent due on the 1st", recipe="explain",
+                     note="What is coming up next in this calendar?")
+    assert msgs[1]["content"].endswith("Question: What is coming up next in this calendar?")
+    assert res["steps"] == [{"do": "note", "label": "Save to Notes", "text": res["answer"]}]
+    with pytest.raises(svc.AssistError):
+        _run(monkeypatch, "x", recipe="explain", note="")

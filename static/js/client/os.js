@@ -2453,11 +2453,12 @@
    * can name Firefox or Telegram but must not silently screen-scrape them. */
   const _aiContextWins=new Set(); let _aiDragWin=null;
   function _aiContextAdd(w){
-    if(_aiContextWins.has(w))return;
+    if(_aiContextWins.has(w)||_AI_PRIVATE.has(_aiViewOf(w)))return;
     while(_aiContextWins.size>=4){const old=_aiContextWins.values().next().value;_aiContextWins.delete(old);old.el.classList.remove('ai-context');}
     _aiContextWins.add(w);w.el.classList.add('ai-context');
   }
   function windowAIContext(w){
+    if(_AI_PRIVATE.has(_aiViewOf(w))) return {title:String(w.title||'Window').slice(0,160),view:_aiViewOf(w),kind:'private',selection:'',text:''};
     let selection='';
     try{ const s=window.getSelection(); if(s&&s.rangeCount&&w.el.contains(s.anchorNode)) selection=String(s).trim(); }catch(_){}
     let visible='';
@@ -2483,8 +2484,71 @@
     const hit=(ctl&&ctl.list||[]).find(c=>(c.role==='button'||c.role==='link')&&/^\s*(?:↩\s*)?reply\s*$/i.test(c.label));
     return hit?hit.ref:null;
   }
+  /* WINDOWS THAT HOLD SECRETS NEVER TALK TO THE AI. Passwords (vault), the signer, the wallet and its
+   * connections show keys, seeds, balances and passwords; ✨ read "the visible window text" of whatever it
+   * was pressed in, so a press there would have sent them to the server's model. These answer with a
+   * notice instead, contribute nothing as a connected window, and their text is never collected. */
+  const _AI_PRIVATE=new Set(['vault','signer','wallet','exodus','connect']);
+  const _aiViewOf=w=>String((w&&(w.appView||w.view))||'').replace(/^doc:/,'');
+  /* EVERY POSTERCHAN APP GETS ITS OWN BUTTONS ("make sure all the AI window features have useful abilities
+   * in all the posterchan windows"). Keyed on the VIEW the window is, not guessed from its title. An
+   * `explain` recipe is one fixed question about what the window shows (answered, savable to Notes); a
+   * starter begins a request for the person to finish and is then done with the window's own controls. */
+  function _aiByView(view){
+    const R=(label,hint,recipe,steer)=>({label,hint,recipe,steer}), X=(label,hint,q)=>R(label,hint,'explain',q);
+    const S=(label,hint,starter)=>({label,hint,starter});
+    const todo=R('To-dos & dates','Every task, request and deadline — with Add to Calendar','tasks');
+    const help=S('Help me with…','Say what you want done here — it uses this window\'s own buttons','');
+    const find=what=>S('Find…','Type what to look for — it uses this window\'s own search','Find '+(what?what+' ':''));
+    const games=[X('Suggest my next move','The best move from what is on the board, and why','From the game shown, what is my best next move, and why?'),
+                 X('How do I play?','The rules, briefly','Explain briefly how to play this game and how to win.')];
+    const files=[find(''),X("What's here",'What these files and folders are','What is in this folder? Group it briefly and point out anything unusual or duplicated.'),help];
+    const numbers=[X('Explain these numbers','What changed and what stands out','Explain these numbers: what changed, what stands out, and anything unusual.'),help];
+    const screen=[X('Explain this screen','What it does and what to do next','What does this screen do, and what should I do next?'),help];
+    const map={
+      notifications:[X('Catch me up','Who replied, mentioned or reacted — and what needs an answer','Who replied to me, mentioned me or reacted, and which of these need an answer from me?'),todo,help],
+      articles:[R('Summarize this article','The key points, saved to Notes if you want','summary'),
+                X('Explain it simply','The article in plain words','Explain what this article says in plain words, for someone new to the topic.'),
+                S('Ask about it…','Ask anything about what you are reading','')],
+      bookmarks:[R('Summarize my saves','What you saved, briefly','summary'),find('in my bookmarks'),todo],
+      streams:[X("What's live",'Who is streaming and what about','Which streams are live, who is streaming, and what are they about?'),help],
+      calls:[X('Missed calls','Who called, what you missed, who to call back','Who called me, which calls did I miss, and who should I call back?'),todo],
+      calendar:[X("What's coming up",'Your next appointments and deadlines, in order','What is coming up next in this calendar, in date order, and does anything clash?'),
+                S('Add an event…','Say what and when — it fills in the calendar','Add to my calendar: '),todo],
+      contacts:[find(''),X('Who is here','An overview — duplicates and missing details','Give a short overview of the contacts shown: how many, and any that look like duplicates or are missing a phone number or email.'),help],
+      websearch:[X('Which results answer it','The results that answer the search best','Which of these search results best answer the search, and what does each say? Name each by its title.'),
+                 R('Save key points','The main points, ready for Notes','summary'),S('Search the web for…','A new search, in the search box','Search the web for ')],
+      budget:[X('Explain my month','Income, paid, still due — and what is left','Explain this month: income, what is paid, what is still due and when, and how much is left.'),
+              R('Bills due → Calendar','Every bill due, with Add to Calendar','tasks'),help],
+      markets:numbers, analytics:numbers, stats:numbers,
+      'media-center':[find(''),X("What's here",'What is in this library','What is in this library? Group it briefly and mention anything unusual.'),help],
+      __music:[find(''),X("What's here",'What is in this library','What is in this music library? Group it briefly by artist or mood.'),help],
+      torrents:[S('Search for…','A title — it uses the search box','Search for '),X('Download status','What is downloading, done or stuck','Which downloads are finished, in progress or stuck, and why might any be stuck?')],
+      repos:[X('Explain this code','What this repository or file does','What does the code or repository shown here do? Explain its main parts.'),find('in this repository'),help],
+      code:[X('Explain this code','What this code does, part by part','What does the code shown here do? Explain its main parts and any likely bugs.'),help],
+      vms:[X('What needs attention','Which machines run, stopped or failing','Which virtual machines are running, which are stopped, and does anything need attention?'),help],
+      __tasks:[X("What's using my computer",'The busiest processes, and whether to worry','Which processes are using the most CPU and memory, and is anything worrying?')],
+      settings:[X('Explain these settings','What each visible option does','Explain what the settings shown here do, and which ones most people change.'),
+                S('Change a setting…','Say what to change — it uses this window\'s own switches','Turn on '),help],
+      drafts:[R('Summarize my drafts','What is waiting to be posted','summary'),help],
+      office:[R('Summarize','The key points of this document','summary'),
+              X('Check the writing','Spelling, unclear sentences, missing parts','Point out spelling mistakes, unclear sentences and anything that seems missing in this document.'),todo],
+      ai:[R('Summarize this chat','The key points of this conversation','summary'),todo],
+      translate:[S('Translate…','What to translate, and into which language','Translate into English: ')],
+      meme:[S('Caption ideas…','Say what the meme is about','Write five funny captions for a meme about ')],
+      calculator:[X('Explain this result','How the calculation works, step by step','Explain the calculation shown, step by step.')],
+      xdc:[X('What are these apps','What each mini app does','What does each mini app shown here do?'),help],
+      chess:games, holdem:games, hangman:games, ttt:games, connect4:games, blackjack:games, __games:games,
+      blossom:files, sync:files, __files:files,
+      __installer:screen, __golive:screen, __remote:screen,
+    };
+    map.__ossettings=map.settings;
+    map.news=[R('Catch me up','The stories here, briefly','summary'),
+              X('What matters most','The one or two stories worth reading first, and why','Which one or two stories here matter most, and why?'),todo];
+    return map[view]||null;
+  }
   function windowAISuggestions(w,ctx,composer){
-    const key=(ctx.title+' '+ctx.view).toLowerCase();
+    const key=(ctx.title+' '+ctx.view).toLowerCase(), view=_aiViewOf(w)||String(ctx.view||'');
     if(ctx.selection) return [{label:'Explain selection',hint:'Explain the selected content clearly.'},
       {label:'Summarize selection',hint:'Summarize the selected content into concise bullets.'},
       {label:'Rewrite selection',hint:'Rewrite the selected content for clarity while preserving its meaning.'}];
@@ -2492,6 +2556,8 @@
       {label:'Plan a fix',hint:'Propose a safe, step-by-step fix for what this terminal window shows.'},
       {label:'Make a script',hint:'Turn the visible terminal task into a reusable script.'}];
     const todo={label:'To-dos & dates',hint:'Every task, request and deadline — with Add to Calendar',recipe:'tasks'};
+    const own=!_AI_CONVO.test(view) && !/^notes?$/.test(view) && _aiByView(view);
+    if(own) return own;
     if(_AI_CONVO.test(key)){
       const canReply=!!composer || !!_aiReplyRef(_aiControls(w));
       return [canReply?{label:'Draft a reply',hint:'Written from this conversation, put in the reply box — never sent',recipe:'draft'}:null,
@@ -2547,11 +2613,23 @@
     toggleWindowAI(_pageWin, button, event);
     if(_pageWin.aiPanel) _pageWin.aiPanel.classList.add('pc-oswin-ai');
   }
+  /* AN OPEN DIALOG IS THE WINDOW. The app's forms (New contact, New event, a bill, a profile edit) open
+   * as a .modal-bg on <body>, OUTSIDE the view's slot -- so they were not in the control list, and
+   * "add Bob, 555-1234" could press "+ Contact" and then had nothing to type into. A dialog covers the
+   * screen and takes every click, so while one is open it is the only thing a step can operate. */
+  function _aiRoot(w){
+    const base=w.body||w.el;
+    try{
+      const d=[...document.querySelectorAll('.modal-bg')].filter(m=>!m.closest('.osw-ai-panel') && m.getClientRects().length).pop();
+      if(d) return d.querySelector('.modal')||d;
+    }catch(_){ }
+    return base;
+  }
   /* The window's own text box, if it has one: the one the person was typing in, else the last visible
    * one (a chat's composer sits at the bottom). Native apps have none we may touch. */
   function _aiComposer(w){
     if(!w || w.native!=null) return null;
-    const root=w.body||w.el, ok=e=>e&&root.contains(e)&&!e.closest('.osw-ai-panel')&&!e.disabled&&!e.readOnly&&
+    const root=_aiRoot(w), ok=e=>e&&root.contains(e)&&!e.closest('.osw-ai-panel')&&!e.disabled&&!e.readOnly&&
       (e.tagName==='TEXTAREA'||(e.tagName==='INPUT'&&/^(text|search|)$/i.test(e.type||''))||e.isContentEditable)&&e.getClientRects().length>0;
     const a=document.activeElement;
     if(ok(a)) return a;
@@ -2689,7 +2767,7 @@
   function _aiControls(w){
     const map=new Map(), list=[];
     if(!w || w.native!=null) return {list,map};
-    const root=w.body||w.el;
+    const root=_aiRoot(w);
     const sel='button,a[href],input,textarea,select,[role="button"],[role="tab"],[role="link"],[role="checkbox"],[role="switch"],[contenteditable="true"],[contenteditable=""]';
     /* A ROW THAT OPENS WHEN CLICKED IS A CONTROL TOO. Most lists here are made clickable in script
      * (`row.onclick = …`), which no selector can see -- so an email in Mail was simply not in the list
@@ -2728,6 +2806,9 @@
       if(!label) label=el.getAttribute('placeholder')||el.getAttribute('title')||el.getAttribute('name')||'';
       label=String(label).replace(/\s+/g,' ').trim().slice(0,80);
       if(!label) continue;
+      // "+ Contact" is drawn as an ICON and a word, and the word alone reads as the contact list -- the
+      // model pressed "New addressbook" instead (measured 0/3). The icon is half the name.
+      if(role==='button' && !el.getAttribute('aria-label') && /^[\w]/.test(label) && !/^(new|add)\b/i.test(label) && el.querySelector('use[href="#i-plus"]')) label='New '+label.toLowerCase();
       let value='';
       if(role==='textbox') value=el.isContentEditable?el.textContent:el.value;
       else if(role==='list') value=(el.selectedOptions&&el.selectedOptions[0]||{}).textContent||'';
@@ -2896,7 +2977,7 @@
         if(focus && wins0[0] && !wins0[0].selection) wins0[0]=Object.assign({},wins0[0],{selection:focus});
       }
       const label=boxRef?((ctl.list.find(c=>c.ref===boxRef)||{}).label||''):replyRef?((ctl.list.find(c=>c.ref===replyRef)||{}).label||'Reply'):'';
-      body={action:'window_recipe',recipe:recipe.recipe,windows:wins0,today:_aiToday(),
+      body={action:'window_recipe',recipe:recipe.recipe,instruction:String(recipe.steer||''),windows:wins0,today:_aiToday(),
             text:(recipe.recipe==='tidy'||recipe.recipe==='checklist')&&box?String(box.isContentEditable?box.textContent:box.value).slice(0,8000):'',
             reply_ref:replyRef,box_ref:boxRef,box_label:label};
     }else body={action:'window_steps',windows:contexts,instruction,history:turns.slice(-4),commands:cmds,today:_aiToday(),controls:ctl.list};
@@ -2976,7 +3057,7 @@
     if(keep) keep.onchange=()=>{ panel._aiKeep=keep.checked; };
     const all=box.querySelector('[data-ai-all]');
     if(all) all.onclick=async()=>{
-      all.disabled=true; let ok=true;
+      all.disabled=true; let ok=true; const before=_aiRoot(w);
       for(const card of box.querySelectorAll('.osw-ai-step')){
         const st=steps[+card.dataset.step];
         if(!st || !_AI_ACTS.has(st.do)) continue;
@@ -2986,7 +3067,10 @@
       all.disabled=false;
       if(w.aiPanel!==panel) return;
       // "Keep going": look again and do the next part, a bounded number of rounds; a refusal stops it.
-      if(ok && panel._aiKeep && (panel._aiRounds=(panel._aiRounds||0)+1)<=_AI_KEEP_GOING_MAX) cont.click();
+      /* A step that OPENED A FORM ("+ Contact") has not done what was asked yet -- the fields were not on
+       * screen when the model planned. Look again once, as Keep going would, so it can fill them. */
+      const opened=_aiRoot(w)!==before && _aiRoot(w)!==(w.body||w.el);
+      if(ok && (panel._aiKeep||opened) && (panel._aiRounds=(panel._aiRounds||0)+1)<=_AI_KEEP_GOING_MAX) cont.click();
       else if(ok && panel._aiKeep) PC().toast('Stopped after '+_AI_KEEP_GOING_MAX+' rounds — press Continue to go on');
     };
     box.querySelectorAll('.osw-ai-step').forEach(card=>{
@@ -3032,6 +3116,12 @@
     }
     if(w.aiPanel){closeWindowAI(w);return;}
     wins.forEach(closeWindowAI);
+    if(_AI_PRIVATE.has(_aiViewOf(w))){
+      const p=document.createElement('div'); p.className='osw-ai-panel osw-ai-private'; w.aiPanel=p;
+      p.innerHTML=`<header><span>🔒</span><div><b>AI is off in ${enc(String(w.title||'this window'))}</b><small>It holds keys, passwords or money — nothing here is ever sent to the AI.</small></div><button data-ai-dismiss aria-label="Close">×</button></header>`;
+      p.querySelector('[data-ai-dismiss]').onclick=()=>closeWindowAI(w);
+      w.el.appendChild(p); return;
+    }
     w.el.classList.remove('ai-alert');
     const related=[..._aiContextWins].filter(x=>wins.includes(x)&&x!==w), contexts=[w,...related].map(windowAIContext);
     // Where an "Insert" would go: remembered NOW, before the panel's own box takes the focus.

@@ -1,0 +1,123 @@
+{
+ "action": "window_steps",
+ "windows": [
+  {
+   "title": "Notes",
+   "view": "notes",
+   "kind": "PosterChan app",
+   "selection": "",
+   "text": "Notes Your private notebook New note FOLDERS All notes 0 Unfiled 0 Import Backup Delete all notes & files All notes 0 Your notebook starts here Write your first note, or bring your notes in with Import. Unfiled 📎"
+  }
+ ],
+ "instruction": "x",
+ "history": [],
+ "commands": false,
+ "today": "2026-10-06",
+ "controls": [
+  {
+   "ref": 1,
+   "role": "button",
+   "label": "New note",
+   "value": "",
+   "near": ""
+  },
+  {
+   "ref": 2,
+   "role": "button",
+   "label": "New folder",
+   "value": "",
+   "near": ""
+  },
+  {
+   "ref": 3,
+   "role": "button",
+   "label": "All notes 0",
+   "value": "",
+   "near": ""
+  },
+  {
+   "ref": 4,
+   "role": "button",
+   "label": "Unfiled 0",
+   "value": "",
+   "near": ""
+  },
+  {
+   "ref": 5,
+   "role": "button",
+   "label": "Import",
+   "value": "",
+   "near": ""
+  },
+  {
+   "ref": 6,
+   "role": "button",
+   "label": "Backup",
+   "value": "",
+   "near": ""
+  },
+  {
+   "ref": 7,
+   "role": "button",
+   "label": "Delete all notes & files",
+   "value": "",
+   "near": ""
+  },
+  {
+   "ref": 8,
+   "role": "button",
+   "label": "New note",
+   "value": "",
+   "near": ""
+  },
+  {
+   "ref": 9,
+   "role": "textbox",
+   "label": "Search notes",
+   "value": "",
+   "near": ""
+  },
+  {
+   "ref": 10,
+   "role": "textbox",
+   "label": "Note title",
+   "value": "",
+   "near": ""
+  },
+  {
+   "ref": 11,
+   "role": "button",
+   "label": "Read",
+   "value": "",
+   "near": ""
+  },
+  {
+   "ref": 12,
+   "role": "button",
+   "label": "Delete note",
+   "value": "",
+   "near": ""
+  },
+  {
+   "ref": 13,
+   "role": "textbox",
+   "label": "tags, comma separated",
+   "value": "",
+   "near": ""
+  },
+  {
+   "ref": 14,
+   "role": "button",
+   "label": "📎",
+   "value": "",
+   "near": ""
+  },
+  {
+   "ref": 15,
+   "role": "textbox",
+   "label": "Note text",
+   "value": "",
+   "near": ""
+  }
+ ]
+}

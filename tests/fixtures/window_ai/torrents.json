@@ -1,0 +1,67 @@
+{
+ "action": "window_steps",
+ "windows": [
+  {
+   "title": "Torrents",
+   "view": "torrents",
+   "kind": "PosterChan app",
+   "selection": "",
+   "text": "⬇ Downloads 🌸 Nyaa 🌌 TGX 🧲 Nostr 📡 Feeds Add torrent Nothing downloading. Add a magnet link above, or start one from AI Chat with torrent <magnet>."
+  }
+ ],
+ "instruction": "x",
+ "history": [],
+ "commands": false,
+ "today": "2026-10-06",
+ "controls": [
+  {
+   "ref": 1,
+   "role": "button",
+   "label": "⬇ Downloads",
+   "value": "",
+   "near": ""
+  },
+  {
+   "ref": 2,
+   "role": "button",
+   "label": "🌸 Nyaa",
+   "value": "",
+   "near": ""
+  },
+  {
+   "ref": 3,
+   "role": "button",
+   "label": "🌌 TGX",
+   "value": "",
+   "near": ""
+  },
+  {
+   "ref": 4,
+   "role": "button",
+   "label": "🧲 Nostr",
+   "value": "",
+   "near": ""
+  },
+  {
+   "ref": 5,
+   "role": "button",
+   "label": "📡 Feeds",
+   "value": "",
+   "near": ""
+  },
+  {
+   "ref": 6,
+   "role": "button",
+   "label": "Add torrent",
+   "value": "",
+   "near": ""
+  },
+  {
+   "ref": 7,
+   "role": "button",
+   "label": "Refresh now",
+   "value": "",
+   "near": ""
+  }
+ ]
+}
