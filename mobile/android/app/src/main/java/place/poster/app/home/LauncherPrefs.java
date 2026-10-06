@@ -27,6 +27,7 @@ public final class LauncherPrefs {
     private static final String K_HIDDEN = "hidden";
     private static final String K_ORDER = "order";
     private static final String K_OPTED_IN = "opted_in";
+    private static final String K_WALLPAPER_OFFERED = "wallpaper_offered";
     private static final String K_SEEDED = "seeded";
     private static final String K_DESK = "desk";
     private static final String K_DOCK = "dock";
@@ -154,6 +155,11 @@ public final class LauncherPrefs {
      * "you are using PosterChan as your home screen" without asking RoleManager on every draw, and
      * by the un-set path so it knows the component was ours to disable.
      */
+    /** The PosterChan live wallpaper has been offered once (see WallpaperOffer) -- never again. */
+    public boolean wallpaperOffered() { return sp.getBoolean(K_WALLPAPER_OFFERED, false); }
+
+    public void setWallpaperOffered() { sp.edit().putBoolean(K_WALLPAPER_OFFERED, true).apply(); }
+
     public boolean optedIn() { return sp.getBoolean(K_OPTED_IN, false); }
 
     public void setOptedIn(boolean v) { sp.edit().putBoolean(K_OPTED_IN, v).apply(); }

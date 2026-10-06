@@ -318,3 +318,29 @@ def test_phone_shell_settings_offers_it_too():
     plugin = _read(APP, "java", "place", "poster", "app", "home", "HomePlugin.java")
     assert "public void setLiveWallpaper(PluginCall call)" in plugin
     assert 'o.put("liveWallpaper", place.poster.app.wallpaper.CyberWallpaper.isActive(getContext()));' in plugin
+
+
+def test_the_launcher_offers_it_as_the_default_once(tmp_path):
+    """'if you enable the poster chan launcher, can you make that live wallpaper the default?' Android lets
+    no ordinary app set a live wallpaper, so the default is the system's own preview of it, opened the first
+    time the launcher is the home screen -- and only that once."""
+    if shutil.which("javac") is None:
+        pytest.skip("no JDK")
+    home = os.path.join(APP, "java", "place", "poster", "app", "home")
+    drv = tmp_path / "Drv.java"
+    drv.write_text("package place.poster.app.home;\npublic class Drv{public static void main(String[] a){"
+                   "boolean[] t={true,false};StringBuilder s=new StringBuilder();"
+                   "for(boolean d:t)for(boolean o:t)for(boolean f:t)s.append(WallpaperOffer.shouldOffer(d,o,f)?'1':'0');"
+                   "System.out.print(s);}}")
+    c = subprocess.run(["javac", "-nowarn", "-d", str(tmp_path), os.path.join(home, "WallpaperOffer.java"), str(drv)],
+                       capture_output=True, text=True)
+    assert c.returncode == 0, c.stderr
+    out = subprocess.run(["java", "-cp", str(tmp_path), "place.poster.app.home.Drv"], capture_output=True, text=True).stdout
+    # (home, ours active, offered) in TT..FF order: only "home, not ours, never offered" offers.
+    assert out == "00010000", out
+    act = _read(home, "HomeActivity.java")
+    body = act[act.index("private void offerWallpaperOnce()"):]
+    body = body[:body.index("\n    }\n")]
+    assert "prefs.setWallpaperOffered();" in body and body.index("prefs.setWallpaperOffered();") < body.index("CyberWallpaper.open(this)"), \
+        "the offer must be recorded BEFORE the picker opens, or a picker that crashes re-opens on every resume"
+    assert "offerWallpaperOnce();" in act[act.index("protected void onResume()"):][:400]

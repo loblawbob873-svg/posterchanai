@@ -138,6 +138,17 @@ public class HomeActivity extends Activity implements DeskView.Host {
     protected void onResume() {
         super.onResume();
         place.poster.app.SystemBars.apply(this);
+        offerWallpaperOnce();
+    }
+
+    /** See WallpaperOffer: the first time this is the home screen, open the live wallpaper's preview. */
+    private void offerWallpaperOnce() {
+        try {
+            if (!WallpaperOffer.shouldOffer(HomeRoles.isDefaultHome(this),
+                    place.poster.app.wallpaper.CyberWallpaper.isActive(this), prefs.wallpaperOffered())) return;
+            prefs.setWallpaperOffered();              // before opening: a crash in the picker must not loop
+            place.poster.app.wallpaper.CyberWallpaper.open(this);
+        } catch (Throwable ignored) { /* a launcher that cannot offer a wallpaper is still a launcher */ }
     }
 
     private List<AppShelf.Entry> installed = new ArrayList<AppShelf.Entry>();
