@@ -7839,6 +7839,7 @@
    * Promise]". A thenable is now AWAITED (the caller's intent, just late), and any other non-string
    * object is refused out loud instead of being pasted as "[object Object]". Strings, numbers and
    * bigints are untouched, which is every correct call in the app. */
+  let _copyCheck = null;               // the last native copy's read-back: {path, verified, at}
   function copyValue(text, okMsg, failLabel){
     if(text && typeof text.then === 'function')
       return Promise.resolve(text).then(v => copyValue(v, okMsg, failLabel),
@@ -7874,7 +7875,20 @@
       if(window.pcClip && window.pcClip.write)
         return window.pcClip.write(val).then(w => w ? ok() : fb()).catch(fb);
       const cap = window.Capacitor && window.Capacitor.Plugins && window.Capacitor.Plugins.Clipboard;
-      if(cap && cap.write) return cap.write({ string: val }).then(ok).catch(fb);
+      /* THE APK READS IT BACK BEFORE SAYING "COPIED" ("it says link copied but nothing pastes", Android
+       * tablet). The plugin resolving means Android took a clip, and on that tablet the clipboard then
+       * held nothing -- with the toast already claiming success, which is the one outcome worse than an
+       * error. So a native write is checked with a native read: the link there is the only "copied";
+       * something else there puts the link on screen to copy by hand (never execCommand, which reports
+       * true in the same WebView without copying); a read that could not be made keeps the old answer,
+       * since "could not ask" is not "missing". `_copyCheck` records the last outcome for diagnosis. */
+      if(cap && cap.write) return cap.write({ string: val }).then(() =>
+        (cap.read ? cap.read().then(r => (r && r.value != null ? String(r.value) : '') === val, () => null) : null)
+      ).then(same => {
+        _copyCheck = { path: 'app', verified: same, at: Date.now() };
+        if(same === false){ _copyFallback(failLabel || 'Copy this:', val, { once:true }); return false; }
+        return ok();
+      }).catch(fb);
       if(navigator.clipboard && navigator.clipboard.writeText)
         return navigator.clipboard.writeText(val).then(ok).catch(fb);
     }catch(_){ /* fall through — a throwing clipboard is a missing one */ }
