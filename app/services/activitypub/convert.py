@@ -499,7 +499,11 @@ def account_from_actor(actor: dict) -> dict:
     return {"uri": aid, "url": aid, "acct": f"{user}@{host}" if user and host else "",
             "username": user, "display_name": str(actor.get("name") or user or "").strip(),
             "avatar": icon_url(actor.get("icon")),
-            "note": str(actor.get("summary") or ""), "emojis": emojis}
+            "note": str(actor.get("summary") or ""), "emojis": emojis,
+            # Profile fields (PropertyValues) — where fediverse people put a wallet address. Dropped
+            # here, the puppet's profile could never show one however the identity code read it.
+            "attachment": [a for a in _as_list(actor.get("attachment"))
+                           if isinstance(a, dict) and a.get("type") == "PropertyValue"]}
 
 
 def username_of(actor: dict) -> str:

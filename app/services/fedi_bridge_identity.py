@@ -129,6 +129,79 @@ def is_community_uri(uri: str) -> bool:
     return bool(_COMMUNITY_PATH.match(urlparse(uri or "").path or ""))
 
 
+# ---- profile fields and the payment addresses in them ------------------------------------------
+#
+# A fediverse profile's key/value FIELDS (Mastodon `fields`, ActivityPub `attachment` PropertyValues)
+# are where people put a wallet address — "Monero Wallet: 4Avre3…". The puppet's kind-0 used to carry
+# the bio only, so every one of those was dropped on the floor here, while momostr (which flattens the
+# fields into the bio) made the same person tippable on Primal. Fediverse people rarely have a
+# Lightning address, so for most of them a field address is the ONLY way anybody here can pay them.
+_MAX_FIELDS = 8
+_XMR_RE = re.compile(r"(?<![1-9A-HJ-NP-Za-km-z])[48][1-9A-HJ-NP-Za-km-z]{94}(?:[1-9A-HJ-NP-Za-km-z]{11})?(?![1-9A-HJ-NP-Za-km-z])")
+_ETH_RE = re.compile(r"(?<![0-9A-Za-z])0x[0-9a-fA-F]{40}(?![0-9A-Za-z])")
+# A Lightning ADDRESS is shaped exactly like an e-mail address, and a profile field saying
+# "contact: me@example.com" is far commoner than one saying "⚡: me@getalby.com" (measured on the 329
+# fediverse actors this node federates with: 2 Lightning fields, many more contact links). Read as a
+# zap target, a mail address sends the payment to whatever `example.com/.well-known/lnurlp/me` answers —
+# possibly a different person. So a user@domain value counts ONLY under a Lightning LABEL; an LNURL
+# (bech32, `lnurl1…`) is self-describing and counts anywhere in a field.
+_LN_LABEL = re.compile(r"(?i)⚡|\blightning\b|\blnurl\b|\bln\b|\bzaps?\b|\blud16\b|\bsats\b|\btips?\b")
+_LN_ADDR = re.compile(r"^(?:lightning:)?([a-z0-9._+-]{1,64}@[a-z0-9-]+(?:\.[a-z0-9-]+)+)$", re.I)
+_LNURL_RE = re.compile(r"(?<![0-9a-z])lnurl1[02-9ac-hj-np-z]{20,}(?![0-9a-z])", re.I)
+
+
+def profile_fields(account: dict) -> list:
+    """[(name, value)] as plain text, from either shape: the Mastodon API's `fields` or an AP actor's
+    `attachment` PropertyValues. Values are HTML on both (a link is an <a>), so they are flattened."""
+    raw = account.get("fields")
+    if not isinstance(raw, list):
+        raw = [a for a in (account.get("attachment") or []) if isinstance(a, dict)
+               and a.get("type") == "PropertyValue"] if isinstance(account.get("attachment"), list) else []
+    out = []
+    for f in raw:
+        if not isinstance(f, dict):
+            continue
+        name = _strip_html(str(f.get("name") or "")).strip().rstrip(":").strip()[:100]
+        value = _strip_html(str(f.get("value") or "")).strip()[:1000]
+        if name or value:
+            out.append((name, value))
+        if len(out) >= _MAX_FIELDS:
+            break
+    return out
+
+
+def payment_addresses(fields: list, about: str = "") -> dict:
+    """{"monero", "ethereum", "lightning"(lud16), "lnurl"(lud06)} found in the fields first, then the bio.
+    Monero and Ethereum count only as a token that IS an address — never a guess from a label — so a
+    mislabelled field cannot misroute money; the worst a wrong label can do is nothing. Lightning is the
+    one exception and is the stricter for it: see `_LN_LABEL`."""
+    found = {}
+    for name, value in fields:
+        if "lightning" not in found and _LN_LABEL.search(name or ""):
+            m = _LN_ADDR.match((value or "").strip())
+            if m:
+                found["lightning"] = m.group(1).lower()
+        if "lnurl" not in found:
+            m = _LNURL_RE.search(value or "")
+            if m:
+                found["lnurl"] = m.group(0).lower()
+    texts = [v for _, v in fields] + [about or ""]
+    for t in texts:
+        if "monero" not in found:
+            m = _XMR_RE.search(t)
+            if m:
+                found["monero"] = m.group(0)
+        if "ethereum" not in found:
+            m = _ETH_RE.search(t)
+            if m:
+                found["ethereum"] = m.group(0)
+    return found
+
+
+def _fields_text(fields: list) -> str:
+    return "\n".join(f"{n}: {v}" if n else v for n, v in fields)
+
+
 def puppet_for(account: dict, instance_host: str = "") -> dict:
     """Resolve the full puppet identity for a fediverse account (no I/O, no DB)."""
     actor_uri = actor_uri_of(account)
@@ -158,6 +231,7 @@ def puppet_for(account: dict, instance_host: str = "") -> dict:
                                       or account.get("avatarUrl") or "") if isinstance(
             account.get("avatar") or account.get("avatar_static") or account.get("avatarUrl") or "", str) else "",
         "about": _strip_html(account.get("note") or account.get("description") or ""),
+        "fields": profile_fields(account),
         "emojis": _emoji_url_map(account.get("emojis")),
     }
 
@@ -169,7 +243,7 @@ def puppet_from_actor(actor_uri: str, acct: str = "") -> dict:
     pubkey_hex = nostr_service.derive_pubkey(sk)
     return {"seckey": sk, "pubkey_hex": pubkey_hex, "npub": nostr_service.npub_of(pubkey_hex),
             "actor_uri": actor_uri, "acct": acct, "host": "", "nip05_name": "",
-            "display_name": "", "avatar_url": "", "about": ""}
+            "display_name": "", "avatar_url": "", "about": "", "fields": []}
 
 
 async def delete_note(port: int, actor_uri: str, nostr_event_id: str, broadcast: bool = False) -> bool:
@@ -183,13 +257,32 @@ async def delete_note(port: int, actor_uri: str, nostr_event_id: str, broadcast:
 
 def _profile_content(p: dict) -> dict:
     domain = nip05_domain()
+    fields = p.get("fields") or []
+    about = p["about"] or ""
+    # The fields go into the bio as "name: value" lines, which is what every Nostr client can show —
+    # there is no kind-0 key for them — and is exactly how momostr presents the same profile.
+    if fields:
+        about = ((about + "\n\n") if about else "") + _fields_text(fields)
     out = {
         "name": p["display_name"] or p["nip05_name"],
         "display_name": p["display_name"] or p["acct"].partition("@")[0],
-        "about": ((p["about"] + "\n\n") if p["about"] else "") + f"🔗 bridged from {p['acct']} (fediverse)",
+        "about": ((about + "\n\n") if about else "") + f"🔗 bridged from {p['acct']} (fediverse)",
         "fediverse": p["acct"],
         "bridged": True,
     }
+    # …and an address among them becomes the keys clients actually read, so the person gets a tip
+    # button: `monero_address` (+ `xmr`, the alias this client writes) and `ethereum`.
+    pay = payment_addresses(fields, p["about"] or "")
+    if pay.get("monero"):
+        out["monero_address"] = out["xmr"] = pay["monero"]
+    if pay.get("ethereum"):
+        out["ethereum"] = pay["ethereum"]
+    # Lightning goes to the standard keys, so the ordinary ⚡ zap button works for them. A zap to an
+    # LNURL server without Nostr support is still a payment (tips.js simply sends no zap request).
+    if pay.get("lightning"):
+        out["lud16"] = pay["lightning"]
+    if pay.get("lnurl"):
+        out["lud06"] = pay["lnurl"]
     if p["avatar_url"]:
         out["picture"] = p["avatar_url"]
     if domain:
@@ -204,12 +297,17 @@ def _profile_emoji_tags(p: dict) -> list:
                           p.get("emojis") or {}, limit=20)
 
 
-def _profile_sig_from(display_name: str, avatar_url: str, about: str, emoji_tags: list | None = None) -> str:
+def _profile_sig_from(display_name: str, avatar_url: str, about: str, emoji_tags: list | None = None,
+                      fields: list | None = None) -> str:
     # Sign over the emoji tags we ACTUALLY emit (shortcodes present in the name/bio), not the whole
     # declared map — so an already-mirrored puppet whose plain text is unchanged still republishes once
     # to GAIN its tags, but an upstream emoji change unused in the name/bio doesn't force a no-op rewrite.
     emo = ",".join(f"{t[1]}={t[2]}" for t in (emoji_tags or []) if len(t) >= 3)
     raw = "\x1f".join([display_name or "", avatar_url or "", (about or "")[:200], nip05_domain(), emo])
+    # Fields are hashed WHOLE and only when present, so a puppet with none keeps the signature it was
+    # published under (no mass republish on deploy) while one with an address republishes once to gain it.
+    if fields:
+        raw += "\x1f" + hashlib.sha256(_fields_text(fields).encode("utf-8")).hexdigest()
     return hashlib.sha256(raw.encode("utf-8")).hexdigest()
 
 
@@ -220,7 +318,8 @@ def _account_profile_sig(account: dict) -> str:
     about = _strip_html(account.get("note") or account.get("description") or "")
     etags = emoji_tags_for(dn + " " + about, _emoji_url_map(account.get("emojis")), limit=20)
     av = account.get("avatar") or account.get("avatar_static") or account.get("avatarUrl") or ""
-    return _profile_sig_from(dn, av.strip() if isinstance(av, str) else "", about, etags)
+    return _profile_sig_from(dn, av.strip() if isinstance(av, str) else "", about, etags,
+                             profile_fields(account))
 
 
 # Provisioned-this-process puppets: actor_uri → {"p": puppet dict, "sig": profile sig}. A hit skips
@@ -409,7 +508,8 @@ async def ensure_puppet(db, port: int, account: dict, instance_host: str = "",
     # Signature over exactly what gets published (name/avatar/bio/domain + the emoji tags we actually
     # emit) so an upstream emoji change that isn't used in the name/bio doesn't trigger a no-op republish.
     emoji_tags = _profile_emoji_tags(p)
-    sig = _profile_sig_from(p["display_name"], p["avatar_url"], p["about"], emoji_tags)
+    sig = _profile_sig_from(p["display_name"], p["avatar_url"], p["about"], emoji_tags,
+                            p.get("fields") or [])
     now = datetime.utcnow()
     need_profile = False
     if row is None:

@@ -8008,7 +8008,7 @@
     // Whatever the sheet just resolved is also what the CARD should be marking — the resolver may
     // have reached relays (a NIP-65 outbox hop) that the batched profile REQ never asked.
     if(_learnRails(pk, state.targets.map(t=>t.type))) try{ decorateProfiles(); }catch(_){}
-    for(const [type,address] of [['lightning',p.lud16||p.lud06],['monero',xmrOf(p)],['bitcoincash',bchOf(p)]])
+    for(const [type,address] of [['lightning',p.lud16||p.lud06],['monero',xmrOf(p)],['bitcoincash',bchOf(p)],['ethereum',ethOf(p)]])
       if(address&&!targets.some(t=>t.type===type)){const t=PCPaymentTargets.target(type,address);if(t)targets.push(t);}
     return targets;
   }
@@ -8132,6 +8132,22 @@
     }
     for(const k in p){ const v=p[k]; if(typeof v==='string' && isXmrAddr(v)) return v.trim(); }
     for(const k of ['about','website']){ const v=p[k]; if(typeof v==='string'){ const m=v.match(_XMR_RX); if(m && isXmrAddr(m[0])) return m[0]; } }
+    return '';
+  }
+  /* Ethereum address from kind-0 metadata — DISPLAY AND HAND-OFF ONLY: it opens the pay sheet (address,
+   * QR, `ethereum:` link to the person's own wallet) and never touches the built-in wallet.
+   * Read from explicit keys only, never scraped out of a bio the way xmrOf does: a Monero address is
+   * self-describing, while `0x` + 40 hex is also the shape of a contract, a token or any EVM account the
+   * person merely mentioned. Fediverse puppets get `ethereum` written by the bridge, which takes it from
+   * the person's own profile fields. */
+  const _ETH_ADDR=/^0x[0-9a-fA-F]{40}$/;
+  function ethOf(p){
+    if(!p || typeof p!=='object') return '';
+    const pick=v=>(typeof v==='string' && _ETH_ADDR.test(v.trim())) ? v.trim() : '';
+    const direct=pick(p.ethereum)||pick(p.eth)||pick(p.ethereum_address)||pick(p.eth_address);
+    if(direct) return direct;
+    const map=p.cryptocurrency_addresses;
+    if(map && typeof map==='object') for(const k of ['ethereum','eth','ETH','Ethereum']){ const v=pick(map[k]); if(v) return v; }
     return '';
   }
   // Monero tip address for a specific NOTE. Nosmero (and others) stamp the author's address on EACH note
