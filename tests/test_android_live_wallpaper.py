@@ -7,12 +7,14 @@ the engine composites it on a phone (the cached sky, the cached skyline blitted 
 then the moving frame). Every assertion below is about pixels a person would see.
 
 What it must be, and why each test exists:
-  * a cyberpunk city in the app's own palette — the sun, the grid, the POSTERCHAN sign actually ON
-    SCREEN on the middle home page (a sign drawn off the edge passes every source-level test there is);
-  * ALIVE: two moments differ where things move and are identical where they do not;
-  * parallax: a page swipe moves the city and NOT the sky — that is what makes it read as distance;
-  * a tap pulses across the floor (the launcher forwards COMMAND_TAP; without that the wallpaper never
-    hears a touch, because the launcher's window is on top of it);
+  * POSTERCHAN IN A CYBERPUNK CITY ("kinda cringe, must include posterchan in a cyberpunk city"): she
+    dances on a wet rooftop in front of a neon night city, with a POSTERCHAN rooftop sign and a hologram
+    billboard of her -- all actually ON SCREEN on the middle home page (art drawn off the edge, or a
+    frame the engine never loaded, passes every source-level test there is);
+  * ALIVE: she dances, and the same moment twice is the same frame;
+  * parallax: a page swipe moves the city, and never moves her off the screen;
+  * a tap makes her hop and ripples the roof (the launcher forwards COMMAND_TAP; without that the
+    wallpaper never hears a touch, because the launcher's window is on top of it);
   * deterministic — the same moment twice is the same frame, which is what makes the rest testable;
   * BATTERY: the home screen's rule is that nothing it owns ticks while nobody is looking, and a live
     wallpaper is the one animated thing in it. `FramePolicy` is RUN: invisible schedules nothing at all.
@@ -48,6 +50,13 @@ def build():
     srcs += [os.path.join(HARNESS, f) for f in os.listdir(HARNESS) if f.endswith(".java")]
     c = subprocess.run(["javac", "-nowarn", "-d", out] + srcs, capture_output=True, text=True, timeout=300)
     assert c.returncode == 0, c.stderr[-3000:]
+    # Her frames, exactly as the APK ships them (res/drawable-nodpi/pc_dance_N.webp); AWT reads PNG.
+    from PIL import Image
+    frames = os.path.join(out, "frames")
+    os.makedirs(frames)
+    for i in range(1, 9):
+        Image.open(os.path.join(APP, "res", "drawable-nodpi", f"pc_dance_{i}.webp")).convert("RGBA").save(
+            os.path.join(frames, f"dance-{i}.png"))
     yield out
     shutil.rmtree(out, ignore_errors=True)
 
@@ -59,7 +68,8 @@ def render(build, w=540, h=1200, t=3.2, offset=0.5, tap=None):
     args = [path, str(w), str(h), str(t), str(offset)]
     if tap:
         args += [str(tap[0]), str(tap[1]), str(tap[2])]
-    r = subprocess.run(["java", "-Djava.awt.headless=true", "-cp", build, "place.poster.app.wallpaper.Render"] + args,
+    r = subprocess.run(["java", "-Djava.awt.headless=true", "-Dpc.frames=" + os.path.join(build, "frames"), "-cp", build,
+                        "place.poster.app.wallpaper.Render"] + args,
                        capture_output=True, text=True, timeout=120)
     assert r.returncode == 0, r.stderr[-3000:]
     img = Image.open(path).convert("RGB")
@@ -85,10 +95,6 @@ def is_cyan(r, g, b):
     return b > 90 and g > 80 and r < 90 and b > r + 50 and g > r + 40
 
 
-def is_gold(r, g, b):
-    return r > 200 and g > 140 and b < 120
-
-
 def is_magenta(r, g, b):
     return r > 150 and b > 120 and g < 110
 
@@ -98,66 +104,70 @@ def diff(a, b, box):
     return sum(1 for y in range(box[1], box[3]) for x in range(box[0], box[2]) if pa[x, y] != pb[x, y])
 
 
-HORIZON = int(1200 * 0.62)
-
-
 # ------------------------------------------------------------------------------------- the picture
+# The scene at 540x1200 (portrait): the roof she stands on is at 0.80h, she is 0.36h tall, centred.
+ROOF = int(1200 * 0.80)
+HER = (270 - 160, ROOF - 440, 270 + 160, ROOF)          # the box she dances in, on the middle page
 
-def test_it_is_a_cyberpunk_city_in_the_apps_palette(build):
+
+def is_hair(r, g, b):
+    """Her orange hair: the one colour nothing else in the city is (a gold-to-magenta sun is never
+    this orange with this little blue -- the old wallpaper's sun had to fail this)."""
+    return r > 200 and 80 < g < 190 and b < 60
+
+
+def hair_moved(a, b, box):
+    """Pixels that are her hair in one picture and not the other: SHE moved, not the rain or a sign."""
+    pa, pb = a.load(), b.load()
+    return sum(1 for y in range(box[1], box[3]) for x in range(box[0], box[2]) if is_hair(*pa[x, y]) != is_hair(*pb[x, y]))
+
+
+def test_it_is_posterchan_in_a_cyberpunk_city(build):
+    """'must include posterchan in a cyberpunk city': she is THERE, on the middle page, in the app's art."""
     img = render(build)
-    # a dark sky, not a blank or a stock gradient
-    top = img.crop((0, 0, 540, 200)).resize((1, 1)).getpixel((0, 0))
-    assert sum(top) < 60, f"the sky is not night: {top}"
-    # the sun, gold, above the horizon
-    assert count(img, (100, 300, 440, HORIZON), is_gold) > 1500, "no sun"
-    # the grid floor: magenta rows AND cyan rays below the horizon
-    floor = (0, HORIZON + 5, 540, 1200)
-    assert count(img, floor, is_magenta) > 800, "no grid rows"
-    assert count(img, floor, is_cyan) > 800, "no grid rays"
+    top = img.crop((0, 0, 540, 150)).resize((1, 1)).getpixel((0, 0))
+    assert max(top) < 50, f"the sky is not night: {top}"
+    assert count(img, HER, is_hair) > 2500, "PosterChan is not on the home screen"
+    city = (0, 250, 540, ROOF - 4)
+    assert count(img, city, is_magenta) > 600 and count(img, city, is_cyan) > 300, "no neon in the city"
+    warm = count(img, city, lambda r, g, b: r > 150 and g > 100 and b < 120)
+    assert warm > 400, "the towers have no lit windows"
 
 
-def test_the_sign_is_on_screen_on_the_middle_page_and_lit(build):
-    """The sign is the branding; drawn off the edge it passes every test that reads source."""
-    from PIL import Image  # noqa
-    # Pick a moment the tube is not stuttering — the scene says which by its own noise; sample a few.
-    best = 0
-    for t in (0.5, 3.2, 7.7, 12.1):
+def test_the_posterchan_sign_and_her_hologram_are_lit_on_the_middle_page(build):
+    """The rooftop sign above her head and the hologram billboard of her, both actually on screen."""
+    best_sign = best_holo = 0
+    for t in (0.5, 3.2, 7.7, 12.1):          # some moment where the tube is not stuttering
         img = render(build, t=t)
-        best = max(best, count(img, (0, 0, 540, HORIZON), is_cyan))
-    assert best > 900, "the lit POSTERCHAN sign is not on the middle page"
+        best_sign = max(best_sign, count(img, (40, 230, 500, HER[1] - 20), is_magenta))
+        best_holo = max(best_holo, count(img, (330, 250, 540, ROOF - 120), is_cyan))
+    assert best_sign > 1500, "the lit POSTERCHAN sign is not above her on the middle page"
+    assert best_holo > 1500, "the hologram billboard is not on the middle page"
 
 
-def test_the_sun_is_sliced_where_you_can_see_it(build):
-    """The bands across the sun ARE the synthwave look. Drawn in the half the skyline covers, they are
-    drawn and never seen — which is exactly what the first version did."""
+def test_she_is_reflected_in_the_wet_roof(build):
     img = render(build)
-    px = img.load()
-    x = 270
-    runs, inside, prev_gold = 0, False, False
-    for y in range(250, HORIZON - 120):
-        g = is_gold(*px[x, y]) or (px[x, y][0] > 200 and px[x, y][1] > 90)   # gold → pink gradient
-        if prev_gold and not g:
-            runs += 1
-        prev_gold = g
-    assert runs >= 2, "no visible slices across the sun"
+    lit = lambda r, g, b: r + g + b > 75                   # anything not wet black
+    under = count(img, (190, ROOF + 6, 350, 1200), lit)    # beneath her feet
+    beside = count(img, (0, ROOF + 6, 160, 1200), lit)     # the same-size patch of roof off to the side
+    assert under > beside + 1500, f"no reflection under her feet ({under} lit vs {beside} beside)"
 
 
 def test_portrait_and_landscape_both_compose(build):
     land = render(build, w=1200, h=750)
-    hz = int(750 * 0.62)
-    assert count(land, (300, 0, 900, hz), is_gold) > 3000, "no sun on a tablet"
-    assert count(land, (0, hz + 5, 1200, 750), is_cyan) > 800, "no floor on a tablet"
+    roof = int(750 * 0.83)
+    assert count(land, (380, 0, 820, roof), is_hair) > 2000, "PosterChan is not on a tablet"
+    assert count(land, (0, 0, 1200, roof), is_magenta) > 1500, "no city on a tablet"
+    small = render(build, w=360, h=640, offset=0.0)
+    assert count(small, (0, 0, 360, 640), is_hair) > 600, "she is lost on a small phone's first page"
 
 
 # ----------------------------------------------------------------------------------- it is alive
 
-def test_it_moves_where_things_move_and_nowhere_else(build):
+def test_she_dances(build):
     a = render(build, t=3.0)
-    b = render(build, t=3.6)
-    assert diff(a, b, (0, HORIZON + 5, 540, 1200)) > 2000, "the grid floor is not moving"
-    # the sky's static half (stars, sun) — sample a band the rain is sparse in and the sign is not in
-    sky_static = diff(a, b, (300, 40, 330, 120))
-    assert sky_static < 400, "the static sky is being redrawn differently every frame"
+    b = render(build, t=3.45)
+    assert hair_moved(a, b, HER) > 1500, "PosterChan is standing still"
 
 
 def test_the_same_moment_is_the_same_frame(build):
@@ -166,19 +176,30 @@ def test_the_same_moment_is_the_same_frame(build):
     assert a.tobytes() == b.tobytes()
 
 
-def test_a_page_swipe_moves_the_city_and_not_the_sky(build):
+def test_a_page_swipe_moves_the_city_and_keeps_her_on_screen(build):
     left = render(build, offset=0.0, t=2.0)
     right = render(build, offset=1.0, t=2.0)
-    assert diff(left, right, (0, HORIZON - 260, 540, HORIZON - 4)) > 5000, "no parallax on the skyline"
+    assert diff(left, right, (0, 250, 540, ROOF - 4)) > 8000, "no parallax on the skyline"
+    for img in (left, right):
+        assert count(img, HER, is_hair) > 2000, "a page swipe moved her off the screen"
 
 
-def test_a_tap_pulses_across_the_floor(build):
+def test_a_tap_makes_her_hop_and_ripples_the_roof(build):
     plain = render(build, t=4.0)
-    tapped = render(build, t=4.0, tap=(270, 950, 3.7))
-    assert diff(plain, tapped, (0, HORIZON + 5, 540, 1200)) > 300, "a tap draws nothing"
-    # and it is over a moment later, not a permanent mark
-    later = render(build, t=6.5, tap=(270, 950, 3.7))
-    assert diff(render(build, t=6.5), later, (0, 0, 540, 1200)) == 0, "a pulse never fades"
+    tapped = render(build, t=4.0, tap=(270, 1100, 3.65))
+    assert hair_moved(plain, tapped, HER) > 1500, "a tap does not move her"
+    assert diff(plain, tapped, (0, ROOF + 4, 540, 1200)) > 300, "a tap draws no ripple"
+    later = render(build, t=6.5, tap=(270, 1100, 3.65))
+    assert diff(render(build, t=6.5), later, (0, 0, 540, 1200)) == 0, "a tap never wears off"
+
+
+def test_the_app_ships_her_frames_and_the_engine_loads_them_by_name():
+    """The scene draws nothing for a frame the engine could not load -- so missing art is silent."""
+    for i in range(1, 9):
+        f = os.path.join(APP, "res", "drawable-nodpi", f"pc_dance_{i}.webp")
+        assert os.path.getsize(f) > 10000, f
+    eng = _read(PKG, "CyberWallpaper.java")
+    assert '"pc_dance_" + (i + 1), "drawable"' in eng and "pen.frames = dance;" in eng
 
 
 def test_the_sign_flickers_rarely_and_hums_otherwise(build):

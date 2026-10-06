@@ -35,4 +35,12 @@ public interface Pen {
 
     /** Horizontal 1px lines every `pitch` px over the area — the CRT texture. */
     void scanlines(float x, float y, float w, float h, int argb, float pitch);
+
+    /**
+     * Dance frame `frame` (0..{@link CyberScene#FRAMES}-1) of PosterChan, scaled into the box at `alpha`.
+     * `tint` 0 draws her as she is; any other colour draws her as a HOLOGRAM in that colour (her light
+     * and shade, in that hue). `flipV` mirrors her top to bottom about the box — a reflection.
+     * Must do nothing (not throw) when the frames are not available.
+     */
+    void sprite(int frame, float x, float y, float w, float h, float alpha, int tint, boolean flipV);
 }

@@ -5,6 +5,9 @@ public class Paint {
   public static final int ANTI_ALIAS_FLAG = 1;
   public enum Style { FILL, STROKE, FILL_AND_STROKE }
   public enum Align { LEFT, CENTER, RIGHT }
+  public static final int FILTER_BITMAP_FLAG = 2;
+  public void setAlpha(int a) {}
+  public ColorFilter setColorFilter(ColorFilter filter) { return filter; }
   public Paint() {}
   public Paint(int flags) {}
   public void setStyle(Style style) {}

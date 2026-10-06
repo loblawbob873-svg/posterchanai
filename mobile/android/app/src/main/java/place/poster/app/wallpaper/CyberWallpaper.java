@@ -9,7 +9,10 @@ import android.content.Intent;
 import android.content.IntentFilter;
 import android.graphics.Bitmap;
 import android.graphics.BitmapShader;
+import android.graphics.BitmapFactory;
 import android.graphics.Canvas;
+import android.graphics.ColorMatrix;
+import android.graphics.ColorMatrixColorFilter;
 import android.graphics.LinearGradient;
 import android.graphics.Paint;
 import android.graphics.RadialGradient;
@@ -34,13 +37,13 @@ import android.view.SurfaceHolder;
  *   * frames are scheduled ONLY while Android reports the wallpaper visible ({@link FramePolicy}); the
  *     moment it is hidden — screen off, an app in front — the pending frame is removed and nothing is
  *     scheduled until it is visible again. No timer, no wake lock, no alarm, ever;
- *   * everything that does not move (sky, sun, every building and window) is drawn ONCE per surface size
+ *   * everything that does not move (sky, moon, every building and window) is drawn ONCE per surface size
  *     into two bitmaps and blitted; a frame is a few dozen primitives on top;
  *   * battery saver drops it to ~12 fps rather than freezing it (a frozen animated wallpaper reads as
  *     broken), and that is re-read the moment the mode changes, not at the next start.
  *
  * Taps on the empty home screen arrive as {@link WallpaperManager#COMMAND_TAP} — the launcher forwards
- * them (DeskView does) — and send a pulse across the grid. Page swipes move the skyline (parallax).
+ * them (DeskView does) — and make PosterChan hop and ripple the wet roof. Page swipes move the skyline (parallax).
  */
 public class CyberWallpaper extends WallpaperService {
 
@@ -101,6 +104,7 @@ public class CyberWallpaper extends WallpaperService {
         private final float[] taps = new float[12];   // up to 4 pulses: {x, y, tStart}
         private int tapNext = 0;
         private CanvasPen pen;
+        private Bitmap[] dance;
 
         private final BroadcastReceiver saver = new BroadcastReceiver() {
             @Override public void onReceive(Context c, Intent i) {
@@ -114,6 +118,7 @@ public class CyberWallpaper extends WallpaperService {
             super.onCreate(holder);
             setOffsetNotificationsEnabled(true);
             readPowerSave();
+            dance = loadDance();
             try {
                 registerReceiver(saver, new IntentFilter(PowerManager.ACTION_POWER_SAVE_MODE_CHANGED));
             } catch (Throwable ignored) { }
@@ -124,6 +129,8 @@ public class CyberWallpaper extends WallpaperService {
             handler.removeCallbacks(frame);
             try { unregisterReceiver(saver); } catch (Throwable ignored) { }
             release();
+            if (dance != null) for (Bitmap b : dance) if (b != null) b.recycle();
+            dance = null;
             super.onDestroy();
         }
 
@@ -161,6 +168,26 @@ public class CyberWallpaper extends WallpaperService {
                 taps[i] = x; taps[i + 1] = y; taps[i + 2] = now();
             }
             return null;
+        }
+
+        /**
+         * PosterChan's dance, decoded ONCE for the engine's life (eight 406x560 frames, ~7 MB). Looked up by
+         * name rather than through R so this class type-checks off-device; a frame that will not decode is
+         * simply skipped (CanvasPen.sprite draws nothing for it), never a crash on the home screen.
+         */
+        private Bitmap[] loadDance() {
+            Bitmap[] out = new Bitmap[CyberScene.FRAMES];
+            try {
+                BitmapFactory.Options o = new BitmapFactory.Options();
+                o.inScaled = false;
+                for (int i = 0; i < out.length; i++) {
+                    int id = getResources().getIdentifier("pc_dance_" + (i + 1), "drawable", getPackageName());
+                    if (id != 0) out[i] = BitmapFactory.decodeResource(getResources(), id, o);
+                }
+            } catch (Throwable t) {
+                Log.w(TAG, "could not load the dance frames", t);
+            }
+            return out;
         }
 
         private float now() { return (SystemClock.uptimeMillis() - started) / 1000f; }
@@ -211,6 +238,7 @@ public class CyberWallpaper extends WallpaperService {
                 c = Build.VERSION.SDK_INT >= 28 ? holder.lockHardwareCanvas() : holder.lockCanvas();
                 if (c != null && scene != null) {
                     if (pen == null) pen = new CanvasPen(c); else pen.setCanvas(c);
+                    pen.frames = dance;
                     float shift = scene.parallaxPx(offset);
                     if (sky != null) c.drawBitmap(sky, 0, 0, null); else scene.drawSky(pen);
                     if (city != null) c.drawBitmap(city, -shift, cityTop, null); else scene.drawSkyline(pen, -shift, 0);
@@ -236,9 +264,15 @@ public class CyberWallpaper extends WallpaperService {
         private final Paint stroke = new Paint(Paint.ANTI_ALIAS_FLAG);
         private final Paint text = new Paint(Paint.ANTI_ALIAS_FLAG);
         private final RectF r = new RectF();
-        private Paint scan;
-        private float scanPitch = -1;
-        private int scanArgb;
+        private final Paint[] scans = new Paint[3];
+        private final float[] scanPitches = new float[3];
+        private final int[] scanArgbs = new int[3];
+        private final Paint spritePaint = new Paint(Paint.ANTI_ALIAS_FLAG | Paint.FILTER_BITMAP_FLAG);
+        private final int[] tints = new int[3];
+        private final ColorMatrixColorFilter[] tintFilters = new ColorMatrixColorFilter[3];
+        private int tintNext = 0;
+        /** PosterChan's dance frames (res/drawable-nodpi/pc_dance_N); null = draw without her. */
+        Bitmap[] frames;
 
         CanvasPen(Canvas c) {
             this.c = c;
@@ -299,15 +333,45 @@ public class CyberWallpaper extends WallpaperService {
 
         /** One textured rect, not hundreds of lines: the pattern is a 1×pitch tile, built once. */
         @Override public void scanlines(float x, float y, float w, float h, int argb, float pitch) {
-            if (scan == null || pitch != scanPitch || argb != scanArgb) {
+            // A frame uses TWO textures (the screen's and the hologram's): cache each, or switching
+            // between them would build a bitmap every frame.
+            int k = 0;
+            while (k < scans.length && scans[k] != null && !(scanPitches[k] == pitch && scanArgbs[k] == argb)) k++;
+            if (k == scans.length) k = 0;
+            if (scans[k] == null || scanPitches[k] != pitch || scanArgbs[k] != argb) {
                 int ph = Math.max(2, Math.round(pitch));
                 Bitmap tile = Bitmap.createBitmap(1, ph, Bitmap.Config.ARGB_8888);
                 tile.setPixel(0, 0, argb);
-                scan = new Paint();
-                scan.setShader(new BitmapShader(tile, Shader.TileMode.REPEAT, Shader.TileMode.REPEAT));
-                scanPitch = pitch; scanArgb = argb;
+                Paint sp = new Paint();
+                sp.setShader(new BitmapShader(tile, Shader.TileMode.REPEAT, Shader.TileMode.REPEAT));
+                scans[k] = sp; scanPitches[k] = pitch; scanArgbs[k] = argb;
             }
-            c.drawRect(x, y, x + w, y + h, scan);
+            c.drawRect(x, y, x + w, y + h, scans[k]);
+        }
+        @Override public void sprite(int frame, float x, float y, float w, float h, float alpha, int tint, boolean flipV) {
+            if (frames == null || frame < 0 || frame >= frames.length || frames[frame] == null) return;
+            spritePaint.setAlpha(Math.max(0, Math.min(255, Math.round(255 * alpha))));
+            spritePaint.setColorFilter(tint == 0 ? null : hologram(tint));
+            r.set(x, y, x + w, y + h);
+            if (flipV) { c.save(); c.scale(1f, -1f, 0f, y + h / 2f); }
+            c.drawBitmap(frames[frame], null, r, spritePaint);
+            if (flipV) c.restore();
+        }
+        /** Her light and shade in the tint's hue: out = tint * (0.25 + 1.2 * luminance). AwtPen.tint is the same. */
+        private ColorMatrixColorFilter hologram(int tint) {
+            for (int k = 0; k < tints.length; k++) if (tintFilters[k] != null && tints[k] == tint) return tintFilters[k];
+            float tr = ((tint >> 16) & 255) / 255f, tg = ((tint >> 8) & 255) / 255f, tb = (tint & 255) / 255f;
+            float[] m = new float[20];
+            float[] t3 = {tr, tg, tb};
+            for (int row = 0; row < 3; row++) {
+                m[row * 5] = 0.3f * 1.2f * t3[row]; m[row * 5 + 1] = 0.59f * 1.2f * t3[row]; m[row * 5 + 2] = 0.11f * 1.2f * t3[row];
+                m[row * 5 + 4] = 0.25f * 255f * t3[row];
+            }
+            m[18] = 1f;
+            ColorMatrixColorFilter f = new ColorMatrixColorFilter(new ColorMatrix(m));
+            int slot = tintNext++ % tints.length;
+            tints[slot] = tint; tintFilters[slot] = f;
+            return f;
         }
     }
 }

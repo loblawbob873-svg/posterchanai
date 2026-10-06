@@ -12,6 +12,7 @@ public abstract class Context {
   public Context getApplicationContext() { return this; }
   public java.io.File getFilesDir() { return null; }
   public Object getSystemService(String name) { return null; }
+  public android.content.res.Resources getResources() { return null; }
   public String getPackageName() { return ""; }
   public android.content.pm.PackageManager getPackageManager() { return null; }
   public android.content.ComponentName startService(Intent i) { return null; }
