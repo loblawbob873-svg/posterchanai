@@ -74,7 +74,7 @@ def test_the_stop_actions_are_behind_more_on_a_phone():
         got["head_menu"] = await b.js("document.querySelector('.menu-pop').innerText")
         # Picking "Stop getting this playlist" runs the real action (its confirm appears).
         await b.js("[...document.querySelectorAll('.menu-pop button, .menu-pop [role=menuitem], .menu-pop .menu-item')].find(x=>/Stop getting/.test(x.textContent)).click(); true")
-        for _ in range(50):
+        for _ in range(100):      # 10s: the confirm is a lazily-built modal on a loaded gate
             if await b.js("!!document.querySelector('.modal-bg, .ui-confirm, [role=dialog]')"):
                 break
             await asyncio.sleep(.1)
