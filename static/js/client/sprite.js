@@ -106,6 +106,12 @@
   <symbol id="i-monitor" viewBox="0 0 24 24"><rect x="2.8" y="4.4" width="18.4" height="12.4" rx="2"/><path d="M8.4 20.4h7.2M12 16.8v3.6"/></symbol>
   <symbol id="i-bandage" viewBox="0 0 24 24"><rect x="2.2" y="8.4" width="19.6" height="7.2" rx="3.6" transform="rotate(-45 12 12)"/><path d="M9.4 9.4l5.2 5.2"/></symbol>
   <symbol id="i-palette" viewBox="0 0 24 24"><path d="M12 3.2a8.8 8.8 0 000 17.6c1.4 0 2-.9 2-1.8 0-.9-.7-1.5-.7-2.3 0-.8.6-1.4 1.5-1.4h1.8a4.2 4.2 0 004.2-4.2c0-4.4-4-7.9-8.8-7.9z"/><circle cx="8.2" cy="10" r="1.1" fill="currentColor" stroke="none"/><circle cx="12" cy="7.6" r="1.1" fill="currentColor" stroke="none"/><circle cx="15.8" cy="10" r="1.1" fill="currentColor" stroke="none"/></symbol>
+  <!-- Meme Builder drawing tools: a brush, an eraser block, and the three shapes (line, arrow, box). -->
+  <symbol id="i-brush" viewBox="0 0 24 24"><path d="M20.2 3.8c-3.4 1.6-7.4 5.4-9.6 8.8l1.6 1.6c3.4-2.2 7.2-6.2 8-10.4z"/><path d="M10.2 13.4c-2.2 0-3.6 1.4-3.6 3.4 0 1.4-.8 2.4-2.4 2.8 1.2.8 2.6 1.2 4 1.2 2.8 0 4.6-1.8 4.6-4.2z"/></symbol>
+  <symbol id="i-eraser" viewBox="0 0 24 24"><path d="M14.2 4.6l5.6 5.6-8.8 8.8H7.6l-3-3a1.6 1.6 0 010-2.2z"/><path d="M9.4 9.4l5.6 5.6"/><path d="M11 19h8.4"/></symbol>
+  <symbol id="i-line" viewBox="0 0 24 24"><path d="M5 19L19 5"/></symbol>
+  <symbol id="i-arrow-ne" viewBox="0 0 24 24"><path d="M5 19L19 5"/><path d="M10.4 5H19v8.6"/></symbol>
+  <symbol id="i-rect" viewBox="0 0 24 24"><rect x="4.4" y="6" width="15.2" height="12" rx="1.6"/></symbol>
   <symbol id="i-plus" viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></symbol>
   <symbol id="i-refresh" viewBox="0 0 24 24"><path d="M20.4 12a8.4 8.4 0 01-14.5 5.8L3.6 15.6"/><path d="M3.6 12a8.4 8.4 0 0114.5-5.8l2.3 2.2"/><path d="M3.6 20.2v-4.6h4.6M20.4 3.8v4.6h-4.6"/></symbol>
   <symbol id="i-bug" viewBox="0 0 24 24"><rect x="7.6" y="7.8" width="8.8" height="11.4" rx="4.4"/><path d="M9.4 6.6a2.6 2.6 0 015.2 0"/><path d="M7.6 11.4H4.2M16.4 11.4h3.4M7.6 15.6H4.6M16.4 15.6h3M8.6 8.4L6.2 5.6M15.4 8.4l2.4-2.8M8.8 18.8l-2 2.2M15.2 18.8l2 2.2"/></symbol>

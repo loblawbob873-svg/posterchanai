@@ -275,9 +275,9 @@
   // full rebuild would restart the video elements), so the ↶/↷ buttons cannot get their enabled state from
   // view() alone: they stayed greyed out after those edits even though Ctrl+Z worked. Update them directly.
   function _syncHistBtns(){
-    const u = document.getElementById('mb-undo'), r = document.getElementById('mb-redo');
-    if(u) u.disabled = !_hist.length;
-    if(r) r.disabled = !_future.length;
+    // The drawing bar carries its own pair (a thumb is at the bottom of a phone, the top bar is not).
+    ['mb-undo','mb-dundo'].forEach(id=>{ const u = document.getElementById(id); if(u) u.disabled = !_hist.length; });
+    ['mb-redo','mb-dredo'].forEach(id=>{ const r = document.getElementById(id); if(r) r.disabled = !_future.length; });
   }
   function _restore(s){
     let next = null;
@@ -330,7 +330,9 @@
         if(/^(BUTTON|A)$/.test(e.target && e.target.tagName || '')) return;
         e.preventDefault(); togglePlay(); return;
       }
-      if(k === 'Escape'){ if(sel){ e.preventDefault(); sel = null; render(); } return; }
+      if(k === 'Escape'){
+        if(_dw.on){ e.preventDefault(); setDrawing(false); return; }
+        if(sel){ e.preventDefault(); sel = null; render(); } return; }
       if(k === 'Delete' || k === 'Backspace'){
         if(!l) return;
         e.preventDefault();
@@ -417,7 +419,8 @@
   // works. Their `start` is DERIVED from that order, never hand-typed: drop a clip anywhere on the timeline
   // and the rest reflow around it (no gaps, no accidental overlaps). TEXT is excluded on purpose — a caption
   // is an overlay pinned ON the footage, so it keeps its own free start/duration.
-  const mediaSeq = () => P.layers.filter(_isVisual)
+  // A drawing is an OVERLAY on the clips, never one of them — Arrange must not slot it in between two.
+  const mediaSeq = () => P.layers.filter(l => _isVisual(l) && !(l.draw && Array.isArray(l.draw.strokes)))
     .sort((a,b)=>((+a.start||0)-(+b.start||0)) || (P.layers.indexOf(a)-P.layers.indexOf(b)));
   // Crossfade length, in seconds, between consecutive clips. 0 = hard cuts (the default and what every
   // existing project has). This is a PROJECT setting rather than per-layer because a transition belongs to
@@ -694,7 +697,7 @@
     if(!l) return null;
     if(P.layers.length >= 24){ toast('24 layers is the limit'); return null; }
     snap();
-    const c = Object.assign({}, l, { id: nid() });
+    const c = _ownDraw(Object.assign({}, l, { id: nid() }));
     if(c.type === 'text'){
       if(_alignOf(c) !== 'center') c.x = clamp(c.x + Math.round(P.w*0.04), 0, Math.max(0, P.w-16));
       c.y = clamp(c.y + Math.round((+c.size||64) * 1.2), 0, Math.max(0, P.h-16));
@@ -737,7 +740,7 @@
     if(P.layers.length >= 24){ toast('24 layers is the limit — no room for the second half'); return null; }
     const st = +l.start||0, du = +l.dur||0;
     const left = +(t - st).toFixed(2);
-    const c = Object.assign({}, l, { id: nid() });
+    const c = _ownDraw(Object.assign({}, l, { id: nid() }));
     c.start = +(st + left).toFixed(2);
     c.dur   = +(du - left).toFixed(2);
     if(l.type === 'video')      c.trim = +((+l.trim||0) + left * _speedOf(l)).toFixed(3);
@@ -807,30 +810,16 @@
 
   function view(){
     return `
-    <div class="mb-wrap">
-      <!-- ONE row, on every width. The two wrapped rows this replaces cost ~6 rows of a phone screen before
-           you saw any of the meme, and everything that configures the PROJECT moved into the ⚙︎ Canvas pane.
-           What is left is the three things you actually do: add, undo, render.
-           There is ONE add button, not two. 🖼️ Media and ➕ More split the sources down a line only the
-           person who wrote it could see — a sticker, a backing track and a layout were behind More, a photo
-           and the Blossom drive behind Media — so finding anything meant opening one, closing it, and
-           opening the other. They are one sheet now, still visibly grouped inside it. -->
+    <div class="mb-wrap${_dw.on?' drawing':''}">
+      <!-- ONE row, on every width: the PROJECT row — open/save, undo, redo, and Render. The two wrapped rows
+           this replaces cost ~6 rows of a phone screen before you saw any of the meme, and everything that
+           configures the project lives in the ⚙︎ Canvas pane.
+           What you ADD to the meme moved out of this row into the tool strip below (.mb-tools), where
+           there is room for each tool to be a labelled, thumb-sized target — on a phone that strip is the
+           bottom bar. -->
       <div class="mb-bar">
         <div class="mb-barmain">
-          <!-- The emoji is in its own span so a narrow phone can drop it and keep the WORD: a labelled
-               button beats a pictogram nobody has to guess at. -->
-          <button class="btn btn-neon small" id="mb-add-media" title="A photo, a clip, music, a sticker, an effect or a ready-made layout"><svg class="ic b-ic mb-e" aria-hidden="true"><use href="#i-image"></use></svg>Media</button>
-          <button class="btn btn-cyan small" id="mb-add-text"><svg class="ic b-ic mb-e" aria-hidden="true"><use href="#i-text"></use></svg>Text</button>
-          <!-- Save / open / rename / start new. It lived under ⚙︎ Canvas, below the export format —
-               a pane you open to CONFIGURE the canvas, not where anyone looks for "open my other
-               meme", which is a thing you do BEFORE anything else. Same sheet, one entry point: the
-               duplicate under Canvas is gone rather than left to drift, and the project's name is
-               the button's title.
-               Its icon deliberately does NOT carry .mb-e (hidden below 480px). Media and Text drop
-               their icon and keep their word; this one does the opposite, because a folder glyph
-               needs no reading and a fourth WORD is exactly what pushed this bar onto a second row
-               at 360px — the wall the one-row bar exists to prevent (caught by check_meme_mobile,
-               which now measures the row count). aria-label carries the name where the word is gone. -->
+          <!-- Save / open / rename / start new, behind one button whose title is the project's name. -->
           <button class="btn btn-cyan small" id="mb-project" aria-label="Project" title="${enc(P.name || 'Untitled')} — save, open, rename, start new"><svg class="ic b-ic" aria-hidden="true"><use href="#i-folder"></use></svg><span class="mb-lbl">Project</span></button>
           <button class="btn btn-cyan small mb-icon" id="mb-undo" title="Undo (Ctrl+Z)" aria-label="Undo" ${_hist.length?'':'disabled'}><svg class="ic x-ic" aria-hidden="true"><use href="#i-undo"></use></svg></button>
           <button class="btn btn-cyan small mb-icon" id="mb-redo" title="Redo (Ctrl+Shift+Z)" aria-label="Redo" ${_future.length?'':'disabled'}><svg class="ic x-ic" aria-hidden="true"><use href="#i-redo"></use></svg></button>
@@ -838,10 +827,22 @@
         <span class="muted small mb-status" id="mb-status"></span>
         <div class="mb-barend">
           <!-- Render is the only control that must never scroll out of reach, so it is its own group. The
-               export format moved to ⚙︎ Canvas: it is set once per project, and the button already SAYS what
-               it will produce (📷 Still / 🎞️ GIF / 🎬 Render), which is what it was next to the format for. -->
+               export format is in ⚙︎ Canvas: it is set once per project, and the button already SAYS what
+               it will produce (📷 Still / 🎞️ GIF / 🎬 Render). -->
           <button class="btn btn-neon small" id="mb-render">${_fmt()==='png'?'📷 Still':(_fmt()==='gif'?'🎞️ GIF':'🎬 Render')}</button>
         </div>
+      </div>
+
+      <!-- THE TOOL STRIP: the five things you put INTO a meme, each a labelled tile. Media is still the one
+           sheet for every source (photo, clip, music, layouts, voice — see pickMedia); Sticker and Effect
+           are in it too, and are ALSO here because they are what people reach for on a picture meme and
+           a sheet in front of them was one tap too many. Draw swaps this strip for the drawing bar. -->
+      <div class="mb-tools" role="toolbar" aria-label="Add to the meme">
+        <button type="button" class="mb-tool" id="mb-add-media" title="A photo, a clip, music, a sticker, an effect or a ready-made layout"><svg class="ic" aria-hidden="true"><use href="#i-image"></use></svg><span>Media</span></button>
+        <button type="button" class="mb-tool" id="mb-add-text" title="A caption"><svg class="ic" aria-hidden="true"><use href="#i-text"></use></svg><span>Text</span></button>
+        <button type="button" class="mb-tool${_dw.on?' on':''}" id="mb-draw" title="Draw on the meme with a pen, lines, arrows and boxes" aria-pressed="${_dw.on}"><svg class="ic" aria-hidden="true"><use href="#i-brush"></use></svg><span>Draw</span></button>
+        <button type="button" class="mb-tool" id="mb-add-sticker" title="An emoji (or a custom one) as its own draggable layer"><svg class="ic" aria-hidden="true"><use href="#i-smile"></use></svg><span>Sticker</span></button>
+        <button type="button" class="mb-tool" id="mb-add-effect" title="The dancing man, the shrug, a character — drag, resize and time it"><svg class="ic" aria-hidden="true"><use href="#i-wand"></use></svg><span>Effect</span></button>
       </div>
 
       <div class="mb-body">
@@ -854,6 +855,7 @@
               <!-- Snap guides: shown only while a drag is actually snapped to that line (see applySnaps). -->
               <i class="mb-guide mb-gv" id="mb-gv" style="display:none"></i>
               <i class="mb-guide mb-gh" id="mb-gh" style="display:none"></i>
+              ${_dw.on ? '<canvas class="mb-dcv" id="mb-dcv" aria-label="Drawing surface"></canvas>' : ''}
             </div>
           </div>
           <!-- Music beds have nothing to show on the stage, but the PREVIEW has to be able to hear them —
@@ -867,6 +869,7 @@
                  which is indistinguishable from a control that does nothing at all. -->
             ${P.layers.filter(l=>l.sound).map(l=>`<audio data-snd="${l.id}" src="/client/meme/sound/${enc(l.sound)}" preload="metadata"></audio>`).join('')}
           </div>
+          ${_dw.on ? drawBar() : ''}
           <div class="mb-playrow">
             <button class="btn btn-ghost small" id="mb-play" aria-label="Play"><svg class="ic b-ic" aria-hidden="true"><use href="#i-play"></use></svg></button>
             <input type="range" id="mb-scrub" class="mb-scrub" min="0" max="${projEnd().toFixed(2)}" step="0.05" value="0">
@@ -1139,7 +1142,7 @@
     const lt = _curT - l.start;
     const media = l.type==='video'
       ? `<video src="${enc(l.src)}#t=0.1" muted playsinline preload="auto" style="object-fit:${ofit}"></video>`
-      : `<img src="${enc(l.src)}" alt="" style="object-fit:${ofit}">`;
+      : `<img src="${enc(_isDraw(l) ? _drawPreview(l) : l.src)}" alt="" style="object-fit:${ofit}">`;
     // .mb-mk styles itself inline for the same reason .mb-fx does — see _rotCss.
     const inner = `<i class="mb-mk" style="position:absolute;inset:0;display:block;pointer-events:none`
                 + `${mk}${_xformCss(l, lt)}">${media}</i>`;
@@ -1185,6 +1188,7 @@
     const tsty = tmk ? ` style="${tmk.replace(/^;/, '')}"` : '';   // goes on the TILE, never on its media
     const tile = l.type==='text'
       ? `<span class="mb-tile mb-tile-gl" aria-hidden="true">${ic('text')}</span>`
+      : _isDraw(l) ? `<span class="mb-tile mb-tile-gl" aria-hidden="true">${ic('brush')}</span>`
       : (l.type==='audio'
         ? `<span class="mb-tile mb-tile-gl mb-tile-aud" aria-hidden="true">${ic('music')}</span>`
         : l.type==='video'
@@ -1620,9 +1624,10 @@
     // read — and on a phone it was most of the reason the builder felt unusable. Split it: the handful you
     // reach for on every layer stay at the top, the rest go into three named, collapsible groups whose
     // open/closed state is remembered (_sec) so the panel comes back the way you left it.
+    const isDraw = _isDraw(l);
     return `
       <div class="mb-insp-hd">
-        <b>${isText?'Text':(l.type==='video'?'Video':'Image')} layer</b>
+        <b>${isText?'Text':(isDraw?'Drawing':(l.type==='video'?'Video':'Image'))} layer</b>
         <span class="mb-insp-acts">
           <button class="btn btn-cyan small" id="mb-split" title="Cut this layer in two where the playhead is (S) — the halves are separate layers, so you can trim, restyle or delete either one. Cut twice and delete the middle to drop a piece out."><svg class="ic b-ic" aria-hidden="true"><use href="#i-scissors"></use></svg>Cut</button>
           <button class="btn btn-cyan small" id="mb-dup" title="Copy this layer — same clip, size, effect, sound and timing — as a new layer just above it">⧉ Duplicate</button>
@@ -1632,21 +1637,25 @@
       ${isText ? `
         <label class="mb-f"><span>Text</span><textarea class="input" id="mb-f-text" rows="2">${enc(l.text)}</textarea></label>
         <label class="mb-f"><span>Size</span><input class="input" type="number" id="mb-f-size" min="8" max="400" value="${l.size}"></label>
-        <div class="mb-frow">
-          <label class="mb-f"><span>Colour</span><input type="color" id="mb-f-color" value="${enc(l.color)}"></label>
-          <label class="mb-f"><span>Outline</span><input type="color" id="mb-f-stroke" value="${enc(l.stroke)}"></label>
-        </div>` : `
+        <div class="mb-f"><span>Colour</span>${paletteHTML('mb-f-color', l.color, 'Text colour')}</div>` : isDraw ? `
+        <button class="btn btn-neon small full" id="mb-draw-edit" title="Add to this drawing, or rub parts of it out"><svg class="ic b-ic" aria-hidden="true"><use href="#i-brush"></use></svg>Draw on it</button>
+        <div class="muted small mb-dbg">${l.draw.strokes.length} stroke${l.draw.strokes.length===1?'':'s'} — drag it, resize it or fade it like any other layer.</div>` : `
         ${l.type==='video' ? trimWidget(l) + `
         <button class="btn btn-cyan small full" id="mb-prev-clip" title="Play just this clip in the preview above"><svg class="ic b-ic" aria-hidden="true"><use href="#i-play"></use></svg> Preview clip</button>` : ''}
         <div class="mb-frow"><button class="btn btn-cyan small" id="mb-fit" title="Show the whole photo inside the canvas. Bars appear wherever its shape differs from the canvas — they are the canvas background."><svg class="ic b-ic" aria-hidden="true"><use href="#i-fit"></use></svg>Whole photo (bars)</button><button class="btn btn-cyan small" id="mb-fill" title="Scale up until the canvas is full and crop the overflow — no bars, but the edges are cut off"><svg class="ic b-ic" aria-hidden="true"><use href="#i-expand"></use></svg>Fill &amp; crop</button></div>
-        ${(l.type!=='image' && l.fxPose) ? `<button class="btn btn-cyan small full" id="mb-talk" title="Make this character say a line in one of your cloned voices. It is animated from the character's own artwork, so the pose stays exactly as it is."><svg class="ic b-ic" aria-hidden="true"><use href="#i-mic"></use></svg>Make it talk</button>` : ''}
-        ${l.type==='image' ? `<button class="btn btn-cyan small full" id="mb-nobg" title="Cut the subject out of this photo and drop the background, so the layers underneath show through. Same cut-out the removebackground command does. Undo with ↺ below."><svg class="ic b-ic" aria-hidden="true"><use href="#i-wand"></use></svg>Remove the background</button>
-        <button class="btn btn-cyan small full" id="mb-talk" title="The face in this picture says a line in one of your cloned voices, with its mouth animated to the speech. Becomes a video layer; undo with ↺ below."><svg class="ic b-ic" aria-hidden="true"><use href="#i-mic"></use></svg>Make it talk</button>` : ''}
-        ${l.type==='image' ? `<button class="btn btn-cyan small full" id="mb-faceswap" title="Swap two faces in this picture, or put a face from another picture on it. Undo with ↺ below."><svg class="ic b-ic" aria-hidden="true"><use href="#i-swap"></use></svg>Face swap</button>` : ''}
-        ${l.type==='image' ? `<button class="btn btn-cyan small full" id="mb-magic" title="Brush over something you want GONE — a person, a sign, a stray cable — and it is filled in to match what is around it. Unlike Erase parts, nothing turns see-through. Undo with ↺ below."><svg class="ic b-ic" aria-hidden="true"><use href="#i-ai"></use></svg>Magic Eraser</button>` : ''}
-        <button class="btn btn-cyan small full" id="mb-erase" title="Rub parts of this layer out with your finger or the mouse. What you erase turns see-through, so the layers underneath show through it."><svg class="ic b-ic" aria-hidden="true"><use href="#i-broom"></use></svg>Erase parts${l.mask?' (erased)':''}</button>
-        ${l.mask ? `<button class="btn btn-cyan small full" id="mb-erase-clear" title="Put every erased part of this layer back"><svg class="ic b-ic" aria-hidden="true"><use href="#i-restore"></use></svg>Undo the erase</button>` : ''}
-        ${l.origSrc ? `<button class="btn btn-cyan small full" id="mb-fx-revert" title="Put this layer's original picture back — the effect (or the background cut-out) that replaced it is undone"><svg class="ic b-ic" aria-hidden="true"><use href="#i-restore"></use></svg>Undo the effect on this layer</button>` : ''}`}
+        <!-- PHOTO TOOLS, two to a row. They were seven full-width buttons stacked one under another — the
+             longest thing in the panel, pushing everything else below the fold on a phone. Same buttons, same
+             ids, same tooltips; the labels are shorter and the grid is half the height. -->
+        <div class="mb-ptools">
+        ${(l.type!=='image' && l.fxPose) ? `<button class="btn btn-cyan small" id="mb-talk" title="Make this character say a line in one of your cloned voices. It is animated from the character's own artwork, so the pose stays exactly as it is."><svg class="ic b-ic" aria-hidden="true"><use href="#i-mic"></use></svg>Make it talk</button>` : ''}
+        ${l.type==='image' ? `<button class="btn btn-cyan small" id="mb-nobg" title="Cut the subject out of this photo and drop the background, so the layers underneath show through. Same cut-out the removebackground command does. Undo with ↺ below."><svg class="ic b-ic" aria-hidden="true"><use href="#i-wand"></use></svg>Remove background</button>
+        <button class="btn btn-cyan small" id="mb-talk" title="The face in this picture says a line in one of your cloned voices, with its mouth animated to the speech. Becomes a video layer; undo with ↺ below."><svg class="ic b-ic" aria-hidden="true"><use href="#i-mic"></use></svg>Make it talk</button>` : ''}
+        ${l.type==='image' ? `<button class="btn btn-cyan small" id="mb-faceswap" title="Swap two faces in this picture, or put a face from another picture on it. Undo with ↺ below."><svg class="ic b-ic" aria-hidden="true"><use href="#i-swap"></use></svg>Face swap</button>` : ''}
+        ${l.type==='image' ? `<button class="btn btn-cyan small" id="mb-magic" title="Brush over something you want GONE — a person, a sign, a stray cable — and it is filled in to match what is around it. Unlike Erase parts, nothing turns see-through. Undo with ↺ below."><svg class="ic b-ic" aria-hidden="true"><use href="#i-ai"></use></svg>Magic Eraser</button>` : ''}
+        <button class="btn btn-cyan small" id="mb-erase" title="Rub parts of this layer out with your finger or the mouse. What you erase turns see-through, so the layers underneath show through it."><svg class="ic b-ic" aria-hidden="true"><use href="#i-broom"></use></svg>Erase parts${l.mask?' (erased)':''}</button>
+        ${l.mask ? `<button class="btn btn-cyan small" id="mb-erase-clear" title="Put every erased part of this layer back"><svg class="ic b-ic" aria-hidden="true"><use href="#i-restore"></use></svg>Undo the erase</button>` : ''}
+        ${l.origSrc ? `<button class="btn btn-cyan small" id="mb-fx-revert" title="Put this layer's original picture back — the effect (or the background cut-out) that replaced it is undone"><svg class="ic b-ic" aria-hidden="true"><use href="#i-restore"></use></svg>Undo the effect</button>` : ''}
+        </div>`}
 
       <!-- Stacking order is one of the handful you reach for on EVERY layer, so it belongs up here with
            them, not buried at the bottom of a collapsed group. On a phone it was the only way to reorder
@@ -1686,12 +1695,13 @@
         <label class="mb-f"><span>Effect</span><select class="input" id="mb-f-fx">
           ${FX.map(([v,n])=>`<option value="${v}" ${l.effect===v?'selected':''}>${n}</option>`).join('')}
         </select></label>
-        ${(l.type==='image') && EFFECTS.length ? `<label class="mb-f"><span>Meme effect</span><select class="input" id="mb-f-meme">
+        ${(l.type==='image' && !isDraw) && EFFECTS.length ? `<label class="mb-f"><span>Meme effect</span><select class="input" id="mb-f-meme">
           <option value="">— apply an effect to this image —</option>
           ${EFFECTS.map(e=>`<option value="${enc(e.name)}" title="${enc(e.desc||'')}">${enc(e.label||e.name)}</option>`).join('')}
         </select></label>
         <button class="btn btn-cyan small full" id="mb-prev-fx" title="Play just this layer in the preview above"><svg class="ic b-ic" aria-hidden="true"><use href="#i-play"></use></svg> Preview effect</button>` : ''}
         ${isText ? `
+        <div class="mb-f"><span>Outline</span>${paletteHTML('mb-f-stroke', l.stroke, 'Outline colour')}</div>
         <label class="mb-f mb-check"><input type="checkbox" id="mb-f-wrap" ${l.wrap===false?'':'checked'}><span>Wrap long lines</span></label>
         ${l.wrap===false ? '' : `<label class="mb-f"><span>Wrap width <b>${_wrapPct(l)}%</b> of the frame</span><input type="range" id="mb-f-wrappct" min="20" max="100" step="1" value="${_wrapPct(l)}"></label>`}
         <label class="mb-f mb-check"><input type="checkbox" id="mb-f-box" ${l.box?'checked':''}><span>Background box</span></label>
@@ -2839,6 +2849,334 @@
     }, err => { say('Could not look for faces: ' + ((err && err.message) || err)); });
   }
 
+  // ---------- ✏️ drawing ----------
+  // Freehand pen, straight line, arrow, box and an eraser, drawn straight onto the STAGE with a finger, a pen
+  // or the mouse. A drawing is an ordinary IMAGE layer (`l.draw`) — so it moves, resizes, fades, flips and
+  // times like any sticker, and the renderer needs to know nothing new about it.
+  //
+  // The layer holds the STROKES, not a picture: points in 1/10000ths of the layer's own box and a width as a
+  // fraction of its width. That is what undo snapshots and localStorage carry (a stroke is a few hundred
+  // bytes, a 720x1280 PNG per undo step is not), and it is resolution-free — reshaping the canvas or
+  // resizing the layer redraws the lines crisply instead of scaling a bitmap.
+  //
+  // Two pictures are made from it, by ONE rasteriser (_drawPaint):
+  //   * the PREVIEW, a data: URL on the stage <img> — synchronous, so stageEl stays declarative;
+  //   * the EXPORT, uploaded to Blossom right before a render (_bakeDrawings), because the renderer only
+  //     ever fetches layer sources by URL. It is re-uploaded only when the strokes changed (drawSig).
+  // Same function, same geometry, so what is on the stage is what comes out of ffmpeg.
+  //
+  // The eraser is a destination-out stroke INSIDE the drawing layer: it can only ever remove ink, never the
+  // photo or anything else, because nothing else is in the picture it is painting on.
+  //
+  // One palette (PALETTE / paletteHTML) colours the pen AND a caption's text and outline. Two swatch rows
+  // with two different sets of colours would be two answers to "what colours does this app have".
+  const PALETTE = [
+    ['#ffffff','White'], ['#000000','Black'], ['#3ce8ff','Cyan'], ['#ff5cf0','Magenta'],
+    ['#ff1f3d','Red'], ['#ff8a00','Orange'], ['#ffe500','Yellow'], ['#00e676','Green'],
+    ['#2f6bff','Blue'], ['#9b4dff','Purple'], ['#8a8a8a','Grey'], ['#8b5a2b','Brown'],
+  ];
+  const _hexOk = (c) => /^#[0-9a-f]{6}$/i.test(String(c||''));
+  // The swatch row. The custom picker comes FIRST and is filled with the current colour, so the row always
+  // shows what you are about to draw with — whether it came from a swatch or from the picker.
+  function paletteHTML(id, value, label){
+    const v = _hexOk(value) ? value.toLowerCase() : '#ffffff';
+    return `<div class="mb-pal" role="group" aria-label="${enc(label)}">
+      <label class="mb-swc" title="Any colour — tap to pick your own" style="--c:${v}"><input type="color" id="${id}" value="${v}" aria-label="${enc(label)}: pick any colour"><svg class="ic" aria-hidden="true"><use href="#i-palette"></use></svg></label>
+      ${PALETTE.map(([c,n])=>`<button type="button" class="mb-sw${c===v?' on':''}" data-color="${c}" aria-label="${n}" title="${n}" aria-pressed="${c===v}" style="--c:${c}"></button>`).join('')}
+    </div>`;
+  }
+  // A swatch tap is the picker's own `input` event, so every palette drives whatever its input already
+  // drives (a caption's colour handler, the pen colour) and there is no second code path per use.
+  function bindPalettes(scope){
+    scope.querySelectorAll('.mb-pal').forEach(pal=>{
+      if(pal._bound) return; pal._bound = true;
+      const inp = pal.querySelector('input[type=color]'); if(!inp) return;
+      const mark = () => {
+        const v = String(inp.value||'').toLowerCase();
+        pal.querySelector('.mb-swc').style.setProperty('--c', v);
+        pal.querySelectorAll('.mb-sw').forEach(b=>{ const on = b.dataset.color===v;
+          b.classList.toggle('on', on); b.setAttribute('aria-pressed', String(on)); });
+      };
+      inp.addEventListener('input', mark);
+      pal.querySelectorAll('.mb-sw').forEach(b=>b.addEventListener('click', ()=>{
+        inp.value = b.dataset.color;
+        inp.dispatchEvent(new Event('input', { bubbles:true }));
+        inp.dispatchEvent(new Event('change', { bubbles:true }));
+      }));
+    });
+  }
+
+  const DTOOLS = [['pen','brush','Pen'], ['line','line','Line'], ['arrow','arrow-ne','Arrow'], ['rect','rect','Box'], ['eraser','eraser','Eraser']];
+  // The pen's settings are a per-device convenience, remembered across visits like a real paint app's.
+  const _dw = (()=>{
+    let s = {}; try{ s = JSON.parse(localStorage.getItem('pc_meme_draw')||'{}') || {}; }catch(_){ }
+    return { on:false, lid:'',
+      tool: DTOOLS.some(t=>t[0]===s.tool) ? s.tool : 'pen',
+      color: _hexOk(s.color) ? s.color.toLowerCase() : '#ff1f3d',
+      size: clamp(s.size || 14, 2, 120) };
+  })();
+  function _dwKeep(){ try{ localStorage.setItem('pc_meme_draw', JSON.stringify({ tool:_dw.tool, color:_dw.color, size:_dw.size })); }catch(_){ } }
+  const _isDraw = (l) => !!(l && l.draw && Array.isArray(l.draw.strokes));
+  // The layer the pen draws into: the selected drawing, else the topmost one. NULL until the first stroke —
+  // an empty drawing layer is clutter on the timeline, so it is made by the stroke that needs it.
+  function _drawTarget(){
+    const s = P.layers.find(x=>x.id===sel);
+    if(_isDraw(s)) return s;
+    const all = P.layers.filter(_isDraw);
+    return all.length ? all[all.length-1] : null;
+  }
+  // A copy that does not share its stroke list with the original (duplicate/split use Object.assign).
+  const _ownDraw = (c) => { if(_isDraw(c)) c.draw = { strokes: c.draw.strokes.map(s=>Object.assign({}, s, { p: s.p.slice() })) }; return c; };
+
+  // Paint strokes into a W x H context. `q` = 1/10000ths of the box -> pixels.
+  function _drawPaint(c, strokes, W, H){
+    const q = 1/10000;
+    for(const s of strokes){
+      const p = s.p || [], lw = Math.max(1, (+s.w||0) * q * W);
+      if(p.length < 2) continue;
+      c.save();
+      c.globalCompositeOperation = s.t==='eraser' ? 'destination-out' : 'source-over';
+      c.strokeStyle = c.fillStyle = _hexOk(s.c) ? s.c : '#000000';
+      c.lineWidth = lw; c.lineCap = 'round'; c.lineJoin = 'round';
+      const X = i => p[i]*q*W, Y = i => p[i+1]*q*H;
+      const last = p.length - 2;
+      if(s.t==='rect'){
+        c.strokeRect(Math.min(X(0),X(last)), Math.min(Y(0),Y(last)), Math.abs(X(last)-X(0)), Math.abs(Y(last)-Y(0)));
+      } else if(p.length === 2 || (s.t!=='pen' && s.t!=='eraser' && X(0)===X(last) && Y(0)===Y(last))){
+        // A TAP is a dot, not a zero-length line (which strokes nothing).
+        c.beginPath(); c.arc(X(0), Y(0), lw/2, 0, Math.PI*2); c.fill();
+      } else {
+        c.beginPath(); c.moveTo(X(0), Y(0));
+        if(s.t==='line' || s.t==='arrow') c.lineTo(X(last), Y(last));
+        else for(let i = 2; i < p.length; i += 2) c.lineTo(X(i), Y(i));
+        c.stroke();
+        if(s.t==='arrow'){
+          // The head scales with the line's width but never vanishes on a thin pen.
+          const a = Math.atan2(Y(last)-Y(0), X(last)-X(0)), h = Math.max(lw*3, 10);
+          c.beginPath();
+          c.moveTo(X(last) - h*Math.cos(a-0.5), Y(last) - h*Math.sin(a-0.5));
+          c.lineTo(X(last), Y(last));
+          c.lineTo(X(last) - h*Math.cos(a+0.5), Y(last) - h*Math.sin(a+0.5));
+          c.stroke();
+        }
+      }
+      c.restore();
+    }
+  }
+  // The pixel size a drawing is rasterised at: the layer's own box in PROJECT pixels (so 1:1 with the
+  // render), capped so a huge canvas does not make a 4K PNG per stroke.
+  function _drawDims(l, cap){
+    const w = Math.max(2, Math.round(+l.w||P.w)), h = Math.max(2, Math.round(+l.h||P.h));
+    const k = Math.min(1, cap / Math.max(w, h));
+    return [Math.max(2, Math.round(w*k)), Math.max(2, Math.round(h*k))];
+  }
+  const _drawSig = (l) => JSON.stringify([Math.round(l.w), Math.round(l.h), l.draw.strokes]);
+  function _drawCanvas(l, cap){
+    const [W, H] = _drawDims(l, cap);
+    const cv = document.createElement('canvas'); cv.width = W; cv.height = H;
+    _drawPaint(cv.getContext('2d'), l.draw.strokes, W, H);
+    return cv;
+  }
+  const _drawPrev = Object.create(null);     // id -> {sig, url}: the stage preview, rebuilt only on change
+  function _drawPreview(l){
+    const sig = _drawSig(l), hit = _drawPrev[l.id];
+    if(hit && hit.sig === sig) return hit.url;
+    let url = '';
+    try{ url = _drawCanvas(l, 1280).toDataURL('image/png'); }catch(_){ }
+    _drawPrev[l.id] = { sig, url };
+    return url;
+  }
+  // Before a render: every drawing that changed since it was last uploaded goes to Blossom, and its `src`
+  // becomes that URL. noCompress, ALWAYS — compressMedia turns a large PNG into a JPEG, and a JPEG has no
+  // alpha: the drawing would arrive as a black rectangle over the whole meme.
+  async function _bakeDrawings(){
+    for(const l of P.layers){
+      if(!_isDraw(l) || !l.draw.strokes.length) continue;
+      const sig = _drawSig(l);
+      if(l.src && l.drawSig === sig) continue;
+      const cv = _drawCanvas(l, 2048);
+      const blob = await new Promise(res=>cv.toBlob(res, 'image/png'));
+      if(!blob) throw new Error('could not read the drawing');
+      const url = await uploadBlob(new File([blob], 'drawing.png', { type:'image/png' }), { noCompress:true });
+      // Re-resolve: the upload is a round trip, and anything that reloads P in between orphans `l`.
+      const cur = P.layers.find(x=>x.id===l.id);
+      if(cur && _isDraw(cur) && _drawSig(cur) === sig){ cur.src = url; cur.drawSig = sig; }
+    }
+    save();
+  }
+
+  // The bar that replaces the tool strip while drawing. Tools, the palette, size, undo/redo, clear, done.
+  function drawBar(){
+    const t = P.layers.find(x=>x.id===_dw.lid);
+    return `<div class="mb-drawbar" id="mb-drawbar" role="toolbar" aria-label="Drawing tools">
+      <div class="mb-drow mb-dtools">
+        ${DTOOLS.map(([k,ic,n])=>`<button type="button" class="mb-dt${_dw.tool===k?' on':''}" data-dtool="${k}" aria-pressed="${_dw.tool===k}" title="${n}"><svg class="ic" aria-hidden="true"><use href="#i-${ic}"></use></svg><span>${n}</span></button>`).join('')}
+        ${/* Done ends the TOOL row: it is the way out, so it sits with the tools and never wraps onto a
+              line of its own under the slider (which is where it landed on a 360px phone). */''}
+        <button type="button" class="mb-dt mb-ddone" id="mb-ddone" title="Finished drawing (Esc)"><svg class="ic" aria-hidden="true"><use href="#i-check"></use></svg><span>Done</span></button>
+      </div>
+      ${paletteHTML('mb-dcolor', _dw.color, 'Drawing colour')}
+      <div class="mb-drow">
+        <label class="mb-dsz" title="How thick the line is, in pixels of the finished meme"><span>Size <b id="mb-dszv">${_dw.size}</b></span>
+          <input type="range" id="mb-dsize" min="2" max="120" step="1" value="${_dw.size}"></label>
+        <button type="button" class="mb-dt" id="mb-dundo" title="Undo the last stroke (Ctrl+Z)" aria-label="Undo" ${_hist.length?'':'disabled'}><svg class="ic" aria-hidden="true"><use href="#i-undo"></use></svg></button>
+        <button type="button" class="mb-dt" id="mb-dredo" title="Redo (Ctrl+Shift+Z)" aria-label="Redo" ${_future.length?'':'disabled'}><svg class="ic" aria-hidden="true"><use href="#i-redo"></use></svg></button>
+        <button type="button" class="mb-dt" id="mb-dclear" title="Remove this drawing (↶ undo brings it back)" aria-label="Clear the drawing" ${t?'':'disabled'}><svg class="ic" aria-hidden="true"><use href="#i-trash"></use></svg></button>
+      </div>
+    </div>`;
+  }
+  function setDrawing(on){
+    _dw.on = !!on;
+    if(on){ stopPlay(false); const t = _drawTarget(); _dw.lid = t ? t.id : ''; }
+    render();
+  }
+
+  // The live surface: a canvas over the whole stage, ABOVE every layer, with touch-action:none so a finger
+  // draws instead of scrolling. It shows the target drawing (its stage <img> is hidden while this is up) and
+  // the stroke in progress, painted from the same _drawPaint the preview and the export use.
+  function bindDrawSurface(root){
+    const stage = root.querySelector('#mb-stage'), cv = root.querySelector('#mb-dcv');
+    if(!stage || !cv) return;
+    const tgt0 = P.layers.find(x=>x.id===_dw.lid) || null;
+    if(tgt0){ const it = stage.querySelector(`.mb-item[data-id="${tgt0.id}"]`); if(it) it.style.visibility = 'hidden'; }
+    let live = null, pid = null, multi = false, raf = 0;
+    const off = document.createElement('canvas');      // the drawing's own buffer, reused every frame
+    const down = new Set();
+    // The box the drawing occupies, in project pixels. A drawing not made yet will fill the canvas.
+    const box = () => { const l = P.layers.find(x=>x.id===_dw.lid);
+      return l ? { x:+l.x||0, y:+l.y||0, w:+l.w||P.w, h:+l.h||P.h, l } : { x:0, y:0, w:P.w, h:P.h, l:null }; };
+    function paint(){
+      raf = 0;
+      // Device pixels, so a line is as sharp on a 3x phone as it will be in the render. clientWidth is a
+      // LAYOUT size, which is what a canvas backing store wants under body{zoom}.
+      const dpr = Math.min(3, window.devicePixelRatio || 1);
+      const W = Math.max(1, Math.round(cv.clientWidth * dpr)), H = Math.max(1, Math.round(cv.clientHeight * dpr));
+      if(cv.width !== W || cv.height !== H){ cv.width = W; cv.height = H; }
+      const c = cv.getContext('2d');
+      c.setTransform(1,0,0,1,0,0); c.clearRect(0, 0, W, H);
+      const b = box();
+      const bw = b.w/P.w*W, bh = b.h/P.h*H;
+      if(bw < 1 || bh < 1) return;
+      // Paint into a buffer the size of the drawing's box, exactly as the export does, then place it: the
+      // stroke widths are fractions of THAT box, so painting anywhere else would draw them a different size.
+      const ow = Math.round(bw), oh = Math.round(bh);
+      if(off.width !== ow || off.height !== oh){ off.width = ow; off.height = oh; }
+      else off.getContext('2d').clearRect(0, 0, ow, oh);
+      const strokes = (b.l ? b.l.draw.strokes : []).concat(live ? [live] : []);
+      _drawPaint(off.getContext('2d'), strokes, off.width, off.height);
+      c.globalAlpha = b.l ? clamp(b.l.opacity == null ? 1 : b.l.opacity, 0.05, 1) : 1;
+      c.drawImage(off, b.x/P.w*W, b.y/P.h*H);
+      c.globalAlpha = 1;
+    }
+    const schedule = () => { if(!raf) raf = requestAnimationFrame(paint); };
+    // Pointer -> 1/10000ths of the drawing's box. The stage RECT and clientX are both viewport pixels, so
+    // body{zoom}, devicePixelRatio and the fitted stage size all cancel out of the fraction.
+    const at = (e) => {
+      const r = stage.getBoundingClientRect(); if(!r.width || !r.height) return null;
+      const b = box();
+      const px = (e.clientX - r.left) / r.width * P.w, py = (e.clientY - r.top) / r.height * P.h;
+      return [Math.round((px - b.x) / b.w * 10000), Math.round((py - b.y) / b.h * 10000)];
+    };
+    cv.addEventListener('pointerdown', (e)=>{
+      down.add(e.pointerId);
+      // A second finger is a pinch or a two-finger scroll — never a mark. Throw the stroke away and ignore
+      // everything until every finger is up.
+      if(down.size > 1){ multi = true; live = null; pid = null; schedule(); return; }
+      if(multi || (e.button != null && e.button > 0)) return;
+      e.preventDefault();
+      if(_dw.tool === 'eraser' && !box().l){ toast('nothing drawn yet — pick the pen first'); return; }
+      const p = at(e); if(!p) return;
+      try{ cv.setPointerCapture(e.pointerId); }catch(_){ }
+      pid = e.pointerId;
+      const b = box();
+      live = { t:_dw.tool, c:_dw.color, w:Math.round(_dw.size / b.w * 10000), p:[p[0], p[1]] };
+      schedule();
+    });
+    cv.addEventListener('pointermove', (e)=>{
+      if(!live || e.pointerId !== pid) return;
+      e.preventDefault();
+      const p = at(e); if(!p) return;
+      const n = live.p.length;
+      if(live.t === 'pen' || live.t === 'eraser'){
+        // Skip sub-pixel jitter (~1.5 project px): a phone reports 120 moves a second, and every point is
+        // carried in undo snapshots and the saved project.
+        const b = box(), dx = (p[0]-live.p[n-2])*b.w/10000, dy = (p[1]-live.p[n-1])*b.h/10000;
+        if(dx*dx + dy*dy < 2.25) return;
+        live.p.push(p[0], p[1]);
+      } else {
+        live.p = [live.p[0], live.p[1], p[0], p[1]];      // a shape is its two corners
+      }
+      schedule();
+    });
+    const end = (e)=>{
+      down.delete(e.pointerId);
+      if(!down.size) multi = false;
+      if(e.pointerId !== pid) return;
+      try{ cv.releasePointerCapture(e.pointerId); }catch(_){ }
+      const st = live; live = null; pid = null;
+      if(!st || e.type === 'pointercancel'){ schedule(); return; }
+      commitStroke(st);
+    };
+    cv.addEventListener('mb-repaint', schedule);
+    cv.addEventListener('pointerup', end);
+    cv.addEventListener('pointercancel', end);
+    // Belt and braces for a WebView that does not honour touch-action on a canvas: a finger that lands on
+    // the drawing must never become a page scroll or a pull-to-refresh.
+    cv.addEventListener('touchstart', (e)=>{ if(e.cancelable) e.preventDefault(); }, { passive:false });
+    if(typeof ResizeObserver !== 'undefined'){ try{ new ResizeObserver(schedule).observe(cv); }catch(_){ } }
+    schedule();
+  }
+  // One stroke = one undo step. The first stroke also MAKES the layer — in the same step, so one ↶ takes
+  // the stroke and the empty layer away together.
+  function commitStroke(st){
+    let made = false;
+    groupEdit(()=>{
+      let l = P.layers.find(x=>x.id===_dw.lid);
+      if(!l){
+        l = addOverlay({ name:'Drawing', draw:{ strokes:[] }, fit:'contain', x:0, y:0, w:P.w, h:P.h });
+        if(!l) return;
+        made = true;
+        // The new layer is the full canvas; the stroke was measured against that same box.
+        _dw.lid = l.id;
+      }
+      l.draw.strokes.push(st);
+    });
+    save();
+    // In place when we can: a full render() restarts every <video> on the stage, once per stroke.
+    const l = P.layers.find(x=>x.id===_dw.lid);
+    const img = l && document.querySelector(`.mb-item[data-id="${l.id}"] img`);
+    if(made || !img){ render(); return; }
+    img.src = _drawPreview(l);
+    _syncHistBtns();
+    const c = document.getElementById('mb-dclear'); if(c) c.disabled = false;
+    // The surface keeps showing the drawing (its img is hidden while drawing); repaint it with the stroke in.
+    const cv = document.getElementById('mb-dcv'); if(cv) cv.dispatchEvent(new Event('mb-repaint'));
+  }
+  function bindDrawBar(root){
+    const bar = root.querySelector('#mb-drawbar'); if(!bar) return;
+    bindPalettes(bar);
+    bar.querySelectorAll('[data-dtool]').forEach(b=>b.addEventListener('click', ()=>{
+      _dw.tool = b.dataset.dtool; _dwKeep();
+      bar.querySelectorAll('[data-dtool]').forEach(x=>{ const on = x===b; x.classList.toggle('on', on); x.setAttribute('aria-pressed', String(on)); });
+    }));
+    const col = bar.querySelector('#mb-dcolor');
+    if(col) col.addEventListener('input', ()=>{ if(_hexOk(col.value)){ _dw.color = col.value.toLowerCase(); _dwKeep(); }
+      // Picking a colour means "draw with it" — coming off the eraser is what everyone expects.
+      if(_dw.tool === 'eraser'){ const pen = bar.querySelector('[data-dtool="pen"]'); if(pen) pen.click(); } });
+    const sz = bar.querySelector('#mb-dsize');
+    if(sz) sz.addEventListener('input', ()=>{ _dw.size = clamp(sz.value, 2, 120); _dwKeep();
+      const v = bar.querySelector('#mb-dszv'); if(v) v.textContent = String(_dw.size); });
+    const on = (id, fn) => { const e = bar.querySelector('#'+id); if(e) e.addEventListener('click', fn); };
+    on('mb-dundo', undo);
+    on('mb-dredo', redo);
+    on('mb-ddone', ()=>setDrawing(false));
+    on('mb-dclear', ()=>{
+      const l = P.layers.find(x=>x.id===_dw.lid); if(!l) return;
+      snap(); P.layers = P.layers.filter(x=>x.id!==l.id); if(sel===l.id) sel = null; _dw.lid = '';
+      save(); render(); toast('drawing cleared — ↶ undo brings it back');
+    });
+  }
+
   function eraseParts(l, magic){
     magic = !!magic && l.type === 'image';
     const isVid = l.type === 'video';
@@ -3573,6 +3911,7 @@
     }, 1000);
     _renderAbort = (typeof AbortController!=='undefined') ? new AbortController() : null;
     try{
+      await _bakeDrawings();          // a drawing reaches the renderer as an uploaded PNG — see there
       const edit=_editPayload(_fmt());
       const auth=await selfProof();
       const r=await fetch('/client/meme/render',{ method:'POST', headers:{'Content-Type':'application/json'},
@@ -3608,7 +3947,8 @@
         fmt,
         // A still is taken AT THE PLAYHEAD — the frame you are looking at is the frame you meant.
         still:(still ? +(_scrub?_scrub.value:0)||0 : 0),
-        layers:P.layers.map(l=>({ type:l.type, src:l.src, start:+l.start, dur:+l.dur, trim:+l.trim||0,
+        // An emptied drawing has no picture (it is only ever made by _bakeDrawings), so it is not sent.
+        layers:P.layers.filter(l=>!_isDraw(l) || (l.draw.strokes.length && l.src)).map(l=>({ type:l.type, src:l.src, start:+l.start, dur:+l.dur, trim:+l.trim||0,
           x:Math.round(l.x), y:Math.round(l.y), w:Math.round(l.w), h:Math.round(l.h),
           opacity:+l.opacity, effect:l.effect, sound:l.sound||'', soundVolume:(l.soundVolume==null?1:+l.soundVolume), mute:!!l.mute,
           flipH:!!l.flipH, flipV:!!l.flipV, rotate:+l.rotate||0,
@@ -3875,6 +4215,7 @@
   async function exportImage(o){
     if(_rendering) throw new Error('a render is already running — wait for it to finish');
     const fmt = _EXPORT_FMTS.some(f=>f[0]===o.fmt) ? o.fmt : 'png';
+    await _bakeDrawings();
     const edit = _editPayload(fmt);
     edit.out_w = SizeMath.clampExport(o.w); edit.out_h = SizeMath.clampExport(o.h);
     edit.quality = Math.max(1, Math.min(100, Math.round(+o.quality || 90)));
@@ -4037,6 +4378,8 @@
   function bindInspector(root){
     const l=P.layers.find(x=>x.id===sel); if(!l) return;
     const on=(id,ev,fn)=>{ const e=root.querySelector('#'+id); if(e) e.addEventListener(ev,fn); };
+    const insp=root.querySelector('#mb-inspector'); if(insp) bindPalettes(insp);
+    on('mb-draw-edit','click',()=>{ _dw.lid = l.id; setDrawing(true); });
     // Typing in a number box is a BURST (one snapshot for the whole edit), and every one of these
     // handlers mutates, so the snapshot has to be taken before the assignment — see snapBurst.
     //
@@ -4467,6 +4810,9 @@
     if(_tab === 'result') _tab = 'layer';
     // Full-height, non-scrolling layout for this view — same opt-in class the DM/AI/Translate views use.
     feed.classList.add('feed-meme');
+    // Undo can take away the drawing being drawn on (it was made by the stroke being undone); the next
+    // stroke then starts a new one rather than writing into a layer that no longer exists.
+    if(_dw.on && !P.layers.some(x=>x.id===_dw.lid && _isDraw(x))){ const t=_drawTarget(); _dw.lid = t ? t.id : ''; }
     feed.innerHTML=view();
     _audioEls = Array.from(feed.querySelectorAll('#mb-audios audio[data-id]'));
     _sndEls  = Array.from(feed.querySelectorAll('#mb-audios audio[data-snd]'));
@@ -4479,7 +4825,11 @@
     const on=(id,ev,fn)=>{ const e=root.querySelector('#'+id); if(e) e.addEventListener(ev,fn); };
     root.querySelectorAll('.mb-tab').forEach(b=>b.addEventListener('click',()=>_showTab(b.dataset.tab)));
     on('mb-add-media','click',pickMedia);
-    on('mb-add-text','click',()=>{ addLayer('text'); render(); });
+    on('mb-add-text','click',()=>{ if(_dw.on) _dw.on = false; addLayer('text'); render(); });
+    on('mb-add-sticker','click',()=>pickSticker(document.getElementById('mb-add-sticker')));
+    on('mb-add-effect','click',pickEffect);
+    on('mb-draw','click',()=>setDrawing(!_dw.on));
+    if(_dw.on){ bindDrawSurface(root); bindDrawBar(root); }
     root.querySelectorAll('.mb-szb').forEach(b=>b.addEventListener('click',()=>{
       const [w,h]=String(b.dataset.size||'').split('x').map(Number); if(w&&h) _resizeCanvas(w,h);
     }));

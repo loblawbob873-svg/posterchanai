@@ -6118,13 +6118,51 @@ body.modal-open .mobilenav{display:none}
 .mb-bar .btn{margin:0}
 .mb-barmain{display:flex;align-items:center;flex-wrap:wrap;gap:8px;flex:1 1 auto;min-width:0}
 .mb-barmain .btn{flex:0 0 auto}
-.mb-e{font-style:normal;margin-inline-end:6px}     /* the leading icon, dropped below 480px (see there) */
-/* It is a sprite <svg> now, not an <i> holding an emoji. margin-right is the wrong lever for that —
-   the .btn:has(.b-ic) rule already lays the button out as a flex row with a gap — and an svg needs
-   its own baseline nudge, so zero the margin and let the flex gap do the spacing. */
-svg.mb-e{margin-inline-end:0}
 .mb-barend{display:flex;align-items:center;gap:8px;flex:0 0 auto}
 .mb-status{flex:0 0 auto;white-space:nowrap}
+/* ---- the tool strip: what you put INTO the meme ----
+   Labelled tiles, not a row of small buttons: each is one of five verbs (Media, Text, Draw, Sticker,
+   Effect), and an icon over a word is readable at a glance and thumb-sized on a phone, where this strip
+   is the bottom bar (see the ≤1100px rules). */
+.mb-tools{display:flex;gap:6px;min-width:0}
+.mb-tool{display:flex;flex-direction:column;align-items:center;justify-content:center;gap:3px;min-width:68px;min-height:48px;
+  padding:6px 10px;margin:0;font-family:inherit;font-size:12px;font-weight:600;line-height:1.1;color:var(--text);
+  background:var(--panel2);border:1px solid var(--line);border-radius:12px;cursor:pointer}
+.mb-tool svg.ic{width:20px;height:20px}
+.mb-tool:hover{border-color:var(--neon);color:var(--neon)}
+.mb-tool.on{border-color:var(--neon);color:var(--neon);background:rgba(var(--accent-rgb),.14)}
+/* ---- ✏️ drawing ----
+   The surface sits over every layer and owns the gesture: touch-action:none, or the browser claims a
+   finger drag as a page scroll and the stroke never lands (the same reason .mb-item and the eraser's
+   wrap carry it). Its backing store is sized in JS in device pixels. */
+.mb-dcv{position:absolute;inset:0;width:100%;height:100%;display:block;z-index:6;touch-action:none;cursor:crosshair}
+.mb-drawbar{display:flex;flex-direction:column;gap:8px;margin-top:8px;padding:8px;
+  border:1px solid var(--line);border-radius:var(--r);background:var(--panel2)}
+.mb-drow{display:flex;align-items:center;gap:6px;flex-wrap:wrap;min-width:0}
+.mb-dt{display:inline-flex;flex-direction:column;align-items:center;justify-content:center;gap:2px;min-width:44px;min-height:44px;
+  padding:4px 8px;margin:0;font-family:inherit;font-size:11px;font-weight:600;line-height:1.1;color:var(--text);
+  background:var(--panel);border:1px solid var(--line);border-radius:10px;cursor:pointer}
+.mb-dt svg.ic{width:20px;height:20px}
+.mb-dt.on{border-color:var(--neon);color:var(--neon);background:rgba(var(--accent-rgb),.14)}
+.mb-dt:disabled{opacity:.4;cursor:default}
+.mb-dtools .mb-dt{flex:1 1 0;padding-inline-start:2px;padding-inline-end:2px}
+.mb-dsz{display:flex;align-items:center;gap:8px;flex:1 1 130px;min-width:0;font-size:12px;color:var(--muted);white-space:nowrap}
+.mb-dsz input{flex:1;min-width:0;height:40px;accent-color:var(--neon)}
+/* Done is the neon one — the way out of the mode, findable at a glance. */
+.mb-dt.mb-ddone{color:#06121a;background:linear-gradient(135deg,var(--cyan),var(--neon2));border-color:transparent}
+/* THE PALETTE — one component for the pen and for a caption's colour and outline. The first chip is the
+   CURRENT colour and opens the full picker; the swatches are the app's own neon cyan/magenta plus the
+   colours a meme needs. A chosen swatch gets a ring, so the row always says what you will draw with. */
+.mb-pal{display:flex;flex-wrap:wrap;gap:6px;align-items:center;min-width:0}
+.mb-sw,.mb-swc{flex:0 0 auto;width:34px;height:34px;padding:0;margin:0;border-radius:50%;cursor:pointer;
+  background:var(--c);border:2px solid rgba(255,255,255,.28);box-shadow:inset 0 0 0 1px rgba(0,0,0,.4)}
+.mb-sw.on{outline:3px solid var(--neon);outline-offset:2px}
+.mb-swc{position:relative;display:inline-flex;align-items:center;justify-content:center;width:48px;border-radius:12px}
+.mb-swc input{position:absolute;inset:0;width:100%;height:100%;opacity:0;cursor:pointer;border:0;padding:0;margin:0}
+.mb-swc svg.ic{width:18px;height:18px;color:#fff;mix-blend-mode:difference;pointer-events:none}
+/* Photo tools, two to a row (they were seven stacked full-width buttons). */
+.mb-ptools{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:6px}
+.mb-ptools .btn{margin:0;min-width:0;white-space:normal;text-align:center}
 .mb-spacer{flex:1 1 auto}
 /* Desktop: every pane visible at once — the stage top-left, the layer inspector down the right, the
    timeline and canvas settings under the stage. The tab strip is a phone affordance and is hidden. */
@@ -6224,6 +6262,11 @@ svg.mb-e{margin-inline-end:0}
   background:var(--neon);border:2px solid var(--bg);cursor:nwse-resize}
 .mb-item.sel .mb-h{display:block}
 .mb-playrow{display:flex;align-items:center;gap:10px;margin-top:8px}
+.mb-wrap.drawing .mb-playrow{display:none}
+/* Desktop: the stage gives up some height while drawing so the bar under it stays on screen (under
+   1100px _fitStage sizes the stage from the space actually left, inline, so this does not apply). */
+.mb-wrap.drawing .mb-stage{height:46vh}
+.mb-drawbar{max-width:760px;width:100%;margin-inline:auto;box-sizing:border-box}
 .mb-playrow .btn{margin:0}
 .mb-scrub{flex:1;min-width:0;accent-color:var(--neon)}
 /* ---- the tab strip and its panes ---- */
@@ -6568,6 +6611,18 @@ img.mb-resvid{width:auto;height:auto;max-width:100%;margin:0 auto;display:block;
   .mb-pane{display:none}                          /* only the open pane exists */
   .mb-pane.on{display:block;flex:0 0 52%;min-height:0;overflow-y:auto;overscroll-behavior:contain}
   .mb-inspector{border:0;padding:0 0 8px}         /* the pane is the frame now */
+  /* The tool strip is the BOTTOM bar here — under the panes, where a thumb is. `order`, not a second copy
+     of the markup: .mb-wrap is a flex column, so this only moves where it is drawn. */
+  .mb-tools{order:3;flex:0 0 auto}
+  .mb-tool{flex:1 1 0;min-width:0;min-height:44px;padding:4px 2px;gap:2px}
+  .mb-sw,.mb-swc{width:40px;height:40px}
+  .mb-swc{width:52px}
+  /* Drawing: the bar replaces the strip, the tabs and the panes, and the stage takes everything else —
+     you cannot draw on a picture squeezed into the top half of the screen. */
+  .mb-wrap.drawing .mb-tools,.mb-wrap.drawing .mb-tabs,.mb-wrap.drawing .mb-pane,
+  .mb-wrap.drawing .mb-playrow{display:none}
+  .mb-wrap.drawing .mb-body{display:flex;flex-direction:column}
+  .mb-drawbar{flex:0 0 auto;margin-top:6px;padding:6px}
   .mb-result{margin-top:0}
   .mb-resvid{max-height:36vh}
 }
@@ -6614,6 +6669,9 @@ img.mb-resvid{width:auto;height:auto;max-width:100%;margin:0 auto;display:block;
   .mb-tlhint{flex:1 1 100%}                       /* the hint takes its own line; controls stay reachable */
   .mb-zb{width:38px;height:34px}                  /* thumb-sized zoom stepper */
   .mb-bar .btn.mb-icon{min-width:44px;padding-inline-start:10px;padding-inline-end:10px}
+  /* Every bar control is a 40px target on a phone — the top row has four buttons now, so it can afford it. */
+  .mb-bar .btn{min-height:40px;min-width:44px}
+  .mb-tab{min-height:40px}
   /* Tighter, so the six buttons usually still make ONE row on a phone — and wrap to a second by
      themselves on a narrow one, or when the user's font settings make them wider, instead of the last
      two disappearing off the edge. */
@@ -6647,17 +6705,13 @@ img.mb-resvid{width:auto;height:auto;max-width:100%;margin:0 auto;display:block;
   .mb-er-wrap>img,.mb-er-wrap>video{max-height:38dvh}
   .mb-er-tools .btn{flex:1 1 46%;min-width:0;padding-top:10px;padding-bottom:10px}
 }
-/* A real phone (360–430px). Emoji + word + two arrows + Render is 58px more than the row has, so the three
-   labelled buttons drop their emoji and keep the WORD — Undo staying on screen is worth more than a
-   pictogram, and hiding the label instead would leave "🅣" and "➕" to be guessed at. */
-@media(max-width:480px){
-  .mb-e{display:none}
-  /* Project is the fourth labelled button on that row and the one that can afford to lose its word:
-     Media and Text are the two things you came here to do, and a folder is legible without reading.
-     Dropping the WORD here rather than the icon is the opposite of the rule above, on purpose. */
-  #mb-project .mb-lbl{display:none}
-  #mb-project svg.ic{margin-inline-end:0}
+/* A SHORT phone (a 360x740 Android, an iPhone SE): the tool strip took its ~50px out of the stage, which
+   left a 9:16 meme 80px wide. The pane scrolls inside itself, so it is the side that can give. */
+@media (max-width:820px) and (max-height:800px){
+  .mb-pane.on{flex-basis:44%}
 }
+/* (A ≤480px block used to strip the top bar's icons and the Project label so six buttons fit one row.
+   Media and Text moved down to the tool strip, the row is four buttons, and every label fits again.) */
 /* (The Meme Builder's Blossom grid used to live here. It now opens the shared blossomPicker — folders
    and all — so .mb-picker/.mb-pick are gone rather than left as a second, folderless look.) */
 .mb-projrow{text-align:start}
