@@ -28,4 +28,6 @@ def test_mail_and_settings_gate_fetch_on_successful_auth():
     auth=settings.index('try{ await ensureAiSession(); }')
     fetch=settings.index("fetch('/api/auth/settings')")
     assert auth < fetch and 'authError=e; break' in settings[auth:fetch]
-    assert 'if(authError)' in settings and 'could not establish your app session' in settings
+    # A failed session no longer REPLACES Settings (relays and every on-device pane still work): it marks the
+    # server half unavailable, which hides the server tabs and keeps Save on this device.
+    assert '_settingsServerDown = authError ?' in settings and 'could not establish your app session' in settings

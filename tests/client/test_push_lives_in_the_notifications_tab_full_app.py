@@ -67,6 +67,10 @@ def test_push_still_appears_when_the_account_settings_cannot_load():
         await b.js(fail)
         await b.js("__PC.switchView('settings'); true")
         await b.until("!!document.getElementById('us-retry') || !!document.querySelector('.us-tabs')")
+        # With the server half unavailable Settings still renders (relays and the other on-device panes work),
+        # so push lives where it always does: the Notifications tab, which must still be there to open.
+        await b.js("(document.querySelector('.us-tab[data-tab=\"notifications\"]')||{click(){}}).click(); true")
+        await asyncio.sleep(.3)
         out.update(await b.js(WHERE))
         out['error'] = await b.js("!!document.getElementById('us-retry')")
 

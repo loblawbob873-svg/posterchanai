@@ -497,6 +497,7 @@ window.PCSettingsFactory = function(dep){
       set.disabled=false;
     };
   }
+  let _settingsServerDown = '';          // why the server half of Settings is unavailable this time, '' when it is fine
   async function renderUserSettings(){
     const host=$('#user-settings'); if(!host) return;
     const generation=++_userSettingsRender,owner=S.ME&&S.ME.pubkey;
@@ -557,20 +558,20 @@ window.PCSettingsFactory = function(dep){
       if(!current()||!unchanged())return;
     }
     if(!current()||!unchanged()) return;
-    if(authError){
-      host.innerHTML=`<section class="set-card"><div class="set-body"><div class="muted">${enc(
-        (authError&&authError.message)||'could not establish your app session')}</div>
-        <button class="btn btn-ghost small" id="us-retry">Retry</button></div></section>`;
-      const retry=$('#us-retry',host); if(retry) retry.onclick=renderUserSettings;
-      _placePushCard(host);
-      return;
-    }
+    /* THE SERVER BEING UNREACHABLE IS NOT A REASON TO HIDE THE SETTINGS THAT DO NOT NEED IT. A failed app
+     * session ("could not establish your app session — failed to fetch") or a settings read that never
+     * answered used to REPLACE this whole screen with the error -- Relays, Media, Theme, Sidebar and every other
+     * on-device pane included, all of which work with no server at all. Reported: "unable to change his relays
+     * after signing". Now it renders like a relays-only install (INSTANCE_SETTINGS_TABS out), says why at the
+     * top with a Retry, and Save keeps to this device: PUTting a form built from nothing could blank the
+     * account's real server settings. */
+    _settingsServerDown = '';
     if(_solo) s={};                    // no server to hold account settings — the client-side ones still apply
-    else if(s && typeof s==='object'){ try{ localStorage.setItem('pc_settings_cache', JSON.stringify(s)); }catch(_){} }
-    else if(_cachedS){ s=_cachedS; }   // network failed but we have last-good settings → show them, not an error
-    if(!s || typeof s!=='object'){
-      host.innerHTML='<section class="set-card"><div class="set-body"><div class="muted">Couldn’t load your settings.</div><button class="btn btn-ghost small" id="us-retry">Retry</button></div></section>';
-      const rt=$('#us-retry'); if(rt) rt.onclick=renderUserSettings; _placePushCard(host); return;
+    else if(!authError && s && typeof s==='object'){ try{ localStorage.setItem('pc_settings_cache', JSON.stringify(s)); }catch(_){} }
+    else if(!authError && _cachedS){ s=_cachedS; }   // session fine, read failed: last-good settings, as before
+    else{
+      _settingsServerDown = authError ? ((authError&&authError.message) || 'could not establish your app session') : 'could not load your server settings';
+      s = {};                          // server panes are hidden, so nothing from the server is shown -- or saved
     }
     _usMail = Array.isArray(s.mail_accounts)? s.mail_accounts.slice() : [];
     // The ACCOUNT value seeds the select, not the localStorage cache. Preferring the cache made every
@@ -597,7 +598,7 @@ window.PCSettingsFactory = function(dep){
     // 🧭 Sidebar is its OWN tab, not a block in Profile: it is ~35 switches, which inside a pane of
     // unrelated settings is a wall you scroll past rather than a thing you go to.
     const tabs=[['profile','Profile'],['timeline','Timeline'],['notifications','Notifications'],['ringtone','Sounds'],['sidebar','Sidebar'],['relays','Relays'],..._phoneTab,..._torTab,['media','Media'],['cache','Cache'],['zaps','Zaps'],['privacy','Privacy'],['muted','Muted'],['mail','Mail'],['telegram','Telegram'],['social','Social'],['keys','API Keys']]
-      .filter(t => !(_standalone() && INSTANCE_SETTINGS_TABS.has(t[0])));
+      .filter(t => !((_standalone() || _settingsServerDown) && INSTANCE_SETTINGS_TABS.has(t[0])));
     // Standalone has no built-in relay for the switch to fall back TO, so "use my own relays" is not a
     // choice there — the list IS the relay config, always on. The switch is hidden and forced checked
     // rather than removed, so the one Save path below still reads it and needs no second branch.
@@ -618,6 +619,9 @@ window.PCSettingsFactory = function(dep){
     if(!S._nostrPrefsLoaded){ S._setRelays=userRelays(); if(!S._setRelays.length) S._setRelays=defaultRelays(); }
     host.innerHTML=`<section class="set-card us">
       <div class="set-head"><div class="set-title">User Settings</div></div>
+      ${_settingsServerDown?`<div class="us-server-down" role="status"><b>Your server settings are unavailable right now</b>
+        <span class="muted small">${enc(_settingsServerDown)} — relays, media, theme and everything else on this device still work.</span>
+        <button class="btn btn-ghost small" id="us-retry">Retry</button></div>`:''}
       <div class="us-tabs">${tabs.map((t,i)=>`<button class="us-tab${i===0?' active':''}" data-tab="${t[0]}">${t[1]}</button>`).join('')}</div>
       <div class="set-body">
         <div class="us-pane active" data-pane="profile">
@@ -868,6 +872,7 @@ window.PCSettingsFactory = function(dep){
 
     _placePushCard(host);
     _ringtonePane(host);
+    { const rtry=$('.us-server-down #us-retry',host); if(rtry) rtry.onclick=renderUserSettings; }
     $$('.us-tab',host).forEach(b=> b.onclick=()=>{
       $$('.us-tab',host).forEach(x=>x.classList.toggle('active',x===b));
       $$('.us-pane',host).forEach(p=>p.classList.toggle('active', p.dataset.pane===b.dataset.tab));
@@ -1458,8 +1463,8 @@ window.PCSettingsFactory = function(dep){
       if($('#set-nwc')){ const u=($('#set-nwc').value||'').trim(); if(!u || Nwc.parse(u)) ClientSettings.set('nwc', u); }
       // With no instance there is no account to PUT to, and reporting "save failed" over a save that
       // fully succeeded (relays, media, theme, presets are all client-side) would be a lie.
-      if(_standalone()){
-        applyTheme(body.theme); toast('settings saved');
+      if(_standalone() || _settingsServerDown){
+        applyTheme(body.theme); toast(_settingsServerDown ? 'saved on this device — server settings were not reachable' : 'settings saved');
         if(st) st.textContent=needReload?'✓ Saved — reloading':'✓ Saved';
         if(needReload) setTimeout(()=>location.reload(),600);
         return;

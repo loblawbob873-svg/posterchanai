@@ -50,9 +50,11 @@ def test_empty_settings_status_and_guarded_completion(outcome):
             await b.until("!!document.querySelector('#us-save')")
             assert not await b.js("!!document.querySelector('#user-settings [data-settings-loading]')")
         elif outcome=='failure':
+            # "unable to change his relays": the failure says why, offers Retry, and the on-device panes --
+            # Relays first -- stay usable instead of the whole screen becoming the error.
             await b.until("!!document.querySelector('#us-retry')")
             assert await b.js("document.querySelector('#user-settings').textContent.includes('fixture signer unavailable')")
-            assert not await b.js("!!document.querySelector('#us-save')")
+            assert await b.js("!!document.querySelector('.us-tab[data-tab=\"relays\"]') && !!document.querySelector('#us-save')")
         else:
             await asyncio.sleep(1.2)
             assert not await b.js("!!document.querySelector('#us-save')")
@@ -73,3 +75,32 @@ def test_existing_settings_edits_survive_refresh():
         await asyncio.sleep(.4)
         assert await b.js("keptSetting.isConnected&&keptSetting.value==='unsaved fixture'"),'late response replaced existing edits'
     asyncio.run(desktop.with_browser('online','',check,"localStorage.setItem('pc_nostr_settings',JSON.stringify({osMode:false}));"))
+
+@pytest.mark.skipif(not Path('/opt/google/chrome/chrome').exists(),reason='Chrome required')
+def test_relays_can_be_changed_when_the_app_session_cannot_be_reached():
+    """Reported: npub1k06ctul… "is unable to change his relays after signing" -- Settings had said "could not
+    establish your app session — failed to fetch" and that error REPLACED the whole screen, Relays included, though
+    relays are saved on the device and published to Nostr with no server involved."""
+    got={}
+    async def check(b):
+        await desktop.login(b)
+        await b.js("window.__settingsAuthGate=()=>Promise.reject(new TypeError('Failed to fetch'));__PC.switchView('settings')")
+        await b.until("!!document.querySelector('.us-server-down #us-retry')")
+        got['banner']=await b.js("document.querySelector('.us-server-down').textContent")
+        await b.js("document.querySelector('.us-tab[data-tab=\"relays\"]').click();true")
+        await b.until("!!document.querySelector('#set-relay-list .relay-row input')")
+        await b.js("(()=>{const on=document.getElementById('set-relays-on'); if(!on.checked){on.checked=true;on.dispatchEvent(new Event('change'));}"
+                   "const i=document.querySelector('#set-relay-list .relay-row input'); i.value='wss://relay.example.test'; i.dispatchEvent(new Event('input',{bubbles:true}));"
+                   "window.__puts=[]; const of=window.fetch; window.fetch=(u,o)=>{ if(o&&o.method==='PUT')__puts.push(String(u)); return of(u,o); };"
+                   "location.reload=()=>{}; document.getElementById('set-relays-save').click();})()")
+        for _ in range(100):
+            if await b.js("(ClientSettings.get('relays')||[]).includes('wss://relay.example.test')"):
+                break
+            await asyncio.sleep(.1)
+        got['relays']=await b.js("ClientSettings.get('relays')")
+        got['tabs']=await b.js("[...document.querySelectorAll('.us-tab')].map(t=>t.dataset.tab)")
+    extra="localStorage.setItem('pc_nostr_settings',JSON.stringify({...JSON.parse(localStorage.getItem('pc_nostr_settings')||'{}'),osMode:false}));"
+    asyncio.run(desktop.with_browser('online','',check,extra))
+    assert 'Failed to fetch' in got['banner'], got
+    assert 'wss://relay.example.test' in (got['relays'] or []), ("the relay was not saved", got)
+    assert 'relays' in got['tabs'], got
