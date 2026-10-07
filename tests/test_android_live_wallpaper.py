@@ -339,8 +339,11 @@ def test_the_launcher_offers_it_as_the_default_once(tmp_path):
     # (home, ours active, offered) in TT..FF order: only "home, not ours, never offered" offers.
     assert out == "00010000", out
     act = _read(home, "HomeActivity.java")
-    body = act[act.index("private void offerWallpaperOnce()"):]
-    body = body[:body.index("\n    }\n")]
-    assert "prefs.setWallpaperOffered();" in body and body.index("prefs.setWallpaperOffered();") < body.index("CyberWallpaper.open(this)"), \
-        "the offer must be recorded BEFORE the picker opens, or a picker that crashes re-opens on every resume"
+    body = act[act.index("private void offerWallpaperOnce()"):act.index("private void dropWallpaperBanner()")]
+    # OFFERED, never opened by itself: the system preview opened on resume took the screen away from the
+    # launcher the first time it appeared (the emulator's "HOME did not show the independent native launcher").
+    assert "CyberWallpaper.open(" not in body.split("onClick(View v)")[0], "the preview opens without being asked for"
+    assert "onClick(View v)" in body and "CyberWallpaper.open(HomeActivity.this)" in body, "tapping the offer does not open the preview"
+    assert body.count("prefs.setWallpaperOffered()") >= 2, "tapping or hiding the offer does not answer it for good"
     assert "offerWallpaperOnce();" in act[act.index("protected void onResume()"):][:400]
+    assert 'name="home_wallpaper_offer"' in _read(APP, "res", "values", "strings.xml")

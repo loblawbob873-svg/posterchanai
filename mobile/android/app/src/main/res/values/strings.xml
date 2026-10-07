@@ -215,4 +215,5 @@
     <string name="wallpaper_cyber_desc">A neon city at sunset: a sliced sun, a POSTERCHAN sign, a grid floor running toward you. Tap the home screen for a pulse. Draws only while you can see it.</string>
     <string name="home_live_wallpaper">Cyberpunk live wallpaper</string>
     <string name="home_no_live_wallpaper">This phone has no live wallpaper picker</string>
+    <string name="home_wallpaper_offer">✨ Use the PosterChan live wallpaper? Tap to preview · hold to hide</string>
 </resources>

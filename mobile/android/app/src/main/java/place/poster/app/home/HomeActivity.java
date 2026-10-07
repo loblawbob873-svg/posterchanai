@@ -141,14 +141,52 @@ public class HomeActivity extends Activity implements DeskView.Host {
         offerWallpaperOnce();
     }
 
-    /** See WallpaperOffer: the first time this is the home screen, open the live wallpaper's preview. */
+    /**
+     * See WallpaperOffer: the first time this is the home screen, OFFER the live wallpaper -- a banner on
+     * the desk, never the system preview opened on its own. Opening it automatically took the screen away
+     * from the launcher the moment it first appeared ("HOME did not show the independent native launcher"
+     * on the emulator, and the same surprise for a person). Tap: preview it, where Android applies it with
+     * one more tap. Long-press: no thanks. Either answers the offer for good.
+     */
+    private TextView wallpaperBanner;
+
     private void offerWallpaperOnce() {
         try {
-            if (!WallpaperOffer.shouldOffer(HomeRoles.isDefaultHome(this),
-                    place.poster.app.wallpaper.CyberWallpaper.isActive(this), prefs.wallpaperOffered())) return;
-            prefs.setWallpaperOffered();              // before opening: a crash in the picker must not loop
-            place.poster.app.wallpaper.CyberWallpaper.open(this);
+            boolean offer = WallpaperOffer.shouldOffer(HomeRoles.isDefaultHome(this),
+                    place.poster.app.wallpaper.CyberWallpaper.isActive(this), prefs.wallpaperOffered());
+            if (!offer) { dropWallpaperBanner(); return; }
+            if (wallpaperBanner != null) return;
+            FrameLayout host = (FrameLayout) findViewById(R.id.pc_home_desk);
+            if (host == null) return;
+            TextView b = new TextView(this);
+            b.setText(R.string.home_wallpaper_offer);
+            b.setTextColor(pal.text);
+            b.setTextSize(14);
+            int pad = Skin.dp(this, 12);
+            b.setPadding(pad, pad, pad, pad);
+            b.setBackground(Skin.pill(this, pal, Skin.alpha(pal.accent, 0.22), true));
+            b.setOnClickListener(new View.OnClickListener() {
+                @Override public void onClick(View v) {
+                    prefs.setWallpaperOffered();
+                    dropWallpaperBanner();
+                    place.poster.app.wallpaper.CyberWallpaper.open(HomeActivity.this);
+                }
+            });
+            b.setOnLongClickListener(new View.OnLongClickListener() {
+                @Override public boolean onLongClick(View v) { prefs.setWallpaperOffered(); dropWallpaperBanner(); return true; }
+            });
+            FrameLayout.LayoutParams lp = new FrameLayout.LayoutParams(
+                    ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT, Gravity.TOP | Gravity.CENTER_HORIZONTAL);
+            lp.topMargin = Skin.dp(this, 16);
+            host.addView(b, lp);
+            wallpaperBanner = b;
         } catch (Throwable ignored) { /* a launcher that cannot offer a wallpaper is still a launcher */ }
+    }
+
+    private void dropWallpaperBanner() {
+        if (wallpaperBanner == null) return;
+        try { ((ViewGroup) wallpaperBanner.getParent()).removeView(wallpaperBanner); } catch (Throwable ignored) { }
+        wallpaperBanner = null;
     }
 
     private List<AppShelf.Entry> installed = new ArrayList<AppShelf.Entry>();
