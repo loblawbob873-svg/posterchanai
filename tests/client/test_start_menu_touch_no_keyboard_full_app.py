@@ -17,6 +17,11 @@ FOCUS = "(()=>{const a=document.activeElement;return {id:a&&a.id||'',tag:a&&a.ta
 CENTER = "(()=>{const r=document.querySelector('#os-start').getBoundingClientRect();return [r.left+r.width/2,r.top+r.height/2]})()"
 
 
+@pytest.fixture(scope="module", autouse=True)
+def bundle():
+    yield from desktop.bundle.__wrapped__()
+
+
 async def _tap(b, xy):
     await b.call('Emulation.setTouchEmulationEnabled', {'enabled': True, 'maxTouchPoints': 5})
     pt = [{'x': xy[0], 'y': xy[1]}]

@@ -11262,7 +11262,7 @@
       if(e.key === 'Escape'){ e.stopPropagation(); toggleStart(false); }
       if(e.key === 'Enter'){ const first = $('.os-app', menu); if(first) first.click(); }
     };
-    q.focus();
+    if(!_touchOpened()) q.focus();        // see _lastInput: after a tap the menu holds focus, not the box
     drawBar();
   }
 
