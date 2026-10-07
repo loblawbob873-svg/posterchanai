@@ -356,8 +356,19 @@ def _json_object(text: str):
     if i < 0:
         return None
     t = t[i:]
+    # A KEY GIVEN TWICE IS BOTH HALVES. Measured: {"answer": …, "tasks": […], "steps": [three fills],
+    # "steps": [press Send]} -- json keeps only the LAST "steps", so the three fills (the whole email) were
+    # thrown away and the plan was a bare Send. Lists under a repeated key are joined, in order.
+    def _pairs(items):
+        out = {}
+        for k, v in items:
+            if k in out and isinstance(out[k], list) and isinstance(v, list):
+                out[k] = out[k] + v
+            else:
+                out[k] = v
+        return out
     try:
-        obj, _end = json.JSONDecoder().raw_decode(t)
+        obj, _end = json.JSONDecoder(object_pairs_hook=_pairs).raw_decode(t)
         return obj if isinstance(obj, dict) else None
     except Exception:
         pass
@@ -380,7 +391,7 @@ def _json_object(text: str):
     fixed = t + ('"' if in_str else "") + "".join(reversed(stack))
     fixed = re.sub(r",\s*([}\]])", r"\1", fixed)
     try:
-        obj = json.loads(fixed)
+        obj = json.loads(fixed, object_pairs_hook=_pairs)
         return obj if isinstance(obj, dict) else None
     except Exception:
         return _salvage_fields(t)
@@ -458,7 +469,9 @@ def goal_of(instruction: str, history=None) -> str:
 # What small models write instead of the step kind asked for -> the kind they meant.
 _KIND_ALIASES = {"type": "fill", "enter": "fill", "input": "fill", "write": "fill", "set": "fill",
                  "select": "choose", "pick": "choose", "check": "toggle", "tick": "toggle",
-                 "uncheck": "toggle", "tap": "click", "open_link": "click", "follow": "click"}
+                 "uncheck": "toggle", "tap": "click", "open_link": "click", "follow": "click",
+                 # {"do":"copy","ref":1 "Copy npub"} (measured): pressing the window's own Copy button.
+                 "copy": "click"}
 
 
 def parse_steps(text: str, commands: bool = False, want_tasks: bool = False, controls=None,
@@ -581,6 +594,8 @@ def parse_steps(text: str, commands: bool = False, want_tasks: bool = False, con
                 if role in _TEXTBOX_ROLES:
                     continue
                 kind, txt = "click", ""
+            if kind == "click":
+                txt = ""            # a press carries no text (a "copy" step brought the npub along)
             if kind == "press":
                 txt = next((k for k in PRESS_KEYS if k.lower() == txt.lower()), "")
                 if not txt:

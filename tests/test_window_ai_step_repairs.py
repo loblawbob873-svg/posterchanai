@@ -293,3 +293,19 @@ def test_an_email_to_an_address_answered_by_browsing_starts_a_new_email():
     got = _run("mail", "email alice@x.test that the meeting moved to 3pm", {"answer": "Opening email to alice@x.test", "tasks": [], "steps": [
         {"do": "click", "ref": 3, "label": "Open inbox"}, {"do": "scroll", "text": "alice@x.test", "label": "Find alice"}]})
     assert got == [("click", "Compose", "")], got
+
+
+def test_steps_given_twice_in_one_reply_are_both_kept():
+    raw = ('{"answer": "Fill the email fields for alice@x.test with the meeting change details, then press Send.", "tasks": [], '
+           '"steps": [{"do": "fill", "ref": 5, "text": "Meeting rescheduled for 3pm", "label": "Subject"}, {"do": "fill", "ref": 6, '
+           '"text": "Hi Alice, just wanted to let you know our meeting has been moved to 3pm. Thanks!", "label": "Message"}, '
+           '{"do": "fill", "ref": 3, "text": "alice@x.test", "label": "To"}], "steps": [{"do": "press", "ref": 2, "text": "Enter", "label": "Send email"}]}')
+    res, lab = _run_full("mail-compose", CONTINUE, raw, [{"q": "email alice@x.test that the meeting moved to 3pm", "a": "", "did": ["pressed “Compose”"]}])
+    got = [(s["do"], lab.get(s.get("ref"), ""), s.get("text", "")) for s in res["steps"]]
+    assert ("fill", "To (comma-separated)", "alice@x.test") in got and ("fill", "Subject", "Meeting rescheduled for 3pm") in got, got
+
+
+def test_copy_on_the_windows_copy_button_presses_it():
+    got = _run("settings", "copy my npub", {"answer": "Your npub is: npub1rwzv24nmzfjypx2…", "tasks": [], "steps": [
+        {"do": "copy", "ref": 1, "text": "npub1rwzv24nmzfjypx2…", "label": "Copy npub"}]})
+    assert got == [("click", "Copy npub", "")], got
