@@ -112,9 +112,11 @@ function hasPcAppWindow(view) {
  * activation token, so on PosterChanOS every one of them is a no-op. The compositor can do both;
  * the window is found by its exact title (`PosterChan Window — <view>`, one per app). The Electron
  * calls stay for Windows/macOS, where they work and there is no compositor to ask. */
-function raisePcAppWindow(prior) {
+function raisePcAppWindow(prior, scope) {
   try { if (prior.isMinimized()) prior.restore(); prior.show(); prior.focus(); } catch (_) {}
   if (!SHELL_MODE) return Promise.resolve(false);
+  /* Brought back FOR a monitor: it comes to that monitor (see placeOnScopeOutput). */
+  if (scope) placeOnScopeOutput(prior, scope, { wm: wm(), owners: _nativeOwners }).catch(() => {});
   let title = '';
   try { title = String(prior.getTitle() || ''); } catch (_) { return Promise.resolve(false); }
   return Promise.resolve().then(() => wm().available()).then(ok => ok ? wm().windows() : [])
@@ -126,14 +128,57 @@ function raisePcAppWindow(prior) {
         .then(() => wm().focus(id)).then(() => true);
     }).catch(() => false);
 }
-function claimPcAppWindow(raw) {
+/* AN APP WINDOW OPENS ON THE MONITOR IT WAS ASKED FROM (#115, "taskbar search opens behind windows" on
+ * the two-monitor desk). Nothing chose an output: Wayfire maps a new toplevel on whichever output has
+ * keyboard focus, so a search typed into the LEFT monitor's taskbar opened its Search window on the
+ * RIGHT one -- measured on .102: the query went in at x<3840, the window mapped at x=4772, focused, over
+ * the terminal there. From the left screen that is exactly "it opened behind my windows".
+ *
+ * `scope` is the asking shell surface's assignment ({output}). The window is found by its exact title
+ * (one per app, set by the page as it adopts -- so this waits for it), its output is judged by the
+ * centre of its rectangle, and it is moved only when it landed somewhere else. One monitor, no scope,
+ * or a title that never settles: nothing is moved. `deps` is injectable for the test. */
+async function placeOnScopeOutput(win, scope, deps) {
+  const d = deps || {};
+  const api = d.wm, sleep = d.sleep || (ms => new Promise(r => setTimeout(r, ms)));
+  if (!api || !scope || !scope.output) return false;
+  for (let i = 0; i < (d.tries || 50); i++) {
+    if (!win || win.isDestroyed()) return false;
+    let title = '';
+    try { title = String(win.getTitle() || ''); } catch (_) { return false; }
+    if (/^PosterChan Window\s*[—-]\s*\S/.test(title)) {
+      const rows = await Promise.resolve(api.windows()).catch(() => []);
+      const hits = (rows || []).filter(r => r && String(r.title || '') === title && r.rect);
+      if (hits.length === 1) {
+        const outs = (await Promise.resolve(api.outputs()).catch(() => [])) || [];
+        if (outs.filter(o => o && o.rect).length < 2) return false;
+        const r = hits[0].rect, cx = r.x + r.width / 2, cy = r.y + r.height / 2;
+        const on = outs.find(o => o && o.rect && cx >= o.rect.x && cx < o.rect.x + o.rect.width
+                                 && cy >= o.rect.y && cy < o.rect.y + o.rect.height);
+        if (!on || String(on.name) === String(scope.output)) return false;
+        if (!outs.some(o => o && String(o.name) === String(scope.output))) return false;
+        if (!scope.rect || typeof api.placeOnOutput !== 'function') return false;
+        const id = Number(hits[0].id);
+        /* The same move Super+Shift+Arrow makes (pc:wm:move-to-output): clamped into that monitor's
+         * rectangle at its own size, owned by that monitor's surface, and focused there. */
+        await api.placeOnOutput(id, scope.rect, '');
+        if (scope.workspace != null && d.owners) d.owners.set(id, String(scope.workspace));
+        try { await api.focus(id); } catch (_) {}
+        return true;
+      }
+    }
+    await sleep(100);
+  }
+  return false;
+}
+function claimPcAppWindow(raw, scope) {
   const view = pcWindowView(raw);
   if (!view) return false;
   const prior = pcAppWindows.get(view);
   if (prior) {
     if (prior.pending) return true;
     if (!prior.isDestroyed()) {
-      raisePcAppWindow(prior);
+      raisePcAppWindow(prior, scope);
       return true;
     }
     pcAppWindows.delete(view);
@@ -1067,6 +1112,12 @@ function createWindow(assignment) {
     if (!view) return;
     installContextMenu(child);
     pcAppWindows.set(view, child);
+    // Opened by a desktop surface: it belongs on that surface's monitor (placeOnScopeOutput). `typeof`
+    // for the same reason as the claim below: the shipped-handler simulations define only what they use.
+    if (typeof placeOnScopeOutput === 'function' && SHELL_MODE) {
+      const scope = _shellScopes.get(created.webContents.id);
+      if (scope) placeOnScopeOutput(child, scope, { wm: wm(), owners: _nativeOwners }).catch(() => {});
+    }
     /* A managed PosterChan window is still a browser surface. Without its own open/navigation
      * policy, a link clicked from Social inside that window bypasses the desktop's handler and
      * Electron creates a raw 800x600 child: no frame, no controls, and no reliable close affordance
@@ -1097,7 +1148,7 @@ function createWindow(assignment) {
       /* `typeof` keeps the small shipped-handler simulation self-contained while production always
        * takes this process-wide path. Return the shared frozen result so the title-at-map regression
        * test can continue to distinguish this early singleton exit from the ordinary-link deny. */
-      if (typeof claimPcAppWindow === 'function' && claimPcAppWindow(url)) return DENY_WINDOW_OPEN;
+      if (typeof claimPcAppWindow === 'function' && claimPcAppWindow(url, typeof placeOnScopeOutput === 'function' && SHELL_MODE ? _shellScopes.get(created.webContents.id) : null)) return DENY_WINDOW_OPEN;
       const num = (name, fallback) => {
         const m = new RegExp(name + '=(\\d+)').exec(String(features || ''));
         const v = m ? Number(m[1]) : NaN;

@@ -12,14 +12,14 @@ OSWIN = (ROOT / "static/js/client/oswin.js").read_text(encoding="utf-8")
 def test_native_app_singletons_are_enforced_process_wide():
     """The main process, shared by every monitor renderer, owns deduplication."""
     assert "const pcAppWindows = new Map()" in MAIN
-    claim = MAIN.split("function claimPcAppWindow(raw) {", 1)[1].split(
+    claim = MAIN.split("function claimPcAppWindow(raw", 1)[1].split(
         "/* Tray / background state.", 1
     )[0]
     assert "const prior = pcAppWindows.get(view)" in claim
     assert "if (prior.pending) return true" in claim
     assert "pcAppWindows.set(view, reservation)" in claim
     handler = MAIN.split("created.webContents.setWindowOpenHandler", 1)[1]
-    assert "claimPcAppWindow(url)) return DENY_WINDOW_OPEN" in handler
+    assert re.search(r"claimPcAppWindow\(url\b[^;]*\)\) return DENY_WINDOW_OPEN", handler), "the open is not claimed first"
 
 
 def test_pending_creation_is_replaced_and_closed_windows_are_released():
@@ -144,3 +144,72 @@ def test_the_compositor_is_never_asked_about_an_ambiguous_or_missing_window():
     assert _raise_run([{"id": 3, "title": "Firefox"}])["calls"] == []
     # Off PosterChanOS (Windows/macOS app) there is no compositor to ask; Electron's own calls stand.
     assert _raise_run([{"id": 15, "title": "PosterChan Window — terminal"}], shell=False)["calls"] == []
+
+
+def _run_placement(case):
+    """Runs the SHIPPED placeOnScopeOutput against a fake Wayfire with two 3840-wide monitors."""
+    policy = MAIN.split("const pcAppWindows = new Map();", 1)[1].split("/* Tray / background state.", 1)[0]
+    script = f"""
+      const pcAppWindows = new Map();
+      {policy}
+      const c = {json.dumps(case)};
+      const moved = [], focused = [];
+      let polls = 0;
+      const win = {{ isDestroyed: () => false,
+                     getTitle: () => (polls++ < (c.unsettled || 0) ? 'PosterChan Window' : c.title) }};
+      const api = {{
+        windows: async () => c.rows,
+        outputs: async () => c.outs,
+        placeOnOutput: async (id, rect, dir) => moved.push([id, rect.x]),
+        focus: async id => focused.push(id),
+      }};
+      const owners = new Map();
+      placeOnScopeOutput(win, c.scope, {{ wm: api, owners, sleep: async () => {{}}, tries: 10 }})
+        .then(r => console.log(JSON.stringify({{ r, moved, focused, owners: [...owners] }})));
+    """
+    run = subprocess.run(["node", "-e", script], cwd=ROOT, text=True, capture_output=True, timeout=20)
+    assert run.returncode == 0, run.stderr
+    return json.loads(run.stdout)
+
+
+TWO = [{"name": "DP-1", "rect": {"x": 0, "y": 0, "width": 3840, "height": 2560}},
+       {"name": "HDMI-A-1", "rect": {"x": 3840, "y": 0, "width": 3840, "height": 2560}}]
+SEARCH_RIGHT = [{"id": 154, "title": "PosterChan Window \u2014 doc:search", "rect": {"x": 4772, "y": 210, "width": 1976, "height": 2141}},
+                {"id": 64, "title": "PosterChan Window \u2014 terminal", "rect": {"x": 4778, "y": 172, "width": 2751, "height": 2187}}]
+
+
+def test_a_window_asked_for_on_the_left_monitor_is_moved_there():
+    """#115, measured on .102: search typed on the left monitor's taskbar opened Search at x=4772 -- the
+    RIGHT monitor, where the keyboard was. It must come to the monitor that asked, and be focused there."""
+    got = _run_placement({"title": "PosterChan Window \u2014 doc:search", "rows": SEARCH_RIGHT, "outs": TWO,
+                          "scope": {"output": "DP-1", "rect": TWO[0]["rect"], "workspace": 1}, "unsettled": 3})
+    # Placed into the LEFT monitor's rectangle (x=0), owned by its surface, focused there.
+    assert got == {"r": True, "moved": [[154, 0]], "focused": [154], "owners": [[154, "1"]]}, got
+
+
+def test_a_window_already_on_the_asking_monitor_is_left_alone():
+    got = _run_placement({"title": "PosterChan Window \u2014 doc:search", "rows": SEARCH_RIGHT, "outs": TWO,
+                          "scope": {"output": "HDMI-A-1", "rect": TWO[1]["rect"]}})
+    assert got["r"] is False and got["moved"] == [] and got["focused"] == [], got
+
+
+def test_one_monitor_or_an_unknown_output_moves_nothing():
+    one = _run_placement({"title": "PosterChan Window \u2014 doc:search", "rows": SEARCH_RIGHT, "outs": TWO[:1],
+                          "scope": {"output": "DP-1", "rect": TWO[0]["rect"]}})
+    gone = _run_placement({"title": "PosterChan Window \u2014 doc:search", "rows": SEARCH_RIGHT, "outs": TWO,
+                           "scope": {"output": "DP-9", "rect": TWO[0]["rect"]}})
+    assert one["moved"] == [] and gone["moved"] == [], (one, gone)
+
+
+def test_a_title_that_never_settles_or_matches_twice_moves_nothing():
+    never = _run_placement({"title": "PosterChan Window", "rows": SEARCH_RIGHT, "outs": TWO, "scope": {"output": "DP-1", "rect": TWO[0]["rect"]}})
+    twice = _run_placement({"title": "PosterChan Window \u2014 doc:search", "rows": SEARCH_RIGHT + [SEARCH_RIGHT[0]],
+                            "outs": TWO, "scope": {"output": "DP-1", "rect": TWO[0]["rect"]}})
+    assert never["moved"] == [] and twice["moved"] == [], (never, twice)
+
+
+def test_new_and_reused_app_windows_are_both_placed_for_the_asking_surface():
+    created = MAIN.split("created.webContents.on('did-create-window'", 1)[1].split("child.once('closed'", 1)[0]
+    assert "placeOnScopeOutput(child, scope" in created and "_shellScopes.get(created.webContents.id)" in created
+    raise_ = MAIN.split("function raisePcAppWindow(prior, scope) {", 1)[1].split("function claimPcAppWindow", 1)[0]
+    assert "placeOnScopeOutput(prior, scope" in raise_
