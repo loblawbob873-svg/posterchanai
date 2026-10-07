@@ -175,7 +175,7 @@ window.PCProfileFactory = function(dep){
   function _patchProfileHeader(pk){
     const feed=$('#feed'); if(!feed) return; const p=Store.profile(pk)||{};
     const av=feed.querySelector('.pav'); if(av){ const s=p.picture||S.LOGO; if(av.getAttribute('src')!==s) av.src=s; }
-    const bn=feed.querySelector('.prof .banner'); if(bn){ const want=p.banner?`<img src="${enc(p.banner)}" onerror="this.remove()">`:''; if(bn.innerHTML!==want) bn.innerHTML=want; }
+    const bn=feed.querySelector('.prof .banner'); if(bn){ const want=p.banner?`<img alt="" src="${enc(p.banner)}" onerror="this.remove()">`:''; if(bn.innerHTML!==want) bn.innerHTML=want; }
     const h2=feed.querySelector('.prof .pbody h2'); if(h2){ const vchk=h2.querySelector('.vchk'); h2.innerHTML=emojiName(pk,p.name||p.display_name||'anon'); if(vchk) h2.appendChild(vchk); }
     const ab=feed.querySelector('.prof .about'); if(ab) ab.innerHTML=emojiHtml(pk, linkify(p.about||''));
     const n5=feed.querySelector('#prof-nip05s'); if(n5 && n5.dataset.pk===pk) n5.innerHTML=_nip05LinesHtml(p.nip05, _hereAddrs.get(pk));
@@ -388,8 +388,8 @@ window.PCProfileFactory = function(dep){
     /* Nostr has no registration event. The date is filled asynchronously from a historical relay
      * search below; never derive it from this page's recent-note cache. */
     const npub=NT().nip19.npubEncode(pk);
-    feed.innerHTML=_PROFILE_TOP+`<div class="prof"><div class="banner">${p.banner?`<img src="${enc(p.banner)}" onerror="this.remove()">`:''}</div>
-      <div class="phead"><img class="pav" src="${enc(p.picture||S.LOGO)}" onerror="this.src='${S.LOGO}'">
+    feed.innerHTML=_PROFILE_TOP+`<div class="prof"><div class="banner">${p.banner?`<img alt="" src="${enc(p.banner)}" onerror="this.remove()">`:''}</div>
+      <div class="phead"><img alt="" class="pav" src="${enc(p.picture||S.LOGO)}" onerror="this.src='${S.LOGO}'">
         <div class="prof-actions"><button class="btn btn-ghost small" id="prof-pay"><svg class="ic b-ic" aria-hidden="true"><use href="#i-coin"></use></svg>Pay</button>${mine?`<button class="btn btn-cyan small" id="edit-prof" title="Edit your profile"><svg class="ic b-ic" aria-hidden="true"><use href="#i-pen"></use></svg>Edit</button><button class="btn btn-ghost small" id="open-settings" title="Settings" aria-label="Settings"><svg class="ic b-ic" aria-hidden="true"><use href="#i-gear"></use></svg><span class="lbl">Settings</span></button><button class="btn btn-ghost small prof-menu-btn" id="prof-menu" title="more"><svg class="ic b-ic" aria-hidden="true"><use href="#i-menu"></use></svg></button>`:`
           <button class="btn btn-ghost small" id="call-prof" title="voice/video call"><svg class="ic b-ic" aria-hidden="true"><use href="#i-phone"></use></svg>Call</button>
           <button class="btn btn-ghost small" id="zap-prof"><svg class="ic b-ic" aria-hidden="true"><use href="#i-zap"></use></svg>Zap</button>
@@ -748,7 +748,7 @@ window.PCProfileFactory = function(dep){
         const rp=Store.profile(x.reporter)||{};
         const rn=rp.name||rp.display_name||(NT().nip19.npubEncode(x.reporter).slice(0,12)+'…');
         const reason=(x.reason||'').trim();
-        return `<div class="psearch rep-row" data-i="${i}"><img src="${enc(rp.picture||S.LOGO)}" onerror="this.src='${S.LOGO}'"><div class="pinfo"><b>${enc(rn)}</b><div class="muted small">🚩 ${enc(x.type||'other')}${reason?' · '+enc(reason.slice(0,120)):''} · ${timeAgo(x.created_at)}</div></div><span class="muted" style="align-self:center">›</span></div>`;
+        return `<div class="psearch rep-row" data-i="${i}"><img alt="" src="${enc(rp.picture||S.LOGO)}" onerror="this.src='${S.LOGO}'"><div class="pinfo"><b>${enc(rn)}</b><div class="muted small">🚩 ${enc(x.type||'other')}${reason?' · '+enc(reason.slice(0,120)):''} · ${timeAgo(x.created_at)}</div></div><span class="muted" style="align-self:center">›</span></div>`;
       }).join('') : '<div class="empty">No reports for this user. 🎉</div>';
       $$('.rep-row',list).forEach(el=> el.onclick=()=> showReportDetail(reports[+el.dataset.i]));
     });
@@ -1101,7 +1101,7 @@ window.PCProfileFactory = function(dep){
         // who I haven't followed back.
         const followsMe = p!==S.ME.pubkey && FOLLOWERS.has(p);
         const canFollow = p!==S.ME.pubkey && !S.FOLLOWS.has(p);
-        return `<div class="psearch" data-prof="${p}"><img src="${enc(m.picture||S.LOGO)}" onerror="this.src='${S.LOGO}'"><div class="pinfo"><b>${enc(m.name||m.display_name||NT().nip19.npubEncode(p).slice(0,14))}${followsMe?'<span class="follows-you">Follows you</span>':''}</b><div class="muted small">${enc(niceNip05(m.nip05)||'')}</div></div>${canFollow?`<button class="btn btn-cyan small pfollow" data-fb="${p}">Follow back</button>`:''}</div>`;
+        return `<div class="psearch" data-prof="${p}"><img alt="" src="${enc(m.picture||S.LOGO)}" onerror="this.src='${S.LOGO}'"><div class="pinfo"><b>${enc(m.name||m.display_name||NT().nip19.npubEncode(p).slice(0,14))}${followsMe?'<span class="follows-you">Follows you</span>':''}</b><div class="muted small">${enc(niceNip05(m.nip05)||'')}</div></div>${canFollow?`<button class="btn btn-cyan small pfollow" data-fb="${p}">Follow back</button>`:''}</div>`;
       }).join('') : '<div class="empty">Nobody here.</div>';
       $$('[data-prof]',list).forEach(el=> el.onclick=(ev)=>{ if(ev.target.closest('.pfollow')) return; closeModal(); renderProfileView(el.dataset.prof); });
       $$('.pfollow',list).forEach(b=> b.onclick=async(ev)=>{ ev.stopPropagation(); b.disabled=true; b.textContent='…';

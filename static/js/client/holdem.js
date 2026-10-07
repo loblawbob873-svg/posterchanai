@@ -79,7 +79,7 @@
     }
     function _bindInvite(){
       const inp=$('#hm-inv'), res=$('#hm-inv-res'); if(!inp) return; let t=null;
-      const draw=rows=>{ res.innerHTML = rows.length ? rows.map(p=>`<div class="chess-inv-row"><img src="${enc((p.meta||{}).picture||LOGO)}" onerror="this.src='${LOGO}'">
+      const draw=rows=>{ res.innerHTML = rows.length ? rows.map(p=>`<div class="chess-inv-row"><img alt="" src="${enc((p.meta||{}).picture||LOGO)}" onerror="this.src='${LOGO}'">
           <div class="ci-meta"><b>${enc((p.meta||{}).name||(p.meta||{}).display_name||'anon')}</b><span class="muted small">${enc(niceNip05((p.meta||{}).nip05)||'')}</span></div>
           <button class="btn btn-neon small" data-add="${p.pubkey}">Seat</button></div>`).join('')
         : '<div class="muted small" style="padding:6px 2px">No match. Paste an npub or name@domain.</div>';
@@ -181,14 +181,14 @@
         const btn = seats.indexOf(pk)===g.button?' 🔘':'';
         const av=(profOf(pk)||{}).picture||LOGO;
         return `<div class="pk-seat${mine?' me':''}${isTurn?' turn':''}${folded.has(pk)?' out':''}">
-          <span class="pk-who"><img class="pk-av" src="${enc(av)}" onerror="this.onerror=null;this.src='${LOGO}'"><span class="pk-nm">${mine?'You':enc(nameOf(pk, names[pk]))}${btn}</span></span>
+          <span class="pk-who"><img alt="" class="pk-av" src="${enc(av)}" onerror="this.onerror=null;this.src='${LOGO}'"><span class="pk-nm">${mine?'You':enc(nameOf(pk, names[pk]))}${btn}</span></span>
           <span class="pk-stk">${stacks[pk]||0}${won?` <b style="color:#ffd25a">+${won}</b>`:''} <span class="muted small">${enc(status)}</span></span>
           ${over&&!folded.has(pk)&&Array.isArray((g.hole||{})[pk])?`<span class="pk-hole">${g.hole[pk].map(c=>cardHtml(c)).join('')}</span>`:''}
         </div>`;
       }).join('');
       const myHand = seated ? `<div class="pk-myhand">
           <div class="pk-myinfo">
-            <img class="pk-myav" src="${enc(myAv)}" onerror="this.onerror=null;this.src='${LOGO}'">
+            <img alt="" class="pk-myav" src="${enc(myAv)}" onerror="this.onerror=null;this.src='${LOGO}'">
             <div class="pk-mymeta"><span class="pk-myname">You</span>
               <span class="pk-mychipline">💰 <b>${stacks[me]||0}</b> chips${!over&&call>0?` · to call <b>${call}</b>`:''}${over&&winners[me]?` · <b style="color:#5dffb0">won +${winners[me]}</b>`:''}</span></div>
           </div>

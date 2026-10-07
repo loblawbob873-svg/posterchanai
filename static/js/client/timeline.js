@@ -1239,7 +1239,7 @@ window.PCTimelineFactory = function(dep){
       for(const e of notes){ const img=_firstImage(e); if(!img||seen.has(e.id)) continue; seen.add(e.id); pics.push({e,img}); }
       notesEl.innerHTML = pics.length
         ? `<div class="pics-grid">${pics.map(x=>{ const cw=S.BLUR_NSFW && isSensitive(x.e);
-            return `<div class="pic-card${cw?' cw':''}" data-id="${x.e.id}">${_hold(`<img src="${enc(x.img)}" loading="lazy" onerror="this.closest('.pic-card')&&this.closest('.pic-card').remove()">`, x.img)}${cw?'<span class="pic-cw">🔞</span>':''}</div>`; }).join('')}</div>`
+            return `<div class="pic-card${cw?' cw':''}" data-id="${x.e.id}">${_hold(`<img src="${enc(x.img)}" alt="Photo" loading="lazy" onerror="this.closest('.pic-card')&&this.closest('.pic-card').remove()">`, x.img)}${cw?'<span class="pic-cw">🔞</span>':''}</div>`; }).join('')}</div>`
         : `<div class="empty">No media in this feed yet. ${S.VIEW==='home'?'Follow people or check Nostrverse.':''}</div>`;
       $$('.pic-card',notesEl).forEach(c=> c.onclick=()=> openThread(c.dataset.id));
       if(preserveScroll) feed.scrollTop=top;

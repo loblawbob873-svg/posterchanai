@@ -599,7 +599,7 @@ window.PCGitFactory = function(dep){
     return `<article class="repo-card" data-id="${e.id}" data-pk="${e.pubkey}">
       <div class="repo-card-hd"><span class="repo-card-ico">🌱</span><span class="repo-card-name">${enc(name)}</span>${_repoIsPrivate(e)?`<span class="repo-private" title="Private — only its owner, maintainers and readers can see or clone it"><svg class="ic" aria-hidden="true"><use href="#i-lock"></use></svg>Private</span>`:''}</div>
       <div class="repo-card-desc">${desc?enc(desc.slice(0,150)):'<span class="muted">git repository</span>'}</div>
-      <div class="repo-card-by"><img class="repo-card-av" src="${enc(p.picture||S.LOGO)}" onerror="this.src='${S.LOGO}'" data-prof="${e.pubkey}"><span class="name" data-prof="${e.pubkey}">${enc(p.name||p.display_name||'anon')}</span>${
+      <div class="repo-card-by"><img alt="" class="repo-card-av" src="${enc(p.picture||S.LOGO)}" onerror="this.src='${S.LOGO}'" data-prof="${e.pubkey}"><span class="name" data-prof="${e.pubkey}">${enc(p.name||p.display_name||'anon')}</span>${
         _repoHostname(e)?`<span class="repo-host${_repoHostedHere(e)?' here':''}" title="${enc(_repoHostname(e))}">${enc(_repoHostname(e))}</span>`:''}</div>
       <div class="repo-card-acts"><button class="btn btn-ghost small repo-star" data-id="${e.id}" title="${_starred(e)?'Unstar':'Star'}">${_starred(e)?'\u2b50':'\u2606'}</button>${clone.length?`<button class="btn btn-ghost small repo-clone" data-clone="${enc(clone[0])}">⧉ Clone</button>`:''}${share?`<button class="btn btn-ghost small repo-share" data-id="${enc(e.id)}" onclick="event.stopPropagation()"><svg class="ic b-ic" aria-hidden="true"><use href="#i-link"></use></svg>Link</button>`:''}${_repoWebExternal(wurl)?`<a class="btn btn-ghost small" href="${enc(wurl)}" target="_blank" rel="noopener" onclick="event.stopPropagation()"><svg class="ic b-ic" aria-hidden="true"><use href="#i-link"></use></svg>Web</a>`:''}</div>
     </article>`;
@@ -695,7 +695,7 @@ window.PCGitFactory = function(dep){
     shown.forEach(needProfile);
     const faces=shown.map(pk=>{
       const pr=profOf(pk);
-      return `<img class="rv-maint-av" data-prof="${pk}" src="${enc(pr.picture||S.LOGO)}"
+      return `<img alt="" class="rv-maint-av" data-prof="${pk}" src="${enc(pr.picture||S.LOGO)}"
         onerror="this.src='${S.LOGO}'" title="${enc(pr.name||pr.display_name||'a maintainer')}">`;
     }).join('');
     const more=others.length>shown.length?`<span class="muted small">+${others.length-shown.length}</span>`:'';
@@ -730,7 +730,7 @@ window.PCGitFactory = function(dep){
     return `<div class="collab-row" data-id="${ev.id}" data-pk="${ev.pubkey}">
       <div class="collab-title"><span class="collab-ico">${ico}</span>${enc(title)}${nAtt?`<span class="collab-att" title="${nAtt} attachment${nAtt>1?'s':''}">📎${nAtt>1?nAtt:''}</span>`:''}${state?`<span class="collab-state st-${enc(state)}">${_ST_BADGE[state]||state}</span>`:''}</div>
       ${preview?`<div class="collab-body">${enc(preview)}${clean.length>240?'…':''}</div>`:''}
-      <div class="collab-meta"><img class="collab-av" src="${enc(p.picture||S.LOGO)}" onerror="this.src='${S.LOGO}'" data-prof="${ev.pubkey}"><span class="name" data-prof="${ev.pubkey}">${enc(p.name||p.display_name||'anon')}</span><span class="muted small">· ${timeAgo(ev.created_at)}</span>${canAct?`<span class="spacer"></span>${
+      <div class="collab-meta"><img alt="" class="collab-av" src="${enc(p.picture||S.LOGO)}" onerror="this.src='${S.LOGO}'" data-prof="${ev.pubkey}"><span class="name" data-prof="${ev.pubkey}">${enc(p.name||p.display_name||'anon')}</span><span class="muted small">· ${timeAgo(ev.created_at)}</span>${canAct?`<span class="spacer"></span>${
         (state==='closed'||state==='resolved')
           ? `<button class="cf-act" data-id="${ev.id}" data-kind="1630" title="Reopen"><svg class="ic b-ic" aria-hidden="true"><use href="#i-reply"></use></svg>Reopen</button>`
           : `<button class="cf-act" data-id="${ev.id}" data-kind="1631" title="Mark resolved"><svg class="ic b-ic" aria-hidden="true"><use href="#i-check"></use></svg>Resolve</button>`
@@ -851,7 +851,7 @@ window.PCGitFactory = function(dep){
       <button class="btn btn-ghost small" id="repo-back"><svg class="ic b-ic" aria-hidden="true"><use href="#i-arrow-left"></use></svg>Repos</button>
       <div class="rv-head">
         <div class="rv-headrow">
-          <img class="rv-avatar" src="${enc(p.picture||S.LOGO)}" onerror="this.src='${S.LOGO}'" data-prof="${e.pubkey}">
+          <img alt="" class="rv-avatar" src="${enc(p.picture||S.LOGO)}" onerror="this.src='${S.LOGO}'" data-prof="${e.pubkey}">
           <div class="rv-headmain">
             <h1 class="rv-title"><svg class="ic h-ic" aria-hidden="true"><use href="#i-git"></use></svg>${enc(name)}</h1>
             <div class="rv-by"><span class="muted small">maintained by</span> <span class="name" data-prof="${e.pubkey}">${enc(p.name||p.display_name||'anon')}</span>${_maintainerStrip(e)}</div>

@@ -45,7 +45,7 @@
     function _bindInvite(){
       const inp=$('#hm-inv'), res=$('#hm-inv-res'); if(!inp) return; let t=null;
       const draw=rows=>{ res.innerHTML = rows.length ? rows.map(p=>{ const m=p.meta||{};
-        return `<div class="chess-inv-row"><img src="${enc(m.picture||LOGO)}" onerror="this.src='${LOGO}'">
+        return `<div class="chess-inv-row"><img alt="" src="${enc(m.picture||LOGO)}" onerror="this.src='${LOGO}'">
           <div class="ci-meta"><b>${enc(m.name||m.display_name||'anon')}</b><span class="muted small">${enc(niceNip05(m.nip05)||'')}</span></div>
           <button class="btn btn-neon small" data-ch="${p.pubkey}">Challenge</button></div>`; }).join('')
         : '<div class="muted small" style="padding:6px 2px">No match. Paste an npub or name@domain.</div>';

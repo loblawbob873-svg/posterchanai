@@ -88,7 +88,7 @@
     function _bindChessInvite(){
       const inp=$('#chess-inv'), res=$('#chess-inv-res'); if(!inp) return; let t=null;
       const render=rows=>{ res.innerHTML = rows.length ? rows.map(p=>{
-          const m=p.meta||{}; return `<div class="chess-inv-row"><img src="${enc(m.picture||LOGO)}" onerror="this.src='${LOGO}'">
+          const m=p.meta||{}; return `<div class="chess-inv-row"><img alt="" src="${enc(m.picture||LOGO)}" onerror="this.src='${LOGO}'">
             <div class="ci-meta"><b>${enc(m.name||m.display_name||'anon')}</b><span class="muted small">${enc(niceNip05(m.nip05)||'')}</span></div>
             <button class="btn btn-neon small" data-challenge="${p.pubkey}">Challenge</button></div>`; }).join('')
         : '<div class="muted small" style="padding:6px 2px">No match. Paste an npub or name@domain.</div>';
@@ -189,7 +189,7 @@
           <button class="btn btn-neon small chess-move-go">Move ▶</button></div>` : '';
       card.classList.add('glass');
       card.innerHTML = `<div class="chess-card-hd">
-          <img class="cc-av" src="${enc(op.picture||LOGO)}" onerror="this.src='${LOGO}'">
+          <img alt="" class="cc-av" src="${enc(op.picture||LOGO)}" onerror="this.src='${LOGO}'">
           <div class="cc-meta"><b>vs ${enc(oppName)}</b><span class="muted small">${enc(iAmWhite?'You: cyan (White)':'You: magenta (Black)')} · ${(g.moves||[]).length} half-moves</span></div>
           <span class="cc-badge ${badge}">${enc(statusLine)}</span>
           <button class="chess-quit" title="${g.status==='active'?'Resign &amp; remove':'Remove from your games'}">✕</button></div>

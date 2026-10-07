@@ -244,7 +244,7 @@ window.PCNotifsFactory = function(dep){
     const go = onClick || (() => { if(!_notifRouteViaDesktop('notifications')) switchView('notifications'); });
     try{ if(window.PCOS && PCOS.isOn() && PCOS.osToast){ PCOS.osToast(html, pic, go, notificationType); return; } }catch(_){}
     const t=document.createElement('div'); t.className='toast notif-toast';
-    t.innerHTML=`<img src="${enc(pic||S.LOGO)}" onerror="this.src='${S.LOGO}'"><span>${html}</span>`;
+    t.innerHTML=`<img alt="" src="${enc(pic||S.LOGO)}" onerror="this.src='${S.LOGO}'"><span>${html}</span>`;
     t.onclick=()=>{ go(); t.remove(); };
     $('#toast-root').appendChild(t); setTimeout(()=>t.remove(),5000);
   }

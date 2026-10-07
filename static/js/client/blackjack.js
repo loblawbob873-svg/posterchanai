@@ -88,7 +88,7 @@
     }
     function _bindInvite(){
       const inp=$('#bj-inv'), res=$('#bj-inv-res'); if(!inp) return; let t=null;
-      const draw=rows=>{ res.innerHTML = rows.length ? rows.map(p=>`<div class="chess-inv-row"><img src="${enc((p.meta||{}).picture||LOGO)}" onerror="this.src='${LOGO}'">
+      const draw=rows=>{ res.innerHTML = rows.length ? rows.map(p=>`<div class="chess-inv-row"><img alt="" src="${enc((p.meta||{}).picture||LOGO)}" onerror="this.src='${LOGO}'">
           <div class="ci-meta"><b>${enc((p.meta||{}).name||(p.meta||{}).display_name||'anon')}</b><span class="muted small">${enc(niceNip05((p.meta||{}).nip05)||'')}</span></div>
           <button class="btn btn-neon small" data-add="${p.pubkey}">Seat</button></div>`).join('')
         : '<div class="muted small" style="padding:6px 2px">No match. Paste an npub or name@domain.</div>';
@@ -170,12 +170,12 @@
       const seatRows = players.filter(pk=>pk!==me).map(pk=>{
         const h=hands[pk]||[], v=handVal(h), av=(profOf(pk)||{}).picture||LOGO, out=results[pk], net=payouts[pk]||0;
         const status=(g.left||[]).includes(pk)?'left':(done[pk]?(out?out.toUpperCase()+(net?` ${net>0?'+':''}${net}`:''):'stand'):'…');
-        return `<div class="pk-seat${out==='win'||out==='blackjack'?' win':''}"><span class="pk-who"><img class="pk-av" src="${enc(av)}" onerror="this.onerror=null;this.src='${LOGO}'"><span class="pk-nm">${enc(nameOf(pk,names[pk]))}</span></span>
+        return `<div class="pk-seat${out==='win'||out==='blackjack'?' win':''}"><span class="pk-who"><img alt="" class="pk-av" src="${enc(av)}" onerror="this.onerror=null;this.src='${LOGO}'"><span class="pk-nm">${enc(nameOf(pk,names[pk]))}</span></span>
           <span class="pk-stk"><span class="bj-cards">${h.map(c=>cardHtml(c)).join('')}</span> <b>${v}</b> <span class="muted small">${enc(status)}</span> · ${stacks[pk]||0}c</span></div>`;
       }).join('');
       const myAv=(profOf(me)||{}).picture||LOGO;
       const myHandCard = `<div class="pk-myhand">
-          <div class="pk-myinfo"><img class="pk-myav" src="${enc(myAv)}" onerror="this.onerror=null;this.src='${LOGO}'"><div class="pk-mymeta"><span class="pk-myname">You</span><span class="pk-mychipline">💰 <b>${myStack}</b> chips · bet ${myBet}</span></div></div>
+          <div class="pk-myinfo"><img alt="" class="pk-myav" src="${enc(myAv)}" onerror="this.onerror=null;this.src='${LOGO}'"><div class="pk-mymeta"><span class="pk-myname">You</span><span class="pk-mychipline">💰 <b>${myStack}</b> chips · bet ${myBet}</span></div></div>
           <div class="pk-mycards">${myHand.map(c=>cardHtml(c,true)).join('')||'<span class="muted small">…</span>'}</div>
           ${myHand.length?`<div class="bj-myval ${myVal>21?'bust':(myVal===21?'win':'')}">${myVal}${myVal>21?' · BUST':(myVal===21?' · 21!':'')}</div>`:''}
         </div>`;

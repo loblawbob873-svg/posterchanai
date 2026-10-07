@@ -343,7 +343,7 @@ window.PCComposeFactory = function(dep){
       const body=(mp.text||'').trim();
       const media=(mp.items&&mp.items.length)?`<div class="media-row cmp-ctx-media">${mp.items.join('')}</div>`:'';
       return `<div class="cmp-ctx"><div class="cmp-ctx-lbl">${label}</div>
-        <div class="quoted cmp-parent" data-open="${enc(o.id)}" role="button" tabindex="0" title="Open original post"><div class="hd"><img class="qav" src="${enc(p.picture||_S.LOGO)}" onerror="this.src='${_S.LOGO}'">`
+        <div class="quoted cmp-parent" data-open="${enc(o.id)}" role="button" tabindex="0" title="Open original post"><div class="hd"><img alt="" class="qav" src="${enc(p.picture||_S.LOGO)}" onerror="this.src='${_S.LOGO}'">`
         +`<span class="name" data-prof="${o.pubkey}">${emojiName(o.pubkey,nm)}</span><span class="time">${timeAgo(o.created_at)}</span></div>`
         +`${body?`<div class="txt">${linkify(body)}</div>`:(media?'':'<div class="txt"><span class="muted small">(no text)</span></div>')}${media}</div></div>`;
     };

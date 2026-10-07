@@ -767,7 +767,15 @@ window.PCKeysFactory = function(dep){
       // Once Tab has moved focus onto one of the row's own controls, that control owns the keyboard:
       // Enter must press the focused button, not re-open the row, and r/b/q must not fire underneath it.
       { const a2=document.activeElement;
-        if(a2 && a2!==el && el.contains(a2)) return; }
+        if(a2 && a2!==el && el.contains(a2)) return;
+        // Post cards are Tab stops too (cards.js). A card that HAS FOCUS is the one the keyboard is on,
+        // even if the arrow-key selection is still on another row — acting on the selected one would
+        // open, reply to or like a post other than the one a screen reader just read out.
+        if(a2 && a2!==el && a2.matches && a2.matches('article.note[data-id]')) return;
+        // And Enter on any other FOCUSED control is that control's press — a toolbar button, the account
+        // card — never "open the selected row" (preventDefault here cancelled the button's own click).
+        if(e.key==='Enter' && a2 && a2!==el && a2!==document.body && a2.matches &&
+           a2.matches('button,a[href],summary,[role="button"],[role="link"],[role="tab"],[role="menuitem"],[role="option"],[role="checkbox"],[role="switch"]')) return; }
       // 🎬 Effect lives in the post's ☰ menu rather than the action row, so it has no button to click —
       // call it directly, behind the same PC_NOSTR_ONLY gate the menu entry uses (a Nostr-only node has
       // no AI backend to render one).

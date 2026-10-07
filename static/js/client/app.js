@@ -5165,14 +5165,14 @@
     }
   }
   function renderMe(){
-    if(GUEST){ const mc=$('#me-card'); if(mc){ mc.innerHTML=`<img src="${LOGO}"><div><div class="mn">Guest</div><div class="muted small">Not signed in</div></div>`; mc.onclick=_guestPrompt; } _paintAuthButton(); return; }
+    if(GUEST){ const mc=$('#me-card'); if(mc){ mc.innerHTML=`<img src="${LOGO}" alt=""><div><div class="mn">Guest</div><div class="muted small">Not signed in</div></div>`; mc.onclick=_guestPrompt; } _paintAuthButton(); return; }
     _paintAuthButton();
     const p = Store.profile(ME.pubkey) || {};
     const av = p.picture || LOGO;
     // One line only: show the username if set — that's all that's needed. No username → fall back to
     // the NIP-05 handle, then a short npub. (No separate npub line cluttering it under the name.)
     const label = p.name || p.display_name || niceNip05(p.nip05) || (ME.npub.slice(0, 12) + '…');
-    $('#me-card').innerHTML = `<img src="${enc(av)}" onerror="this.src='${LOGO}'"><div><div class="mn">${enc(label)}</div></div>`;
+    $('#me-card').innerHTML = `<img src="${enc(av)}" alt="" onerror="this.src='${LOGO}'"><div><div class="mn">${enc(label)}</div></div>`;
     // Keep the switcher's row for this identity in step with the profile as it loads.
     try{ Session.remember(Session.load(), { pubkey: ME.pubkey, npub: ME.npub, name: label,
                                             picture: p.picture || '' }); }catch(_){}
@@ -7578,10 +7578,10 @@
     const summary=(e.tags.find(t=>t[0]==='summary')||[])[1]||'';
     const img=(e.tags.find(t=>t[0]==='image')||[])[1]||'';
     return `<article class="article-card" data-id="${e.id}" data-pk="${e.pubkey}">
-      ${img?_hold(`<img class="art-img" src="${enc(img)}" loading="lazy" onerror="this.remove()">`, img, 'image', 'art-img'):''}
+      ${img?_hold(`<img alt="" class="art-img" src="${enc(img)}" loading="lazy" onerror="this.remove()">`, img, 'image', 'art-img'):''}
       <div class="art-meta"><h3 class="art-title">${enc(title)}</h3>
         ${summary?`<div class="art-sum">${enc(summary.slice(0,200))}</div>`:''}
-        <div class="art-by"><img class="art-av" src="${enc(p.picture||LOGO)}" onerror="this.src='${LOGO}'"><span class="name" data-prof="${e.pubkey}">${enc(p.name||p.display_name||'anon')}</span><span class="muted small">· ${timeAgo(artTime(e))}</span><span class="art-cc muted small" data-addr="${enc(articleAddr(e))}"></span></div>
+        <div class="art-by"><img alt="" class="art-av" src="${enc(p.picture||LOGO)}" onerror="this.src='${LOGO}'"><span class="name" data-prof="${e.pubkey}">${enc(p.name||p.display_name||'anon')}</span><span class="muted small">· ${timeAgo(artTime(e))}</span><span class="art-cc muted small" data-addr="${enc(articleAddr(e))}"></span></div>
       </div></article>`;
   }
   // NIP-22 comments (kind 1111) on a NIP-23 article, scoped to the article's `a` coordinate. Older
@@ -7628,7 +7628,7 @@
     const mag=_magnet(e);
     return `<article class="tor-card note"><div class="body">
       <div class="tor-title">🧲 ${enc(title)}</div>
-      <div class="art-by"><img class="art-av" src="${enc(p.picture||LOGO)}" onerror="this.src='${LOGO}'"><span class="name" data-prof="${e.pubkey}">${enc(p.name||p.display_name||'anon')}</span>${total?`<span class="muted small">· ${_fmtBytes(total)} · ${files.length} file${files.length===1?'':'s'}</span>`:''}</div>
+      <div class="art-by"><img alt="" class="art-av" src="${enc(p.picture||LOGO)}" onerror="this.src='${LOGO}'"><span class="name" data-prof="${e.pubkey}">${enc(p.name||p.display_name||'anon')}</span>${total?`<span class="muted small">· ${_fmtBytes(total)} · ${files.length} file${files.length===1?'':'s'}</span>`:''}</div>
       ${e.content?`<div class="tor-desc">${enc(e.content.slice(0,400))}</div>`:''}
       ${cats?`<div class="tor-tags">${cats}</div>`:''}
       <div class="row tor-actions">${mag?`<button class="btn btn-neon small tor-get" data-magnet="${enc(mag)}"><svg class="ic b-ic" aria-hidden="true"><use href="#i-download"></use></svg>Download here</button><a class="btn btn-cyan small" href="${enc(mag)}"><svg class="ic b-ic" aria-hidden="true"><use href="#i-magnet"></use></svg>Open magnet</a><button class="btn btn-ghost small tor-copy" data-magnet="${enc(mag)}">⧉ Copy</button>`:'<span class="muted small">no infohash</span>'}</div>
@@ -7774,10 +7774,10 @@
     // NIP-32 language label, set from Go Live's Language field -- two letters on the thumbnail.
     const lang=((e.tags.find(t=>t[0]==='l' && t[2]==='ISO-639-1')||[])[1]||'').toLowerCase();
     return `<article class="stream-card" data-id="${e.id}" data-pk="${hpk}">
-      <div class="stream-thumb">${img?_hold(`<img src="${enc(img)}" loading="lazy" onerror="this.parentElement.classList.add('noimg')">`, img):'<span class="stream-play">▶</span>'}${badge}${
+      <div class="stream-thumb">${img?_hold(`<img alt="" src="${enc(img)}" loading="lazy" onerror="this.parentElement.classList.add('noimg')">`, img):'<span class="stream-play">▶</span>'}${badge}${
         /^[a-z]{2}$/.test(lang)?`<span class="stream-lang" title="Language">${enc(lang.toUpperCase())}</span>`:''}</div>
       <div class="stream-meta"><div class="stream-title">${enc(title)}</div>
-        <div class="art-by"><img class="art-av" src="${enc(p.picture||LOGO)}" onerror="this.src='${LOGO}'"><span class="name" data-prof="${hpk}">${enc(p.name||p.display_name||'anon')}</span>${viewers?`<span class="muted small">· ${enc(viewers)} watching</span>`:''}</div>
+        <div class="art-by"><img alt="" class="art-av" src="${enc(p.picture||LOGO)}" onerror="this.src='${LOGO}'"><span class="name" data-prof="${hpk}">${enc(p.name||p.display_name||'anon')}</span>${viewers?`<span class="muted small">· ${enc(viewers)} watching</span>`:''}</div>
       </div></article>`;
   }
   // ---------- live stream chat (NIP-53 kind-1311, addressed to the stream's `a` tag) ----------
@@ -9822,7 +9822,7 @@
     function render(list, left, pos){
       close(); if(!list.length) return;
       box=document.createElement('div'); box.className='mention-box';
-      box.innerHTML=list.map(p=>`<div class="mention-opt" data-pk="${p.pubkey}"><img src="${enc((p.meta||{}).picture||LOGO)}" onerror="this.src='${LOGO}'"><span><b>${enc((p.meta||{}).name||(p.meta||{}).display_name||'anon')}</b> <span class="muted small">${enc(niceNip05((p.meta||{}).nip05)||(NT().nip19.npubEncode(p.pubkey).slice(0,14)+'…'))}</span></span></div>`).join('');
+      box.innerHTML=list.map(p=>`<div class="mention-opt" data-pk="${p.pubkey}"><img alt="" src="${enc((p.meta||{}).picture||LOGO)}" onerror="this.src='${LOGO}'"><span><b>${enc((p.meta||{}).name||(p.meta||{}).display_name||'anon')}</b> <span class="muted small">${enc(niceNip05((p.meta||{}).nip05)||(NT().nip19.npubEncode(p.pubkey).slice(0,14)+'…'))}</span></span></div>`).join('');
       ta.insertAdjacentElement('afterend', box);
       /* `pointerdown`, NOT `mousedown` — it is the one event a finger, a mouse and a pen all send,
        * and this list is most often used on a phone. preventDefault holds the caret in the textarea
@@ -10859,7 +10859,7 @@
         // (it never sees the fetch shim) — so the raw path pointed the whole grid at localhost. _absUrl
         // is also what attaches the ?t= ownership token when the instance is cleartext (an .onion).
         const url=_absUrl(f.url);
-        const thumb=isImg?`<img src="${enc(thumbUrl(url))}" loading="lazy">`:`<div class="file-icon">📎<span>${enc((f.mime.split('/')[1]||'file').slice(0,8))}</span></div>`;
+        const thumb=isImg?`<img alt="" src="${enc(thumbUrl(url))}" loading="lazy">`:`<div class="file-icon">📎<span>${enc((f.mime.split('/')[1]||'file').slice(0,8))}</span></div>`;
         const dlName=downloadName({sha256:f.sha, type:f.mime, url}, f.name, '');
         return `<div class="file-card" data-sha="${enc(f.sha)}"><a href="${enc(url)}" data-mime="${enc(f.mime||'')}" target="_blank">${thumb}</a><button class="copy" data-url="${enc(url)}" title="Copy URL">⧉</button><button class="del" data-sha="${enc(f.sha)}" aria-label="Delete"><svg class="ic x-ic" aria-hidden="true"><use href="#i-close"></use></svg></button><div class="meta"><span class="fname" title="${enc(f.name||'')}">${enc(fileLabel(f.name, extOfBlob({url, type:f.mime}, {name:f.name}), 0))}</span><span class="fc-acts"><button class="dlbtn" data-url="${enc(url)}" data-name="${enc(dlName)}" title="Download ${enc(dlName)}"><svg class="ic b-ic" aria-hidden="true"><use href="#i-download"></use></svg></button></span></div></div>`;
       }).join('')}</div>`;
@@ -11331,7 +11331,7 @@
       // can't mark your OWN message unread.
       const unread = !!(last.t && last.t > _seen && !last.mine);
       return `<div class="dm-peer${unread?' unread':''}" data-peer="${pk}" data-name="${enc((nm||'').toLowerCase())}">
-        <img class="dmav" data-prof="${pk}" src="${enc(p.picture||LOGO)}" onerror="this.src='${LOGO}'">
+        <img alt="" class="dmav" data-prof="${pk}" src="${enc(p.picture||LOGO)}" onerror="this.src='${LOGO}'">
         <div class="dm-peer-main">
           <div class="dm-peer-top"><b class="name" data-prof="${pk}">${emojiName(pk,nm)}</b>
             <span class="dm-when">${enc(_dmWhen(last.t))}</span></div>
@@ -11447,7 +11447,7 @@
         const q=v.replace(/^@/,'').toLowerCase(); if(q.length<2){ ac.classList.add('hidden'); return; }
         const matches=Store.profileList().filter(p=>(((p.meta.name||'')+(p.meta.display_name||'')+(p.meta.nip05||'')).toLowerCase().includes(q))).slice(0,6);
         if(!matches.length){ ac.classList.add('hidden'); return; }
-        ac.classList.remove('hidden'); ac.innerHTML=matches.map(p=>`<div class="mention-opt" data-pk="${p.pubkey}"><img src="${enc(p.meta.picture||LOGO)}" onerror="this.src='${LOGO}'"><b>${enc(p.meta.name||p.meta.display_name||'anon')}</b></div>`).join('');
+        ac.classList.remove('hidden'); ac.innerHTML=matches.map(p=>`<div class="mention-opt" data-pk="${p.pubkey}"><img alt="" src="${enc(p.meta.picture||LOGO)}" onerror="this.src='${LOGO}'"><b>${enc(p.meta.name||p.meta.display_name||'anon')}</b></div>`).join('');
         $$('[data-pk]',ac).forEach(el=> el.onmousedown=ev=>{ ev.preventDefault(); toPk=el.dataset.pk; to.value='@'+((Store.profile(toPk)||{}).name||NT().nip19.npubEncode(toPk).slice(0,12)); ac.classList.add('hidden'); });
       });
       $('#dm-attach',root).onclick=e=>dmAttachMenu(e.currentTarget, body, $('#dm-file',root), $('#dm-status',root));
@@ -12819,8 +12819,8 @@
       }
       const yid=ytId(u);
       if(yid) tag = NO_IMAGES
-        ? `<span class="yt-embed yt-ds" data-yt="${yid}" title="play">▶ YouTube — tap to load</span>`   // data saver: no external thumbnail fetch
-        : `<span class="yt-embed" data-yt="${yid}" title="play"><img class="yt-thumb" src="https://i.ytimg.com/vi/${yid}/hqdefault.jpg" loading="lazy" onerror="this.src='https://i.ytimg.com/vi/${yid}/0.jpg'"><span class="yt-play">▶</span></span>`;
+        ? `<span class="yt-embed yt-ds" data-yt="${yid}" title="play" role="button" tabindex="0">▶ YouTube — tap to load</span>`   // data saver: no external thumbnail fetch
+        : `<span class="yt-embed" data-yt="${yid}" title="play" role="button" tabindex="0" aria-label="Play YouTube video"><img alt="" class="yt-thumb" src="https://i.ytimg.com/vi/${yid}/hqdefault.jpg" loading="lazy" onerror="this.src='https://i.ytimg.com/vi/${yid}/0.jpg'"><span class="yt-play">▶</span></span>`;
       else if(/\.(jpe?g|png|gif|webp|avif)(\?|#|$)/i.test(u)) tag=_media(u, null, 'm');
       else if(/\.(mp4|webm|mov|m4v)(\?|#|$)/i.test(u)) tag=_media(u, 'video', 'm');
       else if(/\.(mp3|ogg|wav|m4a|aac|flac)(\?|#|$)/i.test(u)) tag=`<br><audio src="${u}" controls preload="none"></audio>`;

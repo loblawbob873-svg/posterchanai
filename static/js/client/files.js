@@ -108,7 +108,7 @@ window.PCFilesFactory = function(dep){
           <tbody>${rows.map(u=>{ const p2=Store.profile(u.pubkey)||{}; const nm=p2.name||p2.display_name||(u.npub.slice(0,12)+'…');
             return `<tr class="badm-row" data-pk="${u.pubkey}" style="cursor:pointer;border-top:1px solid var(--border,#333)">
               <td style="padding:6px;display:flex;align-items:center;gap:8px;min-width:0">
-                <img src="${enc(p2.picture||_S.LOGO)}" class="badm-prof" data-pk="${u.pubkey}" style="width:24px;height:24px;border-radius:50%;flex:none" onerror="this.src='${_S.LOGO}'">
+                <img alt="" src="${enc(p2.picture||_S.LOGO)}" class="badm-prof" data-pk="${u.pubkey}" style="width:24px;height:24px;border-radius:50%;flex:none" onerror="this.src='${_S.LOGO}'">
                 <span style="min-width:0;overflow:hidden;text-overflow:ellipsis"><b>${enc(nm)}</b> <span class="muted small">${enc(u.npub.slice(0,14))}…</span></span></td>
               <td style="padding:6px;text-align:right">${u.count}</td>
               <td style="padding:6px;text-align:right"><b>${_fmtBytes(u.size)}</b></td>
@@ -131,7 +131,7 @@ window.PCFilesFactory = function(dep){
     const p=Store.profile(pk)||{}; const nm=p.name||p.display_name||(NT().nip19.npubEncode(pk).slice(0,14)+'…');
     pane.innerHTML=`<div class="row" style="align-items:center;gap:8px;padding:6px 4px">
         <button class="btn btn-ghost small" id="badm-back">‹ Back</button>
-        <img src="${enc(p.picture||_S.LOGO)}" class="badm-prof" data-pk="${pk}" style="width:28px;height:28px;border-radius:50%;cursor:pointer" onerror="this.src='${_S.LOGO}'">
+        <img alt="" src="${enc(p.picture||_S.LOGO)}" class="badm-prof" data-pk="${pk}" style="width:28px;height:28px;border-radius:50%;cursor:pointer" onerror="this.src='${_S.LOGO}'">
         <b class="badm-prof" data-pk="${pk}" style="cursor:pointer">${enc(nm)}</b>
         <span style="flex:1"></span>
         <button class="btn small danger" id="badm-purge"><svg class="ic b-ic" aria-hidden="true"><use href="#i-trash"></use></svg>Purge all</button>
@@ -151,7 +151,7 @@ window.PCFilesFactory = function(dep){
       const full=server+'/'+b.sha256, thumb=thumbUrl(full), t=(b.type||'').toLowerCase(), sz=_fmtBytes(b.size||0);
       const isImg=t.startsWith('image/'), isVid=t.startsWith('video/');
       let inner;
-      if(isImg||isVid) inner=`<img src="${enc(thumb)}" loading="lazy" style="width:100%;height:100%;object-fit:cover" onerror="this.style.display='none'">`+(isVid?`<span style="position:absolute;top:4px;left:4px;font-size:14px;text-shadow:0 0 3px #000">▶</span>`:'');
+      if(isImg||isVid) inner=`<img alt="" src="${enc(thumb)}" loading="lazy" style="width:100%;height:100%;object-fit:cover" onerror="this.style.display='none'">`+(isVid?`<span style="position:absolute;top:4px;left:4px;font-size:14px;text-shadow:0 0 3px #000">▶</span>`:'');
       else inner=`<div style="display:flex;align-items:center;justify-content:center;height:100%;font-size:24px">📄</div>`;
       return `<a href="${enc(full)}" target="_blank" rel="noopener" title="${enc(t)} · ${sz}" style="position:relative;aspect-ratio:1;display:block;border-radius:8px;overflow:hidden;background:var(--panel,#16161c);border:1px solid var(--border,#333)">${inner}<span style="position:absolute;bottom:0;left:0;right:0;background:rgba(0,0,0,.6);color:#fff;font-size:10px;padding:1px 4px">${sz}</span></a>`;
     }).join('');
@@ -225,8 +225,8 @@ window.PCFilesFactory = function(dep){
       <input class="input fx-find" id="fx-find" type="search" autocomplete="off"
              placeholder="🔍 Search files" aria-label="Search files" value="${enc(_S._filesQ)}">
       <div class="fx-views">
-        ${canNewFolder ? `<button class="fx-newfolder" id="bl-newfolder" title="New folder"><svg class="ic b-ic" aria-hidden="true"><use href="#i-plus"></use></svg><span>New folder</span></button>` : ''}
-        ${canNewFolder ? `<button class="fx-newfolder" id="bl-newdoc" title="New document"><svg class="ic b-ic" aria-hidden="true"><use href="#i-note"></use></svg><span>New document</span></button>` : ''}
+        ${canNewFolder ? `<button class="fx-newfolder" id="bl-newfolder" title="New folder" aria-label="New folder"><svg class="ic b-ic" aria-hidden="true"><use href="#i-plus"></use></svg><span>New folder</span></button>` : ''}
+        ${canNewFolder ? `<button class="fx-newfolder" id="bl-newdoc" title="New document" aria-label="New document"><svg class="ic b-ic" aria-hidden="true"><use href="#i-note"></use></svg><span>New document</span></button>` : ''}
         <label class="fx-sort-wrap"><span>Sort by</span><select class="fx-sort" id="fx-sort" aria-label="Sort by">${_FX_SORT_CHOICES.map(([k,d,l])=>`<option value="${k}:${d}"${s.by===k&&s.dir===d?' selected':''}>${l}</option>`).join('')}</select></label>
         <button class="fx-sort-dir" id="fx-sort-dir" title="Reverse sort" aria-label="Reverse sort">${s.dir===1?'▲':'▼'}</button>
         <button class="fx-vw${v==='tiles'?' on':''}" data-view="tiles" title="Tiles" aria-label="Tiles"><svg class="ic b-ic" aria-hidden="true"><use href="#i-grid"></use></svg></button>

@@ -430,7 +430,7 @@
         <button class="bg-tab${_tab==='bills'?' on':''}" data-tab="bills">Bills${s.dueCount?` <i class="bg-n">${s.dueCount}</i>`:''}</button>
         <button class="bg-tab${_tab==='plans'?' on':''}" data-tab="plans">Plans${s.duePlanCount?` <i class="bg-n">${s.duePlanCount}</i>`:''}</button>
         <span class="spacer"></span>
-        <button class="bg-tab ghost${_showHidden?' on':''}" id="bg-hid" title="show rows skipped this month">👁</button>
+        <button class="bg-tab ghost${_showHidden?' on':''}" id="bg-hid" title="show rows skipped this month" aria-label="Show rows skipped this month" aria-pressed="${_showHidden?'true':'false'}">👁</button>
       </div>
       ${_tab==='bills' ? `
         <div class="bg-list">

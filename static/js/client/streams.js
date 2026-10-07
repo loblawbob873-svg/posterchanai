@@ -163,7 +163,7 @@ window.PCStreamsFactory = function(dep){
     feed.innerHTML=`<div class="stream-view">
       <div class="row" style="justify-content:space-between"><button class="btn btn-ghost small" id="st-back"><svg class="ic b-ic" aria-hidden="true"><use href="#i-arrow-left"></use></svg>Streams</button><span style="display:flex;gap:6px">${isMine?'':`<button class="btn btn-neon small" id="st-tip"><svg class="ic b-ic" aria-hidden="true"><use href="#i-zap"></use></svg>Tip</button>`}<button class="btn btn-cyan small" id="st-chat-toggle"><svg class="ic b-ic" aria-hidden="true"><use href="#i-chat"></use></svg>Chat</button>${isDesktop()?`<button class="btn btn-cyan small" id="st-window" title="Open this stream and its live chat in a separate window you can drag to another monitor">🗔 Window</button>`:''}${isMine?`<button class="btn btn-ghost small" id="st-del" style="color:var(--danger,#e0245e)"><svg class="ic b-ic" aria-hidden="true"><use href="#i-trash"></use></svg>Delete</button>`:''}</span></div>
       <h1 class="av-title">${enc(title)}${st==='live'?' <span class="live-badge">● LIVE</span>':''}</h1>
-      <div class="av-by"><img class="art-av" src="${enc(p.picture||S.LOGO)}" onerror="this.src='${S.LOGO}'"><span class="name" data-prof="${hpk}">${enc(p.name||p.display_name||'anon')}</span>${st?`<span class="muted small">· ${enc(st)}</span>`:''}<span class="muted small" id="st-viewers">${_viewersTag(e)?` · 👁 ${enc(_viewersTag(e))} watching`:''}</span></div>
+      <div class="av-by"><img alt="" class="art-av" src="${enc(p.picture||S.LOGO)}" onerror="this.src='${S.LOGO}'"><span class="name" data-prof="${hpk}">${enc(p.name||p.display_name||'anon')}</span>${st?`<span class="muted small">· ${enc(st)}</span>`:''}<span class="muted small" id="st-viewers">${_viewersTag(e)?` · 👁 ${enc(_viewersTag(e))} watching`:''}</span></div>
       ${(det.lang||det.tags.length)?`<div class="st-details">${det.lang?`<span class="st-lang" title="Language">🌐 ${enc(_liveLangName(det.lang))}</span>`:''}${
         det.tags.map(t=>`<span class="st-tag">#${enc(t)}</span>`).join('')}</div>`:''}
       <div class="stream-layout${(!_chatPopout() && ClientSettings.get('streamChatHidden',false))?' chat-hidden':''}">
@@ -489,7 +489,7 @@ window.PCStreamsFactory = function(dep){
     const render=()=>{ if(!msgs.length) return;
       box.innerHTML=msgs.slice(-200).map(m=>{ const pr=profOf(m.pubkey)||{}; needProfile(m.pubkey);
         const nm=`<b class="scm-name" data-prof="${m.pubkey}">${enc(pr.name||pr.display_name||'anon')}</b>`;
-        const av=`<img class="scm-av" data-prof="${m.pubkey}" src="${enc(pr.picture||S.LOGO)}" onerror="this.src='${S.LOGO}'">`;
+        const av=`<img alt="" class="scm-av" data-prof="${m.pubkey}" src="${enc(pr.picture||S.LOGO)}" onerror="this.src='${S.LOGO}'">`;
         // NIP-25: "+" is a like and "-" a dislike; anything else is the emoji itself. A custom
         // `:shortcode:` reaction carries its image in an `emoji` tag, so show that rather than the
         // raw text — otherwise a reaction reads as literal ":pepe:".

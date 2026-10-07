@@ -583,9 +583,9 @@ window.PCUploadFactory = function(dep){
     // onerror → the icon. A guessed type can be wrong, and a server that cannot make a preview
     // answers 404 with a day's cache; without this the card shows the browser's broken-image glyph
     // for as long as that lasts, which is strictly worse than the paperclip it replaced.
-    if(/image/.test(t)) return `<img class="ithumb" data-ext="${enc(ext)}" src="${enc(thumbUrl(b.url))}" loading="lazy">`;
+    if(/image/.test(t)) return `<img alt="" class="ithumb" data-ext="${enc(ext)}" src="${enc(thumbUrl(b.url))}" loading="lazy">`;
     // video: ffmpeg frame thumbnail (server ?thumb=1); falls back to a 🎬 icon if it can't be decoded
-    if(/video/.test(t)) return `<img class="vthumb" data-ext="${enc(ext)}" src="${enc(thumbUrl(b.url))}" loading="lazy">`;
+    if(/video/.test(t)) return `<img alt="" class="vthumb" data-ext="${enc(ext)}" src="${enc(thumbUrl(b.url))}" loading="lazy">`;
     const kind = /audio/.test(t) ? 'audio' : /zip|compress|tar|gzip|7z|rar/.test(t) ? 'archive'
       : /pdf/.test(t) ? 'pdf' : /text|json|xml|csv/.test(t) ? 'document' : 'file';
     return `<div class="file-icon">${_fxFileGlyph(kind)}<span>${enc(ext)}</span></div>`;
@@ -769,7 +769,7 @@ window.PCUploadFactory = function(dep){
       }catch(_){ j={error:'unreachable'}; }
       const rs=j.results||[];
       if(!rs.length){ grid.innerHTML='<div class="empty">'+(j.error?'GIF search is unavailable on this connected instance. Add a Giphy or Tenor key in its Admin settings.':'No GIFs.')+'</div>'; return; }
-      grid.innerHTML=rs.map(g=>`<img class="gif-item" src="${enc(g.preview)}" data-url="${enc(g.url)}" loading="lazy">`).join('');
+      grid.innerHTML=rs.map(g=>`<img class="gif-item" alt="GIF" src="${enc(g.preview)}" data-url="${enc(g.url)}" loading="lazy">`).join('');
       grid.querySelectorAll('.gif-item').forEach(im=> im.onclick=()=>{ ta.value+=(ta.value?'\n':'')+im.dataset.url+' '; ta.dispatchEvent(new Event('input',{bubbles:true})); bg.remove(); toast('GIF added'); });
     }
     q.oninput=()=>{ clearTimeout(t); t=setTimeout(()=>load(q.value.trim()),350); };
@@ -1105,7 +1105,7 @@ window.PCUploadFactory = function(dep){
       if(pics.length>=120) break;
     }
     const grid=$('#pics-grid'); if(!grid) return;
-    grid.innerHTML = pics.length ? pics.map(x=>`<div class="pic-card" data-id="${x.e.id}">${_hold(`<img src="${enc(x.img)}" loading="lazy" onerror="this.closest('.pic-card')&&this.closest('.pic-card').remove()">`, x.img)}</div>`).join('') : '<div class="empty">No pics found yet.</div>';
+    grid.innerHTML = pics.length ? pics.map(x=>`<div class="pic-card" data-id="${x.e.id}">${_hold(`<img src="${enc(x.img)}" alt="Photo" loading="lazy" onerror="this.closest('.pic-card')&&this.closest('.pic-card').remove()">`, x.img)}</div>`).join('') : '<div class="empty">No pics found yet.</div>';
     $$('.pic-card',grid).forEach(c=> c.onclick=()=> openThread(c.dataset.id));
   }
 

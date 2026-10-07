@@ -431,14 +431,14 @@
           <button data-k="Escape">esc</button>
           <button data-k="Tab">tab</button>
           <button data-k="ctrl" class="tty-ctrl">ctrl</button>
-          <button data-k="ArrowUp">↑</button>
-          <button data-k="ArrowDown">↓</button>
-          <button data-k="ArrowLeft">←</button>
-          <button data-k="ArrowRight">→</button>
+          <button data-k="ArrowUp" aria-label="Arrow up">↑</button>
+          <button data-k="ArrowDown" aria-label="Arrow down">↓</button>
+          <button data-k="ArrowLeft" aria-label="Arrow left">←</button>
+          <button data-k="ArrowRight" aria-label="Arrow right">→</button>
           <button data-k="Home">home</button>
           <button data-k="End">end</button>
           <button data-k="^C" class="tty-int">^C</button>
-          <button data-k="kbd" class="tty-kbd">⌨</button>
+          <button data-k="kbd" class="tty-kbd" aria-label="Show keyboard">⌨</button>
         </div>
         <input class="tty-catch" id="tty-catch" autocomplete="off" autocorrect="off"
                autocapitalize="off" spellcheck="false" aria-label="Terminal input">
@@ -1417,7 +1417,7 @@
         const nm = _tabName(x, n);
         const kind = isLocalSid(x.sid) ? 'local' : 'ssh';
         return `<span class="tty-sess tty-tab tty-${kind}${x.sid === sid ? ' active' : ''}" data-tab="${enc(x.sid)}"
-               data-host="${enc(x.host || '')}" data-label="${enc(lab)}" role="tab"
+               data-host="${enc(x.host || '')}" data-label="${enc(lab)}" role="tab" tabindex="0"
                aria-selected="${x.sid === sid ? 'true' : 'false'}"
                title="${enc(nm)} — ${kind === 'local' ? 'this computer' : 'SSH'}, idle ${_ago(x.age)}"><i class="tty-dot"></i><b>${enc(nm)}</b>`
         + `<button data-kill="${enc(x.sid)}" class="tty-kill" title="Close tab (ends the shell)"

@@ -260,7 +260,7 @@
   async function printFrameHTML(blob, kind, urls) {
     if (kind === 'image') {
       var u = URL.createObjectURL(blob); urls.push(u);
-      return '<img src="' + u + '">';
+      return '<img alt="" src="' + u + '">';
     }
     var lib = await loadPdfJs();
     var pdf = await lib.getDocument({ data: new Uint8Array(await blob.arrayBuffer()) }).promise;
@@ -271,7 +271,7 @@
         var c = document.createElement('canvas'); c.width = Math.ceil(vp.width); c.height = Math.ceil(vp.height);
         await page.render({ canvasContext: c.getContext('2d'), viewport: vp }).promise;
         var png = await new Promise(function (r) { c.toBlob(r, 'image/png'); });
-        var pu = URL.createObjectURL(png); urls.push(pu); parts.push('<img src="' + pu + '">');
+        var pu = URL.createObjectURL(png); urls.push(pu); parts.push('<img alt="Page ' + i + '" src="' + pu + '">');
         try { page.cleanup(); } catch (_) {}
       }
     } finally { try { pdf.destroy(); } catch (_) {} }

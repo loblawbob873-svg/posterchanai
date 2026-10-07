@@ -792,7 +792,7 @@
         <div class="muted small">${enc(when)}${e.location ? ' \u00b7 \ud83d\udccd ' + enc(e.location) : ''}</div>
         ${e.notes ? `<div style="white-space:pre-wrap;overflow-wrap:anywhere;margin-top:10px;max-height:50vh;overflow-y:auto">${enc(e.notes)}</div>` : ''}
         <div class="row" style="margin-top:12px;align-items:center;gap:8px">
-          <img src="${enc(p2.picture || PC.LOGO)}" onerror="this.src='${PC.LOGO}'" style="width:28px;height:28px;border-radius:50%">
+          <img alt="" src="${enc(p2.picture || PC.LOGO)}" onerror="this.src='${PC.LOGO}'" style="width:28px;height:28px;border-radius:50%">
           <button class="btn btn-ghost small" id="n52-who">${enc(p2.name || p2.display_name || 'organizer')}</button>
         </div>`, root => {
           const w = root.querySelector('#n52-who');

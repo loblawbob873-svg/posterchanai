@@ -872,7 +872,7 @@
           ${_dw.on ? drawBar() : ''}
           <div class="mb-playrow">
             <button class="btn btn-ghost small" id="mb-play" aria-label="Play"><svg class="ic b-ic" aria-hidden="true"><use href="#i-play"></use></svg></button>
-            <input type="range" id="mb-scrub" class="mb-scrub" min="0" max="${projEnd().toFixed(2)}" step="0.05" value="0">
+            <input type="range" id="mb-scrub" class="mb-scrub" aria-label="Playhead position" min="0" max="${projEnd().toFixed(2)}" step="0.05" value="0">
             <span class="muted small" id="mb-time">0.0s / ${projEnd().toFixed(1)}s</span>
           </div>
         </div>

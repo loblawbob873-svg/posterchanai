@@ -115,9 +115,9 @@ window.PCDiscoverFactory = function(dep){
     const img=(e.tags.find(t=>t[0]==='image')||[])[1]||'';
     const mine=e.pubkey===S.ME.pubkey;
     feed.innerHTML=_navTopHtml('art-back', 'Back')+`<div class="article-view">
-      ${img?_hold(`<img class="av-banner" src="${enc(img)}" onerror="this.remove()">`, img, 'image', 'av-banner'):''}
+      ${img?_hold(`<img alt="" class="av-banner" src="${enc(img)}" onerror="this.remove()">`, img, 'image', 'av-banner'):''}
       <h1 class="av-title">${enc(title)}</h1>
-      <div class="av-by"><img class="art-av" src="${enc(p.picture||S.LOGO)}" onerror="this.src='${S.LOGO}'"><span class="name" data-prof="${e.pubkey}">${enc(p.name||p.display_name||'anon')}</span><span class="muted small">· ${timeAgo(artTime(e))}</span></div>
+      <div class="av-by"><img alt="" class="art-av" src="${enc(p.picture||S.LOGO)}" onerror="this.src='${S.LOGO}'"><span class="name" data-prof="${e.pubkey}">${enc(p.name||p.display_name||'anon')}</span><span class="muted small">· ${timeAgo(artTime(e))}</span></div>
       <div class="av-actions">
         <button class="act actb ${S.BOOKMARKS.has(e.id)?'on':''}" id="av-bm" title="bookmark"><svg class="ic b-ic" aria-hidden="true"><use href="#i-bookmark"></use></svg></button>
         <button class="act actz" id="av-zap" title="zap">${ZAP_ICON}</button>
@@ -155,7 +155,7 @@ window.PCDiscoverFactory = function(dep){
     const mp=mediaParts(c.content, c);
     const kids=(c._kids||[]).map(k=>_acCard(k, depth+1)).join('');
     return `<div class="ac-item"${depth?` style="margin-left:${Math.min(depth,5)*14}px"`:''}>
-      <div class="ac-hd"><img class="ac-av" src="${enc(p.picture||S.LOGO)}" onerror="this.src='${S.LOGO}'"><span class="name" data-prof="${c.pubkey}">${emojiName(c.pubkey,name)}</span><span class="vchk" data-pk="${c.pubkey}"></span><span class="handle">${enc(handle)}</span><span class="time">${timeAgo(c.created_at)}</span></div>
+      <div class="ac-hd"><img alt="" class="ac-av" src="${enc(p.picture||S.LOGO)}" onerror="this.src='${S.LOGO}'"><span class="name" data-prof="${c.pubkey}">${emojiName(c.pubkey,name)}</span><span class="vchk" data-pk="${c.pubkey}"></span><span class="handle">${enc(handle)}</span><span class="time">${timeAgo(c.created_at)}</span></div>
       ${mp.mediaFirst?mp.gallery:''}<div class="ac-body">${applyEmojis(linkify(mp.text), c)}</div>${mp.mediaFirst?'':mp.gallery}
       <div class="ac-act"><button class="btn btn-ghost small ac-reply" data-id="${c.id}"><svg class="ic b-ic" aria-hidden="true"><use href="#i-reply"></use></svg>Reply</button></div>
       ${kids}</div>`;
@@ -953,7 +953,7 @@ window.PCDiscoverFactory = function(dep){
     const repos=_dedupAddr(addrEvs.filter(e=>e.kind===30617 && _matchAddr(e,ql))).sort((a,b)=>b.created_at-a.created_at).slice(0,12);
     const profs=Store.profileList().filter(p=>(((p.meta.name||'')+(p.meta.display_name||'')+(p.meta.nip05||'')).toLowerCase().includes(ql))).slice(0,12);
     let html='';
-    if(profs.length){ html+='<div class="search-section-title">Profiles</div>'; for(const p of profs){ const m=p.meta; html+=`<div class="psearch" data-prof="${p.pubkey}"><img src="${enc(m.picture||S.LOGO)}" onerror="this.src='${S.LOGO}'"><div><b>${emojiName(p.pubkey,m.name||m.display_name||'anon')}</b><div class="muted small">${enc(niceNip05(m.nip05)||(m.about||'').slice(0,60))}</div></div></div>`; } }
+    if(profs.length){ html+='<div class="search-section-title">Profiles</div>'; for(const p of profs){ const m=p.meta; html+=`<div class="psearch" data-prof="${p.pubkey}"><img alt="" src="${enc(m.picture||S.LOGO)}" onerror="this.src='${S.LOGO}'"><div><b>${emojiName(p.pubkey,m.name||m.display_name||'anon')}</b><div class="muted small">${enc(niceNip05(m.nip05)||(m.about||'').slice(0,60))}</div></div></div>`; } }
     if(arts.length){  html+='<div class="search-section-title"><svg class="ic b-ic" aria-hidden="true"><use href="#i-article"></use></svg>Articles</div>'+arts.map(articleCard).join(''); }
     if(strms.length){ html+='<div class="search-section-title"><svg class="ic b-ic" aria-hidden="true"><use href="#i-stream"></use></svg>Streams</div><div class="stream-grid">'+strms.map(streamCard).join('')+'</div>'; }
     if(tors.length){  html+='<div class="search-section-title"><svg class="ic b-ic" aria-hidden="true"><use href="#i-magnet"></use></svg>Torrents</div>'+tors.map(torrentCard).join(''); }

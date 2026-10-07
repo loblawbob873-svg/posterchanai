@@ -1421,7 +1421,7 @@ window.PCCallsFactory = function(dep){
       el.innerHTML=`<div class="rd-stage"><video id="call-remote" class="call-remote" autoplay playsinline></video>
           <div class="rd-scroll rd-scroll-v" id="rd-scroll-v" hidden><i></i></div>
           <div class="rd-scroll rd-scroll-h" id="rd-scroll-h" hidden><i></i></div></div>
-        <div class="call-head"><img id="call-av" onerror="this.src='${S.LOGO}'"><div><div class="call-name" id="call-name"></div><div class="call-status" id="call-status"></div></div>
+        <div class="call-head"><img alt="" id="call-av" onerror="this.src='${S.LOGO}'"><div><div class="call-name" id="call-name"></div><div class="call-status" id="call-status"></div></div>
           <div class="rd-zoom" id="rd-zoom"><button type="button" id="rd-zoom-fit" title="Fit the whole screen (Ctrl+0)">Fit</button><button type="button" id="rd-zoom-actual" title="Actual size, remote pixels 1:1 (Ctrl+1)">1:1</button><button type="button" id="rd-zoom-out" title="Zoom out (Ctrl+-)" aria-label="Zoom out">&minus;</button><input type="range" id="rd-zoom-range" class="rd-zoom-range" min="0" max="1000" value="0" aria-label="Zoom"><button type="button" id="rd-zoom-in" title="Zoom in (Ctrl++)" aria-label="Zoom in">+</button><button type="button" id="rd-zoom-level" title="Click to fit the whole screen (Ctrl+0)">100%</button><button type="button" id="rd-zoom-follow" class="rd-follow" title="Follow the remote pointer" aria-label="Follow the remote pointer" aria-pressed="false">&#9678;</button></div></div>
         <video id="call-local" class="call-local" autoplay playsinline muted></video>
         <div class="call-actions" id="call-actions"></div>`;
@@ -1554,7 +1554,7 @@ window.PCCallsFactory = function(dep){
       </div>
       <div id="grp-panel" class="call-group" style="display:none">
         <p class="muted small">Pick up to 6 people, then start — everyone connects peer-to-peer (mesh).</p>
-        <div class="grp-list">${contacts.map(pk=>{ const p=profOf(pk)||{}; return `<label class="grp-contact"><input type="checkbox" class="grp-pick" value="${pk}"><img src="${enc(p.picture||S.LOGO)}" onerror="this.src='${S.LOGO}'"><span>${enc(p.name||p.display_name||'anon')}</span></label>`; }).join('')}</div>
+        <div class="grp-list">${contacts.map(pk=>{ const p=profOf(pk)||{}; return `<label class="grp-contact"><input type="checkbox" class="grp-pick" value="${pk}"><img alt="" src="${enc(p.picture||S.LOGO)}" onerror="this.src='${S.LOGO}'"><span>${enc(p.name||p.display_name||'anon')}</span></label>`; }).join('')}</div>
         <button class="btn btn-neon full" id="grp-start" style="margin-top:8px"><svg class="ic b-ic" aria-hidden="true"><use href="#i-phone"></use></svg>Start group call</button>
       </div>
       ${(()=>{ const m=_missedList(); if(!m.length) return '';
@@ -1562,9 +1562,9 @@ window.PCCallsFactory = function(dep){
           <svg class="ic b-ic" aria-hidden="true"><use href="#i-phone"></use></svg>Missed
           <button class="btn small" id="missed-clear" style="margin-left:auto">Clear</button></div>` +
           m.map(x=>{ const p=profOf(x.pk)||{};
-            return `<button class="call-contact" data-pk="${x.pk}"><img src="${enc(p.picture||S.LOGO)}" onerror="this.src='${S.LOGO}'"><span>${enc(p.name||p.display_name||'anon')}</span><span class="muted small">${enc(timeAgo(x.at))}</span></button>`;
+            return `<button class="call-contact" data-pk="${x.pk}"><img alt="" src="${enc(p.picture||S.LOGO)}" onerror="this.src='${S.LOGO}'"><span>${enc(p.name||p.display_name||'anon')}</span><span class="muted small">${enc(timeAgo(x.at))}</span></button>`;
           }).join('') + `</div>`; })()}
-      <div class="call-contacts">${contacts.map(pk=>{ const p=profOf(pk)||{}; return `<button class="call-contact" data-pk="${pk}"><img src="${enc(p.picture||S.LOGO)}" onerror="this.src='${S.LOGO}'"><span>${enc(p.name||p.display_name||'anon')}</span></button>`; }).join('')}</div>
+      <div class="call-contacts">${contacts.map(pk=>{ const p=profOf(pk)||{}; return `<button class="call-contact" data-pk="${pk}"><img alt="" src="${enc(p.picture||S.LOGO)}" onerror="this.src='${S.LOGO}'"><span>${enc(p.name||p.display_name||'anon')}</span></button>`; }).join('')}</div>
     </div>`;
     // Followers arrive lazily; when they do, redraw ONCE so the list settles on friends. Guarded on
     // _narrowed and on still being here, so it cannot loop or stomp a view the user has moved on from.
@@ -1583,7 +1583,7 @@ window.PCCallsFactory = function(dep){
         const matches=Store.profileList().filter(p=>p.pubkey!==S.ME.pubkey && (((p.meta.name||'')+(p.meta.display_name||'')+(p.meta.nip05||'')).toLowerCase().includes(q))).slice(0,6);
         if(!matches.length){ ac.classList.add('hidden'); return; }
         ac.classList.remove('hidden');
-        ac.innerHTML=matches.map(p=>`<div class="mention-opt" data-pk="${p.pubkey}"><img src="${enc(p.meta.picture||S.LOGO)}" onerror="this.src='${S.LOGO}'"><b>${enc(p.meta.name||p.meta.display_name||'anon')}</b>${p.meta.nip05?`<span class="muted small">${enc(niceNip05(p.meta.nip05)||'')}</span>`:''}</div>`).join('');
+        ac.innerHTML=matches.map(p=>`<div class="mention-opt" data-pk="${p.pubkey}"><img alt="" src="${enc(p.meta.picture||S.LOGO)}" onerror="this.src='${S.LOGO}'"><b>${enc(p.meta.name||p.meta.display_name||'anon')}</b>${p.meta.nip05?`<span class="muted small">${enc(niceNip05(p.meta.nip05)||'')}</span>`:''}</div>`).join('');
         $$('[data-pk]',ac).forEach(el=> el.onmousedown=ev=>{ ev.preventDefault(); ac.classList.add('hidden'); inp.value=''; go(el.dataset.pk); });
       });
       inp.addEventListener('blur', ()=>setTimeout(()=>ac.classList.add('hidden'), 150)); } }
@@ -1736,9 +1736,9 @@ window.PCCallsFactory = function(dep){
     const inviter = _room.invite ? (profOf(_room.invite.from)||{}) : null;
     el.innerHTML=`<div class="room-hd">📞 Group call · ${n} ${n===1?'person':'people'}${ringingIn&&inviter?` — ${enc(inviter.name||'invite')}`:''}</div>
       <div class="call-grid" data-n="${Math.min(n,6)}">${tiles.map(t=>{
-        if(t.me) return `<div class="call-tile me"><video id="room-local" autoplay playsinline muted ${_room.video?'':'style="display:none"'}></video>${_room.video?'':`<img src="${enc((profOf(S.ME.pubkey)||{}).picture||S.LOGO)}" onerror="this.src='${S.LOGO}'">`}<span class="tl-name">You</span></div>`;
+        if(t.me) return `<div class="call-tile me"><video id="room-local" autoplay playsinline muted ${_room.video?'':'style="display:none"'}></video>${_room.video?'':`<img alt="" src="${enc((profOf(S.ME.pubkey)||{}).picture||S.LOGO)}" onerror="this.src='${S.LOGO}'">`}<span class="tl-name">You</span></div>`;
         const p=profOf(t.hex)||{}; const peer=_room.peers.get(t.hex); const conn=peer&&peer.stream;
-        return `<div class="call-tile" data-hex="${t.hex}"><video class="room-remote" data-hex="${t.hex}" autoplay playsinline ${_room.video&&conn?'':'style="display:none"'}></video>${(_room.video&&conn)?'':`<img src="${enc(p.picture||S.LOGO)}" onerror="this.src='${S.LOGO}'">`}<span class="tl-name">${enc(p.name||p.display_name||'…')}${conn?'':' <span class="muted">·connecting</span>'}</span></div>`;
+        return `<div class="call-tile" data-hex="${t.hex}"><video class="room-remote" data-hex="${t.hex}" autoplay playsinline ${_room.video&&conn?'':'style="display:none"'}></video>${(_room.video&&conn)?'':`<img alt="" src="${enc(p.picture||S.LOGO)}" onerror="this.src='${S.LOGO}'">`}<span class="tl-name">${enc(p.name||p.display_name||'…')}${conn?'':' <span class="muted">·connecting</span>'}</span></div>`;
       }).join('')}</div>
       <div class="call-actions">${ringingIn
         ? `<button class="call-btn accept" id="room-accept"><svg class="ic b-ic" aria-hidden="true"><use href="#i-phone"></use></svg>Join</button><button class="call-btn decline" id="room-decline" aria-label="Decline call"><svg class="ic x-ic" aria-hidden="true"><use href="#i-close"></use></svg></button>`

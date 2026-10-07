@@ -281,7 +281,7 @@
       const read = isRead(it.id);
       const img=safeUrl(it.image), href=safeUrl(it.link);
       return `<div class="news-card${read?' read':''}" data-i="${i}" data-id="${enc(it.id)}">
-        ${img?`<img class="news-thumb" src="${enc(img)}" loading="lazy" onerror="this.remove()">`:''}
+        ${img?`<img alt="" class="news-thumb" src="${enc(img)}" loading="lazy" onerror="this.remove()">`:''}
         <div class="news-body">
           <a class="news-title" href="${enc(href||'#')}" target="_blank" rel="noopener">${enc(it.title)}</a>
           <div class="news-meta">${enc(it.feedName||'')}${it.ts?' · '+_ago(it.ts)+' ago':''}</div>

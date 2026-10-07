@@ -45,7 +45,7 @@ window.PCLinkCardsFactory = function(dep){
   // The card's inner markup. ONE implementation, used both by the synchronous cached path below and by
   // the async first-sight fill, so the two can never render a different shape for the same preview.
   function _lcInner(url, d){
-    return `${d.image?_hold(`<img class="lc-img" src="${enc(d.image)}" loading="lazy" decoding="async" onerror="this.remove()">`, d.image, 'image', 'lc-img'):''}`
+    return `${d.image?_hold(`<img alt="" class="lc-img" src="${enc(d.image)}" loading="lazy" decoding="async" onerror="this.remove()">`, d.image, 'image', 'lc-img'):''}`
       + `<div class="lc-body"><div class="lc-site">${enc(d.site||_lcHost(url))}</div>`
       + `${d.title?`<div class="lc-title">${enc(d.title)}</div>`:''}`
       + `${d.description?`<div class="lc-desc">${enc(d.description.slice(0,160))}</div>`:''}</div>`;
@@ -66,7 +66,7 @@ window.PCLinkCardsFactory = function(dep){
       const av = p.picture || S.LOGO;
       const desc = String(ev.content || '').trim();
       return `<article class="note" data-id="${ev.id}" data-pk="${ev.pubkey}">
-        <img class="av" src="${enc(av)}" onerror="this.src='${S.LOGO}'">
+        <img alt="" class="av" src="${enc(av)}" onerror="this.src='${S.LOGO}'">
         <div class="body">
           <div class="hd"><span class="name" data-prof="${ev.pubkey}">${emojiName(ev.pubkey,name)}</span>
             <span class="vchk"></span><span class="time">${timeAgo(ev.created_at)}</span></div>

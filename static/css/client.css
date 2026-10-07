@@ -7306,6 +7306,7 @@ body.is-offline .needs-net{ opacity:.45; pointer-events:none; filter:saturate(.4
 .nt-fcaret svg.ic{width:14px;height:14px;transition:transform .15s}
 .nt-fcaret.open svg.ic{transform:rotate(90deg)}
 .nt-fcaret:hover{opacity:1}
+span.nt-fcaret{cursor:inherit}   /* the leaf SPACER, not a control: a pointer over it promised a click that does nothing */
 
 /* Attachment thumbnails. There is no server-side thumbnail for an encrypted blob and there cannot
    be — the server can't read the picture — so these are decrypted in the client and shown at size. */

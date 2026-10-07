@@ -500,7 +500,7 @@ window.PCMenusFactory = function(dep){
       // shell with no clipboard must not toast a failure here on top of a successful upload.
       try{ if(window.pcClip && window.pcClip.write) await window.pcClip.write(link);
            else if(navigator.clipboard && navigator.clipboard.writeText) await navigator.clipboard.writeText(link); }catch(_){}
-      modal(`<h3><svg class="ic h-ic" aria-hidden="true"><use href="#i-camera"></use></svg>Post card</h3><img src="${enc(link)}" style="max-width:100%;max-height:54vh;border-radius:10px;display:block;margin:0 auto">`+
+      modal(`<h3><svg class="ic h-ic" aria-hidden="true"><use href="#i-camera"></use></svg>Post card</h3><img alt="Post card preview" src="${enc(link)}" style="max-width:100%;max-height:54vh;border-radius:10px;display:block;margin:0 auto">`+
         `<div class="muted small" style="margin-top:10px;word-break:break-all">${enc(link)}</div>`+
         `<div class="row ss-acts"><button class="btn btn-cyan small" id="ss-fx"><svg class="ic b-ic" aria-hidden="true"><use href="#i-film"></use></svg>Effect</button><button class="btn btn-cyan small" id="ss-meme"><svg class="ic b-ic" aria-hidden="true"><use href="#i-film"></use></svg>Meme Builder</button><button class="btn btn-cyan small" id="ss-note"><svg class="ic b-ic" aria-hidden="true"><use href="#i-note"></use></svg>Save to Notes</button><button class="btn btn-neon small" id="ss-copy"><svg class="ic b-ic" aria-hidden="true"><use href="#i-link"></use></svg>Copy link</button><a class="btn btn-cyan small" href="${enc(link)}" target="_blank" rel="noopener"><svg class="ic b-ic" aria-hidden="true"><use href="#i-link"></use></svg>Open</a><button class="btn btn-cyan small" id="ss-close">Close</button></div>`,
         root=>{

@@ -1106,7 +1106,7 @@ window.PCDmsFactory = function(dep){
       strip.hidden=false;
       strip.innerHTML=imgs.map(u=> S.NO_IMAGES
         ? `<span class="dm-att ds" data-url="${enc(u)}">🖼 image<button class="dm-att-x" title="remove"><svg class="ic x-ic" aria-hidden="true"><use href="#i-close"></use></svg></button></span>`
-        : `<span class="dm-att" data-url="${enc(u)}"><img src="${enc(u)}" loading="lazy" onerror="this.closest('.dm-att')&&this.closest('.dm-att').remove()"><button class="dm-att-x" title="remove"><svg class="ic x-ic" aria-hidden="true"><use href="#i-close"></use></svg></button></span>`).join('');
+        : `<span class="dm-att" data-url="${enc(u)}"><img src="${enc(u)}" alt="Attachment" loading="lazy" onerror="this.closest('.dm-att')&&this.closest('.dm-att').remove()"><button class="dm-att-x" title="remove"><svg class="ic x-ic" aria-hidden="true"><use href="#i-close"></use></svg></button></span>`).join('');
       strip.querySelectorAll('.dm-att-x').forEach(b=> b.onclick=()=>{ removeOne(b.closest('.dm-att').dataset.url); sync(); inp.focus(); }); };
     inp.addEventListener('input', sync);
     inp.addEventListener('paste', async e=>{

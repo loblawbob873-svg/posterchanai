@@ -402,7 +402,7 @@ window.PCAiFactory = function(dep){
   async function aiMount(feed){
     _aiBadge(false);   // entering the view IS the acknowledgement
     feed.innerHTML=`<div class="ai-chat">
-      <div class="ai-bar"><button class="btn btn-ghost small" id="ai-back-social" hidden>← Back to Social</button><button class="btn btn-ghost small" id="ai-make" title="Make something — image, song, video, a cloned voice…"><svg class="ic b-ic" aria-hidden="true"><use href="#i-ai"></use></svg>Make</button><select id="ai-conv" class="input"></select><button class="btn btn-ghost small" id="ai-new"><svg class="ic b-ic" aria-hidden="true"><use href="#i-plus"></use></svg>New</button><button class="btn btn-ghost small" id="ai-nodes" title="Agents — run tasks on your servers" style="display:none"><svg class="ic b-ic" aria-hidden="true"><use href="#i-ai"></use></svg></button><button class="btn btn-ghost small" id="ai-tts" title="Voice narration"><svg class="ic b-ic" aria-hidden="true"><use href="#i-volume"></use></svg></button><button class="btn btn-ghost small" id="ai-del" title="delete this chat"><svg class="ic b-ic" aria-hidden="true"><use href="#i-trash"></use></svg></button></div>
+      <div class="ai-bar"><button class="btn btn-ghost small" id="ai-back-social" hidden>← Back to Social</button><button class="btn btn-ghost small" id="ai-make" title="Make something — image, song, video, a cloned voice…"><svg class="ic b-ic" aria-hidden="true"><use href="#i-ai"></use></svg>Make</button><select id="ai-conv" class="input" aria-label="Conversation"></select><button class="btn btn-ghost small" id="ai-new"><svg class="ic b-ic" aria-hidden="true"><use href="#i-plus"></use></svg>New</button><button class="btn btn-ghost small" id="ai-nodes" title="Agents — run tasks on your servers" style="display:none"><svg class="ic b-ic" aria-hidden="true"><use href="#i-ai"></use></svg></button><button class="btn btn-ghost small" id="ai-tts" title="Voice narration"><svg class="ic b-ic" aria-hidden="true"><use href="#i-volume"></use></svg></button><button class="btn btn-ghost small" id="ai-del" title="delete this chat"><svg class="ic b-ic" aria-hidden="true"><use href="#i-trash"></use></svg></button></div>
       <div class="ai-msgs" id="ai-msgs"></div>
       <div class="ai-attachbar" id="ai-attachbar"></div>
       <div class="ai-compose">
@@ -662,7 +662,7 @@ window.PCAiFactory = function(dep){
         // <img> with no action row at all. Same artifact URL shape _aiFileActions already takes
         // (relative + authed), so a reloaded geni result gets the same buttons the live one has.
         // Assistant only: on a user turn the image is that user's own upload, echoed back.
-        if(m.image_path) html += `<div class="ai-media"><img src="${enc(_absUrl(m.image_path))}" loading="lazy" onerror="window.__aiMediaRetry(this)"></div>`
+        if(m.image_path) html += `<div class="ai-media"><img alt="Generated image" src="${enc(_absUrl(m.image_path))}" loading="lazy" onerror="window.__aiMediaRetry(this)"></div>`
                                  + (m.role==='user'?'':_aiFileActions(m.image_path,'image'));
         aiAddMessage(m.role, html);
       }
@@ -1575,9 +1575,9 @@ window.PCAiFactory = function(dep){
     const opts=sel=>LT_LANGS.map(([c,n,fl])=>`<option value="${c}"${c===sel?' selected':''}>${fl} ${enc(n)}</option>`).join('');
     feed.innerHTML=`<div class="lt-wrap">
       <div class="lt-bar">
-        <select id="lt-a" class="lt-lang">${opts(pair.a)}</select>
+        <select id="lt-a" class="lt-lang" aria-label="First language">${opts(pair.a)}</select>
         <button id="lt-swap" class="lt-swap" title="swap languages"><svg class="ic x-ic" aria-hidden="true"><use href="#i-swap"></use></svg></button>
-        <select id="lt-b" class="lt-lang">${opts(pair.b)}</select>
+        <select id="lt-b" class="lt-lang" aria-label="Second language">${opts(pair.b)}</select>
       </div>
       <div class="lt-log" id="lt-log"><div class="lt-hint muted">Pick the two languages, then tap the mic and speak. Either person can talk — it auto-detects and translates to the other side.</div></div>
       <div class="lt-foot">
@@ -1831,7 +1831,7 @@ window.PCAiFactory = function(dep){
     src=src.replace(/!audio\[([^\]]*)\]\(\s*((?:https?:\/\/|\/)[^)\s]+)\s*\)/g,(m,a,u)=>stash(`<div class="ai-media"><audio controls src="${enc(_absUrl(u))}"></audio></div>`+_aiFileActions(u,'audio',a)));
     // inline images from a command output (effects/stamps, compress/convert) → show with the same
     // copy-link / reply buttons; stash BEFORE mdToHtml so it doesn't render a plain <img>.
-    src=src.replace(/!\[([^\]]*)\]\(\s*((?:https?:\/\/|\/)[^)\s]+)\s*\)/g,(m,a,u)=>stash(`<div class="ai-media"><img src="${enc(_absUrl(u))}" data-full="${enc(_absUrl(u))}" onerror="window.__aiMediaRetry(this)"></div>`+_aiFileActions(u,'image',a)));
+    src=src.replace(/!\[([^\]]*)\]\(\s*((?:https?:\/\/|\/)[^)\s]+)\s*\)/g,(m,a,u)=>stash(`<div class="ai-media"><img alt="Generated image" src="${enc(_absUrl(u))}" data-full="${enc(_absUrl(u))}" onerror="window.__aiMediaRetry(this)"></div>`+_aiFileActions(u,'image',a)));
     /* A NON-MEDIA artifact arrives as a plain markdown LINK, and that is the one form of it that
      * never worked outside a browser. The agent's `/workspace` backup is what reaches a user —
      * `[⬇️ sandbox-workspace.tar.gz](/api/files/…)` — and mdInline renders it as `<a href="/api/…">`,
@@ -2289,7 +2289,7 @@ window.PCAiFactory = function(dep){
       return head+`<div class="ai-media"><audio controls src="data:${mime};base64,${d.audio}"></audio></div>`+_fxReplyBtn(d.audio,mime,fmt); }
     if((d.type==='meme') && d.image) return head+`<div class="ai-media"><img src="data:image/png;base64,${d.image}" alt="meme"></div>`+_fxReplyBtn(d.image,'image/png','png');
     if(d.type==='mail_attachment' && d.data){ const mime=d.mime_type||'application/octet-stream';
-      if(mime.startsWith('image/')) return head+`<div class="ai-media"><img src="data:${mime};base64,${d.data}"></div>`;
+      if(mime.startsWith('image/')) return head+`<div class="ai-media"><img alt="Generated image" src="data:${mime};base64,${d.data}"></div>`;
       return head+`<a class="ai-file" href="data:${mime};base64,${d.data}" download="${enc(d.filename||'attachment')}">📎 ${enc(d.filename||'attachment')}</a>`; }
     if(d.type==='images' && Array.isArray(d.images)){
       // _absUrl: the proxy route is RELATIVE (/api/proxy-image/…) and AUTHED — on the APK a relative /api URL

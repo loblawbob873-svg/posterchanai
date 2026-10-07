@@ -176,8 +176,8 @@ window.PCCardsFactory = function(dep){
     const endsAt=parseInt((ev.tags.find(t=>t[0]==='endsAt')||[])[1]||'0',10);
     const ended=endsAt && endsAt<Math.floor(Date.now()/1000);
     const optHtml=opts.map(o=>`<button class="poll-opt" data-poll="${ev.id}" data-opt="${enc(o.id)}"${ended?' disabled':''}><span class="poll-bar"></span><span class="poll-label">${enc(o.label)}</span><span class="poll-pct"></span></button>`).join('');
-    return `<article class="note poll" data-id="${ev.id}" data-pk="${ev.pubkey}">
-      <img class="av" src="${enc(p.picture||S.LOGO)}" onerror="this.src='${S.LOGO}'">
+    return `<article class="note poll" data-id="${ev.id}" data-pk="${ev.pubkey}" tabindex="0">
+      <img alt="" class="av" src="${enc(p.picture||S.LOGO)}" onerror="this.src='${S.LOGO}'">
       <div class="body">
         <div class="hd"><span class="name" data-prof="${ev.pubkey}">${emojiName(ev.pubkey,name)}</span><span class="vchk"></span>
           <span class="handle">${enc(handle)}</span><span class="time">${timeAgo(ev.created_at)}</span></div>
@@ -340,7 +340,9 @@ window.PCCardsFactory = function(dep){
   }
   // Constructed media (feed / inline text): placeholder in data saver, else a real <img>/<video>.
   // `encUrl` is ALREADY html-encoded; `cls` = optional layout class ("m"); `onerr` = optional onerror.
-  function _media(encUrl, kind, cls, onerr){
+  // "alt" = the description the author wrote (NIP-92 imeta "alt"), unescaped; without one a screen reader
+  // is told it is an image the post carries rather than reading out the URL's file name.
+  function _media(encUrl, kind, cls, onerr, alt){
     if(S.NO_IMAGES) return _phold(encUrl, kind, cls, onerr);
     const c = cls?` class="${cls}"`:''; const oe = onerr?` onerror="${onerr}"`:'';
     // preload="none" fetched NOTHING, so a timeline video was a blank grey box until you pressed play
@@ -356,7 +358,7 @@ window.PCCardsFactory = function(dep){
     // Android WebView. The poster behaviour above is unchanged; it just happens on mount instead of on
     // parse, so only the videos actually on screen ever hold a media player.
     if(kind==='video') return `<video${c} data-vsrc="${encUrl}"${dim} controls preload="none" playsinline></video>`;
-    return `<img${c} src="${encUrl}"${dim} loading="lazy" decoding="async"${oe}>`;
+    return `<img${c} src="${encUrl}" alt="${alt ? enc(alt) : 'Attached image'}"${dim} loading="lazy" decoding="async"${oe}>`;
   }
   // ---- VideoMount: only the videos you can SEE hold a media player -------------------------------
   // A <video> with a src is not markup, it is a live decoder: the WebView allocates a MediaCodec/media
@@ -548,10 +550,12 @@ window.PCCardsFactory = function(dep){
    * imeta, falls back to the extension rules below. */
   function _imetaKinds(ev){
     const out=new Map();
+    out.alts=new Map();   // url → the alt text the author wrote, for the <img> it becomes
     for(const t of ((ev&&ev.tags)||[])){
       if(!t || t[0]!=='imeta') continue;
-      let u='', m='';
-      for(const part of t.slice(1)){ const s=String(part||''); if(s.startsWith('url ')) u=s.slice(4).trim(); else if(s.startsWith('m ')) m=s.slice(2).trim().toLowerCase(); }
+      let u='', m='', a='';
+      for(const part of t.slice(1)){ const s=String(part||''); if(s.startsWith('url ')) u=s.slice(4).trim(); else if(s.startsWith('m ')) m=s.slice(2).trim().toLowerCase(); else if(s.startsWith('alt ')) a=s.slice(4).trim(); }
+      if(u && a) out.alts.set(u, a.slice(0, 500));
       if(u && /^(image|video)\//.test(m)) out.set(u, m.startsWith('video/') ? 'video' : 'image');
     }
     return out;
@@ -559,6 +563,7 @@ window.PCCardsFactory = function(dep){
   function mediaParts(raw, ev){
     if(ev) MediaDims.seed(ev);
     const kinds=_imetaKinds(ev);
+    const alts=kinds.alts||new Map();
     const media=[];
     // Media is LIFTED OUT of the text and rendered as its own row, so whatever text remains would always
     // sit above it — a card post ("<image>\n\n<link>") showed its link ABOVE the picture. When the content
@@ -570,10 +575,10 @@ window.PCCardsFactory = function(dep){
       const u=url.replace(/[)\].,!?]+$/,''); const tail=url.slice(u.length); const E=enc(u);
       const said=kinds.get(u);
       if(said==='video'){ media.push(_media(E,'video')); return tail; }
-      if(said==='image'){ media.push(_media(E)); return tail; }
-      if(/\.(jpe?g|png|gif|webp|avif)(\?|#|$)/i.test(u)){ media.push(_media(E)); return tail; }
+      if(said==='image'){ media.push(_media(E, null, null, null, alts.get(u))); return tail; }
+      if(/\.(jpe?g|png|gif|webp|avif)(\?|#|$)/i.test(u)){ media.push(_media(E, null, null, null, alts.get(u))); return tail; }
       if(/\.(mp4|webm|mov|m4v)(\?|#|$)/i.test(u)){ media.push(_media(E,'video')); return tail; }
-      if(/\/[0-9a-f]{64}(\?|#|$)/i.test(u)){ media.push(_media(E, null, null, BLOBF)); return tail; }
+      if(/\/[0-9a-f]{64}(\?|#|$)/i.test(u)){ media.push(_media(E, null, null, BLOBF, alts.get(u))); return tail; }
       return url;  // non-media URL: leave for linkify
     });
     // One attachment keeps the plain row. TWO OR MORE become a swipeable carousel (scroll-snap gives us
@@ -804,8 +809,8 @@ window.PCCardsFactory = function(dep){
     // 🎉 congrats / 🌅 gm from the post's own text; 😭 from other people's reactions. Text wins when both
     // apply, so a "congrats!" that someone sobbed at still reads as the celebration it is.
     const _celeb = _celebrateOf(bodyTxt) || ((_postEffectsOn() && counts.sob) ? 'sob' : '');
-    return `<article class="note" data-id="${ev.id}" data-pk="${ev.pubkey}"${hasNoteXmr?` data-xmr="${enc(noteXmr)}"${_notePaymentXmr(ev)?' data-xmr-note="1"':''}`:''}${_celeb?` data-celebrate="${_celeb}"`:''}>
-      <img class="av" src="${enc(av)}" onerror="this.src='${S.LOGO}'">
+    return `<article class="note" data-id="${ev.id}" data-pk="${ev.pubkey}" tabindex="0"${hasNoteXmr?` data-xmr="${enc(noteXmr)}"${_notePaymentXmr(ev)?' data-xmr-note="1"':''}`:''}${_celeb?` data-celebrate="${_celeb}"`:''}>
+      <img alt="" class="av" src="${enc(av)}" onerror="this.src='${S.LOGO}'">
       <div class="body">${prefix}
         <div class="hd"><span class="name" data-prof="${ev.pubkey}">${emojiName(ev.pubkey,name)}</span><span class="vchk"></span>
           <span class="handle">${enc(handle)}</span><span class="time">${timeAgo(ev.created_at)}</span>${S.PINNED.has(ev.id)?'<span class="pin-badge" title="Pinned to your profile">📌</span>':''}${(window.Outbox&&Outbox.has(ev.id))?'<span class="pending-badge" data-pending="'+enc(ev.id)+'" title="Waiting to send — tap to send now or discard">Pending</span>':''}</div>
@@ -884,7 +889,7 @@ window.PCCardsFactory = function(dep){
     const cw=S.BLUR_NSFW && (!!cwTag || isSensitive(o));
     const cwReason=cwTag ? String(cwTag[1]||'').trim() : (cw?'NSFW':'');
     return `<div class="quoted" data-open="${o.id}">
-      <div class="hd"><img class="qav" src="${enc(av)}" onerror="this.src='${S.LOGO}'"><span class="name" data-prof="${o.pubkey}">${emojiName(o.pubkey,name)}</span><span class="vchk" data-pk="${o.pubkey}"></span><span class="handle">${enc(handle)}</span><span class="time">${timeAgo(o.created_at)}</span></div>
+      <div class="hd"><img alt="" class="qav" src="${enc(av)}" onerror="this.src='${S.LOGO}'"><span class="name" data-prof="${o.pubkey}">${emojiName(o.pubkey,name)}</span><span class="vchk" data-pk="${o.pubkey}"></span><span class="handle">${enc(handle)}</span><span class="time">${timeAgo(o.created_at)}</span></div>
       ${cw?`<div class="cw-wrap cw-on"><div class="cw-reveal" onclick="event.stopPropagation();var w=this.parentElement;w.classList.remove('cw-on');this.remove();">${_cwRevealInner(cwReason)}</div><div class="cw-inner">`:''}
       ${mp.mediaFirst?mp.gallery:''}
       <div class="txt">${applyEmojis(linkify(stripQuoteRef(mp.text, o)), o)}</div>
@@ -1083,7 +1088,7 @@ window.PCCardsFactory = function(dep){
     const img=(e.tags.find(t=>t[0]==='image')||[])[1]||'';
     const name=p.name||p.display_name||(npubOf(e.pubkey).slice(0,12)+'…');
     return `<div class="quoted naddrlink" data-pk="${enc(e.pubkey)}" data-d="${enc(d)}" data-k="${enc(String(e.kind))}">
-      ${img?_hold(`<img class="m" src="${enc(img)}" loading="lazy">`, img, 'image', 'm'):''}
+      ${img?_hold(`<img alt="" class="m" src="${enc(img)}" loading="lazy">`, img, 'image', 'm'):''}
       <div class="hd"><span class="name">📄 ${e.kind===30023?'Article':'Post'} · ${enc(name)}</span></div>
       <div class="txt"><b>${enc(title)}</b>${summary?`<br><span class="muted small">${enc(summary)}</span>`:''}</div></div>`;
   }
@@ -1253,9 +1258,28 @@ window.PCCardsFactory = function(dep){
     }, false);
   }
 
+  /* A post is opened by clicking anywhere on its card, which a keyboard could never do: the card was
+   * not focusable, so Tab walked every reply/like button on the timeline and never the post itself.
+   * Cards are tab stops now (tabindex="0" in the builders above) and Enter on a FOCUSED CARD is that
+   * click — only the card itself, never a key pressed on a button or field inside it. */
+  function _bindEnterOpensPost(){
+    document.addEventListener('keydown', e => {
+      if(e.key !== 'Enter' || e.ctrlKey || e.metaKey || e.altKey || e.shiftKey || e.repeat) return;
+      if(e.defaultPrevented) return;   // keys.js opened it already (the focused card is also the selected row)
+      const t = e.target;
+      if(!t || !t.matches || !t.matches('article.note[data-id]')) return;
+      if(!(t.closest && t.closest('#feed'))) return;
+      const id = t.dataset.id;
+      if(!id) return;
+      e.preventDefault();
+      openThread(id);
+    }, false);
+  }
+
   function bindFeedActions(){
     _bindSpaceDoesNotJump();
     _bindAltLeftGoesBack();
+    _bindEnterOpensPost();
     $('#feed').addEventListener('click', async (e)=>{
       if(e.target.closest('.yt-embed')) return;  // YouTube facade → handled by the player loader; don't lightbox the thumb
       const mn=e.target.closest('.mention'); if(mn){ e.preventDefault(); const pk=safePk(mn.dataset.np); if(pk) renderProfileView(pk); return; }
