@@ -92,6 +92,13 @@ window.PCMenusFactory = function(dep){
     }, true);
     window.addEventListener('resize', ()=>{ if(box) place(); });
   }
+  /* NAMES FOR THE BUILT-IN SET, so the search box can find them. The picker's search only ever
+   * looked at InstEmoji.list (the instance's custom packs): a unicode emoji carries no name a
+   * browser will tell us, so typing "smi" emptied the whole Emoji tab and showed only custom
+   * shortcodes that happened to contain those letters -- the faces you were looking for vanished
+   * as you typed. Keyed by the character itself; every entry of REACTION_EMOJIS must have one
+   * (tests/client/test_concord_emoji_search_full_app.py checks). */
+  const _EMOJI_NAMES={'❤️':'red heart love','🔥':'fire hot lit','😂':'joy tears laughing lol','🤣':'rofl rolling floor laughing','😮':'open mouth wow surprised','😯':'hushed surprised','😢':'cry sad tear','😭':'sob crying loudly','👍':'thumbsup thumbs up +1 like yes','👎':'thumbsdown thumbs down -1 dislike no','🤙':'call me shaka hang loose','💀':'skull dead','⚡':'zap lightning high voltage','🚀':'rocket launch','🤔':'thinking hmm','🥰':'smiling face with hearts love','😍':'heart eyes love','😘':'kissing heart kiss','😎':'sunglasses cool','🤩':'star struck','🥳':'partying party celebrate','😏':'smirk','😊':'blush smiling happy','🙂':'slightly smiling smile','😉':'wink','😌':'relieved','😋':'yum delicious','😛':'tongue','😜':'winking tongue crazy','🤪':'zany crazy goofy','😅':'sweat smile','😆':'laughing satisfied','😁':'grin beaming','😄':'smile smiling eyes happy','😀':'grinning smile happy','🙃':'upside down','😇':'innocent halo angel','🤗':'hugging hug','🤭':'hand over mouth giggle oops','🤫':'shushing quiet','🫡':'salute','🧐':'monocle','🤓':'nerd','🥸':'disguise','😐':'neutral','😑':'expressionless','😶':'no mouth silent','🙄':'eye roll rolling eyes','😬':'grimace','🤨':'raised eyebrow skeptical','😴':'sleeping zzz','🤤':'drooling','😪':'sleepy','😷':'mask sick','🤒':'thermometer sick','🤕':'bandage hurt','🤢':'nauseated sick','🤮':'vomiting puke','🥵':'hot','🥶':'cold freezing','🥴':'woozy drunk','😵':'dizzy','🤯':'exploding head mind blown','😳':'flushed embarrassed','🥺':'pleading puppy eyes','😤':'triumph huff','😠':'angry','😡':'rage pouting angry','🤬':'cursing swearing','😱':'scream fear','😨':'fearful','😰':'anxious sweat','😥':'sad relieved disappointed','😓':'downcast sweat','🥱':'yawning tired','🤠':'cowboy','😈':'smiling imp devil','👿':'imp angry devil','👹':'ogre','👺':'goblin','🤡':'clown','💩':'poop','👻':'ghost','👽':'alien','👾':'space invader alien monster','🤖':'robot','🎃':'jack o lantern pumpkin halloween','👀':'eyes look','👏':'clap','🙌':'raised hands hooray','🙏':'pray please thanks','🤝':'handshake deal','💪':'muscle strong flex','👊':'punch fist bump','✌️':'victory peace','🤞':'crossed fingers luck','🤟':'love you','🤘':'metal rock horns','👌':'ok','🫶':'heart hands','💯':'hundred 100','💔':'broken heart','🧡':'orange heart','💛':'yellow heart','💚':'green heart','💙':'blue heart','💜':'purple heart','🖤':'black heart','🤍':'white heart','⭐':'star','✨':'sparkles','💥':'boom collision','🎉':'tada party'};
   function openEmojiPopover(anchorBtn, onPick, opts){
     if(openEmojiPopover.closeActive)openEmojiPopover.closeActive();
     opts=opts||{};
@@ -168,7 +175,7 @@ window.PCMenusFactory = function(dep){
       // Hand focus back where it came from, so opening a menu mid-sentence does not cost you the caret.
       // Only when the popover still owns it — an item's action may have moved focus deliberately.
       const mine = pop.contains(document.activeElement) || document.activeElement===document.body;
-      _detachKeys(); pop.remove(); document.querySelectorAll('.pop-backdrop').forEach(b=>b.remove()); document.removeEventListener('click',onDoc,true); const f=$('#feed'); if(f) f.removeEventListener('scroll',onFeedScroll); document.removeEventListener('scroll',onScroll,true); window.removeEventListener('resize',close);
+      _detachKeys(); pop.remove(); document.querySelectorAll('.pop-backdrop').forEach(b=>b.remove()); document.removeEventListener('click',onDoc,true); const f=$('#feed'); if(f) f.removeEventListener('scroll',onFeedScroll); document.removeEventListener('scroll',onScroll,true); window.removeEventListener('resize',onResize);
       ['wheel','touchmove','pointerdown'].forEach(t=>document.removeEventListener(t,_mark,{capture:true})); document.removeEventListener('keydown',_markKey,true);
       if(mine && _prevFocus && _prevFocus.isConnected){ try{ _prevFocus.focus({preventScroll:true}); }catch(_){ } }
     };
@@ -189,7 +196,12 @@ window.PCMenusFactory = function(dep){
     const _byPerson=()=>Date.now()-_userAt<600;
     const onScroll=e=>{ if(!pop.contains(e.target) && _byPerson()) close(); };
     const onFeedScroll=()=>{ if(_byPerson()) close(); };
-    if(opts.anchored){ document.addEventListener('scroll',onScroll,true); window.addEventListener('resize',close); }
+    /* A RESIZE WHILE THE PERSON IS TYPING IN THE SEARCH BOX IS THE KEYBOARD, NOT A LAYOUT CHANGE.
+       Tapping the search field on a phone raises the soft keyboard, and in the APK's WebView that
+       resizes the window -- so the anchored (reaction) picker closed the instant you started to
+       search: "emoji search broken, disappears". Keep it and pull it back on screen instead. */
+    const onResize=()=>{ if(pop.contains(document.activeElement)) _placePop(pop, anchorBtn, opts); else close(); };
+    if(opts.anchored){ document.addEventListener('scroll',onScroll,true); window.addEventListener('resize',onResize); }
     const onDoc=e=>{ if(!pop.contains(e.target) && !(anchorBtn && anchorBtn.contains(e.target))) close(); };
     armTimer=setTimeout(()=>{ if(closed)return;document.addEventListener('click',onDoc,true); const f=$('#feed'); if(f) f.addEventListener('scroll',onFeedScroll); },0);
     // mousedown + preventDefault keeps the textarea focused so insert-at-cursor works. Buttons arrive
@@ -218,7 +230,7 @@ window.PCMenusFactory = function(dep){
       if(!s){ _setTab(_tab, true); return; }
       $$('.ep-tab',pop).forEach(b=>b.classList.remove('on'));
       grid.scrollTop=0;
-      _show(InstEmoji.list.filter(e=>e.s.toLowerCase().includes(s)));
+      _show(REACTION_EMOJIS.filter(e=>(_EMOJI_NAMES[e]||'').includes(s)).concat(InstEmoji.list.filter(e=>e.s.toLowerCase().includes(s))));
     };
     return close;
   }

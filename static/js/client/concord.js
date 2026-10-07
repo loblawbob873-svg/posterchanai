@@ -4961,7 +4961,10 @@
        appeared to randomly disappear (and another device never saw it at all). Funnel both icon
        entry points through the authoritative Community settings publisher. */
     const iconSave=$('#cc-icon-save'); if(iconSave)iconSave.onclick=()=>{ const target=$('#cc-settings-icon'),saveButton=$('#cc-settings-save'); if(!target||!saveButton)return; target.value=normalizeIcon($('#cc-icon-value').value); $('#cc-icon-dialog').classList.add('hidden'); return saveButton.click(); };
-    const emoji=$('#cc-emoji'), input=$('#cc-input'); if(emoji&&input)emoji.onclick=()=>{ if(p.openEmojiPopover)p.openEmojiPopover(emoji,(value,close)=>{ if(close)close(); if(p.insertAt)p.insertAt(input,value); else input.value+=value; input.focus(); }); };
+    /* The composer is looked up AT THE PICK, never captured at the open: a message arriving while the
+       picker is open repaints the room and replaces #cc-input, and the pick then went into the
+       detached textarea -- the emoji you chose simply never appeared. */
+    const emoji=$('#cc-emoji'), input=$('#cc-input'); if(emoji&&input)emoji.onclick=()=>{ if(p.openEmojiPopover)p.openEmojiPopover(emoji,(value,close)=>{ if(close)close(); const box=$('#cc-input')||input; if(p.insertAt)p.insertAt(box,value); else box.value+=value; box.focus(); }); };
     let mentionChoices=[...(activeMentionState.choices||[])],mentionIndex=Number(activeMentionState.index)||0;
     const mentionRecipients=new Map(activeMentionState.recipients||[]);
     const syncMentionState=()=>{activeMentionState={choices:[...mentionChoices],index:mentionIndex,recipients:new Map(mentionRecipients)};};
