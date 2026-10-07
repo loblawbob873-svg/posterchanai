@@ -1,0 +1,46 @@
+{
+ "action": "window_steps",
+ "windows": [
+  {
+   "title": "Telegram",
+   "view": "tg",
+   "kind": "PosterChan app",
+   "selection": "",
+   "text": "TG//LINK ⏻ D Dana 01:19 AM How about 9am at the trailhead? 1 BC 👥 Book club Oct 6 Next book: Dune ◢◤ Pick a chat."
+  }
+ ],
+ "instruction": "x",
+ "history": [],
+ "commands": false,
+ "today": "2026-10-07",
+ "controls": [
+  {
+   "ref": 1,
+   "role": "button",
+   "label": "Sign out of Telegram",
+   "value": "",
+   "near": ""
+  },
+  {
+   "ref": 2,
+   "role": "textbox",
+   "label": "Search chats",
+   "value": "",
+   "near": ""
+  },
+  {
+   "ref": 3,
+   "role": "button",
+   "label": "D Dana 01:19 AM How about 9am at the trailhead? 1",
+   "value": "",
+   "near": "D Dana 01:19 AM How about 9am at the trailhead? 1"
+  },
+  {
+   "ref": 4,
+   "role": "button",
+   "label": "BC 👥 Book club Oct 6 Next book: Dune",
+   "value": "",
+   "near": "BC 👥 Book club Oct 6 Next book: Dune"
+  }
+ ]
+}

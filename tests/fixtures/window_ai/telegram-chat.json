@@ -1,0 +1,144 @@
+{
+ "action": "window_steps",
+ "windows": [
+  {
+   "title": "Telegram",
+   "view": "tg",
+   "kind": "PosterChan app",
+   "selection": "",
+   "text": "TG//LINK ⏻ D Dana 01:19 AM How about 9am at the trailhead? BC 👥 Book club Oct 6 Next book: Dune D Dana Wed, Oct 7 Dana Are we still on for the hike on Saturday? 12:29 AM ☺ ⧉ ↩ Yes! What time? 12:39 AM ✓✓ ☺ ⧉ ↩ Dana How about 9am at the trailhead? 01:19 AM ☺ ⧉ ↩ 📎 📷 ➤"
+  }
+ ],
+ "instruction": "x",
+ "history": [],
+ "commands": false,
+ "today": "2026-10-07",
+ "controls": [
+  {
+   "ref": 1,
+   "role": "button",
+   "label": "Sign out of Telegram",
+   "value": "",
+   "near": ""
+  },
+  {
+   "ref": 2,
+   "role": "textbox",
+   "label": "Search chats",
+   "value": "",
+   "near": ""
+  },
+  {
+   "ref": 3,
+   "role": "button",
+   "label": "D Dana 01:19 AM How about 9am at the trailhead?",
+   "value": "",
+   "near": "D Dana 01:19 AM How about 9am at the trailhead?"
+  },
+  {
+   "ref": 4,
+   "role": "button",
+   "label": "BC 👥 Book club Oct 6 Next book: Dune",
+   "value": "",
+   "near": "BC 👥 Book club Oct 6 Next book: Dune"
+  },
+  {
+   "ref": 5,
+   "role": "item",
+   "label": "Wed, Oct 7 Dana Are we still on for the hike on Saturday? 12:29 AM ☺ ⧉ ↩ Yes! Wh",
+   "value": "",
+   "near": ""
+  },
+  {
+   "ref": 6,
+   "role": "button",
+   "label": "React",
+   "value": "",
+   "near": "Dana Are we still on for the hike on Saturday? 12:29 AM ☺ ⧉ ↩"
+  },
+  {
+   "ref": 7,
+   "role": "button",
+   "label": "Copy",
+   "value": "",
+   "near": "Dana Are we still on for the hike on Saturday? 12:29 AM ☺ ⧉ ↩"
+  },
+  {
+   "ref": 8,
+   "role": "button",
+   "label": "Reply",
+   "value": "",
+   "near": "Dana Are we still on for the hike on Saturday? 12:29 AM ☺ ⧉ ↩"
+  },
+  {
+   "ref": 9,
+   "role": "button",
+   "label": "React",
+   "value": "",
+   "near": "Yes! What time? 12:39 AM ✓✓ ☺ ⧉ ↩"
+  },
+  {
+   "ref": 10,
+   "role": "button",
+   "label": "Copy",
+   "value": "",
+   "near": "Yes! What time? 12:39 AM ✓✓ ☺ ⧉ ↩"
+  },
+  {
+   "ref": 11,
+   "role": "button",
+   "label": "Reply",
+   "value": "",
+   "near": "Yes! What time? 12:39 AM ✓✓ ☺ ⧉ ↩"
+  },
+  {
+   "ref": 12,
+   "role": "button",
+   "label": "React",
+   "value": "",
+   "near": "Dana How about 9am at the trailhead? 01:19 AM ☺ ⧉ ↩"
+  },
+  {
+   "ref": 13,
+   "role": "button",
+   "label": "Copy",
+   "value": "",
+   "near": "Dana How about 9am at the trailhead? 01:19 AM ☺ ⧉ ↩"
+  },
+  {
+   "ref": 14,
+   "role": "button",
+   "label": "Reply",
+   "value": "",
+   "near": "Dana How about 9am at the trailhead? 01:19 AM ☺ ⧉ ↩"
+  },
+  {
+   "ref": 15,
+   "role": "button",
+   "label": "Attach files",
+   "value": "",
+   "near": ""
+  },
+  {
+   "ref": 16,
+   "role": "button",
+   "label": "Camera",
+   "value": "",
+   "near": ""
+  },
+  {
+   "ref": 17,
+   "role": "textbox",
+   "label": "Message",
+   "value": "",
+   "near": ""
+  },
+  {
+   "ref": 18,
+   "role": "button",
+   "label": "Send",
+   "value": "",
+   "near": ""
+  }
+ ]
+}

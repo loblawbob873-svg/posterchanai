@@ -1,0 +1,249 @@
+{
+ "action": "window_steps",
+ "windows": [
+  {
+   "title": "Settings",
+   "view": "settings",
+   "kind": "PosterChan app",
+   "selection": "",
+   "text": "Account npub1rwzv24nmzfjypx2… · build 1791358171 Copy npub Show private key (nsec) ⤓ Sync my data to this relay Logout Delete all my posts Delete my account Pulls your posts back from other relays — and your notes, passwords, calendar and contacts from this server's private backup, if it has one. User Settings Profile Timeline Notifications Ringtone Sidebar Relays Media Cache Zaps Privacy Muted Mail Telegram Social API Keys USE MY OWN RELAYS By default this app uses the built-in relay. Turn this on to connect to your own relays instead — pre-filled with the relays PosterChan uses, so you are not starting from a blank box. Events from them are signature-verified. Add relay Import from extension Copy my private data here Notes, Passwords and Budget live only on a relay, so they are copied to your new relays whenever you change this list. This button runs it again if one was unreachable at the time. (Your files index is signed by the server and stays where it is.) Import from NIP-05 Default built-in relay: wss://fixture.invalid Save & reload Save settings"
+  }
+ ],
+ "instruction": "x",
+ "history": [],
+ "commands": false,
+ "today": "2026-10-07",
+ "controls": [
+  {
+   "ref": 1,
+   "role": "button",
+   "label": "Copy npub",
+   "value": "",
+   "near": ""
+  },
+  {
+   "ref": 2,
+   "role": "button",
+   "label": "Show private key (nsec)",
+   "value": "",
+   "near": ""
+  },
+  {
+   "ref": 3,
+   "role": "button",
+   "label": "⤓ Sync my data to this relay",
+   "value": "",
+   "near": ""
+  },
+  {
+   "ref": 4,
+   "role": "button",
+   "label": "Logout",
+   "value": "",
+   "near": ""
+  },
+  {
+   "ref": 5,
+   "role": "button",
+   "label": "Delete all my posts",
+   "value": "",
+   "near": ""
+  },
+  {
+   "ref": 6,
+   "role": "button",
+   "label": "Delete my account",
+   "value": "",
+   "near": ""
+  },
+  {
+   "ref": 7,
+   "role": "button",
+   "label": "Profile",
+   "value": "",
+   "near": ""
+  },
+  {
+   "ref": 8,
+   "role": "button",
+   "label": "Timeline",
+   "value": "",
+   "near": ""
+  },
+  {
+   "ref": 9,
+   "role": "button",
+   "label": "Notifications",
+   "value": "",
+   "near": ""
+  },
+  {
+   "ref": 10,
+   "role": "button",
+   "label": "Ringtone",
+   "value": "",
+   "near": ""
+  },
+  {
+   "ref": 11,
+   "role": "button",
+   "label": "Sidebar",
+   "value": "",
+   "near": ""
+  },
+  {
+   "ref": 12,
+   "role": "button",
+   "label": "Relays",
+   "value": "",
+   "near": ""
+  },
+  {
+   "ref": 13,
+   "role": "button",
+   "label": "Media",
+   "value": "",
+   "near": ""
+  },
+  {
+   "ref": 14,
+   "role": "button",
+   "label": "Cache",
+   "value": "",
+   "near": ""
+  },
+  {
+   "ref": 15,
+   "role": "button",
+   "label": "Zaps",
+   "value": "",
+   "near": ""
+  },
+  {
+   "ref": 16,
+   "role": "button",
+   "label": "Privacy",
+   "value": "",
+   "near": ""
+  },
+  {
+   "ref": 17,
+   "role": "button",
+   "label": "Muted",
+   "value": "",
+   "near": ""
+  },
+  {
+   "ref": 18,
+   "role": "button",
+   "label": "Mail",
+   "value": "",
+   "near": ""
+  },
+  {
+   "ref": 19,
+   "role": "button",
+   "label": "Telegram",
+   "value": "",
+   "near": ""
+  },
+  {
+   "ref": 20,
+   "role": "button",
+   "label": "Social",
+   "value": "",
+   "near": ""
+  },
+  {
+   "ref": 21,
+   "role": "button",
+   "label": "API Keys",
+   "value": "",
+   "near": ""
+  },
+  {
+   "ref": 22,
+   "role": "checkbox",
+   "label": "Use my own relays",
+   "value": "off",
+   "near": ""
+  },
+  {
+   "ref": 23,
+   "role": "textbox",
+   "label": "wss://relay.example.com",
+   "value": "wss://fixture.invalid",
+   "near": ""
+  },
+  {
+   "ref": 24,
+   "role": "button",
+   "label": "remove",
+   "value": "",
+   "near": ""
+  },
+  {
+   "ref": 25,
+   "role": "textbox",
+   "label": "wss://relay.example.com",
+   "value": "wss://relay.poster.place/",
+   "near": ""
+  },
+  {
+   "ref": 26,
+   "role": "button",
+   "label": "remove",
+   "value": "",
+   "near": ""
+  },
+  {
+   "ref": 27,
+   "role": "button",
+   "label": "Add relay",
+   "value": "",
+   "near": ""
+  },
+  {
+   "ref": 28,
+   "role": "button",
+   "label": "Import from extension",
+   "value": "",
+   "near": ""
+  },
+  {
+   "ref": 29,
+   "role": "button",
+   "label": "Copy my private data here",
+   "value": "",
+   "near": ""
+  },
+  {
+   "ref": 30,
+   "role": "textbox",
+   "label": "you@domain.com",
+   "value": "",
+   "near": ""
+  },
+  {
+   "ref": 31,
+   "role": "button",
+   "label": "Import from NIP-05",
+   "value": "",
+   "near": ""
+  },
+  {
+   "ref": 32,
+   "role": "button",
+   "label": "Save & reload",
+   "value": "",
+   "near": ""
+  },
+  {
+   "ref": 33,
+   "role": "button",
+   "label": "Save settings",
+   "value": "",
+   "near": ""
+  }
+ ]
+}

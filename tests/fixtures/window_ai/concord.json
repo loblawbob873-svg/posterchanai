@@ -1,0 +1,235 @@
+{
+ "action": "window_steps",
+ "windows": [
+  {
+   "title": "Communities1",
+   "view": "concord",
+   "kind": "PosterChan app",
+   "selection": "",
+   "text": "🕊 ◎ GE + Gentoo Users End-to-end encrypted TEXT CHANNELS # general ☆ ⋯ # meetups ☆ ⋯ npub1rwzv24n… You # general PUBLIC Visible to all community members 📌 Invite Links Invites bbbbbbbbbbbb…10:35 AM Who is bringing the projector to the meetup tomorrow? ⋯ 1b84c5567b12…10:35 AM I can, if someone grabs the HDMI cable. ⋯ bbbbbbbbbbbb…10:35 AM Deal. Doors open at 6pm. ⋯ Send Known members 2 npub1rwzv24n… Owner bbbbbbbbbbbb… Member"
+  }
+ ],
+ "instruction": "x",
+ "history": [],
+ "commands": false,
+ "today": "2026-10-07",
+ "controls": [
+  {
+   "ref": 1,
+   "role": "button",
+   "label": "Your rooms",
+   "value": "",
+   "near": ""
+  },
+  {
+   "ref": 2,
+   "role": "button",
+   "label": "Discover public communities",
+   "value": "",
+   "near": ""
+  },
+  {
+   "ref": 3,
+   "role": "button",
+   "label": "GE",
+   "value": "",
+   "near": ""
+  },
+  {
+   "ref": 4,
+   "role": "button",
+   "label": "Create or join a community",
+   "value": "",
+   "near": ""
+  },
+  {
+   "ref": 5,
+   "role": "button",
+   "label": "Set community icon",
+   "value": "",
+   "near": ""
+  },
+  {
+   "ref": 6,
+   "role": "button",
+   "label": "Leave community",
+   "value": "",
+   "near": ""
+  },
+  {
+   "ref": 7,
+   "role": "button",
+   "label": "# general",
+   "value": "",
+   "near": ""
+  },
+  {
+   "ref": 8,
+   "role": "button",
+   "label": "Star #general",
+   "value": "",
+   "near": ""
+  },
+  {
+   "ref": 9,
+   "role": "button",
+   "label": "Options for #general",
+   "value": "",
+   "near": ""
+  },
+  {
+   "ref": 10,
+   "role": "button",
+   "label": "# meetups",
+   "value": "",
+   "near": ""
+  },
+  {
+   "ref": 11,
+   "role": "button",
+   "label": "Star #meetups",
+   "value": "",
+   "near": ""
+  },
+  {
+   "ref": 12,
+   "role": "button",
+   "label": "Options for #meetups",
+   "value": "",
+   "near": ""
+  },
+  {
+   "ref": 13,
+   "role": "button",
+   "label": "Notification settings",
+   "value": "",
+   "near": ""
+  },
+  {
+   "ref": 14,
+   "role": "button",
+   "label": "Pinned messages",
+   "value": "",
+   "near": ""
+  },
+  {
+   "ref": 15,
+   "role": "button",
+   "label": "Publish to Armada Discover",
+   "value": "",
+   "near": ""
+  },
+  {
+   "ref": 16,
+   "role": "button",
+   "label": "Invite an account",
+   "value": "",
+   "near": ""
+  },
+  {
+   "ref": 17,
+   "role": "button",
+   "label": "Manage invitation links",
+   "value": "",
+   "near": ""
+  },
+  {
+   "ref": 18,
+   "role": "button",
+   "label": "Copy room invite link",
+   "value": "",
+   "near": ""
+  },
+  {
+   "ref": 19,
+   "role": "button",
+   "label": "Leave community",
+   "value": "",
+   "near": ""
+  },
+  {
+   "ref": 20,
+   "role": "button",
+   "label": "Start voice call",
+   "value": "",
+   "near": ""
+  },
+  {
+   "ref": 21,
+   "role": "button",
+   "label": "Review direct invitations",
+   "value": "",
+   "near": ""
+  },
+  {
+   "ref": 22,
+   "role": "button",
+   "label": "Members",
+   "value": "",
+   "near": ""
+  },
+  {
+   "ref": 23,
+   "role": "button",
+   "label": "Message actions",
+   "value": "",
+   "near": "bbbbbbbbbbbb…10:35 AM Who is bringing the projector to the meetup tomorrow? ⋯"
+  },
+  {
+   "ref": 24,
+   "role": "button",
+   "label": "Message actions",
+   "value": "",
+   "near": "1b84c5567b12…10:35 AM I can, if someone grabs the HDMI cable. ⋯"
+  },
+  {
+   "ref": 25,
+   "role": "button",
+   "label": "Message actions",
+   "value": "",
+   "near": "bbbbbbbbbbbb…10:35 AM Deal. Doors open at 6pm. ⋯"
+  },
+  {
+   "ref": 26,
+   "role": "button",
+   "label": "Attach file",
+   "value": "",
+   "near": ""
+  },
+  {
+   "ref": 27,
+   "role": "textbox",
+   "label": "Message #general",
+   "value": "",
+   "near": ""
+  },
+  {
+   "ref": 28,
+   "role": "button",
+   "label": "Emoji",
+   "value": "",
+   "near": ""
+  },
+  {
+   "ref": 29,
+   "role": "button",
+   "label": "Send",
+   "value": "",
+   "near": ""
+  },
+  {
+   "ref": 30,
+   "role": "button",
+   "label": "npub1rwzv24n… — Owner",
+   "value": "",
+   "near": ""
+  },
+  {
+   "ref": 31,
+   "role": "button",
+   "label": "bbbbbbbbbbbb… — Member",
+   "value": "",
+   "near": ""
+  }
+ ]
+}

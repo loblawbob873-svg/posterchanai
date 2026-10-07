@@ -1,0 +1,53 @@
+{
+ "action": "window_steps",
+ "windows": [
+  {
+   "title": "File Manager",
+   "view": "blossom",
+   "kind": "PosterChan app",
+   "selection": "",
+   "text": "Open dialog: New folder NAME CONTENTS 🌐 Public — files upload as-is, shareable by URL 🔒 Encrypted — encrypted on this device; only you can open them Cancel Create — Behind it: ▾ Files All Music ▾ Synced Folders Load synced folders Uses your signer only when you ask. AI Chat files ‹ ↑ Files New folder New document Sort by Newest first Oldest first Name A–Z Name Z–A Largest first Smallest first Type A–Z Type Z–A ▼ ⬆ Drop files/folders here, or choose files choose folder → All files · uploaded one at a time — stored · counting… Refresh Check my drive Music empty Everything 🗂 All files browse the whole drive"
+  }
+ ],
+ "instruction": "x",
+ "history": [],
+ "commands": false,
+ "today": "2026-10-07",
+ "controls": [
+  {
+   "ref": 1,
+   "role": "textbox",
+   "label": "Name",
+   "value": "",
+   "near": "New folder"
+  },
+  {
+   "ref": 2,
+   "role": "radio",
+   "label": "🌐 Public — files upload as-is, shareable by URL",
+   "value": "on",
+   "near": "New folder"
+  },
+  {
+   "ref": 3,
+   "role": "radio",
+   "label": "🔒 Encrypted — encrypted on this device; only you can open them",
+   "value": "off",
+   "near": "New folder"
+  },
+  {
+   "ref": 4,
+   "role": "button",
+   "label": "Cancel",
+   "value": "",
+   "near": "New folder"
+  },
+  {
+   "ref": 5,
+   "role": "button",
+   "label": "Create",
+   "value": "",
+   "near": "New folder"
+  }
+ ]
+}

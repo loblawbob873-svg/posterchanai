@@ -1,0 +1,347 @@
+{
+ "action": "window_steps",
+ "windows": [
+  {
+   "title": "Calendar",
+   "view": "calendar",
+   "kind": "PosterChan app",
+   "selection": "",
+   "text": "‹ Today › October 2026 Home Event Sun Mon Tue Wed Thu Fri Sat 27 28 29 30 1 2 3 4 5 6 7 8 9 14:00 Team standup 10 11 12 13 14 15 16 17 18 19 20 21 22 23 24 25 26 27 28 29 30 31 1 2 3 4 5 6 7 Wed 7 October Nothing on this day."
+  }
+ ],
+ "instruction": "x",
+ "history": [],
+ "commands": false,
+ "today": "2026-10-07",
+ "controls": [
+  {
+   "ref": 1,
+   "role": "button",
+   "label": "Previous month",
+   "value": "",
+   "near": ""
+  },
+  {
+   "ref": 2,
+   "role": "button",
+   "label": "Today",
+   "value": "",
+   "near": ""
+  },
+  {
+   "ref": 3,
+   "role": "button",
+   "label": "Next month",
+   "value": "",
+   "near": ""
+  },
+  {
+   "ref": 4,
+   "role": "button",
+   "label": "New event",
+   "value": "",
+   "near": ""
+  },
+  {
+   "ref": 5,
+   "role": "button",
+   "label": "Calendar options",
+   "value": "",
+   "near": ""
+  },
+  {
+   "ref": 6,
+   "role": "button",
+   "label": "27",
+   "value": "",
+   "near": "27"
+  },
+  {
+   "ref": 7,
+   "role": "button",
+   "label": "28",
+   "value": "",
+   "near": "28"
+  },
+  {
+   "ref": 8,
+   "role": "button",
+   "label": "29",
+   "value": "",
+   "near": "29"
+  },
+  {
+   "ref": 9,
+   "role": "button",
+   "label": "30",
+   "value": "",
+   "near": "30"
+  },
+  {
+   "ref": 10,
+   "role": "button",
+   "label": "1",
+   "value": "",
+   "near": "1"
+  },
+  {
+   "ref": 11,
+   "role": "button",
+   "label": "2",
+   "value": "",
+   "near": "2"
+  },
+  {
+   "ref": 12,
+   "role": "button",
+   "label": "3",
+   "value": "",
+   "near": "3"
+  },
+  {
+   "ref": 13,
+   "role": "button",
+   "label": "4",
+   "value": "",
+   "near": "4"
+  },
+  {
+   "ref": 14,
+   "role": "button",
+   "label": "5",
+   "value": "",
+   "near": "5"
+  },
+  {
+   "ref": 15,
+   "role": "button",
+   "label": "6",
+   "value": "",
+   "near": "6"
+  },
+  {
+   "ref": 16,
+   "role": "button",
+   "label": "7",
+   "value": "",
+   "near": "7"
+  },
+  {
+   "ref": 17,
+   "role": "button",
+   "label": "8",
+   "value": "",
+   "near": "8"
+  },
+  {
+   "ref": 18,
+   "role": "button",
+   "label": "9 14:00 Team standup",
+   "value": "",
+   "near": "9 14:00 Team standup"
+  },
+  {
+   "ref": 19,
+   "role": "button",
+   "label": "10",
+   "value": "",
+   "near": "10"
+  },
+  {
+   "ref": 20,
+   "role": "button",
+   "label": "11",
+   "value": "",
+   "near": "11"
+  },
+  {
+   "ref": 21,
+   "role": "button",
+   "label": "12",
+   "value": "",
+   "near": "12"
+  },
+  {
+   "ref": 22,
+   "role": "button",
+   "label": "13",
+   "value": "",
+   "near": "13"
+  },
+  {
+   "ref": 23,
+   "role": "button",
+   "label": "14",
+   "value": "",
+   "near": "14"
+  },
+  {
+   "ref": 24,
+   "role": "button",
+   "label": "15",
+   "value": "",
+   "near": "15"
+  },
+  {
+   "ref": 25,
+   "role": "button",
+   "label": "16",
+   "value": "",
+   "near": "16"
+  },
+  {
+   "ref": 26,
+   "role": "button",
+   "label": "17",
+   "value": "",
+   "near": "17"
+  },
+  {
+   "ref": 27,
+   "role": "button",
+   "label": "18",
+   "value": "",
+   "near": "18"
+  },
+  {
+   "ref": 28,
+   "role": "button",
+   "label": "19",
+   "value": "",
+   "near": "19"
+  },
+  {
+   "ref": 29,
+   "role": "button",
+   "label": "20",
+   "value": "",
+   "near": "20"
+  },
+  {
+   "ref": 30,
+   "role": "button",
+   "label": "21",
+   "value": "",
+   "near": "21"
+  },
+  {
+   "ref": 31,
+   "role": "button",
+   "label": "22",
+   "value": "",
+   "near": "22"
+  },
+  {
+   "ref": 32,
+   "role": "button",
+   "label": "23",
+   "value": "",
+   "near": "23"
+  },
+  {
+   "ref": 33,
+   "role": "button",
+   "label": "24",
+   "value": "",
+   "near": "24"
+  },
+  {
+   "ref": 34,
+   "role": "button",
+   "label": "25",
+   "value": "",
+   "near": "25"
+  },
+  {
+   "ref": 35,
+   "role": "button",
+   "label": "26",
+   "value": "",
+   "near": "26"
+  },
+  {
+   "ref": 36,
+   "role": "button",
+   "label": "27",
+   "value": "",
+   "near": "27"
+  },
+  {
+   "ref": 37,
+   "role": "button",
+   "label": "28",
+   "value": "",
+   "near": "28"
+  },
+  {
+   "ref": 38,
+   "role": "button",
+   "label": "29",
+   "value": "",
+   "near": "29"
+  },
+  {
+   "ref": 39,
+   "role": "button",
+   "label": "30",
+   "value": "",
+   "near": "30"
+  },
+  {
+   "ref": 40,
+   "role": "button",
+   "label": "31",
+   "value": "",
+   "near": "31"
+  },
+  {
+   "ref": 41,
+   "role": "button",
+   "label": "1",
+   "value": "",
+   "near": "1"
+  },
+  {
+   "ref": 42,
+   "role": "button",
+   "label": "2",
+   "value": "",
+   "near": "2"
+  },
+  {
+   "ref": 43,
+   "role": "button",
+   "label": "3",
+   "value": "",
+   "near": "3"
+  },
+  {
+   "ref": 44,
+   "role": "button",
+   "label": "4",
+   "value": "",
+   "near": "4"
+  },
+  {
+   "ref": 45,
+   "role": "button",
+   "label": "5",
+   "value": "",
+   "near": "5"
+  },
+  {
+   "ref": 46,
+   "role": "button",
+   "label": "6",
+   "value": "",
+   "near": "6"
+  },
+  {
+   "ref": 47,
+   "role": "button",
+   "label": "7",
+   "value": "",
+   "near": "7"
+  }
+ ]
+}

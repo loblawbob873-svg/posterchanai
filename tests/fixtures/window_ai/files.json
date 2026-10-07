@@ -1,0 +1,158 @@
+{
+ "action": "window_steps",
+ "windows": [
+  {
+   "title": "File Manager",
+   "view": "blossom",
+   "kind": "PosterChan app",
+   "selection": "",
+   "text": "▾ Files All Music ▾ Synced Folders Load synced folders Uses your signer only when you ask. AI Chat files ‹ ↑ Files New folder New document Sort by Newest first Oldest first Name A–Z Name Z–A Largest first Smallest first Type A–Z Type Z–A ▼ ⬆ Drop files/folders here, or choose files choose folder → All files · uploaded one at a time — stored · counting… Refresh Check my drive Music empty Everything 🗂 All files browse the whole drive"
+  }
+ ],
+ "instruction": "x",
+ "history": [],
+ "commands": false,
+ "today": "2026-10-07",
+ "controls": [
+  {
+   "ref": 1,
+   "role": "button",
+   "label": "▾ Files",
+   "value": "",
+   "near": ""
+  },
+  {
+   "ref": 2,
+   "role": "button",
+   "label": "All",
+   "value": "",
+   "near": ""
+  },
+  {
+   "ref": 3,
+   "role": "button",
+   "label": "Music",
+   "value": "",
+   "near": ""
+  },
+  {
+   "ref": 4,
+   "role": "button",
+   "label": "▾ Synced Folders",
+   "value": "",
+   "near": ""
+  },
+  {
+   "ref": 5,
+   "role": "button",
+   "label": "Load synced folders",
+   "value": "",
+   "near": ""
+  },
+  {
+   "ref": 6,
+   "role": "button",
+   "label": "AI Chat files",
+   "value": "",
+   "near": ""
+  },
+  {
+   "ref": 7,
+   "role": "button",
+   "label": "Locations",
+   "value": "",
+   "near": ""
+  },
+  {
+   "ref": 8,
+   "role": "textbox",
+   "label": "Search files",
+   "value": "",
+   "near": ""
+  },
+  {
+   "ref": 9,
+   "role": "button",
+   "label": "New folder",
+   "value": "",
+   "near": ""
+  },
+  {
+   "ref": 10,
+   "role": "button",
+   "label": "New document",
+   "value": "",
+   "near": ""
+  },
+  {
+   "ref": 11,
+   "role": "list",
+   "label": "Sort by",
+   "value": "Newest first",
+   "near": ""
+  },
+  {
+   "ref": 12,
+   "role": "button",
+   "label": "Reverse sort",
+   "value": "",
+   "near": ""
+  },
+  {
+   "ref": 13,
+   "role": "button",
+   "label": "Tiles",
+   "value": "",
+   "near": ""
+  },
+  {
+   "ref": 14,
+   "role": "button",
+   "label": "Details",
+   "value": "",
+   "near": ""
+  },
+  {
+   "ref": 15,
+   "role": "button",
+   "label": "choose files",
+   "value": "",
+   "near": ""
+  },
+  {
+   "ref": 16,
+   "role": "button",
+   "label": "choose folder",
+   "value": "",
+   "near": ""
+  },
+  {
+   "ref": 17,
+   "role": "button",
+   "label": "Refresh",
+   "value": "",
+   "near": ""
+  },
+  {
+   "ref": 18,
+   "role": "button",
+   "label": "Check my drive",
+   "value": "",
+   "near": ""
+  },
+  {
+   "ref": 19,
+   "role": "button",
+   "label": "Music empty",
+   "value": "",
+   "near": ""
+  },
+  {
+   "ref": 20,
+   "role": "button",
+   "label": "🗂 All files browse the whole drive",
+   "value": "",
+   "near": ""
+  }
+ ]
+}

@@ -1,0 +1,137 @@
+{
+ "action": "window_steps",
+ "windows": [
+  {
+   "title": "Contacts",
+   "view": "contacts",
+   "kind": "PosterChan app",
+   "selection": "",
+   "text": "Open dialog: New contact FIRST LAST Phone ✕ ＋ Add phone Email ✕ ＋ Add email COMPANY ADDRESS CITY POSTCODE BIRTHDAY (YYYY-MM-DD) NOTES Save — Behind it: Contact 2 contacts J AJ Alice Jones 555-0101 W CW Carol White 555-0199 A B C D E F G H I J K L M N O P Q R S T U V W X Y Z #"
+  }
+ ],
+ "instruction": "x",
+ "history": [],
+ "commands": false,
+ "today": "2026-10-07",
+ "controls": [
+  {
+   "ref": 1,
+   "role": "textbox",
+   "label": "First",
+   "value": "",
+   "near": "New contact"
+  },
+  {
+   "ref": 2,
+   "role": "textbox",
+   "label": "Last",
+   "value": "",
+   "near": "New contact"
+  },
+  {
+   "ref": 3,
+   "role": "textbox",
+   "label": "Phone number",
+   "value": "",
+   "near": "New contact"
+  },
+  {
+   "ref": 4,
+   "role": "textbox",
+   "label": "label",
+   "value": "",
+   "near": "New contact"
+  },
+  {
+   "ref": 5,
+   "role": "button",
+   "label": "Remove",
+   "value": "",
+   "near": "New contact"
+  },
+  {
+   "ref": 6,
+   "role": "button",
+   "label": "＋ Add phone",
+   "value": "",
+   "near": "New contact"
+  },
+  {
+   "ref": 7,
+   "role": "textbox",
+   "label": "Email address",
+   "value": "",
+   "near": "New contact"
+  },
+  {
+   "ref": 8,
+   "role": "textbox",
+   "label": "label",
+   "value": "",
+   "near": "New contact"
+  },
+  {
+   "ref": 9,
+   "role": "button",
+   "label": "Remove",
+   "value": "",
+   "near": "New contact"
+  },
+  {
+   "ref": 10,
+   "role": "button",
+   "label": "＋ Add email",
+   "value": "",
+   "near": "New contact"
+  },
+  {
+   "ref": 11,
+   "role": "textbox",
+   "label": "Company",
+   "value": "",
+   "near": "New contact"
+  },
+  {
+   "ref": 12,
+   "role": "textbox",
+   "label": "Address",
+   "value": "",
+   "near": "New contact"
+  },
+  {
+   "ref": 13,
+   "role": "textbox",
+   "label": "City",
+   "value": "",
+   "near": "New contact"
+  },
+  {
+   "ref": 14,
+   "role": "textbox",
+   "label": "Postcode",
+   "value": "",
+   "near": "New contact"
+  },
+  {
+   "ref": 15,
+   "role": "textbox",
+   "label": "Birthday (YYYY-MM-DD)",
+   "value": "",
+   "near": "New contact"
+  },
+  {
+   "ref": 16,
+   "role": "textbox",
+   "label": "Notes",
+   "value": "",
+   "near": "New contact"
+  },
+  {
+   "ref": 17,
+   "role": "button",
+   "label": "Save",
+   "value": "",
+   "near": "New contact"
+  }
+ ]
+}

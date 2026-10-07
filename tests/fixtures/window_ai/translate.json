@@ -1,0 +1,53 @@
+{
+ "action": "window_steps",
+ "windows": [
+  {
+   "title": "Live Translate",
+   "view": "translate",
+   "kind": "PosterChan app",
+   "selection": "",
+   "text": "🇬🇧 English 🇹🇭 Thai 🇲🇲 Burmese 🇪🇸 Spanish 🇫🇷 French 🇩🇪 German 🇮🇹 Italian 🇵🇹 Portuguese 🇷🇺 Russian 🇨🇳 Chinese 🇯🇵 Japanese 🇰🇷 Korean 🇸🇦 Arabic 🇮🇳 Hindi 🇻🇳 Vietnamese 🇮🇩 Indonesian 🇵🇭 Filipino 🇺🇦 Ukrainian 🇹🇷 Turkish 🇵🇱 Polish 🇳🇱 Dutch 🇬🇧 English 🇹🇭 Thai 🇲🇲 Burmese 🇪🇸 Spanish 🇫🇷 French 🇩🇪 German 🇮🇹 Italian 🇵🇹 Portuguese 🇷🇺 Russian 🇨🇳 Chinese 🇯🇵 Japanese 🇰🇷 Korean 🇸🇦 Arabic 🇮🇳 Hindi 🇻🇳 Vietnamese 🇮🇩 Indonesian 🇵🇭 Filipino 🇺🇦 Ukrainian 🇹🇷 Turkish 🇵🇱 Polish 🇳🇱 Dutch Pick the two languages, then tap the mic and speak. Either person can talk — it auto-detects and translates to the other side. 🔊"
+  }
+ ],
+ "instruction": "x",
+ "history": [],
+ "commands": false,
+ "today": "2026-10-07",
+ "controls": [
+  {
+   "ref": 1,
+   "role": "list",
+   "label": "First language",
+   "value": "🇬🇧 English",
+   "near": ""
+  },
+  {
+   "ref": 2,
+   "role": "button",
+   "label": "swap languages",
+   "value": "",
+   "near": ""
+  },
+  {
+   "ref": 3,
+   "role": "list",
+   "label": "Second language",
+   "value": "🇹🇭 Thai",
+   "near": ""
+  },
+  {
+   "ref": 4,
+   "role": "button",
+   "label": "speak the translation aloud",
+   "value": "",
+   "near": ""
+  },
+  {
+   "ref": 5,
+   "role": "button",
+   "label": "tap to speak",
+   "value": "",
+   "near": ""
+  }
+ ]
+}

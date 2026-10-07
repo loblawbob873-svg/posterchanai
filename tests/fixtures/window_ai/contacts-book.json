@@ -1,0 +1,242 @@
+{
+ "action": "window_steps",
+ "windows": [
+  {
+   "title": "Contacts",
+   "view": "contacts",
+   "kind": "PosterChan app",
+   "selection": "",
+   "text": "Contact 2 contacts J AJ Alice Jones 555-0101 W CW Carol White 555-0199 A B C D E F G H I J K L M N O P Q R S T U V W X Y Z #"
+  }
+ ],
+ "instruction": "x",
+ "history": [],
+ "commands": false,
+ "today": "2026-10-07",
+ "controls": [
+  {
+   "ref": 1,
+   "role": "textbox",
+   "label": "Search contacts",
+   "value": "",
+   "near": ""
+  },
+  {
+   "ref": 2,
+   "role": "button",
+   "label": "New contact",
+   "value": "",
+   "near": ""
+  },
+  {
+   "ref": 3,
+   "role": "button",
+   "label": "Contact options",
+   "value": "",
+   "near": ""
+  },
+  {
+   "ref": 4,
+   "role": "button",
+   "label": "AJ Alice Jones 555-0101",
+   "value": "",
+   "near": "AJ Alice Jones 555-0101"
+  },
+  {
+   "ref": 5,
+   "role": "button",
+   "label": "CW Carol White 555-0199",
+   "value": "",
+   "near": "CW Carol White 555-0199"
+  },
+  {
+   "ref": 6,
+   "role": "item",
+   "label": "A",
+   "value": "",
+   "near": ""
+  },
+  {
+   "ref": 7,
+   "role": "item",
+   "label": "B",
+   "value": "",
+   "near": ""
+  },
+  {
+   "ref": 8,
+   "role": "item",
+   "label": "C",
+   "value": "",
+   "near": ""
+  },
+  {
+   "ref": 9,
+   "role": "item",
+   "label": "D",
+   "value": "",
+   "near": ""
+  },
+  {
+   "ref": 10,
+   "role": "item",
+   "label": "E",
+   "value": "",
+   "near": ""
+  },
+  {
+   "ref": 11,
+   "role": "item",
+   "label": "F",
+   "value": "",
+   "near": ""
+  },
+  {
+   "ref": 12,
+   "role": "item",
+   "label": "G",
+   "value": "",
+   "near": ""
+  },
+  {
+   "ref": 13,
+   "role": "item",
+   "label": "H",
+   "value": "",
+   "near": ""
+  },
+  {
+   "ref": 14,
+   "role": "item",
+   "label": "I",
+   "value": "",
+   "near": ""
+  },
+  {
+   "ref": 15,
+   "role": "button",
+   "label": "J",
+   "value": "",
+   "near": ""
+  },
+  {
+   "ref": 16,
+   "role": "item",
+   "label": "K",
+   "value": "",
+   "near": ""
+  },
+  {
+   "ref": 17,
+   "role": "item",
+   "label": "L",
+   "value": "",
+   "near": ""
+  },
+  {
+   "ref": 18,
+   "role": "item",
+   "label": "M",
+   "value": "",
+   "near": ""
+  },
+  {
+   "ref": 19,
+   "role": "item",
+   "label": "N",
+   "value": "",
+   "near": ""
+  },
+  {
+   "ref": 20,
+   "role": "item",
+   "label": "O",
+   "value": "",
+   "near": ""
+  },
+  {
+   "ref": 21,
+   "role": "item",
+   "label": "P",
+   "value": "",
+   "near": ""
+  },
+  {
+   "ref": 22,
+   "role": "item",
+   "label": "Q",
+   "value": "",
+   "near": ""
+  },
+  {
+   "ref": 23,
+   "role": "item",
+   "label": "R",
+   "value": "",
+   "near": ""
+  },
+  {
+   "ref": 24,
+   "role": "item",
+   "label": "S",
+   "value": "",
+   "near": ""
+  },
+  {
+   "ref": 25,
+   "role": "item",
+   "label": "T",
+   "value": "",
+   "near": ""
+  },
+  {
+   "ref": 26,
+   "role": "item",
+   "label": "U",
+   "value": "",
+   "near": ""
+  },
+  {
+   "ref": 27,
+   "role": "item",
+   "label": "V",
+   "value": "",
+   "near": ""
+  },
+  {
+   "ref": 28,
+   "role": "button",
+   "label": "W",
+   "value": "",
+   "near": ""
+  },
+  {
+   "ref": 29,
+   "role": "item",
+   "label": "X",
+   "value": "",
+   "near": ""
+  },
+  {
+   "ref": 30,
+   "role": "item",
+   "label": "Y",
+   "value": "",
+   "near": ""
+  },
+  {
+   "ref": 31,
+   "role": "item",
+   "label": "Z",
+   "value": "",
+   "near": ""
+  },
+  {
+   "ref": 32,
+   "role": "item",
+   "label": "#",
+   "value": "",
+   "near": ""
+  }
+ ]
+}

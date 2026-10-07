@@ -1,0 +1,228 @@
+{
+ "action": "window_steps",
+ "windows": [
+  {
+   "title": "Web Search",
+   "view": "websearch",
+   "kind": "PosterChan app",
+   "selection": "",
+   "text": "Search Web News Images Videos Science Tech Files Any time Past day Past week Past month Past year ✨ Summarize these results Answers your search from the top pages, with sources. wiki.gentoo.org Wayfire configuration - Gentoo Wiki How to install and configure the Wayfire compositor on Gentoo. 📄 Read here ↗ Share 📓 Notes ✨ Summarize wayfire.org wayfire.ini reference | Wayfire docs Every option in wayfire.ini, with defaults. 📄 Read here ↗ Share 📓 Notes ✨ Summarize example.org My Wayfire setup on Gentoo (blog) A walk through my config files. 📄 Read here ↗ Share 📓 Notes ✨ Summarize More results"
+  }
+ ],
+ "instruction": "x",
+ "history": [],
+ "commands": false,
+ "today": "2026-10-07",
+ "controls": [
+  {
+   "ref": 1,
+   "role": "textbox",
+   "label": "Search the web",
+   "value": "gentoo wayfire config",
+   "near": ""
+  },
+  {
+   "ref": 2,
+   "role": "button",
+   "label": "Search",
+   "value": "",
+   "near": ""
+  },
+  {
+   "ref": 3,
+   "role": "button",
+   "label": "Web",
+   "value": "",
+   "near": ""
+  },
+  {
+   "ref": 4,
+   "role": "button",
+   "label": "News",
+   "value": "",
+   "near": ""
+  },
+  {
+   "ref": 5,
+   "role": "button",
+   "label": "Images",
+   "value": "",
+   "near": ""
+  },
+  {
+   "ref": 6,
+   "role": "button",
+   "label": "Videos",
+   "value": "",
+   "near": ""
+  },
+  {
+   "ref": 7,
+   "role": "button",
+   "label": "Science",
+   "value": "",
+   "near": ""
+  },
+  {
+   "ref": 8,
+   "role": "button",
+   "label": "Tech",
+   "value": "",
+   "near": ""
+  },
+  {
+   "ref": 9,
+   "role": "button",
+   "label": "Files",
+   "value": "",
+   "near": ""
+  },
+  {
+   "ref": 10,
+   "role": "list",
+   "label": "Time range",
+   "value": "Any time",
+   "near": ""
+  },
+  {
+   "ref": 11,
+   "role": "button",
+   "label": "✨ Summarize these results",
+   "value": "",
+   "near": ""
+  },
+  {
+   "ref": 12,
+   "role": "item",
+   "label": "wiki.gentoo.org Wayfire configuration - Gentoo Wiki How to install and configure",
+   "value": "",
+   "near": "wiki.gentoo.org Wayfire configuration - Gentoo Wiki How to install and configure the Wayfi"
+  },
+  {
+   "ref": 13,
+   "role": "link",
+   "label": "Wayfire configuration - Gentoo Wiki",
+   "value": "",
+   "near": "wiki.gentoo.org Wayfire configuration - Gentoo Wiki How to install and configure the Wayfi"
+  },
+  {
+   "ref": 14,
+   "role": "button",
+   "label": "📄 Read here",
+   "value": "",
+   "near": "wiki.gentoo.org Wayfire configuration - Gentoo Wiki How to install and configure the Wayfi"
+  },
+  {
+   "ref": 15,
+   "role": "button",
+   "label": "↗ Share",
+   "value": "",
+   "near": "wiki.gentoo.org Wayfire configuration - Gentoo Wiki How to install and configure the Wayfi"
+  },
+  {
+   "ref": 16,
+   "role": "button",
+   "label": "📓 Notes",
+   "value": "",
+   "near": "wiki.gentoo.org Wayfire configuration - Gentoo Wiki How to install and configure the Wayfi"
+  },
+  {
+   "ref": 17,
+   "role": "button",
+   "label": "✨ Summarize",
+   "value": "",
+   "near": "wiki.gentoo.org Wayfire configuration - Gentoo Wiki How to install and configure the Wayfi"
+  },
+  {
+   "ref": 18,
+   "role": "item",
+   "label": "wayfire.org wayfire.ini reference | Wayfire docs Every option in wayfire.ini, wi",
+   "value": "",
+   "near": "wayfire.org wayfire.ini reference | Wayfire docs Every option in wayfire.ini, with default"
+  },
+  {
+   "ref": 19,
+   "role": "link",
+   "label": "wayfire.ini reference | Wayfire docs",
+   "value": "",
+   "near": "wayfire.org wayfire.ini reference | Wayfire docs Every option in wayfire.ini, with default"
+  },
+  {
+   "ref": 20,
+   "role": "button",
+   "label": "📄 Read here",
+   "value": "",
+   "near": "wayfire.org wayfire.ini reference | Wayfire docs Every option in wayfire.ini, with default"
+  },
+  {
+   "ref": 21,
+   "role": "button",
+   "label": "↗ Share",
+   "value": "",
+   "near": "wayfire.org wayfire.ini reference | Wayfire docs Every option in wayfire.ini, with default"
+  },
+  {
+   "ref": 22,
+   "role": "button",
+   "label": "📓 Notes",
+   "value": "",
+   "near": "wayfire.org wayfire.ini reference | Wayfire docs Every option in wayfire.ini, with default"
+  },
+  {
+   "ref": 23,
+   "role": "button",
+   "label": "✨ Summarize",
+   "value": "",
+   "near": "wayfire.org wayfire.ini reference | Wayfire docs Every option in wayfire.ini, with default"
+  },
+  {
+   "ref": 24,
+   "role": "item",
+   "label": "example.org My Wayfire setup on Gentoo (blog) A walk through my config files. 📄",
+   "value": "",
+   "near": "example.org My Wayfire setup on Gentoo (blog) A walk through my config files. 📄 Read here"
+  },
+  {
+   "ref": 25,
+   "role": "link",
+   "label": "My Wayfire setup on Gentoo (blog)",
+   "value": "",
+   "near": "example.org My Wayfire setup on Gentoo (blog) A walk through my config files. 📄 Read here"
+  },
+  {
+   "ref": 26,
+   "role": "button",
+   "label": "📄 Read here",
+   "value": "",
+   "near": "example.org My Wayfire setup on Gentoo (blog) A walk through my config files. 📄 Read here"
+  },
+  {
+   "ref": 27,
+   "role": "button",
+   "label": "↗ Share",
+   "value": "",
+   "near": "example.org My Wayfire setup on Gentoo (blog) A walk through my config files. 📄 Read here"
+  },
+  {
+   "ref": 28,
+   "role": "button",
+   "label": "📓 Notes",
+   "value": "",
+   "near": "example.org My Wayfire setup on Gentoo (blog) A walk through my config files. 📄 Read here"
+  },
+  {
+   "ref": 29,
+   "role": "button",
+   "label": "✨ Summarize",
+   "value": "",
+   "near": "example.org My Wayfire setup on Gentoo (blog) A walk through my config files. 📄 Read here"
+  },
+  {
+   "ref": 30,
+   "role": "button",
+   "label": "More results",
+   "value": "",
+   "near": ""
+  }
+ ]
+}

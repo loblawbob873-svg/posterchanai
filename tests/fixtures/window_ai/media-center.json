@@ -1,0 +1,74 @@
+{
+ "action": "window_steps",
+ "windows": [
+  {
+   "title": "Media Center",
+   "view": "media-center",
+   "kind": "PosterChan app",
+   "selection": "",
+   "text": "Media Center Your movies, shows and music. Pick a library and press play. Private · Server library Manage My libraries 1 Shared with me 0 Movies · 2 Search this library Movies Movies Big Buck Bunny Video · 10 min Movies Play Sintel Video · 15 min Movies Play"
+  }
+ ],
+ "instruction": "x",
+ "history": [],
+ "commands": false,
+ "today": "2026-10-07",
+ "controls": [
+  {
+   "ref": 1,
+   "role": "textbox",
+   "label": "Code shown in your app",
+   "value": "",
+   "near": ""
+  },
+  {
+   "ref": 2,
+   "role": "tab",
+   "label": "My libraries 1",
+   "value": "",
+   "near": ""
+  },
+  {
+   "ref": 3,
+   "role": "tab",
+   "label": "Shared with me 0",
+   "value": "",
+   "near": ""
+  },
+  {
+   "ref": 4,
+   "role": "button",
+   "label": "Movies · 2",
+   "value": "",
+   "near": ""
+  },
+  {
+   "ref": 5,
+   "role": "textbox",
+   "label": "Search this library",
+   "value": "",
+   "near": ""
+  },
+  {
+   "ref": 6,
+   "role": "button",
+   "label": "Movies",
+   "value": "",
+   "near": ""
+  },
+  {
+   "ref": 7,
+   "role": "button",
+   "label": "Play",
+   "value": "",
+   "near": "Big Buck Bunny Video · 10 min Movies Play"
+  },
+  {
+   "ref": 8,
+   "role": "button",
+   "label": "Play",
+   "value": "",
+   "near": "Sintel Video · 15 min Movies Play"
+  }
+ ]
+}

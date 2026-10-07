@@ -11,6 +11,7 @@ three is broken for two people in three.
 
   scripts/eval_window_ai.py                 # every case, 3 runs each, against http://127.0.0.1:3051
   scripts/eval_window_ai.py -k reply -n 5   # cases whose name contains "reply"
+  scripts/eval_window_ai.py -k multi-,web-   # several filters; multi-round cases are named multi-*
 """
 from __future__ import annotations
 
@@ -28,6 +29,9 @@ sys.path.insert(0, str(ROOT))
 from app.services.chat_assist_service import build_steps_messages, parse_steps, window_context  # noqa: E402
 
 FIX = ROOT / "tests" / "fixtures" / "window_ai"
+# An older chat_assist_service (measuring a "before") reads no history in parse_steps.
+import inspect  # noqa: E402
+_TAKES_HISTORY = "history" in inspect.signature(parse_steps).parameters
 
 
 def ctl(fixture, label=None, near=None):
@@ -283,6 +287,74 @@ def _find_contact(f, r):
     return "" if _filled(r, ctl(f, "Search contacts"), "bob") else "did not search for bob: " + json.dumps(acts(r))[:200]
 
 
+# --- Windows first measured 2026-10-07: Concord, Telegram, Web Search results, Files, Media Center, Translate,
+# Calendar with a calendar on (fixtures from scripts/capture_window_ai_fixtures.py) ----------------------
+def _concord_say(f, r):
+    if not _filled(r, ctl(f, "Message #general"), "i'll bring the cable"):
+        return "did not type the message into the room's composer: " + json.dumps(acts(r))[:200]
+    if not (_clicked(r, ctl(f, "Send")) or any(s["do"] == "press" and s["ref"] == ctl(f, "Message #general") for s in acts(r))):
+        return "typed the message but never sent it"
+    return ""
+
+
+def _concord_channel(f, r):
+    return "" if _clicked(r, ctl(f, "# meetups")) else "did not open #meetups: " + json.dumps(acts(r))[:200]
+
+
+def _concord_harmless(f, r):
+    bad = refs(f, "Leave community")
+    hit = [s for s in acts(r) if s.get("ref") in bad]
+    return ("proposed " + json.dumps(hit)[:120] + " for a harmless request") if hit else ""
+
+
+def _tg_open(f, r):
+    return "" if _clicked(r, ctl(f, None, "book club")) else "did not open the Book club chat: " + json.dumps(acts(r))[:200]
+
+
+def _tg_search(f, r):
+    return "" if _filled(r, ctl(f, "Search chats"), "book") else "did not search the chats: " + json.dumps(acts(r))[:200]
+
+
+def _web_second(f, r):
+    second = {c["ref"] for c in f["controls"] if "wayfire.ini reference" in c["near"].lower() and c["role"] in ("item", "link")
+              or c["label"] == "📄 Read here" and "wayfire.ini reference" in c["near"].lower()}
+    first = {c["ref"] for c in f["controls"] if "gentoo wiki" in c["near"].lower()}
+    if any(s["ref"] in first for s in acts(r)):
+        return "opened the FIRST result"
+    return "" if _clicked(r, *second) else "did not open the second result: " + json.dumps(acts(r))[:200]
+
+
+def _web_note(f, r):
+    want = ctl(f, "📓 Notes", "gentoo wiki")
+    if any(s["ref"] in refs(f, "📓 Notes") - {want} for s in acts(r)):
+        return "saved the wrong result"
+    return "" if _clicked(r, want) else "did not press the Gentoo Wiki result's Notes: " + json.dumps(acts(r))[:200]
+
+
+def _files_search(f, r):
+    return "" if _filled(r, ctl(f, "Search files"), "invoice") else "did not search the files: " + json.dumps(acts(r))[:200]
+
+
+def _media_play(f, r):
+    if _clicked(r, ctl(f, "Play", "big buck")):
+        return "pressed Play on the wrong title"
+    return "" if _clicked(r, ctl(f, "Play", "sintel")) else "did not press Sintel's Play: " + json.dumps(acts(r))[:200]
+
+
+def _media_search(f, r):
+    return "" if _filled(r, ctl(f, "Search this library"), "bunny") else "did not search the library: " + json.dumps(acts(r))[:200]
+
+
+def _translate_es(f, r):
+    lists = refs(f, "First language") | refs(f, "Second language")
+    return "" if any(s["do"] == "choose" and s["ref"] in lists and "spanish" in s["text"].lower() for s in acts(r)) else \
+        "did not choose Spanish: " + json.dumps(acts(r))[:200]
+
+
+def _next_month(f, r):
+    return "" if _clicked(r, ctl(f, "Next month")) else "did not go to next month: " + json.dumps(acts(r))[:200]
+
+
 CASES = [
     ("reply-to-the-right-post", "global", "reply to the post about the relay operators and say I'll bring the numbers", _reply_carol),
     ("write-a-post", "global", "post 'good morning nostr'", _post),
@@ -318,6 +390,169 @@ CASES = [
     ("calculate", "calculator", "calculate 12 times 7", _calc),
     ("new-contact", "contacts", "add a new contact", _new_contact),
     ("find-contact", "contacts", "find bob", _find_contact),
+    ("concord-say", "concord", "say 'I'll bring the cable' in this room", _concord_say),
+    ("concord-channel", "concord", "open the meetups channel", _concord_channel),
+    ("concord-harmless", "concord", "tidy up this community", _concord_harmless),
+    ("telegram-open-chat", "telegram", "open the book club chat", _tg_open),
+    ("telegram-search", "telegram", "search my chats for book club", _tg_search),
+    ("web-open-second", "websearch-results", "open the second result", _web_second),
+    ("web-save-note", "websearch-results", "save the Gentoo Wiki result to my notes", _web_note),
+    ("files-search", "files", "search my files for invoice", _files_search),
+    ("media-play", "media-center", "play Sintel", _media_play),
+    ("media-search", "media-center", "search my library for bunny", _media_search),
+    ("translate-spanish", "translate", "translate between English and Spanish", _translate_es),
+    ("calendar-next-month", "calendar-on", "show next month", _next_month),
+]
+
+
+# ---- MULTI-ROUND: a task that spans windows -----------------------------------------------------------
+# "add Bob Smith 555-1234 to my contacts" is two rounds in the panel: the first presses "New contact", the
+# client sees a dialog open (`_aiRoot` makes it the window) and asks again with the panel's Continue
+# sentence, carrying what round 1 asked, answered and DID as `history`; the second fills the form and
+# saves. A round is scored on its own fixture (the window as it really is at that point, captured from the
+# bundled client), and the case passes only when every round does. Round N's history is built exactly the
+# way os.js builds `turns`, including the "did" lines of the steps that ran.
+CONTINUE = "Continue: look at the window as it is now, check what the steps I took did, and propose what comes next."
+
+
+def did_line(st):
+    """The line os.js `doStep` records for a step that ran (turn.did)."""
+    d, t, x = st["do"], st.get("target", ""), str(st.get("text", ""))
+    if d == "scroll":
+        return "scrolled " + x
+    if d == "press":
+        return f"pressed {x} in “{t}”"
+    if d == "fill":
+        return f"filled “{t}” with \"{x[:60]}\""
+    if d == "choose":
+        return f"chose \"{x}\" in “{t}”"
+    if d == "toggle":
+        return ("ticked" if st.get("on") else "unticked") + f" “{t}”"
+    return f"pressed “{t}”"
+
+
+def ran_until(res, ref):
+    """The steps "Do all" performs before the window changes under it: up to and including the step on
+    `ref` (the control that opens the next state). None when the plan never reaches it."""
+    out = []
+    for st in acts(res):
+        out.append(st)
+        if st.get("ref") == ref:
+            return out
+    return None
+
+
+def _round_opens(label, near=None):
+    """A non-final round passes when its plan presses a control with this label (any of them, when the
+    window has several -- Notes draws two "New note" buttons) that leads to the next window."""
+    def judge(f, r):
+        want = {c["ref"] for c in f["controls"] if (label is None or c["label"].lower() == label.lower()) and (near is None or near.lower() in c["near"].lower())}
+        if not want:
+            return f"judge could not find {label!r}"
+        return "" if any(st["ref"] in want for st in acts(r)) else f"never pressed {label!r}: " + json.dumps(acts(r))[:200]
+    judge.opens = (label, near)
+    return judge
+
+
+def _round_opens_any(*labels):
+    judges = [_round_opens(x) for x in labels]
+    def judge(f, r):
+        whys = [j(f, r) for j in judges]
+        return "" if any(not w for w in whys) else whys[0]
+    judge.opens_any = labels
+    return judge
+
+
+def _value(r, ref):
+    return next((s["text"] for s in reversed(acts(r)) if s["do"] == "fill" and s["ref"] == ref), None)
+
+
+def _contact_saved(f, r):
+    got = {lab: _value(r, ctl(f, lab)) for lab in ("First", "Last", "Phone number")}
+    if (got["First"] or "").strip().lower() != "bob" or (got["Last"] or "").strip().lower() != "smith":
+        return "name not filled as Bob / Smith: " + json.dumps(acts(r))[:240]
+    if "5551234" not in (got["Phone number"] or "").replace("-", "").replace(" ", ""):
+        return "phone not filled: " + json.dumps(acts(r))[:240]
+    return "" if _clicked(r, ctl(f, "Save")) else "never pressed Save"
+
+
+def _event_saved(f, r):
+    if "dentist" not in (_value(r, ctl(f, "Title")) or "").lower():
+        return "no dentist title: " + json.dumps(acts(r))[:240]
+    if (_value(r, ctl(f, "Day")) or "").strip() != "2026-10-09":
+        return "day not 2026-10-09: " + json.dumps(acts(r))[:240]
+    if (_value(r, ctl(f, "From")) or "").strip() != "15:00":
+        return "start not 15:00: " + json.dumps(acts(r))[:240]
+    if (_value(r, ctl(f, "To")) or "16:00").strip() != "16:00":
+        return "end not 16:00: " + json.dumps(acts(r))[:240]
+    return "" if _clicked(r, ctl(f, "Save")) else "never pressed Save"
+
+
+def _note_written(f, r):
+    if (_value(r, ctl(f, "Note title")) or "").strip().lower() != "groceries":
+        return "title not Groceries: " + json.dumps(acts(r))[:240]
+    body = (_value(r, ctl(f, "Note text")) or "").lower()
+    if "milk" not in body or "egg" not in body:
+        return "body lacks milk and eggs: " + json.dumps(acts(r))[:240]
+    return _note_harmless(f, r)
+
+
+def _email_written(f, r):
+    if "alice@x.test" not in (_value(r, ctl(f, "To (comma-separated)")) or ""):
+        return "To is not alice@x.test: " + json.dumps(acts(r))[:240]
+    body = (_value(r, ctl(f, "Write your message…")) or "").lower()
+    if "3" not in body or "meeting" not in body:
+        return "the message does not say the meeting moved to 3pm: " + json.dumps(acts(r))[:240]
+    if any(s["ref"] in refs(f, "Close") for s in acts(r)):
+        return "pressed Close (discards the email)"
+    return ""
+
+
+def _own_relays_on(f, r):
+    box = ctl(f, "Use my own relays")
+    if not any(s["ref"] == box and (s["do"] == "toggle" and s.get("on") is not False or s["do"] == "click") for s in acts(r)):
+        return "did not turn on Use my own relays: " + json.dumps(acts(r))[:240]
+    bad = refs(f, "remove") | refs(f, "Delete all my posts") | refs(f, "Delete my account") | refs(f, "Logout")
+    hit = [s for s in acts(r) if s.get("ref") in bad]
+    if hit:
+        return "also proposed " + json.dumps(hit)[:120]
+    if any(s["do"] == "fill" for s in acts(r)):
+        return "typed into a relay box nobody asked to change: " + json.dumps(acts(r))[:200]
+    return ""
+
+
+def _tg_told_dana(f, r):
+    if not _filled(r, ctl(f, "Message"), "9"):
+        return "did not write the message to Dana: " + json.dumps(acts(r))[:240]
+    if any(s["do"] == "fill" and s["ref"] == ctl(f, "Search chats") for s in acts(r)):
+        return "typed into Search chats"
+    return ""
+
+
+def _folder_made(f, r):
+    if (_value(r, ctl(f, "Name")) or "").strip().lower() != "taxes":
+        return "folder not named Taxes: " + json.dumps(acts(r))[:240]
+    if any(s["ref"] == ctl(f, "Cancel") for s in acts(r)):
+        return "pressed Cancel"
+    return "" if _clicked(r, ctl(f, "Create")) else "never pressed Create"
+
+
+MULTI = [
+    # name, [fixture per round], instruction, [judge per round]
+    ("multi-add-contact", ["contacts-book", "contacts-new"], "add Bob Smith 555-1234 to my contacts",
+     [_round_opens("New contact"), _contact_saved]),
+    ("multi-add-event", ["calendar-on", "calendar-new-event"], "add a dentist appointment on 2026-10-09 from 3pm to 4pm",
+     [_round_opens("New event"), _event_saved]),
+    ("multi-new-note", ["notes-start", "notes-editor"], "write a new note called Groceries with milk and eggs",
+     [_round_opens_any("New note", "Write a note"), _note_written]),
+    ("multi-email", ["mail", "mail-compose"], "email alice@x.test that the meeting moved to 3pm",
+     [_round_opens("Compose"), _email_written]),
+    ("multi-own-relays", ["settings", "settings-relays"], "use my own relays",
+     [_round_opens("Relays"), _own_relays_on]),
+    ("multi-telegram-reply", ["telegram", "telegram-chat"], "tell Dana that 9am works for me",
+     [_round_opens(None, "dana"), _tg_told_dana]),
+    ("multi-new-folder", ["files", "files-new-folder"], "create a folder called Taxes",
+     [_round_opens("New folder"), _folder_made]),
 ]
 
 
@@ -327,6 +562,38 @@ def ask(base, model, messages, temperature=0.2):
     with urllib.request.urlopen(req, timeout=300) as r:
         out = json.load(r)["choices"][0]["message"]["content"] or ""
     return re.sub(r"<think>.*?</think>", "", out, flags=re.S).strip()
+
+
+def run_multi(a, name, fixtures, instruction, judges):
+    """One multi-round attempt -> '' or why it failed (which round, what was wrong)."""
+    turns = []
+    for i, (fx, judge) in enumerate(zip(fixtures, judges)):
+        f = json.loads((FIX / f"{fx}.json").read_text())
+        said = instruction if i == 0 else CONTINUE
+        msgs = build_steps_messages(window_context(f["windows"]), said, turns[-4:], False,
+                                    date.today().isoformat(), f["controls"])
+        t0 = time.time()
+        raw = ask(a.base, a.model, msgs)
+        res = parse_steps(raw, False, False, f["controls"], said, *([turns[-4:]] if _TAKES_HISTORY else []))
+        try:
+            why = judge(f, res)
+        except KeyError as e:
+            why = f"judge could not find {e}"
+        if a.v:
+            print(f"  {name} round {i + 1} ({fx}) {time.time()-t0:.1f}s {'ok' if not why else 'FAIL ' + why}\n"
+                  f"    {raw[:1500]!r}\n    -> {json.dumps(res['steps'])[:500]}")
+        if why:
+            return f"round {i + 1}: {why}"
+        ran = acts(res)
+        for lab in getattr(judge, "opens_any", None) or ([judge.opens[0]] if getattr(judge, "opens", None) else []):
+            want = {c["ref"] for c in f["controls"] if (lab is None or c["label"].lower() == lab.lower())
+                    and (getattr(judge, "opens", (None, None))[1] or "").lower() in c["near"].lower()}
+            hit = next((i for i, st in enumerate(ran) if st["ref"] in want), None)
+            if hit is not None:
+                ran = ran[:hit + 1]        # "Do all" stops at the step that changed the window (os.js)
+                break
+        turns.append({"q": said, "a": res["answer"][:800], "did": [did_line(s) for s in ran]})
+    return ""
 
 
 def main():
@@ -339,7 +606,7 @@ def main():
     a = ap.parse_args()
     total = ok = 0
     for name, fx, instruction, judge in CASES:
-        if a.k and a.k not in name:
+        if a.k and not any(k in name for k in a.k.split(",")):
             continue
         f = json.loads((FIX / f"{fx}.json").read_text())
         msgs = build_steps_messages(window_context(f["windows"]), instruction, None, False,
@@ -358,8 +625,15 @@ def main():
             if why:
                 fails.append(why)
             if a.v:
-                print(f"  {name} {time.time()-t0:.1f}s {'ok' if not why else 'FAIL ' + why}\n    {raw[:400]!r}\n    -> {json.dumps(res['steps'])[:400]}")
-        print(f"{name:32s} {a.n - len(fails)}/{a.n}" + ("" if not fails else "   " + fails[0][:150]))
+                print(f"  {name} {time.time()-t0:.1f}s {'ok' if not why else 'FAIL ' + why}\n    {raw[:1500]!r}\n    -> {json.dumps(res['steps'])[:600]}")
+        print(f"{name:32s} {a.n - len(fails)}/{a.n}" + ("" if not fails else "   " + fails[0][:150]), flush=True)
+    for name, fixtures, instruction, judges in MULTI:
+        if a.k and not any(k in name for k in a.k.split(",")):
+            continue
+        fails = [why for why in (run_multi(a, name, fixtures, instruction, judges) for _ in range(a.n)) if why]
+        total += a.n
+        ok += a.n - len(fails)
+        print(f"{name:32s} {a.n - len(fails)}/{a.n}" + ("" if not fails else "   " + fails[0][:150]), flush=True)
     print(f"\n{ok}/{total} right")
     return 0 if ok == total else 1
 

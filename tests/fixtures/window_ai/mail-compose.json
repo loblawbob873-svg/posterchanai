@@ -1,0 +1,95 @@
+{
+ "action": "window_steps",
+ "windows": [
+  {
+   "title": "Email",
+   "view": "mail",
+   "kind": "PosterChan app",
+   "selection": "",
+   "text": "Open dialog: New message × Send From: me@home.test Contacts Attach Files Save draft Encrypt — Behind it: me@home.test Compose Inbox Sent Drafts Select Dana <dana@x.test>2 Dec 31, 1969 Lunch on Friday? are you free Store <shop@x.test>2 Dec 31, 1969 Your receipt from the hardware store thanks for shopping Select a message to read"
+  }
+ ],
+ "instruction": "x",
+ "history": [],
+ "commands": false,
+ "today": "2026-10-07",
+ "controls": [
+  {
+   "ref": 1,
+   "role": "button",
+   "label": "Close",
+   "value": "",
+   "near": "New message"
+  },
+  {
+   "ref": 2,
+   "role": "button",
+   "label": "Send",
+   "value": "",
+   "near": "New message"
+  },
+  {
+   "ref": 3,
+   "role": "textbox",
+   "label": "To (comma-separated)",
+   "value": "",
+   "near": ""
+  },
+  {
+   "ref": 4,
+   "role": "textbox",
+   "label": "Cc (optional)",
+   "value": "",
+   "near": ""
+  },
+  {
+   "ref": 5,
+   "role": "textbox",
+   "label": "Subject",
+   "value": "",
+   "near": ""
+  },
+  {
+   "ref": 6,
+   "role": "textbox",
+   "label": "Write your message…",
+   "value": "",
+   "near": ""
+  },
+  {
+   "ref": 7,
+   "role": "button",
+   "label": "Contacts",
+   "value": "",
+   "near": ""
+  },
+  {
+   "ref": 8,
+   "role": "button",
+   "label": "Attach",
+   "value": "",
+   "near": ""
+  },
+  {
+   "ref": 9,
+   "role": "button",
+   "label": "Files",
+   "value": "",
+   "near": ""
+  },
+  {
+   "ref": 10,
+   "role": "button",
+   "label": "Save draft",
+   "value": "",
+   "near": ""
+  },
+  {
+   "ref": 11,
+   "role": "button",
+   "label": "Encrypt",
+   "value": "",
+   "near": ""
+  }
+ ]
+}
