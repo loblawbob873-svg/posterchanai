@@ -226,6 +226,10 @@ CHECKS = {
                                               live_args=["--base", "{live}"]),
     # Bundles the desktop app's www/ and then wants an instance for the non-standalone half.
     "check_desktop_standalone":        dict(group="ui", secs=600),
+    # The REAL Electron as the PosterChanOS shell under a private headless Wayfire + Xwayland (no network):
+    # resizes the desktop PosterChan through her own menu and fails on a renderer crash. Exit 2 without
+    # wayfire/Xwayland/desktop node_modules.
+    "check_desktop_shell_live":        dict(group="ui", secs=420),
 
     # --- self-contained, but slower than the default ---------------------------------------------
     "check_os_desktop":                dict(group="ui", secs=900),
