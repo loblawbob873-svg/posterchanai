@@ -28,6 +28,11 @@ def _run_src_install(tmp_path):
                       ("pc_usb_scan.py", "app/services/vmhost/usb.py"), ("gentoo.sh", "os/gentoo.sh"),
                       ("publish_iso.sh", "scripts/publish_iso.sh"), ("publish_r2.py", "scripts/publish_r2.py")):
         shutil.copy(ROOT / src, files / name)
+    # ... and the desktop's sound theme, from the same files the client plays (publish_overlay.sh)
+    (files / "sounds" / "stereo").mkdir(parents=True, exist_ok=True)
+    for ev, src in (("message-new-instant", "posterchan-chime.ogg"), ("alarm-clock-elapsed", "posterchan-alert.ogg"),
+                    ("phone-incoming-call", "posterchan-cyberpunk.ogg")):
+        shutil.copy(ROOT / "static" / "sounds" / src, files / "sounds" / "stereo" / f"{ev}.oga")
     (files / "plymouth").mkdir(exist_ok=True)
     (files / "plymouth" / "x.png").write_text("")
     log = tmp_path / "installed"
