@@ -280,3 +280,16 @@ def test_half_a_name_typed_gets_its_other_half():
         "answer": "Fill in the fields for Bob Smith and press Save.", "tasks": [], "steps": [
             {"do": "fill", "ref": 2, "text": "Smith", "label": "Last name"}, {"do": "fill", "ref": 3, "text": "555-1234", "label": "Phone number"}]})
     assert ("fill", "First", "Bob") in got and ("fill", "Last", "Smith") in got and got[-1] == ("click", "Save", ""), got
+
+
+def test_the_continue_round_does_not_press_new_note_again_and_writes_what_was_asked():
+    got = _round2("notes-editor", "write a new note called Groceries with milk and eggs", ["pressed “New note”"], {
+        "answer": "The note hasn't been created yet. Press 'New note' to open the editor.", "tasks": [], "steps": [
+            {"do": "click", "ref": 8, "label": "Open new note"}]})
+    assert got == [("fill", "Note title", "Groceries"), ("fill", "Note text", "milk and eggs")], got
+
+
+def test_an_email_to_an_address_answered_by_browsing_starts_a_new_email():
+    got = _run("mail", "email alice@x.test that the meeting moved to 3pm", {"answer": "Opening email to alice@x.test", "tasks": [], "steps": [
+        {"do": "click", "ref": 3, "label": "Open inbox"}, {"do": "scroll", "text": "alice@x.test", "label": "Find alice"}]})
+    assert got == [("click", "Compose", "")], got

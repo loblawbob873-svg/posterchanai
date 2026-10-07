@@ -624,8 +624,9 @@ def parse_steps(text: str, commands: bool = False, want_tasks: bool = False, con
     steps = steps[:ACT_STEP_MAX * 3] if keyed else steps
     steps = _keypad_from_request(steps, refs, str(goal_of(instruction, history) or ""))
     cc = clean_controls(controls)
+    last = (list(history or [])[-1:] or [{}])[0] if _CONTINUE.match(str(instruction or "")) else {}
     steps = _repair_steps(steps, refs, goal_of(instruction, history), {r: n for r, _ro, _l, _v, n in cc},
-                          {r: v for r, _ro, _l, v, _n in cc})
+                          {r: v for r, _ro, _l, v, _n in cc}, (last.get("did") if isinstance(last, dict) else None))
     if not answer and not tasks and not steps:
         answer = str(text or "").strip()[:4000]
     return {"answer": answer, "tasks": tasks, "steps": steps}
@@ -791,7 +792,8 @@ def _box_key(label) -> str:
     return re.sub(r"\s+", " ", re.sub(r"[^\w@.-]+", " ", t)).strip()
 
 
-def _repair_steps(steps: list, refs: dict, instruction: str, near: dict | None = None, values: dict | None = None) -> list:
+def _repair_steps(steps: list, refs: dict, instruction: str, near: dict | None = None, values: dict | None = None,
+                  did=None) -> list:
     near = near or {}
     values = values or {}
     low = str(instruction or "").lower()
@@ -1030,10 +1032,34 @@ def _repair_steps(steps: list, refs: dict, instruction: str, near: dict | None =
     if rows_typed:
         out = [st for st in out if not (st.get("do") == "fill" and refs.get(st.get("ref"), ("",))[0] == "item")
                and not (st.get("do") == "toggle" and refs.get(st.get("ref"), ("", ""))[1].lower() == "select" and near.get(st.get("ref")) in rows_typed)]
-        if not out and re.match(r"\s*(?:please\s+)?(?:e-?mail|mail|write|compose|message|text)\b", low):
-            starters = [r for r, (role, lab) in refs.items() if role in ("button", "link") and re.fullmatch(r"compose|new( (message|email|mail|post|conversation|chat))?", _box_key(lab))]
-            if len(starters) == 1:
-                out = [_click(starters[0])]
+    # ...and an email to an address, answered by browsing the folders ("Open inbox", then a scroll "to find
+    # alice", measured) with nothing typed anywhere, is the same request: start a new one.
+    if (re.match(r"\s*(?:please\s+)?(?:e-?mail|mail|compose)\b|\s*(?:please\s+)?write\s+(?:an?\s+)?(?:new\s+)?(?:e-?mail|mail|message)\b", low)
+            and not any(st.get("do") == "fill" and refs.get(st.get("ref"), ("",))[0] in _TEXTBOX_ROLES for st in out)):
+        starters = [r for r, (role, lab) in refs.items() if role in ("button", "link") and re.fullmatch(r"compose|new( (message|email|mail))?", _box_key(lab))]
+        if len(starters) == 1 and not any(st.get("ref") == starters[0] for st in out):
+            out = [_click(starters[0])]
+    # THE BUTTON THAT ALREADY RAN. In a Continue round the model pressed "New note" AGAIN beside the note it
+    # had just opened (2 runs in 3) -- a second press starts a second, empty one. A press of a control the
+    # previous round already pressed, when that control STARTS something (New …, Compose, Add …, Create …),
+    # is dropped.
+    again = {m.group(1).strip().lower() for m in (re.match(r"pressed “(.+)”$", str(x)) for x in (did or [])) if m}
+    out = [st for st in out if not (st.get("do") == "click" and str(st.get("target") or "").strip().lower() in again
+                                    and re.match(r"(?:\W*\s*)?(new|compose|add|create)\b", str(st.get("target") or ""), re.I))]
+    # WHAT IT SHOULD SAY. "a new note called Groceries with milk and eggs" titled the note and left it empty.
+    # Contents the request spells out ("with …", "saying …", "containing …") go into the one body box -- a
+    # box labelled as text / body / message / content / note that is not a title, a search or optional --
+    # when the plan typed nothing there.
+    cm = re.search(r"\b(?:with|saying|containing|that says)\s+(.+)$", str(instruction or ""), re.I)
+    if cm and any(st.get("do") == "fill" for st in out):
+        bodies = [r for r, (role, lab) in refs.items() if role in _TEXTBOX_ROLES
+                  and re.search(r"\b(text|body|message|content|note)\b", lab, re.I)
+                  and not re.search(r"\b(title|name|subject|search|filter|find|tags?)\b|\(optional\)", lab, re.I)]
+        if len(bodies) == 1 and not any(st.get("do") == "fill" and st.get("ref") == bodies[0] for st in out):
+            what = cm.group(1).strip(" .!'\"“”")
+            at = max(i for i, st in enumerate(out) if st.get("do") == "fill") + 1
+            out.insert(at, {"do": "fill", "ref": bodies[0], "target": refs[bodies[0]][1], "label": "Write it",
+                            "text": what[:2000], "on": False})
     out = _put_facts(out, refs, values, str(instruction or ""))
     # LOOKING TYPES NOTHING. "show my relay settings" once came back as a fill of the Instance box with a
     # relay URL the model made up -- run by Do all, that repoints the app at a stranger's server. A request
