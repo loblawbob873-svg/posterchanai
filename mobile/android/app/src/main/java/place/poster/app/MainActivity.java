@@ -107,6 +107,7 @@ public class MainActivity extends BridgeActivity {
         if (place.poster.app.office.OpenDocPlugin.isDocIntent(getIntent())) place.poster.app.office.OpenDocPlugin.nonce++;
         super.onCreate(savedInstanceState);
         allowMediaWithoutAGesture();
+        keepRendererWhileVisible();
         keepWebViewClearOfSystemBars();
         catchWebViewDownloads();
         openPopupsInARealBrowser();
@@ -395,6 +396,31 @@ public class MainActivity extends BridgeActivity {
         } catch (Throwable ignored) {
             // A measurement that fails leaves the layout as it is.
         }
+    }
+
+    /* THE RENDERER MATTERS WHILE IT IS ON SCREEN. The whole UI is the WebView's render process, which
+     * Android may reclaim under memory pressure; reclaimed while visible, the app "reloads" in front of
+     * the person (surviveRenderProcessDeath). IMPORTANT priority asks Android to keep it while the app is
+     * visible, and `true` waives that in the background, where reclaiming it is fair and cheap. */
+    private void keepRendererWhileVisible() {
+        try {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                getBridge().getWebView().setRendererPriorityPolicy(WebView.RENDERER_PRIORITY_IMPORTANT, true);
+            }
+        } catch (Throwable ignored) { /* never fatal: the default policy is what shipped before */ }
+    }
+
+    /* ANDROID SAYS MEMORY IS SHORT: tell the page, which trims its caches (store.js `pc:trim-memory`)
+     * before Android's only other move -- killing the renderer -- is needed. TrimPolicy decides which
+     * levels are worth it. */
+    @Override
+    public void onTrimMemory(int level) {
+        super.onTrimMemory(level);
+        if (!TrimPolicy.relieve(level)) return;
+        try {
+            getBridge().getWebView().evaluateJavascript(
+                "try{window.dispatchEvent(new CustomEvent('pc:trim-memory',{detail:{level:" + level + "}}))}catch(_){}", null);
+        } catch (Throwable ignored) { }
     }
 
     private void allowMediaWithoutAGesture() {

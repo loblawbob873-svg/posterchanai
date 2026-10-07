@@ -231,8 +231,8 @@
   // single incoming firehose event re-ran a full sort + _reindex of the whole cache — a UI that
   // gets slower the more notes you own, which is precisely backwards.
   let _pinCount = 0;
-  function _evictMem(){
-    if (mem.events.size <= MEM_MAX + _pinCount) return;
+  function _evictMem(force){
+    if (!force && mem.events.size <= MEM_MAX + _pinCount) return;
     const [pin, rest] = _splitPinned([...mem.events.values()]);
     /* THE CEILING RISES FOR DOCUMENTS, NEVER FOR NOTIFICATIONS.
      *
@@ -686,5 +686,10 @@
   };
 
   Store.setViewer = setViewer;
+  /* THE PHONE SAYS IT IS SHORT OF MEMORY (MainActivity.onTrimMemory → `pc:trim-memory`). Trim the
+   * in-memory cache to its keep size NOW rather than waiting for the cap: the alternative Android has
+   * is killing the WebView's renderer, which the user sees as the app reloading. Pinned documents
+   * (notes, vault, the drive index) are never in the trim -- see _evictMem. */
+  try{ window.addEventListener('pc:trim-memory', () => { try{ _evictMem(true); }catch(_){ } }); }catch(_){ }
   window.Store = Store; window.Session = Session; window.ClientSettings = Settings;
 })();
