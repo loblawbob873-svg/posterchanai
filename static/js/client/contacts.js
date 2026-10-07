@@ -350,11 +350,20 @@
         </div>`).join('');
     }
 
-    function editCard(card, phone){
+    function editCard(card, phone, fill){
       const isNew = !card;
       if(!S.book){ makeBook(); return; }
       const c = card ? JSON.parse(JSON.stringify(card)) : V().blank();
       if(!card && String(phone || '').trim()) c.tels = [{ type:'cell', value:String(phone).trim() }];
+      // A NEW contact filled in by somebody else (the window ✨ "Add a contact…"): the form opens with these
+      // values and nothing is saved until the person presses Save.
+      if(!card && fill){
+        c.n = Object.assign({ family:'', given:'', middle:'', prefix:'', suffix:'' }, { given:String(fill.given||''), family:String(fill.family||'') });
+        if(fill.phone) c.tels = [{ type:'cell', value:String(fill.phone) }];
+        if(fill.email) c.emails = [{ type:'', value:String(fill.email) }];
+        if(fill.org) c.org = String(fill.org);
+        if(fill.note) c.note = String(fill.note);
+      }
       if(card) c.other = card.other || [];        // JSON round trip keeps it, but be explicit
       const n = c.n || { family:'', given:'', middle:'', prefix:'', suffix:'' };
       const a = (c.adrs && c.adrs[0]) || { street:'', city:'', region:'', code:'', country:'' };
@@ -1330,6 +1339,14 @@
     }
 
     window.PCContacts = {
+      /** Open the New contact form filled in with {given, family, phone, email, org, note}. */
+      async draft(fill){
+        try{ ensureOwner(); }catch(_){ }
+        if(!S.ready){ try{ await load(); }catch(_){ } }
+        if(!S.book){ toast('Make an addressbook first — then add the contact'); return false; }
+        editCard(null, '', fill || {});
+        return true;
+      },
       /** The name for a phone number, or '' — never the number back, so the caller decides. */
       nameFor(number){
         try{

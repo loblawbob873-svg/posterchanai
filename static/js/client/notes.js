@@ -48,6 +48,10 @@
   const Store = () => window.Store;
   const ME = () => PC.ME;
 
+  /* Is Notes the screen? `window.__PC` has no VIEW property (the factories get one, this module does not), so
+   * `PC.VIEW === 'notes'` was ALWAYS false and every outside write -- "save this post to my notes", the
+   * window ✨ tidying the open note -- left the screen showing the old text. */
+  const _onNotes = () => { try{ return !!(PC && (PC.isView ? PC.isView('notes') : PC.VIEW === 'notes')); }catch(_){ return false; } };
   let _booted=false;
   function boot(){
     if(_booted) return;
@@ -123,6 +127,42 @@
         hits.sort((a, b) => a.rank - b.rank || b.at - a.at);
         return hits.slice(0, cap).map(h => ({ id: h.id, title: h.title, snippet: h.snippet, at: h.at }));
       },
+      /* THE NOTE ON SCREEN, for the window ✨ ("agentic window features useless in notes"). The panel cannot
+       * read it off the page: a note opens RENDERED, its textarea hidden, so a panel looking for a visible
+       * text box found no note at all. `partial` = a large note whose body has not been fetched yet. */
+      current(){
+        if(!_lib || !_sel) return null;
+        // A NEW note is a draft until its first save -- open in the editor, in no library yet. It is the
+        // note on screen all the same, and "Write it for me" exists for exactly that empty page.
+        const n = _lib.notes.get(String(_sel)) || (_draft && _draft.id === _sel ? _draft : null);
+        if(!n) return null;
+        return { id:n.id, title:n.title || '', body:n.body || '', partial: !n.body && !!n.bodyRef };
+      },
+      // Every note, newest first, as title + the start of its text -- what "Find a note about…" reads.
+      async list(limit){
+        try{ await load(); }catch(_){ return []; }
+        if(!_lib) return [];
+        return Array.from(_lib.notes.values()).sort((a,b)=>(b._at||0)-(a._at||0)).slice(0, Math.max(1, Math.min(+limit||80, 200)))
+          .map(n => ({ id:n.id, title:n.title || 'Untitled note', at:n._at || 0,
+                       snippet:String(n.body || n.snippet || '').replace(/\s+/g,' ').trim().slice(0, 300) }));
+      },
+      /* CHANGE ONE FIELD OF A NOTE and keep the rest. `save` above REPLACES title and tags (it is for
+       * writing a note from elsewhere), which for an edit would wipe the tags and retitle it "Saved". The
+       * open editor is repainted from the result, and a half-typed edit is committed first, so the change
+       * lands on what the person actually has. Throws when it could not be written. */
+      async update(id, o){
+        await load();
+        const n = (_lib && _lib.notes.get(String(id))) || (_draft && _draft.id === String(id) ? _draft : null);
+        if(!n) throw new Error('that note is not here any more');
+        flushEdit();
+        if(o && o.title != null) n.title = String(o.title).slice(0, 200);
+        if(o && o.body != null) n.body = String(o.body);
+        const r = await save(n, 'note');
+        if(!r || (!r.ok && !r.queued)) throw new Error('could not write the note');
+        if(_draft === n) _draft = null;                  // saved: it is a note in the library now
+        if(_onNotes()){ if(_sel === n.id && document.querySelector('.nt-editor')) openNote(n); else _paint(); }
+        return { id:n.id, queued: !!r.queued };
+      },
       /* OPEN ONE NOTE, from outside the Notes screen. Selects it and clears the list's filters (a
        * search result must not open into a folder view that hides it); paints now if Notes is the
        * screen, and otherwise the selection is what the next render opens. Answers whether the note
@@ -134,7 +174,7 @@
         _filter = { folder:FOLDER_ALL, q:'', tag:'' };
         _draft = null;
         _sel = String(id);
-        if(PC.VIEW === 'notes') _paint();
+        if(_onNotes()) _paint();
         return true;
       },
       // The phone folder drawer is an OVERLAY, so the Android back button has to close it before it
@@ -179,7 +219,7 @@
         // Offline is a SUCCESS with a caveat, not a failure: the note is in the local library and
         // the queue publishes it on reconnect, which is the whole point of the offline notebook.
         if(!r || (!r.ok && !r.queued)) throw new Error('could not write the note');
-        if(PC.VIEW === 'notes') _paint();
+        if(_onNotes()) _paint();
         return { id:n.id, queued: !!(r && r.queued) };
       },
     };
@@ -293,9 +333,9 @@
       if(live && live.length){
         const before = _stamp();
         await _absorb(lib, live, n => {
-          if((n === 1 || n % 12 === 0) && PC.VIEW === 'notes' && !_dirty) _paint();
+          if((n === 1 || n % 12 === 0) && _onNotes() && !_dirty) _paint();
         });
-        if(_stamp() !== before && PC.VIEW === 'notes' && !_dirty) _paint();
+        if(_stamp() !== before && _onNotes() && !_dirty) _paint();
       }
     }catch(_){ /* offline: the cache stands on its own */ }
     finally{ _refreshing = false; }
@@ -326,7 +366,7 @@
         if(!_lib) return;
         const before = _stamp();
         await _absorb(_lib, [ev]);
-        if(_stamp() !== before && PC.VIEW === 'notes' && !_dirty) _paint();
+        if(_stamp() !== before && _onNotes() && !_dirty) _paint();
       }});
     }catch(_){ _sub = null; }
   }
@@ -726,7 +766,7 @@
       if(composing) return;
       _filter.q = s.value;
       t=setTimeout(() => {
-        if(s.isConnected && PC.VIEW === 'notes') renderList();
+        if(s.isConnected && _onNotes()) renderList();
       }, 300);
     };
     s.oninput = search;

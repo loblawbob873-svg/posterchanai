@@ -1310,7 +1310,36 @@
       return true;
     }
 
-    window.PCCalendar = { render, reload: load, widgetTick, draft };
+    /* WHAT IS ACTUALLY ON THE CALENDAR, for the window ✨ "What's coming up". Asked of the model from the
+     * screen's text, an EMPTY calendar came back with six invented meetings ("Team Standup", "Q1
+     * Planning" -- measured); this answers from the decrypted items, the same expansion the widget uses.
+     * {off:true} when the calendar is not turned on; [] means nothing in the span. */
+    async function upcoming(spanDays){
+      if(!owner()) return { off:true };
+      if(!S.ready || S.owner !== owner()){ try{ await load(); }catch(_){ } }
+      if(S.enabled === false) return { off:true };
+      const I = window.PCIcal; if(!I) return { events:[] };
+      const span = Math.max(1, Math.min(120, +spanDays || 30));
+      const now = new Date(), from = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+      const to = new Date(from.getFullYear(), from.getMonth(), from.getDate() + span);
+      const out = [];
+      for(const cid of Object.keys(S.items || {})){
+        for(const rec of (S.items[cid] || [])){
+          let occ = [];
+          try{ occ = I.occurrences(I.parseResource(Object.assign({ cal: cid }, rec)), from, to); }catch(_){ occ = []; }
+          for(const o of occ){
+            if(!o || !o.start || (!o.allDay && (o.end || o.start) < now)) continue;
+            out.push({ day:o.key, start:o.start.getTime(), end:(o.end || o.start).getTime(), allDay:!!o.allDay,
+                       time:o.allDay ? '' : `${pad(o.start.getHours())}:${pad(o.start.getMinutes())}`,
+                       title:String(o.title || '(no title)').slice(0, 120), where:String(o.location || '').slice(0, 120) });
+          }
+        }
+      }
+      out.sort((a,b) => a.start - b.start);
+      return { events:out.slice(0, 60), span };
+    }
+
+    window.PCCalendar = { render, reload: load, widgetTick, draft, upcoming };
   }
   init();
 })();

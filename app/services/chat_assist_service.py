@@ -26,7 +26,7 @@ from app.services.texts_ai_service import TextsAiError as AssistError
 logger = logging.getLogger(__name__)
 
 MEDIA = {"telegram": "Telegram chat message", "dm": "direct message (DM)"}
-ACTIONS = ("reply", "summarize", "links", "window", "window_event", "window_steps", "window_recipe")
+ACTIONS = ("reply", "summarize", "links", "window", "window_event", "window_steps", "window_recipe", "window_feed", "window_note", "window_contact", "window_calc")
 
 # A summary may read further back than a reply needs, but a whole year of a group chat never goes to
 # the model: the newest SUMMARY_MSGS messages, each clipped, and a total ceiling on top.
@@ -1177,17 +1177,24 @@ def build_recipe_messages(context: list, recipe: str, text: str = "", note: str 
         # move", "Explain these numbers"); the button's text arrives as `note`. Same rules as a summary.
         if not steer:
             raise AssistError(400, "Ask something about the window first.")
+        # Measured on EMPTY windows: an empty drive came back as "Drake, The Weeknd… each ~15-20 times", an
+        # empty calendar as six meetings. Menus, buttons and section names are not content.
         system = ("Answer the question below for the person looking at this window, from what it shows: "
                   "short, plain sentences and \"- \" bullets, the most useful thing first. If the window does "
-                  "not show enough to answer, say exactly what is missing instead of guessing. "
-                  + _NO_INVENT + lang)
+                  "not show enough to answer, say exactly what is missing instead of guessing. Buttons, menus, "
+                  "tabs and folder or section NAMES are not content: if that is all the window shows, answer in "
+                  "one sentence that there is nothing here yet. Never list an item, name, number or date that "
+                  "does not appear in the window text. " + _NO_INVENT + lang)
         user = _windows_block(context) + "\n\nQuestion: " + steer
         return [{"role": "system", "content": system}, {"role": "user", "content": user}]
     if recipe == "summary":
+        # Measured in Telegram: two chats summarised as one ("meet at the trailhead for a book club").
         system = ("Summarize what this window shows, for the person looking at it: the 3 to 7 points that "
                   "matter most, each as a \"- \" bullet, saying who said or asked what. Lead with anything "
-                  "that needs them (a question to answer, a deadline, a request). No preamble, no closing line. "
-                  + _NO_INVENT + lang)
+                  "that needs them (a question to answer, a deadline, a request). Keep separate conversations, "
+                  "posts and items separate -- never combine facts from two of them into one point. If the "
+                  "window shows only buttons and menus, say in one sentence that there is nothing to summarize. "
+                  "No preamble, no closing line. " + _NO_INVENT + lang)
     elif recipe == "draft":
         system = ("Write the reply the user would send next in the conversation in this window: answer the "
                   "latest message addressed to them, in a natural first-person voice, short (1-4 sentences "
@@ -1290,6 +1297,402 @@ async def window_recipe(db, user, windows, recipe: str, today: str = "", text: s
                 recipe, len(context), sum(len(c[3]) for c in context) + len(str(text or "")), len(body))
     return {"answer": body, "tasks": [], "steps": recipe_steps(recipe, body, reply_ref, box_ref, box_label),
             "recipe": recipe}
+
+
+# ---- ✨ on a TIMELINE: the posts, not the page's text ---------------------------------------------------
+# "Agentic window features are still kinda useless for the social timeline." They were three generic buttons
+# over 4000 characters of innerText -- names, "3h", "reply repost like zap" and post text run together -- so a
+# summary could not say WHICH post, nothing could be answered from it, and nothing on screen could be found.
+# The client now sends the posts themselves, numbered, and every answer here names posts BY NUMBER; the client
+# turns each number back into that card (jump to it, open it, reply to it). A number the model invents that
+# is not on screen is dropped, and the deterministic floors below hold whatever the model misses.
+FEED_RECIPES = ("digest", "needs", "reply", "find")
+FEED_POSTS_MAX = 30
+FEED_POST_CHARS = 600
+
+
+def feed_posts(posts, limit: int = FEED_POSTS_MAX) -> list:
+    """[{n, who, text, mine, to_me}] -- numbered 1..N in the order given, clipped, empties dropped."""
+    out = []
+    for p in list(posts or [])[:limit]:
+        if not isinstance(p, dict):
+            continue
+        text = re.sub(r"\s+", " ", str(p.get("text") or "")).strip()[:FEED_POST_CHARS]
+        if not text and not p.get("who"):
+            continue
+        out.append({"n": len(out) + 1, "who": _clean(p.get("who") or "someone", 60) or "someone",
+                    "text": text, "mine": bool(p.get("mine")), "to_me": bool(p.get("to_me")) and not p.get("mine")})
+    return out
+
+
+def _feed_block(posts: list, subject: str = "posts") -> str:
+    if subject == "notes":
+        return ("The user's notes, numbered (title, then the start of the text):\n<<<NOTES\n"
+                + "\n".join(f"[{p['n']}] {p['who']}: {p['text']}" for p in posts) + "\nNOTES")
+    lines = []
+    for p in posts:
+        tag = " (your own post)" if p["mine"] else " (addressed to you)" if p["to_me"] else ""
+        lines.append(f"[{p['n']}] {p['who']}{tag}: {p['text']}")
+    return "Posts on screen, numbered:\n<<<POSTS\n" + "\n".join(lines) + "\nPOSTS"
+
+
+def build_feed_messages(posts: list, recipe: str, query: str = "", target: int = 0, subject: str = "posts") -> list:
+    if subject == "notes":
+        # THE SAME NUMBERED SHAPE FOR A NOTEBOOK: "Find a note about…" and "What's in my notes" answer with
+        # note numbers the client turns back into notes it can open.
+        if recipe == "find":
+            system = ("Which of the user's notes are about what they are looking for? Match the MEANING, not only "
+                      "the words. Reply with ONLY a JSON object: {\"posts\": [note numbers]}, best match first -- "
+                      "{\"posts\": []} when none are. A note that is merely the closest is NOT a match: if no note "
+                      "is actually about it, the answer is []. ")
+            return [{"role": "system", "content": system},
+                    {"role": "user", "content": _feed_block(posts, subject) + "\n\nLooking for: " + query}]
+        system = ("Group the user's notes into 2 to 6 topics, the biggest first. Reply with ONLY a JSON object: "
+                  "{\"topics\": [{\"title\": a few words, \"summary\": one plain sentence on what these notes "
+                  "hold, \"posts\": [the note numbers in it]}]}. Every number must be one of the [n] shown. "
+                  + _NO_INVENT)
+        return [{"role": "system", "content": system}, {"role": "user", "content": _feed_block(posts, subject)}]
+    if recipe == "digest":
+        system = ("Group these social media posts into 2 to 6 topics people are talking about, the busiest first. "
+                  "Reply with ONLY a JSON object: {\"topics\": [{\"title\": a few words, \"summary\": one or two "
+                  "plain sentences saying who says what, \"posts\": [the numbers of the posts in it]}]}. Every "
+                  "number must be one of the [n] shown. Put anything addressed to the user first. " + _NO_INVENT)
+        user = _feed_block(posts)
+    elif recipe == "needs":
+        system = ("Which of these posts would the user want to answer? A question put to them, a reply to them, a "
+                  "mention, a request or an invitation -- not ordinary news. Reply with ONLY a JSON object: "
+                  "{\"items\": [{\"n\": the post's number, \"why\": a few words, e.g. \"asks you for a link\"}]}; "
+                  "{\"items\": []} when nothing needs them. " + _NO_INVENT)
+        user = _feed_block(posts)
+    elif recipe == "find":
+        system = ("Which posts are about what the user is looking for? Match the MEANING, not only the words. Reply "
+                  "with ONLY a JSON object: {\"posts\": [numbers]} -- {\"posts\": []} when none are. A post that is "
+                  "merely the closest is NOT a match: if no post is actually about it, the answer is [].")
+        user = _feed_block(posts) + "\n\nLooking for: " + query
+    else:
+        post = next((p for p in posts if p["n"] == target), None)
+        if not post:
+            raise AssistError(400, "Pick a post to reply to.")
+        # ONLY the post being answered. With the rest of the timeline beside it as "context", the model
+        # answered the OTHER posts (measured: one reply to the post, one to Dana's meetup, one about the
+        # kernel thread).
+        system = ("Write three different replies the user could post to the post below, each in a natural "
+                  "first-person voice, short (one to three sentences), and different in approach -- e.g. one "
+                  "agrees or adds something, one asks a question, one is light or funny. Reply with ONLY a JSON "
+                  "object: {\"replies\": [\"…\", \"…\", \"…\"]}. No hashtags unless the post uses them. "
+                  + _NO_INVENT + _GAPS + " Write in the language of the post.")
+        user = (f"The post to reply to, by {post['who']}:\n<<<POST\n{post['text']}\nPOST"
+                + (("\n\nThe user wants: " + query) if query else ""))
+    return [{"role": "system", "content": system}, {"role": "user", "content": user}]
+
+
+def _json_obj(out: str):
+    import json
+    t = re.sub(r"<think>.*?</think>", "", str(out or ""), flags=re.S | re.I)
+    m = re.search(r"\{.*\}", t, re.S)
+    if not m:
+        return None
+    try:
+        v = json.loads(m.group(0))
+        return v if isinstance(v, dict) else None
+    except Exception:
+        return None
+
+
+def _loose_fields(out: str, keys) -> dict:
+    """{key: value} read one field at a time from JSON that does not parse -- the model's usual slip is an
+    unquoted value ("what": tip amount per person), which costs json.loads the WHOLE answer."""
+    t = re.sub(r"<think>.*?</think>", "", str(out or ""), flags=re.S | re.I)
+    got = {}
+    for k in keys:
+        m = re.search(r'"%s"\s*:\s*("(?:[^"\\]|\\.)*"|[^,\n}]+)' % re.escape(k), t)
+        if m:
+            v = m.group(1).strip()
+            got[k] = v[1:-1].replace('\\"', '"') if v.startswith('"') and v.endswith('"') and len(v) > 1 else v.strip('"')
+    return got
+
+
+def _nums(v, n_max: int) -> list:
+    out = []
+    for x in v if isinstance(v, list) else []:
+        try:
+            i = int(x)
+        except (TypeError, ValueError):
+            continue
+        if 1 <= i <= n_max and i not in out:
+            out.append(i)
+    return out
+
+
+def _words(q: str) -> list:
+    return [w for w in re.findall(r"[\w#@']+", str(q or "").lower()) if len(w) >= 3]
+
+
+def _loose_feed(out: str) -> dict:
+    """The fields read one by one from JSON that does not parse. Measured: 3 digests in 4 came back with an
+    unquoted "summary" or a missing comma between topics -- the right content, and json.loads refused all of it."""
+    t = re.sub(r"<think>.*?</think>", "", str(out or ""), flags=re.S | re.I)
+    q = lambda v: v.strip().strip(",").strip().strip('"').strip()
+    topics = []
+    for block in re.split(r'(?=["\']title["\']\s*:)', t)[1:]:
+        title = re.search(r'title["\']\s*:\s*"([^"\n]+)"', block)
+        summ = re.search(r'summary["\']\s*:\s*(.+)', block)
+        nums = re.search(r'posts["\']\s*:\s*\[([^\]]*)\]', block)
+        if title and nums:
+            topics.append({"title": title.group(1), "summary": q(summ.group(1)) if summ else "",
+                           "posts": re.findall(r"\d+", nums.group(1))})
+    items = [{"n": n, "why": q(w or "")} for n, w in
+             re.findall(r'"n"\s*:\s*(\d+)\s*,?\s*(?:"why"\s*:\s*([^\n}]+))?', t)]
+    found = re.search(r'"posts"\s*:\s*\[([^\]]*)\]', t)
+    return {"topics": topics, "items": items, "posts": re.findall(r"\d+", found.group(1)) if found else []}
+
+
+def parse_feed(recipe: str, out: str, posts: list, query: str = "") -> dict:
+    """The model's JSON -> what the client draws. Every post number is checked against what was sent; the
+    floors (posts addressed to the person for "needs", literal matches for "find") hold regardless."""
+    raw = _json_obj(out) or _loose_feed(out)
+    n_max = len(posts)
+    if recipe == "digest":
+        topics = []
+        for t in raw.get("topics") or []:
+            if not isinstance(t, dict):
+                continue
+            nums = _nums(t.get("posts"), n_max)
+            title = _clean(t.get("title"), 80)
+            if nums and title:
+                topics.append({"title": title, "summary": _clean(t.get("summary"), 400), "posts": nums})
+        return {"topics": topics[:6]}
+    if recipe == "needs":
+        items, seen = [], set()
+        for it in raw.get("items") or []:
+            if not isinstance(it, dict):
+                continue
+            nums = _nums([it.get("n")], n_max)
+            if nums and nums[0] not in seen and not posts[nums[0] - 1]["mine"]:
+                seen.add(nums[0])
+                items.append({"n": nums[0], "why": _clean(it.get("why"), 120)})
+        for p in posts:                                   # the floor: addressed to them is never left out
+            if p["to_me"] and p["n"] not in seen:
+                seen.add(p["n"])
+                items.append({"n": p["n"], "why": "addressed to you"})
+        return {"items": items}
+    if recipe == "find":
+        nums = _nums(raw.get("posts"), n_max)
+        words = _words(query)
+        if words:                                         # the floor: a post that says it, literally
+            for p in posts:
+                low = p["text"].lower() + " " + p["who"].lower()
+                if p["n"] not in nums and all(w in low for w in words):
+                    nums.append(p["n"])
+        return {"posts": sorted(nums)}
+    replies = [clean_recipe_text(r) for r in (raw.get("replies") or []) if isinstance(r, str)]
+    if not replies:                                       # JSON that does not parse: the quoted strings in it
+        m = re.search(r'"replies"\s*:\s*\[(.*)', str(out or ""), re.S)
+        if m:
+            replies = [clean_recipe_text(x.replace('\\"', '"').replace("\\n", "\n"))
+                       for x in re.findall(r'"((?:[^"\\]|\\.){4,})"', m.group(1))]
+    if not replies:                                       # prose instead of JSON: one reply is still a reply
+        one = clean_recipe_text(out)
+        replies = [one] if one and not one.lstrip().startswith("{") else []
+    return {"replies": [r[:1000] for r in replies if r][:3]}
+
+
+async def window_feed(db, user, posts, recipe: str, query: str = "", target=0, subject: str = "posts") -> dict:
+    recipe = str(recipe or "")
+    subject = "notes" if subject == "notes" else "posts"
+    if recipe not in FEED_RECIPES or (subject == "notes" and recipe not in ("digest", "find")):
+        raise AssistError(400, "Unknown action.")
+    posts = feed_posts(posts, 80 if subject == "notes" else FEED_POSTS_MAX)
+    if not posts:
+        raise AssistError(400, "There are no notes yet." if subject == "notes" else
+                          "There are no posts on screen yet — scroll the timeline, then try again.")
+    query = re.sub(r"\s+", " ", str(query or "")).strip()[:INSTRUCTION_MAX]
+    if recipe == "find" and not query:
+        raise AssistError(400, "Say what to look for.")
+    try:
+        target = int(target or 0)
+    except (TypeError, ValueError):
+        target = 0
+    out = await _chat(db, user, build_feed_messages(posts, recipe, query, target, subject), 0.6 if recipe == "reply" else 0.2)
+    if not out and recipe != "needs":
+        raise AssistError(502, "The AI did not come up with an answer — try again.")
+    res = parse_feed(recipe, out, posts, query)
+    count = len(next(iter(res.values())))
+    logger.info("[chat-assist] window feed %s %s: %d in -> %d", subject, recipe, len(posts), count)
+    if recipe == "reply" and not res["replies"]:
+        raise AssistError(502, "The AI did not come up with a reply — try again.")
+    return {"feed": {"kind": recipe, **res}}
+
+
+# ---- ✨ in NOTES: the note itself, not the screen ---------------------------------------------------------
+# "Agentic window features useless in notes." The panel looked for a VISIBLE text box, and a note opens
+# rendered (read mode) with its textarea hidden -- so for every note that already had text the panel found
+# no note at all and offered "Summarize" of the screen. The client now sends the open note's title and body
+# from the notebook (PCNotes.current), and each answer is applied through the notebook's own save.
+NOTE_RECIPES = ("tidy", "checklist", "continue", "title", "write")
+
+
+def build_note_messages(recipe: str, title: str, body: str, ask: str = "") -> list:
+    lang = " Write in the language of the note."
+    if recipe in ("tidy", "checklist"):
+        # Measured: the note's TITLE came back as the body's first line ("Trip Ideas" over the trip ideas),
+        # and "lisbon? or porto. check flights. ask dana" became ONE checklist item.
+        shape = ("as a checklist: one \"- [ ] \" line per separate thing to do -- split a sentence that holds "
+                 "several tasks into several items -- grouped under short headings only when there are several "
+                 "topics" if recipe == "checklist" else
+                 "clean and well organised: fix spelling and grammar, put related lines together, use short "
+                 "headings and \"- \" bullets where they help")
+        system = ("Rewrite the user's note " + shape + ". Keep EVERY fact, number, link and name exactly; add "
+                  "nothing new and drop nothing that matters. The note's title is shown separately -- do not "
+                  "repeat it as a heading. Output ONLY the rewritten note." + lang)
+    elif recipe == "continue":
+        system = ("Continue the user's note from where it stops: write only the NEXT part, in the same voice and "
+                  "format (the next paragraph, or the next few list items in the same style). Do not repeat what "
+                  "is already there. Never make up facts -- prices, dates, times, names, numbers -- that the "
+                  "note does not give. Output ONLY the new text." + _GAPS + lang)
+    elif recipe == "title":
+        system = ("Give this note a short title, 2 to 8 words, that says what it is about. Output ONLY the "
+                  "title -- no quotes, no full stop." + lang)
+    else:
+        system = ("Write the note the user asks for, in Markdown: a first line \"# \" with a short title, then the "
+                  "note -- short headings and \"- \" bullets where they help, no preamble." + _GAPS
+                  + " Write in the language of the request.")
+    user = ("Write a note: " + ask) if recipe == "write" else (
+        f"Title: {title or '(none)'}\n<<<NOTE\n{body}\nNOTE" + (("\n\nAlso: " + ask) if ask else ""))
+    return [{"role": "system", "content": system}, {"role": "user", "content": user}]
+
+
+def _drop_title_line(t: str, title: str) -> str:
+    """A first or last line that only repeats the title ("# Trip ideas" over the trip ideas, or a closing
+    "Title: Trip ideas" -- both measured) is not content."""
+    if not title:
+        return t
+    same = lambda x: re.sub(r"^#+\s*|^title\s*:\s*|[*_]", "", x.strip(), flags=re.I).strip().rstrip(".:").lower() == title.strip().lower()
+    lines = t.strip().split("\n")
+    while lines and same(lines[0]):
+        lines = lines[1:]
+    while lines and same(lines[-1]):
+        lines = lines[:-1]
+    return "\n".join(lines).strip("\n")
+
+
+def parse_note(recipe: str, out: str, title: str = "", body: str = "") -> dict:
+    t = clean_recipe_text(out)
+    if recipe in ("tidy", "checklist"):
+        t = _drop_title_line(t, title)
+    if recipe == "continue":
+        if re.search(r"^\s*[-*]\s+\[[ xX]\]", body, re.M):     # a checklist goes on as a checklist
+            t = "\n".join(re.sub(r"^(\s*)(?:[-*]\s+)?\[\s?\]\s*", r"\1- [ ] ", x) if re.match(r"^\s*(?:[-*]\s+)?\[\s?\]", x) else x
+                          for x in t.split("\n"))
+            t = "\n".join(x for x in t.split("\n") if not re.match(r"^\s*- \[ \]\s*(?:\[ ?\]\s*)*$", x))
+        return {"append": t.strip()}
+    if recipe == "title":
+        line = next((x for x in t.split("\n") if x.strip()), "")
+        line = re.sub(r"^#+\s*|^title:\s*", "", line.strip(), flags=re.I).strip().strip("\"'“”*").rstrip(".")
+        return {"title": line[:120]}
+    if recipe == "write":
+        lines = t.split("\n")
+        first = next((i for i, x in enumerate(lines) if x.strip()), None)
+        title = ""
+        if first is not None and re.match(r"^#{1,3}\s+\S", lines[first]):
+            title = re.sub(r"^#+\s*", "", lines[first]).strip()[:120]
+            t = "\n".join(lines[first + 1:]).strip()
+        return {"title": title, "body": t}
+    if recipe == "checklist":
+        t = as_checklist(t)
+    return {"body": t}
+
+
+async def window_note(db, user, recipe: str, title: str = "", body: str = "", ask: str = "") -> dict:
+    recipe = str(recipe or "")
+    if recipe not in NOTE_RECIPES:
+        raise AssistError(400, "Unknown action.")
+    title = re.sub(r"\s+", " ", str(title or "")).strip()[:200]
+    body = str(body or "").strip()[:RECIPE_TEXT_MAX]
+    ask = re.sub(r"\s+", " ", str(ask or "")).strip()[:INSTRUCTION_MAX]
+    if recipe == "write" and not ask:
+        raise AssistError(400, "Say what the note should be about.")
+    if recipe != "write" and not body:
+        raise AssistError(400, "This note is empty — write something first, or use “Write it for me”.")
+    out = await _chat(db, user, build_note_messages(recipe, title, body, ask), 0.5 if recipe in ("write", "continue") else 0.2)
+    res = parse_note(recipe, out, title, body)
+    if not any(res.values()):
+        raise AssistError(502, "The AI did not come up with an answer — try again.")
+    logger.info("[chat-assist] window note %s: %d chars in -> %d out", recipe, len(body) + len(ask),
+                sum(len(v) for v in res.values()))
+    return {"note": {"kind": recipe, **res}}
+
+
+# ---- ✨ in CONTACTS: "Add a contact…" -> the New contact form, filled in -----------------------------------
+# The free-form agent opened "+ Contact" and then had to plan a form it had not seen (measured 0/3). One
+# sentence in, one validated set of fields out, and the client opens the app's own form with them for the
+# person to check and Save. A phone number or an email address in what they typed is ALWAYS carried over,
+# whatever the model returned -- those are copied, never generated.
+_EMAIL = re.compile(r"[\w.+-]+@[\w-]+(?:\.[\w-]+)+")
+_PHONE = re.compile(r"(?<![\w])\+?\d[\d ().-]{5,}\d(?![\w])")
+
+
+def parse_contact(out: str, said: str) -> dict:
+    raw = _json_obj(out) or _loose_fields(out, ("given", "family", "phone", "email", "org", "note"))
+    c = {k: _clean(raw.get(k), 120) for k in ("given", "family", "phone", "email", "org", "note")}
+    em, ph = _EMAIL.search(said or ""), _PHONE.search(said or "")
+    c["email"] = em.group(0) if em else ""            # only ever what the person typed
+    c["phone"] = ph.group(0).strip() if ph else ""
+    if not (c["given"] or c["family"]):
+        rest = _PHONE.sub(" ", _EMAIL.sub(" ", said or ""))
+        words = [w for w in re.findall(r"[^\W\d_][\w'-]*", rest) if w.lower() not in ("add", "contact", "new", "phone", "email", "at", "is", "and")]
+        if words:
+            c["given"], c["family"] = words[0], " ".join(words[1:2])
+    return c
+
+
+async def window_contact(db, user, said: str) -> dict:
+    said = re.sub(r"\s+", " ", str(said or "")).strip()[:INSTRUCTION_MAX]
+    if not said:
+        raise AssistError(400, "Say who to add — a name, and a phone number or email if you have one.")
+    msgs = [{"role": "system", "content": (
+        "Turn the user's words into one address-book contact. Reply with ONLY a JSON object: {\"given\": first "
+        "name, \"family\": last name, \"phone\": \"\", \"email\": \"\", \"org\": company or \"\", \"note\": "
+        "anything else they said about the person, or \"\"}. Use only what they wrote; \"\" for anything missing.")},
+        {"role": "user", "content": said}]
+    out = await _chat(db, user, msgs, 0.1)
+    c = parse_contact(out, said)
+    logger.info("[chat-assist] window contact: %d chars -> %d fields", len(said), sum(1 for v in c.values() if v))
+    return {"contact": c}
+
+
+# ---- ✨ in the CALCULATOR: words -> an expression the calculator itself evaluates ---------------------------
+# The free-form agent pressed keypad buttons and got "× 7" (measured 0/3). A model is bad at arithmetic and
+# fine at translation, so it only TRANSLATES ("15% tip on 84.50" -> "84.50*15/100"); the client's own
+# evaluator does the maths, and nothing but the calculator's own symbols can come back.
+_CALC_OK = re.compile(r"^(?:[0-9.+\-*/^%()!, ]|sqrt|sin|cos|tan|ln|log|π|pi|e)+$")
+
+
+def parse_calc(out: str) -> dict:
+    raw = _json_obj(out) or _loose_fields(out, ("expression", "what"))
+    expr = str(raw.get("expression") or "").strip()
+    expr = expr.replace("×", "*").replace("÷", "/").replace("−", "-").replace("**", "^").replace("pi", "π")
+    expr = re.sub(r"(?<=\d),(?=\d{3}\b)", "", expr)                  # 1,250 -> 1250
+    if not expr or len(expr) > 200 or not _CALC_OK.match(expr):
+        return {"expression": "", "what": ""}
+    return {"expression": expr, "what": _clean(raw.get("what"), 160)}
+
+
+async def window_calc(db, user, said: str) -> dict:
+    said = re.sub(r"\s+", " ", str(said or "")).strip()[:INSTRUCTION_MAX]
+    if not said:
+        raise AssistError(400, "Say what to work out.")
+    msgs = [{"role": "system", "content": (
+        "Turn the user's question into ONE arithmetic expression a calculator can evaluate, using only digits, "
+        ". + - * / ^ ( ) and sqrt( sin( cos( tan( ln( log( -- write a percentage as /100. Do NOT compute the "
+        "answer. Reply with ONLY a JSON object: {\"expression\": \"...\", \"what\": a few words saying what it "
+        "works out}.")}, {"role": "user", "content": said}]
+    out = await _chat(db, user, msgs, 0.0)
+    c = parse_calc(out)
+    if not c["expression"]:
+        raise AssistError(422, "That did not turn into a calculation — try saying it with the numbers in it.")
+    logger.info("[chat-assist] window calc: %d chars -> %d char expression", len(said), len(c["expression"]))
+    return {"calc": c}
 
 
 # ---- "Add to Calendar" from the window ✨ answer -------------------------------------------------------

@@ -134,7 +134,9 @@ def test_a_note_is_tidied_in_place_and_undo_puts_it_back():
     got = {}
 
     async def check(b):
-        await _panel(b, "notes", "Notes", NOTE)
+        # The TEXT-BOX path: a note-like window whose notebook module is not loaded. (The Notes app itself
+        # reads the notebook -- tests/client/test_window_ai_timeline_and_notes_full_app.py.)
+        await _panel(b, "notes", "Notes", "window.PCNotes=undefined;" + NOTE)
         got["buttons"] = await b.js(BUTTONS)
         await _press(b, "Tidy this note")
         await b.until("__req.length===1 && !!document.querySelector('.osw-ai-step [data-act]')")

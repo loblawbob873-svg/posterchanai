@@ -12057,3 +12057,20 @@ img.md-rel:not([src]){display:none}
   #feed .ua-ranges button,#feed .sms-head button,#feed .repo-scope .repo-sc,
   #news-head .news-baracts .news-chip,#feed .tor-acts button,#files-pane .fx-nav button{min-height:32px;min-width:32px}
 }
+
+/* ✨ on a timeline: answers name posts (osw-ai-topic + a chip per post), the reply picker, Find */
+.osw-ai-feed-h{display:flex;align-items:center;justify-content:space-between;gap:8px;flex-wrap:wrap;margin-bottom:6px}
+.osw-ai-feed-h b{color:var(--neon);letter-spacing:.06em;text-transform:uppercase;font-size:12px}
+.osw-ai-topic{padding:8px 2px;border-top:1px solid rgba(var(--accent-rgb),.12)}
+.osw-ai-topic:first-of-type{border-top:0}
+.osw-ai-topic p{margin:3px 0 6px;overflow-wrap:anywhere}
+.osw-ai-topic>span{display:flex;flex-wrap:wrap;gap:6px}
+.osw-ai-post{min-height:32px}
+.osw-ai-pick{display:flex;flex-direction:column;gap:6px;max-height:min(46vh,380px);overflow:auto}
+.osw-ai-pick button{display:flex;flex-direction:column;align-items:flex-start;gap:2px;text-align:left;padding:8px 10px;min-height:44px;border-radius:8px;border:1px solid rgba(var(--accent-rgb),.25);background:rgba(0,0,0,.2);color:var(--text);cursor:pointer}
+.osw-ai-pick button:hover,.osw-ai-pick button:focus-visible{border-color:var(--neon)}
+.osw-ai-pick button span{color:var(--muted);font-size:12px;overflow-wrap:anywhere}
+.osw-ai-find{display:flex;gap:6px}.osw-ai-find .input{flex:1 1 auto;min-width:0}
+article.note.ai-found,.notif.ai-found{box-shadow:inset 3px 0 0 var(--neon),0 0 0 1px rgba(var(--accent-rgb),.45)}
+.osw-ai-cal{display:flex;gap:8px;align-items:baseline;padding:3px 2px}.osw-ai-cal>span{min-width:52px;color:var(--muted);font-variant-numeric:tabular-nums}.osw-ai-cal.clash b{color:var(--danger,#f66)}
+.osw-ai-calc{font-size:16px;padding:6px 2px;overflow-wrap:anywhere}.osw-ai-calc b{color:var(--neon)}

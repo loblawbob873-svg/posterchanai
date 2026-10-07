@@ -301,6 +301,11 @@
     const parsed = comps.map(c => {
       const dtstart = first(c, 'DTSTART');
       const dt = dtstart ? parseDt(dtstart.value, dtstart.params) : null;
+      // How long it lasts, from DTEND (the end is exclusive). "When am I free?" needs it: without it a
+      // meeting from 14:00 to 15:00 took up no time at all.
+      const dtend = first(c, 'DTEND');
+      const de = dtend ? parseDt(dtend.value, dtend.params) : null;
+      const durMs = (dt && de && de.date > dt.date) ? (de.date - dt.date) : 0;
       const rid = first(c, 'RECURRENCE-ID');
       const rrule = first(c, 'RRULE');
       const exdates = [];
@@ -327,6 +332,7 @@
         component: nameOf(c),
         start: dt ? dt.date : null,
         allDay: dt ? dt.allDay : false,
+        durMs,
         who,
         title: unescape_((first(c, 'SUMMARY') || {}).value) || '(no title)',
         location: unescape_((first(c, 'LOCATION') || {}).value) || '',
@@ -353,7 +359,7 @@
     const base = {
       uid: res.uid, cal: res.cal, component: res.component,
       title: m.title, location: m.location, notes: m.notes, allDay: m.allDay,
-      who: m.who || [],
+      who: m.who || [], durMs: m.durMs || 0,
     };
     const moved = new Map();          // dayKey of the ORIGINAL slot -> the edited occurrence
     for(const o of res.overrides || []){
@@ -361,7 +367,7 @@
     }
     const out = [];
     const push = (start, from_) => out.push(Object.assign({}, base, {
-      start, key: dayKey(start), recurring: !!from_,
+      start, end: new Date(start.getTime() + (base.durMs || 0)), key: dayKey(start), recurring: !!from_,
     }));
 
     if(!m.rrule){
@@ -377,7 +383,7 @@
           if(o.start && o.start >= from && o.start < to){
             out.push(Object.assign({}, base, {
               title: o.title, location: o.location, notes: o.notes,
-              allDay: o.allDay, start: o.start, key: dayKey(o.start), recurring: true,
+              allDay: o.allDay, start: o.start, end: new Date(o.start.getTime() + (o.durMs || 0)), key: dayKey(o.start), recurring: true,
             }));
           }
           continue;

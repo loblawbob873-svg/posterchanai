@@ -2549,10 +2549,12 @@
     const S=(label,hint,starter)=>({label,hint,starter});
     const todo=R('To-dos & dates','Every task, request and deadline — with Add to Calendar','tasks');
     const help=S('Help me with…','Say what you want done here — it uses this window\'s own buttons','');
-    const find=what=>S('Find…','Type what to look for — it uses this window\'s own search','Find '+(what?what+' ':''));
+    // FIND TYPES INTO THE WINDOW'S OWN SEARCH BOX -- no model. Handed to the free-form agent as "Find …",
+    // finding a contact succeeded 1 time in 3 (it pressed "New addressbook"); a search box needs no planning.
+    const find=what=>({label:'Find…',hint:'Type what to look for — it goes into this window\'s own search box',find:what||''});
     const games=[X('Suggest my next move','The best move from what is on the board, and why','From the game shown, what is my best next move, and why?'),
                  X('How do I play?','The rules, briefly','Explain briefly how to play this game and how to win.')];
-    const files=[find(''),X("What's here",'What these files and folders are','What is in this folder? Group it briefly and point out anything unusual or duplicated.'),help];
+    const files=[find(''),{...X("What's here",'What these files and folders are','What is in this folder? Group it briefly and point out anything unusual or duplicated.'),need:'files'},help];
     const numbers=[X('Explain these numbers','What changed and what stands out','Explain these numbers: what changed, what stands out, and anything unusual.'),help];
     const screen=[X('Explain this screen','What it does and what to do next','What does this screen do, and what should I do next?'),help];
     const map={
@@ -2563,17 +2565,21 @@
       bookmarks:[R('Summarize my saves','What you saved, briefly','summary'),find('in my bookmarks'),todo],
       streams:[X("What's live",'Who is streaming and what about','Which streams are live, who is streaming, and what are they about?'),help],
       calls:[X('Missed calls','Who called, what you missed, who to call back','Who called me, which calls did I miss, and who should I call back?'),todo],
-      calendar:[X("What's coming up",'Your next appointments and deadlines, in order','What is coming up next in this calendar, in date order, and does anything clash?'),
-                S('Add an event…','Say what and when — it fills in the calendar','Add to my calendar: '),todo],
-      contacts:[find(''),X('Who is here','An overview — duplicates and missing details','Give a short overview of the contacts shown: how many, and any that look like duplicates or are missing a phone number or email.'),help],
-      websearch:[X('Which results answer it','The results that answer the search best','Which of these search results best answer the search, and what does each say? Name each by its title.'),
-                 R('Save key points','The main points, ready for Notes','summary'),S('Search the web for…','A new search, in the search box','Search the web for ')],
+      calendar:[{label:"What's coming up",hint:'Your next 30 days, in order — and anything that clashes',cal:'upcoming'},
+                S('Add an event…','Say what and when — it fills in the calendar','Add to my calendar: '),{label:'When am I free?',hint:'Free hours on each of the next 7 days, from what is booked',cal:'free'}],
+      contacts:[find(''),{label:'Add a contact…',hint:'Name, number, email — opens a filled-in New contact form',contact:true},X('Who is here','An overview — duplicates and missing details','Give a short overview of the contacts shown: how many, and any that look like duplicates or are missing a phone number or email.'),help],
+      // `need`: offered only when the window holds what the button is ABOUT. Measured on empty windows: "Which
+      // results answer it" with no search done ranked the screen's own tab names, "Download status" with
+      // nothing downloading answered "All downloads are stuck", "Bills due" with no bills found nothing.
+      websearch:[{...X('Which results answer it','The results that answer the search best','Which of these search results best answer the search, and what does each say? Name each by its title.'),need:'results'},
+                 {...R('Save key points','The main points, ready for Notes','summary'),need:'results'},
+                 {label:'Search the web for…',hint:'Typed into the search box and searched',find:''}],
       budget:[X('Explain my month','Income, paid, still due — and what is left','Explain this month: income, what is paid, what is still due and when, and how much is left.'),
-              R('Bills due → Calendar','Every bill due, with Add to Calendar','tasks'),help],
+              {...R('Bills due → Calendar','Every bill due, with Add to Calendar','tasks'),need:'bills'},help],
       markets:numbers, analytics:numbers, stats:numbers,
       'media-center':[find(''),X("What's here",'What is in this library','What is in this library? Group it briefly and mention anything unusual.'),help],
       __music:[find(''),X("What's here",'What is in this library','What is in this music library? Group it briefly by artist or mood.'),help],
-      torrents:[S('Search for…','A title — it uses the search box','Search for '),X('Download status','What is downloading, done or stuck','Which downloads are finished, in progress or stuck, and why might any be stuck?')],
+      torrents:[{label:'Search for…',hint:'A title — typed into the search box and searched',find:''},{...X('Download status','What is downloading, done or stuck','Which downloads are finished, in progress or stuck, and why might any be stuck?'),need:'downloads'}],
       repos:[X('Explain this code','What this repository or file does','What does the code or repository shown here do? Explain its main parts.'),find('in this repository'),help],
       code:[X('Explain this code','What this code does, part by part','What does the code shown here do? Explain its main parts and any likely bugs.'),help],
       vms:[X('What needs attention','Which machines run, stopped or failing','Which virtual machines are running, which are stopped, and does anything need attention?'),help],
@@ -2586,7 +2592,8 @@
       ai:[R('Summarize this chat','The key points of this conversation','summary'),todo],
       translate:[S('Translate…','What to translate, and into which language','Translate into English: ')],
       meme:[S('Caption ideas…','Say what the meme is about','Write five funny captions for a meme about ')],
-      calculator:[X('Explain this result','How the calculation works, step by step','Explain the calculation shown, step by step.')],
+      calculator:[{label:'Work it out…',hint:'Say it in words — the calculator does the maths',calc:true},
+                  {...X('Explain this result','How the calculation works, step by step','Explain the calculation shown, step by step.'),need:'calc'}],
       xdc:[X('What are these apps','What each mini app does','What does each mini app shown here do?'),help],
       chess:games, holdem:games, hangman:games, ttt:games, connect4:games, blackjack:games, __games:games,
       blossom:files, sync:files, __files:files,
@@ -2606,13 +2613,50 @@
       {label:'Plan a fix',hint:'Propose a safe, step-by-step fix for what this terminal window shows.'},
       {label:'Make a script',hint:'Turn the visible terminal task into a reusable script.'}];
     const todo={label:'To-dos & dates',hint:'Every task, request and deadline — with Add to Calendar',recipe:'tasks'};
+    /* A WINDOW OF POSTS GETS BUTTONS ABOUT THE POSTS ("agentic window features are still kinda useless for
+     * the social timeline"). Timeline, notifications, a profile, a thread, a hashtag, bookmarks: every one
+     * is a list of cards, and every answer here names cards -- jump to them, reply to them, find them. */
+    if(!_AI_CONVO.test(view) && _aiFeedPosts(w).length>=(/notif/.test(view)?1:2)) return [
+      {label:'Catch me up',hint:'The topics on screen — each one links to its posts',feed:'digest'},
+      {label:'What needs me',hint:'Posts you would want to answer — each with Draft reply',feed:'needs'},
+      {label:'Draft a reply…',hint:'Pick a post — three replies to choose from, never sent',feed:'pick'},
+      {label:'Find posts about…',hint:'Highlights the posts on screen that match',feed:'find'},
+      {label:'Write a post…',hint:'Tell it what about — it fills in the post box for you to check',starter:'Write a post about '}];
     const own=!_AI_CONVO.test(view) && !/^notes?$/.test(view) && _aiByView(view);
-    if(own) return own;
+    if(own){
+      // The WINDOW decides what it holds, never a dialog open over it (an Add-bill form hid the
+      // window's "No bills yet", and "Bills due" was offered on an empty budget).
+      const root=w.body||w.el, has={
+        results:()=>!!root.querySelector('.ws-results a[href^="http"]'),
+        downloads:()=>!/nothing downloading/i.test(root.innerText||''),
+        bills:()=>!root.querySelector('.bg-empty'),
+        files:()=>!!root.querySelector('[data-sha]'),
+        calc:()=>{ try{ const st=window.PCCalc&&PCCalc.state(); return !!(st&&(st.expr||(st.hist||[]).length)); }catch(_){ return false; } },
+      };
+      return own.filter(x=>!x.need || !has[x.need] || has[x.need]());
+    }
     if(_AI_CONVO.test(key)){
       const canReply=!!composer || !!_aiReplyRef(_aiControls(w));
       return [canReply?{label:'Draft a reply',hint:'Written from this conversation, put in the reply box — never sent',recipe:'draft'}:null,
         {label:'Catch me up',hint:canReply?'What this conversation says and what it needs from you':'What is new here and what needs you',recipe:'summary'},
         todo].filter(Boolean);
+    }
+    /* NOTES READS THE NOTEBOOK, NOT THE SCREEN ("agentic window features useless in notes"). An open note is
+     * shown RENDERED with its textarea hidden, so the composer rule below found no note for any note that
+     * had text, and the panel fell back to summarising the screen. PCNotes says which note is open and what
+     * it holds, and every change goes back through the notebook's own save -- with Undo. */
+    if(/^notes?$/.test(view) && window.PCNotes && PCNotes.current){
+      const cur=PCNotes.current();
+      const find={label:'Find a note about…',hint:'Searches every note by meaning — opens the one you pick',note:'find'};
+      const all={label:"What's in my notes",hint:'Your notebook grouped by topic — each note one click away',note:'overview'};
+      if(cur && (cur.body.trim()||cur.partial)) return [
+        {label:'Tidy this note',hint:'Spelling, grouping, headings — every fact kept, with Undo',note:'tidy'},
+        {label:'Make it a checklist',hint:'- [ ] items you can tick off, with Undo',note:'checklist'},
+        {label:'Continue writing',hint:'The next part, in your style — added to the end, with Undo',note:'continue'},
+        (!cur.title.trim()||/^(untitled|new note|saved)\b/i.test(cur.title.trim()))?{label:'Give it a title',hint:'A short title from what it says',note:'title'}:null,
+        {label:'To-dos & dates',hint:'Every task and deadline in this note — with Add to Calendar',note:'tasks'}, find].filter(Boolean);
+      if(cur) return [{label:'Write it for me…',hint:'Say what about — it writes this note, with Undo',note:'write'},find,all];
+      return [find,all,{label:'New note…',hint:'Say what it should say — saved as a new note',note:'new'}];
     }
     if(/notes?\b/.test(key)){
       const text=composer?String(composer.isContentEditable?composer.textContent:composer.value).trim():'';
@@ -2627,7 +2671,306 @@
     return [{label:'Summarize',hint:'The key points of this window, saved to Notes if you want',recipe:'summary'},todo,
       {label:'Help me with…',hint:'Say what you want done here — it uses this window\'s own buttons',starter:''}];
   }
-  function closeWindowAI(w){ const p=w&&w.aiPanel;if(p){p.remove();w.aiPanel=null;} }
+  /* THE POSTS ON SCREEN, numbered as the server will number them: the first card still visible in the
+   * window's scroller, then the ones below it, at most 30. The text is the EVENT's (Store), not the card's
+   * innerText, which runs the name, "3h" and the action row into every post. A quoted post inside a card
+   * is part of that card, not a post of its own. */
+  function _aiFeedPosts(w){
+    const root=w&&(w.body||w.el); if(!root||w.native!=null) return [];
+    let me=''; try{ me=(PC().me&&PC().me()||{}).pubkey||''; }catch(_){ }
+    // A notification's reply or mention row is a post too (its id is data-open): Notifications is where
+    // the posts that need an answer ARE, and it had no post card for the panel to find.
+    const cards=[...root.querySelectorAll('article.note[data-id], .notif.reply[data-open], .notif.mention[data-open]')]
+      .filter(a=>(a.dataset.id||a.dataset.open) && a.getClientRects().length && !a.closest('.osw-ai-panel') &&
+        !(a.parentElement && a.parentElement.closest('article.note')));
+    const sc=_aiScroller(w), top=sc?sc.getBoundingClientRect().top:0;
+    let start=cards.findIndex(a=>a.getBoundingClientRect().bottom>top+4); if(start<0) start=0;
+    const out=[];
+    for(const a of cards.slice(start)){
+      if(out.length>=30) break;
+      const id=a.dataset.id||a.dataset.open, ev=(window.Store&&Store.get)?Store.get(id):null, pk=a.dataset.pk||(ev&&ev.pubkey)||'';
+      if(!a.dataset.id && !(ev && (ev.kind===1||ev.kind===1111))) continue;
+      const who=((a.querySelector('.hd .name, .notif-hd .name, .notif-hd b')||{}).textContent||'').trim()||'someone';
+      const text=String((ev&&ev.content)||((a.querySelector('.txt')||{}).textContent)||'')
+        .replace(/nostr:n(?:event|ote|pub|profile|addr)1[0-9a-z]+/g,'').replace(/\s+/g,' ').trim();
+      if(!text) continue;
+      out.push({id,pk,who,text:text.slice(0,600),mine:!!me&&pk===me,
+        to_me:!!(ev&&me&&pk!==me&&(ev.tags||[]).some(t=>t[0]==='p'&&t[1]===me))});
+    }
+    return out;
+  }
+  function _aiFeedCard(w,id){ const root=w.body||w.el; try{ const q=CSS.escape(id); return root.querySelector('article.note[data-id="'+q+'"], .notif[data-open="'+q+'"]'); }catch(_){ return null; } }
+  // Show a post: scroll its card into the middle and outline it; a card that has gone (the feed redrew
+  // past it) opens the post instead, so a link in an answer always leads somewhere.
+  function _aiFeedShow(w,p){
+    const c=_aiFeedCard(w,p.id);
+    if(c){ try{ c.scrollIntoView({block:'center',behavior:'smooth'}); }catch(_){ c.scrollIntoView(); }
+           _aiFlash(c,true); setTimeout(()=>_aiFlash(c,false),4000); return true; }
+    try{ PC().openThread(p.id); return true; }catch(_){ return false; }
+  }
+  function _aiFeedClear(w){ try{ (w.body||w.el).querySelectorAll('.ai-found').forEach(c=>c.classList.remove('ai-found')); }catch(_){ } }
+  const _aiSnip=(t,n)=>{ t=String(t||''); return t.length>n?t.slice(0,n-1)+'…':t; };
+  async function _aiFeed(w,panel,kind,opt){
+    opt=opt||{};
+    const box=panel.querySelector('.osw-ai-answer'); if(!box||_aiBusy.has(panel)) return;
+    const posts=opt.posts||_aiFeedPosts(w);
+    box.hidden=false; box.className='osw-ai-answer';
+    if(!posts.length){ box.innerHTML='<p>No posts on screen yet — scroll the timeline, then try again.</p>'; return; }
+    const chip=(p,i)=>`<button class="btn btn-ghost small osw-ai-post" data-post="${i}" title="${enc(_aiSnip(p.text,200))}">↪ ${enc(_aiSnip(p.who,18))} · ${enc(_aiSnip(p.text,26))}</button>`;
+    const bindPosts=()=>box.querySelectorAll('[data-post]').forEach(b=>b.onclick=()=>{ const p=posts[+b.dataset.post]; if(p) _aiFeedShow(w,p); });
+    const bindReply=()=>box.querySelectorAll('[data-reply-to]').forEach(b=>b.onclick=()=>_aiFeed(w,panel,'reply',{posts,target:+b.dataset.replyTo}));
+    if(kind==='pick'){
+      box.innerHTML='<div class="osw-ai-feed-h"><b>Reply to which post?</b></div><div class="osw-ai-pick">'+posts.slice(0,12).map((p,i)=>
+        `<button data-reply-to="${i}"><b>${enc(_aiSnip(p.who,30))}${p.to_me?' · to you':''}</b><span>${enc(_aiSnip(p.text,110))}</span></button>`).join('')+'</div>';
+      bindReply(); return;
+    }
+    if(kind==='find' && !opt.query){
+      box.innerHTML='<form class="osw-ai-find"><input class="input" placeholder="What to look for — “anything about Linux”" aria-label="What to look for"><button class="btn btn-neon small">Find</button></form>';
+      const f=box.querySelector('form'), i=f.querySelector('input');
+      f.onsubmit=e=>{ e.preventDefault(); const q=i.value.trim(); if(q) _aiFeed(w,panel,'find',{posts,query:q}); };
+      setTimeout(()=>i.focus(),0); return;
+    }
+    _aiBusy.add(panel); box.className='osw-ai-answer loading';
+    box.innerHTML='<span class="spinner"></span> '+({digest:'Reading the posts…',needs:'Looking for what needs you…',find:'Looking…',reply:'Writing replies…'})[kind];
+    let res=null, error='';
+    try{ res=await _aiPost({action:'window_feed',recipe:kind,instruction:opt.query||'',target:kind==='reply'?opt.target+1:0,
+                            posts:posts.map(p=>({who:p.who,text:p.text,mine:p.mine,to_me:p.to_me}))}); }
+    catch(e){ error=(e&&e.message)||'Could not reach the AI — check your connection.'; }
+    finally{ _aiBusy.delete(panel); }
+    if(w.aiPanel!==panel) return;
+    if(error){ box.className='osw-ai-answer error'; box.innerHTML=`<p>${enc(error)}</p>`; return; }
+    const feed=(res&&res.feed)||{}; box.className='osw-ai-answer';
+    const at=n=>posts[n-1];
+    if(kind==='digest'){
+      const topics=(feed.topics||[]).filter(t=>(t.posts||[]).some(at));
+      if(!topics.length){ box.innerHTML='<p>Nothing to group here — try again once more posts have loaded.</p>'; return; }
+      box.innerHTML='<div class="osw-ai-feed-h"><b>'+topics.length+' topic'+(topics.length>1?'s':'')+'</b><button class="btn btn-ghost small" data-ai-note>Save to Notes</button></div>'+
+        topics.map(t=>`<div class="osw-ai-topic"><b>${enc(t.title)}</b>${t.summary?`<p>${enc(t.summary)}</p>`:''}<span>${t.posts.filter(at).map(n=>chip(at(n),n-1)).join('')}</span></div>`).join('');
+      bindPosts();
+      const nb=box.querySelector('[data-ai-note]');
+      nb.onclick=async()=>{ nb.disabled=true;
+        const md=topics.map(t=>'## '+t.title+'\n'+(t.summary||'')+'\n'+t.posts.filter(at).map(n=>'- '+at(n).who+': '+_aiSnip(at(n).text,140)+' (nostr:'+_aiNote(at(n).id)+')').join('\n')).join('\n\n');
+        if(await _aiSaveNote('✨ '+(w.title||'Timeline')+' — catch-up',md)) nb.textContent='✓ In Notes'; else nb.disabled=false; };
+      return;
+    }
+    if(kind==='needs'){
+      const items=(feed.items||[]).filter(it=>at(it.n));
+      if(!items.length){ box.innerHTML='<p>Nothing on screen is waiting for you — no questions, mentions or replies to you.</p>'; return; }
+      box.innerHTML='<div class="osw-ai-feed-h"><b>'+items.length+' to answer</b></div>'+items.map(it=>{ const p=at(it.n);
+        return `<div class="osw-ai-topic"><b>${enc(_aiSnip(p.who,30))}</b>${it.why?` <i class="muted">— ${enc(it.why)}</i>`:''}<p>${enc(_aiSnip(p.text,180))}</p>
+          <span><button class="btn btn-neon small" data-reply-to="${it.n-1}">Draft reply</button><button class="btn btn-ghost small osw-ai-post" data-post="${it.n-1}">Show</button></span></div>`; }).join('');
+      bindPosts(); bindReply(); return;
+    }
+    if(kind==='find'){
+      const nums=(feed.posts||[]).filter(at); _aiFeedClear(w);
+      nums.forEach(n=>{ const c=_aiFeedCard(w,at(n).id); if(c) c.classList.add('ai-found'); });
+      if(!nums.length){ box.innerHTML=`<p>No post on screen is about “${enc(opt.query)}”.</p><div class="osw-ai-do"><button class="btn btn-ghost small" data-ai-again>Look for something else</button></div>`; }
+      else{ box.innerHTML=`<div class="osw-ai-feed-h"><b>${nums.length} post${nums.length>1?'s':''} about “${enc(_aiSnip(opt.query,40))}”</b><button class="btn btn-ghost small" data-ai-again>New search</button></div>`+
+              nums.map(n=>`<div class="osw-ai-topic"><p>${enc(_aiSnip(at(n).text,160))}</p><span>${chip(at(n),n-1)}</span></div>`).join('');
+            _aiFeedShow(w,at(nums[0])); }
+      bindPosts(); box.querySelector('[data-ai-again]').onclick=()=>_aiFeed(w,panel,'find',{posts}); return;
+    }
+    const p=posts[opt.target], replies=feed.replies||[];
+    box.innerHTML=`<div class="osw-ai-feed-h"><b>Reply to ${enc(_aiSnip(p.who,30))}</b>${chip(p,opt.target)}</div>`+replies.map((r,i)=>
+      `<div class="osw-ai-topic"><p>${enc(r)}</p><span><button class="btn btn-neon small" data-use="${i}">Use this</button><button class="btn btn-ghost small" data-copy-r="${i}">Copy</button></span></div>`).join('')+
+      '<div class="osw-ai-do"><button class="btn btn-ghost small" data-ai-more>Three more</button><button class="btn btn-ghost small" data-ai-back>Another post</button></div>';
+    bindPosts();
+    box.querySelectorAll('[data-use]').forEach(b=>b.onclick=()=>{
+      // Into THIS post's reply box, never sent: the composer opens with the text for the person to edit and post.
+      try{ PC().compose({reply:p.id,replyPk:p.pk,text:replies[+b.dataset.use]}); closeWindowAI(w); }
+      catch(_){ try{ PC().copyValue(replies[+b.dataset.use]); }catch(__){ } } });
+    box.querySelectorAll('[data-copy-r]').forEach(b=>b.onclick=()=>{ try{ PC().copyValue(replies[+b.dataset.copyR]); }catch(_){ } });
+    box.querySelector('[data-ai-more]').onclick=()=>_aiFeed(w,panel,'reply',{posts,target:opt.target});
+    box.querySelector('[data-ai-back]').onclick=()=>_aiFeed(w,panel,'pick',{posts});
+  }
+  // An inline "what?" box inside the answer, for the buttons that need a few words before they can run.
+  function _aiAskInline(box,placeholder,label,go){
+    box.hidden=false; box.className='osw-ai-answer';
+    box.innerHTML=`<form class="osw-ai-find"><input class="input" placeholder="${enc(placeholder)}" aria-label="${enc(placeholder)}"><button class="btn btn-neon small">${enc(label)}</button></form>`;
+    const f=box.querySelector('form'), i=f.querySelector('input');
+    f.onsubmit=e=>{ e.preventDefault(); const q=i.value.trim(); if(q) go(q); };
+    setTimeout(()=>i.focus(),0);
+  }
+  async function _aiNotes(w,panel,kind,opt){
+    opt=opt||{};
+    const box=panel.querySelector('.osw-ai-answer'); if(!box||_aiBusy.has(panel)) return;
+    const N=window.PCNotes, cur=N&&N.current?N.current():null;
+    // To-dos read THIS note only: the screen also lists every other note's opening lines, and the task
+    // list came back with the server to-dos of a different note (measured).
+    if(kind==='tasks'){
+      if(!(cur && cur.body.trim())) return;
+      return _aiSteps(w,panel,[{title:cur.title||'Note',view:'notes',kind:'PosterChan app',selection:cur.body.slice(0,4000),text:''}],
+                      'To-dos & dates',null,[],false,{recipe:'tasks'});
+    }
+    if(kind==='find' && !opt.query) return _aiAskInline(box,'What to look for — “the wifi password”, “tax stuff”','Find',q=>_aiNotes(w,panel,'find',{query:q}));
+    if((kind==='write'||kind==='new') && !opt.query) return _aiAskInline(box,'What should it say? — “packing list for a beach weekend”','Write',q=>_aiNotes(w,panel,kind,{query:q}));
+    const spin=t=>{ box.hidden=false; box.className='osw-ai-answer loading'; box.innerHTML='<span class="spinner"></span> '+t; };
+    const fail=m=>{ box.className='osw-ai-answer error'; box.innerHTML=`<p>${enc(m)}</p>`; };
+    _aiBusy.add(panel);
+    let res=null, error='', notes=[];
+    try{
+      if(kind==='find'||kind==='overview'){
+        spin('Reading your notes…');
+        notes=await N.list(80);
+        if(!notes.length) throw new Error('There are no notes yet.');
+        res=await _aiPost({action:'window_feed',subject:'notes',recipe:kind==='find'?'find':'digest',instruction:opt.query||'',
+                           posts:notes.map(n=>({who:n.title,text:n.snippet}))});
+      }else{
+        if(kind!=='write' && kind!=='new' && !(cur && cur.body.trim())) throw new Error(cur&&cur.partial?'This note is still loading — try again in a moment.':'Open a note with some text in it first.');
+        spin(({tidy:'Tidying…',checklist:'Making a checklist…',continue:'Writing the next part…',title:'Thinking of a title…'})[kind]||'Writing…');
+        res=await _aiPost({action:'window_note',recipe:kind==='new'?'write':kind,title:cur?cur.title:'',text:cur?cur.body:'',instruction:opt.query||''});
+      }
+    }catch(e){ error=(e&&e.message)||'Could not reach the AI — check your connection.'; }
+    finally{ _aiBusy.delete(panel); }
+    if(w.aiPanel!==panel) return;
+    if(error) return fail(error);
+    box.className='osw-ai-answer';
+    const open=async id=>{ try{ if(await N.select(id)) closeWindowAI(w); else PC().toast('That note is not here any more'); }catch(_){ } };
+    if(kind==='find'||kind==='overview'){
+      const feed=(res&&res.feed)||{}, at=n=>notes[n-1];
+      const chip=n=>`<button class="btn btn-ghost small osw-ai-post" data-open-note="${enc(at(n).id)}">📝 ${enc(_aiSnip(at(n).title,40))}</button>`;
+      if(kind==='find'){
+        const hits=(feed.posts||[]).filter(at);
+        box.innerHTML=hits.length?`<div class="osw-ai-feed-h"><b>${hits.length} note${hits.length>1?'s':''} about “${enc(_aiSnip(opt.query,40))}”</b><button class="btn btn-ghost small" data-ai-again>New search</button></div>`+
+          hits.map(n=>`<div class="osw-ai-topic"><span>${chip(n)}</span>${at(n).snippet?`<p>${enc(_aiSnip(at(n).snippet,160))}</p>`:''}</div>`).join('')
+          :`<p>No note is about “${enc(opt.query)}”.</p><div class="osw-ai-do"><button class="btn btn-ghost small" data-ai-again>Look for something else</button></div>`;
+        box.querySelector('[data-ai-again]').onclick=()=>_aiNotes(w,panel,'find');
+      }else{
+        const topics=(feed.topics||[]).filter(t=>(t.posts||[]).some(at));
+        box.innerHTML=topics.length?`<div class="osw-ai-feed-h"><b>${topics.length} topic${topics.length>1?'s':''} in ${notes.length} notes</b></div>`+
+          topics.map(t=>`<div class="osw-ai-topic"><b>${enc(t.title)}</b>${t.summary?`<p>${enc(t.summary)}</p>`:''}<span>${t.posts.filter(at).map(chip).join('')}</span></div>`).join('')
+          :'<p>Could not group these notes — try again.</p>';
+      }
+      box.querySelectorAll('[data-open-note]').forEach(b=>b.onclick=()=>open(b.dataset.openNote));
+      return;
+    }
+    const r=(res&&res.note)||{};
+    const shown=kind==='title'?r.title:kind==='continue'?r.append:r.body;
+    const verb=({tidy:'Replace the note',checklist:'Replace the note',continue:'Add to the end',title:'Use this title',write:'Put it in this note',new:'Save as a new note'})[kind];
+    box.innerHTML=(kind==='write'||kind==='new')&&r.title?`<div class="osw-ai-feed-h"><b>${enc(r.title)}</b></div>`:'';
+    box.innerHTML+=`<div class="osw-ai-text">${_aiFormat(shown||'')}</div>
+      <div class="osw-ai-do"><button class="btn btn-neon small" data-apply>${enc(verb)}</button><button class="btn btn-ghost small" data-copy-n>Copy</button>
+      <button class="btn btn-ghost small" data-again-n>Try again</button><button class="btn btn-ghost small" data-undo-n hidden>Undo</button></div>`;
+    box.querySelector('[data-copy-n]').onclick=()=>{ try{ PC().copyValue(shown); }catch(_){ } };
+    box.querySelector('[data-again-n]').onclick=()=>_aiNotes(w,panel,kind,opt);
+    const ap=box.querySelector('[data-apply]'), un=box.querySelector('[data-undo-n]');
+    ap.onclick=async()=>{
+      ap.disabled=true;
+      try{
+        if(kind==='new'){
+          const made=await N.save({title:r.title||'New note',body:r.body||''});
+          ap.textContent='✓ Saved'; if(made&&made.id) await N.select(made.id); return;
+        }
+        const before={title:cur.title,body:cur.body}, id=cur.id;
+        const change=kind==='title'?{title:r.title}:kind==='continue'?{body:cur.body.replace(/\s+$/,'')+'\n\n'+r.append}:
+                     kind==='write'?Object.assign({body:r.body},(!cur.title.trim()||/^(untitled|new note|saved)\b/i.test(cur.title.trim()))&&r.title?{title:r.title}:{}):{body:r.body};
+        await N.update(id,change);
+        ap.textContent='✓ Done'; un.hidden=false;
+        un.onclick=async()=>{ un.disabled=true; try{ await N.update(id,before); un.textContent='✓ Put back'; ap.disabled=false; ap.textContent=verb; }catch(e){ PC().toast((e&&e.message)||'Could not put it back'); un.disabled=false; } };
+      }catch(e){ PC().toast('Could not save — '+((e&&e.message)||'try again')); ap.disabled=false; }
+    };
+  }
+  /* "What's coming up" ANSWERS FROM THE CALENDAR, NOT FROM THE MODEL. Asked of the model, an empty calendar
+   * came back with six invented meetings. The events and the clashes (two timed events that overlap) are
+   * facts the calendar already has, so nothing here is generated -- and nothing can be made up. */
+  async function _aiUpcoming(w,panel,mode){
+    const box=panel.querySelector('.osw-ai-answer'); if(!box) return;
+    box.hidden=false; box.className='osw-ai-answer loading'; box.innerHTML='<span class="spinner"></span> Reading your calendar…';
+    let r=null; try{ r=window.PCCalendar&&PCCalendar.upcoming?await PCCalendar.upcoming(30):null; }catch(_){ }
+    if(w.aiPanel!==panel) return;
+    box.className='osw-ai-answer';
+    if(!r){ box.innerHTML='<p>The calendar could not be read — try again in a moment.</p>'; return; }
+    if(r.off){ box.innerHTML='<p>The calendar is not turned on on this server, so there is nothing on it yet.</p>'; return; }
+    const ev=r.events||[];
+    if(mode==='free'){
+      // Free time between 08:00 and 20:00 on each of the next 7 days, from the timed events booked.
+      const pad=n=>String(n).padStart(2,'0'), hm=t=>{ const d=new Date(t); return pad(d.getHours())+':'+pad(d.getMinutes()); };
+      const rows=[]; const now=new Date();
+      for(let k=0;k<7;k++){
+        const d=new Date(now.getFullYear(),now.getMonth(),now.getDate()+k), key=d.getFullYear()+'-'+pad(d.getMonth()+1)+'-'+pad(d.getDate());
+        const lo=Math.max(new Date(d).setHours(8,0,0,0), k?0:now.getTime()), hi=new Date(d).setHours(20,0,0,0);
+        if(ev.some(e=>e.allDay&&e.day===key)){ rows.push([d,'busy all day']); continue; }
+        const busy=ev.filter(e=>!e.allDay&&e.end>lo&&e.start<hi).sort((a,b)=>a.start-b.start);
+        const free=[]; let t=lo;
+        for(const e of busy){ if(e.start-t>=30*60000) free.push(hm(t)+'–'+hm(e.start)); t=Math.max(t,e.end); }
+        if(hi-t>=30*60000) free.push(hm(t)+'–'+hm(hi));
+        rows.push([d, free.length?free.join(', '):'no free time']);
+      }
+      box.innerHTML='<div class="osw-ai-feed-h"><b>Free time, next 7 days</b><span class="muted">08:00–20:00</span></div>'+
+        rows.map(([d,t])=>`<div class="osw-ai-cal"><span>${enc(d.toLocaleDateString(undefined,{weekday:'short',day:'numeric'}))}</span><b>${enc(t)}</b></div>`).join('');
+      return;
+    }
+    if(!ev.length){ box.innerHTML='<p>Nothing on your calendar in the next '+r.span+' days.</p><div class="osw-ai-do"><button class="btn btn-ghost small" data-ai-add>Add an event</button></div>';
+      box.querySelector('[data-ai-add]').onclick=()=>{ try{ PCCalendar.draft({}); closeWindowAI(w); }catch(_){ } }; return; }
+    const clash=new Set();
+    for(let i=0;i<ev.length;i++) for(let j=i+1;j<ev.length && ev[j].start<ev[i].end;j++)
+      if(!ev[i].allDay && !ev[j].allDay && ev[j].start<ev[i].end){ clash.add(i); clash.add(j); }
+    const dayName=k=>{ try{ const [y,m,d]=k.split('-').map(Number); return new Date(y,m-1,d).toLocaleDateString(undefined,{weekday:'short',month:'short',day:'numeric'}); }catch(_){ return k; } };
+    let last='', html='<div class="osw-ai-feed-h"><b>'+ev.length+' coming up</b>'+(clash.size?'<span class="muted">⚠ '+clash.size+' overlap</span>':'')+'</div>';
+    ev.forEach((e,i)=>{ if(e.day!==last){ html+=`<div class="osw-ai-topic"><b>${enc(dayName(e.day))}</b></div>`; last=e.day; }
+      html+=`<div class="osw-ai-cal${clash.has(i)?' clash':''}"><span>${enc(e.allDay?'all day':e.time)}</span><b>${enc(e.title)}</b>${e.where?` <i class="muted">${enc(e.where)}</i>`:''}${clash.has(i)?' <i class="muted">⚠ overlaps</i>':''}</div>`; });
+    box.innerHTML=html+'<div class="osw-ai-do"><button class="btn btn-ghost small" data-ai-copy-cal>Copy</button></div>';
+    box.querySelector('[data-ai-copy-cal]').onclick=()=>{ try{ PC().copyValue(ev.map(e=>e.day+' '+(e.allDay?'all day':e.time)+' '+e.title).join('\n')); }catch(_){ } };
+  }
+  // The window's own search box: a visible text field whose label says search/find/filter.
+  function _aiSearchBox(w){
+    const root=_aiRoot(w);
+    return [...root.querySelectorAll('input:not([type=hidden]):not([type=checkbox]):not([type=radio]):not([type=file]),[role=searchbox]')]
+      .find(i=>!i.closest('.osw-ai-panel') && i.getClientRects().length && !i.disabled &&
+        (i.type==='search' || i.getAttribute('role')==='searchbox' ||
+         /search|find|filter/i.test((i.getAttribute('aria-label')||'')+' '+(i.placeholder||'')+' '+(i.name||'')+' '+(i.id||'')+' '+(i.className||''))))||null;
+  }
+  function _aiFindIn(w,panel,q,x){
+    const box=panel.querySelector('.osw-ai-answer'), el=_aiSearchBox(w);
+    if(!el){ box.innerHTML='<p>This window has no search box — asking the AI to look instead.</p>';
+      const ta=panel.querySelector('textarea'); if(ta){ ta.value='Find '+q; panel.querySelector('[data-ai-ask]').click(); } return; }
+    _aiType(el,q);
+    // Searches that filter as you type are done; the rest search on Enter -- a form's submit, else the key.
+    try{ if(el.form && el.form.requestSubmit) el.form.requestSubmit();
+         else{ el.dispatchEvent(new KeyboardEvent('keydown',{key:'Enter',code:'Enter',keyCode:13,bubbles:true})); el.dispatchEvent(new KeyboardEvent('keyup',{key:'Enter',code:'Enter',keyCode:13,bubbles:true})); } }catch(_){ }
+    _aiFlash(el,true); setTimeout(()=>_aiFlash(el,false),2500);
+    box.className='osw-ai-answer';
+    box.innerHTML=`<p>Searching this window for “${enc(q)}”.</p><div class="osw-ai-do"><button class="btn btn-ghost small" data-ai-clear-find>Clear the search</button><button class="btn btn-ghost small" data-ai-again>Something else</button></div>`;
+    box.querySelector('[data-ai-clear-find]').onclick=()=>{ _aiType(el,''); box.hidden=true; };
+    box.querySelector('[data-ai-again]').onclick=()=>_aiAskInline(box,'What to look for','Find',q2=>_aiFindIn(w,panel,q2,x));
+  }
+  async function _aiCalc(w,panel,said){
+    const box=panel.querySelector('.osw-ai-answer');
+    box.className='osw-ai-answer loading'; box.innerHTML='<span class="spinner"></span> Working it out…';
+    let r=null, error='';
+    try{ r=await _aiPost({action:'window_calc',instruction:said}); }catch(e){ error=(e&&e.message)||'Could not reach the AI'; }
+    if(w.aiPanel!==panel) return;
+    const c=(r&&r.calc)||{}; let v=null;
+    // The calculator's own evaluator does the arithmetic -- the model only wrote the expression.
+    if(!error){ try{ v=PCCalc.evaluate(c.expression,{deg:!!(PCCalc.state()||{}).deg}); }catch(e){ error='That did not work out: '+((e&&e.message)||'not a calculation'); } }
+    if(error){ box.className='osw-ai-answer error'; box.innerHTML=`<p>${enc(error)}</p>`; return; }
+    const shown=PCCalc.format?PCCalc.format(v):String(v);
+    box.className='osw-ai-answer';
+    box.innerHTML=`${c.what?`<div class="osw-ai-feed-h"><b>${enc(c.what)}</b></div>`:''}<div class="osw-ai-calc"><code>${enc(c.expression)}</code> = <b>${enc(shown)}</b></div>
+      <div class="osw-ai-do"><button class="btn btn-neon small" data-ai-calc-put>Put it in the calculator</button><button class="btn btn-ghost small" data-ai-calc-copy>Copy ${enc(shown)}</button></div>`;
+    box.querySelector('[data-ai-calc-copy]').onclick=()=>{ try{ PC().copyValue(String(shown).replace(/,/g,'')); }catch(_){ } };
+    box.querySelector('[data-ai-calc-put]').onclick=()=>{
+      try{ PCCalc.press('clear'); for(const t of (PCCalc.tokenize?_aiCalcKeys(c.expression):[c.expression])) PCCalc.press(t); PCCalc.press('eq'); }catch(_){ }
+      closeWindowAI(w); };
+  }
+  // Keys for the calculator's press(): function names stay whole ("sqrt("), everything else one character.
+  function _aiCalcKeys(expr){ return String(expr).match(/sqrt\(|sin\(|cos\(|tan\(|ln\(|log\(|./g)||[]; }
+  async function _aiContact(w,panel,said){
+    const box=panel.querySelector('.osw-ai-answer');
+    box.className='osw-ai-answer loading'; box.innerHTML='<span class="spinner"></span> Filling in the form…';
+    let r=null, error='';
+    try{ r=await _aiPost({action:'window_contact',instruction:said}); }catch(e){ error=(e&&e.message)||'Could not reach the AI'; }
+    if(w.aiPanel!==panel) return;
+    if(error){ box.className='osw-ai-answer error'; box.innerHTML=`<p>${enc(error)}</p>`; return; }
+    const c=(r&&r.contact)||{};
+    box.className='osw-ai-answer';
+    if(!(window.PCContacts&&PCContacts.draft)){ box.innerHTML='<p>Contacts is not loaded in this window.</p>'; return; }
+    // The app's own New contact form, filled in: nothing is saved until the person presses Save there.
+    if(await PCContacts.draft(c)) closeWindowAI(w);
+    else box.innerHTML='<p>Could not open the New contact form — make an addressbook first.</p>';
+  }
+  function _aiNote(id){ try{ return NostrTools.nip19.noteEncode(id); }catch(_){ return id; } }
+  function closeWindowAI(w){ const p=w&&w.aiPanel;if(p){p.remove();w.aiPanel=null;} if(w) _aiFeedClear(w); }
   /* WHERE "Open in AI" GOES. In a popped-out window (PosterChanOS: Social, Notes, Files… are each
    * their own toplevel) the AI screen must open on the DESKTOP, in its own window -- asked here, it
    * would repaint the very window the person asked about. No desktop to ask: this page, as before. */
@@ -3207,6 +3550,12 @@
     const clear=panel.querySelector('[data-ai-clear]');if(clear)clear.onclick=()=>{_aiContextWins.forEach(x=>x.el.classList.remove('ai-context'));_aiContextWins.clear();closeWindowAI(w);toggleWindowAI(w,button);};
     panel.querySelectorAll('[data-ai-action]').forEach(b=>b.onclick=()=>{
       const x=suggestions[+b.dataset.aiAction]; if(!x) return;
+      if(x.feed){ panel._aiRounds=0; _aiFeed(w,panel,x.feed); return; }
+      if(x.note){ panel._aiRounds=0; _aiNotes(w,panel,x.note); return; }
+      if(x.cal){ _aiUpcoming(w,panel,x.cal); return; }
+      if(x.find!=null){ _aiAskInline(panel.querySelector('.osw-ai-answer'),'What to look for','Find',q=>_aiFindIn(w,panel,q,x)); return; }
+      if(x.calc){ _aiAskInline(panel.querySelector('.osw-ai-answer'),'e.g. “15% tip on 84.50 split 3 ways”','Work it out',q=>_aiCalc(w,panel,q)); return; }
+      if(x.contact){ _aiAskInline(panel.querySelector('.osw-ai-answer'),'Who? — “Bob Smith, 555-0142, bob@acme.com”','Add',q=>_aiContact(w,panel,q)); return; }
       if(x.starter!=null){ ta.value=x.starter; ta.focus(); try{ ta.setSelectionRange(ta.value.length,ta.value.length); }catch(_){ } return; }
       if(!x.recipe){ ask(x.hint); return; }
       panel._aiRounds=0;

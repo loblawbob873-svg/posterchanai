@@ -50,6 +50,10 @@ class AssistReq(BaseModel):
     reply_ref: Optional[int] = None   # action=window_recipe: the window's own Reply control, when its box is closed
     box_ref: Optional[int] = None     # action=window_recipe: the text box a tidied note replaces
     box_label: str = ""
+    posts: list = []              # action=window_feed: the timeline's posts on screen, in order
+    target: int = 0               # action=window_feed recipe=reply: the post (1-based) to reply to
+    subject: str = "posts"        # action=window_feed: "posts" (a timeline) or "notes" (the notebook)
+    title: str = ""               # action=window_note: the open note's title
 
 
 @router.post("")
@@ -86,6 +90,15 @@ async def chat_assist(req: AssistReq, db: Session = Depends(get_db),
             return {"ok": True, **(await svc.window_recipe(
                 db, user, [w.model_dump() for w in req.windows], req.recipe, req.today, req.text,
                 req.instruction, req.reply_ref, req.box_ref, req.box_label))}
+        if action == "window_feed":
+            return {"ok": True, **(await svc.window_feed(
+                db, user, req.posts, req.recipe, req.instruction, req.target, req.subject))}
+        if action == "window_calc":
+            return {"ok": True, **(await svc.window_calc(db, user, req.instruction))}
+        if action == "window_contact":
+            return {"ok": True, **(await svc.window_contact(db, user, req.instruction))}
+        if action == "window_note":
+            return {"ok": True, **(await svc.window_note(db, user, req.recipe, req.title, req.text, req.instruction))}
         if action == "window":
             return {"ok": True, "answer": await svc.ask_window(
                 db, user, [w.model_dump() for w in req.windows], req.instruction)}

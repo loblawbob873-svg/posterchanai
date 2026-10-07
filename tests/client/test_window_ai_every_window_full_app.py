@@ -61,13 +61,21 @@ def test_every_window_has_its_own_buttons_and_secret_windows_have_none():
         await desktop.login(b)
         await b.js("try{ if(window.PCOS && PCOS.isOn()) PCOS.exit(); }catch(_){}")
         got["walk"] = await b.js(WALK % json.dumps(EXTRAS))
-        # A fixed question goes out with the window: Calendar's first button.
-        await b.js("PCOSWin.isWindow=()=>true;PCOSWin.viewOf=()=>'calendar';"
+        # A fixed question goes out with the window: Budget's first button.
+        await b.js("PCOSWin.isWindow=()=>true;PCOSWin.viewOf=()=>'budget';"
                    "(()=>{const x=document.createElement('button');document.body.appendChild(x);PCOS.pageWindowAI(x,{});})()")
         await b.until("!!document.querySelector('.osw-ai-panel [data-ai-action]')")
         await b.js("document.querySelector('.osw-ai-panel [data-ai-action]').click()")
         await b.until("__sent.length>0")
-        got["cal"] = await b.js("__sent[__sent.length-1]")
+        got["budget"] = await b.js("__sent[__sent.length-1]")
+        # Calendar's "What's coming up" answers from the calendar itself and sends NOTHING to the model:
+        # asked of the model, an empty calendar came back with six invented meetings.
+        await b.js("document.querySelector('.osw-ai-panel [data-ai-dismiss]').click();PCOSWin.viewOf=()=>'calendar';"
+                   "window.__calBefore=__sent.length;(()=>{const x=document.createElement('button');document.body.appendChild(x);PCOS.pageWindowAI(x,{});})()")
+        await b.until("!!document.querySelector('.osw-ai-panel [data-ai-action]')")
+        await b.js("document.querySelector('.osw-ai-panel [data-ai-action]').click()")
+        await b.until("(document.querySelector('.osw-ai-panel .osw-ai-answer')||{}).className==='osw-ai-answer'")
+        got["cal"] = await b.js("({sent:__sent.length-__calBefore, text:document.querySelector('.osw-ai-panel .osw-ai-answer').innerText})")
 
     asyncio.run(desktop.with_browser("online", "", check))
     walk = got["walk"]
@@ -79,5 +87,8 @@ def test_every_window_has_its_own_buttons_and_secret_windows_have_none():
     assert generic == [], f"these windows got only the generic buttons: {generic}"
     empty = sorted(v for v, r in walk.items() if not r["private"] and not r["labels"])
     assert empty == [], f"these windows got no buttons at all: {empty}"
+    bud = got["budget"]
+    assert bud["action"] == "window_recipe" and bud["recipe"] == "explain" and "this month" in bud["instruction"], bud
     cal = got["cal"]
-    assert cal["action"] == "window_recipe" and cal["recipe"] == "explain" and "coming up" in cal["instruction"], cal
+    assert cal["sent"] == 0, ("What's coming up asked the model instead of reading the calendar", cal)
+    assert "calendar" in cal["text"].lower(), cal
