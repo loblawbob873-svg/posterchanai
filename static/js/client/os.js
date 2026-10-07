@@ -2566,16 +2566,17 @@
       streams:[X("What's live",'Who is streaming and what about','Which streams are live, who is streaming, and what are they about?'),help],
       calls:[X('Missed calls','Who called, what you missed, who to call back','Who called me, which calls did I miss, and who should I call back?'),todo],
       calendar:[{label:"What's coming up",hint:'Your next 30 days, in order — and anything that clashes',cal:'upcoming'},
-                S('Add an event…','Say what and when — it fills in the calendar','Add to my calendar: '),{label:'When am I free?',hint:'Free hours on each of the next 7 days, from what is booked',cal:'free'}],
+                {label:'Add an event…',hint:'Say what and when — the New event form opens filled in',event:true},{label:'When am I free?',hint:'Free hours on each of the next 7 days, from what is booked',cal:'free'}],
       contacts:[find(''),{label:'Add a contact…',hint:'Name, number, email — opens a filled-in New contact form',contact:true},X('Who is here','An overview — duplicates and missing details','Give a short overview of the contacts shown: how many, and any that look like duplicates or are missing a phone number or email.'),help],
       // `need`: offered only when the window holds what the button is ABOUT. Measured on empty windows: "Which
       // results answer it" with no search done ranked the screen's own tab names, "Download status" with
       // nothing downloading answered "All downloads are stuck", "Bills due" with no bills found nothing.
-      websearch:[{...X('Which results answer it','The results that answer the search best','Which of these search results best answer the search, and what does each say? Name each by its title.'),need:'results'},
+      websearch:[{label:'Which results answer it',hint:'The results that answer your search, with why — each opens in the reader',web:'rank',need:'results'},
                  {...R('Save key points','The main points, ready for Notes','summary'),need:'results'},
                  {label:'Search the web for…',hint:'Typed into the search box and searched',find:''}],
       budget:[X('Explain my month','Income, paid, still due — and what is left','Explain this month: income, what is paid, what is still due and when, and how much is left.'),
-              {...R('Bills due → Calendar','Every bill due, with Add to Calendar','tasks'),need:'bills'},help],
+              {...R('Bills due → Calendar','Every bill due, with Add to Calendar','tasks'),need:'bills'},
+              {label:'Add a bill…',hint:'Say it — “electric $84.20 due the 15th” — then check it and save',bill:true},help],
       markets:numbers, analytics:numbers, stats:numbers,
       'media-center':[find(''),X("What's here",'What is in this library','What is in this library? Group it briefly and mention anything unusual.'),help],
       __music:[find(''),X("What's here",'What is in this library','What is in this music library? Group it briefly by artist or mood.'),help],
@@ -2933,6 +2934,64 @@
     box.innerHTML=`<p>Searching this window for “${enc(q)}”.</p><div class="osw-ai-do"><button class="btn btn-ghost small" data-ai-clear-find>Clear the search</button><button class="btn btn-ghost small" data-ai-again>Something else</button></div>`;
     box.querySelector('[data-ai-clear-find]').onclick=()=>{ _aiType(el,''); box.hidden=true; };
     box.querySelector('[data-ai-again]').onclick=()=>_aiAskInline(box,'What to look for','Find',q2=>_aiFindIn(w,panel,q2,x));
+  }
+  /* ADD AN EVENT / ADD A BILL: one sentence in, the app's OWN form out, filled in, nothing saved until the person
+   * presses Save there. "Add an event…" used to be a starter for the free-form agent, which had to open the
+   * form and then plan fields it had not seen; the event reader (window_event) and the bill reader
+   * (/api/budget/scan, the same one a photo goes through -- it takes text/plain) already exist. */
+  async function _aiEvent(w,panel,said){
+    const box=panel.querySelector('.osw-ai-answer');
+    box.className='osw-ai-answer loading'; box.innerHTML='<span class="spinner"></span> Reading the date…';
+    let j=null, error='';
+    try{ j=await _aiPost({action:'window_event',windows:[{title:'Calendar',view:'calendar',kind:'PosterChan app',selection:said,text:''}],answer:said,today:_aiToday()}); }
+    catch(e){ error=(e&&e.message)||'Could not reach the AI'; }
+    if(w.aiPanel!==panel) return;
+    if(error || !(j&&j.event)){ box.className='osw-ai-answer error'; box.innerHTML=`<p>${enc(error||'No date in that — say when, like “Friday 2pm”.')}</p>`; return; }
+    if(await _aiCalendar(j.event)) closeWindowAI(w);
+    else{ box.className='osw-ai-answer error'; box.innerHTML='<p>Could not open the New event form.</p>'; }
+  }
+  async function _aiBill(w,panel,said){
+    const box=panel.querySelector('.osw-ai-answer');
+    box.className='osw-ai-answer loading'; box.innerHTML='<span class="spinner"></span> Reading the bill…';
+    let d=null, error='';
+    try{
+      const P=PC(); try{ if(P.ensureAiSession) await P.ensureAiSession(); }catch(_){ }
+      const fd=new FormData(); fd.append('file', new Blob([said],{type:'text/plain'}), 'bill.txt');
+      const r=await (P.authFetch?P.authFetch('/api/budget/scan',{method:'POST',body:fd}):fetch('/api/budget/scan',{method:'POST',body:fd,credentials:'include'}));
+      if(!r.ok) throw new Error(r.status===401||r.status===403?'your account can’t use AI features':'the AI could not read that');
+      d=await r.json();
+    }catch(e){ error=(e&&e.message)||'Could not reach the AI'; }
+    if(w.aiPanel!==panel) return;
+    if(error || !d || d.type!=='bill'){ box.className='osw-ai-answer error'; box.innerHTML=`<p>${enc(error||(d&&d.content)||'Could not read a bill in that — say the name and the amount.')}</p>`; return; }
+    if(window.PCBudget && PCBudget.reviewParsed){ closeWindowAI(w); PCBudget.reviewParsed(d); }
+    else{ box.className='osw-ai-answer error'; box.innerHTML='<p>Budget is not loaded in this window.</p>'; }
+  }
+  /* WHICH RESULTS ANSWER IT, BY NUMBER: the result cards on screen (site, title, snippet) go out numbered, the
+   * model names the ones that answer the search and why, and each answer row opens THAT result in the reader. */
+  async function _aiWebRank(w,panel){
+    const box=panel.querySelector('.osw-ai-answer'), root=w.body||w.el;
+    const cards=[...root.querySelectorAll('.ws-card[data-i]')].filter(c=>c.getClientRects().length).slice(0,20);
+    if(!cards.length){ box.hidden=false; box.className='osw-ai-answer'; box.innerHTML='<p>No results on screen — search first.</p>'; return; }
+    const items=cards.map(c=>({card:c, who:((c.querySelector('.ws-src')||{}).textContent||'').trim()||'web',
+      title:((c.querySelector('.ws-title')||{}).textContent||'').trim(), snip:((c.querySelector('.ws-snip')||{}).textContent||'').trim()}));
+    const q=((root.querySelector('#ws-form input, .ws-q, input[type=search]')||{}).value||'').trim();
+    box.hidden=false; box.className='osw-ai-answer loading'; box.innerHTML='<span class="spinner"></span> Reading the results…';
+    let r=null, error='';
+    try{ r=await _aiPost({action:'window_feed',subject:'results',recipe:'needs',instruction:q,
+                          posts:items.map(it=>({who:it.who,text:(it.title+' — '+it.snip).slice(0,600)}))}); }
+    catch(e){ error=(e&&e.message)||'Could not reach the AI'; }
+    if(w.aiPanel!==panel) return;
+    if(error){ box.className='osw-ai-answer error'; box.innerHTML=`<p>${enc(error)}</p>`; return; }
+    const picks=(((r||{}).feed||{}).items||[]).filter(it=>items[it.n-1]);
+    box.className='osw-ai-answer';
+    if(!picks.length){ box.innerHTML=`<p>None of these results answer “${enc(_aiSnip(q,60))}” — try different words.</p>`; return; }
+    box.innerHTML='<div class="osw-ai-feed-h"><b>'+picks.length+' answer'+(picks.length>1?'':'s')+' it</b></div>'+picks.map((it,k)=>{ const x=items[it.n-1];
+      return `<div class="osw-ai-topic"><b>${enc(_aiSnip(x.title,90))}</b> <span class="muted small">${enc(x.who)}</span>${it.why?`<p>${enc(it.why)}</p>`:''}
+        <span><button class="btn btn-neon small" data-web-read="${it.n-1}">📄 Read here</button><button class="btn btn-ghost small" data-web-show="${it.n-1}">Show</button></span></div>`; }).join('');
+    box.querySelectorAll('[data-web-read]').forEach(b=>b.onclick=()=>{ const c=items[+b.dataset.webRead].card, rd=c&&c.querySelector('.ws-read');
+      if(rd){ closeWindowAI(w); rd.click(); } });
+    box.querySelectorAll('[data-web-show]').forEach(b=>b.onclick=()=>{ const c=items[+b.dataset.webShow].card;
+      if(c){ try{ c.scrollIntoView({block:'center',behavior:'smooth'}); }catch(_){ c.scrollIntoView(); } _aiFlash(c,true); setTimeout(()=>_aiFlash(c,false),3000); } });
   }
   async function _aiCalc(w,panel,said){
     const box=panel.querySelector('.osw-ai-answer');
@@ -3554,6 +3613,9 @@
       if(x.note){ panel._aiRounds=0; _aiNotes(w,panel,x.note); return; }
       if(x.cal){ _aiUpcoming(w,panel,x.cal); return; }
       if(x.find!=null){ _aiAskInline(panel.querySelector('.osw-ai-answer'),'What to look for','Find',q=>_aiFindIn(w,panel,q,x)); return; }
+      if(x.event){ _aiAskInline(panel.querySelector('.osw-ai-answer'),'What and when — “dentist Tuesday 3pm”','Add',q=>_aiEvent(w,panel,q)); return; }
+      if(x.bill){ _aiAskInline(panel.querySelector('.osw-ai-answer'),'“electric $84.20 due the 15th”','Add',q=>_aiBill(w,panel,q)); return; }
+      if(x.web){ _aiWebRank(w,panel); return; }
       if(x.calc){ _aiAskInline(panel.querySelector('.osw-ai-answer'),'e.g. “15% tip on 84.50 split 3 ways”','Work it out',q=>_aiCalc(w,panel,q)); return; }
       if(x.contact){ _aiAskInline(panel.querySelector('.osw-ai-answer'),'Who? — “Bob Smith, 555-0142, bob@acme.com”','Add',q=>_aiContact(w,panel,q)); return; }
       if(x.starter!=null){ ta.value=x.starter; ta.focus(); try{ ta.setSelectionRange(ta.value.length,ta.value.length); }catch(_){ } return; }

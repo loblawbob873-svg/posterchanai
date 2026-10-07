@@ -175,7 +175,7 @@ STATE = r"""(()=>{ const p=__panel(), a=p&&p.querySelector('.osw-ai-answer');
            text:a?(a.innerText||'').replace(/\s+/g,' ').trim().slice(0,700):'', err:!!a&&a.classList.contains('error'),
            buttons:a?[...a.querySelectorAll('button')].map(b=>b.textContent.trim()).filter(Boolean).slice(0,14):[] }; })()"""
 ACT = r"""(()=>{ const a=__panel()&&__panel().querySelector('.osw-ai-answer'); if(!a) return null;
-  const act=a.querySelector('[data-apply],[data-use],[data-ai-all],[data-go],[data-act],[data-task-cal],[data-ai-tasks-note],[data-ai-note],[data-reply-to],[data-open-note],[data-post]');
+  const act=a.querySelector('[data-apply],[data-use],[data-ai-all],[data-go],[data-act],[data-task-cal],[data-web-read],[data-ai-tasks-note],[data-ai-note],[data-reply-to],[data-open-note],[data-post]');
   if(!act) return null; window.__before=__snap(); const t=act.textContent.trim(); act.click(); return t; })()"""
 DIFF = r"""(()=>{ const after=__snap(), out={}; for(const k of Object.keys(after)) if(JSON.stringify(after[k])!==JSON.stringify(__before[k])) out[k]=after[k];
   document.querySelectorAll('.modal-bg').forEach(m=>{ if(!m.closest('.osw-ai-panel')) m.remove(); }); document.body.classList.remove('modal-open'); return out; })()"""

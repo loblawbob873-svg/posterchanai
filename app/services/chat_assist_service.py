@@ -1337,6 +1337,16 @@ def _feed_block(posts: list, subject: str = "posts") -> str:
 
 
 def build_feed_messages(posts: list, recipe: str, query: str = "", target: int = 0, subject: str = "posts") -> list:
+    if subject == "results":
+        # WEB SEARCH RESULTS, numbered like posts: which ones answer what was searched, each with why. The
+        # free-text answer this replaced named the results it liked in prose and linked to none of them.
+        block = ("Search results, numbered (site: title -- snippet):\n<<<RESULTS\n"
+                 + "\n".join(f"[{p['n']}] {p['who']}: {p['text']}" for p in posts) + "\nRESULTS")
+        system = ("The user searched the web. Which of the numbered results actually answer the search? Reply with "
+                  "ONLY a JSON object: {\"items\": [{\"n\": the result's number, \"why\": what it offers, in a few "
+                  "words}]}, best first, at most 5 -- {\"items\": []} when none of them answer it. " + _NO_INVENT)
+        return [{"role": "system", "content": system},
+                {"role": "user", "content": block + "\n\nThe search: " + (query or "(not shown)")}]
     if subject == "notes":
         # THE SAME NUMBERED SHAPE FOR A NOTEBOOK: "Find a note about…" and "What's in my notes" answer with
         # note numbers the client turns back into notes it can open.
@@ -1499,12 +1509,14 @@ def parse_feed(recipe: str, out: str, posts: list, query: str = "") -> dict:
 
 async def window_feed(db, user, posts, recipe: str, query: str = "", target=0, subject: str = "posts") -> dict:
     recipe = str(recipe or "")
-    subject = "notes" if subject == "notes" else "posts"
-    if recipe not in FEED_RECIPES or (subject == "notes" and recipe not in ("digest", "find")):
+    subject = subject if subject in ("notes", "results") else "posts"
+    if (recipe not in FEED_RECIPES or (subject == "notes" and recipe not in ("digest", "find"))
+            or (subject == "results" and recipe != "needs")):
         raise AssistError(400, "Unknown action.")
     posts = feed_posts(posts, 80 if subject == "notes" else FEED_POSTS_MAX)
     if not posts:
         raise AssistError(400, "There are no notes yet." if subject == "notes" else
+                          "There are no results on screen — search first." if subject == "results" else
                           "There are no posts on screen yet — scroll the timeline, then try again.")
     query = re.sub(r"\s+", " ", str(query or "")).strip()[:INSTRUCTION_MAX]
     if recipe == "find" and not query:

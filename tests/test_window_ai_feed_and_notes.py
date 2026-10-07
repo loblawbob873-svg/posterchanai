@@ -109,3 +109,20 @@ def test_a_calculation_survives_an_unquoted_field():
     out = '```json\n{\n  "expression": "(84.50*1.15)/3",\n  "what": tip amount per person\n}\n```'
     assert svc.parse_calc(out) == {"expression": "(84.50*1.15)/3", "what": "tip amount per person"}
     assert svc.parse_contact('{"given": Bob, "family": "Smith"}', "Bob Smith")["given"] == "Bob"
+
+
+def test_search_results_are_ranked_against_the_search_by_number():
+    res = svc.feed_posts([{"who": "wiki.gentoo.org", "text": "Wayfire configuration — how to install"},
+                          {"who": "example.org", "text": "Cookie recipes"}])
+    msgs = svc.build_feed_messages(res, "needs", "gentoo wayfire config", 0, "results")
+    assert "[1] wiki.gentoo.org: Wayfire configuration" in msgs[1]["content"]
+    assert "The search: gentoo wayfire config" in msgs[1]["content"]
+    got = svc.parse_feed("needs", '{"items":[{"n":1,"why":"the setup guide"},{"n":7,"why":"ghost"}]}', res)
+    assert got == {"items": [{"n": 1, "why": "the setup guide"}]}
+
+
+def test_results_only_take_the_ranking_recipe():
+    import asyncio
+    import pytest as _pt
+    with _pt.raises(svc.AssistError):
+        asyncio.run(svc.window_feed(None, None, [{"who": "a", "text": "b"}], "reply", "", 1, "results"))

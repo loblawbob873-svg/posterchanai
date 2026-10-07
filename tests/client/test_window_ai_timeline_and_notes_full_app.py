@@ -209,3 +209,94 @@ def test_add_a_contact_opens_the_new_contact_form_filled_in():
     f = got["form"]
     assert (f["given"], f["family"], f["org"]) == ("Bob", "Smith", "Acme"), f
     assert "555-123-4567" in f["vals"] and "bob@acme.test" in f["vals"], f
+
+
+@pytest.mark.skipif(not Path("/opt/google/chrome/chrome").exists(), reason="Chrome required")
+def test_add_an_event_and_add_a_bill_open_the_apps_own_forms_filled_in():
+    """"Add an event…" was a starter for the free-form agent, which had to open the form and then plan fields it
+    had not seen; Budget had no way to add a bill from a sentence at all. Both now read ONE sentence and open the
+    app's own form filled in -- the New event form, Budget's editable bill review -- with nothing saved."""
+    import sys
+    sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "scripts"))
+    import capture_window_ai_fixtures as cap
+    got = {}
+    canned = {"window_event:": {"event": {"title": "Dentist", "date": "2026-10-13", "start": "15:00", "end": "",
+                                          "allDay": False, "location": "", "notes": ""}}}
+    BILL = ("(()=>{const a=__PC.authFetch; __PC.authFetch=(u,o)=>String(u).includes('/api/budget/scan')"
+            "?Promise.resolve(new Response(JSON.stringify({type:'bill',vendor:'Electric Co',amount:84.2,due_day:15}),{status:200,headers:{'Content-Type':'application/json'}})):a(u,o);})();true")
+
+    async def check(b):
+        await desktop.login(b)
+        await b.js("try{ if(window.PCOS && PCOS.isOn()) PCOS.exit(); }catch(_){}")
+        await b.js(cap.CALENDAR)
+        await b.js("__PC.switchView('calendar');true")
+        await b.until("!!window.PCCalendar")
+        await b.js(STUB_AI + "(%s);true" % json.dumps(canned))
+        got["cal_buttons"] = await b.js(OPEN_PANEL % json.dumps("calendar"))
+        await b.js(CLICK % ("[data-ai-action]", json.dumps("Add an event")))
+        await b.until("!!document.querySelector('.osw-ai-panel form.osw-ai-find')")
+        await b.js("(()=>{const f=document.querySelector('.osw-ai-panel form.osw-ai-find');f.querySelector('input').value='dentist next tuesday 3pm';f.requestSubmit();})()")
+        for _ in range(100):
+            if await b.js("[...document.querySelectorAll('.modal input')].some(i=>i.value==='Dentist')"):
+                break
+            await asyncio.sleep(.1)
+        got["event_form"] = await b.js("[...document.querySelectorAll('.modal input')].map(i=>i.value).join('|')")
+        await b.js("document.querySelectorAll('.modal-bg').forEach(m=>m.remove()); document.body.classList.remove('modal-open'); true")
+        # Budget.
+        await b.js("__PC.switchView('budget');true")
+        await b.until("!!window.PCBudget")
+        await b.js(BILL)
+        got["bud_buttons"] = await b.js(OPEN_PANEL % json.dumps("budget"))
+        await b.js(CLICK % ("[data-ai-action]", json.dumps("Add a bill")))
+        await b.until("!!document.querySelector('.osw-ai-panel form.osw-ai-find')")
+        await b.js("(()=>{const f=document.querySelector('.osw-ai-panel form.osw-ai-find');f.querySelector('input').value='electric bill $84.20 due the 15th';f.requestSubmit();})()")
+        for _ in range(100):
+            if await b.js("!!document.getElementById('bg-an')"):
+                break
+            await asyncio.sleep(.1)
+        got["bill_form"] = await b.js("({name:(document.getElementById('bg-an')||{}).value, amount:(document.getElementById('bg-aa')||{}).value})")
+        got["published"] = await b.js("(window.__published||[]).length")
+
+    asyncio.run(desktop.with_browser("online", "", check, extra_init=RELAY))
+    assert "Add an event…" in got["cal_buttons"], got["cal_buttons"]
+    assert "Dentist" in got["event_form"] and "2026-10-13" in got["event_form"], ("the New event form was not filled in", got["event_form"])
+    assert "Add a bill…" in got["bud_buttons"], got["bud_buttons"]
+    assert got["bill_form"] == {"name": "Electric Co", "amount": "84.20"}, got["bill_form"]
+
+
+@pytest.mark.skipif(not Path("/opt/google/chrome/chrome").exists(), reason="Chrome required")
+def test_which_results_answer_it_names_results_that_open_in_the_reader():
+    """The answer used to be prose naming results it liked, linked to none of them. The result cards now go out
+    numbered with the search, and each pick opens THAT result in the reader."""
+    import sys
+    sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "scripts"))
+    import capture_window_ai_fixtures as cap
+    got = {}
+    canned = {"window_feed:needs": {"feed": {"kind": "needs", "items": [{"n": 2, "why": "every option with defaults"}]}}}
+
+    async def check(b):
+        await desktop.login(b)
+        await b.js("try{ if(window.PCOS && PCOS.isOn()) PCOS.exit(); }catch(_){}")
+        await b.js(cap.WEB_RESULTS)
+        await b.js("__PC.switchView('websearch');true")
+        await b.until("!!document.getElementById('ws-q')")
+        await b.js("(()=>{const i=document.getElementById('ws-q');i.value='gentoo wayfire config';i.dispatchEvent(new Event('input',{bubbles:true}));i.form.requestSubmit();})()")
+        await b.until("document.querySelectorAll('.ws-card[data-i]').length>=3")
+        await b.js(STUB_AI + "(%s);true" % json.dumps(canned))
+        got["buttons"] = await b.js(OPEN_PANEL % json.dumps("websearch"))
+        await b.js(CLICK % ("[data-ai-action]", json.dumps("Which results answer it")))
+        await b.until("!!document.querySelector('.osw-ai-panel [data-web-read]')")
+        got["sent"] = await b.js("__aiSent[0]")
+        got["answer"] = await b.js("document.querySelector('.osw-ai-panel .osw-ai-answer').innerText")
+        await b.js("document.querySelector('.osw-ai-panel [data-web-read]').click(); true")
+        for _ in range(100):
+            if await b.js("!!document.querySelector('.ws-reader')"):
+                break
+            await asyncio.sleep(.1)
+        got["reader"] = await b.js("(document.querySelector('.ws-reader .ws-rtitle')||document.querySelector('.ws-reader')||{innerText:''}).innerText")
+
+    asyncio.run(desktop.with_browser("online", "", check, extra_init=RELAY))
+    assert got["sent"]["subject"] == "results" and got["sent"]["instruction"] == "gentoo wayfire config", got["sent"]
+    assert len(got["sent"]["posts"]) >= 3 and "Wayfire" in got["sent"]["posts"][0]["text"], got["sent"]["posts"]
+    assert "wayfire.ini reference" in got["answer"] and "every option with defaults" in got["answer"], got["answer"]
+    assert "wayfire.ini" in got["reader"], ("Read here did not open the picked result", got["reader"])
