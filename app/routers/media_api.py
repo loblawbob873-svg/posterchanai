@@ -327,7 +327,7 @@ async def process_media(
         elif command == "nami":
             outputs, summary = await asyncio.to_thread(effects_service.nami_attachments, attachments)
         elif command == "mentioned":
-            outputs, summary = await asyncio.to_thread(effects_service.mentioned_attachments, attachments, (req.arg or "").strip())
+            outputs, summary = await asyncio.to_thread(effects_service.mentioned_attachments, attachments, arg.strip())
         elif command == "wasteland":
             outputs, summary = await asyncio.to_thread(effects_service.wasteland_attachments, attachments)
         elif command == "mixalot":

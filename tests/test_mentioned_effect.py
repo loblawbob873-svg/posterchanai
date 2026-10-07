@@ -113,3 +113,27 @@ def test_the_sprite_is_committed_so_re_running_does_not_redraw_her():
     assert sprite.exists() and (ROOT / "assets" / "mentioned_cheer.mov").exists() and (ROOT / "assets" / "mentioned_cheer.mp3").exists()
     im = Image.open(sprite)
     assert im.mode == "RGBA" and im.getextrema()[3][0] == 0, "the sprite has no transparent background"
+
+
+def test_the_media_api_hands_the_effect_only_the_word(monkeypatch):
+    """Code review, 2026-10-07: /api/media/process (the fediverse bots' path) strips trailing modifiers, `meme <text>`
+    and `char <name>` into `arg` -- but the `mentioned` branch read the raw req.arg, so `mentioned michigan zoom meme
+    lol` captioned "MICHIGAN ZOOM MEME LOL MENTIONED" while also zooming and adding the meme text."""
+    import asyncio
+    import base64
+    from app.routers import media_api
+    from app.services import effects_service
+    seen = {}
+
+    def fake(attachments, word=""):
+        seen["word"] = word
+        return [], "stop here"
+    monkeypatch.setattr(effects_service, "mentioned_attachments", fake)
+    req = media_api.MediaProcessRequest(command="mentioned", arg="michigan zoom meme lol",
+                                        media=[media_api.MediaItem(filename="a.jpg", data=base64.b64encode(b"x").decode(),
+                                                                   content_type="image/jpeg")])
+    try:
+        asyncio.run(media_api.process_media(req, None, None, True))
+    except Exception:
+        pass
+    assert seen.get("word") == "michigan", seen
