@@ -205,3 +205,49 @@ class DesktopEntries(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+@unittest.skipIf(not NODE, "needs node")
+class TheDesktopIsNotAnAppInItsOwnMenu(unittest.TestCase):
+    """"posterchan is in the start menu but has a grid icon and does not open?" -- the package installs
+    `place.poster.desktop.desktop` (`Exec=posterchan`) so xdg-desktop-portal can recognise the app for screen
+    sharing, and older installs still carry an unowned `place.poster.desktop`. Both were listed: a grid icon
+    (its icon name has no image) that launched a second copy of the desktop that is already running, which
+    exits at once. Scanned from REAL files in a temporary applications directory, as the menu does."""
+
+    def test_the_shells_own_entries_are_left_out_and_other_apps_stay(self):
+        d = tempfile.mkdtemp()
+        try:
+            apps = os.path.join(d, "applications")
+            os.makedirs(apps)
+            # The wrapper IS installed (it is how the desktop starts), so it passes the "is it on PATH" check.
+            os.makedirs(os.path.join(d, "bin"))
+            with open(os.path.join(d, "bin", "posterchan"), "w") as fh:
+                fh.write("#!/bin/sh\n")
+            os.chmod(os.path.join(d, "bin", "posterchan"), 0o755)
+            entry = "[Desktop Entry]\nType=Application\nName=%s\nExec=%s\nIcon=x\nCategories=Network;\n"
+            for f, name, ex in [("place.poster.desktop.desktop", "PosterChan", "posterchan"),
+                                ("place.poster.desktop", "PosterChan", "posterchan"),
+                                ("firefox.desktop", "Firefox", "/bin/sh %u"),
+                                ("posterchanfan.desktop", "Fan app", "/bin/sh posterchan")]:
+                with open(os.path.join(apps, f), "w") as fh:
+                    fh.write(entry % (name, ex))
+            src = ("const A = require(%s);\nconst r = A.scan({ env: { XDG_DATA_HOME: %s, XDG_DATA_DIRS: %s, PATH: %s + '/bin:/bin:/usr/bin' } });\n"
+                   "process.stdout.write(JSON.stringify(r.apps.map(a => a.name)));" % (json.dumps(MOD), json.dumps(d), json.dumps(d), json.dumps(d)))
+            r = subprocess.run([NODE, "-e", src], capture_output=True, text=True, timeout=60)
+            self.assertEqual(r.returncode, 0, r.stderr[-900:])
+            names = json.loads(r.stdout)
+        finally:
+            shutil.rmtree(d, ignore_errors=True)
+        self.assertNotIn("PosterChan", names, ("the desktop is offered as an app in its own menu", names))
+        self.assertIn("Firefox", names, names)
+        self.assertIn("Fan app", names, "only the desktop's own binary is left out, not any Exec mentioning the word")
+
+    def test_the_binary_itself_by_path_is_left_out_too(self):
+        src = ("const A = require(%s);\nprocess.stdout.write(JSON.stringify(["
+               "A.menuable({Name:'PosterChan', Exec:'/opt/posterchan/posterchan-desktop --shell'}).ok,"
+               "A.menuable({Name:'PosterChan', Exec:'/usr/local/bin/posterchan %%U'}).ok,"
+               "A.menuable({Name:'Other', Exec:'/opt/other/app'}).ok]));" % json.dumps(MOD))
+        r = subprocess.run([NODE, "-e", src], capture_output=True, text=True, timeout=60)
+        self.assertEqual(r.returncode, 0, r.stderr[-900:])
+        self.assertEqual(json.loads(r.stdout), [False, False, True])

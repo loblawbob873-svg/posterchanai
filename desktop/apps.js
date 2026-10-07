@@ -103,6 +103,14 @@ function menuable(entry, opts) {
   const argv = String(e.Exec || '').split(/\s+/);
   if (argv.some((a) => /^--?(server|daemon|no-fork)$/i.test(a)))
     return { ok: false, why: 'a daemon, not a window' };
+  /* THE DESKTOP IS NOT AN APP IN ITS OWN MENU ("posterchan is in the start menu but has a grid icon
+   * and does not open"). The package installs `place.poster.desktop.desktop` (Exec=posterchan) for
+   * xdg-desktop-portal, which only recognises an app that has a desktop file -- and older installs
+   * still carry an unowned `place.poster.desktop`. Clicked, either starts a second copy of the
+   * desktop that is already running, which exits at once. Matched on the PROGRAM, not the name. */
+  const prog = execArgv(e.Exec)[0] || '';
+  if (path.basename(prog) === 'posterchan' || prog.startsWith('/opt/posterchan/'))
+    return { ok: false, why: 'the PosterChan desktop itself' };
   return { ok: true, why: '' };
 }
 
