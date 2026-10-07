@@ -106,3 +106,46 @@ def test_ai_newspaper_clipping_asks_for_the_newspaper_shape_and_arms_the_style()
     asyncio.run(desktop.with_browser("online", "", check))
     assert got["asked"] == {"url": "https://www.example-news.com/story/relays", "style": "newspaper"}, got["asked"]
     assert got["text"].startswith("Relay operators agree to meet\n\n"), got["text"]
+
+
+# "seems like the newspaper is cutting off the ai summary": the story was set at a fixed 26px (~150 words)
+# and the rest was dropped under "Continued at …". What the AI writes -- a headline and two or three
+# paragraphs -- must print to its last word; only a story far longer than a page is trimmed.
+WORDS = ("Operators of several public relays met on Monday and agreed to share spam limits across their "
+         "servers starting next month after a week of unusually heavy traffic hit the network. ")
+AI_STORY = ("Relays agree on shared spam limits\n\n" + WORDS * 3 + "\n\n" + WORDS * 3 + " The last word is ZEBRAFINCH."
+            + "\n\nhttps://www.example-news.com/story/relays")
+HUGE_STORY = "Relays agree\n\n" + WORDS * 30 + " ZEBRAFINCH\n\nhttps://www.example-news.com/story/relays"
+
+SPY = r"""(()=>{window.__drawn=[];const f=CanvasRenderingContext2D.prototype.fillText;
+  CanvasRenderingContext2D.prototype.fillText=function(t,...a){try{__drawn.push(String(t));}catch(_){ } return f.call(this,t,...a);};return true;})()"""
+
+
+async def _drawn(b, text):
+    await _compose(b, text)
+    await b.js(SPY)
+    await _pick_paper(b)
+    return await b.js("__drawn.join(' ')")
+
+
+@CHROME
+def test_the_whole_ai_story_is_printed_not_cut_off():
+    got = {}
+
+    async def check(b):
+        got["ai"] = await _drawn(b, AI_STORY)
+
+    asyncio.run(desktop.with_browser("online", "", check))
+    assert "Continued at" not in got["ai"], "a two-paragraph AI story was cut off"
+    assert "ZEBRAFINCH." in got["ai"], "the story's last words were not printed"
+
+
+@CHROME
+def test_a_story_longer_than_a_page_still_says_where_the_rest_is():
+    got = {}
+
+    async def check(b):
+        got["huge"] = await _drawn(b, HUGE_STORY)
+
+    asyncio.run(desktop.with_browser("online", "", check))
+    assert "Continued at" in got["huge"] and "ZEBRAFINCH" not in got["huge"], "an overlong story was not trimmed honestly"

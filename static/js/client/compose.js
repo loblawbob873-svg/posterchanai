@@ -176,26 +176,38 @@ window.PCComposeFactory = function(dep){
     ctx.textAlign='center';
     for(const ws of hl.slice(0,3)){ y+=hs*1.06; ctx.fillText(ws.join(' '), W/2, y); }
     y+=22; ctx.fillRect(L+CW*0.3,y,CW*0.4,1.5); y+=18;
-    // The story: two justified columns, a drop cap, ending in "Continued at …" when it does not fit.
-    const gutter=36, colW=(CW-gutter)/2, bs=26, lh=bs*1.32, bottom=H-M-64;
-    ctx.textAlign='left'; ctx.font=`400 ${bs}px ${_NP_SERIF}`;
+    // The story: two justified columns and a drop cap, set as LARGE AS FITS THE WHOLE STORY. It was a
+    // fixed 26px -- about 150 words -- so the AI's two or three paragraphs were cut off mid-sentence under
+    // "Continued at …" ("the newspaper is cutting off the ai summary"). Now the type steps down to a
+    // still-readable 16px first, and only a story longer than that is trimmed.
+    const gutter=36, colW=(CW-gutter)/2, bottom=H-M-64;
+    ctx.textAlign='left';
     const capLines=3, cap=story.charAt(0), rest=story.slice(1);
-    ctx.font=`800 ${Math.round(lh*capLines*0.92)}px ${_NP_SERIF}`; const capW=cap?ctx.measureText(cap).width+10:0;
-    ctx.font=`400 ${bs}px ${_NP_SERIF}`;
+    const words=rest.split(/\s+/).filter(Boolean);
+    const cols=[{x:L,y0:y},{x:L+colW+gutter,y0:y}];
     // Lay the words into lines column by column; the first lines of column one are narrower for the cap.
-    const words=rest.split(/\s+/).filter(Boolean); let wi=0, trimmed=false;
-    const cols=[{x:L,y0:y},{x:L+colW+gutter,y0:y}], rows=Math.max(1,Math.floor((bottom-y)/lh));
-    for(let c=0;c<2 && wi<words.length;c++){
-      for(let r=0;r<rows && wi<words.length;r++){
-        const narrow=(c===0 && r<capLines && cap), lx=cols[c].x+(narrow?capW:0), width=colW-(narrow?capW:0);
-        const line=[];
-        while(wi<words.length){ const next=line.concat(words[wi]).join(' ');
-          if(line.length && ctx.measureText(next).width>width) break; line.push(words[wi++]); }
-        const lastRow=(c===1 && r===rows-1);
-        if(lastRow && wi<words.length){ trimmed=true; while(line.length && ctx.measureText(line.join(' ')+' …').width>width) line.pop(); line.push('…'); }
-        _npJustify(ctx, line, lx, cols[c].y0+(r+1)*lh-6, width, wi>=words.length || lastRow);
+    // With draw=false it only measures: true when every word fits.
+    let bs=26, lh=0, capW=0, rows=1, trimmed=false;
+    const setSize=(size)=>{ bs=size; lh=bs*1.32; rows=Math.max(1,Math.floor((bottom-y)/lh));
+      ctx.font=`800 ${Math.round(lh*capLines*0.92)}px ${_NP_SERIF}`; capW=cap?ctx.measureText(cap).width+10:0;
+      ctx.font=`400 ${bs}px ${_NP_SERIF}`; };
+    const lay=(draw)=>{
+      let wi=0;
+      for(let c=0;c<2 && wi<words.length;c++){
+        for(let r=0;r<rows && wi<words.length;r++){
+          const narrow=(c===0 && r<capLines && cap), lx=cols[c].x+(narrow?capW:0), width=colW-(narrow?capW:0);
+          const line=[];
+          while(wi<words.length){ const next=line.concat(words[wi]).join(' ');
+            if(line.length && ctx.measureText(next).width>width) break; line.push(words[wi++]); }
+          const lastRow=(c===1 && r===rows-1);
+          if(draw && lastRow && wi<words.length){ trimmed=true; while(line.length && ctx.measureText(line.join(' ')+' …').width>width) line.pop(); line.push('…'); }
+          if(draw) _npJustify(ctx, line, lx, cols[c].y0+(r+1)*lh-6, width, wi>=words.length || lastRow);
+        }
       }
-    }
+      return wi>=words.length;
+    };
+    for(let size=26; size>=16; size--){ setSize(size); if(lay(false)) break; }
+    lay(true);
     if(cap){ ctx.font=`800 ${Math.round(lh*capLines*0.92)}px ${_NP_SERIF}`; ctx.fillText(cap, L, y+lh*capLines-10); }
     ctx.fillRect(L+colW+gutter/2-0.5, y+6, 1, rows*lh-6);   // the column rule
     ctx.font=`italic 600 20px ${_NP_SERIF}`; ctx.textAlign='right';
