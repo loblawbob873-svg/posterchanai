@@ -1196,10 +1196,19 @@
     while(attachmentActive<ATTACHMENT_LANES&&attachmentWaiting.size){
       let best=null;for(const [ck,w] of attachmentWaiting)if(!best||w.distance<best[1].distance)best=[ck,w];
       const [ck,{file}]=best;attachmentWaiting.delete(ck);attachmentActive++;
-      decryptAttachment(file).then(got=>{for(const h of attachmentHostsFor(ck))paintAttachmentHost(h,file,got);},
+      decryptAttachment(file).then(async got=>{await learnImageSize(file,got);for(const h of attachmentHostsFor(ck))paintAttachmentHost(h,file,got);},
         ()=>{for(const h of attachmentHostsFor(ck))h.innerHTML='<span class="cc-attachment-error">Could not decrypt attachment</span>';})
         .finally(()=>{attachmentActive--;pumpAttachments();});
     }
+  }
+  /* A picture with no `dim` is DECODED BEFORE it replaces its placeholder, so its box arrives at its
+   * real size in one step. Swapped in undecoded, the <img> is 0 px tall for a frame: the pane SHRINKS
+   * under a reader pinned to the bottom, the browser clamps scrollTop, and that clamp's scroll event --
+   * read a frame later, after the picture has grown -- looked like the reader scrolling up, unpinning
+   * the room (measured: 6 of 8 loads of a 15-photo room left the reader 4,858 px above the bottom). */
+  async function learnImageSize(file,got){
+    if(!got||!String(got.mime||'').startsWith('image/')||attachmentSize(file))return;
+    try{const im=new Image();im.src=got.url;await im.decode();if(im.naturalWidth&&im.naturalHeight)attachmentDims.set(attachmentKey(file),{w:im.naturalWidth,h:im.naturalHeight});}catch(_){}
   }
   function paintAttachmentHost(host,file,got){
     if(!host.isConnected)return;
