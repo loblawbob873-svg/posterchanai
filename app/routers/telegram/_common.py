@@ -276,7 +276,7 @@ _FX_MEMES = [
     ("🏳️‍🌈 Gay", "gay"), ("🥷 Blacked", "blacked"),
     ("✡️ Kosher", "kosher"), ("🤔 Consider", "consider"),
     ("🐵 Chimp", "chimp"), ("🗣️ Clay", "clay"),
-    ("🥺 UwU", "uwu"),
+    ("🥺 UwU", "uwu"), ("💰 Nami", "nami"),
     ("💖 Vibe", "vibe"), ("👍 Rebecca", "rebecca"),
     ("🔫 Makima", "makima"), ("🦈 Gura", "gura"),
     ("😎 Thug", "thug"), ("🔵 Blue", "blue"),

@@ -543,6 +543,19 @@ _UWU_AUDIO_CANDIDATES = [
     "/var/lib/posterchanai/assets/uwu.mp3",
 ]
 _UWU_DURATION = 4.8
+# `nami` -- Nami (One Piece) with money bags for pupils, rubbing her hands with a sly grin (scripts/
+# gen_nami_money.py: this node's anime model, pupils painted on, rembg cut-out, a 2 s rub/bob/coins loop).
+_NAMI_OVERLAY_CANDIDATES = [
+    os.environ.get("NAMI_OVERLAY_PATH", ""),
+    os.path.join(_REPO_ROOT, "assets", "nami_money.mov"),
+    "/var/lib/posterchanai/assets/nami_money.mov",
+]
+_NAMI_AUDIO_CANDIDATES = [
+    os.environ.get("NAMI_AUDIO_PATH", ""),
+    os.path.join(_REPO_ROOT, "assets", "nami_money.mp3"),
+    "/var/lib/posterchanai/assets/nami_money.mp3",
+]
+_NAMI_DURATION = 3.6
 _HARLEM_AUDIO_CANDIDATES = [
     os.environ.get("HARLEM_AUDIO_PATH", ""),
     os.path.join(_REPO_ROOT, "assets", "harlem.mp3"),
