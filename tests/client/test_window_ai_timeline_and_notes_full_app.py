@@ -341,6 +341,8 @@ def test_a_typed_request_goes_to_the_tool_that_does_it():
         await b.until("!!document.querySelector('.osw-ai-panel .osw-ai-calc')")
         got["calc"] = await b.js("({shown:document.querySelector('.osw-ai-panel .osw-ai-calc').innerText, sent:__aiSent.map(x=>x.action)})")
         # Not a job with a tool: still the agent.
+        # ✨ is a TOGGLE: the calculation's answer leaves the panel open, so reopening without closing it shut it.
+        await b.js("(document.querySelector('.osw-ai-panel [data-ai-dismiss]')||{click(){}}).click();true")
         await b.js("__aiSent.length=0; " + OPEN_PANEL % json.dumps("calculator"))
         await b.js(ASK % json.dumps("explain how percentages work"))
         for _ in range(100):

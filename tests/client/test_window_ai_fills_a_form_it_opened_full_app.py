@@ -33,7 +33,11 @@ DRIVE = r"""(async()=>{
     if(!steps.length && ref('Name')) steps.push({do:'fill',ref:ref('Name'),text:'Bob',label:'Name'});
     return {answer:'Filling it in.',tasks:[],steps};
   };
-  window.fetch=(u,o)=>{ if(String(u).includes('/api/chat-assist')){ const b=JSON.parse(o.body); __sent.push(b);
+  window.fetch=(u,o)=>{ if(String(u).includes('/api/chat-assist')){ const b=JSON.parse(o.body);
+      // Only the AGENT's rounds are scripted and counted. A direct tool the request reaches first (Contacts'
+      // window_contact) gets nothing usable back, so the request falls back to the agent -- also covered here.
+      if(b.action && b.action!=='window_steps') return Promise.resolve(new Response('{"ok":true}',{status:200,headers:{'Content-Type':'application/json'}}));
+      __sent.push(b);
       return Promise.resolve(new Response(JSON.stringify(Object.assign({ok:true},reply(b))),{status:200,headers:{'Content-Type':'application/json'}})); }
     return real(u,o); };
   __PC.switchView('contacts');

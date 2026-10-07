@@ -2998,13 +2998,13 @@
    * bill, 1/3 on finding a contact -- exactly the jobs that now have a direct tool. A request that plainly IS
    * one of those jobs, in the window that has the tool, goes to the tool; anything else goes to the agent as
    * before. Returns true when it took the request. */
-  function _aiRoute(w,panel,text){
+  function _aiRoute(w,panel,text,orElse){
     const v=_aiViewOf(w), t=String(text||'').trim(), low=t.toLowerCase();
     const rest=(re)=>t.replace(re,'').trim();
     const find=/^(?:please\s+)?(?:find|search(?:\s+for)?|look\s+(?:for|up)|where(?:'s| is))\s+(.+)$/i.exec(t);
     if(v==='calculator' && !/^(?:explain|why|how does)\b/i.test(t)){ _aiCalc(w,panel,t); return true; }
     if(v==='contacts'){
-      if(/^(?:please\s+)?(?:add|new|create|save)\b/i.test(t)){ _aiContact(w,panel,rest(/^(?:please\s+)?(?:add|new|create|save)\s+(?:a\s+)?(?:new\s+)?(?:contact\s*:?\s*)?/i)); return true; }
+      if(/^(?:please\s+)?(?:add|new|create|save)\b/i.test(t)){ _aiContact(w,panel,rest(/^(?:please\s+)?(?:add|new|create|save)\s+(?:a\s+)?(?:new\s+)?(?:contact\s*:?\s*)?/i),orElse); return true; }
       if(find){ _aiFindIn(w,panel,find[1],{}); return true; }
     }
     if(v==='calendar' && /^(?:please\s+)?(?:add|schedule|book|put|create|new\s+event|remind)\b/i.test(t)){ _aiEvent(w,panel,t); return true; }
@@ -3038,7 +3038,7 @@
   }
   // Keys for the calculator's press(): function names stay whole ("sqrt("), everything else one character.
   function _aiCalcKeys(expr){ return String(expr).match(/sqrt\(|sin\(|cos\(|tan\(|ln\(|log\(|./g)||[]; }
-  async function _aiContact(w,panel,said){
+  async function _aiContact(w,panel,said,orElse){
     const box=panel.querySelector('.osw-ai-answer');
     box.className='osw-ai-answer loading'; box.innerHTML='<span class="spinner"></span> Filling in the form…';
     let r=null, error='';
@@ -3046,6 +3046,11 @@
     if(w.aiPanel!==panel) return;
     if(error){ box.className='osw-ai-answer error'; box.innerHTML=`<p>${enc(error)}</p>`; return; }
     const c=(r&&r.contact)||{};
+    /* NOTHING READ IS NOT A CONTACT. An empty answer opened an EMPTY New contact form, which is the tool
+     * claiming a request it could not do. The agent can still press "+ Contact" and type into the form
+     * itself, so a request this tool got nothing out of goes to it instead of stopping here. */
+    if(orElse && !['given','family','phone','email','org'].some(k=>String(c[k]||'').trim())){
+      box.className='osw-ai-answer'; box.innerHTML=''; orElse(); return; }
     box.className='osw-ai-answer';
     if(!(window.PCContacts&&PCContacts.draft)){ box.innerHTML='<p>Contacts is not loaded in this window.</p>'; return; }
     // The app's own New contact form, filled in: nothing is saved until the person presses Save there.
@@ -3627,9 +3632,12 @@
      * not -- so posts that loaded after ✨ was pressed had buttons the model could press and words it could
      * not read ("No posts yet." beside two Reply buttons, measured). Same as Continue. */
     const ask=instruction=>{instruction=String(instruction||'').trim();if(!instruction)return;panel._aiRounds=0;
-      if(!isTerm && _aiRoute(w,panel,instruction)) return;
-      const fresh=[w,..._aiContextWins].filter((x,k,a)=>a.indexOf(x)===k&&(x===w||wins.includes(x))).map(windowAIContext);
-      _aiSteps(w,panel,fresh,instruction,composer,turns,isTerm);};
+      const agent=()=>{
+        const fresh=[w,..._aiContextWins].filter((x,k,a)=>a.indexOf(x)===k&&(x===w||wins.includes(x))).map(windowAIContext);
+        _aiSteps(w,panel,fresh,instruction,composer,turns,isTerm); };
+      // A direct tool that read nothing hands the request back to the agent (`agent` is its orElse).
+      if(!isTerm && _aiRoute(w,panel,instruction,agent)) return;
+      agent();};
     panel.querySelector('[data-ai-dismiss]').onclick=()=>closeWindowAI(w);
     const clear=panel.querySelector('[data-ai-clear]');if(clear)clear.onclick=()=>{_aiContextWins.forEach(x=>x.el.classList.remove('ai-context'));_aiContextWins.clear();closeWindowAI(w);toggleWindowAI(w,button);};
     panel.querySelectorAll('[data-ai-action]').forEach(b=>b.onclick=()=>{
