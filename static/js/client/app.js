@@ -2186,6 +2186,31 @@
       return true;
     }catch(_){ return false; }
   }
+  /* A DOCUMENT WINDOW PAINTS FROM WHAT THE DESKTOP ALREADY HOLDS ("opening a post is laggy on desktop").
+   * A post or profile window is a fresh page with an empty memory: it re-read its cache from disk and,
+   * when routing ran first, asked the relays and waited -- measured on a laptop, 2.7-12.6s of an empty
+   * window for a post the desktop that opened it was showing a moment earlier. The opener is the same
+   * origin and the same process, so its Store is right there: copy the post, the events around it (its
+   * parent and root, its replies) and their authors' profiles into this window's Store BEFORE routing,
+   * and the cache-first paint (CLAUDE.md, "paint that before the first network await") has something
+   * real to paint. Copies are plain JSON -- never the opener's live objects. Fails quietly: with no
+   * opener (it closed) the window loads exactly as before. */
+  function _seedFromOpener(ids, authors){
+    try{
+      const O = window.opener && window.opener.Store;
+      if(!O || O === Store || typeof O.get !== 'function') return 0;
+      const clone = e => JSON.parse(JSON.stringify(e));
+      const seen = new Set(), pks = new Set(authors || []);
+      const put = e => { if(!e || !e.id || seen.has(e.id)) return; seen.add(e.id); try{ Store.saveEvent(clone(e)); pks.add(e.pubkey); }catch(_){ } };
+      for(const id of ids || []){
+        const e = O.get(id); put(e);
+        if(e) for(const t of (e.tags || [])) if(t && (t[0]==='e' || t[0]==='E') && /^[0-9a-f]{64}$/i.test(t[1] || '')) put(O.get(t[1]));
+        try{ (O.query([{ '#e': [id], limit: 200 }]) || []).forEach(put); }catch(_){ }
+      }
+      if(pks.size) try{ (O.query([{ kinds: [0], authors: [...pks] }]) || []).forEach(e => { try{ Store.saveProfile(clone(e)); }catch(_){ } }); }catch(_){ }
+      return seen.size;
+    }catch(_){ return 0; }
+  }
   async function routeFromPath(){
     /* A WINDOW LANDS ON THE VIEW IT WAS OPENED FOR. Gated on `isWindow()`, which is false in a
      * browser tab, in the APK and in the desktop's own shell — so no existing boot path moves. That
@@ -2203,10 +2228,14 @@
        * nothing routes and fall through to the timeline under a window titled "Post" — the same
        * shape as the System Settings lie above. Open the post instead. */
       const _post = /^doc:post:([0-9a-f]{64})$/i.exec(v || '');
-      if(_post){ openThread(_post[1]); return; }
+      if(_post){ _seedFromOpener([_post[1]]); openThread(_post[1]); return; }
       // …nor is a profile window: open that profile, as a shared npub link would.
       const _prof = /^doc:prof:([0-9a-f]{64})$/i.exec(v || '');
-      if(_prof){ renderProfileView(_prof[1]); return; }
+      if(_prof){
+        try{ const O = window.opener && window.opener.Store;
+             if(O && O !== Store) _seedFromOpener((O.query([{ authors: [_prof[1]], kinds: [1, 6, 1068, 1111], limit: 80 }]) || []).map(e => e.id), [_prof[1]]); }catch(_){ }
+        renderProfileView(_prof[1]); return;
+      }
       /* A SEARCH WINDOW is not a view either: it runs the query it was opened with, in this page. */
       if(v === 'doc:search'){ _searchWindowLanding(); return; }
       if(v){
@@ -12334,12 +12363,22 @@
     // The post we hold, painted now if the Store did not already have it above (a link opened cold,
     // where fetchEvent had to go and get it). Same helper either way — see _paintThreadHead.
     _paintThreadHead(feed, ev);
+    /* A FEDIVERSE THREAD OPENED COLD gets its backfill too. openThread asks the server to fetch the
+     * conversation from its home servers -- but only for a post already in the Store, so a pasted link
+     * (nothing cached yet) never asked, and a thread whose first post was never bridged stayed headless
+     * ("how come i cant see entire thread"). Asked once per post; it re-renders when anything lands. */
+    _fediFetchThread(ev.id);
     // Resolve the thread ROOT (+ the ancestor chain from the clicked post up to it) so a click on ANY
     // reply opens the whole conversation root-first. Then render it as a tree with the clicked post
     // highlighted + scrolled into view.
-    const { rootId, chain } = await _threadRoot(ev, hints);
+    const { rootId, chain, missingTop } = await _threadRoot(ev, hints);
     if(VIEW!=='thread' || renderThread._tok!==id) return;   // navigated away while the ancestors resolved
-    let root = chain.find(x=>x.id===rootId) || Store.get(rootId) || await fetchEvent(rootId, [...(hints||[]), ...eTagRelays(ev)]) || ev;
+    /* When the first post cannot be had, the TOPMOST post we do hold heads the thread (not the clicked
+     * one, which hid every ancestor we had climbed to), and the missing post's id still joins the reply
+     * expansion: the rest of the conversation hangs off it. */
+    let root = chain.find(x=>x.id===rootId) || Store.get(rootId) || await fetchEvent(rootId, [...(hints||[]), ...eTagRelays(ev)])
+      || chain[chain.length-1] || ev;
+    const lostTop = (root.id!==rootId) ? rootId : (missingTop && missingTop!==root.id ? missingTop : null);
     Store.saveEvent(root);
     // Two reply queries in PARALLEL: descendants that root-tag the root, AND direct replies to the CLICKED
     // post (a reply that only tags its immediate parent wouldn't appear in the root query — this keeps its
@@ -12353,7 +12392,15 @@
     const merged=new Map();
     for(const x of chain) merged.set(x.id, x);              // clicked post + its ancestors up to root
     merged.set(ev.id, ev); merged.set(root.id, root);
-    let frontier=[...new Set([root.id, ev.id, ...chain.map(x=>x.id)])];
+    /* WHAT IS ALREADY HELD COUNTS. The replies came only from the relay expansion below, so a reply
+     * this page already had -- handed over by the desktop that opened a post window, or cached from the
+     * timeline -- was drawn as "No replies yet" whenever the relays were slow or silent about it. They
+     * join the tree first; the expansion still asks for everything, and only adds. */
+    try{
+      for(const x of (Store.query([{ kinds:[1, 1111], '#e':[root.id, ev.id] }]) || []))
+        if(x && x.id && !merged.has(x.id)) merged.set(x.id, x);
+    }catch(_){ }
+    let frontier=[...new Set([root.id, ev.id, ...chain.map(x=>x.id), ...(lostTop ? [lostTop] : [])])];
     /* WHETHER THE RELAYS EVER ACTUALLY ANSWERED. A `#e` query that times out instead of EOSEing
      * comes back as a SHORT LIST, not as an error, and rendering that as the conversation is how
      * replies "go missing" — worst on a phone radio, which is why this reads as an Android-only
@@ -12441,7 +12488,7 @@
     const partial = !expandedFully;
     // If the clicked post is itself a reply but its parent couldn't be reached (author out of WoT, no
     // working relay hint), SAY so instead of silently presenting the reply as though it were the root.
-    const missingParent = (root.id===ev.id && replyParentId(ev)) ? replyParentId(ev) : null;
+    const missingParent = lostTop || ((root.id===ev.id && replyParentId(ev)) ? replyParentId(ev) : null);
     // root post first (highlighted if IT was the clicked one), then the count, then its reply subtree
     // Every other detail view puts a "←" in its own header (art-back, repo-back, st-back…); the thread
     // was the one that never did, which is why an issue opened from a repo had no visible way out. Bare
@@ -12516,17 +12563,28 @@
     // until you manually clicked upward). After jumping we re-examine that ancestor and keep going if it
     // still has a parent of its own.
     const seen=new Set([ev.id]);
-    let cur=ev, depth=0;
+    let cur=ev, depth=0, missingTop=null;
     while(depth++ < 12){
       const rt=((cur.kind===1111?cur.tags.find(t=>t[0]==='E'&&t[1]):null)||
         cur.tags.filter(t=>t[0]==='e'&&t[1]).find(t=>t[3]==='root')||[])[1];
       const pid = rt || replyParentId(cur);
       if(!pid || pid===cur.id || seen.has(pid)) return { rootId:cur.id, chain };   // no parent / cycle → this is the top
-      const par=Store.get(pid) || await fetchEvent(pid, H(cur));
-      if(!par) return { rootId:pid, chain };                // parent unreachable even via hints → best root we can reach
+      let par=Store.get(pid) || await fetchEvent(pid, H(cur));
+      /* THE ROOT SHORTCUT FAILING IS NOT THE END OF THE CLIMB. A fediverse thread whose first post was
+       * never bridged marks that unreachable post as root; giving up there skipped the DIRECT parent,
+       * which the relay did hold -- and the thread showed one post, "0 replies", over a conversation of
+       * 167 ("how come i cant see entire thread"). Try the parent before settling for the shortcut. */
+      if(!par && rt){
+        const direct = replyParentId(cur);
+        if(direct && direct!==rt && direct!==cur.id && !seen.has(direct)){
+          const dp = Store.get(direct) || await fetchEvent(direct, H(cur));
+          if(dp){ seen.add(direct); Store.saveEvent(dp); chain.push(dp); cur=dp; missingTop = rt; continue; }
+        }
+      }
+      if(!par) return { rootId:pid, chain, missingTop: missingTop || pid };   // unreachable even via hints → best root we can reach
       seen.add(pid); Store.saveEvent(par); chain.push(par); cur=par;
     }
-    return { rootId:cur.id, chain };
+    return { rootId:cur.id, chain, missingTop };
   }
 
   // ---------- search (NIP-50 posts + profile lookup) ----------

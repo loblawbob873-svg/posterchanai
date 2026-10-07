@@ -80,7 +80,7 @@ def test_a_post_we_already_hold_is_painted_before_the_socket_is_waited_on(thread
     # explain why it is there, and matching that made this test pass for the wrong reason.
     for later, why in (
         ("try{ await Relay.ready(); }catch(_){}", "the socket connect"),
-        ("const { rootId, chain } = await _threadRoot(ev, hints);", "the ancestor walk"),
+        ("const { rootId, chain, missingTop } = await _threadRoot(ev, hints);", "the ancestor walk"),
         ("for(let round=0; round<4", "the reply expansion rounds"),
     ):
         assert thread.index(later) > paint, f"{why} runs before the first paint — that is the blank screen"
