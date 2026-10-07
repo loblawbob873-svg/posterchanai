@@ -132,7 +132,7 @@ AUDIT = r"""((mobile)=>{
 
 
 async def settle(b):
-    for _ in range(30):
+    for _ in range(100):          # a loaded gate boots slowly; this only waits for spinners to clear
         if await b.js("!document.querySelector('#feed .spinner, #feed .loading')"):
             break
         await asyncio.sleep(.1)

@@ -12029,9 +12029,10 @@ img.md-rel:not([src]){display:none}
    at 22px, a terminal tab's × at 20px), under the 32px floor that
    tests/client/test_accessibility_every_view_full_app.py holds every toolbar and nav control to.
    min-* rather than height/width: a control already bigger keeps its size, and nothing on a desktop
-   changes. Scoped by the view's own id so it wins over each toolbar's compact sizing. */
+   changes. Scoped by the view's own id so it wins over each toolbar's compact sizing. NOT the Meme Builder
+   bar: it holds its own 40px floor, and this more specific 32px minimum would undercut it. */
 @media(max-width:820px){
   #feed .ai-bar button,#tty-sessions #tty-tab-new,#tty-sessions .tty-kill,#feed .pcc-bar button,
-  #feed .ua-ranges button,#feed .sms-head button,#feed .mb-bar button,#feed .repo-scope .repo-sc,
+  #feed .ua-ranges button,#feed .sms-head button,#feed .repo-scope .repo-sc,
   #news-head .news-baracts .news-chip,#feed .tor-acts button,#files-pane .fx-nav button{min-height:32px;min-width:32px}
 }
