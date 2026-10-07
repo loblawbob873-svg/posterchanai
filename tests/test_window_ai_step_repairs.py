@@ -257,3 +257,26 @@ def test_a_click_on_a_dropdown_naming_an_option_chooses_it():
         "answer": "Set up English-Spanish translation. Tap [3] to change second language to Spanish, then tap [5].", "tasks": [],
         "steps": [{"do": "click", "ref": 3, "label": "Select Spanish"}, {"do": "click", "ref": 5, "label": "Start listening"}]})
     assert got[0] == ("choose", "Second language", "Spanish"), got
+
+
+def test_a_keypad_is_given_the_sum_from_the_request():
+    # Three measured near-misses for "calculate 12 times 7": the 7 lost, the 12 lost, the ANSWER keyed in.
+    for steps in ([{"do": "fill", "ref": 6, "text": "12", "label": "Enter 12"}, {"do": "press", "ref": 11, "text": "×", "label": "Multiply by"}],
+                  [{"do": "click", "ref": 11, "label": "Multiply by 12"}, {"do": "click", "ref": 8, "label": "Enter 7"}],
+                  [{"do": "fill", "ref": 3, "text": "84", "label": "Result"}, {"do": "press", "ref": 23, "text": "=", "label": "Show result"}]):
+        got = _run("calculator", "calculate 12 times 7", {"answer": "Calculating 12 × 7 = 84", "tasks": [], "steps": steps})
+        assert [g[1] for g in got] == ["1", "2", "×", "7", "="], (steps, got)
+
+
+def test_a_note_called_x_with_contents_keeps_the_contents_in_the_body():
+    got = _round2("notes-editor", "write a new note called Groceries with milk and eggs", ["pressed “New note”"], {
+        "answer": "You need to fill in the title and text fields.", "tasks": [], "steps": [
+            {"do": "fill", "ref": 15, "text": "Groceries\n- Milk\n- Eggs", "label": "Fill text"}, {"do": "press", "ref": 8, "text": "Enter", "label": "Create note"}]})
+    assert ("fill", "Note title", "Groceries") in got and ("fill", "Note text", "- Milk\n- Eggs") in got, got
+
+
+def test_half_a_name_typed_gets_its_other_half():
+    got = _round2("contacts-new", "add Bob Smith 555-1234 to my contacts", ["pressed “New contact”"], {
+        "answer": "Fill in the fields for Bob Smith and press Save.", "tasks": [], "steps": [
+            {"do": "fill", "ref": 2, "text": "Smith", "label": "Last name"}, {"do": "fill", "ref": 3, "text": "555-1234", "label": "Phone number"}]})
+    assert ("fill", "First", "Bob") in got and ("fill", "Last", "Smith") in got and got[-1] == ("click", "Save", ""), got

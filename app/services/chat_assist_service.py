@@ -622,6 +622,7 @@ def parse_steps(text: str, commands: bool = False, want_tasks: bool = False, con
     if keyed and "=" in keyed and steps and steps[-1].get("target") != "=":
         steps.append({"do": "click", "ref": keyed["="], "target": "=", "label": "Press =", "text": "", "on": False})
     steps = steps[:ACT_STEP_MAX * 3] if keyed else steps
+    steps = _keypad_from_request(steps, refs, str(goal_of(instruction, history) or ""))
     cc = clean_controls(controls)
     steps = _repair_steps(steps, refs, goal_of(instruction, history), {r: n for r, _ro, _l, _v, n in cc},
                           {r: v for r, _ro, _l, v, _n in cc})
@@ -701,6 +702,25 @@ def _put_facts(out: list, refs: dict, values: dict, request: str) -> list:
                                                  and not re.fullmatch(r"[\d:-]+", str(values.get(r) or "").strip())]
     if mails and len(mail_boxes) == 1:
         kinds += (([", ".join(dict.fromkeys(mails))], mail_boxes),)
+    # A NAME IN TWO BOXES. "add Bob Smith 555-1234 to my contacts" filled Last = Smith and left First empty
+    # (1 run in 3). With one First box and one Last box and half the name typed, the other half is the word
+    # beside it in the request.
+    def _one(rx):
+        hit = [r for r in boxes if re.fullmatch(rx, _box_key(refs[r][1]))]
+        return hit[0] if len(hit) == 1 else None
+    first, last = _one(r"first( name)?|given name"), _one(r"last( name)?|surname|family name")
+    if first and last:
+        typed = {st.get("ref"): str(st.get("text") or "").strip() for st in out if st.get("do") == "fill"}
+        if typed.get(last) and not typed.get(first):
+            m = re.search(r"\b([A-Z][\w'-]*)\s+" + re.escape(typed[last]) + r"\b", request)
+            if m:
+                at = next(i for i, st in enumerate(out) if st.get("ref") == last)
+                out.insert(at, {"do": "fill", "ref": first, "target": refs[first][1], "label": "First name", "text": m.group(1), "on": False})
+        elif typed.get(first) and not typed.get(last):
+            m = re.search(r"\b" + re.escape(typed[first]) + r"\s+([A-Z][\w'-]*)\b", request)
+            if m:
+                at = next(i for i, st in enumerate(out) if st.get("ref") == first) + 1
+                out.insert(at, {"do": "fill", "ref": last, "target": refs[last][1], "label": "Last name", "text": m.group(1), "on": False})
     timed = False
     for vals, where in kinds:
         if not vals or not where or len(vals) > len(where):
@@ -722,6 +742,47 @@ def _put_facts(out: list, refs: dict, values: dict, request: str) -> list:
     words = set(re.findall(r"[a-z0-9]{3,}", request.lower()))
     return [st for st in out if not (st.get("do") == "fill" and re.search(r"\(optional\)", refs.get(st.get("ref"), ("", ""))[1], re.I)
                                      and not (set(re.findall(r"[a-z0-9]{3,}", str(st.get("text") or "").lower())) & words))]
+
+
+_ARITH_OPS = (("multiplied by", "×"), ("divided by", "÷"), ("times", "×"), ("plus", "+"), ("minus", "−"), ("over", "÷"),
+              ("*", "×"), ("x", "×"), ("/", "÷"), ("+", "+"), ("-", "−"), ("×", "×"), ("÷", "÷"), ("−", "−"))
+_ARITH = re.compile(r"\d+(?:\.\d+)?(?:\s*(?:multiplied by|divided by|times|plus|minus|over|[*x/+×÷−-])\s*\d+(?:\.\d+)?)+", re.I)
+
+
+def _keypad_from_request(steps: list, refs: dict, request: str) -> list:
+    """THE SUM THE PERSON TYPED IS THE SUM THE KEYPAD GETS. "calculate 12 times 7" on the Calculator came back
+    as × 7 = (the 12 lost), 1 2 × = (the 7 lost), or 8 4 = (the ANSWER typed in as if it were the sum) --
+    each a different near-miss from a model that copes badly with keypads. When the window is a keypad
+    (ten or more one-character buttons and "=") and the request holds one arithmetic expression, the key
+    presses ARE that expression, then "=" -- read from the request, not from the reply. Other steps stay."""
+    keys = {lab: r for r, (role, lab) in refs.items() if role == "button" and len(lab) == 1}
+    if len(keys) < 10 or "=" not in keys:
+        return steps
+    found = _ARITH.findall(request)
+    if len(found) != 1:
+        return steps
+    expr, seq = found[0], []
+    i = 0
+    while i < len(expr):
+        ch = expr[i]
+        if ch.isdigit() or ch == ".":
+            seq.append(ch)
+            i += 1
+            continue
+        if ch.isspace():
+            i += 1
+            continue
+        for word, sym in _ARITH_OPS:
+            if expr[i:i + len(word)].lower() == word:
+                seq.append(sym)
+                i += len(word)
+                break
+        else:
+            return steps
+    if not all(k in keys for k in seq):
+        return steps
+    rest = [st for st in steps if st.get("ref") not in keys.values()]
+    return rest + [{"do": "click", "ref": keys[k], "target": k, "label": "Press " + k, "text": "", "on": False} for k in seq + ["="]]
 
 
 def _box_key(label) -> str:
@@ -945,6 +1006,12 @@ def _repair_steps(steps: list, refs: dict, instruction: str, near: dict | None =
             for st in out:
                 if (st.get("do") == "fill" and refs.get(st.get("ref"), ("",))[0] in _TEXTBOX_ROLES
                         and str(st.get("text") or "").strip().lower().startswith(name.lower())):
+                    # What followed the name stays where it was typed -- but only when the request asked for
+                    # contents too ("called Groceries WITH milk and eggs"); otherwise it was made up.
+                    rest = str(st.get("text") or "").strip()[len(name):].lstrip(" \n:—").rstrip()
+                    asked_more = bool(str(instruction or "")[nm.end():].strip(" .!?"))
+                    if rest and asked_more and st.get("ref") != tb:
+                        kept.append(dict(st, text=rest[:2000]))
                     st = dict(st, ref=tb, target=refs[tb][1], text=name[:200])
                 kept.append(st)
             out = kept
