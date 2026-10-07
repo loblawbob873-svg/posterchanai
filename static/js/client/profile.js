@@ -1014,6 +1014,8 @@ window.PCProfileFactory = function(dep){
         if(_xmr && !isXmrAddr(_xmr)){ toast('that doesn\'t look like a Monero address (starts 4 or 8)'); $('#pf-xmr',root).focus(); return; }   // keeps the modal open → other edits aren't lost
         const _bch=$('#pf-bch',root).value.trim().replace(/^bitcoincash:/i,'');
         if(_bch && !isBchAddr(_bch)){ toast('that doesn\'t look like a Bitcoin Cash address'); $('#pf-bch',root).focus(); return; }
+        { const _n5=$('#pf-nip05',root).value.trim();   // an npub here was drawn as the profile's 63-character handle
+          if(_n5 && !niceNip05(_n5)){ toast('a NIP-05 looks like name@domain (your npub is not one) — leave it empty if you have none'); $('#pf-nip05',root).focus(); return; } }
         { const sc=$('#pf-xmr-stamp',root); if(sc) ClientSettings.set('xmrStampNotes', !!sc.checked); }   // opt-in: attach my XMR to my posts — per-device only (NOT synced: it's an address-linking privacy choice)
         const meta={ ...p, name:$('#pf-name',root).value.trim(), nip05:$('#pf-nip05',root).value.trim(), lud16:$('#pf-lud16',root).value.trim(), picture:$('#pf-pic',root).value.trim(), banner:$('#pf-banner',root).value.trim(), about:$('#pf-about',root).value.trim() };
         /* Replace only the music entries we own. Ditto and other clients may put arbitrary labelled

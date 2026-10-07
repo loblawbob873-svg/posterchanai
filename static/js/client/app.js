@@ -9771,7 +9771,11 @@
     for(const a of authors){ if(a&&!seen.has(a)){ seen.add(a); tags.push(['p',a]); } }
     return tags;
   }
-  function niceNip05(n){ if(!n) return null; n=String(n).trim(); if(!n) return null; return n.startsWith('_@')?('@'+n.slice(2)):n; }
+  /* A NIP-05 IS `name@domain` -- anything else is not an identity and is not shown as one. A profile that put
+   * its own npub in the field ("why long npub there?") drew the whole 63-character key as its handle. */
+  const _NIP05_RX = /^[a-z0-9._+-]+@([a-z0-9-]+\.)+[a-z]{2,}$/i;
+  function isNip05(n){ return typeof n === 'string' && _NIP05_RX.test(n.trim()); }
+  function niceNip05(n){ if(!n) return null; n=String(n).trim(); if(!_NIP05_RX.test(n)) return null; return n.startsWith('_@')?('@'+n.slice(2)):n; }
 
   async function _ensureProfile(pk){ if(!pk || Store.haveProfile(pk)) return; try{ const e=await Relay.query([{ authors:[pk], kinds:[0], limit:1 }]); if(e[0]) Store.saveProfile(e[0]); }catch(_){} }
   // Recipient fields reuse the same cached profiles and theme as mentions. Store the
