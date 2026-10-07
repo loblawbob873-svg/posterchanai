@@ -892,6 +892,18 @@
     try{ await loadIn(); }catch(_){}
     if(el.isConnected) _paintIn(el, ctx);
   }
+  /* THE "STOP" ACTIONS LIVE BEHIND ⋯ ("buttons stop getting this playlist and stop receiving from matthew
+   * look bad and take up a lot of UI space" -- two long red labels wrapped across the header on a phone).
+   * The buttons themselves are unchanged and hidden beside the ⋯; picking one in the menu presses it, so every
+   * handler, confirm and undo below is the same code it always was. */
+  function _moreMenu(btn){
+    const box = btn.parentElement && btn.parentElement.querySelector('.msh-acts');
+    const acts = box ? [...box.querySelectorAll('button')] : [];
+    if(!acts.length) return;
+    const open = PC && PC.openMenuPopover;
+    if(!open){ acts[0].click(); return; }
+    open(btn, acts.map((a, i) => [String(i), a.textContent.trim(), 'danger']), k => { const a = acts[+k]; if(a) a.click(); });
+  }
   function _paintIn(el, ctx){
     const waiting = pendingShares(), have = acceptedShares();
     el.innerHTML = `<div class="music-head"><div class="music-head-primary">
@@ -905,7 +917,8 @@
             <div class="msh-offer-act">
               <button class="btn btn-neon small msh-yes" data-key="${E(s.key)}">Accept</button>
               <button class="btn btn-ghost small msh-no" data-key="${E(s.key)}">Reject</button>
-              <button class="btn btn-ghost small danger msh-stop" data-from="${E(s.from)}" title="Hide everything ${E(who(s.from))} shares with you, now and later">Stop receiving from ${E(who(s.from))}</button>
+              <button class="btn btn-ghost small msh-more" data-menu="offer" aria-label="More for this share" title="More">⋯</button>
+              <span class="msh-acts" hidden><button class="btn btn-ghost small danger msh-stop" data-from="${E(s.from)}" title="Hide everything ${E(who(s.from))} shares with you, now and later">Stop receiving from ${E(who(s.from))}</button></span>
             </div></div>`).join('')
         : `<div class="empty">${have.length
               ? 'Nothing new. Accepted shares are in the playlist bar.'
@@ -913,13 +926,14 @@
       + (have.length ? `<div class="msh-getting"><div class="muted small"><b>Playlists you are getting</b></div>`
           + have.map(s => `<div class="msh-card msh-have" data-key="${E(s.key)}"><b>${E(s.body.name)}</b>
               <span class="muted small">from ${E(who(s.from))} · ${trackCount(s.body)} song${trackCount(s.body) === 1 ? '' : 's'}</span>
-              <div class="msh-offer-act"><button class="btn btn-ghost small danger msh-stopget" data-key="${E(s.key)}">Stop getting this playlist</button></div></div>`).join('')
+              <div class="msh-offer-act msh-compact"><button class="btn btn-ghost small danger msh-stopget" data-key="${E(s.key)}" title="Stop getting this playlist and its future changes; songs you kept stay yours">${icon('trash')}Remove</button></div></div>`).join('')
           + `</div>` : '')
       + (stoppedSenders().length ? `<div class="msh-stopped muted small"><b>Stopped receiving from</b>`
           + stoppedSenders().map(pk => ` <span class="msh-stopped-who">${E(who(pk))} <button class="btn btn-ghost small msh-unstop" data-from="${E(pk)}">Undo</button></span>`).join('')
           + `</div>` : '');
     el.onclick = async ev => {
       const b = ev.target.closest && ev.target.closest('button'); if(!b || !el.contains(b)) return;
+      if(b.classList.contains('msh-more')){ _moreMenu(b); return; }
       if(b.id === 'msh-refresh'){ b.disabled = true; await loadIn(); if(el.isConnected) _paintIn(el, ctx); return; }
       if(b.classList.contains('msh-stopget')){
         const sh = _in && _in.get(b.dataset.key); if(!sh) return;
@@ -979,14 +993,18 @@
           <button class="btn btn-neon small" id="msh-shuffle"${tracks.length ? '' : ' disabled'}>${icon('shuffle')}Shuffle</button>
           <button class="btn btn-ghost small" id="msh-refresh">${icon('refresh')}Refresh</button>
           <button class="btn btn-ghost small" id="msh-addall"${missing ? '' : ' disabled'}>${icon('plus')}${missing ? `Keep ${missing}` : 'Kept'}</button>
-          <button class="btn btn-ghost small danger" id="msh-dismiss" title="Stop receiving this playlist and its future changes; songs you kept stay yours">${icon('trash')}Stop getting this playlist</button>
-          <button class="btn btn-ghost small danger" id="msh-stopfrom" title="Hide everything ${E(who(cur.from))} shares with you, now and later">Stop receiving from ${E(who(cur.from))}</button>
+          <button class="btn btn-ghost small msh-more" data-menu="head" aria-label="More for this playlist" title="More">⋯</button>
+          <span class="msh-acts" hidden>
+            <button class="btn btn-ghost small danger" id="msh-dismiss" title="Stop receiving this playlist and its future changes; songs you kept stay yours">${icon('trash')}Stop getting this playlist</button>
+            <button class="btn btn-ghost small danger" id="msh-stopfrom" title="Hide everything ${E(who(cur.from))} shares with you, now and later">Stop receiving from ${E(who(cur.from))}</button>
+          </span>
         </div>
         <span class="music-count muted small">${tracks.length} song${tracks.length === 1 ? '' : 's'} · from ${E(who(cur.from))}</span>
         <span class="msh-note muted small">These play from ${E(who(cur.from))}’s copy while it is shared. Keep a song and it stays yours even if the share is stopped.</span>
       </div>` + tracks.map(t => _row(t, lib.has(t.s))).join('');
     el.onclick = async ev => {
       const b = ev.target.closest && ev.target.closest('button'); if(!b || !el.contains(b)) return;
+      if(b.classList.contains('msh-more')){ _moreMenu(b); return; }
       if(b.id === 'msh-refresh'){ b.disabled = true; await loadIn(); if(el.isConnected) renderShared(key, el, ctx); return; }
       /* "no way for me to remove a dupe share": a share is the sharer's document, but whether it is on
        * MY list is my answer -- the same one Reject gives, for every copy of it. Songs already kept stay. */
@@ -1070,6 +1088,7 @@
         : `<div class="empty">You haven’t shared any music${_outOk ? '' : ' — or the relays did not answer; try Refresh'}. Pick a playlist and press Share.</div>`);
     el.onclick = async ev => {
       const b = ev.target.closest && ev.target.closest('button'); if(!b || !el.contains(b)) return;
+      if(b.classList.contains('msh-more')){ _moreMenu(b); return; }
       if(b.id === 'msh-refresh'){ b.disabled = true; await loadOut(); if(el.isConnected) _paintOut(el, ctx); return; }
       const sh = _out && _out.get(b.dataset.id); if(!sh) return;
       const name = (sh.body && sh.body.name) || 'this share';

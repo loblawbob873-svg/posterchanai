@@ -8837,6 +8837,8 @@ body.native:not(.desktop).term-view .tty-bar{padding-top:env(safe-area-inset-top
     white-space:normal;overflow-wrap:anywhere;line-height:1.2;text-align:center}
   .music-count{order:2;flex:1 1 100%;width:100%;padding-inline:2px}
   .music-head-secondary{order:3;margin-inline-start:0;width:100%}
+  /* A shared playlist's header: Shuffle / Refresh / Keep and a narrow ⋯ (the Stop actions) on ONE row. */
+  .music-head-primary:has(> .msh-more){grid-template-columns:repeat(3,minmax(0,1fr)) 44px}
 }
 
 /* A track the index knows about whose bytes are no longer on the server. Shown, not hidden: a
@@ -12077,3 +12079,5 @@ article.note.ai-found,.notif.ai-found{box-shadow:inset 3px 0 0 var(--neon),0 0 0
 .rt-sep{border:0;border-top:1px solid rgba(var(--accent-rgb),.18);margin:18px 0}
 .us-server-down{display:flex;flex-wrap:wrap;align-items:center;gap:6px 10px;margin:0 0 10px;padding:10px 12px;border:1px solid rgba(var(--accent-rgb),.35);border-radius:10px;background:rgba(var(--accent-rgb),.07)}.us-server-down .muted{flex:1 1 220px}
 .mb-clip-sound{display:flex;align-items:flex-end;gap:10px;flex-wrap:wrap;margin:8px 0}.mb-clip-sound .mb-f{flex:1 1 160px;margin:0}.mb-clip-sound>.btn{min-height:40px;white-space:nowrap}
+.msh-more{flex:0 0 auto!important;min-width:40px;font-weight:700;letter-spacing:.05em}
+.msh-offer-act.msh-compact{justify-content:flex-end}.msh-offer-act.msh-compact .btn{flex:0 0 auto}
