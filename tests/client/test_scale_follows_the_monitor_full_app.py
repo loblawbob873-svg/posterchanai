@@ -61,7 +61,12 @@ async def measure():
                                                                             mobile=touch, screenWidth=sw, screenHeight=sh))
                     await b.call("Emulation.setTouchEmulationEnabled", dict(enabled=touch, maxTouchPoints=5 if touch else 1))
                     await b.call("Page.navigate", {"url": f"http://127.0.0.1:{server.server_port}/client"})
-                    await b.until("document.readyState==='complete' && !!document.querySelector('.app')")
+                    # `.app` starts `hidden` and boot reveals it: measured before that it is 0px tall, which
+                    # under a loaded gate is what this read (#103). Wait for the reveal; a page that never gets a
+                    # height still fails, because `until` gives up and raises.
+                    await b.until("document.readyState==='complete' && !!document.querySelector('.app')"
+                                  " && !document.querySelector('.app').classList.contains('hidden')"
+                                  " && document.querySelector('.app').getBoundingClientRect().height>0")
                     out[name] = await b.js("({zoom:+getComputedStyle(document.body).zoom,"
                                            "app:Math.round(document.querySelector('.app').getBoundingClientRect().height),vh:innerHeight})")
         finally:

@@ -95,3 +95,33 @@ def test_a_mentioned_name_gets_its_emoji_when_they_arrive_after_it():
     asyncio.run(desktop.with_browser('online', '', check, ''))
     assert got['before'] == 0, got
     assert got['after'] == 2, "the mention kept its :shortcode: text after the emoji arrived: %r" % got
+
+
+def test_the_mention_itself_is_patched_not_only_a_redrawn_copy():
+    """The race behind the test above failing under load (#103): a mention whose NAME was known but whose
+    emoji map was not was drawn WITHOUT the pending mark, so decorateProfiles -- the pass that runs when the map
+    arrives -- skipped it, and it was fixed only when something redrew the whole thread afterwards. Holding the
+    exact element makes that deterministic: nothing may redraw it for us."""
+    got = {}
+    reply = dict(NOTE, id="e" * 64, content="nostr:{npub} thanks", tags=NOTE["tags"] + [["p", DUCK]])
+
+    async def check(b):
+        await desktop.login(b)
+        await b.until("!!window.__PC")
+        npub = await b.js(f"NostrTools.nip19.npubEncode('{DUCK}')")
+        ev = dict(reply, content=reply["content"].replace("{npub}", npub))
+        bare = {"id": "c" * 64, "pubkey": DUCK, "kind": 0, "created_at": 1790000000, "sig": "", "tags": [],
+                "content": json.dumps({"name": DUCK_NAME})}
+        await b.js("Store.saveProfile(" + json.dumps(bare) + ");Store.saveEvent(" + json.dumps(ev) + ");true")
+        await b.js(f"__PC.openThread('{ev['id']}');true")
+        await b.until("[...document.querySelectorAll('a.mention')].some(a=>a.textContent.includes('Big Duck'))")
+        await b.js("window.__m=[...document.querySelectorAll('a.mention')].find(a=>a.textContent.includes('Big Duck'));true")
+        got['before'] = await b.js("__m.querySelectorAll('img.emoji-inline').length")
+        await b.js("Store.saveProfile(" + json.dumps(dict(bare, tags=DUCK_TAGS)) + ");__PC.decorateProfiles();true")
+        got['after'] = await b.js("__m.querySelectorAll('img.emoji-inline').length")
+        got['marked_after'] = await b.js("__m.hasAttribute('data-mpk')")
+
+    asyncio.run(desktop.with_browser('online', '', check, ''))
+    assert got['before'] == 0, got
+    assert got['after'] == 2, ("the mention on screen kept its :shortcode: text after its emoji arrived", got)
+    assert got['marked_after'] is False, ("a finished mention is still marked pending", got)

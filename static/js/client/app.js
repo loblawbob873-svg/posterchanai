@@ -6282,7 +6282,14 @@
     // dropped once filled so this is one-shot per mention.
     $$('a.mention[data-mpk]').forEach(a=>{ const pk=a.dataset.mpk; const p=Store.profile(pk); if(!p) return;
       const nm=p.name||p.display_name||niceNip05(p.nip05); if(!nm) return;
-      a.innerHTML='@'+emojiName(pk,nm); a.removeAttribute('data-mpk'); });
+      a.innerHTML='@'+emojiName(pk,nm);
+      // Done only once nothing is still to come: a :shortcode: name keeps its mark until its map lands.
+      if(!_mentionWaitsForEmoji(pk,nm)) a.removeAttribute('data-mpk'); });
+  }
+  /* A name made of NIP-30 :shortcodes: whose emoji map is not known yet draws as text for now. */
+  function _mentionWaitsForEmoji(pk, nm){
+    try{ return /:[a-zA-Z0-9_+\-]+:/.test(String(nm||'')) && !(Store.profileEmojis && Store.profileEmojis(pk)); }
+    catch(_){ return false; }
   }
 
   // ---------- view routing ----------
@@ -12855,7 +12862,13 @@
           // Until (unless) a name is known, show WHICH account it is: a short npub. The literal word
           // "profile" read as a name -- "@bulletbill22 muted @profile" in the block bot's posts.
           const np=NT().nip19.npubEncode(pk);
-          return pre+`<a href="#" class="mention" data-np="${np}"${nm?'':` data-mpk="${pk}"`}>@${nm?emojiName(pk,nm):np.slice(0,10)+'…'+np.slice(-5)}</a>`;
+          /* …and STILL unfinished when the name is known but its custom emoji are not: a name of
+             :shortcodes: whose NIP-30 map has not arrived draws as shortcode text, and without the mark
+             the pass that runs when the map lands (decorateProfiles) skipped it -- it was patched only
+             if something happened to redraw the whole thread afterwards (test_custom_emoji_render_
+             everywhere_full_app, which failed under load). */
+          const pending=!nm || _mentionWaitsForEmoji(pk,nm);
+          return pre+`<a href="#" class="mention" data-np="${np}"${pending?` data-mpk="${pk}"`:''}>@${nm?emojiName(pk,nm):np.slice(0,10)+'…'+np.slice(-5)}</a>`;
         }
         if(d.type==='note' || d.type==='nevent'){
           const id = d.type==='note' ? d.data : d.data.id;
