@@ -890,11 +890,20 @@ window.PCCardsFactory = function(dep){
       <div class="txt">${applyEmojis(linkify(stripQuoteRef(mp.text, o)), o)}</div>
       ${mp.mediaFirst?'':mp.gallery}
       ${cw?`</div></div>`:''}</div>`; }
-  // NIP-10 parent e-tag of a reply: the explicit `reply` marker, else `root`, else the last e-tag.
-  // Returns the WHOLE tag so its relay hint (t[2]) can be used to fetch an off-relay parent.
+  // The e-tag naming the post a reply ANSWERS. Returns the WHOLE tag so its relay hint (t[2]) can be
+  // used to fetch an off-relay parent. Feed label, thread tree and notifications all read this one.
+  //   NIP-22 (kind 1111): the lowercase `e` IS the parent; its t[3] is the parent's PUBKEY, not a marker.
+  //   NIP-10: the `reply` marker; else the last UNMARKED e-tag; else the `root` marker (a reply to the
+  //   root itself). That is nostr-tools' nip10.parse order. Taking `root` before an unmarked tag named
+  //   the ROOT as the parent of every reply written ["e",root,"","root"],["e",parent] — an earlier post.
+  //   A `mention` marker, or an e-tag that repeats a `q`, is a QUOTE (isReply's rule) and never the parent.
   function replyParentTag(ev){
-    const es=(ev.tags||[]).filter(t=>t[0]==='e'&&t[1]);
-    return es.find(t=>t[3]==='reply')||es.find(t=>t[3]==='root')||es[es.length-1]||null;
+    const tags=ev.tags||[], es=tags.filter(t=>t[0]==='e'&&t[1]);
+    if(ev.kind===1111) return es[es.length-1]||null;
+    const mk=t=>String(t[3]||'').toLowerCase();
+    const quoted=new Set(tags.filter(t=>t[0]==='q'&&t[1]).map(t=>t[1]));
+    const plain=es.filter(t=>!['reply','root','mention'].includes(mk(t)) && !quoted.has(t[1]));
+    return es.find(t=>mk(t)==='reply')||plain[plain.length-1]||es.find(t=>mk(t)==='root')||null;
   }
   function replyParentId(ev){ const t=replyParentTag(ev); return t?t[1]:null; }
   // Compact "↩ replying to <name>" LABEL shown above a reply — NOT the parent's full card. Rendering the
@@ -917,15 +926,24 @@ window.PCCardsFactory = function(dep){
     const pid=replyParentId(ev);
     if(!pid){ const url=fediParentLink(ev); if(!url) return ''; let host=''; try{host=new URL(url).host;}catch(_){ return ''; }
       return `<div class="reply-ctx reply-ctx-remote"><a class="reply-ctx-lbl" href="${enc(url)}" target="_blank" rel="noopener noreferrer" title="The post this replies to is on ${enc(host)}, which has not answered yet">↩ reply to a post on ${enc(host)}</a></div>`; }
-    const o=Store.get(pid);
-    const parentTag=replyParentTag(ev),pk=(o&&o.pubkey)||(ev.kind===1111&&parentTag&&parentTag[3])||((ev.tags.filter(t=>t[0]==='p'&&t[1]).slice(-1)[0]||[])[1]);
+    /* NAME ONLY WHAT THE REPLY ITSELF SAYS. With the parent not yet held, the label used to name the
+     * reply's LAST `p` tag — but this client and the ActivityPub bridge write the parent's author FIRST
+     * and the earlier participants after it, so the last `p` is somebody EARLIER in the thread (the
+     * root's author, typically), and nothing repainted it when the parent landed: "the feed shows an
+     * earlier post, the thread view is right". Now: the parent's own pubkey once held; before that the
+     * author the e-tag itself carries (NIP-22 t[3], NIP-10 t[4]); else no name. The label carries the
+     * ids it was built from, and patchLoaded repaints it when the parent arrives. */
+    const o=Store.get(pid), parentTag=replyParentTag(ev);
+    const hint=parentTag&&(ev.kind===1111?parentTag[3]:parentTag[4]);
+    const pk=(o&&o.pubkey)||(/^[0-9a-f]{64}$/i.test(hint||'')?hint:'');
+    const wait=o?'':` data-rctx="${enc(pid)}" data-rid="${enc(ev.id||'')}"`;
     if(!o) needEvent(pid);
-    if(!pk) return `<div class="reply-ctx"><span class="reply-ctx-lbl">↩ reply</span></div>`;
+    if(!pk) return `<div class="reply-ctx"${wait}><span class="reply-ctx-lbl">↩ reply</span></div>`;
     const p=profOf(pk); needProfile(pk); const nm=p.name||p.display_name;
     // Parent name is a .name[data-prof] span: renders custom emoji now (emojiName) and gets filled/patched
     // by decorateProfiles once the author's kind-0 loads — so bridged :shortcode: usernames show as images.
     const inner = nm ? emojiName(pk,nm) : (npubOf(pk).slice(0,12)+'…');
-    return `<div class="reply-ctx"><span class="reply-ctx-lbl">↩ replying to <span class="name" data-prof="${pk}">${inner}</span></span></div>`;
+    return `<div class="reply-ctx"${wait}><span class="reply-ctx-lbl">↩ replying to <span class="name" data-prof="${pk}">${inner}</span></span></div>`;
   }
   const _evQ=new Set(); let _evT=null; const _evTries=new Map();
   function needEvent(id){ if(id&&/^[0-9a-f]{64}$/i.test(id)&&!Store.get(id)){ _evQ.add(id); if(!_evT)_evT=setTimeout(flushEvents,150);} }
@@ -1010,9 +1028,9 @@ window.PCCardsFactory = function(dep){
     _lastReask = Date.now();
     _evTries.clear(); _evStalls.clear();
     let n=0;
-    document.querySelectorAll('.note[data-orig],[data-qload],[data-nctx]').forEach(el=>{
+    document.querySelectorAll('.note[data-orig],[data-qload],[data-nctx],[data-rctx]').forEach(el=>{
       if(n>=200) return;                                   // the timeline caps at 200 cards; don't build a huge REQ
-      const d=el.dataset, id=d.orig||d.qload||d.nctx;
+      const d=el.dataset, id=d.orig||d.qload||d.nctx||d.rctx;
       if(id && !Store.get(id)){ n++; needEvent(id); }
     });
   }
@@ -1029,6 +1047,11 @@ window.PCCardsFactory = function(dep){
     });
     $$(`[data-qload="${e.id}"]`).forEach(el=>{
       const div=document.createElement('div'); div.innerHTML=quotedDiv(e);
+      if(div.firstElementChild) el.replaceWith(div.firstElementChild);
+    });
+    $$(`.reply-ctx[data-rctx="${e.id}"]`).forEach(el=>{   // a reply's label: name the parent now it is held
+      const r=Store.get(el.dataset.rid||''); if(!r) return;
+      const div=document.createElement('div'); div.innerHTML=replyContextHtml(r);
       if(div.firstElementChild) el.replaceWith(div.firstElementChild);
     });
   }
