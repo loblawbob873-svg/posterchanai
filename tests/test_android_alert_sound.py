@@ -44,7 +44,7 @@ def test_notifications_are_posted_to_the_channel_the_switch_chose():
 def test_the_plugin_sets_the_phone_notification_sound_and_flips_the_switch():
     assert "RingtoneManager.TYPE_NOTIFICATION" in PLUGIN and "IS_NOTIFICATION, notify ? 1 : 0" in PLUGIN
     assert "@PluginMethod public void appAlert(PluginCall call)" in PLUGIN
-    assert "PushEventService.setAlertSound(getContext(), on)" in PLUGIN
+    assert "PushEventService.setSoundChoice(getContext(), sound)" in PLUGIN
     assert 'r.put("appAlert", place.poster.app.push.PushEventService.alertSoundOn(getContext()))' in PLUGIN
 
 
@@ -72,3 +72,28 @@ def test_a_phone_that_refuses_the_default_sends_the_person_to_sound_settings():
     assert 'outcome = "pick-it"' in block and "Settings.ACTION_SOUND_SETTINGS" in block
     js = open(os.path.join(ROOT, "static", "js", "client", "settings.js")).read()
     assert js.count("r.outcome==='pick-it'") == 2, "both the alert and the ringtone must explain the pick-it outcome"
+
+
+def test_the_phone_plays_the_same_arrival_sound_as_the_web_and_desktop():
+    """"hopefully the webui and apps can use the new sounds like OS". The web and desktop play the cyberpunk chime
+    by default and PosterChanOS uses it for messages -- but a phone played its own default sound unless the Alert
+    was switched on. The account's App arrival sound now picks the channel: the chime (also the default when the
+    phone has never been told), the Alert, or the phone's own sound for anything else."""
+    got = _run_rules("\n".join([
+        'System.out.println(RingtoneRules.messagesChannel("chime"));',
+        'System.out.println(RingtoneRules.messagesChannel((String) null));',
+        'System.out.println(RingtoneRules.messagesChannel(""));',
+        'System.out.println(RingtoneRules.messagesChannel("posterchan"));',
+        'System.out.println(RingtoneRules.messagesChannel("soft"));',
+        'System.out.println(RingtoneRules.messagesChannel("off"));']))
+    assert got == ["pcai_messages_chime", "pcai_messages_chime", "pcai_messages_chime", "pcai_messages_alert",
+                   "pcai_messages", "pcai_messages"], got
+    # The chime channel exists and carries the bundled chime, the same file the web plays.
+    assert 'messagesChannel("chime")' in PUSH and "R.raw.posterchan_chime" in PUSH and "nm.createNotificationChannel(chime)" in PUSH
+    raw = os.path.join(ANDROID, "src", "main", "res", "raw", "posterchan_chime.ogg")
+    assert open(raw, "rb").read() == open(os.path.join(ROOT, "static", "sounds", "posterchan-chime.ogg"), "rb").read()
+    # A phone told nothing yet defaults to the chime; one set up before this keeps its Alert.
+    assert 'return p.getBoolean(K_ALERT, false) ? "posterchan" : "chime";' in PUSH
+    # The client tells the phone the WHOLE choice, and re-tells it whenever it changes.
+    blossom = open(os.path.join(ROOT, "static", "js", "client", "blossom.js")).read()
+    assert "plug.appAlert({on,sound})" in blossom and "localStorage.getItem(key)===sound" in blossom

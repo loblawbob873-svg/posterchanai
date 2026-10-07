@@ -28,20 +28,31 @@ public final class PushEventService {
     public static final String PREFS = "pcai_push";
     private static final String CH_CALLS = "pcai_calls";
     private static final String CH_MSGS_PLAIN = "pcai_messages";
-    private static final String SOUND_PREFS = "pc_sounds", K_ALERT = "posterchanAlert";
+    private static final String SOUND_PREFS = "pc_sounds", K_ALERT = "posterchanAlert", K_SOUND = "arrivalSound";
 
-    public static boolean alertSoundOn(Context ctx) {
-        try { return ctx.getSharedPreferences(SOUND_PREFS, Context.MODE_PRIVATE).getBoolean(K_ALERT, false); }
-        catch (Throwable t) { return false; }
+    /** The account's App arrival sound as this phone last heard it; the chime until told otherwise (as on the web). */
+    public static String soundChoice(Context ctx) {
+        try {
+            android.content.SharedPreferences p = ctx.getSharedPreferences(SOUND_PREFS, Context.MODE_PRIVATE);
+            String s = p.getString(K_SOUND, null);
+            if (s != null && !s.isEmpty()) return s;
+            return p.getBoolean(K_ALERT, false) ? "posterchan" : "chime";   // a phone set up before this was stored
+        } catch (Throwable t) { return "chime"; }
     }
 
-    public static void setAlertSound(Context ctx, boolean on) {
-        ctx.getSharedPreferences(SOUND_PREFS, Context.MODE_PRIVATE).edit().putBoolean(K_ALERT, on).apply();
+    public static void setSoundChoice(Context ctx, String sound) {
+        String s = sound == null || sound.trim().isEmpty() ? "chime" : sound.trim();
+        ctx.getSharedPreferences(SOUND_PREFS, Context.MODE_PRIVATE).edit()
+                .putString(K_SOUND, s).putBoolean(K_ALERT, "posterchan".equals(s)).apply();
     }
 
-    /** The messages channel in use: the alert channel (PosterChan Alert sound) when the switch is on. */
+    public static boolean alertSoundOn(Context ctx) { return "posterchan".equals(soundChoice(ctx)); }
+
+    public static void setAlertSound(Context ctx, boolean on) { setSoundChoice(ctx, on ? "posterchan" : "chime"); }
+
+    /** The messages channel for the arrival sound: the Alert, the cyberpunk chime, or the phone's own. */
     private static String msgsChannel(Context ctx) {
-        return place.poster.app.ringtone.RingtoneRules.messagesChannel(alertSoundOn(ctx));
+        return place.poster.app.ringtone.RingtoneRules.messagesChannel(soundChoice(ctx));
     }
 
     private PushEventService() { }
@@ -208,8 +219,18 @@ public final class PushEventService {
                 new android.media.AudioAttributes.Builder()
                         .setUsage(android.media.AudioAttributes.USAGE_NOTIFICATION)
                         .setContentType(android.media.AudioAttributes.CONTENT_TYPE_SONIFICATION).build());
+        // The cyberpunk chime: the arrival sound's DEFAULT on the web and desktop, and PosterChanOS's message
+        // sound -- so a phone plays it too unless the person picked something else.
+        NotificationChannel chime = new NotificationChannel(
+                place.poster.app.ringtone.RingtoneRules.messagesChannel("chime"), "Messages and mentions (PosterChan chime)",
+                NotificationManager.IMPORTANCE_DEFAULT);
+        chime.setSound(android.net.Uri.parse("android.resource://" + ctx.getPackageName() + "/" + place.poster.app.R.raw.posterchan_chime),
+                new android.media.AudioAttributes.Builder()
+                        .setUsage(android.media.AudioAttributes.USAGE_NOTIFICATION)
+                        .setContentType(android.media.AudioAttributes.CONTENT_TYPE_SONIFICATION).build());
         nm.createNotificationChannel(calls);
         nm.createNotificationChannel(msgs);
         nm.createNotificationChannel(alert);
+        nm.createNotificationChannel(chime);
     }
 }

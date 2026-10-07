@@ -51,12 +51,16 @@ public final class RingtonePlugin extends Plugin {
    * it on is the proof, so `test:true` posts one straight away.
    */
   @PluginMethod public void appAlert(PluginCall call) {
-    boolean on = Boolean.TRUE.equals(call.getBoolean("on", false));
-    place.poster.app.push.PushEventService.setAlertSound(getContext(), on);
+    // `sound` is the account's whole App arrival sound (chime / posterchan / soft / …); an older client sends `on`.
+    String sound = call.getString("sound", null);
+    if (sound == null || sound.trim().isEmpty()) sound = Boolean.TRUE.equals(call.getBoolean("on", false)) ? "posterchan" : "chime";
+    place.poster.app.push.PushEventService.setSoundChoice(getContext(), sound);
+    boolean on = "posterchan".equals(sound);
     if (Boolean.TRUE.equals(call.getBoolean("test", false))) {
-      place.poster.app.push.PushEventService.show(getContext(), "PosterChan", on ? "This is the PosterChan Alert ♪" : "Notifications use your phone's sound again", "msg", "pc-alert-test", "notifications");
+      String said = on ? "This is the PosterChan Alert ♪" : "chime".equals(sound) ? "This is the PosterChan chime ♪" : "Notifications use your phone's sound again";
+      place.poster.app.push.PushEventService.show(getContext(), "PosterChan", said, "msg", "pc-alert-test", "notifications");
     }
-    JSObject r = new JSObject(); r.put("ok", true); r.put("appAlert", on); call.resolve(r);
+    JSObject r = new JSObject(); r.put("ok", true); r.put("appAlert", on); r.put("sound", sound); call.resolve(r);
   }
 
   @PluginMethod public void install(PluginCall call) {

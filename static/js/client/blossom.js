@@ -686,9 +686,11 @@ window.PCBlossomFactory = function(dep){
   function _applyAppAlert(){
     try{
       const plug=_capPlugin('Ringtone','appAlert'); if(!plug || !_notificationOwner()) return;
-      const on=notificationPreference('sound')==='posterchan', key='pc_app_alert_applied';
-      if(localStorage.getItem(key)===String(on)) return;
-      Promise.resolve(plug.appAlert({on})).then(()=>{ try{ localStorage.setItem(key,String(on)); }catch(_){ } }).catch(()=>{});
+      // The WHOLE choice, not only "alert on": the phone has a channel for the chime (the default) too, so it plays
+      // what the web and desktop play. `on` stays for an APK that predates `sound`.
+      const sound=String(notificationPreference('sound')||'chime'), on=sound==='posterchan', key='pc_app_sound_applied';
+      if(localStorage.getItem(key)===sound) return;
+      Promise.resolve(plug.appAlert({on,sound})).then(()=>{ try{ localStorage.setItem(key,sound); }catch(_){ } }).catch(()=>{});
     }catch(_){ }
   }
   function setNotificationPreference(key,value){

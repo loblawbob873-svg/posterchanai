@@ -24,6 +24,18 @@ public final class RingtoneRules {
    */
   public static String messagesChannel(boolean alertSound) { return alertSound ? "pcai_messages_alert" : "pcai_messages"; }
 
+  /**
+   * The messages channel for the account's App arrival sound, the SAME setting the web and desktop use: the
+   * cyberpunk chime (the default everywhere, and PosterChanOS's message sound) and the PosterChan Alert each have a
+   * channel carrying the bundled file -- Android fixes a channel's sound when it is created -- and any other
+   * choice ("soft", "bright", "off"…) keeps the phone's own sound on the plain channel.
+   */
+  public static String messagesChannel(String sound) {
+    if ("posterchan".equals(sound)) return "pcai_messages_alert";
+    if (sound == null || sound.isEmpty() || "chime".equals(sound)) return "pcai_messages_chime";
+    return "pcai_messages";
+  }
+
   /** A plain file name: letters, digits, dash, underscore and one extension; never a path. */
   public static String name(String requested, String mime) {
     String ext = "audio/mpeg".equals(mime) ? ".mp3" : ".ogg";
