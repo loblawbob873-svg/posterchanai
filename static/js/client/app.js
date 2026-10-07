@@ -12867,7 +12867,8 @@
              the pass that runs when the map lands (decorateProfiles) skipped it -- it was patched only
              if something happened to redraw the whole thread afterwards (test_custom_emoji_render_
              everywhere_full_app, which failed under load). */
-          const pending=!nm || _mentionWaitsForEmoji(pk,nm);
+          // Inline, not the _mentionWaitsForEmoji helper: linkify is also run on its own (mention_label_runtime).
+          const pending=!nm || (/:[a-zA-Z0-9_+\-]+:/.test(nm) && !(Store.profileEmojis && Store.profileEmojis(pk)));
           return pre+`<a href="#" class="mention" data-np="${np}"${pending?` data-mpk="${pk}"`:''}>@${nm?emojiName(pk,nm):np.slice(0,10)+'…'+np.slice(-5)}</a>`;
         }
         if(d.type==='note' || d.type==='nevent'){
