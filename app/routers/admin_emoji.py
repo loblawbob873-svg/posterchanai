@@ -53,7 +53,8 @@ async def list_emoji(q: str = "", pack: str = "", offset: int = 0, limit: int = 
     return JSONResponse({
         "dir": st["dir"], "exists": st["exists"], "count": st["count"], "bytes": st["bytes"],
         "packs": st["packs"], "total": total,
-        "emojis": [{"s": e["shortcode"], "p": e["pack"],
+        # `b`: a built-in emoji (assets/emoji-builtin, part of the code) -- shown without rename/delete.
+        "emojis": [{"s": e["shortcode"], "p": e["pack"], "b": bool(e.get("builtin")),
                     "u": f"/client/emoji/{e['pack']}/{e['shortcode']}{e['ext']}",
                     "t": f"/client/emoji/{e['pack']}/{e['shortcode']}{e['ext']}?t=1"} for e in page],
     })

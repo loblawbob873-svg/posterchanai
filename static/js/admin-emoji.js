@@ -53,7 +53,7 @@ function emojiRenderPacks(j) {
     const want = _emState.pack;
     const opts = ['<option value="">All packs</option>'].concat((j.packs || []).map(p =>
         `<option value="${escapeHtml(p.name)}">${escapeHtml(p.name === '_' ? '(loose files)' : p.name)}`
-        + ` — ${p.count.toLocaleString()}</option>`));
+        + `${p.builtin ? ' (built-in)' : ''} — ${p.count.toLocaleString()}</option>`));
     const html = opts.join('');
     if (sel.dataset.html !== html) { sel.innerHTML = html; sel.dataset.html = html; }
     sel.value = want;
@@ -70,10 +70,10 @@ function emojiRenderGrid(list, append) {
         <div class="emoji-cell" data-pack="${escapeHtml(e.p)}" data-sc="${escapeHtml(e.s)}">
             <img src="${escapeHtml(e.t)}" alt=":${escapeHtml(e.s)}:" loading="lazy" decoding="async">
             <span class="emoji-cell-sc" title=":${escapeHtml(e.s)}:">${escapeHtml(e.s)}</span>
-            <span class="emoji-cell-acts">
+            ${e.b ? '<span class="emoji-cell-acts" title="Ships with PosterChan — part of the code, so it cannot be renamed or deleted here">built-in</span>' : `<span class="emoji-cell-acts">
                 <button type="button" class="emoji-act" data-act="rename" title="Rename">✏️</button>
                 <button type="button" class="emoji-act" data-act="delete" title="Delete">🗑️</button>
-            </span>
+            </span>`}
         </div>`).join('');
     if (append) grid.insertAdjacentHTML('beforeend', html); else grid.innerHTML = html;
 }
