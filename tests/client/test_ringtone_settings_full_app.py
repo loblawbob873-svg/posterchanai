@@ -70,7 +70,7 @@ def test_without_the_android_plugin_the_files_are_offered_to_download():
 
     async def check(b):
         await _open_tab(b)
-        got["links"] = await b.js("[...document.querySelectorAll('[data-pane=\"ringtone\"] a[download]')].map(a=>a.getAttribute('download'))")
+        got["links"] = await b.js("[...document.querySelectorAll('#rt-dl a[download]')].map(a=>a.getAttribute('download'))")
         got["set"] = await b.js("!!document.getElementById('rt-set')")
 
     asyncio.run(desktop.with_browser("online", "", check))

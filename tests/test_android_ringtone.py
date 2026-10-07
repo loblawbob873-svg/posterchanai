@@ -58,7 +58,7 @@ def test_the_plugin_is_registered_and_its_permission_declared():
     src = open(os.path.join(PKG, "RingtonePlugin.java")).read()
     assert '@CapacitorPlugin(name = "Ringtone")' in src
     assert "ACTION_MANAGE_WRITE_SETTINGS" in src and "setActualDefaultRingtoneUri" in src
-    assert "IS_RINGTONE" in src and "RingtoneRules.FOLDER" in src
+    assert "IS_RINGTONE" in src and "RingtoneRules.folder(kind)" in src
 
 
 def test_both_app_bundles_carry_the_sound_and_it_is_real_audio():

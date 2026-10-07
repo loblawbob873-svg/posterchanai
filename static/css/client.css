@@ -12074,3 +12074,4 @@ img.md-rel:not([src]){display:none}
 article.note.ai-found,.notif.ai-found{box-shadow:inset 3px 0 0 var(--neon),0 0 0 1px rgba(var(--accent-rgb),.45)}
 .osw-ai-cal{display:flex;gap:8px;align-items:baseline;padding:3px 2px}.osw-ai-cal>span{min-width:52px;color:var(--muted);font-variant-numeric:tabular-nums}.osw-ai-cal.clash b{color:var(--danger,#f66)}
 .osw-ai-calc{font-size:16px;padding:6px 2px;overflow-wrap:anywhere}.osw-ai-calc b{color:var(--neon)}
+.rt-sep{border:0;border-top:1px solid rgba(var(--accent-rgb),.18);margin:18px 0}

@@ -436,7 +436,9 @@ window.PCBlossomFactory = function(dep){
     ['replies','Replies'],['quotes','Quote posts'],['mentions','Mentions'],['reposts','Reposts'],
     ['zaps','Zaps and tips'],['concord','Concord mentions'],['channels','Chat rooms'],
     ['sms','Text messages'],['reminders','Reminders'],['follows','New followers']];
-  const _NOTIFICATION_SOUNDS = ['chime','soft','bright','off'];
+  // 'posterchan' = the PosterChan Alert (static/sounds/posterchan-alert.*, scripts/make_notification_sound.py).
+  const _NOTIFICATION_SOUNDS = ['chime','soft','bright','posterchan','off'];
+  const _SOUND_LABEL = { chime:'Chime', soft:'Soft', bright:'Bright', posterchan:'PosterChan Alert ♪', off:'Silent' };
   function _notificationOwner(){ return (_S.ME && _S.ME.pubkey)||''; }
   function _notificationClean(value){
     const out={};
@@ -675,7 +677,19 @@ window.PCBlossomFactory = function(dep){
     if(createdAt && createdAt<state.clock)return;
     state.clock=Math.max(state.clock,createdAt||0);
     state.values={..._notificationClean(remote),...state.dirty};
-    _notificationStore(owner,state);_paintNotificationSettings();
+    _notificationStore(owner,state);_paintNotificationSettings();_applyAppAlert();
+  }
+  /* THE ANDROID APP PLAYS THE ALERT THROUGH ITS OWN CHANNEL, so it must be TOLD when the sound preference is
+   * the PosterChan Alert -- including when it was picked on another device and arrived here synced. The
+   * WebView never plays a notification sound on Android (notificationSound's own rule), so without this the
+   * choice would do nothing on the one device the request was about. Told only when it changes. */
+  function _applyAppAlert(){
+    try{
+      const plug=_capPlugin('Ringtone','appAlert'); if(!plug || !_notificationOwner()) return;
+      const on=notificationPreference('sound')==='posterchan', key='pc_app_alert_applied';
+      if(localStorage.getItem(key)===String(on)) return;
+      Promise.resolve(plug.appAlert({on})).then(()=>{ try{ localStorage.setItem(key,String(on)); }catch(_){ } }).catch(()=>{});
+    }catch(_){ }
   }
   function setNotificationPreference(key,value){
     const owner=_notificationOwner(),patch=_notificationClean({[key]:value});
@@ -683,6 +697,7 @@ window.PCBlossomFactory = function(dep){
     const state=_notificationState(owner);
     state.values={...state.values,...patch};state.dirty={...state.dirty,...patch};
     _notificationStore(owner,state);_paintNotificationSettings();
+    if(key==='sound') _applyAppAlert();
     return _syncNotificationPreferences(owner);
   }
   function _syncNotificationPreferences(owner=_notificationOwner()){
@@ -720,7 +735,7 @@ window.PCBlossomFactory = function(dep){
       <div class="set-title small">App alerts</div>
       <p class="muted small">Choose which events interrupt you. Messages and notification history remain available. Changes save immediately and sync with your account.</p>
       ${_NOTIFICATION_TYPES.map(([key,label])=>`<label class="fld" style="flex-direction:row;justify-content:space-between;align-items:center">${label}<label class="switch"><input type="checkbox" data-notification-type="${key}" ${notificationPreference(key)?'checked':''}><span class="slider"></span></label></label>`).join('')}
-      <label class="fld">App arrival sound<select class="input" id="us-notification-sound">${_NOTIFICATION_SOUNDS.map(sound=>`<option value="${sound}"${notificationPreference('sound')===sound?' selected':''}>${sound==='off'?'Silent':sound[0].toUpperCase()+sound.slice(1)}</option>`).join('')}</select></label>
+      <label class="fld">App arrival sound<select class="input" id="us-notification-sound">${_NOTIFICATION_SOUNDS.map(sound=>`<option value="${sound}"${notificationPreference('sound')===sound?' selected':''}>${_SOUND_LABEL[sound]||sound}</option>`).join('')}</select></label>
       <div class="set-actions"><button class="btn btn-ghost small" id="us-notification-preview">Preview sound</button><button class="btn btn-ghost small" id="us-notification-sync">Sync now</button></div>
       <div class="muted small" id="us-notification-sync-state" role="status"></div>
 
@@ -789,6 +804,10 @@ window.PCBlossomFactory = function(dep){
     if(!preview && window.Capacitor)return;
     const now=Date.now();if(!preview && now-_notificationLastSound<500)return;
     _notificationLastSound=now;
+    if(sound==='posterchan'){
+      try{ const a=new window.Audio('/static/sounds/posterchan-alert.ogg'); a.volume=0.8; const p=a.play(); if(p&&p.catch)p.catch(()=>{}); }catch(_){ }
+      return;
+    }
     try{
       const Audio=window.AudioContext||window.webkitAudioContext;if(!Audio)return;
       const audio=new Audio(),t=audio.currentTime;

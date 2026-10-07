@@ -27,7 +27,22 @@ public final class PushEventService {
 
     public static final String PREFS = "pcai_push";
     private static final String CH_CALLS = "pcai_calls";
-    private static final String CH_MSGS = "pcai_messages";
+    private static final String CH_MSGS_PLAIN = "pcai_messages";
+    private static final String SOUND_PREFS = "pc_sounds", K_ALERT = "posterchanAlert";
+
+    public static boolean alertSoundOn(Context ctx) {
+        try { return ctx.getSharedPreferences(SOUND_PREFS, Context.MODE_PRIVATE).getBoolean(K_ALERT, false); }
+        catch (Throwable t) { return false; }
+    }
+
+    public static void setAlertSound(Context ctx, boolean on) {
+        ctx.getSharedPreferences(SOUND_PREFS, Context.MODE_PRIVATE).edit().putBoolean(K_ALERT, on).apply();
+    }
+
+    /** The messages channel in use: the alert channel (PosterChan Alert sound) when the switch is on. */
+    private static String msgsChannel(Context ctx) {
+        return place.poster.app.ringtone.RingtoneRules.messagesChannel(alertSoundOn(ctx));
+    }
 
     private PushEventService() { }
 
@@ -105,7 +120,7 @@ public final class PushEventService {
         if (nm == null) return false;
         if (Build.VERSION.SDK_INT >= 24 && !nm.areNotificationsEnabled()) return false;
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-            NotificationChannel channel = nm.getNotificationChannel(call ? CH_CALLS : CH_MSGS);
+            NotificationChannel channel = nm.getNotificationChannel(call ? CH_CALLS : msgsChannel(ctx));
             if (channel != null && channel.getImportance() == NotificationManager.IMPORTANCE_NONE) return false;
         }
         return true;
@@ -136,7 +151,7 @@ public final class PushEventService {
                 isCall ? 1 : 2000 + Math.abs(String.valueOf(route).hashCode() % 100000), open, flags);
 
         Notification.Builder b = Build.VERSION.SDK_INT >= Build.VERSION_CODES.O
-                ? new Notification.Builder(ctx, isCall ? CH_CALLS : CH_MSGS)
+                ? new Notification.Builder(ctx, isCall ? CH_CALLS : msgsChannel(ctx))
                 : new Notification.Builder(ctx);
         b.setContentTitle(title)
          .setContentText(body)
@@ -183,8 +198,18 @@ public final class PushEventService {
                 CH_CALLS, "Calls", NotificationManager.IMPORTANCE_HIGH);
         calls.setDescription("Incoming voice and video calls");
         NotificationChannel msgs = new NotificationChannel(
-                CH_MSGS, "Messages and mentions", NotificationManager.IMPORTANCE_DEFAULT);
+                CH_MSGS_PLAIN, "Messages and mentions", NotificationManager.IMPORTANCE_DEFAULT);
+        // The same notifications with the PosterChan Alert sound (User Settings → Sounds). Its own channel,
+        // because Android fixes a channel's sound when the channel is created.
+        NotificationChannel alert = new NotificationChannel(
+                place.poster.app.ringtone.RingtoneRules.messagesChannel(true), "Messages and mentions (PosterChan Alert)",
+                NotificationManager.IMPORTANCE_DEFAULT);
+        alert.setSound(android.net.Uri.parse("android.resource://" + ctx.getPackageName() + "/" + place.poster.app.R.raw.posterchan_alert),
+                new android.media.AudioAttributes.Builder()
+                        .setUsage(android.media.AudioAttributes.USAGE_NOTIFICATION)
+                        .setContentType(android.media.AudioAttributes.CONTENT_TYPE_SONIFICATION).build());
         nm.createNotificationChannel(calls);
         nm.createNotificationChannel(msgs);
+        nm.createNotificationChannel(alert);
     }
 }

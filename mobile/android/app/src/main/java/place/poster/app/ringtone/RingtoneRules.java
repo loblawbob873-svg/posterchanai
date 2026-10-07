@@ -9,6 +9,20 @@ public final class RingtoneRules {
 
   /** Ringtones live here, so Android's own ringtone picker lists them too. */
   public static final String FOLDER = "Ringtones/";
+  /** Notification sounds live here, so Android's notification-sound picker lists them. */
+  public static final String NOTIFY_FOLDER = "Notifications/";
+
+  /** "notification" stores a notification sound; anything else is a ringtone (the original behaviour). */
+  public static boolean isNotification(String kind) { return "notification".equals(kind); }
+
+  public static String folder(String kind) { return isNotification(kind) ? NOTIFY_FOLDER : FOLDER; }
+
+  /**
+   * The channel PosterChan's message notifications post to. A channel's SOUND is fixed when Android creates
+   * it -- an app can never change it afterwards -- so "PosterChan notifications play the PosterChan Alert" is
+   * a second channel that carries the sound, and the switch picks between the two.
+   */
+  public static String messagesChannel(boolean alertSound) { return alertSound ? "pcai_messages_alert" : "pcai_messages"; }
 
   /** A plain file name: letters, digits, dash, underscore and one extension; never a path. */
   public static String name(String requested, String mime) {

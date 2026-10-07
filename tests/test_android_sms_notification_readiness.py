@@ -34,6 +34,8 @@ class Context {
 }
 public class Harness {
  static final String CHANNEL="pcai_sms",CH_CALLS="pcai_calls",CH_MSGS="pcai_messages";
+ // PushEventService picks the messages channel per the PosterChan Alert switch (off here).
+ static String msgsChannel(Context c){ return CH_MSGS; }
 ''' + body + '''
  static void expect(Context context, boolean expected, String name){
    if(READINESS!=expected)throw new AssertionError(name);
