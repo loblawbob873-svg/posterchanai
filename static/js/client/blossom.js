@@ -812,13 +812,20 @@ window.PCBlossomFactory = function(dep){
       const Audio=window.AudioContext||window.webkitAudioContext;if(!Audio)return;
       const audio=new Audio(),t=audio.currentTime;
       if(audio.state==='suspended')audio.resume().catch(()=>{});
-      const gain=audio.createGain();gain.connect(audio.destination);
-      gain.gain.setValueAtTime(0.0001,t);
-      gain.gain.exponentialRampToValueAtTime(sound==='soft'?0.025:0.05,t+0.025);
-      gain.gain.exponentialRampToValueAtTime(0.0001,t+0.65);
+      /* A DING-DONG, NOT A KEYPAD. Two pure SINES started at the same instant is exactly how a phone keypad
+       * makes its tones (DTMF is two simultaneous sines) -- reported as "I am hearing phone dialer beeps
+       * randomly now when I use posterchan". The two notes now come one after the other, each a triangle
+       * wave with its own soft attack and bell-like decay. */
+      const peak=sound==='soft'?0.03:0.06;
       const frequencies=sound==='bright'?[659.25,987.77]:sound==='soft'?[392,523.25]:[523.25,783.99];
-      frequencies.forEach(f=>{const osc=audio.createOscillator();osc.type='sine';osc.frequency.value=f;osc.connect(gain);osc.start(t);osc.stop(t+0.7);});
-      setTimeout(()=>{try{audio.close();}catch(_){}},800);
+      frequencies.forEach((f,i)=>{
+        const at=t+i*0.13, g=audio.createGain(); g.connect(audio.destination);
+        g.gain.setValueAtTime(0.0001,at);
+        g.gain.exponentialRampToValueAtTime(peak,at+0.02);
+        g.gain.exponentialRampToValueAtTime(0.0001,at+0.55);
+        const osc=audio.createOscillator(); osc.type='triangle'; osc.frequency.value=f; osc.connect(g); osc.start(at); osc.stop(at+0.6);
+      });
+      setTimeout(()=>{try{audio.close();}catch(_){}},950);
     }catch(_){}
   }
   function _notificationType(opts){

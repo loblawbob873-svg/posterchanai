@@ -124,11 +124,14 @@ const fs=require('fs'),vm=require('vm'),assert=require('node:assert/strict');
 const source=fs.readFileSync(process.argv[1],'utf8');
 const block=source.slice(source.indexOf('  let _notificationLastSound='),source.indexOf('  function _notificationType('));
 let selected='chime',clock=10000;const contexts=[],timers=[];
-class Audio {constructor(){this.currentTime=0;this.state='running';this.frequencies=[];this.closed=false;contexts.push(this)}createGain(){return{connect(){},gain:{setValueAtTime(){},exponentialRampToValueAtTime(){}}}}createOscillator(){const o={type:'',frequency:{value:0},connect(){},start:()=>this.frequencies.push(o.frequency.value),stop(){}};return o}close(){this.closed=true}}
+class Audio {constructor(){this.currentTime=0;this.state='running';this.frequencies=[];this.closed=false;contexts.push(this)}createGain(){return{connect(){},gain:{setValueAtTime(){},exponentialRampToValueAtTime(){}}}}createOscillator(){const o={type:'',frequency:{value:0},connect(){},start:at=>{this.frequencies.push(o.frequency.value);(this.starts=this.starts||[]).push(at);(this.types=this.types||[]).push(o.type)},stop(){}};return o}close(){this.closed=true}}
 const c={window:{AudioContext:Audio},Date:{now:()=>clock},notificationPreference:()=>selected,setTimeout:f=>timers.push(f)};
 c._S=c;vm.createContext(c);vm.runInContext(block,c);
 c.notificationSound();c.notificationSound();assert.equal(contexts.length,1,'toast and OS notification chime once');
-assert.deepEqual(contexts[0].frequencies,[523.25,783.99]);timers.splice(0).forEach(f=>f());assert.equal(contexts[0].closed,true,'no persistent desktop idle inhibitor');
+assert.deepEqual(contexts[0].frequencies,[523.25,783.99]);
+// Not a keypad: DTMF is two pure sines starting together ("phone dialer beeps"). One note after the other, no sines.
+assert.ok(contexts[0].starts[1]>contexts[0].starts[0],'the chime notes start together, like a dialer key');
+assert.ok(!contexts[0].types.includes('sine'),'the chime is pure sines, like a dialer key');timers.splice(0).forEach(f=>f());assert.equal(contexts[0].closed,true,'no persistent desktop idle inhibitor');
 selected='off';c.notificationSound(true);assert.equal(contexts.length,1,'silent preview creates no audio context');
 selected='soft';c.notificationSound(true);assert.deepEqual(contexts.at(-1).frequencies,[392,523.25]);
 selected='bright';c.notificationSound(true);assert.deepEqual(contexts.at(-1).frequencies,[659.25,987.77]);
