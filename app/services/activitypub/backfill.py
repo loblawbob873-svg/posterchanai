@@ -33,6 +33,7 @@ logger = logging.getLogger(__name__)
 RECENT = 20                 # an account's posts brought in per backfill
 PAGES = 3                   # outbox pages read at most (a page of boosts can hold no posts)
 REPLIES = 40                # a thread's replies brought in per read
+ANCESTORS = 30              # posts climbed above an opened post, to reach its thread's first post
 REFRESH = 6 * 3600          # an account or thread is re-read at most this often
 _POSTS = ("Note", "Article", "Question", "Page")
 _MARK = "pcai:ap:backfilled:"
@@ -175,9 +176,15 @@ async def backfill_actor(actor_uri: str, *, limit: int = RECENT, min_age: float 
 
 
 async def thread_replies(object_uri: str, *, limit: int = REPLIES, min_age: float = REFRESH) -> dict:
-    """Bring in the replies a post's own server lists for it -- the rest of a thread whose authors
-    nobody here follows. Each reply is fetched from ITS own server (fetch_object checks the id) and
-    stored through store_note, which also brings its parent in when that is missing."""
+    """Bring in the CONVERSATION a post belongs to, from the servers it lives on.
+
+    UP FIRST: the post's ancestors, climbed through `inReplyTo` to the thread's first post (each from
+    ITS own server, at most ANCESTORS). Reading only the opened post's replies left a deep fediverse
+    thread headless -- measured 2026-10-06: a 167-reply conversation across five servers whose first
+    post was never stored, so opening any reply showed one post and "0 replies" ("how come i cant see
+    entire thread", "dont we have intelligent backfilling?"). THEN DOWN: the replies each end lists --
+    the opened post's and the first post's -- each fetched from its own server and stored through
+    store_note, which also brings a missing parent in."""
     from app.services.activitypub import inbox
     key = _THREAD_MARK + state._h(object_uri)
     if min_age and await _marked(key, min_age):
@@ -192,39 +199,75 @@ async def thread_replies(object_uri: str, *, limit: int = REPLIES, min_age: floa
         except Exception as e:
             _note_failure(remote.host_of(object_uri), e)
             raise
-        col = post.get("replies")
-        if isinstance(col, str):
-            col = await remote.fetch_json(col) if _same_host(col, object_uri) else {}
-        page = (col or {}).get("first") or col if isinstance(col, dict) else None
         counts: dict = {}
-        got, pages = 0, 0
-        while page and pages < PAGES and got < limit:
-            if isinstance(page, str):
-                if not _same_host(page, object_uri):
-                    break
-                page = await remote.fetch_json(page)
-            if not isinstance(page, dict):
+
+        def tally(what: str) -> None:
+            k = what.split(":")[0]
+            counts[k] = counts.get(k, 0) + 1
+
+        # ---- up: the ancestors, to the first post
+        top, cur, seen = post, post, {object_uri}
+        for _ in range(ANCESTORS):
+            parent = convert.id_of(cur.get("inReplyTo"))
+            if not parent or not parent.startswith("https://") or parent in seen:
                 break
-            pages += 1
-            for item in convert._as_list(page.get("orderedItems") or page.get("items")):
-                if got >= limit:
-                    break
+            seen.add(parent)
+            try:
+                cur = await remote.fetch_object(parent)          # from its own server, always
+            except Exception:
+                counts["ancestor unreachable"] = counts.get("ancestor unreachable", 0) + 1
+                break
+            author = convert.id_of(cur.get("attributedTo"))
+            if cur.get("type") not in _POSTS or not author:
+                break
+            top = cur
+            await asyncio.sleep(NOTE_GAP)
+            try:
+                tally("ancestor " + await inbox.store_note(cur, author, need_gate=False))
+            except Exception as e:
+                tally(f"ancestor error: {type(e).__name__}")
+
+        # ---- down: the replies each end of the thread lists
+        got = 0
+        for host_post in ([post, top] if top is not post else [post]):
+            host_uri = convert.id_of(host_post) or object_uri
+            col = host_post.get("replies")
+            if isinstance(col, str):
                 try:
-                    note = await remote.fetch_object(convert.id_of(item))   # from its own server, always
+                    col = await remote.fetch_json(col) if _same_host(col, host_uri) else {}
                 except Exception:
-                    counts["unreachable"] = counts.get("unreachable", 0) + 1
-                    continue
-                author = convert.id_of(note.get("attributedTo"))
-                if note.get("type") not in _POSTS or not author:
-                    continue
-                got += 1
-                await asyncio.sleep(NOTE_GAP)
-                try:
-                    what = await inbox.store_note(note, author, need_gate=False)
-                except Exception as e:
-                    what = f"error: {type(e).__name__}"
-                counts[what.split(":")[0]] = counts.get(what.split(":")[0], 0) + 1
-            page = page.get("next")
+                    col = {}
+            page = (col or {}).get("first") or col if isinstance(col, dict) else None
+            pages = 0
+            while page and pages < PAGES and got < limit:
+                if isinstance(page, str):
+                    if not _same_host(page, host_uri):
+                        break
+                    try:
+                        page = await remote.fetch_json(page)
+                    except Exception:
+                        break
+                if not isinstance(page, dict):
+                    break
+                pages += 1
+                for item in convert._as_list(page.get("orderedItems") or page.get("items")):
+                    if got >= limit:
+                        break
+                    try:
+                        note = await remote.fetch_object(convert.id_of(item))   # from its own server, always
+                    except Exception:
+                        counts["unreachable"] = counts.get("unreachable", 0) + 1
+                        continue
+                    author = convert.id_of(note.get("attributedTo"))
+                    if note.get("type") not in _POSTS or not author:
+                        continue
+                    got += 1
+                    await asyncio.sleep(NOTE_GAP)
+                    try:
+                        tally(await inbox.store_note(note, author, need_gate=False))
+                    except Exception as e:
+                        tally(f"error: {type(e).__name__}")
+                page = page.get("next")
         await state._put(key, {"object": object_uri, "at": int(time.time()), "n": got})
     logger.info("[activitypub] thread %s: %s", remote.host_of(object_uri), counts)
     return counts

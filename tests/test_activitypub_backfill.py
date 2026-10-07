@@ -285,3 +285,21 @@ def test_our_relay_gets_a_gap_between_posts(fedi, monkeypatch):
     _outbox(fedi["pages"], [{"type": "Create", "object": _note(i)} for i in range(1, 6)])
     run(backfill.backfill_actor(REMOTE))
     assert waits.count(0.25) == 5
+
+
+def test_opening_a_deep_reply_brings_the_thread_up_to_its_first_post_and_that_posts_replies(fedi):
+    """'how come i cant see entire thread' / 'dont we have intelligent backfilling?' -- a 167-reply
+    fediverse conversation whose first post was never stored: opening any reply showed one post and
+    '0 replies'. Opening the deepest post must climb inReplyTo to the first post, store every ancestor,
+    and read the FIRST post's replies too (a branch nobody here follows only hangs off the top)."""
+    base = "https://mastodon.example/notes/"
+    replies_of_root = {"id": base + "1/replies", "type": "Collection",
+                       "first": {"type": "CollectionPage", "items": [base + "9"]}}
+    chain = [_note(1, replies=replies_of_root)] + [_note(i, inReplyTo=base + str(i - 1)) for i in range(2, 7)]
+    for n in chain:
+        fedi["objects"][n["id"]] = n
+    fedi["objects"][base + "9"] = _note(9, inReplyTo=base + "1")          # a sibling branch off the top
+    counts = run(backfill.thread_replies(base + "6"))
+    stored = set(_stored(fedi))
+    assert {f"post {i}" for i in range(1, 6)} <= stored, ("the ancestors were not climbed", counts, sorted(stored))
+    assert "post 9" in stored, ("the first post's own replies were not read", counts, sorted(stored))
