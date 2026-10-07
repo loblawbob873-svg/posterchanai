@@ -511,6 +511,7 @@ code{font-family:var(--mono);word-break:break-all}
   animation:city-near 96s linear infinite}
 /* drift by EXACTLY one mask period → buildings loop seamlessly; over-extend (260px) > period so no edge shows */
 @keyframes city-far{from{transform:translate3d(0,0,0)}to{transform:translate3d(-192px,0,0)}}
+
 @keyframes city-mid{from{transform:translate3d(0,0,0)}to{transform:translate3d(-128px,0,0)}}
 @keyframes city-near{from{transform:translate3d(0,0,0)}to{transform:translate3d(-176px,0,0)}}
 @keyframes city-haze{0%,100%{opacity:.55}50%{opacity:.85}}
@@ -533,6 +534,24 @@ code{font-family:var(--mono);word-break:break-all}
   contain: strict;                    /* isolate so foreground glow repaints don't re-rasterize it */
 }
 .city-bg::before{ animation: none !important; transform: translateZ(0); }
+/* A TOUCH SCREEN GETS THE SAME BACKDROP AS ONE FLAT PICTURE (tablet: "runs out of memory ... reloads").
+   The translateZ(0) above, and the ones on .scanlines/.grid-bg, each give a full-screen sheet a compositor
+   layer of its own, and they cascade: anything painted OVER a composited layer must be composited too
+   ("Overlap"), so the skyline alone dragged .scanlines, html.os-on, #os-root and #feed into layers. At a
+   tablet's 2x density a full-screen layer is ~16 MB of tiles, held for the life of the page; measured,
+   hiding the backdrop took the renderer from 505 to 383 MB. On a coarse pointer it paints INTO the page
+   instead -- same picture, no layers. The cost is the trade the rule above was avoiding: a glass panel's
+   blur re-rasterizes the gradients under it when it repaints. On a tablet that is the cheaper failure.
+   It must stay AFTER the rule above: same specificity, so the later one wins. */
+@media (pointer:coarse){
+  .scanlines,.grid-bg,.city-far,.city-mid,.city-near,.city-bg::before{transform:none;contain:none;will-change:auto}
+  /* overflow:hidden makes .city-bg a box that CAN be scrolled from script, so Chrome composites it as a
+     scroller; clip looks identical and is not a scroll container. And position:fixed over the viewport's
+     own scroller is composited for that alone ("Viewport"); the page itself never scrolls (body is
+     overflow:hidden, content scrolls in #feed and the windows), so absolute fills the same box. */
+  .city-bg,.scanlines,.grid-bg{overflow:clip;position:absolute}
+  .city-far,.city-mid,.city-near,.city-bg::before{animation:none}
+}
 
 .glass{background:var(--panel);backdrop-filter:blur(7px);-webkit-backdrop-filter:blur(7px);border:1px solid var(--line)}
 /* Perf: the ALWAYS-ON panels (sidebar/topbar/rightbar/mobilenav) re-blur on every content update
@@ -8403,6 +8422,8 @@ body.native:not(.desktop).term-view .tty-bar{padding-top:env(safe-area-inset-top
 /* Which monitor a window from ANOTHER screen is on — the unified Alt+Tab list shows them all. */
 .os-alt-where{margin-left:auto;flex:none;padding:1px 6px;border-radius:6px;font-size:10px;letter-spacing:.04em;color:var(--muted);border:1px solid rgba(var(--accent-rgb),.3)}
 .osw.minimised{display:none}
+/* Entirely under another window: paint nothing (os.js _coverPass). visibility keeps layout and scroll. */
+.osw.osw-covered .osw-body{visibility:hidden}
 /* The start button's LAST resort. When the instance logo cannot be fetched and the bundled PNG is
    missing too, the button draws the sprite flower — sized to match the image it replaces, so the
    taskbar does not reflow at the moment the logo fails. */

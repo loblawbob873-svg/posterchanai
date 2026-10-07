@@ -131,6 +131,44 @@
    * ceiling further away — the counter reaches any number eventually.
    * So a raise that would leave the band renumbers the open windows first, bottom to top, which
    * preserves their stacking exactly and cannot ever collide with a panel. */
+  /* A WINDOW NOBODY CAN SEE PAINTS NOTHING (tablet: "it runs out of memory with a few apps open on
+   * desktop, reloads"). Measured at tablet size (1280x800, DPR 2, the real feeds): every open window
+   * kept its whole feed — a scroller 60-80k px tall — rendered, and the compositor's tiles and the
+   * decoded-image cache each grew ~30-50 MB PER WINDOW, while JS and DOM stayed small. A window that
+   * sits entirely under another (everything behind a maximised window, which is how a tablet is used)
+   * is marked `osw-covered`, and its content is `visibility:hidden` in client.css: nothing to paint,
+   * so no tiles, and its images fall out of the decode cache. visibility, NOT content-visibility —
+   * layout and scroll offsets stay exactly as they were, and this file's parking depends on both.
+   * Recomputed whenever a window's style or class changes (move, resize, raise, maximise, minimise)
+   * and on close, one frame later so a burst of changes costs one pass. */
+  let _coverT = 0, _coverObs = null;
+  function _coverPass(){
+    _coverT = 0;
+    const live = wins.filter(x => x.el && x.el.isConnected && !x.min && !x.el.classList.contains('minimised'));
+    const z = x => parseInt(x.el.style.zIndex, 10) || 0;
+    const rects = new Map(live.map(x => [x, x.el.getBoundingClientRect()]));
+    for(const w of wins){
+      const r = rects.get(w);
+      const covered = !!r && r.width > 0 && live.some(o => o !== w && z(o) > z(w) && (() => {
+        const q = rects.get(o);
+        return q.left <= r.left + 1 && q.top <= r.top + 1 && q.right >= r.right - 1 && q.bottom >= r.bottom - 1;
+      })());
+      if(w.el.classList.contains('osw-covered') !== covered) w.el.classList.toggle('osw-covered', covered);
+    }
+  }
+  function _coverSoon(){ if(!_coverT) _coverT = (window.requestAnimationFrame || setTimeout)(_coverPass); }
+  function _watchCover(w){
+    try{
+      // Our own toggle is a class change too: the next pass finds nothing to change, so it settles.
+      if(!_coverObs){
+        _coverObs = new MutationObserver(_coverSoon);
+        window.addEventListener('resize', _coverSoon);
+      }
+      _coverObs.observe(w.el, { attributes: true, attributeFilter: ['style', 'class'] });
+    }catch(_){ }
+    _coverSoon();
+  }
+
   const Z_WIN_BASE = 10, Z_WIN_MAX = 200;
   function nextZ(){
     if(zTop >= Z_WIN_MAX){
@@ -2306,6 +2344,7 @@
                 render: render || null, noFeed: !!noFeed,
                 messagesTab:(view==='messages'||view==='concord')?view:'' };
     wins.push(w);
+    _watchCover(w);
 
     $('.osw-bar', el).addEventListener('pointerdown', e => {
       if(e.target.closest('.osw-b')) return;
@@ -5498,6 +5537,7 @@
     const i = wins.indexOf(w);
     if(i < 0) return;
     wins.splice(i, 1);
+    _coverSoon();                          // what this window hid is uncovered now
     disposeWindow(w);
     // If this window held the id, hand it back BEFORE removing the element, or `$('#feed')` briefly
     // resolves to nothing and whatever renders next paints into a detached node.
