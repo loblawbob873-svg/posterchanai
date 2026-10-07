@@ -556,6 +556,21 @@ _NAMI_AUDIO_CANDIDATES = [
     "/var/lib/posterchanai/assets/nami_money.mp3",
 ]
 _NAMI_DURATION = 3.6
+
+# `mentioned <thing>` -- the "<THING> MENTIONED" meme: an anime girl cheering, arms up, eyes shut (scripts/
+# gen_mentioned.py: this node's anime model, rembg cut-out, a 1 s hop/confetti loop). The caption is burned
+# on per request.
+_MENTIONED_OVERLAY_CANDIDATES = [
+    os.environ.get("MENTIONED_OVERLAY_PATH", ""),
+    os.path.join(_REPO_ROOT, "assets", "mentioned_cheer.mov"),
+    "/var/lib/posterchanai/assets/mentioned_cheer.mov",
+]
+_MENTIONED_AUDIO_CANDIDATES = [
+    os.environ.get("MENTIONED_AUDIO_PATH", ""),
+    os.path.join(_REPO_ROOT, "assets", "mentioned_cheer.mp3"),
+    "/var/lib/posterchanai/assets/mentioned_cheer.mp3",
+]
+_MENTIONED_DURATION = 3.0
 _HARLEM_AUDIO_CANDIDATES = [
     os.environ.get("HARLEM_AUDIO_PATH", ""),
     os.path.join(_REPO_ROOT, "assets", "harlem.mp3"),

@@ -603,6 +603,21 @@ class _Effects2Mixin:
             return {"type": "text", "content": summary}
         return {"type": "files", "content": summary, "files": outputs}
 
+    async def _mentioned_command(self, arg: str, attachments: Optional[list]) -> dict:
+        """The "<THING> MENTIONED" meme over an image: `mentioned michigan`."""
+        from app.services.media_service import is_image
+
+        if not attachments or not any(is_image(fn, ct) for fn, _, ct in attachments):
+            return {"type": "text", "content": "Attach an image, then send `mentioned <thing>` (e.g. `mentioned michigan`)."}
+
+        import asyncio
+        from app.services.effects_service import mentioned_attachments
+
+        outputs, summary = await asyncio.to_thread(mentioned_attachments, attachments, arg or "")
+        if not outputs:
+            return {"type": "text", "content": summary}
+        return {"type": "files", "content": summary, "files": outputs}
+
     async def _nami_command(self, attachments: Optional[list]) -> dict:
         """Nami with money bags for pupils rubs her hands over an image: `nami`."""
         from app.services.media_service import is_image

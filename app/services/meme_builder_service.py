@@ -266,7 +266,7 @@ _ALPHA_CHARACTERS = [
 # right there. Nice labels only; membership is DISCOVERED from the files (see _alpha_clips).
 _ALPHA_CLIP_LABELS = {
     "beavis": "🤤 Beavis (laughing)", "clay": "🗿 Clay", "makima": "🔫 Makima (shooting)",
-    "rebecca": "💃 Rebecca (dancing)", "reze": "💣 Reze (dancing)", "uwu": "💗 UwU (dancing)", "nami": "💰 Nami (money eyes)",
+    "rebecca": "💃 Rebecca (dancing)", "reze": "💣 Reze (dancing)", "uwu": "💗 UwU (dancing)", "nami": "💰 Nami (money eyes)", "mentioned": "🎉 Mentioned (cheering)",
     "vibe": "🕺 Vibe (dancing)", "gura": "🦈 Gura (shark pog)",
 }
 

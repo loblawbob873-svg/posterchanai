@@ -228,6 +228,7 @@ _POST_PROMPTS = (
     "📣 *Post this glowing image?*", "📣 Post this glowing image?",
 )
 _MEME_PROMPT = "🖼 Meme — reply with the caption text to add:"
+_MENTIONED_PROMPT = "🎉 Mentioned — reply with what got mentioned (e.g. michigan):"
 _EFFECT_CAPTION_PROMPT = "✍️ Reply with the caption text for this effect:"
 _effect_caption_pending: dict = {}
 _effect_char_pending: dict = {}
@@ -276,7 +277,7 @@ _FX_MEMES = [
     ("🏳️‍🌈 Gay", "gay"), ("🥷 Blacked", "blacked"),
     ("✡️ Kosher", "kosher"), ("🤔 Consider", "consider"),
     ("🐵 Chimp", "chimp"), ("🗣️ Clay", "clay"),
-    ("🥺 UwU", "uwu"), ("💰 Nami", "nami"),
+    ("🥺 UwU", "uwu"), ("💰 Nami", "nami"), ("🎉 Mentioned", "mentioned"),
     ("💖 Vibe", "vibe"), ("👍 Rebecca", "rebecca"),
     ("🔫 Makima", "makima"), ("🦈 Gura", "gura"),
     ("😎 Thug", "thug"), ("🔵 Blue", "blue"),

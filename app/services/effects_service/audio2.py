@@ -1,5 +1,5 @@
 """Auto-split from the original effects_service.py monolith. No behavior change."""
-from ._common import List, OutputFile, Path, Tuple, _ADAMSFAMILY_AUDIO_CANDIDATES, _ADAMSFAMILY_DURATION, _BIKE_AUDIO_CANDIDATES, _BIKE_DURATION, _CHARLIESANGLES_AUDIO_CANDIDATES, _CHARLIESANGLES_DURATION, _CHIMP_AUDIO_CANDIDATES, _CHIMP_DURATION, _CHIMP_GIF_CANDIDATES, _CLAY_AUDIO_CANDIDATES, _CLAY_DURATION, _CLAY_OVERLAY_CANDIDATES, _CONSIDER_PNG_CANDIDATES, _DARKNESS_AUDIO_CANDIDATES, _DARKNESS_DURATION, _DIFFERENTSTROKE_AUDIO_CANDIDATES, _DIFFERENTSTROKE_DURATION, _DONTWANTTOWAIT_AUDIO_CANDIDATES, _DONTWANTTOWAIT_DURATION, _FREEBIRD_AUDIO_CANDIDATES, _FREEBIRD_DURATION, _FUTURAMA_AUDIO_CANDIDATES, _FUTURAMA_DURATION, _HAPPYDAYS_AUDIO_CANDIDATES, _HAPPYDAYS_DURATION, _HARLEM_AUDIO_CANDIDATES, _HARLEM_DURATION, _JOBS_AUDIO_CANDIDATES, _JOBS_DURATION, _KANYE_AUDIO_CANDIDATES, _KANYE_DURATION, _LIBERAL_AUDIO_CANDIDATES, _LIBERAL_DURATION, _MIXALOT_AUDIO_CANDIDATES, _MIXALOT_DURATION, _MOVING_AUDIO_CANDIDATES, _MOVING_DURATION, _NONEMATTERS_AUDIO_CANDIDATES, _NONEMATTERS_DURATION, _MUNSTERS_AUDIO_CANDIDATES, _MUNSTERS_DURATION, _ONEPIECE_AUDIO_CANDIDATES, _ONEPIECE_DURATION, _OVERTAKEN_AUDIO_CANDIDATES, _OVERTAKEN_DURATION, _REE_AUDIO_CANDIDATES, _REE_DURATION, _SEINFELD_AUDIO_CANDIDATES, _SEINFELD_DURATION, _SOPRANOS_AUDIO_CANDIDATES, _SOPRANOS_DURATION, _STRANGERTHINGS_AUDIO_CANDIDATES, _STRANGERTHINGS_DURATION, _UWU_AUDIO_CANDIDATES, _UWU_DURATION, _NAMI_OVERLAY_CANDIDATES, _NAMI_AUDIO_CANDIDATES, _NAMI_DURATION, _UWU_OVERLAY_CANDIDATES, _WASTELAND_AUDIO_CANDIDATES, _WASTELAND_DURATION, _XMEN_AUDIO_CANDIDATES, _XMEN_DURATION, _alive_or_still, _human_size, io, is_image, logger, os
+from ._common import List, OutputFile, Path, Tuple, _ADAMSFAMILY_AUDIO_CANDIDATES, _ADAMSFAMILY_DURATION, _BIKE_AUDIO_CANDIDATES, _BIKE_DURATION, _CHARLIESANGLES_AUDIO_CANDIDATES, _CHARLIESANGLES_DURATION, _CHIMP_AUDIO_CANDIDATES, _CHIMP_DURATION, _CHIMP_GIF_CANDIDATES, _CLAY_AUDIO_CANDIDATES, _CLAY_DURATION, _CLAY_OVERLAY_CANDIDATES, _CONSIDER_PNG_CANDIDATES, _DARKNESS_AUDIO_CANDIDATES, _DARKNESS_DURATION, _DIFFERENTSTROKE_AUDIO_CANDIDATES, _DIFFERENTSTROKE_DURATION, _DONTWANTTOWAIT_AUDIO_CANDIDATES, _DONTWANTTOWAIT_DURATION, _FREEBIRD_AUDIO_CANDIDATES, _FREEBIRD_DURATION, _FUTURAMA_AUDIO_CANDIDATES, _FUTURAMA_DURATION, _HAPPYDAYS_AUDIO_CANDIDATES, _HAPPYDAYS_DURATION, _HARLEM_AUDIO_CANDIDATES, _HARLEM_DURATION, _JOBS_AUDIO_CANDIDATES, _JOBS_DURATION, _KANYE_AUDIO_CANDIDATES, _KANYE_DURATION, _LIBERAL_AUDIO_CANDIDATES, _LIBERAL_DURATION, _MIXALOT_AUDIO_CANDIDATES, _MIXALOT_DURATION, _MOVING_AUDIO_CANDIDATES, _MOVING_DURATION, _NONEMATTERS_AUDIO_CANDIDATES, _NONEMATTERS_DURATION, _MUNSTERS_AUDIO_CANDIDATES, _MUNSTERS_DURATION, _ONEPIECE_AUDIO_CANDIDATES, _ONEPIECE_DURATION, _OVERTAKEN_AUDIO_CANDIDATES, _OVERTAKEN_DURATION, _REE_AUDIO_CANDIDATES, _REE_DURATION, _SEINFELD_AUDIO_CANDIDATES, _SEINFELD_DURATION, _SOPRANOS_AUDIO_CANDIDATES, _SOPRANOS_DURATION, _STRANGERTHINGS_AUDIO_CANDIDATES, _STRANGERTHINGS_DURATION, _UWU_AUDIO_CANDIDATES, _UWU_DURATION, _NAMI_OVERLAY_CANDIDATES, _NAMI_AUDIO_CANDIDATES, _NAMI_DURATION, _MENTIONED_OVERLAY_CANDIDATES, _MENTIONED_AUDIO_CANDIDATES, _MENTIONED_DURATION, _meme_font_path, _UWU_OVERLAY_CANDIDATES, _WASTELAND_AUDIO_CANDIDATES, _WASTELAND_DURATION, _XMEN_AUDIO_CANDIDATES, _XMEN_DURATION, _alive_or_still, _human_size, io, is_image, logger, os
 
 def _munsters_audio_path() -> str:
     """First existing munsters mp3 from the candidate list ("" if none)."""
@@ -1167,6 +1167,51 @@ def add_nami(image_data: bytes, source_filename: str = "image.jpg") -> bytes:
     return image_gif_overlay_video(image_data, source_filename, overlay,
                                    duration=_NAMI_DURATION, audio_path=_nami_audio_path() or None,
                                    height_frac=0.6)
+
+
+def _first_existing(paths) -> str:
+    for p in paths:
+        if p and os.path.exists(p):
+            return p
+    return ""
+
+
+def mentioned_caption(word: str) -> str:
+    """'michigan' -> 'MICHIGAN MENTIONED'. No word: the meme's own default."""
+    w = " ".join(str(word or "").split())[:60].strip()
+    return (w + " MENTIONED").upper() if w else "POSTERCHAN MENTIONED"
+
+
+def add_mentioned(image_data: bytes, source_filename: str = "image.jpg", word: str = "") -> bytes:
+    """The "<THING> MENTIONED" meme: a cheering anime girl hops over the image, the caption on top. MP4 bytes."""
+    from app.services.media_service import caption_video, image_gif_overlay_video
+    overlay = _first_existing(_MENTIONED_OVERLAY_CANDIDATES)
+    if not overlay:
+        raise RuntimeError("mentioned overlay (assets/mentioned_cheer.mov) is missing on the server")
+    clip = image_gif_overlay_video(image_data, source_filename, overlay,
+                                   duration=_MENTIONED_DURATION,
+                                   audio_path=_first_existing(_MENTIONED_AUDIO_CANDIDATES) or None,
+                                   height_frac=1.0)
+    # Caption LAST, so it sits over the girl the way the meme's does.
+    return caption_video(clip, mentioned_caption(word), _meme_font_path())
+
+
+def mentioned_attachments(
+    attachments: List[Tuple[str, bytes, str]], word: str = "",
+) -> Tuple[List[OutputFile], str]:
+    """`mentioned <thing>` on the first image attachment (animated video output)."""
+    images = [(fn, d, ct) for fn, d, ct in (attachments or []) if is_image(fn, ct)]
+    if not images:
+        return [], "No image — attach an image first."
+    filename, data, _ = images[0]
+    stem = Path(filename).stem or "image"
+    try:
+        result = add_mentioned(data, filename, word)
+        out: OutputFile = {"filename": f"{stem}_mentioned.mp4", "data": result, "content_type": "video/mp4"}
+        return [out], f"## 🎉 {mentioned_caption(word).title()}\n\n🎉 {filename}: {_human_size(len(result))}"
+    except Exception as e:
+        logger.error(f"mentioned failed for {filename}: {e}", exc_info=True)
+        return [], f"\u274c {filename}: {e}"
 
 
 def nami_attachments(

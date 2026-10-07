@@ -1,5 +1,5 @@
 """Auto-split from callbacks.py: media callback handlers. Bodies moved verbatim."""
-from ._common import CommandService, User, _CLIP_START_PROMPT, _EFFECT_CAPTION_PROMPT, _FLASHCARD_TTL, _MEDIA_ACTION_TTL, _MEME_PROMPT, _SOCIAL_CAPTION_PROMPT, _clip_pending, _effect_caption_pending, _effect_char_pending, _flashcard_decks_cache, _media_action_cache, logger, telegram_service, time
+from ._common import CommandService, User, _CLIP_START_PROMPT, _EFFECT_CAPTION_PROMPT, _FLASHCARD_TTL, _MEDIA_ACTION_TTL, _MEME_PROMPT, _MENTIONED_PROMPT, _SOCIAL_CAPTION_PROMPT, _clip_pending, _effect_caption_pending, _effect_char_pending, _flashcard_decks_cache, _media_action_cache, logger, telegram_service, time
 from .keyboards import _character_prompt_keyboard, _media_action_keyboard, _media_effects_keyboard, _media_fx_characters_keyboard, _media_fx_memes_keyboard, _media_fx_sounds_keyboard, _media_fx_themes_keyboard, _media_translate_keyboard
 from .senders import User, _deliver_files_result, _media_action_cache, _offer_ytdl_share, _send_flashcard, logger, telegram_service, time
 
@@ -1024,6 +1024,17 @@ async def _cb_media(update, db, chat_id, data, callback_query, callback_query_id
                     await telegram_service.send_message(chat_id, "\U0001F97A uwu…")
                     _imgs = [a for a in _atts if is_image(a[0], a[2])]
                     await _send_files_result(await cb_command_service.execute_command("uwu", "", attachments=_imgs))
+            elif _action == "mentioned":
+                # ForceReply for the THING that got mentioned; the image stays in the cache and the reply
+                # renders it (see _MENTIONED_PROMPT in messages.py) -- the caption IS the meme.
+                if not any(is_image(fn, ct) for fn, _, ct in _atts):
+                    await telegram_service.send_message(chat_id, "Nothing to cheer over — that upload has no image.")
+                else:
+                    await telegram_service.send_message(
+                        chat_id, _MENTIONED_PROMPT,
+                        reply_markup={"force_reply": True, "selective": True,
+                                      "input_field_placeholder": "michigan"},
+                    )
             elif _action == "nami":
                 # Animated overlay — run immediately and post the result.
                 if not any(is_image(fn, ct) for fn, _, ct in _atts):

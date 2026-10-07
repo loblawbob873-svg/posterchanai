@@ -1,9 +1,9 @@
 """Auto-split from webhook.py: the message half of _handle_telegram_update."""
 from .messages_command import _msg_command
 from .messages_chat import _msg_chat
-from ._common import ChatService, CommandService, Conversation, Message, User, _CLIP_END_PROMPT, _CLIP_START_PROMPT, _EFFECT_CAPTION_PROMPT, _MEDIA_ACTION_TTL, _MEDIA_GROUP_CACHE, _MEME_PROMPT, _SOCIAL_CAPTION_PROMPT, _clip_pending, _effect_caption_pending, _effect_char_pending, _flashcard_decks_cache, _link_action_cache, _media_action_cache, _youtube_action_cache, asyncio, datetime, logger, re, telegram_service, time
+from ._common import ChatService, CommandService, Conversation, Message, User, _CLIP_END_PROMPT, _CLIP_START_PROMPT, _EFFECT_CAPTION_PROMPT, _MEDIA_ACTION_TTL, _MEDIA_GROUP_CACHE, _MEME_PROMPT, _MENTIONED_PROMPT, _SOCIAL_CAPTION_PROMPT, _clip_pending, _effect_caption_pending, _effect_char_pending, _flashcard_decks_cache, _link_action_cache, _media_action_cache, _youtube_action_cache, asyncio, datetime, logger, re, telegram_service, time
 from .keyboards import _build_torrent_keyboard, _character_prompt_keyboard, _has_nostr, _help_main_keyboard, _media_action_keyboard, _strip_cmd_links, _strip_hashtags, _torrent_nav_keyboard, re
-from .senders import User, _media_action_cache, _offer_social_post, _offer_ytdl_share, _offer_ytdl_video_actions, _send_active_torrents, _send_flashcard, _send_nyaa_results, _send_png_as_document, _send_screenshot, _send_torrent_results, _strip_cmd_links, _torrent_nav_keyboard, asyncio, datetime, logger, re, telegram_service, time
+from .senders import User, _deliver_files_result, _media_action_cache, _offer_social_post, _offer_ytdl_share, _offer_ytdl_video_actions, _send_active_torrents, _send_flashcard, _send_nyaa_results, _send_png_as_document, _send_screenshot, _send_torrent_results, _strip_cmd_links, _torrent_nav_keyboard, asyncio, datetime, logger, re, telegram_service, time
 
 # Telegram matches command words LITERALLY (it never calls parse_command), so it needs its own list —
 # but only of the NON-effect commands. The effects come from CommandService, because a second copy of
@@ -104,6 +104,30 @@ async def _handle_message(update, db):
                     chat_id, _caption, _cap_user, telegram_service,
                     prompt="📣 *Post this?*", image_bytes=_media,
                 )
+                return {"ok": True}
+
+            # Reply to the "🎉 Mentioned" prompt → render `mentioned <reply>` over the cached image.
+            if reply_from.get("is_bot") and reply_text.strip() == _MENTIONED_PROMPT:
+                from app.services.media_service import is_image
+                _entry = _media_action_cache.get(chat_id)
+                if not _entry or (time.time() - _entry.get("ts", 0)) > _MEDIA_ACTION_TTL:
+                    _media_action_cache.pop(chat_id, None)
+                    await telegram_service.send_message(chat_id, "⏳ That upload expired — please send the image again.")
+                    return {"ok": True}
+                _m_user = db.query(User).filter(
+                    User.telegram_chat_id == chat_id,
+                    User.telegram_enabled == True
+                ).first()
+                if not _m_user:
+                    await telegram_service.send_message(chat_id, "Your Telegram account is not linked.")
+                    return {"ok": True}
+                _atts = [a for a in _entry["attachments"] if is_image(a[0], a[2])]
+                await telegram_service.send_message(chat_id, "🎉 Cheering…")
+                _res = await CommandService(db, user=_m_user).execute_command("mentioned", text.strip(), attachments=_atts)
+                if _res.get("type") == "files":
+                    await _deliver_files_result(chat_id, _m_user, _res)
+                else:
+                    await telegram_service.send_message(chat_id, _res.get("content") or "Mentioned failed.")
                 return {"ok": True}
 
             # Reply to the "🖼 Meme" caption prompt → caption the cached image.
