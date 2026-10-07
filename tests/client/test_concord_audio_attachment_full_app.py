@@ -2,15 +2,13 @@
 
 Reported 2026-10-06 on the PosterChanOS desktop: "i uploaded mp3 file in concord just now and
 nothing shows". Driven in the real bundled client: the paperclip's file input gets a real MP3
-(ffmpeg-made, audio/mpeg), the room is CORD-encrypted so the bytes are sealed and stored as
+(a committed ffmpeg-made fixture, audio/mpeg), the room is CORD-encrypted so the bytes are sealed and stored as
 ciphertext on a Blossom fixture that serves them back, the message is SENT -- and then what a person
 sees is measured: a message carrying an <audio> element whose decrypted source actually decodes
 (duration > 0), and no "could not attach" / "Could not decrypt" on screen.
 """
 import asyncio
 import base64
-import shutil
-import subprocess
 from pathlib import Path
 
 import pytest
@@ -50,11 +48,9 @@ window.__net = { puts: [], gets: 0, blobs: {} };
 
 
 def _mp3(tmp_path):
-    out = tmp_path / 'song.mp3'
-    subprocess.run(['ffmpeg', '-hide_banner', '-loglevel', 'error', '-f', 'lavfi', '-i',
-                    'sine=frequency=440:duration=2', '-c:a', 'libmp3lame', '-b:a', '32k', '-y', str(out)],
-                   check=True)
-    return base64.b64encode(out.read_bytes()).decode()
+    # A COMMITTED 2s sine (made once with ffmpeg: sine=440:duration=2, libmp3lame 32k) -- the CI runner
+    # has no ffmpeg, and a test that skips there fails the desktop build.
+    return base64.b64encode((Path(__file__).resolve().parents[1] / 'fixtures' / 'concord' / 'tone-2s.mp3').read_bytes()).decode()
 
 
 # What a person sees: a player they can find and press. The first version of this test only asked
@@ -77,7 +73,6 @@ def _assert_visible(got, what):
 
 
 @pytest.mark.skipif(not Path('/opt/google/chrome/chrome').exists(), reason='Chrome required')
-@pytest.mark.skipif(not shutil.which('ffmpeg'), reason='ffmpeg required to make the mp3')
 @pytest.mark.parametrize('width', [1280, 900, 390])
 def test_an_mp3_sent_in_an_encrypted_room_is_a_player_you_can_see(tmp_path, width):
     mp3 = _mp3(tmp_path)
