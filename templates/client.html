@@ -88,6 +88,8 @@
      call site. The DOM pass itself waits for DOMContentLoaded, and at the default locale (English)
      this script installs nothing, fetches nothing and walks nothing. -->
 <script src="/static/js/client/i18n.js?v={{ ver }}"></script>
+<!-- Accessible names for icon controls + Enter/Space on role=button, for every screen. -->
+<script src="/static/js/client/a11y.js?v={{ ver }}"></script>
 <div class="scanlines" aria-hidden="true"></div>
 <div class="grid-bg" aria-hidden="true"></div>
 <div class="city-bg" aria-hidden="true"><span class="city-far"></span><span class="city-mid"></span><span class="city-near"></span></div>
@@ -365,7 +367,7 @@
             <button class="nav-item" data-view="settings"><svg class="ic"><use href="#i-gear"></use></svg><span>Settings</span></button>
             <button class="nav-item" data-view="signer"><svg class="ic"><use href="#i-key"></use></svg><span>Signer</span></button>
         </nav>
-        <div class="me" id="me-card"></div>
+        <div class="me" id="me-card" role="button" tabindex="0" aria-haspopup="menu"></div>
         <div class="conn" id="conn-status"><i class="dot"></i><span>connecting…</span></div>
         <div class="usercount hidden" id="user-count"></div>
         <button id="btn-install" class="btn btn-cyan small full hidden"><svg class="ic b-ic" aria-hidden="true"><use href="#i-download"></use></svg>Install app</button>

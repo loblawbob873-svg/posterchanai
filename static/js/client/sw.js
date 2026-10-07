@@ -66,6 +66,7 @@ const SHELL = [
    * load and an offline switch to a language this device has never opened simply stays English —
    * which is the same graceful failure as an incomplete catalogue. */
   '/static/js/client/i18n.js',
+  '/static/js/client/a11y.js',
   '/static/js/client/oswin.js',
   '/static/js/client/store.js',
   '/static/js/client/negentropy.js',
