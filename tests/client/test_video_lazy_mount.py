@@ -53,7 +53,7 @@ class VideoLazyMount(unittest.TestCase):
 
     def test_media_emits_no_eager_video_src(self):
         """_media() is the one funnel every note video comes through — it must hand out data-vsrc."""
-        body = _body(self.src, "function _media(encUrl, kind, cls, onerr)")
+        body = _body(self.src, "function _media(")
         video = [ln for ln in body.splitlines() if "`<video" in ln]   # emitted markup, not prose
         self.assertTrue(video, "_media no longer emits a <video> — has the funnel moved?")
         for ln in video:
