@@ -2993,6 +2993,30 @@
     box.querySelectorAll('[data-web-show]').forEach(b=>b.onclick=()=>{ const c=items[+b.dataset.webShow].card;
       if(c){ try{ c.scrollIntoView({block:'center',behavior:'smooth'}); }catch(_){ c.scrollIntoView(); } _aiFlash(c,true); setTimeout(()=>_aiFlash(c,false),3000); } });
   }
+  /* WHAT THE PERSON TYPES GOES WHERE THE BUTTON WOULD HAVE TAKEN IT. The free-form agent plans clicks on a
+   * window it reads as text, and the eval scored it 0/3 on "add a contact", 0/3 on a calculation, 1/3 on a
+   * bill, 1/3 on finding a contact -- exactly the jobs that now have a direct tool. A request that plainly IS
+   * one of those jobs, in the window that has the tool, goes to the tool; anything else goes to the agent as
+   * before. Returns true when it took the request. */
+  function _aiRoute(w,panel,text){
+    const v=_aiViewOf(w), t=String(text||'').trim(), low=t.toLowerCase();
+    const rest=(re)=>t.replace(re,'').trim();
+    const find=/^(?:please\s+)?(?:find|search(?:\s+for)?|look\s+(?:for|up)|where(?:'s| is))\s+(.+)$/i.exec(t);
+    if(v==='calculator' && !/^(?:explain|why|how does)\b/i.test(t)){ _aiCalc(w,panel,t); return true; }
+    if(v==='contacts'){
+      if(/^(?:please\s+)?(?:add|new|create|save)\b/i.test(t)){ _aiContact(w,panel,rest(/^(?:please\s+)?(?:add|new|create|save)\s+(?:a\s+)?(?:new\s+)?(?:contact\s*:?\s*)?/i)); return true; }
+      if(find){ _aiFindIn(w,panel,find[1],{}); return true; }
+    }
+    if(v==='calendar' && /^(?:please\s+)?(?:add|schedule|book|put|create|new\s+event|remind)\b/i.test(t)){ _aiEvent(w,panel,t); return true; }
+    if(v==='budget' && /^(?:please\s+)?(?:add|new)\b/i.test(t) && /\bbill\b|\$|\d/.test(low) && !/\bincome\b|\bpaycheck\b|\bsalary\b/.test(low)){ _aiBill(w,panel,t); return true; }
+    if(/^notes?$/.test(v) && window.PCNotes){
+      if(find){ _aiNotes(w,panel,'find',{query:find[1]}); return true; }
+      if(/^(?:please\s+)?(?:write|make|create|start)\s+(?:me\s+)?(?:a\s+)?(?:new\s+)?note\b/i.test(t)){
+        _aiNotes(w,panel,'new',{query:rest(/^(?:please\s+)?(?:write|make|create|start)\s+(?:me\s+)?(?:a\s+)?(?:new\s+)?note\s*(?:about|for|on|:)?\s*/i)||t}); return true; }
+    }
+    if(find && ['files','blossom','media-center','__music','torrents','websearch','__files','bookmarks'].includes(v) && _aiSearchBox(w)){ _aiFindIn(w,panel,find[1],{}); return true; }
+    return false;
+  }
   async function _aiCalc(w,panel,said){
     const box=panel.querySelector('.osw-ai-answer');
     box.className='osw-ai-answer loading'; box.innerHTML='<span class="spinner"></span> Working it out…';
@@ -3603,6 +3627,7 @@
      * not -- so posts that loaded after ✨ was pressed had buttons the model could press and words it could
      * not read ("No posts yet." beside two Reply buttons, measured). Same as Continue. */
     const ask=instruction=>{instruction=String(instruction||'').trim();if(!instruction)return;panel._aiRounds=0;
+      if(!isTerm && _aiRoute(w,panel,instruction)) return;
       const fresh=[w,..._aiContextWins].filter((x,k,a)=>a.indexOf(x)===k&&(x===w||wins.includes(x))).map(windowAIContext);
       _aiSteps(w,panel,fresh,instruction,composer,turns,isTerm);};
     panel.querySelector('[data-ai-dismiss]').onclick=()=>closeWindowAI(w);

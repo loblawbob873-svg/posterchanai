@@ -61,3 +61,14 @@ def test_the_sound_is_bundled_everywhere_and_is_short_real_audio():
             assert (0.5 if "chime" in path else 1.0) < float(d) < 2.5, (path, d)   # a notification, not a song
     for script in ("mobile/build-www.sh", "desktop/build-www.sh"):
         assert 'static/sounds/* www/static/sounds/' in open(os.path.join(ROOT, script)).read(), script
+
+
+def test_a_phone_that_refuses_the_default_sends_the_person_to_sound_settings():
+    """Reported: "Could not set it: You cannot keep your settings in the secure settings." Some phones refuse an
+    app's write of the default sound even with "Modify system settings" allowed. The sound is already saved where
+    Android's picker lists it, so a refusal opens Sound settings and says what to tap -- never an error."""
+    block = PLUGIN[PLUGIN.index('if ("set".equals(outcome))'):PLUGIN.index('} else if ("needs-permission"')]
+    assert "catch (IllegalArgumentException | SecurityException" in block
+    assert 'outcome = "pick-it"' in block and "Settings.ACTION_SOUND_SETTINGS" in block
+    js = open(os.path.join(ROOT, "static", "js", "client", "settings.js")).read()
+    assert js.count("r.outcome==='pick-it'") == 2, "both the alert and the ringtone must explain the pick-it outcome"

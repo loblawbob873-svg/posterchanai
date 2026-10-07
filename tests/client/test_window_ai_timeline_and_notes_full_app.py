@@ -300,3 +300,56 @@ def test_which_results_answer_it_names_results_that_open_in_the_reader():
     assert len(got["sent"]["posts"]) >= 3 and "Wayfire" in got["sent"]["posts"][0]["text"], got["sent"]["posts"]
     assert "wayfire.ini reference" in got["answer"] and "every option with defaults" in got["answer"], got["answer"]
     assert "wayfire.ini" in got["reader"], ("Read here did not open the picked result", got["reader"])
+
+
+ASK = ("(()=>{const ta=document.querySelector('.osw-ai-panel textarea');ta.value=%s;"
+       "document.querySelector('.osw-ai-panel [data-ai-ask]').click();})(); true")
+
+
+@pytest.mark.skipif(not Path("/opt/google/chrome/chrome").exists(), reason="Chrome required")
+def test_a_typed_request_goes_to_the_tool_that_does_it():
+    """Typed into the ✨ box, "add Bob Smith …" in Contacts or a sum in the Calculator went to the free-form
+    agent, which the eval scored 0/3 on both. A request that plainly IS one of those jobs now goes to the same
+    direct tool its button uses; anything else still goes to the agent."""
+    import sys
+    sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "scripts"))
+    import capture_window_ai_fixtures as cap
+    got = {}
+    canned = {"window_contact:": {"contact": {"given": "Bob", "family": "Smith", "phone": "555-123-4567", "email": "", "org": "", "note": ""}},
+              "window_calc:": {"calc": {"expression": "84.5*15/100", "what": "15% of 84.50"}},
+              "window_steps:": {"answer": "ok", "tasks": [], "steps": []}}
+
+    async def check(b):
+        await desktop.login(b)
+        await b.js("try{ if(window.PCOS && PCOS.isOn()) PCOS.exit(); }catch(_){}")
+        await b.js(cap.CONTACTS)
+        await b.js("__PC.switchView('contacts');true")
+        await b.until("!!window.PCContacts && document.body.innerText.includes('Alice Jones')")
+        await b.js(STUB_AI + "(%s);true" % json.dumps(canned))
+        await b.js(OPEN_PANEL % json.dumps("contacts"))
+        await b.js(ASK % json.dumps("add Bob Smith 555-123-4567"))
+        for _ in range(100):
+            if await b.js("!!document.getElementById('cc-given')"):
+                break
+            await asyncio.sleep(.1)
+        got["contact"] = await b.js("({given:(document.getElementById('cc-given')||{}).value, sent:__aiSent.map(x=>x.action)})")
+        await b.js("document.querySelectorAll('.modal-bg').forEach(m=>m.remove()); document.body.classList.remove('modal-open'); true")
+        await b.js("__PC.switchView('calculator');true")
+        await b.until("!!window.PCCalc && !!document.querySelector('.calc-screen')")
+        await b.js("__aiSent.length=0; " + OPEN_PANEL % json.dumps("calculator"))
+        await b.js(ASK % json.dumps("what is 15% of 84.50"))
+        await b.until("!!document.querySelector('.osw-ai-panel .osw-ai-calc')")
+        got["calc"] = await b.js("({shown:document.querySelector('.osw-ai-panel .osw-ai-calc').innerText, sent:__aiSent.map(x=>x.action)})")
+        # Not a job with a tool: still the agent.
+        await b.js("__aiSent.length=0; " + OPEN_PANEL % json.dumps("calculator"))
+        await b.js(ASK % json.dumps("explain how percentages work"))
+        for _ in range(100):
+            if await b.js("__aiSent.length>0"):
+                break
+            await asyncio.sleep(.1)
+        got["other"] = await b.js("__aiSent.map(x=>x.action)")
+
+    asyncio.run(desktop.with_browser("online", "", check, extra_init=RELAY))
+    assert got["contact"]["given"] == "Bob" and got["contact"]["sent"] == ["window_contact"], got["contact"]
+    assert "12.675" in got["calc"]["shown"] and got["calc"]["sent"] == ["window_calc"], got["calc"]
+    assert got["other"] == ["window_steps"], got["other"]

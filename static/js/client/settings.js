@@ -477,6 +477,7 @@ window.PCSettingsFactory = function(dep){
         const data=await new Promise((ok,no)=>{ const r=new FileReader(); r.onload=()=>ok(String(r.result).split(',')[1]||''); r.onerror=no; r.readAsDataURL(blob); });
         const r=await plug.install({data, mime:'audio/ogg', name:'posterchan-alert', title:'PosterChan Alert', setDefault:true, kind:'notification'});
         alSaid.textContent = r.outcome==='set' ? '✓ It is your phone\'s notification sound now.'
+          : r.outcome==='pick-it' ? 'Saved — this phone only lets you choose it yourself: Android just opened Sound settings; tap Default notification sound → PosterChan Alert.'
           : r.outcome==='needs-permission' ? 'One more step: Android just opened “Modify system settings” — allow PosterChan there, come back, and tap Set again.'
           : '✓ Saved to your notification sounds — pick it in Android\'s Sound settings.';
       }catch(err){ alSaid.textContent='Could not set it: '+((err&&err.message)||err); }
@@ -491,6 +492,7 @@ window.PCSettingsFactory = function(dep){
         const data=await new Promise((ok,no)=>{ const r=new FileReader(); r.onload=()=>ok(String(r.result).split(',')[1]||''); r.onerror=no; r.readAsDataURL(blob); });
         const r=await plug.install({data, mime:'audio/ogg', name:'posterchan-cyberpunk', title:'PosterChan Cyberpunk', setDefault:true});
         said.textContent = r.outcome==='set' ? '✓ It is your phone\'s ringtone now.'
+          : r.outcome==='pick-it' ? 'Saved — this phone only lets you choose it yourself: Android just opened Sound settings; tap Ringtone → PosterChan Cyberpunk.'
           : r.outcome==='needs-permission' ? 'One more step: Android just opened “Modify system settings” — allow PosterChan there, come back, and tap Set again.'
           : '✓ Saved to your ringtones — pick it in Android\'s Sound settings.';
       }catch(e){ said.textContent='Could not set it: '+((e&&e.message)||e); }

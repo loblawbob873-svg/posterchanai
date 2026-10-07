@@ -105,7 +105,18 @@ public final class RingtonePlugin extends Plugin {
         boolean canWrite = Settings.System.canWrite(getContext());
         String outcome = RingtoneRules.outcome(true, canWrite, wantDefault);
         if ("set".equals(outcome)) {
-          RingtoneManager.setActualDefaultRingtoneUri(getContext(), notify ? RingtoneManager.TYPE_NOTIFICATION : RingtoneManager.TYPE_RINGTONE, uri);
+          /* SOME PHONES REFUSE THIS EVEN WITH "Modify system settings" ALLOWED. Reported: "Could not set it: You
+           * cannot keep your settings in the secure settings." -- the provider rejects the write. The sound is
+           * already saved where Android's own picker lists it, so instead of an error the person is taken to the
+           * Sound settings to choose it there (the one place no app is refused). */
+          try {
+            RingtoneManager.setActualDefaultRingtoneUri(getContext(), notify ? RingtoneManager.TYPE_NOTIFICATION : RingtoneManager.TYPE_RINGTONE, uri);
+          } catch (IllegalArgumentException | SecurityException refused) {
+            outcome = "pick-it";
+            Intent i = new Intent(Settings.ACTION_SOUND_SETTINGS);
+            i.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+            try { getContext().startActivity(i); } catch (Exception ignored) { }
+          }
         } else if ("needs-permission".equals(outcome)) {
           Intent i = new Intent(Settings.ACTION_MANAGE_WRITE_SETTINGS, Uri.parse("package:" + getContext().getPackageName()));
           i.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
