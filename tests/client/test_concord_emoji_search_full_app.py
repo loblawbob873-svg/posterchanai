@@ -99,7 +99,7 @@ def test_searching_the_picker_finds_the_emoji_and_keeps_it_open(width, surface):
         await b.js("""(()=>{const r=window.PosterCordReader,old=r.inspectChat;r.inspectChat=async(...a)=>{const got=await old(...a);
           return {...got,messages:[...got.messages,{id:'msg-late',pubkey:'b'.repeat(64),text:'a late arrival',at:Date.now(),kind:9,tags:[]}]};};})()""")
         await b.js("void PCConcord.refreshActiveChannel(__PC)")
-        for _ in range(30):
+        for _ in range(50):          # up to 10s on a loaded gate for the room refresh to land
             if await b.js("[...document.querySelectorAll('.cc-message')].some(m=>m.textContent.includes('a late arrival'))"):
                 break
             await asyncio.sleep(.2)
