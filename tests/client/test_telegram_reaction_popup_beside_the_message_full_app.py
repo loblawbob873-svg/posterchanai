@@ -2,7 +2,7 @@
 
 Reported on PosterChanOS: "Telegram should have the emoji reaction popup not in the top left of the
 window". Driven in the shipped bundle as Telegram's OWN window (`?pcwin=tg`) at the desktop's scale, and
-measured on screen: the quick row and the "＋" full picker must sit next to the message whose ☺ was
+measured on screen: the quick row and the "＋" full list must sit next to the message whose ☺ was
 pressed -- including when Telegram has repainted the message list in between (it does on every update).
 """
 import asyncio
@@ -55,9 +55,11 @@ def test_the_reaction_popups_open_beside_the_message(scale):
             await b.until("!!document.querySelector('.tg-react-pop [data-more]')")
         await b.js("window.__anchorRect=document.querySelector('.tg-msg[data-id=\"1\"] [data-react-pick]').getBoundingClientRect();"
                    "document.querySelector('.tg-react-pop [data-more]').click()")
-        await b.until("!!document.querySelector('.emoji-pop')")
+        # ＋ now opens the rest of THIS chat's reaction list in the same popup (telegram.js pickReaction),
+        # not the general emoji picker, nine in ten of whose emoji Telegram refuses.
+        await b.until("!!document.querySelector('.tg-react-pop.all')")
         await asyncio.sleep(.2)
-        got["picker"] = await b.js(NEAR + "('.emoji-pop')")
+        got["picker"] = await b.js(NEAR + "('.tg-react-pop.all')")
 
     asyncio.run(desktop.with_browser("online", "?pcwin=tg", check,
                                      extra_init=FAKE.replace("state:'none'", "state:'ready'") + WINDOW))
