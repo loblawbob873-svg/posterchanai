@@ -1,5 +1,8 @@
 """PosterChan notification sound: a cute anime cyberpunk alert, ~1.6 s.
 # Regenerate: venv-unified/bin/python scripts/make_notification_sound.py out.wav [voice.wav]
+#             venv-unified/bin/python scripts/make_notification_sound.py --chime out.wav
+#   --chime: the everyday arrival chime -- the same zap and sparkle, shorter (0.85 s) and with no voice,
+#   because it plays for every like and reply and a voice forty times a day is not cute any more.
 #   voice: edge-tts ja-JP-NanamiNeural, pitch +45Hz, rate +10%, 「ピコーン♪」 -> mono 44.1 kHz WAV
 #   (the same voice as the ringtone's 「リンリン！」, scripts/make_ringtone.py)
 
@@ -15,7 +18,10 @@ import numpy as np
 from scipy.signal import butter, lfilter
 
 SR = 44100
-TOTAL = int(1.6 * SR)
+CHIME = "--chime" in sys.argv
+if CHIME:
+    sys.argv.remove("--chime")
+TOTAL = int((0.85 if CHIME else 1.6) * SR)
 rng = np.random.default_rng(11)
 
 
@@ -38,7 +44,7 @@ sq = np.round(sq * 7) / 7                                   # 4-bit
 hold = 6; sq = np.repeat(sq[::hold], hold)[:n]              # sample-and-hold "digital" grit
 noise = rng.standard_normal(n); b, a = butter(2, [2500 / (SR / 2), 9000 / (SR / 2)], btype="band")
 zap = (sq * 0.5 + lfilter(b, a, noise) * 0.35) * np.exp(-t * 22)
-zapl = np.zeros(TOTAL); place(zapl, zap * 0.55, 0.0)
+zapl = np.zeros(TOTAL); place(zapl, zap * (0.35 if CHIME else 0.55), 0.0)
 
 # 2. The sparkle: FM bells, a major arpeggio climbing an octave -- the cute half.
 def bell(freq, dur, bright=2.2):
@@ -47,16 +53,17 @@ def bell(freq, dur, bright=2.2):
     return np.sin(2 * np.pi * freq * tt + mod) * np.exp(-tt * 6.5) * np.clip(tt / 0.003, 0, 1)
 
 spark = np.zeros(TOTAL)
-for i, note in enumerate(("A5", "C#6", "E6", "A6")):
-    place(spark, bell(hz(note), 0.9 - i * 0.1) * (0.5 + 0.12 * i), 0.10 + i * 0.055)
+NOTES = ("E6", "B6") if CHIME else ("A5", "C#6", "E6", "A6")        # the chime: a two-note "pi-pon", up a fifth
+for i, note in enumerate(NOTES):
+    place(spark, bell(hz(note), 0.9 - i * 0.1) * (0.5 + 0.12 * i), (0.07 if CHIME else 0.10) + i * (0.09 if CHIME else 0.055))
 # a held top shimmer under the voice
 m = int(0.9 * SR); tt = np.arange(m) / SR
 shimmer = (np.sin(2 * np.pi * hz("E7") * tt) + 0.5 * np.sin(2 * np.pi * hz("A7") * tt)) * np.exp(-tt * 4) * 0.08
-place(spark, shimmer * (1 + 0.3 * np.sin(2 * np.pi * 9 * tt)), 0.30)
+place(spark, shimmer * (1 + 0.3 * np.sin(2 * np.pi * 9 * tt)) * (0.6 if CHIME else 1), 0.18 if CHIME else 0.30)
 
 # 3. The voice: 「ピコーン♪」, trimmed to where it speaks, landing on the last bell.
 voice = np.zeros(TOTAL)
-if len(sys.argv) > 2:
+if len(sys.argv) > 2 and not CHIME:
     with wave.open(sys.argv[2]) as w:
         v = np.frombuffer(w.readframes(w.getnframes()), dtype="<i2").astype(float) / 32768
         if w.getnchannels() > 1:
@@ -69,7 +76,7 @@ if len(sys.argv) > 2:
     place(voice, v * 0.9, 0.27)
 
 # Ping-pong delay on the sparkle and the voice (an eighth at 150 BPM).
-d = int(0.2 * SR)
+d = int((0.14 if CHIME else 0.2) * SR)
 send = spark + voice * 0.4
 dl = np.zeros(TOTAL); dr = np.zeros(TOTAL)
 for rep, g in enumerate((0.35, 0.2, 0.1)):
@@ -80,7 +87,7 @@ dry = zapl + spark + voice
 st = np.stack([dry + dl * 0.8 + dr * 0.2, dry + dr * 0.8 + dl * 0.2], 1)
 st = np.tanh(st * 1.3) / np.tanh(1.3)
 st /= np.max(np.abs(st)) / 0.95
-fade = int(0.12 * SR); st[-fade:] *= np.linspace(1, 0, fade)[:, None]
+fade = int((0.2 if CHIME else 0.12) * SR); st[-fade:] *= np.linspace(1, 0, fade)[:, None]
 st[:int(0.002 * SR)] *= np.linspace(0, 1, int(0.002 * SR))[:, None]
 
 with wave.open(sys.argv[1], "wb") as w:

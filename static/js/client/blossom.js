@@ -438,7 +438,7 @@ window.PCBlossomFactory = function(dep){
     ['sms','Text messages'],['reminders','Reminders'],['follows','New followers']];
   // 'posterchan' = the PosterChan Alert (static/sounds/posterchan-alert.*, scripts/make_notification_sound.py).
   const _NOTIFICATION_SOUNDS = ['chime','soft','bright','posterchan','off'];
-  const _SOUND_LABEL = { chime:'Chime', soft:'Soft', bright:'Bright', posterchan:'PosterChan Alert ♪', off:'Silent' };
+  const _SOUND_LABEL = { chime:'Cyberpunk chime', soft:'Soft', bright:'Bright', posterchan:'PosterChan Alert ♪', off:'Silent' };
   function _notificationOwner(){ return (_S.ME && _S.ME.pubkey)||''; }
   function _notificationClean(value){
     const out={};
@@ -804,10 +804,15 @@ window.PCBlossomFactory = function(dep){
     if(!preview && window.Capacitor)return;
     const now=Date.now();if(!preview && now-_notificationLastSound<500)return;
     _notificationLastSound=now;
-    if(sound==='posterchan'){
-      try{ const a=new window.Audio('/static/sounds/posterchan-alert.ogg'); a.volume=0.8; const p=a.play(); if(p&&p.catch)p.catch(()=>{}); }catch(_){ }
+    // The PosterChan Alert (「ピコーン♪」) and the default CHIME are files (scripts/make_notification_sound.py):
+    // "we need a cooler sound, cyberpunk anime" -- a glitch zap and a two-note "pi-pon", no voice, 0.85 s.
+    // Where an <audio> element cannot exist the chime falls back to the synthesized ding-dong below.
+    const file=sound==='posterchan'?'posterchan-alert':sound==='chime'?'posterchan-chime':'';
+    if(file && typeof window.Audio==='function'){
+      try{ const a=new window.Audio('/static/sounds/'+file+'.ogg'); a.volume=sound==='chime'?0.7:0.8; const p=a.play(); if(p&&p.catch)p.catch(()=>{}); }catch(_){ }
       return;
     }
+    if(sound==='posterchan') return;
     try{
       const Audio=window.AudioContext||window.webkitAudioContext;if(!Audio)return;
       const audio=new Audio(),t=audio.currentTime;

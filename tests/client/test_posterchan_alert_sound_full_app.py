@@ -90,4 +90,6 @@ def test_on_the_web_a_notification_plays_the_alert_once_it_is_chosen():
     asyncio.run(desktop.with_browser("online", "", check))
     assert "posterchan-alert.ogg" in got["links"] and "posterchan-alert.mp3" in got["links"], got["links"]
     assert not any("posterchan-alert" in p for p in got["before"]), got["before"]
+    # The default is the cyberpunk chime FILE ("we need a cooler sound, cyberpunk anime"), not the synth beep.
+    assert any(p.endswith("/static/sounds/posterchan-chime.ogg") for p in got["before"]), ("the default chime is not the cyberpunk one", got["before"])
     assert any(p.endswith("/static/sounds/posterchan-alert.ogg") for p in got["after"]), ("no alert played", got["after"])

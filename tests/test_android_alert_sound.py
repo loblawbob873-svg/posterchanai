@@ -51,11 +51,13 @@ def test_the_plugin_sets_the_phone_notification_sound_and_flips_the_switch():
 def test_the_sound_is_bundled_everywhere_and_is_short_real_audio():
     raw = os.path.join(ANDROID, "src", "main", "res", "raw", "posterchan_alert.ogg")
     for path in (raw, os.path.join(ROOT, "static", "sounds", "posterchan-alert.ogg"),
-                 os.path.join(ROOT, "static", "sounds", "posterchan-alert.mp3")):
+                 os.path.join(ROOT, "static", "sounds", "posterchan-alert.mp3"),
+                 os.path.join(ROOT, "static", "sounds", "posterchan-chime.ogg"),
+                 os.path.join(ROOT, "static", "sounds", "posterchan-chime.mp3")):
         assert 10_000 < os.path.getsize(path) < 200_000, path
         if shutil.which("ffprobe"):
             d = subprocess.run(["ffprobe", "-v", "error", "-show_entries", "format=duration", "-of", "csv=p=0", path],
                                capture_output=True, text=True).stdout.strip()
-            assert 1.0 < float(d) < 2.5, (path, d)          # a notification, not a song
+            assert (0.5 if "chime" in path else 1.0) < float(d) < 2.5, (path, d)   # a notification, not a song
     for script in ("mobile/build-www.sh", "desktop/build-www.sh"):
         assert 'static/sounds/* www/static/sounds/' in open(os.path.join(ROOT, script)).read(), script
