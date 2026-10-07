@@ -45,7 +45,7 @@ def test_a_post_window_shows_the_post_the_desktop_held_without_asking_the_relays
         await desktop.login(b)
         await b.until("!!window.__PC && document.documentElement.classList.contains('pc-oswin')")
         t0 = await b.js("performance.now()")
-        for _ in range(40):
+        for _ in range(100):          # up to 10s to SEE it; the speed is asserted below (< 1.5s)
             if await b.js("/HANDOVERCANARY/.test((document.getElementById('feed')||{}).innerText||'')"):
                 break
             await asyncio.sleep(0.1)
