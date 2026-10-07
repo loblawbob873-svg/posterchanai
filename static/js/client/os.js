@@ -2503,6 +2503,17 @@
     let visible='';
     if(!selection && w.native==null){
       try{ visible=String((w.body.innerText||w.slot.innerText)||'').replace(/\s+/g,' ').trim().slice(0,4000); }catch(_){}
+      /* AN OPEN DIALOG IS WHAT THE WINDOW SAYS. Its controls are the ones a step can press (_aiRoot), but
+       * it opens on <body>, outside the view -- so the text sent was the page BEHIND the form, and the
+       * second round of "add Bob to my contacts" read "2 contacts, Alice Jones…" beside a New contact
+       * form it could not see the words of. The dialog's text goes first, the page after it. */
+      try{
+        const base=w.body||w.el, r=_aiRoot(w);
+        if(r && r!==base && !base.contains(r)){
+          const d=String(r.innerText||'').replace(/\s+/g,' ').trim().slice(0,1500);
+          if(d) visible=('Open dialog: '+d+' — Behind it: '+visible).slice(0,4000);
+        }
+      }catch(_){}
     }
     return {title:String(w.title||'Window').slice(0,160),view:String(w.appView||w.view||'').slice(0,160),
             kind:w.native!=null?'native app':'PosterChan app',selection:selection.slice(0,4000),text:visible};
@@ -3102,6 +3113,11 @@
         if(!st || !_AI_ACTS.has(st.do)) continue;
         if(!(await doStep(card,st))){ ok=false; break; }
         await _aiSettle(w);                                // let the window finish reacting before the next step
+        /* A STEP THAT OPENED A DIALOG ENDS THIS ROUND. Every later step was planned against the window
+         * as it was -- its controls are now BEHIND the dialog, still connected, so they would be typed
+         * into and pressed out of sight (a contact's name into the search box under the form). The
+         * dialog's own fields are planned in the next round, which the auto-continue below asks for. */
+        if(_aiRoot(w)!==before) break;
       }
       all.disabled=false;
       if(w.aiPanel!==panel) return;
