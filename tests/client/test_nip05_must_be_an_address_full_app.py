@@ -52,3 +52,32 @@ def test_an_npub_in_the_nip05_field_is_not_drawn_and_cannot_be_saved():
     assert NPUB not in got["header"], ("the npub is drawn as the profile's NIP-05", got["header"][:300])
     assert got["still_open"], "Edit Profile saved an npub as a NIP-05"
     assert "name@domain" in got["toast"], ("no sentence said why", got["toast"])
+
+
+@pytest.mark.skipif(not Path("/opt/google/chrome/chrome").exists(), reason="Chrome required")
+def test_a_profile_saved_elsewhere_with_an_npub_opens_the_editor_without_it():
+    """npub1rfnr93… did not type it here: a profile from another app (no client tag, the day before) already
+    held the npub, and Edit Profile carried it into every save. The editor now opens with the field empty
+    (the granted name fills it when there is one), so Save goes through instead of being refused."""
+    got = {}
+
+    async def check(b):
+        await desktop.login(b)
+        await b.js("try{ if(window.PCOS && PCOS.isOn()) PCOS.exit(); }catch(_){}")
+        me = await b.js("__PC.me().pubkey")
+        npub = await b.js("NostrTools.nip19.npubEncode(__PC.me().pubkey)")
+        await b.js("Store.saveProfile({id:'8'.repeat(64),kind:0,pubkey:%s,created_at:Math.floor(Date.now()/1000),tags:[],"
+                   "content:JSON.stringify({name:'Justyn',nip05:%s}),sig:''});true" % (json.dumps(me), json.dumps(npub)))
+        await b.js("__PC.openProfile(%s);true" % json.dumps(me))
+        await b.until("!!document.getElementById('edit-prof')")
+        await b.js("document.getElementById('edit-prof').click();true")
+        await b.until("!!document.getElementById('pf-nip05')")
+        await asyncio.sleep(.5)
+        got["field"] = await b.js("document.getElementById('pf-nip05').value")
+        got["name"] = await b.js("document.getElementById('pf-name').value")
+        got["npub"] = npub
+
+    asyncio.run(desktop.with_browser("online", "", check))
+    assert got["name"] == "Justyn", ("the editor did not open on the stored profile", got)
+    assert got["field"] != got["npub"], "Edit Profile opened with the npub in the NIP-05 field"
+    assert got["field"] == "" or "@" in got["field"], got

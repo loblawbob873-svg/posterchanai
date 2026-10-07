@@ -950,7 +950,7 @@ window.PCProfileFactory = function(dep){
            existed but "Edit profile" appeared to contain nothing related to it. -->
       <div class="fld pf-music-editor"><span>Profile music</span><div id="pf-music-list">${_profileMusicFields(p).map(([label,url])=>`<div class="pf-music-row"><input class="input pf-music-title" aria-label="Track title" placeholder="Track title" value="${enc(String(label||'').replace(/^🎶\s*/,''))}"><input class="input pf-music-url" aria-label="Audio URL" placeholder="https://…/track.mp3" value="${enc(url)}"><button class="btn btn-ghost small pf-music-remove" type="button" aria-label="Remove track">Remove</button></div>`).join('')}</div>
         <div class="row pf-music-actions"><button class="btn btn-ghost small" id="pf-music-add" type="button">Add audio URL</button><button class="btn btn-ghost small" id="pf-music-up" type="button">Upload music</button><input type="file" id="pf-music-file" accept="audio/*,.mp3,.mpga,.m4a,.aac,.ogg,.opus,.wav,.flac" multiple hidden></div></div>
-      <label class="fld">NIP-05 identifier <span class="muted small">(any domain — your own works)</span><input class="input" id="pf-nip05" placeholder="name@domain" value="${enc(p.nip05||'')}"></label>
+      <label class="fld">NIP-05 identifier <span class="muted small">(any domain — your own works)</span><input class="input" id="pf-nip05" placeholder="name@domain" value="${enc(niceNip05(p.nip05)?p.nip05:'')}"></label>
       <div class="pf-nip05-mine" id="pf-nip05-mine" hidden></div>
       <label class="fld">⚡ Lightning address<input class="input" id="pf-lud16" placeholder="you@walletofsatoshi.com" value="${enc(p.lud16||'')}"></label>
       <label class="fld">ɱ Monero address<input class="input" id="pf-xmr" placeholder="4… or 8… (XMR — others can tip you)" value="${enc(xmrOf(p))}"></label>
@@ -968,6 +968,9 @@ window.PCProfileFactory = function(dep){
       // e.g. the signup publish lost the race with the first socket. The name is a public read, so
       // prefill the empty field with it: the verified handle is then one Save away instead of a
       // string the user would have to already know.
+      // A profile some OTHER app saved with a non-address here (npub1rfnr93… had its own npub, written
+      // before it ever used this client) opens EMPTY, so the granted name below fills it and Save is not
+      // refused over a value the person never typed into this editor.
       { const n5=$('#pf-nip05',root);
         /* THE FIELD IS YOURS; THE ADDRESSES HERE ARE KEPT EITHER WAY. A profile publishes ONE nip05, and
          * membership is the name this node granted -- not what the profile says -- so a person can publish
