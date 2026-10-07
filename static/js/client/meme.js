@@ -1591,6 +1591,19 @@
     return 1;
   }
 
+  /* A CLIP'S OWN SOUND, right under the clip. "Meme builder, need way to mute video clip … or adjust volume" --
+   * "ah I see it in timing, bad place": the mute was a checkbox inside the collapsed Timing group and a video
+   * had no volume at all, though the renderer has always honoured both (meme_builder_service: mute, volume
+   * 0-4). Up to 200% here; the preview can only play up to 100% (a media element's limit), the export is
+   * the real level. */
+  function clipSound(l){
+    const vol=(l.volume==null?1:+l.volume), m=!!l.mute;
+    return `<div class="mb-clip-sound">
+      <button type="button" class="btn btn-cyan small${m?' on':''}" id="mb-f-mute" aria-pressed="${m}" title="${m?'This clip is silent in the meme — tap to hear it again':'Silence this clip\'s own sound'}">${m?'🔇 Muted':'🔊 Sound on'}</button>
+      <label class="mb-f"><span>Clip volume <b id="mb-vvol-val">${Math.round(vol*100)}%</b></span>
+        <input type="range" id="mb-f-vvol" min="0" max="2" step="0.05" value="${vol}" ${m?'disabled':''} aria-label="Clip volume"></label>
+    </div>`;
+  }
   function inspector(){
     const l = P.layers.find(x=>x.id===sel);
     if(!l) return `<div class="muted small">Select a layer to edit it.</div>`;
@@ -1641,7 +1654,8 @@
         <button class="btn btn-neon small full" id="mb-draw-edit" title="Add to this drawing, or rub parts of it out"><svg class="ic b-ic" aria-hidden="true"><use href="#i-brush"></use></svg>Draw on it</button>
         <div class="muted small mb-dbg">${l.draw.strokes.length} stroke${l.draw.strokes.length===1?'':'s'} — drag it, resize it or fade it like any other layer.</div>` : `
         ${l.type==='video' ? trimWidget(l) + `
-        <button class="btn btn-cyan small full" id="mb-prev-clip" title="Play just this clip in the preview above"><svg class="ic b-ic" aria-hidden="true"><use href="#i-play"></use></svg> Preview clip</button>` : ''}
+        <button class="btn btn-cyan small full" id="mb-prev-clip" title="Play just this clip in the preview above"><svg class="ic b-ic" aria-hidden="true"><use href="#i-play"></use></svg> Preview clip</button>
+        ${clipSound(l)}` : ''}
         <div class="mb-frow"><button class="btn btn-cyan small" id="mb-fit" title="Show the whole photo inside the canvas. Bars appear wherever its shape differs from the canvas — they are the canvas background."><svg class="ic b-ic" aria-hidden="true"><use href="#i-fit"></use></svg>Whole photo (bars)</button><button class="btn btn-cyan small" id="mb-fill" title="Scale up until the canvas is full and crop the overflow — no bars, but the edges are cut off"><svg class="ic b-ic" aria-hidden="true"><use href="#i-expand"></use></svg>Fill &amp; crop</button></div>
         <!-- PHOTO TOOLS, two to a row. They were seven full-width buttons stacked one under another — the
              longest thing in the panel, pushing everything else below the fold on a phone. Same buttons, same
@@ -1684,7 +1698,6 @@
         ? `<label class="mb-f"><span>Speed <b id="mb-spd-val">${_speedOf(l)}×</b><i class="mb-slot" id="mb-spd-slot">${_slotNote(l)}</i></span>
              <input type="range" id="mb-f-speed" min="0.25" max="4" step="0.05" value="${_speedOf(l)}"></label>
            <div class="mb-frow">${[0.5,1,2].map(v=>`<button class="btn btn-cyan small${_speedOf(l)===v?' on':''}" data-spd="${v}">${v}×</button>`).join('')}</div>
-           <label class="mb-f mb-check"><input type="checkbox" id="mb-f-mute" ${l.mute?'checked':''}><span>Mute this clip</span></label>
            <div class="muted small mb-dbg">Drag the clip on the 🎞 Timeline to set when it appears in the meme.</div>`
         : `<div class="mb-frow">
              <label class="mb-f"><span>Start (s)</span><input class="input" type="number" id="mb-f-start" min="0" step="0.1" value="${l.start}"></label>
@@ -4640,7 +4653,10 @@
       // Audible NOW, like the music-bed slider beside it — waiting for the next seek is what made a
       // working control feel dead.
       const a=_sndEls.find(x=>x.dataset.snd===l.id); if(a) a.volume=clamp(l.soundVolume,0,1); });
-    on('mb-f-mute','change',(e)=>{ snap(); l.mute=e.target.checked; save(); });
+    on('mb-f-mute','click',()=>{ snap(); l.mute=!l.mute; save(); repaint('inspector');
+      toast(l.mute?'clip muted':'clip sound on'); });
+    on('mb-f-vvol','input',(e)=>{ snapBurst('vvol:'+l.id); l.volume=clamp(e.target.value,0,2); save();
+      const b=document.getElementById('mb-vvol-val'); if(b) b.textContent=Math.round(l.volume*100)+'%'; });
     // Speed. The preview mirrors it with playbackRate + a scaled local time (see seek), so slow-mo and 2×
     // are visible without rendering — the whole reason to have a slider rather than a number.
     // Changing the speed keeps the TRIMMED REGION and moves the slot, not the other way round: the footage

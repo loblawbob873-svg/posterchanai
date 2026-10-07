@@ -137,6 +137,16 @@ rm -rf "$TMP/app-misc/posterchanos-shell/files/plymouth"
 install -d "$TMP/app-misc/posterchanos-shell/files/plymouth"
 install -m 0644 "$(dirname "$SRC")/plymouth/posterchanos/"* \
   "$TMP/app-misc/posterchanos-shell/files/plymouth/"
+# THE DESKTOP'S SOUNDS HAVE ONE SOURCE TOO: the same files the client plays (static/sounds, made by
+# scripts/make_notification_sound.py and make_ringtone.py), named for the freedesktop events they answer
+# ("any way to make those the desktop sounds too"). Event names: freedesktop sound naming spec.
+SND="$(dirname "$SRC")/../static/sounds"
+install -d "$TMP/app-misc/posterchanos-shell/files/sounds/stereo"
+for ev in message-new-instant message bell complete dialog-information; do
+  install -m 0644 "$SND/posterchan-chime.ogg" "$TMP/app-misc/posterchanos-shell/files/sounds/stereo/$ev.oga"
+done
+install -m 0644 "$SND/posterchan-alert.ogg" "$TMP/app-misc/posterchanos-shell/files/sounds/stereo/alarm-clock-elapsed.oga"
+install -m 0644 "$SND/posterchan-cyberpunk.ogg" "$TMP/app-misc/posterchanos-shell/files/sounds/stereo/phone-incoming-call.oga"
 # The installed gentoo.sh publishes a verified clean image after all build/content checks.  It must
 # not depend on a repository checkout existing on an installed machine; inject the one canonical
 # publisher beside the canonical installer into every timestamped shell package.

@@ -110,6 +110,15 @@ src_install() {
 	insinto /usr/share/plymouth/themes/posterchanos
 	doins "${FILESDIR}"/plymouth/*
 
+	# THE DESKTOP'S SOUND THEME: the cyberpunk chime for messages and the bell, the PosterChan Alert for
+	# alarms, the リンリン ringtone for calls; everything else falls through to freedesktop (Inherits). The
+	# .oga files are injected by publish_overlay.sh from static/sounds -- one source with the client.
+	# pc-compositor-session makes it the default theme unless the person picked another.
+	insinto /usr/share/sounds/posterchan
+	doins "${FILESDIR}/sounds/index.theme"
+	insinto /usr/share/sounds/posterchan/stereo
+	doins "${FILESDIR}"/sounds/stereo/*.oga
+
 	# NAMED FOR NO DESKTOP, because it applies to the only one there is. xdg-desktop-portal matches
 	# `<XDG_CURRENT_DESKTOP>-portals.conf` first, so the old `sway-portals.conf` selected nothing on a
 	# session announcing `wayfire`: the ScreenCast backend went unset and OBS listed nothing to

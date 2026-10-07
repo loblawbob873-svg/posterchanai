@@ -12076,3 +12076,4 @@ article.note.ai-found,.notif.ai-found{box-shadow:inset 3px 0 0 var(--neon),0 0 0
 .osw-ai-calc{font-size:16px;padding:6px 2px;overflow-wrap:anywhere}.osw-ai-calc b{color:var(--neon)}
 .rt-sep{border:0;border-top:1px solid rgba(var(--accent-rgb),.18);margin:18px 0}
 .us-server-down{display:flex;flex-wrap:wrap;align-items:center;gap:6px 10px;margin:0 0 10px;padding:10px 12px;border:1px solid rgba(var(--accent-rgb),.35);border-radius:10px;background:rgba(var(--accent-rgb),.07)}.us-server-down .muted{flex:1 1 220px}
+.mb-clip-sound{display:flex;align-items:flex-end;gap:10px;flex-wrap:wrap;margin:8px 0}.mb-clip-sound .mb-f{flex:1 1 160px;margin:0}.mb-clip-sound>.btn{min-height:40px;white-space:nowrap}

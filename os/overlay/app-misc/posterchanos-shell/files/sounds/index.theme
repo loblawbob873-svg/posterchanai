@@ -1,0 +1,8 @@
+[Sound Theme]
+Name=PosterChan
+Comment=PosterChanOS: the cyberpunk chime, the PosterChan Alert and the リンリン ringtone. Anything not here is freedesktop's.
+Inherits=freedesktop
+Directories=stereo
+
+[stereo]
+OutputProfile=stereo

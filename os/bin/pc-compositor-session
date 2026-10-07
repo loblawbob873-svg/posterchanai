@@ -834,6 +834,33 @@ pc_gtk_text_scale() {
 	fi
 }
 
+# THE POSTERCHAN SOUND THEME IS THE DEFAULT, NOT A REQUIREMENT ("any way to make those the desktop sounds
+# too"). Set only over the stock theme ('freedesktop') or our own earlier write (the marker) -- a theme the
+# person chose is theirs, exactly like the text-scaling rule above. Needs the theme to be installed.
+pc_sound_theme() {
+	command -v gsettings >/dev/null 2>&1 || return 0
+	[ -r "${PC_SOUND_THEME_DIR:-/usr/share/sounds/posterchan}/index.theme" ] || return 0
+	if [ -z "${DBUS_SESSION_BUS_ADDRESS:-}" ]; then
+		bus=${XDG_RUNTIME_DIR:-/run/user/$(id -u)}/bus
+		[ -S "$bus" ] || return 0
+		DBUS_SESSION_BUS_ADDRESS="unix:path=$bus"
+		export DBUS_SESSION_BUS_ADDRESS
+	fi
+	cur=$(gsettings get org.gnome.desktop.sound theme-name 2>/dev/null) || return 0
+	cur=${cur#\'}; cur=${cur%\'}
+	[ "$cur" != "posterchan" ] || return 0
+	mark=''
+	[ ! -r "$state_dir/sound-theme" ] || IFS= read -r mark <"$state_dir/sound-theme"
+	if [ "$cur" = "freedesktop" ] || [ -z "$cur" ] || [ "$cur" = "$mark" ]; then
+		gsettings set org.gnome.desktop.sound theme-name posterchan 2>/dev/null || return 0
+		gsettings set org.gnome.desktop.sound event-sounds true 2>/dev/null || true
+		printf '%s\n' "$cur" >"$state_dir/sound-theme"
+		note "sound theme $cur -> posterchan"
+	else
+		note "sound theme left at $cur (not ours)"
+	fi
+}
+
 # Xft.dpi HAS NO ENVIRONMENT VARIABLE, and the X server it belongs to does not exist yet: Wayfire
 # starts Xwayland itself, after this point. Merging it now would silently do nothing, and merging it
 # from the shell launcher would tie it to a restart of the shell. Wait for the socket in the
@@ -841,6 +868,7 @@ pc_gtk_text_scale() {
 # clients, may legitimately never appear -- and give up quietly if it does not.
 (
 	pc_gtk_text_scale
+	pc_sound_theme
 	[ "$pc_dpi" -ne 96 ] || exit 0
 	xsock=${PC_XWAYLAND_SOCKET:-/tmp/.X11-unix/X0}
 	n=0
