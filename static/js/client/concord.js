@@ -1143,13 +1143,67 @@
       }else el.onclick=open;
     }
   }
+  /* AN IMAGE-HEAVY ROOM DECRYPTED ITS PICTURES ONE AT A TIME, OLDEST FIRST ("decryption slow in image
+   * heavy rooms"). The hydrator awaited each attachment in DOM order -- one download, one AES-GCM, one
+   * hash, then the next -- so a room opened at its newest message (where a person is looking) painted
+   * the pictures they could see LAST: measured on 40 photos (21 MB) over a 150 ms / 8 MB/s link, the
+   * two on screen arrived after 8.6 s, behind 38 off-screen ones, with never more than one download in
+   * flight. Now an attachment is decrypted when its box comes NEAR the visible part of the pane (an
+   * IntersectionObserver on the pane itself, so the margin is measured in the scroller, not the page),
+   * at most ATTACHMENT_LANES at a time, the ones on screen first and then by distance. A box that
+   * scrolls far away before its turn leaves the queue; one already decrypting finishes into the cache.
+   * The finished bytes paint EVERY live box for that file, so a repaint mid-download (a live room
+   * repaints constantly) never decrypts twice and never waits for a second pass. */
+  const ATTACHMENT_LANES=4,ATTACHMENT_NEAR=1600,attachmentWaiting=new Map(),attachmentHostFile=new WeakMap();
+  let attachmentActive=0,attachmentObservers=[],attachmentPumpQueued=false;
   async function hydrateEncryptedAttachments(messages){
     if(!document.querySelectorAll)return;
     const byId=new Map((messages||[]).map(m=>[messageId(m),m]));
+    for(const o of attachmentObservers)try{o.disconnect();}catch(_){}
+    attachmentObservers=[];const roots=new Map();
     for(const host of document.querySelectorAll('.cc-encrypted-attachment[data-cc-attachment]')){
       const m=byId.get(host.dataset.ccAttachment),file=m&&encryptedAttachments(m)[Number(host.dataset.ccAttachmentIndex)||0];if(!file)continue;
-      try{const got=await decryptAttachment(file);if(!host.isConnected)continue;const p=PC(),url=p.enc(got.url),label=p.enc(got.name||'attachment');if(got.mime.startsWith('image/')){if(host.dataset.ccReady!=='1')host.innerHTML=attachmentImageHtml(p,file,got);const img=host.querySelector('img');if(img&&!attachmentDims.has(attachmentKey(file))){const note=()=>{if(img.naturalWidth&&img.naturalHeight)attachmentDims.set(attachmentKey(file),{w:img.naturalWidth,h:img.naturalHeight});};if(img.complete)note();else img.addEventListener('load',note,{once:true});}const open=host.querySelector('.cc-attachment-open');if(open)open.onclick=e=>{e.preventDefault();e.stopPropagation();attachmentLightbox(p,host,got.url,null);};}else if(got.mime.startsWith('video/')){if(host.dataset.ccReady!=='1'||!host.querySelector('video')){host.innerHTML=attachmentVideoHtml(p,file,got);host.dataset.ccReady='1';}const vid0=host.querySelector('video');if(vid0&&!attachmentDims.has(attachmentKey(file))){const note=()=>{if(vid0.videoWidth&&vid0.videoHeight)attachmentDims.set(attachmentKey(file),{w:vid0.videoWidth,h:vid0.videoHeight});};if(vid0.readyState>=1)note();else vid0.addEventListener('loadedmetadata',note,{once:true});}const openVideo=e=>{e.preventDefault();e.stopPropagation();attachmentLightbox(p,host,got.url,'video');};const video=host.querySelector('video');if(video)video.ondblclick=openVideo;const open=host.querySelector('.cc-attachment-expand');if(open)open.onclick=openVideo;}else if(got.mime.startsWith('audio/'))host.innerHTML=`<audio src="${url}" controls preload="metadata"></audio>`;else host.innerHTML=`<a href="${url}" download="${label}">Download ${label}</a>`;}catch(_){if(host.isConnected)host.innerHTML='<span class="cc-attachment-error">Could not decrypt attachment</span>';}
+      attachmentHostFile.set(host,file);const ck=attachmentKey(file),got=attachmentCache.get(ck);
+      if(got){paintAttachmentHost(host,file,got);continue;}
+      if(!window.IntersectionObserver){scheduleAttachment(file,1);continue;}
+      const root=host.closest('.cc-messages')||null,key=root||document;
+      if(!roots.has(key)){const o=new IntersectionObserver(entries=>attachmentsSeen(entries,root),{root,rootMargin:`${ATTACHMENT_NEAR}px 0px`});roots.set(key,o);attachmentObservers.push(o);}
+      roots.get(key).observe(host);
     }
+  }
+  function attachmentsSeen(entries,root){
+    const r=root&&root.isConnected?root.getBoundingClientRect():{top:0,bottom:window.innerHeight||0};
+    for(const e of entries){const file=attachmentHostFile.get(e.target);if(!file)continue;const ck=attachmentKey(file);
+      if(!e.isIntersecting){const w=attachmentWaiting.get(ck);if(w&&![...attachmentHostsFor(ck)].some(h=>h!==e.target&&nearPane(h,root)))attachmentWaiting.delete(ck);continue;}
+      const q=e.boundingClientRect,distance=q.bottom>r.top&&q.top<r.bottom?0:Math.min(Math.abs(q.top-r.bottom),Math.abs(r.top-q.bottom));
+      scheduleAttachment(file,distance);}
+  }
+  function nearPane(host,root){ if(!host.isConnected)return false;const r=root&&root.isConnected?root.getBoundingClientRect():{top:0,bottom:window.innerHeight||0},q=host.getBoundingClientRect();return q.bottom>r.top-ATTACHMENT_NEAR&&q.top<r.bottom+ATTACHMENT_NEAR; }
+  function attachmentHostsFor(ck){ return [...document.querySelectorAll('.cc-encrypted-attachment[data-cc-attachment]')].filter(h=>{const f=attachmentHostFile.get(h);return f&&attachmentKey(f)===ck;}); }
+  /* `distance` is how far the box is from the visible pane in px (0 = on screen): the queue's order. */
+  function scheduleAttachment(file,distance){
+    const ck=attachmentKey(file);
+    if(attachmentCache.has(ck)){const got=attachmentCache.get(ck);for(const h of attachmentHostsFor(ck))paintAttachmentHost(h,file,got);return;}
+    if(attachmentLoads.has(ck))return;
+    const w=attachmentWaiting.get(ck);if(w){w.distance=Math.min(w.distance,distance);return;}
+    attachmentWaiting.set(ck,{file,distance});
+    /* Pumped once the WHOLE batch is queued: an observer reports its boxes top-down in one callback,
+     * and starting lanes per entry handed them to the oldest off-screen boxes before the on-screen
+     * one at the bottom was even in the queue. */
+    if(!attachmentPumpQueued){attachmentPumpQueued=true;Promise.resolve().then(()=>{attachmentPumpQueued=false;pumpAttachments();});}
+  }
+  function pumpAttachments(){
+    while(attachmentActive<ATTACHMENT_LANES&&attachmentWaiting.size){
+      let best=null;for(const [ck,w] of attachmentWaiting)if(!best||w.distance<best[1].distance)best=[ck,w];
+      const [ck,{file}]=best;attachmentWaiting.delete(ck);attachmentActive++;
+      decryptAttachment(file).then(got=>{for(const h of attachmentHostsFor(ck))paintAttachmentHost(h,file,got);},
+        ()=>{for(const h of attachmentHostsFor(ck))h.innerHTML='<span class="cc-attachment-error">Could not decrypt attachment</span>';})
+        .finally(()=>{attachmentActive--;pumpAttachments();});
+    }
+  }
+  function paintAttachmentHost(host,file,got){
+    if(!host.isConnected)return;
+    try{const p=PC(),url=p.enc(got.url),label=p.enc(got.name||'attachment');if(got.mime.startsWith('image/')){if(host.dataset.ccReady!=='1'){host.innerHTML=attachmentImageHtml(p,file,got);host.dataset.ccReady='1';}const img=host.querySelector('img');if(img&&!attachmentDims.has(attachmentKey(file))){const note=()=>{if(img.naturalWidth&&img.naturalHeight)attachmentDims.set(attachmentKey(file),{w:img.naturalWidth,h:img.naturalHeight});};if(img.complete)note();else img.addEventListener('load',note,{once:true});}const open=host.querySelector('.cc-attachment-open');if(open)open.onclick=e=>{e.preventDefault();e.stopPropagation();attachmentLightbox(p,host,got.url,null);};}else if(got.mime.startsWith('video/')){if(host.dataset.ccReady!=='1'||!host.querySelector('video')){host.innerHTML=attachmentVideoHtml(p,file,got);host.dataset.ccReady='1';}const vid0=host.querySelector('video');if(vid0&&!attachmentDims.has(attachmentKey(file))){const note=()=>{if(vid0.videoWidth&&vid0.videoHeight)attachmentDims.set(attachmentKey(file),{w:vid0.videoWidth,h:vid0.videoHeight});};if(vid0.readyState>=1)note();else vid0.addEventListener('loadedmetadata',note,{once:true});}const openVideo=e=>{e.preventDefault();e.stopPropagation();attachmentLightbox(p,host,got.url,'video');};const video=host.querySelector('video');if(video)video.ondblclick=openVideo;const open=host.querySelector('.cc-attachment-expand');if(open)open.onclick=openVideo;}else if(got.mime.startsWith('audio/'))host.innerHTML=`<audio src="${url}" controls preload="metadata"></audio>`;else host.innerHTML=`<a href="${url}" download="${label}">Download ${label}</a>`;}catch(e){console.warn('Concord attachment paint failed',e);}
   }
   function channelStarKey(room,name){ return `pc.concord.star.${room&&(room.communityId||room.naddr||room.url)||'unknown'}:${name||'general'}`; }
   function channelStarred(room,name){ try{return localStorage.getItem(channelStarKey(room,name))==='1';}catch(_){return false;} }
