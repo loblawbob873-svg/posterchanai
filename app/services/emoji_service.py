@@ -34,6 +34,11 @@ logger = logging.getLogger(__name__)
 _REPO_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 DEFAULT_DIR = "assets/emoji"
+# BUILT-IN PACKS ship with PosterChan itself ("we need a small set of posterchan emoji pack"): the operator's
+# directory above is gitignored -- it is each node's own collection -- so a pack meant for every install
+# lives here, tracked, and is indexed AFTER the operator's packs (an operator's shortcode always wins).
+# Read-only: rename/delete refuse a built-in emoji, because its file is part of the code checkout.
+BUILTIN_DIR = os.path.join(_REPO_ROOT, "assets", "emoji-builtin")
 ROOT_PACK = "_"                     # loose images sitting directly in the emoji dir
 IMAGE_EXTS = {".png", ".gif", ".webp", ".jpg", ".jpeg", ".apng", ".avif"}
 MAX_UPLOAD_BYTES = 8 * 1024 * 1024  # per file; these end up inline in other people's timelines
@@ -185,8 +190,8 @@ def index(force: bool = False) -> List[dict]:
     now = time.monotonic()
     if not force and _cache["entries"] and (now - float(_cache["at"] or 0)) < _SIG_TTL:
         return _cache["entries"]                                    # type: ignore[return-value]
-    sig = _signature(root)
-    if not force and sig is not None and sig == _cache["sig"]:
+    sig = (_signature(root), _signature(BUILTIN_DIR) if root else None)
+    if not force and sig == _cache["sig"]:
         _cache["at"] = now
         return _cache["entries"]                                    # type: ignore[return-value]
     entries: List[dict] = []
@@ -199,6 +204,17 @@ def index(force: bool = False) -> List[dict]:
                     continue
                 seen[sc] = pack
                 entries.append({"shortcode": sc, "pack": pack, "path": path,
+                                "ext": os.path.splitext(path)[1].lower()})
+    # Built-in packs follow the operator's, and only while custom emoji are switched on (a blank setting
+    # means the node has no emoji at all). A shortcode the operator already uses keeps the operator's.
+    if root:
+        for pack in _pack_dirs(BUILTIN_DIR):
+            for raw_sc, path in _scan_pack(BUILTIN_DIR, pack):
+                sc = sanitize_shortcode(raw_sc)
+                if not sc or sc in seen:
+                    continue
+                seen[sc] = pack
+                entries.append({"shortcode": sc, "pack": pack, "path": path, "builtin": True,
                                 "ext": os.path.splitext(path)[1].lower()})
     entries.sort(key=lambda e: (e["pack"], e["shortcode"].lower()))
     _cache.update({"sig": sig, "at": now, "entries": entries,
@@ -286,7 +302,8 @@ def packs() -> List[dict]:
                 pass
         pack_dir = root if name == ROOT_PACK else os.path.join(root, name)
         out.append({"name": name, "count": len(items), "bytes": total,
-                    "managed": read_pack_json(pack_dir) is not None})
+                    "managed": read_pack_json(pack_dir) is not None,
+                    "builtin": all(e.get("builtin") for e in items)})
     out.sort(key=lambda p: p["name"])
     return out
 
@@ -530,6 +547,8 @@ def rename_emoji(pack: str, shortcode: str, new_shortcode: str) -> dict:
     e = lookup(pack, shortcode)
     if not e:
         raise ValueError("no such emoji")
+    if e.get("builtin"):
+        raise ValueError("built-in PosterChan emoji can't be renamed")
     if sc != shortcode and lookup(pack, sc):
         raise ValueError(f":{sc}: already exists in {pack}")
     d = _pack_dir(pack)
@@ -549,6 +568,8 @@ def delete_emoji(pack: str, shortcode: str) -> None:
     e = lookup(pack, shortcode)
     if not e:
         raise ValueError("no such emoji")
+    if e.get("builtin"):
+        raise ValueError("built-in PosterChan emoji can't be deleted")
     d = _pack_dir(pack)
     doc = read_pack_json(d)
     if doc is not None:
