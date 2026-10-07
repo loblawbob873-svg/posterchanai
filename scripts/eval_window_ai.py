@@ -522,7 +522,10 @@ def _own_relays_on(f, r):
 
 
 def _tg_told_dana(f, r):
-    if not _filled(r, ctl(f, "Message"), "9"):
+    # Typed into the composer -- or onto the Reply of one of DANA's messages, which in Telegram quotes it
+    # and focuses that same composer (telegram.js [data-reply]), and the panel types into the focused box.
+    danas = {c["ref"] for c in f["controls"] if c["label"] == "Reply" and c["near"].startswith("Dana")}
+    if not (_filled(r, ctl(f, "Message"), "9") or any(_filled(r, x, "9") for x in danas)):
         return "did not write the message to Dana: " + json.dumps(acts(r))[:240]
     if any(s["do"] == "fill" and s["ref"] == ctl(f, "Search chats") for s in acts(r)):
         return "typed into Search chats"

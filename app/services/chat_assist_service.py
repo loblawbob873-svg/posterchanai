@@ -249,6 +249,17 @@ def clean_controls(controls) -> list:
 
 def build_steps_messages(context: list, instruction: str, history=None, commands: bool = False,
                          today: str = "", controls=None) -> list:
+    # A CONTINUE ROUND STILL HAS A JOB. Measured (eval multi-* cases, 0/21): handed "Continue: look at the
+    # window as it is now…" with the real request only in the history, the model read "pressed New
+    # contact" as the task being DONE -- "Bob Smith was added. The contact form is open for a new entry",
+    # no steps, beside the empty form it had just opened. So the request IS the person's own request
+    # again, with what a step that opened a form did and did not do said in words.
+    goal = goal_of(instruction, history)
+    if goal != instruction:
+        instruction = (f"{goal}\n(Continuing this request. The window has changed since the steps above ran -- a "
+                       "form or dialog may have opened. Those steps did only what they say: opening a form does "
+                       "not fill it or save it. Propose the steps STILL NEEDED to finish the request, with the "
+                       "controls listed now. Only when the window shows it is finished, say so and propose nothing.)")
     base = build_window_messages(context, instruction)          # validates + fences the windows
     today = today if _DATE.match(str(today or "")) else ""
     ctl = clean_controls(controls)
@@ -425,6 +436,25 @@ def _salvage_fields(t: str):
     return out or None
 
 
+# THE REQUEST A CONTINUE ROUND IS STILL WORKING ON. A task that spans windows ("add Bob Smith 555-1234 to
+# my contacts": press New contact, then fill the form that opened) reaches its second round with the panel's
+# Continue sentence as the instruction and the person's real request only in `history`. Every repair below
+# reads the person's words -- the quoted text to type verbatim, "add" ending on the Add button, whether
+# deleting was asked for -- so on a Continue round they must read the ORIGINAL request, or the round that
+# actually fills the form is the one round that gets none of them.
+_CONTINUE = re.compile(r"^\s*continue\b", re.I)
+
+
+def goal_of(instruction: str, history=None) -> str:
+    if not _CONTINUE.match(str(instruction or "")):
+        return instruction
+    for h in reversed(list(history or [])):
+        q = str(h.get("q") or "") if isinstance(h, dict) else ""
+        if q.strip() and not _CONTINUE.match(q):
+            return q
+    return instruction
+
+
 # What small models write instead of the step kind asked for -> the kind they meant.
 _KIND_ALIASES = {"type": "fill", "enter": "fill", "input": "fill", "write": "fill", "set": "fill",
                  "select": "choose", "pick": "choose", "check": "toggle", "tick": "toggle",
@@ -432,7 +462,7 @@ _KIND_ALIASES = {"type": "fill", "enter": "fill", "input": "fill", "write": "fil
 
 
 def parse_steps(text: str, commands: bool = False, want_tasks: bool = False, controls=None,
-                instruction: str = "") -> dict:
+                instruction: str = "", history=None) -> dict:
     """The model's reply -> {answer, tasks, steps}, every field validated. A reply that is not JSON is
     still an answer (local models ignore formats), and its "- " lines become tasks when tasks were asked."""
     raw = _json_object(text)
@@ -461,6 +491,15 @@ def parse_steps(text: str, commands: bool = False, want_tasks: bool = False, con
         tasks.append({"text": txt, "due": due if _DATE.match(due) else "", "who": _clean(t.get("who"), 60)})
         if len(tasks) >= TASK_MAX:
             break
+    # THE TASKS IT WROTE AS BULLETS. Asked for decisions and next actions, the model listed them as "- "
+    # lines in its answer and left "tasks" empty (measured, 2 runs in 3) -- the same reading the non-JSON
+    # path above already gives a reply with no JSON at all.
+    if want_tasks and not tasks:
+        for line in answer.splitlines():
+            bullet = re.match(r"^\s*(?:[-*•]|\d+[.)])\s+(.+)$", line)
+            if bullet and bullet.group(1).strip():
+                tasks.append({"text": _clean(bullet.group(1), 200), "due": "", "who": ""})
+        tasks = tasks[:TASK_MAX]
     steps = []
     keyed = None
     refs = {r: (role, lab) for r, role, lab, _v, _n in clean_controls(controls)}
@@ -480,12 +519,21 @@ def parse_steps(text: str, commands: bool = False, want_tasks: bool = False, con
                 _rr = int(st.get("ref"))
             except (TypeError, ValueError):
                 _rr = None
-            if (len(_keys) >= 10 and _t and _rr in refs and refs[_rr][0] not in _TEXTBOX_ROLES
+            # A ref that names no control at all ("fill ref 0 with 12", measured) is still the keypad: the
+            # digits are what the person asked for, and dropping them computed "× 7 =".
+            if (len(_keys) >= 10 and _t and (_rr not in refs or refs[_rr][0] not in _TEXTBOX_ROLES)
                     and all(ch in _keys for ch in _t.replace(" ", ""))):
                 keyed = _keys
                 for ch in _t.replace(" ", ""):
                     steps.append({"do": "click", "ref": _keys[ch], "target": ch, "label": "Press " + ch, "text": "", "on": False})
                 continue
+        if refs and kind == "click" and str(st.get("ref") or "").strip().isdigit() and refs.get(int(st.get("ref")), ("",))[0] == "list":
+            # A CLICK ON A DROPDOWN NAMING AN OPTION is choosing it: {"do":"click","ref":3 "Second language",
+            # "label":"Select Spanish"} (measured, 2 runs in 3) -- clicking a <select> does nothing a step can see.
+            _opt = str(st.get("text") or "").strip() or re.sub(r"^(?:select|choose|pick|set(?: to)?|change to|switch to|use)\s+", "",
+                                                               str(st.get("label") or "").strip(), flags=re.I)
+            if _opt and _opt.lower() != refs[int(st.get("ref"))][1].lower():
+                kind, st = "choose", dict(st, text=_opt)
         if refs and kind in ("click", "press"):
             try:
                 _r = int(st.get("ref"))
@@ -521,8 +569,12 @@ def parse_steps(text: str, commands: bool = False, want_tasks: bool = False, con
             if kind in ("fill", "choose") and not txt:
                 continue
             # "[Your note title here]" is the model not knowing what to type, not something to type.
+            # On a BUTTON it is the model pressing the button and not knowing what goes in the box it opens
+            # ("Add torrent" filled with "[magnet link]", measured) -- press it, type nothing.
             if kind == "fill" and re.fullmatch(r"\s*[\[<{(].*[\]>})]\s*|.*\byour\b.*\bhere\b.*", txt, re.I | re.S):
-                continue
+                if role in _TEXTBOX_ROLES or role == "list":
+                    continue
+                kind, txt = "click", ""
             # An ELIDED token is a made-up stand-in too: "magnet:xt9:...", "0x1234…". Put on a button it was
             # the model pressing the button and inventing what goes in the box -- press it, type nothing.
             if kind == "fill" and re.fullmatch(r"\S*(\.\.\.|…)\S*", txt):
@@ -570,7 +622,9 @@ def parse_steps(text: str, commands: bool = False, want_tasks: bool = False, con
     if keyed and "=" in keyed and steps and steps[-1].get("target") != "=":
         steps.append({"do": "click", "ref": keyed["="], "target": "=", "label": "Press =", "text": "", "on": False})
     steps = steps[:ACT_STEP_MAX * 3] if keyed else steps
-    steps = _repair_steps(steps, refs, instruction, {r: n for r, _ro, _l, _v, n in clean_controls(controls)})
+    cc = clean_controls(controls)
+    steps = _repair_steps(steps, refs, goal_of(instruction, history), {r: n for r, _ro, _l, _v, n in cc},
+                          {r: v for r, _ro, _l, v, _n in cc})
     if not answer and not tasks and not steps:
         answer = str(text or "").strip()[:4000]
     return {"answer": answer, "tasks": tasks, "steps": steps}
@@ -591,6 +645,13 @@ _QUOTED = re.compile(r"(?<![\w])'([^'\n]{1,500})'(?![\w])|\"([^\"\n]{1,500})\"|�
 _DESTROYS = re.compile(r"\b(delete|remove|erase|wipe|trash|discard|clear|empty|reset|destroy|purge|unfollow|block|leave)\b", re.I)
 
 
+# "call this note Shopping list", "name it Taxes", "rename the folder to Q3" -> the name. It stops before
+# what the thing should CONTAIN ("called Groceries with milk and eggs").
+_NAMES = re.compile(r"\b(?:call(?:ed)?|name(?:d)?|title(?:d)?|rename)\b(?:\s+(?:this\s+\w+|the\s+\w+|this|it))?(?:\s+(?:to|as))?\s+"
+                    r"(.+?)(?=\s+(?:with|containing|saying|that|and)\b|[,:;]|$)", re.I)
+_ORDINALS = {"first": 0, "second": 1, "third": 2, "fourth": 3, "fifth": 4}
+_ORDINAL = re.compile(r"\bthe\s+(first|second|third|fourth|fifth|last|[1-9](?:st|nd|rd|th))\b(?!\s+(?:time|thing))", re.I)
+_READS = re.compile(r"\b(extract|summari[sz]e|explain|catch me up)\b", re.I)
 _NAVIGATES = re.compile(r"\b(show|open|go(?: back)? to|switch to|take me to|view|see|display)\b", re.I)
 _OPENS_ROW = re.compile(r"\b(open|read|show|view|look at|see)\b", re.I)
 _TICKS_ROW = re.compile(r"\b(select|tick|check|mark)\b", re.I)
@@ -603,8 +664,75 @@ _COMMON_WORDS = {"open", "read", "show", "view", "look", "email", "emails", "mai
 _RISKY_NAV = re.compile(r"\b(send|post|publish|pay|delete|remove|log ?out|sign ?out|reset|wipe|private key|nsec)\b", re.I)
 
 
-def _repair_steps(steps: list, refs: dict, instruction: str, near: dict | None = None) -> list:
+_EMAIL = re.compile(r"[\w.+-]+@[\w-]+(?:\.[\w-]+)+")
+_ISO_DAY = re.compile(r"\b\d{4}-\d{2}-\d{2}\b")
+_CLOCK = re.compile(r"\b(\d{1,2})(?::([0-5]\d))?\s*(am|pm)\b|\b([01]?\d|2[0-3]):([0-5]\d)\b", re.I)
+
+
+def _clock_times(text: str) -> list:
+    out = []
+    for m in _CLOCK.finditer(text):
+        if m.group(3):
+            h = int(m.group(1)) % 12 + (12 if m.group(3).lower() == "pm" else 0)
+            out.append(f"{h:02d}:{m.group(2) or '00'}")
+        else:
+            out.append(f"{int(m.group(4)):02d}:{m.group(5)}")
+    return out
+
+
+def _put_facts(out: list, refs: dict, values: dict, request: str) -> list:
+    """THE PERSON'S OWN DATES, TIMES AND ADDRESSES GO WHERE THE FORM HOLDS ONE. Measured on the New event
+    form: "add a dentist appointment on 2026-10-09 from 3pm to 4pm" left Day at today's date and typed
+    10:30-11:30 into From/To (and a "Downtown Dental Clinic" nobody mentioned); on New message, alice@x.test
+    never reached To. A box already HOLDING a date (YYYY-MM-DD) or a time (HH:MM) is that kind of field, and
+    a box labelled To/Email/Recipient takes an address: each value the request states goes into the one
+    box of its kind (times in order: From, then To), replacing what the plan typed there. Applied only
+    while the plan is filling the form in, so a request to look at a day types nothing."""
+    if not any(st.get("do") == "fill" for st in out):
+        return out
+    boxes = sorted(r for r, (role, _l) in refs.items() if role in _TEXTBOX_ROLES)
+    kinds = (
+        (_ISO_DAY.findall(request), [r for r in boxes if _ISO_DAY.fullmatch(str(values.get(r) or "").strip())]),
+        (_clock_times(request), [r for r in boxes if re.fullmatch(r"\d{2}:\d{2}", str(values.get(r) or "").strip())]),
+    )
+    # Addresses all go in the ONE address box, comma-separated -- never one each into To and Cc.
+    mails, mail_boxes = _EMAIL.findall(request), [r for r in boxes if re.search(r"\b(to|e-?mail|recipients?)\b", refs[r][1], re.I)
+                                                 and not re.search(r"\b(search|filter|find)", refs[r][1], re.I)
+                                                 and not re.fullmatch(r"[\d:-]+", str(values.get(r) or "").strip())]
+    if mails and len(mail_boxes) == 1:
+        kinds += (([", ".join(dict.fromkeys(mails))], mail_boxes),)
+    timed = False
+    for vals, where in kinds:
+        if not vals or not where or len(vals) > len(where):
+            continue
+        for v, r in zip(vals, where):
+            have = [st for st in out if st.get("do") == "fill" and st.get("ref") == r]
+            if have:
+                have[-1]["text"] = v
+            else:
+                at = next((i for i, st in enumerate(out) if st.get("do") in ("click", "press")), len(out))
+                out.insert(at, {"do": "fill", "ref": r, "target": refs[r][1], "label": f"Fill {refs[r][1][:30]}",
+                                "text": v, "on": False})
+        timed = timed or where is kinds[1][1]
+    # Times stated and placed: an "All day" box the plan ticked would hide them.
+    if timed:
+        out = [st for st in out if not (st.get("do") == "toggle" and st.get("on") and re.search(r"all.?day", refs.get(st.get("ref"), ("", ""))[1], re.I))]
+    # INVENTED EXTRAS. An optional field the request gave nothing for, filled with words it never used
+    # ("Where (optional)" = "Downtown Dental Clinic"), is the model making something up.
+    words = set(re.findall(r"[a-z0-9]{3,}", request.lower()))
+    return [st for st in out if not (st.get("do") == "fill" and re.search(r"\(optional\)", refs.get(st.get("ref"), ("", ""))[1], re.I)
+                                     and not (set(re.findall(r"[a-z0-9]{3,}", str(st.get("text") or "").lower())) & words))]
+
+
+def _box_key(label) -> str:
+    """A box's label reduced to its words: "To (comma-separated)" -> "to", "Write your message…" -> "write your message"."""
+    t = re.sub(r"\([^)]*\)", " ", str(label or "").lower())
+    return re.sub(r"\s+", " ", re.sub(r"[^\w@.-]+", " ", t)).strip()
+
+
+def _repair_steps(steps: list, refs: dict, instruction: str, near: dict | None = None, values: dict | None = None) -> list:
     near = near or {}
+    values = values or {}
     low = str(instruction or "").lower()
     # A ROW AND ITS "SELECT" BOX ARE TWO DIFFERENT THINGS. Measured in Mail: asked to "open the receipt
     # email" the model ticked a row's Select box (0/3), asked to "select the lunch email" it opened the
@@ -631,8 +759,10 @@ def _repair_steps(steps: list, refs: dict, instruction: str, near: dict | None =
     out = []
     for st in steps:
         prev = out[-1] if out else None
+        # (A fill on a DROPDOWN right after pressing Reply is the same mistake -- measured: the reply's text
+        # aimed at Mail's Account list.)
         if (st.get("do") == "fill" and prev and prev.get("do") == "click"
-                and refs.get(st.get("ref"), ("",))[0] in _TEXTBOX_ROLES
+                and refs.get(st.get("ref"), ("",))[0] in _TEXTBOX_ROLES + ("list",)
                 and _OPENS_A_BOX.search(str(prev.get("target") or ""))
                 and refs.get(prev.get("ref"), ("",))[0] not in _TEXTBOX_ROLES):
             out[-1] = dict(prev, do="fill", text=st["text"], label=prev.get("label") or st.get("label"))
@@ -659,6 +789,12 @@ def _repair_steps(steps: list, refs: dict, instruction: str, near: dict | None =
         enter_on_button = (st.get("do") == "press" and str(st.get("text") or "").lower() == "enter"
                            and refs.get(st.get("ref"), ("",))[0] not in _TEXTBOX_ROLES)
         prev = out[i - 1] if i else None
+        bk = _box_key(refs.get(st.get("ref"), ("", ""))[1])
+        names_button = bool(bk) and (_box_key(said) == bk or _box_key(said).startswith(bk + " "))
+        if enter_on_button and names_button:
+            # ...but Enter on "Save" whose own label says "Save contact" is pressing Save (measured).
+            st.update(do="click", text="")
+            continue
         if enter_on_button and prev and prev.get("do") == "fill" and refs.get(prev.get("ref"), ("",))[0] in _TEXTBOX_ROLES:
             # ...except straight after typing: "fill Search contacts 'bob', press Enter on [2]" meant the
             # box it just typed in, and [2] was "+ Contact" (measured: the search became a new contact).
@@ -682,7 +818,7 @@ def _repair_steps(steps: list, refs: dict, instruction: str, near: dict | None =
     for r, (role, lab) in refs.items():
         if role in _TEXTBOX_ROLES:
             boxes_by_label.setdefault(str(lab).strip().lower(), []).append(r)
-    kept = []
+    kept, moved_from = [], {}
     for st in out:
         role = refs.get(st.get("ref"), ("",))[0]
         if st.get("do") == "toggle" and role in ("button", "link", "tab"):
@@ -690,9 +826,25 @@ def _repair_steps(steps: list, refs: dict, instruction: str, near: dict | None =
         elif st.get("do") == "fill" and role in ("button", "link", "tab") and not _OPENS_A_BOX.search(str(st.get("target") or "")):
             st.update(do="click", text="")
         elif st.get("do") == "fill" and role in _TEXTBOX_ROLES:
-            hit = boxes_by_label.get(str(st.get("label") or "").strip().lower()) or []
+            said = str(st.get("label") or "").strip().lower()
+            hit = boxes_by_label.get(said) or []
+            if not hit:
+                # The step names the box in its own words: "First name" for the box labelled First, "To"
+                # for "To (comma-separated)", "Phone" for "Phone number" (measured: Bob went into a phone's
+                # "label" field, the subject into To). One box whose words start the same way.
+                k = _box_key(said)
+                hit = [r for r, (ro, lab) in refs.items() if ro in _TEXTBOX_ROLES and k and (
+                       _box_key(lab) == k or k.startswith(_box_key(lab) + " ") or _box_key(lab).startswith(k + " "))]
             if len(hit) == 1 and hit[0] != st["ref"]:
+                moved_from[hit[0]] = st["ref"]
                 st.update(ref=hit[0], target=refs[hit[0]][1])
+            elif not hit and st["ref"] in moved_from and not any(
+                    k2.get("do") == "fill" and k2.get("ref") == moved_from[st["ref"]] for k2 in kept):
+                # SWAPPED BOXES. Its neighbour was named onto THIS box and freed its own ("ref 6 'Subject'",
+                # then "ref 5 'Message body'", with 5 Subject and 6 the body): the model had the two numbers
+                # the wrong way round, so this one belongs in the box the other left.
+                old_ref = moved_from[st["ref"]]
+                st.update(ref=old_ref, target=refs[old_ref][1])
         prev = kept[-1] if kept else None
         if (prev and prev.get("do") == "fill" and st.get("do") in ("click", "press") and st.get("ref") == prev.get("ref")
                 and refs.get(prev.get("ref"), ("",))[0] not in _TEXTBOX_ROLES):
@@ -744,11 +896,87 @@ def _repair_steps(steps: list, refs: dict, instruction: str, near: dict | None =
                 if st.get("do") == "click" and refs.get(st.get("ref"), ("",))[0] == "item" and st["ref"] != hit[0]:
                     st.update(ref=hit[0], target=refs[hit[0]][1])
             break
+    # THE N-TH ONE. "open the second result" opened the first, 3 runs in 3. A request that counts ("the second
+    # result", "the 3rd email", "the last one") moves a step on a row -- the row, or a control inside it --
+    # to the same place in the row it counted to. Rows are the `item` controls, in screen order; a control
+    # belongs to a row when it shares the row's `near`.
+    rows = [r for r, (role, _l) in sorted(refs.items()) if role == "item" and near.get(r)]
+    om = _ORDINAL.search(low)
+    if om and len(rows) >= 2:
+        w = om.group(1)
+        n = len(rows) - 1 if w == "last" else _ORDINALS.get(w, int(re.sub(r"\D", "", w) or 0) - 1)
+        if 0 <= n < len(rows):
+            row_near = [near[r] for r in rows]
+            for st in out:
+                r = st.get("ref")
+                if st.get("do") not in ("click", "press") or near.get(r) not in row_near:
+                    continue
+                i = row_near.index(near[r])
+                if i == n:
+                    continue
+                mine = [x for x in sorted(refs) if near.get(x) == row_near[i]]
+                theirs = [x for x in sorted(refs) if near.get(x) == row_near[n]]
+                pos = mine.index(r)
+                if pos < len(theirs) and refs[theirs[pos]][0] == refs[r][0]:
+                    st.update(ref=theirs[pos], target=refs[theirs[pos]][1])
+    # THE ROW'S OWN BUTTON. "save the Gentoo Wiki result to my notes" opened the result (2 runs in 3), beside
+    # a "📓 Notes" button in that same row. A click on a row, when the request names one of the buttons that
+    # row carries, is that button.
+    for st in out:
+        r = st.get("ref")
+        if st.get("do") == "click" and refs.get(r, ("",))[0] == "item" and near.get(r):
+            own = [x for x, (role, lab) in refs.items() if x != r and near.get(x) == near[r] and role in ("button", "link")
+                   and not _RISKY_NAV.search(lab) and _says(lab)]
+            if len(own) == 1:
+                st.update(ref=own[0], target=refs[own[0]][1])
+    # A NAME IS A TITLE. "call this note Shopping list" came back as a fill of the note's BODY with "Shopping
+    # list" and nine grocery items nobody mentioned (2 runs in 3). A request that names the thing ("call it
+    # X", "name it X", "title it X", "rename it to X") puts X -- and only X -- in the one box labelled as its
+    # title or name; a fill elsewhere that starts with X was meant for that box.
+    nm = _NAMES.search(str(instruction or ""))
+    title_boxes = [r for r, (role, lab) in refs.items() if role in _TEXTBOX_ROLES and re.search(r"\b(title|name|subject)\b", lab, re.I)
+                   and not re.search(r"\b(search|filter|find)", lab, re.I)]
+    if nm and len(title_boxes) == 1:
+        name = nm.group(1).strip(" .!?'\"“”")
+        tb = title_boxes[0]
+        if name and not re.match(r"(?:me|you|him|her|us|them|it)\b", name, re.I) \
+                and not any(st.get("do") == "fill" and st.get("ref") == tb for st in out):
+            kept = []
+            for st in out:
+                if (st.get("do") == "fill" and refs.get(st.get("ref"), ("",))[0] in _TEXTBOX_ROLES
+                        and str(st.get("text") or "").strip().lower().startswith(name.lower())):
+                    st = dict(st, ref=tb, target=refs[tb][1], text=name[:200])
+                kept.append(st)
+            out = kept
+            # Not typed anywhere at all ("a new note called Groceries with milk and eggs": the body got
+            # "milk, eggs" and the title nothing) -- the name still goes in the title.
+            if not any(st.get("do") == "fill" and st.get("ref") == tb for st in out):
+                out.insert(0, {"do": "fill", "ref": tb, "target": refs[tb][1], "label": "Name it " + name[:30],
+                               "text": name[:200], "on": False})
+    # A ROW IS NOT A TEXT BOX. "email alice@x.test that the meeting moved to 3pm" came back as the text
+    # "filled" onto Dana's email in the inbox list, and that row's Select box ticked (1 run in 3): a row opens
+    # when clicked and has nowhere to type, so the panel would have opened Dana's email and typed into
+    # whatever box was focused. Such a fill is dropped with the row's own Select tick; a request to WRITE
+    # something that is then left with nothing to do starts a new one with the window's ONE Compose / New
+    # message / New button -- whose form the next round fills.
+    rows_typed = {near.get(st.get("ref")) for st in out if st.get("do") == "fill" and refs.get(st.get("ref"), ("",))[0] == "item"}
+    if rows_typed:
+        out = [st for st in out if not (st.get("do") == "fill" and refs.get(st.get("ref"), ("",))[0] == "item")
+               and not (st.get("do") == "toggle" and refs.get(st.get("ref"), ("", ""))[1].lower() == "select" and near.get(st.get("ref")) in rows_typed)]
+        if not out and re.match(r"\s*(?:please\s+)?(?:e-?mail|mail|write|compose|message|text)\b", low):
+            starters = [r for r, (role, lab) in refs.items() if role in ("button", "link") and re.fullmatch(r"compose|new( (message|email|mail|post|conversation|chat))?", _box_key(lab))]
+            if len(starters) == 1:
+                out = [_click(starters[0])]
+    out = _put_facts(out, refs, values, str(instruction or ""))
     # LOOKING TYPES NOTHING. "show my relay settings" once came back as a fill of the Instance box with a
     # relay URL the model made up -- run by Do all, that repoints the app at a stranger's server. A request
     # only to show / open / go somewhere, with nothing quoted and no verb that writes, has no text to type.
-    if _NAVIGATES.search(low) and not _FINDS.search(low) and not quoted and not _WRITES.search(low):
-        out = [st for st in out if st.get("do") != "fill"]
+    # Enter in a form is SUBMITTING it ("show my relay settings": an invented URL in Instance, then Enter --
+    # the URL was dropped and the Enter stayed, measured), so looking presses no Enter either. Asking to
+    # extract, summarize or explain is reading the window, the same way.
+    if ((_NAVIGATES.search(low) or _READS.search(low)) and not _FINDS.search(low) and not quoted
+            and not _WRITES.search(low)):
+        out = [st for st in out if st.get("do") != "fill" and not (st.get("do") == "press" and st.get("text") == "Enter")]
     # SHOW ME X, WHERE X IS A TAB. "show my relay settings" came back as a description of what was already
     # on screen (0/3), or a click on a neighbouring control, beside a tab labelled Relays; "show me what I
     # sent" came back as a scroll. A request to go somewhere that names exactly one tab/button, answered with
@@ -767,6 +995,14 @@ def _repair_steps(steps: list, refs: dict, instruction: str, near: dict | None =
         same = [r for r, (role, lab) in refs.items() if role == "button" and lab.strip().lower() == verb.group(1)]
         if len(same) == 1 and not any(st.get("ref") == same[0] and st.get("do") in ("click", "press") for st in out):
             out.append(_click(same[0]))
+    # A NEW THING IS FINISHED BY ITS FORM'S OWN SUBMIT. "add Bob Smith 555-1234 to my contacts" filled the
+    # New contact form and stopped (2 runs in 3) -- the button there says Save, not Add. When the request
+    # makes something (add, create, new, make, schedule, save) and the plan typed into the form, the form's
+    # ONE Save/Create/Add/Done/OK button ends it. Never Send: sending stays a request the person words.
+    if re.search(r"\b(add|create|new|make|schedule|book|save)\b", low) and any(st.get("do") == "fill" for st in out):
+        sub = [r for r, (role, lab) in refs.items() if role == "button" and _box_key(lab) in ("save", "create", "add", "done", "ok")]
+        if len(sub) == 1 and not any(st.get("ref") == sub[0] and st.get("do") in ("click", "press") for st in out):
+            out.append(_click(sub[0]))
     asked_to_destroy = bool(_DESTROYS.search(str(instruction or "")))
     return [st for st in out if asked_to_destroy or not _DESTROYS.search(str(st.get("target") or "") + " " + str(st.get("label") or ""))]
 
@@ -780,7 +1016,7 @@ async def window_steps(db, user, windows, instruction: str, history=None, comman
     out = await _chat(db, user, build_steps_messages(context, instruction, history, commands, today, controls), 0.2)
     if not out:
         raise AssistError(502, "The AI did not come up with an answer — try again.")
-    res = parse_steps(out, commands, bool(_TASKY.search(str(instruction or ""))), controls, instruction)
+    res = parse_steps(out, commands, bool(_TASKY.search(str(instruction or ""))), controls, instruction, history)
     logger.info("[chat-assist] window steps: %d windows -> %d tasks, %d steps",
                 len(context), len(res["tasks"]), len(res["steps"]))
     return res
