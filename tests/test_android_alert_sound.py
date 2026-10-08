@@ -87,7 +87,12 @@ def test_the_phone_plays_the_same_arrival_sound_as_the_web_and_desktop():
         'System.out.println(RingtoneRules.messagesChannel("soft"));',
         'System.out.println(RingtoneRules.messagesChannel("off"));']))
     assert got == ["pcai_messages_chime", "pcai_messages_chime", "pcai_messages_chime", "pcai_messages_alert",
-                   "pcai_messages", "pcai_messages"], got
+                   "pcai_messages", "pcai_messages_silent"], got
+    # Code review: a phone whose person had silenced or blocked "Messages and mentions" must not start ringing on the
+    # new default channel -- it inherits the plain channel's importance and silence when first created -- and
+    # "Silent" has a channel with no sound.
+    assert "Math.min(importance, had.getImportance())" in PUSH and "had.getSound() == null" in PUSH
+    assert 'messagesChannel("off")' in PUSH and "silent.setSound(null, null)" in PUSH and "nm.createNotificationChannel(silent)" in PUSH
     # The chime channel exists and carries the bundled chime, the same file the web plays.
     assert 'messagesChannel("chime")' in PUSH and "R.raw.posterchan_chime" in PUSH and "nm.createNotificationChannel(chime)" in PUSH
     raw = os.path.join(ANDROID, "src", "main", "res", "raw", "posterchan_chime.ogg")

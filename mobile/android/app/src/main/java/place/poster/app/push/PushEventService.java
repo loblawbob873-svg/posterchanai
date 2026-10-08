@@ -221,16 +221,31 @@ public final class PushEventService {
                         .setContentType(android.media.AudioAttributes.CONTENT_TYPE_SONIFICATION).build());
         // The cyberpunk chime: the arrival sound's DEFAULT on the web and desktop, and PosterChanOS's message
         // sound -- so a phone plays it too unless the person picked something else.
-        NotificationChannel chime = new NotificationChannel(
-                place.poster.app.ringtone.RingtoneRules.messagesChannel("chime"), "Messages and mentions (PosterChan chime)",
-                NotificationManager.IMPORTANCE_DEFAULT);
-        chime.setSound(android.net.Uri.parse("android.resource://" + ctx.getPackageName() + "/" + place.poster.app.R.raw.posterchan_chime),
+        /* THE PERSON'S OWN SETTINGS CARRY OVER. Every phone moves to this channel by default, and a NEW channel
+         * starts at full volume -- so somebody who had silenced or blocked "Messages and mentions" would hear
+         * it again after an update (code review). When the chime channel is created for the first time it takes
+         * the plain channel's importance (blocked stays blocked) and its silence. Later changes are the person's. */
+        String chimeId = place.poster.app.ringtone.RingtoneRules.messagesChannel("chime");
+        NotificationChannel had = nm.getNotificationChannel(CH_MSGS_PLAIN);
+        boolean fresh = nm.getNotificationChannel(chimeId) == null;
+        int importance = NotificationManager.IMPORTANCE_DEFAULT;
+        if (fresh && had != null && had.getImportance() != NotificationManager.IMPORTANCE_UNSPECIFIED)
+            importance = Math.min(importance, had.getImportance());
+        NotificationChannel chime = new NotificationChannel(chimeId, "Messages and mentions (PosterChan chime)", importance);
+        if (fresh && had != null && had.getSound() == null) chime.setSound(null, null);
+        else chime.setSound(android.net.Uri.parse("android.resource://" + ctx.getPackageName() + "/" + place.poster.app.R.raw.posterchan_chime),
                 new android.media.AudioAttributes.Builder()
                         .setUsage(android.media.AudioAttributes.USAGE_NOTIFICATION)
                         .setContentType(android.media.AudioAttributes.CONTENT_TYPE_SONIFICATION).build());
+        // "Silent": the notifications still arrive, with no sound.
+        NotificationChannel silent = new NotificationChannel(
+                place.poster.app.ringtone.RingtoneRules.messagesChannel("off"), "Messages and mentions (silent)",
+                NotificationManager.IMPORTANCE_LOW);
+        silent.setSound(null, null);
         nm.createNotificationChannel(calls);
         nm.createNotificationChannel(msgs);
         nm.createNotificationChannel(alert);
         nm.createNotificationChannel(chime);
+        nm.createNotificationChannel(silent);
     }
 }

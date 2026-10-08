@@ -512,6 +512,11 @@ def add_emoji(pack: str, shortcode: str, filename: str, data: bytes, overwrite: 
     existing = lookup(pack, sc)
     if existing and not overwrite:
         raise ValueError(f":{sc}: already exists in {pack}")
+    if existing and existing.get("builtin"):
+        # Overwriting a BUILT-IN emoji makes the operator's own copy (which wins, see index()) -- it must never
+        # remove the built-in file: that file is part of the code checkout, and a deploy's `git commit -a` would
+        # ship its deletion to every node (code review, 2026-10-07).
+        existing = None
     d = _pack_dir(pack, create=True)
     doc = read_pack_json(d)
     if doc is not None:

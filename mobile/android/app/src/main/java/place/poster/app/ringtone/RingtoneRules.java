@@ -33,6 +33,8 @@ public final class RingtoneRules {
   public static String messagesChannel(String sound) {
     if ("posterchan".equals(sound)) return "pcai_messages_alert";
     if (sound == null || sound.isEmpty() || "chime".equals(sound)) return "pcai_messages_chime";
+    // "Silent" on the web is silent on the phone too -- not the phone's own sound (code review).
+    if ("off".equals(sound)) return "pcai_messages_silent";
     return "pcai_messages";
   }
 

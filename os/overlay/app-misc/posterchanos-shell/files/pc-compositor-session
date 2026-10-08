@@ -849,9 +849,11 @@ pc_sound_theme() {
 	cur=$(gsettings get org.gnome.desktop.sound theme-name 2>/dev/null) || return 0
 	cur=${cur#\'}; cur=${cur%\'}
 	[ "$cur" != "posterchan" ] || return 0
-	mark=''
-	[ ! -r "$state_dir/sound-theme" ] || IFS= read -r mark <"$state_dir/sound-theme"
-	if [ "$cur" = "freedesktop" ] || [ -z "$cur" ] || [ "$cur" = "$mark" ]; then
+	# ONCE. The marker records that the theme was set here; after that the setting is the person's, and going
+	# back to freedesktop must not be undone at the next login (code review: the old marker held the PREVIOUS
+	# theme, always freedesktop, so it re-applied posterchan every login).
+	[ ! -e "$state_dir/sound-theme" ] || return 0
+	if [ "$cur" = "freedesktop" ] || [ -z "$cur" ]; then
 		gsettings set org.gnome.desktop.sound theme-name posterchan 2>/dev/null || return 0
 		gsettings set org.gnome.desktop.sound event-sounds true 2>/dev/null || true
 		printf '%s\n' "$cur" >"$state_dir/sound-theme"

@@ -458,14 +458,21 @@ window.PCSettingsFactory = function(dep){
       const v=!!e.target.checked;
       // The SAME preference as Notifications → "App arrival sound" (synced to the account): one choice, every
       // device. The Android channel follows it in blossom.js _applyAppAlert.
-      try{ await NP.setNotificationPreference('sound', v?'posterchan':'chime'); }catch(_){ }
+      /* OFF PUTS BACK WHAT WAS THERE. It used to set 'chime' whatever the person had before (soft, bright, silent)
+       * and then say "your phone's sound" while the chime played (code review). The choice before the Alert is
+       * remembered on this device, and the line says which sound is now in use. */
+      let back='chime';
+      try{ if(v){ const cur=NP.notificationPreference('sound'); if(cur && cur!=='posterchan') localStorage.setItem('pc_sound_before_alert',cur); }
+           else back=localStorage.getItem('pc_sound_before_alert')||'chime'; }catch(_){ }
+      const backName=back==='chime'?'the PosterChan chime':back==='off'?'no sound':'the “'+back+'” sound';
+      try{ await NP.setNotificationPreference('sound', v?'posterchan':back); }catch(_){ }
       if(plug && plug.appAlert){
         // The app's own channel: Android plays it even with PosterChan closed. A test notification follows,
         // so the person hears the result of the switch instead of trusting it.
-        try{ await plug.appAlert({on:v, test:true}); alSaid.textContent=v?'✓ On — a test notification is on its way.':'Off — notifications use your phone\'s sound.'; }
+        try{ await plug.appAlert({on:v, sound:v?'posterchan':back, test:true}); alSaid.textContent=v?'✓ On — a test notification is on its way.':'Off — notifications use '+backName+'.'; }
         catch(err){ alSaid.textContent='Could not change it: '+((err&&err.message)||err); }
       }else{
-        alSaid.textContent=v?'✓ On — PosterChan plays it with each notification.':'Off.';
+        alSaid.textContent=v?'✓ On — PosterChan plays it with each notification.':'Off — notifications use '+backName+'.';
         if(v){ try{ new Audio(ALERT+'.ogg').play(); }catch(_){ } }
       }
     };

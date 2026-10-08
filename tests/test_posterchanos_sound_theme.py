@@ -81,3 +81,15 @@ def test_the_package_installs_the_theme_and_publishing_supplies_the_sounds():
         assert ev in pub, ev
     for src in ("posterchan-chime.ogg", "posterchan-alert.ogg", "posterchan-cyberpunk.ogg"):
         assert src in pub and (ROOT / "static/sounds" / src).exists(), src
+
+
+def test_it_is_applied_once_and_going_back_is_respected(tmp_path):
+    """Code review: the marker used to record the PREVIOUS theme (always freedesktop), so a person who went back to
+    freedesktop had posterchan forced on them again at every login. Applied once; after that the choice is theirs."""
+    first = _run(tmp_path, "freedesktop")
+    assert first["theme-name"] == "posterchan", first
+    # They switch back; the next login (same state dir, marker present) must leave it.
+    store = tmp_path / "gsettings.state"
+    store.write_text("theme-name='freedesktop'\n")
+    again = _run(tmp_path, "freedesktop", mark="freedesktop")
+    assert again["theme-name"] == "freedesktop", again
