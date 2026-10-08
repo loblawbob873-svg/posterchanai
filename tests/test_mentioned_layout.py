@@ -45,7 +45,7 @@ def test_other_effects_keep_the_caption_at_the_bottom():
     assert y0 + line_h * len(lines) >= 720 * 0.9
 
 
-@pytest.mark.parametrize("w,h", [(648, 1024), (360, 640), (240, 240), (1080, 1920)])
+@pytest.mark.parametrize("w,h", [(648, 1024), (360, 640), (240, 240), (1080, 1920), (120, 400), (120, 440)])
 @pytest.mark.parametrize("word", ["malfoid", "michigan", "the federal reserve"])
 def test_no_word_is_split_across_lines_when_a_smaller_size_keeps_it_whole(w, h, word):
     """The reported render (648x1024, `malfoid`) came back as "MALFOID / MENTION / ED"."""
