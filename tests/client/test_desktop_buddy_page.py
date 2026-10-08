@@ -30,6 +30,16 @@ async def _mouse(b, kind, x, y, button="left", buttons=1):
                                               "buttons": buttons, "clickCount": 1})
 
 
+async def _settled(b, expr, limit=10.0):
+    """Wait for the page to SHOW the result of an input, not a fixed 0.1s: under the gate's parallel load the
+    reaction lands later, and the old read-once-after-100ms was the 'FLAKY UNDER LOAD' report (2026-10-07)."""
+    for _ in range(int(limit / .05)):
+        if await b.js(expr):
+            return True
+        await asyncio.sleep(.05)
+    return False
+
+
 async def _run(page, hash=""):
     res = {}
     with tempfile.TemporaryDirectory(prefix="pc-buddy-page-") as profile:
@@ -63,7 +73,7 @@ async def _run(page, hash=""):
                 res["pace"] = await b.js("new Promise(ok=>{let n=0,last=__buddy.frame();const t=setInterval(()=>{const f=__buddy.frame();if(f!==last){n++;last=f}},40);setTimeout(()=>{clearInterval(t);ok(n)},4000)})")
                 # Click (no movement): she reacts with a line.
                 await _mouse(b, "mousePressed", 87, 160); await _mouse(b, "mouseReleased", 87, 160, buttons=0)
-                await asyncio.sleep(.1)
+                await _settled(b, "document.getElementById('say').classList.contains('on')")
                 res["said"] = await b.js("document.getElementById('say').classList.contains('on')")
                 # Drag: grabbed at (87,160), pointer travels to (137,180).
                 await b.js("__log.length=0;true")
@@ -72,12 +82,12 @@ async def _run(page, hash=""):
                     await b.call("Input.dispatchMouseEvent", {"type": "mouseMoved", "x": 87 + 10 * i, "y": 160 + 4 * i,
                                                               "button": "left", "buttons": 1})
                 await _mouse(b, "mouseReleased", 137, 180, buttons=0)
-                await asyncio.sleep(.1)
+                await _settled(b, "__log.length>0 && JSON.stringify(__log[__log.length-1])==='[\"drop\"]'")
                 res["drag"] = await b.js("__log")
                 # Right-click -> menu -> Hide.
                 await b.js("__log.length=0;true")
                 await _mouse(b, "mousePressed", 87, 160, "right", 2); await _mouse(b, "mouseReleased", 87, 160, "right", 0)
-                await asyncio.sleep(.1)
+                await _settled(b, "document.getElementById('menu').classList.contains('on')")
                 res["menu"] = await b.js("document.getElementById('menu').classList.contains('on')")
                 await b.js("document.querySelector('#menu [data-a=hide]').click();true")
                 res["hide"] = await b.js("__log")
