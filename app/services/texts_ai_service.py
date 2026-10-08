@@ -142,7 +142,7 @@ def build_choice_messages(context: list, n: int, medium: str = SMS) -> list:
     return msgs
 
 
-_NUMBERED = re.compile(r"^\s*(?:[-*•]\s*)?(?:option\s*)?\(?(\d{1,2})[.):\]]\s*(.+?)\s*$", re.I)
+_NUMBERED = re.compile(r"^\s*(?:[-*•]\s*)?(?:\*\*)?(?:option\s*)?\(?(\d{1,2})[.):\]](?:\*\*)?\s*(.+?)\s*$", re.I)
 
 
 def parse_choices(out: str, n: int) -> list:
@@ -159,6 +159,21 @@ def parse_choices(out: str, n: int) -> list:
             found.append(d)
         if len(found) >= n:
             break
+    if not found:
+        # UNNUMBERED LINES ARE STILL SEPARATE OPTIONS. Asked for "1. … 5.", the model answers a longer message
+        # (measured 2026-10-08: "Can you pick up milk … call your mom") with four replies, one per line and no
+        # numbers -- and this fell through to clean_draft(whole answer): ONE draft in the composer, no menu
+        # ("Sparkle is supposed to generate 5 response choices from a menu but only fills in whatever it
+        # wants"). Two or more non-empty lines are taken one option each, bullets stripped.
+        lines = [re.sub(r"^\s*(?:[-*•]+|\*\*\d{1,2}[.)]\*\*)\s*", "", ln) for ln in (out or "").splitlines()]
+        lines = [ln for ln in lines if ln.strip() and not ln.strip().endswith(":")]    # "Here are some options:"
+        if n > 1 and len(lines) >= 2:
+            for ln in lines:
+                d = clean_draft(ln)
+                if d and d.lower() not in {x.lower() for x in found}:
+                    found.append(d)
+                if len(found) >= n:
+                    break
     if not found:
         d = clean_draft(out)
         if d:

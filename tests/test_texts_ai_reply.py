@@ -270,6 +270,24 @@ class ChoiceTests(unittest.TestCase):
                               '4. Be there soon\n5. extra', 3)
         self.assertEqual(got, ["On my way", "Running late, sorry!", "Be there soon"])
 
+    def test_unnumbered_lines_are_still_separate_choices(self):
+        # Measured 2026-10-08 on the node's model: asked for 5 numbered replies to a longer message, it wrote
+        # four lines with NO numbers -- and the phone got one draft in the composer instead of a menu.
+        out = ("Sure, I'll grab milk on the way. I'll call her too.\n"
+               "No problem, milk's on me. I'll ring Mom later.\n"
+               "Got it, I'll pick up milk and call her tonight\n"
+               "Will do! Anything else you need from the store?")
+        got = S.parse_choices(out, 5)
+        self.assertEqual(len(got), 4, got)
+        self.assertEqual(got[3], "Will do! Anything else you need from the store?")
+        self.assertEqual(S.parse_choices("Here are some options:\n- On my way\n- Running late, sorry!", 5),
+                         ["On my way", "Running late, sorry!"])
+        self.assertEqual(S.parse_choices("**1.** On my way\n**2.** Be there soon", 5), ["On my way", "Be there soon"])
+
+    def test_one_line_is_still_one_choice_and_one_asked_is_one_given(self):
+        self.assertEqual(S.parse_choices("Sure, I'll be there", 5), ["Sure, I'll be there"])
+        self.assertEqual(len(S.parse_choices("a line\nanother line", 1)), 1)
+
     def test_the_count_is_bounded(self):
         chat = _FakeChat("\n".join(f"{i}. option {i}" for i in range(1, 10)))
         code, out = _body(_run(T.TextsAiReplyReq(messages=_thread(3), count=50), chat, user=_User()))
