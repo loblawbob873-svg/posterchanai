@@ -8,6 +8,7 @@ final `else`, which was the CLIP handler, and answered "clip needs <start> <end>
 import asyncio
 import base64
 import os
+import pytest
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
@@ -43,6 +44,31 @@ def test_an_unknown_command_is_still_refused():
 
 
 def test_the_allowlist_is_not_a_hand_typed_copy_again():
-    src = open(os.path.join(ROOT, "app", "routers", "media_api.py")).read()
-    assert '"dildo", "poo", "cum"' not in src, "the hand-typed effect tuple is back"
-    assert "CommandService.MOTION_EFFECTS" in src and "CommandService.ANIMATED_EFFECTS" in src
+    """Every effect the command service supports is accepted here -- a hand-typed copy is what drifted."""
+    from app.routers import media_api
+    from app.services.command_service.core import CommandService
+    refused = [c for c in sorted(set(CommandService.MOTION_EFFECTS) | set(CommandService.ANIMATED_EFFECTS))
+               if asyncio.run(media_api.process_media(media_api.MediaProcessRequest(command=c, arg="", media=[]),
+                                                      None, None, True)).get("error", "").startswith("unsupported")]
+    assert refused == [], refused
+
+
+@pytest.mark.parametrize("name", sorted(__import__("app.routers.media_api", fromlist=["x"])._DIRECT_EFFECTS))
+def test_each_direct_effect_runs_its_own_function_and_keeps_its_summary(name, monkeypatch):
+    """The 81 copied `elif command == X: X_attachments(...)` branches are one table now (checked identical against the
+    old endpoint for every accepted command). Each name must still reach ITS function, and a failed render must still
+    come back as that function's own summary with no files -- not as the shared dispatch's error."""
+    from app.routers import media_api
+    from app.services import effects_service, media_service
+    from app.services.command_service.core import CommandService
+    assert name in CommandService.MOTION_EFFECTS or name in CommandService.ANIMATED_EFFECTS, "not even allowlisted"
+    monkeypatch.setattr(media_service, "compress_effect_outputs", lambda o: o)
+    monkeypatch.setattr(media_api, "_brand_videos", lambda o, *a, **k: o)
+    monkeypatch.setattr(effects_service, f"{name}_attachments",
+                        lambda atts: ([{"filename": f"{name}.mp4", "data": b"v", "content_type": "video/mp4"}], f"## {name}")
+                        if [a[0] for a in atts] == ["a.jpg"] else ([], "the picture never arrived"))
+    r = asyncio.run(media_api.process_media(_req(name), None, None, True))
+    assert r.get("summary") == f"## {name}" and r["files"][0]["filename"] == f"{name}.mp4", r
+    monkeypatch.setattr(effects_service, f"{name}_attachments", lambda atts: ([], "it broke"))
+    r = asyncio.run(media_api.process_media(_req(name), None, None, True))
+    assert r.get("summary") == "it broke" and not r.get("files") and "error" not in r, r

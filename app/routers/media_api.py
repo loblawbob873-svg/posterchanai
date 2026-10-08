@@ -34,6 +34,18 @@ class MediaItem(BaseModel):
 
 
 _MEDIA_TOOLS = ("compress", "clip", "convert")
+# Effects this endpoint runs by calling `effects_service.<name>_attachments(attachments)` directly.
+_DIRECT_EFFECTS = frozenset({
+    "dildo", "poo", "cum", "blood", "bullethole", "fire", "nakedman", "glow", "gay", "blacked", "kosher",
+    "blue", "barked", "hava", "indian", "yakety", "yamete", "curb", "depressing", "fahh", "helpme", "gong",
+    "fbi", "redeem", "gigity", "beavis", "smell", "hood", "akbar", "retard", "heat", "whoabuddy", "diarrhea",
+    "seth", "robocop", "titan", "terminator", "reze", "vibe", "rebecca", "makima", "feliz", "horse",
+    "knightrider", "hugebitch", "sleepwell", "prayer", "sopranos", "cheers", "munsters", "happydays",
+    "dontwanttowait", "strangerthings", "adamsfamily", "xmen", "futurama", "charliesangles",
+    "differentstroke", "seinfeld", "jerry", "onepiece", "overtaken", "freebird", "kanye", "darkness", "bike",
+    "jobs", "ree", "liberal", "moving", "harlem", "chimp", "consider", "clay", "uwu", "nami", "wasteland",
+    "mixalot", "nonematters", "thug", "feltedtables",
+})
 
 
 class MediaProcessRequest(BaseModel):
@@ -177,175 +189,17 @@ async def process_media(
             if not arg.strip():
                 return {"error": "meme needs caption text, e.g. 'meme top text'"}
             outputs, summary = await asyncio.to_thread(effects_service.meme_attachments, attachments, arg)
-        elif command == "dildo":
-            outputs, summary = await asyncio.to_thread(effects_service.dildo_attachments, attachments)
-        elif command == "poo":
-            outputs, summary = await asyncio.to_thread(effects_service.poo_attachments, attachments)
-        elif command == "cum":
-            outputs, summary = await asyncio.to_thread(effects_service.cum_attachments, attachments)
-        elif command == "blood":
-            outputs, summary = await asyncio.to_thread(effects_service.blood_attachments, attachments)
-        elif command == "bullethole":
-            outputs, summary = await asyncio.to_thread(effects_service.bullethole_attachments, attachments)
-        elif command == "fire":
-            outputs, summary = await asyncio.to_thread(effects_service.fire_attachments, attachments)
-        elif command == "nakedman":
-            outputs, summary = await asyncio.to_thread(effects_service.nakedman_attachments, attachments)
+        elif command in _DIRECT_EFFECTS:
+            # A picture in, the effect out: its own `<name>_attachments`, called exactly as each
+            # copied branch here used to call it (so a failure still comes back as its summary).
+            outputs, summary = await asyncio.to_thread(getattr(effects_service, f"{command}_attachments"), attachments)
         elif command == "alive":
             from app.services import parallax_service
             outputs, summary = await asyncio.to_thread(parallax_service.alive_attachments, attachments, arg)
-        elif command == "glow":
-            outputs, summary = await asyncio.to_thread(effects_service.glow_attachments, attachments)
-        elif command == "gay":
-            outputs, summary = await asyncio.to_thread(effects_service.gay_attachments, attachments)
-        elif command == "blacked":
-            outputs, summary = await asyncio.to_thread(effects_service.blacked_attachments, attachments)
-        elif command == "kosher":
-            outputs, summary = await asyncio.to_thread(effects_service.kosher_attachments, attachments)
-        elif command == "blue":
-            outputs, summary = await asyncio.to_thread(effects_service.blue_attachments, attachments)
-        elif command == "barked":
-            outputs, summary = await asyncio.to_thread(effects_service.barked_attachments, attachments)
-        elif command == "hava":
-            outputs, summary = await asyncio.to_thread(effects_service.hava_attachments, attachments)
-        elif command == "indian":
-            outputs, summary = await asyncio.to_thread(effects_service.indian_attachments, attachments)
-        elif command == "yakety":
-            outputs, summary = await asyncio.to_thread(effects_service.yakety_attachments, attachments)
-        elif command == "yamete":
-            outputs, summary = await asyncio.to_thread(effects_service.yamete_attachments, attachments)
-        elif command == "curb":
-            outputs, summary = await asyncio.to_thread(effects_service.curb_attachments, attachments)
-        elif command == "depressing":
-            outputs, summary = await asyncio.to_thread(effects_service.depressing_attachments, attachments)
-        elif command == "fahh":
-            outputs, summary = await asyncio.to_thread(effects_service.fahh_attachments, attachments)
-        elif command == "helpme":
-            outputs, summary = await asyncio.to_thread(effects_service.helpme_attachments, attachments)
-        elif command == "gong":
-            outputs, summary = await asyncio.to_thread(effects_service.gong_attachments, attachments)
-        elif command == "fbi":
-            outputs, summary = await asyncio.to_thread(effects_service.fbi_attachments, attachments)
-        elif command == "redeem":
-            outputs, summary = await asyncio.to_thread(effects_service.redeem_attachments, attachments)
-        elif command == "gigity":
-            outputs, summary = await asyncio.to_thread(effects_service.gigity_attachments, attachments)
-        elif command == "beavis":
-            outputs, summary = await asyncio.to_thread(effects_service.beavis_attachments, attachments)
-        elif command == "smell":
-            outputs, summary = await asyncio.to_thread(effects_service.smell_attachments, attachments)
-        elif command == "hood":
-            outputs, summary = await asyncio.to_thread(effects_service.hood_attachments, attachments)
-        elif command == "akbar":
-            outputs, summary = await asyncio.to_thread(effects_service.akbar_attachments, attachments)
-        elif command == "retard":
-            outputs, summary = await asyncio.to_thread(effects_service.retard_attachments, attachments)
-        elif command == "heat":
-            outputs, summary = await asyncio.to_thread(effects_service.heat_attachments, attachments)
-        elif command == "whoabuddy":
-            outputs, summary = await asyncio.to_thread(effects_service.whoabuddy_attachments, attachments)
-        elif command == "diarrhea":
-            outputs, summary = await asyncio.to_thread(effects_service.diarrhea_attachments, attachments)
-        elif command == "seth":
-            outputs, summary = await asyncio.to_thread(effects_service.seth_attachments, attachments)
-        elif command == "robocop":
-            outputs, summary = await asyncio.to_thread(effects_service.robocop_attachments, attachments)
-        elif command == "titan":
-            outputs, summary = await asyncio.to_thread(effects_service.titan_attachments, attachments)
-        elif command == "terminator":
-            outputs, summary = await asyncio.to_thread(effects_service.terminator_attachments, attachments)
-        elif command == "reze":
-            outputs, summary = await asyncio.to_thread(effects_service.reze_attachments, attachments)
-        elif command == "vibe":
-            outputs, summary = await asyncio.to_thread(effects_service.vibe_attachments, attachments)
-        elif command == "rebecca":
-            outputs, summary = await asyncio.to_thread(effects_service.rebecca_attachments, attachments)
-        elif command == "makima":
-            outputs, summary = await asyncio.to_thread(effects_service.makima_attachments, attachments)
-        elif command == "feliz":
-            outputs, summary = await asyncio.to_thread(effects_service.feliz_attachments, attachments)
-        elif command == "horse":
-            outputs, summary = await asyncio.to_thread(effects_service.horse_attachments, attachments)
-        elif command == "knightrider":
-            outputs, summary = await asyncio.to_thread(effects_service.knightrider_attachments, attachments)
-        elif command == "hugebitch":
-            outputs, summary = await asyncio.to_thread(effects_service.hugebitch_attachments, attachments)
-        elif command == "sleepwell":
-            outputs, summary = await asyncio.to_thread(effects_service.sleepwell_attachments, attachments)
-        elif command == "prayer":
-            outputs, summary = await asyncio.to_thread(effects_service.prayer_attachments, attachments)
-        elif command == "sopranos":
-            outputs, summary = await asyncio.to_thread(effects_service.sopranos_attachments, attachments)
-        elif command == "cheers":
-            outputs, summary = await asyncio.to_thread(effects_service.cheers_attachments, attachments)
-        elif command == "munsters":
-            outputs, summary = await asyncio.to_thread(effects_service.munsters_attachments, attachments)
-        elif command == "happydays":
-            outputs, summary = await asyncio.to_thread(effects_service.happydays_attachments, attachments)
-        elif command == "dontwanttowait":
-            outputs, summary = await asyncio.to_thread(effects_service.dontwanttowait_attachments, attachments)
-        elif command == "strangerthings":
-            outputs, summary = await asyncio.to_thread(effects_service.strangerthings_attachments, attachments)
-        elif command == "adamsfamily":
-            outputs, summary = await asyncio.to_thread(effects_service.adamsfamily_attachments, attachments)
-        elif command == "xmen":
-            outputs, summary = await asyncio.to_thread(effects_service.xmen_attachments, attachments)
-        elif command == "futurama":
-            outputs, summary = await asyncio.to_thread(effects_service.futurama_attachments, attachments)
-        elif command == "charliesangles":
-            outputs, summary = await asyncio.to_thread(effects_service.charliesangles_attachments, attachments)
-        elif command == "differentstroke":
-            outputs, summary = await asyncio.to_thread(effects_service.differentstroke_attachments, attachments)
-        elif command == "seinfeld":
-            outputs, summary = await asyncio.to_thread(effects_service.seinfeld_attachments, attachments)
-        elif command == "jerry":
-            outputs, summary = await asyncio.to_thread(effects_service.jerry_attachments, attachments)
-        elif command == "onepiece":
-            outputs, summary = await asyncio.to_thread(effects_service.onepiece_attachments, attachments)
-        elif command == "overtaken":
-            outputs, summary = await asyncio.to_thread(effects_service.overtaken_attachments, attachments)
-        elif command == "freebird":
-            outputs, summary = await asyncio.to_thread(effects_service.freebird_attachments, attachments)
-        elif command == "kanye":
-            outputs, summary = await asyncio.to_thread(effects_service.kanye_attachments, attachments)
-        elif command == "darkness":
-            outputs, summary = await asyncio.to_thread(effects_service.darkness_attachments, attachments)
-        elif command == "bike":
-            outputs, summary = await asyncio.to_thread(effects_service.bike_attachments, attachments)
-        elif command == "jobs":
-            outputs, summary = await asyncio.to_thread(effects_service.jobs_attachments, attachments)
-        elif command == "ree":
-            outputs, summary = await asyncio.to_thread(effects_service.ree_attachments, attachments)
-        elif command == "liberal":
-            outputs, summary = await asyncio.to_thread(effects_service.liberal_attachments, attachments)
-        elif command == "moving":
-            outputs, summary = await asyncio.to_thread(effects_service.moving_attachments, attachments)
-        elif command == "harlem":
-            outputs, summary = await asyncio.to_thread(effects_service.harlem_attachments, attachments)
-        elif command == "chimp":
-            outputs, summary = await asyncio.to_thread(effects_service.chimp_attachments, attachments)
-        elif command == "consider":
-            outputs, summary = await asyncio.to_thread(effects_service.consider_attachments, attachments)
-        elif command == "clay":
-            outputs, summary = await asyncio.to_thread(effects_service.clay_attachments, attachments)
-        elif command == "uwu":
-            outputs, summary = await asyncio.to_thread(effects_service.uwu_attachments, attachments)
-        elif command == "nami":
-            outputs, summary = await asyncio.to_thread(effects_service.nami_attachments, attachments)
         elif command == "mentioned":
             if not effects_service.mentioned_caption(arg):
                 return {"error": effects_service.MENTIONED_ASK}
             outputs, summary = await asyncio.to_thread(effects_service.mentioned_attachments, attachments, arg.strip())
-        elif command == "wasteland":
-            outputs, summary = await asyncio.to_thread(effects_service.wasteland_attachments, attachments)
-        elif command == "mixalot":
-            outputs, summary = await asyncio.to_thread(effects_service.mixalot_attachments, attachments)
-        elif command == "nonematters":
-            outputs, summary = await asyncio.to_thread(effects_service.nonematters_attachments, attachments)
-        elif command == "thug":
-            outputs, summary = await asyncio.to_thread(effects_service.thug_attachments, attachments)
-        elif command == "feltedtables":
-            outputs, summary = await asyncio.to_thread(effects_service.feltedtables_attachments, attachments)
         elif command == "clip":
             parts = (req.arg or "").split()
             if len(parts) < 2:
