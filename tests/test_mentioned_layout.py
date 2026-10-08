@@ -43,3 +43,12 @@ def test_the_effect_asks_for_the_band_and_the_smaller_character():
 def test_other_effects_keep_the_caption_at_the_bottom():
     fs, lines, line_h, y0 = ms._caption_layout("WHEN THE CODE WORKS", 1280, 720, _meme_font_path())
     assert y0 + line_h * len(lines) >= 720 * 0.9
+
+
+@pytest.mark.parametrize("w,h", [(648, 1024), (360, 640), (240, 240), (1080, 1920)])
+@pytest.mark.parametrize("word", ["malfoid", "michigan", "the federal reserve"])
+def test_no_word_is_split_across_lines_when_a_smaller_size_keeps_it_whole(w, h, word):
+    """The reported render (648x1024, `malfoid`) came back as "MALFOID / MENTION / ED"."""
+    text = audio2.mentioned_caption(word)
+    fs, lines, _lh, _y0 = ms._caption_layout(text, w, h, _meme_font_path(), "top", audio2.MENTIONED_CAPTION_BAND)
+    assert " ".join(lines).split() == text.split(), (w, h, fs, lines)

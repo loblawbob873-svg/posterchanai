@@ -2130,11 +2130,20 @@ def _caption_layout(text: str, W: int, H: int, font_path: str = "", position: st
 
     floor = max(8, min(12, H // 24))
     fs, lines = floor, _wrap_caption(text, _font(floor), max_width)
+    # A size that only fits by SPLITTING a word ("MENTION / ED" on a narrow portrait picture) loses to a smaller
+    # one that keeps every word whole; a word is split only when it cannot fit the width at any size.
+    words = text.split()
+    split_fit = None
     for size in range(max(int(H / 8), floor), floor - 1, -2):
         wrapped = _wrap_caption(text, _font(size), max_width)
         if int(size * 1.3) * len(wrapped) <= max_height:
-            fs, lines = size, wrapped
-            break
+            if " ".join(wrapped).split() == words:
+                fs, lines = size, wrapped
+                break
+            split_fit = split_fit or (size, wrapped)
+    else:
+        if split_fit:
+            fs, lines = split_fit
     line_h = int(fs * 1.3)
     total_h = line_h * len(lines)
     y0 = margin if position == "top" else H - margin - total_h
