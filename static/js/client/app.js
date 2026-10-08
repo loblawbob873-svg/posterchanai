@@ -3876,7 +3876,14 @@
      * because their fetch really does use the shared pool. */
     if(_deepLink && _deepLink.kind==='concord-invite'){
       _deepLinkRouted=true; routeFromPath();
-    } else if(_deepLink){ VIEW='thread'; $('#feed').innerHTML='<div class="spinner"></div>'; }
+    } else if(_deepLink){
+      /* LOGGING IN DOES NOT RE-FIRE onReady. It is once per page load, and a guest who opened a post link
+       * already spent it -- so this second startApp put up a spinner for a route that nothing would ever run,
+       * over the post that was on screen (found by the gate: a post window whose login landed after its paint
+       * sat on a spinner for good). With the relay already up, route now. */
+      if(Relay._ready){ _deepLinkRouted=true; routeFromPath(); }
+      else { VIEW='thread'; $('#feed').innerHTML='<div class="spinner"></div>'; }
+    }
     // PWA shortcut/share, else land on the user's chosen timeline (Nostrverse by default, Home if set).
     // _onLandingView is set AFTER the switch — switchView clears it, so it must be armed last.
     /* STARTING THE DESKTOP IS NOT OPENING AN APP.

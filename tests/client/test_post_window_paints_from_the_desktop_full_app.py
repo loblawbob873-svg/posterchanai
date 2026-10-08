@@ -73,3 +73,28 @@ def test_a_post_window_shows_the_post_the_desktop_held_without_asking_the_relays
     assert not early, ("the window asked the relays for the post BEFORE showing what the desktop held", got)
     assert "Opener Alice" in got["text"], "the author's name was not handed over (the card reads anon)"
     assert "REPLYCANARY" in got["text"], "the replies the desktop held were not handed over"
+
+
+@pytest.mark.skipif(not Path("/opt/google/chrome/chrome").exists(), reason="Chrome required")
+def test_logging_in_while_reading_a_post_keeps_the_post_on_screen():
+    """onReady fires once per page load. A guest reading a post link had already spent it, so the login's second
+    startApp put a spinner over the post and waited for a route nothing would run -- for good. Found by the gate:
+    under load this window's login landed AFTER its paint, and the window stayed a spinner."""
+    got = {}
+
+    async def check(b):
+        await b.until("document.body.classList.contains('guest')")
+        await b.until("/REPLYCANARY/.test((document.getElementById('feed')||{}).innerText||'')")
+        # EVERY render of the thread has finished before the login (the window renders it twice at boot); a
+        # render still in flight would repaint over the spinner by luck and hide the bug.
+        for _ in range(30):
+            await asyncio.sleep(.1)
+        await b.js("(()=>{const key=new Uint8Array(32).fill(1);document.querySelector('#nsec-input').value="
+                   "NostrTools.nip19.nsecEncode(key);document.querySelector('#btn-nsec-login').click()})()")
+        await b.until("!!__PC.me()")
+        for _ in range(60):
+            await asyncio.sleep(.1)
+        got["text"] = await b.js("(document.getElementById('feed')||{}).innerText||''")
+
+    asyncio.run(desktop.with_browser("online", "?pcwin=doc:post:" + "b" * 64, check, WATCH + OPENER))
+    assert "HANDOVERCANARY" in got["text"], ("logging in replaced the post being read", got["text"][:200])
