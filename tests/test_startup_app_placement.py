@@ -71,3 +71,11 @@ def test_the_desktop_tells_each_renderer_which_monitor_it_is():
     main = (root / "main.js").read_text()
     i = main.index("ipcMain.handle('pc:shell:output'")
     assert "_shellScopes.get(e.sender.id)" in main[i:i + 200]
+
+
+def test_monitor_and_tiling_choices_never_travel_with_the_account():
+    """Per device: a laptop signed into the same account must not inherit a desktop's monitor names."""
+    root = Path(__file__).resolve().parents[1] / "static" / "js" / "client"
+    for f in ("app.js", "blossom.js"):
+        src = (root / f).read_text()
+        assert "startupPlacement" not in src and "startupTiling" not in src, f

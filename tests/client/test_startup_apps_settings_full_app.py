@@ -131,15 +131,15 @@ window.pcWM.windows=async()=>__opened.map((v,i)=>({id:i+1,title:'PosterChan Wind
 @pytest.mark.skipif(not Path('/opt/google/chrome/chrome').exists(), reason='Chrome required')
 def test_a_startup_app_can_be_pinned_to_a_monitor_and_that_monitor_tiles_it():
     """'add to OS Settings Startup Apps a way to pin startup apps to a specific monitor and apply a tiling style'.
-    The page offers each switched-on app a monitor and each monitor a tiling style, saves both with the account,
-    and at login the SECOND monitor's desktop opens only the app pinned to it, then tiles its screen."""
+    The page offers each switched-on app a monitor and each monitor a tiling style, keeps both on this device,
+    and at login the SECOND monitor's desktop opens only the app pinned to it, then tiles its screen. Both choices
+    belong to THIS computer: a laptop on the same account must not inherit them."""
     got = {}
 
     async def check(b):
         await desktop.login(b)
         await b.until("!!document.body && document.body.classList.contains('os-on') && !!document.querySelector('#os-bar')")
         await b.js("document.getElementById('osfr')?.remove();document.documentElement.classList.remove('osfr-on')")
-        await b.js("(()=>{const pc=window.__PC,s=pc.saveStartupLayout;pc.saveStartupLayout=(p,t)=>{__layoutSaves.push([p,t]);return s&&s(p,t)}})()")
         await b.js("PCOS.openSystemSettings()")
         await b.until("!!document.querySelector('.os-set-nav [data-page=\"startup\"]')")
         await b.js("document.querySelector('.os-set-nav [data-page=\"startup\"]').click()")
@@ -149,13 +149,17 @@ def test_a_startup_app_can_be_pinned_to_a_monitor_and_that_monitor_tiles_it():
         for v in ('messages', 'notes'):
             await b.js(f"(()=>{{const c={page}.querySelector('[data-startup-view=\"{v}\"]');c.checked=true;c.dispatchEvent(new Event('change'))}})()")
         await b.until(f"!!{page}.querySelector('[data-startup-monitor=\"notes\"]')")
+        # The switch's own account save settles first. Polled, not slept: 15s after load the desktop runs the
+        # startup apps itself (os.js fallback), and a slow test would let that run before the login below.
+        published_before = await b.js("new Promise(r=>{let n=-1,t0=Date.now();const k=()=>{const m=(window.__published||[]).length;if(m===n||Date.now()-t0>3000)return r(m);n=m;setTimeout(k,300)};k()})")
         got['choices'] = await b.js(f"[...{page}.querySelectorAll('[data-startup-monitor=\"notes\"] option')].map(o=>o.textContent)")
         await b.js(f"(()=>{{const s={page}.querySelector('[data-startup-monitor=\"notes\"]');s.value='HDMI-A-1';s.dispatchEvent(new Event('change'))}})()")
         await b.until(f"!!{page}.querySelector('[data-startup-tile=\"HDMI-A-1\"]') && !{page}.querySelector('[data-startup-tiling]').hidden")
         await b.js(f"(()=>{{const s={page}.querySelector('[data-startup-tile=\"HDMI-A-1\"]');s.value='side-by-side';s.dispatchEvent(new Event('change'))}})()")
         got['placement'] = await b.js("ClientSettings.get('startupPlacement',{})")
         got['tiling'] = await b.js("ClientSettings.get('startupTiling',{})")
-        got['saved'] = await b.js("__layoutSaves.slice(-1)[0]")
+        got['published'] = await b.js("new Promise(r=>{let n=-1,t0=Date.now();const k=()=>{const m=(window.__published||[]).length;if(m===n||Date.now()-t0>3000)return r(m);n=m;setTimeout(k,300)};k()})") - published_before
+        got['account_api'] = await b.js("typeof __PC.saveStartupLayout")
         got['switch_still'] = await b.js(f"{page}.querySelector('[data-startup-view=\"notes\"]').checked")
         await b.call("Emulation.setDeviceMetricsOverride", {"width": 400, "height": 900, "deviceScaleFactor": 1, "mobile": True})
         await asyncio.sleep(.3)
@@ -173,7 +177,8 @@ def test_a_startup_app_can_be_pinned_to_a_monitor_and_that_monitor_tiles_it():
     assert got['monitor_before_on'] is False, "an app that does not start at login offered a monitor"
     assert got['choices'] == ['Main monitor', 'Dell U2720Q (DP-1) · main', 'LG 27GL850 (HDMI-A-1)'], got['choices']
     assert got['placement'] == {'notes': 'HDMI-A-1'} and got['tiling'] == {'HDMI-A-1': 'side-by-side'}, got
-    assert got['saved'] == [{'notes': 'HDMI-A-1'}, {'HDMI-A-1': 'side-by-side'}], got['saved']
+    # PER DEVICE ("if I use laptop with same account I don't want issues"): kept on this machine, never published.
+    assert got['published'] == 0 and got['account_api'] == 'undefined', ("monitor/tiling went to the account", got)
     assert got['switch_still'] is True, "choosing a monitor toggled the app's switch"
     assert got['overflow'] <= 1, f"the card overflows a phone-width window by {got['overflow']}px"
     assert got['count'] == 1 and got['opened'] == ['notes'], ("the second monitor opened the wrong apps", got)

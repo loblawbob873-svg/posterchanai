@@ -3942,11 +3942,10 @@
     const host=card.querySelector('[data-startup-pc-list]'); if(!host) return;
     const tileHost=card.querySelector('[data-startup-tiling]');
     let monitors=[];                       // filled by pcDisplays when it answers; one monitor = no choices to offer
-    const saveLayout=()=>{ const { placement, tiling } = _startupLayoutPrefs();
-      try{ PC().saveStartupLayout && PC().saveStartupLayout(placement, tiling); }catch(_){} };
+    // This device only (see _startupPlan): never saved with the account.
     const setPref=(key, k, v)=>{ const cur=_startupLayoutPrefs()[key==='startupPlacement'?'placement':'tiling'];
       const next={ ...cur }; if(v) next[k]=v; else delete next[k];
-      try{ ClientSettings.set(key, next); }catch(_){} saveLayout(); };
+      try{ ClientSettings.set(key, next); }catch(_){} };
     const draw=()=>{
       const on=new Set(_startupViews());
       const { placement, tiling } = _startupLayoutPrefs();
@@ -3987,7 +3986,9 @@
     }catch(_){}
   }
   /* WHICH MONITOR, AND HOW IT TILES ("add to OS Settings Startup Apps a way to pin startup apps to a specific
-   * monitor and apply a tiling style"). Two synced preferences beside `startupApps`:
+   * monitor and apply a tiling style"). Two THIS-DEVICE preferences beside the account-wide `startupApps` list
+   * ("should be per device? if I use laptop with same account I don't want issues") -- monitors belong to the
+   * machine, so these stay in its own ClientSettings and are never written to or read from the account:
    *   startupPlacement  { view: output name }   -- absent / "" = the main monitor
    *   startupTiling     { output name: layout } -- grid | side-by-side | stacked, absent = leave them be
    * Every monitor has its own shell renderer, and a window opened from one lands on that monitor (main.js
@@ -4393,9 +4394,9 @@
             <div class="os-set-actions os-startup-add"><select class="input" data-startup-app aria-label="An installed app"><option value="">Add an installed app…</option></select><button class="btn primary" data-startup-add-app>Add</button></div>
             <div class="os-set-actions os-startup-add"><input class="input" data-startup-name placeholder="Name (optional)" aria-label="Name"><input class="input" data-startup-exec placeholder="Command, e.g. syncthing --no-browser" aria-label="Command"><label class="os-startup-term"><input type="checkbox" data-startup-term> In a terminal</label><button class="btn" data-startup-add-cmd>Add command</button></div>
             <div class="muted" data-startup-status></div></div>
-          <div class="os-set-card" data-startup-pc><div class="os-set-cardhead"><b>PosterChan apps</b><span>Opened in their own windows when you log in. Saved with your account, so every machine you sign into does the same. With more than one monitor, pick where each one opens.</span></div>
+          <div class="os-set-card" data-startup-pc><div class="os-set-cardhead"><b>PosterChan apps</b><span>Opened in their own windows when you log in. Saved with your account, so every machine you sign into does the same. With more than one monitor, pick where each one opens — that choice, and the tiling below, belong to this computer only.</span></div>
             <div data-startup-pc-list class="os-startup-list"></div>
-            <div data-startup-tiling hidden><div class="os-set-cardhead"><b>Tile startup apps</b><span>Once they have opened, arrange each monitor's startup apps. A monitor this computer does not have is skipped, and its apps open on the main one.</span></div>
+            <div data-startup-tiling hidden><div class="os-set-cardhead"><b>Tile startup apps</b><span>Once they have opened, arrange each monitor's startup apps. Set on this computer only — a laptop signed into the same account keeps its own.</span></div>
               <div data-startup-tiling-list class="os-startup-list"></div></div></div></section>`:''}
         <section data-settings-page="printers" ${_osSettingsPage==='printers'?'':'hidden'}><header class="os-set-pagehead"><div>${iconSvg('i-note')}</div><span><h2>Printers</h2><p>Add a printer and print a test page.</p></span></header>${window.pcPrinters?`<div class="os-set-card" data-printers><div class="os-set-cardhead"><b>Printers on this computer</b><span>CUPS's own pages ask for a Unix password and a PosterChan identity account has none, so printers are managed here — using the administrator rights this account already holds.</span></div>
           <div data-printer-list class="os-printer-list"><div class="empty">Loading…</div></div>
