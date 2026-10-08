@@ -2731,7 +2731,7 @@
       f.onsubmit=e=>{ e.preventDefault(); const q=i.value.trim(); if(q) _aiFeed(w,panel,'find',{posts,query:q}); };
       setTimeout(()=>i.focus(),0); return;
     }
-    _aiBusy.add(panel); box.className='osw-ai-answer loading';
+    _aiBusy.add(panel); box.hidden=false; box.className='osw-ai-answer loading';
     box.innerHTML='<span class="spinner"></span> '+({digest:'Reading the posts…',needs:'Looking for what needs you…',find:'Looking…',reply:'Writing replies…'})[kind];
     let res=null, error='';
     try{ res=await _aiPost({action:'window_feed',recipe:kind,instruction:opt.query||'',target:kind==='reply'?opt.target+1:0,
@@ -2862,9 +2862,16 @@
           const made=await N.save({title:r.title||'New note',body:r.body||''});
           ap.textContent='✓ Saved'; if(made&&made.id) await N.select(made.id); return;
         }
-        const before={title:cur.title,body:cur.body}, id=cur.id;
-        const change=kind==='title'?{title:r.title}:kind==='continue'?{body:cur.body.replace(/\s+$/,'')+'\n\n'+r.append}:
-                     kind==='write'?Object.assign({body:r.body},(!cur.title.trim()||/^(untitled|new note|saved)\b/i.test(cur.title.trim()))&&r.title?{title:r.title}:{}):{body:r.body};
+        /* THE NOTE AS IT IS NOW, not as it was when the AI was asked: typing goes on while it works, and building
+         * the change from the old copy threw that typing away -- Undo too (code review). Continuing appends to
+         * what is there now; a rewrite of the whole body refuses if the body moved, rather than overwrite it. */
+        const now=(N.current&&N.current())||cur;
+        if(!now || now.id!==cur.id){ PC().toast('That note is no longer open — run it again on the note you want'); ap.disabled=false; return; }
+        if(kind!=='title' && kind!=='continue' && now.body!==cur.body){
+          PC().toast('The note changed while the AI was working — run it again so nothing you typed is lost'); ap.disabled=false; return; }
+        const before={title:now.title,body:now.body}, id=now.id;
+        const change=kind==='title'?{title:r.title}:kind==='continue'?{body:now.body.replace(/\s+$/,'')+'\n\n'+r.append}:
+                     kind==='write'?Object.assign({body:r.body},(!now.title.trim()||/^(untitled|new note|saved)\b/i.test(now.title.trim()))&&r.title?{title:r.title}:{}):{body:r.body};
         await N.update(id,change);
         ap.textContent='✓ Done'; un.hidden=false;
         un.onclick=async()=>{ un.disabled=true; try{ await N.update(id,before); un.textContent='✓ Put back'; ap.disabled=false; ap.textContent=verb; }catch(e){ PC().toast((e&&e.message)||'Could not put it back'); un.disabled=false; } };
@@ -2877,7 +2884,7 @@
   async function _aiUpcoming(w,panel,mode){
     const box=panel.querySelector('.osw-ai-answer'); if(!box) return;
     box.hidden=false; box.className='osw-ai-answer loading'; box.innerHTML='<span class="spinner"></span> Reading your calendar…';
-    let r=null; try{ r=window.PCCalendar&&PCCalendar.upcoming?await PCCalendar.upcoming(30):null; }catch(_){ }
+    let r=null; try{ r=window.PCCalendar&&PCCalendar.upcoming?await PCCalendar.upcoming(mode==='free'?7:30):null; }catch(_){ }
     if(w.aiPanel!==panel) return;
     box.className='osw-ai-answer';
     if(!r){ box.innerHTML='<p>The calendar could not be read — try again in a moment.</p>'; return; }
@@ -2890,7 +2897,10 @@
       for(let k=0;k<7;k++){
         const d=new Date(now.getFullYear(),now.getMonth(),now.getDate()+k), key=d.getFullYear()+'-'+pad(d.getMonth()+1)+'-'+pad(d.getDate());
         const lo=Math.max(new Date(d).setHours(8,0,0,0), k?0:now.getTime()), hi=new Date(d).setHours(20,0,0,0);
-        if(ev.some(e=>e.allDay&&e.day===key)){ rows.push([d,'busy all day']); continue; }
+        // An all-day event covers EVERY day from its start up to its (exclusive) end, not only the first one -- a
+        // three-day trip left days two and three "free" (code review).
+        const dStart=new Date(d).setHours(0,0,0,0), dEnd=dStart+86400000;
+        if(ev.some(e=>e.allDay&&(e.day===key||(e.start<dEnd&&e.end>dStart)))){ rows.push([d,'busy all day']); continue; }
         const busy=ev.filter(e=>!e.allDay&&e.end>lo&&e.start<hi).sort((a,b)=>a.start-b.start);
         const free=[]; let t=lo;
         for(const e of busy){ if(e.start-t>=30*60000) free.push(hm(t)+'–'+hm(e.start)); t=Math.max(t,e.end); }
@@ -2923,8 +2933,11 @@
   }
   function _aiFindIn(w,panel,q,x){
     const box=panel.querySelector('.osw-ai-answer'), el=_aiSearchBox(w);
+    box.hidden=false;
+    /* No box: the AGENT looks instead -- and it is handed the request with routing switched off for this one
+     * ask, or "Find bob" routes straight back here and recurses until the stack overflows (code review). */
     if(!el){ box.innerHTML='<p>This window has no search box — asking the AI to look instead.</p>';
-      const ta=panel.querySelector('textarea'); if(ta){ ta.value='Find '+q; panel.querySelector('[data-ai-ask]').click(); } return; }
+      const ta=panel.querySelector('textarea'); if(ta){ ta.value='Find '+q; panel._aiNoRoute=true; panel.querySelector('[data-ai-ask]').click(); } return; }
     _aiType(el,q);
     // Searches that filter as you type are done; the rest search on Enter -- a form's submit, else the key.
     try{ if(el.form && el.form.requestSubmit) el.form.requestSubmit();
@@ -2941,7 +2954,7 @@
    * (/api/budget/scan, the same one a photo goes through -- it takes text/plain) already exist. */
   async function _aiEvent(w,panel,said){
     const box=panel.querySelector('.osw-ai-answer');
-    box.className='osw-ai-answer loading'; box.innerHTML='<span class="spinner"></span> Reading the date…';
+    box.hidden=false; box.className='osw-ai-answer loading'; box.innerHTML='<span class="spinner"></span> Reading the date…';
     let j=null, error='';
     try{ j=await _aiPost({action:'window_event',windows:[{title:'Calendar',view:'calendar',kind:'PosterChan app',selection:said,text:''}],answer:said,today:_aiToday()}); }
     catch(e){ error=(e&&e.message)||'Could not reach the AI'; }
@@ -2952,7 +2965,7 @@
   }
   async function _aiBill(w,panel,said){
     const box=panel.querySelector('.osw-ai-answer');
-    box.className='osw-ai-answer loading'; box.innerHTML='<span class="spinner"></span> Reading the bill…';
+    box.hidden=false; box.className='osw-ai-answer loading'; box.innerHTML='<span class="spinner"></span> Reading the bill…';
     let d=null, error='';
     try{
       const P=PC(); try{ if(P.ensureAiSession) await P.ensureAiSession(); }catch(_){ }
@@ -3004,8 +3017,12 @@
     const find=/^(?:please\s+)?(?:find|search(?:\s+for)?|look\s+(?:for|up)|where(?:'s| is))\s+(.+)$/i.exec(t);
     if(v==='calculator' && !/^(?:explain|why|how does)\b/i.test(t)){ _aiCalc(w,panel,t); return true; }
     if(v==='contacts'){
-      if(/^(?:please\s+)?(?:add|new|create|save)\b/i.test(t)){ _aiContact(w,panel,rest(/^(?:please\s+)?(?:add|new|create|save)\s+(?:a\s+)?(?:new\s+)?(?:contact\s*:?\s*)?/i),orElse); return true; }
-      if(find){ _aiFindIn(w,panel,find[1],{}); return true; }
+      /* Only a request SHAPED like a contact: a number, an address, or the word "contact" -- "create a new
+       * addressbook called Work" starts with "create" too, and used to open a New contact named "addressbook
+       * called" (code review). Everything else is the agent's. */
+      if(/^(?:please\s+)?(?:add|new|create|save)\b/i.test(t) && !/\baddress\s?books?\b|\bgroups?\b|\blabels?\b/i.test(t)
+         && (/\bcontacts?\b/i.test(t) || /@/.test(t) || /(?:\d[\s().-]*){7,}/.test(t))){ _aiContact(w,panel,rest(/^(?:please\s+)?(?:add|new|create|save)\s+(?:a\s+)?(?:new\s+)?(?:contact\s*:?\s*)?/i),orElse); return true; }
+      if(find && _aiSearchBox(w)){ _aiFindIn(w,panel,find[1],{}); return true; }
     }
     if(v==='calendar' && /^(?:please\s+)?(?:add|schedule|book|put|create|new\s+event|remind)\b/i.test(t)){ _aiEvent(w,panel,t); return true; }
     if(v==='budget' && /^(?:please\s+)?(?:add|new)\b/i.test(t) && /\bbill\b|\$|\d/.test(low) && !/\bincome\b|\bpaycheck\b|\bsalary\b/.test(low)){ _aiBill(w,panel,t); return true; }
@@ -3019,7 +3036,7 @@
   }
   async function _aiCalc(w,panel,said){
     const box=panel.querySelector('.osw-ai-answer');
-    box.className='osw-ai-answer loading'; box.innerHTML='<span class="spinner"></span> Working it out…';
+    box.hidden=false; box.className='osw-ai-answer loading'; box.innerHTML='<span class="spinner"></span> Working it out…';
     let r=null, error='';
     try{ r=await _aiPost({action:'window_calc',instruction:said}); }catch(e){ error=(e&&e.message)||'Could not reach the AI'; }
     if(w.aiPanel!==panel) return;
@@ -3040,7 +3057,7 @@
   function _aiCalcKeys(expr){ return String(expr).match(/sqrt\(|sin\(|cos\(|tan\(|ln\(|log\(|./g)||[]; }
   async function _aiContact(w,panel,said,orElse){
     const box=panel.querySelector('.osw-ai-answer');
-    box.className='osw-ai-answer loading'; box.innerHTML='<span class="spinner"></span> Filling in the form…';
+    box.hidden=false; box.className='osw-ai-answer loading'; box.innerHTML='<span class="spinner"></span> Filling in the form…';
     let r=null, error='';
     try{ r=await _aiPost({action:'window_contact',instruction:said}); }catch(e){ error=(e&&e.message)||'Could not reach the AI'; }
     if(w.aiPanel!==panel) return;
@@ -3101,7 +3118,11 @@
   function _aiRoot(w){
     const base=w.body||w.el;
     try{
-      const d=[...document.querySelectorAll('.modal-bg')].filter(m=>!m.closest('.osw-ai-panel') && m.getClientRects().length).pop();
+      /* NEVER A DIALOG WITH A PASSWORD FIELD: a dialog sits on <body>, so the vault's entry or a sign-in prompt
+       * open for ANOTHER app would otherwise be read out to the model as this window's text and handed to the
+       * agent as controls it could type into (code review). */
+      const d=[...document.querySelectorAll('.modal-bg')].filter(m=>!m.closest('.osw-ai-panel') && m.getClientRects().length
+        && !m.querySelector('input[type="password"]')).pop();
       if(d) return d.querySelector('.modal')||d;
     }catch(_){ }
     return base;
@@ -3635,8 +3656,10 @@
       const agent=()=>{
         const fresh=[w,..._aiContextWins].filter((x,k,a)=>a.indexOf(x)===k&&(x===w||wins.includes(x))).map(windowAIContext);
         _aiSteps(w,panel,fresh,instruction,composer,turns,isTerm); };
-      // A direct tool that read nothing hands the request back to the agent (`agent` is its orElse).
-      if(!isTerm && _aiRoute(w,panel,instruction,agent)) return;
+      // A direct tool that read nothing hands the request back to the agent (`agent` is its orElse). A request
+      // a tool itself handed over (`_aiNoRoute`) goes straight to the agent, never back through the router.
+      const noRoute=!!panel._aiNoRoute; panel._aiNoRoute=false;
+      if(!isTerm && !noRoute && _aiRoute(w,panel,instruction,agent)) return;
       agent();};
     panel.querySelector('[data-ai-dismiss]').onclick=()=>closeWindowAI(w);
     const clear=panel.querySelector('[data-ai-clear]');if(clear)clear.onclick=()=>{_aiContextWins.forEach(x=>x.el.classList.remove('ai-context'));_aiContextWins.clear();closeWindowAI(w);toggleWindowAI(w,button);};

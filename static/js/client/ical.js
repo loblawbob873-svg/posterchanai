@@ -295,6 +295,13 @@
    * VEVENT would show the master's title for an occurrence that was renamed, and reading them as
    * peers would draw a phantom event on the master's start date.
    */
+  /* An iCalendar DURATION in milliseconds: [+]P[nW][nD][T[nH][nM][nS]]. A negative or unreadable one is 0. */
+  function durationMs(v){
+    const m = /^\+?P(?:(\d+)W)?(?:(\d+)D)?(?:T(?:(\d+)H)?(?:(\d+)M)?(?:(\d+)S)?)?$/i.exec(String(v || '').trim());
+    if(!m) return 0;
+    const n = i => Number(m[i] || 0);
+    return ((((n(1) * 7 + n(2)) * 24 + n(3)) * 60 + n(4)) * 60 + n(5)) * 1000;
+  }
   function parseResource(rec){
     const ics = (rec && rec.ics) || '';
     const comps = splitComponents(ics).filter(c => nameOf(c) !== 'VTIMEZONE');
@@ -305,7 +312,10 @@
       // meeting from 14:00 to 15:00 took up no time at all.
       const dtend = first(c, 'DTEND');
       const de = dtend ? parseDt(dtend.value, dtend.params) : null;
-      const durMs = (dt && de && de.date > dt.date) ? (de.date - dt.date) : 0;
+      // …or from DURATION (RFC 5545 3.3.6, e.g. PT1H30M, P1D, P1W) when there is no DTEND -- many calendar apps
+      // write events that way, and they took up no time either (code review).
+      const dur = first(c, 'DURATION');
+      const durMs = (dt && de && de.date > dt.date) ? (de.date - dt.date) : (dur ? durationMs(dur.value) : 0);
       const rid = first(c, 'RECURRENCE-ID');
       const rrule = first(c, 'RRULE');
       const exdates = [];

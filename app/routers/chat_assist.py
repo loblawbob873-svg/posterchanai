@@ -4,7 +4,7 @@ from typing import Optional
 
 from fastapi import APIRouter, Depends
 from fastapi.responses import JSONResponse
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
 from app.auth import get_current_user_optional
@@ -50,7 +50,9 @@ class AssistReq(BaseModel):
     reply_ref: Optional[int] = None   # action=window_recipe: the window's own Reply control, when its box is closed
     box_ref: Optional[int] = None     # action=window_recipe: the text box a tidied note replaces
     box_label: str = ""
-    posts: list = []              # action=window_feed: the timeline's posts on screen, in order
+    # action=window_feed: the timeline's posts on screen, in order. Bounded HERE: the service keeps the first
+    # FEED_POSTS_MAX, but only after an unbounded body had been parsed and copied (code review, 2026-10-07).
+    posts: list = Field(default_factory=list, max_length=200)
     target: int = 0               # action=window_feed recipe=reply: the post (1-based) to reply to
     subject: str = "posts"        # action=window_feed: "posts" (a timeline) or "notes" (the notebook)
     title: str = ""               # action=window_note: the open note's title

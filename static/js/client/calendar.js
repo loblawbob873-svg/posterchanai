@@ -1336,7 +1336,7 @@
         }
       }
       out.sort((a,b) => a.start - b.start);
-      return { events:out.slice(0, 60), span };
+      return { events:out.slice(0, 300), span };
     }
 
     window.PCCalendar = { render, reload: load, widgetTick, draft, upcoming };

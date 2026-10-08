@@ -494,7 +494,7 @@ def parse_steps(text: str, commands: bool = False, want_tasks: bool = False, con
         return {"answer": answer, "tasks": tasks[:TASK_MAX], "steps": []}
     answer = str(raw.get("answer") or "").strip()[:4000]
     tasks = []
-    for t in raw.get("tasks") or []:
+    for t in _list(raw.get("tasks")):
         if not isinstance(t, dict):
             continue
         txt = _clean(t.get("text"), 200)
@@ -516,7 +516,7 @@ def parse_steps(text: str, commands: bool = False, want_tasks: bool = False, con
     steps = []
     keyed = None
     refs = {r: (role, lab) for r, role, lab, _v, _n in clean_controls(controls)}
-    for st in raw.get("steps") or []:
+    for st in _list(raw.get("steps")):
         if not isinstance(st, dict):
             continue
         kind = _clean(st.get("do"), 20).lower()
@@ -1396,6 +1396,17 @@ def build_feed_messages(posts: list, recipe: str, query: str = "", target: int =
     return [{"role": "system", "content": system}, {"role": "user", "content": user}]
 
 
+def _list(v) -> list:
+    """A model field that should be a list, as a list: `{"topics": 5}` or `{"replies": "Great post!"}` from a model
+    that slipped must not become a TypeError (a 500) or a string iterated letter by letter. A lone string is one
+    item; anything else that is not a list is none (code review, 2026-10-07)."""
+    if isinstance(v, list):
+        return v
+    if isinstance(v, str) and v.strip():
+        return [v]
+    return []
+
+
 def _json_obj(out: str):
     import json
     t = re.sub(r"<think>.*?</think>", "", str(out or ""), flags=re.S | re.I)
@@ -1464,7 +1475,7 @@ def parse_feed(recipe: str, out: str, posts: list, query: str = "") -> dict:
     n_max = len(posts)
     if recipe == "digest":
         topics = []
-        for t in raw.get("topics") or []:
+        for t in _list(raw.get("topics")):
             if not isinstance(t, dict):
                 continue
             nums = _nums(t.get("posts"), n_max)
@@ -1474,7 +1485,7 @@ def parse_feed(recipe: str, out: str, posts: list, query: str = "") -> dict:
         return {"topics": topics[:6]}
     if recipe == "needs":
         items, seen = [], set()
-        for it in raw.get("items") or []:
+        for it in _list(raw.get("items")):
             if not isinstance(it, dict):
                 continue
             nums = _nums([it.get("n")], n_max)
@@ -1495,7 +1506,7 @@ def parse_feed(recipe: str, out: str, posts: list, query: str = "") -> dict:
                 if p["n"] not in nums and all(w in low for w in words):
                     nums.append(p["n"])
         return {"posts": sorted(nums)}
-    replies = [clean_recipe_text(r) for r in (raw.get("replies") or []) if isinstance(r, str)]
+    replies = [clean_recipe_text(r) for r in _list(raw.get("replies")) if isinstance(r, str)]
     if not replies:                                       # JSON that does not parse: the quoted strings in it
         m = re.search(r'"replies"\s*:\s*\[(.*)', str(out or ""), re.S)
         if m:

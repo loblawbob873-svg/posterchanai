@@ -334,3 +334,17 @@ class EditorPreservationTests(unittest.TestCase):
         self.assertIn("PERCENT-COMPLETE:40", out)
         self.assertIn("DUE:", out)          # a VTODO has DUE, never DTEND
         self.assertNotIn("DTEND", out)
+
+
+def test_an_event_with_a_duration_and_no_end_takes_up_its_time():
+    """Code review: "When am I free?" read how long an event lasts from DTEND only, so an event written with
+    DURATION (as many calendar apps write it) took up no time at all."""
+    out = _node("""
+const P=I.parseResource({ics:'BEGIN:VCALENDAR\\r\\nBEGIN:VEVENT\\r\\nUID:d1\\r\\nDTSTART:20260310T140000Z\\r\\nDURATION:PT1H30M\\r\\nSUMMARY:x\\r\\nEND:VEVENT\\r\\nEND:VCALENDAR\\r\\n'});
+const occ=I.occurrences(P,new Date('2026-03-01T00:00:00Z'),new Date('2026-03-31T00:00:00Z'));
+const Q=I.parseResource({ics:'BEGIN:VCALENDAR\\r\\nBEGIN:VEVENT\\r\\nUID:d2\\r\\nDTSTART;VALUE=DATE:20260310\\r\\nDURATION:P2D\\r\\nSUMMARY:y\\r\\nEND:VEVENT\\r\\nEND:VCALENDAR\\r\\n'});
+const occ2=I.occurrences(Q,new Date('2026-03-01T00:00:00Z'),new Date('2026-03-31T00:00:00Z'));
+console.log(JSON.stringify({ms: occ[0].end - occ[0].start, ms2: occ2[0].end - occ2[0].start}));
+""")
+    assert out["ms"] == 90 * 60 * 1000, out
+    assert out["ms2"] == 2 * 86400 * 1000, out
