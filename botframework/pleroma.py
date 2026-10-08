@@ -148,7 +148,7 @@ def upload_media_to_pleroma(image_bytes, filename="image.png", mime="image/png")
             if ext:
                 filename = filename.rsplit(".", 1)[0] + ext
         else:
-            print(f"WARNING: image_bytes is tuple, extracting first element")
+            print("WARNING: image_bytes is tuple, extracting first element")
             image_bytes = image_bytes[0] if image_bytes else None
 
     if not isinstance(image_bytes, bytes):

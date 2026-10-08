@@ -695,10 +695,10 @@ class _CommsMixin:
                 # Get the attachment
                 attachment = get_attachment(self.user.id, self.db, account_email, uid, att_index)
                 if not attachment:
-                    return {"type": "text", "content": f"Attachment not found."}
+                    return {"type": "text", "content": "Attachment not found."}
 
                 if not attachment.data:
-                    return {"type": "text", "content": f"Attachment too large or couldn't be downloaded."}
+                    return {"type": "text", "content": "Attachment too large or couldn't be downloaded."}
 
                 # Don't save automatically - just display the attachment with a save button
                 # Encode attachment data as base64 for display
@@ -838,7 +838,7 @@ class _CommsMixin:
             # Require full email address since contacts feature is removed
             return {
                 "type": "text",
-                "content": f"Please provide a full email address. Example: `mail linda@example.com hello`",
+                "content": "Please provide a full email address. Example: `mail linda@example.com hello`",
             }
 
         # Use specified account or first configured account

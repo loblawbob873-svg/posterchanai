@@ -473,7 +473,7 @@ async def _handle_message(update, db):
                     result = {"type": "text", "content": f"Translation failed: {str(e)}"}
                 
                 await telegram_service.send_message(chat_id, result.get("content", ""))
-                logger.warning(f"TRANSLATE: Sent translation result")
+                logger.warning("TRANSLATE: Sent translation result")
                 return {"ok": True}
             
             # post command: generate a social media post from a replied-to link
@@ -746,7 +746,7 @@ async def _handle_message(update, db):
                         result = {"type": "text", "content": f"Translation failed: {str(e)}"}
                     
                     await telegram_service.send_message(chat_id, result.get("content", ""))
-                    logger.warning(f"TRANSLATE: Sent translation result")
+                    logger.warning("TRANSLATE: Sent translation result")
                     return {"ok": True}
             
             # Download document
@@ -932,7 +932,7 @@ async def _handle_message(update, db):
                 
                 # Send result and return early
                 await telegram_service.send_message(chat_id, result.get("content", ""))
-                logger.warning(f"TRANSLATE: Sent translation result")
+                logger.warning("TRANSLATE: Sent translation result")
                 return {"ok": True}
             elif command == "translate" and has_images:
                 logger.warning(f"TRANSLATE: Command detected but no OCR text yet, has_images={has_images}, attachments={len(attachments)}")

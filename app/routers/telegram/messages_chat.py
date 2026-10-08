@@ -428,7 +428,7 @@ async def _msg_chat(attachments, chat_id, chat_service, command_service, db, doc
                         error_msg = str(chat_err)
                         logger.error(f"Telegram chat error: {error_msg}", exc_info=True)
                         if "Conversation roles must alternate" in error_msg:
-                            logger.error(f"ROLE ERROR - Messages that caused error:")
+                            logger.error("ROLE ERROR - Messages that caused error:")
                             for i, m in enumerate(messages):
                                 _c = m.get('content')
                                 _size = '[vision content]' if isinstance(_c, list) else f"{len(str(_c or ''))} chars"

@@ -1254,7 +1254,7 @@ async def rescan_storage(
                         logger.error(f"[ADMIN] Storage server rescan failed: {response.status_code} - {response.text[:500]}")
                         raise HTTPException(status_code=response.status_code, detail=f"Storage server error: {response.text[:200]}")
             except httpx.TimeoutException:
-                logger.error(f"[ADMIN] Timeout proxying rescan to storage server")
+                logger.error("[ADMIN] Timeout proxying rescan to storage server")
                 raise HTTPException(status_code=504, detail="Storage server scan timeout (this is normal for large collections)")
             except httpx.ConnectError as e:
                 logger.error(f"[ADMIN] Cannot connect to storage server: {e}")
@@ -1328,8 +1328,8 @@ async def rescan_storage(
             if user_path.exists():
                 # Step 1: Restore EXIF timestamps for all media files
                 logger.info(f"[File Scan] Step 1/3: Restoring EXIF timestamps for user {username}")
-                logger.info(f"[File Scan] This will update file modification times from EXIF metadata")
-                logger.info(f"[File Scan] Files copied via rsync will get their original photo/video dates restored")
+                logger.info("[File Scan] This will update file modification times from EXIF metadata")
+                logger.info("[File Scan] Files copied via rsync will get their original photo/video dates restored")
                 exif_stats = batch_restore_timestamps(user_path)
                 logger.info(f"[File Scan] EXIF stats: {exif_stats['restored']} restored, {exif_stats['processed']} processed, {exif_stats.get('skipped', 0)} skipped, {exif_stats.get('errors', 0)} errors")
                 
@@ -1891,7 +1891,7 @@ async def test_proxy_chain(
                     data = resp.json()
                     results["proxy_chain"] = {
                         "ok": True,
-                        "msg": f"Request succeeded via proxy",
+                        "msg": "Request succeeded via proxy",
                         "tor": data.get("IsTor", False),
                         "ip": data.get("IP", "unknown"),
                     }

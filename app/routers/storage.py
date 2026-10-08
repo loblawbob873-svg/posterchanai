@@ -977,11 +977,11 @@ async def get_all_images(
                 images.sort(key=sort_key, reverse=True)
                 logger.error("[STORAGE] Re-sorted array with reverse=True (newest first)")
         else:
-            logger.info(f"[STORAGE] ✓ Sort verified: First 50 images in correct order (newest first)")
+            logger.info("[STORAGE] ✓ Sort verified: First 50 images in correct order (newest first)")
         
         # Debug: log statistics
         total_scanned = len(images) + skipped_count
-        logger.info(f"[STORAGE] Image scan complete:")
+        logger.info("[STORAGE] Image scan complete:")
         logger.info(f"  - Total files scanned: {total_scanned}")
         logger.info(f"  - Valid images/videos: {len(images)}")
         logger.info(f"  - Files skipped: {skipped_count}")

@@ -46,8 +46,8 @@ def _login_and_get_token():
         return token
     except request.HTTPError as e:
         if e.code == 401:
-            print(f"[POSTERCHANAI] Login failed: Invalid username or password (401)")
-            print(f"[POSTERCHANAI] Check POSTERCHANAI_USERNAME and POSTERCHANAI_PASSWORD in config.py")
+            print("[POSTERCHANAI] Login failed: Invalid username or password (401)")
+            print("[POSTERCHANAI] Check POSTERCHANAI_USERNAME and POSTERCHANAI_PASSWORD in config.py")
         else:
             print(f"[POSTERCHANAI] Login failed: HTTP {e.code} - {e.reason}")
         return None
@@ -122,7 +122,7 @@ def generate_image_bytes(prompt):
             if e.code == 401:
                 # Authentication required - try login if we haven't already
                 if not has_api_key:
-                    print(f"[POSTERCHANAI] API key not set, trying login authentication...")
+                    print("[POSTERCHANAI] API key not set, trying login authentication...")
                     try:
                         token = _login_and_get_token()
                         if token:
@@ -135,18 +135,18 @@ def generate_image_bytes(prompt):
                             img_resp = request.urlopen(img_req, timeout=300)
                             result = json.loads(img_resp.read())
                         else:
-                            print(f"[POSTERCHANAI] Authentication failed. Options:")
-                            print(f"[POSTERCHANAI] 1. Set POSTERCHANAI_API_KEY in config.py (recommended)")
-                            print(f"[POSTERCHANAI] 2. Set IMAGE_API_KEY in posterchanai and match it in config.py")
-                            print(f"[POSTERCHANAI] 3. Fix POSTERCHANAI_USERNAME and POSTERCHANAI_PASSWORD in config.py")
+                            print("[POSTERCHANAI] Authentication failed. Options:")
+                            print("[POSTERCHANAI] 1. Set POSTERCHANAI_API_KEY in config.py (recommended)")
+                            print("[POSTERCHANAI] 2. Set IMAGE_API_KEY in posterchanai and match it in config.py")
+                            print("[POSTERCHANAI] 3. Fix POSTERCHANAI_USERNAME and POSTERCHANAI_PASSWORD in config.py")
                             return None
                     except Exception as login_err:
                         print(f"[POSTERCHANAI] Login failed: {login_err}")
-                        print(f"[POSTERCHANAI] Authentication failed. Set POSTERCHANAI_API_KEY in config.py or fix login credentials.")
+                        print("[POSTERCHANAI] Authentication failed. Set POSTERCHANAI_API_KEY in config.py or fix login credentials.")
                         return None
                 else:
-                    print(f"[POSTERCHANAI] API key authentication failed (401).")
-                    print(f"[POSTERCHANAI] Check that POSTERCHANAI_API_KEY matches IMAGE_API_KEY in posterchanai.")
+                    print("[POSTERCHANAI] API key authentication failed (401).")
+                    print("[POSTERCHANAI] Check that POSTERCHANAI_API_KEY matches IMAGE_API_KEY in posterchanai.")
                     return None
             else:
                 print(f"[POSTERCHANAI] HTTP error {e.code}: {e.reason}")
@@ -180,18 +180,18 @@ def generate_image_bytes(prompt):
         error_code = getattr(e, 'errno', None)
         if error_code == 111:
             print(f"[POSTERCHANAI] ERROR: Connection refused to {POSTERCHANAI_API_ENDPOINT}")
-            print(f"[POSTERCHANAI] The posterchanai service is not running or not accessible at this address")
-            print(f"[POSTERCHANAI] Troubleshooting:")
-            print(f"[POSTERCHANAI]  1. Check if posterchanai service is running")
+            print("[POSTERCHANAI] The posterchanai service is not running or not accessible at this address")
+            print("[POSTERCHANAI] Troubleshooting:")
+            print("[POSTERCHANAI]  1. Check if posterchanai service is running")
             print(f"[POSTERCHANAI]  2. Verify POSTERCHANAI_API_ENDPOINT is correct (currently: {POSTERCHANAI_API_ENDPOINT})")
             print(f"[POSTERCHANAI]  3. Test connectivity: curl {POSTERCHANAI_API_ENDPOINT}/api/health")
-            print(f"[POSTERCHANAI]  4. Check firewall rules and network routing")
+            print("[POSTERCHANAI]  4. Check firewall rules and network routing")
         elif error_code == 113:
             print(f"[POSTERCHANAI] ERROR: No route to host {POSTERCHANAI_API_ENDPOINT}")
-            print(f"[POSTERCHANAI] Network routing issue - cannot reach the server")
+            print("[POSTERCHANAI] Network routing issue - cannot reach the server")
         elif error_code == 110:
             print(f"[POSTERCHANAI] ERROR: Connection timed out to {POSTERCHANAI_API_ENDPOINT}")
-            print(f"[POSTERCHANAI] The server is not responding within the timeout period")
+            print("[POSTERCHANAI] The server is not responding within the timeout period")
         else:
             print(f"[POSTERCHANAI] ERROR: Connection error (errno {error_code}) to {POSTERCHANAI_API_ENDPOINT}: {e}")
         return None

@@ -595,7 +595,7 @@ def list_folders(user_id: int, db: Session, account_email: str) -> List[str]:
 
                 result = run_with_timeout(list_imap_folders, timeout=5)
                 if not result or result[0] != "OK":
-                    logger.error(f"Failed to list folders or timed out")
+                    logger.error("Failed to list folders or timed out")
                     return []
 
                 status, folder_data = result

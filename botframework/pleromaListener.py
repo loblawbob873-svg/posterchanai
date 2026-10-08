@@ -425,7 +425,7 @@ def process_notifications():
         own_username = PLEROMA_USERNAME.lstrip("@").lower() if PLEROMA_USERNAME else ""
         other_bots = [b for b in bot_blacklist if b.lower() != own_username]
         if mentions_listed_bot(lower_content, other_bots):
-            print(f"[DEBUG] Skipping mention due to bot_blacklist @mention", flush=True)
+            print("[DEBUG] Skipping mention due to bot_blacklist @mention", flush=True)
             continue
 
         visibility = status.get("visibility", "public")
@@ -474,7 +474,7 @@ def process_notifications():
                     # meme bakes the user's caption into a publicly-posted image, so it
                     # gets the same bad-word gate as geni (compress/clip/convert add no text).
                     if _media_cmd == "meme" and contains_bad:
-                        print(f"[DEBUG] BLOCKED: meme caption contains bad words")
+                        print("[DEBUG] BLOCKED: meme caption contains bad words")
                         send_reply(status, "I cannot add that text to an image.",
                                    own_acct=own_acct, visibility=visibility)
                     else:
@@ -587,7 +587,7 @@ def process_notifications():
                             print(f"[DEBUG] News request for: {source}")
                             try:
                                 reply_text = fetch_news_from_source(source, max_headlines=10)
-                                print(f"[DEBUG] News fetched, waiting 60 seconds before posting...")
+                                print("[DEBUG] News fetched, waiting 60 seconds before posting...")
                                 time.sleep(60)
                                 send_reply(status, reply_text, own_acct=own_acct, visibility=visibility)
                             except Exception as e:
@@ -648,7 +648,7 @@ def process_notifications():
                             # Get avatar URL for video (Pleroma uses 'avatar' field)
                             avatar_url = own.get("avatar") if own else None
                             if avatar_url:
-                                print(f"[TTS] Generating video with avatar...")
+                                print("[TTS] Generating video with avatar...")
                                 video_bytes = generate_narration_video(reply_text, avatar_url)
                                 if video_bytes:
                                     print(f"[TTS] Generated {len(video_bytes)} bytes of video")
@@ -674,7 +674,7 @@ def process_notifications():
                             print("[TTS] AUTO_NARRATE enabled, generating video...")
                             avatar_url = own.get("avatar") if own else None
                             if avatar_url:
-                                print(f"[TTS] Generating video with avatar...")
+                                print("[TTS] Generating video with avatar...")
                                 video_bytes = generate_narration_video(reply_text, avatar_url)
                                 if video_bytes:
                                     print(f"[TTS] Generated {len(video_bytes)} bytes of video")
@@ -690,7 +690,7 @@ def process_notifications():
                                         send_reply(status, reply_text, own_acct=own_acct, visibility=visibility)
                             else:
                                 # No avatar, use audio only
-                                print(f"[TTS] No avatar URL, using audio...")
+                                print("[TTS] No avatar URL, using audio...")
                                 audio_bytes = generate_speech_with_retries(reply_text)
                                 if audio_bytes:
                                     print(f"[TTS] Generated {len(audio_bytes)} bytes of audio")

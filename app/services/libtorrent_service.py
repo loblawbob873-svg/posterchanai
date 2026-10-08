@@ -26,7 +26,7 @@ except ImportError:
             sys.path.insert(0, sp)
     try:
         import libtorrent as lt
-        logger.info(f"[BT] Loaded libtorrent from system site-packages")
+        logger.info("[BT] Loaded libtorrent from system site-packages")
     except ImportError:
         raise ImportError(
             "libtorrent not found. Install system package:\n"
@@ -131,8 +131,8 @@ class LibtorrentService:
         
         if not proxy_available:
             logger.warning(f"[BT] Cannot connect to proxy at {proxy_host}:{proxy_port} after {max_retries} attempts.")
-            logger.warning(f"[BT] Torrent service will start but torrenting will be disabled until proxy is available.")
-            logger.warning(f"[BT] Proxy will be checked periodically and torrenting will be enabled automatically.")
+            logger.warning("[BT] Torrent service will start but torrenting will be disabled until proxy is available.")
+            logger.warning("[BT] Proxy will be checked periodically and torrenting will be enabled automatically.")
             # Don't raise - allow service to start, but mark proxy as unavailable
             self._proxy_available = False
         else:
@@ -161,26 +161,26 @@ class LibtorrentService:
         else:
             # Proxy not available - configure but don't enable proxy settings
             # The service will start but torrenting will be disabled
-            logger.warning(f"[BT] Starting without proxy - torrenting will be disabled until proxy is available")
+            logger.warning("[BT] Starting without proxy - torrenting will be disabled until proxy is available")
 
         # Log startup configuration
         if self._proxy_available:
-            logger.info(f"[BT] ========== TORRENT ENGINE STARTING (TOR DATA MODE) ==========")
+            logger.info("[BT] ========== TORRENT ENGINE STARTING (TOR DATA MODE) ==========")
             logger.info(f"[BT] HTTP Proxy: {proxy_host}:{proxy_port} -> Tor SOCKS5")
             logger.info(f"[BT] Download dir: {self.download_dir}")
-            logger.info(f"[BT] Trackers: DIRECT (UDP+HTTP work) - IP visible to trackers")
-            logger.info(f"[BT] Peer DATA: PROXIED through Tor - anonymous transfers")
-            logger.info(f"[BT] DHT: DISABLED (peer-to-peer UDP)")
-            logger.info(f"[BT] uTP: DISABLED (peer-to-peer UDP)")
-            logger.info(f"[BT] Anonymous mode: ENABLED")
-            logger.info(f"[BT] =============================================================")
+            logger.info("[BT] Trackers: DIRECT (UDP+HTTP work) - IP visible to trackers")
+            logger.info("[BT] Peer DATA: PROXIED through Tor - anonymous transfers")
+            logger.info("[BT] DHT: DISABLED (peer-to-peer UDP)")
+            logger.info("[BT] uTP: DISABLED (peer-to-peer UDP)")
+            logger.info("[BT] Anonymous mode: ENABLED")
+            logger.info("[BT] =============================================================")
         else:
-            logger.warning(f"[BT] ========== TORRENT ENGINE STARTING (PROXY UNAVAILABLE) ==========")
+            logger.warning("[BT] ========== TORRENT ENGINE STARTING (PROXY UNAVAILABLE) ==========")
             logger.warning(f"[BT] HTTP Proxy: {proxy_host}:{proxy_port} - NOT REACHABLE")
             logger.warning(f"[BT] Download dir: {self.download_dir}")
-            logger.warning(f"[BT] Torrenting DISABLED - waiting for proxy to become available")
-            logger.warning(f"[BT] Proxy will be checked periodically and enabled automatically")
-            logger.warning(f"[BT] =============================================================")
+            logger.warning("[BT] Torrenting DISABLED - waiting for proxy to become available")
+            logger.warning("[BT] Proxy will be checked periodically and enabled automatically")
+            logger.warning("[BT] =============================================================")
 
         self.session.apply_settings(settings)
 
@@ -276,7 +276,7 @@ class LibtorrentService:
         self._alert_thread = threading.Thread(target=self._process_alerts, daemon=True)
         self._alert_thread.start()
 
-        logger.info(f"[BT] LibtorrentService started")
+        logger.info("[BT] LibtorrentService started")
 
     def stop(self):
         """Stop background threads and save resume data."""
@@ -433,14 +433,14 @@ class LibtorrentService:
         if not self._proxy_available:
             # Check if proxy has become available
             if self._check_proxy(self.proxy_host, self.proxy_port):
-                logger.info(f"[BT] Proxy is now available! Enabling torrenting...")
+                logger.info("[BT] Proxy is now available! Enabling torrenting...")
                 self._enable_proxy()
                 self._proxy_available = True
             else:
                 raise ConnectionError(f"Proxy at {self.proxy_host}:{self.proxy_port} is not available. Torrenting blocked.")
         elif not self._check_proxy(self.proxy_host, self.proxy_port):
             # Proxy was available but is now down
-            logger.warning(f"[BT] Proxy became unavailable! Disabling torrenting...")
+            logger.warning("[BT] Proxy became unavailable! Disabling torrenting...")
             self._proxy_available = False
             raise ConnectionError(f"Proxy at {self.proxy_host}:{self.proxy_port} is not available. Torrenting blocked.")
     
@@ -513,7 +513,7 @@ class LibtorrentService:
                 
                 # If proxy was unavailable at startup, check if it's now available
                 if not self._proxy_available and proxy_ok:
-                    logger.info(f"[BT] Proxy is now available! Enabling torrenting...")
+                    logger.info("[BT] Proxy is now available! Enabling torrenting...")
                     self._enable_proxy()
                     self._proxy_available = True
                     proxy_was_down = False
@@ -521,7 +521,7 @@ class LibtorrentService:
                     self._recheck_all_torrents()
                 elif self._proxy_available and not proxy_ok and not proxy_was_down:
                     # Proxy went down - pause all active torrents for safety
-                    logger.warning(f"[BT] PROXY DOWN! Pausing all torrents for anonymity protection.")
+                    logger.warning("[BT] PROXY DOWN! Pausing all torrents for anonymity protection.")
                     proxy_was_down = True
                     self._proxy_available = False
                     for info_hash, handle in list(self.torrents.items()):
@@ -533,7 +533,7 @@ class LibtorrentService:
                         except Exception as e:
                             logger.error(f"[BT] Error pausing {info_hash}: {e}")
                 elif proxy_ok and proxy_was_down:
-                    logger.info(f"[BT] Proxy restored. Torrents remain paused - resume manually.")
+                    logger.info("[BT] Proxy restored. Torrents remain paused - resume manually.")
                     proxy_was_down = False
 
             alerts = self.session.pop_alerts()
@@ -609,7 +609,7 @@ class LibtorrentService:
 
                 # DHT events
                 elif isinstance(alert, lt.dht_bootstrap_alert):
-                    logger.info(f"[BT] DHT: Bootstrap complete")
+                    logger.info("[BT] DHT: Bootstrap complete")
                 elif hasattr(lt, 'dht_error_alert') and isinstance(alert, lt.dht_error_alert):
                     logger.warning(f"[BT] DHT ERROR: {alert.error}")
 

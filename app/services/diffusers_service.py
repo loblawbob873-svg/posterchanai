@@ -319,10 +319,10 @@ class DiffusersService:
             # Validate device is actually available
             import torch
             if self._device == "cuda" and not torch.cuda.is_available():
-                logger.warning(f"image_gpu_device is set to 'cuda' but CUDA is not available, falling back to auto-detection")
+                logger.warning("image_gpu_device is set to 'cuda' but CUDA is not available, falling back to auto-detection")
                 self._device = detect_device()
             elif self._device == "xpu" and not (hasattr(torch, "xpu") and torch.xpu.is_available()):
-                logger.warning(f"image_gpu_device is set to 'xpu' but XPU is not available, falling back to auto-detection")
+                logger.warning("image_gpu_device is set to 'xpu' but XPU is not available, falling back to auto-detection")
                 self._device = detect_device()
 
     @property
@@ -996,7 +996,7 @@ class DiffusersService:
             )
 
             # Always unload model after generation to release VRAM
-            logger.info(f"Post-generation: unloading to release VRAM")
+            logger.info("Post-generation: unloading to release VRAM")
             self.unload_model()
 
             if img_bytes:

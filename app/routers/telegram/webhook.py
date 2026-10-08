@@ -173,7 +173,7 @@ async def _handle_telegram_update(update: dict, db: Session):
         _configure_telegram(db)
 
         message = update.get("message")
-        logger.warning(f"TELEGRAM WEBHOOK: Received update")
+        logger.warning("TELEGRAM WEBHOOK: Received update")
         
         if message:
             await _handle_message(update, db)

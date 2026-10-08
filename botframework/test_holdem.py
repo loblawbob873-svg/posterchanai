@@ -169,7 +169,7 @@ def test_solo_persistent_table(rounds=200):
             check(sum(st["stacks"].values()) + sum(st["contrib"].values()) == start_total,
                   "chips conserved across hands")
         # table closed because someone reached 0 — the other holds all the chips
-    print(f"  played varied multi-hand tables to a bust, all conserved")
+    print("  played varied multi-hand tables to a bust, all conserved")
 
 
 def test_leave_mechanics():

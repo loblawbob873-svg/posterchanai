@@ -348,7 +348,7 @@ async def drive(url):
                 before = await js("window.__published.length")
                 await js("window.__pick = {url: location.origin + '/img/2.png', type:'image/png', sha:'ab'.repeat(32), enc:true}; document.querySelector('.alb-add').click(); document.querySelector('.alb-add-files').click()")
                 await asyncio.sleep(0.4)
-                if await js(f"window.__published.length") != before:
+                if await js("window.__published.length") != before:
                     problems.append((label, "add-files", "an ENCRYPTED drive file was published as a picture"))
                 await js("window.__pick = {url: location.origin + '/img/3.png', type:'image/png', sha:'cd'.repeat(32), enc:false}; document.querySelector('.alb-add').click(); document.querySelector('.alb-add-files').click()")
                 await asyncio.sleep(1.0)

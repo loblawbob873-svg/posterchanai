@@ -167,7 +167,7 @@ def verify_api_key(
     # alone is settable by any caller — see app/utils/lb_auth.py.
     if request:
         if lb_auth.is_internal(request):
-            logger.debug(f"[OPENAI-API] ✓ Load-balanced request from another posterchanai node - allowing without auth")
+            logger.debug("[OPENAI-API] ✓ Load-balanced request from another posterchanai node - allowing without auth")
             return None  # Authenticated but no specific user
     
     # Check X-API-Key header first (for user API keys)
@@ -184,7 +184,7 @@ def verify_api_key(
     # Check authorization header
     if not authorization:
         # Allow unauthenticated access (for load-balanced requests or open access)
-        logger.debug(f"[OPENAI-API] No authorization header - allowing unauthenticated access")
+        logger.debug("[OPENAI-API] No authorization header - allowing unauthenticated access")
         return None
 
     # Extract token from "Bearer <token>" format
@@ -216,7 +216,7 @@ def verify_api_key(
                         {"last_used_at": now_utc, "id": api_key.id}
                     )
                     db.commit()
-                except Exception as e:
+                except Exception:
                     # If direct SQL update fails, try ORM method as fallback
                     try:
                         db.rollback()
@@ -282,7 +282,7 @@ async def v1_chat_completions(
     # Don't skip just because user-agent contains "httpx" - external clients might use httpx too
     if load_balanced_header == "true":
         skip_lb = True
-        logger.info(f"Detected load-balanced request (header=true), skipping load balancing to prevent loops")
+        logger.info("Detected load-balanced request (header=true), skipping load balancing to prevent loops")
     else:
         logger.debug(f"Request user-agent: {user_agent[:100] if user_agent else 'None'}, load-balanced header: {load_balanced_header}")
     return await _handle_chat_completions(request, db, skip_load_balancer=skip_lb)
@@ -310,7 +310,7 @@ async def api_chat_completions(
     load_balanced_header = http_request.headers.get("x-posterchanai-load-balanced", "").lower()
     skip_lb = load_balanced_header == "true"
     if skip_lb:
-        logger.info(f"Detected load-balanced request (header=true), skipping load balancing")
+        logger.info("Detected load-balanced request (header=true), skipping load balancing")
     return await _handle_chat_completions(request, db, skip_load_balancer=skip_lb)
 
 
@@ -336,7 +336,7 @@ async def root_chat_completions(
     load_balanced_header = http_request.headers.get("x-posterchanai-load-balanced", "").lower()
     skip_lb = load_balanced_header == "true"
     if skip_lb:
-        logger.info(f"Detected load-balanced request (header=true), skipping load balancing")
+        logger.info("Detected load-balanced request (header=true), skipping load balancing")
     return await _handle_chat_completions(request, db, skip_load_balancer=skip_lb)
 
 

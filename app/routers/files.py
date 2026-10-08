@@ -210,7 +210,7 @@ async def search_files(
         if url.startswith(('http://', 'https://')):
             # If same server, skip HTTP proxy and use local storage directly
             if _is_same_server(url):
-                logger.debug(f"[FILES] Storage URL points to same server - using local search")
+                logger.debug("[FILES] Storage URL points to same server - using local search")
                 # Fall through to local search below
             else:
                 try:
@@ -246,7 +246,7 @@ async def search_files(
                             if response:
                                 logger.warning(f"Storage server search failed: {response.status_code}, falling back to local search")
                             else:
-                                logger.warning(f"Storage server search failed: no response, falling back to local search")
+                                logger.warning("Storage server search failed: no response, falling back to local search")
                 except Exception as e:
                     logger.warning(f"Failed to proxy search to storage server: {e}, falling back to local search")
     
@@ -298,7 +298,7 @@ async def search_files(
                                         item_info["thumbnail"] = thumbnail
                                 # If no stored thumbnail exists, don't generate on-the-fly
                                 # This prevents performance issues when browsing files
-                            except Exception as e:
+                            except Exception:
                                 # Silently skip if thumbnail doesn't exist
                                 pass
                         
@@ -341,7 +341,7 @@ async def get_all_images(
         if url.startswith(('http://', 'https://')):
             # If same server, skip HTTP proxy and use local storage directly
             if _is_same_server(url):
-                logger.debug(f"[FILES] Storage URL points to same server - using local all-images")
+                logger.debug("[FILES] Storage URL points to same server - using local all-images")
                 # Fall through to local storage below
             else:
                 logger.info(f"[FILES] Proxying get_all_images to storage server: {url}")
@@ -465,12 +465,12 @@ async def get_all_images(
                                             logger.error(f"[FILES] Last image: {last_name} (ts={last_ts}, date={datetime.fromtimestamp(last_ts).isoformat() if last_ts > 0 else 'N/A'})")
                                             # Fix by reversing
                                             valid_images.reverse()
-                                            logger.warning(f"[FILES] Fixed by reversing the list")
+                                            logger.warning("[FILES] Fixed by reversing the list")
                                             # Verify fix
                                             new_first_ts = float(valid_images[0].get('modified', 0) or 0)
                                             new_last_ts = float(valid_images[-1].get('modified', 0) or 0)
                                             if new_first_ts < new_last_ts:
-                                                logger.error(f"[FILES] ❌ REVERSE FIX FAILED! Still backwards after reverse!")
+                                                logger.error("[FILES] ❌ REVERSE FIX FAILED! Still backwards after reverse!")
                                             else:
                                                 logger.info(f"[FILES] ✓ Sort fixed: New first={new_first_ts} ({datetime.fromtimestamp(new_first_ts).isoformat() if new_first_ts > 0 else 'N/A'}), New last={new_last_ts} ({datetime.fromtimestamp(new_last_ts).isoformat() if new_last_ts > 0 else 'N/A'})")
                                         else:
@@ -496,7 +496,7 @@ async def get_all_images(
                                             date_str = datetime.fromtimestamp(ts).isoformat() if ts > 0 else 'N/A'
                                             logger.debug(f"[FILES] Image #{i+1}: {img.get('name', 'unknown')} - ts={ts}, date={date_str}")
                                     else:
-                                        logger.warning(f"[FILES] Proxy: Received 0 valid images after filtering")
+                                        logger.warning("[FILES] Proxy: Received 0 valid images after filtering")
                                 
                                 # Test serialization before returning
                                 try:
@@ -562,7 +562,7 @@ async def get_all_images(
                             logger.error(f"[FILES] Storage server returned {response.status_code}: {error_detail}")
                             raise HTTPException(status_code=response.status_code, detail=error_detail)
                 except httpx.TimeoutException:
-                    logger.error(f"[FILES] Timeout proxying get_all_images to storage server")
+                    logger.error("[FILES] Timeout proxying get_all_images to storage server")
                     raise HTTPException(status_code=504, detail="Storage server timeout")
                 except httpx.ConnectError as e:
                     logger.error(f"[FILES] Cannot connect to storage server: {e}")
@@ -933,12 +933,12 @@ async def get_all_images(
                 logger.error(f"[FILES] Last image: {last_name} (ts={last_ts}, date={datetime.fromtimestamp(last_ts).isoformat() if last_ts > 0 else 'N/A'})")
                 # Fix it by reversing
                 images.reverse()
-                logger.warning(f"[FILES] Fixed by reversing the list")
+                logger.warning("[FILES] Fixed by reversing the list")
                 # Verify fix worked
                 new_first_ts = float(images[0].get('modified', 0) or 0)
                 new_last_ts = float(images[-1].get('modified', 0) or 0)
                 if new_first_ts < new_last_ts:
-                    logger.error(f"[FILES] ❌ REVERSE FIX FAILED! Still backwards after reverse!")
+                    logger.error("[FILES] ❌ REVERSE FIX FAILED! Still backwards after reverse!")
                 else:
                     logger.info(f"[FILES] ✓ Reverse fix verified: First={new_first_ts} ({datetime.fromtimestamp(new_first_ts).isoformat() if new_first_ts > 0 else 'N/A'}), Last={new_last_ts} ({datetime.fromtimestamp(new_last_ts).isoformat() if new_last_ts > 0 else 'N/A'})")
             else:
@@ -964,8 +964,8 @@ async def get_all_images(
                 age_days = (current_time - newest_ts) / 86400
                 if age_days > 365:
                     logger.warning(f"[FILES] ⚠️ WARNING: Newest photo is {age_days:.0f} days old ({newest_date.date() if newest_date else 'N/A'})")
-                    logger.warning(f"[FILES] This suggests EXIF restoration may not have run, or files don't have EXIF dates")
-                    logger.warning(f"[FILES] Run /api/admin/storage/rescan to restore timestamps from EXIF metadata")
+                    logger.warning("[FILES] This suggests EXIF restoration may not have run, or files don't have EXIF dates")
+                    logger.warning("[FILES] Run /api/admin/storage/rescan to restore timestamps from EXIF metadata")
             
             logger.info(f"[FILES] Sort verification: Newest={newest_date}, Oldest in first 50={oldest_in_first_50}, Total images={len(images)}")
         
@@ -998,7 +998,7 @@ async def get_all_images(
                 images.sort(key=sort_key, reverse=True)  # Re-sort with reverse=True
                 logger.warning("[FILES] Re-sorted array with reverse=True (newest first)")
         else:
-            logger.info(f"[FILES] ✓ Sort verified: First 50 images in correct order (newest first)")
+            logger.info("[FILES] ✓ Sort verified: First 50 images in correct order (newest first)")
         
         # Log timestamp range for debugging
         if images:
@@ -1014,7 +1014,7 @@ async def get_all_images(
         
         # Debug: log statistics
         total_scanned = len(images) + skipped_count
-        logger.info(f"[FILES] Image scan complete:")
+        logger.info("[FILES] Image scan complete:")
         logger.info(f"  - Total files scanned: {total_scanned}")
         logger.info(f"  - Valid images/videos: {len(images)}")
         logger.info(f"  - Files skipped: {skipped_count}")
@@ -1024,13 +1024,13 @@ async def get_all_images(
         
         # Log sample of oldest and newest files for debugging
         if images:
-            logger.info(f"[FILES] Sample files (first 5 - should be newest):")
+            logger.info("[FILES] Sample files (first 5 - should be newest):")
             for i, img in enumerate(images[:5]):
                 ts = img.get('modified', 0)
                 date_str = datetime.fromtimestamp(ts).strftime('%Y-%m-%d') if ts > 0 else 'N/A'
                 logger.info(f"    {i+1}. {img.get('name', 'unknown')} - {date_str} (ts={ts})")
             if len(images) > 5:
-                logger.info(f"[FILES] Sample files (last 5 - should be oldest):")
+                logger.info("[FILES] Sample files (last 5 - should be oldest):")
                 for i, img in enumerate(images[-5:]):
                     ts = img.get('modified', 0)
                     date_str = datetime.fromtimestamp(ts).strftime('%Y-%m-%d') if ts > 0 else 'N/A'
@@ -1069,7 +1069,7 @@ async def get_all_images(
                 logger.error(f"[FILES] ❌ Found {len(sorting_errors)} sorting errors in first 200 images!")
                 logger.error(f"[FILES] First 5 errors: {sorting_errors[:5]}")
                 # Log sample of timestamps to debug
-                logger.error(f"[FILES] Sample timestamps from first 20 files:")
+                logger.error("[FILES] Sample timestamps from first 20 files:")
                 for i, img in enumerate(images[:20]):
                     logger.error(f"  [{i}] {img.get('name')}: modified={float(img.get('modified', 0) or 0)}")
         
@@ -1214,7 +1214,7 @@ async def list_files(
         if url.startswith(('http://', 'https://')):
             # If same server, skip HTTP proxy and use local filesystem directly
             if _is_same_server(url):
-                logger.debug(f"[FILES] Storage URL points to same server - using local filesystem")
+                logger.debug("[FILES] Storage URL points to same server - using local filesystem")
                 # Fall through to local filesystem below
             else:
                 # Check if this is an external storage path (don't proxy external storage)
@@ -1375,7 +1375,7 @@ async def list_files(
                                         item_info["thumbnail"] = thumbnail
                                 # If no stored thumbnail exists, don't generate on-the-fly
                                 # This prevents performance issues when browsing files
-                            except Exception as e:
+                            except Exception:
                                 # Silently skip if thumbnail doesn't exist
                                 pass
                         
@@ -1488,7 +1488,7 @@ async def list_files(
                                 # If no stored thumbnail exists, don't generate on-the-fly
                                 # This prevents performance issues when browsing files
                             # For external storage, skip thumbnails (they're not stored)
-                        except Exception as e:
+                        except Exception:
                             # Silently skip if thumbnail doesn't exist
                             pass
                     
@@ -2409,7 +2409,7 @@ async def delete_file(
             logger.info(f"[FILES] Proxying delete to storage server: {url}")
             # Proxy to storage server - NO FALLBACK
             result = await _proxy_delete_file(url, current_user.username, file_path, db)
-            logger.info(f"[FILES] Successfully proxied delete to storage server")
+            logger.info("[FILES] Successfully proxied delete to storage server")
             return result
         else:
             raise HTTPException(status_code=500, detail="Invalid storage_server_url configuration")
@@ -2437,7 +2437,7 @@ async def move_files(
             logger.info(f"[FILES] Proxying move_files to storage server: {url}")
             # Proxy to storage server - NO FALLBACK
             result = await _proxy_move_files(url, current_user.username, request.file_paths, request.destination, db)
-            logger.info(f"[FILES] Successfully proxied move_files to storage server")
+            logger.info("[FILES] Successfully proxied move_files to storage server")
             return result
         else:
             raise HTTPException(status_code=500, detail="Invalid storage_server_url configuration")
@@ -2466,7 +2466,7 @@ async def upload_file(
             logger.info(f"[FILES] Proxying upload to storage server: {url}")
             # Proxy to storage server (pass content directly to avoid re-reading)
             result = await _proxy_upload_file(url, current_user.username, filename, content, content_type, path, db)
-            logger.info(f"[FILES] Successfully proxied upload to storage server")
+            logger.info("[FILES] Successfully proxied upload to storage server")
             return result
         else:
             raise HTTPException(status_code=500, detail="Invalid storage_server_url configuration")
@@ -2768,7 +2768,7 @@ async def create_directory(
             logger.info(f"[FILES] Proxying mkdir to storage server: {url}")
             # Proxy to storage server - NO FALLBACK
             result = await _proxy_mkdir(url, current_user.username, path, db)
-            logger.info(f"[FILES] Successfully proxied mkdir to storage server")
+            logger.info("[FILES] Successfully proxied mkdir to storage server")
             return result
         else:
             raise HTTPException(status_code=500, detail="Invalid storage_server_url configuration")

@@ -1080,7 +1080,7 @@ def images_audio_to_video(images: List[Tuple[str, bytes]], audio_path: str,
                 [ffmpeg] + pre + img_inputs
                 + (["-i", audio_path] if audio_path else [])
                 + ["-filter_complex", fc, "-map", "[vout]"]
-                + ([f"-map", f"{n}:a", "-c:a", "aac", "-b:a", VIDEO_AUDIO_BITRATE, "-shortest"]
+                + (["-map", f"{n}:a", "-c:a", "aac", "-b:a", VIDEO_AUDIO_BITRATE, "-shortest"]
                    if audio_path else ["-an"])
                 + venc + ["-pix_fmt", "yuv420p", "-r", "25", "-movflags", "+faststart", "-y", out_path]
             )

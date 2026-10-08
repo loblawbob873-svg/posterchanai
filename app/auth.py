@@ -131,7 +131,7 @@ def get_current_user(
                             {"last_used_at": now_utc, "id": api_key.id}
                         )
                         db.commit()
-                    except Exception as e:
+                    except Exception:
                         # If direct SQL update fails, try ORM method as fallback
                         try:
                             db.rollback()

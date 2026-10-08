@@ -339,7 +339,7 @@ def _post(state, gameid, parent_id, word=None, gameover=False, result=""):
     # On game over, reveal the whole word on the board; otherwise show the current masked display.
     disp = _display(word, set(word)) if (word and gameover) else (_display(word, guessed) if word else state.get("display", ""))
     title = "GAME OVER" if gameover else f"{state['guesser_name']} — guess a letter"
-    sub = result if gameover else f"Check your DMs — I've sent you the word to guess."
+    sub = result if gameover else "Check your DMs — I've sent you the word to guess."
     png = hangman_render.render(disp, state.get("wrong_letters", []), state.get("wrong", 0),
                                 title=title, subtitle=sub)
     if gameover:
@@ -358,8 +358,8 @@ def _post(state, gameid, parent_id, word=None, gameover=False, result=""):
         if guesser_is_sender:
             body = (f"🎯 #hangman — {state['guesser_name']} is guessing a {state.get('wordlen','?')}-letter word!\n"
                     + _clue +
-                    f"📩 Check your DMs — I've sent you the word to guess (a letter at a time). "
-                    f"The result gets posted here. Cheer them on! 🙌")
+                    "📩 Check your DMs — I've sent you the word to guess (a letter at a time). "
+                    "The result gets posted here. Cheer them on! 🙌")
         else:
             whose = (state.get("setter_name") + "'s") if state.get("setter") else "the bot's"
             body = (f"🎯 #hangman — {state['guesser_name']} has been challenged to guess {whose} word "

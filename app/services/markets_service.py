@@ -223,8 +223,8 @@ async def _gen_coin(sym: str, name: str, price: dict = None) -> dict:
                    if price_line else
                    "No live price was available, so say so in the first sentence and do not quote a price "
                    "from the articles — they may be months out of date. ")
-                + f"Then give the most important recent development from the results. Use ONLY facts present "
-                  f"above. No preamble, no markdown headers."
+                + "Then give the most important recent development from the results. Use ONLY facts present "
+                  "above. No preamble, no markdown headers."
             )
             try:
                 chat = ChatService(db, user=None)

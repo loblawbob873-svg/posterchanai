@@ -114,7 +114,7 @@ def transcode_video(
                     new_height = new_height - (new_height % 2)
                     scale_filter = f',scale={new_width}:{new_height}'
             except (ValueError, IndexError):
-                logger.warning(f"Could not parse video dimensions, using original size")
+                logger.warning("Could not parse video dimensions, using original size")
         
         # Build ffmpeg command
         ffmpeg_cmd = [

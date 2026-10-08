@@ -26,8 +26,8 @@ PROMPT = _RAW_PROMPT + " /no_think" if _RAW_PROMPT and not _is_personality else 
 # Whether a personality is loaded, never WHAT it is — the journal is not the place for it.
 print(f"[AI CLIENT] PROMPT loaded: {len(PROMPT) if PROMPT else 0} chars")
 if not PROMPT or len(PROMPT.strip()) < 10:
-    print(f"[AI CLIENT] WARNING: PROMPT is empty or too short! This will cause the bot to use default behavior.")
-    print(f"[AI CLIENT] Check that bots_config.py has 'prompt' set and botctl.py is setting PROMPT env var.")
+    print("[AI CLIENT] WARNING: PROMPT is empty or too short! This will cause the bot to use default behavior.")
+    print("[AI CLIENT] Check that bots_config.py has 'prompt' set and botctl.py is setting PROMPT env var.")
 from ai.response_cleaner import clean_ai_response
 
 logger = logging.getLogger(__name__)
@@ -109,7 +109,7 @@ def _acquire_ai_slot():
         lock_file = open(lock_path, 'w')
         fcntl.flock(lock_file.fileno(), fcntl.LOCK_EX)
         _current_ai_lock = lock_file
-        print(f"[AI] Acquired slot after wait")
+        print("[AI] Acquired slot after wait")
     except Exception as e:
         if lock_file:
             try:
@@ -198,11 +198,11 @@ def _generate_reply_inner(user_content, previous_content, ping, thread_history, 
         system_prompt = PROMPT
         if not system_prompt or len(system_prompt.strip()) < 10:
             print(f"[ERROR] PROMPT is empty or too short ({len(system_prompt) if system_prompt else 0} chars)!")
-            print(f"[ERROR] This means the bot's personality is not set. The bot will use default/generic behavior.")
-            print(f"[ERROR] Check that:")
-            print(f"[ERROR]   1. bots_config.py has 'prompt' set for this bot")
-            print(f"[ERROR]   2. botctl.py is setting PROMPT env var (check botctl.py build_env function)")
-            print(f"[ERROR]   3. The bot process was restarted after config changes")
+            print("[ERROR] This means the bot's personality is not set. The bot will use default/generic behavior.")
+            print("[ERROR] Check that:")
+            print("[ERROR]   1. bots_config.py has 'prompt' set for this bot")
+            print("[ERROR]   2. botctl.py is setting PROMPT env var (check botctl.py build_env function)")
+            print("[ERROR]   3. The bot process was restarted after config changes")
             print(f"[ERROR] Current PROMPT value is {len(system_prompt) if system_prompt else 0} chars")
             # Don't use empty prompt - this will cause issues
             if not system_prompt:
@@ -400,7 +400,7 @@ def _generate_reply_inner(user_content, previous_content, ping, thread_history, 
                     print(f"✓ Successfully generated response (preview): {cleaned[:200]}...\n")
                     return cleaned
                 else:
-                    print(f"⚠ Response cleaning returned None (likely error message detected), NOT posting response")
+                    print("⚠ Response cleaning returned None (likely error message detected), NOT posting response")
                     # Don't return raw content if cleaning failed - this prevents posting error messages
                     # The bot will skip posting when generate_reply returns None
                     return None

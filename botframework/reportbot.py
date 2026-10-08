@@ -181,7 +181,7 @@ def generate_report_message(report_details):
         prompt = REPORT_PROMPT.format(report_details=report_details)
         prompt += " /no_think"
 
-        logging.info(f"Generating AI report message")
+        logging.info("Generating AI report message")
         ai_message = generate_reply(prompt)
 
         if ai_message and "None" not in ai_message and len(ai_message) > 10:

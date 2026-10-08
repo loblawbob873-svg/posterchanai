@@ -333,7 +333,7 @@ def create_avatar_video(image_bytes: bytes, audio_bytes: bytes, text: str = None
                 return None
             # Use the PNG for video creation
             img_path_for_video = png_path
-            print(f"[TTS] Converted GIF to PNG for video creation")
+            print("[TTS] Converted GIF to PNG for video creation")
         else:
             img_path_for_video = img_path
 

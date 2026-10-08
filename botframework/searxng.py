@@ -405,7 +405,7 @@ def search_and_download_images(query, max_images=4):
     results = search_images(query, limit=max_images * 2)  # Get extra in case some fail
 
     if not results:
-        print(f"[SearXNG] No search results found")
+        print("[SearXNG] No search results found")
         return f'No images found for "{query}".', []
 
     print(f"[SearXNG] Found {len(results)} image results, downloading up to {max_images}...")

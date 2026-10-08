@@ -251,7 +251,7 @@ def welcome_pleroma(print_only=False):
             audio_bytes = None
             video_bytes = None
             if AUTO_NARRATE:
-                logging.info(f"[TTS] Generating video for welcome message...")
+                logging.info("[TTS] Generating video for welcome message...")
                 avatar_url = get_bot_avatar_url()
                 video_bytes = generate_narration_video(message, avatar_url)
                 if video_bytes:

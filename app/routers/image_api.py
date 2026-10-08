@@ -42,7 +42,7 @@ async def get_image_auth(
     # A peer node, proven by the shared secret once `lb_shared_secret` is set. The bare header
     # alone is settable by any caller — see app/utils/lb_auth.py.
     if lb_auth.is_internal(request):
-        logger.debug(f"[IMAGE-API] ✓ Load-balanced request from another posterchanai node - allowing without auth")
+        logger.debug("[IMAGE-API] ✓ Load-balanced request from another posterchanai node - allowing without auth")
         return True
     
     # Check API key first (for external integrations and user API keys)
@@ -87,7 +87,7 @@ async def get_image_auth(
         pass
 
     # Allow unauthenticated access (for load-balanced requests or open access)
-    logger.debug(f"[IMAGE-API] Allowing unauthenticated access")
+    logger.debug("[IMAGE-API] Allowing unauthenticated access")
     return True
 
 
@@ -153,10 +153,10 @@ async def generate_image(
         )
 
         if result:
-            logger.info(f"[IMAGE-API] Image generated successfully")
+            logger.info("[IMAGE-API] Image generated successfully")
             return ImageResponse(image=result, pose=True if request.pose_image else None)
         else:
-            logger.error(f"[IMAGE-API] Image generation failed (no result)")
+            logger.error("[IMAGE-API] Image generation failed (no result)")
             # Check if it's a load balancing issue
             settings = settings_store.all_settings()
             server_urls = settings.get("chat_server_urls", "")

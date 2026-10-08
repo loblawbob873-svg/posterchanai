@@ -139,7 +139,7 @@ class _SearchMixin:
                             "query": query
                         }
                     else:
-                        logger.warning(f"Storage server search failed, falling back to local search")
+                        logger.warning("Storage server search failed, falling back to local search")
             except Exception as e:
                 logger.warning(f"Error searching remote files: {e}, falling back to local search")
 

@@ -507,7 +507,7 @@ class _TorrentsMixin:
                 return {"type": "text", "content": formatted}
             except asyncio.TimeoutError:
                 logger.error(f"Torrent search timed out ({len(query or '')}-char query)")
-                return {"type": "text", "content": f"Search timed out. The torrent site may be slow or unavailable."}
+                return {"type": "text", "content": "Search timed out. The torrent site may be slow or unavailable."}
             except ValueError as e:
                 msg = str(e)
                 suffix = "\n\nConfigure proxy in Admin → Network → HTTP Proxy (outbound)" if "requires http proxy" in msg.lower() else ""

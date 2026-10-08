@@ -662,7 +662,7 @@ class LlamaService:
             # Validate context size - warn if very large
             if self.num_ctx > 8192:
                 logger.warning(f"  WARNING: Large context size ({self.num_ctx}) may cause memory issues")
-                logger.warning(f"  Consider reducing ollama_num_ctx to 4096 or 2048 if you encounter 'Failed to create llama_context' errors")
+                logger.warning("  Consider reducing ollama_num_ctx to 4096 or 2048 if you encounter 'Failed to create llama_context' errors")
             
             # Check available GPU memory if using GPU
             if gpu_layers > 0:
@@ -680,7 +680,7 @@ class LlamaService:
                         if estimated_kv_cache_mb > free_memory_mb * 0.5:
                             logger.warning(f"  WARNING: Context size {self.num_ctx} may require ~{estimated_kv_cache_mb} MB for KV cache")
                             logger.warning(f"  Available: {free_memory_mb} MB (model weights need ~8-9GB for 14B Q4_K_M)")
-                            logger.warning(f"  Consider reducing context size to 4096-8192 for 12GB GPUs")
+                            logger.warning("  Consider reducing context size to 4096-8192 for 12GB GPUs")
                 except Exception:
                     pass  # nvidia-smi not available or failed, skip check
 
@@ -703,7 +703,7 @@ class LlamaService:
             # 14B Q4_K_M is ~8-9GB, which with system overhead might not fit in 12GB GPU
             if gpu_layers == -1 and file_size > 8_000_000_000:  # > 8GB model file
                 logger.warning(f"  WARNING: Large model ({file_size / 1e9:.1f}GB) with all GPU layers (-1) may not fit in VRAM")
-                logger.warning(f"  Consider setting llm_gpu_layers to 20-30 for 12GB GPUs")
+                logger.warning("  Consider setting llm_gpu_layers to 20-30 for 12GB GPUs")
             
             for attempt_ctx in context_sizes_to_try:
                 try:
@@ -762,7 +762,7 @@ class LlamaService:
                         last_error = ve
                         if attempt_ctx == context_sizes_to_try[-1]:
                             # Last attempt failed
-                            logger.error(f"Failed to create llama context with all attempted sizes:")
+                            logger.error("Failed to create llama context with all attempted sizes:")
                             logger.error(f"  Tried context sizes: {context_sizes_to_try}")
                             logger.error(f"  GPU layers: {gpu_layers}")
                             logger.error(f"  Model: {resolved_path}")
@@ -809,8 +809,8 @@ class LlamaService:
                         logger.error("  3. Model file corrupted or incompatible")
                         logger.error("Try:")
                         logger.error(f"  - Reducing GPU layers: Set llm_gpu_layers to 20-30 (currently: {gpu_layers})")
-                        logger.error(f"  - Using CPU mode: Set llm_cpu_mode to true")
-                        logger.error(f"  - Check GPU memory: nvidia-smi")
+                        logger.error("  - Using CPU mode: Set llm_cpu_mode to true")
+                        logger.error("  - Check GPU memory: nvidia-smi")
                         logger.error(f"  - Verify model file: ls -lh {resolved_path}")
                         raise RuntimeError(f"Failed to load model after trying all context sizes. Last error: {error_type}: {error_msg}. Try reducing GPU layers or using CPU mode.")
                     elif is_memory_error:
@@ -873,12 +873,12 @@ class LlamaService:
                 logger.error(f"  Model path: {self.model_path}")
                 if _os.path.exists(self.model_path):
                     stat = _os.stat(self.model_path)
-                    logger.error(f"  File exists: Yes")
+                    logger.error("  File exists: Yes")
                     logger.error(f"  File size: {stat.st_size:,} bytes ({stat.st_size / (1024**3):.2f} GB)")
                     logger.error(f"  File readable: {_os.access(self.model_path, _os.R_OK)}")
                     logger.error(f"  File permissions: {oct(stat.st_mode)}")
                 else:
-                    logger.error(f"  File exists: No")
+                    logger.error("  File exists: No")
                 logger.error("Possible causes:")
                 logger.error("  1. Model file is corrupted or incomplete")
                 logger.error("  2. Insufficient GPU/system memory")

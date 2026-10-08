@@ -70,7 +70,7 @@ def get_db():
     db = SessionLocal()
     try:
         yield db
-    except Exception as e:
+    except Exception:
         # Attempt rollback for any exception, but don't fail if database is already closed
         try:
             # Check if connection is still valid before rollback
