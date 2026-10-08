@@ -217,8 +217,11 @@ async def _msg_command(_make_tg_node_notify, arg, attachments, chat_id, command,
 
                         if not arg_sub:
                             # Show category navigation menu without scraping all categories
-                            result = {"type": "text", "content": "🧲 **Torrents** — choose a category:"}
-                            reply_markup = _torrent_nav_keyboard()
+                            # The keyboard RIDES IN THE RESULT: since this branch was split out of messages.py
+                            # (2026-06-16) a local `reply_markup` here reached nobody, so `torrents` sent "choose a
+                            # category" with no categories and results with no 📥 buttons.
+                            result = {"type": "text", "content": "🧲 **Torrents** — choose a category:",
+                                      "reply_markup": _torrent_nav_keyboard()}
                         elif arg_sub in ("movies", "tv", "anime", "music", "search", "s"):
                             # Execute to populate the cache, then send individual result messages
                             result = await command_service.execute_command(command, arg)
@@ -236,7 +239,7 @@ async def _msg_command(_make_tg_node_notify, arg, attachments, chat_id, command,
                             if arg_sub in ("list", "ls"):
                                 await _send_active_torrents(chat_id, content)
                                 return {"ok": True}
-                            reply_markup = _build_torrent_keyboard(arg_sub, content, user_id)
+                            result["reply_markup"] = _build_torrent_keyboard(arg_sub, content, user_id)
                             # Clean non-functional links from torrent result text
                             result["content"] = _strip_cmd_links(content)
                     elif command == "nyaa":

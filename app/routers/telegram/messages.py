@@ -985,6 +985,7 @@ async def _handle_message(update, db):
                 if not (isinstance(_r, dict) and "type" in _r):
                     return _r if isinstance(_r, dict) else {"ok": True}
                 result = _r
+                reply_markup = result.pop("reply_markup", None)
             else:
                 # Regular chat - check for images and do OCR or pass to vision model
                 _r = await _msg_chat(attachments, chat_id, chat_service, command_service, db, doc_text, has_images, is_forwarded, message, reply_text, text, user_obj)
