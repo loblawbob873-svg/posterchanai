@@ -15,6 +15,8 @@ window.pcPower={status:async()=>({profiles:[],canHibernate:false}),
 @pytest.mark.parametrize('action',['reboot','poweroff'])
 def test_native_power_confirmation_keeps_owner_alive_and_dispatches_once(action):
     async def check(b):
+        # The shell module loads after the page; called at once it was a ReferenceError 1 run in 6 under load.
+        await b.until("!!window.PCOSShell && !!document.querySelector('#os-popup-host')")
         await b.js("PCOSShell.openControl('power',document.querySelector('#os-popup-host'))")
         await b.until("!!document.querySelector('[data-act=\""+action+"\"]')")
         await b.js("document.querySelector('[data-act=\""+action+"\"]').click()")
@@ -37,6 +39,8 @@ def test_native_power_confirmation_keeps_owner_alive_and_dispatches_once(action)
 
 def test_native_power_dispatch_failure_stays_visible_and_retryable():
     async def check(b):
+        # The shell module loads after the page; called at once it was a ReferenceError 1 run in 6 under load.
+        await b.until("!!window.PCOSShell && !!document.querySelector('#os-popup-host')")
         await b.js("PCOSShell.openControl('power',document.querySelector('#os-popup-host'));__powerReject=true")
         await b.until("!!document.querySelector('[data-act=reboot]')")
         await b.js("document.querySelector('[data-act=reboot]').click()")
