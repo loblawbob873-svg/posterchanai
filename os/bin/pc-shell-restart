@@ -9,6 +9,21 @@
 # always replace the process. The launcher serializes startup, removes dead singleton locks, and
 # proves that the replacement surfaces mapped.
 set -u
+# CLOSE EVERYTHING THE CALLER LEFT OPEN, before anything else runs. The desktop starts this script itself
+# after an update, and Chromium does not mark its descriptors close-on-exec -- so this script, and through
+# `exec` the launcher and the NEW desktop, inherited the old desktop's whole table. Measured on .102 after
+# one update restart: the launcher held 486 GPU buffers, 556 deleted files, 206 sockets and the old
+# profile's database files for the life of the session, and among those sockets the old remote-debugging
+# LISTENER -- so the new desktop could not bind its own and the port accepted nothing. Stdio stays; the
+# rest belonged to a process that is about to be gone. /bin/sh is bash here; a shell that cannot spell a
+# two-digit descriptor skips them rather than failing the restart.
+for _fd in /proc/$$/fd/*; do
+	_fd=${_fd##*/}
+	case "$_fd" in ''|*[!0-9]*|0|1|2|255) continue ;; esac   # 255: bash's own handle on this script
+	if [ "$_fd" -gt 9 ] && [ -z "${BASH_VERSION:-}" ]; then continue; fi
+	eval "exec $_fd>&-" 2>/dev/null || :
+done
+unset _fd
 # The launcher's path, overridable so this script can be RUN by a test rather than read by one.
 # The default is absolute on purpose: this is driven from a key binding, which is not guaranteed a
 # useful PATH.
