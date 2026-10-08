@@ -7790,7 +7790,7 @@
           <div class="wgt-xmr-bal"><strong>—</strong><span>XMR balance</span><small>— unlocked</small></div>
           <div class="wgt-xmr-health"><span data-rpc>RPC · checking</span><span data-node>Node · checking</span><span data-at>not refreshed</span></div>
           <div class="wgt-xmr-warn" hidden></div><div class="wgt-xmr-actions">
-            <button data-xmr="open">Open Wallet</button><button data-xmr="receive">Receive</button><button data-xmr="send">Send</button><button data-xmr="refresh" aria-label="Refresh wallet">↻</button></div></div>`;
+            <button data-xmr="open">Open Wallet</button><button data-xmr="receive">Receive</button><button data-xmr="send">Send</button><button data-xmr="refresh" aria-label="Refresh wallet"><svg class="ic" aria-hidden="true"><use href="#i-refresh"></use></svg></button></div></div>`;
         el.onclick=ev=>{
           const b=ev.target.closest&&ev.target.closest('[data-xmr]');if(!b)return;ev.stopPropagation();
           const action=b.dataset.xmr;
@@ -7997,10 +7997,10 @@
             <button class="wgt-b wgt-bsh" data-m="shuffle" aria-label="Shuffle everything"
                     title="Shuffle your whole library">
               <svg class="ic" aria-hidden="true"><use href="#i-shuffle"></use></svg></button>
-            <button class="wgt-b" data-m="prev" aria-label="Previous">⏮</button>
-            <button class="wgt-b wgt-bmain" data-m="toggle" aria-label="Play or pause">▶</button>
-            <button class="wgt-b" data-m="next" aria-label="Next">⏭</button>
-            <button class="wgt-b" data-m="open" aria-label="Open Music">☰</button>
+            <button class="wgt-b" data-m="prev" aria-label="Previous"><svg class="ic" aria-hidden="true"><use href="#i-prev"></use></svg></button>
+            <button class="wgt-b wgt-bmain" data-m="toggle" aria-label="Play or pause"><svg class="ic" aria-hidden="true"><use href="#i-play"></use></svg></button>
+            <button class="wgt-b" data-m="next" aria-label="Next"><svg class="ic" aria-hidden="true"><use href="#i-next"></use></svg></button>
+            <button class="wgt-b" data-m="open" aria-label="Open Music"><svg class="ic" aria-hidden="true"><use href="#i-menu"></use></svg></button>
           </div></div>`;
         // Press anywhere on the bar to move: the widget reports a FRACTION, since it knows where you
         // pressed and not how long the track is.
@@ -8083,7 +8083,11 @@
         if(fill) fill.style.width = (dur > 0 ? Math.max(0, Math.min(100, at / dur * 100)) : 0) + '%';
         if(t0) t0.textContent = _mmss(at);
         if(t1) t1.textContent = dur > 0 ? _mmss(dur) : '--:--';
-        if(main) main.textContent = (now && now.playing) ? '⏸' : '▶';
+        /* ICONS, NOT ⏸/▶ CHARACTERS: those drew as colour-emoji tiles on one machine and as empty boxes on
+         * another, which is what made the transport look broken. Swapped only on a change -- this runs every second. */
+        const _mp = !!(now && now.playing);
+        if(main && el._wgtPlaying !== _mp){ el._wgtPlaying = _mp;
+          main.innerHTML = '<svg class="ic" aria-hidden="true"><use href="#i-' + (_mp ? 'pause' : 'play') + '"></use></svg>'; }
         // The equaliser bars dance only while a track is actually playing — the same
         // 'obviously playing from across the room' cue the profile player uses. Driven by
         // the player's state, not a timer, so a paused/stopped widget is quiet.
