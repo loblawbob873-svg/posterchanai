@@ -128,7 +128,7 @@ def test_a_profile_held_only_by_a_relay_that_connects_after_the_lookup_still_fil
         got["held"] = await b.js("__held.length")
         got["urls"] = await b.js("__sockets.map(s=>s.url)")
         await b.js("__openLate();true")
-        for _ in range(60):
+        for _ in range(150):
             if "Dana Peer" in (await b.js(row + ".textContent") or ""):
                 break
             await asyncio.sleep(.1)

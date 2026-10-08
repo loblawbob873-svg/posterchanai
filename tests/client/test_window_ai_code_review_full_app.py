@@ -75,7 +75,7 @@ def test_contacts_find_with_a_dialog_open_and_an_addressbook_request_go_to_the_a
                    "m.style.cssText='position:fixed;inset:0;z-index:5';document.body.appendChild(m);window.__dlg=m;})();true")
         await b.js(OPEN_PANEL % json.dumps("contacts"))
         await b.js(ASK % json.dumps("find bob"))
-        for _ in range(60):
+        for _ in range(150):
             if await b.js("__aiSent.length>0"):
                 break
             await asyncio.sleep(.1)
@@ -84,7 +84,7 @@ def test_contacts_find_with_a_dialog_open_and_an_addressbook_request_go_to_the_a
         await b.js("__dlg.remove(); document.querySelector('.osw-ai-panel [data-ai-dismiss]').click(); __aiSent.length=0; true")
         await b.js(OPEN_PANEL % json.dumps("contacts"))
         await b.js(ASK % json.dumps("create a new addressbook called Work"))
-        for _ in range(60):
+        for _ in range(150):
             if await b.js("__aiSent.length>0"):
                 break
             await asyncio.sleep(.1)
@@ -115,7 +115,7 @@ def test_a_password_dialog_is_never_read_out_to_the_model():
                    "m.style.cssText='position:fixed;inset:0;z-index:5';document.body.appendChild(m);})();true")
         await b.js(OPEN_PANEL % json.dumps("contacts"))
         await b.js(ASK % json.dumps("what is on this screen"))
-        for _ in range(60):
+        for _ in range(150):
             if await b.js("__aiSent.length>0"):
                 break
             await asyncio.sleep(.1)

@@ -6223,7 +6223,11 @@
   // (fediverse-bridged names have :shortcodes:). innerHTML only when there's actually an emoji to render
   // (a real shortcode + a known map), else plain textContent — cheaper and avoids clobbering emoji with
   // a later plain re-decorate. This is why the earlier `nm.textContent=name` wiped the rendered emoji.
-  function _decorName(nm, pk=nm.dataset.prof){ if(!pk) return; const p=Store.profile(pk); if(!p) return;
+  /* ONE ARGUMENT, ALWAYS: this is handed straight to forEach, which passes the INDEX second -- a default
+     `pk` parameter here read every feed name by its list position and left them all as npubs. A row that
+     carries its pubkey elsewhere goes through _decorNameFor. */
+  function _decorName(nm){ _decorNameFor(nm, nm.dataset.prof); }
+  function _decorNameFor(nm, pk){ if(!pk) return; const p=Store.profile(pk); if(!p) return;
     const name=p.name||p.display_name||niceNip05(p.nip05); if(!name) return;   // nip05 fallback so a name-less peer isn't stuck on the raw npub
     const em=(Store.profileEmojis&&Store.profileEmojis(pk));
     if(em && /:[a-zA-Z0-9_+\-]+(?:@[a-zA-Z0-9.\-]+)?:/.test(name)){
@@ -6302,7 +6306,7 @@
          person's profile arrived kept the npub until something redrew the whole list -- "I had to
          refresh after login for the nip05 names and profile pics to render". Filled here by the
          row's own pubkey, emoji-aware, and the search key follows the name. */
-      const nm=n.querySelector('.dm-peer-top .name'); if(nm) _decorName(nm, pk);
+      const nm=n.querySelector('.dm-peer-top .name'); if(nm) _decorNameFor(nm, pk);
       const label=p.name||p.display_name||niceNip05(p.nip05); if(label) n.dataset.name=String(label).toLowerCase();
     }});
     // embedded/quoted notes — fill avatar + name + nip05 once the referenced author's profile loads
