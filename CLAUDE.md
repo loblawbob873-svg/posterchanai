@@ -323,20 +323,21 @@ path to fix a symptom you have not first reproduced as a rate.**
 
 `app/services/command_service.py` → `CommandService.COMMANDS` dict + `execute_command()`
 switch. Reused by the web UI websocket (`app/routers/chat.py`) and Telegram.
-**Gotcha:** Telegram does **not** use `parse_command`; it has its own hardcoded command list
-(two identical spots in `app/routers/telegram.py`). A new command must be added **both** to
-`COMMANDS` and to those Telegram lists, or it works in the web UI but falls through to the LLM
-on Telegram.
+**Gotcha:** Telegram does **not** use `parse_command`; it matches words against its own lists in
+`app/routers/telegram/messages.py`. **The bot is deliberately small (2026-10-08): AI chat, generation,
+every notification and alert, the admin tools, reminders and pins** — everything else lives in
+PosterChan. So a new command goes in ONE of two places: `_TG_BASE_COMMANDS` if the bot should run it,
+or `_TG_MOVED` if it is web-only. Never neither: an unlisted word falls through to the chat model,
+which invents an answer. `_TG_MOVED` words (and their old buttons, `callbacks._MOVED_PREFIXES`) are
+answered with `_TG_MOVED_TEXT` before any download or OCR. `tests/test_telegram_bot_scope.py`.
 
 **Gotcha (commands that consume uploads):** whether a command is handed the upload's raw BYTES is
 `CommandService.wants_attachments()` — `MEDIA_TOOL_COMMANDS` (`compress`/`clip`/`convert`/
-`translate`/…) plus the effect sets, aliases resolved. Both chat paths and Telegram
-(`_TG_EFFECTS`/`_TG_RAW_MEDIA_COMMANDS` in `app/routers/telegram/messages.py`) derive from it, so a
-NEW media tool goes in `MEDIA_TOOL_COMMANDS`, and a new/renamed EFFECT needs nothing. They used to
-be four hand-copied literals of ~99 names: renaming `anyways` → `lookingaway` left the effect
-running with `attachments=None` (it answered "attach an image"), and the Telegram copies had
-already lost `goon`/`hag`. `tests/test_effect_command_coverage.py` fails if a copy comes back.
-The Telegram media-action keyboard/callbacks are still wired per command.
+`translate`/…) plus the effect sets, aliases resolved. Both chat paths derive from it (Telegram only
+matches effect words, into `_TG_MOVED`), so a NEW media tool goes in `MEDIA_TOOL_COMMANDS`, and a
+new/renamed EFFECT needs nothing. They used to be four hand-copied literals of ~99 names: renaming
+`anyways` → `lookingaway` left the effect running with `attachments=None` (it answered "attach an
+image"). `tests/test_effect_command_coverage.py` fails if a copy comes back.
 
 **Gotcha (effect aliases):** an alias whose target is an EFFECT must be resolved before anything
 gated on `command in MOTION_EFFECTS` — `execute_command` resolves at its public entry for exactly
@@ -346,9 +347,8 @@ BEFORE the allowlist check, since clients cache the catalogue and keep sending t
 
 **Media:** generic ffmpeg/Pillow/PyMuPDF helpers live in `app/services/media_service.py`
 (`compress_*`, `clip_video`/`clip_attachment`, `convert_*`, `parse_timecode`). Video ops share
-one HW-accel encoder autodetect (`_video_encoder_candidates`: NVENC → VAAPI → libx264). Telegram
-makes `clip` interactive (start/end ForceReply prompts); the web UI passes both times in the
-arg (`clip <start> <end>`).
+one HW-accel encoder autodetect (`_video_encoder_candidates`: NVENC → VAAPI → libx264). The web UI
+passes both clip times in the arg (`clip <start> <end>`); the media tools are not on Telegram.
 
 ### Settings
 
