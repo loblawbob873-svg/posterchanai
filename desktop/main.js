@@ -3002,6 +3002,12 @@ ipcMain.handle('pc:wm:workarea', (e, area) => {
 });
 /* ARRANGE: the taskbar's button asks for ITS OWN monitor -- the centre of the shell surface that
  * sent it -- so two monitors never arrange each other. */
+/* The output this shell renderer draws, for startup apps pinned to a monitor (os.js _startupPlan). A window
+ * or popup has no scope and answers "". */
+ipcMain.handle('pc:shell:output', (e) => {
+  const scope = _shellScopes.get(e.sender.id);
+  return String((scope && scope.output) || '');
+});
 ipcMain.handle('pc:wm:arrange', async (e, layout) => {
   fsGuard(e);
   const w = wm(); if(!w || typeof w.arrange !== 'function') return { ok:false, why:'this window manager cannot arrange' };

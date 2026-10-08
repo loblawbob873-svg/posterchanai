@@ -259,6 +259,9 @@ if (isOurPage) {
      * services such as folder sync; otherwise every extra monitor becomes another filesystem
      * writer with the same device identity. */
     backgroundOwner,
+    /* WHICH MONITOR this shell renderer draws (its output name, e.g. "HDMI-A-1"; "" when it has none). Startup
+     * apps pinned to a monitor are opened by that monitor's own renderer -- os.js _startupPlan. */
+    outputName: () => ipcRenderer.invoke('pc:shell:output'),
     getInstance: () => ipcRenderer.invoke('pc:instance:get'),
     setInstance: (url) => ipcRenderer.invoke('pc:instance:set', url == null ? '' : url),
     retry: () => ipcRenderer.send('pc:retry'),

@@ -13478,6 +13478,9 @@
     // buddy.js: the desktop PosterChan's on/off and spot follow the account (pcai:client-prefs).
     saveDesktopBuddy: v => { try{ _prefTouched.add('desktopBuddy'); }catch(_){} return saveClientPrefsNostr({ desktopBuddy: v }); },
     saveStartupApps: v => { try{ _prefTouched.add('startupApps'); }catch(_){} return saveClientPrefsNostr({ startupApps: v }); },
+    // Which monitor each startup app opens on, and how each monitor tiles them (os.js _startupPlan).
+    saveStartupLayout: (placement, tiling) => { try{ _prefTouched.add('startupPlacement'); _prefTouched.add('startupTiling'); }catch(_){}
+      return saveClientPrefsNostr({ startupPlacement: placement, startupTiling: tiling }); },
     // os.js: the desktop's compose window must not close while its reply is still being sent.
     publishesSettled,
     // The one themed sheet. osshell.js draws Print Screen's prompt with it, so the desktop comes in

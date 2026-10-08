@@ -3933,37 +3933,130 @@
   function _startupViews(){
     try{ const v=window.ClientSettings && ClientSettings.get('startupApps', []); return Array.isArray(v) ? v.filter(x=>typeof x==='string') : []; }catch(_){ return []; }
   }
+  const _TILE_NAMES = [['', "Don't tile"], ['grid', 'Grid'], ['side-by-side', 'Side by side'], ['stacked', 'Stacked']];
+  function _monitorLabel(m){
+    const kind = [m.make, m.model].filter(Boolean).join(' ').trim();
+    return (kind ? kind + ' (' + m.name + ')' : m.name) + (m.primary ? ' · main' : '');
+  }
   function _wireStartupPcApps(card){
     const host=card.querySelector('[data-startup-pc-list]'); if(!host) return;
+    const tileHost=card.querySelector('[data-startup-tiling]');
+    let monitors=[];                       // filled by pcDisplays when it answers; one monitor = no choices to offer
+    const saveLayout=()=>{ const { placement, tiling } = _startupLayoutPrefs();
+      try{ PC().saveStartupLayout && PC().saveStartupLayout(placement, tiling); }catch(_){} };
+    const setPref=(key, k, v)=>{ const cur=_startupLayoutPrefs()[key==='startupPlacement'?'placement':'tiling'];
+      const next={ ...cur }; if(v) next[k]=v; else delete next[k];
+      try{ ClientSettings.set(key, next); }catch(_){} saveLayout(); };
     const draw=()=>{
       const on=new Set(_startupViews());
-      host.innerHTML=apps().filter(a=>!a.off).map(a=>`<label class="os-startup-pc"><span class="os-startup-nm"><b>${enc(a.label)}</b></span>
-        <span class="switch"><input type="checkbox" data-startup-view="${enc(a.view)}" ${on.has(a.view)?'checked':''} aria-label="Open ${enc(a.label)} when I log in"><span class="slider"></span></span></label>`).join('');
+      const { placement, tiling } = _startupLayoutPrefs();
+      const many = monitors.length > 1;
+      host.innerHTML=apps().filter(a=>!a.off).map(a=>{
+        const sel = many && on.has(a.view) ? `<select class="input os-startup-mon" data-startup-monitor="${enc(a.view)}" aria-label="Monitor for ${enc(a.label)}">
+            <option value="">Main monitor</option>${monitors.map(m=>`<option value="${enc(m.name)}" ${placement[a.view]===m.name?'selected':''}>${enc(_monitorLabel(m))}</option>`).join('')}</select>` : '';
+        return `<label class="os-startup-pc"><span class="os-startup-nm"><b>${enc(a.label)}</b></span>${sel}
+          <span class="switch"><input type="checkbox" data-startup-view="${enc(a.view)}" ${on.has(a.view)?'checked':''} aria-label="Open ${enc(a.label)} when I log in"><span class="slider"></span></span></label>`; }).join('');
+      if(tileHost){
+        tileHost.hidden = !monitors.length;
+        tileHost.querySelector('[data-startup-tiling-list]').innerHTML = monitors.map(m=>`<div class="os-startup-pc os-startup-tilerow"><span class="os-startup-nm"><b>${enc(_monitorLabel(m))}</b></span>
+          <select class="input os-startup-mon" data-startup-tile="${enc(m.name)}" aria-label="Tiling on ${enc(_monitorLabel(m))}">${_TILE_NAMES.map(([v,l])=>`<option value="${v}" ${(tiling[m.name]||'')===v?'selected':''}>${l}</option>`).join('')}</select></div>`).join('');
+      }
       host.querySelectorAll('[data-startup-view]').forEach(cb=>cb.onchange=()=>{
         const set=new Set(_startupViews());
         if(cb.checked) set.add(cb.dataset.startupView); else set.delete(cb.dataset.startupView);
         const list=[...set];
         try{ ClientSettings.set('startupApps', list); }catch(_){}
         try{ PC().saveStartupApps && PC().saveStartupApps(list); }catch(_){}
+        draw();                              // a switched-on app now offers its monitor
+      });
+      host.querySelectorAll('[data-startup-monitor]').forEach(s=>{
+        s.onchange=()=>setPref('startupPlacement', s.dataset.startupMonitor, s.value);
+      });
+      if(tileHost) tileHost.querySelectorAll('[data-startup-tile]').forEach(s=>{
+        s.onchange=()=>setPref('startupTiling', s.dataset.startupTile, s.value);
       });
     };
     draw();
+    try{
+      if(window.pcDisplays && pcDisplays.status) Promise.resolve(pcDisplays.status()).then(rows=>{
+        if(!Array.isArray(rows) || !card.isConnected) return;
+        monitors = rows.filter(r=>r && r.name && r.active!==false)
+          .sort((a,b)=>(b.primary?1:0)-(a.primary?1:0) || ((a.rect||{}).x||0)-((b.rect||{}).x||0));
+        draw();
+      }).catch(()=>{});
+    }catch(_){}
+  }
+  /* WHICH MONITOR, AND HOW IT TILES ("add to OS Settings Startup Apps a way to pin startup apps to a specific
+   * monitor and apply a tiling style"). Two synced preferences beside `startupApps`:
+   *   startupPlacement  { view: output name }   -- absent / "" = the main monitor
+   *   startupTiling     { output name: layout } -- grid | side-by-side | stacked, absent = leave them be
+   * Every monitor has its own shell renderer, and a window opened from one lands on that monitor (main.js
+   * places a PosterChan window on its opener's output), so each renderer opens ONLY its own apps and then
+   * tiles ITS OWN screen (pcWM.arrange arranges the asking renderer's output). An app pinned to a monitor
+   * this machine does not have -- the setting follows the account to a laptop with one screen -- opens on
+   * the main one. Pure, so tests/test_startup_app_placement.py runs it under node. */
+  function _startupPlan(views, placement, tiling, me){
+    const present = new Set((me && me.present) || []);
+    const out = String((me && me.output) || '');
+    const target = v => { const t = placement && typeof placement[v] === 'string' ? placement[v] : '';
+      return t && present.has(t) ? t : ''; };
+    const open = (views || []).filter(v => { const t = target(v); return t ? t === out : !!(me && me.owner); });
+    const want = tiling && out ? tiling[out] : '';
+    const layout = open.length && ['grid', 'side-by-side', 'stacked'].includes(want) ? want : '';
+    return { open, layout };
+  }
+  function _startupLayoutPrefs(){
+    const obj = k => { try{ const v = window.ClientSettings && ClientSettings.get(k, {}); return v && typeof v === 'object' && !Array.isArray(v) ? v : {}; }catch(_){ return {}; } };
+    return { placement: obj('startupPlacement'), tiling: obj('startupTiling') };
+  }
+  /* Which monitor THIS renderer is, and which monitors exist. Null when either cannot be asked (an older
+   * desktop build, or no window manager): then everything opens on the main monitor, untiled, as before. */
+  async function _startupWhere(){
+    try{
+      if(!(window.pcShell && typeof pcShell.outputName === 'function' && window.pcDisplays && pcDisplays.status)) return null;
+      const [output, rows] = await Promise.all([pcShell.outputName(), pcDisplays.status()]);
+      if(!output || !Array.isArray(rows) || !rows.length) return null;
+      return { output: String(output), owner: pcShell.backgroundOwner !== false,
+               present: rows.filter(r => r && r.active !== false).map(r => String(r.name)) };
+    }catch(_){ return null; }
+  }
+  /* Tile once the apps' windows exist: an arrange that runs before a window appears leaves it floating
+   * wherever it opened. Waits for a "PosterChan Window — <view>" per app (main.js titles them so), up to
+   * 25s, then arranges whatever did open. */
+  async function _tileStartup(views, layout){
+    if(!(window.pcWM && typeof pcWM.arrange === 'function')) return false;
+    const has = rows => views.every(v => (rows || []).some(r => new RegExp('^PosterChan Window\\s*[—-]\\s*' + v.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '\\b').test(String(r && r.title || ''))));
+    for(let i = 0; i < 25; i++){
+      await new Promise(r => setTimeout(r, 1000));
+      let rows = null; try{ rows = pcWM.windows ? await pcWM.windows() : null; }catch(_){ rows = null; }
+      if(!rows || has(rows)) break;
+    }
+    await new Promise(r => setTimeout(r, 600));
+    try{ await pcWM.arrange(layout); }catch(_){ return false; }
+    return true;
   }
   let _startupRan=false;
-  /* Once per desktop session, on PosterChanOS only (real app windows), and only on the monitor that owns
-   * the background -- two screens must not each open every app. */
-  function runStartupApps(){
+  /* Once per desktop session, on PosterChanOS only (real app windows). Each monitor's renderer opens the
+   * apps pinned to it; the main one also opens the unpinned -- two screens must not each open every app. */
+  async function runStartupApps(){
     if(_startupRan) return 0;
     // Only the desktop itself: never a popup page or an app window (they load this same client).
     try{ const q=new URLSearchParams(location.search); if(q.get('pcpopup') || q.get('pcwin')) return 0; }catch(_){}
     if(document.documentElement.classList.contains('pc-oswin')) return 0;
     if(!(window.PCOSWin && PCOSWin.enabled && PCOSWin.enabled())) return 0;
-    if(window.pcShell && pcShell.backgroundOwner === false) return 0;
     _startupRan=true;
     const known=new Set(apps().filter(a=>!a.off).map(a=>a.view));
     const want=_startupViews().filter(v=>known.has(v));
-    want.forEach((v,i)=>setTimeout(()=>{ try{ routeView(v); }catch(_){} }, 400 + i*700));
-    return want.length;
+    let me = await _startupWhere();
+    if(!me){
+      if(window.pcShell && pcShell.backgroundOwner === false) return 0;
+      me = { output: '', owner: true, present: [] };
+    }
+    const { placement, tiling } = _startupLayoutPrefs();
+    const plan = _startupPlan(want, placement, tiling, me);
+    plan.open.forEach((v,i)=>setTimeout(()=>{ try{ routeView(v); }catch(_){} }, 400 + i*700));
+    if(plan.layout) _tileStartup(plan.open, plan.layout);
+    return plan.open.length;
   }
   // Fallback when the account's preferences never arrive (offline): use what this machine holds.
   // Only in the PosterChanOS shell, the one place startup apps can run: armed everywhere, it kept every
@@ -4300,8 +4393,10 @@
             <div class="os-set-actions os-startup-add"><select class="input" data-startup-app aria-label="An installed app"><option value="">Add an installed app…</option></select><button class="btn primary" data-startup-add-app>Add</button></div>
             <div class="os-set-actions os-startup-add"><input class="input" data-startup-name placeholder="Name (optional)" aria-label="Name"><input class="input" data-startup-exec placeholder="Command, e.g. syncthing --no-browser" aria-label="Command"><label class="os-startup-term"><input type="checkbox" data-startup-term> In a terminal</label><button class="btn" data-startup-add-cmd>Add command</button></div>
             <div class="muted" data-startup-status></div></div>
-          <div class="os-set-card" data-startup-pc><div class="os-set-cardhead"><b>PosterChan apps</b><span>Opened in their own windows when you log in. Saved with your account, so every machine you sign into does the same.</span></div>
-            <div data-startup-pc-list class="os-startup-list"></div></div></section>`:''}
+          <div class="os-set-card" data-startup-pc><div class="os-set-cardhead"><b>PosterChan apps</b><span>Opened in their own windows when you log in. Saved with your account, so every machine you sign into does the same. With more than one monitor, pick where each one opens.</span></div>
+            <div data-startup-pc-list class="os-startup-list"></div>
+            <div data-startup-tiling hidden><div class="os-set-cardhead"><b>Tile startup apps</b><span>Once they have opened, arrange each monitor's startup apps. A monitor this computer does not have is skipped, and its apps open on the main one.</span></div>
+              <div data-startup-tiling-list class="os-startup-list"></div></div></div></section>`:''}
         <section data-settings-page="printers" ${_osSettingsPage==='printers'?'':'hidden'}><header class="os-set-pagehead"><div>${iconSvg('i-note')}</div><span><h2>Printers</h2><p>Add a printer and print a test page.</p></span></header>${window.pcPrinters?`<div class="os-set-card" data-printers><div class="os-set-cardhead"><b>Printers on this computer</b><span>CUPS's own pages ask for a Unix password and a PosterChan identity account has none, so printers are managed here — using the administrator rights this account already holds.</span></div>
           <div data-printer-list class="os-printer-list"><div class="empty">Loading…</div></div>
           <div class="os-set-actions"><button class="btn" data-printer-refresh>Refresh</button><button class="btn primary" data-printer-find>Find printers</button><span class="muted" data-printer-status></span></div>

@@ -328,6 +328,8 @@ window.PCBlossomFactory = function(dep){
       if(typeof pr.experienceRev==='number') ClientSettings.set('experienceRev', pr.experienceRev);
       // PosterChan apps opened at login (os.js runStartupApps): adopt the account's list, then open them.
       if(!_prefTouched.has('startupApps') && Array.isArray(pr.startupApps)) ClientSettings.set('startupApps', pr.startupApps);
+      for(const k of ['startupPlacement', 'startupTiling'])
+        if(!_prefTouched.has(k) && pr[k] && typeof pr[k] === 'object' && !Array.isArray(pr[k])) ClientSettings.set(k, pr[k]);
       try{ window.PCOS && PCOS.runStartupApps && PCOS.runStartupApps(); }catch(_){}
       if(!_prefTouched.has('desktopBuddy') && pr.desktopBuddy && typeof pr.desktopBuddy === 'object'){
         ClientSettings.set('desktopBuddy', pr.desktopBuddy);

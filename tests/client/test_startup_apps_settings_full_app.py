@@ -116,3 +116,66 @@ def test_posterchan_apps_can_be_chosen_to_open_at_login_and_follow_the_account()
     assert got['saved'] == ['messages', 'notes'] and got['local'] == ['messages', 'notes'], got
     assert got['count'] == 2 and sorted(got['opened']) == ['messages', 'notes'], ("not opened at login", got)
     assert got['again'] == 0, "a second call opened them again"
+
+
+MONITOR_FIXTURE = PC_FIXTURE + r'''
+window.__layoutSaves=[];window.__arranged=[];
+window.pcDisplays={status:async()=>[
+  {name:'DP-1',make:'Dell',model:'U2720Q',active:true,primary:true,rect:{x:0,y:0,width:3840,height:2160}},
+  {name:'HDMI-A-1',make:'LG',model:'27GL850',active:true,primary:false,rect:{x:3840,y:0,width:2560,height:1440}}]};
+window.pcWM.arrange=async(l)=>{__arranged.push(l);return {ok:true}};
+window.pcWM.windows=async()=>__opened.map((v,i)=>({id:i+1,title:'PosterChan Window — '+v}));
+'''
+
+
+@pytest.mark.skipif(not Path('/opt/google/chrome/chrome').exists(), reason='Chrome required')
+def test_a_startup_app_can_be_pinned_to_a_monitor_and_that_monitor_tiles_it():
+    """'add to OS Settings Startup Apps a way to pin startup apps to a specific monitor and apply a tiling style'.
+    The page offers each switched-on app a monitor and each monitor a tiling style, saves both with the account,
+    and at login the SECOND monitor's desktop opens only the app pinned to it, then tiles its screen."""
+    got = {}
+
+    async def check(b):
+        await desktop.login(b)
+        await b.until("!!document.body && document.body.classList.contains('os-on') && !!document.querySelector('#os-bar')")
+        await b.js("document.getElementById('osfr')?.remove();document.documentElement.classList.remove('osfr-on')")
+        await b.js("(()=>{const pc=window.__PC,s=pc.saveStartupLayout;pc.saveStartupLayout=(p,t)=>{__layoutSaves.push([p,t]);return s&&s(p,t)}})()")
+        await b.js("PCOS.openSystemSettings()")
+        await b.until("!!document.querySelector('.os-set-nav [data-page=\"startup\"]')")
+        await b.js("document.querySelector('.os-set-nav [data-page=\"startup\"]').click()")
+        page = "document.querySelector('[data-settings-page=\"startup\"]:not([hidden])')"
+        await b.until(f"!!{page} && {page}.querySelectorAll('[data-startup-view]').length>3")
+        got['monitor_before_on'] = await b.js(f"!!{page}.querySelector('[data-startup-monitor=\"notes\"]')")
+        for v in ('messages', 'notes'):
+            await b.js(f"(()=>{{const c={page}.querySelector('[data-startup-view=\"{v}\"]');c.checked=true;c.dispatchEvent(new Event('change'))}})()")
+        await b.until(f"!!{page}.querySelector('[data-startup-monitor=\"notes\"]')")
+        got['choices'] = await b.js(f"[...{page}.querySelectorAll('[data-startup-monitor=\"notes\"] option')].map(o=>o.textContent)")
+        await b.js(f"(()=>{{const s={page}.querySelector('[data-startup-monitor=\"notes\"]');s.value='HDMI-A-1';s.dispatchEvent(new Event('change'))}})()")
+        await b.until(f"!!{page}.querySelector('[data-startup-tile=\"HDMI-A-1\"]') && !{page}.querySelector('[data-startup-tiling]').hidden")
+        await b.js(f"(()=>{{const s={page}.querySelector('[data-startup-tile=\"HDMI-A-1\"]');s.value='side-by-side';s.dispatchEvent(new Event('change'))}})()")
+        got['placement'] = await b.js("ClientSettings.get('startupPlacement',{})")
+        got['tiling'] = await b.js("ClientSettings.get('startupTiling',{})")
+        got['saved'] = await b.js("__layoutSaves.slice(-1)[0]")
+        got['switch_still'] = await b.js(f"{page}.querySelector('[data-startup-view=\"notes\"]').checked")
+        await b.call("Emulation.setDeviceMetricsOverride", {"width": 400, "height": 900, "deviceScaleFactor": 1, "mobile": True})
+        await asyncio.sleep(.3)
+        got['overflow'] = await b.js(f"(()=>{{const c={page}.querySelector('[data-startup-pc]');return c.scrollWidth-c.clientWidth}})()")
+        # Login on the SECOND monitor's desktop renderer.
+        await b.js("pcShell.backgroundOwner=false;pcShell.outputName=async()=>'HDMI-A-1';"
+                   "PCOSWin.enabled=()=>true;PCOSWin.open=(v)=>{__opened.push(v);return {}};true")
+        got['count'] = await b.js("PCOS.runStartupApps()")
+        await b.until("__arranged.length>0")
+        got['opened'] = await b.js("__opened.slice()")
+        got['arranged'] = await b.js("__arranged.slice()")
+        got['errors'] = await b.js("__errors")
+
+    asyncio.run(desktop.with_browser('online', '', check, MONITOR_FIXTURE))
+    assert got['monitor_before_on'] is False, "an app that does not start at login offered a monitor"
+    assert got['choices'] == ['Main monitor', 'Dell U2720Q (DP-1) · main', 'LG 27GL850 (HDMI-A-1)'], got['choices']
+    assert got['placement'] == {'notes': 'HDMI-A-1'} and got['tiling'] == {'HDMI-A-1': 'side-by-side'}, got
+    assert got['saved'] == [{'notes': 'HDMI-A-1'}, {'HDMI-A-1': 'side-by-side'}], got['saved']
+    assert got['switch_still'] is True, "choosing a monitor toggled the app's switch"
+    assert got['overflow'] <= 1, f"the card overflows a phone-width window by {got['overflow']}px"
+    assert got['count'] == 1 and got['opened'] == ['notes'], ("the second monitor opened the wrong apps", got)
+    assert got['arranged'] == ['side-by-side'], got
+    assert not got['errors'], got['errors']
