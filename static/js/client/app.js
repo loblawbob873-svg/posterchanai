@@ -13234,7 +13234,17 @@
         }
       }catch(_){ }
     };
-    window.addEventListener('error', e => { say('something went wrong', e.error || e); healNav(); });
+    /* A RESIZEOBSERVER-LOOP NOTICE IS NOT AN ERROR. The browser raises it as an ErrorEvent when an observer's
+     * callback changes layout the same frame ("…loop completed with undelivered notifications"), and by the
+     * spec those notifications are simply delivered on the NEXT frame -- nothing failed. Shown as "⚠ something
+     * went wrong" it read as a crash: on a phone right after granting persistent storage (Firefox's prompt bar
+     * closes, the viewport changes height and the lazily laid-out timeline cards settle over two frames).
+     * Logged, never toasted. It carries no `error` object, which is how it differs from a real throw. */
+    const _roNotice = e => !e.error && /^ResizeObserver loop (completed with undelivered notifications|limit exceeded)/i.test(String(e.message || ''));
+    window.addEventListener('error', e => {
+      if(_roNotice(e)){ try{ console.warn('[pc] ' + e.message); }catch(_){ } return; }
+      say('something went wrong', e.error || e); healNav();
+    });
     window.addEventListener('unhandledrejection', e => { say('action failed', e.reason || e); healNav(); });
     // …and on a timer as a backstop, because the stranding can also happen without any exception (a modal
     // removed by something other than closeModal). 4s is invisible to the user and costs one class check.
