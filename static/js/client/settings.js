@@ -461,10 +461,13 @@ window.PCSettingsFactory = function(dep){
       /* OFF PUTS BACK WHAT WAS THERE. It used to set 'chime' whatever the person had before (soft, bright, silent)
        * and then say "your phone's sound" while the chime played (code review). The choice before the Alert is
        * remembered on this device, and the line says which sound is now in use. */
-      let back='chime';
+      /* AND OFF MEANS NO POSTERCHAN SOUND. Putting back "what was there" was, for nearly everybody, the DEFAULT --
+       * the PosterChan chime -- so "he said he unchecked it but still played" was exactly true. A sound somebody
+       * picked (soft, bright, silent) still comes back; the chime, or no remembered choice, becomes 'system'. */
+      let back='system';
       try{ if(v){ const cur=NP.notificationPreference('sound'); if(cur && cur!=='posterchan') localStorage.setItem('pc_sound_before_alert',cur); }
-           else back=localStorage.getItem('pc_sound_before_alert')||'chime'; }catch(_){ }
-      const backName=back==='chime'?'the PosterChan chime':back==='off'?'no sound':'the “'+back+'” sound';
+           else { const was=localStorage.getItem('pc_sound_before_alert'); back=(was && was!=='chime' && was!=='posterchan') ? was : 'system'; } }catch(_){ }
+      const backName=back==='system'?'your phone’s own sound (no PosterChan sound)':back==='off'?'no sound':'the “'+back+'” sound';
       try{ await NP.setNotificationPreference('sound', v?'posterchan':back); }catch(_){ }
       if(plug && plug.appAlert){
         // The app's own channel: Android plays it even with PosterChan closed. A test notification follows,

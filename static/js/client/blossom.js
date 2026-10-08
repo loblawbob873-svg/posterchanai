@@ -437,8 +437,11 @@ window.PCBlossomFactory = function(dep){
     ['zaps','Zaps and tips'],['concord','Concord mentions'],['channels','Chat rooms'],
     ['sms','Text messages'],['reminders','Reminders'],['follows','New followers']];
   // 'posterchan' = the PosterChan Alert (static/sounds/posterchan-alert.*, scripts/make_notification_sound.py).
-  const _NOTIFICATION_SOUNDS = ['chime','soft','bright','posterchan','off'];
-  const _SOUND_LABEL = { chime:'Cyberpunk chime', soft:'Soft', bright:'Bright', posterchan:'PosterChan Alert ♪', off:'Silent' };
+  /* 'system' = NO PosterChan sound: the phone's own notification sound on Android (its plain channel), and nothing
+     of ours on the web and desktop. "can we make the posterchan notification sounds optional?" -- every other
+     choice but Silent was a PosterChan-made sound. */
+  const _NOTIFICATION_SOUNDS = ['chime','soft','bright','posterchan','system','off'];
+  const _SOUND_LABEL = { chime:'Cyberpunk chime', soft:'Soft', bright:'Bright', posterchan:'PosterChan Alert ♪', system:'System sound (no PosterChan sound)', off:'Silent' };
   function _notificationOwner(){ return (_S.ME && _S.ME.pubkey)||''; }
   function _notificationClean(value){
     const out={};
@@ -801,7 +804,7 @@ window.PCBlossomFactory = function(dep){
   }
   let _notificationLastSound=0;
   function notificationSound(preview=false){
-    const sound=notificationPreference('sound');if(sound==='off')return;
+    const sound=notificationPreference('sound');if(sound==='off'||sound==='system')return;
     // Android owns background channels; don't overlay a second WebView chime on its native alert.
     if(!preview && window.Capacitor)return;
     const now=Date.now();if(!preview && now-_notificationLastSound<500)return;
