@@ -6170,6 +6170,39 @@
     if(_profMiss.size>5000){ for(const k of _profMiss.keys()){ _profMiss.delete(k); if(_profMiss.size<=4000) break; } }
     if(changed){ renderMe(); decorateProfiles(); }
   }
+  /* A MISS IS ONLY AS GOOD AS THE RELAYS THAT WERE OPEN WHEN IT WAS ASKED.
+   *
+   * A lookup goes to the sockets that are OPEN at that moment, and right after a login that is
+   * usually the home relay alone — the rest of the pool (your own relays, the profile indexers) is
+   * still connecting. The home relay answers "nothing" for anybody outside its web of trust, and
+   * that answer was remembered for five minutes. The relays that hold those profiles connected a
+   * second later and nothing asked them, so Messages kept every npub and @-autocomplete had no
+   * names until a refresh: "I had to refresh after login to webui for the nip05 names and profile
+   * pics to render". So a relay that newly OPENS voids the misses and the people on screen (and
+   * your follows, which feed the autocomplete) are asked again. */
+  const _profOpen = new Set(); let _profRetryT = null;
+  function _profRetryMisses(){
+    _profRetryT = null;
+    _profMiss.clear();
+    const want = new Set();
+    try{
+      for(const el of document.querySelectorAll('[data-prof],[data-peer],[data-mpk],.note[data-pk]')){
+        const pk = el.dataset.prof || el.dataset.peer || el.dataset.mpk || el.dataset.pk;
+        if(pk && /^[0-9a-f]{64}$/.test(pk)) want.add(pk);
+      }
+    }catch(_){}
+    if(!NO_IMAGES) [...FOLLOWS].slice(0,300).forEach(pk=>want.add(pk));
+    for(const pk of want) if(!Store.haveProfile(pk)) needProfile(pk);
+  }
+  try{
+    Relay.watch(()=>{
+      let grew = false;
+      const open = new Set(Relay.conns().filter(c=>c.open).map(c=>c.url));
+      for(const u of open) if(!_profOpen.has(u)){ _profOpen.add(u); grew = true; }
+      for(const u of [..._profOpen]) if(!open.has(u)) _profOpen.delete(u);
+      if(grew && !_profRetryT) _profRetryT = setTimeout(_profRetryMisses, 400);
+    });
+  }catch(_){}
   async function fetchMyProfile(){
     if(Store.haveProfile(ME.pubkey)) renderMe();   // instant from the profile cache
     // This runs at startup, i.e. exactly when the socket is still CONNECTING and a REQ would be dropped —
@@ -6190,7 +6223,7 @@
   // (fediverse-bridged names have :shortcodes:). innerHTML only when there's actually an emoji to render
   // (a real shortcode + a known map), else plain textContent — cheaper and avoids clobbering emoji with
   // a later plain re-decorate. This is why the earlier `nm.textContent=name` wiped the rendered emoji.
-  function _decorName(nm){ const pk=nm.dataset.prof; if(!pk) return; const p=Store.profile(pk); if(!p) return;
+  function _decorName(nm, pk=nm.dataset.prof){ if(!pk) return; const p=Store.profile(pk); if(!p) return;
     const name=p.name||p.display_name||niceNip05(p.nip05); if(!name) return;   // nip05 fallback so a name-less peer isn't stuck on the raw npub
     const em=(Store.profileEmojis&&Store.profileEmojis(pk));
     if(em && /:[a-zA-Z0-9_+\-]+(?:@[a-zA-Z0-9.\-]+)?:/.test(name)){
@@ -6262,8 +6295,15 @@
     // DM list rows + open-thread header: fill the avatar once the peer's kind-0 arrives. The NAME is a
     // `.name[data-prof]` (see renderMessages / renderDmThread) so the emoji-aware pass below renders it —
     // do NOT set it via textContent here, which would strip custom :shortcode: emoji from the name.
-    $$('.dm-peer[data-peer]').forEach(n=>{ const p=Store.profile(n.dataset.peer); if(p){
+    $$('.dm-peer[data-peer]').forEach(n=>{ const pk=n.dataset.peer, p=Store.profile(pk); if(p){
       _setPic(n.querySelector('.dmav'), p.picture);
+      /* THE ROW'S NAME HAS NO data-prof (the list strips it so the name cannot steal the row's tap),
+         so the `.name[data-prof]` pass below never reaches it: a conversation drawn before its
+         person's profile arrived kept the npub until something redrew the whole list -- "I had to
+         refresh after login for the nip05 names and profile pics to render". Filled here by the
+         row's own pubkey, emoji-aware, and the search key follows the name. */
+      const nm=n.querySelector('.dm-peer-top .name'); if(nm) _decorName(nm, pk);
+      const label=p.name||p.display_name||niceNip05(p.nip05); if(label) n.dataset.name=String(label).toLowerCase();
     }});
     // embedded/quoted notes — fill avatar + name + nip05 once the referenced author's profile loads
     $$('.quoted .name[data-prof]').forEach(nm=>{ const pk=nm.dataset.prof; const p=Store.profile(pk); if(p){
