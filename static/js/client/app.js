@@ -6080,12 +6080,20 @@
   // per note. The observer version started reliably but its "left the viewport" callback did not always
   // arrive — and a loop that only stops on a callback is a loop that can run forever behind you. A single
   // interval that checks rects is deterministic, testable, and cheaper than N timers.
-  let _celebTick=null;
+  let _celebTick=null, _celebFrame=0;
   const _CELEB_SWEEP=1500;
   function observeCelebrations(scope){
     if(NO_IMAGES) return;                                                    // data saver: no decorative animation
     try{ if(matchMedia('(prefers-reduced-motion: reduce)').matches) return; }catch(_){}
-    if(!_celebTick && $$('.note[data-celebrate]', scope||document).length) _celebTick=setInterval(()=>{ if(!document.hidden) _celebSweep(); }, _CELEB_SWEEP);
+    /* THE SWEEP RUNS IN A FRAME, not straight off the timer. It reads every celebrating post's rectangle, and
+     * read from a timer that forces a synchronous layout of the whole page whenever it is dirty -- 95-127 ms
+     * per sweep on a PosterChanOS desktop page, profiled, i.e. the pointer stalling every 1.5 s. Inside
+     * requestAnimationFrame the read uses the layout the frame computes anyway, and a page that is not
+     * drawing (covered, minimised, hidden) does no sweep at all. */
+    if(!_celebTick && $$('.note[data-celebrate]', scope||document).length) _celebTick=setInterval(()=>{
+      if(document.hidden || _celebFrame) return;
+      _celebFrame=requestAnimationFrame(()=>{ _celebFrame=0; _celebSweep(); });
+    }, _CELEB_SWEEP);
   }
   function _celebInView(el){
     const r=el.getBoundingClientRect();
@@ -6990,7 +6998,17 @@
   // NIP-09: a kind-5 removes the AUTHOR'S OWN events it e-tags. Drop them from the cache, the feed,
   // AND notifications (a deleted bot post/reply must stop showing as a notification too).
   function _applyDeletion(ev){
-    try{if(!ev||ev.kind!==5||!_repostVerified(ev))return;}catch(_){return;}
+    /* RELEVANCE BEFORE THE SIGNATURE. Every kind-5 on every subscription lands here, and almost all of them
+     * name events this page never held -- for those the answer is "nothing to do" whatever the signature
+     * says, yet each paid a full Schnorr verify in JS: 203 ms of a 6 s window on a PosterChanOS desktop page
+     * (the one drawing the taskbar), profiled. A deletion only ever removes an event by ITS OWN AUTHOR that
+     * the Store holds, so look for one of those first; the signature is still checked before anything goes. */
+    try{
+      if(!ev||ev.kind!==5) return;
+      const pk=ev.pubkey;
+      const mine=(ev.tags||[]).some(t=>(t[0]==='e'&&t[1]&&(Store.get(t[1])||{}).pubkey===pk)||(t[0]==='a'&&String(t[1]||'').split(':')[1]===pk));
+      if(!mine||!_repostVerified(ev)) return;
+    }catch(_){return;}
     let removed = false;
     const _rm = id => {
       const target=Store.get(id);

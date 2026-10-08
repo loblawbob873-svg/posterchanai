@@ -679,10 +679,25 @@
   }catch(_){}
 
   // ---- client settings (browser-side) ----
+  /* PARSED ONCE, NOT ON EVERY READ. get() used to re-read and JSON.parse the WHOLE blob per key -- and the
+   * blob carries the follow list twice (followsCache + followsSafetyCache, ~70 KB each; 153 KB measured on
+   * a PosterChanOS desktop), while DM unwrapping reads `dmSeen` once per message. Profiled on that desktop
+   * during an ordinary burst: 419 ms of a 6 s window was this one line, on the page that also draws the
+   * taskbar and answers the pointer -- felt as mouse lag. The cache is dropped by our own set() and by a
+   * `storage` event, which is how a write from another monitor's page or a window arrives here.
+   * An object comes back as a COPY, as it always did: callers have been free to change what get() handed
+   * them, and that must not leak into the next read. */
+  let _settingsCache = null;
+  try{ window.addEventListener('storage', e => { if(!e || e.key === null || e.key === 'pc_nostr_settings') _settingsCache = null; }); }catch(_){}
   const Settings = {
     all(){ try { return JSON.parse(localStorage.getItem('pc_nostr_settings')||'{}'); } catch(_){ return {}; } },
-    get(k, d){ const v = Settings.all()[k]; return v===undefined?d:v; },
-    set(k, v){ const a = Settings.all(); a[k]=v; localStorage.setItem('pc_nostr_settings', JSON.stringify(a)); }
+    get(k, d){
+      if(!_settingsCache) _settingsCache = Settings.all();
+      const v = _settingsCache[k];
+      if(v===undefined) return d;
+      return (v && typeof v === 'object') ? JSON.parse(JSON.stringify(v)) : v;
+    },
+    set(k, v){ const a = Settings.all(); a[k]=v; localStorage.setItem('pc_nostr_settings', JSON.stringify(a)); _settingsCache = null; }
   };
 
   Store.setViewer = setViewer;
