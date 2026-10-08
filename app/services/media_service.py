@@ -1200,7 +1200,9 @@ def overlay_corner_character(video_data: bytes, source_filename: str, char_path:
             else:
                 fc = base_fc + ";[vc]format=yuv420p[vout]"
                 venc = ["-c:v", "libx264", "-preset", VIDEO_PRESET, "-crf", str(VIDEO_CRF)]
-            cmd = ([ffmpeg, "-y", "-i", vin] + char_loop + ["-i", char_path,
+            # `pre` (the VAAPI device) goes before the inputs, as in every other encoder here -- it was built and
+            # dropped, so the VAAPI try always failed at hwupload and every overlay fell through to the next encoder.
+            cmd = ([ffmpeg, "-y"] + pre + ["-i", vin] + char_loop + ["-i", char_path,
                     "-filter_complex", fc, "-map", "[vout]", "-map", "0:a?"] + venc
                    + ["-c:a", "copy", "-movflags", "+faststart", out_path])
             r = subprocess.run(cmd, capture_output=True, timeout=600, text=True)
