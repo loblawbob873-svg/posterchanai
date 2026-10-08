@@ -148,6 +148,12 @@ class WotGate:
             await self._persist(store, self._members)
             return len(self.members())
 
+        # A BLOCKED ACCOUNT VOUCHES FOR NOBODY. is_member() already refused it, but its follow list was
+        # still crawled -- so blocking a follow-farm hub kept everything it farmed: on 2026-10-08 two blocked
+        # botrift.com bots, followed back by ~20 seeds each, were the only two vouchers for a relay prober
+        # that posted "mc-relay-probe" 1,376 times. Every tier below drops them before it is crawled.
+        barred = self._blocked | self._bridged
+
         # Depth 1: seeds' direct follows.
         d1_counter = await self._follows_counter(upstream_relays, seeds, direct, batch, pace)
         follows1 = set(d1_counter.keys())
@@ -162,7 +168,7 @@ class WotGate:
         # Depth 2: friends-of-friends, pruned by how many of your follows also follow them.
         fof = set()
         if depth >= 2 and follows1:
-            fof_counter = await self._follows_counter(upstream_relays, follows1, direct, batch, pace)
+            fof_counter = await self._follows_counter(upstream_relays, follows1 - barred, direct, batch, pace)
             fof = {pk for pk, c in fof_counter.items() if c >= min_followers}
             members |= fof
             logger.info("[nostr-relay] WoT depth-2: +%d friends-of-friends (>=%d followers)",
@@ -176,11 +182,11 @@ class WotGate:
             # Only crawl the most-trusted FoF — the top `depth3_crawl_max` by how many of your follows
             # follow them — so the upstream fan-out is bounded regardless of how big the FoF tier got.
             if depth3_crawl_max and len(fof) > depth3_crawl_max:
-                crawl_seeds = [pk for pk, _ in fof_counter.most_common() if pk in fof][:depth3_crawl_max]
+                crawl_seeds = [pk for pk, _ in fof_counter.most_common() if pk in fof and pk not in barred][:depth3_crawl_max]
                 logger.info("[nostr-relay] WoT depth-3: crawling top %d of %d FoF (bounded)",
                             len(crawl_seeds), len(fof))
             else:
-                crawl_seeds = list(fof)
+                crawl_seeds = [pk for pk in fof if pk not in barred]
             fofof_counter = await self._follows_counter(upstream_relays, crawl_seeds, direct, batch, pace)
             before = len(members)
             fofof = {pk for pk, c in fofof_counter.items() if c >= min_followers}

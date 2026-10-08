@@ -7,8 +7,12 @@ and from the fediverse (bridge puppets):
   1. NEW POSTS PER MINUTE, per author (kind 1: notes and replies). Measured over two weeks here: people
      posted at most 5 a minute; above 10 were only feed bots in bursts (a newspaper bot 35, Twitter
      mirrors 15/14/11, a news briefing 12). Default 10.
-  2. THE SAME TEXT FROM ONE AUTHOR more than 3 times in an hour (20+ characters). Everyone who did that
-     here was spam: a donation scam x13, "#GM Fren" x11, zap-begging x10, canned replies x7.
+  2. THE SAME TEXT FROM ONE AUTHOR more than 3 times in an hour (SAME_MIN_CHARS+ characters). Everyone who
+     did that here was spam: a donation scam x13, "#GM Fren" x11, zap-begging x10, canned replies x7. The
+     minimum was 20 until a relay prober posted "mc-relay-probe" (14 characters) 753 times in a day, about 35
+     an hour, straight under it (2026-10-08). Measured at 8 over 30 days, besides the prober's 1,375 notes it
+     only trims the 4th-and-later copy in one hour of short repeats ("GM!🐱 🍵 ✨" x37, a harassment line
+     x21); "gm" and friends stay under it, and nobody loses their first three.
 
 Counted by each post's OWN timestamp, so a catch-up sync of an author's older posts is never a burst.
 Different people saying the same thing are never affected; reactions, boosts, DMs and app data are not
@@ -23,6 +27,7 @@ import time
 _MAX_KEYS = 200_000
 
 
+SAME_MIN_CHARS = 8              # shortest text the same-post check applies to (see 2. above)
 GIFT_WINDOW = 600               # seconds: the gift-wrap budget is counted per recipient per 10 minutes
 
 
@@ -62,7 +67,7 @@ class SpamGuard:
             return f"rate-limited: more than {per_min} new posts in a minute"
         text = str(ev.get("content") or "").strip()
         sk = None
-        if same_max > 0 and len(text) >= 20:
+        if same_max > 0 and len(text) >= SAME_MIN_CHARS:
             sk = (pk, hashlib.sha256(text.encode("utf-8", "replace")).hexdigest()[:24], ts // 3600)
             if self._same.get(sk, 0) >= same_max:
                 return f"rate-limited: the same post more than {same_max} times an hour"

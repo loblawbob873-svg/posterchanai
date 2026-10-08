@@ -54,7 +54,8 @@ def test_people_are_never_limited_but_a_feed_burst_is():
     g = SpamGuard({})
     person = [g.check(_ev(ts=1_000_000 + i * 10)) for i in range(5)]            # 5 in one minute
     assert set(person) == {""}
-    burst = [g.check(_ev(pk="b2", ts=2_000_000)) for _ in range(35)]           # a feed bot's minute
+    # a feed bot's minute -- distinct headlines, as a real feed's are (identical text is the repeat rule's job)
+    burst = [g.check(_ev(pk="b2", ts=2_000_000, content=f"headline number {i}")) for i in range(35)]
     assert burst[:10] == [""] * 10 and all(r.startswith("rate-limited:") for r in burst[10:])
 
 
@@ -150,3 +151,13 @@ def test_a_client_publishing_here_is_told_rate_limited():
     asyncio.new_event_loop().run_until_complete(run())
     oks = [m for _c, m in srv.sent if isinstance(m, list) and m[0] == "OK"]
     assert any(m[2] is False and m[3].startswith("rate-limited:") for m in oks), srv.sent
+
+
+def test_a_short_probe_repeated_all_day_is_caught_and_a_greeting_is_not():
+    """2026-10-08: "mc-relay-probe" (14 characters) x753 in a day, ~35 an hour, under the old 20-character
+    minimum. The 4th copy in an hour is refused; "gm" (2) is still never counted."""
+    from app.services.nostr_relay.spamguard import SpamGuard
+    g = SpamGuard({"posts_per_min": 10, "same_per_hour": 3})
+    res = [g.check(_ev(content="mc-relay-probe", ts=2_001_600 + i * 50)) for i in range(35)]
+    assert res[:3] == ["", "", ""] and all(r.startswith("rate-limited:") for r in res[3:]), res[:6]
+    assert {g.check(_ev(content="gm", ts=2_001_600 + i * 50)) for i in range(20)} == {""}
