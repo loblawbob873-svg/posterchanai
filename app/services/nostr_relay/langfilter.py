@@ -11,6 +11,8 @@ guard (a false positive DELETES the note via the retroactive purge, so both are 
 `LANGUAGES` (code → UI label) drives the clickable toggles in Admin → Relay.
 """
 
+import base64
+import binascii
 import json
 import re
 from collections import defaultdict
@@ -57,6 +59,45 @@ def is_hidden_payload(content) -> bool:
         return False
     hidden = len(_INVISIBLE_RE.findall(s))
     return hidden >= 100 and hidden > len(s) - hidden
+
+
+# One base64 token, padded the way an encoder pads it.
+_B64_TOKEN = re.compile(r"[A-Za-z0-9+/]{38,}={0,2}")
+
+
+def is_encoded_payload(content) -> bool:
+    """True when a note is ONE base64 token carrying binary or JSON -- an encrypted/packed machine message.
+
+    2026-10-08, after the zero-width "webmesh" bots were refused: the same kind of traffic came back as
+    bare base64 -- ciphertext tagged with a random hex hashtag (`#b2b4782f4cc77abc`, 120 notes from one
+    key) and base64 JSON (`#swarmmesh`, 72). Measured over 30 days of kind 1 on this relay: the rule
+    matched 195 notes from 5 keys, every one of them such a bot, and none of the 79 single-token notes
+    people really post -- npub/nevent/note links and Lightning invoices (bech32: all lowercase, and not a
+    length a strict decoder accepts), bitcoin addresses, hex ids, base58 addresses (which never contain
+    0, O, I, l, +, / or =). A token that decodes to TEXT is left alone: only binary (>= 30 bytes) or a
+    JSON object/array counts."""
+    s = (content or "").strip()
+    if len(s) < 40 or len(s) % 4 or not _B64_TOKEN.fullmatch(s):
+        return False
+    if not re.search(r"[0OIl+/=]", s):
+        return False
+    if not (re.search(r"[A-Z]", s) and re.search(r"[a-z]", s) and re.search(r"[0-9]", s)):
+        return False
+    try:
+        raw = base64.b64decode(s, validate=True)
+    except (binascii.Error, ValueError):
+        return False
+    try:
+        text = raw.decode("utf-8")
+    except UnicodeDecodeError:
+        return len(raw) >= 30
+    return is_json_content(text)
+
+
+def is_machine_payload(content) -> bool:
+    """A kind-1 note that is machine data, not a post: a whole JSON blob, a note made of hidden
+    characters, or one base64 token of binary/JSON. ONE predicate for every path and the purge."""
+    return is_json_content(content) or is_hidden_payload(content) or is_encoded_payload(content)
 
 
 # URLs, nostr: URIs and bech32/Lightning entities are long runs of Latin/base32 characters that

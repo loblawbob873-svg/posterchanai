@@ -404,7 +404,7 @@
         </div>
         <div class="form-group">
             <label for="nostr_relay_block_json_posts">
-                <input type="checkbox" id="nostr_relay_block_json_posts" name="nostr_relay_block_json_posts"> Reject machine-payload timeline posts — JSON blobs and notes made of hidden characters (anti-spam)
+                <input type="checkbox" id="nostr_relay_block_json_posts" name="nostr_relay_block_json_posts"> Reject machine-payload timeline posts — JSON blobs, base64 data blobs and notes made of hidden characters (anti-spam)
             </label>
             <small>Drops a note (kind 1) whose <strong>entire</strong> content is a JSON object <code>{…}</code> or array <code>[…]</code> — the shape spammers use to flood the timeline. A human note that merely mentions JSON is unaffected (it doesn’t parse whole), and this touches kind-1 notes ONLY, so profiles, contacts, app data, DVM jobs and reposts (whose content legitimately is JSON) are never rejected. On by default.</small>
         </div>
@@ -441,7 +441,7 @@
                 <summary>Edit as text (<code>name npub-or-hex</code>, one per line)</summary>
                 <textarea id="nostr_relay_nip05_names" name="nostr_relay_nip05_names" rows="8" placeholder="verita84 npub1…&#10;alice 64-char-hex"></textarea>
             </details>
-            <small>A name here IS access to this node's features, whatever NIP-05 the person's profile shows (they may keep one of their own). ✓ = their profile also publishes it. One per line: <code>&lt;name&gt; &lt;npub-or-hex&gt;</code>. Use <code>_</code> as the name for the domain root identity (<code>_@yourdomain</code>). New web-client signups are auto-assigned a name here.</small>
+            <small>A name here IS access to this node's features, whatever NIP-05 the person's profile shows (they may keep one of their own) — so every name listed is a member; the list just notes what their profile shows. One per line: <code>&lt;name&gt; &lt;npub-or-hex&gt;</code>. Use <code>_</code> as the name for the domain root identity (<code>_@yourdomain</code>). New web-client signups are auto-assigned a name here.</small>
         </div>
         <div class="form-group">
             <label for="nostr_relay_nip05_domain">Signup name domain</label>

@@ -901,15 +901,17 @@ class RelayStore:
         return self._delete_sparing_anchors(conn, ids)
 
     def _delete_hidden_payload_sync(self) -> int:
-        """Purge stored notes that are a hidden data payload (langfilter.is_hidden_payload) — the same
-        predicate the live filter refuses at the door, applied to what arrived before it existed.
-        Local users' own notes are spared like every content purge here."""
-        from .langfilter import is_hidden_payload
+        """Purge stored notes that are machine data hidden in a note -- invisible characters
+        (langfilter.is_hidden_payload) or one base64 token (is_encoded_payload): the same predicates the
+        live filter refuses at the door, applied to what arrived before they existed. Local users' own
+        notes are spared like every content purge here."""
+        from .langfilter import is_encoded_payload, is_hidden_payload
         conn = self._conn()
         ids = [r["id"] for r in conn.execute(
-                   f"SELECT id, content FROM events WHERE kind=1 AND length(content) >= 100 "
-                   f"AND content ~ '[\u200b\u200c\u200d\u2060\ufeff]' AND {self._preserve_clause()}")
-               if is_hidden_payload(r["content"])]
+                   f"SELECT id, content FROM events WHERE kind=1 AND length(content) >= 40 "
+                   f"AND (content ~ '[\u200b\u200c\u200d\u2060\ufeff]' OR content ~ '^\\s*[A-Za-z0-9+/]{{38,}}={{0,2}}\\s*$') "
+                   f"AND {self._preserve_clause()}")
+               if is_hidden_payload(r["content"]) or is_encoded_payload(r["content"])]
         return self._delete_sparing_anchors(conn, ids)
 
     async def delete_hidden_payload(self) -> int:

@@ -22,7 +22,7 @@ from websockets.http11 import Response
 from app.services.nostr.event import verify_event
 from app.services import git_acceptance
 from app.services.vmhost import kinds as _vmhost_kinds
-from .langfilter import blocked_language, blocked_word, is_hidden_payload, is_json_content, _NEVER_WORD_FILTERED
+from .langfilter import blocked_language, blocked_word, is_encoded_payload, is_hidden_payload, is_json_content, _NEVER_WORD_FILTERED
 from .bridges import reveals_blocked_bridge, author_on_blocked_bridge, is_bridged_post, is_social_mirror
 from .store import retired_kind_reason as _retired_kind_reason
 from app.services.nostr.quotes import quote_pubkeys
@@ -1750,6 +1750,9 @@ class RelayServer:
             return
         if kind == 1 and self.cfg.get("block_json", True) and is_hidden_payload(content):
             self._refuse(conn, eid, ev, "blocked: a note made of hidden characters is not accepted here")
+            return
+        if kind == 1 and self.cfg.get("block_json", True) and is_encoded_payload(content):
+            self._refuse(conn, eid, ev, "blocked: an encoded (base64) data blob is not accepted here")
             return
         # LANGUAGE detection stays kind-1 only: it guesses, and it may only guess about prose.
         if kind == 1:

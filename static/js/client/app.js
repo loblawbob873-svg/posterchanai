@@ -5811,9 +5811,21 @@
     const hidden=(c.match(/[\u200b\u200c\u200d\u2060\ufeff]/g)||[]).length;
     return hidden>=100 && hidden>c.length-hidden;
   }
+  // ENCODED-DATA SPAM — one base64 token of ciphertext or JSON (`#b2b4782f…`, `#swarmmesh`, 2026-10-08). Same rule
+  // as langfilter.is_encoded_payload: strict base64 of 40+ characters, with a character base58 never uses, that
+  // decodes to BINARY (30+ bytes) or a JSON object/array. npub/nevent/lnbc (bech32) and bitcoin/hex ids never match.
+  let _utf8Fatal=null;
+  function _isEncodedPayload(c){
+    const s=typeof c==='string'?c.trim():'';
+    if(s.length<40 || s.length%4 || !/^[A-Za-z0-9+/]{38,}={0,2}$/.test(s)) return false;
+    if(!/[0OIl+/=]/.test(s) || !/[A-Z]/.test(s) || !/[a-z]/.test(s) || !/[0-9]/.test(s)) return false;
+    let raw; try{ raw=Uint8Array.from(atob(s), ch=>ch.charCodeAt(0)); }catch(_){ return false; }
+    let text; try{ _utf8Fatal=_utf8Fatal||new TextDecoder('utf-8',{fatal:true}); text=_utf8Fatal.decode(raw); }catch(_){ return raw.length>=30; }
+    return _isJsonOnlyContent(text);
+  }
   function _jsonSpam(ev){
     return !!ev && ev.kind===1 && !(CFG && CFG.block_json_posts===false)
-      && (_isJsonOnlyContent(ev.content) || _isHiddenPayload(ev.content));
+      && (_isJsonOnlyContent(ev.content) || _isHiddenPayload(ev.content) || _isEncodedPayload(ev.content));
   }
   function isMutedView(ev){
     if(!ev) return false;
