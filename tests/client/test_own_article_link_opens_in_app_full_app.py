@@ -29,7 +29,10 @@ SETUP = r"""(async()=>{
   const html=__PC.linkify('read this '+location.origin+'/'+naddr+' and '+location.origin+'/static/other.html');
   const host=document.createElement('article'); host.className='note'; host.id='fx-note';
   host.innerHTML='<div class="body"><div class="txt">'+html+'</div></div>';
-  (document.querySelector('#feed')||document.body).prepend(host);
+  // In BODY, not #feed: the click handler is document-level and needs only a .note ancestor, while #feed is
+  // repainted by the timeline -- under the gate's parallel load that redraw landed after this and wiped the
+  // fixture, so the test 'could not find' its own link (FLAKY UNDER LOAD, reproduced 4/6 in parallel).
+  document.body.prepend(host);
   window.__art=art; return naddr;
 })()"""
 
