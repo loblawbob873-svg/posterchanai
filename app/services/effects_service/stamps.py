@@ -99,23 +99,27 @@ def add_gay(data: bytes, count: int = 0) -> bytes:
         return out.getvalue()
 
 
-def gay_attachments(
-    attachments: List[Tuple[str, bytes, str]],
-) -> Tuple[List[OutputFile], str]:
-    """Stamp GAY on the first image attachment. Mirrors blood_attachments."""
+def _stamp_attachments(attachments, name: str, heading: str, lead: str):
+    """Stamp the first image attachment with `add_<name>` (a still, or the alive clip): the shared body of
+    every word/logo stamp below."""
     images = [(fn, d, ct) for fn, d, ct in (attachments or []) if is_image(fn, ct)]
     if not images:
         return [], "No image — attach an image first."
     filename, data, _ = images[0]
     stem = Path(filename).stem or "image"
     try:
-        result = add_gay(data)
-        out = _alive_or_still(result, stem, "gay")
-        summary = f"## 🏳️‍🌈 Gay\n\n🏳️‍🌈 {filename}: {_human_size(len(result))}"
-        return [out], summary
+        result = globals()[f"add_{name}"](data)
+        out = _alive_or_still(result, stem, name)
+        return [out], f"## {heading}\n\n{lead} {filename}: {_human_size(len(result))}"
     except Exception as e:
-        logger.error(f"gay failed for {filename}: {e}", exc_info=True)
+        logger.error(f"{name} failed for {filename}: {e}", exc_info=True)
         return [], f"❌ {filename}: {e}"
+
+
+
+def gay_attachments(attachments: List[Tuple[str, bytes, str]]) -> Tuple[List[OutputFile], str]:
+    """Stamp GAY on the first image attachment."""
+    return _stamp_attachments(attachments, 'gay', '🏳️\u200d🌈 Gay', '🏳️\u200d🌈')
 
 
 def _make_word_stamp(text: str, text_h: int):
@@ -186,23 +190,9 @@ def add_goon(data: bytes, count: int = 0) -> bytes:
         return out.getvalue()
 
 
-def goon_attachments(
-    attachments: List[Tuple[str, bytes, str]],
-) -> Tuple[List[OutputFile], str]:
-    """Stamp GOON on the first image attachment. Mirrors gay_attachments."""
-    images = [(fn, d, ct) for fn, d, ct in (attachments or []) if is_image(fn, ct)]
-    if not images:
-        return [], "No image — attach an image first."
-    filename, data, _ = images[0]
-    stem = Path(filename).stem or "image"
-    try:
-        result = add_goon(data)
-        out = _alive_or_still(result, stem, "goon")
-        summary = f"## 🥴 Goon\n\n🥴 {filename}: {_human_size(len(result))}"
-        return [out], summary
-    except Exception as e:
-        logger.error(f"goon failed for {filename}: {e}", exc_info=True)
-        return [], f"❌ {filename}: {e}"
+def goon_attachments(attachments: List[Tuple[str, bytes, str]]) -> Tuple[List[OutputFile], str]:
+    """Stamp GOON on the first image attachment."""
+    return _stamp_attachments(attachments, 'goon', '🥴 Goon', '🥴')
 
 
 def _make_hag_stamp(text_h: int):
@@ -328,23 +318,9 @@ def add_hag(data: bytes, count: int = 0) -> bytes:
         return out.getvalue()
 
 
-def hag_attachments(
-    attachments: List[Tuple[str, bytes, str]],
-) -> Tuple[List[OutputFile], str]:
-    """Stamp HAG + draw a little old lady on the first image attachment. Mirrors gay_attachments."""
-    images = [(fn, d, ct) for fn, d, ct in (attachments or []) if is_image(fn, ct)]
-    if not images:
-        return [], "No image — attach an image first."
-    filename, data, _ = images[0]
-    stem = Path(filename).stem or "image"
-    try:
-        result = add_hag(data)
-        out = _alive_or_still(result, stem, "hag")
-        summary = f"## 👵 Hag\n\n👵 {filename}: {_human_size(len(result))}"
-        return [out], summary
-    except Exception as e:
-        logger.error(f"hag failed for {filename}: {e}", exc_info=True)
-        return [], f"❌ {filename}: {e}"
+def hag_attachments(attachments: List[Tuple[str, bytes, str]]) -> Tuple[List[OutputFile], str]:
+    """Stamp HAG + draw a little old lady on the first image attachment."""
+    return _stamp_attachments(attachments, 'hag', '👵 Hag', '👵')
 
 
 def _make_blacked(diam: int):
@@ -433,23 +409,9 @@ def add_blacked(data: bytes, count: int = 0) -> bytes:
         return out.getvalue()
 
 
-def blacked_attachments(
-    attachments: List[Tuple[str, bytes, str]],
-) -> Tuple[List[OutputFile], str]:
-    """Slap the BLACKED logo on the first image attachment. Mirrors gay_attachments."""
-    images = [(fn, d, ct) for fn, d, ct in (attachments or []) if is_image(fn, ct)]
-    if not images:
-        return [], "No image — attach an image first."
-    filename, data, _ = images[0]
-    stem = Path(filename).stem or "image"
-    try:
-        result = add_blacked(data)
-        out = _alive_or_still(result, stem, "blacked")
-        summary = f"## 🥷 Blacked\n\n🥷 {filename}: {_human_size(len(result))}"
-        return [out], summary
-    except Exception as e:
-        logger.error(f"blacked failed for {filename}: {e}", exc_info=True)
-        return [], f"❌ {filename}: {e}"
+def blacked_attachments(attachments: List[Tuple[str, bytes, str]]) -> Tuple[List[OutputFile], str]:
+    """Slap the BLACKED logo on the first image attachment."""
+    return _stamp_attachments(attachments, 'blacked', '🥷 Blacked', '🥷')
 
 
 def _make_kosher(diam: int):
@@ -537,23 +499,9 @@ def add_kosher(data: bytes, count: int = 0) -> bytes:
         return out.getvalue()
 
 
-def kosher_attachments(
-    attachments: List[Tuple[str, bytes, str]],
-) -> Tuple[List[OutputFile], str]:
-    """Stamp the KOSHER seal on the first image attachment. Mirrors gay_attachments."""
-    images = [(fn, d, ct) for fn, d, ct in (attachments or []) if is_image(fn, ct)]
-    if not images:
-        return [], "No image — attach an image first."
-    filename, data, _ = images[0]
-    stem = Path(filename).stem or "image"
-    try:
-        result = add_kosher(data)
-        out = _alive_or_still(result, stem, "kosher")
-        summary = f"## ✡️ Kosher\n\n✡️ {filename}: {_human_size(len(result))}"
-        return [out], summary
-    except Exception as e:
-        logger.error(f"kosher failed for {filename}: {e}", exc_info=True)
-        return [], f"❌ {filename}: {e}"
+def kosher_attachments(attachments: List[Tuple[str, bytes, str]]) -> Tuple[List[OutputFile], str]:
+    """Stamp the KOSHER seal on the first image attachment."""
+    return _stamp_attachments(attachments, 'kosher', '✡️ Kosher', '✡️')
 
 
 def _make_barked_dog(h: int):
@@ -684,20 +632,6 @@ def add_barked(data: bytes, count: int = 0) -> bytes:
         return out.getvalue()
 
 
-def barked_attachments(
-    attachments: List[Tuple[str, bytes, str]],
-) -> Tuple[List[OutputFile], str]:
-    """Drop the smirking dog + #BARKED on the first image attachment. Mirrors gay_attachments."""
-    images = [(fn, d, ct) for fn, d, ct in (attachments or []) if is_image(fn, ct)]
-    if not images:
-        return [], "No image — attach an image first."
-    filename, data, _ = images[0]
-    stem = Path(filename).stem or "image"
-    try:
-        result = add_barked(data)
-        out = _alive_or_still(result, stem, "barked")
-        summary = f"## 🐶 Barked\n\n🐶 {filename}: {_human_size(len(result))}"
-        return [out], summary
-    except Exception as e:
-        logger.error(f"barked failed for {filename}: {e}", exc_info=True)
-        return [], f"❌ {filename}: {e}"
+def barked_attachments(attachments: List[Tuple[str, bytes, str]]) -> Tuple[List[OutputFile], str]:
+    """Drop the smirking dog + #BARKED on the first image attachment."""
+    return _stamp_attachments(attachments, 'barked', '🐶 Barked', '🐶')
