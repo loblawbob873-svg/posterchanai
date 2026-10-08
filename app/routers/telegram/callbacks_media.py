@@ -4,6 +4,89 @@ from .keyboards import _character_prompt_keyboard, _media_action_keyboard, _medi
 from .senders import User, _deliver_files_result, _media_action_cache, _offer_ytdl_share, _send_flashcard, logger, telegram_service, time
 
 
+
+# Buttons whose effect needs nothing but the picture: action -> (command, "no picture" reply, progress line).
+_IMAGE_EFFECT_BUTTONS = {
+    'poo': ('poo', 'Nothing to decorate — that upload has no image.', '💩 Adding poop…'),
+    'cum': ('cum', 'Nothing to decorate — that upload has no image.', '💦 Adding cum…'),
+    'blood': ('blood', 'Nothing to decorate — that upload has no image.', '🩸 Adding blood…'),
+    'bullethole': ('bullethole', 'Nothing to decorate — that upload has no image.', '🕳️ Adding bullet holes…'),
+    'fire': ('fire', 'Nothing to decorate — that upload has no image.', '🔥 Setting it on fire…'),
+    'gay': ('gay', 'Nothing to stamp — that upload has no image.', '🏳️\u200d🌈 Stamping…'),
+    'blacked': ('blacked', 'Nothing to stamp — that upload has no image.', '🥷 Slapping the logo on…'),
+    'kosher': ('kosher', 'Nothing to stamp — that upload has no image.', '✡️ Certifying kosher…'),
+    'blue': ('blue', 'Nothing to paint — that upload has no image.', '🔵 Dripping blue paint…'),
+    'barked': ('barked', 'Nothing to bark at — that upload has no image.', '🐶 Barking…'),
+    'hava': ('hava', 'Nothing to set to music — that upload has no image.', '🎻 Hava Nagila-ing…'),
+    'indian': ('indian', 'Nothing to set to music — that upload has no image.', '🇮🇳 Adding the song…'),
+    'yakety': ('yakety', 'Nothing to set to music — that upload has no image.', '🎷 Yakety Sax-ing…'),
+    'yamete': ('yamete', 'Nothing to set to music — that upload has no image.', '🛑 Yamete kudasai…'),
+    'curb': ('curb', 'Nothing to set to music — that upload has no image.', '😬 Curbing…'),
+    'depressing': ('depressing', 'Nothing to set to music — that upload has no image.', '😢 Getting depressing…'),
+    'fahh': ('fahh', 'Nothing to set to music — that upload has no image.', '🌀 Fahh…'),
+    'helpme': ('helpme', 'Nothing to set to music — that upload has no image.', '🆘 Helpme…'),
+    'gong': ('gong', 'Nothing to set to music — that upload has no image.', '🔔 Gong…'),
+    'fbi': ('fbi', 'Nothing to set to music — that upload has no image.', '🚨 FBI OPEN UP…'),
+    'redeem': ('redeem', 'Nothing to set to music — that upload has no image.', '💳 Do NOT redeem it…'),
+    'gigity': ('gigity', 'Nothing to set to music — that upload has no image.', '😏 Gigity…'),
+    'beavis': ('beavis', 'Nothing to set to music — that upload has no image.', '🤤 Beavis…'),
+    'smell': ('smell', 'Nothing to set to music — that upload has no image.', '👃 Can you imagine the smell…'),
+    'hood': ('hood', 'Nothing to set to music — that upload has no image.', '🏚️ Hood…'),
+    'akbar': ('akbar', 'Nothing to set to music — that upload has no image.', '🕌 Akbar…'),
+    'retard': ('retard', 'Nothing to set to music — that upload has no image.', '⚠️ Retard alert…'),
+    'heat': ('heat', 'Nothing to set to music — that upload has no image.', '🔥 It was the heat of the moment…'),
+    'whoabuddy': ('whoabuddy', 'Nothing to set to music — that upload has no image.', '🤠 Whoa buddy…'),
+    'diarrhea': ('diarrhea', 'Nothing to set to music — that upload has no image.', '💩 Explosive diarrhea…'),
+    'seth': ('seth', 'Nothing to set to music — that upload has no image.', '🎬 Seth…'),
+    'robocop': ('robocop', 'Nothing to set to music — that upload has no image.', '🤖 Robocop…'),
+    'titan': ('titan', 'Nothing to set to music — that upload has no image.', '🗿 Titan…'),
+    'terminator': ('terminator', 'Nothing to set to music — that upload has no image.', '🦾 Terminator…'),
+    'reze': ('reze', 'Nothing to set to music — that upload has no image.', '💣 Reze…'),
+    'makima': ('makima', 'Nothing to shoot at — that upload has no image.', '🔫 Makima…'),
+    'gura': ('gura', 'Nothing to pog at — that upload has no image.', '🦈 Gura…'),
+    'rebecca': ('rebecca', 'Nothing to set to music — that upload has no image.', '👍 Rebecca…'),
+    'vibe': ('vibe', 'Nothing to set to music — that upload has no image.', '💖 Vibe…'),
+    'feliz': ('feliz', 'Nothing to set to music — that upload has no image.', '🎉 Feliz…'),
+    'horse': ('horse', 'Nothing to set to music — that upload has no image.', '🐴 Horse…'),
+    'knightrider': ('knightrider', 'Nothing to set to music — that upload has no image.', '🚗 Knight Rider…'),
+    'hugebitch': ('hugebitch', 'Nothing to set to music — that upload has no image.', '🗣️ Huge Bitch…'),
+    'sleepwell': ('sleepwell', 'Nothing to set to music — that upload has no image.', '😴 Sleep Well…'),
+    'prayer': ('prayer', 'Nothing to set to the prayer clip — that upload has no image.', '🙏 Prayer…'),
+    'sopranos': ('sopranos', 'Nothing to set to music — that upload has no image.', '🇮🇹 Sopranos…'),
+    'cheers': ('cheers', 'Nothing to set to music — that upload has no image.', '🍻 Cheers…'),
+    'munsters': ('munsters', 'Nothing to set to music — that upload has no image.', '🧛 Munsters…'),
+    'happydays': ('happydays', 'Nothing to set to music — that upload has no image.', '🕺 Happy Days…'),
+    'dontwanttowait': ('dontwanttowait', 'Nothing to set to music — that upload has no image.', "🌊 Don't Want to Wait…"),
+    'strangerthings': ('strangerthings', 'Nothing to set to music — that upload has no image.', '🔦 Stranger Things…'),
+    'adamsfamily': ('adamsfamily', 'Nothing to set to music — that upload has no image.', '🖤 Addams Family…'),
+    'xmen': ('xmen', 'Nothing to set to music — that upload has no image.', '❌ X-Men…'),
+    'futurama': ('futurama', 'Nothing to set to music — that upload has no image.', '🚀 Futurama…'),
+    'charliesangles': ('charliesangles', 'Nothing to set to music — that upload has no image.', "👼 Charlie's Angels…"),
+    'differentstroke': ('differentstroke', 'Nothing to set to music — that upload has no image.', "🌍 Diff'rent Strokes…"),
+    'jerry': ('jerry', 'Nothing to set to music — that upload has no image.', '🎙️ Jerry…'),
+    'seinfeld': ('seinfeld', 'Nothing to set to music — that upload has no image.', '🎤 Seinfeld…'),
+    'onepiece': ('onepiece', 'Nothing to set to music — that upload has no image.', '🏴\u200d☠️ One Piece…'),
+    'overtaken': ('overtaken', 'Nothing to set to music — that upload has no image.', '🏎️ Overtaken…'),
+    'freebird': ('freebird', 'Nothing to set to music — that upload has no image.', '🦅 Free Bird…'),
+    'kanye': ('kanye', 'Nothing to set to music — that upload has no image.', '🐻 Kanye…'),
+    'darkness': ('darkness', 'Nothing to set to music — that upload has no image.', '🌑 Darkness…'),
+    'bike': ('bike', 'Nothing to set to music — that upload has no image.', '🚲 Bike…'),
+    'jobs': ('jobs', 'Nothing to set to music — that upload has no image.', '💼 They took our jobs…'),
+    'ree': ('ree', 'Nothing to set to music — that upload has no image.', '😡 REEEE…'),
+    'liberal': ('liberal', 'Nothing to set to music — that upload has no image.', '🗽 Liberal…'),
+    'moving': ('moving', 'Nothing to set to music — that upload has no image.', '📦 Moving…'),
+    'harlem': ('harlem', 'Nothing to set to music — that upload has no image.', '🕺 Harlem Shake…'),
+    'chimp': ('chimp', 'Nothing to overlay — that upload has no image.', '🐵 Chimp…'),
+    'consider': ('consider', 'Nothing to decorate — that upload has no image.', '🤔 Consider the following…'),
+    'clay': ('clay', 'Nothing to overlay — that upload has no image.', '🗣️ Sheeeit…'),
+    'uwu': ('uwu', 'Nothing to overlay — that upload has no image.', '🥺 uwu…'),
+    'nami': ('nami', 'Nothing to overlay — that upload has no image.', '💰 ka-ching…'),
+    'wasteland': ('wasteland', 'Nothing to set to music — that upload has no image.', '🎸 Teenage wasteland…'),
+    'mixalot': ('mixalot', 'Nothing to set to music — that upload has no image.', '🍑 Baby got back…'),
+    'nonematters': ('nonematters', 'Nothing to set to music — that upload has no image.', '🤷 None of this matters…'),
+    'thug': ('thug', 'Nothing to set to music — that upload has no image.', '😎 THUG LIFE…'),
+}
+
 async def _cb_mediafc(update, db, chat_id, data, callback_query, callback_query_id):
         cb_user = db.query(User).filter(
             User.telegram_chat_id == chat_id,
@@ -413,46 +496,15 @@ async def _cb_media(update, db, chat_id, data, callback_query, callback_query_id
                     # whose base64 starts with "/9j/" — send_photo would treat that
                     # as a file path and fail.
                     await _send_files_result(await cb_command_service.execute_command("dildo", "", attachments=_imgs))
-            elif _action == "poo":
-                # No caption needed — run immediately and post the result.
+            elif _action in _IMAGE_EFFECT_BUTTONS:
+                # A picture in, the effect out: no caption, no follow-up question.
+                _cmd, _empty, _working = _IMAGE_EFFECT_BUTTONS[_action]
                 if not any(is_image(fn, ct) for fn, _, ct in _atts):
-                    await telegram_service.send_message(chat_id, "Nothing to decorate — that upload has no image.")
+                    await telegram_service.send_message(chat_id, _empty)
                 else:
-                    await telegram_service.send_message(chat_id, "💩 Adding poop…")
+                    await telegram_service.send_message(chat_id, _working)
                     _imgs = [a for a in _atts if is_image(a[0], a[2])]
-                    await _send_files_result(await cb_command_service.execute_command("poo", "", attachments=_imgs))
-            elif _action == "cum":
-                # No caption needed — run immediately and post the result.
-                if not any(is_image(fn, ct) for fn, _, ct in _atts):
-                    await telegram_service.send_message(chat_id, "Nothing to decorate — that upload has no image.")
-                else:
-                    await telegram_service.send_message(chat_id, "💦 Adding cum…")
-                    _imgs = [a for a in _atts if is_image(a[0], a[2])]
-                    await _send_files_result(await cb_command_service.execute_command("cum", "", attachments=_imgs))
-            elif _action == "blood":
-                # No caption needed — run immediately and post the result.
-                if not any(is_image(fn, ct) for fn, _, ct in _atts):
-                    await telegram_service.send_message(chat_id, "Nothing to decorate — that upload has no image.")
-                else:
-                    await telegram_service.send_message(chat_id, "🩸 Adding blood…")
-                    _imgs = [a for a in _atts if is_image(a[0], a[2])]
-                    await _send_files_result(await cb_command_service.execute_command("blood", "", attachments=_imgs))
-            elif _action == "bullethole":
-                # No caption needed — run immediately and post the result.
-                if not any(is_image(fn, ct) for fn, _, ct in _atts):
-                    await telegram_service.send_message(chat_id, "Nothing to decorate — that upload has no image.")
-                else:
-                    await telegram_service.send_message(chat_id, "🕳️ Adding bullet holes…")
-                    _imgs = [a for a in _atts if is_image(a[0], a[2])]
-                    await _send_files_result(await cb_command_service.execute_command("bullethole", "", attachments=_imgs))
-            elif _action == "fire":
-                # No caption needed — run immediately and post the result.
-                if not any(is_image(fn, ct) for fn, _, ct in _atts):
-                    await telegram_service.send_message(chat_id, "Nothing to decorate — that upload has no image.")
-                else:
-                    await telegram_service.send_message(chat_id, "🔥 Setting it on fire…")
-                    _imgs = [a for a in _atts if is_image(a[0], a[2])]
-                    await _send_files_result(await cb_command_service.execute_command("fire", "", attachments=_imgs))
+                    await _send_files_result(await cb_command_service.execute_command(_cmd, "", attachments=_imgs))
             elif _action == "glow":
                 # Enter the shared caption → character → render flow (so glow can get text +
                 # a character too, and the branding outro, like the other effects).
@@ -467,326 +519,6 @@ async def _cb_media(update, db, chat_id, data, callback_query, callback_query_id
                             {"text": "▶️ No, render", "callback_data": "media:capq:skip"},
                         ]]},
                     )
-            elif _action == "gay":
-                # No caption needed — run immediately and post the result.
-                if not any(is_image(fn, ct) for fn, _, ct in _atts):
-                    await telegram_service.send_message(chat_id, "Nothing to stamp — that upload has no image.")
-                else:
-                    await telegram_service.send_message(chat_id, "🏳️‍🌈 Stamping…")
-                    _imgs = [a for a in _atts if is_image(a[0], a[2])]
-                    await _send_files_result(await cb_command_service.execute_command("gay", "", attachments=_imgs))
-            elif _action == "blacked":
-                # No caption needed — run immediately and post the result.
-                if not any(is_image(fn, ct) for fn, _, ct in _atts):
-                    await telegram_service.send_message(chat_id, "Nothing to stamp — that upload has no image.")
-                else:
-                    await telegram_service.send_message(chat_id, "🥷 Slapping the logo on…")
-                    _imgs = [a for a in _atts if is_image(a[0], a[2])]
-                    await _send_files_result(await cb_command_service.execute_command("blacked", "", attachments=_imgs))
-            elif _action == "kosher":
-                # No caption needed — run immediately and post the result.
-                if not any(is_image(fn, ct) for fn, _, ct in _atts):
-                    await telegram_service.send_message(chat_id, "Nothing to stamp — that upload has no image.")
-                else:
-                    await telegram_service.send_message(chat_id, "✡️ Certifying kosher…")
-                    _imgs = [a for a in _atts if is_image(a[0], a[2])]
-                    await _send_files_result(await cb_command_service.execute_command("kosher", "", attachments=_imgs))
-            elif _action == "blue":
-                # No caption needed — run immediately and post the result.
-                if not any(is_image(fn, ct) for fn, _, ct in _atts):
-                    await telegram_service.send_message(chat_id, "Nothing to paint — that upload has no image.")
-                else:
-                    await telegram_service.send_message(chat_id, "🔵 Dripping blue paint…")
-                    _imgs = [a for a in _atts if is_image(a[0], a[2])]
-                    await _send_files_result(await cb_command_service.execute_command("blue", "", attachments=_imgs))
-            elif _action == "barked":
-                # No caption needed — run immediately and post the result.
-                if not any(is_image(fn, ct) for fn, _, ct in _atts):
-                    await telegram_service.send_message(chat_id, "Nothing to bark at — that upload has no image.")
-                else:
-                    await telegram_service.send_message(chat_id, "🐶 Barking…")
-                    _imgs = [a for a in _atts if is_image(a[0], a[2])]
-                    await _send_files_result(await cb_command_service.execute_command("barked", "", attachments=_imgs))
-            elif _action == "hava":
-                # No caption needed — render the video and post it.
-                if not any(is_image(fn, ct) for fn, _, ct in _atts):
-                    await telegram_service.send_message(chat_id, "Nothing to set to music — that upload has no image.")
-                else:
-                    await telegram_service.send_message(chat_id, "🎻 Hava Nagila-ing…")
-                    _imgs = [a for a in _atts if is_image(a[0], a[2])]
-                    await _send_files_result(await cb_command_service.execute_command("hava", "", attachments=_imgs))
-            elif _action == "indian":
-                # No caption needed — render the video and post it.
-                if not any(is_image(fn, ct) for fn, _, ct in _atts):
-                    await telegram_service.send_message(chat_id, "Nothing to set to music — that upload has no image.")
-                else:
-                    await telegram_service.send_message(chat_id, "🇮🇳 Adding the song…")
-                    _imgs = [a for a in _atts if is_image(a[0], a[2])]
-                    await _send_files_result(await cb_command_service.execute_command("indian", "", attachments=_imgs))
-            elif _action == "yakety":
-                # No caption needed — render the video and post it.
-                if not any(is_image(fn, ct) for fn, _, ct in _atts):
-                    await telegram_service.send_message(chat_id, "Nothing to set to music — that upload has no image.")
-                else:
-                    await telegram_service.send_message(chat_id, "🎷 Yakety Sax-ing…")
-                    _imgs = [a for a in _atts if is_image(a[0], a[2])]
-                    await _send_files_result(await cb_command_service.execute_command("yakety", "", attachments=_imgs))
-            elif _action == "yamete":
-                # No caption needed — render the video and post it.
-                if not any(is_image(fn, ct) for fn, _, ct in _atts):
-                    await telegram_service.send_message(chat_id, "Nothing to set to music — that upload has no image.")
-                else:
-                    await telegram_service.send_message(chat_id, "🛑 Yamete kudasai…")
-                    _imgs = [a for a in _atts if is_image(a[0], a[2])]
-                    await _send_files_result(await cb_command_service.execute_command("yamete", "", attachments=_imgs))
-            elif _action == "curb":
-                # No caption needed — render the video and post it.
-                if not any(is_image(fn, ct) for fn, _, ct in _atts):
-                    await telegram_service.send_message(chat_id, "Nothing to set to music — that upload has no image.")
-                else:
-                    await telegram_service.send_message(chat_id, "😬 Curbing…")
-                    _imgs = [a for a in _atts if is_image(a[0], a[2])]
-                    await _send_files_result(await cb_command_service.execute_command("curb", "", attachments=_imgs))
-            elif _action == "depressing":
-                # No caption needed — render the video and post it.
-                if not any(is_image(fn, ct) for fn, _, ct in _atts):
-                    await telegram_service.send_message(chat_id, "Nothing to set to music — that upload has no image.")
-                else:
-                    await telegram_service.send_message(chat_id, "😢 Getting depressing…")
-                    _imgs = [a for a in _atts if is_image(a[0], a[2])]
-                    await _send_files_result(await cb_command_service.execute_command("depressing", "", attachments=_imgs))
-            elif _action == "fahh":
-                # No caption needed — render the video and post it.
-                if not any(is_image(fn, ct) for fn, _, ct in _atts):
-                    await telegram_service.send_message(chat_id, "Nothing to set to music — that upload has no image.")
-                else:
-                    await telegram_service.send_message(chat_id, "🌀 Fahh…")
-                    _imgs = [a for a in _atts if is_image(a[0], a[2])]
-                    await _send_files_result(await cb_command_service.execute_command("fahh", "", attachments=_imgs))
-            elif _action == "helpme":
-                # No caption needed — render the video and post it.
-                if not any(is_image(fn, ct) for fn, _, ct in _atts):
-                    await telegram_service.send_message(chat_id, "Nothing to set to music — that upload has no image.")
-                else:
-                    await telegram_service.send_message(chat_id, "🆘 Helpme…")
-                    _imgs = [a for a in _atts if is_image(a[0], a[2])]
-                    await _send_files_result(await cb_command_service.execute_command("helpme", "", attachments=_imgs))
-            elif _action == "gong":
-                # No caption needed — render the video and post it.
-                if not any(is_image(fn, ct) for fn, _, ct in _atts):
-                    await telegram_service.send_message(chat_id, "Nothing to set to music — that upload has no image.")
-                else:
-                    await telegram_service.send_message(chat_id, "🔔 Gong…")
-                    _imgs = [a for a in _atts if is_image(a[0], a[2])]
-                    await _send_files_result(await cb_command_service.execute_command("gong", "", attachments=_imgs))
-            elif _action == "fbi":
-                # No caption needed — render the video and post it.
-                if not any(is_image(fn, ct) for fn, _, ct in _atts):
-                    await telegram_service.send_message(chat_id, "Nothing to set to music — that upload has no image.")
-                else:
-                    await telegram_service.send_message(chat_id, "🚨 FBI OPEN UP…")
-                    _imgs = [a for a in _atts if is_image(a[0], a[2])]
-                    await _send_files_result(await cb_command_service.execute_command("fbi", "", attachments=_imgs))
-            elif _action == "redeem":
-                # No caption needed — render the video and post it.
-                if not any(is_image(fn, ct) for fn, _, ct in _atts):
-                    await telegram_service.send_message(chat_id, "Nothing to set to music — that upload has no image.")
-                else:
-                    await telegram_service.send_message(chat_id, "💳 Do NOT redeem it…")
-                    _imgs = [a for a in _atts if is_image(a[0], a[2])]
-                    await _send_files_result(await cb_command_service.execute_command("redeem", "", attachments=_imgs))
-            elif _action == "gigity":
-                # No caption needed — render the video and post it.
-                if not any(is_image(fn, ct) for fn, _, ct in _atts):
-                    await telegram_service.send_message(chat_id, "Nothing to set to music — that upload has no image.")
-                else:
-                    await telegram_service.send_message(chat_id, "😏 Gigity…")
-                    _imgs = [a for a in _atts if is_image(a[0], a[2])]
-                    await _send_files_result(await cb_command_service.execute_command("gigity", "", attachments=_imgs))
-            elif _action == "beavis":
-                # No caption needed — render the video and post it.
-                if not any(is_image(fn, ct) for fn, _, ct in _atts):
-                    await telegram_service.send_message(chat_id, "Nothing to set to music — that upload has no image.")
-                else:
-                    await telegram_service.send_message(chat_id, "🤤 Beavis…")
-                    _imgs = [a for a in _atts if is_image(a[0], a[2])]
-                    await _send_files_result(await cb_command_service.execute_command("beavis", "", attachments=_imgs))
-            elif _action == "smell":
-                # No caption needed — render the video and post it.
-                if not any(is_image(fn, ct) for fn, _, ct in _atts):
-                    await telegram_service.send_message(chat_id, "Nothing to set to music — that upload has no image.")
-                else:
-                    await telegram_service.send_message(chat_id, "👃 Can you imagine the smell…")
-                    _imgs = [a for a in _atts if is_image(a[0], a[2])]
-                    await _send_files_result(await cb_command_service.execute_command("smell", "", attachments=_imgs))
-            elif _action == "hood":
-                # No caption needed — render the video and post it.
-                if not any(is_image(fn, ct) for fn, _, ct in _atts):
-                    await telegram_service.send_message(chat_id, "Nothing to set to music — that upload has no image.")
-                else:
-                    await telegram_service.send_message(chat_id, "🏚️ Hood…")
-                    _imgs = [a for a in _atts if is_image(a[0], a[2])]
-                    await _send_files_result(await cb_command_service.execute_command("hood", "", attachments=_imgs))
-            elif _action == "akbar":
-                # No caption needed — render the video and post it.
-                if not any(is_image(fn, ct) for fn, _, ct in _atts):
-                    await telegram_service.send_message(chat_id, "Nothing to set to music — that upload has no image.")
-                else:
-                    await telegram_service.send_message(chat_id, "🕌 Akbar…")
-                    _imgs = [a for a in _atts if is_image(a[0], a[2])]
-                    await _send_files_result(await cb_command_service.execute_command("akbar", "", attachments=_imgs))
-            elif _action == "retard":
-                # No caption needed — render the video and post it.
-                if not any(is_image(fn, ct) for fn, _, ct in _atts):
-                    await telegram_service.send_message(chat_id, "Nothing to set to music — that upload has no image.")
-                else:
-                    await telegram_service.send_message(chat_id, "⚠️ Retard alert…")
-                    _imgs = [a for a in _atts if is_image(a[0], a[2])]
-                    await _send_files_result(await cb_command_service.execute_command("retard", "", attachments=_imgs))
-            elif _action == "heat":
-                # No caption needed — render the video and post it.
-                if not any(is_image(fn, ct) for fn, _, ct in _atts):
-                    await telegram_service.send_message(chat_id, "Nothing to set to music — that upload has no image.")
-                else:
-                    await telegram_service.send_message(chat_id, "\U0001F525 It was the heat of the moment…")
-                    _imgs = [a for a in _atts if is_image(a[0], a[2])]
-                    await _send_files_result(await cb_command_service.execute_command("heat", "", attachments=_imgs))
-            elif _action == "whoabuddy":
-                # No caption needed — render the video and post it.
-                if not any(is_image(fn, ct) for fn, _, ct in _atts):
-                    await telegram_service.send_message(chat_id, "Nothing to set to music — that upload has no image.")
-                else:
-                    await telegram_service.send_message(chat_id, "🤠 Whoa buddy…")
-                    _imgs = [a for a in _atts if is_image(a[0], a[2])]
-                    await _send_files_result(await cb_command_service.execute_command("whoabuddy", "", attachments=_imgs))
-            elif _action == "diarrhea":
-                # No caption needed — render the video and post it.
-                if not any(is_image(fn, ct) for fn, _, ct in _atts):
-                    await telegram_service.send_message(chat_id, "Nothing to set to music — that upload has no image.")
-                else:
-                    await telegram_service.send_message(chat_id, "💩 Explosive diarrhea…")
-                    _imgs = [a for a in _atts if is_image(a[0], a[2])]
-                    await _send_files_result(await cb_command_service.execute_command("diarrhea", "", attachments=_imgs))
-            elif _action == "seth":
-                # No caption needed — render the video and post it.
-                if not any(is_image(fn, ct) for fn, _, ct in _atts):
-                    await telegram_service.send_message(chat_id, "Nothing to set to music — that upload has no image.")
-                else:
-                    await telegram_service.send_message(chat_id, "🎬 Seth…")
-                    _imgs = [a for a in _atts if is_image(a[0], a[2])]
-                    await _send_files_result(await cb_command_service.execute_command("seth", "", attachments=_imgs))
-            elif _action == "robocop":
-                # No caption needed — render the video and post it.
-                if not any(is_image(fn, ct) for fn, _, ct in _atts):
-                    await telegram_service.send_message(chat_id, "Nothing to set to music — that upload has no image.")
-                else:
-                    await telegram_service.send_message(chat_id, "🤖 Robocop…")
-                    _imgs = [a for a in _atts if is_image(a[0], a[2])]
-                    await _send_files_result(await cb_command_service.execute_command("robocop", "", attachments=_imgs))
-            elif _action == "titan":
-                # No caption needed — render the video and post it.
-                if not any(is_image(fn, ct) for fn, _, ct in _atts):
-                    await telegram_service.send_message(chat_id, "Nothing to set to music — that upload has no image.")
-                else:
-                    await telegram_service.send_message(chat_id, "🗿 Titan…")
-                    _imgs = [a for a in _atts if is_image(a[0], a[2])]
-                    await _send_files_result(await cb_command_service.execute_command("titan", "", attachments=_imgs))
-            elif _action == "terminator":
-                # No caption needed — render the video and post it.
-                if not any(is_image(fn, ct) for fn, _, ct in _atts):
-                    await telegram_service.send_message(chat_id, "Nothing to set to music — that upload has no image.")
-                else:
-                    await telegram_service.send_message(chat_id, "🦾 Terminator…")
-                    _imgs = [a for a in _atts if is_image(a[0], a[2])]
-                    await _send_files_result(await cb_command_service.execute_command("terminator", "", attachments=_imgs))
-            elif _action == "reze":
-                # No caption needed — render the video and post it.
-                if not any(is_image(fn, ct) for fn, _, ct in _atts):
-                    await telegram_service.send_message(chat_id, "Nothing to set to music — that upload has no image.")
-                else:
-                    await telegram_service.send_message(chat_id, "💣 Reze…")
-                    _imgs = [a for a in _atts if is_image(a[0], a[2])]
-                    await _send_files_result(await cb_command_service.execute_command("reze", "", attachments=_imgs))
-            elif _action == "makima":
-                # No caption needed — render the video and post it.
-                if not any(is_image(fn, ct) for fn, _, ct in _atts):
-                    await telegram_service.send_message(chat_id, "Nothing to shoot at — that upload has no image.")
-                else:
-                    await telegram_service.send_message(chat_id, "🔫 Makima…")
-                    _imgs = [a for a in _atts if is_image(a[0], a[2])]
-                    await _send_files_result(await cb_command_service.execute_command("makima", "", attachments=_imgs))
-            elif _action == "gura":
-                # No caption needed — render the video and post it.
-                if not any(is_image(fn, ct) for fn, _, ct in _atts):
-                    await telegram_service.send_message(chat_id, "Nothing to pog at — that upload has no image.")
-                else:
-                    await telegram_service.send_message(chat_id, "🦈 Gura…")
-                    _imgs = [a for a in _atts if is_image(a[0], a[2])]
-                    await _send_files_result(await cb_command_service.execute_command("gura", "", attachments=_imgs))
-            elif _action == "rebecca":
-                # No caption needed — render the video and post it.
-                if not any(is_image(fn, ct) for fn, _, ct in _atts):
-                    await telegram_service.send_message(chat_id, "Nothing to set to music — that upload has no image.")
-                else:
-                    await telegram_service.send_message(chat_id, "👍 Rebecca…")
-                    _imgs = [a for a in _atts if is_image(a[0], a[2])]
-                    await _send_files_result(await cb_command_service.execute_command("rebecca", "", attachments=_imgs))
-            elif _action == "vibe":
-                # No caption needed — render the video and post it.
-                if not any(is_image(fn, ct) for fn, _, ct in _atts):
-                    await telegram_service.send_message(chat_id, "Nothing to set to music — that upload has no image.")
-                else:
-                    await telegram_service.send_message(chat_id, "💖 Vibe…")
-                    _imgs = [a for a in _atts if is_image(a[0], a[2])]
-                    await _send_files_result(await cb_command_service.execute_command("vibe", "", attachments=_imgs))
-            elif _action == "feliz":
-                # No caption needed — render the video and post it.
-                if not any(is_image(fn, ct) for fn, _, ct in _atts):
-                    await telegram_service.send_message(chat_id, "Nothing to set to music — that upload has no image.")
-                else:
-                    await telegram_service.send_message(chat_id, "🎉 Feliz…")
-                    _imgs = [a for a in _atts if is_image(a[0], a[2])]
-                    await _send_files_result(await cb_command_service.execute_command("feliz", "", attachments=_imgs))
-            elif _action == "horse":
-                # No caption needed — render the video and post it.
-                if not any(is_image(fn, ct) for fn, _, ct in _atts):
-                    await telegram_service.send_message(chat_id, "Nothing to set to music — that upload has no image.")
-                else:
-                    await telegram_service.send_message(chat_id, "🐴 Horse…")
-                    _imgs = [a for a in _atts if is_image(a[0], a[2])]
-                    await _send_files_result(await cb_command_service.execute_command("horse", "", attachments=_imgs))
-            elif _action == "knightrider":
-                # No caption needed — render the video and post it.
-                if not any(is_image(fn, ct) for fn, _, ct in _atts):
-                    await telegram_service.send_message(chat_id, "Nothing to set to music — that upload has no image.")
-                else:
-                    await telegram_service.send_message(chat_id, "🚗 Knight Rider…")
-                    _imgs = [a for a in _atts if is_image(a[0], a[2])]
-                    await _send_files_result(await cb_command_service.execute_command("knightrider", "", attachments=_imgs))
-            elif _action == "hugebitch":
-                # No caption needed — render the video and post it.
-                if not any(is_image(fn, ct) for fn, _, ct in _atts):
-                    await telegram_service.send_message(chat_id, "Nothing to set to music — that upload has no image.")
-                else:
-                    await telegram_service.send_message(chat_id, "🗣️ Huge Bitch…")
-                    _imgs = [a for a in _atts if is_image(a[0], a[2])]
-                    await _send_files_result(await cb_command_service.execute_command("hugebitch", "", attachments=_imgs))
-            elif _action == "sleepwell":
-                # No caption needed — render the video and post it.
-                if not any(is_image(fn, ct) for fn, _, ct in _atts):
-                    await telegram_service.send_message(chat_id, "Nothing to set to music — that upload has no image.")
-                else:
-                    await telegram_service.send_message(chat_id, "😴 Sleep Well…")
-                    _imgs = [a for a in _atts if is_image(a[0], a[2])]
-                    await _send_files_result(await cb_command_service.execute_command("sleepwell", "", attachments=_imgs))
-            elif _action == "prayer":
-                # No caption needed — render the video and post it.
-                if not any(is_image(fn, ct) for fn, _, ct in _atts):
-                    await telegram_service.send_message(chat_id, "Nothing to set to the prayer clip — that upload has no image.")
-                else:
-                    await telegram_service.send_message(chat_id, "🙏 Prayer…")
-                    _imgs = [a for a in _atts if is_image(a[0], a[2])]
-                    await _send_files_result(await cb_command_service.execute_command("prayer", "", attachments=_imgs))
             elif _action == "alive":
                 # 3D parallax — enter the shared caption → character → render flow.
                 if not any(is_image(fn, ct) for fn, _, ct in _atts):
@@ -800,230 +532,6 @@ async def _cb_media(update, db, chat_id, data, callback_query, callback_query_id
                             {"text": "▶️ No, render", "callback_data": "media:capq:skip"},
                         ]]},
                     )
-            elif _action == "sopranos":
-                # No caption needed — render the video and post it.
-                if not any(is_image(fn, ct) for fn, _, ct in _atts):
-                    await telegram_service.send_message(chat_id, "Nothing to set to music — that upload has no image.")
-                else:
-                    await telegram_service.send_message(chat_id, "🇮🇹 Sopranos…")
-                    _imgs = [a for a in _atts if is_image(a[0], a[2])]
-                    await _send_files_result(await cb_command_service.execute_command("sopranos", "", attachments=_imgs))
-            elif _action == "cheers":
-                # No caption needed — render the video and post it.
-                if not any(is_image(fn, ct) for fn, _, ct in _atts):
-                    await telegram_service.send_message(chat_id, "Nothing to set to music — that upload has no image.")
-                else:
-                    await telegram_service.send_message(chat_id, "🍻 Cheers…")
-                    _imgs = [a for a in _atts if is_image(a[0], a[2])]
-                    await _send_files_result(await cb_command_service.execute_command("cheers", "", attachments=_imgs))
-            elif _action == "munsters":
-                # No caption needed — render the video and post it.
-                if not any(is_image(fn, ct) for fn, _, ct in _atts):
-                    await telegram_service.send_message(chat_id, "Nothing to set to music — that upload has no image.")
-                else:
-                    await telegram_service.send_message(chat_id, "🧛 Munsters…")
-                    _imgs = [a for a in _atts if is_image(a[0], a[2])]
-                    await _send_files_result(await cb_command_service.execute_command("munsters", "", attachments=_imgs))
-            elif _action == "happydays":
-                # No caption needed — render the video and post it.
-                if not any(is_image(fn, ct) for fn, _, ct in _atts):
-                    await telegram_service.send_message(chat_id, "Nothing to set to music — that upload has no image.")
-                else:
-                    await telegram_service.send_message(chat_id, "🕺 Happy Days…")
-                    _imgs = [a for a in _atts if is_image(a[0], a[2])]
-                    await _send_files_result(await cb_command_service.execute_command("happydays", "", attachments=_imgs))
-            elif _action == "dontwanttowait":
-                # No caption needed — render the video and post it.
-                if not any(is_image(fn, ct) for fn, _, ct in _atts):
-                    await telegram_service.send_message(chat_id, "Nothing to set to music — that upload has no image.")
-                else:
-                    await telegram_service.send_message(chat_id, "🌊 Don't Want to Wait…")
-                    _imgs = [a for a in _atts if is_image(a[0], a[2])]
-                    await _send_files_result(await cb_command_service.execute_command("dontwanttowait", "", attachments=_imgs))
-            elif _action == "strangerthings":
-                # No caption needed — render the video and post it.
-                if not any(is_image(fn, ct) for fn, _, ct in _atts):
-                    await telegram_service.send_message(chat_id, "Nothing to set to music — that upload has no image.")
-                else:
-                    await telegram_service.send_message(chat_id, "🔦 Stranger Things…")
-                    _imgs = [a for a in _atts if is_image(a[0], a[2])]
-                    await _send_files_result(await cb_command_service.execute_command("strangerthings", "", attachments=_imgs))
-            elif _action == "adamsfamily":
-                # No caption needed — render the video and post it.
-                if not any(is_image(fn, ct) for fn, _, ct in _atts):
-                    await telegram_service.send_message(chat_id, "Nothing to set to music — that upload has no image.")
-                else:
-                    await telegram_service.send_message(chat_id, "🖤 Addams Family…")
-                    _imgs = [a for a in _atts if is_image(a[0], a[2])]
-                    await _send_files_result(await cb_command_service.execute_command("adamsfamily", "", attachments=_imgs))
-            elif _action == "xmen":
-                # No caption needed — render the video and post it.
-                if not any(is_image(fn, ct) for fn, _, ct in _atts):
-                    await telegram_service.send_message(chat_id, "Nothing to set to music — that upload has no image.")
-                else:
-                    await telegram_service.send_message(chat_id, "❌ X-Men…")
-                    _imgs = [a for a in _atts if is_image(a[0], a[2])]
-                    await _send_files_result(await cb_command_service.execute_command("xmen", "", attachments=_imgs))
-            elif _action == "futurama":
-                # No caption needed — render the video and post it.
-                if not any(is_image(fn, ct) for fn, _, ct in _atts):
-                    await telegram_service.send_message(chat_id, "Nothing to set to music — that upload has no image.")
-                else:
-                    await telegram_service.send_message(chat_id, "🚀 Futurama…")
-                    _imgs = [a for a in _atts if is_image(a[0], a[2])]
-                    await _send_files_result(await cb_command_service.execute_command("futurama", "", attachments=_imgs))
-            elif _action == "charliesangles":
-                # No caption needed — render the video and post it.
-                if not any(is_image(fn, ct) for fn, _, ct in _atts):
-                    await telegram_service.send_message(chat_id, "Nothing to set to music — that upload has no image.")
-                else:
-                    await telegram_service.send_message(chat_id, "👼 Charlie's Angels…")
-                    _imgs = [a for a in _atts if is_image(a[0], a[2])]
-                    await _send_files_result(await cb_command_service.execute_command("charliesangles", "", attachments=_imgs))
-            elif _action == "differentstroke":
-                # No caption needed — render the video and post it.
-                if not any(is_image(fn, ct) for fn, _, ct in _atts):
-                    await telegram_service.send_message(chat_id, "Nothing to set to music — that upload has no image.")
-                else:
-                    await telegram_service.send_message(chat_id, "🌍 Diff'rent Strokes…")
-                    _imgs = [a for a in _atts if is_image(a[0], a[2])]
-                    await _send_files_result(await cb_command_service.execute_command("differentstroke", "", attachments=_imgs))
-            elif _action == "jerry":
-                # No caption needed — composite Jerry onto the image, render the video and post it.
-                if not any(is_image(fn, ct) for fn, _, ct in _atts):
-                    await telegram_service.send_message(chat_id, "Nothing to set to music — that upload has no image.")
-                else:
-                    await telegram_service.send_message(chat_id, "🎙️ Jerry…")
-                    _imgs = [a for a in _atts if is_image(a[0], a[2])]
-                    await _send_files_result(await cb_command_service.execute_command("jerry", "", attachments=_imgs))
-            elif _action == "seinfeld":
-                # No caption needed — render the video and post it.
-                if not any(is_image(fn, ct) for fn, _, ct in _atts):
-                    await telegram_service.send_message(chat_id, "Nothing to set to music — that upload has no image.")
-                else:
-                    await telegram_service.send_message(chat_id, "🎤 Seinfeld…")
-                    _imgs = [a for a in _atts if is_image(a[0], a[2])]
-                    await _send_files_result(await cb_command_service.execute_command("seinfeld", "", attachments=_imgs))
-            elif _action == "onepiece":
-                # No caption needed — render the video and post it.
-                if not any(is_image(fn, ct) for fn, _, ct in _atts):
-                    await telegram_service.send_message(chat_id, "Nothing to set to music — that upload has no image.")
-                else:
-                    await telegram_service.send_message(chat_id, "🏴‍☠️ One Piece…")
-                    _imgs = [a for a in _atts if is_image(a[0], a[2])]
-                    await _send_files_result(await cb_command_service.execute_command("onepiece", "", attachments=_imgs))
-            elif _action == "overtaken":
-                # No caption needed — render the video and post it.
-                if not any(is_image(fn, ct) for fn, _, ct in _atts):
-                    await telegram_service.send_message(chat_id, "Nothing to set to music — that upload has no image.")
-                else:
-                    await telegram_service.send_message(chat_id, "🏎️ Overtaken…")
-                    _imgs = [a for a in _atts if is_image(a[0], a[2])]
-                    await _send_files_result(await cb_command_service.execute_command("overtaken", "", attachments=_imgs))
-            elif _action == "freebird":
-                # No caption needed — render the video and post it.
-                if not any(is_image(fn, ct) for fn, _, ct in _atts):
-                    await telegram_service.send_message(chat_id, "Nothing to set to music — that upload has no image.")
-                else:
-                    await telegram_service.send_message(chat_id, "🦅 Free Bird…")
-                    _imgs = [a for a in _atts if is_image(a[0], a[2])]
-                    await _send_files_result(await cb_command_service.execute_command("freebird", "", attachments=_imgs))
-            elif _action == "kanye":
-                # No caption needed — render the video and post it.
-                if not any(is_image(fn, ct) for fn, _, ct in _atts):
-                    await telegram_service.send_message(chat_id, "Nothing to set to music — that upload has no image.")
-                else:
-                    await telegram_service.send_message(chat_id, "🐻 Kanye…")
-                    _imgs = [a for a in _atts if is_image(a[0], a[2])]
-                    await _send_files_result(await cb_command_service.execute_command("kanye", "", attachments=_imgs))
-            elif _action == "darkness":
-                # No caption needed — render the video and post it.
-                if not any(is_image(fn, ct) for fn, _, ct in _atts):
-                    await telegram_service.send_message(chat_id, "Nothing to set to music — that upload has no image.")
-                else:
-                    await telegram_service.send_message(chat_id, "🌑 Darkness…")
-                    _imgs = [a for a in _atts if is_image(a[0], a[2])]
-                    await _send_files_result(await cb_command_service.execute_command("darkness", "", attachments=_imgs))
-            elif _action == "bike":
-                # No caption needed — render the video and post it.
-                if not any(is_image(fn, ct) for fn, _, ct in _atts):
-                    await telegram_service.send_message(chat_id, "Nothing to set to music — that upload has no image.")
-                else:
-                    await telegram_service.send_message(chat_id, "🚲 Bike…")
-                    _imgs = [a for a in _atts if is_image(a[0], a[2])]
-                    await _send_files_result(await cb_command_service.execute_command("bike", "", attachments=_imgs))
-            elif _action == "jobs":
-                # No caption needed — render the video and post it.
-                if not any(is_image(fn, ct) for fn, _, ct in _atts):
-                    await telegram_service.send_message(chat_id, "Nothing to set to music — that upload has no image.")
-                else:
-                    await telegram_service.send_message(chat_id, "💼 They took our jobs…")
-                    _imgs = [a for a in _atts if is_image(a[0], a[2])]
-                    await _send_files_result(await cb_command_service.execute_command("jobs", "", attachments=_imgs))
-            elif _action == "ree":
-                # No caption needed — render the video and post it.
-                if not any(is_image(fn, ct) for fn, _, ct in _atts):
-                    await telegram_service.send_message(chat_id, "Nothing to set to music — that upload has no image.")
-                else:
-                    await telegram_service.send_message(chat_id, "😡 REEEE…")
-                    _imgs = [a for a in _atts if is_image(a[0], a[2])]
-                    await _send_files_result(await cb_command_service.execute_command("ree", "", attachments=_imgs))
-            elif _action == "liberal":
-                # No caption needed — render the video and post it.
-                if not any(is_image(fn, ct) for fn, _, ct in _atts):
-                    await telegram_service.send_message(chat_id, "Nothing to set to music — that upload has no image.")
-                else:
-                    await telegram_service.send_message(chat_id, "🗽 Liberal…")
-                    _imgs = [a for a in _atts if is_image(a[0], a[2])]
-                    await _send_files_result(await cb_command_service.execute_command("liberal", "", attachments=_imgs))
-            elif _action == "moving":
-                # No caption needed — render the video and post it.
-                if not any(is_image(fn, ct) for fn, _, ct in _atts):
-                    await telegram_service.send_message(chat_id, "Nothing to set to music — that upload has no image.")
-                else:
-                    await telegram_service.send_message(chat_id, "📦 Moving…")
-                    _imgs = [a for a in _atts if is_image(a[0], a[2])]
-                    await _send_files_result(await cb_command_service.execute_command("moving", "", attachments=_imgs))
-            elif _action == "harlem":
-                # No caption needed — render the video and post it.
-                if not any(is_image(fn, ct) for fn, _, ct in _atts):
-                    await telegram_service.send_message(chat_id, "Nothing to set to music — that upload has no image.")
-                else:
-                    await telegram_service.send_message(chat_id, "🕺 Harlem Shake…")
-                    _imgs = [a for a in _atts if is_image(a[0], a[2])]
-                    await _send_files_result(await cb_command_service.execute_command("harlem", "", attachments=_imgs))
-            elif _action == "chimp":
-                # No caption needed — render the overlay video and post it.
-                if not any(is_image(fn, ct) for fn, _, ct in _atts):
-                    await telegram_service.send_message(chat_id, "Nothing to overlay — that upload has no image.")
-                else:
-                    await telegram_service.send_message(chat_id, "🐵 Chimp…")
-                    _imgs = [a for a in _atts if is_image(a[0], a[2])]
-                    await _send_files_result(await cb_command_service.execute_command("chimp", "", attachments=_imgs))
-            elif _action == "consider":
-                # Image overlay — run immediately and post the result.
-                if not any(is_image(fn, ct) for fn, _, ct in _atts):
-                    await telegram_service.send_message(chat_id, "Nothing to decorate — that upload has no image.")
-                else:
-                    await telegram_service.send_message(chat_id, "🤔 Consider the following…")
-                    _imgs = [a for a in _atts if is_image(a[0], a[2])]
-                    await _send_files_result(await cb_command_service.execute_command("consider", "", attachments=_imgs))
-            elif _action == "clay":
-                # Animated overlay — run immediately and post the result.
-                if not any(is_image(fn, ct) for fn, _, ct in _atts):
-                    await telegram_service.send_message(chat_id, "Nothing to overlay — that upload has no image.")
-                else:
-                    await telegram_service.send_message(chat_id, "🗣️ Sheeeit…")
-                    _imgs = [a for a in _atts if is_image(a[0], a[2])]
-                    await _send_files_result(await cb_command_service.execute_command("clay", "", attachments=_imgs))
-            elif _action == "uwu":
-                # Animated overlay — run immediately and post the result.
-                if not any(is_image(fn, ct) for fn, _, ct in _atts):
-                    await telegram_service.send_message(chat_id, "Nothing to overlay — that upload has no image.")
-                else:
-                    await telegram_service.send_message(chat_id, "\U0001F97A uwu…")
-                    _imgs = [a for a in _atts if is_image(a[0], a[2])]
-                    await _send_files_result(await cb_command_service.execute_command("uwu", "", attachments=_imgs))
             elif _action == "mentioned":
                 # ForceReply for the THING that got mentioned; the image stays in the cache and the reply
                 # renders it (see _MENTIONED_PROMPT in messages.py) -- the caption IS the meme.
@@ -1035,46 +543,6 @@ async def _cb_media(update, db, chat_id, data, callback_query, callback_query_id
                         reply_markup={"force_reply": True, "selective": True,
                                       "input_field_placeholder": "michigan"},
                     )
-            elif _action == "nami":
-                # Animated overlay — run immediately and post the result.
-                if not any(is_image(fn, ct) for fn, _, ct in _atts):
-                    await telegram_service.send_message(chat_id, "Nothing to overlay — that upload has no image.")
-                else:
-                    await telegram_service.send_message(chat_id, "💰 ka-ching…")
-                    _imgs = [a for a in _atts if is_image(a[0], a[2])]
-                    await _send_files_result(await cb_command_service.execute_command("nami", "", attachments=_imgs))
-            elif _action == "wasteland":
-                # No caption needed — render the video and post it.
-                if not any(is_image(fn, ct) for fn, _, ct in _atts):
-                    await telegram_service.send_message(chat_id, "Nothing to set to music — that upload has no image.")
-                else:
-                    await telegram_service.send_message(chat_id, "🎸 Teenage wasteland…")
-                    _imgs = [a for a in _atts if is_image(a[0], a[2])]
-                    await _send_files_result(await cb_command_service.execute_command("wasteland", "", attachments=_imgs))
-            elif _action == "mixalot":
-                # No caption needed — render the video and post it.
-                if not any(is_image(fn, ct) for fn, _, ct in _atts):
-                    await telegram_service.send_message(chat_id, "Nothing to set to music — that upload has no image.")
-                else:
-                    await telegram_service.send_message(chat_id, "🍑 Baby got back…")
-                    _imgs = [a for a in _atts if is_image(a[0], a[2])]
-                    await _send_files_result(await cb_command_service.execute_command("mixalot", "", attachments=_imgs))
-            elif _action == "nonematters":
-                # No caption needed — render the video and post it.
-                if not any(is_image(fn, ct) for fn, _, ct in _atts):
-                    await telegram_service.send_message(chat_id, "Nothing to set to music — that upload has no image.")
-                else:
-                    await telegram_service.send_message(chat_id, "\U0001f937 None of this matters…")
-                    _imgs = [a for a in _atts if is_image(a[0], a[2])]
-                    await _send_files_result(await cb_command_service.execute_command("nonematters", "", attachments=_imgs))
-            elif _action == "thug":
-                # No caption needed — render the video and post it.
-                if not any(is_image(fn, ct) for fn, _, ct in _atts):
-                    await telegram_service.send_message(chat_id, "Nothing to set to music — that upload has no image.")
-                else:
-                    await telegram_service.send_message(chat_id, "😎 THUG LIFE…")
-                    _imgs = [a for a in _atts if is_image(a[0], a[2])]
-                    await _send_files_result(await cb_command_service.execute_command("thug", "", attachments=_imgs))
             elif _action == "translate":
                 # Ask which language to translate the upload's text into.
                 await telegram_service.send_message(
