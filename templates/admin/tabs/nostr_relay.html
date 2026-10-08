@@ -167,9 +167,19 @@
                addresses that are this node's own machines rather than people. A relay on an older
                build reports neither, and then this says so instead of printing a confident 0. */
             function nf(n){ try{ return Number(n).toLocaleString(); }catch(_){ return String(n); } }
+            var runningDepth = null;
+            /* WHAT THE REBUILD WILL ACTUALLY DO. This said "depth 2 takes a few min" whatever the depth was, and
+               the relay reads the depth only when it STARTS -- so after saving 1 it went on crawling 3, and the
+               one message about it named a depth that was neither ("WoT depth = 1 but refresh WoT says depth 2"). */
+            function rebuildText(){
+                var sel=document.getElementById('nostr_relay_wot_depth'), d=sel&&sel.value?Number(sel.value):runningDepth;
+                if(!d) return '✓ started — rebuilding (a few minutes)';
+                return '✓ started — rebuilding at depth '+d+(d>1?' (a few minutes)':' (about a minute)');
+            }
             fetch('/api/admin/nostr-relay/status').then(function(r){return r.json();}).then(function(s){
                 if(!(s && s.running)){ stat.textContent='relay not running'; return; }
-                var line='WoT: '+nf(s.members)+' members';
+                var line='WoT: '+nf(s.members)+' members'+(s.wot_depth!=null?' (depth '+s.wot_depth+')':'');
+                runningDepth = s.wot_depth;
                 if(s.online!=null){
                     line+=' · '+nf(s.online)+' connected right now';
                     var made=[];
@@ -186,7 +196,7 @@
                 var f=(window.csrfFetch||fetch);
                 f('/api/admin/nostr-relay/refresh-wot',{method:'POST'}).then(function(r){return r.json();})
                 .then(function(j){
-                    if(j && j.ok) stat.textContent='✓ started — building (depth 2 takes a few min)';
+                    if(j && j.ok) stat.textContent=rebuildText();
                     else stat.textContent='✗ '+((j&&j.error)||'failed');
                 }).catch(function(e){ stat.textContent='✗ '+e; })
                 .finally(function(){ btn.disabled=false; });

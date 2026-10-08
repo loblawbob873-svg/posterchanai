@@ -544,7 +544,7 @@ def models_status(kind: str, admin: User = Depends(get_admin_user)):
 def refresh_nostr_relay_wot(admin: User = Depends(get_admin_user)):
     """Rebuild the Nostr relay's Web of Trust now (Admin → Relay button)."""
     from app.services.nostr_relay.thread import trigger_wot_refresh
-    return trigger_wot_refresh()
+    return trigger_wot_refresh(force=True)
 
 
 @router.post("/nostr-relay/restore-datastore")
@@ -835,6 +835,16 @@ def update_settings(
             "nostr_relay_posterchan_clients_only", "nostr_relay_posterchan_origins",
         )
         _relay_will_restart = any(k in changed_keys for k in _relay_topology_keys)
+        # The trust-graph settings are re-read by every rebuild (thread._build_wot), so saving one starts a
+        # rebuild rather than waiting for the nightly one -- it used to wait for an unrelated relay restart.
+        if not _relay_will_restart and any(k in changed_keys for k in (
+                "nostr_relay_wot_depth", "nostr_relay_wot_min_followers", "nostr_relay_wot_max",
+                "nostr_relay_wot_depth3_crawl_max")):
+            try:
+                from app.services.nostr_relay.thread import trigger_wot_refresh
+                trigger_wot_refresh(force=True)
+            except Exception as e:
+                logger.warning(f"[Admin] WoT rebuild after a WoT setting change failed to start: {e}")
 
         # If the relay blocklist/filters were edited in the UI, push them to the running relay
         # immediately (otherwise the change wouldn't apply until restart / daily refresh).

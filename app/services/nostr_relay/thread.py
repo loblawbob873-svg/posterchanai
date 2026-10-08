@@ -1282,6 +1282,9 @@ async def _main(cfg: dict) -> None:
                            "online": online,                                  # deduped by client IP = people now
                            **parts,                                           # online_remote/_internal/_unknown/_loopback_conns/_measured
                            "calls": calls,                                    # people in a call right now (kind-25050)
+                           # The depth THIS PROCESS crawls with -- read once at start, so a saved setting the relay
+                           # has not restarted into yet must not be reported as the one in force.
+                           "wot_depth": cfg.get("wot_depth"),
                            "pid": os.getpid(), "ts": int(time.time()),
                            "started": _started,
                            "block_purge": dict(_purge_state),
@@ -1317,7 +1320,7 @@ async def _main(cfg: dict) -> None:
                         _now = time.time()
                         if _st["task"] is not None and not _st["task"].done():
                             logger.info("[nostr-relay] WoT refresh already running — request coalesced")
-                        elif _now - _st["last"] < cfg.get("wot_refresh_min_interval_sec", 1800):
+                        elif not cmd.get("force") and _now - _st["last"] < cfg.get("wot_refresh_min_interval_sec", 1800):
                             logger.info("[nostr-relay] WoT refresh throttled — last full build %ds ago "
                                         "(new members are added incrementally, no crawl needed)",
                                         int(_now - _st["last"]))
@@ -1617,20 +1620,82 @@ def _write_wot_stamp(cfg) -> None:
 _wot_refresh_state = {"task": None, "last": 0.0}
 
 
+_WOT_SHAPE_KEYS = ("wot_depth", "wot_min_followers", "wot_max", "wot_depth3_crawl_max")
+
+
+def _wot_shape_path() -> str:
+    return _relay_db_path() + ".wot_shape"
+
+
+def _read_wot_shape() -> dict | None:
+    try:
+        with open(_wot_shape_path()) as f:
+            d = json.load(f)
+        return d if isinstance(d, dict) else None
+    except Exception:
+        return None
+
+
+def _wot_stricter(new: dict, old: dict | None) -> bool:
+    """Is `new` a deliberately SMALLER trust graph than the one `old` built? Fewer hops, a higher follower bar
+    or a lower cap. Unknown `old` is never stricter: without a record of what built the cache, a smaller crawl
+    is indistinguishable from a partial one, and the shrink guard stays on."""
+    if not old:
+        return False
+    def n(d, k, dflt=0):
+        try:
+            return int(d.get(k) if d.get(k) is not None else dflt)
+        except (TypeError, ValueError):
+            return dflt
+    if n(new, "wot_depth", 1) < n(old, "wot_depth", 1):
+        return True
+    if n(new, "wot_min_followers", 2) > n(old, "wot_min_followers", 2):
+        return True
+    nm, om = n(new, "wot_max"), n(old, "wot_max")
+    return bool(nm and (not om or nm < om))
+
+
 async def _build_wot(gate, store, cfg) -> int:
     """Single entry point so every WoT build (initial / daily / manual) uses the same
-    depth, pacing and caps. Records the build time so restarts honour the daily cadence."""
+    depth, pacing and caps. Records the build time so restarts honour the daily cadence.
+
+    THE TRUST-GRAPH SETTINGS ARE RE-READ HERE, NOT TAKEN FROM START-UP. They were read once when the relay
+    started and nothing that saves them restarts it, so Admin -> Nostr Relay -> WoT depth changed nothing until
+    some unrelated restart ("WoT depth = 1 but refresh WoT says depth 2"). And a deliberate change to a SMALLER
+    graph (depth 3 -> 1 halved it on poster.place, 2026-10-08) is exactly what the partial-crawl shrink guard
+    refuses, so the guard steps aside -- only -- when the settings are stricter than the ones that built the
+    cache (recorded in `.wot_shape` after each clean build)."""
+    try:
+        fresh = await asyncio.to_thread(_read_config)
+        for k in _WOT_SHAPE_KEYS:
+            if k in fresh:
+                cfg[k] = fresh[k]
+    except Exception as e:
+        logger.warning("[nostr-relay] WoT settings not re-read (%s) — building with the ones from start-up",
+                       type(e).__name__)
+    shape = {k: cfg.get(k) for k in _WOT_SHAPE_KEYS}
+    deliberate = _wot_stricter(shape, _read_wot_shape())
+    if deliberate:
+        logger.info("[nostr-relay] WoT settings are stricter than the last build (%s) — a smaller graph is "
+                    "intended, shrink guard off for this build", shape)
     n = await gate.build(
         store, cfg["upstream"], cfg["seeds"],
         depth=cfg["wot_depth"], direct=cfg["direct"],
         batch=cfg["author_batch"], pace=cfg["request_pace_sec"],
         min_followers=cfg["wot_min_followers"], max_members=cfg["wot_max"],
-        min_keep_ratio=cfg.get("wot_shrink_guard_ratio", 0.85),
+        min_keep_ratio=0.0 if deliberate else cfg.get("wot_shrink_guard_ratio", 0.85),
         depth3_crawl_max=cfg.get("wot_depth3_crawl_max", 2500))
     # Refresh the daily stamp only on a CLEAN build (follows resolved AND not a kept-cache partial), so
     # a partial crawl stays "due" and retries next cycle instead of marking the cache fresh.
     if n > len(set(cfg["seeds"]) | set(cfg["operator"])) and not gate.last_build_partial:
         _write_wot_stamp(cfg)
+        try:
+            tmp = _wot_shape_path() + ".tmp"
+            with open(tmp, "w") as f:
+                json.dump(shape, f)
+            os.replace(tmp, _wot_shape_path())
+        except Exception as e:
+            logger.debug("[nostr-relay] could not write WoT shape: %s", e)
     return n
 
 
@@ -1878,7 +1943,7 @@ def relay_status() -> dict:
                                     "accepted", "rejected", "started", "ts",
                                     "online_remote", "online_internal", "online_unknown",
                                     "online_loopback_conns", "online_confined",
-                                    "online_measured") if k in st}
+                                    "online_measured", "wot_depth") if k in st}
         if not alive:
             alive = (time.time() - st.get("ts", 0)) < 90 and _pid_alive(st.get("pid"))
     except Exception:
@@ -1913,9 +1978,11 @@ def _drop_control(cmd: dict) -> dict:
         return {"ok": False, "error": str(e)}
 
 
-def trigger_wot_refresh() -> dict:
-    """Admin button: ask the relay subprocess to rebuild the WoT now (it polls /status after)."""
-    return _drop_control({"cmd": "refresh-wot"})
+def trigger_wot_refresh(force: bool = False) -> dict:
+    """Ask the relay subprocess to rebuild the WoT (it polls /status after). `force` = an admin asked (the
+    button, or saving a WoT setting): it skips the 30-minute throttle that exists to coalesce the refreshes
+    every signup drops -- an admin who pressed Refresh was otherwise told "started" while nothing ran."""
+    return _drop_control({"cmd": "refresh-wot", "force": bool(force)})
 
 
 def trigger_wot_add(pubkeys: list) -> dict:
