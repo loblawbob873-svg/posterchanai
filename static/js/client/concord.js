@@ -5314,6 +5314,10 @@
       try{
         if(inv.directId&&inv.account!==p.viewer()?.pubkey)throw new Error('The signed-in account changed');
         if(inv.room?.cord?.bundle)window.PosterCordReader.validateInviteBundle(inv.room.cord.bundle,{forJoin:true});
+        /* CLOSE THE SHEET BEFORE THE JOIN REPAINTS. render() reopens every sheet that was open when it began (so a
+         * background refresh cannot shut one somebody is typing in), and this one was still open -- "click Preview,
+         * then Join, the modal never disappears". Decline hid it after its render; Join never did. */
+        { const sheet=$('#cc-join'); if(sheet)sheet.classList.add('hidden'); const u=$('#cc-invite-url'); if(u)u.value=''; }
         forgetDeclinedInvite(inv.url);pendingInvite=null;await acceptInvite(inv.url,inv.room,!!inv.directId);
         if(inv.directId&&inv.account===p.viewer()?.pubkey)window.PCCordDirectInvites.dismiss(inv.directId,p.cordDirectContext());
       }
@@ -5788,6 +5792,7 @@
                                     if(v&&'channel' in v)state.channel=v.channel;
                                     if(v&&v.controls)roomControls.set(v.controls[0],v.controls[1]);
                                     return state; };
+  window.PCConcord.__testInvite=v=>{ pendingInvite=v||null; render(); };   // an invitation on screen without fetching one
   window.PCConcord.__testMessages=id=>testMessages(id);
   /* The third door: the LIVE repaint exactly as an arriving message performs it. A scroll test that
      calls backgroundRender() directly is testing a path no message ever takes — it skips both the

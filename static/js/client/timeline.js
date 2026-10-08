@@ -756,7 +756,7 @@ window.PCTimelineFactory = function(dep){
       }catch(_){ setSt('the story could not be written'); return; }
     } else if(!words){ toast('paste a link, or write a headline and the story'); return; }
     if(o && o.pick) o.pick();
-    setSt('📰 newspaper clipping — first line is the headline; the link posts under it');
+    setSt('📰 newspaper — first line is the headline; the link posts under it');
   }
   async function _aiHashtags(ta, setSt){
     const body=(ta.value||'').trim();
@@ -1015,7 +1015,7 @@ window.PCTimelineFactory = function(dep){
         // The label carries the state: this is a toggle in a menu that closes on pick, so without the ✓
         // there is nothing anywhere telling you the next post will be framed.
         openMenuPopover(ab, [['enhance','✨ AI Enhancer'],['tags','# Hashtags'],['emoji','😀 Suggest emoji'],['translate','🌐 Translate'],
-                             ['card', (_tlBgFramed?'🖼️ Framed card ✓':'🖼️ Framed card')], ['paper','📰 Newspaper clipping']], a=>{
+                             ['card', (_tlBgFramed?'🖼️ Framed card ✓':'🖼️ Framed card')], ['paper','📰 Newspaper']], a=>{
           const setSt=m=>{ st.textContent=m; };
           if(a==='enhance') _aiEnhance(ta, setSt);
           else if(a==='tags') _aiHashtags(ta, setSt);
@@ -1029,6 +1029,22 @@ window.PCTimelineFactory = function(dep){
           else if(a==='translate') composeTranslate(ta, ab); }); }; }
     // 🎨 Background post — same swatches and renderer the modal uses (CMP_BGS/renderBgPost are
     // module-level), so the two composers can't drift. Short text only; picking one is exclusive.
+    /* 📰 A NEWSPAPER CLIPPING IS NOT A COLOUR. It lives in the background strip as one swatch, so picking it -- or
+     * asking 🤖 AI for a clipping -- left a row of colours open beside it ("for newspaper feature, why do we have a
+     * color select also? confusing"). While it is the choice, the strip folds away into ONE chip that says what will
+     * be posted, and ✕ on it takes the clipping off. 🎨 still opens the colours, and picking one replaces it. */
+    function _paperChip(strip, bg, clear, after){
+      if(!strip) return;
+      let chip=strip.nextElementSibling && strip.nextElementSibling.classList.contains('cmp-paper-chip') ? strip.nextElementSibling : null;
+      if(!(bg && bg.fx==='newspaper')){ if(chip) chip.remove(); return; }
+      strip.classList.add('hidden'); if(after) after();
+      if(!chip){
+        chip=document.createElement('div'); chip.className='cmp-paper-chip';
+        chip.innerHTML='<span>📰 Newspaper</span><button type="button" class="cmp-paper-x" aria-label="Remove the newspaper" title="Remove the newspaper">✕</button>';
+        strip.insertAdjacentElement('afterend', chip);
+      }
+      chip.querySelector('.cmp-paper-x').onclick=()=>{ chip.remove(); clear(); };
+    }
     const bgsRow=$('#tl-cmp-bgs',box);
     let toggleBg=()=>{};
     {
@@ -1042,7 +1058,7 @@ window.PCTimelineFactory = function(dep){
         _tlBgPreview=()=>_tlCardPrev(ta.value, _tlBg, _tlBgFramed);
         const pick=(el,bg)=>{ _tlBg=bg; marks.forEach(m=>m.classList.toggle('on', m===el));
           if(!bg) _tlBgFramed=false;   // same as the modal: ✕ drops the frame too
-          _tlBgPreview(); };
+          _tlBgPreview(); _paperChip(bgsRow, bg, ()=>pick(none,null)); };
         none.onclick=()=>pick(none,null);
         _tlBgClear=()=>pick(none,null);   // reset() disarms the background after a post
         // The only thing a card cannot be made from is NO WORDS (a bare link). Length and links are no

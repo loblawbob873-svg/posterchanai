@@ -278,6 +278,22 @@ window.PCComposeFactory = function(dep){
   // The words are not repeated underneath — the card is a picture OF them, so posting them again is the
   // same thing twice. The link goes at the end because that is the one part a reader has to be able to
   // tap, and it is the only part a card cannot carry.
+  /* 📰 A NEWSPAPER CLIPPING IS NOT A COLOUR. It lives in the background strip as one swatch, so picking it -- or
+   * asking 🤖 AI for a clipping -- left a row of colours open beside it ("for newspaper feature, why do we have a
+   * color select also? confusing"). While it is the choice, the strip folds away into ONE chip that says what will
+   * be posted, and ✕ on it takes the clipping off. 🎨 still opens the colours, and picking one replaces it. */
+  function _paperChip(strip, bg, clear, after){
+    if(!strip) return;
+    let chip=strip.nextElementSibling && strip.nextElementSibling.classList.contains('cmp-paper-chip') ? strip.nextElementSibling : null;
+    if(!(bg && bg.fx==='newspaper')){ if(chip) chip.remove(); return; }
+    strip.classList.add('hidden'); if(after) after();
+    if(!chip){
+      chip=document.createElement('div'); chip.className='cmp-paper-chip';
+      chip.innerHTML='<span>📰 Newspaper</span><button type="button" class="cmp-paper-x" aria-label="Remove the newspaper" title="Remove the newspaper">✕</button>';
+      strip.insertAdjacentElement('afterend', chip);
+    }
+    chip.querySelector('.cmp-paper-x').onclick=()=>{ chip.remove(); clear(); };
+  }
   async function buildBgPost(text, bg, framed){
     const urls=(String(text||'').match(/https?:\/\/\S+/g)||[]).map(u=>u.replace(/[)\].,>'"]+$/,''));
     const words=_BG_WORDS(text);
@@ -544,7 +560,7 @@ window.PCComposeFactory = function(dep){
             if(strip && strip.classList.contains('hidden')){ strip.classList.remove('hidden'); if(b) b.classList.add('active'); } } });
         if(aiBtn) aiBtn.onclick=(e)=>{ e.stopPropagation();
           const items=[['enhance','✨ AI Enhancer'],['tags','# Hashtags'],['emoji','😀 Suggest emoji'],['translate','🌐 Translate']];
-          if($('#cmp-bg-strip',root)) items.push(['card', (_bgFramed?'🖼️ Framed card ✓':'🖼️ Framed card')], ['paper','📰 Newspaper clipping']);
+          if($('#cmp-bg-strip',root)) items.push(['card', (_bgFramed?'🖼️ Framed card ✓':'🖼️ Framed card')], ['paper','📰 Newspaper']);
           openMenuPopover(aiBtn, items, a=>{ if(a==='enhance') doEnhance(); else if(a==='tags') doTags();
             else if(a==='emoji') _aiEmojiSuggest(ta, m=>{ const s=$('#cmp-status',root); if(s) s.textContent=m; });
             else if(a==='card') doCard(); else if(a==='translate') composeTranslate(ta, aiBtn);
@@ -619,6 +635,7 @@ window.PCComposeFactory = function(dep){
             // picked came out framed without asking — which is what made ✕ look like it half-worked.
             if(!bg) _bgFramed=false;
             _bgFramePreview();   // dropping the background must drop its preview with it
+            _paperChip(strip, bg, ()=>select(null,none), ()=>bgBtn.classList.remove('active'));
           };
           // ✕, matching the strip at the top of Social. This said "Aa", so the same control was labelled
           // two different ways depending on which composer you opened.

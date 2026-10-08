@@ -97,8 +97,8 @@ def test_ai_newspaper_clipping_asks_for_the_newspaper_shape_and_arms_the_style()
             return Promise.resolve(new Response(JSON.stringify({text:'Relay operators agree to meet\n\nOperators said on Monday they will meet on Friday.\n\nhttps://www.example-news.com/story/relays'}),{status:200,headers:{'Content-Type':'application/json'}})); }
           return real(u,o);};})();true""")
         await b.js("document.querySelector('#cmp-ai').click();true")
-        await b.until("[...document.querySelectorAll('.menu-pop button, .pop button, [role=menuitem]')].some(x=>/Newspaper clipping/.test(x.textContent))")
-        await b.js("[...document.querySelectorAll('.menu-pop button, .pop button, [role=menuitem]')].find(x=>/Newspaper clipping/.test(x.textContent)).click();true")
+        await b.until("[...document.querySelectorAll('.menu-pop button, .pop button, [role=menuitem]')].some(x=>/^\s*📰 Newspaper\s*$/.test(x.textContent))")
+        await b.js("[...document.querySelectorAll('.menu-pop button, .pop button, [role=menuitem]')].find(x=>/^\s*📰 Newspaper\s*$/.test(x.textContent)).click();true")
         await b.until("__asked.length===1 && !!document.querySelector('#cmp-bg-strip .cmp-swatch.on[title=\"newspaper\"]')")
         got["asked"] = await b.js("__asked[0]")
         got["text"] = await b.js("document.querySelector('#cmp').value")
@@ -149,3 +149,55 @@ def test_a_story_longer_than_a_page_still_says_where_the_rest_is():
 
     asyncio.run(desktop.with_browser("online", "", check))
     assert "Continued at" in got["huge"] and "ZEBRAFINCH" not in got["huge"], "an overlong story was not trimmed honestly"
+
+
+VISIBLE = "(el=>!!el && !el.classList.contains('hidden') && el.getClientRects().length>0)"
+
+
+@CHROME
+def test_the_clipping_is_shown_as_a_clipping_not_as_an_open_colour_picker():
+    """"for newspaper feature, why do we have a color select also? confusing" -- the 📰 is one swatch in the
+    background strip, so choosing it (or 🤖 AI → Newspaper clipping) left a row of colours open beside it. While it
+    is the choice the strip folds into one chip; ✕ there takes the clipping off; a real colour still shows the strip."""
+    got = {}
+
+    async def check(b):
+        await _compose(b, STORY)
+        await _pick_paper(b)
+        got["strip"] = await b.js(VISIBLE + "(document.querySelector('#cmp-bg-strip'))")
+        got["chip"] = await b.js("(document.querySelector('.cmp-paper-chip')||{}).textContent||''")
+        await b.js("document.querySelector('.cmp-paper-chip .cmp-paper-x').click();true")
+        await asyncio.sleep(.2)
+        got["after_x_chip"] = await b.js("!!document.querySelector('.cmp-paper-chip')")
+        got["after_x_on"] = await b.js("(document.querySelector('#cmp-bg-strip .cmp-swatch.on')||{}).title||''")
+        await b.js("document.getElementById('cmp-bg-btn').click();true")
+        await b.js("[...document.querySelectorAll('#cmp-bg-strip .cmp-swatch')].find(x=>x.title&&x.title!=='newspaper'&&x.title!=='no background').click();true")
+        await asyncio.sleep(.2)
+        got["colour_strip"] = await b.js(VISIBLE + "(document.querySelector('#cmp-bg-strip'))")
+        got["colour_chip"] = await b.js("!!document.querySelector('.cmp-paper-chip')")
+
+    asyncio.run(desktop.with_browser("online", "", check))
+    assert not got["strip"], ("the colour strip stayed open beside the clipping", got)
+    assert got["chip"].strip().startswith("📰 Newspaper") and "clipping" not in got["chip"], got   # "Change Newspaper clipping to simply Newspaper"
+    assert not got["after_x_chip"] and got["after_x_on"] == "no background", ("✕ on the chip did not take the clipping off", got)
+    assert got["colour_strip"] and not got["colour_chip"], ("a real colour must still show its strip", got)
+
+
+@CHROME
+def test_the_timeline_composer_folds_the_strip_into_the_chip_too():
+    got = {}
+
+    async def check(b):
+        await desktop.login(b)
+        await b.js("try{ if(window.PCOS && PCOS.isOn()) PCOS.exit(); }catch(_){}; __PC.switchView('home'); true")
+        await b.until("!!document.querySelector('#tl-cmp-bgs') && !!document.querySelector('#tl-cmp-ta, .tl-cmp textarea')")
+        await b.js("(()=>{const t=document.querySelector('#tl-cmp-ta, .tl-cmp textarea');t.value=%s;"
+                   "t.dispatchEvent(new Event('input',{bubbles:true}));const s=document.querySelector('#tl-cmp-bgs');"
+                   "s.classList.remove('hidden');[...s.querySelectorAll('.cmp-swatch')].find(x=>x.title==='newspaper').click();})();true"
+                   % __import__("json").dumps(STORY))
+        await asyncio.sleep(.3)
+        got["strip"] = await b.js(VISIBLE + "(document.querySelector('#tl-cmp-bgs'))")
+        got["chip"] = await b.js("(document.querySelector('.cmp-paper-chip')||{}).textContent||''")
+
+    asyncio.run(desktop.with_browser("online", "", check))
+    assert not got["strip"] and got["chip"].strip().startswith("📰 Newspaper"), got
