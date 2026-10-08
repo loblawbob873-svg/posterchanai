@@ -45,7 +45,7 @@ def test_a_post_window_shows_the_post_the_desktop_held_without_asking_the_relays
         await desktop.login(b)
         await b.until("!!window.__PC && document.documentElement.classList.contains('pc-oswin')")
         t0 = await b.js("performance.now()")
-        for _ in range(100):          # up to 10s to SEE it; the speed is asserted below (< 1.5s)
+        for _ in range(100):          # up to 10s to SEE it; the speed is asserted below (< 4s)
             if await b.js("/HANDOVERCANARY/.test((document.getElementById('feed')||{}).innerText||'')"):
                 break
             await asyncio.sleep(0.1)
@@ -54,6 +54,10 @@ def test_a_post_window_shows_the_post_the_desktop_held_without_asking_the_relays
 
     asyncio.run(desktop.with_browser("online", "?pcwin=doc:post:" + "b" * 64, check, OPENER))
     assert "HANDOVERCANARY" in got["text"], ("the post window stayed empty: it did not use what the desktop held", got["text"][:300])
-    assert got["ms"] < 1500, ("the post appeared, but slowly", got["ms"])
+    # WHAT THE LIMIT GUARDS is "painted from what the desktop held", not raw speed: the regression it exists for
+    # is a window that asked the relays FIRST and fell back to the handover only after Relay.query's 6s timeout.
+    # 1.5s was that line drawn too close -- the full gate runs this in parallel shards and it failed there
+    # ("FLAKY UNDER LOAD", 2026-10-07) while passing alone. 4s is still well inside the relay-first path's 6s.
+    assert got["ms"] < 4000, ("the post appeared only after the relays were asked first", got["ms"])
     assert "Opener Alice" in got["text"], "the author's name was not handed over (the card reads anon)"
     assert "REPLYCANARY" in got["text"], "the replies the desktop held were not handed over"

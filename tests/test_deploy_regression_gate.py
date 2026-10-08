@@ -223,7 +223,7 @@ full='-o' in sys.argv and '--noconftest' not in sys.argv
 if full and crash and crash in files:
     raise SystemExit(2)
 cases=''.join('<testcase classname="%s" name="t" file="%s" time="0.5">%s</testcase>'
-              % (f[:-3].replace('/','.'), f, '<failure/>' if (full and f==fail) else '') for f in files) \
+              % (f[:-3].replace('/','.'), f, '<failure message="AssertionError: the canary text never appeared&#10;second line">tb</failure>' if (full and f==fail) else '') for f in files) \
       or '<testcase name="required"/>'
 Path(report).write_text('<testsuites><testsuite>'+cases+'</testsuite></testsuites>')
 log=os.environ.get('FULL_SEEN')
@@ -291,6 +291,10 @@ def test_a_test_that_fails_only_under_parallel_load_is_reported_not_blocking(tmp
                             capture_output=True, text=True, timeout=120)
     assert result.returncode == 0, result.stdout + result.stderr
     assert 'FLAKY UNDER LOAD' in result.stdout and 'test_a_text_you_can_notice' in result.stdout
+    # WHY it failed under load, kept: the rerun passes, so the parallel failure's message is the only
+    # evidence there will ever be, and without it every flaky test can only be guessed at (2026-10-07).
+    assert 'the canary text never appeared' in result.stdout, result.stdout
+    assert 'second line' not in result.stdout, "the whole message was printed, not its first line"
 
 
 def test_the_full_suite_runs_async_tests_with_their_plugin(source_gate, tmp_path):

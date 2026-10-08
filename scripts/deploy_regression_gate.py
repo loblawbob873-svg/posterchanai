@@ -320,7 +320,7 @@ def _run_shards(root, env, directory, files, shards, durations, captured):
     with concurrent.futures.ThreadPoolExecutor(max_workers=len(shards)) as pool:
         for index, code, output, report in pool.map(run, range(len(shards))):
             results.append((index, code, output, report))
-    bad, cases, times = [], 0, {}
+    bad, cases, times, why = [], 0, {}, {}
     for index, code, output, report in results:
         try:
             parsed = list(ET.parse(report).getroot().iter('testcase'))
@@ -339,6 +339,10 @@ def _run_shards(root, env, directory, files, shards, durations, captured):
             times[name] = times.get(name, 0.0) + float(case.get('time') or 0)
             if case.find('failure') is not None or case.find('error') is not None:
                 bad.append(_node_id(case, root))
+                # The first line of the failure, kept for the flaky report: a test that passes when
+                # re-run alone leaves this parallel failure as the ONLY record of why it failed.
+                fail = case.find('failure') if case.find('failure') is not None else case.find('error')
+                why[bad[-1]] = (str(fail.get('message') or fail.text or '').strip().splitlines() or [''])[0][:240]
         if code == 1 and not any(c.find('failure') is not None or c.find('error') is not None for c in parsed):
             bad.append(f'shard {index} exited 1 with no failing case recorded')
     if times:
@@ -371,6 +375,9 @@ def _run_shards(root, env, directory, files, shards, durations, captured):
     elapsed = time.monotonic() - started
     if flaky:
         print('[regressions] FLAKY UNDER LOAD (failed in parallel, passed alone): ' + ', '.join(flaky))
+        for name in flaky:
+            if why.get(name):
+                print(f'[regressions]   {name}: {why[name]}')
     if bad:
         return False, f'{len(bad)} failing in the full suite ({elapsed:.0f}s):\n  ' + '\n  '.join(bad[:60])
     return True, f'{cases} cases across the full suite in {elapsed:.0f}s'
