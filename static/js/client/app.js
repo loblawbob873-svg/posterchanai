@@ -5802,8 +5802,18 @@
     if(s.length<2 || (s[0]!=='{' && s[0]!=='[')) return false;
     try{ const v=JSON.parse(s); return v!==null && typeof v==='object'; }catch(_){ return false; }
   }
+  // HIDDEN-DATA SPAM — a line of bait over 100+ zero-width characters carrying a payload (the "webmesh"
+  // bots, 2026-10-08). Same rule as langfilter.is_hidden_payload, and the same switch: at least 100
+  // invisible characters AND more invisible than visible, which no person types (a client watermark is
+  // <=50 of them beside hundreds of visible characters).
+  function _isHiddenPayload(c){
+    if(typeof c!=='string' || c.length<100) return false;
+    const hidden=(c.match(/[\u200b\u200c\u200d\u2060\ufeff]/g)||[]).length;
+    return hidden>=100 && hidden>c.length-hidden;
+  }
   function _jsonSpam(ev){
-    return !!ev && ev.kind===1 && !(CFG && CFG.block_json_posts===false) && _isJsonOnlyContent(ev.content);
+    return !!ev && ev.kind===1 && !(CFG && CFG.block_json_posts===false)
+      && (_isJsonOnlyContent(ev.content) || _isHiddenPayload(ev.content));
   }
   function isMutedView(ev){
     if(!ev) return false;
@@ -9150,7 +9160,8 @@
     const S=_fxParse((ta&&ta.value)||'');
     // With meme as the base effect the array holds ONLY caption words; otherwise meme[0] is the
     // keyword and the caption follows it.
-    const capOf=()=> S.effect==='meme' ? (S.meme||[]).join(' ')
+    const capOf=()=> S.effect==='mentioned' ? (S.word||'')
+                    : S.effect==='meme' ? (S.meme||[]).join(' ')
                     : ((S.meme && S.meme.length>1) ? S.meme.slice(1).join(' ') : '');
     const chip=(o,cls)=>{ const n=(o&&o.name)||o; const d=(o&&o.desc)||'';
       return `<button type="button" class="fxs-chip ${cls}" data-pick="${enc(n)}"${d?` title="${enc(d)}"`:''}>${enc(n)}</button>`; };
@@ -9175,7 +9186,7 @@
         <div class="fxs-grid">${motions.map(m=>chip(m,'fxs-mot')).join('')}</div>
         ${chars.length?`<div class="fxs-sec"><svg class="ic b-ic" aria-hidden="true"><use href="#i-smile"></use></svg>Sticker <span class="fxs-hint">optional overlay</span></div>
         <div class="fxs-grid">${chars.map(c=>chip(c,'fxs-char')).join('')}</div>`:''}
-        <div class="fxs-sec"><svg class="ic b-ic" aria-hidden="true"><use href="#i-text"></use></svg>Caption <span class="fxs-hint">optional text on the image</span></div>
+        <div class="fxs-sec"><svg class="ic b-ic" aria-hidden="true"><use href="#i-text"></use></svg><span id="fxs-cap-label">Caption</span> <span class="fxs-hint" id="fxs-cap-hint">optional text on the image</span></div>
         <input class="input" id="fxs-cap" maxlength="120" placeholder="your caption…" value="${enc(capOf())}">
       </div>
       <div class="fxs-ft">
@@ -9209,6 +9220,11 @@
         // `meme` is itself one of the effect chips, and the caption keyword is the SAME word. Picking
         // that chip and typing a caption built `meme meme hello` — the doubling reported at the
         // bottom of the sheet. When meme is the base effect the caption just follows it.
+        /* 🎉 MENTIONED TAKES ITS WORD FROM THIS BOX. The studio sent a bare `mentioned` and the server, rightly,
+         * answered "Say what got mentioned, e.g. `mentioned pizza`" -- there was nowhere to put the word. With
+         * mentioned picked the box asks for it, and its text is the effect's argument, not a meme caption. */
+        if(S.effect === 'mentioned'){ S.word = t.replace(/\s+/g,' ').slice(0,60); S.meme = []; return _fxJoin(S); }
+        S.word = '';
         S.meme = t ? (S.effect === 'meme' ? [t] : ['meme', t]) : [];
         return _fxJoin(S); };
       // Repaint selection + the live command. The command line is the whole point of the footer: it
@@ -9235,8 +9251,13 @@
         const c=build();
         cmdEl.textContent = c || 'nothing picked yet';
         cmdEl.classList.toggle('muted', !c);
-        go.disabled = !S.effect;
-        go.title = S.effect ? '' : 'pick a base effect first';
+        const needsWord = S.effect === 'mentioned' && !S.word;
+        { const lab=$('#fxs-cap-label',root), hint=$('#fxs-cap-hint',root), ment=S.effect==='mentioned';
+          if(lab) lab.textContent = ment ? 'What got mentioned?' : 'Caption';
+          if(hint) hint.textContent = ment ? 'the word on the meme, e.g. pizza' : 'optional text on the image';
+          cap.placeholder = ment ? 'pizza' : 'your caption…'; }
+        go.disabled = !S.effect || needsWord;
+        go.title = !S.effect ? 'pick a base effect first' : needsWord ? 'type what got mentioned first' : '';
       };
       root.addEventListener('click', e=>{
         const b=e.target.closest('.fxs-chip'); if(!b) return;
@@ -9316,14 +9337,20 @@
     const mi=t.indexOf('meme'); const pre=mi>=0?t.slice(0,mi):t; const meme=mi>=0?t.slice(mi):[];
     let char=''; let head=pre.slice(); const ci=pre.indexOf('char');
     if(ci>=0 && pre[ci+1]){ char=pre[ci+1]; head=pre.slice(0,ci).concat(pre.slice(ci+2)); }
-    const p = { effect:head[0]||'', mods:head.slice(1), char, meme };
+    const p = { effect:head[0]||'', mods:head.slice(1), char, meme, word:'' };
+    // `mentioned new york zoom`: everything that is not a motion modifier is the effect's own word (the
+    // server consumes trailing modifiers the same way), so reopening the studio puts it back in its box.
+    if(p.effect==='mentioned'){ const MOT=new Set(['zoom','shake','medshake','beginshake','trippy','pulse','glow','alive']);
+      p.word=p.mods.filter(m=>!MOT.has(m)).join(' '); p.mods=p.mods.filter(m=>MOT.has(m)); }
     // `meme <text>` has no separate base effect — the meme chip IS the effect. Surface it as such so
     // reopening the studio shows the chip selected and the caption in its box. The keyword MUST be
     // dropped from `meme` when promoted, or _fxJoin re-emits it after the effect ("meme meme test").
     if(!p.effect && p.meme[0]==='meme'){ p.effect = 'meme'; p.meme = p.meme.slice(1); }
     return p;
   }
-  function _fxJoin(p){ return [p.effect,...p.mods,...(p.char?['char',p.char]:[]),...p.meme].filter(Boolean).join(' '); }
+  // `word` is an effect's own argument, right after its name and before any modifier (the server strips trailing
+  // modifiers, so a word after them would be read as one): `mentioned pizza zoom`.
+  function _fxJoin(p){ return [p.effect,...(p.word?[p.word]:[]),...p.mods,...(p.char?['char',p.char]:[]),...p.meme].filter(Boolean).join(' '); }
   function _fxSetEffect(ta, eff){ const p=_fxParse(ta.value); p.effect=eff; ta.value=_fxJoin(p); }
   function _fxApplyMod(ta, mod){ const p=_fxParse(ta.value);
     if(mod==='meme '){                       // 😂 Meme prefill

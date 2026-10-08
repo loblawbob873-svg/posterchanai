@@ -844,8 +844,13 @@ class RelayStore:
                    f"SELECT id, content, kind FROM events "
                    f"WHERE kind NOT IN ({skip}) AND {self._preserve_clause()}")
                if blocked_word(r["content"] or "", words)]
-        # Spare thread ANCHORS, for the reason _delete_by_langs_sync spares them: deleting a note a
-        # SURVIVING event still points at by an e-tag orphans that reply's whole thread.
+        # Spare thread ANCHORS, for the reason _delete_by_langs_sync spares them.
+        return self._delete_sparing_anchors(conn, ids)
+
+    def _delete_sparing_anchors(self, conn, ids: list) -> int:
+        """Delete these events and their tags, except a note a SURVIVING event still e-tags: deleting
+        it orphans that reply's whole thread. Its own doomed descendants are in `ids`, so a thread that
+        is condemned top to bottom still goes entirely."""
         if ids:
             cand = set(ids)
             anchored = set()
@@ -893,27 +898,22 @@ class RelayStore:
         # post, no threaded replies" bug). A note is an anchor if any event OUTSIDE this delete set
         # e-tags it (e.g. a blocked-language root with a surviving English reply). Its own blocked
         # descendants are in the set, so a thread that's blocked top-to-bottom is still fully removed.
-        if ids:
-            cand = set(ids)
-            anchored = set()
-            for i in range(0, len(ids), 900):
-                chunk = ids[i:i + 900]
-                ph = ",".join("?" * len(chunk))
-                for row in conn.execute(
-                        f"SELECT value, event_id FROM event_tags WHERE tag='e' AND value IN ({ph})", chunk):
-                    if row["event_id"] not in cand:
-                        anchored.add(row["value"])
-            if anchored:
-                ids = [x for x in ids if x not in anchored]
-        removed = 0
-        for i in range(0, len(ids), 900):
-            chunk = ids[i:i + 900]
-            ph = ",".join("?" * len(chunk))
-            conn.execute(f"DELETE FROM event_tags WHERE event_id IN ({ph})", chunk)
-            conn.execute(f"DELETE FROM events WHERE id IN ({ph})", chunk)
-            removed += len(chunk)
-        conn.commit()
-        return removed
+        return self._delete_sparing_anchors(conn, ids)
+
+    def _delete_hidden_payload_sync(self) -> int:
+        """Purge stored notes that are a hidden data payload (langfilter.is_hidden_payload) — the same
+        predicate the live filter refuses at the door, applied to what arrived before it existed.
+        Local users' own notes are spared like every content purge here."""
+        from .langfilter import is_hidden_payload
+        conn = self._conn()
+        ids = [r["id"] for r in conn.execute(
+                   f"SELECT id, content FROM events WHERE kind=1 AND length(content) >= 100 "
+                   f"AND content ~ '[\u200b\u200c\u200d\u2060\ufeff]' AND {self._preserve_clause()}")
+               if is_hidden_payload(r["content"])]
+        return self._delete_sparing_anchors(conn, ids)
+
+    async def delete_hidden_payload(self) -> int:
+        return await self._w(self._delete_hidden_payload_sync)
 
     async def delete_by_langs(self, blocked) -> int:
         return await self._w(self._delete_by_langs_sync, set(blocked))

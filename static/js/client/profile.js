@@ -716,6 +716,7 @@ window.PCProfileFactory = function(dep){
       // admin extras: one consolidated permissions panel (AI, Blossom, image/music/video/torrent)
       // + relay block. State is fetched inside openPermissions so the menu opens instantly.
       items.push(['caps','🔑 Permissions']);
+      items.push(['trace','🔎 Trace on this relay']);
       items.push(['relay-sync','🔄 Sync notes']);
       items.push(['purge-blossom','🗑️ Purge Blossom','danger']);
       items.push(['block','🚫 Block','danger']);
@@ -727,6 +728,7 @@ window.PCProfileFactory = function(dep){
       if(a==='reports') return showReports(pk);
       if(a==='relays') return showRelays(pk);
       if(a==='caps') return openPermissions(pk);
+      if(a==='trace') return showRelayTrace(pk);
       if(a==='relay-sync') return doRelaySync(pk);
       if(a==='purge-blossom') return doPurgeBlossom(pk);
       if(a==='block') return doBlock(pk);
@@ -788,6 +790,67 @@ window.PCProfileFactory = function(dep){
         body: JSON.stringify({ target: pk, auth: btoa(JSON.stringify(auth)) }) }).then(r=>r.json());
       toast(r.ok ? 'sync queued — notes backfilling 🔄' : ('sync failed: ' + (r.error||'')));
     } catch(e){ toast('sync failed'); }
+  }
+  /* 🔎 TRACE ON THIS RELAY — "how did it make it to my relay!" (2026-10-08), answered in one click instead of
+   * a hand crawl: WHY the key is here (the rule that admitted it, from the web-of-trust rebuild's own record),
+   * WHO vouched for it (its followers inside the trust list, and the strongest one's path upward), WHAT it
+   * stored, and the signals a person would look for. Server: /client/relay-trace (relay_trace.py). */
+  const _TIER = {0:'seed', 1:'follows of a seed', 2:'friend of a friend', 3:'three hops out'};
+  function _traceWho(pk){ const p=profOf(pk)||{}; return { name: p.display_name||p.name||(NT().nip19.npubEncode(pk).slice(0,12)+'…'), pic: p.picture||S.LOGO }; }
+  function _traceDate(ts){ return ts ? new Date(ts*1000).toLocaleString(undefined,{year:'numeric',month:'short',day:'numeric',hour:'2-digit',minute:'2-digit'}) : '—'; }
+  function _traceTier(t){ return t==null ? '<span class="tr-badge">in trust list</span>' : `<span class="tr-badge tr-t${t}">${enc(_TIER[t]||('tier '+t))}</span>`; }
+  async function showRelayTrace(pk){
+    if(!S.IS_ADMIN) return;
+    const who=_traceWho(pk);
+    modal(`<h3><svg class="ic h-ic" aria-hidden="true"><use href="#i-search"></use></svg>Trace on this relay</h3>
+      <div class="relay-trace" id="rtr"><div class="tr-loading"><div class="spinner"></div><div class="muted small">Reading the relay and asking who follows ${enc(who.name)}…</div></div></div>`, async root=>{
+      const box=$('#rtr',root);
+      let r=null;
+      try{
+        const auth=await sign(27235,'relay-trace',[['action','trace'],['p',pk]]);
+        r=await fetch('/client/relay-trace',{method:'POST',headers:{'Content-Type':'application/json'},
+          body:JSON.stringify({target:pk,auth:btoa(JSON.stringify(auth))})}).then(x=>x.json());
+      }catch(_){ r=null; }
+      if(!box.isConnected) return;
+      if(!r||!r.ok){ box.innerHTML=`<div class="tr-card tr-bad"><b>Couldn't trace this account.</b><div class="small">${enc((r&&r.error)||'The server did not answer.')}</div></div>`; return; }
+      const miss=[...new Set([pk,...r.chain.map(c=>c.pubkey),...r.followers.shown.map(f=>f.pubkey)])].filter(a=>!Store.haveProfile(a));
+      if(miss.length){ try{ (await Relay.query([{authors:miss,kinds:[0],limit:miss.length}])).forEach(e=>Store.saveProfile(e)); }catch(_){} }
+      if(!box.isConnected) return;
+      const st=r.stored, me=_traceWho(pk);
+      const kinds=Object.entries(st.by_kind||{}).map(([k,n])=>`<span class="tr-chip">kind ${enc(k)} · ${n}</span>`).join('');
+      const origins={wot:'synced from the network',direct:'published here',ancestor:'pulled in for a thread'};
+      const orig=Object.entries(st.by_origin||{}).map(([o,n])=>`<span class="tr-chip">${enc(origins[o]||o)} · ${n}</span>`).join('');
+      const step=(p,label,badge)=>{ const w=_traceWho(p); return `<li class="tr-step" data-prof="${enc(p)}"><img alt="" src="${enc(w.pic)}" onerror="this.src='${S.LOGO}'"><div><b>${enc(w.name)}</b><div class="small muted">${label}</div></div>${badge||''}</li>`; };
+      const chain = r.chain.length ? `<ol class="tr-chain">${step(pk,'this account')}${r.chain.map((c,i)=>step(c.pubkey, i? 'who is followed by…':'is followed by', _traceTier(c.tier))).join('')}</ol>` : '';
+      const fol=r.followers;
+      const folList = fol.shown.length ? fol.shown.map(f=>{ const w=_traceWho(f.pubkey); return `<div class="psearch tr-fol" data-prof="${enc(f.pubkey)}"><img alt="" src="${enc(w.pic)}" onerror="this.src='${S.LOGO}'"><div class="pinfo"><b>${enc(w.name)}</b><div class="small muted">${f.in_wot?(f.tier!=null?`${enc(_TIER[f.tier]||'')}${f.vouchers?` · ${f.vouchers} vouch`:''}`:'in your trust list'):'not in your trust list'}</div></div>${f.in_wot?'<span class="tr-dot" title="in your trust list"></span>':''}</div>`; }).join('') : '';
+      box.innerHTML=`
+        <div class="tr-card tr-${enc(r.tone)}">
+          <div class="tr-who"><img alt="" src="${enc(me.pic)}" onerror="this.src='${S.LOGO}'"><b>${enc(me.name)}</b></div>
+          <div class="tr-head">${enc(r.headline)}</div>
+        </div>
+        ${r.signals.length?`<div class="tr-sec"><div class="tr-h">Signals</div>${r.signals.map(x=>`<div class="tr-sig tr-${enc(x.level)}">${enc(x.text)}</div>`).join('')}</div>`:''}
+        ${chain?`<div class="tr-sec"><div class="tr-h">How it got here</div>${chain}</div>`:''}
+        <div class="tr-sec"><div class="tr-h">On this relay</div>
+          <div class="tr-grid">
+            <div><span class="tr-n">${st.total}</span><span class="small muted">events stored</span></div>
+            <div><span class="tr-n">${st.per_day||0}</span><span class="small muted">notes / day</span></div>
+            <div><span class="tr-v">${enc(_traceDate(st.first))}</span><span class="small muted">first</span></div>
+            <div><span class="tr-v">${enc(_traceDate(st.last))}</span><span class="small muted">latest</span></div>
+          </div>
+          ${kinds||orig?`<div class="tr-chips">${kinds}${orig}${(st.top_tags||[]).map(t=>`<span class="tr-chip">#${enc(t)}</span>`).join('')}</div>`:''}
+        </div>
+        <div class="tr-sec"><div class="tr-h">Followers ${fol.found==null?'<span class="muted small">— the public relays did not answer</span>':`<span class="muted small">${fol.found} found · ${fol.in_wot} in your trust list</span>`}</div>
+          ${folList?`<div class="people-list tr-fols">${folList}</div>`:''}
+        </div>
+        <div class="tr-actions">
+          <button class="btn btn-ghost small" id="tr-mute">${isMutedAuthor(pk)?'🔊 Unmute':'🔇 Mute'}</button>
+          <button class="btn btn-danger small" id="tr-block">🚫 Block on this relay</button>
+        </div>`;
+      $$('[data-prof]',box).forEach(el=> el.onclick=()=>{ closeModal(); renderProfileView(el.dataset.prof); });
+      const mb=$('#tr-mute',box); if(mb) mb.onclick=async()=>{ await toggleMute(pk); closeModal(); renderProfileView(pk); };
+      const bb=$('#tr-block',box); if(bb) bb.onclick=()=>{ closeModal(); doBlock(pk); };
+    });
   }
   // admin: delete ALL of this account's blobs from the built-in Blossom server (bytes + index rows).
   // Irreversible; signed like doBlock so the server checks admin.

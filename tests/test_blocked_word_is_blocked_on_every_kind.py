@@ -109,5 +109,7 @@ def test_the_purge_still_spares_what_it_always_spared():
     from app.services.nostr_relay.store import RelayStore
     src = inspect.getsource(RelayStore._delete_by_words_sync)
     assert "_preserve_clause()" in src, "local users' own writes are spared"
-    assert "anchored" in src and "tag='e'" in src, (
+    # The anchor rule is shared by every content purge (words, languages, hidden payloads).
+    helper = inspect.getsource(RelayStore._delete_sparing_anchors)
+    assert "_delete_sparing_anchors(" in src and "anchored" in helper and "tag='e'" in helper, (
         "a note a SURVIVING event still points at must not be deleted — that orphans the thread")

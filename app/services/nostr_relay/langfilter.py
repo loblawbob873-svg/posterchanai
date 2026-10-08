@@ -38,6 +38,27 @@ def is_json_content(content) -> bool:
         return False
     return isinstance(parsed, (dict, list))
 
+# Zero-width characters: nothing on screen, so a run of them is a channel for data a reader never sees.
+_INVISIBLE_RE = re.compile("[\u200b\u200c\u200d\u2060\ufeff]")
+
+
+def is_hidden_payload(content) -> bool:
+    """True when a note is mostly DATA HIDDEN IN INVISIBLE CHARACTERS — a machine channel, not a post.
+
+    The "webmesh" bots (2026-10-08) post one innocent line ("Anyone else excited about the new season
+    starting next week?") followed by 130+ zero-width characters encoding their payload; seven keys put
+    1,538 of them on this relay in a day. Measured over 30 days and 629k notes: every one of theirs had
+    >=132 invisible characters and <=70 visible, while real people's notes that carry a run of them (a
+    client watermark, a pasted article) had <=50 invisible beside 100-2,400 visible. So it takes BOTH:
+    at least 100 invisible, and more invisible than visible. A single ZWJ inside an emoji is one
+    character and never comes near either bound."""
+    s = content or ""
+    if len(s) < 100:
+        return False
+    hidden = len(_INVISIBLE_RE.findall(s))
+    return hidden >= 100 and hidden > len(s) - hidden
+
+
 # URLs, nostr: URIs and bech32/Lightning entities are long runs of Latin/base32 characters that
 # are NOT language — left in, they inflate the letter count and dilute a short non-Latin note
 # below the block threshold (e.g. a Japanese line + an image URL reads as 11% Japanese). Strip

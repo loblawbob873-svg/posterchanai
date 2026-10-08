@@ -17,7 +17,7 @@ import logging
 
 from app.services.nostr import relay as _relay
 from app.services.nostr.event import verify_event
-from .langfilter import blocked_language, blocked_word, is_json_content, _NEVER_WORD_FILTERED
+from .langfilter import blocked_language, blocked_word, is_hidden_payload, is_json_content, _NEVER_WORD_FILTERED
 from .bridges import reveals_blocked_bridge, author_on_blocked_bridge, is_bridged_post
 
 logger = logging.getLogger(__name__)
@@ -38,7 +38,7 @@ def _content_blocked(ev, blocked, blocked_words, block_json=True) -> bool:
     content = ev.get("content", "")
     # JSON-blob spam: a kind-1 note whose whole content is a JSON object/array is machine flood, not
     # a human post. Kind 1 ONLY — profiles/contacts/app-data/DVM/reposts are legitimately JSON.
-    if block_json and kind == 1 and is_json_content(content):
+    if block_json and kind == 1 and (is_json_content(content) or is_hidden_payload(content)):
         return True
     if kind == 1 and blocked and blocked_language(content, blocked):
         return True

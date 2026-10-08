@@ -1011,10 +1011,11 @@ async def _main(cfg: dict) -> None:
         if fresh.get("block_bridged"):
             by_proxy += (await _apply_social_mirrors(store, gate) or 0)
         by_inst = (await store.delete_pubkeys(_blocked_instance_puppets(), spare_preserved=False) or 0)
-        total = by_pk + by_word + by_lang + by_bridge + by_proxy + by_inst
+        by_hidden = (await store.delete_hidden_payload() or 0) if fresh.get("block_json", True) else 0
+        total = by_pk + by_word + by_lang + by_bridge + by_proxy + by_inst + by_hidden
         if total:
-            logger.info("[nostr-relay] block-purge breakdown: total=%d (pubkeys=%d words=%d langs=%d bridge=%d proxy=%d) — local/direct-published notes preserved (word/lang purges DO cover WoT members, matching ingest)",
-                        total, by_pk, by_word, by_lang, by_bridge, by_proxy)
+            logger.info("[nostr-relay] block-purge breakdown: total=%d (pubkeys=%d words=%d langs=%d bridge=%d proxy=%d hidden=%d) — local/direct-published notes preserved (word/lang purges DO cover WoT members, matching ingest)",
+                        total, by_pk, by_word, by_lang, by_bridge, by_proxy, by_hidden)
         _purge_state["count"] = total
         _purge_state["ts"] = int(time.time())
         return total

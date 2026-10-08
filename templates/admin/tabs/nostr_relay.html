@@ -404,7 +404,7 @@
         </div>
         <div class="form-group">
             <label for="nostr_relay_block_json_posts">
-                <input type="checkbox" id="nostr_relay_block_json_posts" name="nostr_relay_block_json_posts"> Reject JSON-only timeline posts (anti-spam)
+                <input type="checkbox" id="nostr_relay_block_json_posts" name="nostr_relay_block_json_posts"> Reject machine-payload timeline posts — JSON blobs and notes made of hidden characters (anti-spam)
             </label>
             <small>Drops a note (kind 1) whose <strong>entire</strong> content is a JSON object <code>{…}</code> or array <code>[…]</code> — the shape spammers use to flood the timeline. A human note that merely mentions JSON is unaffected (it doesn’t parse whole), and this touches kind-1 notes ONLY, so profiles, contacts, app data, DVM jobs and reposts (whose content legitimately is JSON) are never rejected. On by default.</small>
         </div>

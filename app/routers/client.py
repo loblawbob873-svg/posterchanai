@@ -4088,6 +4088,33 @@ async def relay_sync(data: RelaySyncReq, db: Session = Depends(get_db)):
     return JSONResponse({"ok": True})
 
 
+@router.post("/relay-trace")
+async def relay_trace(data: RelaySyncReq, db: Session = Depends(get_db)):
+    """Admin-only: WHY this account is on the relay and what it stored there — the profile ⋯ → "Trace on
+    this relay" panel (app/services/relay_trace.py). Read-only; signed like /relay-sync."""
+    target = nostr_service.to_pubkey_hex(data.target)
+    if not target:
+        return JSONResponse({"ok": False, "error": "invalid target"}, status_code=400)
+    target = target.lower()
+    if not _verify_admin_auth(db, data.auth, target, "relay-trace"):
+        return JSONResponse({"ok": False, "error": "admin signature required (or stale request)"}, status_code=403)
+    from app.services import instance_membership, relay_blocklist, relay_trace as _trace
+    ups = (nostr_service.relay.normalize_relays(settings_store.get("nostr_relay_upstream_relays", ""))
+           or list(nostr_service.DEFAULT_RELAYS))[:8]
+    try:
+        facts = await _trace.gather(target, ups)
+    except Exception as e:
+        logger.warning("[client] relay trace failed: %s", e)
+        return JSONResponse({"ok": False, "error": "could not read the relay"}, status_code=503)
+    try:
+        member = await instance_membership.status(target)
+    except Exception:
+        member = None
+    local = db.query(User).filter(User.nostr_npub == nostr_service.npub_of(target)).first() is not None
+    return JSONResponse(_trace.explain(facts, blocked=relay_blocklist.is_blocked(target),
+                                       member=member, local_user=local))
+
+
 # ----- AI access (admin approves a user's AI request from the client profile menu) -----
 class AiAccessReq(BaseModel):
     target: str          # npub/hex to grant/revoke

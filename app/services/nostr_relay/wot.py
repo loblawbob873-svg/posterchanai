@@ -7,6 +7,7 @@ the single chokepoint both the WS write path (server.py) and the ingestion polle
 consult, so non-WoT events can never be stored.
 """
 
+import json
 import time
 import asyncio
 import logging
@@ -15,6 +16,9 @@ from collections import Counter
 from app.services.nostr import relay as _relay
 
 logger = logging.getLogger(__name__)
+
+# relay_kv key holding the last clean build's {pubkey: [tier, vouchers]} (see build()).
+WOT_TIERS_KEY = "wot_tiers_v1"
 
 
 class WotGate:
@@ -200,6 +204,19 @@ class WotGate:
             members = core | set(top)
 
         new_members = frozenset(members)
+        # WHY each member is here, for the profile's "Trace" panel: the tier that admitted it and how
+        # many accounts of the tier below vouched for it. The rebuild is otherwise a bare set, so the
+        # only answer to "how did this spammer get on my relay?" was a re-crawl by hand. Lowest tier wins.
+        tiers = {}
+        for pk in members:
+            if pk in seeds:
+                tiers[pk] = [0, 0]
+            elif pk in follows1:
+                tiers[pk] = [1, d1_counter.get(pk, 0)]
+            elif depth >= 2 and pk in fof:
+                tiers[pk] = [2, fof_counter.get(pk, 0)]
+            else:
+                tiers[pk] = [3, fofof_counter.get(pk, 0)]
         prior = self._members
         # STRONG CACHE: a crawl that resolves far fewer members than the cached set is almost always a
         # PARTIAL crawl (an upstream relay timed out), not thousands of real unfollows. Keep the cached
@@ -214,6 +231,7 @@ class WotGate:
         self._members = new_members
         self.built_at = time.time()
         await self._persist(store, self._members)
+        await self._persist_tiers(store, tiers, depth, min_followers)
         total = len(self.members())
         logger.info("[nostr-relay] WoT rebuilt: %d members (%d seeds, %d direct, depth=%d)",
                     total, len(seeds), len(follows1), depth)
@@ -224,6 +242,14 @@ class WotGate:
             await store.wot_replace(list(members), list(self._operator))
         except Exception as e:
             logger.warning("[nostr-relay] WoT persist failed: %s", e)
+
+    async def _persist_tiers(self, store, tiers: dict, depth: int, min_followers: int) -> None:
+        try:
+            await store.kv_set(WOT_TIERS_KEY, json.dumps(
+                {"built_at": int(time.time()), "depth": depth, "min_followers": min_followers, "tiers": tiers},
+                separators=(",", ":")))
+        except Exception as e:
+            logger.warning("[nostr-relay] WoT tier persist failed: %s", e)
 
     async def load_from_store(self, store) -> int:
         """Warm the in-memory set from the persisted snapshot (used on startup before the
