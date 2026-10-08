@@ -309,3 +309,50 @@ def test_copy_on_the_windows_copy_button_presses_it():
     got = _run("settings", "copy my npub", {"answer": "Your npub is: npub1rwzv24nmzfjypx2…", "tasks": [], "steps": [
         {"do": "copy", "ref": 1, "text": "npub1rwzv24nmzfjypx2…", "label": "Copy npub"}]})
     assert got == [("click", "Copy npub", "")], got
+
+
+# ---- eval 2026-10-08: three near-misses that each sent the click one control off ----------------------
+def test_a_control_named_outright_beats_a_longer_one_that_only_contains_the_word():
+    # "use my own relays" pressed "Use relays only (no server)" 4 runs in 4, beside the "Relays" section.
+    got = _run("settings", "use my own relays", {"answer": "", "steps": [
+        {"do": "click", "ref": 32, "target": "Use relays only (no server)", "label": "Use relays only"}]})
+    assert got == [("click", "Relays", "")], got
+    # ...and asking for that longer button by its own words still presses it.
+    got = _run("settings", "use relays only with no server", {"answer": "", "steps": [
+        {"do": "click", "ref": 32, "label": "Use relays only"}]})
+    assert got == [("click", "Use relays only (no server)", "")], got
+
+
+def test_a_step_named_after_a_button_the_person_asked_for_presses_that_button():
+    # "delete this email" -> {"label":"Delete email"} aimed at the email's own row (1 run in 4).
+    f = json.loads((FIX / "mail-reader.json").read_text())
+    row = next(c["ref"] for c in f["controls"] if c["role"] == "item")
+    got = _run("mail-reader", "delete this email", {"answer": "", "steps": [
+        {"do": "click", "ref": row, "label": "Delete email"}]})
+    assert got == [("click", "Delete", "")], got
+    # The word must be the person's: a step merely LABELLED "Delete ..." on a request that never said
+    # delete is not turned into a deletion.
+    got = _run("mail-reader", "open this email", {"answer": "", "steps": [
+        {"do": "click", "ref": row, "label": "Delete email"}]})
+    assert ("click", "Delete", "") not in got, got
+
+
+def test_a_click_on_a_rows_title_link_when_the_request_names_the_rows_button_is_that_button():
+    got = _run("websearch-results", "save the Gentoo Wiki result to my notes", {"answer": "", "tasks": [],
+               "steps": [{"do": "click", "ref": 13, "target": "Wayfire configuration - Gentoo Wiki", "label": "Open Gentoo Wiki"}]})
+    assert got == [("click", "📓 Notes", "")], got
+    got = _run("websearch-results", "open the Gentoo Wiki result", {"answer": "", "tasks": [],
+               "steps": [{"do": "click", "ref": 13, "label": "Open Gentoo Wiki"}]})
+    assert got == [("click", "Wayfire configuration - Gentoo Wiki", "")], got
+
+
+def test_the_thing_being_added_is_the_title_the_form_was_left_without():
+    # Round 2 of "add a dentist appointment ...": day and times filled, Save pressed, Title empty (3 in 4).
+    got = _run("calendar-new-event", "add a dentist appointment on 2026-10-09 from 3pm to 4pm", {"answer": "", "steps": [
+        {"do": "fill", "ref": 3, "text": "2026-10-09"}, {"do": "fill", "ref": 5, "text": "15:00"},
+        {"do": "fill", "ref": 6, "text": "16:00"}, {"do": "click", "ref": 9}]})
+    assert ("fill", "Title", "Dentist appointment") in got and got[-1] == ("click", "Save", ""), got
+    # A title the plan already typed is left alone.
+    got = _run("calendar-new-event", "add a dentist appointment on 2026-10-09", {"answer": "", "steps": [
+        {"do": "fill", "ref": 2, "text": "Dentist"}, {"do": "fill", "ref": 3, "text": "2026-10-09"}]})
+    assert [g for g in got if g[1] == "Title"] == [("fill", "Title", "Dentist")], got

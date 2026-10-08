@@ -882,6 +882,15 @@ def _repair_steps(steps: list, refs: dict, instruction: str, near: dict | None =
             st.update(do="click", text="")
         if st.get("do") == "click" and said and said != str(st.get("target") or "").strip().lower():
             hit = by_label.get(said) or []
+            if not hit:
+                # ...or STARTS with one button's whole name, and the person said that word: "delete this email"
+                # came back as {"label":"Delete email"} aimed at the email's row, beside a button "Delete".
+                sk = _box_key(said)
+                hit = [r for r, (role, lab) in refs.items() if role == "button" and _box_key(lab)
+                       and sk.startswith(_box_key(lab) + " ")
+                       and re.search(r"\b" + re.escape(_box_key(lab)) + r"\b", low)]
+                if len(hit) == 1 and _box_key(refs.get(st.get("ref"), ("", ""))[1]).startswith(_box_key(refs[hit[0]][1])):
+                    hit = []
             if len(hit) == 1:
                 st.update(ref=hit[0], target=refs[hit[0]][1])
     # MEASURED SHAPES ON BUTTONS (eval 2026-10-06), each read as the obvious thing:
@@ -938,6 +947,18 @@ def _repair_steps(steps: list, refs: dict, instruction: str, near: dict | None =
         for st in out:
             if st.get("do") == "click" and refs.get(st.get("ref"), ("",))[0] == "tab" and st["ref"] != named[0]:
                 st.update(ref=named[0], target=refs[named[0]][1])
+    # THE CONTROL THEY NAMED, NOT ONE THAT MERELY CONTAINS THE WORD. "use my own relays" pressed "Use relays
+    # only (no server)" (4 runs in 4) beside the "Relays" section it meant. When exactly one button's WHOLE
+    # name is in the request, a click on a longer button whose name only contains that word goes to it.
+    whole = [r for r, (role, lab) in refs.items() if role in ("button", "tab", "link") and len(_box_key(lab)) >= 4
+             and not _RISKY_NAV.search(lab) and re.search(r"\b" + re.escape(_box_key(lab)) + r"\b", low)]
+    if len(whole) == 1:
+        wk = _box_key(refs[whole[0]][1])
+        for st in out:
+            r = st.get("ref")
+            if (st.get("do") == "click" and r != whole[0] and refs.get(r, ("",))[0] in ("button", "tab", "link")
+                    and re.search(r"\b" + re.escape(wk) + r"\b", _box_key(refs[r][1]))):
+                st.update(ref=whole[0], target=refs[whole[0]][1])
     def _says(lab):
         w = re.sub(r"^[^\w]+", "", lab.lower()).strip()      # "⬇ Downloads" is named "downloads"
         forms = {w, w[:-1] if w.endswith("s") and len(w) > 3 else w}
@@ -1002,7 +1023,9 @@ def _repair_steps(steps: list, refs: dict, instruction: str, near: dict | None =
     # row carries, is that button.
     for st in out:
         r = st.get("ref")
-        if st.get("do") == "click" and refs.get(r, ("",))[0] == "item" and near.get(r):
+        # (The row's TITLE LINK is the row too: the Gentoo Wiki case clicked the result's link, not its item.)
+        if st.get("do") == "click" and refs.get(r, ("",))[0] in ("item", "link") and near.get(r) \
+                and not _says(refs[r][1]):
             own = [x for x, (role, lab) in refs.items() if x != r and near.get(x) == near[r] and role in ("button", "link")
                    and not _RISKY_NAV.search(lab) and _says(lab)]
             if len(own) == 1:
@@ -1037,6 +1060,17 @@ def _repair_steps(steps: list, refs: dict, instruction: str, near: dict | None =
             if not any(st.get("do") == "fill" and st.get("ref") == tb for st in out):
                 out.insert(0, {"do": "fill", "ref": tb, "target": refs[tb][1], "label": "Name it " + name[:30],
                                "text": name[:200], "on": False})
+    # THE THING BEING ADDED IS ITS TITLE. "add a dentist appointment on 2026-10-09 from 3pm to 4pm" filled the
+    # day and times and saved an event with NO title (3 runs in 4). A request to add / schedule / book / create
+    # "a <thing>" followed by when, on a form with one title box the plan typed nothing into, titles it <thing>.
+    am = re.search(r"\b(?:add|schedule|book|create|make|put in)\s+(?:an?\s+|my\s+|the\s+)?(?:new\s+)?(.+?)\s+"
+                   r"(?:on|at|from|for|tomorrow|today|tonight|next|this|every|in)\b", str(instruction or ""), re.I)
+    if (am and not nm and len(title_boxes) == 1 and any(st.get("do") == "fill" for st in out)
+            and not any(st.get("do") == "fill" and st.get("ref") == title_boxes[0] for st in out)):
+        what = am.group(1).strip(" .,'\"“”")
+        if what and len(what) <= 60 and not re.fullmatch(r"(?:it|this|that|one|event|appointment|meeting)", what, re.I):
+            out.insert(0, {"do": "fill", "ref": title_boxes[0], "target": refs[title_boxes[0]][1], "label": "Title it",
+                           "text": what[:1].upper() + what[1:200], "on": False})
     # A ROW IS NOT A TEXT BOX. "email alice@x.test that the meeting moved to 3pm" came back as the text
     # "filled" onto Dana's email in the inbox list, and that row's Select box ticked (1 run in 3): a row opens
     # when clicked and has nowhere to type, so the panel would have opened Dana's email and typed into
