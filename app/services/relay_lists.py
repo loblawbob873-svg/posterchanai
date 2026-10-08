@@ -32,6 +32,9 @@ LISTS = {
     "blossom_whitelist": "pubkey",
     "media_own_hosts": "domain",
     "blossom_mirror_servers": "server",
+    # Admin → Social → Blocking ("make the text area lists like you did for relays"): fediverse instances
+    # and single accounts, read exactly the way the blocker reads them (fedi_blocklist.normalize).
+    "fedi_bridge_blocked_domains": "fedi",
 }
 
 MAX_ENTRY = 500
@@ -57,7 +60,22 @@ def same(kind: str, entry: str) -> str:
         return (_pk(toks[0]) or toks[0].lower()) + " " + relay
     if kind == "domain":
         return re.sub(r"^[a-z]+://", "", e, flags=re.I).split("/")[0].strip(".").lower()
+    if kind == "fedi":
+        return _fedi_key(e)
     return e.lower().rstrip("/")            # relay, origin
+
+
+def _fedi_key(entry: str) -> str:
+    """`https://Bad.Example/`, `*.bad.example`, `@bad.example` and its punycode are one instance; a
+    profile link and `user@host` are one account -- what fedi_blocklist enforces, in one spelling."""
+    from app.services import fedi_blocklist
+    n = fedi_blocklist.normalize(entry)
+    user, at, host = n.rpartition("@")
+    try:
+        host = host.encode("idna").decode("ascii")
+    except (UnicodeError, ValueError):
+        pass
+    return f"{user}@{host}" if at else host
 
 
 def entries(kind: str, raw: str) -> list:
@@ -65,7 +83,10 @@ def entries(kind: str, raw: str) -> list:
     phrase is a whole LINE; a peer is a line or comma-separated card; everything else is a token
     separated by whitespace or commas. Order kept, duplicates (case-insensitive) dropped."""
     raw = str(raw or "").replace("\r\n", "\n")
-    if kind == "word":
+    if kind == "fedi":
+        from app.services import fedi_blocklist
+        parts = fedi_blocklist.tokens(raw)
+    elif kind == "word":
         parts = [ln.strip() for ln in raw.split("\n")]
     elif kind == "peer":
         parts = [" ".join(ln.split()) for ln in raw.replace(",", "\n").split("\n")]
@@ -118,6 +139,13 @@ def validate(kind: str, entry: str):
     if kind == "origin":
         m = re.match(r"^([a-z][a-z0-9+.-]*)://([^\s/]+)/?$", e, re.I)
         return (m.group(0).rstrip("/"), None) if m else (None, "an origin is scheme://host[:port], e.g. https://poster.place")
+    if kind == "fedi":
+        from app.services import fedi_blocklist
+        n = fedi_blocklist.normalize(e)
+        host = n.rpartition("@")[2]
+        if not n or not re.match(r"^[^\s@/]+\.[^\s@/.]+$", host):
+            return None, "not an instance (bad.example) or an account (someone@bad.example)"
+        return n, None
     if kind == "domain":
         d = re.sub(r"^[a-z]+://", "", e, flags=re.I).split("/")[0].strip(".").lower()
         return (d, None) if re.match(r"^[a-z0-9.-]+\.[a-z0-9-]+$", d) else (None, "not a domain name")
@@ -130,6 +158,8 @@ def edit(raw: str, kind: str, add: str = "", remove: str = ""):
     # EVERY stored spelling, not the de-duplicated view: a remove must take all of them, or the one
     # left behind is drawn again and the entry "comes back".
     raw_parts = str(raw or "").replace("\r\n", "\n")
+    if kind == "fedi":
+        return _edit_fedi(raw_parts, add, remove)
     if kind == "word":
         stored = [ln.strip() for ln in raw_parts.split("\n") if ln.strip()]
     elif kind == "peer":
@@ -153,6 +183,39 @@ def edit(raw: str, kind: str, add: str = "", remove: str = ""):
             return None, "already in the list"
         cur.append(clean)
     return "\n".join(cur), None
+
+
+def _edit_fedi(raw: str, add: str, remove: str):
+    """The fediverse blocklist is typed by hand for years and carries `# why` notes; an edit keeps every
+    comment and every other line as it was, takes out the entry (in every spelling) and appends a new one."""
+    lines = raw.split("\n")
+    if remove:
+        want = _fedi_key(remove)
+        hit, out = False, []
+        for ln in lines:
+            body, hash_, note = ln.partition("#")
+            toks = body.replace(",", " ").split()
+            kept = [t for t in toks if _fedi_key(t) != want]
+            if len(kept) == len(toks):
+                out.append(ln)
+                continue
+            hit = True
+            if kept or hash_:
+                out.append((" ".join(kept) + (" " if kept and hash_ else "") + (hash_ + note if hash_ else "")).rstrip())
+        if not hit:
+            return None, "not in the list (it may have changed — reload)"
+        lines = out
+    if add:
+        clean, err = validate("fedi", add)
+        if err:
+            return None, err
+        from app.services import fedi_blocklist
+        if _fedi_key(clean) in {_fedi_key(t) for t in fedi_blocklist.tokens("\n".join(lines))}:
+            return None, "already in the list"
+        while lines and not lines[-1].strip():
+            lines.pop()
+        lines.append(clean)
+    return "\n".join(ln for ln in lines).strip("\n"), None
 
 
 async def rows(key: str, raw: str) -> dict:
@@ -182,5 +245,8 @@ async def rows(key: str, raw: str) -> dict:
                         "valid": bool(pk)})
     else:
         for e in items:
-            out.append({"value": e, "valid": validate(kind, e)[1] is None})
+            row = {"value": e, "valid": validate(kind, e)[1] is None}
+            if kind == "fedi":
+                row["type"] = "account" if "@" in _fedi_key(e) else "instance"
+            out.append(row)
     return {"key": key, "kind": kind, "items": out, "names_complete": names_ok}

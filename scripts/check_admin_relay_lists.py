@@ -23,14 +23,17 @@ KEYS = ["nostr_relay_posterchan_origins", "nostr_relay_wot_seeds", "nostr_dvm_pe
         "nostr_relay_blocked_words", "nostr_relay_blocked_relays", "nostr_relay_nip05_relays",
         "nostr_relay_upstream_relays", "nostr_relay_private_relays",
         # Admin → Blossom ("fix blossom list textboxes to function like the way you improved the relays")
-        "blossom_whitelist", "media_own_hosts", "blossom_mirror_servers"]
+        "blossom_whitelist", "media_own_hosts", "blossom_mirror_servers",
+        # Admin → Fediverse → Blocking ("make the text area lists like you did for relays")
+        "fedi_bridge_blocked_domains"]
 
 
 def page(names_complete, old_server=False):
     import jinja2
     env = jinja2.Environment(loader=jinja2.FileSystemLoader(os.path.join(ROOT, "templates")))
     tab = env.get_template("admin/tabs/nostr_relay.html").render(cache_bust="1") \
-        + env.get_template("admin/tabs/blossom.html").render(cache_bust="1")
+        + env.get_template("admin/tabs/blossom.html").render(cache_bust="1") \
+        + env.get_template("admin/tabs/social.html").render(cache_bust="1")
     stub = r"""
 <script>
 window.__errors=[]; addEventListener('error',e=>__errors.push(e.message));
@@ -49,10 +52,11 @@ const DB={
  blossom_whitelist:PK,
  media_own_hosts:'media.poster.place',
  blossom_mirror_servers:'https://backup.example.com/blossom\n'+LONG.replace('wss://','https://'),
+ fedi_bridge_blocked_domains:'spam.example\nsomeone-with-a-long-handle@a-very-long-instance-hostname.example.social',
 };
 const rowsOf=k=>DB[k].split('\n').filter(Boolean).map(v=>(k==='nostr_relay_wot_seeds'||k==='nostr_dvm_peers'||k==='blossom_whitelist')
   ?{value:v,pubkey:'ab'.repeat(32),npub:PK,name:'Seed Person With A Rather Long Display Name',picture:'',nip05:'seed@poster.place',relay:v.split(' ')[1]||'',valid:true}
-  :{value:v,valid:true});
+  :(k==='fedi_bridge_blocked_domains'?{value:v,valid:true,type:v.includes('@')?'account':'instance'}:{value:v,valid:true}));
 const IDS=[{name:'alice',address:'alice@poster.place',npub:'npub1a',verified:true,display:'Alice'},
   {name:'ghost',address:'ghost@poster.place',npub:'npub1g',verified:false,display:''},
   {name:'liar',address:'liar@poster.place',npub:'npub1l',verified:false,display:'Liar',profile_nip05:'x@y'}];
@@ -87,7 +91,7 @@ window.csrfFetch=window.fetch; window.pcConfirm=async()=>true;
 <form id="settingsForm" class="settings-form" novalidate onsubmit="event.preventDefault();window.__submits++">{tab}</form></div>
 {fill}
 <script src="/static/js/admin-identities.js"></script><script src="/static/js/admin-relay-lists.js"></script>
-<script>document.getElementById('tab-relay').classList.add('active');document.getElementById('tab-blossom').classList.add('active');
+<script>document.getElementById('tab-relay').classList.add('active');document.getElementById('tab-blossom').classList.add('active');document.getElementById('tab-social').classList.add('active');
 setTimeout(()=>{{document.getElementById('relaytab').click();setTimeout(()=>window.__ready=true,300)}},50);</script>
 </body></html>"""
 
@@ -108,6 +112,8 @@ for(const k of KEYS){
     rowsFit:rows.every(x=>r(x).right<=innerWidth+1), addOnScreen:vis(add)&&onScreen(addBtn)&&r(add).width>=120,
     addNamed:!!(add&&add.name), taFits:!ta||r(ta).right<=innerWidth+1};
 }
+// A fediverse line says whether it blocks an instance or one account.
+out.fediTypes=[...document.querySelectorAll('.rl-panel[data-key="fedi_bridge_blocked_domains"] .rl-type')].map(x=>x.textContent);
 // Add by Enter in the blocked-words box.
 const wp=document.querySelector('.rl-panel[data-key="nostr_relay_blocked_words"]'), wi=wp.querySelector('.rl-add-input');
 wi.value='free crypto'; wi.focus();
@@ -235,6 +241,8 @@ async def run():
                         fails.append((where, k, bad))
                     if k != "nostr_relay_private_relays" and v["rows"] < 1:
                         fails.append((where, k, "no rows drawn"))
+                if out.get("fediTypes") != ["instance", "account"]:
+                    fails.append((where, "fediverse rows do not say instance/account", out.get("fediTypes")))
                 a = out["added"]
                 if a["submits"] or json.loads(a["posted"] or "{}") != {"key": "nostr_relay_blocked_words", "add": "free crypto"}:
                     fails.append((where, "add", a))

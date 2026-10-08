@@ -41,38 +41,52 @@ def _spellings(host: str) -> set:
     return {s for s in out if s}
 
 
+def normalize(tok: str) -> str:
+    """ONE written entry as what it blocks: `host` for an instance, `user@host` for one account, "" for
+    nothing. The blocker (parse) and Admin's list (relay_lists, kind "fedi") both read entries through
+    this, so a row on screen is exactly what the blocker enforces."""
+    # Stray punctuation from a pasted list (`bad.example;`, a quoted host) kept verbatim matched
+    # nothing, silently.
+    t = (tok or "").strip().strip("\"'`;<>()[]{}|").lower()
+    for pre in ("https://", "http://", "wss://", "ws://"):
+        if t.startswith(pre):
+            t = t[len(pre):]
+    host_part, _, path = t.partition("/")
+    if path.startswith("@") and len(path) > 1:
+        # A pasted PROFILE link (https://host/@bob) means that account, not its instance.
+        t = f"{path[1:].split('/')[0].split('@')[0]}@{host_part}"
+    else:
+        t = host_part
+    # `*.bad.example` and `*bad.example` both mean the instance and its subdomains.
+    t = t.lstrip("@").removeprefix("*.").lstrip("*").strip(".")
+    if not t:
+        return ""
+    if "@" in t:                                   # user@host -- one account
+        user, _, host = t.partition("@")
+        host = _host(host)
+        return f"{user}@{host}" if user and host else ""
+    return _host(t)
+
+
+def tokens(raw: str) -> list:
+    """The entries as written: newlines, commas or spaces separate them, `#` starts a comment."""
+    out = []
+    for line in (raw or "").splitlines():
+        out.extend(line.split("#", 1)[0].replace(",", " ").split())
+    return out
+
+
 @lru_cache(maxsize=16)
 def parse(raw: str) -> tuple[frozenset, frozenset]:
     """(blocked instance hosts, blocked accounts as user@host), every spelling of each."""
     hosts, accounts = set(), set()
-    for line in (raw or "").splitlines():
-        line = line.split("#", 1)[0]
-        for tok in line.replace(",", " ").split():
-            # Stray punctuation from a pasted list (`bad.example;`, a quoted host) kept verbatim matched
-            # nothing, silently.
-            t = tok.strip().strip("\"'`;<>()[]{}|").lower()
-            for pre in ("https://", "http://", "wss://", "ws://"):
-                if t.startswith(pre):
-                    t = t[len(pre):]
-            host_part, _, path = t.partition("/")
-            if path.startswith("@") and len(path) > 1:
-                # A pasted PROFILE link (https://host/@bob) means that account, not its instance.
-                t = f"{path[1:].split('/')[0].split('@')[0]}@{host_part}"
-            else:
-                t = host_part
-            # `*.bad.example` and `*bad.example` both mean the instance and its subdomains.
-            t = t.lstrip("@").removeprefix("*.").lstrip("*").strip(".")
-            if not t:
-                continue
-            if "@" in t:                                   # user@host -- one account
-                user, _, host = t.partition("@")
-                host = _host(host)
-                if user and host:
-                    accounts |= {f"{user}@{h}" for h in _spellings(host)}
-                continue
-            host = _host(t)
-            if host:
-                hosts |= _spellings(host)
+    for tok in tokens(raw):
+        t = normalize(tok)
+        if "@" in t:
+            user, _, host = t.partition("@")
+            accounts |= {f"{user}@{h}" for h in _spellings(host)}
+        elif t:
+            hosts |= _spellings(t)
     return frozenset(hosts), frozenset(accounts)
 
 

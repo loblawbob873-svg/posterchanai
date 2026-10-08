@@ -1,4 +1,4 @@
-// Admin → Relay and Admin → Blossom: every LIST setting drawn like Identities / Blocked accounts.
+// Admin → Relay, Blossom and Social: every LIST setting drawn like Identities / Blocked accounts.
 //
 // Origins, WoT seeds, GPU-sharing peers, blocked words, blocked bridge domains and the four relay URL
 // lists were bare textareas. Each is now a searchable list with an Add box and a Remove per row; key
@@ -26,6 +26,8 @@
         blossom_whitelist: ['pubkey', 'person', 'npub1… or 64-char hex'],
         media_own_hosts: ['domain', 'host', 'media.example.com'],
         blossom_mirror_servers: ['server', 'server', 'https://backup.example.com/blossom'],
+        // Admin → Social → Blocking: fediverse instances and single accounts.
+        fedi_bridge_blocked_domains: ['fedi', 'instance or account', 'bad.example or someone@bad.example'],
     };
 
     // Pure, so they can be tested.
@@ -50,9 +52,13 @@
                 <button type="button" class="btn-secondary btn-small rl-remove" aria-label="Remove">Remove</button>
             </div>`;
         }
+        // A fediverse line is an INSTANCE (and its subdomains) or ONE ACCOUNT -- the same text box held both and
+        // nothing on screen said which a line was.
+        const what = kind === 'fedi' && r.type
+            ? `<span class="ids-badge rl-type" title="${r.type === 'account' ? 'Blocks this one account' : 'Blocks this instance and its subdomains'}">${r.type}</span>` : '';
         return `
             <div class="blk-row rl-row" data-value="${esc(r.value)}">
-                <div class="blk-who"><div class="blk-name"><code class="rl-val">${esc(r.value)}</code>${bad}</div></div>
+                <div class="blk-who"><div class="blk-name"><code class="rl-val">${esc(r.value)}</code>${what}${bad}</div></div>
                 <button type="button" class="btn-secondary btn-small rl-remove" aria-label="Remove">Remove</button>
             </div>`;
     }
@@ -200,7 +206,7 @@
             }
             const ad = t.closest('.rl-add-btn');
             if (ad) { add(ad.closest('.rl-panel')); return; }
-            if (t.closest('[data-tab="relay"],[data-tab="blossom"]')) loadAll();
+            if (t.closest('[data-tab="relay"],[data-tab="blossom"],[data-tab="social"]')) loadAll();
         });
         // Enter in the Add box adds -- it must not submit the whole settings form.
         document.addEventListener('keydown', e => {
@@ -220,7 +226,7 @@
         });
         const boot = () => {
             Object.keys(LISTS).forEach(mount);
-            if (typeof location !== 'undefined' && (location.hash === '#tab-relay' || location.hash === '#tab-blossom')) loadAll();
+            if (typeof location !== 'undefined' && ['#tab-relay', '#tab-blossom', '#tab-social'].includes(location.hash)) loadAll();
         };
         if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', boot); else boot();
     }

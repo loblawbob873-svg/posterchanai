@@ -194,6 +194,7 @@ SPELLINGS = {
     "blossom_whitelist": (f"{NPUB_A}\n{PKB}\n{PKA}", PKB, NPUB_A),
     "media_own_hosts": ("media.poster.place\nkeep.example\nMEDIA.POSTER.PLACE", "keep.example", "Media.Poster.Place"),
     "blossom_mirror_servers": ("https://backup.example/blossom\nhttps://keep.example\nhttps://BACKUP.example/blossom/", "https://keep.example", "https://backup.example/blossom/"),
+    "fedi_bridge_blocked_domains": ("https://Bad.Example/\nkeep.example\n*.bad.example", "keep.example", "@bad.example"),
 }
 
 
