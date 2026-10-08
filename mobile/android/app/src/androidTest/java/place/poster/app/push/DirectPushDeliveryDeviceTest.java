@@ -119,7 +119,10 @@ public class DirectPushDeliveryDeviceTest {
             first.notify(771001L, "test", event); first.ack(771001L);
             assertTrue(DirectPushService.connected);
             StatusBarNotification message = card(manager, event);
-            assertEquals("pcai_messages", message.getNotification().getChannelId());
+            // The channel carries the arrival sound this phone chose (chime by default, the same as the
+            // web and the desktop), so it is asked for by that choice rather than spelled out.
+            assertEquals(place.poster.app.ringtone.RingtoneRules.messagesChannel(PushEventService.soundChoice(context)),
+                    message.getNotification().getChannelId());
             first.notify(771002L, "call", call); first.ack(771002L);
             Notification incoming = card(manager, call).getNotification();
             assertEquals("pcai_calls", incoming.getChannelId());
