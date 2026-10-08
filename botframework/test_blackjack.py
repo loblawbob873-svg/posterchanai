@@ -108,6 +108,9 @@ def test_persistent_and_leave():
 
     # leave mid-round folds you and you're not re-seated
     st = bj.start_round(["x", "y"], stacks={"x": 500, "y": 500})
+    # An ordinary hand, pinned: a dealt natural is already DONE, and leave() stands a finished hand out
+    # rather than folding it -- so with a random deal this check failed about two runs in five.
+    _force(st, "x", ["5C", "9D"]); st["done"]["x"] = False   # a natural auto-stands at the deal
     bj.leave(st, "x")
     check("x" in st["left"] and st["done"]["x"] and "x" in st["folded"], "leaver folded + recorded")
     bj.settle(st)
