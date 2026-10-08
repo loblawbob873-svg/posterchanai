@@ -2106,15 +2106,52 @@ def _wrap_caption(text: str, font, max_width: int) -> List[str]:
     return lines or [text]
 
 
-def caption_video(video_data: bytes, text: str, font_path: str = "") -> bytes:
+def _caption_layout(text: str, W: int, H: int, font_path: str = "", position: str = "bottom",
+                    max_height_frac: float = 0.5):
+    """(font size, wrapped lines, line height, top y) for a caption on a W x H frame. Pure, so the layout is
+    testable without ffmpeg.
+
+    EVERY bound is relative to the frame. The floors used to be absolute pixels (16px font, 10px margin), so on
+    a small image the caption took a far bigger share of the picture than on a large one -- "the text was too
+    big" on the mentioned effect's small images, where it also covered the character."""
+    from PIL import ImageFont
+    margin = max(2, H // 22)
+    margin_x = max(2, int(W * 0.04))
+    max_width = max(1, W - 2 * margin_x)
+    max_height = max(1, int(H * min(max(max_height_frac, 0.05), 0.9)) - margin)
+
+    def _font(sz: int):
+        if font_path and os.path.exists(font_path):
+            return ImageFont.truetype(font_path, sz)
+        try:
+            return ImageFont.load_default(sz)
+        except TypeError:
+            return ImageFont.load_default()
+
+    floor = max(8, min(12, H // 24))
+    fs, lines = floor, _wrap_caption(text, _font(floor), max_width)
+    for size in range(max(int(H / 8), floor), floor - 1, -2):
+        wrapped = _wrap_caption(text, _font(size), max_width)
+        if int(size * 1.3) * len(wrapped) <= max_height:
+            fs, lines = size, wrapped
+            break
+    line_h = int(fs * 1.3)
+    total_h = line_h * len(lines)
+    y0 = margin if position == "top" else H - margin - total_h
+    return fs, lines, line_h, y0
+
+
+def caption_video(video_data: bytes, text: str, font_path: str = "", position: str = "bottom",
+                  max_height_frac: float = 0.5) -> bytes:
     """Burn an outlined white meme caption across the lower part of a video
     (static overlay — stays put while the video zooms/shakes). Keeps the audio.
 
     The caption is word-wrapped to the video WIDTH and auto-sized so it never runs
     off the sides — critical for narrow/vertical (mobile) videos where ffmpeg
     drawtext, which does no wrapping of its own, would otherwise clip the text.
-    Each wrapped line is drawn as its own centred drawtext. Returns MP4 bytes."""
-    from PIL import ImageFont
+    Each wrapped line is drawn as its own centred drawtext. `position="top"` puts the block
+    in a band at the top no taller than `max_height_frac` of the height (see _caption_layout).
+    Returns MP4 bytes."""
     ffmpeg = resolve_ffmpeg()
     if not ffmpeg_available():
         raise RuntimeError("ffmpeg is not installed on the server")
@@ -2130,40 +2167,8 @@ def caption_video(video_data: bytes, text: str, font_path: str = "") -> bytes:
             f.write(video_data)
         W = _probe_width(vin) or 1280
         H = _probe_height(vin) or 720
-        margin = max(10, H // 22)
-        margin_x = max(8, int(W * 0.04))
-        max_width = W - 2 * margin_x
-        max_height = int(H * 0.5)  # caption lives in the lower half
-
-        def _font(sz: int):
-            if font_path and os.path.exists(font_path):
-                return ImageFont.truetype(font_path, sz)
-            try:
-                return ImageFont.load_default(sz)
-            except TypeError:
-                return ImageFont.load_default()
-
-        # Auto-size: largest font (from ~1/8 height down) whose wrapped block fits
-        # the width and the lower-half height.
-        fs = max(16, H // 11)
-        lines = [text]
-        for size in range(max(int(H / 8), 16), 11, -2):
-            f = _font(size)
-            wrapped = _wrap_caption(text, f, max_width)
-            line_h = int(size * 1.3)
-            if line_h * len(wrapped) <= max_height:
-                fs, lines = size, wrapped
-                break
-        else:
-            # Nothing fit the lower half even at the floor — use the smallest size
-            # (best effort; very long captions on short clips).
-            f = _font(12)
-            fs, lines = 12, _wrap_caption(text, f, max_width)
-
+        fs, lines, line_h, y0 = _caption_layout(text, W, H, font_path, position, max_height_frac)
         bw = max(2, fs // 12)
-        line_h = int(fs * 1.3)
-        total_h = line_h * len(lines)
-        y0 = H - margin - total_h  # top of the caption block
         fontopt = f"fontfile='{font_path}':" if font_path and os.path.exists(font_path) else ""
 
         # One centred drawtext per line (drawtext has no per-line centering); each

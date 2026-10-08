@@ -306,8 +306,16 @@ def mentioned_caption(word: str) -> str:
     return (w + " MENTIONED").upper() if w else ""
 
 
+# THE CAPTION AND THE GIRL SHARE THE FRAME, NEVER A PIXEL. She stood at full height and the caption was drawn
+# over her, sized from the frame; on a small image the caption grew to a third of it and she disappeared behind it
+# ("character went behind the text and the text was too big"). The caption now owns a band at the top, she stands
+# in the rest, and the two fractions add up to less than the whole -- tests/test_mentioned_layout.py checks it.
+MENTIONED_CAPTION_BAND = 0.24        # the caption block never reaches below this fraction of the height
+MENTIONED_GIRL_HEIGHT = 0.74         # she is this fraction of the height, anchored to the bottom
+
+
 def add_mentioned(image_data: bytes, source_filename: str = "image.jpg", word: str = "") -> bytes:
-    """The "<THING> MENTIONED" meme: a cheering anime girl hops over the image, the caption on top. MP4 bytes."""
+    """The "<THING> MENTIONED" meme: a cheering anime girl hops over the image, the caption above her. MP4 bytes."""
     from app.services.media_service import caption_video, image_gif_overlay_video
     overlay = _first_existing(_MENTIONED_OVERLAY_CANDIDATES)
     if not overlay:
@@ -315,9 +323,9 @@ def add_mentioned(image_data: bytes, source_filename: str = "image.jpg", word: s
     clip = image_gif_overlay_video(image_data, source_filename, overlay,
                                    duration=_MENTIONED_DURATION,
                                    audio_path=_first_existing(_MENTIONED_AUDIO_CANDIDATES) or None,
-                                   height_frac=1.0)
-    # Caption LAST, so it sits over the girl the way the meme's does.
-    return caption_video(clip, mentioned_caption(word), _meme_font_path())
+                                   height_frac=MENTIONED_GIRL_HEIGHT)
+    return caption_video(clip, mentioned_caption(word), _meme_font_path(),
+                         position="top", max_height_frac=MENTIONED_CAPTION_BAND)
 
 
 def mentioned_attachments(

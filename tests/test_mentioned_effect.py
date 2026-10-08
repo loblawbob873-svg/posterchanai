@@ -52,12 +52,19 @@ def test_she_cheers_over_the_picture_with_the_caption_and_a_sound():
         # She is on the picture: grey hoodie / skin / brown hair where there was only flat blue.
         her = sum(1 for r, g, b in px if not (b > r + 60 and b > g + 30))
         assert her > 64 * 48 * 0.15, ("she is not in the rendered video", her)
-        # The caption is burned in: near-white text in the lower part of the frame.
-        # Counted at FULL size: letters are thin, and shrinking the frame first averages them away.
+        # The caption is burned in ABOVE her, in its own band at the top -- drawn over her it hid her on small
+        # pictures ("character went behind the text"). Counted at FULL size: letters are thin, and shrinking the
+        # frame first averages them away.
+        from app.services.effects_service.audio2 import MENTIONED_CAPTION_BAND, MENTIONED_GIRL_HEIGHT
         full = _frame(path, 1.0)
-        low = list(full.crop((0, full.height // 2, full.width, full.height)).getdata())
-        white = sum(1 for r, g, b in low if r > 235 and g > 235 and b > 235)
-        assert white > len(low) * 0.01, ("no caption in the lower part of the video", white, len(low))
+        band = list(full.crop((0, 0, full.width, int(full.height * MENTIONED_CAPTION_BAND))).getdata())
+        white = sum(1 for r, g, b in band if r > 235 and g > 235 and b > 235)
+        assert white > len(band) * 0.01, ("no caption in the top band", white, len(band))
+        # ...and none of it reaches down to where she starts.
+        girl_top = int(full.height * (1 - MENTIONED_GIRL_HEIGHT))
+        below = list(full.crop((0, girl_top, full.width, full.height)).getdata())
+        stray = sum(1 for r, g, b in below if r > 245 and g > 245 and b > 245)
+        assert stray < len(below) * 0.002, ("caption text over the character", stray, len(below))
     finally:
         os.unlink(path)
 
@@ -78,12 +85,9 @@ def test_mentioned_is_reachable_everywhere_an_effect_lives():
     assert 'command == "mentioned":\n            return await self._mentioned_command(arg, attachments)' in src, \
         "the chat command does not hand the effect its word"
     assert '"mentioned"' in (ROOT / "app/routers/media_api.py").read_text()
-    from app.routers.telegram import _common as tg
-    assert ("🎉 Mentioned", "mentioned") in [b for v in tg.__dict__.values() if isinstance(v, list)
-                                            for b in v if isinstance(b, tuple) and len(b) == 2], "no Telegram button"
-    # The button cannot carry a word, so it asks for one and the reply renders it.
-    assert "_MENTIONED_PROMPT" in (ROOT / "app/routers/telegram/callbacks_media.py").read_text()
-    assert 'execute_command("mentioned", text.strip()' in (ROOT / "app/routers/telegram/messages.py").read_text()
+    # Telegram no longer renders effects (2026-10-08): the word is answered with where it lives now.
+    from app.routers.telegram import messages as tg
+    assert "mentioned" in tg._TG_MOVED and "mentioned" in tg._TG_COMMANDS
     from app.services import meme_builder_service as mb
     assert any("mentioned" in json.dumps(c) for c in mb.alpha_effect_catalog()), \
         "the Meme Builder cannot add her as a layer"
@@ -157,5 +161,3 @@ def test_with_no_word_it_asks_for_one_instead_of_inventing_it():
                                                                    content_type="image/jpeg")])
     r = asyncio.run(media_api.process_media(req, None, None, True))
     assert r == {"error": MENTIONED_ASK}, r
-    src = open(os.path.join(ROOT, "app", "routers", "telegram", "messages.py")).read()
-    assert "Type what got mentioned" in src, "an empty Telegram reply does not ask again"
