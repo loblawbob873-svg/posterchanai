@@ -266,7 +266,12 @@ class TheSuiteCanFail(unittest.TestCase):
                 # have nothing to do with the mutation — so without this, an entry whose target had
                 # been renamed, or which imports something the worktree lacks, would report that the
                 # suite catches a bug it has never once seen. "Could not run" is not "noticed".
+                # ONE retry, for the CONTROL only: its question is "can this target pass here at all", and a
+                # browser target failing once under the gate's parallel load answers nothing about the guard
+                # ("FLAKY UNDER LOAD", 2026-10-07). The MUTATED run below is never retried.
                 clean = _run(target, self.tree)
+                if clean.returncode != 0:
+                    clean = _run(target, self.tree)
                 self.assertEqual(
                     clean.returncode, 0,
                     f"{target} does not pass on the UNMUTATED worktree (pytest exit {clean.returncode}). "
