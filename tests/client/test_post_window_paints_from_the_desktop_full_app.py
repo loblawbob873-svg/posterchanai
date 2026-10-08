@@ -30,6 +30,20 @@ PROFILE = {"id": "f" * 64, "kind": 0, "pubkey": PK, "created_at": 1789000000, "t
            "content": json.dumps({"name": "Opener Alice"}), "sig": "c" * 128}
 
 # The desktop: window.opener, holding the post, a reply and the author's profile in its Store.
+# WHAT "WITHOUT ASKING THE RELAYS" MEANS, measured instead of timed: every REQ the page writes that names the post,
+# and the moment its text first appears. A 1.5s (then 4s) wall-clock bound stood in for this and flaked under the
+# gate's parallel load ("FLAKY UNDER LOAD", reason: the window was still empty at 10s) -- a busy machine is slow,
+# not wrong. A window that asked the relays FIRST writes a REQ for the post before it paints; that is the failure.
+WATCH = r"""(()=>{window.__reqForPost=[]; window.__paintAt=null; const ID=%s;
+  const wrap=W=>{ if(!W||!W.prototype||W.prototype.__pcWatched) return W; const send=W.prototype.send;
+    W.prototype.send=function(raw){ try{ const m=JSON.parse(raw); if(m[0]==='REQ' && JSON.stringify(m.slice(2)).includes(ID)) __reqForPost.push(performance.now()); }catch(_){}
+      return send.apply(this,arguments); }; W.prototype.__pcWatched=true; return W; };
+  let WS=wrap(window.WebSocket);
+  try{ Object.defineProperty(window,'WebSocket',{configurable:true,get(){return WS},set(v){WS=wrap(v)}}); }catch(_){}
+  new MutationObserver(()=>{ if(__paintAt===null){ const f=document.getElementById('feed');
+      if(f && (f.textContent||'').includes('HANDOVERCANARY')) __paintAt=performance.now(); } })
+    .observe(document,{childList:true,subtree:true,characterData:true});})();""" % json.dumps("b" * 64)
+
 OPENER = r"""(()=>{const evs=%s;
   const match=(e,f)=>(!f.kinds||f.kinds.includes(e.kind))&&(!f.authors||f.authors.includes(e.pubkey))
       &&(!f['#e']||(e.tags||[]).some(t=>t[0]==='e'&&f['#e'].includes(t[1])));
@@ -44,20 +58,18 @@ def test_a_post_window_shows_the_post_the_desktop_held_without_asking_the_relays
     async def check(b):
         await desktop.login(b)
         await b.until("!!window.__PC && document.documentElement.classList.contains('pc-oswin')")
-        t0 = await b.js("performance.now()")
-        for _ in range(100):          # up to 10s to SEE it; the speed is asserted below (< 4s)
+        for _ in range(300):          # up to 30s to SEE it: a loaded gate is slow, and slowness is not the failure
             if await b.js("/HANDOVERCANARY/.test((document.getElementById('feed')||{}).innerText||'')"):
                 break
             await asyncio.sleep(0.1)
-        got["ms"] = (await b.js("performance.now()")) - t0
         got["text"] = await b.js("(document.getElementById('feed')||{}).innerText||''")
+        got["paint"] = await b.js("__paintAt")
+        got["asked"] = await b.js("__reqForPost.slice()")
 
-    asyncio.run(desktop.with_browser("online", "?pcwin=doc:post:" + "b" * 64, check, OPENER))
+    asyncio.run(desktop.with_browser("online", "?pcwin=doc:post:" + "b" * 64, check, WATCH + OPENER))
     assert "HANDOVERCANARY" in got["text"], ("the post window stayed empty: it did not use what the desktop held", got["text"][:300])
-    # WHAT THE LIMIT GUARDS is "painted from what the desktop held", not raw speed: the regression it exists for
-    # is a window that asked the relays FIRST and fell back to the handover only after Relay.query's 6s timeout.
-    # 1.5s was that line drawn too close -- the full gate runs this in parallel shards and it failed there
-    # ("FLAKY UNDER LOAD", 2026-10-07) while passing alone. 4s is still well inside the relay-first path's 6s.
-    assert got["ms"] < 4000, ("the post appeared only after the relays were asked first", got["ms"])
+    assert got["paint"] is not None, got
+    early = [t for t in got["asked"] if t < got["paint"]]
+    assert not early, ("the window asked the relays for the post BEFORE showing what the desktop held", got)
     assert "Opener Alice" in got["text"], "the author's name was not handed over (the card reads anon)"
     assert "REPLYCANARY" in got["text"], "the replies the desktop held were not handed over"
