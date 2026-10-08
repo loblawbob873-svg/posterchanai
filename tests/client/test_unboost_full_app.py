@@ -45,8 +45,10 @@ def test_repost_button_waits_for_ack_and_preserves_original_after_undo(width,rej
         await b.js("for(const a of __undoAcks.splice(0))a.socket.fire('message',['OK',a.event.id,true,'accepted'])")
         await b.until('!Store.has(__repost.id)')
         assert await b.js('Store.has(__original.id)')
-        assert await b.js("document.querySelector('.note[data-id=\"'+__original.id+'\"]').innerText.includes('Original survives undo')")
-        assert not await b.js("!!document.querySelector('[data-repost-id=\"'+__repost.id+'\"] .repost-tag')")
+        # The SCREEN follows the store a frame or more later; read at once it was "FLAKY UNDER LOAD" in the gate's
+        # parallel run (2026-10-07). Waited for, still failing with the page's state if it never happens.
+        await b.until("!!document.querySelector('.note[data-id=\"'+__original.id+'\"]') && document.querySelector('.note[data-id=\"'+__original.id+'\"]').innerText.includes('Original survives undo')")
+        await b.until("!document.querySelector('[data-repost-id=\"'+__repost.id+'\"] .repost-tag')")
         assert await b.js("__published.filter(e=>e.kind===5).every(e=>e.tags.filter(t=>t[0]==='e').every(t=>t[1]===__repost.id))")
     extra=r'''
 localStorage.setItem('pc_nostr_settings',JSON.stringify({...JSON.parse(localStorage.getItem('pc_nostr_settings')||'{}'),osMode:false}));
