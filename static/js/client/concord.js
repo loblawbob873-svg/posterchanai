@@ -2672,7 +2672,7 @@
     if(!changed)return true;
     const now=Math.max(Math.floor(Date.now()/1000),Number(event.created_at)+1);
     const ev=await p.signTemplate({kind:10009,created_at:now,tags,content});
-    return !!(await p.relayPublishTo([...new Set([...(p.relayUrls?.()||[]),...CORD_RELAYS])],ev));
+    return !!(await p.relayPublishTo(membershipWriteRelays(p,CORD_RELAYS),ev));
   }
   async function nip29Metadata(p,relay,groupIds=[],signal=null){
     const filter={kinds:[39000],limit:200};if(groupIds.length)filter['#d']=groupIds;
@@ -3123,6 +3123,15 @@
    * `#fragment`, which is the decryption key -- without it another device can list the room and never
    * open it. */
   // CORD-02 §8: canonical, self-encrypted addressable membership fragments.
+  /* WHERE A MEMBERSHIP LIST IS WRITTEN: this instance's own relay FIRST, then the public and CORD relays.
+   * It went to `relayUrls()` + CORD only -- and relayUrls() is the PUBLIC write set, never the home relay -- while
+   * every device READS its own relay on every pass and the outside relays once per session. So whichever device
+   * joined a room wrote a list the others never read: "concord on desktop I am in a developer room but phone
+   * don't show room" (2026-10-08: the 10-08 vault was on nos.lol/primal/jskitty, poster.place held the 09-10 one). */
+  function membershipWriteRelays(p, extra){
+    const home = p && p.homeRelay ? p.homeRelay() : '';
+    return [...new Set([...(home ? [home] : []), ...(p && p.relayUrls ? p.relayUrls() : []), ...(extra || [])])];
+  }
   const membershipWrites=new Map(),membershipPublished=new Map();
   function cordCanonical(value){
     if(JSON.isRawJSON?.(value))return value.rawJSON;
@@ -3291,7 +3300,7 @@
       const latest=await cordMembershipState(p,owner);live();
       for(const {index}of events){const seen=latest.fragments.get(index)?.event,was=state.fragments.get(index)?.event;if(seen&&(!was||seen.created_at>was.created_at||seen.created_at===was.created_at&&seen.id<was.id))throw new Error('membership changed while signing; retry this update');}
       events.sort((a,b)=>(a.index>=state.count?0:1)-(b.index>=state.count?0:1)||(a.index>=state.count?b.index-a.index:a.index-b.index));
-      for(const {ev}of events){live();const accepted=await p.relayPublishTo([...new Set([...(p.relayUrls?.()||[]),...CORD_RELAYS])],ev);live();if(!(accepted===true||typeof accepted==='number'&&accepted>0||accepted?.ok===true||Number(accepted?.accepted)>0))throw new Error('membership relays rejected the update');
+      for(const {ev}of events){live();const accepted=await p.relayPublishTo(membershipWriteRelays(p,CORD_RELAYS),ev);live();if(!(accepted===true||typeof accepted==='number'&&accepted>0||accepted?.ok===true||Number(accepted?.accepted)>0))throw new Error('membership relays rejected the update');
         const held=membershipPublished.get(owner)||[];membershipPublished.set(owner,[...held.filter(e=>(e.tags||[]).find(t=>t[0]==='d')?.[1]!==ev.tags[0][1]),ev]);}
       return true;
     });membershipWrites.set(owner,job);return job;

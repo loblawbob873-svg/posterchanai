@@ -13575,6 +13575,7 @@
       if(!result||!result.ok)throw new Error(result&&result.msg||'NIP-29 relay rejected the event');return event;
     },
     relayUrls: () => _writeRelays().slice(),
+    homeRelay: () => (CFG && CFG.relay_url) ? String(CFG.relay_url) : '',   // this instance's own relay (Concord membership writes)
     signTemplate: template => signer.signEvent(template),
     /* THE ONE PLACE AN OS NOTIFICATION IS RAISED, for the sub-modules. It is not a convenience: it
        carries the permission check, the click-to-focus, the icon, AND the fact that Android's WebView
