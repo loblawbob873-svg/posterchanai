@@ -234,7 +234,7 @@ def parse_server_urls(urls_string: str, exclude_self: bool = False, current_port
             url = sanitized_url
         
         if not url:
-            logger.warning(f"[LOAD BALANCER] Skipping empty URL after sanitization")
+            logger.warning("[LOAD BALANCER] Skipping empty URL after sanitization")
             continue
 
         # Accept bare IPs/hosts as well as full URLs — normalize to http://<host>:<port>.
@@ -351,16 +351,14 @@ class LoadBalancer:
                     chunk_count = 0
                     content_chunk_count = 0  # Count chunks that actually have content
                     first_chunk_time = None
-                    empty_stream = True
                     non_data_lines = []
-                    error_detected = False
+                    remote_error = ""
                     async for line in response.aiter_lines():
                         line = line.strip()
                         if not line:
                             continue
                         if line.startswith("data: "):
                             chunk_count += 1
-                            empty_stream = False
                             if first_chunk_time is None:
                                 first_chunk_time = time.time()
                                 logger.info(f"[LOAD BALANCER] STREAM first chunk from {server} after {first_chunk_time - start_time:.2f}s")
@@ -383,19 +381,26 @@ class LoadBalancer:
                                             if content_chunk_count == 1:
                                                 logger.info(f"[LOAD BALANCER] First content chunk from {server} "
                                                             f"({len(content or '')} chars{'' if content else ', tool_call'})")
-                                    # Log errors from remote server and raise exception to trigger fallback
+                                    # A REMOTE ERROR FALLS BACK -- IF NOTHING REAL HAS BEEN SENT YET. The raise for
+                                    # this used to sit inside this try, so the `except Exception` below caught it,
+                                    # logged a warning and passed the error chunk on to the person as their answer:
+                                    # the fallback the comment promised never happened. Before any content, the
+                                    # stream now ends and the caller answers from another server or locally; after
+                                    # content has been sent, falling back would give the person half an answer
+                                    # followed by a second one, so the stream carries on as it always did.
                                     if "error" in data:
                                         error_msg = data.get('error', {})
                                         error_text = error_msg.get('message', str(error_msg)) if isinstance(error_msg, dict) else str(error_msg)
                                         logger.error(f"[LOAD BALANCER] Error in response from {server}: {error_text}")
-                                        error_detected = True
-                                        # Raise exception to trigger fallback to local
-                                        raise NoHealthyServersError(f"Server {server} returned error: {error_text}")
-                                except json.JSONDecodeError as e:
+                                        if content_chunk_count == 0:
+                                            remote_error = error_text or "error"
+                                except json.JSONDecodeError:
                                     logger.warning(f"[LOAD BALANCER] Failed to parse chunk from {server}: {data_str[:100]}")
                                 except Exception as e:
                                     logger.warning(f"[LOAD BALANCER] Error processing chunk from {server}: {e}")
                             
+                            if remote_error:
+                                break
                             # Ensure proper SSE format with \n\n
                             yield line + "\n\n" if not line.endswith("\n\n") else line
                         else:
@@ -404,6 +409,8 @@ class LoadBalancer:
                             logger.debug(f"STREAM non-data line from {server}: {line[:100]}")
 
                     total_time = time.time() - start_time
+                    if remote_error:
+                        raise NoHealthyServersError(f"Server {server} returned error: {remote_error}")
                     if chunk_count == 0:
                         # Log details about what we received (or didn't receive) at debug level
                         if non_data_lines:
@@ -427,11 +434,11 @@ class LoadBalancer:
             except NoHealthyServersError:
                 # Re-raise to trigger fallback to local
                 raise
-            except httpx.ConnectError as e:
+            except httpx.ConnectError:
                 logger.info(f"STREAM CONNECTION ERROR from {server} | Server unreachable (may be down or network issue), falling back to local")
                 await mark_server_unhealthy_async(server)
                 raise NoHealthyServersError(f"Server {server} is unreachable (falling back to local)")
-            except httpx.TimeoutException as e:
+            except httpx.TimeoutException:
                 logger.info(f"STREAM TIMEOUT from {server} | Request timed out, falling back to local")
                 await mark_server_unhealthy_async(server)
                 raise NoHealthyServersError(f"Server {server} timed out (falling back to local)")
@@ -516,11 +523,11 @@ class LoadBalancer:
                 logger.info(f"CHAT COMPLETE from {server} | total_time={time.time()-start_time:.2f}s")
                 return result
 
-            except httpx.ConnectError as e:
+            except httpx.ConnectError:
                 logger.info(f"CHAT CONNECTION ERROR from {server} | Server unreachable (may be down or network issue), falling back to local")
                 await mark_server_unhealthy_async(server)
                 raise NoHealthyServersError(f"Server {server} is unreachable (falling back to local)")
-            except httpx.TimeoutException as e:
+            except httpx.TimeoutException:
                 logger.info(f"CHAT TIMEOUT from {server} | Request timed out, falling back to local")
                 await mark_server_unhealthy_async(server)
                 raise NoHealthyServersError(f"Server {server} timed out (falling back to local)")
