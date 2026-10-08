@@ -226,6 +226,9 @@ legend{ color: var(--accent); font-weight:700; padding:0 6px; }
 .rl-msg:empty{ display:none; }
 .rl-msg.rl-err{ color:#e74c3c; }
 .ids-tools{ display:flex; flex-wrap:wrap; gap:6px; align-items:center; }
+.ids-tools select{ max-width:100%; }
+.ids-act{ opacity:.85; }
+.ids-act.ids-idle{ color:#f0a24a; }
 .blk-row .btn-small{ flex:0 0 auto; }
 @media (max-width: 600px){
   .blk-row{ gap:8px; padding:6px; }

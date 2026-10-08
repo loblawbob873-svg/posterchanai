@@ -3719,6 +3719,60 @@ async def _fetch_latest_kind3(port: int, pubkey: str, timeout: float = 6.0) -> d
     return latest
 
 
+async def _fetch_kind3_strict(port: int, pubkey: str, timeout: float = 8.0) -> tuple[dict | None, bool]:
+    """(newest kind 3 or None, answered). `answered` is True only once the relay sent EOSE: "the relay had
+    no list" and "the relay could not be asked" are different answers, and only the first may lead to a
+    write. _fetch_latest_kind3 returns None for both, which is fine for appending one follow and is exactly
+    the replaceable-list wipe for removing some."""
+    import websockets
+    sub, latest = "op-k3s", None
+    try:
+        async with websockets.connect(f"ws://127.0.0.1:{port}/relay", open_timeout=timeout, close_timeout=2) as ws:
+            await ws.send(json.dumps(["REQ", sub, {"authors": [pubkey], "kinds": [3], "limit": 1}]))
+            while True:
+                msg = json.loads(await asyncio.wait_for(ws.recv(), timeout=timeout))
+                if msg[0] == "EVENT" and msg[1] == sub:
+                    if latest is None or int(msg[2].get("created_at", 0)) > int(latest.get("created_at", 0)):
+                        latest = msg[2]
+                elif msg[0] == "EOSE" and msg[1] == sub:
+                    return latest, True
+    except Exception as e:
+        logger.info("[client] strict kind3 read failed: %s", type(e).__name__)
+    return None, False
+
+
+async def operator_unfollow(db: Session, pubkeys: list) -> dict:
+    """The operator stops following `pubkeys` -- the other half of follow_and_admit. The new contact list is
+    the list READ, minus exactly these keys: never written from a read that did not answer, never shorter by
+    anything else. {"ok", "removed"} or {"ok": False, "error"}."""
+    op = _operator(db)
+    if not op or not op.nostr_nsec:
+        return {"ok": True, "removed": 0, "note": "no operator account"}
+    try:
+        seckey = nostr_service.decode_seckey(op.nostr_nsec)
+    except ValueError:
+        return {"ok": False, "error": "the operator key is invalid"}
+    op_pk = nostr_service.derive_pubkey(seckey)
+    port = int(_setting(db, "nostr_relay_port", "3052"))
+    existing, answered = await _fetch_kind3_strict(port, op_pk)
+    if not answered:
+        return {"ok": False, "error": "could not read the operator's follow list — nothing was unfollowed"}
+    if not existing:
+        return {"ok": True, "removed": 0}
+    drop = {str(p).lower() for p in pubkeys or ()}
+    old = [list(t) for t in existing.get("tags", [])]
+    tags = [t for t in old if not (len(t) >= 2 and t[0] == "p" and str(t[1]).lower() in drop)]
+    removed = len(old) - len(tags)
+    if not removed:
+        return {"ok": True, "removed": 0}
+    ev = nostr_event.build_event(seckey, 3, existing.get("content", "") or "", tags=tags,
+                                 created_at=max(int(time.time()), int(existing.get("created_at", 0)) + 1))
+    accepted, msg = await _publish_to_relay(port, ev)
+    if not accepted:
+        return {"ok": False, "error": f"the relay did not store the new follow list: {msg}"}
+    return {"ok": True, "removed": removed}
+
+
 async def follow_and_admit(db: Session, new_pk: str) -> tuple[bool, str]:
     """Operator follows the new account AND admits it to the relay WoT IMMEDIATELY — so a fresh user
     can post + receive DMs right away, not after the daily upstream-driven rebuild. Reused by signup

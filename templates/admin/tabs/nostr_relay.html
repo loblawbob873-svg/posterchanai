@@ -433,6 +433,14 @@
             <div id="ids_panel" class="blk-panel">
                 <input type="search" id="ids_search" placeholder="Search by name, address, profile or npub…" autocomplete="off">
                 <div class="ids-tools">
+                    <select id="ids_filter" aria-label="Show">
+                        <option value="">Everyone</option>
+                        <option value="never_posted">Never posted</option>
+                        <option value="inactive">No activity at all</option>
+                    </select>
+                    <button type="button" class="btn-secondary btn-small" id="ids_sel_all">Select shown</button>
+                    <button type="button" class="btn-secondary btn-small" id="ids_sel_none">None</button>
+                    <button type="button" class="btn-danger btn-small" id="ids_retire" disabled>Remove, unfollow &amp; block</button>
                     <div id="ids_summary" class="blk-summary">Open this tab to load the list.</div>
                 </div>
                 <div id="ids_list" class="blk-list"></div>

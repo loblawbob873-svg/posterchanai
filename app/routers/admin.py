@@ -417,6 +417,66 @@ async def relay_identity_remove(data: RelayIdentityRemoveReq, db: Session = Depe
     return await _revoke_removed(db, r)
 
 
+class RelayIdentitiesRetireReq(BaseModel):
+    pubkeys: list
+
+
+@router.post("/relay/identities/retire")
+async def relay_identities_retire(data: RelayIdentitiesRetireReq, db: Session = Depends(get_db),
+                                  admin: User = Depends(get_admin_user)):
+    """"Remove, unfollow & block" (2026-10-08: "for the users that signed up and never posted ... we need a way
+    to unfollow them and make sure they can't come back later and DDOS the place"). For each key: BLOCK it
+    first -- that is the step that keeps it out (signup and login refuse a blocked key, the relay rejects and
+    purges it) -- then take every name it holds and the access those carried, then the operator unfollows it
+    so it no longer counts in the web of trust. Each step reports on its own; a failed later step never hides
+    an earlier one that worked. The node's own keys and admins are refused, never retired."""
+    from app.services import nip05_registry, relay_blocklist
+    from app.services.nostr import nostr_service
+    from app.routers.client import operator_unfollow
+    pks = []
+    for t in (data.pubkeys or [])[:501]:
+        h = nostr_service.to_pubkey_hex(str(t))
+        if not h:
+            raise HTTPException(status_code=400, detail=f"not a key: {str(t)[:20]}")
+        pks.append(h.lower())
+    pks = list(dict.fromkeys(pks))
+    if not pks or len(pks) > 500:
+        raise HTTPException(status_code=400, detail="choose between 1 and 500 accounts")
+    admins = set()
+    for u in db.query(User).filter(User.is_admin == True).all():  # noqa: E712
+        try:
+            admins.add(nostr_service.to_pubkey_hex(u.nostr_npub or "") or "")
+        except Exception:
+            pass
+    skipped = [p for p in pks if p in admins]
+    pks = [p for p in pks if p not in admins]
+    out = {"ok": True, "skipped_admins": skipped}
+    if not pks:
+        return out
+    b = await relay_blocklist.set_blocked_many(db, pks, True)
+    if not b.get("ok"):
+        raise HTTPException(status_code=b.get("status", 503), detail=b.get("error") or "the block did not save — nothing changed")
+    refused = set(b.get("refused") or [])
+    pks = [p for p in pks if p not in refused]
+    out["blocked"] = len(pks)
+    out["refused_operator_keys"] = sorted(refused)
+    r = nip05_registry.remove_keys(pks)
+    if r.get("ok"):
+        r = await _revoke_removed(db, r)
+        out.update({"names_removed": r.get("names", []), "value": r.get("value"),
+                    "revoked": r.get("revoked"), "revoke_error": r.get("revoke_error")})
+    else:
+        out["names_error"] = r.get("error")
+    u = await operator_unfollow(db, pks)
+    out["unfollowed"] = u.get("removed", 0)
+    if not u.get("ok"):
+        out["unfollow_error"] = u.get("error")
+    logger.info("[Admin] retired %d key(s): %d name(s) removed, %d unfollowed%s", len(pks),
+                len(out.get("names_removed") or []), out["unfollowed"],
+                " (unfollow failed)" if not u.get("ok") else "")
+    return out
+
+
 class RelayListEditReq(BaseModel):
     key: str
     add: str = ""
