@@ -1424,8 +1424,49 @@
       }
     };
     parkInner(); requestAnimationFrame(parkInner);
+    // A window nobody is looking at plays nothing: a parked <video> kept decoding (and holding its frames).
+    try{ slot.querySelectorAll('video,audio').forEach(m => { try{ if(!m.paused) m.pause(); }catch(_){ } }); }catch(_){}
     w.parked = true;
+    capParked();
   }
+
+  /* HIBERNATE what nobody is looking at ("you need to memory-optimize tablet because the OOM is crazy").
+   *
+   * Parking MOVES a window's whole DOM into its slot so it comes back exactly as it was -- every timeline
+   * card, image, video and chat bubble -- and nothing ever capped how many windows did that. On a desktop
+   * that is cheap; in the Android app the desk lives in ONE WebView, and six parked windows of timeline and
+   * chat are six full views resident at once, which Android answers by killing the renderer (the "reload").
+   *
+   * So a constrained device keeps the content of only its PARK_KEEP most recently used windows; the rest
+   * HIBERNATE: their nodes go (media unloaded first) and the window takes the ordinary repaint path when
+   * it is focused again -- its own render() for a post or profile, its saved view for a feature window --
+   * which is the path a window that was never parked already takes. What a hibernated window loses is
+   * being pixel-identical on return, never its place in the desk. `pc:trim-memory` (Android onTrimMemory)
+   * hibernates every parked window at once, the same moment the Store trims its cache. */
+  const _LOW_MEM = (() => {
+    try{
+      if(window.Capacitor && typeof Capacitor.isNativePlatform === 'function' && Capacitor.isNativePlatform()) return true;
+      return !!(navigator.deviceMemory && navigator.deviceMemory <= 4);
+    }catch(_){ return false; }
+  })();
+  const PARK_KEEP = _LOW_MEM ? 2 : 8;
+  function hibernate(w){
+    if(!w || !w.parked || !w.slot) return false;
+    try{ w.slot.querySelectorAll('video,audio').forEach(m => { try{ m.pause(); m.removeAttribute('src'); m.load(); }catch(_){ } }); }catch(_){}
+    w.slot.innerHTML = '';
+    w.slot.className = 'osw-slot';
+    w.parked = false;
+    w.hibernated = true;
+    return true;
+  }
+  function capParked(keep){
+    const k = keep == null ? PARK_KEEP : keep;
+    const parked = wins.filter(x => x.parked && x.slot).sort((a, b) => (b.lastFocus || 0) - (a.lastFocus || 0));
+    let n = 0;
+    parked.slice(k).forEach(x => { if(hibernate(x)) n++; });
+    return n;
+  }
+  try{ window.addEventListener('pc:trim-memory', () => { try{ capParked(0); }catch(_){ } }); }catch(_){}
 
   /* The slot of a PARKED window that is currently showing `view`.
    *
@@ -1664,6 +1705,8 @@
 
   function focusWin(w, render){
     if(!w) return;
+    w.lastFocus = Date.now();           // capParked keeps the most recently used windows' content
+    w.hibernated = false;
     const focusToken=_claimFocus();
     /* A self-contained window (folder, native surface, etc.) does not claim #feed.  Consequently
      * the feature behind it keeps its live DOM in its own frame.  Remember that fact BEFORE focus
@@ -13480,7 +13523,7 @@
                    * agree with a cold one: boot already restored the desktop before this runs. */
                   mobileLanding: () => { if(!on && !popupKind() && !_authGateUp() && wantsDesktop()) enter(); },
                   wantsDesktop,
-                  isOn: () => on, runStartupApps, openDoc, focusDoc, closeDoc, frontSnapshot, frontRestore, askDesktop, captureReturnTarget, windowOpenHint: _windowOpenHint, routeView, routeApp, snapTo, documentWindow,
+                  isOn: () => on, parkStats: () => ({ keep: PARK_KEEP, parked: wins.filter(x => x.parked && x.slot).length, hibernated: wins.filter(x => x.hibernated).length, nodes: wins.reduce((n, x) => n + (x.slot ? x.slot.getElementsByTagName('*').length : 0), 0) }), runStartupApps, openDoc, focusDoc, closeDoc, frontSnapshot, frontRestore, askDesktop, captureReturnTarget, windowOpenHint: _windowOpenHint, routeView, routeApp, snapTo, documentWindow,
                   openSystemSettings, osToast, pageWindowAI,
                   // app.js calls this when the player's state changes — the Now-playing widget has
                   // nothing to subscribe to, and polling an element we could be told about is the
