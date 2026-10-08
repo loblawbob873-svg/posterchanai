@@ -404,9 +404,6 @@ except Exception as _sx_err:          # never let search stop the app from start
 # OpenAI-compatible API: use OPENAI_API_PREFIX if app is behind a reverse proxy subpath
 _openai_prefix = os.getenv("OPENAI_API_PREFIX", "").strip().rstrip("/")
 app.include_router(openai_api.router, prefix=_openai_prefix)
-# Also include files_router if it exists (for storage server compatibility)
-if hasattr(storage, 'files_router'):
-    app.include_router(storage.files_router)
 
 
 
