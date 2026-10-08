@@ -186,6 +186,30 @@ if [ -f "$log" ] && [ "$(stat -c %s "$log" 2>/dev/null || echo 0)" -gt $((20 * 1
 	mv -f "$log" "$log.1" 2>/dev/null || :
 fi
 # <<< rotate-shell-log
+# >>> reap-orphaned-helpers
+# A DEAD SHELL'S GPU PROCESS KEEPS RUNNING FOR HOURS. A shell that crashes, or that pc-shell-restart has
+# to KILL after its TERM grace, leaves Chromium helpers behind -- the GPU process and the network
+# service -- reparented to init. Measured on the desktop box: two dead sessions' GPU processes still
+# running 3 and 5 hours later, holding GPU memory beside the live desktop's own. A PosterChan helper
+# (`--type=`) whose parent is init belongs to no browser and is never legitimate; a live shell's helpers
+# are parented to it or its zygote, and a diagnostic instance's to that instance. Exact PIDs, read from
+# /proc, never a pattern kill. PC_PROC / PC_KILL let tests/test_shell_reaps_orphaned_helpers.py run it.
+pc_reap_orphaned_helpers() {
+	_proc=${PC_PROC:-/proc}
+	for _d in "$_proc"/[0-9]*; do
+		[ -r "$_d/cmdline" ] && [ -r "$_d/stat" ] || continue
+		_cmd=$(tr '\000' ' ' < "$_d/cmdline" 2>/dev/null) || continue
+		case "$_cmd" in /opt/posterchan/posterchan-desktop\ *--type=*) ;; *) continue ;; esac
+		case "$_cmd" in *--pc-diagnostic-*) continue ;; esac
+		_st=$(cat "$_d/stat" 2>/dev/null) || continue
+		# The parent is the second field after the ")" closing the command name (which may hold spaces).
+		_rest=${_st##*) }
+		_ppid=$(printf '%s\n' "$_rest" | awk '{print $2}')
+		[ "$_ppid" = 1 ] || continue
+		${PC_KILL:-kill} -KILL "${_d##*/}" 2>/dev/null || :
+	done
+}
+# <<< reap-orphaned-helpers
 pid_tmp="$PC_WAYFIRE_SHELL_PID_FILE.tmp.$$"; shell_pid=''
 cleanup(){
 	rm -f "$PC_WAYFIRE_READY_FILE" "$PC_WAYFIRE_SHELL_PID_FILE" "$pid_tmp"
@@ -202,6 +226,7 @@ while [ "$attempt" -lt 2 ]; do
 	# Only dead ownership files are possible here: a live shell was rejected above.  A first GPU
 	# process failure can leave both Chromium singleton state and driver shader caches inconsistent
 	# across a package/Mesa transition, so clear those bounded caches before the one retry.
+	pc_reap_orphaned_helpers
 	rm -f "$profile/SingletonLock" "$profile/SingletonSocket" "$profile/SingletonCookie"
 	if [ "$attempt" -gt 1 ]; then
 		rm -rf "$profile/GPUCache" "$profile/DawnCache" "$profile/GrShaderCache"
