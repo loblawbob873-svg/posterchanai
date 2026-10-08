@@ -1467,6 +1467,11 @@
     return n;
   }
   try{ window.addEventListener('pc:trim-memory', () => { try{ capParked(0); }catch(_){ } }); }catch(_){}
+  function parkStats(){
+    return { keep: PARK_KEEP, parked: wins.filter(x => x.parked && x.slot).length,
+             hibernated: wins.filter(x => x.hibernated).length,
+             nodes: wins.reduce((n, x) => n + (x.slot ? x.slot.getElementsByTagName('*').length : 0), 0) };
+  }
 
   /* The slot of a PARKED window that is currently showing `view`.
    *
@@ -13523,7 +13528,7 @@
                    * agree with a cold one: boot already restored the desktop before this runs. */
                   mobileLanding: () => { if(!on && !popupKind() && !_authGateUp() && wantsDesktop()) enter(); },
                   wantsDesktop,
-                  isOn: () => on, parkStats: () => ({ keep: PARK_KEEP, parked: wins.filter(x => x.parked && x.slot).length, hibernated: wins.filter(x => x.hibernated).length, nodes: wins.reduce((n, x) => n + (x.slot ? x.slot.getElementsByTagName('*').length : 0), 0) }), runStartupApps, openDoc, focusDoc, closeDoc, frontSnapshot, frontRestore, askDesktop, captureReturnTarget, windowOpenHint: _windowOpenHint, routeView, routeApp, snapTo, documentWindow,
+                  isOn: () => on, runStartupApps, openDoc, focusDoc, closeDoc, frontSnapshot, frontRestore, askDesktop, captureReturnTarget, windowOpenHint: _windowOpenHint, routeView, routeApp, snapTo, documentWindow, parkStats,
                   openSystemSettings, osToast, pageWindowAI,
                   // app.js calls this when the player's state changes — the Now-playing widget has
                   // nothing to subscribe to, and polling an element we could be told about is the
