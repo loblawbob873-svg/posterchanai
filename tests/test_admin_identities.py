@@ -106,7 +106,7 @@ def _node(js):
     return json.loads(r.stdout)
 
 
-def test_the_list_finds_what_a_person_would_type_and_shows_problems_first():
+def test_the_list_finds_what_a_person_would_type_and_is_in_name_order():
     out = _node(r"""
 const { matches, sortRows } = require(process.argv[1]);
 const row = { name: 'jonnyfever', address: 'jonnyfever@poster.place', display: 'JonnyFever',
@@ -116,7 +116,8 @@ const order = sortRows([{name:'b', verified:true}, {name:'a', verified:true}, {n
 process.stdout.write(JSON.stringify({q, order}));
 """)
     assert out["q"] == [True, True, True, True, True, True, False]
-    assert out["order"] == ["z", "a", "b"], "an identity that does not verify must come first"
+    # Every row is a member, so nothing is pushed to the top for what the person's profile says.
+    assert out["order"] == ["a", "b", "z"], out
 
 
 def test_a_row_escapes_what_strangers_wrote():
@@ -130,7 +131,28 @@ process.stdout.write(JSON.stringify({ html, ok }));
 """)
     assert "<img src=x" not in out["html"] and "&lt;img src=x" in out["html"]
     assert 'src="&quot; onerror=' in out["html"]
-    assert "not in profile" in out["html"] and "✓ verified" in out["ok"]
+    assert "✓ member" in out["html"] and "✓ member" in out["ok"]
+
+
+def test_a_member_whose_profile_shows_another_address_is_shown_as_a_member():
+    """dreadpirate (2026-10-08): granted dreadpirate@poster.place, profile shows DreadPirateRoberts@getalby.com.
+    That is allowed -- the name is the membership -- and the list read it as a red "not in profile" sorted to the
+    top, i.e. as somebody to remove."""
+    out = _node(r"""
+const { rowHtml } = require(process.argv[1]);
+process.stdout.write(JSON.stringify({
+  dread: rowHtml({ name: 'dreadpirate', address: 'dreadpirate@poster.place', display: 'DPR', npub: 'npub1c5b6',
+                   verified: false, profile_nip05: 'DreadPirateRoberts@getalby.com' }),
+  none:  rowHtml({ name: 'ghost', address: 'ghost@poster.place', display: '', npub: 'npub1g', verified: false, profile_nip05: '' }),
+  same:  rowHtml({ name: 'alice', address: 'alice@poster.place', display: 'A', npub: 'npub1a', verified: true }),
+  via:   rowHtml({ name: 'al', address: 'al@poster.place', display: 'A', npub: 'npub1a', verified: true, via: 'alice@poster.place' }) }));
+""")
+    for k in out:
+        assert "✓ member" in out[k] and "not in profile" not in out[k] and "ids-badge ids-no" not in out[k], (k, out[k])
+    assert "profile shows DreadPirateRoberts@getalby.com" in out["dread"]
+    assert "profile shows no NIP-05" in out["none"]
+    assert "profile shows this address" in out["same"]
+    assert "profile shows alice@poster.place (another of their names here)" in out["via"]
 
 
 def test_removing_keeps_the_saved_text_in_step():

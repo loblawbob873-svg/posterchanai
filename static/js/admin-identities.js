@@ -3,9 +3,11 @@
 // The registry was only a textarea of "name hex" lines: no way to see WHO a name belongs to, whether
 // their profile really publishes the address (a mixed-case "JonnyFever" did not verify in lowercase
 // clients and nothing showed it), or which line is a bot. This draws each identity with the owner's
-// picture and profile name from this relay, the address, and a ✓ when their own profile publishes it
-// exactly. The ✓ is information only: the NAME is what grants access to this node's features, so a
-// person showing an address of their own elsewhere is still a member. Remove goes to the server
+// picture and profile name from this relay, the address, and -- as plain information -- what their own
+// profile's NIP-05 field says. EVERY ROW IS A MEMBER: the NAME is what grants access (2026-10-05), and a
+// profile showing an address of its own (dreadpirate's says DreadPirateRoberts@getalby.com) is allowed and
+// expected. This list used to grade that as a red "not in profile" sorted to the top, which read as "about
+// to be removed" for people who were fine (2026-10-08). Remove goes to the server
 // (one name off the registry, applied live), then the textarea -- still there under "Edit as text",
 // still what Save sends -- is rewritten AND taken as the new baseline, so the next Save cannot put it back.
 (function () {
@@ -20,23 +22,24 @@
         return [row.name, row.address, row.display, row.profile_nip05, row.npub, row.pubkey]
             .some(v => String(v || '').toLowerCase().includes(q));
     }
-    // Unverified first: they are the ones that need looking at.
+    // By name. Nothing here is a problem to surface first: every row is a member.
     function sortRows(rows) {
-        return rows.slice().sort((a, b) => (a.verified === b.verified ? 0 : a.verified ? 1 : -1)
-            || String(a.name).toLowerCase().localeCompare(String(b.name).toLowerCase()));
+        return rows.slice().sort((a, b) => String(a.name).toLowerCase().localeCompare(String(b.name).toLowerCase()));
+    }
+    // What their own profile says, as information -- never as a verdict.
+    function profileNote(r) {
+        if (r.verified) return r.via ? `profile shows ${r.via} (another of their names here)` : 'profile shows this address';
+        return r.profile_nip05 ? `profile shows ${r.profile_nip05}` : 'profile shows no NIP-05';
     }
     function rowHtml(r) {
-        const why = r.verified ? '' : (r.profile_nip05 ? `their profile says ${r.profile_nip05}` : 'their profile does not publish it');
         return `
             <div class="blk-row ids-row" data-name="${esc(r.name)}">
                 ${r.picture ? `<img class="blk-pic" src="${esc(r.picture)}" alt="" loading="lazy" referrerpolicy="no-referrer">`
                             : '<span class="blk-pic blk-nopic"></span>'}
                 <div class="blk-who">
-                    <div class="blk-name">${esc(r.address)}${r.verified
-                        ? (r.via ? `<span class="ids-badge ids-ok" title="An extra name: their profile publishes ${esc(r.via)}, another address of theirs here">✓ verified via ${esc(r.via)}</span>`
-                                 : '<span class="ids-badge ids-ok" title="Their profile publishes this address">✓ verified</span>')
-                        : `<span class="ids-badge ids-no" title="${esc(why)}">not in profile</span>`}</div>
+                    <div class="blk-name">${esc(r.address)}<span class="ids-badge ids-ok" title="This name is granted here, so its owner is a member">✓ member</span></div>
                     <div class="blk-id">${r.display ? esc(r.display) + ' · ' : '(no profile on this relay) · '}<code>${esc(String(r.npub).slice(0, 20))}…</code>${(r.others || []).length ? ` · also ${(r.others || []).map(esc).join(', ')}` : ''}</div>
+                    <div class="blk-id ids-note">${esc(profileNote(r))}</div>
                 </div>
                 <button type="button" class="btn-secondary btn-small ids-remove">Remove</button>
             </div>`;
@@ -49,10 +52,8 @@
         if (!list || !sum) return;
         const q = (document.getElementById('ids_search') || {}).value || '';
         const shown = sortRows(rows.filter(r => matches(r, q)));
-        const unverified = rows.filter(r => !r.verified).length;
         sum.textContent = rows.length
-            ? (q ? `${shown.length} of ${rows.length} identities match`
-                 : `${rows.length} identities` + (unverified ? ` · ${unverified} show another address in their profile (still members)` : ''))
+            ? (q ? `${shown.length} of ${rows.length} identities match` : `${rows.length} identities — every one a member`)
             : 'No identities granted yet.';
         list.innerHTML = shown.slice(0, 300).map(rowHtml).join('')
             + (shown.length > 300 ? `<div class="blk-more">${shown.length - 300} more — search to narrow it down</div>` : '');
