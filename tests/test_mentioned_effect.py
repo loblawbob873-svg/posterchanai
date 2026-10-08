@@ -66,7 +66,7 @@ def test_the_caption_is_the_word_then_mentioned():
     from app.services.effects_service import mentioned_caption
     assert mentioned_caption("michigan") == "MICHIGAN MENTIONED"
     assert mentioned_caption("  new   york ") == "NEW YORK MENTIONED"
-    assert mentioned_caption("") == "POSTERCHAN MENTIONED"
+    assert mentioned_caption("") == "", "there is no default: the person says what got mentioned"
     assert len(mentioned_caption("x" * 500)) <= 60 + len(" MENTIONED")
 
 
@@ -137,3 +137,25 @@ def test_the_media_api_hands_the_effect_only_the_word(monkeypatch):
     except Exception:
         pass
     assert seen.get("word") == "michigan", seen
+
+
+def test_with_no_word_it_asks_for_one_instead_of_inventing_it():
+    """"why does it default to posterchan mentioned? Users should add it" -- no word is a question back, on every
+    surface: the effect, the chat command and the media API."""
+    import asyncio
+    import base64
+    from app.services.effects_service import MENTIONED_ASK, mentioned_attachments
+    outs, said = mentioned_attachments([("a.jpg", b"x", "image/jpeg")], "  ")
+    assert outs == [] and said == MENTIONED_ASK
+    from app.services.command_service.core import CommandService
+    svc = CommandService.__new__(CommandService)
+    got = asyncio.run(svc._mentioned_command("", [("a.jpg", b"x", "image/jpeg")]))
+    assert got == {"type": "text", "content": MENTIONED_ASK}, got
+    from app.routers import media_api
+    req = media_api.MediaProcessRequest(command="mentioned", arg="zoom",
+                                        media=[media_api.MediaItem(filename="a.jpg", data=base64.b64encode(b"x").decode(),
+                                                                   content_type="image/jpeg")])
+    r = asyncio.run(media_api.process_media(req, None, None, True))
+    assert r == {"error": MENTIONED_ASK}, r
+    src = open(os.path.join(ROOT, "app", "routers", "telegram", "messages.py")).read()
+    assert "Type what got mentioned" in src, "an empty Telegram reply does not ask again"

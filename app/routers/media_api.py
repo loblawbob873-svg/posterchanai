@@ -33,6 +33,9 @@ class MediaItem(BaseModel):
     content_type: Optional[str] = ""
 
 
+_MEDIA_TOOLS = ("compress", "clip", "convert")
+
+
 class MediaProcessRequest(BaseModel):
     command: str
     arg: Optional[str] = ""
@@ -99,13 +102,16 @@ async def process_media(
 ):
     """Run a compress/clip/convert/meme/dildo/poo/cum/blood/bullethole/fire/gay/blacked/kosher/barked operation on the supplied attachments."""
     command = (req.command or "").strip().lower()
-    if command not in ("compress", "clip", "convert", "meme", "dildo", "poo", "cum", "blood", "bullethole", "fire", "nakedman", "alive", "glow", "gay", "blacked", "kosher", "blue", "barked", "hava", "indian", "yakety", "yamete", "curb", "depressing", "fahh", "helpme", "gong", "fbi", "redeem", "gigity", "beavis", "heat", "smell", "hood", "akbar", "retard", "whoabuddy", "diarrhea", "seth", "robocop", "titan", "terminator", "reze", "vibe", "rebecca", "makima", "sopranos", "cheers", "munsters", "happydays", "dontwanttowait", "strangerthings", "adamsfamily", "xmen", "futurama", "charliesangles", "differentstroke", "seinfeld", "jerry", "onepiece", "overtaken", "freebird", "kanye", "darkness", "bike", "jobs", "ree", "liberal", "moving", "harlem", "chimp", "consider", "clay", "uwu", "nami", "mentioned", "wasteland", "mixalot", "nonematters", "thug", "feltedtables", "prayer", "feliz", "sleepwell", "horse", "knightrider", "hugebitch"):
+    # THE ALLOWLIST IS THE COMMAND SERVICE'S OWN SETS, not a copy. A hand-typed tuple of ~90 names lived here and
+    # drifted: 14 effects the app supports (carl, collage, gura, shrug, soyjack, woodchipper, …) answered the
+    # fediverse bots "unsupported command" (code review, 2026-10-07).
+    from app.services.command_service import CommandService
+    if command not in _MEDIA_TOOLS and command not in CommandService.MOTION_EFFECTS and command not in CommandService.ANIMATED_EFFECTS:
         return {"error": f"unsupported command '{command}'"}
 
     # Trailing subcommands on an effect: <effect> [zoom|shake] [meme <text>]
     # (e.g. `dildo zoom meme top text`). Strip them here; apply motion then
     # caption to the produced files after dispatch.
-    from app.services.command_service import CommandService
     arg = req.arg or ""
     mods = []
     meme_text = None
@@ -327,6 +333,8 @@ async def process_media(
         elif command == "nami":
             outputs, summary = await asyncio.to_thread(effects_service.nami_attachments, attachments)
         elif command == "mentioned":
+            if not effects_service.mentioned_caption(arg):
+                return {"error": effects_service.MENTIONED_ASK}
             outputs, summary = await asyncio.to_thread(effects_service.mentioned_attachments, attachments, arg.strip())
         elif command == "wasteland":
             outputs, summary = await asyncio.to_thread(effects_service.wasteland_attachments, attachments)
@@ -338,7 +346,7 @@ async def process_media(
             outputs, summary = await asyncio.to_thread(effects_service.thug_attachments, attachments)
         elif command == "feltedtables":
             outputs, summary = await asyncio.to_thread(effects_service.feltedtables_attachments, attachments)
-        else:  # clip
+        elif command == "clip":
             parts = (req.arg or "").split()
             if len(parts) < 2:
                 return {"error": "clip needs <start> <end>, e.g. '0:10 0:30'"}
@@ -349,6 +357,14 @@ async def process_media(
             if end <= start:
                 return {"error": "end time must be after start time"}
             outputs, summary = await asyncio.to_thread(media_service.clip_attachment, attachments, start, end)
+        else:
+            # An effect with no branch above runs through the SAME dispatch chat and Telegram use (the raw one:
+            # the outro and modifiers are applied below, as for every other effect). It used to fall into the
+            # clip branch and answer "clip needs <start> <end>".
+            res = await CommandService(db)._execute_command_inner(command, arg, None, None, attachments, None)
+            if not (isinstance(res, dict) and res.get("type") == "files" and res.get("files")):
+                return {"error": (res or {}).get("content") or f"{command} produced nothing"}
+            outputs, summary = res["files"], res.get("content") or ""
         # Modifiers, already ordered + validated by check_motion_combo: the movement builds the
         # frames, then glow/trippy recolour those real frames (keeping the motion).
         for _mod in (mods if outputs else []):

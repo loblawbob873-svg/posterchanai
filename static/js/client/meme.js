@@ -3762,13 +3762,22 @@
     const layerName = opts.layerName || '';
     if(!name || !base || !base.src){ toast('add an image to this layer first'); return; }
     if(_fxBusy){ toast('still rendering the last effect — hang on'); return; }
+    /* AN EFFECT THAT NEEDS A WORD ASKS FOR IT. `mentioned` captions "<THING> MENTIONED" from what the person types
+     * ("how will users be able to set the text for mentioned") -- there is no default, so without this the
+     * Effect menu could only ever answer "say what got mentioned". The word rides as the effect's `arg`. */
+    let arg = opts.arg || '';
+    if(name === 'mentioned' && !arg){
+      const w = await uiPrompt('What got mentioned?', { value: '', placeholder: 'pizza' });
+      if(!w || !String(w).trim()) return;
+      arg = String(w).trim().slice(0, 60);
+    }
     _fxBusy = true;
     const st=document.getElementById('mb-status');
     if(st) st.textContent=label+'…';
     try{
       const auth = await selfProof();
       const r = await fetch('/client/meme/apply-effect',{ method:'POST', headers:{'Content-Type':'application/json'},
-        body: JSON.stringify({ pubkey: ME.pubkey, auth, url: base.src, effect: name }) });
+        body: JSON.stringify(Object.assign({ pubkey: ME.pubkey, auth, url: base.src, effect: name }, arg ? { arg } : {})) });
       const j = await r.json().catch(()=>({}));
       if(!r.ok || !j.url){ throw new Error(j.detail || j.error || ('HTTP '+r.status)); }
       // The effect transforms the still into a clip — swap the layer's source IN PLACE (keep its box and
@@ -3835,6 +3844,15 @@
         const e = ALPHA_FX[+btn.dataset.i]; if(!e) return;
         PC.closeModal();
         if(_fxBusy){ toast('still rendering the last effect — hang on'); return; }
+        /* THE "MENTIONED" GIRL COMES WITH HER CAPTION. The clip is the cheering girl alone; the meme is
+         * "<THING> MENTIONED", and the thing is the person's to say -- asked BEFORE the render (Cancel adds
+         * nothing), then added as an ordinary text layer they can move, restyle or retype. */
+        let mentionedWord = '';
+        if(e.name === 'mentioned'){
+          const w = await uiPrompt('What got mentioned?', { value: '', placeholder: 'pizza' });
+          if(!w || !String(w).trim()) return;
+          mentionedWord = String(w).trim().slice(0, 60);
+        }
         _fxBusy = true;
         const st=document.getElementById('mb-status');
         if(st) st.textContent='rendering '+(e.label||e.name)+'…';
@@ -3869,6 +3887,7 @@
           if(firstText>=0 && at>firstText) at = firstText;
           snap();
           P.layers.splice(at, 0, ov);
+          if(mentionedWord){ try{ _caption((mentionedWord+' MENTIONED').toUpperCase(), 0.8, { start: ov.start, dur: ov.dur }); }catch(_){ } }
           sel = ov.id;                 // selected on arrival, so it can be dragged/resized immediately
           if(st) st.textContent='';
           save(); render();

@@ -1176,10 +1176,14 @@ def _first_existing(paths) -> str:
     return ""
 
 
+MENTIONED_ASK = "Say what got mentioned, e.g. `mentioned pizza`."
+
+
 def mentioned_caption(word: str) -> str:
-    """'michigan' -> 'MICHIGAN MENTIONED'. No word: the meme's own default."""
+    """'michigan' -> 'MICHIGAN MENTIONED'. No word -> "": the thing that got mentioned is the person's to say
+    ("Users should add it") -- there is no default to fall back on."""
     w = " ".join(str(word or "").split())[:60].strip()
-    return (w + " MENTIONED").upper() if w else "POSTERCHAN MENTIONED"
+    return (w + " MENTIONED").upper() if w else ""
 
 
 def add_mentioned(image_data: bytes, source_filename: str = "image.jpg", word: str = "") -> bytes:
@@ -1200,6 +1204,8 @@ def mentioned_attachments(
     attachments: List[Tuple[str, bytes, str]], word: str = "",
 ) -> Tuple[List[OutputFile], str]:
     """`mentioned <thing>` on the first image attachment (animated video output)."""
+    if not mentioned_caption(word):
+        return [], MENTIONED_ASK
     images = [(fn, d, ct) for fn, d, ct in (attachments or []) if is_image(fn, ct)]
     if not images:
         return [], "No image — attach an image first."

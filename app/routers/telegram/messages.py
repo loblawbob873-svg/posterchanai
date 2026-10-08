@@ -121,6 +121,13 @@ async def _handle_message(update, db):
                 if not _m_user:
                     await telegram_service.send_message(chat_id, "Your Telegram account is not linked.")
                     return {"ok": True}
+                if not text.strip():
+                    # Nothing typed (a sticker, a photo): ask again rather than invent a word.
+                    await telegram_service.send_message(
+                        chat_id, "⚠️ Type what got mentioned. " + _MENTIONED_PROMPT,
+                        reply_markup={"force_reply": True, "selective": True, "input_field_placeholder": "pizza"},
+                    )
+                    return {"ok": True}
                 _atts = [a for a in _entry["attachments"] if is_image(a[0], a[2])]
                 await telegram_service.send_message(chat_id, "🎉 Cheering…")
                 _res = await CommandService(db, user=_m_user).execute_command("mentioned", text.strip(), attachments=_atts)
