@@ -85,7 +85,6 @@ def test_no_ui_control_survives_without_the_feature_behind_it():
     for token in ("bot_ft_nitter", "bot_grp_nitter", "bot_f_nitter_feeds", "bot_f_nitter_poll_seconds"):
         assert token not in js, "%s still referenced in admin-bots.js" % token
         assert token not in html, "%s still in the bots template" % token
-    assert "nitter" not in _read("templates/includes/modals/user_settings.html").lower()
     # app.js keeps ONE mention on purpose: the link-action bar that offers MP3/Video on a pasted
     # mirror URL, which is the client half of the kept rewriter. Forbid the removed FEATURE, not the
     # word, or this test becomes an argument for deleting something that works.

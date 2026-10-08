@@ -218,7 +218,7 @@ The bots are managed from **Admin → Bots** (`templates/admin/tabs/bots.html` +
 | Services | `app/services/*.py` (business logic; routers stay thin) |
 | Models | `app/models.py` (SQLAlchemy); DB init + migrations in `app/database.py` |
 | Schemas | `app/schemas.py` (Pydantic) |
-| Templates | `templates/` (Jinja2); admin tabs in `templates/admin/tabs/`, modals in `templates/includes/modals/` |
+| Templates | `templates/` (Jinja2); admin tabs in `templates/admin/tabs/` |
 | Frontend JS | `static/js/` (`app.js`, `chat.js`, `admin.js`; Nostr client = `static/js/client/*.js` + `static/css/client.css`) |
 
 **IF THE CLIENT ALREADY HOLDS WHAT THE VIEW IS ABOUT, PAINT THAT BEFORE THE FIRST NETWORK AWAIT.**
@@ -376,9 +376,9 @@ arg (`clip <start> <end>`).
   restart and re-check. (Learned removing `finance_api_base`.)
 - **Per-user:** columns on `User` (+ the `UserSetting` key/value table). Migrations for new
   `User` columns go in `app/database.py:_run_migrations` `new_user_columns` (ALTER-on-startup);
-  **new tables** are auto-created by `Base.metadata.create_all` in `init_db()`. UI lives in
-  `templates/includes/modals/user_settings.html`, saved via `/api/auth/settings`
-  (`app/routers/auth.py`), with payload build/load in `static/js/chat.js`.
+  **new tables** are auto-created by `Base.metadata.create_all` in `init_db()`. UI is the client's
+  User Settings (`renderUserSettings` in `static/js/client/settings.js`), saved via `/api/auth/settings`
+  (`app/routers/auth.py`).
 
 ### Schedulers
 

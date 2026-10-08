@@ -29,14 +29,6 @@ NATIVE = re.compile(r"(?<![.\w$])(?:(?:window|globalThis|self)\s*\.\s*)?(alert|c
 # The file that DEFINES the replacements necessarily talks about them.
 EXEMPT = {"admin-dialogs.js"}
 
-# DEAD FILES, EXEMPTED WITH A TRIPWIRE — not ignored.
-#
-# `file-manager.js` and `apikeys.js` carry 156 native dialogs between them and are referenced by
-# NOTHING: no template, no import, no service-worker precache; last touched 2026-05-31. Rewriting
-# 156 call sites in code that cannot run is work with no user on the other end. But an exemption
-# with no condition is how a rule quietly stops applying, so `test_the_dead_files_are_still_dead`
-# below fails the moment anything loads one — at which point they must be fixed or deleted.
-DEAD = {"file-manager.js", "apikeys.js"}
 
 
 def _strip(js: str) -> str:
@@ -59,7 +51,7 @@ class NothingServedByThisAppOpensANativeDialog(unittest.TestCase):
     def test_no_native_dialog_in_any_served_javascript(self):
         bad = []
         for path in sorted((ROOT / "static" / "js").rglob("*.js")):
-            if path.name in EXEMPT or path.name in DEAD or "node_modules" in str(path):
+            if path.name in EXEMPT or "node_modules" in str(path):
                 continue
             self._hits(path.read_text(encoding="utf-8", errors="replace"),
                        str(path.relative_to(ROOT)), bad)
@@ -104,23 +96,3 @@ class NothingServedByThisAppOpensANativeDialog(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
-
-
-class TheExemptionsStayHonest(unittest.TestCase):
-    def test_the_dead_files_are_still_dead(self):
-        """The moment one of these is loaded it is live code full of native dialogs, and the
-        exemption above becomes a lie. This is what makes skipping them defensible."""
-        referenced = []
-        for path in list((ROOT / "templates").rglob("*")) + list((ROOT / "static").rglob("*.js")):
-            if not path.is_file() or path.name in DEAD:
-                continue
-            try:
-                text = path.read_text(encoding="utf-8", errors="replace")
-            except OSError:
-                continue
-            for dead in DEAD:
-                if dead in text:
-                    referenced.append("%s references %s" % (path.name, dead))
-        self.assertEqual(referenced, [],
-                         "a file exempted for being unreachable is now reachable:\n"
-                         + "\n".join(referenced))
