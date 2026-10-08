@@ -15,9 +15,10 @@ if TYPE_CHECKING:   # annotation-only; app.models imports would cycle at runtime
 from .productivity import _ProductivityMixin
 from .effects1 import _Effects1Mixin
 from .effects2 import _Effects2Mixin
+from ._image_effects import _ImageEffectsMixin
 
 
-class CommandService(_BillMixin, _SearchMixin, _GenMixin, _MediaMixin, _TorrentsMixin, _SystemMixin, _CommsMixin, _ProductivityMixin, _Effects1Mixin, _Effects2Mixin):
+class CommandService(_BillMixin, _SearchMixin, _GenMixin, _MediaMixin, _TorrentsMixin, _SystemMixin, _CommsMixin, _ProductivityMixin, _Effects1Mixin, _Effects2Mixin, _ImageEffectsMixin):
     COMMANDS = {
         "files": "Search for files in your storage",
         "help": "Show this help message",
@@ -736,202 +737,28 @@ class CommandService(_BillMixin, _SearchMixin, _GenMixin, _MediaMixin, _Torrents
             return await self._pin_command(arg)
         elif command == "pins":
             return await self._pins_command()
-        elif command == "collage":
-            return await self._collage_command(attachments)
+        elif command in self.IMAGE_EFFECT_COMMANDS:   # a picture in, the effect out (_image_effects.py)
+            return await getattr(self, f"_{command}_command")(attachments)
         elif command == "meme":
             return await self._meme_command(arg, attachments)
-        elif command == "theraped":
-            return await self._theraped_command(attachments)
         elif command == "nothingeverhappens":
             return await self._nothingeverhappens_command(attachments, arg)
         elif command == "nodontthinkiwill":
             return await self._nodontthinkiwill_command(attachments, arg)
         elif command == "ruckus":
             return await self._ruckus_command(attachments, arg)
-        elif command == "would":
-            return await self._would_command(attachments)
-        elif command == "woodchipper":
-            return await self._woodchipper_command(attachments)
-        elif command == "shrug":
-            return await self._shrug_command(attachments)
         elif command == "carl":
             return await self._carl_command(attachments)
         elif command == "soyjack":
             return await self._soyjack_command(attachments)
         elif command == "lookingaway":
             return await self._lookingaway_command(attachments)
-        elif command == "dildo":
-            return await self._dildo_command(attachments)
-        elif command == "poo":
-            return await self._poo_command(attachments)
-        elif command == "cum":
-            return await self._cum_command(attachments)
-        elif command == "blood":
-            return await self._blood_command(attachments)
-        elif command == "bullethole":
-            return await self._bullethole_command(attachments)
-        elif command == "fire":
-            return await self._fire_command(attachments)
-        elif command == "nakedman":
-            return await self._nakedman_command(attachments)
         elif command == "alive":
             return await self._alive_command(arg, attachments)
         elif command == "glow":
             return await self._glow_command(arg, attachments)
-        elif command == "prayer":
-            return await self._prayer_command(attachments)
-        elif command == "gay":
-            return await self._gay_command(attachments)
-        elif command == "hag":
-            return await self._hag_command(attachments)
-        elif command == "goon":
-            return await self._goon_command(attachments)
-        elif command == "blacked":
-            return await self._blacked_command(attachments)
-        elif command == "kosher":
-            return await self._kosher_command(attachments)
-        elif command == "blue":
-            return await self._blue_command(attachments)
-        elif command == "barked":
-            return await self._barked_command(attachments)
-        elif command == "hava":
-            return await self._hava_command(attachments)
-        elif command == "indian":
-            return await self._indian_command(attachments)
-        elif command == "yakety":
-            return await self._yakety_command(attachments)
-        elif command == "yamete":
-            return await self._yamete_command(attachments)
-        elif command == "curb":
-            return await self._curb_command(attachments)
-        elif command == "depressing":
-            return await self._depressing_command(attachments)
-        elif command == "fahh":
-            return await self._fahh_command(attachments)
-        elif command == "helpme":
-            return await self._helpme_command(attachments)
-        elif command == "gong":
-            return await self._gong_command(attachments)
-        elif command == "fbi":
-            return await self._fbi_command(attachments)
-        elif command == "redeem":
-            return await self._redeem_command(attachments)
-        elif command == "gigity":
-            return await self._gigity_command(attachments)
-        elif command == "beavis":
-            return await self._beavis_command(attachments)
-        elif command == "smell":
-            return await self._smell_command(attachments)
-        elif command == "hood":
-            return await self._hood_command(attachments)
-        elif command == "akbar":
-            return await self._akbar_command(attachments)
-        elif command == "retard":
-            return await self._retard_command(attachments)
-        elif command == "heat":
-            return await self._heat_command(attachments)
-        elif command == "whoabuddy":
-            return await self._whoabuddy_command(attachments)
-        elif command == "diarrhea":
-            return await self._diarrhea_command(attachments)
-        elif command == "seth":
-            return await self._seth_command(attachments)
-        elif command == "robocop":
-            return await self._robocop_command(attachments)
-        elif command == "titan":
-            return await self._titan_command(attachments)
-        elif command == "terminator":
-            return await self._terminator_command(attachments)
-        elif command == "reze":
-            return await self._reze_command(attachments)
-        elif command == "vibe":
-            return await self._vibe_command(attachments)
-        elif command == "rebecca":
-            return await self._rebecca_command(attachments)
-        elif command == "makima":
-            return await self._makima_command(attachments)
-        elif command == "gura":
-            return await self._gura_command(attachments)
-        elif command == "feliz":
-            return await self._feliz_command(attachments)
-        elif command == "sleepwell":
-            return await self._sleepwell_command(attachments)
-        elif command == "horse":
-            return await self._horse_command(attachments)
-        elif command == "knightrider":
-            return await self._knightrider_command(attachments)
-        elif command == "hugebitch":
-            return await self._hugebitch_command(attachments)
-        elif command == "sopranos":
-            return await self._sopranos_command(attachments)
-        elif command == "cheers":
-            return await self._cheers_command(attachments)
-        elif command == "munsters":
-            return await self._munsters_command(attachments)
-        elif command == "happydays":
-            return await self._happydays_command(attachments)
-        elif command == "dontwanttowait":
-            return await self._dontwanttowait_command(attachments)
-        elif command == "strangerthings":
-            return await self._strangerthings_command(attachments)
-        elif command == "adamsfamily":
-            return await self._adamsfamily_command(attachments)
-        elif command == "xmen":
-            return await self._xmen_command(attachments)
-        elif command == "futurama":
-            return await self._futurama_command(attachments)
-        elif command == "charliesangles":
-            return await self._charliesangles_command(attachments)
-        elif command == "differentstroke":
-            return await self._differentstroke_command(attachments)
-        elif command == "seinfeld":
-            return await self._seinfeld_command(attachments)
-        elif command == "jerry":
-            return await self._jerry_command(attachments)
-        elif command == "onepiece":
-            return await self._onepiece_command(attachments)
-        elif command == "overtaken":
-            return await self._overtaken_command(attachments)
-        elif command == "freebird":
-            return await self._freebird_command(attachments)
-        elif command == "kanye":
-            return await self._kanye_command(attachments)
-        elif command == "darkness":
-            return await self._darkness_command(attachments)
-        elif command == "bike":
-            return await self._bike_command(attachments)
-        elif command == "jobs":
-            return await self._jobs_command(attachments)
-        elif command == "ree":
-            return await self._ree_command(attachments)
-        elif command == "liberal":
-            return await self._liberal_command(attachments)
-        elif command == "moving":
-            return await self._moving_command(attachments)
-        elif command == "harlem":
-            return await self._harlem_command(attachments)
-        elif command == "chimp":
-            return await self._chimp_command(attachments)
-        elif command == "consider":
-            return await self._consider_command(attachments)
-        elif command == "clay":
-            return await self._clay_command(attachments)
-        elif command == "uwu":
-            return await self._uwu_command(attachments)
-        elif command == "nami":
-            return await self._nami_command(attachments)
         elif command == "mentioned":
             return await self._mentioned_command(arg, attachments)
-        elif command == "wasteland":
-            return await self._wasteland_command(attachments)
-        elif command == "mixalot":
-            return await self._mixalot_command(attachments)
-        elif command == "nonematters":
-            return await self._nonematters_command(attachments)
-        elif command == "thug":
-            return await self._thug_command(attachments)
-        elif command == "feltedtables":
-            return await self._feltedtables_command(attachments)
         elif command == "node":
             return await self._node_command(arg, notify=node_notify)
         elif command == "bill":
