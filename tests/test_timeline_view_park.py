@@ -133,7 +133,7 @@ def test_the_desktop_does_not_open_social_on_its_own():
     Nostrverse firehose already streaming, before a single click — because the boot landing goes
     through PCOS.routeView, which CONJURES a window for the view it is handed. The desktop's home
     screen is the icon grid; "nothing is open" is a state it has and classic mode does not."""
-    boot = APP[APP.index("if(_deepLink){ VIEW='thread';"):]
+    boot = APP[APP.index("} else if(_deepLink){"):]
     boot = boot[: boot.index("_consumeSharedFiles()")]
     assert "PCOS.isOn()" in boot, "the landing still materialises a window on the desktop"
     # THE SHAPE, NOT THE FUNCTION'S NAME. This asserted the literal `_startTimeline()`, which is
@@ -148,7 +148,7 @@ def test_the_landing_guard_is_a_question_and_never_an_internal_boot_latch():
     """The previous boot-landing guard (`_viewChosen`) was a latch, and `applyInstanceGating` can
     switchView during boot — which made the landing skip ITSELF and shipped a broken APK. This one
     reads the screen at the moment of landing, so nothing else running during boot can set it."""
-    boot = APP[APP.index("if(_deepLink){ VIEW='thread';"):]
+    boot = APP[APP.index("} else if(_deepLink){"):]
     boot = boot[: boot.index("_consumeSharedFiles()")]
     # Comments stripped first: the reason this guard is shaped the way it is names the old latch.
     code = re.sub(r"/\*.*?\*/", "", APP, flags=re.S)
