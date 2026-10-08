@@ -4,7 +4,7 @@ ACE-Step 1.5 needs its own Python 3.11–3.12 environment (it conflicts with the
 ships a REST API, so it runs as a SEPARATE process and the app talks to it over HTTP. This module
 is the per-SERVER client (submit → poll → download for ONE server) plus the watermark helper.
 The orchestration — GPU lock, VRAM model-swap and load balancing across servers — lives in
-`music_factory.py`, mirroring `image_factory`/`image_load_balancer` (the "1 task at a time, swap
+`music_factory.py`, mirroring `image_factory` (the "1 task at a time, swap
 models, like we do now" pattern).
 
 REST contract (ACE-Step 1.5, default 127.0.0.1:8001):

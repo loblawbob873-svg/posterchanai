@@ -742,10 +742,6 @@ def theraped_attachments(attachments):
     return _pointing_attachments(attachments, "theraped", "The Raped", add_theraped)
 
 
-def nodontthinkiwill_attachments(attachments):
-    return _pointing_attachments(attachments, "nodontthinkiwill", "No, I Don't Think I Will",
-                                 add_nodontthinkiwill)
-
 
 def ruckus_attachments(attachments):
     """Uncle Ruckus carries his theme, so his output is video/mp4 rather than a still — same shape
@@ -753,10 +749,6 @@ def ruckus_attachments(attachments):
     return _reaction_video_attachments(attachments, "ruckus", "Uncle Ruckus", "🪕",
                                        _ruckus_audio_path, add_ruckus_video, add_ruckus)
 
-
-def nothingeverhappens_attachments(attachments):
-    return _pointing_attachments(attachments, "nothingeverhappens", "Nothing Ever Happens",
-                                 add_nothingeverhappens)
 
 
 def would_attachments(attachments):

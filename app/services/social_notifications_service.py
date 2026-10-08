@@ -6,9 +6,7 @@ A background poller (started from app.main on port 3051, mirroring logs_schedule
 poll_once() on an interval. The Telegram webhook handler calls handle_reply() when a user
 replies to one of the forwarded notification messages.
 """
-import html
 import logging
-import re
 from datetime import datetime, timedelta
 from typing import Optional
 
@@ -23,10 +21,6 @@ from app.services.telegram_service import TelegramService
 logger = logging.getLogger(__name__)
 
 _REPLY_MAP_TTL_DAYS = 7
-_NOTIF_PAGE = 20            # per-page fetch size when draining notifications
-_NOTIF_DRAIN_PAGES = 25     # max pages drained per poll (bound; leftover drains next cycle)
-_TAG_RE = re.compile(r"<[^>]+>")
-_BREAK_RE = re.compile(r"<\s*br\s*/?\s*>|</\s*p\s*>", re.IGNORECASE)
 
 
 # --- settings helpers -------------------------------------------------------
@@ -47,16 +41,6 @@ def _build_telegram(db: Session) -> Optional[TelegramService]:
 
 
 # --- normalization (raw platform object -> common shape) --------------------
-
-def _strip_html(raw: str) -> str:
-    # Pleroma/Mastodon status content is HTML: turn block/line breaks into newlines,
-    # drop remaining tags, then unescape entities (&quot;, &amp;, &#39;, …).
-    text = _BREAK_RE.sub("\n", raw or "")
-    text = _TAG_RE.sub("", text)
-    return html.unescape(text).strip()
-
-
-
 
 _NOSTR_KIND_TYPE = {1: "mention", 1111: "mention", 6: "repost", 7: "reaction"}
 

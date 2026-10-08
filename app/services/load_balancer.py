@@ -19,13 +19,11 @@ _cycle_lock = asyncio.Lock()
 
 # Counter for local vs remote decision (for fair distribution including local server)
 _request_counter: int = 0
-_counter_lock = asyncio.Lock()
 
 # Server health tracking
 _server_health: Dict[str, Tuple[bool, float]] = {}  # server -> (is_healthy, last_check_time)
 _health_lock = asyncio.Lock()
 HEALTH_CHECK_INTERVAL = 30  # Re-check unhealthy servers after 30 seconds
-HEALTH_CHECK_TIMEOUT = 3.0  # Quick timeout for health checks
 
 
 async def get_healthy_server(servers: List[str]) -> Optional[str]:

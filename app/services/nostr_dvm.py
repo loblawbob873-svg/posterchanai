@@ -50,8 +50,6 @@ DVM_REQ_KINDS = frozenset(_REQ_KIND.values())
 # result. A distinct kind (not request+1000) matters — the coordinator's result wait is an await_one on
 # request+1000, so progress can never be mistaken for the final result and end the job early.
 _PROGRESS_OFFSET = 2000
-DVM_KINDS = frozenset(list(_REQ_KIND.values()) + [k + 1000 for k in _REQ_KIND.values()]
-                      + [k + _PROGRESS_OFFSET for k in _REQ_KIND.values()])
 
 # Per-task wait budget (seconds) — the coordinator gives up and falls back to local/next after this.
 _JOB_TIMEOUT = {"chat": 180, "image": 300, "music": 600, "video": 900, "agent": 900}

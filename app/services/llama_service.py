@@ -975,32 +975,6 @@ class LlamaService:
 
         return filtered
 
-    def _manual_format_mistral(self, messages: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
-        """Manual formatting if handler fails."""
-        formatted = []
-        for msg in messages:
-            role = msg.get("role", "user")
-            content = msg.get("content", "")
-            if not content:
-                continue
-            
-            if role == "system":
-                formatted.append({
-                    "role": "system", 
-                    "content": f"<<sys>>\n{content.strip()}\n<</sys>>"
-                })
-            elif role == "user":
-                formatted.append({
-                    "role": "user",
-                    "content": f"[INST] {content.strip()} [/INST]"
-                })
-            elif role == "assistant":
-                formatted.append({
-                    "role": "assistant",
-                    "content": content.strip()
-                })
-        return formatted
-
     def _build_no_think_prompt(self, messages: List[Dict[str, Any]]) -> str:
         """Build a raw ChatML prompt with an empty <think> block pre-filled."""
         parts = []

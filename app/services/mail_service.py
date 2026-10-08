@@ -268,8 +268,6 @@ def get_email_body(msg: email.message.Message) -> Tuple[str, Optional[str]]:
 
 
 # No attachment size limits
-MAX_ATTACHMENT_SIZE = None  # No limit
-MAX_TOTAL_ATTACHMENT_SIZE = None  # No limit
 
 
 def get_attachments(msg: email.message.Message) -> List[EmailAttachment]:

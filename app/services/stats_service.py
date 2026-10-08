@@ -95,8 +95,6 @@ _COUNTER_KEY_H = "stats_counters_hourly"
 # and keeps its full past rather than starting at zero on the day this shipped.)
 COUNTERS = ("calls", "image", "music", "video", "meme")
 _counts: dict = {}                # {"YYYY-MM-DD": {metric: n}}
-_counts_dirty = False
-_counts_loaded = False
 
 
 def bump(metric: str, n: int = 1) -> None:

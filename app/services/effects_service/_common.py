@@ -63,7 +63,6 @@ _FIRE_ANIM_LOOPS = 3
 _NAKEDMAN_ANIM_FRAMES = 40
 _NAKEDMAN_ANIM_FPS = 20
 _NAKEDMAN_ANIM_LOOPS = 4
-_NAKEDMAN_DURATION = 8.0
 _BLACKED_FONT_CANDIDATES = [
     "/usr/share/fonts/archivo-black/ArchivoBlack-Regular.ttf",
     "/usr/share/fonts/truetype/archivo-black/ArchivoBlack-Regular.ttf",
@@ -658,8 +657,6 @@ _CHARACTERS = {
     "lookingaway": "lookingaway_b.png", "lookaway": "lookingaway_b.png",
     "anyways": "anyways.png", "anyway": "anyways.png", "puppet": "anyways.png", "monkey": "anyways.png",
 }
-CHARACTER_NAMES = ["theraped", "would", "woodchipper", "shrug", "carl", "soyjack", "lookingaway", "jerry",
-                   "nothingeverhappens", "nodontthinkiwill", "ruckus"]
 _CHARS_DIR_CANDIDATES = [
     os.path.join(_REPO_ROOT, "assets", "characters"),
     "/var/lib/posterchanai/assets/characters",

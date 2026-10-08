@@ -29,10 +29,6 @@ def _tagged_hash(tag: str, msg: bytes) -> bytes:
     return hashlib.sha256(tag_hash + tag_hash + msg).digest()
 
 
-def _is_infinite(point):
-    return point is None
-
-
 def _x(point):
     return point[0]
 

@@ -889,27 +889,6 @@ class ChatCompletionRequest(BaseModel):
         extra = "ignore"
 
 
-class ChatCompletionChoice(BaseModel):
-    index: int
-    message: ChatMessage
-    finish_reason: Optional[str] = None
-
-
-class ChatCompletionUsage(BaseModel):
-    prompt_tokens: int = 0
-    completion_tokens: int = 0
-    total_tokens: int = 0
-
-
-class ChatCompletionResponse(BaseModel):
-    id: str
-    object: str = "chat.completion"
-    created: int
-    model: str
-    choices: List[ChatCompletionChoice]
-    usage: Optional[ChatCompletionUsage] = None
-
-
 class ModelInfo(BaseModel):
     id: str
     object: str = "model"
