@@ -1334,6 +1334,7 @@
       return art ? { icon: 'i-article', label: 'Article' } : { icon: 'i-note', label: 'Post' };
     }
     if(/^doc:prof:[0-9a-f]{64}$/i.test(v)) return { icon: 'i-user', label: 'Profile' };
+    if(/^doc:trace:[0-9a-f]{64}$/i.test(v)) return { icon: 'i-search', label: 'Trace' };
     if(v === 'doc:search') return { icon: 'i-search', label: 'Search' };
     return null;
   }
@@ -2073,6 +2074,8 @@
      * and refused here it became an in-page frame on the DESKTOP SURFACE -- which sits below every
      * real toplevel, so "My profile" opened BEHIND Social with nothing to say it had opened at all. */
     if(/^doc:prof:[0-9a-f]{64}$/i.test(v)) return v;
+    // …and a TRACE, for the same reason: a pubkey the child traces exactly as the profile menu would.
+    if(/^doc:trace:[0-9a-f]{64}$/i.test(v)) return v;
     if(!v || v.indexOf('doc:') === 0 || v.indexOf('__') === 0 || v.indexOf('folder:') === 0) return '';
     if(!/^[a-z0-9_-]+$/i.test(v)) return '';
     try{ return document.querySelector('.nav-item[data-view="' + v + '"]') ? v : ''; }

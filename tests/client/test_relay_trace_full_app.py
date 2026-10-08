@@ -40,12 +40,14 @@ FACTS = {
 ANSWER = relay_trace.explain(FACTS)
 
 INIT = r"""
-window.__traceReq=null;
+window.__traceReq=null; window.__blockMany=[];
 const __prevFetch=window.fetch;
 window.fetch=async function(url,opts={}){
   const u=String(url);
   if(u.includes('/client/relay-trace')){ window.__traceReq=JSON.parse(opts.body||'{}');
     return new Response(JSON.stringify(ANSWER),{status:200,headers:{'Content-Type':'application/json'}}); }
+  if(u.includes('/client/block-many')){ const b=JSON.parse(opts.body||'{}'); window.__blockMany.push(b);
+    return new Response(JSON.stringify({ok:true,blocked:true,count:3,changed:b.targets.length,refused:[]}),{status:200,headers:{'Content-Type':'application/json'}}); }
   const r=await __prevFetch(url,opts);
   if(u.includes('/client/config')){ try{ const j=await r.clone().json(); j.admin_npubs=[ME_NPUB];
     return new Response(JSON.stringify(j),{status:200,headers:{'Content-Type':'application/json'}}); }catch(_){} }
@@ -71,7 +73,7 @@ def test_an_admin_traces_an_account_from_its_profile_menu():
         await b.until("!!document.getElementById('prof-menu')")
         await b.js("document.getElementById('prof-menu').click(); true")
         await b.until("!!document.querySelector('.menu-pop [data-m=\"trace\"]')")
-        got["label"] = await b.js("document.querySelector('.menu-pop [data-m=\"trace\"]').textContent")
+        got["label"] = await b.js("document.querySelector('.menu-pop [data-m=\"trace\"]').textContent.trim()")
         await b.js("document.querySelector('.menu-pop [data-m=\"trace\"]').click(); true")
         await b.until("!!document.querySelector('.relay-trace .tr-head')")
         got["req"] = await b.js("__traceReq")
@@ -81,6 +83,16 @@ def test_an_admin_traces_an_account_from_its_profile_menu():
             steps:r.querySelectorAll('.tr-step').length, badges:[...r.querySelectorAll('.tr-step .tr-badge')].map(x=>x.textContent),
             followers:r.querySelectorAll('.tr-fol').length, stats:r.querySelector('.tr-grid').innerText,
             chips:r.querySelector('.tr-chips').innerText, block:!!r.querySelector('#tr-block')}})()""")
+        # Bulk block: the account is pre-selected; tick two followers; one signed request names all three.
+        await b.js("""(()=>{const r=document.querySelector('.relay-trace');
+            [...r.querySelectorAll('.tr-fols [data-pick]')].slice(0,2).forEach(c=>{c.checked=true;c.dispatchEvent(new Event('change'))});return 1})()""")
+        got["btn"] = await b.js("document.querySelector('#tr-block').textContent")
+        await b.js("document.querySelector('#tr-block').click(); true")
+        await b.until("!!document.querySelector('.uiconfirm [data-uc=\"1\"]')")
+        got["confirm_text"] = await b.js("document.querySelector('.uiconfirm-msg').textContent")
+        await b.js("document.querySelector('.uiconfirm [data-uc=\"1\"]').click(); true")
+        await b.until("window.__blockMany.length===1 && document.querySelectorAll('.relay-trace .tr-blocked').length===3")
+        got["bulk"] = await b.js("window.__blockMany[0]")
         # The panel at phone width: nothing sticks out sideways.
         await b.call("Emulation.setDeviceMetricsOverride", {"width": 390, "height": 844, "deviceScaleFactor": 2, "mobile": True})
         await asyncio.sleep(.4)
@@ -88,7 +100,6 @@ def test_an_admin_traces_an_account_from_its_profile_menu():
             return [...r.querySelectorAll('*')].filter(e=>{const b=e.getBoundingClientRect();return b.width&&b.right>window.innerWidth+1}).length})()""")
 
     asyncio.run(desktop.with_browser("online", "", check, extra_init=INIT))
-    assert "Trace" in got["label"], got
     req = got["req"]
     assert req and req["target"] == SPAM, got
     proof = json.loads(__import__("base64").b64decode(req["auth"]))
@@ -103,3 +114,32 @@ def test_an_admin_traces_an_account_from_its_profile_menu():
     assert "434" in p["stats"] and "webmesh-v1-nodes" in p["chips"], p
     assert p["block"], p
     assert got["overflow"] == 0, got
+    assert got["label"] == "🔎 Trace", got["label"]
+    assert "Block 3 selected" in got["btn"], got["btn"]
+    assert got["confirm_text"].startswith("Block 3 accounts on this relay?"), got["confirm_text"]
+    bulk = got["bulk"]
+    assert set(bulk["targets"]) == {SPAM, VOUCHER, SEEDED}, bulk["targets"]
+    bproof = json.loads(__import__("base64").b64decode(bulk["auth"]))
+    assert bproof["kind"] == 27235 and bproof["content"] == "block-many" and bproof["pubkey"] == ME_PK
+    assert {t[1] for t in bproof["tags"] if t[0] == "p"} == set(bulk["targets"]), "the proof must name every account"
+
+
+@pytest.mark.skipif(not Path("/opt/google/chrome/chrome").exists(), reason="Chrome required")
+def test_a_trace_window_renders_the_panel_as_its_own_page():
+    """`doc:trace:<pubkey>` is what a PosterChanOS Trace window is opened with; its page is the panel itself,
+    so opening a follower (a window of its own) leaves the trace where it was."""
+    got = {}
+
+    async def check(b):
+        await desktop.login(b)
+        await b.js("try{ if(window.PCOS && PCOS.isOn()) PCOS.exit(); }catch(_){}; true")
+        await b.until("!!document.body && !document.body.classList.contains('guest')")
+        await b.js(f"__PC.switchView('doc:trace:{SPAM}'); true")
+        await b.until("!!document.querySelector('#feed .relay-trace.tr-page .tr-head')")
+        got["head"] = await b.js("document.querySelector('#feed .tr-head').textContent")
+        got["title"] = await b.js("document.querySelector('#view-title').textContent")
+        got["modal"] = await b.js("!!document.querySelector('.modal .relay-trace')")
+
+    asyncio.run(desktop.with_browser("online", "", check, extra_init=INIT))
+    assert got["head"] == ANSWER["headline"], got
+    assert got["title"] == "Trace" and got["modal"] is False, got

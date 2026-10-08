@@ -1431,6 +1431,12 @@ html.pc-oswin .main:not(:has(.pc-navbar))>.topbar::after{content:"";display:bloc
 .relay-trace .tr-chip{font-size:.78em;padding:2px 8px;border-radius:99px;background:rgba(var(--accent-rgb),.1);overflow-wrap:anywhere}
 .relay-trace .tr-fols{max-height:32vh;margin-top:0}
 .relay-trace .tr-fol{cursor:pointer}
+.relay-trace .tr-pick{display:inline-flex;align-items:center;padding:4px;margin:-4px 2px -4px -2px;cursor:pointer}
+.relay-trace .tr-pick input{width:18px;height:18px;accent-color:var(--neon);cursor:pointer}
+.relay-trace .tr-selbar{display:flex;gap:6px;margin:4px 0 6px}
+.relay-trace .tr-blocked{opacity:.45}
+.relay-trace .tr-blocked .pinfo b,.relay-trace .tr-who.tr-blocked b{text-decoration:line-through}
+.relay-trace.tr-page{max-width:720px;margin:0 auto;padding:12px 14px 20px}
 .relay-trace .tr-dot{width:9px;height:9px;border-radius:50%;background:var(--green);align-self:center;flex:none}
 .relay-trace .tr-actions{display:flex;gap:8px;justify-content:flex-end;flex-wrap:wrap;position:sticky;bottom:0;padding-top:6px;background:inherit}
 @media (max-width:560px){.relay-trace .tr-grid{grid-template-columns:repeat(2,1fr)}.relay-trace .tr-actions .btn{flex:1}}

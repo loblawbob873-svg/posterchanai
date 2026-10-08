@@ -64,7 +64,20 @@ def is_user_blocked(user) -> bool:
 
 
 async def set_blocked(db, target_hex: str, blocked: bool) -> dict:
-    """Add or remove one key, store the list as npubs and re-apply it on the running relay.
+    """Add or remove one key -- see set_blocked_many, which this is the one-key case of."""
+    r = await set_blocked_many(db, [target_hex], blocked)
+    if r.get("ok") and r.get("refused"):
+        return {"ok": False, "error": "refusing to block an operator key"}
+    if r.get("ok"):
+        return {"ok": True, "blocked": blocked, "count": r["count"]}
+    return r
+
+
+async def set_blocked_many(db, targets: list, blocked: bool) -> dict:
+    """Add or remove keys, store the list as npubs and re-apply it on the running relay -- ONE write and
+    ONE reload however many keys (the Trace panel blocks a whole follow-back ring at once; a write and a
+    relay reload per key would be N chances for the race below). {"ok", "blocked", "count", "changed",
+    "refused"} or {"ok": False, "error", "status"}.
     {"ok", "blocked", "count"} or {"ok": False, "error", "status"}.
 
     THE LIST IS WRITTEN TO THE RELAY BEFORE THE RELAY IS TOLD TO RELOAD IT, AND A WRITE THAT DID NOT
@@ -75,18 +88,23 @@ async def set_blocked(db, target_hex: str, blocked: bool) -> dict:
     told "blocked", the npub was in Admin -> Relay, and the relay kept accepting that author's posts,
     DMs, games and a git issue for as long as it ran.
     """
-    target = (target_hex or "").lower()
+    wanted = [t for t in dict.fromkeys((x or "").lower() for x in targets) if t]
+    refused = []
     if blocked:
         # Never the node's own operator/bot keys: that rejects the operator's signup-follow events and
         # breaks new-account admission, with no in-app way back.
         from app.services.blossom_service import _operator_pubkeys
-        if target in _operator_pubkeys(db):
-            return {"ok": False, "error": "refusing to block an operator key"}
+        ops = set(_operator_pubkeys(db))
+        refused = [t for t in wanted if t in ops]
+        wanted = [t for t in wanted if t not in ops]
     cur = set(blocked_hex())
+    before = len(cur)
     if blocked:
-        cur.add(target)
+        cur.update(wanted)
     else:
-        cur.discard(target)
+        cur.difference_update(wanted)
+    if not wanted:
+        return {"ok": True, "blocked": blocked, "count": len(cur), "changed": 0, "refused": refused}
     out = []
     for h in sorted(cur):
         try:
@@ -112,7 +130,7 @@ async def set_blocked(db, target_hex: str, blocked: bool) -> dict:
         trigger_block_reload()
     except Exception as e:
         logger.warning("[relay-blocklist] reload failed: %s", e)
-    return {"ok": True, "blocked": blocked, "count": len(cur)}
+    return {"ok": True, "blocked": blocked, "count": len(cur), "changed": abs(len(cur) - before), "refused": refused}
 
 
 async def profiles(pubkeys: list) -> tuple:

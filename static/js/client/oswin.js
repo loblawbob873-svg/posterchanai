@@ -209,6 +209,7 @@
     // identifier test below. It is routable because the child can fetch that id; see popOutView.
     if(/^doc:post:[0-9a-f]{64}$/i.test(v)) return true;
     if(/^doc:prof:[0-9a-f]{64}$/i.test(v)) return true;   // a profile: the child opens that pubkey
+    if(/^doc:trace:[0-9a-f]{64}$/i.test(v)) return true;  // a Trace: the child traces that pubkey
     if(v === 'doc:search') return true;       // rebuilt from its query (see open / SEARCH_ARG)
     if(!v || !/^[a-z0-9_-]+$/i.test(v)) return false;
     try{ return !!root.document.querySelector('.nav-item[data-view="' + v + '"]'); }
@@ -347,6 +348,8 @@
             root.__PC.openThread(v.slice('doc:post:'.length));
           else if(/^doc:prof:[0-9a-f]{64}$/i.test(v) && root.__PC && typeof root.__PC.openProfile==='function')
             root.__PC.openProfile(v.slice('doc:prof:'.length));
+          else if(/^doc:trace:[0-9a-f]{64}$/i.test(v) && root.__PC && typeof root.__PC.openTrace==='function')
+            root.__PC.openTrace(v.slice('doc:trace:'.length));
           else if(root.__PC&&typeof root.__PC.switchView==='function')root.__PC.switchView(v);
         }catch(_){}
         try{root.focus();}catch(_){}

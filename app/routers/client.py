@@ -3908,6 +3908,46 @@ async def block_pubkey(data: BlockReq, db: Session = Depends(get_db)):
     return JSONResponse(r)
 
 
+class BlockManyReq(BaseModel):
+    targets: list        # npubs or hex keys, at most BLOCK_MANY_MAX
+    auth: str            # base64 kind-27235, content "block-many", p-tagging EVERY target
+
+
+BLOCK_MANY_MAX = 200
+
+
+@router.post("/block-many")
+async def block_many(data: BlockManyReq, db: Session = Depends(get_db)):
+    """Admin-only: block several pubkeys at once (Trace panel: an account and the follow-back ring that let
+    it in). ONE signature, but it must name every target -- a proof signed for one list cannot be stretched
+    to cover a key it never named -- and one write + one relay reload for the lot."""
+    targets = []
+    for t in (data.targets or [])[: BLOCK_MANY_MAX + 1]:
+        h = nostr_service.to_pubkey_hex(str(t))
+        if not h:
+            return JSONResponse({"ok": False, "error": "invalid target"}, status_code=400)
+        targets.append(h.lower())
+    targets = list(dict.fromkeys(targets))
+    if not targets:
+        return JSONResponse({"ok": False, "error": "nothing to block"}, status_code=400)
+    if len(targets) > BLOCK_MANY_MAX:
+        return JSONResponse({"ok": False, "error": f"at most {BLOCK_MANY_MAX} at a time"}, status_code=400)
+    if not _verify_admin_signer(db, data.auth, "block-many"):
+        return JSONResponse({"ok": False, "error": "admin signature required (or stale request)"}, status_code=403)
+    try:
+        named = {t[1].lower() for t in json.loads(base64.b64decode(data.auth)).get("tags", [])
+                 if isinstance(t, list) and len(t) >= 2 and t[0] == "p"}
+    except Exception:
+        named = set()
+    if not set(targets) <= named:
+        return JSONResponse({"ok": False, "error": "the signature does not name every account"}, status_code=403)
+    from app.services import relay_blocklist
+    r = await relay_blocklist.set_blocked_many(db, targets, True)
+    if not r.get("ok"):
+        return JSONResponse({k: v for k, v in r.items() if k != "status"}, status_code=r.get("status", 400))
+    return JSONResponse(r)
+
+
 class BlockedListReq(BaseModel):
     auth: str            # base64 of a kind-27235 event with content "blocked-list", signed by an admin
 

@@ -2230,6 +2230,9 @@
       const _post = /^doc:post:([0-9a-f]{64})$/i.exec(v || '');
       if(_post){ _seedFromOpener([_post[1]]); openThread(_post[1]); return; }
       // …nor is a profile window: open that profile, as a shared npub link would.
+      // …nor is a Trace window: trace that account (admin-only; renderTraceView refuses anyone else).
+      const _trc = /^doc:trace:([0-9a-f]{64})$/i.exec(v || '');
+      if(_trc){ renderTraceView(_trc[1]); return; }
       const _prof = /^doc:prof:([0-9a-f]{64})$/i.exec(v || '');
       if(_prof){
         try{ const O = window.opener && window.opener.Store;
@@ -6630,6 +6633,8 @@
       if(_pw && typeof openThread === 'function'){ openThread(_pw[1]); return; }
       const _pf = /^doc:prof:([0-9a-f]{64})$/i.exec(String(v || ''));
       if(_pf && typeof renderProfileView === 'function'){ renderProfileView(_pf[1]); return; }
+      const _tr = /^doc:trace:([0-9a-f]{64})$/i.exec(String(v || ''));
+      if(_tr){ renderTraceView(_tr[1]); return; }
     }
     // …and a SEARCH window, which is rebuilt from its query (see _searchWindowLanding).
     if(String(v || '') === 'doc:search'){ _searchWindowLanding(); return; }
@@ -11696,6 +11701,7 @@
     needProfile, niceNip05, noteHtml, openDMWith, openMenuPopover, openStream, profOf, publish,
     renderMe, renderView, showPaymentTargets, sign, startCall, streamCard, streamHost, switchView,
     timeAgo, toast, toggleFollow, toggleMute, uiConfirm, uploadBlob, xmrOf,
+    markRelayBlocked: pks => { if(_relayBlocked) (pks||[]).forEach(p => _relayBlocked.add(p)); },
   }; }
   function _profileMod(){ return _lzGet('profile.js', 'PCProfileFactory', _profileDeps); }
   function _profileLoad(){ return _lzLoad('profile.js', 'PCProfileFactory', _profileDeps); }
@@ -11704,6 +11710,8 @@
   function loadOlderProfile(){ return _lzRun(_profileMod, _profileLoad, 'loadOlderProfile', arguments); }
   function renderProfile(){ return _lzRun(_profileMod, _profileLoad, 'renderProfile', arguments, true); }
   function renderProfileView(){ return _lzRun(_profileMod, _profileLoad, 'renderProfileView', arguments); }
+  function renderTraceView(){ return _lzRun(_profileMod, _profileLoad, 'renderTraceView', arguments); }
+  function openTrace(){ return _lzRun(_profileMod, _profileLoad, 'showRelayTrace', arguments); }
   // ---------- AI view (the old PosterChan AI web UI, merged in as a client view) ----------
   /* The Terminal is admins + the SSH allowlist, and its API already refuses everyone else on
    * every endpoint — so showing the row to anyone else only ever produces a permission error.
@@ -13727,6 +13735,7 @@
     capPlugin: _capPlugin,
     // The desktop hides the sidebar, and #me-card was the only way to reach your own profile.
     openProfile: (pk) => renderProfileView(pk || (ME && ME.pubkey)),
+    openTrace: (pk) => openTrace(pk),                       // → Trace from a popped-out window opens as the desktop's own window
     openNote: id => openThread(String(id || '')),
     /* The apps THIS DEVICE signs for, and the ability to end one. Exposed because a signer that
      * cannot be inspected cannot be tested: scripts/check_qr_device_login.py pairs two apps and

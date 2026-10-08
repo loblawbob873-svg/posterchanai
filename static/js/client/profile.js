@@ -19,7 +19,7 @@ window.PCProfileFactory = function(dep){
     isBchAddr, isMutedAuthor, isReply, isXmrAddr, linkify, loadSentinel, mediaParts, modal, mountAlbums,
     needProfile, niceNip05, noteHtml, openDMWith, openMenuPopover, openStream, profOf, publish,
     renderMe, renderView, showPaymentTargets, sign, startCall, streamCard, streamHost, switchView,
-    timeAgo, toast, toggleFollow, toggleMute, uiConfirm, uploadBlob, xmrOf,
+    timeAgo, toast, toggleFollow, toggleMute, uiConfirm, uploadBlob, xmrOf, markRelayBlocked,
   } = dep;
 
 
@@ -716,7 +716,7 @@ window.PCProfileFactory = function(dep){
       // admin extras: one consolidated permissions panel (AI, Blossom, image/music/video/torrent)
       // + relay block. State is fetched inside openPermissions so the menu opens instantly.
       items.push(['caps','🔑 Permissions']);
-      items.push(['trace','🔎 Trace on this relay']);
+      items.push(['trace','🔎 Trace']);
       items.push(['relay-sync','🔄 Sync notes']);
       items.push(['purge-blossom','🗑️ Purge Blossom','danger']);
       items.push(['block','🚫 Block','danger']);
@@ -799,58 +799,116 @@ window.PCProfileFactory = function(dep){
   function _traceWho(pk){ const p=profOf(pk)||{}; return { name: p.display_name||p.name||(NT().nip19.npubEncode(pk).slice(0,12)+'…'), pic: p.picture||S.LOGO }; }
   function _traceDate(ts){ return ts ? new Date(ts*1000).toLocaleString(undefined,{year:'numeric',month:'short',day:'numeric',hour:'2-digit',minute:'2-digit'}) : '—'; }
   function _traceTier(t){ return t==null ? '<span class="tr-badge">in trust list</span>' : `<span class="tr-badge tr-t${t}">${enc(_TIER[t]||('tier '+t))}</span>`; }
-  async function showRelayTrace(pk){
-    if(!S.IS_ADMIN) return;
+  /* TRACE IS A WINDOW OF ITS OWN ("trace should be it's own window so we don't lose progress"). It was a
+   * modal, and the first follower anybody opened closed it -- with the list read, the vouchers worked out
+   * and whatever was being weighed up gone. On PosterChanOS it is a `doc:trace:<pubkey>` window: a follower
+   * opens in a window of its own (renderProfileView hands those to the desktop) and the trace stays put.
+   * Where there are no windows it is the old modal, and a follower opens in a new tab on the web. */
+  function showRelayTrace(pk){
+    if(!S.IS_ADMIN || !pk) return;
+    const OW=window.PCOSWin;
+    try{
+      if(OW && OW.isWindow && OW.isWindow() && String(OW.viewOf()||'').toLowerCase()!==('doc:trace:'+pk).toLowerCase()){
+        const desk=OW.desktop && OW.desktop();
+        if(desk && desk.PCOS && desk.PCOS.isOn() && desk.__PC && desk.__PC.openTrace){ desk.__PC.openTrace(pk); return; }
+      }
+      if(window.PCOS && PCOS.isOn() && PCOS.openDoc('trace:'+pk, 'Trace', 'i-search', () => renderTraceView(pk))) return;
+    }catch(_){}
+    modal(`<h3><svg class="ic h-ic" aria-hidden="true"><use href="#i-search"></use></svg>Trace</h3>
+      <div class="relay-trace" id="rtr"></div>`, root => paintTrace($('#rtr',root), pk, false));
+  }
+  // The window's (and a routed `doc:trace:` view's) own page: the same panel, in #feed.
+  function renderTraceView(pk){
+    if(!S.IS_ADMIN || !/^[0-9a-f]{64}$/i.test(String(pk||''))) return;
+    S.VIEW='trace';
+    try{ $('#view-title').textContent='Trace'; }catch(_){}
+    const feed=$('#feed'); if(!feed) return;
+    feed.innerHTML='<div class="relay-trace tr-page" id="rtr"></div>';
+    paintTrace($('#rtr',feed), pk, true);
+  }
+  async function paintTrace(box, pk, inWindow){
+    if(!box) return;
     const who=_traceWho(pk);
-    modal(`<h3><svg class="ic h-ic" aria-hidden="true"><use href="#i-search"></use></svg>Trace on this relay</h3>
-      <div class="relay-trace" id="rtr"><div class="tr-loading"><div class="spinner"></div><div class="muted small">Reading the relay and asking who follows ${enc(who.name)}…</div></div></div>`, async root=>{
-      const box=$('#rtr',root);
-      let r=null;
-      try{
-        const auth=await sign(27235,'relay-trace',[['action','trace'],['p',pk]]);
-        r=await fetch('/client/relay-trace',{method:'POST',headers:{'Content-Type':'application/json'},
-          body:JSON.stringify({target:pk,auth:btoa(JSON.stringify(auth))})}).then(x=>x.json());
-      }catch(_){ r=null; }
-      if(!box.isConnected) return;
-      if(!r||!r.ok){ box.innerHTML=`<div class="tr-card tr-bad"><b>Couldn't trace this account.</b><div class="small">${enc((r&&r.error)||'The server did not answer.')}</div></div>`; return; }
-      const miss=[...new Set([pk,...r.chain.map(c=>c.pubkey),...r.followers.shown.map(f=>f.pubkey)])].filter(a=>!Store.haveProfile(a));
-      if(miss.length){ try{ (await Relay.query([{authors:miss,kinds:[0],limit:miss.length}])).forEach(e=>Store.saveProfile(e)); }catch(_){} }
-      if(!box.isConnected) return;
-      const st=r.stored, me=_traceWho(pk);
-      const kinds=Object.entries(st.by_kind||{}).map(([k,n])=>`<span class="tr-chip">kind ${enc(k)} · ${n}</span>`).join('');
-      const origins={wot:'synced from the network',direct:'published here',ancestor:'pulled in for a thread'};
-      const orig=Object.entries(st.by_origin||{}).map(([o,n])=>`<span class="tr-chip">${enc(origins[o]||o)} · ${n}</span>`).join('');
-      const step=(p,label,badge)=>{ const w=_traceWho(p); return `<li class="tr-step" data-prof="${enc(p)}"><img alt="" src="${enc(w.pic)}" onerror="this.src='${S.LOGO}'"><div><b>${enc(w.name)}</b><div class="small muted">${label}</div></div>${badge||''}</li>`; };
-      const chain = r.chain.length ? `<ol class="tr-chain">${step(pk,'this account')}${r.chain.map((c,i)=>step(c.pubkey, i? 'who is followed by…':'is followed by', _traceTier(c.tier))).join('')}</ol>` : '';
-      const fol=r.followers;
-      const folList = fol.shown.length ? fol.shown.map(f=>{ const w=_traceWho(f.pubkey); return `<div class="psearch tr-fol" data-prof="${enc(f.pubkey)}"><img alt="" src="${enc(w.pic)}" onerror="this.src='${S.LOGO}'"><div class="pinfo"><b>${enc(w.name)}</b><div class="small muted">${f.in_wot?(f.tier!=null?`${enc(_TIER[f.tier]||'')}${f.vouchers?` · ${f.vouchers} vouch`:''}`:'in your trust list'):'not in your trust list'}</div></div>${f.in_wot?'<span class="tr-dot" title="in your trust list"></span>':''}</div>`; }).join('') : '';
-      box.innerHTML=`
-        <div class="tr-card tr-${enc(r.tone)}">
-          <div class="tr-who"><img alt="" src="${enc(me.pic)}" onerror="this.src='${S.LOGO}'"><b>${enc(me.name)}</b></div>
-          <div class="tr-head">${enc(r.headline)}</div>
+    box.innerHTML=`<div class="tr-loading"><div class="spinner"></div><div class="muted small">Reading the relay and asking who follows ${enc(who.name)}…</div></div>`;
+    let r=null;
+    try{
+      const auth=await sign(27235,'relay-trace',[['action','trace'],['p',pk]]);
+      r=await fetch('/client/relay-trace',{method:'POST',headers:{'Content-Type':'application/json'},
+        body:JSON.stringify({target:pk,auth:btoa(JSON.stringify(auth))})}).then(x=>x.json());
+    }catch(_){ r=null; }
+    if(!box.isConnected) return;
+    if(!r||!r.ok){ box.innerHTML=`<div class="tr-card tr-bad"><b>Couldn't trace this account.</b><div class="small">${enc((r&&r.error)||'The server did not answer.')}</div></div>`; return; }
+    const miss=[...new Set([pk,...r.chain.map(c=>c.pubkey),...r.followers.shown.map(f=>f.pubkey)])].filter(a=>!Store.haveProfile(a));
+    if(miss.length){ try{ (await Relay.query([{authors:miss,kinds:[0],limit:miss.length}])).forEach(e=>Store.saveProfile(e)); }catch(_){} }
+    if(!box.isConnected) return;
+    const st=r.stored, me=_traceWho(pk);
+    const kinds=Object.entries(st.by_kind||{}).map(([k,n])=>`<span class="tr-chip">kind ${enc(k)} · ${n}</span>`).join('');
+    const origins={wot:'synced from the network',direct:'published here',ancestor:'pulled in for a thread'};
+    const orig=Object.entries(st.by_origin||{}).map(([o,n])=>`<span class="tr-chip">${enc(origins[o]||o)} · ${n}</span>`).join('');
+    const pick=p=>`<label class="tr-pick" title="Select to block"><input type="checkbox" data-pick="${enc(p)}"></label>`;
+    const step=(p,label,badge)=>{ const w=_traceWho(p); return `<li class="tr-step" data-prof="${enc(p)}"><img alt="" src="${enc(w.pic)}" onerror="this.src='${S.LOGO}'"><div><b>${enc(w.name)}</b><div class="small muted">${label}</div></div>${badge||''}</li>`; };
+    const chain = r.chain.length ? `<ol class="tr-chain">${step(pk,'this account')}${r.chain.map((c,i)=>step(c.pubkey, i? 'who is followed by…':'is followed by', _traceTier(c.tier))).join('')}</ol>` : '';
+    const fol=r.followers;
+    const folList = fol.shown.length ? fol.shown.map(f=>{ const w=_traceWho(f.pubkey); return `<div class="psearch tr-fol" data-prof="${enc(f.pubkey)}">${pick(f.pubkey)}<img alt="" src="${enc(w.pic)}" onerror="this.src='${S.LOGO}'"><div class="pinfo"><b>${enc(w.name)}</b><div class="small muted">${f.in_wot?(f.tier!=null?`${enc(_TIER[f.tier]||'')}${f.vouchers?` · ${f.vouchers} vouch`:''}`:'in your trust list'):'not in your trust list'}</div></div>${f.in_wot?'<span class="tr-dot" title="in your trust list"></span>':''}</div>`; }).join('') : '';
+    box.innerHTML=`
+      <div class="tr-card tr-${enc(r.tone)}">
+        <div class="tr-who">${pick(pk)}<img alt="" src="${enc(me.pic)}" onerror="this.src='${S.LOGO}'"><b>${enc(me.name)}</b></div>
+        <div class="tr-head">${enc(r.headline)}</div>
+      </div>
+      ${r.signals.length?`<div class="tr-sec"><div class="tr-h">Signals</div>${r.signals.map(x=>`<div class="tr-sig tr-${enc(x.level)}">${enc(x.text)}</div>`).join('')}</div>`:''}
+      ${chain?`<div class="tr-sec"><div class="tr-h">How it got here</div>${chain}</div>`:''}
+      <div class="tr-sec"><div class="tr-h">On this relay</div>
+        <div class="tr-grid">
+          <div><span class="tr-n">${st.total}</span><span class="small muted">events stored</span></div>
+          <div><span class="tr-n">${st.per_day||0}</span><span class="small muted">notes / day</span></div>
+          <div><span class="tr-v">${enc(_traceDate(st.first))}</span><span class="small muted">first</span></div>
+          <div><span class="tr-v">${enc(_traceDate(st.last))}</span><span class="small muted">latest</span></div>
         </div>
-        ${r.signals.length?`<div class="tr-sec"><div class="tr-h">Signals</div>${r.signals.map(x=>`<div class="tr-sig tr-${enc(x.level)}">${enc(x.text)}</div>`).join('')}</div>`:''}
-        ${chain?`<div class="tr-sec"><div class="tr-h">How it got here</div>${chain}</div>`:''}
-        <div class="tr-sec"><div class="tr-h">On this relay</div>
-          <div class="tr-grid">
-            <div><span class="tr-n">${st.total}</span><span class="small muted">events stored</span></div>
-            <div><span class="tr-n">${st.per_day||0}</span><span class="small muted">notes / day</span></div>
-            <div><span class="tr-v">${enc(_traceDate(st.first))}</span><span class="small muted">first</span></div>
-            <div><span class="tr-v">${enc(_traceDate(st.last))}</span><span class="small muted">latest</span></div>
-          </div>
-          ${kinds||orig?`<div class="tr-chips">${kinds}${orig}${(st.top_tags||[]).map(t=>`<span class="tr-chip">#${enc(t)}</span>`).join('')}</div>`:''}
-        </div>
-        <div class="tr-sec"><div class="tr-h">Followers ${fol.found==null?'<span class="muted small">— the public relays did not answer</span>':`<span class="muted small">${fol.found} found · ${fol.in_wot} in your trust list</span>`}</div>
-          ${folList?`<div class="people-list tr-fols">${folList}</div>`:''}
-        </div>
-        <div class="tr-actions">
-          <button class="btn btn-ghost small" id="tr-mute">${isMutedAuthor(pk)?'🔊 Unmute':'🔇 Mute'}</button>
-          <button class="btn btn-danger small" id="tr-block">🚫 Block on this relay</button>
-        </div>`;
-      $$('[data-prof]',box).forEach(el=> el.onclick=()=>{ closeModal(); renderProfileView(el.dataset.prof); });
-      const mb=$('#tr-mute',box); if(mb) mb.onclick=async()=>{ await toggleMute(pk); closeModal(); renderProfileView(pk); };
-      const bb=$('#tr-block',box); if(bb) bb.onclick=()=>{ closeModal(); doBlock(pk); };
+        ${kinds||orig?`<div class="tr-chips">${kinds}${orig}${(st.top_tags||[]).map(t=>`<span class="tr-chip">#${enc(t)}</span>`).join('')}</div>`:''}
+      </div>
+      <div class="tr-sec"><div class="tr-h">Followers ${fol.found==null?'<span class="muted small">— the public relays did not answer</span>':`<span class="muted small">${fol.found} found · ${fol.in_wot} in your trust list</span>`}</div>
+        ${folList?`<div class="tr-selbar"><button class="btn btn-ghost small" id="tr-all">Select all</button><button class="btn btn-ghost small" id="tr-none">None</button></div><div class="people-list tr-fols">${folList}</div>`:''}
+      </div>
+      <div class="tr-actions">
+        <button class="btn btn-ghost small" id="tr-mute">${isMutedAuthor(pk)?'🔊 Unmute':'🔇 Mute'}</button>
+        <button class="btn btn-danger small" id="tr-block" disabled>🚫 Block selected</button>
+      </div>`;
+    const picks=()=>$$('[data-pick]',box).filter(c=>c.checked&&!c.disabled).map(c=>c.dataset.pick);
+    const bb=$('#tr-block',box);
+    const sync=()=>{ const n=picks().length; bb.disabled=!n; bb.textContent=n?`🚫 Block ${n} selected`:'🚫 Block selected'; };
+    $$('.tr-pick',box).forEach(l=>{ l.onclick=e=>e.stopPropagation(); });
+    $$('[data-pick]',box).forEach(c=>{ c.onchange=sync; });
+    const mark=on=>$$('.tr-fols [data-pick]',box).forEach(c=>{ if(!c.disabled) c.checked=on; });
+    const all=$('#tr-all',box); if(all) all.onclick=()=>{ mark(true); sync(); };
+    const none=$('#tr-none',box); if(none) none.onclick=()=>{ mark(false); sync(); };
+    // The account itself starts selected: tracing somebody is usually the first step to blocking them.
+    const self=$(`.tr-who [data-pick]`,box); if(self){ self.checked=true; sync(); }
+    $$('[data-prof]',box).forEach(el=> el.onclick=()=>{
+      const p=el.dataset.prof;
+      if(inWindow){ renderProfileView(p); return; }      // a window hands the profile to a window of its own
+      try{ if(!window.Capacitor && !window.__PC_API_BASE__){ window.open('/'+NT().nip19.npubEncode(p),'_blank','noopener'); return; } }catch(_){}
+      closeModal(); renderProfileView(p);
     });
+    const mb=$('#tr-mute',box); if(mb) mb.onclick=async()=>{ await toggleMute(pk); mb.textContent=isMutedAuthor(pk)?'🔊 Unmute':'🔇 Mute'; };
+    bb.onclick=async()=>{
+      const list=picks(); if(!list.length) return;
+      if(!await uiConfirm(`Block ${list.length} account${list.length===1?'':'s'} on this relay? Their events are rejected and the ones already stored are purged.`,{ok:'Block'})) return;
+      bb.disabled=true; bb.textContent='Blocking…';
+      let res=null;
+      try{
+        // ONE signature that names every account: the server refuses a proof that does not name a key it blocks.
+        const auth=await sign(27235,'block-many',[['action','block-many'],...list.map(p=>['p',p])]);
+        res=await fetch('/client/block-many',{method:'POST',headers:{'Content-Type':'application/json'},
+          body:JSON.stringify({targets:list,auth:btoa(JSON.stringify(auth))})}).then(x=>x.json());
+      }catch(_){ res=null; }
+      if(!box.isConnected) return;
+      if(!res||!res.ok){ toast('block failed: '+((res&&res.error)||'the server did not answer')); sync(); return; }
+      const refused=new Set(res.refused||[]);
+      list.forEach(p=>{ if(refused.has(p)) return; const c=$(`[data-pick="${p}"]`,box); if(c){ c.checked=false; c.disabled=true; c.closest('.tr-fol,.tr-who')?.classList.add('tr-blocked'); } });
+      try{ markRelayBlocked(list.filter(p=>!refused.has(p))); }catch(_){}
+      toast(`Blocked ${list.length-refused.size} on the relay`+(refused.size?` — ${refused.size} operator key${refused.size===1?'':'s'} skipped`:''));
+      sync();
+    };
   }
   // admin: delete ALL of this account's blobs from the built-in Blossom server (bytes + index rows).
   // Irreversible; signed like doBlock so the server checks admin.
@@ -1192,6 +1250,6 @@ window.PCProfileFactory = function(dep){
     });
   }
   return {
-    doPurgeBlossom, editProfile, loadOlderProfile, renderProfile, renderProfileView,
+    doPurgeBlossom, editProfile, loadOlderProfile, renderProfile, renderProfileView, renderTraceView, showRelayTrace,
   };
 };
