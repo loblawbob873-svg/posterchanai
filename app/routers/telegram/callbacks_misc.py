@@ -1,7 +1,7 @@
 """Auto-split from callbacks.py: misc callback handlers. Bodies moved verbatim."""
-from ._common import ChatService, CommandService, User, _CONSUMED, _HELP_SECTIONS, _flashcard_decks_cache, _geni_image_cache, _link_action_cache, _nostr_post_cache, asyncio, logger, telegram_service, time
-from .keyboards import _has_nostr, _help_main_keyboard, _recover_post_text, _strip_hashtags
-from .senders import User, _deliver_pin_result, _geni_image_cache, _has_nostr, _link_content_for_llm, _offer_social_post, _post_to_nostr, _send_flashcard, _send_screenshot, asyncio, logger, telegram_service, time
+from ._common import ChatService, CommandService, User, _HELP_SECTIONS, _link_action_cache, asyncio, logger, telegram_service, time
+from .keyboards import _help_main_keyboard
+from .senders import _deliver_pin_result, _link_content_for_llm, _send_screenshot, asyncio, logger, telegram_service, time
 
 
 async def _cb_rem(update, db, chat_id, data, callback_query, callback_query_id):
@@ -63,11 +63,7 @@ async def _cb_pin(update, db, chat_id, data, callback_query, callback_query_id):
 async def _cb_prompt(update, db, chat_id, data, callback_query, callback_query_id):
         action = data.split(":", 1)[1]
         _PROMPT_CONFIGS = {
-            "search":   ("🔍 What would you like to search for?", "e.g. latest AI news"),
-            "images":   ("🖼 What images would you like to search for?", "e.g. northern lights"),
             "geni":     ("🎨 Describe the image you want to generate:", "e.g. a sunset over a cyberpunk city"),
-            "nyaa":     ("🔎 Type your anime search:", "e.g. one piece 1080p"),
-            "torrents": ("🔍 Type your torrent search:", "e.g. dark knight 1080p"),
             "screenshot": ("📸 Send the URL to screenshot:", "e.g. example.com"),
         }
         cfg = _PROMPT_CONFIGS.get(action)
@@ -175,72 +171,6 @@ async def _cb_lnk(update, db, chat_id, data, callback_query, callback_query_id):
                 logger.error(f"Link summary error: {lnk_err}", exc_info=True)
                 await telegram_service.send_message(chat_id, f"Error: {lnk_err}")
 
-        elif action == "flashcards":
-            # Flashcards from the page's REAL fetched text (same source as Summary) — never
-            # OCR a screenshot, so proper nouns/numbers stay correct (no hallucination).
-            if not lnk_user:
-                await telegram_service.send_message(chat_id, "Your Telegram account is not linked.")
-                return {"ok": True}
-            await telegram_service.send_message(chat_id, "🎴 Reading the page and generating flashcards…")
-            try:
-                from app.services import flashcards_service
-                title, content, err = await _link_content_for_llm(db, cached_url)
-                if not content:
-                    # No real text (e.g. a JS-only page or a video) — refuse rather than invent.
-                    await telegram_service.send_message(chat_id, f"Couldn't read that link to make flashcards. ({err})")
-                    return {"ok": True}
-                src = f"{title}\n\n{content}" if title else content
-                cards = await flashcards_service.generate_flashcards(src, ChatService(db, user=lnk_user))
-                if cards:
-                    _deck = {"title": title or "Flashcards", "cards": cards, "idx": 0,
-                             "answered": [None] * len(cards), "score": 0, "ts": time.time()}
-                    _flashcard_decks_cache[chat_id] = _deck
-                    await _send_flashcard(chat_id, _deck)
-                else:
-                    await telegram_service.send_message(chat_id, "Couldn't make flashcards from that page.")
-            except Exception as lnk_err:
-                logger.error(f"Link flashcards error: {lnk_err}", exc_info=True)
-                await telegram_service.send_message(chat_id, f"Error: {lnk_err}")
-
-        elif action == "post":
-            await telegram_service.send_message(chat_id, "⏳ Generating post, please wait...")
-            try:
-                import asyncio as _asyncio
-                title, content, err = await _link_content_for_llm(db, cached_url)
-                if not content:
-                    # No real content (e.g. a YouTube video with no captions) -> refuse
-                    # rather than letting the model invent a post from the bare URL.
-                    await telegram_service.send_message(chat_id, f"Couldn't read that link to write a post. ({err})")
-                    return {"ok": True}
-                article_context = f"Title: {title}\n\n{content[:3000]}"
-
-                post_messages = [
-                    {
-                        "role": "system",
-                        "content": "You are a social media expert. Write compelling, detailed social media posts. Output ONLY the post text. No introductions, no 'here is your post', no URL placeholders like 'link' or 'read more'."
-                    },
-                    {
-                        "role": "user",
-                        "content": (
-                            "Write a viral and engaging social media post based on this content. "
-                            "Be detailed — include key facts, context, and why it matters. "
-                            "Use emojis.\n\n"
-                            f"Content:\n{article_context}"
-                        )
-                    }
-                ]
-
-                lnk_chat = ChatService(db, user=lnk_user)
-                lnk_chat.num_predict = min(lnk_chat.num_predict, 900)
-                post_text = await _asyncio.wait_for(lnk_chat.chat(post_messages), timeout=120)
-                post_text = _strip_hashtags(post_text).rstrip() + f"\n\n{cached_url}"
-                await _offer_social_post(chat_id, post_text, lnk_user, telegram_service)
-            except _asyncio.TimeoutError:
-                await telegram_service.send_message(chat_id, "Timed out generating post.")
-            except Exception as lnk_err:
-                logger.error(f"Link post generation error: {lnk_err}", exc_info=True)
-                await telegram_service.send_message(chat_id, f"Error generating post: {lnk_err}")
-
         elif action == "screenshot":
             await telegram_service.send_message(chat_id, "⏳ Capturing screenshot, please wait...")
             try:
@@ -254,113 +184,3 @@ async def _cb_lnk(update, db, chat_id, data, callback_query, callback_query_id):
             except Exception as lnk_err:
                 logger.error(f"Link screenshot error: {lnk_err}", exc_info=True)
                 await telegram_service.send_message(chat_id, f"Error capturing screenshot: {lnk_err}")
-
-
-async def _cb_glowtextpost(update, db, chat_id, data, callback_query, callback_query_id):
-        _gp = _nostr_post_cache.get(chat_id)
-        if _gp in (None, _CONSUMED):
-            _gp = _recover_post_text(callback_query) or None
-        if not _gp:
-            await telegram_service.send_message(chat_id, "No post text to glow — generate a post first.")
-            return {"ok": True}
-        _gu = db.query(User).filter(
-            User.telegram_chat_id == chat_id,
-            User.telegram_enabled == True,
-        ).first()
-        # A URL baked into the glow image is useless (not clickable) — keep links OUT of
-        # the image and put them in the post body instead.
-        import re as _re
-        _glow_urls = _re.findall(r'https?://\S+', _gp)
-        _glow_text = _re.sub(r'https?://\S+', '', _gp).strip()
-        try:
-            from app.services import effects_service as _fx
-            _glow_png = await asyncio.to_thread(_fx.render_glow_text_card, _glow_text or _gp)
-        except Exception as _ge:
-            logger.error(f"glow text card failed: {_ge}", exc_info=True)
-            await telegram_service.send_message(chat_id, f"❌ Couldn't render the glowing text: {_ge}")
-            return {"ok": True}
-        # send_photo takes a str (URL/path/base64), not raw bytes — encode for the
-        # preview. _offer_social_post keeps the RAW bytes (the platform post
-        # handlers attach _geni_image_cache as raw image_bytes).
-        import base64 as _b64
-        await telegram_service.send_photo(
-            chat_id, _b64.b64encode(_glow_png).decode("ascii"), "🌟 Glowing text preview")
-        # The glowing TEXT is now the image; keep any link(s) in the post body so they
-        # stay clickable (don't re-post the text — it's in the image).
-        _glow_body = "\n".join(_glow_urls)
-        await _offer_social_post(chat_id, _glow_body, _gu, telegram_service,
-                                 prompt="📣 *Post this glowing image?*", image_bytes=_glow_png)
-        return {"ok": True}
-
-
-async def _cb_nostr(update, db, chat_id, data, callback_query, callback_query_id):
-        action = data.split(":", 1)[1]
-
-        if action == "skip":
-            _nostr_post_cache.pop(chat_id, None)
-            _geni_image_cache.pop(chat_id, None)
-            await telegram_service.send_message(chat_id, "Post skipped.")
-            return {"ok": True}
-
-        # action == "post"
-        pending_post = _nostr_post_cache.pop(chat_id, None)
-        if pending_post == _CONSUMED:
-            await telegram_service.send_message(chat_id, "Already posted via 'Post to All'.")
-            return {"ok": True}
-        if pending_post is None:
-            pending_post = _recover_post_text(callback_query) or None
-        if pending_post is None:
-            await telegram_service.send_message(chat_id, "No pending Nostr post found. Please generate a new post.")
-            return {"ok": True}
-
-        nostr_user = db.query(User).filter(
-            User.telegram_chat_id == chat_id,
-            User.telegram_enabled == True
-        ).first()
-
-        if not nostr_user or not _has_nostr(nostr_user):
-            await telegram_service.send_message(chat_id, "Nostr is not configured on your account.")
-            return {"ok": True}
-
-        _nostr_image = _geni_image_cache.get(chat_id)  # .get so other platforms can still use it
-        try:
-            await _post_to_nostr(nostr_user, pending_post, _nostr_image)
-            await telegram_service.send_message(chat_id, "✅ Posted to Nostr!")
-        except Exception as nostr_err:
-            logger.error(f"Nostr post error: {nostr_err}", exc_info=True)
-            await telegram_service.send_message(chat_id, f"❌ Failed to post to Nostr: {nostr_err}")
-
-
-
-
-async def _cb_allpost(update, db, chat_id, data, callback_query, callback_query_id):
-        all_user = db.query(User).filter(
-            User.telegram_chat_id == chat_id,
-            User.telegram_enabled == True
-        ).first()
-
-        # Recover post text from message if caches were lost (e.g. service restart).
-        # Shared _recover_post_text() strips the prompt and refuses to post a bare
-        # prompt — same helper used by the individual mk:/nostr: handlers.
-
-        results = []
-
-        _all_image = _geni_image_cache.get(chat_id)
-
-        # Nostr
-        nostr_post = _nostr_post_cache.pop(chat_id, None) or _recover_post_text(callback_query)
-        if (nostr_post or _all_image) and nostr_post != _CONSUMED and all_user and _has_nostr(all_user):
-            try:
-                await _post_to_nostr(all_user, nostr_post, _all_image)
-                results.append("✅ Nostr")
-            except Exception as _e:
-                logger.error(f"all:post Nostr error: {_e}", exc_info=True)
-                results.append(f"❌ Nostr: {_e}")
-            # Sentinel prevents the old Nostr button from double-posting
-            _nostr_post_cache[chat_id] = _CONSUMED
-
-        if results:
-            await telegram_service.send_message(chat_id, "\n".join(results))
-
-        if not results:
-            await telegram_service.send_message(chat_id, "No social platforms configured.")

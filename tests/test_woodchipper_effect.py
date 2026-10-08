@@ -47,11 +47,9 @@ def test_it_stands_bottom_centre_and_says_get_in():
 def test_every_surface_offers_it():
     from app.services.command_service import CommandService
     from app.services.meme_builder_service import _ALPHA_CHARACTERS
-    from app.routers.telegram._common import _FX_CHARACTERS
     assert "woodchipper" in CommandService.COMMANDS and "Get in!" in CommandService.COMMANDS["woodchipper"]
     assert "woodchipper" in CommandService.MOTION_EFFECTS
     assert "woodchipper" in dict(_ALPHA_CHARACTERS), "not in the Meme Builder"
-    assert "woodchipper" in [k for _, k in _FX_CHARACTERS], "not in Telegram's effects menu"
 
 
 def test_the_command_returns_the_picture_and_asks_for_one_when_missing():

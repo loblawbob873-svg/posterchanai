@@ -56,10 +56,9 @@ def test_nami_is_reachable_everywhere_an_effect_lives():
     from app.services.command_service.core import CommandService
     assert "nami" in CommandService.COMMANDS and "nami" in CommandService.ANIMATED_EFFECTS
     assert CommandService.wants_attachments("nami")
-    from app.routers.telegram import _common as tg
-    assert any(cmd == "nami" for _, cmd in tg.__dict__.get("_EFFECT_BUTTONS", []) or
-               [b for v in tg.__dict__.values() if isinstance(v, list) for b in v if isinstance(b, tuple) and len(b) == 2]), \
-        "no Telegram effect button for nami"
+    # Telegram no longer renders effects (2026-10-08): the word is answered with where it lives now.
+    from app.routers.telegram import messages as tg
+    assert "nami" in tg._TG_MOVED and "nami" in tg._TG_COMMANDS
     from app.services import meme_builder_service as mb
     assert any(c.get("name") == "nami" or c.get("effect") == "nami" or "nami" in json.dumps(c) for c in mb.alpha_effect_catalog()), \
         "the Meme Builder cannot add Nami as a layer"

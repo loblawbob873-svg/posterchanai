@@ -1,91 +1,13 @@
 """Auto-split from messages.py: _msg_chat."""
-from ._common import Conversation, Message, User, _link_action_cache, _youtube_action_cache, asyncio, datetime, logger, telegram_service
-from .keyboards import _has_nostr
-from .senders import User, asyncio, datetime, logger, telegram_service
+from ._common import Conversation, Message, User, _link_action_cache, asyncio, datetime, logger, telegram_service
+
+from .senders import asyncio, logger, telegram_service
 
 
 async def _msg_chat(attachments, chat_id, chat_service, command_service, db, doc_text, has_images, is_forwarded, message, reply_text, text, user_obj):
                 from app.services.intent_service import IntentService
                 intent_service = IntentService(db, user=user_obj)
                 text_stripped = text.strip()
-
-                # Detect YouTube URLs anywhere in the message
-                _yt_domains = ('youtube.com/watch', 'youtu.be/', 'youtube.com/shorts/')
-                _all_urls_in_text = [u for u in __import__('re').findall(r'https?://\S+', text_stripped)]
-                youtube_url = next((u for u in _all_urls_in_text if any(d in u for d in _yt_domains)), None)
-
-                # Detect an X/Twitter status URL (downloadable via yt-dlp, no transcript so no
-                # Summary option). extract_download_urls returns the x.com-normalized form (a mirror
-                # rewritten); keep the ORIGINAL url too so the bare/forwarded check works on the text.
-                _x_orig = _x_dl = None
-                if not youtube_url:
-                    from app.services.youtube_service import extract_download_urls as _edl
-                    for _u in _all_urls_in_text:
-                        _got = _edl(_u)
-                        if _got:
-                            _x_orig, _x_dl = _u, _got[0]
-                            break
-
-                # YouTube URL (bare or forwarded): ask the user what they want to do
-                if youtube_url and (is_forwarded or not text_stripped.replace(youtube_url, '').strip()):
-                    logger.info(f"Telegram: YouTube URL detected, prompting action: {youtube_url}")
-                    _youtube_action_cache[chat_id] = youtube_url
-                    
-                    # Check if user has social platforms configured
-                    _yt_user_for_social = db.query(User).filter(
-                        User.telegram_chat_id == chat_id,
-                        User.telegram_enabled == True
-                    ).first()
-
-                    # Build keyboard with social post option if any platform is configured
-                    yt_keyboard = [
-                        [
-                            {"text": "📋 Summary",  "callback_data": "yt:summary"},
-                            {"text": "🎵 MP3",      "callback_data": "yt:mp3"},
-                            {"text": "🎬 Movie",    "callback_data": "yt:video"},
-                        ]
-                    ]
-                    if _has_nostr(_yt_user_for_social):
-                        yt_keyboard.append([
-                            {"text": "📣 Post", "callback_data": "yt:post"}
-                        ])
-                    
-                    await telegram_service.send_message(
-                        chat_id,
-                        "🎬 What would you like to do with this video?",
-                        reply_markup={"inline_keyboard": yt_keyboard},
-                    )
-                    return {"ok": True}
-
-                # X/Twitter status URL (bare or forwarded): same prompt as YouTube minus
-                # Summary (tweets have no transcript). Reuses the yt: callbacks — the cached URL is
-                # the x.com-normalized form, so MP3/Video/Post all download via yt-dlp's Twitter path.
-                if _x_dl and (is_forwarded or not text_stripped.replace(_x_orig, '').strip()):
-                    logger.info(f"Telegram: X URL detected, prompting action: {_x_dl}")
-                    _youtube_action_cache[chat_id] = _x_dl
-
-                    _x_user_for_social = db.query(User).filter(
-                        User.telegram_chat_id == chat_id,
-                        User.telegram_enabled == True
-                    ).first()
-
-                    x_keyboard = [
-                        [
-                            {"text": "🎵 MP3",   "callback_data": "yt:mp3"},
-                            {"text": "🎬 Video", "callback_data": "yt:video"},
-                        ]
-                    ]
-                    if _has_nostr(_x_user_for_social):
-                        x_keyboard.append([
-                            {"text": "📣 Post", "callback_data": "yt:post"}
-                        ])
-
-                    await telegram_service.send_message(
-                        chat_id,
-                        "🐦 What would you like to do with this post?",
-                        reply_markup={"inline_keyboard": x_keyboard},
-                    )
-                    return {"ok": True}
 
                 # Forwarded messages with URLs prompt the user what to do (same as bare URL)
                 if is_forwarded:
@@ -124,11 +46,7 @@ async def _msg_chat(attachments, chat_id, chat_service, command_service, db, doc
                                     [
                                         {"text": "📋 Summary",    "callback_data": "lnk:summary"},
                                         {"text": "📸 Screenshot", "callback_data": "lnk:screenshot"},
-                                        {"text": "🎴 Flashcards", "callback_data": "lnk:flashcards"},
-                                    ],
-                                    [
-                                        {"text": "📣 Post",   "callback_data": "lnk:post"},
-                                        {"text": "❌ Cancel", "callback_data": "lnk:cancel"},
+                                        {"text": "❌ Cancel",     "callback_data": "lnk:cancel"},
                                     ],
                                 ]
                             },
@@ -165,6 +83,11 @@ async def _msg_chat(attachments, chat_id, chat_service, command_service, db, doc
                 # parse it to split command name from arguments
                 intent_command_str = intent.get("command", "") if intent else ""
                 command, arg = command_service.parse_command(intent_command_str) if intent_command_str else (None, "")
+                # An intent that lands on a feature the bot no longer offers (messages._TG_MOVED) is a GUESS about
+                # ordinary words, so it is answered as ordinary chat rather than run.
+                from .messages import _TG_MOVED
+                if command and command in _TG_MOVED:
+                    command, arg = None, ""
 
                 if command:
                     logger.info(f"Detected intent: command={command}, arg={arg}")
@@ -344,11 +267,7 @@ async def _msg_chat(attachments, chat_id, chat_service, command_service, db, doc
                                     [
                                         {"text": "📋 Summary",    "callback_data": "lnk:summary"},
                                         {"text": "📸 Screenshot", "callback_data": "lnk:screenshot"},
-                                        {"text": "🎴 Flashcards", "callback_data": "lnk:flashcards"},
-                                    ],
-                                    [
-                                        {"text": "📣 Post",   "callback_data": "lnk:post"},
-                                        {"text": "❌ Cancel", "callback_data": "lnk:cancel"},
+                                        {"text": "❌ Cancel",     "callback_data": "lnk:cancel"},
                                     ],
                                 ]
                             },
