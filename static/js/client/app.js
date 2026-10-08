@@ -6282,9 +6282,16 @@
     // dropped once filled so this is one-shot per mention.
     $$('a.mention[data-mpk]').forEach(a=>{ const pk=a.dataset.mpk; const p=Store.profile(pk); if(!p) return;
       const nm=p.name||p.display_name||niceNip05(p.nip05); if(!nm) return;
-      a.innerHTML='@'+emojiName(pk,nm);
-      // Done only once nothing is still to come: a :shortcode: name keeps its mark until its map lands.
-      if(!_mentionWaitsForEmoji(pk,nm)) a.removeAttribute('data-mpk'); });
+      const h='@'+emojiName(pk,nm); if(a.innerHTML!==h) a.innerHTML=h;     // unchanged: leave it (and any selection) alone
+      // Done once nothing is still to come: a :shortcode: name keeps its mark until its map lands -- but not for
+      // ever. A name that merely CONTAINS colons ("time 10:30:00") never gets a map, and stayed marked and redrawn on
+      // every pass for the life of the page; 20 s is far past the one refetch that could bring one (code review).
+      if(_mentionWaitsForEmoji(pk,nm)){
+        const t0=+a.dataset.mwait||0;
+        if(!t0){ a.dataset.mwait=String(Date.now()); return; }
+        if(Date.now()-t0<20000) return;
+      }
+      a.removeAttribute('data-mpk'); a.removeAttribute('data-mwait'); });
   }
   /* A name made of NIP-30 :shortcodes: whose emoji map is not known yet draws as text for now. */
   function _mentionWaitsForEmoji(pk, nm){

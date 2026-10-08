@@ -125,3 +125,32 @@ def test_the_mention_itself_is_patched_not_only_a_redrawn_copy():
     assert got['before'] == 0, got
     assert got['after'] == 2, ("the mention on screen kept its :shortcode: text after its emoji arrived", got)
     assert got['marked_after'] is False, ("a finished mention is still marked pending", got)
+
+
+def test_a_name_with_colons_that_is_not_emoji_stops_waiting():
+    """Code review: "time 10:30:00" looks like :shortcode: text to the pending test, but no emoji map ever comes for
+    it -- so the mention stayed marked and was redrawn on every decorate pass for the life of the page. It now
+    waits 20 s (far past the one refetch that could bring a map) and then is done. The clock is moved, not slept."""
+    got = {}
+    reply = dict(NOTE, id="b" * 64, content="nostr:{npub} see you", tags=NOTE["tags"] + [["p", DUCK]])
+
+    async def check(b):
+        await desktop.login(b)
+        await b.until("!!window.__PC")
+        npub = await b.js(f"NostrTools.nip19.npubEncode('{DUCK}')")
+        ev = dict(reply, content=reply["content"].replace("{npub}", npub))
+        prof = {"id": "a" * 64, "pubkey": DUCK, "kind": 0, "created_at": 1790000000, "sig": "", "tags": [],
+                "content": json.dumps({"name": "Meet 10:30:00 sharp"})}
+        await b.js("Store.saveProfile(" + json.dumps(prof) + ");Store.saveEvent(" + json.dumps(ev) + ");true")
+        await b.js(f"__PC.openThread('{ev['id']}');true")
+        await b.until("[...document.querySelectorAll('a.mention')].some(a=>a.textContent.includes('Meet'))")
+        await b.js("window.__m=[...document.querySelectorAll('a.mention')].find(a=>a.textContent.includes('Meet'));__PC.decorateProfiles();true")
+        got["waiting"] = await b.js("__m.hasAttribute('data-mpk')")
+        await b.js("(()=>{const real=Date.now; Date.now=()=>real()+21000;})(); __PC.decorateProfiles(); true")
+        got["after"] = await b.js("__m.hasAttribute('data-mpk')")
+        got["text"] = await b.js("__m.textContent")
+
+    asyncio.run(desktop.with_browser('online', '', check, ''))
+    assert got["waiting"] is True, ("it should still be waiting for a map at first", got)
+    assert got["after"] is False, ("the mention is still marked pending 21 s later", got)
+    assert "Meet 10:30:00 sharp" in got["text"], got

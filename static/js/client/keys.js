@@ -299,9 +299,16 @@ window.PCKeysFactory = function(dep){
       if(prev && a2 && a2!==prev && prev.contains(a2) && prev!==el){
         try{ a2.blur(); document.body.focus({preventScroll:true}); }catch(_){ }
       } }
+    // A CARD that has focus (cards are Tab stops; a click on an image focuses one) travels WITH the selection.
+    // Left behind, the key handler sees "focus is on another row" and every post key does nothing -- and Enter
+    // opens the focused card, not the highlighted one (code review).
+    const cardFocused=(()=>{ const a3=document.activeElement; return !!(a3 && a3!==el && a3.matches && a3.matches('article.note[data-id]')); })();
     document.querySelectorAll('.sel').forEach(n=>n.classList.remove('sel'));
     if(!el){ _selId=null; _selRef=null; return; }
     _selId=_rowKey(el); _selRef=el; el.classList.add('sel');
+    if(cardFocused){
+      try{ if(el.matches && el.matches('article.note[data-id]')) el.focus({preventScroll:true});
+           else { document.activeElement.blur(); document.body.focus({preventScroll:true}); } }catch(_){ } }
     el.scrollIntoView({block:'nearest'});
   }
   // The note at the top of what you are looking at — where a selection should START, and where it should
