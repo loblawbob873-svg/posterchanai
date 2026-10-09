@@ -25,9 +25,10 @@ def test_mail_and_settings_gate_fetch_on_successful_auth():
 
     settings_start=APP.index('async function renderUserSettings()')
     settings=APP[settings_start:settings_start+50000]
-    auth=settings.index('try{ await ensureAiSession(); }')
+    auth=settings.index('const sessionP=ensureAiSession();')
     fetch=settings.index("fetch('/api/auth/settings')")
-    assert auth < fetch and 'authError=e; break' in settings[auth:fetch]
+    # no protected GET without a session: a failed one AND one still pending after the cap both leave first
+    assert auth < fetch and 'authError=e; break' in settings[auth:fetch] and 'lateSession=sessionP; break' in settings[auth:fetch]
     # A failed session no longer REPLACES Settings (relays and every on-device pane still work): it marks the
     # server half unavailable, which hides the server tabs and keeps Save on this device.
     assert '_settingsServerDown = authError ?' in settings and 'could not establish your app session' in settings
