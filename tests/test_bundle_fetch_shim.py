@@ -50,25 +50,26 @@ def shim_js(script):
     return re.sub(r"</?script>", "", js)
 
 
-def run_shim(script):
+def run_shim(script, instance=INSTANCE):
     js = shim_js(script)
     urls = json.dumps(LOCAL + REMOTE)
     prog = f"""
 const seen = [];
 globalThis.window = globalThis;
-globalThis.localStorage = {{ getItem: () => {json.dumps(INSTANCE)}, setItem: () => {{}} }};
+globalThis.localStorage = {{ getItem: () => {json.dumps(instance)}, setItem: () => {{}} }};
 globalThis.document = {{ addEventListener: () => {{}}, body: {{ classList: {{ add: () => {{}} }} }} }};
 globalThis.WebSocket = function(){{}};
 globalThis.WebSocket.prototype = {{}};
 // The desktop shim reads its instance from the preload bridge, the APK from localStorage.
-globalThis.pcShell = {{ instanceSync: {json.dumps(INSTANCE)} }};
-globalThis.fetch = function(i, o){{ seen.push(typeof i === 'string' ? i : (i && i.url)); return Promise.resolve(); }};
+globalThis.pcShell = {{ instanceSync: {json.dumps(instance)} }};
+globalThis.fetch = function(i, o){{ seen.push(typeof i === 'string' ? i : (i && i.url)); creds.push(o && o.credentials); return Promise.resolve(); }};
+const creds = [];
 {js}
 const out = {{}};
 for (const u of {urls}) {{
-  seen.length = 0;
+  seen.length = 0; creds.length = 0;
   try {{ window.fetch(u, {{}}); }} catch (e) {{ seen.push('THREW: ' + e.message); }}
-  out[u] = seen[0];
+  out[u] = [seen[0], creds[0]];
 }}
 console.log(JSON.stringify(out));
 """
@@ -81,7 +82,7 @@ console.log(JSON.stringify(out));
 @unittest.skipUnless(NODE, "node is not installed")
 class BundleFetchShim(unittest.TestCase):
     def _check(self, script):
-        got = run_shim(script)
+        got = {u: v[0] for u, v in run_shim(script).items()}
         for u in LOCAL:
             self.assertEqual(
                 got[u], u,
@@ -92,6 +93,23 @@ class BundleFetchShim(unittest.TestCase):
             self.assertEqual(
                 got[u], INSTANCE + u,
                 f"{script}: {u} stayed root-relative — a server call must reach the instance.")
+
+    def _creds(self, script):
+        """A cleartext instance (our .onion) gets NO credentials — its Secure cookie can never exist there,
+        and the credentialed form is what failed on a phone; an https instance keeps them (the cookie)."""
+        onion = "http://o2c7ssznoqr3xjfjtewxi2gerrbglckdm5y54lvsev4kv3ahjh2bf4qd.onion"
+        got = run_shim(script, onion)
+        for u in REMOTE:
+            self.assertEqual(got[u], [onion + u, "omit"], f"{script}: {u} over the .onion")
+        got = run_shim(script)
+        for u in REMOTE:
+            self.assertEqual(got[u], [INSTANCE + u, "include"], f"{script}: {u} over https")
+
+    def test_apk_shim_sends_cookies_only_where_they_can_exist(self):
+        self._creds(os.path.join("mobile", "build-www.sh"))
+
+    def test_desktop_shim_sends_cookies_only_where_they_can_exist(self):
+        self._creds(os.path.join("desktop", "build-www.sh"))
 
     def test_apk_shim_keeps_bundled_assets_local(self):
         self._check(os.path.join("mobile", "build-www.sh"))

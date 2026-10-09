@@ -132,6 +132,13 @@ window.__PC_TOKEN__ = '';
   // for /api/*, and "no instance" would look like "broken instance". A rejected promise is the same
   // shape as the network failure every one of these call sites already catches.
   var NO_SERVER = 'PosterChan: no instance configured (running on relays only)';
+  /* Cookies only where a cookie can exist. The session cookie is `Secure` (SameSite=None requires it), so
+     against a CLEARTEXT instance — our .onion, a LAN box — it is never stored and never sent; the bearer
+     (_auth) is what authenticates there. Forcing credentials:'include' anyway bought nothing and made
+     every server call a credentialed cross-origin request: on a phone on our .onion the AI session login
+     (a rewritten relative URL) failed as "Failed to fetch" while the welcome page's own request (absolute,
+     no credentials) to the same host succeeded — the one shape that phone was proven to accept. */
+  var _CRED = /^https:/i.test(B) ? 'include' : 'omit';
   window.fetch = function(i, o){
     try {
       var p = (typeof i === 'string') ? i : (i && i.url) || '';
@@ -140,8 +147,8 @@ window.__PC_TOKEN__ = '';
         // credentials:'include' — these are cross-origin (app://posterchan -> the instance), so without
         // it the session cookie is neither sent nor stored and every authed call 401-loops. Paired with
         // the server's SameSite=None cookie + CORS allow-credentials for this origin.
-        if (typeof i === 'string'){ i = B + i; o = _auth(Object.assign({}, o, {credentials:'include'})); }
-        else { o = _auth(Object.assign({}, o, {credentials:'include'})); i = new Request(B + i.url, i); }
+        if (typeof i === 'string'){ i = B + i; o = _auth(Object.assign({}, o, {credentials:_CRED})); }
+        else { o = _auth(Object.assign({}, o, {credentials:_CRED})); i = new Request(B + i.url, i); }
       }
     } catch(e){}
     return _f(i, o);
