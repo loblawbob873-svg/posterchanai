@@ -34,6 +34,7 @@
     <div class="pct" id="pct">starting…</div>
     <div class="err hidden" id="err"></div>
     <div class="row">
+      <button id="offline" class="hidden">Open offline — Tor stays on</button>
       <button id="skip" class="hidden">Continue without Tor</button>
       <button id="retry" class="hidden">Try again</button>
     </div>
@@ -57,6 +58,7 @@
       $('err').classList.remove('hidden');
       $('pct').textContent = '';
       $('skip').classList.remove('hidden');
+      $('offline').classList.remove('hidden');
       $('retry').classList.remove('hidden');
       return;
     }
@@ -64,13 +66,21 @@
     $('pct').textContent = s.bootstrapped ? 'connected' : (p ? p + '%' : 'starting…');
     // Offer the escape hatch only once waiting has stopped feeling brief. Showing it immediately invites
     // a click a second before the circuit completes, which is the one moment it does the wrong thing.
-    if (!settled) setTimeout(()=>$('skip').classList.remove('hidden'), 12000);
+    if (!settled) setTimeout(()=>{ $('skip').classList.remove('hidden'); $('offline').classList.remove('hidden'); }, 12000);
+    // With no network there is nothing to wait for: say so and offer the safe way in at once.
+    if (navigator.onLine === false){
+      $('title').textContent = 'No network — Tor is waiting';
+      $('sub').textContent = 'Open what is on this computer now; Tor connects by itself when the network is back. Nothing goes out without it.';
+      $('offline').classList.remove('hidden');
+    }
   }
 
   if (window.pcShell && window.pcShell.tor){
     window.pcShell.tor.status().then(paint).catch(()=>{});
     if (window.pcShell.tor.onStatus) window.pcShell.tor.onStatus(paint);
     $('skip').onclick = () => { settled = true; window.pcShell.tor.set({ enabled:false }); };
+    $('offline').onclick = () => { settled = true; if (window.pcShell.tor.openOffline) window.pcShell.tor.openOffline(); };
+    window.addEventListener('offline', () => window.pcShell.tor.status().then(paint).catch(()=>{}));
     $('retry').onclick = () => { $('err').classList.add('hidden'); $('pct').textContent='starting…'; window.pcShell.tor.restart(); };
   }
 </script>

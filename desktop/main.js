@@ -1412,6 +1412,20 @@ async function loadApp(target) {
    * existing contract true instead of changing it. */
   await target.loadURL(APP_URL);
 }
+/* OPEN WITH NO NETWORK, TOR STILL ON. The boot card's only exit used to be "Continue without Tor", which
+ * switches Tor OFF — so a laptop opened on a plane came back online later and talked in the clear. This
+ * loads the app with the proxy still pointed at Tor's SOCKS port (applyProxy, enabled): every request
+ * fails closed until Tor bootstraps, nothing can go direct, and the notes, files and mail kept on the
+ * machine open meanwhile. The waiting run is superseded (its generation is bumped) so it cannot reload
+ * the app a second time when the circuit does come up. */
+async function openKeepingTor(target) {
+  target = target || win;
+  if (!target || target.isDestroyed() || !tor.status().enabled) return false;
+  loadGens.set(target, (loadGens.get(target) || 0) + 1);
+  await applyProxy();
+  await target.loadURL(APP_URL);
+  return true;
+}
 function loadAllApps(){
   /* Native pickers are BrowserWindows too, but they are not app surfaces. Reloading one as the
    * PosterChan client halfway through choosing a folder turns a settings change into a destroyed
@@ -1735,6 +1749,7 @@ ipcMain.on('pc:retry', (e) => {
 ipcMain.handle('pc:tor:status', () => tor.status());
 ipcMain.handle('pc:tor:set', (e, opts) => fromOurPage(e) ? setTor(opts) : tor.status());
 ipcMain.handle('pc:tor:new-circuit', (e) => fromOurPage(e) ? tor.newCircuit() : false);
+ipcMain.handle('pc:tor:open-offline', (e) => fromOurPage(e) ? openKeepingTor(BrowserWindow.fromWebContents(e.sender) || win) : false);
 ipcMain.handle('pc:tor:restart', async (e) => {
   if (!fromOurPage(e)) return tor.status();
   await tor.start();

@@ -316,6 +316,7 @@ if (isOurPage) {
       set: (opts) => ipcRenderer.invoke('pc:tor:set', opts || {}),
       newCircuit: () => ipcRenderer.invoke('pc:tor:new-circuit'),
       restart: () => ipcRenderer.invoke('pc:tor:restart'),
+      openOffline: () => ipcRenderer.invoke('pc:tor:open-offline'),
       // Push, not poll: bootstrap goes 0→100 over seconds and the progress card would either lag or
       // spin a timer. The listener is wrapped so the page never receives the IpcRendererEvent itself.
       onStatus: (fn) => {
