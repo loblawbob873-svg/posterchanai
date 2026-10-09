@@ -4137,7 +4137,8 @@
   // popstate (the back button skipped a view) and the refresh timers (double work forever after).
   function bindGlobalsOnce(){
     if(window.__pcGlobalsBound) return; window.__pcGlobalsBound = true;
-    setInterval(()=>hydrateReminderNotifications(),60000);   // one poller, also after guest → login
+    // Hidden = nobody to show it to; a due reminder still reaches the phone as a push (reminder_service).
+    setInterval(()=>{ if(!document.hidden) hydrateReminderNotifications(); },60000);   // one poller, also after guest → login
     // See _navView: a view switch becomes a history entry only once somebody has touched the app.
     ['pointerdown','keydown','touchstart'].forEach(t=>{
       try{ document.addEventListener(t, ()=>{ _userActed = true; }, { capture:true, passive:true }); }catch(_){ }
