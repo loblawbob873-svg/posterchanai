@@ -934,6 +934,37 @@
    * `@npub1…` it rendered `@@Name` (linkify keeps the character before the entity). */
   function readableMentions(text){ return String(text||'').replace(/(^|\s)@((?:npub1)[023456789acdefghjklmnpqrstuvwxyz]{58})(?![0-9a-z])/gi,'$1nostr:$2'); }
   /* The same, for plain text that is not linkified (a notification body). */
+  /* A MEMBER WITH NO PROFILE ON THIS RELAY IS LOOKED UP WHERE THE ROOM LIVES ("why is vyram not displaying
+   * correctly", 2026-10-08). Names come from `p.profOf`, i.e. what this instance's relay holds -- and an Armada
+   * user often writes with a SEPARATE key (Vyram's room key a4c44c8e…, his posting key b3f585f3…) that is in nobody's
+   * web of trust here, so its kind-0 was never synced and he showed as a bare hex prefix. Each such key is asked
+   * ONCE per session, batched, from the room's own relays + the big profile relays; what comes back is saved to the
+   * shared Store and the room repainted. A key with no profile anywhere simply stays a prefix -- asked, not nagged. */
+  const MEMBER_PROFILE_RELAYS=['wss://purplepag.es','wss://relay.primal.net','wss://nos.lol'];
+  const profileAsked=new Set(),profileWant=new Set();let profileTimer=null;
+  function wantProfiles(p,pks,room){
+    try{
+      for(const pk of pks||[]){
+        if(!/^[0-9a-f]{64}$/.test(String(pk||''))||profileAsked.has(pk))continue;
+        const pr=p&&p.profOf?p.profOf(pk):null;
+        if(pr&&(pr.name||pr.display_name))continue;
+        profileWant.add(pk);
+      }
+      if(!profileWant.size||profileTimer)return;
+      const relays=[...new Set([...((room&&room.cord&&room.cord.bundle&&room.cord.bundle.relays)||[]),...MEMBER_PROFILE_RELAYS])].slice(0,8);
+      profileTimer=setTimeout(async()=>{
+        profileTimer=null;
+        const batch=[...profileWant].slice(0,60);batch.forEach(pk=>{profileWant.delete(pk);profileAsked.add(pk);});
+        let got=0;
+        try{
+          const evs=await cordQuery(p,relays,[{kinds:[0],authors:batch,limit:batch.length}],{purpose:'concord member profiles',timeout:6000});
+          for(const e of evs||[]){try{if(e&&e.kind===0&&window.Store&&window.Store.saveProfile){window.Store.saveProfile(e);got++;}}catch(_){}}
+        }catch(_){}
+        if(got)try{backgroundRender();}catch(_){}
+        if(profileWant.size)wantProfiles(p,[],room);
+      },250);
+    }catch(_){}
+  }
   function mentionNames(text,profOf){
     return String(text||'').replace(/(^|\s)@(npub1[023456789acdefghjklmnpqrstuvwxyz]{58})(?![0-9a-z])/gi,(whole,pre,np)=>{
       try{ const pk=window.NostrTools.nip19.decode(np).data,pr=profOf?profOf(pk)||{}:{}; return pre+'@'+(pr.display_name||pr.name||np.slice(0,12)+'…'); }catch(_){ return whole; }
@@ -4714,6 +4745,7 @@
       +`<button id="cc-retry-channel" class="cc-welcome-retry">Try these relays again</button></div>`;
   }
   function messagesPaneHtml(p,messages,current,viewer,me){
+    wantProfiles(p,(messages||[]).map(m=>m&&m.pubkey),current);
     /* DERIVED HERE, not read from `render()`. This function is a SIBLING of render, not its
        closure — the same trap `bind()` documents above, and referring to render's locals throws on
        the first message drawn (caught by concord_runtime.mjs: "canModerate is not defined").
@@ -4823,6 +4855,7 @@
         && current.moderators.indexOf(viewer.pubkey)>=0),
       memberPks=current?roomParticipants(current,viewer.pubkey).filter(pk=>!banned.has(pk)):[];
     let membersHidden=localStorage.getItem('pc.concord.members.hidden')==='1';
+    wantProfiles(p,memberPks,saved()[state.community]);
     const memberRows=memberPks.map(pk=>{const pr=p.profOf?p.profOf(pk):{},name=pk===viewer.pubkey?me:(pr.display_name||pr.name||pk.slice(0,12)+'…');let npub='';try{npub=window.NostrTools.nip19.npubEncode(pk);}catch(_){}/* the form people copy and paste -- the hex alone found nobody from an npub */const q=[name,pr.name,pr.display_name,pr.nip05,npub,pk].filter(Boolean).join(' ').toLowerCase();return `<button class="cc-member" data-cc-member="${p.enc(pk)}" data-q="${p.enc(q)}" aria-label="${p.enc(name)} — ${pk===ownerPk?'Owner':'Member'}"><img src="${p.enc(pr.picture||p.LOGO||'')}" alt=""><span><b>${p.enc(name)}</b><small>${pk===ownerPk?'Owner':'Member'}</small></span></button>`;}).join('');
     notifyMentions(p,current,messages,viewer,me,state.channel||'general');
     if(current&&viewingChannel(current,state.channel||'general')){
