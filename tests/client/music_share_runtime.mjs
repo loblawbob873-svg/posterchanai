@@ -62,7 +62,8 @@ function makeNet(){
 function person(net, name){
   const sk = NT.generateSecretKey(), pk = NT.getPublicKey(sk);
   const store = [];
-  const lib = new Map();          // sha → {m, plain}
+  const lib = new Map();
+  const offline = new Map();   // this device's kept copies (MusicOffline)          // sha → {m, plain}
   let clock = 1_700_000_000 + Math.floor(Math.random() * 1000);
   const mk = webcrypto.getRandomValues(new Uint8Array(32));
   const ls = {};
@@ -99,12 +100,13 @@ function person(net, name){
     musicShareKey: async sha => ctx.PCMusicShare.deriveKey(mk, sha),
     musicPlainOf: async sha => { const t = lib.get(sha); if(!t) throw new Error('no such track'); return t.plain; },
     musicLibrary: () => [...lib.keys()],
-    musicLibraryAdd: async entries => { for(const [s, m] of entries) lib.set(s, { m }); return true; },
+    musicLibraryAdd: async entries => { if(net.refuseLibrary) return false; for(const [s, m] of entries) lib.set(s, { m }); return true; },
+    MusicOffline: { put: async (sha, bytes) => { offline.set(sha, new Uint8Array(bytes)); return true; } },
     toast: () => {}, enc: s => String(s),
   };
   vm.createContext(installStateGlobals(ctx) && ctx);
   vm.runInContext(SHARE_JS, ctx, { filename: 'musicshare.js' });
-  return { name, sk, pk, lib, ctx, S: ctx.PCMusicShare, store, mk, ls,
+  return { name, sk, pk, lib, offline, ctx, S: ctx.PCMusicShare, store, mk, ls,
            addTrack: async (plain, name) => { const s = await sha256hex(webcrypto.getRandomValues(new Uint8Array(16)));
              lib.set(s, { m: { name, mime: 'audio/wav', size: plain.length, enc: true, mk: true, folder: 'Music' }, plain }); return s; } };
 }
@@ -189,6 +191,24 @@ await run('A shares; B plays it; B adds it; A stops sharing; B keeps it; C never
              && cIn.length === 0 && !cDecrypted && !cBody && rv.ok && k5 >= 0 && tomb > k5 && bAfter.length === 0
              && !!blob && !blob.owners.has(A.pk) && blob.owners.has(B.pk) && after && eq(after, p1) && rv.released >= 1,
            tagsOk, leaks, add, noRawKey, cIn: cIn.length, cDecrypted, rv, k5, tomb, bAfter: bAfter.length, owners: blob && [...blob.owners].length };
+});
+
+await run('songs added to the library are kept on this device, not streamed', async () => {
+  const net = makeNet(); const A = person(net, 'A'), B = person(net, 'B');
+  const p1 = wav(3000, 5), s1 = await A.addTrack(p1, 'Offline');
+  const r = await A.S.share({ name: 'Car', tracks: [{ sha: s1, name: 'Offline', mime: 'audio/wav', size: 3000, ext: 'wav' }], to: [B.pk] });
+  const ins = await B.S.loadIn(); const bt = await B.S.tracksOf(ins[0]); B.S.register(ins[0], bt);
+  const add = await B.S.addToLibrary(ins[0], bt);
+  const kept = B.offline.get(bt[0].s);
+  // The kept bytes are what the server holds (still encrypted), and the shipped player decrypt opens them.
+  const same = !!kept && eq(kept, net.blobs.get(bt[0].s).bytes);
+  const plain = kept ? await shippedDriveDecrypt(B)(B.lib.get(bt[0].s).m, kept, true) : null;
+  // A library save that failed keeps nothing: the offline sweep would only drop it again.
+  const C = person(net, 'C'); await A.S.share({ name: 'Car2', tracks: [{ sha: s1, name: 'Offline', mime: 'audio/wav', size: 3000, ext: 'wav' }], to: [C.pk] });
+  const cin = await C.S.loadIn(); const ct = await C.S.tracksOf(cin[0]); C.S.register(cin[0], ct);
+  net.refuseLibrary = true; const cadd = await C.S.addToLibrary(cin[0], ct); net.refuseLibrary = false;
+  return { ok: r.ok && add.ok && add.kept === 1 && same && plain && eq(plain, p1) && !cadd.saved && C.offline.size === 0,
+           add, same, cadd, cKept: C.offline.size };
 });
 
 await run('the same song shared twice is ONE blob', async () => {

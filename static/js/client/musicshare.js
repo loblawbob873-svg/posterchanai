@@ -760,12 +760,18 @@
   // ------------------------------------------------------------------------------------ adding
 
   /* Copy shared tracks into MY library: the same ciphertext re-uploaded to my server (owner, not a
-   * duplicate), the key wrapped to me. The verdict is the library SAVE, not the uploads. */
+   * duplicate), the key wrapped to me. The verdict is the library SAVE, not the uploads.
+   *
+   * AND KEEP THEM ON THIS DEVICE ("shared music playlists only stream despite adding them to my
+   * library"). The button says "Keeping N / M…", and the bytes were already downloaded to copy them —
+   * yet they were thrown away, so every added song streamed from the server like one never added.
+   * The same ciphertext goes into the offline store (MusicOffline, still encrypted), AFTER the library
+   * save: the offline sweep drops bytes the library does not know, so keeping first would race it. */
   async function addToLibrary(sh, items, onStep){
     if(!_boot() || !ME()) return { ok:false, error:'not signed in' };
     const have = new Set((PC.musicLibrary && PC.musicLibrary()) || []);
     const todo = (items || []).filter(t => !have.has(t.s));
-    const entries = [], errors = [];
+    const entries = [], errors = [], bytes = new Map();
     let done = 0;
     const step = () => { if(onStep) try{ onStep({ done, total: todo.length }); }catch(_){} };
     step();
@@ -778,6 +784,7 @@
         if(_shaOf(url) !== t.s) throw new Error('stored under a different address');
         const keyenc = await PC.nip44enc(ME().pubkey, JSON.stringify({ k: t.k, iv: t.iv }));
         entries.push([t.s, libraryEntry(t, sh.from, keyenc)]);
+        bytes.set(t.s, ct);
       }catch(e){
         const m = (e && e.message) || String(e);
         /* "Not authorized to upload" is not a broken share — it is a server that will not store files
@@ -788,9 +795,13 @@
       }
       done++; step();
     }
-    let saved = true;
+    let saved = true, kept = 0;
     if(entries.length) saved = !!(await PC.musicLibraryAdd(entries));
-    return { ok: saved && !errors.length, added: saved ? entries.length : 0, skipped: items.length - todo.length,
+    const off = PC.MusicOffline;
+    if(saved && off && off.put) for(const [sha] of entries){
+      try{ if(await off.put(sha, bytes.get(sha))) kept++; }catch(_){}
+    }
+    return { ok: saved && !errors.length, added: saved ? entries.length : 0, kept, skipped: items.length - todo.length,
              failed: errors.length, error: errors[0] || (saved ? '' : 'your library list could not be saved'), saved };
   }
 
