@@ -19,11 +19,77 @@
   // Same contract every sub-module uses (see stats.js/news.js): wait for app.js to publish the bridge,
   // then take our helpers off it rather than off bare globals — app.js is an IIFE, so `toast`,
   // `uploadBlob` and friends are NOT global.
-  let PC = null, toast, uploadBlob, selfProof, uiConfirm, uiPrompt, ME;
+  let PC = null, toast, _uploadNet, selfProof, uiConfirm, uiPrompt, ME;
+  /* POSTERCHANOS RENDERS ON THE MACHINE (desktop/meme-local.js): the server's own renderer, run from
+   * /opt/posterchan-server by the desktop app, so a meme is made without a network round trip — and
+   * without a network at all. `pcMemeLocal` is the desktop's bridge; it answers available() only where
+   * that renderer is installed, so a plain desktop app and the web keep rendering on the instance. */
+  let _localQ = null;
+  function _memeLocal(){
+    if(!window.pcMemeLocal) return Promise.resolve(false);
+    return _localQ || (_localQ = Promise.resolve().then(()=>window.pcMemeLocal.available()).then(v=>!!v, ()=>false));
+  }
+  const _isLocalSrc = u => typeof u === 'string' && u.indexOf('/__memelocal/') >= 0;
+  /* Every layer's media becomes a URL the renderer can reach. Online that is a Blossom upload, as
+   * everywhere. With no network the upload cannot happen, and on a machine that renders locally the
+   * bytes are kept on the machine instead, under an address the stage can draw — otherwise adding a
+   * picture offline failed and the builder could do nothing at all. */
+  async function uploadBlob(file, opts){
+    const local = await _memeLocal();
+    if(local && navigator.onLine === false) return _keepLocal(file);
+    try{ return await _uploadNet(file, opts); }
+    catch(err){ if(local){ try{ return await _keepLocal(file); }catch(_){ } } throw err; }
+  }
+  async function _keepLocal(file){
+    const r = await window.pcMemeLocal.store(await file.arrayBuffer(), file.name || '', file.type || '');
+    if(!r || !r.ok) throw new Error((r && r.error) || 'could not keep that file on this machine');
+    return r.url || (location.origin + r.path);
+  }
+  /* The render itself, on this machine. Null = "not here, ask the instance" (no local renderer, or a
+   * layer whose media this page cannot read); an Error = the local renderer refused or failed, which
+   * the instance would too, so it is said rather than retried there. */
+  async function _renderLocal(edit, signal){
+    if(!(await _memeLocal())) return null;
+    const keys = new Set();
+    for(const l of edit.layers){
+      if(l.src && l.type !== 'text' && !_isLocalSrc(l.src)) keys.add(l.src);
+      if(l.mask && l.type !== 'text' && l.type !== 'audio' && !_isLocalSrc(l.mask)) keys.add(l.mask);
+    }
+    const sources = [];
+    for(const k of keys){
+      let r = null;
+      try{ r = await fetch(k, { signal }); }catch(e){ if(e && e.name === 'AbortError') throw e; }
+      if(!r || !r.ok){
+        if(navigator.onLine === false) throw new Error('a layer’s media isn’t on this machine — reconnect once to render it');
+        return null;
+      }
+      sources.push({ key: k, bytes: await r.arrayBuffer() });
+    }
+    const job = window.pcMemeLocal.render(edit, sources);
+    const aborted = new Promise((_, rej)=>{ if(signal) signal.addEventListener('abort', ()=>{ const e = new Error('aborted'); e.name = 'AbortError'; rej(e); }, { once:true }); });
+    const r = await Promise.race([job, aborted]);
+    if(!r || !r.ok) throw new Error((r && r.error) || 'render failed');
+    return new Blob([r.bytes], { type: r.mime || 'application/octet-stream' });
+  }
+  // The instance's render, as before.
+  async function _renderRemote(edit, signal, what){
+    const auth=await selfProof();
+    const r=await fetch('/client/meme/render',{ method:'POST', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({ pubkey: ME.pubkey, auth, edit }), signal });
+    if(!r.ok){
+      let msg=''; try{ msg=(await r.json()).detail||''; }catch(_){ msg=await r.text().catch(()=>''); }
+      throw new Error(msg||(what+' failed ('+r.status+')'));
+    }
+    return r.blob();
+  }
+  async function _renderEdit(edit, signal, what){
+    return (await _renderLocal(edit, signal)) || _renderRemote(edit, signal, what);
+  }
+
   function boot(){
     PC = window.__PC;
     if(!PC) return setTimeout(boot, 50);
-    ({ toast, uploadBlob, selfProof, uiConfirm, uiPrompt } = PC);
+    ({ toast, uploadBlob: _uploadNet, selfProof, uiConfirm, uiPrompt } = PC);
     bindKeys();          // ONCE, on the document — see bindKeys for why not per render()
     window.PCMeme = {
       render(){ ME = PC.ME; P = load(); _fitNext = true; render(); },
@@ -4146,15 +4212,7 @@
     try{
       await _bakeDrawings();          // a drawing reaches the renderer as an uploaded PNG — see there
       const edit=_editPayload(_fmt());
-      const auth=await selfProof();
-      const r=await fetch('/client/meme/render',{ method:'POST', headers:{'Content-Type':'application/json'},
-        body: JSON.stringify({ pubkey: ME.pubkey, auth, edit }),
-        signal: _renderAbort ? _renderAbort.signal : undefined });
-      if(!r.ok){
-        let msg=''; try{ msg=(await r.json()).detail||''; }catch(_){ msg=await r.text().catch(()=>''); }
-        throw new Error(msg||('render failed ('+r.status+')'));
-      }
-      const blob=await r.blob();
+      const blob=await _renderEdit(edit, _renderAbort ? _renderAbort.signal : undefined, 'render');
       if(st) st.textContent='';
       showResult(blob, out);
     }catch(err){
@@ -4455,14 +4513,7 @@
     edit.quality = Math.max(1, Math.min(100, Math.round(+o.quality || 90)));
     _rendering = true;
     try{
-      const auth = await selfProof();
-      const r = await fetch('/client/meme/render', { method:'POST', headers:{'Content-Type':'application/json'},
-        body: JSON.stringify({ pubkey: ME.pubkey, auth, edit }) });
-      if(!r.ok){
-        let msg=''; try{ msg=(await r.json()).detail||''; }catch(_){ msg=await r.text().catch(()=>''); }
-        throw new Error(msg || ('export failed ('+r.status+')'));
-      }
-      const blob = await r.blob();
+      const blob = await _renderEdit(edit, undefined, 'export');
       // SAY IT IF THE FILE IS NOT WHAT WAS ASKED FOR. A render can overflow to a peer node running older
       // code, which ignores out_w/out_h (and answers a PNG for any still) — the file would look fine and
       // be the wrong size, which is the one thing this dialog exists to get right.

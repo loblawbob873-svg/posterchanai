@@ -56,6 +56,8 @@ const bluetooth = require('./bluetooth');
 const liveusb = require('./liveusb');
 const installer = require('./installer');
 const remotecontrol = require('./remotecontrol');
+const memeLocal = require('./meme-local');
+const { OfficeLocal } = require('./office-local');
 const diagnostic = require('./diagnostic').resolve(process.argv, process.env);
 /* ProcessSingleton is acquired much later, but Electron chooses its lock directory from userData.
  * Set the diagnostic domain before any config/session access and, crucially, before
@@ -444,6 +446,16 @@ function serveBundle() {
     if (rel.startsWith('/__hostfile/')) {
       try { return serveHostFile(request, rel); }
       catch (_) { return new Response('not found', { status: 404 }); }
+    }
+    /* Meme Builder media kept on this machine because it could not be uploaded (see meme-local.js).
+     * Content-addressed names only; anything else is a 404. */
+    if (rel.startsWith(memeLocal.LOCAL_PREFIX)) {
+      const f = memeLocal.localFile(memeStoreDir(), rel);
+      if (!f) return new Response('not found', { status: 404 });
+      try {
+        return new Response(await fs.promises.readFile(f), { status: 200, headers: {
+          'Content-Type': memeLocal.contentType(f), 'Cache-Control': 'max-age=31536000, immutable' } });
+      } catch (_) { return new Response('not found', { status: 404 }); }
     }
     // Contain every request inside www/. path.normalize collapses ../ BEFORE the prefix test, so a
     // crafted app://posterchan/../../etc/passwd resolves and is then rejected — testing the raw
@@ -4049,6 +4061,35 @@ ipcMain.handle('pc:vm:pick-iso', async (e) => {
 
 /* SCREENSHOTS. See screenshot.js for why this is grim and not capturePage() or desktopCapturer.
  * `available` is asked separately so a tray can hide a button that could only ever fail. */
+/* MEME BUILDER ON THIS MACHINE (meme-local.js): render with the server's own renderer from
+ * /opt/posterchan-server, and keep layer media here when it cannot be uploaded. Our page only. */
+const memeStoreDir = () => path.join(app.getPath('userData'), 'meme-local');
+ipcMain.handle('pc:meme:available', (e) => fromOurPage(e) && memeLocal.available());
+ipcMain.handle('pc:meme:store', (e, bytes, name, type) => {
+  if (!fromOurPage(e)) return { ok: false, error: 'refused' };
+  try { const p = memeLocal.store(memeStoreDir(), bytes, name, type); return { ok: true, path: p, url: APP_ORIGIN + p }; }
+  catch (err) { return { ok: false, error: String((err && err.message) || err) }; }
+});
+ipcMain.handle('pc:meme:render', async (e, job) => {
+  if (!fromOurPage(e)) return { ok: false, error: 'refused' };
+  return memeLocal.render(job || {}, { storeDir: memeStoreDir() });
+});
+/* POSTERCHAN OFFICE ON THIS MACHINE (office-local.js): Collabora started only when a document is
+ * opened, on loopback, with this process as its WOPI host. Our page only. */
+let _officeLocal = null;
+const officeLocal = () => (_officeLocal || (_officeLocal = new OfficeLocal({ origin: APP_ORIGIN, log: (m) => console.log(m) })));
+const _officeCall = (fn) => async (e, ...a) => {
+  if (!fromOurPage(e)) return { ok: false, error: 'refused' };
+  try { return Object.assign({ ok: true }, await fn(...a)); }
+  catch (err) { return { ok: false, error: String((err && err.message) || err) }; }
+};
+ipcMain.handle('pc:office:available', (e) => fromOurPage(e) && officeLocal().available());
+ipcMain.on('pc:office:installed', (e) => { e.returnValue = !!(fromOurPage(e) && officeLocal().available()); });
+ipcMain.handle('pc:office:open', _officeCall((bytes, name, mode) => officeLocal().open(bytes, String(name || ''), String(mode || 'edit'))));
+ipcMain.handle('pc:office:contents', _officeCall((id, token) => ({ bytes: officeLocal().contents(String(id), String(token)) })));
+ipcMain.handle('pc:office:export', _officeCall((id, token, fmt) => officeLocal().export(String(id), String(token), String(fmt))));
+ipcMain.handle('pc:office:close', _officeCall((id, token) => ({ closed: officeLocal().close(String(id), String(token)) })));
+app.on('will-quit', () => { if (_officeLocal) _officeLocal.stop(); });
 ipcMain.handle('pc:shot:available', (e) => { fsGuard(e); return require('./screenshot.js').available(); });
 /* PRINT SCREEN'S PROMPT (osshell.js shotPrompt): the whole screen is captured to a private staging
  * file BEFORE the prompt is drawn, and handed back with a small preview; Save moves it into

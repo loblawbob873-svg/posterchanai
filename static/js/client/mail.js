@@ -16,8 +16,17 @@ window.PCMailFactory = function(dep){
     $, $$, BUNDLED, NT, _fmtBytes, _instanceBase, _isDesktopApp, _officeSession, _officeable,
     _pickOne, _previewable, _sheet, _withModule, blossomPicker, bumpMail, closeModal, copyValue,
     enc, ensureAiSession, fileFromBytes, modal, notifToast, openMenuPopover, osNotify, saveBlobAs,
-    sendDm, switchView, toast, uiConfirm, uiPrompt,
+    sendDm, switchView, toast, uiConfirm, uiPrompt, deviceCache,
   } = dep;
+
+  /* EMAIL WITH NO NETWORK. "we need to make sure that email, notes works when no connection either".
+   * The mailbox lives on the instance and this screen only ever asked /api/mail, so offline it was a
+   * sign-in error over an empty screen. Every READ the screen makes (accounts, folders, a list, a
+   * message, a thread) is now also kept on this device — app.js deviceCache: sealed under the DM
+   * cache's device key, never in the clear, per account — and answered from here when the instance cannot
+   * be reached. Only reads: sending, moving and deleting still need the server and still say so. */
+  const MailCache = deviceCache('pc-mail-v1');
+  const _unreachable = e => !!(e && (e.name === 'TypeError' || e.offline || /^http 5\d\d$/.test(e.message || '')));
 
 
   /* EMAIL IS ITS OWN VIEW. It used to be the second TAB of Messages, and the two share nothing but
@@ -441,7 +450,7 @@ window.PCMailFactory = function(dep){
         const P=await _withModule('preview.js','PCPreview');
         if(!P||!P.open({name:a.dataset.name||'attachment',mime:a.dataset.mime||blob.type,blob}))
           throw new Error('Preview cannot open this attachment');
-      }else if(S.CFG.office_enabled && _officeable(a.dataset.name||'',a.dataset.mime||blob.type)){
+      }else if((S.CFG.office_enabled || (window.pcOfficeLocal && pcOfficeLocal.installed)) && _officeable(a.dataset.name||'',a.dataset.mime||blob.type)){
         const name=a.dataset.name||'document';
         const file=fileFromBytes(await blob.arrayBuffer(),name,a.dataset.mime||blob.type);
         await _officeSession(file, updated=>saveBlobAs(updated,name));
@@ -454,9 +463,25 @@ window.PCMailFactory = function(dep){
   const Mail = {
     unread:0, root:null, accounts:[], acct:null, folder:'INBOX', folders:['INBOX','Sent','Drafts'], folderLabels:{}, msgs:[], openUid:null, openFolder:null, openAccount:null, q:'', _syncing:false, sel:null, _listSeq:0,
     async api(path, opts={}){
-      await ensureAiSession();
-      const r=await fetch('/api/mail'+path,{...opts,credentials:'include',headers:{...(opts.headers||{}),...(S._aiToken?{'Authorization':'Bearer '+S._aiToken}:{})}});
-      if(!r.ok) throw new Error('http '+r.status); return r.json();
+      const read = !opts.method || String(opts.method).toUpperCase() === 'GET';
+      const fromDevice = async (why) => {
+        const kept = read ? await MailCache.get(path) : null;
+        if(kept){ this.offline = true; try{ Object.defineProperty(kept, '_fromDevice', { value:true }); }catch(_){ } return kept; }
+        throw why;
+      };
+      if(navigator.onLine === false){
+        const e = new Error(read ? 'you’re offline and this hasn’t been opened on this device yet' : 'you’re offline — this needs the mail server');
+        e.offline = true; return fromDevice(e);
+      }
+      let j;
+      try{
+        await ensureAiSession();
+        const r=await fetch('/api/mail'+path,{...opts,credentials:'include',headers:{...(opts.headers||{}),...(S._aiToken?{'Authorization':'Bearer '+S._aiToken}:{})}});
+        if(!r.ok) throw new Error('http '+r.status);
+        j = await r.json();
+      }catch(e){ if(_unreachable(e)) return fromDevice(e); throw e; }
+      if(read){ this.offline = false; MailCache.put(path, j); }
+      return j;
     },
     async render(root){
       this.root=root; root.innerHTML='<div class="mail-loading"><div class="spinner"></div></div>';
@@ -763,7 +788,12 @@ window.PCMailFactory = function(dep){
         if(seq!==this._listSeq || root!==this.root || account!==this.acct || folder!==this.folder || query!==this.q) return;
         this.msgs=r.messages||[];
         this._next=query?0:(r.next_until||0);
-        this._listError='';
+        // Answered from this device (no network, or the server unreachable): the list is real mail,
+        // just not fresh — said the same way as a refresh that failed over a loaded list.
+        this._listError=r._fromDevice
+          ?(navigator.onLine===false?'Offline — showing the mail kept on this device.':'Showing the mail already loaded — could not reach the server.')
+          :'';
+        if(r._fromDevice) this._next=0;
         if(query)this.convSent=[];
       }catch(_){
         if(seq!==this._listSeq || root!==this.root || account!==this.acct || folder!==this.folder || query!==this.q) return;
@@ -1632,6 +1662,7 @@ window.PCMailFactory = function(dep){
       };
     },
     async sync(manual){
+      if(navigator.onLine === false){ if(manual) toast('you’re offline — showing the mail kept on this device'); return; }
       if(this._syncing) return; this._syncing=true; this._lastSync=Date.now();
       // A background poll has no UI to drive: `this.root` is null unless Messages is open, and every
       // element lookup below is already scoped to it.

@@ -10844,7 +10844,7 @@
       out.push({ id:'preview', icon:'👁', label:'Preview',
                  hint:'Look at it here — pictures, video and PDFs',
                  run:() => openPreviewFile(d, opts) });
-    if(!!CFG.office_enabled && _officeable(name, mime))
+    if((!!CFG.office_enabled || !!(window.pcOfficeLocal && pcOfficeLocal.installed)) && _officeable(name, mime))
       out.push({ id:'office', icon:'📝', label:'Office document',
                  hint:'Writer, Calc or Impress — edits and saves back',
                  run:() => (opts.sync ? openSyncOfficeFile(d) : openOfficeFile(d)) });
@@ -11475,7 +11475,7 @@
     $, $$, BUNDLED, NT, _fmtBytes, _instanceBase, _isDesktopApp, _officeSession, _officeable,
     _pickOne, _previewable, _sheet, _withModule, blossomPicker, bumpMail, closeModal, copyValue,
     enc, ensureAiSession, fileFromBytes, modal, notifToast, openMenuPopover, osNotify, saveBlobAs,
-    sendDm, switchView, toast, uiConfirm, uiPrompt,
+    sendDm, switchView, toast, uiConfirm, uiPrompt, deviceCache,
   }; }
   function _mailMod(){ return _lzGet('mail.js', 'PCMailFactory', _mailDeps); }
   function _mailLoad(){ return _lzLoad('mail.js', 'PCMailFactory', _mailDeps); }
@@ -11777,7 +11777,12 @@
       else if(response.status===401){if(_aiAuth)_aiAuth.can_media=false;ensureAiSession().then(applyMediaGate).catch(()=>{});}
     }catch(_){}applyMediaGate();
   }
-  function _termAllowed(){ return IS_ADMIN || !!(_aiAuth && _aiAuth.can_ssh); }
+  /* A desktop with its own PTY (window.pcTerm — PosterChanOS, the desktop app) has a terminal that needs
+   * nothing from the instance: it is this machine's shell, run by the person sitting at it. Gating it on
+   * the instance's admin flag hid it whenever there was no network to ask (offline, `_aiAuth` is null),
+   * which is exactly when a local shell is most needed. SSH to the instance's nodes is still the
+   * instance's to grant, and the server still checks it. */
+  function _termAllowed(){ return IS_ADMIN || !!(_aiAuth && _aiAuth.can_ssh) || !!(window.pcTerm && window.pcTerm.start); }
   function applyTermGate(){
     try{
       const can = _termAllowed();
@@ -11831,9 +11836,23 @@
     let mine=null;
     _aiAuthP = (async()=>{
       try{
+        /* NO NETWORK IS AN ANSWER, NOT A WAIT. Offline this POST could only fail — after the browser's
+         * own connect timeout, which with an unreachable instance is minutes — and every app that asks
+         * for a session (Mail, Terminal, Web Search…) sat on a spinner for that long. Said at once;
+         * `offline` lets a caller with a copy on the device fall back to it. The SIGNING is never timed
+         * (a remote signer waits on a person); only the request to the instance is. */
+        if(navigator.onLine === false){ const e = new Error('you’re offline'); e.offline = true; throw e; }
         const auth = await sign(27235, 'ai-login', [['p', ME.pubkey]]);   // prove key ownership
-        const response = await fetch('/api/auth/nostr-login', { method:'POST', headers:{'Content-Type':'application/json'},
-          body: JSON.stringify({ pubkey: ME.pubkey, auth: btoa(JSON.stringify(auth)) }) });
+        const ac = (typeof AbortController !== 'undefined') ? new AbortController() : null;
+        const timer = ac ? setTimeout(() => ac.abort(), 20000) : 0;
+        let response;
+        try{
+          response = await fetch('/api/auth/nostr-login', { method:'POST', headers:{'Content-Type':'application/json'},
+            body: JSON.stringify({ pubkey: ME.pubkey, auth: btoa(JSON.stringify(auth)) }), signal: ac ? ac.signal : undefined });
+        }catch(e){
+          const n = new Error(e && e.name === 'AbortError' ? 'the instance did not answer' : 'could not reach the instance');
+          n.offline = true; throw n;
+        }finally{ if(timer) clearTimeout(timer); }
         let r=null; try{ r=await response.json(); }catch(_){}
         if(!response.ok) throw new Error((r && (r.detail || r.error)) || ('login returned HTTP '+response.status));
         if(r && r.access_token) _setAiToken(r.access_token);
@@ -11842,7 +11861,7 @@
       }catch(e){
         const why=(e&&e.message)||String(e||'unknown error');
         const out=new Error('could not establish your app session: '+why);
-        try{ out.cause=e; }catch(_){}
+        try{ out.cause=e; if(e && e.offline) out.offline=true; }catch(_){}
         throw out;                                             // callers MUST NOT continue tokenless
       }
       /* Only ever retire OUR OWN attempt. With `force` a second attempt can be running, and a
@@ -13549,7 +13568,43 @@
 
   // Shared surface for separate game modules (chess.js, future tic-tac-toe, …) so per-game UI lives
   // in its own file without bloating this core. Live getters for the mutable ME/CFG/VIEW.
+  /* ONE ENCRYPTED DEVICE CACHE FOR WHAT THE INSTANCE SERVES. Email and Telegram live on the instance,
+   * so with no network their screens had nothing to show. What a screen has READ is kept here, per
+   * account, sealed with the DM cache's device key (AES-GCM; never plaintext in the profile), and read
+   * back when the instance cannot be reached. A cache: every failure is a miss, never an error. */
+  const _deviceCaches = new Map();
+  function deviceCache(name){
+    if(_deviceCaches.has(name)) return _deviceCaches.get(name);
+    let dbP = null;
+    const idb = () => dbP || (dbP = new Promise((res, rej) => {
+      let r; try{ r = indexedDB.open(name, 1); }catch(e){ return rej(e); }
+      r.onupgradeneeded = () => { try{ r.result.createObjectStore('r'); }catch(_){} };
+      r.onsuccess = () => res(r.result); r.onerror = () => rej(r.error || new Error('indexeddb'));
+    }));
+    const k = key => ((ME && ME.pubkey) || 'anon').slice(0, 16) + ':' + key;
+    const c = {
+      async get(key){
+        try{
+          const db = await idb();
+          const rec = await new Promise((res, rej) => { const q = db.transaction('r','readonly').objectStore('r').get(k(key));
+            q.onsuccess = () => res(q.result || null); q.onerror = () => rej(q.error); });
+          return rec ? await DmCache.open(rec) : null;
+        }catch(_){ return null; }
+      },
+      async put(key, value){
+        try{
+          const rec = await DmCache.seal(value); if(!rec) return;
+          const db = await idb();
+          await new Promise((res, rej) => { const q = db.transaction('r','readwrite').objectStore('r').put(rec, k(key));
+            q.onsuccess = () => res(); q.onerror = () => rej(q.error); });
+        }catch(_){}
+      },
+    };
+    _deviceCaches.set(name, c);
+    return c;
+  }
   window.__PC = {
+    deviceCache,
     // buddy.js: the desktop PosterChan's on/off and spot follow the account (pcai:client-prefs).
     saveDesktopBuddy: v => { try{ _prefTouched.add('desktopBuddy'); }catch(_){} return saveClientPrefsNostr({ desktopBuddy: v }); },
     saveStartupApps: (v, at) => { try{ _prefTouched.add('startupApps'); }catch(_){}

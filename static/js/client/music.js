@@ -459,8 +459,7 @@ window.PCMusicFactory = function(dep){
         MusicPlayer.shuffle=true;
         if(only && only.length) MusicPlayer.queue = q.map(t=>t.sha);
         else MusicPlayer.refreshQueue();
-        // force: the random pick can be the track already playing, and without it that PAUSES.
-        MusicPlayer.play(MusicPlayer.queue[Math.floor(Math.random()*MusicPlayer.queue.length)], {force:true});
+        MusicPlayer.shufflePlay();   // a fresh shuffled round of exactly this queue
         sh.classList.add('on'); }; }
     /* Pressing play inside a playlist makes the PLAYLIST the queue, in its order — otherwise
      * ⏭ walks the whole library from wherever that track happens to sit in it, which is not what

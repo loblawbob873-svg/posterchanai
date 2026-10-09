@@ -406,6 +406,7 @@ window.PCMusicPlayerFactory = function(dep){
       // remember the outgoing track so ⏮ returns to it (matters in shuffle — next() is random, so the
       // queue-order-previous isn't what you just heard). `opts.back` = we're navigating backward, don't record.
       if(this.cur && this.cur!==sha && !(opts&&opts.back)){ this._history.push(this.cur); if(this._history.length>200) this._history.shift(); }
+      { const k=this._bag.indexOf(sha); if(k>=0) this._bag.splice(k,1); }   // picked by hand: not again this round
       this.cur=sha; this._loading=true; this.el.classList.remove('hidden'); this._render();
       try{ const u=await trackUrl(sha);
         if(this.cur!==sha) return;   // a newer ⏭/⏮ superseded this load while we awaited the URL —
@@ -431,8 +432,52 @@ window.PCMusicPlayerFactory = function(dep){
     toggle(){ if(S._audioEl){ if(S._audioEl.paused) S._audioEl.play(); else S._audioEl.pause(); } },
     next(){ if(!this.queue.length) this.refreshQueue();
       if(!this.queue.length) return; let i=this.queue.indexOf(this.cur);
-      i=this.shuffle ? this._randIdx(i) : (i+1)%this.queue.length; this.play(this.queue[i], {force:true}); },
-    _randIdx(cur){ if(this.queue.length<2) return 0; let r; do{ r=Math.floor(Math.random()*this.queue.length); }while(r===cur); return r; },   // don't replay the same track
+      if(this.shuffle){ this.play(this._nextShuffled(), {force:true}); return; }
+      i=(i+1)%this.queue.length; this.play(this.queue[i], {force:true}); },
+    /* SHUFFLE IS A DECK, NOT A DIE. "bad on small playlists and not random enough on large": each ⏭
+     * used to roll a fresh random index (anything but the current track), i.e. sampling WITH
+     * replacement. On a 3-song playlist that is a coin flip between the other two, so the same pair
+     * ping-pongs and the third can go unheard for a long run; on a 2,000-song library the birthday
+     * paradox brings a song back within ~50 tracks while most of the library never comes up, which
+     * reads as "it keeps playing the same ones".
+     *
+     * Now every song plays once per round, in a fair order (Fisher-Yates over crypto randomness), and
+     * the next round is drawn fresh. Two seams are smoothed: the playing song is left out of the round
+     * that starts under it, and the songs heard most recently (up to half the list) are pushed to the
+     * back half of the next round, so a round boundary never replays what just played. A song picked
+     * by hand mid-round is taken out of the round. The round is rebuilt when the queue changes (a
+     * different playlist is a different deck). */
+    _bag:[], _bagSig:'',
+    _rnd(n){
+      try{ const c=globalThis.crypto; if(c && c.getRandomValues){
+        const lim=Math.floor(0x100000000/n)*n, a=new Uint32Array(1);
+        do{ c.getRandomValues(a); }while(a[0]>=lim);       // no modulo bias
+        return a[0]%n; } }catch(_){ }
+      return Math.floor(Math.random()*n);
+    },
+    _deal(){
+      const q=this.queue.filter(x=>x!==this.cur);
+      for(let i=q.length-1;i>0;i--){ const j=this._rnd(i+1); const t=q[i]; q[i]=q[j]; q[j]=t; }
+      const recentN=Math.min(Math.floor(this.queue.length/2), this._history.length);
+      const recent=new Set(recentN ? this._history.slice(-recentN) : []);
+      if(!recent.size) return q;
+      // Recently heard songs go to the BACK HALF, still in shuffled order and still spread out.
+      const fresh=q.filter(x=>!recent.has(x)), heard=q.filter(x=>recent.has(x));
+      const out=fresh.slice(), half=Math.ceil(out.length/2);
+      for(const h of heard){ const at=half+this._rnd(out.length-half+1); out.splice(at,0,h); }
+      return out;
+    },
+    _nextShuffled(){
+      if(!this.queue.length) return undefined;
+      if(this.queue.length===1) return this.queue[0];
+      const sig=this.queue.length+':'+this.queue.join('|');
+      if(sig!==this._bagSig){ this._bagSig=sig; this._bag=[]; }
+      if(!this._bag.length) this._bag=this._deal();
+      return this._bag.shift();
+    },
+    // Start shuffling the queue as a fresh round (the Shuffle buttons in Music and in a shared playlist).
+    shufflePlay(){ this.shuffle=true; this._bagSig=''; this._bag=[]; const pick=this._nextShuffled();
+      if(pick) this.play(pick, {force:true}); return pick; },
     prev(){ if(S._audioEl && S._audioEl.currentTime>3){ S._audioEl.currentTime=0; return; }   // >3s in = restart current
       if(this._history.length){ this.play(this._history.pop(), {back:true, force:true}); return; }   // back to the track actually played before
       if(!this.queue.length) this.refreshQueue();

@@ -23,7 +23,8 @@ function player(opts){
   const o = opts || {};
   const audio = { src: '', paused: true, currentTime: 0, duration: 100,
                   play: async function(){ this.paused = false; }, pause(){ this.paused = true; } };
-  const ctx = { console, Math, JSON, Promise, Map, Set, Array, Object, String, Number, setTimeout, clearTimeout };
+  const ctx = { console, Math, JSON, Promise, Map, Set, Array, Object, String, Number, setTimeout, clearTimeout,
+                Uint32Array, crypto: require('crypto').webcrypto };
   ctx.window = ctx;
   ctx.window.PCPlaylists = { get: id => id === 'p1' ? { id: 'p1', name: 'Road', tracks: PLAYLIST.slice() } : null,
                              all: () => [{ id: 'p1', name: 'Road', tracks: PLAYLIST.slice() }] };
@@ -96,6 +97,70 @@ async function run(name, fn){
     await M.play(PLAYLIST[0]); await settle();
     await M.play(PLAYLIST[0], { force: true }); await settle();
     return { ok: !audio.paused && M.cur === PLAYLIST[0], paused: audio.paused };
+  });
+
+  /* "improve music player shuffle logic, bad on small playlists and not random enough on large".
+   * Measured on the old player (a fresh random index per ⏭, anything but the current song): in a
+   * 3-song playlist the plays per song drifted apart and the same two songs ping-ponged (X Y X); in a
+   * 2,000-song library the first repeat came after ~50 songs and only ~1,260 different songs played in
+   * 2,000 skips. */
+  await run('a small playlist plays every song once per round, never X Y X', async () => {
+    const { M } = player({ playlist: 'p1' });
+    M.queue = PLAYLIST.slice(); M.shuffle = true;
+    await M.play(PLAYLIST[0]); await settle();
+    const played = [M.cur];
+    for(let i = 0; i < 300; i++){ M.next(); await settle(); played.push(M.cur); }
+    const counts = PLAYLIST.map(s => played.filter(x => x === s).length);
+    let minGap = Infinity; const last = {};
+    played.forEach((s, i) => { if(s in last) minGap = Math.min(minGap, i - last[s]); last[s] = i; });
+    return { ok: Math.max(...counts) - Math.min(...counts) <= 1 && minGap >= 3, counts, minGap };
+  });
+
+  await run('a large library plays every song before any comes back', async () => {
+    const { M } = player({});
+    const big = Array.from({ length: 2000 }, (_, i) => ('b' + String(i).padStart(5, '0')).padEnd(64, '0'));
+    M.queue = big.slice(); M.shuffle = true;
+    await M.play(big[0]); await settle();
+    const played = [M.cur];
+    for(let i = 0; i < 1999; i++){ M.next(); await settle(); played.push(M.cur); }
+    const distinct = new Set(played).size;
+    // and the order is not the list order, nor a near-copy of it
+    let inOrder = 0; for(let i = 1; i < played.length; i++) if(big.indexOf(played[i]) === big.indexOf(played[i - 1]) + 1) inOrder++;
+    return { ok: distinct === 2000 && inOrder < 20, distinct, inOrder };
+  });
+
+  await run('a new round never starts with what just played', async () => {
+    const { M } = player({});
+    const four = LIB.slice(0, 4);
+    M.queue = four.slice(); M.shuffle = true;
+    await M.play(four[0]); await settle();
+    const played = [M.cur];
+    for(let i = 0; i < 400; i++){ M.next(); await settle(); played.push(M.cur); }
+    let minGap = Infinity; const last = {};
+    played.forEach((s, i) => { if(s in last) minGap = Math.min(minGap, i - last[s]); last[s] = i; });
+    return { ok: minGap >= 3, minGap };
+  });
+
+  await run('Shuffle starts on a fair pick', async () => {
+    const { M } = player({});
+    const four = LIB.slice(0, 4), hits = Object.fromEntries(four.map(s => [s, 0]));
+    for(let i = 0; i < 4000; i++){ M.cur = null; M._history = []; M.queue = four.slice(); M.play = function(sha){ this.cur = sha; };
+      hits[M.shufflePlay()]++; }
+    const shares = Object.values(hits).map(n => n / 4000);
+    return { ok: shares.every(x => x > 0.2 && x < 0.3) && M.shuffle === true, shares };
+  });
+
+  await run('a song picked by hand is not dealt again this round', async () => {
+    const { M } = player({});
+    const ten = LIB.slice();
+    M.queue = ten.slice(); M.shuffle = true;
+    await M.play(ten[0]); await settle();
+    M.next(); await settle();                 // a round is dealt
+    const handPick = M._bag[M._bag.length - 1];
+    await M.play(handPick); await settle();
+    const rest = [];
+    const n = M._bag.length; for(let i = 0; i < n; i++){ M.next(); await settle(); rest.push(M.cur); }
+    return { ok: !rest.includes(handPick), n, again: rest.filter(x => x === handPick).length };
   });
 
   process.stdout.write(JSON.stringify(out));

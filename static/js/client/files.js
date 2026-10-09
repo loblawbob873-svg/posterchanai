@@ -2976,6 +2976,27 @@ window.PCFilesFactory = function(dep){
     for(let i = 0; i < x.length; i++) if(x[i] !== y[i]) return false;
     return true;
   }
+  /* POSTERCHANOS OPENS A DOCUMENT ON THE MACHINE (desktop/office-local.js): the same Collabora the
+   * instance runs, started only when a document is opened, with the desktop as its WOPI host — so a
+   * document opens with no network, and its bytes never leave the machine. Same session shape as the
+   * instance's, so everything after this is one code path. Null = not here (no local editor). */
+  let _officeLocalQ = null;
+  async function _officeLocalSession(file){
+    const L = window.pcOfficeLocal;
+    if(!L) return null;
+    if(!_officeLocalQ) _officeLocalQ = Promise.resolve().then(()=>L.available()).then(v=>!!v, ()=>false);
+    if(!(await _officeLocalQ)) return null;
+    const r = await L.open(await file.arrayBuffer(), file.name || 'document', 'edit');
+    if(!r || !r.ok) throw new Error((r && r.error) || 'the office editor on this machine could not open it');
+    const session = { id:r.id, token:r.token, editor_url:r.editor_url, expires:r.expires, readonly:r.readonly };
+    const unwrap = (x, what) => { if(!x || !x.ok) throw new Error((x && x.error) || what); return x; };
+    return {
+      session,
+      contents: async()=>new Blob([unwrap(await L.contents(session.id, session.token), 'this document is no longer open').bytes]),
+      exportAs: async fmt=>{ const x = unwrap(await L.export(session.id, session.token, fmt), 'could not convert this document'); return new Blob([x.bytes], { type:x.mime }); },
+      drop: async()=>{ try{ await L.close(session.id, session.token); }catch(_){ } },
+    };
+  }
   async function _officeSession(file, saveBack){
     // Capture the launcher before opening the editor changes VIEW. Files keeps its
     // selected source and folder in memory, so returning through switchView restores it.
@@ -2985,34 +3006,46 @@ window.PCFilesFactory = function(dep){
      * `https://localhost`) has no server on its own origin, so a bare `/client/office/...` resolves
      * against the BUNDLE and fails — and every failure in this function said the same six words,
      * "office unavailable", whatever went wrong. */
-    const B = _instanceBase();
+    let api=null;
     try{
-      /* Do not let a missing packaged-app instance turn these into relative requests. On desktop
-       * that means app://posterchan/client/office; in the APK it means https://localhost/client/office.
-       * Neither is the node that advertised Office, and retrying there only produces a white/empty
-       * editor after the file bytes have already been read. */
-      if(!/^https?:\/\//i.test(B))
-        throw new Error('connect this app to your PosterChan instance before opening Office');
-      const fd=new FormData(); fd.append('file',file,file.name); fd.append('mode','edit');
-      /* WHERE THE EDITOR SHOULD POST BACK TO — this page, which is not the instance in either
-       * packaged app (`app://posterchan` on the desktop, `capacitor://localhost` on Android). The
-       * server checks it against the shells it already trusts and ignores anything else, so this is
-       * a statement of fact, not a permission. Without it Collabora addresses every host message to
-       * the instance, the browser drops all of them, and `askEditorToSave` waits out its full
-       * timeout on every Save, Save As and PDF export. */
-      try{ if(location && location.origin && location.origin !== 'null') fd.append('origin', location.origin); }catch(_){ }
-      let r;
-      try{ await ensureAiSession();r=await window.__PC.authFetch(B + '/client/office/session',{method:'POST',body:fd}); }
-      catch(e){ throw new Error('could not reach ' + (B || 'this node') + ' — ' + ((e&&e.message)||e)); }
-      if(!r.ok){
-        const said=(await r.json().catch(()=>null)||{}).detail||'';
-        // 404 here means the router is not mounted; 502 means CODE itself is not running behind
-        // /office-code. Those send you to completely different places.
-        throw new Error(said || (r.status===404 ? 'this node has no office editor installed'
-                               : r.status===502 ? 'the office editor is not running on this node'
-                               : 'office HTTP '+r.status));
+      api = await _officeLocalSession(file);
+      if(!api){
+        const B = _instanceBase();
+        /* Do not let a missing packaged-app instance turn these into relative requests. On desktop
+         * that means app://posterchan/client/office; in the APK it means https://localhost/client/office.
+         * Neither is the node that advertised Office, and retrying there only produces a white/empty
+         * editor after the file bytes have already been read. */
+        if(!/^https?:\/\//i.test(B))
+          throw new Error('connect this app to your PosterChan instance before opening Office');
+        const fd=new FormData(); fd.append('file',file,file.name); fd.append('mode','edit');
+        /* WHERE THE EDITOR SHOULD POST BACK TO — this page, which is not the instance in either
+         * packaged app (`app://posterchan` on the desktop, `capacitor://localhost` on Android). The
+         * server checks it against the shells it already trusts and ignores anything else, so this is
+         * a statement of fact, not a permission. Without it Collabora addresses every host message to
+         * the instance, the browser drops all of them, and `askEditorToSave` waits out its full
+         * timeout on every Save, Save As and PDF export. */
+        try{ if(location && location.origin && location.origin !== 'null') fd.append('origin', location.origin); }catch(_){ }
+        let r;
+        try{ await ensureAiSession();r=await window.__PC.authFetch(B + '/client/office/session',{method:'POST',body:fd}); }
+        catch(e){ throw new Error('could not reach ' + (B || 'this node') + ' — ' + ((e&&e.message)||e)); }
+        if(!r.ok){
+          const said=(await r.json().catch(()=>null)||{}).detail||'';
+          // 404 here means the router is not mounted; 502 means CODE itself is not running behind
+          // /office-code. Those send you to completely different places.
+          throw new Error(said || (r.status===404 ? 'this node has no office editor installed'
+                                 : r.status===502 ? 'the office editor is not running on this node'
+                                 : 'office HTTP '+r.status));
+        }
+        session=await r.json();
+        const T = () => '?access_token='+encodeURIComponent(session.token);
+        api = {
+          session,
+          contents: async()=>{ const rr=await fetch(B+'/client/office/session/'+session.id+'/contents'+T()); if(!rr.ok) throw new Error('saved document HTTP '+rr.status); return rr.blob(); },
+          exportAs: async fmt=>{ const rr=await fetch(B+'/client/office/session/'+session.id+'/export/'+fmt+T()); if(!rr.ok) throw new Error('HTTP '+rr.status); return rr.blob(); },
+          drop: async()=>{ try{ await fetch(B+'/client/office/session/'+session.id+T(),{method:'DELETE'}); }catch(_){} },
+        };
       }
-      session=await r.json();
+      session = api.session;
       const frameName='pc-office-'+session.id;
       /* THE EDITOR'S BODY, BUILT ONCE and mounted either in a desktop WINDOW or in a modal. A
        * document editor is an application, not a dialog: on the windowed desktop it must minimise,
@@ -3023,7 +3056,7 @@ window.PCFilesFactory = function(dep){
         <form class="office-launch" method="post" action="${enc(session.editor_url)}" target="${frameName}">
           <input type="hidden" name="access_token" value="${enc(session.token)}"><input type="hidden" name="access_token_ttl" value="${session.expires*1000}"></form>
         <div class="row office-actions"><button class="btn btn-ghost" id="office-close">Close</button><button class="btn btn-ghost" id="office-pdf" aria-label="Save as PDF"><span class="office-long">Save as </span>PDF…</button><button class="btn btn-ghost" id="office-saveas">Save As…</button><button class="btn btn-neon" id="office-save">Save</button></div>`;
-      const drop=async()=>{ try{ await fetch(B + '/client/office/session/'+session.id+'?access_token='+encodeURIComponent(session.token),{method:'DELETE'}); }catch(_){} };
+      const drop=()=>api.drop();
       /* `wire` is handed how to shut whatever it was mounted in, so the Save and Close buttons do
        * not have to know which of the two they are living in. */
       /* SAVE HAD TO **ASK** THE EDITOR TO SAVE, AND IT NEVER DID.
@@ -3079,9 +3112,7 @@ window.PCFilesFactory = function(dep){
           try{
             await askEditorToSave(root);
             await new Promise(res=>setTimeout(res,700));
-            const rr=await fetch(B + '/client/office/session/'+session.id+'/export/pdf?access_token='+encodeURIComponent(session.token));
-            if(!rr.ok) throw new Error('HTTP '+rr.status);
-            const blob=await rr.blob();
+            const blob=await api.exportAs('pdf');
             if(!blob.size) throw new Error('the converter returned nothing');
             await _officeSaveCopy(blob, (file.name||'document').replace(/\.[^.]+$/,'') + '.pdf');
           }catch(err){ toast('could not save a PDF: '+((err&&err.message)||err)); }
@@ -3092,9 +3123,7 @@ window.PCFilesFactory = function(dep){
           const b=e.currentTarget;b.disabled=true;b.textContent='Saving…';
           try{
             await askEditorToSave(root); await new Promise(res=>setTimeout(res,700));
-            const rr=await fetch(B+'/client/office/session/'+session.id+'/contents?access_token='+encodeURIComponent(session.token));
-            if(!rr.ok)throw new Error('saved document HTTP '+rr.status);
-            await _officeSaveCopy(await rr.blob(),file.name||'document');
+            await _officeSaveCopy(await api.contents(),file.name||'document');
           }catch(err){toast('Save As failed: '+((err&&err.message)||err));}
           b.disabled=false;b.textContent='Save As…';
         };
@@ -3104,9 +3133,7 @@ window.PCFilesFactory = function(dep){
             await askEditorToSave(root);
             // Its PutFile lands just after the acknowledgement; a short settle covers both paths.
             await new Promise(res=>setTimeout(res,700));
-            const rr=await fetch(B + '/client/office/session/'+session.id+'/contents?access_token='+encodeURIComponent(session.token));
-            if(!rr.ok) throw new Error('saved document HTTP '+rr.status);
-            const bytes = await rr.arrayBuffer();
+            const bytes = await (await api.contents()).arrayBuffer();
             /* AND SAY SO WHEN THERE IS NOTHING TO SAVE. Uploading an unchanged document is not
              * harmless here — it mints a second blob and re-points the drive index at it — and a
              * "document saved" toast over bytes that never changed is precisely how the missing

@@ -159,6 +159,10 @@ class PosterChanOSProfile(unittest.TestCase):
         # process does not.
         "wl-paste": "gui-apps/wl-clipboard",
         "wpctl": "media-video/wireplumber",
+        # desktop/meme-local.js: the Meme Builder renders on the machine with the server's own
+        # renderer, run by the SYSTEM python (its Pillow and ffmpeg are asked for by name — see
+        # test_the_meme_builder_can_render_on_the_machine).
+        "python3": "base:dev-lang/python",
         # DELIBERATELY NOT PACKAGED, and this entry is the record of why: it is not in the Gentoo
         # tree, so adding it breaks emerge on every fresh build. desktop/power.js only reaches for
         # it when /sys/class/backlight is root-owned, and what makes that path unnecessary here is
@@ -219,6 +223,14 @@ class PosterChanOSProfile(unittest.TestCase):
                 self.assertIn(pkg, self.pkgs,
                               "the shell runs `%s`, so %s has to be in POSTERCHANOS_PACKAGES"
                               % (binary, pkg))
+
+    def test_the_meme_builder_can_render_on_the_machine(self):
+        """desktop/meme-local.js runs meme_builder_service.render under the system python3, so the
+        Meme Builder works with no network. That renderer needs Pillow and ffmpeg; both were only on
+        the test laptop as somebody else's dependency, which is exactly the shape that breaks on the
+        next fresh build."""
+        for pkg in ("media-video/ffmpeg", "dev-python/pillow"):
+            self.assertIn(pkg, self.pkgs, pkg + " is what the Meme Builder renders with on this machine")
 
     def test_the_screenshot_tools_are_installed(self):
         """Named on their own because this is a whole feature, not a fallback path: with no grim

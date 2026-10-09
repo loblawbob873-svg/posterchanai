@@ -47,12 +47,33 @@
                allowed:new Map() };   // chat → the reactions Telegram takes there (/api/tgc/reactions)
   let root = null;
 
+  /* WITH NO NETWORK YOUR MESSAGES ARE STILL HERE. "Telegram looks like it's missing a retry when
+   * offline and can't connect, should be able to view your messages without an internet connection".
+   * The session lives on the node, so offline this screen was "Telegram is not available" with no way
+   * back but leaving. What it has READ — the status, the chat list, a chat's newest page — is kept on
+   * this device (app.js deviceCache: sealed under the device key, per account) and shown when the
+   * node cannot be reached, with a banner that says so and a Retry. Sending still needs the node. */
+  const keep = () => { const P = PC(); return P.deviceCache ? P.deviceCache('pc-tg-v1') : null; };
+  const KEPT = /^\/api\/tgc\/(status|dialogs\?limit=200|messages\/-?\d+\?limit=50)$/;
+  const unreachable = e => !!(e && (e.offline || e.name === 'TypeError' || /^HTTP 5\d\d$/.test(e.message || '')));
   async function api(path, opts){
     const P = PC();
-    try{ if(P.ensureAiSession) await P.ensureAiSession(); }catch(_){}
-    const r = await (P.authFetch ? P.authFetch(path, opts || {}) : fetch(path, Object.assign({credentials:'include'}, opts || {})));
-    let j = null; try{ j = await r.json(); }catch(_){}
+    const read = !(opts && opts.method && String(opts.method).toUpperCase() !== 'GET') && KEPT.test(path);
+    const fromDevice = async why => {
+      const c = read && keep(), v = c ? await c.get(path) : null;
+      if(v){ st.offline = true; return v; }
+      throw why;
+    };
+    if(navigator.onLine === false){ const e = new Error('You’re offline.'); e.offline = true; return fromDevice(e); }
+    let r, j = null;
+    try{
+      try{ if(P.ensureAiSession) await P.ensureAiSession(); }catch(e){ if(e && e.offline) throw e; }
+      r = await (P.authFetch ? P.authFetch(path, opts || {}) : fetch(path, Object.assign({credentials:'include'}, opts || {})));
+      try{ j = await r.json(); }catch(_){}
+      if(!r.ok && r.status >= 500) throw new Error('HTTP ' + r.status);
+    }catch(e){ if(unreachable(e)) return fromDevice(e); throw e; }
     if(!r.ok || (j && j.ok === false)) throw new Error((j && (j.error || j.detail)) || ('HTTP ' + r.status));
+    if(read){ st.offline = false; const c = keep(); if(c) c.put(path, j || {}); }
     return j || {};
   }
   const post = (path, body) => api(path, { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(body||{}) });
@@ -173,13 +194,19 @@
     }
     feed.innerHTML = '<div class="tg-app"><div class="tg-boot">CONNECTING…</div></div>';
     root = feed.querySelector('.tg-app');
+    st.offline = false;
     try{ st.status = await api('/api/tgc/status'); }
-    catch(e){ root.innerHTML = `<div class="tg-card"><h3>Telegram is not available</h3><p>${esc(e.message)}</p></div>`; return; }
+    catch(e){
+      root.innerHTML = `<div class="tg-card"><h3>Telegram is not available</h3><p>${esc(e.message)}</p>
+        <div class="tg-form"><button class="tg-btn tg-primary" data-act="retry">Retry</button></div></div>`;
+      root.querySelector('[data-act="retry"]').onclick = () => render();
+      return;
+    }
     if(!inView()) return;
     if(!st.status.configured) return renderSetup();
     if(st.status.state !== 'ready') return renderLogin();
-    await ticket();
-    connect();
+    // Kept on this device: nothing to connect to, and media tickets cannot be had.
+    if(!st.offline){ await ticket(); connect(); }
     return renderMain();
   }
 
@@ -246,15 +273,37 @@
         <input class="tg-in tg-search" type="search" placeholder="Search chats" value="${esc(st.filter)}" aria-label="Search chats">
         <div class="tg-dialogs" role="list"><div class="tg-muted tg-pad">Loading chats…</div></div></aside>
       <section class="tg-chat" aria-live="polite"></section></div>`;
+    paintOffline();
     root.querySelector('.tg-search').oninput = e => { st.filter = e.target.value; paintDialogs(); findOnTelegram(); };
     root.querySelector('[data-act="logout"]').onclick = async () => {
       const P = PC(); if(P.uiConfirm && !(await P.uiConfirm('Sign out of Telegram on every device?'))) return;
       await post('/api/tgc/logout'); st.status = null; st.dialogs = []; st.msgs.clear(); st.open = null; render(); };
     try{ st.dialogs = (await api('/api/tgc/dialogs?limit=200')).dialogs || []; }
-    catch(e){ root.querySelector('.tg-dialogs').innerHTML = `<div class="tg-err tg-pad">${esc(e.message)}</div>`; return; }
+    catch(e){
+      root.querySelector('.tg-dialogs').innerHTML = `<div class="tg-err tg-pad">${esc(e.message)}</div>
+        <div class="tg-pad"><button class="tg-btn" data-act="retry">Retry</button></div>`;
+      root.querySelector('.tg-dialogs [data-act="retry"]').onclick = () => render();
+      return;
+    }
     if(!inView()) return;
+    paintOffline();
     paintDialogs();
     if(st.open) openChat(st.open); else paintChat();
+  }
+
+  /* The banner is the whole difference between "these are your messages" and "these are your messages
+   * as of when you last had a connection" — and Retry is the way back without leaving the screen. */
+  function paintOffline(){
+    const shell = root && root.querySelector('.tg-shell'); if(!shell) return;
+    let b = root.querySelector('.tg-offline');
+    if(!st.offline){ if(b) b.remove(); return; }
+    if(!b){
+      b = document.createElement('div'); b.className = 'tg-offline'; b.setAttribute('role', 'status');
+      b.innerHTML = `<span>${navigator.onLine === false ? 'Offline' : 'Can’t reach Telegram'} — showing the messages kept on this device.</span>
+        <button class="tg-mini" data-act="retry">Retry</button>`;
+      b.querySelector('[data-act="retry"]').onclick = () => render();
+      shell.parentNode.insertBefore(b, shell);
+    }
   }
 
   function paintDialogs(){
@@ -419,12 +468,14 @@
       try{ const r = await api('/api/tgc/messages/' + id + '?limit=50'); st.msgs.set(id, r.messages || []); noteReadOut(id, r.read_out || 0); }
       catch(e){ const l = root.querySelector('.tg-msgs'); if(l) l.innerHTML = `<div class="tg-err tg-pad">${esc(e.message)}</div>`; return; }
       if(st.open !== id) return;
+      paintOffline();
       paintMessages(true);
     }
     const d = st.dialogs.find(x => x.id === id); if(d){ d.unread = 0; paintDialogs(); }
     markRead();
   }
   function markRead(){
+    if(st.offline) return;
     const list = st.msgs.get(st.open) || []; const last = list[list.length - 1];
     if(last) post('/api/tgc/read', { chat_id:st.open, max_id:last.id }).catch(() => {});
   }

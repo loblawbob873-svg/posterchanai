@@ -1039,10 +1039,10 @@
         return;
       }
       if(b.id === 'msh-shuffle'){
-        const M = PC.MusicPlayer, pick = order[Math.floor(Math.random() * order.length)];
+        const M = PC.MusicPlayer;
         if(!order.length) return;
-        if(M){ M.queue = order.slice(); M.shuffle = true; M.play(pick, { force: true }); }   // force: a pick of the playing song must not pause it
-        else if(ctx.play) ctx.play(pick, order);
+        if(M){ M.queue = order.slice(); M.shufflePlay(); }   // a fresh shuffled round of this playlist
+        else if(ctx.play) ctx.play(order[Math.floor(Math.random() * order.length)], order);
         return;
       }
       if(b.classList.contains('track-play')){

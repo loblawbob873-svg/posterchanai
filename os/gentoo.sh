@@ -277,6 +277,7 @@ BASE_PACKAGES="www-client/firefox-bin $BASE_PACKAGES"
 POSTERCHANOS_PACKAGES="gui-wm/wayfire gui-libs/wayfire-plugins-extra gui-wm/gamescope gui-apps/wlr-randr x11-base/xwayland gui-apps/foot app-misc/ddcutil \
 gui-apps/wl-clipboard \
 gui-apps/grim gui-apps/slurp \
+media-video/ffmpeg dev-python/pillow app-misc/posterchan-office \
 net-print/cups \
 x11-misc/xdg-utils x11-apps/xrdb gnome-base/gsettings-desktop-schemas \
 media-video/pipewire media-video/wireplumber gui-libs/gtk media-fonts/noto media-fonts/noto-emoji \

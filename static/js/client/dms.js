@@ -408,6 +408,24 @@ window.PCDmsFactory = function(dep){
                                                 ['encrypt', 'decrypt']);
       return this._key;
     },
+    /* THE SAME DEVICE KEY, LENT. Email kept offline (mail.js MailCache) is as private as a DM and has
+     * the same answer: AES-GCM under this one key, never plaintext in the profile. Null = could not. */
+    async seal(obj){
+      try{
+        const key = await this._mk(); if(!key) return null;
+        const iv = new Uint8Array(12); crypto.getRandomValues(iv);
+        const ct = await crypto.subtle.encrypt({ name:'AES-GCM', iv }, key, new TextEncoder().encode(JSON.stringify(obj)));
+        return { iv, ct:new Uint8Array(ct) };
+      }catch(_){ return null; }
+    },
+    async open(rec){
+      try{
+        if(!rec || !rec.iv || !rec.ct) return null;
+        const key = await this._mk(); if(!key) return null;
+        const pt = await crypto.subtle.decrypt({ name:'AES-GCM', iv:new Uint8Array(rec.iv) }, key, new Uint8Array(rec.ct));
+        return JSON.parse(new TextDecoder().decode(pt));
+      }catch(_){ return null; }
+    },
     async get(id){
       if(this._dead()) return null;
       try{

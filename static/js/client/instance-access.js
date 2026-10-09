@@ -5,7 +5,7 @@
     sync:'Folder Sync',vault:'Passwords',torrents:'Torrents',analytics:'My Analytics',
     'media-center':'Media Center',repos:'Git',texts:'Texts',notes:'Notes',
     wallet:'Monero Wallet',exodus:'Wallet',websearch:'Web Search'});
-  const localApps=new Set(['notes','vault','texts','analytics']);
+  const localApps=new Set(['notes','vault','texts','analytics','meme','office','mail']);
   /* A VERIFIED MEMBER IS NOT RE-ASKED ON EVERY APP. The server remembers the grant (instance_membership
      GRANT_FRESH) and so does this page: within FRESH an app opens with no request at all, and after it
      the app still opens at once while the check runs behind it. */

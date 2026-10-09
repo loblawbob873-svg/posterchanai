@@ -245,6 +245,34 @@ if (isOurPage) {
   /* READ is OUR PAGE'S ONLY -- see pcClip above, which is write-only on purpose and exposed to any
    * page the app loads. Reading somebody's clipboard is a different power and it stays behind the
    * same gate as the compositor and the network. */
+  /* Meme Builder renders on this machine when the server's renderer is installed here (PosterChanOS),
+   * and keeps layer media here when there is no network to upload it to. ArrayBuffers cross, never
+   * views (see pcClip.writeImage). */
+  const _ab = (b) => (b instanceof ArrayBuffer) ? b
+    : (b && b.buffer instanceof ArrayBuffer) ? b.buffer.slice(b.byteOffset || 0, (b.byteOffset || 0) + b.byteLength) : null;
+  contextBridge.exposeInMainWorld('pcMemeLocal', {
+    available: () => ipcRenderer.invoke('pc:meme:available'),
+    store: (bytes, name, type) => ipcRenderer.invoke('pc:meme:store', _ab(bytes), String(name || ''), String(type || '')),
+    render: (edit, sources) => ipcRenderer.invoke('pc:meme:render', {
+      edit, sources: (Array.isArray(sources) ? sources : []).map(s => ({ key: String(s && s.key || ''), bytes: _ab(s && s.bytes) })),
+    }),
+  });
+
+  /* PosterChan Office on this machine (desktop/office-local.js) — same session contract as the
+   * instance's /client/office/session, so files.js runs one path for both. */
+  let officeInstalled = false;
+  try { officeInstalled = !!ipcRenderer.sendSync('pc:office:installed'); } catch (_) {}
+  contextBridge.exposeInMainWorld('pcOfficeLocal', {
+    // Read once at preload: the "Office document" choice is drawn synchronously, and offline there
+    // is no instance config to say Office exists.
+    installed: officeInstalled,
+    available: () => ipcRenderer.invoke('pc:office:available'),
+    open: (bytes, name, mode) => ipcRenderer.invoke('pc:office:open', _ab(bytes), String(name || ''), String(mode || 'edit')),
+    contents: (id, token) => ipcRenderer.invoke('pc:office:contents', String(id), String(token)),
+    export: (id, token, fmt) => ipcRenderer.invoke('pc:office:export', String(id), String(token), String(fmt)),
+    close: (id, token) => ipcRenderer.invoke('pc:office:close', String(id), String(token)),
+  });
+
   contextBridge.exposeInMainWorld('pcClipRead', {
     read: () => ipcRenderer.invoke('pc:clip:read'),
   });

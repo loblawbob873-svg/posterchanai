@@ -44,6 +44,11 @@ def results():
     "a song ending moves on inside the playlist, shuffled",
     "with no playlist chosen, shuffle covers the library",
     "shuffle picking the song already playing restarts it, never pauses",
+    "a small playlist plays every song once per round, never X Y X",
+    "a large library plays every song before any comes back",
+    "a new round never starts with what just played",
+    "Shuffle starts on a fair pick",
+    "a song picked by hand is not dealt again this round",
 ])
 def test_scenario(results, scenario):
     assert scenario in results, sorted(results)
