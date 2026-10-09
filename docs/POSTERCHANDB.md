@@ -1,6 +1,6 @@
 # PosterChanDB — a RAM-first store for the relay's events
 
-Status: **design** (2026-10-09). Nothing here is deployed. Numbers are MEASURED on server1's live relay
+Status: **design** (2026-10-09), Python (numpy + stdlib). Nothing here is deployed. Numbers are MEASURED on server1's live relay
 with `scripts/posterchandb_measure.py` (a 2% sample, scaled), not estimated from first principles.
 
 ## Why
@@ -45,12 +45,21 @@ desktop) evicts the CONTENT of old, unpinned events to the log and keeps their i
 code path, a smaller budget.
 
 1. **Records.** One contiguous arena per ~64 MB slab; an event is `seq → (slab, offset)`. Fixed part, then
-   tags (letter + interned-key / raw-32-byte / string), then content (zstd with a dictionary trained on
-   this relay's own posts, or raw bytes for ciphertext).
-2. **Indexes.** Every event gets a sequence number. Roaring bitmaps of sequence numbers per
-   (author, kind), per kind, per single-letter tag value (`#p #e #a #d #t #k …`), plus a time column
-   (u32 per seq) and an id hash map. A NIP-01 filter is bitmap AND/OR, then "newest N" by the time column.
-   Replaceable/addressable events keep a current-version map; superseded ones get a dead bit.
+   tags (letter + interned-key / raw-32-byte / string), then content (stdlib `zlib` with a preset
+   dictionary built from this relay's own posts — measured 398 B/event vs zstd's 386, so no new
+   dependency — or raw bytes for ciphertext).
+2. **Indexes — flat arrays, never a Python object per event.** In Python the danger is object
+   overhead, not data: a dict entry or small object per event or per tag is 60–150 bytes, which across
+   2.6M events and 16M tag references would cost more RAM than the data. So every index is numpy:
+   - per-event columns indexed by sequence number: `created_at` u32, `kind` u16, author (interned) u32,
+     id prefix u64, record offset u64 — **69 MB** for 2.64M events (measured);
+   - postings in CSR form: a sorted u64 array of hashed keys (author+kind, kind, each single-letter tag
+     value) with offsets into one u32 array of sequence numbers — **~154 MB** (measured);
+   - new events go to a small append buffer (plain Python lists, bounded) that is merged into the arrays
+     at every flush, so the big arrays are rebuilt in bulk, never grown per event.
+   A NIP-01 filter: `searchsorted` each key, slice its postings, `intersect1d`/`union1d`, then the newest
+   N by `created_at` (`argpartition`). Replaceable/addressable events keep a current-version map; a
+   superseded version gets a dead bit in a bitmap array.
 3. **Writes — delayed and configurable.** Writes land in RAM and are flushed to the log on a timer.
    - `posterchandb_flush_interval` — seconds between flushes, **default 60** (Admin → Nostr Relay).
      Everything written since the last flush is lost only if the machine dies WITHOUT a clean stop
@@ -67,10 +76,24 @@ code path, a smaller budget.
    as data. Startup = latest snapshot + replay of the log tail. Backups = copy closed log files + snapshot.
 5. **Deletes / expiration / auto-clean / pay-to-stay.** Dead bits; background compaction rewrites old
    slabs and log files without them. Today's SQL rules become bitmap queries over the same indexes.
-6. **Search.** A small separate index for kinds 1 and 30023 only, replacing the 2.4 GB index over
-   everything.
-7. **Shape.** A Rust service on a local Unix socket; the Python relay is a client. Rust for predictable
-   memory (no GC, packed structs) and speed. App tables (users, Blossom ownership; < 1 GB) stay in Postgres.
+6. **Search — at least as good as today.** Today NIP-50 search is Postgres's `simple` text config:
+   lowercased words, no stemming, every query word must match (`plainto_tsquery`), newest first — over
+   the content of EVERY event, ciphertext included. PosterChanDB keeps exactly those rules with an in-RAM
+   word index in the same CSR form (word hash → sorted sequence numbers): **≤ 264 MB** measured (an upper
+   bound — the vocabulary grows slower than the corpus) against Postgres's 2.38 GB. Ciphertext (NIP-04/44
+   base64, 20% of events) is not indexed: it only ever produced noise words. A query = intersect each
+   word's postings, newest first. The switch is gated on a parity test: a corpus of real search queries
+   run against both stores, results compared id for id; any difference must be explained (e.g. Postgres's
+   parser treating a URL as one token) before reads move.
+7. **Shape — Python, inside the relay process.** numpy (already required on every node type, Nostr-only
+   included) and the standard library (`zlib`, `mmap`, `os.pwrite`/`fsync`); no new dependency. Reads
+   are numpy array operations measured in microseconds, run on the event loop; flushes, snapshots and
+   compaction run in a worker thread (file I/O and numpy release the GIL). App tables (users, Blossom
+   ownership; < 1 GB) stay in Postgres on servers.
+
+**RAM, all in (measured, 2.64M events):** columns 69 MB + postings 154 MB + search ≤ 264 MB ≈ **0.5 GB**,
+plus the content cache — its size is the `posterchandb_read_cache_mb` setting. Postgres today: 20 GB of
+shared buffers.
 
 ## Read- and write-efficient: SSD writes (measured)
 
@@ -123,6 +146,20 @@ The tab shows the live numbers beside them — content in RAM vs on disk, cache 
 to be flushed, seconds since the last flush — so the trade being made is visible, not inferred.
 Pinned and never evicted: every replaceable/addressable document (profiles, follow lists, `pcai:` app
 data) and anything published here, so the content that matters most is never a disk read.
+
+## PosterChanOS
+
+A PosterChanOS machine that runs the PosterChan server today needs a whole PostgreSQL server for its
+relay (`app-misc/posterchan-server` depends on `dev-db/postgresql`). PosterChanDB needs no database daemon:
+the relay keeps its events in its own files under the server's data directory. What that buys a desktop
+or laptop:
+- **RAM sized to the machine** — the read cache is a setting, and `auto` takes 25–50% of RAM; indexes for
+  a personal relay (tens of thousands of events, not millions) are a few MB.
+- **Laptop SSDs** — writes are batched (default every 60 s) and sequential; idle means zero writes.
+- **Offline and on battery** — no Postgres to start, no checkpoint I/O while the lid is shut; a clean
+  shutdown flushes, and the next boot loads one snapshot.
+- **One less service** in the package and in the installer; Postgres stays only for the server's app
+  tables, and on a personal machine those could move into the same store later.
 
 ## What has to move
 
