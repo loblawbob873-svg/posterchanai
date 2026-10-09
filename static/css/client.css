@@ -11760,9 +11760,9 @@ html.pc-oswin .main:has(>#feed>.tg-app)>.topbar{display:none}
 .tg-mini:hover{color:var(--accent)}
 
 .tg-offline{flex:none;display:flex;align-items:center;gap:8px;flex-wrap:wrap;padding:6px 12px;font-size:12px;
-  border-bottom:1px solid var(--border,#333);background:color-mix(in srgb,var(--tg-hot) 12%,transparent);color:var(--text,#ddd)}
+  border-bottom:1px solid var(--line);background:color-mix(in srgb,var(--tg-hot) 12%,transparent);color:var(--text,#ddd)}
 .tg-offline span{flex:1;min-width:0}
-.tg-offline .tg-mini{min-height:32px;padding:0 10px;border:1px solid var(--border,#444);border-radius:6px;color:inherit}
+.tg-offline .tg-mini{min-height:32px;padding:0 10px;border:1px solid var(--line);border-radius:6px;color:inherit}
 .tg-shell{flex:1;min-height:0;display:grid;grid-template-columns:minmax(260px,340px) minmax(0,1fr);height:100%;
   border-top:1px solid rgba(var(--accent-rgb),.18)}
 .tg-side{display:flex;flex-direction:column;min-height:0;border-right:1px solid rgba(var(--accent-rgb),.22);

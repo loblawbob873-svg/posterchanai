@@ -450,7 +450,7 @@ window.PCMailFactory = function(dep){
         const P=await _withModule('preview.js','PCPreview');
         if(!P||!P.open({name:a.dataset.name||'attachment',mime:a.dataset.mime||blob.type,blob}))
           throw new Error('Preview cannot open this attachment');
-      }else if((S.CFG.office_enabled || (window.pcOfficeLocal && pcOfficeLocal.installed && pcOfficeLocal.installed())) && _officeable(a.dataset.name||'',a.dataset.mime||blob.type)){
+      }else if((S.CFG.office_enabled || (window.pcOfficeLocal && window.pcOfficeLocal.installed && window.pcOfficeLocal.installed())) && _officeable(a.dataset.name||'',a.dataset.mime||blob.type)){
         const name=a.dataset.name||'document';
         const file=fileFromBytes(await blob.arrayBuffer(),name,a.dataset.mime||blob.type);
         await _officeSession(file, updated=>saveBlobAs(updated,name));
@@ -466,7 +466,7 @@ window.PCMailFactory = function(dep){
       const read = !opts.method || String(opts.method).toUpperCase() === 'GET';
       const fromDevice = async (why) => {
         const kept = read ? await MailCache.get(path) : null;
-        if(kept){ this.offline = true; try{ Object.defineProperty(kept, '_fromDevice', { value:true }); }catch(_){ } return kept; }
+        if(kept){ this.offline = true; Object.defineProperty(kept, '_fromDevice', { value:true }); return kept; }
         throw why;
       };
       if(navigator.onLine === false){

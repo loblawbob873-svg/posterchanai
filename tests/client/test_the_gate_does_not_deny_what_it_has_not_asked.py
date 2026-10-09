@@ -101,8 +101,10 @@ def test_a_member_who_is_merely_offline_is_not_told_to_fix_their_profile(chrome)
         settle(chrome)
         chrome.evaluate("Object.defineProperty(navigator,'onLine',{value:false,configurable:true});PCInstanceAccess.refresh()")
         settle(chrome)
-        assert chrome.evaluate("PCInstanceAccess.allowed('mail')") is False
-        chrome.evaluate("PCInstanceAccess.gate('mail')")
+        # Web Search needs the server; Mail reads what this device kept, so a cached yes opens it offline.
+        assert chrome.evaluate("PCInstanceAccess.allowed('websearch')") is False
+        assert chrome.evaluate("PCInstanceAccess.allowed('mail')") is True
+        chrome.evaluate("PCInstanceAccess.gate('websearch')")
         assert ESSAY not in text(chrome), 'a member who is offline is told they are not a member'
         assert 'Offline' in chrome.evaluate("document.querySelector('.ia-status').textContent")
         assert chrome.evaluate("!!document.querySelector('.ia-use')") is False, \
