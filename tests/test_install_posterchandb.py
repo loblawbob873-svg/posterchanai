@@ -40,22 +40,28 @@ def run(tmp_path, fstype="btrfs", env=None, secrets=None, chattr_fail=False):
     return out.stdout + out.stderr, (log.read_text() if log.exists() else ""), repo
 
 
+def test_the_default_is_var_lib_posterchandb():
+    out = subprocess.run(["bash", "-c", 'SCRIPT_DIR=/nonexistent; unset POSTERCHANDB_DIR; . "%s/scripts/install/posterchandb.sh"; '
+                          'posterchandb_dir' % ROOT], capture_output=True, text=True).stdout.strip()
+    assert out == "/var/lib/posterchandb"
+
+
 def test_btrfs_gets_recursive_nocow_and_it_is_verified(tmp_path):
-    out, log, repo = run(tmp_path)
-    d = repo / "data" / "posterchandb"
+    d = tmp_path / "pcdb"
+    out, log, repo = run(tmp_path, env={"POSTERCHANDB_DIR": str(d)})
     assert d.is_dir() and oct(d.stat().st_mode & 0o777) == "0o700"
     assert "chattr -R +C %s" % d in log
     assert "OK NOCOW set" in out
 
 
 def test_not_btrfs_sets_nothing(tmp_path):
-    out, log, _ = run(tmp_path, fstype="ext2/ext3")
+    out, log, _ = run(tmp_path, fstype="ext2/ext3", env={"POSTERCHANDB_DIR": str(tmp_path / "pcdb")})
     assert "chattr" not in log
     assert "btrfs-only" in out
 
 
 def test_a_failed_chattr_is_reported_not_claimed(tmp_path):
-    out, _, _ = run(tmp_path, chattr_fail=True)
+    out, _, _ = run(tmp_path, chattr_fail=True, env={"POSTERCHANDB_DIR": str(tmp_path / "pcdb")})
     assert "WARN chattr -R +C failed" in out and "OK NOCOW" not in out
 
 
@@ -73,7 +79,7 @@ def test_the_app_resolves_the_same_directory(monkeypatch):
     monkeypatch.setenv("POSTERCHANDB_DIR", "/usb/posterchandb")
     assert posterchandb.data_dir() == "/usb/posterchandb"
     monkeypatch.delenv("POSTERCHANDB_DIR")
-    assert posterchandb.data_dir() == str(ROOT / "data" / "posterchandb")
+    assert posterchandb.data_dir() == "/var/lib/posterchandb"
 
 
 def test_every_install_path_prepares_it_and_posterchanos_points_at_a_nocow_dir():

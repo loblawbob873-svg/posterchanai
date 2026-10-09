@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # PosterChanDB data directory (docs/POSTERCHANDB.md). Where: $POSTERCHANDB_DIR (set it in
-# data/secrets.env — e.g. POSTERCHANDB_DIR=/raid/posterchandb on a RAID box), else <repo>/data/posterchandb.
+# data/secrets.env), else /var/lib/posterchandb — system state, like /var/lib/postgresql, owned by the
+# account the service runs as.
 #
 # On btrfs the directory gets NOCOW (`chattr -R +C`). PosterChanDB is an append-only log that is
 # compacted by rewriting whole segments, so copy-on-write buys it nothing and costs a second copy of
@@ -13,22 +14,22 @@ posterchandb_dir() {
     if [ -z "$v" ] && [ -f "$root/data/secrets.env" ]; then
         v="$(sed -n 's/^\(export \)\{0,1\}POSTERCHANDB_DIR=["'"'"']\{0,1\}\([^"'"'"']*\)["'"'"']\{0,1\}$/\2/p' "$root/data/secrets.env" | tail -1)"
     fi
-    echo "${v:-$root/data/posterchandb}"
+    echo "${v:-/var/lib/posterchandb}"
 }
 
 setup_posterchandb_dir() {
     local dir
     dir="$(posterchandb_dir)"
     print_step "PosterChanDB data directory: $dir"
+    # owned by the account the service runs as (PosterChanOS's pc-server passes PC_SERVICE_USER)
+    local owner="${PC_SERVICE_USER:-$(id -un)}"
     if ! mkdir -p "$dir" 2>/dev/null; then
-        sudo mkdir -p "$dir" && sudo chown "$(id -un)": "$dir" \
-            || { print_warning "could not create $dir — set POSTERCHANDB_DIR in data/secrets.env"; return 0; }
+        sudo mkdir -p "$dir" || { print_warning "could not create $dir — set POSTERCHANDB_DIR in data/secrets.env"; return 0; }
+    fi
+    if [ "$(stat -c %U "$dir" 2>/dev/null)" != "$owner" ]; then
+        chown "$owner": "$dir" 2>/dev/null || sudo chown "$owner": "$dir" || print_warning "could not give $dir to $owner"
     fi
     chmod 700 "$dir" 2>/dev/null || sudo chmod 700 "$dir"
-    # run as root on behalf of a service account (PosterChanOS's pc-server): hand the directory to it
-    if [ -n "${PC_SERVICE_USER:-}" ] && [ "$(id -u)" = "0" ]; then
-        chown "$PC_SERVICE_USER:" "$dir" 2>/dev/null || true
-    fi
     local fs
     fs="$(stat -f -c %T "$dir" 2>/dev/null)"
     if [ "$fs" != "btrfs" ]; then

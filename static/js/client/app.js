@@ -11897,6 +11897,18 @@
     // The admin frame may already be loaded and waiting (it is preloaded hidden), so push rather than
     // making it poll — its own request for one may have arrived before we had anything to give.
     try{ _sendAdminToken(); }catch(_){} }
+  /* SAY WHICH SERVER, AND WHY A .onion CANNOT BE REACHED. The APK has no Tor of its own: an .onion
+   * instance works only while Orbot runs in VPN mode with PosterChan in its app list, and without that
+   * the name never resolves — the request dies at once as a bare "Failed to fetch", which reads exactly
+   * like a dead server. Reported from a phone on our .onion with clearnet default relays, so Social
+   * worked and only the app session failed. */
+  function _unreachableWhy(aborted){
+    let host='';
+    try{ host=new URL(window.__PC_API_BASE__ || location.origin).host; }catch(_){}
+    if(/\.onion(:\d+)?$/i.test(host))
+      return host+' is a Tor address — Orbot must be running in VPN mode with PosterChan in its app list';
+    return aborted ? (host||'the instance')+' did not answer' : 'could not reach '+(host||'the instance');
+  }
   async function ensureAiSession(opts){
     /* AUTH METADATA IS NOT A CREDENTIAL. A browser can keep this in memory after the server was
      * restarted (cookie gone), and older/login-degraded responses could supply `user` without an
@@ -11948,7 +11960,7 @@
           response = await fetch('/api/auth/nostr-login', { method:'POST', headers:{'Content-Type':'application/json'},
             body: JSON.stringify({ pubkey: ME.pubkey, auth: btoa(JSON.stringify(auth)) }), signal: ac ? ac.signal : undefined });
         }catch(e){
-          const n = new Error(e && e.name === 'AbortError' ? 'the instance did not answer' : 'could not reach the instance');
+          const n = new Error(_unreachableWhy(e && e.name === 'AbortError'));
           n.offline = true; throw n;
         }finally{ if(timer) clearTimeout(timer); }
         let r=null; try{ r=await response.json(); }catch(_){}
