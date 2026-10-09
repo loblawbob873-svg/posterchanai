@@ -9,6 +9,14 @@ set -e
 
 DATA_HOME="${POSTERCHANAI_DATA:-/var/lib/posterchanai}"
 mkdir -p "$DATA_HOME"/{models,torrents,tor,tor2,hf,miopen,assets,media} /app/data
+# PosterChanDB: the relay's append-only event log. NOCOW on btrfs (`chattr -R +C`), set while the
+# directory is still new — +C only applies to files created after it (docs/POSTERCHANDB.md).
+PCDB_DIR="${POSTERCHANDB_DIR:-$DATA_HOME/posterchandb}"
+mkdir -p -m 700 "$PCDB_DIR"
+if [ "$(stat -f -c %T "$PCDB_DIR" 2>/dev/null)" = "btrfs" ]; then
+    chattr -R +C "$PCDB_DIR" 2>/dev/null && echo "[entrypoint] NOCOW set on $PCDB_DIR" \
+        || echo "[entrypoint] could not set NOCOW on $PCDB_DIR (btrfs will copy-on-write its log)"
+fi
 # Compose supplies this cache as tmpfs; a bare docker run should use --tmpfs
 # /tmp/posterchan-media-center:size=2560m,mode=0700. The service enforces /tmp paths.
 mkdir -p -m 700 /tmp/posterchan-media-center

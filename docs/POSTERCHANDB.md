@@ -173,7 +173,7 @@ Everything that reads the relay's event tables directly needs the store's API in
    to Postgres byte for byte; publish size/RAM/latency.
 2. Shadow writes: every event goes to both stores; reads still from Postgres.
 3. Shadow reads: every query runs on both and mismatches are logged (no content, counts and ids only).
-4. Switch reads, one node at a time, starting with nas.lan. Postgres stays as the fallback.
+4. Switch reads, one node at a time, starting with server1 — the node whose relay runs it, with the store on its RAID5 (`POSTERCHANDB_DIR=/usb/posterchandb`, NOCOW). Postgres stays as the fallback.
 5. Retire the Postgres event tables once a node has run clean for an agreed period.
 
 Every data-safety rule the relay has learned keeps its test against the new store before it is trusted:

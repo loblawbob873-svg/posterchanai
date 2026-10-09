@@ -31,6 +31,7 @@ source "$INSTALL_DIR/image.sh"
 source "$INSTALL_DIR/systemd.sh"
 source "$INSTALL_DIR/setup.sh"
 source "$INSTALL_DIR/postgres.sh"
+source "$INSTALL_DIR/posterchandb.sh"
 source "$INSTALL_DIR/telegram_botapi.sh"
 source "$INSTALL_DIR/update.sh"
 source "$INSTALL_DIR/music.sh"
@@ -228,6 +229,7 @@ install_nostr_only() {
 
     setup_directories
     setup_postgres           # the one and only database (app + built-in Nostr relay)
+    setup_posterchandb_dir   # the relay's RAM-first event store (NOCOW on btrfs)
     setup_python_env         # honours NOSTR_ONLY -> installs requirements-nostr.txt
 
     # Provision the relay's instance (operator) key now, seed the WoT with it, and print the npub.
@@ -316,6 +318,7 @@ main() {
     # too (existing SQLite installs upgrading to the Postgres-only datastore).
     if [ "${UPDATE_ONLY:-0}" = "1" ]; then
         setup_postgres
+        setup_posterchandb_dir
         run_updates
         return
     fi
@@ -331,6 +334,7 @@ main() {
 
     # Step 6b: PostgreSQL — the one and only database (app + built-in Nostr relay).
     setup_postgres
+    setup_posterchandb_dir
 
     # Step 7: Setup Python environment
     setup_python_env

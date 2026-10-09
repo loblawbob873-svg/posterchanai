@@ -396,6 +396,7 @@ ENV POSTERCHANAI_PORT=3051 \
     POSTERCHANAI_MEDIA_CACHE=/tmp/posterchan-media-center \
     NVIDIA_DRIVER_CAPABILITIES=compute,utility,video \
     HF_HOME=/var/lib/posterchanai/hf \
+    POSTERCHANDB_DIR=/var/lib/posterchanai/posterchandb \
     MIOPEN_USER_DB_PATH=/var/lib/posterchanai/miopen \
     MIOPEN_CUSTOM_CACHE_DIR=/var/lib/posterchanai/miopen \
     MIOPEN_FIND_MODE=2 \

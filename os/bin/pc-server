@@ -215,6 +215,7 @@ searx_dropin(){
 own_tree(){ # the service writes into its own tree (data/, state files); the installer ran as root
   chown -R "$SVC_USER:$SVC_USER" "$APP"
   [ -d /var/lib/posterchanai ] && chown -R "$SVC_USER:$SVC_USER" /var/lib/posterchanai
+  [ -d /var/lib/posterchandb ] && chown -R "$SVC_USER:$SVC_USER" /var/lib/posterchandb
   return 0
 }
 
@@ -223,6 +224,9 @@ do_enable(){
   ensure_account || return 1
   ensure_postgres || return 1
   ensure_tor
+  # PosterChanDB (the relay's RAM-first store) lives beside the other system state, where
+  # gentoo.sh's btrfs tweaks already made it NOCOW; install.sh creates it and re-checks +C.
+  set_secret POSTERCHANDB_DIR "/var/lib/posterchandb"
   if [ -f "$PG_OWNED" ]; then
     set_secret DATABASE_URL "'postgresql+psycopg2://posterchan@/posterchan_relay?host=$PG_SOCKET'"
     set_secret NOSTR_RELAY_PG_DSN "'host=$PG_SOCKET dbname=posterchan_relay user=posterchan'"

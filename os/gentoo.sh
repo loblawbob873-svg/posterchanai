@@ -1587,8 +1587,10 @@ nodatacow() {
 btrfsTweaks() {
 	# The system's write-heavy stores. `/var/lib/postgresql` is the one that matters on a node
 	# running the relay — the event store is a stream of small writes and is what the user named.
+	# `/var/lib/posterchandb` is PosterChanDB, the relay's own append-only event store (pc-server
+	# points the bundled server at it; docs/POSTERCHANDB.md) — made NOCOW here while it is still empty.
 	DISABLE_COW=("/var/lib/postgresql" "/var/lib/mysql" "/var/lib/libvirt" \
-	             "/var/lib/docker" "/volumes")
+	             "/var/lib/docker" "/volumes" "/var/lib/posterchandb")
 
 	echo -e "\033[1;36m[nodatacow on the write-heavy paths]\033[0m"
 	for i in "${DISABLE_COW[@]}"; do

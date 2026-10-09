@@ -4,7 +4,7 @@
 Runs on a node against its own relay database, READ-ONLY (it never calls RelayStore.open(), which would
 run schema changes). It:
   1. streams every stored event out of Postgres into a separate PosterChanDB at --dir (default
-     /raid/posterchandb/parity), plus the derived `_quote_author` tags;
+     $POSTERCHANDB_DIR/parity — on server1 /usb/posterchandb/parity, the RAID5), plus the derived `_quote_author` tags;
   2. builds a query corpus FROM THE DATA: author feeds, profiles/follows/relay lists, mentions (with and
      without quotes), threads, hashtags, time windows, id batches, `#d~` folder reads, cursor paging and
      one- and two-word searches;
@@ -30,6 +30,7 @@ from collections import defaultdict
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from app.services.nostr_relay import store as relay_store_mod  # noqa: E402
+from app.services.posterchandb import data_dir  # noqa: E402
 from app.services.posterchandb.store import Store, search_words  # noqa: E402
 
 WORD = re.compile(r"[a-z]{4,}")
@@ -117,7 +118,7 @@ def run_pg(rs, conn, flt):
 
 def main() -> int:
     ap = argparse.ArgumentParser()
-    ap.add_argument("--dir", default="/raid/posterchandb/parity")
+    ap.add_argument("--dir", default=os.path.join(data_dir(), "parity"))
     ap.add_argument("--queries", type=int, default=300)
     ap.add_argument("--reuse", action="store_true", help="reopen an existing --dir instead of reloading")
     ap.add_argument("--seed", type=int, default=1009)
@@ -153,7 +154,7 @@ def main() -> int:
         for flt in flts:
             if cat == "cursor_pages":
                 # walk every page through both, comparing page by page
-                cur_pg = cur_db = None
+                cur_pg = None
                 while True:
                     f1 = dict(flt, **({"_cursor": cur_pg} if cur_pg else {}))
                     t0 = time.perf_counter(); p = run_pg(rs, conn, f1); tp += time.perf_counter() - t0
