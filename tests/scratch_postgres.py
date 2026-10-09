@@ -58,7 +58,9 @@ def _start_private() -> dict | None:
     os.makedirs(sock)
     env = dict(os.environ, LC_ALL="C")
     try:
-        subprocess.run([initdb, "-D", data, "-U", ROLE, "--auth=trust", "-E", "UTF8", "--no-sync"],
+        # The PRODUCTION locale (nas.lan: datcollate = datctype = C.UTF8). It decides what to_tsvector
+        # lowercases -- under plain `C`, "Привет" stays capitalised and search tests certify the wrong thing.
+        subprocess.run([initdb, "-D", data, "-U", ROLE, "--auth=trust", "-E", "UTF8", "--locale=C.UTF-8", "--no-sync"],
                        check=True, capture_output=True, env=env, timeout=120)
         # 5432 on purpose: the socket lives in our own directory and there is no TCP listener, so it
         # cannot clash -- and code that passes only a host (the bots' akkoma_db) finds it.

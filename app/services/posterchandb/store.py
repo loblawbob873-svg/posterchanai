@@ -36,13 +36,12 @@ import zlib
 
 import numpy as np
 
+from . import tsparser
 from .codec import Codec
 
 MAGIC = b"PCDB1\n"
 OP_PUT, OP_DEAD, OP_DERIVED = 1, 2, 3   # OP_PUT payload: op, origin byte, codec record
 _FRAME = struct.Struct("<II")
-_WORD = re.compile(r"\w+", re.U)
-_CIPHER = re.compile(r"^[A-Za-z0-9+/=]{40,}(\?iv=[A-Za-z0-9+/=]+)?$")
 
 
 def _h(s: str) -> int:
@@ -81,12 +80,10 @@ def _expiration(ev: dict) -> int:
 
 
 def search_words(text: str):
-    """The words a search matches on: lowercased \\w+ runs (Postgres's `simple` config: no stemming,
-    no stop words). Ciphertext is not text and is not indexed."""
-    t = (text or "").strip()
-    if not t or _CIPHER.match(t):
-        return set()
-    return {w for w in _WORD.findall(t.lower()) if len(w) <= 64}
+    """What a search matches on — EXACTLY the lexemes of the relay's `to_tsvector('simple', text)` (tsparser.py
+    is Postgres's own parser; tests/test_posterchandb_tsparser.py holds it to a real Postgres). A search is the
+    AND of `plainto_tsquery('simple', search)`'s lexemes: the same function applied to the search text."""
+    return tsparser.search_set(text or "")
 
 
 def _merge_runs(ka, sa, pa, kb, sb, pb, dead=None):

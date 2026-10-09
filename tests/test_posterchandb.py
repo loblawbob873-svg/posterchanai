@@ -181,15 +181,19 @@ def test_expired_and_ephemeral_are_never_returned(store):
     assert store.put(mk(kind=20001)) == "ephemeral"
 
 
-def test_search_matches_every_word_ignores_case_and_skips_ciphertext(store):
-    a = mk(content="The Ferry leaves at seven")
+def test_search_matches_every_word_ignores_case_and_follows_postgres_tokens(store):
+    a = mk(content="The Ferry leaves at seven https://ferries.example/timetable.pdf")
     b = mk(content="ferry tickets")
     c = mk(content="A" * 60 + "==")
     for e in (a, b, c):
         store.put(e)
     assert set(ids(store.query({"search": "ferry"}))) == {a["id"], b["id"]}
     assert ids(store.query({"search": "FERRY seven"})) == [a["id"]]
-    assert store.query({"search": "A" * 60}) == []
+    # Postgres indexes base64 too (its parser sees an asciiword) — the relay finds it, so must we
+    assert ids(store.query({"search": "A" * 60})) == [c["id"]]
+    # …and a word inside a URL is NOT a word to Postgres: the URL, its host and its path are the tokens
+    assert store.query({"search": "timetable"}) == []
+    assert ids(store.query({"search": "ferries.example"})) == [a["id"]]
 
 
 # ---------------------------------------------------------------- durability
