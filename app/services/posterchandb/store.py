@@ -5,10 +5,13 @@ Nothing here allocates a Python object PER EVENT that lives beyond the call: rec
 and every index is a sorted numpy key array + one flat postings array ("base"), with a small dict of
 recent additions ("delta") merged in bulk at each flush. See docs/POSTERCHANDB.md.
 
+Layout on disk: `seg-000001.log`, `seg-000002.log`, … (~256 MB each). Each segment has its own RAM
+arena, so compacting a segment frees exactly its memory.
+
 Durability:
   * every write is appended to an in-memory pending buffer and indexed at once (reads see it);
   * `flush()` writes the buffer to the current log file and fsyncs it — on the timer
-    (`flush_interval`, default 60 s), on `close()` (a clean stop), and immediately for a DIRECT write
+    (`flush_interval`, default 300 s), on `close()` (a clean stop), and immediately for a DIRECT write
     when `direct_durable` is on;
   * log records are framed `<u32 len><u32 crc32><payload>`; a torn or corrupt tail found on open is
     truncated away and reported, never read as data.
@@ -30,7 +33,7 @@ import numpy as np
 from .codec import Codec
 
 MAGIC = b"PCDB1\n"
-OP_PUT, OP_DEAD, OP_DERIVED = 1, 2, 3
+OP_PUT, OP_DEAD, OP_DERIVED = 1, 2, 3   # OP_PUT payload: op, origin byte, codec record
 _FRAME = struct.Struct("<II")
 _WORD = re.compile(r"\w+", re.U)
 _CIPHER = re.compile(r"^[A-Za-z0-9+/=]{40,}(\?iv=[A-Za-z0-9+/=]+)?$")
@@ -80,7 +83,7 @@ def search_words(text: str):
     return {w for w in _WORD.findall(t.lower()) if len(w) <= 64}
 
 
-def _merge_runs(ka, sa, pa, kb, sb, pb):
+def _merge_runs(ka, sa, pa, kb, sb, pb, dead=None):
     """Merge two CSR runs (keys sorted unique, starts, postings). Every posting in run B is NEWER than
     every posting in run A (sequence numbers only grow), so per key the result is simply A's list then
     B's: a STABLE sort on keys alone, never a re-sort of postings."""
@@ -88,6 +91,10 @@ def _merge_runs(ka, sa, pa, kb, sb, pb):
     kb_rep = np.repeat(kb, np.diff(sb))
     allk = np.concatenate([ka_rep, kb_rep])
     allp = np.concatenate([pa, pb])
+    if dead is not None and len(allp):
+        # SELF-CLEANING: postings of dead events are dropped by the merge that happens anyway
+        live = dead[allp] == 0
+        allk, allp = allk[live], allp[live]
     order = np.argsort(allk, kind="stable")
     allk, allp = allk[order], allp[order]
     uk, first = np.unique(allk, return_index=True)
@@ -126,7 +133,7 @@ class _Postings:
             return np.zeros(0, dtype=np.uint32)
         return parts[0] if len(parts) == 1 else np.concatenate(parts)
 
-    def merge(self) -> None:
+    def merge(self, dead=None) -> None:
         if self.delta:
             items = sorted(self.delta.items())
             keys = np.fromiter((k for k, _ in items), dtype=np.uint64, count=len(items))
@@ -139,7 +146,7 @@ class _Postings:
         while len(self.runs) > 1 and len(self.runs[-1][2]) * self.RATIO >= len(self.runs[-2][2]):
             b = self.runs.pop()
             a = self.runs.pop()
-            self.runs.append(_merge_runs(*a, *b))
+            self.runs.append(_merge_runs(*a, *b, dead=dead))
 
     def nbytes(self) -> int:
         return sum(k.nbytes + s.nbytes + p.nbytes for k, s, p in self.runs)
@@ -156,13 +163,13 @@ class _Prefix:
     def add(self, value: str, seq: int) -> None:
         self.delta.append((value, seq))
 
-    def merge(self) -> None:
+    def merge(self, dead=None) -> None:
         if self.delta:
             self.runs.append(sorted(self.delta))
             self.delta = []
         while len(self.runs) > 1 and len(self.runs[-1]) * 4 >= len(self.runs[-2]):
             b = self.runs.pop(); a = self.runs.pop()
-            self.runs.append(sorted(a + b))
+            self.runs.append(sorted(x for x in a + b if dead is None or not dead[x[1]]))
 
     def prefix(self, pre: str) -> list:
         out = [q for v, q in self.delta if v.startswith(pre)]
@@ -173,112 +180,207 @@ class _Prefix:
         return out
 
 
+ORIGINS = {"direct": 0, "wot": 1, "bridge": 2, "ancestor": 3}
+ORIGIN_NAMES = {v: k for k, v in ORIGINS.items()}
+SEGMENT_BYTES = 256 * 1024 * 1024
+DROPPED = 0xFFFFFFFF            # `seg` of a dead record whose segment was compacted away: no bytes anywhere
+COMPACT_CHUNK = 4 * 1024 * 1024 # compaction writes in large sequential pieces (full RAID5 stripes, no RMW)
+
+
 class Store:
-    def __init__(self, path: str, *, zdict: bytes = b"", flush_interval: float = 60.0,
-                 direct_durable: bool = True, log=None):
+    """See the module docstring. Every public method is thread-safe (one re-entrant lock)."""
+
+    def __init__(self, path: str, *, zdict: bytes = b"", flush_interval: float = 300.0,
+                 direct_durable: bool = True, segment_bytes: int = SEGMENT_BYTES,
+                 compact_dead_pct: float = 40.0, log=None):
         self.path = path
         self.codec = Codec(zdict)
         self.flush_interval = float(flush_interval)
         self.direct_durable = bool(direct_durable)
+        self.segment_bytes = int(segment_bytes)
+        self.compact_dead_pct = float(compact_dead_pct)
         self.log = log or (lambda *a: None)
         self._lock = threading.RLock()
         # per-event columns (index = sequence number)
-        self.arena = bytearray()
+        self.arenas: dict[int, bytearray] = {}     # segment id -> that segment's records, in RAM
+        self.seg = array.array("I")
         self.off = array.array("Q")
         self.length = array.array("I")
         self.created = array.array("Q")
         self.kind = array.array("I")
         self.expires = array.array("Q")
+        self.origin = bytearray()
+        self.author = array.array("I")             # interned public key
         self.dead = bytearray()
-        # id -> seq: sorted base + delta
-        self._id_runs: list = []      # leveled sorted runs of (id-prefix u64, seq u32)
+        self._authors: list[str] = []
+        self._author_ix: dict[str, int] = {}
+        # per-segment bookkeeping: bytes of records, bytes of dead records
+        self.seg_bytes: dict[int, int] = {}
+        self.seg_dead: dict[int, int] = {}
+        # the OP_DEAD/OP_DERIVED payloads each segment holds, kept in RAM so compaction never has to
+        # read a segment back from disk to find what must be carried forward
+        self.seg_markers: dict[int, list] = {}
+        self._compacting = False
+        self.derived: dict[int, set] = {}   # seq -> {(tag, value)}: re-emitted beside a record whenever it moves
+        # id -> seq: leveled sorted runs + delta
+        self._id_runs: list = []
         self._id_delta: dict[int, int] = {}
-        self.idx = _Postings()       # author+kind, kind, single-letter tags
+        self.idx = _Postings()       # author+kind, author, kind, single-letter tags
         self.words = _Postings()     # search
         self.dprefix = _Prefix()     # `#d~` prefix reads
         self.current: dict[int, int] = {}   # replaceable/addressable address hash -> seq of current version
         self._pending = bytearray()
         self._pending_n = 0
         self._last_flush = time.monotonic()
+        self._active = 0
         self._file = None
         os.makedirs(path, exist_ok=True)
         self._open()
 
     # ---------------------------------------------------------------- disk
-    def _log_path(self) -> str:
-        return os.path.join(self.path, "events.log")
+    def _seg_path(self, sid: int) -> str:
+        return os.path.join(self.path, "seg-%06d.log" % sid)
+
+    def _segments(self) -> list:
+        out = []
+        for name in os.listdir(self.path):
+            m = re.match(r"^seg-(\d{6})\.log$", name)
+            if m:
+                out.append(int(m.group(1)))
+        return sorted(out)
+
+    def _new_segment(self, sid: int) -> None:
+        p = self._seg_path(sid)
+        with open(p, "wb") as f:
+            f.write(MAGIC)
+            f.flush()
+            os.fsync(f.fileno())
+        self._fsync_dir()
+
+    def _fsync_dir(self) -> None:
+        try:
+            fd = os.open(self.path, os.O_RDONLY)
+            try:
+                os.fsync(fd)
+            finally:
+                os.close(fd)
+        except OSError:
+            pass
 
     def _open(self) -> None:
-        p = self._log_path()
-        if not os.path.exists(p):
-            with open(p, "wb") as f:
-                f.write(MAGIC)
-                f.flush()
-                os.fsync(f.fileno())
-        good = self._replay(p)
-        size = os.path.getsize(p)
-        if good < size:
-            self.log("[posterchandb] truncating %d torn/corrupt bytes at the end of the log" % (size - good))
-            with open(p, "r+b") as f:
-                f.truncate(good)
-                f.flush()
-                os.fsync(f.fileno())
-        self._file = open(p, "ab")
-        self.idx.merge()
-        self.words.merge()
-        self.dprefix.merge()
-        self._merge_ids()
+        sids = self._segments()
+        if not sids:
+            self._new_segment(1)
+            sids = [1]
+        for sid in sids:
+            p = self._seg_path(sid)
+            self.arenas.setdefault(sid, bytearray())
+            self.seg_bytes.setdefault(sid, 0)
+            self.seg_dead.setdefault(sid, 0)
+            self.seg_markers.setdefault(sid, [])
+            good = self._replay(sid, p)
+            size = os.path.getsize(p)
+            if good < size:
+                # Only the LAST segment can legitimately have a torn tail; an earlier one means a
+                # crash mid-compaction left a partial copy — its records are also in a later segment.
+                self.log("[posterchandb] cutting %d torn/corrupt bytes off %s" % (size - good, os.path.basename(p)))
+                with open(p, "r+b") as f:
+                    f.truncate(good)
+                    f.flush()
+                    os.fsync(f.fileno())
+        self._active = sids[-1]
+        self._file = open(self._seg_path(self._active), "ab")
+        self._merge_all()
 
-    def _replay(self, p: str) -> int:
+    def _replay(self, sid: int, p: str) -> int:
         with open(p, "rb") as f:
             data = f.read()
         if not data.startswith(MAGIC):
-            raise ValueError("not a PosterChanDB log: " + p)
+            raise ValueError("not a PosterChanDB segment: " + p)
         i = len(MAGIC)
         while i + _FRAME.size <= len(data):
             n, crc = _FRAME.unpack_from(data, i)
             j = i + _FRAME.size
-            if j + n > len(data):
+            if j + n > len(data) or n == 0:
                 break
             payload = data[j:j + n]
             if zlib.crc32(payload) & 0xFFFFFFFF != crc:
                 break
             op = payload[0]
             if op == OP_PUT:
-                ev = self.codec.decode(payload[1:])
-                self._apply_put(ev, payload[1:], replay=True)
+                origin = payload[1]
+                rec = payload[2:]
+                eid = bytes(rec[:32]).hex()
+                if self._seq_of(eid) is None:          # a compaction copy may exist twice after a crash
+                    ev = self.codec.decode(rec)
+                    self._apply_put(ev, rec, origin, sid, replay=True)
             elif op == OP_DEAD:
+                self.seg_markers[sid].append(bytes(payload))
                 s = self._seq_of(bytes(payload[1:33]).hex())
                 if s is not None:
-                    self.dead[s] = 1
+                    self._kill(s, persist=False)
             elif op == OP_DERIVED:
+                self.seg_markers[sid].append(bytes(payload))
                 s = self._seq_of(bytes(payload[1:33]).hex())
                 if s is not None:
                     tag, _, value = bytes(payload[33:]).decode("utf-8").partition("\x00")
-                    self.idx.add(_h("t:%s:%s" % (tag, value)), s)
+                    if (tag, value) not in self.derived.setdefault(s, set()):
+                        self.derived[s].add((tag, value))
+                        self.idx.add(_h("t:%s:%s" % (tag, value)), s)
             i = j + n
         return i
 
     def _frame(self, payload: bytes) -> None:
+        if payload[0] != OP_PUT:     # pending always lands in the segment that is active now
+            self.seg_markers.setdefault(self._active, []).append(bytes(payload))
         self._pending += _FRAME.pack(len(payload), zlib.crc32(payload) & 0xFFFFFFFF)
         self._pending += payload
         self._pending_n += 1
 
+    def _merge_all(self) -> None:
+        dead = np.frombuffer(self.dead, dtype=np.uint8) if len(self.dead) else None
+        self.idx.merge(dead)
+        self.words.merge(dead)
+        self.dprefix.merge(self.dead)
+        self._merge_ids()
+
+    def _drain(self, fsync: bool) -> int:
+        """Hand the buffer to the kernel in ONE sequential write; fsync only when asked."""
+        n = self._pending_n
+        if self._pending:
+            self._file.write(self._pending)
+            self._file.flush()
+            self._pending = bytearray()
+            self._pending_n = 0
+        if fsync:
+            os.fsync(self._file.fileno())
+            try:   # the log is never read back while open (records live in RAM): don't let it fill the page cache
+                os.posix_fadvise(self._file.fileno(), 0, 0, os.POSIX_FADV_DONTNEED)
+            except (AttributeError, OSError):
+                pass
+        return n
+
+    def _rotate_if_full(self) -> None:
+        """A full segment is closed, so compaction can later rewrite it on its own."""
+        if self._file.tell() < self.segment_bytes:
+            return
+        os.fsync(self._file.fileno())
+        self._file.close()
+        self._active += 1
+        self._new_segment(self._active)
+        self.arenas[self._active] = bytearray()
+        self.seg_bytes[self._active] = 0
+        self.seg_dead[self._active] = 0
+        self.seg_markers[self._active] = []
+        self._file = open(self._seg_path(self._active), "ab")
+
     def flush(self) -> int:
-        """Write everything buffered to disk and fsync. Returns how many records were written."""
+        """Write everything buffered to the active segment and fsync. Returns records written."""
         with self._lock:
-            n = self._pending_n
-            if self._pending:
-                self._file.write(self._pending)
-                self._file.flush()
-                os.fsync(self._file.fileno())
-                self._pending = bytearray()
-                self._pending_n = 0
-            self.idx.merge()
-            self.words.merge()
-            self.dprefix.merge()
-            self._merge_ids()
+            n = self._drain(fsync=True)
+            self._merge_all()
             self._last_flush = time.monotonic()
+            self._rotate_if_full()
             return n
 
     def maybe_flush(self) -> int:
@@ -288,35 +390,68 @@ class Store:
 
     def close(self) -> None:
         with self._lock:
+            if self._file is None:
+                return
             self.flush()
-            if self._file:
-                self._file.close()
-                self._file = None
+            self._file.close()
+            self._file = None
+
+    def disk_bytes(self) -> int:
+        tot = 0
+        for sid in list(self.arenas):
+            try:
+                tot += os.path.getsize(self._seg_path(sid))
+            except OSError:
+                pass
+        return tot
 
     def stats(self) -> dict:
-        return {"events": len(self.off), "dead": int(sum(self.dead)), "arena_bytes": len(self.arena),
+        dead = int(np.count_nonzero(np.frombuffer(self.dead, np.uint8))) if len(self.dead) else 0
+        return {"events": len(self.off), "live": len(self.off) - dead, "dead": dead,
+                "disk_bytes": self.disk_bytes(),
+                "arena_bytes": sum(len(a) for a in self.arenas.values()),
                 "index_bytes": self.idx.nbytes() + self.words.nbytes() + sum(k.nbytes + v.nbytes for k, v in self._id_runs),
-                "runs": len(self.idx.runs),
+                "segments": len(self.arenas), "runs": len(self.idx.runs),
                 "unflushed": self._pending_n, "since_flush_s": round(time.monotonic() - self._last_flush, 1)}
+
+    # ---------------------------------------------------------------- record access
+    def _rec(self, seq: int) -> memoryview:
+        o = self.off[seq]
+        return memoryview(self.arenas[self.seg[seq]])[o:o + self.length[seq]]
+
+    def _id_hex(self, seq: int) -> str:
+        o = self.off[seq]
+        return bytes(self.arenas[self.seg[seq]][o:o + 32]).hex()
+
+    def pubkey_of(self, seq: int) -> str:
+        return self._authors[self.author[seq]]
 
     # ---------------------------------------------------------------- ids
     def _merge_ids(self) -> None:
-        """Same leveled scheme as the postings: sort only the new ids into a run; merge runs geometrically."""
         if self._id_delta:
             k = np.fromiter(self._id_delta.keys(), dtype=np.uint64, count=len(self._id_delta))
             v = np.fromiter(self._id_delta.values(), dtype=np.uint32, count=len(self._id_delta))
             o = np.argsort(k)
             self._id_runs.append((k[o], v[o]))
             self._id_delta = {}
+        seg = np.frombuffer(self.seg, dtype=np.uint32) if len(self.seg) else None
         while len(self._id_runs) > 1 and len(self._id_runs[-1][0]) * 4 >= len(self._id_runs[-2][0]):
             kb, vb = self._id_runs.pop()
             ka, va = self._id_runs.pop()
             k = np.concatenate([ka, kb]); v = np.concatenate([va, vb])
+            if seg is not None:      # records compacted away are forgotten, here, in a merge that happens anyway
+                keep = seg[v] != DROPPED
+                k, v = k[keep], v[keep]
             o = np.argsort(k, kind="stable")
             self._id_runs.append((k[o], v[o]))
 
     def _seq_of(self, eid: str):
-        key = int(eid[:16], 16)
+        if not isinstance(eid, str) or len(eid) != 64:
+            return None
+        try:
+            key = int(eid[:16], 16)
+        except ValueError:
+            return None
         s = self._id_delta.get(key)
         cands = [s] if s is not None else []
         ku = np.uint64(key)
@@ -326,7 +461,7 @@ class Store:
                 hi = int(np.searchsorted(keys, ku, "right"))
                 cands += [int(x) for x in seqs[lo:hi]]
         for c in cands:          # an 8-byte prefix can collide: confirm against the record's own id
-            if self.arena[self.off[c]:self.off[c] + 32].hex() == eid:
+            if self.seg[c] != DROPPED and self._id_hex(c) == eid:
                 return c
         return None
 
@@ -344,25 +479,41 @@ class Store:
         bc = self.created[b_seq]
         if a["created_at"] != bc:
             return a["created_at"] > bc
-        return a["id"] < self.arena[self.off[b_seq]:self.off[b_seq] + 32].hex()
+        return a["id"] < self._id_hex(b_seq)
 
-    def put(self, ev: dict, *, direct: bool = False) -> str:
+    def _kill(self, seq: int, *, persist: bool) -> None:
+        """Mark an event dead. `persist` writes an OP_DEAD marker — only for deaths that cannot be
+        re-derived on replay (auto-clean); superseded versions, NIP-09 deletions and expiry are
+        recomputed from the events themselves every time the store opens."""
+        if self.dead[seq]:
+            return
+        self.dead[seq] = 1
+        if self.seg[seq] != DROPPED:
+            self.seg_dead[self.seg[seq]] = self.seg_dead.get(self.seg[seq], 0) + self.length[seq]
+        if persist:
+            self._frame(bytes([OP_DEAD]) + bytes.fromhex(self._id_hex(seq)))
+
+    def put(self, ev: dict, *, direct: bool = False, origin: str | None = None) -> str:
         """Store a (signature-verified) event. Returns 'stored', 'duplicate', 'superseded' (an older
-        version of a replaceable the store already has newer), or 'ephemeral' (not stored)."""
+        version of a replaceable the store already has newer), 'deleted' (its author's kind-5 already
+        names it) or 'ephemeral' (not stored)."""
         if is_ephemeral(ev["kind"]):
             return "ephemeral"
         with self._lock:
             if self._seq_of(ev["id"]) is not None:
                 return "duplicate"
+            if self._deleted_by_author(ev):
+                return "deleted"
             addr = self._address(ev)
             if addr is not None:
                 cur = self.current.get(addr)
                 if cur is not None and not self.dead[cur] and not self._newer(ev, cur):
                     return "superseded"
+            o = ORIGINS.get(origin or ("direct" if direct else "wot"), 4)
             rec = self.codec.encode(ev)
-            self._frame(bytes([OP_PUT]) + rec)
-            self._apply_put(ev, rec, replay=False)
-            if direct and self.direct_durable:
+            self._frame(bytes([OP_PUT, o]) + rec)
+            self._apply_put(ev, rec, o, self._active)
+            if (direct or o == 0) and self.direct_durable:
                 self.flush()
             return "stored"
 
@@ -372,23 +523,36 @@ class Store:
             s = self._seq_of(event_id)
             if s is None:
                 return False
+            if (tag, value) in self.derived.get(s, ()):
+                return True
             self._frame(bytes([OP_DERIVED]) + bytes.fromhex(event_id) + ("%s\x00%s" % (tag, value)).encode("utf-8"))
+            self.derived.setdefault(s, set()).add((tag, value))
             self.idx.add(_h("t:%s:%s" % (tag, value)), s)
             return True
 
-    def _apply_put(self, ev: dict, rec, *, replay: bool) -> None:
+    def _apply_put(self, ev: dict, rec, origin: int, sid: int, replay: bool = False) -> None:
         seq = len(self.off)
-        self.off.append(len(self.arena))
+        arena = self.arenas.setdefault(sid, bytearray())
+        self.seg.append(sid)
+        self.off.append(len(arena))
         self.length.append(len(rec))
-        self.arena += rec
+        arena += rec
+        self.seg_bytes[sid] = self.seg_bytes.get(sid, 0) + len(rec)
         self.created.append(ev["created_at"])
         self.kind.append(ev["kind"])
         self.expires.append(_expiration(ev))
+        self.origin.append(origin)
+        pk = ev["pubkey"]
+        aid = self._author_ix.get(pk)
+        if aid is None:
+            aid = self._author_ix[pk] = len(self._authors)
+            self._authors.append(pk)
+        self.author.append(aid)
         self.dead.append(0)
         self._id_delta[int(ev["id"][:16], 16)] = seq
         k = ev["kind"]
-        self.idx.add(_h("ak:%s:%d" % (ev["pubkey"], k)), seq)
-        self.idx.add(_h("au:%s" % ev["pubkey"]), seq)
+        self.idx.add(_h("ak:%s:%d" % (pk, k)), seq)
+        self.idx.add(_h("au:%s" % pk), seq)
         self.idx.add(_h("k:%d" % k), seq)
         for t in ev.get("tags") or []:
             if len(t) >= 2 and len(t[0]) == 1:
@@ -402,40 +566,154 @@ class Store:
             cur = self.current.get(addr)
             if cur is None or self.dead[cur] or self._newer(ev, cur):
                 if cur is not None:
-                    self.dead[cur] = 1
+                    self._kill(cur, persist=False)
                 self.current[addr] = seq
             else:
-                self.dead[seq] = 1
-        if k == 5:
-            self._apply_deletion(ev, replay)
+                self._kill(seq, persist=False)
+        if k == 5 and not replay:       # on replay its deaths come back as the OP_DEAD markers it wrote
+            self._apply_deletion(ev)
 
-    def _apply_deletion(self, ev: dict, replay: bool) -> None:
-        """NIP-09: an author can delete their OWN events, by id (`e`) or address (`a`, up to the deletion's time)."""
+    def _apply_deletion(self, ev: dict) -> None:
+        """NIP-09, exactly as the relay applies it (nostr_relay/store.py `if kind == 5`): `e` removes the
+        author's OWN event of any kind but 5 and 1059 (Concord giftwraps fold their own deletions); `a`
+        removes the author's events of that kind carrying that `d` value, up to the deletion's time.
+        The deaths are PERSISTED (OP_DEAD), not re-derived on replay: compaction moves records forward,
+        and a deletion replayed after an event that arrived later would kill what the relay kept."""
+        pk = ev["pubkey"]
         for t in ev.get("tags") or []:
             if len(t) < 2:
                 continue
             if t[0] == "e":
                 s = self._seq_of(t[1])
-                if s is not None and self.arena[self.off[s] + 32:self.off[s] + 64].hex() == ev["pubkey"] \
-                        and self.kind[s] != 5:
-                    self.dead[s] = 1
+                if s is not None and self.pubkey_of(s) == pk and self.kind[s] not in (5, 1059):
+                    self._kill(s, persist=True)
             elif t[0] == "a":
-                parts = t[1].split(":", 2)
-                if len(parts) == 3 and parts[1] == ev["pubkey"]:
-                    try:
-                        k = int(parts[0])
-                    except ValueError:
+                parts = str(t[1]).split(":", 2)
+                if len(parts) == 3 and parts[1] == pk and parts[0].isdigit():
+                    hit = np.intersect1d(self.idx.get(_h("t:d:%s" % parts[2])),
+                                         self.idx.get(_h("ak:%s:%d" % (pk, int(parts[0])))))
+                    for s in hit:
+                        s = int(s)
+                        if s < len(self.dead) and not self.dead[s] and self.created[s] <= ev["created_at"]:
+                            self._kill(s, persist=True)
+
+    def _deleted_by_author(self, ev: dict) -> bool:
+        """The relay's rule: a sync/backfill must not resurrect an event its author already deleted —
+        the retained kind-5 naming it (`e`) is the record, even when the deletion arrived first."""
+        if ev["kind"] in (5, 1059):
+            return False
+        for s in np.intersect1d(self.idx.get(_h("t:e:%s" % ev["id"])),
+                                self.idx.get(_h("ak:%s:5" % ev["pubkey"]))):
+            if not self.dead[int(s)]:
+                return True
+        return False
+
+    def kill(self, seqs) -> int:
+        """Auto-clean: mark events dead durably (an OP_DEAD marker each). Returns how many changed.
+        A direct write is never killed here — that is not an auto-clean decision (see maintenance.py)."""
+        n = 0
+        with self._lock:
+            for s in seqs:
+                s = int(s)
+                if not self.dead[s] and self.seg[s] != DROPPED:
+                    self._kill(s, persist=True)
+                    n += 1
+        return n
+
+    # ---------------------------------------------------------------- compaction
+    def segment_dead_pct(self) -> dict:
+        return {sid: (100.0 * self.seg_dead.get(sid, 0) / b if b else 0.0) for sid, b in self.seg_bytes.items()}
+
+    def compaction_candidate(self):
+        """The deadest CLOSED segment over the threshold, or None."""
+        cands = [(pct, sid) for sid, pct in self.segment_dead_pct().items()
+                 if sid != self._active and pct >= self.compact_dead_pct]
+        return max(cands)[1] if cands else None
+
+    def compact(self, sid: int | None = None, pace=None) -> dict:
+        """Reclaim a closed segment: copy its LIVE records into the active segment, carry forward the
+        markers that still mean something, fsync ONCE, then delete the old file and free its RAM.
+
+        Disk cost is exactly the segment's live bytes, written sequentially in COMPACT_CHUNK pieces;
+        nothing is read from disk (records and markers are already in RAM). The lock is released
+        between chunks and `pace(nbytes, cpu_s)` (maintenance's throttle) is called there, so a
+        compaction never holds up a write for more than one chunk. Safe at any crash point: the old
+        file is deleted only after the copies are fsynced, and a replay skips an id it already has."""
+        with self._lock:
+            if self._compacting:
+                return {"compacted": None}
+            sid = self.compaction_candidate() if sid is None else sid
+            if sid is None or sid == self._active or sid not in self.arenas:
+                return {"compacted": None}
+            self._compacting = True
+        try:
+            seqs = np.nonzero(np.frombuffer(self.seg, dtype=np.uint32) == sid)[0]
+            moved = written = 0
+            i = 0
+            while i < len(seqs):
+                t0 = time.thread_time()
+                with self._lock:
+                    old = self.arenas[sid]
+                    chunk = 0
+                    while i < len(seqs) and chunk < COMPACT_CHUNK:
+                        s = int(seqs[i]); i += 1
+                        if self.dead[s] or self.seg[s] != sid:
+                            continue
+                        o, n = self.off[s], self.length[s]
+                        rec = bytes(old[o:o + n])
+                        act = self.arenas.setdefault(self._active, bytearray())
+                        self._frame(bytes([OP_PUT, self.origin[s]]) + rec)
+                        # a derived tag must follow its record on replay, wherever its old marker sits
+                        for tag, value in sorted(self.derived.get(s, ())):
+                            self._frame(bytes([OP_DERIVED]) + rec[:32] + ("%s\x00%s" % (tag, value)).encode("utf-8"))
+                        self.seg[s] = self._active
+                        self.off[s] = len(act)
+                        act += rec
+                        self.seg_bytes[self._active] = self.seg_bytes.get(self._active, 0) + n
+                        chunk += n
+                        moved += 1
+                    self._drain(fsync=False)
+                    self._rotate_if_full()
+                written += chunk
+                if pace:
+                    pace(chunk, time.thread_time() - t0)
+            with self._lock:
+                carried = 0
+                for payload in self.seg_markers.get(sid, []):
+                    s = self._seq_of(bytes(payload[1:33]).hex())
+                    if s is None:
                         continue
-                    addr = _h("a:%s:%d:%s" % (parts[1], k, parts[2])) if is_addressable(k) \
-                        else _h("r:%s:%d" % (parts[1], k))
-                    s = self.current.get(addr)
-                    if s is not None and self.created[s] <= ev["created_at"]:
-                        self.dead[s] = 1
+                    if payload[0] == OP_DEAD and self.dead[s] and self.seg[s] != sid:
+                        self._frame(payload); carried += 1       # the record it kills lives on elsewhere
+                    elif payload[0] == OP_DERIVED and not self.dead[s] and self.seg[s] < sid:
+                        # its record sits in an EARLIER segment, so the copy stays after it on replay; a
+                        # record that moved (now in a later segment) already had its tags re-emitted beside it
+                        self._frame(payload); carried += 1
+                self._drain(fsync=True)
+                self._rotate_if_full()
+                os.remove(self._seg_path(sid))
+                self._fsync_dir()
+                seg = self.seg
+                for s in seqs:                                # dead records here now have no bytes anywhere
+                    s = int(s)
+                    if seg[s] == sid:
+                        seg[s] = DROPPED
+                        self.derived.pop(s, None)
+                del self.arenas[sid]
+                self.seg_bytes.pop(sid, None)
+                self.seg_dead.pop(sid, None)
+                self.seg_markers.pop(sid, None)
+                return {"compacted": sid, "moved": moved, "written": written, "carried": carried}
+        finally:
+            self._compacting = False
 
     # ---------------------------------------------------------------- read
     def get(self, seq: int) -> dict:
-        o = self.off[seq]
-        return self.codec.decode(memoryview(self.arena)[o:o + self.length[seq]])
+        return self.codec.decode(self._rec(seq))
+
+    def seq_of(self, eid: str):
+        with self._lock:
+            return self._seq_of(eid)
 
     def query(self, flt: dict, now: int | None = None) -> list:
         """One NIP-01 filter (+ NIP-50 `search`), newest first, `limit` applied. Dead and expired
@@ -500,8 +778,7 @@ class Store:
                 keep &= cc <= c0
                 same = np.nonzero(keep & (cc == c0))[0]
                 for j in same:              # equal timestamps: page on the id (`e.id < cursor id`)
-                    o = self.off[int(cand[j])]
-                    if not self.arena[o:o + 32].hex() < c1:
+                    if not self._id_hex(int(cand[j])) < c1:
                         keep[j] = False
             cand = cand[keep]
             # The relay's own rule (store.py _query_one): `limit or 500`, clamped to 1..5000.

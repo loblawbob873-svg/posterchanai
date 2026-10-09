@@ -187,12 +187,12 @@ def test_a_clean_close_loses_nothing_and_reopen_gives_the_same_answers(tmp_path)
 def test_delayed_writes_are_not_on_disk_until_the_flush_but_direct_writes_are(tmp_path):
     p = str(tmp_path / "db")
     s = Store(p, flush_interval=60, direct_durable=True)
-    size0 = os.path.getsize(os.path.join(p, "events.log"))
+    size0 = os.path.getsize(os.path.join(p, "seg-000001.log"))
     s.put(mk())                                       # copied from elsewhere: waits for the timer
-    assert os.path.getsize(os.path.join(p, "events.log")) == size0
+    assert os.path.getsize(os.path.join(p, "seg-000001.log")) == size0
     assert s.maybe_flush() == 0                       # the 60 s have not passed
     s.put(mk(), direct=True)                          # written here: on disk before put() returns
-    assert os.path.getsize(os.path.join(p, "events.log")) > size0
+    assert os.path.getsize(os.path.join(p, "seg-000001.log")) > size0
     assert s.stats()["unflushed"] == 0
     s.close()
 
@@ -204,7 +204,7 @@ def test_a_torn_or_corrupt_tail_is_cut_off_and_everything_before_it_survives(tmp
     for e in evs:
         s.put(e)
     s.close()
-    log = os.path.join(p, "events.log")
+    log = os.path.join(p, "seg-000001.log")
     good = os.path.getsize(log)
     with open(log, "ab") as f:                        # a write cut short by power loss
         f.write(b"\x40\x00\x00\x00\xde\xad\xbe\xefpartial")

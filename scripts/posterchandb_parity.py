@@ -124,8 +124,10 @@ def main() -> int:
     a = ap.parse_args()
     rs = relay_store_mod.RelayStore()
     conn = rs._conn()
-    if not a.reuse and os.path.exists(os.path.join(a.dir, "events.log")):
-        os.remove(os.path.join(a.dir, "events.log"))
+    if not a.reuse and os.path.isdir(a.dir):
+        for name in os.listdir(a.dir):
+            if name.startswith("seg-") and name.endswith(".log"):
+                os.remove(os.path.join(a.dir, name))
     t = time.time()
     db = Store(a.dir, flush_interval=3600, direct_durable=False, log=lambda m: print(m))
     if not a.reuse:
@@ -135,7 +137,7 @@ def main() -> int:
     else:
         print("reopened %d events in %.0f s" % (len(db.off), time.time() - t))
     st = db.stats()
-    disk = os.path.getsize(os.path.join(a.dir, "events.log"))
+    disk = sum(os.path.getsize(os.path.join(a.dir, n)) for n in os.listdir(a.dir) if n.startswith("seg-"))
     print(json.dumps({"events": st["events"], "dead": st["dead"], "arena_MB": round(st["arena_bytes"] / 1e6),
                       "index_MB": round(st["index_bytes"] / 1e6), "disk_MB": round(disk / 1e6),
                       "rss_MB": round(rss_mb())}))

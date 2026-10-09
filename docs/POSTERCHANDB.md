@@ -61,7 +61,7 @@ code path, a smaller budget.
    N by `created_at` (`argpartition`). Replaceable/addressable events keep a current-version map; a
    superseded version gets a dead bit in a bitmap array.
 3. **Writes — delayed and configurable.** Writes land in RAM and are flushed to the log on a timer.
-   - `posterchandb_flush_interval` — seconds between flushes, **default 60** (Admin → Nostr Relay).
+   - `posterchandb_flush_interval` — seconds between flushes, **default 300** (5 minutes) (Admin → Nostr Relay).
      Everything written since the last flush is lost only if the machine dies WITHOUT a clean stop
      (power cut, kernel panic, OOM kill); copies of other relays' events are simply fetched again.
    - **A clean stop always flushes first.** SIGTERM (systemd stop/restart, `sync.sh`), SIGINT and SIGHUP
@@ -117,7 +117,7 @@ random. Indexes are never written per event: they live in RAM and can always be 
 snapshot only makes startup fast). Reads touch no disk at all while the content fits the read cache.
 
 Things that keep it that way:
-- **Batching is the point of the write delay.** A 60 s flush turns thousands of small writes into a few
+- **Batching is the point of the write delay.** A 5-minute flush turns thousands of small writes into a few
   large aligned ones; the per-write overhead of an SSD (erase-block rewrites) is paid once per batch.
 - **Replaceable churn does not rewrite anything.** A settings document saved 100 times is 100 appended
   records with 99 dead bits — reclaimed in bulk by compaction, not in place.
@@ -137,7 +137,7 @@ restart) by the store when the value changes.
 | setting | default | what it does |
 |---|---|---|
 | `posterchandb_read_cache_mb` | **auto** (the whole store if it fits in 50% of RAM, else 25% of RAM) | RAM for event CONTENT. Indexes are always fully in RAM (~340 MB here). Above the budget, the content of the oldest, least-read, unpinned events is evicted and read back from the log on demand. `0` = everything in RAM. |
-| `posterchandb_flush_interval` | **60 s** | The write delay: seconds between flushes of buffered writes to disk. Anything since the last flush survives a clean stop (always flushed first) but not a power cut. |
+| `posterchandb_flush_interval` | **300 s** | The write delay: seconds between flushes of buffered writes to disk. Anything since the last flush survives a clean stop (always flushed first) but not a power cut. |
 | `posterchandb_direct_durable` | **on** | Flush this server's own users' writes before answering OK (group-committed, ~1–5 ms), whatever the interval. Off = they wait for the timer too. |
 | `posterchandb_snapshot_hours` | **24** | How often the in-RAM indexes are snapshotted (plus always on a clean stop). Rarer = fewer SSD writes, a slightly longer startup after a crash (the log tail is replayed). |
 | `posterchandb_compact_dead_pct` | **40** | Rewrite a log file only when this much of it is deleted/superseded — the knob between disk space and SSD writes. |
@@ -155,7 +155,7 @@ the relay keeps its events in its own files under the server's data directory. W
 or laptop:
 - **RAM sized to the machine** — the read cache is a setting, and `auto` takes 25–50% of RAM; indexes for
   a personal relay (tens of thousands of events, not millions) are a few MB.
-- **Laptop SSDs** — writes are batched (default every 60 s) and sequential; idle means zero writes.
+- **Laptop SSDs** — writes are batched (default every 5 minutes) and sequential; idle means zero writes.
 - **Offline and on battery** — no Postgres to start, no checkpoint I/O while the lid is shut; a clean
   shutdown flushes, and the next boot loads one snapshot.
 - **One less service** in the package and in the installer; Postgres stays only for the server's app
