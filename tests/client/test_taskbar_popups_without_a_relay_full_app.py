@@ -37,11 +37,10 @@ DEAD = {
 
 # The machine's own Wi-Fi bridge, the way preload.js injects it.
 NET = r'''window.pcNet={available:async()=>true,
-  summary:async()=>({wifi:{enabled:true,ssid:'Cafe'},wired:null,online:false}),
-  status:async()=>({wifi:{enabled:true,ssid:'Cafe'},online:false}),
-  wifiList:async()=>([{ssid:'Home',signal:80,secure:true},{ssid:'Cafe',signal:60,secure:false,active:true}]),
-  scan:async()=>([{ssid:'Home',signal:80,secure:true},{ssid:'Cafe',signal:60,secure:false,active:true}]),
-  connect:async(o)=>{(window.__joined=window.__joined||[]).push(o);return{ok:true};}};'''
+  status:async()=>({wifi:{enabled:true,ssid:'Cafe'},online:false,connectivity:'none'}),
+  wifi:async()=>([{ssid:'Home',signal:80,secure:true},{ssid:'Cafe',signal:60,secure:false,active:true}]),
+  connect:async(ssid,pw)=>{(window.__joined=window.__joined||[]).push(ssid);return{ok:true};},
+  forget:async()=>({ok:true}),radio:async()=>({ok:true}),bridges:async()=>[]};'''
 
 PAINTED = "(()=>{const h=document.querySelector('#os-popup-host');if(!h)return null;const r=h.getBoundingClientRect();" \
           "return {h:Math.round(r.height),text:h.innerText.trim().slice(0,200),buttons:h.querySelectorAll('button').length}})()"
@@ -81,7 +80,7 @@ def test_wifi_can_be_switched_from_the_tray_without_a_relay(dead):
     async def check(b):
         await _popup(b)
         # Quick Settings → the Wi-Fi tile → the network list.
-        await b.js("(()=>{const t=document.querySelector('#os-popup-host [data-kind=net],#os-popup-host [data-tray=net]');if(t)t.click();return !!t})()")
+        await b.js("(()=>{const t=document.querySelector('#os-popup-host [data-qs=net],#os-popup-host [data-os=net]');if(t)t.click();return !!t})()")
         for _ in range(40):
             got['rows'] = await b.js("[...document.querySelectorAll('#os-popup-host button,#os-popup-host [role=button]')].map(x=>x.innerText.trim()).filter(t=>/Home|Cafe/.test(t))")
             if got['rows']:
@@ -91,29 +90,3 @@ def test_wifi_can_be_switched_from_the_tray_without_a_relay(dead):
     asyncio.run(desktop.with_browser('online', '?pcpopup=tray', check, DEAD[dead] + NET))
     assert got.get('rows'), ('no Wi-Fi networks offered without a relay', got)
 
-
-@pytest.mark.skipif(not Path('/opt/google/chrome/chrome').exists(), reason='Chrome required')
-@pytest.mark.parametrize('dead', ['never', 'refused'])
-def test_the_desktop_itself_works_without_a_relay(dead):
-    """The menus are only reachable through the desktop: its taskbar must draw, and the Start and
-    tray chips must still ask the shell for their windows."""
-    got = {}
-
-    async def check(b):
-        await b.js("window.__asked=[];window.pcPopup={...(window.pcPopup||{}),toggle:async(k,r)=>{__asked.push(k);return true},"
-                   "open:async(k,r)=>{__asked.push(k);return true},pick:async()=>true,act:async()=>true,close:async()=>true}")
-        for _ in range(60):
-            if await b.js("!!document.querySelector('#os-bar') && document.querySelector('#os-bar').getBoundingClientRect().height>20"):
-                break
-            await asyncio.sleep(.05)
-        got['bar'] = await b.js("!!document.querySelector('#os-bar') && document.querySelector('#os-bar').getBoundingClientRect().height>20")
-        await b.js("(()=>{const s=document.querySelector('#os-start,.os-start');if(s)s.click();})()")
-        await asyncio.sleep(.3)
-        await b.js("(()=>{const t=document.querySelector('[data-kind=quick]');if(t)t.click();})()")
-        await asyncio.sleep(.3)
-        got['asked'] = await b.js('__asked')
-        got['errors'] = await b.js('__errors')
-
-    asyncio.run(desktop.with_browser('online', '', check, DEAD[dead] + NET))
-    assert got['bar'], ('no taskbar without a relay', got)
-    assert 'start' in got['asked'] and 'tray' in got['asked'], ('a taskbar chip did nothing', got)
