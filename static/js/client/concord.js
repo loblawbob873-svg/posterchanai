@@ -934,13 +934,20 @@
    * `@npub1…` it rendered `@@Name` (linkify keeps the character before the entity). */
   function readableMentions(text){ return String(text||'').replace(/(^|\s)@((?:npub1)[023456789acdefghjklmnpqrstuvwxyz]{58})(?![0-9a-z])/gi,'$1nostr:$2'); }
   /* The same, for plain text that is not linkified (a notification body). */
+
+  function mentionNames(text,profOf){
+    return String(text||'').replace(/(^|\s)@(npub1[023456789acdefghjklmnpqrstuvwxyz]{58})(?![0-9a-z])/gi,(whole,pre,np)=>{
+      try{ const pk=window.NostrTools.nip19.decode(np).data,pr=profOf?profOf(pk)||{}:{}; return pre+'@'+(pr.display_name||pr.name||np.slice(0,12)+'…'); }catch(_){ return whole; }
+    });
+  }
   /* A MEMBER WITH NO PROFILE ON THIS RELAY IS LOOKED UP WHERE THE ROOM LIVES ("why is vyram not displaying
    * correctly", 2026-10-08). Names come from `p.profOf`, i.e. what this instance's relay holds -- and an Armada
    * user often writes with a SEPARATE key (Vyram's room key a4c44c8e…, his posting key b3f585f3…) that is in nobody's
    * web of trust here, so its kind-0 was never synced and he showed as a bare hex prefix. Each such key is asked
-   * ONCE per session, batched, from the room's own relays + the big profile relays; what comes back is saved to the
-   * shared Store and the room repainted. A key with no profile anywhere simply stays a prefix -- asked, not nagged. */
-  const MEMBER_PROFILE_RELAYS=['wss://purplepag.es','wss://relay.primal.net','wss://nos.lol'];
+   * ONCE per session, batched, from the ROOM'S OWN relays only (`roomRelays`) -- never an outside profile relay:
+   * the batch IS the room's member list, and an open room's traffic stays on its bundle relays (concord_runtime.mjs
+   * enforces that). Vyram's room-key kind-0 is on three of the Developer's Quarters relays, measured. What comes back
+   * is saved to the shared Store and the room repainted. A key with no profile there simply stays a prefix. */
   const profileAsked=new Set(),profileWant=new Set();let profileTimer=null;
   function wantProfiles(p,pks,room){
     try{
@@ -951,7 +958,8 @@
         profileWant.add(pk);
       }
       if(!profileWant.size||profileTimer)return;
-      const relays=[...new Set([...((room&&room.cord&&room.cord.bundle&&room.cord.bundle.relays)||[]),...MEMBER_PROFILE_RELAYS])].slice(0,8);
+      const bundle=room&&room.cord&&room.cord.bundle;if(!bundle)return;
+      const relays=roomRelays(bundle);if(!relays.length)return;
       profileTimer=setTimeout(async()=>{
         profileTimer=null;
         const batch=[...profileWant].slice(0,60);batch.forEach(pk=>{profileWant.delete(pk);profileAsked.add(pk);});
@@ -964,11 +972,6 @@
         if(profileWant.size)wantProfiles(p,[],room);
       },250);
     }catch(_){}
-  }
-  function mentionNames(text,profOf){
-    return String(text||'').replace(/(^|\s)@(npub1[023456789acdefghjklmnpqrstuvwxyz]{58})(?![0-9a-z])/gi,(whole,pre,np)=>{
-      try{ const pk=window.NostrTools.nip19.decode(np).data,pr=profOf?profOf(pk)||{}:{}; return pre+'@'+(pr.display_name||pr.name||np.slice(0,12)+'…'); }catch(_){ return whole; }
-    });
   }
   function channelReadKey(room,name){ return 'pc.concord.read.'+(room&&room.naddr||'')+':'+(name||'general'); }
   function seenAt(room,name){
@@ -2985,6 +2988,23 @@
            Vector room before validation or hydration had a chance to run. */
         const compatible=e.current?e:{...e,current:e.seed};
         const old=entries.get(e.community_id);if(!old||cordU64(e.added_at||0)>cordU64(old.added_at||0))entries.set(e.community_id,compatible);
+      }
+      /* A JOIN NEWER THAN THIS DEVICE'S LEAVE ANSWERS THE LEAVE -- no tombstone needed.
+       *
+       * Reported as "i updated apk but not in developers room yet": the room was in the vault,
+       * its invite resolved, and the phone still hid it, because this ledger said "left" and the
+       * only heal (below) waits for a tombstone to be VISIBLE. A rejoin made on another device
+       * removes the tombstone from the fragment it writes, so on that path the heal can never
+       * fire and the room stays hidden on this device for ever. The timestamps already say which
+       * decision came last: a leave always outranks the join it retired (leaveArmadaMembership
+       * stamps max(now, added_at)), so a stale relay replaying that old join still loses, while a
+       * join made AFTER this device's leave wins. A row with no removedAt is not judged. */
+      for(const e of entries.values()){
+        if(cordU64(e.added_at||0)<=cordU64(tombs.get(e.community_id)||0))continue;
+        const url=inviteRefUrl(e.invite_ref),ref={communityId:e.community_id,url,naddr:url?String((inviteParts(url)||{}).naddr||''):''},
+              rows=leftCommunities(viewer.pubkey).filter(row=>leftMatches(row,ref));
+        if(rows.length&&rows.every(row=>Number(row.removedAt)>0&&cordU64(e.added_at||0)>BigInt(Math.floor(Number(row.removedAt)))))
+          forgetLeftCommunity(viewer.pubkey,ref);
       }
       const live=[...entries.values()].filter(e=>cordU64(e.added_at||0)>cordU64(tombs.get(e.community_id)||0)&&
         !wasLocallyLeft(viewer.pubkey,{communityId:e.community_id,url:inviteRefUrl(e.invite_ref)}));

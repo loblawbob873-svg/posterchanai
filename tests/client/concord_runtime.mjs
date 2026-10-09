@@ -416,6 +416,26 @@ membershipBatch=[{...oldJoin,id:'intentional-rejoin',created_at:300,content:JSON
 await PCConcord.syncArmadaMemberships(membershipPC,membershipPC.viewer(),true);
 if(!JSON.parse(data.get('pc.concord.invites')).some(room=>room.communityId===soapboxId))
   throw new Error('intentional Soapbox rejoin stayed suppressed by the leave ledger');
+// Rejoined on ANOTHER device: this device's ledger still says "left" and nothing cleared it here.
+// The vault fragment carrying the join has no tombstone beside it (a CORD-02 writer drops the
+// retired entry's tombstone, and a relay may only hold the newest fragment), so the heal that
+// waits for a visible tombstone never fires -- the room the person is in stayed hidden on this
+// device for ever. A ledger row OLDER than the join is answered by the join itself.
+PCConcord.rememberLeftCommunity(membershipPC.viewer().pubkey,soapboxRoom,400);
+data.set('pc.concord.invites',JSON.stringify([]));
+membershipBatch=[{...oldJoin,id:'rejoin-elsewhere',created_at:500,content:JSON.stringify({entries:[{community_id:soapboxId,added_at:500,current:JOIN_BUNDLE,seed:JOIN_BUNDLE,invite_ref:soapboxUrl}],tombstones:[]})}];
+await PCConcord.syncArmadaMemberships(membershipPC,membershipPC.viewer(),true);
+if(!JSON.parse(data.get('pc.concord.invites')).some(room=>room.communityId===soapboxId))
+  throw new Error('a rejoin made on another device stayed hidden behind this device\'s older leave');
+if(PCConcord.wasLocallyLeft&&PCConcord.wasLocallyLeft(membershipPC.viewer().pubkey,soapboxRoom))
+  throw new Error('the stale leave record outlived the rejoin that answered it');
+// ...but a leave made AFTER the join it is compared with still holds (the stale-relay case, without a tombstone).
+PCConcord.rememberLeftCommunity(membershipPC.viewer().pubkey,soapboxRoom,600);
+data.set('pc.concord.invites',JSON.stringify([]));
+await PCConcord.syncArmadaMemberships(membershipPC,membershipPC.viewer(),true);
+if(JSON.parse(data.get('pc.concord.invites')).some(room=>room.communityId===soapboxId))
+  throw new Error('an old join resurrected a community this device left after it');
+PCConcord.forgetLeftCommunity(membershipPC.viewer().pubkey,soapboxRoom);
 const mentionRoom={naddr:'mention-room',channels:[{name:'general'},{name:'support',id:'support-id'}]};
 data.set('pc.concord.test.mention-room',JSON.stringify([{id:'m1',pubkey:'b'.repeat(64),text:'general'}]));
 data.set('pc.concord.test.mention-room.support-id',JSON.stringify([{id:'m2',pubkey:'c'.repeat(64),text:'support'}]));
