@@ -104,3 +104,44 @@ def test_on_a_phone_the_buttons_say_what_they_do_and_saving_is_seen():
         assert on_top["mine"], ("the save confirmation is hidden behind the image", on_top)
         assert on_top["clearOfBar"], ("the save confirmation covers the viewer's buttons", on_top, await b.js("(()=>{const r=document.querySelector('.lightbox .lb-bar').getBoundingClientRect();const t=document.querySelector('#toast-root').getBoundingClientRect();return {bar:[r.top,r.bottom],toast:[t.top,t.bottom],ih:innerHeight}})()"))
     asyncio.run(desktop.with_browser("online", "", check, ""))
+
+
+OVERLAP = r"""(()=>{const c=document.querySelector('.lightbox .lb-count');if(!c)return {missing:true};
+  const r=c.getBoundingClientRect(),hit=[];
+  for(const b of document.querySelectorAll('.lightbox .lb-btn,.lightbox .lb-nav')){
+    if(b.style.display==='none'||getComputedStyle(b).display==='none')continue;
+    const q=b.getBoundingClientRect();
+    if(q.width&&r.left<q.right&&q.left<r.right&&r.top<q.bottom&&q.top<r.bottom)hit.push(b.title||b.getAttribute('aria-label'));}
+  const tops=new Set([...document.querySelectorAll('.lightbox .lb-btn')].filter(b=>getComputedStyle(b).display!=='none')
+    .map(b=>Math.round(b.getBoundingClientRect().top)));
+  return {text:c.textContent,hit,onscreen:r.top>=0&&r.left>=0&&r.right<=innerWidth&&r.bottom<=innerHeight,rows:tops.size};})()"""
+
+
+@pytest.mark.skipif(not Path("/opt/google/chrome/chrome").exists(), reason="Chrome required")
+@pytest.mark.parametrize("width,native", [(360, True), (390, True), (390, False), (1280, False)])
+def test_the_image_counter_never_covers_a_button(width, native):
+    """Reported: "multiple images in a social post show 1/2 over the button save". The counter was pinned 74px
+    above the bottom — sized for the round 46px buttons — and on a phone the buttons carry a label (and wrap on a
+    narrow screen), so the bar grew under it and "1 / 2" sat on Save."""
+    got = {}
+
+    async def check(b):
+        await b.call("Emulation.setDeviceMetricsOverride", dict(width=width, height=780, deviceScaleFactor=1,
+                                                               mobile=width < 600))
+        if width < 600:
+            await b.call("Emulation.setTouchEmulationEnabled", dict(enabled=True, maxTouchPoints=5))
+        await desktop.login(b)
+        await b.js("document.getElementById('osfr')?.remove();document.documentElement.classList.remove('osfr-on')")
+        if native:
+            await b.js(NATIVE + "(true)")
+        await b.js("__PC.openLightbox('/static/icon-512.png','image',{items:[{src:'/static/icon-512.png',kind:'image'},"
+                   "{src:'/static/icon-192.png',kind:'image'}],i:0})")
+        await b.until("!!document.querySelector('.lightbox .lb-count')")
+        await b.js("document.querySelector('.lightbox').classList.add('lb-hot')")   # the bar showing, as after a tap
+        await asyncio.sleep(.4)
+        got.update(await b.js(OVERLAP))
+    asyncio.run(desktop.with_browser("online", "", check, ""))
+    assert got.get("text") == "1 / 2", got
+    assert not got["hit"], ("the counter covers %r at %dpx" % (got["hit"], width))
+    assert got["onscreen"], got
+    assert got["rows"] == 1, ("the toolbar wrapped into %d rows at %dpx with room for one" % (got["rows"], width))
