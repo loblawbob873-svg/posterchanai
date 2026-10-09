@@ -78,8 +78,11 @@ const Relay = {
   async query(f){
     if (!relayAnswers) throw new Error('no relay answered');
     const want = (f && f[0] && f[0]['#d'] && f[0]['#d'][0]) || null;
-    if (!want) return docs.slice();
-    return docs.filter(d => (d.tags || []).some(t => t[0] === 'd' && t[1] === want));
+    // `complete`: every relay answered — what the real Relay.query reports, and what makes an empty
+    // answer mean "no such document" rather than "nobody replied".
+    const done = r => Object.defineProperty(r, 'complete', { value: true, enumerable: false });
+    if (!want) return done(docs.slice());
+    return done(docs.filter(d => (d.tags || []).some(t => t[0] === 'd' && t[1] === want)));
   },
 };
 const publish = async (kind, content, tags) => { published.push({kind, content, tags}); return {ok:true}; };

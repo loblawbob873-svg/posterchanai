@@ -86,11 +86,15 @@ window.PCFilesIndexFactory = function(dep){
       // NOT from inside pull() — pull() calls this to unwrap the key it just fetched, and
       // `_pullDone` is only set at its END, so a pointer with no mk would recurse until the stack
       // gave out. `_pulling` is the re-entrancy guard.
-      if(!this._pullDone && !this._pulling){
-        try{ await this.pull(); }catch(_){ }
+      /* "THE SERVER ANSWERED" IS `_pullOk`, NEVER `_pullDone`. `_pullDone` is set in pull()'s
+       * finally, so a pull that FAILED — no network — read as an answer and the device minted a key
+       * that decrypts none of the person's files (found by the 2026-10-09 offline audit). Mint only
+       * when a pull proved the server has no index, and never while it holds one we could not read. */
+      if(!this._pulling){
+        if(!this._pullOk){ try{ await this.pull(); }catch(_){ } }
         if(this.mk) return this.mk;
         if(this._mkWrapped){ this.mk=await _unwrapMK(this._mkWrapped); return this.mk; }
-        if(!this._pullDone) throw new Error('couldn’t reach your drive to load its key — nothing was changed');
+        if(!this._pullOk || this._pullBlocked) throw new Error('couldn’t reach your drive to load its key — nothing was changed');
       }
       this.mk=crypto.getRandomValues(new Uint8Array(32));
       this._mkWrapped=await S.signer.nip44enc(S.ME.pubkey, JSON.stringify({k:_u8b64(this.mk)})); this.saveLocal();
