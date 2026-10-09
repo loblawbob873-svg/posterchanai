@@ -36,6 +36,9 @@ import zlib
 
 import numpy as np
 
+from app.services.nostr.quotes import quote_pubkeys, quoted_ids_without_author, remember_quote_authors
+from app.services.nostr_relay import store as relay_rules   # the relay's own rule constants: one source
+
 from . import tsparser
 from .codec import Codec
 
@@ -69,14 +72,20 @@ def _dtag(ev: dict) -> str:
     return ""
 
 
-def _expiration(ev: dict) -> int:
+def _expiration(ev: dict):
+    """The relay's parse (_insert_one): the FIRST expiration tag only, int(); unreadable = no expiration."""
     for t in ev.get("tags") or []:
         if len(t) >= 2 and t[0] == "expiration":
             try:
-                return max(0, int(t[1]))
-            except ValueError:
-                return 0
-    return 0
+                return int(t[1])
+            except (ValueError, TypeError):
+                return None
+    return None
+
+
+def _first_d(tags) -> str:
+    """The relay's `d` for an addressable event: the first ["d", v] with a value (a bare ["d"] is skipped)."""
+    return next((t[1] for t in tags if len(t) >= 2 and t[0] == "d"), "")
 
 
 def search_words(text: str):
@@ -238,7 +247,6 @@ class Store:
         self.idx = _Postings()       # author+kind, author, kind, single-letter tags
         self.words = _Postings()     # search
         self.dprefix = _Prefix()     # `#d~` prefix reads
-        self.current: dict[int, int] = {}   # replaceable/addressable address hash -> seq of current version
         self._flushed = 0        # bytes of the active segment's arena that are on disk
         self._pending_n = 0
         self._last_flush = time.monotonic()
@@ -522,25 +530,10 @@ class Store:
         return None
 
     # ---------------------------------------------------------------- write
-    def _address(self, ev: dict):
-        k = ev["kind"]
-        if is_replaceable(k):
-            return _h("r:%s:%d" % (ev["pubkey"], k))
-        if is_addressable(k):
-            return _h("a:%s:%d:%s" % (ev["pubkey"], k, _dtag(ev)))
-        return None
-
-    def _newer(self, a: dict, b_seq: int) -> bool:
-        """NIP-01: the newer created_at wins; on a tie the LOWER id wins."""
-        bc = self.created[b_seq]
-        if a["created_at"] != bc:
-            return a["created_at"] > bc
-        return a["id"] < self._id_hex(b_seq)
-
     def _kill(self, seq: int, *, persist: bool) -> None:
-        """Mark an event dead. `persist` writes an OP_DEAD marker — only for deaths that cannot be
-        re-derived on replay (auto-clean); superseded versions, NIP-09 deletions and expiry are
-        recomputed from the events themselves every time the store opens."""
+        """Mark an event dead. `persist` writes an OP_DEAD marker. Every decision that depends on ARRIVAL
+        (a superseded version, a NIP-09 deletion, auto-clean) is persisted: compaction reorders the log, so
+        re-deriving them on replay could reach a different answer than the relay did."""
         if self.dead[seq]:
             return
         self.dead[seq] = 1
@@ -549,29 +542,88 @@ class Store:
         if persist:
             self._frame(bytes([OP_DEAD]) + bytes.fromhex(self._id_hex(seq)))
 
+    def _live(self, arr):
+        return [int(x) for x in arr if not self.dead[int(x)]]
+
+    def _same_coordinate(self, ev: dict, kind: int) -> list:
+        """The rows the relay would compare a replaceable/addressable event against (live versions only)."""
+        pk = ev["pubkey"]
+        rows = self.idx.get(_h("ak:%s:%d" % (pk, kind)))
+        if is_replaceable(kind):
+            return self._live(rows)
+        d = _first_d(ev.get("tags") or [])
+        d = d if isinstance(d, str) else str(d)
+        if d:     # a stored version matches if ANY of its d tags is this value (the relay joins event_tags)
+            return self._live(np.intersect1d(rows, self.idx.get(_h("t:d:%s" % d))))
+        # empty d = no d tag at all OR an explicit ["d", ""]
+        return self._live(np.union1d(np.intersect1d(rows, self.idx.get(_h("nod:%s:%d" % (pk, kind)))),
+                                     np.intersect1d(rows, self.idx.get(_h("t:d:")))))
+
     def put(self, ev: dict, *, direct: bool = False, origin: str | None = None) -> str:
-        """Store a (signature-verified) event. Returns 'stored', 'duplicate', 'superseded' (an older
-        version of a replaceable the store already has newer), 'deleted' (its author's kind-5 already
-        names it) or 'ephemeral' (not stored)."""
-        if is_ephemeral(ev["kind"]):
-            return "ephemeral"
+        """Store a (signature-verified) event, by EXACTLY the rules of the relay's _insert_one, which
+        tests/test_posterchandb_vs_relay.py holds it to. Returns 'stored', 'duplicate', or why it was not:
+        'retired', 'future', 'fedi-only', 'expired', 'deleted', 'superseded'."""
+        origin_name = origin or ("direct" if direct else "wot")
+        kind, created = int(ev["kind"]), int(ev["created_at"])
+        tags = ev.get("tags") or []
+        now = int(time.time())
+        if kind in relay_rules._RETIRED_KINDS:
+            return "retired"
+        if created > now + 900:
+            return "future"
+        if ["client-mode", "fedi-only"] in tags:
+            return "fedi-only"
+        exp = None if kind in relay_rules._NEVER_EXPIRE_KINDS else _expiration(ev)
+        if exp is not None and exp <= now:
+            return "expired"
         with self._lock:
             if self._seq_of(ev["id"]) is not None:
                 return "duplicate"
             if self._deleted_by_author(ev):
                 return "deleted"
-            addr = self._address(ev)
-            if addr is not None:
-                cur = self.current.get(addr)
-                if cur is not None and not self.dead[cur] and not self._newer(ev, cur):
-                    return "superseded"
-            o = ORIGINS.get(origin or ("direct" if direct else "wot"), 4)
+            losers = []
+            if is_replaceable(kind) or is_addressable(kind):
+                strict = kind == 10133 if is_replaceable(kind) else kind in relay_rules._STRICT_TIE_KINDS
+                eid = ev["id"]
+                for s in self._same_coordinate(ev, kind):
+                    rc = self.created[s]
+                    tie_direct = (not strict and rc == created and origin_name == "direct"
+                                  and self.origin[s] == ORIGINS["direct"])
+                    if rc < created or (rc == created and eid < self._id_hex(s)) or tie_direct:
+                        losers.append(s)
+                    else:
+                        return "superseded"
+            for s in losers:
+                self._kill(s, persist=True)
+            o = ORIGINS.get(origin_name, 4)
             rec = self.codec.encode(ev)
             start = self._frame(bytes([OP_PUT, o]) + rec)
             self._apply_put(ev, rec[:32], len(rec), start + 2, o, self._active)
-            if (direct or o == 0) and self.direct_durable:
+            self._index_quotes(ev)
+            if kind == 5:
+                self._apply_deletion(ev)
+            if o == 0 and self.direct_durable:
                 self.flush()
             return "stored"
+
+    def _index_quotes(self, ev: dict) -> None:
+        """The relay's derived `_quote_author` index, both directions: this quote's authors now, and — when
+        a kind-1 arrives — the quotes that arrived BEFORE it and named no author."""
+        eid = ev["id"]
+        resolved = {}
+        for qid in quoted_ids_without_author(ev):
+            s = self._seq_of(qid)
+            if s is not None and not self.dead[s]:
+                resolved[qid] = self.pubkey_of(s)
+        if resolved:
+            remember_quote_authors(eid, resolved.values())
+        for recipient in quote_pubkeys(ev, resolved):
+            self.add_derived_tag(eid, "_quote_author", recipient)
+        if int(ev["kind"]) == 1:
+            for s in self._live(np.intersect1d(self.idx.get(_h("t:q:%s" % eid)), self.idx.get(_h("k:1")))):
+                q = self.get(s)
+                if eid in quoted_ids_without_author({"kind": 1, "tags": q["tags"]}):
+                    self.add_derived_tag(q["id"], "_quote_author", ev["pubkey"])
 
     def add_derived_tag(self, event_id: str, tag: str, value: str) -> bool:
         """An index-only tag the relay derives (today: `_quote_author`). Logged, so it survives a restart."""
@@ -596,7 +648,8 @@ class Store:
         self.seg_bytes[sid] = self.seg_bytes.get(sid, 0) + n
         self.created.append(ev["created_at"])
         self.kind.append(ev["kind"])
-        self.expires.append(_expiration(ev))
+        exp = None if int(ev["kind"]) in relay_rules._NEVER_EXPIRE_KINDS else _expiration(ev)
+        self.expires.append(exp if exp and exp > 0 else 0)
         self.origin.append(origin)
         pk = ev["pubkey"]
         aid = self._author_ix.get(pk)
@@ -610,6 +663,7 @@ class Store:
         self.idx.add(_h("ak:%s:%d" % (pk, k)), seq)
         self.idx.add(_h("au:%s" % pk), seq)
         self.idx.add(_h("k:%d" % k), seq)
+        has_d = False
         for t in ev.get("tags") or []:
             # exactly the relay's rule: single-letter STRING names, value indexed as str(t[1])
             if len(t) >= 2 and isinstance(t[0], str) and len(t[0]) == 1:
@@ -617,19 +671,11 @@ class Store:
                 self.idx.add(_h("t:%s:%s" % (t[0], v)), seq)
                 if t[0] == "d":
                     self.dprefix.add(v, seq)
+                    has_d = True
+        if is_addressable(k) and not has_d:
+            self.idx.add(_h("nod:%s:%d" % (pk, k)), seq)
         for w in search_words(ev.get("content", "")):
             self.words.add(_h(w), seq)
-        addr = self._address(ev)
-        if addr is not None:
-            cur = self.current.get(addr)
-            if cur is None or self.dead[cur] or self._newer(ev, cur):
-                if cur is not None:
-                    self._kill(cur, persist=False)
-                self.current[addr] = seq
-            else:
-                self._kill(seq, persist=False)
-        if k == 5 and not replay:       # on replay its deaths come back as the OP_DEAD markers it wrote
-            self._apply_deletion(ev)
 
     def _apply_deletion(self, ev: dict) -> None:
         """NIP-09, exactly as the relay applies it (nostr_relay/store.py `if kind == 5`): `e` removes the

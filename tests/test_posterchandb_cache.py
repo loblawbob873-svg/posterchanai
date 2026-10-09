@@ -5,13 +5,14 @@ checked on what a reader gets (identical query answers, warm or cold, before and
 is resident afterwards.
 """
 import os
+import time
 
 
 from app.services.posterchandb.cache import MB, CacheGovernor, meminfo, psi_some_avg10
 from app.services.posterchandb.store import Store
 from tests.test_posterchandb import hx, mk
 
-NOW = 1_800_000_000
+NOW = int(time.time()) - 120          # real time: the relay refuses events from the future
 GB = 1024 * MB
 
 

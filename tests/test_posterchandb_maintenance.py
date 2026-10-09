@@ -5,6 +5,7 @@ files on disk, a reopened store), not on internal flags.
 """
 import builtins
 import os
+import time
 from collections import namedtuple
 
 import pytest
@@ -14,7 +15,7 @@ from app.services.posterchandb import maintenance as M
 from app.services.posterchandb.store import COMPACT_CHUNK, Store
 from tests.test_posterchandb import hx, mk
 
-NOW = 1_800_000_000
+NOW = int(time.time()) - 120          # real time: the relay refuses events from the future
 DAY = 86400
 OLD = NOW - 400 * DAY
 DU = namedtuple("DU", "total used free")
@@ -47,25 +48,31 @@ def db(tmp_path):
 
 # ---------------------------------------------------------------- the relay's rules, one by one
 def test_expiry_deletes_except_the_kinds_that_must_never_expire(db):
-    gone = mk(kind=1, created_at=NOW - 10, tags=[["expiration", str(NOW - 1)]])
-    later = mk(kind=1, created_at=NOW - 10, tags=[["expiration", str(NOW + 999)]])
+    # stored while valid, then the clock passes their expiration: maintenance must KILL them (reclaimable)
+    soon = NOW + 300
+    gone = mk(kind=1, created_at=NOW - 10, tags=[["expiration", str(soon)]])
+    later = mk(kind=1, created_at=NOW - 10, tags=[["expiration", str(soon + 999)]])
     note = mk(kind=30078, created_at=NOW - 10, tags=[["d", "pcai:note:1"], ["expiration", str(NOW - 1)]])
     repo = mk(kind=30617, created_at=NOW - 10, tags=[["d", "r"], ["expiration", str(NOW - 1)]])
     for e in (gone, later, note, repo):
-        db.put(e, direct=True)
-    maint(db).run_pass()
-    # query() already hides an expired event; the point is that maintenance KILLED it (reclaimable) and
-    # left the never-expire kinds alone
+        assert db.put(e, direct=True) == "stored"       # never-expire kinds drop the tag, so even NOW-1 stores
+    m = maint(db)
+    m.now = lambda: soon + 1
+    m.run_pass()
     assert db.dead[db.seq_of(gone["id"])] == 1
     assert db.dead[db.seq_of(later["id"])] == 0
     assert db.dead[db.seq_of(note["id"])] == 0
     assert db.dead[db.seq_of(repo["id"])] == 0
 
 
-def test_retired_kinds_go_whoever_wrote_them(db):
-    r = mk(kind=relay._RETIRED_KINDS[0], created_at=NOW - 5)
+def test_retired_kinds_go_whoever_wrote_them(db, monkeypatch):
+    # ingest refuses them now (as the relay does); this is the cleaner for rows stored before that rule
+    monkeypatch.setattr(relay, "_RETIRED_KINDS", ())
+    r = mk(kind=40, created_at=NOW - 5)
     keep = mk(kind=1, created_at=NOW - 5)
     db.put(r, direct=True); db.put(keep, direct=True)
+    monkeypatch.undo()
+    assert db.put(mk(kind=40, created_at=NOW - 4), direct=True) == "retired"
     maint(db).run_pass()
     assert ids(db) == {keep["id"]}
 

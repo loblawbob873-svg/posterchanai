@@ -8,6 +8,7 @@ import json
 import os
 import random
 import string
+import time
 
 import pytest
 
@@ -27,7 +28,7 @@ def ev_id(ev):
 
 
 def mk(kind=1, content="hello world", tags=None, pubkey=None, created_at=None):
-    ev = {"pubkey": pubkey or hx(), "created_at": created_at if created_at is not None else R.randint(1_600_000_000, 1_800_000_000),
+    ev = {"pubkey": pubkey or hx(), "created_at": created_at if created_at is not None else R.randint(1_600_000_000, int(time.time()) - 60),
           "kind": kind, "tags": tags if tags is not None else [], "content": content, "sig": hx(128)}
     ev["id"] = ev_id(ev)
     return ev
@@ -174,11 +175,15 @@ def test_deletion_only_by_the_author(store):
     assert store.query({"authors": [pk], "kinds": [30023]}) == []
 
 
-def test_expired_and_ephemeral_are_never_returned(store):
-    e = mk(tags=[["expiration", "1000"]])
-    store.put(e)
-    assert store.query({"ids": [e["id"]]}, now=999) and store.query({"ids": [e["id"]]}, now=1001) == []
-    assert store.put(mk(kind=20001)) == "ephemeral"
+def test_expired_events_are_refused_on_arrival_and_hidden_once_they_expire(store):
+    now = int(time.time())
+    assert store.put(mk(tags=[["expiration", str(now - 1)]])) == "expired"      # the relay never stores these
+    e = mk(tags=[["expiration", str(now + 60)]])
+    assert store.put(e) == "stored"
+    assert ids(store.query({"ids": [e["id"]]}, now=now)) == [e["id"]]
+    assert store.query({"ids": [e["id"]]}, now=now + 61) == []
+    # the relay's STORE keeps ephemeral kinds (its server decides not to send them here) — so does ours
+    assert store.put(mk(kind=20001)) == "stored"
 
 
 def test_search_matches_every_word_ignores_case_and_follows_postgres_tokens(store):
