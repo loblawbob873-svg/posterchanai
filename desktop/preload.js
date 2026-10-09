@@ -260,12 +260,14 @@ if (isOurPage) {
 
   /* PosterChan Office on this machine (desktop/office-local.js) — same session contract as the
    * instance's /client/office/session, so files.js runs one path for both. */
+  /* Asked ONCE, asynchronously, and read through a function. A synchronous ask at preload time blocked
+   * the page on the main process — and in a window whose main side had no handler, the page never
+   * finished loading at all (caught by the real-Electron reload test). The answer lands long before
+   * anybody opens a document; until then it says "no" and the instance's Office is offered as before. */
   let officeInstalled = false;
-  try { officeInstalled = !!ipcRenderer.sendSync('pc:office:installed'); } catch (_) {}
+  ipcRenderer.invoke('pc:office:available').then(v => { officeInstalled = !!v; }, () => {});
   contextBridge.exposeInMainWorld('pcOfficeLocal', {
-    // Read once at preload: the "Office document" choice is drawn synchronously, and offline there
-    // is no instance config to say Office exists.
-    installed: officeInstalled,
+    installed: () => officeInstalled,
     available: () => ipcRenderer.invoke('pc:office:available'),
     open: (bytes, name, mode) => ipcRenderer.invoke('pc:office:open', _ab(bytes), String(name || ''), String(mode || 'edit')),
     contents: (id, token) => ipcRenderer.invoke('pc:office:contents', String(id), String(token)),

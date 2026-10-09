@@ -30,7 +30,7 @@ window.pcHost={
  writeBytes:async(path,bytes,mtime)=>{__writes.push([path,new TextDecoder().decode(bytes)]);return {ok:true,mtime:200};},
  open:async()=>{throw Error('must open Office inside the app');},
 };
-window.pcOfficeLocal={installed:true,available:async()=>true,
+window.pcOfficeLocal={installed:()=>true,available:async()=>true,
  open:async(bytes,name,mode)=>{__opened.push([new TextDecoder().decode(new Uint8Array(bytes)),name,mode]);
    return {ok:true,id:'local1',token:'tok',expires:9999999999,editor_url:location.origin+'/__local-editor'};},
  contents:async(id,token)=>({ok:true,bytes:new TextEncoder().encode('edited on this machine')}),

@@ -45,9 +45,14 @@ def test_the_emoji_picker_opens_by_its_button(size):
             if got['where']:
                 break
             await asyncio.sleep(.1)
-        # Pick the first emoji the picker offers; it must reach the message box.
-        await b.js("""(()=>{const p=[...document.querySelectorAll('.emoji-pop')].find(x=>x.getBoundingClientRect().height>0);
-            const e=p&&p.querySelector('.ep-grid button');if(e)e.click();})()""")
+        # Pick the first emoji the picker offers, with REAL pointer input (the cell takes a pick on
+        # mousedown, so a synthetic .click() would prove nothing); it must reach the message box.
+        cell = await b.js("""(()=>{const p=[...document.querySelectorAll('.emoji-pop')].find(x=>x.getBoundingClientRect().height>0);
+            const e=p&&p.querySelector('.ep-grid [data-e]');if(!e)return null;const r=e.getBoundingClientRect();
+            return [r.left+r.width/2,r.top+r.height/2];})()""")
+        if cell:
+            for kind in ('mousePressed', 'mouseReleased'):
+                await b.call('Input.dispatchMouseEvent', dict(type=kind, x=cell[0], y=cell[1], button='left', clickCount=1))
         await asyncio.sleep(.3)
         got['typed'] = await b.js("(document.querySelector('.tg-composer textarea.tg-text')||{}).value||''")
 
@@ -57,7 +62,7 @@ def test_the_emoji_picker_opens_by_its_button(size):
     (bl, bt, br, bb), (pl, pt, pr, pb) = w['btn'], w['pop']
     assert not w['sheet'], ("the picker is a centred sheet, not anchored to its button", w)
     assert pl < br and pr > bl, ("the picker is not in the button's column", w)
-    near = abs(pb - bt) <= 16 or abs(pt - bb) <= 16
+    near = abs(pb - bt) <= 24 or abs(pt - bb) <= 24   # 6px margin + the popover's display scaling
     assert near, ("the picker is not directly above or below its button", w)
     assert pl >= 0 and pr <= w['vw'] + 1 and pt >= 0 and pb <= w['vh'] + 1, ("the picker is off screen", w)
     assert got['typed'].strip(), "picking an emoji did not put it in the message box"

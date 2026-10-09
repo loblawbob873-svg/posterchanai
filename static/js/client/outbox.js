@@ -32,8 +32,11 @@
   // Non-replaceable, id-addressed kinds only. Adding to this set is a correctness decision, not a
   // preference: the kind must be one where re-sending the identical event is a no-op at the relay.
   //   1    text note          6    repost          7    reaction
-  //   1111 NIP-22 comment     9802 highlight
-  const QUEUEABLE = new Set([1, 6, 7, 1111, 9802]);
+  //   1111 NIP-22 comment     9802 highlight       1059 NIP-17 gift wrap (a DM)
+  // A gift wrap is signed once, by a throwaway key, at compose time, and addressed by its own id — re-sending
+  // it is a no-op, exactly like a note. It joined when a DM written offline was shown in the thread and then
+  // simply never sent.
+  const QUEUEABLE = new Set([1, 6, 7, 1059, 1111, 9802]);
 
   function _load(){
     try{
@@ -92,11 +95,14 @@
 
     // Queue a SIGNED event. Returns false (and queues nothing) for any kind that is not provably safe to
     // replay, so a caller that forgets to check canQueue still cannot create the dangerous case.
-    add(ev){
+    /* `owner` is the ACCOUNT that wrote it, which is the event's own pubkey for everything except a
+     * gift wrap: a wrap is signed by a throwaway key, so read by pubkey it belonged to nobody and the
+     * flush skipped it for ever — a DM written offline sat "queued" and was never sent. */
+    add(ev, owner){
       if (!ev || !ev.id || !ev.sig || !this.canQueue(ev.kind)) return false;
       if (this.has(ev.id)) return true;                       // already waiting — adding twice is a no-op
       if (items.length >= MAX) return false;                  // refuse rather than silently evict a post
-      items.push({ ev, at: Math.floor(Date.now()/1000), tries: 0 });
+      items.push({ ev, owner: String(owner || ev.pubkey), at: Math.floor(Date.now()/1000), tries: 0 });
       _save(items); _changed();
       /* A publish can time out while the pool still reports `ok` (the phone resumed with a zombie
        * socket). There will be no reconnect transition to trigger app.js's drain, so schedule one
@@ -142,7 +148,7 @@
           if(onlyId&&it.ev.id!==onlyId)continue;
           // A native sibling can hold another account's cached queue. Its session/policy
           // route must never be used to send that account's event.
-          if(window.__PC && (!owner || it.ev.pubkey!==owner))continue;
+          if(window.__PC && (!owner || (it.owner || it.ev.pubkey)!==owner))continue;
           if(window.__PC && ((__PC.me()||{}).pubkey!==owner))break;
           if (!window.Relay || Relay.status !== 'ok') break;   // went away mid-drain → stop, keep the rest
           let r = null;

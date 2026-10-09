@@ -450,7 +450,7 @@ window.PCMailFactory = function(dep){
         const P=await _withModule('preview.js','PCPreview');
         if(!P||!P.open({name:a.dataset.name||'attachment',mime:a.dataset.mime||blob.type,blob}))
           throw new Error('Preview cannot open this attachment');
-      }else if((S.CFG.office_enabled || (window.pcOfficeLocal && pcOfficeLocal.installed)) && _officeable(a.dataset.name||'',a.dataset.mime||blob.type)){
+      }else if((S.CFG.office_enabled || (window.pcOfficeLocal && pcOfficeLocal.installed && pcOfficeLocal.installed())) && _officeable(a.dataset.name||'',a.dataset.mime||blob.type)){
         const name=a.dataset.name||'document';
         const file=fileFromBytes(await blob.arrayBuffer(),name,a.dataset.mime||blob.type);
         await _officeSession(file, updated=>saveBlobAs(updated,name));

@@ -1002,8 +1002,18 @@ window.PCDmsFactory = function(dep){
       const echoed = await ingestWrap(toSelf, false);   // show our own message right away
       if(!echoed) _dmEcho(pk, text, toSelf && toSelf.id);
       _keepDmOpen(pk);
-      const r1=await Relay.publish(toPeer); await Relay.publish(toSelf);
+      const r1=await Relay.publish(toPeer), r2=await Relay.publish(toSelf);
       _keepDmOpen(pk);
+      /* WRITTEN OFFLINE, SENT WHEN BACK. The message was already in the thread (the echo above), so a
+       * publish that could not reach a relay left something that LOOKED sent and never would be. Both
+       * wraps go to the Outbox (signed already; a resend is a no-op) — only when the relays could not be
+       * reached: a relay that ANSWERED no has refused it, and retrying a refusal sends nothing. */
+      const unreached = r => !!r && r.ok === false && !r.noQueue && (r.msg === 'offline' || navigator.onLine === false);
+      if(unreached(r1) && window.Outbox && Outbox.canQueue(1059)){
+        Outbox.add(toPeer, S.ME.pubkey); if(unreached(r2)) Outbox.add(toSelf, S.ME.pubkey);
+        toast('you’re offline — the message will be sent when you’re back online');
+        return;
+      }
       // ingestWrap already schedules the visible thread's in-place refresh. Rebuilding all of
       // Messages here replaced the mobile overlay/composer and could drop the sender back on the
       // conversation list immediately after Send.

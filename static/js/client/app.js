@@ -10844,7 +10844,7 @@
       out.push({ id:'preview', icon:'👁', label:'Preview',
                  hint:'Look at it here — pictures, video and PDFs',
                  run:() => openPreviewFile(d, opts) });
-    if((!!CFG.office_enabled || !!(window.pcOfficeLocal && pcOfficeLocal.installed)) && _officeable(name, mime))
+    if((!!CFG.office_enabled || !!(window.pcOfficeLocal && pcOfficeLocal.installed && pcOfficeLocal.installed())) && _officeable(name, mime))
       out.push({ id:'office', icon:'📝', label:'Office document',
                  hint:'Writer, Calc or Impress — edits and saves back',
                  run:() => (opts.sync ? openSyncOfficeFile(d) : openOfficeFile(d)) });

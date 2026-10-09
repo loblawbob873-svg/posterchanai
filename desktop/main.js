@@ -4084,7 +4084,6 @@ const _officeCall = (fn) => async (e, ...a) => {
   catch (err) { return { ok: false, error: String((err && err.message) || err) }; }
 };
 ipcMain.handle('pc:office:available', (e) => fromOurPage(e) && officeLocal().available());
-ipcMain.on('pc:office:installed', (e) => { e.returnValue = !!(fromOurPage(e) && officeLocal().available()); });
 ipcMain.handle('pc:office:open', _officeCall((bytes, name, mode) => officeLocal().open(bytes, String(name || ''), String(mode || 'edit'))));
 ipcMain.handle('pc:office:contents', _officeCall((id, token) => ({ bytes: officeLocal().contents(String(id), String(token)) })));
 ipcMain.handle('pc:office:export', _officeCall((id, token, fmt) => officeLocal().export(String(id), String(token), String(fmt))));
