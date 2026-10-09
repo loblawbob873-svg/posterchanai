@@ -10858,6 +10858,13 @@ html.pc-oswin .pv-sheet{top:38px}
 .pv-pdf-body{display:block;background:#202124;padding:10px;overflow:auto}
 .pv-pdf-pages{width:100%;display:flex;flex-direction:column;align-items:center;gap:10px;min-height:100%}
 .pv-pdf-page{display:block;max-width:100%;height:auto;background:#fff;box-shadow:0 2px 12px #0008}
+/* Zoomed: pages are wider than the screen, so they scroll sideways from the left edge (a centred flex
+   column clips its own overflow on the left, out of reach of the scrollbar), and the fit-width cap is off. */
+.pv-pdf-pages.pv-zoomed{align-items:flex-start;width:max-content;min-width:100%}
+.pv-pdf-pages.pv-zoomed .pv-pdf-page{max-width:none}
+.pv-pdf-body{touch-action:pan-x pan-y}
+.pv-zoombox{display:inline-flex;align-items:center;gap:2px}
+.pv-zoom-pct{min-width:3.2em;text-align:center;color:var(--muted)}
 /* A PHONE GETS TWO ROWS: the name (with the size and ✕) on its own line, the actions below it and
    free to wrap. One row gave the name whatever five buttons left over, which was nothing. */
 @media(max-width:640px){
@@ -11981,13 +11988,23 @@ img.md-rel:not([src]){display:none}
 .pe-fields.pe-fields-shut .pe-fields-list{display:none}
 .pe-field{display:inline-flex;align-items:center;gap:6px}
 .pe-field .input{min-width:140px;padding:4px 8px}
-.pe-pages{flex:1 1 auto;min-height:0;overflow:auto;padding:12px;display:flex;flex-direction:column;align-items:center;gap:14px}
+.pe-pages{flex:1 1 auto;min-height:0;overflow:auto;padding:12px;display:flex;flex-direction:column;align-items:safe center;gap:14px}
 .pe-cell{display:flex;flex-direction:column;align-items:center;gap:4px}
 .pe-page-tools{display:flex;align-items:center;gap:4px;font-size:12px;color:var(--muted)}
 .pe-page-tools .pe-page-no{margin-right:6px}
 .pe-page{position:relative;box-shadow:0 2px 14px rgba(0,0,0,.45);background:#fff;transition:transform .15s ease}
 .pe-canvas,.pe-overlay{position:absolute;inset:0;display:block}
 .pe-overlay{cursor:crosshair}
+.pe-zoombox{display:inline-flex;align-items:center;gap:2px}
+.pe-zoom-pct{min-width:3.2em;text-align:center;color:var(--muted)}
+/* A placed signature: a box you drag (move) or drag by its corner (resize). Only live with the Sign tool. */
+.pe-sig{position:absolute;z-index:2;pointer-events:none;touch-action:none;box-sizing:border-box;border:1px dashed transparent;border-radius:3px}
+.pe-root[data-tool="sign"] .pe-sig{pointer-events:auto;cursor:move;border-color:rgba(0,179,255,.55)}
+.pe-root[data-tool="sign"] .pe-sig.picked{border:2px dashed #00b3ff}
+.pe-sig img{display:block;width:100%;height:100%;pointer-events:none;user-select:none;-webkit-user-drag:none}
+.pe-sig-size,.pe-sig-x{display:none;position:absolute}
+.pe-root[data-tool="sign"] .pe-sig-size{display:block;right:-11px;bottom:-11px;width:22px;height:22px;border-radius:50%;background:#00b3ff;border:2px solid #fff;cursor:nwse-resize;box-shadow:0 1px 4px rgba(0,0,0,.4)}
+.pe-root[data-tool="sign"] .pe-sig-x{display:grid;place-items:center;right:-11px;top:-11px;width:22px;height:22px;padding:0;border-radius:50%;background:#ff2b6d;color:#fff;border:2px solid #fff;font:700 14px/1 system-ui,sans-serif;cursor:pointer;box-shadow:0 1px 4px rgba(0,0,0,.4)}
 .pe-textbox{position:absolute;z-index:2;min-width:120px;font:12px Helvetica,Arial,sans-serif;padding:2px 4px;border:1px dashed var(--accent);background:rgba(255,255,255,.9)}
 .pe-sign-sheet{position:absolute;inset:0;z-index:10;display:grid;place-items:center;background:rgba(0,0,0,.55)}
 .pe-sign-card{display:flex;flex-direction:column;gap:10px;padding:16px;border-radius:14px;background:var(--bg,#111);border:1px solid var(--line);max-width:min(640px,94vw)}

@@ -608,6 +608,27 @@ window.PCUploadFactory = function(dep){
     return url + sep + 'download=1' + (name?('&filename='+encodeURIComponent(name)):'');
   }
 
+  /* SAVE MEANS THE DEVICE, NOT THE SHARE SHEET. In the APK saveBlobAs IS the share sheet (a WebView
+   * ignores <a download>), so every "Save" behaved exactly like "Share" ("PDF editor -> save on android
+   * is functioning like share, not saving to device"). The APK already ships MediaSave (the image
+   * viewer's Save): MediaStore with RELATIVE_PATH, no permission on Android 10+, and anything that is
+   * not a picture or a video lands in Download/PosterChan. An older APK, Android 9, or a failed write
+   * fall back to saveBlobAs -- the share sheet is still a way to keep the file, and saying so beats a
+   * dead button. Returns 'saved:<where>' | 'shared' | 'saved'. */
+  async function saveToDevice(blob, name){
+    name=name||'file';
+    if(_isNativeApp()){
+      let M=null; try{ const P=window.Capacitor&&Capacitor.Plugins; M=(P&&P.MediaSave)||null; }catch(_){ }
+      let ok=false; try{ ok=!!(M && typeof M.available==='function' && ((await M.available())||{}).ok); }catch(_){ ok=false; }
+      if(ok){
+        try{
+          const r=await M.save({ data: await _blobToB64(blob), name, mime: blob.type||'' });
+          if(r && r.ok) return 'saved:'+String(r.where||'Download/PosterChan/'+name);
+        }catch(_){ /* fall through to the share sheet */ }
+      }
+    }
+    return saveBlobAs(blob, name);
+  }
   async function saveBlobAs(blob, name){
     name=name||'file';
     if(_isNativeApp()){
@@ -1113,7 +1134,7 @@ window.PCUploadFactory = function(dep){
     _bindThumbFallback, _blossomDenied, _fileUnder, _firstImage, _signUploadBatch, blobThumb,
     blossomPicker, compressImage, compressVideo, copyUrl, downloadBlobFile, downloadName,
     extOfBlob, fetchMediaBlob, fileFromBytes, fileLabel, fileNameFor, gifPicker, imetaTagsFor,
-    mimeForName, renderPics, requestBlossomAccess, requestStreamAccess, saveBlobAs, saveEncrypted,
+    mimeForName, renderPics, requestBlossomAccess, requestStreamAccess, saveBlobAs, saveToDevice, saveEncrypted,
     saveMedia, sha256hex, sniffExt, stripImageMetadata, thumbUrl, uploadBlob,
   };
 };

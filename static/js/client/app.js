@@ -10139,6 +10139,7 @@
   function requestBlossomAccess(){ return _lzRun(_uploadMod, _uploadLoad, 'requestBlossomAccess', arguments); }
   function requestStreamAccess(){ return _lzRun(_uploadMod, _uploadLoad, 'requestStreamAccess', arguments); }
   function saveBlobAs(){ return _lzRun(_uploadMod, _uploadLoad, 'saveBlobAs', arguments); }
+  function saveToDevice(){ return _lzRun(_uploadMod, _uploadLoad, 'saveToDevice', arguments); }
   function saveEncrypted(){ return _lzRun(_uploadMod, _uploadLoad, 'saveEncrypted', arguments); }
   function saveMedia(){ return _lzRun(_uploadMod, _uploadLoad, 'saveMedia', arguments); }
   function sha256hex(){ return _lzRun(_uploadMod, _uploadLoad, 'sha256hex', arguments); }
@@ -13612,7 +13613,7 @@
      * two of three platforms; this routes through Filesystem+Share in a shell and the anchor only
      * on the web. sms.js needs it for a picture message's attachments, which are bytes the client
      * holds and nothing else can fetch. */
-    saveBlobAs, fetchMediaBlob,
+    saveBlobAs, saveToDevice, fetchMediaBlob,
     ensureProfile: _ensureProfile, NT, compose, switchView:requestView, switchMessagesTab, timelineTop,
     /* `global` is the historical route printed on the generic Social launcher.  Launcher surfaces
      * need the semantic destination, including a configured Home timeline when Nostrverse remains

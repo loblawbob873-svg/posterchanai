@@ -107,6 +107,9 @@
       + TOOLS.map(function (t) { return '<button class="btn btn-ghost small pe-tool" data-tool="' + t[0] + '" aria-pressed="false">' + t[1] + '</button>'; }).join('')
       + '<input type="color" class="pe-color" value="' + state.color + '" aria-label="Colour" title="Colour">'
       + '<button class="btn btn-ghost small pe-undo" title="Undo the last mark">Undo</button>'
+      + '<span class="pe-zoombox" role="group" aria-label="Zoom"><button class="btn btn-ghost small pe-zoom-out" aria-label="Zoom out">&#8722;</button>'
+      + '<span class="pe-zoom-pct small" aria-live="polite">100%</span>'
+      + '<button class="btn btn-ghost small pe-zoom-in" aria-label="Zoom in">+</button></span>'
       + '<button class="btn btn-ghost small pe-preview-btn" aria-pressed="false" title="See the document exactly as it will be saved">Preview</button>'
       + '<span class="pe-gap"></span>'
       + '<button class="btn btn-ghost small pe-cancel">Cancel</button>'
@@ -125,6 +128,7 @@
     function setTool(t) {
       var again = state.tool === t;
       state.tool = t; state.picked = null;
+      try { host.querySelector('.pe-root').dataset.tool = t; } catch (_) {}
       host.querySelectorAll('.pe-tool').forEach(function (b) {
         var on = b.dataset.tool === t; b.classList.toggle('on', on); b.setAttribute('aria-pressed', on ? 'true' : 'false');
       });
@@ -138,7 +142,10 @@
      * scrolled past the first page ("the pdf editor has no scroll so i can't edit everything").
      * Tap tools (Text, Sign) let the browser pan and act on a TAP; the drawing tools keep one finger
      * for the pen and leave two fingers to pan and zoom. */
-    function touchActionFor() { return (state.tool === 'draw' || state.tool === 'highlight') ? 'pinch-zoom' : 'pan-x pan-y pinch-zoom'; }
+    /* Pinch is OURS now (PCPreview.pinchZoom -- the APK's WebView has the browser's own switched off),
+     * so no overlay grants pinch-zoom to the browser: tap tools keep one-finger pan, drawing tools keep
+     * one finger for the pen, and two fingers zoom/pan everywhere. */
+    function touchActionFor() { return (state.tool === 'draw' || state.tool === 'highlight') ? 'none' : 'pan-x pan-y'; }
     /* WHERE THE SIGNATURE GOES, said on screen: after "Use signature" the only cue was a toast. The
      * strip shows the signature itself, what a tap will do, and the way to change it. */
     function hint() {
@@ -146,7 +153,7 @@
       if (state.tool !== 'sign' || !state.signature) { el.hidden = true; el.innerHTML = ''; return; }
       el.hidden = false;
       el.innerHTML = '<img class="pe-hint-sig" alt="Your signature" src="' + H(state.signature) + '">'
-        + '<span class="pe-hint-say">' + (state.picked ? 'Tap where this signature should go.' : 'Tap the page where your signature goes. Tap a placed signature to move it.') + '</span>'
+        + '<span class="pe-hint-say">' + (state.picked ? 'Tap where this signature should go.' : 'Tap the page where your signature goes. Drag a signature to move it, or its corner to resize.') + '</span>'
         + (state.picked ? '<button class="btn btn-ghost small pe-hint-remove">Remove it</button>' : '')
         + '<button class="btn btn-ghost small pe-hint-change">Change signature</button>';
       el.querySelector('.pe-hint-change').onclick = function () { signaturePad(); };
@@ -250,7 +257,8 @@
         var cell = document.createElement('div'); cell.className = 'pe-cell'; cell.appendChild(tools); cell.appendChild(wrap);
         pagesBox.appendChild(cell);
         await page.render({ canvasContext: canvas.getContext('2d'), viewport: vp, transform: ratio !== 1 ? [ratio, 0, 0, ratio, 0, 0] : null }).promise;
-        var rec = { index: n - 1, cell: cell, el: wrap, overlay: overlay, viewport: vp, ratio: ratio };
+        var rec = { index: n - 1, cell: cell, el: wrap, overlay: overlay, viewport: vp, ratio: ratio, fit: vp.scale,
+                    px: canvas.width * canvas.height, canvas: canvas };
         state.pages.push(rec);
         state.order.push(n - 1);
         wirePage(rec);
@@ -258,8 +266,57 @@
       }
       await formFields(doc);
       try { doc.destroy(); } catch (_) {}
+      zoomReady();
     }
 
+    /* ZOOM ("unable to zoom in PDF on mobile"). Every mark, field and signature is stored in PDF
+     * points and drawn through rec.viewport, so zooming is: a new viewport (clone at fit x zoom), new
+     * CSS sizes for the page, its canvas and its overlay, a redraw of the marks -- all at once, so the
+     * layout and the point under the fingers are right immediately -- then the page image is rendered
+     * again at the new size. Backing pixels per page are capped by a budget shared across the document
+     * and never go below what fit-width already used, so zoom cannot multiply a long PDF's memory. */
+    var zoom = 1, zoomRun = 0;
+    async function setZoom(z, focus) {
+      z = Math.max(1, Math.min(4, Math.round(z * 100) / 100));
+      var from = zoom; zoom = z; var run = ++zoomRun;
+      var pct = q('.pe-zoom-pct'); if (pct) pct.textContent = Math.round(z * 100) + '%';
+      var dpr = root.devicePixelRatio || 1, budget = Math.min(6e6, 40e6 / Math.max(1, state.pages.length));
+      state.pages.forEach(function (rec) {
+        var vp = rec.viewport.clone({ scale: rec.fit * z });
+        var cap = Math.max(rec.px, budget), k = Math.min(dpr, Math.sqrt(cap / (vp.width * vp.height)));
+        rec.viewport = vp; rec.ratio = k;
+        var w = Math.floor(vp.width) + 'px', h = Math.floor(vp.height) + 'px';
+        [rec.el, rec.canvas, rec.overlay].forEach(function (el) { el.style.width = w; el.style.height = h; });
+        rec.overlay.width = Math.ceil(vp.width * k); rec.overlay.height = Math.ceil(vp.height * k);
+        redraw(rec.index);
+      });
+      if (PV().keepFocus) PV().keepFocus(pagesBox, from, z, focus);
+      var lib = opts.pdfjs, doc = null;
+      try {
+        doc = await lib.getDocument({ data: original.slice() }).promise;
+        for (var i = 0; i < state.pages.length; i++) {
+          if (run !== zoomRun) return;
+          var rec = state.pages[i], page = await doc.getPage(rec.index + 1), vp2 = rec.viewport, k2 = rec.ratio;
+          var off = document.createElement('canvas'); off.width = Math.ceil(vp2.width * k2); off.height = Math.ceil(vp2.height * k2);
+          await page.render({ canvasContext: off.getContext('2d'), viewport: vp2, transform: k2 !== 1 ? [k2, 0, 0, k2, 0, 0] : null }).promise;
+          if (run !== zoomRun) return;
+          rec.canvas.width = off.width; rec.canvas.height = off.height; rec.canvas.getContext('2d').drawImage(off, 0, 0);
+          off.width = off.height = 0;
+        }
+      } catch (_) { /* a failed re-draw leaves the stretched page, still usable */ }
+      finally { try { if (doc) doc.destroy(); } catch (_) {} }
+    }
+    var PV = function () { return root.PCPreview || {}; };
+    var pinch = null, pinchEnded = 0;
+    function zoomReady() { try {
+      q('.pe-zoom-out').onclick = function () { setZoom(zoom / 1.25); };
+      q('.pe-zoom-in').onclick = function () { setZoom(zoom * 1.25); };
+      if (!PV().pinchZoom) return;
+      pinch = PV().pinchZoom(pagesBox, { get: function () { return zoom; }, min: 1, max: 4,
+        content: function () { return pagesBox; },
+        begin: function () { state.pinching = true; },
+        set: function (z, f) { state.pinching = false; pinchEnded = Date.now(); setZoom(z, f); } });
+    } catch (_) {} }
     function toPdf(rec, x, y) { var p = rec.viewport.convertToPdfPoint(x, y); return { x: p[0], y: p[1] }; }
     function toView(rec, x, y) { var p = rec.viewport.convertToViewportPoint(x, y); return { x: p[0], y: p[1] }; }
     function redraw(index) {
@@ -268,6 +325,71 @@
       c.setTransform(1, 0, 0, 1, 0, 0); c.clearRect(0, 0, rec.overlay.width, rec.overlay.height);
       c.setTransform(rec.ratio, 0, 0, rec.ratio, 0, 0);
       state.marks.filter(function (m) { return m.page === index; }).forEach(function (m) { paint(c, rec, m); });
+      sigBoxes(rec);
+    }
+    /* A PLACED SIGNATURE IS SOMETHING YOU HOLD, not a stamp ("when adding signature, it should be
+     * moveable and resizeable"). It used to be pixels on the overlay canvas, so the only way to move it
+     * was tap-to-pick then tap-somewhere-else, and it could never change size. Each one is now a box
+     * over the page: drag it to move, drag its corner to resize (its own proportions kept), x removes
+     * it, and a TAP still picks it, so tap-to-move across pages keeps working. The box is
+     * touch-action:none and the overlay is not, so dragging a signature never scrolls while a swipe
+     * anywhere else still does. Boxes take pointer events only with the Sign tool, so drawing or
+     * highlighting over a signature is unaffected. The mark's PDF-space x/y/w/h is written back on
+     * release, which is all build() reads. */
+    function sigBoxes(rec) {
+      rec.el.querySelectorAll('.pe-sig').forEach(function (n) { n.remove(); });
+      state.marks.forEach(function (m) {
+        if (m.type !== 'image' || m.page !== rec.index) return;
+        var tl = toView(rec, m.x, m.y + m.h), br = toView(rec, m.x + m.w, m.y);
+        var box = document.createElement('div');
+        box.className = 'pe-sig' + (m === state.picked ? ' picked' : '');
+        box.style.left = Math.min(tl.x, br.x) + 'px'; box.style.top = Math.min(tl.y, br.y) + 'px';
+        box.style.width = Math.abs(br.x - tl.x) + 'px'; box.style.height = Math.abs(br.y - tl.y) + 'px';
+        box.innerHTML = '<img alt="Signature" draggable="false" src="' + H(m.png) + '">'
+          + '<span class="pe-sig-size" role="button" aria-label="Resize signature"></span>'
+          + '<button type="button" class="pe-sig-x" aria-label="Remove signature">\u00d7</button>';
+        wireSig(rec, m, box); rec.el.appendChild(box);
+      });
+    }
+    function wireSig(rec, m, box) {
+      var g = null;
+      box.addEventListener('pointerdown', function (e) {
+        if (e.target.closest('.pe-sig-x')) return;
+        e.preventDefault(); e.stopPropagation();
+        try { box.setPointerCapture(e.pointerId); } catch (_) {}
+        g = { id: e.pointerId, x: e.clientX, y: e.clientY, l: box.offsetLeft, t: box.offsetTop, w: box.offsetWidth, h: box.offsetHeight,
+              resize: !!e.target.closest('.pe-sig-size'), moved: false };
+      });
+      box.addEventListener('pointermove', function (e) {
+        if (!g || e.pointerId !== g.id) return;
+        var dx = e.clientX - g.x, dy = e.clientY - g.y;
+        if (!g.moved && Math.hypot(dx, dy) < 6) return;
+        g.moved = true;
+        var W = rec.el.clientWidth, HH = rec.el.clientHeight;
+        if (g.resize) {
+          var a = g.w / g.h, w = Math.max(24, Math.min(g.w + dx, W - g.l)), h = w / a;
+          if (g.t + h > HH) { h = HH - g.t; w = h * a; }
+          box.style.width = w + 'px'; box.style.height = h + 'px';
+        } else {
+          box.style.left = Math.max(0, Math.min(W - g.w, g.l + dx)) + 'px';
+          box.style.top = Math.max(0, Math.min(HH - g.h, g.t + dy)) + 'px';
+        }
+      });
+      box.addEventListener('pointerup', function (e) {
+        if (!g || e.pointerId !== g.id) return;
+        var was = g; g = null;
+        if (!was.moved) { state.picked = state.picked === m ? null : m; redraw(rec.index); hint(); return; }
+        var l = box.offsetLeft, t = box.offsetTop, a = toPdf(rec, l, t), b = toPdf(rec, l + box.offsetWidth, t + box.offsetHeight);
+        m.x = Math.min(a.x, b.x); m.y = Math.min(a.y, b.y); m.w = Math.abs(b.x - a.x); m.h = Math.abs(b.y - a.y);
+        state.dirty = true; redraw(rec.index);
+      });
+      box.addEventListener('pointercancel', function () { g = null; redraw(rec.index); });
+      box.querySelector('.pe-sig-x').onclick = function (e) {
+        e.stopPropagation();
+        var i = state.marks.indexOf(m); if (i >= 0) { state.marks.splice(i, 1); state.dirty = true; }
+        if (state.picked === m) state.picked = null;
+        redraw(rec.index); hint();
+      };
     }
     function paint(c, rec, m) {
       var k = rec.viewport.scale;
@@ -282,16 +404,9 @@
       } else if (m.type === 'ink') {
         c.strokeStyle = m.color; c.lineWidth = m.width * k; c.lineCap = 'round'; c.lineJoin = 'round';
         c.beginPath(); m.points.forEach(function (pt, i) { var v = toView(rec, pt.x, pt.y); i ? c.lineTo(v.x, v.y) : c.moveTo(v.x, v.y); }); c.stroke();
-      } else if (m.type === 'image') {
-        if (m === state.picked) {
-          var a0 = toView(rec, m.x, m.y + m.h), b0 = toView(rec, m.x + m.w, m.y);
-          c.save(); c.setLineDash([6, 4]); c.lineWidth = 2; c.strokeStyle = '#00b3ff';
-          c.strokeRect(Math.min(a0.x, b0.x) - 3, Math.min(a0.y, b0.y) - 3, Math.abs(b0.x - a0.x) + 6, Math.abs(b0.y - a0.y) + 6); c.restore();
-        }
-        var img = m._img; if (!img) { img = new Image(); img.onload = function () { redraw(rec.index); }; img.src = m.png; m._img = img; return; }
-        var tl = toView(rec, m.x, m.y + m.h), br = toView(rec, m.x + m.w, m.y);
-        c.drawImage(img, Math.min(tl.x, br.x), Math.min(tl.y, br.y), Math.abs(br.x - tl.x), Math.abs(br.y - tl.y));
       }
+      // A signature ('image') is NOT painted here: it is a DOM box (sigBoxes) so it can be dragged and
+      // resized with a finger without taking the page's own scroll away (see sigBoxes).
     }
 
     function wirePage(rec) {
@@ -301,6 +416,7 @@
       var tap = null;
       // A TAP, not a press: the finger that starts a scroll must not also drop a text box.
       var tapped = function (e) {
+        if (state.pinching || Date.now() - pinchEnded < 350) return;   // the first finger of a pinch
         var v = at(e), p = toPdf(rec, v.x, v.y);
         if (state.tool === 'text') { textBox(rec, v, p); return; }
         if (!state.signature) { signaturePad(); return; }
@@ -329,6 +445,7 @@
           if (e.pointerType === 'mouse') e.preventDefault();
           return;
         }
+        if (state.pinching || drag) return;   // one stroke at a time; a second finger is a pinch
         var v = at(e), p = toPdf(rec, v.x, v.y);
         try { el.setPointerCapture(e.pointerId); } catch (_) {}
         drag = { start: p, points: [p] };
@@ -339,6 +456,10 @@
       el.addEventListener('pointermove', function (e) {
         if (tap && e.pointerId === tap.id && Math.hypot(e.clientX - tap.x, e.clientY - tap.y) > 10) tap = null;
         if (!drag) return;
+        if (state.pinching) {                 // a second finger landed: this was a pinch, not a stroke
+          var i = state.marks.indexOf(drag.mark); if (i >= 0) state.marks.splice(i, 1);
+          drag = null; redraw(rec.index); return;
+        }
         var v = at(e), p = toPdf(rec, v.x, v.y);
         if (drag.mark.type === 'ink') drag.points.push(p);
         else { drag.mark.x = Math.min(drag.start.x, p.x); drag.mark.y = Math.min(drag.start.y, p.y); drag.mark.w = Math.abs(p.x - drag.start.x); drag.mark.h = Math.abs(p.y - drag.start.y); }
@@ -583,8 +704,11 @@
         var blob = await build();
         if (inPlace && saveBack) { await saveBack(blob); toast('PDF saved'); finish(blob); return; }
         var copyName = name.replace(/\.pdf$/i, '') + ' (edited).pdf';
-        if (!PC().saveBlobAs) throw new Error('this build cannot save a file');
-        await PC().saveBlobAs(blob, copyName); finish(blob);
+        var saver = PC().saveToDevice || PC().saveBlobAs;
+        if (!saver) throw new Error('this build cannot save a file');
+        var how = await saver(blob, copyName);
+        if (/^saved:/.test(String(how || ''))) toast('Saved to ' + String(how).slice(6));
+        finish(blob);
       } catch (e) {
         toast('could not save the PDF: ' + ((e && e.message) || e));
         btns.forEach(function (b) { b.disabled = false; });

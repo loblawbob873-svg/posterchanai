@@ -143,10 +143,103 @@
     });
   }
 
+  /* PINCH TO ZOOM, OURS ("unable to zoom in PDF on mobile"). The APK's WebView has the browser's own
+   * pinch-zoom switched off, and the browser's zoom would scale the whole app (bars, buttons) anyway,
+   * so a PDF could never be read closer than fit-to-width. TOUCH events, not pointer events: a
+   * pointer stream is cancelled the moment the browser decides two fingers are a scroll, while touch
+   * events keep arriving -- and a two-finger move calls preventDefault so it zooms instead of
+   * scrolling. While the fingers are down the content is scaled with a transform (cheap, live); on
+   * release `set(zoom, focus)` re-lays it out at the new size and the point under the fingers stays
+   * under them. `active()` lets a tap handler ignore the first finger of a pinch. */
+  function pinchZoom(el, opts) {
+    var g = null;
+    var two = function (t) {
+      var a = t[0], b = t[1];
+      return { x: (a.clientX + b.clientX) / 2, y: (a.clientY + b.clientY) / 2, d: Math.max(1, Math.hypot(a.clientX - b.clientX, a.clientY - b.clientY)) };
+    };
+    el.addEventListener('touchstart', function (e) {
+      if (e.touches.length !== 2) return;
+      var m = two(e.touches), r = el.getBoundingClientRect();
+      g = { d: m.d, x: m.x, y: m.y, lx: m.x, ly: m.y, k: 1, z: opts.get(), vx: m.x - r.left, vy: m.y - r.top,
+            fx: m.x - r.left + el.scrollLeft, fy: m.y - r.top + el.scrollTop };
+      if (opts.begin) opts.begin();
+    }, { passive: true, capture: true });
+    el.addEventListener('touchmove', function (e) {
+      if (!g || e.touches.length !== 2) return;
+      if (e.cancelable) e.preventDefault();
+      var m = two(e.touches), lo = opts.min / g.z, hi = opts.max / g.z;
+      g.k = Math.max(lo, Math.min(hi, m.d / g.d)); g.lx = m.x; g.ly = m.y;
+      var c = opts.content();
+      // The scroller itself (the editor) scales its visible box; inner content scales in content space.
+      c.style.transformOrigin = c === el ? (g.vx + 'px ' + g.vy + 'px') : (g.fx + 'px ' + g.fy + 'px');
+      c.style.transform = 'translate(' + (m.x - g.x) + 'px,' + (m.y - g.y) + 'px) scale(' + g.k + ')';
+    }, { passive: false, capture: true });
+    var end = function (e) {
+      if (!g || e.touches.length >= 2) return;
+      var done = g; g = null;
+      var c = opts.content(); c.style.transform = ''; c.style.transformOrigin = '';
+      var r = el.getBoundingClientRect();
+      // Where the fingers ENDED: the content point that was under them stays under them, which is also
+      // what makes a two-finger drag without a pinch a pan.
+      opts.set(done.z * done.k, { fx: done.fx, fy: done.fy, vx: done.lx - r.left, vy: done.ly - r.top });
+    };
+    el.addEventListener('touchend', end, { capture: true });
+    el.addEventListener('touchcancel', end, { capture: true });
+    return { active: function () { return !!g; } };
+  }
+  /* Keep the content point that was under the fingers (or the centre) under them after a re-layout
+   * from zoom `from` to zoom `to`. */
+  function keepFocus(el, from, to, focus) {
+    var q = to / from, f = focus || { fx: el.scrollLeft + el.clientWidth / 2, fy: el.scrollTop + el.clientHeight / 2,
+                                     vx: el.clientWidth / 2, vy: el.clientHeight / 2 };
+    el.scrollLeft = Math.max(0, f.fx * q - f.vx); el.scrollTop = Math.max(0, f.fy * q - f.vy);
+  }
+  var ZOOM_MIN = 1, ZOOM_MAX = 4;
+
   function renderPdf(host, blob, name) {
     var box = host.querySelector('.pv-pdf-pages');
     if (!box) return function () {};
-    var stopped = false, task = null, pdf = null, rendered = 0;
+    var stopped = false, task = null, pdf = null, rendered = 0, pages = [], zoom = 1, zoomRun = 0;
+    var scroller = host.querySelector('.pv-pdf-body') || box;
+    /* ZOOM RE-DRAWS, it does not stretch: the CSS size changes at once (so the layout and the scroll
+     * position are right immediately), then each page is rendered again at the new size. Its backing
+     * pixels are capped per page by a budget shared across the document -- never below what fit-width
+     * already used -- so zooming a long PDF on a phone cannot multiply its memory, which is the same
+     * renderer that already gets killed for memory on the tablet. A newer zoom abandons the older
+     * re-draw part-way (`zoomRun`). */
+    async function setZoom(z, focus) {
+      z = Math.max(ZOOM_MIN, Math.min(ZOOM_MAX, Math.round(z * 100) / 100));
+      var from = zoom; zoom = z; var run = ++zoomRun;
+      var pct = host.querySelector('.pv-zoom-pct'); if (pct) pct.textContent = Math.round(z * 100) + '%';
+      box.classList.toggle('pv-zoomed', z > 1);
+      pages.forEach(function (it) {
+        var w = it.base.width * it.fit * z, h = it.base.height * it.fit * z;
+        it.canvas.style.width = Math.ceil(w) + 'px'; it.canvas.style.height = Math.ceil(h) + 'px';
+      });
+      keepFocus(scroller, from, z, focus);
+      var budget = Math.min(6e6, 60e6 / Math.max(1, pages.length));
+      for (var i = 0; i < pages.length; i++) {
+        if (stopped || run !== zoomRun) return;
+        var it = pages[i], vp = it.page.getViewport({ scale: it.fit * z });
+        var dpr = Math.max(1, Math.min(2, Number(root.devicePixelRatio) || 1));
+        var cap = Math.max(it.px, budget), k = Math.min(dpr, Math.sqrt(cap / (vp.width * vp.height)));
+        var cw = Math.ceil(vp.width * k), ch = Math.ceil(vp.height * k);
+        if (cw === it.canvas.width && ch === it.canvas.height) continue;
+        var off = document.createElement('canvas'); off.width = cw; off.height = ch;
+        try { await it.page.render({ canvasContext: off.getContext('2d'), viewport: vp, transform: k === 1 ? null : [k, 0, 0, k, 0, 0] }).promise; }
+        catch (_) { continue; }
+        if (stopped || run !== zoomRun) return;
+        it.canvas.width = cw; it.canvas.height = ch; it.canvas.getContext('2d').drawImage(off, 0, 0);
+        off.width = off.height = 0;
+      }
+    }
+    function zoomReady() { try {    // zoom failing to wire must never cost the document already drawn
+      var out = host.querySelector('.pv-zoom-out'), inn = host.querySelector('.pv-zoom-in');
+      if (out) out.onclick = function () { setZoom(zoom / 1.25); };
+      if (inn) inn.onclick = function () { setZoom(zoom * 1.25); };
+      pinchZoom(scroller, { get: function () { return zoom; }, min: ZOOM_MIN, max: ZOOM_MAX,
+        content: function () { return box; }, set: setZoom });
+    } catch (_) {} }
     var cancel = function () {
       stopped = true;
       try { if (task && task.cancel) task.cancel(); } catch (_) {}
@@ -177,10 +270,12 @@
         canvas.style.height = Math.ceil(viewport.height) + 'px';
         canvas.setAttribute('aria-label', 'Page ' + n);
         box.appendChild(canvas);
+        pages.push({ canvas: canvas, page: page, base: base, fit: viewport.scale, px: canvas.width * canvas.height });
         task = page.render({ canvasContext: canvas.getContext('2d'), viewport: viewport,
           transform: outputScale === 1 ? null : [outputScale, 0, 0, outputScale, 0, 0] });
         await task.promise; task = null; rendered = n;
       }
+      zoomReady();
     } catch (e) {
       if (stopped) return;
       var msg = '<div class="empty pv-pdf-fallback">'
@@ -355,6 +450,9 @@
       + '<span class="pv-acts">'
       + (kind === 'image' ? '<button class="btn btn-ghost small pv-zoom">Actual size</button>'
                             + '<button class="btn btn-ghost small pv-rot" title="Rotate" aria-label="Rotate">&#8635;</button>' : '')
+      + (kind === 'pdf' ? '<span class="pv-zoombox" role="group" aria-label="Zoom"><button class="btn btn-ghost small pv-zoom-out" aria-label="Zoom out">&#8722;</button>'
+                          + '<span class="pv-zoom-pct small" aria-live="polite">100%</span>'
+                          + '<button class="btn btn-ghost small pv-zoom-in" aria-label="Zoom in">+</button></span>' : '')
       + (kind === 'pdf' ? '<button class="btn btn-ghost small pv-edit" title="Fill in, mark up, sign or rearrange">Edit</button>' : '')
       + (kind === 'pdf' && nativeOpen() ? '<button class="btn btn-ghost small pv-open">Open in app</button>' : '')
       + (canPrint(kind) ? '<button class="btn btn-ghost small pv-print">Print</button>' : '')
@@ -472,10 +570,11 @@
       /* saveBlobAs, NEVER a bare <a download>: the APK's WebView ignores a programmatic download and
        * the desktop's app:// origin refuses one, so the button would silently do nothing on two of
        * the three platforms this ships to. */
-      var save = PC().saveBlobAs;
+      var save = PC().saveToDevice || PC().saveBlobAs;
       if (!save) { toast('cannot save on this build'); return; }
       fetch(url).then(function (r) { return r.blob(); })
         .then(function (b) { return save(b, name || 'file'); })
+        .then(function (how) { if (/^saved:/.test(String(how || ''))) toast('Saved to ' + String(how).slice(6)); })
         .catch(function (e) { toast('could not save: ' + ((e && e.message) || e)); });
     };
     var op = q('.pv-open');
@@ -678,7 +777,7 @@
     return opened;
   }
 
-  root.PCPreview = { open: open, acceptHandoff: acceptHandoff, handles: handles, kindOf: kindOf,
+  root.PCPreview = { pinchZoom: pinchZoom, keepFocus: keepFocus, open: open, acceptHandoff: acceptHandoff, handles: handles, kindOf: kindOf,
                      isImage: isImage, isVideo: isVideo, isAudio: isAudio, isPdf: isPdf,
                      loadPdfJs: loadPdfJs, isOpen: isOpen, close: close,
                      _openElsewhere: openElsewhere, _renderPdf: renderPdf,

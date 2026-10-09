@@ -97,7 +97,9 @@ def test_a_finger_scrolls_the_document_and_a_tap_still_types():
     assert got["last_page_visible"], "the last page cannot be reached"
     assert got["box_after_tap"] == 1, "a tap with Text no longer opens a box"
     assert got["editor_after_escape"], "Escape in a text note closed the editor and discarded the edits"
-    assert got["draw_touch_action"] == "pinch-zoom", got["draw_touch_action"]
+    # One finger is the pen; pinch is the editor's OWN now (the APK's WebView has the browser's off), so
+    # the overlay hands the browser nothing -- see test_pdf_zoom_full_app.py for the pinch itself.
+    assert got["draw_touch_action"] == "none", got["draw_touch_action"]
     assert not got["errors"], got["errors"]
 
 
