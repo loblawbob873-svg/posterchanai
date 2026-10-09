@@ -18,6 +18,15 @@ from fastapi import WebSocket, WebSocketDisconnect
 
 logger = logging.getLogger(__name__)
 TRANSPORT = "posterchan-direct"
+# EVERY FRAME ON THIS SOCKET WAKES A PHONE'S RADIO, and the socket exists to sit idle in a pocket.
+# It used to carry three unaligned keepalives — an app ping from here after 20s of quiet, uvicorn's
+# protocol ping every 20s and the APK's OkHttp ping every 30s — so a phone doing nothing was woken
+# several times a minute, all day ("bad battery drain"). Now there are two, each every 75s (inside
+# Cloudflare's 100s idle window): the APK's (which is how it notices a dead link) and uvicorn's
+# (run.py; how this end notices one). This loop sends NOTHING on its own. It still wakes every
+# POLL_S, because a notification queued by ANOTHER process (the worker) cannot set this process's
+# event — that read is a database query and costs the phone nothing.
+POLL_S = 20
 _MAX_PENDING = 100
 _MAX_PAYLOAD_BYTES = 16 * 1024
 
@@ -189,15 +198,13 @@ async def serve(websocket: WebSocket, subscription_id: int) -> None:
                 await websocket.send_json(frame)
 
             signalled = asyncio.create_task(conn.wake.wait())
-            done, _ = await asyncio.wait((recv, signalled), timeout=20,
+            done, _ = await asyncio.wait((recv, signalled), timeout=POLL_S,
                                          return_when=asyncio.FIRST_COMPLETED)
             if signalled in done:
                 conn.wake.clear()
             else:
                 signalled.cancel()
                 await asyncio.gather(signalled, return_exceptions=True)
-            if not done:
-                await websocket.send_json({"type": "ping"})
             if recv not in done:
                 continue
             msg = recv.result()

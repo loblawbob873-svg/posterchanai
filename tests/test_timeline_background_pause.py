@@ -30,7 +30,7 @@ APPJS = client_source_as_app()
 def test_a_backgrounded_phone_drops_the_timeline():
     assert "function _tlBackground(){" in APPJS
     i = APPJS.index("function _tlBackground(){")
-    body = APPJS[i:i + 400]
+    body = APPJS[i:APPJS.index("function _tlForeground(){")]
     assert "_tlPause" in body and "_TL_HIDE_AFTER" in body
 
 
@@ -45,7 +45,7 @@ def test_the_desktop_app_is_exempt():
     """The occlusion trap. This is the assertion that keeps "battery on a phone" from becoming "the
     Social window stops updating whenever you look at something else"."""
     i = APPJS.index("function _tlBackground(){")
-    body = APPJS[i:i + 400]
+    body = APPJS[i:APPJS.index("function _tlForeground(){")]
     assert "if(_isDesktopApp()) return;" in body, "a covered desktop window loses its timeline"
     assert body.index("_isDesktopApp") < body.index("_tlHideTimer"), (
         "the timer is armed before the desktop check, so it fires anyway")
@@ -76,7 +76,7 @@ def test_both_background_signals_arm_it():
 
 def test_returning_resumes_it_and_cancels_a_pending_pause():
     i = APPJS.index("function _tlForeground(){")
-    body = APPJS[i:i + 300]
+    body = APPJS[i:APPJS.index("\n  }", i)]
     assert "clearTimeout(_tlHideTimer)" in body, (
         "a pause armed just before returning would fire after you are back")
     assert "_tlResume" in body
