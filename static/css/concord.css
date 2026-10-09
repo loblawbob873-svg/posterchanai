@@ -362,10 +362,11 @@ body.concord-view .cc-folder-glyph{font-size:18px!important}
 /* "Check my communities" report: a phone is the device it is for, so it wraps and scrolls inside the modal. */
 .cc-mcheck-out{white-space:pre-wrap;overflow-wrap:anywhere;max-height:50vh;overflow:auto;font-size:12px;line-height:1.45;margin:8px 0;padding:8px;border-radius:8px;background:rgba(127,127,127,.12)}
 /* The room header at phone width: the secondary room actions live behind ⋯ (concord.js #cc-head-more)
-   so Members and the buttons used mid-conversation stay on screen. Wide screens never show ⋯. */
+   so Members, Copy invite link and the buttons used mid-conversation stay on screen. Wide screens
+   never show ⋯. */
 .cc-head-more{display:none!important}
 @media(max-width:820px){
   body.concord-view #cc-publish-listing,body.concord-view #cc-direct-send,body.concord-view #cc-manage-links,
-  body.concord-view #cc-copy-link,body.concord-view #cc-leave-shortcut,body.concord-view #cc-direct-inbox{display:none!important}
+  body.concord-view #cc-leave-shortcut,body.concord-view #cc-direct-inbox{display:none!important}
   body.concord-view .cc-head-more{display:grid!important;place-items:center;font-size:20px;line-height:1}
 }

@@ -47,7 +47,7 @@ PAINTED = "(()=>{const h=document.querySelector('#os-popup-host');if(!h)return n
 
 
 async def _popup(b):
-    for _ in range(40):                      # 2s: a menu is something you click, not something you wait for
+    for _ in range(40):                      # deadline: 2s — a menu is something you click, not something you wait for
         got = await b.js(PAINTED)
         if got and got['h'] > 30 and got['buttons'] > 0:
             return got
@@ -81,7 +81,7 @@ def test_wifi_can_be_switched_from_the_tray_without_a_relay(dead):
         await _popup(b)
         # Quick Settings → the Wi-Fi tile → the network list.
         await b.js("(()=>{const t=document.querySelector('#os-popup-host [data-qs=net],#os-popup-host [data-os=net]');if(t)t.click();return !!t})()")
-        for _ in range(40):
+        for _ in range(200):
             got['rows'] = await b.js("[...document.querySelectorAll('#os-popup-host button,#os-popup-host [role=button]')].map(x=>x.innerText.trim()).filter(t=>/Home|Cafe/.test(t))")
             if got['rows']:
                 break

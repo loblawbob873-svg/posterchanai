@@ -24,7 +24,8 @@ def bundle():
 
 DOWN = r"""
 if(localStorage.getItem('__dead')==='1'){
-  Object.defineProperty(Navigator.prototype,'onLine',{configurable:true,get:()=>!window.__back});
+  Object.defineProperty(navigator,'onLine',{configurable:true,get:()=>false});
+  window.__comeBack=()=>{window.__back=true;Object.defineProperty(navigator,'onLine',{configurable:true,get:()=>true});};
   window.WebSocket=class extends EventTarget{static OPEN=1;static CONNECTING=0;static CLOSING=2;static CLOSED=3;
     constructor(u){super();this.url=String(u);this.readyState=0;} send(){} close(){this.readyState=3;}};
   const up=window.fetch;
@@ -41,6 +42,7 @@ def test_telegram_shows_the_kept_messages_offline_and_retry_brings_it_back(width
     async def check(b):
         await b.call('Emulation.setDeviceMetricsOverride', dict(width=width, height=900, deviceScaleFactor=1, mobile=False))
         await _open(b)
+        await b.js("window.__publishOK=true")   # the device key (pcai:dmkey) is minted only once a relay accepts it
         await b.until("document.querySelectorAll('.tg-dialog').length===2")
         await b.js("document.querySelector('.tg-dialog[data-chat=\"42\"]').click()")
         await b.until("/hey there/.test((document.querySelector('.tg-msgs')||{}).textContent||'')")
@@ -49,13 +51,13 @@ def test_telegram_shows_the_kept_messages_offline_and_retry_brings_it_back(width
         await b.js("localStorage.setItem('__dead','1')")
         await b.call('Page.reload')
         await b.until('!!window.__PC && !!__PC.me()')
-        await _open(b)
+        await b.js("__PC.switchView('tg')")
         await b.until("document.querySelectorAll('.tg-dialog').length===2")
         got['banner'] = await b.js("(document.querySelector('.tg-offline')||{}).textContent||''")
         await b.js("document.querySelector('.tg-dialog[data-chat=\"42\"]').click()")
         await b.until("/hey there/.test((document.querySelector('.tg-msgs')||{}).textContent||'')")
 
-        await b.js("window.__back=true")
+        await b.js("__comeBack()")
         await b.js("document.querySelector('.tg-offline [data-act=retry]').click()")
         await b.until("document.querySelectorAll('.tg-dialog').length===2 && !document.querySelector('.tg-offline')")
         got['errors'] = await b.js('__errors')
@@ -73,7 +75,7 @@ def test_never_read_and_unreachable_still_offers_retry():
         await b.until('!!window.__PC')
         await _open(b)
         await b.until("!!document.querySelector('.tg-card [data-act=retry]')")
-        await b.js("window.__back=true")
+        await b.js("__comeBack()")
         await b.js("document.querySelector('.tg-card [data-act=retry]').click()")
         await b.until("document.querySelectorAll('.tg-dialog').length===2")
 

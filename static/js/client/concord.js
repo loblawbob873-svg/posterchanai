@@ -5303,7 +5303,7 @@
      * At phone width (client.css) the room's secondary actions fold into this ⋯ and Members stays in
      * the header; each menu row presses the real (hidden) button, so there is one handler per action. */
     { const more=$('#cc-head-more'); if(more)more.onclick=()=>{
-        const rows=[['cc-members','Members'],['cc-direct-send','Invite an account'],['cc-copy-link','Copy invite link'],
+        const rows=[['cc-members','Members'],['cc-direct-send','Invite an account'],
           ['cc-manage-links','Invitation links'],['cc-direct-inbox','Review invitations'],['cc-publish-listing','Publish to Armada Discover'],
           ['cc-leave-shortcut','Leave community']].filter(([id])=>!!$('#'+id));
         if(!p.openMenuPopover||!rows.length)return;

@@ -42,7 +42,7 @@ class TheEditorIsAskedToSave(unittest.TestCase):
     def test_save_asks_before_it_reads(self):
         body = self._save_handler()
         ask = body.find("askEditorToSave(root)")
-        read = body.find("/contents?access_token=")
+        read = body.find("api.contents()")   # the session's current bytes (instance or this machine)
         self.assertGreaterEqual(ask, 0, "Save no longer asks the editor to save — this is the bug")
         self.assertLess(ask, read, "the document is read before the editor was asked to write it")
 
@@ -68,7 +68,7 @@ class TheEditorIsAskedToSave(unittest.TestCase):
         start = APP.index("if(pdfBtn) pdfBtn.onclick")
         body = APP[start:start + 1400]
         self.assertIn("askEditorToSave(root)", body, "the PDF is converted from unsaved bytes")
-        self.assertIn("/export/pdf?access_token=", body)
+        self.assertIn("api.exportAs('pdf')", body)
         self.assertIn("_officeSaveCopy(", body,
                       "PDF export must use the same destination-aware save path as Save As")
         self.assertNotIn("<a download", body)

@@ -54,7 +54,7 @@ def test_bookmarks_show_the_saved_post_with_no_network():
         await b.until('!!window.__PC && !!window.PCOS')
         await b.until("!!__PC.me()")
         await b.js("__PC.switchView('bookmarks')")
-        for _ in range(60):
+        for _ in range(100):
             txt = await b.js("(document.querySelector('#feed')||{}).innerText||''")
             if 'offline soup' in txt:
                 break

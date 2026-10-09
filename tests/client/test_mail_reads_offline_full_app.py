@@ -24,6 +24,7 @@ def bundled_assets():
 INIT = r'''
 localStorage.setItem('pc_nostr_settings',JSON.stringify({...JSON.parse(localStorage.getItem('pc_nostr_settings')||'{}'),osMode:false}));
 window.__mailAsked=0;
+window.__publishOK=true;   // the device key (pcai:dmkey) is minted only once a relay accepts it
 const dead=localStorage.getItem('__dead')==='1';
 if(dead){
   Object.defineProperty(Navigator.prototype,'onLine',{configurable:true,get:()=>false});
@@ -55,13 +56,14 @@ def test_email_reads_what_was_opened_before_with_no_network(width):
     async def check(b):
         await b.call('Emulation.setDeviceMetricsOverride', dict(width=width, height=900, deviceScaleFactor=1, mobile=width < 600))
         await desktop.login(b)
+        await b.js("window.__publishOK=true")
         await b.js("__PC.switchView('mail')")
         await b.until("document.querySelectorAll('.mail-item').length===1")
         await click(b, '.mail-item .mi-content')
         await b.until(OPEN)
         await asyncio.sleep(1.5)                        # the device copy is written behind the paint
         got['sealed'] = await b.js("""new Promise(res=>{const r=indexedDB.open('pc-mail-v1');r.onsuccess=()=>{
-            const q=r.result.transaction('r').objectStore('r').getAll();q.onsuccess=()=>{
+            if(!r.result.objectStoreNames.contains('r'))return res({n:0});const q=r.result.transaction('r').objectStore('r').getAll();q.onsuccess=()=>{
             const raw=JSON.stringify(q.result.map(x=>Array.from(new Uint8Array(x.ct||[])).map(c=>String.fromCharCode(c)).join('')));
             res({n:q.result.length,plain:/pier four|Ferry/.test(raw)})};};r.onerror=()=>res({n:-1})})""")
 

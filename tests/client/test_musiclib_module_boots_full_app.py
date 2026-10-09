@@ -46,6 +46,11 @@ window.__blobs={};
   // object URL (what trackUrl returns) the way the browser would.
   if(u.startsWith('blob:')) return new Promise((ok,no)=>{const x=new XMLHttpRequest();x.open('GET',u);x.responseType='arraybuffer';
     x.onload=()=>ok(new Response(x.response,{status:200}));x.onerror=()=>no(new TypeError('blob read failed'));x.send();});
+  /* A FRESH DRIVE, said the way the server says it: `{ok:true}` with no index. The generic fixture's
+     `{}` is "could not ask", and since the drive key is never minted on "could not ask" (filesindex.js
+     _ensureMK — inventing a key there is how a device made every encrypted file unreadable) the
+     track could not be encrypted at all. */
+  if(/\/client\/files-index(?:[?#].*)?$/.test(u)) return Promise.resolve(new Response('{"ok":true}',{status:200,headers:{'Content-Type':'application/json'}}));
   if(m && __blobs[m[1]]) return Promise.resolve(new Response(__blobs[m[1]],{status:200,headers:{'Content-Type':'application/octet-stream'}}));
   if(/\/list\/[0-9a-f]{64}/.test(u)) return Promise.resolve(new Response(JSON.stringify(Object.keys(__blobs).map(s=>({sha256:s,size:__blobs[s].length}))),{status:200,headers:{'Content-Type':'application/json'}}));
   return prev.apply(this,arguments);

@@ -2976,27 +2976,6 @@ window.PCFilesFactory = function(dep){
     for(let i = 0; i < x.length; i++) if(x[i] !== y[i]) return false;
     return true;
   }
-  /* POSTERCHANOS OPENS A DOCUMENT ON THE MACHINE (desktop/office-local.js): the same Collabora the
-   * instance runs, started only when a document is opened, with the desktop as its WOPI host — so a
-   * document opens with no network, and its bytes never leave the machine. Same session shape as the
-   * instance's, so everything after this is one code path. Null = not here (no local editor). */
-  let _officeLocalQ = null;
-  async function _officeLocalSession(file){
-    const L = window.pcOfficeLocal;
-    if(!L) return null;
-    if(!_officeLocalQ) _officeLocalQ = Promise.resolve().then(()=>L.available()).then(v=>!!v, ()=>false);
-    if(!(await _officeLocalQ)) return null;
-    const r = await L.open(await file.arrayBuffer(), file.name || 'document', 'edit');
-    if(!r || !r.ok) throw new Error((r && r.error) || 'the office editor on this machine could not open it');
-    const session = { id:r.id, token:r.token, editor_url:r.editor_url, expires:r.expires, readonly:r.readonly };
-    const unwrap = (x, what) => { if(!x || !x.ok) throw new Error((x && x.error) || what); return x; };
-    return {
-      session,
-      contents: async()=>new Blob([unwrap(await L.contents(session.id, session.token), 'this document is no longer open').bytes]),
-      exportAs: async fmt=>{ const x = unwrap(await L.export(session.id, session.token, fmt), 'could not convert this document'); return new Blob([x.bytes], { type:x.mime }); },
-      drop: async()=>{ try{ await L.close(session.id, session.token); }catch(_){ } },
-    };
-  }
   async function _officeSession(file, saveBack){
     // Capture the launcher before opening the editor changes VIEW. Files keeps its
     // selected source and folder in memory, so returning through switchView restores it.
@@ -3218,6 +3197,27 @@ window.PCFilesFactory = function(dep){
     }catch(err){ toast('office unavailable: '+((err&&err.message)||err)); }
   }
 
+  /* POSTERCHANOS OPENS A DOCUMENT ON THE MACHINE (desktop/office-local.js): the same Collabora the
+   * instance runs, started only when a document is opened, with the desktop as its WOPI host — so a
+   * document opens with no network, and its bytes never leave the machine. Same session shape as the
+   * instance's, so everything after this is one code path. Null = not here (no local editor). */
+  let _officeLocalQ = null;
+  async function _officeLocalSession(file){
+    const L = window.pcOfficeLocal;
+    if(!L) return null;
+    if(!_officeLocalQ) _officeLocalQ = Promise.resolve().then(()=>L.available()).then(v=>!!v, ()=>false);
+    if(!(await _officeLocalQ)) return null;
+    const r = await L.open(await file.arrayBuffer(), file.name || 'document', 'edit');
+    if(!r || !r.ok) throw new Error((r && r.error) || 'the office editor on this machine could not open it');
+    const session = { id:r.id, token:r.token, editor_url:r.editor_url, expires:r.expires, readonly:r.readonly };
+    const unwrap = (x, what) => { if(!x || !x.ok) throw new Error((x && x.error) || what); return x; };
+    return {
+      session,
+      contents: async()=>new Blob([unwrap(await L.contents(session.id, session.token), 'this document is no longer open').bytes]),
+      exportAs: async fmt=>{ const x = unwrap(await L.export(session.id, session.token, fmt), 'could not convert this document'); return new Blob([x.bytes], { type:x.mime }); },
+      drop: async()=>{ try{ await L.close(session.id, session.token); }catch(_){ } },
+    };
+  }
   async function _officeStoreDrive(blob,name){
     const file=fileFromBytes(await blob.arrayBuffer(),name,blob.type||mimeForName(name)||'application/octet-stream');
     const stored={}; const url=await uploadBlob(file,{hashOut:stored,noCompress:true});

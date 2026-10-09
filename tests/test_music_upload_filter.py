@@ -157,8 +157,13 @@ def test_transport_actions_never_land_on_pause():
     assert prv and "force:true" in prv.group(0), "prev() must force — it can resolve to the current track"
     # EVERY shuffle entry point, not just the first — the classic Music button and the app's
     # "Shuffle all" are two of them, and only one had been fixed.
+    # Every Shuffle button starts through MusicPlayer.shufflePlay() (a fresh shuffled round); that one
+    # method is where the pick is played, so that is where `force` must be. A hand-rolled random pick
+    # coming back next to it is the shape this guarded before.
+    sp = re.search(r"    shufflePlay\(\)\{.*?\},\n", src, re.S)
+    assert sp and "force:true" in sp.group(0), "shufflePlay() must force — its pick can be the playing track"
+    assert src.count("shufflePlay()") >= 2, "the Shuffle button no longer starts through shufflePlay()"
     picks = re.findall(r"MusicPlayer\.play\(MusicPlayer\.queue\[Math\.floor[^\n]*", src)
-    assert picks, "no shuffle pick found — did the shuffle move?"
     assert all("force:true" in p for p in picks), (
         "a shuffle pick can be the track already playing; without force that pauses: "
         + "; ".join(p[:90] for p in picks if "force:true" not in p))

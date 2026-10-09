@@ -15,7 +15,9 @@
 import fs from 'node:fs';
 import { clientSource, clientSourceAt, installStateGlobals } from './client_source.mjs';
 const app = clientSource();
-const start = app.indexOf('  async function renderBookmarks(){');
+// From _bookmarksFromStore: renderBookmarks calls it first (the offline read of your own list), so a
+// slice that started at renderBookmarks itself ran a function whose first line was undefined here.
+const start = app.indexOf('  function _bookmarksFromStore(){');
 const end = app.indexOf('  // ---------- minimal, SAFE markdown renderer', start);
 if (start < 0 || end < 0) throw new Error('renderBookmarks moved');
 const shipped = app.slice(start, end);
@@ -24,6 +26,7 @@ const held = new Map([['a1', {id:'a1', pubkey:'p1', created_at:2}],
                       ['a2', {id:'a2', pubkey:'p2', created_at:1}]]);
 globalThis.BOOKMARKS = new Set(['a1', 'a2', 'missing1']);
 globalThis.VIEW = 'bookmarks';
+globalThis.ME = { pubkey: 'me' }; globalThis.GUEST = false;
 globalThis.Store = { get: id => held.get(id) || null, saveEvent(){} };
 globalThis.needProfile = () => {};
 globalThis.noteHtml = ev => `<article data-id="${ev.id}"></article>`;

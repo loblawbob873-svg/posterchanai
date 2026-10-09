@@ -62,7 +62,11 @@ class ExportIsGated(unittest.TestCase):
         """The button and the allowlist are in different files and different languages."""
         from pathlib import Path
         app_js = client_source()
-        asked = set(re.findall(r"/client/office/session/'\+session\.id\+'/export/(\w+)", app_js))
+        # The client asks through its session object (files.js: instance or this machine), and the
+        # instance path builds /client/office/session/<id>/export/<fmt> from what it was asked for.
+        asked = set(re.findall(r"exportAs\('(\w+)'\)", app_js))
+        self.assertIn("/client/office/session/'+session.id+'/export/'+fmt", app_js,
+                      "the instance export route is no longer what the session object asks")
         self.assertTrue(asked, "no client asks for an export at all")
         self.assertTrue(asked <= set(office._EXPORT),
                         f"the client asks for {asked - set(office._EXPORT)}, which the server refuses")

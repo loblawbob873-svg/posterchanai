@@ -60,6 +60,9 @@ const protocol={handle:(scheme, fn)=>{handler=fn;}};
 const WWW=process.argv[2];
 const _MIME={'.html':'text/html','.js':'text/javascript','.png':'image/png'};
 function serveHostFile(){ return new Response('host'); }
+// Meme Builder media kept on the machine (desktop/meme-local.js): the real module, an empty store.
+const memeLocal=require(path.join(path.dirname(process.argv[1]),'meme-local.js'));
+const memeStoreDir=()=>path.join(WWW,'..','no-meme-store');
 eval(src.slice(i,j)); serveBundle();
 (async()=>{
   const ask=async u=>{ const r=await handler({url:u, headers:new Map()}); return {status:r.status, body:(await r.text()).slice(0,40), type:r.headers.get('content-type')}; };
