@@ -262,6 +262,9 @@ function onBotFormChange() {
 }
 
 function openBotModal(id) {
+    { const f = _g('bot_f_concord_invite'), b = _g('bot_concord_toggle');   // a room key starts hidden on every open
+      if (f) f.classList.remove('revealed'); if (b) b.textContent = '👁 Reveal';
+      const st = _g('bot_concord_status'); if (st) st.textContent = ''; }
     const b = id !== undefined ? _bots[id] : null;
     _g('botModalTitle').textContent = b ? `Edit ${b.name}` : 'Add bot';
     _g('botModalError').textContent = '';
@@ -388,8 +391,8 @@ function wireBotConcordInvite() {
 function toggleBotConcord() {
     const f = _g('bot_f_concord_invite'), btn = _g('bot_concord_toggle');
     if (!f) return;
-    const show = f.type === 'password';
-    f.type = show ? 'text' : 'password';
+    const show = !f.classList.contains('revealed');
+    f.classList.toggle('revealed', show);
     if (btn) btn.textContent = show ? '🙈 Hide' : '👁 Reveal';
 }
 
@@ -398,33 +401,43 @@ function toggleBotConcord() {
    indistinguishable from a working one until the bot has been running silently for a day. The
    server opens it with the SAME bridge the bot uses, and reports the room's name and channels —
    evidence, not a green tick. */
+/* One invite per line, so every line is opened and reported on its own line: a bot in three rooms
+   with one bad link must say WHICH link is bad. */
+function botConcordInvites(v) {
+    return [...new Set(String(v || '').split(/[\s,]+/).filter(Boolean))];
+}
 async function testBotConcord() {
     const st = _g('bot_concord_status');
-    const invite = _val('bot_f_concord_invite');
-    if (!invite) { if (st) st.textContent = 'Paste the invite link first.'; return; }
-    if (invite.indexOf('#') < 0) {
-        if (st) st.textContent = '✗ That link has no # part. The text after # is the room key — '
-                              + 'copy the whole link, some chat apps cut it off.';
-        return;
+    const invites = botConcordInvites(_val('bot_f_concord_invite'));
+    if (!invites.length) { if (st) st.textContent = 'Paste an invite link first.'; return; }
+    if (st) st.textContent = 'Opening ' + (invites.length === 1 ? 'the room' : invites.length + ' rooms') + '…';
+    const lines = [];
+    for (const [n, invite] of invites.entries()) {
+        const tag = invites.length > 1 ? (n + 1) + '. ' : '';
+        if (invite.indexOf('#') < 0) {
+            lines.push(tag + '✗ That link has no # part. The text after # is the room key — '
+                       + 'copy the whole link, some chat apps cut it off.');
+            continue;
+        }
+        try {
+            const r = await fetch('/api/admin/bots/concord-test', {
+                method: 'POST', headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ invite }),
+            });
+            const d = await r.json().catch(() => ({}));
+            if (!r.ok) throw new Error(d.detail || r.statusText);
+            const chans = (d.channels || []).map(c => '#' + c.name).join(' ');
+            /* SAY WHAT WAS ACTUALLY PROVED: the LINK opens from this node. Whether the bot joins is
+               a question about Save ("i don't see bot in room despite what the UI says"). */
+            lines.push(tag + '✓ opens ' + (d.name || 'the room') + ' — '
+                       + (d.channels || []).length + ' channel(s): ' + chans);
+        } catch (e) {
+            lines.push(tag + '✗ ' + (e.message || e));
+        }
     }
-    if (st) st.textContent = 'Opening the room…';
-    try {
-        const r = await fetch('/api/admin/bots/concord-test', {
-            method: 'POST', headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ invite }),
-        });
-        const d = await r.json().catch(() => ({}));
-        if (!r.ok) throw new Error(d.detail || r.statusText);
-        const chans = (d.channels || []).map(c => '#' + c.name).join(' ');
-        /* SAY WHAT WAS ACTUALLY PROVED. This read "✓ room — 3 channels", which an operator
-           reasonably takes as "the bot is in there" — and it was reported exactly that way: "i
-           don't see bot in room despite what the UI says". It proves the LINK opens from this
-           node. Whether the bot joins is a question about Save. */
-        if (st) st.textContent = '✓ this link opens ' + (d.name || 'the room') + ' — '
-                               + (d.channels || []).length + ' channel(s): ' + chans
-                               + ' · Save the bot to make it join.';
-    } catch (e) {
-        if (st) st.textContent = '✗ ' + (e.message || e);
+    if (st) {
+        st.style.whiteSpace = 'pre-line';
+        st.textContent = lines.join('\n') + (lines.some(l => l.indexOf('✓') >= 0) ? '\nSave the bot to make it join.' : '');
     }
 }
 

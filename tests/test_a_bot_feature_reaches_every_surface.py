@@ -237,5 +237,11 @@ def test_a_credential_field_is_masked():
     """The `#` fragment IS the room key, so that input grants read access to everything the room has
     ever said. It is masked for the same reason the nsec is, and it is checked because the default
     for a text input is the opposite."""
-    block = HTML[HTML.index('id="bot_f_concord_invite"') - 200:HTML.index('id="bot_f_concord_invite"') + 200]
-    assert 'type="password"' in block, "the Concord invite is rendered as plain text"
+    i = HTML.index('id="bot_f_concord_invite"')
+    tag = HTML[HTML.rindex("<", 0, i):HTML.index(">", i)]
+    # One invite per line (2026-10-09) means a <textarea>, which has no type=password: the mask is
+    # the `bots-secret` class, masked by the stylesheet until Reveal adds `revealed`.
+    assert 'type="password"' in tag or "bots-secret" in tag, "the Concord invite is rendered as plain text"
+    if "bots-secret" in tag:
+        css = (ROOT / "static/css/admin-tabs.css").read_text()
+        assert ".bots-secret:not(.revealed){ -webkit-text-security:disc; }" in css.replace("  ", " ")

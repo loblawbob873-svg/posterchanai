@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import subprocess
 import threading
 from pathlib import Path
@@ -169,6 +170,36 @@ class Room:
                                 challenge=challenge, relay=relay, relays=allowed)
 
 
+def invites_from_env(env: dict | None = None) -> list[str]:
+    """Every invite this bot was given — ONE BOT, SEVERAL ROOMS.
+
+    `concord_invite` used to hold exactly one link, so being in two communities took two bots
+    sharing one key ("it does not look like our bots support multiple concord rooms"). It now holds
+    one link per line (commas and spaces also separate them — an invite never contains either).
+    Order kept, duplicates dropped.
+    """
+    src = env if env is not None else os.environ
+    seen, out = set(), []
+    for tok in re.split(r"[\s,]+", src.get("CONCORD_INVITE") or ""):
+        if tok and tok not in seen:
+            seen.add(tok)
+            out.append(tok)
+    return out
+
+
+def rooms_from_env(env: dict | None = None) -> list["Room"]:
+    """One Room per invite (see invites_from_env); [] when the bot is in none."""
+    src = env if env is not None else os.environ
+    invites = invites_from_env(src)
+    if not invites:
+        return []
+    nsec = (src.get("NOSTR_NSEC") or "").strip()
+    if not nsec:
+        raise ConcordError("CONCORD_INVITE is set but NOSTR_NSEC is not — a bot needs an identity "
+                           "to speak in a room")
+    return [Room(i, nsec) for i in invites]
+
+
 def from_env(env: dict | None = None) -> Room | None:
     """The room this bot was configured with, or None when it has none.
 
@@ -177,9 +208,10 @@ def from_env(env: dict | None = None) -> Room | None:
     than raising.
     """
     src = env if env is not None else os.environ
-    invite = (src.get("CONCORD_INVITE") or "").strip()
-    if not invite:
+    invites = invites_from_env(src)
+    if not invites:
         return None
+    invite = invites[0]
     nsec = (src.get("NOSTR_NSEC") or "").strip()
     if not nsec:
         raise ConcordError("CONCORD_INVITE is set but NOSTR_NSEC is not — a bot needs an identity "

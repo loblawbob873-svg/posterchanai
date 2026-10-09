@@ -12,6 +12,7 @@
  *
  * Prints one line: ROOM <json>.
  */
+import vm from 'node:vm';
 import { makeRealm, loadInto, into } from '../botframework/cord_realm.mjs';
 
 const nt = makeRealm();   loadInto(nt, 'static/vendor/nostr/nostr.bundle.js');
@@ -23,7 +24,9 @@ const signer = (sk) => (t) => toCord(NT.finalizeEvent(toNT({
   tags: t.tags || [], content: t.content ?? '' }), sk));
 
 const ownerSk = NT.generateSecretKey(), owner = NT.getPublicKey(ownerSk);
-const botSk = NT.generateSecretKey(), bot = NT.getPublicKey(botSk);
+/* PC_BOT_SK (hex) mints a SECOND room for the SAME bot — how one bot in several rooms is tested. */
+const botSk = process.env.PC_BOT_SK ? vm.runInContext('Uint8Array.from(' + JSON.stringify([...Buffer.from(process.env.PC_BOT_SK, 'hex')]) + ')', nt)
+                                    : NT.generateSecretKey(), bot = NT.getPublicKey(botSk);
 
 /* The relay and base are overridable so this same fixture can mint a room on a REAL relay — which
    is how the bot is tested as a live process rather than only as a set of decisions. */

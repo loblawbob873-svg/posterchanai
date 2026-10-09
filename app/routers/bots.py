@@ -486,8 +486,12 @@ def _vet_config(config: dict) -> dict:
     Server-side because it must hold for the API and the migration seed too, not only the form.
     """
     cfg = dict(config or {})
-    inv = str(cfg.get("concord_invite") or "").strip()
-    if inv:
+    # One invite per line: a bot can sit in several rooms. Each line is vetted on its own, and the
+    # list is stored normalised (one per line, duplicates dropped) — what the bot reads back.
+    invites = list(dict.fromkeys(t for t in re.split(r"[\s,]+", str(cfg.get("concord_invite") or "")) if t))
+    if invites:
+        cfg["concord_invite"] = "\n".join(invites)
+    for inv in invites:
         if inv.startswith(("nsec1", "ncryptsec1")):
             raise HTTPException(status_code=400, detail=(
                 "That is a private key, not a Concord invite. Paste the room's invite LINK "
