@@ -58,7 +58,7 @@ def is_ephemeral(kind: int) -> bool:
 def _dtag(ev: dict) -> str:
     for t in ev.get("tags") or []:
         if len(t) >= 2 and t[0] == "d":
-            return t[1]
+            return t[1] if isinstance(t[1], str) else str(t[1])   # the relay matches str(t[1]) via event_tags
         if len(t) == 1 and t[0] == "d":
             return ""
     return ""
@@ -555,10 +555,12 @@ class Store:
         self.idx.add(_h("au:%s" % pk), seq)
         self.idx.add(_h("k:%d" % k), seq)
         for t in ev.get("tags") or []:
-            if len(t) >= 2 and len(t[0]) == 1:
-                self.idx.add(_h("t:%s:%s" % (t[0], t[1])), seq)
+            # exactly the relay's rule: single-letter STRING names, value indexed as str(t[1])
+            if len(t) >= 2 and isinstance(t[0], str) and len(t[0]) == 1:
+                v = t[1] if isinstance(t[1], str) else str(t[1])
+                self.idx.add(_h("t:%s:%s" % (t[0], v)), seq)
                 if t[0] == "d":
-                    self.dprefix.add(t[1], seq)
+                    self.dprefix.add(v, seq)
         for w in search_words(ev.get("content", "")):
             self.words.add(_h(w), seq)
         addr = self._address(ev)

@@ -41,8 +41,11 @@ def rss_mb() -> float:
 
 
 def load(pg, dst: Store, batch: int = 20000) -> int:
-    """Stream events oldest first (so replaceable/deletion rules replay in order)."""
-    raw = pg._raw
+    """Stream events oldest first (so replaceable/deletion rules replay in order). Its own READ-ONLY
+    connection: a server-side (named) cursor needs a transaction, and the relay's connection is autocommit."""
+    import psycopg2
+    raw = psycopg2.connect(relay_store_mod._DEFAULT_DSN)
+    raw.set_session(readonly=True, autocommit=False)
     n = 0
     with raw.cursor(name="pcdb_parity_load") as cur:
         cur.itersize = batch
@@ -61,6 +64,8 @@ def load(pg, dst: Store, batch: int = 20000) -> int:
         cur.execute("SELECT event_id, value FROM event_tags WHERE tag='_quote_author'")
         for eid, val in cur:
             dst.add_derived_tag(eid, "_quote_author", val)
+    raw.rollback()
+    raw.close()
     dst.flush()
     return n
 

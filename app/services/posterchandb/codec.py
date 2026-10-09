@@ -10,7 +10,9 @@ Layout (all integers are unsigned LEB128 varints unless noted):
     id 32 bytes | pubkey 32 bytes | sig 64 bytes | created_at | kind
     tag count, then per tag: element count, then per element one of
         0x00 + 32 raw bytes          a 64-char LOWERCASE hex string (ids, pubkeys — most `p`/`e` values)
-        0x01 + len + utf-8 bytes     anything else
+        0x01 + len + utf-8 bytes     any other string
+        0x02 + len + JSON            a NON-string element (a number, null, a list) — invalid per NIP-01 but
+                                     relays store them and their ids hash over them, so they are kept exactly
     content: one mode byte, then
         0x00 + len + utf-8           as written
         0x01 + len + zlib(dict)      text that compressed smaller with the relay's preset dictionary
@@ -24,6 +26,7 @@ from __future__ import annotations
 
 import base64
 import binascii
+import json
 import re
 import zlib
 
@@ -110,8 +113,12 @@ class Codec:
             _varint(len(t), out)
             for v in t:
                 if not isinstance(v, str):
-                    raise ValueError("tag elements must be strings")
-                if len(v) == 64 and _HEX64.match(v):
+                    raw = json.dumps(v, ensure_ascii=False, separators=(",", ":"), allow_nan=False)
+                    if json.loads(raw) != v or type(json.loads(raw)) is not type(v):
+                        raise ValueError("a tag element that JSON cannot give back unchanged")
+                    out.append(2)
+                    _bytes(raw.encode("utf-8"), out)
+                elif len(v) == 64 and _HEX64.match(v):
                     out.append(0)
                     out += bytes.fromhex(v)
                 else:
@@ -162,7 +169,8 @@ class Codec:
                     i += 32
                 else:
                     n, i = _read_varint(mv, i)
-                    t.append(bytes(mv[i:i + n]).decode("utf-8"))
+                    raw = bytes(mv[i:i + n]).decode("utf-8")
+                    t.append(json.loads(raw) if mode == 2 else raw)
                     i += n
             tags.append(t)
         mode = mv[i]

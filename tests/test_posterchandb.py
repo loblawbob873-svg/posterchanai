@@ -61,11 +61,34 @@ def test_uppercase_or_short_hex_in_a_tag_is_kept_as_written():
 
 def test_invalid_events_are_refused_not_mangled():
     c = Codec()
-    for bad in ({"id": "ABC"}, {"sig": "zz"}, {"created_at": 1.5}, {"kind": -1}, {"tags": [["p", 5]]}, {"content": None}):
+    for bad in ({"id": "ABC"}, {"sig": "zz"}, {"created_at": 1.5}, {"kind": -1}, {"tags": [["p", float("nan")]]},
+                {"content": None}):
         ev = mk()
         ev.update(bad)
         with pytest.raises((ValueError, KeyError, TypeError)):
             c.encode(ev)
+
+
+def test_non_string_tag_elements_real_relays_store_come_back_exactly():
+    """Found loading poster.place's relay: events whose tags hold numbers/null/lists. Invalid per NIP-01, but
+    stored, and their id hashes over them — so they must round-trip value-for-value AND type-for-type."""
+    c = Codec()
+    ev = mk(tags=[["amount", 21000], ["x", 1.5], ["y", None], ["z", True], ["w", ["a", 1]], ["p", hx()]])
+    back = c.decode(c.encode(ev))
+    assert back == ev and [type(v) for t in back["tags"] for v in t] == [type(v) for t in ev["tags"] for v in t]
+    assert ev_id(back) == ev["id"]
+
+
+def test_non_string_tags_are_stored_and_indexed_the_way_the_relay_indexes_them(tmp_path):
+    s = Store(str(tmp_path / "db"))
+    ev = mk(kind=1, created_at=1_700_000_000, tags=[[7, "x"], ["t", 21000], ["e", None], ["amount", 5]])
+    assert s.put(ev) == "stored"
+    assert [e["id"] for e in s.query({"#t": ["21000"]}, now=1_800_000_000)] == [ev["id"]]   # str(21000)
+    assert [e["id"] for e in s.query({"#e": ["None"]}, now=1_800_000_000)] == [ev["id"]]
+    s.close()
+    s = Store(str(tmp_path / "db"))
+    assert s.get(s.seq_of(ev["id"])) == ev
+    s.close()
 
 
 def test_compact_encoding_is_smaller_than_json_on_typical_events():
