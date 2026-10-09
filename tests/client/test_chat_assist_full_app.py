@@ -148,7 +148,8 @@ def test_telegram_sparkle(width):
     msgs = got['reply_call']['messages']
     assert msgs[0] == {'me': False, 'text': 'hey there', 'who': 'Alice'}, msgs
     assert msgs[1]['text'] == '[a photo]' and msgs[2] == {'me': True, 'text': 'the doc', 'who': ''}, msgs
-    assert got['row'] == ['attach', 'camera', 'ai', 'send'], got['row']
+    # The PosterChan emoji picker joined the row (2026-10-09); ✨ still sits beside Send.
+    assert got['row'] == ['attach', 'camera', 'emoji', 'ai', 'send'], got['row']
 
 
 @pytest.mark.skipif(not Path('/opt/google/chrome/chrome').exists(), reason='Chrome required')

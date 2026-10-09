@@ -1,3 +1,4 @@
+import re
 from pathlib import Path
 from tests.client_source import client_source
 
@@ -75,7 +76,8 @@ def test_attach_files_uses_connected_instances_cors_safe_media_reader():
     assert "PC.fetchMediaBlob(url)" in picker
     assert "blob=(await PC.fetchMediaBlob(url)).blob" in picker
     assert picker.index("PC.fetchMediaBlob(url)") < picker.index("else { const res=await fetch(url)")
-    assert "saveBlobAs, fetchMediaBlob" in app
+    # Both are exported on __PC (the export list grows -- saveToDevice joined it 2026-10-09).
+    assert re.search(r"\bsaveBlobAs,[^}]{0,200}\bfetchMediaBlob,", app), "saveBlobAs/fetchMediaBlob not exported"
     fetcher = app[app.index("async function fetchMediaBlob(src)"):
                   app.index("async function sniffExt", app.index("async function fetchMediaBlob(src)"))]
     assert "credentials:'include'" in fetcher
