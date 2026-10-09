@@ -2,7 +2,7 @@
 """Measure what PosterChanDB would hold for THIS relay: compact record size vs JSON vs Postgres, and the
 RAM of its in-memory indexes. Reads a 2% sample of the live events table (read-only). Needs zstandard,
 pyroaring, psycopg2 (a scratch venv is fine). See docs/POSTERCHANDB.md."""
-import re, json, struct, random, sys
+import re, json, random
 import psycopg2, zstandard, pyroaring
 url = next(re.search(r'(postgresql[^\s"\']+)', l).group(1) for l in open('data/secrets.env') if 'postgresql' in l)
 url = url.replace('postgresql+psycopg2://', 'postgresql://')
