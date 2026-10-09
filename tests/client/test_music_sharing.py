@@ -48,6 +48,7 @@ SCENARIOS = [
     "derived key is per track, deterministic, and not the master key",
     "wire validation refuses junk",
     "A shares; B plays it; B adds it; A stops sharing; B keeps it; C never could",
+    "songs added to the library are kept on this device, not streamed",
     "the same song shared twice is ONE blob",
     "revoking one of two shares keeps the copy the other still uses",
     "an incomplete read never releases anything",
