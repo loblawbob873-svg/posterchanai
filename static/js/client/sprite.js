@@ -108,6 +108,8 @@
   <symbol id="i-palette" viewBox="0 0 24 24"><path d="M12 3.2a8.8 8.8 0 000 17.6c1.4 0 2-.9 2-1.8 0-.9-.7-1.5-.7-2.3 0-.8.6-1.4 1.5-1.4h1.8a4.2 4.2 0 004.2-4.2c0-4.4-4-7.9-8.8-7.9z"/><circle cx="8.2" cy="10" r="1.1" fill="currentColor" stroke="none"/><circle cx="12" cy="7.6" r="1.1" fill="currentColor" stroke="none"/><circle cx="15.8" cy="10" r="1.1" fill="currentColor" stroke="none"/></symbol>
   <!-- Meme Builder drawing tools: a brush, an eraser block, and the three shapes (line, arrow, box). -->
   <symbol id="i-brush" viewBox="0 0 24 24"><path d="M20.2 3.8c-3.4 1.6-7.4 5.4-9.6 8.8l1.6 1.6c3.4-2.2 7.2-6.2 8-10.4z"/><path d="M10.2 13.4c-2.2 0-3.6 1.4-3.6 3.4 0 1.4-.8 2.4-2.4 2.8 1.2.8 2.6 1.2 4 1.2 2.8 0 4.6-1.8 4.6-4.2z"/></symbol>
+  <symbol id="i-bucket" viewBox="0 0 24 24"><path d="M11 3.5l7.5 7.5-6.8 6.8a1.6 1.6 0 01-2.2 0l-5.3-5.3a1.6 1.6 0 010-2.2z"/><path d="M4.6 11.6h13"/><path d="M19.6 14.2s1.8 2.2 1.8 3.4a1.8 1.8 0 01-3.6 0c0-1.2 1.8-3.4 1.8-3.4z"/></symbol>
+  <symbol id="i-eyedropper" viewBox="0 0 24 24"><path d="M15.4 4.2a2.4 2.4 0 013.4 3.4l-1.6 1.6 1 1-1.4 1.4-5-5 1.4-1.4 1 1z"/><path d="M11.8 7.6l-7 7a2 2 0 00-.6 1.4V19h3l7-7"/></symbol>
   <symbol id="i-eraser" viewBox="0 0 24 24"><path d="M14.2 4.6l5.6 5.6-8.8 8.8H7.6l-3-3a1.6 1.6 0 010-2.2z"/><path d="M9.4 9.4l5.6 5.6"/><path d="M11 19h8.4"/></symbol>
   <symbol id="i-line" viewBox="0 0 24 24"><path d="M5 19L19 5"/></symbol>
   <symbol id="i-arrow-ne" viewBox="0 0 24 24"><path d="M5 19L19 5"/><path d="M10.4 5H19v8.6"/></symbol>

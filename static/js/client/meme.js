@@ -101,7 +101,7 @@
   let _hasResult = false;                   // a finished render is sitting in #mb-result → offer its tab
   // Inspector sections. A layer panel is ~20 controls; collapsed by default it is the handful you actually
   // reach for. Module-level so the state survives repaint('inspector'), which happens on every drag end.
-  const _sec = { place:true, time:false, look:false };
+  const _sec = { tools:true, place:true, time:false, look:false };
   // Read the groups' state back OFF THE DOM immediately before the panel is rebuilt, rather than tracking it
   // with a `toggle` listener. <details> fires `toggle` ASYNCHRONOUSLY, so a rebuild triggered in the same
   // task as the click — tap a group open, then tap a clip — ran before the event and rewrote the panel from
@@ -1147,7 +1147,9 @@
     const inner = `<i class="mb-mk" style="position:absolute;inset:0;display:block;pointer-events:none`
                 + `${mk}${_xformCss(l, lt)}">${media}</i>`;
     const fxw = `<i class="mb-fx${_fxCrops(l)?' crop':''}" style="${_rotCss(l)}">${inner}</i>`;
-    return `<div class="mb-item mb-media${s}" data-id="${l.id}" style="${pos}${size}opacity:${_opacityOf(l, lt)}">${fxw}<i class="mb-h"></i></div>`;
+    const wc = (_warpOn && l.id===sel && (l.type==='image'||l.type==='video')) ? (_warpOk(l.warp) || _WARP_ID) : null;
+    const handles = wc ? [0,1,2,3].map(k=>`<i class="mb-wh" data-wc="${k}" role="slider" aria-label="${['Top-left','Top-right','Bottom-left','Bottom-right'][k]} corner" style="left:${(wc[k*2]*100).toFixed(2)}%;top:${(wc[k*2+1]*100).toFixed(2)}%"></i>`).join('') : '';
+    return `<div class="mb-item mb-media${s}${wc?' mb-warping':''}" data-id="${l.id}" style="${pos}${size}opacity:${_opacityOf(l, lt)}">${fxw}<i class="mb-h"></i>${handles}</div>`;
   }
 
   function trackEl(l){
@@ -1487,8 +1489,69 @@
     const t=_xform(l, lt), f=_fxFilter(l);
     return (t ? `;transform:${t};transform-origin:${_fxOrigin(l)}` : '') + (f ? `;filter:${f}` : '');
   }
+  /* DISTORT ("Meme builder also needs those standard transform/warp features to images"). A picture's four
+   * corners dragged inside its box -- perspective, skew, shear in one control. `l.warp` is eight fractions of
+   * the box, (x, y) for top-left, top-right, bottom-left, bottom-right, exactly what the renderer's
+   * `perspective` filter is given (meme_builder_service._warp_corners), and the stage draws it with the
+   * matching homography as a matrix3d. A matrix3d is in PIXELS, so it needs the layer's laid-out size:
+   * _warpPx, refreshed by _measureWarps after every stage bind and resize. */
+  const _warpPx = Object.create(null);
+  let _warpOn = false;
+  const _WARP_ID = [0, 0, 1, 0, 0, 1, 1, 1];
+  /* A corner may not be dragged across the picture: past a straight line through two other corners the
+   * shape folds into a triangle or a bow-tie, which no perspective can draw (the exporter would have to
+   * put a corner at infinity). Corners go TL TR BR BL; every turn must bend the same way, by a margin. */
+  function _warpConvex(w, W, H){
+    const q = [[w[0]*W, w[1]*H], [w[2]*W, w[3]*H], [w[6]*W, w[7]*H], [w[4]*W, w[5]*H]];
+    const min = 0.02 * W * H;
+    for(let i = 0; i < 4; i++){
+      const a = q[i], b = q[(i+1)%4], c = q[(i+2)%4];
+      if((b[0]-a[0])*(c[1]-b[1]) - (b[1]-a[1])*(c[0]-b[0]) <= min) return false;
+    }
+    return true;
+  }
+  function _warpOk(w){
+    if(!Array.isArray(w) || w.length !== 8 || !w.every(v=>Number.isFinite(+v))) return null;
+    const c = w.map(v=>Math.min(1, Math.max(0, +v)));
+    return c.every((v,i)=>Math.abs(v-_WARP_ID[i]) < 0.002) ? null : c;
+  }
+  // Unit square -> the quad (Heckbert's square-to-quad), scaled to a W x H element, as CSS matrix3d values.
+  function _warpMatrix(w, W, H){
+    const q = [[w[0]*W, w[1]*H], [w[2]*W, w[3]*H], [w[6]*W, w[7]*H], [w[4]*W, w[5]*H]];   // TL TR BR BL
+    const sx = q[0][0]-q[1][0]+q[2][0]-q[3][0], sy = q[0][1]-q[1][1]+q[2][1]-q[3][1];
+    let a, b, c, d, e, f, g = 0, h = 0;
+    if(Math.abs(sx) < 1e-9 && Math.abs(sy) < 1e-9){
+      a = q[1][0]-q[0][0]; b = q[2][0]-q[1][0]; c = q[0][0]; d = q[1][1]-q[0][1]; e = q[2][1]-q[1][1]; f = q[0][1];
+    } else {
+      const dx1 = q[1][0]-q[2][0], dx2 = q[3][0]-q[2][0], dy1 = q[1][1]-q[2][1], dy2 = q[3][1]-q[2][1];
+      const den = dx1*dy2 - dx2*dy1; if(Math.abs(den) < 1e-9) return null;
+      g = (sx*dy2 - dx2*sy)/den; h = (dx1*sy - sx*dy1)/den;
+      a = q[1][0]-q[0][0]+g*q[1][0]; b = q[3][0]-q[0][0]+h*q[3][0]; c = q[0][0];
+      d = q[1][1]-q[0][1]+g*q[1][1]; e = q[3][1]-q[0][1]+h*q[3][1]; f = q[0][1];
+    }
+    return [a/W, d/W, 0, g/W,  b/H, e/H, 0, h/H,  0, 0, 1, 0,  c, f, 0, 1].map(v=>+v.toFixed(8)).join(',');
+  }
+  // Leftmost in the list = applied LAST: after flip and the effect, before the wrapper's rotate -- the
+  // renderer's order. Wrapped in translate(-o)..translate(o) so the element's transform-origin (which the
+  // effect needs) does not also shift the warp.
+  function _warpCss(l){
+    const w = (l.type==='image' || l.type==='video') ? _warpOk(l.warp) : null; if(!w) return '';
+    const sz = _warpPx[l.id]; if(!sz || !sz.W || !sz.H) return '';
+    const M = _warpMatrix(w, sz.W, sz.H); if(!M) return '';
+    const o = _fxOrigin(l) === '0 0' ? [0, 0] : [sz.W/2, sz.H/2];
+    return `translate(${-o[0]}px,${-o[1]}px) matrix3d(${M}) translate(${o[0]}px,${o[1]}px)`;
+  }
+  function _measureWarps(root){
+    for(const l of P.layers){
+      if(!_warpOk(l.warp)) continue;
+      const m = root.querySelector(`.mb-item[data-id="${l.id}"] .mb-mk`); if(!m) continue;
+      _warpPx[l.id] = { W:m.offsetWidth, H:m.offsetHeight };
+      m.style.transform = _xform(l, _curT - l.start); m.style.transformOrigin = _fxOrigin(l);
+    }
+  }
   function _xform(l, lt){
     const p=[];
+    const wp=_warpCss(l); if(wp) p.push(wp);
     // EFFECT FIRST in the list, flip second. A CSS transform list applies RIGHT TO LEFT — the
     // rightmost runs first — and the renderer's order is hflip/vflip THEN the effect. So the effect
     // has to be the leftmost entry to run last. Written the other way round it silently mirrors a
@@ -1642,9 +1705,9 @@
       <div class="mb-insp-hd">
         <b>${isText?'Text':(isDraw?'Drawing':(l.type==='video'?'Video':'Image'))} layer</b>
         <span class="mb-insp-acts">
-          <button class="btn btn-cyan small" id="mb-split" title="Cut this layer in two where the playhead is (S) — the halves are separate layers, so you can trim, restyle or delete either one. Cut twice and delete the middle to drop a piece out."><svg class="ic b-ic" aria-hidden="true"><use href="#i-scissors"></use></svg>Cut</button>
-          <button class="btn btn-cyan small" id="mb-dup" title="Copy this layer — same clip, size, effect, sound and timing — as a new layer just above it">⧉ Duplicate</button>
-          <button class="btn btn-danger small" id="mb-del"><svg class="ic b-ic" aria-hidden="true"><use href="#i-trash"></use></svg>Delete</button>
+          <button class="btn btn-cyan small mb-ico" id="mb-split" aria-label="Cut at the playhead" title="Cut this layer in two where the playhead is (S) — the halves are separate layers, so you can trim, restyle or delete either one. Cut twice and delete the middle to drop a piece out."><svg class="ic b-ic" aria-hidden="true"><use href="#i-scissors"></use></svg></button>
+          <button class="btn btn-cyan small mb-ico" id="mb-dup" aria-label="Duplicate" title="Copy this layer — same clip, size, effect, sound and timing — as a new layer just above it"><span aria-hidden="true">⧉</span></button>
+          <button class="btn btn-danger small mb-ico" id="mb-del" aria-label="Delete this layer" title="Delete this layer"><svg class="ic b-ic" aria-hidden="true"><use href="#i-trash"></use></svg></button>
         </span>
       </div>
       ${isText ? `
@@ -1656,11 +1719,12 @@
         ${l.type==='video' ? trimWidget(l) + `
         <button class="btn btn-cyan small full" id="mb-prev-clip" title="Play just this clip in the preview above"><svg class="ic b-ic" aria-hidden="true"><use href="#i-play"></use></svg> Preview clip</button>
         ${clipSound(l)}` : ''}
-        <div class="mb-frow"><button class="btn btn-cyan small" id="mb-fit" title="Show the whole photo inside the canvas. Bars appear wherever its shape differs from the canvas — they are the canvas background."><svg class="ic b-ic" aria-hidden="true"><use href="#i-fit"></use></svg>Whole photo (bars)</button><button class="btn btn-cyan small" id="mb-fill" title="Scale up until the canvas is full and crop the overflow — no bars, but the edges are cut off"><svg class="ic b-ic" aria-hidden="true"><use href="#i-expand"></use></svg>Fill &amp; crop</button></div>
-        <!-- PHOTO TOOLS, two to a row. They were seven full-width buttons stacked one under another — the
+        <!-- PHOTO TOOLS, two to a row, in their own named group (2026-10-09: "the many many buttons on Image
+             Layer is getting crowded and ugly"). Fit / Fill moved to the quick row with stacking order.
+             PHOTO TOOLS history: two to a row. They were seven full-width buttons stacked one under another — the
              longest thing in the panel, pushing everything else below the fold on a phone. Same buttons, same
              ids, same tooltips; the labels are shorter and the grid is half the height. -->
-        <div class="mb-ptools">
+        ${_sect('tools', '✨ Photo tools', `<div class="mb-ptools">
         ${(l.type!=='image' && l.fxPose) ? `<button class="btn btn-cyan small" id="mb-talk" title="Make this character say a line in one of your cloned voices. It is animated from the character's own artwork, so the pose stays exactly as it is."><svg class="ic b-ic" aria-hidden="true"><use href="#i-mic"></use></svg>Make it talk</button>` : ''}
         ${l.type==='image' ? `<button class="btn btn-cyan small" id="mb-nobg" title="Cut the subject out of this photo and drop the background, so the layers underneath show through. Same cut-out the removebackground command does. Undo with ↺ below."><svg class="ic b-ic" aria-hidden="true"><use href="#i-wand"></use></svg>Remove background</button>
         <button class="btn btn-cyan small" id="mb-talk" title="The face in this picture says a line in one of your cloned voices, with its mouth animated to the speech. Becomes a video layer; undo with ↺ below."><svg class="ic b-ic" aria-hidden="true"><use href="#i-mic"></use></svg>Make it talk</button>` : ''}
@@ -1669,16 +1733,21 @@
         <button class="btn btn-cyan small" id="mb-erase" title="Rub parts of this layer out with your finger or the mouse. What you erase turns see-through, so the layers underneath show through it."><svg class="ic b-ic" aria-hidden="true"><use href="#i-broom"></use></svg>Erase parts${l.mask?' (erased)':''}</button>
         ${l.mask ? `<button class="btn btn-cyan small" id="mb-erase-clear" title="Put every erased part of this layer back"><svg class="ic b-ic" aria-hidden="true"><use href="#i-restore"></use></svg>Undo the erase</button>` : ''}
         ${l.origSrc ? `<button class="btn btn-cyan small" id="mb-fx-revert" title="Put this layer's original picture back — the effect (or the background cut-out) that replaced it is undone"><svg class="ic b-ic" aria-hidden="true"><use href="#i-restore"></use></svg>Undo the effect</button>` : ''}
-        </div>`}
+        </div>`)}`}
 
       <!-- Stacking order is one of the handful you reach for on EVERY layer, so it belongs up here with
            them, not buried at the bottom of a collapsed group. On a phone it was the only way to reorder
            at all — the row's ⬆︎/⬇︎ buttons come off the track there so the lane gets the width (see the
            ≤820px rules) — and "in the layer panel" meant: select the layer, open Look & sound, scroll to
            the end. Which is indistinguishable from not being there. -->
-      <div class="mb-order">
-        <button class="btn btn-cyan small" id="mb-back"><svg class="ic b-ic" aria-hidden="true"><use href="#i-download"></use></svg> Send back</button>
-        <button class="btn btn-cyan small" id="mb-front"><svg class="ic b-ic" aria-hidden="true"><use href="#i-upload"></use></svg> Bring front</button>
+      <!-- ONE ROW for the four you reach for on every picture: fit, fill, and stacking order. Icon over a
+           one-word label, each a full touch target, so the row reads at a glance on a phone. Text and
+           drawing layers have no fit/fill, so their row is just the stacking pair. -->
+      <div class="mb-quick${(isText||isDraw)?' mb-quick2':''}">
+        ${(isText||isDraw) ? '' : `<button class="btn btn-cyan small" id="mb-fit" title="Show the whole photo inside the canvas. Bars appear wherever its shape differs from the canvas — they are the canvas background."><svg class="ic b-ic" aria-hidden="true"><use href="#i-fit"></use></svg><span>Fit</span></button>
+        <button class="btn btn-cyan small" id="mb-fill" title="Scale up until the canvas is full and crop the overflow — no bars, but the edges are cut off"><svg class="ic b-ic" aria-hidden="true"><use href="#i-expand"></use></svg><span>Fill</span></button>`}
+        <button class="btn btn-cyan small" id="mb-back" title="Send this layer behind the one under it"><svg class="ic b-ic" aria-hidden="true"><use href="#i-download"></use></svg><span>Back</span></button>
+        <button class="btn btn-cyan small" id="mb-front" title="Bring this layer in front of the one above it"><svg class="ic b-ic" aria-hidden="true"><use href="#i-upload"></use></svg><span>Front</span></button>
       </div>
 
       ${_sect('place', '📐 Position &amp; size', (isText
@@ -1690,6 +1759,7 @@
              <label class="mb-f"><span>W</span><input class="input" type="number" id="mb-f-w" value="${Math.round(l.w)}"></label>
              <label class="mb-f"><span>H</span><input class="input" type="number" id="mb-f-h" value="${Math.round(l.h)}"></label>
            </div>
+           ${(l.type==='image'||l.type==='video') && !isDraw ? `<div class="mb-frow"><button class="btn btn-cyan small${_warpOn?' on':''}" id="mb-warp" aria-pressed="${_warpOn}" title="Drag the picture's four corners to skew it or give it perspective"><svg class="ic b-ic" aria-hidden="true"><use href="#i-resize"></use></svg>Distort</button>${_warpOk(l.warp)?`<button class="btn btn-cyan small" id="mb-warp-reset" title="Put the corners back"><svg class="ic b-ic" aria-hidden="true"><use href="#i-restore"></use></svg>Undistort</button>`:''}</div>` : ''}
            <button class="btn btn-cyan small full" id="mb-resize" title="Set this layer's exact size in pixels or percent"><svg class="ic b-ic" aria-hidden="true"><use href="#i-resize"></use></svg>Resize…</button>
            <button class="btn btn-cyan small full" id="mb-canvas-match" title="Reshape the CANVAS to this photo — the third option: no bars AND nothing cropped"><svg class="ic b-ic" aria-hidden="true"><use href="#i-resize"></use></svg>Canvas to this photo</button>
            <label class="mb-f"><span>Layer name</span><input class="input" id="mb-f-name" maxlength="24" placeholder="${enc(srcName(l.src))}" value="${enc(l.name||'')}"></label>`))}
@@ -2071,6 +2141,36 @@
   }
 
   function bindStage(root){
+    _measureWarps(root);
+    const _st = root.querySelector('#mb-stage');
+    if(_st && !_st._warpRO && typeof ResizeObserver !== 'undefined'){
+      try{ _st._warpRO = new ResizeObserver(()=>_measureWarps(root)); _st._warpRO.observe(_st); }catch(_){ }
+    }
+    // Distort's corner handles. Their own pointer stream (stopPropagation), so dragging a corner never
+    // moves or resizes the layer; one undo step per drag; the transform repaints in place on every move.
+    root.querySelectorAll('.mb-wh').forEach(hd=>{
+      hd.addEventListener('pointerdown', (e)=>{
+        e.preventDefault(); e.stopPropagation();
+        const it = hd.closest('.mb-item'), l = it && P.layers.find(x=>x.id===it.dataset.id); if(!l) return;
+        const k = +hd.dataset.wc;
+        snap();
+        if(!_warpOk(l.warp)) l.warp = _WARP_ID.slice();
+        try{ hd.setPointerCapture(e.pointerId); }catch(_){ }
+        const move = (ev)=>{
+          const r = it.getBoundingClientRect(); if(!r.width || !r.height) return;
+          const fx = Math.min(1, Math.max(0, (ev.clientX - r.left)/r.width)), fy = Math.min(1, Math.max(0, (ev.clientY - r.top)/r.height));
+          const next = l.warp.slice(); next[k*2] = +fx.toFixed(4); next[k*2+1] = +fy.toFixed(4);
+          if(!_warpConvex(next, r.width, r.height)) return;      // the corner stops at the last drawable place
+          l.warp = next;
+          hd.style.left = (fx*100).toFixed(2)+'%'; hd.style.top = (fy*100).toFixed(2)+'%';
+          const m = it.querySelector('.mb-mk');
+          if(m){ _warpPx[l.id] = { W:m.offsetWidth, H:m.offsetHeight }; m.style.transform = _xform(l, _curT - l.start); m.style.transformOrigin = _fxOrigin(l); }
+        };
+        const up = ()=>{ hd.removeEventListener('pointermove', move); hd.removeEventListener('pointerup', up); hd.removeEventListener('pointercancel', up);
+          if(!_warpOk(l.warp)) delete l.warp; save(); };
+        hd.addEventListener('pointermove', move); hd.addEventListener('pointerup', up); hd.addEventListener('pointercancel', up);
+      });
+    });
     const stage = root.querySelector('#mb-stage'); if(!stage) return;
     stage.addEventListener('pointerdown', (e)=>{
       const item = e.target.closest('.mb-item'); if(!item) return;
@@ -2919,12 +3019,16 @@
     });
   }
 
-  const DTOOLS = [['pen','brush','Pen'], ['line','line','Line'], ['arrow','arrow-ne','Arrow'], ['rect','rect','Box'], ['eraser','eraser','Eraser']];
+  // Fill and Pick ("Draw -> missing the fill bucket and color grabber that paint programs usually have").
+  // A fill is a STROKE like any other ({t:'fill', c, p:[x,y]}) so undo, the saved project, the stage
+  // preview and the export all replay it the same way; Pick is not a stroke at all, it sets the colour.
+  const DTOOLS = [['pen','brush','Pen'], ['line','line','Line'], ['arrow','arrow-ne','Arrow'], ['rect','rect','Box'],
+                  ['fill','bucket','Fill'], ['pick','eyedropper','Pick'], ['eraser','eraser','Eraser']];
   // The pen's settings are a per-device convenience, remembered across visits like a real paint app's.
   const _dw = (()=>{
     let s = {}; try{ s = JSON.parse(localStorage.getItem('pc_meme_draw')||'{}') || {}; }catch(_){ }
     return { on:false, lid:'',
-      tool: DTOOLS.some(t=>t[0]===s.tool) ? s.tool : 'pen',
+      tool: DTOOLS.some(t=>t[0]===s.tool) && s.tool !== 'pick' ? s.tool : 'pen',
       color: _hexOk(s.color) ? s.color.toLowerCase() : '#ff1f3d',
       size: clamp(s.size || 14, 2, 120) };
   })();
@@ -2942,10 +3046,50 @@
   const _ownDraw = (c) => { if(_isDraw(c)) c.draw = { strokes: c.draw.strokes.map(s=>Object.assign({}, s, { p: s.p.slice() })) }; return c; };
 
   // Paint strokes into a W x H context. `q` = 1/10000ths of the box -> pixels.
+  /* A FLOOD FILL over what is drawn so far in THIS buffer: the drawing's own lines are the walls, the way a
+   * paint program's bucket works on one layer. Scanline fill over RGBA with a tolerance, so the soft
+   * anti-aliased edge of a pen line counts as wall and not as a gap the paint leaks through; then one more
+   * pass grows the fill a pixel into those edge pixels, or a hairline of background shows between the
+   * colour and the line. Run at whatever size the buffer is (stage preview or export), always from the same
+   * relative point, so both come out the same shape. */
+  function _floodFill(c, x, y, hex, W, H){
+    x = Math.floor(x); y = Math.floor(y);
+    if(x < 0 || y < 0 || x >= W || y >= H) return;
+    let img; try{ img = c.getImageData(0, 0, W, H); }catch(_){ return; }
+    const d = img.data, i0 = (y*W + x) * 4;
+    const tr = d[i0], tg = d[i0+1], tb = d[i0+2], ta = d[i0+3];
+    const h = String(hex||'#000000').replace('#',''), fr = parseInt(h.slice(0,2),16), fg = parseInt(h.slice(2,4),16), fb = parseInt(h.slice(4,6),16);
+    if(ta === 255 && Math.abs(tr-fr) < 2 && Math.abs(tg-fg) < 2 && Math.abs(tb-fb) < 2) return;   // already that colour
+    const TOL = 48;
+    const same = (k) => Math.abs(d[k]-tr) <= TOL && Math.abs(d[k+1]-tg) <= TOL && Math.abs(d[k+2]-tb) <= TOL && Math.abs(d[k+3]-ta) <= TOL;
+    const done = new Uint8Array(W*H), stack = [x, y];
+    while(stack.length){
+      const yy = stack.pop(), xx0 = stack.pop();
+      let xx = xx0;
+      while(xx >= 0 && !done[yy*W+xx] && same((yy*W+xx)*4)) xx--;
+      xx++;
+      let up = false, dn = false;
+      while(xx < W && !done[yy*W+xx] && same((yy*W+xx)*4)){
+        done[yy*W+xx] = 1;
+        if(yy > 0){ const k = (yy-1)*W+xx; if(!done[k] && same(k*4)){ if(!up){ stack.push(xx, yy-1); up = true; } } else up = false; }
+        if(yy < H-1){ const k = (yy+1)*W+xx; if(!done[k] && same(k*4)){ if(!dn){ stack.push(xx, yy+1); dn = true; } } else dn = false; }
+        xx++;
+      }
+    }
+    // Grow one pixel into the edge, then paint.
+    const grow = done.slice();
+    for(let yy = 0; yy < H; yy++) for(let xx = 0; xx < W; xx++){
+      const k = yy*W+xx; if(done[k]) continue;
+      if((xx > 0 && done[k-1]) || (xx < W-1 && done[k+1]) || (yy > 0 && done[k-W]) || (yy < H-1 && done[k+W])) grow[k] = 1;
+    }
+    for(let k = 0; k < W*H; k++) if(grow[k]){ const j = k*4; d[j] = fr; d[j+1] = fg; d[j+2] = fb; d[j+3] = 255; }
+    c.putImageData(img, 0, 0);
+  }
   function _drawPaint(c, strokes, W, H){
     const q = 1/10000;
     for(const s of strokes){
       const p = s.p || [], lw = Math.max(1, (+s.w||0) * q * W);
+      if(s.t === 'fill'){ if(p.length >= 2) _floodFill(c, p[0]*q*W, p[1]*q*H, _hexOk(s.c) ? s.c : '#000000', W, H); continue; }
       if(p.length < 2) continue;
       c.save();
       c.globalCompositeOperation = s.t==='eraser' ? 'destination-out' : 'source-over';
@@ -3053,6 +3197,7 @@
     const tgt0 = P.layers.find(x=>x.id===_dw.lid) || null;
     if(tgt0){ const it = stage.querySelector(`.mb-item[data-id="${tgt0.id}"]`); if(it) it.style.visibility = 'hidden'; }
     let live = null, pid = null, multi = false, raf = 0;
+    const cache = { cv:null, key:'', last:null };     // committed strokes, painted once (see paint)
     const off = document.createElement('canvas');      // the drawing's own buffer, reused every frame
     const down = new Set();
     // The box the drawing occupies, in project pixels. A drawing not made yet will fill the canvas.
@@ -3075,8 +3220,21 @@
       const ow = Math.round(bw), oh = Math.round(bh);
       if(off.width !== ow || off.height !== oh){ off.width = ow; off.height = oh; }
       else off.getContext('2d').clearRect(0, 0, ow, oh);
-      const strokes = (b.l ? b.l.draw.strokes : []).concat(live ? [live] : []);
-      _drawPaint(off.getContext('2d'), strokes, off.width, off.height);
+      /* What is already committed is painted ONCE into a cache, and only the stroke in progress on top of it.
+       * A flood fill reads every pixel of the buffer; replaying every fill on every pointer move made drawing
+       * after a couple of fills visibly lag. The cache is keyed on the stroke list's length, its last stroke
+       * and the size, which is everything that can change it (undo restores different stroke objects). */
+      const committed = b.l ? b.l.draw.strokes : [];
+      const ck = committed.length + ':' + ow + 'x' + oh;
+      if(!cache.cv || cache.key !== ck || cache.last !== committed[committed.length-1]){
+        if(!cache.cv) cache.cv = document.createElement('canvas');
+        cache.cv.width = ow; cache.cv.height = oh;
+        _drawPaint(cache.cv.getContext('2d'), committed, ow, oh);
+        cache.key = ck; cache.last = committed[committed.length-1];
+      }
+      const oc = off.getContext('2d');
+      oc.drawImage(cache.cv, 0, 0);
+      if(live) _drawPaint(oc, [live], off.width, off.height);
       c.globalAlpha = b.l ? clamp(b.l.opacity == null ? 1 : b.l.opacity, 0.05, 1) : 1;
       c.drawImage(off, b.x/P.w*W, b.y/P.h*H);
       c.globalAlpha = 1;
@@ -3098,7 +3256,9 @@
       if(multi || (e.button != null && e.button > 0)) return;
       e.preventDefault();
       if(_dw.tool === 'eraser' && !box().l){ toast('nothing drawn yet — pick the pen first'); return; }
+      if(_dw.tool === 'pick'){ void pickColour(e, stage); return; }
       const p = at(e); if(!p) return;
+      if(_dw.tool === 'fill'){ commitStroke({ t:'fill', c:_dw.color, w:0, p:[p[0], p[1]] }); return; }
       try{ cv.setPointerCapture(e.pointerId); }catch(_){ }
       pid = e.pointerId;
       const b = box();
@@ -3139,6 +3299,46 @@
     if(typeof ResizeObserver !== 'undefined'){ try{ new ResizeObserver(schedule).observe(cv); }catch(_){ } }
     schedule();
   }
+  /* PICK: the colour of what you see at that point -- the layers composited the way the stage shows them,
+   * drawing included. Images are drawn from fresh crossOrigin copies (Blossom and the media host answer
+   * CORS *), so the canvas stays readable; a picture from a host that does not is reported, never guessed.
+   * Then back to the tool you had, the way a paint program's picker hands you straight back your brush. */
+  const _imgCache = Object.create(null);
+  function _corsImg(src){
+    if(_imgCache[src]) return _imgCache[src];
+    return (_imgCache[src] = new Promise(res=>{ const im = new Image(); im.crossOrigin = 'anonymous';
+      im.onload = ()=>res(im); im.onerror = ()=>res(null); im.src = src; }));
+  }
+  async function pickColour(e, stage){
+    const r = stage.getBoundingClientRect(); if(!r.width || !r.height) return;
+    const fx = (e.clientX - r.left) / r.width, fy = (e.clientY - r.top) / r.height;
+    const W = Math.max(1, Math.round(r.width)), H = Math.max(1, Math.round(r.height));
+    const cv = document.createElement('canvas'); cv.width = W; cv.height = H;
+    const c = cv.getContext('2d');
+    c.fillStyle = P.bg || '#000000'; c.fillRect(0, 0, W, H);
+    let blocked = false;
+    for(const l of P.layers){
+      if(l.hidden || (l.type !== 'image' && l.type !== 'video' && !_isDraw(l))) continue;
+      const x = (+l.x||0)/P.w*W, y = (+l.y||0)/P.h*H, w = (+l.w||P.w)/P.w*W, h = (+l.h||P.h)/P.h*H;
+      c.globalAlpha = clamp(l.opacity == null ? 1 : l.opacity, 0, 1);
+      if(_isDraw(l)){ const d = document.createElement('canvas'); d.width = Math.max(1,Math.round(w)); d.height = Math.max(1,Math.round(h));
+        _drawPaint(d.getContext('2d'), l.draw.strokes, d.width, d.height); c.drawImage(d, x, y); continue; }
+      if(l.type === 'video'){ const v = stage.querySelector(`.mb-item[data-id="${l.id}"] video`); if(v) try{ c.drawImage(v, x, y, w, h); }catch(_){ blocked = true; } continue; }
+      const im = await _corsImg(l.src); if(im) c.drawImage(im, x, y, w, h); else blocked = true;
+    }
+    c.globalAlpha = 1;
+    let px = null;
+    try{ px = c.getImageData(Math.min(W-1, Math.max(0, Math.floor(fx*W))), Math.min(H-1, Math.max(0, Math.floor(fy*H))), 1, 1).data; }
+    catch(_){ px = null; blocked = true; }
+    if(!px){ toast(blocked ? 'that picture does not allow its colours to be read' : 'could not read a colour there'); return; }
+    const hex = '#' + [px[0], px[1], px[2]].map(n=>n.toString(16).padStart(2,'0')).join('');
+    _dw.color = hex; _dwKeep();
+    const col = document.getElementById('mb-dcolor');
+    if(col){ col.value = hex; col.dispatchEvent(new Event('input', { bubbles:true })); }
+    const back = document.querySelector(`#mb-drawbar [data-dtool="${_dw.prevTool || 'pen'}"]`);
+    if(back) back.click();
+    toast('colour picked ' + hex);
+  }
   // One stroke = one undo step. The first stroke also MAKES the layer — in the same step, so one ↶ takes
   // the stroke and the empty layer away together.
   function commitStroke(st){
@@ -3169,6 +3369,7 @@
     const bar = root.querySelector('#mb-drawbar'); if(!bar) return;
     bindPalettes(bar);
     bar.querySelectorAll('[data-dtool]').forEach(b=>b.addEventListener('click', ()=>{
+      if(b.dataset.dtool === 'pick' && _dw.tool !== 'pick') _dw.prevTool = _dw.tool;   // Pick hands this back
       _dw.tool = b.dataset.dtool; _dwKeep();
       bar.querySelectorAll('[data-dtool]').forEach(x=>{ const on = x===b; x.classList.toggle('on', on); x.setAttribute('aria-pressed', String(on)); });
     }));
@@ -3984,6 +4185,7 @@
           x:Math.round(l.x), y:Math.round(l.y), w:Math.round(l.w), h:Math.round(l.h),
           opacity:+l.opacity, effect:l.effect, sound:l.sound||'', soundVolume:(l.soundVolume==null?1:+l.soundVolume), mute:!!l.mute,
           flipH:!!l.flipH, flipV:!!l.flipV, rotate:+l.rotate||0,
+          warp:_warpOk(l.warp) || undefined,
           // NOT `+l.volume||1`: that turned a deliberate volume of 0 back into full volume.
           volume:(l.volume==null?1:+l.volume), fade:!!l.fade,
           speed:_speedOf(l), xin:+l.xin||0, xout:+l.xout||0,
@@ -4715,6 +4917,8 @@
       m.style.transform=_xform(l, _curT-l.start); m.style.transformOrigin=_fxOrigin(l);
       const fw=it.querySelector('.mb-fx');
       if(fw){ fw.style.transform=(+l.rotate||0)?`rotate(${+l.rotate||0}deg)`:''; fw.style.transformOrigin='center'; } };
+    on('mb-warp','click',()=>{ _warpOn = !_warpOn; render(); });
+    on('mb-warp-reset','click',()=>{ snap(); delete l.warp; save(); render(); });
     on('mb-fliph','click',(e)=>{ snap(); l.flipH=!l.flipH; save(); e.currentTarget.classList.toggle('on',!!l.flipH); _paintX(); });
     on('mb-flipv','click',(e)=>{ snap(); l.flipV=!l.flipV; save(); e.currentTarget.classList.toggle('on',!!l.flipV); _paintX(); });
     on('mb-f-rot','input',(e)=>{ snapBurst('rot:'+l.id); l.rotate=clamp(e.target.value,-180,180); save();
