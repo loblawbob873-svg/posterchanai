@@ -184,3 +184,48 @@ def test_a_startup_app_can_be_pinned_to_a_monitor_and_that_monitor_tiles_it():
     assert got['count'] == 1 and got['opened'] == ['notes'], ("the second monitor opened the wrong apps", got)
     assert got['arranged'] == ['side-by-side'], got
     assert not got['errors'], got['errors']
+
+
+STALE = PC_FIXTURE + r'''
+/* The ACCOUNT still holds the old list: a save that never landed, or another window's older read. */
+(function(){ let Rl; Object.defineProperty(window,'Relay',{configurable:true,get(){return Rl;},set(v){Rl=v;const real=Rl.query.bind(Rl);
+  Rl.query=async(filters,...rest)=>{const f=filters&&filters[0]||{};
+    if((f['#d']||[]).includes('pcai:client-prefs')){const out=[{id:'f'.repeat(64),pubkey:(f.authors||[''])[0],kind:30078,created_at:1,
+      tags:[['d','pcai:client-prefs']],content:JSON.stringify({startupApps:['messages','notes']}),sig:''}];out.complete=true;return out;}
+    return real(filters,...rest);};}}); })();
+'''
+
+
+@pytest.mark.skipif(not Path('/opt/google/chrome/chrome').exists(), reason='Chrome required')
+def test_a_startup_app_switched_off_stays_off_when_an_older_account_copy_arrives():
+    """'System Settings -> Startup, not letting me turn off an app to autostart now' (2026-10-09). Every
+    PosterChan window re-applies the account's list when it loads; only the window the switch was flipped in
+    knew it changed, so an older copy put the app straight back on. A reload is exactly 'another window'."""
+    got = {}
+
+    async def check(b):
+        await desktop.login(b)
+        await b.js("ClientSettings.set('startupApps',['messages','notes'])")
+        await b.until("!!document.body && document.body.classList.contains('os-on') && !!document.querySelector('#os-bar')")
+        await b.js("document.getElementById('osfr')?.remove();document.documentElement.classList.remove('osfr-on')")
+        await b.js("PCOS.openSystemSettings()")
+        await b.until("!!document.querySelector('.os-set-nav [data-page=\"startup\"]')")
+        await b.js("document.querySelector('.os-set-nav [data-page=\"startup\"]').click()")
+        page = "document.querySelector('[data-settings-page=\"startup\"]:not([hidden])')"
+        await b.until(f"!!{page} && !!{page}.querySelector('[data-startup-view=\"messages\"]')")
+        await b.js(f"(()=>{{const c={page}.querySelector('[data-startup-view=\"messages\"]');c.checked=false;c.dispatchEvent(new Event('change'))}})()")
+        got['after_switch'] = await b.js("ClientSettings.get('startupApps',[])")
+        await asyncio.sleep(1.0)
+        # Another window loading = this page loading again, with the stale account copy still there.
+        await b.js("window.__published=[];location.reload()")
+        # Still signed in after the reload (the session persists), so the page restores the account's
+        # prefs on its own boot -- exactly what a second window does. No second login.
+        await asyncio.sleep(6.0)
+        got['after_reload'] = await b.js("ClientSettings.get('startupApps',[])")
+        got['healed'] = await b.js("(window.__published||[]).filter(e=>e.kind===30078&&(e.tags||[]).some(t=>t[1]==='pcai:client-prefs'))"
+                                   ".map(e=>JSON.parse(e.content).startupApps)")
+
+    asyncio.run(desktop.with_browser('online', '', check, STALE))
+    assert got['after_switch'] == ['notes'], got
+    assert got['after_reload'] == ['notes'], ("an older account copy turned the app back on", got)
+    assert ['notes'] in got['healed'], ("the newer list was not put back up to the account", got)

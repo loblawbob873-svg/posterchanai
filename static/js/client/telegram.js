@@ -341,6 +341,7 @@
       <footer class="tg-composer">
         <button class="tg-icon" data-act="attach" title="Attach files" aria-label="Attach files">📎</button>
         <button class="tg-icon" data-act="camera" title="Camera: photo or video" aria-label="Camera">📷</button>
+        <button class="tg-icon" data-act="emoji" title="Emoji" aria-label="Emoji">😊</button>
         <textarea class="tg-in tg-text" rows="1" placeholder="Message" aria-label="Message"></textarea>
         <button class="tg-icon tg-ai" data-act="ai" title="AI: reply, summarize, links" aria-label="AI: reply, summarize, links"${aiShown() ? '' : ' hidden'}>✨</button>
         <button class="tg-btn tg-primary tg-send" data-act="send" aria-label="Send">➤</button>
@@ -350,6 +351,19 @@
     pane.querySelectorAll('[data-act="call"],[data-act="vcall"]').forEach(b => b.onclick = () => {
       if(window.PCTgCall) window.PCTgCall.start(d.id, d.title, b.dataset.act === 'vcall'); });
     const ta = pane.querySelector('.tg-text');
+    /* PosterChan's emoji picker in the message box ("add our custom emoji picker to telegram"): search,
+     * categories and recents, inserted at the cursor. STANDARD emoji only (`unicodeOnly`, as Texts
+     * does): a custom emoji here is an image this instance hosts, and Telegram only renders custom
+     * emoji from its own sets, so one would arrive at the other end as `:name:` text. */
+    const emojiBtn = pane.querySelector('[data-act="emoji"]');
+    if(emojiBtn && ta) emojiBtn.onclick = () => { if(!PC().openEmojiPopover) return;
+      PC().openEmojiPopover(emojiBtn, (emoji, close) => {
+        const a = Number.isInteger(ta.selectionStart) ? ta.selectionStart : ta.value.length;
+        const z = Number.isInteger(ta.selectionEnd) ? ta.selectionEnd : a;
+        ta.setRangeText(emoji, a, z, 'end');
+        ta.dispatchEvent(new Event('input', { bubbles: true }));   // the draft and the box's height follow typing
+        if(close) close(); try{ ta.focus(); }catch(_){ }
+      }, { unicodeOnly: true }); };
     ta.addEventListener('keydown', e => { if(e.key === 'Enter' && !e.shiftKey && !e.isComposing){ e.preventDefault(); send(); } });
     ta.addEventListener('input', () => { ta.style.height = 'auto'; ta.style.height = Math.min(160, ta.scrollHeight) + 'px'; });
     pane.querySelector('[data-act="send"]').onclick = send;

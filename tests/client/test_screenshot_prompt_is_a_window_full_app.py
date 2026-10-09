@@ -207,7 +207,7 @@ def test_in_the_capture_window_the_delay_comes_before_the_action_you_choose():
 
     asyncio.run(desktop.with_browser("online", "?pcpopup=shot", check, BRIDGES + STAGED))
     assert got["opts"] == ["None", "3 s", "5 s", "10 s"], got
-    assert got["acts_on_screen"] == ["save", "copy", "region", "screen", "cancel"], got
+    assert got["acts_on_screen"] == ["save", "copy", "markup", "region", "screen", "cancel"], got
     assert got["on"] == ["5"] and got["kept"] == "5", got
     assert got["acts"] == ["shot:delay-5-screen"], ("the window must hand the delay AND the action to the desktop", got)
     assert ["discard", "/tmp/posterchan-shots-1000/s.png"] in got["shot"], got
@@ -286,3 +286,41 @@ def test_clicking_the_countdown_cancels_it():
         assert not await b.js("!!document.getElementById('os-shot-count')")
 
     asyncio.run(desktop.with_browser("online", "", check, COMPOSITOR + BRIDGES))
+
+
+# "we need a way to markup screenshots after taking them ... a button that opens up meme builder"
+# (2026-10-09). Two halves, like Select region: the prompt saves and hands the path over, the desktop
+# opens it -- the popup is closing and cannot host the Meme Builder.
+@pytest.mark.skipif(not Path("/opt/google/chrome/chrome").exists(), reason="Chrome required")
+def test_mark_up_saves_the_shot_and_hands_it_to_the_desktop():
+    async def check(b):
+        await b.until("!!document.querySelector('.os-shot-popup .shot-prompt [data-shot-act=\"markup\"]')")
+        await b.js("document.querySelector('[data-shot-act=\"markup\"]').click()")
+        await asyncio.sleep(1.0)
+        shot, acts = await b.js("[__shot, __acts]")
+        assert ["take", {"staged": "/tmp/posterchan-shots-1000/s.png", "copy": False}] in shot, ("the original was not saved first", shot)
+        assert "markup:" + "%2Fhome%2Fu%2FPictures%2FScreenshots%2FPosterChan-x.png" in acts, acts
+
+    asyncio.run(desktop.with_browser("online", "?pcpopup=shot", check, BRIDGES + STAGED))
+
+
+HOST = r"""
+window.pcHost = Object.assign(window.pcHost||{}, { read: async (p, max)=>{ window.__read=[p,max];
+  return new Uint8Array([137,80,78,71,13,10,26,10,0,0,0,0]); } });
+"""
+
+
+@pytest.mark.skipif(not Path("/opt/google/chrome/chrome").exists(), reason="Chrome required")
+def test_the_desktop_opens_a_marked_up_shot_in_the_meme_builder():
+    async def check(b):
+        await desktop.login(b)
+        await b.until("!!window.PCOS && PCOS.isOn() && !!window.__wm && !!__wm.emit")
+        await b.js("window.__up=null; __PC.uploadBlob=async(f,o)=>{ window.__up=[f.name,f.type,f.size,o]; return 'https://media.example/shot.png'; }")
+        await b.js("__wm.emit({name:'tick',change:'run',payload:'pc:act:markup:%2Fhome%2Fu%2FPictures%2FScreenshots%2FPosterChan-x.png'})")
+        await b.until("!!window.__up")
+        assert await b.js("__read[0]") == "/home/u/Pictures/Screenshots/PosterChan-x.png"
+        assert await b.js("__up") == ["PosterChan-x.png", "image/png", 12, {"noCompress": True}], await b.js("__up")
+        await b.until("[...document.querySelectorAll('img,video')].some(e=>(e.getAttribute('src')||'')==='https://media.example/shot.png')"
+                      "||JSON.stringify(localStorage).indexOf('https://media.example/shot.png')>=0")
+
+    asyncio.run(desktop.with_browser("online", "", check, COMPOSITOR + BRIDGES + HOST))

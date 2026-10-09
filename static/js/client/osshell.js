@@ -1639,6 +1639,7 @@
         <div class="shot-acts">
           <button class="shot-btn shot-save" data-shot-act="save"><b>Save to Pictures</b><kbd>Enter</kbd></button>
           <button class="shot-btn" data-shot-act="copy"><b>Save &amp; copy</b><kbd>C</kbd></button>
+          <button class="shot-btn" data-shot-act="markup"><b>Mark up</b><kbd>M</kbd></button>
           ${st.region ? `<button class="shot-btn" data-shot-act="region"><b>Select region</b><kbd>R</kbd></button>` : ''}
           <button class="shot-btn" data-shot-act="screen"><b>Full screen</b><kbd>F</kbd></button>
           <button class="shot-btn shot-cancel" data-shot-act="cancel"><b>Cancel</b><kbd>Esc</kbd></button>
@@ -1663,6 +1664,14 @@
       let res = null;
       try{ res = await sh.take({ staged: st.path, copy: a === 'copy' }); }catch(e){ res = { ok: false, why: String((e && e.message) || e) }; }
       if(!res || !res.ok){ busy = false; if(foot) foot.textContent = (res && res.why) || 'the screenshot did not save'; return; }
+      /* MARK UP ("we need a way to markup screenshots after taking them ... a button that opens up meme
+         builder"): saved first, like every other choice, so the original is kept whatever happens to the
+         edit -- then the DESKTOP opens it in the Meme Builder, because this popup closes the moment it
+         asks (the same hand-off Select region uses). */
+      if(a === 'markup'){
+        try{ root.pcPopup.act('markup:' + encodeURIComponent(String(res.path || ''))); }catch(_){ try{ root.close(); }catch(__){ } }
+        return;
+      }
       const m = /Screenshots\/[^/]+$/.exec(String(res.path || ''));
       if(foot) foot.textContent = '✓ Saved · ' + (m ? m[0] : res.path) + (res.copied ? ' · copied' : '');
       host.querySelector('.shot-prompt').classList.add('shot-done');
@@ -1677,6 +1686,7 @@
       else if(k === 'Enter' && !(e.target && e.target.matches && e.target.matches('[data-shot-act]'))){ e.preventDefault(); act('save'); }
       else if((k === 'r' || k === 'R') && st.region){ e.preventDefault(); act('region'); }
       else if(k === 'c' || k === 'C'){ e.preventDefault(); act('copy'); }
+      else if(k === 'm' || k === 'M'){ e.preventDefault(); act('markup'); }
     }, true);
     setTimeout(() => { const b = host.querySelector('.shot-save'); if(b) b.focus(); }, 0);
   }

@@ -1077,9 +1077,11 @@
       return true;
     }
 
+    let lastFrame = null;              // what _retryOpen re-sends when there is no session to resume yet
     function _open(frame){
       const opening = ++openEpoch;
       want = true;
+      lastFrame = frame && !frame.resume ? Object.assign({}, frame, { password: '', hadPassword: !!frame.password }) : lastFrame;
       /* The cache above is per-SOCKET, not per-terminal. A reattach opens a PTY that knows nothing
        * about what this client last sent — and on the cross-device path (start on the laptop, pick it
        * up on the phone) the size it is about to be told is the one thing that must not be skipped as
@@ -1291,6 +1293,14 @@
             return;
           }
           if(m.t === 'err'){
+            /* "TOO EARLY" IS NOT A REFUSAL ("Terminal -> when auto start, it fails to connect until you
+             * restart app"). A Terminal opened at login starts before the app session exists (the
+             * server answers `please log in again`), before the network is up (`could not connect`),
+             * or while the desktop's shell bridge is still coming up -- and every one of those was
+             * treated as final, so the window sat dead until the app was restarted. Those retry on
+             * the ordinary backoff, refreshing the session first when that was the complaint. A real
+             * refusal -- not allowed, switched off, no such host, too many terminals -- still stops. */
+            if(_tooEarly(m.m) && _retryOpen(m.m)) return;
             want = false;                  // a refusal is not something to retry into
             term.write('\r\n\x1b[31m' + m.m + '\x1b[0m\r\n'); _state(m.m, 'err');
             return;
@@ -1309,6 +1319,32 @@
             try{ term.write('\r\n\x1b[33m' + why + '\x1b[0m\r\n'); }catch(_){}
             _drop(); _sessions();
           }
+    }
+
+    const _FINAL = /not allowed|switched off|no such host|maximum number|too many terminals|no shell of its own|origin may not|expected an open frame/i;
+    function _tooEarly(msg){
+      const t = String(msg || '');
+      if(_FINAL.test(t)) return false;
+      return /please log in again|could not connect|timed out|not ready|Error invoking remote method|the shell would not start/i.test(t)
+        || !!(link && link.kind === 'local');
+    }
+    /* Re-open what was being opened: the same session when there is one, else the same request. A
+     * password is never kept for this -- that host asks again, by hand. */
+    function _retryOpen(why){
+      let frame = sid ? { resume: sid, host, label } : null;
+      if(!frame && lastFrame && !lastFrame.hadPassword){ frame = Object.assign({}, lastFrame); delete frame.hadPassword; }
+      if(!frame || retry > 8) return false;
+      _unlink(); connected = false;
+      if(retryT){ clearTimeout(retryT); retryT = null; }
+      const wait = Math.min(8000, 500 * Math.pow(1.7, retry++));
+      _state('not ready yet — retrying in ' + Math.round(wait / 1000) + 's', 'warn', String(why || ''));
+      retryT = setTimeout(async () => {
+        retryT = null;
+        if(!want) return;
+        if(/log in again/i.test(String(why || ''))){ try{ await _bounded(PC.ensureAiSession && PC.ensureAiSession({ force: true }), 8000); }catch(_){} }
+        if(want) _open(frame);
+      }, wait);
+      return true;
     }
 
     /* THE SOCKET WENT AWAY. The shell did not — that is the whole point — so this reconnects rather

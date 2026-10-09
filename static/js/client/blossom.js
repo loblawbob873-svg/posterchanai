@@ -327,7 +327,17 @@ window.PCBlossomFactory = function(dep){
       // itself decides from `pr`; keeping the number here too lets this device know it without a re-read.
       if(typeof pr.experienceRev==='number') ClientSettings.set('experienceRev', pr.experienceRev);
       // PosterChan apps opened at login (os.js runStartupApps): adopt the account's list, then open them.
-      if(!_prefTouched.has('startupApps') && Array.isArray(pr.startupApps)) ClientSettings.set('startupApps', pr.startupApps);
+      /* NEWEST WINS, not "the account wins". Each window applies this when it loads, and the account
+         copy can be OLDER than this device's: a switch flipped a moment ago in another window, or a save
+         that was skipped because the document could not be read first. Applied unconditionally it turned
+         a startup app back on ("not letting me turn off an app to autostart"). A copy without a stamp
+         (written before this) is older than any stamped local change; when this device holds the newer
+         list it puts it back up, which is the save that never landed. */
+      if(!_prefTouched.has('startupApps') && Array.isArray(pr.startupApps)){
+        const remoteAt = Number(pr.startupAppsAt) || 0, localAt = Number(ClientSettings.get('startupAppsAt', 0)) || 0;
+        if(remoteAt >= localAt){ ClientSettings.set('startupApps', pr.startupApps); if(remoteAt) ClientSettings.set('startupAppsAt', remoteAt); }
+        else saveClientPrefsNostr({ startupApps: ClientSettings.get('startupApps', []), startupAppsAt: localAt });
+      }
       try{ window.PCOS && PCOS.runStartupApps && PCOS.runStartupApps(); }catch(_){}
       if(!_prefTouched.has('desktopBuddy') && pr.desktopBuddy && typeof pr.desktopBuddy === 'object'){
         ClientSettings.set('desktopBuddy', pr.desktopBuddy);

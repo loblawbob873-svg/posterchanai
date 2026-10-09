@@ -4014,9 +4014,13 @@
       host.querySelectorAll('[data-startup-view]').forEach(cb=>cb.onchange=()=>{
         const set=new Set(_startupViews());
         if(cb.checked) set.add(cb.dataset.startupView); else set.delete(cb.dataset.startupView);
-        const list=[...set];
-        try{ ClientSettings.set('startupApps', list); }catch(_){}
-        try{ PC().saveStartupApps && PC().saveStartupApps(list); }catch(_){}
+        const list=[...set], at=Date.now();
+        /* STAMPED, so an older copy of the list cannot win ("not letting me turn off an app to
+           autostart"): every PosterChan window re-applies the account's list when it loads, and only
+           the window the switch was flipped in knows it changed -- so a window whose read was older,
+           or a save that never landed, put the old list straight back. See blossom.js restore. */
+        try{ ClientSettings.set('startupApps', list); ClientSettings.set('startupAppsAt', at); }catch(_){}
+        try{ PC().saveStartupApps && PC().saveStartupApps(list, at); }catch(_){}
         draw();                              // a switched-on app now offers its monitor
       });
       host.querySelectorAll('[data-startup-monitor]').forEach(s=>{
@@ -6705,6 +6709,28 @@
    * machine with no window manager, which is exactly the machine that must not care, reported
    * "Error invoking remote method 'pc:wm:popup.close': no compositor" into the page. Measured by
    * scripts/check_desktop_app_without_a_compositor.py after the gate below was already in place. */
+  /* A SAVED SCREENSHOT, OPENED IN THE MEME BUILDER TO MARK UP (the screenshot prompt's Mark up). Read
+   * off this machine's disk, then uploaded the way the builder ingests every local file -- its layers
+   * are URLs that must outlive this session -- WITHOUT recompression, which would blur the text in
+   * a screenshot of text. The file in ~/Pictures/Screenshots is untouched. */
+  async function _markupShot(path){
+    try{
+      if(!path || !window.pcHost || !pcHost.read) throw new Error('this build cannot open the screenshot');
+      PC().toast && PC().toast('Opening the screenshot in the Meme Builder…');
+      const bytes = await pcHost.read(path, 64 * 1024 * 1024);
+      const name = String(path).split('/').pop() || 'screenshot.png';
+      const file = new File([bytes], name, { type: /\.jpe?g$/i.test(name) ? 'image/jpeg' : 'image/png' });
+      const url = await PC().uploadBlob(file, { noCompress: true });
+      if(!url) throw new Error('the upload did not return an address');
+      openLauncherApp('meme');
+      const m = await _waitFor(() => window.PCMeme && PCMeme.addMedia ? PCMeme : null);
+      if(!m || !m.addMedia(url, file.type)) throw new Error('the Meme Builder did not take it');
+    }catch(e){ PC().toast && PC().toast('could not open it to mark up: ' + ((e && e.message) || e)); }
+  }
+  function _waitFor(get, ms){
+    return new Promise(res => { const t0 = Date.now(); (function poll(){ let v = null; try{ v = get(); }catch(_){ }
+      if(v || Date.now() - t0 > (ms || 8000)) return res(v); setTimeout(poll, 100); })(); });
+  }
   function _popupTell(fn, ...args){
     try{
       const r = window.pcPopup && typeof pcPopup[fn] === 'function' ? pcPopup[fn](...args) : null;
@@ -12268,6 +12294,7 @@
                   if(d){ if(window.PCOSShell && PCOSShell.delayedShot) PCOSShell.delayedShot(Number(d[1]), d[2] || 'screen'); }
                   else if(window.PCOSShell && PCOSShell.takeShot) PCOSShell.takeShot(val === 'region' ? 'region' : 'screen');
                 }
+                else if(kind === 'markup') _markupShot(val);
                 else if(kind === 'app') launchMachineApp(val);
                 /* Put on / taken off the desktop from the start menu. Performed HERE, in the window
                    that has read the layout and holds the write gate: the menu is a popup that closes
