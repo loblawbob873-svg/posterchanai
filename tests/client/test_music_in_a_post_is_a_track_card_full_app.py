@@ -47,6 +47,14 @@ Object.defineProperty(HTMLMediaElement.prototype,'duration',{configurable:true,g
   return built=[a,b,list];}});})();
 '''.replace('B64', base64.b64encode(id3v23()).decode())
 
+LAYOUT = r"""[...document.querySelectorAll('#feed .pc-track')].map(c=>{const r=c.getBoundingClientRect();
+  const inside=sel=>{const e=c.querySelector(sel),q=e&&e.getBoundingClientRect();return !!q&&q.width>0&&q.left>=r.left-1&&q.right<=r.right+1&&q.top>=r.top-1&&q.bottom<=r.bottom+1;};
+  const play=c.querySelector('.pct-play').getBoundingClientRect(),t=c.querySelector('.pct-title'),sub=c.querySelector('.pct-sub');
+  return {art:inside('.pct-art'),play:inside('.pct-play'),wave:inside('.pct-wave'),time:inside('.pct-time'),
+    tap:Math.min(play.width,play.height),titleClipped:t.scrollWidth<=t.clientWidth+1||getComputedStyle(t).textOverflow==='ellipsis',
+    subOneLine:sub.getBoundingClientRect().height<=parseFloat(getComputedStyle(sub).lineHeight||'20')*1.6+2,
+    waveW:c.querySelector('.pct-wave').getBoundingClientRect().width,overflow:document.documentElement.scrollWidth>innerWidth+1};})"""
+
 CARDS = r"""[...document.querySelectorAll('#feed .pc-track')].map(c=>{const r=c.getBoundingClientRect(),img=c.querySelector('.pct-art img');
   return {src:c.dataset.src,title:c.querySelector('.pct-title').textContent,sub:c.querySelector('.pct-sub').textContent,
     cover:!!img&&img.naturalWidth>=0&&/^blob:/.test(img.src),fits:r.left>=-1&&r.right<=innerWidth+1,
@@ -63,7 +71,7 @@ async def _click(b, sel, fx=0.5):
 
 
 @pytest.mark.skipif(not Path('/opt/google/chrome/chrome').exists(), reason='Chrome required')
-@pytest.mark.parametrize('width', [390, 1280])
+@pytest.mark.parametrize('width', [360, 390, 1280])
 def test_a_posted_track_shows_its_cover_title_and_artist_and_plays(width):
     got = {}
 
@@ -74,6 +82,12 @@ def test_a_posted_track_shows_its_cover_title_and_artist_and_plays(width):
         await b.until("document.querySelectorAll('#feed .pc-track').length===2")
         await b.until("[...document.querySelectorAll('#feed .pc-track .pct-title')].every(t=>t.textContent==='Playground')")
         got['rest'] = await b.js(CARDS)
+        got['layout'] = await b.js(LAYOUT)
+        import os
+        if os.environ.get('PC_TRACK_SHOTS'):
+            await b.js("document.querySelector('#feed .pc-track').scrollIntoView({block:'center'})")
+            shot = (await b.call('Page.captureScreenshot', {'format': 'png'}))['data']
+            Path(os.environ['PC_TRACK_SHOTS'], f'track-{width}.png').write_bytes(base64.b64decode(shot))
         got['viewUrl'] = await b.js("location.href")
         await _click(b, '#feed .pc-track .pct-play')
         got['playing'] = await b.js(CARDS)
@@ -90,6 +104,10 @@ def test_a_posted_track_shows_its_cover_title_and_artist_and_plays(width):
     for c in rest:
         assert c['title'] == 'Playground' and c['sub'] == 'Bea Miller · Arcane: League of Legends', c
         assert c['cover'] and c['fits'] and not c['playing'] and c['bars'] == 40, c
+    for L in got['layout']:
+        assert L['art'] and L['play'] and L['wave'] and L['time'], ("part of the track sticks out of its card", width, L)
+        assert L['tap'] >= 40, ("the play button is too small to tap", width, L)
+        assert L['titleClipped'] and L['subOneLine'] and L['waveW'] >= 80 and not L['overflow'], (width, L)
     assert all(r.startswith('bytes=0-') for r in got['ranges']), ("tags must be read from the head of the file only", got['ranges'])
     first = got['playing'][0]
     assert first['playing'] and first['label'].startswith('Pause'), ("play did not play", first)

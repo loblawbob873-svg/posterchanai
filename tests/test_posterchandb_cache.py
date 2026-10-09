@@ -6,7 +6,6 @@ is resident afterwards.
 """
 import os
 
-import pytest
 
 from app.services.posterchandb.cache import MB, CacheGovernor, meminfo, psi_some_avg10
 from app.services.posterchandb.store import Store
