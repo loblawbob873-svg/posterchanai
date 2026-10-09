@@ -211,8 +211,20 @@ pc_reap_orphaned_helpers() {
 }
 # <<< reap-orphaned-helpers
 pid_tmp="$PC_WAYFIRE_SHELL_PID_FILE.tmp.$$"; shell_pid=''
+# ONLY OUR OWN FILES. A restart leaves this launcher running until its shell is gone, and by then the
+# pid and ready files belong to the REPLACEMENT. Deleting them unconditionally told
+# pc-compositor-session "no shell", and it stopped Wayfire under a perfectly healthy desktop -- the
+# whole session lost, 40 minutes after a restart nobody connected it with (2026-10-09, twice on one
+# machine, three times on another). The pid file is the ownership record: clean up only while it
+# still names our shell.
 cleanup(){
-	rm -f "$PC_WAYFIRE_READY_FILE" "$PC_WAYFIRE_SHELL_PID_FILE" "$pid_tmp"
+	rm -f "$pid_tmp"
+	[ -n "$shell_pid" ] || return 0
+	_owner=''
+	[ ! -r "$PC_WAYFIRE_SHELL_PID_FILE" ] || IFS= read -r _owner <"$PC_WAYFIRE_SHELL_PID_FILE" || :
+	if [ "$_owner" = "$shell_pid" ]; then
+		rm -f "$PC_WAYFIRE_READY_FILE" "$PC_WAYFIRE_SHELL_PID_FILE"
+	fi
 }
 terminate(){
 	[ -z "$shell_pid" ] || ! kill -0 "$shell_pid" 2>/dev/null || kill -TERM "$shell_pid" 2>/dev/null || true

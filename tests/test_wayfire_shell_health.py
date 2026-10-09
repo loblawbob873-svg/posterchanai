@@ -679,3 +679,43 @@ def test_startup_app_exclusion_does_not_accept_another_process_or_duplicate_shel
     secondary['pid'] = 42
     views.append(dict(primary))
     assert layout(42) is None
+
+
+def test_an_old_launcher_exiting_never_deletes_the_new_shells_pid_file(tmp_path):
+    """THE DESKTOP DIED WITH NOTHING WRONG WITH IT. A desktop restart leaves the previous launcher
+    alive until its own shell is gone; when that one finally exited (on .102, 40 minutes later), its
+    `trap cleanup EXIT` deleted posterchan-wayfire-shell.pid -- which by then named the NEW, healthy
+    shell. pc-compositor-session reads that file, saw "no replacement shell within 3000ms" and stopped
+    Wayfire: the whole session gone, twice on .102 and three times on the laptop on 2026-10-09.
+    A launcher may only clean up files that still describe ITS shell."""
+    script, env = _launcher_env(tmp_path)
+    pid_file = Path(env["XDG_RUNTIME_DIR"], "posterchan-wayfire-shell.pid")
+    ready = Path(env["XDG_RUNTIME_DIR"], "posterchan-wayfire-ready")
+    old = subprocess.Popen([str(script)], env=env)
+    newer = subprocess.Popen(["sleep", "30"])
+    try:
+        for _ in range(150):
+            if (tmp_path / "healthy").exists() and pid_file.exists(): break
+            time.sleep(.02)
+        assert pid_file.exists()
+        # A restart: the replacement shell now owns the session's pid (and ready) file.
+        pid_file.write_text(f"{newer.pid}\n")
+        ready.write_text("ready\n")
+        old.terminate(); old.wait(timeout=3)
+        assert pid_file.exists() and pid_file.read_text().strip() == str(newer.pid), (
+            "the old launcher deleted the pid file of the shell that replaced it")
+        assert ready.exists(), "the old launcher deleted the replacement's ready file"
+    finally:
+        newer.kill(); newer.wait()
+        if old.poll() is None: old.kill()
+
+
+def test_a_launcher_still_cleans_up_its_own_files(tmp_path):
+    script, env = _launcher_env(tmp_path)
+    pid_file = Path(env["XDG_RUNTIME_DIR"], "posterchan-wayfire-shell.pid")
+    proc = subprocess.Popen([str(script)], env=env)
+    for _ in range(150):
+        if (tmp_path / "healthy").exists() and pid_file.exists(): break
+        time.sleep(.02)
+    proc.terminate(); proc.wait(timeout=3)
+    assert not pid_file.exists(), "a launcher whose own shell is gone left its pid file behind"
