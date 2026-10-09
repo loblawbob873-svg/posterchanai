@@ -125,3 +125,38 @@ class TheModule(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TheLinkPreview(unittest.TestCase):
+    """2026-10-09: "anyway to make our encrypted share links show a preview of the image in Texts".
+    The unfurler (Google Messages, iMessage) fetches the page WITHOUT the fragment, so it never has the
+    key: the preview cannot show the picture and must not pretend to. What it can do is not render as a
+    bare URL: a generic card, absolute https URLs, and nothing about the file."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.c = TestClient(M.app)
+
+    def _metas(self, html):
+        return dict(re.findall(r'<meta (?:property|name)="([^"]+)" content="([^"]*)"', html))
+
+    def test_a_crawler_gets_a_card_with_absolute_https_addresses(self):
+        r = self.c.get("/f/" + SHA, headers={"x-forwarded-host": "poster.place", "x-forwarded-proto": "https",
+                                             "user-agent": "facebookexternalhit/1.1"})
+        m = self._metas(r.text)
+        self.assertEqual(m.get("og:image"), "https://poster.place/static/share-card.png")
+        self.assertEqual(m.get("og:url"), "https://poster.place/f/" + SHA)
+        self.assertEqual(m.get("twitter:card"), "summary_large_image")
+        self.assertTrue(m.get("og:title") and m.get("og:description"), m)
+
+    def test_the_card_says_nothing_about_the_file(self):
+        """The server has no name, type or size to leak -- and must not start inventing them."""
+        m = self._metas(self.c.get("/f/" + SHA).text)
+        text = " ".join(v for k, v in m.items() if k.startswith(("og:", "twitter:", "description")))
+        for leak in ("png", "jpg", "image/", "video/", "KB", "MB", "hello"):
+            self.assertNotIn(leak, text.replace("share-card.png", ""), (leak, text))
+
+    def test_the_card_image_is_the_size_messengers_expect(self):
+        from PIL import Image
+        with Image.open(os.path.join(ROOT, "static", "share-card.png")) as im:
+            self.assertEqual(im.size, (1200, 630))

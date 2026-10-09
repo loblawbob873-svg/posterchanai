@@ -51,10 +51,23 @@ async def shared_file(request: Request, sha: str):
     # (request, name, context) — the modern Starlette signature. The old (name, {"request": …})
     # order still works and warns, and a deprecation that is merely tolerated becomes a broken node
     # on whichever upgrade finally removes it.
+    # THE LINK PREVIEW KNOWS NOTHING ABOUT THE FILE, AND THAT IS THE DESIGN ("anyway to make our
+    # encrypted share links show a preview of the image in Texts"). Google Messages, iMessage and
+    # every other unfurler fetch this URL WITHOUT the fragment, i.e. without the key, so the only
+    # honest card is a generic one: a lock, "Private file", and that it opens in a browser. Without
+    # any tags the link rendered as bare text, which on a phone reads as spam. Absolute URLs from the
+    # forwarded host/scheme -- behind the proxy base_url is http://, and a crawler drops a mismatched
+    # og:url (same rule as the repo card in main.py).
+    fwd_host = request.headers.get("x-forwarded-host") or request.headers.get("host") or ""
+    fwd_proto = request.headers.get("x-forwarded-proto") or request.url.scheme or "https"
+    base = (f"{fwd_proto}://{fwd_host}".rstrip("/") if fwd_host else str(request.base_url).rstrip("/"))
+    card = {"url": f"{base}/f/{sha}", "image": f"{base}/static/share-card.png",
+            "title": "🔒 Private file",
+            "description": "End-to-end encrypted with PosterChan. Tap to open it in your browser, no app needed."}
     return _TEMPLATES.TemplateResponse(
         request,
         "sharelink.html",
-        {"blob_url": "/blossom/" + sha, "sha": sha},
+        {"blob_url": "/blossom/" + sha, "sha": sha, "card": card},
         # The page holds no secret itself, but it is pointless to let a CDN or a proxy keep a copy
         # of a one-off transfer page, and `no-store` keeps the URL out of a shared cache index.
         headers={"Cache-Control": "no-store", "Referrer-Policy": "no-referrer"},

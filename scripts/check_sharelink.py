@@ -107,6 +107,13 @@ async def drive(base, cases):
 
             await call("Page.enable")
             await call("Runtime.enable")
+            # A PHONE'S SHARE SHEET, stubbed: headless Chrome has none, and on an iPhone it is the only
+            # way a picture reaches Photos. Records exactly what the page handed it.
+            await call("Page.addScriptToEvaluateOnNewDocument", {"source": """
+              if(location.search.indexOf('phone=1')>=0){
+                navigator.canShare = function(d){ return !!(d && d.files && d.files.length); };
+                navigator.share = function(d){ window.__shared = d.files.map(function(f){ return f.name+'|'+f.type+'|'+f.size; }); return Promise.resolve(); };
+              }"""})
 
             async def open_link(url):
                 # about:blank first. Two URLs differing only in the fragment are an in-page jump, not
@@ -127,6 +134,8 @@ async def drive(base, cases):
                   err:  (document.querySelector('.err')||{}).textContent || '',
                   note: [...document.querySelectorAll('.note')].map(n=>n.textContent).join(' | '),
                   img:  !!document.querySelector('img'),
+                  share: [...document.querySelectorAll('button.btn')].map(b=>b.textContent).join('|'),
+                  inline: !!(document.querySelector('video') && document.querySelector('video').hasAttribute('playsinline')),
                   dl:   !!document.querySelector('a.btn[download]'),
                   body: document.body.textContent.slice(0, 400)
                 })""")
@@ -153,6 +162,25 @@ async def drive(base, cases):
                           x=>x.toString(16).padStart(2,'0')).join('');})()""")
                     if digest != hashlib.sha256(PNG).hexdigest():
                         problems.append(("wrong-bytes", f"[{label}] saved bytes differ from the original"))
+                elif want == "share":
+                    if "Save to Photos" not in got["share"]:
+                        problems.append(("no-phone-save", f"[{label}] a phone that can share got no Save to Photos ({got['share']!r})"))
+                    else:
+                        await js("document.querySelector('button.btn').click()")
+                        await asyncio.sleep(0.3)
+                        handed = await js("window.__shared || []")
+                        if handed != ["hello.png|image/png|%d" % len(PNG)]:
+                            problems.append(("no-phone-save", f"[{label}] the share sheet got {handed!r}, not the decrypted photo"))
+                    if not got["dl"]:
+                        problems.append(("no-download", f"[{label}] the plain download disappeared beside the share button"))
+                elif want == "video":
+                    if not got["inline"]:
+                        problems.append(("video-fullscreen", f"[{label}] a video without playsinline goes full-screen on an iPhone"))
+                elif want == "undecodable":
+                    if "cannot show this kind of picture" not in got["note"]:
+                        problems.append(("broken-image", f"[{label}] an undecodable picture was left as a broken image ({got['note']!r})"))
+                    if not got["dl"]:
+                        problems.append(("no-download", f"[{label}] no way to save the picture it could not show"))
                 elif want == "invalid":
                     if not got["err"] or got["dl"]:
                         problems.append(("bad-manifest", f"[{label}] invalid chunks were offered as a file"))
@@ -245,6 +273,9 @@ def main():
     missing_sha = store(json.dumps({"v":1, "size":len(PNG), "chunks":missing_chunks}).encode())
     bad_sha = store(json.dumps({"v":1, "size":len(PNG)+1, "chunks":chunks}).encode())
     chunk_meta = b64u(json.dumps({"k":KEY_B64U,"m":"image/png","n":"hello.png","c":1}).encode())
+    # Bytes no browser can draw (as an iPhone's HEIC is to Android Chrome). Chrome SNIFFS image
+    # content, so a PNG labelled image/heic would still display and this case could never fail.
+    heic_sha = store(b"\x00\x00\x00\x18ftypheic" + os.urandom(400))
 
     client = TestClient(M.app)
     _pages = {}
@@ -311,6 +342,10 @@ def main():
         # The sender deleted the file. Must read as gone, never as a broken link — they are
         # different sentences with different things for the person to do.
         ("deleted", f"{base}/f/{'b' * 64}#pcenc1={meta}", "gone"),
+        # The phone fixes (2026-10-09, "make sure iphone and android users have a good experience").
+        ("phone save", f"{base}/f/{sha}?phone=1#pcenc1={meta}", "share"),
+        ("video", f"{base}/f/{sha}#pcenc1=" + b64u(json.dumps({"k": KEY_B64U, "m": "video/mp4", "n": "clip.mp4"}).encode()), "video"),
+        ("heic on android", f"{base}/f/{heic_sha}#pcenc1=" + b64u(json.dumps({"k": KEY_B64U, "m": "image/heic", "n": "IMG_1.heic"}).encode()), "undecodable"),
     ]
     try:
         rc = asyncio.run(drive(base, cases))

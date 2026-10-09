@@ -3,6 +3,24 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Shared file</title>
+<!-- The link preview (Texts, iMessage, WhatsApp, Signal): GENERIC by necessity -- the server never has
+     the key, so it cannot describe the file and does not try. See sharelink.py. -->
+<meta name="description" content="{{ card.description }}">
+<meta property="og:type" content="website">
+<meta property="og:site_name" content="PosterChan">
+<meta property="og:title" content="{{ card.title }}">
+<meta property="og:description" content="{{ card.description }}">
+<meta property="og:url" content="{{ card.url }}">
+<meta property="og:image" content="{{ card.image }}">
+<meta property="og:image:width" content="1200">
+<meta property="og:image:height" content="630">
+<meta property="og:image:alt" content="A lock: a private, encrypted file">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:title" content="{{ card.title }}">
+<meta name="twitter:description" content="{{ card.description }}">
+<meta name="twitter:image" content="{{ card.image }}">
+<meta name="theme-color" content="#0f1016">
+<link rel="apple-touch-icon" href="/static/apple-touch-icon.png">
 <!-- NOTHING IS LOADED FROM ANYWHERE. One page, no scripts, no fonts, no analytics: this page is
      handed to people over SMS, opened on a phone with no account here, and it is the only thing
      standing between them and a file they were sent. It is also the page that HOLDS A DECRYPTION
@@ -20,6 +38,8 @@
   .name{font-weight:600;word-break:break-all;margin:10px 0 2px}
   .meta,.note{opacity:.72;font-size:13px}
   .note{margin-top:14px}
+  .acts{display:flex;gap:10px;justify-content:center;flex-wrap:wrap}
+  .btn.alt{background:transparent;color:inherit;border:1px solid rgba(127,127,150,.45)}
   a.btn,button.btn{display:inline-block;margin-top:16px;padding:11px 20px;border-radius:10px;
         background:#3ce8ff;color:#07202a;border:0;font:inherit;font-weight:600;cursor:pointer;
         text-decoration:none}
@@ -149,18 +169,44 @@
     var s = document.createElement('div'); s.className = 'meta'; s.textContent = human(out.size);
     card.appendChild(n); card.appendChild(s);
 
+    document.title = name;
     // Shown inline when it is something a browser can show; always downloadable either way.
     if(/^image\//.test(mime)){
-      var img = document.createElement('img'); img.src = url; img.alt = name; card.appendChild(img);
+      var img = document.createElement('img'); img.src = url; img.alt = name;
+      /* A picture this browser cannot decode -- an iPhone's HEIC opened on Android, say -- draws
+         NOTHING, which reads as a broken link. Say so, and point at Save. */
+      img.onerror = function(){ var w = document.createElement('div'); w.className = 'note';
+        w.textContent = 'This browser cannot show this kind of picture. Save it to open it in your photos app.';
+        img.replaceWith(w); };
+      card.appendChild(img);
     }else if(/^video\//.test(mime)){
-      var v = document.createElement('video'); v.src = url; v.controls = true; card.appendChild(v);
+      /* playsinline: without it an iPhone takes the video full-screen the moment it plays. */
+      var v = document.createElement('video'); v.src = url; v.controls = true;
+      v.setAttribute('playsinline', ''); v.playsInline = true; card.appendChild(v);
     }else if(/^audio\//.test(mime)){
       var a = document.createElement('audio'); a.src = url; a.controls = true;
       a.style.marginTop = '16px'; a.style.width = '100%'; card.appendChild(a);
     }
+    /* SAVING ON A PHONE IS THE SHARE SHEET. An <a download> on an iPhone opens Safari's download
+       prompt and lands in Files, never in Photos; the share sheet (Web Share, level 2) is where
+       "Save Image" / "Save Video" live on iOS and where Android offers Photos, Drive and the rest.
+       Offered first when this browser can share THIS file; the plain download stays beside it. */
+    var acts = document.createElement('div'); acts.className = 'acts'; card.appendChild(acts);
+    var file = null;
+    try{ file = new File([out], name, {type: mime}); }catch(e){}
+    if(file && navigator.canShare && navigator.share){
+      var ok = false; try{ ok = navigator.canShare({files: [file]}); }catch(e){}
+      if(ok){
+        var sh = document.createElement('button'); sh.className = 'btn';
+        sh.textContent = /^image\//.test(mime) ? 'Save to Photos' : /^video\//.test(mime) ? 'Save video' : 'Share / Save';
+        sh.onclick = function(){ navigator.share({files: [file]}).catch(function(){}); };
+        acts.appendChild(sh);
+      }
+    }
     var dl = document.createElement('a');
-    dl.className = 'btn'; dl.href = url; dl.download = name; dl.textContent = 'Save file';
-    card.appendChild(dl);
+    dl.className = 'btn' + (acts.children.length ? ' alt' : ''); dl.href = url; dl.download = name;
+    dl.textContent = acts.children.length ? 'Download' : 'Save file';
+    acts.appendChild(dl);
     var note = document.createElement('div');
     note.className = 'note';
     note.textContent = 'Decrypted in your browser. The key is in the link itself and was never sent '
