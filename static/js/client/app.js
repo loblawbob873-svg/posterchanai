@@ -7413,7 +7413,12 @@
     }
     if(ev.kind!==1) return false;
     const es=ev.tags.filter(t=>Array.isArray(t) && t[0]==='e' && t[1]);
-    if(!es.length) return false;
+    /* A FEDIVERSE REPLY WHOSE PARENT NOTHING HERE HOLDS has no `e` tag at all: the inbox records the
+     * parent as an `r` URL beside its `proxy … activitypub` tag (cards.js fediParentLink, same rule).
+     * Counting `e` tags alone called it a top-level post, so the feed never wrapped the "↩ reply to a
+     * post on <host>" label around it -- a bare GIF out of nowhere ("i can't tell what this post is"). */
+    if(!es.length) return ev.tags.some(t=>Array.isArray(t)&&t[0]==='proxy'&&t[2]==='activitypub')
+      && ev.tags.some(t=>Array.isArray(t)&&t[0]==='r'&&/^https:\/\/[^\s"'<>]+$/i.test(String(t[1]||'')));
     const quoted=new Set(ev.tags.filter(t=>Array.isArray(t) && t[0]==='q' && t[1]).map(t=>t[1]));
     return es.some(t=>{
       const marker=String(t[3]||'').toLowerCase();
@@ -12630,7 +12635,10 @@
     // cannot name one destination — it walks the history it came through instead.
     let html = _THREAD_TOP;
     html+= missingParent ? `<div class="thread-node thread-missing"><div class="empty">↩ Replying to a post that couldn't be loaded from any connected relay.</div></div>` : '';
-    html+=`<div class="thread-node${id===root.id?' thread-hl':''}" data-tid="${enc(root.id)}">${noteHtml(root)}</div>`;
+    // A ROOT WITH NO PARENT HERE can still be a fediverse reply (its parent only an `r` URL): say what it
+    // answers, or the opened post is a bare GIF out of nowhere ("i can't tell what this post is").
+    const rootCtx = (!missingParent && !replyParentId(root) && isReply(root)) ? replyContextHtml(root) : '';
+    html+=`<div class="thread-node${id===root.id?' thread-hl':''}" data-tid="${enc(root.id)}">${rootCtx}${noteHtml(root)}</div>`;
     // A git issue or patch: its status, and a way to close/resolve it from right here (git.js).
     const isIssue = root.kind===1621 || root.kind===1617;
     if(isIssue) html+=`<div class="issue-status-host" id="issue-status-host"></div>`;
