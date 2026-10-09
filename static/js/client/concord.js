@@ -3436,7 +3436,17 @@
   const deliveryOwner=p=>String(p&&p.viewer&&p.viewer().pubkey||'');
   const deliveryId=(owner,rumor)=>JSON.stringify([owner,rumor]);
   function deliveryStream(d,receipt=false){return envelopeCacheKey(d.loadKey,JSON.stringify(['delivery-v1',d.owner,d.channelId,receipt?'accepted':'pending']));}
-  function deliveryAllowed(p,d){const room=saved().find(r=>roomIdentity(r)===d.roomId);return deliveryOwner(p)===d.owner&&room&&(room.channels||[]).some(c=>c.id===d.channelId);}
+  /* THE ROOM A QUEUED MESSAGE BELONGS TO IS FOUND THE WAY EVERY OTHER PATH FINDS A ROOM. `roomIdentity` is
+   * communityId, else naddr, else url -- and a room joined by link GAINS its communityId later, when the membership
+   * sync hydrates it. A message queued before that kept the old identity, matched no room, and Retry answered
+   * "Delivery needs attention: sending account or community changed" in the person's OWN room, for ever
+   * (2026-10-08). The exact identity still wins; failing that, `sameRoom` (community key / invite keys) against the
+   * room as it was when the message was written. */
+  function deliveryRoom(d){
+    const rooms=saved();
+    return rooms.find(r=>roomIdentity(r)===d.roomId)||(d.roomRef?rooms.find(r=>sameRoom(r,d.roomRef)):null)||null;
+  }
+  function deliveryAllowed(p,d){const room=deliveryRoom(d);return deliveryOwner(p)===d.owner&&room&&(room.channels||[]).some(c=>c.id===d.channelId);}
   async function persistDelivery(d,receipt=false){
     const cache=window.PCConcordCache,key=deliveryStream(d);
     if(!cache||!cache.putDelivery||!cache.getDeliveries||!cache.completeDelivery)throw new Error('encrypted delivery storage is unavailable');
@@ -3462,7 +3472,7 @@
       if(!p.relayPublishRoom)throw new Error('room delivery requires an updated client');
       paintDelivery(d,'sending');
       let result;
-      try{const room=saved().find(r=>roomIdentity(r)===d.roomId),bundle=room&&room.cord&&room.cord.bundle;
+      try{const room=deliveryRoom(d),bundle=room&&room.cord&&room.cord.bundle;
         result=await p.relayPublishRoom(d.relays,d.made.wrap,cordPlaneAuth(p,cordPlaneContext(p,bundle,roomControls.get(d.loadKey)||[],room),d.made.wrap.pubkey,d.relays));}
       catch(e){paintDelivery(d,'unknown');throw e;}
       if(!result||!result.ok){
@@ -3852,7 +3862,7 @@
       if(!result||!result.ok)throw new Error(result&&result.msg||'room delivery was not acknowledged');
       await cacheEnvelopes(envelopeCacheKey(loadKey,writeChannel.id),[made.wrap]);return made;
     }
-    const d={owner:viewer.pubkey,loadKey,roomId:roomIdentity(room),channelId:writeChannel.id,
+    const d={owner:viewer.pubkey,loadKey,roomId:roomIdentity(room),roomRef:{communityId:room.communityId,naddr:room.naddr,url:room.url,inviteAliases:room.inviteAliases,cord:room.cord&&room.cord.bundle?{bundle:{community_id:room.cord.bundle.community_id}}:undefined},channelId:writeChannel.id,
       storeId:channelStoreId(room,channelName),relays,made,status:'unknown'};
     deliveries.set(deliveryId(d.owner,made.rumorId),d);
     if(onPrepared)onPrepared(d);
