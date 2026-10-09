@@ -688,6 +688,10 @@ async def _safe(coro):
 def _why(e: Exception) -> str:
     """Telethon's errors, in words somebody signing in can act on."""
     n = type(e).__name__
+    if n not in _KNOWN_ERRORS:
+        # The NAME only (never the request, the chat or the text): "Telegram refused that: … (caused by
+        # SendReactionRequest)" reached a person with nothing in the log to say which refusal it was.
+        logger.warning("[tgc] untranslated Telegram error %s", n)
     return {
         "PhoneNumberInvalidError": "Telegram does not recognise that phone number.",
         "PhoneCodeInvalidError": "That code is not right — check the latest code Telegram sent.",
@@ -701,6 +705,12 @@ def _why(e: Exception) -> str:
         "ChatWriteForbiddenError": "You cannot react or write in this chat.",
         "SearchQueryEmptyError": "Type something to search for.",
     }.get(n, "Telegram refused that: " + (str(e) or n))
+
+
+_KNOWN_ERRORS = {"PhoneNumberInvalidError", "PhoneCodeInvalidError", "PhoneCodeExpiredError",
+                 "PasswordHashInvalidError", "FloodWaitError", "PhoneNumberBannedError", "ApiIdInvalidError",
+                 "ReactionInvalidError", "ReactionsTooManyError", "ChatWriteForbiddenError",
+                 "SearchQueryEmptyError"}
 
 
 _manager: Manager | None = None

@@ -412,7 +412,12 @@
         ta.setRangeText(emoji, a, z, 'end');
         ta.dispatchEvent(new Event('input', { bubbles: true }));   // the draft and the box's height follow typing
         if(close) close(); try{ ta.focus(); }catch(_){ }
-      }, { unicodeOnly: true }); };
+      /* ANCHORED to the button ("emoji selector is going in the middle of the window kinda"): under
+       * 1180px every popover became a centred bottom sheet, and a Telegram window is almost always
+       * narrower than that, so the picker opened mid-window, away from the box it types into. It
+       * flips above the button (the composer sits at the bottom) and stays a sheet only on a screen
+       * too small to anchor anything. */
+      }, { unicodeOnly: true, anchored: window.innerWidth >= 600 }); };
     ta.addEventListener('keydown', e => { if(e.key === 'Enter' && !e.shiftKey && !e.isComposing){ e.preventDefault(); send(); } });
     ta.addEventListener('input', () => { ta.style.height = 'auto'; ta.style.height = Math.min(160, ta.scrollHeight) + 'px'; });
     pane.querySelector('[data-act="send"]').onclick = send;
@@ -622,7 +627,10 @@
     const plus = pop.querySelector('[data-more]');
     if(plus) plus.onclick = e => {
       if(list){ e.stopPropagation(); pop.classList.add('all'); pop.innerHTML = buttons(list); bind(); place(); return; }
-      close(); PC().openEmojiPopover(anchor, (value, done) => { if(done) done(); react(msgId, value); });
+      // Telegram could not say which reactions this chat takes: the general picker, but ANCHORED (a
+      // centred sheet is the 10-06 "popup in the wrong place" bug again) and standard emoji only.
+      close(); PC().openEmojiPopover(anchor, (value, done) => { if(done) done(); react(msgId, value); },
+        { unicodeOnly: true, anchored: window.innerWidth >= 600 });
     };
   }
   function linkify(t){
