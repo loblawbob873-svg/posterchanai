@@ -237,3 +237,91 @@ def test_runs_stay_logarithmic_over_many_flushes(tmp_path):
     # and the answers are still complete
     assert len(s.query({"kinds": [1], "limit": 10000})) == n
     s.close()
+
+
+# ---------------------------------------------------------------- the relay's own query rules (store.py _query_one/_build_where)
+def test_equal_timestamps_come_back_higher_id_first(store):
+    evs = [mk(created_at=5000) for _ in range(6)]
+    for e in evs:
+        store.put(e)
+    got = store.query({"kinds": [1]})
+    assert ids(got) == sorted(ids(evs), reverse=True)
+
+
+def test_limit_is_or_500_clamped_to_1_and_5000(store):
+    for i in range(520):
+        store.put(mk(created_at=10_000 + i))
+    assert len(store.query({"kinds": [1]})) == 500
+    assert len(store.query({"kinds": [1], "limit": 0})) == 500           # `limit or 500`
+    assert len(store.query({"kinds": [1], "limit": 3})) == 3
+    assert len(store.query({"kinds": [1], "limit": 99999})) == 520       # capped at 5000, only 520 exist
+
+
+def test_limit_never_drops_an_event_at_the_cut_off_timestamp_for_a_later_one(store):
+    evs = [mk(created_at=100) for _ in range(5)] + [mk(created_at=50) for _ in range(5)]
+    for e in evs:
+        store.put(e)
+    got = store.query({"kinds": [1], "limit": 3})
+    assert ids(got) == sorted([e["id"] for e in evs if e["created_at"] == 100], reverse=True)[:3]
+
+
+def test_cursor_pages_through_everything_exactly_once(store):
+    pk = hx()
+    evs = [mk(kind=30078, pubkey=pk, created_at=7000 + (i // 4), tags=[["d", "doc:%d" % i]]) for i in range(40)]
+    for e in evs:
+        store.put(e)
+    seen, cursor = [], None
+    while True:
+        flt = {"authors": [pk], "kinds": [30078], "limit": 7}
+        if cursor:
+            flt["_cursor"] = cursor
+        page = store.query(flt)
+        if not page:
+            break
+        seen += ids(page)
+        cursor = [page[-1]["created_at"], page[-1]["id"]]
+    assert sorted(seen) == sorted(ids(evs)) and len(seen) == len(set(seen)) == 40
+
+
+def test_d_prefix_is_a_prefix_and_percent_underscore_are_literal(store):
+    pk = hx()
+    inbox = [mk(kind=30078, pubkey=pk, tags=[["d", "pcai:mail:me@x:INBOX:%d" % i]]) for i in range(3)]
+    other = mk(kind=30078, pubkey=pk, tags=[["d", "pcai:mail:me@x:Sent:1"]])
+    pct = mk(kind=30078, pubkey=pk, tags=[["d", "a%b_c:1"]])
+    near = mk(kind=30078, pubkey=pk, tags=[["d", "aXbYc:1"]])
+    for e in inbox + [other, pct, near]:
+        store.put(e)
+    assert set(ids(store.query({"#d~": ["pcai:mail:me@x:INBOX:"]}))) == set(ids(inbox))
+    assert ids(store.query({"#d~": ["a%b_"]})) == [pct["id"]]          # never a LIKE wildcard
+    assert store.query({"#d~": ["pcai:mail:nobody:"]}) == []
+
+
+def test_quote_authors_count_as_mentions_only_when_asked(store):
+    author = hx()
+    quote = mk(tags=[["q", hx(), "", author]])
+    store.put(quote)
+    store.add_derived_tag(quote["id"], "_quote_author", author)
+    assert store.query({"#p": [author]}) == []
+    assert ids(store.query({"#p": [author], "_include_quotes": True})) == [quote["id"]]
+
+
+def test_empty_filter_lists_are_ignored_like_the_relay_does(store):
+    e = mk()
+    store.put(e)
+    assert ids(store.query({"ids": [], "authors": [], "kinds": [], "#p": []})) == [e["id"]]
+
+
+def test_derived_tags_and_deletions_survive_a_restart(tmp_path):
+    p = str(tmp_path / "db")
+    s = Store(p)
+    author, pk = hx(), hx()
+    quote = mk(tags=[["q", hx()]])
+    gone = mk(pubkey=pk)
+    s.put(quote); s.put(gone)
+    s.add_derived_tag(quote["id"], "_quote_author", author)
+    s.put(mk(kind=5, pubkey=pk, tags=[["e", gone["id"]]]))
+    s.close()
+    s2 = Store(p)
+    assert ids(s2.query({"#p": [author], "_include_quotes": True})) == [quote["id"]]
+    assert s2.query({"ids": [gone["id"]]}) == []
+    s2.close()

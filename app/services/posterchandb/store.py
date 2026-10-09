@@ -16,6 +16,7 @@ Durability:
 from __future__ import annotations
 
 import array
+import bisect
 import hashlib
 import os
 import re
@@ -29,7 +30,7 @@ import numpy as np
 from .codec import Codec
 
 MAGIC = b"PCDB1\n"
-OP_PUT, OP_DEAD = 1, 2
+OP_PUT, OP_DEAD, OP_DERIVED = 1, 2, 3
 _FRAME = struct.Struct("<II")
 _WORD = re.compile(r"\w+", re.U)
 _CIPHER = re.compile(r"^[A-Za-z0-9+/=]{40,}(\?iv=[A-Za-z0-9+/=]+)?$")
@@ -144,6 +145,34 @@ class _Postings:
         return sum(k.nbytes + s.nbytes + p.nbytes for k, s, p in self.runs)
 
 
+class _Prefix:
+    """Sorted (value, seq) runs for prefix matching on ONE tag letter (`#d~`, the app's folder reads).
+    Leveled like the postings; only events that carry the tag pay for it."""
+
+    def __init__(self):
+        self.runs: list = []
+        self.delta: list = []
+
+    def add(self, value: str, seq: int) -> None:
+        self.delta.append((value, seq))
+
+    def merge(self) -> None:
+        if self.delta:
+            self.runs.append(sorted(self.delta))
+            self.delta = []
+        while len(self.runs) > 1 and len(self.runs[-1]) * 4 >= len(self.runs[-2]):
+            b = self.runs.pop(); a = self.runs.pop()
+            self.runs.append(sorted(a + b))
+
+    def prefix(self, pre: str) -> list:
+        out = [q for v, q in self.delta if v.startswith(pre)]
+        for run in self.runs:
+            i = bisect.bisect_left(run, (pre, -1))
+            while i < len(run) and run[i][0].startswith(pre):
+                out.append(run[i][1]); i += 1
+        return out
+
+
 class Store:
     def __init__(self, path: str, *, zdict: bytes = b"", flush_interval: float = 60.0,
                  direct_durable: bool = True, log=None):
@@ -166,6 +195,7 @@ class Store:
         self._id_delta: dict[int, int] = {}
         self.idx = _Postings()       # author+kind, kind, single-letter tags
         self.words = _Postings()     # search
+        self.dprefix = _Prefix()     # `#d~` prefix reads
         self.current: dict[int, int] = {}   # replaceable/addressable address hash -> seq of current version
         self._pending = bytearray()
         self._pending_n = 0
@@ -196,6 +226,7 @@ class Store:
         self._file = open(p, "ab")
         self.idx.merge()
         self.words.merge()
+        self.dprefix.merge()
         self._merge_ids()
 
     def _replay(self, p: str) -> int:
@@ -220,6 +251,11 @@ class Store:
                 s = self._seq_of(bytes(payload[1:33]).hex())
                 if s is not None:
                     self.dead[s] = 1
+            elif op == OP_DERIVED:
+                s = self._seq_of(bytes(payload[1:33]).hex())
+                if s is not None:
+                    tag, _, value = bytes(payload[33:]).decode("utf-8").partition("\x00")
+                    self.idx.add(_h("t:%s:%s" % (tag, value)), s)
             i = j + n
         return i
 
@@ -240,6 +276,7 @@ class Store:
                 self._pending_n = 0
             self.idx.merge()
             self.words.merge()
+            self.dprefix.merge()
             self._merge_ids()
             self._last_flush = time.monotonic()
             return n
@@ -329,6 +366,16 @@ class Store:
                 self.flush()
             return "stored"
 
+    def add_derived_tag(self, event_id: str, tag: str, value: str) -> bool:
+        """An index-only tag the relay derives (today: `_quote_author`). Logged, so it survives a restart."""
+        with self._lock:
+            s = self._seq_of(event_id)
+            if s is None:
+                return False
+            self._frame(bytes([OP_DERIVED]) + bytes.fromhex(event_id) + ("%s\x00%s" % (tag, value)).encode("utf-8"))
+            self.idx.add(_h("t:%s:%s" % (tag, value)), s)
+            return True
+
     def _apply_put(self, ev: dict, rec, *, replay: bool) -> None:
         seq = len(self.off)
         self.off.append(len(self.arena))
@@ -346,6 +393,8 @@ class Store:
         for t in ev.get("tags") or []:
             if len(t) >= 2 and len(t[0]) == 1:
                 self.idx.add(_h("t:%s:%s" % (t[0], t[1])), seq)
+                if t[0] == "d":
+                    self.dprefix.add(t[1], seq)
         for w in search_words(ev.get("content", "")):
             self.words.add(_h(w), seq)
         addr = self._address(ev)
@@ -408,9 +457,17 @@ class Store:
                 sets.append(np.unique(np.concatenate([self.idx.get(_h("k:%d" % k)) for k in kinds]
                                                      or [np.zeros(0, np.uint32)])))
             for key, vals in flt.items():
-                if len(key) == 2 and key[0] == "#" and isinstance(vals, list):
-                    sets.append(np.unique(np.concatenate([self.idx.get(_h("t:%s:%s" % (key[1], v))) for v in vals]
-                                                         or [np.zeros(0, np.uint32)])))
+                if not (isinstance(key, str) and key.startswith("#") and vals):
+                    continue
+                if len(key) == 2:
+                    tags = [key[1]] + (["_quote_author"] if key == "#p" and flt.get("_include_quotes") is True else [])
+                    sets.append(np.unique(np.concatenate([self.idx.get(_h("t:%s:%s" % (tg, v)))
+                                                          for tg in tags for v in vals])))
+                elif len(key) == 3 and key.endswith("~"):
+                    if key[1] != "d":
+                        return []          # prefix matching is indexed for `d` only — the app's one use
+                    sets.append(np.unique(np.array([q for v in vals for q in self.dprefix.prefix(str(v))],
+                                                   dtype=np.uint32)))
             if flt.get("search"):
                 words = search_words(flt["search"])
                 if not words:
@@ -436,15 +493,28 @@ class Store:
                 keep &= created[cand] >= int(flt["since"])
             if "until" in flt:
                 keep &= created[cand] <= int(flt["until"])
+            cur = flt.get("_cursor")
+            if isinstance(cur, list) and len(cur) == 2:
+                c0, c1 = int(cur[0]), str(cur[1])
+                cc = created[cand]
+                keep &= cc <= c0
+                same = np.nonzero(keep & (cc == c0))[0]
+                for j in same:              # equal timestamps: page on the id (`e.id < cursor id`)
+                    o = self.off[int(cand[j])]
+                    if not self.arena[o:o + 32].hex() < c1:
+                        keep[j] = False
             cand = cand[keep]
-            limit = int(flt.get("limit", 500)) if flt.get("limit") is not None else 500
-            if limit <= 0 or not len(cand):
+            # The relay's own rule (store.py _query_one): `limit or 500`, clamped to 1..5000.
+            limit = max(1, min(int(flt.get("limit") or 500), 5000))
+            if not len(cand):
                 return []
             c = created[cand]
             if len(cand) > limit:
-                part = np.argpartition(-c.astype(np.int64), limit - 1)[:limit]
-                cand, c = cand[part], c[part]
+                # keep every event at the cut-off timestamp: the id decides among them below
+                cut = np.partition(c, len(c) - limit)[len(c) - limit]
+                sel = c >= cut
+                cand, c = cand[sel], c[sel]
             evs = [self.get(int(s)) for s in cand]
-            # newest first; NIP-01 tie-break: lower id first
-            evs.sort(key=lambda e: (-e["created_at"], e["id"]))
+            # ORDER BY created_at DESC, id DESC — exactly the relay's order
+            evs.sort(key=lambda e: (e["created_at"], e["id"]), reverse=True)
             return evs[:limit]
