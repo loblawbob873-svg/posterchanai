@@ -70,6 +70,7 @@
       this._open();
     }
     _open(){
+      if(this.pool._asleep){ this._setStatus('off'); return; }   // see Relay.sleep()
       /* NOT `_retry()`: a malformed URL cannot start working, and retrying one is how a typo becomes
          an endless stream of rejected connections nobody can trace back to it. Said once, out loud,
          because the alternative is a relay that is simply always 'off' for no stated reason. */
@@ -390,11 +391,30 @@
     // dead socket → the "relay timeout when loading" symptom. Tearing the socket down and reopening
     // (our relay reconnects in ~0.1s, re-arming live subs) refreshes the feed instantly on focus.
     wake(){
+      this._asleep = false;
+      for (const fn of [...this._naps]) { try{ fn(true); }catch(_){} }
       for (const c of this._conns.values()){
         c._teardownSocket();   // nulls handlers + stops the prior heartbeat before reopening
         clearTimeout(c._rt); c._backoff = 600; try{ c._open(); }catch(_){}
       }
     },
+
+    /* THE APK IN A POCKET HOLDS NO SOCKETS. Every open relay socket is a radio that wakes whenever
+     * its relay pings it (ours every 30s) or anything arrives, and a backgrounded APK is NOT frozen
+     * the way this file otherwise assumes: PosterChan Direct's foreground service keeps the process
+     * running, so the sockets streamed into a pocket all day ("10 percent used for today so far").
+     * Closed-app notifications are that service's job, not the page's. sleep() closes every pooled
+     * socket AND every live subscribeFrom() socket, refuses to reopen any of them, and wake() — which
+     * every resume path already calls — brings them all back and re-arms their subscriptions. */
+    _asleep: false,
+    _naps: new Set(),
+    sleep(){
+      if (this._asleep) return;
+      this._asleep = true;
+      for (const c of this._conns.values()){ clearTimeout(c._rt); c._teardownSocket(); c._setStatus('off'); }
+      for (const fn of [...this._naps]) { try{ fn(false); }catch(_){} }
+    },
+    asleep(){ return this._asleep; },
 
     _setStatus(s){ if (s === this.status) return; this.status = s; if (this.onStatus) this.onStatus(s); },
     _recomputeStatus(){
@@ -1114,7 +1134,9 @@
       const ready=new Promise(resolve=>{readyResolve=resolve;});
       const markReady=ok=>{if(!readyDone){readyDone=true;readyResolve(!!ok);}};
       const redials=[];
+      const naps=[];
       const stop=()=>{ if(closed)return;closed=true;if(tm)clearTimeout(tm);
+        naps.forEach(fn=>this._naps.delete(fn));
         // Cancel a pending redial BEFORE closing, or the close we are about to do schedules another.
         redials.forEach(cancel=>{try{cancel();}catch(_){}});
         sockets.forEach(ws=>{try{ws.close();}catch(_){}}); };
@@ -1132,12 +1154,13 @@
            outlive many outages. `cur` is the socket `stop()` closes. */
         redials.push(()=>{if(auth)auth.stop(); if(retry){clearTimeout(retry);retry=null;} if(cur){try{cur.close();}catch(_){}} });
         const schedule=()=>{
-          if(!active()){stop();return;}if(!live||retry||authBlocked)return;
+          if(!active()){stop();return;}if(!live||retry||authBlocked||this._asleep)return;
           retry=setTimeout(()=>{retry=null;dial();},backoff);
           backoff=Math.min(backoff*2,30000);
         };
         const dial=()=>{
           if(!active()){stop();return;}
+          if(live&&this._asleep)return;
           let ws;
           try{ws=new WebSocket(u);}catch(_){ return schedule(); }
           if(auth)auth.stop();cur=ws;sockets[n]=ws;
@@ -1159,6 +1182,17 @@
             ws.onerror=()=>{try{ws.close();}catch(_){}};
           }
         };
+        if(live){
+          // Relay.sleep()/wake(): drop this socket without ending the subscription, then redial it.
+          const nap=awake=>{
+            if(closed)return;
+            if(awake){ if(!cur&&!retry){backoff=1000;dial();} return; }
+            if(retry){clearTimeout(retry);retry=null;}
+            if(auth)auth.stop();
+            const w=cur;cur=null;if(w){w.onclose=w.onerror=w.onmessage=null;try{w.close();}catch(_){}}
+          };
+          naps.push(nap);this._naps.add(nap);
+        }
         dial();
       });
       /* Do not let a failed external relay leave a realtime join pending for a full minute. */

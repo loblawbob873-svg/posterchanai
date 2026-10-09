@@ -121,6 +121,11 @@ if __name__ == "__main__":
         # base64 over the WebSocket; the 16 MB default drops large frames and
         # the message never arrives. Raise to 64 MB.
         ws_max_size=64 * 1024 * 1024,
+        # uvicorn pings every socket every 20s by default, and on the push socket every ping wakes an
+        # idle phone's radio (see direct_push_service.POLL_S). 75s stays inside Cloudflare's
+        # 100s idle window; a dead peer is still noticed within ~2 minutes.
+        ws_ping_interval=75,
+        ws_ping_timeout=60,
         # Restart speed: without this, uvicorn's graceful shutdown waits INDEFINITELY for in-flight
         # requests to finish. The bots generate near-constantly, so there's almost always a 30-300s LLM
         # request open → the process never exits on SIGTERM → systemd hits TimeoutStopSec (10s) and

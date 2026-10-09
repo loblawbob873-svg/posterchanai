@@ -279,15 +279,42 @@
    * The CSS no longer freezes an entry animation, so a stale class can no longer hide a post. This
    * is the other half: the class tracks the app, not one unreliable event. */
   function _animOff(on){ try{ document.body.classList.toggle('anim-off', !!on); }catch(_){} }
+  /* AND THE APK THEN LETS GO OF THE NETWORK ENTIRELY (Relay.sleep). Everything above assumed Android
+   * freezes a backgrounded app; it stopped doing that when notifications moved into PosterChan
+   * Direct's FOREGROUND SERVICE, which keeps the whole process — this page included — running. So
+   * every relay socket, and every poller, kept the radio awake in a pocket all day ("bad battery
+   * drain… 10 percent used for today so far"). Closed-app notifications are the service's job.
+   * Not while something is still being DONE in the background: a call, a Concord voice room, music
+   * or any other media playing, or "Stay connected", which is the person asking for exactly this.
+   * The resume paths already call Relay.wake(), which reopens everything. */
+  let _keepLive = false;
+  function _busyInBackground(){
+    try{
+      if(_keepLive) return true;
+      if(document.querySelector('#call-overlay,#room-overlay,.pc-cord-call')) return true;
+      if(navigator.mediaSession && navigator.mediaSession.playbackState === 'playing') return true;
+      for(const m of document.querySelectorAll('audio,video')) if(!m.paused && !m.muted) return true;
+    }catch(_){}
+    return false;
+  }
   function _tlBackground(){
     _animOff(true);          // ...before the desktop guard: a covered window still pauses its motion
     if(_isDesktopApp()) return;
     clearTimeout(_tlHideTimer);
-    _tlHideTimer = setTimeout(()=>{ try{ _tlPause && _tlPause(); }catch(_){} }, _TL_HIDE_AFTER);
+    if(_isNativeApp()){ try{ const P=_capPlugin('PosterChanPush','stayConnected');
+      if(P) P.stayConnected().then(r=>{ _keepLive=!!(r&&r.on); }).catch(()=>{}); }catch(_){} }
+    _tlHideTimer = setTimeout(()=>{
+      try{ _tlPause && _tlPause(); }catch(_){}
+      try{ if(_isNativeApp() && !_busyInBackground()) Relay.sleep(); }catch(_){}
+    }, _TL_HIDE_AFTER);
   }
   function _tlForeground(){
     _animOff(false);
     clearTimeout(_tlHideTimer); _tlHideTimer = null;
+    /* Straight back, not through _resumeRelay's 4s debounce or its 6s "were we away long enough"
+     * test: a sleeping pool is not a doubtful socket, it is NO socket, and nothing else reopens it. */
+    try{ if(Relay.asleep()){ _lastWake = Date.now(); Relay.wake();
+      Relay.ready(8000).then(ok=>{ if(ok){ _reaskMissing(); _flushOutbox(); } }).catch(()=>{}); } }catch(_){}
     try{ _tlResume && _tlResume(); }catch(_){}
   }
   let CFG = {}, ME = null, FOLLOWS = new Set(), FOLLOWERS = new Set(), MUTED = new Set(), MUTED_WORDS = new Set(), MUTED_THREADS = new Set(), PINNED = new Set(), BOOKMARKS = new Set(), VIEW = 'home', IS_ADMIN = false, GUEST = false;
@@ -2706,7 +2733,7 @@
         document.querySelectorAll('.logo-img,.brand-logo').forEach(img=>img.src=CFG.logo_url);
       }catch(_){}
     }
-    updateUserCount(); let _ucT=0; setInterval(()=>{ if(NO_IMAGES && (++_ucT % 4)) return; updateUserCount(true); }, 15000);   // online refresh: 15s normally, throttled to 60s in data saver (still current, 1/4 the round trips)
+    updateUserCount(); let _ucT=0; setInterval(()=>{ if(document.hidden) return; if(NO_IMAGES && (++_ucT % 4)) return; updateUserCount(true); }, 15000);   // online refresh: 15s normally, throttled to 60s in data saver (still current, 1/4 the round trips)
     await Store.init();
     // Ask the browser for PERSISTENT storage so our caches (SW media cache + IndexedDB) aren't evicted
     // under pressure — that's what lets a large offline media cache actually stick around. Best-effort;
@@ -4110,7 +4137,8 @@
   // popstate (the back button skipped a view) and the refresh timers (double work forever after).
   function bindGlobalsOnce(){
     if(window.__pcGlobalsBound) return; window.__pcGlobalsBound = true;
-    setInterval(()=>hydrateReminderNotifications(),60000);   // one poller, also after guest → login
+    // Hidden = nobody to show it to; a due reminder still reaches the phone as a push (reminder_service).
+    setInterval(()=>{ if(!document.hidden) hydrateReminderNotifications(); },60000);   // one poller, also after guest → login
     // See _navView: a view switch becomes a history entry only once somebody has touched the app.
     ['pointerdown','keydown','touchstart'].forEach(t=>{
       try{ document.addEventListener(t, ()=>{ _userActed = true; }, { capture:true, passive:true }); }catch(_){ }

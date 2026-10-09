@@ -44,6 +44,7 @@ public class DirectPushService extends Service {
     // Incoming-call queue entries expire after 90 seconds. A five-minute retry ceiling
     // could miss the whole ringing window after connectivity returned.
     private static final long MAX_BACKOFF_MS = 30L * 1000L;
+    static final long PING_S = 75L;
 
     private final Handler handler = new Handler(Looper.getMainLooper());
     private OkHttpClient client;
@@ -104,7 +105,10 @@ public class DirectPushService extends Service {
 
         if (client == null) {
             client = new OkHttpClient.Builder()
-                    .pingInterval(30, TimeUnit.SECONDS)
+                    // Every ping wakes the radio. One every 75s keeps Cloudflare's 100s idle
+                    // window open and still finds a dead link in under three minutes; the server
+                    // side matches it (run.py ws_ping_interval).
+                    .pingInterval(PING_S, TimeUnit.SECONDS)
                     .connectTimeout(20, TimeUnit.SECONDS)
                     .readTimeout(0, TimeUnit.MILLISECONDS)
                     .retryOnConnectionFailure(false)
