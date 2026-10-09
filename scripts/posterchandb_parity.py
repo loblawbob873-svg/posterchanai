@@ -4,7 +4,7 @@
 Runs on a node against its own relay database, READ-ONLY (it never calls RelayStore.open(), which would
 run schema changes). It:
   1. streams every stored event out of Postgres into a separate PosterChanDB at --dir (default
-     $POSTERCHANDB_DIR/parity — on server1 /usb/posterchandb/parity, the RAID5), plus the derived `_quote_author` tags;
+     $POSTERCHANDB_DIR/parity, default /var/lib/posterchandb/parity), plus the derived `_quote_author` tags;
   2. builds a query corpus FROM THE DATA: author feeds, profiles/follows/relay lists, mentions (with and
      without quotes), threads, hashtags, time windows, id batches, `#d~` folder reads, cursor paging and
      one- and two-word searches;
