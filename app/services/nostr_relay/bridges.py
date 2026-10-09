@@ -122,7 +122,7 @@ def author_on_blocked_bridge(ev: dict, domains) -> bool:
 
 def reveals_blocked_bridge(ev: dict, domains) -> bool:
     """True if `ev` shows its author is hosted on a blocked bridge domain (so the whole account
-    should be denied). Looks at kind-0 nip05, kind-3/10002 relay hints, and any `proxy` tag host."""
+    should be denied). Looks at kind-0 nip05 and any `proxy` tag host -- never at relay lists."""
     if not domains:
         return False
     tags = ev.get("tags") or []
@@ -138,10 +138,12 @@ def reveals_blocked_bridge(ev: dict, domains) -> bool:
             nip05 = ""
         if "@" in nip05 and _match(nip05.rsplit("@", 1)[-1], domains):
             return True
-    if kind in (3, 10002):                                      # relay-list / contact-list relays
-        for t in tags:
-            if len(t) >= 2 and t[0] == "r" and _match(relay_domain(t[1]), domains):
-                return True
+    # A RELAY LIST THAT MERELY NAMES A BRIDGE RELAY IS NOT A BRIDGE ACCOUNT (2026-10-09). Plenty of
+    # real people list relay.ditto.pub or relay.momostr.pink to READ fediverse content; treating that as
+    # "hosted on the bridge" refused their relay list ("blocked: bridged relay not accepted") AND marked
+    # the whole account bridged, barring everything else they post -- Vyram, a Concord user, could not
+    # save his settings. What does identify a bridge account is unchanged: a nip05 ON the bridge domain
+    # (handle@mostr.pub) and the NIP-48 proxy tag a bridge stamps on what it mirrors.
     return False
 
 
