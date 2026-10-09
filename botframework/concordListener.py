@@ -529,17 +529,40 @@ def _room_reply(room, cid: str, publish, relays):
 
 
 def process_mentions(state: dict | None = None, wire: Wire | None = None) -> int:
-    """One pass: read every readable channel, answer what named us. Returns replies sent."""
-    w = wire or (state or {}).get("wire") or live_wire()
-    query = w.query
+    """One pass over EVERY room this bot was invited to. Returns replies sent.
 
+    A bot used to hold one invite, so being in two communities took two bots on one key. Now each
+    invite (one per line in `concord_invite`) gets its own session inside `state["rooms"]`, they
+    share one "already answered" list (message ids are unique across rooms), and a room that cannot
+    be opened or read costs THAT room its pass, never the others: its session is dropped so the next
+    pass re-joins it from the link. A caller that hands in a single `room` (the tests, the old
+    shape) gets exactly the old single-room pass.
+    """
+    w = wire or (state or {}).get("wire") or live_wire()
     st = state if state is not None else _STATE
-    room = st.get("room")
-    if room is None:
-        room = _cc.from_env()
-        if room is None:
-            return 0
-        st["room"] = room
+    if st.get("room") is not None:
+        return _room_pass(st, w)
+    rooms = st.get("rooms")
+    if rooms is None:
+        rooms = [{"room": r} for r in _cc.rooms_from_env()]
+        st["rooms"] = rooms
+    seen = st.setdefault("seen", _Seen(_seen_path()))
+    sent = 0
+    for sub in rooms:
+        sub["seen"] = seen
+        try:
+            sent += _room_pass(sub, w)
+        except Exception as e:
+            name = getattr(sub.get("session"), "name", "") or "a room"
+            sub.pop("session", None)
+            _say("could not read %s this pass (%s) — will re-join it next pass", name, e)
+    return sent
+
+
+def _room_pass(st: dict, w: Wire) -> int:
+    """One pass over ONE room: read every readable channel, answer what named us."""
+    query = w.query
+    room = st["room"]
     session = st.get("session")
     if session is None:
         session = open_room(room, query)

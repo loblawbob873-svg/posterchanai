@@ -1,4 +1,5 @@
 import os
+import re
 
 # These globals used to live in bots_config.py. After merging this framework into
 # posterchanai they are injected as env vars by bot_manager_service (from the global
@@ -60,7 +61,7 @@ PLEROMA_ADMIN_TOKEN = os.getenv("PLEROMA_ADMIN_TOKEN")
 # A self-hosted instance on the LAN resolves to a private IP, which the SSRF guard
 # (is_safe_url) blocks by default; list such instances here to allow their media
 # (e.g. compress/clip/convert on files hosted there). Comma-separated.
-TRUSTED_MEDIA_HOSTS = [h.strip().lower() for h in os.getenv("TRUSTED_MEDIA_HOSTS", "").split(",") if h.strip()]
+TRUSTED_MEDIA_HOSTS = [h.strip().lower() for h in re.split(r"[,\s]+", os.getenv("TRUSTED_MEDIA_HOSTS", "")) if h.strip()]   # one per line or comma-separated
 
 # Blockbot Configuration
 BLOCK_LIMIT = 1

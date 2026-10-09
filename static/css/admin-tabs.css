@@ -682,3 +682,13 @@
 .bot-talk-face img { width: 100%; height: 100%; object-fit: cover; display: block; }
 .bot-talk-face .x { position: absolute; top: 2px; right: 2px; width: 22px; height: 22px; line-height: 20px; padding: 0;
     border-radius: 50%; border: 0; background: rgba(0,0,0,.7); color: #fff; font-size: 14px; cursor: pointer; }
+
+/* Bot editor list fields — the same shape as Admin → Nostr Relay's lists: a short label, a box
+   with one entry per line, the explanation underneath. */
+.admin-page .bots-list{ width:100%; box-sizing:border-box; min-height:5.2em; resize:vertical;
+  font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace; font-size:13px; line-height:1.5;
+  white-space:pre; overflow-wrap:normal; overflow-x:auto; }
+.form-group > .bots-list + small{ display:block; margin-top:5px; font-size:12px; line-height:1.4; }
+/* An invite's # part is the room key: masked until Reveal, like the password field it replaced. */
+.bots-secret:not(.revealed){ -webkit-text-security:disc; }
+@supports not (-webkit-text-security:disc){ .bots-secret:not(.revealed):not(:focus){ filter:blur(5px); } }
