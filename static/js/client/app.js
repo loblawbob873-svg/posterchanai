@@ -10875,27 +10875,99 @@
   // Blobs the server still HAS (from Blossom /list) — see _refreshBlobHave in musiclib.js.
   let _blobHave=null;
   let _blobSizes = new Map();   // sha → bytes, from the same /list that fills _blobHave
-  /* A MUSIC FILE IN A POST IS A TRACK, NOT A FORM CONTROL ("make it look cool like the desktop
-   * widget/profile page"). It was a bare `<audio controls>` after a <br>; now it is the profile's track
-   * card (profile.js `.prof-track`): the ♪ mark, the file's name, and the cyan→magenta equaliser that
-   * moves only while it plays. One look for music wherever it appears, one stylesheet to keep. The name
-   * is the file's own (decoded, extension dropped) — a hash-named blob says "Audio" rather than a hash.
-   * `controls` stay: they are the accessible transport. */
-  function _trackCard(u){
-    let name='';
-    try{ name=decodeURIComponent(String(u).split(/[?#]/)[0].split('/').pop()||''); }catch(_){ name=''; }
+  /* A MUSIC FILE IN A POST IS A TRACK ("make it look cool like the desktop widget/profile page", then
+   * "show the audio metadata like ditto/amethyst does it", with a post comparing Armada and Ditto). It
+   * was a bare <audio controls> after a <br>. Now: cover art, the file's own title and "artist · album"
+   * (audiotags.js reads them from the first bytes of the file, lazily, when the card is on screen), a
+   * round play button, bars that fill as it plays and seek on click/arrows, and the time. Until the tags
+   * arrive — or for a file that has none — it shows the file's own name.
+   * The bars are DECORATIVE (seeded from the URL, stable per track): a real waveform means downloading
+   * and decoding the whole file, per post, on a timeline. */
+  function _trackBars(u){
+    let h=2166136261; for(let i=0;i<u.length;i++){ h^=u.charCodeAt(i); h=Math.imul(h,16777619)>>>0; }
+    const out=[]; for(let i=0;i<40;i++){ h^=h<<13; h^=h>>>17; h^=h<<5; h>>>=0;
+      const env=Math.sin(Math.PI*(i+.5)/40)*.55+.45; out.push(Math.round(18+70*env*((h%1000)/1000*.6+.4))); }
+    return out;
+  }
+  function _trackCard(u, label, preload){
+    let name=String(label||'');
+    if(!name) try{ name=decodeURIComponent(String(u).split(/[?#]/)[0].split('/').pop()||''); }catch(_){ name=''; }
     name=name.replace(/\.[a-z0-9]{2,5}$/i,'').replace(/[_]+/g,' ').trim();
     if(!name || /^[0-9a-f]{32,}$/i.test(name)) name='Audio';
-    const eq=`<div class="prof-eq" aria-hidden="true">${Array.from({length:12},(_,i)=>`<i style="--i:${i}"></i>`).join('')}</div>`;
-    return `<div class="prof-track note-track" role="group" aria-label="${enc(name)}"><div class="prof-track-head"><span class="prof-track-mark" aria-hidden="true">♪</span>`
-      + `<div class="prof-track-name" title="${enc(name)}">${enc(name)}</div></div>${eq}<audio controls preload="none" src="${u}"></audio></div>`;
+    const bars=_trackBars(String(u)).map((h,i)=>`<i style="height:${h}%" data-i="${i}"></i>`).join('');
+    return `<div class="pc-track" data-src="${u}"><div class="pct-art" aria-hidden="true"><span>♪</span></div>`
+      + `<div class="pct-main"><div class="pct-title" title="${enc(name)}">${enc(name)}</div><div class="pct-sub"></div>`
+      + `<div class="pct-row"><button type="button" class="pct-play" aria-label="Play ${enc(name)}"><svg viewBox="0 0 24 24" aria-hidden="true"><path class="pct-i-play" d="M8 5v14l11-7z"/><path class="pct-i-pause" d="M7 5h4v14H7zM13 5h4v14h-4z"/></svg></button>`
+      + `<div class="pct-wave" role="slider" tabindex="0" aria-label="Seek" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0">${bars}</div>`
+      + `<span class="pct-time">0:00</span></div></div><audio preload="${preload==='metadata'?'metadata':'none'}" src="${u}"></audio></div>`;
   }
-  /* The equaliser follows the element's OWN events, wherever a card is — in a post, a thread, a profile,
-   * a window. Media events do not bubble, so this listens in the capture phase, once, for the page. */
-  try{ ['play','playing','pause','ended','emptied','error'].forEach(t=>document.addEventListener(t, ev=>{
-    const a=ev.target, card=a && a.closest && a.tagName==='AUDIO' && a.closest('.prof-track');
-    if(card) card.classList.toggle('playing', t==='play'||t==='playing');
-  }, true)); }catch(_){ }
+  const _tfmt=s=>{ s=Math.max(0,Math.floor(s||0)); return Math.floor(s/60)+':'+String(s%60).padStart(2,'0'); };
+  function _trackPaint(card){
+    const a=card.querySelector('audio'); if(!a) return;
+    const d=isFinite(a.duration)&&a.duration>0?a.duration:0, f=d?a.currentTime/d:0;
+    const bars=card.querySelectorAll('.pct-wave i'), lit=Math.round(f*bars.length);
+    bars.forEach((b,i)=>b.classList.toggle('on', i<lit));
+    const w=card.querySelector('.pct-wave'); if(w) w.setAttribute('aria-valuenow', String(Math.round(f*100)));
+    const t=card.querySelector('.pct-time'); if(t) t.textContent=_tfmt(a.currentTime>0||!d?a.currentTime:d);
+    const playing=!a.paused&&!a.ended; card.classList.toggle('playing', playing);
+    const btn=card.querySelector('.pct-play'), nm=(card.querySelector('.pct-title')||{}).textContent||'';
+    if(btn) btn.setAttribute('aria-label', (playing?'Pause ':'Play ')+nm);
+  }
+  /* The tags, once per card, when it is first on screen. A file whose tags cannot be read keeps its name. */
+  let _trackIO=null;
+  function _trackTags(card){
+    if(card.dataset.tagged) return; card.dataset.tagged='1';
+    const src=card.dataset.src;
+    _withModule('audiotags.js','PCAudioTags').then(T=>T&&T.read(src)).then(m=>{
+      if(!m||!card.isConnected) return;
+      if(m.title){ const t=card.querySelector('.pct-title'); t.textContent=m.title; t.title=m.title; }
+      const sub=[m.artist,m.album].filter(Boolean).join(' · ');
+      if(sub){ const e=card.querySelector('.pct-sub'); e.textContent=sub; e.title=sub; }
+      if(m.picture&&m.picture.data&&m.picture.data.length){
+        try{ const url=URL.createObjectURL(new Blob([m.picture.data],{type:m.picture.mime||'image/jpeg'}));
+          const art=card.querySelector('.pct-art'); art.innerHTML=`<img alt="" src="${url}">`; }catch(_){ }
+      }
+      _trackPaint(card);
+    }).catch(()=>{});
+  }
+  function _trackWatch(root){
+    const cards=(root.matches&&root.matches('.pc-track')?[root]:[]).concat([...(root.querySelectorAll?root.querySelectorAll('.pc-track:not([data-tagged])'):[])]);
+    if(!cards.length) return;
+    if(!_trackIO && typeof IntersectionObserver!=='undefined')
+      _trackIO=new IntersectionObserver(es=>es.forEach(e=>{ if(e.isIntersecting){ _trackIO.unobserve(e.target); _trackTags(e.target); } }),{rootMargin:'200px'});
+    cards.forEach(c=>{ if(c.dataset.tagged) return; if(_trackIO) _trackIO.observe(c); else _trackTags(c); });
+  }
+  try{
+    new MutationObserver(ms=>{ for(const m of ms) for(const n of m.addedNodes) if(n.nodeType===1) _trackWatch(n); })
+      .observe(document.documentElement,{childList:true,subtree:true});
+    // One set of listeners for every card on the page. Media events do not bubble: capture phase.
+    ['play','playing','pause','ended','timeupdate','loadedmetadata','emptied','error'].forEach(t=>document.addEventListener(t, ev=>{
+      const a=ev.target; if(!a||a.tagName!=='AUDIO') return;
+      const card=a.closest&&a.closest('.pc-track');
+      if(card){
+        // One track at a time: starting this one pauses any other card that is playing.
+        if(t==='play') document.querySelectorAll('.pc-track audio').forEach(o=>{ if(o!==a&&!o.paused) o.pause(); });
+        _trackPaint(card); return;
+      }
+      const prof=a.closest&&a.closest('.prof-track');
+      if(prof) prof.classList.toggle('playing', t==='play'||t==='playing');
+    }, true));
+    document.addEventListener('click', ev=>{
+      const btn=ev.target.closest&&ev.target.closest('.pc-track .pct-play');
+      if(btn){ const a=btn.closest('.pc-track').querySelector('audio'); if(a.paused) a.play().catch(()=>{}); else a.pause(); return; }
+      const wave=ev.target.closest&&ev.target.closest('.pc-track .pct-wave');
+      if(wave){ const a=wave.closest('.pc-track').querySelector('audio'), r=wave.getBoundingClientRect(), f=Math.max(0,Math.min(1,(ev.clientX-r.left)/r.width));
+        const go=()=>{ if(isFinite(a.duration)&&a.duration>0){ a.currentTime=f*a.duration; _trackPaint(wave.closest('.pc-track')); } };
+        if(isFinite(a.duration)&&a.duration>0) go(); else { a.addEventListener('loadedmetadata',go,{once:true}); a.preload='metadata'; a.load(); } }
+    });
+    document.addEventListener('keydown', ev=>{
+      const wave=ev.target.closest&&ev.target.closest('.pc-track .pct-wave'); if(!wave) return;
+      const a=wave.closest('.pc-track').querySelector('audio'); if(!(isFinite(a.duration)&&a.duration>0)) return;
+      const step={ArrowRight:5,ArrowLeft:-5,ArrowUp:5,ArrowDown:-5}[ev.key];
+      if(step){ ev.preventDefault(); a.currentTime=Math.max(0,Math.min(a.duration,a.currentTime+step)); _trackPaint(wave.closest('.pc-track')); }
+      else if(ev.key===' '||ev.key==='Enter'){ ev.preventDefault(); if(a.paused) a.play().catch(()=>{}); else a.pause(); }
+    });
+  }catch(_){ }
   // The one <audio> element the music player plays through (musicplayer.js creates it). The floating
   // cyberpunk player — a persistent widget appended to <body> (NOT #feed), so it hovers over EVERY view
   // and keeps playing as you navigate. Minimizable to a mini bar; draggable anywhere.
@@ -13051,7 +13123,8 @@
         : `<span class="yt-embed" data-yt="${yid}" title="play" role="button" tabindex="0" aria-label="Play YouTube video"><img alt="" class="yt-thumb" src="https://i.ytimg.com/vi/${yid}/hqdefault.jpg" loading="lazy" onerror="this.src='https://i.ytimg.com/vi/${yid}/0.jpg'"><span class="yt-play">▶</span></span>`;
       else if(/\.(jpe?g|png|gif|webp|avif)(\?|#|$)/i.test(u)) tag=_media(u, null, 'm');
       else if(/\.(mp4|webm|mov|m4v)(\?|#|$)/i.test(u)) tag=_media(u, 'video', 'm');
-      else if(/\.(mp3|ogg|oga|opus|wav|m4a|aac|flac)(\?|#|$)/i.test(u)) tag=_trackCard(u);
+      // .mpga is audio/mpeg's registered extension — what Ditto's Blossom names an MP3 it kept the tags of.
+      else if(/\.(mp3|mpga|ogg|oga|opus|wav|m4a|aac|flac)(\?|#|$)/i.test(u)) tag=_trackCard(u);
       // extensionless Blossom hash URLs (e.g. media.poster.place/<sha256>) — bots post these for
       // fedi media. Try as an image; if it isn't one, swap to a plain link on error.
       else if(/\/[0-9a-f]{64}(\?|#|$)/i.test(u)) tag=_media(u, null, 'm', BLOBF);
@@ -13631,6 +13704,8 @@
   }
   window.__PC = {
     deviceCache,
+    // Concord draws its audio attachments with the same track card a post uses (cover, title, artist).
+    trackCard: (url, label, preload) => _trackCard(enc(String(url||'')), label, preload),
     // buddy.js: the desktop PosterChan's on/off and spot follow the account (pcai:client-prefs).
     saveDesktopBuddy: v => { try{ _prefTouched.add('desktopBuddy'); }catch(_){} return saveClientPrefsNostr({ desktopBuddy: v }); },
     saveStartupApps: (v, at) => { try{ _prefTouched.add('startupApps'); }catch(_){}

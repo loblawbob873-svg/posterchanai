@@ -58,18 +58,25 @@ def _mp3(tmp_path):
 # there, loaded, 2 s long, and 0 px wide: `.cc-encrypted-attachment` is `width:fit-content` with
 # `overflow:hidden`, the player's own width was `min(420px,100%)`, and a percentage width inside a
 # shrink-to-fit box is cyclic, so the box shrank to nothing and clipped its only child.
-VISIBLE = """(()=>{const a=document.querySelector(SEL);if(!a)return null;
-  const r=a.getBoundingClientRect(),h=a.parentElement.getBoundingClientRect(),
-    hit=document.elementFromPoint(r.left+Math.min(20,r.width/2),r.top+r.height/2);
+# Since 2026-10-09 an audio attachment is the TRACK CARD a post uses (cover, title, artist, play, bars):
+# what a person finds and presses is the card and its play button, and the <audio> inside does the
+# decoding out of sight. So: the card is drawn at a usable size, its box does not clip it, the play
+# button is the thing under the pointer, and the decrypted source behind it really decodes.
+VISIBLE = """(()=>{const a=document.querySelector(SEL);if(!a)return null;const card=a.closest('.pc-track');
+  const box=card||a,r=box.getBoundingClientRect(),h=box.parentElement.getBoundingClientRect(),
+    btn=card&&card.querySelector('.pct-play'),br=btn&&btn.getBoundingClientRect(),
+    hit=btn?document.elementFromPoint(br.left+br.width/2,br.top+br.height/2):null;
   return {src:a.src,ready:a.readyState,duration:a.duration,w:r.width,h:r.height,hostW:h.width,hostH:h.height,
-    hit:hit===a};})()"""
+    card:!!card,title:card?card.querySelector('.pct-title').textContent:'',hit:!!btn&&!!hit&&btn.contains(hit)};})()"""
 
 
 def _assert_visible(got, what):
     assert got, what + ': no <audio> in the message at all'
+    assert got['card'], (what + ': the attachment is a bare <audio>, not the track card', got)
     assert got['w'] >= 200 and got['h'] >= 24, (what + ': the player is drawn too small to see or press', got)
     assert got['hostW'] >= got['w'] - 1, (what + ': the attachment box clips its player', got)
-    assert got['hit'], (what + ': something else is on top of the player', got)
+    assert got['hit'], (what + ': something else is on top of the play button', got)
+    assert got['title'] == 'song', (what + ': the track is not named after its file', got)
 
 
 @pytest.mark.skipif(not Path('/opt/google/chrome/chrome').exists(), reason='Chrome required')

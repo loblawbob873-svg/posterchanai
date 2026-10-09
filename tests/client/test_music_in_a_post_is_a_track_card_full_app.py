@@ -1,16 +1,22 @@
-"""A MUSIC FILE IN A POST LOOKS LIKE THE PLAYER, NOT A FORM CONTROL.
+"""A MUSIC FILE IN A POST SHOWS AS A TRACK — ITS COVER, TITLE AND ARTIST — LIKE DITTO AND ARMADA.
 
-"if a person puts a music file in a post, make it look cool like the desktop widget/profile page". A
-posted .mp3/.ogg/.flac link was a bare <audio controls> after a line break. Now it is the profile's track
-card: the ♪ mark, the file's readable name, and the cyan→magenta equaliser that moves only while the
-track plays. The real client, the real feed renderer (via Bookmarks), at phone and desktop width.
+"if a person puts a music file in a post, make it look cool like the desktop widget/profile page", then
+"try to get it to show the audio metadata like ditto/amethyst does it" with a post comparing Armada and
+Ditto (nevent1qqsqqqqqlxtf3…): cover art, the file's own title, "artist · album", a round play button,
+bars that fill as it plays, and the time. That post also points out that Ditto's Blossom serves an MP3
+as .mpga (audio/mpeg's registered extension) — which PosterChan did not recognise as audio at all.
+The real client and the real feed renderer (via Bookmarks); the media server is a fixture serving REAL
+ID3v2.3 bytes; the audio element's playback is stubbed (headless Chrome has no file to decode).
 """
 import asyncio
+import base64
+import json
 from pathlib import Path
 
 import pytest
 
 from tests.client import test_desktop_offline_full_app as desktop
+from tests.client.test_audio_tags import id3v23
 
 
 @pytest.fixture(scope='module', autouse=True)
@@ -20,44 +26,74 @@ def bundled_assets():
 
 SEED = r'''
 localStorage.setItem('pc_nostr_settings',JSON.stringify({...JSON.parse(localStorage.getItem('pc_nostr_settings')||'{}'),osMode:false}));
+window.__tagBytes=Uint8Array.from(atob('B64'),c=>c.charCodeAt(0));window.__ranges=[];
+{const up=window.fetch;window.fetch=(url,opts)=>{const u=String(url);
+  if(u.startsWith('https://media.example/')){__ranges.push((opts&&opts.headers&&opts.headers.Range)||'');
+    return Promise.resolve(new Response(__tagBytes,{status:206,headers:{'Content-Type':'audio/mpeg'}}));}
+  return up(url,opts);};}
+// Playback: no real file to decode in headless Chrome, so play/pause/duration behave like a 200 s track.
+Object.defineProperty(HTMLMediaElement.prototype,'duration',{configurable:true,get(){return 200;}});
+{let t=new WeakMap();Object.defineProperty(HTMLMediaElement.prototype,'currentTime',{configurable:true,
+  get(){return t.get(this)||0;},set(v){t.set(this,v);this.dispatchEvent(new Event('timeupdate'));}});}
+{const paused=new WeakMap();Object.defineProperty(HTMLMediaElement.prototype,'paused',{configurable:true,get(){return paused.get(this)!==false;}});
+ HTMLMediaElement.prototype.play=function(){paused.set(this,false);this.dispatchEvent(new Event('play'));return Promise.resolve();};
+ HTMLMediaElement.prototype.pause=function(){paused.set(this,true);this.dispatchEvent(new Event('pause'));};}
 (()=>{let built=null;Object.defineProperty(window,'__events',{configurable:true,set(v){built=v;},get(){
   if(built||!window.NostrTools)return built||[];
-  const me=new Uint8Array(32).fill(1), other=new Uint8Array(32).fill(7);
-  const note=NostrTools.finalizeEvent({kind:1,created_at:Math.floor(Date.now()/1000)-60,
-    content:'new track up https://media.example/music/Night_City_Drive.mp3 enjoy',tags:[]},other);
-  const list=NostrTools.finalizeEvent({kind:10003,created_at:Math.floor(Date.now()/1000)-30,content:'',tags:[['e',note.id]]},me);
-  return built=[note,list];}});})();
-'''
+  const me=new Uint8Array(32).fill(1), other=new Uint8Array(32).fill(7), now=Math.floor(Date.now()/1000);
+  const a=NostrTools.finalizeEvent({kind:1,created_at:now-60,content:'new track https://media.example/music/Playground.mp3',tags:[]},other);
+  const b=NostrTools.finalizeEvent({kind:1,created_at:now-50,content:'from ditto https://media.example/50b4aa.mpga',tags:[]},other);
+  const list=NostrTools.finalizeEvent({kind:10003,created_at:now-30,content:'',tags:[['e',a.id],['e',b.id]]},me);
+  return built=[a,b,list];}});})();
+'''.replace('B64', base64.b64encode(id3v23()).decode())
 
-CARD = r"""(()=>{const c=document.querySelector('#feed .note-track');if(!c)return null;const r=c.getBoundingClientRect();
-  const a=c.querySelector('audio');
-  return {name:(c.querySelector('.prof-track-name')||{}).textContent||'',bars:c.querySelectorAll('.prof-eq i').length,
-          mark:!!c.querySelector('.prof-track-mark'),audio:!!a&&a.hasAttribute('controls'),
-          fits:r.left>=-1&&r.right<=innerWidth+1&&r.width>120,bare:document.querySelectorAll('#feed .note audio:not(.prof-track audio)').length,
-          playing:c.classList.contains('playing')};})()"""
+CARDS = r"""[...document.querySelectorAll('#feed .pc-track')].map(c=>{const r=c.getBoundingClientRect(),img=c.querySelector('.pct-art img');
+  return {src:c.dataset.src,title:c.querySelector('.pct-title').textContent,sub:c.querySelector('.pct-sub').textContent,
+    cover:!!img&&img.naturalWidth>=0&&/^blob:/.test(img.src),fits:r.left>=-1&&r.right<=innerWidth+1,
+    playing:c.classList.contains('playing'),label:c.querySelector('.pct-play').getAttribute('aria-label'),
+    lit:c.querySelectorAll('.pct-wave i.on').length,bars:c.querySelectorAll('.pct-wave i').length,
+    time:c.querySelector('.pct-time').textContent,now:c.querySelector('.pct-wave').getAttribute('aria-valuenow')};})"""
+
+
+async def _click(b, sel, fx=0.5):
+    r = await b.js(f"(()=>{{const e=document.querySelector({json.dumps(sel)});e.scrollIntoView({{block:'center'}});const r=e.getBoundingClientRect();return [r.left+r.width*{fx},r.top+r.height/2];}})()")
+    for kind in ('mousePressed', 'mouseReleased'):
+        await b.call('Input.dispatchMouseEvent', dict(type=kind, x=r[0], y=r[1], button='left', clickCount=1))
+    await asyncio.sleep(.2)
 
 
 @pytest.mark.skipif(not Path('/opt/google/chrome/chrome').exists(), reason='Chrome required')
 @pytest.mark.parametrize('width', [390, 1280])
-def test_a_posted_music_file_is_a_track_card(width):
+def test_a_posted_track_shows_its_cover_title_and_artist_and_plays(width):
     got = {}
 
     async def check(b):
         await b.call('Emulation.setDeviceMetricsOverride', dict(width=width, height=900, deviceScaleFactor=1, mobile=width < 600))
         await desktop.login(b)
         await b.js("__PC.switchView('bookmarks')")
-        await b.until("!!document.querySelector('#feed .note-track')")
-        got['rest'] = await b.js(CARD)
-        await b.js("document.querySelector('#feed .note-track audio').dispatchEvent(new Event('play'))")
-        got['on'] = await b.js(CARD)
-        await b.js("document.querySelector('#feed .note-track audio').dispatchEvent(new Event('pause'))")
-        got['off'] = await b.js(CARD)
+        await b.until("document.querySelectorAll('#feed .pc-track').length===2")
+        await b.until("[...document.querySelectorAll('#feed .pc-track .pct-title')].every(t=>t.textContent==='Playground')")
+        got['rest'] = await b.js(CARDS)
+        got['viewUrl'] = await b.js("location.href")
+        await _click(b, '#feed .pc-track .pct-play')
+        got['playing'] = await b.js(CARDS)
+        await _click(b, '#feed .pc-track .pct-wave', 0.5)
+        got['seeked'] = await b.js(CARDS)
+        got['stillHere'] = await b.js("location.href")
+        await _click(b, '#feed .pc-track:nth-of-type(1) .pct-play')
         got['errors'] = await b.js('__errors')
+        got['ranges'] = await b.js('__ranges')
 
     asyncio.run(desktop.with_browser('online', '', check, SEED))
-    r = got['rest']
-    assert r, "the posted music file is not a track card"
-    assert r['name'] == 'Night City Drive' and r['mark'] and r['bars'] == 12 and r['audio'], r
-    assert r['fits'] and r['bare'] == 0, r
-    assert r['playing'] is False and got['on']['playing'] is True and got['off']['playing'] is False, got
+    rest = got['rest']
+    assert len(rest) == 2, ("the .mp3 and the .mpga must both be tracks", rest)
+    for c in rest:
+        assert c['title'] == 'Playground' and c['sub'] == 'Bea Miller · Arcane: League of Legends', c
+        assert c['cover'] and c['fits'] and not c['playing'] and c['bars'] == 40, c
+    assert all(r.startswith('bytes=0-') for r in got['ranges']), ("tags must be read from the head of the file only", got['ranges'])
+    first = got['playing'][0]
+    assert first['playing'] and first['label'].startswith('Pause'), ("play did not play", first)
+    s = got['seeked'][0]
+    assert s['now'] in ('49', '50', '51') and 18 <= s['lit'] <= 22 and s['time'] == '1:40', ("seeking by the bars failed", s)
+    assert got['stillHere'] == got['viewUrl'], "pressing the player opened the post instead"
     assert not got['errors'], got['errors']

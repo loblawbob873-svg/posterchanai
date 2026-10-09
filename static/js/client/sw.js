@@ -185,6 +185,7 @@ const SHELL = [
   '/static/js/client/linkcards.js',
   '/static/js/client/push.js',
   '/static/js/client/chatassist.js',
+  '/static/js/client/audiotags.js',
   '/static/js/client/signer.js',
   '/static/js/client/vaultcore.js',
   '/static/js/client/vault.js',

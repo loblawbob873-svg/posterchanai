@@ -10992,7 +10992,28 @@ html.pc-oswin .pv-sheet{top:38px}
    into it. The equaliser animates ONLY while the audio plays — `.playing` is toggled from the
    element's own play/pause/ended/error events, so a paused profile is completely still and a failed
    track never leaves bars dancing over silence. */
-.note-track{margin:8px 0 4px;max-width:520px}
+/* A track in a post (app.js _trackCard): cover, title, artist · album, play, bars, time. */
+.pc-track{display:flex;gap:12px;align-items:stretch;margin:8px 0 4px;max-width:560px;padding:10px;
+  border:1px solid var(--line);border-radius:14px;background:linear-gradient(135deg,color-mix(in srgb,var(--cyan,#0ff) 6%,transparent),color-mix(in srgb,var(--magenta,#f0f) 5%,transparent));box-sizing:border-box}
+.pc-track.playing{border-color:color-mix(in srgb,var(--cyan,#0ff) 55%,var(--line));box-shadow:0 0 18px color-mix(in srgb,var(--cyan,#0ff) 18%,transparent)}
+.pct-art{flex:0 0 auto;width:86px;height:86px;border-radius:10px;overflow:hidden;display:grid;place-items:center;
+  background:linear-gradient(135deg,color-mix(in srgb,var(--cyan,#0ff) 30%,#111),color-mix(in srgb,var(--magenta,#f0f) 30%,#111));font-size:32px;color:#fff}
+.pct-art img{width:100%;height:100%;object-fit:cover;display:block}
+.pct-main{flex:1 1 auto;min-width:0;display:flex;flex-direction:column;justify-content:center;gap:2px}
+.pct-title{font-weight:700;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.pct-sub{color:var(--muted);font-size:.86em;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;min-height:1.2em}
+.pct-row{display:flex;align-items:center;gap:10px;margin-top:6px;min-width:0}
+.pct-play{flex:0 0 auto;width:44px;height:44px;border-radius:50%;border:0;cursor:pointer;display:grid;place-items:center;
+  background:var(--cyan,#19c3e6);color:#06121a}
+.pct-play svg{width:20px;height:20px;fill:currentColor}
+.pct-play .pct-i-pause,.pc-track.playing .pct-play .pct-i-play{display:none}
+.pc-track.playing .pct-play .pct-i-pause{display:inline}
+.pct-wave{flex:1 1 auto;min-width:0;height:36px;display:flex;align-items:center;gap:2px;cursor:pointer;outline-offset:3px}
+.pct-wave i{flex:1 1 0;min-width:2px;border-radius:2px;background:color-mix(in srgb,var(--muted,#889) 55%,transparent)}
+.pct-wave i.on{background:var(--cyan,#19c3e6)}
+.pct-time{flex:0 0 auto;color:var(--muted);font-size:.85em;font-variant-numeric:tabular-nums;min-width:3ch;text-align:right}
+.pc-track audio{display:none}
+@media(max-width:480px){.pct-art{width:64px;height:64px}.pct-play{width:40px;height:40px}}
 .prof-track{position:relative;min-width:0;padding:10px 12px 8px;border:1px solid var(--line);
   border-radius:12px;overflow:hidden;
   background:linear-gradient(180deg,rgba(0,240,255,.05),transparent 60%),var(--panel)}
