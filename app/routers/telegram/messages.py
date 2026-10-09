@@ -15,6 +15,9 @@ _TG_BASE_COMMANDS = [
     "help", "new", "geni", "musicgeni", "videogeni", "narrate", "voice", "talk", "news", "dailynews",
     "logs", "syslogs", "syslog", "healthreport", "node", "screenshot", "shot", "ss",
     "remind", "reminders", "pin", "pins",
+    # Sharing a link to Social came back 2026-10-09 ("add ability to share links from chat to Social"):
+    # `share <link> [comment]`, `share` as a REPLY to any message with a link, or the link menu's button.
+    "share", "post",
 ]
 _TG_EFFECTS = set(CommandService.MOTION_EFFECTS) | set(CommandService.ANIMATED_EFFECTS)
 # The effects' OLD names have to be matchable too — aliases are resolved AFTER this match, so a word
@@ -25,13 +28,13 @@ _TG_EFFECT_WORDS = _TG_EFFECTS | {k for k, v in CommandService.COMMAND_ALIASES.i
 # pins). These words still MATCH, so they are answered with where the feature lives instead of reaching the chat
 # model, which would make an answer up -- the same reason the retired `news` words are still listed.
 _TG_MOVED = _TG_EFFECT_WORDS | {
-    "ytdl", "yt", "torrents", "nyaa", "search", "images", "mail", "translate", "post", "share",
+    "ytdl", "yt", "torrents", "nyaa", "search", "images", "mail", "translate",
     "removebackground", "compress", "clip", "convert", "extractaudio", "circlecrop", "ocr", "flashcards",
     "bill", "budget", "bills", "pay", "addbill", "finance",
 }
 _TG_MOVED_TEXT = ("That's in PosterChan now — open the app or poster.place. Here I can chat, generate images, "
-                  "music, video and voices, send you your notifications and alerts, run the admin tools, and "
-                  "keep your reminders and pins. Send help for the list.")
+                  "music, video and voices, share links to Social, send you your notifications and alerts, run the "
+                  "admin tools, and keep your reminders and pins. Send help for the list.")
 _TG_COMMANDS = _TG_BASE_COMMANDS + sorted(_TG_MOVED - set(_TG_BASE_COMMANDS))
 # Commands that consume the upload's raw BYTES: OCR'ing the image for them is wasted work (they never
 # read the text), and an oversized one has to be reported rather than fed to the chat model.
@@ -41,6 +44,22 @@ _TG_RAW_MEDIA_COMMANDS = {
     # `talk` animates the attached PICTURE's mouth — it needs the image bytes, not its OCR.
     "talk",
 }
+
+
+def _shareable_text(msg) -> str:
+    """What `share`, sent as a REPLY, puts on Social: the replied-to message's text or caption, plus every
+    link Telegram keeps OUTSIDE that text. A channel post's "Read more" or a hyperlinked word is a
+    `text_link` entity whose URL appears nowhere in `text`, so sharing the text alone would post the
+    headline and lose the link -- the one thing the person meant to share."""
+    if not isinstance(msg, dict):
+        return ""
+    body = (msg.get("text") or msg.get("caption") or "").strip()
+    links = []
+    for e in (msg.get("entities") or []) + (msg.get("caption_entities") or []):
+        u = (e or {}).get("url") if (e or {}).get("type") == "text_link" else None
+        if u and u.startswith(("http://", "https://")) and u not in body and u not in links:
+            links.append(u)
+    return "\n".join(([body] if body else []) + links).strip()
 
 
 async def _handle_message(update, db):
@@ -243,6 +262,11 @@ async def _handle_message(update, db):
             # canonical name, or execute_command rejects them as "Unknown command".
             if command:
                 command = CommandService.COMMAND_ALIASES.get(command, command)
+            # `share` as a REPLY shares the message it answers; anything typed after it is the comment.
+            if command == "post" and reply_to:
+                shared = _shareable_text(reply_to)
+                if shared:
+                    arg = (arg + "\n\n" + shared).strip() if arg else shared
             # FEATURES THAT LIVE IN POSTERCHAN NOW (2026-10-08: "since posterchan is great now, we don't need most
             # of the telegram features in the bot"). The words still MATCH -- unmatched, `torrents` or `compress`
             # would go to the chat model, which would invent an answer -- and say where the feature is instead.
@@ -250,7 +274,8 @@ async def _handle_message(update, db):
                 await telegram_service.send_message(chat_id, _TG_MOVED_TEXT)
                 return {"ok": True}
 
-            logger.warning(f"TELEGRAM: text='{text}', cmd={command}, arg='{arg}', photos={len(photos) if photos else 0}")
+            logger.warning(f"TELEGRAM: text={len(text or '')} chars, cmd={command}, arg={len(arg or '')} chars, "
+                           f"photos={len(photos) if photos else 0}")
             
             # Download photos FIRST (before any command processing that needs OCR)
             if photos:
@@ -372,7 +397,7 @@ async def _handle_message(update, db):
                         break
                 if command:
                     command = CommandService.COMMAND_ALIASES.get(command, command)
-                logger.info(f"[MEDIA-GROUP] {media_group_id}: assembled {len(attachments)} attachments, cmd={command}, text={text!r}")
+                logger.info(f"[MEDIA-GROUP] {media_group_id}: assembled {len(attachments)} attachments, cmd={command}, text={len(text or '')} chars")
 
             # Extract text from PDF/Office document attachments (concatenate all, not just last)
             doc_text = None

@@ -1,5 +1,5 @@
 """Auto-split from messages.py: _msg_chat."""
-from ._common import Conversation, Message, User, _link_action_cache, asyncio, datetime, logger, telegram_service
+from ._common import _LINK_MENU, Conversation, Message, User, _link_action_cache, asyncio, datetime, logger, telegram_service
 
 from .senders import asyncio, logger, telegram_service
 
@@ -42,13 +42,7 @@ async def _msg_chat(attachments, chat_id, chat_service, command_service, db, doc
                             chat_id,
                             f"🔗 What would you like to do with this link?\n{_fwd_url}",
                             reply_markup={
-                                "inline_keyboard": [
-                                    [
-                                        {"text": "📋 Summary",    "callback_data": "lnk:summary"},
-                                        {"text": "📸 Screenshot", "callback_data": "lnk:screenshot"},
-                                        {"text": "❌ Cancel",     "callback_data": "lnk:cancel"},
-                                    ],
-                                ]
+                                "inline_keyboard": _LINK_MENU
                             },
                         )
                         return {"ok": True}
@@ -263,13 +257,7 @@ async def _msg_chat(attachments, chat_id, chat_service, command_service, db, doc
                             chat_id,
                             f"🔗 What would you like to do with this link?\n{urls[0]}",
                             reply_markup={
-                                "inline_keyboard": [
-                                    [
-                                        {"text": "📋 Summary",    "callback_data": "lnk:summary"},
-                                        {"text": "📸 Screenshot", "callback_data": "lnk:screenshot"},
-                                        {"text": "❌ Cancel",     "callback_data": "lnk:cancel"},
-                                    ],
-                                ]
+                                "inline_keyboard": _LINK_MENU
                             },
                         )
                         return {"ok": True}

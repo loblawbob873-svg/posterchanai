@@ -14,8 +14,10 @@ from app.routers.telegram import callbacks, keyboards, messages
 
 ROOT = Path(__file__).resolve().parents[1]
 KEPT = ["help", "new", "geni", "musicgeni", "videogeni", "narrate", "voice", "talk", "logs", "syslogs",
-        "healthreport", "node", "screenshot", "remind", "reminders", "pin", "pins"]
-REMOVED = ["torrents", "nyaa", "ytdl", "yt", "search", "images", "mail", "translate", "post", "share", "compress",
+        "healthreport", "node", "screenshot", "remind", "reminders", "pin", "pins",
+        # 2026-10-09: "add ability to share links from chat to Social" -- see test_telegram_share_to_social.py
+        "share", "post"]
+REMOVED = ["torrents", "nyaa", "ytdl", "yt", "search", "images", "mail", "translate", "compress",
            "convert", "clip", "removebackground", "ocr", "flashcards", "bill", "budget", "mentioned", "meme", "nami"]
 
 

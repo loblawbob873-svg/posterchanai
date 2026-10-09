@@ -16,6 +16,13 @@ from app.services.telegram_service import telegram_service, configure_from_setti
 from app.services.chat_service import ChatService
 from app.services.command_service import CommandService
 logger = logging.getLogger(__name__)
+# What a link sent to the bot can become. ONE definition: the plain-link and the forwarded-link paths
+# each had their own copy of this keyboard. Two rows, so the buttons stay readable on a phone.
+_LINK_MENU = [
+    [{"text": "📋 Summary", "callback_data": "lnk:summary"}, {"text": "📸 Screenshot", "callback_data": "lnk:screenshot"}],
+    [{"text": "📣 Share to Social", "callback_data": "lnk:share"}, {"text": "❌ Cancel", "callback_data": "lnk:cancel"}],
+]
+
 _HELP_SECTIONS = {
     "pins": (
         "📌 *Pins*\n\n"
@@ -40,6 +47,7 @@ _HELP_SECTIONS = {
         "• Reply to a message to use it as context\n"
         "• Send any URL to get a summary\n"
         "• Forward any article or link — auto\\-summarized\n"
+        "• Share a link to Social: tap 📣 on the link menu, send `share <link> <comment>`, or reply `share` to a message with a link\n"
         "• Send a photo to describe it or extract text \\(OCR\\)\n"
         "• The bot remembers recent conversation context"
     ),

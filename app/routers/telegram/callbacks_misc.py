@@ -171,6 +171,20 @@ async def _cb_lnk(update, db, chat_id, data, callback_query, callback_query_id):
                 logger.error(f"Link summary error: {lnk_err}", exc_info=True)
                 await telegram_service.send_message(chat_id, f"Error: {lnk_err}")
 
+        elif action == "share":
+            # 📣 Share to Social: the same `post` command the web app runs (a kind-1 from the account's
+            # linked key to this node's relay, which federates it and sends it on to the fediverse).
+            try:
+                share_res = await CommandService(db, user=lnk_user).execute_command("post", cached_url)
+                said = str((share_res or {}).get("content") or "")
+                if "✅" in said:
+                    await telegram_service.send_message(chat_id, "📣 Shared to Social:\n" + cached_url)
+                else:   # no linked key, relay refused, ... -- say what the command said, without its markdown
+                    await telegram_service.send_message(chat_id, said.replace("**", "").replace("`", "") or "Could not share that link.")
+            except Exception as lnk_err:
+                logger.error(f"Link share error: {lnk_err}", exc_info=True)
+                await telegram_service.send_message(chat_id, f"Could not share that link: {lnk_err}")
+
         elif action == "screenshot":
             await telegram_service.send_message(chat_id, "⏳ Capturing screenshot, please wait...")
             try:
