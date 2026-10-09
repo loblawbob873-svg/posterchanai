@@ -294,7 +294,11 @@ window.PCComposeFactory = function(dep){
     }
     chip.querySelector('.cmp-paper-x').onclick=()=>{ chip.remove(); clear(); };
   }
-  async function buildBgPost(text, bg, framed){
+  /* `onStage('uploading')` fires BETWEEN the draw and the upload. Callers used to set "uploading…" only
+   * after this returned -- i.e. after the upload had finished -- so the whole upload sat under
+   * "rendering…" ("why is background taking forever to render": the canvas takes milliseconds, the
+   * wait was the upload, and the label pointed at the wrong step). */
+  async function buildBgPost(text, bg, framed, onStage){
     const urls=(String(text||'').match(/https?:\/\/\S+/g)||[]).map(u=>u.replace(/[)\].,>'"]+$/,''));
     const words=_BG_WORDS(text);
     // A clipping lays out the WHOLE story itself (two columns, "Continued at …" when it runs out); every
@@ -303,6 +307,7 @@ window.PCComposeFactory = function(dep){
     const card=paper ? words : _cardHook(words);
     let site=''; try{ site=urls.length ? new URL(urls[0]).hostname : ''; }catch(_){ }
     const blob=await renderBgPost(card||' ', bg, framed, {site});
+    try{ if(onStage) onStage('uploading'); }catch(_){ }
     const url=await uploadBlob(new File([blob],'post.jpg',{type:'image/jpeg'}), {folder:'Posts'});
     // `trimmed` = the card could not hold every word. Callers surface it, so a long draft losing its tail
     // is never silent — for a link summary that is fine (the article link is right there), but it must
@@ -727,8 +732,8 @@ window.PCComposeFactory = function(dep){
           }
           const sb=$('#cmp-send',root); if(sb) sb.disabled=true; $('#cmp-status',root).textContent='rendering…';
           try{
-            const built=await buildBgPost(text, _bgChoice, _bgFramed);
-            $('#cmp-status',root).textContent='uploading…';
+            const built=await buildBgPost(text, _bgChoice, _bgFramed, ()=>{ $('#cmp-status',root).textContent='uploading…'; });
+            $('#cmp-status',root).textContent='posting…';
             if(built.trimmed) toast('card shows the opening — the rest did not fit on it');
             const url=built.content;   // the image, plus anything that did not fit on the card
             // A background REPLY is still a reply: without these it publishes as a top-level note and the
@@ -828,8 +833,8 @@ window.PCComposeFactory = function(dep){
                 imetaTagsFor(text).forEach(t=>tags.push(t)); _applyCw(tags);
               } else if(typeof _bgChoice!=='undefined' && _bgChoice){        // 🎨 background → render+upload now, post the image
                 if(!text){ st.textContent='write something first'; go.disabled=false; return; }
-                st.textContent='rendering…'; const _b=await buildBgPost(text, _bgChoice, _bgFramed);
-                st.textContent='uploading…'; content=_b.content;
+                st.textContent='rendering…'; const _b=await buildBgPost(text, _bgChoice, _bgFramed, ()=>{ st.textContent='uploading…'; });
+                st.textContent='posting…'; content=_b.content;
                 if(_b.trimmed) toast('card shows the opening — the rest did not fit on it');
                 imetaTagsFor(content).forEach(t=>tags.push(t)); _applyCw(tags);
               } else {                                                       // plain text (incl. attached media URLs in the text)

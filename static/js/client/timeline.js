@@ -1104,8 +1104,8 @@ window.PCTimelineFactory = function(dep){
       if(_tlBg && !isPoll){
         if(!S._BG_WORDS(text)){ st.textContent='nothing to put on the card — write something, or use 🤖 AI → 🖼️ Framed card to summarize the link'; return null; }
         st.textContent='rendering…';
-        const built=await buildBgPost(text, _tlBg, _tlBgFramed);
-        st.textContent='uploading…';
+        const built=await buildBgPost(text, _tlBg, _tlBgFramed, ()=>{ st.textContent='uploading…'; });
+        st.textContent='posting…';
         if(built.trimmed) toast('card shows the opening — the rest did not fit on it');
         // imeta from the CONTENT, not the bare image URL: the note may now also carry the source link,
         // which has no _MEDIA_META entry and is correctly skipped.
