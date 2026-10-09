@@ -371,18 +371,26 @@ window.PCDmsFactory = function(dep){
     },
     async _loadKey(){
       if(!S.ME || !S.ME.pubkey || !S.signer || !S.signer.nip44dec) throw new Error('no signer');
+      /* THE LOCAL COPY FIRST. The doc is pinned in the Store, so offline it is already here; asking the
+       * relays first made the Messages screen wait ~12s for an answer it held all along. */
+      const flt = { authors:[S.ME.pubkey], kinds:[30078], '#d':[this.D], limit:1 };
+      const newest = list => (list || []).filter(e => e && e.content).sort((x, y) => y.created_at - x.created_at)[0] || null;
       let ev = null, sawRelay = false;
+      try{ ev = newest(typeof Store !== 'undefined' && Store.query ? Store.query([flt]) : []); }catch(_){ ev = null; }
       for(let a = 0; a < 2 && !ev; a++){
         if(a) await new Promise(r => setTimeout(r, 400));
         try{
-          const evs = await Relay.query([{ authors:[S.ME.pubkey], kinds:[30078], '#d':[this.D], limit:1 }]);
-          sawRelay = true;
-          ev = (evs || []).sort((x, y) => y.created_at - x.created_at)[0] || null;
+          const evs = await Relay.query([flt]);
+          /* AN ANSWER IS A COMPLETE QUERY, NOT A RESOLVED ONE. Relay.query resolves [] when it times
+           * out (`complete === false`), and reading that as "you have no key" minted a replacement —
+           * on a flaky link even published it — leaving every other device's cache unreadable. */
+          if((evs && evs.length) || (evs && evs.complete === true)) sawRelay = true;
+          ev = newest(evs);
         }catch(_){}
       }
       // "Nobody answered" is not "you have no key" — minting one here is how every cached message on
       // every other device would become unreadable.
-      if(!sawRelay) throw new Error('relays silent');
+      if(!ev && !sawRelay) throw new Error('relays silent');
       let hex = '';
       if(ev){
         if(typeof ev.content!=='string' || !ev.content) throw new Error('DM cache key event is empty or corrupt');

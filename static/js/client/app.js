@@ -7484,8 +7484,20 @@
    * mentions to protect and cannot reach ME (the client keeps it inside this IIFE). One helper
    * rather than a literal per site: a login mode added later inherits it. */
   function _tellStoreWhoIAm(){ try{ if(window.Store && Store.setViewer) Store.setViewer(ME && ME.pubkey); }catch(_){} }
+  /* OFFLINE THE LIST IS ALREADY ON THIS DEVICE. BOOKMARKS is filled by fetchBookmarks, which only runs
+   * once a relay is ready (hydrateUser) — so with no network the view said "No bookmarks yet" while the
+   * person's kind-10003 sat in the Store (found by the 2026-10-09 offline audit). Read it from there. */
+  function _bookmarksFromStore(){
+    if(BOOKMARKS.size || !ME || GUEST) return;
+    try{
+      const ev=(Store.query([{ authors:[ME.pubkey], kinds:[10003], limit:1 }])||[])
+        .sort((a,b)=>b.created_at-a.created_at)[0];
+      if(ev) BOOKMARKS=new Set(ev.tags.filter(t=>t[0]==='e'&&t[1]).map(t=>t[1]));
+    }catch(_){}
+  }
   async function renderBookmarks(){
     const feed=$('#feed');
+    _bookmarksFromStore();
     const ids=[...BOOKMARKS];
     if(!ids.length){ feed.innerHTML='<div class="empty">No bookmarks yet. Tap 🔖 on a post to save it here.</div>'; return; }
     const held=()=>ids.map(id=>Store.get(id)).filter(Boolean).sort((a,b)=>b.created_at-a.created_at);
