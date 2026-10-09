@@ -280,29 +280,25 @@ def test_it_waits_while_the_machine_is_busy_and_gives_up_waiting_eventually():
 
 def test_compaction_writes_in_big_sequential_pieces_and_is_paced_between_them(tmp_path):
     p = str(tmp_path / "db")
-    s = Store(p, flush_interval=3600, direct_durable=False, segment_bytes=12 * 1024 * 1024)
-    for i in range(1400):                    # ~8+ MB in segment 1
+    s = Store(p, flush_interval=3600, direct_durable=False, segment_bytes=10 * 1024 * 1024)
+    for i in range(3000):                    # segment 1 fills past 10 MB and closes at a flush
         s.put(mk(kind=1, created_at=NOW - i, content=hx(6000)), origin="wot")
+        if i % 200 == 199:
+            s.flush()
     s.flush()
-    s._rotate_if_full()
+    assert s._active > 1, "segment 1 should have closed"
     s.segment_bytes = 64 * 1024 * 1024
-    if s._active == 1:                        # force segment 1 closed
-        s._file.close(); s._active = 2; s._new_segment(2)
-        s.arenas[2] = bytearray(); s.seg_bytes[2] = 0; s.seg_dead[2] = 0; s.seg_markers[2] = []
-        s._file = open(s._seg_path(2), "ab")
-    paced = []
-    writes = []
+    paced, writes = [], []
     real_drain = s._drain
 
     def spy(fsync):
-        writes.append((len(s._pending), fsync))
+        writes.append((len(s.arenas[s._active]) - s._flushed, fsync))
         return real_drain(fsync)
     s._drain = spy
     s.compact(sid=1, pace=lambda nbytes, cpu: paced.append(nbytes))
     assert len(paced) >= 2, "the whole segment went out in one unpaced burst"
     assert max(paced) <= COMPACT_CHUNK + 7000
-    fsyncs = [w for w in writes if w[1]]
-    assert len(fsyncs) == 1, "one fsync per compacted segment, not one per chunk"
+    assert len([w for w in writes if w[1]]) == 1, "one fsync per compacted segment, not one per chunk"
     assert min(n for n, f in writes[:-1]) >= COMPACT_CHUNK // 2, "small writes are RAID5 read-modify-writes"
     s.close()
 

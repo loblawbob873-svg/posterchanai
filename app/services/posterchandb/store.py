@@ -5,8 +5,14 @@ Nothing here allocates a Python object PER EVENT that lives beyond the call: rec
 and every index is a sorted numpy key array + one flat postings array ("base"), with a small dict of
 recent additions ("delta") merged in bulk at each flush. See docs/POSTERCHANDB.md.
 
-Layout on disk: `seg-000001.log`, `seg-000002.log`, … (~256 MB each). Each segment has its own RAM
-arena, so compacting a segment frees exactly its memory.
+Layout on disk: `seg-000001.log`, `seg-000002.log`, … (~256 MB each). A segment's RAM copy (its
+"arena") is the file's bytes verbatim, so a record's offset is the same in RAM and on disk.
+
+RAM is a CACHE, not a requirement. Indexes, ids and the per-event columns always stay in RAM (~100
+bytes an event); a CLOSED segment's record bytes may be dropped from RAM (`evict`) and are then read
+from its file on demand (`os.pread`, through the kernel's page cache — closed segments never change).
+cache.py decides which segments stay resident from the machine's free memory and pressure. The ACTIVE
+segment is always resident: its unflushed tail exists nowhere else.
 
 Durability:
   * every write is appended to an in-memory pending buffer and indexed at once (reads see it);
@@ -192,7 +198,7 @@ class Store:
 
     def __init__(self, path: str, *, zdict: bytes = b"", flush_interval: float = 300.0,
                  direct_durable: bool = True, segment_bytes: int = SEGMENT_BYTES,
-                 compact_dead_pct: float = 40.0, log=None):
+                 compact_dead_pct: float = 40.0, admit=None, log=None):
         self.path = path
         self.codec = Codec(zdict)
         self.flush_interval = float(flush_interval)
@@ -200,9 +206,16 @@ class Store:
         self.segment_bytes = int(segment_bytes)
         self.compact_dead_pct = float(compact_dead_pct)
         self.log = log or (lambda *a: None)
+        # admit(nbytes) -> bool: may a closed segment stay resident after it is read at startup? (cache.py)
+        self.admit = admit or (lambda n: True)
         self._lock = threading.RLock()
         # per-event columns (index = sequence number)
-        self.arenas: dict[int, bytearray] = {}     # segment id -> that segment's records, in RAM
+        self.arenas: dict = {}                     # segment id -> its file's bytes (resident) or None (cold)
+        self.seg_size: dict[int, int] = {}         # bytes of each segment (file + unflushed tail)
+        self.seg_hits: dict[int, float] = {}       # recent reads per segment (decayed by the cache governor)
+        self.seg_last: dict[int, float] = {}       # last read, monotonic
+        self._fds: dict[int, int] = {}             # read-only fds for cold reads
+        self.ids = bytearray()                     # 32 raw bytes per event: id checks never touch a record
         self.seg = array.array("I")
         self.off = array.array("Q")
         self.length = array.array("I")
@@ -229,7 +242,7 @@ class Store:
         self.words = _Postings()     # search
         self.dprefix = _Prefix()     # `#d~` prefix reads
         self.current: dict[int, int] = {}   # replaceable/addressable address hash -> seq of current version
-        self._pending = bytearray()
+        self._flushed = 0        # bytes of the active segment's arena that are on disk
         self._pending_n = 0
         self._last_flush = time.monotonic()
         self._active = 0
@@ -274,36 +287,40 @@ class Store:
             sids = [1]
         for sid in sids:
             p = self._seg_path(sid)
-            self.arenas.setdefault(sid, bytearray())
+            with open(p, "rb") as f:
+                data = f.read()
             self.seg_bytes.setdefault(sid, 0)
             self.seg_dead.setdefault(sid, 0)
             self.seg_markers.setdefault(sid, [])
-            good = self._replay(sid, p)
-            size = os.path.getsize(p)
-            if good < size:
+            good = self._replay(sid, data)
+            if good < len(data):
                 # Only the LAST segment can legitimately have a torn tail; an earlier one means a
                 # crash mid-compaction left a partial copy — its records are also in a later segment.
-                self.log("[posterchandb] cutting %d torn/corrupt bytes off %s" % (size - good, os.path.basename(p)))
+                self.log("[posterchandb] cutting %d torn/corrupt bytes off %s" % (len(data) - good, os.path.basename(p)))
                 with open(p, "r+b") as f:
                     f.truncate(good)
                     f.flush()
                     os.fsync(f.fileno())
+            self.seg_size[sid] = good
+            # the active (last) segment is always resident; a closed one only while RAM allows
+            self.arenas[sid] = bytearray(data[:good]) if (sid == sids[-1] or self.admit(good)) else None
+            del data
         self._active = sids[-1]
+        self._flushed = self.seg_size[self._active]
         self._file = open(self._seg_path(self._active), "ab")
         self._merge_all()
 
-    def _replay(self, sid: int, p: str) -> int:
-        with open(p, "rb") as f:
-            data = f.read()
+    def _replay(self, sid: int, data) -> int:
         if not data.startswith(MAGIC):
-            raise ValueError("not a PosterChanDB segment: " + p)
+            raise ValueError("not a PosterChanDB segment: %s" % self._seg_path(sid))
+        mv = memoryview(data)
         i = len(MAGIC)
         while i + _FRAME.size <= len(data):
             n, crc = _FRAME.unpack_from(data, i)
             j = i + _FRAME.size
             if j + n > len(data) or n == 0:
                 break
-            payload = data[j:j + n]
+            payload = mv[j:j + n]
             if zlib.crc32(payload) & 0xFFFFFFFF != crc:
                 break
             op = payload[0]
@@ -313,7 +330,7 @@ class Store:
                 eid = bytes(rec[:32]).hex()
                 if self._seq_of(eid) is None:          # a compaction copy may exist twice after a crash
                     ev = self.codec.decode(rec)
-                    self._apply_put(ev, rec, origin, sid, replay=True)
+                    self._apply_put(ev, bytes(rec[:32]), len(rec), j + 2, origin, sid, replay=True)
             elif op == OP_DEAD:
                 self.seg_markers[sid].append(bytes(payload))
                 s = self._seq_of(bytes(payload[1:33]).hex())
@@ -330,12 +347,18 @@ class Store:
             i = j + n
         return i
 
-    def _frame(self, payload: bytes) -> None:
-        if payload[0] != OP_PUT:     # pending always lands in the segment that is active now
+    def _frame(self, payload: bytes) -> int:
+        """Append one framed payload to the active segment's arena (on disk at the next drain).
+        Returns the payload's offset in the segment."""
+        if payload[0] != OP_PUT:
             self.seg_markers.setdefault(self._active, []).append(bytes(payload))
-        self._pending += _FRAME.pack(len(payload), zlib.crc32(payload) & 0xFFFFFFFF)
-        self._pending += payload
+        arena = self.arenas[self._active]
+        start = len(arena) + _FRAME.size
+        arena += _FRAME.pack(len(payload), zlib.crc32(payload) & 0xFFFFFFFF)
+        arena += payload
+        self.seg_size[self._active] = len(arena)
         self._pending_n += 1
+        return start
 
     def _merge_all(self) -> None:
         dead = np.frombuffer(self.dead, dtype=np.uint8) if len(self.dead) else None
@@ -347,14 +370,15 @@ class Store:
     def _drain(self, fsync: bool) -> int:
         """Hand the buffer to the kernel in ONE sequential write; fsync only when asked."""
         n = self._pending_n
-        if self._pending:
-            self._file.write(self._pending)
+        arena = self.arenas[self._active]
+        if len(arena) > self._flushed:
+            self._file.write(memoryview(arena)[self._flushed:])
             self._file.flush()
-            self._pending = bytearray()
+            self._flushed = len(arena)
             self._pending_n = 0
         if fsync:
             os.fsync(self._file.fileno())
-            try:   # the log is never read back while open (records live in RAM): don't let it fill the page cache
+            try:   # the active segment is resident (its RAM copy IS the file): don't hold it twice in the page cache
                 os.posix_fadvise(self._file.fileno(), 0, 0, os.POSIX_FADV_DONTNEED)
             except (AttributeError, OSError):
                 pass
@@ -362,13 +386,15 @@ class Store:
 
     def _rotate_if_full(self) -> None:
         """A full segment is closed, so compaction can later rewrite it on its own."""
-        if self._file.tell() < self.segment_bytes:
+        if self._flushed < self.segment_bytes:
             return
         os.fsync(self._file.fileno())
         self._file.close()
         self._active += 1
         self._new_segment(self._active)
-        self.arenas[self._active] = bytearray()
+        self.arenas[self._active] = bytearray(MAGIC)
+        self.seg_size[self._active] = len(MAGIC)
+        self._flushed = len(MAGIC)
         self.seg_bytes[self._active] = 0
         self.seg_dead[self._active] = 0
         self.seg_markers[self._active] = []
@@ -395,33 +421,66 @@ class Store:
             self.flush()
             self._file.close()
             self._file = None
+            for fd in self._fds.values():
+                os.close(fd)
+            self._fds = {}
 
     def disk_bytes(self) -> int:
-        tot = 0
-        for sid in list(self.arenas):
-            try:
-                tot += os.path.getsize(self._seg_path(sid))
-            except OSError:
-                pass
-        return tot
+        return sum(self.seg_size.values())
 
     def stats(self) -> dict:
         dead = int(np.count_nonzero(np.frombuffer(self.dead, np.uint8))) if len(self.dead) else 0
         return {"events": len(self.off), "live": len(self.off) - dead, "dead": dead,
                 "disk_bytes": self.disk_bytes(),
-                "arena_bytes": sum(len(a) for a in self.arenas.values()),
+                "arena_bytes": self.resident_bytes(),
+                "cold_segments": sum(1 for a in self.arenas.values() if a is None),
                 "index_bytes": self.idx.nbytes() + self.words.nbytes() + sum(k.nbytes + v.nbytes for k, v in self._id_runs),
-                "segments": len(self.arenas), "runs": len(self.idx.runs),
+                "segments": len(self.arenas), "runs": len(self.idx.runs), "id_bytes": len(self.ids),
                 "unflushed": self._pending_n, "since_flush_s": round(time.monotonic() - self._last_flush, 1)}
 
     # ---------------------------------------------------------------- record access
-    def _rec(self, seq: int) -> memoryview:
-        o = self.off[seq]
-        return memoryview(self.arenas[self.seg[seq]])[o:o + self.length[seq]]
+    def _rec(self, seq: int):
+        sid = self.seg[seq]
+        o, n = self.off[seq], self.length[seq]
+        self.seg_hits[sid] = self.seg_hits.get(sid, 0) + 1
+        self.seg_last[sid] = time.monotonic()
+        a = self.arenas.get(sid)
+        if a is not None:
+            return memoryview(a)[o:o + n]
+        fd = self._fds.get(sid)
+        if fd is None:
+            fd = self._fds[sid] = os.open(self._seg_path(sid), os.O_RDONLY)
+        return os.pread(fd, n, o)
 
     def _id_hex(self, seq: int) -> str:
-        o = self.off[seq]
-        return bytes(self.arenas[self.seg[seq]][o:o + 32]).hex()
+        return self.ids[seq * 32:seq * 32 + 32].hex()
+
+    # ---------------------------------------------------------------- the RAM cache (driven by cache.py)
+    def resident_bytes(self) -> int:
+        return sum(len(a) for a in self.arenas.values() if a is not None)
+
+    def evict(self, sid: int) -> int:
+        """Drop a CLOSED segment's bytes from RAM (reads then come from its file). Returns bytes freed."""
+        with self._lock:
+            a = self.arenas.get(sid)
+            if a is None or sid == self._active:
+                return 0
+            self.arenas[sid] = None
+            return len(a)
+
+    def load(self, sid: int) -> int:
+        """Read a closed segment back into RAM — one sequential read. Returns bytes loaded."""
+        with self._lock:
+            if sid not in self.arenas or self.arenas[sid] is not None:
+                return 0
+            size = self.seg_size[sid]
+        with open(self._seg_path(sid), "rb") as f:     # immutable once closed: safe to read unlocked
+            data = bytearray(f.read(size))
+        with self._lock:
+            if sid in self.arenas and self.arenas[sid] is None and len(data) == size:
+                self.arenas[sid] = data
+                return size
+            return 0
 
     def pubkey_of(self, seq: int) -> str:
         return self._authors[self.author[seq]]
@@ -511,8 +570,8 @@ class Store:
                     return "superseded"
             o = ORIGINS.get(origin or ("direct" if direct else "wot"), 4)
             rec = self.codec.encode(ev)
-            self._frame(bytes([OP_PUT, o]) + rec)
-            self._apply_put(ev, rec, o, self._active)
+            start = self._frame(bytes([OP_PUT, o]) + rec)
+            self._apply_put(ev, rec[:32], len(rec), start + 2, o, self._active)
             if (direct or o == 0) and self.direct_durable:
                 self.flush()
             return "stored"
@@ -530,14 +589,14 @@ class Store:
             self.idx.add(_h("t:%s:%s" % (tag, value)), s)
             return True
 
-    def _apply_put(self, ev: dict, rec, origin: int, sid: int, replay: bool = False) -> None:
+    def _apply_put(self, ev: dict, raw_id: bytes, n: int, off: int, origin: int, sid: int,
+                   replay: bool = False) -> None:
         seq = len(self.off)
-        arena = self.arenas.setdefault(sid, bytearray())
         self.seg.append(sid)
-        self.off.append(len(arena))
-        self.length.append(len(rec))
-        arena += rec
-        self.seg_bytes[sid] = self.seg_bytes.get(sid, 0) + len(rec)
+        self.off.append(off)
+        self.length.append(n)
+        self.ids += raw_id
+        self.seg_bytes[sid] = self.seg_bytes.get(sid, 0) + n
         self.created.append(ev["created_at"])
         self.kind.append(ev["kind"])
         self.expires.append(_expiration(ev))
@@ -637,7 +696,8 @@ class Store:
         markers that still mean something, fsync ONCE, then delete the old file and free its RAM.
 
         Disk cost is exactly the segment's live bytes, written sequentially in COMPACT_CHUNK pieces;
-        nothing is read from disk (records and markers are already in RAM). The lock is released
+        nothing is read from disk while the segment is resident (records and markers are in RAM; a COLD
+        segment is read once, in file order, through the page cache). The lock is released
         between chunks and `pace(nbytes, cpu_s)` (maintenance's throttle) is called there, so a
         compaction never holds up a write for more than one chunk. Safe at any crash point: the old
         file is deleted only after the copies are fsynced, and a replay skips an id it already has."""
@@ -645,7 +705,7 @@ class Store:
             if self._compacting:
                 return {"compacted": None}
             sid = self.compaction_candidate() if sid is None else sid
-            if sid is None or sid == self._active or sid not in self.arenas:
+            if sid is None or sid == self._active or sid not in self.arenas or sid not in self.seg_size:
                 return {"compacted": None}
             self._compacting = True
         try:
@@ -655,22 +715,19 @@ class Store:
             while i < len(seqs):
                 t0 = time.thread_time()
                 with self._lock:
-                    old = self.arenas[sid]
                     chunk = 0
                     while i < len(seqs) and chunk < COMPACT_CHUNK:
                         s = int(seqs[i]); i += 1
                         if self.dead[s] or self.seg[s] != sid:
                             continue
-                        o, n = self.off[s], self.length[s]
-                        rec = bytes(old[o:o + n])
-                        act = self.arenas.setdefault(self._active, bytearray())
-                        self._frame(bytes([OP_PUT, self.origin[s]]) + rec)
+                        n = self.length[s]
+                        rec = bytes(self._rec(s))
+                        start = self._frame(bytes([OP_PUT, self.origin[s]]) + rec)
+                        self.seg[s] = self._active
+                        self.off[s] = start + 2
                         # a derived tag must follow its record on replay, wherever its old marker sits
                         for tag, value in sorted(self.derived.get(s, ())):
                             self._frame(bytes([OP_DERIVED]) + rec[:32] + ("%s\x00%s" % (tag, value)).encode("utf-8"))
-                        self.seg[s] = self._active
-                        self.off[s] = len(act)
-                        act += rec
                         self.seg_bytes[self._active] = self.seg_bytes.get(self._active, 0) + n
                         chunk += n
                         moved += 1
@@ -702,6 +759,11 @@ class Store:
                         seg[s] = DROPPED
                         self.derived.pop(s, None)
                 del self.arenas[sid]
+                fd = self._fds.pop(sid, None)
+                if fd is not None:
+                    os.close(fd)
+                for d in (self.seg_size, self.seg_hits, self.seg_last):
+                    d.pop(sid, None)
                 self.seg_bytes.pop(sid, None)
                 self.seg_dead.pop(sid, None)
                 self.seg_markers.pop(sid, None)
