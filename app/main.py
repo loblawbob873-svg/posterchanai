@@ -116,6 +116,12 @@ app.add_middleware(
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
+    # THE APK ON OUR .onion. Under Orbot an .onion resolves to a PRIVATE address (Tor's virtual
+    # 10.192.0.0/10), so the WebView's preflight carries `Access-Control-Request-Private-Network: true`
+    # — and without this Starlette answers that preflight 400, which the page sees as a bare "Failed to
+    # fetch": AI Chat's session, Mail, every POST. The relay kept working (a websocket sends no
+    # preflight), which is what made it look like one broken screen. Still only the origins above.
+    allow_private_network=True,
 )
 app.add_middleware(UntrustedFilesMiddleware)
 app.add_middleware(CookieOriginMiddleware)
