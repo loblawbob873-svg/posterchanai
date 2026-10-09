@@ -10992,6 +10992,7 @@ html.pc-oswin .pv-sheet{top:38px}
    into it. The equaliser animates ONLY while the audio plays — `.playing` is toggled from the
    element's own play/pause/ended/error events, so a paused profile is completely still and a failed
    track never leaves bars dancing over silence. */
+.note-track{margin:8px 0 4px;max-width:520px}
 .prof-track{position:relative;min-width:0;padding:10px 12px 8px;border:1px solid var(--line);
   border-radius:12px;overflow:hidden;
   background:linear-gradient(180deg,rgba(0,240,255,.05),transparent 60%),var(--panel)}

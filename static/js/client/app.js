@@ -10875,6 +10875,27 @@
   // Blobs the server still HAS (from Blossom /list) — see _refreshBlobHave in musiclib.js.
   let _blobHave=null;
   let _blobSizes = new Map();   // sha → bytes, from the same /list that fills _blobHave
+  /* A MUSIC FILE IN A POST IS A TRACK, NOT A FORM CONTROL ("make it look cool like the desktop
+   * widget/profile page"). It was a bare `<audio controls>` after a <br>; now it is the profile's track
+   * card (profile.js `.prof-track`): the ♪ mark, the file's name, and the cyan→magenta equaliser that
+   * moves only while it plays. One look for music wherever it appears, one stylesheet to keep. The name
+   * is the file's own (decoded, extension dropped) — a hash-named blob says "Audio" rather than a hash.
+   * `controls` stay: they are the accessible transport. */
+  function _trackCard(u){
+    let name='';
+    try{ name=decodeURIComponent(String(u).split(/[?#]/)[0].split('/').pop()||''); }catch(_){ name=''; }
+    name=name.replace(/\.[a-z0-9]{2,5}$/i,'').replace(/[_]+/g,' ').trim();
+    if(!name || /^[0-9a-f]{32,}$/i.test(name)) name='Audio';
+    const eq=`<div class="prof-eq" aria-hidden="true">${Array.from({length:12},(_,i)=>`<i style="--i:${i}"></i>`).join('')}</div>`;
+    return `<div class="prof-track note-track" role="group" aria-label="${enc(name)}"><div class="prof-track-head"><span class="prof-track-mark" aria-hidden="true">♪</span>`
+      + `<div class="prof-track-name" title="${enc(name)}">${enc(name)}</div></div>${eq}<audio controls preload="none" src="${u}"></audio></div>`;
+  }
+  /* The equaliser follows the element's OWN events, wherever a card is — in a post, a thread, a profile,
+   * a window. Media events do not bubble, so this listens in the capture phase, once, for the page. */
+  try{ ['play','playing','pause','ended','emptied','error'].forEach(t=>document.addEventListener(t, ev=>{
+    const a=ev.target, card=a && a.closest && a.tagName==='AUDIO' && a.closest('.prof-track');
+    if(card) card.classList.toggle('playing', t==='play'||t==='playing');
+  }, true)); }catch(_){ }
   // The one <audio> element the music player plays through (musicplayer.js creates it). The floating
   // cyberpunk player — a persistent widget appended to <body> (NOT #feed), so it hovers over EVERY view
   // and keeps playing as you navigate. Minimizable to a mini bar; draggable anywhere.
@@ -13030,7 +13051,7 @@
         : `<span class="yt-embed" data-yt="${yid}" title="play" role="button" tabindex="0" aria-label="Play YouTube video"><img alt="" class="yt-thumb" src="https://i.ytimg.com/vi/${yid}/hqdefault.jpg" loading="lazy" onerror="this.src='https://i.ytimg.com/vi/${yid}/0.jpg'"><span class="yt-play">▶</span></span>`;
       else if(/\.(jpe?g|png|gif|webp|avif)(\?|#|$)/i.test(u)) tag=_media(u, null, 'm');
       else if(/\.(mp4|webm|mov|m4v)(\?|#|$)/i.test(u)) tag=_media(u, 'video', 'm');
-      else if(/\.(mp3|ogg|wav|m4a|aac|flac)(\?|#|$)/i.test(u)) tag=`<br><audio src="${u}" controls preload="none"></audio>`;
+      else if(/\.(mp3|ogg|oga|opus|wav|m4a|aac|flac)(\?|#|$)/i.test(u)) tag=_trackCard(u);
       // extensionless Blossom hash URLs (e.g. media.poster.place/<sha256>) — bots post these for
       // fedi media. Try as an image; if it isn't one, swap to a plain link on error.
       else if(/\/[0-9a-f]{64}(\?|#|$)/i.test(u)) tag=_media(u, null, 'm', BLOBF);
