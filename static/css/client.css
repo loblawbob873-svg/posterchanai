@@ -6477,6 +6477,21 @@ body.modal-open .mobilenav{display:none}
 .mb-trim-len{color:var(--neon);font-weight:700}
 .mb-check{flex-direction:row;align-items:center;gap:8px}
 .mb-order{display:flex;gap:8px}
+/* Image layer panel, decluttered: icon-only header actions, one quick row of four, tools in a group. */
+.mb-insp-acts .mb-ico{min-width:40px;min-height:40px;padding:0 10px;display:inline-flex;align-items:center;justify-content:center}
+.mb-insp-acts .mb-ico .ic{margin:0}
+/* Every control on the layer panel is a finger-sized target (40px), on a phone and with a mouse:
+   the panel was a wall of 27-31px buttons. Sliders, swatches and tick boxes keep their own size. */
+#mb-inspector button,#mb-inspector select,
+#mb-inspector input:not([type=range]):not([type=color]):not([type=checkbox]):not([type=radio]){min-height:40px}
+#mb-inspector button{min-width:40px}
+.mb-quick{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:6px;margin:8px 0}
+.mb-quick.mb-quick2{grid-template-columns:repeat(2,minmax(0,1fr))}
+.mb-quick .btn{margin:0;min-width:0;min-height:48px;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:2px;padding:4px 2px;font-size:12px;line-height:1.1}
+.mb-quick .btn .ic{margin:0}
+/* Distort corner handles: a 28px target (44 on touch), drawn as a ring so the picture stays visible under it. */
+.mb-wh{position:absolute;width:28px;height:28px;margin:-14px 0 0 -14px;border-radius:50%;background:rgba(0,179,255,.25);border:3px solid #00b3ff;box-shadow:0 0 0 2px #fff;z-index:6;touch-action:none;cursor:grab}
+@media (pointer:coarse){.mb-wh{width:44px;height:44px;margin:-22px 0 0 -22px}}
 .mb-order .btn{margin:0;flex:1}
 /* Nine-position align pad. Square cells in a 3x3 so it reads as the canvas it maps onto, and 34px tall so
    each one is a real touch target rather than a 9-way sliver. */

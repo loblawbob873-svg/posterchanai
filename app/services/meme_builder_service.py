@@ -59,6 +59,36 @@ _STILL_TYPES = {"png": "image/png", "jpeg": "image/jpeg", "webp": "image/webp"}
 # Per-layer effects expressed directly in the filtergraph. Each entry is a callable taking the layer's
 # resolved geometry/timing and returning ffmpeg filter chain text (applied to that layer's own stream,
 # BEFORE the overlay), so effects compose with position and timing instead of fighting them.
+def _warp_corners(raw):
+    """The editor's Distort corners: eight numbers, (x, y) for top-left, top-right, bottom-left, bottom-right,
+    each a FRACTION of the layer's box, clamped to the box. None when absent, malformed, or the identity --
+    an untouched layer must render byte-for-byte as before."""
+    if not isinstance(raw, (list, tuple)) or len(raw) != 8:
+        return None
+    try:
+        vals = [min(1.0, max(0.0, float(v))) for v in raw]
+    except (TypeError, ValueError):
+        return None
+    ident = [0, 0, 1, 0, 0, 1, 1, 1]
+    if all(abs(a - b) < 0.002 for a, b in zip(vals, ident)):
+        return None
+    return vals
+
+
+def _warp_folded(warp, lw, lh):
+    """True when a Distort corner was dragged across the line through two others: the shape folds into a
+    triangle or a bow-tie, which `perspective` cannot draw -- the corner would sit at infinity and the
+    whole layer comes out blank (measured: the photo gone from the export). The editor refuses that
+    drag; anything else that arrives here renders unwarped rather than black."""
+    q = [(warp[i] * lw, warp[i + 1] * lh) for i in range(0, 8, 2)]
+    ring = [q[0], q[1], q[3], q[2]]                # TL TR BR BL
+    for i in range(4):
+        a, b, c = ring[i], ring[(i + 1) % 4], ring[(i + 2) % 4]
+        if (b[0] - a[0]) * (c[1] - b[1]) - (b[1] - a[1]) * (c[0] - b[0]) <= 0.02 * lw * lh:
+            return True
+    return False
+
+
 def _fx_chain(effect: str, w: int, h: int, dur: float, fps: int) -> str:
     e = (effect or "none").strip().lower()
     if e in ("", "none"):
@@ -859,6 +889,20 @@ def render(edit: dict, sources: dict) -> tuple:
             fx = _fx_chain(effect, lw, lh, dur, fps)
             if fx:
                 chain.append(fx)
+            # DISTORT (perspective / skew): the picture's four corners moved inside its box, drag-placed in the
+            # editor. After the effect and before the rotate -- the same order the editor's transform list uses
+            # (meme.js _xform). A 1px transparent border goes on first: `perspective` fills what lies outside
+            # the warped shape by stretching the frame's EDGE pixels, so with an opaque edge the corners pulled
+            # inward left smeared photo behind them; with a transparent edge they stay see-through (measured).
+            # The frame grows by that 1px each side, so the overlay origin moves back by one.
+            warp = _warp_corners(layer.get("warp"))
+            warp_shift = 0
+            if warp and not _warp_folded(warp, lw, lh):
+                pts = [(1 + warp[i] * lw, 1 + warp[i + 1] * lh) for i in range(0, 8, 2)]
+                chain.append(f"pad={lw + 2}:{lh + 2}:1:1:color=black@0")
+                chain.append("perspective=" + ":".join(f"x{k}={pts[k][0]:.2f}:y{k}={pts[k][1]:.2f}" for k in range(4))
+                             + ":sense=destination:interpolation=linear")
+                warp_shift = 1
             # TRANSITION ramps — the crossfade. These are alpha fades on the layer's OWN stream, in its own
             # local time (the shift onto the project timeline happens further down), so a clip whose slot
             # overlaps the previous one fades up while that one fades out: a real dissolve, with no xfade
@@ -875,7 +919,9 @@ def render(edit: dict, sources: dict) -> tuple:
             # whole rotated image so the corners aren't sliced off; that growth is symmetric, so the
             # overlay origin has to move back by half of it or the layer would visibly drift down-right as
             # you rotate. fillcolor=none keeps the new corners transparent (the chain is already rgba).
-            ox, oy = lx, ly
+            ox, oy = lx - warp_shift, ly - warp_shift
+            if warp_shift:
+                lw, lh = lw + 2, lh + 2          # the rotate below grows the frame it was GIVEN
             rot = _num(layer.get("rotate"), -360, 360, 0)
             if abs(rot) > 0.01:
                 rad = math.radians(rot)
@@ -886,8 +932,8 @@ def render(edit: dict, sources: dict) -> tuple:
                 # which is why it has not misbehaved here, but "most of the time" is not a guarantee
                 # and the two rotates may as well state the same, defined thing.
                 chain.append(f"rotate={rad:.6f}:ow=rotw({rad:.6f}):oh=roth({rad:.6f}):fillcolor=black@0")
-                ox = lx - int(round((ow - lw) / 2))
-                oy = ly - int(round((oh - lh) / 2))
+                ox = lx - warp_shift - int(round((ow - lw) / 2))
+                oy = ly - warp_shift - int(round((oh - lh) / 2))
             if opacity < 1.0:
                 chain.append(f"colorchannelmixer=aa={opacity:.3f}")
             # setpts shifts the layer to its slot on the project timeline; the overlay `enable` then
