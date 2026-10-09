@@ -510,6 +510,7 @@ window.PCSettingsFactory = function(dep){
     };
   }
   let _settingsServerDown = '';          // why the server half of Settings is unavailable this time, '' when it is fine
+  const SESSION_WAIT_MS = 6000;          // how long Settings waits for an app session before drawing the device panes
   async function renderUserSettings(){
     const host=$('#user-settings'); if(!host) return;
     const generation=++_userSettingsRender,owner=S.ME&&S.ME.pubkey;
@@ -546,12 +547,27 @@ window.PCSettingsFactory = function(dep){
     // every field that lives on a server is a pane that INSTANCE_SETTINGS_TABS has already dropped, and
     // the wipe this guard exists to prevent needs a server to wipe.
     const _solo = _standalone();
-    let authError=null;
+    let authError=null, lateSession=null;
     for(let attempt=0; _solo ? false : attempt<3; attempt++){
       const waiting=setTimeout(()=>status(S.ME&&S.ME.mode==='nip46'&&(Nip46._inflightP||(Nip46._queueP||[]).length)?'Waiting for your phone signer…':'Establishing your app session…'),1000);
-      try{ await ensureAiSession(); }
+      /* A SESSION THAT NEVER ANSWERS MUST NOT HOLD THE ON-DEVICE SETTINGS HOSTAGE. Relays, theme, media,
+       * sidebar — none of it needs the server, and a session can hang far longer than it can fail: a signer
+       * that never replies, an instance behind Tor that is slow or unroutable from this phone. Reported:
+       * "Where did all the settings go? … settings page shows Establishing your app session". After
+       * SESSION_WAIT_MS the device panes render as if the server were down (with the reason), and when the
+       * session does land this screen re-renders with the server panes — renderUserSettings itself refuses
+       * to replace a form somebody has started editing. */
+      let slowTimer=0; const SLOW={};
+      try{
+        const sessionP=ensureAiSession();
+        const got=await Promise.race([sessionP, new Promise(ok=>{ slowTimer=setTimeout(()=>ok(SLOW), SESSION_WAIT_MS); })]);
+        if(got===SLOW){
+          authError=new Error('still establishing your app session — the server settings appear here once it connects');
+          lateSession=sessionP; break;
+        }
+      }
       catch(e){ authError=e; break; }
-      finally{clearTimeout(waiting);}          // no credential means no protected GET
+      finally{clearTimeout(waiting); clearTimeout(slowTimer);}          // no credential means no protected GET
       if(!current()||!unchanged()) return;   // stale account/view or edits made during authentication
       status('Loading your settings…');
       try{ const r=await fetch('/api/auth/settings'); if(!current()||!unchanged())return; if(r.ok){ s=await r.json(); break; }
@@ -570,6 +586,17 @@ window.PCSettingsFactory = function(dep){
       if(!current()||!unchanged())return;
     }
     if(!current()||!unchanged()) return;
+    if(lateSession){
+      // Touched = a PERSON changed something since the device panes appeared (code filling values in
+      // during render is not an edit — renderUserSettings' own form check counts those, so it is not used here).
+      let touched=false; const mark=()=>{ touched=true; };
+      host.addEventListener('input', mark, true); host.addEventListener('change', mark, true);
+      lateSession.then(()=>{
+        host.removeEventListener('input', mark, true); host.removeEventListener('change', mark, true);
+        if(touched || S.VIEW!=='settings' || (S.ME&&S.ME.pubkey)!==owner || $('#user-settings')!==host) return;
+        host.innerHTML=''; renderUserSettings();
+      }, ()=>{});
+    }
     /* THE SERVER BEING UNREACHABLE IS NOT A REASON TO HIDE THE SETTINGS THAT DO NOT NEED IT. A failed app
      * session ("could not establish your app session — failed to fetch") or a settings read that never
      * answered used to REPLACE this whole screen with the error -- Relays, Media, Theme, Sidebar and every other

@@ -18,8 +18,8 @@ def bundle():
             source=path.read_text()
             start=source.find('  async function renderUserSettings(){')
             if start<0:continue
-            at=source.index('await ensureAiSession();',start)
-            source=source[:at]+'await window.__settingsAuthGate();'+source[at+len('await ensureAiSession();'):]
+            at=source.index('const sessionP=ensureAiSession();',start)
+            source=source[:at]+'const sessionP=window.__settingsAuthGate();'+source[at+len('const sessionP=ensureAiSession();'):]
             source=source[:start]+'  window.__renderSettingsFixture=renderUserSettings;\n'+source[start:]
             path.write_text(source)
             changed+=1
@@ -104,3 +104,36 @@ def test_relays_can_be_changed_when_the_app_session_cannot_be_reached():
     assert 'Failed to fetch' in got['banner'], got
     assert 'wss://relay.example.test' in (got['relays'] or []), ("the relay was not saved", got)
     assert 'relays' in got['tabs'], got
+
+
+@pytest.mark.skipif(not Path('/opt/google/chrome/chrome').exists(),reason='Chrome required')
+def test_a_session_that_never_answers_still_shows_the_device_settings_then_the_rest():
+    """Reported from a phone on our .onion: "Where did all the settings go? … Establishing your app session" —
+    the session hung, and the whole screen waited on it. After the cap the device panes render with the reason;
+    when the session finally lands the server panes appear, and an edit made in between is never thrown away."""
+    got={}
+    async def check(b):
+        await desktop.login(b)
+        await b.js("window.__settingsAuthGate=()=>new Promise(r=>{window.__settingsResolve=r});__PC.switchView('settings')")
+        await b.until("!!document.querySelector('#user-settings [role=status]')")
+        assert not await b.js("!!document.querySelector('#us-save')")
+        await b.until("!!document.querySelector('.us-server-down') && !!document.querySelector('#us-save')")
+        got['banner']=await b.js("document.querySelector('.us-server-down').textContent")
+        got['tabs_waiting']=await b.js("[...document.querySelectorAll('.us-tab')].map(t=>t.dataset.tab)")
+        # a session, once established, is cached — the next ask answers at once, like ensureAiSession's
+        await b.js("{const r=window.__settingsResolve;window.__settingsAuthGate=()=>Promise.resolve({});r({})}")
+        await b.until("!document.querySelector('.us-server-down') && !!document.querySelector('#us-save')")
+        got['tabs_after']=await b.js("[...document.querySelectorAll('.us-tab')].map(t=>t.dataset.tab)")
+        # an edit made while waiting is kept when the session lands
+        await b.js("window.__settingsAuthGate=()=>new Promise(r=>{window.__settingsResolve=r});document.querySelector('#user-settings').innerHTML='';void window.__renderSettingsFixture()")
+        await b.until("!!document.querySelector('.us-server-down') && !!document.querySelector('#us-save')")
+        await b.js("window.kept=[...document.querySelectorAll('#user-settings input')].find(el=>el.type==='text'||el.type==='url'||el.type==='email');kept.value='typed while waiting';kept.dispatchEvent(new Event('input',{bubbles:true}))")
+        await b.js("{const r=window.__settingsResolve;window.__settingsAuthGate=()=>Promise.resolve({});r({})}")
+        await asyncio.sleep(1.5)
+        got['kept']=await b.js("kept.isConnected && kept.value")
+    extra="localStorage.setItem('pc_nostr_settings',JSON.stringify({...JSON.parse(localStorage.getItem('pc_nostr_settings')||'{}'),osMode:false}));"
+    asyncio.run(desktop.with_browser('online','',check,extra))
+    assert 'still establishing your app session' in got['banner'], got
+    assert 'relays' in got['tabs_waiting'] and 'mail' not in got['tabs_waiting'], got
+    assert 'mail' in got['tabs_after'], ("the server panes never came back once the session landed", got)
+    assert got['kept'] == 'typed while waiting', ("a late session threw away an edit", got)
