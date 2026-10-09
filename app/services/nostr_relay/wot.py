@@ -194,6 +194,10 @@ class WotGate:
             logger.info("[nostr-relay] WoT depth-3: +%d friends-of-friends-of-friends (>=%d followers)",
                         len(members) - before, min_followers)
 
+        # …and is not a member either. is_member() refused it anyway, but the persisted set still listed it, so
+        # the member count, Trace ("in the web of trust") and the next start's cache all claimed a blocked bot.
+        members -= (barred - set(seeds))
+
         if depth >= 2 and max_members and len(members) > max_members:
             # Keep seeds + direct follows always; fill remaining room with the most-followed outer
             # members (FoF first, then FoFoF) by occurrence across the crawled tiers.

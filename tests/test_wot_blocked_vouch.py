@@ -34,6 +34,7 @@ def _build(blocked, depth=2):
     gate.set_blocked(blocked)
     store = mock.Mock()
     store.wot_replace = mock.AsyncMock(return_value=0)
+    _build.store = store
     store.kv_set = mock.AsyncMock()
     with mock.patch.object(wot_mod.WotGate, "_follows_counter", counter):
         asyncio.run(gate.build(store, [], [S1, S2], depth=depth, min_followers=2))
@@ -56,3 +57,10 @@ def test_unblocked_the_same_graph_admits_as_before():
 def test_the_third_tier_is_not_crawled_from_a_blocked_account():
     gate = _build([HUB1, HUB2, PROBE], depth=3)
     assert not gate.is_member(DEEP_BAD)
+
+
+def test_a_blocked_account_is_not_written_into_the_trusted_set():
+    _build([HUB1, HUB2])
+    persisted = set(_build.store.wot_replace.call_args.args[0])
+    assert HUB1 not in persisted and HUB2 not in persisted, "the member list still names the blocked hubs"
+    assert NICE in persisted and S1 in persisted
