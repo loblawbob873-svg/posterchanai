@@ -359,3 +359,5 @@ body.concord-view .cc-folder-grid{display:grid!important;grid-template-columns:1
 body.concord-view .cc-folder-mini{display:flex!important;align-items:center!important;justify-content:center!important;overflow:hidden!important;border-radius:5px!important;font-size:9px!important;min-width:0!important;min-height:0!important}
 body.concord-view .cc-folder-mini img{width:100%!important;height:100%!important;object-fit:cover!important}
 body.concord-view .cc-folder-glyph{font-size:18px!important}
+/* "Check my communities" report: a phone is the device it is for, so it wraps and scrolls inside the modal. */
+.cc-mcheck-out{white-space:pre-wrap;overflow-wrap:anywhere;max-height:50vh;overflow:auto;font-size:12px;line-height:1.45;margin:8px 0;padding:8px;border-radius:8px;background:rgba(127,127,127,.12)}

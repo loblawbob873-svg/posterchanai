@@ -3153,6 +3153,78 @@
       clearTimeout(membershipRetryTimer); if(state.community==null)membershipRetryTimer=setTimeout(()=>syncArmadaMemberships(p,p.viewer?p.viewer():viewer),recovered?60000:120000);
     }
   }
+  /* "CHECK MY COMMUNITIES" SAYS WHAT THIS DEVICE MEASURED, ROOM BY ROOM.
+   *
+   * "i updated phone ... I don't see the developers room on phone": the vault on the home relay held
+   * the room, its invite resolved in 2.7s from a desktop, and the phone still showed nothing -- with
+   * nothing on screen and nothing in any log, because every step of the membership pass fails into a
+   * silent `continue` (a vault that would not decrypt, an invite that would not load, a local "left"
+   * record). There is no device here to attach a debugger to, so the device reports: how many
+   * membership documents it found, how many it could decrypt, and for each community in them whether
+   * it is shown and, if not, which step stopped it. Read-only; the repair is a separate button. */
+  async function checkMemberships(p){
+    const viewer=p.viewer?p.viewer():{},pk=viewer.pubkey,lines=[],rows=[];
+    if(!pk||!p.nip44dec)return {lines:['Sign in with a key that can decrypt to check your communities.'],rows};
+    let events=[];
+    try{events=await membershipEvents(p,pk,{external:true,legacyRecovery:true,fullFragments:true});}
+    catch(e){lines.push('Could not read your membership list: '+String(e&&e.message||e).slice(0,160));return {lines,rows};}
+    const kinds=[...new Set(events.map(e=>e.kind===33302?'33302:'+(((e.tags||[]).find(t=>t[0]==='d')||[])[1]??''):String(e.kind)))];
+    lines.push('Membership documents found: '+events.length+(kinds.length?' ('+kinds.join(', ')+')':''));
+    const decrypted=[];let failed=0,firstErr='';
+    for(const event of events){
+      try{decrypted.push({event,doc:cordJsonParse(await p.nip44dec(pk,event.content))});}
+      catch(e){failed++;if(!firstErr)firstErr=String(e&&e.message||e).slice(0,160);}
+    }
+    lines.push('Decrypted: '+decrypted.length+' of '+events.length+(failed?' -- failed: '+firstErr:''));
+    const list=decodeMembershipLists(decrypted),tombs=new Map(),best=new Map();
+    for(const t of list.tombstones)if(t&&t.community_id)tombs.set(t.community_id,cordIntegerMax(tombs.get(t.community_id)||0,t.removed_at||0));
+    for(const e of list.entries){if(!e||!e.community_id)continue;const o=best.get(e.community_id);if(!o||cordU64(e.added_at||0)>cordU64(o.added_at||0))best.set(e.community_id,e);}
+    const rooms=saved();
+    for(const e of best.values()){
+      const name=String((e.current&&e.current.name)||(e.seed&&e.seed.name)||'Community'),url=inviteRefUrl(e.invite_ref),
+            ref={communityId:e.community_id,url,naddr:url?String((inviteParts(url)||{}).naddr||''):''};
+      let status,fixable=false;
+      if(cordU64(e.added_at||0)<=cordU64(tombs.get(e.community_id)||0))status='left (your account left it)';
+      else if(rooms.some(r=>sameRoom(r,ref)))status='shown';
+      else if(wasLocallyLeft(pk,ref)){const row=leftCommunities(pk).find(r=>leftMatches(r,ref))||{};fixable=true;
+        status='hidden: this device recorded leaving it'+(row.removedAt?' on '+new Date(Number(row.removedAt)).toLocaleString():'');}
+      else if(!url)status='missing: its membership entry has no invite link';
+      else{fixable=true;try{await hydrateInvite(p,url);status='missing: its invite loads fine here';}
+        catch(err){status='missing: its invite did not load -- '+String(err&&err.message||err).slice(0,120);}}
+      rows.push({name,status,ref,fixable});
+    }
+    if(!best.size)lines.push('No communities in your membership list.');
+    return {lines,rows};
+  }
+  /* The repair is the ordinary recovery pass, after forgetting this device's "left" record for the
+   * rooms a person just chose to restore -- choosing to restore IS the decision that record stands in
+   * for. Everything else (tombstones, the account's own leaves) is untouched. */
+  async function restoreMemberships(p,rows){
+    const viewer=p.viewer?p.viewer():{};if(!viewer.pubkey)return;
+    for(const r of rows||[])if(r.fixable)forgetLeftCommunity(viewer.pubkey,r.ref);
+    for(let i=0;membershipBusy&&i<40;i++)await new Promise(res=>setTimeout(res,250));
+    await syncArmadaMemberships(p,viewer,'recovery');
+  }
+  function membershipReportText(report){
+    return [...report.lines,...report.rows.map(r=>'- '+r.name+': '+r.status)].join('\n');
+  }
+  async function showMembershipCheck(p){
+    p.modal('<h3>Check my communities</h3><p class="muted" id="cc-mcheck-status">Reading your membership list…</p><pre id="cc-mcheck-out" class="cc-mcheck-out"></pre><div class="cc-primary-actions"><button class="btn btn-neon" id="cc-mcheck-fix" hidden>Restore missing communities</button><button class="btn btn-ghost" id="cc-mcheck-copy" hidden>Copy report</button></div>',async root=>{
+      const status=root.querySelector('#cc-mcheck-status'),out=root.querySelector('#cc-mcheck-out'),
+            fix=root.querySelector('#cc-mcheck-fix'),copy=root.querySelector('#cc-mcheck-copy');
+      const run=async()=>{
+        let report;try{report=await checkMemberships(p);}catch(e){report={lines:['Check failed: '+String(e&&e.message||e).slice(0,160)],rows:[]};}
+        out.textContent=membershipReportText(report);status.textContent='';
+        copy.hidden=false;copy.onclick=()=>p.copyValue(out.textContent);
+        const broken=report.rows.filter(r=>r.fixable);fix.hidden=!broken.length;
+        fix.onclick=async()=>{fix.disabled=true;status.textContent='Restoring…';
+          try{await restoreMemberships(p,broken);backgroundRender();status.textContent='Checking again…';await run();}
+          catch(e){status.textContent='Restore failed: '+String(e&&e.message||e).slice(0,160);}
+          finally{fix.disabled=false;}};
+      };
+      await run();
+    });
+  }
   /* A COMMUNITY THIS ACCOUNT IS IN BELONGS IN THE VAULT, WHETHER OR NOT IT HAS A community_id.
    *
    * This refused any room without one, silently -- so such a room lived in ONE device's
@@ -4786,7 +4858,7 @@
       ||(Array.isArray(current&&current.moderators)
          && current.moderators.indexOf(viewer.pubkey)>=0);
     const joinedRooms=''; // Active communities use the server rail/channel navigator, not home-page cards.
-    return `${state.community==null?`<div class="cc-discover"><div class="concord-mark">C</div><h2>Find your community</h2><p>Join an Armada-compatible CORD-05 invite or create a public relay community.</p><div class="cc-primary-actions"><button class="btn btn-neon" id="cc-create">Create community</button><button class="btn btn-ghost" id="cc-welcome-join">Join with invite</button></div>${joinedRooms}<section class="cc-public"><div><h3>Public communities</h3><small>Public CORD invites discovered on Armada relays</small></div>${discovered.length?discovered.map((r,i)=>{const pr=p.profOf?p.profOf(r.source.pubkey):{};return `<button data-cc-discover="${i}" class="cc-public-room"><span class="cc-public-icon">${publicRoomIcon(p,r)}</span><span class="cc-public-copy"><b>${p.enc(r.name)}</b><small>${p.enc((r.description||'Public Concord community').slice(0,120))}</small><em>${p.enc(pr.name||pr.display_name||'Nostr community')}</em></span><strong>Join</strong></button>`;}).join(''):(discoveryLoaded?'<div class="cc-public-empty"><b>No public communities found</b><span>Publish or paste a public Armada/CORD invite to list it.</span></div>':'<div class="cc-public-empty"><b>Searching relays…</b><span>Looking for public Armada/CORD invite notes.</span></div>')}</section></div>`:(messages.length?`${state.thread?`<div class="cc-thread-bar"><button id="cc-thread-back" aria-label="Back to channel">\u2190 Back</button><b>Thread</b><span>${p.enc(String((messages.find(x=>messageId(x)===state.thread)||{}).by||''))}</span></div>`:''}<div class="cc-message-list"><!--cc-list-->${(()=>{
+    return `${state.community==null?`<div class="cc-discover"><div class="concord-mark">C</div><h2>Find your community</h2><p>Join an Armada-compatible CORD-05 invite or create a public relay community.</p><div class="cc-primary-actions"><button class="btn btn-neon" id="cc-create">Create community</button><button class="btn btn-ghost" id="cc-welcome-join">Join with invite</button><button class="btn btn-ghost" id="cc-check-memberships">Check my communities</button></div>${joinedRooms}<section class="cc-public"><div><h3>Public communities</h3><small>Public CORD invites discovered on Armada relays</small></div>${discovered.length?discovered.map((r,i)=>{const pr=p.profOf?p.profOf(r.source.pubkey):{};return `<button data-cc-discover="${i}" class="cc-public-room"><span class="cc-public-icon">${publicRoomIcon(p,r)}</span><span class="cc-public-copy"><b>${p.enc(r.name)}</b><small>${p.enc((r.description||'Public Concord community').slice(0,120))}</small><em>${p.enc(pr.name||pr.display_name||'Nostr community')}</em></span><strong>Join</strong></button>`;}).join(''):(discoveryLoaded?'<div class="cc-public-empty"><b>No public communities found</b><span>Publish or paste a public Armada/CORD invite to list it.</span></div>':'<div class="cc-public-empty"><b>Searching relays…</b><span>Looking for public Armada/CORD invite notes.</span></div>')}</section></div>`:(messages.length?`${state.thread?`<div class="cc-thread-bar"><button id="cc-thread-back" aria-label="Back to channel">\u2190 Back</button><b>Thread</b><span>${p.enc(String((messages.find(x=>messageId(x)===state.thread)||{}).by||''))}</span></div>`:''}<div class="cc-message-list"><!--cc-list-->${(()=>{
           /* A THREAD WHOSE ROOT IS NOT HERE MUST NOT EMPTY THE CHANNEL.
            *
            * `threadView` answers [] for a root it cannot find, and a repaint can easily happen with
@@ -5069,6 +5141,7 @@
     const home=$('#cc-home'); if(home)home.onclick=()=>{ const rooms=saved(),wanted=Number(localStorage.getItem('pc.concord.active')||0); discoveryOpen=!rooms.length; state.community=rooms.length&&wanted>=0&&wanted<rooms.length?wanted:(rooms.length?0:null); state.channel=state.community==null?null:'general'; mobileChatOpen=false; mobileDrawerOpen=false; render(); };
     const discovery=$('#cc-discovery'); if(discovery)discovery.onclick=()=>{ discoveryOpen=true; state.community=null; state.channel=null; mobileChatOpen=false; mobileDrawerOpen=false; render(); };
     ['#cc-add','#cc-welcome-join'].forEach(s=>{ const b=$(s); if(b)b.onclick=openJoin; });
+    { const b=$('#cc-check-memberships'); if(b)b.onclick=()=>showMembershipCheck(p); }
     /* CREATING A COMMUNITY WAS REACHABLE ONLY WHILE YOU HAD NONE.
      *
      * "Create community" lives on the `state.community==null` discover pane, and the moment you
@@ -5853,7 +5926,7 @@
     close.publish=event=>(!plane&&R.publishFastTo&&R.publishFastTo(x.relays,event)?1:0)+(external.publish?external.publish(event):0);
     return close;
   }
-  window.PCConcord={announceListing,pollVoteChanged,render,backgroundRender,refoundingBeforeEvents:true,reviewRefoundingRecipients,refoundRoom,acquireRefoundingControls,createPrivateRoomChannel,mergeDirectInviteRoom,showDirectInvitations,showDirectInviteSender,saveCommunitySettings,timerSettingsHtml,unreadRooms,paintUnreadBadge,emptyChannelHtml,channelUnread,noteChannelReach,invitePreviewHtml,declineInvite,inviteWasDeclined,forgetDeclinedInvite,declinedInvites,sameRoom,uniqueRooms,wake,iconRef,readChat,reconcileChannels,startChatLive,stopChatLive,pollOf,pollHtml,refreshActiveChannel,warmRoomIcons,hydrateRoomStreams,replyParentId,threadRootId,threadIndex,threadView,openInvite:openInviteLink,openNotification,notificationRoute,inviteParts,normalizeIcon,roomIcon,roomRelays,reactionSummary,reactionPickerPosition,notifyMentions,discoverInvites,recoverOwnedInvite,membershipEvents,decodeMembershipLists,mergeArmadaBundle,syncArmadaMemberships,nip29MembershipTags,nip29Memberships,nip29Metadata,nip29History,foldNip29History,nip29PreviousTags,publishNip29Message,syncNip29Memberships,hydrateNip29Room,activateJoinedRoom,resumeActiveRoom,threadParticipants,cordReplyTags,roomParticipants,typedMentionRecipients,textMentionsViewer,paintMentions,messageMentionsViewer,conversationIsVisible,repaintScrollTop,pendingEchoMatch,applyRoomIconMetadata,channelSectionsHtml,removeCommunityByIdentity,persistArmadaMembership,persistArmadaMemberships,leaveArmadaMembership,leftCommunities,rememberLeftCommunity,forgetLeftCommunity,wasLocallyLeft,memberTapAction,memberViewportIsNarrow,encryptedAttachments,publicAttachments,messageContentHtml,wireRoomMedia,handoffState,acceptHandoff,beginComposerSend,restoreFailedComposer,webxdcOf,resolveWebxdcCard,deriveWebxdcUrlTopic,hydrateWebxdcCards,webxdcQuery,webxdcPublish,webxdcSubscribe,webxdcPeerQuery,webxdcPeerPublish,webxdcPeerSubscribe,refreshOwnedInviteLinks,changeOwnedInviteLink,showOwnedInviteLinks};
+  window.PCConcord={announceListing,pollVoteChanged,render,backgroundRender,refoundingBeforeEvents:true,reviewRefoundingRecipients,refoundRoom,acquireRefoundingControls,createPrivateRoomChannel,mergeDirectInviteRoom,showDirectInvitations,showDirectInviteSender,saveCommunitySettings,timerSettingsHtml,unreadRooms,paintUnreadBadge,emptyChannelHtml,channelUnread,noteChannelReach,invitePreviewHtml,declineInvite,inviteWasDeclined,forgetDeclinedInvite,declinedInvites,sameRoom,uniqueRooms,wake,iconRef,readChat,reconcileChannels,startChatLive,stopChatLive,pollOf,pollHtml,refreshActiveChannel,warmRoomIcons,hydrateRoomStreams,replyParentId,threadRootId,threadIndex,threadView,openInvite:openInviteLink,openNotification,notificationRoute,inviteParts,normalizeIcon,roomIcon,roomRelays,reactionSummary,reactionPickerPosition,notifyMentions,discoverInvites,recoverOwnedInvite,membershipEvents,decodeMembershipLists,mergeArmadaBundle,syncArmadaMemberships,nip29MembershipTags,nip29Memberships,nip29Metadata,nip29History,foldNip29History,nip29PreviousTags,publishNip29Message,syncNip29Memberships,hydrateNip29Room,activateJoinedRoom,resumeActiveRoom,threadParticipants,cordReplyTags,roomParticipants,typedMentionRecipients,textMentionsViewer,paintMentions,messageMentionsViewer,conversationIsVisible,repaintScrollTop,pendingEchoMatch,applyRoomIconMetadata,channelSectionsHtml,removeCommunityByIdentity,persistArmadaMembership,persistArmadaMemberships,leaveArmadaMembership,checkMemberships,restoreMemberships,leftCommunities,rememberLeftCommunity,forgetLeftCommunity,wasLocallyLeft,memberTapAction,memberViewportIsNarrow,encryptedAttachments,publicAttachments,messageContentHtml,wireRoomMedia,handoffState,acceptHandoff,beginComposerSend,restoreFailedComposer,webxdcOf,resolveWebxdcCard,deriveWebxdcUrlTopic,hydrateWebxdcCards,webxdcQuery,webxdcPublish,webxdcSubscribe,webxdcPeerQuery,webxdcPeerPublish,webxdcPeerSubscribe,refreshOwnedInviteLinks,changeOwnedInviteLink,showOwnedInviteLinks};
   /* A monitor destination may load this module only after its frame-handoff callback has returned.
    * Adopt the one-shot room/channel before app.js invokes render(), then remove it so an ordinary
    * later Communities open cannot replay an old monitor move. */

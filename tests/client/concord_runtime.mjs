@@ -436,6 +436,31 @@ await PCConcord.syncArmadaMemberships(membershipPC,membershipPC.viewer(),true);
 if(JSON.parse(data.get('pc.concord.invites')).some(room=>room.communityId===soapboxId))
   throw new Error('an old join resurrected a community this device left after it');
 PCConcord.forgetLeftCommunity(membershipPC.viewer().pubkey,soapboxRoom);
+// "Check my communities" (the phone that would not show Developer's Quarters): the device REPORTS
+// which step hid each community -- here a local "left" record newer than the join, plus a document
+// it could not decrypt -- and Restore brings the room back.
+{
+  const pk=membershipPC.viewer().pubkey;
+  PCConcord.rememberLeftCommunity(pk,soapboxRoom,900);
+  data.set('pc.concord.invites',JSON.stringify([]));
+  membershipBatch=[{...oldJoin,id:'check-join',created_at:950,content:JSON.stringify({entries:[{community_id:soapboxId,added_at:800,current:JOIN_BUNDLE,seed:JOIN_BUNDLE,invite_ref:soapboxUrl}],tombstones:[]})},
+                   {id:'check-bad',pubkey:pk,kind:13302,created_at:10,content:'NOT JSON',tags:[]}];
+  const report=await PCConcord.checkMemberships(membershipPC);
+  const row=report.rows.find(r=>r.ref.communityId===soapboxId);
+  if(!report.lines.some(l=>l.startsWith('Decrypted: 1 of 2')))
+    throw new Error('the check did not say a membership document failed to decrypt: '+JSON.stringify(report.lines));
+  if(!row||!/^hidden: this device recorded leaving it/.test(row.status)||!row.fixable)
+    throw new Error('the check did not name the local leave record as what hid the room: '+JSON.stringify(report.rows));
+  if(JSON.parse(data.get('pc.concord.invites')).some(room=>room.communityId===soapboxId))
+    throw new Error('the check is supposed to be read-only, and it added the room');
+  await PCConcord.restoreMemberships(membershipPC,report.rows);
+  if(!JSON.parse(data.get('pc.concord.invites')).some(room=>room.communityId===soapboxId))
+    throw new Error('Restore did not bring the hidden community back');
+  const again=await PCConcord.checkMemberships(membershipPC);
+  if((again.rows.find(r=>r.ref.communityId===soapboxId)||{}).status!=='shown')
+    throw new Error('after Restore the check still does not see the room: '+JSON.stringify(again.rows));
+  PCConcord.forgetLeftCommunity(pk,soapboxRoom);
+}
 const mentionRoom={naddr:'mention-room',channels:[{name:'general'},{name:'support',id:'support-id'}]};
 data.set('pc.concord.test.mention-room',JSON.stringify([{id:'m1',pubkey:'b'.repeat(64),text:'general'}]));
 data.set('pc.concord.test.mention-room.support-id',JSON.stringify([{id:'m2',pubkey:'c'.repeat(64),text:'support'}]));
