@@ -10952,14 +10952,17 @@
       const prof=a.closest&&a.closest('.prof-track');
       if(prof) prof.classList.toggle('playing', t==='play'||t==='playing');
     }, true));
+    /* CAPTURE PHASE, and the click stops here — the .img-hold lesson: #feed's own click opens the post, and
+     * the bars (a div[role=slider]) are not in its skip list, so tapping them to seek OPENED THE POST
+     * instead (measured: the view navigated, the seek never happened). Capture runs before that handler. */
     document.addEventListener('click', ev=>{
       const btn=ev.target.closest&&ev.target.closest('.pc-track .pct-play');
-      if(btn){ const a=btn.closest('.pc-track').querySelector('audio'); if(a.paused) a.play().catch(()=>{}); else a.pause(); return; }
+      if(btn){ ev.preventDefault(); ev.stopPropagation(); const a=btn.closest('.pc-track').querySelector('audio'); if(a.paused) a.play().catch(()=>{}); else a.pause(); return; }
       const wave=ev.target.closest&&ev.target.closest('.pc-track .pct-wave');
-      if(wave){ const a=wave.closest('.pc-track').querySelector('audio'), r=wave.getBoundingClientRect(), f=Math.max(0,Math.min(1,(ev.clientX-r.left)/r.width));
+      if(wave){ ev.preventDefault(); ev.stopPropagation(); const a=wave.closest('.pc-track').querySelector('audio'), r=wave.getBoundingClientRect(), f=Math.max(0,Math.min(1,(ev.clientX-r.left)/r.width));
         const go=()=>{ if(isFinite(a.duration)&&a.duration>0){ a.currentTime=f*a.duration; _trackPaint(wave.closest('.pc-track')); } };
         if(isFinite(a.duration)&&a.duration>0) go(); else { a.addEventListener('loadedmetadata',go,{once:true}); a.preload='metadata'; a.load(); } }
-    });
+    }, true);
     document.addEventListener('keydown', ev=>{
       const wave=ev.target.closest&&ev.target.closest('.pc-track .pct-wave'); if(!wave) return;
       const a=wave.closest('.pc-track').querySelector('audio'); if(!(isFinite(a.duration)&&a.duration>0)) return;

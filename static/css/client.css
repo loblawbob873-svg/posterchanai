@@ -11008,8 +11008,8 @@ html.pc-oswin .pv-sheet{top:38px}
 .pct-play svg{width:20px;height:20px;fill:currentColor}
 .pct-play .pct-i-pause,.pc-track.playing .pct-play .pct-i-play{display:none}
 .pc-track.playing .pct-play .pct-i-pause{display:inline}
-.pct-wave{flex:1 1 auto;min-width:0;height:36px;display:flex;align-items:center;gap:2px;cursor:pointer;outline-offset:3px}
-.pct-wave i{flex:1 1 0;min-width:2px;border-radius:2px;background:color-mix(in srgb,var(--muted,#889) 55%,transparent)}
+.pct-wave{flex:1 1 auto;min-width:0;height:36px;display:flex;align-items:center;gap:2px;cursor:pointer;outline-offset:3px;overflow:hidden}
+.pct-wave i{flex:1 1 0;min-width:0;border-radius:2px;background:color-mix(in srgb,var(--muted,#889) 55%,transparent)}
 .pct-wave i.on{background:var(--cyan,#19c3e6)}
 .pct-time{flex:0 0 auto;color:var(--muted);font-size:.85em;font-variant-numeric:tabular-nums;min-width:3ch;text-align:right}
 .pc-track audio{display:none}

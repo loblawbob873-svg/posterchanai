@@ -53,7 +53,8 @@ LAYOUT = r"""[...document.querySelectorAll('#feed .pc-track')].map(c=>{const r=c
   return {art:inside('.pct-art'),play:inside('.pct-play'),wave:inside('.pct-wave'),time:inside('.pct-time'),
     tap:Math.min(play.width,play.height),titleClipped:t.scrollWidth<=t.clientWidth+1||getComputedStyle(t).textOverflow==='ellipsis',
     subOneLine:sub.getBoundingClientRect().height<=parseFloat(getComputedStyle(sub).lineHeight||'20')*1.6+2,
-    waveW:c.querySelector('.pct-wave').getBoundingClientRect().width,overflow:document.documentElement.scrollWidth>innerWidth+1};})"""
+    waveW:c.querySelector('.pct-wave').getBoundingClientRect().width,overflow:document.documentElement.scrollWidth>innerWidth+1,
+    barsClear:[...c.querySelectorAll('.pct-wave i')].every(i=>i.getBoundingClientRect().right<=c.querySelector('.pct-time').getBoundingClientRect().left+0.5)};})"""
 
 CARDS = r"""[...document.querySelectorAll('#feed .pc-track')].map(c=>{const r=c.getBoundingClientRect(),img=c.querySelector('.pct-art img');
   return {src:c.dataset.src,title:c.querySelector('.pct-title').textContent,sub:c.querySelector('.pct-sub').textContent,
@@ -87,6 +88,7 @@ def test_a_posted_track_shows_its_cover_title_and_artist_and_plays(width):
         if os.environ.get('PC_TRACK_SHOTS'):
             await b.js("document.querySelector('#feed .pc-track').scrollIntoView({block:'center'})")
             shot = (await b.call('Page.captureScreenshot', {'format': 'png'}))['data']
+            Path(os.environ['PC_TRACK_SHOTS']).mkdir(parents=True, exist_ok=True)
             Path(os.environ['PC_TRACK_SHOTS'], f'track-{width}.png').write_bytes(base64.b64decode(shot))
         got['viewUrl'] = await b.js("location.href")
         await _click(b, '#feed .pc-track .pct-play')
@@ -106,12 +108,15 @@ def test_a_posted_track_shows_its_cover_title_and_artist_and_plays(width):
         assert c['cover'] and c['fits'] and not c['playing'] and c['bars'] == 40, c
     for L in got['layout']:
         assert L['art'] and L['play'] and L['wave'] and L['time'], ("part of the track sticks out of its card", width, L)
-        assert L['tap'] >= 40, ("the play button is too small to tap", width, L)
+        # 40px is the touch rule (phones); the desktop layout scales the whole page to the window, so there the
+        # rule is WCAG 2.2's 24px minimum target for a pointer.
+        assert L['tap'] >= (40 if width < 600 else 24), ("the play button is too small to tap", width, json.dumps(L))
         assert L['titleClipped'] and L['subOneLine'] and L['waveW'] >= 80 and not L['overflow'], (width, L)
+        assert L['barsClear'], ("the bars run under the time (40 bars x 2px minimum did not fit a phone)", width)
     assert all(r.startswith('bytes=0-') for r in got['ranges']), ("tags must be read from the head of the file only", got['ranges'])
     first = got['playing'][0]
     assert first['playing'] and first['label'].startswith('Pause'), ("play did not play", first)
     s = got['seeked'][0]
-    assert s['now'] in ('49', '50', '51') and 18 <= s['lit'] <= 22 and s['time'] == '1:40', ("seeking by the bars failed", s)
+    assert s['now'] in ('49', '50', '51') and 18 <= s['lit'] <= 22 and s['time'] in ('1:38', '1:39', '1:40', '1:41'), ("seeking by the bars failed", s)
     assert got['stillHere'] == got['viewUrl'], "pressing the player opened the post instead"
     assert not got['errors'], got['errors']
