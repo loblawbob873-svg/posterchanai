@@ -441,6 +441,19 @@ def _reactions(**tally):
                                      for e, (n, mine) in tally.items()])
 
 
+def _reported(truth, mode):
+    """How Telegram REPORTS a message's reactions, which is not always how it holds them. On a message
+    somebody else sent, your own reaction can come back with no `chosen_order` — said only in
+    `recent_reactions` (`my`), or not said at all. mode: "chosen" | "recent" | "unsaid"."""
+    from telethon.tl.types import MessagePeerReaction, MessageReactions, PeerUser, ReactionCount, ReactionEmoji
+    results = [ReactionCount(reaction=ReactionEmoji(emoticon=e), count=n,
+                             chosen_order=(1 if (mine and mode == "chosen") else None))
+               for e, (n, mine) in truth.items() if n > 0]
+    recent = ([MessagePeerReaction(peer_id=PeerUser(1), date=None, reaction=ReactionEmoji(emoticon=e), my=True)
+               for e, (n, mine) in truth.items() if mine and n > 0] if mode == "recent" else None)
+    return MessageReactions(results=results, recent_reactions=recent)
+
+
 def _available():
     """Telegram's answer to messages.getAvailableReactions, in Telethon's own types — the real list's
     shape: ❤ with no variation selector, a retired (inactive) entry and a Premium-only one."""
@@ -490,7 +503,16 @@ def _react_world(world):
             if any(r.emoticon in tg.refuse for r in req.reaction):
                 raise type("ReactionInvalidError", (Exception,), {})()
             m = next(x for x in tg.chats[req.peer] if x.id == req.msg_id)
-            tally = {rc.reaction.emoticon: [rc.count, rc.chosen_order is not None] for rc in m.reactions.results}
+            # What Telegram HOLDS (never what it reported): mine is truth, not chosen_order.
+            truth = getattr(m, "_truth", None) or {rc.reaction.emoticon: (rc.count, rc.chosen_order is not None)
+                                                    for rc in m.reactions.results}
+            tally = {e: [n, mine] for e, (n, mine) in truth.items()}
+            had = {e for e, (n, mine) in truth.items() if mine}
+            want = {r.emoticon for r in req.reaction}
+            tg.sent.append(("react", req.peer, req.msg_id, [r.emoticon for r in req.reaction]))
+            if had == want:                             # real Telegram: nothing would change
+                raise type("MessageNotModifiedError", (Exception,), {})(
+                    "Content of the message was not modified (caused by SendReactionRequest)")
             for e, v in tally.items():                  # an ordinary account holds one reaction
                 if v[1]:
                     v[0] -= 1
@@ -499,8 +521,8 @@ def _react_world(world):
                 tally.setdefault(r.emoticon, [0, False])
                 tally[r.emoticon][0] += 1
                 tally[r.emoticon][1] = True
-            m.reactions = _reactions(**{e: (n, mine) for e, (n, mine) in tally.items() if n > 0})
-            tg.sent.append(("react", req.peer, req.msg_id, [r.emoticon for r in req.reaction]))
+            m._truth = {e: (n, mine) for e, (n, mine) in tally.items() if n > 0}
+            m.reactions = _reported(m._truth, getattr(tg, "report", "chosen"))
             return None
         if name == "SearchRequest":
             from telethon.tl.types import Channel, PeerChannel, PeerUser, User
@@ -773,3 +795,39 @@ def test_the_live_socket_gives_its_database_session_back_after_setup(api, monkey
         ws.send_text(json.dumps({"token": "x"}))
         assert ws.receive_json()["type"] == "state"
         assert sessions and sessions[0].closed, "the socket kept its database session open after setup"
+
+
+# ---- your reaction on THEIR message ------------------------------------------------------------------
+# Reported 2026-10-09: "Telegram refused that: Content of the message not modified" — "it worked on my
+# message but not the other person". On a message somebody else sent, Telegram can report your own
+# reaction without `chosen_order`, so the manager thought it was not yours, asked to ADD it again, and
+# Telegram refused a change that changed nothing. The fake above refuses exactly that way now.
+
+def _theirs_with_my_reaction(world, mode):
+    mgr, tg = _react_world(world)
+    m = tg.chats[42][0]
+    m._truth = {"👍": (3, True)}                        # two of them and you
+    tg.report = mode
+    m.reactions = _reported(m._truth, mode)
+    return mgr, tg
+
+
+@pytest.mark.parametrize("mode", ["recent", "unsaid"])
+def test_your_reaction_on_their_message_is_taken_back_not_refused(world, mode):
+    mgr, tg = _theirs_with_my_reaction(world, mode)
+    after = run(mgr.react(None, U(1), 42, 1, "👍"))
+    assert after == [{"emoji": "👍", "count": 2, "mine": False}], after
+    assert tg.sent[-1] == ("react", 42, 1, []), "the tap must end with your reaction taken back"
+
+
+def test_your_reaction_said_only_in_recent_reactions_shows_as_yours(world):
+    mgr, tg = _theirs_with_my_reaction(world, "recent")
+    first = run(mgr.messages(None, U(1), 42))[0]
+    assert first["reactions"] == [{"emoji": "👍", "count": 3, "mine": True}], first["reactions"]
+
+
+def test_another_reaction_on_their_message_replaces_yours(world):
+    mgr, tg = _theirs_with_my_reaction(world, "unsaid")
+    after = {r["emoji"]: r for r in run(mgr.react(None, U(1), 42, 1, "🔥"))}
+    assert after["🔥"]["count"] == 1 and after["👍"]["count"] == 2, after
+

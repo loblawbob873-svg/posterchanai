@@ -131,12 +131,18 @@ def reactions_of(msg) -> list:
     """A message's emoji reactions: [{emoji, count, mine}]. Custom-emoji and paid reactions carry no
     emoji a browser can draw, so they are left out rather than shown as an empty chip."""
     out = []
-    for rc in (getattr(getattr(msg, "reactions", None), "results", None) or []):
+    rs = getattr(msg, "reactions", None)
+    # YOURS, two ways. `chosen_order` is the usual mark, but on a message somebody ELSE sent Telegram can
+    # report your reaction only in `recent_reactions` (`my`). Read as "not yours", a tap asked Telegram to
+    # add what it already held and was refused: "Content of the message was not modified".
+    my_recent = {str(getattr(getattr(p, "reaction", None), "emoticon", "") or "")
+                 for p in (getattr(rs, "recent_reactions", None) or []) if getattr(p, "my", False)}
+    for rc in (getattr(rs, "results", None) or []):
         emoji = getattr(getattr(rc, "reaction", None), "emoticon", None)
         if not emoji:
             continue
         out.append({"emoji": str(emoji), "count": int(getattr(rc, "count", 0) or 0),
-                    "mine": getattr(rc, "chosen_order", None) is not None})
+                    "mine": getattr(rc, "chosen_order", None) is not None or str(emoji) in my_recent})
     return out
 
 
@@ -583,7 +589,16 @@ class Manager:
                                   "Telegram does not take {} as a reaction here.".format(emoji))
                 emoji = hit                     # Telegram's own spelling (❤, not ❤️)
             want = [] if took_back is not None else [ReactionEmoji(emoticon=emoji)]
-            await c(SendReactionRequest(peer=int(chat_id), msg_id=int(msg_id), reaction=want))
+            try:
+                await c(SendReactionRequest(peer=int(chat_id), msg_id=int(msg_id), reaction=want))
+            except Exception as e:
+                if type(e).__name__ != "MessageNotModifiedError":
+                    raise
+                # Telegram already held exactly this. Asked to ADD, the reaction was already yours and
+                # simply not reported as yours (it can say nothing on another person's message) — so the
+                # tap means take it back. Asked to REMOVE, there was nothing to remove: done either way.
+                if want:
+                    await c(SendReactionRequest(peer=int(chat_id), msg_id=int(msg_id), reaction=[]))
             m = await c.get_messages(int(chat_id), ids=int(msg_id))
         except TGError:
             raise
