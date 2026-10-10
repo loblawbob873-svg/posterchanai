@@ -990,6 +990,94 @@ class Store:
         finally:
             self._compacting = False
 
+    # ---------------------------------------------------------------- aggregates (nostr_relay/aggregates.py)
+    # Server Stats, the stats bot and the relay trace COUNT things; they never need the events themselves. These
+    # hand out COPIES taken in short pieces under the lock, and the counting happens after it is released: one
+    # 465 ms read under this lock starved every client of the relay (2026-10-09), and a stats page must never be
+    # able to do that. Every answer is a superset/snapshot the caller filters with the copied columns.
+    STATS_CHUNK = 262144
+
+    def stats_columns(self, chunk: int | None = None) -> dict:
+        """Copies of the per-event columns the aggregates read, plus the interned authors. Taken `chunk` events at
+        a time with the lock released in between, so a copy of millions of events never holds a writer up for more
+        than ~a millisecond. Seqs are stable and the columns append-only, so the pieces line up; `dead` may move
+        on between pieces, which a statistic can afford (it is a snapshot either way)."""
+        chunk = int(chunk or self.STATS_CHUNK)
+        with self._lock:
+            n = len(self.off)
+        out = {k: np.empty(n, dtype=t) for k, t in (("created", np.uint64), ("kind", np.uint32),
+                                                     ("origin", np.uint8), ("author", np.uint32),
+                                                     ("dead", np.uint8), ("expires", np.uint64))}
+        lo = 0
+        while lo < n:
+            hi = min(n, lo + chunk)
+            with self._lock:
+                if len(self.off) < hi:
+                    raise RuntimeError("the store was reloaded while its columns were being copied")
+                for name, col, dt in (("created", self.created, np.uint64), ("kind", self.kind, np.uint32),
+                                      ("origin", self.origin, np.uint8), ("author", self.author, np.uint32),
+                                      ("dead", self.dead, np.uint8), ("expires", self.expires, np.uint64)):
+                    v = np.frombuffer(col, dtype=dt)
+                    out[name][lo:hi] = v[lo:hi]
+                    del v                           # no view may outlive the lock (see _grow)
+            lo = hi
+        with self._lock:
+            out["authors"] = list(self._authors)
+        out["n"] = n
+        return out
+
+    def kind_seqs(self, kind: int) -> np.ndarray:
+        with self._lock:
+            return np.unique(self.idx.get(_h("k:%d" % int(kind))))
+
+    def tag_seqs(self, tag: str, value: str) -> np.ndarray:
+        """Every seq carrying the single-letter tag `tag`=`value` (dead ones included: filter with the columns)."""
+        with self._lock:
+            return np.unique(self.idx.get(_h("t:%s:%s" % (tag, value))))
+
+    def author_seqs(self, pubkey: str) -> np.ndarray:
+        with self._lock:
+            return np.unique(self.idx.get(_h("au:%s" % pubkey)))
+
+    def d_prefix_pairs(self, pre: str) -> list:
+        """[(d value, seq)] for every `d` tag starting with `pre` (dead ones included). The runs are never
+        mutated in place (a merge builds a new list), so only the references and the small delta are taken under
+        the lock and the scan runs outside it."""
+        with self._lock:
+            runs = list(self.dprefix.runs)
+            out = [(v, q) for v, q in self.dprefix.delta if v.startswith(pre)]
+        for run in runs:
+            i = bisect.bisect_left(run, (pre, -1))
+            while i < len(run) and run[i][0].startswith(pre):
+                out.append(run[i])
+                i += 1
+        return out
+
+    def columns_for(self, seqs, chunk: int = 4096) -> list:
+        """[(kind, origin, created, dead, expires)] for a few seqs (one author's), read under the lock in pieces."""
+        seqs = [int(s) for s in seqs]
+        out = []
+        for i in range(0, len(seqs), chunk):
+            with self._lock:
+                n = len(self.off)
+                for s in seqs[i:i + chunk]:
+                    if s < n:
+                        out.append((self.kind[s], self.origin[s], self.created[s], self.dead[s], self.expires[s]))
+        return out
+
+    def contents(self, seqs, chunk: int = 256) -> list:
+        """[(pubkey, content)] for `seqs`, decoded a few hundred at a time under the lock."""
+        seqs = [int(s) for s in seqs]
+        out = []
+        for i in range(0, len(seqs), chunk):
+            with self._lock:
+                for s in seqs[i:i + chunk]:
+                    if self.dead[s] or self.seg[s] == DROPPED:
+                        continue
+                    ev = self.get(s)
+                    out.append((ev["pubkey"], ev.get("content") or ""))
+        return out
+
     # ---------------------------------------------------------------- read
     def get(self, seq: int) -> dict:
         return self.codec.decode(self._rec(seq))

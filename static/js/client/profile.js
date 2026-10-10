@@ -849,7 +849,7 @@ window.PCProfileFactory = function(dep){
     const step=(p,label,badge)=>{ const w=_traceWho(p); return `<li class="tr-step" data-prof="${enc(p)}"><img alt="" src="${enc(w.pic)}" onerror="this.src='${S.LOGO}'"><div><b>${enc(w.name)}</b><div class="small muted">${label}</div></div>${badge||''}</li>`; };
     const chain = r.chain.length ? `<ol class="tr-chain">${step(pk,'this account')}${r.chain.map((c,i)=>step(c.pubkey, i? 'who is followed by…':'is followed by', _traceTier(c.tier))).join('')}</ol>` : '';
     const fol=r.followers;
-    const folList = fol.shown.length ? fol.shown.map(f=>{ const w=_traceWho(f.pubkey); return `<div class="psearch tr-fol" data-prof="${enc(f.pubkey)}">${pick(f.pubkey)}<img alt="" src="${enc(w.pic)}" onerror="this.src='${S.LOGO}'"><div class="pinfo"><b>${enc(w.name)}</b><div class="small muted">${f.in_wot?(f.tier!=null?`${enc(_TIER[f.tier]||'')}${f.vouchers?` · ${f.vouchers} vouch`:''}`:'in your trust list'):'not in your trust list'}</div></div>${f.in_wot?'<span class="tr-dot" title="in your trust list"></span>':''}</div>`; }).join('') : '';
+    const folList = fol.shown.length ? fol.shown.map(f=>{ const w=_traceWho(f.pubkey); return `<div class="psearch tr-fol" data-prof="${enc(f.pubkey)}">${pick(f.pubkey)}<img alt="" src="${enc(w.pic)}" onerror="this.src='${S.LOGO}'"><div class="pinfo"><b>${enc(w.name)}</b><div class="small muted">${f.in_wot?(f.tier!=null?`${enc(_TIER[f.tier]||'')}${f.vouchers?` · ${f.vouchers} vouch`:''}`:'in your trust list'):(f.in_wot===null?'trust list unknown':'not in your trust list')}</div></div>${f.in_wot?'<span class="tr-dot" title="in your trust list"></span>':''}</div>`; }).join('') : '';
     box.innerHTML=`
       <div class="tr-card tr-${enc(r.tone)}">
         <div class="tr-who">${pick(pk)}<img alt="" src="${enc(me.pic)}" onerror="this.src='${S.LOGO}'"><b>${enc(me.name)}</b></div>
@@ -866,7 +866,7 @@ window.PCProfileFactory = function(dep){
         </div>
         ${kinds||orig?`<div class="tr-chips">${kinds}${orig}${(st.top_tags||[]).map(t=>`<span class="tr-chip">#${enc(t)}</span>`).join('')}</div>`:''}
       </div>
-      <div class="tr-sec"><div class="tr-h">Followers ${fol.found==null?'<span class="muted small">— the public relays did not answer</span>':`<span class="muted small">${fol.found} found · ${fol.in_wot} in your trust list</span>`}</div>
+      <div class="tr-sec"><div class="tr-h">Followers ${fol.found==null?'<span class="muted small">— the public relays did not answer</span>':`<span class="muted small">${fol.found} found · ${fol.in_wot==null?'trust list unknown':fol.in_wot+' in your trust list'}</span>`}</div>
         ${folList?`<div class="tr-selbar"><button class="btn btn-ghost small" id="tr-all">Select all</button><button class="btn btn-ghost small" id="tr-none">None</button></div><div class="people-list tr-fols">${folList}</div>`:''}
       </div>
       <div class="tr-actions">

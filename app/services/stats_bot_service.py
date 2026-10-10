@@ -1,7 +1,7 @@
 """Nostr Stats Bot — optional, posts a cyberpunk activity graph every 6 hours.
 
-Reads the built-in relay's Postgres directly (read-only) for two metrics over the past 7 days,
-counting ONLY pubkeys whose latest kind-0 profile carries a non-empty `nip05`:
+Asks the built-in relay (nostr_relay/aggregates.py: it counts from its own store, PosterChanDB or Postgres) for
+two metrics, counting ONLY pubkeys whose latest kind-0 profile carries a non-empty `nip05`:
   - daily kind-1 POSTS by nip05 users
   - daily ACTIVE nip05 users (distinct authors who posted that day)
 Renders a neon/cyberpunk chart with Pillow (already a dependency — no new packages) and either
@@ -26,6 +26,7 @@ logger = logging.getLogger(__name__)
 stats_scheduler = None
 _DAYS = 30     # collect 30 days; the weekly panel is the last 7 of it (one Postgres pass)
 _MONTHS = 6    # also bucket the last 6 calendar months for the month-by-month panel (same pass)
+_ASK_TIMEOUT = 180.0   # the relay counts ~6 months of notes; it is a 6-hourly job, so waiting is fine
 
 # Cyberpunk palette (matches the web client: --cyan / --neon-magenta on near-black). The 30-day
 # panel uses a SECOND pair (green/amber) so all four series read distinctly.
@@ -58,125 +59,120 @@ def _relay_dsn() -> str:
                            "host=127.0.0.1 port=5432 dbname=posterchan_relay user=posterchan"))
 
 
-def _collect_stats(days: int = _DAYS, months: int = _MONTHS) -> dict:
-    """BLOCKING: query the relay's Postgres → daily posts + DAU (past `days`) AND monthly posts + MAU
-    (past `months` calendar months) for nip05 users, all UTC, in ONE streaming pass.
+def _puppet_pubkeys() -> set:
+    """Fedi→Nostr bridge puppets (the app's registry). Their kind-1s are MIRRORED fediverse posts, not native Nostr
+    activity -- counting them inflates the numbers ("only here for now"). The relay also drops the puppets IT
+    knows (its own bridge_puppet table); this is the app's half. No registry = count every NIP-05 holder."""
+    try:
+        from app.database import SessionLocal
+        from app.models import FediPuppet
+        db = SessionLocal()
+        try:
+            return {r[0] for r in db.query(FediPuppet.pubkey_hex).all() if r[0]}
+        finally:
+            db.close()
+    except Exception:       # noqa: BLE001
+        return set()
 
-    Daily buckets are UTC midnights ending today; month buckets are calendar months ending with the
-    current month. Returns a dict the renderer consumes.
+
+def _ask_activity(since: int) -> dict:
+    """The relay's answer: NIP-05 holders and their kind-1 notes per UTC day since `since`
+    (nostr_relay/aggregates.py). Raises relay_reader.Unavailable -- the bot must never post zeros."""
+    from app.services.nostr_relay import aggregates
+    return aggregates.ask("nip05-activity", {"since": int(since)}, timeout=_ASK_TIMEOUT)
+
+
+def _collect_stats(days: int = _DAYS, months: int = _MONTHS) -> dict:
+    """BLOCKING: daily posts + DAU (past `days`) AND monthly posts + MAU (past `months` calendar months) for
+    nip05 users, all UTC. The relay counts (per author per UTC day, from its own store); this buckets.
+
+    Daily buckets are UTC midnights ending YESTERDAY; month buckets are calendar months ending with the current
+    month. Returns a dict the renderer consumes. Raises relay_reader.Unavailable when the relay cannot be asked.
     """
     import bisect
-    import psycopg2
-    conn = psycopg2.connect(_relay_dsn(), connect_timeout=10)
-    try:
-        cur = conn.cursor()
-        # nip05 set: the relay keeps only the newest kind-0 per pubkey (replaceable), so one row each.
-        cur.execute("SELECT pubkey, content FROM events WHERE kind=0")
-        nip05 = set()
-        for pk, content in cur.fetchall():
-            try:
-                m = json.loads(content or "{}")
-                if isinstance(m, dict) and str(m.get("nip05", "") or "").strip():
-                    nip05.add(pk)
-            except Exception:
-                pass
+    now = datetime.now(timezone.utc)
+    # THE DAILY WINDOW ENDS YESTERDAY, and every panel is better for it. Including today put a
+    # PARTIAL day at the end of every chart — measured mid-morning UTC it was 4.9k posts against a
+    # 9k run rate — so the last bar always looked like the network had fallen off a cliff, the
+    # "past 7 days" total was really six and a bit, and the trailing point dragged the line down
+    # on all three panels. Complete UTC days only; the month panel still shows the current month,
+    # where a partial bucket is obvious and expected.
+    midnight = datetime(now.year, now.month, now.day, tzinfo=timezone.utc)
+    last_day = midnight - timedelta(days=1)
+    starts = [int((last_day - timedelta(days=days - 1 - i)).timestamp()) for i in range(days)]
+    day_since = starts[0]
+    day_until = int(midnight.timestamp())        # exclusive: today is not a day yet
+    labels = [datetime.fromtimestamp(s, timezone.utc).strftime("%a") for s in starts]
+    dates = [datetime.fromtimestamp(s, timezone.utc).strftime("%m/%d") for s in starts]
 
-        # Drop fedi→Nostr bridge puppets. They carry a nip05_name (so they'd otherwise count), but their
-        # kind-1s are MIRRORED fediverse posts, not native Nostr activity — counting them inflates the
-        # numbers misleadingly ("only here for now"). Same DB as `events` (posterchan_relay); the table
-        # may be absent on a node that never bridged, so fall back to counting all nip05 users.
-        try:
-            cur.execute("SELECT pubkey_hex FROM fedi_puppets")
-            nip05 -= {r[0] for r in cur.fetchall() if r[0]}
-        except Exception:
-            conn.rollback()   # a failed statement poisons the txn for the following named-cursor scan
+    # Calendar-month buckets: the last `months` months, oldest→newest, ending with this month.
+    yms = []
+    y, mo = now.year, now.month
+    for _ in range(months):
+        yms.append((y, mo))
+        mo -= 1
+        if mo == 0:
+            mo, y = 12, y - 1
+    yms.reverse()
+    month_labels = [datetime(yy, mm, 1, tzinfo=timezone.utc).strftime("%b") for yy, mm in yms]
+    # Per-month start timestamps (ascending); every one is a UTC midnight, so a whole UTC DAY falls in
+    # exactly one month and the relay's per-day rows bucket exactly.
+    month_starts = [int(datetime(yy, mm, 1, tzinfo=timezone.utc).timestamp()) for yy, mm in yms]
+    month_since = month_starts[0]
 
-        now = datetime.now(timezone.utc)
-        # THE DAILY WINDOW ENDS YESTERDAY, and every panel is better for it. Including today put a
-        # PARTIAL day at the end of every chart — measured mid-morning UTC it was 4.9k posts against a
-        # 9k run rate — so the last bar always looked like the network had fallen off a cliff, the
-        # "past 7 days" total was really six and a bit, and the trailing point dragged the line down
-        # on all three panels. Complete UTC days only; the month panel still shows the current month,
-        # where a partial bucket is obvious and expected.
-        midnight = datetime(now.year, now.month, now.day, tzinfo=timezone.utc)
-        last_day = midnight - timedelta(days=1)
-        starts = [int((last_day - timedelta(days=days - 1 - i)).timestamp()) for i in range(days)]
-        day_since = starts[0]
-        day_until = int(midnight.timestamp())        # exclusive: today is not a day yet
-        labels = [datetime.fromtimestamp(s, timezone.utc).strftime("%a") for s in starts]
-        dates = [datetime.fromtimestamp(s, timezone.utc).strftime("%m/%d") for s in starts]
+    since = min(day_since, month_since)
+    ans = _ask_activity(since)
+    authors = ans.get("nip05") or []
+    puppets = _puppet_pubkeys()
+    nip05 = set(authors) - puppets
 
-        # Calendar-month buckets: the last `months` months, oldest→newest, ending with this month.
-        yms = []
-        y, mo = now.year, now.month
-        for _ in range(months):
-            yms.append((y, mo))
-            mo -= 1
-            if mo == 0:
-                mo, y = 12, y - 1
-        yms.reverse()
-        month_labels = [datetime(yy, mm, 1, tzinfo=timezone.utc).strftime("%b") for yy, mm in yms]
-        # Per-month start timestamps (ascending) — a bisect maps each event to its month bucket without
-        # building a datetime per row (the scan can be millions of rows on a busy relay).
-        month_starts = [int(datetime(yy, mm, 1, tzinfo=timezone.utc).timestamp()) for yy, mm in yms]
-        month_since = month_starts[0]
+    posts = [0] * days
+    actives = [set() for _ in range(days)]
+    m_posts = [0] * months
+    m_actives = [set() for _ in range(months)]
+    for day, ai, n in ans.get("activity") or []:
+        pk = authors[int(ai)]
+        if pk not in nip05:
+            continue
+        day, n = int(day), int(n)
+        if day < since:
+            continue
+        if day_since <= day < day_until:
+            idx = int((day - day_since) // 86400)       # UTC has no DST → each bucket is exactly 86400s
+            if 0 <= idx < days:
+                posts[idx] += n
+                actives[idx].add(pk)
+        mi = bisect.bisect_right(month_starts, day) - 1  # which calendar-month bucket
+        if 0 <= mi < months:
+            m_posts[mi] += n
+            m_actives[mi].add(pk)
 
-        posts = [0] * days
-        actives = [set() for _ in range(days)]
-        m_posts = [0] * months
-        m_actives = [set() for _ in range(months)]
-        # Scan the WHOLE window (the earlier of the day/month start) ONCE, via a SERVER-SIDE (named)
-        # cursor so a busy relay's result STREAMS instead of buffering wholesale (bounded memory/CPU).
-        # Uses the (kind, created_at) index; we filter to nip05 authors in Python.
-        since = min(day_since, month_since)
-        scan = conn.cursor(name="stats_k1_scan")
-        scan.itersize = 5000
-        scan.execute("SELECT created_at, pubkey FROM events WHERE kind=1 AND created_at >= %s", (since,))
-        for ts, pk in scan:
-            if pk not in nip05:
-                continue
-            if day_since <= ts < day_until:
-                idx = int((ts - day_since) // 86400)       # UTC has no DST → each bucket is exactly 86400s
-                if 0 <= idx < days:
-                    posts[idx] += 1
-                    actives[idx].add(pk)
-            mi = bisect.bisect_right(month_starts, ts) - 1  # which calendar-month bucket
-            if 0 <= mi < months:
-                m_posts[mi] += 1
-                m_actives[mi].add(pk)
-        scan.close()
+    dau = [len(s) for s in actives]
+    mau = [len(s) for s in m_actives]
 
-        dau = [len(s) for s in actives]
-        mau = [len(s) for s in m_actives]
+    def _union(sets):
+        u = set()
+        for s in sets:
+            u |= s
+        return len(u)
 
-        def _union(sets):
-            u = set()
-            for s in sets:
-                u |= s
-            return len(u)
-
-        # DAU/MAU are per-period DISTINCT, so a week/month "active users" total is the UNION of the
-        # finer sets (not the sum of counts). Posts are simple sums.
-        # A UNIQUE-USER COUNT OVER 7 DAYS AND ONE OVER 30 ARE NOT COMPARABLE, and printing them on
-        # consecutive lines invites exactly that comparison ("active users looks way higher on 30
-        # days" — of course it does: a longer window catches anyone who posted once). The average
-        # DAY is the figure that means the same thing in both, so it goes out beside them.
-        dau_week = [x for x in dau[-7:] if x]
-        dau_all = [x for x in dau if x]
-        return {
-            "labels": labels, "dates": dates, "posts": posts, "dau": dau,
-            "month_labels": month_labels, "posts_by_month": m_posts, "mau": mau,
-            "posts_week": sum(posts[-7:]), "posts_month": sum(posts),
-            "active_week": _union(actives[-7:]), "active_month": _union(actives),
-            "dau_avg_week": int(round(sum(dau_week) / len(dau_week))) if dau_week else 0,
-            "dau_avg_month": int(round(sum(dau_all) / len(dau_all))) if dau_all else 0,
-            "nip05_total": len(nip05),
-        }
-    finally:
-        try:
-            conn.close()
-        except Exception:
-            pass
+    # DAU/MAU are per-period DISTINCT, so a week/month "active users" total is the UNION of the
+    # finer sets (not the sum of counts). Posts are simple sums.
+    # A UNIQUE-USER COUNT OVER 7 DAYS AND ONE OVER 30 ARE NOT COMPARABLE, and printing them on
+    # consecutive lines invites exactly that comparison ("active users looks way higher on 30
+    # days" — of course it does: a longer window catches anyone who posted once). The average
+    # DAY is the figure that means the same thing in both, so it goes out beside them.
+    dau_week = [x for x in dau[-7:] if x]
+    dau_all = [x for x in dau if x]
+    return {
+        "labels": labels, "dates": dates, "posts": posts, "dau": dau,
+        "month_labels": month_labels, "posts_by_month": m_posts, "mau": mau,
+        "posts_week": sum(posts[-7:]), "posts_month": sum(posts),
+        "active_week": _union(actives[-7:]), "active_month": _union(actives),
+        "dau_avg_week": int(round(sum(dau_week) / len(dau_week))) if dau_week else 0,
+        "dau_avg_month": int(round(sum(dau_all) / len(dau_all))) if dau_all else 0,
+        "nip05_total": len(nip05),
+    }
 
 
 # --- chart ---------------------------------------------------------------

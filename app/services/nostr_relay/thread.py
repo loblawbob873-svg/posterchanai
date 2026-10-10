@@ -1561,6 +1561,10 @@ async def _main(cfg: dict) -> None:
 
     tasks.append(asyncio.create_task(_status_writer()))
     tasks.append(asyncio.create_task(_control_poller()))
+    # Request/RESPONSE beside the fire-and-forget commands: Server Stats, the stats bot and the relay trace ask
+    # for COUNTS the relay computes from its own store on its own "relay-stats" thread (aggregates.py, #161).
+    from . import aggregates as _aggregates
+    tasks.append(asyncio.create_task(_aggregates.ask_poller(store, _paths["control"], _relay.stop_event)))
     try:
         await _relay.stop_event.wait()
     finally:

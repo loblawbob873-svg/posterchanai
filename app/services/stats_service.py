@@ -1,28 +1,26 @@
 """Public server statistics for the client's Server Stats page.
 
-Everything here is READ-ONLY aggregation over data the node already stores — chiefly the relay's
-`events` table, which the app shares (same Postgres database, see app/database.py). No new tables and
-no per-request write path: a stats page must never be able to slow down posting.
+Everything here is READ-ONLY aggregation over data the node already stores. The relay-derived figures (chiefly
+counts over its events) are computed BY THE RELAY PROCESS from its own store -- PosterChanDB when it serves,
+Postgres otherwise -- and asked for over its control dir (nostr_relay/aggregates.py, #161). This module defines
+what each figure MEANS (the constants below, which aggregates.py counts by) and shapes the answer for the page;
+it opens no database. A relay that cannot be asked makes those figures UNKNOWN on the page, never zero.
 
 Scope: the Network-section figures are THIS SERVER's own activity (origin='direct' — see _LOCAL), not
-the federated network the relay syncs. ~96% of `events` is synced content (origin='wot'/'ancestor')
+the federated network the relay syncs. ~96% of stored events are synced content (origin='wot'/'ancestor')
 or our fedi mirror ('bridge'); counting all of it read as "misleading" since the page frames itself
 as "what this node is doing".
 
-The `relay` block (see _relay) is the one exception, and deliberately so: it answers "what is the
-relay PROCESS doing" — outbound queue depth, which upstream streams are live, what it accepted or
-turned away — rather than "what has been published". None of it is a query: the relay runs in its
-own process and publishes those numbers to a status file every 15s, so this is a file read.
+The `relay` block (see _relay) answers "what is the relay PROCESS doing" — outbound queue depth, which upstream
+streams are live, what it accepted or turned away — from the status file it publishes every 15s.
 
-Cost discipline (the whole reason this module exists rather than inline queries in the router):
+Cost discipline:
 
-* Every window is bounded by an INTEGER epoch computed in Python. Writing
-  `created_at >= extract(epoch from now())` instead costs a sequential scan of ~2.2M rows — measured
-  at 646ms for the 60-minute window versus 8ms with a plain integer bound, because the extract() form
-  isn't a constant the planner can push into idx_events_kind_created.
-* Results are cached for _TTL seconds and served to every viewer from that one snapshot, so the cost
-  is per-minute, not per-visitor. Measured full refresh: ~0.5s, dominated by the 30-day window.
-* The counts are grouped in ONE pass per window (bucket, kind) rather than a query per metric.
+* Every window is bounded by an INTEGER epoch computed in Python (an `extract(epoch from now())` bound cost a
+  sequential scan: 646ms vs 8ms on Postgres).
+* Results are cached for _TTL seconds here AND in the relay, and served to every viewer from that one snapshot,
+  so the cost is per-minute, not per-visitor. The relay computes on its own "relay-stats" thread -- never a read
+  worker -- and on PosterChanDB counts copies of its columns taken in short pieces under the store lock.
 
 Calls are the one metric with no history to read: kind-25050 signaling is ephemeral (NIP-01 20000-
 29999), so the relay stores none of it — `SELECT count(*) FROM events WHERE kind=25050` is 0 by
@@ -37,6 +35,7 @@ import time
 logger = logging.getLogger(__name__)
 
 _TTL = 60.0                 # seconds a computed snapshot is served to everyone
+_ASK_TIMEOUT = 20.0         # seconds to wait for the relay's answer before the page says "unknown"
 _cache = {"at": 0.0, "data": None}
 _lock = asyncio.Lock()      # one refresh at a time — a burst of viewers must not each run the scans
 
@@ -67,6 +66,11 @@ GAME_PREFIXES = {
     "blackjack": "pcai:blackjack:",
     "holdem":    "pcai:holdem:",
 }
+
+# The encrypted AI-chat transcript events, counted by their d-tag prefix and never read.
+CHAT_PREFIX = "pcai:msg:"
+# Monero support is a public kind-1 tip note carrying this tag (not a Lightning receipt).
+MONERO_TIP = ("t", "monerotip")
 
 # Windows: (key, seconds back, bucket size). 61 points, 25 points, 31 points — small enough to draw
 # as plain SVG polylines with no client-side downsampling.
@@ -172,10 +176,24 @@ _ONE_TIME_KINDS = (1059, 9735)
 _PERSON_PUBKEY = "CASE WHEN kind NOT IN (%s) THEN pubkey END" % ", ".join(str(k) for k in _ONE_TIME_KINDS)
 
 
-def _series(db, now: int):
-    """Grouped kind/tip scans per window → {window: {metric: [counts...]}} aligned to fixed buckets.
-    Counts only locally-published events (origin='direct', see _LOCAL)."""
-    from sqlalchemy import text
+def _relay_counts():
+    """Every relay-derived number, computed BY THE RELAY from its own store (nostr_relay/aggregates.py) -- the app
+    no longer opens the relay's database. None when the relay could not be asked: every figure that depends on it
+    is then UNKNOWN (rendered "—"), never 0."""
+    try:
+        from app.services.nostr_relay import aggregates
+        return aggregates.ask("server-stats", {}, timeout=_ASK_TIMEOUT)
+    except Exception as e:      # relay_reader.Unavailable, or anything else that means "could not ask"
+        logger.info("[stats] relay counts unavailable: %s", e)
+        return None
+
+
+def _series(raw, now: int):
+    """Per-window series {window: {metric: [counts...]}} aligned to fixed buckets, from the relay's raw
+    (bucket, kind, n) rows. Counts only locally-published events (origin='direct', see _LOCAL).
+
+    A part the relay could not count is None here (its cards show "—"), and so is every window when `raw` is
+    None -- a missing answer must not be drawn as a flat line at zero."""
     out = {}
     for key, span, step in WINDOWS:
         # Exact rolling bounds with partial first/last buckets. Include the current
@@ -185,101 +203,51 @@ def _series(db, now: int):
         n = (now // step) - (first_bucket // step) + 1
         buckets = [first_bucket + i * step for i in range(n)]
         index = {b: i for i, b in enumerate(buckets)}
+        w = ((raw or {}).get("windows") or {}).get(key) or {}
         series = {m: [0] * n for m in (*KINDS, "monero_zaps")}
-        rows = db.execute(text("""
-            SELECT (created_at / :step) * :step AS bucket, kind, count(*)
-              FROM events
-             WHERE created_at >= :start AND created_at < :now AND kind = ANY(:kinds) AND %s
-             GROUP BY 1, 2
-        """ % _LOCAL), {"step": step, "start": start, "now": now, "kinds": _ALL_KINDS}).fetchall()
-        for bucket, kind, count in rows:
-            i = index.get(int(bucket))
-            metric = _KIND_TO_METRIC.get(int(kind))
-            if i is not None and metric:
-                series[metric][i] += int(count)
-        # Monero support is a public kind-1 tip note, not a Lightning receipt (9735).
-        # EXISTS counts each event once even if its publisher repeats the hashtag. Keep
-        # Notes intact: this is an additional activity breakdown, not another event.
-        # No wallet balances or private transfers are inspected or inferred.
-        tips = db.execute(text("""
-            SELECT (e.created_at / :step) * :step AS bucket, count(*)
-              FROM events e
-             WHERE e.created_at >= :start AND e.created_at < :now
-               AND e.kind = 1 AND e.origin = 'direct'
-               AND EXISTS (SELECT 1 FROM event_tags t WHERE t.event_id = e.id
-                           AND t.tag = 't' AND t.value = 'monerotip')
-             GROUP BY 1
-        """), {"step": step, "start": start, "now": now}).fetchall()
-        for bucket, count in tips:
-            i = index.get(int(bucket))
-            if i is not None:
-                series["monero_zaps"][i] = int(count)
-        # Per-window totals so the range selector actually applies to the summary sections. Without
-        # these, Network / Games / AI showed all-time figures that never moved when you switched
-        # range, which reads as broken. Measured: 0.01s / 0.08s / 0.50s for the three windows.
-        row = db.execute(text("SELECT count(*), count(DISTINCT " + _PERSON_PUBKEY + ") FROM events "
-                              "WHERE created_at >= :s AND created_at < :n AND " + _LOCAL),
-                         {"s": start, "n": now}).first()
-        win_events, win_people = int(row[0] or 0), int(row[1] or 0)
-        # Per-GAME breakdown for this window, one grouped query (~0.01-0.04s) rather than six LIKE
-        # counts, so the games bars follow the range selector like everything else does.
-        gparams = {"s": start, "n": now}
-        cases, wheres = [], []
-        for i, (gname, pre) in enumerate(GAME_PREFIXES.items()):
-            gparams["p%d" % i] = pre + "%"
-            gparams["n%d" % i] = gname
-            cases.append("WHEN t.value LIKE :p%d THEN :n%d" % (i, i))
-            wheres.append("t.value LIKE :p%d" % i)
-        grows = db.execute(text(
-            "SELECT CASE %s END AS g, count(DISTINCT t.value) "
-            "FROM event_tags t JOIN events e ON e.id = t.event_id "
-            "WHERE t.tag = 'd' AND (%s) AND e.created_at >= :s AND e.created_at < :n GROUP BY 1"
-            % (" ".join(cases), " OR ".join(wheres))), gparams).fetchall()
-        by_game = {g: 0 for g in GAME_PREFIXES}
-        for gname, cnt in grows:
-            if gname in by_game:
-                by_game[gname] = int(cnt or 0)
+        if w.get("kinds") is None:
+            for m in KINDS:
+                series[m] = None
+        else:
+            for bucket, kind, count in w["kinds"]:
+                i = index.get(int(bucket))
+                metric = _KIND_TO_METRIC.get(int(kind))
+                if i is not None and metric:
+                    series[metric][i] += int(count)
+        # Monero support is a public kind-1 tip note, not a Lightning receipt (9735): counted once per event
+        # even if its publisher repeats the hashtag; Notes stay intact. No wallet is inspected or inferred.
+        if w.get("monero") is None:
+            series["monero_zaps"] = None
+        else:
+            for bucket, count in w["monero"]:
+                i = index.get(int(bucket))
+                if i is not None:
+                    series["monero_zaps"][i] = int(count)
+        # Per-window totals so the range selector applies to the summary sections too.
+        by_game = w.get("by_game")
+        games = None if by_game is None else int(sum(by_game.values()))
         out[key] = {"t0": first_bucket, "step": step, "n": n, "series": series,
-                    "totals": {"events": win_events, "people": win_people,
-                               "games": int(sum(by_game.values())), "by_game": by_game}}
+                    "totals": {"events": w.get("events"), "people": w.get("people"),
+                               "games": games,
+                               "by_game": {g: int(by_game.get(g, 0)) for g in GAME_PREFIXES} if by_game is not None else {}}}
     return out
 
 
-def _games(db):
-    """Distinct game boards per game. event_tags(tag,value) is indexed, so this is a ~25ms lookup."""
-    from sqlalchemy import text
-    out, total = {}, 0
-    for name, prefix in GAME_PREFIXES.items():
-        try:
-            n = db.execute(text("""SELECT count(DISTINCT value) FROM event_tags
-                                    WHERE tag = 'd' AND value LIKE :p"""),
-                           {"p": prefix + "%"}).scalar() or 0
-        except Exception:
-            n = 0
-        out[name] = int(n)
-        total += int(n)
-    return {"by_game": out, "total": total}
+def _games(raw):
+    """Distinct game boards per game, all time (one distinct d-tag is one game)."""
+    g = (raw or {}).get("games")
+    if g is None:
+        return {"by_game": {}, "total": None}
+    by_game = {name: int(g.get(name, 0)) for name in GAME_PREFIXES}
+    return {"by_game": by_game, "total": int(sum(by_game.values()))}
 
 
-def _origins(db, now: int) -> dict:
-    """{origin: {"total": n, "day": n}} in ONE grouped pass over `events`.
-
-    `origin` has no index, so any question about it is a sequential scan — which is exactly why this
-    is one query answering every such question instead of one per number. It also feeds `events` /
-    `events_24h` in _totals (origin='direct'), replacing two more scans of the same table.
-    """
-    from sqlalchemy import text
-    out = {}
-    try:
-        rows = db.execute(text("""
-            SELECT origin, count(*), count(*) FILTER (WHERE created_at >= :s)
-              FROM events GROUP BY 1
-        """), {"s": now - 86400}).fetchall()
-        for origin, total, day in rows:
-            out[str(origin or "?")] = {"total": int(total or 0), "day": int(day or 0)}
-    except Exception as e:
-        logger.debug("[stats] origin breakdown unavailable: %s", e)
-    return out
+def _origins(raw):
+    """{origin: {"total": n, "day": n}} -- every stored event by how it got here; None = unknown. It also feeds
+    `events` / `events_24h` in _totals (origin='direct')."""
+    o = (raw or {}).get("origins")
+    return None if o is None else {str(k): {"total": int(v.get("total", 0)), "day": int(v.get("day", 0))}
+                                   for k, v in o.items()}
 
 
 def _relay(now: int, origins: dict) -> dict:
@@ -330,64 +298,42 @@ def _relay(now: int, origins: dict) -> dict:
     return out
 
 
-def _totals(db, now: int, origins: dict):
-    from sqlalchemy import text
-    def scalar(sql, params=None, default=0):
-        try:
-            v = db.execute(text(sql), params or {}).scalar()
-            return int(v) if v is not None else default
-        except Exception:
-            return default
-
-    # Chat volume from the ENCRYPTED transcript events (the plaintext `messages` table is gone).
-    # We count events, never read content — the d-tag identifies them, the body stays encrypted.
-    # ~half of the events are assistant replies, so this counts TURNS, not user prompts; the label
-    # on the page says "AI chat" rather than "requests" for that reason.
-    ai_day = scalar("""SELECT count(*) FROM event_tags t JOIN events e ON e.id = t.event_id
-                        WHERE t.tag = 'd' AND t.value LIKE 'pcai:msg:%' AND e.created_at >= :s""",
-                    {"s": now - 86400})
-    # Network-section counts are scoped to origin='direct' (see _LOCAL): posted HERE, not synced from
-    # the federated network. `db_bytes` stays the full on-disk footprint (honest storage figure).
-    # Both come from the single grouped scan in _origins (origin='direct' IS _LOCAL) rather than
-    # from two more sequential scans of the same table for the same two numbers.
-    _direct = origins.get("direct") or {}
+def _totals(raw, origins):
+    """All-time / 24h figures. Network-section counts are scoped to origin='direct' (see _LOCAL): posted HERE,
+    not synced from the federated network. AI chat is counted from the ENCRYPTED transcript events by their
+    d-tag (never read) -- ~half are assistant replies, so it counts TURNS. `db_bytes` is the relay store's
+    genuine on-disk footprint. Unknown (None) whenever the relay could not count it."""
+    raw = raw or {}
+    direct = (origins or {}).get("direct") if origins is not None else None
+    def get(k):
+        v = raw.get(k)
+        return None if v is None else int(v)
     return {
-        "events":        int(_direct.get("total", 0)),
-        "events_24h":    int(_direct.get("day", 0)),
-        "notes":         scalar("SELECT count(*) FROM events WHERE kind=1 AND " + _LOCAL),
-        "streams":       scalar("SELECT count(*) FROM events WHERE kind=30311 AND " + _LOCAL),
-        "pubkeys_24h":   scalar("SELECT count(DISTINCT " + _PERSON_PUBKEY + ") FROM events WHERE created_at >= :s AND " + _LOCAL, {"s": now - 86400}),
-        "pubkeys_30d":   scalar("SELECT count(DISTINCT " + _PERSON_PUBKEY + ") FROM events WHERE created_at >= :s AND " + _LOCAL, {"s": now - 2592000}),
-        "profiles":      scalar("SELECT count(*) FROM events WHERE kind=0 AND " + _LOCAL),
-        "ai_requests":   scalar("""SELECT count(*) FROM event_tags
-                                    WHERE tag = 'd' AND value LIKE 'pcai:msg:%'"""),
-        "ai_requests_24h": ai_day,
-        "db_bytes":      scalar("SELECT pg_database_size(current_database())"),
+        "events":        None if origins is None else int((direct or {}).get("total", 0)),
+        "events_24h":    None if origins is None else int((direct or {}).get("day", 0)),
+        "notes":         get("notes"),
+        "streams":       get("streams"),
+        "pubkeys_24h":   get("pubkeys_24h"),
+        "pubkeys_30d":   get("pubkeys_30d"),
+        "profiles":      get("profiles"),
+        "ai_requests":   get("ai_requests"),
+        "ai_requests_24h": get("ai_requests_24h"),
+        "db_bytes":      get("db_bytes"),
     }
 
 
-def _chat_series(db, now: int):
-    """Daily AI-chat requests for the 30-day window, straight from `messages`.
-
-    Chat is the one AI metric with real history — every prompt is already a row — so it's aggregated
-    rather than counted forward like image/music/video. `created_at` is a naive UTC timestamp here,
-    matching the rest of the app.
-    """
-    from sqlalchemy import text
+def _chat_series(raw, now: int):
+    """Daily AI-chat turns for the 30-day window (UTC days), from the relay's per-day counts of the encrypted
+    `pcai:msg:` transcript events."""
     days = [time.strftime("%Y-%m-%d", time.gmtime(now - i * 86400)) for i in range(29, -1, -1)]
+    rows = (raw or {}).get("chat_daily")
+    if rows is None:
+        return {"series": None, "days": days, "unknown": True}
     counts = {d: 0 for d in days}
-    try:
-        rows = db.execute(text("""
-            SELECT to_char(to_timestamp(e.created_at) at time zone 'utc', 'YYYY-MM-DD') AS d, count(*)
-              FROM event_tags t JOIN events e ON e.id = t.event_id
-             WHERE t.tag = 'd' AND t.value LIKE 'pcai:msg:%' AND e.created_at >= :since
-             GROUP BY 1
-        """), {"since": now - 2592000}).fetchall()
-        for d, n in rows:
-            if d in counts:
-                counts[d] = int(n)
-    except Exception as e:
-        logger.debug("[stats] chat series unavailable: %s", e)
+    for day, n in rows:
+        d = time.strftime("%Y-%m-%d", time.gmtime(int(day)))
+        if d in counts:
+            counts[d] = int(n)
     return {"series": [counts[d] for d in days], "days": days}
 
 
@@ -428,32 +374,27 @@ def _counter_series(now: int):
 
 
 def _compute() -> dict:
-    """The blocking half: opens its OWN session because it runs in a worker thread.
-
-    Never call this on the event loop. It is ~1.2s of synchronous SQL (dominated by the 30-day scan
-    and the two distinct-person counts), which on the loop would stall every websocket,
-    stream and chat request on the node for that whole second.
-    """
-    from app.database import SessionLocal
-    db = SessionLocal()
-    try:
-        now = int(time.time())
-        t0 = time.monotonic()
-        origins = _origins(db, now)
-        data = {
-            "now": now,
-            "windows": _series(db, now),
-            "games": _games(db),
-            "totals": _totals(db, now, origins),
-            "relay": _relay(now, origins),
-            "counters": _counter_series(now),
-            "chat": _chat_series(db, now),
-            "ttl": int(_TTL),
-        }
-        data["ms"] = int((time.monotonic() - t0) * 1000)
-        return data
-    finally:
-        db.close()
+    """The blocking half (runs in a worker thread): ONE ask to the relay process, which counts from its own
+    store (PosterChanDB or Postgres) on its own thread, plus local file reads. No database is opened here."""
+    t0 = time.monotonic()
+    raw = _relay_counts()
+    now = int((raw or {}).get("now") or time.time())     # the relay's buckets are aligned to ITS now
+    origins = _origins(raw)
+    data = {
+        "now": now,
+        "windows": _series(raw, now),
+        "games": _games(raw),
+        "totals": _totals(raw, origins),
+        "relay": _relay(now, origins),
+        "counters": _counter_series(int(time.time())),
+        "chat": _chat_series(raw, now),
+        "ttl": int(_TTL),
+        # Said on the page: the relay could not be asked, so its numbers are unknown -- not zero.
+        "relay_unavailable": raw is None,
+        "relay_backend": (raw or {}).get("backend"),
+    }
+    data["ms"] = int((time.monotonic() - t0) * 1000)
+    return data
 
 
 async def get_stats(force: bool = False) -> dict:
@@ -468,6 +409,7 @@ async def get_stats(force: bool = False) -> dict:
             return _cache["data"]
         await _load_counters()
         data = await asyncio.to_thread(_compute)
-        _cache["at"] = time.monotonic()
+        # An unanswered ask is cached briefly only, so the page recovers as soon as the relay does.
+        _cache["at"] = time.monotonic() - (0 if not data.get("relay_unavailable") else max(0.0, _TTL - 10))
         _cache["data"] = data
         return data

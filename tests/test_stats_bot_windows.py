@@ -25,65 +25,21 @@ from datetime import datetime, timedelta, timezone
 from app.services import stats_bot_service as S
 
 
-# --- a stand-in for the relay's Postgres --------------------------------------------------------
-
-class _Cursor:
-    """Just enough psycopg2: the kind-0 fetch, the puppet fetch, and the streaming kind-1 scan."""
-
-    def __init__(self, rows_k0, rows_k1, named=False):
-        self._k0, self._k1, self._named = rows_k0, rows_k1, named
-        self._mode = None
-        self.itersize = 0
-
-    def execute(self, sql, params=None):
-        if "kind=0" in sql:
-            self._mode = "k0"
-        elif "fedi_puppets" in sql:
-            raise RuntimeError("no such table")      # the common case: a node that never bridged
-        else:
-            self._mode = "k1"
-            self._since = params[0] if params else 0
-
-    def fetchall(self):
-        return list(self._k0)
-
-    def __iter__(self):
-        return iter([(ts, pk) for ts, pk in self._k1 if ts >= self._since])
-
-    def close(self):
-        pass
-
-
-class _Conn:
-    def __init__(self, rows_k0, rows_k1):
-        self._k0, self._k1 = rows_k0, rows_k1
-
-    def cursor(self, name=None):
-        return _Cursor(self._k0, self._k1, named=bool(name))
-
-    def rollback(self):
-        pass
-
-    def close(self):
-        pass
-
+# --- the relay's half, run for real over a throwaway store ---------------------------------------
 
 def _collect(rows_k1, nip05_pubkeys=("alice", "bob", "carol")):
-    """Run the SHIPPED _collect_stats against a stubbed relay DB."""
-    import sys
-    import types
-    k0 = [(pk, '{"nip05": "%s@example.com"}' % pk) for pk in nip05_pubkeys]
-    fake = types.ModuleType("psycopg2")
-    fake.connect = lambda *a, **k: _Conn(k0, rows_k1)
-    old = sys.modules.get("psycopg2")
-    sys.modules["psycopg2"] = fake
-    try:
+    """Run the SHIPPED _collect_stats, with the relay's SHIPPED aggregate (nostr_relay/aggregates.py) counting
+    `rows_k1` [(created_at, author)] in a sqlite stand-in for its store -- what the relay process answers."""
+    import json
+    from unittest import mock
+    from app.services.nostr_relay import aggregates
+    from tests.relay_agg_fixture import ev, sql_source
+    evs = [ev(p, 0, 1_600_000_000, content=json.dumps({"nip05": "%s@example.com" % p})) for p in nip05_pubkeys]
+    evs += [ev(p, 1, ts) for ts, p in rows_k1]
+    src = sql_source(evs)
+    with mock.patch.object(S, "_ask_activity", lambda since: aggregates.nip05_activity(src, since)), \
+         mock.patch.object(S, "_puppet_pubkeys", lambda: set()):
         return S._collect_stats()
-    finally:
-        if old is not None:
-            sys.modules["psycopg2"] = old
-        else:
-            del sys.modules["psycopg2"]
 
 
 def _utc_midnight():

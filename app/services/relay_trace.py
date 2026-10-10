@@ -6,7 +6,8 @@ rule let a key in. The rebuild now records each member's tier and how many accou
 vouched for it (`wot.WOT_TIERS_KEY`), and this module turns that plus a live follower lookup into the
 admin's profile ⋯ → "Trace on this relay" panel.
 
-`gather()` collects FACTS (relay Postgres, the tier record, the upstream follower lists); `explain()` is
+`gather()` collects FACTS (the relay's own counts + tier record, asked of the relay process; the upstream follower
+lists); `explain()` is
 a pure function from facts to the sentences on screen, so the wording is testable without a relay.
 Nothing here writes anything.
 """
@@ -18,7 +19,6 @@ import logging
 from collections import Counter
 
 from app.services.nostr_relay.langfilter import is_hidden_payload
-from app.services.nostr_relay.wot import WOT_TIERS_KEY
 
 logger = logging.getLogger(__name__)
 
@@ -29,52 +29,32 @@ _RECENT = 300
 
 
 def _relay_rows(pk: str) -> dict:
-    """BLOCKING: everything the relay's own Postgres knows about `pk`."""
-    import psycopg2
-    from app.services.stats_bot_service import _relay_dsn
-    conn = psycopg2.connect(_relay_dsn(), connect_timeout=10)
-    try:
-        cur = conn.cursor()
-        cur.execute("SELECT kind, origin, count(*), min(created_at), max(created_at) FROM events "
-                    "WHERE pubkey=%s GROUP BY kind, origin", (pk,))
-        groups = cur.fetchall()
-        cur.execute("SELECT depth, added_at FROM wot WHERE pubkey=%s", (pk,))
-        wot = cur.fetchone()
-        cur.execute("SELECT value::jsonb->'tiers'->%s, value::jsonb->'built_at', value::jsonb->'depth', "
-                    "value::jsonb->'min_followers' FROM relay_kv WHERE key=%s", (pk, WOT_TIERS_KEY))
-        tier_row = cur.fetchone()
-        cur.execute("SELECT content, tags, created_at FROM events WHERE pubkey=%s AND kind=1 "
-                    "ORDER BY created_at DESC LIMIT %s", (pk, _RECENT))
-        recent = cur.fetchall()
-        cur.execute("SELECT content FROM events WHERE pubkey=%s AND kind=0 LIMIT 1", (pk,))
-        prof = cur.fetchone()
-        return {"groups": groups, "wot": wot, "tier_row": tier_row, "recent": recent,
-                "profile": prof[0] if prof else None}
-    finally:
-        conn.close()
+    """BLOCKING: everything this relay knows about `pk`. The counts per kind/origin, the WoT row and the tier come
+    from the relay PROCESS (nostr_relay/aggregates.py "trace" -- origin is not part of a Nostr event, so no REQ
+    can answer it); the recent notes and the profile are an ordinary REQ (relay_reader), exactly what a client
+    sees. Raises relay_reader.Unavailable when the relay cannot be asked -- never an empty account."""
+    from app.services import relay_reader
+    from app.services.nostr_relay import aggregates
+    facts = aggregates.ask("trace", {"pubkey": pk}, timeout=20.0)
+    notes = relay_reader.query([{"authors": [pk], "kinds": [1], "limit": _RECENT}])
+    notes.sort(key=lambda e: (e.get("created_at", 0), e.get("id", "")), reverse=True)
+    prof = relay_reader.query([{"authors": [pk], "kinds": [0], "limit": 1}])
+    return {"groups": [tuple(g) for g in facts.get("groups") or []],
+            "wot": tuple(facts["wot"]) if facts.get("wot") else None,
+            "tier_row": tuple(facts["tier_row"]) if facts.get("tier_row") else None,
+            "recent": [(e.get("content") or "", json.dumps(e.get("tags") or []), int(e.get("created_at") or 0))
+                       for e in notes[:_RECENT]],
+            "profile": prof[0].get("content") if prof else None}
 
 
 def _tiers_for(pks: list) -> dict:
     """BLOCKING: {pubkey: [tier, vouchers]} for the members among `pks` (from the last clean rebuild),
-    plus {pubkey: None} for members the record does not cover (operators, admitted between rebuilds)."""
+    plus {pubkey: None} for members the record does not cover (operators, admitted between rebuilds).
+    Asked of the relay process (it holds the trust set); raises relay_reader.Unavailable when it can't be."""
     if not pks:
         return {}
-    import psycopg2
-    from app.services.stats_bot_service import _relay_dsn
-    conn = psycopg2.connect(_relay_dsn(), connect_timeout=10)
-    try:
-        cur = conn.cursor()
-        cur.execute("SELECT pubkey FROM wot WHERE pubkey = ANY(%s)", (list(pks),))
-        members = [r[0] for r in cur.fetchall()]
-        out = {m: None for m in members}
-        if members:
-            cur.execute("SELECT k, v FROM relay_kv, jsonb_each(value::jsonb->'tiers') AS t(k, v) "
-                        "WHERE key=%s AND k = ANY(%s)", (WOT_TIERS_KEY, members))
-            for k, v in cur.fetchall():
-                out[k] = v if isinstance(v, list) else json.loads(v)
-        return out
-    finally:
-        conn.close()
+    from app.services.nostr_relay import aggregates
+    return aggregates.ask("wot-tiers", {"pubkeys": list(pks)}, timeout=20.0) or {}
 
 
 async def _followers(pk: str, relays: list) -> list:
@@ -108,9 +88,15 @@ async def gather(pk: str, relays: list, *, hops: int = 2) -> dict:
     rows = await asyncio.to_thread(_relay_rows, pk)
     followers = chain = None
     tiers = {}
+    tiers_unknown = False
     try:
         followers = await asyncio.wait_for(_followers(pk, relays), 20)
-        tiers = await asyncio.to_thread(_tiers_for, followers)
+        try:
+            tiers = await asyncio.to_thread(_tiers_for, followers)
+        except Exception:
+            # Which followers are members is the RELAY's answer; not getting it is "unknown", never "none of them".
+            tiers_unknown = True
+            raise
         # Walk up the strongest voucher until it reaches the seeds or their follows.
         chain, cur = [], _rank(tiers, followers)
         for _ in range(hops):
@@ -126,7 +112,8 @@ async def gather(pk: str, relays: list, *, hops: int = 2) -> dict:
             cur = _rank(up_t, up)
     except Exception as e:
         logger.info("[relay-trace] follower lookup failed: %s", e)
-    return {"pubkey": pk, "rows": rows, "followers": followers, "tiers": tiers, "chain": chain}
+    return {"pubkey": pk, "rows": rows, "followers": followers, "tiers": tiers, "chain": chain,
+            "tiers_unknown": tiers_unknown}
 
 
 def explain(facts: dict, *, blocked: bool = False, member: dict | None = None, local_user: bool = False) -> dict:
@@ -220,6 +207,8 @@ def explain(facts: dict, *, blocked: bool = False, member: dict | None = None, l
     tiers = facts.get("tiers") or {}
     if followers is None:
         signals.append({"level": "info", "text": "Could not ask the public relays who follows it."})
+    elif facts.get("tiers_unknown"):
+        signals.append({"level": "info", "text": "Could not ask this relay which of its followers are in the web of trust."})
     elif not followers:
         signals.append({"level": "warn", "text": "No follower found on the public relays."})
 
@@ -227,7 +216,7 @@ def explain(facts: dict, *, blocked: bool = False, member: dict | None = None, l
     if followers:
         for p in _rank(tiers, followers)[:_SHOWN_FOLLOWERS]:
             t = tiers.get(p, "absent")
-            shown.append({"pubkey": p, "in_wot": t != "absent",
+            shown.append({"pubkey": p, "in_wot": None if facts.get("tiers_unknown") else t != "absent",
                           "tier": None if t in ("absent", None) else t[0],
                           "vouchers": None if t in ("absent", None) else t[1]})
     return {
@@ -239,7 +228,8 @@ def explain(facts: dict, *, blocked: bool = False, member: dict | None = None, l
         "chain": [{"pubkey": c["pubkey"], "tier": None if c["tier"] is None else c["tier"][0],
                    "vouchers": None if c["tier"] is None else c["tier"][1]} for c in (facts.get("chain") or [])],
         "followers": {"found": None if followers is None else len(followers),
-                      "in_wot": sum(1 for p in (followers or []) if p in tiers), "shown": shown},
+                      "in_wot": None if facts.get("tiers_unknown") else sum(1 for p in (followers or []) if p in tiers),
+                      "shown": shown},
         "wot": {"member": bool(wot), "tier": None if not tier else tier[0], "built_at": built_at, "depth": depth,
                 "min_followers": min_f},
     }
