@@ -72,8 +72,9 @@ class TheShardCountIsAskable(unittest.TestCase):
 
     def test_the_option_reaches_the_suite_and_not_just_the_parser(self):
         """An accepted flag that changes nothing is worse than no flag."""
-        self.assertIn("run_full_suite(root, env, directory, jobs=jobs)", SRC,
-                      "run_gate accepts a shard count and drops it on the floor")
+        # The rule is that the shard count is PASSED; other arguments may join it (the server-only browser skip).
+        self.assertRegex(SRC, r"run_full_suite\(root, env, directory, jobs=jobs[,)]",
+                         "run_gate accepts a shard count and drops it on the floor")
         self.assertIn("def run_gate(root=ROOT, receipt=None, full=False, jobs=0):", SRC)
         self.assertRegex(SRC, r"parser\.add_argument\('--jobs'")
 
