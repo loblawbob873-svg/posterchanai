@@ -5447,7 +5447,9 @@
       const arr = pt ? JSON.parse(pt) : null; return Array.isArray(arr) ? arr.filter(t => Array.isArray(t) && t[0]) : null; }catch(_){ return null; } };
     let tags = null;
     if(!/\?iv=/.test(ev.content) && signer.nip44dec) tags = await tryDec(() => signer.nip44dec(ME.pubkey, ev.content));
-    if(!tags && signer.nip04dec) tags = await tryDec(() => signer.nip04dec(ME.pubkey, ev.content));
+    // NIP-04 ONLY for NIP-04 content. Handing a NIP-44 payload to nip04_decrypt can only fail -- and a remote
+    // signer (NIP-46/55) shows that failure to the person ("nip04_decrypt_failed: invalid base64").
+    if(!tags && signer.nip04dec && /\?iv=/.test(ev.content)) tags = await tryDec(() => signer.nip04dec(ME.pubkey, ev.content));
     return tags;
   }
   /* What the shrink guard needs to know about a kind-10000 publish: how many PRIVATE entries ride along
