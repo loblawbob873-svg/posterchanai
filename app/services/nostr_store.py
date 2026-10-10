@@ -520,11 +520,16 @@ async def get_docs(port: int, d_tags, *, seckey: bytes | None = None, pubkey: st
     return {d: _decode(ev.get("content", ""), seckey, encrypt) for d, ev in best.items()}
 
 
-async def delete_doc(port: int, seckey: bytes, d_tag: str, *, kind: int = APP_KIND) -> bool:
-    """Delete document `d_tag` (NIP-09 kind-5 referencing the current event + its addressable coord)."""
+async def delete_doc(port: int, seckey: bytes, d_tag: str, *, kind: int = APP_KIND,
+                     strict: bool = False) -> bool:
+    """Delete document `d_tag` (NIP-09 kind-5 referencing the current event + its addressable coord).
+
+    `strict=True` RAISES when the relay cannot be asked whether the document exists -- loosely, an
+    unreachable relay answers "nothing there" and this returns True: a delete reported done that never
+    happened, which a caller counting what it removed must not be told."""
     pk = bip340.pubkey_from_seckey(seckey).hex()
     evs = await _ws_query(port, [{"authors": [pk], "kinds": [kind], "#d": [d_tag], "limit": 1}],
-                          auth_seckey=seckey)
+                          auth_seckey=seckey, strict=strict)
     if not evs:
         return True   # nothing to delete
     eid = evs[0].get("id")
