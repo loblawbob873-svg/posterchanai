@@ -1117,7 +1117,12 @@ window.PCDmsFactory = function(dep){
   }
   async function decryptMsg(peer, m){
     if(m.text!=null) return m.text;
-    try{ m.text=await S.signer.nip04dec(peer, m.ev.content); }catch(_){ m.text='🔒 (couldn\'t decrypt)'; }
+    // A kind-4 whose content has no `?iv=` is not NIP-04 (some clients put NIP-44 there): ask NIP-44, never
+    // NIP-04, which can only fail -- loudly, inside a remote signer ("nip04_decrypt_failed: invalid base64").
+    const ct = String(m.ev.content || '');
+    try{ m.text = /\?iv=/.test(ct) ? await S.signer.nip04dec(peer, ct)
+                 : (S.signer.nip44dec ? await S.signer.nip44dec(peer, ct) : (()=>{ throw new Error('not NIP-04'); })()); }
+    catch(_){ m.text='🔒 (couldn\'t decrypt)'; }
     return m.text;
   }
   // Shared image-URL test for compose preview strips. Extension-only (matches the linkify/media embed

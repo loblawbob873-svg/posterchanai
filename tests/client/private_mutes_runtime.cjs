@@ -100,5 +100,19 @@ function ok(name, v){ if(!v) throw new Error(name); console.log('  ok   ' + name
   ok('the private list lost exactly that person', kept.length === 20 && !kept.some(t => t[1] === pk(100)));
   ok('and they were not added to the public tags', !sealed.tags.some(t => t[0] === 'p' && t[1] === pk(100)));
   ok('the local private set forgets them', !s.MUTED_PRIVATE.has(pk(100)));
+  // 5. 2026-10-10: a NIP-46/55 signer showed "nip04_decrypt_failed: invalid base64". A NIP-44 private list whose
+  //    NIP-44 decrypt failed was handed to nip04_decrypt anyway -- which can only fail, LOUDLY, in the signer.
+  //    NIP-04 is only ever asked for content that IS NIP-04 (`?iv=`).
+  {
+    const asked = [];
+    const sg = { nip44dec: async () => { asked.push('44'); throw new Error('refused'); },
+                 nip04dec: async () => { asked.push('04'); throw new Error('nip04_decrypt_failed: invalid base64'); } };
+    const ww = world({ settings: {}, signer: sg });
+    const res = await ww._readPrivateMutes({ kind: 10000, content: 'AsomeNip44PayloadWithoutAnIv==', tags: [] });
+    ok('NIP-44 content is never sent to the NIP-04 decryptor', res === null && asked.join(',') === '44');
+    asked.length = 0;
+    await ww._readPrivateMutes({ kind: 10000, content: 'abc?iv=def', tags: [] });
+    ok('NIP-04 content still goes to the NIP-04 decryptor', asked.includes('04') && !asked.includes('44'));
+  }
   console.log('OK private mutes');
 })().catch(e => { console.error(e.stack || e); process.exitCode = 1; });
