@@ -326,3 +326,35 @@ def test_searches_go_to_postgres_until_the_words_are_indexed_then_come_from_ram(
     assert not _same_answers(rs, gen, 200)
     assert m.counters["served"] > served
     assert _until(lambda: os.path.exists(os.path.join(m.path, "index.snap"))), "no snapshot after indexing"
+
+
+# ---------------------------------------------------------------- a new install, and a directory that cannot be used
+def test_a_new_install_with_an_empty_database_becomes_ready_and_takes_the_first_writes(relay_pg, tmp_path):
+    rs, dsn = relay_pg                                    # nothing stored yet: a first boot
+    path = str(tmp_path / "fresh" / "relay")              # and the directory does not exist yet either
+    m = _attach(rs, _mirror(path, dsn))
+    assert _until(lambda: m.state == "ready"), m.stats()
+    assert m.counters["copied"] == 0 and m.pg_count == m.my_count == 0
+    gen = Gen(46)
+    _feed(rs, gen, 150)                                   # the first posts ever made on this node
+    assert not _same_answers(rs, gen, 150)
+    assert m.counters["served"] > 0
+    _stop(rs)
+    m2 = _attach(rs, _mirror(path, dsn))                  # and its first restart reopens instead of copying
+    assert _until(lambda: m2.state == "ready") and m2.counters["copied"] == 0
+
+
+def test_a_directory_that_cannot_be_used_leaves_the_relay_on_postgres(relay_pg, tmp_path, monkeypatch, caplog):
+    import logging
+    from app.services.nostr_relay import thread
+    rs, dsn = relay_pg
+    blocker = tmp_path / "not-a-dir"
+    blocker.write_text("a file where the data directory should be")   # mkdir under it fails, like a broken mount
+    monkeypatch.setenv("POSTERCHANDB_DIR", str(blocker))
+    with caplog.at_level(logging.WARNING):
+        thread._start_mirror(rs, {"pcdb_mode": "serve", "pg_dsn": dsn})
+    assert rs.mirror is None, "a mirror that could not open its directory was attached"
+    assert any("not started" in r.getMessage() for r in caplog.records), caplog.text
+    gen = Gen(47)
+    _feed(rs, gen, 100)                                   # and the relay goes on storing and answering
+    assert not _same_answers(rs, gen, 100)
