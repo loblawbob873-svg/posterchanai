@@ -17,17 +17,22 @@ from unittest import mock
 import pytest
 
 from app.services import nip05_registry as N
+from app.services.nostr import bip340
 from tests.relay_fake import FakeRelay, ev
 
 ROOT = Path(__file__).resolve().parents[1]
 A, B, C = "a" * 64, "b" * 64, "c" * 64
+OP_SK = bytes.fromhex("42" * 32)
+OP = bip340.pubkey_from_seckey(OP_SK).hex()
 
 
 @pytest.fixture
 def relay(monkeypatch):
-    """THIS node's relay (#161: activity is asked of the relay, never read from its Postgres tables)."""
-    r = FakeRelay()
+    """THIS node's relay (#161: activity is asked of the relay, never read from its Postgres tables), which
+    counts private documents for this node's operator key only."""
+    r = FakeRelay(operator=OP)
     monkeypatch.setenv("POSTERCHANAI_RELAY_PORT", str(r.port))
+    monkeypatch.setattr(N, "_operator_key", lambda: OP_SK, raising=False)
     yield r
     r.close()
 
@@ -46,8 +51,8 @@ def test_activity_counts_posts_apart_from_what_signing_up_writes(relay, monkeypa
     relay.events += [ev(A, 5, 1791450000 - i) for i in range(28)]                          # 28 other events
     relay.events += [ev(B, 0, 1790000000), ev(B, 10002, 1791100000)]
     relay.events += [ev(B, 5, 1791000000 - i) for i in range(3)]
-    # D: one deletion, then a page's worth of PRIVATE documents newer than it -- the relay withholds them, so
-    # the newest-first page shows nothing; the date must still be found, and must not be one of theirs.
+    # D: one deletion, then a page's worth of PRIVATE documents newer than it -- the relay withholds them from
+    # every REQ, so the newest-first page shows nothing; they are still activity, and the dates must count them.
     relay.events += [ev(D, 0, 1700000000), ev(D, 5, 1760000000)]
     relay.events += [ev(D, 30078, 1770000000 + i, tags=[["d", "pcai:note:%d" % i]]) for i in range(10)]
     got = N.activity([A, B, C, D])
@@ -57,15 +62,41 @@ def test_activity_counts_posts_apart_from_what_signing_up_writes(relay, monkeypa
     assert got[B] == {"posts": 0, "events": 3, "last_post": None, "last_event": 1791000000, "first_seen": 1790000000}
     # A key the relay holds NOTHING for is "no activity at all" -- it was asked, and answered.
     assert got[C] == {"posts": 0, "events": 0, "last_post": None, "last_event": None, "first_seen": None}
-    assert got[D] == {"posts": 0, "events": 1, "last_post": None, "last_event": 1760000000, "first_seen": 1700000000}
+    assert got[D] == {"posts": 0, "events": 11, "last_post": None, "last_event": 1770000009, "first_seen": 1700000000}
     assert list(N.SIGNUP_KINDS) and 0 in N.SIGNUP_KINDS and 3 in N.SIGNUP_KINDS
     assert 1 in N.POST_KINDS and 0 not in N.POST_KINDS
+
+
+def test_a_member_who_only_writes_notes_is_active_with_the_right_dates(relay):
+    """Admin offers "signed up and never did anything" accounts for removal; a Notes-only member (kind 30078,
+    private to them) must never be one of them."""
+    N_ = "e" * 64
+    relay.events += [ev(N_, 30078, 1790000000 + i * 1000, tags=[["d", "pcai:note:%d" % i]]) for i in range(3)]
+    got = N.activity([N_])[N_]
+    assert got == {"posts": 0, "events": 3, "last_post": None, "last_event": 1790002000, "first_seen": 1790000000}
+    assert OP in relay.auths, "the private count must be asked as this node's operator"
+
+
+def test_a_relay_that_will_not_count_private_documents_is_unknown_not_inactive(monkeypatch):
+    """An older relay (mid-deploy) or one that does not take this key as its own answers the narrower count --
+    without private documents -- and a Notes-only member would read as inactive. That is "could not ask"."""
+    r = FakeRelay(operator="")        # signs us in, never grants the operator count
+    try:
+        monkeypatch.setenv("POSTERCHANAI_RELAY_PORT", str(r.port))
+        monkeypatch.setattr(N, "_operator_key", lambda: OP_SK, raising=False)
+        r.events += [ev(A, 30078, 1790000000, tags=[["d", "pcai:note:1"]])]
+        assert N.activity([A]) is None
+        monkeypatch.setattr(N, "_operator_key", lambda: None)       # no operator key on this node
+        assert N.activity([A]) is None
+    finally:
+        r.close()
 
 
 def test_a_relay_that_cannot_be_read_is_unknown_never_inactive(monkeypatch):
     import socket
     s = socket.socket(); s.bind(("127.0.0.1", 0)); port = s.getsockname()[1]; s.close()
     monkeypatch.setenv("POSTERCHANAI_RELAY_PORT", str(port))
+    monkeypatch.setattr(N, "_operator_key", lambda: OP_SK, raising=False)
     assert N.activity([A]) is None
 
     async def profiles(pks):

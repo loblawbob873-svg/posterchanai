@@ -19,7 +19,7 @@ import pytest
 
 from app.services import relay_reader, settings_store as S
 from app.services.nostr import bip340, nip44
-from tests.relay_fake import FakeRelay, ev
+from tests.relay_fake import FakeRelay, ShippedRelay, ev
 
 OP_SK = bytes.fromhex("42" * 32)
 OP = bip340.pubkey_from_seckey(OP_SK).hex()
@@ -189,72 +189,17 @@ def test_open_store_for_settings_makes_the_store_the_settings_source(monkeypatch
 # event store replaced by memory. A reader that signs the wrong relay URL, or a COUNT the relay would refuse,
 # passes every fake and fails here.
 
-class _MemStore:
-    def __init__(self, events):
-        self.events = list(events)
-
-    async def query(self, filters, hard_cap=5000):
-        from tests.relay_fake import _matches, _order
-        seen = {}
-        for f in filters:
-            lim = max(1, min(int(f.get("limit") or 500), 5000))
-            for e in _order([e for e in self.events if _matches(e, f)])[:lim]:
-                seen[e["id"]] = e
-        return _order(seen.values())[:hard_cap]
-
-    async def count_filtered(self, filters, protect_nip78=False):
-        from tests.relay_fake import _matches
-        n = 0
-        for f in filters:
-            explicit = any(int(k) in (78, 30078) for k in (f.get("kinds") or []))
-            n += sum(1 for e in self.events if _matches(e, f)
-                     and not (protect_nip78 and not explicit and int(e["kind"]) in (78, 30078)))
-        return n
-
-
-class _Gate:
-    def is_member(self, _pk): return True
-    def is_operator(self, _pk): return False
-    def is_blocked(self, _pk): return False
-    def is_puppet_event(self, _ev): return False
-
-
 @pytest.fixture
 def real_relay():
-    import asyncio
-    import threading
-    import websockets
-    from app.services.nostr_relay.server import RelayServer
+    servers = []
 
-    holder, ready = {}, threading.Event()
-
-    def run():
-        loop = asyncio.new_event_loop()
-        asyncio.set_event_loop(loop)
-
-        async def main():
-            srv = RelayServer(_MemStore(holder["events"]), _Gate(), {"wot_enabled": False})
-            ws = await websockets.serve(srv.handle, "127.0.0.1", 0, process_request=srv.process_request)
-            holder["port"] = ws.sockets[0].getsockname()[1]
-            holder["stop"] = asyncio.Event()
-            ready.set()
-            await holder["stop"].wait()
-            ws.close()
-            await ws.wait_closed()
-        holder["loop"] = loop
-        loop.run_until_complete(main())
-
-    def start(events):
-        holder["events"] = events
-        t = threading.Thread(target=run, daemon=True)
-        t.start()
-        assert ready.wait(10)
-        holder["thread"] = t
-        return holder["port"]
+    def start(events, cfg=None):
+        srv = ShippedRelay(events, cfg)
+        servers.append(srv)
+        return srv.port
     yield start
-    if "stop" in holder:
-        holder["loop"].call_soon_threadsafe(holder["stop"].set)
-        holder["thread"].join(10)
+    for srv in servers:
+        srv.close()
 
 
 def test_the_shipped_relay_serves_the_operator_its_settings(store, monkeypatch, real_relay):
@@ -273,10 +218,14 @@ def test_the_shipped_relay_answers_identities_activity(monkeypatch, real_relay):
     events += [ev(A, 5, 1791450000 - i) for i in range(28)]
     events += [ev(D, 0, 1700000000), ev(D, 5, 1760000000)]
     events += [ev(D, 30078, 1770000000 + i, tags=[["d", "pcai:note:%d" % i]]) for i in range(10)]
-    port = real_relay(events)
+    events += [ev("e" * 64, 30078, 1790000000 + i, tags=[["d", "pcai:note:%d" % i]]) for i in range(2)]
+    port = real_relay(events, {"node_pubkey": OP})
     monkeypatch.setenv("POSTERCHANAI_RELAY_PORT", str(port))
-    got = N.activity([A, D, "c" * 64])
+    monkeypatch.setattr(N, "_operator_key", lambda: OP_SK, raising=False)
+    got = N.activity([A, D, "c" * 64, "e" * 64])
     assert got[A] == {"posts": 12, "events": 40, "last_post": 1791400000, "last_event": 1791450000,
                       "first_seen": 1780000000}
-    assert got[D] == {"posts": 0, "events": 1, "last_post": None, "last_event": 1760000000, "first_seen": 1700000000}
+    assert got[D] == {"posts": 0, "events": 11, "last_post": None, "last_event": 1770000009, "first_seen": 1700000000}
+    assert got["e" * 64] == {"posts": 0, "events": 2, "last_post": None, "last_event": 1790000001,
+                             "first_seen": 1790000000}, "a Notes-only member read as inactive"
     assert got["c" * 64]["events"] == 0

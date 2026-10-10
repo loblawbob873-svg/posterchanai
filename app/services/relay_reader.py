@@ -101,22 +101,33 @@ def query(filters: list, *, port: int | None = None, timeout: float = 10.0, url:
     return out
 
 
-def counts(filters: list, *, port: int | None = None, timeout: float = 10.0, url: str | None = None) -> list:
+def counts(filters: list, *, port: int | None = None, timeout: float = 10.0, url: str | None = None,
+           auth_seckey: bytes | None = None, private: bool = False) -> list:
     """NIP-45: one COUNT per filter in `filters`, all on one socket; the answers in the same order.
 
-    The relay counts what it would serve a client that has not signed in, so NIP-78 documents (kinds 78/30078)
-    are never in a count. Raises Unavailable when any count cannot be had -- a missing count is never 0."""
+    Unauthenticated, the relay counts what it would serve anybody: NIP-78 documents (kinds 78/30078) are never in
+    a count. `private=True` asks for the OPERATOR count: sign in with `auth_seckey` (this node's own key) and the
+    relay includes every author's private documents -- counts only, it serves none of them. Each answer must
+    then SAY so (`"private": true`): a relay that does not grant it (an older build mid-deploy, a key it does not
+    recognise as its own) answers with the narrower count, and taking that for the full one would read a member
+    who only writes Notes as inactive. So that is Unavailable, as is any count that cannot be had -- a missing
+    count is never 0."""
     if not filters:
         return []
+    if private and not auth_seckey:
+        raise Unavailable("a private count needs the operator key")
     try:
         from websockets.sync.client import connect
     except Exception as e:      # noqa: BLE001
         raise Unavailable("websockets is not installed: %s" % e) from e
+    target = _target(url, port)
     base = "rc" + uuid.uuid4().hex[:8]
     subs = ["%s-%d" % (base, i) for i in range(len(filters))]
     got: dict = {}
     try:
-        with connect(_target(url, port), open_timeout=timeout, close_timeout=2) as ws:
+        with connect(target, open_timeout=timeout, close_timeout=2) as ws:
+            if auth_seckey:
+                _authenticate(ws, target, auth_seckey, timeout)
             for sub, flt in zip(subs, filters):
                 ws.send(json.dumps(["COUNT", sub, flt]))
             want = set(subs)
@@ -128,6 +139,8 @@ def counts(filters: list, *, port: int | None = None, timeout: float = 10.0, url
                     n = msg[2].get("count")
                     if not isinstance(n, int) or isinstance(n, bool) or n < 0:
                         raise Unavailable("the relay answered a COUNT with %r" % (msg[2],))
+                    if private and msg[2].get("private") is not True:
+                        raise Unavailable("the relay did not count private documents for this key")
                     got[msg[1]] = n
                 elif msg[0] == "CLOSED":
                     raise Unavailable("the relay refused a COUNT: %s" % (msg[2] if len(msg) > 2 else ""))
