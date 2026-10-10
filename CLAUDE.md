@@ -80,8 +80,10 @@ exiting **1** on drift rather than reporting a green deploy. Guarded by
 `tests/test_sync_deploy_flow.py`.
 
 Push authorization is a **Nostr signature, not a connection**: only a maintainer of
-`30617:<owner>:posterchanai` can move a ref, and the `pre-receive` hook reads the **hosting node's**
-(nas) relay Postgres. server1 and nas run separate relays with separate event stores, so the repo
+`30617:<owner>:posterchanai` can move a ref, and the `pre-receive` hook asks the **hosting node's**
+(nas) RELAY over its loopback socket (`relay_reader`, signed in as the node key so private repos are
+visible) — never its Postgres (#161), and a relay that cannot be asked REFUSES the push. server1 and nas
+run separate relays with separate event stores, so the repo
 announcement lists **`wss://poster.place/git`** — that endpoint proxies to *nas's* relay, which is why
 a push signed on server1 is visible to nas's hook. Everything is a public URL: no `nas.lan`, no SSH.
 
