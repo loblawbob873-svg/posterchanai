@@ -33,7 +33,8 @@ function run(playing){
   const el=fakeEl();
   const player={now:()=>playing===null?null:({title:'Song',next:'Next',total:3,pos:1,playing:!!playing,d:100,t:5}),
     shuffling:()=>false};
-  const ctx={console,Math,Number,$:(s,e)=>e.querySelector(s),PC:()=>({music:()=>player}),
+  // `_widgetPlayer` is what the widget reads: this page's player, or the Music window's over the channel.
+  const ctx={console,Math,Number,$:(s,e)=>e.querySelector(s),PC:()=>({music:()=>player}),_widgetPlayer:()=>player,
     _mmss:x=>String(x|0),el};
   vm.createContext(ctx);
   vm.runInContext('(function(el){'+body+'})(el);',ctx);

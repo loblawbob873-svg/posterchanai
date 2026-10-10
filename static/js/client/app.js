@@ -6773,7 +6773,11 @@
       // While ROUTING (back/forward) it may only bring an existing window forward — so going back to
       // the timeline focuses the Social window that already has it, rather than repainting whatever
       // window happened to be in front (which turned the Profile window into a timeline).
-      try{ if(PCOS.routeView && PCOS.routeView(v, _routing)) return; }
+      try{
+        if(PCOS.routeView && PCOS.routeView(v, _routing)) return;
+        // Music is the desktop's own window, not a sidebar view routeView knows (see os.js routeMusic).
+        if(v === 'music' && PCOS.routeMusic && PCOS.routeMusic()) return;
+      }
       finally{ switchView._osIn = 0; }
     }
     // Leaving Messages clears the open conversation so RE-entering Messages shows the list (not the last
@@ -6818,7 +6822,7 @@
     $('#view-title').textContent = { home:'Home', texts:'Texts', global:'Nostrverse', trending:'Trending', notifications:'Notifications', messages:'Messages', concord:'Communities', mail:'Email', drafts:'Drafts', bookmarks:'Bookmarks', analytics:'My Analytics 📈', articles:'Articles', markets:'Markets 📈', streams:'Streams', calls:'Calls 📞', pics:'Pics', torrents:'Torrents 🧲', 'media-center':'Media Center', repos:'Git 🌱', repo:'Repo', news:'News 🗞️', websearch:'Web Search 🔎', vms:'Virtual Machines 🖥️', code:'PosterChan Code 💻', calendar:'Calendar 📅', contacts:'Contacts 👥', notes:'Notes 📝', sync:'Folder Sync 🔄', vault:'Passwords 🔑', wallet:'Monero Wallet ɱ', exodus:'Wallet 💼', budget:'Budget 💰',calculator:'Calculator',tg:'Telegram', stats:'Server Stats 📊', chess:'Chess ♟️', ttt:'Tic-Tac-Toe ⭕', hangman:'Hangman 🎯', connect4:'Connect Four 🔴', blackjack:'Blackjack 🃏', holdem:"Texas Hold'em 🃏", xdc:'Webxdc 🎮', meme:'Meme Builder 🎬', blossom:'Files', profile:'Profile', settings:'Settings', ai:'PosterChan AI', translate:'Live Translate 🌐', admin:'Admin', terminal:'Terminal', office:'PosterChan Office', signer:'Signer',
       /* The desktop's own screens are routed by an internal id; the heading is what a person reads,
        * and "__ossettings" is not a word (it was, on every System Settings window). */
-      __ossettings:'System Settings', __tasks:'Task Manager', __remote:'Remote Desktop', __golive:'Go Live',
+      __ossettings:'System Settings', __tasks:'Task Manager', __remote:'Remote Desktop', __golive:'Go Live', __music:'Music',
       __installer:'Install PosterChanOS' }[v]||v;
     if(v==='blossom') $('#view-title').textContent='File Manager';
     if(v==='office') $('#view-title').textContent='PosterChan Office';
@@ -10480,7 +10484,13 @@
   function _musicLoad(){ return _lzLoad('music.js', 'PCMusicFactory', _musicDeps); }
   function _renderMusicList(){ return _lzRun(_musicMod, _musicLoad, '_renderMusicList', arguments); }
   function _updateMusicListBtns(){ const m=_musicMod(); if(m) return m._updateMusicListBtns.apply(null, arguments); }   // nothing to do until it has loaded
-  function renderMusicApp(){ return _lzRun(_musicMod, _musicLoad, 'renderMusicApp', arguments, true); }
+  /* On the windowed desktop Music is a WINDOW: an entry that is not that window's own repaint
+   * (openMusic from a launcher tile, the widget relaunch, switchView('music')) opens or raises it
+   * instead of painting into whichever window holds #feed. See os.js routeMusic. */
+  function renderMusicApp(){
+    try{ if(window.PCOS && PCOS.routeMusic && PCOS.routeMusic()) return; }catch(_){}
+    return _lzRun(_musicMod, _musicLoad, 'renderMusicApp', arguments, true);
+  }
   /* Bluetooth connection behaviour is a PHONE preference, not player chrome. User Settings asks
    * through this narrow bridge so the Music screen keeps its scarce mobile height for the library. */
   function _musicPhoneSettings(){
