@@ -83,8 +83,8 @@ not hand-maintained.
 
 | group | what | needs | time |
 |-------|------|-------|------|
-| `unit` | `pytest tests/` — services, routers, relay, media | nothing | ~3.5 min |
-| `client` | `pytest tests/client/` — the shipped client JS, run under node against stubs | node | ~5.5 min |
+| `unit` | `tests/` (sharded: `deploy_regression_gate.py --suite tests`) — services, routers, relay, media | nothing | ~25 min |
+| `client` | `tests/client/` (sharded: `--suite tests/client`) — the shipped client JS, run under node against stubs | node | ~20 min |
 | `ui` | 20 browser checks that serve the real `static/` themselves and drive headless Chrome | chrome | ~2 min (parallel) |
 | `lint` | advisory — real findings that are not "does the app work" | nothing | seconds |
 | `live` | browser checks against a REAL running instance | `--live URL` | ~15 min |
