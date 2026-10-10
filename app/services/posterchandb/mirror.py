@@ -142,7 +142,7 @@ class Mirror:
             self._words_thread = threading.Thread(target=self._index_words, name="posterchandb-words", daemon=True)
             self._words_thread.start()
         if state == "ready" and self.maintenance and self._maint is None:
-            pol = lambda: maint_mod.Policy(min_free_pct=0)     # noqa: E731 -- Postgres decides what is deleted
+            pol = lambda: maint_mod.Policy(min_free_pct=0, mirror_of_postgres=True)     # noqa: E731 -- Postgres decides what is deleted
             # Snapshots HOURLY, never at shutdown: the stop must fit systemd's 10 s, and with a snapshot at most an
             # hour old the next start replays seconds of log instead of re-indexing everything.
             self._maint = maint_mod.Maintainer(self.store, pol, log=self.log, snapshot_hours=1.0)

@@ -103,7 +103,7 @@ class Policy:
 
     def __init__(self, retention_days: int = 0, max_events: int = 0, preserve_pubkeys=(),
                  subscribers=(), free_retention_days: int = 0, paid_retention_days: int = 0,
-                 tiered_ok: bool = False, min_free_pct: float = 5.0):
+                 tiered_ok: bool = False, min_free_pct: float = 5.0, mirror_of_postgres: bool = False):
         self.retention_days = int(retention_days or 0)
         self.max_events = int(max_events or 0)
         self.preserve_pubkeys = set(preserve_pubkeys or ())
@@ -112,6 +112,11 @@ class Policy:
         self.paid_retention_days = int(paid_retention_days or 0)
         self.tiered_ok = bool(tiered_ok)
         self.min_free_pct = float(min_free_pct)
+        # A MIRROR of Postgres deletes only what neither side counts (expired events). Every other rule is
+        # Postgres's to apply on its own schedule; the mirror receives those deletions. Applied here on the
+        # mirror's clock (a bridged DM crossing its TTL between Postgres's nightly prunes) it left the two one
+        # event apart and the next restart marked the mirror stale (2026-10-10).
+        self.mirror_of_postgres = bool(mirror_of_postgres)
 
 
 def _author_mask(store, n: int, pubkeys) -> np.ndarray:
@@ -206,6 +211,8 @@ class Maintainer:
         out = {}
         out["expired"] = live & (expires > 0) & (expires <= now) & \
             ~np.isin(kind, np.asarray(relay._NEVER_EXPIRE_KINDS, dtype=np.uint32))
+        if pol.mirror_of_postgres:
+            return out
         out["retired"] = live & np.isin(kind, np.asarray(relay._RETIRED_KINDS, dtype=np.uint32))
         sub_exempt = subs if pol.subscribers else np.zeros(n, dtype=bool)
         if pol.retention_days:
