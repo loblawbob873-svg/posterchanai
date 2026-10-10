@@ -389,7 +389,10 @@ class Store:
                 origin = payload[1]
                 rec = payload[2:]
                 eid = bytes(rec[:32]).hex()
-                if self._seq_of(eid) is None:          # a compaction copy may exist twice after a crash
+                s0 = self._seq_of(eid)
+                # Skip only a LIVE duplicate (a compaction copy may exist twice after a crash). A dead one is an
+                # event pruned/purged and then received again, which is stored again -- as on Postgres.
+                if s0 is None or self.dead[s0]:
                     ev = self.codec.decode(rec)
                     self._apply_put(ev, bytes(rec[:32]), len(rec), j + 2, origin, sid, replay=True)
             elif op == OP_DEAD:
@@ -612,10 +615,16 @@ class Store:
             if lo < len(keys) and keys[lo] == ku:
                 hi = int(np.searchsorted(keys, ku, "right"))
                 cands += [int(x) for x in seqs[lo:hi]]
-        for c in cands:          # an 8-byte prefix can collide: confirm against the record's own id
+        # An 8-byte prefix can collide: confirm against the record's own id. One id can have SEVERAL records --
+        # an event pruned or purged and then received again (the firehose re-sends old events) is stored
+        # again, exactly as the relay's Postgres re-inserts a deleted row -- so the LIVE one is the answer.
+        dead_hit = None
+        for c in cands:
             if self.seg[c] != DROPPED and self._id_hex(c) == eid:
-                return c
-        return None
+                if not self.dead[c]:
+                    return c
+                dead_hit = c
+        return dead_hit
 
     # ---------------------------------------------------------------- write
     def _kill(self, seq: int, *, persist: bool) -> None:
@@ -666,24 +675,34 @@ class Store:
         if exp is not None and exp <= now:
             return "expired"
         with self._lock:
-            if self._seq_of(ev["id"]) is not None:
-                return "duplicate"
-            if self._deleted_by_author(ev):
+            s0 = self._seq_of(ev["id"])
+            dup = s0 is not None and not self.dead[s0]
+            # A LIVE DUPLICATE still runs the relay's side effects: its INSERT is ON CONFLICT DO NOTHING but the
+            # statements around it are not, so a re-sent deletion deletes targets that arrived since, and a re-sent
+            # newest version deletes older versions of its coordinate that arrived since (an older version whose
+            # FIRST d tag differs is stored beside it, and only the newer one's re-send matches it).
+            if dup and kind == 5:
+                self._apply_deletion(ev)
+            if not dup and self._deleted_by_author(ev):
                 return "deleted"
             losers = []
             if is_replaceable(kind) or is_addressable(kind):
                 strict = kind == 10133 if is_replaceable(kind) else kind in relay_rules._STRICT_TIE_KINDS
                 eid = ev["id"]
                 for s in self._same_coordinate(ev, kind):
+                    if s == s0:
+                        continue                     # the relay skips its own row (`row["id"] == eid`)
                     rc = self.created[s]
                     tie_direct = (not strict and rc == created and origin_name == "direct"
                                   and self.origin[s] == ORIGINS["direct"])
                     if rc < created or (rc == created and eid < self._id_hex(s)) or tie_direct:
                         losers.append(s)
                     else:
-                        return "superseded"
+                        return "duplicate" if dup else "superseded"
             for s in losers:
                 self._kill(s, persist=True)
+            if dup:
+                return "duplicate"
             o = ORIGINS.get(origin_name, 4)
             rec = self.codec.encode(ev)
             start = self._frame(bytes([OP_PUT, o]) + rec)

@@ -235,3 +235,41 @@ def test_auto_clean_leaves_exactly_what_the_relays_prune_leaves(pair, seed, max_
     assert removed > 20, "the history must give the cleaner real work, or this proves little"
     assert want == got, ("relay kept %d, PosterChanDB kept %d; only relay: %d, only pcdb: %d"
                          % (len(want), len(got), len(want - got), len(got - want)))
+
+
+# ---------------------------------------------------------------- re-arrival after a purge or prune
+@pytest.mark.parametrize("seed", [21, 22, 23, 24])
+def test_an_event_purged_then_received_again_is_stored_again_like_postgres(pair, seed):
+    """The firehose re-sends old events all the time. Postgres re-inserts a row that a purge or the prune
+    deleted (unless a newer version or the author's deletion refuses it); PosterChanDB used to answer
+    'duplicate' because its id lookup found the DEAD record -- and after a restart the replay skipped the
+    second copy too. Purge in both, re-send everything to both, compare decisions and answers, restart."""
+    rs, db, path = pair
+    gen = Gen(seed)
+    assert not _feed(rs, db, gen, 700)
+    victims = gen.authors[:2]
+    rs._delete_pubkeys_sync(victims, spare_preserved=False)
+    seqs = [s for s in range(len(db.off)) if not db.dead[s] and db.seg[s] != 0xFFFFFFFF
+            and db.pubkey_of(s) in victims]
+    db.kill(seqs)
+    assert _survivors_relay(rs) == _survivors_pcdb(db), "the purge itself already differs"
+    resent, bad = list(gen.made), []
+    gen.r.shuffle(resent)
+    for ev in resent[:500]:
+        origin = gen.r.choice(ORIGINS)
+        a = rs._add_event_sync(dict(ev), origin)
+        b = db.put(dict(ev), origin=origin)
+        # Postgres answers True for an id it already holds (ON CONFLICT DO NOTHING) -- or False, for an
+        # addressable event that loses the version check against itself; the survivor sets are the real test.
+        if b != "duplicate" and a != (b == "stored"):        # a live duplicate changes neither store
+            bad.append({"kind": ev["kind"], "relay_stored": a, "pcdb": b})
+    assert not bad, "%d re-sent events decided differently; first: %r" % (len(bad), bad[:3])
+    assert _survivors_relay(rs) == _survivors_pcdb(db)
+    assert not _compare(rs, db, gen, 300)
+    db.close()
+    db2 = Store(path)
+    try:
+        assert _survivors_relay(rs) == _survivors_pcdb(db2), "a re-stored event was lost on restart"
+        assert not _compare(rs, db2, gen, 200)
+    finally:
+        db2.close()

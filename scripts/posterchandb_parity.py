@@ -40,12 +40,21 @@ def rss_mb() -> float:
     return resource.getrusage(resource.RUSAGE_SELF).ru_maxrss / 1024.0
 
 
-def load(pg, dst: Store, batch: int = 20000) -> int:
-    """Stream events oldest first (so replaceable/deletion rules replay in order). Its own READ-ONLY
-    connection: a server-side (named) cursor needs a transaction, and the relay's connection is autocommit."""
+def snapshot_conn(dsn):
+    """ONE read-only REPEATABLE READ transaction for the whole run: the load AND every Postgres answer it is
+    compared with see the same moment. The first production run loaded at one moment and asked the LIVE
+    relay 45 minutes later -- the sampled authors are the active ones, so their newest posts and profile
+    replacements read as mismatches (same count, a few ids swapped) that were the relay moving, not the
+    store being wrong. (A long open transaction holds back VACUUM on that database for the run's length.)"""
     import psycopg2
-    raw = psycopg2.connect(relay_store_mod._DEFAULT_DSN)
-    raw.set_session(readonly=True, autocommit=False)
+    raw = psycopg2.connect(dsn, connect_timeout=10)
+    raw.set_session(isolation_level="REPEATABLE READ", readonly=True, autocommit=False)
+    return raw
+
+
+def load(raw, dst: Store, batch: int = 20000) -> int:
+    """Stream events oldest first (so replaceable/deletion rules replay in order), inside the run's snapshot
+    transaction (a server-side named cursor needs one anyway)."""
     n = 0
     with raw.cursor(name="pcdb_parity_load") as cur:
         cur.itersize = batch
@@ -64,8 +73,6 @@ def load(pg, dst: Store, batch: int = 20000) -> int:
         cur.execute("SELECT event_id, value FROM event_tags WHERE tag='_quote_author'")
         for eid, val in cur:
             dst.add_derived_tag(eid, "_quote_author", val)
-    raw.rollback()
-    raw.close()
     dst.flush()
     return n
 
@@ -129,7 +136,8 @@ def main() -> int:
     ap.add_argument("--seed", type=int, default=1009)
     a = ap.parse_args()
     rs = relay_store_mod.RelayStore()
-    conn = rs._conn()
+    raw = snapshot_conn(rs.dsn)
+    conn = relay_store_mod._PgConn(raw)
     if not a.reuse and os.path.isdir(a.dir):
         for name in os.listdir(a.dir):
             if name.startswith("seg-") and name.endswith(".log"):
@@ -138,10 +146,10 @@ def main() -> int:
     db = Store(a.dir, flush_interval=3600, direct_durable=False, log=lambda m: print(m))
     if not a.reuse:
         print("loading from Postgres …", flush=True)
-        n = load(conn, db)
+        n = load(raw, db)
         print("loaded %d events in %.0f s" % (n, time.time() - t))
     else:
-        print("reopened %d events in %.0f s" % (len(db.off), time.time() - t))
+        print("reopened %d events in %.0f s (NOTE: compared with Postgres as it is NOW, not as it was at the load -- expect drift on active authors)" % (len(db.off), time.time() - t))
     st = db.stats()
     disk = sum(os.path.getsize(os.path.join(a.dir, n)) for n in os.listdir(a.dir) if n.startswith("seg-"))
     print(json.dumps({"events": st["events"], "dead": st["dead"], "arena_MB": round(st["arena_bytes"] / 1e6),
@@ -188,6 +196,8 @@ def main() -> int:
                        "pcdb_ms_avg": round(tq / max(1, ok + bad) * 1000, 2), "examples": examples}
         print(cat, json.dumps(report[cat]), flush=True)
     db.close()
+    raw.rollback()
+    raw.close()
     print("TOTAL mismatches:", failed)
     return 0 if failed == 0 else 1
 
