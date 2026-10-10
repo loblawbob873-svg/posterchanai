@@ -529,14 +529,15 @@ def main():
         from hashtagbot import post_trending_hashtags, get_config
         get_config()
         post_trending_hashtags(print_only=True)
-    elif args.unfollows:
-        from unfollowbot import pleroma_unfollows, init_db
-        init_db()
-        pleroma_unfollows(print_only=False)
-    elif args.unfollows_print:
-        from unfollowbot import pleroma_unfollows, init_db
-        init_db()
-        pleroma_unfollows(print_only=True)
+    elif args.unfollows or args.unfollows_print:
+        from config import PLEROMA_ENDPOINT
+        if PLEROMA_ENDPOINT:
+            from unfollowbot import pleroma_unfollows, init_db
+            init_db()
+            pleroma_unfollows(print_only=bool(args.unfollows_print))
+        else:
+            from nostr_unfollowbot import unfollows
+            unfollows(print_only=bool(args.unfollows_print))
 
 
 def _daemon_plan(args) -> list:
@@ -591,8 +592,12 @@ def _daemon_plan(args) -> list:
         if PLEROMA_ENDPOINT:
             import unfollowbot
             add("Pleroma unfollowbot", unfollowbot, unfollowbot.init_db)
+        elif NOSTR_NSEC:
+            # Nostr contact lists + fediverse Undo(Follow) of this instance's members -- nostr_unfollowbot.py.
+            import nostr_unfollowbot
+            add("Nostr unfollow bot", nostr_unfollowbot)
         else:
-            print("ERROR: PLEROMA_ENDPOINT is not configured")
+            print("ERROR: the unfollow bot needs PLEROMA_ENDPOINT or NOSTR_NSEC")
     return plan
 
 

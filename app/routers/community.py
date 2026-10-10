@@ -92,3 +92,16 @@ async def members(_auth: bool = Depends(get_bot_auth)):
     async def roll():
         return community_stats.member_list()
     return {"members": await _read(roll())}
+
+
+@router.get("/follows")
+async def follows(_auth: bool = Depends(get_bot_auth)):
+    """The unfollow bot's picture of who follows this instance's members (community_stats.follows)."""
+    return await _read(community_stats.follows())
+
+
+@router.get("/contact-lists")
+async def contact_lists(authors: str = "", _auth: bool = Depends(get_bot_auth)):
+    """The current contact list of up to 50 keys -- what a remembered follower who vanished from /follows
+    now follows."""
+    return {"lists": await _read(community_stats.contact_lists([a for a in authors.split(",") if a]))}

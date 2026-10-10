@@ -303,6 +303,77 @@ async def blocks() -> list:
     return out
 
 
+# ---- follows (the unfollow bot) ------------------------------------------------------------------
+#
+# A Nostr follow is the follower's kind-3 contact list p-tagging a member; an unfollow is that author's
+# NEWER list no longer naming them. A relay keeps only the newest kind 3 per author, so the bot keeps the
+# previous picture and diffs. Read here in pages, and an answer that hit the relay's cap RAISES: a list
+# cut short would read as dozens of people unfollowing at once.
+_FOLLOW_PAGE = 20           # member keys per query
+_FOLLOW_CAP = 5000          # the relay's per-filter ceiling: a page this full may have been cut
+
+
+def _contact_summary(ev: dict, member_set: set) -> dict:
+    ps = {t[1] for t in ev.get("tags") or [] if isinstance(t, list) and len(t) >= 2 and t[0] == "p"
+          and isinstance(t[1], str) and len(t[1]) == 64}
+    return {"author": ev["pubkey"], "at": int(ev["created_at"]), "size": len(ps),
+            "follows": sorted(ps & member_set)}
+
+
+async def follows() -> dict:
+    """{"nostr": [{author, at, size, follows:[member pubkeys]}], "fedi": [{member, actor, gone, at}],
+    "members": {pubkey: handle}, "refs": {pubkey: ref}, "bots": [pubkeys]}.
+
+    `nostr` holds every current contact list naming a member. Somebody who now follows NONE of them is simply
+    absent; contact_lists() answers what their current list says. Raises when anything could not be read
+    completely."""
+    from app.services.activitypub import state
+    known = members()
+    member_set = set(known)
+    lists: dict = {}
+    keys = sorted(member_set)
+    for i in range(0, len(keys), _FOLLOW_PAGE):
+        got = await _query([{"kinds": [3], "#p": keys[i:i + _FOLLOW_PAGE], "limit": _FOLLOW_CAP}])
+        if len(got) >= _FOLLOW_CAP:
+            raise RuntimeError("contact lists naming members hit the relay's cap -- incomplete")
+        for ev in got:
+            if ev["pubkey"] not in lists or int(ev["created_at"]) > lists[ev["pubkey"]]["at"]:
+                lists[ev["pubkey"]] = _contact_summary(ev, member_set)
+    docs = await nostr_store.list_docs(_port(), state._FOLLOWER_PREFIX, seckey=state._seckey(), strict=True,
+                                       limit=100000)
+    fedi = []
+    for d_tag, d in docs.items():
+        if not (isinstance(d, dict) and d.get("actor")):
+            continue
+        member = d_tag[len(state._FOLLOWER_PREFIX):].split(":")[0]
+        if member in member_set:
+            fedi.append({"member": member, "actor": d["actor"], "gone": bool(d.get("gone")), "at": int(d.get("at") or 0)})
+    puppet_of = _puppets_of_actors([f["actor"] for f in fedi])
+    for f in fedi:
+        pup = puppet_of.get(f["actor"], "")
+        f["ref"] = _ref(pup) if pup else f["actor"]
+    others = [pk for pk in lists if pk not in known]
+    puppets = _puppet_accts(others)
+    names = dict(known)
+    for pk in others:
+        names[pk] = handle(pk, known, puppets)
+    return {"nostr": sorted(lists.values(), key=lambda r: r["author"]), "fedi": fedi, "members": known,
+            "names": names, "refs": {pk: _ref(pk) for pk in names}, "bots": sorted(bot_pubkeys())}
+
+
+async def contact_lists(authors: list) -> list:
+    """[{author, at, size, follows}] -- the CURRENT contact list of each of these keys (at most 50), naming
+    which members it still follows. An author with no list on this relay is absent (not "follows nobody")."""
+    member_set = set(members())
+    keys = [a for a in authors if isinstance(a, str) and len(a) == 64][:50]
+    out: dict = {}
+    if keys:
+        for ev in await _query([{"kinds": [3], "authors": keys, "limit": 200}]):
+            if ev["pubkey"] not in out or int(ev["created_at"]) > out[ev["pubkey"]]["at"]:
+                out[ev["pubkey"]] = _contact_summary(ev, member_set)
+    return sorted(out.values(), key=lambda r: r["author"])
+
+
 PER_SERVER = 3
 
 
