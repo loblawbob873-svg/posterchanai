@@ -412,13 +412,20 @@ class Store:
         replayed = 0
         for sid in sids:
             p = self._seg_path(sid)
-            with open(p, "rb") as f:
-                data = f.read()
             self.seg_bytes.setdefault(sid, 0)
             self.seg_dead.setdefault(sid, 0)
             self.seg_markers.setdefault(sid, [])
+            if meta is not None and sid < meta["active"] and sid != sids[-1]:
+                # Closed and covered by the snapshot: NOT READ. It starts cold (served by pread through the page
+                # cache) and the cache governor brings it into RAM when it is actually read. Reading every segment
+                # at open made a start cost one full pass over the data -- 2.8 GB today, and growing with it.
+                self.seg_size[sid] = os.path.getsize(p)
+                self.arenas[sid] = None
+                continue
+            with open(p, "rb") as f:
+                data = f.read()
             if meta is not None and sid < meta["active"]:
-                good = len(data)                       # closed and covered by the snapshot: nothing to parse
+                good = len(data)                       # covered by the snapshot: nothing to parse
             else:
                 start = meta["flushed"] if (meta is not None and sid == meta["active"]) else None
                 n0 = len(self.off)

@@ -156,3 +156,26 @@ def test_maintenance_snapshots_after_a_compaction(tmp_path):
         assert again.last_open["snapshot"] is True, again.last_open
     finally:
         again.close()
+
+
+def test_a_snapshot_reopen_reads_no_closed_segment_and_still_answers_exactly(tmp_path):
+    """Opening used to READ every segment file even when the snapshot covered it -- one full pass over the data
+    per start (2.8 GB on server1, growing with every event). Covered segments now start cold and are read only
+    when a query needs them."""
+    p = str(tmp_path / "db")
+    s, g = _fill(p, 21, n=1500, segment_bytes=16 * 1024)
+    s.flush()
+    assert s.snapshot() is not None
+    s.close(take_snapshot=False)
+    full = Store(p, snapshots=False)
+    want = _answers(full, g)
+    closed = [sid for sid in full._segments()][:-1]
+    full.close(take_snapshot=False)
+    assert len(closed) >= 3, "the fixture did not span several segments"
+    again = Store(p)
+    try:
+        assert again.last_open["snapshot"] and again.last_open["replayed"] == 0
+        assert all(again.arenas[sid] is None for sid in closed), "a covered segment was read at open"
+        assert _answers(again, g) == want
+    finally:
+        again.close(take_snapshot=False)

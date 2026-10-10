@@ -84,3 +84,44 @@ def test_bridge_scans_decode_only_candidates_and_then_only_new_events(tmp_path):
     finally:
         ps.close()
         loop.close()
+
+
+def test_a_restart_resumes_the_scans_instead_of_rescanning(tmp_path):
+    """The scans' progress is saved in the store directory, so a restart decodes only what arrived since --
+    and a memo whose high-water event is no longer the one it recorded is thrown away, never trusted."""
+    ps, loop = _store(tmp_path)
+    try:
+        for i in range(300):
+            ps._add_event_sync(_mk("%064x" % (i + 1), 0, content='{"nip05":"u%d@mostr.pub"}' % i, n=i), "wot")
+        ps._add_event_sync(_mk("b" * 64, 1, tags=[["proxy", "https://mostr.pub/o/1", "activitypub"]], n=400),
+                           "wot")
+        first = loop.run_until_complete(ps.bridged_pubkeys(BLOCKED))
+        ident = loop.run_until_complete(ps.bridge_identity_pubkeys(BLOCKED))
+        doms = loop.run_until_complete(ps.nip05_domains())
+        mirrors = loop.run_until_complete(ps.social_mirror_pubkeys())
+    finally:
+        ps.close()
+        loop.close()
+    loop = asyncio.new_event_loop()
+    again = P.PcdbRelayStore(str(tmp_path / "pcdb"), maintenance=False)
+    again.open(loop)
+    try:
+        box = _count_decodes(again)
+        assert loop.run_until_complete(again.bridged_pubkeys(BLOCKED)) == first
+        assert loop.run_until_complete(again.bridge_identity_pubkeys(BLOCKED)) == ident
+        assert sorted(loop.run_until_complete(again.nip05_domains())) == sorted(doms)
+        assert loop.run_until_complete(again.social_mirror_pubkeys()) == mirrors
+        assert box["n"] == 0, "the restart re-decoded %d events the scans had already seen" % box["n"]
+        # a memo that does not match the store is ignored
+        import json, os
+        mp = os.path.join(again.path, again._SCAN_MEMO)
+        raw = json.load(open(mp))
+        raw["bridged"]["anchor"] = "0" * 64
+        json.dump(raw, open(mp, "w"))
+        again._memos = None
+        box["n"] = 0
+        assert loop.run_until_complete(again.bridged_pubkeys(BLOCKED)) == first
+        assert box["n"] > 0, "a memo that no longer matches the store was trusted"
+    finally:
+        again.close()
+        loop.close()

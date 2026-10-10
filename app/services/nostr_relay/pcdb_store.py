@@ -249,8 +249,11 @@ class PcdbRelayStore(RelayStore):
         maint_mod.lower_priority()
         st = self.store
         while not self._stop.is_set() and st.words_pending:
+            t0 = time.perf_counter()
             st.index_pending_words(25)
-            self._stop.wait(0.01)
+            # At most a third of the GIL: a backlog of millions (a promotion) must not slow the queries being served
+            # meanwhile. A search catches its own words up inline, so nothing waits on this pass.
+            self._stop.wait(max(0.01, 2 * (time.perf_counter() - t0)))
 
     def close(self) -> None:
         def _shut():
@@ -368,8 +371,8 @@ class PcdbRelayStore(RelayStore):
                 self._held(t0)
         return n
 
-    def _decode(self, seqs, fn) -> None:
-        """fn(seq, event, origin) for each still-live seq, DECODE_BATCH records per lock hold."""
+    def _decode(self, seqs, fn, pace: bool = True) -> None:
+        """fn(seq, event, origin) for each still-live seq, DECODE_BATCH records per lock hold (paced: see below)."""
         st = self.store
         seqs = [int(s) for s in seqs]
         for i in range(0, len(seqs), DECODE_BATCH):
@@ -382,6 +385,10 @@ class PcdbRelayStore(RelayStore):
                 self._held(t0)
             for s, ev, o in batch:       # the predicate (a language detector, a word matcher) runs unlocked
                 fn(s, ev, o)
+            if pace:
+                # A scan is background work: it gives the GIL and the store lock back for as long as it just used
+                # them, so queries arriving meanwhile are never queued behind a whole-store pass.
+                time.sleep(min(0.05, time.perf_counter() - t0))
 
     def _live_seqs_of(self, ids) -> list:
         st = self.store
@@ -639,27 +646,78 @@ class PcdbRelayStore(RelayStore):
         with st._lock:
             return [v for s, v in hits.items() if not st.dead[s] and st.seg[s] != DROPPED]
 
+    _SCAN_MEMO = "scan-memo.json"
+
+    def _scan_memo(self, name: str, key) -> dict:
+        """This scan's progress: {"key", "hi", "anchor", "hits": {seq: value}}. Loaded once from the store directory
+        and trusted only when the event at its high-water mark is still the one it recorded (a replay without a
+        snapshot after a compaction can renumber)."""
+        memos = getattr(self, "_memos", None)
+        if memos is None:
+            memos = self._memos = {}
+            try:
+                with open(os.path.join(self.path, self._SCAN_MEMO), encoding="utf-8") as f:
+                    raw = json.load(f)
+                n = self._n()
+                for nm, m in (raw or {}).items():
+                    hi = int(m.get("hi") or 0)
+                    if 0 < hi <= n and self.store._id_hex(hi - 1) == m.get("anchor"):
+                        memos[nm] = {"key": m.get("key"), "hi": hi, "anchor": m.get("anchor"),
+                                     "hits": {int(k): v for k, v in (m.get("hits") or {}).items()}}
+            except (OSError, ValueError, TypeError, AttributeError):
+                pass
+        m = memos.get(name)
+        if m is None or m.get("key") != key:
+            m = memos[name] = {"key": key, "hi": 0, "anchor": None, "hits": {}}
+        return m
+
+    def _save_scan_memos(self) -> None:
+        memos = getattr(self, "_memos", None) or {}
+        path = os.path.join(self.path, self._SCAN_MEMO)
+        tmp = path + ".tmp"
+        try:
+            with open(tmp, "w", encoding="utf-8") as f:
+                json.dump({nm: {"key": m["key"], "hi": m["hi"], "anchor": m["anchor"],
+                                "hits": {str(k): v for k, v in m["hits"].items()}} for nm, m in memos.items()}, f)
+            os.replace(tmp, path)
+        except OSError as e:
+            self.log("[nostr-relay] scan progress not saved: %s" % (e,))
+
+    def _incremental(self, name: str, key, select, check) -> list:
+        """The live values of an append-only scan: `select(lo, hi)` gives candidate seqs stored in [lo, hi), and
+        `check(event, origin)` a value or None. Only events stored since the last pass are decoded -- across
+        restarts too -- and a hit whose event has since died stops counting."""
+        m = self._scan_memo(name, key)
+        lo, hi, hits = m["hi"], self._n(), m["hits"]
+        if hi > lo:
+            def _check(s, ev, o):
+                v = check(ev, o)
+                if v is not None:
+                    hits[s] = v
+            self._decode(select(lo, hi), _check)
+            m["hi"], m["anchor"] = hi, self.store._id_hex(hi - 1)
+            self._save_scan_memos()
+        return self._live_hits(hits)
+
     def _bridged_pubkeys_sync(self, domains) -> set:
-        domains = frozenset(d for d in domains if d)
+        domains = sorted(d for d in domains if d)
         if not domains:
             return set()
         from .bridges import reveals_blocked_bridge
-        memo = getattr(self, "_bridged_memo", None)
-        if memo is None or memo[0] != domains:
-            memo = self._bridged_memo = [domains, 0, {}]
-        lo, hi, hits = memo[1], self._n(), memo[2]
-        if hi > lo:
-            def _check(s, ev, o):
-                if ev["kind"] in self._BRIDGE_KINDS or '"proxy"' in self._tags_text(ev):
-                    e = {"pubkey": ev["pubkey"], "kind": ev["kind"], "content": ev.get("content") or "",
-                         "tags": ev.get("tags") or []}
-                    if ev["pubkey"] and reveals_blocked_bridge(e, domains):
-                        hits[s] = ev["pubkey"]
+        doms = set(domains)
+
+        def select(lo, hi):
             ident = self._select(lambda c, s: np.isin(c["kind"], self._BRIDGE_KINDS), ("kind",), hi=hi, lo=lo)
-            cand = sorted(set(int(x) for x in ident) | set(self._proxy_seqs(lo, hi, self._BRIDGE_KINDS)))
-            self._decode(cand, _check)
-            memo[1] = hi
-        return set(self._live_hits(hits))
+            return sorted(set(int(x) for x in ident) | set(self._proxy_seqs(lo, hi, self._BRIDGE_KINDS)))
+
+        def check(ev, o):
+            if ev["kind"] in self._BRIDGE_KINDS or '"proxy"' in self._tags_text(ev):
+                e = {"pubkey": ev["pubkey"], "kind": ev["kind"], "content": ev.get("content") or "",
+                     "tags": ev.get("tags") or []}
+                if ev["pubkey"] and reveals_blocked_bridge(e, doms):
+                    return ev["pubkey"]
+            return None
+        return set(self._incremental("bridged", domains, select, check))
 
     async def bridged_pubkeys(self, domains) -> set:
         return await self._s(self._bridged_pubkeys_sync, set(domains))
@@ -667,19 +725,20 @@ class PcdbRelayStore(RelayStore):
     def _kind0(self) -> np.ndarray:
         return self._select(lambda c, s: c["kind"] == 0, ("kind",))
 
+    def _kind0_between(self, lo, hi):
+        return self._select(lambda c, s: c["kind"] == 0, ("kind",), hi=hi, lo=lo)
+
     def _bridge_identity_pubkeys_sync(self, domains) -> set:
-        domains = {d for d in domains if d}
+        domains = sorted(d for d in domains if d)
         if not domains:
             return set()
         from .bridges import author_on_blocked_bridge
-        out: set = set()
+        doms = set(domains)
 
-        def _check(s, ev, o):
+        def check(ev, o):
             e = {"pubkey": ev["pubkey"], "kind": 0, "content": ev.get("content") or "", "tags": []}
-            if ev["pubkey"] and author_on_blocked_bridge(e, domains):
-                out.add(ev["pubkey"])
-        self._decode(self._kind0(), _check)
-        return out
+            return ev["pubkey"] if ev["pubkey"] and author_on_blocked_bridge(e, doms) else None
+        return set(self._incremental("identity", domains, self._kind0_between, check))
 
     async def bridge_identity_pubkeys(self, domains) -> set:
         return await self._s(self._bridge_identity_pubkeys_sync, set(domains))
@@ -688,39 +747,30 @@ class PcdbRelayStore(RelayStore):
         """Authors of stored fediverse/Bluesky MIRROR events, minus anyone who published one of our own puppet
         events (`fedibridge`) or anything stored as origin='bridge' (store.py, same rule)."""
         from .bridges import is_social_mirror
-        memo = getattr(self, "_mirror_memo", None)
-        if memo is None:
-            memo = self._mirror_memo = [0, {}]
-        lo, hi, hits = memo[0], self._n(), memo[1]
-        if hi > lo:
-            def _check(s, ev, o):
-                raw = self._tags_text(ev)
-                if '"proxy"' not in raw or not ev["pubkey"]:
-                    return
-                if o == _BRIDGE or '"fedibridge"' in raw:
-                    hits[s] = (ev["pubkey"], True)
-                elif is_social_mirror({"tags": ev.get("tags") or []}):
-                    hits[s] = (ev["pubkey"], False)
-            self._decode(self._proxy_seqs(lo, hi), _check)
-            memo[0] = hi
-        live = self._live_hits(hits)
+
+        def check(ev, o):
+            raw = self._tags_text(ev)
+            if '"proxy"' not in raw or not ev["pubkey"]:
+                return None
+            if o == _BRIDGE or '"fedibridge"' in raw:
+                return [ev["pubkey"], True]
+            if is_social_mirror({"tags": ev.get("tags") or []}):
+                return [ev["pubkey"], False]
+            return None
+        live = self._incremental("mirrors", "", lambda lo, hi: self._proxy_seqs(lo, hi), check)
         return {pk for pk, ours in live if not ours} - {pk for pk, ours in live if ours}
 
     async def social_mirror_pubkeys(self) -> set:
         return await self._s(self._social_mirror_pubkeys_sync)
 
     def _nip05_domains_sync(self) -> list:
-        out: list = []
-
-        def _check(s, ev, o):
+        def check(ev, o):
             try:
                 nip05 = (json.loads(ev.get("content") or "{}").get("nip05") or "").strip().lower()
             except Exception:      # noqa: BLE001
-                return
-            if "@" in nip05:
-                out.append(nip05.rsplit("@", 1)[-1])
-        self._decode(self._kind0(), _check)
-        return out
+                return None
+            return nip05.rsplit("@", 1)[-1] if "@" in nip05 else None
+        return list(self._incremental("nip05_domains", "", self._kind0_between, check))
 
     async def nip05_domains(self) -> list:
         return await self._s(self._nip05_domains_sync)
