@@ -10221,7 +10221,7 @@
       get _uploadBatchAuth(){ return _uploadBatchAuth; }, set _uploadBatchAuth(v){ _uploadBatchAuth = v; },
     },
     $, $$, FilesIdx, _MEDIA_META, _blobToB64, _blossomBuiltin, _fmtBytes, _fxFileGlyph, _hold,
-    _instanceBase, _isNativeApp, _popKeys, _serverOrigin, _shaFromUrl, _trapFocus,
+    _instanceBase, _isNativeApp, _popKeys, _serverOrigin, _shaFromUrl, _trapFocus, _withModule,
     checkBlossomAccess, copyValue, enc, isMutedView, isReply, mediaServer, needProfile, openThread,
     profOf, safePk, sendDm, sign, toast, trackUrl, uploadTarget,
   }; }
@@ -10967,22 +10967,44 @@
       const env=Math.sin(Math.PI*(i+.5)/40)*.55+.45; out.push(Math.round(18+70*env*((h%1000)/1000*.6+.4))); }
     return out;
   }
-  function _trackCard(u, label, preload){
-    let name=String(label||'');
+  /* …AND WHAT THE POST ITSELF SAYS ABOUT THE TRACK, when it says it: the `imeta` of that URL. Our own
+   * posts carry title/artist/album/duration/image (upload.js _postedAudioMeta); Amethyst's carry
+   * `image` (its artwork) and Ditto's `duration`. Painted at once — no range read of the file needed —
+   * and the file's own tags still win where they exist, as before. `u` arrives HTML-escaped (linkify
+   * escapes the text before it finds URLs), so the map is keyed the same way. */
+  function _audioImeta(ev){
+    const out=new Map();
+    for(const t of ((ev&&ev.tags)||[])){
+      if(!t || t[0]!=='imeta') continue;
+      const f={};
+      for(const part of t.slice(1)){ const str=String(part||''), i=str.indexOf(' ');
+        if(i>0){ const k=str.slice(0,i); if(!(k in f)) f[k]=str.slice(i+1).trim(); } }
+      if(!f.url || (f.m && !/^audio\//i.test(f.m))) continue;
+      out.set(enc(f.url), f);
+    }
+    return out;
+  }
+  function _trackCard(u, label, preload, meta){
+    const M=meta||{}, clip=v=>String(v||'').trim().slice(0,200);
+    let name=clip(M.title) || String(label||'');
     if(!name) try{ name=decodeURIComponent(String(u).split(/[?#]/)[0].split('/').pop()||''); }catch(_){ name=''; }
-    name=name.replace(/\.[a-z0-9]{2,5}$/i,'').replace(/[_]+/g,' ').trim();
+    if(!M.title) name=name.replace(/\.[a-z0-9]{2,5}$/i,'').replace(/[_]+/g,' ').trim();
     if(!name || /^[0-9a-f]{32,}$/i.test(name)) name='Audio';
+    const sub=[clip(M.artist), clip(M.album)].filter(Boolean).join(' · ');
+    const dur=Number(M.duration), d=isFinite(dur) && dur>0 && dur<864000 ? dur : 0;
+    const img=(!NO_IMAGES && /^https?:\/\/[^\s"'<>]+$/i.test(String(M.image||'')))
+      ? `<img alt="" loading="lazy" referrerpolicy="no-referrer" src="${enc(M.image)}" onerror="this.parentNode.innerHTML='<span>♪</span>'">` : '<span>♪</span>';
     const bars=_trackBars(String(u)).map((h,i)=>`<i style="height:${h}%" data-i="${i}"></i>`).join('');
-    return `<div class="pc-track" data-src="${u}"><div class="pct-art" aria-hidden="true"><span>♪</span></div>`
-      + `<div class="pct-main"><div class="pct-title" title="${enc(name)}">${enc(name)}</div><div class="pct-sub"></div>`
+    return `<div class="pc-track" data-src="${u}"${d?` data-dur="${d}"`:''}><div class="pct-art" aria-hidden="true">${img}</div>`
+      + `<div class="pct-main"><div class="pct-title" title="${enc(name)}">${enc(name)}</div><div class="pct-sub"${sub?` title="${enc(sub)}"`:''}>${enc(sub)}</div>`
       + `<div class="pct-row"><button type="button" class="pct-play" aria-label="Play ${enc(name)}"><svg viewBox="0 0 24 24" aria-hidden="true"><path class="pct-i-play" d="M8 5v14l11-7z"/><path class="pct-i-pause" d="M7 5h4v14H7zM13 5h4v14h-4z"/></svg></button>`
       + `<div class="pct-wave" role="slider" tabindex="0" aria-label="Seek" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0">${bars}</div>`
-      + `<span class="pct-time">0:00</span></div></div><audio preload="${preload==='metadata'?'metadata':'none'}" src="${u}"></audio></div>`;
+      + `<span class="pct-time">${_tfmt(d)}</span></div></div><audio preload="${preload==='metadata'?'metadata':'none'}" src="${u}"></audio></div>`;
   }
   const _tfmt=s=>{ s=Math.max(0,Math.floor(s||0)); return Math.floor(s/60)+':'+String(s%60).padStart(2,'0'); };
   function _trackPaint(card){
     const a=card.querySelector('audio'); if(!a) return;
-    const d=isFinite(a.duration)&&a.duration>0?a.duration:0, f=d?a.currentTime/d:0;
+    const d=isFinite(a.duration)&&a.duration>0?a.duration:(Number(card.dataset.dur)||0), f=d?a.currentTime/d:0;
     const bars=card.querySelectorAll('.pct-wave i'), lit=Math.round(f*bars.length);
     bars.forEach((b,i)=>b.classList.toggle('on', i<lit));
     const w=card.querySelector('.pct-wave'); if(w) w.setAttribute('aria-valuenow', String(Math.round(f*100)));
@@ -13167,7 +13189,8 @@
     if(bare.length <= _LINK_LABEL_MAX) return u;   // untouched — the common case
     return bare.slice(0, _LINK_LABEL_MAX - 1) + '…';
   }
-  function linkify(txt){
+  function linkify(txt, ev){
+    const _aud = ev ? _audioImeta(ev) : null;
     // Older instance-application DMs used a hex key. Keep those messages openable too.
     txt=String(txt==null?'':txt).replace(/(^|\s)nostr:([a-f0-9]{64})(?=$|\s|[.,!?])/gi,
       (match,space,pk)=>space+'nostr:'+NT().nip19.npubEncode(pk.toLowerCase()));
@@ -13217,7 +13240,9 @@
       else if(/\.(jpe?g|png|gif|webp|avif)(\?|#|$)/i.test(u)) tag=_media(u, null, 'm');
       else if(/\.(mp4|webm|mov|m4v)(\?|#|$)/i.test(u)) tag=_media(u, 'video', 'm');
       // .mpga is audio/mpeg's registered extension — what Ditto's Blossom names an MP3 it kept the tags of.
-      else if(/\.(mp3|mpga|ogg|oga|opus|wav|m4a|aac|flac)(\?|#|$)/i.test(u)) tag=_trackCard(u);
+      // …or a URL with no audio extension that the post's own imeta declares audio/* (an extension-less Blossom URL).
+      else if(/\.(mp3|mpga|ogg|oga|opus|wav|m4a|aac|flac)(\?|#|$)/i.test(u) || (_aud && _aud.has(u) && /^audio\//i.test(_aud.get(u).m||'')))
+        tag=_trackCard(u, '', null, _aud && _aud.get(u));
       // extensionless Blossom hash URLs (e.g. media.poster.place/<sha256>) — bots post these for
       // fedi media. Try as an image; if it isn't one, swap to a plain link on error.
       else if(/\/[0-9a-f]{64}(\?|#|$)/i.test(u)) tag=_media(u, null, 'm', BLOBF);
