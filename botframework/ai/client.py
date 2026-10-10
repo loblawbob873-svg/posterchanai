@@ -377,7 +377,6 @@ def _generate_reply_inner(user_content, previous_content, ping, thread_history, 
             result = r.json()
 
             content = _extract_content(result)
-            print(f"Raw AI response content (FULL): {content}")
             print(f"Raw AI response content: {len(content) if content else 0} chars")
             if content:
                 cleaned = clean_ai_response(content, debug_mode=DEBUG_MODE)
@@ -390,14 +389,14 @@ def _generate_reply_inner(user_content, previous_content, ping, thread_history, 
                     # (return None) so the bot simply skips rather than looping all attempts.
                     if not ping and _is_echo(cleaned, user_content):
                         echo_retries += 1
-                        print(f"⚠ Response echoes the user's message ({echo_retries}/{max_echo_retries}); discarding: {cleaned[:120]}...")
+                        print(f"⚠ Response echoes the user's message ({echo_retries}/{max_echo_retries}); discarding it")
                         if echo_retries >= max_echo_retries:
                             print("⚠ Model keeps echoing the user; giving up without posting.")
                             return None
                         time.sleep(2)
                         continue
-                    print(f"✓ Successfully generated response (FULL): {cleaned}")
-                    print(f"✓ Successfully generated response (preview): {cleaned[:200]}...\n")
+                    # Size only: replies quote what people said (an encrypted Concord room included) -- never log content.
+                    print(f"✓ Generated a response ({len(cleaned)} chars)")
                     return cleaned
                 else:
                     print("⚠ Response cleaning returned None (likely error message detected), NOT posting response")

@@ -118,6 +118,40 @@ def detect_search_intent(query):
     return query.strip(), categories, time_range
 
 
+# ASKING FOR THE WEB, HOWEVER IT IS PHRASED. Only a message STARTING with `search `/`news ` used to reach the real
+# search; "can you search news in Denver, CO" went to the bare model, which has no web access -- and answered
+# anyway: "let me check what's happening in Denver! ... here's what I found", a state of emergency and a mayor
+# who left office in 2023, all invented (2026-10-09, a Concord room). A question that needs the web gets the web.
+# Anywhere in the message: phrasings that can only mean "tell me what the web says".
+_WEB_ASK = re.compile(
+    r"\b(news\s+(?:about|on|in|for|from|of|around|near)\b|(?:latest|breaking|today'?s|local)\s+news\b|"
+    r"headlines?\b|current\s+events\b|what(?:'s|\s+is)\s+(?:happening|going\s+on)\s+(?:in|with|at|around)\b|"
+    r"latest\s+(?:on|about)\b)", re.I)
+# At the START only (after "can you"/"please"): a search verb is a request there, and prose anywhere else
+# ("that search was funny").
+_POLITE = re.compile(r"^(?:(?:hey|hi|yo|ok(?:ay)?|please|pls|can\s+you|could\s+you|would\s+you|will\s+you|"
+                     r"i\s+(?:want|need)\s+you\s+to|go|and|also)[\s,]+)+", re.I)
+_VERB = re.compile(r"^(?:search(?:\s+(?:for|up|the\s+web|online))?|look\s*(?:it\s+)?up|google)[\s:,]+",
+                   re.I)
+
+
+def web_query(text):
+    """The search to run when a message asks for something only the web can answer (news, a search, what is
+    happening somewhere), else None. Never a guess at the topic: the person's own words, minus "can you search"."""
+    t = " ".join(str(text or "").split())
+    if not t:
+        return None
+    asked = _POLITE.sub("", t)
+    if _VERB.match(asked):
+        q = _VERB.sub("", asked)
+    elif _WEB_ASK.search(t):
+        q = asked
+    else:
+        return None
+    q = q.strip(" ?!.")
+    return q or None
+
+
 def smart_search(query, limit=5):
     """Detect intent from a natural query, run a targeted SearXNG search, and
     fall back to a plain search if the targeted one comes up empty.

@@ -338,6 +338,16 @@ def _is_command(body: str) -> bool:
     return any(low == c or low.startswith(c + " ") for c in _media_commands())
 
 
+def _asks_the_web(body: str) -> bool:
+    """A question only the web can answer goes to the dispatcher, which searches (searxng.web_query) -- the bare
+    model has no web access and invented Denver "news" when it was asked (2026-10-09)."""
+    try:
+        from searxng import web_query
+        return bool(web_query(body))
+    except Exception:
+        return False
+
+
 def _media_commands():
     """Read from `bot_commands` at CALL time, never copied into a literal here — a second hand-typed
     list of ~84 effect names is exactly how the Telegram copies drifted (see CLAUDE.md)."""
@@ -633,7 +643,7 @@ def _room_pass(st: dict, w: Wire) -> int:
                 # NAMED this bot (the `mentions()` guard above), which is the rule that keeps a bot
                 # welcome in somebody else's room.
                 body = _strip_address(text, npub, names)
-                if w.dispatch is not None and _is_command(body):
+                if w.dispatch is not None and (_is_command(body) or _asks_the_web(body)):
                     w.dispatch(body, _room_reply(session.room, cid, w.publish, session.relays),
                                author)
                     seen.add(mid)

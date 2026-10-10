@@ -24,7 +24,7 @@ from bot_commands import MEDIA_COMMANDS, NO_CAPTION_COMMANDS, BOT_HELP_TEXT
 from rate_limit import SlidingWindowLimiter
 from ai import generate_reply, is_ai_configured
 import nostr as _nk
-from searxng import smart_search, summarize_search_results, search_and_download_images
+from searxng import smart_search, summarize_search_results, search_and_download_images, web_query
 from news import fetch_news_from_source
 from core.utils import contains_bad_words, is_listed_bot
 from posterchanai_api import process_media, capture_screenshot, fetch_ytdl_media, parse_ytdl_postaction
@@ -541,6 +541,14 @@ def _dispatch(note, prompt_text, own, thread_history, reply=None, sender_key=Non
                 reply("", video_bytes=video)
             else:
                 reply(reply_text, audio_bytes=generate_speech_with_retries(reply_text))
+        return
+
+    # A question only the web can answer gets the web -- never the bare model, which invents "news" (searxng.web_query).
+    query = web_query(prompt_text)
+    if query:
+        results, categories = smart_search(query)
+        reply(summarize_search_results(results, query, categories) if results
+              else f'I searched for "{query}" and found nothing -- I won\'t make something up.')
         return
 
     # Plain reply.
