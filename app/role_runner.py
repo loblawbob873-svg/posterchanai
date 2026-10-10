@@ -117,6 +117,16 @@ def run_role(role: str) -> int:
                      exc_info=True)
         return 1
 
+    try:
+        # #161: a role process that touches a table moving off Postgres (stream recordings and their blobs,
+        # the puppet registry the relay purges by) must read it where its store of record is: SQL until the
+        # table's `_migrated` marker exists. Binding is cheap and touches nothing.
+        from app.database import SessionLocal
+        from app.services import table_migration
+        table_migration.bind(SessionLocal)
+    except Exception as e:      # noqa: BLE001
+        logger.error("[role] app tables not bound to SQL: %s", e, exc_info=True)
+
     started = []
     for label, module, start_fn, stop_fn in services:
         try:

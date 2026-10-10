@@ -41,8 +41,8 @@ async def get_effects_auth(
         if not token:
             continue
         try:
-            from app.utils.auth_utils import query_api_key_with_retry, get_user_from_api_key
-            api_key, user_id = query_api_key_with_retry(db, str(token).strip())
+            from app.utils.auth_utils import aquery_api_key, get_user_from_api_key
+            api_key, user_id = await aquery_api_key(str(token).strip())
             if api_key and user_id and get_user_from_api_key(db, user_id):
                 return True
         except Exception:

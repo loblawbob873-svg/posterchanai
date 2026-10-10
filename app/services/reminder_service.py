@@ -19,11 +19,12 @@ import json
 import logging
 import re
 from datetime import datetime, timedelta, timezone
+from types import SimpleNamespace
 from typing import Optional
 
 from sqlalchemy.orm import Session
 
-from app.models import User, Conversation, Message, Reminder
+from app.models import User, Conversation
 
 try:
     from zoneinfo import ZoneInfo
@@ -165,39 +166,100 @@ async def parse_reminder(text: str, chat_service, now: Optional[datetime] = None
 
 
 # --------------------------------------------------------------------------- CRUD
+#
+# The store of record is the `reminders` DocTable (#161): one operator document per reminder, keyed by its
+# integer id as a string. A row is {user_id, text, due_at, status, created_at, delivered_at} with the datetimes
+# as naive-UTC ISO strings; callers get a `SimpleNamespace` with the old model's attribute names, so `r.id`,
+# `r.text` and `r.due_at` read exactly as they did. "Could not ask" raises relay_reader.Unavailable -- never an
+# empty list -- and every caller turns that into "try again", not "you have no reminders".
 
-def create_reminder(db: Session, user: User, text: str, due_at: datetime) -> Reminder:
-    r = Reminder(user_id=user.id, text=text, due_at=due_at, status="pending")
-    db.add(r)
-    db.commit()
-    db.refresh(r)
-    from app.services import record_store
-    record_store.mirror_reminder_blocking(db, user, r)
-    return r
-
-
-def list_reminders(db: Session, user: User) -> list:
-    return (db.query(Reminder)
-            .filter(Reminder.user_id == user.id, Reminder.status == "pending")
-            .order_by(Reminder.due_at.asc())
-            .all())
+UNAVAILABLE_TEXT = ("⚠️ Reminders are unavailable right now — this node's datastore could not be asked. "
+                    "Try again in a moment.")
 
 
-def get_reminder(db: Session, user: User, rid: int) -> Optional[Reminder]:
-    return (db.query(Reminder)
-            .filter(Reminder.id == rid, Reminder.user_id == user.id)
-            .first())
+def _table():
+    from app.services.doc_table import DocTable
+    from app.services.app_tables import REMINDERS
+    return DocTable(REMINDERS)
 
 
-def cancel_reminder(db: Session, user: User, rid: int) -> bool:
-    r = get_reminder(db, user, rid)
-    if not r or r.status != "pending":
-        return False
-    r.status = "cancelled"
-    db.commit()
-    from app.services import record_store
-    record_store.mirror_reminder_blocking(db, user, r)
+def reminder_row(user_id, text, due_at, status="pending", created_at=None, delivered_at=None) -> dict:
+    from app.services.app_tables import to_iso
+    return {"user_id": user_id, "text": text or "", "due_at": to_iso(due_at), "status": status or "pending",
+            "created_at": to_iso(created_at), "delivered_at": to_iso(delivered_at)}
+
+
+def as_reminder(key, row: dict) -> SimpleNamespace:
+    from app.services.app_tables import from_iso
+    return SimpleNamespace(id=int(key), user_id=row.get("user_id"), text=row.get("text") or "",
+                           due_at=from_iso(row.get("due_at")), status=row.get("status") or "pending",
+                           created_at=from_iso(row.get("created_at")),
+                           delivered_at=from_iso(row.get("delivered_at")))
+
+
+def _new_row(user: User, text: str, due_at: datetime) -> dict:
+    return reminder_row(user.id, text, due_at, "pending", datetime.utcnow(), None)
+
+
+async def acreate_reminder(db: Session, user: User, text: str, due_at: datetime) -> SimpleNamespace:
+    """Store a pending reminder. Needs no read: a new id (SQL's own until the table's migration marker exists,
+    `new_id()` after it)."""
+    from app.services.app_tables import new_id
+    row = _new_row(user, text, due_at)
+    rid = await _table().ainsert(row, new_id)
+    return as_reminder(rid, row)
+
+
+def create_reminder(db: Session, user: User, text: str, due_at: datetime) -> SimpleNamespace:
+    """The same, for a thread with no event loop (the torrent alert thread)."""
+    from app.services.app_tables import new_id
+    row = _new_row(user, text, due_at)
+    rid = _table().insert(row, new_id)
+    return as_reminder(rid, row)
+
+
+async def alist_reminders(db: Session, user: User) -> list:
+    """The user's PENDING reminders, soonest first."""
+    from app.services.app_tables import table, REMINDERS
+    t = await table(REMINDERS)
+    rows = await t.awhere(lambda r: r.get("user_id") == user.id and r.get("status") == "pending")
+    out = [as_reminder(k, r) for k, r in rows]
+    out.sort(key=lambda r: (r.due_at or datetime.max, r.id))
+    return out
+
+
+async def aget_reminder(db: Session, user: User, rid: int) -> Optional[SimpleNamespace]:
+    from app.services.app_tables import table, REMINDERS
+    t = await table(REMINDERS)
+    row = await t.aget(str(int(rid)))
+    if not row or row.get("user_id") != user.id:
+        return None
+    return as_reminder(rid, row)
+
+
+async def acancel_reminder(db: Session, user: User, rid: int) -> bool:
+    """pending -> cancelled. Loses to a poller claim (both take the same row lock)."""
+    from app.services.app_tables import table, row_lock, REMINDERS
+    t = await table(REMINDERS)
+    async with row_lock(REMINDERS):
+        row = await t.aget(str(int(rid)))
+        if not row or row.get("user_id") != user.id or row.get("status") != "pending":
+            return False
+        row["status"] = "cancelled"
+        await t.aput(str(int(rid)), row)
     return True
+
+
+async def adelivered_history(user_id, cutoff: datetime, limit: int = 200) -> list:
+    """Delivered reminders whose delivery (or, for rows from before delivered_at existed, due) time is at or
+    after `cutoff`, newest first."""
+    from app.services.app_tables import table, REMINDERS
+    t = await table(REMINDERS)
+    items = [as_reminder(k, r) for k, r in await t.awhere(
+        lambda r: r.get("user_id") == user_id and r.get("status") == "done")]
+    items = [r for r in items if (r.delivered_at or r.due_at) and (r.delivered_at or r.due_at) >= cutoff]
+    items.sort(key=lambda r: ((r.delivered_at or r.due_at), r.id), reverse=True)
+    return items[:limit]
 
 
 # --------------------------------------------------------------------------- formatting
@@ -237,7 +299,7 @@ def _get_or_create_reminders_chat(db: Session, user_id: int) -> Conversation:
     return chat
 
 
-def notification_record(reminder: Reminder) -> dict:
+def notification_record(reminder) -> dict:
     """Stable, owner-filtered notification history shared by live delivery and reload."""
     def stamp(value):
         return value.replace(tzinfo=timezone.utc).isoformat() if value else None
@@ -250,7 +312,7 @@ def notification_record(reminder: Reminder) -> dict:
     }
 
 
-async def deliver(db: Session, reminder: Reminder) -> None:
+async def deliver(db: Session, reminder) -> None:
     """Deliver a fired reminder: always to the web UI, plus Telegram if configured."""
     user = db.query(User).filter(User.id == reminder.user_id).first()
     if not user:
@@ -285,11 +347,11 @@ async def deliver(db: Session, reminder: Reminder) -> None:
     npub = (getattr(user, "nostr_npub", "") or "").strip()
     if npub:
         try:
-            from app.models import PushSubscription
-            from app.services import push_service
+            from app.services import push_service, push_store
             from app.services.nostr import nostr_service
             pk = nostr_service.to_pubkey_hex(npub)
-            rows = db.query(PushSubscription).filter(PushSubscription.pubkey == pk).all() if pk else []
+            # Unreadable devices raise (relay_reader.Unavailable) into the except below: nothing is deleted.
+            rows = (await push_store.subs_for([pk])).get(pk, []) if pk else []
             from app.services import push_prefs
             payload = {"title": "⏰ Reminder", "body": reminder.text, "type": "reminder",
                        **notification_record(reminder), "view": notification_record(reminder)["route"]}
@@ -301,9 +363,7 @@ async def deliver(db: Session, reminder: Reminder) -> None:
                 from app.services.direct_push_service import subscription_dict
                 sub = subscription_dict(row)
                 if not await asyncio.to_thread(push_service.send, sub, payload):
-                    db.delete(row)        # endpoint is gone for good — prune it
-            if rows:
-                db.commit()
+                    await push_store.delete_sub(row["id"])   # endpoint is gone for good — prune it
         except Exception as e:
             logger.warning(f"reminder push failed for user {user.id}: {e}")
 
@@ -324,34 +384,40 @@ async def deliver(db: Session, reminder: Reminder) -> None:
 async def poll_once(db: Session) -> None:
     """Fire any reminders whose due time has passed — each EXACTLY once.
 
-    Each row is *claimed* with an atomic conditional UPDATE (pending → done) BEFORE delivery, so a
-    reminder can never be delivered twice — even if a poll overlaps, the process restarts, or the
-    row is somehow seen again, only the single UPDATE that flips it off "pending" wins and proceeds.
-    (Trade-off: if delivery itself errored after the claim we'd skip it rather than risk a double —
-    the web-UI insert is the reliable part and Telegram failures are caught inside `deliver`.)"""
+    Each row is *claimed* (pending → done, written to the relay) BEFORE delivery, under the same row lock a
+    cancel takes, so a reminder can never be delivered twice — a cancel racing the claim loses, as it did to
+    the conditional UPDATE this replaces. A claim the relay did not confirm is NOT delivered (it may or may not
+    have landed), and the next pass re-reads the table strictly before trying again, so an ack lost on the way
+    back cannot turn into a second delivery either.
+    (Trade-off kept from before: if delivery itself errored after the claim we skip it rather than risk a
+    double.) A table that cannot be read raises Unavailable — the caller skips the tick; nothing is assumed."""
+    global _reload_before_claim
+    from app.services.app_tables import table, row_lock, from_iso, REMINDERS
+    t = await table(REMINDERS)
+    if _reload_before_claim:
+        if await t.amigrated():             # before the marker SQL answers: there is no copy to reload
+            await t.aload(force=True)
+        _reload_before_claim = False
     now = datetime.utcnow()
-    due_ids = [r.id for r in (db.query(Reminder.id)
-                              .filter(Reminder.status == "pending", Reminder.due_at <= now)
-                              .order_by(Reminder.due_at.asc())
-                              .limit(50)
-                              .all())]
-    for rid in due_ids:
-        claimed = (db.query(Reminder)
-                   .filter(Reminder.id == rid, Reminder.status == "pending")
-                   .update({"status": "done", "delivered_at": datetime.utcnow()},
-                           synchronize_session=False))
-        db.commit()
-        if not claimed:
-            continue  # another claim already took it — never deliver twice
-        r = db.query(Reminder).filter(Reminder.id == rid).first()
-        try:
-            from app.services import record_store
-            if record_store.enabled(db):
-                u = db.query(User).filter(User.id == r.user_id).first()
-                if u:
-                    await record_store.mirror_reminder(db, u, r)   # persist the done/delivered state
-        except Exception as e:
-            logger.debug(f"reminder mirror (delivered) failed: {e}")
+
+    def _due(r):
+        d = from_iso(r.get("due_at"))
+        return r.get("status") == "pending" and d is not None and d <= now
+    due = sorted(await t.awhere(_due), key=lambda kr: (from_iso(kr[1].get("due_at")), int(kr[0])))[:50]
+    for rid, _ in due:
+        async with row_lock(REMINDERS):
+            cur = await t.aget(rid)
+            if not cur or cur.get("status") != "pending":
+                continue  # cancelled or claimed meanwhile — never deliver twice
+            cur["status"] = "done"
+            cur["delivered_at"] = datetime.utcnow().isoformat()
+            try:
+                await t.aput(rid, cur)
+            except Exception as e:      # noqa: BLE001 -- Unavailable, or a socket error mid-write
+                _reload_before_claim = True
+                logger.warning(f"could not claim reminder #{rid} (not delivered, retried next pass): {e}")
+                return
+        r = as_reminder(rid, cur)
         try:
             await deliver(db, r)
             logger.info(f"delivered reminder #{rid} to user {r.user_id}")
@@ -359,6 +425,7 @@ async def poll_once(db: Session) -> None:
             logger.warning(f"failed to deliver reminder #{rid} (already marked done, won't retry): {e}")
 
 
+_reload_before_claim = False
 _scheduler = None
 
 
@@ -395,3 +462,20 @@ def stop_reminder_scheduler() -> None:
             pass
         _scheduler = None
         logger.info("reminder poller stopped")
+
+
+# --------------------------------------------------------------------------- the SQL side (#161 wave 1)
+# Until the `reminders` marker exists SQL is the store of record: DocTable reads it through this Legacy and writes
+# SQL first, then the relay. The rows are exactly what the migration copies.
+def _reminder_from_sql(r) -> dict:
+    return reminder_row(r.user_id, r.text, r.due_at, r.status, r.created_at, r.delivered_at)
+
+
+def _register_legacy():
+    from app.services import table_migration
+    from app.services.app_tables import REMINDERS
+    from app.services.legacy_sql import ModelLegacy
+    table_migration.register(ModelLegacy(REMINDERS, "Reminder", _reminder_from_sql))
+
+
+_register_legacy()

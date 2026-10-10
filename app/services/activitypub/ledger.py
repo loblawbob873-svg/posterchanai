@@ -1,4 +1,4 @@
-"""Keep the delivered-notes ledger (FediBridgeDelivered) as bounded as the events it describes.
+"""Keep the delivered-notes ledger (the `fedi_bridge_delivered` DocTable) as bounded as the events it describes.
 
 Every note that arrives over ActivityPub, and every DM that crosses, leaves a row: the dedup key
 that stops a note being stored twice. The rows are bookkeeping, not content, so they follow the
@@ -9,32 +9,24 @@ auto-deleted". This job used to live in the Pleroma bridge; without it, nothing 
 from __future__ import annotations
 
 import logging
-from datetime import datetime, timedelta
-
 from app.services import settings_store
 
 logger = logging.getLogger(__name__)
 
 
 def prune() -> int:
-    from app.database import SessionLocal
-    from app.models import FediBridgeDelivered
+    """Delete ledger rows past retention (sync: the scheduler runs it on a worker thread). A ledger that
+    cannot be read prunes nothing this time -- "could not ask" is never "nothing old"."""
+    import asyncio
+    from app.services import fedi_tables
     try:
         keep_days = int(settings_store.get("nostr_relay_retention_days", "30") or "30")
     except ValueError:
         keep_days = 30
     if keep_days <= 0:
         return 0
-    db = SessionLocal()
     try:
-        n = (db.query(FediBridgeDelivered)
-               .filter(FediBridgeDelivered.created_at < datetime.utcnow() - timedelta(days=keep_days))
-               .delete(synchronize_session=False))
-        db.commit()
-        return n or 0
-    except Exception as e:
-        db.rollback()
-        logger.warning("[activitypub] ledger prune failed: %s: %s", type(e).__name__, e)
+        return asyncio.run(fedi_tables.aprune(keep_days))
+    except Exception as e:      # noqa: BLE001
+        logger.warning("[activitypub] ledger prune failed: %s", type(e).__name__)
         return 0
-    finally:
-        db.close()

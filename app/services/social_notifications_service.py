@@ -13,7 +13,7 @@ from typing import Optional
 from sqlalchemy.orm import Session
 
 import json
-from app.models import User, SocialReplyMap, UserSetting
+from app.models import User, UserSetting
 from app.services import settings_store
 from app.services.nostr import nostr_service
 from app.services.telegram_service import TelegramService
@@ -129,9 +129,33 @@ def _format(norm: dict) -> str:
 
 # --- delivery + cursor ------------------------------------------------------
 
-def _prune(db: Session) -> None:
+# The reply map is the `social_reply_map` DocTable (#161; it used to be a Postgres table): one operator document
+# per forwarded Telegram message, keyed "<telegram_chat_id>:<telegram_message_id>" -- the lookup a reply makes --
+# so a second mapping for the same message REPLACES the first, which is what the old `ORDER BY id DESC LIMIT 1`
+# lookup returned anyway. Row: {user_id, telegram_chat_id, telegram_message_id, platform, target_id, visibility,
+# created_at} -- the columns the SQL table has. (The SQL write also named `room_id`/`event_id`, which that table
+# never had: every insert raised and no mapping was ever stored. Nothing reads those two, so they are gone.)
+
+def reply_key(chat_id, message_id) -> str:
+    return "%s:%s" % (chat_id, int(message_id))
+
+
+def _reply_table():
+    from app.services.doc_table import DocTable
+    from app.services.app_tables import SOCIAL_REPLY_MAP
+    return DocTable(SOCIAL_REPLY_MAP)
+
+
+async def _prune(db: Session) -> None:
+    """Drop mappings older than the TTL. Best-effort: a table that cannot be read prunes nothing."""
+    from app.services.app_tables import from_iso
     cutoff = datetime.utcnow() - timedelta(days=_REPLY_MAP_TTL_DAYS)
-    db.query(SocialReplyMap).filter(SocialReplyMap.created_at < cutoff).delete(synchronize_session=False)
+    t = _reply_table()
+    try:
+        for k, _row in await t.awhere(lambda r: (from_iso(r.get("created_at")) or cutoff) < cutoff):
+            await t.adelete(k)
+    except Exception as e:      # noqa: BLE001 -- Unavailable: the next pass prunes
+        logger.info(f"[social] reply-map prune skipped: {e}")
 
 
 # A follow is a ONE-TIME event, but Pleroma re-issues the follow notification with a fresh id
@@ -181,19 +205,21 @@ async def _deliver(db: Session, tg: TelegramService, user: User, chat_id: str, n
         return False
     if norm.get("encrypted"):
         return True  # informational only — no reply target to map
-    db.add(SocialReplyMap(
-        user_id=user.id,
-        telegram_chat_id=chat_id,
-        telegram_message_id=msg_id,
-        platform=norm["platform"],
-        target_id=norm.get("reply_target"),
-        room_id=norm.get("room_id"),
-        event_id=norm.get("event_id"),
-        visibility=norm.get("visibility"),
-    ))
-    # Commit each mapping right after its message is sent, so a mid-batch failure can't
-    # lose the mapping for an already-delivered message (or bleed it into a later commit).
-    db.commit()
+    # Store each mapping right after its message is sent. If the relay cannot take it the message has STILL
+    # been delivered, so this returns True (the cursor advances): re-sending it would be a duplicate in the
+    # user's chat, and the only cost of the lost mapping is that replying to that one message does nothing.
+    try:
+        await _reply_table().aput(reply_key(chat_id, msg_id), {
+            "user_id": user.id,
+            "telegram_chat_id": str(chat_id),
+            "telegram_message_id": int(msg_id),
+            "platform": norm["platform"],
+            "target_id": norm.get("reply_target"),
+            "visibility": norm.get("visibility"),
+            "created_at": datetime.utcnow().isoformat(),
+        })
+    except Exception as e:      # noqa: BLE001
+        logger.warning(f"[social] reply mapping for user {user.id} not stored: {e}")
     return True
 
 
@@ -229,8 +255,8 @@ async def _relay_nostr(db: Session, tg: TelegramService, user: User, chat_id: st
         label = await _nostr_actor_label(ev.get("pubkey", ""), relays)
         await _deliver(db, tg, user, chat_id, _norm_nostr(ev, actor_label=label))
     user.nostr_notif_since = str(newest)
-    _prune(db)
     db.commit()
+    await _prune(db)
 
 
 
@@ -270,17 +296,18 @@ async def handle_reply(db: Session, chat_id, reply_to_message_id: int, text: str
     """If the replied-to Telegram message maps to a forwarded notification, post `text` as a
     reply on that platform. Returns a confirmation string, or None if there's no mapping
     (so the caller can fall through to normal command/chat handling)."""
-    row = (
-        db.query(SocialReplyMap)
-        .filter(
-            SocialReplyMap.telegram_chat_id == str(chat_id),
-            SocialReplyMap.telegram_message_id == reply_to_message_id,
-        )
-        .order_by(SocialReplyMap.id.desc())
-        .first()
-    )
-    if not row:
+    from types import SimpleNamespace
+    from app.services.relay_reader import Unavailable
+    try:
+        rec = await _reply_table().aget(reply_key(chat_id, reply_to_message_id))
+    except Unavailable:
+        # "Could not ask" is not "not a notification": falling through would hand the user's reply to the
+        # chat model. Say so; they can reply again in a moment.
+        return "⚠️ Couldn't look that notification up right now (the datastore could not be asked) — try again shortly."
+    if not rec:
         return None
+    row = SimpleNamespace(user_id=rec.get("user_id"), platform=rec.get("platform"),
+                          target_id=rec.get("target_id"), visibility=rec.get("visibility"))
     user = db.query(User).filter(User.id == row.user_id).first()
     if not user:
         return None
@@ -340,3 +367,62 @@ def start_social_notifications_scheduler() -> None:
     _scheduler.add_job(_job, "interval", seconds=secs, id="social_notif_poll", max_instances=1, coalesce=True)
     _scheduler.start()
     logger.info(f"[social] notification poller started (every {secs}s)")
+
+
+# --- the SQL side (#161 wave 1) ----------------------------------------------
+# Until the `social_reply_map` marker exists SQL is the store of record. Its rows are keyed "<chat>:<message>";
+# two SQL rows for one message collapse to the NEWEST (highest id) -- the one the old `ORDER BY id DESC` lookup
+# answered with -- and a write replaces whatever the message mapped to.
+from app.services.doc_table import Legacy as _Legacy  # noqa: E402
+
+
+class ReplyMapLegacy(_Legacy):
+    name = "social_reply_map"
+
+    @staticmethod
+    def row(r) -> dict:
+        from app.services.app_tables import to_iso
+        return {"user_id": r.user_id, "telegram_chat_id": str(r.telegram_chat_id),
+                "telegram_message_id": int(r.telegram_message_id), "platform": r.platform,
+                "target_id": r.target_id, "visibility": r.visibility, "created_at": to_iso(r.created_at)}
+
+    def rows(self, db) -> dict:
+        from app.models import SocialReplyMap
+        out = {}
+        for r in db.query(SocialReplyMap).order_by(SocialReplyMap.id.asc()).all():
+            out[reply_key(r.telegram_chat_id, r.telegram_message_id)] = self.row(r)
+        return out
+
+    @staticmethod
+    def _q(db, k):
+        from app.models import SocialReplyMap
+        chat, msg = str(k).rsplit(":", 1)
+        return db.query(SocialReplyMap).filter(SocialReplyMap.telegram_chat_id == chat,
+                                               SocialReplyMap.telegram_message_id == int(msg))
+
+    def get(self, db, k):
+        from app.models import SocialReplyMap
+        r = self._q(db, k).order_by(SocialReplyMap.id.desc()).first()
+        return self.row(r) if r is not None else None
+
+    def put(self, db, k, row: dict) -> None:
+        from app.models import SocialReplyMap
+        from app.services.legacy_sql import to_datetime
+        self._q(db, k).delete(synchronize_session=False)
+        db.add(SocialReplyMap(user_id=row.get("user_id"), telegram_chat_id=str(row.get("telegram_chat_id")),
+                              telegram_message_id=int(row.get("telegram_message_id")),
+                              platform=row.get("platform") or "", target_id=row.get("target_id"),
+                              visibility=row.get("visibility"), created_at=to_datetime(row.get("created_at"))))
+        db.flush()
+
+    def delete(self, db, k) -> None:
+        self._q(db, k).delete(synchronize_session=False)
+        db.flush()
+
+
+def _register_legacy():
+    from app.services import table_migration
+    table_migration.register(ReplyMapLegacy())
+
+
+_register_legacy()

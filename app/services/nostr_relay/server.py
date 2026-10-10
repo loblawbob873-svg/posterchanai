@@ -312,6 +312,12 @@ def _match_one(flt: dict, ev: dict, _tags: dict | None = None) -> bool:
                 have = have | quote_pubkeys(ev)
             if not (want & have):
                 return False
+        elif isinstance(key, str) and key.startswith("#") and key.endswith("~") and len(key) == 3 and vals:
+            # `#d~` is this relay's PREFIX tag filter (stored reads honour it; see store.py). A live subscription
+            # must too, or a DocTable watching "pcai:t:reminders:" is sent every operator document.
+            have = _event_tags(ev, key[1], _tags)
+            if not any(h.startswith(str(p)) for p in vals for h in have):
+                return False
     if flt.get("search"):
         low = (ev.get("content") or "").lower()
         if not all(t in low for t in re.findall(r"\w+", flt["search"].lower())):

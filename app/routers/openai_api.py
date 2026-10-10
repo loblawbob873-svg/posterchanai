@@ -7,7 +7,6 @@ import json
 import logging
 import os
 import re
-from datetime import datetime
 from typing import Optional, AsyncGenerator
 from fastapi import APIRouter, Depends, Header, HTTPException, Request, Request
 from fastapi.responses import StreamingResponse
@@ -170,17 +169,26 @@ def verify_api_key(
             logger.debug("[OPENAI-API] ✓ Load-balanced request from another posterchanai node - allowing without auth")
             return None  # Authenticated but no specific user
     
+    from app.services import api_key_store
+    from app.services.relay_reader import Unavailable
+
+    def _lookup(tok):
+        try:
+            return query_api_key_with_retry(db, tok)
+        except Unavailable:
+            # The key table could not be read: "try again", never "invalid" and never a pass.
+            raise HTTPException(status_code=503, detail="API keys cannot be checked right now; try again shortly")
+
     # Check X-API-Key header first (for user API keys)
     if x_api_key:
         x_api_key = str(x_api_key).strip()
-        # Check user API keys from api_keys table
-        api_key, user_id = query_api_key_with_retry(db, x_api_key)
+        api_key, user_id = _lookup(x_api_key)
         if api_key and user_id:
             user = get_user_from_api_key(db, user_id)
             if user:
                 logger.debug(f"[OPENAI-API] Authenticated via X-API-Key header (User API Key: {user.username})")
                 return user
-    
+
     # Check authorization header
     if not authorization:
         # Allow unauthenticated access (for load-balanced requests or open access)
@@ -193,55 +201,12 @@ def verify_api_key(
     else:
         token = authorization
 
-    # Check user API keys - get api_key AND user_id together to avoid lazy loading
-    api_key, user_id = query_api_key_with_retry(db, token)
+    api_key, user_id = _lookup(token)
 
     if api_key and user_id:
-        # Get user using the already-fetched user_id (no lazy loading needed)
         user = get_user_from_api_key(db, user_id)
-        
         if user:
-            # Now update last used timestamp (after we've already fetched user)
-            try:
-                from datetime import timezone
-                # Try to refresh the api_key object to ensure it's in a valid state
-                # Update last_used_at using direct SQL to avoid SQLite parameter binding issues
-                # SQLite can have issues with ORM updates, so use raw SQL
-                try:
-                    from sqlalchemy import text
-                    now_utc = datetime.now(timezone.utc)
-                    # Use parameterized query but with explicit parameter names to avoid SQLite issues
-                    db.execute(
-                        text("UPDATE api_keys SET last_used_at = :last_used_at WHERE id = :id"),
-                        {"last_used_at": now_utc, "id": api_key.id}
-                    )
-                    db.commit()
-                except Exception:
-                    # If direct SQL update fails, try ORM method as fallback
-                    try:
-                        db.rollback()
-                        # Fallback: try refreshing and updating via ORM
-                        try:
-                            db.refresh(api_key)
-                        except Exception:
-                            pass
-                        api_key.last_used_at = datetime.now(timezone.utc)
-                        db.commit()
-                    except Exception as fallback_error:
-                        # If both methods fail, rollback but we already have the user
-                        try:
-                            db.rollback()
-                        except Exception:
-                            pass
-                        logger.warning(f"Failed to update API key last_used_at (both methods): {fallback_error}")
-            except Exception as e:
-                # If commit fails, rollback but we already have the user
-                try:
-                    db.rollback()
-                except Exception:
-                    pass  # Ignore rollback errors
-                logger.warning(f"Failed to update API key last_used_at: {e}")
-            
+            api_key_store.touch(api_key)       # last_used_at, throttled; never fails the request
             return user
         else:
             raise HTTPException(status_code=401, detail="Invalid API key")

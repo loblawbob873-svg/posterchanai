@@ -57,12 +57,12 @@ async def _push(db, user, title: str, body: str) -> None:
     if not npub:
         return
     try:
-        from app.models import PushSubscription
-        from app.services import push_service
+        from app.services import push_service, push_store
         from app.services.nostr import nostr_service
         pk = nostr_service.to_pubkey_hex(npub)
         from app.services import push_prefs
-        rows = db.query(PushSubscription).filter(PushSubscription.pubkey == pk).all() if pk else []
+        # Unreadable devices raise (relay_reader.Unavailable) into the except below: nothing is deleted.
+        rows = (await push_store.subs_for([pk])).get(pk, []) if pk else []
         payload = {"title": title, "body": body, "type": "mail"}
         for row in rows:
             # THE "EMAIL" TOGGLE WAS HONOURED BY NOTHING ON THIS PATH.
@@ -81,9 +81,7 @@ async def _push(db, user, title: str, body: str) -> None:
             from app.services.direct_push_service import subscription_dict
             sub = subscription_dict(row)
             if not await asyncio.to_thread(push_service.send, sub, payload):
-                db.delete(row)            # the endpoint is gone for good — prune it
-        if rows:
-            db.commit()
+                await push_store.delete_sub(row["id"])   # the endpoint is gone for good — prune it
     except Exception as e:
         logger.warning("[mail-notify] push failed for user %s: %s", user.id, e)
 

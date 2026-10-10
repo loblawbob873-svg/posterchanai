@@ -18,14 +18,10 @@ import time
 import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
-from sqlalchemy import create_engine
-from sqlalchemy.orm import Session
-from sqlalchemy.pool import StaticPool
 
-from app.database import Base, get_db
-from app.models import PushSubscription
 from app.routers import push as push_router
 from app.services.nostr import bip340, event as nostr_event
+from tests import push_relay_harness as H
 
 SK = bytes(range(1, 33))
 PK = bip340.pubkey_from_seckey(SK).hex()
@@ -42,26 +38,23 @@ def _auth(content="push-prefs", created_at=None, seckey=SK):
 
 
 @pytest.fixture
-def client():
-    engine = create_engine("sqlite://", connect_args={"check_same_thread": False},
-                           poolclass=StaticPool)
-    Base.metadata.create_all(engine, tables=[PushSubscription.__table__])
-    db = Session(engine)
-    db.add(PushSubscription(pubkey=PK, endpoint="direct:%s:phone-device-0001" % PK,
-                            transport="direct", device_id="phone-device-0001"))
-    db.add(PushSubscription(pubkey=PK, endpoint="https://push.example/desktop",
-                            transport="webpush", p256dh="p", auth="a"))
-    db.commit()
+def client(tmp_path, monkeypatch):
+    """The devices are push_store documents on a REAL relay (#161)."""
+    r = H.start(tmp_path, monkeypatch)
+    H.add_sub(pubkey=PK, endpoint="direct:%s:phone-device-0001" % PK,
+              transport="direct", device_id="phone-device-0001", p256dh=None, auth=None)
+    H.add_sub(pubkey=PK, endpoint="https://push.example/desktop",
+              transport="webpush", p256dh="p", auth="a")
     api = FastAPI()
     api.include_router(push_router.router)
-    api.dependency_overrides[get_db] = lambda: db
-    yield TestClient(api), db
-    db.close()
+    yield TestClient(api), None
+    H.reset()
+    r.close()
 
 
-def _rows(db):
-    return {r.endpoint: (json.loads(r.prefs) if r.prefs else None)
-            for r in db.query(PushSubscription).all()}
+def _rows(db=None):
+    """What another process (the worker) reads back from the relay."""
+    return {r["endpoint"]: (json.loads(r["prefs"]) if r.get("prefs") else None) for r in H.fresh_subs()}
 
 
 def test_a_named_device_is_the_only_one_that_changes(client):

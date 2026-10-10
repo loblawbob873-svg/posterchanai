@@ -1,4 +1,7 @@
-"""Private durable reminder history and live payload share occurrence identities."""
+"""Private durable reminder history and live payload share occurrence identities.
+
+Reminders live in the `reminders` DocTable on this node's relay (#161); the history rows are written there and
+read back through the shipped relay (tests/app_tables_harness.py)."""
 from datetime import datetime, timedelta
 import pytest
 from types import SimpleNamespace
@@ -6,60 +9,77 @@ from fastapi import FastAPI
 from fastapi.testclient import TestClient
 from sqlalchemy import create_engine
 from sqlalchemy.orm import Session
-from sqlalchemy.pool import StaticPool
+from app.services.app_tables import new_id
+from app.services.doc_table import DocTable
 from tests.reminder_api_harness import reminder_modules
+from tests.app_tables_harness import tables, shared_relay, fresh_process_view  # noqa: F401
 
 
 @pytest.fixture(autouse=True)
-def isolated_reminder_modules():
-    global Reminder, User, router, get_current_user, get_db, notification_record
+def isolated_reminder_modules(tables):
+    global User, router, get_current_user, get_db, notification_record, service
     with reminder_modules() as harness:
-        Reminder, User = harness.models.Reminder, harness.models.User
+        User = harness.models.User
         router, get_current_user, get_db = harness.router, harness.get_current_user, harness.get_db
         notification_record = harness.service.notification_record
+        service = harness.service
         yield harness
+
+
+def Reminder(user_id, text, due_at, delivered_at=None, status='pending'):
+    return (str(new_id()), service.reminder_row(user_id, text, due_at, status, due_at, delivered_at))
+
+
+def _put_all(rows):
+    t = DocTable('reminders')
+    for k, row in rows:
+        t.put(k, row)
 
 
 
 def test_reminder_history_authenticated_owner_status_limit_and_repeat_identity():
-    engine=create_engine('sqlite://',connect_args={'check_same_thread':False},poolclass=StaticPool)
-    Reminder.__table__.create(engine)
-    with Session(engine) as db:
-        now=datetime.utcnow()-timedelta(days=1)
-        for i in range(205):
-            db.add(Reminder(user_id=1,text='📅 Event '+str(i),due_at=now+timedelta(minutes=i),
-                            delivered_at=now+timedelta(minutes=i),status='done'))
-        db.add_all([Reminder(user_id=2,text='private other owner',due_at=now,status='done'),
-                    Reminder(user_id=1,text='pending',due_at=now,status='pending'),
-                    Reminder(user_id=1,text='cancelled',due_at=now,status='cancelled')]);db.commit()
-        app=FastAPI();app.include_router(router)
-        app.dependency_overrides[get_db]=lambda:db
-        with TestClient(app) as client:
-            assert client.get('/api/auth/reminder-notifications').status_code in (401,403)
-            app.dependency_overrides[get_current_user]=lambda:SimpleNamespace(id=1)
-            items=client.get('/api/auth/reminder-notifications').json()['items']
-            assert len(items)==200
-            assert all('Event' in r['content'] and r['route']=='calendar' for r in items)
-            assert items[0]['content'].endswith('Event 204')
-            first=dict(items[0]);row=db.get(Reminder,first['reminder_id'])
-            row.due_at+=timedelta(days=1);row.delivered_at+=timedelta(days=1);db.commit()
-            repeated=notification_record(row)
-            assert repeated['reminder_id']==first['reminder_id'] and repeated['due_at']!=first['due_at']
-            app.dependency_overrides[get_current_user]=lambda:SimpleNamespace(id=2)
-            other=client.get('/api/auth/reminder-notifications').json()['items']
-            assert len(other)==1 and other[0]['content'].endswith('private other owner')
-            assert other[0]['route']=='notifications'
-    engine.dispose()
+    now=datetime.utcnow()-timedelta(days=1)
+    rows=[Reminder(user_id=1,text='📅 Event '+str(i),due_at=now+timedelta(minutes=i),
+                   delivered_at=now+timedelta(minutes=i),status='done') for i in range(205)]
+    rows+=[Reminder(user_id=2,text='private other owner',due_at=now,status='done'),
+           Reminder(user_id=1,text='pending',due_at=now,status='pending'),
+           Reminder(user_id=1,text='cancelled',due_at=now,status='cancelled')]
+    _put_all(rows)
+    app=FastAPI();app.include_router(router)
+    app.dependency_overrides[get_db]=lambda:None
+    with TestClient(app) as client:
+        assert client.get('/api/auth/reminder-notifications').status_code in (401,403)
+        app.dependency_overrides[get_current_user]=lambda:SimpleNamespace(id=1)
+        items=client.get('/api/auth/reminder-notifications').json()['items']
+        assert len(items)==200
+        assert all('Event' in r['content'] and r['route']=='calendar' for r in items)
+        assert items[0]['content'].endswith('Event 204')
+        first=dict(items[0])
+        stored=fresh_process_view('reminders').get(str(first['reminder_id']))
+        row=service.as_reminder(first['reminder_id'],stored)
+        row.due_at+=timedelta(days=1);row.delivered_at+=timedelta(days=1)
+        repeated=notification_record(row)
+        assert repeated['reminder_id']==first['reminder_id'] and repeated['due_at']!=first['due_at']
+        app.dependency_overrides[get_current_user]=lambda:SimpleNamespace(id=2)
+        other=client.get('/api/auth/reminder-notifications').json()['items']
+        assert len(other)==1 and other[0]['content'].endswith('private other owner')
+        assert other[0]['route']=='notifications'
 
 
 def test_live_delivery_keeps_ai_archive_and_push_uses_calendar_view(monkeypatch):
     import asyncio
-    from app.models import User, PushSubscription
-    from app.services import reminder_service, chat_history, push_service, direct_push_service
+    from app.models import User
+    from app.services import reminder_service, chat_history, push_service, direct_push_service, push_store
     from app.services.nostr import nostr_service
     from app.routers.chat import manager
+    # The push devices are push_store documents (#161); this harness stubs settings, so the device table
+    # is stubbed at push_store's boundary (tests/test_push_store.py runs that boundary on a real relay).
+    async def subs_for(pks):
+        return {'a'*64:[{'id':1,'pubkey':'a'*64,'endpoint':'private-fixture','p256dh':'fixture',
+                         'auth':'fixture','prefs':None}]} if 'a'*64 in pks else {}
+    monkeypatch.setattr(push_store,'subs_for',subs_for)
     engine=create_engine('sqlite://')
-    for table in (User.__table__,Reminder.__table__,PushSubscription.__table__):table.create(engine)
+    for table in (User.__table__,):table.create(engine)
     archived=[];live=[];pushed=[]
     async def archive(db,user,conversation,role,body):archived.append((user.id,conversation,body))
     async def socket(owner,data):live.append((owner,data))
@@ -72,9 +92,9 @@ def test_live_delivery_keeps_ai_archive_and_push_uses_calendar_view(monkeypatch)
     with Session(engine) as db:
         user=User(username='fixture',password_hash='unused',nostr_npub='fixture',telegram_enabled=False)
         db.add(user);db.flush()
-        db.add(PushSubscription(pubkey='a'*64,endpoint='private-fixture',p256dh='fixture',auth='fixture'))
-        reminder=Reminder(user_id=user.id,text='📅 Calendar appointment',due_at=datetime(2026,9,8),delivered_at=datetime(2026,9,8),status='done')
-        db.add(reminder);db.commit();asyncio.run(reminder_service.deliver(db,reminder))
+        db.commit()
+        rid,row=Reminder(user_id=user.id,text='📅 Calendar appointment',due_at=datetime(2026,9,8),delivered_at=datetime(2026,9,8),status='done')
+        reminder=service.as_reminder(rid,row);asyncio.run(reminder_service.deliver(db,reminder))
         assert archived==[(user.id,88,'⏰ Reminder: 📅 Calendar appointment')]
         assert live[0][1]['route']=='calendar' and live[0][1]['reminder_id']==reminder.id
         assert pushed[0]['view']=='calendar' and pushed[0]['due_at']==live[0][1]['due_at']

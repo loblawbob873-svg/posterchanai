@@ -9,40 +9,59 @@ burying today's items under it is worse than showing nothing.
 
 Nothing is lost by bounding it: reminder_service.deliver also persists every reminder into the
 "⏰ Reminders" conversation, which is the durable history and is not age-bounded.
+
+The reminders live in the `reminders` DocTable on this node's relay (#161), so the rows below are written there
+and the endpoint reads them back through the shipped relay (tests/app_tables_harness.py).
 """
 from datetime import datetime, timedelta
 import pytest
+from contextlib import contextmanager
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
-from sqlalchemy import create_engine
-from sqlalchemy.orm import Session
-from sqlalchemy.pool import StaticPool
+from app.services.app_tables import new_id
+from app.services.doc_table import DocTable
 from tests.reminder_api_harness import reminder_modules
+from tests.app_tables_harness import tables, shared_relay  # noqa: F401
 
 
 @pytest.fixture(autouse=True)
-def isolated_reminder_modules():
-    global Reminder, User, router, get_current_user, get_db, notification_record
+def isolated_reminder_modules(tables):
+    global User, router, get_current_user, get_db, notification_record, service
     with reminder_modules() as harness:
-        Reminder, User = harness.models.Reminder, harness.models.User
+        User = harness.models.User
         router, get_current_user, get_db = harness.router, harness.get_current_user, harness.get_db
         notification_record = harness.service.notification_record
+        service = harness.service
         yield harness
 
 
+def Reminder(user_id, text, due_at, delivered_at=None, status='pending'):
+    return (str(new_id()), service.reminder_row(user_id, text, due_at, status, due_at, delivered_at))
+
+
+class _Rows:
+    """Stands where the SQL session stood: `add`/`add_all` write reminder rows to the relay."""
+    def add(self, row):
+        DocTable('reminders').put(*row)
+
+    def add_all(self, rows):
+        for row in rows:
+            self.add(row)
+
+    def commit(self):
+        pass
 
 
 def _client(db, user_id=1):
     app = FastAPI(); app.include_router(router)
-    app.dependency_overrides[get_db] = lambda: db
+    app.dependency_overrides[get_db] = lambda: None
     app.dependency_overrides[get_current_user] = lambda: User(id=user_id, username="u")
     return TestClient(app)
 
 
+@contextmanager
 def _db():
-    engine = create_engine('sqlite://', connect_args={'check_same_thread': False}, poolclass=StaticPool)
-    Reminder.__table__.create(engine)
-    return Session(engine)
+    yield _Rows()
 
 
 def _texts(client):

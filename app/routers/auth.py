@@ -4,7 +4,6 @@ import logging
 import time
 from typing import List
 from datetime import datetime, timedelta
-from sqlalchemy import func
 from fastapi import APIRouter, Depends, HTTPException, status, Response, UploadFile, File, Request
 from starlette.requests import Request as StarletteRequest
 from sqlalchemy.orm import Session
@@ -13,7 +12,8 @@ from pydantic import BaseModel
 from app.database import get_db
 
 logger = logging.getLogger(__name__)
-from app.models import User, APIKey, VerificationToken
+from app.models import User
+from app.services.relay_reader import Unavailable
 from app.schemas import (
     UserLogin, UserResponse, Token, APIKeyCreate, APIKeyResponse, APIKeyListItem,
     UserSettingsUpdate, UserSettingsResponse
@@ -347,32 +347,29 @@ def get_me(current_user: User = Depends(get_current_user)):
 @router.get("/verify/{token}")
 def verify_email(token: str, response: Response, db: Session = Depends(get_db)):
     """Verify email address using token from email link"""
-    # Find the verification token
-    verification = db.query(VerificationToken).filter(
-        VerificationToken.token == token
-    ).first()
+    from app.services import verification_store
+    try:
+        # Single-use: the token is gone from the relay (confirmed) before anything acts on it.
+        verdict, user_id = verification_store.consume(token)
+    except Unavailable:
+        raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                            detail="Verification is unavailable right now; try the link again shortly")
 
-    if not verification:
+    if verdict == "invalid":
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Invalid verification token"
         )
 
-    # Check if expired
-    if verification.expires_at < datetime.utcnow():
-        # Delete expired token
-        db.delete(verification)
-        db.commit()
+    if verdict == "expired":
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Verification token has expired. Please register again."
         )
 
     # Get the user
-    user = db.query(User).filter(User.id == verification.user_id).first()
+    user = db.query(User).filter(User.id == user_id).first()
     if not user:
-        db.delete(verification)
-        db.commit()
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="User not found"
@@ -380,7 +377,6 @@ def verify_email(token: str, response: Response, db: Session = Depends(get_db)):
 
     # Mark email as verified
     user.email_verified = True
-    db.delete(verification)  # Token is single-use
     db.commit()
 
     if user.is_admin:
@@ -416,22 +412,13 @@ def resend_verification(request: Request, db: Session = Depends(get_db), current
             detail="No email address on file"
         )
 
-    # Delete any existing tokens
-    db.query(VerificationToken).filter(
-        VerificationToken.user_id == current_user.id
-    ).delete()
-
-    # Generate new token
-    token = secrets.token_urlsafe(32)
-    expires_at = datetime.utcnow() + timedelta(hours=24)
-
-    verification = VerificationToken(
-        user_id=current_user.id,
-        token=token,
-        expires_at=expires_at
-    )
-    db.add(verification)
-    db.commit()
+    # Replace any existing tokens with a fresh one (24 hours)
+    from app.services import verification_store
+    try:
+        token = verification_store.issue(current_user.id, hours=24)
+    except Unavailable:
+        raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                            detail="Verification is unavailable right now; please try again shortly")
 
     # Build verification URL
     base_url = str(request.base_url).rstrip('/')
@@ -457,13 +444,22 @@ def resend_verification(request: Request, db: Session = Depends(get_db), current
 
 # ============== API Key Management ==============
 
+def _keys_unavailable():
+    return HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                         detail="API keys cannot be read right now; try again shortly")
+
+
 @router.get("/api-keys", response_model=List[APIKeyListItem])
 def list_api_keys(
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
     """List all API keys for the current user"""
-    keys = db.query(APIKey).filter(APIKey.user_id == current_user.id).all()
+    from app.services import api_key_store
+    try:
+        keys = api_key_store.for_user(current_user.id)
+    except Unavailable:
+        raise _keys_unavailable()
     return [
         APIKeyListItem(
             id=k.id,
@@ -484,25 +480,16 @@ def create_api_key(
     db: Session = Depends(get_db)
 ):
     """Create a new API key for the current user"""
-    # Generate a secure random key
-    raw_key = secrets.token_hex(32)
-    api_key = f"sk-{raw_key}"
-
-    new_key = APIKey(
-        user_id=current_user.id,
-        key=api_key,
-        name=key_data.name or "Default"
-    )
-    db.add(new_key)
-    db.commit()
-    db.refresh(new_key)
-    from app.services import record_store
-    record_store.mirror_apikey_blocking(db, current_user, new_key)
+    from app.services import api_key_store
+    try:
+        new_key = api_key_store.create(current_user.id, key_data.name or "Default")
+    except Unavailable:
+        raise _keys_unavailable()
 
     return APIKeyResponse(
         id=new_key.id,
         name=new_key.name,
-        key=api_key,  # Only returned once on creation
+        key=new_key.key,  # Only returned once on creation
         created_at=new_key.created_at,
         last_used_at=new_key.last_used_at,
         is_active=new_key.is_active
@@ -516,10 +503,11 @@ def get_api_key(
     db: Session = Depends(get_db)
 ):
     """Get the full API key (for copying)"""
-    api_key = db.query(APIKey).filter(
-        APIKey.id == key_id,
-        APIKey.user_id == current_user.id
-    ).first()
+    from app.services import api_key_store
+    try:
+        api_key = api_key_store.get_for_user(key_id, current_user.id)
+    except Unavailable:
+        raise _keys_unavailable()
 
     if not api_key:
         raise HTTPException(status_code=404, detail="API key not found")
@@ -534,18 +522,18 @@ def delete_api_key(
     db: Session = Depends(get_db)
 ):
     """Delete an API key"""
-    api_key = db.query(APIKey).filter(
-        APIKey.id == key_id,
-        APIKey.user_id == current_user.id
-    ).first()
-
-    if not api_key:
-        raise HTTPException(status_code=404, detail="API key not found")
-
-    db.delete(api_key)
-    db.commit()
+    from app.services import api_key_store
+    try:
+        api_key = api_key_store.get_for_user(key_id, current_user.id)
+        if not api_key:
+            raise HTTPException(status_code=404, detail="API key not found")
+        # Gone from the relay before this says so -- a deletion that did not land would bring the key
+        # back on the next load.
+        api_key_store.delete(key_id)
+    except Unavailable:
+        raise _keys_unavailable()
     from app.services import record_store
-    record_store.delete_apikey_blocking(db, current_user, key_id)
+    record_store.delete_apikey_blocking(db, current_user, key_id)    # the retired per-user mirror's copy
     return {"message": "API key deleted"}
 
 
@@ -556,18 +544,14 @@ def toggle_api_key(
     db: Session = Depends(get_db)
 ):
     """Enable or disable an API key"""
-    api_key = db.query(APIKey).filter(
-        APIKey.id == key_id,
-        APIKey.user_id == current_user.id
-    ).first()
-
-    if not api_key:
-        raise HTTPException(status_code=404, detail="API key not found")
-
-    api_key.is_active = not api_key.is_active
-    db.commit()
-    from app.services import record_store
-    record_store.mirror_apikey_blocking(db, current_user, api_key)
+    from app.services import api_key_store
+    try:
+        api_key = api_key_store.get_for_user(key_id, current_user.id)
+        if not api_key:
+            raise HTTPException(status_code=404, detail="API key not found")
+        api_key = api_key_store.set_active(key_id, not api_key.is_active)
+    except Unavailable:
+        raise _keys_unavailable()
     return {"message": "API key toggled", "is_active": api_key.is_active}
 
 
@@ -1053,7 +1037,7 @@ async def scan_user_storage(
 # ============== Calendar Event API ==============
 
 @router.get("/reminder-notifications")
-def reminder_notifications(user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+async def reminder_notifications(user: User = Depends(get_current_user), db: Session = Depends(get_db)):
     """Delivered reminders survive missed sockets and are private to the authenticated account.
 
     BOUNDED BY AGE, because this feeds the NOTIFICATIONS panel. Unbounded it returned every
@@ -1065,8 +1049,8 @@ def reminder_notifications(user: User = Depends(get_current_user), db: Session =
     Nothing is lost: `reminder_service.deliver` also persists every reminder into the "⏰ Reminders"
     conversation, which is the durable history and is not age-bounded.
     """
-    from app.models import Reminder
-    from app.services.reminder_service import notification_record
+    from app.services.reminder_service import notification_record, adelivered_history
+    from app.services.relay_reader import Unavailable
     days = 7
     try:
         from app.services import settings_store
@@ -1075,8 +1059,10 @@ def reminder_notifications(user: User = Depends(get_current_user), db: Session =
         days = 7
     cutoff = datetime.utcnow() - timedelta(days=days)
     # delivered_at is the truth; fall back to due_at for rows delivered before it was recorded.
-    rows = (db.query(Reminder)
-            .filter(Reminder.user_id == user.id, Reminder.status == "done",
-                    func.coalesce(Reminder.delivered_at, Reminder.due_at) >= cutoff)
-            .order_by(Reminder.delivered_at.desc(), Reminder.id.desc()).limit(200).all())
+    try:
+        rows = await adelivered_history(user.id, cutoff, 200)
+    except Unavailable:
+        # "Could not ask" is not "no reminders": an empty list would tell the client its history is empty.
+        raise HTTPException(status_code=503, detail="Reminder history is unavailable right now — "
+                                                    "this node's datastore could not be asked. Try again shortly.")
     return {"items": [notification_record(row) for row in rows], "history_days": days}

@@ -37,13 +37,23 @@ SENDERS = {
 }
 
 
+# The device rows left Postgres for push_store's documents (#161); reading them is what makes a sender.
+_READS_DEVICES = re.compile(r"PushSubscription|push_store\.(?:all_subs|subs_for|subs_where|get_sub)")
+
+
 def _senders_on_disk():
-    """Any module that queries PushSubscription is a sender and must appear above."""
+    """Any module that reads the device rows is a sender and must appear above."""
     found = set()
     for f in SERVICES.glob("*.py"):
-        if "PushSubscription" in f.read_text(encoding="utf-8"):
+        if _READS_DEVICES.search(f.read_text(encoding="utf-8")):
             found.add(f.name)
-    return found - {"push_prefs.py"}
+    return found - {"push_prefs.py", "push_store.py"}
+
+
+def test_the_sender_scan_still_sees_the_senders():
+    """A scan that matches nothing passes vacuously; the known senders must be found by it."""
+    assert {"mail_notify_service.py", "reminder_service.py", "nostr_push_service.py",
+            "direct_push_service.py"} <= _senders_on_disk()
 
 
 def test_no_sender_exists_that_this_test_does_not_know_about():

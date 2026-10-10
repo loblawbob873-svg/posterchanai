@@ -38,6 +38,7 @@ from app.models import User
 from app.services import emoji_service, settings_store, tor_service
 from app.services.nostr import nostr_service, event as nostr_event
 from app.services.text_utils import strip_preamble
+from app.services.relay_reader import Unavailable
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/client", tags=["client"])
@@ -4116,13 +4117,22 @@ async def blossom_purge(data: BlossomPurgeReq, db: Session = Depends(get_db)):
     if not _verify_admin_auth(db, data.auth, target, "blossom-purge"):
         return JSONResponse({"ok": False, "error": "admin signature required (or stale request)"}, status_code=403)
     from app.services import blossom_service
-    blobs = blossom_service.list_for_pubkey(db, target)
+    from app.services.relay_reader import Unavailable
+    try:
+        blobs = blossom_service.list_for_pubkey(db, target)
+    except Unavailable as e:
+        logger.warning("[client] blossom purge refused, blob index unreadable: %s", e)
+        return JSONResponse({"ok": False, "error": "blob index unavailable — nothing was deleted"},
+                            status_code=503)
     deleted = 0
     for blob in blobs:
-        await blossom_service.delete_blob_bytes(db, blob)
-        db.delete(blob)
+        try:
+            await blossom_service.delete_blob(db, blob)
+        except Unavailable as e:
+            logger.warning("[client] blossom purge stopped after %d: %s", deleted, e)
+            return JSONResponse({"ok": False, "deleted": deleted,
+                                 "error": "blob index refused a delete — stopped"}, status_code=503)
         deleted += 1
-    db.commit()
     logger.info("[client] admin purged %d blossom blob(s) for %s", deleted, target)
     return JSONResponse({"ok": True, "deleted": deleted})
 
@@ -4138,12 +4148,19 @@ async def admin_blossom_usage(data: AdminAuthReq, db: Session = Depends(get_db))
     Files → Admin tab so admins can see who's using storage and drill into a user's files."""
     if not _verify_admin_signer(db, data.auth, "blossom-usage"):
         return JSONResponse({"ok": False, "error": "admin signature required (or stale request)"}, status_code=403)
-    from app.models import BlossomBlob
-    from sqlalchemy import func
-    rows = (db.query(BlossomBlob.pubkey, func.coalesce(func.sum(BlossomBlob.size), 0), func.count())
-            .group_by(BlossomBlob.pubkey).all())
+    from app.services import blob_index
+    from app.services.relay_reader import Unavailable
+    try:
+        every = blob_index.rows()
+    except Unavailable:
+        return JSONResponse({"ok": False, "error": "blob index unavailable, retry shortly"}, status_code=503)
+    agg: dict = {}
+    for b in every:                       # by uploader (the row's first owner), as the SQL GROUP BY was
+        a = agg.setdefault(b.pubkey, [0, 0])
+        a[0] += int(b.size or 0)
+        a[1] += 1
     users = []
-    for pk, total, cnt in rows:
+    for pk, (total, cnt) in agg.items():
         try:
             npub = nostr_service.npub_of(pk)
         except Exception:
@@ -4576,7 +4593,15 @@ async def ai_files_prune(data: AiFileReq, db: Session = Depends(get_db)):
     from app.services.nostr import bip340
     storage_pub = bip340.pubkey_from_seckey(sk).hex()
     deleted, freed = 0, 0
-    for blob in blossom_service.list_for_pubkey(db, storage_pub, include_private=True):
+    from app.services.relay_reader import Unavailable
+    try:
+        mine = blossom_service.list_for_pubkey(db, storage_pub, include_private=True)
+    except Unavailable as e:
+        logger.warning("[client] ai-files prune refused, blob index unreadable: %s", e)
+        return JSONResponse({"ok": False, "deleted": 0, "bytes": 0,
+                             "error": "Could not read which files you have — nothing was deleted."},
+                            status_code=503)
+    for blob in mine:
         if not blob.private or blob.sha256 in keep:
             continue
         size = int(blob.size or 0)
@@ -4743,7 +4768,13 @@ async def ai_file_delete(data: AiFileReq, db: Session = Depends(get_db)):
             logger.warning("[client] ai-file delete refused, references unreadable: %s", type(e).__name__)
             return JSONResponse({"ok": False, "error": "Could not reach your files just now — nothing was deleted."},
                                 status_code=503)
-    await artifact_store.delete_blob(db, data.sha)
+    from app.services.relay_reader import Unavailable
+    try:
+        await artifact_store.delete_blob(db, data.sha)
+    except Unavailable as e:
+        logger.warning("[client] ai-file delete refused, blob index unavailable: %s", e)
+        return JSONResponse({"ok": False, "error": "Could not reach your files just now — nothing was deleted."},
+                            status_code=503)
     # Drop the listing reference so the file actually disappears from the Files view.
     if user:
         for d, ref in uploads.items():
@@ -4872,12 +4903,19 @@ class ScheduledCancelReq(BaseModel):
 _MAX_PENDING_SCHEDULES = 100   # per-user cap (abuse guard)
 
 
+def _scheduled_unavailable():
+    """The schedules live on this node's relay (#161). "Could not ask" is a 503 with a reason — an empty
+    list would tell the Drafts screen the user has nothing scheduled."""
+    return JSONResponse({"ok": False, "error": "scheduled posts are unavailable right now — this node's "
+                                               "datastore could not be asked; try again shortly"},
+                        status_code=503)
+
+
 @router.post("/scheduled")
 async def scheduled_create(data: ScheduledCreateReq, db: Session = Depends(get_db)):
     """Store a pre-signed note to publish later. The server never signs it — the client already did,
     with created_at = the scheduled time — so this only validates ownership + the event, then queues it."""
     from app.services import scheduled_posts_service as sched
-    from app.models import ScheduledPost
     pk = nostr_service.to_pubkey_hex(data.pubkey)
     if not pk:
         return JSONResponse({"ok": False, "error": "invalid pubkey"}, status_code=400)
@@ -4905,12 +4943,13 @@ async def scheduled_create(data: ScheduledCreateReq, db: Session = Depends(get_d
     user = db.query(User).filter(User.nostr_npub == nostr_service.npub_of(pk)).first()
     if not user:
         return JSONResponse({"ok": False, "error": "no account"}, status_code=403)
-    pending = (db.query(ScheduledPost)
-               .filter(ScheduledPost.user_id == user.id,
-                       ScheduledPost.status.in_(("pending", "sending"))).count())
-    if pending >= _MAX_PENDING_SCHEDULES:
-        return JSONResponse({"ok": False, "error": f"too many scheduled posts (max {_MAX_PENDING_SCHEDULES})"}, status_code=429)
-    row = sched.create(db, user, ev, datetime.utcfromtimestamp(when))
+    try:
+        pending = await sched.count_open(db, user)
+        if pending >= _MAX_PENDING_SCHEDULES:
+            return JSONResponse({"ok": False, "error": f"too many scheduled posts (max {_MAX_PENDING_SCHEDULES})"}, status_code=429)
+        row = await sched.create(db, user, ev, datetime.utcfromtimestamp(when))
+    except Unavailable:
+        return _scheduled_unavailable()
     return JSONResponse({"ok": True, "id": row.id, "scheduled_at": when})
 
 
@@ -4925,7 +4964,11 @@ async def scheduled_list(data: ScheduledAuthReq, db: Session = Depends(get_db)):
     user = db.query(User).filter(User.nostr_npub == nostr_service.npub_of(pk)).first()
     if not user:
         return JSONResponse({"ok": True, "posts": []})
-    return JSONResponse({"ok": True, "posts": sched.list_for_user(db, user)})
+    try:
+        posts = await sched.list_for_user(db, user)
+    except Unavailable:
+        return _scheduled_unavailable()
+    return JSONResponse({"ok": True, "posts": posts})
 
 
 @router.post("/scheduled/cancel")
@@ -4939,7 +4982,10 @@ async def scheduled_cancel(data: ScheduledCancelReq, db: Session = Depends(get_d
     user = db.query(User).filter(User.nostr_npub == nostr_service.npub_of(pk)).first()
     if not user:
         return JSONResponse({"ok": False, "error": "no account"}, status_code=403)
-    ok = sched.cancel(db, user, int(data.id))
+    try:
+        ok = await sched.cancel(db, user, int(data.id))
+    except Unavailable:
+        return _scheduled_unavailable()
     return JSONResponse({"ok": ok, "error": None if ok else "already sending or sent"})
 
 
@@ -5033,11 +5079,11 @@ async def _release_sync_blob(db, sha: str | None, pubkey_hex: str) -> None:
         return
     try:
         from app.services import blossom_service
-        if not blossom_service.is_owner(db, sha, pubkey_hex):
+        if not await blossom_service.is_owner(db, sha, pubkey_hex):
             return
-        if blossom_service.release_owner(db, sha, pubkey_hex):
+        if await blossom_service.release_owner(db, sha, pubkey_hex):
             return                       # somebody else still references these bytes
-        blossom_service.expire_blob_in(db, sha, _SUPERSEDED_BLOB_DAYS)
+        await blossom_service.expire_blob_in(db, sha, _SUPERSEDED_BLOB_DAYS)
     except Exception as e:
         try:
             db.rollback()
@@ -5555,7 +5601,7 @@ async def files_index(data: FilesIndexReq, db: Session = Depends(get_db)):
                                     status_code=503)
         if not await store.put_doc(port, sk, "pcai:files-index", target):
             return JSONResponse({"ok": False, "error": "relay rejected restore"}, status_code=503)
-        _expire_unreferenced_index(db, target.get("indexSha"), 0)
+        await _expire_unreferenced_index(db, target.get("indexSha"), 0)
         return JSONResponse({"ok": True, "restored": slot, "n": _files_index_count(target)})
     if data.history:
         try:
@@ -5610,7 +5656,7 @@ async def files_index(data: FilesIndexReq, db: Session = Depends(get_db)):
             in_use = await _index_shas_in_use(store, port, sk, prev)
             cand = data.index.get("indexSha")
             if in_use is not None and cand not in in_use:
-                _expire_unreferenced_index(db, cand, 7)
+                await _expire_unreferenced_index(db, cand, 7)
             return JSONResponse({"ok": False, "error": "refused: " + drop, "collapse": True},
                                 status_code=409)
 
@@ -5632,7 +5678,7 @@ async def files_index(data: FilesIndexReq, db: Session = Depends(get_db)):
             in_use = await _index_shas_in_use(store, port, sk, prev)
             cand = data.index.get("indexSha")
             if in_use is not None and cand not in in_use:
-                _expire_unreferenced_index(db, cand, 7)
+                await _expire_unreferenced_index(db, cand, 7)
             logger.warning("[files-index] save REFUSED for %s: the relay rejected or never acked the "
                         "write; nothing was stored, so the folder list still lacks whatever was "
                         "just uploaded", pk[:12])
@@ -5641,7 +5687,7 @@ async def files_index(data: FilesIndexReq, db: Session = Depends(get_db)):
 
         # This index is now LIVE, so make sure it carries no expiry from an earlier refused attempt
         # at the same bytes — otherwise a retry that finally succeeds still gets swept later.
-        _expire_unreferenced_index(db, data.index.get("indexSha"), 0)
+        await _expire_unreferenced_index(db, data.index.get("indexSha"), 0)
 
         # Age out only the index blob that just fell OUT of backup retention. A merely superseded
         # blob is still referenced by the backup written above, and expiring that one left the version
@@ -5652,7 +5698,7 @@ async def files_index(data: FilesIndexReq, db: Session = Depends(get_db)):
                 live.add(prev.get("indexSha"))          # still referenced by the backup just written
             if evicted_sha and evicted_sha not in live:
                 from app.services import blossom_service
-                blossom_service.expire_blob_in(db, evicted_sha, _FILES_INDEX_BAK_DAYS)
+                await blossom_service.expire_blob_in(db, evicted_sha, _FILES_INDEX_BAK_DAYS)
         except Exception as e:
             logger.debug("[client] files-index: could not age out the old index blob: %s", e)
         # A kept key rides the answer so the sender adopts NOW — waiting for its next pull leaves a
@@ -5697,7 +5743,7 @@ async def _index_shas_in_use(store, port: int, sk: bytes, prev) -> set:
     return used
 
 
-def _expire_unreferenced_index(db, sha: str | None, days: int) -> None:
+async def _expire_unreferenced_index(db, sha: str | None, days: int) -> None:
     """Give an index blob a short TTL (days>0) or clear one (days=0). Best-effort, never raises.
 
     The client uploads the encrypted index blob BEFORE the server has agreed to store the pointer, so
@@ -5709,9 +5755,9 @@ def _expire_unreferenced_index(db, sha: str | None, days: int) -> None:
     try:
         from app.services import blossom_service
         if days > 0:
-            blossom_service.expire_blob_in(db, sha, days)
+            await blossom_service.expire_blob_in(db, sha, days)
         else:
-            blossom_service.clear_blob_expiry(db, sha)
+            await blossom_service.clear_blob_expiry(db, sha)
     except Exception as e:
         logger.debug("[client] files-index: TTL touch on %s failed: %s", str(sha)[:12], e)
 
@@ -5892,6 +5938,7 @@ async def delete_account(data: DeleteAccountReq, db: Session = Depends(get_db)):
         db.delete(c)
     db.query(UserSetting).filter(UserSetting.user_id == user.id).delete()
     npub = user.nostr_npub   # capture before delete — needed to remove the relay account docs
+    uid = user.id
     db.delete(user)
     db.commit()
     try:
@@ -5899,6 +5946,12 @@ async def delete_account(data: DeleteAccountReq, db: Session = Depends(get_db)):
         await users_store.delete_user(db, npub)   # remove account docs so a rebuild won't resurrect it
     except Exception as e:
         logger.warning("[client] account-delete relay doc removal failed: %s", e)
+    try:
+        # Reminders, scheduled posts, pins and reply mappings (#161: no FK cascade any more).
+        from app.services import app_tables
+        await app_tables.apurge_user(uid)
+    except Exception as e:
+        logger.warning("[client] account-delete app-table removal failed: %s", e)
     logger.info("[client] account deleted: %s", pk[:16])
     return JSONResponse({"ok": True})
 
@@ -6025,7 +6078,7 @@ _MEME_BLOB_RE = re.compile(r"/([0-9a-f]{64})(\.[A-Za-z0-9]{1,8})?(?:[?#]|$)")
 async def _meme_adopt_peer_blob(db: Session, peer: str, payload: dict) -> bool:
     """Copy a peer-rendered blob into THIS node's Blossom store, so the URL the peer handed back
     actually resolves. Nodes share the public Blossom base URL (`blossom_public_url`) but each has
-    its OWN Postgres: a blob saved on the peer has no BlossomBlob row here, and /blossom/<sha> is a
+    its OWN blob index: a blob saved on the peer has no index row here, and /blossom/<sha> is a
     row lookup — so without this copy the URL 404s and the layer silently breaks. Content-addressed,
     so re-saving the same bytes locally yields the SAME sha and the peer's URL stays correct."""
     from app.services import blossom_service
@@ -6034,7 +6087,7 @@ async def _meme_adopt_peer_blob(db: Session, peer: str, payload: dict) -> bool:
     if not m:
         return False
     sha, ext = m.group(1), (m.group(2) or "")
-    if blossom_service.get_blob_meta(db, sha) is not None:
+    if await blossom_service.get_blob_meta(db, sha) is not None:
         return True   # already here (dedup / shared DB) — nothing to copy
     import httpx
     # Fetch from the PEER directly, not from the shared public base: that base points at whichever
@@ -6595,14 +6648,13 @@ async def ap_fetch_profile(req: ApProfileReq, request: Request):
         return JSONResponse({"ok": False, "error": "bad pubkey"}, status_code=400)
     if not _ap_fetch_allowed(request):
         return JSONResponse({"ok": False, "error": "slow down"}, status_code=429)
-    from app.database import SessionLocal
-    from app.models import FediPuppet
-    db = SessionLocal()
+    from app.services import fedi_tables
+    from app.services.relay_reader import Unavailable
     try:
-        row = db.query(FediPuppet).filter(FediPuppet.pubkey_hex == pk).first()
-        actor = row.actor_uri if row else ""
-    finally:
-        db.close()
+        row = await fedi_tables.apuppet_by_pubkey(pk)
+    except Unavailable:
+        return JSONResponse({"ok": False, "error": "registry unavailable"}, status_code=503)
+    actor = row.actor_uri if row else ""
     if not actor:
         return {"ok": True, "fediverse": False}
     from app.services.activitypub import backfill
@@ -6622,14 +6674,13 @@ async def ap_fetch_thread(req: ApThreadReq, request: Request):
         return JSONResponse({"ok": False, "error": "bad event id"}, status_code=400)
     if not _ap_fetch_allowed(request):
         return JSONResponse({"ok": False, "error": "slow down"}, status_code=429)
-    from app.database import SessionLocal
-    from app.models import FediBridgeDelivered
-    db = SessionLocal()
+    from app.services import fedi_tables
+    from app.services.relay_reader import Unavailable
     try:
-        row = db.query(FediBridgeDelivered).filter(FediBridgeDelivered.nostr_event_id == eid).first()
-        uri = (row.note_uri or row.note_id) if row else ""
-    finally:
-        db.close()
+        row = await fedi_tables.adelivered_by_event(eid)
+    except Unavailable:
+        return JSONResponse({"ok": False, "error": "ledger unavailable"}, status_code=503)
+    uri = (row.note_uri or row.note_id) if row else ""
     if not uri or not uri.startswith("https://"):
         return {"ok": True, "fediverse": False}
     from app.services.activitypub import backfill

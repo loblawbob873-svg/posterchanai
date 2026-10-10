@@ -1126,7 +1126,7 @@ async def _main(cfg: dict, store: RelayStore | None = None) -> None:
         # reactions, videos, relay lists. Spares operators and the preserve set, like every purge here.
         if fresh.get("block_bridged"):
             by_proxy += (await _apply_social_mirrors(store, gate) or 0)
-        by_inst = (await store.delete_pubkeys(_blocked_instance_puppets(), spare_preserved=False) or 0)
+        by_inst = (await store.delete_pubkeys(await _blocked_instance_puppets(), spare_preserved=False) or 0)
         by_hidden = (await store.delete_hidden_payload() or 0) if fresh.get("block_json", True) else 0
         total = by_pk + by_word + by_lang + by_bridge + by_proxy + by_inst + by_hidden
         if total:
@@ -2248,19 +2248,16 @@ async def _apply_social_mirrors(store, gate) -> int:
     return removed
 
 
-def _blocked_instance_puppets() -> list:
+async def _blocked_instance_puppets() -> list:
     """Puppets of fediverse instances/accounts blocked in Admin -> Social (fedi_bridge_blocked_domains):
-    an admin's explicit decision, so "Purge now" removes their stored posts too."""
-    from app.database import SessionLocal
+    an admin's explicit decision, so "Purge now" removes their stored posts too. An unreadable puppet
+    registry purges none of them this time (the next purge asks again)."""
     from app.services import fedi_blocklist, settings_store
-    db = SessionLocal()
     try:
-        return fedi_blocklist.blocked_puppet_pubkeys(db, settings_store.get("fedi_bridge_blocked_domains", "") or "")
+        return await fedi_blocklist.ablocked_puppet_pubkeys(settings_store.get("fedi_bridge_blocked_domains", "") or "")
     except Exception as e:
-        logger.warning("[nostr-relay] blocked-instance puppets unreadable: %s", e)
+        logger.warning("[nostr-relay] blocked-instance puppets unreadable: %s", type(e).__name__)
         return []
-    finally:
-        db.close()
 
 
 async def _apply_blocked_relays(store, gate, domains) -> int:

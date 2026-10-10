@@ -22,7 +22,7 @@ import asyncio
 import hashlib
 import logging
 from collections import OrderedDict
-from datetime import datetime
+from datetime import datetime, timedelta
 
 from app.services import keystore, settings_store
 from app.services.nostr import bridge_keys, nostr_service
@@ -326,7 +326,7 @@ def _account_profile_sig(account: dict) -> str:
 
 
 # Provisioned-this-process puppets: actor_uri → {"p": puppet dict, "sig": profile sig}. A hit skips
-# key derivation + the FediPuppet DB round-trip entirely (timelines repeat the same authors a lot).
+# key derivation + the puppet-registry round-trip entirely (timelines repeat the same authors a lot).
 _PUPPET_CACHE: "OrderedDict[str, dict]" = OrderedDict()
 _PUPPET_CACHE_MAX = 5000
 
@@ -434,12 +434,27 @@ def _same_person_alias(a: str, b: str) -> bool:
     return (pa.path or "").startswith("/@") or (pb.path or "").startswith("/@")
 
 
+def _cache_puppet(actor_uri: str, p: dict, raw_sig: str) -> None:
+    _PUPPET_CACHE[actor_uri] = {"p": p, "raw_sig": raw_sig}
+    _PUPPET_CACHE.move_to_end(actor_uri)
+    while len(_PUPPET_CACHE) > _PUPPET_CACHE_MAX:
+        _PUPPET_CACHE.popitem(last=False)
+
+
+_SEEN_EVERY = timedelta(days=1)     # last_seen is bookkeeping: one registry write a day per account, not per sighting
+
+
 async def ensure_puppet(db, port: int, account: dict, instance_host: str = "",
                         profile_refresh: bool = True) -> dict | None:
     """Provision (or refresh) a fediverse account's puppet: upsert the registry row, and (re)publish
     its kind-0 profile when first seen or when the display name/avatar/bio/domain changed. Returns
-    the puppet dict, or None if the account has no usable actor URI."""
-    from app.models import FediPuppet
+    the puppet dict, or None if the account has no usable actor URI.
+
+    The registry is the DocTable `fedi_puppets` (fedi_tables); `db` is no longer used and is kept only
+    so callers need not change. A registry that cannot be read RAISES (relay_reader.Unavailable) before
+    any key is derived or anything is registered: read as "unknown person", the alias rule below would be
+    skipped and a second identity minted beside the real one."""
+    from app.services import fedi_tables
     actor_uri = actor_uri_of(account)
     if not actor_uri:
         return None
@@ -452,22 +467,37 @@ async def ensure_puppet(db, port: int, account: dict, instance_host: str = "",
         _PUPPET_CACHE.move_to_end(actor_uri)
         return cached["p"]
 
-    p = puppet_for(account, instance_host)
-    row = db.query(FediPuppet).filter(FediPuppet.actor_uri == p["actor_uri"]).first()
+    # The registry FIRST: nothing is derived from an answer that was never given.
+    row = await fedi_tables.apuppet_by_uri(actor_uri)
     # One person, one puppet. actor_uri is the PK and comes from `uri or url` — but Mastodon exposes an
     # actor as BOTH https://host/users/alice (uri) and https://host/@alice (url), and the mention path
     # builds a synthetic account that only has `url`. So the same person arrived under two keys and got
     # two puppets with two different pubkeys and one shared nip05_name: their follows/mentions/DMs split
     # across two Nostr identities, and the NIP-05 lookup flip-flopped between them (the relay map is
     # last-write-wins). If this handle already has a puppet under the other URI form, REUSE it.
-    if row is None and p.get("acct"):
-        alt = (db.query(FediPuppet)
-               .filter(FediPuppet.acct == p["acct"])
-               .order_by(FediPuppet.created_at.asc()).first())
-        if alt is not None and _same_person_alias(alt.actor_uri, p["actor_uri"]):
-            actor_uri = alt.actor_uri            # keep the original key (and its derived pubkey)
-            p = puppet_for({**account, "uri": alt.actor_uri, "url": alt.actor_uri}, instance_host)
+    acct = acct_of(account, instance_host)
+    if row is None and acct:
+        alts = await fedi_tables.apuppets_with_acct(acct)
+        alt = alts[0] if alts else None
+        if alt is not None and _same_person_alias(alt.actor_uri, actor_uri):
             row = alt
+            account = {**account, "uri": alt.actor_uri, "url": alt.actor_uri}  # keep the original key
+    p = puppet_for(account, instance_host)
+    now = datetime.utcnow()
+
+    def _new_row(profile_sig=None) -> dict:
+        return {"actor_uri": p["actor_uri"], "acct": p["acct"], "instance_host": p["host"],
+                "pubkey_hex": p["pubkey_hex"], "nip05_name": p["nip05_name"],
+                "display_name": p["display_name"], "avatar_url": p["avatar_url"],
+                "profile_sig": profile_sig, "last_seen": now, "created_at": now}
+
+    async def _save(r: dict) -> bool:
+        try:
+            await fedi_tables.aput_puppet(r)
+            return True
+        except Exception as e:      # noqa: BLE001
+            logger.debug("[fedi-bridge] puppet upsert failed for %s: %s", p["acct"], type(e).__name__)
+            return False
     # A mention-only sighting passes a SYNTHETIC account ({url, acct, username, display_name=username})
     # with no real profile fields (the caller sets profile_refresh=False). Recomputing the kind-0 from it
     # would downgrade an already-mirrored profile — blank the bio, drop emoji tags, revert the name to the
@@ -478,30 +508,17 @@ async def ensure_puppet(db, port: int, account: dict, instance_host: str = "",
     # NIP-05 registration. Register the row but publish nothing; the next sighting with a real account
     # object fills the profile in (profile_sig stays NULL so it will).
     if row is None and not profile_refresh:
-        row = FediPuppet(actor_uri=p["actor_uri"], acct=p["acct"], instance_host=p["host"],
-                         pubkey_hex=p["pubkey_hex"], nip05_name=p["nip05_name"],
-                         display_name=p["display_name"], avatar_url=p["avatar_url"],
-                         profile_sig=None, last_seen=datetime.utcnow(), created_at=datetime.utcnow())
-        db.add(row)
-        try:
-            db.commit()
-        except Exception:
-            db.rollback()
-        _PUPPET_CACHE[actor_uri] = {"p": p, "raw_sig": raw_sig}
-        _PUPPET_CACHE.move_to_end(actor_uri)
-        while len(_PUPPET_CACHE) > _PUPPET_CACHE_MAX:
-            _PUPPET_CACHE.popitem(last=False)
+        if await _save(_new_row()):
+            _cache_puppet(actor_uri, p, raw_sig)
         return p
     if row is not None and not profile_refresh:
-        row.last_seen = datetime.utcnow()
-        try:
-            db.commit()
-        except Exception:
-            db.rollback()
-        _PUPPET_CACHE[actor_uri] = {"p": p, "raw_sig": raw_sig}
-        _PUPPET_CACHE.move_to_end(actor_uri)
-        while len(_PUPPET_CACHE) > _PUPPET_CACHE_MAX:
-            _PUPPET_CACHE.popitem(last=False)
+        from app.services.table_migrate import dt as _dt
+        seen = _dt(row.last_seen)
+        ok = True
+        if seen is None or now - seen >= _SEEN_EVERY:
+            ok = await _save({**row, "last_seen": now})
+        if ok:
+            _cache_puppet(actor_uri, p, raw_sig)
         return p
     # Don't DOWNGRADE a known avatar: a real sighting can still be momentarily avatar-less, so an
     # existing good avatar must survive. The kind-0's `picture` is what the client renders in both
@@ -513,30 +530,16 @@ async def ensure_puppet(db, port: int, account: dict, instance_host: str = "",
     emoji_tags = _profile_emoji_tags(p)
     sig = _profile_sig_from(p["display_name"], p["avatar_url"], p["about"], emoji_tags,
                             p.get("fields") or [])
-    now = datetime.utcnow()
-    need_profile = False
     if row is None:
-        row = FediPuppet(actor_uri=p["actor_uri"], acct=p["acct"], instance_host=p["host"],
-                         pubkey_hex=p["pubkey_hex"], nip05_name=p["nip05_name"],
-                         display_name=p["display_name"], avatar_url=p["avatar_url"],
-                         profile_sig=None, last_seen=now, created_at=now)
-        db.add(row)
+        rec = _new_row()
         need_profile = True
     else:
-        row.acct = p["acct"]
-        row.instance_host = p["host"]
-        row.display_name = p["display_name"]
-        row.avatar_url = p["avatar_url"]
-        row.nip05_name = p["nip05_name"]
-        row.last_seen = now
+        rec = {**row, "acct": p["acct"], "instance_host": p["host"], "display_name": p["display_name"],
+               "avatar_url": p["avatar_url"], "nip05_name": p["nip05_name"], "last_seen": now}
         # Re-publish the kind-0 only when the display name / avatar / bio / domain actually changed
         # (profile_sig captures all of those) or it was never published.
         need_profile = row.profile_sig != sig
-    try:
-        db.commit()
-    except Exception as e:
-        db.rollback()
-        logger.debug("[fedi-bridge] puppet upsert failed for %s: %s", p["acct"], e)
+    saved = await _save(rec)
 
     if need_profile:
         broadcast = str(settings_store.get("fedi_bridge_broadcast", "false")).lower() in ("1", "true", "yes", "on")
@@ -545,14 +548,12 @@ async def ensure_puppet(db, port: int, account: dict, instance_host: str = "",
         ok, msg = await publish(port, ev)
         if ok:
             await _publish_dm_relays(port, p, broadcast)
-            row.profile_sig = sig
-            try:
-                db.commit()
-            except Exception:
-                db.rollback()
+            saved = await _save({**rec, "profile_sig": sig})
         else:
             logger.debug("[fedi-bridge] profile publish failed for %s: %s", p["acct"], msg)
             return p   # don't cache as 'done' until the profile actually published
+    if not saved:
+        return p       # nor until the registry holds it
 
     _PUPPET_CACHE[actor_uri] = {"p": p, "raw_sig": raw_sig}
     _PUPPET_CACHE.move_to_end(actor_uri)

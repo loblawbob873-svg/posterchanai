@@ -326,7 +326,6 @@ async def upload_bot_avatar(payload: AvatarPayload, request: Request, db: Sessio
     `keep`: a profile picture must never be aged out by the blob TTL sweep."""
     import base64 as _b64
     from app.services import blossom_service
-    from app.models import BlossomBlob
     from app.routers.blossom import _base_url
     nsec = (payload.nsec or "").strip()
     if not nsec and payload.bot_id is not None:
@@ -359,7 +358,7 @@ async def upload_bot_avatar(payload: AvatarPayload, request: Request, db: Sessio
         pub = nostr_service.derive_pubkey(sk)
         pub = pub if isinstance(pub, str) else pub.hex()
         await blossom_service.save_blob(db, pub, data, mime, keep=True, filename="avatar")
-        blob = db.query(BlossomBlob).filter(BlossomBlob.sha256 == blossom_service.compute_sha256(data)).first()
+        blob = await blossom_service.blob_index.aget(blossom_service.compute_sha256(data))
         if not blob:
             raise RuntimeError("stored, but the blob row is missing")
         return {"url": blossom_service.descriptor(blob, _base_url(request, db))["url"]}
@@ -685,17 +684,16 @@ def _cleanup_nostr_identity(db: Session, bot: Bot):
     #    from a possibly-empty/stale cache was silently dropping human grants (e.g. the admin).
     # 1b) remove its NIP-05 name from the relay's served list
     _nip05_remove_pubkey(pub)
-    # 2) purge its Blossom blobs (bytes + index rows)
+    # 2) purge its Blossom blobs (index document first, then the bytes). Off the main loop
+    #    (_run_async) → delete_blob gets its own httpx client, else the proxy delete silently fails and
+    #    orphans the bytes. An index that cannot be read purges nothing and says so.
     try:
         for blob in blossom_service.list_for_pubkey(db, pub):
             try:
-                _run_async(blossom_service.delete_blob_bytes(db, blob, fresh_client=True))   # off-main-loop (_run_async) → own httpx client, else the proxy delete silently fails and orphans the bytes
-            except Exception:
-                pass
-            db.delete(blob)
-        db.commit()
+                _run_async(blossom_service.delete_blob(db, blob, fresh_client=True))
+            except Exception as e:
+                logger.warning("[bot-delete] could not purge blob %s: %s", blob.sha256[:12], e)
     except Exception as e:
-        db.rollback()
         logger.warning("[bot-delete] blossom purge failed: %s", e)
     # 3) purge its relay events (profile/nip05/posts/app-data) + operator unfollow
     try:

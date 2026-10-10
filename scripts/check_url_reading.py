@@ -51,11 +51,11 @@ def check(ok: bool, label: str, detail: str = ""):
 
 
 def api_key(db) -> str:
-    from sqlalchemy import text
-    row = db.execute(text("SELECT key FROM api_keys ORDER BY id DESC LIMIT 1")).fetchone()
-    if not row:
-        raise SystemExit("no API key in the database — make one in the UI first")
-    return row[0]
+    from app.services import api_key_store
+    key = api_key_store.pick_key(db, newest=True)
+    if not key:
+        raise SystemExit("no API key on this node — make one in the UI first")
+    return key
 
 
 async def generate(base: str, key: str, messages: list) -> str:

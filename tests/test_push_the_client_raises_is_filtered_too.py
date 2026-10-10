@@ -41,31 +41,10 @@ PK = "a" * 64
 WRAP = "c" * 64
 
 
-class _Sub:
-    """Just enough PushSubscription for `_subs_for` to convert and the handler to send to."""
-    def __init__(self, endpoint, prefs=None):
-        self.id = endpoint
-        self.pubkey = PK
-        self.endpoint = endpoint
-        self.transport = "webpush"
-        self.device_id = None
-        self.token_hash = None
-        self.p256dh = "p"
-        self.auth = "a"
-        self.prefs = prefs
-
-
-class _DB:
-    def __init__(self, subs):
-        self._subs = subs
-    def query(self, _model):
-        return self
-    def filter(self, *_a, **_k):
-        return self
-    def all(self):
-        return list(self._subs)
-    def close(self):
-        pass
+def _Sub(endpoint, prefs=None):
+    """A device row as push_store holds it (#161), for `_subs_for` to convert and the handler to send to."""
+    return {"id": 1, "pubkey": PK, "endpoint": endpoint, "transport": "webpush", "device_id": None,
+            "token_hash": None, "p256dh": "p", "auth": "a", "prefs": prefs}
 
 
 def _async(value):
@@ -77,7 +56,9 @@ def _async(value):
 def _run_dm(monkeypatch, subs):
     """Drive the REAL `_dm_handler` over a gift wrap, through the REAL `subscription_dict`."""
     sent = []
-    monkeypatch.setattr("app.database.SessionLocal", lambda: _DB(subs))
+    # the devices come from push_store; the conversion to the wire shape (`_subs_for`) is the real one
+    from app.services import push_store
+    monkeypatch.setattr(push_store, "subs_for_sync", lambda pks: {PK: list(subs)} if PK in set(pks) else {})
     monkeypatch.setattr(nps, "_subscriber_pks", lambda: _async({PK}))
     monkeypatch.setattr(nps, "_sent_by_own_device", lambda pks, wid: set())
     monkeypatch.setattr(nps.push_service, "send",

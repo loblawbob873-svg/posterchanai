@@ -5,18 +5,16 @@ contact list is republished every time its owner follows or unfollows ANYONE -- 
 kind-3 would re-announce every existing follower all day (which is why the open app never toasts
 them). The watcher remembers who already follows whom (push_follow_seen): the first sighting of a
 person seeds their existing followers silently, a follower it has never seen pushes "X followed you"
-once, and a re-saved list pushes nothing. Drives the real `_poll()`; the relay and the devices are stubs.
+once, and a re-saved list pushes nothing. Drives the real `_poll()`; the events the poll reads are stubs,
+while the devices and the seen-ledger are the real push_store documents on a real relay (#161).
 """
 import asyncio
 
 import pytest
-from sqlalchemy import create_engine
-from sqlalchemy.orm import sessionmaker
-from sqlalchemy.pool import StaticPool
 
-from app.models import Base, PushFollowSeen, PushSubscription
 from app.services import nostr_push_service as nps
-from app.services import push_prefs
+from app.services import push_prefs, push_store
+from tests import push_relay_harness as H
 from tests.client_source import app_source_with
 
 ME = "a" * 64
@@ -30,15 +28,10 @@ def _contacts(author, eid, *pks):
 
 
 @pytest.fixture
-def world(monkeypatch):
-    engine = create_engine("sqlite://", poolclass=StaticPool, connect_args={"check_same_thread": False})
-    Base.metadata.create_all(engine, tables=[PushSubscription.__table__, PushFollowSeen.__table__])
-    Session = sessionmaker(bind=engine)
-    monkeypatch.setattr("app.database.SessionLocal", Session)
-    db = Session()
-    db.add(PushSubscription(pubkey=ME, endpoint="https://push.example/phone", transport="webpush", p256dh="p", auth="a"))
-    db.commit()
-    db.close()
+def world(tmp_path, monkeypatch):
+    r = H.start(tmp_path, monkeypatch)
+    monkeypatch.setattr(nps, "_seen", set())
+    H.add_sub(pubkey=ME, endpoint="https://push.example/phone", transport="webpush", p256dh="p", auth="a")
     relay_lists = [_contacts(OLD, "1" * 64, ME)]            # what the relay holds: OLD's list names ME
     poll_events = []
     sent = []
@@ -54,14 +47,16 @@ def world(monkeypatch):
         return {OLD: "Olga", NEW: "Nadia"}.get(pk, "")
     monkeypatch.setattr(nps, "_name_for", name)
     monkeypatch.setattr(nps.push_service, "send", lambda sub, payload: sent.append(payload) or True)
-    monkeypatch.setattr(nps, "subscription_dict", lambda s: {"endpoint": s.endpoint})
+    monkeypatch.setattr(nps, "subscription_dict", lambda s: {"endpoint": s["endpoint"]})
 
     def poll(*events):
         poll_events[:] = events
         nps._cursor = 1
         asyncio.run(nps._poll())
         return sent
-    return {"poll": poll, "sent": sent, "Session": Session, "relay_lists": relay_lists}
+    yield {"poll": poll, "sent": sent, "relay_lists": relay_lists}
+    H.reset()
+    r.close()
 
 
 def test_an_existing_follower_resaving_their_list_is_not_a_new_follow(world):
@@ -80,12 +75,32 @@ def test_a_new_follower_pushes_once_and_opens_notifications(world):
 
 
 def test_the_new_followers_toggle_silences_it_per_device(world):
-    db = world["Session"]()
-    row = db.query(PushSubscription).first()
-    row.prefs = '{"follows": false}'
-    db.commit()
-    db.close()
+    [row] = H.subs()
+    row["prefs"] = '{"follows": false}'
+    asyncio.run(push_store.put_sub(row))
     assert world["poll"](_contacts(NEW, "3" * 64, ME)) == []
+
+
+def test_the_ledger_survives_a_restart(world):
+    """A fresh process (the worker restarted) must not re-announce a follower it already announced."""
+    assert len(world["poll"](_contacts(NEW, "3" * 64, ME))) == 1
+    world["sent"].clear()
+    H.reset()                                                  # a cold process view, read from the relay
+    nps._seen.clear()
+    assert world["poll"](_contacts(NEW, "5" * 64, ME, "e" * 64)) == []
+    assert push_store.follows().get(ME)["seeded"] is True
+
+
+def test_an_unreadable_ledger_announces_nothing(world, monkeypatch):
+    """Unlike the own-sent-DM dedup, "unknown" here is NOT "send": a contact list is re-saved on every
+    follow of anybody, so failing open would announce old followers as new. This was the SQL version's
+    behaviour on a database error, kept."""
+    from app.services.relay_reader import Unavailable
+
+    async def down(*_a, **_k):
+        raise Unavailable("relay down")
+    monkeypatch.setattr(push_store, "follow_seeded", down)
+    assert asyncio.run(nps._is_new_follower(ME, NEW)) is False
 
 
 def test_follows_are_one_of_the_shared_toggle_names():

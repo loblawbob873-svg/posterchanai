@@ -15,7 +15,12 @@ async def _cb_rem(update, db, chat_id, data, callback_query, callback_query_id):
         parts = data.split(":")
         if len(parts) >= 3 and parts[1] == "cancel" and parts[2].isdigit():
             from app.services import reminder_service
-            ok = reminder_service.cancel_reminder(db, cb_user, int(parts[2]))
+            from app.services.relay_reader import Unavailable
+            try:
+                ok = await reminder_service.acancel_reminder(db, cb_user, int(parts[2]))
+            except Unavailable:
+                await telegram_service.send_message(chat_id, reminder_service.UNAVAILABLE_TEXT, parse_mode="")
+                return {"ok": True}
             await telegram_service.send_message(
                 chat_id, "🗑️ Reminder cancelled." if ok else "No matching pending reminder.")
         return {"ok": True}
@@ -32,13 +37,20 @@ async def _cb_pin(update, db, chat_id, data, callback_query, callback_query_id):
         parts = data.split(":")
         if len(parts) >= 3 and parts[2].isdigit():
             from app.services import saved_search_service
+            from app.services.relay_reader import Unavailable
             sid = int(parts[2])
-            if parts[1] == "del":
-                ok = saved_search_service.delete_saved_search(db, cb_user, sid)
-                await telegram_service.send_message(
-                    chat_id, "🗑️ Pin deleted." if ok else "No matching pin.")
-            elif parts[1] == "run":
-                s = next((x for x in saved_search_service.list_saved_searches(db, cb_user) if x.id == sid), None)
+            try:
+                if parts[1] == "del":
+                    ok = await saved_search_service.adelete_saved_search(db, cb_user, sid)
+                    await telegram_service.send_message(
+                        chat_id, "🗑️ Pin deleted." if ok else "No matching pin.")
+                    return {"ok": True}
+                pins = await saved_search_service.alist_saved_searches(db, cb_user) if parts[1] == "run" else []
+            except Unavailable:
+                await telegram_service.send_message(chat_id, saved_search_service.UNAVAILABLE_TEXT, parse_mode="")
+                return {"ok": True}
+            if parts[1] == "run":
+                s = next((x for x in pins if x.id == sid), None)
                 if not s:
                     await telegram_service.send_message(chat_id, "That pin is gone.")
                 else:

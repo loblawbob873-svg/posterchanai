@@ -14,8 +14,17 @@ from fastapi import HTTPException
 from sqlalchemy.orm import declarative_base
 import importlib
 
-for _package in ('app', 'app.services', 'app.routers'):
+for _package in ('app', 'app.services', 'app.routers',
+                 # Reminders live in a DocTable on the relay now (#161). Import its stack BEFORE any stub goes
+                 # in, so it binds the real crypto and transport; the operator key it signs with is still read
+                 # through the (stubbed) settings_store at call time -- see OPERATOR_SK below.
+                 'app.services.nostr.bip340', 'app.services.nostr.nip44', 'app.services.nostr.bech32',
+                 'app.services.nostr.event', 'app.services.nostr_store', 'app.services.relay_reader',
+                 'app.services.doc_table', 'app.services.app_tables', 'websockets.sync.client'):
     importlib.import_module(_package)
+
+# The relay-backed reminder tests run tests/app_tables_harness.py's relay, which trusts this operator key.
+OPERATOR_SK = bytes.fromhex("31" * 32)
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -54,12 +63,15 @@ def reminder_modules():
         stub('app.services.email_service', EmailService=forbidden)
         stub('app.services.storage_service', StorageService=forbidden)
         settings = stub('app.services.settings_store', get=lambda *args: 7,
-                        get_int=forbidden, get_bool=forbidden, set=forbidden)
+                        get_int=forbidden, get_bool=forbidden, set=forbidden,
+                        _operator_seckey=lambda db: OPERATOR_SK)
         stub('app.services.chat_history', append=forbidden)
         stub('app.routers.chat', manager=SimpleNamespace(send_json=forbidden))
         stub('app.services.push_service', send=forbidden)
         stub('app.services.direct_push_service', subscription_dict=forbidden)
-        stub('app.services.nostr', nostr_service=SimpleNamespace(to_pubkey_hex=forbidden))
+        stub('app.services.nostr', nostr_service=SimpleNamespace(to_pubkey_hex=forbidden),
+             bip340=sys.modules['app.services.nostr.bip340'], nip44=sys.modules['app.services.nostr.nip44'],
+             bech32=sys.modules['app.services.nostr.bech32'], event=sys.modules['app.services.nostr.event'])
         # Parse the actual stored preference fields; no push service or database import is needed.
         load('app.services.push_prefs', 'app/services/push_prefs.py')
         reminder = load('app.services.reminder_service', 'app/services/reminder_service.py')

@@ -4,7 +4,7 @@ import json
 import logging
 from datetime import datetime, timezone
 
-from app.models import User, FediPuppet, Bot
+from app.models import User, Bot
 from app.services import settings_store as settings, users_store, blossom_service
 from app.services.nostr import nostr_service as ns
 
@@ -59,7 +59,10 @@ async def _plan(db, exempt_fediverse=True):
     users = db.query(User).all()
     keep = _infrastructure_keys(db, users)
     if exempt_fediverse:
-        keep.update(pk for pk, in db.query(FediPuppet.pubkey_hex).all())
+        # Raises relay_reader.Unavailable on an unreadable registry, which aborts the plan like any
+        # other error here -- "no puppets" would strip every fediverse account of its exemption.
+        from app.services import fedi_tables
+        keep.update(await fedi_tables.apuppet_pubkeys())
         # Accounts that linked a fediverse account under the retired bridge (legacy columns).
         keep.update(ns.to_pubkey_hex(u.nostr_npub) for u in users if u.nostr_npub and
                     (u.pleroma_acct or u.pleroma_enabled or u.pleroma_instance_url))

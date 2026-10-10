@@ -255,9 +255,9 @@ def test_vod_listings_hide_recordings_whose_blob_is_gone():
     assert "def _playable(" in src
     body = src[src.index("@router.get(\"/vods\")"):]
     body = body[:body.index("@router.post(\"/quality\")")]
-    assert body.count("_playable(db, rows)") == 2, (
+    assert body.count("_playable(db, stream_vod_store.") == 2, (
         "both /vods and /vods/by-token must filter — the stamper reads by-token")
-    assert "BlossomBlob" in src
+    assert "blob_index.get(" in src
 
 
 def test_the_end_of_stream_message_is_reassuring_not_a_warning():

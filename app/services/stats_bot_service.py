@@ -62,17 +62,11 @@ def _relay_dsn() -> str:
 def _puppet_pubkeys() -> set:
     """Fedi→Nostr bridge puppets (the app's registry). Their kind-1s are MIRRORED fediverse posts, not native Nostr
     activity -- counting them inflates the numbers ("only here for now"). The relay also drops the puppets IT
-    knows (its own bridge_puppet table); this is the app's half. No registry = count every NIP-05 holder."""
-    try:
-        from app.database import SessionLocal
-        from app.models import FediPuppet
-        db = SessionLocal()
-        try:
-            return {r[0] for r in db.query(FediPuppet.pubkey_hex).all() if r[0]}
-        finally:
-            db.close()
-    except Exception:       # noqa: BLE001
-        return set()
+    knows (its own bridge_puppet table); this is the app's half. Runs on a worker thread. Raises
+    relay_reader.Unavailable when the registry cannot be read -- counted as "no puppets", every mirrored
+    fediverse account would be posted as native activity."""
+    from app.services import fedi_tables
+    return fedi_tables.puppet_pubkeys()
 
 
 def _ask_activity(since: int) -> dict:
