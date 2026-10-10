@@ -148,12 +148,26 @@ function rememberWorkArea(store, area){
 }
 /** The published area for one output rectangle, or null when nothing has published one — and null
  *  is deliberately not "the output": a caller that has no measurement must keep behaving as it did
- *  before this existed, not act on a work area somebody else's monitor reported. */
+ *  before this existed, not act on a work area somebody else's monitor reported.
+ *
+ *  A MEASUREMENT OF AN EARLIER MODE IS NOT A MEASUREMENT OF THIS ONE ("autostart tiling uses only about
+ *  75 percent of the screen"). The shell surface covers its output, so its area starts at the output's
+ *  origin and spans its full width, with the taskbar band (`reserve`) taken off the bottom. At login the
+ *  monitor comes up in one mode and the saved layout switches it to its final one a moment later (main.js
+ *  repairPointerGaps); the area published in between -- 2880 wide on a 3840 screen -- sits at the same
+ *  origin, is CONTAINED in the bigger output, and was returned until the renderer happened to publish
+ *  again, so a startup Grid tiled into three quarters of the screen. Matched by origin now, and when the
+ *  size no longer agrees with the output the band is the only part of it still true: the area is the
+ *  output minus that band. */
 function workAreaFor(store, outputRect){
   const b=outputRect||{}, l=Number(b.x)||0, t=Number(b.y)||0;
-  const r=l+(Number(b.width)||0), d=t+(Number(b.height)||0);
-  for(const a of (Array.isArray(store)?store:[]))
-    if(a.x>=l && a.y>=t && a.x+a.w<=r && a.y+a.h<=d) return a;
+  const W=Number(b.width)||0, H=Number(b.height)||0;
+  const own=(Array.isArray(store)?store:[]).filter(a=>a&&a.x===l&&a.y===t).pop();
+  if(!own) return null;
+  const reserve=Math.max(0,Number(own.reserve)||0);
+  const fits=own.w===W && (reserve>0 ? Math.abs(own.h+reserve-H)<=1 : own.h<=H);
+  if(fits) return own;
+  if(reserve>0 && W>0 && H>0 && reserve<=H/2) return {x:l, y:t, w:W, h:H-reserve, reserve};
   return null;
 }
 

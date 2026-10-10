@@ -4082,9 +4082,10 @@
   /* Tile once the apps' windows exist: an arrange that runs before a window appears leaves it floating
    * wherever it opened. Waits for a "PosterChan Window — <view>" per app (main.js titles them so), up to
    * 25s, then arranges whatever did open. */
+  const _startupTitle = v => new RegExp('^PosterChan Window\\s*[—-]\\s*' + v.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '\\b');
   async function _tileStartup(views, layout){
     if(!(window.pcWM && typeof pcWM.arrange === 'function')) return false;
-    const has = rows => views.every(v => (rows || []).some(r => new RegExp('^PosterChan Window\\s*[—-]\\s*' + v.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '\\b').test(String(r && r.title || ''))));
+    const has = rows => views.every(v => (rows || []).some(r => _startupTitle(v).test(String(r && r.title || ''))));
     for(let i = 0; i < 25; i++){
       await new Promise(r => setTimeout(r, 1000));
       let rows = null; try{ rows = pcWM.windows ? await pcWM.windows() : null; }catch(_){ rows = null; }
@@ -4092,7 +4093,68 @@
     }
     await new Promise(r => setTimeout(r, 600));
     try{ await pcWM.arrange(layout); }catch(_){ return false; }
+    _retileStartupOnResize(views, layout);
     return true;
+  }
+  /* THE SCREEN CAN STILL BE CHANGING SIZE WHEN THE STARTUP GRID IS LAID ("it tiles before the monitor
+   * chooses the final resolution at start. All the tiled windows use only about 75 percent of the
+   * screen"). At login the monitor comes up in one mode and the saved display layout moves it to its final
+   * one moments later -- after, or in the middle of, the arrange above -- and nothing ever tiled again, so
+   * the grid stayed the size of the mode the session started in. This desktop's own surface is resized
+   * with its output, so for the first minutes of the session a change in this page's size re-tiles the
+   * startup apps -- against the compositor's CURRENT output, since pcWM.arrange measures it at the moment
+   * it is asked.
+   *
+   * IT NEVER FIGHTS THE PERSON. The windows' rectangles are recorded once the grid is laid; if any of them
+   * has moved or changed size relative to the others since (a drag, a snap, a close), the layout is theirs
+   * now and this stands down for good. Relative, not absolute: an output whose ORIGIN moves (the monitor to
+   * its left grew) carries every tile with it, which is not somebody rearranging them. */
+  const STARTUP_RETILE_MS = 120000;
+  function _startupShape(rows, views){
+    const got = views.map(v => (rows || []).find(r => _startupTitle(v).test(String(r && r.title || ''))))
+      .filter(r => r && r.rect && r.rect.width > 0 && r.rect.height > 0);
+    if(!got.length) return null;
+    const ox = Math.min(...got.map(r => r.rect.x)), oy = Math.min(...got.map(r => r.rect.y));
+    return got.map(r => ({ id: r.id, x: r.rect.x - ox, y: r.rect.y - oy, w: r.rect.width, h: r.rect.height }));
+  }
+  function _sameShape(a, b){
+    if(!a || !b || a.length !== b.length) return false;
+    return a.every((p, i) => { const q = b[i];
+      return q && q.id === p.id && Math.abs(p.x - q.x) <= 8 && Math.abs(p.y - q.y) <= 8
+        && Math.abs(p.w - q.w) <= 8 && Math.abs(p.h - q.h) <= 8; });
+  }
+  function _retileStartupOnResize(views, layout){
+    if(!(window.pcWM && typeof pcWM.windows === 'function') || typeof window.addEventListener !== 'function') return;
+    const size = () => [window.innerWidth, window.innerHeight,
+                        (window.screen && screen.width) || 0, (window.screen && screen.height) || 0].join('x');
+    const until = Date.now() + STARTUP_RETILE_MS;
+    let laid = size(), shape = null, timer = 0, busy = false, done = false;
+    const snap = async () => { try{ return _startupShape(await pcWM.windows(), views); }catch(_){ return null; } };
+    const stop = () => { done = true; clearTimeout(timer); clearInterval(poll);
+      try{ window.removeEventListener('resize', changed); }catch(_){} };
+    const settle = async () => {
+      timer = 0;
+      if(done || busy) return;
+      if(Date.now() > until){ stop(); return; }
+      const now = size();
+      if(now === laid) return;
+      busy = true;
+      try{
+        const cur = await snap();
+        if(!_sameShape(shape, cur)){ stop(); return; }   // somebody arranged them since: theirs now
+        laid = now;
+        try{ await pcWM.arrange(layout); }catch(_){ stop(); return; }
+        shape = await snap();
+        if(!shape) stop();
+      }finally{ busy = false; }
+      if(!done && size() !== laid) timer = setTimeout(settle, 1200);   // it moved again meanwhile
+    };
+    /* Debounced: a mode switch arrives as several resizes, and arranging into each would flash the grid. */
+    function changed(){ if(done) return; clearTimeout(timer); timer = setTimeout(settle, 1200); }
+    /* And polled, because a surface resized while the page is busy booting can land between two event
+     * loops nobody listens to -- the size is what matters, not the event. */
+    const poll = setInterval(() => { if(Date.now() > until) stop(); else if(size() !== laid && !timer) changed(); }, 2000);
+    snap().then(s => { shape = s; if(!s) stop(); else window.addEventListener('resize', changed); });
   }
   let _startupRan=false;
   /* Once per desktop session, on PosterChanOS only (real app windows). Each monitor's renderer opens the
